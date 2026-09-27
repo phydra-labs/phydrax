@@ -15,7 +15,7 @@ the attempt; they never contribute a plausible value or derivative.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, ClassVar, final, Literal, TypeAlias
+from typing import Any, ClassVar, final, Literal
 
 import equinox as eqx
 import jax
@@ -57,7 +57,7 @@ from .._tree_math import tree_inner
 from ..typing import parse
 
 
-AcceptedResultPolicy: TypeAlias = Literal["reduce-support", "reject-attempt"]
+type AcceptedResultPolicy = Literal["reduce-support", "reject-attempt"]
 _DERIVATIVE_FREE_ALTERNATIVES = (
     "derivative-free consumers remain available: train_components with a "
     "distribution-evolution optimizer, or posterior_problem_from_solver_objective "

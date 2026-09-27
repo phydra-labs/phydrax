@@ -52,7 +52,7 @@ from ..typing import PRNGKey
 from ._solver_objective import AbstractSolverObjective, kernel_objective
 
 
-ComponentOptimizer = (
+type ComponentOptimizer = (
     optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
     | AbstractDistributionEvolutionMethod

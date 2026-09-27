@@ -8,12 +8,12 @@ import argparse
 import json
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 from benchmarks._runtime import measure_repeated
+from phydrax.axes import AxisArray
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -34,7 +34,6 @@ def _timed(operation: Any, ready: Any, repeats: Any) -> Any:
         repeats=repeats,
         synchronizer=lambda value: jax.block_until_ready(ready(value)),
     )
-    # ty: ignore[invalid-argument-type]
     return result, 1_000.0 * float(distribution.mean_seconds)
 
 
@@ -54,15 +53,13 @@ def _spatial_density_record(size: int, repeats: int) -> Any:
     target_weights = widths * jnp.exp(-8.0 * (points[:, 0] - 0.65) ** 2)
     source = phx.integration.discrete(
         points,
-        # ty: ignore[invalid-argument-type]
-        cx.Field(source_weights, dims=("atom",)),
+        AxisArray(source_weights, dims=("atom",)),
         axes="atom",
         normalized=True,
     )
     target = phx.integration.discrete(
         points,
-        # ty: ignore[invalid-argument-type]
-        cx.Field(target_weights, dims=("atom",)),
+        AxisArray(target_weights, dims=("atom",)),
         axes="atom",
         normalized=True,
     )

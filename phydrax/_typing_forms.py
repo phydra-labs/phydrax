@@ -15,13 +15,23 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, ClassVar, Generic, Literal, NoReturn, Protocol, TypeAlias, TypeVar
+from typing import (
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NoReturn,
+    Protocol,
+    TypeAlias,
+    TypeAliasType,
+    TypeVar,
+    TypeVarTuple,
+)
 
 import jax
 import numpy as np
 import numpy.typing as npt
 from jax.typing import ArrayLike
-from typing_extensions import TypeAliasType, TypeVarTuple
 
 from ._dtype_names import category_dtype_rule, DTypeRule, exact_dtype_rule
 

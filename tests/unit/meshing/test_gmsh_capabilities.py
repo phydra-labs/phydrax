@@ -177,8 +177,7 @@ def _channel_walls(provider: Any, source: Any) -> Any:
 
     shape, _, _ = read_occt_shape(source.report.source_id)
     walls = {0.45: [], 0.55: []}
-    # ty: ignore[unresolved-attribute]
-    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)):
+    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)):
         curve = BRepAdaptor_Curve(edge)
         ends = (curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter()))
         for height, selected in walls.items():
@@ -315,7 +314,6 @@ def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(
     result = provider.plan(source, specification, reconstruction=reconstruction).execute()
 
     achieved = dict(result.compliance.achieved)
-    # ty: ignore[unresolved-attribute]
     boundary_audit = result.boundary.audit()
     assert result.audit.passed and result.compliance.passed
     assert boundary_audit.valid and boundary_audit.closed
@@ -365,7 +363,6 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     element = elements[0]
     nodes = np.asarray(coordinates)[np.asarray(routes[0])]
     points, weights = _tetrahedron_rule(6)
-    # ty: ignore[unresolved-attribute]
     _, gradients = element.tabulate(points)
     jacobians = np.matmul(np.swapaxes(nodes, 1, 2)[:, None], np.asarray(gradients)[None])
     curved_volume = float(np.sum(np.linalg.det(jacobians) @ weights))
@@ -376,10 +373,8 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
         np.sum(np.abs(np.linalg.det(corners[:, 1:] - corners[:, :1]))) / 6.0
     )
     reference_vertices = np.vstack((np.zeros((1, 3)), np.eye(3)))
-    # ty: ignore[unresolved-attribute]
     values, _ = element.tabulate(reference_vertices)
     assert result.audit.passed and result.compliance.passed
-    # ty: ignore[unresolved-attribute]
     assert element.degree == order
     assert achieved["gmsh_minimum_scaled_inverse_condition"] > 0.0
     assert achieved["gmsh_minimum_scaled_inverse_gradient_error"] > 0.0

@@ -449,6 +449,18 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Python support now targets 3.12 (`>=3.12,<3.13`). Runtime, optional, test,
+  QA, and Python build dependency floors target the newest jointly resolvable
+  stable releases, with ceilings at the next compatible release boundary. Both
+  uv locks are refreshed.
+- The accidentally reintroduced `chex` and `coordax` runtime requirements are
+  removed; their former roles remain owned by native substrates.
+- JAX 0.11 execution uses its final-style JAXPR and transpose contracts without
+  the removed pxla primitive registry. OCP 8 collection and TopoDS downcast
+  APIs replace their removed predecessors, and benchmark named arrays import
+  `AxisArray` directly from the native axis substrate.
+- Public runtime type aliases use Python 3.12 `type` statements, so Griffe 2
+  resolves their package-owned identities without chasing `typing` internals.
 - `SweptLayerControl` and `LayerTerminationPolicy` are replaced by
   `BoundaryLayerControl(wall, schedule, route=EXACT_SWEEP, volume_scope=...,
   cap_scope=...)`; `VolumeMeshingSpec.layer_controls` accepts
@@ -958,8 +970,7 @@
   guide.
 - The Phydrax wheel ships the PEP 561 `py.typed` marker, so type checkers use its
   inline annotations. `python -m tools.check_installed_typing` builds the wheel,
-  installs it for Python 3.11–3.13, and checks consumer fixtures against the
-  installed package with the pinned ty.
+  installs it for Python 3.12 and checks consumer fixtures against the pinned ty.
 - `tools/audit_host_sync.py` reports `bool`/`int`/`float`/`numpy.asarray`/
   `numpy.array`/`jax.device_get` calls in package code, classified as static-shape
   reads, host preparation, explicit safe points, external-provider code, output
@@ -3662,7 +3673,7 @@
   Concrete modules that inherit an abstract owner's custom constructor declare a
   checker-only `__init__` alias, matching Equinox's runtime constructor choice.
 - Typing is gated by the pinned ty `0.0.84` through `tools/check_typing.py`
-  (`report`, `check`). ty analyzes Python 3.11 semantics, ignores the dataclass
+  (`report`, `check`). ty analyzes Python 3.12 semantics, ignores the dataclass
   field-order rule that does not apply to Equinox constructors, types optional
   providers as `Any` at their import boundary, and honors only `ty: ignore[rule]`
   suppressions. The package is ty-clean, and every function, method, and nested

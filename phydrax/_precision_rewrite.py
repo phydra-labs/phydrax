@@ -249,11 +249,6 @@ def _rewrite_nested(
     path: str,
     /,
 ) -> tuple[Any, tuple[tuple[str, str], ...], bool]:
-    if isinstance(value, jax_core.ClosedJaxpr):
-        rewritten, records = _rewrite_jaxpr(
-            value.jaxpr, policy, path, allow_boundary_dtype_change=False
-        )
-        return value.replace(jaxpr=rewritten), records, True
     if isinstance(value, jax_core.Jaxpr):
         rewritten, records = _rewrite_jaxpr(
             value, policy, path, allow_boundary_dtype_change=False
@@ -402,10 +397,9 @@ def prepare_precision_rewrite(
     output_shape = jax.eval_shape(function, *arguments)
     output_treedef = jax.tree.structure(output_shape)
     closed = jax.make_jaxpr(function)(*arguments)
-    rewritten, records = _rewrite_jaxpr(
-        closed.jaxpr, policy, "root", allow_boundary_dtype_change=True
+    rewritten_closed, records = _rewrite_jaxpr(
+        closed, policy, "root", allow_boundary_dtype_change=True
     )
-    rewritten_closed = closed.replace(jaxpr=rewritten)
     original_fingerprint = canonical_fingerprint(
         {"kind": "original-jaxpr", "jaxpr": str(closed)}
     )
@@ -421,7 +415,7 @@ def prepare_precision_rewrite(
     rule_map = _rule_map(policy)
     rewritten_output_dtypes = {
         variable: rule.output_dtype
-        for equation in rewritten.eqns
+        for equation in rewritten_closed.eqns
         if (rule := rule_map.get(equation.primitive.name)) is not None
         and equation.primitive.name
         in ("dot_general", "conv_general_dilated", "reduce_sum", "reduce_prod")
@@ -432,7 +426,7 @@ def prepare_precision_rewrite(
             tuple(variable.aval.shape),
             rewritten_output_dtypes.get(variable, jnp.dtype(variable.aval.dtype).name),
         )
-        for variable in rewritten.outvars
+        for variable in rewritten_closed.outvars
     )
     plan_id = canonical_fingerprint(
         {
@@ -484,18 +478,18 @@ def _execute_jaxpr(
             raise TypeError("Precision JAXPR outputs must be Var atoms.")
 
     for variable, value in zip(
-        closed_jaxpr.jaxpr.constvars,
+        closed_jaxpr.constvars,
         closed_jaxpr.consts,
         strict=True,
     ):
         write(variable, value)
     for variable, value in zip(
-        closed_jaxpr.jaxpr.invars,
+        closed_jaxpr.invars,
         arguments,
         strict=True,
     ):
         write(variable, value)
-    for equation in closed_jaxpr.jaxpr.eqns:
+    for equation in closed_jaxpr.eqns:
         inputs = [read(variable) for variable in equation.invars]
         rule = rule_map.get(equation.primitive.name)
         if rule is not None and equation.primitive.name in (
@@ -519,7 +513,7 @@ def _execute_jaxpr(
             outputs = [jnp.asarray(value, dtype=rule.output_dtype) for value in outputs]
         for variable, value in zip(equation.outvars, outputs, strict=True):
             write(variable, value)
-    return [read(variable) for variable in closed_jaxpr.jaxpr.outvars]
+    return [read(variable) for variable in closed_jaxpr.outvars]
 
 
 def execute_precision_rewrite(plan: PrecisionRewritePlan, *args: Any) -> Any:

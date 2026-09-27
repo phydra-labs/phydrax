@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from enum import StrEnum
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 
@@ -17,7 +17,7 @@ from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
 
-RegularityPieces: TypeAlias = Literal["none", "polynomial", "smooth"]
+type RegularityPieces = Literal["none", "polynomial", "smooth"]
 
 DERIVATIVE_SUPPORTED = "derivative-supported"
 DERIVATIVE_UNSUPPORTED = "derivative-unsupported"

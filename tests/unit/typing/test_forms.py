@@ -35,6 +35,14 @@ def test_dimension_naming_is_a_convention_not_a_runtime_rule() -> None:
 
     assert pt.parse(3, pt.Size[components], "count") == 3
 
+type Mode = Literal["direct", "iterative"]
+
+
+def test_pep695_alias_preserves_literal_contract() -> None:
+    assert pt.parse("direct", Mode, "mode") == "direct"
+    with pytest.raises(ValueError, match="mode"):
+        pt.parse("invalid", Mode, "mode")
+
 
 @pytest.mark.parametrize("token", [pt.AnyDim, pt.AnyShape, pt.Scalar])
 def test_shape_tokens_cannot_be_instantiated_or_extended(token: Any) -> None:

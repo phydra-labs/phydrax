@@ -8,7 +8,6 @@ import argparse
 import json
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,6 +15,7 @@ import jax.random as jr
 
 import phydrax as phx
 from benchmarks._runtime import measure_repeated
+from phydrax.axes import AxisArray
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,8 +33,7 @@ def _parser() -> argparse.ArgumentParser:
 def _target(states: Any, probabilities: Any, provenance: Any) -> Any:
     return phx.integration.discrete(
         states,
-        # ty: ignore[invalid-argument-type]
-        cx.Field(probabilities, dims=("state",)),
+        AxisArray(probabilities, dims=("state",)),
         axes="state",
         normalized=True,
         provenance=provenance,
@@ -88,7 +87,6 @@ def _timed(operation: Any, ready: Any, repeats: Any) -> Any:
         repeats=repeats,
         synchronizer=lambda value: jax.block_until_ready(ready(value)),
     )
-    # ty: ignore[invalid-argument-type]
     return result, 1_000.0 * float(distribution.mean_seconds)
 
 

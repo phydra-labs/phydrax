@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 
@@ -23,6 +22,7 @@ from benchmarks._runtime import (
     measure_synchronized,
     synchronize,
 )
+from phydrax.axes import AxisArray
 
 
 _OPERATIONS = ("sort", "rank", "topk", "quantile")
@@ -210,11 +210,11 @@ def _operation(
 
     def apply(values: Any) -> Any:
         if workload.named:
-            value = cx.Field(values, dims=("case", "sample"))
+            value = AxisArray(values, dims=("case", "sample"))
             weights = (
                 None
                 if workload.weights is None
-                else cx.Field(workload.weights, dims=("case", "sample"))
+                else AxisArray(workload.weights, dims=("case", "sample"))
             )
             axis: int | str = "sample"
         else:
@@ -223,7 +223,6 @@ def _operation(
             axis = -1
 
         if case.operation == "sort":
-            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_sort(
                 value,
                 weights=weights,
@@ -231,7 +230,6 @@ def _operation(
                 solver=solver,
             )
         elif case.operation == "rank":
-            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_rank(
                 value,
                 weights=weights,
@@ -239,7 +237,6 @@ def _operation(
                 solver=solver,
             )
         elif case.operation == "topk":
-            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_topk_mask(
                 value,
                 selected,
@@ -248,7 +245,6 @@ def _operation(
                 solver=solver,
             )
         else:
-            # ty: ignore[no-matching-overload]
             output = phx.transport.soft_quantile(
                 value,
                 _QUANTILES.astype(values.dtype),
@@ -257,7 +253,7 @@ def _operation(
                 solver=solver,
                 quantile_dim="quantile",
             )
-        return output.data if isinstance(output, cx.Field) else output
+        return output.data if isinstance(output, AxisArray) else output
 
     return apply
 
@@ -278,7 +274,6 @@ def _steady_ms(compiled: Any, example: jax.Array, warmups: int, repeats: int) ->
         warmup=warmups,
         repeats=repeats,
     )
-    # ty: ignore[invalid-argument-type]
     return 1_000.0 * float(distribution.mean_seconds)
 
 

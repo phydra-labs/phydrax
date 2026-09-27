@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from fractions import Fraction
 from math import frexp, isfinite, pi
 from numbers import Integral, Real
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -32,7 +32,7 @@ from .units import (
 )
 
 
-LengthCoordinateKind: TypeAlias = Literal["physical", "comoving", "code"]
+type LengthCoordinateKind = Literal["physical", "comoving", "code"]
 
 
 class SpatialCoordinateContract(StrictModule, NonTrainableState):
@@ -284,7 +284,7 @@ class DimensionalScaleContract(StrictModule, NonTrainableState):
         return scale
 
 
-PhysicalConstant: TypeAlias = int | float | str | Fraction
+type PhysicalConstant = int | float | str | Fraction
 
 
 def _positive_constant(value: PhysicalConstant, name: str, /) -> Fraction:

@@ -10,7 +10,6 @@ import math
 from pathlib import Path
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -19,6 +18,7 @@ import jax.scipy.special as jsp
 import phydrax as phx
 from benchmarks._runtime import measure_lower_and_compile, measure_repeated
 from phydrax._frozendict import frozendict
+from phydrax.axes import AxisArray
 
 
 def _timed(operation: Any, /, *, repeats: int) -> tuple[jax.Array, float, float]:
@@ -40,14 +40,14 @@ def _timed(operation: Any, /, *, repeats: int) -> tuple[jax.Array, float, float]
 
 
 def _time_point(value: float) -> Any:
-    return frozendict({"t": cx.Field(jnp.asarray(value), dims=())})
+    return frozendict({"t": AxisArray(jnp.asarray(value), dims=())})
 
 
 def _space_time_point(space: float, time_: float) -> Any:
     return frozendict(
         {
-            "x": cx.Field(jnp.asarray([space]), dims=(None,)),
-            "t": cx.Field(jnp.asarray(time_), dims=()),
+            "x": AxisArray(jnp.asarray([space]), dims=(None,)),
+            "t": AxisArray(jnp.asarray(time_), dims=()),
         }
     )
 

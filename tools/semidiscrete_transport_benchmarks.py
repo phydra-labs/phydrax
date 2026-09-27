@@ -9,12 +9,12 @@ import json
 import time
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.axes import AxisArray
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -42,8 +42,7 @@ def _problem(order: int, atoms: int) -> Any:
     support = (jnp.arange(atoms, dtype="float64") + 0.5) / atoms
     target = phx.integration.discrete(
         support,
-        # ty: ignore[invalid-argument-type]
-        cx.Field(jnp.full((atoms,), 1.0 / atoms), dims=("atom",)),
+        AxisArray(jnp.full((atoms,), 1.0 / atoms), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance="semidiscrete-benchmark-support",

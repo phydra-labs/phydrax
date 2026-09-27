@@ -212,16 +212,14 @@ def _surface_patch(face: Any, bounds: np.ndarray) -> Any:
 
 
 def _ordered_wires(face: Any) -> list[Any]:
-    # ty: ignore[unresolved-attribute]
-    return _explore(face, TopAbs_WIRE, TopoDS.Wire_s)
+    return _explore(face, TopAbs_WIRE, TopoDS.Wire)
 
 
 def _wire_edge_indices(wire: Any, face: Any, edges: list[Any]) -> tuple[int, ...]:
     explorer = BRepTools_WireExplorer(wire, face)
     result: list[int] = []
     while explorer.More():
-        # ty: ignore[unresolved-attribute]
-        edge = TopoDS.Edge_s(explorer.Current())
+        edge = TopoDS.Edge(explorer.Current())
         index = _shape_index(edges, edge)
         sign = -1 if edge.Orientation() == TopAbs_REVERSED else 1
         result.append(sign * (index + 1))
@@ -233,8 +231,7 @@ def _sample_wire(wire: Any, face: Any, samples_per_edge: int) -> np.ndarray | No
     explorer = BRepTools_WireExplorer(wire, face)
     segments: list[np.ndarray] = []
     while explorer.More():
-        # ty: ignore[unresolved-attribute]
-        edge = TopoDS.Edge_s(explorer.Current())
+        edge = TopoDS.Edge(explorer.Current())
         curve = BRepAdaptor_Curve2d(edge, face)
         start = float(curve.FirstParameter())
         end = float(curve.LastParameter())
@@ -280,12 +277,9 @@ def _normalized_trim_domain(
 
 
 def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[Any]]:
-    # ty: ignore[unresolved-attribute]
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)
-    # ty: ignore[unresolved-attribute]
-    vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
-    # ty: ignore[unresolved-attribute]
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
+    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
+    vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     face_edges: list[tuple[int, ...]] = []
     face_wires: list[tuple[tuple[int, ...], ...]] = []
     edge_faces: list[list[int]] = [[] for _ in edges]
@@ -305,8 +299,7 @@ def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[
     for solid in solids:
         indices: list[int] = []
         relative_orientations: list[int] = []
-        # ty: ignore[unresolved-attribute]
-        for solid_face in _explore_unique(solid, TopAbs_FACE, TopoDS.Face_s):
+        for solid_face in _explore_unique(solid, TopAbs_FACE, TopoDS.Face):
             face_index = _shape_index(faces, solid_face)
             indices.append(face_index)
             relative_orientations.append(
@@ -505,8 +498,7 @@ def model_from_occt_shape(
         raise ValueError("Meshing deflections must be positive.")
     if trim_samples_per_edge < 3:
         raise ValueError("trim_samples_per_edge must be at least three.")
-    # ty: ignore[unresolved-attribute]
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
+    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
     if not faces:
         raise ValueError("The OCCT shape contains no faces.")
     topology, edges = _extract_topology(shape, faces)

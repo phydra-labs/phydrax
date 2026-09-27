@@ -832,7 +832,7 @@ projected fields; a learned proposer imitates them but is always re-certified.
 | --- | --- | --- |
 | Mmg | Mmg 5.8 libraries plus the packaged persistent worker | Simplex metric, level-set, and Lagrangian adaptation through Mmg2D/MMGS/MMG3D with region/boundary references and field interpolation |
 | fTetWild | `phydrax[meshing-ftetwild]` | Robust surface-to-tetrahedron generation; sampled boundary-envelope evidence |
-| Poisson | `phydrax[meshing-poisson]`, Python below 3.13 | Open3D screened Poisson reconstruction from oriented points |
+| Poisson | `phydrax[meshing-poisson]` | Open3D screened Poisson reconstruction from oriented points |
 | OpenVDB | Native `openvdb` Python binding; conda-forge provides it | Existing sparse voxel field to isosurface, with explicit background semantics |
 | Omega_h | Omega_h, built either serially or with MPI, plus the packaged persistent worker | Simplex metric adaptation with class preservation, field transfer, ownership, and ghost residence |
 | VoroCrust | Source-built mesher plus the packaged persistent extraction worker | Surface sampling and explicit face-defined Voronoi cells |
