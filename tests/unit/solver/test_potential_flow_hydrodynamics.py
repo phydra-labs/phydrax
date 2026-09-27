@@ -26,7 +26,9 @@ from phydrax.solver._potential_flow_hydrodynamics import (
 
 def _region(mesh: Any, *, feature_id: Any) -> Any:
     return MeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(mesh.vertices),
+        # ty: ignore[invalid-argument-type]
         np.asarray(mesh.faces, dtype=np.int32),
         feature_id=feature_id,
     )

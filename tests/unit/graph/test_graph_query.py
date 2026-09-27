@@ -243,8 +243,6 @@ def test_query_neighbors_support_morton_execution_and_geometry_gradients() -> No
         2,
         1,
         2,
-        maximum_leaf_occupancy=1,
-        target_top_nodes=1,
     )
 
     def distances(target: Any) -> Any:

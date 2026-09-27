@@ -7,6 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -278,6 +279,100 @@ def test_metric_common_refinement_preserves_content_and_transpose_pairing() -> N
     lhs = jnp.vdot(result.target_content, target_cotangent)
     rhs = jnp.vdot(source_content, pullback)
     np.testing.assert_allclose(lhs, rhs, rtol=2.0e-6, atol=2.0e-7)
+
+
+def _plane_complex(offset: Any, x_cells: Any) -> Any:
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: points[:, 0] - offset,
+        f"regrid-plane-{offset}",
+        15,
+    )
+    return phx.discretization.MultivaluedCutCellPlan(
+        _topology_x_cells(x_cells),
+        _identity,
+        "identity-map",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        _resources(),
+    ).prepare()
+
+
+def _ordered_components(complex_: Any) -> Any:
+    count = complex_.component_count
+    return np.argsort(np.asarray(complex_.component_centers)[:count, 0])
+
+
+def test_nonmatching_regrid_transition_conserves_content_and_constants() -> None:
+    # Source cells [0, 1/2], [1/2, 1] and target cells [0, 1/3], [1/3, 2/3],
+    # [2/3, 1] share only the fluid region x > 0.37.
+    source = _plane_complex(0.37, 2)
+    target = _plane_complex(0.37, 3)
+    transition = phx.discretization.MultivaluedCutCellTransition(
+        source,
+        target,
+        tolerance=2.0e-8,
+    )
+    source_order = _ordered_components(source)
+    target_order = _ordered_components(target)
+    source_content = (
+        jnp.zeros((source.component_capacity, 2))
+        .at[source_order]
+        .set(jnp.asarray(((2.0, -1.0), (3.0, 5.0))))
+    )
+
+    result = transition.apply_content(source_content)
+
+    assert transition.coverage_complete
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        result.target_total, result.source_total, rtol=1.0e-13, atol=1.0e-13
+    )
+    # [0.37, 2/3] receives all of the first source cell and 1/3 of the second;
+    # [2/3, 1] receives the remaining 2/3 of the second source cell.
+    np.testing.assert_allclose(
+        result.target_content[target_order],
+        jnp.asarray(((3.0, 2.0 / 3.0), (2.0, 10.0 / 3.0))),
+        rtol=2.0e-6,
+        atol=2.0e-6,
+    )
+    constant = jnp.zeros((source.component_capacity, 1)).at[source_order].set(4.0)
+    np.testing.assert_allclose(
+        transition.apply_average(constant)[target_order],
+        4.0,
+        rtol=1.0e-12,
+    )
+
+
+def test_nonmatching_regrid_transition_reports_incomplete_coverage() -> None:
+    source = _plane_complex(0.37, 2)
+    target = _plane_complex(0.45, 3)
+
+    with pytest.raises(ValueError, match="coverage is incomplete"):
+        phx.discretization.MultivaluedCutCellTransition(
+            source,
+            target,
+            tolerance=2.0e-8,
+        )
+    transition = phx.discretization.MultivaluedCutCellTransition(
+        source,
+        target,
+        tolerance=2.0e-8,
+        require_complete=False,
+    )
+
+    assert not transition.coverage_complete
+    target_count = target.component_count
+    np.testing.assert_allclose(
+        transition.target_coverage,
+        target.component_volumes[:target_count],
+        rtol=1.0e-10,
+    )
+    np.testing.assert_allclose(jnp.sum(transition.source_coverage), 0.55, atol=2.0e-6)
+    constant = (
+        jnp.zeros((source.component_capacity, 1)).at[: source.component_count].set(4.0)
+    )
+    np.testing.assert_allclose(
+        transition.apply_average(constant)[:target_count], 4.0, rtol=1.0e-12
+    )
 
 
 def test_multivalued_small_cell_redistribution_uses_aperture_neighbor() -> None:

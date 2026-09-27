@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 
@@ -159,7 +160,21 @@ def test_local_implicit_material_uses_implicit_jvp() -> None:
     assert jnp.allclose(tangent, 0.25, atol=1.0e-8)
 
 
-def test_time_law_schedule_and_uniform_refinement_are_transactional() -> None:
+def _bisect_all(source: Any, hierarchy: Any = None) -> Any:
+    return phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(
+                source.mesh.blocks[0].global_ids, hierarchy=hierarchy
+            ),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+
+
+def test_time_law_schedule_and_uniform_bisection_are_transactional() -> None:
     law = phx.solver.TimeLaw.ramp(0.0, 1.0, 0.0, 1.0)
 
     def solve(state: Any, start: Any, end: Any, time_law: Any, args: Any) -> Any:
@@ -173,13 +188,21 @@ def test_time_law_schedule_and_uniform_refinement_are_transactional() -> None:
         (phx.solver.SolveStage("load", 0.0, 1.0, law, solve),)
     )
     final_state, results = schedule.run(jnp.asarray(0.0))
-    refined, refinement = phx.discretization.fem.refine_triangles_uniform(_tri_mesh())
+    source = phx.meshing.certify_cell_mesh(
+        _tri_mesh(), phx.SpatialCoordinateContract.si()
+    )
+    first = _bisect_all(source)
+    second = _bisect_all(first.target, first.hierarchy)
+    cells = second.lineage.entity_lineage(2)
 
     # ty: ignore[invalid-argument-type]
     assert jnp.allclose(final_state, 1.0)
     assert bool(results[0].accepted)
-    assert refined.blocks[0].cell_count == 16
-    assert refinement.child_cell_ids.shape == (4, 4)
+    assert first.target.mesh.blocks[0].cell_count == 8
+    assert second.target.mesh.blocks[0].cell_count == 16
+    assert jnp.all(
+        cells.relation_kinds == int(phx.meshing.EntityLineageKind.REFINED_FROM)
+    )
 
 
 def test_element_partial_and_p_transfer_operators_are_consistent() -> None:
@@ -257,14 +280,31 @@ def test_partition_and_local_adaptation_have_stable_routes() -> None:
         0.25,
         cell_global_ids=mesh.blocks[0].global_ids,
     )
-    refined, adaptation, transfer = phx.discretization.fem.refine_triangles_local(
-        mesh, marked
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(marked),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+    refined = adaptation.target.mesh
+    transfer = adaptation.transfer
+    parents = np.unique(
+        # ty: ignore[unresolved-attribute]
+        np.asarray(adaptation.lineage.entity_lineage(2).source_global_ids)[
+            # ty: ignore[unresolved-attribute]
+            np.asarray(adaptation.lineage.entity_lineage(2).relation_kinds)
+            == int(phx.meshing.EntityLineageKind.REFINED_FROM)
+        ]
     )
 
     assert set(partition.cell_owner.tolist()) == {0, 1}
-    assert adaptation.parent_cell_ids.shape == (1,)
-    assert transfer.primal.shape == (
-        refined.coordinates.shape[0],
-        mesh.coordinates.shape[0],
-    )
+    assert parents.shape == (1,)
+    # ty: ignore[unresolved-attribute]
+    assert transfer.target_size == refined.coordinates.shape[0]
+    # ty: ignore[unresolved-attribute]
+    assert transfer.source_size == mesh.coordinates.shape[0]
     assert refined.blocks[0].cell_count == 5

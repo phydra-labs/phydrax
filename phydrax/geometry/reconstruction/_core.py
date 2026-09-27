@@ -309,6 +309,7 @@ def _clean_surface_mesh(
     faces: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, TriangleTopology]:
     vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
+    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces_, num_vertices=vertices_.shape[0])
     return vertices_, faces_, topology
 
@@ -351,6 +352,7 @@ def reconstruct_planar_region(
         np.arange(offsets[index], offsets[index + 1], dtype=np.int32)
         for index in range(offsets.shape[0] - 1)
     )
+    # ty: ignore[invalid-argument-type]
     source = PlanarMeshRegion(vertices, loops, feature_id=feature_id)
     algorithm = "scipy_delaunay_2d_native_boundary"
     parameters = _parameter_records(
@@ -437,6 +439,7 @@ def _surface_source(
             "Surface reconstruction did not produce a watertight consistently wound solid.",
             report,
         )
+    # ty: ignore[invalid-argument-type]
     source = MeshRegion(vertices_clean, faces_clean, feature_id=feature_id)
     return ReconstructedGeometrySource(source, report)
 
@@ -535,6 +538,7 @@ def reconstruct_dem_region(
     )
     top_vertices = points[retained_indices].copy()
     top_vertices[:, :2] = planar_vertices
+    # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(top_faces, num_vertices=top_vertices.shape[0])
     boundary = np.asarray(topology.boundary_halfedges, dtype=np.int32)
     origins = np.asarray(topology.halfedge_origin, dtype=np.int32)[boundary]

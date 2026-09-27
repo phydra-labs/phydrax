@@ -729,6 +729,7 @@ class Sketch(StrictModule):
         loop = np.arange(polygon.shape[0], dtype=np.int32)
         from ..simplicial import PlanarMeshRegion
 
+        # ty: ignore[invalid-argument-type]
         return PlanarMeshRegion(polygon, (loop,), feature_id=self.feature_id)
 
 

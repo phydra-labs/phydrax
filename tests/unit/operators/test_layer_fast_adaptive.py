@@ -15,6 +15,7 @@ from phydrax.geometry import MeshRegion
 from phydrax.geometry.surface._contracts import SurfaceMetadata
 from phydrax.geometry.surface._model import SurfaceModel
 from phydrax.linalg import MaterializationPolicy
+from phydrax.meshing import BisectionCompatibility
 from phydrax.operators.integral.layer_potential._adaptive_boundary import (
     BoundaryEpochError,
     BoundaryMeshEpoch,
@@ -180,7 +181,8 @@ def test_deterministic_refinement_transfer_conserves_charge_and_invalidates_epoc
         strategy="dorfler",
         fraction=0.25,
         max_marked_faces=2,
-        max_target_faces=32,
+        max_target_faces=256,
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
     )
     indicators = jnp.ones((4,))
     first = mark_boundary_faces(epoch, indicators, policy)

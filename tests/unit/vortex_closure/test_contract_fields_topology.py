@@ -196,6 +196,69 @@ def test_fmm_has_real_hierarchy_and_matches_direct_small_cloud() -> None:
     assert bool(fmm_result.successful)
 
 
+def test_fmm_adaptive_lists_match_direct_on_clustered_sources() -> None:
+    rng = np.random.default_rng(13)
+    position = np.clip(
+        np.concatenate(
+            (
+                [-0.4, -0.35] + 0.03 * rng.standard_normal((40, 2)),
+                rng.uniform(-0.9, 0.9, (24, 2)),
+            )
+        ),
+        -0.95,
+        0.95,
+    )
+    strength = rng.standard_normal(position.shape[0])
+    core = np.full((position.shape[0],), 0.01)
+    targets = np.concatenate(
+        (
+            [-0.4, -0.35] + 0.15 * rng.standard_normal((6, 2)),
+            rng.uniform(-0.9, 0.9, (6, 2)),
+        )
+    )
+    source = phx.discretization.VortexSourceState(
+        jnp.asarray(position), jnp.asarray(strength), core_radius=jnp.asarray(core)
+    )
+    target = phx.discretization.VortexTargetState(jnp.asarray(targets))
+    request = phx.discretization.VortexFieldRequest(
+        velocity=True, velocity_gradient=True, vorticity=False
+    )
+    fmm = phx.operators.VortexFMMPlan(
+        position,
+        (-1.0, -1.0),
+        (1.0, 1.0),
+        depth=6,
+        expansion_order=1,
+        leaf_capacity=4,
+        maximum_reference_displacement=0.001,
+    ).prepare(
+        source_capacity=position.shape[0],
+        target_capacity=targets.shape[0],
+        target_topology="arbitrary-targets",
+    )
+    direct = phx.operators.GaussianDirectVortexPlan2D(
+        maximum_sources=position.shape[0],
+        maximum_targets=targets.shape[0],
+    ).prepare(
+        source_capacity=position.shape[0],
+        target_capacity=targets.shape[0],
+        target_topology="arbitrary-targets",
+    )
+    fmm_result = fmm.evaluate(source, target, request=request)
+    direct_result = direct.evaluate(source, target, request=request)
+    evidence = fmm_result.diagnostics.backend_diagnostics
+
+    assert bool(fmm_result.successful)
+    assert int(evidence.m2l_count) > 0
+    assert int(evidence.p2l_count) > 0
+    assert int(evidence.m2p_count) > 0
+    assert int(evidence.near_pair_count) > 0
+    scale = float(jnp.max(jnp.abs(direct_result.velocity)))
+    np.testing.assert_allclose(
+        fmm_result.velocity, direct_result.velocity, rtol=0.0, atol=1e-2 * scale
+    )
+
+
 def test_three_dimensional_fmm_matches_direct_vector_vorticity() -> None:
     position = jnp.asarray(
         (

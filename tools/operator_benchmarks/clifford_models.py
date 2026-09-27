@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._trainable import NonTrainableState, ParameterOwner

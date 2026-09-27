@@ -286,7 +286,6 @@ def test_tetrahedral_face_quadrature_is_degree_four_exact() -> None:
     )
     assert static_metrics.face_blocks[0].layout.quadrature_count == 6
 
-    # ty: ignore[unresolved-attribute]
     faces = np.asarray(discretization.connectivity.faces)
     face = int(np.flatnonzero(np.all(faces == (0, 1, 2), axis=1))[0])
     points = np.asarray(discretization.face_quadrature_points[face])

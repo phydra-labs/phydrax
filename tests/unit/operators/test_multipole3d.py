@@ -16,15 +16,36 @@ TARGETS = jnp.asarray([[0.05, 0.1, 0.2], [0.2, -0.1, -0.15], [-0.1, 0.2, -0.2]])
 STRENGTHS = jnp.asarray([0.8, -0.4, 0.3, 1.1])
 
 
-def _direct(kernel: Any, parameter: Any = 0.0) -> Any:
-    radii = jnp.linalg.norm(TARGETS[:, None, :] - SOURCES[None, :, :], axis=-1)
+def _clustered_cloud() -> Any:
+    rng = np.random.default_rng(17)
+    sources = np.concatenate(
+        (
+            [-0.55, -0.5, -0.45] + 0.04 * rng.standard_normal((16, 3)),
+            [0.5, 0.45, 0.5] + 0.08 * rng.standard_normal((10, 3)),
+            rng.uniform(-0.9, 0.9, (6, 3)),
+        )
+    )
+    targets = np.concatenate(
+        (
+            [-0.45, -0.4, -0.35] + 0.05 * rng.standard_normal((4, 3)),
+            rng.uniform(-0.9, 0.9, (6, 3)),
+        )
+    )
+    strengths = rng.standard_normal(sources.shape[0])
+    return jnp.asarray(sources), jnp.asarray(targets), jnp.asarray(strengths)
+
+
+def _direct(
+    kernel: Any, sources: Any, strengths: Any, targets: Any, parameter: Any = 0.0
+) -> Any:
+    radii = jnp.linalg.norm(targets[:, None, :] - sources[None, :, :], axis=-1)
     if kernel == "laplace":
         numerator = jnp.ones_like(radii)
     elif kernel == "helmholtz":
         numerator = jnp.exp(1j * parameter * radii)
     else:
         numerator = jnp.exp(-parameter * radii)
-    return jnp.sum(numerator * STRENGTHS[None, :] / (4.0 * jnp.pi * radii), axis=1)
+    return jnp.sum(numerator * strengths[None, :] / (4.0 * jnp.pi * radii), axis=1)
 
 
 @pytest.mark.parametrize(
@@ -39,30 +60,68 @@ def _direct(kernel: Any, parameter: Any = 0.0) -> Any:
         ),
     ],
 )
-def test_complete_multipole_pipelines_match_direct(
+def test_complete_multipole_pipelines_match_direct_on_clustered_points(
     plan_type: Any, keyword: Any, kernel: Any
 ) -> None:
+    sources, targets, strengths = _clustered_cloud()
     prepared = plan_type(
-        SOURCES,
+        sources,
         [-1.0, -1.0, -1.0],
         [1.0, 1.0, 1.0],
-        reference_targets=TARGETS,
-        depth=2,
-        expansion_order=3,
+        reference_targets=targets,
+        depth=4,
+        expansion_order=4,
+        source_leaf_occupancy=2,
         **keyword,
     ).prepare()
-    result = prepared.evaluate(SOURCES, STRENGTHS, TARGETS)
-    expected = _direct(kernel, 0.7)
-    np.testing.assert_allclose(result.values, expected, rtol=4e-3, atol=4e-4)
+    result = prepared.evaluate(sources, strengths, targets)
+    expected = _direct(kernel, sources, strengths, targets, 0.7)
+    # Expansion truncation scales with the absolute potential sum(|q| / (4 pi r)),
+    # not with the signed sum, which cancels about 450-fold at one screened target.
+    # At order 4 the Laplace tail bound sum(|q| rho**5 / (4 pi R (1 - rho))) of the
+    # realized V, W, and X routes stays below 7.5e-3 of that scale at every target;
+    # screened and low-frequency Helmholtz expansions share this geometric tail.
+    scale = _direct("laplace", sources, jnp.abs(strengths), targets)
+    np.testing.assert_array_less(jnp.abs(result.values - expected), 1e-2 * scale)
     assert bool(result.successful)
-    assert int(result.p2m_count) == SOURCES.shape[0]
+    assert int(result.p2m_count) == sources.shape[0]
     assert int(result.m2m_count) > 0
     assert int(result.m2l_count) > 0
+    assert int(result.p2l_count) > 0
     assert int(result.l2l_count) > 0
-    assert int(result.l2p_count) == TARGETS.shape[0]
+    assert int(result.l2p_count) == targets.shape[0]
+    assert int(result.m2p_count) > 0
     assert int(result.p2p_count) > 0
     assert bool(result.capacity.successful)
     assert bool(result.truncation.well_separated)
+
+
+def test_level_octree_accepts_source_motion_within_padding() -> None:
+    sources, _, strengths = _clustered_cloud()
+    prepared = phx.operators.LaplaceMultipolePlan3D(
+        sources,
+        [-1.0, -1.0, -1.0],
+        [1.0, 1.0, 1.0],
+        depth=4,
+        expansion_order=3,
+        source_leaf_occupancy=2,
+        target_leaf_occupancy=2,
+        maximum_reference_displacement=0.02,
+    ).prepare()
+    moved = sources + 0.019 * jnp.asarray(
+        np.random.default_rng(3).uniform(-1.0, 1.0, sources.shape)
+    ) / jnp.sqrt(3.0)
+    result = prepared.evaluate(moved, strengths)
+    radii = jnp.linalg.norm(moved[:, None, :] - moved[None, :, :], axis=-1)
+    radii = jnp.where(jnp.eye(sources.shape[0], dtype=bool), jnp.inf, radii)
+    expected = jnp.sum(strengths[None, :] / (4.0 * jnp.pi * radii), axis=1)
+    assert bool(result.successful)
+    assert not bool(result.stale_topology)
+    np.testing.assert_allclose(result.values, expected, rtol=4e-3, atol=4e-4)
+
+    far = sources + jnp.asarray([0.03, 0.0, 0.0])
+    with pytest.raises(eqx.EquinoxRuntimeError, match="frozen-topology envelope"):
+        prepared.evaluate(far, strengths)
 
 
 def test_laplace_elementary_translations_compose() -> None:

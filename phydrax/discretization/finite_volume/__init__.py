@@ -28,10 +28,8 @@ from ._amr_diffusion import (
     PreparedCompositeAMRDiffusion,
 )
 from ._automatic_remap import (
-    build_unstructured_conservative_remap,
-    UnstructuredConservativeRemapBuildResult,
-    UnstructuredConservativeRemapEvidence,
-    UnstructuredConservativeRemapStatus,
+    prepare_unstructured_conservative_remap,
+    PreparedUnstructuredConservativeRemap,
 )
 from ._block_amr import (
     BlockAMRFiniteVolumePlan,
@@ -450,7 +448,12 @@ from ._triangle_viscous import (
     TriangleViscousStabilityReport,
 )
 from ._unstructured import (
+    evaluate_masked_fv_conservation,
+    evaluate_masked_fv_geometry,
     evaluate_unstructured_fv_geometry,
+    masked_fv_flux_divergence,
+    MaskedFiniteVolumeConservation,
+    MaskedFiniteVolumeGeometry,
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumePlan,
     UnstructuredFiniteVolumeQualityReport,
@@ -498,7 +501,10 @@ from ._unstructured_overset import (
 )
 from ._unstructured_remap import (
     UnstructuredConservativeRemapPlan,
+    UnstructuredRemapLimiter,
     UnstructuredRemapReport,
+    UnstructuredSecondOrderRemapPlan,
+    UnstructuredSecondOrderRemapResult,
 )
 from ._unstructured_thermal import (
     UnstructuredThermalBoundaryCondition,
@@ -557,10 +563,8 @@ __all__ = [
     "PreparedMetricLine",
     "PreparedFiniteVolumeGeometry",
     "lower_static_unstructured_stage_metrics",
-    "UnstructuredConservativeRemapBuildResult",
-    "UnstructuredConservativeRemapEvidence",
-    "UnstructuredConservativeRemapStatus",
-    "build_unstructured_conservative_remap",
+    "PreparedUnstructuredConservativeRemap",
+    "prepare_unstructured_conservative_remap",
     "BalancedCapillaryOperator",
     "CapillaryFaceRateBlock",
     "CurvatureEvidence",
@@ -584,6 +588,11 @@ __all__ = [
     "UnstructuredFiniteVolumePlan",
     "UnstructuredFiniteVolumeQualityReport",
     "evaluate_unstructured_fv_geometry",
+    "MaskedFiniteVolumeConservation",
+    "MaskedFiniteVolumeGeometry",
+    "evaluate_masked_fv_conservation",
+    "evaluate_masked_fv_geometry",
+    "masked_fv_flux_divergence",
     "ConservativeSmallCellRedistributionEvidence",
     "ConservativeSmallCellRedistributionPlan",
     "ConservativeSmallCellRedistributionReport",
@@ -627,7 +636,10 @@ __all__ = [
     "UnstructuredMotionMetrics",
     "UnstructuredMotionReport",
     "UnstructuredConservativeRemapPlan",
+    "UnstructuredRemapLimiter",
     "UnstructuredRemapReport",
+    "UnstructuredSecondOrderRemapPlan",
+    "UnstructuredSecondOrderRemapResult",
     "PeriodicSlidingCoupling",
     "PeriodicSlidingRefreshArtifact",
     "PeriodicSlidingInterfacePlan",

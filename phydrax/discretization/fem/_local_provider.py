@@ -523,8 +523,10 @@ class FiniteElementLocalProvider(StrictModule):
                     discretization.dof_maps[field_index].cell_dofs[block_index][selected]
                 )
             coordinate_element = discretization.coordinate_elements[block_index]
+            # ty: ignore[unresolved-attribute]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
             coordinate_hessians = (
+                # ty: ignore[invalid-argument-type]
                 _tabulation_hessians(coordinate_element, points)
                 if maximum_derivative_order == 2
                 else None

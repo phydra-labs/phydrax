@@ -91,6 +91,7 @@ def test_mesh_and_planar_regions_have_explicit_signed_queries() -> None:
     assert float(region.measure) == pytest.approx(1.0 / 6.0)
 
     planar = phx.geometry.PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         [
             [0.0, 0.0],
             [2.0, 0.0],

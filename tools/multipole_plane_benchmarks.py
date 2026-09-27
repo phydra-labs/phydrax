@@ -77,6 +77,8 @@ def _case(
         )
         if kind != "laplace":
             policy["maximum_plane_node_argument"] = 0.75
+    else:
+        policy["source_leaf_occupancy"] = 2
     started = time.perf_counter()
     prepared = plan_type(
         sources,
@@ -110,6 +112,8 @@ def _case(
         "required_near": int(capacity.required_near_interactions),
         "near_capacity": int(capacity.near_interaction_capacity),
         "m2l_count": int(result.m2l_count),
+        "p2l_count": int(result.p2l_count),
+        "m2p_count": int(result.m2p_count),
         "p2p_count": int(result.p2p_count),
         "successful": bool(result.successful),
         "checksum": float(jnp.sum(jnp.abs(first.values))),

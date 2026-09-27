@@ -3,16 +3,8 @@
 #
 from __future__ import annotations
 
-import hashlib
-import os
-import shutil
-import signal
-import struct
-import subprocess
-import tempfile
-import time
-from pathlib import Path
-from typing import BinaryIO, TypeAlias
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,12 +12,13 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._external_runtime import NativeWorkerCall, NativeWorkerIdentity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...logging import emit
 from .._assembly import MeshAssembly, MeshPart
+from .._canonical import certify_cell_mesh
 from .._contracts import (
     MeshingCapability,
     MeshingDerivativeMode,
@@ -40,22 +33,37 @@ from .._contracts import (
 from .._coupling import OversetCoupling
 from .._result import CellMeshingResult, MeshingRuntimeInfo
 from .._scope import MeshingScope
+from ._worker import ProviderWorker
 
 
 _CELL_KINDS = ("tetrahedron", "pyramid", "prism", "hexahedron")
-_DonorRecords: TypeAlias = dict[
-    tuple[int, int], list[tuple[int, int, np.ndarray, np.ndarray]]
-]
+_STENCIL_WIDTHS = (4, 5, 6, 8)
+_MAXIMUM_STENCIL = 8
+_RANK_ARRAYS = {
+    "parts": np.dtype(np.int64),
+    "node_iblank": np.dtype(np.int32),
+    "cell_iblank": np.dtype(np.int32),
+    "donor_parts": np.dtype(np.int64),
+    "receptor_parts": np.dtype(np.int64),
+    "receptor_nodes": np.dtype(np.int64),
+    "donor_cells": np.dtype(np.int64),
+    "stencil_offsets": np.dtype(np.int64),
+    "stencil_nodes": np.dtype(np.int64),
+    "stencil_weights": np.dtype(np.float64),
+}
+_DONOR_ARRAYS = tuple(_RANK_ARRAYS)[3:]
 
 
 class TiogaOptions(StrictModule, NonTrainableState):
-    """Process-isolated TIOGA options; no native dependency is loaded on import.
+    """Persistent TIOGA worker options; no native dependency is loaded on import.
 
-    Build ``native/tioga`` against a real TIOGA installation and put
-    ``phydrax-tioga`` on PATH, set PHYDRAX_TIOGA_EXECUTABLE, or pass executable.
-    ``ranks`` distributes complete parts round-robin, not cells within a part.
-    The linked MPI implementation must match ``mpi_launcher``. Linear nodal
-    interpolation is not conservative overlap remapping or high-order transfer.
+    Build ``native/providers/tioga`` against a real TIOGA installation and put
+    ``phydrax-tioga-worker`` on PATH, set PHYDRAX_TIOGA_WORKER, or pass
+    ``executable``. ``ranks`` distributes complete parts round-robin, not cells
+    within a part; more than one rank launches the worker through
+    ``mpi_launcher`` with ``mpi_arguments`` and ``-n ranks``, whose MPI
+    implementation must match the linked one. Linear nodal interpolation is not
+    conservative overlap remapping or high-order transfer.
     """
 
     executable: str | None = eqx.field(static=True)
@@ -64,7 +72,6 @@ class TiogaOptions(StrictModule, NonTrainableState):
     ranks: int = eqx.field(static=True)
     fringe_layers: int = eqx.field(static=True)
     exclusion_layers: int = eqx.field(static=True)
-    timeout_seconds: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     options_id: str = eqx.field(static=True)
 
@@ -77,7 +84,6 @@ class TiogaOptions(StrictModule, NonTrainableState):
         ranks: int = 1,
         fringe_layers: int = 1,
         exclusion_layers: int = 3,
-        timeout_seconds: float = 300.0,
         tolerance: float = 1e-9,
     ) -> None:
         for name, value, minimum in (
@@ -103,8 +109,6 @@ class TiogaOptions(StrictModule, NonTrainableState):
             not isinstance(value, str) or not value for value in mpi_arguments
         ):
             raise ValueError("mpi_arguments must be a tuple of nonempty argv tokens.")
-        if not np.isfinite(timeout_seconds) or timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive and finite.")
         if not np.isfinite(tolerance) or not 0 < tolerance < 1:
             raise ValueError("tolerance must be finite and between zero and one.")
         self.executable, self.mpi_launcher = executable, mpi_launcher
@@ -114,7 +118,7 @@ class TiogaOptions(StrictModule, NonTrainableState):
             int(fringe_layers),
             int(exclusion_layers),
         )
-        self.timeout_seconds, self.tolerance = float(timeout_seconds), float(tolerance)
+        self.tolerance = float(tolerance)
         self.options_id = canonical_fingerprint(
             {
                 "kind": "tioga-options",
@@ -124,7 +128,6 @@ class TiogaOptions(StrictModule, NonTrainableState):
                 "ranks": self.ranks,
                 "fringe": self.fringe_layers,
                 "exclude": self.exclusion_layers,
-                "timeout": self.timeout_seconds,
                 "tolerance": self.tolerance,
             }
         )
@@ -223,10 +226,82 @@ class TiogaDonorEvidence(StrictModule, NonTrainableState):
         )
 
 
+class TiogaRegistration(StrictModule, NonTrainableState):
+    """Worker-resident TIOGA registration state an assembly result describes.
+
+    ``session_id`` names the worker session holding the registration, and
+    ``state`` the exact registered coordinates (every motion update advances
+    it). Only a result whose registration is still resident in that session at
+    that state can be moved; anything else fails explicitly instead of
+    registering again. Boundary node IDs follow ``part_names`` order.
+    """
+
+    session_id: str = eqx.field(static=True)
+    identity_id: str = eqx.field(static=True)
+    registration: int = eqx.field(static=True)
+    state: int = eqx.field(static=True)
+    part_names: tuple[str, ...] = eqx.field(static=True)
+    wall_node_ids: tuple[Array, ...]
+    overset_node_ids: tuple[Array, ...]
+    registration_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        session_id: str,
+        identity_id: str,
+        registration: int,
+        state: int,
+        part_names: tuple[str, ...],
+        wall_node_ids: tuple[ArrayLike, ...],
+        overset_node_ids: tuple[ArrayLike, ...],
+        /,
+    ) -> None:
+        if not all(
+            isinstance(value, str) and value for value in (session_id, identity_id)
+        ):
+            raise ValueError("TIOGA registrations require worker session identities.")
+        if (
+            type(registration) is not int
+            or type(state) is not int
+            or not 0 < registration <= state
+        ):
+            raise ValueError("TIOGA registration and state must be ordered sequences.")
+        names = tuple(part_names)
+        walls = tuple(np.asarray(values, dtype=np.int64) for values in wall_node_ids)
+        overset = tuple(np.asarray(values, dtype=np.int64) for values in overset_node_ids)
+        if (
+            len(names) < 2
+            or len(set(names)) != len(names)
+            or not all(isinstance(name, str) for name in names)
+            or len(walls) != len(names)
+            or len(overset) != len(names)
+            or any(values.ndim != 1 for values in (*walls, *overset))
+        ):
+            raise ValueError("TIOGA registration boundaries must follow its parts.")
+        self.session_id, self.identity_id = session_id, identity_id
+        self.registration, self.state = registration, state
+        self.part_names = names
+        self.wall_node_ids = tuple(jnp.asarray(values) for values in walls)
+        self.overset_node_ids = tuple(jnp.asarray(values) for values in overset)
+        self.registration_id = canonical_fingerprint(
+            {
+                "kind": "tioga-registration",
+                "session": session_id,
+                "identity": identity_id,
+                "registration": registration,
+                "state": state,
+                "parts": names,
+                "walls": [array_tree_fingerprint(values) for values in walls],
+                "overset": [array_tree_fingerprint(values) for values in overset],
+            }
+        )
+
+
 class TiogaAssemblyResult(StrictModule, NonTrainableState):
     assembly: MeshAssembly
     blanking: tuple[TiogaPartBlanking, ...]
     donors: tuple[TiogaDonorEvidence, ...]
+    registration: TiogaRegistration
     provider: MeshingProviderInfo
     runtime: MeshingRuntimeInfo
     provenance: SemanticProvenance
@@ -238,6 +313,7 @@ class TiogaAssemblyResult(StrictModule, NonTrainableState):
         assembly: MeshAssembly,
         blanking: tuple[TiogaPartBlanking, ...],
         donors: tuple[TiogaDonorEvidence, ...],
+        registration: TiogaRegistration,
         provider: MeshingProviderInfo,
         runtime: MeshingRuntimeInfo,
         provenance: SemanticProvenance,
@@ -256,11 +332,16 @@ class TiogaAssemblyResult(StrictModule, NonTrainableState):
         }
         if {item.coupling_id for item in donors} != links or len(donors) != len(links):
             raise ValueError("TIOGA result requires evidence for every overset coupling.")
+        if not isinstance(registration, TiogaRegistration) or registration.part_names != (
+            tuple(part.name for part in assembly.parts)
+        ):
+            raise ValueError("TIOGA result registration must follow the assembly parts.")
         self.assembly, self.blanking, self.donors = (
             assembly,
             tuple(blanking),
             tuple(donors),
         )
+        self.registration = registration
         self.provider, self.runtime, self.provenance = provider, runtime, provenance
         self.derivative_mode = MeshingDerivativeMode.NONDIFFERENTIABLE
         self.result_id = canonical_fingerprint(
@@ -269,118 +350,464 @@ class TiogaAssemblyResult(StrictModule, NonTrainableState):
                 "assembly": assembly.assembly_id,
                 "blanking": [item.report_id for item in blanking],
                 "donors": [item.evidence_id for item in donors],
+                "registration": registration.registration_id,
                 "runtime": runtime.runtime_id,
                 "provenance": provenance.semantic_id,
             }
         )
 
 
-def _run(command: list[str], timeout: float, *, cwd: str | None = None) -> str:
-    started = time.perf_counter()
-    emit(
-        "DEBUG",
-        "provider.process.started",
-        "TIOGA process started",
-        executable=Path(command[0]).name,
-        provider="tioga",
+@dataclass(frozen=True, slots=True)
+class _PartTables:
+    """Host row tables of one registered part in original mesh row order."""
+
+    vertex_ids: np.ndarray
+    cell_ids: np.ndarray
+    cell_nodes: np.ndarray
+    coordinates: np.ndarray
+
+
+def _conversion(message: str, /) -> MeshingFailure:
+    return MeshingFailure(MeshingFailureCategory.CONVERSION_FAILED, message)
+
+
+def _tables(part: MeshPart, /) -> _PartTables:
+    # ty: ignore[unresolved-attribute]
+    mesh = part.carrier.mesh
+    cell_ids = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=os.name == "posix",
+    cell_nodes = np.full((cell_ids.size, _MAXIMUM_STENCIL), -1, dtype=np.int64)
+    start = 0
+    for block in mesh.blocks:
+        cell_nodes[start : start + block.cell_count, : block.arity] = np.asarray(
+            block.vertices, dtype=np.int64
         )
-    except OSError as error:
-        emit(
-            "ERROR",
-            "provider.process.failed",
-            "TIOGA process was unavailable",
-            elapsed_seconds=time.perf_counter() - started,
-            failure_category="provider_unavailable",
-            provider="tioga",
-        )
-        raise MeshingFailure(
-            MeshingFailureCategory.PROVIDER_UNAVAILABLE, f"Cannot launch TIOGA: {error}"
-        ) from error
-    try:
-        output, _ = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        emit(
-            "ERROR",
-            "provider.process.failed",
-            "TIOGA process timed out",
-            elapsed_seconds=time.perf_counter() - started,
-            failure_category="timed_out",
-            provider="tioga",
-        )
-        if os.name == "posix":
-            os.killpg(process.pid, signal.SIGKILL)
-        else:
-            process.kill()
-        process.communicate()
-        raise MeshingFailure(
-            MeshingFailureCategory.TIMED_OUT,
-            "TIOGA assembly exceeded its wall-time limit.",
-        ) from error
-    if process.returncode != 0:
-        emit(
-            "ERROR",
-            "provider.process.failed",
-            "TIOGA process failed",
-            elapsed_seconds=time.perf_counter() - started,
-            failure_category="nonzero_exit",
-            provider="tioga",
-            return_code=process.returncode,
-            stdout_bytes=len(output.encode("utf-8")),
-        )
-        raise MeshingFailure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            f"TIOGA exited with status {process.returncode}: {output[-12000:]}",
-        )
-    emit(
-        "DEBUG",
-        "provider.process.completed",
-        "TIOGA process completed",
-        elapsed_seconds=time.perf_counter() - started,
-        provider="tioga",
-        return_code=process.returncode,
-        stdout_bytes=len(output.encode("utf-8")),
+        start += block.cell_count
+    return _PartTables(
+        np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+        cell_ids,
+        cell_nodes,
+        np.asarray(mesh.coordinates, dtype=np.float64),
     )
-    return output
 
 
-def _executable(options: TiogaOptions) -> str:
-    candidate = options.executable or os.environ.get(
-        "PHYDRAX_TIOGA_EXECUTABLE", "phydrax-tioga"
-    )
-    executable = shutil.which(candidate)
-    if executable is None:
-        raise MeshingFailure(
-            MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-            "Build native/tioga and set PHYDRAX_TIOGA_EXECUTABLE or TiogaOptions.executable.",
+def _rows(vertex_ids: np.ndarray, identifiers: np.ndarray, /) -> np.ndarray:
+    """Rows of known vertex IDs (membership is guaranteed by scope checks)."""
+    order = np.argsort(vertex_ids, kind="stable")
+    return order[np.searchsorted(vertex_ids[order], identifiers)].astype(np.int32)
+
+
+def _admit_parts(assembly: MeshAssembly, limits: MeshingLimits, /) -> None:
+    if len(assembly.parts) < 2:
+        raise ValueError("TIOGA requires at least two parts.")
+    if any(isinstance(link, OversetCoupling) for link in assembly.couplings):
+        raise ValueError("Remove previous overset overlays before reassembling.")
+    totals = np.zeros(3, dtype=np.int64)
+    for part in assembly.parts:
+        if (
+            not isinstance(part.carrier, CellMeshingResult)
+            or part.intrinsic_dimension != 3
+            or part.ambient_dimension != 3
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                "TIOGA requires certified 3D CellMesh parts, not implicit tessellation of other carriers.",
+            )
+        mesh = part.carrier.mesh
+        if any(block.cell_kind not in _CELL_KINDS for block in mesh.blocks):
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                "TIOGA supports tetrahedra, pyramids, prisms and hexahedra, not arbitrary polyhedra.",
+            )
+        elements, routes, coordinates = part.carrier.geometry.resolve(mesh)
+        if not np.array_equal(
+            np.asarray(coordinates), np.asarray(mesh.coordinates)
+        ) or any(
+            element.local_dof_count != block.arity
+            or not np.array_equal(np.asarray(route), np.asarray(block.vertices))
+            for block, element, route in zip(mesh.blocks, elements, routes, strict=True)
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                "TIOGA adapter requires vertex-linear geometry; high-order geometry cannot be silently dropped.",
+            )
+        connectivity = sum(block.vertices.size for block in mesh.blocks)
+        if (
+            mesh.coordinates.size > np.iinfo(np.int32).max
+            or connectivity > np.iinfo(np.int32).max
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "Mesh exceeds TIOGA int32 local indexing capacity.",
+            )
+        totals += (
+            mesh.coordinates.shape[0],
+            sum(block.cell_count for block in mesh.blocks),
+            connectivity,
         )
-    return str(Path(executable).resolve())
-
-
-def _info(executable: str, timeout: float) -> MeshingProviderInfo:
-    version = _run([executable, "--version"], timeout).strip()
-    prefix = "phydrax-tioga/2 tioga/"
     if (
-        not version.startswith(prefix)
-        or not version[len(prefix) :]
-        or any(char.isspace() for char in version[len(prefix) :])
+        totals[0] > limits.maximum_vertices
+        or totals[1] > limits.maximum_cells
+        or totals[2] > limits.maximum_connectivity_entries
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "TIOGA input exceeds configured entity or connectivity limits.",
+        )
+
+
+def _boundaries(
+    assembly: MeshAssembly, scopes: tuple[MeshingScope, ...], /
+) -> tuple[np.ndarray, ...]:
+    """Unique boundary node IDs of every part, in assembly part order."""
+    grouped: dict[str, list[np.ndarray]] = {part.name: [] for part in assembly.parts}
+    for scope in scopes:
+        if not isinstance(scope, MeshingScope) or scope.entity_dimension != 0:
+            raise TypeError(
+                "TIOGA boundaries require revision-bound vertex MeshingScope values."
+            )
+        part = assembly.part(scope.source_id)
+        part.require_scope(scope)
+        grouped[part.name].append(np.asarray(scope.entity_ids, dtype=np.int64))
+    return tuple(
+        np.unique(np.concatenate(grouped[part.name], dtype=np.int64))
+        if grouped[part.name]
+        else np.zeros(0, dtype=np.int64)
+        for part in assembly.parts
+    )
+
+
+def _boundary_arrays(
+    tables: tuple[_PartTables, ...], identifiers: tuple[np.ndarray, ...], /
+) -> tuple[np.ndarray, np.ndarray]:
+    rows = [
+        _rows(table.vertex_ids, values)
+        for table, values in zip(tables, identifiers, strict=True)
+    ]
+    offsets = np.concatenate(([0], np.cumsum([row.size for row in rows]))).astype(
+        np.int64
+    )
+    return offsets, np.concatenate(rows, dtype=np.int32)
+
+
+def _registration_arrays(
+    assembly: MeshAssembly,
+    tables: tuple[_PartTables, ...],
+    walls: tuple[np.ndarray, ...],
+    overset: tuple[np.ndarray, ...],
+    /,
+) -> dict[str, np.ndarray]:
+    blocks = [
+        (index, block)
+        for index, part in enumerate(assembly.parts)
+        # ty: ignore[unresolved-attribute]
+        for block in part.carrier.mesh.blocks
+    ]
+    wall_offsets, wall_nodes = _boundary_arrays(tables, walls)
+    overset_offsets, overset_nodes = _boundary_arrays(tables, overset)
+    return {
+        "part_nodes": np.asarray(
+            [table.vertex_ids.size for table in tables], dtype=np.int64
+        ),
+        "part_cells": np.asarray(
+            [table.cell_ids.size for table in tables], dtype=np.int64
+        ),
+        "coordinates": np.concatenate([table.coordinates for table in tables]),
+        "block_parts": np.asarray([index for index, _ in blocks], dtype=np.int64),
+        "block_arities": np.asarray([block.arity for _, block in blocks], dtype=np.int64),
+        "block_cells": np.asarray(
+            [block.cell_count for _, block in blocks], dtype=np.int64
+        ),
+        "connectivity": np.concatenate(
+            [np.asarray(block.vertices, dtype=np.int32).ravel() for _, block in blocks]
+        ),
+        "wall_offsets": wall_offsets,
+        "wall_nodes": wall_nodes,
+        "overset_offsets": overset_offsets,
+        "overset_nodes": overset_nodes,
+    }
+
+
+def _require_input_bytes(
+    arrays: Mapping[str, np.ndarray], limits: MeshingLimits, /
+) -> None:
+    if sum(value.nbytes for value in arrays.values()) > limits.maximum_data_bytes:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "TIOGA input exceeds maximum_data_bytes.",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _Donors:
+    """Validated donor records of every rank, one row per receptor."""
+
+    donor_parts: np.ndarray
+    receptor_parts: np.ndarray
+    receptor_nodes: np.ndarray
+    donor_cells: np.ndarray
+    stencil_rows: np.ndarray
+    raw_weights: np.ndarray
+
+
+def _rank_outputs(
+    call: NativeWorkerCall,
+    tables: tuple[_PartTables, ...],
+    ranks: int,
+    /,
+) -> tuple[list[np.ndarray], list[np.ndarray], dict[str, np.ndarray]]:
+    count = len(tables)
+    if call.arrays or set(call.parts) != {f"rank-{rank}" for rank in range(ranks)}:
+        raise _conversion("TIOGA rank outputs are incomplete.")
+    nodes = np.asarray([table.vertex_ids.size for table in tables], dtype=np.int64)
+    cells = np.asarray([table.cell_ids.size for table in tables], dtype=np.int64)
+    node_iblank: list[np.ndarray] = [np.zeros(0, dtype=np.int32)] * count
+    cell_iblank: list[np.ndarray] = [np.zeros(0, dtype=np.int32)] * count
+    records: dict[str, list[np.ndarray]] = {name: [] for name in _DONOR_ARRAYS}
+    stencil_base = 0
+    for rank in range(ranks):
+        arrays = call.parts[f"rank-{rank}"]
+        owned = np.arange(rank, count, ranks, dtype=np.int64)
+        if {name: value.dtype for name, value in arrays.items()} != _RANK_ARRAYS or (
+            not np.array_equal(arrays["parts"], owned)
+        ):
+            raise _conversion("TIOGA rank output ownership is incomplete.")
+        donors = arrays["donor_parts"].size
+        offsets = arrays["stencil_offsets"]
+        if (
+            arrays["node_iblank"].shape != (np.sum(nodes[owned]),)
+            or arrays["cell_iblank"].shape != (np.sum(cells[owned]),)
+            or any(
+                arrays[name].shape != (donors,)
+                for name in ("receptor_parts", "receptor_nodes", "donor_cells")
+            )
+            or offsets.shape != (donors + 1,)
+            or offsets[0] != 0
+            or np.any(np.diff(offsets) < 0)
+            or arrays["stencil_nodes"].shape != (offsets[-1],)
+            or arrays["stencil_weights"].shape != (offsets[-1],)
+            or np.any(np.remainder(arrays["donor_parts"], ranks) != rank)
+        ):
+            raise _conversion("TIOGA rank output arrays are inconsistent.")
+        for part, values in zip(
+            owned, np.split(arrays["node_iblank"], np.cumsum(nodes[owned])[:-1])
+        ):
+            node_iblank[part] = np.array(values, dtype=np.int32)
+        for part, values in zip(
+            owned, np.split(arrays["cell_iblank"], np.cumsum(cells[owned])[:-1])
+        ):
+            cell_iblank[part] = np.array(values, dtype=np.int32)
+        for name in records:
+            values = arrays[name]
+            records[name].append(
+                values[1:] + stencil_base if name == "stencil_offsets" else values
+            )
+        stencil_base += offsets[-1]
+    merged = {name: np.concatenate(values) for name, values in records.items()}
+    merged["stencil_offsets"] = np.concatenate(
+        ([0], merged["stencil_offsets"]), dtype=np.int64
+    )
+    return node_iblank, cell_iblank, merged
+
+
+def _donors(
+    records: dict[str, np.ndarray],
+    tables: tuple[_PartTables, ...],
+    node_iblank: list[np.ndarray],
+    limits: MeshingLimits,
+    tolerance: float,
+    /,
+) -> _Donors:
+    """Validate native donor records without per-donor Python work."""
+    donor_parts, receptor_parts = records["donor_parts"], records["receptor_parts"]
+    receptor_nodes, donor_cells = records["receptor_nodes"], records["donor_cells"]
+    offsets, stencil_nodes = records["stencil_offsets"], records["stencil_nodes"]
+    count = donor_parts.size
+    if (
+        count > limits.maximum_vertices
+        or stencil_nodes.size > limits.maximum_connectivity_entries
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "TIOGA donor inventory exceeds resource limits.",
+        )
+    nodes = np.asarray([table.vertex_ids.size for table in tables], dtype=np.int64)
+    cells = np.asarray([table.cell_ids.size for table in tables], dtype=np.int64)
+    widths = np.diff(offsets)
+    if (
+        np.any(~np.isin(widths, _STENCIL_WIDTHS))
+        or np.any((donor_parts < 0) | (donor_parts >= nodes.size))
+        or np.any((receptor_parts < 0) | (receptor_parts >= nodes.size))
+        or np.any(receptor_parts == donor_parts)
+        or np.any((receptor_nodes < 0) | (receptor_nodes >= nodes[receptor_parts]))
+        or np.any((donor_cells < 0) | (donor_cells >= cells[donor_parts]))
+    ):
+        raise _conversion("TIOGA returned invalid donor/receptor routing.")
+    owner = np.repeat(np.arange(count), widths)
+    if np.any((stencil_nodes < 0) | (stencil_nodes >= nodes[donor_parts[owner]])):
+        raise _conversion("TIOGA returned an invalid donor stencil node.")
+    column = np.arange(stencil_nodes.size) - offsets[:-1][owner]
+    rows = np.full((count, _MAXIMUM_STENCIL), -1, dtype=np.int64)
+    raw = np.zeros((count, _MAXIMUM_STENCIL), dtype=np.float64)
+    rows[owner, column] = stencil_nodes
+    raw[owner, column] = records["stencil_weights"]
+    # Every stencil must be exactly the node set of its reported donor cell.
+    for part, table in enumerate(tables):
+        selected = donor_parts == part
+        if not np.array_equal(
+            np.sort(table.cell_nodes[donor_cells[selected]], axis=1),
+            np.sort(rows[selected], axis=1),
+        ):
+            raise _conversion(
+                "TIOGA donor stencil does not belong to its reported source cell."
+            )
+    keys = np.sort(receptor_parts * np.max(nodes) + receptor_nodes)
+    if np.any(keys[1:] == keys[:-1]):
+        raise _conversion("TIOGA assigned multiple donors to one receptor.")
+    for part, values in enumerate(node_iblank):
+        receptors = np.zeros(values.size, dtype=np.bool_)
+        receptors[receptor_nodes[receptor_parts == part]] = True
+        if not np.array_equal(receptors, values < 0):
+            raise _conversion("TIOGA receptor blanking and donor records disagree.")
+    if (
+        not np.all(np.isfinite(raw))
+        or np.any(raw < -tolerance)
+        or np.any(np.abs(raw.sum(axis=1) - 1) > tolerance)
+    ):
+        raise _conversion(
+            "TIOGA stencil is not positive partition-of-unity within tolerance."
+        )
+    return _Donors(donor_parts, receptor_parts, receptor_nodes, donor_cells, rows, raw)
+
+
+def _coupling(
+    source: MeshPart,
+    target: MeshPart,
+    source_table: _PartTables,
+    target_table: _PartTables,
+    donors: _Donors,
+    selected: np.ndarray,
+    hole_scope: MeshingScope | None,
+    tolerance: float,
+    /,
+) -> tuple[OversetCoupling, TiogaDonorEvidence]:
+    target_ids = target_table.vertex_ids[donors.receptor_nodes[selected]]
+    order = np.argsort(target_ids, kind="stable")
+    selected, target_ids = selected[order], target_ids[order]
+    rows, raw = donors.stencil_rows[selected], donors.raw_weights[selected]
+    valid = rows >= 0
+    weights = np.maximum(raw, 0)
+    weights /= weights.sum(axis=1, keepdims=True)
+    donor_points = np.where(
+        valid[..., None], source_table.coordinates[np.maximum(rows, 0)], 0
+    )
+    reconstructed = np.sum(weights[..., None] * donor_points, axis=1)
+    expected = target_table.coordinates[donors.receptor_nodes[selected]]
+    used = source_table.coordinates[np.unique(rows[valid])]
+    scale = max(
+        np.max(np.abs(used)),
+        np.max(np.abs(expected)),
+        np.max(np.ptp(used, axis=0)),
+        np.finfo(np.float64).tiny,
+    )
+    if not np.allclose(reconstructed, expected, rtol=0, atol=10 * tolerance * scale):
+        raise _conversion("TIOGA donor weights do not reproduce receptor coordinates.")
+    identifiers = np.where(valid, source_table.vertex_ids[np.maximum(rows, 0)], -1)
+    link = OversetCoupling(
+        source,
+        target,
+        source.scope(0, np.unique(identifiers[valid])),
+        target.scope(0, target_ids),
+        identifiers,
+        weights,
+        hole_scope=hole_scope,
+        tolerance=tolerance,
+    )
+    cells = source_table.cell_ids[donors.donor_cells[selected]]
+    return link, TiogaDonorEvidence(source, link, cells, raw)
+
+
+def _assembly_outputs(
+    call: NativeWorkerCall,
+    parts: tuple[MeshPart, ...],
+    registration: TiogaRegistration,
+    options: TiogaOptions,
+    limits: MeshingLimits,
+    /,
+) -> tuple[tuple[TiogaPartBlanking, ...], tuple[OversetCoupling, ...], tuple]:
+    tables = tuple(_tables(part) for part in parts)
+    node_iblank, cell_iblank, records = _rank_outputs(call, tables, options.ranks)
+    donors = _donors(records, tables, node_iblank, limits, options.tolerance)
+    blanking = tuple(
+        TiogaPartBlanking(part, nodes, cells)
+        for part, nodes, cells in zip(parts, node_iblank, cell_iblank, strict=True)
+    )
+    for part, table, values, walls, overset in zip(
+        parts,
+        tables,
+        node_iblank,
+        registration.wall_node_ids,
+        registration.overset_node_ids,
+        strict=True,
+    ):
+        if np.any(values[_rows(table.vertex_ids, np.asarray(overset))] == 1):
+            raise _conversion(
+                f"TIOGA left orphan overset boundary receptors in {part.name!r}."
+            )
+        if np.any(values[_rows(table.vertex_ids, np.asarray(walls))] == 0):
+            raise _conversion(f"TIOGA blanked solid wall nodes in {part.name!r}.")
+    holes = tuple(
+        part.scope(0, table.vertex_ids[values == 0]) if np.any(values == 0) else None
+        for part, table, values in zip(parts, tables, node_iblank, strict=True)
+    )
+    count = len(parts)
+    pairs = donors.donor_parts * count + donors.receptor_parts
+    links, evidence = [], []
+    for key in np.unique(pairs):
+        source, target = divmod(int(key), count)
+        link, record = _coupling(
+            parts[source],
+            parts[target],
+            tables[source],
+            tables[target],
+            donors,
+            np.flatnonzero(pairs == key),
+            holes[target],
+            options.tolerance,
+        )
+        links.append(link)
+        evidence.append(record)
+    return blanking, tuple(links), tuple(evidence)
+
+
+def _provider_info(identity: NativeWorkerIdentity, ranks: int, /) -> MeshingProviderInfo:
+    reported = identity.reported
+    revision = reported.get("revision")
+    if (
+        reported.get("provider") != "tioga"
+        or not isinstance(revision, str)
+        or not revision
+        or any(character.isspace() for character in revision)
+        or reported.get("node_global_ids") is not True
+        or not isinstance(reported.get("operations"), list)
+        or not {"move", "register"}.issubset(reported["operations"])
     ):
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-            "Unsupported phydrax-tioga native bridge protocol/version.",
+            "Unsupported TIOGA worker identity.",
+            stage="startup",
+        )
+    if identity.ranks != ranks:
+        raise MeshingFailure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            f"The TIOGA worker started {identity.ranks} ranks instead of {ranks}.",
+            stage="startup",
         )
     return MeshingProviderInfo(
         "tioga",
-        version[len(prefix) :],
-        "LGPL-2.1-or-later",
+        revision,
+        "BSD-3-Clause",
         operations=(MeshingOperation.ASSEMBLE_OVERSET,),
         source_kinds=(MeshingSourceKind.MESH_ASSEMBLY,),
         capabilities=(
@@ -394,293 +821,100 @@ def _info(executable: str, timeout: float) -> MeshingProviderInfo:
     )
 
 
-def _boundaries(
-    assembly: MeshAssembly, scopes: tuple[MeshingScope, ...]
-) -> dict[str, np.ndarray]:
-    grouped: dict[str, list[np.ndarray]] = {}
-    for scope in scopes:
-        if not isinstance(scope, MeshingScope) or scope.entity_dimension != 0:
-            raise TypeError(
-                "TIOGA boundaries require revision-bound vertex MeshingScope values."
-            )
-        part = assembly.part(scope.source_id)
-        part.require_scope(scope)
-        grouped.setdefault(part.name, []).append(np.asarray(scope.entity_ids))
-    return {name: np.unique(np.concatenate(rows)) for name, rows in grouped.items()}
-
-
-def _write_input(
-    path: Path,
-    assembly: MeshAssembly,
-    walls: dict[str, np.ndarray],
-    overset: dict[str, np.ndarray],
-    options: TiogaOptions,
-    limits: MeshingLimits,
-) -> None:
-    with path.open("wb") as stream:
-        stream.write(b"PXTIOGA2")
-        stream.write(
-            struct.pack(
-                "<iiiQQQQ",
-                len(assembly.parts),
-                options.fringe_layers,
-                options.exclusion_layers,
-                limits.maximum_vertices,
-                limits.maximum_cells,
-                limits.maximum_connectivity_entries,
-                limits.maximum_data_bytes,
-            )
+def _moved_part(part: MeshPart, coordinates: ArrayLike, /) -> MeshPart:
+    carrier = part.carrier
+    points = np.asarray(coordinates)
+    if points.dtype.kind not in "iuf":
+        raise TypeError("TIOGA motion coordinates must be real arrays.")
+    points = points.astype(np.float64)
+    # ty: ignore[unresolved-attribute]
+    current = np.asarray(carrier.mesh.coordinates, dtype=np.float64)
+    if points.shape != current.shape or not np.all(np.isfinite(points)):
+        raise ValueError(
+            f"TIOGA motion of {part.name!r} requires finite coordinates of shape {current.shape}."
         )
-        node_counts: list[int] = []
-        for part in assembly.parts:
-            if not (isinstance(part.carrier, CellMeshingResult)):
-                raise RuntimeError(
-                    "Internal invariant failed: isinstance(part.carrier, CellMeshingResult)."
-                )
-            node_counts.append(part.carrier.mesh.coordinates.shape[0])
-        part_node_counts = np.asarray(node_counts, dtype="<u8")
-        part_node_counts.tofile(stream)
-        node_offset = 0
-        for part in assembly.parts:
-            assert isinstance(part.carrier, CellMeshingResult)
-            mesh = part.carrier.mesh
-            vertices = np.asarray(mesh.vertex_global_ids)
-            rows = {
-                int(identifier): index + 1 for index, identifier in enumerate(vertices)
+    if np.array_equal(points, current):
+        return part
+    # ty: ignore[unresolved-attribute]
+    if carrier.boundary is not None or carrier.associations:
+        raise MeshingFailure(
+            MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+            f"TIOGA motion cannot carry the geometry-bound boundary or associations of {part.name!r}.",
+        )
+    # ty: ignore[unresolved-attribute]
+    mesh = carrier.mesh.with_coordinates(
+        points,
+        numeric_version=canonical_fingerprint(
+            {
+                "kind": "tioga-motion",
+                # ty: ignore[unresolved-attribute]
+                "mesh": carrier.mesh.mesh_id,
+                "coordinates": array_tree_fingerprint(points),
             }
-            wall_rows = np.asarray(
-                [rows[int(value)] for value in walls.get(part.name, ())], dtype=np.int32
-            )
-            overset_rows = np.asarray(
-                [rows[int(value)] for value in overset.get(part.name, ())], dtype=np.int32
-            )
-            start = stream.tell()
-            stream.write(struct.pack("<Q", 0))
-            stream.write(
-                struct.pack(
-                    "<iiii",
-                    vertices.size,
-                    len(mesh.blocks),
-                    wall_rows.size,
-                    overset_rows.size,
-                )
-            )
-            np.asarray(mesh.coordinates, dtype="<f8").tofile(stream)
-            vertices.astype("<u8", copy=False).tofile(stream)
-            wall_rows.astype("<i4", copy=False).tofile(stream)
-            overset_rows.astype("<i4", copy=False).tofile(stream)
-            if node_offset > np.iinfo(np.uint64).max - vertices.size:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "TIOGA global node namespace exceeds uint64 capacity.",
-                )
-            stream.write(struct.pack("<Q", node_offset))
-            node_offset += vertices.size
-            for block in mesh.blocks:
-                stream.write(struct.pack("<ii", block.arity, block.cell_count))
-                connectivity = (np.asarray(block.vertices, dtype=np.int64) + 1).astype(
-                    "<i4", copy=False
-                )
-                connectivity.tofile(stream)
-                np.asarray(block.global_ids, dtype="<u8").tofile(stream)
-            end = stream.tell()
-            stream.seek(start)
-            stream.write(struct.pack("<Q", end - start - 8))
-            stream.seek(end)
-
-
-def _read_array(stream: BinaryIO, dtype: np.dtype, count: int) -> np.ndarray:
-    if count < 0:
-        raise ValueError("Negative TIOGA output count.")
-    values = np.fromfile(stream, dtype=dtype, count=count)
-    if values.size != count:
-        raise ValueError("Truncated TIOGA output.")
-    return values
-
-
-def _read_outputs(
-    prefix: Path,
-    assembly: MeshAssembly,
-    ranks: int,
-    limits: MeshingLimits,
-) -> tuple[tuple[TiogaPartBlanking, ...], _DonorRecords]:
-    blanking = {}
-    records: _DonorRecords = {}
-    total_bytes = sum(Path(f"{prefix}.{rank}").stat().st_size for rank in range(ranks))
-    if total_bytes > limits.maximum_data_bytes:
-        raise ValueError("TIOGA output exceeds maximum_data_bytes.")
-    total_donors = 0
-    for rank in range(ranks):
-        with Path(f"{prefix}.{rank}").open("rb") as stream:
-            if stream.read(8) != b"PXTIOGR2":
-                raise ValueError("Invalid TIOGA output protocol.")
-            count = int(_read_array(stream, np.dtype("<i4"), 1)[0])
-            if count != len(range(rank, len(assembly.parts), ranks)):
-                raise ValueError("TIOGA output rank ownership is incomplete.")
-            for _ in range(count):
-                source, nodes, cells = (
-                    int(value) for value in _read_array(stream, np.dtype("<i4"), 3)
-                )
-                if (
-                    source not in range(rank, len(assembly.parts), ranks)
-                    or source in blanking
-                ):
-                    raise ValueError("TIOGA returned duplicate/foreign mesh parts.")
-                part = assembly.parts[source]
-                assert isinstance(part.carrier, CellMeshingResult)
-                mesh = part.carrier.mesh
-                if nodes != mesh.coordinates.shape[0] or cells != sum(
-                    block.cell_count for block in mesh.blocks
-                ):
-                    raise ValueError("TIOGA changed the input mesh cardinality.")
-                blanking[source] = TiogaPartBlanking(
-                    part,
-                    _read_array(stream, np.dtype("<i4"), nodes),
-                    _read_array(stream, np.dtype("<i4"), cells),
-                )
-                donor_count = int(_read_array(stream, np.dtype("<i4"), 1)[0])
-                if donor_count < 0:
-                    raise ValueError("Invalid TIOGA donor count.")
-                total_donors += donor_count
-                if (
-                    total_donors > limits.maximum_vertices
-                    or donor_count > limits.maximum_connectivity_entries
-                ):
-                    raise ValueError("TIOGA donor inventory exceeds resource limits.")
-                for _ in range(donor_count):
-                    target, receptor, width = (
-                        int(value) for value in _read_array(stream, np.dtype("<i4"), 3)
-                    )
-                    if (
-                        target not in range(len(assembly.parts))
-                        or source == target
-                        or width not in (4, 5, 6, 8)
-                    ):
-                        raise ValueError("Invalid TIOGA donor/receptor routing.")
-                    target_part = assembly.parts[target]
-                    assert isinstance(target_part.carrier, CellMeshingResult)
-                    target_mesh = target_part.carrier.mesh
-                    if not 0 <= receptor < target_mesh.coordinates.shape[0]:
-                        raise ValueError("Unknown TIOGA receptor node.")
-                    cell = int(_read_array(stream, np.dtype("<u8"), 1)[0])
-                    if cell > np.iinfo(np.int64).max:
-                        raise ValueError(
-                            "Native donor cell ID exceeds canonical int64 range."
-                        )
-                    stencil = _read_array(
-                        stream, np.dtype([("id", "<u8"), ("weight", "<f8")]), width
-                    )
-                    if np.any(stencil["id"] > np.iinfo(np.int64).max):
-                        raise ValueError("Native donor ID exceeds canonical int64 range.")
-                    records.setdefault((source, target), []).append(
-                        (
-                            int(np.asarray(target_mesh.vertex_global_ids)[receptor]),
-                            cell,
-                            stencil["id"].astype(np.int64),
-                            stencil["weight"],
-                        )
-                    )
-            if stream.read(1):
-                raise ValueError("Unexpected trailing TIOGA output.")
-    return tuple(blanking[index] for index in range(len(assembly.parts))), records
-
-
-def _couplings(
-    assembly: MeshAssembly,
-    blanking: tuple[TiogaPartBlanking, ...],
-    records: _DonorRecords,
-    tolerance: float,
-) -> tuple[tuple[OversetCoupling, ...], tuple[TiogaDonorEvidence, ...]]:
-    links, evidence = [], []
-    receptors = [set() for _ in assembly.parts]
-    for (source_index, target_index), rows in sorted(records.items()):
-        source, target = assembly.parts[source_index], assembly.parts[target_index]
-        rows.sort(key=lambda item: item[0])
-        target_ids = np.asarray([row[0] for row in rows], dtype=np.int64)
-        if len(set(target_ids)) != len(rows) or receptors[target_index].intersection(
-            target_ids
-        ):
-            raise ValueError("TIOGA assigned multiple donors to one receptor.")
-        receptors[target_index].update(target_ids)
-        width = max(len(row[2]) for row in rows)
-        ids, raw = (
-            np.full((len(rows), width), -1, dtype=np.int64),
-            np.zeros((len(rows), width)),
-        )
-        cells = np.asarray([row[1] for row in rows], dtype=np.int64)
-        if not (isinstance(source.carrier, CellMeshingResult)):
-            raise RuntimeError(
-                "Internal invariant failed: isinstance(source.carrier, CellMeshingResult)."
-            )
-        source_mesh = source.carrier.mesh
-        cell_nodes = {
-            int(identifier): np.asarray(source_mesh.vertex_global_ids)[vertices]
-            for block in source_mesh.blocks
-            for identifier, vertices in zip(
-                np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
-            )
-        }
-        for index, (_, cell, nodes, weights) in enumerate(rows):
-            if cell not in cell_nodes or not np.array_equal(
-                np.sort(nodes), np.sort(cell_nodes[cell])
-            ):
-                raise ValueError(
-                    "TIOGA donor stencil does not belong to its reported source cell."
-                )
-            ids[index, : len(nodes)], raw[index, : len(nodes)] = nodes, weights
-        if (
-            not np.all(np.isfinite(raw))
-            or np.any(raw < -tolerance)
-            or np.any(np.abs(raw.sum(axis=1) - 1) > tolerance)
-        ):
-            raise ValueError(
-                "TIOGA stencil is not positive partition-of-unity within tolerance."
-            )
-        weights = np.maximum(raw, 0)
-        weights /= weights.sum(axis=1, keepdims=True)
-        holes = np.asarray(blanking[target_index].node_ids)[
-            np.asarray(blanking[target_index].node_iblank) == 0
-        ]
-        link = OversetCoupling(
-            source,
-            target,
-            source.scope(0, np.unique(ids[ids >= 0])),
-            target.scope(0, target_ids),
-            ids,
-            weights,
-            hole_scope=target.scope(0, holes) if holes.size else None,
-            tolerance=tolerance,
-        )
-        coordinates = np.asarray(source.point_coordinates(link.source_scope))
-        expected = np.asarray(target.point_coordinates(link.target_scope))
-        reconstructed = np.asarray(link.transfer(coordinates))
-        scale = max(
-            float(np.max(np.abs(coordinates))),
-            float(np.max(np.abs(expected))),
-            float(np.max(np.ptp(coordinates, axis=0))),
-            np.finfo(np.float64).tiny,
-        )
-        if not np.allclose(reconstructed, expected, rtol=0, atol=10 * tolerance * scale):
-            raise ValueError("TIOGA donor weights do not reproduce receptor coordinates.")
-        links.append(link)
-        evidence.append(TiogaDonorEvidence(source, link, cells, raw))
-    for index, status in enumerate(blanking):
-        expected = set(
-            np.asarray(status.node_ids)[np.asarray(status.node_iblank) < 0].tolist()
-        )
-        if expected != receptors[index]:
-            raise ValueError("TIOGA receptor blanking and donor records disagree.")
-    return tuple(links), tuple(evidence)
+        ),
+    )
+    return MeshPart(
+        part.name,
+        certify_cell_mesh(
+            mesh,
+            part.coordinate_contract,
+            # ty: ignore[unresolved-attribute]
+            patches=carrier.patches,
+            # ty: ignore[unresolved-attribute]
+            zones=carrier.zones,
+            # ty: ignore[unresolved-attribute]
+            labels=carrier.labels,
+            # ty: ignore[unresolved-attribute]
+            attributes=carrier.attributes,
+        ),
+    )
 
 
 class TiogaProvider:
+    """TIOGA overset assembly through one persistent collective worker session.
+
+    The worker identity is probed once per session; every ``execute`` and
+    ``move`` reuses the session. ``move`` updates the resident registration in
+    place, so only a result produced by the live session can be moved.
+    """
+
     def __init__(self, options: TiogaOptions | None = None) -> None:
         self.options = TiogaOptions() if options is None else options
         if not isinstance(self.options, TiogaOptions):
             raise TypeError("options must be TiogaOptions.")
+        launcher = (
+            (
+                self.options.mpi_launcher,
+                *self.options.mpi_arguments,
+                "-n",
+                str(self.options.ranks),
+            )
+            if self.options.ranks > 1
+            else ()
+        )
+        self.worker = ProviderWorker(
+            "tioga",
+            executable=self.options.executable,
+            environment_variable="PHYDRAX_TIOGA_WORKER",
+            default_executable="phydrax-tioga-worker",
+            build_hint=(
+                "Build native/providers/tioga and set PHYDRAX_TIOGA_WORKER or "
+                "TiogaOptions.executable."
+            ),
+            launcher=launcher,
+        )
 
     def info(self) -> MeshingProviderInfo:
-        return _info(_executable(self.options), self.options.timeout_seconds)
+        return _provider_info(self.worker.identity, self.options.ranks)
+
+    def close(self) -> None:
+        self.worker.close()
+
+    def __enter__(self) -> TiogaProvider:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def execute(
         self,
@@ -691,184 +925,196 @@ class TiogaProvider:
         overset_scopes: tuple[MeshingScope, ...] = (),
         limits: MeshingLimits | None = None,
     ) -> TiogaAssemblyResult:
-        """Assemble 3D vertex-linear cell meshes without altering their identities.
+        """Register and assemble 3D vertex-linear cell meshes without altering identities.
 
         Boundary scopes contain original global NODE IDs. Walls must describe
         closed solid boundaries, and overset nodes mark mandatory interpolation
         boundaries. Unspecified boundaries remain ordinary exterior boundaries.
         Any orphan mandatory receptor fails instead of inventing a donor.
-        Existing non-overset overlays and all input audits are retained verbatim.
+        Existing non-overset overlays and all input audits are retained
+        verbatim. The registration replaces any earlier one of this session.
         """
         if not isinstance(assembly, MeshAssembly):
             raise TypeError("assembly must be MeshAssembly.")
-        limits_ = MeshingLimits() if limits is None else limits
-        if not isinstance(limits_, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits.")
-        if (
-            limits_.maximum_vertices > 10_000_000
-            or limits_.maximum_cells > 20_000_000
-            or limits_.maximum_connectivity_entries > 500_000_000
-            or limits_.maximum_data_bytes > 4_000_000_000
+        limits_ = _limits(limits)
+        if self.options.ranks > len(assembly.parts):
+            raise ValueError("TIOGA requires ranks <= part count.")
+        _admit_parts(assembly, limits_)
+        walls = _boundaries(assembly, wall_scopes)
+        overset = _boundaries(assembly, overset_scopes)
+        if any(
+            np.intersect1d(wall, boundary).size
+            for wall, boundary in zip(walls, overset, strict=True)
         ):
-            raise ValueError("limits exceed the TIOGA bridge hard bounds.")
-        total_vertices = 0
-        total_cells = 0
-        total_connectivity = 0
-        estimated_input_bytes = 8 + 12 + 32 + 8 * len(assembly.parts)
-        if len(assembly.parts) < 2 or self.options.ranks > len(assembly.parts):
-            raise ValueError("TIOGA requires at least two parts and ranks <= part count.")
-        if any(isinstance(link, OversetCoupling) for link in assembly.couplings):
-            raise ValueError("Remove previous overset overlays before reassembling.")
-        for part in assembly.parts:
-            if (
-                not isinstance(part.carrier, CellMeshingResult)
-                or part.intrinsic_dimension != 3
-                or part.ambient_dimension != 3
-            ):
-                raise MeshingFailure(
-                    MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                    "TIOGA requires certified 3D CellMesh parts, not implicit tessellation of other carriers.",
-                )
-            mesh = part.carrier.mesh
-            vertices = mesh.coordinates.shape[0]
-            cells = sum(block.cell_count for block in mesh.blocks)
-            connectivity = sum(block.vertices.size for block in mesh.blocks)
-            total_vertices += vertices
-            total_cells += cells
-            total_connectivity += connectivity
-            estimated_input_bytes += (
-                8
-                + 16
-                + vertices * (3 * 8 + 8)
-                + 8
-                + len(mesh.blocks) * 8
-                + connectivity * 4
-                + cells * 8
+            raise ValueError("Wall and overset boundary node scopes must be disjoint.")
+        tables = tuple(_tables(part) for part in assembly.parts)
+        arrays = _registration_arrays(assembly, tables, walls, overset)
+        _require_input_bytes(arrays, limits_)
+        provider = self.info()
+        call = self.worker.call(
+            "register",
+            {
+                "fringe_layers": self.options.fringe_layers,
+                "exclusion_layers": self.options.exclusion_layers,
+                "maximum_vertices": limits_.maximum_vertices,
+                "maximum_cells": limits_.maximum_cells,
+                "maximum_connectivity_entries": limits_.maximum_connectivity_entries,
+            },
+            arrays,
+            limits=limits_,
+        )
+        return self._result(
+            assembly.parts,
+            assembly.couplings,
+            walls,
+            overset,
+            call,
+            provider,
+            limits_,
+            {"operation": "register", "source_assembly": assembly.assembly_id},
+        )
+
+    def move(
+        self,
+        previous: TiogaAssemblyResult,
+        coordinates: Mapping[str, ArrayLike],
+        /,
+        *,
+        limits: MeshingLimits | None = None,
+    ) -> TiogaAssemblyResult:
+        """Move named parts of a resident registration and rerun connectivity.
+
+        ``coordinates`` maps part names to new coordinates in mesh row order;
+        connectivity and every node/cell ID are unchanged. The worker rewrites
+        the registered coordinates in place without restarting. A result whose
+        registration is no longer resident at its exact state (worker restart,
+        a later registration, or a later motion) fails explicitly. Moved parts
+        are recertified; unmoved parts and their overlays are kept verbatim.
+        """
+        if not isinstance(previous, TiogaAssemblyResult):
+            raise TypeError("previous must be TiogaAssemblyResult.")
+        if not isinstance(coordinates, Mapping) or not coordinates:
+            raise TypeError("coordinates must map moved part names to coordinates.")
+        limits_ = _limits(limits)
+        registration = previous.registration
+        names = registration.part_names
+        if any(name not in names for name in coordinates):
+            raise ValueError("TIOGA motion names parts outside the registration.")
+        moved = np.asarray(
+            sorted(names.index(name) for name in coordinates), dtype=np.int64
+        )
+        tioga_links = {item.coupling_id for item in previous.donors}
+        retained = tuple(
+            link
+            for link in previous.assembly.couplings
+            if link.coupling_id not in tioga_links
+        )
+        if any(
+            scope.source_id in coordinates
+            for link in retained
+            for scope in (link.source_scope, link.target_scope)
+        ):
+            raise ValueError(
+                "Non-overset overlays of moved parts cannot follow a TIOGA motion."
             )
-            if np.any(np.asarray(mesh.vertex_global_ids) < 0) or any(
-                np.any(np.asarray(block.global_ids) < 0) for block in mesh.blocks
-            ):
-                raise ValueError("TIOGA global node and cell IDs must be nonnegative.")
-            if any(block.cell_kind not in _CELL_KINDS for block in mesh.blocks):
-                raise MeshingFailure(
-                    MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                    "TIOGA supports tetrahedra, pyramids, prisms and hexahedra, not arbitrary polyhedra.",
-                )
-            elements, routes, coordinates = part.carrier.geometry.resolve(mesh)
-            if not np.array_equal(
-                np.asarray(coordinates), np.asarray(mesh.coordinates)
-            ) or any(
-                element.local_dof_count != block.arity
-                or not np.array_equal(np.asarray(route), np.asarray(block.vertices))
-                for block, element, route in zip(
-                    mesh.blocks, elements, routes, strict=True
-                )
-            ):
-                raise MeshingFailure(
-                    MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                    "TIOGA adapter requires vertex-linear geometry; high-order geometry cannot be silently dropped.",
-                )
-            if (
-                mesh.coordinates.size > np.iinfo(np.int32).max
-                or sum(block.vertices.size for block in mesh.blocks)
-                > np.iinfo(np.int32).max
-            ):
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Mesh exceeds TIOGA int32 local indexing capacity.",
-                )
+        identity = self.worker.identity
         if (
-            total_vertices > limits_.maximum_vertices
-            or total_cells > limits_.maximum_cells
-            or total_connectivity > limits_.maximum_connectivity_entries
+            identity.session_id != registration.session_id
+            or identity.identity_id != registration.identity_id
         ):
             raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "TIOGA input exceeds configured entity or connectivity limits.",
+                MeshingFailureCategory.INVALID_SPECIFICATION,
+                "The TIOGA registration belongs to a worker session that is no longer "
+                "active; execute the assembly again instead of moving it.",
+                stage="move",
             )
-        walls, overset = (
-            _boundaries(assembly, wall_scopes),
-            _boundaries(assembly, overset_scopes),
+        provider = _provider_info(identity, self.options.ranks)
+        parts = tuple(
+            _moved_part(part, coordinates[part.name])
+            if part.name in coordinates
+            else part
+            for part in previous.assembly.parts
         )
-        estimated_input_bytes += 4 * sum(
-            values.size for values in (*walls.values(), *overset.values())
+        arrays = {
+            "moved_parts": moved,
+            "coordinates": np.concatenate(
+                [
+                    np.asarray(parts[index].carrier.mesh.coordinates, dtype=np.float64)
+                    for index in moved
+                ]
+            ),
+        }
+        _require_input_bytes(arrays, limits_)
+        call = self.worker.call(
+            "move",
+            {"registration": registration.registration, "state": registration.state},
+            arrays,
+            limits=limits_,
         )
-        if estimated_input_bytes > limits_.maximum_data_bytes:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "TIOGA input exceeds maximum_data_bytes.",
+        return self._result(
+            parts,
+            retained,
+            tuple(np.asarray(values) for values in registration.wall_node_ids),
+            tuple(np.asarray(values) for values in registration.overset_node_ids),
+            call,
+            provider,
+            limits_,
+            {
+                "operation": "move",
+                "previous_result": previous.result_id,
+                "moved_parts": sorted(coordinates),
+            },
+        )
+
+    def _result(
+        self,
+        parts: tuple[MeshPart, ...],
+        retained: tuple,
+        walls: tuple[np.ndarray, ...],
+        overset: tuple[np.ndarray, ...],
+        call: NativeWorkerCall,
+        provider: MeshingProviderInfo,
+        limits: MeshingLimits,
+        content: dict,
+        /,
+    ) -> TiogaAssemblyResult:
+        identity = self.worker.identity
+        result = call.result
+        if (
+            set(result) != {"registration", "state"}
+            or type(result["registration"]) is not int
+            or type(result["state"]) is not int
+            or result["state"] != call.sequence
+        ):
+            raise _conversion("TIOGA worker returned an invalid registration record.")
+        registration = TiogaRegistration(
+            identity.session_id,
+            identity.identity_id,
+            result["registration"],
+            result["state"],
+            tuple(part.name for part in parts),
+            walls,
+            overset,
+        )
+        # Provider output becomes domain objects here; any contract violation
+        # the explicit checks above did not name is still a conversion failure.
+        try:
+            blanking, links, evidence = _assembly_outputs(
+                call, parts, registration, self.options, limits
             )
-        for name in walls.keys() & overset.keys():
-            if np.intersect1d(walls[name], overset[name]).size:
-                raise ValueError(
-                    "Wall and overset boundary node scopes must be disjoint."
-                )
-        executable = _executable(self.options)
-        provider = _info(executable, self.options.timeout_seconds)
-        command = [executable]
-        if self.options.ranks > 1:
-            launcher = shutil.which(self.options.mpi_launcher)
-            if launcher is None:
-                raise MeshingFailure(
-                    MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-                    "TIOGA MPI launcher is unavailable.",
-                )
-            command = [
-                str(Path(launcher).resolve()),
-                *self.options.mpi_arguments,
-                "-n",
-                str(self.options.ranks),
-                executable,
-            ]
-        with tempfile.TemporaryDirectory(prefix="phydrax-tioga-") as directory:
-            path, prefix = Path(directory) / "input.bin", Path(directory) / "output.bin"
-            _write_input(path, assembly, walls, overset, self.options, limits_)
-            if path.stat().st_size > limits_.maximum_data_bytes:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Serialized TIOGA input exceeds maximum_data_bytes.",
-                )
-            with path.open("rb") as stream:
-                input_digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            _run(
-                [*command, str(path), str(prefix)],
-                min(self.options.timeout_seconds, limits_.maximum_wall_seconds),
-                cwd=directory,
-            )
-            try:
-                blanking, records = _read_outputs(
-                    prefix, assembly, self.options.ranks, limits_
-                )
-                links, evidence = _couplings(
-                    assembly, blanking, records, self.options.tolerance
-                )
-                for status in blanking:
-                    ids, values = (
-                        np.asarray(status.node_ids),
-                        np.asarray(status.node_iblank),
-                    )
-                    if np.any(
-                        values[np.isin(ids, overset.get(status.part_name, ()))] == 1
-                    ):
-                        raise ValueError(
-                            f"TIOGA left orphan overset boundary receptors in {status.part_name!r}."
-                        )
-                    if np.any(values[np.isin(ids, walls.get(status.part_name, ()))] == 0):
-                        raise ValueError(
-                            f"TIOGA blanked solid wall nodes in {status.part_name!r}."
-                        )
-                result_assembly = MeshAssembly(
-                    assembly.parts, couplings=(*assembly.couplings, *links)
-                )
-            except (ValueError, OSError, OverflowError) as error:
-                raise MeshingFailure(
-                    MeshingFailureCategory.CONVERSION_FAILED, str(error)
-                ) from error
+            assembly = MeshAssembly(parts, couplings=(*retained, *links))
+        except ValueError as error:
+            raise _conversion(str(error)) from error
         provenance = SemanticProvenance(
             {
                 "kind": "tioga-overset-assembly",
-                "source_assembly": assembly.assembly_id,
-                "input_sha256": input_digest,
+                **content,
+                "parts": [part.part_id for part in parts],
+                "registration": registration.registration_id,
+                "input_manifest_sha256": call.evidence["input_manifest_sha256"],
+                "output_manifest_sha256": call.evidence["output_manifest_sha256"],
+                "worker_sequence": call.sequence,
+                "worker_peak_rss_bytes": call.evidence["peak_rss_bytes"],
                 "upstream_revision": provider.version,
                 "options": self.options.options_id,
                 "rank_distribution": "whole-parts-round-robin",
@@ -876,7 +1122,11 @@ class TiogaProvider:
                 "weights": "raw evidence retained; negative roundoff clipped then normalized",
                 "topology_change": "none",
                 "conservative_transfer": False,
-            }
+            },
+            resource_ids={
+                "worker_identity": identity.identity_id,
+                "worker_session": identity.session_id,
+            },
         )
         runtime = MeshingRuntimeInfo(
             provider.provider_id,
@@ -888,10 +1138,10 @@ class TiogaProvider:
                 "input_entities",
                 "input_connectivity_entries",
                 "input_bytes",
-                "bridge_donor_allocations",
-                "serialized_output_bytes",
+                "output_bytes",
                 "local_int32_indexing",
                 "global_uint64_node_namespace",
+                self.worker.memory_limit_evidence(),
             ),
             unenforced_limits=(
                 "provider_internal_workspace",
@@ -899,8 +1149,22 @@ class TiogaProvider:
             ),
         )
         return TiogaAssemblyResult(
-            result_assembly, blanking, evidence, provider, runtime, provenance
+            assembly, blanking, evidence, registration, provider, runtime, provenance
         )
+
+
+def _limits(limits: MeshingLimits | None, /) -> MeshingLimits:
+    limits_ = MeshingLimits() if limits is None else limits
+    if not isinstance(limits_, MeshingLimits):
+        raise TypeError("limits must be MeshingLimits.")
+    if (
+        limits_.maximum_vertices > 10_000_000
+        or limits_.maximum_cells > 20_000_000
+        or limits_.maximum_connectivity_entries > 500_000_000
+        or limits_.maximum_data_bytes > 4_000_000_000
+    ):
+        raise ValueError("limits exceed the TIOGA worker hard bounds.")
+    return limits_
 
 
 __all__ = [
@@ -909,4 +1173,5 @@ __all__ = [
     "TiogaOptions",
     "TiogaPartBlanking",
     "TiogaProvider",
+    "TiogaRegistration",
 ]

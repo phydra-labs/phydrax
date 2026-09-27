@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel, FrozenModel

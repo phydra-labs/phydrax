@@ -36,17 +36,25 @@ def run() -> dict[str, float]:
         action(state).block_until_ready()
     elapsed = (perf_counter() - start) / iterations
 
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     adapt_start = perf_counter()
-    refined, adaptation, transfer = phx.discretization.refine_triangles_local(
-        mesh, jnp.asarray([0])
+    adaptation = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MarkedMeshAdaptation(jnp.asarray([0])),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
     )
     adapt_elapsed = perf_counter() - adapt_start
     return {
         "sipg_apply_seconds": elapsed,
         "local_adaptation_seconds": adapt_elapsed,
-        "refined_cells": float(refined.blocks[0].cell_count),
-        "transfer_rows": float(transfer.primal.shape[0]),
-        "adaptation_identity_length": float(len(adaptation.adaptation_id)),
+        "refined_cells": float(adaptation.target.mesh.blocks[0].cell_count),
+        # ty: ignore[unresolved-attribute]
+        "transfer_rows": float(adaptation.transfer.target_size),
+        "adaptation_identity_length": float(len(adaptation.result_id)),
     }
 
 

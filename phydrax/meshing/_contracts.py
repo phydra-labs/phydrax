@@ -14,13 +14,13 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..geometry.brep import PlanarEmbedding
 from ._controls import (
+    BoundaryLayerControl,
     HoleSeed,
     PatchControl,
     PeriodicConstraint,
     ProtectedFeature,
     RegionControl,
     RegionSeed,
-    SweptLayerControl,
 )
 from ._scope import MeshingScope
 from ._sizing import (
@@ -402,6 +402,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
     region_controls: tuple[RegionControl, ...]
     patch_controls: tuple[PatchControl, ...]
     periodic_constraints: tuple[PeriodicConstraint, ...]
+    layer_controls: tuple[BoundaryLayerControl, ...]
     size_combination: SizeCombinationPolicy = eqx.field(static=True)
     size_compliance: SizeCompliancePolicy
     limits: MeshingLimits
@@ -420,6 +421,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         region_controls: tuple[RegionControl, ...] = (),
         patch_controls: tuple[PatchControl, ...] = (),
         periodic_constraints: tuple[PeriodicConstraint, ...] = (),
+        layer_controls: tuple[BoundaryLayerControl, ...] = (),
         size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
         size_compliance: SizeCompliancePolicy | None = None,
         limits: MeshingLimits | None = None,
@@ -455,6 +457,24 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             size_combination,
             size_compliance,
         )
+        layers = tuple(layer_controls)
+        if not all(isinstance(control, BoundaryLayerControl) for control in layers):
+            raise TypeError(
+                "layer_controls must contain only BoundaryLayerControl values."
+            )
+        if any(
+            control.wall_scope.entity_dimension != 1
+            or (
+                control.wall_scope.source_id,
+                control.wall_scope.source_revision,
+                control.wall_scope.entity_kind,
+            )
+            != (scope.source_id, scope.source_revision, scope.entity_kind)
+            for control in layers
+        ):
+            raise ValueError(
+                "Surface boundary layers grow from wall curves of the meshed source."
+            )
         limit = MeshingLimits() if limits is None else limits
         if not isinstance(limit, MeshingLimits):
             raise TypeError("limits must be MeshingLimits or None.")
@@ -466,6 +486,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         self.region_controls = regions
         self.patch_controls = patches
         self.periodic_constraints = periodic
+        self.layer_controls = layers
         self.size_combination = size_combination
         self.size_compliance = compliance
         self.limits = limit
@@ -485,6 +506,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 "regions": [value.control_id for value in regions],
                 "patches": [value.control_id for value in patches],
                 "periodic": [value.constraint_id for value in periodic],
+                "layers": [value.control_id for value in layers],
                 "limits": limit.limits_id,
                 "deterministic": bool(deterministic),
             }
@@ -525,7 +547,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
     patch_controls: tuple[PatchControl, ...]
     region_seeds: tuple[RegionSeed, ...]
     hole_seeds: tuple[HoleSeed, ...]
-    layer_controls: tuple[SweptLayerControl, ...]
+    layer_controls: tuple[BoundaryLayerControl, ...]
     periodic_constraints: tuple[PeriodicConstraint, ...]
     size_combination: SizeCombinationPolicy = eqx.field(static=True)
     size_compliance: SizeCompliancePolicy
@@ -546,7 +568,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
         patch_controls: tuple[PatchControl, ...] = (),
         region_seeds: tuple[RegionSeed, ...] = (),
         hole_seeds: tuple[HoleSeed, ...] = (),
-        layer_controls: tuple[SweptLayerControl, ...] = (),
+        layer_controls: tuple[BoundaryLayerControl, ...] = (),
         periodic_constraints: tuple[PeriodicConstraint, ...] = (),
         size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
         size_compliance: SizeCompliancePolicy | None = None,
@@ -584,10 +606,15 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             raise TypeError("region_seeds must contain RegionSeed values.")
         if not all(isinstance(seed, HoleSeed) for seed in hole_seeds_):
             raise TypeError("hole_seeds must contain HoleSeed values.")
-        if not all(isinstance(control, SweptLayerControl) for control in layer_controls_):
-            raise TypeError("layer_controls must contain only SweptLayerControl values.")
+        if not all(
+            isinstance(control, BoundaryLayerControl) for control in layer_controls_
+        ):
+            raise TypeError(
+                "layer_controls must contain only BoundaryLayerControl values."
+            )
         if any(
-            control.volume_scope.entity_set_id != boundary_scope.entity_set_id
+            control.volume_scope is None
+            or control.volume_scope.entity_set_id != boundary_scope.entity_set_id
             or np.setdiff1d(
                 np.asarray(control.volume_scope.entity_ids),
                 np.asarray(boundary_scope.entity_ids),
@@ -595,16 +622,13 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             for control in layer_controls_
         ):
             raise ValueError(
-                "Swept-layer volume scopes must be contained in the top-level volume scope."
+                "Boundary-layer volume scopes must be contained in the top-level volume scope."
             )
         layer_scopes = tuple(
             scope
             for control in layer_controls_
-            for scope in (
-                control.source_scope,
-                control.target_scope,
-                control.volume_scope,
-            )
+            for scope in (control.wall_scope, control.cap_scope, control.volume_scope)
+            if scope is not None
         )
         binding = (
             boundary_scope.source_id,

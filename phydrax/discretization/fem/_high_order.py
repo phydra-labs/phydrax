@@ -859,6 +859,17 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             dimension = len(support) - 1
             entity = entity_sets[dimension].index(support)
             entity_dofs[dimension][entity].append(dof)
+        # Shared-entity routing assumes entity DOFs follow the reference entity's
+        # vertex order: edge (a, b) runs from a toward b, and higher entities are
+        # lexicographic in their local lattice frame with the second vertex
+        # fastest. The multi-index enumeration alone does not guarantee this.
+        for dimension, entities in enumerate(topology.entities):
+            for entity, vertices in enumerate(entities):
+                entity_dofs[dimension][entity].sort(
+                    key=lambda dof, frame=vertices[:0:-1]: tuple(
+                        self.multiindices[dof][vertex] for vertex in frame
+                    )
+                )
         return FiniteElementSpec(
             "SimplexLagrange",
             self.cell_kind,

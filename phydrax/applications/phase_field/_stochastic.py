@@ -17,6 +17,7 @@ from phydrax import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization.fem import FiniteElementTopologyTransfer
 from ...stochastic import WienerRealization
 from ...typing import parse
 
@@ -126,19 +127,20 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
 
     def transfer(
         self,
-        prolongation: ArrayLike,
+        transfer: FiniteElementTopologyTransfer,
         /,
         *,
         conservation_weights: ArrayLike | None = None,
     ) -> PhaseFieldNoisePlan:
         """Transfer the same global Wiener modes to a successor FE epoch."""
 
-        operator = jnp.asarray(prolongation)
-        if operator.ndim != 2 or operator.shape[1] != self.basis.shape[0]:
+        if not isinstance(transfer, FiniteElementTopologyTransfer):
+            raise TypeError("Noise-basis transfer must be FiniteElementTopologyTransfer.")
+        if transfer.source_size != self.basis.shape[0]:
             raise ValueError(
                 "Noise-basis transfer must map source DOFs to successor DOFs."
             )
-        basis = operator @ self.basis
+        basis = transfer.apply(self.basis)
         weights = conservation_weights if self.kind == "cahn-hilliard" else None
         if self.kind == "cahn-hilliard" and weights is None:
             raise ValueError(

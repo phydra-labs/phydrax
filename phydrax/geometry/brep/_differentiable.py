@@ -431,11 +431,17 @@ class _FixedTopologyBRepKernel(GeometryKernel):
             flat, triangles
         )
         query = self._query(state, flat)
+        distance_sq = jnp.sum((closest_by_face - flat[:, None, :]) ** 2, axis=-1)
+        second_distance_sq = (
+            jnp.sort(distance_sq, axis=-1)[:, 1]
+            if triangles.shape[0] > 1
+            else jnp.full((flat.shape[0],), jnp.inf, dtype=distance_sq.dtype)
+        )
         unique, regular, margin = triangle_query_evidence(
             flat,
-            triangles,
-            closest_by_face,
-            query.face_index,
+            triangles[query.face_index],
+            query.closest_point,
+            second_distance_sq,
         )
         return represented_mesh_closest_point(
             points_,

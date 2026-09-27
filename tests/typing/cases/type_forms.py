@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Literal, TypeAlias
 
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 
 Mode: TypeAlias = Literal["dense", "sparse"]

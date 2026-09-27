@@ -365,6 +365,7 @@ def _edge_coordinate_trace(
         None, :
     ]
     coordinate_element = discretization.coordinate_elements[block_index]
+    # ty: ignore[unresolved-attribute]
     basis, gradients = coordinate_element.tabulate(jnp.asarray(reference_points))
     coordinate_routes = discretization.coordinate_dofs[block_index][cell_index]
     coordinates = np.asarray(
@@ -778,6 +779,7 @@ def _hybrid_boundary_routes(
                 (topology.vertices[int(local_facet)],), dtype=jnp.float64
             )
             basis_values, basis_gradients = element.tabulate(points)
+            # ty: ignore[unresolved-attribute]
             coordinate_basis, _coordinate_gradients = coordinate_element.tabulate(points)
             coordinates = discretization.default_runtime.coordinates[
                 coordinate_routes[local_cell]
@@ -796,6 +798,7 @@ def _hybrid_boundary_routes(
             points, weights, normals = _map_edge_rule(
                 block.cell_kind, int(local_facet), data
             )
+            # ty: ignore[unresolved-attribute]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
             local_coordinates = discretization.default_runtime.coordinates[
                 coordinate_routes[local_cell]
@@ -823,6 +826,7 @@ def _hybrid_boundary_routes(
             points, weights, normals = _map_face_rule(
                 block.cell_kind, int(local_facet), data
             )
+            # ty: ignore[unresolved-attribute]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
             local_coordinates = discretization.default_runtime.coordinates[
                 coordinate_routes[local_cell]
@@ -953,6 +957,7 @@ def _three_dimensional_interface_routes(
         neighbor_points = jnp.asarray(neighbor_barycentric @ neighbor_reference_vertices)
         owner_coordinate_element = discretization.coordinate_elements[owner_block]
         owner_coordinate_routes = discretization.coordinate_dofs[owner_block][owner_cell]
+        # ty: ignore[unresolved-attribute]
         coordinate_basis, coordinate_gradients = owner_coordinate_element.tabulate(
             owner_points
         )
@@ -1161,6 +1166,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for block_index, (block, element) in enumerate(
             zip(blocks, elements, strict=True)
         ):
+            # ty: ignore[unresolved-attribute]
             coordinate_order = discretization.coordinate_elements[block_index].degree
             volume_degrees[block.name] = _selected_degree(
                 method.volume_quadrature, element.degree, coordinate_order
@@ -1612,6 +1618,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             routes = self.discretization.dof_maps[0].cell_dofs[block_index]
             local = state[routes]
             coordinate_element = self.discretization.coordinate_elements[block_index]
+            # ty: ignore[unresolved-attribute]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(
                 element.reference_nodes
             )
@@ -1644,6 +1651,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         for block_index, element in enumerate(self.discretization.elements[0]):
             routes = self.discretization.dof_maps[0].cell_dofs[block_index]
             coordinate_element = self.discretization.coordinate_elements[block_index]
+            # ty: ignore[unresolved-attribute]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(
                 element.reference_nodes
             )

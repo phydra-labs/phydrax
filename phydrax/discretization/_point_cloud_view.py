@@ -31,7 +31,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from .._bvh import build_point_bvh, PackedBVH, point_select_leaf_items
+from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
 from .._differentiation import DerivativeRegularity
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import GatherStencil
@@ -105,8 +105,11 @@ class PointCloudFieldReconstructionKernel(
             )
         features = TotalDegreePolynomialFeatures(cloud.shape[1], degree)
         self.points = jnp.asarray(cloud)
-        self.bvh = build_point_bvh(
-            cloud, leaf_size=min(_LEAF_SIZE, cloud.shape[0]), dtype=jnp.float64
+        self.bvh = prepare_bvh(
+            cloud,
+            cloud,
+            policy=BVHBuildPolicy(leaf_size=min(_LEAF_SIZE, cloud.shape[0])),
+            dtype=jnp.float64,
         )
         self.exponents = jnp.asarray(features.exponents)
         self.radius = radius

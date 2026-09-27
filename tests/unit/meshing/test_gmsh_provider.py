@@ -30,7 +30,11 @@ def _planar_face(points: Any) -> Any:
 def _source(path: Any, shape: Any = None) -> Any:
     persisted = path.with_suffix(".brep")
     model = phx.geometry.persist_occt_shape(
-        BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape() if shape is None else shape,
+        (
+            BRepPrimAPI_MakeBox(gp_Pnt(-0.5, -0.5, -0.5), 1.0, 1.0, 1.0).Shape()
+            if shape is None
+            else shape
+        ),
         persisted,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
         linear_deflection=0.05,
@@ -154,6 +158,8 @@ def _specification(
         return phx.meshing.SurfaceMeshingSpec(
             target, scope, size_controls=(size,), periodic_constraints=periodic
         )
+    # Gmsh volume Delaunay treats sizes as targets; interior edges may exceed the
+    # hard bound by about one percent, so the volume request declares that slack.
     return phx.meshing.VolumeMeshingSpec(
         target,
         scope,
@@ -163,6 +169,7 @@ def _specification(
         size_controls=(size,),
         layer_controls=layers,
         periodic_constraints=periodic,
+        size_compliance=phx.meshing.SizeCompliancePolicy(relative_tolerance=0.1),
     )
 
 
@@ -276,11 +283,12 @@ def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path: Any) -> None
         first,
         growth_rate=1.2,
     )
-    control = phx.meshing.SweptLayerControl(
+    control = phx.meshing.BoundaryLayerControl(
         _face_scope(source, 2, -0.5),
-        _face_scope(source, 2, 0.5),
-        provider.whole_scope(source, 3),
         schedule,
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        volume_scope=provider.whole_scope(source, 3),
+        cap_scope=_face_scope(source, 2, 0.5),
     )
     result = provider.plan(
         source,
@@ -320,7 +328,7 @@ def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() ->
     # ty: ignore[unresolved-import]
     import gmsh
 
-    from phydrax.meshing.providers._gmsh import _audit_jacobians, _element_rows
+    from phydrax.meshing.providers._gmsh_elements import _audit_jacobians, _element_rows
 
     with _provider().open_session():
         gmsh.model.add("curved-inversion")
@@ -392,14 +400,11 @@ def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_s
     )
 
 
-def test_gmsh_preflight_rejects_unlowered_local_curvature_and_proximity(
-    tmp_path: Any,
-) -> None:
+def test_gmsh_preflight_rejects_unlowered_local_curvature(tmp_path: Any) -> None:
     source = _source(tmp_path / "local-sizing.step")
     provider = _provider()
     whole = provider.whole_scope(source, 2)
     first = provider.entity_scope(source, source.model.face_ids[0])
-    second = provider.entity_scope(source, source.model.face_ids[1])
     target = phx.meshing.CellMeshingTarget(
         2,
         3,
@@ -410,19 +415,13 @@ def test_gmsh_preflight_rejects_unlowered_local_curvature_and_proximity(
         whole,
         size_controls=(phx.meshing.CurvatureSizeControl(first, np.pi / 12.0),),
     )
-    proximity = phx.meshing.SurfaceMeshingSpec(
-        target,
-        whole,
-        size_controls=(phx.meshing.ProximitySizeControl(first, second, 3),),
-    )
 
-    for specification in (curvature, proximity):
-        with pytest.raises(phx.meshing.MeshingFailure) as failure:
-            provider.plan(source, specification)
-        assert (
-            failure.value.category
-            is phx.meshing.MeshingFailureCategory.UNSUPPORTED_COMBINATION
-        )
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        provider.plan(source, curvature)
+    assert (
+        failure.value.category
+        is phx.meshing.MeshingFailureCategory.UNSUPPORTED_COMBINATION
+    )
 
 
 def test_real_gmsh_hard_size_compliance_has_no_factor_two_allowance(

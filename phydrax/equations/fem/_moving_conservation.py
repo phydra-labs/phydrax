@@ -155,8 +155,11 @@ def finite_element_ale_metric_evidence(
     for block_index, block in enumerate(discretization.mesh.blocks):
         coordinate_element = discretization.coordinate_elements[block_index]
         points, _weights = _degree_aware_reference_rule(
-            block.cell_kind, max(2, coordinate_element.degree + 2)
+            block.cell_kind,
+            # ty: ignore[unresolved-attribute]
+            max(2, coordinate_element.degree + 2),
         )
+        # ty: ignore[unresolved-attribute]
         _basis, gradients = coordinate_element.tabulate(points)
         routes = discretization.coordinate_dofs[block_index]
         current_coordinates = current.coordinates[routes]

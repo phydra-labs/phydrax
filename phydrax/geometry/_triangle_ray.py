@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,11 +15,36 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from .._bvh import build_packed_bvh, refit_packed_bvh_bounds
+from .._bvh import BVHBuildPolicy, PackedBVH, prepare_bvh, refit_packed_bvh_bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._geometry_predicates import (
+    orient2d,
+    PredicateMode,
+    PredicateResult,
+    resolve_host_predicate_mode,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._ray_intersection import RayIntersectionResult, RayIntersectionStatus
+
+
+# A triangle is degenerate exactly when its three coordinate-plane projections
+# (the cross-product components) all have zero orientation.
+_PROJECTION_AXES = ((1, 2), (2, 0), (0, 1))
+
+
+def _projected_areas(
+    triangle_vertices: Any, mode: PredicateMode, /
+) -> tuple[PredicateResult, ...]:
+    return tuple(
+        orient2d(
+            triangle_vertices[:, 0][:, list(axes)],
+            triangle_vertices[:, 1][:, list(axes)],
+            triangle_vertices[:, 2][:, list(axes)],
+            mode=mode,
+        )
+        for axes in _PROJECTION_AXES
+    )
 
 
 class TriangleRayIntersectionStatus(IntEnum):
@@ -89,13 +114,19 @@ class TriangleRayQueryPlan(StrictModule, NonTrainableState):
             raise TypeError("triangles must contain integer vertex indices.")
         if np.any(triangles_host < 0) or np.any(triangles_host >= vertices_host.shape[0]):
             raise ValueError("triangles contains an out-of-range vertex index.")
-        triangle_vertices = vertices_host[triangles_host]
-        area_vectors = np.cross(
-            triangle_vertices[:, 1] - triangle_vertices[:, 0],
-            triangle_vertices[:, 2] - triangle_vertices[:, 0],
+        areas = _projected_areas(
+            vertices_host[triangles_host],
+            resolve_host_predicate_mode(PredicateMode.EXACT),
         )
-        if np.any(np.linalg.norm(area_vectors, axis=-1) == 0.0):
+        nonzero = np.any([area.certain & (area.signs != 0) for area in areas], axis=0)
+        zero = np.all([area.certain & (area.signs == 0) for area in areas], axis=0)
+        if np.any(zero):
             raise ValueError("triangles must be nondegenerate and oriented.")
+        if not np.all(nonzero):
+            raise ValueError(
+                "Triangle nondegeneracy is unresolved by the filtered predicate; "
+                "exact predicates require the optional phydrax-meshcore library."
+            )
         count = triangles_host.shape[0]
         if entity_ids is None:
             entity_host = np.arange(count, dtype=np.int32)
@@ -175,11 +206,7 @@ class PreparedTriangleRayQuery(StrictModule, NonTrainableState):
 
     triangles: Array
     entity_ids: Array
-    left: Array
-    right: Array
-    leaf_id: Array
-    leaf_items: Array
-    leaf_node: Array
+    bvh: PackedBVH
     reference_geometry: TriangleRayGeometryState
     leaf_size: int = eqx.field(static=True)
     traversal_stack_capacity: int = eqx.field(static=True)
@@ -235,11 +262,10 @@ def prepare_triangle_ray_query(
     padding = np.finfo(vertices_host.dtype).eps * 16.0 * scale
     bbox_min = bbox_min - padding[:, None]
     bbox_max = bbox_max + padding[:, None]
-    bvh = build_packed_bvh(
+    bvh = prepare_bvh(
         bbox_min,
         bbox_max,
-        np.mean(triangle_vertices, axis=1),
-        leaf_size=plan.leaf_size,
+        policy=BVHBuildPolicy(leaf_size=plan.leaf_size),
         dtype=plan.vertices.dtype,
     )
     geometry = TriangleRayGeometryState(
@@ -261,6 +287,8 @@ def prepare_triangle_ray_query(
         np.asarray(bvh.leaf_id),
         np.asarray(bvh.leaf_items),
         np.asarray(bvh.leaf_node),
+        np.asarray(bvh.item_bbox_min),
+        np.asarray(bvh.item_bbox_max),
         triangle_vertices,
         edge_one,
         edge_two,
@@ -281,11 +309,7 @@ def prepare_triangle_ray_query(
     return PreparedTriangleRayQuery(
         plan.triangles,
         plan.entity_ids,
-        bvh.left,
-        bvh.right,
-        bvh.leaf_id,
-        bvh.leaf_items,
-        bvh.leaf_node,
+        bvh,
         geometry,
         plan.leaf_size,
         plan.traversal_stack_capacity,
@@ -333,7 +357,11 @@ def refit_triangle_ray_geometry(
     edge_two = triangle_vertices[:, 2] - triangle_vertices[:, 0]
     area_vectors = jnp.cross(edge_one, edge_two)
     area_norms = jnp.sqrt(jnp.sum(area_vectors * area_vectors, axis=-1))
-    nondegenerate_triangles = area_norms > jnp.finfo(vertices_.dtype).eps
+    certified_area = jnp.zeros(area_norms.shape, dtype=jnp.bool_)
+    for area in _projected_areas(triangle_vertices, PredicateMode.FILTERED_DEVICE):
+        certified_area = certified_area | (area.certain & (area.signs != 0))
+    # A certified nonzero area can still underflow its Euclidean norm.
+    nondegenerate_triangles = certified_area & (area_norms > 0.0)
     normals = area_vectors / jnp.where(
         nondegenerate_triangles[:, None], area_norms[:, None], 1.0
     )
@@ -343,22 +371,14 @@ def refit_triangle_ray_geometry(
     padding = jnp.finfo(vertices_.dtype).eps * 16.0 * scale
     item_min = item_min - padding[:, None]
     item_max = item_max + padding[:, None]
-    bbox_min, bbox_max, _, _ = refit_packed_bvh_bounds(
-        item_min,
-        item_max,
-        left=prepared.left,
-        right=prepared.right,
-        leaf_id=prepared.leaf_id,
-        leaf_items=prepared.leaf_items,
-        leaf_node=prepared.leaf_node,
-    )
+    refitted = refit_packed_bvh_bounds(prepared.bvh, item_min, item_max)
     return TriangleRayGeometryState(
         triangle_vertices,
         edge_one,
         edge_two,
         normals,
-        bbox_min,
-        bbox_max,
+        refitted.bbox_min,
+        refitted.bbox_max,
         finite,
         jnp.all(nondegenerate_triangles),
         geometry_id,
@@ -598,7 +618,7 @@ def _query_bvh_one(
 
             def inspect_node(node_state: _RayNodeState) -> _RayNodeState:
                 stack___, size__, candidate__, tests__, exhausted__ = node_state
-                leaf = prepared.leaf_id[node]
+                leaf = prepared.bvh.leaf_id[node]
 
                 def inspect_leaf(leaf_state: _RayNodeState) -> _RayNodeState:
                     stack____, size___, candidate___, tests___, exhausted___ = leaf_state
@@ -608,7 +628,7 @@ def _query_bvh_one(
                         origin,
                         direction,
                         candidate___,
-                        prepared.leaf_items[leaf],
+                        prepared.bvh.leaf_items[leaf],
                     )
                     return stack____, size___, merged, tests___ + tested, exhausted___
 
@@ -616,8 +636,8 @@ def _query_bvh_one(
                     stack____, size___, candidate___, tests___, exhausted___ = (
                         branch_state
                     )
-                    left = prepared.left[node]
-                    right = prepared.right[node]
+                    left = prepared.bvh.left[node]
+                    right = prepared.bvh.right[node]
                     left_hit, left_near = _ray_box_hit(
                         origin,
                         direction,

@@ -334,6 +334,7 @@ def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe() -> 
     epoch = phx.applications.phase_field.PhaseFieldAdaptiveEpoch(method, initial)
     adaptation = phx.applications.phase_field.PhaseFieldAdaptivityPlan(
         gradient_threshold=0.0,
+        coordinate_contract=phx.SpatialCoordinateContract.si(),
         energy_tolerance=1.0,
     ).refine(epoch)
     assert bool(adaptation.committed)

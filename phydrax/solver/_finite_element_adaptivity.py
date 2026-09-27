@@ -17,7 +17,7 @@ from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellMesh, FiniteElementTransferBundle
+from ..discretization import CellMesh
 from ..discretization.fem import (
     FiniteElementHPEpoch,
     FiniteElementHPGeometry,
@@ -26,15 +26,16 @@ from ..discretization.fem import (
     prepare_finite_element_hp_epoch,
 )
 from ..equations import MaterialTransaction
-from ..meshing import CellMeshTransition
+from ..meshing import MeshAdaptationResult
 from ._finite_element_schedule import FiniteElementAcceptedState
 
 
 class FiniteElementTopologyResult(StrictModule, NonTrainableState):
+    """Promoted or retained state; ``adaptation`` is set only when committed."""
+
     state: FiniteElementAcceptedState
     mesh: CellMesh
-    transition: CellMeshTransition | None
-    transfer: FiniteElementTransferBundle | None
+    adaptation: MeshAdaptationResult | None
     committed: Array
     diagnostics: object
 
@@ -50,7 +51,12 @@ class FiniteElementHPTopologyResult(StrictModule, NonTrainableState):
 
 
 class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
-    """Build and certify a local-mesh candidate before atomic promotion."""
+    """Transfer, certify, and atomically promote one certified mesh adaptation.
+
+    Vertex P1 fields move through the adaptation's sparse
+    `FiniteElementTopologyTransfer`; materials go through ``material_transfer``
+    with the adaptation lineage. Rejection retains the accepted mesh and state.
+    """
 
     certify: Callable
     material_transfer: Callable | None
@@ -93,12 +99,26 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             }
         )
 
+    def _retained(
+        self,
+        accepted: FiniteElementAcceptedState,
+        mesh: CellMesh,
+        diagnostics: str,
+        /,
+    ) -> FiniteElementTopologyResult:
+        return FiniteElementTopologyResult(
+            state=accepted,
+            mesh=mesh,
+            adaptation=None,
+            committed=jnp.asarray(False),
+            diagnostics=diagnostics,
+        )
+
     def execute(
         self,
         accepted: FiniteElementAcceptedState,
         mesh: CellMesh,
-        transition: CellMeshTransition,
-        transfer: FiniteElementTransferBundle,
+        adaptation: MeshAdaptationResult,
         args: object = None,
         /,
     ) -> FiniteElementTopologyResult:
@@ -106,38 +126,34 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             raise TypeError("accepted must be FiniteElementAcceptedState.")
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
-        if not isinstance(transition, CellMeshTransition):
-            raise TypeError("transition must be CellMeshTransition.")
-        if not isinstance(transfer, FiniteElementTransferBundle):
-            raise TypeError("transfer must be FiniteElementTransferBundle.")
+        if not isinstance(adaptation, MeshAdaptationResult):
+            raise TypeError("adaptation must be MeshAdaptationResult.")
         if (
             mesh.topology_id != accepted.topology_id
-            or transition.source_mesh_id != mesh.mesh_id
-            or transition.source_topology_id != mesh.topology_id
+            or adaptation.source.mesh.mesh_id != mesh.mesh_id
         ):
-            raise ValueError("Accepted state and topology transition disagree.")
-        candidate_mesh = transition.target.mesh
+            raise ValueError("Accepted state and mesh adaptation disagree.")
+        transition = adaptation.transition
+        if transition is None:
+            return self._retained(accepted, mesh, "adaptation-unchanged")
+        transfer = adaptation.transfer
+        if transfer is None:
+            raise ValueError(
+                "Automatic topology transfer requires the adaptation's vertex transfer."
+            )
+        candidate_mesh = adaptation.target.mesh
         candidate_fields = []
         for field in accepted.fields:
-            if field.shape[0] != transfer.primal.shape[1]:
+            if field.shape[0] != transfer.source_size:
                 raise ValueError(
                     "Automatic topology transfer currently requires vertex P1 fields."
                 )
-            candidate_fields.append(
-                jnp.tensordot(transfer.primal, field, axes=((1,), (0,)))
-            )
+            candidate_fields.append(transfer.apply(field))
         candidate_materials: MaterialTransaction | None
         if accepted.materials is None:
             candidate_materials = None
         elif self.material_transfer is None:
-            return FiniteElementTopologyResult(
-                state=accepted,
-                mesh=mesh,
-                transition=None,
-                transfer=None,
-                committed=jnp.asarray(False),
-                diagnostics="material-transfer-policy-required",
-            )
+            return self._retained(accepted, mesh, "material-transfer-policy-required")
         else:
             transferred = self.material_transfer(
                 accepted.materials,
@@ -145,14 +161,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 args,
             )
             if not isinstance(transferred, MaterialTransaction):
-                return FiniteElementTopologyResult(
-                    state=accepted,
-                    mesh=mesh,
-                    transition=None,
-                    transfer=None,
-                    committed=jnp.asarray(False),
-                    diagnostics="material-transfer-rejected",
-                )
+                return self._retained(accepted, mesh, "material-transfer-rejected")
             candidate_materials = transferred
         certified = self.certify(
             candidate_mesh,
@@ -162,14 +171,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             args,
         )
         if not bool(jnp.asarray(certified)):
-            return FiniteElementTopologyResult(
-                state=accepted,
-                mesh=mesh,
-                transition=None,
-                transfer=None,
-                committed=jnp.asarray(False),
-                diagnostics="candidate-certification-rejected",
-            )
+            return self._retained(accepted, mesh, "candidate-certification-rejected")
         promoted = FiniteElementAcceptedState(
             candidate_fields,
             accepted.time,
@@ -184,8 +186,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         return FiniteElementTopologyResult(
             state=promoted,
             mesh=candidate_mesh,
-            transition=transition,
-            transfer=transfer,
+            adaptation=adaptation,
             committed=jnp.asarray(True),
             diagnostics="committed",
         )
@@ -215,7 +216,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     "Automatic hp state transfer requires one transfer per field."
                 )
             candidate_fields = tuple(
-                transfer.apply_mass_projection(field)
+                transfer.apply_l2_projection(field)
                 for transfer, field in zip(transfers, accepted.fields, strict=True)
             )
         else:

@@ -51,6 +51,7 @@ def _sphere_face_count(case: str) -> int | None:
 
 def _region(case: str) -> Any:
     if case == "tetrahedron":
+        # ty: ignore[invalid-argument-type]
         return phx.geometry.MeshRegion(_TETRA_VERTICES, _TETRA_FACES)
     if case == "two-tetrahedra":
         vertices = np.concatenate(
@@ -70,6 +71,7 @@ def _region(case: str) -> Any:
             raise ValueError(
                 "[geometry] Deterministic icosphere refinement produced an unexpected face count."
             )
+        # ty: ignore[invalid-argument-type]
         return phx.geometry.MeshRegion(np.asarray(mesh.vertices), np.asarray(mesh.faces))
     raise ValueError(f"[geometry] Unknown benchmark case {case!r}.")
 

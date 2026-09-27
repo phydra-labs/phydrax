@@ -6,6 +6,7 @@
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -123,6 +124,41 @@ def test_ale_step_prepares_all_ssprk_geometry_and_commits_atomically() -> None:
         step.committed_geometry().cell_volumes[0][0],
         step.stage_endpoint.cell_volumes[0][0],
     )
+
+
+def test_routed_patch_motion_moves_the_interior_and_keeps_the_gcl() -> None:
+    topology = _topology((4, 4))
+
+    def boundary_map(point: Any, time: Any, args: Any) -> Any:
+        del args
+        return point * (1.0 + 0.2 * time) + jnp.asarray((0.1 * time * point[1] ** 2, 0.0))
+
+    prescribed = phx.discretization.VariablePatchGeometryPlan(
+        topology, boundary_map, "prescribed-shear"
+    )
+    routed = phx.discretization.VariablePatchGeometryPlan(
+        topology,
+        boundary_map,
+        "routed-shear",
+        motion_policy=phx.discretization.FiniteElementMeshMotionPolicy(),
+    )
+    prescribed_state = prescribed.state(0.5)
+    routed_state = routed.state(0.5)
+    active = routed_state.active_cell_masks[0][0]
+    reference = np.asarray(routed.reference_vertices[0][0][0])
+    boundary = np.any((reference == 0.0) | (reference == 1.0), axis=-1)
+    moved = np.asarray(routed_state.vertex_coordinates[0][0][0])
+    mapped = np.asarray(prescribed_state.vertex_coordinates[0][0][0])
+
+    assert bool(routed_state.valid)
+    assert jnp.all(routed_state.gcl_defects[0][0][active] <= 1.0e-10)
+    np.testing.assert_allclose(moved[boundary], mapped[boundary], atol=1e-12)
+    # The quadratic shear is not harmonic, so the routed interior differs.
+    assert not np.allclose(moved[~boundary], mapped[~boundary])
+    step = phx.discretization.VariablePatchALEPlan(
+        routed, endpoint_tolerance=1.0e-8
+    ).prepare_step(routed.state(0.0), 0.1)
+    assert bool(step.successful)
 
 
 def test_patch_geometry_revision_is_exact_bounded_and_cannot_overflow_ale() -> None:

@@ -267,6 +267,7 @@ def test_provider_support_report_fails_before_execution() -> None:
 
 
 def test_layer_schedule_geometric_constructor_has_explicit_schedule_identity() -> None:
+    # ty: ignore[invalid-argument-type]
     explicit = phx.meshing.LayerSchedule((0.125, 0.25, 0.5))
     geometric = phx.meshing.LayerSchedule.geometric(
         3,
@@ -318,21 +319,31 @@ def test_geometric_layer_schedule_rejects_non_integral_count_and_invalid_paramet
         phx.meshing.LayerSchedule.geometric(2, 0.1, growth_rate=0.0)
 
 
-def test_swept_layer_control_is_face_to_face_and_volume_bound() -> None:
-    source = _scope(2, (10,))
-    target = _scope(2, (20,))
-    volume_scope = _scope(3, (30,))
-    schedule = phx.meshing.LayerSchedule((0.1, 0.15, 0.2))
-    control = phx.meshing.SweptLayerControl(
-        source,
-        target,
-        volume_scope,
+def _exact_sweep(
+    wall: Any, cap: Any, volume_scope: Any, schedule: Any, **options: Any
+) -> Any:
+    return phx.meshing.BoundaryLayerControl(
+        wall,
         schedule,
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        volume_scope=volume_scope,
+        cap_scope=cap,
+        **options,
     )
-    equivalent = phx.meshing.SweptLayerControl(
-        source,
-        target,
+
+
+def test_exact_sweep_boundary_layer_is_wall_to_cap_and_volume_bound() -> None:
+    wall = _scope(2, (10,))
+    cap = _scope(2, (20,))
+    volume_scope = _scope(3, (30,))
+    # ty: ignore[invalid-argument-type]
+    schedule = phx.meshing.LayerSchedule((0.1, 0.15, 0.2))
+    control = _exact_sweep(wall, cap, volume_scope, schedule)
+    equivalent = _exact_sweep(
+        wall,
+        cap,
         volume_scope,
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1, 0.15, 0.2)),
     )
     target_spec = phx.meshing.CellMeshingTarget(
@@ -352,49 +363,53 @@ def test_swept_layer_control_is_face_to_face_and_volume_bound() -> None:
     )
 
     assert control.schedule is schedule
-    assert control.termination is phx.meshing.LayerTerminationPolicy.REJECT
+    assert control.collision is phx.meshing.BoundaryLayerCollisionPolicy.FAIL
     assert control.control_id == equivalent.control_id
+    assert (
+        control.control_id
+        != _exact_sweep(wall, cap, volume_scope, schedule, feature_angle=0.3).control_id
+    )
     assert specification.layer_controls == (control,)
 
 
-def test_swept_layer_control_rejects_wrong_dimensions_binding_and_termination() -> None:
-    source = _scope(2, (10,))
-    target = _scope(2, (20,))
+def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies() -> None:
+    wall = _scope(2, (10,))
+    cap = _scope(2, (20,))
     volume_scope = _scope(3, (30,))
-    schedule = phx.meshing.LayerSchedule((0.1,))
+    # ty: ignore[invalid-argument-type]
+    schedule = phx.meshing.LayerSchedule((0.1, 0.2))
 
-    with pytest.raises(ValueError, match="face scopes"):
-        phx.meshing.SweptLayerControl(
-            _scope(1, (10,)),
-            target,
-            volume_scope,
+    with pytest.raises(ValueError, match="EXACT_SWEEP requires"):
+        _exact_sweep(_scope(1, (10,)), cap, volume_scope, schedule)
+    with pytest.raises(ValueError, match="CAD_EXTRUSION requires"):
+        phx.meshing.BoundaryLayerControl(
+            wall,
             schedule,
+            route=phx.meshing.BoundaryLayerRoute.CAD_EXTRUSION,
+            volume_scope=volume_scope,
+            cap_scope=cap,
         )
     with pytest.raises(ValueError, match="source binding"):
-        phx.meshing.SweptLayerControl(
-            source,
-            _scope(2, (20,), revision="foreign"),
-            volume_scope,
-            schedule,
-        )
+        _exact_sweep(wall, _scope(2, (20,), revision="foreign"), volume_scope, schedule)
     with pytest.raises(ValueError, match="disjoint"):
-        phx.meshing.SweptLayerControl(
-            source,
-            source,
+        _exact_sweep(wall, wall, volume_scope, schedule)
+    with pytest.raises(ValueError, match="Only the ADVANCING route"):
+        _exact_sweep(
+            wall,
+            cap,
             volume_scope,
             schedule,
+            collision=phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
         )
-    with pytest.raises(ValueError, match="only REJECT"):
-        phx.meshing.SweptLayerControl(
-            source,
-            target,
-            volume_scope,
-            schedule,
-            termination=phx.meshing.LayerTerminationPolicy.COLLAPSE,
-        )
+    with pytest.raises(ValueError, match="growth_rate_bounds"):
+        _exact_sweep(wall, cap, volume_scope, schedule, growth_rate_bounds=(1.0, 1.5))
+    with pytest.raises(ValueError, match="minimum_thickness_fraction"):
+        _exact_sweep(wall, cap, volume_scope, schedule, minimum_thickness_fraction=0.0)
+    with pytest.raises(ValueError, match="maximum_corner_stretch"):
+        _exact_sweep(wall, cap, volume_scope, schedule, maximum_corner_stretch=0.5)
 
 
-def test_volume_spec_rejects_swept_layer_outside_top_level_volume_scope() -> None:
+def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> None:
     boundary_scope = _scope(3, (30,))
     target_spec = phx.meshing.CellMeshingTarget(
         3,
@@ -404,10 +419,11 @@ def test_volume_spec_rejects_swept_layer_outside_top_level_volume_scope() -> Non
             allow_mixed=True,
         ),
     )
-    control = phx.meshing.SweptLayerControl(
+    control = _exact_sweep(
         _scope(2, (10,)),
         _scope(2, (20,)),
         _scope(3, (40,)),
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1,)),
     )
 

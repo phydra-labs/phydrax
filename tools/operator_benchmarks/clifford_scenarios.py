@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 import phydrax as phx
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint

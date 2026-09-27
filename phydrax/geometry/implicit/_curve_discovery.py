@@ -17,7 +17,7 @@ from .._certificate import FieldRegularity, SignReliability, ZeroSetAccuracy
 from .._contracts import CompiledGeometry, GeometryKind
 from ..design._schema import DesignState, ParameterSchema
 from ..simplicial._regions import SegmentMesh
-from ._discovery import _bisect_root
+from ._discovery import _isolate_roots
 from ._policy import ImplicitSurfacePolicy
 from ._projection import (
     _field_and_gradient,
@@ -61,7 +61,9 @@ class ImplicitCurveRealization(StrictModule):
         if not bool(np.asarray(self.accepted)):
             raise ValueError("Only an accepted implicit curve can be materialized.")
         return SegmentMesh(
+            # ty: ignore[invalid-argument-type]
             np.asarray(self.vertices),
+            # ty: ignore[invalid-argument-type]
             np.asarray(self.edges),
             source_id=self.source_id,
         )
@@ -272,7 +274,7 @@ def discover_implicit_curve(
             "Implicit curve discovery refuses lattice vertices on the zero set."
         )
 
-    vertices: list[np.ndarray] = []
+    vertices: list[tuple[tuple[int, int], tuple[int, int]]] = []
     edge_vertices: dict[tuple[tuple[int, int], tuple[int, int]], int] = {}
     segments: list[tuple[int, int]] = []
     for cell_i in range(axes[0].size - 1):
@@ -300,17 +302,8 @@ def discover_implicit_curve(
                 key = _edge_key(cell_i, cell_j, start, stop)
                 vertex = edge_vertices.get(key)
                 if vertex is None:
-                    first_index, second_index = key
-                    root = _bisect_root(
-                        geometry,
-                        lattice_points[first_index],
-                        lattice_points[second_index],
-                        values[first_index],
-                        values[second_index],
-                        root_tolerance,
-                    )
                     vertex = len(vertices)
-                    vertices.append(root)
+                    vertices.append(key)
                     if len(vertices) > policy.maximum_vertices:
                         raise ValueError(
                             "Implicit curve discovery exceeds maximum_vertices."
@@ -345,29 +338,39 @@ def discover_implicit_curve(
                     pairings = ((0, 1), (2, 3))
 
             for first_edge, second_edge in pairings:
-                start = crossing_vertices[first_edge]
-                stop = crossing_vertices[second_edge]
-                midpoint = 0.5 * (vertices[start] + vertices[stop])
-                tangent = vertices[stop] - vertices[start]
-                right_normal = np.asarray((tangent[1], -tangent[0]))
-                finite_gradient = np.asarray(
-                    _field_and_gradient(
-                        geometry.kernel,
-                        geometry.state,
-                        jnp.asarray(midpoint[None, :]),
-                    )[1][0],
-                    dtype=np.float64,
+                segments.append(
+                    (crossing_vertices[first_edge], crossing_vertices[second_edge])
                 )
-                if np.dot(right_normal, finite_gradient) < 0.0:
-                    start, stop = stop, start
-                segments.append((start, stop))
                 if len(segments) > policy.maximum_faces:
                     raise ValueError("Implicit curve discovery exceeds maximum_faces.")
 
     if not vertices or not segments:
         raise ValueError("Implicit curve discovery found no closed zero contour.")
-    vertices_array = np.asarray(vertices, dtype=np.float64)
+    edge_keys = np.asarray(vertices, dtype=np.int64)
+    lower_key = tuple(edge_keys[:, 0].T)
+    upper_key = tuple(edge_keys[:, 1].T)
+    roots, residuals = _isolate_roots(
+        geometry.kernel,
+        geometry.state,
+        jnp.asarray(lattice_points[lower_key]),
+        jnp.asarray(lattice_points[upper_key]),
+        jnp.asarray(values[lower_key]),
+        jnp.asarray(values[upper_key]),
+        jnp.asarray(root_tolerance, dtype=jnp.float64),
+    )
+    if np.any(np.asarray(residuals) > root_tolerance):
+        raise ValueError("Implicit root isolation did not meet root_tolerance.")
+    vertices_array = np.asarray(roots, dtype=np.float64)
     segment_array = np.asarray(segments, dtype=np.int32)
+    tangent = vertices_array[segment_array[:, 1]] - vertices_array[segment_array[:, 0]]
+    right_normal = np.stack((tangent[:, 1], -tangent[:, 0]), axis=1)
+    _, gradients = _field_and_gradient(
+        geometry.kernel,
+        geometry.state,
+        jnp.asarray(np.mean(vertices_array[segment_array], axis=1)),
+    )
+    flip = np.sum(right_normal * np.asarray(gradients, dtype=np.float64), axis=1) < 0.0
+    segment_array = np.where(flip[:, None], segment_array[:, ::-1], segment_array)
     degree = np.bincount(segment_array.reshape((-1,)), minlength=len(vertices))
     if np.any(degree != 2):
         raise ValueError("Implicit curve discovery produced a nonmanifold open topology.")

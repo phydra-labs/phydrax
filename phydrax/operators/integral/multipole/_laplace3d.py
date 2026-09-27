@@ -7,9 +7,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from operator import index
-from typing import Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -21,8 +20,11 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....discretization.spatial import MortonAddressPlan, SparseLevelOctreePlan
-from ....discretization.spatial._level_octree import SparseLevelOctree
+from ....discretization.spatial import (
+    AdaptiveOctree,
+    AdaptiveOctreePlan,
+    MortonAddressPlan,
+)
 from ....discretization.spatial._plane_interactions import (
     MortonPlaneInteractionPlan,
     MortonPlaneInteractionState,
@@ -40,8 +42,11 @@ from ....special._solid_harmonic import (
 from ....typing import parse
 
 
-TranslationRoute3D: TypeAlias = Literal["dense"]
-LaplaceExecution3D: TypeAlias = Literal["level_octree", "plane_dual"]
+TranslationRoute3D = Literal["dense"]
+LaplaceExecution3D = Literal["level_octree", "plane_dual"]
+
+# Targets per batch of the per-target W/U gathers, bounding their working set.
+_TARGET_BATCH_SIZE = 256
 
 
 def _translation_quadrature(bandlimit: int) -> tuple[np.ndarray, np.ndarray]:
@@ -131,13 +136,14 @@ class MultipoleCapacityEvidence3D(StrictModule, NonTrainableState):
 
 
 class MultipoleFarLocal3D(StrictModule, NonTrainableState):
-    """Target-associated far local expansions and their completion evidence."""
+    """Far-only local expansions centered at every target center."""
 
     coefficients: Array
     truncation: MultipoleTruncationEvidence3D
     capacity: MultipoleCapacityEvidence3D
     m2m_count: Array
     m2l_count: Array
+    p2l_count: Array
     l2l_count: Array
     successful: Array
     prepared_id: str = eqx.field(static=True)
@@ -158,8 +164,10 @@ class AbstractLaplaceMultipoleEvaluation3D(StrictModule, NonTrainableState):
     p2m_count: Array
     m2m_count: Array
     m2l_count: Array
+    p2l_count: Array
     l2l_count: Array
     l2p_count: Array
+    m2p_count: Array
     p2p_count: Array
     expansion_order: int = eqx.field(static=True)
     source_convention: str = eqx.field(static=True)
@@ -172,11 +180,20 @@ class LaplaceMultipoleEvaluation3D(AbstractLaplaceMultipoleEvaluation3D):
 
 
 class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
-    """Fixed-capacity Laplace FMM policy over a frozen sparse level octree.
+    """Fixed-capacity Laplace FMM policy over frozen reference topology.
 
     ``expansion_order=p`` stores degrees ``0 <= ell <= p`` in a complex,
     spin-zero :class:`SphericalModeLayout`.  Omitting ``reference_targets``
     selects same-support evaluation and exact diagonal exclusion.
+
+    ``execution="level_octree"`` prepares an adaptive octree over the
+    reference sources that subdivides cells holding more than
+    ``source_leaf_occupancy`` sources down to ``depth``; targets are located in
+    its leaves at evaluation. Its U/V/W/X interaction lists keep one cell of
+    clearance for sources displaced by up to ``maximum_reference_displacement``.
+    ``far_interaction_capacity`` then bounds each of the V, W, and X lists and
+    ``near_interaction_capacity`` bounds the U list; ``None`` stores them
+    completely.
     """
 
     reference_sources: Array
@@ -189,12 +206,12 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
     target_capacity: int = eqx.field(static=True)
     target_topology: Literal["same-support", "rectangular"] = eqx.field(static=True)
     maximum_reference_displacement: float = eqx.field(static=True)
-    far_interaction_capacity: int = eqx.field(static=True)
-    near_interaction_capacity: int = eqx.field(static=True)
+    far_interaction_capacity: int | None = eqx.field(static=True)
+    near_interaction_capacity: int | None = eqx.field(static=True)
     maximum_coefficient_bytes: int = eqx.field(static=True)
     translation_route: TranslationRoute3D = eqx.field(static=True)
     execution: LaplaceExecution3D = eqx.field(static=True)
-    plane_queue_capacity: int = eqx.field(static=True)
+    plane_queue_capacity: int | None = eqx.field(static=True)
     source_leaf_occupancy: int = eqx.field(static=True)
     target_leaf_occupancy: int = eqx.field(static=True)
     plane_coarsening_factor: int = eqx.field(static=True)
@@ -300,37 +317,33 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
             not math.isfinite(maximum_node_radius) or maximum_node_radius <= 0.0
         ):
             raise ValueError("plane_maximum_node_radius must be finite and positive.")
-        combined = sources.shape[0] + targets.shape[0]
         if execution == "plane_dual":
             source_leaf_count = math.ceil(sources.shape[0] / source_leaf)
             target_leaf_count = math.ceil(targets.shape[0] / target_leaf)
             pair_default = max(source_leaf_count * target_leaf_count, 1)
-            far_default = pair_default
-            near_default = pair_default
-            queue_default = pair_default
         else:
-            far_default = combined * max(depth_ - 1, 1) * min(189, combined)
-            near_default = combined * min(27, combined)
-            queue_default = max(far_default, near_default)
+            pair_default = None
         far = (
-            far_default
+            pair_default
             if far_interaction_capacity is None
             else index(far_interaction_capacity)
         )
         near = (
-            near_default
+            pair_default
             if near_interaction_capacity is None
             else index(near_interaction_capacity)
         )
         queue = (
-            queue_default if plane_queue_capacity is None else index(plane_queue_capacity)
+            pair_default if plane_queue_capacity is None else index(plane_queue_capacity)
         )
-        if far <= 0 or near <= 0 or queue <= 0:
+        if any(value is not None and value <= 0 for value in (far, near, queue)):
             raise ValueError("Far, near, and queue capacities must be positive.")
         self.reference_sources = jnp.asarray(sources)
         self.reference_targets = jnp.asarray(targets)
-        self.lower = (float(lower_[0]), float(lower_[1]), float(lower_[2]))
-        self.upper = (float(upper_[0]), float(upper_[1]), float(upper_[2]))
+        # ty: ignore[invalid-assignment]
+        self.lower = tuple(float(value) for value in lower_)
+        # ty: ignore[invalid-assignment]
+        self.upper = tuple(float(value) for value in upper_)
         self.depth = depth_
         self.expansion_order = order
         self.source_capacity = sources.shape[0]
@@ -377,6 +390,7 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
 
     def prepare(self, /) -> PreparedLaplaceMultipole3D:
         """Materialize topology, projection quadrature, and bounded workspaces."""
+        # ty: ignore[missing-argument]
         return PreparedLaplaceMultipole3D(self)
 
 
@@ -385,7 +399,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
 
     plan: LaplaceMultipolePlan3D
     layout: SphericalModeLayout
-    topology: SparseLevelOctree | None
+    topology: AdaptiveOctree | None
     quadrature_directions: Array
     quadrature_weights: Array
     quadrature_harmonics: Array
@@ -421,24 +435,18 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         target_plane = None
         plane_interactions = None
         if plan.execution == "level_octree":
-            combined_reference = jnp.concatenate(
-                (plan.reference_sources, plan.reference_targets),
-                axis=0,
-            )
-            combined_capacity = plan.source_capacity + plan.target_capacity
-            octree_plan = SparseLevelOctreePlan(
+            topology = AdaptiveOctreePlan(
                 MortonAddressPlan(plan.lower, plan.upper, plan.depth),
-                combined_capacity,
-                far_interaction_capacity=plan.far_interaction_capacity,
-                near_interaction_capacity=plan.near_interaction_capacity,
-            )
-            topology = octree_plan.prepare(
-                combined_reference,
-                stable_ids=jnp.arange(combined_capacity, dtype=jnp.int64),
-            )
+                leaf_capacity=plan.source_leaf_occupancy,
+                separation_padding=plan.maximum_reference_displacement,
+                u_capacity=plan.near_interaction_capacity,
+                v_capacity=plan.far_interaction_capacity,
+                w_capacity=plan.far_interaction_capacity,
+                x_capacity=plan.far_interaction_capacity,
+            ).prepare(plan.reference_sources)
             if not bool(topology.evidence.successful):
                 raise ValueError(
-                    "SparseLevelOctreePlan capacity is exhausted by the reference topology."
+                    "Adaptive octree interaction capacity is exhausted by the reference sources."
                 )
         else:
             address = MortonAddressPlan(plan.lower, plan.upper, plan.depth)
@@ -474,8 +482,11 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 source_plane_plan,
                 target_plane_plan,
                 opening_angle=plan.plane_opening_angle,
+                # ty: ignore[invalid-argument-type]
                 queue_capacity=plan.plane_queue_capacity,
+                # ty: ignore[invalid-argument-type]
                 far_capacity=plan.far_interaction_capacity,
+                # ty: ignore[invalid-argument-type]
                 near_capacity=plan.near_interaction_capacity,
                 maximum_node_radius=plan.plane_maximum_node_radius,
             ).build(
@@ -495,8 +506,14 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         padded = math.prod(layout.coefficient_shape)
         coefficient_bytes = padded * np.dtype(np.complex128).itemsize
         if topology is not None:
-            node_capacity = topology.hierarchy.node_active.size
+            node_capacity = topology.node_count
             required_bytes = 2 * node_capacity * coefficient_bytes
+            far_capacity = (
+                topology.v_list.routes.capacity
+                + topology.w_list.routes.capacity
+                + topology.x_list.routes.capacity
+            )
+            near_capacity = topology.u_list.routes.capacity
             topology_id = topology.tree_id
         else:
             if source_plane_plan is None or target_plane_plan is None:
@@ -505,6 +522,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 source_plane_plan.node_capacity + target_plane_plan.node_capacity
             )
             required_bytes = node_capacity * coefficient_bytes
+            far_capacity = plan.far_interaction_capacity
+            near_capacity = plan.near_interaction_capacity
             topology_id = canonical_fingerprint(
                 {
                     "source_plane": source_plane_plan.plan_id,
@@ -530,8 +549,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 "maximum_coefficient_bytes": plan.maximum_coefficient_bytes,
                 "quadrature_node_count": directions.shape[0],
                 "node_capacity": node_capacity,
-                "far_interaction_capacity": plan.far_interaction_capacity,
-                "near_interaction_capacity": plan.near_interaction_capacity,
+                "far_interaction_capacity": far_capacity,
+                "near_interaction_capacity": near_capacity,
                 "execution": plan.execution,
             }
         )
@@ -550,8 +569,10 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             maximum_coefficient_bytes=plan.maximum_coefficient_bytes,
             quadrature_node_count=directions.shape[0],
             node_capacity=node_capacity,
-            far_interaction_capacity=plan.far_interaction_capacity,
-            near_interaction_capacity=plan.near_interaction_capacity,
+            # ty: ignore[invalid-argument-type]
+            far_interaction_capacity=far_capacity,
+            # ty: ignore[invalid-argument-type]
+            near_interaction_capacity=near_capacity,
             within_budget=within_budget,
             evidence_id=evidence_id,
         )
@@ -635,7 +656,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             if normals.shape != positions.shape:
                 raise ValueError("source_normals must match source_positions.")
 
-            def dipole_basis(vector: Array, normal: Array) -> Array:
+            def dipole_basis(vector: Any, normal: Any) -> Any:
                 derivative = jax.jacfwd(self._p2m_basis)(vector)
                 return jnp.sum(derivative * normal, axis=-1)
 
@@ -671,7 +692,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             if normals.shape != positions.shape:
                 raise ValueError("source_normals must match source_positions.")
 
-            def dipole_basis(vector: Array, normal: Array) -> Array:
+            def dipole_basis(vector: Any, normal: Any) -> Any:
                 derivative = jax.jacfwd(self._p2l_basis)(vector)
                 return jnp.sum(derivative * normal, axis=-1)
 
@@ -682,13 +703,9 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             modal.reshape(self.layout.coefficient_shape + payload_shape)
         )
 
-    def _evaluate_basis(
-        self,
-        coefficients: Array,
-        relative: Array,
-        radial: Literal["regular", "irregular"],
-    ) -> Array:
+    def _evaluate_basis(self, coefficients: Array, relative: Array, radial: str) -> Array:
         modal = self._validate_coefficients(coefficients, "coefficients")
+        # ty: ignore[invalid-argument-type]
         basis = _mode_basis(self.layout, relative, radial=radial)
         modal_flat, payload_shape = _flatten_payload(modal, 2)
         point_shape = tuple(relative.shape[:-1])
@@ -737,9 +754,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         )
         return translated
 
-    def _project_local(
-        self, function: Callable[[Array], Array], center: Array, /
-    ) -> Array:
+    def _project_local(self, function: Any, center: Array, /) -> Array:
         directions = self.quadrature_directions.astype(center.dtype)
         weights = self.quadrature_weights.astype(center.dtype)
         payload_probe = function(center)
@@ -751,8 +766,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         offset = self.layout.bandlimit - 1
         for degree in range(self.layout.bandlimit):
 
-            def along(direction: Array, degree: int = degree) -> Array:
-                def radial(distance: Array) -> Array:
+            def along(direction: Any, degree: Any = degree) -> Any:
+                def radial(distance: Any) -> Any:
                     return function(center + distance * direction)
 
                 derivative = radial
@@ -1128,6 +1143,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             (self.plan.target_capacity, self.plan.source_capacity), dtype=jnp.bool_
         )
         near = self.plane_interactions.near
+        # ty: ignore[invalid-argument-type]
         for route in range(self.plan.near_interaction_capacity):
             pair_mask = pair_mask | (
                 near.valid[route]
@@ -1179,8 +1195,10 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             p2m_count=jnp.sum(active, dtype=jnp.int32),
             m2m_count=m2m_count,
             m2l_count=m2l_count,
+            p2l_count=jnp.asarray(0, dtype=jnp.int32),
             l2l_count=l2l_count,
             l2p_count=jnp.asarray(self.plan.target_capacity, dtype=jnp.int32),
+            m2p_count=jnp.asarray(0, dtype=jnp.int32),
             p2p_count=p2p_count,
             expansion_order=self.plan.expansion_order,
             source_convention=self.source_convention,
@@ -1192,11 +1210,6 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 }
             ),
         )
-
-    def _level_octree_topology(self) -> SparseLevelOctree:
-        if self.topology is None:
-            raise RuntimeError("Level-octree topology is not prepared.")
-        return self.topology
 
     def _capacity_evidence(self) -> MultipoleCapacityEvidence3D:
         if self.plan.execution == "plane_dual":
@@ -1218,17 +1231,26 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 near_interaction_capacity=interactions.near_capacity,
                 successful=interactions.successful,
             )
-        level_octree = self._level_octree_topology()
-        hierarchy = level_octree.hierarchy
-        topology = level_octree.evidence
+        if self.topology is None:
+            raise RuntimeError("Level-octree topology is not prepared.")
+        topology = self.topology
+        far_lists = (topology.v_list, topology.w_list, topology.x_list)
         return MultipoleCapacityEvidence3D(
-            required_nodes=hierarchy.evidence.required_nodes,
-            node_capacity=hierarchy.evidence.node_capacity,
-            required_far_interactions=topology.required_far_interactions,
-            far_interaction_capacity=topology.far_interaction_capacity,
-            required_near_interactions=topology.required_near_interactions,
-            near_interaction_capacity=topology.near_interaction_capacity,
-            successful=topology.successful,
+            required_nodes=topology.evidence.node_count,
+            node_capacity=topology.evidence.node_count,
+            # ty: ignore[invalid-argument-type]
+            required_far_interactions=sum(
+                interaction.required_routes for interaction in far_lists
+            ),
+            far_interaction_capacity=jnp.asarray(
+                sum(interaction.routes.capacity for interaction in far_lists),
+                dtype=jnp.int32,
+            ),
+            required_near_interactions=topology.u_list.required_routes,
+            near_interaction_capacity=jnp.asarray(
+                topology.u_list.routes.capacity, dtype=jnp.int32
+            ),
+            successful=topology.evidence.successful,
         )
 
     def _validate_evaluation_inputs(
@@ -1323,16 +1345,13 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 | ~finite
             )
         else:
-            address = MortonAddressPlan(
-                self.plan.lower,
-                self.plan.upper,
-                self.plan.depth,
-            )
-            actual_codes = address.encode(actual).codes
-            reference_codes = address.encode(references).codes
+            if self.topology is None:
+                raise RuntimeError("Level-octree topology is not prepared.")
+            # Sources keep their reference leaves; the separation padding covers
+            # their displacement. Targets are located, so they only need a leaf.
             stale = (
                 (displacement > self.plan.maximum_reference_displacement)
-                | jnp.any(actual_codes != reference_codes)
+                | jnp.any(self.topology.locate(targets) < 0)
                 | ~finite
             )
         strengths = eqx.error_if(
@@ -1349,17 +1368,19 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         active: Array,
         normals: Array | None,
     ) -> tuple[Array, Array]:
-        hierarchy = self._level_octree_topology().hierarchy
-        node_count = hierarchy.node_active.size
-        source_leaf = hierarchy.logical_point_leaf_slots[: self.plan.source_capacity]
-        safe_leaf = jnp.maximum(source_leaf, 0)
-        centers = hierarchy.node_centers[safe_leaf]
-        relative = sources - centers
+        """P2M into the frozen reference leaves, then M2M up the adaptive octree."""
+        topology = self.topology
+        # ty: ignore[unresolved-attribute]
+        node_count = topology.node_count
+        # ty: ignore[unresolved-attribute]
+        leaves = topology.point_leaves
+        # ty: ignore[unresolved-attribute]
+        relative = sources - topology.node_centers[leaves]
         if normals is None:
             basis = jnp.moveaxis(self._p2m_basis(relative), -1, 0)
         else:
 
-            def dipole_basis(vector: Array, normal: Array) -> Array:
+            def dipole_basis(vector: Any, normal: Any) -> Any:
                 derivative = jax.jacfwd(self._p2m_basis)(vector)
                 return jnp.sum(derivative * normal, axis=-1)
 
@@ -1374,49 +1395,21 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 + (strength_flat.shape[-1],),
                 dtype=jnp.result_type(per_source.dtype, 1j),
             )
-            .at[safe_leaf]
+            .at[leaves]
             .add(per_source)
         )
-        charge = jnp.max(jnp.abs(strength_flat), axis=-1)
-        charge_mass = (
-            jnp.zeros((node_count,), dtype=charge.dtype)
-            .at[safe_leaf]
-            .add(jnp.where(active, charge, 0.0))
-        )
-        children = hierarchy.node_children
-        safe_children = jnp.maximum(children, 0)
-        valid_children = children >= 0
-        for level in range(self.plan.depth - 1, -1, -1):
-            at_level = (
-                hierarchy.node_active
-                & ~hierarchy.node_is_leaf
-                & (hierarchy.node_levels == level)
+        charge = jnp.where(active, jnp.max(jnp.abs(strength_flat), axis=-1), 0.0)
+        charge_mass = jnp.zeros((node_count,), dtype=charge.dtype).at[leaves].add(charge)
+
+        def translate(values: Any, child_centers: Any, parent_centers: Any) -> Any:
+            child_moments, child_mass = values
+            return (
+                jax.vmap(self.m2m)(child_moments, child_centers, parent_centers),
+                child_mass,
             )
-            child_moments = moments[safe_children]
-            child_centers = hierarchy.node_centers[safe_children]
-            parent_centers = jnp.broadcast_to(
-                hierarchy.node_centers[:, None, :], child_centers.shape
-            )
-            translated = jax.vmap(
-                jax.vmap(self.m2m, in_axes=(0, 0, 0)), in_axes=(0, 0, 0)
-            )(child_moments, child_centers, parent_centers)
-            translated = jnp.where(
-                valid_children.reshape(
-                    valid_children.shape + (1,) * (translated.ndim - 2)
-                ),
-                translated,
-                0.0,
-            )
-            parent_moments = jnp.sum(translated, axis=1)
-            moments = jnp.where(
-                at_level.reshape((node_count,) + (1,) * (moments.ndim - 1)),
-                parent_moments,
-                moments,
-            )
-            parent_mass = jnp.sum(
-                jnp.where(valid_children, charge_mass[safe_children], 0.0), axis=1
-            )
-            charge_mass = jnp.where(at_level, parent_mass, charge_mass)
+
+        # ty: ignore[unresolved-attribute]
+        moments, charge_mass = topology.upward_pass((moments, charge_mass), translate)
         return moments.reshape(
             (node_count,) + self.layout.coefficient_shape + payload_shape
         ), charge_mass
@@ -1427,75 +1420,141 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         strengths: Array,
         active: Array,
         normals: Array | None,
-    ) -> tuple[Array, MultipoleTruncationEvidence3D, Array, Array, Array]:
-        topology = self._level_octree_topology()
-        hierarchy = topology.hierarchy
+    ) -> tuple[Array, Array, Array]:
+        """Return node moments, node charge mass, and complete node locals.
+
+        Node locals collect V-list M2L and X-list P2L routes and then inherit every
+        ancestor local through L2L.
+        """
+        topology = self.topology
         moments, charge_mass = self._source_moments(sources, strengths, active, normals)
-        node_count = hierarchy.node_active.size
-        safe_source = jnp.maximum(topology.far_sources, 0)
-        safe_target = jnp.maximum(topology.far_targets, 0)
-        active_route = topology.far_active
-        source_center = hierarchy.node_centers[safe_source]
-        raw_target_center = hierarchy.node_centers[safe_target]
-        fallback_offset = jnp.asarray((1.0, 0.0, 0.0), dtype=source_center.dtype)
+        # ty: ignore[unresolved-attribute]
+        centers = topology.node_centers
+        # Masked route slots are evaluated one unit away from their expansion
+        # center so that every basis stays finite under differentiation.
+        offset = jnp.asarray((1.0, 0.0, 0.0), dtype=centers.dtype)
+        # ty: ignore[unresolved-attribute]
+        far = topology.v_list.routes
+        source_center = centers[far.source_indices]
         target_center = jnp.where(
-            active_route[:, None],
-            raw_target_center,
-            source_center + fallback_offset,
+            far.valid[:, None], centers[far.target_indices], source_center + offset
         )
         translated = jax.vmap(self.m2l)(
-            moments[safe_source], source_center, target_center
+            moments[far.source_indices], source_center, target_center
         )
         translated = jnp.where(
-            active_route.reshape((active_route.size,) + (1,) * (translated.ndim - 1)),
-            translated,
+            far.valid.reshape((-1,) + (1,) * (translated.ndim - 1)), translated, 0.0
+        )
+        # ty: ignore[unresolved-attribute]
+        leaf_routes = topology.x_list.routes
+        # ty: ignore[unresolved-attribute]
+        points, point_valid = topology.leaf_points(leaf_routes.source_indices)
+        point_valid = point_valid & leaf_routes.valid[:, None] & active[points]
+        local_center = centers[leaf_routes.target_indices]
+        positions = jnp.where(
+            point_valid[..., None], sources[points], local_center[:, None, :] + offset
+        )
+        point_strengths = jnp.where(
+            point_valid.reshape(point_valid.shape + (1,) * (strengths.ndim - 1)),
+            strengths[points],
             0.0,
         )
+        if normals is None:
+            expanded = jax.vmap(self.p2l)(positions, point_strengths, local_center)
+        else:
+            expanded = jax.vmap(
+                lambda position, strength, center, normal: self.p2l(
+                    position, strength, center, source_normals=normal
+                )
+            )(positions, point_strengths, local_center, normals[points])
         locals_ = (
-            jnp.zeros((node_count,) + translated.shape[1:], dtype=translated.dtype)
-            .at[safe_target]
-            .add(translated)
+            # ty: ignore[unresolved-attribute]
+            topology.v_list.execution.reduce(translated, accumulation="deterministic")[0]
+            # ty: ignore[unresolved-attribute]
+            + topology.x_list.execution.reduce(expanded, accumulation="deterministic")[0]
         )
-        source_radius = jnp.linalg.norm(hierarchy.node_half_widths[safe_source], axis=-1)
-        target_radius = jnp.linalg.norm(hierarchy.node_half_widths[safe_target], axis=-1)
-        distance = jnp.linalg.norm(target_center - source_center, axis=-1)
-        safe_distance = jnp.maximum(distance, jnp.finfo(distance.dtype).tiny)
-        ratio = (source_radius + target_radius) / safe_distance
-        gap = jnp.maximum(
-            distance - source_radius - target_radius,
-            jnp.finfo(distance.dtype).tiny,
-        )
+        # ty: ignore[unresolved-attribute]
+        locals_ = topology.downward_pass(locals_, jax.vmap(self.l2l))
+        return moments, charge_mass, locals_
+
+    def _octree_truncation(self, charge_mass: Array) -> MultipoleTruncationEvidence3D:
+        """Geometric tail evidence of every V (M2L), W (M2P), and X (P2L) route."""
+        # ty: ignore[unresolved-attribute]
+        sources, radii, distances, valid = self.topology.far_route_geometry()
+        tiny = jnp.finfo(radii.dtype).tiny
+        distance = jnp.maximum(distances, tiny)
+        route_mass = charge_mass[sources]
+        ratio = radii / distance
+        gap = jnp.maximum(distance - radii, tiny)
         route_tail = (
-            charge_mass[safe_source]
+            route_mass
             * ratio ** (self.plan.expansion_order + 1)
             / (4.0 * jnp.pi * gap * jnp.maximum(1.0 - ratio, jnp.finfo(ratio.dtype).eps))
         )
-        route_tail = jnp.where(active_route, route_tail, 0.0)
-        maximum_ratio = jnp.max(jnp.where(active_route, ratio, 0.0), initial=0.0)
-        well_separated = jnp.all(~active_route | (ratio < 1.0))
-        parent = jnp.maximum(hierarchy.node_parents, 0)
-        for level in range(1, self.plan.depth + 1):
-            at_level = hierarchy.node_active & (hierarchy.node_levels == level)
-            inherited = jax.vmap(self.l2l)(
-                locals_[parent], hierarchy.node_centers[parent], hierarchy.node_centers
-            )
-            locals_ = locals_ + jnp.where(
-                at_level.reshape((node_count,) + (1,) * (locals_.ndim - 1)),
-                inherited,
-                0.0,
-            )
-        truncation = MultipoleTruncationEvidence3D(
-            geometric_tail_bound=jnp.sum(route_tail),
-            maximum_separation_ratio=maximum_ratio,
-            well_separated=well_separated,
+        return MultipoleTruncationEvidence3D(
+            geometric_tail_bound=jnp.sum(jnp.where(valid, route_tail, 0.0)),
+            maximum_separation_ratio=jnp.max(jnp.where(valid, ratio, 0.0), initial=0.0),
+            well_separated=jnp.all(~valid | (ratio < 1.0)),
             expansion_order=self.plan.expansion_order,
         )
-        m2m_count = jnp.sum(
-            hierarchy.node_active & ~hierarchy.node_is_leaf, dtype=jnp.int32
+
+    def _octree_target_routes(
+        self,
+        moments: Array,
+        sources: Array,
+        strengths: Array,
+        active: Array,
+        normals: Array | None,
+        targets: Array,
+        target_leaves: Array,
+        identities: Array,
+    ) -> tuple[Array, Array, Array, Array]:
+        """Evaluate W-list multipoles and U-list direct pairs at every target."""
+        topology = self.topology
+        # ty: ignore[unresolved-attribute]
+        centers = topology.node_centers
+        offset = jnp.asarray((1.0, 0.0, 0.0), dtype=centers.dtype)
+
+        def one_target(item: Any) -> Any:
+            target, leaf, identity = item
+            # ty: ignore[unresolved-attribute]
+            nodes, valid = topology.w_list.rows(leaf)
+            node_centers = jnp.where(valid[:, None], centers[nodes], target + offset)
+            multipole_values = jax.vmap(
+                lambda moment, center: self.multipole_to_point(moment, center, target)
+            )(moments[nodes], node_centers)
+            multipole_value = jnp.sum(
+                jnp.where(
+                    valid.reshape((-1,) + (1,) * (multipole_values.ndim - 1)),
+                    multipole_values,
+                    0.0,
+                ),
+                axis=0,
+            )
+            # ty: ignore[unresolved-attribute]
+            leaves, leaf_valid = topology.u_list.rows(leaf)
+            # ty: ignore[unresolved-attribute]
+            points, point_valid = topology.leaf_points(leaves)
+            points = points.reshape((-1,))
+            pair_valid = (
+                (point_valid & leaf_valid[:, None]).reshape((-1,))
+                & active[points]
+                & (points != identity)
+            )
+            near, count = self._p2p_masked(
+                sources[points],
+                strengths[points],
+                target[None, :],
+                pair_valid[None, :],
+                source_normals=None if normals is None else normals[points],
+            )
+            return multipole_value, near[0], count, jnp.sum(valid, dtype=jnp.int32)
+
+        return jax.lax.map(
+            one_target,
+            (targets, target_leaves, identities),
+            batch_size=_TARGET_BATCH_SIZE,
         )
-        m2l_count = jnp.sum(active_route, dtype=jnp.int32)
-        l2l_count = jnp.maximum(hierarchy.evidence.active_nodes - 1, 0)
-        return locals_, truncation, m2m_count, m2l_count, l2l_count
 
     def far_local(
         self,
@@ -1507,8 +1566,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         source_normals: ArrayLike | None = None,
         active_mask: ArrayLike | None = None,
     ) -> MultipoleFarLocal3D:
-        """Return the far-only local expansion associated with every target leaf."""
-        sources, strengths, _targets, active, normals, _, stale = (
+        """Return the far-only local expansion centered at every target center."""
+        sources, strengths, expansion_centers, active, normals, _, stale = (
             self._validate_evaluation_inputs(
                 source_positions,
                 source_strengths,
@@ -1519,7 +1578,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         )
         if self.plan.execution == "plane_dual":
             (
-                coefficients,
+                leaf_coefficients,
                 truncation,
                 m2m_count,
                 m2l_count,
@@ -1527,9 +1586,17 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             ) = self._plane_far_locals(
                 sources,
                 strengths,
-                _targets,
+                expansion_centers,
                 active,
                 normals,
+            )
+            # ty: ignore[unresolved-attribute]
+            target_leaf = jnp.maximum(self.target_plane.logical_point_leaf_slots, 0)
+            coefficients = jax.vmap(self.l2l)(
+                leaf_coefficients,
+                # ty: ignore[unresolved-attribute]
+                self.target_plane.node_centers[target_leaf],
+                expansion_centers,
             )
             capacity = self._capacity_evidence()
             finite = jnp.all(jnp.isfinite(coefficients))
@@ -1540,29 +1607,61 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 capacity=capacity,
                 m2m_count=m2m_count,
                 m2l_count=m2l_count,
-                l2l_count=l2l_count,
+                p2l_count=jnp.asarray(0, dtype=jnp.int32),
+                l2l_count=l2l_count + self.plan.target_capacity,
                 successful=successful,
                 prepared_id=self.prepared_id,
             )
-        locals_, truncation, m2m_count, m2l_count, l2l_count = self._far_locals(
+        topology = self.topology
+        moments, charge_mass, locals_ = self._far_locals(
             sources, strengths, active, normals
         )
-        hierarchy = self._level_octree_topology().hierarchy
-        target_leaf = hierarchy.logical_point_leaf_slots[
-            self.plan.source_capacity : self.plan.source_capacity
-            + self.plan.target_capacity
-        ]
-        coefficients = locals_[jnp.maximum(target_leaf, 0)]
+        truncation = self._octree_truncation(charge_mass)
+        # ty: ignore[unresolved-attribute]
+        centers = topology.node_centers
+        offset = jnp.asarray((1.0, 0.0, 0.0), dtype=centers.dtype)
+        # ty: ignore[unresolved-attribute]
+        target_leaves = jnp.maximum(topology.locate(expansion_centers), 0)
+        inherited = jax.vmap(self.l2l)(
+            locals_[target_leaves], centers[target_leaves], expansion_centers
+        )
+
+        def converted_locals(item: Any) -> Any:
+            center, leaf = item
+            # ty: ignore[unresolved-attribute]
+            nodes, valid = topology.w_list.rows(leaf)
+            source_centers = centers[nodes]
+            local_centers = jnp.where(valid[:, None], center, source_centers + offset)
+            translated = jax.vmap(self.m2l)(moments[nodes], source_centers, local_centers)
+            return jnp.sum(
+                jnp.where(
+                    valid.reshape((-1,) + (1,) * (translated.ndim - 1)), translated, 0.0
+                ),
+                axis=0,
+            ), jnp.sum(valid, dtype=jnp.int32)
+
+        converted, conversions = jax.lax.map(
+            converted_locals,
+            (expansion_centers, target_leaves),
+            batch_size=_TARGET_BATCH_SIZE,
+        )
+        coefficients = inherited + converted
         capacity = self._capacity_evidence()
         finite = jnp.all(jnp.isfinite(coefficients))
         successful = capacity.successful & truncation.well_separated & finite & ~stale
+        # ty: ignore[unresolved-attribute]
+        translations = jnp.asarray(topology.node_count - 1, dtype=jnp.int32)
         return MultipoleFarLocal3D(
             coefficients=coefficients,
             truncation=truncation,
             capacity=capacity,
-            m2m_count=m2m_count,
-            m2l_count=m2l_count,
-            l2l_count=l2l_count,
+            m2m_count=translations,
+            # ty: ignore[unresolved-attribute]
+            m2l_count=jnp.sum(topology.v_list.routes.valid, dtype=jnp.int32)
+            + jnp.sum(conversions, dtype=jnp.int32),
+            # ty: ignore[unresolved-attribute]
+            p2l_count=jnp.sum(topology.x_list.routes.valid, dtype=jnp.int32),
+            l2l_count=translations + self.plan.target_capacity,
             successful=successful,
             prepared_id=self.prepared_id,
         )
@@ -1597,30 +1696,6 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 source_normals,
             )
         )
-        locals_, truncation, m2m_count, m2l_count, l2l_count = self._far_locals(
-            sources, strengths, active, normals
-        )
-        topology = self._level_octree_topology()
-        hierarchy = topology.hierarchy
-        source_leaf = hierarchy.logical_point_leaf_slots[: self.plan.source_capacity]
-        target_leaf = hierarchy.logical_point_leaf_slots[
-            self.plan.source_capacity : self.plan.source_capacity
-            + self.plan.target_capacity
-        ]
-        target_local = locals_[jnp.maximum(target_leaf, 0)]
-        far_values = jax.vmap(self.l2p)(
-            target_local, hierarchy.node_centers[jnp.maximum(target_leaf, 0)], targets
-        )
-        pair_mask = jnp.zeros(
-            (self.plan.target_capacity, self.plan.source_capacity), dtype=jnp.bool_
-        )
-        for route in range(self.plan.near_interaction_capacity):
-            pair_mask = pair_mask | (
-                topology.near_active[route]
-                & (target_leaf[:, None] == topology.near_targets[route])
-                & (source_leaf[None, :] == topology.near_sources[route])
-            )
-        pair_mask = pair_mask & active[None, :]
         if target_source_indices is None and self.plan.target_topology == "same-support":
             identities = jnp.arange(self.plan.target_capacity, dtype=jnp.int32)
         elif target_source_indices is None:
@@ -1629,21 +1704,38 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             identities = jnp.asarray(target_source_indices, dtype=jnp.int32)
             if identities.shape != (self.plan.target_capacity,):
                 raise ValueError("target_source_indices must match target_capacity.")
-        pair_mask = pair_mask & (
-            identities[:, None]
-            != jnp.arange(self.plan.source_capacity, dtype=jnp.int32)[None, :]
+        topology = self.topology
+        moments, charge_mass, locals_ = self._far_locals(
+            sources, strengths, active, normals
         )
-        near_values, p2p_count = self._p2p_masked(
-            sources,
-            strengths,
+        truncation = self._octree_truncation(charge_mass)
+        # ty: ignore[unresolved-attribute]
+        target_leaves = jnp.maximum(topology.locate(targets), 0)
+        local_values = jax.vmap(self.l2p)(
+            locals_[target_leaves],
+            # ty: ignore[unresolved-attribute]
+            topology.node_centers[target_leaves],
             targets,
-            pair_mask,
-            source_normals=normals,
         )
+        multipole_values, near_values, p2p_counts, m2p_counts = (
+            self._octree_target_routes(
+                moments,
+                sources,
+                strengths,
+                active,
+                normals,
+                targets,
+                target_leaves,
+                identities,
+            )
+        )
+        far_values = local_values + multipole_values
         values = far_values + near_values
         capacity = self._capacity_evidence()
         finite = jnp.all(jnp.isfinite(values))
         successful = capacity.successful & truncation.well_separated & finite & ~stale
+        # ty: ignore[unresolved-attribute]
+        translations = jnp.asarray(topology.node_count - 1, dtype=jnp.int32)
         return LaplaceMultipoleEvaluation3D(
             values=values,
             far_values=far_values,
@@ -1655,11 +1747,15 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             finite=finite,
             successful=successful,
             p2m_count=jnp.sum(active, dtype=jnp.int32),
-            m2m_count=m2m_count,
-            m2l_count=m2l_count,
-            l2l_count=l2l_count,
+            m2m_count=translations,
+            # ty: ignore[unresolved-attribute]
+            m2l_count=jnp.sum(topology.v_list.routes.valid, dtype=jnp.int32),
+            # ty: ignore[unresolved-attribute]
+            p2l_count=jnp.sum(topology.x_list.routes.valid, dtype=jnp.int32),
+            l2l_count=translations,
             l2p_count=jnp.asarray(self.plan.target_capacity, dtype=jnp.int32),
-            p2p_count=p2p_count,
+            m2p_count=jnp.sum(m2p_counts, dtype=jnp.int32),
+            p2p_count=jnp.sum(p2p_counts, dtype=jnp.int32),
             expansion_order=self.plan.expansion_order,
             source_convention=self.source_convention,
             local_convention=self.local_convention,
@@ -1677,7 +1773,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         source_strengths: ArrayLike,
         target_positions: ArrayLike | None = None,
         /,
-        **kwargs: ArrayLike | None,
+        **kwargs: Any,
     ) -> Array:
         """Return only values while preserving the full evidence API on ``evaluate``."""
         return self.evaluate(
@@ -1687,21 +1783,6 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
 
 class PreparedLaplaceMultipole3D(AbstractPreparedLaplaceMultipole3D):
     """Final prepared complete Laplace FMM pipeline."""
-
-    if TYPE_CHECKING:
-        __init__ = AbstractPreparedLaplaceMultipole3D.__init__
-
-        def evaluate(
-            self,
-            source_positions: ArrayLike,
-            source_strengths: ArrayLike,
-            target_positions: ArrayLike | None = None,
-            /,
-            *,
-            source_normals: ArrayLike | None = None,
-            active_mask: ArrayLike | None = None,
-            target_source_indices: ArrayLike | None = None,
-        ) -> LaplaceMultipoleEvaluation3D: ...
 
 
 __all__ = [

@@ -215,7 +215,7 @@ class FiniteElementHPMultigridPlan(StrictModule, NonTrainableState):
         index = int(level)
         if index < 0 or index >= len(self.transfers):
             raise ValueError("hp multigrid restriction level is out of range.")
-        return self.transfers[index].apply_mass_projection(values)
+        return self.transfers[index].apply_l2_projection(values)
 
     def pullback(self, level: int, coarse_dual: ArrayLike, /) -> Array:
         index = int(level)

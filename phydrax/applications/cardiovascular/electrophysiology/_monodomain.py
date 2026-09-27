@@ -273,6 +273,7 @@ class PhenomenologicalMonodomainPlan(StrictModule, NonTrainableState):
                 )
             if (
                 coordinate_element.cell_kind != expected_kind
+                # ty: ignore[unresolved-attribute]
                 or coordinate_element.degree != 1
             ):
                 raise ValueError("Monodomain coordinate geometry must be affine P1.")

@@ -375,9 +375,10 @@ class ImplicitSurfacePlan(StrictModule):
                 "source_id": source_id,
                 "topology_id": topology_id,
                 "projection_id": projection.plan_id,
-                "grid_points": arrays["grid_points"].tolist(),
-                "faces": arrays["faces"].tolist(),
-                "qef_regularization": arrays["qef_regularization"].tolist(),
+                "grid_points": arrays["grid_points"],
+                "faces": arrays["faces"],
+                "qef_regularization": arrays["qef_regularization"],
+                "intersection_pairs": arrays["intersection_pairs"],
                 "policy": repr(policy),
             }
         )

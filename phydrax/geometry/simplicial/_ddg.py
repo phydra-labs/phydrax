@@ -40,35 +40,19 @@ class DDGOperators(StrictModule):
         face_area = 0.5 * doubled_area
         face_normal = cross / doubled_area[:, None]
 
+        # Half-edge ``3 * face + k`` runs from corner ``k`` to corner ``k + 1``;
+        # its cotangent is taken at the opposite corner ``k + 2``.
         squared = jnp.sum(
             (triangles - jnp.roll(triangles, -1, axis=1)) ** 2,
             axis=-1,
         )
-        cotangent = jnp.stack(
-            (
-                (squared[:, 0] + squared[:, 2] - squared[:, 1]) / (2.0 * doubled_area),
-                (squared[:, 0] + squared[:, 1] - squared[:, 2]) / (2.0 * doubled_area),
-                (squared[:, 1] + squared[:, 2] - squared[:, 0]) / (2.0 * doubled_area),
-            ),
-            axis=-1,
-        )
-        opposite_edges = jnp.stack(
-            (
-                faces[:, [1, 2]],
-                faces[:, [2, 0]],
-                faces[:, [0, 1]],
-            ),
-            axis=1,
-        ).reshape((-1, 2))
-        canonical_opposite = jnp.sort(opposite_edges, axis=-1)
+        halfedge_cotangent = (
+            jnp.roll(squared, -1, axis=1) + jnp.roll(squared, 1, axis=1) - squared
+        ) / (2.0 * doubled_area[:, None])
         edge_lookup = mesh.topology.edges
-        matches = jnp.all(
-            canonical_opposite[:, None, :] == edge_lookup[None, :, :], axis=-1
-        )
-        opposite_edge_index = jnp.argmax(matches, axis=-1)
         edge_weights = jnp.zeros((edge_lookup.shape[0],), dtype=vertices.dtype)
-        edge_weights = edge_weights.at[opposite_edge_index].add(
-            0.5 * cotangent.reshape((-1,))
+        edge_weights = edge_weights.at[mesh.topology.halfedge_edge].add(
+            0.5 * halfedge_cotangent.reshape((-1,))
         )
 
         vertex_mass = jnp.zeros((vertices.shape[0],), dtype=vertices.dtype)

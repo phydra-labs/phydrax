@@ -112,7 +112,6 @@ def test_high_order_hex_global_counts_layout_and_boundary_mask(
     assert dof_map.global_dof_count == global_count
     assert dof_map.entity_dof_counts == entity_counts
     assert np.count_nonzero(dof_map.boundary_dof_mask) == boundary_count
-    # ty: ignore[unresolved-attribute]
     assert prepared.field_spaces[0].layout.names == (
         "vertices",
         "edges",

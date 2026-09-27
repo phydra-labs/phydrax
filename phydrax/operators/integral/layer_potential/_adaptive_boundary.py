@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,16 +14,12 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._physical import SpatialCoordinateContract
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization._cell_complex import PolygonalConnectivity
 from ....discretization._cell_mesh import CellMesh
-from ....discretization.fem._adaptivity import (
-    dorfler_mark,
-    FiniteElementAdaptationMap,
-    maximum_mark,
-    refine_triangles_local,
-)
+from ....discretization.fem._adaptivity import dorfler_mark, maximum_mark
 from ....geometry.surface._contracts import (
     SurfaceInterface,
     SurfaceMetadata,
@@ -34,6 +30,14 @@ from ....typing import parse
 from ._fast_provider import BEMExecutionEnvelope
 
 
+if TYPE_CHECKING:
+    from ....meshing import (
+        BisectionCompatibility,
+        BisectionHierarchy,
+        MeshAdaptationResult,
+    )
+
+
 BoundaryMarkingStrategy: TypeAlias = Literal["dorfler", "maximum"]
 
 
@@ -42,12 +46,17 @@ class BoundaryEpochError(ValueError):
 
 
 class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
-    """Deterministic marking and host-refinement resource limits."""
+    """Deterministic marking, bisection compatibility, and resource limits.
+
+    ``compatibility`` decides incompatible initial bisection labels: REJECT, or
+    an explicit uniform compatibility refinement before the local bisection.
+    """
 
     strategy: BoundaryMarkingStrategy = eqx.field(static=True)
     fraction: float = eqx.field(static=True)
     max_marked_faces: int = eqx.field(static=True)
     max_target_faces: int = eqx.field(static=True)
+    compatibility: BisectionCompatibility = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -57,8 +66,16 @@ class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
         fraction: float = 0.5,
         max_marked_faces: int = 100_000,
         max_target_faces: int = 1_000_000,
+        compatibility: BisectionCompatibility | None = None,
     ) -> None:
+        # Lazy: phydrax.meshing transitively imports the operator packages.
+        from ....meshing import BisectionCompatibility
+
+        if compatibility is None:
+            compatibility = BisectionCompatibility.REJECT
         strategy = parse(strategy, BoundaryMarkingStrategy, "strategy")
+        if not isinstance(compatibility, BisectionCompatibility):
+            raise TypeError("compatibility must be BisectionCompatibility.")
         fraction_ = float(fraction)
         marked_limit = int(max_marked_faces)
         target_limit = int(max_target_faces)
@@ -70,6 +87,7 @@ class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
         self.fraction = fraction_
         self.max_marked_faces = marked_limit
         self.max_target_faces = target_limit
+        self.compatibility = compatibility
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "boundary-h-refinement-policy",
@@ -77,6 +95,7 @@ class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
                 "fraction": fraction_,
                 "max_marked_faces": marked_limit,
                 "max_target_faces": target_limit,
+                "compatibility": compatibility.value,
             }
         )
 
@@ -168,10 +187,12 @@ class BoundaryMeshEpoch(StrictModule, NonTrainableState):
 
     The epoch binds exact topology and geometry fingerprints. Any refinement,
     coordinate change, or numeric-version change invalidates prepared state.
+    ``hierarchy`` carries the bisection labels of refined epochs.
     """
 
     mesh: CellMesh
     surface_model: SurfaceModel | None
+    hierarchy: BisectionHierarchy | None
     generation: int = eqx.field(static=True)
     parent_epoch_id: str | None = eqx.field(static=True)
     envelope: BEMExecutionEnvelope
@@ -184,7 +205,12 @@ class BoundaryMeshEpoch(StrictModule, NonTrainableState):
         *,
         generation: int = 0,
         parent_epoch_id: str | None = None,
+        hierarchy: BisectionHierarchy | None = None,
     ) -> None:
+        from ....meshing import BisectionHierarchy
+
+        if hierarchy is not None and not isinstance(hierarchy, BisectionHierarchy):
+            raise TypeError("hierarchy must be BisectionHierarchy or None.")
         if isinstance(surface, SurfaceModel):
             mesh = surface.mesh
             surface_model = surface
@@ -230,6 +256,7 @@ class BoundaryMeshEpoch(StrictModule, NonTrainableState):
         )
         self.mesh = mesh
         self.surface_model = surface_model
+        self.hierarchy = hierarchy
         self.generation = generation_
         self.parent_epoch_id = parent
         self.envelope = envelope
@@ -242,6 +269,7 @@ class BoundaryMeshEpoch(StrictModule, NonTrainableState):
                     None if surface_model is None else surface_model.model_id
                 ),
                 "generation": generation_,
+                "hierarchy": None if hierarchy is None else hierarchy.hierarchy_id,
                 "parent": parent,
                 "envelope": envelope.envelope_id,
             }
@@ -419,7 +447,7 @@ class BoundaryRefinementResult(StrictModule, NonTrainableState):
     source_epoch: BoundaryMeshEpoch
     target_epoch: BoundaryMeshEpoch
     marking: BoundaryRefinementMarking
-    adaptation: FiniteElementAdaptationMap
+    adaptation: MeshAdaptationResult
     transfer: DP0BoundaryTransfer
     envelope: BEMExecutionEnvelope
     result_id: str = eqx.field(static=True)
@@ -501,30 +529,25 @@ def mark_boundary_faces(
 
 def _dp0_parent_routes(
     source: BoundaryMeshEpoch,
-    target_mesh: CellMesh,
-    adaptation: FiniteElementAdaptationMap,
+    adaptation: MeshAdaptationResult,
     /,
 ) -> np.ndarray:
+    """Source-face row of every target face from the exact cell lineage."""
     source_ids = np.asarray(source.mesh.blocks[0].global_ids, dtype=np.int64)
-    target_ids = np.asarray(target_mesh.blocks[0].global_ids, dtype=np.int64)
-    source_local = {int(value): index for index, value in enumerate(source_ids)}
-    target_local = {int(value): index for index, value in enumerate(target_ids)}
-    routes = np.full((target_ids.size,), -1, dtype=np.int32)
-    for cell_id, local in source_local.items():
-        if cell_id in target_local:
-            routes[target_local[cell_id]] = local
-    parent_ids = np.asarray(adaptation.parent_cell_ids, dtype=np.int64)
-    child_ids = np.asarray(adaptation.child_cell_ids, dtype=np.int64)
-    child_valid = np.asarray(adaptation.child_valid, dtype=np.bool_)
-    for parent_id, children, valid in zip(
-        parent_ids, child_ids, child_valid, strict=True
+    target_ids = np.asarray(adaptation.target.mesh.blocks[0].global_ids, dtype=np.int64)
+    # ty: ignore[unresolved-attribute]
+    cells = adaptation.lineage.entity_lineage(2)
+    parents = np.asarray(cells.source_global_ids, dtype=np.int64)
+    children = np.asarray(cells.target_global_ids, dtype=np.int64)
+    if np.unique(children).size != children.size or not np.array_equal(
+        np.sort(children), np.sort(target_ids)
     ):
-        parent = source_local[int(parent_id)]
-        for child_id in children[valid]:
-            routes[target_local[int(child_id)]] = parent
-    if np.any(routes < 0):
         raise ValueError("Local refinement did not provide complete DP0 parent lineage.")
-    return routes
+    source_order = np.argsort(source_ids, kind="stable")
+    parent_rows = source_order[np.searchsorted(source_ids[source_order], parents)]
+    child_order = np.argsort(children, kind="stable")
+    routes = parent_rows[child_order][np.searchsorted(children[child_order], target_ids)]
+    return routes.astype(np.int32)
 
 
 def refine_boundary_h(
@@ -532,24 +555,59 @@ def refine_boundary_h(
     indicators: ArrayLike,
     policy: BoundaryRefinementPolicy,
     /,
+    *,
+    coordinate_contract: SpatialCoordinateContract | None = None,
 ) -> BoundaryRefinementResult:
-    """Mark, conformingly bisect, advance the epoch, and prepare DP0 transfer."""
+    """Mark, conformingly bisect, advance the epoch, and prepare DP0 transfer.
+
+    Refinement is native newest-vertex bisection through `prepare_mesh_adaptation`
+    and continues the epoch's bisection hierarchy. A bare `CellMesh` epoch needs
+    an explicit ``coordinate_contract``; a `SurfaceModel` epoch uses its own.
+    """
+    from ....meshing import (
+        certify_cell_mesh,
+        execute_mesh_adaptation,
+        MarkedMeshAdaptation,
+        MeshAdaptationPolicy,
+        MeshAdaptationRoute,
+        prepare_mesh_adaptation,
+    )
+
     marking = mark_boundary_faces(epoch, indicators, policy)
     marked = np.asarray(marking.marked_face_global_ids, dtype=np.int64)
     if marked.size == 0:
         raise ValueError("Boundary refinement requires at least one positive indicator.")
+    if epoch.surface_model is not None:
+        contract = epoch.surface_model.metadata.coordinate_contract
+        if (
+            coordinate_contract is not None
+            and coordinate_contract.spatial_id != contract.spatial_id
+        ):
+            raise ValueError("coordinate_contract contradicts the surface model.")
+    elif coordinate_contract is None:
+        raise ValueError("A bare CellMesh boundary epoch needs a coordinate_contract.")
+    else:
+        contract = coordinate_contract
     generation = epoch.generation + 1
-    target_mesh, adaptation, _ = refine_triangles_local(
-        epoch.mesh,
-        marked,
-        numeric_version=f"boundary-h-epoch-{generation}",
+    adaptation = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            certify_cell_mesh(epoch.mesh, contract),
+            MarkedMeshAdaptation(marked, hierarchy=epoch.hierarchy),
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.NATIVE_BISECTION,
+                compatibility=policy.compatibility,
+            ),
+        )
     )
+    if adaptation.transition is None:
+        raise ValueError("Boundary bisection left the marked faces unchanged.")
+    target_mesh = adaptation.target.mesh
     target_count = target_mesh.blocks[0].cell_count
     if target_count > policy.max_target_faces:
         raise ValueError(
             f"Refined boundary has {target_count} faces, exceeding the declared limit {policy.max_target_faces}."
         )
-    routes = _dp0_parent_routes(epoch, target_mesh, adaptation)
+    routes = _dp0_parent_routes(epoch, adaptation)
     if epoch.surface_model is None:
         target_surface = target_mesh
     else:
@@ -619,12 +677,14 @@ def refine_boundary_h(
         target_surface,
         generation=generation,
         parent_epoch_id=epoch.epoch_id,
+        # ty: ignore[invalid-argument-type]
+        hierarchy=adaptation.hierarchy,
     )
     transfer = DP0BoundaryTransfer(epoch, target_epoch, routes)
     envelope = _boundary_envelope(
         target_mesh,
         formulation="dp0-galerkin-local-h-refinement",
-        provider="longest-edge-conforming-triangle-bisection",
+        provider="native-newest-vertex-bisection",
         resource_evidence=(
             f"source-face-count={epoch.mesh.blocks[0].cell_count}",
             f"target-face-count={target_count}",
@@ -653,7 +713,7 @@ def refine_boundary_h(
                 "source_epoch": epoch.epoch_id,
                 "target_epoch": target_epoch.epoch_id,
                 "marking": marking.marking_id,
-                "adaptation": adaptation.adaptation_id,
+                "adaptation": adaptation.result_id,
                 "transfer": transfer.transfer_id,
                 "envelope": envelope.envelope_id,
             }

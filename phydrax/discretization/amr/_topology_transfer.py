@@ -605,16 +605,28 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
                 "AMR field payload components do not match transition field."
             )
         component_count = prod(self.component_shape) if self.component_shape else 1
-        source_values = []
-        for level, slot, local in zip(
-            np.asarray(self.source_levels),
-            np.asarray(self.source_slots),
-            np.asarray(self.source_local),
-            strict=True,
-        ):
-            block = state.levels[int(level)].safe_values()[int(slot)]
-            source_values.append(block.reshape((-1, component_count))[int(local)])
-        packed_source = jnp.stack(source_values, axis=0)
+        # One gather over the concatenated canonical level storage replaces the
+        # per-leaf host loop; leaf rows are static route arrays.
+        source_cells = np.asarray(
+            [prod(level.plan.block_shape) for level in state.levels], dtype=np.int32
+        )
+        source_sizes = [
+            level.plan.maximum_blocks * cells
+            for level, cells in zip(state.levels, source_cells.tolist(), strict=True)
+        ]
+        source_offsets = np.cumsum([0, *source_sizes[:-1]], dtype=np.int32)
+        source_rows = (
+            jnp.asarray(source_offsets)[self.source_levels]
+            + self.source_slots * jnp.asarray(source_cells)[self.source_levels]
+            + self.source_local
+        )
+        packed_source = jnp.concatenate(
+            tuple(
+                level.safe_values().reshape((-1, component_count))
+                for level in state.levels
+            ),
+            axis=0,
+        )[source_rows]
         component_results = tuple(
             self.transition.apply(packed_source[:, component])
             for component in range(component_count)
@@ -629,29 +641,38 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
             ),
             axis=1,
         )
-        target_arrays = [
-            jnp.zeros(
-                (level.maximum_blocks,) + level.block_shape + self.component_shape,
-                dtype=storage_values.dtype,
-            )
-            for level in self.target_topology.plan.levels
+        target_plans = self.target_topology.plan.levels
+        target_cells = np.asarray(
+            [prod(level.block_shape) for level in target_plans], dtype=np.int32
+        )
+        target_sizes = [
+            level.maximum_blocks * cells
+            for level, cells in zip(target_plans, target_cells.tolist(), strict=True)
         ]
-        for row, (level, slot, local) in enumerate(
-            zip(
-                np.asarray(self.target_levels),
-                np.asarray(self.target_slots),
-                np.asarray(self.target_local),
+        target_offsets = np.cumsum([0, *target_sizes], dtype=np.int32)
+        target_rows = (
+            jnp.asarray(target_offsets[:-1])[self.target_levels]
+            + self.target_slots * jnp.asarray(target_cells)[self.target_levels]
+            + self.target_local
+        )
+        target_storage = (
+            jnp.zeros(
+                (int(target_offsets[-1]), component_count), dtype=storage_values.dtype
+            )
+            .at[target_rows]
+            .set(storage_values)
+        )
+        target_arrays = [
+            target_storage[start:stop].reshape(
+                (level.maximum_blocks,) + level.block_shape + self.component_shape
+            )
+            for level, start, stop in zip(
+                target_plans,
+                target_offsets[:-1].tolist(),
+                target_offsets[1:].tolist(),
                 strict=True,
             )
-        ):
-            level_index = int(level)
-            block_shape = self.target_topology.plan.levels[level_index].block_shape
-            local_index = np.unravel_index(int(local), block_shape)
-            target_arrays[level_index] = (
-                target_arrays[level_index]
-                .at[(int(slot),) + local_index]
-                .set(storage_values[row].reshape(self.component_shape))
-            )
+        ]
         target_levels = tuple(
             BlockLevelState(plan, metadata, values)
             for plan, metadata, values in zip(

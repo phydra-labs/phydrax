@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal, TypeAlias
+from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,10 +13,14 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.ein as ein
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import determinant_small_linear, SmallLinearSolvePlan
+from ...sparse import RowRelation, SparseLinearMap
 from .._cell_mesh import CellBlock, CellMesh
 from ._generic import (
     FiniteElementDiscretization,
@@ -28,7 +32,6 @@ from ._high_order import ReferenceNodalFamily
 from ._hp import (
     finite_element_hp_workset_plan,
     FiniteElementHPLineage,
-    FiniteElementHPLineageKind,
     FiniteElementHPTopology,
     FiniteElementHPTransferPlan,
     FiniteElementHPWorksetPlan,
@@ -36,7 +39,6 @@ from ._hp import (
 from ._reference import FiniteElementSpec
 
 
-_HPInterfaceRelation: TypeAlias = Literal["conforming", "mortar", "exterior", "periodic"]
 _HP_RELATIONS = {"conforming": 0, "mortar": 1, "exterior": 2, "periodic": 3}
 _HP_LINEAGE_RELATIONS = {"unchanged": 0, "refinement": 1, "coarsening": 2}
 _QUAD_FACETS = ((0, 1), (1, 2), (2, 3), (3, 0))
@@ -249,7 +251,7 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
         neighbor_slots: ArrayLike,
         owner_local_facets: ArrayLike,
         neighbor_local_facets: ArrayLike,
-        relations: Sequence[_HPInterfaceRelation],
+        relations: Sequence[Literal["conforming", "mortar", "exterior", "periodic"]],
         /,
         *,
         child_indices: ArrayLike | None = None,
@@ -667,11 +669,11 @@ def initial_finite_element_hp_topology(
     if not isinstance(mesh, CellMesh) or len(mesh.blocks) == 0:
         raise TypeError("Initial hp topology requires a non-empty CellMesh.")
     kinds = {block.cell_kind for block in mesh.blocks}
-    kind = next(iter(kinds))
-    if len(kinds) != 1 or kind not in ("quadrilateral", "hexahedron"):
+    if len(kinds) != 1 or next(iter(kinds)) not in ("quadrilateral", "hexahedron"):
         raise ValueError(
             "Initial hp topology requires only quadrilateral or hexahedron blocks."
         )
+    kind = next(iter(kinds))
     dimension = 2 if kind == "quadrilateral" else 3
     degrees = (
         (int(degree),) * dimension
@@ -697,6 +699,7 @@ def initial_finite_element_hp_topology(
     cell_degrees = np.zeros((capacity_, dimension), dtype=np.int32)
     cell_degrees[:count] = degrees
     topology = FiniteElementHPTopology(
+        # ty: ignore[invalid-argument-type]
         kind,
         mesh.topology_id,
         identifiers,
@@ -767,7 +770,7 @@ def refine_tensor_hp_cells(
     next_global = int(np.max(identifiers[allocated], initial=-1)) + 1
     relation_source = []
     relation_target = []
-    relation_names: list[FiniteElementHPLineageKind] = []
+    relation_names = []
     unchanged = [slot for slot in active_slots if slot not in set(requested.tolist())]
     for slot in unchanged:
         relation_source.append(int(slot))
@@ -851,6 +854,7 @@ def refine_tensor_hp_cells(
         new_topology.capacity,
         np.asarray(relation_source, dtype=np.int32),
         np.asarray(relation_target, dtype=np.int32),
+        # ty: ignore[invalid-argument-type]
         tuple(relation_names),
     )
     return FiniteElementHPRefinementResult(
@@ -894,7 +898,7 @@ def coarsen_tensor_hp_cells(
     )
     relation_source = []
     relation_target = []
-    relation_names: list[FiniteElementHPLineageKind] = []
+    relation_names = []
     selected_children: set[int] = set()
     for parent in selected:
         parent = int(parent)
@@ -959,6 +963,7 @@ def coarsen_tensor_hp_cells(
         new_topology.capacity,
         np.asarray(relation_source, dtype=np.int32),
         np.asarray(relation_target, dtype=np.int32),
+        # ty: ignore[invalid-argument-type]
         tuple(relation_names),
     )
     return FiniteElementHPRefinementResult(
@@ -970,6 +975,81 @@ def coarsen_tensor_hp_cells(
     )
 
 
+def _forest_lattice(
+    topology: FiniteElementHPTopology,
+    geometry: FiniteElementHPGeometry,
+    /,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
+    """Exact integer root-lattice boxes and welded root-corner IDs for every slot.
+
+    Refinement halves each reference axis at most once per level, so every box
+    coordinate is an exact dyadic multiple of ``2**-depth``. Root corners inherit
+    their bitwise-identical source-mesh coordinates, so exact equality welds the
+    conforming root mesh without tolerance.
+    """
+
+    if geometry.topology_id != topology.topology_id:
+        raise ValueError("hp lattice topology and geometry disagree.")
+    allocated = np.asarray(topology.allocated)
+    depth = int(np.max(np.asarray(topology.levels)[allocated]))
+    if topology.dimension * depth > 62:
+        raise ValueError("hp forest depth exceeds the exact integer lattice.")
+    lower = np.ldexp(np.asarray(geometry.reference_lower, dtype=np.float64), depth)
+    upper = np.ldexp(np.asarray(geometry.reference_upper, dtype=np.float64), depth)
+    if np.any(lower != np.floor(lower)) or np.any(upper != np.floor(upper)):
+        raise ValueError("hp reference boxes must be dyadic at the forest depth.")
+    root_slots = np.flatnonzero(allocated & (np.asarray(topology.parent_slots) < 0))
+    root_ids = np.asarray(topology.root_cell_ids)[root_slots]
+    root_corners = np.asarray(geometry.cell_vertices)[root_slots]
+    _, welded = np.unique(
+        root_corners.reshape((-1, root_corners.shape[2])),
+        axis=0,
+        return_inverse=True,
+    )
+    welded = welded.reshape(root_corners.shape[:2]).astype(np.int64)
+    ordered = np.sort(welded, axis=1)
+    if np.any(ordered[:, 1:] == ordered[:, :-1]):
+        raise ValueError("hp root cells must have distinct corner vertices.")
+    order = np.argsort(root_ids)
+    root_row = order[
+        np.minimum(
+            np.searchsorted(root_ids[order], np.asarray(topology.root_cell_ids)),
+            root_ids.size - 1,
+        )
+    ]
+    corner_ids = np.where(allocated[:, None], welded[root_row], -1)
+    return depth, lower.astype(np.int64), upper.astype(np.int64), corner_ids
+
+
+def _lattice_vertex_keys(
+    points: np.ndarray,
+    corner_ids: np.ndarray,
+    size: int,
+    /,
+) -> np.ndarray:
+    """Root-independent exact keys of lattice points.
+
+    A point is keyed by its sorted nonzero multilinear weight numerators over the
+    welded root corners. Points on shared root faces, edges, or corners involve
+    only the shared corners, so every root containing them produces one key.
+    """
+
+    corners = _corner_points(points.shape[-1]).astype(np.bool_)
+    weights = np.prod(
+        np.where(corners, points[..., None, :], size - points[..., None, :]),
+        axis=-1,
+    )
+    identifiers = np.where(weights != 0, corner_ids, np.iinfo(np.int64).max)
+    order = np.argsort(identifiers, axis=-1, kind="stable")
+    return np.concatenate(
+        (
+            np.take_along_axis(identifiers, order, axis=-1),
+            np.take_along_axis(weights, order, axis=-1),
+        ),
+        axis=-1,
+    )
+
+
 def hp_active_cell_mesh(
     topology: FiniteElementHPTopology,
     geometry: FiniteElementHPGeometry,
@@ -977,51 +1057,58 @@ def hp_active_cell_mesh(
     *,
     numeric_version: str = "hp-active",
 ) -> tuple[CellMesh, tuple[tuple[int, ...], ...], Array]:
+    """Weld active leaves by exact lattice keys in canonical tree order."""
+
     if geometry.topology_id != topology.topology_id:
         raise ValueError("hp active mesh topology and geometry disagree.")
+    depth, lower, upper, corner_ids = _forest_lattice(topology, geometry)
     active = np.flatnonzero(np.asarray(topology.active))
-    degrees = np.asarray(topology.cell_degrees)
-    identifiers = np.asarray(topology.cell_global_ids)
-    vertices = np.asarray(geometry.cell_vertices)
-    point_map: dict[tuple[float, ...], int] = {}
-    points: list[np.ndarray] = []
-    local_cells: dict[tuple[int, ...], list[tuple[int, ...]]] = {}
-    local_ids: dict[tuple[int, ...], list[int]] = {}
-    local_slots: dict[tuple[int, ...], list[int]] = {}
-    ordered_slots = sorted(
-        active.tolist(),
-        key=lambda value: (
-            int(np.asarray(topology.root_cell_ids)[value]),
-            int(np.asarray(topology.path_codes)[value]),
-        ),
+    ordered = active[
+        np.lexsort(
+            (
+                np.asarray(topology.path_codes)[active],
+                np.asarray(topology.root_cell_ids)[active],
+            )
+        )
+    ]
+    corners = _corner_points(topology.dimension).astype(np.int64)
+    points = (
+        lower[ordered][:, None, :]
+        + corners[None, :, :] * (upper[ordered] - lower[ordered])[:, None, :]
     )
-    for slot in ordered_slots:
-        cell = []
-        for point in vertices[slot]:
-            key = tuple(np.round(point, decimals=14).tolist())
-            if key not in point_map:
-                point_map[key] = len(points)
-                points.append(point.copy())
-            cell.append(point_map[key])
-        degree = tuple(degrees[slot])
-        local_cells.setdefault(degree, []).append(tuple(cell))
-        local_ids.setdefault(degree, []).append(int(identifiers[slot]))
-        local_slots.setdefault(degree, []).append(slot)
+    keys = _lattice_vertex_keys(points, corner_ids[ordered][:, None, :], 1 << depth)
+    _, first, inverse = np.unique(
+        keys.reshape((-1, keys.shape[-1])),
+        axis=0,
+        return_index=True,
+        return_inverse=True,
+    )
+    rank = np.empty(first.shape, dtype=np.int64)
+    rank[np.argsort(first, kind="stable")] = np.arange(first.size)
+    cells = rank[inverse.reshape((-1,))].reshape(points.shape[:2]).astype(np.int32)
+    vertices = np.asarray(geometry.cell_vertices)[ordered]
+    coordinates = vertices.reshape((-1, vertices.shape[2]))[np.sort(first)]
+    degree_rows, degree_index = np.unique(
+        np.asarray(topology.cell_degrees)[ordered], axis=0, return_inverse=True
+    )
+    degree_index = degree_index.reshape((-1,))
+    identifiers = np.asarray(topology.cell_global_ids)[ordered]
+    degrees = tuple(tuple(int(value) for value in row) for row in degree_rows)
+    members = tuple(
+        np.flatnonzero(degree_index == index) for index in range(len(degrees))
+    )
     blocks = tuple(
         CellBlock(
             f"hp-{topology.cell_kind}-{'x'.join(str(value) for value in degree)}",
             topology.cell_kind,
-            np.asarray(local_cells[degree], dtype=np.int32),
-            global_ids=np.asarray(local_ids[degree], dtype=np.int64),
+            cells[member],
+            global_ids=identifiers[member].astype(np.int64),
         )
-        for degree in sorted(local_cells)
+        for degree, member in zip(degrees, members, strict=True)
     )
-    mesh = CellMesh(np.asarray(points), blocks, numeric_version=numeric_version)
-    slot_routes = np.asarray(
-        [slot for degree in sorted(local_slots) for slot in local_slots[degree]],
-        dtype=np.int32,
-    )
-    return mesh, tuple(sorted(local_cells)), jnp.asarray(slot_routes)
+    mesh = CellMesh(coordinates, blocks, numeric_version=numeric_version)
+    slot_routes = np.concatenate(tuple(ordered[member] for member in members))
+    return mesh, degrees, jnp.asarray(slot_routes.astype(np.int32))
 
 
 def _facet_vertices(
@@ -1064,155 +1151,205 @@ def _facet_contains(coarse: np.ndarray, fine: np.ndarray, tolerance: float, /) -
     )
 
 
-def _facet_measure(points: np.ndarray, /) -> float:
-    if points.shape[1] == 2:
-        return float(np.linalg.norm(points[-1] - points[0]))
-    first = points[1] - points[0]
-    second = points[-1] - points[0]
-    return float(np.linalg.norm(np.cross(first, second)))
+def _row_join(table: np.ndarray, queries: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Return every ``(table_index, query_index)`` pair of identical integer rows."""
+
+    _, inverse = np.unique(
+        np.concatenate((table, queries), axis=0), axis=0, return_inverse=True
+    )
+    inverse = inverse.reshape((-1,))
+    table_ids = inverse[: table.shape[0]]
+    query_ids = inverse[table.shape[0] :]
+    order = np.argsort(table_ids, kind="stable")
+    ordered = table_ids[order]
+    left = np.searchsorted(ordered, query_ids, side="left")
+    counts = np.searchsorted(ordered, query_ids, side="right") - left
+    query_index = np.repeat(np.arange(query_ids.size), counts)
+    offsets = np.arange(query_index.size) - np.repeat(np.cumsum(counts) - counts, counts)
+    return order[np.repeat(left, counts) + offsets], query_index
+
+
+def _forest_facet_rows(
+    topology: FiniteElementHPTopology,
+    geometry: FiniteElementHPGeometry,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Canonical plane keys and in-plane lattice rectangles of every active facet.
+
+    Row layout: ``(on_root_face, root, axis, plane, face_ids[4], u0, u1, v0, v1)``.
+    Facets inside one root use that root's lattice; facets on a root face use a
+    frame fixed by welded corner IDs (origin at the smallest ID, first axis toward
+    its smaller-ID neighbor), which both roots sharing the face agree on.
+    Facets are enumerated slot-major in ascending active-slot order.
+    """
+
+    depth, lower, upper, corner_ids = _forest_lattice(topology, geometry)
+    size = 1 << depth
+    active = np.flatnonzero(np.asarray(topology.active))
+    low, high = lower[active], upper[active]
+    roots = np.asarray(topology.root_cell_ids)[active]
+    corners = _corner_points(topology.dimension).astype(np.int64)
+    facet_count = len(_cell_facets(topology.cell_kind))
+    rows = np.full((facet_count, active.size, 12), -1, dtype=np.int64)
+    rows[:, :, 10:12] = 0
+    for local_facet in range(facet_count):
+        axis, side, tangents = _tensor_facet_axis_side(topology.cell_kind, local_facet)
+        plane = high[:, axis] if side else low[:, axis]
+        on_face = plane == (size if side else 0)
+        face = np.flatnonzero(corners[:, axis] == side)
+        face_ids = corner_ids[active][:, face]
+        face_bits = corners[face][:, list(tangents)]
+        origin_bits = face_bits[np.argmin(face_ids, axis=1)]
+        axes = np.broadcast_to(np.asarray(tangents), (active.size, len(tangents)))
+        if len(tangents) == 2:
+            by_bits = np.empty((2, 2), dtype=np.int64)
+            by_bits[face_bits[:, 0], face_bits[:, 1]] = np.arange(face.size)
+            row_index = np.arange(active.size)
+            first = face_ids[row_index, by_bits[1 - origin_bits[:, 0], origin_bits[:, 1]]]
+            second = face_ids[
+                row_index, by_bits[origin_bits[:, 0], 1 - origin_bits[:, 1]]
+            ]
+            swap = (on_face & (second < first))[:, None]
+            axes = np.where(swap, axes[:, ::-1], axes)
+            origin_bits = np.where(swap, origin_bits[:, ::-1], origin_bits)
+        for frame_axis in range(len(tangents)):
+            chosen = axes[:, frame_axis : frame_axis + 1]
+            start = np.take_along_axis(low, chosen, axis=1)[:, 0]
+            stop = np.take_along_axis(high, chosen, axis=1)[:, 0]
+            flip = on_face & (origin_bits[:, frame_axis] == 1)
+            rows[local_facet, :, 8 + 2 * frame_axis] = np.where(flip, size - stop, start)
+            rows[local_facet, :, 9 + 2 * frame_axis] = np.where(flip, size - start, stop)
+        rows[local_facet, :, 0] = on_face
+        rows[local_facet, :, 1] = np.where(on_face, -1, roots)
+        rows[local_facet, :, 2] = np.where(on_face, -1, axis)
+        rows[local_facet, :, 3] = np.where(on_face, -1, plane)
+        rows[local_facet, :, 4 : 4 + face.size] = np.where(
+            on_face[:, None], np.sort(face_ids, axis=1), -1
+        )
+    slots = np.repeat(active, facet_count)
+    local = np.tile(np.arange(facet_count), active.size)
+    return slots, local, np.swapaxes(rows, 0, 1).reshape((-1, 12))
+
+
+def _forest_facet_adjacency(
+    rows: np.ndarray,
+    slots: np.ndarray,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return conforming facet pairs and strict ``(coarse, fine)`` containments.
+
+    Leaf facets on one side of a plane are disjoint dyadic rectangles, so a
+    strictly larger facet containing a finer one is the aligned rectangle of one
+    of the finitely many facet size classes; each class costs one sorted row join.
+    """
+
+    _, inverse, counts = np.unique(rows, axis=0, return_inverse=True, return_counts=True)
+    inverse = inverse.reshape((-1,))
+    paired = np.flatnonzero(counts[inverse] == 2)
+    conforming = paired[np.argsort(inverse[paired], kind="stable")].reshape((-1, 2))
+    conforming = conforming[slots[conforming[:, 0]] != slots[conforming[:, 1]]]
+    width = rows[:, 9] - rows[:, 8]
+    height = rows[:, 11] - rows[:, 10]
+    contained = [np.empty((0, 2), dtype=np.int64)]
+    for class_width, class_height in np.unique(np.stack((width, height), axis=1), axis=0):
+        fine = np.flatnonzero(
+            (width <= class_width)
+            & (height <= class_height)
+            & ((width < class_width) | (height < class_height))
+        )
+        if fine.size == 0:
+            continue
+        coarse = np.flatnonzero((width == class_width) & (height == class_height))
+        queries = rows[fine].copy()
+        queries[:, 8] -= queries[:, 8] % class_width
+        queries[:, 9] = queries[:, 8] + class_width
+        if class_height:
+            queries[:, 10] -= queries[:, 10] % class_height
+            queries[:, 11] = queries[:, 10] + class_height
+        table_index, query_index = _row_join(rows[coarse], queries)
+        contained.append(np.stack((coarse[table_index], fine[query_index]), axis=1))
+    containment = np.concatenate(contained, axis=0)
+    containment = containment[slots[containment[:, 0]] != slots[containment[:, 1]]]
+    return conforming, containment
 
 
 def finite_element_hp_balance_error(
     topology: FiniteElementHPTopology,
     geometry: FiniteElementHPGeometry,
     /,
-    *,
-    tolerance: float = 1.0e-10,
 ) -> int:
-    """Return the largest refinement-level jump across geometrically adjacent faces."""
+    """Return the largest refinement-level jump across adjacent leaf facets."""
 
-    active = np.flatnonzero(np.asarray(topology.active))
-    levels = np.asarray(topology.levels)
-    facets = [
-        (
-            int(slot),
-            _facet_vertices(topology, geometry, int(slot), local_facet),
-        )
-        for slot in active
-        for local_facet in range(len(_cell_facets(topology.cell_kind)))
-    ]
-    maximum = 0
-    for left in range(len(facets)):
-        left_slot, left_points = facets[left]
-        left_measure = _facet_measure(left_points)
-        for right in range(left + 1, len(facets)):
-            right_slot, right_points = facets[right]
-            if left_slot == right_slot:
-                continue
-            right_measure = _facet_measure(right_points)
-            adjacent = False
-            if abs(left_measure - right_measure) <= tolerance * max(
-                left_measure, right_measure, 1.0
-            ):
-                left_key = tuple(
-                    sorted(tuple(value) for value in np.round(left_points, decimals=13))
-                )
-                right_key = tuple(
-                    sorted(tuple(value) for value in np.round(right_points, decimals=13))
-                )
-                adjacent = left_key == right_key
-            elif left_measure > right_measure:
-                adjacent = _facet_contains(left_points, right_points, tolerance)
-            else:
-                adjacent = _facet_contains(right_points, left_points, tolerance)
-            if adjacent:
-                maximum = max(
-                    maximum,
-                    abs(int(levels[left_slot]) - int(levels[right_slot])),
-                )
-    return maximum
+    slots, _, rows = _forest_facet_rows(topology, geometry)
+    conforming, containment = _forest_facet_adjacency(rows, slots)
+    pairs = np.concatenate((conforming, containment), axis=0)
+    levels = np.asarray(topology.levels).astype(np.int64)
+    jumps = np.abs(levels[slots[pairs[:, 0]]] - levels[slots[pairs[:, 1]]])
+    return int(np.max(jumps, initial=0))
 
 
 def finite_element_hp_interface_plan(
     topology: FiniteElementHPTopology,
     geometry: FiniteElementHPGeometry,
     /,
-    *,
-    tolerance: float = 1.0e-10,
 ) -> FiniteElementHPInterfacePlan:
     """Build a canonical leaf-facet overlay, including one-to-many mortar patches."""
 
     if geometry.topology_id != topology.topology_id:
         raise ValueError("hp interface topology and geometry disagree.")
-    tolerance_ = float(tolerance)
-    active = np.flatnonzero(np.asarray(topology.active))
     roots = np.asarray(topology.root_cell_ids)
     paths = np.asarray(topology.path_codes)
-    facets: list[tuple[int, int, np.ndarray, float]] = []
-    for slot in active:
-        for local_facet in range(len(_cell_facets(topology.cell_kind))):
-            points = _facet_vertices(topology, geometry, int(slot), local_facet)
-            facets.append((int(slot), local_facet, points, _facet_measure(points)))
-    used: set[int] = set()
-    rows: list[tuple[int, int, int, int, _HPInterfaceRelation, int, int]] = []
-    rounded_keys: dict[tuple[tuple[float, ...], ...], list[int]] = {}
-    for index, (_, _, points, _) in enumerate(facets):
-        key = tuple(sorted(tuple(value) for value in np.round(points, decimals=13)))
-        rounded_keys.setdefault(key, []).append(index)
-    for indices in rounded_keys.values():
-        if len(indices) == 2:
-            left, right = indices
-            left_slot, left_facet, _, _ = facets[left]
-            right_slot, right_facet, _, _ = facets[right]
-            left_key = (roots[left_slot], paths[left_slot])
-            right_key = (roots[right_slot], paths[right_slot])
-            if right_key < left_key:
-                left, right = right, left
-                left_slot, left_facet, _, _ = facets[left]
-                right_slot, right_facet, _, _ = facets[right]
+    slots, local, facet_rows = _forest_facet_rows(topology, geometry)
+    conforming, containment = _forest_facet_adjacency(facet_rows, slots)
+    used = np.zeros(slots.shape, dtype=np.bool_)
+    rows: list[tuple[int, int, int, int, str, int, int]] = []
+    for left, right in conforming:
+        if (roots[slots[right]], paths[slots[right]]) < (
+            roots[slots[left]],
+            paths[slots[left]],
+        ):
+            left, right = right, left
+        rows.append(
+            (
+                int(slots[left]),
+                int(slots[right]),
+                int(local[left]),
+                int(local[right]),
+                "conforming",
+                0,
+                1,
+            )
+        )
+    used[conforming.reshape((-1,))] = True
+    containment = containment[~used[containment[:, 0]] & ~used[containment[:, 1]]]
+    expected = 2 if topology.dimension == 2 else 4
+    coarse_facets, coarse_group, child_totals = np.unique(
+        containment[:, 0], return_inverse=True, return_counts=True
+    )
+    coarse_group = coarse_group.reshape((-1,))
+    for group, coarse in enumerate(coarse_facets):
+        if child_totals[group] != expected:
+            continue
+        children = containment[coarse_group == group, 1]
+        children = children[
+            np.lexsort((local[children], paths[slots[children]], roots[slots[children]]))
+        ]
+        for child, fine in enumerate(children):
             rows.append(
                 (
-                    left_slot,
-                    right_slot,
-                    left_facet,
-                    right_facet,
-                    "conforming",
-                    0,
-                    1,
+                    int(slots[coarse]),
+                    int(slots[fine]),
+                    int(local[coarse]),
+                    int(local[fine]),
+                    "mortar",
+                    child,
+                    expected,
                 )
             )
-            used.update((left, right))
-    for coarse_index, (
-        coarse_slot,
-        coarse_facet,
-        coarse_points,
-        coarse_measure,
-    ) in sorted(enumerate(facets), key=lambda item: (-item[1][3], item[0])):
-        if coarse_index in used:
-            continue
-        children = []
-        for fine_index, (fine_slot, fine_facet, fine_points, fine_measure) in enumerate(
-            facets
-        ):
-            if (
-                fine_index == coarse_index
-                or fine_index in used
-                or coarse_slot == fine_slot
-                or fine_measure >= coarse_measure * (1.0 - tolerance_)
-            ):
-                continue
-            if _facet_contains(coarse_points, fine_points, tolerance_):
-                children.append((fine_index, fine_slot, fine_facet))
-        expected = 2 if topology.dimension == 2 else 4
-        if len(children) == expected:
-            children.sort(key=lambda item: (roots[item[1]], paths[item[1]], item[2]))
-            for child, (fine_index, fine_slot, fine_facet) in enumerate(children):
-                rows.append(
-                    (
-                        coarse_slot,
-                        fine_slot,
-                        coarse_facet,
-                        fine_facet,
-                        "mortar",
-                        child,
-                        expected,
-                    )
-                )
-                used.add(fine_index)
-            used.add(coarse_index)
-    for index, (slot, local_facet, _, _) in enumerate(facets):
-        if index not in used:
-            rows.append((slot, -1, local_facet, -1, "exterior", 0, 1))
+        used[children] = True
+        used[coarse] = True
+    for index in np.flatnonzero(~used):
+        rows.append((int(slots[index]), -1, int(local[index]), -1, "exterior", 0, 1))
     rows.sort(
         key=lambda row: (
             int(roots[row[0]]),
@@ -1228,6 +1365,7 @@ def finite_element_hp_interface_plan(
         np.asarray([row[1] for row in rows], dtype=np.int32),
         np.asarray([row[2] for row in rows], dtype=np.int32),
         np.asarray([row[3] for row in rows], dtype=np.int32),
+        # ty: ignore[invalid-argument-type]
         tuple(row[4] for row in rows),
         child_indices=np.asarray([row[5] for row in rows], dtype=np.int32),
         child_counts=np.asarray([row[6] for row in rows], dtype=np.int32),
@@ -1383,60 +1521,83 @@ def certify_finite_element_hp_geometry(
 
 
 class FiniteElementHPTraceConstraintPlan(StrictModule, NonTrainableState):
-    """One linear master-trace parameterization of broken cell coordinates."""
+    """One sparse master-trace parameterization of broken cell coordinates.
 
-    prolongation: Array
-    row_columns: Array
-    row_weights: Array
-    row_valid: Array
+    ``prolongation`` maps reduced (independent) coordinates to every broken
+    coordinate: independent DOFs copy their own reduced column and each hanging
+    DOF interpolates master DOFs through one local trace row.
+    """
+
+    prolongation: SparseLinearMap
     full_dof_count: int = eqx.field(static=True)
     reduced_dof_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, prolongation: ArrayLike, /) -> None:
-        matrix = np.asarray(prolongation)
+    def __init__(
+        self,
+        row_columns: ArrayLike,
+        row_weights: ArrayLike,
+        row_valid: ArrayLike,
+        /,
+        *,
+        reduced_dof_count: int,
+    ) -> None:
+        columns = np.asarray(row_columns)
+        weights = np.asarray(row_weights)
+        valid = np.asarray(row_valid)
+        reduced = int(reduced_dof_count)
         if (
-            matrix.ndim != 2
-            or matrix.shape[0] < matrix.shape[1]
-            or not np.issubdtype(matrix.dtype, np.inexact)
-            or np.any(~np.isfinite(matrix))
-            or np.any(np.count_nonzero(matrix, axis=1) == 0)
+            columns.ndim != 2
+            or not np.issubdtype(columns.dtype, np.integer)
+            or valid.dtype != np.bool_
+            or weights.shape != columns.shape
+            or valid.shape != columns.shape
+            or not np.issubdtype(weights.dtype, np.inexact)
+            or reduced <= 0
+            or columns.shape[0] < reduced
+            or np.any(~np.isfinite(weights[valid]))
+            or np.any(columns[valid] < 0)
+            or np.any(columns[valid] >= reduced)
+            or np.any(~np.any(valid & (weights != 0.0), axis=1))
         ):
-            raise ValueError("hp trace prolongation matrix is invalid.")
-        width = int(np.max(np.count_nonzero(matrix, axis=1)))
-        columns = np.zeros((matrix.shape[0], width), dtype=np.int32)
-        weights = np.zeros((matrix.shape[0], width), dtype=matrix.dtype)
-        valid = np.zeros((matrix.shape[0], width), dtype=np.bool_)
-        for row in range(matrix.shape[0]):
-            local = np.flatnonzero(matrix[row])
-            columns[row, : local.size] = local
-            weights[row, : local.size] = matrix[row, local]
-            valid[row, : local.size] = True
-        self.prolongation = jnp.asarray(matrix)
-        self.row_columns = jnp.asarray(columns)
-        self.row_weights = jnp.asarray(weights)
-        self.row_valid = jnp.asarray(valid)
-        self.full_dof_count, self.reduced_dof_count = matrix.shape
-        self.plan_id = canonical_fingerprint(
+            raise ValueError("hp trace prolongation rows are invalid.")
+        safe_columns = np.where(valid, columns, 0).astype(np.int32)
+        safe_weights = np.where(valid, weights, 0.0)
+        plan_id = canonical_fingerprint(
             {
                 "kind": "finite-element-hp-trace-constraint",
-                "prolongation": array_tree_fingerprint(matrix),
-                "row_columns": array_tree_fingerprint(columns),
-                "row_weights": array_tree_fingerprint(weights),
+                "reduced_dof_count": reduced,
+                "row_columns": array_tree_fingerprint(safe_columns),
+                "row_weights": array_tree_fingerprint(safe_weights),
                 "row_valid": array_tree_fingerprint(valid),
             }
         )
+        self.prolongation = SparseLinearMap(
+            RowRelation(safe_columns, source_size=reduced, valid=valid),
+            jnp.asarray(safe_weights),
+            operator_id=plan_id,
+        )
+        self.full_dof_count = columns.shape[0]
+        self.reduced_dof_count = reduced
+        self.plan_id = plan_id
+
+    @property
+    def row_columns(self) -> Array:
+        return self.prolongation.relation.source_indices
+
+    @property
+    def row_weights(self) -> Array:
+        return self.prolongation.coefficients
+
+    @property
+    def row_valid(self) -> Array:
+        return self.prolongation.relation.valid
 
     def expand(self, reduced: ArrayLike, /) -> Array:
         value = jnp.asarray(reduced)
-        if value.shape[0] != self.reduced_dof_count:
+        if value.ndim == 0 or value.shape[0] != self.reduced_dof_count:
             raise ValueError("Reduced trace values have incompatible shape.")
-        gathered = value[self.row_columns]
-        weights = self.row_weights.reshape(
-            self.row_weights.shape + (1,) * (gathered.ndim - 2)
-        )
-        valid = self.row_valid.reshape(self.row_valid.shape + (1,) * (gathered.ndim - 2))
-        return jnp.sum(jnp.where(valid, weights * gathered, 0.0), axis=1)
+        return self.prolongation.mv(value)
 
     def affine_lift(self, reduced_lift: ArrayLike, /) -> Array:
         """Expand nonzero master/Dirichlet data through every hanging trace route."""
@@ -1445,26 +1606,9 @@ class FiniteElementHPTraceConstraintPlan(StrictModule, NonTrainableState):
 
     def pullback_raw(self, full_dual: ArrayLike, /) -> Array:
         value = jnp.asarray(full_dual)
-        if value.shape[0] != self.full_dof_count:
+        if value.ndim == 0 or value.shape[0] != self.full_dof_count:
             raise ValueError("Full trace dual has incompatible shape.")
-        result = jnp.zeros(
-            (self.reduced_dof_count,) + value.shape[1:],
-            dtype=value.dtype,
-        )
-        for column in range(self.row_columns.shape[1]):
-            routes = self.row_columns[:, column]
-            weights = self.row_weights[:, column].reshape(
-                self.row_weights[:, column].shape + (1,) * (value.ndim - 1)
-            )
-            contribution = jnp.where(
-                self.row_valid[:, column].reshape(
-                    self.row_valid[:, column].shape + (1,) * (value.ndim - 1)
-                ),
-                weights * value,
-                0.0,
-            )
-            result = result.at[routes].add(contribution)
-        return result
+        return self.prolongation.transpose_mv(value)
 
 
 def finite_element_hp_trace_constraint_plan(
@@ -1474,7 +1618,11 @@ def finite_element_hp_trace_constraint_plan(
     interpolation: ArrayLike,
     /,
 ) -> FiniteElementHPTraceConstraintPlan:
-    """Build one master-trace prolongation from flattened slave interpolation rows."""
+    """Build one sparse master-trace prolongation from slave interpolation rows.
+
+    Masters must be independent DOFs: a hanging DOF constrained by another hanging
+    DOF (a constraint chain) is rejected. Zero-weight master entries are inert.
+    """
 
     full_count = int(full_dof_count)
     slaves = np.asarray(slave_dofs, dtype=np.int32)
@@ -1484,7 +1632,9 @@ def finite_element_hp_trace_constraint_plan(
         full_count <= 0
         or slaves.ndim != 1
         or masters.ndim != 2
+        or masters.shape[1] == 0
         or weights.shape != masters.shape
+        or not np.issubdtype(weights.dtype, np.inexact)
         or masters.shape[0] != slaves.size
         or np.unique(slaves).size != slaves.size
         or np.any(slaves < 0)
@@ -1500,11 +1650,19 @@ def finite_element_hp_trace_constraint_plan(
     column_by_dof[independent] = np.arange(independent.size, dtype=np.int32)
     if np.any(column_by_dof[masters] < 0):
         raise ValueError("Every hp trace master must be an independent DOF.")
-    matrix = np.zeros((full_count, independent.size), dtype=weights.dtype)
-    matrix[independent, np.arange(independent.size)] = 1.0
-    for row, slave in enumerate(slaves):
-        matrix[slave, column_by_dof[masters[row]]] = weights[row]
-    return FiniteElementHPTraceConstraintPlan(matrix)
+    width = masters.shape[1]
+    columns = np.zeros((full_count, width), dtype=np.int32)
+    row_weights = np.zeros((full_count, width), dtype=weights.dtype)
+    valid = np.zeros((full_count, width), dtype=np.bool_)
+    columns[independent, 0] = column_by_dof[independent]
+    row_weights[independent, 0] = 1.0
+    valid[independent, 0] = True
+    columns[slaves] = column_by_dof[masters]
+    row_weights[slaves] = weights
+    valid[slaves] = weights != 0.0
+    return FiniteElementHPTraceConstraintPlan(
+        columns, row_weights, valid, reduced_dof_count=independent.size
+    )
 
 
 def tensor_trace_interpolation(
@@ -1589,6 +1747,82 @@ def _epoch_slot_elements(
     return result
 
 
+def _tensor_gauss_rule(
+    points_per_axis: int,
+    dimension: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Tensor Gauss-Legendre points and weights on the unit reference box."""
+
+    rule = legendre_rule_data(points_per_axis, "gauss")
+    nodes = 0.5 * (np.asarray(rule.nodes, dtype=np.float64) + 1.0)
+    weights = 0.5 * np.asarray(rule.weights, dtype=np.float64)
+    node_grids = np.meshgrid(*((nodes,) * dimension), indexing="ij")
+    weight_grids = np.meshgrid(*((weights,) * dimension), indexing="ij")
+    points = np.stack(tuple(grid.reshape((-1,)) for grid in node_grids), axis=1)
+    products = np.prod(
+        np.stack(tuple(grid.reshape((-1,)) for grid in weight_grids), axis=1), axis=1
+    )
+    return points, products
+
+
+def _multilinear_measure_density(
+    vertices: np.ndarray, points: np.ndarray, /
+) -> np.ndarray:
+    """Return sqrt(det(J^T J)) of multilinear cells ``(R, 2^d, s)`` at points ``(Q, d)``."""
+
+    dimension = points.shape[1]
+    corners = _corner_points(dimension)
+    factors = np.where(
+        corners[None, :, :] == 0.0,
+        1.0 - points[:, None, :],
+        points[:, None, :],
+    )
+    signs = np.where(corners == 0.0, -1.0, 1.0)
+    derivatives = np.stack(
+        tuple(
+            signs[None, :, axis] * np.prod(np.delete(factors, axis, axis=2), axis=2)
+            for axis in range(dimension)
+        ),
+        axis=-1,
+    )
+    jacobian = np.asarray(ein.contract("rcs,qca->rqsa", vertices, derivatives))
+    gram = np.asarray(ein.contract("rqsa,rqsb->rqab", jacobian, jacobian))
+    determinant = np.asarray(
+        determinant_small_linear(SmallLinearSolvePlan(dimension), gram)
+    )
+    # The Gram determinant is nonnegative; only rounding can push it below zero.
+    return np.sqrt(np.maximum(determinant, 0.0))
+
+
+def _first_owner_rows(
+    inside: np.ndarray,
+    group: np.ndarray,
+    group_count: int,
+    counts: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Assign every target node to the first route of its group that contains it."""
+
+    order = np.lexsort((np.arange(group.size), group))
+    ordered_group = group[order]
+    cumulative = np.cumsum(inside[order], axis=0, dtype=np.int64)
+    first_row = np.searchsorted(ordered_group, ordered_group, side="left")
+    base = np.where(
+        (first_row > 0)[:, None],
+        cumulative[np.maximum(first_row - 1, 0)],
+        0,
+    )
+    owned = np.zeros_like(inside)
+    owned[order] = inside[order] & (cumulative - base == 1)
+    covered = np.zeros((group_count, inside.shape[1]), dtype=np.bool_)
+    np.logical_or.at(covered, group, inside)
+    required = np.arange(inside.shape[1])[None, :] < counts[:, None]
+    if np.any(required & ~covered):
+        raise ValueError("hp coarsening children do not cover every parent node.")
+    return owned
+
+
 def finite_element_hp_transfer_plan(
     source: FiniteElementHPEpoch,
     target: FiniteElementHPEpoch,
@@ -1597,97 +1831,122 @@ def finite_element_hp_transfer_plan(
     transfer_kind: Literal["p", "h-refinement", "h-coarsening"],
     /,
 ) -> FiniteElementHPTransferPlan:
-    """Build padded tensor interpolation/projection routes for one hp field."""
+    """Build padded nodal-interpolation and local L2-projection routes for one field.
 
+    Refinement and p routes integrate over their target cell; coarsening routes
+    integrate over each source child, so child target-mass contributions sum to
+    the parent mass. Cell measures follow each integration cell's multilinear
+    geometry. A coarsened parent node is interpolated from the first child in
+    canonical tree order that contains it.
+    """
+
+    match transfer_kind:
+        case "p":
+            relation_code = _HP_LINEAGE_RELATIONS["unchanged"]
+        case "h-refinement":
+            relation_code = _HP_LINEAGE_RELATIONS["refinement"]
+        case "h-coarsening":
+            relation_code = _HP_LINEAGE_RELATIONS["coarsening"]
+        case _:
+            raise ValueError(f"Unknown hp transfer kind {transfer_kind!r}.")
     if source.discretization is None or target.discretization is None:
         raise ValueError("hp transfer construction requires prepared discretizations.")
     source_index = source.discretization._field_index(field_name)
     target_index = target.discretization._field_index(field_name)
     source_elements = _epoch_slot_elements(source, source_index)
     target_elements = _epoch_slot_elements(target, target_index)
-    source_slots_all = np.asarray(lineage.source_slots)
-    target_slots_all = np.asarray(lineage.target_slots)
-    valid_all = np.asarray(lineage.valid)
-    relation_codes = np.asarray(lineage.relation_codes)
-    relation_code = {
-        "p": _HP_LINEAGE_RELATIONS["unchanged"],
-        "h-refinement": _HP_LINEAGE_RELATIONS["refinement"],
-        "h-coarsening": _HP_LINEAGE_RELATIONS["coarsening"],
-    }[transfer_kind]
-    selected = valid_all & (relation_codes == relation_code)
+    selected = np.asarray(lineage.valid) & (
+        np.asarray(lineage.relation_codes) == relation_code
+    )
     if not np.any(selected):
         raise ValueError(f"No lineage routes support transfer kind {transfer_kind!r}.")
-    source_slots = source_slots_all[selected]
-    target_slots = target_slots_all[selected]
+    source_slots = np.asarray(lineage.source_slots)[selected]
+    target_slots = np.asarray(lineage.target_slots)[selected]
+    route_source = tuple(source_elements[int(slot)][0] for slot in source_slots)
+    route_target = tuple(target_elements[int(slot)][0] for slot in target_slots)
     source_count = np.asarray(
-        [source_elements[int(slot)][1] for slot in source_slots], dtype=np.int32
+        tuple(element.local_dof_count for element in route_source), dtype=np.int32
     )
     target_count = np.asarray(
-        [target_elements[int(slot)][1] for slot in target_slots], dtype=np.int32
+        tuple(element.local_dof_count for element in route_target), dtype=np.int32
     )
+    source_lower = np.asarray(source.geometry.reference_lower)[source_slots]
+    source_upper = np.asarray(source.geometry.reference_upper)[source_slots]
+    target_lower = np.asarray(target.geometry.reference_lower)[target_slots]
+    target_upper = np.asarray(target.geometry.reference_upper)[target_slots]
+    coarsening = transfer_kind == "h-coarsening"
+    integration = source if coarsening else target
+    integration_slots = source_slots if coarsening else target_slots
+    integration_lower = source_lower if coarsening else target_lower
+    integration_upper = source_upper if coarsening else target_upper
+    dimension = source_lower.shape[1]
+    maximum_degree = max(
+        int(np.unique(np.asarray(element.reference_nodes)[:, axis]).size) - 1
+        for element in route_source + route_target
+        for axis in range(dimension)
+    )
+    points, weights = _tensor_gauss_rule(maximum_degree + 1 + dimension // 2, dimension)
+    measure = weights[None, :] * _multilinear_measure_density(
+        np.asarray(integration.geometry.cell_vertices)[integration_slots], points
+    )
+    root_points = (
+        integration_lower[:, None, :]
+        + points[None, :, :] * (integration_upper - integration_lower)[:, None, :]
+    )
+    source_points = (root_points - source_lower[:, None, :]) / (
+        source_upper - source_lower
+    )[:, None, :]
+    target_points = (root_points - target_lower[:, None, :]) / (
+        target_upper - target_lower
+    )[:, None, :]
     source_width = int(np.max(source_count))
     target_width = int(np.max(target_count))
-    matrices = np.zeros((source_slots.size, target_width, source_width), dtype=np.float64)
-    projection = np.zeros_like(matrices)
-    if transfer_kind != "h-coarsening":
-        for route, (source_slot, target_slot) in enumerate(
-            zip(source_slots, target_slots, strict=True)
-        ):
-            source_element = source_elements[int(source_slot)][0]
-            target_element = target_elements[int(target_slot)][0]
-            target_nodes = np.asarray(target_element.reference_nodes)
-            if transfer_kind == "h-refinement":
-                source_lower = np.asarray(source.geometry.reference_lower)[source_slot]
-                source_upper = np.asarray(source.geometry.reference_upper)[source_slot]
-                target_lower = np.asarray(target.geometry.reference_lower)[target_slot]
-                target_upper = np.asarray(target.geometry.reference_upper)[target_slot]
-                global_points = target_lower + target_nodes * (
-                    target_upper - target_lower
-                )
-                target_nodes = (global_points - source_lower) / (
-                    source_upper - source_lower
-                )
-            local = np.asarray(
-                tensor_trace_interpolation(
-                    source_element.reference_nodes,
-                    target_nodes,
-                )
-            )
-            matrices[route, : target_count[route], : source_count[route]] = local
-            projection[route, : target_count[route], : source_count[route]] = local
-    else:
-        grouped: dict[int, list[int]] = {}
-        for route, target_slot in enumerate(target_slots):
-            grouped.setdefault(int(target_slot), []).append(route)
-        for target_slot, routes in grouped.items():
-            parent_element = target_elements[target_slot][0]
-            refinement_matrices = []
-            for route in routes:
-                child_slot = int(source_slots[route])
-                child_element = source_elements[child_slot][0]
-                child_nodes = np.asarray(child_element.reference_nodes)
-                parent_lower = np.asarray(target.geometry.reference_lower)[target_slot]
-                parent_upper = np.asarray(target.geometry.reference_upper)[target_slot]
-                child_lower = np.asarray(source.geometry.reference_lower)[child_slot]
-                child_upper = np.asarray(source.geometry.reference_upper)[child_slot]
-                global_points = child_lower + child_nodes * (child_upper - child_lower)
-                parent_points = (global_points - parent_lower) / (
-                    parent_upper - parent_lower
-                )
-                refinement_matrices.append(
-                    np.asarray(
-                        tensor_trace_interpolation(
-                            parent_element.reference_nodes,
-                            parent_points,
-                        )
-                    )
-                )
-            normal = sum(matrix.T @ matrix for matrix in refinement_matrices)
-            for route, refinement in zip(routes, refinement_matrices, strict=True):
-                local = np.linalg.solve(normal, refinement.T)
-                matrices[route, : target_count[route], : source_count[route]] = local
-                projection[route, : target_count[route], : source_count[route]] = local
-    pairing_adjoint = np.swapaxes(matrices, 1, 2)
+    routes = source_slots.size
+    matrices = np.zeros((routes, target_width, source_width), dtype=np.float64)
+    inside = np.zeros((routes, target_width), dtype=np.bool_)
+    source_basis = np.zeros((routes, points.shape[0], source_width), dtype=np.float64)
+    target_basis = np.zeros((routes, points.shape[0], target_width), dtype=np.float64)
+    tolerance = 64.0 * np.finfo(np.float64).eps
+    # Host preparation over heterogeneous route elements; every tabulation is
+    # vectorized over its nodes or quadrature points.
+    for route, (source_element, target_element) in enumerate(
+        zip(route_source, route_target, strict=True)
+    ):
+        source_nodes = np.asarray(source_element.reference_nodes)
+        target_nodes = np.asarray(target_element.reference_nodes)
+        nodes_in_source = (
+            target_lower[route]
+            + target_nodes * (target_upper[route] - target_lower[route])
+            - source_lower[route]
+        ) / (source_upper[route] - source_lower[route])
+        count_s, count_t = source_count[route], target_count[route]
+        matrices[route, :count_t, :count_s] = np.asarray(
+            tensor_trace_interpolation(source_nodes, nodes_in_source)
+        )
+        inside[route, :count_t] = np.all(
+            (nodes_in_source >= -tolerance) & (nodes_in_source <= 1.0 + tolerance),
+            axis=1,
+        )
+        source_basis[route, :, :count_s] = np.asarray(
+            tensor_trace_interpolation(source_nodes, source_points[route])
+        )
+        target_basis[route, :, :count_t] = np.asarray(
+            tensor_trace_interpolation(target_nodes, target_points[route])
+        )
+    if coarsening:
+        groups, group = np.unique(target_slots, return_inverse=True)
+        group_count = np.zeros(groups.shape, dtype=np.int32)
+        group_count[group] = target_count
+        owned = _first_owner_rows(inside, group, groups.size, group_count)
+        matrices = np.where(owned[:, :, None], matrices, 0.0)
+    elif not np.all(inside[np.arange(target_width)[None, :] < target_count[:, None]]):
+        raise ValueError("hp refinement target nodes must lie inside their source cell.")
+    mass = np.asarray(
+        ein.contract("rqi,rq,rqj->rij", target_basis, measure, target_basis)
+    )
+    coupling = np.asarray(
+        ein.contract("rqi,rq,rqj->rij", target_basis, measure, source_basis)
+    )
     return FiniteElementHPTransferPlan(
         source.topology.topology_id,
         target.topology.topology_id,
@@ -1701,8 +1960,9 @@ def finite_element_hp_transfer_plan(
         matrices,
         source_plan_id=source.topology.plan_id,
         target_plan_id=target.topology.plan_id,
-        pairing_adjoint=pairing_adjoint,
-        mass_projection=projection,
+        pairing_adjoint=np.swapaxes(matrices, 1, 2),
+        l2_mass=mass,
+        l2_coupling=coupling,
     )
 
 
@@ -1718,7 +1978,7 @@ class FiniteElementHPStateTransferPolicy(StrictModule, NonTrainableState):
         role_ = str(role)
         if not name_ or role_ not in (
             "primal",
-            "mass-projection",
+            "l2-projection",
             "raw-dual",
             "pairing-adjoint",
             "recompute",
@@ -1738,17 +1998,23 @@ class FiniteElementHPStateTransferPolicy(StrictModule, NonTrainableState):
         values: ArrayLike,
         /,
     ) -> Array | None:
-        if self.role == "primal":
-            return transfer.apply_primal(values)
-        if self.role == "mass-projection":
-            return transfer.apply_mass_projection(values)
-        if self.role == "raw-dual":
-            return transfer.pullback_raw(values)
-        if self.role == "pairing-adjoint":
-            return transfer.apply_pairing_adjoint(values)
-        if self.role in ("invalidate", "discard"):
-            return None
-        raise ValueError("Recompute policies require an explicit recomputation callback.")
+        match self.role:
+            case "primal":
+                return transfer.apply_primal(values)
+            case "l2-projection":
+                return transfer.apply_l2_projection(values)
+            case "raw-dual":
+                return transfer.pullback_raw(values)
+            case "pairing-adjoint":
+                return transfer.apply_pairing_adjoint(values)
+            case "invalidate" | "discard":
+                return None
+            case "recompute":
+                raise ValueError(
+                    "Recompute policies require an explicit recomputation callback."
+                )
+            case _:
+                raise ValueError(f"Unknown hp state-transfer role {self.role!r}.")
 
 
 class FiniteElementHPResidualJumpLedger(StrictModule):
@@ -2246,17 +2512,20 @@ def _hp_trace_constraint_for_field(
                 )
                 evaluation = (evaluation + child_coordinates) / width
         interpolation = np.asarray(tensor_trace_interpolation(master_nodes, evaluation))
-        for local_row, slave in enumerate(slave_global):
-            slave_ = int(slave)
-            if slave_ in set(master_global.tolist()):
-                continue
-            values = interpolation[local_row]
-            if slave_ in slave_rows:
-                continue
-            slave_rows[slave_] = (master_global.copy(), values.copy())
+        hanging = ~np.isin(slave_global, master_global)
+        for local_row in np.flatnonzero(hanging):
+            slave_rows.setdefault(
+                int(slave_global[local_row]),
+                (master_global.copy(), interpolation[local_row].copy()),
+            )
     full_count = discretization.dof_maps[field_index].global_dof_count
     if not slave_rows:
-        return FiniteElementHPTraceConstraintPlan(np.eye(full_count))
+        return finite_element_hp_trace_constraint_plan(
+            full_count,
+            np.empty((0,), dtype=np.int32),
+            np.empty((0, 1), dtype=np.int32),
+            np.empty((0, 1), dtype=np.float64),
+        )
     max_width = max(masters.size for masters, _ in slave_rows.values())
     slaves = np.asarray(sorted(slave_rows), dtype=np.int32)
     masters = np.empty((slaves.size, max_width), dtype=np.int32)

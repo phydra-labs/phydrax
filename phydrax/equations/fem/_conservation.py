@@ -753,6 +753,7 @@ def _coordinate_values(
     field_element = discretization.elements[field_index][0]
     coordinate_element = discretization.coordinate_elements[0]
     coordinate_routes = discretization.coordinate_dofs[0]
+    # ty: ignore[unresolved-attribute]
     values = coordinate_element.tabulate(field_element.reference_nodes)[0]
     return ein.contract(
         "qi,cid->cqd",

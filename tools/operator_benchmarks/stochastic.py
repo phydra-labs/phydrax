@@ -7,7 +7,8 @@ from typing import Any, Sequence
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax as phx
 import phydrax.ein as ein

@@ -213,7 +213,11 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
             payload = jnp.where(mask, payload, 0)
             received = jax.lax.ppermute(payload, axis_name=axis_name, perm=permutation)
             receive_indices = self.phase_receive_indices[phase, part]
-            # Only destinations write; sources with no incoming permutation receive zeros.
+            receive_valid = self.phase_receive_valid[phase, part].reshape(
+                send_valid.shape + (1,) * (values.ndim - 1)
+            )
+            # Only destinations write, and only their valid message slots: padded
+            # slots alias local row zero, which is always an owned entity.
             destination = jnp.any(
                 jnp.asarray(
                     [target == part for _, target in permutation], dtype=jnp.bool_
@@ -221,7 +225,9 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
             )
             values = jax.lax.cond(
                 destination,
-                lambda current: current.at[receive_indices].set(received),
+                lambda current: current.at[receive_indices].set(
+                    jnp.where(receive_valid, received, current[receive_indices])
+                ),
                 lambda current: current,
                 values,
             )

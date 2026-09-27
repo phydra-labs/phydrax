@@ -231,6 +231,7 @@ def _cell_metric(
     /,
 ) -> FiniteElementMetricData:
     coordinate_element = discretization.coordinate_elements[block_index]
+    # ty: ignore[unresolved-attribute]
     coordinate_basis, coordinate_gradients = coordinate_element.tabulate(
         reference.volume_rule.points
     )
@@ -2214,6 +2215,7 @@ def _prepared_facet_side(
         physical_weights = surface_jacobian * facet.weights[None, :]
     else:
         coordinate_element = discretization.coordinate_elements[block_index]
+        # ty: ignore[unresolved-attribute]
         coordinate_basis, coordinate_gradients = coordinate_element.tabulate(facet.points)
         coordinate_routes = discretization.coordinate_dofs[block_index][local_cells]
         metric = FiniteElementMetricData(

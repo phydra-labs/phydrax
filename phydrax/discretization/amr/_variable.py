@@ -669,25 +669,18 @@ def _components(
 
 def _aligned_component_box(
     level: int,
-    component: set[tuple[int, ...]],
+    cells: np.ndarray,
     alignment: tuple[int, ...],
     shape: tuple[int, ...],
     /,
 ) -> LogicalPatchBox:
-    lower = tuple(
-        min(cell[axis] for cell in component) // alignment[axis] * alignment[axis]
-        for axis in range(len(shape))
+    step = np.asarray(alignment, dtype=np.int64)
+    lower = np.min(cells, axis=0) // step * step
+    upper = np.minimum(
+        np.asarray(shape, dtype=np.int64),
+        (np.max(cells, axis=0) + step) // step * step,
     )
-    upper = tuple(
-        min(
-            shape[axis],
-            (max(cell[axis] for cell in component) + 1 + alignment[axis] - 1)
-            // alignment[axis]
-            * alignment[axis],
-        )
-        for axis in range(len(shape))
-    )
-    return LogicalPatchBox(level, lower, upper)
+    return LogicalPatchBox(level, tuple(lower.tolist()), tuple(upper.tolist()))
 
 
 def _split_to_catalog(
@@ -720,19 +713,24 @@ def _split_to_catalog(
 def _cluster_component(
     level_plan: VariablePatchLevelPlan,
     level: int,
-    component: set[tuple[int, ...]],
+    cells: np.ndarray,
     alignment: tuple[int, ...],
     shape: tuple[int, ...],
     policy: PatchClusteringPolicy,
     /,
 ) -> tuple[tuple[int, LogicalPatchBox], ...] | None:
-    """Recursively split sparse components at aligned low-density separators."""
+    """Recursively split sparse ``(n, d)`` cell sets at aligned low-density separators.
 
-    if not component:
+    Separator and balance counts for every aligned split come from one sorted
+    coordinate column per axis, so each recursion level costs ``O(n log n)``.
+    """
+
+    count = cells.shape[0]
+    if count == 0:
         return ()
-    box = _aligned_component_box(level, component, alignment, shape)
+    box = _aligned_component_box(level, cells, alignment, shape)
     cell_count = prod(box.extent)
-    fill = len(component) / cell_count
+    fill = count / cell_count
     aspect = max(box.extent) / min(box.extent)
     bucket = level_plan.bucket_for_extent(box.extent)
     if (
@@ -742,30 +740,39 @@ def _cluster_component(
     ):
         return ((bucket, box),)
 
-    candidates: list[tuple[int, int, int, int, int]] = []
+    columns: list[np.ndarray] = []
     for axis in range(box.dimension):
         step = alignment[axis]
-        for split in range(box.lower[axis] + step, box.upper[axis], step):
-            left_count = sum(cell[axis] < split for cell in component)
-            right_count = len(component) - left_count
-            if left_count == 0 or right_count == 0:
-                continue
-            separator_count = sum(
-                split - step <= cell[axis] < split + step for cell in component
-            )
-            imbalance = abs(left_count - right_count)
-            candidates.append(
-                (separator_count, imbalance, -box.extent[axis], axis, split)
-            )
-    if not candidates:
+        splits = np.arange(box.lower[axis] + step, box.upper[axis], step, dtype=np.int64)
+        coordinates = np.sort(cells[:, axis])
+        left = np.searchsorted(coordinates, splits, side="left")
+        separator = np.searchsorted(
+            coordinates, splits + step, side="left"
+        ) - np.searchsorted(coordinates, splits - step, side="left")
+        admissible = (left > 0) & (left < count)
+        columns.append(
+            np.stack(
+                (
+                    separator,
+                    np.abs(2 * left - count),
+                    np.full(splits.shape, -box.extent[axis], dtype=np.int64),
+                    np.full(splits.shape, axis, dtype=np.int64),
+                    splits,
+                ),
+                axis=1,
+            )[admissible]
+        )
+    candidates = np.concatenate(columns, axis=0)
+    if candidates.shape[0] == 0:
         return _split_to_catalog(level_plan, box) if bucket is None else ((bucket, box),)
-    _, _, _, axis, split = min(candidates)
-    left = {cell for cell in component if cell[axis] < split}
-    right = component - left
+    best = candidates[np.lexsort(candidates.T[::-1])[0]]
+    axis = int(best[3])
+    split = int(best[4])
+    lower_side = cells[:, axis] < split
     left_result = _cluster_component(
         level_plan,
         level,
-        left,
+        cells[lower_side],
         alignment,
         shape,
         policy,
@@ -773,7 +780,7 @@ def _cluster_component(
     right_result = _cluster_component(
         level_plan,
         level,
-        right,
+        cells[~lower_side],
         alignment,
         shape,
         policy,
@@ -973,17 +980,19 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
             )
             candidate_pairs: list[tuple[int, LogicalPatchBox]] = []
             for component in components:
-                refined = {
-                    tuple(
-                        cell[axis] * self.plan.levels[level].refinement_ratio
-                        + child[axis]
-                        for axis in range(level_plan.dimension)
-                    )
-                    for cell in component
-                    for child in np.ndindex(
-                        (self.plan.levels[level].refinement_ratio,) * level_plan.dimension
-                    )
-                }
+                refined = np.unique(
+                    (
+                        np.asarray(sorted(component), dtype=np.int64)[:, None, :]
+                        * self.plan.levels[level].refinement_ratio
+                        + np.indices(
+                            (self.plan.levels[level].refinement_ratio,)
+                            * level_plan.dimension
+                        )
+                        .reshape(level_plan.dimension, -1)
+                        .T[None, :, :]
+                    ).reshape(-1, level_plan.dimension),
+                    axis=0,
+                )
                 clustered = _cluster_component(
                     level_plan,
                     level + 1,

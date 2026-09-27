@@ -188,7 +188,6 @@ def test_tetrahedron_nodal_dg_preserves_free_stream() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]
@@ -246,7 +245,6 @@ def test_mixed_triangle_quadrilateral_nodal_dg_uses_conservative_mortar() -> Non
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]
@@ -318,7 +316,6 @@ def test_prism_and_pyramid_nodal_dg_preserve_free_stream() -> None:
         )
         state = jnp.broadcast_to(
             system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-            # ty: ignore[unresolved-attribute]
             discretization.field_spaces[0].vector_space.shape,
         )
         # ty: ignore[invalid-argument-type]
@@ -402,7 +399,6 @@ def test_tetrahedron_nodal_ldg_preserves_stationary_rest_state() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 0.0, 1.0))),
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]
@@ -461,7 +457,6 @@ def test_polyhedral_three_dimensional_interface_is_conservative() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]
@@ -508,7 +503,6 @@ def test_interval_p_zero_nodal_dg_preserves_constant_state() -> None:
         discretization,
         NodalDGConservationMethodPlan(RusanovFluxPlan()),
     )
-    # ty: ignore[unresolved-attribute]
     state = jnp.ones(discretization.field_spaces[0].vector_space.shape)
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=2.0e-12)
@@ -558,7 +552,6 @@ def test_hexahedron_general_nodal_dg_preserves_free_stream() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]
@@ -627,7 +620,6 @@ def test_nodal_dg_transformed_periodicity_is_conservative() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type, unresolved-attribute]

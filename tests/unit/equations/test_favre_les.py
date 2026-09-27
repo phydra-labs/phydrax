@@ -811,7 +811,6 @@ def test_nodal_dg_semidiscrete_rhs_includes_gradient_aware_sgs_energy_rate() -> 
     )
     state = jnp.broadcast_to(
         point_state,
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]

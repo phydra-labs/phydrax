@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from ..._bvh import build_packed_bvh, point_select_leaf_items
+from ..._bvh import BVHBuildPolicy, point_select_leaf_items, prepare_bvh
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, GatherStencil
 from ..._strict import StrictModule
@@ -210,11 +210,10 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
         if not bool(jnp.all(simplices.evidence.successful)):
             raise ValueError("Barycentric splatting requires nondegenerate simplices.")
         cell_vertices = coordinates[cells]
-        bvh = build_packed_bvh(
+        bvh = prepare_bvh(
             np.min(cell_vertices, axis=1),
             np.max(cell_vertices, axis=1),
-            np.mean(cell_vertices, axis=1),
-            leaf_size=min(16, cells.shape[0]),
+            policy=BVHBuildPolicy(leaf_size=min(16, cells.shape[0])),
             dtype=simplices.vertices.dtype,
         )
         candidate_cells, candidate_valid, search_complete = point_select_leaf_items(

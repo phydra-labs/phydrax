@@ -18,7 +18,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from ..._bvh import build_packed_bvh, PackedBVH, point_select_leaf_items
+from ..._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
@@ -247,11 +247,10 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
             raise ValueError("maximum_candidates must be positive.")
         cell_bounds_min = np.min(cells, axis=1)
         cell_bounds_max = np.max(cells, axis=1)
-        bvh = build_packed_bvh(
+        bvh = prepare_bvh(
             cell_bounds_min,
             cell_bounds_max,
-            np.mean(cells, axis=1),
-            leaf_size=min(16, cells.shape[0]),
+            policy=BVHBuildPolicy(leaf_size=min(16, cells.shape[0])),
             dtype=simplex.vertices.dtype,
         )
         nodal_values = jnp.asarray(values_host[tetrahedra_host])

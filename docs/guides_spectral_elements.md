@@ -177,12 +177,21 @@ removed from the physical exterior domain.
 DOF budgets, and coarsening hysteresis. Balance-added cells are recorded separately
 from the requested set.
 
-Primal interpolation, physical mass projection, raw dual pullback, and pairing
-adjoint remain separate transfer roles. `FiniteElementHPTransaction` pairs accepted
-and candidate epochs with their lineage and transfers. The solver topology
-transaction transfers declared state/history roles, certifies the fully prepared
-candidate, and then promotes atomically or returns the accepted state unchanged.
-Epoch forest and geometry data have canonical restart adapters.
+Nodal interpolation (the primal role), local L2 projection, raw dual pullback, and
+pairing adjoint remain separate transfer roles. The L2 projection solves each
+target cell's quadrature mass matrix, summed over its incoming routes, through the
+native local-block factorization and keeps per-cell rank and condition evidence
+in `FiniteElementHPProjectionEvidence`; applying a projection whose mass solves
+failed raises. `FiniteElementHPTransaction` pairs accepted and candidate epochs
+with their lineage and transfers. The solver topology transaction transfers
+declared state/history roles, certifies the fully prepared candidate, and then
+promotes atomically or returns the accepted state unchanged. Epoch forest and
+geometry data have canonical restart adapters.
+
+Hanging-node trace constraints are sparse row maps, and forest vertex welding,
+facet pairing, and 2:1 balance checks use exact integer lattice keys derived from
+the dyadic reference boxes and welded root corners rather than rounded
+coordinates or all-pairs facet comparisons.
 
 ## Adaptive solvers and distribution
 

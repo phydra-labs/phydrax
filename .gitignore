@@ -1,7 +1,8 @@
 *.html
 *.csv
 *.txt
-!phydrax/meshing/providers/native/**/CMakeLists.txt
+!native/providers/**/CMakeLists.txt
+!native/meshcore/**/CMakeLists.txt
 !LICENSES/BEMPP-CL-MIT.txt
 !LICENSES/FMMAX-MIT.txt
 !LICENSES/JZTREE-MIT.txt
@@ -38,6 +39,7 @@ scratch.py
 *.onnx
 *.tfevents*
 dist/
+build/
 site/
 _gitignore/
 benchmarks/*

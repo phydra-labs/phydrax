@@ -62,6 +62,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
         coordinate_dofs = discretization.coordinate_dofs[index]
         if coordinate_element.cell_kind != block.cell_kind:
             raise ValueError("Coordinate element and cell block kinds differ.")
+        # ty: ignore[invalid-assignment]
         self.coordinate_element = coordinate_element
         self.coordinate_dofs = jnp.asarray(coordinate_dofs)
         self.precision_policy = discretization.precision_policy

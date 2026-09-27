@@ -169,20 +169,37 @@ def test_run_configuration_round_trips_one_execution_vocabulary() -> None:
         )
 
 
-def test_transfer_distinguishes_raw_dual_and_pairing_adjoint() -> None:
+def test_transfer_distinguishes_raw_dual_and_hilbert_adjoint() -> None:
+    source_mass = jnp.asarray([0.5, 0.5])
+    target_mass = jnp.asarray([0.25, 0.5, 0.25])
     primal = jnp.asarray([[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]])
-    pairing_adjoint = jnp.asarray([[2.0, 1.0, 0.0], [0.0, 1.0, 2.0]])
-    transfer = phx.discretization.FiniteElementTransferBundle(
-        primal,
-        "adaptation",
-        pairing_adjoint=pairing_adjoint,
+    adjoint_matrix = (primal.T * target_mass[None, :]) / source_mass[:, None]
+    hilbert_adjoint = phx.linalg.DenseLinearOperator(
+        adjoint_matrix,
+        source=phx.linalg.ArraySpace((3,)),
+        target=phx.linalg.ArraySpace((2,)),
     )
+    transfer = phx.discretization.fem.vertex_interpolation_transfer(
+        jnp.asarray([[0, 0], [0, 1], [1, 1]], dtype=jnp.int32),
+        jnp.asarray([[1.0, 0.0], [0.5, 0.5], [1.0, 0.0]]),
+        jnp.asarray([[True, False], [True, True], [True, False]]),
+        source_size=2,
+        source_topology_id="coarse",
+        target_topology_id="fine",
+        hilbert_adjoint=hilbert_adjoint,
+    )
+    source = jnp.asarray([2.0, -1.0])
+    target = jnp.asarray([0.5, 3.0, -2.0])
+    raw = transfer.pullback(target)
+    # ty: ignore[unresolved-attribute]
+    adjoint = transfer.hilbert_adjoint.mv(target)
 
-    assert jnp.array_equal(transfer.dual_pullback, primal.T)
-    # ty: ignore[invalid-argument-type]
-    assert jnp.array_equal(transfer.pairing_adjoint, pairing_adjoint)
-    # ty: ignore[invalid-argument-type]
-    assert not jnp.array_equal(transfer.dual_pullback, transfer.pairing_adjoint)
+    assert jnp.allclose(raw, primal.T @ target)
+    assert not jnp.allclose(raw, adjoint)
+    assert jnp.allclose(
+        jnp.vdot(transfer.apply(source), target_mass * target),
+        jnp.vdot(source, source_mass * adjoint),
+    )
 
 
 def test_q1_hexahedral_volume_contract_is_executable() -> None:

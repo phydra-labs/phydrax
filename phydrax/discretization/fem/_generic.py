@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
-from typing import cast
+from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,7 +18,6 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -28,7 +27,14 @@ from ...linalg import (
     OperatorProperties,
     SmallLinearSolvePlan,
 )
-from ...sparse import EdgeRelation, RowRelation, SparseLinearMap
+from ...sparse import (
+    EdgeRelation,
+    gather_routes,
+    route_reduce,
+    RowRelation,
+    SparseLinearMap,
+)
+from .._adaptive_simplex import MaskedSimplexMesh
 from .._cell_complex import (
     IntervalConnectivity,
     PolygonalConnectivity,
@@ -62,12 +68,7 @@ from .._local_variational import (
 )
 from .._measure import DiscreteMeasure
 from .._reference_cell import reference_cell_topology
-from .._spaces import (
-    BlockDofLayout,
-    DiscreteFieldSpace,
-    EntityDofLayout,
-    FieldConformity,
-)
+from .._spaces import BlockDofLayout, DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
 from .._topology import EntitySelection
 from ._precision import FiniteElementPrecisionPolicy
@@ -366,13 +367,20 @@ class _FiniteElementDofLayout:
     global_count: int
     entity_dof_counts: tuple[int, ...]
     entity_dofs_per_entity: tuple[int, ...]
-    edge_widths: np.ndarray | None
-    edge_starts: np.ndarray | None
-    face_widths: np.ndarray | None
-    face_starts: np.ndarray | None
-    compatible_face_width: int | None
-    compatible_cell_width: int | None
-    cell_starts: np.ndarray | None
+    edge_widths: np.ndarray | None = None
+    edge_starts: np.ndarray | None = None
+    face_widths: np.ndarray | None = None
+    face_starts: np.ndarray | None = None
+    compatible_face_width: int | None = None
+    compatible_cell_width: int | None = None
+    cell_starts: np.ndarray | None = None
+
+
+_HIGH_ORDER_H1_CONNECTIVITIES = (
+    PolygonalConnectivity,
+    TetrahedralConnectivity,
+    HexahedralConnectivity,
+)
 
 
 def _prepare_finite_element_dof_layout(
@@ -385,284 +393,329 @@ def _prepare_finite_element_dof_layout(
     if len(conformities) != 1:
         raise ValueError("One field must use one conformity across cell blocks.")
     conformity = conformities.pop()
-    vertex_count = mesh.coordinates.shape[0]
-    connectivity = mesh.connectivity
-    topological_dimension = mesh.topological_dimension
-    entity_dof_counts = (0,) * (topological_dimension + 1)
-    entity_dofs_per_entity = (1,) * (topological_dimension + 1)
-    edge_widths = None
-    edge_starts = None
-    face_shapes = None
-    face_widths = None
-    face_starts = None
-    compatible_face_width = None
-    compatible_cell_width = None
-    cell_widths = None
-    cell_starts = None
-
-    if conformity == "L2":
-        association = "cell"
-        global_count = sum(
-            block.cell_count * element.local_dof_count
-            for block, element in zip(mesh.blocks, resolved, strict=True)
-        )
-    elif conformity in ("Hdiv", "Hcurl"):
-        if components:
-            raise ValueError(
-                "H(div)/H(curl) element values cannot add replicated components."
-            )
-        if isinstance(connectivity, PolygonalConnectivity):
-            association = "edge"
-            global_count = connectivity.edges.shape[0]
-        elif isinstance(connectivity, TetrahedralConnectivity) and conformity == "Hdiv":
-            widths = {
-                len(face_dofs)
-                for element in resolved
-                for face_dofs in element.entity_dofs[2]
-            }
-            if len(widths) != 1 or not widths or next(iter(widths)) < 1:
-                raise ValueError(
-                    "Tetrahedral H(div) faces require one uniform positive moment width."
-                )
-            if any(
-                any(
-                    entity
-                    for dimension in (0, 1)
-                    for entity in element.entity_dofs[dimension]
-                )
-                for element in resolved
-            ):
-                raise ValueError(
-                    "Tetrahedral H(div) elements require face and cell moments only."
-                )
-            cell_widths_ = {
-                len(element.entity_dofs[3][0])
-                for element in resolved
-                if len(element.entity_dofs[3]) == 1
-            }
-            if len(cell_widths_) != 1:
-                raise ValueError(
-                    "Tetrahedral H(div) cells require one uniform interior width."
-                )
-            compatible_face_width = next(iter(widths))
-            compatible_cell_width = next(iter(cell_widths_))
-            association = "hdiv_entity"
-            face_dof_count = connectivity.faces.shape[0] * compatible_face_width
-            total_cell_count = sum(block.cell_count for block in mesh.blocks)
-            cell_dof_count = total_cell_count * compatible_cell_width
-            global_count = face_dof_count + cell_dof_count
-            entity_dof_counts = (0, 0, face_dof_count, cell_dof_count)
-            entity_dofs_per_entity = (
-                0,
-                0,
-                compatible_face_width,
-                compatible_cell_width,
-            )
-        else:
-            raise ValueError(
-                "Compatible spaces require polygonal edges or tetrahedral H(div) faces."
-            )
-    elif conformity == "H1":
-        high_order = any(_has_nonvertex_dofs(element) for element in resolved)
-        if not high_order:
-            association = "vertex"
-            global_count = vertex_count
-        else:
-            if not isinstance(
-                connectivity,
-                (
-                    PolygonalConnectivity,
-                    TetrahedralConnectivity,
-                    HexahedralConnectivity,
+    match conformity:
+        case "L2":
+            return _single_association_dof_layout(
+                mesh,
+                conformity,
+                "cell",
+                sum(
+                    block.cell_count * element.local_dof_count
+                    for block, element in zip(mesh.blocks, resolved, strict=True)
                 ),
-            ):
-                raise ValueError(
-                    "High-order H1 entity routing requires polygonal, tetrahedral, or hexahedral connectivity."
-                )
-            association = "entity"
-            edge_count = connectivity.edges.shape[0]
-            edge_widths = np.full((edge_count,), -1, dtype=np.int32)
-            total_cell_count = sum(block.cell_count for block in mesh.blocks)
-            cell_widths = np.empty((total_cell_count,), dtype=np.int32)
-            if isinstance(
-                connectivity, (TetrahedralConnectivity, HexahedralConnectivity)
-            ):
-                face_count = connectivity.faces.shape[0]
-                face_widths = np.full((face_count,), -1, dtype=np.int32)
-            if isinstance(connectivity, HexahedralConnectivity):
-                face_shapes = np.full((face_count, 2), -1, dtype=np.int32)
-
-            cell_offset = 0
-            for block, element in zip(
-                mesh.blocks,
-                resolved,
-                strict=True,
-            ):
-                if len(element.entity_dofs[0]) != block.arity:
-                    raise ValueError(
-                        "H1 nodal vertex entities must match the cell vertices."
-                    )
-                local_edge_count = len(element.entity_dofs[1])
-                if isinstance(connectivity, PolygonalConnectivity):
-                    expected_edge_count = block.arity
-                elif isinstance(connectivity, TetrahedralConnectivity):
-                    expected_edge_count = len(_TETRAHEDRAL_EDGES)
-                else:
-                    expected_edge_count = len(_HEXAHEDRAL_EDGES)
-                if local_edge_count != expected_edge_count:
-                    raise ValueError(
-                        "H1 edge entities must match the reference cell edges."
-                    )
-                if isinstance(connectivity, TetrahedralConnectivity):
-                    block_cell_edges, _, block_cell_faces = _tetrahedral_entity_routes(
-                        connectivity,
-                        np.asarray(block.vertices, dtype=np.int32),
-                    )
-                else:
-                    block_cell_edges = np.asarray(
-                        connectivity.cell_edges,
-                        dtype=np.int32,
-                    )[
-                        cell_offset : cell_offset + block.cell_count,
-                        :local_edge_count,
-                    ]
-                for local_edge, edge_dofs in enumerate(element.entity_dofs[1]):
-                    width = len(edge_dofs)
-                    for edge in np.unique(block_cell_edges[:, local_edge]):
-                        existing = edge_widths[int(edge)]
-                        if existing >= 0 and existing != width:
-                            raise ValueError(
-                                "Shared H1 edge trace widths are incompatible; a mortar is required."
-                            )
-                        edge_widths[int(edge)] = width
-
-                if isinstance(connectivity, HexahedralConnectivity):
-                    if face_shapes is None:
-                        raise RuntimeError(
-                            "Hexahedral H1 routing requires allocated face shapes."
-                        )
-                    if len(element.entity_dofs[2]) != len(_HEXAHEDRAL_FACES):
-                        raise ValueError(
-                            "H1 face entities must match the hexahedron faces."
-                        )
-                    block_cell_faces = np.asarray(
-                        connectivity.cell_faces,
-                        dtype=np.int32,
-                    )[cell_offset : cell_offset + block.cell_count]
-                    block_face_permutations = np.asarray(
-                        connectivity.cell_face_vertex_permutations,
-                        dtype=np.int32,
-                    )[cell_offset : cell_offset + block.cell_count]
-                    for local_face in range(len(_HEXAHEDRAL_FACES)):
-                        local_shape = _hexahedral_face_shape(
-                            element,
-                            local_face,
-                        )
-                        for cell in range(block.cell_count):
-                            face = int(block_cell_faces[cell, local_face])
-                            canonical_shape = _canonical_face_shape(
-                                block_face_permutations[cell, local_face],
-                                local_shape,
-                            )
-                            existing = tuple(face_shapes[face])
-                            if existing[0] >= 0 and existing != canonical_shape:
-                                raise ValueError(
-                                    "Shared H1 quadrilateral trace shapes are incompatible; a mortar is required."
-                                )
-                            face_shapes[face] = canonical_shape
-                            if face_widths is None:
-                                raise RuntimeError(
-                                    "Hexahedral H1 routing requires face widths."
-                                )
-                            face_widths[face] = prod(canonical_shape)
-                elif isinstance(connectivity, TetrahedralConnectivity):
-                    if face_widths is None:
-                        raise RuntimeError(
-                            "Tetrahedral H1 routing requires allocated face widths."
-                        )
-                    if len(element.entity_dofs[2]) != len(_TETRAHEDRAL_FACES):
-                        raise ValueError(
-                            "H1 face entities must match the tetrahedron faces."
-                        )
-                    for local_face, face_dofs in enumerate(element.entity_dofs[2]):
-                        width = len(face_dofs)
-                        for face in np.unique(block_cell_faces[:, local_face]):
-                            existing = face_widths[int(face)]
-                            if existing >= 0 and existing != width:
-                                raise ValueError(
-                                    "Shared H1 triangular trace widths are incompatible; a mortar is required."
-                                )
-                            face_widths[int(face)] = width
-
-                top_entities = element.entity_dofs[topological_dimension]
-                if len(top_entities) != 1:
-                    raise ValueError(
-                        "H1 cell interiors require one top-dimensional entity."
-                    )
-                cell_widths[cell_offset : cell_offset + block.cell_count] = len(
-                    top_entities[0]
-                )
-                cell_offset += block.cell_count
-
-            if np.any(edge_widths < 0):
-                raise ValueError("High-order H1 routing left unassigned edges.")
-            if face_widths is not None and np.any(face_widths < 0):
-                raise ValueError("High-order H1 routing left unassigned faces.")
-
-            cursor = vertex_count
-            edge_starts = np.empty_like(edge_widths)
-            for edge, width in enumerate(edge_widths):
-                edge_starts[edge] = cursor
-                cursor += int(width)
-            edge_dof_count = cursor - vertex_count
-
-            face_dof_count = 0
-            if face_widths is not None:
-                face_starts = np.empty((len(face_widths),), dtype=np.int32)
-                for face, width in enumerate(face_widths):
-                    face_starts[face] = cursor
-                    cursor += int(width)
-                face_dof_count = cursor - vertex_count - edge_dof_count
-
-            cell_starts = np.empty_like(cell_widths)
-            cell_global_ids = np.concatenate(
-                tuple(
-                    np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks
-                )
             )
-            for cell in np.argsort(cell_global_ids, kind="stable"):
-                cell_starts[cell] = cursor
-                cursor += int(cell_widths[cell])
-            cell_dof_count = cursor - (vertex_count + edge_dof_count + face_dof_count)
-            global_count = cursor
+        case "Hdiv" | "Hcurl":
+            return _compatible_dof_layout(mesh, resolved, components, conformity)
+        case "H1":
+            if not any(_has_nonvertex_dofs(element) for element in resolved):
+                return _single_association_dof_layout(
+                    mesh, conformity, "vertex", mesh.coordinates.shape[0]
+                )
+            return _high_order_h1_dof_layout(mesh, resolved)
+        case _:
+            raise ValueError(f"Unsupported finite-element conformity {conformity!r}.")
 
-            counts = [vertex_count, edge_dof_count]
-            per_entity = [1, _uniform_entity_width(edge_widths)]
-            if topological_dimension == 3:
-                if face_widths is None:
-                    raise TypeError("Three-dimensional H1 routing requires face widths.")
-                counts.append(face_dof_count)
-                per_entity.append(_uniform_entity_width(face_widths))
-            counts.append(cell_dof_count)
-            per_entity.append(_uniform_entity_width(cell_widths))
-            entity_dof_counts = tuple(counts)
-            entity_dofs_per_entity = tuple(per_entity)
-    else:
-        raise ValueError(f"Unsupported finite-element conformity {conformity!r}.")
+
+def _single_association_dof_layout(
+    mesh: CellMesh,
+    conformity: str,
+    association: str,
+    global_count: int,
+    /,
+) -> _FiniteElementDofLayout:
+    # One association owns every DOF, so no per-entity offsets are published.
+    entity_count = mesh.topological_dimension + 1
     return _FiniteElementDofLayout(
         conformity=conformity,
         association=association,
         global_count=global_count,
-        entity_dof_counts=entity_dof_counts,
-        entity_dofs_per_entity=entity_dofs_per_entity,
+        entity_dof_counts=(0,) * entity_count,
+        entity_dofs_per_entity=(1,) * entity_count,
+    )
+
+
+def _compatible_dof_layout(
+    mesh: CellMesh,
+    resolved: tuple[FiniteElementSpec, ...],
+    components: tuple[int, ...],
+    conformity: str,
+    /,
+) -> _FiniteElementDofLayout:
+    if components:
+        raise ValueError(
+            "H(div)/H(curl) element values cannot add replicated components."
+        )
+    connectivity = mesh.connectivity
+    if isinstance(connectivity, PolygonalConnectivity):
+        return _single_association_dof_layout(
+            mesh, conformity, "edge", connectivity.edges.shape[0]
+        )
+    if isinstance(connectivity, TetrahedralConnectivity) and conformity == "Hdiv":
+        return _tetrahedral_hdiv_dof_layout(mesh, resolved, connectivity)
+    raise ValueError(
+        "Compatible spaces require polygonal edges or tetrahedral H(div) faces."
+    )
+
+
+def _tetrahedral_hdiv_dof_layout(
+    mesh: CellMesh,
+    resolved: tuple[FiniteElementSpec, ...],
+    connectivity: TetrahedralConnectivity,
+    /,
+) -> _FiniteElementDofLayout:
+    face_widths = {
+        len(face_dofs) for element in resolved for face_dofs in element.entity_dofs[2]
+    }
+    if len(face_widths) != 1 or not face_widths or next(iter(face_widths)) < 1:
+        raise ValueError(
+            "Tetrahedral H(div) faces require one uniform positive moment width."
+        )
+    if any(
+        any(entity for dimension in (0, 1) for entity in element.entity_dofs[dimension])
+        for element in resolved
+    ):
+        raise ValueError(
+            "Tetrahedral H(div) elements require face and cell moments only."
+        )
+    cell_widths = {
+        len(element.entity_dofs[3][0])
+        for element in resolved
+        if len(element.entity_dofs[3]) == 1
+    }
+    if len(cell_widths) != 1:
+        raise ValueError("Tetrahedral H(div) cells require one uniform interior width.")
+    face_width = next(iter(face_widths))
+    cell_width = next(iter(cell_widths))
+    face_dof_count = connectivity.faces.shape[0] * face_width
+    cell_dof_count = sum(block.cell_count for block in mesh.blocks) * cell_width
+    return _FiniteElementDofLayout(
+        conformity="Hdiv",
+        association="hdiv_entity",
+        global_count=face_dof_count + cell_dof_count,
+        entity_dof_counts=(0, 0, face_dof_count, cell_dof_count),
+        entity_dofs_per_entity=(0, 0, face_width, cell_width),
+        compatible_face_width=face_width,
+        compatible_cell_width=cell_width,
+    )
+
+
+def _high_order_h1_dof_layout(
+    mesh: CellMesh,
+    resolved: tuple[FiniteElementSpec, ...],
+    /,
+) -> _FiniteElementDofLayout:
+    edge_widths, face_widths, cell_widths = _high_order_h1_entity_widths(mesh, resolved)
+    # Global numbering: vertices, then edge, face, and cell interiors.
+    vertex_count = mesh.coordinates.shape[0]
+    cursor = vertex_count
+    edge_starts = np.empty_like(edge_widths)
+    for edge, width in enumerate(edge_widths):
+        edge_starts[edge] = cursor
+        cursor += int(width)
+    edge_dof_count = cursor - vertex_count
+
+    face_starts = None
+    face_dof_count = 0
+    if face_widths is not None:
+        face_starts = np.empty((len(face_widths),), dtype=np.int32)
+        for face, width in enumerate(face_widths):
+            face_starts[face] = cursor
+            cursor += int(width)
+        face_dof_count = cursor - vertex_count - edge_dof_count
+
+    # Cell interiors follow global cell identity, independent of block order.
+    cell_starts = np.empty_like(cell_widths)
+    cell_global_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    )
+    for cell in np.argsort(cell_global_ids, kind="stable"):
+        cell_starts[cell] = cursor
+        cursor += int(cell_widths[cell])
+    cell_dof_count = cursor - (vertex_count + edge_dof_count + face_dof_count)
+
+    counts = [vertex_count, edge_dof_count]
+    per_entity = [1, _uniform_entity_width(edge_widths)]
+    if mesh.topological_dimension == 3:
+        if face_widths is None:
+            raise TypeError("Three-dimensional H1 routing requires face widths.")
+        counts.append(face_dof_count)
+        per_entity.append(_uniform_entity_width(face_widths))
+    counts.append(cell_dof_count)
+    per_entity.append(_uniform_entity_width(cell_widths))
+    return _FiniteElementDofLayout(
+        conformity="H1",
+        association="entity",
+        global_count=cursor,
+        entity_dof_counts=tuple(counts),
+        entity_dofs_per_entity=tuple(per_entity),
         edge_widths=edge_widths,
         edge_starts=edge_starts,
         face_widths=face_widths,
         face_starts=face_starts,
-        compatible_face_width=compatible_face_width,
-        compatible_cell_width=compatible_cell_width,
         cell_starts=cell_starts,
     )
+
+
+def _high_order_h1_entity_widths(
+    mesh: CellMesh,
+    resolved: tuple[FiniteElementSpec, ...],
+    /,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
+    """Return conforming edge, face, and cell-interior DOF widths per entity."""
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, _HIGH_ORDER_H1_CONNECTIVITIES):
+        raise ValueError(
+            "High-order H1 entity routing requires polygonal, tetrahedral, or hexahedral connectivity."
+        )
+    edge_widths = np.full((connectivity.edges.shape[0],), -1, dtype=np.int32)
+    total_cell_count = sum(block.cell_count for block in mesh.blocks)
+    cell_widths = np.empty((total_cell_count,), dtype=np.int32)
+    face_widths = None
+    face_shapes = None
+    if isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+        face_count = connectivity.faces.shape[0]
+        face_widths = np.full((face_count,), -1, dtype=np.int32)
+    if isinstance(connectivity, HexahedralConnectivity):
+        face_shapes = np.full((face_count, 2), -1, dtype=np.int32)
+
+    cell_offset = 0
+    for block, element in zip(mesh.blocks, resolved, strict=True):
+        if len(element.entity_dofs[0]) != block.arity:
+            raise ValueError("H1 nodal vertex entities must match the cell vertices.")
+        _record_high_order_h1_trace_widths(
+            connectivity,
+            block,
+            element,
+            cell_offset,
+            edge_widths,
+            face_widths,
+            face_shapes,
+        )
+        top_entities = element.entity_dofs[mesh.topological_dimension]
+        if len(top_entities) != 1:
+            raise ValueError("H1 cell interiors require one top-dimensional entity.")
+        cell_widths[cell_offset : cell_offset + block.cell_count] = len(top_entities[0])
+        cell_offset += block.cell_count
+
+    if np.any(edge_widths < 0):
+        raise ValueError("High-order H1 routing left unassigned edges.")
+    if face_widths is not None and np.any(face_widths < 0):
+        raise ValueError("High-order H1 routing left unassigned faces.")
+    return edge_widths, face_widths, cell_widths
+
+
+def _record_high_order_h1_trace_widths(
+    connectivity: PolygonalConnectivity
+    | TetrahedralConnectivity
+    | HexahedralConnectivity,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    cell_offset: int,
+    edge_widths: np.ndarray,
+    face_widths: np.ndarray | None,
+    face_shapes: np.ndarray | None,
+    /,
+) -> None:
+    """Record one block's edge and face trace widths on the shared entities."""
+    local_edge_count = len(element.entity_dofs[1])
+    if isinstance(connectivity, PolygonalConnectivity):
+        expected_edge_count = block.arity
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        expected_edge_count = len(_TETRAHEDRAL_EDGES)
+    else:
+        expected_edge_count = len(_HEXAHEDRAL_EDGES)
+    if local_edge_count != expected_edge_count:
+        raise ValueError("H1 edge entities must match the reference cell edges.")
+    if isinstance(connectivity, TetrahedralConnectivity):
+        block_cell_edges, _, block_cell_faces = _tetrahedral_entity_routes(
+            connectivity,
+            np.asarray(block.vertices, dtype=np.int32),
+        )
+    else:
+        block_cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
+            cell_offset : cell_offset + block.cell_count,
+            :local_edge_count,
+        ]
+    _record_shared_entity_widths(
+        edge_widths,
+        block_cell_edges,
+        element.entity_dofs[1],
+        "Shared H1 edge trace widths are incompatible; a mortar is required.",
+    )
+
+    if isinstance(connectivity, HexahedralConnectivity):
+        _record_hexahedral_face_widths(
+            connectivity, block, element, cell_offset, face_shapes, face_widths
+        )
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        if face_widths is None:
+            raise RuntimeError("Tetrahedral H1 routing requires allocated face widths.")
+        if len(element.entity_dofs[2]) != len(_TETRAHEDRAL_FACES):
+            raise ValueError("H1 face entities must match the tetrahedron faces.")
+        _record_shared_entity_widths(
+            face_widths,
+            block_cell_faces,
+            element.entity_dofs[2],
+            "Shared H1 triangular trace widths are incompatible; a mortar is required.",
+        )
+
+
+def _record_shared_entity_widths(
+    widths: np.ndarray,
+    block_routes: np.ndarray,
+    local_entity_dofs: tuple[tuple[int, ...], ...],
+    conflict_message: str,
+    /,
+) -> None:
+    """Assign each shared entity one DOF width; unequal traces need a mortar."""
+    for local_entity, entity_dofs in enumerate(local_entity_dofs):
+        width = len(entity_dofs)
+        for entity in np.unique(block_routes[:, local_entity]):
+            existing = widths[int(entity)]
+            if existing >= 0 and existing != width:
+                raise ValueError(conflict_message)
+            widths[int(entity)] = width
+
+
+def _record_hexahedral_face_widths(
+    connectivity: HexahedralConnectivity,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    cell_offset: int,
+    face_shapes: np.ndarray | None,
+    face_widths: np.ndarray | None,
+    /,
+) -> None:
+    """Assign each shared quadrilateral face one canonical tensor trace shape."""
+    if face_shapes is None:
+        raise RuntimeError("Hexahedral H1 routing requires allocated face shapes.")
+    if len(element.entity_dofs[2]) != len(_HEXAHEDRAL_FACES):
+        raise ValueError("H1 face entities must match the hexahedron faces.")
+    block_cell_faces = np.asarray(
+        connectivity.cell_faces,
+        dtype=np.int32,
+    )[cell_offset : cell_offset + block.cell_count]
+    block_face_permutations = np.asarray(
+        connectivity.cell_face_vertex_permutations,
+        dtype=np.int32,
+    )[cell_offset : cell_offset + block.cell_count]
+    for local_face in range(len(_HEXAHEDRAL_FACES)):
+        local_shape = _hexahedral_face_shape(element, local_face)
+        for cell in range(block.cell_count):
+            face = int(block_cell_faces[cell, local_face])
+            canonical_shape = _canonical_face_shape(
+                block_face_permutations[cell, local_face],
+                local_shape,
+            )
+            existing = tuple(face_shapes[face])
+            if existing[0] >= 0 and existing != canonical_shape:
+                raise ValueError(
+                    "Shared H1 quadrilateral trace shapes are incompatible; a mortar is required."
+                )
+            face_shapes[face] = canonical_shape
+            if face_widths is None:
+                raise RuntimeError("Hexahedral H1 routing requires face widths.")
+            face_widths[face] = prod(canonical_shape)
 
 
 def _build_finite_element_dof_routes(
@@ -671,16 +724,7 @@ def _build_finite_element_dof_routes(
     layout: _FiniteElementDofLayout,
     /,
 ) -> tuple[tuple[Array, ...], tuple[Array, ...], tuple[RowRelation, ...]]:
-    association = layout.association
-    global_count = layout.global_count
     connectivity = mesh.connectivity
-    topological_dimension = mesh.topological_dimension
-    edge_widths = layout.edge_widths
-    edge_starts = layout.edge_starts
-    face_starts = layout.face_starts
-    compatible_face_width = layout.compatible_face_width
-    compatible_cell_width = layout.compatible_cell_width
-    cell_starts = layout.cell_starts
     block_dofs = []
     orientations = []
     relations = []
@@ -688,242 +732,299 @@ def _build_finite_element_dof_routes(
     dof_offset = 0
     for block, element in zip(mesh.blocks, resolved, strict=True):
         vertices = np.asarray(block.vertices, dtype=np.int32)
-        if association == "cell":
-            width = element.local_dof_count
-            local = np.arange(
-                dof_offset,
-                dof_offset + block.cell_count * width,
-                dtype=np.int32,
-            ).reshape((block.cell_count, width))
-            dof_offset += block.cell_count * width
-            orientation = np.ones_like(local, dtype=np.float64)
-        elif association == "edge":
-            if not isinstance(connectivity, PolygonalConnectivity):
-                raise TypeError("Compatible edge map requires polygonal connectivity.")
-            local = np.asarray(connectivity.cell_edges, dtype=np.int32)[
-                cell_offset : cell_offset + block.cell_count,
-                : element.local_dof_count,
-            ]
-            orientation = np.asarray(
-                connectivity.cell_edge_signs,
-                dtype=np.float64,
-            )[
-                cell_offset : cell_offset + block.cell_count,
-                : element.local_dof_count,
-            ]
-        elif association == "hdiv_entity":
-            if not isinstance(connectivity, TetrahedralConnectivity):
-                raise TypeError("Compatible face map requires tetrahedral connectivity.")
-            if compatible_face_width is None:
-                raise RuntimeError("Compatible face width was not prepared.")
-            if compatible_cell_width is None:
-                raise RuntimeError("Compatible cell width was not prepared.")
-            _, _, block_cell_faces = _tetrahedral_entity_routes(connectivity, vertices)
-            local = np.full(
-                (block.cell_count, element.local_dof_count),
-                -1,
-                dtype=np.int32,
-            )
-            orientation = np.ones_like(local, dtype=np.float64)
-            for local_face, face_dofs in enumerate(element.entity_dofs[2]):
-                width = len(face_dofs)
-                if width != compatible_face_width:
-                    raise ValueError("Tetrahedral H(div) face widths are inconsistent.")
-                local_vertices = _TETRAHEDRAL_FACES[local_face]
-                face_vertex_ids = vertices[:, np.asarray(local_vertices, dtype=np.int32)]
-                vertex_positions = np.argsort(
-                    np.argsort(face_vertex_ids, axis=1), axis=1
-                ).astype(np.int32)
-                inversions = (
-                    (face_vertex_ids[:, 0] > face_vertex_ids[:, 1]).astype(np.int32)
-                    + (face_vertex_ids[:, 0] > face_vertex_ids[:, 2]).astype(np.int32)
-                    + (face_vertex_ids[:, 1] > face_vertex_ids[:, 2]).astype(np.int32)
-                )
-                face_signs = 1.0 - 2.0 * (inversions % 2)
-                if width == 1:
-                    positions = np.zeros((block.cell_count, 1), dtype=np.int32)
-                else:
-                    if width == 3:
-                        positions = vertex_positions
-                    elif width == 6:
-                        edge_positions = []
-                        for first_local, second_local in ((0, 1), (1, 2), (2, 0)):
-                            first = vertex_positions[:, first_local]
-                            second = vertex_positions[:, second_local]
-                            low = np.minimum(first, second)
-                            high = np.maximum(first, second)
-                            edge_positions.append(
-                                np.where(
-                                    (low == 0) & (high == 1),
-                                    3,
-                                    np.where((low == 1) & (high == 2), 4, 5),
-                                )
-                            )
-                        positions = np.column_stack(
-                            (vertex_positions, *edge_positions)
-                        ).astype(np.int32)
-                    else:
-                        raise ValueError(
-                            "Tetrahedral H(div) supports one, three, or six moments per face."
-                        )
-                dofs = np.asarray(face_dofs, dtype=np.int32)
-                local[:, dofs] = block_cell_faces[:, local_face, None] * width + positions
-                orientation[:, dofs] = face_signs[:, None]
-            interior_dofs = element.entity_dofs[3][0]
-            if len(interior_dofs) != compatible_cell_width:
-                raise ValueError("Tetrahedral H(div) cell widths are inconsistent.")
-            if interior_dofs:
-                face_dof_count = connectivity.faces.shape[0] * compatible_face_width
-                starts = (
-                    face_dof_count
-                    + (cell_offset + np.arange(block.cell_count)) * compatible_cell_width
-                )
-                local[:, np.asarray(interior_dofs, dtype=np.int32)] = (
-                    starts[:, None]
-                    + np.arange(compatible_cell_width, dtype=np.int32)[None, :]
-                )
-            if np.any(local < 0):
-                raise ValueError("Tetrahedral H(div) map left unassigned DOFs.")
-        elif association == "entity":
-            if not isinstance(
-                connectivity,
-                (
-                    PolygonalConnectivity,
-                    TetrahedralConnectivity,
-                    HexahedralConnectivity,
-                ),
-            ):
-                raise RuntimeError("High-order H1 routing lost compatible connectivity.")
-            if edge_widths is None or edge_starts is None or cell_starts is None:
-                raise TypeError("High-order H1 entity offsets are unavailable.")
-            local = np.full(
-                (block.cell_count, element.local_dof_count),
-                -1,
-                dtype=np.int32,
-            )
-            for local_vertex, entity_dofs in enumerate(element.entity_dofs[0]):
-                if len(entity_dofs) != 1:
-                    raise ValueError("H1 nodal vertices require one DOF per vertex.")
-                local[:, entity_dofs[0]] = vertices[:, local_vertex]
-
-            local_edge_count = len(element.entity_dofs[1])
-            if isinstance(connectivity, TetrahedralConnectivity):
-                (
-                    block_cell_edges,
-                    block_cell_signs,
-                    block_cell_faces,
-                ) = _tetrahedral_entity_routes(connectivity, vertices)
-            else:
-                block_cell_edges = np.asarray(
-                    connectivity.cell_edges,
+        match layout.association:
+            case "cell":
+                width = element.local_dof_count
+                local = np.arange(
+                    dof_offset,
+                    dof_offset + block.cell_count * width,
                     dtype=np.int32,
-                )[
-                    cell_offset : cell_offset + block.cell_count,
-                    :local_edge_count,
+                ).reshape((block.cell_count, width))
+                dof_offset += block.cell_count * width
+                orientation = np.ones_like(local, dtype=np.float64)
+            case "edge":
+                if not isinstance(connectivity, PolygonalConnectivity):
+                    raise TypeError(
+                        "Compatible edge map requires polygonal connectivity."
+                    )
+                rows = slice(cell_offset, cell_offset + block.cell_count)
+                local = np.asarray(connectivity.cell_edges, dtype=np.int32)[
+                    rows, : element.local_dof_count
                 ]
-                block_cell_signs = np.asarray(
+                orientation = np.asarray(
                     connectivity.cell_edge_signs,
                     dtype=np.float64,
-                )[
-                    cell_offset : cell_offset + block.cell_count,
-                    :local_edge_count,
-                ]
-            for local_edge, entity_dofs in enumerate(element.entity_dofs[1]):
-                width = len(entity_dofs)
-                if width == 0:
-                    continue
-                positions = np.arange(width, dtype=np.int32)
-                canonical_positions = np.where(
-                    block_cell_signs[:, local_edge, None] > 0.0,
-                    positions,
-                    positions[::-1],
+                )[rows, : element.local_dof_count]
+            case "hdiv_entity":
+                local, orientation = _tetrahedral_hdiv_block_routes(
+                    mesh, layout, block, element, vertices, cell_offset
                 )
-                local[:, np.asarray(entity_dofs, dtype=np.int32)] = (
-                    edge_starts[block_cell_edges[:, local_edge], None]
-                    + canonical_positions
+            case "entity":
+                local = _high_order_h1_block_routes(
+                    mesh, layout, block, element, vertices, cell_offset
                 )
-
-            if isinstance(connectivity, HexahedralConnectivity):
-                if face_starts is None:
-                    raise TypeError("Hexahedral H1 face offsets are unavailable.")
-                block_cell_faces = np.asarray(
-                    connectivity.cell_faces,
-                    dtype=np.int32,
-                )[cell_offset : cell_offset + block.cell_count]
-                block_face_permutations = np.asarray(
-                    connectivity.cell_face_vertex_permutations,
-                    dtype=np.int32,
-                )[cell_offset : cell_offset + block.cell_count]
-                for local_face, face_dofs in enumerate(element.entity_dofs[2]):
-                    if not face_dofs:
-                        continue
-                    shape = _hexahedral_face_shape(element, local_face)
-                    grid_positions = _hexahedral_face_grid_positions(
-                        element,
-                        local_face,
-                        shape,
+                orientation = np.ones_like(local, dtype=np.float64)
+            case "vertex":
+                if element.local_dof_count != vertices.shape[1]:
+                    raise ValueError(
+                        "Vertex-associated H1 elements require one DOF per vertex."
                     )
-                    for cell in range(block.cell_count):
-                        tensor_permutation = _quadrilateral_tensor_permutation(
-                            block_face_permutations[cell, local_face],
-                            *shape,
-                        )
-                        face = block_cell_faces[cell, local_face]
-                        local[
-                            cell,
-                            np.asarray(face_dofs, dtype=np.int32),
-                        ] = face_starts[face] + tensor_permutation[grid_positions]
-            elif isinstance(connectivity, TetrahedralConnectivity):
-                if face_starts is None:
-                    raise TypeError("Tetrahedral H1 face offsets are unavailable.")
-                canonical_faces = np.asarray(connectivity.faces, dtype=np.int32)
-                for local_face, face_dofs in enumerate(element.entity_dofs[2]):
-                    if not face_dofs:
-                        continue
-                    reference_vertices = _TETRAHEDRAL_FACES[local_face]
-                    for cell in range(block.cell_count):
-                        face = int(block_cell_faces[cell, local_face])
-                        local_vertices = tuple(
-                            int(vertices[cell, vertex]) for vertex in reference_vertices
-                        )
-                        canonical_vertices = tuple(canonical_faces[face])
-                        positions = _tetrahedral_face_dof_positions(
-                            element,
-                            local_face,
-                            local_vertices,
-                            canonical_vertices,
-                        )
-                        local[
-                            cell,
-                            np.asarray(face_dofs, dtype=np.int32),
-                        ] = face_starts[face] + positions
-
-            interior_dofs = element.entity_dofs[topological_dimension][0]
-            for cell in range(block.cell_count):
-                if interior_dofs:
-                    local[
-                        cell,
-                        np.asarray(interior_dofs, dtype=np.int32),
-                    ] = cell_starts[cell_offset + cell] + np.arange(
-                        len(interior_dofs), dtype=np.int32
-                    )
-            if np.any(local < 0):
-                raise ValueError("High-order H1 entity map left unassigned DOFs.")
-            orientation = np.ones_like(local, dtype=np.float64)
-        elif association == "vertex":
-            if element.local_dof_count != vertices.shape[1]:
-                raise ValueError(
-                    "Vertex-associated H1 elements require one DOF per vertex."
-                )
-            local = vertices
-            orientation = np.ones_like(local, dtype=np.float64)
-        else:
-            raise ValueError("Unsupported finite-element DOF map.")
+                local = vertices
+                orientation = np.ones_like(local, dtype=np.float64)
+            case _:
+                raise ValueError("Unsupported finite-element DOF map.")
         block_dofs.append(jnp.asarray(local))
         orientations.append(jnp.asarray(orientation))
-        relations.append(RowRelation(local, source_size=global_count))
+        relations.append(RowRelation(local, source_size=layout.global_count))
         cell_offset += block.cell_count
     return tuple(block_dofs), tuple(orientations), tuple(relations)
+
+
+def _tetrahedral_hdiv_block_routes(
+    mesh: CellMesh,
+    layout: _FiniteElementDofLayout,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    vertices: np.ndarray,
+    cell_offset: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, TetrahedralConnectivity):
+        raise TypeError("Compatible face map requires tetrahedral connectivity.")
+    compatible_face_width = layout.compatible_face_width
+    compatible_cell_width = layout.compatible_cell_width
+    if compatible_face_width is None:
+        raise RuntimeError("Compatible face width was not prepared.")
+    if compatible_cell_width is None:
+        raise RuntimeError("Compatible cell width was not prepared.")
+    _, _, block_cell_faces = _tetrahedral_entity_routes(connectivity, vertices)
+    local = np.full(
+        (block.cell_count, element.local_dof_count),
+        -1,
+        dtype=np.int32,
+    )
+    orientation = np.ones_like(local, dtype=np.float64)
+    for local_face, face_dofs in enumerate(element.entity_dofs[2]):
+        width = len(face_dofs)
+        if width != compatible_face_width:
+            raise ValueError("Tetrahedral H(div) face widths are inconsistent.")
+        local_vertices = _TETRAHEDRAL_FACES[local_face]
+        face_vertex_ids = vertices[:, np.asarray(local_vertices, dtype=np.int32)]
+        positions, face_signs = _tetrahedral_hdiv_face_moment_routes(
+            face_vertex_ids, width
+        )
+        dofs = np.asarray(face_dofs, dtype=np.int32)
+        local[:, dofs] = block_cell_faces[:, local_face, None] * width + positions
+        orientation[:, dofs] = face_signs[:, None]
+    interior_dofs = element.entity_dofs[3][0]
+    if len(interior_dofs) != compatible_cell_width:
+        raise ValueError("Tetrahedral H(div) cell widths are inconsistent.")
+    if interior_dofs:
+        face_dof_count = connectivity.faces.shape[0] * compatible_face_width
+        starts = (
+            face_dof_count
+            + (cell_offset + np.arange(block.cell_count)) * compatible_cell_width
+        )
+        local[:, np.asarray(interior_dofs, dtype=np.int32)] = (
+            starts[:, None] + np.arange(compatible_cell_width, dtype=np.int32)[None, :]
+        )
+    if np.any(local < 0):
+        raise ValueError("Tetrahedral H(div) map left unassigned DOFs.")
+    return local, orientation
+
+
+def _tetrahedral_hdiv_face_moment_routes(
+    face_vertex_ids: np.ndarray,
+    width: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return canonical face-moment positions and normal signs for one local face."""
+    vertex_positions = np.argsort(np.argsort(face_vertex_ids, axis=1), axis=1).astype(
+        np.int32
+    )
+    inversions = (
+        (face_vertex_ids[:, 0] > face_vertex_ids[:, 1]).astype(np.int32)
+        + (face_vertex_ids[:, 0] > face_vertex_ids[:, 2]).astype(np.int32)
+        + (face_vertex_ids[:, 1] > face_vertex_ids[:, 2]).astype(np.int32)
+    )
+    face_signs = 1.0 - 2.0 * (inversions % 2)
+    if width == 1:
+        positions = np.zeros((face_vertex_ids.shape[0], 1), dtype=np.int32)
+    elif width == 3:
+        positions = vertex_positions
+    elif width == 6:
+        edge_positions = []
+        for first_local, second_local in ((0, 1), (1, 2), (2, 0)):
+            first = vertex_positions[:, first_local]
+            second = vertex_positions[:, second_local]
+            low = np.minimum(first, second)
+            high = np.maximum(first, second)
+            edge_positions.append(
+                np.where(
+                    (low == 0) & (high == 1),
+                    3,
+                    np.where((low == 1) & (high == 2), 4, 5),
+                )
+            )
+        positions = np.column_stack((vertex_positions, *edge_positions)).astype(np.int32)
+    else:
+        raise ValueError(
+            "Tetrahedral H(div) supports one, three, or six moments per face."
+        )
+    return positions, face_signs
+
+
+def _high_order_h1_block_routes(
+    mesh: CellMesh,
+    layout: _FiniteElementDofLayout,
+    block: CellBlock | PolyhedralBlock,
+    element: FiniteElementSpec,
+    vertices: np.ndarray,
+    cell_offset: int,
+    /,
+) -> np.ndarray:
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, _HIGH_ORDER_H1_CONNECTIVITIES):
+        raise RuntimeError("High-order H1 routing lost compatible connectivity.")
+    edge_starts = layout.edge_starts
+    cell_starts = layout.cell_starts
+    if layout.edge_widths is None or edge_starts is None or cell_starts is None:
+        raise TypeError("High-order H1 entity offsets are unavailable.")
+    local = np.full(
+        (block.cell_count, element.local_dof_count),
+        -1,
+        dtype=np.int32,
+    )
+    for local_vertex, entity_dofs in enumerate(element.entity_dofs[0]):
+        if len(entity_dofs) != 1:
+            raise ValueError("H1 nodal vertices require one DOF per vertex.")
+        local[:, entity_dofs[0]] = vertices[:, local_vertex]
+
+    local_edge_count = len(element.entity_dofs[1])
+    if isinstance(connectivity, TetrahedralConnectivity):
+        (
+            block_cell_edges,
+            block_cell_signs,
+            block_cell_faces,
+        ) = _tetrahedral_entity_routes(connectivity, vertices)
+    else:
+        rows = slice(cell_offset, cell_offset + block.cell_count)
+        block_cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
+            rows, :local_edge_count
+        ]
+        block_cell_signs = np.asarray(
+            connectivity.cell_edge_signs,
+            dtype=np.float64,
+        )[rows, :local_edge_count]
+    # Edge-interior DOFs are stored along the canonical edge direction.
+    for local_edge, entity_dofs in enumerate(element.entity_dofs[1]):
+        width = len(entity_dofs)
+        if width == 0:
+            continue
+        positions = np.arange(width, dtype=np.int32)
+        canonical_positions = np.where(
+            block_cell_signs[:, local_edge, None] > 0.0,
+            positions,
+            positions[::-1],
+        )
+        local[:, np.asarray(entity_dofs, dtype=np.int32)] = (
+            edge_starts[block_cell_edges[:, local_edge], None] + canonical_positions
+        )
+
+    if isinstance(connectivity, HexahedralConnectivity):
+        _assign_hexahedral_face_dofs(
+            local, connectivity, element, layout.face_starts, cell_offset
+        )
+    elif isinstance(connectivity, TetrahedralConnectivity):
+        _assign_tetrahedral_face_dofs(
+            local, connectivity, element, layout.face_starts, vertices, block_cell_faces
+        )
+
+    interior_dofs = element.entity_dofs[mesh.topological_dimension][0]
+    if interior_dofs:
+        for cell in range(block.cell_count):
+            local[
+                cell,
+                np.asarray(interior_dofs, dtype=np.int32),
+            ] = cell_starts[cell_offset + cell] + np.arange(
+                len(interior_dofs), dtype=np.int32
+            )
+    if np.any(local < 0):
+        raise ValueError("High-order H1 entity map left unassigned DOFs.")
+    return local
+
+
+def _assign_hexahedral_face_dofs(
+    local: np.ndarray,
+    connectivity: HexahedralConnectivity,
+    element: FiniteElementSpec,
+    face_starts: np.ndarray | None,
+    cell_offset: int,
+    /,
+) -> None:
+    """Route quadrilateral face-interior DOFs through each face's tensor permutation."""
+    if face_starts is None:
+        raise TypeError("Hexahedral H1 face offsets are unavailable.")
+    cell_count = local.shape[0]
+    block_cell_faces = np.asarray(
+        connectivity.cell_faces,
+        dtype=np.int32,
+    )[cell_offset : cell_offset + cell_count]
+    block_face_permutations = np.asarray(
+        connectivity.cell_face_vertex_permutations,
+        dtype=np.int32,
+    )[cell_offset : cell_offset + cell_count]
+    for local_face, face_dofs in enumerate(element.entity_dofs[2]):
+        if not face_dofs:
+            continue
+        shape = _hexahedral_face_shape(element, local_face)
+        grid_positions = _hexahedral_face_grid_positions(element, local_face, shape)
+        for cell in range(cell_count):
+            tensor_permutation = _quadrilateral_tensor_permutation(
+                block_face_permutations[cell, local_face],
+                *shape,
+            )
+            face = block_cell_faces[cell, local_face]
+            local[
+                cell,
+                np.asarray(face_dofs, dtype=np.int32),
+            ] = face_starts[face] + tensor_permutation[grid_positions]
+
+
+def _assign_tetrahedral_face_dofs(
+    local: np.ndarray,
+    connectivity: TetrahedralConnectivity,
+    element: FiniteElementSpec,
+    face_starts: np.ndarray | None,
+    vertices: np.ndarray,
+    block_cell_faces: np.ndarray,
+    /,
+) -> None:
+    """Route triangular face-interior DOFs by canonical face barycentric order."""
+    if face_starts is None:
+        raise TypeError("Tetrahedral H1 face offsets are unavailable.")
+    canonical_faces = np.asarray(connectivity.faces, dtype=np.int32)
+    for local_face, face_dofs in enumerate(element.entity_dofs[2]):
+        if not face_dofs:
+            continue
+        reference_vertices = _TETRAHEDRAL_FACES[local_face]
+        for cell in range(local.shape[0]):
+            face = int(block_cell_faces[cell, local_face])
+            local_vertices = tuple(
+                int(vertices[cell, vertex]) for vertex in reference_vertices
+            )
+            canonical_vertices = tuple(canonical_faces[face])
+            positions = _tetrahedral_face_dof_positions(
+                element,
+                local_face,
+                local_vertices,
+                canonical_vertices,
+            )
+            local[
+                cell,
+                np.asarray(face_dofs, dtype=np.int32),
+            ] = face_starts[face] + positions
 
 
 def _build_finite_element_dof_coordinates(
@@ -932,146 +1033,164 @@ def _build_finite_element_dof_coordinates(
     layout: _FiniteElementDofLayout,
     block_dofs: tuple[Array, ...],
     /,
-) -> tuple[tuple[Array, ...], np.ndarray, np.ndarray]:
-    association = layout.association
+) -> tuple[tuple[Array, ...], Array, Array]:
     global_count = layout.global_count
-    connectivity = mesh.connectivity
-    vertex_count = mesh.coordinates.shape[0]
-    edge_widths = layout.edge_widths
-    edge_starts = layout.edge_starts
-    face_widths = layout.face_widths
-    face_starts = layout.face_starts
-    compatible_face_width = layout.compatible_face_width
-    compatible_cell_width = layout.compatible_cell_width
     coordinate_weights = tuple(
         lagrange_element(block.cell_kind, 1).tabulate(element.reference_nodes)[0]
         for block, element in zip(mesh.blocks, resolved, strict=True)
     )
-    if association == "cell":
-        boundary = np.zeros((global_count,), dtype=np.bool_)
-        coordinate_blocks = []
-        mesh_coordinates = np.asarray(mesh.coordinates)
-        for block, weights_ in zip(mesh.blocks, coordinate_weights, strict=True):
-            cell_coordinates = mesh_coordinates[
-                np.asarray(block.vertices, dtype=np.int32)
-            ]
-            mapped = ein.contract(
-                "ia,cad->cid",
-                np.asarray(weights_),
-                cell_coordinates,
+    match layout.association:
+        case "cell":
+            boundary = np.zeros((global_count,), dtype=np.bool_)
+            dof_coordinates = _cell_dof_coordinates(mesh, coordinate_weights)
+        case "edge":
+            connectivity = mesh.connectivity
+            if not isinstance(connectivity, PolygonalConnectivity):
+                raise TypeError("Compatible edge map requires polygonal connectivity.")
+            boundary = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
+            edge_vertices = np.asarray(connectivity.edges, dtype=np.int32)
+            dof_coordinates = np.mean(
+                np.asarray(mesh.coordinates)[edge_vertices],
+                axis=1,
             )
-            coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
-        dof_coordinates = np.concatenate(tuple(coordinate_blocks), axis=0)
-    elif association == "edge":
-        if not isinstance(connectivity, PolygonalConnectivity):
-            raise TypeError("Compatible edge map requires polygonal connectivity.")
-        boundary = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
-        edge_vertices = np.asarray(connectivity.edges, dtype=np.int32)
-        dof_coordinates = np.mean(
-            np.asarray(mesh.coordinates)[edge_vertices],
-            axis=1,
-        )
-    elif association == "hdiv_entity":
-        if not isinstance(connectivity, TetrahedralConnectivity):
-            raise TypeError("Compatible face map requires tetrahedral connectivity.")
-        if compatible_face_width is None or compatible_cell_width is None:
-            raise RuntimeError("Compatible H(div) widths were not prepared.")
-        boundary = np.zeros((global_count,), dtype=np.bool_)
-        face_dof_count = connectivity.faces.shape[0] * compatible_face_width
-        boundary[:face_dof_count] = np.repeat(
-            np.asarray(connectivity.boundary_faces, dtype=np.bool_),
-            compatible_face_width,
-        )
-        accumulated = np.zeros(
-            (global_count, mesh.ambient_dimension),
-            dtype=np.asarray(mesh.coordinates).dtype,
-        )
-        counts = np.zeros((global_count,), dtype=np.int32)
-        for block, weights_, routes in zip(
-            mesh.blocks,
-            coordinate_weights,
-            block_dofs,
-            strict=True,
-        ):
-            mapped = ein.contract(
-                "ia,cad->cid",
-                np.asarray(weights_),
-                np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
-            )
-            routes_ = np.asarray(routes)
-            np.add.at(
-                accumulated,
-                routes_.reshape((-1,)),
-                mapped.reshape((-1, mesh.ambient_dimension)),
-            )
-            np.add.at(counts, routes_.reshape((-1,)), 1)
-        if np.any(counts == 0):
-            raise ValueError("Compatible face coordinates contain unassigned DOFs.")
-        dof_coordinates = accumulated / counts[:, None]
-    else:
-        boundary = np.zeros((global_count,), dtype=np.bool_)
-        boundary[:vertex_count] = np.asarray(
-            mesh.topology.entity_sets[0].subset("boundary").mask,
-            dtype=np.bool_,
-        )
-        if association == "entity":
-            if not isinstance(
-                connectivity,
-                (
-                    PolygonalConnectivity,
-                    TetrahedralConnectivity,
-                    HexahedralConnectivity,
-                ),
-            ):
-                raise TypeError(
-                    "High-order H1 boundary routing requires edge connectivity."
-                )
-            if edge_starts is None or edge_widths is None:
-                raise TypeError("High-order H1 edge offsets are unavailable.")
-            for edge in np.flatnonzero(
-                np.asarray(connectivity.boundary_edges, dtype=np.bool_)
-            ):
-                start = int(edge_starts[edge])
-                boundary[start : start + int(edge_widths[edge])] = True
-            if isinstance(
-                connectivity, (TetrahedralConnectivity, HexahedralConnectivity)
-            ):
-                if face_starts is None or face_widths is None:
-                    raise TypeError("High-order H1 face offsets are unavailable.")
-                for face in np.flatnonzero(
-                    np.asarray(connectivity.boundary_faces, dtype=np.bool_)
-                ):
-                    start = int(face_starts[face])
-                    boundary[start : start + int(face_widths[face])] = True
-            accumulated = np.zeros(
-                (global_count, mesh.ambient_dimension),
-                dtype=np.asarray(mesh.coordinates).dtype,
-            )
-            counts = np.zeros((global_count,), dtype=np.int32)
-            for block, weights_, routes in zip(
-                mesh.blocks,
+        case "hdiv_entity":
+            boundary = _tetrahedral_hdiv_boundary_mask(mesh, layout)
+            dof_coordinates = _averaged_dof_coordinates(
+                mesh,
                 coordinate_weights,
                 block_dofs,
-                strict=True,
-            ):
-                mapped = ein.contract(
-                    "ia,cad->cid",
-                    np.asarray(weights_),
-                    np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
-                )
-                routes_ = np.asarray(routes)
-                np.add.at(
-                    accumulated,
-                    routes_.reshape((-1,)),
-                    mapped.reshape((-1, mesh.ambient_dimension)),
-                )
-                np.add.at(counts, routes_.reshape((-1,)), 1)
-            if np.any(counts == 0):
-                raise ValueError("High-order H1 coordinates contain unassigned DOFs.")
-            dof_coordinates = accumulated / counts[:, None]
-        else:
+                global_count,
+                "Compatible face coordinates contain unassigned DOFs.",
+            )
+        case "entity":
+            boundary = _high_order_h1_boundary_mask(mesh, layout)
+            dof_coordinates = _averaged_dof_coordinates(
+                mesh,
+                coordinate_weights,
+                block_dofs,
+                global_count,
+                "High-order H1 coordinates contain unassigned DOFs.",
+            )
+        case "vertex":
+            boundary = _vertex_boundary_mask(mesh, global_count)
             dof_coordinates = np.asarray(mesh.coordinates)
+        case _:
+            raise ValueError("Unsupported finite-element DOF map.")
+    # ty: ignore[invalid-return-type]
     return coordinate_weights, boundary, dof_coordinates
+
+
+def _cell_dof_coordinates(
+    mesh: CellMesh,
+    coordinate_weights: tuple[Array, ...],
+    /,
+) -> np.ndarray:
+    coordinate_blocks = []
+    mesh_coordinates = np.asarray(mesh.coordinates)
+    for block, weights_ in zip(mesh.blocks, coordinate_weights, strict=True):
+        cell_coordinates = mesh_coordinates[np.asarray(block.vertices, dtype=np.int32)]
+        mapped = ein.contract(
+            "ia,cad->cid",
+            np.asarray(weights_),
+            cell_coordinates,
+        )
+        coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
+    return np.concatenate(tuple(coordinate_blocks), axis=0)
+
+
+def _averaged_dof_coordinates(
+    mesh: CellMesh,
+    coordinate_weights: tuple[Array, ...],
+    block_dofs: tuple[Array, ...],
+    global_count: int,
+    unassigned_message: str,
+    /,
+) -> np.ndarray:
+    """Average each shared DOF's mapped node over every cell that routes to it."""
+    accumulated = np.zeros(
+        (global_count, mesh.ambient_dimension),
+        dtype=np.asarray(mesh.coordinates).dtype,
+    )
+    counts = np.zeros((global_count,), dtype=np.int32)
+    for block, weights_, routes in zip(
+        mesh.blocks,
+        coordinate_weights,
+        block_dofs,
+        strict=True,
+    ):
+        mapped = ein.contract(
+            "ia,cad->cid",
+            np.asarray(weights_),
+            np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
+        )
+        routes_ = np.asarray(routes)
+        np.add.at(
+            accumulated,
+            routes_.reshape((-1,)),
+            mapped.reshape((-1, mesh.ambient_dimension)),
+        )
+        np.add.at(counts, routes_.reshape((-1,)), 1)
+    if np.any(counts == 0):
+        raise ValueError(unassigned_message)
+    return accumulated / counts[:, None]
+
+
+def _vertex_boundary_mask(mesh: CellMesh, global_count: int, /) -> np.ndarray:
+    boundary = np.zeros((global_count,), dtype=np.bool_)
+    boundary[: mesh.coordinates.shape[0]] = np.asarray(
+        mesh.topology.entity_sets[0].subset("boundary").mask,
+        dtype=np.bool_,
+    )
+    return boundary
+
+
+def _tetrahedral_hdiv_boundary_mask(
+    mesh: CellMesh,
+    layout: _FiniteElementDofLayout,
+    /,
+) -> np.ndarray:
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, TetrahedralConnectivity):
+        raise TypeError("Compatible face map requires tetrahedral connectivity.")
+    compatible_face_width = layout.compatible_face_width
+    if compatible_face_width is None or layout.compatible_cell_width is None:
+        raise RuntimeError("Compatible H(div) widths were not prepared.")
+    boundary = np.zeros((layout.global_count,), dtype=np.bool_)
+    face_dof_count = connectivity.faces.shape[0] * compatible_face_width
+    boundary[:face_dof_count] = np.repeat(
+        np.asarray(connectivity.boundary_faces, dtype=np.bool_),
+        compatible_face_width,
+    )
+    return boundary
+
+
+def _high_order_h1_boundary_mask(
+    mesh: CellMesh,
+    layout: _FiniteElementDofLayout,
+    /,
+) -> np.ndarray:
+    boundary = _vertex_boundary_mask(mesh, layout.global_count)
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, _HIGH_ORDER_H1_CONNECTIVITIES):
+        raise TypeError("High-order H1 boundary routing requires edge connectivity.")
+    edge_starts = layout.edge_starts
+    edge_widths = layout.edge_widths
+    if edge_starts is None or edge_widths is None:
+        raise TypeError("High-order H1 edge offsets are unavailable.")
+    for edge in np.flatnonzero(np.asarray(connectivity.boundary_edges, dtype=np.bool_)):
+        start = int(edge_starts[edge])
+        boundary[start : start + int(edge_widths[edge])] = True
+    if isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+        face_starts = layout.face_starts
+        face_widths = layout.face_widths
+        if face_starts is None or face_widths is None:
+            raise TypeError("High-order H1 face offsets are unavailable.")
+        for face in np.flatnonzero(
+            np.asarray(connectivity.boundary_faces, dtype=np.bool_)
+        ):
+            start = int(face_starts[face])
+            boundary[start : start + int(face_widths[face])] = True
+    return boundary
 
 
 def _canonical_finite_element_routes(
@@ -1548,7 +1667,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
             }
         )
 
-    def prepare(self, /, *, numeric_version: str = "0") -> FiniteElementDiscretization:
+    def prepare(self, /, *, numeric_version: str = "0") -> Any:
         return FiniteElementDiscretization(self, numeric_version=numeric_version)
 
 
@@ -1557,7 +1676,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     dof_maps: tuple[FiniteElementDofMap, ...]
     default_runtime: FiniteElementRuntimeData
     elements: tuple[tuple[FiniteElementSpec, ...], ...]
-    coordinate_elements: tuple[FiniteElementSpec, ...]
+    coordinate_elements: tuple[CellGeometryElement, ...]
     coordinate_dofs: tuple[Array, ...]
     block_geometries: tuple[tuple[FiniteElementBlockGeometry, ...], ...]
     cell_domain: IntegrationDomain
@@ -1602,8 +1721,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             vector_shape = (dof_map.global_dof_count,) + field.component_shape
             vector_space = ArraySpace(vector_shape)
             vertex_count = mesh.coordinates.shape[0]
-            # FiniteElementDofMap above rejects conformities outside H1/L2/Hdiv/Hcurl.
-            conformity = cast(FieldConformity, elements[0].conformity)
+            conformity = elements[0].conformity
             if dof_map.association == "vertex":
                 layout = EntityDofLayout(
                     mesh.topology.entity_sets[0].entity_set_id,
@@ -1665,6 +1783,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                     layout,
                     vector_space,
                     representation=representation,
+                    # ty: ignore[invalid-argument-type]
                     conformity=conformity,
                     projection_id=canonical_fingerprint(
                         {
@@ -1752,10 +1871,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         )
         self.dof_maps = tuple(dof_maps)
         self.elements = tuple(all_elements)
-        # _prepare_block_geometry above rejects non-FiniteElementSpec coordinate elements.
-        self.coordinate_elements = cast(
-            tuple[FiniteElementSpec, ...], coordinate_elements
-        )
+        self.coordinate_elements = coordinate_elements
         self.coordinate_dofs = coordinate_dofs
         self.block_geometries = tuple(all_geometries)
         self.cell_domain = IntegrationDomain(
@@ -1808,7 +1924,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         )
 
     @property
-    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
+    def precision_evidence(self) -> Any:
         return self.precision_policy.evidence()
 
     def prepare_runtime(
@@ -2633,6 +2749,361 @@ def _assemble_local_operator(
     )
 
 
+@final
+class MaskedFiniteElementPlan(StrictModule, NonTrainableState):
+    """Static Lagrange finite-element plan for one `MaskedSimplexMesh` bucket.
+
+    Every field is static: cell kind, ambient dimension, vertex and cell
+    capacities, the layout ``signature_id``, family, degree, and precision policy.
+    ``plan_id`` fingerprints the family, degree, layout signature, and precision
+    policy only, so `assemble_masked_finite_element` compiles once per capacity
+    bucket and serves every layout of that signature regardless of its active
+    counts or topology values.
+
+    Masked capacity layouts carry vertex DOFs only: DOF ``i`` is vertex slot
+    ``i``, so the only admissible Lagrange degree is 1. Higher degrees need edge,
+    face, and cell DOF slots the layout does not allocate and raise
+    ``ValueError``.
+    """
+
+    cell_kind: str = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
+    vertex_capacity: int = eqx.field(static=True)
+    cell_capacity: int = eqx.field(static=True)
+    signature_id: str = eqx.field(static=True)
+    family: str = eqx.field(static=True)
+    degree: int = eqx.field(static=True)
+    precision_policy: FiniteElementPrecisionPolicy
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mesh: MaskedSimplexMesh,
+        /,
+        *,
+        degree: int = 1,
+        precision_policy: FiniteElementPrecisionPolicy | None = None,
+    ) -> None:
+        if not isinstance(mesh, MaskedSimplexMesh):
+            raise TypeError("mesh must be a MaskedSimplexMesh.")
+        if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
+            raise TypeError("degree must be an integer.")
+        if degree != 1:
+            raise ValueError(
+                "Masked capacity layouts carry vertex DOFs only; the Lagrange "
+                "degree must be 1."
+            )
+        precision = (
+            FiniteElementPrecisionPolicy()
+            if precision_policy is None
+            else precision_policy
+        )
+        if not isinstance(precision, FiniteElementPrecisionPolicy):
+            raise TypeError(
+                "precision_policy must be FiniteElementPrecisionPolicy or None."
+            )
+        self.cell_kind = mesh.cell_kind
+        self.ambient_dimension = mesh.ambient_dimension
+        self.vertex_capacity = mesh.vertex_capacity
+        self.cell_capacity = mesh.cell_capacity
+        self.signature_id = mesh.signature_id
+        self.family = "lagrange"
+        self.degree = 1
+        self.precision_policy = precision
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "masked-finite-element-plan",
+                "family": "lagrange",
+                "degree": 1,
+                "mesh_signature": mesh.signature_id,
+                "precision_policy": precision.policy_id,
+            }
+        )
+
+
+@final
+class MaskedFiniteElementSystem(StrictModule, NonTrainableState):
+    """Capacity-shaped P1 mass and stiffness operators of one masked layout.
+
+    Both operators act on ``(vertex_capacity,)`` vectors and share one
+    `EdgeRelation`: ``cell_capacity * (d + 1) ** 2`` cell routes valid only on
+    active cells, then ``vertex_capacity`` diagonal routes valid only on inactive
+    vertex slots with coefficient 1. Inactive DOFs are therefore pinned through
+    identity rows: each operator stays square, is the identity on padding, and
+    never couples padding to active DOFs, so solve, transpose, and adjoint
+    actions keep the capacity shape and map zero padding to zero padding.
+    ``mass`` is symmetric positive definite; ``stiffness`` is symmetric positive
+    semidefinite with the constants of each active component as its kernel.
+    ``boundary_dofs`` marks active vertices lying on a boundary facet. Operator
+    IDs derive from ``plan_id`` alone, never from topology values.
+    """
+
+    plan_id: str = eqx.field(static=True)
+    mass: SparseLinearMap
+    stiffness: SparseLinearMap
+    dof_active: Array
+    boundary_dofs: Array
+
+    def __init__(
+        self,
+        plan_id: str,
+        mass: SparseLinearMap,
+        stiffness: SparseLinearMap,
+        dof_active: Array,
+        boundary_dofs: Array,
+        /,
+    ) -> None:
+        if not isinstance(plan_id, str) or not plan_id:
+            raise ValueError("plan_id must be a non-empty string.")
+        if not isinstance(mass, SparseLinearMap) or not isinstance(
+            stiffness, SparseLinearMap
+        ):
+            raise TypeError("mass and stiffness must be SparseLinearMap operators.")
+        shape = mass.input_shape
+        if (
+            mass.output_shape != shape
+            or stiffness.input_shape != shape
+            or stiffness.output_shape != shape
+        ):
+            raise ValueError("Masked operators must share one square DOF space.")
+        for name, mask in (("dof_active", dof_active), ("boundary_dofs", boundary_dofs)):
+            if mask.dtype != jnp.bool_ or mask.shape != shape:
+                raise TypeError(f"{name} must be a boolean {shape} array.")
+        self.plan_id = plan_id
+        self.mass = mass
+        self.stiffness = stiffness
+        self.dof_active = dof_active
+        self.boundary_dofs = boundary_dofs
+
+
+def _masked_local_tensors(
+    plan: MaskedFiniteElementPlan, mesh: MaskedSimplexMesh, /
+) -> tuple[Array, Array]:
+    """P1 local mass and stiffness on every cell lane, exactly zero on padding.
+
+    Inactive lanes are mapped onto the reference simplex, appended after the
+    vertex slots, so the metric inverse and the positive-measure check never see
+    padding rows; their finite tensors are then replaced by exact zeros.
+    """
+
+    element = lagrange_element(plan.cell_kind, plan.degree)
+    policy = plan.precision_policy
+    width = mesh.dimension + 1
+    reference_vertices = jnp.pad(
+        jnp.asarray(element.reference_nodes, dtype=mesh.coordinates.dtype),
+        ((0, 0), (0, plan.ambient_dimension - mesh.dimension)),
+    )
+    reference_slots = jnp.arange(
+        plan.vertex_capacity, plan.vertex_capacity + width, dtype=jnp.int32
+    )
+    routes = jnp.where(mesh.cell_active[:, None], mesh.cells, reference_slots[None, :])
+    points_, weights_ = _degree_aware_reference_rule(plan.cell_kind, plan.degree)
+    reference_points = policy.geometry(points_)
+    reference_weights = policy.accumulation(weights_)
+    physical_points, jacobian, _, inverse_metric, _, _, measure_factor, _ = (
+        _evaluate_coordinate_map(
+            element,
+            routes,
+            jnp.concatenate((mesh.coordinates, reference_vertices)),
+            reference_points,
+            precision_policy=policy,
+            paired=False,
+        )
+    )
+    measure_factor = eqx.error_if(
+        measure_factor,
+        jnp.any(~jnp.isfinite(measure_factor) | (measure_factor <= 0.0)),
+        "Masked finite-element geometry requires positive finite metric "
+        "determinants on active cells.",
+    )
+    basis_values, reference_gradients = element.tabulate(reference_points)
+    reference_gradients = policy.evaluation(reference_gradients)
+    physical_weights = policy.accumulation(measure_factor * reference_weights[None, :])
+    geometry = FiniteElementBlockGeometry(
+        block_name=plan.cell_kind,
+        reference_points=reference_points,
+        reference_weights=reference_weights,
+        basis_values=policy.evaluation(basis_values),
+        reference_gradients=reference_gradients,
+        physical_points=physical_points,
+        physical_gradients=ein.contract(
+            "cqdi,cqij,qkj->cqkd", jacobian, inverse_metric, reference_gradients
+        ),
+        physical_weights=physical_weights,
+        measure=policy.output(jnp.sum(physical_weights, axis=1)),
+    )
+    active = mesh.cell_active[:, None, None]
+    zero = jnp.zeros((), dtype=physical_weights.dtype)
+    return (
+        jnp.where(active, _local_mass_tensor(geometry), zero),
+        jnp.where(active, _local_stiffness_tensor(geometry), zero),
+    )
+
+
+def _masked_boundary_dofs(mesh: MaskedSimplexMesh, /) -> Array:
+    """Active vertex slots on a boundary facet.
+
+    Local vertex ``j`` lies on the facet opposite local vertex ``i`` iff
+    ``i != j``; per-cell flags reduce onto vertex slots over the active
+    cell-vertex incidence relation.
+    """
+
+    width = mesh.dimension + 1
+    opposite = jnp.asarray(1 - np.eye(width, dtype=np.int32))
+    on_boundary = mesh.boundary_facets.astype(jnp.int32) @ opposite
+    incidence = EdgeRelation(
+        jnp.arange(mesh.cell_capacity * width, dtype=jnp.int32),
+        mesh.cells.reshape((-1,)),
+        source_size=mesh.cell_capacity * width,
+        target_size=mesh.vertex_capacity,
+        valid=jnp.repeat(mesh.cell_active, width),
+    )
+    counts = route_reduce(incidence, on_boundary.reshape((-1,)))
+    return (counts > 0) & mesh.vertex_active
+
+
+@eqx.filter_jit
+def assemble_masked_finite_element(
+    plan: MaskedFiniteElementPlan, mesh: MaskedSimplexMesh, /
+) -> MaskedFiniteElementSystem:
+    """Assemble capacity-shaped P1 mass and stiffness on one masked layout.
+
+    Module-level compiled entry. Its compile key is the plan's static identity
+    plus the layout signature (cell kind, ambient dimension, capacities,
+    coordinate dtype); coordinates, IDs, masks, cells, and adjacency are traced,
+    so layouts of one bucket with different active counts or topology reuse one
+    executable. See `MaskedFiniteElementSystem` for the pinned-padding layout.
+    """
+
+    if not isinstance(plan, MaskedFiniteElementPlan):
+        raise TypeError("plan must be a MaskedFiniteElementPlan.")
+    if not isinstance(mesh, MaskedSimplexMesh):
+        raise TypeError("mesh must be a MaskedSimplexMesh.")
+    if mesh.signature_id != plan.signature_id:
+        raise ValueError("mesh does not belong to the plan's capacity bucket.")
+    width = mesh.dimension + 1
+    mass_local, stiffness_local = _masked_local_tensors(plan, mesh)
+    columns = jnp.broadcast_to(mesh.cells[:, None, :], (plan.cell_capacity, width, width))
+    slots = jnp.arange(plan.vertex_capacity, dtype=jnp.int32)
+    relation = EdgeRelation(
+        jnp.concatenate((columns.reshape((-1,)), slots)),
+        jnp.concatenate((jnp.swapaxes(columns, 1, 2).reshape((-1,)), slots)),
+        source_size=plan.vertex_capacity,
+        target_size=plan.vertex_capacity,
+        valid=jnp.concatenate(
+            (jnp.repeat(mesh.cell_active, width * width), ~mesh.vertex_active)
+        ),
+    )
+    pins = jnp.ones((plan.vertex_capacity,), dtype=mass_local.dtype)
+    mass = SparseLinearMap(
+        relation,
+        jnp.concatenate((mass_local.reshape((-1,)), pins)),
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id=canonical_fingerprint(
+            {"kind": "masked-finite-element-mass", "plan": plan.plan_id}
+        ),
+    )
+    stiffness = SparseLinearMap(
+        relation,
+        jnp.concatenate((stiffness_local.reshape((-1,)), pins)),
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id=canonical_fingerprint(
+            {"kind": "masked-finite-element-stiffness", "plan": plan.plan_id}
+        ),
+    )
+    return MaskedFiniteElementSystem(
+        plan.plan_id,
+        mass,
+        stiffness,
+        mesh.vertex_active,
+        _masked_boundary_dofs(mesh),
+    )
+
+
+def constrain_masked_dofs(
+    operator: SparseLinearMap, pinned: ArrayLike, /
+) -> SparseLinearMap:
+    """Pin DOFs of a square edge-relation operator through identity rows.
+
+    Returns ``P_free A P_free + P_pinned``: routes touching a pinned source or
+    target are invalidated and one appended diagonal route per DOF, valid only
+    where ``pinned``, carries 1. The route capacity is static (operator routes
+    plus one per DOF), so a traced ``pinned`` mask never changes the compiled
+    shape. With ``pinned = system.boundary_dofs`` a masked stiffness becomes the
+    homogeneous Dirichlet operator; padding stays pinned whether or not it is
+    included in ``pinned``. Self-adjointness and (semi)definiteness carry over
+    as transformed evidence; the operator ID derives from the input operator ID.
+    """
+
+    if not isinstance(operator, SparseLinearMap) or not isinstance(
+        operator.relation, EdgeRelation
+    ):
+        raise TypeError("operator must be a SparseLinearMap over an EdgeRelation.")
+    relation = operator.relation
+    if operator.batch_shape or relation.source_size != relation.target_size:
+        raise ValueError("constrain_masked_dofs requires an unbatched square operator.")
+    mask = jnp.asarray(pinned)
+    if mask.dtype != jnp.bool_:
+        raise TypeError("pinned must be a boolean array.")
+    if mask.shape != (relation.source_size,):
+        raise ValueError("pinned must hold one flag per DOF.")
+    slots = jnp.arange(relation.source_size, dtype=relation.source_indices.dtype)
+    free = (
+        relation.valid
+        & ~gather_routes(relation, mask)
+        & ~gather_routes(relation.transpose(), mask)
+    )
+    constrained = EdgeRelation(
+        jnp.concatenate((relation.source_indices, slots)),
+        jnp.concatenate((relation.target_indices, slots)),
+        source_size=relation.source_size,
+        target_size=relation.target_size,
+        valid=jnp.concatenate((free, mask)),
+    )
+    source = operator.properties
+    claims = {
+        "self_adjoint": source.self_adjoint,
+        "positive_definite": source.positive_definite,
+        "positive_semidefinite": source.positive_semidefinite,
+    }
+    return SparseLinearMap(
+        constrained,
+        jnp.concatenate(
+            (
+                operator.coefficients,
+                jnp.ones((relation.source_size,), dtype=operator.coefficients.dtype),
+            )
+        ),
+        properties=OperatorProperties(
+            **claims,
+            evidence={
+                name: "transformed"
+                for name, claimed in claims.items()
+                if claimed and source.evidence_for(name) != "unknown"
+            },
+        ),
+        operator_id=canonical_fingerprint(
+            {"kind": "masked-dof-constraint", "operator": operator.operator_id}
+        ),
+    )
+
+
 __all__ = [
     "FiniteElementDiscretization",
     "FiniteElementDofMap",
@@ -2640,4 +3111,8 @@ __all__ = [
     "FiniteElementPlan",
     "FiniteElementRuntimeData",
     "IntegrationDomain",
+    "MaskedFiniteElementPlan",
+    "MaskedFiniteElementSystem",
+    "assemble_masked_finite_element",
+    "constrain_masked_dofs",
 ]

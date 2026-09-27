@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 import diffrax as dfx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax as phx
 

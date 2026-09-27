@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Fixed-capacity block AMR topology, FillPatch, and distributed execution."""
+"""Fixed-capacity block and forest AMR topology, FillPatch, and distributed execution."""
 
 from ._adaptive_implicit import (
     AdaptiveImplicitSamplingEvidence,
@@ -113,6 +113,40 @@ from ._fd_transfer import (
     AMRAxisEntity,
     AMREntityTransferPlan,
     AMREntityTransferReport,
+)
+from ._forest import (
+    AMRBalanceStencil,
+    forest_common_refinement,
+    forest_leaf_geometry,
+    ForestAdaptEvidence,
+    ForestAdaptResult,
+    ForestAdaptStatus,
+    ForestBlockLowering,
+    ForestCutComplex,
+    ForestFaceKind,
+    ForestHierarchyTopology,
+    ForestLeafGeometry,
+    ForestLeafWorkset,
+    ForestPlan,
+    ForestTopologyCompiler,
+    ForestWorksetSignature,
+    prepare_forest_cut_complex,
+)
+from ._forest_distributed import (
+    ForestMigrationPlan,
+    ForestPartitionEvidence,
+    ForestPartitionPlan,
+    PreparedForestPartition,
+)
+from ._forest_transfer import (
+    forest_vertex_interpolation,
+    ForestCochainComplex,
+    ForestCochainTransfer,
+    ForestFieldTransition,
+    ForestRefluxRoutes,
+    ForestTransferResult,
+    ForestTransferRoutes,
+    ForestVertexLayout,
 )
 from ._geometry import VariablePatchGeometryPlan, VariablePatchGeometryState
 from ._mapped_geometry import (
@@ -310,4 +344,32 @@ __all__ = [
     "PreparedVariablePatchPartition",
     "VariablePatchPartitionEvidence",
     "VariablePatchPartitionPlan",
+    "AMRBalanceStencil",
+    "ForestAdaptEvidence",
+    "ForestAdaptResult",
+    "ForestAdaptStatus",
+    "ForestBlockLowering",
+    "ForestCochainComplex",
+    "ForestCochainTransfer",
+    "ForestCutComplex",
+    "ForestFaceKind",
+    "ForestFieldTransition",
+    "ForestHierarchyTopology",
+    "ForestLeafGeometry",
+    "ForestLeafWorkset",
+    "ForestMigrationPlan",
+    "ForestPartitionEvidence",
+    "ForestPartitionPlan",
+    "ForestPlan",
+    "ForestRefluxRoutes",
+    "ForestTopologyCompiler",
+    "ForestTransferResult",
+    "ForestTransferRoutes",
+    "ForestVertexLayout",
+    "ForestWorksetSignature",
+    "forest_common_refinement",
+    "forest_leaf_geometry",
+    "forest_vertex_interpolation",
+    "prepare_forest_cut_complex",
+    "PreparedForestPartition",
 ]

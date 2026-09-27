@@ -188,9 +188,11 @@ retains the accepted mesh and state.
 under a fixed boundary-coordinate provider. Every `realize` call requires a nonempty
 caller-owned `numeric_version` for the proposed coordinate state; that value
 participates in runtime identity and is never inferred from coordinates.
-Boundary motion is extended harmonically to interior vertices and accepted only when
-provider, solve, displacement, finiteness, and signed-Jacobian evidence pass. An
-invalid trial returns the base runtime but remains inadmissible.
+Boundary motion is extended to interior vertices along the policy's
+`FiniteElementMeshMotionRoute` (harmonic, stiffened elasticity, Winslow, MMPDE, or
+prescribed) and accepted only when provider, route solve, displacement, finiteness,
+and signed corner-Jacobian evidence pass. An invalid trial returns the base runtime
+but remains inadmissible.
 
 PDE-constrained workflows must recompute the realization from the same design in
 the residual, objective, `state_admissibility`, and `state_realization` callables.

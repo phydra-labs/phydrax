@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import jax.numpy as jnp
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.data_utils import CSVReader, CSVReadPolicy
 

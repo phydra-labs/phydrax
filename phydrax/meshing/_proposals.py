@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import heapq
+import math
 import time
 from abc import abstractmethod
-from collections.abc import Callable
 from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
@@ -33,12 +32,29 @@ from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
-from ..discretization.fem import FiniteElementTransferBundle
+from ..optim import OptimizationTermination
 from ..typing import parse
-from ._adaptation import refine_triangle_mesh
+from ._adaptation import (
+    execute_mesh_adaptation,
+    MarkedMeshAdaptation,
+    MeshAdaptationPolicy,
+    MeshAdaptationResult,
+    MeshAdaptationRoute,
+    MetricMeshAdaptation,
+    prepare_mesh_adaptation,
+)
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshAuditReport
 from ._contracts import MeshingLimits
-from ._lineage import CellMeshTransition
+from ._metric import (
+    _grade_scalar_sizes,
+    MeshMetricField,
+    MeshMetricSamples,
+    MetricGradationKind,
+    MetricGradationPolicy,
+    MetricNormalizationEvidence,
+    MetricNormalizationPolicy,
+    normalize_mesh_metric,
+)
 from ._optimization import (
     MeshOptimizationResult,
     optimize_cell_mesh,
@@ -47,12 +63,7 @@ from ._optimization import (
 from ._quality import evaluate_cell_quality
 from ._result import CellMeshingResult, MeshingComplianceReport
 from ._scope import MeshingEntityKind, MeshingScope
-from ._sizing import (
-    MeshMetricField,
-    normalize_mesh_metric,
-    ResolvedSizeField,
-    SizeFieldDomain,
-)
+from ._sizing import ResolvedSizeField, SizeFieldDomain
 
 
 def mesh_proposal_scope(
@@ -159,7 +170,7 @@ class _AbstractMeshProposal(StrictModule, NonTrainableState):
 
 
 class MeshMarkingProposal(_AbstractMeshProposal):
-    """Untrusted cell priorities; positive scores request one refinement step."""
+    """Untrusted cell priorities; positive scores request native bisection."""
 
     def __init__(
         self,
@@ -265,7 +276,7 @@ class AbstractMeshProposer(AbstractComponentSlot):
     a mesh. `propose(source, features, scope=...)` returns one typed marking,
     size, or metric proposal bound to the exact source revision; only
     `project_mesh_proposal` and `prepare_mesh_proposal` turn it into a trusted
-    candidate, under a `MeshProposalSafetyPolicy` and native refinement.
+    candidate, under a `MeshProposalSafetyPolicy` and native adaptation.
     `features` hold one row per scope entity in sorted global-ID order.
     """
 
@@ -604,7 +615,7 @@ def _protected_vertices(
     return fixed
 
 
-def _payload_bytes(value: object) -> int:
+def _payload_bytes(value: Any) -> int:
     return sum(
         leaf.nbytes
         for leaf in jax.tree_util.tree_leaves(value)
@@ -631,11 +642,7 @@ def _limit_issues(result: CellMeshingResult, limits: MeshingLimits) -> tuple[str
     )
 
 
-def _check_binding(
-    source: CellMeshingResult,
-    proposal: MeshProposal,
-    policy: MeshProposalSafetyPolicy,
-) -> None:
+def _check_binding(source: Any, proposal: Any, policy: Any) -> None:
     if not isinstance(source, CellMeshingResult):
         raise TypeError("source must be CellMeshingResult.")
     if not isinstance(
@@ -666,93 +673,47 @@ def _check_binding(
         _scope_rows(source, scope)
 
 
-def _grade_sizes(values: np.ndarray, edges: np.ndarray, growth: float) -> np.ndarray:
-    """Exact graph envelope; no iteration cap can leave a distant edge unsafe."""
-    sizes = np.log(values)
-    adjacency = [[] for _ in sizes]
-    for first, second in edges:
-        adjacency[int(first)].append(int(second))
-        adjacency[int(second)].append(int(first))
-    queue = [(float(value), row) for row, value in enumerate(sizes)]
-    heapq.heapify(queue)
-    step = np.log(growth)
-    while queue:
-        value, row = heapq.heappop(queue)
-        if value != sizes[row]:
-            continue
-        for neighbor in adjacency[row]:
-            candidate = value + step
-            if candidate < sizes[neighbor]:
-                sizes[neighbor] = candidate
-                heapq.heappush(queue, (candidate, neighbor))
-    return np.exp(sizes)
+def _project_sizes(values: Any, points: Any, edges: Any, policy: Any) -> np.ndarray:
+    """Clamp to the size bounds, then grade exactly through the metric owner."""
+    lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+    graded, _, _ = _grade_scalar_sizes(
+        np.clip(values, policy.minimum_size, policy.maximum_size),
+        edges,
+        lengths,
+        np.full((edges.shape[0],), policy.maximum_gradation),
+        MetricGradationKind.PHYSICAL,
+    )
+    return graded
 
 
 def _project_metric(
-    scope: MeshingScope,
-    raw: np.ndarray,
-    edges: np.ndarray,
-    policy: MeshProposalSafetyPolicy,
-) -> MeshMetricField:
-    symmetric = 0.5 * raw + 0.5 * np.swapaxes(raw, -1, -2)
-    eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
-    lower, upper = 1.0 / policy.maximum_size**2, 1.0 / policy.minimum_size**2
-    eigenvalues = np.clip(eigenvalues, lower, upper)
-    repaired = (eigenvectors * eigenvalues[:, None, :]) @ np.swapaxes(
-        eigenvectors, -1, -2
-    )
-    repaired = 0.5 * repaired + 0.5 * np.swapaxes(repaired, -1, -2)
-    metric = normalize_mesh_metric(
-        MeshMetricField(
-            scope,
-            repaired,
+    scope: Any, raw: Any, points: Any, edges: Any, policy: Any
+) -> tuple[MeshMetricField, MetricNormalizationEvidence]:
+    # Untrusted tensors: the trusted policy explicitly requests symmetric-part
+    # repair and indefinite projection, and the evidence reports both.
+    return normalize_mesh_metric(
+        MeshMetricSamples(scope, raw),
+        policy=MetricNormalizationPolicy(
             minimum_size=policy.minimum_size,
             maximum_size=policy.maximum_size,
             maximum_anisotropy=policy.maximum_anisotropy,
-            maximum_gradation=policy.maximum_gradation,
-        )
-    )
-    eigenvalues, eigenvectors = np.linalg.eigh(np.asarray(metric.values))
-    logarithms = np.log(eigenvalues)
-    sizes = np.exp(-0.5 * logarithms.mean(axis=1))
-    graded = _grade_sizes(sizes, edges, policy.maximum_gradation)
-    # Uniform log-eigenvalue shifts, saturated at the upper bound, realize the
-    # scalar graph envelope without increasing anisotropy or violating size bounds.
-    target = -2.0 * np.log(graded)
-    low = np.zeros(sizes.size)
-    high = np.maximum(0.0, np.log(upper) - logarithms.min(axis=1))
-    for _ in range(64):
-        middle = 0.5 * (low + high)
-        mean = np.minimum(logarithms + middle[:, None], np.log(upper)).mean(axis=1)
-        low = np.where(mean < target, middle, low)
-        high = np.where(mean < target, high, middle)
-    eigenvalues = np.exp(np.minimum(logarithms + high[:, None], np.log(upper)))
-    projected = (eigenvectors * eigenvalues[:, None, :]) @ np.swapaxes(
-        eigenvectors, -1, -2
-    )
-    projected = 0.5 * projected + 0.5 * np.swapaxes(projected, -1, -2)
-    return MeshMetricField(
-        scope,
-        projected,
-        minimum_size=policy.minimum_size,
-        maximum_size=policy.maximum_size,
-        maximum_anisotropy=policy.maximum_anisotropy,
-        maximum_gradation=policy.maximum_gradation,
+            gradation=MetricGradationPolicy(policy.maximum_gradation),
+            symmetrize=True,
+            project_indefinite=True,
+        ),
+        adjacency=edges,
+        coordinates=points,
     )
 
 
-def _coordinate_projector(
-    source: CellMeshingResult,
-    proposal: MeshCoordinateProposal,
-    policy: MeshProposalSafetyPolicy,
-) -> tuple[Array, Callable[[Array], Array]]:
+def _coordinate_projector(source: Any, proposal: Any, policy: Any) -> Any:
     points = jnp.asarray(source.mesh.coordinates)
     movable = np.zeros(points.shape[0], dtype=np.bool_)
     movable[_scope_rows(source, proposal.scope)] = True
     fixed = jnp.asarray(~movable | _protected_vertices(source, policy))
     bounds = policy.coordinate_bounds
 
-    def project(values: Array) -> Array:
+    def project(values: Any) -> Any:
         if bounds is not None:
             values = jnp.clip(values, bounds[0], bounds[1])
         delta = values - points
@@ -767,39 +728,31 @@ def _coordinate_projector(
     return fixed, project
 
 
-def _safe_marks(
-    source: CellMeshingResult,
-    connectivity: PolygonalConnectivity,
-    scores: np.ndarray,
-    policy: MeshProposalSafetyPolicy,
-) -> np.ndarray:
-    mesh = source.mesh
-    cells = np.asarray(mesh.blocks[0].global_ids)
-    cell_edges = np.asarray(connectivity.cell_edges)[:, :3]
-    forbidden_edges = np.zeros(mesh.entity_set(1).count, dtype=np.bool_)
-    for scope in policy.protected_scopes:
-        if scope.entity_dimension > 0:
-            rows = _entity_closure(
-                mesh, scope.entity_dimension, _scope_rows(source, scope), 1
-            )
-            forbidden_edges[rows] = True
-    # Excluding all incident cells is conservative for longest-edge bisection:
-    # no requested split can enter a protected cell through conformity closure.
-    allowed = ~np.any(forbidden_edges[cell_edges], axis=1)
+def _optimization_bounds(source: Any, policy: Any) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(source.mesh.coordinates)
+    # A per-axis half-width r / sqrt(d) inscribes the box in the trust-region
+    # ball, so box projection can never exceed maximum_displacement.
+    radius = policy.maximum_displacement / math.sqrt(points.shape[1])
+    lower, upper = points - radius, points + radius
+    if policy.coordinate_bounds is not None:
+        bounds = np.asarray(policy.coordinate_bounds)
+        lower, upper = np.maximum(lower, bounds[0]), np.minimum(upper, bounds[1])
+    # A source coordinate outside the coordinate bounds cannot move on that axis.
+    empty = lower > upper
+    return np.where(empty, points, lower), np.where(empty, points, upper)
+
+
+def _safe_marks(source: Any, scores: Any, policy: Any) -> Any:
+    """Highest positive scores within the declared capacity, then by global ID.
+
+    Protection is enforced exactly by native bisection, which rejects every mark
+    whose conformity closure would split a protected entity and reports it.
+    """
+    cells = np.asarray(source.mesh.blocks[0].global_ids)
     order = np.lexsort((cells, -scores))
     counts = source.audit.entity_counts
-    # Native FE refinement retains both a dense primal and its dual pullback.
-    # Budget that known payload before the trusted refinement allocates it.
-    vertices = source.mesh.coordinates.shape[0]
-    transfer_row_bytes = 2 * vertices * source.mesh.coordinates.dtype.itemsize
-    transfer_capacity = max(
-        0,
-        (policy.limits.maximum_data_bytes - _payload_bytes(source)) // transfer_row_bytes
-        - vertices,
-    )
     capacity = min(
         policy.maximum_marked_cells,
-        transfer_capacity,
         max(0, policy.limits.maximum_vertices - counts[0]),
         max(0, (policy.limits.maximum_cells - counts[2]) // 2),
         max(0, (policy.limits.maximum_faces - counts[2]) // 2),
@@ -813,7 +766,7 @@ def _safe_marks(
             // 18,
         ),
     )
-    selected = order[(scores[order] > 0) & allowed[order]][:capacity]
+    selected = order[scores[order] > 0][:capacity]
     return np.sort(cells[selected]).astype(np.int64, copy=False)
 
 
@@ -825,21 +778,27 @@ class MeshProposalProjection(StrictModule, NonTrainableState):
     marked_cell_ids: Array
     size_field: ResolvedSizeField | None
     metric: MeshMetricField | None
+    metric_evidence: MetricNormalizationEvidence | None
     target_coordinates: Array | None
     projection_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        proposal: MeshProposal,
-        policy: MeshProposalSafetyPolicy,
-        marked_cell_ids: ArrayLike,
-        size_field: ResolvedSizeField | None,
-        metric: MeshMetricField | None,
-        target_coordinates: Array | None,
+        proposal: Any,
+        policy: Any,
+        marked_cell_ids: Any,
+        size_field: Any,
+        metric: Any,
+        target_coordinates: Any,
+        *,
+        metric_evidence: Any = None,
     ) -> None:
+        if (metric is None) != (metric_evidence is None):
+            raise ValueError("A projected metric requires its normalization evidence.")
         self.proposal, self.policy = proposal, policy
         self.marked_cell_ids = jnp.asarray(marked_cell_ids, dtype=jnp.int64)
         self.size_field, self.metric = size_field, metric
+        self.metric_evidence = metric_evidence
         self.target_coordinates = target_coordinates
         self.projection_id = canonical_fingerprint(
             {
@@ -849,6 +808,9 @@ class MeshProposalProjection(StrictModule, NonTrainableState):
                 "marks": array_tree_fingerprint(self.marked_cell_ids),
                 "size": None if size_field is None else size_field.field_id,
                 "metric": None if metric is None else metric.metric_id,
+                "metric_evidence": None
+                if metric_evidence is None
+                else metric_evidence.evidence_id,
                 "coordinates": None
                 if target_coordinates is None
                 else array_tree_fingerprint(target_coordinates),
@@ -864,14 +826,15 @@ def project_mesh_proposal(
 ) -> MeshProposalProjection:
     """Deterministically project untrusted values without generating a mesh.
 
-    Marking, size and metric proposals currently request one native T3
-    longest-edge refinement step. A metric controls directional edge marking,
-    not an unsupported anisotropic remesher or an achieved-size guarantee.
+    Marking proposals project onto capacity-bounded marks executed by native
+    bisection. Size and metric proposals project onto a graded size field or a
+    normalized metric executed by native planar anisotropic metric adaptation
+    (split, collapse, flip, relocation) toward the unit-mesh criterion.
     """
     _check_binding(source, proposal, policy)
     mesh = source.mesh
     rows = _scope_rows(source, proposal.scope)
-    sizes, metric, target = None, None, None
+    sizes, metric, metric_evidence, target = None, None, None, None
     marks = np.empty(0, dtype=np.int64)
     if isinstance(proposal, MeshCoordinateProposal):
         _, project = _coordinate_projector(source, proposal, policy)
@@ -879,7 +842,7 @@ def project_mesh_proposal(
         # A safe target must itself be a valid optimization reference. Backtrack
         # toward the certified source, rather than accepting an inverted target.
         for _ in range(64):
-            if bool(jnp.all(evaluate_cell_quality(mesh, target).valid)):
+            if bool(jnp.all(evaluate_cell_quality(mesh, target).sampled_valid)):
                 break
             target = project(0.5 * (target + mesh.coordinates))
         else:
@@ -892,68 +855,50 @@ def project_mesh_proposal(
         connectivity = mesh.connectivity
         if not isinstance(connectivity, PolygonalConnectivity):
             raise TypeError("Native T3 proposals require polygonal connectivity.")
-        scores = np.zeros(mesh.blocks[0].global_ids.size)
         if isinstance(proposal, MeshMarkingProposal):
+            scores = np.zeros(mesh.blocks[0].global_ids.size)
             scores[rows] = np.asarray(proposal.values)
+            marks = _safe_marks(source, scores, policy)
         else:
             if rows.size != mesh.coordinates.shape[0]:
                 raise ValueError(
                     "Size and metric proposals must cover every source vertex."
                 )
-            edges = np.asarray(connectivity.edges)
             # Field arrays are scope ordered; connectivity and points are mesh ordered.
             inverse = np.empty(rows.size, dtype=np.int64)
             inverse[rows] = np.arange(rows.size)
-            field_edges = inverse[edges]
+            field_edges = inverse[np.asarray(connectivity.edges)]
+            field_points = np.asarray(mesh.coordinates)[rows]
             if isinstance(proposal, MeshSizeProposal):
-                values = _grade_sizes(
-                    np.clip(
-                        np.asarray(proposal.values),
-                        policy.minimum_size,
-                        policy.maximum_size,
-                    ),
-                    field_edges,
-                    policy.maximum_gradation,
-                )
                 sizes = ResolvedSizeField(
                     SizeFieldDomain.SAMPLE_CLOUD,
-                    np.asarray(mesh.coordinates)[rows],
-                    values,
+                    field_points,
+                    _project_sizes(
+                        np.asarray(proposal.values), field_points, field_edges, policy
+                    ),
+                    sample_entity_ids=proposal.scope.entity_ids,
                     source_control_ids=(proposal.proposal_id, policy.policy_id),
                 )
-                values = values[inverse]
-                lengths = np.linalg.norm(
-                    np.asarray(mesh.coordinates)[edges[:, 1]]
-                    - np.asarray(mesh.coordinates)[edges[:, 0]],
-                    axis=1,
-                )
-                edge_scores = (
-                    lengths / np.minimum(values[edges[:, 0]], values[edges[:, 1]]) - 1.0
-                )
             else:
-                metric = _project_metric(
-                    proposal.scope, np.asarray(proposal.values), field_edges, policy
+                metric, metric_evidence = _project_metric(
+                    proposal.scope,
+                    np.asarray(proposal.values),
+                    field_points,
+                    field_edges,
+                    policy,
                 )
-                values = np.asarray(metric.values)[inverse]
-                delta = (
-                    np.asarray(mesh.coordinates)[edges[:, 1]]
-                    - np.asarray(mesh.coordinates)[edges[:, 0]]
-                )
-                average = 0.5 * (values[edges[:, 0]] + values[edges[:, 1]])
-                lengths = np.sqrt(
-                    np.sum(delta * (average @ delta[..., None])[..., 0], axis=1)
-                )
-                edge_scores = lengths - 1.0
-            scores = np.max(
-                edge_scores[np.asarray(connectivity.cell_edges)[:, :3]], axis=1
-            )
-        marks = _safe_marks(source, connectivity, scores, policy)
-    return MeshProposalProjection(proposal, policy, marks, sizes, metric, target)
+    return MeshProposalProjection(
+        proposal,
+        policy,
+        marks,
+        sizes,
+        metric,
+        target,
+        metric_evidence=metric_evidence,
+    )
 
 
-def _entity_vertex_signatures(
-    mesh: CellMesh, dimension: int
-) -> tuple[tuple[int, ...], ...]:
+def _entity_vertex_signatures(mesh: CellMesh, dimension: int) -> Any:
     vertices = [{int(identifier)} for identifier in np.asarray(mesh.vertex_global_ids)]
     for degree in range(1, dimension + 1):
         upper = [set() for _ in range(mesh.entity_set(degree).count)]
@@ -969,11 +914,7 @@ def _entity_vertex_signatures(
     return tuple(tuple(sorted(values)) for values in vertices)
 
 
-def _preservation_issues(
-    source: CellMeshingResult,
-    candidate: CellMeshingResult,
-    projection: MeshProposalProjection,
-) -> tuple[str, ...]:
+def _preservation_issues(source: Any, candidate: Any, projection: Any) -> Any:
     policy = projection.policy
     issues = []
     if candidate.coordinate_contract.spatial_id != source.coordinate_contract.spatial_id:
@@ -1046,9 +987,10 @@ def _preservation_issues(
 class MeshProposalTransaction(StrictModule, NonTrainableState):
     """Prepared trusted result and separate safety evidence; source stays intact.
 
-    A refinement exposes the native transition and transfer bundle for the
-    solver's FiniteElementTopologyTransaction; commit here promotes only a mesh,
-    never solution fields. Explicit rejection returns the identical source.
+    Marking, size, and metric proposals expose their native `MeshAdaptationResult`
+    (transition, lineage, and sparse FE transfer) for the solver's
+    FiniteElementTopologyTransaction; commit here promotes only a mesh, never
+    solution fields. Explicit rejection returns the identical source.
     """
 
     source: CellMeshingResult
@@ -1056,21 +998,19 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
     trusted_result: CellMeshingResult
     safety_audit: CellMeshAuditReport
     compliance: MeshingComplianceReport
-    transition: CellMeshTransition | None
-    transfer: FiniteElementTransferBundle | None
+    adaptation: MeshAdaptationResult | None
     optimization: MeshOptimizationResult | None
     transaction_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        source: CellMeshingResult,
-        projection: MeshProposalProjection,
-        trusted_result: CellMeshingResult,
-        safety_audit: CellMeshAuditReport,
-        compliance: MeshingComplianceReport,
-        transition: CellMeshTransition | None,
-        transfer: FiniteElementTransferBundle | None,
-        optimization: MeshOptimizationResult | None,
+        source: Any,
+        projection: Any,
+        trusted_result: Any,
+        safety_audit: Any,
+        compliance: Any,
+        adaptation: Any,
+        optimization: Any,
     ) -> None:
         _check_binding(source, projection.proposal, projection.policy)
         if (
@@ -1080,38 +1020,36 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
             raise ValueError("Safety audit must match the candidate and safety policy.")
         if compliance.specification_id != projection.projection_id:
             raise ValueError("Compliance must be bound to the exact projected proposal.")
-        if transition is not None and (
-            transition.source_mesh_id != source.mesh.mesh_id
-            or transition.target.result_id != trusted_result.result_id
-            or transfer is None
+        if adaptation is not None and (
+            adaptation.source.result_id != source.result_id
+            or adaptation.target.result_id != trusted_result.result_id
         ):
-            raise ValueError(
-                "Proposal transition must match the source, candidate, and transfer."
-            )
+            raise ValueError("Proposal adaptation must match the source and candidate.")
         if isinstance(projection.proposal, MeshCoordinateProposal):
+            # A failed optimization leaves the exact source as its candidate.
             if (
                 optimization is None
-                or optimization.result.result_id != trusted_result.result_id
-                or transition is not None
+                or adaptation is not None
+                or (
+                    optimization.result.result_id
+                    if optimization.accepted
+                    else source.result_id
+                )
+                != trusted_result.result_id
             ):
                 raise ValueError(
                     "Coordinate proposal candidate must match its trusted optimization."
                 )
-        elif projection.marked_cell_ids.size:
-            if transition is None or optimization is not None:
+        elif projection.marked_cell_ids.size or not isinstance(
+            projection.proposal, MeshMarkingProposal
+        ):
+            if adaptation is None or optimization is not None:
                 raise ValueError(
-                    "Marked proposal candidate requires trusted refinement evidence."
+                    "Adaptive proposal candidate requires trusted adaptation evidence."
                 )
-        elif trusted_result.result_id != source.result_id:
+        elif adaptation is not None or trusted_result.result_id != source.result_id:
             raise ValueError(
                 "An empty projected marking must preserve the exact source result."
-            )
-        if transfer is not None and transfer.primal.shape != (
-            trusted_result.mesh.coordinates.shape[0],
-            source.mesh.coordinates.shape[0],
-        ):
-            raise ValueError(
-                "Proposal transfer must match the source and candidate vertex counts."
             )
         self.source, self.projection, self.trusted_result = (
             source,
@@ -1119,21 +1057,16 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
             trusted_result,
         )
         self.safety_audit, self.compliance = safety_audit, compliance
-        self.transition, self.transfer, self.optimization = (
-            transition,
-            transfer,
-            optimization,
-        )
+        self.adaptation, self.optimization = adaptation, optimization
         self.transaction_id = canonical_fingerprint(
             {
                 "kind": "mesh-proposal-transaction",
                 "source": source.result_id,
                 "projection": projection.projection_id,
                 "result": trusted_result.result_id,
-                "transfer": None if transfer is None else transfer.transfer_id,
                 "audit": safety_audit.report_id,
                 "compliance": compliance.report_id,
-                "transition": None if transition is None else transition.transition_id,
+                "adaptation": None if adaptation is None else adaptation.result_id,
                 "optimization": None
                 if optimization is None
                 else optimization.optimization_id,
@@ -1170,6 +1103,64 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
         return self.trusted_result
 
 
+def _mesh_scope(source: CellMeshingResult, scope: MeshingScope, /) -> MeshingScope:
+    """Rebind a result-revision proposal scope to the mesh-revision binding."""
+    return MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        scope.entity_dimension,
+        scope.entity_set_id,
+        scope.entity_ids,
+    )
+
+
+def _adaptation_metric(
+    source: CellMeshingResult, projection: MeshProposalProjection, /
+) -> MeshMetricField:
+    """Projected metric, or the isotropic metric ``I / h**2`` of projected sizes."""
+    policy = projection.policy
+    scope = _mesh_scope(source, projection.proposal.scope)
+    if projection.metric is not None:
+        values = np.asarray(projection.metric.values)
+    else:
+        # ty: ignore[unresolved-attribute]
+        sizes = np.asarray(projection.size_field.values, dtype=np.float64)
+        dimension = source.mesh.ambient_dimension
+        values = np.eye(dimension)[None, :, :] / (sizes**2)[:, None, None]
+    return MeshMetricField(
+        scope,
+        values,
+        minimum_size=policy.minimum_size,
+        maximum_size=policy.maximum_size,
+        maximum_anisotropy=policy.maximum_anisotropy,
+    )
+
+
+def _execute_adaptation(
+    source: CellMeshingResult, projection: MeshProposalProjection, /
+) -> MeshAdaptationResult:
+    policy = projection.policy
+    protected = tuple(_mesh_scope(source, scope) for scope in policy.protected_scopes)
+    if isinstance(projection.proposal, MeshMarkingProposal):
+        request = MarkedMeshAdaptation(projection.marked_cell_ids)
+        route = MeshAdaptationRoute.NATIVE_BISECTION
+    else:
+        request = MetricMeshAdaptation(_adaptation_metric(source, projection))
+        route = MeshAdaptationRoute.NATIVE_METRIC_2D
+    return execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            request,
+            policy=MeshAdaptationPolicy(
+                route,
+                protected_scopes=protected,
+                limits=policy.limits,
+            ),
+        )
+    )
+
+
 def prepare_mesh_proposal(
     source: CellMeshingResult,
     proposal: MeshProposal,
@@ -1179,7 +1170,7 @@ def prepare_mesh_proposal(
     """Project, execute a native trusted path, audit and prepare atomic promotion.
 
     No caller-supplied mesh or audit is accepted as proposal evidence. Native
-    refinement and optimization currently operate on affine, unassociated
+    adaptation and optimization currently operate on affine, unassociated
     meshes: metadata requiring remapping is rejected rather than discarded.
     An empty projected marking is an explicit unchanged-source transaction.
     """
@@ -1203,42 +1194,52 @@ def prepare_mesh_proposal(
         raise ValueError(
             "Native proposal execution cannot discard revision-bound mesh metadata."
         )
-    transition, transfer, optimization = None, None, None
+    adaptation, optimization = None, None
     candidate = source
     if isinstance(proposal, MeshCoordinateProposal):
-        fixed, project = _coordinate_projector(source, proposal, policy)
+        fixed, _ = _coordinate_projector(source, proposal, policy)
         plan = TargetMatrixOptimizationPlan(
             source.mesh,
             target_coordinates=projection.target_coordinates,
             fixed_vertices=fixed,
-            maximum_iterations=policy.maximum_optimization_iterations,
+            coordinate_bounds=_optimization_bounds(source, policy),
+            termination=OptimizationTermination(
+                maximum_steps=policy.maximum_optimization_iterations
+            ),
         )
         optimization = optimize_cell_mesh(
             plan,
             source.coordinate_contract,
-            project=project,
             numeric_version=f"proposal:{projection.projection_id}",
         )
-        candidate = optimization.result
-    elif projection.marked_cell_ids.size:
-        transition, transfer = refine_triangle_mesh(
-            source.mesh,
-            projection.marked_cell_ids,
-            source.coordinate_contract,
-            numeric_version=f"proposal:{projection.projection_id}",
-        )
-        candidate = transition.target
+        if optimization.accepted:
+            candidate = optimization.result
+    elif projection.marked_cell_ids.size or not isinstance(proposal, MeshMarkingProposal):
+        adaptation = _execute_adaptation(source, projection)
+        candidate = adaptation.target
+    # ty: ignore[unresolved-attribute]
     quality = evaluate_cell_quality(candidate.mesh, candidate.geometry.coordinates)
     audit = audit_cell_mesh(
-        candidate.mesh, candidate.geometry, quality, policy=policy.audit_policy
+        # ty: ignore[unresolved-attribute]
+        candidate.mesh,
+        # ty: ignore[unresolved-attribute]
+        candidate.geometry,
+        quality,
+        policy=policy.audit_policy,
     )
+    # ty: ignore[invalid-argument-type]
     issues = _limit_issues(candidate, policy.limits) + _preservation_issues(
         source, candidate, projection
     )
     if not audit.passed:
         issues += ("safety_audit",)
+    if optimization is not None and not optimization.accepted:
+        issues += ("mesh_optimization",)
+    if adaptation is not None:
+        issues += adaptation.compliance.issues
     if (
-        _payload_bytes(candidate) + _payload_bytes(transfer)
+        _payload_bytes(candidate)
+        + _payload_bytes(None if adaptation is None else adaptation.transfer)
         > policy.limits.maximum_data_bytes
     ):
         issues += ("maximum_data_bytes",)
@@ -1253,7 +1254,9 @@ def prepare_mesh_proposal(
             ("maximum_vertices", policy.limits.maximum_vertices),
         ),
         achieved=(
+            # ty: ignore[unresolved-attribute]
             ("cells", candidate.audit.entity_counts[-1]),
+            # ty: ignore[unresolved-attribute]
             ("vertices", candidate.audit.vertex_count),
         ),
     )
@@ -1263,8 +1266,7 @@ def prepare_mesh_proposal(
         candidate,
         audit,
         compliance,
-        transition,
-        transfer,
+        adaptation,
         optimization,
     )
 

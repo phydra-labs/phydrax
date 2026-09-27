@@ -135,3 +135,47 @@ def test_repeated_queries_are_deterministic() -> None:
     assert first.content_identity == second.content_identity
     assert np.array_equal(first.source_global_ids, second.source_global_ids)
     assert np.array_equal(first.target_global_ids, second.target_global_ids)
+
+
+def test_every_brute_force_candidate_is_returned_in_canonical_order() -> None:
+    rng = np.random.default_rng(4)
+    target_lower = np.round(rng.random((150, 3)) * 8.0) / 8.0
+    target_upper = target_lower + np.round(rng.random((150, 3)) * 2.0) / 8.0 + 0.125
+    source_lower = np.round(rng.random((120, 3)) * 8.0) / 8.0
+    source_upper = source_lower + np.round(rng.random((120, 3)) * 2.0) / 8.0 + 0.125
+    target_ids = rng.permutation(150) * 3 + 1
+    source_ids = rng.permutation(120) * 5 + 2
+    index = build_host_aabb_overlap_bvh(
+        target_lower, target_upper, global_ids=target_ids, absolute_tolerance=1e-9
+    )
+    extent = np.minimum(source_upper[:, None], target_upper[None]) - np.maximum(
+        source_lower[:, None], target_lower[None]
+    )
+    for zero_measure in (False, True):
+        hit = np.all(extent >= -1e-9 if zero_measure else extent > 0.0, axis=-1)
+        source, target = np.nonzero(hit)
+        expected = sorted(zip(source_ids[source], target_ids[target], strict=True))
+        result = _query(
+            index,
+            source_lower,
+            source_upper,
+            source_global_ids=source_ids,
+            include_zero_measure=zero_measure,
+        )
+        assert result.status is OverlapSearchStatus.SUCCESS
+        observed = list(
+            zip(result.source_global_ids, result.target_global_ids, strict=True)
+        )
+        assert observed == expected
+        assert result.candidate_count == len(expected)
+    limited = _query(
+        index,
+        source_lower,
+        source_upper,
+        source_global_ids=source_ids,
+        include_zero_measure=True,
+        max_candidates=len(expected) - 1,
+        max_memory_bytes=32 * len(expected),
+    )
+    assert limited.status is OverlapSearchStatus.CANDIDATE_LIMIT
+    assert limited.candidate_count == 0

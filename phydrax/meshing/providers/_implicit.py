@@ -4,15 +4,11 @@
 
 from __future__ import annotations
 
-import json
-import pickle
 from dataclasses import replace
-from multiprocessing import get_context
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from time import monotonic
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -28,6 +24,7 @@ from ...geometry.implicit import (
     discover_implicit_surface,
     ImplicitSurfacePlan,
     ImplicitSurfacePolicy,
+    ImplicitSurfaceStatus,
 )
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from .._association import GeometryAssociation, GeometryAssociationKind
@@ -66,12 +63,14 @@ def _admit_implicit_specification(
         unsupported.append("mixed-cell transition policies")
     if specification.planar_embedding is not None:
         unsupported.append("planar embeddings")
-    controls = specification.size_controls
-    control = controls[0] if len(controls) == 1 else None
-    if not isinstance(control, UniformSizeControl):
+    if len(specification.size_controls) != 1 or not isinstance(
+        specification.size_controls[0], UniformSizeControl
+    ):
         unsupported.append("exactly one whole-surface uniform size control")
-    elif control.scope.scope_id != specification.scope.scope_id:
-        unsupported.append("local size-control scopes")
+    else:
+        control = specification.size_controls[0]
+        if control.scope.scope_id != specification.scope.scope_id:
+            unsupported.append("local size-control scopes")
     if specification.protected_features:
         unsupported.append("protected features")
     if specification.region_controls:
@@ -80,13 +79,16 @@ def _admit_implicit_specification(
         unsupported.append("patch/interface controls")
     if specification.periodic_constraints:
         unsupported.append("periodic constraints")
-    if unsupported or not isinstance(control, UniformSizeControl):
+    if specification.layer_controls:
+        unsupported.append("boundary-layer controls")
+    if unsupported:
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
             "Native implicit meshing does not enforce: " + ", ".join(unsupported) + ".",
             provider_code="preflight",
         )
-    return control
+    # ty: ignore[invalid-return-type]
+    return specification.size_controls[0]
 
 
 def _bounded_implicit_policy(
@@ -256,136 +258,13 @@ def _implicit_size_compliance(
     )
 
 
-def _realize_implicit_worker(
-    surface_plan: ImplicitSurfacePlan,
-    state: DesignState,
-    vertices_path: str,
-    faces_path: str,
-    metadata_path: str,
-    error_path: str,
-) -> None:
-    try:
-        realization = surface_plan.realize(state)
-        np.save(vertices_path, np.asarray(realization.vertices), allow_pickle=False)
-        np.save(faces_path, np.asarray(realization.faces), allow_pickle=False)
-        Path(metadata_path).write_text(
-            json.dumps(
-                {
-                    "accepted": bool(np.asarray(realization.evidence.accepted)),
-                    "minimum_face_area": float(
-                        np.asarray(realization.evidence.minimum_face_area)
-                    ),
-                    "status": int(np.asarray(realization.evidence.status)),
-                },
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-            encoding="utf-8",
+def _check_deadline(started: float, limits: MeshingLimits, /) -> None:
+    if monotonic() - started > limits.maximum_wall_seconds:
+        raise MeshingFailure(
+            MeshingFailureCategory.TIMED_OUT,
+            "Implicit meshing exceeded its enforced wall-time limit.",
+            stage=MeshingStageKind.SURFACE_MESHING.value,
         )
-    except BaseException as error:
-        Path(error_path).write_text(
-            f"{type(error).__name__}: {error}"[:4096],
-            encoding="utf-8",
-        )
-        raise
-
-
-def _run_bounded_realization(
-    surface_plan: ImplicitSurfacePlan,
-    state: DesignState,
-    limits: MeshingLimits,
-    /,
-) -> tuple[np.ndarray, np.ndarray, bool, float, int]:
-    started = monotonic()
-    with TemporaryDirectory(prefix="phydrax-implicit-worker-") as temporary:
-        root = Path(temporary)
-        vertices_path = root / "vertices.npy"
-        faces_path = root / "faces.npy"
-        metadata_path = root / "evidence.json"
-        error_path = root / "error.txt"
-        process = get_context("spawn").Process(
-            target=_realize_implicit_worker,
-            args=(
-                surface_plan,
-                state,
-                str(vertices_path),
-                str(faces_path),
-                str(metadata_path),
-                str(error_path),
-            ),
-        )
-        try:
-            process.start()
-        except (
-            OSError,
-            TypeError,
-            AttributeError,
-            RuntimeError,
-            pickle.PicklingError,
-        ) as error:
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-                "Cannot launch the bounded implicit-meshing worker.",
-                stage=MeshingStageKind.SURFACE_MESHING.value,
-            ) from error
-        remaining = limits.maximum_wall_seconds - (monotonic() - started)
-        process.join(max(remaining, 0.0))
-        if process.is_alive():
-            process.kill()
-            process.join()
-            process.close()
-            raise MeshingFailure(
-                MeshingFailureCategory.TIMED_OUT,
-                "Implicit meshing exceeded its enforced wall-time limit.",
-                stage=MeshingStageKind.SURFACE_MESHING.value,
-            )
-        exit_code = process.exitcode
-        process.close()
-        if exit_code != 0:
-            detail = (
-                error_path.read_text(encoding="utf-8")
-                if error_path.is_file()
-                else f"worker exit code {exit_code}"
-            )
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"Implicit meshing worker failed: {detail}",
-                stage=MeshingStageKind.SURFACE_MESHING.value,
-            )
-        if (
-            not vertices_path.is_file()
-            or not faces_path.is_file()
-            or not metadata_path.is_file()
-        ):
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "Implicit meshing worker did not publish a complete result.",
-                stage=MeshingStageKind.SURFACE_MESHING.value,
-            )
-        encoded_bytes = vertices_path.stat().st_size + faces_path.stat().st_size
-        if encoded_bytes > limits.maximum_data_bytes + 1024:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Implicit meshing worker output exceeds its data budget.",
-                stage=MeshingStageKind.SURFACE_MESHING.value,
-            )
-        vertices = np.load(vertices_path, allow_pickle=False)
-        faces = np.load(faces_path, allow_pickle=False)
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if monotonic() - started > limits.maximum_wall_seconds:
-            raise MeshingFailure(
-                MeshingFailureCategory.TIMED_OUT,
-                "Implicit result materialization exceeded its enforced wall-time limit.",
-                stage=MeshingStageKind.SURFACE_MESHING.value,
-            )
-    return (
-        vertices,
-        faces,
-        bool(metadata["accepted"]),
-        float(metadata["minimum_face_area"]),
-        int(metadata["status"]),
-    )
 
 
 class ImplicitMeshingPlan(StrictModule, NonTrainableState):
@@ -455,35 +334,46 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
         )
 
     def execute(self, state: DesignState | None = None, /) -> CellMeshingResult:
+        """Realize, certify, and publish the fixed-topology surface for one state.
+
+        Execution is an eager in-process host boundary: certification consumes the
+        gradient-stopped primal realization, while ``result.geometry.coordinates``
+        remains the JAX realization of ``state``. Differentiating an observable of
+        those coordinates with respect to the design state therefore follows this
+        plan's fixed topology and route. The wall-time limit is enforced at every
+        stage boundary; no result is published after the deadline.
+        """
+
+        started = monotonic()
+        limits = self.specification.limits
         selected = self.geometry.state if state is None else state
-        (
-            vertices_host,
-            faces_host,
-            accepted,
-            minimum_face_area,
-            realization_status,
-        ) = _run_bounded_realization(
-            self.surface_plan,
-            selected,
-            self.specification.limits,
+        realization = self.surface_plan.realize(selected)
+        primal = jax.lax.stop_gradient(
+            (
+                realization.vertices,
+                realization.evidence.status,
+                realization.evidence.minimum_face_area,
+            )
         )
-        if not accepted:
+        vertices_host = np.asarray(primal[0], dtype=np.float64)
+        realization_status = int(np.asarray(primal[1]))
+        minimum_face_area = float(np.asarray(primal[2]))
+        faces_host = np.asarray(realization.faces, dtype=np.int32)
+        _check_deadline(started, limits)
+        if realization_status != int(ImplicitSurfaceStatus.SUCCESS):
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                 "Implicit surface realization was rejected by its runtime evidence.",
                 provider_code=f"implicit_status:{realization_status}",
                 stage=MeshingStageKind.SURFACE_MESHING.value,
             )
-        _check_implicit_result_limits(
-            vertices_host,
-            faces_host,
-            self.specification.limits,
+        _check_implicit_result_limits(vertices_host, faces_host, limits)
+        centroids = jnp.mean(jnp.asarray(vertices_host)[faces_host], axis=1)
+        residuals = jnp.abs(
+            self.geometry.with_state(jax.lax.stop_gradient(selected)).boundary_field(
+                centroids
+            )
         )
-        centroids = jnp.mean(
-            jnp.asarray(vertices_host)[jnp.asarray(faces_host, dtype=jnp.int32)],
-            axis=1,
-        )
-        residuals = jnp.abs(self.geometry.with_state(selected).boundary_field(centroids))
         compliance = _implicit_size_compliance(
             self.specification,
             vertices_host,
@@ -532,11 +422,11 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
             resolved=np.ones((face_set.count,), dtype=np.bool_),
             exact=False,
         )
-        geometry = CellGeometrySpec.affine(mesh)
-        quality_evaluation = evaluate_cell_quality(mesh, geometry.coordinates)
+        host_geometry = CellGeometrySpec.affine(mesh)
+        quality_evaluation = evaluate_cell_quality(mesh, host_geometry.coordinates)
         audit = audit_cell_mesh(
             mesh,
-            geometry,
+            host_geometry,
             quality_evaluation,
             associations=(association,),
         )
@@ -546,6 +436,7 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
                 "; ".join(audit.issues),
                 stage=MeshingStageKind.GEOMETRY_AUDIT.value,
             )
+        _check_deadline(started, limits)
         stages = (
             MeshingStageReport(
                 MeshingStageKind.SOURCE_INSPECTION,
@@ -610,9 +501,9 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
                 "mesh": mesh.mesh_id,
             }
         )
-        return CellMeshingResult(
+        certified = CellMeshingResult(
             mesh,
-            geometry,
+            host_geometry,
             self.coordinate_contract,
             audit,
             audit.quality,
@@ -624,6 +515,13 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
             provenance,
             boundary=boundary,
             associations=(association,),
+        )
+        # The certified host coordinates are the primal of the realization; the
+        # published leaf carries the realization itself so design derivatives flow.
+        return eqx.tree_at(
+            lambda result: result.geometry.coordinates,
+            certified,
+            realization.vertices,
         )
 
 

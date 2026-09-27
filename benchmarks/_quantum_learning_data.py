@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PRNGKeyArray
+from jax import Array
+from jaxtyping import PRNGKeyArray
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 

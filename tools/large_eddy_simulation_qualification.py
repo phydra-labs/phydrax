@@ -3113,7 +3113,6 @@ def _run_favre_dg_energy(case: Mapping[str, object], _reference: Any) -> Any:
     )
     state = jnp.broadcast_to(
         point_state,
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]

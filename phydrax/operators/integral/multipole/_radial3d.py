@@ -355,7 +355,13 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
         /,
         *,
         radial: Literal["regular", "irregular"],
+        conjugate_angular: bool = False,
     ) -> Array:
+        """Return ``radial(k*r) * Y`` or, for source sums, ``radial(k*r) * conj(Y)``.
+
+        Only the angular factor is conjugated: the addition theorem pairs the
+        outgoing Hankel radial factor with ``conj(Y)`` of the source direction.
+        """
         values = jnp.asarray(vectors)
         radius = jnp.linalg.norm(values, axis=-1)
         valid_direction = radius > 0.0
@@ -366,6 +372,8 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
             fallback,
         )
         angular = _mode_basis(self.layout, directions, radial="regular")
+        if conjugate_angular:
+            angular = jnp.conj(angular)
         radial_values = self._radial_sequence(radius, radial=radial)
         return angular * radial_values[:, None]
 
@@ -376,13 +384,16 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
         return 2.0 * parameter / jnp.pi
 
     def _p2m_basis(self, relative: Array, /) -> Array:
-        basis = self._wave_basis(relative, radial="regular")
-        return self._kernel_prefactor(relative.dtype) * jnp.conj(basis)
+        return self._kernel_prefactor(relative.dtype) * self._wave_basis(
+            relative, radial="regular", conjugate_angular=True
+        )
 
     def _p2l_basis(self, relative: Array, /) -> Array:
-        basis = self._wave_basis(relative, radial="irregular")
-        return self._kernel_prefactor(relative.dtype) * jnp.conj(basis)
+        return self._kernel_prefactor(relative.dtype) * self._wave_basis(
+            relative, radial="irregular", conjugate_angular=True
+        )
 
+    # ty: ignore[invalid-method-override]
     def _evaluate_basis(
         self,
         coefficients: Array,
@@ -563,8 +574,12 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
             p2m_count=evaluation.p2m_count,
             m2m_count=evaluation.m2m_count,
             m2l_count=evaluation.m2l_count,
+            # ty: ignore[invalid-key]
+            p2l_count=evaluation.p2l_count,
             l2l_count=evaluation.l2l_count,
             l2p_count=evaluation.l2p_count,
+            # ty: ignore[invalid-key]
+            m2p_count=evaluation.m2p_count,
             p2p_count=evaluation.p2p_count,
             expansion_order=evaluation.expansion_order,
             source_convention=self.source_convention,
@@ -577,9 +592,11 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
             ),
         )
         if self.kernel_plan.kernel == "helmholtz":
+            # ty: ignore[missing-argument]
             return HelmholtzMultipoleEvaluation3D(
                 **common, wavenumber=self.kernel_plan.parameter
             )
+        # ty: ignore[missing-argument]
         return ModifiedHelmholtzMultipoleEvaluation3D(
             **common, decay=self.kernel_plan.parameter
         )

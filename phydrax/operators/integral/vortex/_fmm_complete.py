@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -18,9 +18,9 @@ from phydrax.ein import contract
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ....discretization.spatial import (
+    AdaptiveOctree,
+    AdaptiveOctreePlan,
     MortonAddressPlan,
-    MortonPointHierarchyState,
-    SparseLevelOctreePlan,
 )
 from ....discretization.spatial._plane_interactions import (
     MortonPlaneInteractionPlan,
@@ -52,16 +52,19 @@ from ._gaussian2d import gaussian_vortex_kernel_2d
 from ._gaussian3d import GaussianErfVortexKernel3D
 
 
-VortexFMMExecution: TypeAlias = Literal["level_octree", "plane_dual"]
-_NearRouteState: TypeAlias = tuple[Array, Array, Array]
-_NearSourceState: TypeAlias = tuple[Array, Array, Array, Array]
+VortexFMMExecution = Literal["level_octree", "plane_dual"]
+
+# Targets per batch of the per-target W/U gathers, bounding their working set.
+_TARGET_BATCH_SIZE = 256
 
 
 class VortexFMMEvidence(StrictModule):
     p2m_count: Array
     m2m_count: Array
     m2l_count: Array
+    p2l_count: Array
     l2l_count: Array
+    m2p_count: Array
     near_pair_count: Array
     expansion_order: int = eqx.field(static=True)
     geometric_tail_bound: Array
@@ -73,7 +76,15 @@ class VortexFMMEvidence(StrictModule):
 
 
 class VortexFMMPlan(AbstractVortexVelocityPlan):
-    """Reference-envelope vortex FMM with level-octree or plane execution."""
+    """Reference-envelope vortex FMM with adaptive-octree or plane execution.
+
+    ``execution="level_octree"`` prepares an adaptive octree over the
+    reference sources, subdividing cells with more than ``leaf_capacity`` sources
+    down to ``depth``; its U/V/W/X interaction lists keep one cell of clearance for
+    sources displaced by up to ``maximum_reference_displacement``, and targets are
+    located in its leaves at evaluation. ``maximum_far_interactions`` bounds each
+    of its V, W, and X lists and ``maximum_near_interactions`` its U list.
+    """
 
     reference_position: Array
     reference_target: Array
@@ -156,6 +167,7 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
         near = (
             None if maximum_near_interactions is None else int(maximum_near_interactions)
         )
+        execution = parse(execution, VortexFMMExecution, "execution")
         if (
             reference.ndim != 2
             or reference.shape[0] == 0
@@ -191,7 +203,6 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
             raise ValueError(
                 "Vortex FMM geometry, execution, or capacity controls are invalid."
             )
-        execution = parse(execution, VortexFMMExecution, "execution")
         lower_tuple = tuple(float(value) for value in lower_array)
         upper_tuple = tuple(float(value) for value in upper_array)
         precision_value = VortexPrecisionPolicy() if precision is None else precision
@@ -299,6 +310,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
     backend_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
     capabilities: VortexVelocityCapabilities
+    topology: AdaptiveOctree | None
     source_plane_plan: MortonPlaneSchedulePlan | None = eqx.field(static=True)
     target_plane_plan: MortonPlaneSchedulePlan | None = eqx.field(static=True)
     source_plane: MortonPlaneScheduleState | None
@@ -318,11 +330,26 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         self.target_capacity = compatibility.target_capacity
         self.backend_id = plan.plan_id
         self.capabilities = plan.capabilities
+        topology = None
         source_plane_plan = None
         target_plane_plan = None
         source_plane = None
         target_plane = None
         plane_interactions = None
+        if plan.execution == "level_octree":
+            topology = AdaptiveOctreePlan(
+                MortonAddressPlan(plan.lower, plan.upper, plan.depth),
+                leaf_capacity=plan.leaf_capacity,
+                separation_padding=plan.maximum_reference_displacement,
+                u_capacity=plan.maximum_near_interactions,
+                v_capacity=plan.maximum_far_interactions,
+                w_capacity=plan.maximum_far_interactions,
+                x_capacity=plan.maximum_far_interactions,
+            ).prepare(plan.reference_position)
+            if not bool(topology.evidence.successful):
+                raise ValueError(
+                    "Vortex FMM interaction capacity is exhausted by the reference tree."
+                )
         if plan.execution == "plane_dual":
             address = MortonAddressPlan(plan.lower, plan.upper, plan.depth)
             source_plane_plan = MortonPlaneSchedulePlan(
@@ -395,6 +422,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                 raise ValueError(
                     "Plane vortex schedule or interaction capacity is exhausted."
                 )
+        self.topology = topology
         self.source_plane_plan = source_plane_plan
         self.target_plane_plan = target_plane_plan
         self.source_plane = source_plane
@@ -405,6 +433,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                 "kind": "prepared-sparse-vortex-fmm",
                 "plan": plan.plan_id,
                 "compatibility": compatibility.compatibility_id,
+                "topology": None if topology is None else topology.tree_id,
                 "source_plane": (
                     None if source_plane_plan is None else source_plane_plan.plan_id
                 ),
@@ -448,90 +477,199 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             correction = correction + jacobian @ first_moment[component]
         return value - correction
 
-    def _moments(
+    def _moments(self, source: VortexSourceState, /) -> tuple[Array, Array]:
+        """P2M monopoles and first moments into the frozen reference leaves, then M2M."""
+        topology = self.topology
+        # ty: ignore[unresolved-attribute]
+        leaves = topology.point_leaves
+        # ty: ignore[unresolved-attribute]
+        relative = source.safe_positions() - topology.node_centers[leaves]
+        active = source.active_mask.reshape(
+            source.active_mask.shape + (1,) * (source.safe_strength().ndim - 1)
+        )
+        strength = jnp.where(active, source.safe_strength(), 0.0)
+        dtype = source.positions.dtype
+        monopole = (
+            # ty: ignore[unresolved-attribute]
+            jnp.zeros((topology.node_count,) + strength.shape[1:], dtype=dtype)
+            .at[leaves]
+            .add(strength)
+        )
+        first = (
+            jnp.zeros(
+                # ty: ignore[unresolved-attribute]
+                (topology.node_count,) + strength.shape[1:] + (self.dimension,),
+                dtype=dtype,
+            )
+            .at[leaves]
+            .add(
+                strength[..., None]
+                * relative.reshape(
+                    relative.shape[:1] + (1,) * (strength.ndim - 1) + relative.shape[1:]
+                )
+            )
+        )
+
+        def translate(values: Any, child_centers: Any, parent_centers: Any) -> Any:
+            child_monopole, child_first = values
+            shift = child_centers - parent_centers
+            shift = shift.reshape(
+                shift.shape[:1] + (1,) * (child_monopole.ndim - 1) + shift.shape[1:]
+            )
+            return child_monopole, child_first + child_monopole[..., None] * shift
+
+        # ty: ignore[unresolved-attribute]
+        return topology.upward_pass((monopole, first), translate)
+
+    def _multipole_field(
+        self, displacement: Array, monopole: Array, first_moment: Array, /
+    ) -> tuple[Array, Array]:
+        """Truncated multipole velocity and its displacement gradient."""
+        return self._multipole_velocity(displacement, monopole, first_moment), jax.jacfwd(
+            lambda value: self._multipole_velocity(value, monopole, first_moment)
+        )(displacement)
+
+    def _point_field(
+        self, displacement: Array, strength: Array, /
+    ) -> tuple[Array, Array]:
+        """Singular point-vortex velocity and its displacement gradient."""
+        return self._kernel(strength, displacement), jax.jacfwd(
+            lambda value: self._kernel(strength, value)
+        )(displacement)
+
+    def _regularized_pairs(
+        self, displacement: Array, strength: Array, core_radius: Array, /
+    ) -> tuple[Array, Array]:
+        """Core-regularized pair velocities and velocity gradients."""
+        if self.dimension == 2:
+            unit = gaussian_vortex_kernel_2d(displacement, core_radius)
+            return (
+                strength[:, None] * unit.velocity,
+                strength[:, None, None] * unit.velocity_gradient,
+            )
+        kernel = GaussianErfVortexKernel3D().evaluate(displacement, strength, core_radius)
+        return kernel.velocity, kernel.velocity_gradient
+
+    def _octree_locals(
+        self, source: VortexSourceState, monopole: Array, first_moment: Array, /
+    ) -> tuple[Array, Array]:
+        """Node local values and gradients from V (M2L) and X (P2L) routes and L2L."""
+        topology = self.topology
+        # ty: ignore[unresolved-attribute]
+        centers = topology.node_centers
+        # Masked route slots are evaluated at unit displacement so that every
+        # kernel stays finite under differentiation.
+        # ty: ignore[unresolved-attribute]
+        far = topology.v_list.routes
+        displacement = jnp.where(
+            far.valid[:, None],
+            centers[far.target_indices] - centers[far.source_indices],
+            1.0,
+        )
+        far_value, far_gradient = jax.vmap(self._multipole_field)(
+            displacement,
+            monopole[far.source_indices],
+            first_moment[far.source_indices],
+        )
+        far_value = jnp.where(far.valid[:, None], far_value, 0.0)
+        far_gradient = jnp.where(far.valid[:, None, None], far_gradient, 0.0)
+        # ty: ignore[unresolved-attribute]
+        leaf = topology.x_list.routes
+        # ty: ignore[unresolved-attribute]
+        points, point_valid = topology.leaf_points(leaf.source_indices)
+        point_valid = point_valid & leaf.valid[:, None] & source.active_mask[points]
+        point_displacement = jnp.where(
+            point_valid[..., None],
+            centers[leaf.target_indices][:, None, :] - source.safe_positions()[points],
+            1.0,
+        )
+        point_value, point_gradient = jax.vmap(jax.vmap(self._point_field))(
+            point_displacement, source.safe_strength()[points]
+        )
+        point_value = jnp.sum(jnp.where(point_valid[..., None], point_value, 0.0), axis=1)
+        point_gradient = jnp.sum(
+            jnp.where(point_valid[..., None, None], point_gradient, 0.0), axis=1
+        )
+        # ty: ignore[unresolved-attribute]
+        (far_local, far_local_gradient), _ = topology.v_list.execution.reduce(
+            (far_value, far_gradient), accumulation="deterministic"
+        )
+        # ty: ignore[unresolved-attribute]
+        (leaf_local, leaf_local_gradient), _ = topology.x_list.execution.reduce(
+            (point_value, point_gradient), accumulation="deterministic"
+        )
+
+        def inherit(values: Any, parent_centers: Any, child_centers: Any) -> Any:
+            parent_value, parent_gradient = values
+            shift = child_centers - parent_centers
+            return (
+                parent_value + contract("nij,nj->ni", parent_gradient, shift),
+                parent_gradient,
+            )
+
+        # ty: ignore[unresolved-attribute]
+        return topology.downward_pass(
+            (far_local + leaf_local, far_local_gradient + leaf_local_gradient),
+            inherit,
+        )
+
+    def _octree_target_fields(
         self,
         source: VortexSourceState,
-        hierarchy: MortonPointHierarchyState,
-        point_leaf: Array,
-        sorted_logical: Array,
-    ) -> tuple[Array, Array]:
-        node_capacity = hierarchy.node_active.size
-        combined_capacity = sorted_logical.shape[0]
-        is_source = hierarchy.sorted_active & (sorted_logical < self.source_capacity)
-        source_index = jnp.clip(sorted_logical, 0, self.source_capacity - 1)
-        source_strength = source.safe_strength()[source_index]
-        sorted_position = jnp.concatenate(
-            (source.safe_positions(), jnp.zeros((self.target_capacity, self.dimension))),
-            axis=0,
-        )[sorted_logical]
-        safe_leaf = jnp.maximum(point_leaf, 0)
-        relative = sorted_position - hierarchy.node_centers[safe_leaf]
-        if self.dimension == 2:
-            strength = jnp.where(is_source, source_strength, 0.0)
-            monopole = (
-                jnp.zeros((node_capacity,), dtype=source.positions.dtype)
-                .at[safe_leaf]
-                .add(strength)
+        target: VortexTargetState,
+        monopole: Array,
+        first_moment: Array,
+        target_leaves: Array,
+        /,
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        """W-list multipole and U-list regularized direct fields at every target."""
+        topology = self.topology
+        # ty: ignore[unresolved-attribute]
+        centers = topology.node_centers
+        positions = source.safe_positions()
+        strengths = source.safe_strength()
+        core_radii = source.safe_core_radius()
+        identities = (
+            jnp.full((target.capacity,), -1, dtype=jnp.int32)
+            if target.source_indices is None
+            else target.source_indices
+        )
+
+        def one_target(item: Any) -> Any:
+            position, leaf, identity = item
+            # ty: ignore[unresolved-attribute]
+            nodes, valid = topology.w_list.rows(leaf)
+            displacement = jnp.where(valid[:, None], position - centers[nodes], 1.0)
+            values, gradients = jax.vmap(self._multipole_field)(
+                displacement, monopole[nodes], first_moment[nodes]
             )
-            first = (
-                jnp.zeros((node_capacity, self.dimension), dtype=source.positions.dtype)
-                .at[safe_leaf]
-                .add(strength[:, None] * relative)
+            # ty: ignore[unresolved-attribute]
+            leaves, leaf_valid = topology.u_list.rows(leaf)
+            # ty: ignore[unresolved-attribute]
+            points, point_valid = topology.leaf_points(leaves)
+            points = points.reshape((-1,))
+            pair_valid = (
+                (point_valid & leaf_valid[:, None]).reshape((-1,))
+                & source.active_mask[points]
+                & (points != identity)
             )
-        else:
-            strength = jnp.where(is_source[:, None], source_strength, 0.0)
-            monopole = (
-                jnp.zeros((node_capacity, 3), dtype=source.positions.dtype)
-                .at[safe_leaf]
-                .add(strength)
+            pair_velocity, pair_gradient = self._regularized_pairs(
+                position - positions[points], strengths[points], core_radii[points]
             )
-            first = (
-                jnp.zeros(
-                    (node_capacity, 3, self.dimension), dtype=source.positions.dtype
-                )
-                .at[safe_leaf]
-                .add(strength[..., None] * relative[:, None, :])
+            return (
+                jnp.sum(jnp.where(valid[:, None], values, 0.0), axis=0),
+                jnp.sum(jnp.where(valid[:, None, None], gradients, 0.0), axis=0),
+                jnp.sum(jnp.where(pair_valid[:, None], pair_velocity, 0.0), axis=0),
+                jnp.sum(jnp.where(pair_valid[:, None, None], pair_gradient, 0.0), axis=0),
+                jnp.sum(pair_valid, dtype=jnp.int32),
+                jnp.sum(valid, dtype=jnp.int32),
             )
-        del combined_capacity
-        for level in range(self.plan.depth - 1, -1, -1):
-            at_level = (
-                hierarchy.node_active
-                & ~hierarchy.node_is_leaf
-                & (hierarchy.node_levels == level)
-            )
-            children = hierarchy.node_children
-            child_valid = children >= 0
-            safe_children = jnp.maximum(children, 0)
-            child_monopole = monopole[safe_children]
-            shift = (
-                hierarchy.node_centers[safe_children] - hierarchy.node_centers[:, None, :]
-            )
-            if self.dimension == 2:
-                child_monopole = jnp.where(child_valid, child_monopole, 0.0)
-                parent_monopole = jnp.sum(child_monopole, axis=1)
-                translated_first = (
-                    first[safe_children] + child_monopole[..., None] * shift
-                )
-                parent_first = jnp.sum(
-                    jnp.where(child_valid[..., None], translated_first, 0.0),
-                    axis=1,
-                )
-                monopole = jnp.where(at_level, parent_monopole, monopole)
-                first = jnp.where(at_level[:, None], parent_first, first)
-            else:
-                child_monopole = jnp.where(child_valid[..., None], child_monopole, 0.0)
-                parent_monopole = jnp.sum(child_monopole, axis=1)
-                translated_first = (
-                    first[safe_children]
-                    + child_monopole[..., None] * shift[:, :, None, :]
-                )
-                parent_first = jnp.sum(
-                    jnp.where(child_valid[..., None, None], translated_first, 0.0),
-                    axis=1,
-                )
-                monopole = jnp.where(at_level[:, None], parent_monopole, monopole)
-                first = jnp.where(at_level[:, None, None], parent_first, first)
-        return monopole, first
+
+        return jax.lax.map(
+            one_target,
+            (target.positions, target_leaves, identities),
+            batch_size=_TARGET_BATCH_SIZE,
+        )
 
     def _plane_stale(
         self,
@@ -755,7 +893,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             source_first[far_source],
         )
 
-        def far_gradient(displacement: Array, monopole: Array, first: Array) -> Array:
+        def far_gradient(displacement: Any, monopole: Any, first: Any) -> Any:
             return jax.jacfwd(
                 lambda value: self._multipole_velocity(value, monopole, first)
             )(displacement)
@@ -991,10 +1129,12 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                 dtype=jnp.int32,
             ),
             m2l_count=jnp.sum(far.valid, dtype=jnp.int32),
+            p2l_count=jnp.asarray(0, dtype=jnp.int32),
             l2l_count=jnp.maximum(
                 target_schedule.evidence.active_nodes - 1,
                 0,
             ),
+            m2p_count=jnp.asarray(0, dtype=jnp.int32),
             near_pair_count=jnp.sum(pair_valid, dtype=jnp.int32),
             expansion_order=self.plan.expansion_order,
             geometric_tail_bound=tail,
@@ -1068,227 +1208,30 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             initial=0.0,
         )
         stale = displacement_from_reference > self.plan.maximum_reference_displacement
-        combined_position = jnp.concatenate(
-            (source.safe_positions(), target.positions), axis=0
+        topology = self.topology
+        monopole, first_moment = self._moments(source)
+        local_value, local_gradient = self._octree_locals(source, monopole, first_moment)
+        # ty: ignore[unresolved-attribute]
+        target_leaves = jnp.maximum(topology.locate(target.positions), 0)
+        # ty: ignore[unresolved-attribute]
+        delta = target.positions - topology.node_centers[target_leaves]
+        (
+            multipole_velocity,
+            multipole_gradient,
+            near_velocity,
+            near_gradient,
+            near_counts,
+            m2p_counts,
+        ) = self._octree_target_fields(
+            source, target, monopole, first_moment, target_leaves
         )
-        combined_active = jnp.concatenate(
-            (
-                source.active_mask,
-                jnp.ones((target.capacity,), dtype=jnp.bool_),
-            )
+        velocity_all = (
+            local_value[target_leaves]
+            + contract("tij,tj->ti", local_gradient[target_leaves], delta)
+            + multipole_velocity
+            + near_velocity
         )
-        combined_capacity = self.source_capacity + self.target_capacity
-        branching = 1 << self.dimension
-        stencil = 3**self.dimension
-        far_stencil = stencil * (branching - 1)
-        far_capacity = (
-            combined_capacity
-            * max(self.plan.depth - 1, 1)
-            * min(far_stencil, combined_capacity)
-        )
-        near_capacity = combined_capacity * min(stencil, combined_capacity)
-        level_tree = SparseLevelOctreePlan(
-            MortonAddressPlan(self.plan.lower, self.plan.upper, self.plan.depth),
-            combined_capacity,
-            far_interaction_capacity=far_capacity,
-            near_interaction_capacity=near_capacity,
-        ).prepare(
-            combined_position,
-            active_mask=combined_active,
-            stable_ids=jnp.arange(combined_capacity, dtype=jnp.int64),
-        )
-        hierarchy = level_tree.hierarchy
-        point_leaf = hierarchy.sorted_point_leaf_slots
-        sorted_logical = hierarchy.storage_to_logical
-        monopole, first_moment = self._moments(
-            source, hierarchy, point_leaf, sorted_logical
-        )
-        safe_far_source = jnp.maximum(level_tree.far_sources, 0)
-        safe_far_target = jnp.maximum(level_tree.far_targets, 0)
-        source_center = hierarchy.node_centers[safe_far_source]
-        target_center = hierarchy.node_centers[safe_far_target]
-        route_displacement = jnp.where(
-            level_tree.far_active[:, None],
-            target_center - source_center,
-            jnp.ones_like(target_center),
-        )
-        route_monopole = monopole[safe_far_source]
-        route_first = first_moment[safe_far_source]
-        route_value = jax.vmap(self._multipole_velocity)(
-            route_displacement, route_monopole, route_first
-        )
-
-        def route_gradient(
-            displacement: Array, source_monopole: Array, source_first: Array
-        ) -> Array:
-            return jax.jacfwd(
-                lambda value: self._multipole_velocity(
-                    value, source_monopole, source_first
-                )
-            )(displacement)
-
-        route_gradient_value = jax.vmap(route_gradient)(
-            route_displacement, route_monopole, route_first
-        )
-        route_value = jnp.where(level_tree.far_active[:, None], route_value, 0.0)
-        route_gradient_value = jnp.where(
-            level_tree.far_active[:, None, None], route_gradient_value, 0.0
-        )
-        local_value = (
-            jnp.zeros(
-                (hierarchy.node_active.size, self.dimension), dtype=source.positions.dtype
-            )
-            .at[safe_far_target]
-            .add(route_value)
-        )
-        local_gradient = (
-            jnp.zeros(
-                (hierarchy.node_active.size, self.dimension, self.dimension),
-                dtype=source.positions.dtype,
-            )
-            .at[safe_far_target]
-            .add(route_gradient_value)
-        )
-        for level in range(1, self.plan.depth + 1):
-            at_level = hierarchy.node_active & (hierarchy.node_levels == level)
-            parent = jnp.maximum(hierarchy.node_parents, 0)
-            shift = hierarchy.node_centers - hierarchy.node_centers[parent]
-            inherited_value = local_value[parent] + contract(
-                "nij,nj->ni", local_gradient[parent], shift
-            )
-            local_value = local_value + jnp.where(at_level[:, None], inherited_value, 0.0)
-            local_gradient = local_gradient + jnp.where(
-                at_level[:, None, None], local_gradient[parent], 0.0
-            )
-        target_logical = self.source_capacity + jnp.arange(
-            self.target_capacity, dtype=jnp.int32
-        )
-        target_storage = hierarchy.logical_to_storage[target_logical]
-        target_leaf = point_leaf[target_storage]
-        safe_target_leaf = jnp.maximum(target_leaf, 0)
-        delta = target.positions - hierarchy.node_centers[safe_target_leaf]
-        far_velocity = local_value[safe_target_leaf] + contract(
-            "tij,tj->ti", local_gradient[safe_target_leaf], delta
-        )
-        near_velocity = jnp.zeros_like(far_velocity)
-        near_gradient = jnp.zeros(
-            (target.capacity, self.dimension, self.dimension), dtype=far_velocity.dtype
-        )
-        near_count = jnp.asarray(0, dtype=jnp.int32)
-        source_offsets = jnp.arange(self.plan.leaf_capacity, dtype=jnp.int32)
-        target_identity = target.source_indices
-
-        def near_route_body(route: Array, state: _NearRouteState) -> _NearRouteState:
-            velocity, gradient, count = state
-            target_node = jnp.maximum(level_tree.near_targets[route], 0)
-            source_node = jnp.maximum(level_tree.near_sources[route], 0)
-            route_active = level_tree.near_active[route]
-            source_start = hierarchy.node_item_starts[source_node]
-            source_count = jnp.where(
-                route_active, hierarchy.node_item_counts[source_node], 0
-            )
-            target_mask = target_leaf == target_node
-
-            def source_body(source_state: _NearSourceState) -> _NearSourceState:
-                offset, current_velocity, current_gradient, current_count = source_state
-                source_storage = source_start + offset + source_offsets
-                source_in_leaf = (source_storage < source_start + source_count) & (
-                    source_storage < combined_capacity
-                )
-                safe_storage = jnp.minimum(source_storage, combined_capacity - 1)
-                logical = sorted_logical[safe_storage]
-                source_index = jnp.clip(logical, 0, self.source_capacity - 1)
-                source_valid = (
-                    source_in_leaf
-                    & (logical < self.source_capacity)
-                    & source.active_mask[source_index]
-                )
-                displacement = (
-                    target.positions[:, None, :]
-                    - source.safe_positions()[source_index][None, :, :]
-                )
-                self_mask = (
-                    jnp.zeros((target.capacity, self.plan.leaf_capacity), dtype=jnp.bool_)
-                    if target_identity is None
-                    else target_identity[:, None] == source_index[None, :]
-                )
-                if self.dimension == 2:
-                    unit_kernel = gaussian_vortex_kernel_2d(
-                        displacement,
-                        jnp.broadcast_to(
-                            source.safe_core_radius()[source_index][None, :],
-                            displacement.shape[:-1],
-                        ),
-                    )
-                    pair_strength = jnp.broadcast_to(
-                        source.safe_strength()[source_index][None, :],
-                        displacement.shape[:-1],
-                    )
-                    pair_velocity = pair_strength[..., None] * unit_kernel.velocity
-                    pair_gradient = (
-                        pair_strength[..., None, None] * unit_kernel.velocity_gradient
-                    )
-                else:
-                    kernel = GaussianErfVortexKernel3D().evaluate(
-                        displacement,
-                        jnp.broadcast_to(
-                            source.safe_strength()[source_index][None, :, :],
-                            displacement.shape,
-                        ),
-                        jnp.broadcast_to(
-                            source.safe_core_radius()[source_index][None, :],
-                            displacement.shape[:-1],
-                        ),
-                    )
-                    pair_velocity = kernel.velocity
-                    pair_gradient = kernel.velocity_gradient
-                pair_mask = target_mask[:, None] & source_valid[None, :] & ~self_mask
-                current_velocity = current_velocity + jnp.sum(
-                    jnp.where(pair_mask[..., None], pair_velocity, 0.0), axis=1
-                )
-                current_gradient = current_gradient + jnp.sum(
-                    jnp.where(pair_mask[..., None, None], pair_gradient, 0.0),
-                    axis=1,
-                )
-                return (
-                    offset + self.plan.leaf_capacity,
-                    current_velocity,
-                    current_gradient,
-                    current_count + jnp.sum(pair_mask, dtype=jnp.int32),
-                )
-
-            source_initial = (
-                jnp.asarray(0, dtype=jnp.int32),
-                velocity,
-                gradient,
-                jnp.asarray(0, dtype=jnp.int32),
-            )
-
-            def evaluate_route(initial: _NearSourceState) -> _NearSourceState:
-                return jax.lax.fori_loop(
-                    0,
-                    (combined_capacity + self.plan.leaf_capacity - 1)
-                    // self.plan.leaf_capacity,
-                    lambda _, source_state: source_body(source_state),
-                    initial,
-                )
-
-            _, velocity, gradient, route_count = jax.lax.cond(
-                route_active,
-                evaluate_route,
-                lambda initial: initial,
-                source_initial,
-            )
-            return velocity, gradient, count + route_count
-
-        near_velocity, near_gradient, near_count = jax.lax.fori_loop(
-            0,
-            level_tree.near_active.size,
-            near_route_body,
-            (near_velocity, near_gradient, near_count),
-        )
-        velocity_all = far_velocity + near_velocity
-        gradient_all = local_gradient[safe_target_leaf] + near_gradient
+        gradient_all = local_gradient[target_leaves] + multipole_gradient + near_gradient
         if request.vorticity:
             if self.dimension == 2:
                 vorticity = gradient_all[:, 1, 0] - gradient_all[:, 0, 1]
@@ -1303,36 +1246,41 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                 )
         else:
             vorticity = None
+        # ty: ignore[unresolved-attribute]
+        route_sources, radii, distances, route_valid = topology.far_route_geometry()
+        route_monopole = monopole[route_sources]
         monopole_norm = (
             jnp.abs(route_monopole)
             if self.dimension == 2
             else jnp.sqrt(jnp.sum(route_monopole**2, axis=-1))
         )
-        route_distance = jnp.sqrt(jnp.sum(route_displacement**2, axis=-1))
-        ratio = jnp.max(
-            hierarchy.node_half_widths[safe_far_source], axis=-1
-        ) / jnp.maximum(
-            route_distance,
-            jnp.finfo(source.positions.dtype).tiny,
-        )
+        ratio = radii / jnp.maximum(distances, jnp.finfo(radii.dtype).tiny)
         tail = jnp.sum(
             jnp.where(
-                level_tree.far_active,
+                route_valid,
                 monopole_norm * ratio ** (self.plan.expansion_order + 1),
                 0.0,
             )
         )
         finite = jnp.all(jnp.isfinite(velocity_all)) & jnp.all(jnp.isfinite(gradient_all))
-        source_overflow = ~level_tree.evidence.successful
+        # ty: ignore[unresolved-attribute]
+        source_overflow = ~topology.evidence.successful
         successful = finite & ~stale & ~source_overflow
+        # ty: ignore[unresolved-attribute]
+        translations = jnp.asarray(topology.node_count - 1, dtype=jnp.int32)
+        # ty: ignore[unresolved-attribute]
+        m2l_count = jnp.sum(topology.v_list.routes.valid, dtype=jnp.int32)
+        # ty: ignore[unresolved-attribute]
+        p2l_count = jnp.sum(topology.x_list.routes.valid, dtype=jnp.int32)
+        m2p_count = jnp.sum(m2p_counts, dtype=jnp.int32)
+        near_count = jnp.sum(near_counts, dtype=jnp.int32)
         evidence = VortexFMMEvidence(
             p2m_count=jnp.sum(source.active_mask, dtype=jnp.int32),
-            m2m_count=jnp.sum(
-                hierarchy.node_active & ~hierarchy.node_is_leaf,
-                dtype=jnp.int32,
-            ),
-            m2l_count=jnp.sum(level_tree.far_active, dtype=jnp.int32),
-            l2l_count=jnp.maximum(level_tree.evidence.active_nodes - 1, 0),
+            m2m_count=translations,
+            m2l_count=m2l_count,
+            p2l_count=p2l_count,
+            l2l_count=translations,
+            m2p_count=m2p_count,
             near_pair_count=near_count,
             expansion_order=self.plan.expansion_order,
             geometric_tail_bound=tail,
@@ -1345,7 +1293,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         diagnostics = VortexVelocityDiagnostics(
             jnp.asarray(source.capacity, dtype=jnp.int32),
             jnp.asarray(target.capacity, dtype=jnp.int32),
-            jnp.sum(level_tree.far_active, dtype=jnp.int32) + near_count,
+            m2l_count + p2l_count + m2p_count + near_count,
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.min(source.safe_core_radius()),

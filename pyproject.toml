@@ -5,8 +5,9 @@ requires = ["hatchling"]
 [tool.hatch.build]
 artifacts = [
   "phydrax/nn/operator/pretrained/*.npz",
-  "phydrax/meshing/providers/native/**/*.cpp",
-  "phydrax/meshing/providers/native/**/CMakeLists.txt",
+  "native/providers/**/*.cpp",
+  "native/providers/**/*.hpp",
+  "native/providers/**/CMakeLists.txt",
   "phydrax/backends/*.jl",
   "phydrax/backends/*.m2",
 ]
@@ -19,6 +20,11 @@ exclude = [
   "**/__pycache__/**",
   ".DS_Store",
 ]
+
+# Native provider worker sources ship inside the wheel so installed users can
+# build them; phydrax.meshing.providers.native_provider_source_path locates them.
+[tool.hatch.build.targets.wheel.force-include]
+"native/providers" = "phydrax/native/providers"
 
 [project]
 authors = [
@@ -171,14 +177,14 @@ kinetic-interop = [
 layout-interop = [
   "gdstk>=0.9.62,<0.10",
 ]
+meshcore = [
+  "phydrax-meshcore==0.2.2",
+]
 meshing-manifold = [
   "manifold3d>=3.5.2",
 ]
 meshing-gmsh = [
   "gmsh>=4.15,<4.16",
-]
-meshing-mmg = [
-  "pymmg>=1.0,<1.1",
 ]
 meshing-ftetwild = [
   "wildmeshing>=0.4.1,<0.5",
@@ -344,6 +350,7 @@ include = [
   "benchmarks",
   "examples",
   "mkdocstrings_setup.py",
+  "native/meshcore/python",
 ]
 
 [tool.ty.analysis]
@@ -393,13 +400,14 @@ markers = [
     "opticstudio_live: requires a licensed local OpticStudio installation",
     "meshing_gmsh: requires the optional real Gmsh provider",
     "meshing_manifold: requires the optional real Manifold provider",
-    "meshing_mmg: requires the optional real Mmg provider",
+    "meshing_mmg: requires the real Mmg native worker",
     "meshing_ftetwild: requires the optional real fTetWild provider",
-    "meshing_omega_h: requires the real Omega_h native bridge",
-    "meshing_vorocrust: requires the real VoroCrust executable and extraction bridge",
+    "meshing_omega_h: requires the real Omega_h native worker",
+    "meshing_vorocrust: requires the real VoroCrust mesher and extraction worker",
     "homotopy_continuation_live: requires an explicitly pinned Julia and HomotopyContinuation environment",
     "macaulay2_live: requires an explicitly pinned Macaulay2 executable",
     "typecheck: runs the pinned ty checker over static typing fixtures",
+    "meshcore: requires the native phydrax-meshcore library (installed or PHYDRAX_MESHCORE_LIBRARY)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",

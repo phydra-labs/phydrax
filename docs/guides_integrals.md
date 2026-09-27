@@ -955,7 +955,13 @@ partition.
 ## Three-dimensional spherical multipoles
 
 `LaplaceMultipolePlan3D` prepares a bounded spherical-harmonic FMM for
-`1/(4*pi*r)`. `execution="level_octree"` retains the occupied-level authority.
+`1/(4*pi*r)`. `execution="level_octree"` prepares a
+`phydrax.discretization.spatial.AdaptiveOctree` over the reference sources: a
+cell is subdivided while it holds more than `source_leaf_occupancy` sources and
+lies above `depth`, and targets are located in its leaves at evaluation. Its
+adaptive-FMM U/V/W/X interaction lists keep one cell of clearance for sources
+displaced by up to `maximum_reference_displacement`; `far_interaction_capacity`
+bounds each of the V, W, and X lists and `near_interaction_capacity` the U list.
 `execution="plane_dual"` prepares separate compact Morton source and target
 planes, conservatively pads their reference node bounds by
 `maximum_reference_displacement`, and freezes the resulting far/near routes.
@@ -964,12 +970,15 @@ the orthonormal Condon--Shortley `(ell,m)` layout, source-normal dipoles,
 separate far/near values, stale-topology behavior, and the geometric
 truncation bound.
 
-The prepared action executes:
+The prepared adaptive-octree action executes:
 
 ```text
-P2M -> M2M -> M2L -> L2L -> L2P
-                         + exact near P2P.
+P2M -> M2M -> (V) M2L + (X) P2L -> L2L -> L2P
+                        + (W) M2P + (U) exact near P2P.
 ```
+
+`far_local` returns far-only local expansions centered at the requested target
+centers, including the W-list contributions converted by M2L.
 
 Plane routes own source and target capacities independently. Queue, far, and
 near capacities are fixed at preparation; exhaustion invalidates the complete

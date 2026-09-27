@@ -7,7 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import pytest
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax as phx
 

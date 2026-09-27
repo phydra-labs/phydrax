@@ -426,24 +426,33 @@ def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells
     blocks = (
         phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((12.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
             (1,),
+            # ty: ignore[invalid-argument-type]
             (-1,),
+            # ty: ignore[invalid-argument-type]
             (True,),
             "active-physical",
             "physical",
         ),
         phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((8.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
             (1,),
+            # ty: ignore[invalid-argument-type]
             (-1,),
+            # ty: ignore[invalid-argument-type]
             (True,),
             "active-cut",
             "cut",
         ),
         phx.discretization.ConservationStageFluxRateBlock(
             jnp.asarray(((2.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
             (1,),
+            # ty: ignore[invalid-argument-type]
             (2,),
+            # ty: ignore[invalid-argument-type]
             (True,),
             "active-redistribution",
             "small-cell-redistribution",

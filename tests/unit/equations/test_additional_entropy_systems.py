@@ -70,7 +70,6 @@ def test_mhd_executes_through_nodal_conservation_compiler() -> None:
         system.primitive_to_conserved(
             jnp.asarray((1.0, 0.1, 0.0, 0.0, 1.0, 0.2, 0.0, 0.0))
         ),
-        # ty: ignore[unresolved-attribute]
         discretization.field_spaces[0].vector_space.shape,
     )
     # ty: ignore[invalid-argument-type]

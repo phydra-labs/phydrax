@@ -9,6 +9,9 @@ from typing import Any
 import numpy as np
 import pytest
 
+from phydrax._geometry_precision import GeometryPrecisionPolicy
+from phydrax._geometry_predicates import PredicateMode
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry._tetra_intersections import (
     intersect_tetrahedra,
     TetraIntersectionLimits,
@@ -75,9 +78,14 @@ def test_partial_overlap_matches_analytic_shifted_tetrahedron(
     assert result.evidence.vertex_count == 4
 
 
+@pytest.mark.meshcore
+@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
 def test_shared_face_edge_and_vertex_are_zero_measure_contacts(
     unit_tetrahedron: Any,
 ) -> None:
+    # Three contact planes meeting in a shared edge form an exactly singular
+    # triple; certifying that zero requires the exact predicates.
+    exact = GeometryPrecisionPolicy(predicate_mode=PredicateMode.EXACT)
     shared_face = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -104,13 +112,13 @@ def test_shared_face_edge_and_vertex_are_zero_measure_contacts(
     )
 
     for other in (shared_face, shared_edge, shared_vertex):
-        result = intersect_tetrahedra(unit_tetrahedron, other)
+        result = intersect_tetrahedra(unit_tetrahedron, other, precision=exact)
         assert result.status is TetraIntersectionStatus.ZERO_MEASURE_CONTACT
         assert result.volume == 0.0
 
-    face_result = intersect_tetrahedra(unit_tetrahedron, shared_face)
-    edge_result = intersect_tetrahedra(unit_tetrahedron, shared_edge)
-    vertex_result = intersect_tetrahedra(unit_tetrahedron, shared_vertex)
+    face_result = intersect_tetrahedra(unit_tetrahedron, shared_face, precision=exact)
+    edge_result = intersect_tetrahedra(unit_tetrahedron, shared_edge, precision=exact)
+    vertex_result = intersect_tetrahedra(unit_tetrahedron, shared_vertex, precision=exact)
     assert face_result.evidence.vertex_count == 3
     assert edge_result.evidence.vertex_count == 2
     assert vertex_result.evidence.vertex_count == 1
@@ -211,3 +219,44 @@ def test_volume_only_and_repeated_results_are_deterministic(
     assert first.faces == ()
     assert first.volume == second.volume
     assert first.evidence == second.evidence
+
+
+# Positively oriented sliver whose orientation (exactly 11.5 * 2**-48) is
+# below the floating-point filter bound.
+SLIVER = np.asarray(
+    (
+        (0.5, 0.5, 0.0),
+        (12.0, 12.0, 0.0),
+        (24.0, 24.0 + 2.0**-48, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+)
+ZERO_TOLERANCE = TetraIntersectionTolerance(absolute=0.0, relative=0.0)
+
+
+def test_unresolved_filtered_orientation_fails_closed(unit_tetrahedron: Any) -> None:
+    result = intersect_tetrahedra(
+        SLIVER,
+        unit_tetrahedron + 100.0,
+        tolerance=ZERO_TOLERANCE,
+        precision=GeometryPrecisionPolicy(predicate_mode=PredicateMode.FILTERED),
+    )
+
+    assert result.status is TetraIntersectionStatus.UNCERTAIN_PREDICATE
+    assert result.evidence.predicate_uncertain
+    assert result.evidence.predicate_mode is PredicateMode.FILTERED
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
+def test_exact_orientation_certifies_the_sliver(unit_tetrahedron: Any) -> None:
+    result = intersect_tetrahedra(
+        SLIVER,
+        unit_tetrahedron + 100.0,
+        tolerance=ZERO_TOLERANCE,
+        precision=GeometryPrecisionPolicy(predicate_mode=PredicateMode.EXACT),
+    )
+
+    assert result.status is TetraIntersectionStatus.DISJOINT
+    assert not result.evidence.predicate_uncertain
+    assert result.evidence.predicate_mode is PredicateMode.EXACT

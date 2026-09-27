@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
-from typing import Any, Callable, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Mapping, Sequence, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,6 +20,13 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import TopologyEpoch
 from ..meshing import CellMeshTransition
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume._automatic_remap import (
+        PreparedUnstructuredConservativeRemap,
+    )
+    from ..geometry._supermesh import CommonRefinementPolicy
 
 
 _EnumT = TypeVar("_EnumT", bound=IntEnum)
@@ -449,6 +456,314 @@ class FiniteVolumeTopologyEvent(StrictModule, NonTrainableState):
         return event
 
 
+def _require_journal_origin(
+    initial_epoch: TopologyEpoch,
+    initial_artifacts: FiniteVolumeTopologyArtifacts,
+    /,
+) -> None:
+    if not isinstance(initial_epoch, TopologyEpoch):
+        raise TypeError("initial_epoch must be TopologyEpoch.")
+    if not isinstance(initial_artifacts, FiniteVolumeTopologyArtifacts):
+        raise TypeError("initial_artifacts must be FiniteVolumeTopologyArtifacts.")
+    if initial_artifacts.epoch_id != initial_epoch.epoch_id:
+        raise ValueError("Initial topology artifacts have the wrong epoch key.")
+
+
+def _require_journal_capacity(capacity: int, /) -> None:
+    if (
+        not isinstance(capacity, int)
+        or isinstance(capacity, bool)
+        or capacity <= 0
+        or capacity > np.iinfo(np.int32).max
+    ):
+        raise ValueError(
+            "Topology event journal capacity must be a positive int32 value."
+        )
+
+
+def _require_persisted_journal_records(
+    events: tuple[FiniteVolumeTopologyEvent, ...],
+    result_epochs: tuple[TopologyEpoch, ...],
+    result_artifacts: tuple[FiniteVolumeTopologyArtifacts, ...],
+    capacity: int,
+    overflowed: bool,
+    /,
+) -> None:
+    if not isinstance(events, tuple) or any(
+        not isinstance(event, FiniteVolumeTopologyEvent) for event in events
+    ):
+        raise TypeError("events must be a tuple of FiniteVolumeTopologyEvent.")
+    _require_journal_capacity(capacity)
+    if not isinstance(result_epochs, tuple) or any(
+        not isinstance(epoch, TopologyEpoch) for epoch in result_epochs
+    ):
+        raise TypeError("result_epochs must be a tuple of TopologyEpoch.")
+    if not isinstance(result_artifacts, tuple) or any(
+        not isinstance(artifacts, FiniteVolumeTopologyArtifacts)
+        for artifacts in result_artifacts
+    ):
+        raise TypeError(
+            "result_artifacts must be a tuple of FiniteVolumeTopologyArtifacts."
+        )
+    if len(result_artifacts) != len(result_epochs):
+        raise ValueError("Result topology epochs and artifacts must be paired.")
+    if not isinstance(overflowed, bool):
+        raise TypeError("overflowed must be boolean.")
+    if len(events) > capacity:
+        raise ValueError("Persisted topology events exceed journal capacity.")
+    for sequence, event in enumerate(events):
+        if event.sequence != sequence:
+            raise ValueError(
+                "Persisted topology event sequences must be contiguous from zero."
+            )
+
+
+def _persisted_journal_storage(
+    events: tuple[FiniteVolumeTopologyEvent, ...],
+    epoch_table: tuple[TopologyEpoch, ...],
+    artifact_table: tuple[FiniteVolumeTopologyArtifacts, ...],
+    capacity: int,
+    overflowed: bool,
+    time_dtype: np.dtype,
+    /,
+) -> dict[str, Any]:
+    count = len(events)
+    kinds = np.full((capacity,), -1, dtype=np.int32)
+    states = np.full((capacity,), -1, dtype=np.int32)
+    statuses = np.full((capacity,), -1, dtype=np.int32)
+    accepted_steps = np.full((capacity,), -1, dtype=np.int32)
+    times = np.full((capacity,), np.nan, dtype=time_dtype)
+    input_epoch_ids: list[str | None] = [None] * capacity
+    requested_ids: list[str | None] = [None] * capacity
+    result_ids: list[str | None] = [None] * capacity
+    payload_ids: list[str | None] = [None] * capacity
+    for sequence, event in enumerate(events):
+        kinds[sequence] = int(event.kind)
+        states[sequence] = int(event.state)
+        statuses[sequence] = int(event.status)
+        accepted_steps[sequence] = event.accepted_step
+        times[sequence] = event.time
+        input_epoch_ids[sequence] = event.input_epoch_id
+        requested_ids[sequence] = event.requested_id
+        result_ids[sequence] = event.result_id
+        payload_ids[sequence] = event.payload_id
+    return {
+        "kinds": kinds,
+        "states": states,
+        "statuses": statuses,
+        "accepted_steps": accepted_steps,
+        "times": times,
+        "next_sequence": np.asarray(count, dtype=np.int32),
+        "count": np.asarray(count, dtype=np.int32),
+        "overflowed": np.asarray(overflowed),
+        "current_epoch_id": epoch_table[-1].epoch_id,
+        "epoch_table": epoch_table,
+        "artifact_table": artifact_table,
+        "input_epoch_ids": tuple(input_epoch_ids),
+        "requested_ids": tuple(requested_ids),
+        "result_ids": tuple(result_ids),
+        "payload_ids": tuple(payload_ids),
+    }
+
+
+_JOURNAL_ARCHIVE_ARRAY_NAMES = frozenset(
+    (
+        "kinds",
+        "states",
+        "statuses",
+        "accepted_steps",
+        "times",
+        "next_sequence",
+        "count",
+        "overflowed",
+    )
+)
+_JOURNAL_ARCHIVE_STATIC_TABLES = (
+    "input_epoch_ids",
+    "requested_ids",
+    "result_ids",
+    "payload_ids",
+)
+
+
+def _journal_archive_arrays(
+    arrays: dict[str, Any],
+    capacity: int,
+    times_dtype: Any,
+    /,
+) -> dict[str, np.ndarray]:
+    if not isinstance(arrays, dict) or set(arrays) != _JOURNAL_ARCHIVE_ARRAY_NAMES:
+        raise ValueError("Topology event journal archive array inventory changed.")
+    archived_arrays = {name: np.asarray(value) for name, value in arrays.items()}
+    for name in ("kinds", "states", "statuses", "accepted_steps"):
+        value = archived_arrays[name]
+        if value.shape != (capacity,) or value.dtype != np.dtype(np.int32):
+            raise ValueError(f"Topology event journal archive array {name!r} changed.")
+    times = archived_arrays["times"]
+    if (
+        times.shape != (capacity,)
+        or times.dtype.kind != "f"
+        or not isinstance(times_dtype, str)
+        or np.dtype(times.dtype).name != times_dtype
+    ):
+        raise ValueError("Topology event journal archive times changed.")
+    for name in ("next_sequence", "count"):
+        value = archived_arrays[name]
+        if value.shape != () or value.dtype != np.dtype(np.int32):
+            raise ValueError(f"Topology event journal archive scalar {name!r} changed.")
+    overflowed = archived_arrays["overflowed"]
+    if overflowed.shape != () or overflowed.dtype != np.dtype(np.bool_):
+        raise ValueError("Topology event journal archive overflow flag changed.")
+    return archived_arrays
+
+
+def _journal_archive_static_records(
+    payload: dict[str, Any],
+    capacity: int,
+    /,
+) -> tuple[
+    tuple[TopologyEpoch, ...],
+    tuple[FiniteVolumeTopologyArtifacts, ...],
+    tuple[FiniteVolumeTopologyEvent, ...],
+]:
+    epoch_records = payload["epoch_table"]
+    artifact_records = payload["artifact_table"]
+    event_records = payload["events"]
+    if not isinstance(epoch_records, list) or not epoch_records:
+        raise ValueError("Topology event journal archive epoch table is invalid.")
+    if not isinstance(artifact_records, list) or len(artifact_records) != len(
+        epoch_records
+    ):
+        raise ValueError("Topology event journal archive artifact table is invalid.")
+    if not isinstance(event_records, list):
+        raise ValueError("Topology event journal archive events are invalid.")
+    epochs = tuple(TopologyEpoch.from_archive_record(epoch) for epoch in epoch_records)
+    artifacts = tuple(
+        FiniteVolumeTopologyArtifacts.from_archive_record(record, epoch)
+        for record, epoch in zip(artifact_records, epochs, strict=True)
+    )
+    events = tuple(
+        FiniteVolumeTopologyEvent.from_archive_record(event) for event in event_records
+    )
+    for name in _JOURNAL_ARCHIVE_STATIC_TABLES:
+        table = payload[name]
+        if not isinstance(table, list) or len(table) != capacity:
+            raise ValueError(f"Topology event journal archive table {name!r} changed.")
+        for value in table:
+            _require_identifier(value, name)
+    return epochs, artifacts, events
+
+
+def _verify_journal_archive_reconstruction(
+    journal: FiniteVolumeTopologyEventJournal,
+    payload: dict[str, Any],
+    archived_arrays: dict[str, np.ndarray],
+    /,
+) -> None:
+    reconstructed_arrays = journal.archive_arrays()
+    for name in _JOURNAL_ARCHIVE_ARRAY_NAMES:
+        if not np.array_equal(
+            archived_arrays[name],
+            reconstructed_arrays[name],
+            equal_nan=True,
+        ):
+            raise ValueError(
+                f"Topology event journal archive array {name!r} is inconsistent."
+            )
+    for name in _JOURNAL_ARCHIVE_STATIC_TABLES:
+        if tuple(payload[name]) != getattr(journal, name):
+            raise ValueError(
+                f"Topology event journal archive table {name!r} is inconsistent."
+            )
+    expected_current_epoch = _required_identifier(
+        payload["current_epoch_id"], "current_epoch_id"
+    )
+    expected_journal_id = _required_identifier(payload["journal_id"], "journal_id")
+    if (
+        journal.current_epoch_id != expected_current_epoch
+        or journal.journal_id != expected_journal_id
+    ):
+        raise ValueError("Topology event journal archive identity changed.")
+
+
+def _slot_continues_batch(
+    index: int,
+    accepted_step: np.integer,
+    time: np.floating,
+    previous_step: int,
+    previous_time: float,
+    /,
+) -> bool:
+    """Validate one occupied slot's timing; report whether it extends its predecessor."""
+
+    if accepted_step < 0 or not np.isfinite(time):
+        raise ValueError("Topology event journal timing is invalid.")
+    if index > 0 and (accepted_step < previous_step or time < previous_time):
+        raise ValueError("Topology event journal timing must be monotone.")
+    return index > 0 and accepted_step == previous_step and time == previous_time
+
+
+def _validate_requested_slot(
+    status: TopologyEventStatus,
+    input_epoch: str,
+    result: str | None,
+    historical_tip: str,
+    current_epoch_id: str,
+    joins_pending_batch: bool,
+    /,
+) -> None:
+    if input_epoch != historical_tip:
+        raise ValueError("Topology event input epoch does not match its historical tip.")
+    if status is not TopologyEventStatus.PENDING or result is not None:
+        raise ValueError("Requested topology event slot is inconsistent.")
+    if input_epoch != current_epoch_id or not joins_pending_batch:
+        raise ValueError("Pending topology event batch is inconsistent.")
+
+
+def _committed_epoch_chain_step(
+    status: TopologyEventStatus,
+    input_epoch: str,
+    result: str | None,
+    epoch_ids: tuple[str, ...],
+    committed_count: int,
+    historical_tip: str,
+    /,
+) -> tuple[int, str]:
+    """Advance the replayed epoch chain across one committed slot."""
+
+    if (
+        status is not TopologyEventStatus.SUCCESS
+        or result is None
+        or result not in epoch_ids
+    ):
+        raise ValueError("Committed topology event slot is inconsistent.")
+    if result == historical_tip and input_epoch == historical_tip:
+        return committed_count, historical_tip
+    if (
+        input_epoch == historical_tip
+        and committed_count + 1 < len(epoch_ids)
+        and result == epoch_ids[committed_count + 1]
+    ):
+        return committed_count + 1, result
+    raise ValueError("Committed topology events must reproduce the epoch chain.")
+
+
+def _batch_identifiers(
+    values: Sequence[str | None] | None,
+    defaults: tuple[str | None, ...],
+    name: str,
+    message: str,
+    /,
+) -> tuple[str | None, ...]:
+    """Validate one per-slot identifier override aligned with its batch slots."""
+
+    if values is None:
+        return defaults
+    if not isinstance(values, (tuple, list)) or len(values) != len(defaults):
+        raise ValueError(message)
+    return tuple(_require_identifier(value, name) for value in values)
+
+
 class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
     """Fixed-capacity accepted-step topology journal.
 
@@ -485,21 +800,8 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         time: ArrayLike = 0.0,
         _storage: dict[str, Any] | None = None,
     ) -> None:
-        if not isinstance(initial_epoch, TopologyEpoch):
-            raise TypeError("initial_epoch must be TopologyEpoch.")
-        if not isinstance(initial_artifacts, FiniteVolumeTopologyArtifacts):
-            raise TypeError("initial_artifacts must be FiniteVolumeTopologyArtifacts.")
-        if initial_artifacts.epoch_id != initial_epoch.epoch_id:
-            raise ValueError("Initial topology artifacts have the wrong epoch key.")
-        if (
-            not isinstance(capacity, int)
-            or isinstance(capacity, bool)
-            or capacity <= 0
-            or capacity > np.iinfo(np.int32).max
-        ):
-            raise ValueError(
-                "Topology event journal capacity must be a positive int32 value."
-            )
+        _require_journal_origin(initial_epoch, initial_artifacts)
+        _require_journal_capacity(capacity)
         _, initial_time = _host_finite_time(time, "time")
         if not np.issubdtype(initial_time.dtype, np.floating):
             initial_time = initial_time.astype(np.float64)
@@ -573,95 +875,25 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         time: ArrayLike = 0.0,
     ) -> FiniteVolumeTopologyEventJournal:
         """Reconstruct and verify an immutable journal from persisted records."""
-        if not isinstance(initial_epoch, TopologyEpoch):
-            raise TypeError("initial_epoch must be TopologyEpoch.")
-        if not isinstance(initial_artifacts, FiniteVolumeTopologyArtifacts):
-            raise TypeError("initial_artifacts must be FiniteVolumeTopologyArtifacts.")
-        if initial_artifacts.epoch_id != initial_epoch.epoch_id:
-            raise ValueError("Initial topology artifacts have the wrong epoch key.")
-        if not isinstance(events, tuple) or any(
-            not isinstance(event, FiniteVolumeTopologyEvent) for event in events
-        ):
-            raise TypeError("events must be a tuple of FiniteVolumeTopologyEvent.")
-        if (
-            not isinstance(capacity, int)
-            or isinstance(capacity, bool)
-            or capacity <= 0
-            or capacity > np.iinfo(np.int32).max
-        ):
-            raise ValueError(
-                "Topology event journal capacity must be a positive int32 value."
-            )
-        if not isinstance(result_epochs, tuple) or any(
-            not isinstance(epoch, TopologyEpoch) for epoch in result_epochs
-        ):
-            raise TypeError("result_epochs must be a tuple of TopologyEpoch.")
-        if not isinstance(result_artifacts, tuple) or any(
-            not isinstance(artifacts, FiniteVolumeTopologyArtifacts)
-            for artifacts in result_artifacts
-        ):
-            raise TypeError(
-                "result_artifacts must be a tuple of FiniteVolumeTopologyArtifacts."
-            )
-        if len(result_artifacts) != len(result_epochs):
-            raise ValueError("Result topology epochs and artifacts must be paired.")
-        if not isinstance(overflowed, bool):
-            raise TypeError("overflowed must be boolean.")
-        if len(events) > capacity:
-            raise ValueError("Persisted topology events exceed journal capacity.")
-        for sequence, event in enumerate(events):
-            if event.sequence != sequence:
-                raise ValueError(
-                    "Persisted topology event sequences must be contiguous from zero."
-                )
-
+        _require_journal_origin(initial_epoch, initial_artifacts)
+        _require_persisted_journal_records(
+            events, result_epochs, result_artifacts, capacity, overflowed
+        )
         _, time_storage = _host_finite_time(time, "time")
         if not np.issubdtype(time_storage.dtype, np.floating):
             time_storage = time_storage.astype(np.float64)
-        count = len(events)
-        kinds = np.full((capacity,), -1, dtype=np.int32)
-        states = np.full((capacity,), -1, dtype=np.int32)
-        statuses = np.full((capacity,), -1, dtype=np.int32)
-        accepted_steps = np.full((capacity,), -1, dtype=np.int32)
-        times = np.full((capacity,), np.nan, dtype=time_storage.dtype)
-        input_epoch_ids: list[str | None] = [None] * capacity
-        requested_ids: list[str | None] = [None] * capacity
-        result_ids: list[str | None] = [None] * capacity
-        payload_ids: list[str | None] = [None] * capacity
-        for sequence, event in enumerate(events):
-            kinds[sequence] = int(event.kind)
-            states[sequence] = int(event.state)
-            statuses[sequence] = int(event.status)
-            accepted_steps[sequence] = event.accepted_step
-            times[sequence] = event.time
-            input_epoch_ids[sequence] = event.input_epoch_id
-            requested_ids[sequence] = event.requested_id
-            result_ids[sequence] = event.result_id
-            payload_ids[sequence] = event.payload_id
-
-        epoch_table = (initial_epoch, *result_epochs)
-        artifact_table = (initial_artifacts, *result_artifacts)
         journal = cls(
             initial_epoch,
             initial_artifacts,
             capacity=capacity,
-            _storage={
-                "kinds": kinds,
-                "states": states,
-                "statuses": statuses,
-                "accepted_steps": accepted_steps,
-                "times": times,
-                "next_sequence": np.asarray(count, dtype=np.int32),
-                "count": np.asarray(count, dtype=np.int32),
-                "overflowed": np.asarray(overflowed),
-                "current_epoch_id": epoch_table[-1].epoch_id,
-                "epoch_table": epoch_table,
-                "artifact_table": artifact_table,
-                "input_epoch_ids": tuple(input_epoch_ids),
-                "requested_ids": tuple(requested_ids),
-                "result_ids": tuple(result_ids),
-                "payload_ids": tuple(payload_ids),
-            },
+            _storage=_persisted_journal_storage(
+                events,
+                (initial_epoch, *result_epochs),
+                (initial_artifacts, *result_artifacts),
+                capacity,
+                overflowed,
+                time_storage.dtype,
+            ),
         )
         if any(
             journal.event(sequence).event_id != event.event_id
@@ -746,81 +978,10 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError(
                 "Topology event journal archive capacity must be a positive int32 value."
             )
-        array_names = frozenset(
-            (
-                "kinds",
-                "states",
-                "statuses",
-                "accepted_steps",
-                "times",
-                "next_sequence",
-                "count",
-                "overflowed",
-            )
+        archived_arrays = _journal_archive_arrays(
+            arrays, capacity, payload["times_dtype"]
         )
-        if not isinstance(arrays, dict) or set(arrays) != array_names:
-            raise ValueError("Topology event journal archive array inventory changed.")
-        archived_arrays = {name: np.asarray(value) for name, value in arrays.items()}
-        for name in ("kinds", "states", "statuses", "accepted_steps"):
-            value = archived_arrays[name]
-            if value.shape != (capacity,) or value.dtype != np.dtype(np.int32):
-                raise ValueError(
-                    f"Topology event journal archive array {name!r} changed."
-                )
-        times = archived_arrays["times"]
-        if (
-            times.shape != (capacity,)
-            or times.dtype.kind != "f"
-            or not isinstance(payload["times_dtype"], str)
-            or np.dtype(times.dtype).name != payload["times_dtype"]
-        ):
-            raise ValueError("Topology event journal archive times changed.")
-        for name in ("next_sequence", "count"):
-            value = archived_arrays[name]
-            if value.shape != () or value.dtype != np.dtype(np.int32):
-                raise ValueError(
-                    f"Topology event journal archive scalar {name!r} changed."
-                )
-        overflowed = archived_arrays["overflowed"]
-        if overflowed.shape != () or overflowed.dtype != np.dtype(np.bool_):
-            raise ValueError("Topology event journal archive overflow flag changed.")
-
-        epoch_records = payload["epoch_table"]
-        artifact_records = payload["artifact_table"]
-        event_records = payload["events"]
-        if not isinstance(epoch_records, list) or not epoch_records:
-            raise ValueError("Topology event journal archive epoch table is invalid.")
-        if not isinstance(artifact_records, list) or len(artifact_records) != len(
-            epoch_records
-        ):
-            raise ValueError("Topology event journal archive artifact table is invalid.")
-        if not isinstance(event_records, list):
-            raise ValueError("Topology event journal archive events are invalid.")
-        epochs = tuple(
-            TopologyEpoch.from_archive_record(epoch) for epoch in epoch_records
-        )
-        artifacts = tuple(
-            FiniteVolumeTopologyArtifacts.from_archive_record(record_, epoch)
-            for record_, epoch in zip(artifact_records, epochs, strict=True)
-        )
-        events = tuple(
-            FiniteVolumeTopologyEvent.from_archive_record(event)
-            for event in event_records
-        )
-        static_table_names = (
-            "input_epoch_ids",
-            "requested_ids",
-            "result_ids",
-            "payload_ids",
-        )
-        for name in static_table_names:
-            table = payload[name]
-            if not isinstance(table, list) or len(table) != capacity:
-                raise ValueError(
-                    f"Topology event journal archive table {name!r} changed."
-                )
-            for value in table:
-                _require_identifier(value, name)
+        epochs, artifacts, events = _journal_archive_static_records(payload, capacity)
         journal = cls.from_events(
             epochs[0],
             artifacts[0],
@@ -828,36 +989,27 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             result_epochs=epochs[1:],
             result_artifacts=artifacts[1:],
             capacity=capacity,
-            overflowed=bool(overflowed),
-            time=np.asarray(0.0, dtype=times.dtype),
+            overflowed=bool(archived_arrays["overflowed"]),
+            time=np.asarray(0.0, dtype=archived_arrays["times"].dtype),
         )
-        reconstructed_arrays = journal.archive_arrays()
-        for name in array_names:
-            if not np.array_equal(
-                archived_arrays[name],
-                reconstructed_arrays[name],
-                equal_nan=True,
-            ):
-                raise ValueError(
-                    f"Topology event journal archive array {name!r} is inconsistent."
-                )
-        for name in static_table_names:
-            if tuple(payload[name]) != getattr(journal, name):
-                raise ValueError(
-                    f"Topology event journal archive table {name!r} is inconsistent."
-                )
-        expected_current_epoch = _required_identifier(
-            payload["current_epoch_id"], "current_epoch_id"
-        )
-        expected_journal_id = _required_identifier(payload["journal_id"], "journal_id")
-        if (
-            journal.current_epoch_id != expected_current_epoch
-            or journal.journal_id != expected_journal_id
-        ):
-            raise ValueError("Topology event journal archive identity changed.")
+        _verify_journal_archive_reconstruction(journal, payload, archived_arrays)
         return journal
 
     def _validate(self) -> None:
+        self._validate_storage_layout()
+        epoch_ids = self._validate_epoch_chain()
+        count = self._validated_event_count()
+        kinds = np.asarray(self.kinds)
+        states = np.asarray(self.states)
+        statuses = np.asarray(self.statuses)
+        accepted_steps = np.asarray(self.accepted_steps)
+        times = np.asarray(self.times)
+        self._validate_event_slots(
+            epoch_ids, count, kinds, states, statuses, accepted_steps, times
+        )
+        self._validate_unused_slots(count, kinds, states, statuses, accepted_steps, times)
+
+    def _validate_storage_layout(self) -> None:
         arrays = (
             self.kinds,
             self.states,
@@ -877,6 +1029,8 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         )
         if any(len(table) != self.capacity for table in static_tables):
             raise ValueError("Topology event journal static capacity changed.")
+
+    def _validate_epoch_chain(self) -> tuple[str, ...]:
         if not self.epoch_table or any(
             not isinstance(epoch, TopologyEpoch) for epoch in self.epoch_table
         ):
@@ -907,6 +1061,9 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         current_epoch = _require_identifier(self.current_epoch_id, "current_epoch_id")
         if current_epoch != epoch_ids[-1]:
             raise ValueError("Current topology epoch must be the epoch-table tip.")
+        return epoch_ids
+
+    def _validated_event_count(self) -> int:
         count = _host_nonnegative_integer(self.count, "count")
         next_sequence = _host_nonnegative_integer(self.next_sequence, "next_sequence")
         overflowed = bool(_host_scalar(self.overflowed, "overflowed"))
@@ -914,12 +1071,22 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError("Topology event journal sequence/count invariant changed.")
         if overflowed and count != self.capacity:
             raise ValueError("Topology event journal overflow requires full capacity.")
-        kinds = np.asarray(self.kinds)
-        states = np.asarray(self.states)
-        statuses = np.asarray(self.statuses)
-        accepted_steps = np.asarray(self.accepted_steps)
+        return count
+
+    def _validate_event_slots(
+        self,
+        epoch_ids: tuple[str, ...],
+        count: int,
+        kinds: np.ndarray,
+        states: np.ndarray,
+        statuses: np.ndarray,
+        accepted_steps: np.ndarray,
+        times: np.ndarray,
+        /,
+    ) -> None:
+        """Replay occupied slots in sequence order against the epoch chain."""
+
         pending_input_epochs: list[str] = []
-        times = np.asarray(self.times)
         historical_tip = epoch_ids[0]
         committed_count = 0
         previous_step = -1
@@ -934,54 +1101,32 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             _required_identifier(self.requested_ids[index], "requested_id")
             result = _require_identifier(self.result_ids[index], "result_id")
             _require_identifier(self.payload_ids[index], "payload_id")
-            if accepted_steps[index] < 0 or not np.isfinite(times[index]):
-                raise ValueError("Topology event journal timing is invalid.")
-            if index > 0 and (
-                accepted_steps[index] < previous_step or times[index] < previous_time
-            ):
-                raise ValueError("Topology event journal timing must be monotone.")
-            same_batch = (
-                index > 0
-                and accepted_steps[index] == previous_step
-                and times[index] == previous_time
+            same_batch = _slot_continues_batch(
+                index, accepted_steps[index], times[index], previous_step, previous_time
             )
             if pending_input_epochs and state is not TopologyEventState.REQUESTED:
                 raise ValueError(
                     "Pending topology event records must form a trailing batch."
                 )
             if state is TopologyEventState.REQUESTED:
-                if input_epoch != historical_tip:
-                    raise ValueError(
-                        "Topology event input epoch does not match its historical tip."
-                    )
+                _validate_requested_slot(
+                    status,
+                    input_epoch,
+                    result,
+                    historical_tip,
+                    self.current_epoch_id,
+                    not pending_input_epochs or same_batch,
+                )
                 pending_input_epochs.append(input_epoch)
-                if status is not TopologyEventStatus.PENDING or result is not None:
-                    raise ValueError("Requested topology event slot is inconsistent.")
-                if input_epoch != self.current_epoch_id or (
-                    len(pending_input_epochs) > 1 and not same_batch
-                ):
-                    raise ValueError("Pending topology event batch is inconsistent.")
             elif state is TopologyEventState.COMMITTED:
-                if (
-                    status is not TopologyEventStatus.SUCCESS
-                    or result is None
-                    or result not in epoch_ids
-                ):
-                    raise ValueError("Committed topology event slot is inconsistent.")
-                retained = result == historical_tip and input_epoch == historical_tip
-                if retained:
-                    pass
-                elif (
-                    input_epoch == historical_tip
-                    and committed_count + 1 < len(epoch_ids)
-                    and result == epoch_ids[committed_count + 1]
-                ):
-                    committed_count += 1
-                    historical_tip = result
-                else:
-                    raise ValueError(
-                        "Committed topology events must reproduce the epoch chain."
-                    )
+                committed_count, historical_tip = _committed_epoch_chain_step(
+                    status,
+                    input_epoch,
+                    result,
+                    epoch_ids,
+                    committed_count,
+                    historical_tip,
+                )
             elif state is TopologyEventState.FAILED:
                 if not _is_failed_status(status):
                     raise ValueError("Failed topology event slot is inconsistent.")
@@ -1000,6 +1145,23 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError(
                 "Every noninitial topology epoch must have one committed event."
             )
+
+    def _validate_unused_slots(
+        self,
+        count: int,
+        kinds: np.ndarray,
+        states: np.ndarray,
+        statuses: np.ndarray,
+        accepted_steps: np.ndarray,
+        times: np.ndarray,
+        /,
+    ) -> None:
+        static_tables = (
+            self.input_epoch_ids,
+            self.requested_ids,
+            self.result_ids,
+            self.payload_ids,
+        )
         for index in range(count, self.capacity):
             if (
                 kinds[index] != -1
@@ -1191,23 +1353,15 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError("Topology event input epoch is stale.")
         return sequence
 
-    def commit_batch(
+    def _commit_retains_epoch(
         self,
-        sequences: Sequence[int],
         result_epoch: TopologyEpoch,
         result_artifacts: FiniteVolumeTopologyArtifacts,
+        result_id: str | None,
         /,
-        *,
-        result_id: str | None = None,
-        payload_ids: Sequence[str | None] | None = None,
-    ) -> FiniteVolumeTopologyEventJournal:
-        """Commit simultaneous requests to one realized epoch atomically."""
+    ) -> bool:
+        """Validate the committed epoch transition; report whether it retains the tip."""
 
-        if not isinstance(sequences, (tuple, list)) or not sequences:
-            raise ValueError("Topology event commit batch must be nonempty.")
-        indexes = tuple(self._requested_slot(sequence) for sequence in sequences)
-        if len(set(indexes)) != len(indexes):
-            raise ValueError("Topology event commit sequences must be unique.")
         if not isinstance(result_epoch, TopologyEpoch):
             raise TypeError("result_epoch must be TopologyEpoch.")
         if not isinstance(result_artifacts, FiniteVolumeTopologyArtifacts):
@@ -1236,6 +1390,9 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             raise ValueError(
                 "Committed result identity is not the result epoch identity."
             )
+        return retained
+
+    def _require_simultaneous_slots(self, indexes: tuple[int, ...], /) -> None:
         first = indexes[0]
         for index in indexes[1:]:
             if (
@@ -1246,16 +1403,32 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 != float(np.asarray(self.times[first]))
             ):
                 raise ValueError("Topology commit requests are not simultaneous.")
-        if payload_ids is not None:
-            if not isinstance(payload_ids, (tuple, list)) or len(payload_ids) != len(
-                indexes
-            ):
-                raise ValueError("Topology commit payload IDs must match sequences.")
-            payload_values = tuple(
-                _require_identifier(value, "payload_id") for value in payload_ids
-            )
-        else:
-            payload_values = tuple(self.payload_ids[index] for index in indexes)
+
+    def commit_batch(
+        self,
+        sequences: Sequence[int],
+        result_epoch: TopologyEpoch,
+        result_artifacts: FiniteVolumeTopologyArtifacts,
+        /,
+        *,
+        result_id: str | None = None,
+        payload_ids: Sequence[str | None] | None = None,
+    ) -> FiniteVolumeTopologyEventJournal:
+        """Commit simultaneous requests to one realized epoch atomically."""
+
+        if not isinstance(sequences, (tuple, list)) or not sequences:
+            raise ValueError("Topology event commit batch must be nonempty.")
+        indexes = tuple(self._requested_slot(sequence) for sequence in sequences)
+        if len(set(indexes)) != len(indexes):
+            raise ValueError("Topology event commit sequences must be unique.")
+        retained = self._commit_retains_epoch(result_epoch, result_artifacts, result_id)
+        self._require_simultaneous_slots(indexes)
+        payload_values = _batch_identifiers(
+            payload_ids,
+            tuple(self.payload_ids[index] for index in indexes),
+            "payload_id",
+            "Topology commit payload IDs must match sequences.",
+        )
         result_table = list(self.result_ids)
         payload_table = list(self.payload_ids)
         states = self.states
@@ -1318,26 +1491,18 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         indexes = tuple(self._requested_slot(sequence) for sequence in sequences)
         if len(set(indexes)) != len(indexes):
             raise ValueError("Topology event failure sequences must be unique.")
-        if result_ids is not None:
-            if not isinstance(result_ids, (tuple, list)) or len(result_ids) != len(
-                indexes
-            ):
-                raise ValueError("Topology failure result IDs must match sequences.")
-            result_values = tuple(
-                _require_identifier(value, "result_id") for value in result_ids
-            )
-        else:
-            result_values = (None,) * len(indexes)
-        if payload_ids is not None:
-            if not isinstance(payload_ids, (tuple, list)) or len(payload_ids) != len(
-                indexes
-            ):
-                raise ValueError("Topology failure payload IDs must match sequences.")
-            payload_values = tuple(
-                _require_identifier(value, "payload_id") for value in payload_ids
-            )
-        else:
-            payload_values = tuple(self.payload_ids[index] for index in indexes)
+        result_values = _batch_identifiers(
+            result_ids,
+            (None,) * len(indexes),
+            "result_id",
+            "Topology failure result IDs must match sequences.",
+        )
+        payload_values = _batch_identifiers(
+            payload_ids,
+            tuple(self.payload_ids[index] for index in indexes),
+            "payload_id",
+            "Topology failure payload IDs must match sequences.",
+        )
         states = self.states
         statuses = self.statuses
         result_table = list(self.result_ids)
@@ -1406,7 +1571,12 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
 
 @dataclass(frozen=True)
 class FiniteVolumeTopologyEventTransactionResult:
-    """Host-side result of one atomic topology-event transaction."""
+    """Host-side result of one atomic topology-event transaction.
+
+    ``automatic_remap`` is the common-refinement remap the transaction prepared
+    from its source and target geometry (``None`` when a remap was supplied); its
+    ``status`` and ``evidence`` explain a failed remap preparation.
+    """
 
     journal: FiniteVolumeTopologyEventJournal
     content_state: Any
@@ -1416,6 +1586,7 @@ class FiniteVolumeTopologyEventTransactionResult:
     statuses: tuple[TopologyEventStatus, ...]
     committed: bool
     failure: TopologyEventStatus | None = None
+    automatic_remap: PreparedUnstructuredConservativeRemap | None = None
 
     @property
     def state(self) -> Any:
@@ -1683,6 +1854,22 @@ class _PreparedTopologyEvent:
     source_content: Any
     result_id: str | None
     payload_ids: Sequence[str | None] | None
+    automatic_remap: PreparedUnstructuredConservativeRemap | None
+
+
+@dataclass(frozen=True)
+class _TopologyEventCandidate:
+    """Candidate fields; explicit transaction arguments precede prepared artifacts."""
+
+    candidate_epoch: Any
+    candidate_artifacts: Any
+    remap: Any
+    metrics: Any
+    evidence: Any
+    status: Any
+    source_content: Any
+    result_id: Any
+    payload_ids: Any
 
 
 def _normalize_topology_event_inputs(
@@ -1738,6 +1925,212 @@ def _normalize_topology_event_inputs(
     )
 
 
+def _first_host_field(value: Any, names: tuple[str, ...], /) -> Any:
+    for name in names:
+        field = _host_field(value, name)
+        if field is not _MISSING:
+            return field
+    return None
+
+
+def _remesh_artifact_candidate(
+    explicit: _TopologyEventCandidate,
+    artifact: FiniteVolumeRemeshArtifact,
+    /,
+) -> _TopologyEventCandidate:
+    return _TopologyEventCandidate(
+        candidate_epoch=(
+            artifact.candidate_epoch
+            if explicit.candidate_epoch is None
+            else explicit.candidate_epoch
+        ),
+        candidate_artifacts=(
+            artifact.candidate_artifacts
+            if explicit.candidate_artifacts is None
+            else explicit.candidate_artifacts
+        ),
+        remap=artifact.remap if explicit.remap is None else explicit.remap,
+        metrics=artifact.metrics if explicit.metrics is None else explicit.metrics,
+        evidence=artifact.evidence if explicit.evidence is None else explicit.evidence,
+        status=artifact.status if explicit.status is None else explicit.status,
+        source_content=explicit.source_content,
+        result_id=(
+            artifact.result_id if explicit.result_id is None else explicit.result_id
+        ),
+        payload_ids=(
+            artifact.payload_ids if explicit.payload_ids is None else explicit.payload_ids
+        ),
+    )
+
+
+def _host_artifact_candidate(
+    explicit: _TopologyEventCandidate,
+    prepared: Any,
+    /,
+) -> _TopologyEventCandidate:
+    # Keyword order is the prepared-field lookup order.
+    return _TopologyEventCandidate(
+        candidate_epoch=(
+            _first_host_field(prepared, ("epoch", "candidate_epoch", "result_epoch"))
+            if explicit.candidate_epoch is None
+            else explicit.candidate_epoch
+        ),
+        candidate_artifacts=(
+            _first_host_field(
+                prepared, ("artifacts", "candidate_artifacts", "result_artifacts")
+            )
+            if explicit.candidate_artifacts is None
+            else explicit.candidate_artifacts
+        ),
+        remap=(
+            _host_field(prepared, "remap") if explicit.remap is None else explicit.remap
+        ),
+        result_id=(
+            _first_host_field(prepared, ("result_id",))
+            if explicit.result_id is None
+            else explicit.result_id
+        ),
+        payload_ids=(
+            _first_host_field(prepared, ("payload_ids",))
+            if explicit.payload_ids is None
+            else explicit.payload_ids
+        ),
+        metrics=(
+            _host_field(prepared, "metrics")
+            if explicit.metrics is None
+            else explicit.metrics
+        ),
+        evidence=(
+            _host_field(prepared, "evidence")
+            if explicit.evidence is None
+            else explicit.evidence
+        ),
+        status=(
+            _host_field(prepared, "status")
+            if explicit.status is None
+            else explicit.status
+        ),
+        source_content=(
+            _host_field(prepared, "source_content")
+            if explicit.source_content is None
+            else explicit.source_content
+        ),
+    )
+
+
+def _resolve_topology_event_candidate(
+    self: FiniteVolumeTopologyEventTransaction,
+    source_content: Any,
+    inputs: _TopologyEventInputs,
+    /,
+    *,
+    result_id: str | None,
+    payload_ids: Sequence[str | None] | None,
+) -> tuple[Any, _TopologyEventCandidate]:
+    prepared = inputs.artifact
+    if prepared is None and self.prepare is not None:
+        prepared = _call_transfer(
+            self.prepare, self.requests, self.journal.current_epoch_id
+        )
+    explicit = _TopologyEventCandidate(
+        inputs.candidate_epoch,
+        inputs.candidate_artifacts,
+        inputs.remap,
+        inputs.metrics,
+        inputs.evidence,
+        inputs.status,
+        source_content,
+        result_id,
+        payload_ids,
+    )
+    if isinstance(prepared, FiniteVolumeRemeshArtifact):
+        if self.target_geometry is None and prepared.target_geometry is not None:
+            self.target_geometry = prepared.target_geometry
+        return prepared, _remesh_artifact_candidate(explicit, prepared)
+    if prepared is not None:
+        return prepared, _host_artifact_candidate(explicit, prepared)
+    return prepared, explicit
+
+
+def _prepare_automatic_remap(
+    self: FiniteVolumeTopologyEventTransaction,
+    source_content: Any,
+    /,
+) -> PreparedUnstructuredConservativeRemap | FiniteVolumeTopologyEventTransactionResult:
+    from ..discretization.finite_volume._automatic_remap import (
+        prepare_unstructured_conservative_remap,
+    )
+    from ..geometry._supermesh import CommonRefinementStatus
+
+    automatic_remap = prepare_unstructured_conservative_remap(
+        self.source_geometry,
+        self.target_geometry,
+        provenance=self.remap_provenance,
+        policy=self.remap_policy,
+    )
+    match automatic_remap.status:
+        case CommonRefinementStatus.SUCCESS:
+            return automatic_remap
+        case CommonRefinementStatus.RESOURCE_LIMIT:
+            return self._failure(
+                source_content,
+                TopologyEventStatus.FAILED_RESOURCE_LIMIT,
+                automatic_remap=automatic_remap,
+            )
+        case (
+            CommonRefinementStatus.INVALID_GEOMETRY
+            | CommonRefinementStatus.PREDICATE_UNCERTAIN
+            | CommonRefinementStatus.INTERSECTION_FAILURE
+            | CommonRefinementStatus.DOUBLE_COVERAGE
+            | CommonRefinementStatus.COVERAGE_GAP
+        ):
+            return self._failure(
+                source_content,
+                TopologyEventStatus.FAILED_COVERAGE,
+                automatic_remap=automatic_remap,
+            )
+        case _:
+            raise ValueError(
+                f"Unknown common-refinement status {automatic_remap.status!r}."
+            )
+
+
+def _candidate_admission_failure(
+    candidate: _TopologyEventCandidate,
+    coverage_ok: bool | None,
+    coverage_tolerance: float,
+    /,
+) -> TopologyEventStatus | None:
+    """Return the first failed candidate-artifact admission check, if any."""
+
+    if (
+        candidate.remap is None
+        or candidate.metrics is None
+        or candidate.evidence is None
+        or candidate.status is None
+        or candidate.candidate_epoch is None
+        or candidate.candidate_artifacts is None
+    ):
+        return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+    if not _required_artifact_success(candidate.status, "status"):
+        return _failure_reason(
+            candidate.status, TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        )
+    if coverage_ok is False or not _coverage_passed(candidate.remap, coverage_tolerance):
+        return TopologyEventStatus.FAILED_COVERAGE
+    if not _required_artifact_success(
+        candidate.metrics, "metrics"
+    ) or not _required_artifact_success(candidate.evidence, "evidence"):
+        return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+    if not isinstance(candidate.candidate_epoch, TopologyEpoch) or not isinstance(
+        candidate.candidate_artifacts, FiniteVolumeTopologyArtifacts
+    ):
+        return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+    if candidate.candidate_artifacts.epoch_id != candidate.candidate_epoch.epoch_id:
+        return TopologyEventStatus.FAILED_STALE_EPOCH
+    return None
+
+
 def _prepare_topology_event_artifacts(
     self: FiniteVolumeTopologyEventTransaction,
     source_content: Any,
@@ -1749,69 +2142,10 @@ def _prepare_topology_event_artifacts(
     result_id: str | None,
     payload_ids: Sequence[str | None] | None,
 ) -> _PreparedTopologyEvent | FiniteVolumeTopologyEventTransactionResult:
-    artifact = inputs.artifact
-    candidate_epoch = inputs.candidate_epoch
-    candidate_artifacts = inputs.candidate_artifacts
-    remap = inputs.remap
-    metrics = inputs.metrics
-    evidence = inputs.evidence
-    status = inputs.status
-    prepared = artifact
-    if prepared is None and self.prepare is not None:
-        prepared = _call_transfer(
-            self.prepare, self.requests, self.journal.current_epoch_id
-        )
-    if isinstance(prepared, FiniteVolumeRemeshArtifact):
-        candidate_epoch = (
-            prepared.candidate_epoch if candidate_epoch is None else candidate_epoch
-        )
-        candidate_artifacts = (
-            prepared.candidate_artifacts
-            if candidate_artifacts is None
-            else candidate_artifacts
-        )
-        remap = prepared.remap if remap is None else remap
-        metrics = prepared.metrics if metrics is None else metrics
-        evidence = prepared.evidence if evidence is None else evidence
-        status = prepared.status if status is None else status
-        result_id = prepared.result_id if result_id is None else result_id
-        payload_ids = prepared.payload_ids if payload_ids is None else payload_ids
-        if self.target_geometry is None and prepared.target_geometry is not None:
-            self.target_geometry = prepared.target_geometry
-    elif prepared is not None:
-        if candidate_epoch is None:
-            candidate_epoch = _host_field(prepared, "epoch")
-            if candidate_epoch is _MISSING:
-                candidate_epoch = _host_field(prepared, "candidate_epoch")
-            if candidate_epoch is _MISSING:
-                candidate_epoch = _host_field(prepared, "result_epoch")
-            if candidate_epoch is _MISSING:
-                candidate_epoch = None
-        if candidate_artifacts is None:
-            candidate_artifacts = _host_field(prepared, "artifacts")
-            if candidate_artifacts is _MISSING:
-                candidate_artifacts = _host_field(prepared, "candidate_artifacts")
-            if candidate_artifacts is _MISSING:
-                candidate_artifacts = _host_field(prepared, "result_artifacts")
-            if candidate_artifacts is _MISSING:
-                candidate_artifacts = None
-        remap = remap if remap is not None else _host_field(prepared, "remap")
-        if result_id is None:
-            result_id = _host_field(prepared, "result_id")
-            if result_id is _MISSING:
-                result_id = None
-        if payload_ids is None:
-            payload_ids = _host_field(prepared, "payload_ids")
-            if payload_ids is _MISSING:
-                payload_ids = None
-        if metrics is None:
-            metrics = _host_field(prepared, "metrics")
-        if evidence is None:
-            evidence = _host_field(prepared, "evidence")
-        if status is None:
-            status = _host_field(prepared, "status")
-        if source_content is None:
-            source_content = _host_field(prepared, "source_content")
+    prepared, candidate = _resolve_topology_event_candidate(
+        self, source_content, inputs, result_id=result_id, payload_ids=payload_ids
+    )
+    source_content = candidate.source_content
     if (
         self.source_geometry is not None or self.target_geometry is not None
     ) and source_content is None:
@@ -1821,68 +2155,40 @@ def _prepare_topology_event_artifacts(
         )
     if resource_ok is False:
         return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
+    automatic_remap = None
     if (
-        remap is None
+        candidate.remap is None
         and self.source_geometry is not None
         and self.target_geometry is not None
     ):
-        from ..discretization.finite_volume._automatic_remap import (
-            build_unstructured_conservative_remap,
+        remap_outcome = _prepare_automatic_remap(self, source_content)
+        if isinstance(remap_outcome, FiniteVolumeTopologyEventTransactionResult):
+            return remap_outcome
+        automatic_remap = remap_outcome
+        candidate = replace(
+            candidate,
+            remap=automatic_remap.plan,
+            metrics=automatic_remap.evidence,
+            evidence=automatic_remap.evidence,
+            status=TopologyEventStatus.SUCCESS,
         )
-
-        build = build_unstructured_conservative_remap(
-            self.source_geometry,
-            self.target_geometry,
-            tolerance=self.remap_tolerance,
-            limits=self.remap_limits,
-            provenance=self.remap_provenance,
-        )
-        if not build.passed or build.plan is None:
-            return self._failure(
-                source_content,
-                TopologyEventStatus.FAILED_COVERAGE,
-            )
-        remap = build.plan
-        metrics = build.evidence
-        evidence = build.evidence
-        status = TopologyEventStatus.SUCCESS
-    if (
-        remap is None
-        or metrics is None
-        or evidence is None
-        or status is None
-        or candidate_epoch is None
-        or candidate_artifacts is None
-    ):
-        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
-    if not _required_artifact_success(status, "status"):
-        return self._failure(
-            source_content,
-            _failure_reason(status, TopologyEventStatus.FAILED_MISSING_ARTIFACT),
-        )
-    if coverage_ok is False or not _coverage_passed(remap, self.coverage_tolerance):
-        return self._failure(source_content, TopologyEventStatus.FAILED_COVERAGE)
-    if not _required_artifact_success(
-        metrics, "metrics"
-    ) or not _required_artifact_success(evidence, "evidence"):
-        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
-    if not isinstance(candidate_epoch, TopologyEpoch) or not isinstance(
-        candidate_artifacts, FiniteVolumeTopologyArtifacts
-    ):
-        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
-    if candidate_artifacts.epoch_id != candidate_epoch.epoch_id:
-        return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+    failure = _candidate_admission_failure(
+        candidate, coverage_ok, self.coverage_tolerance
+    )
+    if failure is not None:
+        return self._failure(source_content, failure, automatic_remap=automatic_remap)
     return _PreparedTopologyEvent(
         prepared,
-        candidate_epoch,
-        candidate_artifacts,
-        remap,
-        metrics,
-        evidence,
-        status,
+        candidate.candidate_epoch,
+        candidate.candidate_artifacts,
+        candidate.remap,
+        candidate.metrics,
+        candidate.evidence,
+        candidate.status,
         source_content,
-        result_id,
-        payload_ids,
+        candidate.result_id,
+        candidate.payload_ids,
+        automatic_remap,
     )
 
 
@@ -1913,8 +2219,7 @@ class FiniteVolumeTopologyEventTransaction:
         status: Any = None,
         source_geometry: Any = None,
         target_geometry: Any = None,
-        remap_tolerance: float = 1e-10,
-        remap_limits: Any = None,
+        remap_policy: CommonRefinementPolicy | None = None,
         remap_provenance: str = "topology-event",
     ) -> None:
         if not isinstance(journal, FiniteVolumeTopologyEventJournal):
@@ -1931,6 +2236,16 @@ class FiniteVolumeTopologyEventTransaction:
         tolerance = float(coverage_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("coverage_tolerance must be finite and nonnegative.")
+        from ..geometry._supermesh import CommonRefinementPolicy
+
+        if remap_policy is not None and not isinstance(
+            remap_policy, CommonRefinementPolicy
+        ):
+            raise TypeError("remap_policy must be a CommonRefinementPolicy or None.")
+        if not isinstance(remap_provenance, str):
+            raise TypeError("remap_provenance must be a string.")
+        if not remap_provenance:
+            raise ValueError("remap_provenance must be non-empty.")
         self.journal = journal
         self.requests = tuple(requests)
         self.accepted_step = _host_nonnegative_integer(accepted_step, "accepted_step")
@@ -1951,9 +2266,8 @@ class FiniteVolumeTopologyEventTransaction:
         self._status = status
         self.source_geometry = source_geometry
         self.target_geometry = target_geometry
-        self.remap_tolerance = float(remap_tolerance)
-        self.remap_limits = remap_limits
-        self.remap_provenance = str(remap_provenance)
+        self.remap_policy = remap_policy
+        self.remap_provenance = remap_provenance
 
     def _outcome(
         self,
@@ -1965,6 +2279,7 @@ class FiniteVolumeTopologyEventTransaction:
         result_epoch: TopologyEpoch | None = None,
         result_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         committed: bool = False,
+        automatic_remap: PreparedUnstructuredConservativeRemap | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         current_journal = self.journal if journal is None else journal
         count = int(np.asarray(current_journal.count))
@@ -1983,6 +2298,7 @@ class FiniteVolumeTopologyEventTransaction:
             tuple(status for _ in self.requests),
             committed,
             None if committed else status,
+            automatic_remap,
         )
 
     def _failure(
@@ -1990,21 +2306,196 @@ class FiniteVolumeTopologyEventTransaction:
         content_state: Any,
         status: TopologyEventStatus,
         /,
+        *,
+        automatic_remap: PreparedUnstructuredConservativeRemap | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         if status is TopologyEventStatus.FAILED_STALE_EPOCH:
-            return self._outcome(content_state, status)
+            return self._outcome(content_state, status, automatic_remap=automatic_remap)
         try:
             requested = self.journal.append_requested_batch(
                 self.requests, self.accepted_step, self.time
             )
         except (OverflowError, ValueError):
-            return self._outcome(content_state, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
+            return self._outcome(
+                content_state,
+                TopologyEventStatus.FAILED_RESOURCE_LIMIT,
+                automatic_remap=automatic_remap,
+            )
         sequences = tuple(
             int(np.asarray(requested.count)) - len(self.requests) + index
             for index in range(len(self.requests))
         )
         failed = requested.fail_batch(sequences, status=status)
-        return self._outcome(content_state, status, journal=failed)
+        return self._outcome(
+            content_state, status, journal=failed, automatic_remap=automatic_remap
+        )
+
+    def _candidate_epoch_is_stale(
+        self,
+        candidate_epoch: TopologyEpoch,
+        candidate_artifacts: FiniteVolumeTopologyArtifacts,
+        /,
+    ) -> bool:
+        """Check the candidate against the journal tip and bound geometries."""
+
+        current_epoch = self.journal.epoch_table[-1]
+        current_artifacts = self.journal.artifact_table[-1]
+        same_realization = (
+            candidate_epoch.topology_id == current_epoch.topology_id
+            and candidate_epoch.partition_id == current_epoch.partition_id
+        )
+        if same_realization:
+            if candidate_epoch.epoch_id != current_epoch.epoch_id:
+                return True
+        elif candidate_epoch.index != current_epoch.index + 1:
+            return True
+        if self.source_geometry is not None and (
+            current_artifacts.prepared_id != self.source_geometry.prepared_id
+            or current_epoch.topology_id != self.source_geometry.topology_id
+            or current_epoch.geometry_id != self.source_geometry.geometry_id
+        ):
+            return True
+        return self.target_geometry is not None and (
+            candidate_artifacts.prepared_id != self.target_geometry.prepared_id
+            or candidate_epoch.topology_id != self.target_geometry.topology_id
+            or candidate_epoch.geometry_id != self.target_geometry.geometry_id
+        )
+
+    def _transfer_candidate_content(
+        self,
+        prepared_event: _PreparedTopologyEvent,
+        transfer: Callable[..., Any] | None,
+        /,
+    ) -> Any:
+        candidate_content = _host_field(prepared_event.prepared, "content_state")
+        if candidate_content is _MISSING:
+            candidate_content = None
+        source_content = prepared_event.source_content
+        transfer_callback = self.transfer if transfer is None else transfer
+        if transfer_callback is not None:
+            return _call_transfer(transfer_callback, source_content, prepared_event.remap)
+        if source_content is not None:
+            apply = _host_field(prepared_event.remap, "apply")
+            if callable(apply):
+                source_average = _host_field(source_content, "cell_average")
+                if callable(source_average):
+                    source_average = source_average()
+                if source_average is not _MISSING:
+                    return apply(source_average)
+        return candidate_content
+
+    def _content_contract_failure(
+        self,
+        prepared_event: _PreparedTopologyEvent,
+        candidate_content: Any,
+        /,
+    ) -> TopologyEventStatus | None:
+        """Check transferred epoch-keyed content against the candidate epoch."""
+
+        if _host_field(prepared_event.source_content, "topology_epoch_id") is _MISSING:
+            return None
+        required_content_fields = (
+            "topology_epoch_id",
+            "effective_cell_volumes",
+            "active_cell_mask",
+            "conservative_content",
+        )
+        if candidate_content is None or any(
+            _host_field(candidate_content, field) is _MISSING
+            for field in required_content_fields
+        ):
+            return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        candidate_content_epoch = _host_field(candidate_content, "topology_epoch_id")
+        if candidate_content_epoch != prepared_event.candidate_epoch.epoch_id:
+            return TopologyEventStatus.FAILED_STALE_EPOCH
+        if self.target_geometry is None:
+            return None
+        target_volumes = np.asarray(self.target_geometry.cell_volumes)
+        candidate_volumes = np.asarray(
+            _host_field(candidate_content, "effective_cell_volumes")
+        )
+        if candidate_volumes.shape != target_volumes.shape or not np.allclose(
+            candidate_volumes,
+            target_volumes,
+            rtol=0.0,
+            atol=0.0,
+        ):
+            return TopologyEventStatus.FAILED_STALE_EPOCH
+        return None
+
+    def _content_admission_failure(
+        self,
+        prepared_event: _PreparedTopologyEvent,
+        candidate_content: Any,
+        /,
+        *,
+        positivity_ok: bool | None,
+        active_cell_mask: Any,
+        admissibility: Callable[[Any], Any] | bool | None,
+    ) -> TopologyEventStatus | None:
+        """Check conservation, positivity, and admissibility of transferred content."""
+
+        if not _conservation_passed(
+            prepared_event.remap,
+            prepared_event.source_content,
+            candidate_content,
+            self.coverage_tolerance,
+        ):
+            return TopologyEventStatus.FAILED_COVERAGE
+        if positivity_ok is False or not _active_content_valid(
+            candidate_content,
+            self.active_cell_mask if active_cell_mask is _MISSING else active_cell_mask,
+        ):
+            return TopologyEventStatus.FAILED_POSITIVITY
+        if admissibility is None:
+            return None
+        admissible = (
+            admissibility(candidate_content)
+            if callable(admissibility)
+            else bool(admissibility)
+        )
+        if not bool(np.asarray(admissible)):
+            return TopologyEventStatus.FAILED_POSITIVITY
+        return None
+
+    def _commit_prepared(
+        self,
+        prepared_event: _PreparedTopologyEvent,
+        candidate_content: Any,
+        /,
+    ) -> FiniteVolumeTopologyEventTransactionResult:
+        """Append and commit the coalesced requests as one journal transition."""
+
+        try:
+            requested = self.journal.append_requested_batch(
+                self.requests, self.accepted_step, self.time
+            )
+            start = int(np.asarray(requested.count)) - len(self.requests)
+            sequences = tuple(start + index for index in range(len(self.requests)))
+            committed = requested.commit_batch(
+                sequences,
+                prepared_event.candidate_epoch,
+                prepared_event.candidate_artifacts,
+                result_id=prepared_event.result_id,
+                payload_ids=prepared_event.payload_ids,
+            )
+        except (OverflowError, ValueError, TypeError):
+            return self._failure(
+                prepared_event.source_content,
+                TopologyEventStatus.FAILED_RESOURCE_LIMIT,
+                automatic_remap=prepared_event.automatic_remap,
+            )
+        return self._outcome(
+            candidate_content
+            if candidate_content is not None
+            else prepared_event.source_content,
+            TopologyEventStatus.SUCCESS,
+            journal=committed,
+            result_epoch=prepared_event.candidate_epoch,
+            result_artifacts=prepared_event.candidate_artifacts,
+            committed=True,
+            automatic_remap=prepared_event.automatic_remap,
+        )
 
     def execute(
         self,
@@ -2042,7 +2533,6 @@ class FiniteVolumeTopologyEventTransaction:
         )
         if isinstance(normalized, FiniteVolumeTopologyEventTransactionResult):
             return normalized
-        admissibility = normalized.admissibility
         prepared_event = _prepare_topology_event_artifacts(
             self,
             source_content,
@@ -2054,140 +2544,31 @@ class FiniteVolumeTopologyEventTransaction:
         )
         if isinstance(prepared_event, FiniteVolumeTopologyEventTransactionResult):
             return prepared_event
-        prepared = prepared_event.prepared
-        candidate_epoch = prepared_event.candidate_epoch
-        candidate_artifacts = prepared_event.candidate_artifacts
-        remap = prepared_event.remap
-        metrics = prepared_event.metrics
-        evidence = prepared_event.evidence
-        status = prepared_event.status
-        source_content = prepared_event.source_content
-        result_id = prepared_event.result_id
-        payload_ids = prepared_event.payload_ids
-        current_epoch = self.journal.epoch_table[-1]
-        current_artifacts = self.journal.artifact_table[-1]
-        same_realization = (
-            candidate_epoch.topology_id == current_epoch.topology_id
-            and candidate_epoch.partition_id == current_epoch.partition_id
-        )
-        if same_realization:
-            if candidate_epoch.epoch_id != current_epoch.epoch_id:
-                return self._failure(
-                    source_content, TopologyEventStatus.FAILED_STALE_EPOCH
-                )
-        elif candidate_epoch.index != current_epoch.index + 1:
-            return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
-        if self.source_geometry is not None:
-            if (
-                current_artifacts.prepared_id != self.source_geometry.prepared_id
-                or current_epoch.topology_id != self.source_geometry.topology_id
-                or current_epoch.geometry_id != self.source_geometry.geometry_id
-            ):
-                return self._failure(
-                    source_content, TopologyEventStatus.FAILED_STALE_EPOCH
-                )
-        if self.target_geometry is not None and (
-            candidate_artifacts.prepared_id != self.target_geometry.prepared_id
-            or candidate_epoch.topology_id != self.target_geometry.topology_id
-            or candidate_epoch.geometry_id != self.target_geometry.geometry_id
+        if self._candidate_epoch_is_stale(
+            prepared_event.candidate_epoch, prepared_event.candidate_artifacts
         ):
-            return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
-
-        candidate_content = _host_field(prepared, "content_state")
-        if candidate_content is _MISSING:
-            candidate_content = None
-        transfer_callback = self.transfer if transfer is None else transfer
-        if transfer_callback is not None:
-            candidate_content = _call_transfer(transfer_callback, source_content, remap)
-        elif source_content is not None:
-            apply = _host_field(remap, "apply")
-            if callable(apply):
-                source_average = _host_field(source_content, "cell_average")
-                if callable(source_average):
-                    source_average = source_average()
-                if source_average is not _MISSING:
-                    candidate_content = apply(source_average)
-        source_epoch = _host_field(source_content, "topology_epoch_id")
-        if source_epoch is not _MISSING:
-            required_content_fields = (
-                "topology_epoch_id",
-                "effective_cell_volumes",
-                "active_cell_mask",
-                "conservative_content",
-            )
-            if candidate_content is None or any(
-                _host_field(candidate_content, field) is _MISSING
-                for field in required_content_fields
-            ):
-                return self._failure(
-                    source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
-                )
-            candidate_content_epoch = _host_field(candidate_content, "topology_epoch_id")
-            if candidate_content_epoch != candidate_epoch.epoch_id:
-                return self._failure(
-                    source_content, TopologyEventStatus.FAILED_STALE_EPOCH
-                )
-            if self.target_geometry is not None:
-                target_volumes = np.asarray(self.target_geometry.cell_volumes)
-                candidate_volumes = np.asarray(
-                    _host_field(candidate_content, "effective_cell_volumes")
-                )
-                if candidate_volumes.shape != target_volumes.shape or not np.allclose(
-                    candidate_volumes,
-                    target_volumes,
-                    rtol=0.0,
-                    atol=0.0,
-                ):
-                    return self._failure(
-                        source_content, TopologyEventStatus.FAILED_STALE_EPOCH
-                    )
-        if not _conservation_passed(
-            remap,
-            source_content,
-            candidate_content,
-            self.coverage_tolerance,
-        ):
-            return self._failure(source_content, TopologyEventStatus.FAILED_COVERAGE)
-        if positivity_ok is False or not _active_content_valid(
-            candidate_content,
-            self.active_cell_mask if active_cell_mask is _MISSING else active_cell_mask,
-        ):
-            return self._failure(source_content, TopologyEventStatus.FAILED_POSITIVITY)
-        if admissibility is not None:
-            admissible = (
-                admissibility(candidate_content)
-                if callable(admissibility)
-                else bool(admissibility)
-            )
-            if not bool(np.asarray(admissible)):
-                return self._failure(
-                    source_content, TopologyEventStatus.FAILED_POSITIVITY
-                )
-        try:
-            requested = self.journal.append_requested_batch(
-                self.requests, self.accepted_step, self.time
-            )
-            start = int(np.asarray(requested.count)) - len(self.requests)
-            sequences = tuple(start + index for index in range(len(self.requests)))
-            committed = requested.commit_batch(
-                sequences,
-                candidate_epoch,
-                candidate_artifacts,
-                result_id=result_id,
-                payload_ids=payload_ids,
-            )
-        except (OverflowError, ValueError, TypeError):
             return self._failure(
-                source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT
+                prepared_event.source_content,
+                TopologyEventStatus.FAILED_STALE_EPOCH,
+                automatic_remap=prepared_event.automatic_remap,
             )
-        return self._outcome(
-            candidate_content if candidate_content is not None else source_content,
-            TopologyEventStatus.SUCCESS,
-            journal=committed,
-            result_epoch=candidate_epoch,
-            result_artifacts=candidate_artifacts,
-            committed=True,
-        )
+        candidate_content = self._transfer_candidate_content(prepared_event, transfer)
+        failure = self._content_contract_failure(prepared_event, candidate_content)
+        if failure is None:
+            failure = self._content_admission_failure(
+                prepared_event,
+                candidate_content,
+                positivity_ok=positivity_ok,
+                active_cell_mask=active_cell_mask,
+                admissibility=normalized.admissibility,
+            )
+        if failure is not None:
+            return self._failure(
+                prepared_event.source_content,
+                failure,
+                automatic_remap=prepared_event.automatic_remap,
+            )
+        return self._commit_prepared(prepared_event, candidate_content)
 
     run = execute
     commit = execute
@@ -2311,8 +2692,7 @@ class FiniteVolumeTopologyEventScheduler:
         constructor_kwargs = dict(kwargs)
         source_geometry = constructor_kwargs.pop("source_geometry", None)
         target_geometry = constructor_kwargs.pop("target_geometry", None)
-        remap_tolerance = constructor_kwargs.pop("remap_tolerance", 1e-10)
-        remap_limits = constructor_kwargs.pop("remap_limits", None)
+        remap_policy = constructor_kwargs.pop("remap_policy", None)
         remap_provenance = constructor_kwargs.pop("remap_provenance", "topology-event")
         coverage_tolerance = constructor_kwargs.pop("coverage_tolerance", 0.0)
         active_cell_mask = constructor_kwargs.pop("active_cell_mask", _MISSING)
@@ -2334,8 +2714,7 @@ class FiniteVolumeTopologyEventScheduler:
             admissibility=admissibility,
             source_geometry=source_geometry,
             target_geometry=target_geometry,
-            remap_tolerance=remap_tolerance,
-            remap_limits=remap_limits,
+            remap_policy=remap_policy,
             remap_provenance=remap_provenance,
         )
         result = transaction.execute(

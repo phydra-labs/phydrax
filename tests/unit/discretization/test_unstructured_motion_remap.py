@@ -502,6 +502,49 @@ def test_ssprk_ale_rejects_inverted_coordinate_geometry() -> None:
     assert 0.0 < step.proposed_reduction_factor < 1.0
 
 
+def test_routed_interior_motion_keeps_the_ssprk_gcl_by_construction() -> None:
+    plan = _quad_plan(4, 4)
+
+    def dilation(time: Any, vertices: Any, args: Any) -> Any:
+        del args
+        return vertices * (1.0 + 0.3 * time)
+
+    def sheared_dilation(time: Any, vertices: Any, args: Any) -> Any:
+        del args
+        shear = jnp.stack(
+            (0.2 * time * vertices[:, 1] ** 2, jnp.zeros_like(vertices[:, 0])), axis=1
+        )
+        return vertices * (1.0 + 0.3 * time) + shear
+
+    prescribed = phx.discretization.FixedConnectivityMotionPlan(
+        plan, dilation, mapping_id="prescribed-dilation"
+    ).advance(jnp.asarray(0.0), jnp.asarray(0.2))
+    routed_policy = phx.discretization.FiniteElementMeshMotionPolicy()
+    routed = phx.discretization.FixedConnectivityMotionPlan(
+        plan, dilation, mapping_id="routed-dilation", motion_policy=routed_policy
+    ).advance(jnp.asarray(0.0), jnp.asarray(0.2))
+
+    # A dilated boundary extends harmonically to the same affine interior.
+    np.testing.assert_allclose(
+        routed.new_geometry.vertices, prescribed.new_geometry.vertices, atol=1e-9
+    )
+    np.testing.assert_allclose(routed.gcl_residual, prescribed.gcl_residual, atol=1e-10)
+    assert bool(routed.report.passed) == bool(prescribed.report.passed)
+
+    sheared = phx.discretization.FixedConnectivityMotionPlan(
+        plan, sheared_dilation, mapping_id="routed-shear", motion_policy=routed_policy
+    ).advance(jnp.asarray(0.0), jnp.asarray(0.2))
+    boundary = np.any(
+        (np.asarray(plan.vertices) == 0.0) | (np.asarray(plan.vertices) == 1.0), axis=1
+    )
+    np.testing.assert_allclose(
+        sheared.new_geometry.vertices[boundary],
+        sheared_dilation(0.2, plan.vertices, None)[boundary],
+        atol=1e-12,
+    )
+    assert sheared.report.maximum_gcl_residual < 1e-10
+
+
 def test_ssprk_ale_routes_topology_geometry_and_evidence_versions_exactly() -> None:
     def translation(time: Any, vertices: Any, velocity: Any) -> Any:
         return vertices + time * velocity

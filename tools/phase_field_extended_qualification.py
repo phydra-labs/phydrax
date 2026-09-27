@@ -305,6 +305,7 @@ def _adaptive_stochastic_distributed() -> dict[str, object]:
         )
     )
     epoch = phx.applications.phase_field.PhaseFieldAdaptiveEpoch(method, initial)
+    # ty: ignore[missing-argument]
     adaptation = phx.applications.phase_field.PhaseFieldAdaptivityPlan(
         gradient_threshold=0.0,
         energy_tolerance=1.0,

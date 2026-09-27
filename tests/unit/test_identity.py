@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._execution_pool import PoolExecutionSignature
 from phydrax._identity import (

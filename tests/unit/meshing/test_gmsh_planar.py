@@ -31,6 +31,7 @@ _COORDINATES = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 
 def _rectangle(x0: Any, x1: Any, *, feature_id: Any) -> Any:
     return phx.geometry.PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(((x0, 0.0), (x1, 0.0), (x1, 1.0), (x0, 1.0))),
         ((0, 1, 2, 3),),
         feature_id=feature_id,
@@ -40,6 +41,7 @@ def _rectangle(x0: Any, x1: Any, *, feature_id: Any) -> Any:
 def _partition(tmp_path: Any, *, hole: Any = False) -> Any:
     if hole:
         region = phx.geometry.PlanarMeshRegion(
+            # ty: ignore[invalid-argument-type]
             np.asarray(
                 (
                     (0.0, 0.0),

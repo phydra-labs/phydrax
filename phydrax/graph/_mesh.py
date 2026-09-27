@@ -10,6 +10,8 @@ import numpy as np
 
 from phydrax._strict import StrictModule
 
+from ..geometry.simplicial._ddg import DDGOperators, discrete_operators
+from ..geometry.simplicial._mesh import TriangleMesh
 from ..sparse import gather_routes, mask_routes, route_reduce
 from ..typing import parse
 from ._geometry import (
@@ -86,47 +88,27 @@ def _as_feature_mapping(name: str, value: Any, /) -> dict[str, Any]:
     return {"features": value}
 
 
-def _cotangent_at_vertex(a: np.ndarray, b: np.ndarray, c: np.ndarray, /) -> float:
-    u = b - a
-    v = c - a
-    cross_norm = float(np.linalg.norm(np.cross(u, v)))
-    if cross_norm <= 1e-30:
-        return 0.0
-    return float(np.dot(u, v) / cross_norm)
-
-
-def _cotangent_weight_map(
-    vertices: np.ndarray,
-    faces: np.ndarray,
-    /,
-) -> dict[tuple[int, int], float]:
-    weights: dict[tuple[int, int], float] = {}
-    for face in faces:
-        i, j, k = (int(face[0]), int(face[1]), int(face[2]))
-        vi, vj, vk = vertices[[i, j, k]]
-        contributions = (
-            ((j, k), _cotangent_at_vertex(vi, vj, vk)),
-            ((k, i), _cotangent_at_vertex(vj, vk, vi)),
-            ((i, j), _cotangent_at_vertex(vk, vi, vj)),
-        )
-        for edge, cotangent in contributions:
-            key = (min(edge), max(edge))
-            weights[key] = weights.get(key, 0.0) + 0.5 * cotangent
-    return weights
-
-
-def _cotangent_weights_for_pairs(
+def _pair_edge_weights(
+    operators: DDGOperators,
     pairs: np.ndarray,
-    weight_map: dict[tuple[int, int], float],
     /,
-) -> np.ndarray:
-    weights = np.zeros((pairs.shape[0],), dtype=np.float64)
-    for i, (sender, receiver) in enumerate(pairs):
-        if int(sender) == int(receiver):
-            continue
-        key = tuple(sorted((int(sender), int(receiver))))
-        weights[i] = weight_map.get(key, 0.0)
-    return weights
+) -> jnp.ndarray:
+    """Gather DDG edge weights for directed vertex pairs; self pairs weigh zero."""
+    vertex_count = operators.vertices.shape[0]
+    edges = np.asarray(operators.edges, dtype=np.int64)
+    # Topology edges are unique and lexicographically sorted, so their packed keys
+    # are strictly increasing and admit a binary search.
+    edge_keys = edges[:, 0] * vertex_count + edges[:, 1]
+    low = np.minimum(pairs[:, 0], pairs[:, 1]).astype(np.int64)
+    high = np.maximum(pairs[:, 0], pairs[:, 1]).astype(np.int64)
+    off_diagonal = low != high
+    position = np.searchsorted(edge_keys, low * vertex_count + high)
+    position = np.where(off_diagonal, position, 0).astype(np.int32)
+    return jnp.where(
+        jnp.asarray(off_diagonal),
+        operators.edge_weights[jnp.asarray(position)],
+        jnp.zeros((), dtype=operators.edge_weights.dtype),
+    )
 
 
 def mesh_face_areas(mesh_vertices: Any, mesh_faces: Any, /) -> jnp.ndarray:
@@ -167,22 +149,24 @@ def mesh_cotangent_weights(
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Return directed edge indices and cotangent FEM weights.
 
-    The returned weights use the standard half-cotangent convention
+    The returned weights are the `DDGOperators` edge weights of the validated
+    `TriangleMesh`, using the half-cotangent convention
     `0.5 * (cot(alpha) + cot(beta))` for each undirected mesh edge. Boundary
-    edges have a single opposite angle contribution.
+    edges have a single opposite angle contribution; self edges weigh zero.
+    Degenerate faces and non-manifold edges raise `ValueError`.
     """
     vertices, faces = _validate_mesh_arrays(mesh_vertices, mesh_faces)
+    operators = discrete_operators(TriangleMesh(vertices, faces))
     pairs = _triangle_adjacency(
         faces,
         add_reverse_edges=add_reverse_edges,
         add_self_edges=add_self_edges,
         n_vertices=vertices.shape[0],
     )
-    weights = _cotangent_weights_for_pairs(pairs, _cotangent_weight_map(vertices, faces))
     return (
         jnp.asarray(pairs[:, 0], dtype=jnp.int32),
         jnp.asarray(pairs[:, 1], dtype=jnp.int32),
-        jnp.asarray(weights, dtype=jnp.float64),
+        _pair_edge_weights(operators, pairs),
     )
 
 
@@ -200,10 +184,12 @@ def mesh_to_cotangent_graph(
 ) -> GeometryGraph:
     """Convert a triangular mesh into a geometry graph with cotangent data.
 
-    The graph carries `edges[weight_key]` and `nodes[mass_key]`, so
+    The graph carries `edges[weight_key]` (the `DDGOperators` half-cotangent
+    edge weights) and `nodes[mass_key]` (barycentric lumped vertex areas), so
     `MeshCotangentLaplacian` can be applied without recomputing geometry.
     """
     vertices, faces = _validate_mesh_arrays(mesh_vertices, mesh_faces)
+    operators = discrete_operators(TriangleMesh(vertices, faces))
     bundle = mesh_to_geometry_graph(
         vertices,
         faces,
@@ -221,13 +207,10 @@ def mesh_to_cotangent_graph(
         ],
         axis=1,
     )
-    weight = _cotangent_weights_for_pairs(pairs, _cotangent_weight_map(vertices, faces))
-    mass = mesh_lumped_vertex_areas(vertices, faces)
-
     nodes = _as_feature_mapping("nodes", bundle.graph.nodes)
-    nodes[mass_key] = mass
+    nodes[mass_key] = operators.vertex_mass
     edges = _as_feature_mapping("edges", bundle.graph.edges)
-    edges[weight_key] = jnp.asarray(weight, dtype=jnp.float64)
+    edges[weight_key] = _pair_edge_weights(operators, pairs)
 
     graph = bundle.graph.replace(nodes=nodes, edges=edges, validate=validate)
     return GeometryGraph(

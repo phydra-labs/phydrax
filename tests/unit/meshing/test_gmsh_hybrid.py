@@ -91,11 +91,12 @@ def _hybrid_specification(
     whole = provider.whole_scope(source, 3)
     swept_scope = _scope(provider, source, 3, (swept,))
     core_scope = _scope(provider, source, 3, (core,))
-    control = phx.meshing.SweptLayerControl(
+    control = phx.meshing.BoundaryLayerControl(
         _scope(provider, source, 2, (source_face,)),
-        _scope(provider, source, 2, (target_face,)),
-        swept_scope,
         schedule,
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        volume_scope=swept_scope,
+        cap_scope=_scope(provider, source, 2, (target_face,)),
     )
     regions = (
         phx.meshing.RegionControl(
@@ -167,6 +168,7 @@ def test_real_full_width_prism_slab_meets_tetra_core_on_exact_triangles(
     source, source_face, target_face, swept, core = _slab_fixture(
         tmp_path / "hybrid-slab.brep"
     )
+    # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.08, 0.10, 0.12))
     specification, control = _hybrid_specification(
         provider,
@@ -292,6 +294,7 @@ def test_swept_lateral_face_adjoining_unswept_volume_is_rejected_before_generati
         target_cap,
         swept,
         core,
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.25, 0.25, 0.25, 0.25)),
         patch_face=shared_face[0],
     )
@@ -322,6 +325,7 @@ def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(
         target_face,
         swept,
         core,
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.08, 0.10, 0.11)),
     )
 
@@ -370,6 +374,7 @@ def test_hybrid_sweep_rejects_high_order_and_transition_cell_claims(
         target_face,
         swept,
         core,
+        # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1, 0.1, 0.1)),
         geometry_order=geometry_order,
         policy=policy,

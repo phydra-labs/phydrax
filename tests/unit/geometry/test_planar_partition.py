@@ -51,6 +51,7 @@ def _rectangle(
     feature_id: str,
 ) -> PlanarMeshRegion:
     return PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(
             (
                 (x_min, y_min),
@@ -208,6 +209,7 @@ def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
 
 def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path: Any) -> None:
     region = PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(
             (
                 (0.0, 0.0),
@@ -427,6 +429,7 @@ def test_missing_live_planar_history_publishes_nothing(
 
 def test_holes_must_be_strictly_inside_the_outer_loop(tmp_path: Any) -> None:
     invalid = PlanarMeshRegion(
+        # ty: ignore[invalid-argument-type]
         np.asarray(
             (
                 (0.0, 0.0),

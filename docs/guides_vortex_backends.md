@@ -18,11 +18,18 @@ spectral, cutoff, and correction defects remain separate evidence.
 
 ## Hierarchical FMM
 
-`VortexFMMPlan` supports the occupied-level authority
-`execution="level_octree"` and a fixed-envelope
-`execution="plane_dual"` route. Plane execution freezes separate source and
-target Morton schedules, aggregates monopole and first-moment vector payloads,
-uses deterministic source-to-target far routes, and preserves exact
+`VortexFMMPlan` supports an adaptive-octree `execution="level_octree"` route and
+a fixed-envelope `execution="plane_dual"` route. Adaptive-octree execution
+prepares a `phydrax.discretization.spatial.AdaptiveOctree` over the reference
+sources, subdividing cells with more than `leaf_capacity` sources down to
+`depth`, and locates arbitrary targets in its leaves at evaluation. Its U/V/W/X
+interaction lists keep one cell of clearance for sources displaced by up to
+`maximum_reference_displacement`: V routes translate monopole and first-moment
+payloads to local expansions, X routes convert source points to local
+expansions, W routes evaluate multipoles at targets, and U routes remain exact
+regularized pairs. Plane execution freezes separate source and target Morton
+schedules, aggregates monopole and first-moment vector payloads, and uses
+deterministic source-to-target far routes. Both preserve exact
 Gaussian/Gaussian-erf near interactions, velocity gradients, vorticity, core
 radius handling, explicit self identity, and geometric-tail evidence.
 

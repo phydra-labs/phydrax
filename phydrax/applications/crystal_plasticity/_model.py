@@ -807,6 +807,7 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
                 )
             polynomial_degree = max(
                 discretization.elements[field_index][block_index].degree,
+                # ty: ignore[unresolved-attribute]
                 discretization.coordinate_elements[block_index].degree,
             )
             rule, axis_order = _route_rule(block.cell_kind, polynomial_degree)

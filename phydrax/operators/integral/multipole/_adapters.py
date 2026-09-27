@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
@@ -53,6 +52,7 @@ def evaluate_laplace_layer_multipole_3d(
         source_weights,
         prepared.plan.source_capacity,
     )
+    # ty: ignore[invalid-return-type]
     return prepared.evaluate(
         source_positions,
         strengths,
@@ -74,49 +74,23 @@ def prepare_laplace_qbx_far_local_3d(
     source_normals: ArrayLike | None = None,
     active_mask: ArrayLike | None = None,
 ) -> MultipoleFarLocal3D:
-    """Return far-only local coefficients at prepared three-dimensional QBX centers."""
+    """Return far-only local coefficients centered at prepared 3D QBX centers."""
     if not isinstance(prepared, PreparedLaplaceMultipole3D):
         raise TypeError("prepared must be PreparedLaplaceMultipole3D.")
+    centers = jnp.asarray(expansion_centers)
+    if centers.shape != (prepared.plan.target_capacity, 3):
+        raise ValueError("expansion_centers must have shape (target_capacity, 3).")
     strengths = _weighted_strengths(
         source_density,
         source_weights,
         prepared.plan.source_capacity,
     )
-    far = prepared.far_local(
+    return prepared.far_local(
         source_positions,
         strengths,
-        expansion_centers,
+        centers,
         source_normals=source_normals,
         active_mask=active_mask,
-    )
-    centers = jnp.asarray(expansion_centers)
-    if centers.shape != (prepared.plan.target_capacity, 3):
-        raise ValueError("expansion_centers must have shape (target_capacity, 3).")
-    if prepared.target_plane is None:
-        if prepared.topology is None:
-            raise RuntimeError("Level-octree topology is not prepared.")
-        hierarchy = prepared.topology.hierarchy
-        target_leaf = hierarchy.logical_point_leaf_slots[
-            prepared.plan.source_capacity : prepared.plan.source_capacity
-            + prepared.plan.target_capacity
-        ]
-        leaf_centers = hierarchy.node_centers[jnp.maximum(target_leaf, 0)]
-    else:
-        target_leaf = jnp.maximum(
-            prepared.target_plane.logical_point_leaf_slots,
-            0,
-        )
-        leaf_centers = prepared.target_plane.node_centers[target_leaf]
-    shifted = jax.vmap(prepared.l2l)(far.coefficients, leaf_centers, centers)
-    return MultipoleFarLocal3D(
-        coefficients=shifted,
-        truncation=far.truncation,
-        capacity=far.capacity,
-        m2m_count=far.m2m_count,
-        m2l_count=far.m2l_count,
-        l2l_count=far.l2l_count + prepared.plan.target_capacity,
-        successful=far.successful,
-        prepared_id=far.prepared_id,
     )
 
 

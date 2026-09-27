@@ -16,6 +16,11 @@ from numpy.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization.fem import (
+    FiniteElementTopologyTransfer,
+    vertex_interpolation_transfer,
+)
+from ..sparse import RowRelation, SparseLinearMap
 from ._result import CellMeshingResult
 
 
@@ -25,6 +30,11 @@ class EntityLineageKind(IntEnum):
     COARSENED_INTO = 2
     SPLIT_FROM = 3
     MERGED_INTO = 4
+    COLLAPSED_INTO = 5
+    SWAPPED_FROM = 6
+    RELOCATED = 7
+    GENERATED_ON_GEOMETRY = 8
+    UNKNOWN = 9
 
 
 class MeshTransitionKind(StrEnum):
@@ -228,30 +238,88 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
             }
         )
 
+    def _source_routes(self, source_global_ids: ArrayLike, /) -> np.ndarray:
+        """Resolve stencil source IDs to positions in one caller-supplied ID order."""
+
+        identifiers = np.asarray(source_global_ids, dtype=np.int64)
+        if identifiers.ndim != 1 or identifiers.size == 0:
+            raise ValueError("source_global_ids must be one non-empty rank-1 array.")
+        order = np.argsort(identifiers, kind="stable")
+        ordered = identifiers[order]
+        if np.any(ordered[1:] == ordered[:-1]):
+            raise ValueError("source_global_ids must be unique.")
+        references = np.asarray(self.source_global_ids)
+        valid = np.asarray(self.valid)
+        position = np.minimum(np.searchsorted(ordered, references), identifiers.size - 1)
+        if np.any(valid & (ordered[position] != references)):
+            raise ValueError("Interpolation stencil references an unavailable source ID.")
+        return np.where(valid, order[position], 0).astype(np.int32)
+
+    def as_transfer(
+        self,
+        source_global_ids: ArrayLike,
+        /,
+        *,
+        source_topology_id: str,
+        target_topology_id: str,
+        preserves_linear: bool = False,
+        conservative: bool = False,
+        source_coordinates: ArrayLike | None = None,
+        target_coordinates: ArrayLike | None = None,
+        source_measures: ArrayLike | None = None,
+        target_measures: ArrayLike | None = None,
+    ) -> FiniteElementTopologyTransfer:
+        """Resolve this stencil into a sparse transfer over one source DOF order.
+
+        Linear-preservation and conservation claims are certified by the transfer
+        owner from the supplied row-aligned coordinates and P1 DOF measures.
+        """
+
+        identifiers = np.asarray(source_global_ids, dtype=np.int64)
+        return vertex_interpolation_transfer(
+            self._source_routes(identifiers),
+            np.asarray(self.weights),
+            np.asarray(self.valid),
+            source_size=identifiers.size,
+            source_topology_id=source_topology_id,
+            target_topology_id=target_topology_id,
+            preserves_linear=preserves_linear,
+            conservative=conservative,
+            # ty: ignore[invalid-argument-type]
+            source_coordinates=source_coordinates,
+            # ty: ignore[invalid-argument-type]
+            target_coordinates=target_coordinates,
+            # ty: ignore[invalid-argument-type]
+            source_measures=source_measures,
+            # ty: ignore[invalid-argument-type]
+            target_measures=target_measures,
+        )
+
     def apply(
         self,
         source_global_ids: ArrayLike,
         values: JaxArrayLike,
         /,
     ) -> Array:
+        """Interpolate source values given in ``source_global_ids`` order in one gather."""
+
         identifiers = np.asarray(source_global_ids, dtype=np.int64)
         source_values = jnp.asarray(values)
-        if identifiers.ndim != 1 or source_values.shape[0] != identifiers.shape[0]:
+        routes = self._source_routes(identifiers)
+        if source_values.ndim == 0 or source_values.shape[0] != identifiers.size:
             raise ValueError("Source values must align with source_global_ids.")
-        lookup = {int(identifier): index for index, identifier in enumerate(identifiers)}
-        routes = np.zeros(self.source_global_ids.shape, dtype=np.int32)
-        for row, column in zip(*np.nonzero(np.asarray(self.valid)), strict=True):
-            identifier = int(np.asarray(self.source_global_ids)[row, column])
-            if identifier not in lookup:
-                raise ValueError(
-                    "Interpolation stencil references an unavailable source ID."
-                )
-            routes[row, column] = lookup[identifier]
-        gathered = source_values[jnp.asarray(routes)]
-        weights = jnp.where(self.valid, self.weights, 0.0)
-        return jnp.sum(
-            gathered * weights[(...,) + (None,) * (source_values.ndim - 1)], axis=1
-        )
+        relation = RowRelation(routes, source_size=identifiers.size, valid=self.valid)
+        return SparseLinearMap(
+            relation,
+            self.weights,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "vertex-interpolation-stencil-map",
+                    "stencil": self.stencil_id,
+                    "source_global_ids": array_tree_fingerprint(identifiers),
+                }
+            ),
+        ).mv(source_values)
 
 
 class CellMeshTransition(StrictModule, NonTrainableState):

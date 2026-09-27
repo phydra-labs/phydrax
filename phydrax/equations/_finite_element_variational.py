@@ -2728,7 +2728,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 strict=True,
             ):
                 exact_degree = 2 * element.degree + element.topological_dimension * max(
-                    coordinate_element.degree - 1, 0
+                    # ty: ignore[unresolved-attribute]
+                    coordinate_element.degree - 1,
+                    0,
                 )
                 count = max(2, (exact_degree + 2) // 2)
                 if block.cell_kind == "triangle":
@@ -2740,6 +2742,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 elif block.cell_kind == "quadrilateral":
                     tensor_degree = (
                         2 * element.degree
+                        # ty: ignore[unresolved-attribute]
                         + element.topological_dimension * coordinate_element.degree
                         - 1
                     )
@@ -2748,6 +2751,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 elif block.cell_kind == "hexahedron":
                     tensor_degree = (
                         2 * element.degree
+                        # ty: ignore[unresolved-attribute]
                         + element.topological_dimension * coordinate_element.degree
                         - 1
                     )

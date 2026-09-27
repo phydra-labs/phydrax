@@ -112,6 +112,7 @@ class TriangleMesh(StrictModule):
             raise ValueError("source_id must be non-empty.")
         self.vertices = jnp.asarray(vertices_host, dtype=jnp.float64)
         self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
+        # ty: ignore[invalid-argument-type]
         self.topology = TriangleTopology(faces_host, num_vertices=vertices_host.shape[0])
         self.source_id = source_id or f"triangle-mesh-{uuid4().hex}"
 

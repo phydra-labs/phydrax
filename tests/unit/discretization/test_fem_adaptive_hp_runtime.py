@@ -118,6 +118,7 @@ def test_quad_refinement_builds_stable_forest_mortars_and_coarsens() -> None:
     assert sum(block.cell_count for block in active_mesh.blocks) == 5
     assert degrees == ((2, 3),)
     assert routes.shape == (5,)
+    assert active_mesh.coordinates.shape[0] == 11
 
     coarsened = coarsen_tensor_hp_cells(
         refined.topology,
@@ -321,8 +322,11 @@ def test_prepared_h1_epoch_builds_master_trace_constraint_and_uniform_limit() ->
     uniform_plan = dict(uniform_epoch.constraints)["u"]
     # ty: ignore[unresolved-attribute]
     assert uniform_plan.full_dof_count == uniform_plan.reduced_dof_count
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_allclose(np.asarray(uniform_plan.prolongation), np.eye(15))
+    np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
+        np.asarray(uniform_plan.prolongation.as_dense()),
+        np.eye(15),
+    )
 
 
 def test_h_transfer_roles_and_epoch_transaction_are_distinct_and_conservative(
@@ -429,7 +433,7 @@ def test_h_transfer_roles_and_epoch_transaction_are_distinct_and_conservative(
         "u",
         "h-coarsening",
     )
-    reconstructed = coarsening_transfer.apply_mass_projection(target_values)
+    reconstructed = coarsening_transfer.apply_l2_projection(target_values)
     parent_count = int(np.asarray(coarsening_transfer.target_dof_count)[0])
     parent_slot = int(np.asarray(coarsening_transfer.target_slots)[0])
     np.testing.assert_allclose(
@@ -500,3 +504,145 @@ def test_residual_jump_ledger_budgets_hysteresis_and_balance_are_deterministic()
     )
     assert int(np.asarray(first.coarsen_history)[1]) == 1
     assert int(np.asarray(second.coarsen_history)[1]) == 2
+
+
+def _rotated_hex_pair_mesh() -> Any:
+    coordinates = jnp.asarray(
+        tuple(
+            (float(x), float(y), float(z))
+            for z in range(2)
+            for y in range(2)
+            for x in range(3)
+        )
+    )
+    return CellMesh(
+        coordinates,
+        (
+            CellBlock(
+                "hexes",
+                "hexahedron",
+                jnp.asarray(
+                    ((0, 1, 4, 3, 6, 7, 10, 9), (4, 1, 2, 5, 10, 7, 8, 11)),
+                    dtype=jnp.int32,
+                ),
+                global_ids=jnp.asarray((30, 40), dtype=jnp.int64),
+            ),
+        ),
+    )
+
+
+def test_hex_roots_with_opposed_face_frames_pair_and_balance_exactly() -> None:
+    topology, geometry = initial_finite_element_hp_topology(
+        _rotated_hex_pair_mesh(), 1, 40
+    )
+    refined = refine_tensor_hp_cells(
+        topology, geometry, jnp.asarray((30, 40), dtype=jnp.int64)
+    )
+    interfaces = finite_element_hp_interface_plan(refined.topology, refined.geometry)
+    active_mesh, _, _ = hp_active_cell_mesh(refined.topology, refined.geometry)
+
+    assert np.count_nonzero(np.asarray(interfaces.relation_mask("conforming"))) == 28
+    assert active_mesh.coordinates.shape[0] == 45
+    assert certify_finite_element_hp_geometry(
+        refined.topology, refined.geometry, interfaces
+    ).passed
+
+    deeper = refine_tensor_hp_cells(
+        refined.topology, refined.geometry, jnp.asarray((42,), dtype=jnp.int64)
+    )
+    deeper_interfaces = finite_element_hp_interface_plan(deeper.topology, deeper.geometry)
+
+    assert np.count_nonzero(np.asarray(deeper_interfaces.relation_mask("mortar"))) == 16
+    assert certify_finite_element_hp_geometry(
+        deeper.topology, deeper.geometry, deeper_interfaces
+    ).passed
+    with pytest.raises(ValueError, match="2:1 balance"):
+        refine_tensor_hp_cells(
+            deeper.topology, deeper.geometry, jnp.asarray((58,), dtype=jnp.int64)
+        )
+
+
+def _bilinear_measure(vertices: Any, points: Any) -> Any:
+    x, y = points[:, 0], points[:, 1]
+    d_first = np.stack((-(1.0 - y), 1.0 - y, y, -y), axis=1)
+    d_second = np.stack((-(1.0 - x), -x, x, 1.0 - x), axis=1)
+    jacobian = np.stack(
+        (d_first @ vertices, d_second @ vertices), axis=-1
+    )  # (points, space, reference)
+    return np.abs(np.linalg.det(jacobian))
+
+
+def test_hp_coarsening_l2_projection_is_mass_orthogonal_on_curved_geometry() -> None:
+    mesh = CellMesh(
+        jnp.asarray(((0.0, 0.0), (2.0, 0.0), (1.5, 1.0), (0.0, 1.0))),
+        (
+            CellBlock(
+                "quad",
+                "quadrilateral",
+                jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
+                global_ids=jnp.asarray((10,), dtype=jnp.int64),
+            ),
+        ),
+    )
+    topology, geometry = initial_finite_element_hp_topology(mesh, 2, 8)
+    fine = refine_tensor_hp_cells(topology, geometry, jnp.asarray((10,), dtype=jnp.int64))
+    coarse = coarsen_tensor_hp_cells(
+        fine.topology, fine.geometry, jnp.asarray((10,), dtype=jnp.int64)
+    )
+    fine_epoch = prepare_finite_element_hp_epoch(
+        fine.topology, fine.geometry, "u", conformity="L2"
+    )
+    coarse_epoch = prepare_finite_element_hp_epoch(
+        coarse.topology, coarse.geometry, "u", conformity="L2"
+    )
+    transfer = finite_element_hp_transfer_plan(
+        fine_epoch, coarse_epoch, coarse.lineage, "u", "h-coarsening"
+    )
+    rng = np.random.default_rng(7)
+    fine_values = np.zeros((topology.capacity, transfer.primal.shape[2]))
+    for slot, count in zip(
+        np.asarray(transfer.source_slots),
+        np.asarray(transfer.source_dof_count),
+        strict=True,
+    ):
+        fine_values[slot, :count] = rng.normal(size=count)
+    projected = np.asarray(transfer.apply_l2_projection(jnp.asarray(fine_values)))
+    nodal = np.asarray(transfer.apply_primal(jnp.asarray(fine_values)))
+
+    parent = int(np.asarray(transfer.target_slots)[0])
+    parent_count = int(np.asarray(transfer.target_dof_count)[0])
+    # ty: ignore[unresolved-attribute]
+    parent_nodes = np.asarray(coarse_epoch.discretization.elements[0][0].reference_nodes)
+    # ty: ignore[unresolved-attribute]
+    child_nodes = np.asarray(fine_epoch.discretization.elements[0][0].reference_nodes)
+    nodes, weights = np.polynomial.legendre.leggauss(8)
+    nodes, weights = 0.5 * (nodes + 1.0), 0.5 * weights
+    points = np.stack(np.meshgrid(nodes, nodes, indexing="ij"), axis=-1).reshape((-1, 2))
+    point_weights = np.outer(weights, weights).reshape((-1,))
+    residual = np.zeros((parent_count,))
+    for child in np.asarray(transfer.source_slots):
+        lower = np.asarray(fine.geometry.reference_lower)[child]
+        upper = np.asarray(fine.geometry.reference_upper)[child]
+        measure = point_weights * _bilinear_measure(
+            np.asarray(fine.geometry.cell_vertices)[child], points
+        )
+        parent_basis = np.asarray(
+            tensor_trace_interpolation(parent_nodes, lower + points * (upper - lower))
+        )
+        child_basis = np.asarray(tensor_trace_interpolation(child_nodes, points))
+        difference = (
+            parent_basis @ projected[parent, :parent_count]
+            - child_basis @ fine_values[child, : child_nodes.shape[0]]
+        )
+        residual += parent_basis.T @ (measure * difference)
+
+    # ty: ignore[unresolved-attribute]
+    assert transfer.l2_evidence.successful
+    np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
+        np.asarray(transfer.l2_evidence.numerical_rank),
+        # ty: ignore[unresolved-attribute]
+        np.asarray(transfer.l2_evidence.dof_counts),
+    )
+    np.testing.assert_allclose(residual, 0.0, atol=1.0e-12)
+    assert not np.allclose(nodal[parent, :parent_count], projected[parent, :parent_count])
