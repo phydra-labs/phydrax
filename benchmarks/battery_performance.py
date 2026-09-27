@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import hashlib
 import math
@@ -17,9 +15,10 @@ import time
 import tracemalloc
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import jax
-from jax.extend.core import ClosedJaxpr, Jaxpr
+from jax.extend.core import Jaxpr
 
 from benchmarks._comparison import (
     compare_performance as compare_distributions,
@@ -170,13 +169,11 @@ def _compiler_resource_record(compiled: Any) -> dict[str, object]:
     }
 
 
-def _dense_array_count(closed: ClosedJaxpr, /) -> int:
+def _dense_array_count(closed: Jaxpr, /) -> int:
     """Inspect all nested compiled computation graphs, not a source-text assertion."""
     seen: set[int] = set()
 
     def visit(value: object) -> int:
-        if isinstance(value, ClosedJaxpr):
-            return visit(value.jaxpr)
         if isinstance(value, Jaxpr):
             if id(value) in seen:
                 return 0

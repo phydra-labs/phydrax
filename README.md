@@ -595,7 +595,7 @@ solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 
 ## Installation
 
-Requires Python 3.11+.
+Requires Python 3.12.
 
 First, install your preferred JAX distribution.
 Otherwise, Phydrax will default to the cpu version.

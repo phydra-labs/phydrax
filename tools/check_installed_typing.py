@@ -28,7 +28,7 @@ from tools.check_typing import run_tool, verify_pinned
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "typing" / "installed"
-DEFAULT_PYTHONS = ("3.11", "3.12", "3.13")
+DEFAULT_PYTHONS = ("3.12",)
 MARKER = "phydrax/py.typed"
 
 

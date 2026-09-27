@@ -10,13 +10,13 @@ import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
-import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
 from benchmarks._runtime import measure_repeated
+from phydrax.axes import AxisArray
 
 
 def _measure(
@@ -30,7 +30,6 @@ def _measure(
         warmup=1,
         repeats=repeats,
     )
-    # ty: ignore[invalid-argument-type]
     return estimate, 1_000.0 * float(distribution.mean_seconds)
 
 
@@ -72,7 +71,6 @@ def _measure_compiled(
         warmup=1,
         repeats=repeats,
     )
-    # ty: ignore[invalid-argument-type]
     return estimate, 1_000.0 * float(distribution.mean_seconds)
 
 
@@ -118,17 +116,16 @@ def _interoperability_benchmarks(
     records: list[dict[str, Any]] = []
     for budget in budgets:
         particle = jnp.linspace(-2.0, 2.0, budget)
-        weighted_samples = cx.Field(
+        weighted_samples = AxisArray(
             jnp.arange(4.0)[:, None] + particle[None, :] ** 2,
             dims=("case", "particle"),
         )
-        weighted_log_weights = cx.Field(
+        weighted_log_weights = AxisArray(
             jnp.broadcast_to(-0.5 * particle[None, :] ** 2, (4, budget)),
             dims=("case", "particle"),
         )
         weighted_target = phx.integration.weighted(
             weighted_samples,
-            # ty: ignore[invalid-argument-type]
             weighted_log_weights,
             sample_axes="particle",
             independent=True,
@@ -156,7 +153,6 @@ def _interoperability_benchmarks(
         num_times = 16
         num_space = 16
         times = jnp.linspace(0.0, 1.0, num_times)
-        # ty: ignore[invalid-argument-type]
         axis = phx.discretization.FourierAxisSpec(num_space).materialize(0.0, 1.0)
         spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
         phase = jnp.linspace(0.0, 2.0 * jnp.pi, budget, endpoint=False)
@@ -221,7 +217,7 @@ def _interoperability_benchmarks(
 
         def staged_operation(
             scale: jax.Array,
-            values: cx.Field = path_target.samples,
+            values: AxisArray = path_target.samples,
         ) -> phx.integration.IntegrationEstimate:
             space_estimate = phx.integration.integrate(
                 scale * values,

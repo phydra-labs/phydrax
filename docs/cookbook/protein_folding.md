@@ -13,7 +13,7 @@ See the [guide](../guides_protein_folding.md),
 
 ## 1. Prepare the environment and retain the source
 
-Run the commands from the repository root with Python 3.11–3.13 and the local
+Run the commands from the repository root with Python 3.12 and the local
 package installed. The physical handoff additionally needs OpenMM 8.2–8.x;
 the repository's `atomistic-interop` extra includes it. In a selected virtual
 environment, installation is:

@@ -148,16 +148,12 @@ def _validated_request(model: BRepModel, control: BoundaryLayerControl, /) -> An
     revision = model.report.source_revision
     for scope, dimension in ((control.wall_scope, 2), (control.volume_scope, 3)):
         if (
-            # ty: ignore[unresolved-attribute]
             scope.source_id != model.report.source_id
-            # ty: ignore[unresolved-attribute]
             or scope.source_revision != revision
-            # ty: ignore[unresolved-attribute]
             or scope.entity_set_id != f"{revision}:brep:{dimension}"
         ):
             raise ValueError("The control scopes must bind this BRep source revision.")
     walls = tuple(int(value) for value in np.asarray(control.wall_scope.entity_ids))
-    # ty: ignore[unresolved-attribute]
     solids = {int(value) for value in np.asarray(control.volume_scope.entity_ids)}
     owners = []
     for wall in walls:
@@ -171,10 +167,8 @@ def _validated_request(model: BRepModel, control: BoundaryLayerControl, /) -> An
 
 
 def _extrusion_prisms(shape: Any, walls: Any, owners: Any, total: float, /) -> Any:
-    # ty: ignore[unresolved-attribute]
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
-    # ty: ignore[unresolved-attribute]
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
+    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     prisms = []
     planes = []
     for wall, owner in zip(walls, owners, strict=True):
@@ -221,10 +215,8 @@ def _classify_slabs(
     model: BRepModel, prisms: Any, planes: Any, total: float, scale: float, /
 ) -> Any:
     shape, _, _ = read_occt_shape(model.report.source_id)
-    # ty: ignore[unresolved-attribute]
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
-    # ty: ignore[unresolved-attribute]
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
+    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     measures = [_volume(solid) for solid in solids]
     tolerance = 1.0e-9 * scale
     slabs, bottoms, tops, volumes, residuals = [], [], [], [], []
@@ -305,15 +297,12 @@ def prepare_boundary_layer_extrusion(
     slabs, bottoms, tops, volumes, residual = _classify_slabs(
         partitioned, prisms, planes, total, scale
     )
-    # ty: ignore[unresolved-attribute]
     controlled = {int(value) for value in np.asarray(control.volume_scope.entity_ids)}
-    # ty: ignore[unresolved-attribute]
-    original = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
+    original = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     published = _explore_unique(
         read_occt_shape(partitioned.report.source_id)[0],
         TopAbs_SOLID,
-        # ty: ignore[unresolved-attribute]
-        TopoDS.Solid_s,
+        TopoDS.Solid,
     )
     core = []
     for index, solid in enumerate(published):

@@ -172,7 +172,6 @@ def _synthetic_source_root(directory: Path) -> Path:
 
 def _synthetic_runtime_lock(directory: Path) -> tuple[Path, dict[str, str]]:
     versions = {
-        "coordax": "1.0.0",
         "diffrax": "1.0.1",
         "equinox": "1.0.2",
         "jax": "1.0.3",

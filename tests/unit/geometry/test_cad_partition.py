@@ -111,8 +111,7 @@ def _solid_volumes(result: Any) -> dict[BRepEntityId, float]:
     explorer = TopExp_Explorer(shape, TopAbs_SOLID)
     solids = []
     while explorer.More():
-        # ty: ignore[unresolved-attribute]
-        candidate = TopoDS.Solid_s(explorer.Current())
+        candidate = TopoDS.Solid(explorer.Current())
         if not any(value.IsSame(candidate) for value in solids):
             solids.append(candidate)
         explorer.Next()

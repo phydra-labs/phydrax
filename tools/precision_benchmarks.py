@@ -11,13 +11,13 @@ import platform
 from collections.abc import Callable
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 from benchmarks._runtime import measure_repeated
+from phydrax.axes import AxisArray
 
 
 def _timed(call: Callable[[], Any], repeats: int, /) -> tuple[Any, float]:
@@ -26,7 +26,6 @@ def _timed(call: Callable[[], Any], repeats: int, /) -> tuple[Any, float]:
         warmup=1,
         repeats=repeats,
     )
-    # ty: ignore[invalid-argument-type]
     return value, float(distribution.mean_seconds)
 
 
@@ -125,7 +124,6 @@ def _integration_case(order: int, repeats: int, /) -> dict[str, Any]:
             "seconds": seconds,
             "absolute_error": float(jnp.abs(value.astype(jnp.float64) - 0.2)),
             "output_dtype": value.dtype.name,
-            # ty: ignore[unresolved-attribute]
             "precision_evidence_id": estimate.precision_evidence.evidence_id,
         }
     return results
@@ -217,8 +215,7 @@ def _predictive_case(draws: int, width: int, repeats: int, /) -> dict[str, Any]:
     results = {}
     for name, precision in configurations.items():
         predictive = phx.uq.PredictiveField(
-            # ty: ignore[invalid-argument-type]
-            cx.Field(source, dims=("draw", "x")),
+            AxisArray(source, dims=("draw", "x")),
             (phx.uq.SampleAxis("draw", "epistemic"),),
             precision=precision,
         )
@@ -466,7 +463,6 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
             precision=precision,
         )
         runtime = phx.solver.PreparedFiniteVolumeRuntime(
-            # ty: ignore[invalid-argument-type]
             compiled.dynamics,
             phx.discretization.FluxPositivityPlan(),
         )
@@ -504,7 +500,6 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
         )
         reported = tuple(
             float(item)
-            # ty: ignore[unresolved-attribute]
             for item in jax.device_get(diagnostics.conservation_defect)
         )
         results[name] = {
@@ -512,7 +507,6 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
             "state_bytes": value.size * value.dtype.itemsize,
             "state_dtype": value.dtype.name,
             "conservation_defect": float(
-                # ty: ignore[unresolved-attribute]
                 jnp.max(jnp.abs(diagnostics.conservation_defect))
             ),
             "conservation_reference_error": max(
@@ -711,7 +705,6 @@ def _open_system_case(steps: int, repeats: int, /) -> dict[str, Any]:
             "seconds": seconds,
             "trajectory_bytes": value.size * value.dtype.itemsize,
             "output_dtype": value.dtype.name,
-            # ty: ignore[unresolved-attribute]
             "statistical_error": float(result.approximation.statistical_error),
             "precision_evidence_id": evidence.evidence_id,
             "approximation_policy_ids": list(result.approximation.precision_policy_ids),

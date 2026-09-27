@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.10"]
+requires = ["scikit-build-core>=1.1.0,<2"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -7,18 +7,18 @@ name = "phydrax-meshcore"
 # Released in lockstep with phydrax, which pins and verifies this exact version.
 version = "0.2.2"
 description = "Exact geometric predicates, clipping moments, and Delaunay kernels for Phydrax (plain C ABI)."
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
 license = {text = "Phydra Non-Production License (PNPL)"}
 
 [tool.scikit-build]
-minimum-version = "0.10"
-cmake.version = ">=3.20"
-ninja.version = ">=1.10"
+minimum-version = "1.1"
+cmake.version = ">=4.4.3,<5"
+ninja.version = ">=1.13.2,<2"
 cmake.build-type = "Release"
 cmake.define.PHX_MC_BUILD_TESTS = "OFF"
 # The shared library is loaded with ctypes, not imported as a CPython
-# extension, so one wheel serves every Python 3 version of a platform.
+# extension, so one wheel serves every supported Python 3 version of a platform.
 wheel.py-api = "py3"
 wheel.packages = ["python/phydrax_meshcore"]
 sdist.include = ["CMakeLists.txt", "include", "src", "tests", "python"]

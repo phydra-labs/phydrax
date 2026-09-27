@@ -9,7 +9,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,6 +23,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax.axes import AxisArray
 from phydrax.uq._conditional_moments import _condition_affine_gaussian_diagonal
 
 from .configuration import BenchmarkConfiguration
@@ -365,7 +365,7 @@ def nonlinear_transformed_ode(
         lambda parameters: jnp.sum(
             likelihood.log_prob(forward(parameters, sensor_time), observations)
         ),
-        predict=lambda parameters, locations: cx.Field(
+        predict=lambda parameters, locations: AxisArray(
             forward(parameters, locations), dims=("time",)
         ),
     )

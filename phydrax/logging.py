@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC
 from types import MappingProxyType
-from typing import Any, cast, IO, TYPE_CHECKING, TypeAlias
+from typing import Any, cast, IO, TYPE_CHECKING
 
 from loguru import logger as _loguru_logger
 
@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 from ._privacy import JSONValue, REDACTED, SecretRedactor
 
 
-LogValue: TypeAlias = JSONValue
-LogSink: TypeAlias = str | os.PathLike[str] | IO[str] | Callable[[str], None]
-LogLevel: TypeAlias = str | int
+type LogValue = JSONValue
+type LogSink = str | os.PathLike[str] | IO[str] | Callable[[str], None]
+type LogLevel = str | int
 
 _EVENT_NAME = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 _FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]*$")

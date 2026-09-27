@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from OCP.BOPAlgo import BOPAlgo_CellsBuilder
+from OCP.collections import List_TopoDS_Shape
 from OCP.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
@@ -20,7 +21,6 @@ from OCP.TopAbs import (
 )
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Shape
-from OCP.TopTools import TopTools_ListOfShape
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -757,8 +757,8 @@ def _oriented_face(solid: Any, face: Any) -> Any:
     )
 
 
-def _shape_list(shapes: Sequence[Any]) -> TopTools_ListOfShape:
-    result = TopTools_ListOfShape()
+def _shape_list(shapes: Sequence[Any]) -> List_TopoDS_Shape:
+    result = List_TopoDS_Shape()
     for shape in shapes:
         result.Append(shape)
     return result
@@ -770,7 +770,7 @@ def _members(
     atoms: tuple[Any, ...],
 ) -> frozenset[int]:
     builder.RemoveAllFromResult()
-    builder.AddToResult(_shape_list((shape,)), TopTools_ListOfShape())
+    builder.AddToResult(_shape_list((shape,)), List_TopoDS_Shape())
     selected = _explore_unique(builder.Shape(), TopAbs_SOLID, TopoDS.Solid)
     return frozenset(_shape_index(atoms, value) for value in selected)
 

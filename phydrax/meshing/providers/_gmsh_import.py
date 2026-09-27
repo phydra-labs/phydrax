@@ -225,8 +225,7 @@ def _scope_samples(
     from OCP.TopoDS import TopoDS
 
     if scope.entity_dimension == 0:
-        # ty: ignore[unresolved-attribute]
-        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
+        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
         result = []
         for vertex in ids:
             point = BRep_Tool.Pnt_s(vertices[int(vertex)])
@@ -237,7 +236,7 @@ def _scope_samples(
             MeshingFailureCategory.PROVIDER_UNAVAILABLE,
             "The CAD kernel must expose the TopoDS.Edge_s edge downcast.",
         )
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)
+    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
     result = []
     for edge in ids:
         curve = BRepAdaptor_Curve(edges[int(edge)])
@@ -329,8 +328,7 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple:
             "Source solids require nonempty manifold boundaries with opposite shared-face orientations.",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
-    # ty: ignore[unresolved-attribute]
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     if len(solids) != topology.num_solids or any(
         not BRepCheck_Analyzer(solid).IsValid() for solid in solids
     ):
@@ -378,7 +376,6 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple:
                     "BRep solid interiors overlap; provider-side ownership fragmentation is prohibited.",
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
-    # ty: ignore[invalid-return-type]
     return solids
 
 

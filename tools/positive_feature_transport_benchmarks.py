@@ -9,13 +9,13 @@ import json
 import time
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 from benchmarks._runtime import logical_array_bytes
+from phydrax.axes import AxisArray
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -36,10 +36,9 @@ def _problem(size: int, dimension: int) -> Any:
     indices = jnp.arange(size * dimension, dtype="float64")
     source_points = jnp.reshape(jnp.sin(0.013 * indices), (size, dimension))
     target_points = jnp.reshape(jnp.cos(0.017 * indices), (size, dimension))
-    weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
+    weights = AxisArray(jnp.ones((size,), dtype="float64"), dims=("atom",))
     source = phx.integration.discrete(
         source_points,
-        # ty: ignore[invalid-argument-type]
         weights,
         axes="atom",
         normalized=True,
@@ -47,7 +46,6 @@ def _problem(size: int, dimension: int) -> Any:
     )
     target = phx.integration.discrete(
         target_points,
-        # ty: ignore[invalid-argument-type]
         weights,
         axes="atom",
         normalized=True,
@@ -108,10 +106,9 @@ def _record(
     plan_action_ms = 1e3 * (time.perf_counter() - started) / repeats
 
     def scalar(points: Any) -> Any:
-        weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
+        weights = AxisArray(jnp.ones((size,), dtype="float64"), dims=("atom",))
         source = phx.integration.discrete(
             points,
-            # ty: ignore[invalid-argument-type]
             weights,
             axes="atom",
             normalized=True,
@@ -119,7 +116,6 @@ def _record(
         )
         target = phx.integration.discrete(
             problem.target.points,
-            # ty: ignore[invalid-argument-type]
             weights,
             axes="atom",
             normalized=True,

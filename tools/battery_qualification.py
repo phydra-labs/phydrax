@@ -197,7 +197,6 @@ _PERFORMANCE_ENVIRONMENT_KEYS = (
     "JAX_COMPILATION_CACHE_DIR",
 )
 _RUNTIME_DISTRIBUTIONS = (
-    "coordax",
     "diffrax",
     "equinox",
     "jax",

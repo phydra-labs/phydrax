@@ -28,12 +28,13 @@ from typing import (
     Literal,
     NoReturn,
     TypeAlias,
+    TypeAliasType,
     Union,
 )
 
 import jax
 import numpy as np
-from typing_extensions import evaluate_forward_ref, get_annotations, TypeAliasType
+from typing_extensions import evaluate_forward_ref, get_annotations
 
 from ._dtype_names import dtype_matches, DTypeRule
 from ._typing_forms import (
@@ -305,6 +306,8 @@ def compile_form(form: object, /) -> Contract | None:
     """Compile one annotation; `None` means an ordinary static-only annotation."""
     origin = get_origin(form)
     arguments = get_args(form)
+    if isinstance(form, TypeAliasType) and not _is_vocabulary(form):
+        return compile_form(form.__value__)
     if isinstance(origin, TypeAliasType) and origin in TENSOR_FORMS:
         return _tensor(form, origin, arguments)
     if origin is Size:

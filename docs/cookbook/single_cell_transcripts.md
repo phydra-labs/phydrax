@@ -8,7 +8,7 @@ the synthetic generator; it is not fed to the fit or count-derived velocity esti
 
 ## Prerequisites and runnable command
 
-Use Python 3.11–3.13 with this checkout installed and a working supported JAX backend.
+Use Python 3.12 with this checkout installed and a working supported JAX backend.
 Run from the repository root:
 
 ```bash

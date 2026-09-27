@@ -428,14 +428,10 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
         embedding: PlanarEmbedding | None,
         /,
     ) -> None:
-        # ty: ignore[unresolved-attribute]
-        faces = tuple(_explore_unique(shape, TopAbs_FACE, TopoDS.Face_s))
-        # ty: ignore[unresolved-attribute]
-        edges = tuple(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s))
-        # ty: ignore[unresolved-attribute]
-        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
-        # ty: ignore[unresolved-attribute]
-        solids = tuple(_explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s))
+        faces = tuple(_explore_unique(shape, TopAbs_FACE, TopoDS.Face))
+        edges = tuple(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge))
+        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
+        solids = tuple(_explore_unique(shape, TopAbs_SOLID, TopoDS.Solid))
         topology = model.topology
         if (len(faces), len(edges), len(vertices), len(solids)) != (
             topology.num_faces,
@@ -736,7 +732,6 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
                 probes = probes[(probes >= first) & (probes <= last)]
                 distances = [np.linalg.norm(_xyz(curve.Value(p)) - query) for p in probes]
                 if _flat(
-                    # ty: ignore[invalid-argument-type]
                     distances,
                     float(np.linalg.norm(candidates[best] - query)),
                     tolerance,
@@ -802,7 +797,6 @@ class PreparedBRepProjection(StrictModule, NonTrainableState):
                         for sign in (-1.0, 1.0)
                     ]
                     if _flat(
-                        # ty: ignore[invalid-argument-type]
                         [np.linalg.norm(probe - query) for probe in probes],
                         distance,
                         tolerance,

@@ -9,7 +9,7 @@ physical clock or one accuracy claim. See the [scientific guide](../guides_nucle
 ## Prerequisites
 
 Run from a repository checkout containing `benchmarks/` and `tests/fixtures/`, with
-Python 3.11–3.13 and the checkout's Phydrax package/dependencies installed in `.venv`.
+Python 3.12 and the checkout's Phydrax package/dependencies installed in `.venv`.
 For a new environment, use the repository installation instructions; the commands below
 assume `.venv/bin/python` imports that checkout. No external prediction provider,
 commercial parameter table, network download, or pretrained checkpoint is required for

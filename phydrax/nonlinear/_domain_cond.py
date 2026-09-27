@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax._src import ad_util, core
 from jax._src.ad_checkpoint import transpose_jaxpr
-from jax._src.interpreters import ad, batching, mlir, partial_eval as pe, pxla
+from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax.typing import ArrayLike
 
 
@@ -114,7 +114,7 @@ def _transpose(
 ) -> list[Any]:
     linear = tuple(ad.is_undefined_primal(value) for value in arguments)
     zero = tuple(isinstance(value, ad_util.Zero) for value in cotangents)
-    transposed, input_zero = transpose_jaxpr(call, linear, zero)
+    transposed, input_zero, output_tree = transpose_jaxpr(call, linear, zero)
     inputs = (
         *(
             value
@@ -123,7 +123,12 @@ def _transpose(
         ),
         *(value for value, is_zero in zip(cotangents, zero, strict=True) if not is_zero),
     )
-    values = iter(_bind(transposed, inputs))
+    cotangent_values, logs = jax.tree.unflatten(
+        output_tree, _bind(transposed, inputs)
+    )
+    if jax.tree.leaves(logs):
+        raise RuntimeError("Domain conditional transpose produced unexpected logs.")
+    values = iter(cotangent_values)
     zeros = iter(input_zero)
     return [
         (ad_util.Zero(value.aval) if next(zeros) else next(values)) if is_linear else None
@@ -136,7 +141,6 @@ _domain_call.def_effectful_abstract_eval(_abstract)
 batching.primitive_batchers[_domain_call] = _batch
 ad.primitive_jvps[_domain_call] = _jvp
 ad.primitive_transposes[_domain_call] = _transpose
-pxla.register_initial_style_primitive(_domain_call)
 mlir.register_lowering(
     _domain_call, mlir.lower_fun(_implementation, multiple_results=True)
 )

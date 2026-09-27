@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from math import prod
-from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import equinox as eqx
 
@@ -20,7 +20,7 @@ from ..typing import parse
 from ..units._dimension import DimensionSignature
 
 
-PortVariance: TypeAlias = Literal[
+type PortVariance = Literal[
     "neutral", "primal", "dual", "covariant", "contravariant"
 ]
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -46,23 +46,21 @@ from ._state_space_inference import (
 from ._structured_laplace import StructuredLaplaceResult
 
 
-StateSpaceEstimationProblem: TypeAlias = (
-    StateSpaceProblem | RaoBlackwellizedStateSpaceProblem
-)
-ApproximateStateSpaceLikelihoodResult: TypeAlias = (
+type StateSpaceEstimationProblem = StateSpaceProblem | RaoBlackwellizedStateSpaceProblem
+type ApproximateStateSpaceLikelihoodResult = (
     BellmanFilterResult
     | ParticleFilterResult
     | GuidedParticleFilterResult
     | EnsembleFilterResult
     | RaoBlackwellizedFilterResult
 )
-StateSpaceLikelihoodBackend: TypeAlias = (
+type StateSpaceLikelihoodBackend = (
     ExactStateSpaceLikelihood | ApproximateStateSpaceLikelihoodResult
 )
-StateSpaceLikelihoodFunction: TypeAlias = Callable[
+type StateSpaceLikelihoodFunction = Callable[
     [StateSpaceEstimationProblem], StateSpaceLikelihoodBackend
 ]
-StateSpaceSampler: TypeAlias = Callable[..., Any]
+type StateSpaceSampler = Callable[..., Any]
 
 
 def _name(value: str, /, *, owner: str) -> str:

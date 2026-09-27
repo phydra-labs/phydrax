@@ -78,7 +78,6 @@ def test_real_gmsh_volume_result_is_audited_associated_and_solver_ready(
     assert result.trace.successful
     assert result.boundary is not None
     assert result.associations[0].complete
-    # ty: ignore[unresolved-attribute]
     assert result.geometry.elements[0].degree == geometry_order
     assert result.mesh.blocks[0].cell_kind == "tetrahedron"
     assert result.coordinate_contract.spatial_id == source.coordinate_contract.spatial_id
@@ -125,8 +124,7 @@ def _edge_scope(source: Any, axis: Any, coordinate: Any) -> Any:
 
     shape, _, _ = read_occt_shape(source.report.source_id)
     selected = []
-    # ty: ignore[unresolved-attribute]
-    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)):
+    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)):
         curve = BRepAdaptor_Curve(edge)
         values = [
             curve.Value(float(value))
@@ -325,7 +323,6 @@ def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path: Any) -> None
 
 
 def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() -> None:
-    # ty: ignore[unresolved-import]
     import gmsh
 
     from phydrax.meshing.providers._gmsh_elements import _audit_jacobians, _element_rows
@@ -347,7 +344,6 @@ def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() ->
 
 
 def test_real_gmsh_session_releases_global_ownership_after_body_failure() -> None:
-    # ty: ignore[unresolved-import]
     import gmsh
 
     provider = _provider()

@@ -16,7 +16,7 @@ admissibility requirements, and derivative admission of one binding.
 from collections.abc import Iterable
 from math import isfinite
 from numbers import Real
-from typing import Any, ClassVar, final, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, ClassVar, final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from ._array import AbstractArrayModel
 
 
-ExecutionTier: TypeAlias = Literal[
+type ExecutionTier = Literal[
     "native-jax",
     "functional-jax",
     "converted-native",
@@ -64,8 +64,8 @@ ExecutionTier: TypeAlias = Literal[
     "host-inference",
     "external-adjoint",
 ]
-RandomnessMode: TypeAlias = Literal["deterministic", "fixed-realization", "resampled"]
-CertificateRecord: TypeAlias = tuple[str, str, CapabilityEvidenceKind]
+type RandomnessMode = Literal["deterministic", "fixed-realization", "resampled"]
+type CertificateRecord = tuple[str, str, CapabilityEvidenceKind]
 
 _PYTHON_SCALAR_TYPES = (bool, int, float, complex)
 

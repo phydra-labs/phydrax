@@ -8,7 +8,7 @@ fixtures**, not a real Geant4 campaign or experimental DNA-damage reference.
 
 ## Prerequisites and command
 
-Use Python 3.11–3.13 with this checkout installed and a working supported JAX backend.
+Use Python 3.12 with this checkout installed and a working supported JAX backend.
 Run from the repository root, not from `docs/`:
 
 ```bash

@@ -9,12 +9,12 @@ import json
 import time
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.axes import AxisArray
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,8 +33,7 @@ def _parser() -> argparse.ArgumentParser:
 def _measure(points: Any, weights: Any, *, provenance: Any) -> Any:
     return phx.integration.discrete(
         points,
-        # ty: ignore[invalid-argument-type]
-        cx.Field(weights, dims=("atom",)),
+        AxisArray(weights, dims=("atom",)),
         axes="atom",
         normalized=False,
         provenance=provenance,
