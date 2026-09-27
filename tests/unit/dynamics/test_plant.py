@@ -157,7 +157,7 @@ def _allclose_tree(actual: Any, expected: Any) -> None:
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def test_mixed_pytree_reset_and_step_roll_back_every_failed_case_atomically() -> None:
+def test_plant_scenario_1() -> None:
     plant = _MixedPlant(jnp.asarray([True, False, True]))
     keys = _keys()
     reset = plant.reset(keys, _parameters(plant), case_shape=(3,), initial_time=0.25)
@@ -206,9 +206,6 @@ def test_mixed_pytree_reset_and_step_roll_back_every_failed_case_atomically() ->
         step.accepted_state.step_index[successful_cases], [1, 1]
     )
     np.testing.assert_array_equal(step.candidate_state.step_index, [1, 1, 1])
-
-
-def test_state_parameter_and_executable_identity_mismatches_are_rejected() -> None:
     plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     state = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state
@@ -274,9 +271,6 @@ def test_state_parameter_and_executable_identity_mismatches_are_rejected() -> No
     )
     with pytest.raises(ValueError, match="numeric revision"):
         plant.step(context, state, commands, stale_parameters)
-
-
-def test_nonfinite_control_is_casewise_failure_and_schema_mismatch_is_rejected() -> None:
     plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     state = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state

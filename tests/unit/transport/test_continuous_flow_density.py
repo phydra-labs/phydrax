@@ -56,7 +56,7 @@ def _flow(matrix: Any, *, shift: Any = None, max_exact_dimension: Any = 32) -> A
     )
 
 
-def test_zero_and_translation_flows_preserve_base_log_density() -> None:
+def test_continuous_flow_density_scenario_1() -> None:
     zero = _flow(jnp.zeros((2, 2)))
     values = jnp.asarray([[0.2, -0.4], [1.0, 0.5]])
     expected = _normal(jnp.zeros((2,)), jnp.eye(2)).log_prob(values)
@@ -66,9 +66,6 @@ def test_zero_and_translation_flows_preserve_base_log_density() -> None:
     translation = _flow(jnp.zeros((2, 2)), shift=[1.0, -2.0])
     translated = values + jnp.asarray([1.0, -2.0])
     assert jnp.allclose(translation.log_prob(translated), expected, atol=3e-7)
-
-
-def test_diagonal_linear_flow_matches_analytic_gaussian_and_log_volume() -> None:
     rates = jnp.asarray([0.3, -0.2])
     flow = _flow(jnp.diag(rates))
     data = jnp.asarray([[0.4, -0.7], [1.2, 0.1], [-0.5, 0.9]])
@@ -80,9 +77,6 @@ def test_diagonal_linear_flow_matches_analytic_gaussian_and_log_volume() -> None
     assert jnp.allclose(result.log_prob, target.log_prob(data), atol=4e-7)
     assert jnp.allclose(result.log_volume, -jnp.sum(rates), atol=3e-8)
     assert jnp.all(result.accepted_steps > 0)
-
-
-def test_sample_and_log_prob_agrees_with_inverse_evaluation_and_gradients() -> None:
     flow = _flow(jnp.asarray([[0.2, 0.0], [0.0, -0.1]]))
     samples, sampled_log_prob = flow.sample_and_log_prob(jr.key(11), (5,))
     inverse_log_prob = flow.log_prob(samples)
@@ -98,16 +92,13 @@ def test_sample_and_log_prob_agrees_with_inverse_evaluation_and_gradients() -> N
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
 
 
-def test_one_dimensional_flow_density_integrates_to_one() -> None:
+def test_continuous_flow_density_scenario_2() -> None:
     flow = _flow(jnp.asarray([[0.25]]))
     grid = jnp.linspace(-8.0, 8.0, 65)[:, None]
     density = jnp.exp(flow.log_prob(grid))
     mass = jnp.trapezoid(density, grid[:, 0])
 
     assert jnp.allclose(mass, 1.0, atol=2e-5)
-
-
-def test_stochastic_log_density_reports_replayable_probe_uncertainty() -> None:
     matrix = jnp.asarray([[0.1, 0.8], [-0.4, -0.2]])
     flow = _flow(matrix)
     value = jnp.asarray([0.25, -0.5])
@@ -129,9 +120,6 @@ def test_stochastic_log_density_reports_replayable_probe_uncertainty() -> None:
     assert not jnp.array_equal(first.probe_log_volumes, changed.probe_log_volumes)
     assert jnp.abs(first.log_prob - exact) <= 4.0 * first.standard_error + 2e-5
     assert first.standard_error > 0.0
-
-
-def test_continuous_flow_density_rejects_unsupported_contracts() -> None:
     with pytest.raises(ValueError, match="exceeds cap"):
         _flow(jnp.zeros((3, 3)), max_exact_dimension=2)
 
@@ -149,7 +137,7 @@ def test_continuous_flow_density_rejects_unsupported_contracts() -> None:
         phx.transport.ContinuousFlowLaw(transport)
 
 
-def test_piecewise_density_reduces_validity_over_active_tape_slots() -> None:
+def test_continuous_flow_density_scenario_3() -> None:
     guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0] - 0.5,
         guard_id="piecewise-density-velocity-change-guard",
@@ -186,6 +174,28 @@ def test_piecewise_density_reduces_validity_over_active_tape_slots() -> None:
     assert result.valid.shape == ()
     assert result.valid
     assert jnp.isclose(result.event_log_abs_determinant, jnp.log(2.0))
+    scalar = phx.uq.Uniform(-1.0, 1.0)
+    injective = phx.transport.InjectiveContinuousFlowLaw(
+        scalar,
+        lambda value: value[None],
+        lambda value: value[0],
+        event_shape=(1,),
+    )
+
+    injected = injective.sample(jr.key(31), (5,))
+
+    assert injected.shape == (5, 1)
+    assert injective.log_prob(injected).shape == (5,)
+
+    hybrid = phx.transport.HybridFlowLaw(
+        jnp.asarray([0.4, 0.6]),
+        (scalar, phx.uq.Uniform(1.0, 2.0)),
+        mode_id="scalar-hybrid",
+    )
+    samples = hybrid.sample(jr.key(32), (7,))
+
+    assert samples.value.shape == (7,)
+    assert hybrid.log_prob(samples.mode, samples.value).shape == (7,)
 
 
 def test_piecewise_density_binds_preparation_and_replay_policy_identity() -> None:
@@ -259,28 +269,3 @@ def test_piecewise_density_binds_preparation_and_replay_policy_identity() -> Non
         assert alternate_law.law_id != law.law_id
         with pytest.raises(ValueError, match="replay-policy identity"):
             alternate_law.log_prob_with_diagnostics(jnp.asarray([0.2]))
-
-
-def test_scalar_latent_and_hybrid_laws_preserve_sample_axes() -> None:
-    scalar = phx.uq.Uniform(-1.0, 1.0)
-    injective = phx.transport.InjectiveContinuousFlowLaw(
-        scalar,
-        lambda value: value[None],
-        lambda value: value[0],
-        event_shape=(1,),
-    )
-
-    injected = injective.sample(jr.key(31), (5,))
-
-    assert injected.shape == (5, 1)
-    assert injective.log_prob(injected).shape == (5,)
-
-    hybrid = phx.transport.HybridFlowLaw(
-        jnp.asarray([0.4, 0.6]),
-        (scalar, phx.uq.Uniform(1.0, 2.0)),
-        mode_id="scalar-hybrid",
-    )
-    samples = hybrid.sample(jr.key(32), (7,))
-
-    assert samples.value.shape == (7,)
-    assert hybrid.log_prob(samples.mode, samples.value).shape == (7,)

@@ -221,44 +221,37 @@ def _binding(*, two: Any = False, prior_sigma: Any = 0.02) -> Any:
     )
 
 
-@pytest.mark.parametrize("axis", ["lot", "wafer", "die", "structure", "condition"])
-def test_complete_group_holdout_cannot_be_replaced_by_random_curve_points(
-    axis: Any,
-) -> None:
-    train = _case("train")
-    heldout = _case("renamed-heldout", (0.2, 0.4, 0.6), die="train")
-    if axis == "condition":
-        heldout = eqx.tree_at(lambda c: c.controls, heldout, train.controls)
-        # Fresh observations may still be part of the same physical condition.
-        values = dict(
-            case_id=heldout.case_id,
-            observation_ids=heldout.observation_ids,
-            process_revision=heldout.process_revision,
-            geometry_id=heldout.geometry_id,
-            lot=heldout.lot,
-            wafer=heldout.wafer,
-            die=heldout.die,
-            structure=heldout.structure,
-            condition_group=train.condition_group,
-            correlation_group=heldout.correlation_group,
-            source_kind=heldout.source_kind,
-            source_uri=heldout.source_uri,
-            instrument_record=heldout.instrument_record,
-            deembedding_record=heldout.deembedding_record,
-            uncertainty_assumptions=heldout.uncertainty_assumptions,
-            terminal_definitions=heldout.terminal_definitions,
-            observables=heldout.observables,
-            reference=heldout.reference,
-            **heldout.arrays(),
-        )
-        heldout = SemiconductorMeasurementCase(**values)
-    with pytest.raises(ValueError, match="leakage"):
-        _campaign(train, heldout, axes=(axis,))
-
-
-def test_correlated_measurement_deembedding_and_control_errors_enter_joint_likelihood() -> (
-    None
-):
+def test_semiconductor_calibration_scenario_1() -> None:
+    for axis in ["lot", "wafer", "die", "structure", "condition"]:
+        train = _case("train")
+        heldout = _case("renamed-heldout", (0.2, 0.4, 0.6), die="train")
+        if axis == "condition":
+            heldout = eqx.tree_at(lambda c: c.controls, heldout, train.controls)
+            # Fresh observations may still be part of the same physical condition.
+            values = dict(
+                case_id=heldout.case_id,
+                observation_ids=heldout.observation_ids,
+                process_revision=heldout.process_revision,
+                geometry_id=heldout.geometry_id,
+                lot=heldout.lot,
+                wafer=heldout.wafer,
+                die=heldout.die,
+                structure=heldout.structure,
+                condition_group=train.condition_group,
+                correlation_group=heldout.correlation_group,
+                source_kind=heldout.source_kind,
+                source_uri=heldout.source_uri,
+                instrument_record=heldout.instrument_record,
+                deembedding_record=heldout.deembedding_record,
+                uncertainty_assumptions=heldout.uncertainty_assumptions,
+                terminal_definitions=heldout.terminal_definitions,
+                observables=heldout.observables,
+                reference=heldout.reference,
+                **heldout.arrays(),
+            )
+            heldout = SemiconductorMeasurementCase(**values)
+        with pytest.raises(ValueError, match="leakage"):
+            _campaign(train, heldout, axes=(axis,))
     train = _case("training", (0.2, 0.2), rho=0.5, deembed=1e-7, control_error=1e-3)
     campaign = _campaign(train)
     prepared = prepare_semiconductor_calibration(campaign, _binding(), _current)
@@ -291,9 +284,6 @@ def test_correlated_measurement_deembedding_and_control_errors_enter_joint_likel
         + jnp.log(2 * jnp.pi)
     )
     assert abs(float(expected - independent)) > 0.1
-
-
-def test_heldout_values_never_change_training_posterior() -> None:
     original = prepare_semiconductor_calibration(_campaign(), _binding(), _current)
     shifted = prepare_semiconductor_calibration(
         _campaign(heldout=_case("heldout", (0.2, 0.4, 0.6), observed_shift=1e-3)),
@@ -371,7 +361,7 @@ def test_unresolved_native_forward_preserves_rejected_evidence_and_stops_inferen
     )
 
 
-def test_an_unresolved_likelihood_point_is_not_given_zero_probability() -> None:
+def test_semiconductor_calibration_scenario_2() -> None:
     initial = jnp.asarray([1e-25])
     binding = SemiconductorParameterBinding(
         ParameterSpace(initial, log_prior=lambda p: -0.5 * jnp.sum((p / 0.1) ** 2)),
@@ -389,17 +379,11 @@ def test_an_unresolved_likelihood_point_is_not_given_zero_probability() -> None:
         RuntimeError, match="Numerically unresolved semiconductor forward"
     ):
         prepared.posterior.log_likelihood(jnp.asarray([0.1])).block_until_ready()
-
-
-def test_physical_prior_exclusion_is_not_numerical_failure() -> None:
     prepared = prepare_semiconductor_calibration(_campaign(), _binding(), _current)
     inadmissible = evaluate_semiconductor_forward(prepared, jnp.asarray([-0.1]))
     assert inadmissible.status == "physical-inadmissible"
     assert not inadmissible.cases
     assert float(prepared.posterior.log_likelihood(jnp.asarray([-0.1]))) == -math.inf
-
-
-def test_prior_curvature_cannot_identify_two_indistinguishable_mobilities() -> None:
     campaign = _campaign()
     weak = prepare_semiconductor_calibration(
         campaign, _binding(two=True, prior_sigma=0.2), _current

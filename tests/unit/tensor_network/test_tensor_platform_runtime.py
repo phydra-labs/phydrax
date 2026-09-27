@@ -194,7 +194,7 @@ def test_archive_rejects_zero_payload_before_publication(tmp_path: Any) -> None:
     assert not path.exists()
 
 
-def test_resource_refusal_is_explicit_and_typed() -> None:
+def test_tensor_platform_runtime_scenario_1() -> None:
     state = _mps()
     support = _support(state)
     policy = TensorNetworkResourcePolicy(
@@ -221,9 +221,6 @@ def test_resource_refusal_is_explicit_and_typed() -> None:
     )
     unsupported_refusal = admit_tensor_network_resources(forecast, (unsupported,))
     assert unsupported_refusal.failure == TensorNetworkFailure.UNSUPPORTED_TUPLE
-
-
-def test_telemetry_redacts_before_persisting_or_fingerprinting() -> None:
     policy = TensorNetworkTelemetryPolicy(
         ("iteration", "operator_norm", "access_token"),
         redacted_fields=("access_token",),
@@ -240,6 +237,64 @@ def test_telemetry_redacts_before_persisting_or_fingerprinting() -> None:
     assert dict(record.attributes)["access_token"] == "<redacted>"
     assert secret not in repr(record)
     assert record.redacted_fields == ("access_token",)
+    state = _mps()
+    support = _support(state)
+    claims = (
+        TensorNetworkClaim.FINITE_EXECUTION,
+        TensorNetworkClaim.DETERMINISTIC_REPLAY,
+    )
+    gates = (
+        TensorNetworkReleaseGate.CODE_VERIFICATION,
+        TensorNetworkReleaseGate.ARCHIVE_REPLAY,
+    )
+    profile = TensorNetworkQualificationProfile(
+        (support,),
+        {claim: 1e-6 for claim in claims},
+        required_claims=claims,
+        required_release_gates=gates,
+    )
+    evidence = tuple(
+        TensorNetworkClaimEvidence(
+            profile,
+            support,
+            claim,
+            jnp.asarray([0.0, 5e-7]),
+            source_id=f"computed-{claim.value}",
+        )
+        for claim in claims
+    )
+    result = TensorNetworkQualificationResult(profile, support, evidence)
+    assert result.passed
+    passing_gates = tuple(
+        ReleaseGateEvidence(
+            gate.value,
+            passed=True,
+            evidence_ids=(f"artifact-{gate.value}",),
+            reviewer_id="independent-reviewer",
+            issued_at=1,
+            expires_at=10,
+        )
+        for gate in gates
+    )
+    released = evaluate_tensor_network_release(result, passing_gates, evaluated_at=5)
+    assert released.released
+    assert released.failure == TensorNetworkFailure.NONE
+
+    rejected_gate = ReleaseGateEvidence(
+        TensorNetworkReleaseGate.ARCHIVE_REPLAY.value,
+        passed=False,
+        evidence_ids=("failed-replay",),
+        reviewer_id="independent-reviewer",
+        issued_at=1,
+        expires_at=10,
+    )
+    refused = evaluate_tensor_network_release(
+        result,
+        (passing_gates[0], rejected_gate),
+        evaluated_at=5,
+    )
+    assert not refused.released
+    assert refused.failure == TensorNetworkFailure.RELEASE_GATE_FAILED
 
 
 def test_accepted_checkpoint_and_replay_compatibility_are_exact(tmp_path: Any) -> None:
@@ -304,64 +359,3 @@ def test_accepted_checkpoint_and_replay_compatibility_are_exact(tmp_path: Any) -
     canceled_state = canceled.request_cancellation("operator cancellation")
     assert canceled_state.status == TensorNetworkRunStatus.CANCELED
     assert canceled_state.failure == TensorNetworkFailure.CANCELED
-
-
-def test_release_gate_decision_uses_computed_claim_evidence() -> None:
-    state = _mps()
-    support = _support(state)
-    claims = (
-        TensorNetworkClaim.FINITE_EXECUTION,
-        TensorNetworkClaim.DETERMINISTIC_REPLAY,
-    )
-    gates = (
-        TensorNetworkReleaseGate.CODE_VERIFICATION,
-        TensorNetworkReleaseGate.ARCHIVE_REPLAY,
-    )
-    profile = TensorNetworkQualificationProfile(
-        (support,),
-        {claim: 1e-6 for claim in claims},
-        required_claims=claims,
-        required_release_gates=gates,
-    )
-    evidence = tuple(
-        TensorNetworkClaimEvidence(
-            profile,
-            support,
-            claim,
-            jnp.asarray([0.0, 5e-7]),
-            source_id=f"computed-{claim.value}",
-        )
-        for claim in claims
-    )
-    result = TensorNetworkQualificationResult(profile, support, evidence)
-    assert result.passed
-    passing_gates = tuple(
-        ReleaseGateEvidence(
-            gate.value,
-            passed=True,
-            evidence_ids=(f"artifact-{gate.value}",),
-            reviewer_id="independent-reviewer",
-            issued_at=1,
-            expires_at=10,
-        )
-        for gate in gates
-    )
-    released = evaluate_tensor_network_release(result, passing_gates, evaluated_at=5)
-    assert released.released
-    assert released.failure == TensorNetworkFailure.NONE
-
-    rejected_gate = ReleaseGateEvidence(
-        TensorNetworkReleaseGate.ARCHIVE_REPLAY.value,
-        passed=False,
-        evidence_ids=("failed-replay",),
-        reviewer_id="independent-reviewer",
-        issued_at=1,
-        expires_at=10,
-    )
-    refused = evaluate_tensor_network_release(
-        result,
-        (passing_gates[0], rejected_gate),
-        evaluated_at=5,
-    )
-    assert not refused.released
-    assert refused.failure == TensorNetworkFailure.RELEASE_GATE_FAILED

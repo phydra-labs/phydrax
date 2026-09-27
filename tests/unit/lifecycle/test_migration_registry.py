@@ -58,7 +58,7 @@ def _edges() -> tuple[MigrationEdge, MigrationEdge]:
     )
 
 
-def test_registry_migrates_to_current_writer_with_digest_lineage() -> None:
+def test_migration_registry_scenario_1() -> None:
     first, second = _edges()
     registry = CompatibilityRegistry("current-format", (second, first))
 
@@ -74,9 +74,6 @@ def test_registry_migrates_to_current_writer_with_digest_lineage() -> None:
     )
     assert len(set(report.lineage)) == 3
     assert not report.lossy
-
-
-def test_registry_preserves_existing_lineage_and_requires_continuity() -> None:
     registry = CompatibilityRegistry("current-format", _edges())
     initial = registry.resolve({"value": 7}, source_format_id="source-format")
     ancestor = "0" * 64
@@ -95,9 +92,30 @@ def test_registry_preserves_existing_lineage_and_requires_continuity() -> None:
             source_format_id="source-format",
             lineage=(ancestor,),
         )
+    edges = (
+        MigrationEdge("v1", "left", _identity_copy, migration_id="to-left"),
+        MigrationEdge("left", "v3", _identity_copy, migration_id="left-current"),
+        MigrationEdge("v1", "right", _identity_copy, migration_id="to-right"),
+        MigrationEdge("right", "v3", _identity_copy, migration_id="right-current"),
+    )
+    registry = CompatibilityRegistry("v3", edges)
 
+    with pytest.raises(AmbiguousMigrationError, match="multiple shortest"):
+        registry.resolve({"value": 1}, source_format_id="v1")
+    with pytest.raises(UnsupportedMigrationError, match="cannot migrate"):
+        registry.resolve({"value": 1}, source_format_id="unknown")
+    cycle = (
+        MigrationEdge("v1", "v2", _identity_copy, migration_id="forward"),
+        MigrationEdge("v2", "v1", _identity_copy, migration_id="backward"),
+    )
 
-def test_registry_selects_unique_shortest_path_deterministically() -> None:
+    with pytest.raises(CyclicMigrationError, match="acyclic"):
+        CompatibilityRegistry("v3", cycle)
+    with pytest.raises(ValueError, match="current writer"):
+        CompatibilityRegistry(
+            "v3",
+            (MigrationEdge("v3", "v2", _identity_copy, migration_id="reverse-write"),),
+        )
     first, second = _edges()
     direct = MigrationEdge(
         "source-format",
@@ -111,39 +129,13 @@ def test_registry_selects_unique_shortest_path_deterministically() -> None:
 
     assert report.migration_ids == ("direct-value",)
     assert report.output_record == {"payload": 11}
+    first, second = _edges()
 
+    left = CompatibilityRegistry("current-format", (first, second))
+    right = CompatibilityRegistry("current-format", (second, first))
 
-def test_registry_rejects_ambiguous_and_unsupported_paths() -> None:
-    edges = (
-        MigrationEdge("v1", "left", _identity_copy, migration_id="to-left"),
-        MigrationEdge("left", "v3", _identity_copy, migration_id="left-current"),
-        MigrationEdge("v1", "right", _identity_copy, migration_id="to-right"),
-        MigrationEdge("right", "v3", _identity_copy, migration_id="right-current"),
-    )
-    registry = CompatibilityRegistry("v3", edges)
-
-    with pytest.raises(AmbiguousMigrationError, match="multiple shortest"):
-        registry.resolve({"value": 1}, source_format_id="v1")
-    with pytest.raises(UnsupportedMigrationError, match="cannot migrate"):
-        registry.resolve({"value": 1}, source_format_id="unknown")
-
-
-def test_registry_rejects_cycles_and_outgoing_current_writer_edges() -> None:
-    cycle = (
-        MigrationEdge("v1", "v2", _identity_copy, migration_id="forward"),
-        MigrationEdge("v2", "v1", _identity_copy, migration_id="backward"),
-    )
-
-    with pytest.raises(CyclicMigrationError, match="acyclic"):
-        CompatibilityRegistry("v3", cycle)
-    with pytest.raises(ValueError, match="current writer"):
-        CompatibilityRegistry(
-            "v3",
-            (MigrationEdge("v3", "v2", _identity_copy, migration_id="reverse-write"),),
-        )
-
-
-def test_lossy_migration_requires_explicit_authorization() -> None:
+    assert left.registry_id == right.registry_id
+    assert left.to_record() == right.to_record()
     registry = CompatibilityRegistry(
         "v2",
         (
@@ -161,9 +153,6 @@ def test_lossy_migration_requires_explicit_authorization() -> None:
         registry.resolve({"value": 1}, source_format_id="v1")
     report = registry.resolve({"value": 1}, source_format_id="v1", allow_lossy=True)
     assert report.lossy
-
-
-def test_report_reconstruction_and_rollback_select_the_parent_artifact() -> None:
     registry = CompatibilityRegistry("current-format", _edges())
     report = registry.resolve({"value": 19}, source_format_id="source-format")
 
@@ -184,17 +173,7 @@ def test_report_reconstruction_and_rollback_select_the_parent_artifact() -> None
     assert restored.rollback_artifact_id == report.input_digest
 
 
-def test_registry_identity_is_independent_of_edge_order() -> None:
-    first, second = _edges()
-
-    left = CompatibilityRegistry("current-format", (first, second))
-    right = CompatibilityRegistry("current-format", (second, first))
-
-    assert left.registry_id == right.registry_id
-    assert left.to_record() == right.to_record()
-
-
-def test_canonical_load_is_strict_and_rejects_nonfinite_values() -> None:
+def test_migration_registry_scenario_2() -> None:
     registry = CompatibilityRegistry("current-format", _edges())
     request = {
         "format_id": "source-format",
@@ -221,9 +200,6 @@ def test_canonical_load_is_strict_and_rejects_nonfinite_values() -> None:
                 }
             )
         )
-
-
-def test_migration_transform_cannot_rewrite_its_input_in_place() -> None:
     registry = CompatibilityRegistry(
         "v2",
         (MigrationEdge("v1", "v2", _mutate_input, migration_id="mutating-transition"),),

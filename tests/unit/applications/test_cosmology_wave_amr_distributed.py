@@ -98,7 +98,7 @@ def _prepared(*, cells: int = 8, adaptive: bool = False) -> Any:
     return hierarchy, prepared, prepared.initialize(tuple(values), 1.0)
 
 
-def test_single_part_distributed_entry_is_exact_local_authority() -> None:
+def test_cosmology_wave_amr_distributed_scenario_1() -> None:
     hierarchy, prepared, state = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 1),
@@ -118,11 +118,81 @@ def test_single_part_distributed_entry_is_exact_local_authority() -> None:
         result.state.psi.levels, authority.state.psi.levels, strict=True
     ):
         np.testing.assert_array_equal(actual.values, expected.values)
+    hierarchy, prepared, state = _prepared(cells=16, adaptive=True)
+    values = list(prepared.layout.bind_state(state.psi))
+    for level, mask in enumerate(prepared.layout.leaf_mask):
+        indices = np.argwhere(np.asarray(mask))
+        if indices.size:
+            values[level] = values[level].at[tuple(indices[0])].set(0.0 + 0.0j)
+            break
+    nodal_state = prepared.initialize(tuple(values), state.scale_factor)
+    proposal = prepared.propose_topology(nodal_state)
+    assert proposal.successful and proposal.compilation.status.changed
+    successor = prepared.plan.prepare(
+        prepared.physics,
+        proposal.compilation.topology,
+        prepared.background,
+    )
+    partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 1)
+    source = prepared.prepare_distributed(
+        partition,
+        maximum_bytes=20_000_000,
+    )
+    target = successor.prepare_distributed(
+        partition,
+        maximum_bytes=20_000_000,
+    )
+    packed = source.execution.bind_packed_state(
+        source.execution.pack_canonical_values(
+            prepared.layout.bind_state(nodal_state.psi)
+        ),
+        nodal_state.scale_factor,
+    )
+    authority = prepared.transition(nodal_state, proposal)
 
+    result = prepared.transition_distributed(
+        source,
+        packed,
+        proposal,
+        target,
+    )
 
-def test_two_part_metadata_prepares_exact_composite_and_fillpatch_routes_without_devices() -> (
-    None
-):
+    assert bool(result.successful) == bool(authority.successful)
+    np.testing.assert_allclose(
+        result.evidence.probability_relative_defect,
+        authority.evidence.probability_relative_defect,
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        result.evidence.phase_defect,
+        authority.evidence.phase_defect,
+        rtol=0.0,
+        atol=0.0,
+    )
+    candidate = target.hierarchy.unpack(result.candidate_state.psi)
+    for actual, expected in zip(
+        candidate.levels,
+        authority.candidate_state.psi.levels,
+        strict=True,
+    ):
+        np.testing.assert_array_equal(actual.values, expected.values)
+    assert result.candidate_state.execution_id == target.execution.execution_id
+    assert result.candidate_prepared.prepared_id == successor.prepared_id
+
+    rejected = prepared.transition_distributed(
+        source,
+        packed,
+        proposal,
+        target,
+        maximum_bytes=0,
+    )
+    assert not bool(rejected.successful)
+    assert rejected.candidate_state.execution_id == source.execution.execution_id
+    assert rejected.candidate_prepared.prepared_id == prepared.prepared_id
+    assert (
+        rejected.candidate_distributed_preparation.preparation_id == source.preparation_id
+    )
     hierarchy, prepared, _ = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
@@ -141,30 +211,6 @@ def test_two_part_metadata_prepares_exact_composite_and_fillpatch_routes_without
     assert distributed.required_bytes <= distributed.maximum_bytes
     assert distributed.mesh_id is None
     assert "ExecutionGroup mesh" in distributed.reason
-
-
-def test_resource_preflight_rejects_before_any_route_or_operator_allocation(
-    monkeypatch: Any,
-) -> None:
-    hierarchy, prepared, _ = _prepared()
-    partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
-
-    def forbidden_prepare(*args: Any, **kwargs: Any) -> None:
-        del args, kwargs
-        raise AssertionError("route construction happened before resource admission")
-
-    monkeypatch.setattr(type(partition), "prepare", forbidden_prepare)
-    rejected = prepared.prepare_distributed(partition, maximum_bytes=0)
-
-    assert not rejected.admitted
-    assert not rejected.executable
-    assert rejected.hierarchy is None
-    assert rejected.execution is None
-    assert rejected.required_bytes == rejected.preflight_required_bytes
-    assert rejected.required_bytes > rejected.maximum_bytes
-
-
-def test_accepted_boundary_repartition_uses_stable_block_identity_routes() -> None:
     hierarchy, prepared, state = _prepared(cells=16)
     partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
     source = prepared.prepare_distributed(partition, maximum_bytes=20_000_000)
@@ -205,9 +251,28 @@ def test_accepted_boundary_repartition_uses_stable_block_identity_routes() -> No
         prepared.migrate_distributed_state(source, rejected, target)
 
 
-def test_checkpoint_contract_binds_every_continuation_array_and_partition_identity() -> (
-    None
-):
+def test_resource_preflight_rejects_before_any_route_or_operator_allocation(
+    monkeypatch: Any,
+) -> None:
+    hierarchy, prepared, _ = _prepared()
+    partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 2)
+
+    def forbidden_prepare(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise AssertionError("route construction happened before resource admission")
+
+    monkeypatch.setattr(type(partition), "prepare", forbidden_prepare)
+    rejected = prepared.prepare_distributed(partition, maximum_bytes=0)
+
+    assert not rejected.admitted
+    assert not rejected.executable
+    assert rejected.hierarchy is None
+    assert rejected.execution is None
+    assert rejected.required_bytes == rejected.preflight_required_bytes
+    assert rejected.required_bytes > rejected.maximum_bytes
+
+
+def test_cosmology_wave_amr_distributed_scenario_2() -> None:
     hierarchy, prepared, _ = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
@@ -227,9 +292,6 @@ def test_checkpoint_contract_binds_every_continuation_array_and_partition_identi
         "['scale_factor']",
         "['accepted_boundary']",
     )
-
-
-def test_topology_successor_route_algebra_is_available_without_two_devices() -> None:
     hierarchy, prepared, state = _prepared(cells=16, adaptive=True)
     proposal = prepared.propose_topology(state)
     assert proposal.successful and proposal.compilation.status.changed
@@ -277,9 +339,6 @@ def test_topology_successor_route_algebra_is_available_without_two_devices() -> 
     assert any(owner.common_stable_block_ids)
     assert owner.overlap_capacity >= 1
     assert owner.halo.permutations
-
-
-def test_packed_state_validation_rejects_invalid_physics_and_storage() -> None:
     hierarchy, prepared, state = _prepared()
     distributed = prepared.prepare_distributed(
         phx.discretization.BlockAMRPartitionPlan(hierarchy, 2),
@@ -362,81 +421,3 @@ def test_process_checkpoint_accepts_local_path_subset_but_manifest_requires_inve
     )
     with pytest.raises(ValueError, match="inventory is incomplete"):
         execution._validate_checkpoint_manifest(incomplete, execution)
-
-
-def test_single_part_topology_transition_matches_local_authority_at_wave_node() -> None:
-    hierarchy, prepared, state = _prepared(cells=16, adaptive=True)
-    values = list(prepared.layout.bind_state(state.psi))
-    for level, mask in enumerate(prepared.layout.leaf_mask):
-        indices = np.argwhere(np.asarray(mask))
-        if indices.size:
-            values[level] = values[level].at[tuple(indices[0])].set(0.0 + 0.0j)
-            break
-    nodal_state = prepared.initialize(tuple(values), state.scale_factor)
-    proposal = prepared.propose_topology(nodal_state)
-    assert proposal.successful and proposal.compilation.status.changed
-    successor = prepared.plan.prepare(
-        prepared.physics,
-        proposal.compilation.topology,
-        prepared.background,
-    )
-    partition = phx.discretization.BlockAMRPartitionPlan(hierarchy, 1)
-    source = prepared.prepare_distributed(
-        partition,
-        maximum_bytes=20_000_000,
-    )
-    target = successor.prepare_distributed(
-        partition,
-        maximum_bytes=20_000_000,
-    )
-    packed = source.execution.bind_packed_state(
-        source.execution.pack_canonical_values(
-            prepared.layout.bind_state(nodal_state.psi)
-        ),
-        nodal_state.scale_factor,
-    )
-    authority = prepared.transition(nodal_state, proposal)
-
-    result = prepared.transition_distributed(
-        source,
-        packed,
-        proposal,
-        target,
-    )
-
-    assert bool(result.successful) == bool(authority.successful)
-    np.testing.assert_allclose(
-        result.evidence.probability_relative_defect,
-        authority.evidence.probability_relative_defect,
-        rtol=0.0,
-        atol=0.0,
-    )
-    np.testing.assert_allclose(
-        result.evidence.phase_defect,
-        authority.evidence.phase_defect,
-        rtol=0.0,
-        atol=0.0,
-    )
-    candidate = target.hierarchy.unpack(result.candidate_state.psi)
-    for actual, expected in zip(
-        candidate.levels,
-        authority.candidate_state.psi.levels,
-        strict=True,
-    ):
-        np.testing.assert_array_equal(actual.values, expected.values)
-    assert result.candidate_state.execution_id == target.execution.execution_id
-    assert result.candidate_prepared.prepared_id == successor.prepared_id
-
-    rejected = prepared.transition_distributed(
-        source,
-        packed,
-        proposal,
-        target,
-        maximum_bytes=0,
-    )
-    assert not bool(rejected.successful)
-    assert rejected.candidate_state.execution_id == source.execution.execution_id
-    assert rejected.candidate_prepared.prepared_id == prepared.prepared_id
-    assert (
-        rejected.candidate_distributed_preparation.preparation_id == source.preparation_id
-    )

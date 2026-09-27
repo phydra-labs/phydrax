@@ -14,15 +14,12 @@ from tools.operator_benchmarks import (
 )
 
 
-def test_periodic_clifford_laplacian_recovers_fourier_mode() -> None:
+def test_clifford_operator_benchmarks_scenario_1() -> None:
     count = 8
     coordinate = 2.0 * jnp.pi * jnp.arange(count) / count
     values = jnp.sin(coordinate)[None, :, None]
     operator = PeriodicCliffordLaplacian((count,))
     assert jnp.allclose(operator(values), -values, atol=1e-12, rtol=1e-12)
-
-
-def test_all_multigrade_scenarios_are_finite_and_schema_consistent() -> None:
     scenarios = clifford_benchmark_scenarios(4)
     assert tuple(value.name for value in scenarios) == (
         "clifford_incompressible_velocity_vorticity_2d",
@@ -35,9 +32,6 @@ def test_all_multigrade_scenarios_are_finite_and_schema_consistent() -> None:
         assert jnp.all(jnp.isfinite(scenario.inputs))
         assert jnp.all(jnp.isfinite(scenario.targets))
         assert scenario.scenario_id
-
-
-def test_entropy_euler_scenario_retains_pair_evidence_and_admissibility() -> None:
     scenario = entropy_euler_scenario(6)
     assert isinstance(scenario.diagnostics["pair_id"], str)
     assert bool(scenario.diagnostics["admissible"])

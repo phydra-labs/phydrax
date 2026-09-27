@@ -78,7 +78,7 @@ def _advance(batch: Any, values: Any) -> Any:
     return eqx.tree_at(lambda item: item.inputs["state"].values, batch, values)
 
 
-def test_energy_distance_is_zero_for_identical_ensembles_and_chunk_invariant() -> None:
+def test_distributional_semigroup_scenario_1() -> None:
     left = jr.normal(jr.key(0), (17, 3, 4))
     right = left + 0.6
     identical = phx.uq.energy_distance(left, left)
@@ -92,9 +92,6 @@ def test_energy_distance_is_zero_for_identical_ensembles_and_chunk_invariant() -
         phx.uq.energy_distance(left, right[..., :-1])
     with pytest.raises(ValueError, match="beta"):
         phx.uq.energy_distance(left, right, beta=0.0)
-
-
-def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry() -> None:
     batch = _transition_batch(cases=2, size=4)
     left_samples = jr.normal(jr.key(1), (8, 2, 4))
     right_samples = left_samples + jnp.asarray([0.0, 0.2, 0.4, 0.8])
@@ -144,11 +141,6 @@ def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry()
     )
     with pytest.raises(ValueError, match="physical output contract"):
         phx.uq.operator_ensemble_energy_distance(left, shifted)
-
-
-def test_distributional_semigroup_recognizes_brownian_composition_and_key_replay() -> (
-    None
-):
     batch = _transition_batch(cases=2, size=4)
     objective = phx.nn.operator.training.DistributionalSemigroupObjective(
         num_samples=32,

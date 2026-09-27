@@ -39,7 +39,7 @@ def _wcsph(name: Any, ids: Any, positions: Any, *, density_reference: Any = 1.0)
     return compiled, jnp.asarray(positions)[:, None], box
 
 
-def test_transport_velocity_runs_through_fixed_step_substrate() -> None:
+def test_advanced_particle_methods_scenario_1() -> None:
     compiled, position, _ = _wcsph("transport", range(6), (jnp.arange(6) + 0.5) / 6.0)
     transport = phx.discretization.PreparedTransportVelocityDynamics(
         compiled.dynamics,
@@ -62,9 +62,6 @@ def test_transport_velocity_runs_through_fixed_step_substrate() -> None:
     assert solution.successful
     assert jnp.all(jnp.isfinite(solution.states))
     assert jnp.isfinite(diagnostics.background_acceleration_norm)
-
-
-def test_multiphase_interface_is_reciprocal_and_compiles_flat_state() -> None:
     first, first_position, box = _wcsph("phase-a", range(4), (jnp.arange(4) + 0.25) / 4.0)
     second, second_position, _ = _wcsph("phase-b", range(4), (jnp.arange(4) + 0.75) / 4.0)
     phase_a = phx.discretization.PhaseDefinition("phase-a", first.dynamics)
@@ -93,9 +90,6 @@ def test_multiphase_interface_is_reciprocal_and_compiles_flat_state() -> None:
     assert rate.shape == state.shape
     assert jnp.allclose(diagnostics.total_momentum_rate, 0.0, atol=1e-13)
     assert diagnostics.interface_pair_count > 0
-
-
-def test_iisph_and_dfsph_fixed_steps_return_complete_projection_status() -> None:
     count = 6
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(

@@ -117,7 +117,7 @@ def _source(manifest: Any, name: Any = "raw") -> Any:
     )
 
 
-def test_gauge_preserves_handedness_and_proper_rigid_invariance() -> None:
+def test_coordinate_generation_scenario_1() -> None:
     _, _, _, support, x = _fixture()
     rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     first, valid = eqx.filter_jit(support.canonicalize)(jnp.asarray(x))
@@ -135,9 +135,6 @@ def test_gauge_preserves_handedness_and_proper_rigid_invariance() -> None:
     )(jnp.asarray(x))
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.allclose(jnp.sum(gradient, axis=0), 0.0, atol=1e-10)
-
-
-def test_offline_provider_mapping_reorders_without_erasing_parent_rights() -> None:
     construct, keys, mapping, support, x = _fixture()
     output, restricted_weights = _rights(), _rights(b"restricted-weights", training=False)
     records = tuple(
@@ -190,9 +187,6 @@ def test_offline_provider_mapping_reorders_without_erasing_parent_rights() -> No
     bad_mapping[keys[0]], bad_mapping[keys[1]] = mapping[keys[1]], mapping[keys[0]]
     with pytest.raises(ValueError):
         map_protein_hypothesis(result.hypotheses[0], support, bad_mapping)
-
-
-def test_training_refuses_restrictions_and_validation_leakage() -> None:
     _, _, _, support, x = _fixture()
     with pytest.raises(PermissionError):
         _data(support, x, _rights(training=False))

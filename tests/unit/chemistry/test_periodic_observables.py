@@ -58,7 +58,7 @@ def _scalar_chain(*, overlap: Any = 0.0) -> Any:
     return pencil, mesh, spectrum
 
 
-def test_generalized_velocity_contains_dS_and_is_physical_cartesian() -> None:
+def test_periodic_observables_scenario_1() -> None:
     pencil, mesh, spectrum = _scalar_chain(overlap=0.1)
     velocity = PeriodicVelocityPlan(pencil, spectrum).evaluate()
     q = np.asarray(mesh.fractional_points[:, 0])
@@ -80,9 +80,6 @@ def test_generalized_velocity_contains_dS_and_is_physical_cartesian() -> None:
     )
     assert velocity.derivative_basis == "cartesian-wavevector-m-per-s"
     assert bool(velocity.successful)
-
-
-def test_dos_and_metric_grouped_pdos_preserve_state_partition() -> None:
     # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[3.0]])
     basis = PeriodicOrbitalBasisPlan(
@@ -118,9 +115,6 @@ def test_dos_and_metric_grouped_pdos_preserve_state_partition() -> None:
     )
     assert pdos.metric_route == "generalized-mulliken-partition"
     assert bool(pdos.successful)
-
-
-def test_fermi_surface_reports_unresolved_corner_without_silent_interpolation() -> None:
     _, mesh, spectrum = _scalar_chain()
     resolved = fermi_surface_evidence(mesh, spectrum, 0.2)
     corner_energy = float(spectrum.energies[0, 0])

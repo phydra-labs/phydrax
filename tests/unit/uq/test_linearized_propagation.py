@@ -21,7 +21,7 @@ def _linear_problem() -> Any:
     return matrix, covariance, center
 
 
-def test_all_covariance_representations_recover_the_same_affine_pushforward() -> None:
+def test_linearized_propagation_scenario_1() -> None:
     matrix, covariance, center = _linear_problem()
     expected = matrix @ covariance @ matrix.T
     cholesky = jnp.linalg.cholesky(covariance)
@@ -47,6 +47,65 @@ def test_all_covariance_representations_recover_the_same_affine_pushforward() ->
         )
         if not isinstance(declared, phx.uq.CovarianceOperator):
             assert jnp.allclose(result.exact_variance(batch_size=1), jnp.diag(expected))
+    multiplier = jnp.asarray(1.0 + 2.0j)
+    center = jnp.asarray([1.0 - 0.5j, -0.2 + 0.3j])
+    result = phx.uq.propagate_linearized(
+        lambda value: multiplier * value,
+        center,
+        phx.uq.DenseCovariance(jnp.eye(2)),
+        complex_linear=True,
+    )
+    cotangent = jnp.asarray([0.4 + 0.7j, -0.1 + 0.2j])
+
+    assert jnp.allclose(result.pullback(cotangent), jnp.conj(multiplier) * cotangent)
+    assert jnp.allclose(result.exact_variance(), jnp.full((2,), 5.0))
+    assert jnp.allclose(
+        result.materialize_covariance().matrix,
+        5.0 * jnp.eye(2),
+    )
+
+    with pytest.raises(ValueError, match="complex_linear=True"):
+        phx.uq.propagate_linearized(
+            lambda value: multiplier * value,
+            center,
+            phx.uq.DiagonalCovariance(jnp.ones(2)),
+        )
+    covariance = jnp.asarray(
+        [
+            [2.0, 0.4, -0.2, 0.1],
+            [0.4, 1.5, 0.3, -0.2],
+            [-0.2, 0.3, 1.2, 0.25],
+            [0.1, -0.2, 0.25, 0.9],
+        ]
+    )
+    result = phx.uq.propagate_linearized(
+        lambda value: value,
+        jnp.zeros(4),
+        phx.uq.CovarianceOperator(lambda vector: covariance @ vector),
+    )
+
+    estimate = result.estimate_variance(jr.key(8), num_probes=2048, batch_size=127)
+    replay = result.estimate_variance(jr.key(8), num_probes=2048, batch_size=127)
+    repeated = result.estimate_variance(jr.key(8), num_probes=2048, batch_size=503)
+    changed = result.estimate_variance(jr.key(9), num_probes=2048)
+
+    assert estimate.approximation == "first_order_hutchinson"
+    assert estimate.probe_distribution == "rademacher"
+    assert estimate.num_probes == 2048
+    assert not estimate.exact
+    assert jnp.array_equal(estimate.variance, replay.variance)
+    assert jnp.array_equal(estimate.standard_error, replay.standard_error)
+    assert jnp.allclose(estimate.variance, repeated.variance, rtol=1e-14, atol=1e-14)
+    assert jnp.allclose(
+        estimate.standard_error,
+        repeated.standard_error,
+        rtol=1e-14,
+        atol=1e-14,
+    )
+    assert not jnp.array_equal(estimate.variance, changed.variance)
+    assert jnp.allclose(estimate.variance, jnp.diag(covariance), atol=0.04)
+    assert jnp.all(jnp.isfinite(estimate.standard_error))
+    assert jnp.all(estimate.standard_error > 0.0)
 
 
 def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions() -> None:
@@ -108,72 +167,7 @@ def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions() -
     assert jnp.allclose(left, right)
 
 
-def test_complex_linear_propagation_uses_the_hermitian_adjoint() -> None:
-    multiplier = jnp.asarray(1.0 + 2.0j)
-    center = jnp.asarray([1.0 - 0.5j, -0.2 + 0.3j])
-    result = phx.uq.propagate_linearized(
-        lambda value: multiplier * value,
-        center,
-        phx.uq.DenseCovariance(jnp.eye(2)),
-        complex_linear=True,
-    )
-    cotangent = jnp.asarray([0.4 + 0.7j, -0.1 + 0.2j])
-
-    assert jnp.allclose(result.pullback(cotangent), jnp.conj(multiplier) * cotangent)
-    assert jnp.allclose(result.exact_variance(), jnp.full((2,), 5.0))
-    assert jnp.allclose(
-        result.materialize_covariance().matrix,
-        5.0 * jnp.eye(2),
-    )
-
-    with pytest.raises(ValueError, match="complex_linear=True"):
-        phx.uq.propagate_linearized(
-            lambda value: multiplier * value,
-            center,
-            phx.uq.DiagonalCovariance(jnp.ones(2)),
-        )
-
-
-def test_hutchinson_diagonal_is_keyed_and_reports_sampling_error() -> None:
-    covariance = jnp.asarray(
-        [
-            [2.0, 0.4, -0.2, 0.1],
-            [0.4, 1.5, 0.3, -0.2],
-            [-0.2, 0.3, 1.2, 0.25],
-            [0.1, -0.2, 0.25, 0.9],
-        ]
-    )
-    result = phx.uq.propagate_linearized(
-        lambda value: value,
-        jnp.zeros(4),
-        phx.uq.CovarianceOperator(lambda vector: covariance @ vector),
-    )
-
-    estimate = result.estimate_variance(jr.key(8), num_probes=2048, batch_size=127)
-    replay = result.estimate_variance(jr.key(8), num_probes=2048, batch_size=127)
-    repeated = result.estimate_variance(jr.key(8), num_probes=2048, batch_size=503)
-    changed = result.estimate_variance(jr.key(9), num_probes=2048)
-
-    assert estimate.approximation == "first_order_hutchinson"
-    assert estimate.probe_distribution == "rademacher"
-    assert estimate.num_probes == 2048
-    assert not estimate.exact
-    assert jnp.array_equal(estimate.variance, replay.variance)
-    assert jnp.array_equal(estimate.standard_error, replay.standard_error)
-    assert jnp.allclose(estimate.variance, repeated.variance, rtol=1e-14, atol=1e-14)
-    assert jnp.allclose(
-        estimate.standard_error,
-        repeated.standard_error,
-        rtol=1e-14,
-        atol=1e-14,
-    )
-    assert not jnp.array_equal(estimate.variance, changed.variance)
-    assert jnp.allclose(estimate.variance, jnp.diag(covariance), atol=0.04)
-    assert jnp.all(jnp.isfinite(estimate.standard_error))
-    assert jnp.all(estimate.standard_error > 0.0)
-
-
-def test_large_matrix_free_operator_path_rejects_dense_shortcuts() -> None:
+def test_linearized_propagation_scenario_2() -> None:
     dimension = 20_000
     center = jnp.linspace(-1.0, 1.0, dimension)
     result = phx.uq.propagate_linearized(
@@ -188,23 +182,14 @@ def test_large_matrix_free_operator_path_rejects_dense_shortcuts() -> None:
         result.exact_variance()
     with pytest.raises(ValueError, match="exceeds max_dimension"):
         result.materialize_covariance(max_dimension=128)
-
-
-@pytest.mark.parametrize(
-    "factory",
-    [
+    for factory in [
         lambda: phx.uq.DiagonalCovariance(jnp.asarray([1.0, -0.1])),
         lambda: phx.uq.DenseCovariance(jnp.asarray([[1.0, 0.5], [0.0, 1.0]])),
         lambda: phx.uq.DenseCovariance(jnp.asarray([[1.0, 2.0], [2.0, 1.0]])),
         lambda: phx.uq.FactorCovariance(jnp.ones((0, 2))),
-    ],
-)
-def test_covariance_representations_reject_invalid_declarations(factory: Any) -> None:
-    with pytest.raises((TypeError, ValueError)):
-        factory()
-
-
-def test_covariance_representations_can_be_declared_under_jit() -> None:
+    ]:
+        with pytest.raises((TypeError, ValueError)):
+            factory()
     diagonal, dense, factor = jax.jit(
         lambda variance, matrix, factors: (
             phx.uq.DiagonalCovariance(variance),
@@ -216,9 +201,6 @@ def test_covariance_representations_can_be_declared_under_jit() -> None:
     assert jnp.array_equal(diagonal.variance, jnp.asarray([0.25, 0.5]))
     assert jnp.array_equal(dense.matrix, jnp.eye(2))
     assert jnp.array_equal(factor.factors, jnp.eye(2))
-
-
-def test_linearized_propagation_rejects_shape_and_materialization_mismatches() -> None:
     with pytest.raises(ValueError, match="shape must match"):
         phx.uq.propagate_linearized(
             lambda value: value,

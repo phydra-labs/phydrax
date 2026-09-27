@@ -35,7 +35,7 @@ def _mixed_policy(*, refinement_steps: int = 3) -> Any:
     )
 
 
-def test_dense_mixed_precision_refinement_improves_certified_solution() -> None:
+def test_linalg_mixed_precision_scenario_1() -> None:
     matrix = jnp.asarray(
         [
             [1.234567890123, 0.345678901234],
@@ -75,9 +75,6 @@ def test_dense_mixed_precision_refinement_improves_certified_solution() -> None:
 
     selected = la.plan(problem, refined_policy).candidates[-1]
     assert selected.factorization_bytes == matrix.size * jnp.dtype(jnp.float32).itemsize
-
-
-def test_mixed_precision_rejects_unsafe_condition_before_factorization() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 1.0e-8], dtype=jnp.float64))
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
 
@@ -86,9 +83,6 @@ def test_mixed_precision_rejects_unsafe_condition_before_factorization() -> None
         match="capability rejected before low-precision factorization",
     ):
         la.prepare(problem, _mixed_policy())
-
-
-def test_mixed_precision_rejects_unsupported_factor_and_accumulation_dtypes() -> None:
     matrix = jnp.asarray([[2.0, 0.25], [0.5, 1.5]], dtype=jnp.float64)
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
     unsupported_factor = la.LinearSolvePolicy(
@@ -113,9 +107,6 @@ def test_mixed_precision_rejects_unsupported_factor_and_accumulation_dtypes() ->
         la.plan(problem, unsupported_factor)
     with pytest.raises(ValueError, match="accumulation_dtype"):
         la.plan(problem, unsupported_accumulation)
-
-
-def test_default_dense_precision_behavior_and_evidence_remain_unchanged() -> None:
     matrix = jnp.asarray([[2.25, -0.5], [0.75, 1.5]], dtype=jnp.float64)
     rhs = jnp.asarray([1.0, -2.0], dtype=jnp.float64)
     result = la.solve(la.LinearSystem(la.DenseLinearOperator(matrix)), rhs)

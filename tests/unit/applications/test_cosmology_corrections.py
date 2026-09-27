@@ -51,7 +51,7 @@ def _linear_power() -> Any:
     return background, power
 
 
-def test_multiplicative_correction_preserves_grid_and_chains_provenance() -> None:
+def test_cosmology_corrections_scenario_1() -> None:
     _, power = _linear_power()
     card = cosmology.CorrectionModelCard(
         name="test-boost",
@@ -89,9 +89,6 @@ def test_multiplicative_correction_preserves_grid_and_chains_provenance() -> Non
         lambda strength: jnp.sum(plan.apply(power, strength=strength).power.power_values)
     )(jnp.asarray(0.5))
     np.testing.assert_allclose(derivative, jnp.sum(power.power_values))
-
-
-def test_correction_rejects_wrong_denominator_and_domain() -> None:
     _, power = _linear_power()
     card = cosmology.CorrectionModelCard(
         name="bad-domain",

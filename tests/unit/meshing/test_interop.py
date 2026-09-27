@@ -97,7 +97,7 @@ def test_external_metadata_loss_requires_permission_before_writing(tmp_path: Any
     assert not path.exists()
 
 
-def test_native_roundtrip_preserves_organization_units_and_lower_entity_ids() -> None:
+def test_native_contracts() -> None:
     original = _mesh()
     mesh = phx.discretization.CellMesh(
         original.coordinates,
@@ -158,6 +158,72 @@ def test_native_roundtrip_preserves_organization_units_and_lower_entity_ids() ->
             restored.mesh.entity_set(dimension).entity_ids,
             mesh.entity_set(dimension).entity_ids,
         )
+    for cell_type in tuple(MESHIO_CELL_TYPES):
+        kind, order, corners = MESHIO_CELL_TYPES[cell_type]
+        points = meshio_reference_nodes(cell_type)
+        vertex_ids = np.arange(corners, dtype=np.int64)[::-1] + 100
+        mesh = phx.discretization.CellMesh(
+            points[:corners],
+            (
+                phx.discretization.CellBlock(
+                    "named-block",
+                    kind,
+                    np.arange(corners, dtype=np.int32)[None, :],
+                    global_ids=np.asarray((500,)),
+                ),
+            ),
+            vertex_global_ids=vertex_ids,
+        )
+        element = phx.discretization.lagrange_element(kind, order)
+        permutation = reference_node_permutation(cell_type, element.reference_nodes)
+        curved_points = points.copy()
+        if order > 1:
+            curved_points[corners:, 0] += 0.03125
+        geometry = phx.discretization.CellGeometrySpec(
+            {"named-block": element}, {"named-block": permutation[None, :]}, curved_points
+        )
+        point_ids = np.concatenate(
+            (vertex_ids, np.arange(points.shape[0] - corners, dtype=np.int64) + 1000)
+        )
+        artifact, report = export_mesh_array_artifact(
+            mesh, geometry, _policy(), point_global_ids=point_ids
+        )
+        restored = phx.meshing.import_cell_mesh(artifact, _policy())
+        assert report.status == phx.interchange.AdapterStatus.LOSSLESS
+        np.testing.assert_array_equal(
+            artifact.blocks[0].connectivity, np.arange(points.shape[0])[None, :]
+        )
+        np.testing.assert_array_equal(restored.artifact.point_global_ids, point_ids)
+        np.testing.assert_array_equal(
+            restored.geometry.geometry_dofs[0], permutation[None, :]
+        )
+        np.testing.assert_array_equal(restored.geometry.coordinates, curved_points)
+        np.testing.assert_array_equal(restored.mesh.vertex_global_ids, vertex_ids)
+    mesh = _mesh()
+    permutation = np.asarray((2, 0, 3, 1))
+    inverse = np.argsort(permutation)
+    geometry = phx.discretization.CellGeometrySpec(
+        {mesh.blocks[0].name: phx.discretization.lagrange_element("triangle", 1)},
+        {mesh.blocks[0].name: inverse[np.asarray(mesh.blocks[0].vertices)]},
+        np.asarray(mesh.coordinates)[permutation] + 0.5,
+    )
+    artifact, _ = export_mesh_array_artifact(mesh, geometry, _policy())
+    restored = phx.meshing.import_cell_mesh(artifact, _policy())
+    np.testing.assert_array_equal(
+        artifact.point_global_ids, np.asarray(mesh.vertex_global_ids)[permutation]
+    )
+    np.testing.assert_array_equal(restored.mesh.vertex_global_ids, mesh.vertex_global_ids)
+    np.testing.assert_array_equal(restored.mesh.coordinates, mesh.coordinates)
+    np.testing.assert_array_equal(restored.geometry.coordinates, geometry.coordinates)
+    mesh = _mesh()
+    artifact, _ = export_mesh_array_artifact(
+        mesh, phx.discretization.CellGeometrySpec.affine(mesh), _policy()
+    )
+    different = phx.meshing.MeshInteropPolicy(
+        phx.SpatialCoordinateContract(phx.units.METER, reference_frame="other")
+    )
+    with pytest.raises(ValueError, match="coordinate contract"):
+        phx.meshing.import_cell_mesh(artifact, different)
 
 
 def test_external_export_reports_region_and_patch_semantic_losses(tmp_path: Any) -> None:
@@ -190,85 +256,6 @@ def test_external_export_reports_region_and_patch_semantic_losses(tmp_path: Any)
         "patches",
         "patches.fluid-wall.adjacent_zone_ids",
     } <= losses
-
-
-@pytest.mark.parametrize("cell_type", tuple(MESHIO_CELL_TYPES))
-def test_native_roundtrip_preserves_shared_reference_ordering_and_geometry_ids(
-    cell_type: Any,
-) -> None:
-    kind, order, corners = MESHIO_CELL_TYPES[cell_type]
-    points = meshio_reference_nodes(cell_type)
-    vertex_ids = np.arange(corners, dtype=np.int64)[::-1] + 100
-    mesh = phx.discretization.CellMesh(
-        points[:corners],
-        (
-            phx.discretization.CellBlock(
-                "named-block",
-                kind,
-                np.arange(corners, dtype=np.int32)[None, :],
-                global_ids=np.asarray((500,)),
-            ),
-        ),
-        vertex_global_ids=vertex_ids,
-    )
-    element = phx.discretization.lagrange_element(kind, order)
-    permutation = reference_node_permutation(cell_type, element.reference_nodes)
-    curved_points = points.copy()
-    if order > 1:
-        curved_points[corners:, 0] += 0.03125
-    geometry = phx.discretization.CellGeometrySpec(
-        {"named-block": element}, {"named-block": permutation[None, :]}, curved_points
-    )
-    point_ids = np.concatenate(
-        (vertex_ids, np.arange(points.shape[0] - corners, dtype=np.int64) + 1000)
-    )
-    artifact, report = export_mesh_array_artifact(
-        mesh, geometry, _policy(), point_global_ids=point_ids
-    )
-    restored = phx.meshing.import_cell_mesh(artifact, _policy())
-    assert report.status == phx.interchange.AdapterStatus.LOSSLESS
-    np.testing.assert_array_equal(
-        artifact.blocks[0].connectivity, np.arange(points.shape[0])[None, :]
-    )
-    np.testing.assert_array_equal(restored.artifact.point_global_ids, point_ids)
-    np.testing.assert_array_equal(
-        restored.geometry.geometry_dofs[0], permutation[None, :]
-    )
-    np.testing.assert_array_equal(restored.geometry.coordinates, curved_points)
-    np.testing.assert_array_equal(restored.mesh.vertex_global_ids, vertex_ids)
-
-
-def test_native_reordered_geometry_keeps_vertex_ids_and_separate_vertex_coordinates() -> (
-    None
-):
-    mesh = _mesh()
-    permutation = np.asarray((2, 0, 3, 1))
-    inverse = np.argsort(permutation)
-    geometry = phx.discretization.CellGeometrySpec(
-        {mesh.blocks[0].name: phx.discretization.lagrange_element("triangle", 1)},
-        {mesh.blocks[0].name: inverse[np.asarray(mesh.blocks[0].vertices)]},
-        np.asarray(mesh.coordinates)[permutation] + 0.5,
-    )
-    artifact, _ = export_mesh_array_artifact(mesh, geometry, _policy())
-    restored = phx.meshing.import_cell_mesh(artifact, _policy())
-    np.testing.assert_array_equal(
-        artifact.point_global_ids, np.asarray(mesh.vertex_global_ids)[permutation]
-    )
-    np.testing.assert_array_equal(restored.mesh.vertex_global_ids, mesh.vertex_global_ids)
-    np.testing.assert_array_equal(restored.mesh.coordinates, mesh.coordinates)
-    np.testing.assert_array_equal(restored.geometry.coordinates, geometry.coordinates)
-
-
-def test_native_coordinate_contract_mismatch_is_rejected() -> None:
-    mesh = _mesh()
-    artifact, _ = export_mesh_array_artifact(
-        mesh, phx.discretization.CellGeometrySpec.affine(mesh), _policy()
-    )
-    different = phx.meshing.MeshInteropPolicy(
-        phx.SpatialCoordinateContract(phx.units.METER, reference_frame="other")
-    )
-    with pytest.raises(ValueError, match="coordinate contract"):
-        phx.meshing.import_cell_mesh(artifact, different)
 
 
 def test_export_rejects_stale_attribute_binding_and_reserved_identity_name(
@@ -441,7 +428,7 @@ def _artifact(blocks: Any, *, fields: Any = ()) -> Any:
     )
 
 
-def test_artifact_rejects_ambiguous_block_and_field_identity() -> None:
+def test_interop_scenario_1() -> None:
     first = MeshArrayBlock(
         "same", "triangle", "triangle", 1, np.asarray(((0, 1, 2),)), np.asarray((10,))
     )
@@ -465,19 +452,9 @@ def test_artifact_rejects_ambiguous_block_and_field_identity() -> None:
     )
     with pytest.raises(ValueError, match="field names"):
         _artifact((first,), fields=(repeated, repeated))
-
-
-@pytest.mark.parametrize(
-    "invalid", [np.asarray(((0.0, 1.5, 2.0),)), np.asarray(((False, True, True),))]
-)
-def test_artifact_rejects_noninteger_connectivity_without_truncation(
-    invalid: Any,
-) -> None:
-    with pytest.raises(TypeError, match="integers"):
-        MeshArrayBlock("a", "triangle", "triangle", 1, invalid, np.asarray((10,)))
-
-
-def test_artifact_owns_arrays_and_rejects_malformed_reference_width() -> None:
+    for invalid in [np.asarray(((0.0, 1.5, 2.0),)), np.asarray(((False, True, True),))]:
+        with pytest.raises(TypeError, match="integers"):
+            MeshArrayBlock("a", "triangle", "triangle", 1, invalid, np.asarray((10,)))
     connectivity = np.asarray(((0, 1, 2),))
     ids = np.asarray((10,))
     values = np.asarray((7.0,))
@@ -505,6 +482,25 @@ def test_artifact_owns_arrays_and_rejects_malformed_reference_width() -> None:
     )
     with pytest.raises(ValueError, match="connectivity width"):
         phx.meshing.import_cell_mesh(_artifact((malformed,)), _policy())
+    points = meshio_reference_nodes("triangle6")
+    mesh = phx.discretization.CellMesh.from_triangles(
+        points[:3], np.asarray(((0, 1, 2),)), vertex_global_ids=np.asarray((5, 0, 2))
+    )
+    element = phx.discretization.lagrange_element("triangle", 2)
+    block = mesh.blocks[0]
+    geometry = phx.discretization.CellGeometrySpec(
+        {block.name: element},
+        {
+            block.name: reference_node_permutation("triangle6", element.reference_nodes)[
+                None, :
+            ]
+        },
+        points,
+    )
+    artifact, report = export_mesh_array_artifact(mesh, geometry, _policy())
+    np.testing.assert_array_equal(artifact.point_global_ids[:3], (5, 0, 2))
+    assert np.unique(artifact.point_global_ids).size == 6
+    assert "high_order_point_global_ids" in {loss.path for loss in report.losses}
 
 
 def test_disjoint_same_name_cell_attributes_survive_native_and_file_roundtrip(
@@ -563,25 +559,3 @@ def test_tensor_attributes_preserve_native_shape_and_declare_file_loss(
     )
     assert "attribute.tensor" in {loss.path for loss in exported.report.losses}
     assert "tensor" not in exported.report.preserved_fields
-
-
-def test_generated_geometry_ids_keep_unsorted_vertex_ids_without_collision() -> None:
-    points = meshio_reference_nodes("triangle6")
-    mesh = phx.discretization.CellMesh.from_triangles(
-        points[:3], np.asarray(((0, 1, 2),)), vertex_global_ids=np.asarray((5, 0, 2))
-    )
-    element = phx.discretization.lagrange_element("triangle", 2)
-    block = mesh.blocks[0]
-    geometry = phx.discretization.CellGeometrySpec(
-        {block.name: element},
-        {
-            block.name: reference_node_permutation("triangle6", element.reference_nodes)[
-                None, :
-            ]
-        },
-        points,
-    )
-    artifact, report = export_mesh_array_artifact(mesh, geometry, _policy())
-    np.testing.assert_array_equal(artifact.point_global_ids[:3], (5, 0, 2))
-    assert np.unique(artifact.point_global_ids).size == 6
-    assert "high_order_point_global_ids" in {loss.path for loss in report.losses}

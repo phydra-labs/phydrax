@@ -158,7 +158,7 @@ def _problem_and_plan(
     return controlled_problem, policy, fitted_problem, plan
 
 
-def test_exact_linear_feature_value_recovery_and_deterministic_reduction() -> None:
+def test_fitted_bellman_scenario_1() -> None:
     _, _, problem, plan = _problem_and_plan()
 
     result = fit_frozen_policy_bellman(problem, plan)
@@ -180,9 +180,6 @@ def test_exact_linear_feature_value_recovery_and_deterministic_reduction() -> No
     assert result.frozen_policy_evaluation
     assert not result.policy_improvement_performed
     assert not result.optimality_claimed
-
-
-def test_backward_regression_uses_explicit_training_weights() -> None:
     controlled, policy = _controlled_problem(num_steps=1)
     _, _, problem, plan = _problem_and_plan(
         controlled_problem=controlled,
@@ -208,9 +205,6 @@ def test_backward_regression_uses_explicit_training_weights() -> None:
         0.0,
         atol=1e-6,
     )
-
-
-def test_rank_deficiency_without_ridge_is_reported_without_pseudoinverse() -> None:
     feature_map = lambda time, state, args: jnp.asarray([1.0, state[0]])
     _, _, problem, plan = _problem_and_plan(
         feature_map=feature_map,
@@ -229,7 +223,7 @@ def test_rank_deficiency_without_ridge_is_reported_without_pseudoinverse() -> No
     assert int(result.stage_status[0]) == FittedBellmanStatus.DEPENDENCY_FAILED
 
 
-def test_ridge_regularizes_solve_but_does_not_hide_original_normal_residual() -> None:
+def test_fitted_bellman_scenario_2() -> None:
     _, _, problem, plan = _problem_and_plan(ridge=0.5)
 
     result = fit_frozen_policy_bellman(problem, plan)
@@ -244,9 +238,6 @@ def test_ridge_regularizes_solve_but_does_not_hide_original_normal_residual() ->
         atol=2e-5,
     )
     assert np.all(np.asarray(result.training_weighted_rmse) > 0.0)
-
-
-def test_training_fit_and_holdout_bellman_identity_are_separate() -> None:
     train_noise = jnp.zeros((4, 2, 1))
     holdout_noise = jnp.asarray(
         [
@@ -273,9 +264,6 @@ def test_training_fit_and_holdout_bellman_identity_are_separate() -> None:
         result.holdout_targets - result.holdout_value_predictions,
         atol=1e-6,
     )
-
-
-def test_invalid_paths_are_excluded_case_locally_from_both_roles() -> None:
     train_noise = jnp.asarray(
         [
             [[0.0], [0.0]],
@@ -301,7 +289,7 @@ def test_invalid_paths_are_excluded_case_locally_from_both_roles() -> None:
     assert bool(result.valid)
 
 
-def test_problem_rejects_reused_or_overlapping_holdout_identity() -> None:
+def test_fitted_bellman_scenario_3() -> None:
     controlled, policy = _controlled_problem()
     training = _paths(controlled, policy, jnp.zeros((2, 2, 1)), role="training")
 
@@ -329,6 +317,17 @@ def test_problem_rejects_reused_or_overlapping_holdout_identity() -> None:
             num_features=1,
             feature_id="feature",
         )
+    _, _, problem, plan = _problem_and_plan()
+    prepared = prepare_fitted_bellman(problem, plan)
+
+    eager = evaluate_fitted_bellman(prepared)
+    compiled = eqx.filter_jit(evaluate_fitted_bellman)(prepared)
+    times = jnp.asarray([0.0, 1.0, 2.0])
+    states = jnp.asarray([[1.0], [2.0], [3.0]])
+    case_values = jax.vmap(eager.predict)(times, states)
+
+    np.testing.assert_allclose(compiled.coefficients, eager.coefficients, atol=1e-6)
+    np.testing.assert_allclose(case_values, [4.0, 6.0, 6.0], atol=1e-6)
 
 
 def test_terminal_value_is_regressed_on_terminal_features() -> None:
@@ -359,20 +358,6 @@ def test_terminal_value_is_regressed_on_terminal_features() -> None:
     )
     assert int(result.design_ranks[-1]) == 2
     assert int(result.stage_status[0]) == FittedBellmanStatus.RANK_DEFICIENT
-
-
-def test_prepared_evaluation_is_filter_jittable_and_prediction_vmaps_over_cases() -> None:
-    _, _, problem, plan = _problem_and_plan()
-    prepared = prepare_fitted_bellman(problem, plan)
-
-    eager = evaluate_fitted_bellman(prepared)
-    compiled = eqx.filter_jit(evaluate_fitted_bellman)(prepared)
-    times = jnp.asarray([0.0, 1.0, 2.0])
-    states = jnp.asarray([[1.0], [2.0], [3.0]])
-    case_values = jax.vmap(eager.predict)(times, states)
-
-    np.testing.assert_allclose(compiled.coefficients, eager.coefficients, atol=1e-6)
-    np.testing.assert_allclose(case_values, [4.0, 6.0, 6.0], atol=1e-6)
 
 
 def test_bsde_bridge_preserves_ids_and_never_conflates_action_with_z() -> None:

@@ -128,7 +128,7 @@ def _input_driven_problem() -> Any:
     )
 
 
-def test_scalar_kalman_matches_hand_calculation_and_streaming() -> None:
+def test_state_space_kalman_scenario_1() -> None:
     problem = _problem()
     result = phx.uq.kalman_filter(problem)
 
@@ -151,9 +151,6 @@ def test_scalar_kalman_matches_hand_calculation_and_streaming() -> None:
         jnp.stack([record.filtered_mean for record in records]),
         result.filtered_means,
     )
-
-
-def test_typed_input_drives_kalman_transition_and_observation_parameters() -> None:
     result = phx.uq.kalman_filter(_input_driven_problem())
     expected_end_input = jnp.asarray([[2.0, 4.0], [20.0, 40.0]])
 
@@ -167,6 +164,13 @@ def test_typed_input_drives_kalman_transition_and_observation_parameters() -> No
         expected_end_input * result.predicted_means[..., 0] + 0.25 * expected_end_input
     )
     assert jnp.allclose(result.innovations[..., 0], -expected_prediction)
+    problem = _problem(mask=jnp.asarray([[True], [False]]))
+    result = phx.uq.kalman_filter(problem)
+
+    assert jnp.allclose(result.filtered_means[1], result.predicted_means[1])
+    assert jnp.allclose(result.filtered_covariances[1], result.predicted_covariances[1])
+    assert result.observed_counts[1] == 0
+    assert result.incremental_log_likelihood[1] == 0.0
 
 
 def test_context_indices_and_input_parameters_survive_jit_vmap_and_scan() -> None:
@@ -218,17 +222,7 @@ def test_context_indices_and_input_parameters_survive_jit_vmap_and_scan() -> Non
     assert jnp.allclose(scanned, expected)
 
 
-def test_missing_observation_is_exact_forecast_only_update() -> None:
-    problem = _problem(mask=jnp.asarray([[True], [False]]))
-    result = phx.uq.kalman_filter(problem)
-
-    assert jnp.allclose(result.filtered_means[1], result.predicted_means[1])
-    assert jnp.allclose(result.filtered_covariances[1], result.predicted_covariances[1])
-    assert result.observed_counts[1] == 0
-    assert result.incremental_log_likelihood[1] == 0.0
-
-
-def test_rts_terminal_identity_covariance_contraction_and_coherent_paths() -> None:
+def test_state_space_kalman_scenario_2() -> None:
     problem = _problem()
     filtered = phx.uq.kalman_filter(problem)
     smoothed = phx.uq.rts_smoother(filtered)
@@ -244,9 +238,6 @@ def test_rts_terminal_identity_covariance_contraction_and_coherent_paths() -> No
     assert jnp.allclose(jnp.mean(paths[:, 0, 0]), smoothed.means[0, 0], atol=0.04)
     assert jnp.allclose(jnp.var(paths[:, 0, 0]), smoothed.covariances[0, 0, 0], atol=0.04)
     assert jnp.corrcoef(paths[:, 0, 0], paths[:, 1, 0])[0, 1] > 0.0
-
-
-def test_irregular_padded_cases_preserve_last_valid_state() -> None:
     problem = _problem(
         case_shape=(2,),
         step_valid=jnp.asarray([[True, True], [True, False]]),
@@ -259,9 +250,6 @@ def test_irregular_padded_cases_preserve_last_valid_state() -> None:
     assert jnp.allclose(result.filtered_means[1, 1], result.filtered_means[1, 0])
     assert jnp.allclose(smoothed.means[1, 1], result.filtered_means[1, 1])
     assert jnp.all(result.successful)
-
-
-def test_kalman_diagnostics_detect_finite_psd_results() -> None:
     result = phx.uq.kalman_filter(_problem())
     diagnostics = phx.uq.kalman_innovation_diagnostics(result)
 

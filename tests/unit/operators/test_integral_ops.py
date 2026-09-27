@@ -46,7 +46,7 @@ def _ball_rule(radius: Any, dimension: Any, count: Any) -> Any:
     return {"offsets": offsets, "weights": weights}
 
 
-def test_integral_and_mean_delegate_to_typed_integration_api() -> None:
+def test_integral_ops_scenario_1() -> None:
     domain = Interval1d(0.0, 1.0)
     target = phx.integration.over(domain.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
@@ -57,6 +57,35 @@ def test_integral_and_mean_delegate_to_typed_integration_api() -> None:
 
     assert jnp.allclose(jnp.asarray(integrated.data), 2.0, atol=1e-12)
     assert jnp.allclose(jnp.asarray(averaged.data), 2.0, atol=1e-12)
+    domain = TimeInterval(2.0, 3.0)
+    function = domain.Function("t")(lambda time: jnp.stack((time, time**2)))
+    convolution = time_convolution(lambda lag: jnp.exp(-lag), function)
+    start = frozendict({"t": cx.AxisArray(jnp.array(2.0), dims=())})
+
+    value = jnp.asarray(convolution(start).data)
+
+    assert jnp.array_equal(value, jnp.zeros((2,)))
+    assert convolution.metadata["integral_randomized"] is False
+    assert convolution.metadata["integral_rule"] == "GaussLegendreRule"
+    domain = TimeInterval(2.0, 3.0)
+    function = domain.Function("t")(lambda time: (time - 2.0) ** 2)
+    convolution = time_convolution(
+        lambda lag: jnp.ones_like(lag),
+        function,
+        rule=phx.integration.GaussLegendreRule(32),
+        cluster_exponent=2.0,
+    )
+    endpoint = frozendict({"t": cx.AxisArray(jnp.array(3.0), dims=())})
+
+    assert jnp.allclose(convolution(endpoint).data, 1.0 / 3.0, atol=1e-12)
+    domain = Interval1d(-1.0, 1.0)
+    function = DomainFunction(domain=domain, deps=(), func=jnp.array(3.14))
+    operator = fractional_laplacian(function, alpha=1.2)
+    points = jnp.linspace(-0.8, 0.8, 7)[:, None]
+    values = jnp.asarray(
+        operator(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
+    )
+    assert jnp.max(jnp.abs(values)) < 1e-12
 
 
 def test_spatial_integral_nonlocal_kernel_converges_under_rule_refinement() -> None:
@@ -104,44 +133,6 @@ def test_time_convolution_exp_sin_closed_form() -> None:
     assert jnp.max(jnp.abs(values - exact)) < 2e-3
 
 
-def test_time_convolution_is_exact_zero_at_nonzero_domain_start() -> None:
-    domain = TimeInterval(2.0, 3.0)
-    function = domain.Function("t")(lambda time: jnp.stack((time, time**2)))
-    convolution = time_convolution(lambda lag: jnp.exp(-lag), function)
-    start = frozendict({"t": cx.AxisArray(jnp.array(2.0), dims=())})
-
-    value = jnp.asarray(convolution(start).data)
-
-    assert jnp.array_equal(value, jnp.zeros((2,)))
-    assert convolution.metadata["integral_randomized"] is False
-    assert convolution.metadata["integral_rule"] == "GaussLegendreRule"
-
-
-def test_time_convolution_nonzero_start_and_clustered_rule() -> None:
-    domain = TimeInterval(2.0, 3.0)
-    function = domain.Function("t")(lambda time: (time - 2.0) ** 2)
-    convolution = time_convolution(
-        lambda lag: jnp.ones_like(lag),
-        function,
-        rule=phx.integration.GaussLegendreRule(32),
-        cluster_exponent=2.0,
-    )
-    endpoint = frozendict({"t": cx.AxisArray(jnp.array(3.0), dims=())})
-
-    assert jnp.allclose(convolution(endpoint).data, 1.0 / 3.0, atol=1e-12)
-
-
-def test_fractional_laplacian_constant_zero() -> None:
-    domain = Interval1d(-1.0, 1.0)
-    function = DomainFunction(domain=domain, deps=(), func=jnp.array(3.14))
-    operator = fractional_laplacian(function, alpha=1.2)
-    points = jnp.linspace(-0.8, 0.8, 7)[:, None]
-    values = jnp.asarray(
-        operator(frozendict({"x": cx.AxisArray(points, dims=("n", None))})).data
-    )
-    assert jnp.max(jnp.abs(values)) < 1e-12
-
-
 def test_nonlocal_integral_zero_field_zero_result() -> None:
     domain = Interval1d(0.0, 1.0)
     function = DomainFunction(domain=domain, deps=(), func=jnp.array(0.0))
@@ -180,7 +171,7 @@ def test_nonlocal_integral_time_dependent_field_integrates_to_time(
     assert jnp.allclose(output, batch.points["t"].data[None, :], atol=1e-12)
 
 
-def test_nonlocal_integral_context_parameter_receives_full_context() -> None:
+def test_integral_ops_scenario_2() -> None:
     domain = Interval1d(0.0, 1.0)
     function = domain.Function("x")(lambda x: x[0])
     operator = nonlocal_integral(
@@ -193,9 +184,6 @@ def test_nonlocal_integral_context_parameter_receives_full_context() -> None:
     )
 
     assert jnp.allclose(jnp.asarray(operator(points).data), 0.5, atol=1e-12)
-
-
-def test_local_integral_constant_field_equals_ball_volume() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

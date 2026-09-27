@@ -317,7 +317,7 @@ def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path: Any) -> None
     _assert_curved_geometry(result)
 
 
-def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() -> None:
+def test_real_contracts() -> None:
 
     from phydrax.meshing.providers._gmsh_elements import _audit_jacobians, _element_rows
 
@@ -335,9 +335,6 @@ def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() ->
         with pytest.raises(phx.meshing.MeshingFailure) as failure:
             _audit_jacobians(gmsh, _element_rows(gmsh, 3, 2))
         assert failure.value.category is phx.meshing.MeshingFailureCategory.AUDIT_FAILED
-
-
-def test_real_gmsh_session_releases_global_ownership_after_body_failure() -> None:
 
     provider = _provider()
     with pytest.raises(RuntimeError, match="body failure"):

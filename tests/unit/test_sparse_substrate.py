@@ -13,7 +13,7 @@ import phydrax as phx
 from phydrax.linalg import ArraySpace, DiagonalPairing
 
 
-def test_edge_linear_map_matches_dense_forward_transpose_and_adjoint() -> None:
+def test_sparse_substrate_scenario_1() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 2, 0], dtype=jnp.int32),
         jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
@@ -35,9 +35,6 @@ def test_edge_linear_map_matches_dense_forward_transpose_and_adjoint() -> None:
     assert jnp.allclose(forward, dense @ source.at[1].set(0.0))
     assert jnp.allclose(transpose, dense.T @ target)
     assert jnp.allclose(adjoint, jnp.conj(dense).T @ target)
-
-
-def test_shared_pattern_batched_sparse_map_matches_dense_actions_and_storage() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 2, 0], dtype=jnp.int32),
         jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
@@ -63,9 +60,6 @@ def test_shared_pattern_batched_sparse_map_matches_dense_actions_and_storage() -
     assert jnp.allclose(forward, oe.contract("bij,bj->bi", dense, source))
     assert jnp.allclose(transpose, oe.contract("bji,bj->bi", dense, target))
     assert jnp.allclose(adjoint, transpose)
-
-
-def test_row_linear_map_preserves_cases_payloads_and_dense_adjoint() -> None:
     relation = phx.sparse.RowRelation(
         jnp.asarray(
             [
@@ -121,7 +115,7 @@ def test_row_linear_map_preserves_cases_payloads_and_dense_adjoint() -> None:
     )
 
 
-def test_route_reductions_keep_invalid_nan_routes_inert_and_empty_targets_zero() -> None:
+def test_sparse_substrate_scenario_2() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 2], dtype=jnp.int32),
         jnp.asarray([0, 0, 1], dtype=jnp.int32),
@@ -137,9 +131,6 @@ def test_route_reductions_keep_invalid_nan_routes_inert_and_empty_targets_zero()
     expected = jnp.asarray([[2.0, 4.0], [-1.0, 5.0], [0.0, 0.0]])
     assert jnp.array_equal(summed, expected)
     assert jnp.array_equal(maximum, expected)
-
-
-def test_cochain_incidence_exposes_sparse_boundary_and_derivative_actions() -> None:
     boundary = jnp.asarray(
         [
             [-1.0, 0.0],
@@ -158,9 +149,6 @@ def test_cochain_incidence_exposes_sparse_boundary_and_derivative_actions() -> N
     assert jnp.allclose(boundary_action(upper), boundary @ upper)
     assert jnp.array_equal(derivative_action.as_dense(), boundary.T)
     assert jnp.array_equal(boundary_action.as_dense(), boundary)
-
-
-def test_sparse_coordinate_operator_adjoint_respects_declared_pairings() -> None:
     source = ArraySpace(
         (3,),
         dtype=jnp.complex128,
@@ -280,7 +268,7 @@ def test_sparse_plans_reuse_global_structural_jacobian_and_hessian_patterns() ->
     assert jnp.allclose(result.value, jnp.linalg.solve(hessian_matrix, rhs))
 
 
-def test_prepared_riesz_hessian_primal_uses_inverse_pairing() -> None:
+def test_sparse_substrate_scenario_3() -> None:
     space = ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -310,9 +298,26 @@ def test_prepared_riesz_hessian_primal_uses_inverse_pairing() -> None:
         prepared.linearization.primal,
         jnp.asarray([point[0] / 2.0, 3.0 * point[1] / 4.0]),
     )
+    relation = phx.sparse.EdgeRelation(
+        jnp.arange(5, dtype=jnp.int32),
+        jnp.asarray([2, 0, 2, 0, 1], dtype=jnp.int32),
+        source_size=5,
+        target_size=4,
+        valid=jnp.asarray([True, True, True, False, True]),
+    )
+    execution = phx.sparse.RelationExecutionPlan().prepare(relation)
+    values = jnp.asarray([1.0 + 2.0j, 3.0, -2.0j, jnp.nan, 4.0 - 1.0j])
 
+    deterministic, evidence = execution.reduce(
+        values,
+        accumulation="deterministic",
+    )
+    compensated, _ = execution.reduce(values, accumulation="compensated")
 
-def test_element_tensor_identity_includes_routes_validity_and_properties() -> None:
+    expected = jnp.asarray([3.0, 4.0 - 1.0j, 1.0, 0.0])
+    assert jnp.array_equal(deterministic, expected)
+    assert jnp.array_equal(compensated, expected)
+    assert bool(evidence.successful)
     matrices = jnp.asarray([[[2.0, -1.0], [-1.0, 2.0]]])
     inputs = jnp.asarray([[0, 1]], dtype=jnp.int32)
     outputs = jnp.asarray([[1, 2]], dtype=jnp.int32)
@@ -354,6 +359,28 @@ def test_element_tensor_identity_includes_routes_validity_and_properties() -> No
             }
         )
         == 4
+    )
+    plan = phx.sparse.KeyGroupPlan(
+        5,
+        3,
+        9,
+        maximum_group_size=2,
+        case_shape=(2,),
+    )
+    keys = jnp.asarray([[4, 1, 4, 2, 9], [3, 3, 8, 2, 9]])
+    valid = jnp.asarray([[True, True, True, True, False], [True] * 5])
+    stable_ids = jnp.asarray([[5, 4, 3, 2, 1], [0, 1, 2, 3, 4]])
+    state = jax.jit(plan.build)(keys, valid, stable_ids=stable_ids)
+    lookup = state.lookup(jnp.asarray([[1, 4, 7], [2, 3, 8]]))
+
+    assert jnp.array_equal(state.group_keys[0], jnp.asarray([1, 2, 4]))
+    assert jnp.array_equal(state.group_counts[0], jnp.asarray([1, 1, 2]))
+    assert bool(state.evidence.successful[0])
+    assert not bool(state.evidence.successful[1])
+    assert bool(state.evidence.group_overflow[1])
+    assert jnp.array_equal(
+        lookup.supported,
+        jnp.asarray([[True, True, False], [False, False, False]]),
     )
 
 
@@ -414,54 +441,6 @@ def test_sparse_diagonal_assembly_and_numeric_refresh_are_jit_safe() -> None:
     value, diagonal = jax.jit(refresh_and_solve)(coefficients)
     assert jnp.allclose(diagonal, coefficients)
     assert jnp.allclose(value, right_hand_side / coefficients)
-
-
-def test_key_groups_are_case_local_canonical_and_fail_closed() -> None:
-    plan = phx.sparse.KeyGroupPlan(
-        5,
-        3,
-        9,
-        maximum_group_size=2,
-        case_shape=(2,),
-    )
-    keys = jnp.asarray([[4, 1, 4, 2, 9], [3, 3, 8, 2, 9]])
-    valid = jnp.asarray([[True, True, True, True, False], [True] * 5])
-    stable_ids = jnp.asarray([[5, 4, 3, 2, 1], [0, 1, 2, 3, 4]])
-    state = jax.jit(plan.build)(keys, valid, stable_ids=stable_ids)
-    lookup = state.lookup(jnp.asarray([[1, 4, 7], [2, 3, 8]]))
-
-    assert jnp.array_equal(state.group_keys[0], jnp.asarray([1, 2, 4]))
-    assert jnp.array_equal(state.group_counts[0], jnp.asarray([1, 1, 2]))
-    assert bool(state.evidence.successful[0])
-    assert not bool(state.evidence.successful[1])
-    assert bool(state.evidence.group_overflow[1])
-    assert jnp.array_equal(
-        lookup.supported,
-        jnp.asarray([[True, True, False], [False, False, False]]),
-    )
-
-
-def test_prepared_relation_execution_preserves_canonical_complex_reductions() -> None:
-    relation = phx.sparse.EdgeRelation(
-        jnp.arange(5, dtype=jnp.int32),
-        jnp.asarray([2, 0, 2, 0, 1], dtype=jnp.int32),
-        source_size=5,
-        target_size=4,
-        valid=jnp.asarray([True, True, True, False, True]),
-    )
-    execution = phx.sparse.RelationExecutionPlan().prepare(relation)
-    values = jnp.asarray([1.0 + 2.0j, 3.0, -2.0j, jnp.nan, 4.0 - 1.0j])
-
-    deterministic, evidence = execution.reduce(
-        values,
-        accumulation="deterministic",
-    )
-    compensated, _ = execution.reduce(values, accumulation="compensated")
-
-    expected = jnp.asarray([3.0, 4.0 - 1.0j, 1.0, 0.0])
-    assert jnp.array_equal(deterministic, expected)
-    assert jnp.array_equal(compensated, expected)
-    assert bool(evidence.successful)
 
 
 def test_relation_execution_masks_padding_and_reports_target_capacity_status() -> None:

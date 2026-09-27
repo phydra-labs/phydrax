@@ -138,40 +138,71 @@ def _with_generic_rows(arrays: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("name", sorted(CASES))
-def test_filters_never_certify_a_wrong_sign_on_near_degenerate_grids(name: Any) -> None:
-    near_degenerate, reference, predicate = CASES[name]()
-    arrays = _with_generic_rows(near_degenerate)
-    expected = _reference(reference, arrays)
-    generic = slice(near_degenerate[0].shape[0], None)
+def test_predicates_scenario_1() -> None:
+    for name in sorted(CASES):
+        near_degenerate, reference, predicate = CASES[name]()
+        arrays = _with_generic_rows(near_degenerate)
+        expected = _reference(reference, arrays)
+        generic = slice(near_degenerate[0].shape[0], None)
 
-    host = predicate(*arrays, mode=PredicateMode.FILTERED)
-    assert host.signs.dtype == np.int8
-    np.testing.assert_array_equal(host.signs[host.certain], expected[host.certain])
-    assert np.all(host.signs[~host.certain] == PredicateSign.UNCERTAIN)
-    assert np.mean(host.certain[generic]) > 0.9
+        host = predicate(*arrays, mode=PredicateMode.FILTERED)
+        assert host.signs.dtype == np.int8
+        np.testing.assert_array_equal(host.signs[host.certain], expected[host.certain])
+        assert np.all(host.signs[~host.certain] == PredicateSign.UNCERTAIN)
+        assert np.mean(host.certain[generic]) > 0.9
 
-    device = jax.jit(
-        lambda *values: predicate(*values, mode=PredicateMode.FILTERED_DEVICE)
-    )(*(jnp.asarray(array) for array in arrays))
-    signs = np.asarray(device.signs)
-    certain = np.asarray(device.certain)
-    np.testing.assert_array_equal(signs[certain], expected[certain])
-    assert np.all(signs[~certain] == PredicateSign.UNCERTAIN)
-    assert np.mean(certain[generic]) > 0.9
+        device = jax.jit(
+            lambda *values: predicate(*values, mode=PredicateMode.FILTERED_DEVICE)
+        )(*(jnp.asarray(array) for array in arrays))
+        signs = np.asarray(device.signs)
+        certain = np.asarray(device.certain)
+        np.testing.assert_array_equal(signs[certain], expected[certain])
+        assert np.all(signs[~certain] == PredicateSign.UNCERTAIN)
+        assert np.mean(certain[generic]) > 0.9
+    collinear = orient2d([0.0, 0.0], [1.0, 0.0], [5.0, 0.0], mode=PredicateMode.FILTERED)
+    coplanar = orient3d(
+        [0.0, 0.0, 2.0],
+        [1.0, 0.0, 2.0],
+        [0.0, 3.0, 2.0],
+        [7.0, -1.0, 2.0],
+        mode=PredicateMode.FILTERED,
+    )
+    duplicate = incircle(
+        [0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 0.0], mode=PredicateMode.FILTERED
+    )
+    for result in (collinear, coplanar, duplicate):
+        assert bool(result.certain)
+        assert int(result.signs) == PredicateSign.ZERO
+    tiny = np.finfo(np.float64).tiny / 4.0
+    a = jnp.asarray([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]])
+    b = jnp.asarray([[tiny, 0.0], [1.0, 0.0], [jnp.inf, 0.0]])
+    c = jnp.asarray([[0.0, tiny], [0.0, 1.0], [0.0, 1.0]])
+    result = orient2d(a, b, c, mode=PredicateMode.FILTERED_DEVICE)
+    np.testing.assert_array_equal(np.asarray(result.certain), [False, True, False])
+    assert int(result.signs[1]) == PredicateSign.POSITIVE
+    a = jnp.zeros((3,), dtype=jnp.float32)
+    x = jnp.asarray([1.0, 0.0, 0.0], dtype=jnp.float32)
+    y = jnp.asarray([0.0, 1.0, 0.0], dtype=jnp.float32)
+    z = jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)
+    inside = jnp.asarray([0.2, 0.2, 0.2], dtype=jnp.float32)
+    mode = PredicateMode.FILTERED_DEVICE
+    assert int(orient3d(a, x, y, z, mode=mode).signs) == 1
+    assert int(orient3d(a, y, x, z, mode=mode).signs) == -1
+    assert int(insphere(a, x, y, z, inside, mode=mode).signs) == 1
+    assert int(incircle(a[:2], x[:2], y[:2], inside[:2], mode=mode).signs) == 1
 
 
 @requires_meshcore
 @pytest.mark.meshcore
-@pytest.mark.parametrize("name", sorted(CASES))
-def test_exact_mode_matches_rational_reference(name: Any) -> None:
-    arrays, reference, predicate = CASES[name]()
-    expected = _reference(reference, arrays)
-    result = predicate(*arrays, mode=PredicateMode.EXACT)
-    assert bool(np.all(result.certain))
-    np.testing.assert_array_equal(result.signs, expected)
-    # The adversarial grids contain exact zeros and both strict signs.
-    assert set(expected.tolist()) == {-1, 0, 1}
+def test_exact_mode_matches_rational_reference() -> None:
+    for name in sorted(CASES):
+        arrays, reference, predicate = CASES[name]()
+        expected = _reference(reference, arrays)
+        result = predicate(*arrays, mode=PredicateMode.EXACT)
+        assert bool(np.all(result.certain))
+        np.testing.assert_array_equal(result.signs, expected)
+        # The adversarial grids contain exact zeros and both strict signs.
+        assert set(expected.tolist()) == {-1, 0, 1}
 
 
 @requires_meshcore
@@ -199,46 +230,6 @@ def test_exact_signs_are_antisymmetric_under_argument_exchange() -> None:
     sp = insphere(a, b, c, d, e, mode=exact).signs
     np.testing.assert_array_equal(insphere(b, a, c, d, e, mode=exact).signs, -sp)
     assert np.any(o2 == 0) and np.any(o3 == 0)
-
-
-def test_structural_zeros_are_certified_without_meshcore() -> None:
-    collinear = orient2d([0.0, 0.0], [1.0, 0.0], [5.0, 0.0], mode=PredicateMode.FILTERED)
-    coplanar = orient3d(
-        [0.0, 0.0, 2.0],
-        [1.0, 0.0, 2.0],
-        [0.0, 3.0, 2.0],
-        [7.0, -1.0, 2.0],
-        mode=PredicateMode.FILTERED,
-    )
-    duplicate = incircle(
-        [0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 0.0], mode=PredicateMode.FILTERED
-    )
-    for result in (collinear, coplanar, duplicate):
-        assert bool(result.certain)
-        assert int(result.signs) == PredicateSign.ZERO
-
-
-def test_device_filter_refuses_subnormal_and_nonfinite_inputs() -> None:
-    tiny = np.finfo(np.float64).tiny / 4.0
-    a = jnp.asarray([[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]])
-    b = jnp.asarray([[tiny, 0.0], [1.0, 0.0], [jnp.inf, 0.0]])
-    c = jnp.asarray([[0.0, tiny], [0.0, 1.0], [0.0, 1.0]])
-    result = orient2d(a, b, c, mode=PredicateMode.FILTERED_DEVICE)
-    np.testing.assert_array_equal(np.asarray(result.certain), [False, True, False])
-    assert int(result.signs[1]) == PredicateSign.POSITIVE
-
-
-def test_device_filter_matches_float32_orientation_conventions() -> None:
-    a = jnp.zeros((3,), dtype=jnp.float32)
-    x = jnp.asarray([1.0, 0.0, 0.0], dtype=jnp.float32)
-    y = jnp.asarray([0.0, 1.0, 0.0], dtype=jnp.float32)
-    z = jnp.asarray([0.0, 0.0, 1.0], dtype=jnp.float32)
-    inside = jnp.asarray([0.2, 0.2, 0.2], dtype=jnp.float32)
-    mode = PredicateMode.FILTERED_DEVICE
-    assert int(orient3d(a, x, y, z, mode=mode).signs) == 1
-    assert int(orient3d(a, y, x, z, mode=mode).signs) == -1
-    assert int(insphere(a, x, y, z, inside, mode=mode).signs) == 1
-    assert int(incircle(a[:2], x[:2], y[:2], inside[:2], mode=mode).signs) == 1
 
 
 def test_missing_library_is_explicit(monkeypatch: Any, tmp_path: Any) -> None:

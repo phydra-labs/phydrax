@@ -71,7 +71,7 @@ def _problem() -> Any:
     return compiled, state, boundary
 
 
-def test_reference_and_structured_conversion_backends_agree_and_replay_balance() -> None:
+def test_particle_conversion_scenario_1() -> None:
     compiled, state, boundary = _problem()
     reference = phx.solver.advance_particle_conversion(
         compiled.dynamics,
@@ -115,9 +115,6 @@ def test_reference_and_structured_conversion_backends_agree_and_replay_balance()
         rtol=2.0e-3,
         atol=1.0e-9,
     )
-
-
-def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events() -> None:
     compiled, state, boundary = _problem()
     evaluation = compiled.dynamics.evaluate(state, (boundary,))
     policy = phx.solver.ParticleConversionSensitivityPolicy(
@@ -166,9 +163,6 @@ def test_conversion_validity_certificate_masks_branchwise_derivatives_at_events(
     )
     assert not exhausted_result.usable
     assert jnp.isnan(exhausted_result.sensitivity)
-
-
-def test_generic_hybrid_event_localizes_transverse_phase_exhaustion() -> None:
     guard = phx.solver.HybridGuardPlan(
         lambda time, state, args: state[0],
         guard_id="phase-exhaustion-guard",

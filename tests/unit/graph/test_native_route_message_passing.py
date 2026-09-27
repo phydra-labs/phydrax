@@ -274,11 +274,53 @@ PARITY_CASES: dict[str, Callable] = {
 }
 
 
-@pytest.mark.parametrize("case", sorted(PARITY_CASES))
-def test_route_reductions_match_segment_reductions(case: Any) -> None:
-    inputs, apply, reference = PARITY_CASES[case]()
+def test_native_route_message_passing_scenario_1() -> None:
+    for case in sorted(PARITY_CASES):
+        inputs, apply, reference = PARITY_CASES[case]()
 
-    np.testing.assert_allclose(apply(inputs), reference(inputs), rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(
+            apply(inputs), reference(inputs), rtol=1e-12, atol=1e-12
+        )
+    for case in sorted(_padding_cases()):
+        graph, apply = _padding_cases()[case]
+
+        np.testing.assert_allclose(
+            apply(_padded(graph)), apply(graph), rtol=1e-14, atol=1e-14
+        )
+    relation = phx.sparse.EdgeRelation(
+        # ty: ignore[invalid-argument-type]
+        [0, -5, 2, 1],
+        # ty: ignore[invalid-argument-type]
+        [1, 9, 0, 0],
+        source_size=3,
+        target_size=3,
+        # ty: ignore[invalid-argument-type]
+        valid=[True, False, True, True],
+    )
+    payload = _random((4, 2), 40)
+
+    graph = phx.graph.GraphIR.from_edge_relation(relation, nodes=_random((3, 1), 41))
+    view = graph.edge_relation()
+
+    np.testing.assert_array_equal(view.valid, relation.valid)
+    np.testing.assert_allclose(
+        phx.sparse.route_reduce(view, payload), phx.sparse.route_reduce(relation, payload)
+    )
+    np.testing.assert_allclose(
+        phx.sparse.gather_routes(view, graph.nodes),
+        phx.sparse.gather_routes(relation, graph.nodes),
+    )
+    # ty: ignore[invalid-argument-type]
+    rectangular = phx.sparse.EdgeRelation([0], [1], source_size=1, target_size=2)
+
+    with pytest.raises(ValueError, match="one node space"):
+        phx.graph.GraphIR.from_edge_relation(rectangular)
+    with pytest.raises(TypeError, match="EdgeRelation"):
+        # ty: ignore[invalid-argument-type]
+        phx.graph.GraphIR.from_edge_relation(np.zeros((2, 1), dtype=np.int32))
+    with pytest.raises(ValueError, match="reduction"):
+        # ty: ignore[invalid-argument-type]
+        phx.graph.GraphKernelIntegral(reduction="median")
 
 
 def _typed_graph(nodes: Any, **edges: Any) -> Any:
@@ -331,15 +373,6 @@ def _padding_cases() -> dict[str, tuple[phx.graph.GraphIR, Callable]]:
     }
 
 
-@pytest.mark.parametrize("case", sorted(_padding_cases()))
-def test_masked_routes_are_inert(case: Any) -> None:
-    graph, apply = _padding_cases()[case]
-
-    np.testing.assert_allclose(
-        apply(_padded(graph)), apply(graph), rtol=1e-14, atol=1e-14
-    )
-
-
 def test_masked_routes_do_not_change_mesh_graph_net_gradients() -> None:
     model = phx.graph.MeshGraphNet(
         node_in_size=3,
@@ -362,46 +395,3 @@ def test_masked_routes_do_not_change_mesh_graph_net_gradients() -> None:
 
     for expected, actual in zip(reference, padded, strict=True):
         np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_graph_view_of_relation_reproduces_routes() -> None:
-    relation = phx.sparse.EdgeRelation(
-        # ty: ignore[invalid-argument-type]
-        [0, -5, 2, 1],
-        # ty: ignore[invalid-argument-type]
-        [1, 9, 0, 0],
-        source_size=3,
-        target_size=3,
-        # ty: ignore[invalid-argument-type]
-        valid=[True, False, True, True],
-    )
-    payload = _random((4, 2), 40)
-
-    graph = phx.graph.GraphIR.from_edge_relation(relation, nodes=_random((3, 1), 41))
-    view = graph.edge_relation()
-
-    np.testing.assert_array_equal(view.valid, relation.valid)
-    np.testing.assert_allclose(
-        phx.sparse.route_reduce(view, payload), phx.sparse.route_reduce(relation, payload)
-    )
-    np.testing.assert_allclose(
-        phx.sparse.gather_routes(view, graph.nodes),
-        phx.sparse.gather_routes(relation, graph.nodes),
-    )
-
-
-def test_graph_view_requires_one_node_space() -> None:
-    # ty: ignore[invalid-argument-type]
-    rectangular = phx.sparse.EdgeRelation([0], [1], source_size=1, target_size=2)
-
-    with pytest.raises(ValueError, match="one node space"):
-        phx.graph.GraphIR.from_edge_relation(rectangular)
-    with pytest.raises(TypeError, match="EdgeRelation"):
-        # ty: ignore[invalid-argument-type]
-        phx.graph.GraphIR.from_edge_relation(np.zeros((2, 1), dtype=np.int32))
-
-
-def test_graph_kernel_integral_rejects_unknown_reduction() -> None:
-    with pytest.raises(ValueError, match="reduction"):
-        # ty: ignore[invalid-argument-type]
-        phx.graph.GraphKernelIntegral(reduction="median")

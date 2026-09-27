@@ -14,7 +14,7 @@ import phydrax as phx
 import phydrax.solver._gaussian_lindblad as gaussian_lindblad
 
 
-def test_gaussian_bosonic_lindblad_reaches_thermal_state() -> None:
+def test_nonmarkov_manybody_scenario_1() -> None:
     problem = phx.solver.damped_thermal_oscillator(0.4, 1.0)
     stationary = problem.stationary_state()
     assert bool(stationary.valid)
@@ -22,6 +22,36 @@ def test_gaussian_bosonic_lindblad_reaches_thermal_state() -> None:
     solution = phx.solver.solve_gaussian_lindblad(problem, step_size=0.05, steps=10)
     assert bool(solution.valid)
     assert solution.covariances[-1, 0, 0] > solution.covariances[0, 0, 0]
+    problem = phx.solver.amplitude_damping_trajectory_problem(
+        0.5, jnp.asarray([0.0j, 1.0 + 0.0j])
+    )
+    first = phx.solver.solve_quantum_jump_ensemble(
+        problem,
+        jax.random.PRNGKey(2),
+        step_size=0.02,
+        steps=20,
+        trajectory_count=32,
+    )
+    second = phx.solver.solve_quantum_jump_ensemble(
+        problem,
+        jax.random.PRNGKey(2),
+        step_size=0.02,
+        steps=20,
+        trajectory_count=32,
+    )
+    assert bool(first.valid)
+    assert jnp.array_equal(first.states, second.states)
+    assert jnp.sum(first.jump_mask) > 0
+    coarse = phx.operators.quantum.BosonicFockSpace((3,))
+    fine = phx.operators.quantum.BosonicFockSpace((5,))
+    state = jnp.asarray([0.0j, 0.0j, 1.0 + 0.0j])
+    annihilated = coarse.annihilate(state, 0)
+    assert jnp.allclose(annihilated, jnp.asarray([0.0j, jnp.sqrt(2.0), 0.0j]))
+    evidence = coarse.cutoff_evidence(state)
+    assert jnp.allclose(evidence.top_level_probability, 1.0)
+    embedded = coarse.embed(state, fine)
+    assert embedded.shape == (5,)
+    assert jnp.allclose(embedded[:3], state)
 
 
 def test_stationary_gaussian_rejects_failed_mean_solve(monkeypatch: Any) -> None:
@@ -47,43 +77,7 @@ def test_stationary_gaussian_rejects_failed_mean_solve(monkeypatch: Any) -> None
         problem.stationary_state()
 
 
-def test_quantum_jump_ensemble_replays_and_decays() -> None:
-    problem = phx.solver.amplitude_damping_trajectory_problem(
-        0.5, jnp.asarray([0.0j, 1.0 + 0.0j])
-    )
-    first = phx.solver.solve_quantum_jump_ensemble(
-        problem,
-        jax.random.PRNGKey(2),
-        step_size=0.02,
-        steps=20,
-        trajectory_count=32,
-    )
-    second = phx.solver.solve_quantum_jump_ensemble(
-        problem,
-        jax.random.PRNGKey(2),
-        step_size=0.02,
-        steps=20,
-        trajectory_count=32,
-    )
-    assert bool(first.valid)
-    assert jnp.array_equal(first.states, second.states)
-    assert jnp.sum(first.jump_mask) > 0
-
-
-def test_fock_ladder_cutoff_and_embedding_are_explicit() -> None:
-    coarse = phx.operators.quantum.BosonicFockSpace((3,))
-    fine = phx.operators.quantum.BosonicFockSpace((5,))
-    state = jnp.asarray([0.0j, 0.0j, 1.0 + 0.0j])
-    annihilated = coarse.annihilate(state, 0)
-    assert jnp.allclose(annihilated, jnp.asarray([0.0j, jnp.sqrt(2.0), 0.0j]))
-    evidence = coarse.cutoff_evidence(state)
-    assert jnp.allclose(evidence.top_level_probability, 1.0)
-    embedded = coarse.embed(state, fine)
-    assert embedded.shape == (5,)
-    assert jnp.allclose(embedded[:3], state)
-
-
-def test_pseudomode_reduction_and_bath_expansion() -> None:
+def test_nonmarkov_manybody_scenario_2() -> None:
     expansion, mode, mapping = phx.operators.quantum.lorentzian_pseudomode(
         1.0, 0.5, 0.2, cutoff=3
     )
@@ -94,9 +88,6 @@ def test_pseudomode_reduction_and_bath_expansion() -> None:
     solution = phx.solver.solve_pseudomode(problem, step_size=0.02, steps=2)
     assert bool(solution.valid)
     assert solution.reduced_states.shape == (3, 2, 2)
-
-
-def test_heom_topology_and_root_state() -> None:
     initial = jnp.asarray([[0.6 + 0.0j, 0.0j], [0.0j, 0.4 + 0.0j]])
     problem = phx.solver.thermal_drude_lorentz_qubit_heom(
         0.05, 1.0, 2.0, initial, depth=1
@@ -105,9 +96,6 @@ def test_heom_topology_and_root_state() -> None:
     solution = phx.solver.solve_heom(problem, step_size=0.01, steps=2)
     assert bool(solution.valid)
     assert solution.root_states.shape == (3, 2, 2)
-
-
-def test_memory_kernel_and_dynamical_map_physicality() -> None:
     initial = jnp.asarray([[0.6 + 0.0j, 0.0j], [0.0j, 0.4 + 0.0j]])
     problem = phx.solver.exponential_memory_qubit_problem(0.05, 1.0, initial)
     solution = phx.solver.solve_memory_kernel(problem, step_size=0.01, steps=2)
@@ -117,7 +105,7 @@ def test_memory_kernel_and_dynamical_map_physicality() -> None:
     assert bool(report.valid)
 
 
-def test_tensor_network_purification_and_gate_truncation() -> None:
+def test_nonmarkov_manybody_scenario_3() -> None:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype="complex128")
     )
@@ -132,9 +120,6 @@ def test_tensor_network_purification_and_gate_truncation() -> None:
         (jnp.asarray([[[[1.0]], [[0.0]]]], dtype="complex128"),)
     )
     assert jnp.allclose(jnp.trace(purification.to_dense_density(normalize=True)), 1.0)
-
-
-def test_markov_process_tensor_contracts_identity_interventions() -> None:
     identity = jnp.eye(4, dtype="complex128")
     initial = jnp.asarray([[0.7 + 0.0j, 0.0j], [0.0j, 0.3 + 0.0j]])
     process = phx.tensor_network.markov_process_tensor((identity, identity), initial)

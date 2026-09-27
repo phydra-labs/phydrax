@@ -137,9 +137,7 @@ def _capture_plan() -> Any:
     )
 
 
-def test_radiative_capture_and_photo_dissociation_obey_pointwise_detailed_balance() -> (
-    None
-):
+def test_dark_bound_states_scenario_1() -> None:
     plan = _capture_plan()
     momentum = jnp.asarray((0.2, 1.0, 2.0))
     result = evaluate_radiative_capture_balance(plan, momentum)
@@ -157,9 +155,6 @@ def test_radiative_capture_and_photo_dissociation_obey_pointwise_detailed_balanc
         rtol=1e-7,
     )
     np.testing.assert_allclose(result.detailed_balance_residual, 0.0, atol=1e-12)
-
-
-def test_thermal_forward_reverse_rates_share_one_saha_equilibrium_ratio() -> None:
     plan = _capture_plan()
     temperature = jnp.asarray((0.1, 0.5, 1.0))
     result = evaluate_thermal_bound_state_balance(plan, temperature)

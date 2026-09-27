@@ -31,7 +31,7 @@ def _trap(kind: Any = "bulk", density: Any = 2e21) -> Any:
     )
 
 
-def test_trap_exact_step_is_bounded_and_ledger_matches_inventory_change() -> None:
+def test_semiconductor_kinetics_scenario_1() -> None:
     trap = _trap()
     initial = jnp.array([0.0, 1.0, 0.2])
     dt = jnp.array([1e-14, 1e-8, 1e-2])
@@ -73,9 +73,6 @@ def test_trap_exact_step_is_bounded_and_ledger_matches_inventory_change() -> Non
     invalid = trap.advance(1.1, 3e20, 2e20, 300.0, 0.8 * Q, 0.4 * Q, 1.0)
     assert not bool(invalid.successful)
     assert np.isnan(invalid.occupancy)
-
-
-def test_trap_detailed_balance_and_energy_reference_invariance() -> None:
     trap = _trap()
     equilibrium = trap.evaluate(2 / 3, 1e20, 1.5e19, 300.0, 0.8 * Q, 0.4 * Q)
     np.testing.assert_allclose(
@@ -95,9 +92,6 @@ def test_trap_detailed_balance_and_energy_reference_invariance() -> None:
         after.trap_energy_source - before.trap_energy_source,
         Q * before.trap_population_source,
     )
-
-
-def test_surface_inventory_uses_area_not_neighbor_volume() -> None:
     bulk, surface = _trap(), _trap("surface", 2e15)
     volume, area = 3e-18, 3e-12
     args = (0.25, 3e20, 2e20, 300.0, 0.8 * Q, 0.4 * Q)
@@ -113,22 +107,6 @@ def test_surface_inventory_uses_area_not_neighbor_volume() -> None:
         volume * bulk_exchange.lattice_energy_source,
         area * surface_exchange.lattice_energy_source,
     )
-
-
-def _barrier(
-    positions: Any, energies: Any, masses: Any, minimum_action: Any = 0.0
-) -> Any:
-    return WKBBarrierPath(
-        positions,
-        energies,
-        masses,
-        minimum_action=minimum_action,
-        energy_reference="synthetic zero",
-        provenance="analytic scalar barrier fixture; no material complex-band claim",
-    )
-
-
-def test_wkb_rectangular_and_linear_turning_point_actions() -> None:
     mass, length, height, energy = 0.2 * 9.1093837139e-31, 4e-9, 1.0 * Q, 0.25 * Q
     rectangular = _barrier([0.0, length], [height, height], [mass])
     result = rectangular.evaluate(energy)
@@ -157,9 +135,6 @@ def test_wkb_rectangular_and_linear_turning_point_actions() -> None:
     over = rectangular.evaluate(2 * height)
     assert float(over.transmission) == 1.0
     assert float(over.forbidden_length) == 0.0
-
-
-def test_wkb_rejects_resonant_multibarrier_and_unadmitted_small_action() -> None:
     mass = 0.2 * 9.1093837139e-31
     two_barriers = _barrier([0.0, 2e-9, 4e-9], [Q, 0.0, Q], [mass, mass])
     result = two_barriers.evaluate(0.5 * Q)
@@ -167,6 +142,19 @@ def test_wkb_rejects_resonant_multibarrier_and_unadmitted_small_action() -> None
     assert np.isnan(result.transmission)
     thin = _barrier([0.0, 1e-12], [Q, Q], [mass], minimum_action=2.0)
     assert not bool(thin.evaluate(0.5 * Q).successful)
+
+
+def _barrier(
+    positions: Any, energies: Any, masses: Any, minimum_action: Any = 0.0
+) -> Any:
+    return WKBBarrierPath(
+        positions,
+        energies,
+        masses,
+        minimum_action=minimum_action,
+        energy_reference="synthetic zero",
+        provenance="analytic scalar barrier fixture; no material complex-band claim",
+    )
 
 
 def test_nonlocal_tunneling_has_nodewise_charge_and_energy_incidence() -> None:

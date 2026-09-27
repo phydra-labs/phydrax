@@ -46,7 +46,7 @@ def _problem() -> Any:
     )
 
 
-def test_fully_adapted_auxiliary_filter_has_exact_incremental_correction() -> None:
+def test_guided_particle_scenario_1() -> None:
     problem = _problem()
     proposal = phx.uq.LinearGaussianGuidedParticleProposal((1,))
     result = phx.uq.guided_particle_filter(
@@ -86,6 +86,16 @@ def test_fully_adapted_auxiliary_filter_has_exact_incremental_correction() -> No
         exact.total_log_likelihood,
         atol=0.08,
     )
+    with jax.disable_jit():
+        proposal = phx.uq.BootstrapParticleProposal((2,))
+        try:
+            phx.uq.guided_particle_filter(
+                jr.key(1), _problem(), proposal, num_particles=4
+            )
+        except ValueError as error:
+            assert "state shapes do not match" in str(error)
+        else:
+            raise AssertionError("Expected a proposal/model shape mismatch.")
 
 
 def test_callable_guided_proposal_computes_target_density_correction() -> None:
@@ -139,16 +149,3 @@ def test_callable_guided_proposal_computes_target_density_correction() -> None:
     assert jnp.allclose(result.proposal_log_corrections, 0.0)
     assert jnp.array_equal(result.proposal_ancestor_indices[0], jnp.arange(32))
     assert not result.auxiliary_resampled[0]
-
-
-def test_guided_filter_rejects_proposal_shape_mismatch() -> None:
-    with jax.disable_jit():
-        proposal = phx.uq.BootstrapParticleProposal((2,))
-        try:
-            phx.uq.guided_particle_filter(
-                jr.key(1), _problem(), proposal, num_particles=4
-            )
-        except ValueError as error:
-            assert "state shapes do not match" in str(error)
-        else:
-            raise AssertionError("Expected a proposal/model shape mismatch.")

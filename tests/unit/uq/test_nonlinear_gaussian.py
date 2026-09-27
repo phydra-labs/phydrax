@@ -23,7 +23,7 @@ def _linear_case() -> Any:
     return mean, phx.uq.GaussianFactor(root), matrix, offset
 
 
-def test_all_transforms_recover_affine_moments_and_cross_covariance() -> None:
+def test_nonlinear_gaussian_scenario_1() -> None:
     mean, factor, matrix, offset = _linear_case()
     covariance = factor.covariance
     expected_mean = matrix @ mean + offset
@@ -46,6 +46,52 @@ def test_all_transforms_recover_affine_moments_and_cross_covariance() -> None:
         assert jnp.allclose(result.cross_covariance, expected_cross, atol=2e-6)
         assert result.input_dimension == 2
         assert result.output_dimension == 3
+    mean = jnp.asarray(0.3)
+    variance = 0.7
+    factor = phx.uq.GaussianFactor(jnp.asarray([[jnp.sqrt(variance)]]))
+    function = lambda value: value**2
+    exact_mean = mean**2 + variance
+    exact_variance = 2.0 * variance**2 + 4.0 * mean**2 * variance
+    exact_cross = 2.0 * mean * variance
+
+    unscented = phx.uq.scaled_unscented_transform(function, mean, factor)
+    hermite = phx.uq.gauss_hermite_transform(function, mean, factor, order=3)
+    cubature = phx.uq.spherical_radial_cubature(function, mean, factor)
+    first_order = phx.uq.first_order_gaussian_transform(function, mean, factor)
+
+    for result in (unscented, hermite):
+        assert jnp.allclose(result.mean, exact_mean, atol=2e-6)
+        assert jnp.allclose(result.factor.covariance[0, 0], exact_variance, atol=2e-6)
+        assert jnp.allclose(result.cross_covariance[0, 0], exact_cross, atol=2e-6)
+    assert jnp.allclose(cubature.mean, exact_mean, atol=2e-6)
+    assert jnp.allclose(cubature.cross_covariance[0, 0], exact_cross, atol=2e-6)
+    assert jnp.allclose(first_order.mean, mean**2)
+    assert jnp.allclose(first_order.factor.covariance[0, 0], 4.0 * mean**2 * variance)
+    assert jnp.allclose(first_order.cross_covariance[0, 0], exact_cross, atol=2e-6)
+    singular = phx.uq.GaussianFactor(jnp.asarray([[1.0], [2.0]]))
+    matrix = jnp.asarray([[0.5, -0.25], [1.0, 0.5]])
+    transformed = phx.uq.spherical_radial_cubature(
+        lambda value: matrix @ value,
+        jnp.asarray([0.2, -0.1]),
+        singular,
+    )
+    expected = matrix @ singular.covariance @ matrix.T
+
+    assert transformed.valid
+    assert transformed.factor.numerical_rank == 1
+    assert jnp.allclose(transformed.factor.covariance, expected)
+
+    zero = phx.uq.GaussianFactor(jnp.zeros((2, 0)))
+    deterministic = phx.uq.spherical_radial_cubature(
+        lambda value: jnp.asarray([value[0] - value[1]]),
+        jnp.asarray([2.0, 0.5]),
+        zero,
+    )
+    assert deterministic.valid
+    assert deterministic.point_count == 1
+    assert deterministic.factor.numerical_rank == 0
+    assert jnp.array_equal(deterministic.factor.covariance, jnp.zeros((1, 1)))
+    assert jnp.array_equal(deterministic.cross_covariance, jnp.zeros((2, 1)))
 
 
 def test_first_order_transform_uses_complex_real_linear_factor_directions() -> None:
@@ -118,31 +164,6 @@ def test_first_order_high_output_cross_covariance_has_linear_shape() -> None:
     )
 
 
-def test_quadratic_moments_distinguish_exact_and_first_order_rules() -> None:
-    mean = jnp.asarray(0.3)
-    variance = 0.7
-    factor = phx.uq.GaussianFactor(jnp.asarray([[jnp.sqrt(variance)]]))
-    function = lambda value: value**2
-    exact_mean = mean**2 + variance
-    exact_variance = 2.0 * variance**2 + 4.0 * mean**2 * variance
-    exact_cross = 2.0 * mean * variance
-
-    unscented = phx.uq.scaled_unscented_transform(function, mean, factor)
-    hermite = phx.uq.gauss_hermite_transform(function, mean, factor, order=3)
-    cubature = phx.uq.spherical_radial_cubature(function, mean, factor)
-    first_order = phx.uq.first_order_gaussian_transform(function, mean, factor)
-
-    for result in (unscented, hermite):
-        assert jnp.allclose(result.mean, exact_mean, atol=2e-6)
-        assert jnp.allclose(result.factor.covariance[0, 0], exact_variance, atol=2e-6)
-        assert jnp.allclose(result.cross_covariance[0, 0], exact_cross, atol=2e-6)
-    assert jnp.allclose(cubature.mean, exact_mean, atol=2e-6)
-    assert jnp.allclose(cubature.cross_covariance[0, 0], exact_cross, atol=2e-6)
-    assert jnp.allclose(first_order.mean, mean**2)
-    assert jnp.allclose(first_order.factor.covariance[0, 0], 4.0 * mean**2 * variance)
-    assert jnp.allclose(first_order.cross_covariance[0, 0], exact_cross, atol=2e-6)
-
-
 def test_high_order_hermite_matches_a_deterministic_particle_reference() -> None:
     mean = jnp.asarray(-0.2)
     scale = 0.65
@@ -167,34 +188,7 @@ def test_high_order_hermite_matches_a_deterministic_particle_reference() -> None
     assert jnp.allclose(result.cross_covariance[0], reference_cross, atol=4e-5)
 
 
-def test_singular_and_zero_rank_factors_remain_observable_and_valid() -> None:
-    singular = phx.uq.GaussianFactor(jnp.asarray([[1.0], [2.0]]))
-    matrix = jnp.asarray([[0.5, -0.25], [1.0, 0.5]])
-    transformed = phx.uq.spherical_radial_cubature(
-        lambda value: matrix @ value,
-        jnp.asarray([0.2, -0.1]),
-        singular,
-    )
-    expected = matrix @ singular.covariance @ matrix.T
-
-    assert transformed.valid
-    assert transformed.factor.numerical_rank == 1
-    assert jnp.allclose(transformed.factor.covariance, expected)
-
-    zero = phx.uq.GaussianFactor(jnp.zeros((2, 0)))
-    deterministic = phx.uq.spherical_radial_cubature(
-        lambda value: jnp.asarray([value[0] - value[1]]),
-        jnp.asarray([2.0, 0.5]),
-        zero,
-    )
-    assert deterministic.valid
-    assert deterministic.point_count == 1
-    assert deterministic.factor.numerical_rank == 0
-    assert jnp.array_equal(deterministic.factor.covariance, jnp.zeros((1, 1)))
-    assert jnp.array_equal(deterministic.cross_covariance, jnp.zeros((2, 1)))
-
-
-def test_dimension_and_tensor_point_guards_are_explicit() -> None:
+def test_nonlinear_gaussian_scenario_2() -> None:
     factor = phx.uq.GaussianFactor(jnp.eye(6))
     with pytest.raises(ValueError, match="got 6, cap 5"):
         phx.uq.gauss_hermite_transform(lambda value: value, jnp.zeros(6), factor)
@@ -215,9 +209,6 @@ def test_dimension_and_tensor_point_guards_are_explicit() -> None:
             scalar_factor,
             beta=-2.0,
         )
-
-
-def test_invalid_unscented_covariance_is_reported_without_repair() -> None:
     factor = phx.uq.GaussianFactor(jnp.ones((1, 1)))
     result = phx.uq.scaled_unscented_transform(
         lambda value: value**2,
@@ -230,9 +221,6 @@ def test_invalid_unscented_covariance_is_reported_without_repair() -> None:
     assert result.status == phx.uq.NONLINEAR_GAUSSIAN_OUTPUT_FACTOR_INVALID
     assert not result.factor.valid
     assert jnp.any(~jnp.isfinite(result.factor.factor))
-
-
-def test_regularization_is_applied_and_recorded_explicitly() -> None:
     factor = phx.uq.GaussianFactor(jnp.ones((1, 1)))
     result = phx.uq.spherical_radial_cubature(
         lambda value: jnp.asarray([2.0, -1.0]),
@@ -247,7 +235,7 @@ def test_regularization_is_applied_and_recorded_explicitly() -> None:
     assert jnp.array_equal(result.cross_covariance, jnp.zeros((1, 2)))
 
 
-def test_method_and_parameter_provenance_are_stable() -> None:
+def test_nonlinear_gaussian_scenario_3() -> None:
     factor = phx.uq.GaussianFactor(jnp.eye(2))
     mean = jnp.zeros(2)
     cubature = phx.uq.spherical_radial_cubature(lambda value: value, mean, factor)
@@ -288,6 +276,70 @@ def test_method_and_parameter_provenance_are_stable() -> None:
         "first-order-jvp-vjp",
         1,
     )
+    factor = phx.uq.GaussianFactor(jnp.asarray([[0.7]]))
+    first = phx.uq.gaussian_expectation(
+        lambda value: value**2,
+        jnp.asarray(0.2),
+        factor,
+        method="monte-carlo",
+        key=jr.key(71),
+        num_samples=4_096,
+    )
+    second = phx.uq.gaussian_expectation(
+        lambda value: value**2,
+        jnp.asarray(0.2),
+        factor,
+        method="monte-carlo",
+        key=jr.key(71),
+        num_samples=4_096,
+    )
+    assert first.method_id == "fixed-sample-monte-carlo"
+    assert first.point_count == 4_096
+    assert jnp.array_equal(first.value, second.value)
+    assert jnp.allclose(first.value, 0.2**2 + 0.7**2, atol=2.5e-2)
+    with pytest.raises(ValueError, match="key is required"):
+        phx.uq.gaussian_expectation(
+            lambda value: value,
+            jnp.asarray(0.0),
+            factor,
+            method="monte-carlo",
+        )
+
+    deterministic = phx.uq.gaussian_expectation(
+        lambda value: {"value": 3.0 * value - 1.0},
+        jnp.asarray([0.25, -0.5]),
+        phx.uq.GaussianFactor(jnp.zeros((2, 0))),
+        method="monte-carlo",
+        key=jr.key(4),
+        num_samples=128,
+    )
+    assert deterministic.point_count == 1
+    assert jnp.array_equal(deterministic.value["value"], jnp.asarray([-0.25, -2.5]))
+    factor = phx.uq.GaussianFactor(jnp.eye(2))
+    with pytest.raises(ValueError, match="exceeds max_dimension"):
+        phx.uq.gaussian_expectation(
+            lambda value: value,
+            jnp.zeros(2),
+            factor,
+            method="gauss-hermite",
+            max_dimension=1,
+        )
+    with pytest.raises(ValueError, match="exceeds max_points"):
+        phx.uq.gaussian_expectation(
+            lambda value: value,
+            jnp.zeros(2),
+            factor,
+            method="gauss-hermite",
+            order=5,
+            max_points=24,
+        )
+    nonfinite = phx.uq.gaussian_expectation(
+        lambda value: jnp.asarray(jnp.nan),
+        jnp.zeros(2),
+        factor,
+    )
+    assert not nonfinite.valid
+    assert nonfinite.status == phx.uq.NONLINEAR_GAUSSIAN_NONFINITE
 
 
 def test_event_pytrees_jit_vmap_and_gradients_preserve_contracts() -> None:
@@ -432,73 +484,3 @@ def test_gaussian_expectation_polynomial_values_and_gradients_are_exact() -> Non
     assert jnp.allclose(value, expected, atol=2e-6)
     assert jnp.allclose(mean_gradient, 2.0 * mean, atol=2e-6)
     assert jnp.allclose(scale_gradient, 2.0 * scale, atol=2e-6)
-
-
-def test_gaussian_expectation_monte_carlo_is_keyed_and_zero_rank_is_exact() -> None:
-    factor = phx.uq.GaussianFactor(jnp.asarray([[0.7]]))
-    first = phx.uq.gaussian_expectation(
-        lambda value: value**2,
-        jnp.asarray(0.2),
-        factor,
-        method="monte-carlo",
-        key=jr.key(71),
-        num_samples=4_096,
-    )
-    second = phx.uq.gaussian_expectation(
-        lambda value: value**2,
-        jnp.asarray(0.2),
-        factor,
-        method="monte-carlo",
-        key=jr.key(71),
-        num_samples=4_096,
-    )
-    assert first.method_id == "fixed-sample-monte-carlo"
-    assert first.point_count == 4_096
-    assert jnp.array_equal(first.value, second.value)
-    assert jnp.allclose(first.value, 0.2**2 + 0.7**2, atol=2.5e-2)
-    with pytest.raises(ValueError, match="key is required"):
-        phx.uq.gaussian_expectation(
-            lambda value: value,
-            jnp.asarray(0.0),
-            factor,
-            method="monte-carlo",
-        )
-
-    deterministic = phx.uq.gaussian_expectation(
-        lambda value: {"value": 3.0 * value - 1.0},
-        jnp.asarray([0.25, -0.5]),
-        phx.uq.GaussianFactor(jnp.zeros((2, 0))),
-        method="monte-carlo",
-        key=jr.key(4),
-        num_samples=128,
-    )
-    assert deterministic.point_count == 1
-    assert jnp.array_equal(deterministic.value["value"], jnp.asarray([-0.25, -2.5]))
-
-
-def test_gaussian_expectation_preserves_guards_and_nonfinite_status() -> None:
-    factor = phx.uq.GaussianFactor(jnp.eye(2))
-    with pytest.raises(ValueError, match="exceeds max_dimension"):
-        phx.uq.gaussian_expectation(
-            lambda value: value,
-            jnp.zeros(2),
-            factor,
-            method="gauss-hermite",
-            max_dimension=1,
-        )
-    with pytest.raises(ValueError, match="exceeds max_points"):
-        phx.uq.gaussian_expectation(
-            lambda value: value,
-            jnp.zeros(2),
-            factor,
-            method="gauss-hermite",
-            order=5,
-            max_points=24,
-        )
-    nonfinite = phx.uq.gaussian_expectation(
-        lambda value: jnp.asarray(jnp.nan),
-        jnp.zeros(2),
-        factor,
-    )
-    assert not nonfinite.valid
-    assert nonfinite.status == phx.uq.NONLINEAR_GAUSSIAN_NONFINITE

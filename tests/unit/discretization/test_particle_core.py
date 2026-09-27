@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_particle_plan_prepares_material_support_without_current_geometry() -> None:
+def test_particle_contracts() -> None:
     plan = phx.discretization.ParticleSetPlan(
         # ty: ignore[invalid-argument-type]
         [7, 11, 19],
@@ -33,9 +33,25 @@ def test_particle_plan_prepares_material_support_without_current_geometry() -> N
     assert particles.numeric_version == "initial"
     assert particles.plan_id == plan.plan_id
     assert particles.resource_evidence_id == particles.preparation.report_id
-
-
-def test_particle_padding_is_inert_and_topological() -> None:
+    with pytest.raises(ValueError, match="unique"):
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.ParticleSetPlan([2, 2], [1.0, 1.0], ambient_dimension=1)
+    with pytest.raises(ValueError, match="finite and positive"):
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.ParticleSetPlan([2, 3], [1.0, 0.0], ambient_dimension=1)
+    with pytest.raises(ValueError, match="at least one active"):
+        phx.discretization.ParticleSetPlan(
+            # ty: ignore[invalid-argument-type]
+            [-1, -1],
+            # ty: ignore[invalid-argument-type]
+            [np.nan, np.nan],
+            ambient_dimension=1,
+            # ty: ignore[invalid-argument-type]
+            active_mask=[False, False],
+        )
+    with pytest.raises(ValueError, match="ambient_dimension"):
+        # ty: ignore[invalid-argument-type]
+        phx.discretization.ParticleSetPlan([2], [1.0], ambient_dimension=0)
     # ty: ignore[invalid-argument-type]
     subset = phx.discretization.EntitySubset("observed", [True, False, False])
     particles = phx.discretization.ParticleSetPlan(
@@ -67,31 +83,6 @@ def test_particle_padding_is_inert_and_topological() -> None:
             # ty: ignore[invalid-argument-type]
             subsets=(phx.discretization.EntitySubset("invalid", [False, False, True]),),
         )
-
-
-def test_particle_plan_rejects_invalid_structural_data() -> None:
-    with pytest.raises(ValueError, match="unique"):
-        # ty: ignore[invalid-argument-type]
-        phx.discretization.ParticleSetPlan([2, 2], [1.0, 1.0], ambient_dimension=1)
-    with pytest.raises(ValueError, match="finite and positive"):
-        # ty: ignore[invalid-argument-type]
-        phx.discretization.ParticleSetPlan([2, 3], [1.0, 0.0], ambient_dimension=1)
-    with pytest.raises(ValueError, match="at least one active"):
-        phx.discretization.ParticleSetPlan(
-            # ty: ignore[invalid-argument-type]
-            [-1, -1],
-            # ty: ignore[invalid-argument-type]
-            [np.nan, np.nan],
-            ambient_dimension=1,
-            # ty: ignore[invalid-argument-type]
-            active_mask=[False, False],
-        )
-    with pytest.raises(ValueError, match="ambient_dimension"):
-        # ty: ignore[invalid-argument-type]
-        phx.discretization.ParticleSetPlan([2], [1.0], ambient_dimension=0)
-
-
-def test_particle_precision_and_execution_policies_are_explicit() -> None:
     precision = phx.discretization.ParticlePrecisionPolicy(
         geometry_dtype="float32",
         evaluation_dtype="float32",

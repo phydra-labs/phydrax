@@ -26,7 +26,7 @@ def _saturation(force: Any = HighFieldDrivingForce.ELECTRIC_FIELD) -> Any:
     )
 
 
-def test_velocity_saturation_recovers_low_field_and_bounded_asymptote() -> None:
+def test_semiconductor_high_field_scenario_1() -> None:
     law = _saturation()
     fields = jnp.array([0.0, 1e-2, 1e9])
     result = law.evaluate(0.1, fields, 300.0)
@@ -37,9 +37,6 @@ def test_velocity_saturation_recovers_low_field_and_bounded_asymptote() -> None:
     assert float(result.drift_speed[0]) == 0.0
     warm = law.evaluate(0.1, 1e9, 600.0)
     np.testing.assert_allclose(warm.saturation_velocity, 1e5 / np.sqrt(2.0))
-
-
-def test_driving_choice_distinguishes_builtin_and_electrochemical_fields() -> None:
     field_law = _saturation()
     fermi_law = _saturation(HighFieldDrivingForce.QUASI_FERMI_GRADIENT)
     electric = field_law.driving_force.from_fields(1e8, 0.0)
@@ -50,30 +47,6 @@ def test_driving_choice_distinguishes_builtin_and_electrochemical_fields() -> No
     invalid = field_law.evaluate(0.1, [2e10, 1.0], [300.0, 1100.0])
     assert not np.any(invalid.successful)
     assert np.all(np.isnan(invalid.mobility))
-
-
-def _ionization() -> Any:
-    return LocalImpactIonization(
-        2e6,
-        7e5,
-        1e7,
-        2e7,
-        electron_exponent=1.0,
-        hole_exponent=2.0,
-        electron_temperature_exponent=0.2,
-        hole_temperature_exponent=-0.3,
-        electron_birth_energy=0.1 * Q,
-        hole_birth_energy=0.2 * Q,
-        reference_temperature=300.0,
-        # ty: ignore[invalid-argument-type]
-        temperature_range=(200.0, 800.0),
-        maximum_field=1e9,
-        orientation="synthetic scalar longitudinal direction",
-        provenance="synthetic Chynoweth law; not an avalanche calibration",
-    )
-
-
-def test_ionization_pays_pair_creation_energy_and_preserves_charge() -> None:
     law = _ionization()
     field, gn, gp, gap = 1e7, -3e24, 2e24, 1.1 * Q
     result = law.evaluate(field, gn, gp, 300.0, gap)
@@ -97,3 +70,24 @@ def test_ionization_pays_pair_creation_energy_and_preserves_charge() -> None:
     zero = law.evaluate(0.0, gn, gp, 300.0, gap)
     assert float(zero.electron_source) == 0.0
     assert float(zero.electron_energy_source) == 0.0
+
+
+def _ionization() -> Any:
+    return LocalImpactIonization(
+        2e6,
+        7e5,
+        1e7,
+        2e7,
+        electron_exponent=1.0,
+        hole_exponent=2.0,
+        electron_temperature_exponent=0.2,
+        hole_temperature_exponent=-0.3,
+        electron_birth_energy=0.1 * Q,
+        hole_birth_energy=0.2 * Q,
+        reference_temperature=300.0,
+        # ty: ignore[invalid-argument-type]
+        temperature_range=(200.0, 800.0),
+        maximum_field=1e9,
+        orientation="synthetic scalar longitudinal direction",
+        provenance="synthetic Chynoweth law; not an avalanche calibration",
+    )

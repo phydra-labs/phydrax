@@ -54,7 +54,7 @@ def _euler_level(level: Any, realization: Any, parent_result: Any, transfer: Any
     return jnp.prod(factors, axis=-1)
 
 
-def test_coupled_hierarchy_reuses_paths_and_telescopes_exactly() -> None:
+def test_coupled_hierarchy_contracts() -> None:
     hierarchy = _hierarchy()
     realization = phx.stochastic.WienerRealization(
         jr.key(8),
@@ -85,6 +85,14 @@ def test_coupled_hierarchy_reuses_paths_and_telescopes_exactly() -> None:
     )
     assert jnp.allclose(result.telescoping_mean(), jnp.mean(result.finest_observable))
     assert result.total_cost_seconds == 3.0
+    hierarchy = _hierarchy(independent=True)
+    with pytest.raises(ValueError, match="independent"):
+        phx.solver.solve_coupled_hierarchy(
+            hierarchy,
+            None,
+            _euler_level,
+            lambda output, level: output,
+        )
 
 
 def test_coupled_hierarchy_tracks_failed_pairs_without_repairing_them() -> None:
@@ -142,14 +150,3 @@ def test_coupled_hierarchy_resolves_declared_state_transfer() -> None:
 
     assert received == [None, transfer]
     assert result.levels[1].state_transfer_id == transfer.transfer_id
-
-
-def test_coupled_hierarchy_rejects_independent_level_noise() -> None:
-    hierarchy = _hierarchy(independent=True)
-    with pytest.raises(ValueError, match="independent"):
-        phx.solver.solve_coupled_hierarchy(
-            hierarchy,
-            None,
-            _euler_level,
-            lambda output, level: output,
-        )

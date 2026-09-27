@@ -20,7 +20,7 @@ def _single_leaf_geometry(parameters: Any, manifold: Any) -> Any:
     )
 
 
-def test_riemannian_sgd_reduces_exactly_to_optax_sgd_in_euclidean_space() -> None:
+def test_riemannian_first_order_scenario_1() -> None:
     parameters = {"point": jnp.array([1.5, -2.0])}
     gradients = {"point": jnp.array([0.25, -0.75])}
     geometry = _single_leaf_geometry(
@@ -40,40 +40,6 @@ def test_riemannian_sgd_reduces_exactly_to_optax_sgd_in_euclidean_space() -> Non
     assert int(state.step) == 1
     assert jnp.allclose(state.metrics.gradient_norm, jnp.sqrt(0.625))
     assert jnp.allclose(state.metrics.tangent_step_norm, 0.2 * jnp.sqrt(0.625))
-
-
-def test_simplex_riemannian_sgd_is_exact_entropy_mirror_descent() -> None:
-    probability = jnp.asarray([0.2, 0.3, 0.5])
-    gradient = jnp.asarray([1.2, -0.4, 0.7])
-    learning_rate = 0.15
-    parameters = {"point": probability}
-    geometry = _single_leaf_geometry(
-        parameters,
-        phx.metrix.ProbabilitySimplexManifold(3),
-    )
-    optimizer = phx.optim.riemannian_sgd(
-        geometry,
-        learning_rate=learning_rate,
-    )
-    state = optimizer.init(parameters)
-    actual, _ = optimizer.update(
-        {"point": gradient},
-        state,
-        parameters,
-    )
-    shifted, _ = optimizer.update(
-        {"point": gradient + 5.0},
-        state,
-        parameters,
-    )
-    logits = jnp.log(probability) - learning_rate * gradient
-    expected = jax.nn.softmax(logits)
-
-    assert jnp.allclose(actual["point"], expected)
-    assert jnp.allclose(shifted["point"], expected)
-
-
-def test_riemannian_sgd_mixed_update_and_global_clipping() -> None:
     parameters = {
         "offset": jnp.array(1.0),
         "point": jnp.array([1.0, 0.0, 0.0]),
@@ -102,9 +68,6 @@ def test_riemannian_sgd_mixed_update_and_global_clipping() -> None:
     assert jnp.allclose(state.metrics.tangent_step_norm, 0.5)
     assert jnp.allclose(jnp.linalg.norm(destination["point"]), 1.0)
     assert destination["offset"] == parameters["offset"]
-
-
-def test_riemannian_sgd_schedule_and_jit_use_logical_step() -> None:
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _single_leaf_geometry(parameters, phx.metrix.SphereManifold(3))
     optimizer = phx.optim.riemannian_sgd(
@@ -120,9 +83,6 @@ def test_riemannian_sgd_schedule_and_jit_use_logical_step() -> None:
     parameters, state = update(gradients, state, parameters)
     assert jnp.allclose(state.metrics.learning_rate, 0.1)
     assert bool(geometry.contains(parameters))
-
-
-def test_riemannian_optimizer_configuration_and_nonfinite_failures() -> None:
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _single_leaf_geometry(parameters, phx.metrix.SphereManifold(3))
     invalid_learning_rate: Any = []
@@ -143,9 +103,57 @@ def test_riemannian_optimizer_configuration_and_nonfinite_failures() -> None:
             optimizer.init(parameters),
             parameters,
         )
+    parameters = {"point": jnp.array([1.0, -2.0])}
+    geometry = _single_leaf_geometry(
+        parameters,
+        phx.metrix.EuclideanManifold((2,)),
+    )
+    optimizer = phx.optim.riemannian_momentum(
+        geometry,
+        learning_rate=0.1,
+        momentum=0.75,
+    )
+    state = optimizer.init(parameters)
+    expected_momentum = jnp.zeros((2,))
 
+    for gradient in (jnp.array([1.0, -0.5]), jnp.array([0.2, 0.7])):
+        expected_momentum = 0.75 * expected_momentum + gradient
+        expected_parameters = parameters["point"] - 0.1 * expected_momentum
+        parameters, state = optimizer.update(
+            {"point": gradient},
+            state,
+            parameters,
+        )
+        assert jnp.allclose(parameters["point"], expected_parameters)
+        assert jnp.allclose(state.momentum["point"], expected_momentum)
+    probability = jnp.asarray([0.2, 0.3, 0.5])
+    gradient = jnp.asarray([1.2, -0.4, 0.7])
+    learning_rate = 0.15
+    parameters = {"point": probability}
+    geometry = _single_leaf_geometry(
+        parameters,
+        phx.metrix.ProbabilitySimplexManifold(3),
+    )
+    optimizer = phx.optim.riemannian_sgd(
+        geometry,
+        learning_rate=learning_rate,
+    )
+    state = optimizer.init(parameters)
+    actual, _ = optimizer.update(
+        {"point": gradient},
+        state,
+        parameters,
+    )
+    shifted, _ = optimizer.update(
+        {"point": gradient + 5.0},
+        state,
+        parameters,
+    )
+    logits = jnp.log(probability) - learning_rate * gradient
+    expected = jax.nn.softmax(logits)
 
-def test_transported_momentum_remains_tangent_at_new_point() -> None:
+    assert jnp.allclose(actual["point"], expected)
+    assert jnp.allclose(shifted["point"], expected)
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _single_leaf_geometry(parameters, phx.metrix.SphereManifold(3))
     optimizer = phx.optim.riemannian_momentum(
@@ -170,32 +178,6 @@ def test_transported_momentum_remains_tangent_at_new_point() -> None:
         assert bool(geometry.contains(parameters))
 
     assert state.metrics.momentum_norm > 0.0
-
-
-def test_riemannian_momentum_reduces_to_heavy_ball_in_euclidean_space() -> None:
-    parameters = {"point": jnp.array([1.0, -2.0])}
-    geometry = _single_leaf_geometry(
-        parameters,
-        phx.metrix.EuclideanManifold((2,)),
-    )
-    optimizer = phx.optim.riemannian_momentum(
-        geometry,
-        learning_rate=0.1,
-        momentum=0.75,
-    )
-    state = optimizer.init(parameters)
-    expected_momentum = jnp.zeros((2,))
-
-    for gradient in (jnp.array([1.0, -0.5]), jnp.array([0.2, 0.7])):
-        expected_momentum = 0.75 * expected_momentum + gradient
-        expected_parameters = parameters["point"] - 0.1 * expected_momentum
-        parameters, state = optimizer.update(
-            {"point": gradient},
-            state,
-            parameters,
-        )
-        assert jnp.allclose(parameters["point"], expected_parameters)
-        assert jnp.allclose(state.momentum["point"], expected_momentum)
 
 
 def test_sphere_rayleigh_quotient_converges_to_extremal_eigenvector() -> None:

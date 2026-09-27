@@ -54,7 +54,7 @@ def _coverage(schedule: Any, interactions: Any) -> Any:
     return coverage
 
 
-def test_dual_tree_routes_cover_each_ordered_pair_once() -> None:
+def test_plane_interactions_scenario_1() -> None:
     schedule_plan, schedule = _schedule()
     interactions = MortonPlaneInteractionPlan(
         schedule_plan,
@@ -68,20 +68,6 @@ def test_dual_tree_routes_cover_each_ordered_pair_once() -> None:
     assert float(interactions.evidence.maximum_accepted_ratio) < 0.5
     near_nodes = interactions.near.source_indices[interactions.near.valid]
     assert bool(jnp.all(schedule.node_planes[near_nodes] == 0))
-
-
-def test_plane_scales_are_finite_powers_of_two_and_enclose_nodes() -> None:
-    _, schedule = _schedule()
-    active = schedule.node_active
-    scales = schedule.node_scales[active]
-    radii = jnp.sqrt(jnp.sum(schedule.node_half_widths[active] ** 2, axis=-1))
-    assert bool(schedule.evidence.successful)
-    assert int(schedule.evidence.invalid_scales) == 0
-    assert bool(jnp.all(scales >= radii))
-    np.testing.assert_allclose(jnp.log2(scales), jnp.round(jnp.log2(scales)))
-
-
-def test_dual_tree_capacity_failure_is_fail_closed() -> None:
     schedule_plan, schedule = _schedule()
     interactions = MortonPlaneInteractionPlan(
         schedule_plan,
@@ -98,9 +84,6 @@ def test_dual_tree_capacity_failure_is_fail_closed() -> None:
     )
     np.testing.assert_array_equal(interactions.far.valid, False)
     np.testing.assert_array_equal(interactions.near.valid, False)
-
-
-def test_dual_tree_build_is_filter_jittable() -> None:
     schedule_plan, schedule = _schedule()
     plan = MortonPlaneInteractionPlan(
         schedule_plan,
@@ -114,9 +97,21 @@ def test_dual_tree_build_is_filter_jittable() -> None:
     assert bool(compiled.evidence.successful)
     np.testing.assert_array_equal(compiled.far.valid, eager.far.valid)
     np.testing.assert_array_equal(compiled.near.valid, eager.near.valid)
-
-
-def test_bipartite_dual_tree_covers_rectangular_point_pairs_once() -> None:
+    _, schedule = _schedule()
+    active = schedule.node_active
+    scales = schedule.node_scales[active]
+    radii = jnp.sqrt(jnp.sum(schedule.node_half_widths[active] ** 2, axis=-1))
+    assert bool(schedule.evidence.successful)
+    assert int(schedule.evidence.invalid_scales) == 0
+    assert bool(jnp.all(scales >= radii))
+    np.testing.assert_allclose(jnp.log2(scales), jnp.round(jnp.log2(scales)))
+    schedule_plan, _ = _schedule()
+    invalid = schedule_plan.build(
+        jnp.full((8, 3), 0.5),
+        bounding_padding=jnp.asarray([0.0, -0.1, 0.0]),
+    )
+    assert not bool(invalid.evidence.successful)
+    assert int(invalid.evidence.invalid_padding) == 1
     address = MortonAddressPlan((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 12)
     source_points = jnp.asarray(
         [
@@ -182,13 +177,3 @@ def test_bipartite_dual_tree_covers_rectangular_point_pairs_once() -> None:
     np.testing.assert_allclose(target.bounding_padding, [0.02, 0.01, 0.03])
     assert int(source.evidence.invalid_padding) == 0
     assert int(target.evidence.invalid_padding) == 0
-
-
-def test_plane_schedule_rejects_invalid_displacement_padding() -> None:
-    schedule_plan, _ = _schedule()
-    invalid = schedule_plan.build(
-        jnp.full((8, 3), 0.5),
-        bounding_padding=jnp.asarray([0.0, -0.1, 0.0]),
-    )
-    assert not bool(invalid.evidence.successful)
-    assert int(invalid.evidence.invalid_padding) == 1

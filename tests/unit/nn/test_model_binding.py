@@ -8,15 +8,12 @@ import pytest
 from phydrax.domain import ModelBinding
 
 
-def test_flat_model_binding_packs_scalar_and_vector_points() -> None:
+def test_model_binding_scenario_1() -> None:
     binding = ModelBinding.pointwise("flat")
     packed = binding.pack_point((jnp.asarray(2.0), jnp.asarray([3.0, 4.0])))
 
     assert packed.shape == (3,)
     assert jnp.allclose(packed, jnp.asarray([2.0, 3.0, 4.0]))
-
-
-def test_flat_model_binding_preserves_shared_batch_shape() -> None:
     binding = ModelBinding.pointwise("flat")
     scalar = jnp.asarray([1.0, 2.0, 3.0])
     vector = jnp.asarray([[4.0, 5.0], [6.0, 7.0], [8.0, 9.0]])
@@ -25,9 +22,9 @@ def test_flat_model_binding_preserves_shared_batch_shape() -> None:
     assert packed.shape == (3, 3)
     assert jnp.allclose(packed[:, 0], scalar)
     assert jnp.allclose(packed[:, 1:], vector)
-
-
-def test_structured_model_binding_preserves_coordinate_parts() -> None:
+    binding = ModelBinding.pointwise("flat")
+    with pytest.raises(ValueError, match="cannot pack tuple inputs"):
+        binding.pack_point(((jnp.asarray([1.0]), jnp.asarray([2.0])),))
     binding = ModelBinding.pointwise("structured")
     packed = binding.pack_point(
         ((jnp.asarray(1.0), jnp.asarray(2.0)), jnp.asarray([3.0, 4.0]))
@@ -38,9 +35,3 @@ def test_structured_model_binding_preserves_coordinate_parts() -> None:
     assert jnp.allclose(packed[0], 1.0)
     assert jnp.allclose(packed[1], 2.0)
     assert jnp.allclose(packed[2], jnp.asarray([3.0, 4.0]))
-
-
-def test_flat_model_binding_rejects_coord_separable_tuple() -> None:
-    binding = ModelBinding.pointwise("flat")
-    with pytest.raises(ValueError, match="cannot pack tuple inputs"):
-        binding.pack_point(((jnp.asarray([1.0]), jnp.asarray([2.0])),))

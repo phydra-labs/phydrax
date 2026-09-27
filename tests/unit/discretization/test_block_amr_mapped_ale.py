@@ -30,9 +30,7 @@ def _topology(shape: Any) -> Any:
     return phx.discretization.VariablePatchTopologyCompiler(plan).initial_topology()
 
 
-def test_identity_patch_geometry_matches_reference_cell_volumes_in_all_dimensions() -> (
-    None
-):
+def test_block_amr_mapped_ale_scenario_1() -> None:
     for shape in ((4,), (4, 4), (2, 2, 2)):
         topology = _topology(shape)
         geometry = phx.discretization.VariablePatchGeometryPlan(
@@ -46,9 +44,6 @@ def test_identity_patch_geometry_matches_reference_cell_volumes_in_all_dimension
         active = geometry.active_cell_masks[0][0]
         assert jnp.allclose(geometry.cell_volumes[0][0][active], expected)
         assert jnp.allclose(geometry.gcl_defects[0][0][active], 0.0)
-
-
-def test_affine_mapped_patch_geometry_has_exact_area_and_stationary_gcl() -> None:
     topology = _topology((4, 4))
     matrix = jnp.asarray([[1.5, 0.25], [0.0, 2.0]])
     geometry = phx.discretization.VariablePatchGeometryPlan(
@@ -62,9 +57,6 @@ def test_affine_mapped_patch_geometry_has_exact_area_and_stationary_gcl() -> Non
     assert bool(geometry.valid)
     assert jnp.allclose(geometry.cell_volumes[0][0][active], 3.0 / 16.0)
     assert jnp.allclose(geometry.mesh_volume_rates[0][0][active], 0.0)
-
-
-def test_ale_patch_geometry_satisfies_independent_gcl_face_sweep() -> None:
     topology = _topology((4,))
     geometry_plan = phx.discretization.VariablePatchGeometryPlan(
         topology,
@@ -78,32 +70,6 @@ def test_ale_patch_geometry_satisfies_independent_gcl_face_sweep() -> None:
     assert bool(geometry.valid)
     assert jnp.allclose(geometry.cell_volumes[0][0][active], 1.1 / 4.0)
     assert jnp.allclose(geometry.mesh_volume_rates[0][0][active], 0.2 / 4.0)
-
-
-def test_patch_geometry_rejects_negative_orientation() -> None:
-    topology = _topology((4,))
-    geometry = phx.discretization.VariablePatchGeometryPlan(
-        topology,
-        lambda point, time, args: -point,
-        "reflected-1d",
-    ).state(0.0)
-
-    assert not bool(geometry.valid)
-
-
-def test_patch_geometry_rejects_reflected_hexahedron() -> None:
-    topology = _topology((2, 2, 2))
-    geometry = phx.discretization.VariablePatchGeometryPlan(
-        topology,
-        lambda point, time, args: jnp.asarray((-point[0], point[1], point[2])),
-        "reflected-3d",
-    ).state(0.0)
-
-    assert not bool(geometry.valid)
-    assert jnp.any(geometry.orientation_minima[0][0] < 0.0)
-
-
-def test_ale_step_prepares_all_ssprk_geometry_and_commits_atomically() -> None:
     topology = _topology((4,))
     geometry_plan = phx.discretization.VariablePatchGeometryPlan(
         topology,
@@ -124,6 +90,46 @@ def test_ale_step_prepares_all_ssprk_geometry_and_commits_atomically() -> None:
         step.committed_geometry().cell_volumes[0][0],
         step.stage_endpoint.cell_volumes[0][0],
     )
+
+
+def test_patch_geometry_contracts() -> None:
+    topology = _topology((4,))
+    geometry = phx.discretization.VariablePatchGeometryPlan(
+        topology,
+        lambda point, time, args: -point,
+        "reflected-1d",
+    ).state(0.0)
+
+    assert not bool(geometry.valid)
+    topology = _topology((2, 2, 2))
+    geometry = phx.discretization.VariablePatchGeometryPlan(
+        topology,
+        lambda point, time, args: jnp.asarray((-point[0], point[1], point[2])),
+        "reflected-3d",
+    ).state(0.0)
+
+    assert not bool(geometry.valid)
+    assert jnp.any(geometry.orientation_minima[0][0] < 0.0)
+    topology = _topology((4,))
+    geometry_plan = phx.discretization.VariablePatchGeometryPlan(
+        topology,
+        lambda point, time, args: point,
+        "bounded-revision",
+    )
+
+    for revision in (-1, 1.5, 2**31):
+        with pytest.raises(ValueError, match="revision"):
+            geometry_plan.state(0.0, revision=revision)
+
+    source = geometry_plan.state(
+        0.0,
+        revision=jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32),
+    )
+    with pytest.raises(Exception, match="cannot advance"):
+        phx.discretization.VariablePatchALEPlan(geometry_plan).prepare_step(
+            source,
+            0.1,
+        )
 
 
 def test_routed_patch_motion_moves_the_interior_and_keeps_the_gcl() -> None:
@@ -159,26 +165,3 @@ def test_routed_patch_motion_moves_the_interior_and_keeps_the_gcl() -> None:
         routed, endpoint_tolerance=1.0e-8
     ).prepare_step(routed.state(0.0), 0.1)
     assert bool(step.successful)
-
-
-def test_patch_geometry_revision_is_exact_bounded_and_cannot_overflow_ale() -> None:
-    topology = _topology((4,))
-    geometry_plan = phx.discretization.VariablePatchGeometryPlan(
-        topology,
-        lambda point, time, args: point,
-        "bounded-revision",
-    )
-
-    for revision in (-1, 1.5, 2**31):
-        with pytest.raises(ValueError, match="revision"):
-            geometry_plan.state(0.0, revision=revision)
-
-    source = geometry_plan.state(
-        0.0,
-        revision=jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32),
-    )
-    with pytest.raises(Exception, match="cannot advance"):
-        phx.discretization.VariablePatchALEPlan(geometry_plan).prepare_step(
-            source,
-            0.1,
-        )

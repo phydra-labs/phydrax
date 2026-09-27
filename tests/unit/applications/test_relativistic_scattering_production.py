@@ -98,7 +98,7 @@ def _empty_event_batch(event_ids: Any) -> Any:
     )
 
 
-def test_pileup_addressing_uses_all_event_id_bits() -> None:
+def test_relativistic_scattering_production_scenario_1() -> None:
     primary = _empty_event_batch((1, 1 + 2**32))
     pool = _empty_event_batch(tuple(range(8)))
     plan = CollisionEnvironmentPlan(
@@ -116,9 +116,6 @@ def test_pileup_addressing_uses_all_event_id_bits() -> None:
         jnp.array_equal(assigned.requested_pileup[0], assigned.requested_pileup[1])
         and jnp.array_equal(assigned.pileup_indices[0], assigned.pileup_indices[1])
     )
-
-
-def test_lorentz_and_mass_shell_identities() -> None:
     electron = Particle(
         "electron",
         mass=0.511,
@@ -143,9 +140,6 @@ def test_lorentz_and_mass_shell_identities() -> None:
         momentum.value,
         atol=1.0e-12,
     )
-
-
-def test_spinor_and_massive_vector_completeness() -> None:
     mass = 0.8
     momentum = jnp.asarray(
         [
@@ -169,7 +163,7 @@ def test_spinor_and_massive_vector_completeness() -> None:
     )
 
 
-def test_compton_and_breit_wheeler_ward_identities() -> None:
+def test_relativistic_scattering_production_scenario_2() -> None:
     mass = 1.0
     energy = 0.7
     angle = 0.8
@@ -234,9 +228,6 @@ def test_compton_and_breit_wheeler_ward_identities() -> None:
         k1, k2, electron, positron, (1, -1), k1, epsilon2, electron_mass=mass
     )
     assert jnp.abs(pair_ward) < 1.0e-10
-
-
-def test_all_tree_qed_processes_produce_finite_crossing_sums() -> None:
     mass = 1.0
     energy = 1.7
     magnitude = jnp.sqrt(energy**2 - mass**2)
@@ -304,9 +295,6 @@ def test_all_tree_qed_processes_produce_finite_crossing_sums() -> None:
     assert jnp.all(jnp.isfinite(amplitudes))
     assert jnp.all(jnp.abs(amplitudes) > 0.0)
     assert jnp.abs(annihilation_ward) < 1.0e-10
-
-
-def test_analytic_annihilation_cross_section_integrates_exactly() -> None:
     s = 31.0
     nodes, weights = np.polynomial.legendre.leggauss(8)
     angular = (
@@ -317,7 +305,7 @@ def test_analytic_annihilation_cross_section_integrates_exactly() -> None:
     assert jnp.allclose(angular, electron_muon_total_cross_section(s), atol=1.0e-14)
 
 
-def test_klein_nishina_has_thomson_limit_and_pair_threshold() -> None:
+def test_relativistic_scattering_production_scenario_3() -> None:
     mass = 0.73
     alpha = 1.0 / 137.035999084
     nodes, weights = np.polynomial.legendre.leggauss(16)
@@ -341,9 +329,6 @@ def test_klein_nishina_has_thomson_limit_and_pair_threshold() -> None:
         breit_wheeler_total_cross_section(3.9 * mass**2, electron_mass=mass, alpha=alpha)
         == 0.0
     )
-
-
-def test_two_body_and_recursive_phase_space_normalization() -> None:
     total = jnp.asarray([3.0, 0.0, 0.0, 0.0])
     two_body = TwoBodyPhaseSpaceMap(0.0, 0.0)
     point = two_body.map(jnp.asarray([0.37, 0.61]), total)
@@ -369,9 +354,6 @@ def test_two_body_and_recursive_phase_space_normalization() -> None:
         9.0 / (256.0 * jnp.pi**3),
         rtol=2.0e-7,
     )
-
-
-def test_multi_channel_weight_is_unbiased_for_overlapping_support() -> None:
     total = jnp.asarray([5.0, 0.0, 0.0, 0.0])
     first = TwoBodyPhaseSpaceMap(0.0, 0.0)
     second = TwoBodyPhaseSpaceMap(0.0, 0.0)
@@ -384,7 +366,7 @@ def test_multi_channel_weight_is_unbiased_for_overlapping_support() -> None:
     assert jnp.allclose(mapped_second.integration_weight, 1.0 / (8.0 * jnp.pi))
 
 
-def test_polarization_density_operations_preserve_probability() -> None:
+def test_relativistic_scattering_production_scenario_4() -> None:
     pure = pure_polarization_density(jnp.asarray([1.0, 1.0j]))
     rotation = jnp.asarray([[1.0, 1.0], [-1.0, 1.0]]) / jnp.sqrt(2.0)
     rotated = rotate_polarization_density(pure, rotation)
@@ -394,9 +376,6 @@ def test_polarization_density_operations_preserve_probability() -> None:
     assert pure.valid & rotated.valid & product.valid & stokes.valid
     assert jnp.allclose(jnp.trace(product.matrix), 1.0)
     assert jnp.allclose(stokes_parameters(stokes), jnp.asarray([0.2, -0.3, 0.4]))
-
-
-def test_exact_signed_rejection_enforces_support_bound() -> None:
     momenta = jnp.zeros((4, 2, 4))
     stream = WeightedEventStream(
         momenta,
@@ -415,9 +394,6 @@ def test_exact_signed_rejection_enforces_support_bound() -> None:
     assert violated.status == int(EventStatus.SUPPORT_BOUND_VIOLATED)
     assert not jnp.any(violated.active)
     assert violated.support_excess > 0.0
-
-
-def test_finite_scalar_loop_and_real_virtual_subtraction_cancel() -> None:
     bubble = finite_scalar_bubble(
         0.0,
         2.0,

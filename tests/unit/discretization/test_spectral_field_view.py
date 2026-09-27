@@ -42,35 +42,34 @@ _FAMILIES = {
 }
 
 
-@pytest.mark.parametrize("family", sorted(_FAMILIES))
-def test_point_synthesis_equals_grid_reconstruction_and_derivatives(family: Any) -> None:
-    space = _space(_FAMILIES[family])
-    rng = np.random.default_rng(3)
-    # A generic (non-Hermitian) modal state exercises every mode, including
-    # Nyquist and the highest sine/cosine modes.
-    count = space.modal_shape[0]
-    coefficients = jnp.asarray(rng.normal(size=count) + 1j * rng.normal(size=count))
-    nodes = space.axes[0].nodes[:, None]
+def test_spectral_field_view_scenario_1() -> None:
+    for family in sorted(_FAMILIES):
+        space = _space(_FAMILIES[family])
+        rng = np.random.default_rng(3)
+        # A generic (non-Hermitian) modal state exercises every mode, including
+        # Nyquist and the highest sine/cosine modes.
+        count = space.modal_shape[0]
+        coefficients = jnp.asarray(rng.normal(size=count) + 1j * rng.normal(size=count))
+        nodes = space.axes[0].nodes[:, None]
 
-    np.testing.assert_allclose(
-        space.evaluate(coefficients, nodes), space.reconstruct(coefficients), atol=1e-13
-    )
-    np.testing.assert_allclose(
-        space.evaluate(coefficients, nodes, real_output=False),
-        space.reconstruct(coefficients, real_output=False),
-        atol=1e-13,
-    )
-    for order in (1, 2, 3):
-        reference = space.derivative_values(coefficients, axis=0, order=order)
-        scale = max(1.0, float(jnp.max(jnp.abs(reference))))
         np.testing.assert_allclose(
-            space.derivative_at(coefficients, nodes, (order,)),
-            reference,
-            atol=1e-13 * scale,
+            space.evaluate(coefficients, nodes),
+            space.reconstruct(coefficients),
+            atol=1e-13,
         )
-
-
-def test_analytic_fields_and_derivatives_at_arbitrary_points() -> None:
+        np.testing.assert_allclose(
+            space.evaluate(coefficients, nodes, real_output=False),
+            space.reconstruct(coefficients, real_output=False),
+            atol=1e-13,
+        )
+        for order in (1, 2, 3):
+            reference = space.derivative_values(coefficients, axis=0, order=order)
+            scale = max(1.0, float(jnp.max(jnp.abs(reference))))
+            np.testing.assert_allclose(
+                space.derivative_at(coefficients, nodes, (order,)),
+                reference,
+                atol=1e-13 * scale,
+            )
     rng = np.random.default_rng(0)
     fourier = _space((D.FourierBasisPlan(16), D.AxisDomain.periodic(0.0, 1.0)))
     x = fourier.axes[0].nodes
@@ -135,23 +134,6 @@ def test_analytic_fields_and_derivatives_at_arbitrary_points() -> None:
         -(wave**2) * jnp.sin(wave * r),
         atol=1e-10,
     )
-
-
-def _mixed() -> Any:
-    # u(x, y) = sin(2 pi x) (y^2 + y) on the periodic x cell [0, 1) and y in [-1, 1].
-    space = _space(
-        (D.FourierBasisPlan(12), D.AxisDomain.periodic(0.0, 1.0)),
-        (D.ChebyshevBasisPlan(6), D.AxisDomain.interval(-1.0, 1.0)),
-    )
-    x, y = jnp.meshgrid(space.axes[0].nodes, space.axes[1].nodes, indexing="ij")
-    coefficients = space.project(jnp.sin(2.0 * jnp.pi * x) * (y**2 + y))
-    return space, coefficients
-
-
-_POINTS = jnp.asarray(((0.1, -0.3), (0.45, 0.8), (0.9, 0.05), (0.7, -0.95)))
-
-
-def test_view_domain_function_gradient_and_laplacian_are_exact() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     field = _view(reconstruction, coefficients).as_domain_function()
@@ -190,7 +172,21 @@ def test_view_domain_function_gradient_and_laplacian_are_exact() -> None:
     )
 
 
-def test_derivatives_beyond_the_prepared_order_are_refused() -> None:
+def _mixed() -> Any:
+    # u(x, y) = sin(2 pi x) (y^2 + y) on the periodic x cell [0, 1) and y in [-1, 1].
+    space = _space(
+        (D.FourierBasisPlan(12), D.AxisDomain.periodic(0.0, 1.0)),
+        (D.ChebyshevBasisPlan(6), D.AxisDomain.interval(-1.0, 1.0)),
+    )
+    x, y = jnp.meshgrid(space.axes[0].nodes, space.axes[1].nodes, indexing="ij")
+    coefficients = space.project(jnp.sin(2.0 * jnp.pi * x) * (y**2 + y))
+    return space, coefficients
+
+
+_POINTS = jnp.asarray(((0.1, -0.3), (0.45, 0.8), (0.9, 0.05), (0.7, -0.95)))
+
+
+def test_spectral_field_view_scenario_2() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(
         space, maximum_derivative_order=1
@@ -201,9 +197,6 @@ def test_derivatives_beyond_the_prepared_order_are_refused() -> None:
         reconstruction.derivative(coefficients, _POINTS, (1, 1))
     with pytest.raises(ValueError, match="maximum_derivative_order=1"):
         phx.operators.partial_n(field, var="x", axis=1, order=2)
-
-
-def test_queries_outside_the_axis_box_fail_closed_with_evidence() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     view = _view(reconstruction, coefficients)
@@ -223,9 +216,6 @@ def test_queries_outside_the_axis_box_fail_closed_with_evidence() -> None:
         view.as_domain_function().func(points[0])
     with pytest.raises(Exception, match="invalid"):
         eqx.filter_jit(view.as_domain_function().func)(points[:2]).block_until_ready()
-
-
-def test_coefficient_transpose_is_the_exact_adjoint_of_the_synthesis() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     cotangent = jnp.asarray((1.0, -2.0, 0.5, 3.0))
@@ -249,7 +239,7 @@ def test_coefficient_transpose_is_the_exact_adjoint_of_the_synthesis() -> None:
     )
 
 
-def test_invalid_query_routes_have_no_transpose() -> None:
+def test_spectral_field_view_scenario_3() -> None:
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
     # One valid point and one outside the bounded y axis.
@@ -262,9 +252,6 @@ def test_invalid_query_routes_have_no_transpose() -> None:
         reconstruction.duality_evidence(coefficients, points, cotangent)
     with pytest.raises(Exception, match="invalid"):
         eqx.filter_jit(reconstruction.transpose)(points, cotangent).block_until_ready()
-
-
-def test_vector_components_follow_the_declared_value_port() -> None:
     space, coefficients = _mixed()
     port = phx.ValuePort(
         "velocity",
@@ -281,9 +268,6 @@ def test_vector_components_follow_the_declared_value_port() -> None:
     np.testing.assert_allclose(
         values, jnp.stack((expected, 2.0 * expected), -1), atol=1e-13
     )
-
-
-def test_support_geometry_must_be_the_axis_box() -> None:
     space, coefficients = _mixed()
     box = phx.geometry.Orthotope((0.5, 0.0), (1.0, 2.0), feature_id="user-box").compile()
     reconstruction = prepare_spectral_field_reconstruction(space, support_geometry=box)
@@ -297,7 +281,7 @@ def test_support_geometry_must_be_the_axis_box() -> None:
         prepare_spectral_field_reconstruction(space, support_geometry=shrunk)
 
 
-def test_axes_without_point_synthesis_or_box_support_are_refused() -> None:
+def test_spectral_field_view_scenario_4() -> None:
     constrained = _space(
         (
             D.ConstrainedBasisPlan(
@@ -316,23 +300,16 @@ def test_axes_without_point_synthesis_or_box_support_are_refused() -> None:
     rational = _space((D.RationalChebyshevLineBasisPlan(8), D.AxisDomain.real_line()))
     with pytest.raises(ValueError, match="unbounded"):
         prepare_spectral_field_reconstruction(rational)
-
-
-@pytest.mark.parametrize(
-    "axis",
-    [
+    for axis in [
         (D.RationalChebyshevLineBasisPlan(8), D.AxisDomain.real_line()),
         (D.RationalChebyshevHalfLineBasisPlan(8), D.AxisDomain.half_line(0.0)),
-    ],
-    ids=["real-line", "half-line"],
-)
-def test_rational_axes_refuse_arbitrary_point_synthesis(axis: Any) -> None:
-    rational = _space(axis)
-    coefficients = jnp.zeros(rational.modal_shape, dtype=jnp.complex128)
-    points = jnp.ones((1, 1))
-    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
-        rational.evaluate(coefficients, points)
-    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
-        rational.derivative_at(coefficients, points, (1,))
-    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
-        rational.axes[0].evaluate_basis(points[:, 0])
+    ]:
+        rational = _space(axis)
+        coefficients = jnp.zeros(rational.modal_shape, dtype=jnp.complex128)
+        points = jnp.ones((1, 1))
+        with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+            rational.evaluate(coefficients, points)
+        with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+            rational.derivative_at(coefficients, points, (1,))
+        with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+            rational.axes[0].evaluate_basis(points[:, 0])

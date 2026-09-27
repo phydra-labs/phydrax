@@ -36,7 +36,7 @@ def _features() -> Any:
     )
 
 
-def test_one_class_svm_uses_native_kernel_score_and_dual_invariants() -> None:
+def test_one_class_contracts() -> None:
     features = _features()
     weights = jnp.array([1.0, 1.3, 0.8, 1.5, 1.1, 0.9, 1.4, 1.0])
     recipe = OneClassSVMRecipe(
@@ -78,9 +78,28 @@ def test_one_class_svm_uses_native_kernel_score_and_dual_invariants() -> None:
         contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
     )
     assert contract.route is DerivativeRoute.UNROLLED
+    features = _features()
 
+    with pytest.raises(TypeError, match="native AbstractPositiveDefiniteKernel"):
+        # ty: ignore[invalid-argument-type]
+        OneClassSVMRecipe(jnp.eye(features.shape[0]))
 
-def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity() -> None:
+    recipe = OneClassSVMRecipe(nu=0.25, iterations=3, learning_rate=0.1, tolerance=1e6)
+    with pytest.raises(TypeError, match="require real features"):
+        recipe.fit_batch(MLBatch(features.astype(jnp.complex64) + 0.1j))
+
+    model = recipe.fit_batch(MLBatch(features)).as_trainable()
+    with pytest.raises(TypeError, match="require real features"):
+        model(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
+    features = _features()
+    sparse = SparseFeatures(
+        features,
+        jnp.broadcast_to(jnp.arange(2, dtype=jnp.int32), features.shape),
+        feature_count=2,
+    )
+
+    with pytest.raises(TypeError, match="requires dense features"):
+        OneClassSVMRecipe().fit_batch(MLBatch(sparse))
     base = _features()
     features = jnp.stack((base, base * jnp.array([1.1, 0.9])), axis=0)
     targets = jnp.stack(
@@ -115,6 +134,19 @@ def test_one_class_svm_case_axes_masks_and_inactive_dual_capacity() -> None:
     assert jnp.all(model.dual_coefficients[:, 7] == 0.0)
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(jnp.sum(model.dual_coefficients, axis=-1), 1.0, atol=2e-5)
+    features = _features()
+    insufficient_mask = jnp.array([True, False, False, False, False, False, False, False])
+    insufficient = OneClassSVMRecipe(nu=0.25, iterations=2, tolerance=1e6).fit_batch(
+        MLBatch(features, sample_mask=insufficient_mask)
+    )
+    nonconverged = OneClassSVMRecipe(
+        nu=0.25, iterations=1, learning_rate=0.1, tolerance=1e-30
+    ).fit_batch(MLBatch(features))
+
+    assert not insufficient.valid
+    assert insufficient.status == ML_INSUFFICIENT_DATA
+    assert not nonconverged.valid
+    assert nonconverged.status == ML_NONCONVERGED
 
 
 def test_one_class_svm_jit_vmap_prediction_parameter_and_fit_gradients() -> None:
@@ -178,49 +210,3 @@ def test_one_class_svm_native_kernel_hyperparameter_gradient_is_finite() -> None
     derivative = jax.grad(loss)(jnp.asarray(1.1))
     assert jnp.isfinite(derivative)
     assert jnp.abs(derivative) > 1e-8
-
-
-def test_one_class_svm_rejects_precomputed_and_complex_kernel_geometry() -> None:
-    features = _features()
-
-    with pytest.raises(TypeError, match="native AbstractPositiveDefiniteKernel"):
-        # ty: ignore[invalid-argument-type]
-        OneClassSVMRecipe(jnp.eye(features.shape[0]))
-
-    recipe = OneClassSVMRecipe(nu=0.25, iterations=3, learning_rate=0.1, tolerance=1e6)
-    with pytest.raises(TypeError, match="require real features"):
-        recipe.fit_batch(MLBatch(features.astype(jnp.complex64) + 0.1j))
-
-    model = recipe.fit_batch(MLBatch(features)).as_trainable()
-    with pytest.raises(TypeError, match="require real features"):
-        model(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
-
-
-def test_one_class_svm_rejects_sparse_features_explicitly() -> None:
-    features = _features()
-    sparse = SparseFeatures(
-        features,
-        jnp.broadcast_to(jnp.arange(2, dtype=jnp.int32), features.shape),
-        feature_count=2,
-    )
-
-    with pytest.raises(TypeError, match="requires dense features"):
-        OneClassSVMRecipe().fit_batch(MLBatch(sparse))
-
-
-def test_one_class_svm_invalid_statuses_distinguish_insufficient_and_nonconverged() -> (
-    None
-):
-    features = _features()
-    insufficient_mask = jnp.array([True, False, False, False, False, False, False, False])
-    insufficient = OneClassSVMRecipe(nu=0.25, iterations=2, tolerance=1e6).fit_batch(
-        MLBatch(features, sample_mask=insufficient_mask)
-    )
-    nonconverged = OneClassSVMRecipe(
-        nu=0.25, iterations=1, learning_rate=0.1, tolerance=1e-30
-    ).fit_batch(MLBatch(features))
-
-    assert not insufficient.valid
-    assert insufficient.status == ML_INSUFFICIENT_DATA
-    assert not nonconverged.valid
-    assert nonconverged.status == ML_NONCONVERGED

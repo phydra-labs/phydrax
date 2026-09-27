@@ -171,7 +171,7 @@ def _inputs(
     )
 
 
-def test_field_units_species_identity_and_filter_provenance_are_exact() -> None:
+def test_favre_les_scenario_1() -> None:
     schema = _schema()
     fields = _fields(schema)
     closure = _closure(schema)
@@ -212,9 +212,6 @@ def test_field_units_species_identity_and_filter_provenance_are_exact() -> None:
         closure.validate_compressible_transport_binding(
             schema.schema_id, schema.species_names, 2
         )
-
-
-def test_constant_density_reduces_to_specific_model_and_is_objective() -> None:
     schema = _schema()
     closure = _closure(schema)
     inputs = _inputs(closure.fields)
@@ -259,9 +256,6 @@ def test_constant_density_reduces_to_specific_model_and_is_objective() -> None:
     np.testing.assert_allclose(
         rotated.sgs_species_flux, result.sgs_species_flux @ rotation.T
     )
-
-
-def test_total_energy_stress_work_heat_and_named_species_flux_signs() -> None:
     schema = _schema()
     closure = _closure(schema)
     inputs = _inputs(closure.fields)
@@ -288,7 +282,7 @@ def test_total_energy_stress_work_heat_and_named_species_flux_signs() -> None:
     assert bool(jnp.all(result.evidence.successful))
 
 
-def test_isotropic_trace_policy_is_explicit_and_conservatively_integrated() -> None:
+def test_favre_les_scenario_2() -> None:
     schema = _schema()
     provided = _closure(schema, isotropic_trace_policy="provided-sgs-kinetic-energy")
     assert provided.transport_role == "physical-subgrid-transport"
@@ -366,9 +360,6 @@ def test_isotropic_trace_policy_is_explicit_and_conservatively_integrated() -> N
     assert float(system.max_wave_speed(state, state, 0)) > float(
         baseline.max_wave_speed(base_state, base_state, 0)
     )
-
-
-def test_zero_coefficient_is_exact_and_invalid_or_unbounded_inputs_are_refused() -> None:
     schema = _schema()
     zero = _closure(schema, coefficient=0.0, upper_bound=0.0)
     result = zero.evaluate(_inputs(zero.fields))
@@ -401,9 +392,6 @@ def test_zero_coefficient_is_exact_and_invalid_or_unbounded_inputs_are_refused()
     ):
         output = bounded.evaluate(_inputs(bounded.fields))
         jax.block_until_ready(output.kinematic_eddy_viscosity)
-
-
-def test_transported_sgs_energy_exchange_signs_and_positivity_restriction() -> None:
     schema = _schema()
     closure = _closure(
         schema,

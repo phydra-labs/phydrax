@@ -58,7 +58,7 @@ def _boundary_batch(domain: Any) -> Any:
     )
 
 
-def test_graph_model_wrapper_returns_node_field() -> None:
+def test_graph_contracts() -> None:
     domain = phx.domain.GraphDomain(_graph())
     batch = _batch(domain)
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 2.0)
@@ -70,9 +70,6 @@ def test_graph_model_wrapper_returns_node_field() -> None:
 
     out = wrapped(batch)
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([[3.0], [4.0], [5.0]]))
-
-
-def test_graph_model_wrapper_restricts_output_to_node_set() -> None:
     domain = phx.domain.GraphDomain(_graph())
     batch = _boundary_batch(domain)
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 2.0)
@@ -84,6 +81,13 @@ def test_graph_model_wrapper_restricts_output_to_node_set() -> None:
 
     out = wrapped(batch)
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([[3.0], [5.0]]))
+    domain = phx.domain.GraphDomain(_graph())
+    batch = _batch(domain)
+    model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: 2.0 * nodes)
+    u = domain.GraphModel(model)
+
+    out = u(batch)
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([[2.0], [4.0], [6.0]]))
 
 
 def test_graph_model_wrapper_input_fn_uses_full_node_view_for_node_sets() -> None:
@@ -133,13 +137,3 @@ def test_graph_model_wrapper_installs_edge_and_global_input_functions() -> None:
     )(batch)
 
     assert jnp.allclose(jnp.asarray(out.data), jnp.array([5.0, 8.0]))
-
-
-def test_graph_domain_graph_model_convenience() -> None:
-    domain = phx.domain.GraphDomain(_graph())
-    batch = _batch(domain)
-    model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: 2.0 * nodes)
-    u = domain.GraphModel(model)
-
-    out = u(batch)
-    assert jnp.allclose(jnp.asarray(out.data), jnp.array([[2.0], [4.0], [6.0]]))

@@ -46,39 +46,33 @@ def _data(clean: Any, *, mask: Any = None, independent: Any = True) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "process",
-    [
+def test_denoising_score_matching_scenario_1() -> None:
+    for process in [
         phx.stochastic.VariancePreservingDiffusion(2, beta_minimum=0.2, beta_maximum=2.0),
         phx.stochastic.VarianceExplodingDiffusion(
             2, initial_scale=0.02, terminal_scale=2.0
         ),
-    ],
-)
-def test_exact_conditional_score_has_zero_denoising_objective(process: Any) -> None:
-    clean_state = jnp.asarray([0.4, -0.7])
-    clean = jnp.broadcast_to(clean_state, (64, 2))
-    score = _score_function(_ConditionalGaussianScore(process, clean_state), process)
-    term = phx.terms.DenoisingScoreMatchingTerm(
-        "score",
-        _data(clean),
-        process,
-        phx.terms.UniformTimeSamplingPolicy(0.02, 0.9),
-    )
-    batch = term.sample(key=jr.key(1))
-    diagnostics = term.diagnostics({"score": score}, key=jr.key(2), batch=batch)
-    compiled = eqx.filter_jit(
-        lambda function: term.loss({"score": function}, key=jr.key(2), batch=batch)
-    )(score)
+    ]:
+        clean_state = jnp.asarray([0.4, -0.7])
+        clean = jnp.broadcast_to(clean_state, (64, 2))
+        score = _score_function(_ConditionalGaussianScore(process, clean_state), process)
+        term = phx.terms.DenoisingScoreMatchingTerm(
+            "score",
+            _data(clean),
+            process,
+            phx.terms.UniformTimeSamplingPolicy(0.02, 0.9),
+        )
+        batch = term.sample(key=jr.key(1))
+        diagnostics = term.diagnostics({"score": score}, key=jr.key(2), batch=batch)
+        compiled = eqx.filter_jit(
+            lambda function: term.loss({"score": function}, key=jr.key(2), batch=batch)
+        )(score)
 
-    assert diagnostics.passed
-    assert diagnostics.valid_fraction == 1.0
-    assert diagnostics.objective < 1e-24
-    assert compiled < 1e-24
-    assert jnp.isfinite(diagnostics.objective_standard_error)
-
-
-def test_denoising_weighting_changes_only_declared_node_weights() -> None:
+        assert diagnostics.passed
+        assert diagnostics.valid_fraction == 1.0
+        assert diagnostics.objective < 1e-24
+        assert compiled < 1e-24
+        assert jnp.isfinite(diagnostics.objective_standard_error)
     process = phx.stochastic.VariancePreservingDiffusion(1)
     clean = jnp.zeros((32, 1))
     score = _score_function(_ZeroScore(), process)
@@ -98,9 +92,6 @@ def test_denoising_weighting_changes_only_declared_node_weights() -> None:
         assert diagnostics.weighting == weighting
         assert diagnostics.minimum_objective_weight > 0.0
     assert not jnp.allclose(jnp.asarray(objectives), objectives[0])
-
-
-def test_denoising_masks_invalid_samples_and_rejects_empty_mass() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(1)
     clean = jnp.asarray([[0.0], [jnp.nan], [1.0]])
     score = _score_function(_ZeroScore(), process)
@@ -124,6 +115,24 @@ def test_denoising_masks_invalid_samples_and_rejects_empty_mass() -> None:
         (ValueError, eqx.EquinoxRuntimeError), match="no finite positive mass"
     ):
         empty.loss({"score": score}, key=jr.key(6))
+    process = phx.stochastic.VariancePreservingDiffusion(1)
+    with pytest.raises(ValueError, match="strictly positive"):
+        phx.terms.DenoisingScoreMatchingTerm(
+            "score",
+            _data(jnp.zeros((4, 1))),
+            process,
+            phx.terms.UniformTimeSamplingPolicy(0.0, 0.8),
+        )
+
+    wrong = _score_function(lambda state, time: jnp.zeros((2,)), process)
+    term = phx.terms.DenoisingScoreMatchingTerm(
+        "score",
+        _data(jnp.zeros((4, 1))),
+        process,
+        phx.terms.UniformTimeSamplingPolicy(0.05, 0.8),
+    )
+    with pytest.raises(ValueError, match="same shape"):
+        term.loss({"score": wrong}, key=jr.key(9))
 
 
 def test_resampled_denoising_provider_runs_once_per_materialized_batch() -> None:
@@ -146,24 +155,3 @@ def test_resampled_denoising_provider_runs_once_per_materialized_batch() -> None
     term.loss({"score": score}, key=jr.key(8), batch=batch)
 
     assert len(calls) == 1
-
-
-def test_denoising_rejects_zero_noise_endpoint_and_wrong_score_shape() -> None:
-    process = phx.stochastic.VariancePreservingDiffusion(1)
-    with pytest.raises(ValueError, match="strictly positive"):
-        phx.terms.DenoisingScoreMatchingTerm(
-            "score",
-            _data(jnp.zeros((4, 1))),
-            process,
-            phx.terms.UniformTimeSamplingPolicy(0.0, 0.8),
-        )
-
-    wrong = _score_function(lambda state, time: jnp.zeros((2,)), process)
-    term = phx.terms.DenoisingScoreMatchingTerm(
-        "score",
-        _data(jnp.zeros((4, 1))),
-        process,
-        phx.terms.UniformTimeSamplingPolicy(0.05, 0.8),
-    )
-    with pytest.raises(ValueError, match="same shape"):
-        term.loss({"score": wrong}, key=jr.key(9))

@@ -42,16 +42,13 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_graph_kernel_integral_aggregates_weighted_source_nodes() -> None:
+def test_graph_neural_operators_scenario_1() -> None:
     kernel = phx.graph.GraphKernelIntegral(
         lambda edges, sent, recv, globals_: edges[:, 0],
     )
     out = kernel(_line_graph())
 
     assert jnp.allclose(out.nodes[:, 0], jnp.array([0.0, 0.0, 3.0]))
-
-
-def test_graph_kernel_integral_normalizes_by_receiver_degree() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[1.0], [2.0], [4.0]]),
         senders=jnp.array([0, 1], dtype=jnp.int32),
@@ -63,26 +60,12 @@ def test_graph_kernel_integral_normalizes_by_receiver_degree() -> None:
     out = kernel(graph)
 
     assert jnp.allclose(out.nodes[:, 0], jnp.array([0.0, 0.0, 1.5]))
-
-
-def test_graph_diffusion_computes_weighted_incidence_laplacian() -> None:
     diffusion = phx.graph.GraphDiffusion(
         lambda edges, sent, recv, globals_: edges[:, 0],
     )
     out = diffusion(_line_graph())
 
     assert jnp.allclose(out.nodes[:, 0], jnp.array([-2.0, -4.0, 6.0]))
-
-
-def test_repeated_graph_processor_applies_block_multiple_times() -> None:
-    block = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 1.0)
-    processor = phx.graph.RepeatedGraphProcessor(block, steps=3)
-    out = processor(_line_graph())
-
-    assert jnp.allclose(out.nodes[:, 0], jnp.array([3.0, 4.0, 6.0]))
-
-
-def test_graph_neural_operator_preserves_padding_entries() -> None:
     base = phx.domain.GraphDatasetDomain(_graphs())
     domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
     batch = domain.points_from_indices(
@@ -98,6 +81,11 @@ def test_graph_neural_operator_preserves_padding_entries() -> None:
     assert out.nodes.shape == (6, 1)
     assert jnp.allclose(out.nodes[:5, 0], jnp.array([-1.0, 1.0, -2.0, -2.0, 4.0]))
     assert jnp.allclose(out.nodes[5, 0], 0.0)
+    block = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 1.0)
+    processor = phx.graph.RepeatedGraphProcessor(block, steps=3)
+    out = processor(_line_graph())
+
+    assert jnp.allclose(out.nodes[:, 0], jnp.array([3.0, 4.0, 6.0]))
 
 
 def test_graph_kernel_integral_wraps_as_domain_graph_model() -> None:

@@ -55,7 +55,7 @@ def test_canonical_fugacity_round_trip_from_imaginary_chemical_potential() -> No
     assert jnp.allclose(evaluated.grand_partition, partition(0.3), atol=2e-6)
 
 
-def test_complex_langevin_gaussian_one_variable_controls() -> None:
+def test_sign_problem_finite_methods_scenario_1() -> None:
     runtime = prepare_complex_langevin(
         ComplexLangevinPlan(
             num_steps=7000,
@@ -79,9 +79,6 @@ def test_complex_langevin_gaussian_one_variable_controls() -> None:
     assert jnp.abs(second_moment - 1.0) < 0.18
     assert controls.finite
     assert controls.maximum_residual < 0.1
-
-
-def test_complex_langevin_rejects_heavy_drift_tail() -> None:
     runtime = prepare_complex_langevin(
         ComplexLangevinPlan(
             num_steps=32,
@@ -99,9 +96,6 @@ def test_complex_langevin_rejects_heavy_drift_tail() -> None:
     assert result.diagnostics.status == int(ComplexLangevinStatus.DRIFT_TAIL_REJECTED)
     assert result.diagnostics.drift_tail_probability > 0.0
     assert not result.successful
-
-
-def test_complex_langevin_applies_monotone_gauge_cooling() -> None:
     cooling = prepare_gauge_cooling(
         GaugeCoolingPlan(iterations=2, step_size=0.5),
         lambda z: 1j * jnp.imag(z),
@@ -131,9 +125,6 @@ def test_complex_langevin_applies_monotone_gauge_cooling() -> None:
     assert jnp.all(
         result.diagnostics.cooling_final_norm <= result.diagnostics.cooling_initial_norm
     )
-
-
-def test_holomorphic_flow_jacobian_and_residual_phase_are_consistent() -> None:
     flow_time = 0.2
     prepared = prepare_holomorphic_flow_quadrature(
         HolomorphicFlowQuadraturePlan(
@@ -157,9 +148,6 @@ def test_holomorphic_flow_jacobian_and_residual_phase_are_consistent() -> None:
     assert geometry.maximum_imaginary_action_drift < 1e-6
     assert result.diagnostics.status == int(HolomorphicFlowStatus.SUCCESS)
     assert jnp.allclose(result.value, 1.0 + 0.0j)
-
-
-def test_holomorphic_flow_abstains_on_residual_phase_cancellation() -> None:
     prepared = prepare_holomorphic_flow_quadrature(
         HolomorphicFlowQuadraturePlan(
             flow_time=0.0,

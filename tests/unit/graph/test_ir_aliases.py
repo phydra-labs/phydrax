@@ -17,7 +17,7 @@ def _make_graph(n_nodes: int) -> vx.GraphIR:
     )
 
 
-def test_batch_aliases_match_batch_graphs() -> None:
+def test_ir_aliases_scenario_1() -> None:
     g1 = _make_graph(2)
     g2 = _make_graph(3)
 
@@ -31,9 +31,6 @@ def test_batch_aliases_match_batch_graphs() -> None:
     assert jnp.array_equal(canonical.n_node, b2.n_node)
     assert jnp.array_equal(canonical.n_edge, b2.n_edge)
     assert jnp.array_equal(canonical.edge_index, b2.edge_index)
-
-
-def test_unbatch_aliases_match_unbatch_graph() -> None:
     g1 = _make_graph(2)
     g2 = _make_graph(3)
     batched = vx.batch_graphs((g1, g2))

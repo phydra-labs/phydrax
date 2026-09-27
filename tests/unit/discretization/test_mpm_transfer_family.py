@@ -8,7 +8,6 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 import phydrax as phx
 
@@ -56,31 +55,25 @@ def _compiled(transfer: Any, schedule: Any, *, fields: Any = None) -> Any:
     return compiled, arguments, state, velocity
 
 
-@pytest.mark.parametrize(
-    "transfer",
-    [
+def test_mpm_transfer_family_scenario_1() -> None:
+    for transfer in [
         phx.discretization.PICTransferPlan(),
         phx.discretization.FLIPTransferPlan(),
         phx.discretization.PICFLIPTransferPlan(0.25),
         phx.discretization.APICTransferPlan(),
-    ],
-)
-def test_transfer_family_preserves_constant_translation(transfer: Any) -> None:
-    compiled, arguments, state, velocity = _compiled(
-        transfer, phx.discretization.USLMPMSchedule()
-    )
-    detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
-    assert bool(detail.successful)
-    np.testing.assert_allclose(
-        detail.accepted_state.particles.velocity, velocity, rtol=2e-10, atol=2e-10
-    )
-    if not transfer.requires_affine_state:
-        np.testing.assert_allclose(
-            detail.accepted_state.particles.affine_velocity, 0.0, atol=1e-14
+    ]:
+        compiled, arguments, state, velocity = _compiled(
+            transfer, phx.discretization.USLMPMSchedule()
         )
-
-
-def test_advection_plans_are_independent_of_velocity_transfer() -> None:
+        detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
+        assert bool(detail.successful)
+        np.testing.assert_allclose(
+            detail.accepted_state.particles.velocity, velocity, rtol=2e-10, atol=2e-10
+        )
+        if not transfer.requires_affine_state:
+            np.testing.assert_allclose(
+                detail.accepted_state.particles.affine_velocity, 0.0, atol=1e-14
+            )
     transferred = jnp.asarray([[2.0, 0.0]])
     pic = jnp.asarray([[1.0, 0.0]])
     previous = jnp.asarray([[0.0, 0.0]])
@@ -97,65 +90,54 @@ def test_advection_plans_are_independent_of_velocity_transfer() -> None:
         phx.discretization.MidpointAdvectionPlan().velocity(transferred, pic, previous),
         [[1.0, 0.0]],
     )
-
-
-@pytest.mark.parametrize(
-    "schedule",
-    [
+    for schedule in [
         phx.discretization.AffineMUSLMPMSchedule(),
         phx.discretization.PostAdvectionMUSLMPMSchedule(),
         phx.discretization.PostAdvectionMUSLMPMSchedule(affine_transfer=True),
-    ],
-)
-def test_remaining_musl_variants_rebuild_and_certify_second_transfer(
-    schedule: Any,
-) -> None:
-    compiled, arguments, state, _ = _compiled(
-        phx.discretization.APICTransferPlan(), schedule
-    )
-    detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
-    assert bool(detail.successful)
-    assert bool(detail.diagnostics.schedule.second_momentum_extrapolation)
-    assert detail.diagnostics.schedule.second_transfer_mass_defect < 1e-10
-    assert detail.diagnostics.schedule.second_transfer_momentum_defect < 1e-9
+    ]:
+        compiled, arguments, state, _ = _compiled(
+            phx.discretization.APICTransferPlan(), schedule
+        )
+        detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
+        assert bool(detail.successful)
+        assert bool(detail.diagnostics.schedule.second_momentum_extrapolation)
+        assert detail.diagnostics.schedule.second_transfer_mass_defect < 1e-10
+        assert detail.diagnostics.schedule.second_transfer_momentum_defect < 1e-9
 
 
-@pytest.mark.parametrize(
-    "schedule",
-    [
+def test_multifield_schedules_reapply_simultaneous_constraints() -> None:
+    for schedule in [
         phx.discretization.USFMPMSchedule(),
         phx.discretization.MUSLMPMSchedule(),
         phx.discretization.AffineMUSLMPMSchedule(),
         phx.discretization.PostAdvectionMUSLMPMSchedule(),
-    ],
-)
-def test_multifield_schedules_reapply_simultaneous_constraints(schedule: Any) -> None:
-    slots = jnp.asarray((0, 0, 1, 1), dtype=jnp.int32)
-    contact = phx.discretization.KWayMPMContactPlan(
-        2,
-        friction=phx.discretization.SharpCoulombMPMFrictionPlan(0.1),
-        maximum_steps=40,
-        tolerance=1e-8,
-    )
-    fields = phx.discretization.MPMNodalFieldPlan(
-        ("left", "right"), slots, contact_plan=contact
-    )
-    compiled, arguments, state, _ = _compiled(
-        phx.discretization.APICTransferPlan(), schedule, fields=fields
-    )
-    state = phx.discretization.MPMRuntimeState(
-        state.particles,
-        state.time,
-        state.accepted_step,
-        state.last_status,
-        state.topology_generation,
-        state.assignment_input,
-        state.material_slots,
-        slots,
-        slots,
-        state.storage_state,
-    )
-    detail = compiled.dynamics.step_detailed(state, 0.0005, arguments)
-    assert bool(detail.successful)
-    assert detail.grid.mass.shape[0] == 2
-    assert bool(detail.diagnostics.transfer.field_contact_successful)
+    ]:
+        slots = jnp.asarray((0, 0, 1, 1), dtype=jnp.int32)
+        contact = phx.discretization.KWayMPMContactPlan(
+            2,
+            friction=phx.discretization.SharpCoulombMPMFrictionPlan(0.1),
+            maximum_steps=40,
+            tolerance=1e-8,
+        )
+        fields = phx.discretization.MPMNodalFieldPlan(
+            ("left", "right"), slots, contact_plan=contact
+        )
+        compiled, arguments, state, _ = _compiled(
+            phx.discretization.APICTransferPlan(), schedule, fields=fields
+        )
+        state = phx.discretization.MPMRuntimeState(
+            state.particles,
+            state.time,
+            state.accepted_step,
+            state.last_status,
+            state.topology_generation,
+            state.assignment_input,
+            state.material_slots,
+            slots,
+            slots,
+            state.storage_state,
+        )
+        detail = compiled.dynamics.step_detailed(state, 0.0005, arguments)
+        assert bool(detail.successful)
+        assert detail.grid.mass.shape[0] == 2
+        assert bool(detail.diagnostics.transfer.field_contact_successful)

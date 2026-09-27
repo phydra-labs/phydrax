@@ -99,7 +99,7 @@ def _implicit_policy(*, maximum_steps: Any = 40, absolute: Any = 1e-10) -> Any:
     )
 
 
-def test_graph_identity_is_declaration_order_invariant_and_compiles_one_scc() -> None:
+def test_partitioned_coupling_scenario_1() -> None:
     graph, states, values = _linear_graph()
     reordered = cpl.CouplingGraph(
         tuple(reversed(graph.subsystems)),
@@ -118,9 +118,6 @@ def test_graph_identity_is_declaration_order_invariant_and_compiles_one_scc() ->
     assert len(prepared.stages) == 1
     assert prepared.stages[0].cyclic
     assert prepared.report.resources.interface_size == 2
-
-
-def test_graph_rejects_mismatched_direct_spaces_and_missing_driver() -> None:
     first = phx.linalg.ArraySpace((1,), space_id="first")
     second = phx.linalg.ArraySpace((1,), space_id="second")
     output = cpl.CouplingPort("output", "output", first, reference_scale=1.0)
@@ -152,9 +149,6 @@ def test_graph_rejects_mismatched_direct_spaces_and_missing_driver() -> None:
             (jnp.zeros(1),),
             policy=cpl.ExplicitCouplingPolicy(cpl.CouplingSweep("jacobi")),
         )
-
-
-def test_explicit_jacobi_completes_without_claiming_convergence() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -175,9 +169,6 @@ def test_explicit_jacobi_completes_without_claiming_convergence() -> None:
         result.diagnostics.exchange_residual_norms,
         jnp.asarray([0.0, 0.5]),
     )
-
-
-def test_explicit_gauss_seidel_order_changes_the_single_sweep() -> None:
     graph, states, values = _linear_graph()
     policy = cpl.ExplicitCouplingPolicy(
         cpl.CouplingSweep("gauss-seidel", subsystem_order=("b", "a"))
@@ -189,9 +180,6 @@ def test_explicit_gauss_seidel_order_changes_the_single_sweep() -> None:
     assert bool(result.successful)
     assert jnp.allclose(result.accepted_state.exchange_values[0], 0.25)
     assert jnp.allclose(result.accepted_state.exchange_values[1], 0.5)
-
-
-def test_implicit_anderson_certifies_the_physical_interface_root_under_jit() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(graph, states, values, policy=_implicit_policy())
 
@@ -207,9 +195,19 @@ def test_implicit_anderson_certifies_the_physical_interface_root_under_jit() -> 
         result.accepted_state.exchange_values[1], jnp.asarray([2.0 / 3.0]), atol=1e-8
     )
     assert jnp.all(result.diagnostics.exchange_certified)
+    graph, states, values = _linear_graph(count_state=True)
+    prepared = cpl.prepare_coupling(graph, states, values, policy=_implicit_policy())
+
+    result = cpl.advance_coupling_window(prepared, prepared.reference_state, 1.0)
+
+    assert bool(result.successful)
+    assert all(
+        jnp.allclose(state, 1.0) for state in result.accepted_state.participant_states
+    )
+    assert int(result.diagnostics.participant_evaluations[0]) > 1
 
 
-def test_iteration_exhaustion_keeps_the_window_checkpoint() -> None:
+def test_partitioned_coupling_scenario_2() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -226,9 +224,6 @@ def test_iteration_exhaustion_keeps_the_window_checkpoint() -> None:
     assert float(result.accepted_state.time) == pytest.approx(0.0)
     assert jnp.allclose(result.accepted_state.exchange_values[0], 0.0)
     assert not jnp.allclose(result.candidate_state.exchange_values[1], 0.0)
-
-
-def test_participant_failure_rolls_back_the_entire_window_and_rollout_stops() -> None:
     graph, states, values = _linear_graph(fail_b=True)
     problem = cpl.CouplingProblem(
         graph,
@@ -251,9 +246,6 @@ def test_participant_failure_rolls_back_the_entire_window_and_rollout_stops() ->
     assert solution.retained_valid.tolist() == [True, True, False, False]
     assert int(solution.statuses[1]) == int(cpl.CouplingStatus.PARTICIPANT_FAILURE)
     assert jnp.all(solution.participant_evaluations[2] == 0)
-
-
-def test_final_physical_certification_can_reject_a_loose_nonlinear_success() -> None:
     graph, states, values = _linear_graph()
     policy = cpl.ImplicitCouplingPolicy(
         phx.nonlinear.FixedPointIteration(),
@@ -277,22 +269,7 @@ def test_final_physical_certification_can_reject_a_loose_nonlinear_success() -> 
     assert float(result.accepted_state.time) == pytest.approx(0.0)
 
 
-def test_implicit_iterations_replay_the_window_checkpoint_instead_of_chaining_state() -> (
-    None
-):
-    graph, states, values = _linear_graph(count_state=True)
-    prepared = cpl.prepare_coupling(graph, states, values, policy=_implicit_policy())
-
-    result = cpl.advance_coupling_window(prepared, prepared.reference_state, 1.0)
-
-    assert bool(result.successful)
-    assert all(
-        jnp.allclose(state, 1.0) for state in result.accepted_state.participant_states
-    )
-    assert int(result.diagnostics.participant_evaluations[0]) > 1
-
-
-def test_numeric_refresh_preserves_plan_identity_and_increments_version() -> None:
+def test_partitioned_coupling_scenario_3() -> None:
     graph, states, values = _linear_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -313,23 +290,6 @@ def test_numeric_refresh_preserves_plan_identity_and_increments_version() -> Non
     assert refreshed.plan_id == prepared.plan_id
     assert int(refreshed.numeric_version) == 1
     assert jnp.allclose(result.accepted_state.exchange_values[1], 1.0)
-
-
-def _field_space(name: Any) -> Any:
-    topology = phx.discretization.TensorTopology(("x",), (3,))
-    support = phx.discretization.DiscreteSupport(topology, 1, f"{name}-support")
-    layout = phx.discretization.TensorDofLayout(("x",), (3,))
-    vector_space = phx.linalg.ArraySpace((3,), space_id=f"{name}-vectors")
-    return phx.discretization.DiscreteFieldSpace(
-        name,
-        support.support_id,
-        layout,
-        vector_space,
-        representation="point_value",
-    )
-
-
-def test_forward_and_paired_adjoint_field_exchanges_preserve_virtual_work() -> None:
     source_space = _field_space("source")
     target_space = _field_space("target")
     matrix = jnp.asarray([[1.0, 0.0, 0.0], [0.25, 0.5, 0.25], [0.0, 0.0, 1.0]])
@@ -439,4 +399,18 @@ def test_forward_and_paired_adjoint_field_exchanges_preserve_virtual_work() -> N
     assert jnp.allclose(mapped_source, matrix.T @ target_value)
     assert jnp.vdot(mapped_target, target_value) == pytest.approx(
         float(jnp.vdot(source_value, mapped_source))
+    )
+
+
+def _field_space(name: Any) -> Any:
+    topology = phx.discretization.TensorTopology(("x",), (3,))
+    support = phx.discretization.DiscreteSupport(topology, 1, f"{name}-support")
+    layout = phx.discretization.TensorDofLayout(("x",), (3,))
+    vector_space = phx.linalg.ArraySpace((3,), space_id=f"{name}-vectors")
+    return phx.discretization.DiscreteFieldSpace(
+        name,
+        support.support_id,
+        layout,
+        vector_space,
+        representation="point_value",
     )

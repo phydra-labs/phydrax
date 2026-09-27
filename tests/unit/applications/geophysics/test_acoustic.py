@@ -41,7 +41,7 @@ def _survey(steps: Any = 19, absorber: Any = 3) -> Any:
     return plan, acquisition, rates
 
 
-def test_prepared_sampling_affine_fields_and_exact_transpose() -> None:
+def test_acoustic_scenario_1() -> None:
     grid = AcousticGrid((7, 9), (0.002, 0.003), (0.01, -0.02), length_unit=KILOMETER)
     points = np.asarray([[11.2, -18.1], [17.3, 1.8], [22.0, 4.0]])
     sampling = PreparedAcousticSampling(grid, points)
@@ -57,40 +57,34 @@ def test_prepared_sampling_affine_fields_and_exact_transpose() -> None:
     with pytest.raises(ValueError, match="within"):
         # ty: ignore[invalid-argument-type]
         PreparedAcousticSampling(grid, [[9.0, 0.0]])
-
-
-@pytest.mark.parametrize("dimensions", [2, 3])
-def test_monopole_volume_rate_scaling_and_axis_symmetry(dimensions: Any) -> None:
-    grid = AcousticGrid((7,) * dimensions, (0.5,) * dimensions)
-    center = [1.5] * dimensions
-    # ty: ignore[invalid-argument-type]
-    acquisition = SeismicAcquisition(grid, [center], [center])
-    plan = ConstantDensityAcousticPlan(grid, 0.05, 3, 2.0, 3.0)
-    initial = plan.initial_state()
-    state = plan.step(initial, 2.0, acquisition, jnp.asarray([0.7]))
-    expected_pressure = 3.0 * 2.0**2 * 0.7 * 0.05 / grid.cell_measure
-    np.testing.assert_allclose(
-        state.pressure[(3,) * dimensions], expected_pressure, rtol=2e-6
-    )
-    np.testing.assert_allclose(
-        jnp.sum(state.pressure) * grid.cell_measure / (3.0 * 2.0**2),
-        0.7 * 0.05,
-        rtol=2e-6,
-    )
-    propagated = plan.step(state, 2.0, acquisition, jnp.asarray([0.0])).pressure
-    neighbors = []
-    for axis in range(dimensions):
-        for sign in (-1, 1):
-            index = [3] * dimensions
-            index[axis] += sign
-            neighbors.append(propagated[tuple(index)])
-    assert float(neighbors[0]) > 0
-    np.testing.assert_allclose(
-        neighbors, jnp.full((2 * dimensions,), neighbors[0]), rtol=2e-6
-    )
-
-
-def test_rigid_wall_standing_wave_matches_discrete_dispersion() -> None:
+    for dimensions in [2, 3]:
+        grid = AcousticGrid((7,) * dimensions, (0.5,) * dimensions)
+        center = [1.5] * dimensions
+        # ty: ignore[invalid-argument-type]
+        acquisition = SeismicAcquisition(grid, [center], [center])
+        plan = ConstantDensityAcousticPlan(grid, 0.05, 3, 2.0, 3.0)
+        initial = plan.initial_state()
+        state = plan.step(initial, 2.0, acquisition, jnp.asarray([0.7]))
+        expected_pressure = 3.0 * 2.0**2 * 0.7 * 0.05 / grid.cell_measure
+        np.testing.assert_allclose(
+            state.pressure[(3,) * dimensions], expected_pressure, rtol=2e-6
+        )
+        np.testing.assert_allclose(
+            jnp.sum(state.pressure) * grid.cell_measure / (3.0 * 2.0**2),
+            0.7 * 0.05,
+            rtol=2e-6,
+        )
+        propagated = plan.step(state, 2.0, acquisition, jnp.asarray([0.0])).pressure
+        neighbors = []
+        for axis in range(dimensions):
+            for sign in (-1, 1):
+                index = [3] * dimensions
+                index[axis] += sign
+                neighbors.append(propagated[tuple(index)])
+        assert float(neighbors[0]) > 0
+        np.testing.assert_allclose(
+            neighbors, jnp.full((2 * dimensions,), neighbors[0]), rtol=2e-6
+        )
     nx, steps, dt, speed = 32, 40, 0.1, 2.0
     grid = AcousticGrid((nx, 4), (1.0, 1.0), (0.5, 0.5))
     # ty: ignore[invalid-argument-type]
@@ -117,7 +111,7 @@ def test_rigid_wall_standing_wave_matches_discrete_dispersion() -> None:
     assert float(jnp.max(jnp.abs(result.final_state.pressure - continuum))) < 0.02
 
 
-def test_cfl_preparation_and_dynamic_material_fail_closed() -> None:
+def test_acoustic_scenario_2() -> None:
     grid = AcousticGrid((7, 7), (1.0, 1.0))
     with pytest.raises(ValueError, match="CFL"):
         ConstantDensityAcousticPlan(grid, 0.8, 2, 1.0)
@@ -131,6 +125,69 @@ def test_cfl_preparation_and_dynamic_material_fail_closed() -> None:
             match="wavespeed",
         ):
             jax.block_until_ready(forward(speed))
+    plan, acquisition, _ = _survey(steps=9)
+    full_plan = ConstantDensityAcousticPlan(
+        plan.grid,
+        plan.time_step,
+        18,
+        plan.maximum_wavespeed,
+        plan.density,
+        absorber_cells=plan.absorber_cells,
+    )
+    x, y = jnp.meshgrid(*plan.grid.axis_nodes(), indexing="ij")
+    initial_pressure = jnp.exp(-((x - 0.8) ** 2 + (y - 1.1) ** 2) / 0.1)
+    first = plan.simulate(
+        1.5,
+        acquisition,
+        jnp.zeros((9, 1)),
+        initial_state=plan.initial_state(initial_pressure),
+    )
+    checkpoint = plan.checkpoint(first.final_state, 1.5)
+    resumed = plan.restart(
+        checkpoint, acquisition, jnp.zeros((9, 1)), replay="block", block_size=4
+    )
+    full = full_plan.simulate(
+        1.5,
+        acquisition,
+        jnp.zeros((18, 1)),
+        initial_state=full_plan.initial_state(initial_pressure),
+    )
+    np.testing.assert_allclose(
+        resumed.final_state.split_pressure,
+        full.final_state.split_pressure,
+        atol=1e-7,
+        rtol=1e-6,
+    )
+    for resumed_velocity, full_velocity in zip(
+        resumed.final_state.velocity, full.final_state.velocity, strict=True
+    ):
+        np.testing.assert_allclose(resumed_velocity, full_velocity, atol=1e-7, rtol=1e-6)
+    np.testing.assert_allclose(resumed.traces.support.coordinates[0], 9 * plan.time_step)
+    wrong_plan = ConstantDensityAcousticPlan(
+        plan.grid, 0.04, 9, 2.0, 2.0, absorber_cells=3
+    )
+    with pytest.raises(ValueError, match="different prepared plan"):
+        wrong_plan.restart(checkpoint, acquisition, jnp.zeros((9, 1)))
+    grid = AcousticGrid((41, 41), (0.5, 0.5))
+    # ty: ignore[invalid-argument-type]
+    acquisition = SeismicAcquisition(grid, [[10.0, 10.0]], [[10.0, 10.0]])
+    wall = ConstantDensityAcousticPlan(grid, 0.15, 240, 1.0, 1.0)
+    layer = ConstantDensityAcousticPlan(
+        grid, 0.15, 240, 1.0, 1.0, absorber_cells=8, absorber_strength=6.0
+    )
+    x, y = jnp.meshgrid(*grid.axis_nodes(), indexing="ij")
+    pressure = jnp.exp(-((x - 10.0) ** 2 + (y - 10.0) ** 2) / 2.0)
+    rates = jnp.zeros((240, 1))
+    reflected = wall.simulate(
+        1.0, acquisition, rates, initial_state=wall.initial_state(pressure)
+    )
+    absorbed = layer.simulate(
+        1.0, acquisition, rates, initial_state=layer.initial_state(pressure)
+    )
+    reflected_energy = wall.energy(reflected.final_state, 1.0)
+    absorbed_energy = layer.energy(absorbed.final_state, 1.0)
+    assert float(absorbed_energy / reflected_energy) < 0.6
+    assert float(reflected_energy / wall.energy(wall.initial_state(pressure), 1.0)) > 0.95
 
 
 def test_full_step_block_and_scheduled_discrete_adjoint_equivalence() -> None:
@@ -185,75 +242,6 @@ def test_full_step_block_and_scheduled_discrete_adjoint_equivalence() -> None:
     np.testing.assert_allclose(
         finite_difference, jnp.sum(gradient * direction), atol=3e-6, rtol=0.02
     )
-
-
-def test_checkpoint_continuation_preserves_split_absorber_state() -> None:
-    plan, acquisition, _ = _survey(steps=9)
-    full_plan = ConstantDensityAcousticPlan(
-        plan.grid,
-        plan.time_step,
-        18,
-        plan.maximum_wavespeed,
-        plan.density,
-        absorber_cells=plan.absorber_cells,
-    )
-    x, y = jnp.meshgrid(*plan.grid.axis_nodes(), indexing="ij")
-    initial_pressure = jnp.exp(-((x - 0.8) ** 2 + (y - 1.1) ** 2) / 0.1)
-    first = plan.simulate(
-        1.5,
-        acquisition,
-        jnp.zeros((9, 1)),
-        initial_state=plan.initial_state(initial_pressure),
-    )
-    checkpoint = plan.checkpoint(first.final_state, 1.5)
-    resumed = plan.restart(
-        checkpoint, acquisition, jnp.zeros((9, 1)), replay="block", block_size=4
-    )
-    full = full_plan.simulate(
-        1.5,
-        acquisition,
-        jnp.zeros((18, 1)),
-        initial_state=full_plan.initial_state(initial_pressure),
-    )
-    np.testing.assert_allclose(
-        resumed.final_state.split_pressure,
-        full.final_state.split_pressure,
-        atol=1e-7,
-        rtol=1e-6,
-    )
-    for resumed_velocity, full_velocity in zip(
-        resumed.final_state.velocity, full.final_state.velocity, strict=True
-    ):
-        np.testing.assert_allclose(resumed_velocity, full_velocity, atol=1e-7, rtol=1e-6)
-    np.testing.assert_allclose(resumed.traces.support.coordinates[0], 9 * plan.time_step)
-    wrong_plan = ConstantDensityAcousticPlan(
-        plan.grid, 0.04, 9, 2.0, 2.0, absorber_cells=3
-    )
-    with pytest.raises(ValueError, match="different prepared plan"):
-        wrong_plan.restart(checkpoint, acquisition, jnp.zeros((9, 1)))
-
-
-def test_split_damping_reduces_late_box_energy_without_perfect_pml_claim() -> None:
-    grid = AcousticGrid((41, 41), (0.5, 0.5))
-    # ty: ignore[invalid-argument-type]
-    acquisition = SeismicAcquisition(grid, [[10.0, 10.0]], [[10.0, 10.0]])
-    wall = ConstantDensityAcousticPlan(grid, 0.15, 240, 1.0, 1.0)
-    layer = ConstantDensityAcousticPlan(
-        grid, 0.15, 240, 1.0, 1.0, absorber_cells=8, absorber_strength=6.0
-    )
-    x, y = jnp.meshgrid(*grid.axis_nodes(), indexing="ij")
-    pressure = jnp.exp(-((x - 10.0) ** 2 + (y - 10.0) ** 2) / 2.0)
-    rates = jnp.zeros((240, 1))
-    reflected = wall.simulate(
-        1.0, acquisition, rates, initial_state=wall.initial_state(pressure)
-    )
-    absorbed = layer.simulate(
-        1.0, acquisition, rates, initial_state=layer.initial_state(pressure)
-    )
-    reflected_energy = wall.energy(reflected.final_state, 1.0)
-    absorbed_energy = layer.energy(absorbed.final_state, 1.0)
-    assert float(absorbed_energy / reflected_energy) < 0.6
-    assert float(reflected_energy / wall.energy(wall.initial_state(pressure), 1.0)) > 0.95
 
 
 def test_masked_native_pressure_likelihood_gradient_and_time_transpose() -> None:

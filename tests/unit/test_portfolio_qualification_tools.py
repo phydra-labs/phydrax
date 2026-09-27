@@ -210,7 +210,7 @@ def _lbm_deployment(profile: Any, evidence: Any) -> Any:
     )
 
 
-def test_immersed_and_lbm_profile_records_preserve_exact_route_distinctions() -> None:
+def test_portfolio_qualification_tools_scenario_1() -> None:
     immersed = immersed_profile_record()
     body_methods = {
         value["regime"]: value["body_method"]
@@ -247,9 +247,6 @@ def test_immersed_and_lbm_profile_records_preserve_exact_route_distinctions() ->
     assert all(value["method_class"] == "lattice-kinetic" for value in lbm)
     assert all(not value["signed"] and not value["released"] for value in lbm)
     assert lbm == lbm_profile_records(conjugate_thermal=thermal)
-
-
-def test_lbm_candidate_retains_gap_report_and_resource_refusal() -> None:
     hardware = LatticeBoltzmannHardwareTarget(
         "cpu",
         "qualification-test",
@@ -300,6 +297,71 @@ def test_lbm_candidate_retains_gap_report_and_resource_refusal() -> None:
     assert "output-parity" in coverage["inconclusive_predicate_ids"]
     # ty: ignore[not-subscriptable]
     assert gap_candidate["gates"]["operational"]["outcome"] == "inconclusive"
+    pipeline = _closure_pipeline()
+    prepared_filter, alignment, dag, dataset, partition, normalizer, binding, quality = (
+        pipeline
+    )
+    offline = closure_candidate_profile(
+        prepared_filter, alignment, dag, dataset, partition
+    )
+    deployed = closure_candidate_profile(
+        prepared_filter,
+        alignment,
+        dag,
+        dataset,
+        partition,
+        normalizer=normalizer,
+        binding=binding,
+    )
+    assert dict(offline.support_tuples[0].attributes)["route"] == "offline-closure-data"
+    assert (
+        dict(deployed.support_tuples[0].attributes)["route"]
+        == "deployed-conservative_face"
+    )
+    assert (
+        offline.support_tuples[0].support_tuple_id
+        != deployed.support_tuples[0].support_tuple_id
+    )
+
+    mismatched_partition = _closure_pipeline(partition_salt="partition-b")[4]
+    mismatched_profile = closure_candidate_profile(
+        prepared_filter,
+        alignment,
+        dag,
+        dataset,
+        mismatched_partition,
+        normalizer=normalizer,
+        binding=binding,
+    )
+    subject = binding.binding_id
+    evidence = tuple(
+        _evidence(kind, subject)
+        for kind in ("scientific", "performance", "operational", "security")
+    )
+    candidate = build_closure_data_candidate(
+        mismatched_profile,
+        prepared_filter,
+        alignment,
+        dag,
+        dataset,
+        mismatched_partition,
+        quality,
+        _run(mismatched_profile, mismatched_profile.support_tuples[0]),
+        evidence,
+        at_time=10,
+        normalizer=normalizer,
+        binding=binding,
+        reference_manifests=(_denied_reference(),),
+    )
+    # ty: ignore[not-subscriptable]
+    assert candidate["gates"]["security"]["outcome"] == "failed"
+    # ty: ignore[not-subscriptable]
+    reasons = candidate["gates"]["security"]["failed_reasons"]
+    assert "normalizer-partition-mismatch" in reasons
+    assert any("commercial-use-not-permitted" in value for value in reasons)
+    assert any("training-use-not-permitted" in value for value in reasons)
+    assert candidate["route"] == "deployed-conservative_face"
+    assert candidate["release_ready"] is False
 
 
 def _closure_pipeline(*, partition_salt: Any = "partition-a") -> Any:
@@ -396,74 +458,6 @@ def _denied_reference() -> Any:
         uncertainty={"state": 0.01},
         lineage_ids=("source-a",),
     )
-
-
-def test_closure_candidates_isolate_offline_deployment_and_fail_leakage_rights() -> None:
-    pipeline = _closure_pipeline()
-    prepared_filter, alignment, dag, dataset, partition, normalizer, binding, quality = (
-        pipeline
-    )
-    offline = closure_candidate_profile(
-        prepared_filter, alignment, dag, dataset, partition
-    )
-    deployed = closure_candidate_profile(
-        prepared_filter,
-        alignment,
-        dag,
-        dataset,
-        partition,
-        normalizer=normalizer,
-        binding=binding,
-    )
-    assert dict(offline.support_tuples[0].attributes)["route"] == "offline-closure-data"
-    assert (
-        dict(deployed.support_tuples[0].attributes)["route"]
-        == "deployed-conservative_face"
-    )
-    assert (
-        offline.support_tuples[0].support_tuple_id
-        != deployed.support_tuples[0].support_tuple_id
-    )
-
-    mismatched_partition = _closure_pipeline(partition_salt="partition-b")[4]
-    mismatched_profile = closure_candidate_profile(
-        prepared_filter,
-        alignment,
-        dag,
-        dataset,
-        mismatched_partition,
-        normalizer=normalizer,
-        binding=binding,
-    )
-    subject = binding.binding_id
-    evidence = tuple(
-        _evidence(kind, subject)
-        for kind in ("scientific", "performance", "operational", "security")
-    )
-    candidate = build_closure_data_candidate(
-        mismatched_profile,
-        prepared_filter,
-        alignment,
-        dag,
-        dataset,
-        mismatched_partition,
-        quality,
-        _run(mismatched_profile, mismatched_profile.support_tuples[0]),
-        evidence,
-        at_time=10,
-        normalizer=normalizer,
-        binding=binding,
-        reference_manifests=(_denied_reference(),),
-    )
-    # ty: ignore[not-subscriptable]
-    assert candidate["gates"]["security"]["outcome"] == "failed"
-    # ty: ignore[not-subscriptable]
-    reasons = candidate["gates"]["security"]["failed_reasons"]
-    assert "normalizer-partition-mismatch" in reasons
-    assert any("commercial-use-not-permitted" in value for value in reasons)
-    assert any("training-use-not-permitted" in value for value in reasons)
-    assert candidate["route"] == "deployed-conservative_face"
-    assert candidate["release_ready"] is False
 
 
 def _cumulant_plan(closure: Any, interaction_model: Any) -> Any:

@@ -71,7 +71,7 @@ def _prepare() -> Any:
     return material, prepared
 
 
-def test_native_mixed_rest_and_spatial_active_virtual_work_are_exact() -> None:
+def test_heidlauf_roehrle_2014_continuum_scenario_1() -> None:
     material, prepared = _prepare()
     state = prepared.problem.state_space.zeros()
     rest = prepared.problem.residual(state, jnp.zeros(2))
@@ -89,6 +89,16 @@ def test_native_mixed_rest_and_spatial_active_virtual_work_are_exact() -> None:
     np.testing.assert_allclose(virtual_work, expected, rtol=3e-5, atol=0.1)
     np.testing.assert_allclose(jnp.sum(residual[0], axis=0), 0.0, atol=0.03)
     np.testing.assert_allclose(residual[1], 0.0, atol=2e-7)
+    material, _ = _prepare()
+    provenance = SemanticProvenance({"kind": "foreign-prescribed-field"})
+    field = HeidlaufRoehrle2014ActiveStressField(
+        lambda points, context: jnp.zeros(points.shape[:-1]),
+        provenance,
+        NumericRevision(provenance, {}),
+        source_id="another-source",
+    )
+    with pytest.raises(ValueError, match="foreign active-stress source"):
+        material.form(active_stress_field=field)
 
 
 def test_compiled_native_active_source_jvp_and_mixed_constraint_derivative() -> None:
@@ -114,16 +124,3 @@ def test_compiled_native_active_source_jvp_and_mixed_constraint_derivative() -> 
     )[1]
     # Partition of unity of pressure tests: d int -log(J)/d epsilon = -volume.
     np.testing.assert_allclose(jnp.sum(constraint_jvp), -1 / 6, rtol=3e-5, atol=1e-6)
-
-
-def test_preparation_rejects_a_field_from_another_source() -> None:
-    material, _ = _prepare()
-    provenance = SemanticProvenance({"kind": "foreign-prescribed-field"})
-    field = HeidlaufRoehrle2014ActiveStressField(
-        lambda points, context: jnp.zeros(points.shape[:-1]),
-        provenance,
-        NumericRevision(provenance, {}),
-        source_id="another-source",
-    )
-    with pytest.raises(ValueError, match="foreign active-stress source"):
-        material.form(active_stress_field=field)

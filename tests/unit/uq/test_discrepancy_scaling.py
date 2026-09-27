@@ -12,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_multi_output_gp_uses_declared_cross_output_covariance() -> None:
+def test_discrepancy_scaling_scenario_1() -> None:
     observation_x = jnp.linspace(0.0, 1.0, 18)
     base = jnp.stack([observation_x, 2.0 * observation_x], axis=1)
     latent = 0.15 * jnp.sin(2.0 * jnp.pi * observation_x)
@@ -79,6 +79,37 @@ def test_multi_output_gp_uses_declared_cross_output_covariance() -> None:
     assert jnp.sqrt(jnp.mean((dense_mean - expected) ** 2)) < 0.01
     assert posterior_cross_correlation < -0.05
     assert jnp.linalg.eigvalsh(coregionalization.covariance).min() >= 0.0
+    baseline = jnp.array([1.48, 1.52, 1.47, 1.51, 1.50, 1.49])
+    fixed = jnp.array([1.19, 1.23, 1.18, 1.22, 1.21, 1.20])
+    joint = jnp.array([1.18, 1.24, 1.19, 1.21, 1.22, 1.20])
+    common: dict[str, Any] = dict(
+        true_parameters=jnp.asarray(1.2),
+        baseline_parameter_estimates=baseline,
+        fixed_gp_parameter_estimates=fixed,
+        joint_gp_parameter_estimates=joint,
+        baseline_nll=jnp.full(6, 1.4),
+        fixed_gp_nll=jnp.full(6, 0.7),
+        baseline_crps=jnp.full(6, 0.3),
+        fixed_gp_crps=jnp.full(6, 0.1),
+        fixed_gp_coverage=jnp.full(6, 0.9),
+    )
+    report = phx.uq.discrepancy_identifiability_report(
+        **common,
+        joint_parameter_gp_correlations=jnp.full((6, 1, 3), 0.4),
+    )
+    confounded = phx.uq.discrepancy_identifiability_report(
+        **common,
+        joint_parameter_gp_correlations=jnp.full((6, 1, 3), 0.99),
+    )
+
+    assert report.passed
+    assert report.num_repeats == 6
+    assert report.nll_improvement == pytest.approx(0.7)
+    assert report.crps_improvement == pytest.approx(0.2)
+    assert not confounded.passed
+    assert "parameter/GP correlation" in confounded.failures[-1]
+    with pytest.raises(RuntimeError, match="identifiability gates failed"):
+        confounded.raise_on_failure()
 
 
 def test_sparse_fitc_matches_exact_gp_without_quadratic_training_storage() -> None:
@@ -256,39 +287,3 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
     )
     assert exact_factored_condition.output_dims == ("query",)
     assert sparse_factored_condition.output_dims == ("query",)
-
-
-def test_repeated_identifiability_report_gates_bias_scores_coverage_and_confounding() -> (
-    None
-):
-    baseline = jnp.array([1.48, 1.52, 1.47, 1.51, 1.50, 1.49])
-    fixed = jnp.array([1.19, 1.23, 1.18, 1.22, 1.21, 1.20])
-    joint = jnp.array([1.18, 1.24, 1.19, 1.21, 1.22, 1.20])
-    common: dict[str, Any] = dict(
-        true_parameters=jnp.asarray(1.2),
-        baseline_parameter_estimates=baseline,
-        fixed_gp_parameter_estimates=fixed,
-        joint_gp_parameter_estimates=joint,
-        baseline_nll=jnp.full(6, 1.4),
-        fixed_gp_nll=jnp.full(6, 0.7),
-        baseline_crps=jnp.full(6, 0.3),
-        fixed_gp_crps=jnp.full(6, 0.1),
-        fixed_gp_coverage=jnp.full(6, 0.9),
-    )
-    report = phx.uq.discrepancy_identifiability_report(
-        **common,
-        joint_parameter_gp_correlations=jnp.full((6, 1, 3), 0.4),
-    )
-    confounded = phx.uq.discrepancy_identifiability_report(
-        **common,
-        joint_parameter_gp_correlations=jnp.full((6, 1, 3), 0.99),
-    )
-
-    assert report.passed
-    assert report.num_repeats == 6
-    assert report.nll_improvement == pytest.approx(0.7)
-    assert report.crps_improvement == pytest.approx(0.2)
-    assert not confounded.passed
-    assert "parameter/GP correlation" in confounded.failures[-1]
-    with pytest.raises(RuntimeError, match="identifiability gates failed"):
-        confounded.raise_on_failure()

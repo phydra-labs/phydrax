@@ -32,7 +32,7 @@ def _mixed_layout(dimension: Any = 2) -> Any:
     )
 
 
-def test_tensor_layout_round_trips_packed_fields_and_schema() -> None:
+def test_tensor_field_equivariance_scenario_1() -> None:
     layout = _mixed_layout()
     values = jnp.arange(5 * layout.channel_count, dtype="float64").reshape(
         5, layout.channel_count
@@ -48,9 +48,6 @@ def test_tensor_layout_round_trips_packed_fields_and_schema() -> None:
         values,
     )
     assert TensorFieldLayout.from_dict(layout.to_dict()).to_dict() == layout.to_dict()
-
-
-def test_tensor_actions_respect_variance_rank_and_reflection_parity() -> None:
     reflection = jnp.diag(jnp.array([1.0, -1.0]))
     vector = TensorType(("contravariant",), dimension=2)
     covector = TensorType(("covariant",), dimension=2)
@@ -70,11 +67,6 @@ def test_tensor_actions_respect_variance_rank_and_reflection_parity() -> None:
     matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     expected = reflection @ matrix @ reflection.T
     assert jnp.array_equal(rank_two.transform(matrix, reflection), expected)
-
-
-def test_tensor_normalization_contract_rejects_non_equivariant_affine_statistics() -> (
-    None
-):
     layout = _mixed_layout()
     valid_scale = (2.0, 3.0, 4.0, 4.0, 5.0)
     valid_offset = (1.0, -2.0, 0.0, 0.0, 0.0)
@@ -90,36 +82,25 @@ def test_tensor_normalization_contract_rejects_non_equivariant_affine_statistics
             valid_scale,
             (1.0, -2.0, 0.1, 0.0, 0.0),
         )
-
-
-@pytest.mark.parametrize(
-    ("construct", "order", "proper"),
-    (
+    for construct, order, proper in (
         (FiniteOrthogonalGroup.c4, 4, True),
         (FiniteOrthogonalGroup.d4, 8, False),
         (FiniteOrthogonalGroup.cube_rotations, 24, True),
         (FiniteOrthogonalGroup.cube_orthogonal, 48, False),
-    ),
-)
-def test_builtin_finite_groups_have_exact_group_metadata(
-    construct: Any, order: Any, proper: Any
-) -> None:
-    group = construct()
-    assert group.order == order
-    assert group.is_proper is proper
-    assert group.supports_lattice_action
-    identity = group.identity_index
-    for left in range(group.order):
-        inverse = group.inverse(left)
-        assert group.compose(left, identity) == left
-        assert group.compose(identity, left) == left
-        assert group.compose(left, inverse) == identity
-        assert group.compose(inverse, left) == identity
-    restored = FiniteOrthogonalGroup.from_dict(group.to_dict())
-    assert restored.fingerprint == group.fingerprint
-
-
-def test_finite_group_field_actions_compose_for_mixed_tensor_fields_under_jit() -> None:
+    ):
+        group = construct()
+        assert group.order == order
+        assert group.is_proper is proper
+        assert group.supports_lattice_action
+        identity = group.identity_index
+        for left in range(group.order):
+            inverse = group.inverse(left)
+            assert group.compose(left, identity) == left
+            assert group.compose(identity, left) == left
+            assert group.compose(left, inverse) == identity
+            assert group.compose(inverse, left) == identity
+        restored = FiniteOrthogonalGroup.from_dict(group.to_dict())
+        assert restored.fingerprint == group.fingerprint
     group = FiniteOrthogonalGroup.d4()
     layout = _mixed_layout()
     values = jnp.arange(5 * 5 * layout.channel_count, dtype="float64").reshape(

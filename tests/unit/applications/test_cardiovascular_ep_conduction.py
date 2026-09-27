@@ -49,7 +49,7 @@ from phydrax.applications.cardiovascular.electrophysiology._pacing import (
 )
 
 
-def test_anisotropic_graph_and_fem_eikonal_match_analytic_travel_times() -> None:
+def test_cardiovascular_ep_conduction_scenario_1() -> None:
     graph = GraphEikonalRoute(
         jnp.asarray((10, 20, 30)),
         jnp.asarray((100, 101)),
@@ -80,9 +80,6 @@ def test_anisotropic_graph_and_fem_eikonal_match_analytic_travel_times() -> None
     )
     np.testing.assert_allclose(fem_result.arrival_time_ms, (0.0, 0.0, 1.0), atol=1.0e-6)
     assert bool(fem_result.evidence.successful)
-
-
-def test_eikonal_source_time_remains_differentiable() -> None:
     route = GraphEikonalRoute(
         jnp.asarray((10, 20, 30)),
         jnp.asarray((100, 101)),
@@ -101,21 +98,6 @@ def test_eikonal_source_time_remains_differentiable() -> None:
         ).arrival_time_ms[2]
     )(jnp.asarray(3.0))
     np.testing.assert_allclose(derivative, 1.0)
-
-
-def _line_network(*, event_capacity: Any = 24) -> Any:
-    return PurkinjeNetworkPlan(
-        jnp.asarray((10, 20, 30)),
-        jnp.asarray((100, 101)),
-        jnp.asarray(((0, 1), (1, 2))),
-        jnp.asarray((1.0, 2.0)),
-        5.0,
-        event_capacity=event_capacity,
-        stimulus_capacity=4,
-    )
-
-
-def test_purkinje_delay_refractory_block_and_deterministic_events() -> None:
     plan = _line_network()
     state = initialize_purkinje_state(plan)
     first = propagate_purkinje(
@@ -155,9 +137,6 @@ def test_purkinje_delay_refractory_block_and_deterministic_events() -> None:
     )
     assert int(blocked.evidence.blocked_wave_count) == 1
     assert float(blocked.state.latest_activation_time_ms[2]) == 3.0
-
-
-def test_purkinje_event_overflow_exposes_candidate_and_fails_closed() -> None:
     plan = _line_network(event_capacity=1)
     initial = initialize_purkinje_state(plan)
     result = propagate_purkinje(
@@ -170,9 +149,45 @@ def test_purkinje_event_overflow_exposes_candidate_and_fails_closed() -> None:
     assert not bool(result.evidence.successful)
     assert np.isneginf(float(result.state.latest_activation_time_ms[0]))
     assert float(result.candidate_state.latest_activation_time_ms[0]) == 0.0
+    plan = PurkinjeNetworkPlan(
+        jnp.asarray((10, 20)),
+        jnp.asarray((100,)),
+        jnp.asarray(((0, 1),)),
+        jnp.asarray((2.0,)),
+        10.0,
+        event_capacity=8,
+        stimulus_capacity=2,
+    )
+    result = propagate_purkinje(
+        plan,
+        initialize_purkinje_state(plan),
+        # ty: ignore[invalid-argument-type]
+        make_purkinje_stimulus_batch(plan, (1, 2), (0, 1), (0.0, 0.0)),
+    )
+    active = np.asarray(result.events.active)
+    kinds = np.asarray(result.events.kind)[active]
+    times = np.asarray(result.events.time_ms)[active]
+    assert np.sum(kinds == int(PurkinjeEventKind.WAVE_COLLISION)) == 1
+    np.testing.assert_allclose(
+        times[kinds == int(PurkinjeEventKind.WAVE_COLLISION)], (1.0,)
+    )
+    assert int(result.evidence.activation_count) == 2
+    assert not bool(result.evidence.fixed_event_sequence_derivative_valid)
 
 
-def test_pmj_requires_successful_propagation_from_bound_network() -> None:
+def _line_network(*, event_capacity: Any = 24) -> Any:
+    return PurkinjeNetworkPlan(
+        jnp.asarray((10, 20, 30)),
+        jnp.asarray((100, 101)),
+        jnp.asarray(((0, 1), (1, 2))),
+        jnp.asarray((1.0, 2.0)),
+        5.0,
+        event_capacity=event_capacity,
+        stimulus_capacity=4,
+    )
+
+
+def test_cardiovascular_ep_conduction_scenario_2() -> None:
     bound_network = _line_network(event_capacity=1)
     rejected = propagate_purkinje(
         bound_network,
@@ -205,36 +220,6 @@ def test_pmj_requires_successful_propagation_from_bound_network() -> None:
     )
     with pytest.raises(ValueError, match="another PMJ-bound plan"):
         schedule_pmj_activations(pmj, accepted_other, jnp.asarray((-jnp.inf,)))
-
-
-def test_purkinje_antiparallel_waves_collide_before_node_arrival() -> None:
-    plan = PurkinjeNetworkPlan(
-        jnp.asarray((10, 20)),
-        jnp.asarray((100,)),
-        jnp.asarray(((0, 1),)),
-        jnp.asarray((2.0,)),
-        10.0,
-        event_capacity=8,
-        stimulus_capacity=2,
-    )
-    result = propagate_purkinje(
-        plan,
-        initialize_purkinje_state(plan),
-        # ty: ignore[invalid-argument-type]
-        make_purkinje_stimulus_batch(plan, (1, 2), (0, 1), (0.0, 0.0)),
-    )
-    active = np.asarray(result.events.active)
-    kinds = np.asarray(result.events.kind)[active]
-    times = np.asarray(result.events.time_ms)[active]
-    assert np.sum(kinds == int(PurkinjeEventKind.WAVE_COLLISION)) == 1
-    np.testing.assert_allclose(
-        times[kinds == int(PurkinjeEventKind.WAVE_COLLISION)], (1.0,)
-    )
-    assert int(result.evidence.activation_count) == 2
-    assert not bool(result.evidence.fixed_event_sequence_derivative_valid)
-
-
-def test_pmj_exchange_timing_support_and_pacing_controller_state() -> None:
     network = _line_network()
     propagated = propagate_purkinje(
         network,
@@ -305,27 +290,6 @@ def test_pmj_exchange_timing_support_and_pacing_controller_state() -> None:
     assert bool(paced.command.emitted)
     assert int(paced.state.command_count) == 1
     assert float(paced.command.start_time_ms) == 1700.0
-
-
-def _heart_only_bidomain() -> Any:
-    plan = BidomainFEMPlan(
-        HeartOnlyBidomainRoute(),
-        jnp.asarray((10, 20, 30)),
-        jnp.asarray((100, 101)),
-        jnp.asarray(((0.0,), (1.0,), (2.0,))),
-        jnp.asarray(((0, 1), (1, 2))),
-        jnp.asarray(((1.0,),)),
-        jnp.asarray(((2.0,),)),
-        dt_ms=0.1,
-        membrane_capacitance_uF_per_mm3=1.0,
-        residual_tolerance=2.0e-5,
-        gauge_tolerance_mV=2.0e-5,
-        source_compatibility_tolerance_uA=2.0e-5,
-    )
-    return plan.prepare()
-
-
-def test_bidomain_gauge_nullspace_block_residual_and_monodomain_limit() -> None:
     prepared = _heart_only_bidomain()
     state = initialize_bidomain_state(prepared, jnp.asarray((0.0, 1.0, 0.0)))
     inputs = zero_bidomain_inputs(prepared)
@@ -363,9 +327,6 @@ def test_bidomain_gauge_nullspace_block_residual_and_monodomain_limit() -> None:
         )
     )(incompatible)
     assert not bool(rejected_limit.evidence.successful)
-
-
-def test_heart_torso_interface_is_monolithic_and_flux_conservative() -> None:
     route = HeartTorsoBidomainRoute(
         jnp.asarray((1000, 1001)),
         jnp.asarray((1100,)),
@@ -404,3 +365,21 @@ def test_heart_torso_interface_is_monolithic_and_flux_conservative() -> None:
         (result.state.extracellular_potential_mV, result.state.torso_potential_mV)
     )
     assert abs(float(prepared.gauge_weights @ combined)) < 2.0e-5
+
+
+def _heart_only_bidomain() -> Any:
+    plan = BidomainFEMPlan(
+        HeartOnlyBidomainRoute(),
+        jnp.asarray((10, 20, 30)),
+        jnp.asarray((100, 101)),
+        jnp.asarray(((0.0,), (1.0,), (2.0,))),
+        jnp.asarray(((0, 1), (1, 2))),
+        jnp.asarray(((1.0,),)),
+        jnp.asarray(((2.0,),)),
+        dt_ms=0.1,
+        membrane_capacitance_uF_per_mm3=1.0,
+        residual_tolerance=2.0e-5,
+        gauge_tolerance_mV=2.0e-5,
+        source_compatibility_tolerance_uA=2.0e-5,
+    )
+    return plan.prepare()

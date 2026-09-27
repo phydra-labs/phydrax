@@ -106,7 +106,7 @@ def _loss_value(term: Any, model: Any, dataset: Any) -> Any:
     )
 
 
-def test_spectral_pde_loss_is_targetless_differentiable_and_fingerprinted() -> None:
+def test_operator_spectral_residual_scenario_1() -> None:
     dataset = _dataset()
     compiled = _compiled()
     term = phx.nn.operator.training.SpectralPDEResidualLoss(
@@ -144,9 +144,6 @@ def test_spectral_pde_loss_is_targetless_differentiable_and_fingerprinted() -> N
             weight=2.0,
         ).fingerprint
     )
-
-
-def test_targetless_operator_fit_reduces_spectral_residual() -> None:
     dataset = _dataset()
     term = phx.nn.operator.training.SpectralPDEResidualLoss(
         "spectral_poisson",

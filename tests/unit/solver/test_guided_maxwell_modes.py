@@ -43,7 +43,7 @@ def _plan(gammas: Any, *, target: Any, divergence: Any = None) -> Any:
     )
 
 
-def test_rectangular_waveguide_cutoffs_and_polynomial_mode_evidence() -> None:
+def test_guided_maxwell_modes_scenario_1() -> None:
     vacuum_wavenumber = 4.0
     transverse_wavenumbers = np.sqrt(np.asarray([12.0, 7.0]))
     expected = np.sqrt(vacuum_wavenumber**2 - transverse_wavenumbers**2)
@@ -58,9 +58,6 @@ def test_rectangular_waveguide_cutoffs_and_polynomial_mode_evidence() -> None:
     np.testing.assert_allclose(result.biorthogonality_matrix, np.eye(2), atol=1e-9)
     assert np.all(result.derivative_evidence.nearest_absolute_gaps > 0.9)
     assert np.all(result.classifications == int(GuidedModeClassification.PROPAGATING))
-
-
-def test_cutoff_pml_classification_divergence_and_mode_launch() -> None:
     cutoff = _plan([0.0], target=0.0).solve()
     assert int(cutoff.classifications[0]) == int(GuidedModeClassification.CUTOFF)
     assert not bool(cutoff.derivative_evidence.derivative_valid_mask[0])
@@ -79,9 +76,6 @@ def test_cutoff_pml_classification_divergence_and_mode_launch() -> None:
 
     divergent = _plan([2.0], target=2.0, divergence=[[1.0]]).solve()
     assert int(divergent.status) == int(GuidedModeStatus.DIVERGENCE_TOLERANCE_NOT_MET)
-
-
-def test_isolated_beta_derivative_uses_left_right_polynomial_pairing() -> None:
     prepared = _plan([2.0], target=2.0).prepare()
     result = solve_fixed_frequency_guided_modes(prepared)
     derivative = guided_mode_beta_derivative(

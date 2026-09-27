@@ -75,7 +75,7 @@ def _uniform_state(runtime: Any) -> Any:
     )
 
 
-def test_d2v17_periodic_pull_routes_every_integer_velocity() -> None:
+def test_smooth_compressible_d2v_spatial_scenario_1() -> None:
     quadrature = d2v17_quadrature()
     transport = D2V17PeriodicTransportPlan(quadrature, (5, 6), (0.01, 0.01), 0.01)
     populations = jnp.arange(5 * 6 * 17, dtype=jnp.float64).reshape((5, 6, 17))
@@ -88,9 +88,6 @@ def test_d2v17_periodic_pull_routes_every_integer_velocity() -> None:
             jnp.roll(populations[..., index], shift=offset, axis=(0, 1)),
         )
     assert transport.maximum_reach == (2, 2)
-
-
-def test_periodic_spatial_oracle_step_preserves_uniform_state_and_content() -> None:
     runtime = _runtime()
     state = _uniform_state(runtime)
 
@@ -114,9 +111,6 @@ def test_periodic_spatial_oracle_step_preserves_uniform_state_and_content() -> N
         0.0,
         atol=2e-12,
     )
-
-
-def test_periodic_spatial_failure_rolls_back_both_population_fields() -> None:
     runtime = _runtime()
     state = _uniform_state(runtime)
     invalid_particles = state.particle_populations.at[2, 3, 0].set(-1.0)
@@ -138,9 +132,6 @@ def test_periodic_spatial_failure_rolls_back_both_population_fields() -> None:
         result.accepted_state.total_energy_populations,
         invalid.total_energy_populations,
     )
-
-
-def test_periodic_spatial_refuses_wrong_step_and_non_d2v17_quadrature() -> None:
     runtime = _runtime()
     state = _uniform_state(runtime)
 

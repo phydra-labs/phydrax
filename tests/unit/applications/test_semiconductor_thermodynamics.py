@@ -45,62 +45,57 @@ def _ionization() -> Any:
     )
 
 
-@pytest.mark.parametrize("statistics", ["boltzmann", "fermi-dirac"])
-def test_populations_and_inverse_are_invariant_under_electronic_gauge_shift(
-    statistics: Any,
-) -> None:
-    bands = _bands(statistics)
-    temperature = jnp.asarray([150.0, 300.0, 500.0])
-    potential = jnp.asarray([-0.13, 0.0, 0.27])
-    ec, ev = bands.band_edges(potential, temperature)
-    efn = ec + KB * temperature * jnp.asarray([-12.0, -1.0, 9.0])
-    efp = ev - KB * temperature * jnp.asarray([-8.0, 0.2, 4.0])
-    n, p = (
-        bands.electron_density(potential, efn, temperature),
-        bands.hole_density(potential, efp, temperature),
-    )
-    voltage_shift = 0.43
-    np.testing.assert_allclose(
-        bands.electron_density(
-            potential + voltage_shift, efn - Q * voltage_shift, temperature
-        ),
-        n,
-        rtol=3e-12,
-    )
-    np.testing.assert_allclose(
-        bands.hole_density(
-            potential + voltage_shift, efp - Q * voltage_shift, temperature
-        ),
-        p,
-        rtol=3e-12,
-    )
-    np.testing.assert_allclose(
-        bands.electron_fermi_energy(potential + voltage_shift, n, temperature),
-        efn - Q * voltage_shift,
-        rtol=0,
-        atol=1e-31,
-    )
-    np.testing.assert_allclose(
-        bands.hole_fermi_energy(potential + voltage_shift, p, temperature),
-        efp - Q * voltage_shift,
-        rtol=0,
-        atol=1e-31,
-    )
-    offset = 0.8 * Q
-    shifted = eqx.tree_at(
-        lambda model: (model.conduction_band_edge, model.valence_band_edge),
-        bands,
-        (bands.conduction_band_edge + offset, bands.valence_band_edge + offset),
-    )
-    np.testing.assert_allclose(
-        shifted.electron_density(potential, efn + offset, temperature), n, rtol=3e-12
-    )
-    np.testing.assert_allclose(
-        shifted.hole_density(potential, efp + offset, temperature), p, rtol=3e-12
-    )
-
-
-def test_boltzmann_reduction_has_mass_action_einstein_and_classical_energy() -> None:
+def test_semiconductor_thermodynamics_scenario_1() -> None:
+    for statistics in ["boltzmann", "fermi-dirac"]:
+        bands = _bands(statistics)
+        temperature = jnp.asarray([150.0, 300.0, 500.0])
+        potential = jnp.asarray([-0.13, 0.0, 0.27])
+        ec, ev = bands.band_edges(potential, temperature)
+        efn = ec + KB * temperature * jnp.asarray([-12.0, -1.0, 9.0])
+        efp = ev - KB * temperature * jnp.asarray([-8.0, 0.2, 4.0])
+        n, p = (
+            bands.electron_density(potential, efn, temperature),
+            bands.hole_density(potential, efp, temperature),
+        )
+        voltage_shift = 0.43
+        np.testing.assert_allclose(
+            bands.electron_density(
+                potential + voltage_shift, efn - Q * voltage_shift, temperature
+            ),
+            n,
+            rtol=3e-12,
+        )
+        np.testing.assert_allclose(
+            bands.hole_density(
+                potential + voltage_shift, efp - Q * voltage_shift, temperature
+            ),
+            p,
+            rtol=3e-12,
+        )
+        np.testing.assert_allclose(
+            bands.electron_fermi_energy(potential + voltage_shift, n, temperature),
+            efn - Q * voltage_shift,
+            rtol=0,
+            atol=1e-31,
+        )
+        np.testing.assert_allclose(
+            bands.hole_fermi_energy(potential + voltage_shift, p, temperature),
+            efp - Q * voltage_shift,
+            rtol=0,
+            atol=1e-31,
+        )
+        offset = 0.8 * Q
+        shifted = eqx.tree_at(
+            lambda model: (model.conduction_band_edge, model.valence_band_edge),
+            bands,
+            (bands.conduction_band_edge + offset, bands.valence_band_edge + offset),
+        )
+        np.testing.assert_allclose(
+            shifted.electron_density(potential, efn + offset, temperature), n, rtol=3e-12
+        )
+        np.testing.assert_allclose(
+            shifted.hole_density(potential, efp + offset, temperature), p, rtol=3e-12
+        )
     bands = _bands("boltzmann")
     temperature = jnp.asarray([150.0, 300.0, 500.0])
     potential = 0.12
@@ -130,9 +125,6 @@ def test_boltzmann_reduction_has_mass_action_einstein_and_classical_energy() -> 
     eta = jnp.asarray([-32.0, -24.0, -18.0])
     np.testing.assert_allclose(fd.statistics_value(eta), jnp.exp(eta), rtol=6e-9)
     np.testing.assert_allclose(fd.statistics_derivative(eta), jnp.exp(eta), rtol=1.2e-8)
-
-
-def test_fd_reference_degenerate_limit_and_derivative_are_one_statistics() -> None:
     bands = _bands()
     # F_j(0)=(1-2**(-j))*zeta(j+1), in the DLMF normalized convention.
     np.testing.assert_allclose(
@@ -163,9 +155,6 @@ def test_fd_reference_degenerate_limit_and_derivative_are_one_statistics() -> No
     np.testing.assert_allclose(
         bands.statistics_value(degenerate_eta), sommerfeld, rtol=2e-10
     )
-
-
-def test_fd_inverse_has_implicit_forward_reverse_and_density_derivatives() -> None:
     bands = _bands()
     eta = jnp.asarray([-50.0, -4.0, 0.0, 7.0, 60.0])
     population = bands.statistics_value(eta)
@@ -215,9 +204,7 @@ def test_fd_inverse_has_implicit_forward_reverse_and_density_derivatives() -> No
     )
 
 
-def test_log_scaled_fd_preserves_representable_density_below_normalized_underflow() -> (
-    None
-):
+def test_semiconductor_thermodynamics_scenario_2() -> None:
     bands = _bands()
     temperature = 300.0
     ec, _ = bands.band_edges(0.0, temperature)
@@ -231,107 +218,136 @@ def test_log_scaled_fd_preserves_representable_density_below_normalized_underflo
     np.testing.assert_allclose(
         (recovered - ec) / (KB * temperature), -750.0, rtol=0, atol=4e-10
     )
-
-
-@pytest.mark.parametrize("carrier", ["electron", "hole"])
-def test_fd_kinetic_energy_obeys_thermodynamic_legendre_identity(carrier: Any) -> None:
-    bands = _bands()
-    temperature = 300.0
-    if carrier == "electron":
-        energy_density = bands.electron_energy_density
-        fermi_energy = bands.electron_fermi_energy
-        edge_index, sign, dos = 0, 1, bands.conduction_density_of_states
-    else:
-        energy_density = bands.hole_energy_density
-        fermi_energy = bands.hole_fermi_energy
-        edge_index, sign, dos = 1, -1, bands.valence_density_of_states
-    density = 4.2 * dos
-
-    def free_energy(n: Any, T: Any) -> Any:
-        edge = bands.band_edges(0.0, T)[edge_index]
-        kinetic_mu = sign * (fermi_energy(0.0, n, T) - edge)
-        return n * kinetic_mu - (2 / 3) * energy_density(n, T)
-
-    kinetic_mu = sign * (
-        fermi_energy(0.0, density, temperature)
-        - bands.band_edges(0.0, temperature)[edge_index]
-    )
-    np.testing.assert_allclose(
-        jax.grad(free_energy, argnums=0)(density, temperature), kinetic_mu, rtol=3e-10
-    )
-    energy = energy_density(density, temperature)
-    reconstructed = free_energy(density, temperature) - temperature * jax.grad(
-        free_energy, argnums=1
-    )(density, temperature)
-    np.testing.assert_allclose(reconstructed, energy, rtol=3e-10)
-    dilute_density = dos * jnp.exp(-25.0)
-    np.testing.assert_allclose(
-        energy_density(dilute_density, temperature),
-        1.5 * dilute_density * KB * temperature,
-        rtol=1e-11,
-    )
-    assert float(energy_density(0.0, temperature)) == 0.0
-    np.testing.assert_allclose(
-        jax.grad(lambda n: energy_density(n, temperature))(0.0),
-        1.5 * KB * temperature,
-        rtol=2e-14,
-    )
-
-
-@pytest.mark.parametrize("statistics", ["boltzmann", "fermi-dirac"])
-@pytest.mark.parametrize("carrier", ["electron", "hole"])
-def test_material_energy_includes_band_entropy_but_not_electrostatic_storage(
-    statistics: Any, carrier: Any
-) -> None:
+    for statistics in ["boltzmann", "fermi-dirac"]:
+        for carrier in ["electron", "hole"]:
+            bands = _bands(
+                statistics,
+                conduction_temperature_coefficient=2e-4 * Q,
+                gap_varshni_alpha=4.73e-4 * Q,
+                gap_varshni_beta=636.0,
+            )
+            temperature, potential = 420.0, 0.23
+            if carrier == "electron":
+                free_energy = bands.electron_material_free_energy_density
+                internal_energy = bands.electron_material_internal_energy_density
+                kinetic_energy = bands.electron_energy_density
+                fermi_energy = bands.electron_fermi_energy
+                edge_index, sign, dos = 0, 1, bands.conduction_density_of_states
+            else:
+                free_energy = bands.hole_material_free_energy_density
+                internal_energy = bands.hole_material_internal_energy_density
+                kinetic_energy = bands.hole_energy_density
+                fermi_energy = bands.hole_fermi_energy
+                edge_index, sign, dos = 1, -1, bands.valence_density_of_states
+            density = 0.7 * dos
+            material_edge = bands.band_edges(0.0, temperature)[edge_index]
+            edge_derivative = bands.material_band_temperature_derivatives(temperature)[
+                edge_index
+            ]
+            automatic_edge_derivative = jax.grad(
+                lambda T: bands.band_edges(0.0, T)[edge_index]
+            )(temperature)
+            np.testing.assert_allclose(
+                edge_derivative, automatic_edge_derivative, rtol=3e-14
+            )
+            chemical_energy = sign * (
+                fermi_energy(potential, density, temperature) + Q * potential
+            )
+            np.testing.assert_allclose(
+                jax.grad(free_energy, argnums=0)(density, temperature),
+                chemical_energy,
+                rtol=3e-11,
+            )
+            helmholtz = free_energy(density, temperature)
+            entropy = -jax.grad(free_energy, argnums=1)(density, temperature)
+            material_internal = internal_energy(density, temperature)
+            np.testing.assert_allclose(
+                material_internal, helmholtz + temperature * entropy, rtol=3e-11
+            )
+            naive_band_plus_kinetic = (
+                kinetic_energy(density, temperature) + sign * density * material_edge
+            )
+            np.testing.assert_allclose(
+                material_internal - naive_band_plus_kinetic,
+                -sign * density * temperature * edge_derivative,
+                rtol=3e-11,
+            )
+            assert float(internal_energy(0.0, temperature)) == 0.0
+    per_cm3 = derived_unit("1/cm3", ((CENTIMETER, -3),))
     bands = _bands(
-        statistics,
-        conduction_temperature_coefficient=2e-4 * Q,
+        "boltzmann",
+        conduction_band_edge=-4.05,
+        valence_band_edge=-5.17,
+        conduction_density_of_states=2.8e19,
+        valence_density_of_states=1.04e19,
+        energy_unit=ELECTRONVOLT,
+        density_unit=per_cm3,
+        conduction_temperature_coefficient=2e-5 * Q,
         gap_varshni_alpha=4.73e-4 * Q,
         gap_varshni_beta=636.0,
     )
-    temperature, potential = 420.0, 0.23
-    if carrier == "electron":
-        free_energy = bands.electron_material_free_energy_density
-        internal_energy = bands.electron_material_internal_energy_density
-        kinetic_energy = bands.electron_energy_density
-        fermi_energy = bands.electron_fermi_energy
-        edge_index, sign, dos = 0, 1, bands.conduction_density_of_states
-    else:
-        free_energy = bands.hole_material_free_energy_density
-        internal_energy = bands.hole_material_internal_energy_density
-        kinetic_energy = bands.hole_energy_density
-        fermi_energy = bands.hole_fermi_energy
-        edge_index, sign, dos = 1, -1, bands.valence_density_of_states
-    density = 0.7 * dos
-    material_edge = bands.band_edges(0.0, temperature)[edge_index]
-    edge_derivative = bands.material_band_temperature_derivatives(temperature)[edge_index]
-    automatic_edge_derivative = jax.grad(lambda T: bands.band_edges(0.0, T)[edge_index])(
-        temperature
+    temperature = jnp.asarray([80.0, 300.0, 550.0])
+    ec, ev = bands.band_edges(0.0, temperature)
+    expected_gap = Q * (
+        1.12 - 4.73e-4 * (temperature**2 / (temperature + 636) - 300**2 / 936)
     )
-    np.testing.assert_allclose(edge_derivative, automatic_edge_derivative, rtol=3e-14)
-    chemical_energy = sign * (
-        fermi_energy(potential, density, temperature) + Q * potential
-    )
-    np.testing.assert_allclose(
-        jax.grad(free_energy, argnums=0)(density, temperature),
-        chemical_energy,
-        rtol=3e-11,
-    )
-    helmholtz = free_energy(density, temperature)
-    entropy = -jax.grad(free_energy, argnums=1)(density, temperature)
-    material_internal = internal_energy(density, temperature)
-    np.testing.assert_allclose(
-        material_internal, helmholtz + temperature * entropy, rtol=3e-11
-    )
-    naive_band_plus_kinetic = (
-        kinetic_energy(density, temperature) + sign * density * material_edge
-    )
-    np.testing.assert_allclose(
-        material_internal - naive_band_plus_kinetic,
-        -sign * density * temperature * edge_derivative,
-        rtol=3e-11,
-    )
-    assert float(internal_energy(0.0, temperature)) == 0.0
+    np.testing.assert_allclose(ec - ev, expected_gap, rtol=3e-14)
+    np.testing.assert_allclose(ec, -4.05 * Q + 2e-5 * Q * (temperature - 300), rtol=3e-14)
+    nc, nv = bands.density_of_states(temperature)
+    np.testing.assert_allclose(nc, 2.8e25 * (temperature / 300) ** 1.5, rtol=3e-14)
+    np.testing.assert_allclose(nv, 1.04e25 * (temperature / 300) ** 1.5, rtol=3e-14)
+    sensitivity = jax.grad(lambda T: bands.density_of_states(T)[0])(300.0)
+    np.testing.assert_allclose(sensitivity, 1.5 * 2.8e25 / 300, rtol=3e-14)
+    bands.admit_temperature(temperature)
+    with pytest.raises(ValueError):
+        bands.admit_temperature(601.0)
+    with pytest.raises(ValueError):
+        _bands(gap_varshni_alpha=0.1 * Q, gap_varshni_beta=10.0)
+
+
+def test_fd_kinetic_energy_obeys_thermodynamic_legendre_identity() -> None:
+    for carrier in ["electron", "hole"]:
+        bands = _bands()
+        temperature = 300.0
+        if carrier == "electron":
+            energy_density = bands.electron_energy_density
+            fermi_energy = bands.electron_fermi_energy
+            edge_index, sign, dos = 0, 1, bands.conduction_density_of_states
+        else:
+            energy_density = bands.hole_energy_density
+            fermi_energy = bands.hole_fermi_energy
+            edge_index, sign, dos = 1, -1, bands.valence_density_of_states
+        density = 4.2 * dos
+
+        def free_energy(n: Any, T: Any) -> Any:
+            edge = bands.band_edges(0.0, T)[edge_index]
+            kinetic_mu = sign * (fermi_energy(0.0, n, T) - edge)
+            return n * kinetic_mu - (2 / 3) * energy_density(n, T)
+
+        kinetic_mu = sign * (
+            fermi_energy(0.0, density, temperature)
+            - bands.band_edges(0.0, temperature)[edge_index]
+        )
+        np.testing.assert_allclose(
+            jax.grad(free_energy, argnums=0)(density, temperature), kinetic_mu, rtol=3e-10
+        )
+        energy = energy_density(density, temperature)
+        reconstructed = free_energy(density, temperature) - temperature * jax.grad(
+            free_energy, argnums=1
+        )(density, temperature)
+        np.testing.assert_allclose(reconstructed, energy, rtol=3e-10)
+        dilute_density = dos * jnp.exp(-25.0)
+        np.testing.assert_allclose(
+            energy_density(dilute_density, temperature),
+            1.5 * dilute_density * KB * temperature,
+            rtol=1e-11,
+        )
+        assert float(energy_density(0.0, temperature)) == 0.0
+        np.testing.assert_allclose(
+            jax.grad(lambda n: energy_density(n, temperature))(0.0),
+            1.5 * KB * temperature,
+            rtol=2e-14,
+        )
 
 
 def test_pair_material_energy_is_reference_independent_with_varshni_heat_capacity() -> (
@@ -375,40 +391,7 @@ def test_pair_material_energy_is_reference_independent_with_varshni_heat_capacit
     )
 
 
-def test_temperature_law_and_native_units_preserve_independent_dos() -> None:
-    per_cm3 = derived_unit("1/cm3", ((CENTIMETER, -3),))
-    bands = _bands(
-        "boltzmann",
-        conduction_band_edge=-4.05,
-        valence_band_edge=-5.17,
-        conduction_density_of_states=2.8e19,
-        valence_density_of_states=1.04e19,
-        energy_unit=ELECTRONVOLT,
-        density_unit=per_cm3,
-        conduction_temperature_coefficient=2e-5 * Q,
-        gap_varshni_alpha=4.73e-4 * Q,
-        gap_varshni_beta=636.0,
-    )
-    temperature = jnp.asarray([80.0, 300.0, 550.0])
-    ec, ev = bands.band_edges(0.0, temperature)
-    expected_gap = Q * (
-        1.12 - 4.73e-4 * (temperature**2 / (temperature + 636) - 300**2 / 936)
-    )
-    np.testing.assert_allclose(ec - ev, expected_gap, rtol=3e-14)
-    np.testing.assert_allclose(ec, -4.05 * Q + 2e-5 * Q * (temperature - 300), rtol=3e-14)
-    nc, nv = bands.density_of_states(temperature)
-    np.testing.assert_allclose(nc, 2.8e25 * (temperature / 300) ** 1.5, rtol=3e-14)
-    np.testing.assert_allclose(nv, 1.04e25 * (temperature / 300) ** 1.5, rtol=3e-14)
-    sensitivity = jax.grad(lambda T: bands.density_of_states(T)[0])(300.0)
-    np.testing.assert_allclose(sensitivity, 1.5 * 2.8e25 / 300, rtol=3e-14)
-    bands.admit_temperature(temperature)
-    with pytest.raises(ValueError):
-        bands.admit_temperature(601.0)
-    with pytest.raises(ValueError):
-        _bands(gap_varshni_alpha=0.1 * Q, gap_varshni_beta=10.0)
-
-
-def test_explicit_impurity_degeneracies_occupancies_and_energy_share_levels() -> None:
+def test_semiconductor_thermodynamics_scenario_3() -> None:
     bands, ionization = _bands(), _ionization()
     ionization.admit(bands)
     temperature, potential = 260.0, 0.17
@@ -444,9 +427,6 @@ def test_explicit_impurity_degeneracies_occupancies_and_energy_share_levels() ->
         rtol=3e-12,
         atol=1e-12,
     )
-
-
-def test_neutral_equilibrium_includes_freeze_out_compensation_and_gauge() -> None:
     bands, ionization = _bands(), _ionization()
     temperature = jnp.asarray([50.0, 300.0, 300.0])
     donors = jnp.asarray([1e21, 1e21, 2e21])
@@ -475,6 +455,25 @@ def test_neutral_equilibrium_includes_freeze_out_compensation_and_gauge() -> Non
         potential + 0.4, temperature, donors, acceptors, ionization=ionization
     )
     np.testing.assert_allclose(shifted, ef - Q * 0.4, rtol=0, atol=1e-31)
+    bands = _bands()
+    transformed_domain_error = (ValueError, RuntimeError, eqx.EquinoxRuntimeError)
+    with pytest.raises(transformed_domain_error):
+        bands.electron_fermi_energy(0.0, 0.0, 300.0)
+    with pytest.raises(transformed_domain_error):
+        bands.hole_energy_density(-1.0, 300.0)
+    with pytest.raises(transformed_domain_error):
+        bands.statistics_value(80.01)
+    with pytest.raises(transformed_domain_error):
+        bands.inverse_statistics(1.01 * bands.statistics_value(80.0))
+    with pytest.raises(transformed_domain_error):
+        bands.band_edges(0.0, 601.0)
+    with pytest.raises(transformed_domain_error):
+        bands.equilibrium_fermi_energy(0.0, 300.0, donors=1e30)
+    bad_levels = eqx.tree_at(
+        lambda item: item.donor_binding_energy, _ionization(), 2.0 * Q
+    )
+    with pytest.raises(ValueError):
+        bad_levels.admit(bands)
 
 
 def test_neutral_equilibrium_differentiates_material_and_dopant_parameters() -> None:
@@ -501,25 +500,3 @@ def test_neutral_equilibrium_differentiates_material_and_dopant_parameters() -> 
 
     derivative = jax.grad(intrinsic_ef)(jnp.log(bands.conduction_density_of_states))
     np.testing.assert_allclose(derivative, -0.5 * KB * temperature, rtol=3e-11)
-
-
-def test_runtime_domain_rejections_do_not_clip_or_extrapolate() -> None:
-    bands = _bands()
-    transformed_domain_error = (ValueError, RuntimeError, eqx.EquinoxRuntimeError)
-    with pytest.raises(transformed_domain_error):
-        bands.electron_fermi_energy(0.0, 0.0, 300.0)
-    with pytest.raises(transformed_domain_error):
-        bands.hole_energy_density(-1.0, 300.0)
-    with pytest.raises(transformed_domain_error):
-        bands.statistics_value(80.01)
-    with pytest.raises(transformed_domain_error):
-        bands.inverse_statistics(1.01 * bands.statistics_value(80.0))
-    with pytest.raises(transformed_domain_error):
-        bands.band_edges(0.0, 601.0)
-    with pytest.raises(transformed_domain_error):
-        bands.equilibrium_fermi_energy(0.0, 300.0, donors=1e30)
-    bad_levels = eqx.tree_at(
-        lambda item: item.donor_binding_energy, _ionization(), 2.0 * Q
-    )
-    with pytest.raises(ValueError):
-        bad_levels.admit(bands)

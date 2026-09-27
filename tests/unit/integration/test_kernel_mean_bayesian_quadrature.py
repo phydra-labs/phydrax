@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_interval_kernel_mean_physical_and_normalized_mass_scaling() -> None:
+def test_kernel_mean_bayesian_quadrature_scenario_1() -> None:
     interval = phx.domain.Interval1d(-1.0, 2.0)
     kernel = phx.kernels.Matern32Kernel(length_scale=0.7)
     physical = phx.integration.IntervalKernelMean(interval, kernel, target_id="physical")
@@ -15,9 +15,6 @@ def test_interval_kernel_mean_physical_and_normalized_mass_scaling() -> None:
     points = jnp.asarray([[-0.5], [0.3], [1.5]])
     assert jnp.allclose(physical.mean(points), 3.0 * normalized.mean(points))
     assert jnp.allclose(physical.double_mean(), 9.0 * normalized.double_mean())
-
-
-def test_finite_feature_bq_and_sequential_variance_are_deterministic() -> None:
     kernel = phx.kernels.FiniteFeatureKernel(
         lambda point: jnp.asarray([1.0, point[0]]),
         jnp.eye(2),
@@ -47,9 +44,6 @@ def test_finite_feature_bq_and_sequential_variance_are_deterministic() -> None:
     assert jnp.allclose(value, jnp.asarray([1.0, 0.5]), atol=1e-5)
     assert jnp.all(jnp.diff(prepared.posterior_variance_history) <= 1e-6)
     assert jnp.unique(prepared.source_indices).size == 3
-
-
-def test_finite_feature_kernel_mean_accepts_kernels_without_feature_factor() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.zeros((3, 1)),
         edges={"conductance": jnp.ones((4,))},

@@ -21,7 +21,7 @@ def _solve(space: Any, costs: Any, method: Any) -> Any:
     )
 
 
-def test_branch_and_bound_set_packing_solves_conflicts_and_certifies() -> None:
+def test_set_packing_scenario_1() -> None:
     space = phx.combinatorial.SetPackingSpace(
         jnp.asarray(
             [
@@ -43,9 +43,6 @@ def test_branch_and_bound_set_packing_solves_conflicts_and_certifies() -> None:
     assert result.certificate.optimality_proven
     assert result.certificate.absolute_gap == 0.0
     assert result.provenance.exact
-
-
-def test_branch_and_bound_ties_infeasibility_and_budget_evidence_are_explicit() -> None:
     tied_space = phx.combinatorial.SetPackingSpace(
         jnp.asarray([[True], [True]]),
         minimum_selected=1,
@@ -86,9 +83,6 @@ def test_branch_and_bound_ties_infeasibility_and_budget_evidence_are_explicit() 
     assert not budgeted.certificate.optimality_proven
     assert budgeted.certificate.gap_available
     np.testing.assert_array_equal(budgeted.decision.selected, [True, True, True])
-
-
-def test_greedy_set_packing_distinguishes_feasible_and_certified_results() -> None:
     conflicted = phx.combinatorial.SetPackingSpace(
         jnp.asarray(
             [
@@ -120,9 +114,6 @@ def test_greedy_set_packing_distinguishes_feasible_and_certified_results() -> No
     assert certified.status == int(phx.combinatorial.CombinatorialStatus.OPTIMAL)
     assert certified.certificate.optimality_proven
     assert not certified.provenance.exact
-
-
-def test_set_packing_outputs_have_stopped_ordinary_gradients() -> None:
     space = phx.combinatorial.SetPackingSpace(jnp.eye(2, dtype="bool"))
     method = phx.combinatorial.BranchAndBoundSetPacking()
 
@@ -135,9 +126,6 @@ def test_set_packing_outputs_have_stopped_ordinary_gradients() -> None:
     )(jnp.asarray([-2.0, 1.0]))
 
     np.testing.assert_array_equal(gradient, jnp.zeros((2,)))
-
-
-def test_set_packing_oracle_honors_required_and_forbidden_sets() -> None:
     space = phx.combinatorial.SetPackingSpace(
         jnp.asarray(
             [

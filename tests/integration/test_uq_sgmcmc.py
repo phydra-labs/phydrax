@@ -49,7 +49,7 @@ def _conjugate_normal_problem() -> Any:
     )
 
 
-def test_sgld_recovers_conjugate_posterior_and_step_refinement_reduces_bias() -> None:
+def test_uq_sgmcmc_scenario_1() -> None:
     problem, exact_problem, source, expected_mean, expected_variance = (
         _conjugate_normal_problem()
     )
@@ -98,9 +98,6 @@ def test_sgld_recovers_conjugate_posterior_and_step_refinement_reduces_bias() ->
     assert jnp.abs(jnp.var(nuts.samples) - expected_variance) / expected_variance < 0.2
     assert jnp.allclose(laplace.map_parameters, expected_mean, atol=1.0e-10)
     assert jnp.allclose(laplace.covariance[0, 0], expected_variance, rtol=1.0e-10)
-
-
-def test_sgnht_recovers_conjugate_posterior_with_thermostat_diagnostics() -> None:
     problem, _, source, expected_mean, expected_variance = _conjugate_normal_problem()
     control = phx.uq.build_sgmcmc_control_variate(
         problem,

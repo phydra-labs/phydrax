@@ -134,7 +134,7 @@ def _runtime(controlled: Any, neighborhood: Any, *, temperature: Any = 1.0) -> A
     return dynamics, PreparedThermodynamicStateTable(dynamics, plans)
 
 
-def test_controlled_hamiltonian_has_exact_base_endpoint_and_control_derivatives() -> None:
+def test_controlled_free_energy_scenario_1() -> None:
     controlled, neighborhood = _controlled()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.2, 0.2, 0.0]])
     relation = neighborhood.build(positions)
@@ -164,179 +164,6 @@ def test_controlled_hamiltonian_has_exact_base_endpoint_and_control_derivatives(
         rtol=5.0e-5,
         atol=5.0e-6,
     )
-
-
-def test_soft_core_and_reduced_potential_evidence_fail_closed() -> None:
-    controlled, neighborhood = _controlled()
-    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    relation = neighborhood.build(positions)
-    decoupled = controlled.evaluate(positions, relation, state_index=2)
-    assert bool(decoupled.successful)
-    assert bool(jnp.all(jnp.isfinite(decoupled.forces)))
-    invalid = controlled.evaluate(positions, relation, state_index=8)
-    assert not bool(invalid.status.state_index_valid)
-    assert bool(jnp.isnan(invalid.energy))
-
-    first = positions.at[2, 0].set(2.0)
-    second = positions.at[2, 0].set(2.2)
-    _, thermodynamic = _runtime(controlled, neighborhood)
-    cross = controlled.reduced_potentials(
-        jnp.stack((first, second)),
-        (neighborhood.build(first), neighborhood.build(second)),
-        thermodynamic,
-    )
-    assert cross.values.shape == (3, 2)
-    assert bool(jnp.all(cross.coverage))
-    assert cross.state_ids == ("coupled", "middle", "decoupled")
-    assert len(set(cross.potential_ids)) == 3
-    assert cross.unit_system_id == controlled.system.plan.units.unit_system_id
-    assert cross.thermodynamic_table_id == thermodynamic.table_id
-    assert cross.control_ids == controlled.control_ids
-    np.testing.assert_allclose(cross.controls, thermodynamic.controls)
-    assert cross.bias_ids == thermodynamic.bias_ids
-    negative_beta = eqx.tree_at(
-        lambda value: value.beta,
-        thermodynamic,
-        thermodynamic.beta.at[0].set(-1.0),
-    )
-    with pytest.raises(ValueError, match="non-negative"):
-        controlled.reduced_potentials(
-            first[None],
-            (neighborhood.build(first),),
-            negative_beta,
-            state_indices=[0],
-        )
-
-
-def test_preparation_rejects_charge_change_and_state_dependent_geometry() -> None:
-    force_field, _ = _force_field()
-    schedule = AlchemicalControlSchedulePlan(
-        ("on", "off"),
-        ("charged-region",),
-        (AlchemicalControlKind.ELECTROSTATICS,),
-        jnp.asarray([[1.0], [0.0]]),
-    )
-    # ty: ignore[invalid-argument-type]
-    charged = AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],))
-    with pytest.raises(ValueError, match="zero net charge"):
-        ControlledHamiltonianPlan(force_field, schedule, charged).prepare()
-    changed_masses = AlchemicalInteractionPartitionPlan(
-        schedule.control_ids,
-        # ty: ignore[invalid-argument-type]
-        ([10, 20],),
-        changes_masses=True,
-    )
-    with pytest.raises(ValueError, match="State-dependent masses"):
-        ControlledHamiltonianPlan(force_field, schedule, changed_masses).prepare()
-    changed_constraints = AlchemicalInteractionPartitionPlan(
-        schedule.control_ids,
-        # ty: ignore[invalid-argument-type]
-        ([10, 20],),
-        changes_constraints=True,
-    )
-    with pytest.raises(ValueError, match="State-dependent constraints"):
-        ControlledHamiltonianPlan(force_field, schedule, changed_constraints).prepare()
-    changed_virtual_geometry = AlchemicalInteractionPartitionPlan(
-        schedule.control_ids,
-        # ty: ignore[invalid-argument-type]
-        ([10, 20],),
-        changes_virtual_geometry=True,
-    )
-    with pytest.raises(ValueError, match="State-dependent virtual-site geometry"):
-        ControlledHamiltonianPlan(
-            force_field, schedule, changed_virtual_geometry
-        ).prepare()
-    unknown_mapping = AlchemicalInteractionPartitionPlan(
-        schedule.control_ids,
-        # ty: ignore[invalid-argument-type]
-        ([10, 20],),
-        # ty: ignore[invalid-argument-type]
-        mapped_particle_ids=[[10, 999]],
-    )
-    with pytest.raises(ValueError, match="mapping references"):
-        ControlledHamiltonianPlan(force_field, schedule, unknown_mapping).prepare()
-
-
-def test_disappearing_bond_has_defined_off_endpoint_at_collapsed_geometry() -> None:
-    units = AtomisticUnitSystem.reduced()
-    system = AtomisticSystemPlan(
-        # ty: ignore[invalid-argument-type]
-        [10, 20],
-        # ty: ignore[invalid-argument-type]
-        [1, 1],
-        # ty: ignore[invalid-argument-type]
-        [1.0, 1.0],
-        units,
-        topology=MolecularTopologyPlan(bonds=[[10, 20]]),
-    )
-    force_field = AtomisticForceFieldPlan(
-        system,
-        # ty: ignore[invalid-argument-type]
-        AtomisticPotentialProgram([HarmonicBondPotential([3.0], [1.0])]),
-        AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
-        AtomisticForceFieldProvenance(
-            "native", ("bond-parameters",), "test", "controlled-bond"
-        ),
-    ).prepare()
-    schedule = AlchemicalControlSchedulePlan(
-        ("bonded", "unbonded"),
-        ("bond-control",),
-        (AlchemicalControlKind.BOND,),
-        jnp.asarray([[1.0], [0.0]]),
-    )
-    controlled = ControlledHamiltonianPlan(
-        force_field,
-        schedule,
-        # ty: ignore[invalid-argument-type]
-        AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],)),
-    ).prepare()
-    neighborhood = DenseParticleNeighborhoodPlan(1).prepare(force_field.system.particles)
-    positions = jnp.zeros((2, 3))
-    evaluation = controlled.evaluate(
-        positions, neighborhood.build(positions), state_index=1
-    )
-    np.testing.assert_allclose(evaluation.energy, 0.0, atol=0.0)
-    np.testing.assert_allclose(evaluation.forces, 0.0, atol=0.0)
-    assert bool(jnp.all(jnp.isfinite(evaluation.dU_dcontrols)))
-    assert bool(evaluation.successful)
-
-
-def test_preparation_refuses_partial_reciprocal_electrostatic_control() -> None:
-    units = AtomisticUnitSystem.reduced()
-    cell = PeriodicCell(jnp.eye(3) * 10.0, periodic_axes=(True, True, True))
-    system = AtomisticSystemPlan(
-        # ty: ignore[invalid-argument-type]
-        [10, 20, 30],
-        # ty: ignore[invalid-argument-type]
-        [1, 1, 1],
-        # ty: ignore[invalid-argument-type]
-        [1.0, 1.0, 1.0],
-        units,
-        # ty: ignore[invalid-argument-type]
-        charges=[1.0, -1.0, 0.0],
-        cell=cell,
-    )
-    force_field = AtomisticForceFieldPlan(
-        system,
-        AtomisticPotentialProgram([EwaldReferencePotential(0.3, 3.0, 1)]),
-        AtomisticNonbondedPolicy(3.0, electrostatics="ewald"),
-        AtomisticForceFieldProvenance(
-            "native", ("ewald-parameters",), "test", "controlled-ewald"
-        ),
-    ).prepare()
-    schedule = AlchemicalControlSchedulePlan(
-        ("on", "off"),
-        ("electrostatics",),
-        (AlchemicalControlKind.ELECTROSTATICS,),
-        jnp.asarray([[1.0], [0.0]]),
-    )
-    # ty: ignore[invalid-argument-type]
-    partition = AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10, 20],))
-    with pytest.raises(ValueError, match="cannot diverge"):
-        ControlledHamiltonianPlan(force_field, schedule, partition).prepare()
-
-
-def test_controlled_cell_stress_differentiates_the_same_scalar() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(jnp.eye(3) * 10.0, periodic_axes=(True, True, True))
     system = AtomisticSystemPlan(
@@ -386,70 +213,167 @@ def test_controlled_cell_stress_differentiates_the_same_scalar() -> None:
     assert result.control_derivatives.shape == (1,)
     assert bool(jnp.all(jnp.isfinite(result.stress)))
     assert bool(result.successful)
+    controlled, neighborhood = _controlled()
+    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    relation = neighborhood.build(positions)
+    decoupled = controlled.evaluate(positions, relation, state_index=2)
+    assert bool(decoupled.successful)
+    assert bool(jnp.all(jnp.isfinite(decoupled.forces)))
+    invalid = controlled.evaluate(positions, relation, state_index=8)
+    assert not bool(invalid.status.state_index_valid)
+    assert bool(jnp.isnan(invalid.energy))
 
-
-def _leg(controlled: Any, thermodynamic: Any, environment: Any) -> Any:
-    return FreeEnergyProtocolLegPlan(
-        FreeEnergyStatePlan(controlled, thermodynamic, 0),
-        FreeEnergyStatePlan(controlled, thermodynamic, 2),
-        environment,
+    first = positions.at[2, 0].set(2.0)
+    second = positions.at[2, 0].set(2.2)
+    _, thermodynamic = _runtime(controlled, neighborhood)
+    cross = controlled.reduced_potentials(
+        jnp.stack((first, second)),
+        (neighborhood.build(first), neighborhood.build(second)),
+        thermodynamic,
     )
-
-
-def _analysis(
-    leg: Any, value: Any, variance: Any, identity: Any, *, mapping_id: Any = None
-) -> Any:
-    states = (leg.source, leg.destination)
-    dataset = ReducedWorkDataset(
-        jnp.zeros((2,)),
-        jnp.ones((2,), dtype="bool"),
-        jnp.ones((2,), dtype="bool"),
-        jnp.asarray([0, 1]),
-        jnp.asarray([1, 0]),
-        jnp.asarray([0, 1]),
-        jnp.zeros((2,), dtype=jnp.int32),
-        jnp.zeros((2,), dtype=jnp.int32),
-        jnp.asarray([0, 1]),
-        state_ids=tuple(state.state_id for state in states),
-        potential_ids=tuple(state.potential_id for state in states),
-        measure_ids=tuple(state.measure_id for state in states),
-        producer_id="focused-protocol-test",
-        run_id=f"run:{identity}",
-        work_id=f"work:{identity}",
-        work_kind="targeted-map" if mapping_id is not None else "equilibrium-difference",
-        qualification_id=f"qualification:{identity}",
-        sampling_exact=True,
-        sampling_bias_bound=0.0,
-        mapping_id=mapping_id,
-        bias_ids=tuple(state.bias_id for state in states),
-        unit_system_id=states[0].unit_system_id,
-        inverse_temperature=states[0].inverse_temperature,
-        unit_id="1",
+    assert cross.values.shape == (3, 2)
+    assert bool(jnp.all(cross.coverage))
+    assert cross.state_ids == ("coupled", "middle", "decoupled")
+    assert len(set(cross.potential_ids)) == 3
+    assert cross.unit_system_id == controlled.system.plan.units.unit_system_id
+    assert cross.thermodynamic_table_id == thermodynamic.table_id
+    assert cross.control_ids == controlled.control_ids
+    np.testing.assert_allclose(cross.controls, thermodynamic.controls)
+    assert cross.bias_ids == thermodynamic.bias_ids
+    negative_beta = eqx.tree_at(
+        lambda value: value.beta,
+        thermodynamic,
+        thermodynamic.beta.at[0].set(-1.0),
     )
-    covariance = jnp.asarray([[0.0, 0.0], [0.0, variance]])
-    result = FreeEnergyResult(
-        jnp.asarray([0.0, value]),
-        covariance,
-        jnp.ones((2, 2)),
-        jnp.ones((2, 2), dtype="bool"),
-        jnp.asarray([10.0, 10.0]),
-        jnp.asarray([10.0, 10.0]),
-        jnp.asarray([[0.0], [jnp.sqrt(variance)]]),
-        1,
-        0.0,
-        1,
-        0,
-        0,
-        state_ids=dataset.state_ids,
-        gauge_state_id=dataset.state_ids[0],
-        method="focused-authenticated-result",
-        dataset_id=dataset.dataset_id,
-        selection_id=f"selection:{identity}",
+    with pytest.raises(ValueError, match="non-negative"):
+        controlled.reduced_potentials(
+            first[None],
+            (neighborhood.build(first),),
+            negative_beta,
+            state_indices=[0],
+        )
+    force_field, _ = _force_field()
+    schedule = AlchemicalControlSchedulePlan(
+        ("on", "off"),
+        ("charged-region",),
+        (AlchemicalControlKind.ELECTROSTATICS,),
+        jnp.asarray([[1.0], [0.0]]),
     )
-    return result, dataset
+    # ty: ignore[invalid-argument-type]
+    charged = AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],))
+    with pytest.raises(ValueError, match="zero net charge"):
+        ControlledHamiltonianPlan(force_field, schedule, charged).prepare()
+    changed_masses = AlchemicalInteractionPartitionPlan(
+        schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
+        ([10, 20],),
+        changes_masses=True,
+    )
+    with pytest.raises(ValueError, match="State-dependent masses"):
+        ControlledHamiltonianPlan(force_field, schedule, changed_masses).prepare()
+    changed_constraints = AlchemicalInteractionPartitionPlan(
+        schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
+        ([10, 20],),
+        changes_constraints=True,
+    )
+    with pytest.raises(ValueError, match="State-dependent constraints"):
+        ControlledHamiltonianPlan(force_field, schedule, changed_constraints).prepare()
+    changed_virtual_geometry = AlchemicalInteractionPartitionPlan(
+        schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
+        ([10, 20],),
+        changes_virtual_geometry=True,
+    )
+    with pytest.raises(ValueError, match="State-dependent virtual-site geometry"):
+        ControlledHamiltonianPlan(
+            force_field, schedule, changed_virtual_geometry
+        ).prepare()
+    unknown_mapping = AlchemicalInteractionPartitionPlan(
+        schedule.control_ids,
+        # ty: ignore[invalid-argument-type]
+        ([10, 20],),
+        # ty: ignore[invalid-argument-type]
+        mapped_particle_ids=[[10, 999]],
+    )
+    with pytest.raises(ValueError, match="mapping references"):
+        ControlledHamiltonianPlan(force_field, schedule, unknown_mapping).prepare()
+    units = AtomisticUnitSystem.reduced()
+    cell = PeriodicCell(jnp.eye(3) * 10.0, periodic_axes=(True, True, True))
+    system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
+        [10, 20, 30],
+        # ty: ignore[invalid-argument-type]
+        [1, 1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0, 1.0],
+        units,
+        # ty: ignore[invalid-argument-type]
+        charges=[1.0, -1.0, 0.0],
+        cell=cell,
+    )
+    force_field = AtomisticForceFieldPlan(
+        system,
+        AtomisticPotentialProgram([EwaldReferencePotential(0.3, 3.0, 1)]),
+        AtomisticNonbondedPolicy(3.0, electrostatics="ewald"),
+        AtomisticForceFieldProvenance(
+            "native", ("ewald-parameters",), "test", "controlled-ewald"
+        ),
+    ).prepare()
+    schedule = AlchemicalControlSchedulePlan(
+        ("on", "off"),
+        ("electrostatics",),
+        (AlchemicalControlKind.ELECTROSTATICS,),
+        jnp.asarray([[1.0], [0.0]]),
+    )
+    # ty: ignore[invalid-argument-type]
+    partition = AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10, 20],))
+    with pytest.raises(ValueError, match="cannot diverge"):
+        ControlledHamiltonianPlan(force_field, schedule, partition).prepare()
 
 
-def test_protocol_signs_and_covariance_are_explicit() -> None:
+def test_controlled_free_energy_scenario_2() -> None:
+    units = AtomisticUnitSystem.reduced()
+    system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
+        [10, 20],
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 1.0],
+        units,
+        topology=MolecularTopologyPlan(bonds=[[10, 20]]),
+    )
+    force_field = AtomisticForceFieldPlan(
+        system,
+        # ty: ignore[invalid-argument-type]
+        AtomisticPotentialProgram([HarmonicBondPotential([3.0], [1.0])]),
+        AtomisticNonbondedPolicy(3.0, electrostatics="direct"),
+        AtomisticForceFieldProvenance(
+            "native", ("bond-parameters",), "test", "controlled-bond"
+        ),
+    ).prepare()
+    schedule = AlchemicalControlSchedulePlan(
+        ("bonded", "unbonded"),
+        ("bond-control",),
+        (AlchemicalControlKind.BOND,),
+        jnp.asarray([[1.0], [0.0]]),
+    )
+    controlled = ControlledHamiltonianPlan(
+        force_field,
+        schedule,
+        # ty: ignore[invalid-argument-type]
+        AlchemicalInteractionPartitionPlan(schedule.control_ids, ([10],)),
+    ).prepare()
+    neighborhood = DenseParticleNeighborhoodPlan(1).prepare(force_field.system.particles)
+    positions = jnp.zeros((2, 3))
+    evaluation = controlled.evaluate(
+        positions, neighborhood.build(positions), state_index=1
+    )
+    np.testing.assert_allclose(evaluation.energy, 0.0, atol=0.0)
+    np.testing.assert_allclose(evaluation.forces, 0.0, atol=0.0)
+    assert bool(jnp.all(jnp.isfinite(evaluation.dU_dcontrols)))
+    assert bool(evaluation.successful)
     controlled, neighborhood = _controlled()
     _, thermodynamic = _runtime(controlled, neighborhood)
     vacuum_plan = _leg(controlled, thermodynamic, "vacuum")
@@ -486,9 +410,6 @@ def test_protocol_signs_and_covariance_are_explicit() -> None:
         NeutralAbsoluteSolvationPlan(
             vacuum_plan, hot_solvent_plan, corrections=(correction_plan,)
         ).evaluate(vacuum, hot_solvent, (correction,), covariance)
-
-
-def test_absolute_and_mapped_protocol_formulas_are_oriented() -> None:
     controlled, neighborhood = _controlled()
     _, thermodynamic = _runtime(controlled, neighborhood)
     solvent_plan = _leg(controlled, thermodynamic, "solvent")
@@ -571,6 +492,67 @@ def test_absolute_and_mapped_protocol_formulas_are_oriented() -> None:
     )
     np.testing.assert_allclose(relative_binding.value, 1.5)
     assert complex_mapped.mapping_plan_id == complex_mapping.plan_id
+
+
+def _leg(controlled: Any, thermodynamic: Any, environment: Any) -> Any:
+    return FreeEnergyProtocolLegPlan(
+        FreeEnergyStatePlan(controlled, thermodynamic, 0),
+        FreeEnergyStatePlan(controlled, thermodynamic, 2),
+        environment,
+    )
+
+
+def _analysis(
+    leg: Any, value: Any, variance: Any, identity: Any, *, mapping_id: Any = None
+) -> Any:
+    states = (leg.source, leg.destination)
+    dataset = ReducedWorkDataset(
+        jnp.zeros((2,)),
+        jnp.ones((2,), dtype="bool"),
+        jnp.ones((2,), dtype="bool"),
+        jnp.asarray([0, 1]),
+        jnp.asarray([1, 0]),
+        jnp.asarray([0, 1]),
+        jnp.zeros((2,), dtype=jnp.int32),
+        jnp.zeros((2,), dtype=jnp.int32),
+        jnp.asarray([0, 1]),
+        state_ids=tuple(state.state_id for state in states),
+        potential_ids=tuple(state.potential_id for state in states),
+        measure_ids=tuple(state.measure_id for state in states),
+        producer_id="focused-protocol-test",
+        run_id=f"run:{identity}",
+        work_id=f"work:{identity}",
+        work_kind="targeted-map" if mapping_id is not None else "equilibrium-difference",
+        qualification_id=f"qualification:{identity}",
+        sampling_exact=True,
+        sampling_bias_bound=0.0,
+        mapping_id=mapping_id,
+        bias_ids=tuple(state.bias_id for state in states),
+        unit_system_id=states[0].unit_system_id,
+        inverse_temperature=states[0].inverse_temperature,
+        unit_id="1",
+    )
+    covariance = jnp.asarray([[0.0, 0.0], [0.0, variance]])
+    result = FreeEnergyResult(
+        jnp.asarray([0.0, value]),
+        covariance,
+        jnp.ones((2, 2)),
+        jnp.ones((2, 2), dtype="bool"),
+        jnp.asarray([10.0, 10.0]),
+        jnp.asarray([10.0, 10.0]),
+        jnp.asarray([[0.0], [jnp.sqrt(variance)]]),
+        1,
+        0.0,
+        1,
+        0,
+        0,
+        state_ids=dataset.state_ids,
+        gauge_state_id=dataset.state_ids[0],
+        method="focused-authenticated-result",
+        dataset_id=dataset.dataset_id,
+        selection_id=f"selection:{identity}",
+    )
+    return result, dataset
 
 
 def test_switching_executes_native_dynamics_and_emits_lineage() -> None:

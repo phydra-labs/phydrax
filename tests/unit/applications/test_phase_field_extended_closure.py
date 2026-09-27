@@ -68,7 +68,7 @@ def _binary_model(*, polynomial: Any = False) -> Any:
     )
 
 
-def test_multiblock_discrete_gradient_closes_one_energy_ledger() -> None:
+def test_phase_field_extended_closure_scenario_1() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _two_block_mesh(),
@@ -94,9 +94,6 @@ def test_multiblock_discrete_gradient_closes_one_energy_ledger() -> None:
     )
     assert result.evidence.ledger.total_residual <= result.evidence.energy_tolerance
     assert len(method.discretization.mesh.blocks) == 2
-
-
-def test_periodic_constraint_identifies_both_square_seams() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -129,9 +126,6 @@ def test_periodic_constraint_identifies_both_square_seams() -> None:
     assert isinstance(constraint.constraint_map.reduced_space, phx.linalg.ArraySpace)
     assert constraint.constraint_map.reduced_space.shape == (1,)
     np.testing.assert_array_equal(expanded, jnp.full((4,), 2.5))
-
-
-def test_wetting_and_time_dependent_microtraction_enter_boundary_ledger() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -164,7 +158,7 @@ def test_wetting_and_time_dependent_microtraction_enter_boundary_ledger() -> Non
     assert result.evidence.ledger.closed
 
 
-def test_tensor_mobility_and_boundary_flux_close_mass_balance() -> None:
+def test_phase_field_extended_closure_scenario_2() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -198,9 +192,6 @@ def test_tensor_mobility_and_boundary_flux_close_mass_balance() -> None:
     np.testing.assert_allclose(result.evidence.mass_source, 5.0e-6)
     assert result.evidence.mass_defect <= result.evidence.mass_tolerance
     assert result.evidence.dissipation > 0.0
-
-
-def test_dense_grand_potential_step_conserves_components() -> None:
     phase_a = phx.applications.phase_field.QuadraticGrandPotentialPhase(
         "phase-a", 0.0, jnp.asarray((0.2,)), jnp.asarray(((1.0,),))
     )
@@ -251,9 +242,6 @@ def test_dense_grand_potential_step_conserves_components() -> None:
     assert bool(result.evidence.components_conserved)
     assert result.evidence.component_defect <= result.evidence.component_tolerance
     assert result.evidence.energy_defect <= result.evidence.energy_tolerance
-
-
-def test_active_phase_storage_is_dense_equivalent_and_capacity_safe() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -298,7 +286,7 @@ def test_active_phase_storage_is_dense_equivalent_and_capacity_safe() -> None:
     assert bool(allowed.successful)
 
 
-def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe() -> None:
+def test_phase_field_extended_closure_scenario_3() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _square_mesh(),
@@ -359,9 +347,6 @@ def test_amr_stochastic_replay_and_distributed_ownership_are_identity_safe() -> 
         stochastic_id=noise.noise_plan_id,
     )
     assert manifest.stochastic_id == noise.noise_plan_id
-
-
-def test_integrated_capability_profiles_are_exact_unreleased_claims() -> None:
     profiles = phx.applications.phase_field.phase_field_candidate_profiles()
 
     assert tuple(profile.name for profile in profiles) == (

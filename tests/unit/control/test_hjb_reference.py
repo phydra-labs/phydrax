@@ -52,7 +52,7 @@ def _linear_cost_problem(*, cost: Any, problem_id: Any) -> Any:
     )
 
 
-def test_deterministic_reduction_matches_running_cost_and_earns_discrete_label() -> None:
+def test_hjb_reference_scenario_1() -> None:
     problem = _linear_cost_problem(cost=2.0, problem_id="deterministic-hjb")
     result = solve_discrete_hjb_reference(problem)
     times = np.asarray(problem.time_grid.times)
@@ -70,9 +70,6 @@ def test_deterministic_reduction_matches_running_cost_and_earns_discrete_label()
     assert result.evidence.maximum_boundary_residual == 0.0
     assert result.evidence.maximum_terminal_residual == 0.0
     assert bool(result.evidence.refinement_passed)
-
-
-def test_positive_diffusion_reduction_matches_quadratic_heat_solution() -> None:
     sigma = 0.2
     terminal_time = 0.1
     grid = BoundedUniformGrid1D(-1.0, 1.0, 21)
@@ -101,9 +98,6 @@ def test_positive_diffusion_reduction_matches_quadratic_heat_solution() -> None:
     assert result.evidence.maximum_courant_number < 1.0
     assert result.evidence.minimum_monotonicity_margin > 0.0
     assert bool(result.successful)
-
-
-def test_upwind_drift_uses_forward_difference_for_positive_generator_drift() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1]), time_id="upwind-positive")
     terminal = np.asarray(grid.points) ** 2
@@ -128,9 +122,6 @@ def test_upwind_drift_uses_forward_difference_for_positive_generator_drift() -> 
     forward = (terminal[2:] - terminal[1:-1]) / grid.spacing
     expected = terminal[1:-1] + 0.1 * forward
     np.testing.assert_allclose(result.values[0, 1:-1], expected, rtol=1e-12, atol=1e-12)
-
-
-def test_upwind_drift_uses_backward_difference_for_negative_generator_drift() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1]), time_id="upwind-negative")
     terminal = np.asarray(grid.points) ** 2
@@ -157,7 +148,7 @@ def test_upwind_drift_uses_backward_difference_for_negative_generator_drift() ->
     np.testing.assert_allclose(result.values[0, 1:-1], expected, rtol=1e-12, atol=1e-12)
 
 
-def test_terminal_boundary_data_and_action_selector_are_explicit() -> None:
+def test_hjb_reference_scenario_2() -> None:
     grid = BoundedUniformGrid1D(0.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1, 0.2]), time_id="action-hjb")
     terminal = np.asarray(grid.points)
@@ -200,11 +191,6 @@ def test_terminal_boundary_data_and_action_selector_are_explicit() -> None:
             lambda time, state, action, args: 0.0,
             problem_id="incompatible-hjb",
         )
-
-
-def test_unsupported_callback_shape_and_nonmonotone_step_fail_before_integration() -> (
-    None
-):
     grid = BoundedUniformGrid1D(-1.0, 1.0, 5)
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1]), time_id="invalid-hjb")
     terminal = np.zeros(grid.num_points)
@@ -236,9 +222,6 @@ def test_unsupported_callback_shape_and_nonmonotone_step_fail_before_integration
     )
     with pytest.raises(ValueError, match="monotone"):
         solve_discrete_hjb_reference(nonmonotone_problem)
-
-
-def test_refinement_result_exposes_gate_failure_without_broad_claim_language() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 7)
     time_grid = TimeGrid(jnp.linspace(0.0, 0.1, 5), time_id="refinement-hjb")
     terminal = np.asarray(grid.points) ** 4

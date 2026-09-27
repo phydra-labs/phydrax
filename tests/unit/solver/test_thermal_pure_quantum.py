@@ -99,7 +99,7 @@ def _plan(
     )
 
 
-def test_tpq_beta_zero_trace_and_semantic_prng_replay_are_exact() -> None:
+def test_tpq_contracts() -> None:
     hamiltonian, _ = _diagonal_fermion_operators()
     identity = IdentityLinearOperator(hamiltonian.source)
     prepared = prepare_thermal_pure_quantum(_plan(0.0), hamiltonian)
@@ -110,9 +110,6 @@ def test_tpq_beta_zero_trace_and_semantic_prng_replay_are_exact() -> None:
     np.testing.assert_array_equal(first.raw_probes, replay.raw_probes)
     np.testing.assert_array_equal(first.thermal_vectors, replay.thermal_vectors)
     assert bool(first.valid)
-
-
-def test_tpq_uses_ratio_of_probe_sums_for_canonical_observable() -> None:
     hamiltonian, number_a = _diagonal_fermion_operators()
     beta = 0.7
     result = thermal_pure_quantum(
@@ -130,9 +127,6 @@ def test_tpq_uses_ratio_of_probe_sums_for_canonical_observable() -> None:
         result.norm_weights
     )
     np.testing.assert_allclose(result.observable_estimates, ratio_of_sums)
-
-
-def test_tpq_preparation_refuses_retained_or_krylov_workspace() -> None:
     hamiltonian, _ = _diagonal_fermion_operators()
     with pytest.raises(ValueError, match="maximum_retained_bytes"):
         prepare_thermal_pure_quantum(_plan(0.0, maximum_retained_bytes=1), hamiltonian)

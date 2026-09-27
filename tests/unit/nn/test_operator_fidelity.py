@@ -107,7 +107,7 @@ def _dataset(case_ids: Any, *, scale: Any) -> Any:
     )
 
 
-def test_fidelity_correction_operator_adds_baseline_and_correction() -> None:
+def test_fidelity_contracts() -> None:
     dataset = _dataset((0, 1, 2), scale=3.0)
     model = phx.nn.operator.architectures.FidelityCorrectionOperator(
         _ScaleOperator(1.0),
@@ -118,9 +118,6 @@ def test_fidelity_correction_operator_adds_baseline_and_correction() -> None:
     source = dataset.batch.input("state").values
     assert source is not None
     assert jnp.allclose(values, 3.0 * source)
-
-
-def test_fidelity_contract_intersects_both_child_capabilities() -> None:
     baseline_capability = phx.nn.operator.OperatorCapabilitySpec(
         source_geometries=("tensor_grid",),
         query_geometries=("tensor_grid",),
@@ -155,9 +152,6 @@ def test_fidelity_contract_intersects_both_child_capabilities() -> None:
     assert capability.masks == "all_valid_only"
     assert not capability.resolution_transfer
     assert not capability.multiple_queries
-
-
-def test_fidelity_contract_rejects_unrepresentable_training_requirements() -> None:
     baseline = _ScaleOperator(
         1.0,
         training=phx.nn.operator.OperatorTrainingRequirement(),
@@ -175,9 +169,6 @@ def test_fidelity_contract_rejects_unrepresentable_training_requirements() -> No
             correction,
             _path(),
         )
-
-
-def test_fidelity_operator_preparation_pairs_physical_cases_explicitly() -> None:
     low = _dataset((0, 1, 2, 3), scale=1.0)
     target = _dataset((0, 1, 2), scale=3.0)
     prepared = phx.nn.operator.training.prepare_fidelity_operator_dataset(

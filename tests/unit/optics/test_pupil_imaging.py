@@ -38,7 +38,7 @@ def _finite_space(count: Any, lower: Any, upper: Any, *, z: Any = 0.0) -> Any:
     )
 
 
-def test_noll_mapping_and_modes_are_continuous_unit_rms() -> None:
+def test_pupil_imaging_scenario_1() -> None:
     space = _finite_space(129, -1.05, 1.05)
     result = evaluate_noll_zernike_opd(
         space,
@@ -60,14 +60,39 @@ def test_noll_mapping_and_modes_are_continuous_unit_rms() -> None:
         atol=2.5e-2,
     )
     assert bool(result.evidence.adequate)
-
-
-def test_piston_and_tilt_have_exact_noll_normalization() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (0.25, 0.0), (0.0, -0.25)))
 
     np.testing.assert_allclose(noll_zernike(1, coordinates), (1.0, 1.0, 1.0))
     np.testing.assert_allclose(noll_zernike(2, coordinates), (0.0, 0.5, 0.0))
     np.testing.assert_allclose(noll_zernike(3, coordinates), (0.0, 0.0, -0.5))
+    _, image_space, _, field, prepared = _fraunhofer_case()
+    result = fraunhofer_psf(prepared, field)
+    axis = np.asarray(image_space.coordinate_axes[0])
+    center = image_space.shape[1] // 2
+    null_index = int(np.argmin(np.abs(axis - 1.22)))
+    peak = float(result.plane.values[image_space.shape[0] // 2, center])
+    first_null = float(result.plane.values[null_index, center])
+    integrated_power = jnp.sum(result.plane.values * image_space.area_weights)
+
+    np.testing.assert_allclose(integrated_power, 1.0, rtol=2e-6)
+    assert first_null / peak < 1.5e-2
+    assert float(result.sampling.samples_per_airy_radius) > 2.0
+    assert bool(result.valid)
+    pupil = _finite_space(5, -0.5, 0.5)
+    image = _finite_space(7, -0.4, 0.4, z=0.8)
+    coordinates = pupil.transverse_coordinates
+    values = (1.0 + coordinates[..., 0]) * jnp.exp(0.3j * coordinates[..., 1])
+    field = ScalarPlaneField(pupil, values, 2.0, 0.0)
+    plan = FraunhoferImagingPlan(pupil, image, 0.8, 8.0, 0.8).prepare()
+    result = fraunhofer_psf(plan, field)
+    target = image.transverse_coordinates[1, 5]
+    phase = jnp.exp(
+        -1j * 8.0 / 0.8 * jnp.sum(coordinates * target[None, None, :], axis=-1)
+    )
+    amplitude = jnp.sum(values * phase * pupil.area_weights)
+    expected = jnp.abs(8.0 / (2.0 * jnp.pi * 0.8) * amplitude) ** 2
+
+    np.testing.assert_allclose(result.raw_intensity[1, 5], expected, rtol=2e-6)
 
 
 def _fraunhofer_case() -> Any:
@@ -86,41 +111,7 @@ def _fraunhofer_case() -> Any:
     return pupil_space, image_space, aperture, field, prepared
 
 
-def test_fraunhofer_circular_pupil_has_airy_null_and_unit_power() -> None:
-    _, image_space, _, field, prepared = _fraunhofer_case()
-    result = fraunhofer_psf(prepared, field)
-    axis = np.asarray(image_space.coordinate_axes[0])
-    center = image_space.shape[1] // 2
-    null_index = int(np.argmin(np.abs(axis - 1.22)))
-    peak = float(result.plane.values[image_space.shape[0] // 2, center])
-    first_null = float(result.plane.values[null_index, center])
-    integrated_power = jnp.sum(result.plane.values * image_space.area_weights)
-
-    np.testing.assert_allclose(integrated_power, 1.0, rtol=2e-6)
-    assert first_null / peak < 1.5e-2
-    assert float(result.sampling.samples_per_airy_radius) > 2.0
-    assert bool(result.valid)
-
-
-def test_fraunhofer_prepared_dft_matches_direct_quadrature() -> None:
-    pupil = _finite_space(5, -0.5, 0.5)
-    image = _finite_space(7, -0.4, 0.4, z=0.8)
-    coordinates = pupil.transverse_coordinates
-    values = (1.0 + coordinates[..., 0]) * jnp.exp(0.3j * coordinates[..., 1])
-    field = ScalarPlaneField(pupil, values, 2.0, 0.0)
-    plan = FraunhoferImagingPlan(pupil, image, 0.8, 8.0, 0.8).prepare()
-    result = fraunhofer_psf(plan, field)
-    target = image.transverse_coordinates[1, 5]
-    phase = jnp.exp(
-        -1j * 8.0 / 0.8 * jnp.sum(coordinates * target[None, None, :], axis=-1)
-    )
-    amplitude = jnp.sum(values * phase * pupil.area_weights)
-    expected = jnp.abs(8.0 / (2.0 * jnp.pi * 0.8) * amplitude) ** 2
-
-    np.testing.assert_allclose(result.raw_intensity[1, 5], expected, rtol=2e-6)
-
-
-def test_circular_pupil_mtf_matches_diffraction_limited_formula() -> None:
+def test_pupil_imaging_scenario_2() -> None:
     _, _, _, field, prepared = _fraunhofer_case()
     transfer = normalized_otf_mtf(fraunhofer_psf(prepared, field).plane)
     frequencies = np.asarray(transfer.frequency_axes[0])
@@ -143,9 +134,6 @@ def test_circular_pupil_mtf_matches_diffraction_limited_formula() -> None:
     )
     assert float(transfer.evidence.hermitian_error) < 1e-5
     assert bool(transfer.evidence.valid)
-
-
-def test_strehl_is_piston_invariant_and_detects_defocus() -> None:
     pupil_space, _, aperture, field, prepared = _fraunhofer_case()
     reference = fraunhofer_psf(prepared, field).plane
     piston = evaluate_noll_zernike_opd(

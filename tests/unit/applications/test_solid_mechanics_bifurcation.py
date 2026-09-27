@@ -148,7 +148,7 @@ def _primary_graph(problem: Any, geometry: Any) -> Any:
     return MechanicsBranchGraph((primary,))
 
 
-def test_detector_preserves_fold_pitchfork_and_transcritical_semantics() -> None:
+def test_solid_mechanics_bifurcation_scenario_1() -> None:
     equilibrium, stability, _, geometry = _static_context()
     detector = MechanicsBifurcationDetector(equilibrium)
 
@@ -186,9 +186,6 @@ def test_detector_preserves_fold_pitchfork_and_transcritical_semantics() -> None
     assert pitchfork.mode_provenance_id == "physical-tangent-assembly"
     assert pitchfork.root_mode is not None
     assert pitchfork.physical_mode is not None
-
-
-def test_hopf_requires_dynamic_evidence_and_refuses_static_claims() -> None:
     dtype = jnp.float32
     space = phx.linalg.ArraySpace((2,), dtype=dtype, space_id="physical-dynamics")
     root = phx.nonlinear.NonlinearSystemProblem(
@@ -255,9 +252,6 @@ def test_hopf_requires_dynamic_evidence_and_refuses_static_claims() -> None:
     assert record.classification == "hopf-flutter"
     assert record.eigenvalue_quantity == "squared-angular-frequency"
     assert record.dynamic_stability is dynamic
-
-
-def test_corrected_switching_builds_lineage_and_checks_symmetry_duplicates() -> None:
     equilibrium, stability, problem, geometry = _static_context()
     detector = MechanicsBifurcationDetector(equilibrium)
     record = detector.detect(
@@ -323,7 +317,7 @@ def test_corrected_switching_builds_lineage_and_checks_symmetry_duplicates() -> 
     assert len(quotient.symmetry_rejected_branch_ids) == 1
 
 
-def test_imperfection_family_and_zero_limit_study_preserve_provenance() -> None:
+def test_solid_mechanics_bifurcation_scenario_2() -> None:
     family = ImperfectionFamily(
         jnp.asarray((0.0, 1.0, -1.0), dtype=jnp.float32),
         units="m",
@@ -346,9 +340,6 @@ def test_imperfection_family_and_zero_limit_study_preserve_provenance() -> None:
     assert study.family.family_id == family.family_id
     assert bool(study.limit_resolved)
     assert study.family.discretization_id == "mesh-level-2"
-
-
-def test_explicit_selection_policies_can_disagree_and_refuse_potential_claims() -> None:
     _, _, problem, geometry = _static_context()
     graph = _primary_graph(problem, geometry)
     primary = graph.branches[0]

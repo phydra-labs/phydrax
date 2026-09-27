@@ -84,7 +84,7 @@ def _calibration() -> Any:
     )
 
 
-def test_hu_calibration_preserves_support_and_material_basis_order() -> None:
+def test_hu_contracts() -> None:
     source = _asset((-500.0, 0.0, 500.0))
     calibrated = apply_hu_calibration(source, _calibration())
 
@@ -114,14 +114,8 @@ def test_hu_calibration_preserves_support_and_material_basis_order() -> None:
         == "not-represented-shared-hu-covariance"
     )
     assert len(calibrated.density.references) == 2
-
-
-def test_hu_calibration_refuses_values_outside_closed_support() -> None:
     with pytest.raises(ValueError, match="clamping and extrapolation are not permitted"):
         apply_hu_calibration(_asset((-1000.0, 1000.1)), _calibration())
-
-
-def test_hu_material_result_rejects_unrelated_calibration_identity() -> None:
     calibrated = apply_hu_calibration(_asset((0.0,)), _calibration())
     with pytest.raises(ValueError, match="calibration_id"):
         HUToMaterialResult(

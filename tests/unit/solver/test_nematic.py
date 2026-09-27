@@ -29,7 +29,7 @@ def _dynamics(dimension: Any = 1, orientation: Any = 3, activity: Any = 0.0) -> 
     )
 
 
-def test_passive_nematic_relaxation_decreases_free_energy() -> None:
+def test_nematic_scenario_1() -> None:
     dynamics = _dynamics()
     compact = jnp.zeros((8, 5)).at[:, 0].set(0.1)
     before = dynamics.evaluate(compact)
@@ -45,9 +45,6 @@ def test_passive_nematic_relaxation_decreases_free_energy() -> None:
     )
     assert semi_implicit.successful
     assert semi_implicit.evaluation.total_free_energy <= before.total_free_energy + 1.0e-8
-
-
-def test_periodic_mac_nematic_stress_is_work_dual_and_commit_is_atomic() -> None:
     axes = (
         phx.discretization.UniformCellAxisSpec(8, periodic=True),
         phx.discretization.UniformCellAxisSpec(8, periodic=True),

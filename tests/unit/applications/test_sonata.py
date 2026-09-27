@@ -205,33 +205,33 @@ def test_spike_secondary_sorting_units_and_float_ids_are_not_silently_coerced(
         ep.import_sonata(**arguments)
 
 
-@pytest.mark.parametrize("hazard", ["external", "vds", "reference", "compressed_size"])
 def test_untrusted_hdf5_cannot_escape_resources_or_decode_unbounded_arrays(
-    tmp_path: Any, hazard: Any
+    tmp_path: Any,
 ) -> None:
-    arguments = _fixture(tmp_path)
-    with h5py.File(tmp_path / "nodes.h5", "r+") as handle:
-        if hazard == "external":
-            handle["hidden"] = h5py.ExternalLink("/outside/not-read.h5", "/x")
-        elif hazard == "vds":
-            layout = h5py.VirtualLayout(shape=(1,), dtype="f8")
-            layout[0] = h5py.VirtualSource("/outside/not-read.h5", "x", shape=(1,))[0]
-            handle.create_virtual_dataset("hidden", layout)
-        elif hazard == "reference":
-            handle.create_dataset(
-                "hidden", data=[handle["nodes/cells"].ref], dtype=h5py.ref_dtype
-            )
-        else:
-            handle.create_dataset(
-                "hidden",
-                shape=(100_000_000,),
-                dtype="f8",
-                chunks=(1024,),
-                compression="gzip",
-                fillvalue=0,
-            )
-    with pytest.raises((AdapterError, ResourceReadError)):
-        ep.import_sonata(**arguments)
+    for hazard in ["external", "vds", "reference", "compressed_size"]:
+        arguments = _fixture(tmp_path)
+        with h5py.File(tmp_path / "nodes.h5", "r+") as handle:
+            if hazard == "external":
+                handle["hidden"] = h5py.ExternalLink("/outside/not-read.h5", "/x")
+            elif hazard == "vds":
+                layout = h5py.VirtualLayout(shape=(1,), dtype="f8")
+                layout[0] = h5py.VirtualSource("/outside/not-read.h5", "x", shape=(1,))[0]
+                handle.create_virtual_dataset("hidden", layout)
+            elif hazard == "reference":
+                handle.create_dataset(
+                    "hidden", data=[handle["nodes/cells"].ref], dtype=h5py.ref_dtype
+                )
+            else:
+                handle.create_dataset(
+                    "hidden",
+                    shape=(100_000_000,),
+                    dtype="f8",
+                    chunks=(1024,),
+                    compression="gzip",
+                    fillvalue=0,
+                )
+        with pytest.raises((AdapterError, ResourceReadError)):
+            ep.import_sonata(**arguments)
 
 
 def test_cable_sites_require_exact_unambiguous_supplied_mapping(tmp_path: Any) -> None:

@@ -112,7 +112,7 @@ def _finite_element_contact_case(*, friction: Any = False) -> Any:
     return coordinates, cells, compiled, scene, search, contact, accepted, dynamics
 
 
-def test_declared_finite_element_potential_generates_existing_residual() -> None:
+def test_contact_physics_scenario_1() -> None:
     _, _, compiled, _, _, _, accepted, _ = _finite_element_contact_case()
     displacement = accepted.mechanics.displacement.at[2, 0].set(0.1)
     gradient = compiled.residual(displacement)
@@ -124,9 +124,6 @@ def test_declared_finite_element_potential_generates_existing_residual() -> None
         rtol=1.0e-11,
         atol=1.0e-12,
     )
-
-
-def test_contact_potential_is_finite_balanced_and_positive() -> None:
     _, _, _, scene, search, contact, accepted, _ = _finite_element_contact_case()
     positions = scene.positions(accepted.mechanics.displacement)
     epoch = search.build(scene, positions)
@@ -138,41 +135,6 @@ def test_contact_potential_is_finite_balanced_and_positive() -> None:
     assert evaluation.minimum_gap > 0.0
     np.testing.assert_allclose(evaluation.action_reaction_residual, 0.0, atol=2.0e-10)
     np.testing.assert_allclose(evaluation.moment_residual, 0.0, atol=2.0e-10)
-
-
-def test_lagged_friction_is_finite_and_dissipative() -> None:
-    _, _, _, scene, search, contact, accepted, dynamics = _finite_element_contact_case(
-        friction=True
-    )
-    positions = scene.positions(accepted.mechanics.displacement)
-    epoch = search.build(scene, positions)
-    friction = dynamics.friction
-    assert friction is not None
-    state = friction.build_state(positions, epoch)
-    velocity = scene.map_values(accepted.mechanics.velocity)
-    evaluation = friction.evaluate(velocity, state)
-
-    assert bool(evaluation.successful)
-    assert evaluation.active_contacts > 0
-    assert evaluation.dissipation_rate >= 0.0
-
-
-def test_lagged_friction_contact_step_converges_without_fallback() -> None:
-    _, _, _, _, _, _, accepted, dynamics = _finite_element_contact_case(friction=True)
-    result = phx.applications.contact.solve_finite_element_contact_step(
-        phx.applications.contact.prepare_finite_element_contact_step(
-            dynamics, accepted, 0.02
-        )
-    )
-
-    assert bool(result.accepted)
-    assert result.friction is not None and bool(result.friction.successful)
-    assert result.accepted_state.friction_state is not None
-    assert result.diagnostics.lag_iterations >= 1
-    assert result.diagnostics.lag_residual <= dynamics.friction.plan.lag_tolerance
-
-
-def test_contact_newmark_step_is_transactional_and_safe() -> None:
     _, _, _, _, _, _, accepted, dynamics = _finite_element_contact_case()
     result = phx.applications.contact.solve_finite_element_contact_step(
         phx.applications.contact.prepare_finite_element_contact_step(
@@ -186,9 +148,6 @@ def test_contact_newmark_step_is_transactional_and_safe() -> None:
     assert bool(result.contact.successful)
     assert result.contact.minimum_gap > 0.0
     assert result.accepted_state.state_version == accepted.state_version + 1
-
-
-def test_contact_capacity_failure_rolls_back_complete_dynamic_state() -> None:
     coordinates, cells, compiled, scene, _, contact, accepted, _ = (
         _finite_element_contact_case()
     )
@@ -222,6 +181,32 @@ def test_contact_capacity_failure_rolls_back_complete_dynamic_state() -> None:
     assert int(result.rejection_reasons) & int(
         phx.applications.contact.ContactRejectionReason.SEARCH
     )
+    _, _, _, scene, search, contact, accepted, dynamics = _finite_element_contact_case(
+        friction=True
+    )
+    positions = scene.positions(accepted.mechanics.displacement)
+    epoch = search.build(scene, positions)
+    friction = dynamics.friction
+    assert friction is not None
+    state = friction.build_state(positions, epoch)
+    velocity = scene.map_values(accepted.mechanics.velocity)
+    evaluation = friction.evaluate(velocity, state)
+
+    assert bool(evaluation.successful)
+    assert evaluation.active_contacts > 0
+    assert evaluation.dissipation_rate >= 0.0
+    _, _, _, _, _, _, accepted, dynamics = _finite_element_contact_case(friction=True)
+    result = phx.applications.contact.solve_finite_element_contact_step(
+        phx.applications.contact.prepare_finite_element_contact_step(
+            dynamics, accepted, 0.02
+        )
+    )
+
+    assert bool(result.accepted)
+    assert result.friction is not None and bool(result.friction.successful)
+    assert result.accepted_state.friction_state is not None
+    assert result.diagnostics.lag_iterations >= 1
+    assert result.diagnostics.lag_residual <= dynamics.friction.plan.lag_tolerance
 
 
 def test_fixed_route_contact_sensitivity_is_qualified() -> None:

@@ -178,7 +178,7 @@ def _unit_interval_problem(objective_coefficients: Any = (0.0, 0.0, 1.0)) -> Any
     return PolynomialOptimizationProblem(objective, inequalities=inequalities)
 
 
-def test_compact_univariate_known_optimum_has_matching_bounds_and_rank_one_atom() -> None:
+def test_polynomial_relaxation_scenario_1() -> None:
     problem = _unit_interval_problem()
     prepared = prepare_polynomial_relaxation(problem, 1)
 
@@ -209,9 +209,6 @@ def test_compact_univariate_known_optimum_has_matching_bounds_and_rank_one_atom(
     assert bool(result.dual.accepted)
     assert result.atom_extraction.status == AtomExtractionStatus.EXTRACTED
     np.testing.assert_allclose(result.atom_extraction.atoms, [[0.0]], atol=1e-7)
-
-
-def test_compact_bivariate_known_optimum_uses_dense_moment_and_localizing_bases() -> None:
     objective = _system(
         ("x", "y"),
         ("radius squared",),
@@ -253,11 +250,6 @@ def test_compact_bivariate_known_optimum_uses_dense_moment_and_localizing_bases(
     assert bool(result.psd.accepted)
     assert bool(result.exactness_evidenced)
     assert bool(result.dual.accepted)
-
-
-def test_equalities_and_inequalities_are_compiled_and_replayed_in_original_domain() -> (
-    None
-):
     objective = _system(("x",), ("x",), (0,), ((1,),), (1.0,))
     equalities = _system(
         ("x",),
@@ -299,9 +291,6 @@ def test_equalities_and_inequalities_are_compiled_and_replayed_in_original_domai
     np.testing.assert_allclose(result.lower_bound, 1.0, atol=1e-7)
     np.testing.assert_allclose(result.upper_bound, 1.0, atol=1e-7)
     assert bool(result.dual.accepted)
-
-
-def test_low_but_compilable_order_keeps_nonzero_gap_and_no_exactness_evidence() -> None:
     objective = _system(("x",), ("x",), (0,), ((1,),), (1.0,))
     equalities = _system(
         ("x",),
@@ -337,9 +326,7 @@ def test_low_but_compilable_order_keeps_nonzero_gap_and_no_exactness_evidence() 
     assert result.atom_extraction.status == AtomExtractionStatus.NOT_FLAT
 
 
-def test_plan_reports_constant_infeasibility_and_resource_rejection_before_allocation() -> (
-    None
-):
+def test_polynomial_relaxation_scenario_2() -> None:
     objective = _system(("x",), ("objective",), (0,), ((0,),), (0.0,))
     impossible = _system(("x",), ("impossible",), (0,), ((0,),), (-1.0,))
     infeasible = PolynomialOptimizationProblem(objective, inequalities=impossible)
@@ -355,9 +342,6 @@ def test_plan_reports_constant_infeasibility_and_resource_rejection_before_alloc
     assert rejected.estimate.moment_count == 3
     with pytest.raises(ValueError, match="RESOURCE_REJECTED"):
         prepare_polynomial_relaxation(rejected)
-
-
-def test_insufficient_order_is_not_compiled_or_reported_as_exactness() -> None:
     quartic = _system(("x",), ("quartic",), (0,), ((4,),), (1.0,))
     problem = PolynomialOptimizationProblem(quartic)
     plan = plan_polynomial_relaxation(problem, 1)
@@ -367,9 +351,6 @@ def test_insufficient_order_is_not_compiled_or_reported_as_exactness() -> None:
     assert not plan.ready
     with pytest.raises(ValueError, match="INSUFFICIENT_ORDER"):
         prepare_polynomial_relaxation(plan)
-
-
-def test_nonflat_moments_do_not_fabricate_atoms_or_exactness() -> None:
     problem = _unit_interval_problem()
     prepared = prepare_polynomial_relaxation(problem, 2)
     nonflat_moments = (1.0, 0.0, 2.0 / 3.0, 0.0, 2.0 / 3.0)
@@ -387,9 +368,7 @@ def test_nonflat_moments_do_not_fabricate_atoms_or_exactness() -> None:
     assert result.atom_extraction.weights.shape == (0,)
 
 
-def test_original_candidate_replay_controls_upper_bound_independently_of_provider_path() -> (
-    None
-):
+def test_polynomial_relaxation_scenario_3() -> None:
     problem = _unit_interval_problem()
     feasible = audit_polynomial_candidate(problem, jnp.asarray([0.5]))
     infeasible = audit_polynomial_candidate(problem, jnp.asarray([2.0]))
@@ -411,9 +390,6 @@ def test_original_candidate_replay_controls_upper_bound_independently_of_provide
     assert not bool(result.lower_bound_available)
     assert bool(result.upper_bound_available)
     np.testing.assert_allclose(result.upper_bound, 0.25, atol=1e-7)
-
-
-def test_numeric_refresh_reuses_topology_and_updates_only_coefficient_binding() -> None:
     original = _unit_interval_problem((0.0, 0.0, 1.0))
     refreshed_problem = _unit_interval_problem((1.0, 0.0, 2.0))
     prepared = prepare_polynomial_relaxation(original, 1)

@@ -43,7 +43,7 @@ def _problem(paths: Any, *, generator: Any, terminal: Any) -> Any:
     )
 
 
-def test_explicit_least_squares_recovers_linear_martingale_and_control() -> None:
+def test_regression_bsde_scenario_1() -> None:
     paths = _brownian_tree_paths()
     problem = _problem(
         paths,
@@ -84,9 +84,6 @@ def test_explicit_least_squares_recovers_linear_martingale_and_control() -> None
     assert diagnostics.passed
     assert diagnostics.max_value_normal_equation_error < 1e-8
     assert diagnostics.max_control_normal_equation_error < 1e-8
-
-
-def test_implicit_least_squares_solves_current_value_backward_euler_equation() -> None:
     num_paths = 64
     num_steps = 4
     times = jnp.linspace(0.0, 1.0, num_steps + 1)
@@ -139,9 +136,6 @@ def test_implicit_least_squares_solves_current_value_backward_euler_equation() -
     assert jnp.all(implicit.picard_converged)
     assert jnp.all(implicit.picard_iterations > 1)
     assert phx.solver.least_squares_bsde_diagnostics(implicit).passed
-
-
-def test_least_squares_reports_insufficient_conditional_sample_budget() -> None:
     paths = _brownian_tree_paths(num_steps=1, repeats=1)
     problem = _problem(
         paths,

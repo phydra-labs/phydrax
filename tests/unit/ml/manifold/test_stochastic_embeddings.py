@@ -39,9 +39,7 @@ def _embedding_loss(model: Any) -> Any:
     return jnp.sum(coefficients[:, None] * jnp.square(model.embedding))
 
 
-def test_tsne_requires_explicit_key_is_deterministic_and_is_exactly_transductive() -> (
-    None
-):
+def test_stochastic_embeddings_scenario_1() -> None:
     features = _features()
     recipe = TSNERecipe(
         2,
@@ -104,9 +102,6 @@ def test_tsne_requires_explicit_key_is_deterministic_and_is_exactly_transductive
             learning_rate=0.1,
             max_samples=6,
         ).fit_batch(MLBatch(features), key=key)
-
-
-def test_tsne_jitted_fit_and_case_key_splitting_preserve_case_sample_axes() -> None:
     base = _features()
     features = jnp.stack((base, 1.1 * base), axis=0)
     targets = jnp.stack(
@@ -142,9 +137,6 @@ def test_tsne_jitted_fit_and_case_key_splitting_preserve_case_sample_axes() -> N
     assert result.diagnostics.objective.shape == (2,)
     assert result.diagnostics.residual.shape == (2,)
     assert compiled_embedding.shape == (2, 7, 1)
-
-
-def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces() -> None:
     features = _features()
     weights = jnp.array([1.0, 1.3, 0.9, 1.5, 1.1, 0.8, 1.2])
     recipe = FuzzyGraphEmbeddingRecipe(
@@ -215,53 +207,6 @@ def test_fuzzy_graph_embedding_key_transform_jit_vmap_and_gradient_surfaces() ->
             iterations=2,
             max_samples=6,
         ).fit_batch(MLBatch(features), key=key)
-
-
-@pytest.mark.parametrize(
-    "recipe",
-    [
-        TSNERecipe(
-            1,
-            perplexity=2.0,
-            iterations=3,
-            learning_rate=0.1,
-            tolerance=1e6,
-        ),
-        FuzzyGraphEmbeddingRecipe(
-            1,
-            n_neighbors=3,
-            iterations=3,
-            learning_rate=0.1,
-            tolerance=1e6,
-        ),
-    ],
-)
-def test_stochastic_manifold_fit_feature_and_weight_gradients_use_fixed_keys(
-    recipe: Any,
-) -> None:
-    features = _features()
-    weights = jnp.array([1.0, 1.2, 0.9, 1.4, 1.1, 0.8, 1.3])
-    key = jax.random.key(41)
-
-    def feature_loss(value: Any) -> Any:
-        model = recipe.fit_batch(
-            MLBatch(value, sample_weight=weights), key=key
-        ).as_trainable()
-        return _embedding_loss(model)
-
-    def weight_loss(value: Any) -> Any:
-        model = recipe.fit_batch(
-            MLBatch(features, sample_weight=value), key=key
-        ).as_trainable()
-        return _embedding_loss(model)
-
-    feature_gradient = jax.grad(feature_loss)(features)
-    weight_gradient = jax.grad(weight_loss)(weights)
-    assert jnp.all(jnp.isfinite(feature_gradient))
-    assert jnp.all(jnp.isfinite(weight_gradient))
-
-
-def test_stochastic_embeddings_return_insufficient_data_status_for_masked_cases() -> None:
     features = _features()
     mask = jnp.array([True, True, False, False, False, False, False])
     key = jax.random.key(51)
@@ -285,3 +230,42 @@ def test_stochastic_embeddings_return_insufficient_data_status_for_masked_cases(
     assert tsne.status == ML_INSUFFICIENT_DATA
     assert not fuzzy.valid
     assert fuzzy.status == ML_INSUFFICIENT_DATA
+
+
+def test_stochastic_manifold_fit_feature_and_weight_gradients_use_fixed_keys() -> None:
+    for recipe in [
+        TSNERecipe(
+            1,
+            perplexity=2.0,
+            iterations=3,
+            learning_rate=0.1,
+            tolerance=1e6,
+        ),
+        FuzzyGraphEmbeddingRecipe(
+            1,
+            n_neighbors=3,
+            iterations=3,
+            learning_rate=0.1,
+            tolerance=1e6,
+        ),
+    ]:
+        features = _features()
+        weights = jnp.array([1.0, 1.2, 0.9, 1.4, 1.1, 0.8, 1.3])
+        key = jax.random.key(41)
+
+        def feature_loss(value: Any) -> Any:
+            model = recipe.fit_batch(
+                MLBatch(value, sample_weight=weights), key=key
+            ).as_trainable()
+            return _embedding_loss(model)
+
+        def weight_loss(value: Any) -> Any:
+            model = recipe.fit_batch(
+                MLBatch(features, sample_weight=value), key=key
+            ).as_trainable()
+            return _embedding_loss(model)
+
+        feature_gradient = jax.grad(feature_loss)(features)
+        weight_gradient = jax.grad(weight_loss)(weights)
+        assert jnp.all(jnp.isfinite(feature_gradient))
+        assert jnp.all(jnp.isfinite(weight_gradient))

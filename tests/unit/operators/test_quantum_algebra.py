@@ -27,7 +27,7 @@ def _pauli_fields() -> Any:
     )
 
 
-def test_pauli_commutation_and_anticommutation_relations() -> None:
+def test_quantum_algebra_scenario_1() -> None:
     _time, sigma_x, sigma_y, sigma_z = _pauli_fields()
 
     commutator = phx.operators.commutator(sigma_x, sigma_y)
@@ -37,9 +37,6 @@ def test_pauli_commutation_and_anticommutation_relations() -> None:
     assert jnp.allclose(anticommutator.func(), jnp.zeros((2, 2)))
     assert jnp.allclose(bracket.func(), 2.0 * SIGMA_Z)
     assert jnp.allclose(phx.operators.hermiticity_residual(bracket).func(), 0.0)
-
-
-def test_commutator_lie_and_leibniz_identities() -> None:
     _time, a, b, c = _pauli_fields()
     jacobi = (
         phx.operators.commutator(a, phx.operators.commutator(b, c))
@@ -57,9 +54,6 @@ def test_commutator_lie_and_leibniz_identities() -> None:
     assert jnp.allclose(jacobi.func(), jnp.zeros((2, 2)), atol=1e-12)
     assert jnp.allclose(leibniz_left.func(), leibniz_right.func(), atol=1e-12)
     assert jnp.allclose(phx.operators.commutator(a, a).func(), jnp.zeros((2, 2)))
-
-
-def test_density_structure_residuals() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     density = time.Function()(0.5 * (jnp.eye(2) + SIGMA_X))
 
@@ -79,7 +73,7 @@ def test_quantum_bracket_is_jittable_and_parameter_differentiable() -> None:
     assert jnp.allclose(jax.jit(jax.grad(bracket_entry))(1.7), 2.0, atol=1e-12)
 
 
-def test_quantum_algebra_validates_shapes_and_hbar() -> None:
+def test_quantum_contracts() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     square = time.Function()(jnp.eye(2))
     rectangular = time.Function()(jnp.ones((2, 3)))
@@ -95,9 +89,6 @@ def test_quantum_algebra_validates_shapes_and_hbar() -> None:
         phx.operators.quantum_bracket(square, square, hbar=1.0j)
     with pytest.raises(ValueError, match="hbar must be a scalar"):
         phx.operators.quantum_bracket(square, square, hbar=jnp.ones((2,)))
-
-
-def test_quantum_bracket_rejects_nonpositive_or_nonfinite_scalar_arrays() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     square = time.Function()(jnp.eye(2))
 

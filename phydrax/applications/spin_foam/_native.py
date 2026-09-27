@@ -144,9 +144,7 @@ def evaluate_sl2c_boost(
     matrix = expm(-1j * radius * generator)  # ty: ignore[deprecated]
     half_matrix = expm(-0.5j * radius * generator)  # ty: ignore[deprecated]
     hermiticity = float(np.linalg.norm(generator - generator.conj().T))
-    unitarity = float(
-        np.linalg.norm(matrix.conj().T @ matrix - np.eye(matrix.shape[0]))
-    )
+    unitarity = float(np.linalg.norm(matrix.conj().T @ matrix - np.eye(matrix.shape[0])))
     composition = float(np.linalg.norm(half_matrix @ half_matrix - matrix))
     boundary = float(np.max(np.abs(matrix[-1])))
     accepted = max(hermiticity, unitarity, composition) <= plan.tolerance

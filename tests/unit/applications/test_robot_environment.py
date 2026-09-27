@@ -28,6 +28,7 @@ from phydrax.dynamics._plant import (
     PlantRuntimeState,
 )
 from phydrax.dynamics._system import DiscreteTransitionResult
+from tests._support.assertions import assert_tree_equal
 
 
 class _ThresholdTask(AbstractRobotTask):
@@ -295,16 +296,7 @@ def _environment(
     )
 
 
-def _assert_tree_equal(left: Any, right: Any) -> None:
-    for left_leaf, right_leaf in zip(
-        jax.tree.leaves(left),
-        jax.tree.leaves(right),
-        strict=True,
-    ):
-        assert jnp.array_equal(left_leaf, right_leaf)
-
-
-def test_array_system_bridge_preserves_repetition_and_atomic_rollback() -> None:
+def test_robot_environment_scenario_1() -> None:
     environment = _environment(repeat=2)
     reset = environment.reset(jax.random.key(4))
     assert isinstance(environment.plant, ArrayDiscreteSystemPlant)
@@ -328,13 +320,10 @@ def test_array_system_bridge_preserves_repetition_and_atomic_rollback() -> None:
     assert result.candidate_state.plant_state.time == 2.0
     assert result.candidate_state.plant_state.step_index == 2
     assert result.candidate_state.episode_step_index == 2
-    _assert_tree_equal(result.accepted_state, reset.state)
+    assert_tree_equal(result.accepted_state, reset.state)
     assert result.total_reward == 0.0
     assert not result.terminated
     assert not result.truncated
-
-
-def test_array_adapter_accepted_state_drives_task_wrappers_and_repetition() -> None:
     environment = _environment(transition=_projected_transition)
     environment = PreparedRobotEnvironment(
         environment.plant,
@@ -355,9 +344,6 @@ def test_array_adapter_accepted_state_drives_task_wrappers_and_repetition() -> N
     assert result.accepted_state.wrapper_states[0][0] == 2.0
     assert result.candidate_observation[0] == 2.0
     assert jnp.array_equal(result.reward_components, jnp.asarray([2.0, -2.0]))
-
-
-def test_domain_termination_and_horizon_use_environment_episode_index() -> None:
     terminated_environment = _environment(threshold=1.0, repeat=3, horizon=1)
     terminated_reset = terminated_environment.reset(jax.random.key(5))
     terminated = terminated_environment.step(
@@ -388,9 +374,6 @@ def test_domain_termination_and_horizon_use_environment_episode_index() -> None:
     )
     assert horizon.accepted_state.episode_step_index == 2
     assert horizon.accepted_state.plant_state.time == 2.0
-
-
-def test_auto_reset_keeps_terminal_outputs_and_resets_both_state_domains() -> None:
     environment = _environment(threshold=1.0, repeat=3, auto_reset=True)
     reset = environment.reset(jax.random.key(7))
 
@@ -414,7 +397,7 @@ def test_auto_reset_keeps_terminal_outputs_and_resets_both_state_domains() -> No
     assert not jnp.array_equal(result.reset_state.key, result.accepted_state.key)
 
 
-def test_environment_provenance_binds_all_plant_identities_and_task_content() -> None:
+def test_robot_environment_scenario_2() -> None:
     display_id = "shared-display-id"
     baseline = _environment(threshold=1.0, environment_id=display_id)
     changed_task = _environment(threshold=2.0, environment_id=display_id)
@@ -440,36 +423,15 @@ def test_environment_provenance_binds_all_plant_identities_and_task_content() ->
     )
     with pytest.raises(ValueError, match="provenance"):
         changed_task.step(reset.state, jnp.asarray([0.25]))
+    environment = _mixed_environment(reset_successful=False)
+    keys = jax.random.split(jax.random.key(59), 2)
+    reset = environment.reset(keys, case_shape=(2,))
 
-
-def test_opaque_environment_callables_without_declared_ids_are_refused() -> None:
-    def closure_transition(context: Any, state: Any, action: Any, args: Any) -> Any:
-        return _bounded_transition(context, state, action, args)
-
-    with pytest.raises(TypeError, match="Opaque callables"):
-        _environment(initializer=lambda key: jnp.zeros((2,)))
-    with pytest.raises(TypeError, match="Opaque callables"):
-        _environment(initializer=functools.partial(_initial_state))
-    with pytest.raises(TypeError, match="Opaque callables"):
-        _environment(transition=closure_transition)
-    with pytest.raises(TypeError, match="Opaque callables"):
-        _environment(
-            initializer=lambda key: jnp.zeros((2,)),
-            initializer_semantic_id="zero-initializer",
-        )
-
-    baseline = _environment()
-    with pytest.raises(TypeError, match="Opaque callables"):
-        PreparedRobotEnvironment(
-            baseline.plant,
-            baseline.parameters,
-            baseline.task,
-            (_ShapedWrapper(lambda value: 0.5 * value),),
-            step_size=1.0,
-        )
-
-
-def test_distinct_opaque_initializers_bind_their_declared_identities() -> None:
+    assert jnp.array_equal(reset.attempted, jnp.asarray([True, True]))
+    assert jnp.array_equal(reset.successful, jnp.asarray([False, False]))
+    assert jnp.array_equal(reset.status, jnp.asarray([7, 7]))
+    assert jnp.array_equal(reset.backend_status, jnp.asarray([17, 17]))
+    assert reset.evidence == ()
     first = _environment(
         initializer=lambda key: jnp.zeros((2,)),
         initializer_semantic_id="zero-initializer",
@@ -499,9 +461,6 @@ def test_distinct_opaque_initializers_bind_their_declared_identities() -> None:
         revised.plant.numeric_revision.revision_id
         != first.plant.numeric_revision.revision_id
     )
-
-
-def test_strict_module_transition_is_content_addressed() -> None:
     slow = _environment(transition=_GainTransition(1.0))
     fast = _environment(transition=_GainTransition(2.0))
 
@@ -518,6 +477,33 @@ def test_strict_module_transition_is_content_addressed() -> None:
             transition=_GainTransition(1.0),
             transition_semantic_id="gain",
             transition_numeric_id="gain:rev-1",
+        )
+
+
+def test_opaque_environment_callables_without_declared_ids_are_refused() -> None:
+    def closure_transition(context: Any, state: Any, action: Any, args: Any) -> Any:
+        return _bounded_transition(context, state, action, args)
+
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(initializer=lambda key: jnp.zeros((2,)))
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(initializer=functools.partial(_initial_state))
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(transition=closure_transition)
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(
+            initializer=lambda key: jnp.zeros((2,)),
+            initializer_semantic_id="zero-initializer",
+        )
+
+    baseline = _environment()
+    with pytest.raises(TypeError, match="Opaque callables"):
+        PreparedRobotEnvironment(
+            baseline.plant,
+            baseline.parameters,
+            baseline.task,
+            (_ShapedWrapper(lambda value: 0.5 * value),),
+            step_size=1.0,
         )
 
 
@@ -742,21 +728,7 @@ def _mixed_environment(
     )
 
 
-def test_environment_reset_retains_failed_plant_disposition() -> None:
-    environment = _mixed_environment(reset_successful=False)
-    keys = jax.random.split(jax.random.key(59), 2)
-    reset = environment.reset(keys, case_shape=(2,))
-
-    assert jnp.array_equal(reset.attempted, jnp.asarray([True, True]))
-    assert jnp.array_equal(reset.successful, jnp.asarray([False, False]))
-    assert jnp.array_equal(reset.status, jnp.asarray([7, 7]))
-    assert jnp.array_equal(reset.backend_status, jnp.asarray([17, 17]))
-    assert reset.evidence == ()
-
-
-def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leaves() -> (
-    None
-):
+def test_robot_environment_scenario_3() -> None:
     environment = _mixed_environment()
     keys = jax.random.split(jax.random.key(60), 2)
     reset = environment.reset(keys, case_shape=(2,))
@@ -823,9 +795,6 @@ def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leav
     )
     assert jnp.array_equal(result.reset_state.key[1], source.key[1])
     assert result.reset_state.wrapper_states[0]["count"][1] == 0
-
-
-def test_same_shape_stale_plant_provenance_is_rejected_before_transition() -> None:
     environment = _mixed_environment()
     stale_environment = _mixed_environment(semantic_tag="stale-mixed")
     keys = jax.random.split(jax.random.key(61), 2)

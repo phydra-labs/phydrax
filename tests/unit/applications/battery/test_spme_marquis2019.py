@@ -219,7 +219,7 @@ def _observable(adapter: Any, output: Any, name: Any) -> Any:
     return output.values[..., adapter.observable_names.index(name)]
 
 
-def test_three_region_plan_prepares_exact_ordered_topology_and_nonuniform_faces() -> None:
+def test_spme_marquis2019_scenario_1() -> None:
     negative = ThroughCellRegionPlan(
         2,
         region="negative",
@@ -245,9 +245,108 @@ def test_three_region_plan_prepares_exact_ordered_topology_and_nonuniform_faces(
         prepared.electrolyte_current_fraction_faces,
         jnp.asarray((0.0, 0.25, 1.0, 1.0, 0.25, 0.0)),
     )
+    parameters = _parameters()
+    adapter, prepared = _adapter()
+    state = _state(adapter, prepared, parameters)
+    metrics = prepared.through_cell.metrics(
+        negative_thickness_m=parameters.spm_parameters.negative_electrode_thickness_m,
+        separator_thickness_m=parameters.separator_thickness_m,
+        positive_thickness_m=parameters.spm_parameters.positive_electrode_thickness_m,
+        negative_porosity=parameters.negative_electrolyte_porosity,
+        separator_porosity=parameters.separator_electrolyte_porosity,
+        positive_porosity=parameters.positive_electrolyte_porosity,
+        bruggeman_coefficient=parameters.bruggeman_coefficient,
+        electrolyte_diffusivity_m2_s=parameters.electrolyte_diffusivity.evaluate(
+            parameters.typical_electrolyte_concentration_mol_m3,
+            parameters.spm_parameters.temperature_k,
+        ).values,
+        electrode_area_m2=parameters.spm_parameters.electrode_area_m2,
+    )
+    concentration = 900.0 + 2.0e6 * metrics.cell_centers_m
+    perturbed = Marquis2019SpmeState(
+        state.negative_amount_mol,
+        state.positive_amount_mol,
+        concentration * metrics.storage_volume_m3,
+    )
+    electrolyte = prepared.evaluate(perturbed, parameters, 0.0).electrolyte_transport
+
+    np.testing.assert_allclose(
+        electrolyte.negative_separator_concentration_jump_mol_m3,
+        0.0,
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(
+        electrolyte.separator_positive_concentration_jump_mol_m3,
+        0.0,
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(jnp.sum(electrolyte.amount_rate_mol_s), 0.0, atol=1.0e-15)
+    np.testing.assert_allclose(electrolyte.conservation_residual_mol_s, 0.0, atol=1.0e-15)
+    parameters = _parameters()
+    adapter, prepared = _adapter()
+    state = _state(adapter, prepared, parameters)
+    current = 4.0
+    output = adapter.observe(
+        prepared, jnp.asarray(0.0), state, _runtime(parameters, current)
+    )
+    terms = tuple(
+        _observable(adapter, output, name)
+        for name in (
+            "voltage:particle_ocp_v",
+            "voltage:reaction_overpotential_v",
+            "voltage:mean_concentration_overpotential_v",
+            "voltage:electrolyte_ohmic_loss_v",
+            "voltage:solid_ohmic_loss_v",
+        )
+    )
+    spm = parameters.spm_parameters
+    current_density = current / spm.electrode_area_m2
+    expected_electrolyte_ohmic = (
+        current_density
+        / (
+            parameters.electrolyte_conductivity.evaluate(
+                parameters.typical_electrolyte_concentration_mol_m3,
+                spm.temperature_k,
+            ).values
+        )
+        * (
+            spm.negative_electrode_thickness_m
+            / (
+                3.0
+                * parameters.negative_electrolyte_porosity
+                ** parameters.bruggeman_coefficient
+            )
+            + parameters.separator_thickness_m
+            / parameters.separator_electrolyte_porosity**parameters.bruggeman_coefficient
+            + spm.positive_electrode_thickness_m
+            / (
+                3.0
+                * parameters.positive_electrolyte_porosity
+                ** parameters.bruggeman_coefficient
+            )
+        )
+    )
+    expected_solid_ohmic = (
+        current_density
+        / 3.0
+        * (
+            spm.negative_electrode_thickness_m
+            / parameters.negative_solid_conductivity_s_m
+            + spm.positive_electrode_thickness_m
+            / parameters.positive_solid_conductivity_s_m
+        )
+    )
+
+    np.testing.assert_allclose(terms[0], 4.0)
+    assert float(terms[1]) > 0.0
+    np.testing.assert_allclose(terms[2], 0.0, atol=1.0e-15)
+    np.testing.assert_allclose(terms[3], expected_electrolyte_ohmic)
+    np.testing.assert_allclose(terms[4], expected_solid_ohmic)
+    np.testing.assert_allclose(_observable(adapter, output, "voltage_v"), sum(terms))
+    assert bool(output.domain_valid)
 
 
-def test_eq48_boundaries_interfaces_current_split_source_and_conservation() -> None:
+def test_eq48_contracts() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -318,48 +417,77 @@ def test_eq48_boundaries_interfaces_current_split_source_and_conservation() -> N
         0.0,
         atol=1.0e-15,
     )
-
-
-def test_single_face_flux_preserves_continuity_and_inventory_for_nonuniform_state() -> (
-    None
-):
     parameters = _parameters()
+    variable_diffusivity = TabulatedPropertyLaw(
+        jnp.asarray((0.0, 3.0e4)),
+        jnp.asarray((1.0e-14, 5.0e-14)),
+        value_bounds=(0.0, jnp.inf),
+        quantity="negative-solid-diffusivity",
+        coordinate="solid_lithium_concentration",
+        value_unit="m2/s",
+        coordinate_unit="mol/m3",
+        source_id="test:negative-variable-solid-diffusivity",
+    )
+    variable_spm = eqx.tree_at(
+        lambda value: value.negative_solid_diffusivity,
+        parameters.spm_parameters,
+        variable_diffusivity,
+    )
+    variable_parameters = eqx.tree_at(
+        lambda value: value.spm_parameters,
+        parameters,
+        variable_spm,
+    )
     adapter, prepared = _adapter()
-    state = _state(adapter, prepared, parameters)
-    metrics = prepared.through_cell.metrics(
-        negative_thickness_m=parameters.spm_parameters.negative_electrode_thickness_m,
-        separator_thickness_m=parameters.separator_thickness_m,
-        positive_thickness_m=parameters.spm_parameters.positive_electrode_thickness_m,
-        negative_porosity=parameters.negative_electrolyte_porosity,
-        separator_porosity=parameters.separator_electrolyte_porosity,
-        positive_porosity=parameters.positive_electrolyte_porosity,
-        bruggeman_coefficient=parameters.bruggeman_coefficient,
-        electrolyte_diffusivity_m2_s=parameters.electrolyte_diffusivity.evaluate(
-            parameters.typical_electrolyte_concentration_mol_m3,
-            parameters.spm_parameters.temperature_k,
-        ).values,
-        electrode_area_m2=parameters.spm_parameters.electrode_area_m2,
+    uniform = _state(adapter, prepared, variable_parameters)
+    shell_scale = jnp.linspace(0.8, 1.2, uniform.negative_amount_mol.size)
+    state = Marquis2019SpmeState(
+        uniform.negative_amount_mol * shell_scale,
+        uniform.positive_amount_mol,
+        uniform.electrolyte_amount_mol,
     )
-    concentration = 900.0 + 2.0e6 * metrics.cell_centers_m
-    perturbed = Marquis2019SpmeState(
-        state.negative_amount_mol,
-        state.positive_amount_mol,
-        concentration * metrics.storage_volume_m3,
+    current = 0.1
+    variable = prepared.evaluate(state, variable_parameters, current)
+    constant = prepared.evaluate(state, parameters, current)
+    expected_shell_diffusivity = variable_diffusivity.evaluate(
+        variable.particle_transport.negative.concentration_mol_m3
+    ).values
+    np.testing.assert_allclose(
+        variable.particle_transport.negative_diffusivity_m2_s,
+        expected_shell_diffusivity,
     )
-    electrolyte = prepared.evaluate(perturbed, parameters, 0.0).electrolyte_transport
+    assert (
+        float(
+            jnp.max(
+                jnp.abs(
+                    variable.particle_transport.negative.amount_rate_mol_s
+                    - constant.particle_transport.negative.amount_rate_mol_s
+                )
+            )
+        )
+        > 1.0e-12
+    )
 
-    np.testing.assert_allclose(
-        electrolyte.negative_separator_concentration_jump_mol_m3,
-        0.0,
-        atol=1.0e-12,
+    spm = variable_parameters.spm_parameters
+    total_length = (
+        spm.negative_electrode_thickness_m
+        + variable_parameters.separator_thickness_m
+        + spm.positive_electrode_thickness_m
+    )
+    expected_table6 = (
+        spm.negative_particle_radius_m**2
+        * (abs(current) / spm.electrode_area_m2)
+        / (
+            jnp.min(expected_shell_diffusivity)
+            * FARADAY
+            * spm.negative_maximum_concentration_mol_m3
+            * total_length
+        )
     )
     np.testing.assert_allclose(
-        electrolyte.separator_positive_concentration_jump_mol_m3,
-        0.0,
-        atol=1.0e-12,
+        variable.negative_solid_diffusion_number,
+        expected_table6,
     )
-    np.testing.assert_allclose(jnp.sum(electrolyte.amount_rate_mol_s), 0.0, atol=1.0e-15)
-    np.testing.assert_allclose(electrolyte.conservation_residual_mol_s, 0.0, atol=1.0e-15)
 
 
 def test_electrolyte_coefficients_are_frozen_at_typical_concentration_and_temperature() -> (
@@ -532,72 +660,7 @@ def test_electrolyte_coefficients_are_frozen_at_typical_concentration_and_temper
     )
 
 
-def test_five_voltage_terms_are_exact_paper_averages_with_one_third_factors() -> None:
-    parameters = _parameters()
-    adapter, prepared = _adapter()
-    state = _state(adapter, prepared, parameters)
-    current = 4.0
-    output = adapter.observe(
-        prepared, jnp.asarray(0.0), state, _runtime(parameters, current)
-    )
-    terms = tuple(
-        _observable(adapter, output, name)
-        for name in (
-            "voltage:particle_ocp_v",
-            "voltage:reaction_overpotential_v",
-            "voltage:mean_concentration_overpotential_v",
-            "voltage:electrolyte_ohmic_loss_v",
-            "voltage:solid_ohmic_loss_v",
-        )
-    )
-    spm = parameters.spm_parameters
-    current_density = current / spm.electrode_area_m2
-    expected_electrolyte_ohmic = (
-        current_density
-        / (
-            parameters.electrolyte_conductivity.evaluate(
-                parameters.typical_electrolyte_concentration_mol_m3,
-                spm.temperature_k,
-            ).values
-        )
-        * (
-            spm.negative_electrode_thickness_m
-            / (
-                3.0
-                * parameters.negative_electrolyte_porosity
-                ** parameters.bruggeman_coefficient
-            )
-            + parameters.separator_thickness_m
-            / parameters.separator_electrolyte_porosity**parameters.bruggeman_coefficient
-            + spm.positive_electrode_thickness_m
-            / (
-                3.0
-                * parameters.positive_electrolyte_porosity
-                ** parameters.bruggeman_coefficient
-            )
-        )
-    )
-    expected_solid_ohmic = (
-        current_density
-        / 3.0
-        * (
-            spm.negative_electrode_thickness_m
-            / parameters.negative_solid_conductivity_s_m
-            + spm.positive_electrode_thickness_m
-            / parameters.positive_solid_conductivity_s_m
-        )
-    )
-
-    np.testing.assert_allclose(terms[0], 4.0)
-    assert float(terms[1]) > 0.0
-    np.testing.assert_allclose(terms[2], 0.0, atol=1.0e-15)
-    np.testing.assert_allclose(terms[3], expected_electrolyte_ohmic)
-    np.testing.assert_allclose(terms[4], expected_solid_ohmic)
-    np.testing.assert_allclose(_observable(adapter, output, "voltage_v"), sum(terms))
-    assert bool(output.domain_valid)
-
-
-def test_uniform_electrolyte_and_vanishing_ohmic_losses_reduce_exactly_to_spm() -> None:
+def test_spme_marquis2019_scenario_2() -> None:
     parameters = _parameters(transference=1.0)
     high_conductivity = _electrolyte_law(
         1.0e30,
@@ -649,83 +712,6 @@ def test_uniform_electrolyte_and_vanishing_ohmic_losses_reduce_exactly_to_spm() 
         rtol=1.0e-12,
         atol=1.0e-12,
     )
-
-
-def test_eq48_particles_use_runtime_shell_concentration_dependent_diffusivity() -> None:
-    parameters = _parameters()
-    variable_diffusivity = TabulatedPropertyLaw(
-        jnp.asarray((0.0, 3.0e4)),
-        jnp.asarray((1.0e-14, 5.0e-14)),
-        value_bounds=(0.0, jnp.inf),
-        quantity="negative-solid-diffusivity",
-        coordinate="solid_lithium_concentration",
-        value_unit="m2/s",
-        coordinate_unit="mol/m3",
-        source_id="test:negative-variable-solid-diffusivity",
-    )
-    variable_spm = eqx.tree_at(
-        lambda value: value.negative_solid_diffusivity,
-        parameters.spm_parameters,
-        variable_diffusivity,
-    )
-    variable_parameters = eqx.tree_at(
-        lambda value: value.spm_parameters,
-        parameters,
-        variable_spm,
-    )
-    adapter, prepared = _adapter()
-    uniform = _state(adapter, prepared, variable_parameters)
-    shell_scale = jnp.linspace(0.8, 1.2, uniform.negative_amount_mol.size)
-    state = Marquis2019SpmeState(
-        uniform.negative_amount_mol * shell_scale,
-        uniform.positive_amount_mol,
-        uniform.electrolyte_amount_mol,
-    )
-    current = 0.1
-    variable = prepared.evaluate(state, variable_parameters, current)
-    constant = prepared.evaluate(state, parameters, current)
-    expected_shell_diffusivity = variable_diffusivity.evaluate(
-        variable.particle_transport.negative.concentration_mol_m3
-    ).values
-    np.testing.assert_allclose(
-        variable.particle_transport.negative_diffusivity_m2_s,
-        expected_shell_diffusivity,
-    )
-    assert (
-        float(
-            jnp.max(
-                jnp.abs(
-                    variable.particle_transport.negative.amount_rate_mol_s
-                    - constant.particle_transport.negative.amount_rate_mol_s
-                )
-            )
-        )
-        > 1.0e-12
-    )
-
-    spm = variable_parameters.spm_parameters
-    total_length = (
-        spm.negative_electrode_thickness_m
-        + variable_parameters.separator_thickness_m
-        + spm.positive_electrode_thickness_m
-    )
-    expected_table6 = (
-        spm.negative_particle_radius_m**2
-        * (abs(current) / spm.electrode_area_m2)
-        / (
-            jnp.min(expected_shell_diffusivity)
-            * FARADAY
-            * spm.negative_maximum_concentration_mol_m3
-            * total_length
-        )
-    )
-    np.testing.assert_allclose(
-        variable.negative_solid_diffusion_number,
-        expected_table6,
-    )
-
-
-def test_table6_quantities_and_eq49_use_actual_current_and_state() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -782,9 +768,6 @@ def test_table6_quantities_and_eq49_use_actual_current_and_state() -> None:
     np.testing.assert_allclose(
         _observable(adapter, output, "table6:conditions_satisfied"), 1.0
     )
-
-
-def test_eq49_ocp_error_matches_independent_molar_perturbation_normalization() -> None:
     # The runtime passes q_scale=I*L/De [C/m3], whereas a Taylor expansion
     # uses delta_c=q_scale/F [mol/m3] and dimensionless voltage scale RT/F.
     molar_perturbation = jnp.asarray(2.0)
@@ -797,9 +780,6 @@ def test_eq49_ocp_error_matches_independent_molar_perturbation_normalization() -
         expected,
         rtol=1.0e-12,
     )
-
-
-def test_eq49_applicability_refuses_a_tabulated_ocp_kink_in_its_neighborhood() -> None:
     parameters = _parameters()
     kinked_ocp = TabulatedPropertyLaw(
         jnp.asarray((0.0, 0.5, 1.0)),
@@ -834,9 +814,6 @@ def test_eq49_applicability_refuses_a_tabulated_ocp_kink_in_its_neighborhood() -
     np.testing.assert_allclose(
         _observable(adapter, output, "table6:conditions_satisfied"), 0.0
     )
-
-
-def test_eq49_neighborhood_refuses_crossing_noncontiguous_table_support() -> None:
     disconnected_ocp = TabulatedPropertyLaw(
         jnp.asarray((0.0, 0.45, 0.5, 0.55, 1.0)),
         jnp.asarray((0.1, 0.145, 0.15, 0.155, 0.2)),
@@ -861,7 +838,7 @@ def test_eq49_neighborhood_refuses_crossing_noncontiguous_table_support() -> Non
     assert not bool(neighborhood_valid)
 
 
-def test_support_failures_are_explicit_and_outputs_remain_finite() -> None:
+def test_spme_marquis2019_scenario_3() -> None:
     parameters = _parameters(maximum_current=5.0)
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -884,6 +861,47 @@ def test_support_failures_are_explicit_and_outputs_remain_finite() -> None:
     )
     assert not bool(invalid.domain_valid)
     assert bool(jnp.all(jnp.isfinite(invalid.values)))
+    parameters = _parameters(maximum_current=0.5)
+    _, prepared = _adapter()
+    initial = Marquis2019SpmeInitialCondition(0.5, 0.5)
+    protocol = BatteryProtocolPlan(
+        (CurrentStepPlan(0.5), RestStepPlan(0.25), CurrentStepPlan(0.25))
+    )
+    validate_marquis2019_spme_execution(
+        prepared,
+        parameters,
+        initial,
+        protocol,
+        BatteryProtocolValues(protocol, jnp.asarray((0.2, -0.05))),
+    )
+    with pytest.raises(ValueError):
+        validate_marquis2019_spme_execution(
+            prepared,
+            parameters,
+            initial,
+            protocol,
+            BatteryProtocolValues(protocol, jnp.asarray((0.2, 0.6))),
+        )
+    too_long = BatteryProtocolPlan((CurrentStepPlan(200000.0),))
+    with pytest.raises(ValueError):
+        validate_marquis2019_spme_execution(
+            prepared,
+            parameters,
+            initial,
+            too_long,
+            BatteryProtocolValues(too_long, jnp.asarray((0.2,))),
+        )
+    parameters = _parameters(maximum_current=20.0)
+    _, prepared = _adapter()
+    protocol = BatteryProtocolPlan((CurrentStepPlan(0.1),))
+    with pytest.raises(ValueError):
+        validate_marquis2019_spme_execution(
+            prepared,
+            parameters,
+            Marquis2019SpmeInitialCondition(0.5, 0.5),
+            protocol,
+            BatteryProtocolValues(protocol, jnp.asarray((5.0,))),
+        )
 
 
 def test_through_cell_refinement_improves_interface_flux_for_smooth_solution() -> None:
@@ -1080,50 +1098,3 @@ def test_protocol_orchestration_reports_all_conservation_and_evidence() -> None:
 
     fixed_path_derivative = jax.grad(final_negative_amount)(jnp.asarray(0.2))
     np.testing.assert_allclose(fixed_path_derivative, 0.5 / FARADAY, rtol=2.0e-5)
-
-
-def test_model_preflight_checks_later_amplitudes_and_complete_charge_inventory() -> None:
-    parameters = _parameters(maximum_current=0.5)
-    _, prepared = _adapter()
-    initial = Marquis2019SpmeInitialCondition(0.5, 0.5)
-    protocol = BatteryProtocolPlan(
-        (CurrentStepPlan(0.5), RestStepPlan(0.25), CurrentStepPlan(0.25))
-    )
-    validate_marquis2019_spme_execution(
-        prepared,
-        parameters,
-        initial,
-        protocol,
-        BatteryProtocolValues(protocol, jnp.asarray((0.2, -0.05))),
-    )
-    with pytest.raises(ValueError):
-        validate_marquis2019_spme_execution(
-            prepared,
-            parameters,
-            initial,
-            protocol,
-            BatteryProtocolValues(protocol, jnp.asarray((0.2, 0.6))),
-        )
-    too_long = BatteryProtocolPlan((CurrentStepPlan(200000.0),))
-    with pytest.raises(ValueError):
-        validate_marquis2019_spme_execution(
-            prepared,
-            parameters,
-            initial,
-            too_long,
-            BatteryProtocolValues(too_long, jnp.asarray((0.2,))),
-        )
-
-
-def test_model_preflight_refuses_table6_failure_below_declared_current_bound() -> None:
-    parameters = _parameters(maximum_current=20.0)
-    _, prepared = _adapter()
-    protocol = BatteryProtocolPlan((CurrentStepPlan(0.1),))
-    with pytest.raises(ValueError):
-        validate_marquis2019_spme_execution(
-            prepared,
-            parameters,
-            Marquis2019SpmeInitialCondition(0.5, 0.5),
-            protocol,
-            BatteryProtocolValues(protocol, jnp.asarray((5.0,))),
-        )

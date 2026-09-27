@@ -30,7 +30,7 @@ from phydrax.uq import (
 )
 
 
-def test_likelihood_ratio_matches_common_random_number_finite_difference() -> None:
+def test_advanced_sensitivity_scenario_1() -> None:
     theta = 0.7
     noise = jr.normal(jr.key(21), (100_000,))
     samples = theta + noise
@@ -50,6 +50,46 @@ def test_likelihood_ratio_matches_common_random_number_finite_difference() -> No
     assert bool(estimate.valid)
     assert estimate.estimator_id == "likelihood_ratio"
     assert estimate.noise_id == "normal-draws-21"
+    features = jnp.asarray([-1.0, 0.5, 2.0, 3.0])
+    theta = 0.4
+    log_weights = theta * features
+    ancestors = jnp.asarray([0, 1, 2, 3, 3, 2, 3, 1])
+    values = features**2
+    result = resampling_score_gradient(
+        values,
+        log_weights,
+        features,
+        ancestors,
+        resampling_id="systematic-step-7",
+        noise_id="particle-cloud-4",
+    )
+
+    np.testing.assert_allclose(result.expected_centered_score, 0.0, atol=2e-15)
+    expected_centered = features - jnp.sum(result.normalized_weights * features)
+    np.testing.assert_allclose(result.centered_scores, expected_centered, atol=2e-15)
+    assert bool(result.valid)
+    assert result.estimator_id == "resampling_score"
+    assert result.resampling_id == "systematic-step-7"
+    scores = jnp.asarray([[1.0, -2.0, 0.5], [0.2, 0.7, -1.0], [-0.4, 1.1, 0.3]])
+    vector = jnp.asarray([0.6, -0.2, 0.9])
+    fisher = fisher_information_action(scores, vector, regularization=0.15)
+    dense_fisher = scores.T @ scores / scores.shape[0] + 0.15 * jnp.eye(3)
+    np.testing.assert_allclose(fisher.action, dense_fisher @ vector, atol=2e-15)
+
+    matrix = jnp.asarray([[1.0, 2.0, -0.5], [0.3, -0.4, 1.2]])
+    residual = lambda parameters: jnp.tanh(matrix @ parameters)
+    parameters = jnp.asarray([0.2, -0.1, 0.4])
+    gauss_newton = gauss_newton_action(
+        residual,
+        parameters,
+        vector,
+        regularization=0.05,
+    )
+    jacobian = jax.jacrev(residual)(parameters)
+    expected = (jacobian.T @ jacobian + 0.05 * jnp.eye(3)) @ vector
+    np.testing.assert_allclose(gauss_newton.action, expected, atol=2e-15)
+    assert bool(fisher.valid)
+    assert bool(gauss_newton.valid)
 
 
 def test_fixed_noise_pathwise_gradient_matches_finite_difference() -> None:
@@ -82,53 +122,7 @@ def test_fixed_noise_pathwise_gradient_matches_finite_difference() -> None:
     assert result.approximation == "exact_autodiff_for_fixed_realization"
 
 
-def test_resampling_scores_include_normalizer_and_obey_score_identity() -> None:
-    features = jnp.asarray([-1.0, 0.5, 2.0, 3.0])
-    theta = 0.4
-    log_weights = theta * features
-    ancestors = jnp.asarray([0, 1, 2, 3, 3, 2, 3, 1])
-    values = features**2
-    result = resampling_score_gradient(
-        values,
-        log_weights,
-        features,
-        ancestors,
-        resampling_id="systematic-step-7",
-        noise_id="particle-cloud-4",
-    )
-
-    np.testing.assert_allclose(result.expected_centered_score, 0.0, atol=2e-15)
-    expected_centered = features - jnp.sum(result.normalized_weights * features)
-    np.testing.assert_allclose(result.centered_scores, expected_centered, atol=2e-15)
-    assert bool(result.valid)
-    assert result.estimator_id == "resampling_score"
-    assert result.resampling_id == "systematic-step-7"
-
-
-def test_fisher_and_gauss_newton_actions_match_dense_products() -> None:
-    scores = jnp.asarray([[1.0, -2.0, 0.5], [0.2, 0.7, -1.0], [-0.4, 1.1, 0.3]])
-    vector = jnp.asarray([0.6, -0.2, 0.9])
-    fisher = fisher_information_action(scores, vector, regularization=0.15)
-    dense_fisher = scores.T @ scores / scores.shape[0] + 0.15 * jnp.eye(3)
-    np.testing.assert_allclose(fisher.action, dense_fisher @ vector, atol=2e-15)
-
-    matrix = jnp.asarray([[1.0, 2.0, -0.5], [0.3, -0.4, 1.2]])
-    residual = lambda parameters: jnp.tanh(matrix @ parameters)
-    parameters = jnp.asarray([0.2, -0.1, 0.4])
-    gauss_newton = gauss_newton_action(
-        residual,
-        parameters,
-        vector,
-        regularization=0.05,
-    )
-    jacobian = jax.jacrev(residual)(parameters)
-    expected = (jacobian.T @ jacobian + 0.05 * jnp.eye(3)) @ vector
-    np.testing.assert_allclose(gauss_newton.action, expected, atol=2e-15)
-    assert bool(fisher.valid)
-    assert bool(gauss_newton.valid)
-
-
-def test_matrix_free_actions_are_jit_compatible() -> None:
+def test_advanced_sensitivity_scenario_2() -> None:
     scores = jnp.asarray([[1.0, 2.0], [-0.5, 0.3], [0.2, -0.7]])
     vector = jnp.asarray([0.4, -0.6])
     action = jax.jit(
@@ -137,9 +131,6 @@ def test_matrix_free_actions_are_jit_compatible() -> None:
         )
     )(scores, vector)
     np.testing.assert_allclose(action, scores.T @ scores @ vector / 3.0, atol=2e-15)
-
-
-def test_exact_exponential_family_fisher_actions_match_dense_hessians() -> None:
     cases = (
         (BernoulliFamily(), jnp.asarray([0.3])),
         (PoissonFamily(), jnp.asarray([jnp.log(1.7)])),
@@ -163,9 +154,24 @@ def test_exact_exponential_family_fisher_actions_match_dense_hessians() -> None:
         assert bool(result.valid)
         assert result.operator_id == "fisher_information"
         assert result.approximation == "exact_exponential_family"
-
-
-def test_parameter_space_family_fisher_pullback_matches_dense_product_and_jit() -> None:
+    family = ExponentialRateFamily()
+    invalid = exponential_family_fisher_action(
+        family,
+        family.natural(jnp.asarray([0.0])),
+        jnp.asarray([1.0]),
+    )
+    nonfinite = exponential_family_fisher_action(
+        family,
+        family.natural(jnp.asarray([jnp.nan])),
+        jnp.asarray([1.0]),
+    )
+    assert not bool(invalid.valid)
+    assert int(invalid.status) == 2
+    assert int(family.natural_domain(family.natural(jnp.asarray([0.0]))).status) == (
+        EXPONENTIAL_FAMILY_OUTSIDE_NATURAL_DOMAIN
+    )
+    assert not bool(nonfinite.valid)
+    assert int(nonfinite.status) == 1
     family = PoissonFamily()
     matrix = jnp.asarray([[1.0, -0.4, 0.2], [0.3, 0.7, -0.5]])
     offset = jnp.asarray([-0.2, 0.4])
@@ -205,28 +211,7 @@ def test_parameter_space_family_fisher_pullback_matches_dense_product_and_jit() 
     assert result.operator_id == "fisher_information_pullback"
 
 
-def test_exact_family_fisher_reports_invalid_and_nonfinite_coordinates() -> None:
-    family = ExponentialRateFamily()
-    invalid = exponential_family_fisher_action(
-        family,
-        family.natural(jnp.asarray([0.0])),
-        jnp.asarray([1.0]),
-    )
-    nonfinite = exponential_family_fisher_action(
-        family,
-        family.natural(jnp.asarray([jnp.nan])),
-        jnp.asarray([1.0]),
-    )
-    assert not bool(invalid.valid)
-    assert int(invalid.status) == 2
-    assert int(family.natural_domain(family.natural(jnp.asarray([0.0]))).status) == (
-        EXPONENTIAL_FAMILY_OUTSIDE_NATURAL_DOMAIN
-    )
-    assert not bool(nonfinite.valid)
-    assert int(nonfinite.status) == 1
-
-
-def test_empirical_directions_match_dense_observability_and_controllability() -> None:
+def test_advanced_sensitivity_scenario_3() -> None:
     observation = jnp.asarray([[2.0, 0.0], [0.0, 0.5], [1.0, -1.0]])
     observability = empirical_observability_directions(
         lambda state: observation @ state,
@@ -252,9 +237,6 @@ def test_empirical_directions_match_dense_observability_and_controllability() ->
     assert controllability.quantity == "controllability"
     assert bool(observability.valid)
     assert bool(controllability.valid)
-
-
-def test_experiment_design_objectives_and_invalid_information_status() -> None:
     information = jnp.asarray([[4.0, 0.5], [0.5, 2.0]])
     d_optimal = experiment_design_objective(
         information,
@@ -285,9 +267,6 @@ def test_experiment_design_objectives_and_invalid_information_status() -> None:
     assert not bool(invalid.valid)
     assert bool(jnp.isnan(invalid.value))
     assert int(invalid.status) != 0
-
-
-def test_guarded_dense_direction_and_design_materialization_reject_large_spaces() -> None:
     with pytest.raises(ValueError, match="max_dimension"):
         empirical_observability_directions(
             lambda state: state,

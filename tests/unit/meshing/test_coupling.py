@@ -32,7 +32,7 @@ def _part(name: Any, coordinates: Any = None, cells: Any = None) -> Any:
     )
 
 
-def test_conformal_bijection_maps_global_ids_and_rejects_stale_endpoint() -> None:
+def test_coupling_scenario_1() -> None:
     source = _part("left")
     target = _part("right", ((1.0, 0.0), (0.0, 0.0), (0.0, 1.0)), ((1, 0, 2),))
     source_scope, target_scope = source.scope(0, [0, 1]), target.scope(0, [0, 1])
@@ -50,9 +50,6 @@ def test_conformal_bijection_maps_global_ids_and_rejects_stale_endpoint() -> Non
         ConformalCoupling(
             source, target, source_scope, target_scope, source_ids=np.asarray([0, 0])
         )
-
-
-def test_periodic_isometry_transports_vectors_not_just_scalar_values() -> None:
     source = _part("source")
     rotation = np.asarray(((0.0, -1.0), (1.0, 0.0)))
     translation = np.asarray((2.0, 1.0))
@@ -80,9 +77,6 @@ def test_periodic_isometry_transports_vectors_not_just_scalar_values() -> None:
             2 * rotation,
             translation,
         )
-
-
-def test_node_contact_activation_and_equal_opposite_differentiable_forces() -> None:
     source = _part("source")
     target = _part("target", np.asarray(source.carrier.mesh.coordinates) - [0.0, 0.1])
     coupling = ContactCoupling(
@@ -104,7 +98,7 @@ def test_node_contact_activation_and_equal_opposite_differentiable_forces() -> N
     np.testing.assert_allclose(derivative, np.tile([0.0, -10.0], (3, 1)))
 
 
-def test_overset_interpolates_constants_and_linear_values_with_exact_transpose() -> None:
+def test_coupling_scenario_2() -> None:
     source = _part("donor")
     target = _part("receptor", ((0.25, 0.25), (0.5, 0.25), (0.25, 0.5)))
     overlay = OversetCoupling(
@@ -140,11 +134,6 @@ def test_overset_interpolates_constants_and_linear_values_with_exact_transpose()
     )
     with pytest.raises(ValueError, match="exactly one"):
         MeshAssembly((source, target, duplicate_donor), couplings=(overlay, duplicate))
-
-
-def test_overset_rejects_nonpartition_weights_unknown_donors_and_conflicting_holes() -> (
-    None
-):
     source, target = _part("source"), _part("target")
     args = (source, target, source.scope(0, [0, 1]), target.scope(0, [0]))
     with pytest.raises(ValueError, match="summing to one"):
@@ -159,36 +148,6 @@ def test_overset_rejects_nonpartition_weights_unknown_donors_and_conflicting_hol
         )
     overlay = OversetCoupling(*args, np.asarray([[0, 1]]), np.asarray([[1.0, 0.0]]))
     np.testing.assert_allclose(overlay.transfer(jnp.asarray([2.0, jnp.nan])), [2.0])
-
-
-def _grid_part(
-    name: Any, count: Any, *, offset: Any = (0.0, 0.0), scale: Any = 1.0
-) -> Any:
-    xs, ys = np.meshgrid(
-        np.linspace(0.0, scale, count + 1),
-        np.linspace(0.0, scale, count + 1),
-        indexing="ij",
-    )
-    points = np.stack((xs.ravel(), ys.ravel()), axis=1) + np.asarray(offset)
-    index = np.arange((count + 1) ** 2).reshape(count + 1, count + 1)
-    lower, right = index[:-1, :-1].ravel(), index[1:, :-1].ravel()
-    upper, left = index[1:, 1:].ravel(), index[:-1, 1:].ravel()
-    triangles = np.concatenate(
-        (np.stack((lower, right, upper), 1), np.stack((lower, upper, left), 1))
-    )
-    return _part(name, points, triangles)
-
-
-def _vertex_scope(part: Any, ids: Any = None) -> Any:
-    identifiers = (
-        np.asarray(part.carrier.mesh.vertex_global_ids)
-        if ids is None
-        else np.asarray(ids)
-    )
-    return part.scope(0, np.sort(identifiers))
-
-
-def test_overset_search_interpolates_linear_fields_through_located_donor_cells() -> None:
     donor = _grid_part("donor", 4)
     receptor = _grid_part("receptor", 3, offset=(0.13, 0.21), scale=0.6)
     source_scope, target_scope = _vertex_scope(donor), _vertex_scope(receptor)
@@ -211,9 +170,6 @@ def test_overset_search_interpolates_linear_fields_through_located_donor_cells()
         jnp.vdot(affine, overlay.transpose(cotangent)),
     )
     MeshAssembly((donor, receptor), couplings=(overlay,))
-
-
-def test_overset_search_reports_outside_and_excluded_donors() -> None:
     donor = _grid_part("donor", 2)
     receptor = _part("receptor", ((0.2, 0.2), (0.7, 0.3), (1.3, 1.2)))
     target_scope = _vertex_scope(receptor)
@@ -237,9 +193,6 @@ def test_overset_search_reports_outside_and_excluded_donors() -> None:
         OversetCoupling.search(
             donor, receptor, _vertex_scope(donor, identifiers[~center]), first
         )
-
-
-def test_contact_search_recovers_the_nearest_node_bijection() -> None:
     source = _grid_part("source", 2)
     coordinates = np.asarray(source.carrier.mesh.coordinates)
     permutation = np.random.default_rng(5).permutation(coordinates.shape[0])
@@ -279,3 +232,30 @@ def test_contact_search_recovers_the_nearest_node_bijection() -> None:
             normals,
             capture_radius=1.0,
         )
+
+
+def _grid_part(
+    name: Any, count: Any, *, offset: Any = (0.0, 0.0), scale: Any = 1.0
+) -> Any:
+    xs, ys = np.meshgrid(
+        np.linspace(0.0, scale, count + 1),
+        np.linspace(0.0, scale, count + 1),
+        indexing="ij",
+    )
+    points = np.stack((xs.ravel(), ys.ravel()), axis=1) + np.asarray(offset)
+    index = np.arange((count + 1) ** 2).reshape(count + 1, count + 1)
+    lower, right = index[:-1, :-1].ravel(), index[1:, :-1].ravel()
+    upper, left = index[1:, 1:].ravel(), index[:-1, 1:].ravel()
+    triangles = np.concatenate(
+        (np.stack((lower, right, upper), 1), np.stack((lower, upper, left), 1))
+    )
+    return _part(name, points, triangles)
+
+
+def _vertex_scope(part: Any, ids: Any = None) -> Any:
+    identifiers = (
+        np.asarray(part.carrier.mesh.vertex_global_ids)
+        if ids is None
+        else np.asarray(ids)
+    )
+    return part.scope(0, np.sort(identifiers))

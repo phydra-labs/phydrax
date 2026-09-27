@@ -85,7 +85,7 @@ def _prepared(
     ).prepare()
 
 
-def test_native_scalar_solver_generates_operators_transfer_and_tt_te_ee() -> None:
+def test_cosmology_scalar_einstein_boltzmann_scenario_1() -> None:
     prepared = _prepared()
     result = prepared.solve(jnp.asarray([2.0e-9, 2.0e-9, 2.0e-9]))
     assert result.transfer.states.shape[:2] == (40, 3)
@@ -105,38 +105,6 @@ def test_native_scalar_solver_generates_operators_transfer_and_tt_te_ee() -> Non
     assert bool(result.evidence.transition_schedule_valid)
     assert bool(result.evidence.finite)
     assert bool(result.successful)
-
-
-def test_line_of_sight_error_includes_polarization_underresolution() -> None:
-    delta_time = jnp.asarray([1.0, 1.0])
-    radial = jnp.ones((1, 1, 3))
-    temperature_source = jnp.full((3, 1), 2.0)
-    polarization_source = jnp.asarray([[0.0], [0.0], [2.0]])
-
-    temperature, polarization, error, finite = _line_of_sight_transfers(
-        delta_time,
-        temperature_source,
-        polarization_source,
-        radial,
-    )
-
-    assert bool(finite)
-    assert jnp.allclose(temperature, 4.0)
-    assert jnp.allclose(polarization, 1.0)
-    assert jnp.allclose(error, 1.0)
-    assert not bool(error <= 0.5)
-
-    _, _, nonfinite_error, nonfinite = _line_of_sight_transfers(
-        delta_time,
-        temperature_source,
-        polarization_source.at[-1, 0].set(jnp.nan),
-        radial,
-    )
-    assert not bool(nonfinite)
-    assert not bool(jnp.isfinite(nonfinite_error))
-
-
-def test_native_scalar_solver_gates_success_on_line_of_sight_error() -> None:
     primordial = jnp.asarray([2.0e-9, 2.0e-9, 2.0e-9])
     tolerance = 5.0e-3
     resolved = _prepared(line_of_sight_quadrature_tolerance=tolerance)
@@ -170,6 +138,32 @@ def test_native_scalar_solver_gates_success_on_line_of_sight_error() -> None:
     )
     with pytest.raises(eqx.EquinoxRuntimeError, match="must be finite"):
         nonfinite.solve(primordial)
+    delta_time = jnp.asarray([1.0, 1.0])
+    radial = jnp.ones((1, 1, 3))
+    temperature_source = jnp.full((3, 1), 2.0)
+    polarization_source = jnp.asarray([[0.0], [0.0], [2.0]])
+
+    temperature, polarization, error, finite = _line_of_sight_transfers(
+        delta_time,
+        temperature_source,
+        polarization_source,
+        radial,
+    )
+
+    assert bool(finite)
+    assert jnp.allclose(temperature, 4.0)
+    assert jnp.allclose(polarization, 1.0)
+    assert jnp.allclose(error, 1.0)
+    assert not bool(error <= 0.5)
+
+    _, _, nonfinite_error, nonfinite = _line_of_sight_transfers(
+        delta_time,
+        temperature_source,
+        polarization_source.at[-1, 0].set(jnp.nan),
+        radial,
+    )
+    assert not bool(nonfinite)
+    assert not bool(jnp.isfinite(nonfinite_error))
 
 
 def test_native_scalar_solver_is_jittable_and_parameter_differentiable() -> None:

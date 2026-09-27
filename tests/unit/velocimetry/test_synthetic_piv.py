@@ -31,7 +31,7 @@ def _small_plan(kind: PIVScenarioKind, **overrides: Any) -> PIVScenarioPlan:
     return PIVScenarioPlan(kind, **options)
 
 
-def test_translation_truth_uses_row_then_column_components() -> None:
+def test_synthetic_piv_scenario_1() -> None:
     case = generate_piv_case(
         _small_plan(
             PIVScenarioKind.TRANSLATION,
@@ -49,43 +49,32 @@ def test_translation_truth_uses_row_then_column_components() -> None:
         np.broadcast_to((2.0, -1.25), case.first_positions_rc.shape),
     )
     assert case.image_pair.geometry.coordinate_convention == "row-down-column-right"
-
-
-@pytest.mark.parametrize(
-    "kind",
-    [
+    for kind in [
         PIVScenarioKind.NO_MOTION,
         PIVScenarioKind.AFFINE,
         PIVScenarioKind.SHEAR,
         PIVScenarioKind.ROTATION,
         PIVScenarioKind.SPATIAL_FREQUENCY,
-    ],
-)
-def test_motion_families_generate_finite_fixed_shape_truth(
-    kind: PIVScenarioKind,
-) -> None:
-    case = generate_piv_case(
-        _small_plan(
-            kind,
-            displacement_rc=(0.2, -0.1),
-            affine_gradient_rc=(0.01, -0.02, 0.03, 0.01),
-            shear=0.04,
-            rotation_radians=0.06,
-            spatial_amplitude_rc=(1.0, 1.5),
-            spatial_frequency_rc=(1.0, 3.0),
+    ]:
+        case = generate_piv_case(
+            _small_plan(
+                kind,
+                displacement_rc=(0.2, -0.1),
+                affine_gradient_rc=(0.01, -0.02, 0.03, 0.01),
+                shear=0.04,
+                rotation_radians=0.06,
+                spatial_amplitude_rc=(1.0, 1.5),
+                spatial_frequency_rc=(1.0, 3.0),
+            )
         )
-    )
 
-    assert case.image_pair.first.shape == (24, 28)
-    assert case.truth.displacement_rc.shape == (24, 28, 2)
-    assert bool(jnp.all(jnp.isfinite(case.truth.displacement_rc)))
-    if kind is PIVScenarioKind.NO_MOTION:
-        assert bool(jnp.all(case.truth.displacement_rc == 0.0))
-    else:
-        assert bool(jnp.any(case.truth.displacement_rc != 0.0))
-
-
-def test_density_diameter_noise_dropout_mask_and_boundary_are_deterministic() -> None:
+        assert case.image_pair.first.shape == (24, 28)
+        assert case.truth.displacement_rc.shape == (24, 28, 2)
+        assert bool(jnp.all(jnp.isfinite(case.truth.displacement_rc)))
+        if kind is PIVScenarioKind.NO_MOTION:
+            assert bool(jnp.all(case.truth.displacement_rc == 0.0))
+        else:
+            assert bool(jnp.any(case.truth.displacement_rc != 0.0))
     plan = _small_plan(
         PIVScenarioKind.TRANSLATION,
         particle_density=0.035,
@@ -112,14 +101,11 @@ def test_density_diameter_noise_dropout_mask_and_boundary_are_deterministic() ->
     assert first.evidence.finite
 
 
-def test_piv_case_exposes_no_tracking_identity_field() -> None:
+def test_synthetic_piv_scenario_2() -> None:
     field_names = {field.name for field in fields(PIVSyntheticCase)}
     assert "trajectory_ids" not in field_names
     assert "track_ids" not in field_names
     assert "particle_ids" not in field_names
-
-
-def test_plan_rejects_capacity_that_cannot_represent_requested_density() -> None:
     with pytest.raises(ValueError, match="capacity"):
         PIVScenarioPlan(
             PIVScenarioKind.TRANSLATION,

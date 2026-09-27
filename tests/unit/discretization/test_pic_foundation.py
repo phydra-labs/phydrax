@@ -31,7 +31,7 @@ def _pic_transfer(*, particle_count: Any = 2) -> Any:
     return bridge, charged, transfer
 
 
-def test_charged_particles_reuse_stable_support_and_validate_specific_charge() -> None:
+def test_pic_foundation_scenario_1() -> None:
     _, charged, _ = _pic_transfer()
     assert charged.particles.capacity == 2
     np.testing.assert_allclose(charged.specific_charge, -1.0)
@@ -44,9 +44,6 @@ def test_charged_particles_reuse_stable_support_and_validate_specific_charge() -
         phx.discretization.ChargedParticlePlan(
             jnp.asarray([-1.0, -1.0]), "invalid"
         ).prepare(particles)
-
-
-def test_relativistic_boris_preserves_proper_speed_in_magnetic_field() -> None:
     pusher = phx.discretization.pic.RelativisticBorisPlan()
     initial = jnp.asarray([[0.2, -0.1, 0.05]])
     result = pusher.push(
@@ -62,9 +59,6 @@ def test_relativistic_boris_preserves_proper_speed_in_magnetic_field() -> None:
         jnp.sum(result.proper_velocity**2), jnp.sum(initial**2), rtol=2e-13, atol=2e-13
     )
     assert result.maximum_speed < 1.0
-
-
-def test_pic_charge_and_field_transfer_preserve_layout_and_fixed_route_ad() -> None:
     bridge, charged, transfer = _pic_transfer()
     position = jnp.asarray([[0.2, 0.3, 0.4], [0.7, 0.6, 0.5]])
     routes = transfer.build(position)

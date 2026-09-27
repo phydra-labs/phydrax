@@ -48,7 +48,7 @@ def _context() -> Any:
     return background, growth, power
 
 
-def test_smooth_collapse_and_calibrated_halo_triplet() -> None:
+def test_cosmology_halo_models_scenario_1() -> None:
     background, growth, power = _context()
     collapse = cosmology.SmoothComponentSphericalCollapsePlan(
         steps=256, bisection_iterations=32
@@ -67,9 +67,6 @@ def test_smooth_collapse_and_calibrated_halo_triplet() -> None:
     assert bool(triplet.successful)
     assert jnp.all(triplet.mass_function_dndlnm >= 0.0)
     assert jnp.all(triplet.concentration > 0.0)
-
-
-def test_halo_model_catalog_and_zheng_expectation() -> None:
     background, _, power = _context()
     variance = cosmology.LinearVariancePlan(1.0)
     triplet = cosmology.TinkerDuffy200mPlan(

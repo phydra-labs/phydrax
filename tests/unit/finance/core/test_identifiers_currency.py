@@ -23,7 +23,7 @@ from phydrax.finance.core import (
 )
 
 
-def test_financial_references_preserve_namespaced_identity_and_quote_semantics() -> None:
+def test_identifiers_currency_scenario_1() -> None:
     usd = Currency("USD", 2)
     equity_id = FinancialIdentifier("figi", "BBG000B9XRY4")
     option_id = FinancialIdentifier("internal", "AAPL-202612-C200")
@@ -50,9 +50,6 @@ def test_financial_references_preserve_namespaced_identity_and_quote_semantics()
             "currency_per_share",
             "duplicate underlying",
         )
-
-
-def test_exact_same_currency_arithmetic_rejects_cross_currency_substitution() -> None:
     usd = Currency("USD", 2)
     eur = Currency("EUR", 2)
     left = CurrencyAmount(usd, 125)
@@ -69,9 +66,6 @@ def test_exact_same_currency_arithmetic_rejects_cross_currency_substitution() ->
 
     with pytest.raises(OverflowError, match="signed int64"):
         CurrencyAmount(usd, 2**63)
-
-
-def test_monetary_rounding_is_explicit_and_padding_is_neutral() -> None:
     usd = Currency("USD", 2)
     jpy = Currency("JPY", 0)
     monetary = MonetaryArray(

@@ -19,7 +19,7 @@ from phydrax.control.stochastic._multiplicative_lq import (
 from phydrax.dynamics import TimeGrid
 
 
-def test_scalar_affine_recursion_matches_direct_correlated_noise_algebra() -> None:
+def test_multiplicative_lq_scenario_1() -> None:
     a = 1.2
     b = 0.7
     c = 0.3
@@ -107,9 +107,6 @@ def test_scalar_affine_recursion_matches_direct_correlated_noise_algebra() -> No
     np.testing.assert_allclose(result.trace_increments[0], expected_trace)
     assert result.diagnostics.maximum_stationarity_residual < 1e-12
     assert result.diagnostics.maximum_bellman_residual < 1e-12
-
-
-def test_zero_noise_reduces_to_exact_finite_horizon_lqr() -> None:
     horizon = 3
     a = jnp.asarray([[[1.0]], [[0.9]], [[1.1]]])
     b = jnp.asarray([[[0.8]], [[1.0]], [[0.7]]])
@@ -163,9 +160,6 @@ def test_zero_noise_reduces_to_exact_finite_horizon_lqr() -> None:
     np.testing.assert_allclose(result.value.linear, deterministic.value.linear)
     np.testing.assert_allclose(result.value.constants, deterministic.value.constants)
     np.testing.assert_array_equal(result.trace_increments, jnp.zeros(horizon))
-
-
-def test_additive_bias_noise_has_certainty_equivalent_gains_and_exact_traces() -> None:
     horizon = 3
     a = jnp.asarray([[[1.0]], [[0.9]], [[1.1]]])
     b = jnp.asarray([[[0.8]], [[1.0]], [[0.7]]])
@@ -208,7 +202,7 @@ def test_additive_bias_noise_has_certainty_equivalent_gains_and_exact_traces() -
     )
 
 
-def test_control_noise_curvature_and_state_noise_change_the_expected_policy() -> None:
+def test_multiplicative_lq_scenario_2() -> None:
     common = dict(
         dynamics_matrices=jnp.ones((2, 1, 1)),
         control_matrices=jnp.ones((2, 1, 1)),
@@ -259,6 +253,72 @@ def test_control_noise_curvature_and_state_noise_change_the_expected_policy() ->
         control_noise.diagnostics.control_minimum_eigenvalues[-1],
         1.0 + 1.0 + 0.8**2,
     )
+    cases = 5
+    a = jnp.ones((cases, 1, 1, 1)).at[3, 0, 0, 0].set(jnp.nan)
+    b = jnp.ones((cases, 1, 1, 1))
+    q = jnp.zeros((cases, 1, 1, 1))
+    r = jnp.ones((cases, 1, 1, 1)).at[4, 0, 0, 0].set(-2.0)
+    qf = jnp.ones((cases, 1, 1))
+    gamma = jnp.broadcast_to(jnp.eye(2), (cases, 1, 2, 2))
+    gamma = gamma.at[1, 0].set(jnp.asarray([[1.0, 0.2], [0.0, 1.0]]))
+    gamma = gamma.at[2, 0].set(jnp.asarray([[1.0, 0.0], [0.0, -1.0]]))
+    time_grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="multiplicative-failures")
+
+    result = eqx.filter_jit(finite_horizon_multiplicative_lq_state_feedback)(
+        a,
+        b,
+        q,
+        r,
+        qf,
+        state_noise_matrices=jnp.zeros((cases, 1, 2, 1, 1)),
+        control_noise_matrices=jnp.zeros((cases, 1, 2, 1, 1)),
+        noise_covariances=gamma,
+        time_grid=time_grid,
+    )
+    expected = jnp.asarray(
+        [
+            MultiplicativeLQStateFeedbackStatus.SUCCESS,
+            MultiplicativeLQStateFeedbackStatus.NOISE_COVARIANCE_NONSYMMETRIC,
+            MultiplicativeLQStateFeedbackStatus.NOISE_COVARIANCE_NOT_POSITIVE_SEMIDEFINITE,
+            MultiplicativeLQStateFeedbackStatus.NONFINITE_INPUT,
+            MultiplicativeLQStateFeedbackStatus.CONTROL_CURVATURE_NOT_POSITIVE_DEFINITE,
+        ],
+        dtype=jnp.int32,
+    )
+
+    np.testing.assert_array_equal(result.status, expected)
+    np.testing.assert_array_equal(result.diagnostics.first_failed_stage, [-1, 0, 0, 0, 0])
+    assert bool(result.valid[0])
+    assert not bool(jnp.any(result.valid[1:]))
+    required = (
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.zeros((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.ones((1, 1)),
+    )
+    with pytest.raises(ValueError, match="state_noise_matrices must have shape"):
+        finite_horizon_multiplicative_lq_state_feedback(
+            *required,
+            state_noise_matrices=jnp.zeros((1, 1, 1)),
+            control_noise_matrices=jnp.zeros((1, 1, 1, 1)),
+            noise_covariances=jnp.ones((1, 1, 1)),
+        )
+    with pytest.raises(ValueError, match="noise_covariances must have shape"):
+        finite_horizon_multiplicative_lq_state_feedback(
+            *required,
+            state_noise_matrices=jnp.zeros((1, 1, 1, 1)),
+            control_noise_matrices=jnp.zeros((1, 1, 1, 1)),
+            noise_covariances=jnp.ones((1, 1)),
+        )
+    with pytest.raises(ValueError, match="covariance_tolerance"):
+        finite_horizon_multiplicative_lq_state_feedback(
+            *required,
+            state_noise_matrices=jnp.zeros((1, 1, 1, 1)),
+            control_noise_matrices=jnp.zeros((1, 1, 1, 1)),
+            noise_covariances=jnp.ones((1, 1, 1)),
+            covariance_tolerance=-1.0,
+        )
 
 
 def test_case_axes_jit_and_autodiff_preserve_noise_dependence() -> None:
@@ -297,75 +357,3 @@ def test_case_axes_jit_and_autodiff_preserve_noise_dependence() -> None:
     np.testing.assert_array_equal(result.valid, jnp.ones(cases, dtype="bool"))
     assert np.isfinite(gradient)
     assert not np.isclose(gradient, 0.0)
-
-
-def test_jitted_cases_report_covariance_curvature_and_nonfinite_failures() -> None:
-    cases = 5
-    a = jnp.ones((cases, 1, 1, 1)).at[3, 0, 0, 0].set(jnp.nan)
-    b = jnp.ones((cases, 1, 1, 1))
-    q = jnp.zeros((cases, 1, 1, 1))
-    r = jnp.ones((cases, 1, 1, 1)).at[4, 0, 0, 0].set(-2.0)
-    qf = jnp.ones((cases, 1, 1))
-    gamma = jnp.broadcast_to(jnp.eye(2), (cases, 1, 2, 2))
-    gamma = gamma.at[1, 0].set(jnp.asarray([[1.0, 0.2], [0.0, 1.0]]))
-    gamma = gamma.at[2, 0].set(jnp.asarray([[1.0, 0.0], [0.0, -1.0]]))
-    time_grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="multiplicative-failures")
-
-    result = eqx.filter_jit(finite_horizon_multiplicative_lq_state_feedback)(
-        a,
-        b,
-        q,
-        r,
-        qf,
-        state_noise_matrices=jnp.zeros((cases, 1, 2, 1, 1)),
-        control_noise_matrices=jnp.zeros((cases, 1, 2, 1, 1)),
-        noise_covariances=gamma,
-        time_grid=time_grid,
-    )
-    expected = jnp.asarray(
-        [
-            MultiplicativeLQStateFeedbackStatus.SUCCESS,
-            MultiplicativeLQStateFeedbackStatus.NOISE_COVARIANCE_NONSYMMETRIC,
-            MultiplicativeLQStateFeedbackStatus.NOISE_COVARIANCE_NOT_POSITIVE_SEMIDEFINITE,
-            MultiplicativeLQStateFeedbackStatus.NONFINITE_INPUT,
-            MultiplicativeLQStateFeedbackStatus.CONTROL_CURVATURE_NOT_POSITIVE_DEFINITE,
-        ],
-        dtype=jnp.int32,
-    )
-
-    np.testing.assert_array_equal(result.status, expected)
-    np.testing.assert_array_equal(result.diagnostics.first_failed_stage, [-1, 0, 0, 0, 0])
-    assert bool(result.valid[0])
-    assert not bool(jnp.any(result.valid[1:]))
-
-
-def test_structural_validation_rejects_implicit_noise_axes_and_bad_tolerances() -> None:
-    required = (
-        jnp.ones((1, 1, 1)),
-        jnp.ones((1, 1, 1)),
-        jnp.zeros((1, 1, 1)),
-        jnp.ones((1, 1, 1)),
-        jnp.ones((1, 1)),
-    )
-    with pytest.raises(ValueError, match="state_noise_matrices must have shape"):
-        finite_horizon_multiplicative_lq_state_feedback(
-            *required,
-            state_noise_matrices=jnp.zeros((1, 1, 1)),
-            control_noise_matrices=jnp.zeros((1, 1, 1, 1)),
-            noise_covariances=jnp.ones((1, 1, 1)),
-        )
-    with pytest.raises(ValueError, match="noise_covariances must have shape"):
-        finite_horizon_multiplicative_lq_state_feedback(
-            *required,
-            state_noise_matrices=jnp.zeros((1, 1, 1, 1)),
-            control_noise_matrices=jnp.zeros((1, 1, 1, 1)),
-            noise_covariances=jnp.ones((1, 1)),
-        )
-    with pytest.raises(ValueError, match="covariance_tolerance"):
-        finite_horizon_multiplicative_lq_state_feedback(
-            *required,
-            state_noise_matrices=jnp.zeros((1, 1, 1, 1)),
-            control_noise_matrices=jnp.zeros((1, 1, 1, 1)),
-            noise_covariances=jnp.ones((1, 1, 1)),
-            covariance_tolerance=-1.0,
-        )

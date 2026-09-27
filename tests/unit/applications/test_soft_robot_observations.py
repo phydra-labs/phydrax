@@ -141,7 +141,7 @@ def _full_plan(tendon: Any, *, sensor: Any = None, ledger: Any = False) -> Any:
     )
 
 
-def test_exact_layout_arbitrary_arc_length_provenance_and_zero_noise_mechanics() -> None:
+def test_soft_robot_observations_scenario_1() -> None:
     plant, tendon = _plant_and_tendon()
     runtime = _runtime(plant)
     plan = prepare_soft_observation_plan(
@@ -257,9 +257,6 @@ def test_exact_layout_arbitrary_arc_length_provenance_and_zero_noise_mechanics()
     assert observation.query_ids == plan.query_ids
     assert observation.sensor_id == "joint-encoder-and-shape"
     assert candidate_sensor is not sensor_state
-
-
-def test_same_plant_key_replays_noise_and_sample_hold_is_explicit() -> None:
     plant, _ = _plant_and_tendon()
     runtime = _runtime(plant, key_seed=19)
     prepared = prepare_soft_observation_plan(
@@ -301,9 +298,6 @@ def test_same_plant_key_replays_noise_and_sample_hold_is_explicit() -> None:
     assert resampled.sample_timestamp == due_runtime.time
     assert resampled.sample_epoch == due_runtime.step_index
     assert not jnp.array_equal(resampled.noise_key, first.noise_key)
-
-
-def test_foreign_plant_stale_tendon_and_query_mismatches_reject() -> None:
     plant, tendon = _plant_and_tendon()
     runtime = _runtime(plant)
     prepared = prepare_soft_observation_plan(plant, _full_plan(tendon))

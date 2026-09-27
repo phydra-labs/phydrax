@@ -8,7 +8,7 @@ from phydrax.chemistry.periodic._lattice_thermodynamics import (
 )
 
 
-def test_stable_mode_thermodynamics_obeys_identity_and_classical_cv_limit() -> None:
+def test_lattice_thermodynamics_scenario_1() -> None:
     units = AtomisticUnitSystem.reduced()
     # ty: ignore[invalid-argument-type]
     plan = HarmonicThermodynamicsPlan([0.4, 0.6], [1.0, 1000.0], units)
@@ -21,9 +21,6 @@ def test_stable_mode_thermodynamics_obeys_identity_and_classical_cv_limit() -> N
     with pytest.raises(ValueError, match="strictly positive stable"):
         # ty: ignore[invalid-argument-type]
         plan.evaluate([[0.0, 2.0, 3.0], [1.5, 2.5, 3.5]])
-
-
-def test_qha_requires_and_recovers_strict_interior_minimum() -> None:
     units = AtomisticUnitSystem.reduced()
     # ty: ignore[invalid-argument-type]
     thermodynamics = HarmonicThermodynamicsPlan([1.0], [1.0, 2.0, 3.0], units)

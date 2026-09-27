@@ -19,7 +19,7 @@ def _amounts(
     return jnp.asarray(concentration) * multiplicity * volumes
 
 
-def test_center_boundary_surface_reconstruction_and_electrode_scaling() -> None:
+def test_particle_scenario_1() -> None:
     prepared = BatteryParticlePlan(4, particle_id="test").prepare()
     radius = 2.0e-6
     multiplicity = 7.0
@@ -63,9 +63,6 @@ def test_center_boundary_surface_reconstruction_and_electrode_scaling() -> None:
     )
     np.testing.assert_allclose(result.conservation_residual_mol_s, 0.0, atol=1.0e-20)
     assert bool(result.domain_valid)
-
-
-def test_quadratic_manufactured_solution_has_exact_spherical_diffusion_rate() -> None:
     shell_count = 8
     prepared = BatteryParticlePlan(shell_count, particle_id="manufactured").prepare()
     radius = 3.0e-6
@@ -95,9 +92,6 @@ def test_quadratic_manufactured_solution_has_exact_spherical_diffusion_rate() ->
     np.testing.assert_allclose(result.face_molar_flux_mol_m2_s, expected_face_flux)
     np.testing.assert_allclose(result.amount_rate_mol_s, expected_rate, rtol=1.0e-6)
     np.testing.assert_allclose(result.conservation_residual_mol_s, 0.0, atol=1.0e-20)
-
-
-def test_zero_boundary_flux_relaxes_concentration_without_changing_total_amount() -> None:
     prepared = BatteryParticlePlan(4, particle_id="relaxation").prepare()
     radius = 2.0e-6
     multiplicity = 5.0
@@ -116,7 +110,7 @@ def test_zero_boundary_flux_relaxes_concentration_without_changing_total_amount(
     assert bool(result.domain_valid)
 
 
-def test_shell_diffusivity_uses_harmonic_face_values_and_surface_cell_property() -> None:
+def test_particle_scenario_2() -> None:
     prepared = BatteryParticlePlan(3, particle_id="variable-diffusivity").prepare()
     radius = 3.0e-6
     multiplicity = 2.0
@@ -154,6 +148,28 @@ def test_shell_diffusivity_uses_harmonic_face_values_and_surface_cell_property()
         concentration[-1] - outward_flux * surface_distance / diffusivity[-1],
     )
     assert bool(result.domain_valid)
+    prepared = BatteryParticlePlan(2, particle_id="domain").prepare()
+    amounts = prepared.initial_amounts(1.0e4, 1.0e-6, 3.0)
+    negative = amounts.at[0].set(-1.0)
+    invalid_state = prepared.evaluate(
+        negative,
+        particle_radius_m=1.0e-6,
+        particle_multiplicity=3.0,
+        support_volume_m3=1.0e-15,
+        diffusivity_m2_s=1.0e-14,
+        outward_molar_flux_mol_m2_s=0.0,
+    )
+    invalid_property = prepared.evaluate(
+        amounts,
+        particle_radius_m=1.0e-6,
+        particle_multiplicity=3.0,
+        support_volume_m3=1.0e-15,
+        diffusivity_m2_s=0.0,
+        outward_molar_flux_mol_m2_s=0.0,
+    )
+
+    assert not bool(invalid_state.domain_valid)
+    assert not bool(invalid_property.domain_valid)
 
 
 def test_particle_transport_is_jittable_vmappable_and_differentiable() -> None:
@@ -191,28 +207,3 @@ def test_particle_transport_is_jittable_vmappable_and_differentiable() -> None:
         -radius * (1.0 - prepared.transport.mesh.reference_cells[-1]) / 2.0e-14,
     )
     assert bool(jnp.all(mapped.domain_valid))
-
-
-def test_particle_domain_rejects_negative_amount_and_nonpositive_diffusivity() -> None:
-    prepared = BatteryParticlePlan(2, particle_id="domain").prepare()
-    amounts = prepared.initial_amounts(1.0e4, 1.0e-6, 3.0)
-    negative = amounts.at[0].set(-1.0)
-    invalid_state = prepared.evaluate(
-        negative,
-        particle_radius_m=1.0e-6,
-        particle_multiplicity=3.0,
-        support_volume_m3=1.0e-15,
-        diffusivity_m2_s=1.0e-14,
-        outward_molar_flux_mol_m2_s=0.0,
-    )
-    invalid_property = prepared.evaluate(
-        amounts,
-        particle_radius_m=1.0e-6,
-        particle_multiplicity=3.0,
-        support_volume_m3=1.0e-15,
-        diffusivity_m2_s=0.0,
-        outward_molar_flux_mol_m2_s=0.0,
-    )
-
-    assert not bool(invalid_state.domain_valid)
-    assert not bool(invalid_property.domain_valid)

@@ -42,7 +42,7 @@ def _status_policy(equilibration: Any, *, refinement_steps: Any = 3) -> Any:
     )
 
 
-def test_two_sided_scaled_operator_matches_dense_actions_and_congruence_claims() -> None:
+def test_linalg_resilience_scenario_1() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
     base = la.DenseLinearOperator(matrix, properties=_positive_definite_properties())
     left = jnp.asarray([2.0, 0.5])
@@ -71,9 +71,6 @@ def test_two_sided_scaled_operator_matches_dense_actions_and_congruence_claims()
         la.materialize(congruence, la.MaterializationPolicy(max_entries=4)),
         left[:, None] * matrix * left[None, :],
     )
-
-
-def test_ruiz_equilibration_reduces_condition_and_refines_original_residual() -> None:
     matrix = jnp.asarray([[1e-6, 2e-3], [3e2, 4e6]])
     operator = la.DenseLinearOperator(matrix, operator_id="ill-scaled-system")
     problem = la.LinearSystem(operator, problem_id="ill-scaled-problem")
@@ -123,9 +120,6 @@ def test_ruiz_equilibration_reduces_condition_and_refines_original_residual() ->
         rtol=1e-9,
         atol=1e-9,
     )
-
-
-def test_symmetric_ruiz_preserves_certificates_for_native_pcg() -> None:
     matrix = jnp.asarray([[1e-6, 1e-3], [1e-3, 2e3]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -153,7 +147,7 @@ def test_symmetric_ruiz_preserves_certificates_for_native_pcg() -> None:
     assert jnp.allclose(result.value, jnp.linalg.solve(matrix, jnp.asarray([1.0, 2.0])))
 
 
-def test_explicit_equilibration_supports_a_matrix_free_base() -> None:
+def test_linalg_resilience_scenario_2() -> None:
     matrix = jnp.asarray([[4.0, 1.0], [2.0, 3.0]])
     space = la.ArraySpace((2,), dtype=jnp.float64)
     operator = la.FunctionLinearOperator(
@@ -186,9 +180,6 @@ def test_explicit_equilibration_supports_a_matrix_free_base() -> None:
     assert prepared.base_prepared.plan.backend == "native-krylov"
     assert result.successful
     assert jnp.allclose(result.value, jnp.linalg.solve(matrix, rhs), atol=1e-11)
-
-
-def test_explicit_equilibration_transforms_declared_nullspaces_and_certificate() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     matrix = jnp.asarray([[1.0, -1.0], [-1.0, 1.0]])
     operator = la.DenseLinearOperator(
@@ -251,6 +242,32 @@ def test_explicit_equilibration_transforms_declared_nullspaces_and_certificate()
     result = la.solve_resilient(prepared, rhs)
     assert bool(result.successful)
     assert jnp.allclose(matrix @ result.value, rhs, atol=1e-10)
+    matrix = jnp.eye(3)
+    space = la.ArraySpace((3,), dtype=jnp.float64)
+    matrix_free = la.FunctionLinearOperator(
+        lambda value: matrix @ value,
+        source=space,
+        target=space,
+        transpose_action=lambda value: matrix.T @ value,
+    )
+    with pytest.raises(ValueError, match="exceeds max_entries"):
+        la.plan_resilient_solve(
+            la.LinearSystem(matrix_free),
+            _status_policy(
+                la.EquilibrationPolicy(
+                    "ruiz",
+                    materialization=la.MaterializationPolicy(max_entries=1),
+                )
+            ),
+        )
+    problem = la.LinearSystem(la.DenseLinearOperator(matrix))
+    policy = la.ResilientSolvePolicy(
+        la.LinearSolvePolicy(la.DenseLU()),
+        equilibration=la.EquilibrationPolicy("ruiz"),
+        resources=la.ResilienceResourcePolicy(max_workspace_bytes=1),
+    )
+    with pytest.raises(ValueError, match="workspace exceeds"):
+        la.plan_resilient_solve(problem, policy)
 
 
 def test_resilient_one_shot_solve_has_the_dense_mathematical_derivative() -> None:
@@ -279,32 +296,3 @@ def test_resilient_one_shot_solve_has_the_dense_mathematical_derivative() -> Non
     expected = jax.grad(dense)(diagonal)
 
     assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
-
-
-def test_resilient_planning_rejects_unavailable_materialization_and_workspace() -> None:
-    matrix = jnp.eye(3)
-    space = la.ArraySpace((3,), dtype=jnp.float64)
-    matrix_free = la.FunctionLinearOperator(
-        lambda value: matrix @ value,
-        source=space,
-        target=space,
-        transpose_action=lambda value: matrix.T @ value,
-    )
-    with pytest.raises(ValueError, match="exceeds max_entries"):
-        la.plan_resilient_solve(
-            la.LinearSystem(matrix_free),
-            _status_policy(
-                la.EquilibrationPolicy(
-                    "ruiz",
-                    materialization=la.MaterializationPolicy(max_entries=1),
-                )
-            ),
-        )
-    problem = la.LinearSystem(la.DenseLinearOperator(matrix))
-    policy = la.ResilientSolvePolicy(
-        la.LinearSolvePolicy(la.DenseLU()),
-        equilibration=la.EquilibrationPolicy("ruiz"),
-        resources=la.ResilienceResourcePolicy(max_workspace_bytes=1),
-    )
-    with pytest.raises(ValueError, match="workspace exceeds"):
-        la.plan_resilient_solve(problem, policy)

@@ -43,9 +43,7 @@ def _law(*, bulk_modulus: Any = None) -> Any:
     )
 
 
-def test_exact_and_finite_bulk_laws_have_the_declared_pressure_equations_and_blocks() -> (
-    None
-):
+def test_mixed_hyperelastic_scenario_1() -> None:
     deformation = jnp.asarray(((1.2, 0.1), (0.0, 0.9)))
     pressure = jnp.asarray(2.5)
     exact = _law()
@@ -98,11 +96,6 @@ def test_exact_and_finite_bulk_laws_have_the_declared_pressure_equations_and_blo
     assert finite.formulation == "finite-bulk"
     assert bool(exact_response.evidence.valid)
     assert bool(finite_response.evidence.valid)
-
-
-def test_isochoric_response_is_scale_invariant_and_invalid_j_is_explicit_evidence() -> (
-    None
-):
     law = _law()
     deformation = jnp.asarray(((1.1, 0.2), (0.1, 0.95)))
 
@@ -116,11 +109,6 @@ def test_isochoric_response_is_scale_invariant_and_invalid_j_is_explicit_evidenc
 
     assert not bool(invalid.evidence.jacobian_valid)
     assert not bool(invalid.evidence.valid)
-
-
-def test_mixed_form_declares_exact_and_finite_bulk_block_dependencies_without_penalty_aliasing() -> (
-    None
-):
     exact = mixed_hyperelastic_form("u", "p", MixedHyperelasticModel(_law()))
     finite = mixed_hyperelastic_form(
         "u", "p", MixedHyperelasticModel(_law(bulk_modulus=100.0))

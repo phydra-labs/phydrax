@@ -48,7 +48,7 @@ def _time(size: Any = 64, *, periodic: Any = True, half_width: Any = jnp.pi) -> 
     return PulseTimeSpace(grid, topology="periodic-cell" if periodic else "finite-window")
 
 
-def test_pulse_time_topology_is_explicit_and_field_shapes_are_closed() -> None:
+def test_envelope_scenario_1() -> None:
     finite_grid = TensorGridPlan((UniformAxisSpec(9),), axis_names=("time",)).prepare(
         jnp.asarray([[-1.0], [1.0]])
     )
@@ -65,9 +65,6 @@ def test_pulse_time_topology_is_explicit_and_field_shapes_are_closed() -> None:
     time = PulseTimeSpace(finite_grid, topology="finite-window")
     with pytest.raises(ValueError, match="shape"):
         PulseEnvelopeField(plane, time, jnp.ones((8, 10, 8)), 4.0, 0.0)
-
-
-def test_exact_grid_aligned_bridge_roundtrips_scalar_and_tangential_fields() -> None:
     plane = _plane()
     time_space = _time()
     time = time_space.coordinates
@@ -107,9 +104,6 @@ def test_exact_grid_aligned_bridge_roundtrips_scalar_and_tangential_fields() -> 
         assert recovered.successful
         assert jnp.allclose(recovered.field.values, values, rtol=2e-6, atol=2e-6)
         assert recovered.field.longitudinal_coordinate == -0.4
-
-
-def test_bridge_refuses_finite_time_off_grid_carriers_and_forbidden_bands() -> None:
     finite = _time(periodic=False)
     with pytest.raises(ValueError, match="periodic-cell"):
         PulseEnvelopeBridgePlan(finite, 8.0)
@@ -165,7 +159,7 @@ def test_bridge_admits_smooth_gradients_through_complex_field_values() -> None:
     assert derivative != 0.0
 
 
-def test_gaussian_sampling_resolves_physical_rms_widths_phase_and_jones_state() -> None:
+def test_gaussian_sampling_contracts() -> None:
     plane = _plane(shape=(96, 96), half_width=8.0)
     time_space = _time(size=128, half_width=10.0)
     plan = GaussianPulseEnvelopePlan(
@@ -208,9 +202,6 @@ def test_gaussian_sampling_resolves_physical_rms_widths_phase_and_jones_state() 
     assert jnp.allclose(jnp.abs(temporal_peak[0]), 3.0 / jnp.sqrt(2.0), rtol=2e-3)
     assert jnp.allclose(temporal_peak[1] / temporal_peak[0], 1.0j, rtol=2e-5)
     assert jnp.allclose(jnp.angle(temporal_peak[0]), 0.4, atol=2e-3)
-
-
-def test_gaussian_sampling_reports_truncated_support_and_spectral_aliasing() -> None:
     plane = _plane(shape=(20, 20), periodic=False, half_width=1.0)
     time_space = _time(size=20, periodic=False, half_width=1.0)
     plan = GaussianPulseEnvelopePlan(

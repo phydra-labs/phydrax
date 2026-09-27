@@ -93,7 +93,7 @@ def _gate(artifact: Any, category: Any, name: Any) -> Any:
     return next(value for value in artifact["gates"][category] if value["name"] == name)
 
 
-def test_route_inventories_cover_each_commercial_qualification_surface() -> None:
+def test_commercial_flow_qualification_tools_scenario_1() -> None:
     assert set(incompressible.ROUTES) == {
         "weighted-pressure",
         "open-pressure",
@@ -150,6 +150,60 @@ def test_route_inventories_cover_each_commercial_qualification_surface() -> None
         "reacting-production",
         "learned-chemistry",
     }
+    definition = incompressible.ROUTES["mac-controller"]
+    request = _request(incompressible.CAPABILITY, definition)
+    artifact = incompressible.produce_candidate("mac-controller", request)
+
+    verify_candidate_artifact(artifact)
+    # ty: ignore[invalid-argument-type]
+    assert tuple(artifact["gates"]) == GATE_CATEGORIES
+    # ty: ignore[invalid-argument-type]
+    assert tuple(artifact["qualification_evidence"]) == GATE_CATEGORIES
+    # ty: ignore[unresolved-attribute]
+    assert {criterion["kind"] for criterion in artifact["criteria"].values()} == {
+        "commercial-route-criterion"
+    }
+    # ty: ignore[invalid-argument-type]
+    dependency = SupportDependency.from_record(artifact["support_dependency"])
+    # ty: ignore[invalid-argument-type]
+    run_spec = ResolvedRunSpec.from_record(artifact["resolved_run_spec"])
+    for category in GATE_CATEGORIES:
+        evidence = QualificationEvidence.from_record(
+            # ty: ignore[not-subscriptable]
+            artifact["qualification_evidence"][category]
+        )
+        assert dependency.dependency_id in evidence.subject_ids
+        assert run_spec.spec_id in evidence.subject_ids
+        assert evidence.evidence_kind == category
+
+    other_support = SupportTuple(
+        incompressible.CAPABILITY,
+        {"route": "mac-controller", "method": "different-method"},
+    )
+    bad_request = dict(request)
+    bad_request["support_dependency"] = SupportDependency(
+        request["support_dependency"].profile_id,
+        other_support.support_tuple_id,
+    )
+    with pytest.raises(ValueError, match="exact SupportTuple"):
+        incompressible.produce_candidate("mac-controller", bad_request)
+    definition = incompressible.ROUTES["open-pressure"]
+    failed_request = _request(incompressible.CAPABILITY, definition)
+    failed_request["observations"]["open-pressure-residual"] = False
+    failed = incompressible.produce_candidate("open-pressure", failed_request)
+
+    inconclusive_request = _request(incompressible.CAPABILITY, definition)
+    del inconclusive_request["observations"]["open-pressure-residual"]
+    inconclusive = incompressible.produce_candidate("open-pressure", inconclusive_request)
+
+    assert failed["status"] == "failed"
+    assert _gate(failed, "scientific", "open-pressure-residual")["outcome"] == "failed"
+    assert inconclusive["status"] == "inconclusive"
+    assert (
+        _gate(inconclusive, "scientific", "open-pressure-residual")["outcome"]
+        == "inconclusive"
+    )
+    assert not inconclusive["failed_reasons"]
 
 
 def test_serialization_and_metric_identity_are_deterministic_and_content_derived(
@@ -204,67 +258,7 @@ def test_serialization_and_metric_identity_are_deterministic_and_content_derived
     assert output_path.read_text().endswith("\n")
 
 
-def test_candidate_binds_exact_tuple_dependency_run_and_separate_evidence() -> None:
-    definition = incompressible.ROUTES["mac-controller"]
-    request = _request(incompressible.CAPABILITY, definition)
-    artifact = incompressible.produce_candidate("mac-controller", request)
-
-    verify_candidate_artifact(artifact)
-    # ty: ignore[invalid-argument-type]
-    assert tuple(artifact["gates"]) == GATE_CATEGORIES
-    # ty: ignore[invalid-argument-type]
-    assert tuple(artifact["qualification_evidence"]) == GATE_CATEGORIES
-    # ty: ignore[unresolved-attribute]
-    assert {criterion["kind"] for criterion in artifact["criteria"].values()} == {
-        "commercial-route-criterion"
-    }
-    # ty: ignore[invalid-argument-type]
-    dependency = SupportDependency.from_record(artifact["support_dependency"])
-    # ty: ignore[invalid-argument-type]
-    run_spec = ResolvedRunSpec.from_record(artifact["resolved_run_spec"])
-    for category in GATE_CATEGORIES:
-        evidence = QualificationEvidence.from_record(
-            # ty: ignore[not-subscriptable]
-            artifact["qualification_evidence"][category]
-        )
-        assert dependency.dependency_id in evidence.subject_ids
-        assert run_spec.spec_id in evidence.subject_ids
-        assert evidence.evidence_kind == category
-
-    other_support = SupportTuple(
-        incompressible.CAPABILITY,
-        {"route": "mac-controller", "method": "different-method"},
-    )
-    bad_request = dict(request)
-    bad_request["support_dependency"] = SupportDependency(
-        request["support_dependency"].profile_id,
-        other_support.support_tuple_id,
-    )
-    with pytest.raises(ValueError, match="exact SupportTuple"):
-        incompressible.produce_candidate("mac-controller", bad_request)
-
-
-def test_observed_failure_and_unavailable_evidence_remain_distinct() -> None:
-    definition = incompressible.ROUTES["open-pressure"]
-    failed_request = _request(incompressible.CAPABILITY, definition)
-    failed_request["observations"]["open-pressure-residual"] = False
-    failed = incompressible.produce_candidate("open-pressure", failed_request)
-
-    inconclusive_request = _request(incompressible.CAPABILITY, definition)
-    del inconclusive_request["observations"]["open-pressure-residual"]
-    inconclusive = incompressible.produce_candidate("open-pressure", inconclusive_request)
-
-    assert failed["status"] == "failed"
-    assert _gate(failed, "scientific", "open-pressure-residual")["outcome"] == "failed"
-    assert inconclusive["status"] == "inconclusive"
-    assert (
-        _gate(inconclusive, "scientific", "open-pressure-residual")["outcome"]
-        == "inconclusive"
-    )
-    assert not inconclusive["failed_reasons"]
-
-
-def test_timing_cannot_be_scientific_evidence() -> None:
+def test_commercial_flow_qualification_tools_scenario_2() -> None:
     with pytest.raises(ValueError, match="Timing measurements"):
         GateDefinition(
             "wall-clock-seconds",
@@ -282,9 +276,6 @@ def test_timing_cannot_be_scientific_evidence() -> None:
     }
     with pytest.raises(ValueError, match="Timing measurements"):
         incompressible.produce_candidate("weighted-pressure", request)
-
-
-def test_compressible_candidate_never_inherits_or_claims_dns_support() -> None:
     definition = compressible.ROUTES["smooth-dgsem"]
     request = _request(compressible.CAPABILITY, definition)
     artifact = compressible.produce_candidate("smooth-dgsem", request)
@@ -304,47 +295,39 @@ def test_compressible_candidate_never_inherits_or_claims_dns_support() -> None:
     claimed["dns_claimed"] = True
     with pytest.raises(ValueError, match="cannot claim or inherit DNS"):
         compressible.produce_candidate("smooth-dgsem", claimed)
-
-
-@pytest.mark.parametrize(
-    ("commercial", "uncertainty", "error", "reason"),
-    (
+    for commercial, uncertainty, error, reason in (
         (False, {"state": 0.01}, PermissionError, "commercial-use-not-permitted"),
         (True, None, ValueError, "unquantified uncertainty"),
-    ),
-)
-def test_external_reference_requires_rights_and_quantification(
-    commercial: Any, uncertainty: Any, error: Any, reason: Any
-) -> None:
-    payload = b"governed-reference"
-    manifest = ReferenceArtifactManifest(
-        "restricted-reference.bin",
-        checksum_algorithm="sha256",
-        checksum=hashlib.sha256(payload).hexdigest(),
-        size_bytes=len(payload),
-        license_id="restricted-test-license",
-        commercial_use_permitted=commercial,
-        redistribution_permitted=False,
-        training_use_permitted=False,
-        export_permitted=False,
-        export_classification="restricted",
-        nondimensionalization={"length": 1.0},
-        uncertainty=uncertainty,
-        lineage_ids=("reference-lineage-test",),
-    )
-    definition = compressible.ROUTES["material"]
-    request = _request(compressible.CAPABILITY, definition)
-
-    with pytest.raises(error, match=reason):
-        compressible.produce_candidate(
-            "material",
-            request,
-            reference_manifest=manifest,
-            reference_payload=payload,
+    ):
+        payload = b"governed-reference"
+        manifest = ReferenceArtifactManifest(
+            "restricted-reference.bin",
+            checksum_algorithm="sha256",
+            checksum=hashlib.sha256(payload).hexdigest(),
+            size_bytes=len(payload),
+            license_id="restricted-test-license",
+            commercial_use_permitted=commercial,
+            redistribution_permitted=False,
+            training_use_permitted=False,
+            export_permitted=False,
+            export_classification="restricted",
+            nondimensionalization={"length": 1.0},
+            uncertainty=uncertainty,
+            lineage_ids=("reference-lineage-test",),
         )
+        definition = compressible.ROUTES["material"]
+        request = _request(compressible.CAPABILITY, definition)
+
+        with pytest.raises(error, match=reason):
+            compressible.produce_candidate(
+                "material",
+                request,
+                reference_manifest=manifest,
+                reference_payload=payload,
+            )
 
 
-def test_absent_or_simulated_multidevice_and_provider_are_inconclusive() -> None:
+def test_commercial_flow_qualification_tools_scenario_3() -> None:
     slab_definition = distributed.ROUTES["slab"]
     absent_request = _request(distributed.CAPABILITY, slab_definition)
     absent = distributed.produce_candidate("slab", absent_request)
@@ -373,9 +356,6 @@ def test_absent_or_simulated_multidevice_and_provider_are_inconclusive() -> None
     cantera = reacting.produce_candidate("cantera-boundary", cantera_request)
     assert cantera["status"] == "inconclusive"
     assert _gate(cantera, "operational", "cantera-provider")["outcome"] == "inconclusive"
-
-
-def test_scale_candidate_binds_observed_and_forecast_resource_records() -> None:
     definition = distributed.ROUTES["scale-resource"]
     request = _request(distributed.CAPABILITY, definition)
     context = request["evidence_context"]
@@ -419,9 +399,6 @@ def test_scale_candidate_binds_observed_and_forecast_resource_records() -> None:
     assert artifact["status"] == "passed"
     assert performance.observed_resource_record_ids == (observed.record_id,)
     assert performance.forecast_resource_record_ids == (forecast.record_id,)
-
-
-def test_profile_is_content_addressed_but_remains_unsigned_and_unreleased() -> None:
     definition = reacting.ROUTES["statistics"]
     request = _request(reacting.CAPABILITY, definition)
     artifact = reacting.produce_candidate("statistics", request)

@@ -53,7 +53,7 @@ def _condition(field_names: Any, matrices: Any, target: Any) -> Any:
     )
 
 
-def test_exact_affine_projector_is_idempotent_and_fixes_feasible_values() -> None:
+def test_affine_projector_closure_scenario_1() -> None:
     condition = _condition(
         ("u",),
         (jnp.eye(2),),
@@ -80,9 +80,6 @@ def test_exact_affine_projector_is_idempotent_and_fixes_feasible_values() -> Non
     program = compile_enforcement(fields, (spec,))
     program_projected = program.apply(fields)
     assert jnp.allclose(program_projected["u"], jnp.asarray([1.0, -2.0]))
-
-
-def test_joint_projector_resolves_cyclic_coupled_fields_without_a_pivot() -> None:
     condition = _condition(
         ("u", "v"),
         (jnp.eye(2), jnp.eye(2)),
@@ -102,9 +99,6 @@ def test_joint_projector_resolves_cyclic_coupled_fields_without_a_pivot() -> Non
     projected = prepared.apply(fields)
     assert jnp.allclose(projected["u"] + projected["v"], jnp.asarray([2.0, 4.0]))
     assert prepared.correction.evidence.identity_defect < 1e-6
-
-
-def test_generalized_affine_projection_is_not_stamped_exact() -> None:
     condition = _condition(
         ("u",),
         (jnp.eye(2),),

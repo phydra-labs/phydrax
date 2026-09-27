@@ -37,96 +37,49 @@ def _parameters() -> Any:
     return NeoHookeanParameters.from_shear_bulk(3.0, 11.0)
 
 
-@pytest.mark.parametrize("dimension", [2, 3])
-def test_finite_strain_kinematics_energy_stress_and_tangent_are_ad_consistent(
-    dimension: Any,
-) -> None:
-    deformation = _deformation(dimension)
-    parameters = _parameters()
-    kinematics = finite_strain_kinematics(deformation)
-    response = NeoHookeanLaw(parameters).evaluate(deformation)
+def test_finite_strain_scenario_1() -> None:
+    for dimension in [2, 3]:
+        deformation = _deformation(dimension)
+        parameters = _parameters()
+        kinematics = finite_strain_kinematics(deformation)
+        response = NeoHookeanLaw(parameters).evaluate(deformation)
 
-    assert isinstance(response, type(neo_hookean_response(deformation, parameters)))
-    assert bool(response.admissible)
-    assert kinematics.dimension == dimension
-    assert kinematics.kinematics == (
-        "plane_strain" if dimension == 2 else "three_dimensional"
-    )
-    assert kinematics.deformation_gradient.shape == (3, 3)
-    if dimension == 2:
+        assert isinstance(response, type(neo_hookean_response(deformation, parameters)))
+        assert bool(response.admissible)
+        assert kinematics.dimension == dimension
+        assert kinematics.kinematics == (
+            "plane_strain" if dimension == 2 else "three_dimensional"
+        )
+        assert kinematics.deformation_gradient.shape == (3, 3)
+        if dimension == 2:
+            np.testing.assert_allclose(
+                kinematics.deformation_gradient,
+                jnp.eye(3).at[:2, :2].set(deformation),
+                rtol=0.0,
+                atol=0.0,
+            )
+
+        energy_gradient = jax.grad(
+            lambda value: (
+                NeoHookeanLaw(parameters).evaluate(value).reference_energy_density
+            )
+        )(deformation)
         np.testing.assert_allclose(
-            kinematics.deformation_gradient,
-            jnp.eye(3).at[:2, :2].set(deformation),
-            rtol=0.0,
-            atol=0.0,
+            energy_gradient,
+            response.first_piola[:dimension, :dimension],
+            rtol=2e-11,
+            atol=2e-11,
         )
 
-    energy_gradient = jax.grad(
-        lambda value: NeoHookeanLaw(parameters).evaluate(value).reference_energy_density
-    )(deformation)
-    np.testing.assert_allclose(
-        energy_gradient,
-        response.first_piola[:dimension, :dimension],
-        rtol=2e-11,
-        atol=2e-11,
-    )
-
-    ad_tangent = jax.jacfwd(lambda value: neo_hookean_first_piola(value, parameters))(
-        deformation
-    )
-    np.testing.assert_allclose(
-        ad_tangent,
-        response.tangent[..., :dimension, :dimension],
-        rtol=3e-11,
-        atol=3e-11,
-    )
-
-
-@pytest.mark.parametrize("dimension", [2, 3])
-def test_nanson_area_and_stress_transforms_are_exact_inverses(dimension: Any) -> None:
-    deformation = _deformation(dimension)
-    parameters = _parameters()
-    reference_area = (
-        jnp.asarray((0.6, -0.8)) if dimension == 2 else jnp.asarray((0.3, -0.4, 0.5))
-    )
-    response = neo_hookean_response(deformation, parameters)
-
-    current_area = nanson_transform(deformation, reference_area)
-    restored_area = inverse_nanson_transform(deformation, current_area)
-    evidence = nanson_response(deformation, reference_area)
-    np.testing.assert_allclose(restored_area, reference_area, rtol=2e-12, atol=2e-12)
-    np.testing.assert_allclose(evidence.current_area_vector, current_area)
-    assert bool(evidence.admissible)
-    assert evidence.area_ratio > 0.0
-
-    cauchy = first_piola_to_cauchy(response.kinematics, response.first_piola)
-    restored_piola = cauchy_to_first_piola(response.kinematics, cauchy)
-    np.testing.assert_allclose(cauchy, response.cauchy_stress, rtol=2e-12, atol=2e-12)
-    np.testing.assert_allclose(
-        restored_piola, response.first_piola, rtol=2e-12, atol=2e-12
-    )
-
-
-@pytest.mark.parametrize("kind", ["jacobian", "logarithmic"])
-@pytest.mark.parametrize("dimension", [2, 3])
-def test_volumetric_constraint_derivative_matches_forward_ad(
-    kind: Any, dimension: Any
-) -> None:
-    deformation = _deformation(dimension)
-    constraint = VolumetricConstraint(kind)
-    value, derivative = constraint.evaluate(deformation)
-    ad_derivative = jax.jacfwd(constraint.value)(deformation)
-
-    assert jnp.isfinite(value)
-    np.testing.assert_allclose(
-        derivative[..., :dimension, :dimension],
-        ad_derivative,
-        rtol=2e-12,
-        atol=2e-12,
-    )
-
-
-def test_finite_strain_and_material_admissibility_are_explicit() -> None:
+        ad_tangent = jax.jacfwd(lambda value: neo_hookean_first_piola(value, parameters))(
+            deformation
+        )
+        np.testing.assert_allclose(
+            ad_tangent,
+            response.tangent[..., :dimension, :dimension],
+            rtol=3e-11,
+            atol=3e-11,
+        )
     inverted = jnp.diag(jnp.asarray((-1.0, 1.0)))
     inverted_response = neo_hookean_response(inverted, _parameters())
     assert not bool(inverted_response.kinematic_admissible)
@@ -145,6 +98,42 @@ def test_finite_strain_and_material_admissibility_are_explicit() -> None:
         NeoHookeanParameters(2.0, -2.0)
     with pytest.raises(ValueError, match="2x2 or 3x3"):
         finite_strain_kinematics(jnp.ones((2, 3)))
+    for dimension in [2, 3]:
+        deformation = _deformation(dimension)
+        parameters = _parameters()
+        reference_area = (
+            jnp.asarray((0.6, -0.8)) if dimension == 2 else jnp.asarray((0.3, -0.4, 0.5))
+        )
+        response = neo_hookean_response(deformation, parameters)
+
+        current_area = nanson_transform(deformation, reference_area)
+        restored_area = inverse_nanson_transform(deformation, current_area)
+        evidence = nanson_response(deformation, reference_area)
+        np.testing.assert_allclose(restored_area, reference_area, rtol=2e-12, atol=2e-12)
+        np.testing.assert_allclose(evidence.current_area_vector, current_area)
+        assert bool(evidence.admissible)
+        assert evidence.area_ratio > 0.0
+
+        cauchy = first_piola_to_cauchy(response.kinematics, response.first_piola)
+        restored_piola = cauchy_to_first_piola(response.kinematics, cauchy)
+        np.testing.assert_allclose(cauchy, response.cauchy_stress, rtol=2e-12, atol=2e-12)
+        np.testing.assert_allclose(
+            restored_piola, response.first_piola, rtol=2e-12, atol=2e-12
+        )
+    for kind in ["jacobian", "logarithmic"]:
+        for dimension in [2, 3]:
+            deformation = _deformation(dimension)
+            constraint = VolumetricConstraint(kind)
+            value, derivative = constraint.evaluate(deformation)
+            ad_derivative = jax.jacfwd(constraint.value)(deformation)
+
+            assert jnp.isfinite(value)
+            np.testing.assert_allclose(
+                derivative[..., :dimension, :dimension],
+                ad_derivative,
+                rtol=2e-12,
+                atol=2e-12,
+            )
 
 
 def test_canonical_moduli_kernels_support_batched_scalar_material_fields() -> None:

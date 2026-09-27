@@ -105,7 +105,7 @@ def _case(
     return plan, frame, state, spectral
 
 
-def test_boosted_single_particle_has_analytic_stress_energy_and_units() -> None:
+def test_relativistic_stress_transfer_scenario_1() -> None:
     plan, frame, state, _ = _case(weights=jnp.asarray([2.5]))
     result = plan.deposit(state, frame)
 
@@ -135,9 +135,6 @@ def test_boosted_single_particle_has_analytic_stress_energy_and_units() -> None:
     )
     assert result.energy_density_unit_id == result.momentum_density_unit_id
     assert result.volume_measure_id == plan.volume_measure_id
-
-
-def test_proper_measure_and_anisotropic_trace_use_the_spatial_metric() -> None:
     plan, _, original, spectral = _case(momenta=jnp.asarray([[2.0, 0.0, 0.0]]))
     shape = spectral.physical_shape
     identity = jnp.broadcast_to(jnp.eye(3), shape + (3, 3))
@@ -194,9 +191,6 @@ def test_proper_measure_and_anisotropic_trace_use_the_spatial_metric() -> None:
         rtol=2e-6,
     )
     np.testing.assert_allclose(anisotropic_trace, 0.0, atol=2e-6)
-
-
-def test_zero_energy_massless_slot_is_rejected_without_nonfinite_stress() -> None:
     base, frame, _, _ = _case(momenta=jnp.zeros((1, 3)))
     plan = RelativisticStressDepositPlan(
         base.transfer,
@@ -219,7 +213,7 @@ def test_zero_energy_massless_slot_is_rejected_without_nonfinite_stress() -> Non
     np.testing.assert_allclose(result.projection.energy_density, 0.0, atol=0.0)
 
 
-def test_matched_deposit_gather_is_adjoint_and_state_identity_is_stable() -> None:
+def test_relativistic_stress_transfer_scenario_2() -> None:
     momenta = jnp.asarray([[0.3, -0.2, 0.1], [0.5, 0.4, -0.1], [-0.2, 0.3, 0.6]])
     plan, frame, state, spectral = _case(
         particle_count=3,
@@ -244,9 +238,6 @@ def test_matched_deposit_gather_is_adjoint_and_state_identity_is_stable() -> Non
     assert np.array_equal(np.asarray(state.lineage_ids), np.asarray([100, 101, 102]))
     assert state.frame_token.shape == ()
     assert state.frame_id == frame.frame_id
-
-
-def test_inactive_capacity_is_masked_without_changing_stable_slots() -> None:
     plan, frame, state, _ = _case(particle_count=2, momenta=jnp.zeros((2, 3)))
     masked = RelativisticParticleState(
         state.particle_ids,

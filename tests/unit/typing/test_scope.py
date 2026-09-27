@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 from typing import Literal
 
 import jax.numpy as jnp
 import pytest
+from hypothesis import given, strategies as st
 
 import phydrax.typing as pt
+
+
+pytestmark = [pytest.mark.strict_jax, pytest.mark.filterwarnings("error")]
 
 
 class NodeDim(pt.Dim):
@@ -14,22 +20,27 @@ class ComponentDim(pt.Dim):
     pass
 
 
-def test_scope_bindings_are_shared_across_checks_and_report_conflicts() -> None:
-    scope = pt.Scope()
-    pt.parse(3, pt.Size[NodeDim], "count", scope=scope)
-    pt.parse(jnp.zeros((3,)), pt.Float64[NodeDim], "values", scope=scope)
-    with pytest.raises(ValueError, match="count"):
-        pt.parse(jnp.zeros((4,)), pt.Float64[NodeDim], "other", scope=scope)
-
-
-def test_separate_scopes_are_independent() -> None:
+@given(
+    first_size=st.integers(min_value=1, max_value=8),
+    second_size=st.integers(min_value=1, max_value=8),
+)
+def test_scopes_share_bindings_locally_and_remain_independent(
+    first_size: int,
+    second_size: int,
+) -> None:
     first, second = pt.Scope(), pt.Scope()
-    pt.parse(jnp.zeros((2,)), pt.Float64[NodeDim], "a", scope=first)
-    pt.parse(jnp.zeros((5,)), pt.Float64[NodeDim], "b", scope=second)
-    assert (first.size(NodeDim), second.size(NodeDim)) == (2, 5)
+    pt.parse(first_size, pt.Size[NodeDim], "count", scope=first)
+    pt.parse(jnp.zeros((first_size,)), pt.Float64[NodeDim], "values", scope=first)
+    pt.parse(jnp.zeros((second_size,)), pt.Float64[NodeDim], "values", scope=second)
+
+    assert (first.size(NodeDim), second.size(NodeDim)) == (first_size, second_size)
+    conflicting = first_size + 1
+    with pytest.raises(ValueError, match="other"):
+        pt.parse(jnp.zeros((conflicting,)), pt.Float64[NodeDim], "other", scope=first)
+    assert first.size(NodeDim) == first_size
 
 
-def test_failed_union_alternatives_roll_back_every_binding() -> None:
+def test_failed_parse_contracts() -> None:
     scope = pt.Scope()
     union = pt.Float64[NodeDim, Literal[3]] | pt.Float64[ComponentDim, ComponentDim]
     pt.parse(jnp.zeros((2, 2)), union, "matrix", scope=scope)
@@ -37,34 +48,28 @@ def test_failed_union_alternatives_roll_back_every_binding() -> None:
     with pytest.raises(ValueError):
         scope.size(NodeDim)
 
-
-def test_failed_parse_rolls_back_every_new_binding() -> None:
-    scope = pt.Scope()
+    empty = pt.Scope()
     with pytest.raises(TypeError):
         pt.parse(
             jnp.ones((3,), dtype=jnp.int32),
             pt.Float64[NodeDim],
             "wrong_dtype",
-            scope=scope,
+            scope=empty,
         )
     with pytest.raises(ValueError):
-        scope.size(NodeDim)
+        empty.size(NodeDim)
 
     with pytest.raises(ValueError):
         pt.parse(
             (2, jnp.zeros((3,))),
             tuple[pt.Size[NodeDim], pt.Float64[NodeDim]],
             "late_failure",
-            scope=scope,
+            scope=empty,
         )
     with pytest.raises(ValueError):
-        scope.size(NodeDim)
-
-
-def test_failed_parse_preserves_bindings_that_predate_the_operation() -> None:
+        empty.size(NodeDim)
     scope = pt.Scope()
     pt.parse(2, pt.Size[NodeDim], "count", scope=scope)
-
     with pytest.raises(ValueError):
         pt.parse(
             (2, jnp.zeros((3,))),
@@ -72,14 +77,10 @@ def test_failed_parse_preserves_bindings_that_predate_the_operation() -> None:
             "late_failure",
             scope=scope,
         )
-
     assert scope.size(NodeDim) == 2
 
-
-def test_unbound_and_wrong_kind_lookups_are_refused() -> None:
-    scope = pt.Scope()
     with pytest.raises(ValueError):
-        scope.size(NodeDim)
+        scope.size(ComponentDim)
     with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         scope.size(int)

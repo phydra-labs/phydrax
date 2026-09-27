@@ -8,7 +8,7 @@ from phydrax.applications.compressible_flow import (
 )
 
 
-def test_shock_tracking_recovers_moving_compression_location() -> None:
+def test_compressible_unsteady_scenario_1() -> None:
     coordinate = jnp.linspace(0.0, 1.0, 201)
     locations = jnp.asarray((0.35, 0.55))
     pressure = jnp.stack(
@@ -21,9 +21,6 @@ def test_shock_tracking_recovers_moving_compression_location() -> None:
     assert bool(jnp.all(result.successful))
     np.testing.assert_allclose(result.location, locations, atol=0.006)
     assert jnp.all(result.peak_margin >= 0.0)
-
-
-def test_snapshot_metric_is_volume_weighted_and_invertible() -> None:
     volumes = jnp.asarray(((1.0, 4.0), (9.0, 16.0)))
     plan = CompressibleSnapshotMetricPlan(volumes, (0, 2), (2.0, 5.0))
     state = jnp.arange(2 * 4 * 3, dtype="float64").reshape((2, 2, 2, 3))
@@ -35,9 +32,6 @@ def test_snapshot_metric_is_volume_weighted_and_invertible() -> None:
     assert encoded.shape == (2, 8)
     first_cell = expected[:, 0, 0, :] / jnp.asarray((2.0, 5.0))
     np.testing.assert_allclose(encoded[:, :2], first_cell)
-
-
-def test_load_history_binds_validity_and_source_identity() -> None:
     times = jnp.asarray((0.0, 0.1, 0.2))
     history = CompressibleLoadHistory(
         times,

@@ -80,7 +80,7 @@ def _matrix(operator: Any) -> Any:
     return jnp.stack(tuple(operator.mv(column) for column in identity), axis=1)
 
 
-def test_matrix_free_sector_action_matches_independent_full_fock_car_signs() -> None:
+def test_sector_operator_scenario_1() -> None:
     order, prepared = _three_mode_hopping()
     sector = FixedCardinalityFermionBasis(order, 2, resources=_basis_resources())
     operator = QuantumSectorOperator(prepared, SectorChargeMap(sector, sector, 0))
@@ -105,9 +105,6 @@ def test_matrix_free_sector_action_matches_independent_full_fock_car_signs() -> 
     with pytest.raises(LinearCapabilityError, match="does not support"):
         materialize(operator, MaterializationPolicy(max_entries=16, max_bytes=1_024))
     assert sector_matrix[2, 0] == -1.0
-
-
-def test_charge_map_certification_rejects_wrong_target_sector() -> None:
     order = FermionModeOrder(("a", "b"))
     spaces = tuple(LocalSpacePlan.fermion(label, label) for label in order.labels)
     creation = LocalOperatorPlan(spaces[0], "create-a", ((0.0, 0.0), (1.0, 0.0)), (1,))
@@ -123,9 +120,6 @@ def test_charge_map_certification_rejects_wrong_target_sector() -> None:
     np.testing.assert_allclose(mapped.mv(jnp.asarray([1.0 + 0.0j])), [0.0, 1.0])
     with pytest.raises(ValueError, match="unique charge map"):
         QuantumSectorOperator(prepared, SectorChargeMap(target, target, 0))
-
-
-def test_direct_spin_and_boson_sectors_preserve_ladder_normalizations() -> None:
     spin_spaces = (LocalSpacePlan.spin("i", 1), LocalSpacePlan.spin("j", 1))
     spin_raise = ((0.0, 0.0), (1.0, 0.0))
     spin_lower = np.asarray(spin_raise).T

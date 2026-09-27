@@ -55,7 +55,7 @@ def _compile_mixed(*, points: Any = 8) -> Any:
     return axis, spatial, compiled
 
 
-def test_semidiscrete_dae_compiles_aligned_residual_and_honest_structure() -> None:
+def test_semidiscrete_dae_scenario_1() -> None:
     axis, spatial, compiled = _compile_mixed()
     u = jnp.sin(2.0 * jnp.pi * axis.nodes)
     state = compiled.layout.pack({"u": u, "p": u})
@@ -82,9 +82,6 @@ def test_semidiscrete_dae_compiles_aligned_residual_and_honest_structure() -> No
         compiled.system.state_rate_scale,
         jnp.full(compiled.state_shape, 3.0),
     )
-
-
-def test_semidiscrete_dae_requires_bijective_targets_and_direct_time_rates() -> None:
     _, spatial = _spatial()
     problem = _mixed_problem()
 
@@ -121,9 +118,6 @@ def test_semidiscrete_dae_requires_bijective_targets_and_direct_time_rates() -> 
             spatial,
             equation_targets={"diffusion": "u", "constraint": "p"},
         )
-
-
-def test_explicit_and_implicit_compilers_agree_for_eliminable_heat_equation() -> None:
     base = _mixed_problem()
     heat = phx.equations.PDEProblemIR(
         coordinates=base.coordinates,
@@ -143,6 +137,36 @@ def test_explicit_and_implicit_compilers_agree_for_eliminable_heat_equation() ->
 
     assert implicit.structure.component_axis is None
     assert jnp.max(jnp.abs(implicit(0.0, state, rate, None))) < 1e-11
+    axis, _, compiled = _compile_mixed(points=6)
+    initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
+    problem = phx.solver.discretized_dae_problem(
+        compiled,
+        compiled.layout.pack({"u": initial_u, "p": jnp.zeros_like(initial_u)}),
+        problem_id="semipde-adapter",
+    )
+    solution = phx.solver.solve_dae(
+        problem,
+        phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.01, 3), time_id="adapter"),
+        policy=phx.solver.DAESolvePolicy(method=phx.solver.BDFMethod(1)),
+    )
+
+    data = phx.dynamics.identification.trajectory_data_from_differential_solution(
+        solution
+    )
+
+    # ty: ignore[invalid-argument-type]
+    assert jnp.array_equal(data.derivatives, solution.state_rates)
+    # ty: ignore[not-subscriptable]
+    assert not data.derivative_valid[0]
+    # ty: ignore[not-subscriptable]
+    assert jnp.all(data.derivative_valid[1:])
+    assert jnp.array_equal(data.sample_valid, solution.valid)
+    assert jnp.array_equal(
+        data.transition_valid,
+        solution.valid[:-1] & solution.valid[1:],
+    )
+    assert data.coordinate_id == solution.time_id
+    assert data.source_id.startswith("dae:")
 
 
 def test_compiled_dae_solve_is_jittable_and_parameter_differentiable() -> None:
@@ -207,39 +231,6 @@ def test_compiled_dae_solve_is_jittable_and_parameter_differentiable() -> None:
         ).artifact_id
         == solution.temporal_mesh.mesh_id
     )
-
-
-def test_dae_trajectory_adapter_retains_rates_validity_and_provenance() -> None:
-    axis, _, compiled = _compile_mixed(points=6)
-    initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
-    problem = phx.solver.discretized_dae_problem(
-        compiled,
-        compiled.layout.pack({"u": initial_u, "p": jnp.zeros_like(initial_u)}),
-        problem_id="semipde-adapter",
-    )
-    solution = phx.solver.solve_dae(
-        problem,
-        phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.01, 3), time_id="adapter"),
-        policy=phx.solver.DAESolvePolicy(method=phx.solver.BDFMethod(1)),
-    )
-
-    data = phx.dynamics.identification.trajectory_data_from_differential_solution(
-        solution
-    )
-
-    # ty: ignore[invalid-argument-type]
-    assert jnp.array_equal(data.derivatives, solution.state_rates)
-    # ty: ignore[not-subscriptable]
-    assert not data.derivative_valid[0]
-    # ty: ignore[not-subscriptable]
-    assert jnp.all(data.derivative_valid[1:])
-    assert jnp.array_equal(data.sample_valid, solution.valid)
-    assert jnp.array_equal(
-        data.transition_valid,
-        solution.valid[:-1] & solution.valid[1:],
-    )
-    assert data.coordinate_id == solution.time_id
-    assert data.source_id.startswith("dae:")
 
 
 def test_compiled_dae_adaptive_plan_preserves_discretization_identity() -> None:

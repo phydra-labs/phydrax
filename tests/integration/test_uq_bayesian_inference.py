@@ -45,7 +45,7 @@ def _conjugate_poisson_problem() -> Any:
     return problem, posterior_mean, posterior_variance
 
 
-def test_nuts_and_dense_laplace_recover_the_conjugate_poisson_posterior() -> None:
+def test_uq_bayesian_inference_scenario_1() -> None:
     problem, exact_mean, exact_variance = _conjugate_poisson_problem()
     nuts = phx.uq.sample_nuts(
         problem,
@@ -89,9 +89,6 @@ def test_nuts_and_dense_laplace_recover_the_conjugate_poisson_posterior() -> Non
     )
     assert prediction.samples.shape == (4, 300, 17)
     assert jnp.allclose(jnp.asarray(prediction.samples.data)[..., (0, -1)], 0.0)
-
-
-def test_fixed_hmc_retains_trajectory_configuration_and_replays_from_root_key() -> None:
     problem, exact_mean, _ = _conjugate_poisson_problem()
     settings: dict[str, Any] = dict(
         num_integration_steps=7,

@@ -89,7 +89,7 @@ def _successful_linear_solve(solution_function: Any, *, condition: Any = 1.0) ->
     )
 
 
-def test_fold_extended_system_exposes_blocks_and_requires_certificate() -> None:
+def test_bifurcation_workflows_scenario_1() -> None:
     dtype = jnp.float32
     state_space = phx.linalg.PyTreeSpace({"x": jnp.asarray(0.0, dtype=dtype)})
     problem = ct.ParameterContinuationProblem(
@@ -141,6 +141,126 @@ def test_fold_extended_system_exposes_blocks_and_requires_certificate() -> None:
     assert bool(certificate.certified)
     assert bool(normal_form.successful)
     np.testing.assert_allclose(float(normal_form.coefficient), 1.0, rtol=1e-6)
+    dtype = jnp.float32
+    state_space = phx.linalg.ArraySpace((), dtype=dtype)
+    problem = ct.ParameterContinuationProblem(
+        lambda state, parameter, args: parameter * state - state**3,
+        problem_id="symmetric-pitchfork",
+    )
+    state = jnp.asarray(0.0, dtype=dtype)
+    parameter = jnp.asarray(0.0, dtype=dtype)
+    mode = jnp.asarray(1.0, dtype=dtype)
+    geometry = _geometry(problem, state, parameter, state_space)
+    analyzer = _nullspace_analyzer(mode, mode, [0.0])
+    branch = ct.certify_branch_point(
+        problem,
+        state,
+        parameter,
+        geometry,
+        analyzer,
+        ct.BranchPointAssumptions(
+            smoothness_order=3,
+            scalar_parameter_verified=True,
+            reference_branch_verified=True,
+            local_fredholm_index_zero_verified=True,
+        ),
+    )
+    assert bool(branch.certified)
+
+    normal_form = ct.pitchfork_normal_form(
+        problem,
+        state,
+        parameter,
+        geometry,
+        branch.evidence.nullspace,
+        _successful_linear_solve(
+            lambda action, right_hand_side, system_id: jnp.zeros_like(right_hand_side)
+        ),
+    )
+    pitchfork = ct.certify_pitchfork(
+        branch,
+        problem,
+        lambda value: -value,
+        ct.PitchforkAssumptions(
+            smoothness_order=3,
+            symmetry_is_linear=True,
+            symmetry_is_involutive=True,
+            equation_equivariance_verified=True,
+            reference_branch_symmetric=True,
+            critical_mode_is_odd=True,
+        ),
+        quadratic_coefficient=normal_form.quadratic_coefficient,
+        cubic_coefficient=normal_form.cubic_coefficient,
+        normal_form_solve_residual=jnp.max(normal_form.diagnostics.linear_residuals),
+        normal_form_condition=jnp.max(normal_form.diagnostics.linear_condition_estimates),
+        normal_form_success=normal_form.successful,
+    )
+    seeds = ct.switch_branches_from_nullspace(pitchfork, amplitude=0.05)
+
+    assert bool(normal_form.successful)
+    np.testing.assert_allclose(float(normal_form.quadratic_coefficient), 0.0)
+    np.testing.assert_allclose(float(normal_form.cubic_coefficient), -1.0, rtol=1e-6)
+    assert bool(pitchfork.certified)
+    np.testing.assert_allclose(float(seeds[0][0]), 0.05, rtol=1e-6)
+    np.testing.assert_allclose(float(seeds[1][0]), -0.05, rtol=1e-6)
+    dtype = jnp.float32
+    state_space = phx.linalg.ArraySpace((), dtype=dtype)
+    problem = ct.ParameterContinuationProblem(
+        lambda state, parameter, args: state**2 - parameter * state,
+        problem_id="transcritical-normal-form",
+    )
+    state = jnp.asarray(0.0, dtype=dtype)
+    parameter = jnp.asarray(0.0, dtype=dtype)
+    mode = jnp.asarray(1.0, dtype=dtype)
+    geometry = _geometry(problem, state, parameter, state_space)
+    branch = ct.certify_branch_point(
+        problem,
+        state,
+        parameter,
+        geometry,
+        _nullspace_analyzer(mode, mode, [0.0]),
+        ct.BranchPointAssumptions(
+            smoothness_order=2,
+            scalar_parameter_verified=True,
+            reference_branch_verified=True,
+            local_fredholm_index_zero_verified=True,
+        ),
+    )
+    normal_form = transcritical_normal_form(
+        problem,
+        state,
+        parameter,
+        geometry,
+        branch.evidence.nullspace,
+        _successful_linear_solve(
+            lambda action, right_hand_side, system_id: jnp.zeros_like(right_hand_side)
+        ),
+    )
+    certificate = certify_transcritical(
+        branch,
+        TranscriticalAssumptions(
+            smoothness_order=2,
+            reference_branch_verified=True,
+            intersecting_branch_verified=True,
+            distinct_tangents_verified=True,
+        ),
+        quadratic_coefficient=normal_form.quadratic_coefficient,
+        mixed_coefficient=normal_form.mixed_coefficient,
+        reference_tangent_residual=jnp.max(normal_form.diagnostics.linear_residuals),
+        reference_tangent_condition=jnp.max(
+            normal_form.diagnostics.linear_condition_estimates
+        ),
+        reference_tangent_success=normal_form.successful,
+        family_separation=normal_form.tangent_separation,
+    )
+
+    assert bool(branch.certified)
+    assert bool(normal_form.successful)
+    np.testing.assert_allclose(float(normal_form.quadratic_coefficient), 1.0)
+    np.testing.assert_allclose(float(normal_form.mixed_coefficient), -1.0)
+    np.testing.assert_allclose(float(normal_form.tangent_separation), 1.0)
+    assert certificate.kind == "transcritical"
+    assert bool(certificate.certified)
 
 
 def test_hopf_extended_system_and_spectral_certificate_are_distinct() -> None:
@@ -237,133 +357,7 @@ def test_hopf_extended_system_and_spectral_certificate_are_distinct() -> None:
     assert float(normal_form.first_lyapunov_coefficient) < 0.0
 
 
-def test_pitchfork_certificate_drives_two_automatic_switches() -> None:
-    dtype = jnp.float32
-    state_space = phx.linalg.ArraySpace((), dtype=dtype)
-    problem = ct.ParameterContinuationProblem(
-        lambda state, parameter, args: parameter * state - state**3,
-        problem_id="symmetric-pitchfork",
-    )
-    state = jnp.asarray(0.0, dtype=dtype)
-    parameter = jnp.asarray(0.0, dtype=dtype)
-    mode = jnp.asarray(1.0, dtype=dtype)
-    geometry = _geometry(problem, state, parameter, state_space)
-    analyzer = _nullspace_analyzer(mode, mode, [0.0])
-    branch = ct.certify_branch_point(
-        problem,
-        state,
-        parameter,
-        geometry,
-        analyzer,
-        ct.BranchPointAssumptions(
-            smoothness_order=3,
-            scalar_parameter_verified=True,
-            reference_branch_verified=True,
-            local_fredholm_index_zero_verified=True,
-        ),
-    )
-    assert bool(branch.certified)
-
-    normal_form = ct.pitchfork_normal_form(
-        problem,
-        state,
-        parameter,
-        geometry,
-        branch.evidence.nullspace,
-        _successful_linear_solve(
-            lambda action, right_hand_side, system_id: jnp.zeros_like(right_hand_side)
-        ),
-    )
-    pitchfork = ct.certify_pitchfork(
-        branch,
-        problem,
-        lambda value: -value,
-        ct.PitchforkAssumptions(
-            smoothness_order=3,
-            symmetry_is_linear=True,
-            symmetry_is_involutive=True,
-            equation_equivariance_verified=True,
-            reference_branch_symmetric=True,
-            critical_mode_is_odd=True,
-        ),
-        quadratic_coefficient=normal_form.quadratic_coefficient,
-        cubic_coefficient=normal_form.cubic_coefficient,
-        normal_form_solve_residual=jnp.max(normal_form.diagnostics.linear_residuals),
-        normal_form_condition=jnp.max(normal_form.diagnostics.linear_condition_estimates),
-        normal_form_success=normal_form.successful,
-    )
-    seeds = ct.switch_branches_from_nullspace(pitchfork, amplitude=0.05)
-
-    assert bool(normal_form.successful)
-    np.testing.assert_allclose(float(normal_form.quadratic_coefficient), 0.0)
-    np.testing.assert_allclose(float(normal_form.cubic_coefficient), -1.0, rtol=1e-6)
-    assert bool(pitchfork.certified)
-    np.testing.assert_allclose(float(seeds[0][0]), 0.05, rtol=1e-6)
-    np.testing.assert_allclose(float(seeds[1][0]), -0.05, rtol=1e-6)
-
-
-def test_transcritical_certificate_requires_two_nondegenerate_reduced_terms() -> None:
-    dtype = jnp.float32
-    state_space = phx.linalg.ArraySpace((), dtype=dtype)
-    problem = ct.ParameterContinuationProblem(
-        lambda state, parameter, args: state**2 - parameter * state,
-        problem_id="transcritical-normal-form",
-    )
-    state = jnp.asarray(0.0, dtype=dtype)
-    parameter = jnp.asarray(0.0, dtype=dtype)
-    mode = jnp.asarray(1.0, dtype=dtype)
-    geometry = _geometry(problem, state, parameter, state_space)
-    branch = ct.certify_branch_point(
-        problem,
-        state,
-        parameter,
-        geometry,
-        _nullspace_analyzer(mode, mode, [0.0]),
-        ct.BranchPointAssumptions(
-            smoothness_order=2,
-            scalar_parameter_verified=True,
-            reference_branch_verified=True,
-            local_fredholm_index_zero_verified=True,
-        ),
-    )
-    normal_form = transcritical_normal_form(
-        problem,
-        state,
-        parameter,
-        geometry,
-        branch.evidence.nullspace,
-        _successful_linear_solve(
-            lambda action, right_hand_side, system_id: jnp.zeros_like(right_hand_side)
-        ),
-    )
-    certificate = certify_transcritical(
-        branch,
-        TranscriticalAssumptions(
-            smoothness_order=2,
-            reference_branch_verified=True,
-            intersecting_branch_verified=True,
-            distinct_tangents_verified=True,
-        ),
-        quadratic_coefficient=normal_form.quadratic_coefficient,
-        mixed_coefficient=normal_form.mixed_coefficient,
-        reference_tangent_residual=jnp.max(normal_form.diagnostics.linear_residuals),
-        reference_tangent_condition=jnp.max(
-            normal_form.diagnostics.linear_condition_estimates
-        ),
-        reference_tangent_success=normal_form.successful,
-        family_separation=normal_form.tangent_separation,
-    )
-
-    assert bool(branch.certified)
-    assert bool(normal_form.successful)
-    np.testing.assert_allclose(float(normal_form.quadratic_coefficient), 1.0)
-    np.testing.assert_allclose(float(normal_form.mixed_coefficient), -1.0)
-    np.testing.assert_allclose(float(normal_form.tangent_separation), 1.0)
-    assert certificate.kind == "transcritical"
-    assert bool(certificate.certified)
-
-
-def test_incomplete_or_ill_conditioned_evidence_never_certifies() -> None:
+def test_bifurcation_workflows_scenario_2() -> None:
     dtype = jnp.float32
     state_space = phx.linalg.ArraySpace((), dtype=dtype)
     problem = ct.ParameterContinuationProblem(
@@ -424,9 +418,6 @@ def test_incomplete_or_ill_conditioned_evidence_never_certifies() -> None:
     )
     assert not bool(ill_conditioned.successful)
     assert int(ill_conditioned.status) == int(ct.NormalFormStatus.ILL_CONDITIONED)
-
-
-def test_linear_and_parameter_homotopies_have_exact_endpoints() -> None:
     dtype = jnp.float32
     start = nl.NonlinearSystemProblem(
         lambda state, args: state - 1.0,
@@ -466,9 +457,35 @@ def test_linear_and_parameter_homotopies_have_exact_endpoints() -> None:
         0.0,
         atol=1e-7,
     )
+    space = phx.linalg.ArraySpace((), dtype=jnp.float64)
+    start = nl.NonlinearSystemProblem(
+        lambda state, args: state - 1.0,
+        state_space=space,
+        residual_space=space,
+        problem_id="spaced-start",
+    )
+    target = nl.NonlinearSystemProblem(
+        lambda state, args: state - 2.0,
+        state_space=space,
+        residual_space=space,
+        problem_id="spaced-target",
+    )
+    homotopy = ct.linear_homotopy(start, target)
+    state_space, residual_space = homotopy.continuation_problem.declared_spaces()
 
+    # ty: ignore[unresolved-attribute]
+    assert state_space.space_id == space.space_id
+    # ty: ignore[unresolved-attribute]
+    assert residual_space.space_id == space.space_id
 
-def test_metric_deflation_rejects_known_root_and_preserves_other_root() -> None:
+    incompatible = nl.NonlinearSystemProblem(
+        lambda state, args: jnp.stack((state, state)),
+        state_space=space,
+        residual_space=phx.linalg.ArraySpace((2,), dtype=jnp.float64),
+        problem_id="incompatible-target",
+    )
+    with pytest.raises(ValueError, match="residual spaces"):
+        ct.linear_homotopy(start, incompatible)
     dtype = jnp.float32
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state * (state - 1.0),
@@ -518,7 +535,7 @@ def test_metric_deflation_rejects_known_root_and_preserves_other_root() -> None:
     assert float(other.minimum_known_root_distance) == pytest.approx(2.0)
 
 
-def test_public_continuation_namespace_owns_workflows() -> None:
+def test_bifurcation_workflows_scenario_3() -> None:
     names = (
         "FoldProblem",
         "HopfProblem",
@@ -531,9 +548,6 @@ def test_public_continuation_namespace_owns_workflows() -> None:
     assert all(hasattr(phx.continuation, name) for name in names)
     assert not hasattr(phx.dynamics.analysis, "ContinuationProblem")
     assert not hasattr(phx.dynamics.analysis, "branch_switch_seed")
-
-
-def test_nullspace_evidence_respects_distinct_state_and_residual_spaces() -> None:
     state_space = phx.linalg.PyTreeSpace(
         {"x": jnp.zeros((1,), dtype=jnp.float64)},
         space_id="nullspace-state",
@@ -573,41 +587,6 @@ def test_nullspace_evidence_respects_distinct_state_and_residual_spaces() -> Non
     assert float(evidence.left_residual_norm) == 0.0
     assert float(evidence.right_norm) == 1.0
     assert float(evidence.left_norm) == 1.0
-
-
-def test_linear_homotopy_preserves_and_validates_declared_spaces() -> None:
-    space = phx.linalg.ArraySpace((), dtype=jnp.float64)
-    start = nl.NonlinearSystemProblem(
-        lambda state, args: state - 1.0,
-        state_space=space,
-        residual_space=space,
-        problem_id="spaced-start",
-    )
-    target = nl.NonlinearSystemProblem(
-        lambda state, args: state - 2.0,
-        state_space=space,
-        residual_space=space,
-        problem_id="spaced-target",
-    )
-    homotopy = ct.linear_homotopy(start, target)
-    state_space, residual_space = homotopy.continuation_problem.declared_spaces()
-
-    # ty: ignore[unresolved-attribute]
-    assert state_space.space_id == space.space_id
-    # ty: ignore[unresolved-attribute]
-    assert residual_space.space_id == space.space_id
-
-    incompatible = nl.NonlinearSystemProblem(
-        lambda state, args: jnp.stack((state, state)),
-        state_space=space,
-        residual_space=phx.linalg.ArraySpace((2,), dtype=jnp.float64),
-        problem_id="incompatible-target",
-    )
-    with pytest.raises(ValueError, match="residual spaces"):
-        ct.linear_homotopy(start, incompatible)
-
-
-def test_deflation_preserves_original_domain_and_acceptance_guards() -> None:
     space = phx.linalg.ArraySpace((), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: jnp.log(state),

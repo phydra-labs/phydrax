@@ -35,7 +35,7 @@ def _network(in_size: Any = 2, out_size: Any = 1, seed: Any = 0) -> Any:
     )
 
 
-def test_policy_is_jittable_vmappable_and_requires_the_state() -> None:
+def test_neural_feedback_policy_scenario_1() -> None:
     network = _network()
     policy = NeuralFeedbackPolicy(
         network, state_shape=(2,), control_shape=(1,), policy_id="neural"
@@ -60,9 +60,6 @@ def test_policy_is_jittable_vmappable_and_requires_the_state() -> None:
         policy.sample(jnp.asarray(0.0), jnp.asarray([0.0, 0.5]))
     with pytest.raises(ValueError, match="shape"):
         policy.evaluate(jnp.ones((2,)), 0.25, state=states[0])
-
-
-def test_policy_sizes_and_binding_are_exact() -> None:
     with pytest.raises(ValueError, match="in_size must be 3"):
         NeuralFeedbackPolicy(
             _network(),
@@ -88,9 +85,6 @@ def test_policy_sizes_and_binding_are_exact() -> None:
     contract = policy.component_contract()
     assert contract.authority is phx.ComponentAuthority.DECISION
     assert contract.slot_semantic_id == AbstractControlParameterization.slot_semantic_id
-
-
-def test_port_declaring_policy_binds_only_to_declared_owner_ports() -> None:
     owner = phx.ModelPorts(
         inputs=(full_port("plant.state", (2,)), full_port("plant.time", ())),
         outputs=(full_port("plant.control", (1,)),),

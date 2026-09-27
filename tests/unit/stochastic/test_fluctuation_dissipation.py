@@ -69,7 +69,7 @@ def _variable_mobility_dynamics(temperature: Any = 0.7) -> Any:
     )
 
 
-def test_variable_mobility_includes_complete_ito_correction() -> None:
+def test_fluctuation_dissipation_scenario_1() -> None:
     temperature = 0.7
     dynamics = _variable_mobility_dynamics(temperature)
     state = jnp.asarray([0.2])
@@ -109,9 +109,6 @@ def test_variable_mobility_includes_complete_ito_correction() -> None:
         atol=1e-10,
         rtol=0.0,
     )
-
-
-def test_state_dependent_skew_field_has_exact_divergence_correction() -> None:
     temperature = 0.4
     field = phx.nn.models.PortHamiltonianVectorField(
         state_size=2,
@@ -146,9 +143,6 @@ def test_state_dependent_skew_field_has_exact_divergence_correction() -> None:
         atol=1e-10,
         rtol=0.0,
     )
-
-
-def test_constant_structure_has_exact_zero_correction() -> None:
     field = phx.nn.models.PortHamiltonianVectorField(
         state_size=2,
         energy=_QuadraticEnergy2D(),
@@ -167,7 +161,7 @@ def test_constant_structure_has_exact_zero_correction() -> None:
     )
 
 
-def test_isothermal_dynamics_rejects_nonequilibrium_configuration() -> None:
+def test_fluctuation_dissipation_scenario_2() -> None:
     with pytest.raises(ValueError, match="strictly positive"):
         phx.stochastic.IsothermalPortHamiltonianDynamics(
             phx.nn.models.PortHamiltonianVectorField(
@@ -197,9 +191,6 @@ def test_isothermal_dynamics_rejects_nonequilibrium_configuration() -> None:
             temperature=0.5,
             process_id="conservative",
         )
-
-
-def test_thermodynamic_kernel_and_solver_preserve_process_contracts() -> None:
     dynamics = _variable_mobility_dynamics()
     kernel = dynamics.transition_kernel()
     context = phx.stochastic.StateSpaceStepContext.empty()

@@ -81,7 +81,7 @@ def _context(state: Any) -> Any:
     )
 
 
-def test_supported_provider_pair_reports_matching_qualified_release() -> None:
+def test_robot_mjx_adapter_scenario_1() -> None:
     availability = mjx_availability()
 
     assert availability.available
@@ -91,9 +91,6 @@ def test_supported_provider_pair_reports_matching_qualified_release() -> None:
         versions["mujoco-mjx"].split(".post", 1)[0]
         == versions["mujoco"].split(".post", 1)[0]
     )
-
-
-def test_prepared_plant_keeps_closed_manifest_device_and_dtype() -> None:
     plant = prepare_mjx_adapter(_model())
     other_device = "gpu" if plant.device != "gpu" else "cpu"
     other_dtype = "float64" if plant.dtype != "float64" else "float32"
@@ -119,23 +116,6 @@ def test_prepared_plant_keeps_closed_manifest_device_and_dtype() -> None:
         )
     with pytest.raises(BackendUnavailableError, match="dtype"):
         plant.profile.require((RoboticsOperationRequirement("step", dtype=other_dtype),))
-
-
-def test_unsupported_model_feature_rejects_before_transfer(monkeypatch: Any) -> None:
-    transfers = []
-
-    def transferred(*args: Any, **kwargs: Any) -> None:
-        transfers.append((args, kwargs))
-        raise AssertionError("unsupported model reached device transfer")
-
-    monkeypatch.setattr(mjx, "put_model", transferred)
-
-    with pytest.raises(BackendUnavailableError, match="unsupported solver"):
-        prepare_mjx_adapter(_model(solver="PGS"))
-    assert not transfers
-
-
-def test_reset_step_refresh_and_observe_use_plant_runtime_state() -> None:
     model = _model()
     plant = prepare_mjx_adapter(model)
 
@@ -179,7 +159,21 @@ def test_reset_step_refresh_and_observe_use_plant_runtime_state() -> None:
     assert plant.control(refreshed.accepted_state).values.shape == (model.nu,)
 
 
-def test_observation_request_selects_content_not_freshness() -> None:
+def test_unsupported_model_feature_rejects_before_transfer(monkeypatch: Any) -> None:
+    transfers = []
+
+    def transferred(*args: Any, **kwargs: Any) -> None:
+        transfers.append((args, kwargs))
+        raise AssertionError("unsupported model reached device transfer")
+
+    monkeypatch.setattr(mjx, "put_model", transferred)
+
+    with pytest.raises(BackendUnavailableError, match="unsupported solver"):
+        prepare_mjx_adapter(_model(solver="PGS"))
+    assert not transfers
+
+
+def test_robot_mjx_adapter_scenario_2() -> None:
     model = _model()
     plant = prepare_mjx_adapter(model)
     source = _reset(plant).accepted_state
@@ -190,9 +184,6 @@ def test_observation_request_selects_content_not_freshness() -> None:
     assert bool(observation.successful)
     assert observation.projection.index_map.names == ("qvel/hinge",)
     assert observation.projection.values.shape == (model.nv,)
-
-
-def test_shared_schema_covers_complete_payload_and_exact_case_axes() -> None:
     plant = prepare_mjx_adapter(_model(), case_ndim=1)
     state = _reset(plant, (2,)).accepted_state
     provider_leaves = jax.tree_util.tree_leaves(state.payload.opaque)
@@ -216,9 +207,6 @@ def test_shared_schema_covers_complete_payload_and_exact_case_axes() -> None:
     malformed = eqx.tree_at(lambda runtime: runtime.payload, state, malformed_payload)
     with pytest.raises(ValueError, match="intrinsic shape"):
         plant.qpos(malformed)
-
-
-def test_stale_and_wrong_control_projection_are_rejected() -> None:
     first = prepare_mjx_adapter(_model(mass="1"))
     second = prepare_mjx_adapter(_model(mass="2"))
     first_state = _reset(first).accepted_state
@@ -253,7 +241,7 @@ def test_stale_and_wrong_control_projection_are_rejected() -> None:
             first.step(_context(first_state), first_state, wrong_kind, first.parameters)
 
 
-def test_one_nonfinite_case_rolls_back_the_complete_payload_only_for_that_case() -> None:
+def test_robot_mjx_adapter_scenario_3() -> None:
     plant = prepare_mjx_adapter(_model(), case_ndim=1)
     source = _reset(plant, (2,)).accepted_state
     command = plant.control(source)
@@ -280,6 +268,33 @@ def test_one_nonfinite_case_rolls_back_the_complete_payload_only_for_that_case()
         strict=True,
     ):
         assert jnp.array_equal(accepted_leaf[1], source_leaf[1])
+    plant = prepare_mjx_adapter(_model())
+    source = _reset(plant).accepted_state
+    checkpoint = plant.checkpoint(source)
+    context = _context(source)
+    command = plant.control(source)
+    expected = plant.step(context, source, command, plant.parameters)
+    expected_digest = plant.state_digest(expected.accepted_state)
+
+    replay = plant.replay(
+        checkpoint,
+        (context,),
+        (command,),
+        plant.parameters,
+        expected_digests=(expected_digest,),
+    )
+
+    assert plant.verify_checkpoint(checkpoint)
+    restored = plant.restore(checkpoint)
+    assert isinstance(restored.payload.opaque, mjx.Data)
+    assert plant.state_digest(restored) == checkpoint.digest
+    assert replay.matched
+    assert replay.first_mismatch_step == -1
+    assert plant.state_digest(replay.final_state) == expected_digest
+    assert all(
+        not isinstance(leaf, (mujoco.MjModel, mjx.Model))
+        for leaf in jax.tree_util.tree_leaves(checkpoint)
+    )
 
 
 def test_refresh_rolls_back_only_the_nonfinite_complete_case(monkeypatch: Any) -> None:
@@ -322,35 +337,3 @@ def test_refresh_rolls_back_only_the_nonfinite_complete_case(monkeypatch: Any) -
         strict=True,
     ):
         assert jnp.array_equal(accepted_leaf[1], source_leaf[1])
-
-
-def test_generic_checkpoint_and_replay_digest_without_serializing_provider_objects() -> (
-    None
-):
-    plant = prepare_mjx_adapter(_model())
-    source = _reset(plant).accepted_state
-    checkpoint = plant.checkpoint(source)
-    context = _context(source)
-    command = plant.control(source)
-    expected = plant.step(context, source, command, plant.parameters)
-    expected_digest = plant.state_digest(expected.accepted_state)
-
-    replay = plant.replay(
-        checkpoint,
-        (context,),
-        (command,),
-        plant.parameters,
-        expected_digests=(expected_digest,),
-    )
-
-    assert plant.verify_checkpoint(checkpoint)
-    restored = plant.restore(checkpoint)
-    assert isinstance(restored.payload.opaque, mjx.Data)
-    assert plant.state_digest(restored) == checkpoint.digest
-    assert replay.matched
-    assert replay.first_mismatch_step == -1
-    assert plant.state_digest(replay.final_state) == expected_digest
-    assert all(
-        not isinstance(leaf, (mujoco.MjModel, mjx.Model))
-        for leaf in jax.tree_util.tree_leaves(checkpoint)
-    )

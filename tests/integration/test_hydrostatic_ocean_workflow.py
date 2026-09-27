@@ -44,7 +44,7 @@ def _state(ocean: Any, eta: Any) -> Any:
     )
 
 
-def test_implicit_hydrostatic_external_wave_is_volume_conservative() -> None:
+def test_hydrostatic_ocean_workflow_scenario_1() -> None:
     geometry = _geometry()
     ocean = phx.applications.ocean.HydrostaticPrimitiveEquationPlan(
         geometry,
@@ -79,9 +79,6 @@ def test_implicit_hydrostatic_external_wave_is_volume_conservative() -> None:
         atol=2e-9,
     )
     assert jnp.all(jnp.isfinite(result.accepted_state.state.transports[0]))
-
-
-def test_split_explicit_wetdry_keeps_nonnegative_depth_and_inventory() -> None:
     x = jnp.linspace(0.0, 1.0, 6)[:, None]
     depth = jnp.broadcast_to(0.02 + 0.98 * x, (6, 4))
     geometry = _geometry(depth=depth)
@@ -119,9 +116,6 @@ def test_split_explicit_wetdry_keeps_nonnegative_depth_and_inventory() -> None:
     assert jnp.all(epoch.total_depth >= 0.0)
     assert jnp.all(final.tracer_inventory["absolute_salinity"] >= 0.0)
     assert result.accepted_state.ledger.limiter_correction >= 0.0
-
-
-def test_flather_boundary_and_freshwater_share_volume_ledger() -> None:
     geometry = _geometry(periodic_x=False)
     boundary = phx.applications.ocean.HydrostaticOpenBoundary(
         0,

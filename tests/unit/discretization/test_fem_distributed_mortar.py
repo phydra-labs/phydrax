@@ -71,7 +71,7 @@ def _child_mortar(child_index: int) -> Any:
     )
 
 
-def test_owned_halo_worksets_dependencies_and_deterministic_halo_actions() -> None:
+def test_fem_distributed_mortar_scenario_1() -> None:
     partition = CellPartition(np.asarray([0, 0, 1, 1]), 2)
     facets = np.asarray([[0, 1], [1, 2], [2, 3]], dtype=np.int32)
     worksets = finite_element_partition_workset_plan(
@@ -109,9 +109,6 @@ def test_owned_halo_worksets_dependencies_and_deterministic_halo_actions() -> No
         jnp.asarray([2.0, 0.0, 0.0, 3.0, 0.0]),
     )
     assert halo.reduction_semantics == "replica-columns-left-to-right"
-
-
-def test_global_inner_and_dual_pullback_are_partition_independent() -> None:
     mesh = CellMesh.from_triangles(
         jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
         jnp.asarray([[0, 1, 2], [0, 2, 3]], dtype=jnp.int32),
@@ -139,9 +136,6 @@ def test_global_inner_and_dual_pullback_are_partition_independent() -> None:
         first.pullback_global(local_dual) + second.pullback_global(local_dual),
         serial.pullback_global(local_dual),
     )
-
-
-def test_one_rank_and_partitioned_facet_reductions_are_identical_and_once_owned() -> None:
     facets = np.asarray([[0, 1], [1, 2], [2, 3]], dtype=np.int32)
     cell_ids = np.asarray([40, 10, 30, 20], dtype=np.int64)
     facet_ids = np.asarray([300, 100, 200], dtype=np.int64)
@@ -170,9 +164,7 @@ def test_one_rank_and_partitioned_facet_reductions_are_identical_and_once_owned(
     assert jnp.allclose(jnp.sum(partition_sum), 0.0)
 
 
-def test_unequal_p_reversed_curved_mortar_reproduces_and_preserves_adjoint_roles() -> (
-    None
-):
+def test_fem_distributed_mortar_scenario_2() -> None:
     mortar = _unequal_reversed_mortar()
     quadrature = mortar.quadrature_points[:, 0]
     left_nodes = jnp.linspace(-1.0, 1.0, 4)
@@ -208,11 +200,6 @@ def test_unequal_p_reversed_curved_mortar_reproduces_and_preserves_adjoint_roles
     assert jnp.allclose(jnp.sum(left_flux), mortar.integrated_flux(flux))
     assert jnp.allclose(jnp.sum(right_flux), -mortar.integrated_flux(flux))
     assert jnp.allclose(mortar.conservation_residual(flux), 0.0)
-
-
-def test_two_to_one_children_and_distributed_mortar_equal_serial_once_evaluation() -> (
-    None
-):
     children = (_child_mortar(0), _child_mortar(1))
     assert all(child.evidence.declared_polynomials_reproduced for child in children)
     assert jnp.allclose(

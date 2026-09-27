@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 import jax.random as jr
-import pytest
 
 from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy, MLP
@@ -50,7 +49,7 @@ class ScalarLatentModel(_AbstractBaseModel):
         return jnp.stack([x, 2.0 * x], axis=-1)
 
 
-def test_latent_contraction_mixed_inputs_shape_and_values() -> None:
+def test_latent_contraction_contracts() -> None:
     model = LatentContractionModel(
         latent_size=2,
         out_size="scalar",
@@ -67,9 +66,6 @@ def test_latent_contraction_mixed_inputs_shape_and_values() -> None:
     expected = (3.0 * X - Y)[..., None] * p_axis[None, None, :]
     assert out.shape == expected.shape
     assert jnp.allclose(out, expected)
-
-
-def test_latent_contraction_aligned_points() -> None:
     model = LatentContractionModel(
         latent_size=2,
         out_size="scalar",
@@ -87,9 +83,6 @@ def test_latent_contraction_aligned_points() -> None:
     expected = (3.0 * points[:, 0] - points[:, 1]) * points[:, 2]
     assert out.shape == expected.shape
     assert jnp.allclose(out, expected)
-
-
-def test_latent_contraction_dense_factor_batches() -> None:
     model = LatentContractionModel(
         latent_size=2,
         out_size="scalar",
@@ -109,32 +102,26 @@ def test_latent_contraction_dense_factor_batches() -> None:
     expected = (3.0 * x_batch[:, 0] - x_batch[:, 1])[:, None] * p_batch[None, :]
     assert out.shape == expected.shape
     assert jnp.allclose(out, expected)
-
-
-@pytest.mark.parametrize("topology", ("flat", "best_effort_flat", "strict_flat"))
-def test_latent_contraction_flat_topologies_match_grouped(topology: FlatTopology) -> None:
-    grouped = LatentContractionModel(
-        latent_size=2,
-        out_size="scalar",
-        x=XYLatentModel(),
-        p=ScalarLatentModel(),
-    )
-    planned = LatentContractionModel(
-        latent_size=2,
-        out_size="scalar",
-        x=XYLatentModel(),
-        p=ScalarLatentModel(),
-        execution_policy=LatentExecutionPolicy(topology=topology, fallback="warn"),
-    )
-    x = (jnp.array([0.0, 0.5, 1.0]), jnp.array([1.0, 2.0]))
-    p = (jnp.array([1.0, 2.0]),)
-    expected = grouped({"x": x, "p": p})
-    out = planned({"x": x, "p": p})
-    assert out.shape == expected.shape
-    assert jnp.allclose(out, expected)
-
-
-def test_latent_contraction_aligned_scan_matches_loop_for_homogeneous_factors() -> None:
+    for topology in ("flat", "best_effort_flat", "strict_flat"):
+        grouped = LatentContractionModel(
+            latent_size=2,
+            out_size="scalar",
+            x=XYLatentModel(),
+            p=ScalarLatentModel(),
+        )
+        planned = LatentContractionModel(
+            latent_size=2,
+            out_size="scalar",
+            x=XYLatentModel(),
+            p=ScalarLatentModel(),
+            execution_policy=LatentExecutionPolicy(topology=topology, fallback="warn"),
+        )
+        x = (jnp.array([0.0, 0.5, 1.0]), jnp.array([1.0, 2.0]))
+        p = (jnp.array([1.0, 2.0]),)
+        expected = grouped({"x": x, "p": p})
+        out = planned({"x": x, "p": p})
+        assert out.shape == expected.shape
+        assert jnp.allclose(out, expected)
     latent_size = 4
     out_size = 2
     m1 = MLP(
@@ -174,9 +161,6 @@ def test_latent_contraction_aligned_scan_matches_loop_for_homogeneous_factors() 
 
     assert out_scan.shape == out_loop.shape
     assert jnp.allclose(out_scan, out_loop)
-
-
-def test_latent_contraction_scan_falls_back_when_aligned_factors_not_uniform() -> None:
     latent_size = 4
     out_size = 2
     scalar_model = MLP(

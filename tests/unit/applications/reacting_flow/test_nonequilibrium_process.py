@@ -109,7 +109,7 @@ def _advance(*, chemistry: Any = False) -> Any:
     return system, state, result, after
 
 
-def test_mode_relaxation_moves_toward_heavy_temperature_with_zero_energy_source() -> None:
+def test_nonequilibrium_process_scenario_1() -> None:
     system, before, result, after = _advance()
     assert bool(result.accepted)
     np.testing.assert_array_equal(
@@ -120,9 +120,6 @@ def test_mode_relaxation_moves_toward_heavy_temperature_with_zero_energy_source(
         after[..., system.energy_index], before[..., system.energy_index]
     )
     assert jnp.all(system.mode_temperatures(after) > system.mode_temperatures(before))
-
-
-def test_joint_chemistry_relaxation_preserves_elements_mass_and_total_energy() -> None:
     system, before, result, after = _advance(chemistry=True)
     assert bool(result.accepted)
     assert jnp.all(after[..., 0] < before[..., 0])

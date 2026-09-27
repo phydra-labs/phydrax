@@ -94,7 +94,7 @@ def _policy(iterations: Any) -> Any:
     )
 
 
-def test_hydrogen_vmc_replay_persistence_diagnostics_and_training() -> None:
+def test_electronic_vmc_scenario_1() -> None:
     problem = _hydrogen_problem()
     policy = _policy(2)
     first = phx.solver.solve_variational_monte_carlo(problem, policy, key=jr.key(123))
@@ -112,37 +112,6 @@ def test_hydrogen_vmc_replay_persistence_diagnostics_and_training() -> None:
     assert jnp.abs(first.final_state.model.alpha - 1.0) < jnp.abs(
         problem.model.alpha - 1.0
     )
-
-
-def test_electronic_vmc_checkpoint_restart_matches_persistent_continuation(
-    tmp_path: Any,
-) -> None:
-    problem = _hydrogen_problem()
-    one_step = _policy(1)
-    uninterrupted = phx.solver.solve_variational_monte_carlo(
-        problem, _policy(2), key=jr.key(77)
-    )
-    prefix = phx.solver.solve_variational_monte_carlo(problem, one_step, key=jr.key(77))
-    checkpoint = tmp_path / "electronic-vmc.npz"
-    phx.solver.write_variational_monte_carlo_checkpoint(
-        checkpoint, problem, one_step, prefix.final_state
-    )
-    restored = phx.solver.read_variational_monte_carlo_checkpoint(
-        checkpoint, problem, one_step
-    )
-    resumed = phx.solver.solve_variational_monte_carlo(problem, one_step, state=restored)
-    assert resumed.completed_iterations == 2
-    assert jnp.array_equal(
-        resumed.final_state.markov_state.position,
-        uninterrupted.final_state.markov_state.position,
-    )
-    assert jnp.allclose(
-        resumed.final_state.parameter_coordinates,
-        uninterrupted.final_state.parameter_coordinates,
-    )
-
-
-def test_small_helium_and_hydrogen_molecule_ferminet_vmc_smoke() -> None:
     cases = (
         (_atom([2], [[0.0, 0.0, 0.0]], name="He"), 2, 1),
         (
@@ -194,9 +163,6 @@ def test_small_helium_and_hydrogen_molecule_ferminet_vmc_smoke() -> None:
         )
         assert result.final_estimate.local.value.shape == (2, 1)
         assert result.final_estimate.local.method_id.startswith("electronic-kinetic")
-
-
-def test_failed_local_and_linear_actions_record_without_applying_updates() -> None:
     baseline = _hydrogen_problem(chains=4)
     failed_local = phx.solver.VariationalMonteCarloProblem(
         baseline.model,
@@ -253,3 +219,31 @@ def test_failed_local_and_linear_actions_record_without_applying_updates() -> No
     )
     assert int(linear_result.final_state.iteration) == 0
     assert int(linear_result.final_state.attempt_cursor) == 1
+
+
+def test_electronic_vmc_checkpoint_restart_matches_persistent_continuation(
+    tmp_path: Any,
+) -> None:
+    problem = _hydrogen_problem()
+    one_step = _policy(1)
+    uninterrupted = phx.solver.solve_variational_monte_carlo(
+        problem, _policy(2), key=jr.key(77)
+    )
+    prefix = phx.solver.solve_variational_monte_carlo(problem, one_step, key=jr.key(77))
+    checkpoint = tmp_path / "electronic-vmc.npz"
+    phx.solver.write_variational_monte_carlo_checkpoint(
+        checkpoint, problem, one_step, prefix.final_state
+    )
+    restored = phx.solver.read_variational_monte_carlo_checkpoint(
+        checkpoint, problem, one_step
+    )
+    resumed = phx.solver.solve_variational_monte_carlo(problem, one_step, state=restored)
+    assert resumed.completed_iterations == 2
+    assert jnp.array_equal(
+        resumed.final_state.markov_state.position,
+        uninterrupted.final_state.markov_state.position,
+    )
+    assert jnp.allclose(
+        resumed.final_state.parameter_coordinates,
+        uninterrupted.final_state.parameter_coordinates,
+    )

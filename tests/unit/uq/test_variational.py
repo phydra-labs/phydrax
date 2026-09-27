@@ -25,7 +25,7 @@ def _gaussian_problem() -> Any:
     )
 
 
-def test_mean_field_samples_and_normalized_log_density_are_consistent() -> None:
+def test_variational_scenario_1() -> None:
     family = phx.uq.MeanFieldGaussianFamily.from_position(
         {"a": jnp.asarray([0.2, -0.1]), "b": jnp.asarray(0.3)},
         initial_scale=0.4,
@@ -43,9 +43,6 @@ def test_mean_field_samples_and_normalized_log_density_are_consistent() -> None:
         bool(jnp.all(leaf))
         for leaf in jax.tree.leaves(jax.tree.map(jnp.isfinite, family.scale))
     )
-
-
-def test_mean_field_vi_recovers_analytic_gaussian_posterior() -> None:
     problem = _gaussian_problem()
     result = phx.uq.fit_variational(
         problem,
@@ -76,6 +73,31 @@ def test_mean_field_vi_recovers_analytic_gaussian_posterior() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert observations.samples.data.shape == (1000, 2)
+    likelihood = phx.uq.Normal(2.0, 0.3)
+    space = phx.uq.ParameterSpace(
+        jnp.asarray(0.0),
+        priors=phx.uq.LogNormal(0.0, 0.5),
+        bijectors=phx.uq.ExpBijector(),
+    )
+    problem = phx.uq.PosteriorProblem(
+        space,
+        lambda value: likelihood.log_prob(value),
+    )
+    result = phx.uq.fit_variational(
+        problem,
+        key=jax.random.key(4),
+        config=phx.uq.VariationalConfig(
+            num_steps=150,
+            samples_per_step=16,
+            learning_rate=0.02,
+            record_every=10,
+        ),
+        num_samples=128,
+    )
+
+    assert jnp.all(result.samples > 0.0)
+    assert jnp.all(jnp.isfinite(result.log_target))
+    assert jnp.all(jnp.isfinite(result.log_variational))
 
 
 def test_variational_checkpoint_resume_matches_uninterrupted_training(
@@ -128,31 +150,3 @@ def test_variational_checkpoint_resume_matches_uninterrupted_training(
         jax.tree.map(jnp.array_equal, resumed.family, uninterrupted.family)
     )
     assert jnp.array_equal(resumed.diagnostics.elbo, uninterrupted.diagnostics.elbo)
-
-
-def test_variational_family_preserves_constrained_parameter_coordinates() -> None:
-    likelihood = phx.uq.Normal(2.0, 0.3)
-    space = phx.uq.ParameterSpace(
-        jnp.asarray(0.0),
-        priors=phx.uq.LogNormal(0.0, 0.5),
-        bijectors=phx.uq.ExpBijector(),
-    )
-    problem = phx.uq.PosteriorProblem(
-        space,
-        lambda value: likelihood.log_prob(value),
-    )
-    result = phx.uq.fit_variational(
-        problem,
-        key=jax.random.key(4),
-        config=phx.uq.VariationalConfig(
-            num_steps=150,
-            samples_per_step=16,
-            learning_rate=0.02,
-            record_every=10,
-        ),
-        num_samples=128,
-    )
-
-    assert jnp.all(result.samples > 0.0)
-    assert jnp.all(jnp.isfinite(result.log_target))
-    assert jnp.all(jnp.isfinite(result.log_variational))

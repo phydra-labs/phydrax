@@ -189,9 +189,7 @@ def _credit_fixture(years: Any = 4, hazard: Any = 0.02, spread: Any = 0.0) -> An
     return currency, model, discount, recovery, instrument, cds
 
 
-def test_affine_zero_coupon_references_cover_vasicek_hull_white_cir_and_cir_plus_plus() -> (
-    None
-):
+def test_rates_credit_scenario_1() -> None:
     law = _pricing()
     vasicek = VasicekModel(
         0.35,
@@ -274,9 +272,6 @@ def test_affine_zero_coupon_references_cover_vasicek_hull_white_cir_and_cir_plus
     with pytest.raises(TypeError, match="PricingLaw"):
         # ty: ignore[invalid-argument-type]
         vasicek_zero_coupon_bond(vasicek, physical, rate, 0.0, maturity)
-
-
-def test_hjm_and_lmm_reject_factor_tenor_and_measure_incompatibility() -> None:
     with pytest.raises(ValueError, match="shape"):
         FiniteFactorHJMModel(
             jnp.asarray([0.0, 1.0, 2.0]),
@@ -323,9 +318,6 @@ def test_hjm_and_lmm_reject_factor_tenor_and_measure_incompatibility() -> None:
             _pricing("lmm-layout", "Q-terminal"),
             jnp.asarray([-0.03, 0.035]),
         )
-
-
-def test_constant_hazard_cds_parity_and_defaultable_bond_recovery() -> None:
     _, model, discount, recovery, instrument, cds = _credit_fixture()
     law = _pricing("credit-layout", "Q")
     times = np.arange(1.0, 5.0)
@@ -391,7 +383,7 @@ def test_constant_hazard_cds_parity_and_defaultable_bond_recovery() -> None:
     np.testing.assert_allclose(event_cashflows.default_settlement_times, [1.0])
 
 
-def test_reduced_form_default_clock_emits_one_recovery_event_per_path() -> None:
+def test_rates_credit_scenario_2() -> None:
     _, model, _, _, _, _ = _credit_fixture(years=1, hazard=100.0)
     realization = PoissonClockRealization(
         jr.key(7),
@@ -406,11 +398,6 @@ def test_reduced_form_default_clock_emits_one_recovery_event_per_path() -> None:
     assert bool(jnp.all(events.valid))
     assert bool(jnp.all((events.default_times >= 0.0) & (events.default_times <= 1.0)))
     np.testing.assert_allclose(events.recoveries, 0.4)
-
-
-def test_intensity_credit_requires_explicit_physical_base_instead_of_reusing_q_hazard() -> (
-    None
-):
     _, base, _, _, _, _ = _credit_fixture(years=1, hazard=0.02)
     model = IntensityCreditModel(
         base,
@@ -436,9 +423,6 @@ def test_intensity_credit_requires_explicit_physical_base_instead_of_reusing_q_h
         jnp.full((2, 1), 2.0 * math.log(2.0)),
     )
     np.testing.assert_allclose(physical_intensity, 0.06)
-
-
-def test_structural_credit_does_not_equate_physical_and_pricing_default_laws() -> None:
     model = StructuralCreditModel(
         100.0,
         90.0,

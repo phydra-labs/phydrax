@@ -130,7 +130,7 @@ def _evaluate(problem: Any, paths: Any, *, action: Any = 0.0, value: Any = 0.0) 
     )
 
 
-def test_one_period_social_planner_control_differs_from_mfg_control() -> None:
+def test_mean_field_control_scenario_1() -> None:
     """The population term doubles the mean coupling in the planner FOC."""
     paths = _paths()
     problem = _problem(paths)
@@ -161,9 +161,6 @@ def test_one_period_social_planner_control_differs_from_mfg_control() -> None:
     )
     assert float(mfc.welfare) < float(mfg_action_in_planner_contract.welfare)
     assert mfc.certificate_label == MEAN_FIELD_CONTROL_PLANNER_STATIONARITY
-
-
-def test_explicit_zero_externality_reduces_to_base_bsde_residuals() -> None:
     paths = _paths()
     zero = _analytic_externality(
         running=lambda time, state, law, value, control, action, args: jnp.zeros((1,)),
@@ -181,9 +178,6 @@ def test_explicit_zero_externality_reduces_to_base_bsde_residuals() -> None:
         result.terminal_residual,
         result.bsde_evaluation.terminal_residual,
     )
-
-
-def test_missing_externality_derivative_is_rejected_instead_of_dropped() -> None:
     with pytest.raises(TypeError, match="running must be callable"):
         MeanFieldExternality(
             # ty: ignore[invalid-argument-type]
@@ -214,7 +208,7 @@ def test_missing_externality_derivative_is_rejected_instead_of_dropped() -> None
         )
 
 
-def test_finite_particle_adjoint_preserves_bias_audit_evidence() -> None:
+def test_mean_field_control_scenario_2() -> None:
     paths = _paths()
     particle_externality = MeanFieldExternality(
         lambda time, state, law, value, control, action, args: jnp.asarray([law.mean[0]]),
@@ -249,9 +243,6 @@ def test_finite_particle_adjoint_preserves_bias_audit_evidence() -> None:
             particle_count=2,
             discretization_id="two-particle",
         )
-
-
-def test_invalid_law_low_ess_and_wrong_path_identity_have_distinct_statuses() -> None:
     invalid_paths = _paths(valid=jnp.asarray([[True, True], [False, False]]))
     invalid = _evaluate(_problem(invalid_paths), invalid_paths)
     assert not bool(invalid.valid)
@@ -289,9 +280,6 @@ def test_invalid_law_low_ess_and_wrong_path_identity_have_distinct_statuses() ->
     assert int(count_mismatch.status) == int(
         MeanFieldControlStatus.PATH_IDENTITY_MISMATCH
     )
-
-
-def test_terminal_residual_includes_terminal_measure_externality() -> None:
     paths = _paths()
     externality = _analytic_externality(
         running=lambda time, state, law, value, control, action, args: jnp.zeros((1,)),

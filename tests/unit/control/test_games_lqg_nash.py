@@ -34,7 +34,7 @@ def _two_player_scalar_game(case_shape: Any = ()) -> Any:
     return a, b, q, r, qf, partition
 
 
-def test_zero_noise_exactly_preserves_the_deterministic_feedback_nash_result() -> None:
+def test_games_lqg_nash_scenario_1() -> None:
     a, b, q, r, qf, partition = _two_player_scalar_game()
     state_linear = jnp.asarray([[[0.2]], [[-0.3]]])
     control_linear = jnp.asarray([[[0.1, -0.2]], [[0.3, 0.4]]])
@@ -112,9 +112,6 @@ def test_zero_noise_exactly_preserves_the_deterministic_feedback_nash_result() -
             nested_value.constants,
             deterministic_value.constants,
         )
-
-
-def test_common_noise_corrects_each_player_constant_and_initial_cost_separately() -> None:
     a, b, q, r, qf, partition = _two_player_scalar_game()
     result = finite_horizon_lqg_feedback_nash(
         a,
@@ -153,9 +150,6 @@ def test_common_noise_corrects_each_player_constant_and_initial_cost_separately(
         + result.initial_covariance_cost
     )
     np.testing.assert_allclose(result.initial_expected_cost, expected)
-
-
-def test_game_case_axes_remain_distinct_from_the_player_axis() -> None:
     case_shape = (2, 3)
     a, b, q, r, qf, partition = _two_player_scalar_game(case_shape)
     factors = jnp.ones(case_shape + (1, 1, 1))
@@ -203,9 +197,6 @@ def test_game_case_axes_remain_distinct_from_the_player_axis() -> None:
             process_noise_factors=factors,
             process_noise_covariances=jnp.ones(case_shape + (2, 1, 1, 1)),
         )
-
-
-def test_game_rejects_non_psd_and_nonfinite_noise_covariances_before_solving() -> None:
     a, b, q, r, qf, partition = _two_player_scalar_game()
     factors = jnp.ones((1, 1, 1))
 

@@ -40,7 +40,7 @@ def _operator_inference_data() -> Any:
     return data
 
 
-def test_operator_inference_uses_only_c_a_b_and_symmetric_h_blocks() -> None:
+def test_identified_scenario_1() -> None:
     data = _operator_inference_data()
     library = phx.dynamics.identification.OperatorInferenceFeatureLibrary(
         data.state_layout,
@@ -67,9 +67,6 @@ def test_operator_inference_uses_only_c_a_b_and_symmetric_h_blocks() -> None:
     )
     prediction = result.evaluate(data.states, data.inputs)
     np.testing.assert_allclose(prediction, data.derivatives, atol=2e-5)
-
-
-def test_reduced_trajectory_projection_preserves_offset_and_derivatives() -> None:
     data = _operator_inference_data()
     full = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="opinf-full")
     basis = phx.rom.ReducedBasisArtifact(

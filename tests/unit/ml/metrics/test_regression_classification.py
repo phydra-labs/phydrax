@@ -9,7 +9,7 @@ import pytest
 from phydrax.ml import metrics
 
 
-def test_regression_preserves_case_sample_output_axes_weights_and_masks() -> None:
+def test_regression_contracts() -> None:
     target = jnp.array(
         [
             [[1.0, 2.0], [2.0, 4.0], [jnp.nan, jnp.nan]],
@@ -56,9 +56,6 @@ def test_regression_preserves_case_sample_output_axes_weights_and_masks() -> Non
     assert jnp.allclose(raw.effective_weight, 4.0)
     assert jnp.allclose(reduced.value, jnp.array([5.0, 5.0]))
     assert jnp.allclose(absolute.value, jnp.array([[1.75, 2.25], [1.75, 2.25]]))
-
-
-def test_regression_definitions_and_explicit_edge_statuses() -> None:
     target = jnp.array([1.0, 2.0, 3.0])
     perfect = metrics.r2_score(target, target)
     explained = metrics.explained_variance_score(target, target + 2.0)
@@ -80,109 +77,6 @@ def test_regression_definitions_and_explicit_edge_statuses() -> None:
     assert not bool(empty.valid)
     assert not bool(invalid.valid)
     assert not bool(zero_denominator.valid)
-
-
-def test_classification_exact_weighted_catalog_and_confusion_orientation() -> None:
-    target = jnp.array([0, 1, 1, 0])
-    prediction = jnp.array([0, 1, 0, 0])
-    weight = jnp.array([1.0, 2.0, 3.0, 4.0])
-
-    accuracy = metrics.accuracy_score(target, prediction, sample_weight=weight)
-    balanced = metrics.balanced_accuracy_score(
-        target, prediction, num_classes=2, sample_weight=weight
-    )
-    confusion = metrics.confusion_matrix(
-        target, prediction, num_classes=2, sample_weight=weight
-    )
-    report = metrics.precision_recall_fscore(
-        target,
-        prediction,
-        num_classes=2,
-        average="binary",
-        sample_weight=weight,
-    )
-
-    assert jnp.allclose(accuracy.value, 0.7)
-    assert jnp.allclose(confusion.value, jnp.array([[5.0, 0.0], [3.0, 2.0]]))
-    assert jnp.allclose(balanced.value, 0.7)
-    assert jnp.allclose(report.precision, 1.0)
-    assert jnp.allclose(report.recall, 0.4)
-    assert jnp.allclose(report.fscore, 4.0 / 7.0)
-    assert jnp.allclose(report.support, 5.0)
-
-
-def test_classification_probability_scores_and_auc_hard_sorting() -> None:
-    target = jnp.array([0, 0, 1, 1])
-    score = jnp.array([0.1, 0.4, 0.35, 0.8])
-    probability = jnp.stack((1.0 - score, score), axis=-1)
-
-    log_score = metrics.log_loss(target, probability)
-    brier = metrics.brier_score(target, score)
-    roc = metrics.roc_auc_score(target, score)
-    pr = metrics.pr_auc_score(target, score)
-    tie_roc = metrics.roc_auc_score(target, jnp.ones_like(score))
-    tie_pr = metrics.pr_auc_score(target, jnp.ones_like(score))
-    impossible_log = metrics.log_loss(
-        jnp.array([0, 1]),
-        jnp.array([[0.0, 1.0], [0.2, 0.8]]),
-    )
-
-    expected_log = -jnp.mean(jnp.log(jnp.array([0.9, 0.6, 0.35, 0.8])))
-    expected_brier = jnp.mean((score - target) ** 2)
-    assert jnp.allclose(log_score.value, expected_log)
-    assert jnp.allclose(brier.value, expected_brier)
-    assert jnp.allclose(roc.value, 0.75)
-    assert jnp.allclose(pr.value, 19.0 / 24.0)
-    assert jnp.allclose(tie_roc.value, 0.5)
-    assert jnp.allclose(tie_pr.value, 0.75)
-    assert bool(impossible_log.valid)
-    assert jnp.isinf(impossible_log.value)
-
-
-def test_hard_and_smooth_classification_semantics_are_distinct() -> None:
-    target = jnp.array([0, 1, 1])
-    probability = jnp.array([[0.8, 0.2], [0.3, 0.7], [0.4, 0.6]])
-    hard = metrics.accuracy_score(target, jnp.argmax(probability, axis=-1))
-    smooth = metrics.smooth_accuracy_score(target, probability)
-    smooth_f = metrics.smooth_f1_score(target, probability, average="binary")
-
-    assert jnp.allclose(hard.value, 1.0)
-    assert jnp.allclose(smooth.value, 0.7)
-    assert 0.0 < float(smooth_f.value) < 1.0
-
-    hard_gradient = jax.grad(lambda values: metrics.roc_auc_score(target, values).value)(
-        probability[:, 1]
-    )
-    smooth_gradient = jax.grad(
-        lambda values: (
-            metrics.smooth_roc_auc_score(target, values, temperature=0.25).value
-        )
-    )(probability[:, 1])
-    assert jnp.allclose(hard_gradient, 0.0)
-    assert jnp.any(jnp.abs(smooth_gradient) > 0.0)
-    assert jnp.all(jnp.isfinite(smooth_gradient))
-
-
-def test_classification_single_class_and_complex_policies_fail_closed() -> None:
-    single = metrics.roc_auc_score(jnp.zeros(3, dtype=jnp.int32), jnp.arange(3.0))
-    assert int(single.status) == metrics.METRIC_SINGLE_CLASS
-    assert not bool(single.valid)
-
-    complex_target = jnp.array([1.0 + 1.0j, 2.0 - 1.0j])
-    complex_prediction = jnp.array([0.0 + 1.0j, 2.0 + 1.0j])
-    squared = metrics.mean_squared_error(complex_target, complex_prediction)
-    assert jnp.allclose(squared.value, 2.5)
-
-    with pytest.raises(TypeError, match="complex"):
-        metrics.pinball_loss(complex_target, complex_prediction)
-    with pytest.raises(TypeError, match="complex"):
-        metrics.log_loss(
-            jnp.array([0, 1]),
-            jnp.array([[0.5 + 0.0j, 0.5], [0.2, 0.8]]),
-        )
-
-
-def test_regression_catalog_output_reductions_and_gradients() -> None:
     target = jnp.array([[0.0, 0.0], [1.0, 1.0], [2.0, 4.0]])
     prediction = jnp.array([[0.0, 1.0], [2.0, 1.0], [0.0, 5.0]])
 
@@ -257,7 +151,74 @@ def test_regression_catalog_output_reductions_and_gradients() -> None:
         )
 
 
-def test_classification_averaging_wrappers_and_denominator_states() -> None:
+def test_classification_contracts() -> None:
+    target = jnp.array([0, 1, 1, 0])
+    prediction = jnp.array([0, 1, 0, 0])
+    weight = jnp.array([1.0, 2.0, 3.0, 4.0])
+
+    accuracy = metrics.accuracy_score(target, prediction, sample_weight=weight)
+    balanced = metrics.balanced_accuracy_score(
+        target, prediction, num_classes=2, sample_weight=weight
+    )
+    confusion = metrics.confusion_matrix(
+        target, prediction, num_classes=2, sample_weight=weight
+    )
+    report = metrics.precision_recall_fscore(
+        target,
+        prediction,
+        num_classes=2,
+        average="binary",
+        sample_weight=weight,
+    )
+
+    assert jnp.allclose(accuracy.value, 0.7)
+    assert jnp.allclose(confusion.value, jnp.array([[5.0, 0.0], [3.0, 2.0]]))
+    assert jnp.allclose(balanced.value, 0.7)
+    assert jnp.allclose(report.precision, 1.0)
+    assert jnp.allclose(report.recall, 0.4)
+    assert jnp.allclose(report.fscore, 4.0 / 7.0)
+    assert jnp.allclose(report.support, 5.0)
+    target = jnp.array([0, 0, 1, 1])
+    score = jnp.array([0.1, 0.4, 0.35, 0.8])
+    probability = jnp.stack((1.0 - score, score), axis=-1)
+
+    log_score = metrics.log_loss(target, probability)
+    brier = metrics.brier_score(target, score)
+    roc = metrics.roc_auc_score(target, score)
+    pr = metrics.pr_auc_score(target, score)
+    tie_roc = metrics.roc_auc_score(target, jnp.ones_like(score))
+    tie_pr = metrics.pr_auc_score(target, jnp.ones_like(score))
+    impossible_log = metrics.log_loss(
+        jnp.array([0, 1]),
+        jnp.array([[0.0, 1.0], [0.2, 0.8]]),
+    )
+
+    expected_log = -jnp.mean(jnp.log(jnp.array([0.9, 0.6, 0.35, 0.8])))
+    expected_brier = jnp.mean((score - target) ** 2)
+    assert jnp.allclose(log_score.value, expected_log)
+    assert jnp.allclose(brier.value, expected_brier)
+    assert jnp.allclose(roc.value, 0.75)
+    assert jnp.allclose(pr.value, 19.0 / 24.0)
+    assert jnp.allclose(tie_roc.value, 0.5)
+    assert jnp.allclose(tie_pr.value, 0.75)
+    assert bool(impossible_log.valid)
+    assert jnp.isinf(impossible_log.value)
+    single = metrics.roc_auc_score(jnp.zeros(3, dtype=jnp.int32), jnp.arange(3.0))
+    assert int(single.status) == metrics.METRIC_SINGLE_CLASS
+    assert not bool(single.valid)
+
+    complex_target = jnp.array([1.0 + 1.0j, 2.0 - 1.0j])
+    complex_prediction = jnp.array([0.0 + 1.0j, 2.0 + 1.0j])
+    squared = metrics.mean_squared_error(complex_target, complex_prediction)
+    assert jnp.allclose(squared.value, 2.5)
+
+    with pytest.raises(TypeError, match="complex"):
+        metrics.pinball_loss(complex_target, complex_prediction)
+    with pytest.raises(TypeError, match="complex"):
+        metrics.log_loss(
+            jnp.array([0, 1]),
+            jnp.array([[0.5 + 0.0j, 0.5], [0.2, 0.8]]),
+        )
     target = jnp.array([0, 1, 2, 2, 1, 0])
     prediction = jnp.array([0, 2, 2, 1, 1, 0])
 
@@ -329,9 +290,75 @@ def test_classification_averaging_wrappers_and_denominator_states() -> None:
     assert int(empty.status) == metrics.METRIC_EMPTY
     assert int(invalid.status) == metrics.METRIC_INVALID_INPUT
     assert int(invalid_label.status) == metrics.METRIC_INVALID_INPUT
+    target = jnp.array([[0, 1, 1], [1, 0, 0]])
+    logits = jnp.array(
+        [
+            [[2.0, -1.0], [-1.0, 2.0], [0.0, 1.0]],
+            [[-1.0, 2.0], [2.0, -1.0], [1.0, 0.0]],
+        ]
+    )
+    weight = jnp.array([1.0, 2.0, 1.0])
+    mask = jnp.array([[True, True, False], [True, True, True]])
+
+    batched = metrics.smooth_accuracy_score(
+        target,
+        logits,
+        sample_weight=weight,
+        mask=mask,
+        sample_axis=-1,
+        from_logits=True,
+    )
+    mapped = jax.vmap(
+        lambda labels, values, included: (
+            metrics.smooth_accuracy_score(
+                labels,
+                values,
+                sample_weight=weight,
+                mask=included,
+                from_logits=True,
+            ).value
+        )
+    )(target, logits, mask)
+    compiled_loss = jax.jit(
+        lambda values: (
+            metrics.log_loss(
+                target,
+                values,
+                sample_weight=weight,
+                mask=mask,
+                from_logits=True,
+            ).value
+        )
+    )(logits)
+
+    assert batched.value.shape == (2,)
+    assert jnp.allclose(batched.value, mapped)
+    assert compiled_loss.shape == (2,)
+    assert jnp.all(jnp.isfinite(compiled_loss))
 
 
-def test_smooth_classification_catalog_matches_expected_count_wrappers() -> None:
+def test_regression_classification_scenario_1() -> None:
+    target = jnp.array([0, 1, 1])
+    probability = jnp.array([[0.8, 0.2], [0.3, 0.7], [0.4, 0.6]])
+    hard = metrics.accuracy_score(target, jnp.argmax(probability, axis=-1))
+    smooth = metrics.smooth_accuracy_score(target, probability)
+    smooth_f = metrics.smooth_f1_score(target, probability, average="binary")
+
+    assert jnp.allclose(hard.value, 1.0)
+    assert jnp.allclose(smooth.value, 0.7)
+    assert 0.0 < float(smooth_f.value) < 1.0
+
+    hard_gradient = jax.grad(lambda values: metrics.roc_auc_score(target, values).value)(
+        probability[:, 1]
+    )
+    smooth_gradient = jax.grad(
+        lambda values: (
+            metrics.smooth_roc_auc_score(target, values, temperature=0.25).value
+        )
+    )(probability[:, 1])
+    assert jnp.allclose(hard_gradient, 0.0)
+    assert jnp.any(jnp.abs(smooth_gradient) > 0.0)
+    assert jnp.all(jnp.isfinite(smooth_gradient))
     target = jnp.array([0, 1, 1])
     probability = jnp.array([[0.8, 0.2], [0.3, 0.7], [0.4, 0.6]])
 
@@ -391,51 +418,3 @@ def test_smooth_classification_catalog_matches_expected_count_wrappers() -> None
     )(score)
     assert jnp.all(jnp.isfinite(pr_gradient))
     assert jnp.any(jnp.abs(pr_gradient) > 0.0)
-
-
-def test_classification_case_axes_vmap_and_jit_from_logits() -> None:
-    target = jnp.array([[0, 1, 1], [1, 0, 0]])
-    logits = jnp.array(
-        [
-            [[2.0, -1.0], [-1.0, 2.0], [0.0, 1.0]],
-            [[-1.0, 2.0], [2.0, -1.0], [1.0, 0.0]],
-        ]
-    )
-    weight = jnp.array([1.0, 2.0, 1.0])
-    mask = jnp.array([[True, True, False], [True, True, True]])
-
-    batched = metrics.smooth_accuracy_score(
-        target,
-        logits,
-        sample_weight=weight,
-        mask=mask,
-        sample_axis=-1,
-        from_logits=True,
-    )
-    mapped = jax.vmap(
-        lambda labels, values, included: (
-            metrics.smooth_accuracy_score(
-                labels,
-                values,
-                sample_weight=weight,
-                mask=included,
-                from_logits=True,
-            ).value
-        )
-    )(target, logits, mask)
-    compiled_loss = jax.jit(
-        lambda values: (
-            metrics.log_loss(
-                target,
-                values,
-                sample_weight=weight,
-                mask=mask,
-                from_logits=True,
-            ).value
-        )
-    )(logits)
-
-    assert batched.value.shape == (2,)
-    assert jnp.allclose(batched.value, mapped)
-    assert compiled_loss.shape == (2,)
-    assert jnp.all(jnp.isfinite(compiled_loss))

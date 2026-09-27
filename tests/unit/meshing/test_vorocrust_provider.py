@@ -88,7 +88,7 @@ def test_real_vorocrust_preserves_closed_cube_volume() -> None:
     assert result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
 
 
-def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa() -> None:
+def test_vorocrust_contracts() -> None:
     coordinates = np.asarray(
         (
             (0, 0, 0),
@@ -164,6 +164,30 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa() -
     assert not qualified.tpfa_certified
     with pytest.raises(ValueError, match="does not certify TPFA"):
         qualified.require_tpfa()
+    mesh, merged, collapsed = _polyhedra(
+        _two_box_extraction(), phx.meshing.MeshingLimits(), 1e-12
+    )
+    certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+
+    assert merged == 2
+    assert collapsed == 1
+    np.testing.assert_array_equal(mesh.vertex_global_ids, np.arange(12))
+    np.testing.assert_array_equal(
+        np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks]), (0, 1)
+    )
+    np.testing.assert_allclose(
+        np.asarray(certified.quality.evaluation.measures), (0.5, 0.5), rtol=1e-12
+    )
+    assert certified.audit.passed
+    # Consecutive chain members lie within the tolerance of each other, but
+    # the chain end is farther than the tolerance from its representative.
+    step = 0.6 * 1e-9 * np.sqrt(3.0)
+    arrays = _two_box_extraction(((step, 0.0, 0.0), (2 * step, 0.0, 0.0)))
+
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        _polyhedra(arrays, phx.meshing.MeshingLimits(), 1e-9)
+
+    assert failure.value.category is phx.meshing.MeshingFailureCategory.CONVERSION_FAILED
 
 
 def test_vorocrust_worker_startup_exit_is_an_execution_failure(tmp_path: Any) -> None:
@@ -292,33 +316,3 @@ def _two_box_extraction(extra_vertices: Any = ()) -> Any:
         "seed_points": np.asarray(((0.25, 0.5, 0.5), (0.75, 0.5, 0.5), (-1.0, 0.5, 0.5))),
         "seed_regions": np.asarray((1, 1, 0), dtype=np.int64),
     }
-
-
-def test_vorocrust_extraction_normalizes_aliases_and_orients_cells_outward() -> None:
-    mesh, merged, collapsed = _polyhedra(
-        _two_box_extraction(), phx.meshing.MeshingLimits(), 1e-12
-    )
-    certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-
-    assert merged == 2
-    assert collapsed == 1
-    np.testing.assert_array_equal(mesh.vertex_global_ids, np.arange(12))
-    np.testing.assert_array_equal(
-        np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks]), (0, 1)
-    )
-    np.testing.assert_allclose(
-        np.asarray(certified.quality.evaluation.measures), (0.5, 0.5), rtol=1e-12
-    )
-    assert certified.audit.passed
-
-
-def test_vorocrust_extraction_refuses_transitive_alias_chains() -> None:
-    # Consecutive chain members lie within the tolerance of each other, but
-    # the chain end is farther than the tolerance from its representative.
-    step = 0.6 * 1e-9 * np.sqrt(3.0)
-    arrays = _two_box_extraction(((step, 0.0, 0.0), (2 * step, 0.0, 0.0)))
-
-    with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        _polyhedra(arrays, phx.meshing.MeshingLimits(), 1e-9)
-
-    assert failure.value.category is phx.meshing.MeshingFailureCategory.CONVERSION_FAILED

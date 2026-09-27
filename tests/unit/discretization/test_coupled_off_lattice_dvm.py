@@ -46,9 +46,7 @@ def _prepared(
     )
 
 
-def test_periodic_uniform_departure_transfer_preserves_constant_integral_and_direction() -> (
-    None
-):
+def test_coupled_off_lattice_dvm_scenario_1() -> None:
     transfer = PeriodicUniformGridDepartureTransfer((4, 3), (0.5, 2.0), (0.25, -0.5))
     constant = jnp.full((4, 3), 2.75, dtype=jnp.float64)
     transported_constant = transfer.primal_operator.mv(constant)
@@ -65,9 +63,6 @@ def test_periodic_uniform_departure_transfer_preserves_constant_integral_and_dir
     expected = expected.at[2, 0].set(0.125)
     expected = expected.at[2, 1].set(0.125)
     np.testing.assert_allclose(transported, expected, atol=1.0e-14)
-
-
-def test_coupled_d2v37_uses_one_transfer_tuple_and_audits_declared_moments() -> None:
     prepared = _prepared()
     quadrature = prepared.quadrature
     f_constants = jnp.linspace(
@@ -121,6 +116,53 @@ def test_coupled_d2v37_uses_one_transfer_tuple_and_audits_declared_moments() -> 
         shared.candidate_state.particle_populations,
         shared.candidate_state.total_energy_populations,
     )
+    prepared = _prepared()
+    q = prepared.quadrature.population_count
+    shape = prepared.population_transport.source_shape
+    dtype = prepared.quadrature.velocities.dtype
+    state = SmoothCompressibleKineticState(
+        jnp.ones(shape + (q,), dtype=dtype),
+        jnp.ones(shape + (q,), dtype=dtype),
+    )
+
+    refused = prepared.transport_with_evidence(state, 0.5 * prepared.required_step_size)
+    assert not bool(refused.successful)
+    assert int(refused.status) == int(CoupledD2V37TransportStatus.FIXED_STEP_MISMATCH)
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError), match="refuses a time step"
+    ):
+        invalid = prepared.transport(state, 0.5 * prepared.required_step_size)
+        jax.block_until_ready(invalid.particle_populations)
+
+    with pytest.raises(ValueError, match="periodic 2-D geometry"):
+        PreparedCoupledD2V37OffLatticeTransport.prepare(
+            _method(d2v37_off_lattice_quadrature()),
+            (4, 5),
+            (1.0, 1.0),
+            0.1,
+            periodic_axes=(True, False),
+        )
+    with pytest.raises(ValueError, match="at least two cells"):
+        PeriodicUniformGridDepartureTransfer((1, 5), (1.0, 1.0), (0.25, 0.25))
+    bad_state = SmoothCompressibleKineticState(
+        jnp.ones((shape[0], shape[1] + 1, q), dtype=dtype),
+        jnp.ones((shape[0], shape[1] + 1, q), dtype=dtype),
+    )
+    with pytest.raises(ValueError, match="must have shape"):
+        prepared.transport_with_evidence(bad_state, prepared.required_step_size)
+    transfer = PeriodicUniformGridDepartureTransfer((4, 5), (1.0, 1.0), (0.25, 0.5))
+    with pytest.raises(ValueError, match="integer_roll"):
+        SemiLagrangianTransferRequirements(exact_on=("integer_roll",)).validate(transfer)
+
+    d2v17_method = _method(d2v17_quadrature())
+    with pytest.raises(ValueError, match="D2V37 quadrature identity"):
+        PreparedCoupledD2V37OffLatticeTransport.prepare(
+            d2v17_method, (4, 5), (1.0, 1.0), 0.1
+        )
+
+    d2v37_transport = _prepared().population_transport
+    with pytest.raises(ValueError, match="D2V37 quadrature identity"):
+        PreparedCoupledD2V37OffLatticeTransport(d2v17_method, d2v37_transport, (0.7, 1.1))
 
 
 def test_coupled_d2v37_preserves_positive_population_integrals_and_gradients() -> None:
@@ -167,58 +209,3 @@ def test_coupled_d2v37_preserves_positive_population_integrals_and_gradients() -
     assert gradient.shape == f.shape
     assert bool(jnp.all(jnp.isfinite(gradient)))
     assert float(jnp.max(jnp.abs(gradient))) > 0.0
-
-
-def test_coupled_d2v37_refuses_variable_step_nonperiodic_geometry_and_bad_shapes() -> (
-    None
-):
-    prepared = _prepared()
-    q = prepared.quadrature.population_count
-    shape = prepared.population_transport.source_shape
-    dtype = prepared.quadrature.velocities.dtype
-    state = SmoothCompressibleKineticState(
-        jnp.ones(shape + (q,), dtype=dtype),
-        jnp.ones(shape + (q,), dtype=dtype),
-    )
-
-    refused = prepared.transport_with_evidence(state, 0.5 * prepared.required_step_size)
-    assert not bool(refused.successful)
-    assert int(refused.status) == int(CoupledD2V37TransportStatus.FIXED_STEP_MISMATCH)
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError), match="refuses a time step"
-    ):
-        invalid = prepared.transport(state, 0.5 * prepared.required_step_size)
-        jax.block_until_ready(invalid.particle_populations)
-
-    with pytest.raises(ValueError, match="periodic 2-D geometry"):
-        PreparedCoupledD2V37OffLatticeTransport.prepare(
-            _method(d2v37_off_lattice_quadrature()),
-            (4, 5),
-            (1.0, 1.0),
-            0.1,
-            periodic_axes=(True, False),
-        )
-    with pytest.raises(ValueError, match="at least two cells"):
-        PeriodicUniformGridDepartureTransfer((1, 5), (1.0, 1.0), (0.25, 0.25))
-    bad_state = SmoothCompressibleKineticState(
-        jnp.ones((shape[0], shape[1] + 1, q), dtype=dtype),
-        jnp.ones((shape[0], shape[1] + 1, q), dtype=dtype),
-    )
-    with pytest.raises(ValueError, match="must have shape"):
-        prepared.transport_with_evidence(bad_state, prepared.required_step_size)
-
-
-def test_coupled_d2v37_rejects_integer_roll_and_d2v17_identity_claims() -> None:
-    transfer = PeriodicUniformGridDepartureTransfer((4, 5), (1.0, 1.0), (0.25, 0.5))
-    with pytest.raises(ValueError, match="integer_roll"):
-        SemiLagrangianTransferRequirements(exact_on=("integer_roll",)).validate(transfer)
-
-    d2v17_method = _method(d2v17_quadrature())
-    with pytest.raises(ValueError, match="D2V37 quadrature identity"):
-        PreparedCoupledD2V37OffLatticeTransport.prepare(
-            d2v17_method, (4, 5), (1.0, 1.0), 0.1
-        )
-
-    d2v37_transport = _prepared().population_transport
-    with pytest.raises(ValueError, match="D2V37 quadrature identity"):
-        PreparedCoupledD2V37OffLatticeTransport(d2v17_method, d2v37_transport, (0.7, 1.1))

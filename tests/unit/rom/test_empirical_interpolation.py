@@ -31,7 +31,7 @@ def _artifact(basis: Any, *, role: Any = "roq") -> Any:
     )
 
 
-def test_empirical_interpolation_reproduces_source_basis() -> None:
+def test_empirical_interpolation_contracts() -> None:
     basis = jnp.eye(4)
     artifact = _artifact(basis)
     interpolation = phx.rom.prepare_empirical_interpolation(artifact)
@@ -44,9 +44,6 @@ def test_empirical_interpolation_reproduces_source_basis() -> None:
     assert interpolation.support_id == artifact.support_id
     assert interpolation.condition_number <= 1.0e10
     assert interpolation.maximum_reproduction_error <= 1.0e-12
-
-
-def test_empirical_interpolation_preserves_complex_basis_algebra() -> None:
     basis = jnp.asarray(
         [
             [1.0 + 1.0j, 0.5 - 0.5j],

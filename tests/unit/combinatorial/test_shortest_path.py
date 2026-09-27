@@ -23,7 +23,7 @@ def _relation(source: Any, target: Any, vertices: Any, *, valid: Any = None) -> 
     )
 
 
-def test_dag_shortest_path_supports_signed_edges_and_certifies_dual() -> None:
+def test_shortest_path_scenario_1() -> None:
     relation = _relation([0, 0, 1, 2, 1], [1, 2, 2, 3, 3], 4)
     space = phx.combinatorial.ShortestPathSpace(relation, 0, 3)
     result = phx.combinatorial.solve_combinatorial(
@@ -45,9 +45,34 @@ def test_dag_shortest_path_supports_signed_edges_and_certifies_dual() -> None:
     np.testing.assert_allclose(result.certificate.absolute_gap, 0.0, atol=1e-12)
     np.testing.assert_allclose(result.certificate.dual_residual, 0.0, atol=1e-12)
     assert result.certificate.optimality_proven
+    empty = _relation([], [], 1)
+    identity_space = phx.combinatorial.ShortestPathSpace(empty, 0, 0)
+    identity = phx.combinatorial.solve_combinatorial(
+        phx.combinatorial.LinearCombinatorialProblem(
+            identity_space,
+            jnp.asarray([], dtype="float64"),
+        ),
+        phx.combinatorial.DAGShortestPath(),
+    )
 
+    np.testing.assert_array_equal(identity.decision.vertices, jnp.asarray([0]))
+    np.testing.assert_array_equal(
+        identity.decision.edges, jnp.asarray([], dtype=jnp.int32)
+    )
+    assert identity.decision.length == 1
+    assert identity.objective_value == 0.0
+    assert identity.valid
 
-def test_dag_path_batches_ties_masks_and_unreachable_status() -> None:
+    cycle = _relation([0, 1], [1, 0], 2)
+    cyclic_space = phx.combinatorial.ShortestPathSpace(cycle, 0, 1)
+    with pytest.raises(ValueError, match="acyclic"):
+        phx.combinatorial.plan_combinatorial(
+            phx.combinatorial.LinearCombinatorialProblem(
+                cyclic_space,
+                jnp.ones((2,)),
+            ),
+            phx.combinatorial.DAGShortestPath(),
+        )
     relation = _relation(
         [0, 0, 1, 2, 0],
         [1, 2, 3, 3, 3],
@@ -106,40 +131,6 @@ def test_dag_path_batches_ties_masks_and_unreachable_status() -> None:
     )
     assert nonfinite.decision.length == 0
     np.testing.assert_array_equal(nonfinite.features, jnp.zeros((5,)))
-
-
-def test_dag_shortest_path_handles_identity_path_and_rejects_cycles() -> None:
-    empty = _relation([], [], 1)
-    identity_space = phx.combinatorial.ShortestPathSpace(empty, 0, 0)
-    identity = phx.combinatorial.solve_combinatorial(
-        phx.combinatorial.LinearCombinatorialProblem(
-            identity_space,
-            jnp.asarray([], dtype="float64"),
-        ),
-        phx.combinatorial.DAGShortestPath(),
-    )
-
-    np.testing.assert_array_equal(identity.decision.vertices, jnp.asarray([0]))
-    np.testing.assert_array_equal(
-        identity.decision.edges, jnp.asarray([], dtype=jnp.int32)
-    )
-    assert identity.decision.length == 1
-    assert identity.objective_value == 0.0
-    assert identity.valid
-
-    cycle = _relation([0, 1], [1, 0], 2)
-    cyclic_space = phx.combinatorial.ShortestPathSpace(cycle, 0, 1)
-    with pytest.raises(ValueError, match="acyclic"):
-        phx.combinatorial.plan_combinatorial(
-            phx.combinatorial.LinearCombinatorialProblem(
-                cyclic_space,
-                jnp.ones((2,)),
-            ),
-            phx.combinatorial.DAGShortestPath(),
-        )
-
-
-def test_path_audit_rejects_disconnected_decision() -> None:
     relation = _relation([0, 1], [1, 2], 3)
     space = phx.combinatorial.ShortestPathSpace(relation, 0, 2)
     invalid = phx.combinatorial.PathDecision(

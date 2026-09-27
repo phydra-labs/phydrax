@@ -170,7 +170,7 @@ def _produce(route: str, provider: _InjectedProvider | None = None) -> Any:
     return artifact, injected
 
 
-def test_all_platform_fault_boundaries_are_exercised_and_assembled() -> None:
+def test_commercial_platform_qualification_scenario_1() -> None:
     artifacts = []
     exercised = {}
     for route in ROUTE_BOUNDARIES:
@@ -193,11 +193,7 @@ def test_all_platform_fault_boundaries_are_exercised_and_assembled() -> None:
     assert candidate["release_ready"] is False
     # ty: ignore[invalid-argument-type]
     assert set(candidate["required_routes"]) == set(ROUTE_BOUNDARIES)
-
-
-@pytest.mark.parametrize(
-    ("route", "boundary"),
-    (
+    for route, boundary in (
         ("chunk-lifecycle", "chunk.duplicate-write"),
         ("chunk-lifecycle", "chunk.stale-attempt"),
         ("durable-service", "service.cross-tenant-denial"),
@@ -217,41 +213,34 @@ def test_all_platform_fault_boundaries_are_exercised_and_assembled() -> None:
         ("configuration-migration", "migration.lossy-denial"),
         ("configuration-migration", "migration.ambiguous-path"),
         ("configuration-migration", "migration.immutable-parent-rollback"),
-    ),
-)
-def test_fault_contract_failures_remain_boundary_and_gate_specific(
-    route: Any, boundary: Any
-) -> None:
-    provider_id, deployment, dependency, resolved, context, source, matrix = _bindings(
-        route
-    )
-    provider = _InjectedProvider(provider_id, deployment, wrong_boundary=boundary)
-    artifact = produce_provider_qualification(
-        provider,
-        matrix,
-        context=context,
-        support_dependencies=(dependency,),
-        resolved_run_spec=resolved,
-        source_evidence=source,
-        scientific_criteria=("scientific.reference",),
-        performance_criteria=("performance.reference",),
-    )
+    ):
+        provider_id, deployment, dependency, resolved, context, source, matrix = (
+            _bindings(route)
+        )
+        provider = _InjectedProvider(provider_id, deployment, wrong_boundary=boundary)
+        artifact = produce_provider_qualification(
+            provider,
+            matrix,
+            context=context,
+            support_dependencies=(dependency,),
+            resolved_run_spec=resolved,
+            source_evidence=source,
+            scientific_criteria=("scientific.reference",),
+            performance_criteria=("performance.reference",),
+        )
 
-    failed = [
-        observation
-        # ty: ignore[not-iterable]
-        for observation in artifact["observations"]
-        if observation["outcome"] == "failed"
-    ]
-    assert [observation["boundary_id"] for observation in failed] == [boundary]
-    assert artifact["status"] == "failed"
-    # ty: ignore[not-subscriptable]
-    assert artifact["gates"][0]["outcome"] == "passed"
-    # ty: ignore[not-subscriptable]
-    assert artifact["gates"][1]["outcome"] == "passed"
-
-
-def test_secret_leakage_is_failed_and_removed_from_candidate_records() -> None:
+        failed = [
+            observation
+            # ty: ignore[not-iterable]
+            for observation in artifact["observations"]
+            if observation["outcome"] == "failed"
+        ]
+        assert [observation["boundary_id"] for observation in failed] == [boundary]
+        assert artifact["status"] == "failed"
+        # ty: ignore[not-subscriptable]
+        assert artifact["gates"][0]["outcome"] == "passed"
+        # ty: ignore[not-subscriptable]
+        assert artifact["gates"][1]["outcome"] == "passed"
     route = "redaction-support"
     boundary = "redaction.recursive"
     provider_id, deployment, dependency, resolved, context, source, matrix = _bindings(
@@ -284,7 +273,7 @@ def test_secret_leakage_is_failed_and_removed_from_candidate_records() -> None:
     verify_provider_qualification(artifact)
 
 
-def test_undeclared_effects_fail_and_provider_construction_is_inert() -> None:
+def test_commercial_platform_qualification_scenario_2() -> None:
     route = "oidc-jwks"
     boundary = "platform.no-hidden-external-effects"
     provider_id, deployment, dependency, resolved, context, source, matrix = _bindings(
@@ -340,9 +329,6 @@ def test_undeclared_effects_fail_and_provider_construction_is_inert() -> None:
     assert constructor_boundary["initial_effects_clean"] is False
     assert constructor_boundary["outcome"] == "failed"
     verify_provider_qualification(constructor_artifact)
-
-
-def test_provider_deployment_and_support_mismatch_fail_before_exercise() -> None:
     route = "s3-repository"
     provider_id, deployment, dependency, resolved, context, source, matrix = _bindings(
         route
@@ -409,9 +395,6 @@ def test_provider_deployment_and_support_mismatch_fail_before_exercise() -> None
             performance_criteria=("performance.reference",),
         )
     assert provider.calls == []
-
-
-def test_operational_evidence_cannot_satisfy_scientific_gate() -> None:
     route = "production-local"
     provider_id, deployment, dependency, resolved, context, source, matrix = _bindings(
         route
@@ -457,7 +440,7 @@ def test_operational_evidence_cannot_satisfy_scientific_gate() -> None:
     verify_provider_qualification(artifact)
 
 
-def test_expired_scientific_evidence_is_not_current() -> None:
+def test_commercial_platform_qualification_scenario_3() -> None:
     route = "production-local"
     provider_id, deployment, dependency, resolved, context, source, matrix = _bindings(
         route
@@ -497,9 +480,6 @@ def test_expired_scientific_evidence_is_not_current() -> None:
     # ty: ignore[not-subscriptable]
     reasons = artifact["gates"][0]["coverage"]["gaps"][0]["reasons"]
     assert any(reason.startswith("expired-evidence:") for reason in reasons)
-
-
-def test_artifacts_are_deterministic_provider_specific_and_tamper_evident() -> None:
     first, _ = _produce("durable-service")
     second, _ = _produce("durable-service")
     assert first == second

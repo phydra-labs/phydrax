@@ -80,7 +80,7 @@ def _plan(
     )
 
 
-def test_native_direct_collocation_solves_analytic_controlled_dae() -> None:
+def test_direct_collocation_solve_scenario_1() -> None:
     problem = _analytic_dae_problem()
     result = phx.control.solve_direct_collocation(
         problem,
@@ -103,9 +103,6 @@ def test_native_direct_collocation_solves_analytic_controlled_dae() -> None:
     assert result.diagnostics.maximum_constraint_violation <= 1e-6
     assert not result.diagnostics.off_grid_certified
     assert result.optimization_result.certificate is not None
-
-
-def test_native_sparse_augmented_direct_collocation_uses_exact_derivatives() -> None:
     result = phx.control.solve_direct_collocation(
         _analytic_dae_problem(),
         _plan(exact_hessian=True, identity="analytic-direct-sparse"),
@@ -118,9 +115,6 @@ def test_native_sparse_augmented_direct_collocation_uses_exact_derivatives() -> 
     assert result.structured_result is not None
     assert result.diagnostics.maximum_defect <= 1e-6
     assert result.diagnostics.maximum_constraint_violation <= 1e-6
-
-
-def test_variable_duration_recovers_unit_time_integrator_solution() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -155,9 +149,6 @@ def test_variable_duration_recovers_unit_time_integrator_solution() -> None:
     assert jnp.allclose(result.duration, 1.0, atol=2e-5)
     assert jnp.allclose(result.decision.controls, 1.0, atol=2e-5)
     assert jnp.allclose(result.objective, 2.0, atol=2e-5)
-
-
-def test_continuous_control_problem_is_a_lossless_fixed_duration_input() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.5, 1.0)),
         time_id="control-adapter-time",
@@ -201,7 +192,7 @@ def test_continuous_control_problem_is_a_lossless_fixed_duration_input() -> None
     assert len(compilation.problem.trajectory_constraints) == 1
 
 
-def test_off_grid_audit_preserves_matrix_state_and_control_events() -> None:
+def test_direct_collocation_solve_scenario_2() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, control, args: control,
         state_layout=phx.dynamics.StateLayout((2, 2)),
@@ -233,9 +224,6 @@ def test_off_grid_audit_preserves_matrix_state_and_control_events() -> None:
     assert bool(result.successful)
     assert result.decision.states.shape == (3, 2, 2)
     assert result.diagnostics.maximum_off_grid_defect <= 1e-7
-
-
-def test_direct_collocation_rejects_out_of_bound_initial_guess() -> None:
     problem = _analytic_dae_problem()
     with pytest.raises(ValueError, match="violates its bounds"):
         phx.control.compile_direct_collocation(

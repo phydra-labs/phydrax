@@ -329,7 +329,7 @@ def _mechanics_observations() -> Any:
     )
 
 
-def test_complex_mechanics_requires_frozen_heldout_prediction_lineage() -> None:
+def test_protein_nucleic_cotranslation_qualification_scenario_1() -> None:
     observations = _mechanics_observations()
     campaign = _campaign(observations)
     fit = _model_fit(
@@ -389,6 +389,95 @@ def test_complex_mechanics_requires_frozen_heldout_prediction_lineage() -> None:
         _prediction_evidence(prediction),
         "complex-mechanics-macro-standardized-rms",
     )
+    inputs = _affinity_inputs()
+    assessment = protein_nucleic.assess_protein_nucleic_affinity(
+        inputs,
+        maximum_standardized_rms=1.0,
+        prediction_evidence=_prediction_evidence(inputs),
+    )
+
+    np.testing.assert_allclose(inputs.predicted_binding_free_energy, [-4.5])
+    np.testing.assert_allclose(
+        inputs.prediction_standard_error, [np.sqrt(0.2**2 + 0.1**2 + 0.1**2 + 0.05**2)]
+    )
+    assert assessment.status == "ready-for-claim-evaluation"
+    _assert_scope_mismatch(
+        assessment,
+        _prediction_evidence(inputs),
+        "binding-affinity-macro-standardized-rms",
+    )
+    denied = _reference("denied", training=False, lineage=("denied-root",))
+    with pytest.raises(PermissionError):
+        _affinity_inputs(bound_sampling_reference=denied)
+
+    reused = _reference("reused", lineage=("reused-root",))
+    with pytest.raises(ValueError):
+        _affinity_inputs(
+            bound_sampling_reference=reused,
+            unbound_sampling_reference=reused,
+            binding_measurement_reference=reused,
+            shared_sampling_lineage_ids=("reused-root",),
+        )
+    inputs = _affinity_inputs(
+        component_covariance=None,
+        components_conditionally_independent=False,
+        standard_state_standard_error=None,
+    )
+    assessment = protein_nucleic.assess_protein_nucleic_affinity(
+        inputs,
+        maximum_standardized_rms=1.0,
+        prediction_evidence=_prediction_evidence(inputs),
+    )
+    assert assessment.status == "inconclusive"
+    assert (
+        "affinity-component-joint-covariance-or-conditional-independence"
+        in assessment.missing_prerequisites
+    )
+    mechanics = _mechanics_observations()
+    mechanics_campaign = _campaign(mechanics)
+    cotranslation = _cotranslation_observations(_reference("forged-timing"))
+    cotranslation_campaign = _campaign(cotranslation, cotranslation=True)
+    artifacts = (_reference("fit-source"), _reference("selection-source"))
+    parameters = np.asarray([0.25, -0.5])
+    for fit_type, model, campaign in (
+        (ProteinNucleicModelFit, "forged-protein-nucleic", mechanics_campaign),
+        (CotranslationModelFit, "forged-cotranslation", cotranslation_campaign),
+    ):
+        code = _reference(f"{model}-code")
+        forged = QualificationEvidence(
+            "scientific",
+            "passed",
+            (
+                campaign.campaign_id,
+                model,
+                code.manifest_id,
+                *(artifact.manifest_id for artifact in artifacts),
+            ),
+            build_id="test-build",
+            environment_id="test-environment",
+            backend="cpu",
+            topology="single-device",
+            precision="float64",
+            reduction="deterministic",
+            replay_id=f"forged-replay:{model}",
+            criteria_ids=("fit-execution",),
+            raw_artifact_ids=(f"raw:forged:{model}",),
+            campaign_start_record_ids=(),
+            campaign_observation_record_ids=(),
+            reviewer_id="test-reviewer",
+            issued_at=1,
+            expires_at=100,
+            reason="forged fit identity",
+        )
+        with pytest.raises(ValueError, match="Fit execution evidence"):
+            fit_type(
+                model,
+                campaign,
+                parameters,
+                artifacts,
+                code,
+                forged,
+            )
 
 
 def _affinity_inputs(**overrides: Any) -> Any:
@@ -474,59 +563,6 @@ def _affinity_inputs(**overrides: Any) -> Any:
     )
 
 
-def test_affinity_propagates_correction_uncertainty_under_explicit_independence() -> None:
-    inputs = _affinity_inputs()
-    assessment = protein_nucleic.assess_protein_nucleic_affinity(
-        inputs,
-        maximum_standardized_rms=1.0,
-        prediction_evidence=_prediction_evidence(inputs),
-    )
-
-    np.testing.assert_allclose(inputs.predicted_binding_free_energy, [-4.5])
-    np.testing.assert_allclose(
-        inputs.prediction_standard_error, [np.sqrt(0.2**2 + 0.1**2 + 0.1**2 + 0.05**2)]
-    )
-    assert assessment.status == "ready-for-claim-evaluation"
-    _assert_scope_mismatch(
-        assessment,
-        _prediction_evidence(inputs),
-        "binding-affinity-macro-standardized-rms",
-    )
-
-
-def test_affinity_rejects_reused_or_rights_denied_fit_artifacts() -> None:
-    denied = _reference("denied", training=False, lineage=("denied-root",))
-    with pytest.raises(PermissionError):
-        _affinity_inputs(bound_sampling_reference=denied)
-
-    reused = _reference("reused", lineage=("reused-root",))
-    with pytest.raises(ValueError):
-        _affinity_inputs(
-            bound_sampling_reference=reused,
-            unbound_sampling_reference=reused,
-            binding_measurement_reference=reused,
-            shared_sampling_lineage_ids=("reused-root",),
-        )
-
-
-def test_affinity_without_joint_covariance_or_independence_is_inconclusive() -> None:
-    inputs = _affinity_inputs(
-        component_covariance=None,
-        components_conditionally_independent=False,
-        standard_state_standard_error=None,
-    )
-    assessment = protein_nucleic.assess_protein_nucleic_affinity(
-        inputs,
-        maximum_standardized_rms=1.0,
-        prediction_evidence=_prediction_evidence(inputs),
-    )
-    assert assessment.status == "inconclusive"
-    assert (
-        "affinity-component-joint-covariance-or-conditional-independence"
-        in assessment.missing_prerequisites
-    )
-
-
 def _cotranslation_observations(
     timing_reference: Any,
     *,
@@ -575,55 +611,7 @@ def _cotranslation_prediction(
     )
 
 
-def test_protein_fit_records_reject_forged_execution_identity() -> None:
-    mechanics = _mechanics_observations()
-    mechanics_campaign = _campaign(mechanics)
-    cotranslation = _cotranslation_observations(_reference("forged-timing"))
-    cotranslation_campaign = _campaign(cotranslation, cotranslation=True)
-    artifacts = (_reference("fit-source"), _reference("selection-source"))
-    parameters = np.asarray([0.25, -0.5])
-    for fit_type, model, campaign in (
-        (ProteinNucleicModelFit, "forged-protein-nucleic", mechanics_campaign),
-        (CotranslationModelFit, "forged-cotranslation", cotranslation_campaign),
-    ):
-        code = _reference(f"{model}-code")
-        forged = QualificationEvidence(
-            "scientific",
-            "passed",
-            (
-                campaign.campaign_id,
-                model,
-                code.manifest_id,
-                *(artifact.manifest_id for artifact in artifacts),
-            ),
-            build_id="test-build",
-            environment_id="test-environment",
-            backend="cpu",
-            topology="single-device",
-            precision="float64",
-            reduction="deterministic",
-            replay_id=f"forged-replay:{model}",
-            criteria_ids=("fit-execution",),
-            raw_artifact_ids=(f"raw:forged:{model}",),
-            campaign_start_record_ids=(),
-            campaign_observation_record_ids=(),
-            reviewer_id="test-reviewer",
-            issued_at=1,
-            expires_at=100,
-            reason="forged fit identity",
-        )
-        with pytest.raises(ValueError, match="Fit execution evidence"):
-            fit_type(
-                model,
-                campaign,
-                parameters,
-                artifacts,
-                code,
-                forged,
-            )
-
-
-def test_cotranslation_converts_fret_length_units_and_requires_frozen_lineage() -> None:
+def test_protein_nucleic_cotranslation_qualification_scenario_2() -> None:
     law = CotranslationObservationLaw(
         "length-resolved-fret",
         _reference("fret-law"),
@@ -675,9 +663,6 @@ def test_cotranslation_converts_fret_length_units_and_requires_frozen_lineage() 
         _prediction_evidence(prediction),
         "cotranslation-macro-standardized-rms",
     )
-
-
-def test_arrest_release_canonicalizes_time_and_propagates_dwell_uncertainty() -> None:
     target = 1.0 - np.exp(-1.0)
     observations = _cotranslation_observations(
         _reference("timing-ms"),

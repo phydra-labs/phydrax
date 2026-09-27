@@ -81,35 +81,30 @@ def _parabolic_state(space: Any, dynamics: Any) -> Any:
     return dynamics.project_state(velocity)
 
 
-@pytest.mark.parametrize("route", ("ultraspherical_banded", "dense_reference"))
-def test_mixed_channel_stokes_enforces_traction_without_tangential_no_slip(
-    route: Any,
-) -> None:
-    space = _space()
-    solver = phx.discretization.ChannelStokesPlan(
-        space,
-        0.05,
-        tangential_boundary="traction",
-        route=route,
-    ).prepare(10.0)
-    physical_shape = (space.physical_shape[0], space.physical_shape[2], 2)
-    lower_physical = jnp.zeros(physical_shape).at[..., 0].set(0.02)
-    upper_physical = jnp.zeros(physical_shape).at[..., 0].set(-0.01)
-    solved = solver.solve(
-        jnp.zeros(space.modal_shape + (3,), dtype="complex128"),
-        lower_tangential_traction=solver.project_horizontal_boundary(lower_physical),
-        upper_tangential_traction=solver.project_horizontal_boundary(upper_physical),
-    )
-    physical = space.reconstruct(solved.velocity)
+def test_channel_les_boundary_owners_scenario_1() -> None:
+    for route in ("ultraspherical_banded", "dense_reference"):
+        space = _space()
+        solver = phx.discretization.ChannelStokesPlan(
+            space,
+            0.05,
+            tangential_boundary="traction",
+            route=route,
+        ).prepare(10.0)
+        physical_shape = (space.physical_shape[0], space.physical_shape[2], 2)
+        lower_physical = jnp.zeros(physical_shape).at[..., 0].set(0.02)
+        upper_physical = jnp.zeros(physical_shape).at[..., 0].set(-0.01)
+        solved = solver.solve(
+            jnp.zeros(space.modal_shape + (3,), dtype="complex128"),
+            lower_tangential_traction=solver.project_horizontal_boundary(lower_physical),
+            upper_tangential_traction=solver.project_horizontal_boundary(upper_physical),
+        )
+        physical = space.reconstruct(solved.velocity)
 
-    assert bool(solved.successful)
-    assert float(solved.diagnostics.tangential_traction_residual) < 1.0e-9
-    np.testing.assert_allclose(physical[:, 0, :, 1], 0.0, atol=1.0e-9)
-    np.testing.assert_allclose(physical[:, -1, :, 1], 0.0, atol=1.0e-9)
-    assert float(jnp.max(jnp.abs(physical[:, (0, -1), :, 0]))) > 0.0
-
-
-def test_wall_owned_channel_changes_trajectory_and_closes_boundary_work() -> None:
+        assert bool(solved.successful)
+        assert float(solved.diagnostics.tangential_traction_residual) < 1.0e-9
+        np.testing.assert_allclose(physical[:, 0, :, 1], 0.0, atol=1.0e-9)
+        np.testing.assert_allclose(physical[:, -1, :, 1], 0.0, atol=1.0e-9)
+        assert float(jnp.max(jnp.abs(physical[:, (0, -1), :, 0]))) > 0.0
     space_off, off = _channel_les()
     space_on, on = _channel_les(tangential_boundary="traction")
     initial_off = _parabolic_state(space_off, off)
@@ -190,24 +185,6 @@ def test_wall_owned_channel_changes_trajectory_and_closes_boundary_work() -> Non
         rtol=1.0e-8,
     )
     assert bool(second.evidence.dissipative)
-
-
-def _spectral_mac_owner(variance: Any) -> Any:
-    angles = 0.5 * jnp.pi * jnp.arange(4)
-    coordinates = jnp.stack((jnp.zeros_like(angles), angles), axis=-1)
-    return StochasticTurbulentInflowPlan("spectral").prepare_mac_boundary(
-        coordinates,
-        jnp.asarray((1.0, 0.0)),
-        jnp.ones((4,)),
-        jnp.asarray(((variance, 0.0), (0.0, 0.0))),
-        axis="x",
-        side="lower",
-        boundary_shape=(4,),
-        spectral_wavevectors=jnp.asarray(((0.0, 1.0),)),
-    )
-
-
-def test_mac_inflow_owner_commits_covariance_and_restarts_exactly() -> None:
     owner = _spectral_mac_owner(0.7)
     initial = owner.initialize(
         jax.random.key(19),
@@ -261,7 +238,22 @@ def test_mac_inflow_owner_commits_covariance_and_restarts_exactly() -> None:
     assert bool(first.evidence.successful)
 
 
-def test_complete_channel_restriction_refuses_unsafe_step() -> None:
+def _spectral_mac_owner(variance: Any) -> Any:
+    angles = 0.5 * jnp.pi * jnp.arange(4)
+    coordinates = jnp.stack((jnp.zeros_like(angles), angles), axis=-1)
+    return StochasticTurbulentInflowPlan("spectral").prepare_mac_boundary(
+        coordinates,
+        jnp.asarray((1.0, 0.0)),
+        jnp.ones((4,)),
+        jnp.asarray(((variance, 0.0), (0.0, 0.0))),
+        axis="x",
+        side="lower",
+        boundary_shape=(4,),
+        spectral_wavevectors=jnp.asarray(((0.0, 1.0),)),
+    )
+
+
+def test_channel_les_boundary_owners_scenario_2() -> None:
     space, dynamics = _channel_les()
     initial = _parabolic_state(space, dynamics)
     restriction = dynamics.explicit_restriction(initial)
@@ -280,9 +272,6 @@ def test_complete_channel_restriction_refuses_unsafe_step() -> None:
     assert int(solution.diagnostics.status[0]) == CHANNEL_FLOW_EXPLICIT_RESTRICTION
     np.testing.assert_array_equal(solution.velocity[0], solution.velocity[-1])
     assert not bool(solution.successful)
-
-
-def test_unsupported_wall_pressure_gradient_and_open_inflow_refuse() -> None:
     _, velocity_owned = _channel_les()
     with pytest.raises(ValueError, match="traction-owned"):
         VectorEquilibriumWallStressPlan().prepare_channel(

@@ -24,7 +24,7 @@ def _triangle_model(*, charges: Any = None) -> Any:
     )
 
 
-def test_z2_gauss_sector_uses_binary_edge_basis_and_constraint_rank() -> None:
+def test_z2_contracts() -> None:
     model = _triangle_model()
     sector = phx.applications.lattice_field.prepare_z2_gauss_sector(model)
     occupations = jnp.asarray([[0, 0, 0], [1, 1, 1]], dtype=jnp.int32)
@@ -37,9 +37,6 @@ def test_z2_gauss_sector_uses_binary_edge_basis_and_constraint_rank() -> None:
         phx.applications.lattice_field.z2_gauss_eigenvalues(model, occupations),
         np.ones((2, 3), dtype="int64"),
     )
-
-
-def test_z2_hamiltonian_commutes_with_every_gauss_generator() -> None:
     model = _triangle_model()
     hamiltonian = phx.applications.lattice_field.z2_gauge_hamiltonian(model)
     dense = phx.solver.materialize_local_hamiltonian(hamiltonian)
@@ -50,9 +47,6 @@ def test_z2_hamiltonian_commutes_with_every_gauss_generator() -> None:
         )
         assert jnp.max(jnp.abs(dense @ generator - generator @ dense)) < 1e-12
         assert jnp.max(jnp.abs(generator @ generator - jnp.eye(8))) < 1e-12
-
-
-def test_z2_boundary_loop_matches_magnetic_support() -> None:
     model = _triangle_model()
     paths = phx.discretization.prepare_cell_boundary_paths(model.topology).paths
     loop = phx.applications.lattice_field.z2_loop_operator(model, paths, 0)
@@ -60,9 +54,6 @@ def test_z2_boundary_loop_matches_magnetic_support() -> None:
         phx.solver.LocalHamiltonian(model.layout, (loop,))
     )
     assert jnp.max(jnp.abs(loop_dense @ loop_dense - jnp.eye(8))) < 1e-12
-
-
-def test_z2_charge_consistency_and_resource_limits_fail_before_allocation() -> None:
     inconsistent = _triangle_model(charges=jnp.asarray([1, 0, 0]))
     with pytest.raises(ValueError, match="inconsistent"):
         phx.applications.lattice_field.prepare_z2_gauss_sector(inconsistent)
@@ -70,9 +61,6 @@ def test_z2_charge_consistency_and_resource_limits_fail_before_allocation() -> N
         phx.applications.lattice_field.prepare_z2_gauss_sector(
             _triangle_model(), maximum_basis_states=4
         )
-
-
-def test_z2_homology_uses_exact_gf2_topology() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(2, periodic=True),

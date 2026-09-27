@@ -37,7 +37,7 @@ def _noisy_evaluator(*, num_realizations: Any, scale: Any) -> Any:
     return evaluate
 
 
-def test_u_statistic_is_unbiased_for_noisy_residual_and_has_exact_gradient() -> None:
+def test_randomized_residual_objective_scenario_1() -> None:
     parameter = jnp.asarray(0.7)
     objective = RandomizedResidualTerm(
         _noisy_evaluator(num_realizations=4096, scale=1.5),
@@ -55,9 +55,6 @@ def test_u_statistic_is_unbiased_for_noisy_residual_and_has_exact_gradient() -> 
     assert jnp.allclose(value, parameter**2, atol=8e-2)
     assert jnp.allclose(gradient, 2.0 * parameter, atol=8e-2)
     assert objective.diagnostics(_functions(parameter), batch=batch).passed
-
-
-def test_plugin_exposes_variance_bias_while_independent_product_is_unbiased() -> None:
     parameter = jnp.asarray(0.4)
     collocation = {"count": 8192}
     evaluator = _noisy_evaluator(num_realizations=4, scale=2.0)
@@ -88,6 +85,18 @@ def test_plugin_exposes_variance_bias_while_independent_product_is_unbiased() ->
     assert jnp.allclose(unbiased, parameter**2, atol=8e-2)
     assert jnp.allclose(product, parameter**2, atol=8e-2)
     assert jnp.allclose(biased - unbiased, 1.0, atol=8e-2)
+    objective = RandomizedResidualTerm(
+        _noisy_evaluator(num_realizations=2, scale=1.0),
+        collocation={"count": 1},
+        sampling_mode="fixed",
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions=_functions(0.0),
+        terms=(objective,),
+    )
+
+    with pytest.raises(ValueError, match="keep_best=False"):
+        solver.solve(num_iter=1, optim=optax.sgd(0.1), log_every=0)
 
 
 def test_vector_complex_residuals_masks_and_weights_reduce_correctly() -> None:
@@ -152,21 +161,6 @@ def test_resampled_collocation_is_materialized_once_per_optimizer_update() -> No
 
     assert len(calls) == 5
     assert _parameter(trained.functions) > 0.5
-
-
-def test_signed_randomized_objective_rejects_best_sample_selection() -> None:
-    objective = RandomizedResidualTerm(
-        _noisy_evaluator(num_realizations=2, scale=1.0),
-        collocation={"count": 1},
-        sampling_mode="fixed",
-    )
-    solver = phx.solver.FunctionalSolver(
-        functions=_functions(0.0),
-        terms=(objective,),
-    )
-
-    with pytest.raises(ValueError, match="keep_best=False"):
-        solver.solve(num_iter=1, optim=optax.sgd(0.1), log_every=0)
 
 
 def test_zero_valid_mass_is_rejected() -> None:

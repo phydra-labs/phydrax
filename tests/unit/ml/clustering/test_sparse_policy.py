@@ -21,16 +21,11 @@ def _sparse_batch() -> Any:
     return MLBatch(features)
 
 
-@pytest.mark.parametrize(
-    "recipe",
-    [
+def test_dense_clustering_families_reject_implicit_sparse_materialization() -> None:
+    for recipe in [
         KMeans(1, initialization="first"),
         DBSCAN(1, 3, minimum_samples=1.0),
         SpectralBiclustering(1, 1),
-    ],
-)
-def test_dense_clustering_families_reject_implicit_sparse_materialization(
-    recipe: Any,
-) -> None:
-    with pytest.raises(TypeError, match="requires dense features"):
-        recipe.fit_batch(_sparse_batch())
+    ]:
+        with pytest.raises(TypeError, match="requires dense features"):
+            recipe.fit_batch(_sparse_batch())

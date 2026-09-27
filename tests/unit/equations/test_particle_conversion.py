@@ -69,7 +69,7 @@ def _conversion_tree_pair(reference: Any, covector: Any, vector: Any) -> Any:
     return sum(products, start=jnp.asarray(0.0))
 
 
-def test_particle_conversion_geometry_certifies_four_spaces_and_frozen_routes() -> None:
+def test_particle_conversion_scenario_1() -> None:
     _, _, batch = _batch(shells=2)
     batch_state = phx.discretization.initialize_particle_internal_batch(
         batch,
@@ -127,9 +127,6 @@ def test_particle_conversion_geometry_certifies_four_spaces_and_frozen_routes() 
     )
     with pytest.raises(Exception, match="incompatible frozen route"):
         geometry.inverse_retract(state, incompatible)
-
-
-def test_thermodynamic_inversion_and_radial_transport_are_conservative() -> None:
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(
@@ -209,9 +206,6 @@ def test_thermodynamic_inversion_and_radial_transport_are_conservative() -> None
     assert jnp.abs(evaluation.internal_energy_residual) < 1.0e-10
     assert jnp.max(jnp.abs(evaluation.internal_species_residual)) < 1.0e-12
     assert evaluation.entropy_production >= 0.0
-
-
-def test_reaction_network_conserves_elements_and_reaction_energy() -> None:
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(
@@ -251,7 +245,7 @@ def test_reaction_network_conserves_elements_and_reaction_energy() -> None:
     assert jnp.all(evaluation.internal_energy_rate > 0.0)
 
 
-def test_evaporation_and_shrinking_core_report_exhaustion_restrictions() -> None:
+def test_particle_conversion_scenario_2() -> None:
     schema = _schema(
         (phx.equations.ChemicalPhaseKind.LIQUID, phx.equations.ChemicalPhaseKind.GAS)
     )
@@ -304,9 +298,6 @@ def test_evaporation_and_shrinking_core_report_exhaustion_restrictions() -> None
     assert core.successful
     assert core.core_radius_rate[0] < 0.0
     assert core.explicit_step_restriction > 0.0
-
-
-def test_continuum_exchange_deposits_exact_opposite_heat_and_species() -> None:
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
         phx.equations.PolynomialSpeciesThermodynamicsPlan(

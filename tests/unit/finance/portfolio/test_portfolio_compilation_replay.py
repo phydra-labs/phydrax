@@ -53,7 +53,7 @@ def _forecast(
     )
 
 
-def test_two_asset_minimum_variance_has_analytic_allocation() -> None:
+def test_portfolio_compilation_replay_scenario_1() -> None:
     problem = PortfolioProblem(
         _forecast(),
         MeanVarianceObjective(1.0, return_weight=0.0),
@@ -72,9 +72,6 @@ def test_two_asset_minimum_variance_has_analytic_allocation() -> None:
     )
     assert bool(result.certificate.certified)
     assert result.forecast_law_id == "forecast"
-
-
-def test_singular_covariance_is_accepted_without_artificial_inverse() -> None:
     problem = PortfolioProblem(
         _forecast(covariance=((1.0, 1.0), (1.0, 1.0))),
         MeanVarianceObjective(1.0),
@@ -84,9 +81,6 @@ def test_singular_covariance_is_accepted_without_artificial_inverse() -> None:
     )
     compiled = compile_portfolio_problem(problem)
     assert isinstance(compiled.program, QuadraticProgram)
-
-
-def test_mip_decode_returns_lots_and_activity_and_rejects_corruption() -> None:
     problem = PortfolioProblem(
         _forecast(expected=(0.1, 0.0), covariance=((0.0, 0.0), (0.0, 0.0))),
         MeanVarianceObjective(0.0),
@@ -120,7 +114,7 @@ def test_mip_decode_returns_lots_and_activity_and_rejects_corruption() -> None:
         decode_portfolio_decision(compiled, feasible, structure_id="wrong")
 
 
-def test_scenario_tree_enforces_information_causality() -> None:
+def test_portfolio_compilation_replay_scenario_2() -> None:
     tree = ScenarioTree(jnp.asarray(((0, 1), (0, 2)), dtype=jnp.int32))
     forecast = ForecastLaw(
         ("asset:a", "asset:b"),
@@ -154,9 +148,6 @@ def test_scenario_tree_enforces_information_causality() -> None:
         decode_portfolio_decision(
             compiled, leaking, structure_id=compiled.plan.structure_id
         )
-
-
-def test_numeric_refresh_refuses_structural_change() -> None:
     constraints = PortfolioConstraints(
         lower_weights=jnp.zeros(2), upper_weights=jnp.ones(2)
     )
@@ -188,9 +179,6 @@ def test_numeric_refresh_refuses_structural_change() -> None:
     )
     with pytest.raises(ValueError, match="structure"):
         refresh_portfolio_compilation(compiled, structural)
-
-
-def test_multicurrency_settlement_replay_is_self_financing() -> None:
     usd, eur = Currency("USD", 2), Currency("EUR", 2)
     us = AssetReference(FinancialIdentifier("asset", "us"), "equity", usd, "US")
     eu = AssetReference(FinancialIdentifier("asset", "eu"), "equity", eur, "EU")

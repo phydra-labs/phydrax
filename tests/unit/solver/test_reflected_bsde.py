@@ -103,7 +103,7 @@ def test_reflected_solver_uses_nonanticipative_path_features_and_lower_obstacle(
     assert diagnostics.lower_complementarity_error == 0.0
 
 
-def test_doubly_reflected_implicit_scheme_projects_inside_picard_iteration() -> None:
+def test_reflected_bsde_scenario_1() -> None:
     paths = _deterministic_paths()
     problem = phx.stochastic.ReflectedPathDependentBSDEProblem(
         lambda key: paths,
@@ -141,9 +141,6 @@ def test_doubly_reflected_implicit_scheme_projects_inside_picard_iteration() -> 
     assert jnp.allclose(result.local_residuals, 0.0, atol=1e-12)
     assert jnp.all(result.picard_converged)
     assert phx.solver.reflected_path_dependent_bsde_diagnostics(result).passed
-
-
-def test_reflected_solver_never_projects_incompatible_terminal_data() -> None:
     paths = _deterministic_paths()
     problem = phx.stochastic.ReflectedPathDependentBSDEProblem(
         lambda key: paths,

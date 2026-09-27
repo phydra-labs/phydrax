@@ -45,15 +45,12 @@ def _trainable_interval_solver(policy: Any) -> Any:
     return FunctionalSolver(functions={"u": u}, terms=(term,))
 
 
-def test_solver_initializes_and_uses_adaptive_population() -> None:
+def test_solver_contracts() -> None:
     solver = _trainable_interval_solver(R3(refresh_every=1, sampler="uniform"))
     assert len(solver.collocation) == 1
     assert solver.collocation[0] is not None
     loss = solver.loss(key=jr.key(1), step=1)
     assert jnp.isfinite(loss)
-
-
-def test_solver_returns_updated_collocation_state_after_training() -> None:
     solver = _trainable_interval_solver(
         PeriodicCollocation(refresh_every=1, sampler="uniform")
     )
@@ -75,31 +72,6 @@ def test_solver_returns_updated_collocation_state_after_training() -> None:
         jnp.asarray(initial.batch.points["x"].data),
         updated.batch.points["x"].data,
     )
-
-
-def test_solver_logs_adaptive_population_diagnostics(phydrax_events: Any) -> None:
-    solver = _trainable_interval_solver(
-        PeriodicCollocation(refresh_every=1, sampler="uniform")
-    )
-    solver.solve(
-        num_iter=1,
-        optim=optax.adam(1e-3),
-        seed=7,
-        jit=True,
-        keep_best=False,
-        log_every=1,
-        log_terms=True,
-    )
-    event = phydrax_events.records("training.step.completed")[-1]
-    metric_names = {metric["name"] for metric in event["fields"]["metrics"]}
-    for metric in ("refresh_count", "point_count", "effective_sample_size"):
-        assert any(
-            name.startswith("train/terms/000_") and name.endswith(f"/{metric}")
-            for name in metric_names
-        )
-
-
-def test_solver_records_controlled_collocation_evaluation_budgets() -> None:
     solver = _trainable_interval_solver(
         controlled_collocation(
             PeriodicCollocation(refresh_every=1, sampler="uniform"),
@@ -122,9 +94,6 @@ def test_solver_records_controlled_collocation_evaluation_budgets() -> None:
     assert int(population.monitor_evaluations) == 48
     assert int(population.training_evaluations) == 32
     assert not bool(population.proposal_pending)
-
-
-def test_solver_profiles_device_synchronized_adaptive_refresh_boundary() -> None:
     solver = _trainable_interval_solver(R3(refresh_every=1, sampler="uniform"))
     trained = solver.solve(
         num_iter=2,
@@ -140,3 +109,25 @@ def test_solver_profiles_device_synchronized_adaptive_refresh_boundary() -> None
     assert bool(diagnostics["profile_enabled"])
     assert float(diagnostics["refresh_wall_time_seconds"]) > 0.0
     assert float(diagnostics["optimizer_wall_time_seconds"]) > 0.0
+
+
+def test_solver_logs_adaptive_population_diagnostics(phydrax_events: Any) -> None:
+    solver = _trainable_interval_solver(
+        PeriodicCollocation(refresh_every=1, sampler="uniform")
+    )
+    solver.solve(
+        num_iter=1,
+        optim=optax.adam(1e-3),
+        seed=7,
+        jit=True,
+        keep_best=False,
+        log_every=1,
+        log_terms=True,
+    )
+    event = phydrax_events.records("training.step.completed")[-1]
+    metric_names = {metric["name"] for metric in event["fields"]["metrics"]}
+    for metric in ("refresh_count", "point_count", "effective_sample_size"):
+        assert any(
+            name.startswith("train/terms/000_") and name.endswith(f"/{metric}")
+            for name in metric_names
+        )

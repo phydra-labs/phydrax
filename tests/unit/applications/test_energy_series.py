@@ -48,7 +48,7 @@ def test_irregular_rebin_preserves_energy_and_parameter_derivative() -> None:
     assert jnp.allclose(derivative, jnp.array([2.0, 3.0]) * 3600)
 
 
-def test_incomplete_channel_is_not_imputed_or_integrated() -> None:
+def test_energy_series_scenario_1() -> None:
     support = SeriesSupport(jnp.array([0.0, 1.0, 2.0]), coordinate_id="time")
     source = EnergySeries(
         SampledSeries(
@@ -70,9 +70,6 @@ def test_incomplete_channel_is_not_imputed_or_integrated() -> None:
     assert jnp.allclose(result.samples.values[:, 0], jnp.array([3.0]))
     with pytest.raises(eqx.EquinoxRuntimeError):
         integrate_energy_series(result)
-
-
-def test_interval_integrals_subdivide_without_changing_total() -> None:
     source = EnergySeries(
         SampledSeries(
             SeriesSupport(jnp.array([0.0, 2.0, 5.0]), coordinate_id="time"),
@@ -94,9 +91,6 @@ def test_interval_integrals_subdivide_without_changing_total() -> None:
     )
     # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(outside.samples.value_valid, jnp.array([False, False]))
-
-
-def test_counter_decrease_requires_explicit_consumption_evidence() -> None:
     source = EnergySeries(
         SampledSeries(
             SeriesSupport(jnp.array([0.0, 1.0, 2.0]), coordinate_id="time"),

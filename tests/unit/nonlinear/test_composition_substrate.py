@@ -25,9 +25,7 @@ def _termination(**kwargs: Any) -> Any:
     )
 
 
-def test_function_update_distinguishes_application_from_root_convergence_and_refresh() -> (
-    None
-):
+def test_composition_substrate_scenario_1() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         problem_id="finite-update",
@@ -62,9 +60,6 @@ def test_function_update_distinguishes_application_from_root_convergence_and_ref
     )
     assert refreshed.plan.plan_id == prepared.plan.plan_id
     assert int(refreshed.numeric_version) == 1
-
-
-def test_update_budget_rejects_before_callable_proposal() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     update = nl.FunctionNonlinearUpdate(lambda state, target: target)
     prepared = nl.prepare_nonlinear_update(
@@ -83,11 +78,6 @@ def test_update_budget_rejects_before_callable_proposal() -> None:
     assert not bool(result.applied)
     assert result.status == int(nl.NonlinearUpdateStatus.BUDGET_EXHAUSTED)
     assert jnp.allclose(result.state, jnp.asarray([0.0]))
-
-
-def test_additive_multiplicative_and_optimal_compositions_preserve_physical_residual() -> (
-    None
-):
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     half = nl.FunctionNonlinearUpdate(
         lambda state, target: state + 0.5 * (target - state),
@@ -159,7 +149,7 @@ def test_additive_multiplicative_and_optimal_compositions_preserve_physical_resi
     assert float(optimal_result.diagnostics.final_residual_norm) <= 1.0
 
 
-def test_typed_ngmres_and_richardson_solve_and_raw_callable_is_rejected() -> None:
+def test_composition_substrate_scenario_2() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     exact = nl.FunctionNonlinearUpdate(lambda state, target: target)
 
@@ -182,28 +172,6 @@ def test_typed_ngmres_and_richardson_solve_and_raw_callable_is_rejected() -> Non
     with pytest.raises(TypeError, match="AbstractNonlinearUpdate"):
         # ty: ignore[invalid-argument-type]
         nl.NonlinearGMRES(lambda state, args: state)
-
-
-def _subdomain(index: Any, target: Any) -> Any:
-    space = la.ArraySpace((1,), dtype=jnp.float64)
-    return nl.NonlinearSubdomain(
-        lambda state: state[index : index + 1],
-        lambda residual: residual[index : index + 1],
-        lambda correction: (
-            jnp.zeros((2,), dtype=correction.dtype).at[index].set(correction[0])
-        ),
-        lambda local, global_state, args: local - args[index : index + 1],
-        nl.FunctionNonlinearUpdate(
-            lambda local, context: context[1][index : index + 1],
-            update_id=f"exact-local-{index}",
-        ),
-        state_space=space,
-        residual_space=space,
-        subdomain_id=f"block-{index}",
-    )
-
-
-def test_nonlinear_schwarz_gauss_seidel_and_aspin_certify_global_system() -> None:
     target = jnp.asarray([2.0, 3.0], dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - args,
@@ -238,36 +206,6 @@ def test_nonlinear_schwarz_gauss_seidel_and_aspin_certify_global_system() -> Non
     assert jnp.allclose(aspin_result.state, target, atol=1e-8)
     assert aspin_result.provenance.method_id == "aspin"
     assert not aspin_result.diagnostics.counts_complete
-
-
-def test_prepared_function_update_follows_filtered_jit_pattern() -> None:
-    problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
-    prepared = nl.prepare_nonlinear_update(
-        problem,
-        jnp.asarray([0.0]),
-        nl.FunctionNonlinearUpdate(lambda state, target: target),
-        args=jnp.asarray([2.0]),
-    )
-
-    @eqx.filter_jit
-    def apply(current: Any, state: Any, target: Any) -> Any:
-        result, next_current = nl.apply_prepared_nonlinear_update(
-            current,
-            state,
-            args=target,
-        )
-        return result.state, next_current
-
-    state, next_prepared = apply(
-        prepared,
-        jnp.asarray([0.0]),
-        jnp.asarray([2.0]),
-    )
-    assert jnp.allclose(state, jnp.asarray([2.0]))
-    assert next_prepared.plan.plan_id == prepared.plan.plan_id
-
-
-def test_residual_optimal_composition_preflights_and_accounts_coefficient_solve() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     updates = (
         nl.FunctionNonlinearUpdate(
@@ -314,3 +252,49 @@ def test_residual_optimal_composition_preflights_and_accounts_coefficient_solve(
     assert int(applied.diagnostics.linear_setups) == 1
     assert int(applied.diagnostics.linear_solves) == 1
     assert int(applied.diagnostics.linear_iterations) <= 1
+
+
+def _subdomain(index: Any, target: Any) -> Any:
+    space = la.ArraySpace((1,), dtype=jnp.float64)
+    return nl.NonlinearSubdomain(
+        lambda state: state[index : index + 1],
+        lambda residual: residual[index : index + 1],
+        lambda correction: (
+            jnp.zeros((2,), dtype=correction.dtype).at[index].set(correction[0])
+        ),
+        lambda local, global_state, args: local - args[index : index + 1],
+        nl.FunctionNonlinearUpdate(
+            lambda local, context: context[1][index : index + 1],
+            update_id=f"exact-local-{index}",
+        ),
+        state_space=space,
+        residual_space=space,
+        subdomain_id=f"block-{index}",
+    )
+
+
+def test_prepared_function_update_follows_filtered_jit_pattern() -> None:
+    problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
+    prepared = nl.prepare_nonlinear_update(
+        problem,
+        jnp.asarray([0.0]),
+        nl.FunctionNonlinearUpdate(lambda state, target: target),
+        args=jnp.asarray([2.0]),
+    )
+
+    @eqx.filter_jit
+    def apply(current: Any, state: Any, target: Any) -> Any:
+        result, next_current = nl.apply_prepared_nonlinear_update(
+            current,
+            state,
+            args=target,
+        )
+        return result.state, next_current
+
+    state, next_prepared = apply(
+        prepared,
+        jnp.asarray([0.0]),
+        jnp.asarray([2.0]),
+    )
+    assert jnp.allclose(state, jnp.asarray([2.0]))
+    assert next_prepared.plan.plan_id == prepared.plan.plan_id

@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import opt_einsum as oe
-import pytest
 from jax.scipy.special import sph_harm_y
 
 import phydrax as phx
@@ -80,7 +79,7 @@ class _ConstantDifferentialKernel(eqx.Module):
         return jnp.ones((1,))
 
 
-def test_fourier_spectral_conv_exactly_preserves_retained_mode() -> None:
+def test_operator_scientific_validation_scenario_1() -> None:
     count = 32
     x = jnp.arange(count, dtype="float64")
     signal = jnp.cos(2.0 * jnp.pi * 2.0 * x / count)[:, None]
@@ -95,9 +94,6 @@ def test_fourier_spectral_conv_exactly_preserves_retained_mode() -> None:
 
     output = layer(signal)
     assert jnp.allclose(output, signal, rtol=1e-11, atol=1e-11)
-
-
-def test_fourier_spectral_conv_exactly_learns_negative_signed_block() -> None:
     nx, ny = 18, 20
     x = jnp.arange(nx, dtype="float64")[:, None]
     y = jnp.arange(ny, dtype="float64")[None, :]
@@ -115,80 +111,73 @@ def test_fourier_spectral_conv_exactly_learns_negative_signed_block() -> None:
 
     output = layer(signal)
     assert jnp.allclose(output, signal, rtol=1e-11, atol=1e-11)
+    for basis in ("fourier", "sine", "cosine", "legendre"):
+        if basis == "fourier":
+            nodes = jnp.linspace(0.0, 1.0, 40, endpoint=False)
+            axis = phx.nn.operator.OperatorAxis(
+                "x",
+                nodes,
+                quadrature_weights=jnp.full((40,), 1.0 / 40.0),
+                basis="fourier",
+                periodic=True,
+            )
+            modes = 5
+            signal = (
+                1.0
+                + 0.3 * jnp.cos(2.0 * jnp.pi * nodes)
+                - 0.2 * jnp.sin(4.0 * jnp.pi * nodes)
+            )
+        elif basis == "sine":
+            nodes = jnp.linspace(0.0, 1.0, 41)
+            axis = phx.nn.operator.OperatorAxis("x", nodes, basis="sine")
+            modes = 3
+            signal = jnp.sin(jnp.pi * nodes) + 0.4 * jnp.sin(3.0 * jnp.pi * nodes)
+        elif basis == "cosine":
+            nodes = jnp.linspace(0.0, 1.0, 41) ** 1.3
+            axis = phx.nn.operator.OperatorAxis("x", nodes, basis="cosine")
+            modes = 4
+            signal = (
+                1.0 + 0.2 * jnp.cos(jnp.pi * nodes) - 0.3 * jnp.cos(3.0 * jnp.pi * nodes)
+            )
+        else:
+            nodes = jnp.linspace(0.0, 1.0, 41) ** 1.2
+            axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
+            modes = 4
+            z = 2.0 * nodes - 1.0
+            signal = 1.0 + 0.4 * z - 0.2 * 0.5 * (3.0 * z**2 - 1.0)
 
+        layer, axis = _identity_basis_layer(basis, modes, axis)
+        reconstructed = layer(signal[:, None], (axis,))[..., 0]
+        assert jnp.allclose(reconstructed, signal, rtol=1e-9, atol=1e-9)
+    for basis in ("fourier", "sine", "cosine", "legendre"):
+        if basis == "fourier":
+            nodes = jnp.linspace(0.0, 1.0, 80, endpoint=False)
+            axis = phx.nn.operator.OperatorAxis(
+                "x",
+                nodes,
+                quadrature_weights=jnp.full((80,), 1.0 / 80.0),
+                periodic=True,
+                basis="fourier",
+            )
+            signal = jnp.exp(0.4 * jnp.cos(2.0 * jnp.pi * nodes))
+        elif basis == "sine":
+            nodes = jnp.linspace(0.0, 1.0, 81)
+            axis = phx.nn.operator.OperatorAxis("x", nodes, basis="sine")
+            signal = nodes * (1.0 - nodes) * jnp.exp(nodes)
+        elif basis == "cosine":
+            nodes = jnp.linspace(0.0, 1.0, 81) ** 1.2
+            axis = phx.nn.operator.OperatorAxis("x", nodes, basis="cosine")
+            signal = jnp.exp(0.3 * jnp.cos(jnp.pi * nodes))
+        else:
+            nodes = jnp.linspace(0.0, 1.0, 81) ** 1.2
+            axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
+            signal = jnp.exp(nodes)
 
-@pytest.mark.parametrize("basis", ("fourier", "sine", "cosine", "legendre"))
-def test_basis_projection_reconstructs_representable_functions(basis: Any) -> None:
-    if basis == "fourier":
-        nodes = jnp.linspace(0.0, 1.0, 40, endpoint=False)
-        axis = phx.nn.operator.OperatorAxis(
-            "x",
-            nodes,
-            quadrature_weights=jnp.full((40,), 1.0 / 40.0),
-            basis="fourier",
-            periodic=True,
-        )
-        modes = 5
-        signal = (
-            1.0
-            + 0.3 * jnp.cos(2.0 * jnp.pi * nodes)
-            - 0.2 * jnp.sin(4.0 * jnp.pi * nodes)
-        )
-    elif basis == "sine":
-        nodes = jnp.linspace(0.0, 1.0, 41)
-        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="sine")
-        modes = 3
-        signal = jnp.sin(jnp.pi * nodes) + 0.4 * jnp.sin(3.0 * jnp.pi * nodes)
-    elif basis == "cosine":
-        nodes = jnp.linspace(0.0, 1.0, 41) ** 1.3
-        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="cosine")
-        modes = 4
-        signal = 1.0 + 0.2 * jnp.cos(jnp.pi * nodes) - 0.3 * jnp.cos(3.0 * jnp.pi * nodes)
-    else:
-        nodes = jnp.linspace(0.0, 1.0, 41) ** 1.2
-        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
-        modes = 4
-        z = 2.0 * nodes - 1.0
-        signal = 1.0 + 0.4 * z - 0.2 * 0.5 * (3.0 * z**2 - 1.0)
-
-    layer, axis = _identity_basis_layer(basis, modes, axis)
-    reconstructed = layer(signal[:, None], (axis,))[..., 0]
-    assert jnp.allclose(reconstructed, signal, rtol=1e-9, atol=1e-9)
-
-
-@pytest.mark.parametrize("basis", ("fourier", "sine", "cosine", "legendre"))
-def test_basis_projection_error_decreases_with_modes(basis: Any) -> None:
-    if basis == "fourier":
-        nodes = jnp.linspace(0.0, 1.0, 80, endpoint=False)
-        axis = phx.nn.operator.OperatorAxis(
-            "x",
-            nodes,
-            quadrature_weights=jnp.full((80,), 1.0 / 80.0),
-            periodic=True,
-            basis="fourier",
-        )
-        signal = jnp.exp(0.4 * jnp.cos(2.0 * jnp.pi * nodes))
-    elif basis == "sine":
-        nodes = jnp.linspace(0.0, 1.0, 81)
-        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="sine")
-        signal = nodes * (1.0 - nodes) * jnp.exp(nodes)
-    elif basis == "cosine":
-        nodes = jnp.linspace(0.0, 1.0, 81) ** 1.2
-        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="cosine")
-        signal = jnp.exp(0.3 * jnp.cos(jnp.pi * nodes))
-    else:
-        nodes = jnp.linspace(0.0, 1.0, 81) ** 1.2
-        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
-        signal = jnp.exp(nodes)
-
-    low, _ = _identity_basis_layer(basis, 3, axis)
-    high, _ = _identity_basis_layer(basis, 10, axis)
-    low_error = jnp.linalg.norm(low(signal[:, None], (axis,))[..., 0] - signal)
-    high_error = jnp.linalg.norm(high(signal[:, None], (axis,))[..., 0] - signal)
-    assert high_error < 0.25 * low_error
-
-
-def test_basis_projection_is_jittable_and_differentiable() -> None:
+        low, _ = _identity_basis_layer(basis, 3, axis)
+        high, _ = _identity_basis_layer(basis, 10, axis)
+        low_error = jnp.linalg.norm(low(signal[:, None], (axis,))[..., 0] - signal)
+        high_error = jnp.linalg.norm(high(signal[:, None], (axis,))[..., 0] - signal)
+        assert high_error < 0.25 * low_error
     nodes = jnp.linspace(0.0, 1.0, 32) ** 1.2
     axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
     layer, _ = _identity_basis_layer("legendre", 8, axis)
@@ -199,18 +188,15 @@ def test_basis_projection_is_jittable_and_differentiable() -> None:
     gradient = jax.grad(lambda x: jnp.sum(evaluate(x) ** 2))(values)
     assert jnp.all(jnp.isfinite(output))
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def _integral_encoder() -> Any:
-    return phx.nn.operator.architectures.IntegralBranchEncoder(
-        # ty: ignore[invalid-argument-type]
-        feature_model=_ValueFeature(),
-        latent_size=1,
-        coord_dim=1,
-    )
-
-
-def test_integral_branch_padding_and_permutation_are_exact_invariances() -> None:
+    nodes = jnp.linspace(0.0, 1.0, 41) ** 1.3
+    axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
+    layer, _ = _identity_basis_layer("legendre", 8, axis)
+    values = jnp.exp(nodes)[:, None]
+    plan = layer.plan((axis,))
+    assert isinstance(plan, phx.nn.operator.layers.BasisTransformPlan)
+    expected = layer(values, (axis,))
+    actual = eqx.filter_jit(lambda x: layer(x, (axis,), plan=plan))(values)
+    assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
     coordinates = jnp.array([[0.1], [0.3], [0.6], [0.9]])
     values = jnp.array([1.0, 2.0, 4.0, 8.0])
     weights = jnp.array([0.1, 0.2, 0.3, 0.4])
@@ -236,6 +222,15 @@ def test_integral_branch_padding_and_permutation_are_exact_invariances() -> None
     )
     assert jnp.allclose(encoder(permuted, case_ndim=0), reference)
     assert jnp.allclose(encoder(padded, case_ndim=0), reference)
+
+
+def _integral_encoder() -> Any:
+    return phx.nn.operator.architectures.IntegralBranchEncoder(
+        # ty: ignore[invalid-argument-type]
+        feature_model=_ValueFeature(),
+        latent_size=1,
+        coord_dim=1,
+    )
 
 
 def test_integral_branch_has_midpoint_quadrature_convergence() -> None:
@@ -357,16 +352,110 @@ def _graph_integral_estimate(count: Any) -> Any:
     return operator(graph).nodes["integral"][target]
 
 
-@pytest.mark.parametrize(
-    "estimate",
-    (_local_integral_estimate, _graph_integral_estimate),
-)
-def test_local_and_graph_integrals_have_midpoint_continuum_convergence(
-    estimate: Any,
-) -> None:
-    coarse = jnp.abs(estimate(8) - 1.0 / 3.0)
-    fine = jnp.abs(estimate(64) - 1.0 / 3.0)
-    assert fine < 0.02 * coarse
+def test_operator_scientific_validation_scenario_2() -> None:
+    for estimate in (_local_integral_estimate, _graph_integral_estimate):
+        coarse = jnp.abs(estimate(8) - 1.0 / 3.0)
+        fine = jnp.abs(estimate(64) - 1.0 / 3.0)
+        assert fine < 0.02 * coarse
+    model = _known_exponential_laplace_operator()
+    batch = _aligned_temporal_batch(37)
+    assert jnp.allclose(
+        model.recurrent(batch),
+        model(batch),
+        rtol=1e-11,
+        atol=1e-11,
+    )
+    count = 1025
+    model = _known_exponential_laplace_operator()
+    values = jnp.sin(jnp.linspace(0.0, 20.0, count))
+    batch = _aligned_temporal_batch(count, values)
+
+    output = eqx.filter_jit(model.recurrent)(batch)
+    gradient = jax.grad(
+        lambda source_values: jnp.sum(
+            model.recurrent(_aligned_temporal_batch(count, source_values)) ** 2
+        )
+    )(values)
+    assert jnp.all(jnp.isfinite(output))
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.max(jnp.abs(output)) < 2.0
+    decay = 1.3
+    count = 9
+    model = _known_exponential_laplace_operator(decay)
+    time = jnp.linspace(0.0, 2.0, count)
+    values = jr.normal(jr.key(30), (count,))
+    gradient = jax.grad(
+        lambda source_values: model.recurrent(
+            _aligned_temporal_batch(count, source_values)
+        )[-1]
+    )(values)
+
+    delta = jnp.diff(time)
+    expected = jnp.zeros((count,))
+    expected = expected.at[0].set(0.5 * delta[0] * jnp.exp(-decay * (time[-1] - time[0])))
+    expected = expected.at[-1].set(0.5 * delta[-1])
+    expected = expected.at[1:-1].set(
+        0.5 * (delta[:-1] + delta[1:]) * jnp.exp(-decay * (time[-1] - time[1:-1]))
+    )
+    assert jnp.allclose(gradient, expected, rtol=1e-11, atol=1e-11)
+    for sampling in ("mw", "mwss", "dh", "gl"):
+        layer, plan = _degree_filter((1.0, 0.0, 0.0, 0.0), sampling=sampling)
+        values = jnp.ones((*plan.sample_shape, 1))
+        error = jnp.linalg.norm(layer(values, plan)[..., 0] - 1.0) / jnp.sqrt(values.size)
+        assert error < 1e-11
+    layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
+    mode = jnp.real(_harmonic(2, 1, plan))
+    output = layer(mode[..., None], plan)[..., 0]
+    relative_error = jnp.linalg.norm(output - 1.7 * mode) / jnp.linalg.norm(mode)
+    assert relative_error < 1e-11
+    layer, plan = _degree_filter((0.8, -0.3, 1.2, 0.4))
+    values = (jnp.real(_harmonic(1, 1, plan)) + 0.3 * jnp.real(_harmonic(3, -2, plan)))[
+        ..., None
+    ]
+    shift = 2
+    expected = jnp.roll(layer(values, plan), shift, axis=1)
+    actual = layer(jnp.roll(values, shift, axis=1), plan)
+    assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)
+    layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
+    theta, phi = jnp.meshgrid(plan.theta, plan.phi, indexing="ij")
+    points = jnp.stack(
+        (
+            jnp.sin(theta) * jnp.cos(phi),
+            jnp.sin(theta) * jnp.sin(phi),
+            jnp.cos(theta),
+        ),
+        axis=-1,
+    )
+    alpha, beta = 0.47, -0.81
+    rotation_z = jnp.array(
+        [
+            [jnp.cos(alpha), -jnp.sin(alpha), 0.0],
+            [jnp.sin(alpha), jnp.cos(alpha), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    rotation_y = jnp.array(
+        [
+            [jnp.cos(beta), 0.0, jnp.sin(beta)],
+            [0.0, 1.0, 0.0],
+            [-jnp.sin(beta), 0.0, jnp.cos(beta)],
+        ]
+    )
+    rotated = oe.contract("...i,ij->...j", points, rotation_z @ rotation_y)
+    x, y, z = rotated[..., 0], rotated[..., 1], rotated[..., 2]
+    degree_two_field = x * y + 0.3 * (y**2 - z**2)
+    output = layer(degree_two_field[..., None], plan)[..., 0]
+    relative_error = jnp.linalg.norm(output - 1.7 * degree_two_field) / jnp.linalg.norm(
+        degree_two_field
+    )
+    assert relative_error < 1e-11
+    layer, recursive = _degree_filter((0.8, -0.3, 1.2, 0.4))
+    precomputed = phx.discretization.SphericalHarmonicPlan(4, execution="precomputed")
+    values = jr.normal(jr.key(40), (*recursive.sample_shape, 1))
+    expected = layer(values, recursive)
+    actual = eqx.filter_jit(lambda x: layer(x, precomputed))(values)
+    assert recursive.fingerprint == precomputed.fingerprint
+    assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)
 
 
 def test_graph_integral_is_invariant_to_source_permutation() -> None:
@@ -447,17 +536,6 @@ def _aligned_temporal_batch(count: Any, values: Any = None) -> Any:
     )
 
 
-def test_laplace_recurrence_agrees_with_direct_aligned_evaluation() -> None:
-    model = _known_exponential_laplace_operator()
-    batch = _aligned_temporal_batch(37)
-    assert jnp.allclose(
-        model.recurrent(batch),
-        model(batch),
-        rtol=1e-11,
-        atol=1e-11,
-    )
-
-
 def test_laplace_quadrature_converges_to_known_exponential_convolution() -> None:
     decay = 1.3
     model = _known_exponential_laplace_operator(decay)
@@ -469,23 +547,6 @@ def test_laplace_quadrature_converges_to_known_exponential_convolution() -> None
         return jnp.linalg.norm(model.recurrent(batch) - exact)
 
     assert error(129) < 0.08 * error(17)
-
-
-def test_laplace_recurrence_is_stable_and_differentiable_for_long_sequences() -> None:
-    count = 1025
-    model = _known_exponential_laplace_operator()
-    values = jnp.sin(jnp.linspace(0.0, 20.0, count))
-    batch = _aligned_temporal_batch(count, values)
-
-    output = eqx.filter_jit(model.recurrent)(batch)
-    gradient = jax.grad(
-        lambda source_values: jnp.sum(
-            model.recurrent(_aligned_temporal_batch(count, source_values)) ** 2
-        )
-    )(values)
-    assert jnp.all(jnp.isfinite(output))
-    assert jnp.all(jnp.isfinite(gradient))
-    assert jnp.max(jnp.abs(output)) < 2.0
 
 
 def _degree_filter(
@@ -522,69 +583,6 @@ def _harmonic(degree: Any, order: Any, plan: Any) -> Any:
     return flattened[..., 0].reshape(theta.shape)
 
 
-@pytest.mark.parametrize("sampling", ("mw", "mwss", "dh", "gl"))
-def test_spherical_constant_mode_is_exact_on_sampling_theorems(sampling: Any) -> None:
-    layer, plan = _degree_filter((1.0, 0.0, 0.0, 0.0), sampling=sampling)
-    values = jnp.ones((*plan.sample_shape, 1))
-    error = jnp.linalg.norm(layer(values, plan)[..., 0] - 1.0) / jnp.sqrt(values.size)
-    assert error < 1e-11
-
-
-def test_spherical_filter_applies_one_gain_per_harmonic_degree() -> None:
-    layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
-    mode = jnp.real(_harmonic(2, 1, plan))
-    output = layer(mode[..., None], plan)[..., 0]
-    relative_error = jnp.linalg.norm(output - 1.7 * mode) / jnp.linalg.norm(mode)
-    assert relative_error < 1e-11
-
-
-def test_spherical_operator_is_equivariant_to_longitude_rotations() -> None:
-    layer, plan = _degree_filter((0.8, -0.3, 1.2, 0.4))
-    values = (jnp.real(_harmonic(1, 1, plan)) + 0.3 * jnp.real(_harmonic(3, -2, plan)))[
-        ..., None
-    ]
-    shift = 2
-    expected = jnp.roll(layer(values, plan), shift, axis=1)
-    actual = layer(jnp.roll(values, shift, axis=1), plan)
-    assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)
-
-
-def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation() -> None:
-    layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
-    theta, phi = jnp.meshgrid(plan.theta, plan.phi, indexing="ij")
-    points = jnp.stack(
-        (
-            jnp.sin(theta) * jnp.cos(phi),
-            jnp.sin(theta) * jnp.sin(phi),
-            jnp.cos(theta),
-        ),
-        axis=-1,
-    )
-    alpha, beta = 0.47, -0.81
-    rotation_z = jnp.array(
-        [
-            [jnp.cos(alpha), -jnp.sin(alpha), 0.0],
-            [jnp.sin(alpha), jnp.cos(alpha), 0.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
-    rotation_y = jnp.array(
-        [
-            [jnp.cos(beta), 0.0, jnp.sin(beta)],
-            [0.0, 1.0, 0.0],
-            [-jnp.sin(beta), 0.0, jnp.cos(beta)],
-        ]
-    )
-    rotated = oe.contract("...i,ij->...j", points, rotation_z @ rotation_y)
-    x, y, z = rotated[..., 0], rotated[..., 1], rotated[..., 2]
-    degree_two_field = x * y + 0.3 * (y**2 - z**2)
-    output = layer(degree_two_field[..., None], plan)[..., 0]
-    relative_error = jnp.linalg.norm(output - 1.7 * degree_two_field) / jnp.linalg.norm(
-        degree_two_field
-    )
-    assert relative_error < 1e-11
-
-
 def _attention_samples(weights: Any, mask: Any = None) -> Any:
     count = len(weights)
     return phx.nn.operator.FunctionSamples(
@@ -595,7 +593,7 @@ def _attention_samples(weights: Any, mask: Any = None) -> Any:
     )
 
 
-def test_operator_attention_is_permutation_equivariant() -> None:
+def test_operator_scientific_validation_scenario_3() -> None:
     values = jr.normal(jr.key(20), (7, 3))
     weights = jnp.array([0.05, 0.1, 0.15, 0.2, 0.1, 0.25, 0.15])
     samples = _attention_samples(weights)
@@ -614,41 +612,35 @@ def test_operator_attention_is_permutation_equivariant() -> None:
     )
     actual = attention(values[permutation], permuted_samples)
     assert jnp.allclose(actual, reference[permutation], rtol=1e-11, atol=1e-11)
-
-
-@pytest.mark.parametrize("kind", ("operator", "slice"))
-def test_operator_attention_is_invariant_to_masked_padding(kind: Any) -> None:
-    values = jr.normal(jr.key(22), (5, 3))
-    samples = _attention_samples(jnp.full((5,), 0.2))
-    padded_values = jnp.concatenate((values, jnp.full((3, 3), 1e10)), axis=0)
-    padded_samples = phx.nn.operator.FunctionSamples(
-        values=None,
-        coordinates=jnp.arange(8, dtype="float64")[:, None],
-        quadrature_weights=jnp.concatenate((jnp.full((5,), 0.2), jnp.ones((3,)))),
-        mask=jnp.array([True, True, True, True, True, False, False, False]),
-    )
-    if kind == "operator":
-        attention = phx.nn.operator.layers.OperatorAttention(
-            source_channels=3,
-            num_heads=2,
-            head_dim=4,
-            key=jr.key(23),
+    for kind in ("operator", "slice"):
+        values = jr.normal(jr.key(22), (5, 3))
+        samples = _attention_samples(jnp.full((5,), 0.2))
+        padded_values = jnp.concatenate((values, jnp.full((3, 3), 1e10)), axis=0)
+        padded_samples = phx.nn.operator.FunctionSamples(
+            values=None,
+            coordinates=jnp.arange(8, dtype="float64")[:, None],
+            quadrature_weights=jnp.concatenate((jnp.full((5,), 0.2), jnp.ones((3,)))),
+            mask=jnp.array([True, True, True, True, True, False, False, False]),
         )
-    else:
-        attention = phx.nn.operator.layers.SliceAttention(
-            channels=3,
-            num_slices=4,
-            num_heads=2,
-            head_dim=4,
-            key=jr.key(23),
-        )
-    reference = attention(values, samples)
-    actual = attention(padded_values, padded_samples)
-    assert jnp.allclose(actual[:5], reference, rtol=1e-10, atol=1e-10)
-    assert jnp.allclose(actual[5:], 0.0)
-
-
-def test_cross_attention_is_continuum_consistent_under_measure_splitting() -> None:
+        if kind == "operator":
+            attention = phx.nn.operator.layers.OperatorAttention(
+                source_channels=3,
+                num_heads=2,
+                head_dim=4,
+                key=jr.key(23),
+            )
+        else:
+            attention = phx.nn.operator.layers.SliceAttention(
+                channels=3,
+                num_slices=4,
+                num_heads=2,
+                head_dim=4,
+                key=jr.key(23),
+            )
+        reference = attention(values, samples)
+        actual = attention(padded_values, padded_samples)
+        assert jnp.allclose(actual[:5], reference, rtol=1e-10, atol=1e-10)
+        assert jnp.allclose(actual[5:], 0.0)
     attention = phx.nn.operator.layers.OperatorAttention(
         source_channels=2,
         query_channels=2,
@@ -666,72 +658,6 @@ def test_cross_attention_is_continuum_consistent_under_measure_splitting() -> No
     split_source = _attention_samples(jnp.array([0.15, 0.15, 0.7]))
     actual = attention.cross(split_values, query_values, split_source, query)
     assert jnp.allclose(actual, reference, rtol=1e-11, atol=1e-11)
-
-
-@pytest.mark.parametrize("kind", ("deeponet", "local"))
-def test_quadrature_operator_value_gradients_equal_analytic_weights(kind: Any) -> None:
-    coordinates = jnp.array([[0.05], [0.2], [0.55], [0.9]])
-    weights = jnp.array([0.1, 0.2, 0.3, 0.4])
-    values = jnp.array([0.7, -0.2, 1.3, 2.0])
-    query = phx.nn.operator.FunctionSamples(
-        values=None,
-        coordinates=jnp.array([[0.37]]),
-    )
-    if kind == "deeponet":
-        model = phx.nn.operator.architectures.DeepONet(
-            branch=_integral_encoder(),
-            # ty: ignore[invalid-argument-type]
-            trunk=_ConstantTrunk(),
-            coord_dim=1,
-            latent_size=1,
-        )
-    else:
-        model = phx.nn.operator.architectures.LocalIntegralOperator(
-            # ty: ignore[invalid-argument-type]
-            kernel_model=_SourceValueKernel(),
-            coord_dim=1,
-        )
-
-    def evaluate(source_values: Any) -> Any:
-        batch = phx.nn.operator.OperatorBatch(
-            inputs={
-                "u": phx.nn.operator.FunctionSamples(
-                    values=source_values,
-                    coordinates=coordinates,
-                    quadrature_weights=weights,
-                )
-            },
-            queries={"query": query},
-        )
-        return model(batch)[0]
-
-    gradient = jax.grad(evaluate)(values)
-    assert jnp.allclose(gradient, weights, rtol=1e-11, atol=1e-11)
-
-
-def test_laplace_terminal_gradient_matches_trapezoidal_convolution_weights() -> None:
-    decay = 1.3
-    count = 9
-    model = _known_exponential_laplace_operator(decay)
-    time = jnp.linspace(0.0, 2.0, count)
-    values = jr.normal(jr.key(30), (count,))
-    gradient = jax.grad(
-        lambda source_values: model.recurrent(
-            _aligned_temporal_batch(count, source_values)
-        )[-1]
-    )(values)
-
-    delta = jnp.diff(time)
-    expected = jnp.zeros((count,))
-    expected = expected.at[0].set(0.5 * delta[0] * jnp.exp(-decay * (time[-1] - time[0])))
-    expected = expected.at[-1].set(0.5 * delta[-1])
-    expected = expected.at[1:-1].set(
-        0.5 * (delta[:-1] + delta[1:]) * jnp.exp(-decay * (time[-1] - time[1:-1]))
-    )
-    assert jnp.allclose(gradient, expected, rtol=1e-11, atol=1e-11)
-
-
-def test_retained_fourier_mode_has_identity_energy_gradient() -> None:
     count = 32
     x = jnp.arange(count, dtype="float64")
     signal = (
@@ -750,73 +676,92 @@ def test_retained_fourier_mode_has_identity_energy_gradient() -> None:
     assert jnp.allclose(gradient, signal, rtol=1e-11, atol=1e-11)
 
 
-@pytest.mark.parametrize("kind", ("integral", "differential"))
-def test_sparse_neighbor_execution_matches_dense_radius_operator(kind: Any) -> None:
-    source_x = jnp.linspace(0.0, 1.0, 64)
-    query_x = jnp.linspace(0.03, 0.97, 31)
-    batch = phx.nn.operator.OperatorBatch(
-        inputs={
-            "u": phx.nn.operator.FunctionSamples(
-                values=jnp.sin(2.0 * jnp.pi * source_x),
-                coordinates=source_x[:, None],
-                quadrature_weights=jnp.full((64,), 1.0 / 64.0),
+def test_quadrature_operator_value_gradients_equal_analytic_weights() -> None:
+    for kind in ("deeponet", "local"):
+        coordinates = jnp.array([[0.05], [0.2], [0.55], [0.9]])
+        weights = jnp.array([0.1, 0.2, 0.3, 0.4])
+        values = jnp.array([0.7, -0.2, 1.3, 2.0])
+        query = phx.nn.operator.FunctionSamples(
+            values=None,
+            coordinates=jnp.array([[0.37]]),
+        )
+        if kind == "deeponet":
+            model = phx.nn.operator.architectures.DeepONet(
+                branch=_integral_encoder(),
+                # ty: ignore[invalid-argument-type]
+                trunk=_ConstantTrunk(),
+                coord_dim=1,
+                latent_size=1,
             )
-        },
-        queries={
-            "query": phx.nn.operator.FunctionSamples(
-                values=None,
-                coordinates=query_x[:, None],
+        else:
+            model = phx.nn.operator.architectures.LocalIntegralOperator(
+                # ty: ignore[invalid-argument-type]
+                kernel_model=_SourceValueKernel(),
+                coord_dim=1,
             )
-        },
-    )
-    if kind == "integral":
-        dense = phx.nn.operator.architectures.LocalIntegralOperator(
-            # ty: ignore[invalid-argument-type]
-            kernel_model=_SourceValueKernel(),
-            coord_dim=1,
-            radius=0.08,
-        )
-        sparse = phx.nn.operator.architectures.LocalIntegralOperator(
-            # ty: ignore[invalid-argument-type]
-            kernel_model=_SourceValueKernel(),
-            coord_dim=1,
-            radius=0.08,
-            max_neighbors=12,
-        )
-    else:
-        dense = phx.nn.operator.architectures.LocalDifferentialOperator(
-            # ty: ignore[invalid-argument-type]
-            kernel_model=_ConstantDifferentialKernel(),
-            coord_dim=1,
-            radius=0.08,
-        )
-        sparse = phx.nn.operator.architectures.LocalDifferentialOperator(
-            # ty: ignore[invalid-argument-type]
-            kernel_model=_ConstantDifferentialKernel(),
-            coord_dim=1,
-            radius=0.08,
-            max_neighbors=12,
-        )
-    assert jnp.allclose(sparse(batch), dense(batch), rtol=1e-11, atol=1e-11)
+
+        def evaluate(source_values: Any) -> Any:
+            batch = phx.nn.operator.OperatorBatch(
+                inputs={
+                    "u": phx.nn.operator.FunctionSamples(
+                        values=source_values,
+                        coordinates=coordinates,
+                        quadrature_weights=weights,
+                    )
+                },
+                queries={"query": query},
+            )
+            return model(batch)[0]
+
+        gradient = jax.grad(evaluate)(values)
+        assert jnp.allclose(gradient, weights, rtol=1e-11, atol=1e-11)
 
 
-def test_basis_transform_plan_reuses_exact_projection_matrices() -> None:
-    nodes = jnp.linspace(0.0, 1.0, 41) ** 1.3
-    axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
-    layer, _ = _identity_basis_layer("legendre", 8, axis)
-    values = jnp.exp(nodes)[:, None]
-    plan = layer.plan((axis,))
-    assert isinstance(plan, phx.nn.operator.layers.BasisTransformPlan)
-    expected = layer(values, (axis,))
-    actual = eqx.filter_jit(lambda x: layer(x, (axis,), plan=plan))(values)
-    assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_spherical_execution_plans_are_interchangeable_and_jittable() -> None:
-    layer, recursive = _degree_filter((0.8, -0.3, 1.2, 0.4))
-    precomputed = phx.discretization.SphericalHarmonicPlan(4, execution="precomputed")
-    values = jr.normal(jr.key(40), (*recursive.sample_shape, 1))
-    expected = layer(values, recursive)
-    actual = eqx.filter_jit(lambda x: layer(x, precomputed))(values)
-    assert recursive.fingerprint == precomputed.fingerprint
-    assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)
+def test_sparse_neighbor_execution_matches_dense_radius_operator() -> None:
+    for kind in ("integral", "differential"):
+        source_x = jnp.linspace(0.0, 1.0, 64)
+        query_x = jnp.linspace(0.03, 0.97, 31)
+        batch = phx.nn.operator.OperatorBatch(
+            inputs={
+                "u": phx.nn.operator.FunctionSamples(
+                    values=jnp.sin(2.0 * jnp.pi * source_x),
+                    coordinates=source_x[:, None],
+                    quadrature_weights=jnp.full((64,), 1.0 / 64.0),
+                )
+            },
+            queries={
+                "query": phx.nn.operator.FunctionSamples(
+                    values=None,
+                    coordinates=query_x[:, None],
+                )
+            },
+        )
+        if kind == "integral":
+            dense = phx.nn.operator.architectures.LocalIntegralOperator(
+                # ty: ignore[invalid-argument-type]
+                kernel_model=_SourceValueKernel(),
+                coord_dim=1,
+                radius=0.08,
+            )
+            sparse = phx.nn.operator.architectures.LocalIntegralOperator(
+                # ty: ignore[invalid-argument-type]
+                kernel_model=_SourceValueKernel(),
+                coord_dim=1,
+                radius=0.08,
+                max_neighbors=12,
+            )
+        else:
+            dense = phx.nn.operator.architectures.LocalDifferentialOperator(
+                # ty: ignore[invalid-argument-type]
+                kernel_model=_ConstantDifferentialKernel(),
+                coord_dim=1,
+                radius=0.08,
+            )
+            sparse = phx.nn.operator.architectures.LocalDifferentialOperator(
+                # ty: ignore[invalid-argument-type]
+                kernel_model=_ConstantDifferentialKernel(),
+                coord_dim=1,
+                radius=0.08,
+                max_neighbors=12,
+            )
+        assert jnp.allclose(sparse(batch), dense(batch), rtol=1e-11, atol=1e-11)

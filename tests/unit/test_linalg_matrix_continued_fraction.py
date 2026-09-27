@@ -51,7 +51,7 @@ def _leading_resolvent_blocks(matrix: Any, shifts: Any, block_size: Any) -> Any:
     )(shifts)
 
 
-def test_matrix_continued_fraction_matches_noncommuting_block_resolvent() -> None:
+def test_linalg_matrix_continued_fraction_scenario_1() -> None:
     diagonal = jnp.asarray(
         [
             [[1.0 + 0.1j, 0.2], [-0.3j, 2.0 - 0.1j]],
@@ -107,85 +107,6 @@ def test_matrix_continued_fraction_matches_noncommuting_block_resolvent() -> Non
     assert bool(eager.all_successful)
     assert bool(jnp.all(eager.diagnostics.maximum_relative_inverse_residual < 1e-12))
     assert eager.provenance.coupling == "explicit-upper-lower"
-
-
-def test_adjoint_coupling_default_preserves_matrix_resolvent_sign() -> None:
-    diagonal = jnp.asarray(
-        [
-            [[1.0, 0.2j], [-0.2j, 1.5]],
-            [[2.0, 0.1 - 0.05j], [0.1 + 0.05j, 2.5]],
-            [[3.0, -0.15j], [0.15j, 3.5]],
-        ],
-        dtype=jnp.complex128,
-    )
-    upper = jnp.asarray(
-        [
-            [[0.3, 0.1j], [0.05, -0.2]],
-            [[-0.1j, 0.25], [0.2, 0.15j]],
-        ],
-        dtype=jnp.complex128,
-    )
-    lower = jnp.conj(jnp.swapaxes(upper, -1, -2))
-    shifts = jnp.asarray([0.5 + 0.25j, 2.25 + 0.25j, 4.0 + 0.25j])
-
-    implicit = la.matrix_continued_fraction(diagonal, upper, shifts)
-    explicit = la.matrix_continued_fraction(
-        diagonal,
-        upper,
-        shifts,
-        lower_couplings=lower,
-    )
-    hermitian_imaginary_part = (
-        implicit.value - jnp.conj(jnp.swapaxes(implicit.value, -1, -2))
-    ) / (2.0j)
-    spectral_blocks = -hermitian_imaginary_part
-
-    np.testing.assert_allclose(implicit.value, explicit.value, rtol=2e-12, atol=2e-12)
-    assert implicit.value.shape == (3, 2, 2)
-    assert bool(jnp.all(jnp.linalg.eigvalsh(spectral_blocks) >= -1e-12))
-    assert implicit.provenance.coupling == "adjoint-paired-upper-lower"
-
-
-def test_terminal_self_energy_matches_eliminated_block() -> None:
-    diagonal = jnp.asarray(
-        [
-            [[1.0, 0.1], [0.1, 1.5]],
-            [[2.0, -0.2j], [0.2j, 2.5]],
-            [[3.0, 0.15], [0.15, 3.5]],
-        ],
-        dtype=jnp.complex128,
-    )
-    upper = jnp.asarray(
-        [
-            [[0.25, 0.1j], [-0.05, 0.2]],
-            [[0.1, -0.15j], [0.2j, 0.3]],
-        ],
-        dtype=jnp.complex128,
-    )
-    lower = jnp.conj(jnp.swapaxes(upper, -1, -2))
-    shifts = jnp.asarray([0.25 + 0.3j, 2.75 + 0.3j])
-    identity = jnp.eye(2, dtype=jnp.complex128)
-    tail_resolvent = jax.vmap(
-        lambda shift: jnp.linalg.solve(shift * identity - diagonal[2], identity)
-    )(shifts)
-    self_energy = jax.vmap(lambda value: upper[1] @ value @ lower[1])(tail_resolvent)
-
-    result = la.matrix_continued_fraction(
-        diagonal[:2],
-        upper[:1],
-        shifts,
-        lower_couplings=lower[:1],
-        terminal_self_energy=self_energy,
-    )
-    full_matrix = _assemble_block_tridiagonal(diagonal, upper, lower)
-    expected = _leading_resolvent_blocks(full_matrix, shifts, block_size=2)
-
-    np.testing.assert_allclose(result.value, expected, rtol=3e-11, atol=3e-11)
-    assert bool(result.all_successful)
-    assert result.provenance.termination == "explicit-terminal-self-energy"
-
-
-def test_matrix_continued_fraction_isolates_failures_and_validates_shapes() -> None:
     diagonal = jnp.asarray([[[1.0, 0.0], [0.0, 2.0]]])
     shifts = jnp.asarray([1.0 + 0.0j, 3.0 + 0.0j, jnp.nan + 0.0j])
 
@@ -228,6 +149,76 @@ def test_matrix_continued_fraction_isolates_failures_and_validates_shapes() -> N
             shifts[:2],
             terminal_self_energy=jnp.zeros((2, 2, 3)),
         )
+    diagonal = jnp.asarray(
+        [
+            [[1.0, 0.2j], [-0.2j, 1.5]],
+            [[2.0, 0.1 - 0.05j], [0.1 + 0.05j, 2.5]],
+            [[3.0, -0.15j], [0.15j, 3.5]],
+        ],
+        dtype=jnp.complex128,
+    )
+    upper = jnp.asarray(
+        [
+            [[0.3, 0.1j], [0.05, -0.2]],
+            [[-0.1j, 0.25], [0.2, 0.15j]],
+        ],
+        dtype=jnp.complex128,
+    )
+    lower = jnp.conj(jnp.swapaxes(upper, -1, -2))
+    shifts = jnp.asarray([0.5 + 0.25j, 2.25 + 0.25j, 4.0 + 0.25j])
+
+    implicit = la.matrix_continued_fraction(diagonal, upper, shifts)
+    explicit = la.matrix_continued_fraction(
+        diagonal,
+        upper,
+        shifts,
+        lower_couplings=lower,
+    )
+    hermitian_imaginary_part = (
+        implicit.value - jnp.conj(jnp.swapaxes(implicit.value, -1, -2))
+    ) / (2.0j)
+    spectral_blocks = -hermitian_imaginary_part
+
+    np.testing.assert_allclose(implicit.value, explicit.value, rtol=2e-12, atol=2e-12)
+    assert implicit.value.shape == (3, 2, 2)
+    assert bool(jnp.all(jnp.linalg.eigvalsh(spectral_blocks) >= -1e-12))
+    assert implicit.provenance.coupling == "adjoint-paired-upper-lower"
+    diagonal = jnp.asarray(
+        [
+            [[1.0, 0.1], [0.1, 1.5]],
+            [[2.0, -0.2j], [0.2j, 2.5]],
+            [[3.0, 0.15], [0.15, 3.5]],
+        ],
+        dtype=jnp.complex128,
+    )
+    upper = jnp.asarray(
+        [
+            [[0.25, 0.1j], [-0.05, 0.2]],
+            [[0.1, -0.15j], [0.2j, 0.3]],
+        ],
+        dtype=jnp.complex128,
+    )
+    lower = jnp.conj(jnp.swapaxes(upper, -1, -2))
+    shifts = jnp.asarray([0.25 + 0.3j, 2.75 + 0.3j])
+    identity = jnp.eye(2, dtype=jnp.complex128)
+    tail_resolvent = jax.vmap(
+        lambda shift: jnp.linalg.solve(shift * identity - diagonal[2], identity)
+    )(shifts)
+    self_energy = jax.vmap(lambda value: upper[1] @ value @ lower[1])(tail_resolvent)
+
+    result = la.matrix_continued_fraction(
+        diagonal[:2],
+        upper[:1],
+        shifts,
+        lower_couplings=lower[:1],
+        terminal_self_energy=self_energy,
+    )
+    full_matrix = _assemble_block_tridiagonal(diagonal, upper, lower)
+    expected = _leading_resolvent_blocks(full_matrix, shifts, block_size=2)
+
+    np.testing.assert_allclose(result.value, expected, rtol=3e-11, atol=3e-11)
+    assert bool(result.all_successful)
+    assert result.provenance.termination == "explicit-terminal-self-energy"
 
 
 def test_matrix_continued_fraction_shift_jvp_matches_dense_derivative() -> None:

@@ -66,7 +66,7 @@ def test_rank_one_cross_preserves_nonunit_anchor_scale() -> None:
     assert jnp.allclose(result.tensor.evaluate(all_indices), evaluator(all_indices))
 
 
-def test_cross_and_completion_reject_nonfinite_observations_and_policy() -> None:
+def test_tensor_train_algorithms_scenario_1() -> None:
     with pytest.raises(ValueError, match="regularization"):
         tt.TTCrossPlan(
             (2, 2),
@@ -114,9 +114,6 @@ def test_cross_and_completion_reject_nonfinite_observations_and_policy() -> None
             jnp.ones((2,)),
             jnp.ones((2,)),
         )
-
-
-def test_amen_like_poisson_solve_uses_true_global_residual() -> None:
     size = 6
     modes = (size,)
     operator = tt.laplacian_operator(
@@ -158,9 +155,6 @@ def test_amen_like_poisson_solve_uses_true_global_residual() -> None:
         < result.evidence.true_global_residual_norms[0]
     )
     assert result.converged
-
-
-def test_weighted_completion_reports_independent_holdout_error() -> None:
     dense = (jnp.arange(4, dtype=jnp.float32) + 1)[:, None] * (
         jnp.arange(4, dtype=jnp.float32) + 2
     )[None, :]

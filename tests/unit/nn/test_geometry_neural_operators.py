@@ -67,7 +67,7 @@ def _constant_kernel_transfer(*, reduction: Any) -> Any:
     )
 
 
-def test_tensor_grid_latent_geometry_tracks_case_bounds_and_measure() -> None:
+def test_geometry_neural_operators_scenario_1() -> None:
     source = jnp.array(
         [
             [[0.0, -1.0], [2.0, -1.0], [0.0, 3.0], [2.0, 3.0]],
@@ -86,9 +86,6 @@ def test_tensor_grid_latent_geometry_tracks_case_bounds_and_measure() -> None:
     assert coordinates.shape == (2, 12, 2)
     assert jnp.allclose(jnp.sum(weights, axis=-1), jnp.array([8.0, 2.0]))
     assert tuple(axis.size for axis in geometry.axes()) == (4, 3)
-
-
-def test_regional_farthest_points_are_deterministic_case_local_and_masked() -> None:
     source = jnp.array(
         [
             [[0.0], [1.0], [2.0], [100.0]],
@@ -106,9 +103,44 @@ def test_regional_farthest_points_are_deterministic_case_local_and_masked() -> N
     assert jnp.all(first[0] <= 2.0)
     assert jnp.all(first[1] >= 10.0)
     assert jnp.all(first[1] <= 12.0)
+    processor = RegionalGraphProcessor(
+        3,
+        1,
+        neighbors=3,
+        depth=2,
+        width=6,
+        mlp_depth=1,
+        key=jr.key(31),
+    )
+    coordinates = jnp.broadcast_to(
+        jnp.linspace(0.0, 1.0, 5)[None, :, None],
+        (2, 5, 1),
+    )
+    values = jnp.stack(
+        (
+            jnp.sin(coordinates[..., 0]),
+            jnp.cos(coordinates[..., 0]),
+            coordinates[..., 0],
+        ),
+        axis=-1,
+    )
+    measure = jnp.full((2, 5), 0.2)
+    mask = jnp.ones((2, 5), dtype="bool")
+    evaluate = eqx.filter_jit(
+        lambda model, weights: model(
+            values,
+            coordinates,
+            weights,
+            mask,
+        )
+    )
 
+    reference = evaluate(processor, measure)
+    rescaled = evaluate(processor, 7.0 * measure)
 
-def test_kernel_transfer_distinguishes_integral_and_normalized_measure() -> None:
+    assert reference.shape == values.shape
+    assert jnp.all(jnp.isfinite(reference))
+    assert jnp.allclose(reference, rescaled, rtol=1e-10, atol=1e-10)
     source = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
     target = jnp.array([[0.25], [0.75]])
     values = jnp.arange(8, dtype="float64")
@@ -129,28 +161,6 @@ def test_kernel_transfer_distinguishes_integral_and_normalized_measure() -> None
 
     assert jnp.allclose(integral[:, 0], 2.0)
     assert jnp.allclose(normalized[:, 0], 1.0)
-
-
-def test_integral_transfer_rejects_implicit_point_cloud_measure() -> None:
-    transfer = GraphKernelTransfer(
-        in_channels=1,
-        out_channels=2,
-        coord_dim=1,
-        neighbors=2,
-        key=jr.key(1),
-    )
-    coordinates = jnp.array([[0.0], [1.0]])
-
-    with pytest.raises(ValueError, match="explicit source_measure"):
-        transfer(
-            jnp.ones((2,)),
-            coordinates,
-            coordinates,
-            source_measure=None,
-        )
-
-
-def test_kernel_and_attention_transfers_are_jittable_and_differentiable() -> None:
     source = jnp.array([[[0.0], [0.5], [1.0]]])
     target = jnp.array([[[0.2], [0.8]]])
     values = jnp.array([[1.0, 2.0, 3.0]])
@@ -200,31 +210,23 @@ def test_kernel_and_attention_transfers_are_jittable_and_differentiable() -> Non
         assert all(jnp.all(jnp.isfinite(leaf)) for leaf in gradient_leaves)
 
 
-def test_geometry_moments_are_permutation_invariant_and_finite_when_empty() -> None:
-    source = jnp.array([[[0.0], [0.5], [1.0]]])
-    target = jnp.array([[[0.25], [2.0]]])
-    measure = jnp.array([[0.2, 0.3, 0.5]])
-    embedding = GeometryMomentEmbedding(1, 0.6)
+def test_geometry_neural_operators_scenario_2() -> None:
+    transfer = GraphKernelTransfer(
+        in_channels=1,
+        out_channels=2,
+        coord_dim=1,
+        neighbors=2,
+        key=jr.key(1),
+    )
+    coordinates = jnp.array([[0.0], [1.0]])
 
-    def evaluate(points: Any, weights: Any) -> Any:
-        neighborhood = __import__("phydrax").graph.query_neighbors(
-            points,
-            target,
-            max_neighbors=3,
-            radius=0.6,
+    with pytest.raises(ValueError, match="explicit source_measure"):
+        transfer(
+            jnp.ones((2,)),
+            coordinates,
+            coordinates,
+            source_measure=None,
         )
-        return embedding(neighborhood, weights)
-
-    reference = evaluate(source, measure)
-    permutation = jnp.array([2, 0, 1])
-    permuted = evaluate(source[:, permutation], measure[:, permutation])
-
-    assert jnp.allclose(reference, permuted)
-    assert jnp.all(jnp.isfinite(reference))
-    assert reference[0, 1, -1] == 0.0
-
-
-def test_multiscale_gates_form_a_partition_of_unity() -> None:
     transfers = tuple(
         GraphKernelTransfer(
             in_channels=1,
@@ -262,6 +264,86 @@ def test_multiscale_gates_form_a_partition_of_unity() -> None:
     assert jnp.allclose(jnp.sum(gates, axis=-1), 1.0)
     assert output.shape == (1, 2, 3)
     assert jnp.all(jnp.isfinite(output))
+    model = _gino()
+    batch = _gino_batch()
+
+    output = eqx.filter_jit(lambda item, data: item(data))(model, batch)
+
+    assert output.shape == (2, 5)
+    assert jnp.all(jnp.isfinite(output))
+    assert jnp.allclose(output[1, 3:], 0.0)
+    model = _gino(query_channels=1)
+    batch = _gino_batch(query_covariates=True)
+    reference = model(batch)
+    permutation = jnp.array([7, 1, 5, 0, 3, 6, 2, 4])
+    source = batch.input("u")
+    permuted = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=source.values[:, permutation],
+                coordinates=source.coordinates[:, permutation],
+                quadrature_weights=source.quadrature_weights[:, permutation],
+            )
+        },
+        queries={"query": batch.require_single_query()},
+        case_axes=batch.case_axes,
+    )
+
+    assert jnp.allclose(model(permuted), reference, rtol=1e-10, atol=1e-10)
+    first_coordinates = jnp.linspace(0.0, 1.0, 8)[:, None]
+    second_coordinates = jnp.linspace(0.05, 0.95, 9)[:, None]
+    query = jnp.linspace(0.1, 0.9, 4)[:, None]
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.sin(first_coordinates[:, 0]),
+                coordinates=first_coordinates,
+                quadrature_weights=jnp.full((8,), 1.0 / 8.0),
+            ),
+            "v": phx.nn.operator.FunctionSamples(
+                values=jnp.cos(second_coordinates[:, 0]),
+                coordinates=second_coordinates,
+                quadrature_weights=jnp.full((9,), 1.0 / 9.0),
+            ),
+        },
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, coordinates=query)
+        },
+    )
+    model = _gino(
+        in_channels={"u": 1, "v": 1},
+        source_key=None,
+        key=jr.key(21),
+    )
+
+    output = model(batch)
+
+    assert output.shape == (4,)
+    assert jnp.all(jnp.isfinite(output))
+
+
+def test_geometry_moments_are_permutation_invariant_and_finite_when_empty() -> None:
+    source = jnp.array([[[0.0], [0.5], [1.0]]])
+    target = jnp.array([[[0.25], [2.0]]])
+    measure = jnp.array([[0.2, 0.3, 0.5]])
+    embedding = GeometryMomentEmbedding(1, 0.6)
+
+    def evaluate(points: Any, weights: Any) -> Any:
+        neighborhood = __import__("phydrax").graph.query_neighbors(
+            points,
+            target,
+            max_neighbors=3,
+            radius=0.6,
+        )
+        return embedding(neighborhood, weights)
+
+    reference = evaluate(source, measure)
+    permutation = jnp.array([2, 0, 1])
+    permuted = evaluate(source[:, permutation], measure[:, permutation])
+
+    assert jnp.allclose(reference, permuted)
+    assert jnp.all(jnp.isfinite(reference))
+    assert reference[0, 1, -1] == 0.0
 
 
 def _gino(
@@ -327,71 +409,6 @@ def _gino_batch(*, query_covariates: Any = False) -> Any:
         },
         case_axes=("case",),
     )
-
-
-def test_gino_supports_per_case_geometry_independent_queries_and_masks() -> None:
-    model = _gino()
-    batch = _gino_batch()
-
-    output = eqx.filter_jit(lambda item, data: item(data))(model, batch)
-
-    assert output.shape == (2, 5)
-    assert jnp.all(jnp.isfinite(output))
-    assert jnp.allclose(output[1, 3:], 0.0)
-
-
-def test_gino_supports_query_covariates_and_source_permutation() -> None:
-    model = _gino(query_channels=1)
-    batch = _gino_batch(query_covariates=True)
-    reference = model(batch)
-    permutation = jnp.array([7, 1, 5, 0, 3, 6, 2, 4])
-    source = batch.input("u")
-    permuted = phx.nn.operator.OperatorBatch(
-        inputs={
-            "u": phx.nn.operator.FunctionSamples(
-                values=source.values[:, permutation],
-                coordinates=source.coordinates[:, permutation],
-                quadrature_weights=source.quadrature_weights[:, permutation],
-            )
-        },
-        queries={"query": batch.require_single_query()},
-        case_axes=batch.case_axes,
-    )
-
-    assert jnp.allclose(model(permuted), reference, rtol=1e-10, atol=1e-10)
-
-
-def test_gino_fuses_independently_sampled_multiple_sources() -> None:
-    first_coordinates = jnp.linspace(0.0, 1.0, 8)[:, None]
-    second_coordinates = jnp.linspace(0.05, 0.95, 9)[:, None]
-    query = jnp.linspace(0.1, 0.9, 4)[:, None]
-    batch = phx.nn.operator.OperatorBatch(
-        inputs={
-            "u": phx.nn.operator.FunctionSamples(
-                values=jnp.sin(first_coordinates[:, 0]),
-                coordinates=first_coordinates,
-                quadrature_weights=jnp.full((8,), 1.0 / 8.0),
-            ),
-            "v": phx.nn.operator.FunctionSamples(
-                values=jnp.cos(second_coordinates[:, 0]),
-                coordinates=second_coordinates,
-                quadrature_weights=jnp.full((9,), 1.0 / 9.0),
-            ),
-        },
-        queries={
-            "query": phx.nn.operator.FunctionSamples(values=None, coordinates=query)
-        },
-    )
-    model = _gino(
-        in_channels={"u": 1, "v": 1},
-        source_key=None,
-        key=jr.key(21),
-    )
-
-    output = model(batch)
-
-    assert output.shape == (4,)
-    assert jnp.all(jnp.isfinite(output))
 
 
 def test_gino_has_finite_parameter_gradients_and_serializes(tmp_path: Any) -> None:
@@ -488,48 +505,7 @@ def _rigno(*, key: Any = jr.key(30)) -> Any:
     )
 
 
-def test_regional_graph_processor_is_measure_scale_invariant_and_jittable() -> None:
-    processor = RegionalGraphProcessor(
-        3,
-        1,
-        neighbors=3,
-        depth=2,
-        width=6,
-        mlp_depth=1,
-        key=jr.key(31),
-    )
-    coordinates = jnp.broadcast_to(
-        jnp.linspace(0.0, 1.0, 5)[None, :, None],
-        (2, 5, 1),
-    )
-    values = jnp.stack(
-        (
-            jnp.sin(coordinates[..., 0]),
-            jnp.cos(coordinates[..., 0]),
-            coordinates[..., 0],
-        ),
-        axis=-1,
-    )
-    measure = jnp.full((2, 5), 0.2)
-    mask = jnp.ones((2, 5), dtype="bool")
-    evaluate = eqx.filter_jit(
-        lambda model, weights: model(
-            values,
-            coordinates,
-            weights,
-            mask,
-        )
-    )
-
-    reference = evaluate(processor, measure)
-    rescaled = evaluate(processor, 7.0 * measure)
-
-    assert reference.shape == values.shape
-    assert jnp.all(jnp.isfinite(reference))
-    assert jnp.allclose(reference, rescaled, rtol=1e-10, atol=1e-10)
-
-
-def test_rigno_supports_case_geometry_query_masks_and_graph_isolation() -> None:
+def test_geometry_neural_operators_scenario_3() -> None:
     model = _rigno()
     batch = _gino_batch()
     source = batch.input("u")
@@ -538,6 +514,101 @@ def test_rigno_supports_case_geometry_query_masks_and_graph_isolation() -> None:
         inputs={
             "u": phx.nn.operator.FunctionSamples(
                 values=changed_values,
+                coordinates=source.coordinates,
+                quadrature_weights=source.quadrature_weights,
+            )
+        },
+        queries={"query": batch.require_single_query()},
+        case_axes=batch.case_axes,
+    )
+
+    reference = eqx.filter_jit(lambda item, data: item(data))(model, batch)
+    modified = model(changed)
+
+    assert reference.shape == (2, 5)
+    assert jnp.all(jnp.isfinite(reference))
+    assert jnp.allclose(reference[1, 3:], 0.0)
+    assert jnp.allclose(reference[0], modified[0], rtol=1e-12, atol=1e-12)
+    assert not jnp.allclose(reference[1, :3], modified[1, :3])
+    processor = OperatorTransformerProcessor(
+        (4, 4),
+        2,
+        patch_shape=2,
+        model_width=8,
+        depth=3,
+        heads=2,
+        key=jr.key(40),
+    )
+    values = jnp.arange(64, dtype="float64").reshape((2, 16, 2)) / 64.0
+    coordinates = jnp.stack(
+        jnp.meshgrid(
+            jnp.linspace(0.0, 1.0, 4),
+            jnp.linspace(0.0, 1.0, 4),
+            indexing="ij",
+        ),
+        axis=-1,
+    ).reshape((16, 2))
+    coordinates = jnp.broadcast_to(coordinates, (2, 16, 2))
+    measure = jnp.full((2, 16), 1.0 / 16.0)
+    mask = jnp.ones((2, 16), dtype="bool").at[1, 10:].set(False)
+
+    tokens = processor.patchify(values)
+    reconstructed = processor.unpatchify(tokens, (2,))
+    evaluate = eqx.filter_jit(
+        lambda model, weights: model(
+            values,
+            coordinates,
+            weights,
+            mask,
+        )
+    )
+    reference = evaluate(processor, measure)
+    rescaled = evaluate(processor, 11.0 * measure)
+
+    assert jnp.array_equal(reconstructed, values)
+    assert reference.shape == values.shape
+    assert jnp.all(jnp.isfinite(reference))
+    assert jnp.allclose(reference, rescaled, rtol=1e-10, atol=1e-10)
+    assert jnp.allclose(reference[1, 10:], 0.0)
+    processor = OperatorTransformerProcessor(
+        (4, 4),
+        2,
+        patch_shape=(2, 2),
+        model_width=8,
+        depth=2,
+        heads=2,
+        long_range_skip=True,
+        key=jr.key(41),
+    )
+    values = jnp.linspace(-1.0, 1.0, 32).reshape((1, 16, 2))
+    coordinates = jnp.stack(
+        jnp.meshgrid(
+            jnp.linspace(0.0, 1.0, 4),
+            jnp.linspace(0.0, 1.0, 4),
+            indexing="ij",
+        ),
+        axis=-1,
+    ).reshape((1, 16, 2))
+    measure = jnp.full((1, 16), 1.0 / 16.0)
+    mask = jnp.ones((1, 16), dtype="bool")
+
+    loss, gradient = eqx.filter_value_and_grad(
+        lambda model: jnp.mean(model(values, coordinates, measure, mask) ** 2)
+    )(processor)
+    leaves = [
+        leaf for leaf in jax.tree_util.tree_leaves(gradient) if eqx.is_inexact_array(leaf)
+    ]
+
+    assert jnp.isfinite(loss)
+    assert leaves
+    assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
+    model = _gaot()
+    batch = _gaot_batch()
+    source = batch.input("u")
+    changed = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.asarray(source.values).at[1].add(20.0),
                 coordinates=source.coordinates,
                 quadrature_weights=source.quadrature_weights,
             )
@@ -579,84 +650,6 @@ def test_rigno_has_finite_parameter_gradients_and_serializes(tmp_path: Any) -> N
     assert status.name == "RIGNO"
     assert status.tier == "research"
     assert not status.recommendation_eligible
-
-
-def test_operator_transformer_patch_roundtrip_measure_scaling_and_masks() -> None:
-    processor = OperatorTransformerProcessor(
-        (4, 4),
-        2,
-        patch_shape=2,
-        model_width=8,
-        depth=3,
-        heads=2,
-        key=jr.key(40),
-    )
-    values = jnp.arange(64, dtype="float64").reshape((2, 16, 2)) / 64.0
-    coordinates = jnp.stack(
-        jnp.meshgrid(
-            jnp.linspace(0.0, 1.0, 4),
-            jnp.linspace(0.0, 1.0, 4),
-            indexing="ij",
-        ),
-        axis=-1,
-    ).reshape((16, 2))
-    coordinates = jnp.broadcast_to(coordinates, (2, 16, 2))
-    measure = jnp.full((2, 16), 1.0 / 16.0)
-    mask = jnp.ones((2, 16), dtype="bool").at[1, 10:].set(False)
-
-    tokens = processor.patchify(values)
-    reconstructed = processor.unpatchify(tokens, (2,))
-    evaluate = eqx.filter_jit(
-        lambda model, weights: model(
-            values,
-            coordinates,
-            weights,
-            mask,
-        )
-    )
-    reference = evaluate(processor, measure)
-    rescaled = evaluate(processor, 11.0 * measure)
-
-    assert jnp.array_equal(reconstructed, values)
-    assert reference.shape == values.shape
-    assert jnp.all(jnp.isfinite(reference))
-    assert jnp.allclose(reference, rescaled, rtol=1e-10, atol=1e-10)
-    assert jnp.allclose(reference[1, 10:], 0.0)
-
-
-def test_operator_transformer_has_finite_parameter_gradients() -> None:
-    processor = OperatorTransformerProcessor(
-        (4, 4),
-        2,
-        patch_shape=(2, 2),
-        model_width=8,
-        depth=2,
-        heads=2,
-        long_range_skip=True,
-        key=jr.key(41),
-    )
-    values = jnp.linspace(-1.0, 1.0, 32).reshape((1, 16, 2))
-    coordinates = jnp.stack(
-        jnp.meshgrid(
-            jnp.linspace(0.0, 1.0, 4),
-            jnp.linspace(0.0, 1.0, 4),
-            indexing="ij",
-        ),
-        axis=-1,
-    ).reshape((1, 16, 2))
-    measure = jnp.full((1, 16), 1.0 / 16.0)
-    mask = jnp.ones((1, 16), dtype="bool")
-
-    loss, gradient = eqx.filter_value_and_grad(
-        lambda model: jnp.mean(model(values, coordinates, measure, mask) ** 2)
-    )(processor)
-    leaves = [
-        leaf for leaf in jax.tree_util.tree_leaves(gradient) if eqx.is_inexact_array(leaf)
-    ]
-
-    assert jnp.isfinite(loss)
-    assert leaves
-    assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
 
 
 def _gaot_batch() -> Any:
@@ -732,32 +725,6 @@ def _gaot(*, key: Any = jr.key(50)) -> Any:
         query_chunk_size=8,
         key=key,
     )
-
-
-def test_gaot_supports_case_geometry_query_masks_and_graph_isolation() -> None:
-    model = _gaot()
-    batch = _gaot_batch()
-    source = batch.input("u")
-    changed = phx.nn.operator.OperatorBatch(
-        inputs={
-            "u": phx.nn.operator.FunctionSamples(
-                values=jnp.asarray(source.values).at[1].add(20.0),
-                coordinates=source.coordinates,
-                quadrature_weights=source.quadrature_weights,
-            )
-        },
-        queries={"query": batch.require_single_query()},
-        case_axes=batch.case_axes,
-    )
-
-    reference = eqx.filter_jit(lambda item, data: item(data))(model, batch)
-    modified = model(changed)
-
-    assert reference.shape == (2, 5)
-    assert jnp.all(jnp.isfinite(reference))
-    assert jnp.allclose(reference[1, 3:], 0.0)
-    assert jnp.allclose(reference[0], modified[0], rtol=1e-12, atol=1e-12)
-    assert not jnp.allclose(reference[1, :3], modified[1, :3])
 
 
 def test_gaot_has_finite_parameter_gradients_serializes_and_is_research(

@@ -75,7 +75,7 @@ def _large_quad_mesh() -> Any:
     ).prepare()
 
 
-def test_mapped_periodic_seam_certifies_translation_and_rejects_nonisometry() -> None:
+def test_fv_capability_closure_deep_scenario_1() -> None:
     reference = phx.discretization.FiniteVolumePlan(
         _grid((4, 3), periodic=(True, False)),
         component_names=("density", "momentum_x", "momentum_y", "energy"),
@@ -101,9 +101,6 @@ def test_mapped_periodic_seam_certifies_translation_and_rejects_nonisometry() ->
             jnp.asarray(((2.0, 0.0), (0.0, 1.0))),
             jnp.zeros((2,)),
         )
-
-
-def test_multiblock_invalid_fallback_rolls_back_every_block_atomically() -> None:
     system = phx.equations.ShallowWaterSystem()
     left = phx.discretization.FiniteVolumePlan(
         _grid((2,)), component_names=system.component_names
@@ -138,9 +135,6 @@ def test_multiblock_invalid_fallback_rolls_back_every_block_atomically() -> None
     np.testing.assert_array_equal(result.states[1], base[1])
     np.testing.assert_array_equal(result.interface_integrals[0], jnp.zeros((2,)))
     np.testing.assert_array_equal(result.conservation_defect, jnp.zeros((2,)))
-
-
-def test_moving_degree_one_wlsq_refreshes_stage_geometry_and_remap_has_jvp() -> None:
     mesh = _quad_mesh()
     reconstruction = phx.discretization.CellPolynomialReconstructionPlan(
         1, oversampling=0
@@ -183,9 +177,6 @@ def test_moving_degree_one_wlsq_refreshes_stage_geometry_and_remap_has_jvp() -> 
         remap.apply_fixed_combinatorics(
             primal, 0.5 * mesh.cell_volumes, mesh.cell_volumes, mesh.cell_volumes
         ).block_until_ready()
-
-
-def test_moving_degree_two_and_weno_accept_only_rigid_translation() -> None:
     mesh = _large_quad_mesh()
     polynomial = phx.discretization.CellPolynomialReconstructionPlan(
         2, oversampling=0
@@ -220,7 +211,7 @@ def test_moving_degree_two_and_weno_accept_only_rigid_translation() -> None:
         polynomial.stage_coefficients(state, deformed)[0].block_until_ready()
 
 
-def test_epoch_transition_rejects_incomplete_coverage_before_mutating_registers() -> None:
+def test_fv_capability_closure_deep_scenario_2() -> None:
     mesh = _quad_mesh()
     offsets = jnp.arange(mesh.cell_count + 1, dtype=jnp.int32)
     indices = jnp.arange(mesh.cell_count, dtype=jnp.int32)
@@ -238,6 +229,35 @@ def test_epoch_transition_rejects_incomplete_coverage_before_mutating_registers(
         FiniteVolumeStageEpochTransition(
             "source", object(), "target", incomplete, 1, "event"
         )
+    system = phx.equations.EulerSystem(2)
+    pair = ideal_gas_euler_entropy_pair(system)
+    central = EntropyConservativeEulerFluxPlan()
+    stable = EntropyStableFluxPlan(central, pair)
+    left = system.primitive_to_conserved(jnp.asarray((1.0, 0.2, -0.1, 1.0)))
+    right = system.primitive_to_conserved(jnp.asarray((0.9, 0.1, 0.05, 0.95)))
+    normal = jnp.asarray((3.0, 4.0)) / 5.0
+    flux = stable.normal_face_flux(system, left, right, normal)
+    residual = pair.normal_interface_entropy_residual(
+        left, right, flux.normal_flux, normal
+    )
+    assert jnp.isfinite(residual)
+    assert stable.entropy_dissipation(left, right, flux.max_speed) <= 0.0
+
+    state = jnp.stack((left, right))
+    zeros = jnp.zeros_like(state)
+    diagnostics = evaluate_content_form_entropy_diagnostics(
+        pair,
+        state,
+        jnp.ones((2,)),
+        jnp.zeros((2,)),
+        zeros,
+        zeros,
+        zeros,
+        zeros,
+        zeros,
+    )
+    np.testing.assert_allclose(diagnostics.semidiscrete_entropy_rate, 0.0)
+    np.testing.assert_allclose(diagnostics.shear_entropy_production, 0.0)
 
 
 def test_segmented_ssprk_epoch_transfer_and_stage_failure_rollback() -> None:
@@ -293,35 +313,3 @@ def test_segmented_ssprk_epoch_transfer_and_stage_failure_rollback() -> None:
     assert not bool(failing.accepted)
     np.testing.assert_array_equal(failing.content, initial)
     assert int(failing.failed_stage) == 2
-
-
-def test_normal_entropy_flux_and_content_production_are_pair_bound() -> None:
-    system = phx.equations.EulerSystem(2)
-    pair = ideal_gas_euler_entropy_pair(system)
-    central = EntropyConservativeEulerFluxPlan()
-    stable = EntropyStableFluxPlan(central, pair)
-    left = system.primitive_to_conserved(jnp.asarray((1.0, 0.2, -0.1, 1.0)))
-    right = system.primitive_to_conserved(jnp.asarray((0.9, 0.1, 0.05, 0.95)))
-    normal = jnp.asarray((3.0, 4.0)) / 5.0
-    flux = stable.normal_face_flux(system, left, right, normal)
-    residual = pair.normal_interface_entropy_residual(
-        left, right, flux.normal_flux, normal
-    )
-    assert jnp.isfinite(residual)
-    assert stable.entropy_dissipation(left, right, flux.max_speed) <= 0.0
-
-    state = jnp.stack((left, right))
-    zeros = jnp.zeros_like(state)
-    diagnostics = evaluate_content_form_entropy_diagnostics(
-        pair,
-        state,
-        jnp.ones((2,)),
-        jnp.zeros((2,)),
-        zeros,
-        zeros,
-        zeros,
-        zeros,
-        zeros,
-    )
-    np.testing.assert_allclose(diagnostics.semidiscrete_entropy_rate, 0.0)
-    np.testing.assert_allclose(diagnostics.shear_entropy_production, 0.0)

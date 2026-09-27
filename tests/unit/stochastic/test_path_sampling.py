@@ -119,7 +119,7 @@ def _path(capacity: int = 7) -> PathBuffer:
     return PathBuffer.from_trajectory(values, jnp.arange(5.0), capacity=capacity)
 
 
-def test_state_regions_are_boolean_and_half_open() -> None:
+def test_path_sampling_scenario_1() -> None:
     left = StateRegionPlan.half_open(jnp.asarray([0.0]), jnp.asarray([1.0]))
     right = StateRegionPlan.half_open(jnp.asarray([1.0]), jnp.asarray([2.0]))
     values = jnp.asarray([[-0.1], [0.0], [0.999], [1.0], [1.999], [2.0]])
@@ -133,9 +133,6 @@ def test_state_regions_are_boolean_and_half_open() -> None:
     np.testing.assert_array_equal(
         (left ^ right).contains(values), (left | right).contains(values)
     )
-
-
-def test_path_buffer_mask_lineage_and_time_reversal_are_exact() -> None:
     path = _path()
     np.testing.assert_array_equal(path.mask, [True, True, True, True, True, False, False])
     np.testing.assert_array_equal(path.lineage, [0, 1, 2, 3, 4, -1, -1])
@@ -162,9 +159,6 @@ def test_path_buffer_mask_lineage_and_time_reversal_are_exact() -> None:
         path.lineage,
     )
     assert not bool(invalid_padding.valid())
-
-
-def test_path_reversal_move_is_symmetric_for_reversible_dynamics() -> None:
     kernel = _deterministic_kernel()
     result = propose_path_reversal(
         FixedPathEnsemble(5),
@@ -187,9 +181,49 @@ def test_path_reversal_move_is_symmetric_for_reversible_dynamics() -> None:
     )
     assert bool(shot.evaluation.proposal_valid)
     np.testing.assert_allclose(shot.proposed.positions, result.committed.positions)
-
-
-def test_asymmetric_selector_separates_length_normalization() -> None:
+    kernel = _deterministic_kernel()
+    path = _path()
+    target = make_incremental_path_target(
+        FixedPathEnsemble(5),
+        DeterministicPathAction(kernel),
+    )
+    state = target.initialize(path)
+    proposal = target.propose(state, path, ())
+    np.testing.assert_allclose(proposal.log_ratio, 0.0)
+    assert bool(proposal.valid)
+    kernel = _gaussian_kernel()
+    action = NormalizedStochasticPathAction(
+        kernel,
+        lambda state: -0.5 * jnp.sum(state**2) - 0.5 * jnp.log(2.0 * jnp.pi),
+        initial_density_id="normal-a",
+    )
+    ensemble = FixedPathEnsemble(5)
+    potential = ReducedPathPotential(ensemble, action, inverse_temperature=2.0)
+    evaluation = cross_evaluate_path_potentials(
+        (potential, potential),
+        (_path(), _path()),
+        jnp.asarray([0, 1]),
+        state_ids=("path-state-a", "path-state-b"),
+        measure_id="fixed-capacity-path-coordinate-measure",
+        chain_index=jnp.asarray([0, 1]),
+        draw_index=jnp.asarray([0, 0]),
+        repeat_index=jnp.asarray([0, 0]),
+        dependence_group_index=jnp.asarray([0, 0]),
+        run_id="normalized-path-cross-evaluation",
+    )
+    assert evaluation.samples.values.shape == (2, 2)
+    np.testing.assert_allclose(evaluation.samples.inverse_temperatures, 2.0)
+    work = path_fep_work(evaluation, 0, 1)
+    assert int(jnp.sum(work.sample_active)) == 1
+    assert work.inverse_temperature == 2.0
+    np.testing.assert_allclose(work.values[work.sample_active], jnp.asarray([0.0]))
+    with pytest.raises(ValueError, match="normalized stochastic"):
+        ReducedPathPotential(
+            ensemble,
+            # ty: ignore[invalid-argument-type]
+            SurrogatePathAction(lambda path: jnp.asarray(0.0), action_id="surrogate"),
+            inverse_temperature=2.0,
+        )
     short = PathBuffer.from_trajectory(
         jnp.arange(4.0).reshape((4, 1)), jnp.arange(4.0), capacity=7
     )
@@ -216,7 +250,7 @@ def test_asymmetric_selector_separates_length_normalization() -> None:
     assert int(invalid.eligible_count) == 3
 
 
-def test_first_passage_ensemble_rejects_a_premature_target_visit() -> None:
+def test_path_sampling_scenario_2() -> None:
     initial = StateRegionPlan.half_open(jnp.asarray([-0.5]), jnp.asarray([0.5]))
     final = StateRegionPlan.half_open(jnp.asarray([1.5]), jnp.asarray([2.5]))
     ensemble = FirstPassagePathEnsemble(initial, final)
@@ -238,9 +272,6 @@ def test_first_passage_ensemble_rejects_a_premature_target_visit() -> None:
     assert bool(ensemble.contains(valid))
     assert bool(ensemble.contains(revisiting_initial))
     assert not bool(ensemble.contains(premature))
-
-
-def test_interface_ensemble_matches_first_terminal_hit_support() -> None:
     initial = StateRegionPlan.half_open(jnp.asarray([-0.5]), jnp.asarray([0.5]))
     final = StateRegionPlan.half_open(jnp.asarray([1.5]), jnp.asarray([2.5]))
     path = PathBuffer.from_trajectory(
@@ -269,9 +300,6 @@ def test_interface_ensemble_matches_first_terminal_hit_support() -> None:
         capacity=6,
     )
     assert not bool(nan_interface.contains(direct))
-
-
-def test_deterministic_two_way_shooting_obeys_detailed_balance() -> None:
     kernel = _deterministic_kernel()
     action = DeterministicPathAction(kernel)
     ensemble = FixedPathEnsemble(5)
@@ -340,7 +368,7 @@ def test_variable_length_shooting_reports_separate_length_correction() -> None:
         np.testing.assert_allclose(result.evaluation.selector_log_ratio, 0.0)
 
 
-def test_normalized_gaussian_action_and_propagation_have_exact_mh_sum() -> None:
+def test_path_sampling_scenario_3() -> None:
     kernel = _gaussian_kernel()
     action = NormalizedStochasticPathAction(
         kernel,
@@ -372,9 +400,6 @@ def test_normalized_gaussian_action_and_propagation_have_exact_mh_sum() -> None:
     )
     np.testing.assert_allclose(evidence.log_acceptance_ratio, summed, rtol=1.0e-6)
     assert bool(evidence.proposal_valid)
-
-
-def test_failed_propagation_rejects_once_without_retry() -> None:
     kernel = _deterministic_kernel(fail=True)
     result = propose_one_way_shooting(
         FixedPathEnsemble(5),
@@ -389,6 +414,18 @@ def test_failed_propagation_rejects_once_without_retry() -> None:
     assert not bool(result.evaluation.propagation_valid)
     assert int(result.evaluation.propagation_status) == PATH_PROPAGATION_KERNEL_FAILURE
     np.testing.assert_allclose(result.committed.positions, result.current.positions)
+    kernel = _deterministic_kernel()
+    result = propose_path_shift(
+        FixedPathEnsemble(5),
+        DeterministicPathAction(kernel),
+        kernel,
+        _path(),
+        jax.random.key(51),
+        maximum_shift=2,
+    )
+    assert bool(result.evaluation.proposal_valid)
+    assert int(result.proposed.length) == 5
+    np.testing.assert_allclose(jnp.diff(result.proposed.positions[:5, 0]), 1.0)
 
 
 def test_nonfinite_propagation_is_classified_and_rejected() -> None:
@@ -478,22 +515,7 @@ def test_capacity_overflow_rejects_without_extending_path_shape() -> None:
     assert result.proposed.positions.shape == path.positions.shape
 
 
-def test_fixed_path_shifting_preserves_length_and_dynamics() -> None:
-    kernel = _deterministic_kernel()
-    result = propose_path_shift(
-        FixedPathEnsemble(5),
-        DeterministicPathAction(kernel),
-        kernel,
-        _path(),
-        jax.random.key(51),
-        maximum_shift=2,
-    )
-    assert bool(result.evaluation.proposal_valid)
-    assert int(result.proposed.length) == 5
-    np.testing.assert_allclose(jnp.diff(result.proposed.positions[:5, 0]), 1.0)
-
-
-def test_regrowth_requires_fixed_uniform_time_contract() -> None:
+def test_path_sampling_scenario_4() -> None:
     kernel = _deterministic_kernel()
     plan = TPSPlan(
         FixedPathEnsemble(5),
@@ -527,22 +549,6 @@ def test_regrowth_requires_fixed_uniform_time_contract() -> None:
             variable_step,
             DeterministicPathAction(variable_step),
         )
-
-
-def test_path_target_uses_incremental_mh_contract() -> None:
-    kernel = _deterministic_kernel()
-    path = _path()
-    target = make_incremental_path_target(
-        FixedPathEnsemble(5),
-        DeterministicPathAction(kernel),
-    )
-    state = target.initialize(path)
-    proposal = target.propose(state, path, ())
-    np.testing.assert_allclose(proposal.log_ratio, 0.0)
-    assert bool(proposal.valid)
-
-
-def test_tis_rate_factorization_is_flux_times_crossing_factors() -> None:
     flux = estimate_reactive_flux(jnp.asarray([True, False, True]), 4.0)
     result = factorize_tis_rate(flux, jnp.asarray([0.5, 0.25, 0.2]))
     np.testing.assert_allclose(result.rate, 0.0125)
@@ -554,9 +560,6 @@ def test_tis_rate_factorization_is_flux_times_crossing_factors() -> None:
     np.testing.assert_allclose(jnp.exp(zero.log_rate), zero.rate)
     with pytest.raises(ValueError, match="binary indicators"):
         estimate_reactive_flux(jnp.asarray([1.0, jnp.nan]), 2.0)
-
-
-def test_committor_fit_preserves_probability_ordering() -> None:
     features = jnp.linspace(-2.0, 2.0, 64).reshape((-1, 1))
     outcomes = (features[:, 0] > 0.0).astype(features.dtype)
     result = fit_committor(
@@ -575,7 +578,7 @@ def test_committor_fit_preserves_probability_ordering() -> None:
     assert bool(result.converged) == bool(result.gradient_norm <= 1.0e-7)
 
 
-def test_replica_exchange_is_symmetric_for_equal_targets() -> None:
+def test_path_sampling_scenario_5() -> None:
     kernel = _deterministic_kernel()
     action = DeterministicPathAction(kernel)
     ensemble = FixedPathEnsemble(5)
@@ -589,9 +592,6 @@ def test_replica_exchange_is_symmetric_for_equal_targets() -> None:
     np.testing.assert_allclose(exchange.evaluation.exchange_log_ratio, 0.0)
     np.testing.assert_allclose(reverse.evaluation.exchange_log_ratio, 0.0)
     assert bool(exchange.accepted)
-
-
-def test_correlated_uncertainty_exceeds_naive_independent_error() -> None:
     innovations = jax.random.normal(jax.random.key(8), (512,))
     correlated = jax.lax.scan(
         lambda value, noise: (0.95 * value + noise, 0.95 * value + noise),
@@ -615,42 +615,4 @@ def test_correlated_uncertainty_exceeds_naive_independent_error() -> None:
         integrated_autocorrelation_time(
             jnp.asarray([0.0, jnp.nan, 1.0]),
             maximum_lag=1,
-        )
-
-
-def test_path_reweighting_fails_closed_for_surrogates_and_crosses_normalized_actions() -> (
-    None
-):
-    kernel = _gaussian_kernel()
-    action = NormalizedStochasticPathAction(
-        kernel,
-        lambda state: -0.5 * jnp.sum(state**2) - 0.5 * jnp.log(2.0 * jnp.pi),
-        initial_density_id="normal-a",
-    )
-    ensemble = FixedPathEnsemble(5)
-    potential = ReducedPathPotential(ensemble, action, inverse_temperature=2.0)
-    evaluation = cross_evaluate_path_potentials(
-        (potential, potential),
-        (_path(), _path()),
-        jnp.asarray([0, 1]),
-        state_ids=("path-state-a", "path-state-b"),
-        measure_id="fixed-capacity-path-coordinate-measure",
-        chain_index=jnp.asarray([0, 1]),
-        draw_index=jnp.asarray([0, 0]),
-        repeat_index=jnp.asarray([0, 0]),
-        dependence_group_index=jnp.asarray([0, 0]),
-        run_id="normalized-path-cross-evaluation",
-    )
-    assert evaluation.samples.values.shape == (2, 2)
-    np.testing.assert_allclose(evaluation.samples.inverse_temperatures, 2.0)
-    work = path_fep_work(evaluation, 0, 1)
-    assert int(jnp.sum(work.sample_active)) == 1
-    assert work.inverse_temperature == 2.0
-    np.testing.assert_allclose(work.values[work.sample_active], jnp.asarray([0.0]))
-    with pytest.raises(ValueError, match="normalized stochastic"):
-        ReducedPathPotential(
-            ensemble,
-            # ty: ignore[invalid-argument-type]
-            SurrogatePathAction(lambda path: jnp.asarray(0.0), action_id="surrogate"),
-            inverse_temperature=2.0,
         )

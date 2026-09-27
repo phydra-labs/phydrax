@@ -42,7 +42,7 @@ def _all_observation_batch(domain: Any, structure: Any) -> Any:
     )
 
 
-def test_trajectory_signal_matches_vector_observed_nodes() -> None:
+def test_trajectory_contracts() -> None:
     domain, values, _slopes, structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="linear")
 
@@ -50,9 +50,6 @@ def test_trajectory_signal_matches_vector_observed_nodes() -> None:
     pred = jnp.asarray(signal(batch, key=jr.key(0)).data)
     target = values[domain.flat_case_indices, domain.flat_time_indices]
     assert jnp.allclose(pred, target, atol=1e-12)
-
-
-def test_trajectory_signal_linear_interpolates_and_differentiates() -> None:
     domain, values, slopes, structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="linear")
     dt_signal = partial_t(signal, var="t")
@@ -72,17 +69,11 @@ def test_trajectory_signal_linear_interpolates_and_differentiates() -> None:
 
     deriv = jnp.asarray(dt_signal(batch, key=jr.key(2)).data)
     assert jnp.allclose(deriv, jnp.broadcast_to(slopes, deriv.shape), atol=1e-12)
-
-
-def test_trajectory_signal_nearest_rejects_time_derivative() -> None:
     domain, values, _slopes, _structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="nearest")
 
     with pytest.raises(ValueError, match="nearest.*not differentiable"):
         partial_t(signal, var="t")
-
-
-def test_trajectory_signal_cubic_hermite_supports_second_time_derivative() -> None:
     domain, values, _slopes, structure = _make_problem()
     signal = TrajectorySignal(domain, values, interpolation="cubic_hermite")
     d2_signal = partial_n(signal, var="t", order=2)
@@ -92,6 +83,21 @@ def test_trajectory_signal_cubic_hermite_supports_second_time_derivative() -> No
     )
     pred = jnp.asarray(d2_signal(batch, key=jr.key(7)).data)
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
+    domain, _values, _slopes, _structure = _make_problem()
+    targets = domain.inputs[:, 0]
+    allowed = jnp.asarray([0, 2], dtype=jnp.int32)
+
+    term = TrajectoryCaseDataTerm(
+        "theta",
+        domain.component(),
+        targets,
+        sampling=phx.domain.PointSampling(16, design="uniform"),
+        case_indices=allowed,
+    )
+
+    batch = term.sample(key=jr.key(8))
+    assert jnp.all(jnp.isin(batch.case_indices, allowed))
+    assert jnp.allclose(batch.target, targets[batch.case_indices])
 
 
 def test_trajectory_case_data_term_supervises_case_only_vector_target() -> None:
@@ -139,24 +145,6 @@ def test_trajectory_case_data_term_can_evaluate_at_case_end() -> None:
 
     loss = term.loss({"theta": final_value}, key=jr.key(4))
     assert jnp.allclose(loss, 0.0, atol=1e-12)
-
-
-def test_trajectory_case_data_term_samples_only_case_subset() -> None:
-    domain, _values, _slopes, _structure = _make_problem()
-    targets = domain.inputs[:, 0]
-    allowed = jnp.asarray([0, 2], dtype=jnp.int32)
-
-    term = TrajectoryCaseDataTerm(
-        "theta",
-        domain.component(),
-        targets,
-        sampling=phx.domain.PointSampling(16, design="uniform"),
-        case_indices=allowed,
-    )
-
-    batch = term.sample(key=jr.key(8))
-    assert jnp.all(jnp.isin(batch.case_indices, allowed))
-    assert jnp.allclose(batch.target, targets[batch.case_indices])
 
 
 def test_physics_residual_can_use_fixed_trajectory_signal() -> None:

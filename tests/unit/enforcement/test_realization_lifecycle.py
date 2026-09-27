@@ -42,7 +42,7 @@ def _condition() -> Any:
     )
 
 
-def test_refresh_transaction_commits_atomically_and_reuses_fixed_state() -> None:
+def test_realization_lifecycle_scenario_1() -> None:
     condition = _condition()
     context = ConditionEvaluationContext(
         condition,
@@ -62,9 +62,6 @@ def test_refresh_transaction_commits_atomically_and_reuses_fixed_state() -> None
     )
     repeated = commit_refresh(state, unchanged, validate_refresh(unchanged))
     assert repeated.generation == state.generation
-
-
-def test_missing_required_caller_source_fails_without_candidate_values() -> None:
     condition = _condition()
     context = ConditionEvaluationContext(condition)
     proposal = propose_refresh(
@@ -75,9 +72,6 @@ def test_missing_required_caller_source_fails_without_candidate_values() -> None
     state = commit_refresh(None, proposal, validation)
     assert state.phase is RealizationLifecyclePhase.FAILED
     assert not state.values
-
-
-def test_local_enforcement_step_is_a_changed_transaction() -> None:
     domain = Interval1d(0.0, 1.0)
     field = domain.Function("x")(lambda x: x[0])
     boundary = domain.component({"x": Boundary()})

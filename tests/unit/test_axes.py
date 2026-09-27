@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_axis_identity_layout_alignment_and_reduction() -> None:
+def test_axes_scenario_1() -> None:
     case = phx.axes.Axis(phx.axes.AxisKey("experiment", "case"), 3)
     component = phx.axes.Axis(phx.axes.AxisKey("state", "component"), 2)
     values = phx.axes.AxisArray(
@@ -27,17 +27,11 @@ def test_axis_identity_layout_alignment_and_reduction() -> None:
     assert weighted.layout == values.layout
     np.testing.assert_allclose(reduced.data, jnp.asarray((16.0, 22.0)))
     assert reduced.layout == phx.axes.AxisLayout((component.ref(),))
-
-
-def test_axis_keys_prevent_equal_size_identity_collisions() -> None:
     left = phx.axes.Axis(phx.axes.AxisKey("left", "sample"), 2)
     right = phx.axes.Axis(phx.axes.AxisKey("right", "sample"), 2)
     assert left.key != right.key
     with pytest.raises(ValueError, match="repeat"):
         phx.axes.AxisLayout((left.ref(), left.ref()))
-
-
-def test_axis_contraction_and_jit_preserve_layout() -> None:
     state = phx.axes.Axis(phx.axes.AxisKey("system", "state"), 2)
     target = phx.axes.Axis(phx.axes.AxisKey("system", "target"), 3)
     source_ref = state.ref(slot="source", variance="dual")
@@ -60,9 +54,6 @@ def test_axis_contraction_and_jit_preserve_layout() -> None:
 
     np.testing.assert_allclose(result.data, jnp.asarray((-1.0, 1.0, 3.0)))
     assert result.layout == phx.axes.AxisLayout((target_ref,))
-
-
-def test_alignment_preserves_namespaced_axis_references() -> None:
     left_axis = phx.axes.Axis(phx.axes.AxisKey("left", "sample"), 2)
     right_axis = phx.axes.Axis(phx.axes.AxisKey("right", "sample"), 3)
     left_ref = left_axis.ref(slot="source")
@@ -85,9 +76,6 @@ def test_alignment_preserves_namespaced_axis_references() -> None:
     aligned = plan.apply(field)
     np.testing.assert_allclose(aligned.data, field.data.T)
     assert aligned.layout == plan.target
-
-
-def test_broadcast_like_keeps_disjoint_namespaces_distinct() -> None:
     left_ref = phx.axes.Axis(phx.axes.AxisKey("left", "sample"), 2).ref()
     right_ref = phx.axes.Axis(phx.axes.AxisKey("right", "sample"), 3).ref()
     left = phx.axes.AxisArray(

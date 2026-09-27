@@ -27,7 +27,7 @@ from phydrax.operators.path_integral import (
 from phydrax.stochastic import StochasticPathEnsembleResult
 
 
-def test_regulated_real_time_is_finite_slice_with_phase_evidence() -> None:
+def test_path_integral_capability_closure_scenario_1() -> None:
     mesh = TemporalMesh.uniform(0.0, 0.2, 2, role="path")
     plan = RealTimePathIntegralPlan(
         mesh,
@@ -47,9 +47,6 @@ def test_regulated_real_time_is_finite_slice_with_phase_evidence() -> None:
     assert result.covariance.shape == (2, 2)
     assert result.claim == "regulated-finite-slice-only"
     assert float(result.regulator) == 0.5
-
-
-def test_source_feynman_kac_separates_terminal_and_duhamel_terms() -> None:
     mesh = TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.zeros((8, 3, 1))
     result = source_feynman_kac_from_paths(
@@ -61,9 +58,6 @@ def test_source_feynman_kac_separates_terminal_and_duhamel_terms() -> None:
     assert jnp.allclose(result.estimate.value, 2.0)
     assert jnp.allclose(result.terminal_term, 0.0)
     assert jnp.allclose(result.source_term, 2.0)
-
-
-def test_interval_images_periodic_ring_and_finite_u1_invariants() -> None:
     reflecting = PreparedGeometryPathKernel(
         0.0,
         1.0,
@@ -100,7 +94,7 @@ def test_interval_images_periodic_ring_and_finite_u1_invariants() -> None:
     assert jnp.allclose(jnp.abs(wilson_loop(links, loop)), 1.0)
 
 
-def test_finite_exchange_sector_reports_sign_collapse_without_repair() -> None:
+def test_path_integral_capability_closure_scenario_2() -> None:
     plan = ExchangePathPlan(
         jnp.array([[0, 1], [1, 0]], dtype=jnp.int32),
         statistics="fermion",
@@ -114,9 +108,6 @@ def test_finite_exchange_sector_reports_sign_collapse_without_repair() -> None:
     )
     assert not bool(result.valid)
     assert result.sector == "full-enumeration"
-
-
-def test_single_active_signed_ratio_sample_has_no_uncertainty_evidence() -> None:
     plan = ExchangePathPlan(
         jnp.array([[0, 1], [1, 0]], dtype=jnp.int32),
         statistics="fermion",
@@ -132,9 +123,6 @@ def test_single_active_signed_ratio_sample_has_no_uncertainty_evidence() -> None
     assert jnp.allclose(result.value, 2.0)
     assert not bool(result.valid)
     assert jnp.isnan(result.standard_error)
-
-
-def test_signed_ratio_uncertainty_has_inverse_sqrt_sample_scaling() -> None:
     plan = ExchangePathPlan(
         jnp.array([[0, 1], [1, 0]], dtype=jnp.int32),
         statistics="fermion",

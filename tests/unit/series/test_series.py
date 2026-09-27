@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_support_preserves_shared_coordinates_and_disconnected_restarts() -> None:
+def test_series_scenario_1() -> None:
     shared = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 2.0]),
         node_valid=jnp.asarray([[True, True, True], [True, True, False]]),
@@ -41,9 +41,6 @@ def test_support_preserves_shared_coordinates_and_disconnected_restarts() -> Non
             coordinate_id="invalid-time",
         )
         jax.block_until_ready(invalid.edge_valid)
-
-
-def test_sampled_series_supports_pytrees_component_masks_and_edge_values() -> None:
     support = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 2.0]),
         coordinate_name="parameter",
@@ -73,9 +70,6 @@ def test_sampled_series_supports_pytrees_component_masks_and_edge_values() -> No
     )
     assert edge.sample_shape == (2,)
     np.testing.assert_allclose(edge.values_for(0), [[2.0], [4.0]])
-
-
-def test_pair_view_is_lazy_and_never_crosses_disconnected_edges() -> None:
     support = phx.series.SeriesSupport(
         jnp.asarray([0.0, 1.0, 2.0, 0.0, 1.0]),
         edge_valid=jnp.asarray([True, True, False, True]),
@@ -108,7 +102,7 @@ def test_pair_view_is_lazy_and_never_crosses_disconnected_edges() -> None:
     assert not bool(phx.series.SeriesPairView.from_lag(incomplete, 2).valid[0])
 
 
-def test_reconstruction_handles_irregular_cases_bounds_and_breakpoints() -> None:
+def test_reconstruction_contracts() -> None:
     times = jnp.asarray([[0.0, 1.0, 3.0, 99.0], [-1.0, 0.5, 2.0, 123.0]])
     valid = jnp.asarray([[True, True, True, False], [True, True, True, False]])
     values = jnp.asarray(
@@ -161,6 +155,41 @@ def test_reconstruction_handles_irregular_cases_bounds_and_breakpoints() -> None
     )
     _, integer_mask = integer_reconstruction.breakpoints(0.5, 1.5)
     np.testing.assert_array_equal(integer_mask, [False, True, False])
+    support = phx.series.SeriesSupport(
+        jnp.asarray([0.0, 1.0, 0.0, 1.0]),
+        edge_valid=jnp.asarray([True, False, True]),
+        coordinate_name="time",
+        coordinate_id="disconnected",
+    )
+    series = phx.series.SampledSeries(
+        support,
+        jnp.arange(4.0),
+        series_id="disconnected-values",
+    )
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError), match="connected valid prefix"
+    ):
+        reconstruction = phx.series.SampledSeriesReconstruction(
+            series,
+            interpolation="linear",
+        )
+        jax.block_until_ready(reconstruction.series.support.coordinates)
+    support = phx.series.SeriesSupport(
+        jnp.asarray([0.0, 1.0]),
+        coordinate_name="time",
+        coordinate_id="snap-time",
+    )
+    series = phx.series.SampledSeries(
+        support,
+        jnp.asarray([0.0, 1.0]),
+        series_id="snap-values",
+    )
+    for tolerance in (jnp.nan, jnp.inf):
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            phx.series.SampledSeriesReconstruction(
+                series,
+                snap_tolerance=tolerance,
+            )
 
 
 def test_reconstruction_preserves_hold_ties_derivatives_and_gradients() -> None:
@@ -233,44 +262,3 @@ def test_reconstruction_preserves_hold_ties_derivatives_and_gradients() -> None:
         jax.grad(at_half)(jnp.asarray([0.0, 2.0, 4.0, 6.0])),
         [0.5, 0.5, 0.0, 0.0],
     )
-
-
-def test_reconstruction_rejects_disconnected_support() -> None:
-    support = phx.series.SeriesSupport(
-        jnp.asarray([0.0, 1.0, 0.0, 1.0]),
-        edge_valid=jnp.asarray([True, False, True]),
-        coordinate_name="time",
-        coordinate_id="disconnected",
-    )
-    series = phx.series.SampledSeries(
-        support,
-        jnp.arange(4.0),
-        series_id="disconnected-values",
-    )
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError), match="connected valid prefix"
-    ):
-        reconstruction = phx.series.SampledSeriesReconstruction(
-            series,
-            interpolation="linear",
-        )
-        jax.block_until_ready(reconstruction.series.support.coordinates)
-
-
-def test_reconstruction_rejects_nonfinite_snap_tolerance() -> None:
-    support = phx.series.SeriesSupport(
-        jnp.asarray([0.0, 1.0]),
-        coordinate_name="time",
-        coordinate_id="snap-time",
-    )
-    series = phx.series.SampledSeries(
-        support,
-        jnp.asarray([0.0, 1.0]),
-        series_id="snap-values",
-    )
-    for tolerance in (jnp.nan, jnp.inf):
-        with pytest.raises(ValueError, match="finite and non-negative"):
-            phx.series.SampledSeriesReconstruction(
-                series,
-                snap_tolerance=tolerance,
-            )

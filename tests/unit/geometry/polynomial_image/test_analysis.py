@@ -69,7 +69,7 @@ def _total_degree_support(labels: Any, maximum_degree: Any) -> Any:
     return TargetMonomialSupport(labels, exponents)
 
 
-def test_twisted_cubic_discovers_three_quadratic_relations_and_dimension_one() -> None:
+def test_analysis_scenario_1() -> None:
     polynomial_map = _map(
         ("t",),
         ("x", "y", "z"),
@@ -108,9 +108,6 @@ def test_twisted_cubic_discovers_three_quadratic_relations_and_dimension_one() -
     assert result.claims.ideal_equality is EvidenceDisposition.NOT_ASSESSED
     assert result.claims.real_geometry is EvidenceDisposition.NOT_ASSESSED
     assert result.claims.topology is EvidenceDisposition.NOT_ASSESSED
-
-
-def test_veronese_discovers_quadratic_relation_and_generic_dimension_two() -> None:
     polynomial_map = _map(
         ("s", "t"),
         ("x", "y", "z"),
@@ -145,9 +142,6 @@ def test_veronese_discovers_quadratic_relation_and_generic_dimension_two() -> No
     assert result.jacobian_rank.dimension_lower_bound == 2
     assert result.jacobian_rank.dimension_upper_bound == 2
     assert result.relations.relation_count == 1
-
-
-def test_rank_deficiency_is_resolved_but_near_cutoff_rank_is_ambiguous() -> None:
     deficient = _map(
         ("u", "v"),
         ("x", "y"),
@@ -199,7 +193,7 @@ def test_rank_deficiency_is_resolved_but_near_cutoff_rank_is_ambiguous() -> None
     assert ambiguous.status is PolynomialImageAnalysisStatus.JACOBIAN_RANK_AMBIGUOUS
 
 
-def test_insufficient_samples_and_resource_limits_return_typed_results() -> None:
+def test_analysis_scenario_2() -> None:
     polynomial_map = _map(
         ("t",),
         ("x",),
@@ -241,11 +235,6 @@ def test_insufficient_samples_and_resource_limits_return_typed_results() -> None
     assert limited.status is PolynomialImageAnalysisStatus.RESOURCE_LIMIT
     assert not limited.resources.within_budget
     assert limited.resources.limiting_resource == "maximum_design_entries"
-
-
-def test_heldout_samples_reject_relation_created_by_nonrepresentative_discovery_points() -> (
-    None
-):
     polynomial_map = _map(
         ("t",),
         ("y",),
@@ -272,9 +261,6 @@ def test_heldout_samples_reject_relation_created_by_nonrepresentative_discovery_
     assert result.relations.relation_count == 1
     assert not result.relations.validation_accepted
     assert result.claims.numerical_discovery is EvidenceDisposition.REJECTED
-
-
-def test_affine_sampling_is_replayable_and_refresh_preserves_samples() -> None:
     polynomial_map = _map(
         ("s", "t"),
         ("x", "y"),

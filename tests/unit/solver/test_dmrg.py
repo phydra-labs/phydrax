@@ -18,7 +18,7 @@ def _two_site_hamiltonian() -> Any:
     return tn.add_mpo(tn.add_mpo(interaction, left_field), right_field)
 
 
-def test_prepared_two_site_dmrg_reaches_dense_ground_state() -> None:
+def test_dmrg_scenario_1() -> None:
     hamiltonian = _two_site_hamiltonian()
     initial = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128))
     problem = phx.solver.FiniteDMRGProblem(initial, hamiltonian, problem_id="two-site")
@@ -41,9 +41,6 @@ def test_prepared_two_site_dmrg_reaches_dense_ground_state() -> None:
     assert jnp.allclose(overlap, 1.0, atol=1e-7)
     assert jnp.any(result.diagnostics.active_sweeps)
     assert jnp.allclose(result.diagnostics.hermiticity_residual, 0.0, atol=1e-10)
-
-
-def test_dmrg_refresh_preserves_plan_identity_for_numeric_updates() -> None:
     hamiltonian = _two_site_hamiltonian()
     initial = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128))
     problem = phx.solver.FiniteDMRGProblem(initial, hamiltonian, problem_id="refresh")

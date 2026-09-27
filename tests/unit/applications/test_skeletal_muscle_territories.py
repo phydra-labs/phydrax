@@ -28,7 +28,7 @@ def _territory() -> Any:
     )
 
 
-def test_sparse_territory_counts_coverage_and_endplate_routing() -> None:
+def test_skeletal_muscle_territories_scenario_1() -> None:
     plan = _territory()
     stimulus = plan.bind_events(
         jnp.asarray(((1.0, jnp.inf), (1.05, jnp.inf))),
@@ -46,11 +46,6 @@ def test_sparse_territory_counts_coverage_and_endplate_routing() -> None:
     np.testing.assert_array_equal(current, expected)
     assert stimulus.fiber_motor_unit_index.shape == (3,)
     assert stimulus.event_times_ms.shape == (2, 2)
-
-
-def test_bound_events_are_accepted_by_fiber_bundle_without_dense_territory_tensor() -> (
-    None
-):
     stimulus = _territory().bind_events(
         jnp.asarray(((0.0,), (0.0,))),
         jnp.asarray(((True,), (False,))),
@@ -67,9 +62,6 @@ def test_bound_events_are_accepted_by_fiber_bundle_without_dense_territory_tenso
     assert plan.stimulus is stimulus
     assert plan.stimulus.current(0.05)[0, 1] == 100.0
     assert plan.stimulus.current(0.25)[0, 1] == 0.0
-
-
-def test_invalid_territory_and_active_event_data_fail_at_host_boundary() -> None:
     with pytest.raises(ValueError, match="out-of-range unit"):
         MotorUnitTerritoryPlan(
             ("unit-0",),

@@ -42,7 +42,7 @@ def _linear_problem() -> Any:
     return problem, mean, covariance
 
 
-def test_tempered_eki_matches_linear_gaussian_mean_covariance_and_replays() -> None:
+def test_eki_scenario_1() -> None:
     problem, exact_mean, exact_covariance = _linear_problem()
     settings: dict[str, Any] = {
         "key": jr.key(950),
@@ -75,49 +75,6 @@ def test_tempered_eki_matches_linear_gaussian_mean_covariance_and_replays() -> N
     assert isinstance(prediction, phx.uq.PredictiveField)
     assert prediction.samples.dims == ("__phydra_uq_ensemble", "point")
     assert prediction.samples.shape == (512, 3)
-
-
-def test_eki_respects_bijectors_custom_initial_ensembles_and_no_reverse_mode() -> None:
-    @jax.custom_vjp
-    def forward(value: Any) -> Any:
-        return jnp.asarray([value, 0.5 * value])
-
-    def forward_fwd(value: Any) -> Any:
-        return forward(value), None
-
-    def forward_bwd(residual: Any, cotangent: Any) -> None:
-        raise AssertionError("EKI requested a reverse-mode derivative")
-
-    # ty: ignore[invalid-argument-type]
-    forward.defvjp(forward_fwd, forward_bwd)
-    space = phx.uq.ParameterSpace(
-        jnp.log(jnp.asarray(1.0)),
-        priors=phx.uq.LogNormal(0.0, 0.5),
-        bijectors=phx.uq.ExpBijector(),
-    )
-    observations = jnp.asarray([2.0, 1.0])
-    problem = phx.uq.PosteriorProblem(
-        space,
-        lambda physical: -0.5 * jnp.sum(((forward(physical) - observations) / 0.2) ** 2),
-        gauss_newton_residual=lambda physical: (forward(physical) - observations) / 0.2,
-    )
-    initial = jnp.linspace(-0.8, 0.8, 128)
-    result = phx.uq.fit_eki(
-        problem,
-        key=jr.key(951),
-        ensemble_size=128,
-        initial_ensemble=initial,
-        target_ess=0.75,
-    )
-
-    assert result.converged
-    assert jnp.array_equal(result.initial_unconstrained_ensemble, initial)
-    assert jnp.all(result.initial_ensemble > 0.0)
-    assert jnp.all(result.ensemble > 0.0)
-    assert jnp.mean(result.ensemble) == pytest.approx(2.0, abs=0.12)
-
-
-def test_eki_reports_collapse_and_rejects_invalid_residuals_and_configuration() -> None:
     problem, _, _ = _linear_problem()
     collapsed = phx.uq.fit_eki(
         problem,
@@ -158,6 +115,77 @@ def test_eki_reports_collapse_and_rejects_invalid_residuals_and_configuration() 
             raise_on_failure=True,
         )
     assert error.value.result.termination_reason == "max_steps"
+    _, exact_mean, exact_covariance = _linear_problem()
+    tree = phx.bind_component(
+        _ObservedCoefficients(jnp.zeros(2)), phx.ComponentAuthority.MODEL
+    )
+    space = phx.uq.ParameterSpace(jnp.zeros(2), priors=phx.uq.Normal(0.0, 1.0))
+    problem = phx.uq.posterior_problem_from_solver_objective(
+        _observation_objective(), tree, space
+    )
+
+    result = phx.uq.fit_eki(problem, key=jr.key(950), ensemble_size=512)
+    assert result.converged
+    assert jnp.allclose(jnp.mean(result.ensemble, axis=0), exact_mean, atol=0.04)
+    assert jnp.allclose(
+        jnp.cov(result.ensemble, rowvar=False), exact_covariance, atol=0.012
+    )
+    # The provider declares no derivative: gradient consumers are refused, never
+    # handed a derivative, while EKI above ran on residuals alone.
+    with pytest.raises(Exception, match="not differentiable"):
+        jax.block_until_ready(jax.grad(problem.log_density)(jnp.zeros(2)))
+
+    failed = phx.uq.posterior_problem_from_solver_objective(
+        _observation_objective(accepted=False), tree, space
+    )
+    assert problem.log_likelihood(jnp.zeros(2)) > -jnp.inf
+    assert failed.log_likelihood(jnp.zeros(2)) == -jnp.inf
+    with pytest.raises(FloatingPointError, match="residuals must be finite"):
+        phx.uq.fit_eki(failed, key=jr.key(951), ensemble_size=8)
+    with pytest.raises(ValueError, match="cannot drop failed cases"):
+        phx.uq.posterior_problem_from_solver_objective(
+            _observation_objective(accepted_results="reduce-support"), tree, space
+        )
+
+
+def test_eki_respects_bijectors_custom_initial_ensembles_and_no_reverse_mode() -> None:
+    @jax.custom_vjp
+    def forward(value: Any) -> Any:
+        return jnp.asarray([value, 0.5 * value])
+
+    def forward_fwd(value: Any) -> Any:
+        return forward(value), None
+
+    def forward_bwd(residual: Any, cotangent: Any) -> None:
+        raise AssertionError("EKI requested a reverse-mode derivative")
+
+    # ty: ignore[invalid-argument-type]
+    forward.defvjp(forward_fwd, forward_bwd)
+    space = phx.uq.ParameterSpace(
+        jnp.log(jnp.asarray(1.0)),
+        priors=phx.uq.LogNormal(0.0, 0.5),
+        bijectors=phx.uq.ExpBijector(),
+    )
+    observations = jnp.asarray([2.0, 1.0])
+    problem = phx.uq.PosteriorProblem(
+        space,
+        lambda physical: -0.5 * jnp.sum(((forward(physical) - observations) / 0.2) ** 2),
+        gauss_newton_residual=lambda physical: (forward(physical) - observations) / 0.2,
+    )
+    initial = jnp.linspace(-0.8, 0.8, 128)
+    result = phx.uq.fit_eki(
+        problem,
+        key=jr.key(951),
+        ensemble_size=128,
+        initial_ensemble=initial,
+        target_ess=0.75,
+    )
+
+    assert result.converged
+    assert jnp.array_equal(result.initial_unconstrained_ensemble, initial)
+    assert jnp.all(result.initial_ensemble > 0.0)
+    assert jnp.all(result.ensemble > 0.0)
+    assert jnp.mean(result.ensemble) == pytest.approx(2.0, abs=0.12)
 
 
 class _ObservedCoefficients(phx.AbstractArrayModel):
@@ -204,37 +232,3 @@ def _observation_objective(
         objective_id="linear-observations",
         accepted_results=accepted_results,
     )
-
-
-def test_eki_consumes_a_solver_objective_likelihood_without_derivatives() -> None:
-    _, exact_mean, exact_covariance = _linear_problem()
-    tree = phx.bind_component(
-        _ObservedCoefficients(jnp.zeros(2)), phx.ComponentAuthority.MODEL
-    )
-    space = phx.uq.ParameterSpace(jnp.zeros(2), priors=phx.uq.Normal(0.0, 1.0))
-    problem = phx.uq.posterior_problem_from_solver_objective(
-        _observation_objective(), tree, space
-    )
-
-    result = phx.uq.fit_eki(problem, key=jr.key(950), ensemble_size=512)
-    assert result.converged
-    assert jnp.allclose(jnp.mean(result.ensemble, axis=0), exact_mean, atol=0.04)
-    assert jnp.allclose(
-        jnp.cov(result.ensemble, rowvar=False), exact_covariance, atol=0.012
-    )
-    # The provider declares no derivative: gradient consumers are refused, never
-    # handed a derivative, while EKI above ran on residuals alone.
-    with pytest.raises(Exception, match="not differentiable"):
-        jax.block_until_ready(jax.grad(problem.log_density)(jnp.zeros(2)))
-
-    failed = phx.uq.posterior_problem_from_solver_objective(
-        _observation_objective(accepted=False), tree, space
-    )
-    assert problem.log_likelihood(jnp.zeros(2)) > -jnp.inf
-    assert failed.log_likelihood(jnp.zeros(2)) == -jnp.inf
-    with pytest.raises(FloatingPointError, match="residuals must be finite"):
-        phx.uq.fit_eki(failed, key=jr.key(951), ensemble_size=8)
-    with pytest.raises(ValueError, match="cannot drop failed cases"):
-        phx.uq.posterior_problem_from_solver_objective(
-            _observation_objective(accepted_results="reduce-support"), tree, space
-        )

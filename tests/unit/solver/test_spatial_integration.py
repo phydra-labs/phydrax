@@ -15,7 +15,7 @@ def _tensor_grid() -> Any:
     return phx.discretization.TensorSpectralDiscretization.from_axes((x_axis, y_axis))
 
 
-def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes() -> None:
+def test_spatial_integration_scenario_1() -> None:
     discretization = _tensor_grid()
     target = phx.integration.spatial_measure(
         discretization,
@@ -42,9 +42,6 @@ def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes() ->
     assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
     assert jnp.all(estimate.successful)
     assert estimate.error_estimate is None
-
-
-def test_spatial_measure_exposes_physical_coordinates_to_callables() -> None:
     discretization = _tensor_grid()
     target = phx.integration.spatial_measure(
         discretization,
@@ -64,9 +61,6 @@ def test_spatial_measure_exposes_physical_coordinates_to_callables() -> None:
         discretization.quadrature_weights * jnp.sum(coordinates**2, axis=-1)
     )
     assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
-
-
-def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass() -> None:
     discretization = _tensor_grid()
     mask = jnp.ones(discretization.state_shape, dtype="bool").at[0].set(False)
     target = phx.integration.spatial_measure(
@@ -87,11 +81,6 @@ def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass() -> N
         estimate.diagnostics.target_mass,
         jnp.sum(jnp.where(mask, discretization.quadrature_weights, 0.0)),
     )
-
-
-def test_spectral_spatial_measure_reduces_precomputed_fields_without_coordinates() -> (
-    None
-):
     plan = spectral.SpectralDecomposition.from_eigenpairs(
         jnp.asarray([0.0, 1.0, 4.0]),
         jnp.eye(3),

@@ -36,7 +36,7 @@ def _spacetime() -> Any:
     return domain, chart
 
 
-def test_domain_curvature_adapters_preserve_labeled_jittable_semantics() -> None:
+def test_domain_curvature_contracts() -> None:
     domain, chart = _spacetime()
     metric = phx.metrix.minkowski_metric(chart)
     point = jnp.array([0.2, -0.1, 0.3, 0.4])
@@ -58,6 +58,22 @@ def test_domain_curvature_adapters_preserve_labeled_jittable_semantics() -> None
     assert jnp.allclose(jax.jit(ricci.func)(points), 0.0)
     assert jnp.allclose(jax.jit(scalar.func)(points), 0.0)
     assert jnp.allclose(jax.jit(einstein.func)(points), 0.0)
+    domain, chart = _spacetime()
+    metric = phx.metrix.minkowski_metric(chart)
+    line = phx.domain.Interval1d(-1.0, 1.0)
+    riemannian = phx.metrix.diagonal_metric(
+        lambda q: jnp.ones((4,)),
+        chart=chart,
+    )
+    invalid_domain: Any = object()
+    invalid_metric: Any = riemannian
+
+    with pytest.raises(TypeError, match="require a Domain"):
+        phx.operators.domain_scalar_curvature(invalid_domain, metric, var="x")
+    with pytest.raises(TypeError, match="requires a LorentzianMetric"):
+        phx.operators.domain_scalar_curvature(domain, invalid_metric, var="x")
+    with pytest.raises(ValueError, match="does not match"):
+        phx.operators.domain_scalar_curvature(line, metric)
 
 
 def test_domain_curvature_is_differentiable_through_trainable_metric_fields() -> None:
@@ -95,22 +111,3 @@ def test_domain_curvature_is_differentiable_through_trainable_metric_fields() ->
         jnp.diag(einstein)[1:],
         -3.0 * expansion_rate**2 * scale_squared,
     )
-
-
-def test_domain_curvature_rejects_incompatible_geometry_contracts() -> None:
-    domain, chart = _spacetime()
-    metric = phx.metrix.minkowski_metric(chart)
-    line = phx.domain.Interval1d(-1.0, 1.0)
-    riemannian = phx.metrix.diagonal_metric(
-        lambda q: jnp.ones((4,)),
-        chart=chart,
-    )
-    invalid_domain: Any = object()
-    invalid_metric: Any = riemannian
-
-    with pytest.raises(TypeError, match="require a Domain"):
-        phx.operators.domain_scalar_curvature(invalid_domain, metric, var="x")
-    with pytest.raises(TypeError, match="requires a LorentzianMetric"):
-        phx.operators.domain_scalar_curvature(domain, invalid_metric, var="x")
-    with pytest.raises(ValueError, match="does not match"):
-        phx.operators.domain_scalar_curvature(line, metric)

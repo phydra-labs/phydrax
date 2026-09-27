@@ -29,7 +29,7 @@ def _scalar_data(
     )
 
 
-def test_finite_size_growth_recovers_finite_amplitude_linear_rate() -> None:
+def test_chaos_diagnostics_scenario_1() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 0.5]))
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: matrix @ state,
@@ -58,9 +58,6 @@ def test_finite_size_growth_recovers_finite_amplitude_linear_rate() -> None:
     np.testing.assert_allclose(
         np.asarray(result.average_growth_rates), np.log([2.0, 0.5]), atol=2e-10
     )
-
-
-def test_recurrence_rqa_preserves_theiler_mask_and_line_statistics() -> None:
     periodic = np.tile(np.arange(8, dtype="float64"), 25)
     data = _scalar_data(periodic, source_id="periodic-rqa")
 
@@ -78,9 +75,6 @@ def test_recurrence_rqa_preserves_theiler_mask_and_line_statistics() -> None:
     assert float(result.determinism) > 0.95
     assert int(result.longest_diagonal) > 100
     assert int(jnp.sum(result.diagonal_length_histogram)) > 0
-
-
-def test_rqa_with_no_recurrences_is_not_successful_with_nan_metrics() -> None:
     data = _scalar_data(
         jnp.asarray([0.0, 1.0, 3.0, 7.0]),
         source_id="no-recurrence-rqa",
@@ -98,7 +92,7 @@ def test_rqa_with_no_recurrences_is_not_successful_with_nan_metrics() -> None:
     assert jnp.isnan(result.determinism)
 
 
-def test_zero_one_test_separates_periodic_and_logistic_observables() -> None:
+def test_chaos_diagnostics_scenario_2() -> None:
     count = 1400
     periodic = np.sin(2.0 * np.pi * np.arange(count) / 37.0)
     logistic = np.empty((count,))
@@ -125,9 +119,6 @@ def test_zero_one_test_separates_periodic_and_logistic_observables() -> None:
     assert float(result.statistic[1]) > 0.7
     assert float(result.statistic[1] - result.statistic[0]) > 0.6
     assert bool(jnp.all(result.used_sample_mask[:, :100] == 0))
-
-
-def test_correlation_dimension_records_fit_window_and_theiler_pairs() -> None:
     rng = np.random.default_rng(9)
     values = rng.uniform(0.0, 1.0, 1200)
     data = _scalar_data(values, source_id="uniform-line-dimension")
@@ -145,9 +136,6 @@ def test_correlation_dimension_records_fit_window_and_theiler_pairs() -> None:
     assert float(result.r_squared) > 0.995
     assert int(jnp.sum(result.fit_mask)) == 11
     assert int(result.eligible_pair_count) > 500_000
-
-
-def test_correlation_dimension_rejects_degenerate_fit_diagnostics() -> None:
     data = _scalar_data(
         jnp.asarray([0.0, 1.0, 3.0]),
         source_id="degenerate-correlation-fit",
@@ -162,9 +150,6 @@ def test_correlation_dimension_rejects_degenerate_fit_diagnostics() -> None:
     assert jnp.isnan(result.r_squared)
     assert not bool(result.valid)
     assert int(result.status) == phx.dynamics.analysis.CHAOS_DIAGNOSTIC_FIT_FAILED
-
-
-def test_surrogate_protocol_and_uncertainty_summary_preserve_rng_and_sources() -> None:
     time = jnp.arange(512, dtype="float64")
     series = jnp.sin(2.0 * jnp.pi * time / 32.0)
     significance = phx.dynamics.analysis.surrogate_significance(

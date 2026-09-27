@@ -103,7 +103,7 @@ def _zero_curves() -> Any:
     )
 
 
-def test_fixed_bond_clean_dirty_and_accrued_prices_are_distinct_and_reconcile() -> None:
+def test_deterministic_products_scenario_1() -> None:
     fixed_leg = ResolvedFixedLeg(
         contract_id="bond-leg",
         schedule=_resolved_schedule(),
@@ -125,9 +125,6 @@ def test_fixed_bond_clean_dirty_and_accrued_prices_are_distinct_and_reconcile() 
     np.testing.assert_allclose(accrued, 2.0, atol=1e-6)
     np.testing.assert_allclose(dirty, 108.0, atol=1e-6)
     np.testing.assert_allclose(clean + accrued, dirty, atol=1e-6)
-
-
-def test_fra_start_discounting_and_futures_price_quote_conventions_are_explicit() -> None:
     schedule = _resolved_schedule(periods=1)
     simple_rate = 0.05
     projection = _curve(
@@ -180,6 +177,52 @@ def test_fra_start_discounting_and_futures_price_quote_conventions_are_explicit(
     np.testing.assert_allclose(start_amount, end_amount / 1.05, rtol=2e-5)
     np.testing.assert_allclose(future.model_quote(curves), 95.0, rtol=2e-5)
     np.testing.assert_allclose(future.present_value(curves), 1_000.0, rtol=2e-5)
+    schedule = _resolved_schedule()
+    usd_discount = _curve("usd-discount", USD, jnp.zeros((4,)))
+    usd_projection = _curve("usd-projection", USD, jnp.zeros((4,)), role="projection")
+    eur_discount = _curve("eur-discount", EUR, jnp.zeros((4,)))
+    eur_projection = _curve("eur-projection", EUR, jnp.zeros((4,)), role="projection")
+    curves = CurveSet((usd_discount, usd_projection, eur_discount, eur_projection))
+    base_leg = ResolvedFloatingLeg(
+        contract_id="xccy-eur",
+        schedule=schedule,
+        currency=EUR,
+        discount_curve_id="eur-discount",
+        projection_curve_id="eur-projection",
+        notional=100.0,
+        spread=0.0,
+        gearing=1.0,
+        pay_receive=PayReceive.RECEIVE,
+        fixing_values=jnp.zeros((2,)),
+        fixing_mask=jnp.zeros((2,), dtype="bool"),
+        exchange_initial=True,
+        exchange_final=True,
+    )
+    quote_leg = ResolvedFloatingLeg(
+        contract_id="xccy-usd",
+        schedule=schedule,
+        currency=USD,
+        discount_curve_id="usd-discount",
+        projection_curve_id="usd-projection",
+        notional=110.0,
+        spread=0.0,
+        gearing=1.0,
+        pay_receive=PayReceive.PAY,
+        fixing_values=jnp.zeros((2,)),
+        fixing_mask=jnp.zeros((2,), dtype="bool"),
+        exchange_initial=True,
+        exchange_final=True,
+    )
+    swap = ResolvedCrossCurrencySwap("xccy", base_leg, quote_leg, FXPair(EUR, USD))
+
+    replay = swap.cashflow_replay(curves)
+    assert int(jnp.sum(replay.notional_exchange_mask)) == 4
+    assert set(replay.slot_currency_ids) == {EUR.currency_id, USD.currency_id}
+    np.testing.assert_allclose(
+        swap.present_value(curves, reporting_currency=USD, spot_quote_per_base=1.1),
+        0.0,
+        atol=1e-6,
+    )
 
 
 def test_payer_receiver_swap_parity_is_exact_under_identical_curves() -> None:
@@ -229,56 +272,7 @@ def test_payer_receiver_swap_parity_is_exact_under_identical_curves() -> None:
     )
 
 
-def test_cross_currency_swap_retains_both_notional_exchange_streams() -> None:
-    schedule = _resolved_schedule()
-    usd_discount = _curve("usd-discount", USD, jnp.zeros((4,)))
-    usd_projection = _curve("usd-projection", USD, jnp.zeros((4,)), role="projection")
-    eur_discount = _curve("eur-discount", EUR, jnp.zeros((4,)))
-    eur_projection = _curve("eur-projection", EUR, jnp.zeros((4,)), role="projection")
-    curves = CurveSet((usd_discount, usd_projection, eur_discount, eur_projection))
-    base_leg = ResolvedFloatingLeg(
-        contract_id="xccy-eur",
-        schedule=schedule,
-        currency=EUR,
-        discount_curve_id="eur-discount",
-        projection_curve_id="eur-projection",
-        notional=100.0,
-        spread=0.0,
-        gearing=1.0,
-        pay_receive=PayReceive.RECEIVE,
-        fixing_values=jnp.zeros((2,)),
-        fixing_mask=jnp.zeros((2,), dtype="bool"),
-        exchange_initial=True,
-        exchange_final=True,
-    )
-    quote_leg = ResolvedFloatingLeg(
-        contract_id="xccy-usd",
-        schedule=schedule,
-        currency=USD,
-        discount_curve_id="usd-discount",
-        projection_curve_id="usd-projection",
-        notional=110.0,
-        spread=0.0,
-        gearing=1.0,
-        pay_receive=PayReceive.PAY,
-        fixing_values=jnp.zeros((2,)),
-        fixing_mask=jnp.zeros((2,), dtype="bool"),
-        exchange_initial=True,
-        exchange_final=True,
-    )
-    swap = ResolvedCrossCurrencySwap("xccy", base_leg, quote_leg, FXPair(EUR, USD))
-
-    replay = swap.cashflow_replay(curves)
-    assert int(jnp.sum(replay.notional_exchange_mask)) == 4
-    assert set(replay.slot_currency_ids) == {EUR.currency_id, USD.currency_id}
-    np.testing.assert_allclose(
-        swap.present_value(curves, reporting_currency=USD, spot_quote_per_base=1.1),
-        0.0,
-        atol=1e-6,
-    )
-
-
-def test_deliverable_fx_forward_retains_two_known_notional_exchange_legs() -> None:
+def test_deterministic_products_scenario_2() -> None:
     curves = CurveSet(
         (
             _curve("eur-discount", EUR, jnp.zeros((4,))),
@@ -305,9 +299,6 @@ def test_deliverable_fx_forward_retains_two_known_notional_exchange_legs() -> No
     np.testing.assert_allclose(replay.amounts, jnp.asarray((100.0, -110.0)))
     assert replay.slot_currency_ids == (EUR.currency_id, USD.currency_id)
     np.testing.assert_allclose(forward.present_value(curves, 1.1), 0.0)
-
-
-def test_inflation_leg_distinguishes_known_and_projected_lagged_fixings() -> None:
     schedule = _resolved_schedule()
     discount = _curve("discount", USD, jnp.zeros((4,)))
     index = _curve(

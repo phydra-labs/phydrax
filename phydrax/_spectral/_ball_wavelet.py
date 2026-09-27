@@ -125,9 +125,7 @@ def _directionality(bandlimit: int, directional_bandlimit: int, /) -> np.ndarray
             if choose < 0 or choose > gamma or gamma - order != 2 * choose:
                 continue
             log_binomial = (
-                lgamma(gamma + 1)
-                - lgamma(choose + 1)
-                - lgamma(gamma - choose + 1)
+                lgamma(gamma + 1) - lgamma(choose + 1) - lgamma(gamma - choose + 1)
             )
             result[degree, index] = phase * np.sqrt(
                 np.exp(log_binomial - gamma * np.log(2.0))

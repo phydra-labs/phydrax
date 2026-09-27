@@ -183,7 +183,7 @@ def _exact_energy(model: Any) -> Any:
     return jnp.real(jnp.vdot(state, hamiltonian @ state) / jnp.vdot(state, state))
 
 
-def test_variational_monte_carlo_runs_persistent_sr_and_improves_energy() -> None:
+def test_variational_monte_carlo_scenario_1() -> None:
     problem = phx.solver.VariationalMonteCarloProblem(
         _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2])),
         _operator(),
@@ -221,9 +221,6 @@ def test_variational_monte_carlo_runs_persistent_sr_and_improves_energy() -> Non
         "local_energy_real",
     }
     assert diagnostics.mean_acceptance_rate == result.final_estimate.acceptance_rate
-
-
-def test_vmc_zero_iterations_performs_only_frozen_evaluation() -> None:
     problem = phx.solver.VariationalMonteCarloProblem(
         _TableModel(jnp.asarray([0.0, 0.1, -0.1, 0.0])),
         _operator(),
@@ -247,50 +244,38 @@ def test_vmc_zero_iterations_performs_only_frozen_evaluation() -> None:
     assert result.linear_results == ()
     assert result.final_estimate.successful
     assert result.final_estimate.chain_diagnostics is not None
-
-
-@pytest.mark.parametrize(
-    ("target_factory", "target_factory_id"),
-    (
+    for target_factory, target_factory_id in (
         (_full_target_factory, "table-full"),
         (_incremental_target_factory, "table-incremental"),
-    ),
-)
-def test_vmc_rebinds_full_and_incremental_targets_for_each_frozen_model(
-    target_factory: Any,
-    target_factory_id: Any,
-) -> None:
-    model = _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
-    problem = phx.solver.VariationalMonteCarloProblem(
-        model,
-        _operator(),
-        _kernel(),
-        _initial_configurations(),
-        target_factory=target_factory,
-        target_factory_id=target_factory_id,
-    )
-    state = problem.initial_state(key=jr.key(17))
-    changed_model = _TableModel(model.parameters + 0.4)
+    ):
+        model = _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
+        problem = phx.solver.VariationalMonteCarloProblem(
+            model,
+            _operator(),
+            _kernel(),
+            _initial_configurations(),
+            target_factory=target_factory,
+            target_factory_id=target_factory_id,
+        )
+        state = problem.initial_state(key=jr.key(17))
+        changed_model = _TableModel(model.parameters + 0.4)
 
-    estimate, samples = phx.solver.evaluate_variational_monte_carlo(
-        problem,
-        changed_model,
-        state.markov_state,
-        key=jr.key(18),
-        num_draws=6,
-    )
-    expected = jax.vmap(
-        lambda configuration: _table_log_target(changed_model, configuration)
-    )(samples.final_state.position)
+        estimate, samples = phx.solver.evaluate_variational_monte_carlo(
+            problem,
+            changed_model,
+            state.markov_state,
+            key=jr.key(18),
+            num_draws=6,
+        )
+        expected = jax.vmap(
+            lambda configuration: _table_log_target(changed_model, configuration)
+        )(samples.final_state.position)
 
-    assert estimate.successful
-    assert samples.final_state.target_id == "table-density"
-    assert jnp.allclose(samples.final_state.log_target, expected)
-    if target_factory is _incremental_target_factory:
-        assert jnp.allclose(samples.final_state.cache, expected)
-
-
-def test_vmc_rejects_estimates_from_a_tainted_incremental_chain() -> None:
+        assert estimate.successful
+        assert samples.final_state.target_id == "table-density"
+        assert jnp.allclose(samples.final_state.log_target, expected)
+        if target_factory is _incremental_target_factory:
+            assert jnp.allclose(samples.final_state.cache, expected)
     model = _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
     problem = phx.solver.VariationalMonteCarloProblem(
         model,
@@ -313,6 +298,47 @@ def test_vmc_rejects_estimates_from_a_tainted_incremental_chain() -> None:
     assert not jnp.all(samples.final_state.valid)
     assert estimate.status == phx.solver.VMC_INVALID_SAMPLES
     assert not estimate.successful
+    real_model = _TableModel(jnp.zeros((4,)))
+    complex_model = _TableModel(jnp.zeros((4,), dtype="complex128"))
+
+    with pytest.raises(TypeError, match="holomorphic"):
+        phx.solver.VariationalMonteCarloProblem(
+            real_model,
+            _operator(),
+            _kernel(),
+            _initial_configurations(),
+            complex_parameter_mode="holomorphic",
+        )
+    with pytest.raises(TypeError, match="real parameter mode"):
+        phx.solver.VariationalMonteCarloProblem(
+            complex_model,
+            _operator(),
+            _kernel(),
+            _initial_configurations(),
+            complex_parameter_mode="real",
+        )
+
+    for mode in ("holomorphic", "nonholomorphic"):
+        problem = phx.solver.VariationalMonteCarloProblem(
+            complex_model,
+            _operator(),
+            _kernel(),
+            _initial_configurations(),
+            complex_parameter_mode=mode,
+        )
+        result = phx.solver.solve_variational_monte_carlo(
+            problem,
+            phx.solver.VariationalMonteCarloPolicy(
+                num_iterations=1,
+                draws_per_iteration=8,
+                final_evaluation_draws=8,
+                damping=0.2,
+                learning_rate=0.01,
+            ),
+            key=jr.key(12 if mode == "holomorphic" else 13),
+        )
+        assert result.successful
+        assert jnp.all(jnp.isfinite(result.final_state.parameter_coordinates))
 
 
 def test_vmc_target_factory_identity_is_explicit_and_stable() -> None:
@@ -357,50 +383,6 @@ def test_vmc_target_factory_identity_is_explicit_and_stable() -> None:
     )
     with pytest.raises(ValueError, match="preserve its target identity"):
         unstable.target_for_model(model)
-
-
-def test_vmc_complex_parameter_modes_are_explicit() -> None:
-    real_model = _TableModel(jnp.zeros((4,)))
-    complex_model = _TableModel(jnp.zeros((4,), dtype="complex128"))
-
-    with pytest.raises(TypeError, match="holomorphic"):
-        phx.solver.VariationalMonteCarloProblem(
-            real_model,
-            _operator(),
-            _kernel(),
-            _initial_configurations(),
-            complex_parameter_mode="holomorphic",
-        )
-    with pytest.raises(TypeError, match="real parameter mode"):
-        phx.solver.VariationalMonteCarloProblem(
-            complex_model,
-            _operator(),
-            _kernel(),
-            _initial_configurations(),
-            complex_parameter_mode="real",
-        )
-
-    for mode in ("holomorphic", "nonholomorphic"):
-        problem = phx.solver.VariationalMonteCarloProblem(
-            complex_model,
-            _operator(),
-            _kernel(),
-            _initial_configurations(),
-            complex_parameter_mode=mode,
-        )
-        result = phx.solver.solve_variational_monte_carlo(
-            problem,
-            phx.solver.VariationalMonteCarloPolicy(
-                num_iterations=1,
-                draws_per_iteration=8,
-                final_evaluation_draws=8,
-                damping=0.2,
-                learning_rate=0.01,
-            ),
-            key=jr.key(12 if mode == "holomorphic" else 13),
-        )
-        assert result.successful
-        assert jnp.all(jnp.isfinite(result.final_state.parameter_coordinates))
 
 
 def test_vmc_checkpoint_resume_matches_uninterrupted_training(tmp_path: Any) -> None:

@@ -125,7 +125,7 @@ def _data_pairing(left: Any, right: Any) -> Any:
     return value
 
 
-def test_cone_dual_projection_smoothness_margins_locate_kinks() -> None:
+def test_conic_sensitivity_scenario_1() -> None:
     zero = phx.optim.ZeroCone(2)
     nonnegative = phx.optim.NonnegativeCone(3)
     soc = phx.optim.SecondOrderCone(3)
@@ -152,9 +152,6 @@ def test_cone_dual_projection_smoothness_margins_locate_kinks() -> None:
     np.testing.assert_allclose(product.dual_projection_smoothness_margin(blocks), 0.5)
     empty = phx.optim.ProductCone(())
     assert jnp.isinf(empty.dual_projection_smoothness_margin(jnp.empty((0,))))
-
-
-def test_dense_sensitivity_rejects_sparse_tangent_operator() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -186,9 +183,6 @@ def test_dense_sensitivity_rejects_sparse_tangent_operator() -> None:
 
     with pytest.raises(TypeError, match="dense tangent data"):
         phx.optim.conic_primal_jvp(sensitivity, tangent)
-
-
-def test_active_orthant_primal_jvp_is_linear_at_small_scale() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -226,7 +220,7 @@ def test_active_orthant_primal_jvp_is_linear_at_small_scale() -> None:
     )
 
 
-def test_soc_projection_qcp_matches_analytic_jvp_and_adjoint() -> None:
+def test_conic_sensitivity_scenario_2() -> None:
     cone = phx.optim.SecondOrderCone(2)
     center = jnp.asarray([0.0, 2.0])
     direction = jnp.asarray([0.3, -0.2])
@@ -266,9 +260,6 @@ def test_soc_projection_qcp_matches_analytic_jvp_and_adjoint() -> None:
         rtol=2e-7,
     )
     assert adjoint.regular
-
-
-def test_batched_soc_sensitivity_maps_common_residual_over_array_leaves() -> None:
     cone = phx.optim.SecondOrderCone(2)
     centers = jnp.asarray([[0.0, 2.0], [0.0, 3.0]])
     directions = jnp.asarray([[0.3, -0.2], [-0.4, 0.1]])
@@ -310,9 +301,6 @@ def test_batched_soc_sensitivity_maps_common_residual_over_array_leaves() -> Non
         rtol=3e-7,
     )
     np.testing.assert_array_equal(adjoint.regular, jnp.asarray([True, True]))
-
-
-def test_fixed_bound_sensitivity_uses_diagonal_tangent_and_symmetric_pullback() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.zeros(1),
@@ -347,7 +335,7 @@ def test_fixed_bound_sensitivity_uses_diagonal_tangent_and_symmetric_pullback() 
         jax.block_until_ready(phx.optim.conic_primal_jvp(sensitivity, invalid).value)
 
 
-def test_weak_complementarity_returns_nonregular_nan_sensitivity() -> None:
+def test_conic_sensitivity_scenario_3() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.zeros(1),
@@ -376,9 +364,6 @@ def test_weak_complementarity_returns_nonregular_nan_sensitivity() -> None:
     assert not derivative.projection_regular
     assert not derivative.regular
     assert jnp.isnan(derivative.value[0])
-
-
-def test_regularized_linear_conic_objective_differentiates_executed_map() -> None:
     problem = phx.optim.ConicProgram(
         None,
         jnp.asarray([-1.0]),
@@ -408,6 +393,27 @@ def test_regularized_linear_conic_objective_differentiates_executed_map() -> Non
     adjoint = phx.optim.conic_primal_vjp(sensitivity, jnp.ones(1))
     assert adjoint.value.quadratic is None
     np.testing.assert_allclose(adjoint.value.linear, jnp.asarray([-0.5]), atol=2e-7)
+    solution = (
+        jnp.ones(1),
+        jnp.zeros(1),
+        jnp.ones(1),
+        jnp.zeros(1),
+        jnp.zeros(1),
+    )
+    problem = phx.optim.ConicProgram(
+        jnp.ones((1, 1)),
+        jnp.asarray([-2.0]),
+        jnp.ones((1, 1)),
+        jnp.ones(1),
+        phx.optim.NonnegativeCone(1),
+        problem_id="independent-conic-binding",
+    )
+    first, execution, _ = _prepare(problem, solution=solution)
+    second, _, _ = _prepare(problem, solution=solution)
+    assert first.numeric_binding_id != second.numeric_binding_id
+
+    with pytest.raises(ValueError, match="numeric binding"):
+        phx.optim.prepare_conic_sensitivity(second, execution)
 
 
 def test_prepared_sensitivity_rejects_stale_numeric_execution() -> None:
@@ -437,31 +443,7 @@ def test_prepared_sensitivity_rejects_stale_numeric_execution() -> None:
         phx.optim.prepare_conic_sensitivity(refreshed, execution)
 
 
-def test_prepared_sensitivity_rejects_independent_same_version_binding() -> None:
-    solution = (
-        jnp.ones(1),
-        jnp.zeros(1),
-        jnp.ones(1),
-        jnp.zeros(1),
-        jnp.zeros(1),
-    )
-    problem = phx.optim.ConicProgram(
-        jnp.ones((1, 1)),
-        jnp.asarray([-2.0]),
-        jnp.ones((1, 1)),
-        jnp.ones(1),
-        phx.optim.NonnegativeCone(1),
-        problem_id="independent-conic-binding",
-    )
-    first, execution, _ = _prepare(problem, solution=solution)
-    second, _, _ = _prepare(problem, solution=solution)
-    assert first.numeric_binding_id != second.numeric_binding_id
-
-    with pytest.raises(ValueError, match="numeric binding"):
-        phx.optim.prepare_conic_sensitivity(second, execution)
-
-
-def test_projection_regularity_uses_the_differentiated_residual_point() -> None:
+def test_conic_sensitivity_scenario_4() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -491,9 +473,6 @@ def test_projection_regularity_uses_the_differentiated_residual_point() -> None:
     np.testing.assert_array_equal(
         sensitivity.projection_regular, jnp.ones(1, dtype="bool")
     )
-
-
-def test_damped_derivative_svd_is_rejected() -> None:
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),
         jnp.asarray([-2.0]),
@@ -516,9 +495,6 @@ def test_damped_derivative_svd_is_rejected() -> None:
             ),
             linear=damped,
         )
-
-
-def test_advanced_cone_projection_qcps_match_native_regular_jvps() -> None:
     psd = phx.optim.PositiveSemidefiniteCone(2)
     cases = (
         (
@@ -579,9 +555,6 @@ def test_advanced_cone_projection_qcps_match_native_regular_jvps() -> None:
             atol=5e-6,
             rtol=5e-6,
         )
-
-
-def test_advanced_cone_projection_boundaries_are_nonregular() -> None:
     psd = phx.optim.PositiveSemidefiniteCone(2)
     cases = (
         (psd, psd.pack(jnp.diag(jnp.asarray([1.0, 0.0])))),

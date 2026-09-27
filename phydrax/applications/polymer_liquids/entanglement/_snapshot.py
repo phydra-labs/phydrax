@@ -161,8 +161,7 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         )
         topology_bonds[...] = np.asarray(dynamics.system.topology.bond_indices)
         actual = {
-            tuple(sorted((int(left), int(right))))
-            for left, right in topology_bonds
+            tuple(sorted((int(left), int(right)))) for left, right in topology_bonds
         }
         if actual != set(expected):
             raise ValueError(

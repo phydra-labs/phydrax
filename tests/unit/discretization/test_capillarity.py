@@ -62,7 +62,7 @@ def _operator_and_plic(kind: str = "circle") -> Any:
     return operator, plic, alpha
 
 
-def test_planar_zero_force_and_jittable_gradient() -> None:
+def test_capillarity_scenario_1() -> None:
     operator, plic, alpha = _operator_and_plic("planar")
     evidence = operator.curvature(plic, alpha)
     assert jnp.all(
@@ -90,9 +90,6 @@ def test_planar_zero_force_and_jittable_gradient() -> None:
         zero.momentum_force_rate(plic, jnp.ones(alpha.shape), alpha),
         jnp.zeros_like(result),
     )
-
-
-def test_circle_jump_budget_and_capillary_step() -> None:
     operator, plic, alpha = _operator_and_plic("circle")
     evidence = operator.curvature(plic, alpha)
     active_curvature = evidence.curvature[evidence.valid_mask]
@@ -107,47 +104,46 @@ def test_circle_jump_budget_and_capillary_step() -> None:
     assert jnp.allclose(block.energy_budget(alpha.size), 0.0)
     expected = 0.4 * jnp.sqrt(1.0 * 0.25**3 / 0.7)
     assert jnp.allclose(operator.capillary_step(0.25, jnp.ones(alpha.shape)), expected)
-
-
-@pytest.mark.parametrize("pure_alpha", (0.0, 1.0))
-def test_pure_phase_is_exact_zero_eager_and_filter_jit(pure_alpha: Any) -> None:
-    discretization, gradient = _grid()
-    alpha = jnp.full((discretization.cell_count,), pure_alpha, dtype=jnp.float32)
-    plic = UnstructuredVOFPlan(discretization, gradient).reconstruct(alpha)
-    operator = BalancedCapillaryOperator(
-        discretization,
-        gradient,
-        SurfaceTensionPolicy(0.7, 1.0e-6, 0.4, "pure-phase-surface"),
-    )
-    density = jnp.ones_like(alpha)
-
-    assert not bool(jnp.any(plic.interface_active))
-    evidence = operator.curvature(plic, alpha)
-    assert jnp.all(evidence.status == int(CurvatureStatus.MISSING_INTERFACE))
-
-    eager = operator.face_rate_block(plic, density, alpha, jnp.ones((alpha.size, 2)))
-    compiled = eqx.filter_jit(
-        lambda rho, fraction: operator.face_rate_block(
-            plic, rho, fraction, jnp.ones((fraction.size, 2))
+    for pure_alpha in (0.0, 1.0):
+        discretization, gradient = _grid()
+        alpha = jnp.full((discretization.cell_count,), pure_alpha, dtype=jnp.float32)
+        plic = UnstructuredVOFPlan(discretization, gradient).reconstruct(alpha)
+        operator = BalancedCapillaryOperator(
+            discretization,
+            gradient,
+            SurfaceTensionPolicy(0.7, 1.0e-6, 0.4, "pure-phase-surface"),
         )
-    )(density, alpha)
-    for block in (eager, compiled):
-        assert jnp.array_equal(block.momentum_rate, jnp.zeros_like(block.momentum_rate))
-        assert jnp.array_equal(
-            block.energy_work_rate, jnp.zeros_like(block.energy_work_rate)
+        density = jnp.ones_like(alpha)
+
+        assert not bool(jnp.any(plic.interface_active))
+        evidence = operator.curvature(plic, alpha)
+        assert jnp.all(evidence.status == int(CurvatureStatus.MISSING_INTERFACE))
+
+        eager = operator.face_rate_block(plic, density, alpha, jnp.ones((alpha.size, 2)))
+        compiled = eqx.filter_jit(
+            lambda rho, fraction: operator.face_rate_block(
+                plic, rho, fraction, jnp.ones((fraction.size, 2))
+            )
+        )(density, alpha)
+        for block in (eager, compiled):
+            assert jnp.array_equal(
+                block.momentum_rate, jnp.zeros_like(block.momentum_rate)
+            )
+            assert jnp.array_equal(
+                block.energy_work_rate, jnp.zeros_like(block.energy_work_rate)
+            )
+
+        eager_limit = operator.capillary_step(
+            0.25, density, interface_active=plic.interface_active
         )
-
-    eager_limit = operator.capillary_step(
-        0.25, density, interface_active=plic.interface_active
-    )
-    compiled_limit = eqx.filter_jit(
-        lambda active: operator.capillary_step(0.25, density, interface_active=active)
-    )(plic.interface_active)
-    assert bool(jnp.isinf(eager_limit))
-    assert bool(jnp.isinf(compiled_limit))
+        compiled_limit = eqx.filter_jit(
+            lambda active: operator.capillary_step(0.25, density, interface_active=active)
+        )(plic.interface_active)
+        assert bool(jnp.isinf(eager_limit))
+        assert bool(jnp.isinf(compiled_limit))
 
 
-def test_active_uncertain_and_invalid_inputs_fail_closed() -> None:
+def test_capillarity_scenario_2() -> None:
     operator, plic, alpha = _operator_and_plic("circle")
     active_index = int(np.flatnonzero(np.asarray(plic.interface_active))[0])
     one_active = jnp.zeros_like(plic.interface_active).at[active_index].set(True)
@@ -170,17 +166,11 @@ def test_active_uncertain_and_invalid_inputs_fail_closed() -> None:
         operator.face_rate_block(plic, -jnp.ones(alpha.shape), alpha)
     with pytest.raises(ValueError):
         SurfaceTensionPolicy(-1.0, 1.0, 0.5)
-
-
-def test_policy_identity_changes_with_policy_fields() -> None:
     first = SurfaceTensionPolicy(1.0, 1.0e-6, 0.5, "a")
     second = SurfaceTensionPolicy(1.1, 1.0e-6, 0.5, "a")
     third = SurfaceTensionPolicy(1.0, 1.0e-6, 0.5, "b")
     assert first.policy_id != second.policy_id
     assert first.policy_id != third.policy_id
-
-
-def test_geometry_identity_mismatch_is_rejected() -> None:
     from types import SimpleNamespace
 
     operator, plic, alpha = _operator_and_plic("circle")

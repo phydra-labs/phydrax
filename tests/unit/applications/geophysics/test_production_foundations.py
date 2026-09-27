@@ -50,7 +50,7 @@ def _tetra_mesh() -> Any:
     )
 
 
-def test_time_borehole_and_planetary_coordinate_contracts_are_explicit() -> None:
+def test_production_foundations_scenario_1() -> None:
     resource = bounded_resource_from_bytes(
         b"pinned leap table", limits=ResourceLimits(1024, 2, 4, 4, 0)
     ).manifest
@@ -125,9 +125,6 @@ def test_time_borehole_and_planetary_coordinate_contracts_are_explicit() -> None
     np.testing.assert_allclose(
         planetary.inertial_to_body_fixed(rotated, np.pi / (2e-4)), point, atol=1e-8
     )
-
-
-def test_tetrahedral_hcurl_exact_sequence_and_positive_actions() -> None:
     space = phx.discretization.TetrahedralNedelecSpace(_tetra_mesh())
     vertex = jnp.asarray((0.3, -0.2, 1.1, 0.7))
     edge_gradient = space.gradient(vertex)
@@ -140,11 +137,6 @@ def test_tetrahedral_hcurl_exact_sequence_and_positive_actions() -> None:
     curl = space.curl_curl_action(edge, 3.0)
     assert float(jnp.vdot(edge, mass)) > 0
     assert float(jnp.vdot(edge, curl)) >= 0
-
-
-def test_covariance_actions_variable_projection_and_priors_match_dense_references() -> (
-    None
-):
     layout = CoordinateLayout(("a", "b", "c", "d"))
     # ty: ignore[invalid-argument-type]
     diagonal = DiagonalCovarianceAction([1.0, 2.0, 3.0, 4.0], layout)

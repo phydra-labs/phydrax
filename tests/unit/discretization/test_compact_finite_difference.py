@@ -34,29 +34,26 @@ def _derivative(count: Any, derivative_order: Any, accuracy_order: Any) -> Any:
     return grid, phx.discretization.CompactDerivativePlan(grid, request).prepare()
 
 
-@pytest.mark.parametrize("accuracy_order", (4, 6))
-def test_periodic_compact_first_and_second_derivatives_converge(
-    accuracy_order: Any,
-) -> None:
-    errors = []
-    for count in (16, 32):
-        grid, first = _derivative(count, 1, accuracy_order)
-        _, second = _derivative(count, 2, accuracy_order)
-        x = grid.axes[0].nodes
-        value = jnp.sin(2.0 * jnp.pi * x)
-        first_error = jnp.max(
-            jnp.abs(first.mv(value) - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * x))
-        )
-        second_error = jnp.max(jnp.abs(second.mv(value) + (2.0 * jnp.pi) ** 2 * value))
-        errors.append(jnp.maximum(first_error, second_error))
-        assert first.report.passed
-        assert second.report.passed
-        assert first.report.dense_materialization_entries == 0
-        assert second.report.dense_materialization_entries == 0
-    assert errors[0] / errors[1] > 2.0 ** (accuracy_order - 1)
-
-
-def test_compact_staggered_interpolation_and_derivative_preserve_locations() -> None:
+def test_compact_finite_difference_scenario_1() -> None:
+    for accuracy_order in (4, 6):
+        errors = []
+        for count in (16, 32):
+            grid, first = _derivative(count, 1, accuracy_order)
+            _, second = _derivative(count, 2, accuracy_order)
+            x = grid.axes[0].nodes
+            value = jnp.sin(2.0 * jnp.pi * x)
+            first_error = jnp.max(
+                jnp.abs(first.mv(value) - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * x))
+            )
+            second_error = jnp.max(
+                jnp.abs(second.mv(value) + (2.0 * jnp.pi) ** 2 * value)
+            )
+            errors.append(jnp.maximum(first_error, second_error))
+            assert first.report.passed
+            assert second.report.passed
+            assert first.report.dense_materialization_entries == 0
+            assert second.report.dense_materialization_entries == 0
+        assert errors[0] / errors[1] > 2.0 ** (accuracy_order - 1)
     grid = _grid(32)
     point = grid.centered_location
     cell = grid.location((Fraction(1, 2),))
@@ -95,9 +92,6 @@ def test_compact_staggered_interpolation_and_derivative_preserve_locations() -> 
     )
     assert interpolation.source.shape == grid.layout_at(point).shape
     assert interpolation.target.shape == grid.layout_at(cell).shape
-
-
-def test_compact_tensor_components_transpose_adjoint_and_grad() -> None:
     grid = _grid(24, dimension=2)
     request = phx.discretization.DerivativeRequest(
         "dy",
@@ -125,9 +119,6 @@ def test_compact_tensor_components_transpose_adjoint_and_grad() -> None:
     np.testing.assert_allclose(pairing_left, pairing_right, atol=2e-10)
     assert jnp.isfinite(gradient)
     assert result.shape == value.shape
-
-
-def test_compact_rejects_unsupported_structure_and_dense_materialization() -> None:
     grid, operator = _derivative(16, 1, 4)
     with pytest.raises(ValueError, match="prohibit"):
         operator._materialize()

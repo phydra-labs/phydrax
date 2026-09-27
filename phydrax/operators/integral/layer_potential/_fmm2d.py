@@ -522,9 +522,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         outputs = []
         errors = []
         for target_index, target_values in enumerate(target_points.tolist()):
-            target_coordinate = complex(
-                float(target_values[0]), float(target_values[1])
-            )
+            target_coordinate = complex(float(target_values[0]), float(target_values[1]))
             leaf = target_leaf_map[target_index]
             center = target_centers_jax[leaf, 0] + 1j * target_centers_jax[leaf, 1]
             displacement = target_coordinate - center

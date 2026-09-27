@@ -19,7 +19,7 @@ def _components(function: Any, vector: Any) -> Any:
     return jnp.stack((jnp.real(value), jnp.imag(value)))
 
 
-def test_low_degree_regular_and_irregular_closed_forms() -> None:
+def test_solid_harmonic_scenario_1() -> None:
     vector = jnp.asarray(
         [[0.3, -0.4, 0.8], [-1.2, 0.5, -0.7], [0.0, 0.6, 1.1]],
         dtype=jnp.float64,
@@ -46,9 +46,6 @@ def test_low_degree_regular_and_irregular_closed_forms() -> None:
             rtol=5e-13,
             atol=3e-14,
         )
-
-
-def test_homogeneity_antipodal_parity_and_conjugacy() -> None:
     vector = jnp.asarray([[0.4, -0.7, 1.1], [-0.2, 0.9, 0.5]])
     scale = 3.25
     for degree, order in ((0, 0), (1, 1), (4, 2), (5, 3)):
@@ -90,9 +87,6 @@ def test_homogeneity_antipodal_parity_and_conjugacy() -> None:
             rtol=2e-12,
             atol=2e-14,
         )
-
-
-def test_euler_homogeneity_identities_hold_for_coordinate_derivatives() -> None:
     point = jnp.asarray([0.4, -0.65, 1.2], dtype=jnp.float64)
     for degree, order in ((1, 0), (3, -2), (6, 3)):
         regular = lambda vector: phx.special.solid_harmonic_regular(degree, order, vector)
@@ -119,7 +113,7 @@ def test_euler_homogeneity_identities_hold_for_coordinate_derivatives() -> None:
         )
 
 
-def test_regular_and_irregular_modes_are_harmonic_under_coordinate_hessians() -> None:
+def test_solid_harmonic_scenario_2() -> None:
     point = jnp.asarray([0.37, -0.61, 1.09], dtype=jnp.float64)
     for function in (
         lambda vector: phx.special.solid_harmonic_regular(5, -3, vector),
@@ -129,9 +123,6 @@ def test_regular_and_irregular_modes_are_harmonic_under_coordinate_hessians() ->
         imaginary_hessian = jax.hessian(lambda value: jnp.imag(function(value)))(point)
         np.testing.assert_allclose(jnp.trace(real_hessian), 0.0, atol=2e-10)
         np.testing.assert_allclose(jnp.trace(imaginary_hessian), 0.0, atol=2e-10)
-
-
-def test_origin_semantics_and_irregular_singularities_are_lane_local() -> None:
     origin = jnp.zeros(3, dtype=jnp.float64)
     np.testing.assert_allclose(
         phx.special.solid_harmonic_regular(0, 0, origin),
@@ -158,9 +149,6 @@ def test_origin_semantics_and_irregular_singularities_are_lane_local() -> None:
     assert jnp.all(jnp.isfinite(values[jnp.asarray([0, 4])]))
     assert jnp.all(jnp.isnan(jnp.real(values[1:4])))
     assert jnp.all(jnp.isnan(jnp.imag(values[1:4])))
-
-
-def test_irregular_reciprocal_scaling_handles_extreme_finite_radii() -> None:
     direction = jnp.asarray([2.0, -3.0, 5.0], dtype=jnp.float64)
     direction = direction / jnp.linalg.norm(direction)
     radii = jnp.asarray([1.0e-100, 1.0e100], dtype=jnp.float64)
@@ -172,7 +160,7 @@ def test_irregular_reciprocal_scaling_handles_extreme_finite_radii() -> None:
     np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=0.0)
 
 
-def test_laplace_addition_theorem_recovers_inverse_distance() -> None:
+def test_solid_harmonic_scenario_3() -> None:
     source = jnp.asarray([0.08, -0.11, 0.17], dtype=jnp.float64)
     target = jnp.asarray([1.1, 0.7, -0.5], dtype=jnp.float64)
     expansion = 0.0j
@@ -186,9 +174,6 @@ def test_laplace_addition_theorem_recovers_inverse_distance() -> None:
     expected = 1.0 / (4.0 * math.pi * jnp.linalg.norm(target - source))
     np.testing.assert_allclose(expansion, expected, rtol=2e-9, atol=2e-12)
     np.testing.assert_allclose(jnp.imag(expansion), 0.0, atol=2e-14)
-
-
-def test_dtype_static_structure_jit_and_directional_ad_compose() -> None:
     low = jnp.asarray([[0.2, -0.3, 0.7]], dtype=jnp.float16)
     high = jnp.asarray([0.2, -0.3, 0.7], dtype=jnp.float64)
     assert phx.special.solid_harmonic_regular(3, 2, low).dtype == jnp.complex64

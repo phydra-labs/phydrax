@@ -34,9 +34,7 @@ def _square_dual() -> phx.graph.MeshDualGraph:
     return phx.graph.mesh_to_dual_graph(vertices, faces)
 
 
-def test_finite_volume_divergence_conserves_internal_flux_without_volume_normalization() -> (
-    None
-):
+def test_finite_volume_contracts() -> None:
     out = phx.graph.GraphFiniteVolumeDivergence(
         output_key="div",
         normalize_by_volume=False,
@@ -44,15 +42,9 @@ def test_finite_volume_divergence_conserves_internal_flux_without_volume_normali
 
     assert jnp.allclose(out.nodes["div"], jnp.array([-8.0, 8.0]))
     assert jnp.allclose(jnp.sum(out.nodes["div"]), 0.0)
-
-
-def test_finite_volume_divergence_normalizes_by_cell_volume() -> None:
     out = phx.graph.GraphFiniteVolumeDivergence(output_key="div")(_flux_graph())
 
     assert jnp.allclose(out.nodes["div"], jnp.array([-4.0, 8.0]))
-
-
-def test_finite_volume_diffusion_is_zero_for_constant_dual_cell_field() -> None:
     dual = _square_dual()
     graph = dual.graph.replace(
         nodes={**dual.graph.nodes, "u": jnp.ones((2,))},
@@ -62,9 +54,6 @@ def test_finite_volume_diffusion_is_zero_for_constant_dual_cell_field() -> None:
     out = phx.graph.GraphFiniteVolumeDiffusion(input_key="u", output_key="du")(graph)
 
     assert jnp.allclose(out.nodes["du"], jnp.zeros((2, 1)))
-
-
-def test_finite_volume_diffusion_is_conservative_on_dual_graph() -> None:
     dual = _square_dual()
     graph = dual.graph.replace(
         nodes={**dual.graph.nodes, "u": jnp.array([1.0, 3.0])},

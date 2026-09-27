@@ -27,7 +27,7 @@ def _gmres_policy(*, relative: float = 1e-12, maximum_steps: int) -> Any:
     )
 
 
-def test_eisenstat_walker_changes_inner_work_and_records_final_forcing() -> None:
+def test_newton_controls_scenario_1() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     expected = jnp.ones((4,))
     target = matrix @ expected
@@ -71,9 +71,6 @@ def test_eisenstat_walker_changes_inner_work_and_records_final_forcing() -> None
     )
     assert float(constant.diagnostics.final_forcing) == pytest.approx(1e-10)
     assert 1e-10 <= float(adaptive.diagnostics.final_forcing) < 0.5
-
-
-def test_inexact_newton_carries_gcrodr_state_under_dynamic_forcing() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
     expected = jnp.ones((4,))
     target = matrix @ expected + 0.05 * expected**3
@@ -117,11 +114,6 @@ def test_inexact_newton_carries_gcrodr_state_under_dynamic_forcing() -> None:
     )
     assert 1e-10 <= float(result.diagnostics.final_forcing) < 0.2
     assert result.provenance.notes == ("linear-method=gmres;linear-backend=native-krylov")
-
-
-def test_jacobian_refresh_policies_change_preparation_counts_without_losing_root() -> (
-    None
-):
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state**2 - 2.0,
         problem_id="refresh-counts",
@@ -158,7 +150,7 @@ def test_jacobian_refresh_policies_change_preparation_counts_without_losing_root
     }
 
 
-def test_rejection_refresh_reprepares_after_rejected_trust_steps_and_converges() -> None:
+def test_newton_controls_scenario_2() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state**2 - 2.0,
         problem_id="rejection-refresh",
@@ -189,9 +181,6 @@ def test_rejection_refresh_reprepares_after_rejected_trust_steps_and_converges()
     assert jnp.allclose(result.state, jnp.sqrt(2.0), atol=1e-7)
     assert rejected >= 2
     assert int(result.diagnostics.jacobian_preparations) == rejected + 1
-
-
-def test_trust_region_dogleg_accepts_boundary_step_before_full_newton_fits() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 4.0]))
     expected = jnp.asarray([2.0, 1.0])
     target = matrix @ expected

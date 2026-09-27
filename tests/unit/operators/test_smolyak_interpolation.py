@@ -49,7 +49,7 @@ def test_polynomial_is_exact_for_scalar_vector_matrix_and_complex_outputs() -> N
     )
 
 
-def test_named_batched_evaluation_jit_and_dependency_order_are_preserved() -> None:
+def test_smolyak_interpolation_scenario_1() -> None:
     domain = _square_domain()
     function = domain.Function("y", "x")(lambda y, x: y**3 + x * y + 2.0 * x)
     approximation = phx.operators.interpolate_smolyak(
@@ -72,6 +72,68 @@ def test_named_batched_evaluation_jit_and_dependency_order_are_preserved() -> No
     assert approximation.func.axis_labels == ("y", "x")
     assert evaluated.dims == expected.dims
     assert jnp.allclose(jnp.asarray(evaluated.data), expected.data, atol=1e-11)
+    x = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 2.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    function = domain.Function("x")(lambda x: x**3)
+    approximation = phx.operators.interpolate_smolyak(
+        function,
+        phx.operators.SmolyakInterpolationPlan(1, 4),
+    )
+
+    assert approximation.domain is domain
+    assert approximation.deps == ("x",)
+    assert approximation(
+        {"x": jnp.asarray(0.3), "y": jnp.asarray(1.7)}
+    ).data == pytest.approx(
+        0.3**3,
+        abs=1e-12,
+    )
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    function = interval.Function("x")(lambda x: x)
+
+    with pytest.raises(ValueError, match="dimension=2"):
+        phx.operators.interpolate_smolyak(
+            function,
+            phx.operators.SmolyakInterpolationPlan(2, 2),
+        )
+    with pytest.raises(TypeError, match="requires a probability factor"):
+        phx.operators.interpolate_smolyak(
+            function,
+            phx.operators.SmolyakInterpolationPlan(
+                1,
+                2,
+                axis_rules="gauss-hermite",
+            ),
+        )
+    with pytest.raises(ValueError, match="non-finite"):
+        phx.operators.interpolate_smolyak(
+            interval.Function("x")(lambda x: jnp.inf * jnp.ones_like(x)),
+            phx.operators.SmolyakInterpolationPlan(1, 2),
+        )
+
+    empirical = phx.domain.ProbabilityDomain(
+        phx.uq.EmpiricalDistribution(jnp.asarray([0.0, 1.0])),
+        label="e",
+    )
+    with pytest.raises(ValueError, match="no declared exact reference transport"):
+        phx.operators.interpolate_smolyak(
+            empirical.Function("e")(lambda e: e),
+            phx.operators.SmolyakInterpolationPlan(1, 2),
+        )
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    function = interval.Function(
+        "x",
+        binding=phx.domain.FunctionBinding(pass_key=True),
+    )(lambda x, *, key: x**2 + 0.1 * jr.normal(key))
+    plan = phx.operators.SmolyakInterpolationPlan(1, 4)
+    first = phx.operators.interpolate_smolyak(function, plan, key=jr.key(7))
+    second = phx.operators.interpolate_smolyak(function, plan, key=jr.key(7))
+    third = phx.operators.interpolate_smolyak(function, plan, key=jr.key(8))
+    query = {"x": jnp.asarray(0.2)}
+
+    assert first(query).data == second(query).data
+    assert first(query).data != third(query).data
 
 
 def test_first_and_second_derivatives_are_exact_at_and_near_nodes() -> None:
@@ -163,77 +225,6 @@ def test_interpolant_is_fixed_state_and_does_not_retain_source_callable() -> Non
     assert not any(leaf is source for leaf in jax.tree_util.tree_leaves(approximation))
     assert approximation({"x": jnp.asarray(0.4)}).data == pytest.approx(1.16)
     assert source.count == fit_count
-
-
-def test_interpolation_preserves_unused_domain_factors() -> None:
-    x = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    y = phx.domain.ScalarInterval(0.0, 2.0, label="y")
-    domain = phx.domain.ProductDomain(x, y)
-    function = domain.Function("x")(lambda x: x**3)
-    approximation = phx.operators.interpolate_smolyak(
-        function,
-        phx.operators.SmolyakInterpolationPlan(1, 4),
-    )
-
-    assert approximation.domain is domain
-    assert approximation.deps == ("x",)
-    assert approximation(
-        {"x": jnp.asarray(0.3), "y": jnp.asarray(1.7)}
-    ).data == pytest.approx(
-        0.3**3,
-        abs=1e-12,
-    )
-
-
-def test_stochastic_fitting_is_reproducible_for_the_same_key() -> None:
-    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    function = interval.Function(
-        "x",
-        binding=phx.domain.FunctionBinding(pass_key=True),
-    )(lambda x, *, key: x**2 + 0.1 * jr.normal(key))
-    plan = phx.operators.SmolyakInterpolationPlan(1, 4)
-    first = phx.operators.interpolate_smolyak(function, plan, key=jr.key(7))
-    second = phx.operators.interpolate_smolyak(function, plan, key=jr.key(7))
-    third = phx.operators.interpolate_smolyak(function, plan, key=jr.key(8))
-    query = {"x": jnp.asarray(0.2)}
-
-    assert first(query).data == second(query).data
-    assert first(query).data != third(query).data
-
-
-def test_interpolation_rejects_invalid_domains_rules_and_source_values() -> None:
-    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    function = interval.Function("x")(lambda x: x)
-
-    with pytest.raises(ValueError, match="dimension=2"):
-        phx.operators.interpolate_smolyak(
-            function,
-            phx.operators.SmolyakInterpolationPlan(2, 2),
-        )
-    with pytest.raises(TypeError, match="requires a probability factor"):
-        phx.operators.interpolate_smolyak(
-            function,
-            phx.operators.SmolyakInterpolationPlan(
-                1,
-                2,
-                axis_rules="gauss-hermite",
-            ),
-        )
-    with pytest.raises(ValueError, match="non-finite"):
-        phx.operators.interpolate_smolyak(
-            interval.Function("x")(lambda x: jnp.inf * jnp.ones_like(x)),
-            phx.operators.SmolyakInterpolationPlan(1, 2),
-        )
-
-    empirical = phx.domain.ProbabilityDomain(
-        phx.uq.EmpiricalDistribution(jnp.asarray([0.0, 1.0])),
-        label="e",
-    )
-    with pytest.raises(ValueError, match="no declared exact reference transport"):
-        phx.operators.interpolate_smolyak(
-            empirical.Function("e")(lambda e: e),
-            phx.operators.SmolyakInterpolationPlan(1, 2),
-        )
 
 
 def test_plan_validation_and_fitted_diagnostics_are_explicit() -> None:

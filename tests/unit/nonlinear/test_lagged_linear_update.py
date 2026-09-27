@@ -45,7 +45,7 @@ def _scaled_operator(
     )
 
 
-def test_lagged_linear_update_applies_prepared_physical_correction() -> None:
+def test_lagged_linear_contracts() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     target = jnp.asarray([2.0, -1.0, 4.0])
     problem = nl.NonlinearSystemProblem(
@@ -82,9 +82,6 @@ def test_lagged_linear_update_applies_prepared_physical_correction() -> None:
     assert result.diagnostics.jvp_evaluations > 0
     assert refreshed.internal_state.template.template_id == template_id
     assert refreshed.internal_state.numeric_version == 1
-
-
-def test_lagged_linear_update_refresh_preserves_symbolic_identity() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
@@ -114,9 +111,6 @@ def test_lagged_linear_update_refresh_preserves_symbolic_identity() -> None:
     )
     assert refreshed.internal_state.plan.plan_id == prepared.internal_state.plan.plan_id
     assert refreshed.internal_state.numeric_version == 1
-
-
-def test_lagged_linear_update_rejects_changed_operator_identity() -> None:
     space = la.ArraySpace((2,), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state - 1.0,
@@ -146,9 +140,6 @@ def test_lagged_linear_update_rejects_changed_operator_identity() -> None:
             jnp.zeros((2,)),
             args="changed-operator",
         )
-
-
-def test_lagged_linear_update_fails_closed_on_budget_and_domain_rejection() -> None:
     space = la.ArraySpace((), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state + 1.0,
@@ -182,9 +173,6 @@ def test_lagged_linear_update_fails_closed_on_budget_and_domain_rejection() -> N
     assert rejected.status == int(nl.NonlinearUpdateStatus.DOMAIN_REJECTED)
     assert jnp.array_equal(rejected.state, jnp.asarray(1.0))
     assert jnp.array_equal(rejected.residual, jnp.asarray(2.0))
-
-
-def test_lagged_linear_update_validates_configuration_and_spaces() -> None:
     with pytest.raises(TypeError, match="operator_function"):
         nl.LaggedLinearSolveUpdate(object())
     with pytest.raises(ValueError, match="damping"):

@@ -125,7 +125,7 @@ def _lge_plan(
     )
 
 
-def test_lat_apd_timing_censoring_and_record_boundary() -> None:
+def test_cardiovascular_modalities_scenario_1() -> None:
     timebase = SampleTimeAxis.uniform("ep-1ms", 8, 1.0, MILLISECOND)
     voltage = jnp.asarray(
         [
@@ -183,9 +183,6 @@ def test_lat_apd_timing_censoring_and_record_boundary() -> None:
     np.testing.assert_allclose(apd.duration_ms[0], 4.2916665)
     assert bool(apd.evidence.successful[0])
     assert bool(apd.evidence.activation_censored[1])
-
-
-def test_egm_gauge_electrode_filter_and_timebase_evidence() -> None:
     timebase = SampleTimeAxis.uniform("electrical-1ms", 5, 1.0, MILLISECOND)
     labels = ("e1", "e2", "e3")
     gauge = ElectricalGaugePlan(
@@ -227,9 +224,6 @@ def test_egm_gauge_electrode_filter_and_timebase_evidence() -> None:
     with pytest.raises(TypeError, match="sampled Vm"):
         # ty: ignore[invalid-argument-type]
         plan.observe(jnp.zeros((5, 2)))
-
-
-def test_ecg_lead_reciprocity_and_fail_closed_mismatch() -> None:
     timebase = SampleTimeAxis.uniform("ecg-2ms", 4, 2.0, MILLISECOND)
     electrodes = ("ra", "la", "ll")
     gauge = ElectricalGaugePlan(

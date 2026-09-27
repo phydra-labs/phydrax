@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_public_finite_chain_and_tensor_train_reference_oracles() -> None:
+def test_public_contracts() -> None:
     z = jnp.diag(jnp.asarray([1.0, -1.0], dtype=jnp.complex128))
     state = phx.tensor_network.product_mps(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128)
@@ -23,9 +23,6 @@ def test_public_finite_chain_and_tensor_train_reference_oracles() -> None:
         decomposition.tensor.to_dense(max_entries=dense.size), dense, atol=1e-10
     )
     assert decomposition.evidence.frobenius_error_bound >= 0.0
-
-
-def test_public_network_and_symmetry_reference_oracles() -> None:
     local = jnp.asarray([1.0, 0.0], dtype=jnp.float64).reshape((1, 1, 1, 1, 2))
     state = phx.tensor_network.PEPS((local,), 1, 1)
     contraction = phx.tensor_network.contract_peps_exact(state)
@@ -39,9 +36,6 @@ def test_public_network_and_symmetry_reference_oracles() -> None:
         atol=1e-10,
     )
     assert phx.tensor_network.su2_pentagon_residual(1, 1, 1, 1, 0) < 1e-10
-
-
-def test_public_quantum_instrument_probability_oracle() -> None:
     zero = jnp.asarray([[1.0, 0.0], [0.0, 0.0]], dtype=jnp.complex64)
     one = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.complex64)
     instrument = phx.solver.QuantumInstrument(

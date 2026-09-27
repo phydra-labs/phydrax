@@ -47,7 +47,7 @@ def _structure(positions: Any = None) -> Any:
     return AtomicStructure([8, 1, 1], positions, [15.999, 1.008, 1.008], SCALE)
 
 
-def test_energy_is_rigid_motion_invariant_and_force_is_equivariant() -> None:
+def test_nequip_scenario_1() -> None:
     model = _model()
     structure = _structure()
     reference = energy_and_forces(model, structure, _execution())
@@ -66,9 +66,6 @@ def test_energy_is_rigid_motion_invariant_and_force_is_equivariant() -> None:
     assert observed.provenance.method_id.endswith("nequip-energy")
     assert observed.provenance.conservative_forces
     assert observed.provenance.frozen_candidate_topology
-
-
-def test_conservative_force_matches_energy_finite_difference() -> None:
     model = _model(interaction_count=1)
     batch = AtomisticBatch.from_structure(_structure())
     prediction = energy_and_forces(model, batch, _execution())
@@ -86,6 +83,22 @@ def test_conservative_force_matches_energy_finite_difference() -> None:
     )
     np.testing.assert_allclose(prediction.net_force, 0.0, atol=3e-9)
     np.testing.assert_allclose(prediction.net_torque, 0.0, atol=3e-9)
+    model = _model()
+    structure = _structure()
+    permutation = np.asarray([2, 0, 1])
+    permuted = AtomicStructure(
+        np.asarray(structure.atomic_numbers)[permutation],
+        np.asarray(structure.positions)[permutation],
+        np.asarray(structure.masses)[permutation],
+        SCALE,
+        particle_ids=np.asarray(structure.particle_ids)[permutation],
+    )
+    reference = energy_and_forces(model, structure, _execution())
+    observed = energy_and_forces(model, permuted, _execution())
+    np.testing.assert_allclose(observed.energy, reference.energy, rtol=3e-10, atol=3e-10)
+    np.testing.assert_allclose(
+        observed.forces[0], reference.forces[0][permutation], rtol=3e-9, atol=3e-9
+    )
 
 
 def test_three_atom_energy_is_continuous_when_one_edge_crosses_cutoff() -> None:
@@ -111,28 +124,7 @@ def test_three_atom_energy_is_continuous_when_one_edge_crosses_cutoff() -> None:
     assert abs(float(above - at)) < 1e-5
 
 
-def test_atom_and_species_permutation_preserves_energy_and_permutes_force() -> None:
-    model = _model()
-    structure = _structure()
-    permutation = np.asarray([2, 0, 1])
-    permuted = AtomicStructure(
-        np.asarray(structure.atomic_numbers)[permutation],
-        np.asarray(structure.positions)[permutation],
-        np.asarray(structure.masses)[permutation],
-        SCALE,
-        particle_ids=np.asarray(structure.particle_ids)[permutation],
-    )
-    reference = energy_and_forces(model, structure, _execution())
-    observed = energy_and_forces(model, permuted, _execution())
-    np.testing.assert_allclose(observed.energy, reference.energy, rtol=3e-10, atol=3e-10)
-    np.testing.assert_allclose(
-        observed.forces[0], reference.forces[0][permutation], rtol=3e-9, atol=3e-9
-    )
-
-
-def test_padding_is_masked_and_neighbor_overflow_fails_closed_without_truncation() -> (
-    None
-):
+def test_nequip_scenario_2() -> None:
     model = _model()
     # ty: ignore[invalid-argument-type]
     hydrogen = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], SCALE)
@@ -155,9 +147,6 @@ def test_padding_is_masked_and_neighbor_overflow_fails_closed_without_truncation
     assert bool(jnp.isnan(overflow.energy[0]))
     with pytest.raises(Exception, match="overflow"):
         overflow_model(water, _execution(0))
-
-
-def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps() -> None:
     model = _model()
     reference = AtomicStructure(
         # ty: ignore[invalid-argument-type]
@@ -196,9 +185,6 @@ def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps(
         observed.forces[0, :2], expected.forces[0], rtol=1e-12, atol=1e-12
     )
     np.testing.assert_allclose(observed.forces[0, 2:], 0.0, atol=0.0)
-
-
-def test_radial_modulation_has_one_output_per_actual_tensor_product_weight() -> None:
     model = _model(interaction_count=1)
     interaction = model.interactions[0]
     plan = interaction.tensor_product.plan

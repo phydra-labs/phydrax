@@ -69,7 +69,7 @@ def _runtime() -> Any:
     return system, dynamics, thermodynamic, state
 
 
-def test_restrained_mean_force_estimator_records_finite_stiffness_gradient() -> None:
+def test_learned_free_energy_bias_scenario_1() -> None:
     centers = jnp.asarray([[-1.0], [0.0], [1.0]])
     # ty: ignore[invalid-argument-type]
     plan = phx.atomistic.sampling.RestrainedMeanForcePlan(centers, [10.0])
@@ -85,9 +85,6 @@ def test_restrained_mean_force_estimator_records_finite_stiffness_gradient() -> 
     assert jnp.all(jnp.isfinite(data.gradient_standard_error))
     assert data.free_energy_gradients[0, 0] > 0.0
     assert data.free_energy_gradients[2, 0] < 0.0
-
-
-def test_free_energy_gradient_training_selects_scalar_model() -> None:
     centers = jnp.linspace(-1.5, 1.5, 21)[:, None]
     data = phx.atomistic.sampling.MeanForceData(
         centers,
@@ -108,9 +105,6 @@ def test_free_energy_gradient_training_selects_scalar_model() -> None:
     assert bool(result.valid)
     assert result.validation_loss[-1] < 0.1
     assert jnp.isfinite(result.model(jnp.asarray([0.4]))[0])
-
-
-def test_gauge_aligned_committee_produces_conservative_trusted_bias() -> None:
     system, dynamics, thermodynamic, state = _runtime()
     distance = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]

@@ -73,52 +73,52 @@ def _ligament_comparison_definition() -> Any:
     return definition, positions, blocks
 
 
-@pytest.mark.parametrize("block_index", (0, 1, 2))
-def test_existing_ligament_blocks_supply_energy_force_tangent_and_geometry_derivatives(
-    block_index: Any,
-) -> None:
-    definition, positions, blocks = _ligament_comparison_definition()
-    block = blocks[block_index]
-    rotations = jnp.asarray(
-        (
-            (0.01, -0.02, 0.03),
-            (0.02, 0.01, -0.01),
-            (-0.01, 0.02, 0.01),
-            (0.0, 0.0, 0.0),
-            (0.0, 0.0, 0.0),
+def test_existing_ligament_blocks_supply_energy_force_tangent_and_geometry_derivatives() -> (
+    None
+):
+    for block_index in (0, 1, 2):
+        definition, positions, blocks = _ligament_comparison_definition()
+        block = blocks[block_index]
+        rotations = jnp.asarray(
+            (
+                (0.01, -0.02, 0.03),
+                (0.02, 0.01, -0.01),
+                (-0.01, 0.02, 0.01),
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0),
+            )
         )
-    )
-    displaced = positions.at[1, 1].set(0.04).at[4, 2].set(0.08)
+        displaced = positions.at[1, 1].set(0.04).at[4, 2].set(0.08)
 
-    def energy(flat_positions: Any) -> Any:
-        kinematics = mn.MemberKinematics(
-            flat_positions.reshape(positions.shape), rotations
-        )
-        return block.evaluate(definition, kinematics).energy
+        def energy(flat_positions: Any) -> Any:
+            kinematics = mn.MemberKinematics(
+                flat_positions.reshape(positions.shape), rotations
+            )
+            return block.evaluate(definition, kinematics).energy
 
-    point = displaced.reshape((-1,))
-    force = jax.grad(energy)(point)
-    tangent = jax.jacfwd(jax.grad(energy))(point)
-    hessian = jax.hessian(energy)(point)
-    direction = jnp.linspace(-0.3, 0.4, point.size)
-    direction = direction / jnp.sqrt(jnp.sum(direction**2))
-    step = 1.0e-5
-    finite_force = (
-        energy(point + step * direction) - energy(point - step * direction)
-    ) / (2.0 * step)
-    finite_tangent = (
-        jax.grad(energy)(point + step * direction)
-        - jax.grad(energy)(point - step * direction)
-    ) / (2.0 * step)
-    mode_quantity = jnp.vdot(direction, tangent @ direction)
+        point = displaced.reshape((-1,))
+        force = jax.grad(energy)(point)
+        tangent = jax.jacfwd(jax.grad(energy))(point)
+        hessian = jax.hessian(energy)(point)
+        direction = jnp.linspace(-0.3, 0.4, point.size)
+        direction = direction / jnp.sqrt(jnp.sum(direction**2))
+        step = 1.0e-5
+        finite_force = (
+            energy(point + step * direction) - energy(point - step * direction)
+        ) / (2.0 * step)
+        finite_tangent = (
+            jax.grad(energy)(point + step * direction)
+            - jax.grad(energy)(point - step * direction)
+        ) / (2.0 * step)
+        mode_quantity = jnp.vdot(direction, tangent @ direction)
 
-    assert jnp.all(jnp.isfinite(force))
-    assert jnp.all(jnp.isfinite(tangent))
-    assert jnp.vdot(force, direction) == pytest.approx(finite_force, rel=2.0e-4)
-    assert jnp.allclose(tangent, hessian, atol=1.0e-9, rtol=1.0e-9)
-    assert jnp.allclose(tangent @ direction, finite_tangent, atol=2.0e-4, rtol=2.0e-4)
-    assert jnp.sum(tangent**2) > 0.0
-    assert jnp.isfinite(mode_quantity)
+        assert jnp.all(jnp.isfinite(force))
+        assert jnp.all(jnp.isfinite(tangent))
+        assert jnp.vdot(force, direction) == pytest.approx(finite_force, rel=2.0e-4)
+        assert jnp.allclose(tangent, hessian, atol=1.0e-9, rtol=1.0e-9)
+        assert jnp.allclose(tangent @ direction, finite_tangent, atol=2.0e-4, rtol=2.0e-4)
+        assert jnp.sum(tangent**2) > 0.0
+        assert jnp.isfinite(mode_quantity)
 
 
 def test_existing_ligament_blocks_are_objective_and_frame_route_needs_no_new_block() -> (

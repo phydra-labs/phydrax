@@ -112,7 +112,7 @@ def _assert_complete_moments(refinement: Any, dimension: int, /) -> None:
     assert evidence.source_gap_count == evidence.source_double_count == 0
 
 
-def test_identical_meshes_give_the_diagonal_with_certified_measures() -> None:
+def test_supermesh_scenario_1() -> None:
     mesh = _perturbed_triangles(6, 3)
     refinement = prepare_common_refinement(mesh, mesh)
 
@@ -133,9 +133,6 @@ def test_identical_meshes_give_the_diagonal_with_certified_measures() -> None:
     # Neighbors sharing a face only touch: exact classification drops them.
     assert refinement.evidence.candidate_pair_count > refinement.entry_count
     assert refinement.source_mesh_id == refinement.target_mesh_id == mesh.mesh_id
-
-
-def test_nonmatching_mixed_polygon_meshes_partition_moments_and_simplices() -> None:
     points, quads = _grid(5)
     # Moving vertex (0.4, 0.4) inward turns its lower-left quadrilateral into a
     # nonconvex dart that needs a certified cone from a vertex.
@@ -176,9 +173,6 @@ def test_nonmatching_mixed_polygon_meshes_partition_moments_and_simplices() -> N
     assert np.all(np.diff(rows) >= 0)
     ordered = np.lexsort((np.asarray(refinement.source_cells), rows))
     np.testing.assert_array_equal(ordered, np.arange(rows.size))
-
-
-def test_nonconvex_quadrilateral_cone_is_certified() -> None:
     # Reflex vertex (1, 1): the cone from vertex 0 folds, the cone from vertex 1
     # is certified.
     dart = CellMesh.from_polygons(
@@ -199,7 +193,7 @@ def test_nonconvex_quadrilateral_cone_is_certified() -> None:
     np.testing.assert_allclose(refinement.first_moments[0], (1.0, 1.0), rtol=1e-14)
 
 
-def test_three_dimensional_cells_of_every_kind_refine_the_unit_cube() -> None:
+def test_supermesh_scenario_2() -> None:
     tetrahedra = _kuhn_tetrahedra(3)
     hexahedra = _hexahedra(2)
     points, corners = _cube_lattice(2)
@@ -242,9 +236,6 @@ def test_three_dimensional_cells_of_every_kind_refine_the_unit_cube() -> None:
     )
     assert refinement.succeeded
     assert float(np.sum(refinement.volumes)) == pytest.approx(1.0 / 6.0, rel=1e-14)
-
-
-def test_partial_coverage_fails_closed_unless_the_requirement_allows_it() -> None:
     source = _quad_mesh(4)
     points, quads = _grid(2)
     inner = CellMesh(0.5 * points + 0.25, (CellBlock("inner", "quadrilateral", quads),))
@@ -266,9 +257,6 @@ def test_partial_coverage_fails_closed_unless_the_requirement_allows_it() -> Non
     assert covered_target.succeeded
     assert covered_source.status is CommonRefinementStatus.COVERAGE_GAP
     np.testing.assert_allclose(np.sum(complete.volumes), 0.25, rtol=1e-14)
-
-
-def test_double_coverage_is_reported_for_overlapping_cells() -> None:
     # Two cells covering [0.5, 1] x [0, 1] twice.
     overlapping = CellMesh.from_polygons(
         np.asarray(
@@ -291,7 +279,7 @@ def test_double_coverage_is_reported_for_overlapping_cells() -> None:
     assert refinement.evidence.target_double_count == 2
 
 
-def test_uncertain_and_uncertified_cells_fail_closed() -> None:
+def test_supermesh_scenario_3() -> None:
     # Nearly collinear corner: the filter cannot resolve it, exact predicates can.
     sliver = np.asarray(((0.5, 0.5), (12.0, 12.0), (24.0, 24.0 + 2.0**-48)))
     # ty: ignore[invalid-argument-type]
@@ -321,9 +309,6 @@ def test_uncertain_and_uncertified_cells_fail_closed() -> None:
     assert outside.status is CommonRefinementStatus.PREDICATE_UNCERTAIN
     assert invalid.status is CommonRefinementStatus.INVALID_GEOMETRY
     assert invalid.evidence.invalid_cell_count == 1
-
-
-def test_resource_limits_refuse_without_partial_entries() -> None:
     source = _quad_mesh(6)
     target = _perturbed_triangles(5, 1)
     baseline = prepare_common_refinement(source, target)
@@ -338,9 +323,6 @@ def test_resource_limits_refuse_without_partial_entries() -> None:
         np.testing.assert_array_equal(refused.target_offsets, 0)
     assert baseline.succeeded
     assert baseline.evidence.retained_bytes > 0
-
-
-def test_preparation_is_deterministic_and_validates_its_inputs() -> None:
     source = _quad_mesh(3)
     target = _perturbed_triangles(4, 2)
     first = prepare_common_refinement(source, target)

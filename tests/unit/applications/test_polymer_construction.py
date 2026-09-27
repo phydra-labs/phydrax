@@ -53,7 +53,7 @@ def _source() -> Any:
     }
 
 
-def test_recipe_adapter_and_lowering_preserve_explicit_material_semantics() -> None:
+def test_polymer_construction_scenario_1() -> None:
     adapted = pc.polymer_recipe_from_mapping(
         _source(), phx.atomistic.AtomisticUnitSystem.reduced()
     )
@@ -67,40 +67,6 @@ def test_recipe_adapter_and_lowering_preserve_explicit_material_semantics() -> N
     assert (
         pc.polymer_recipe_to_mapping(adapted.recipe)["material_id"] == "two-chain-network"
     )
-
-
-def test_admitted_recipe_requires_the_exact_trusted_manifest(tmp_path: Any) -> None:
-    payload = json.dumps(_source()).encode()
-    (tmp_path / "recipe.json").write_bytes(payload)
-    manifest = ArtifactManifest(
-        artifact_id="polymer-recipe",
-        producer="independent-test",
-        version="1",
-        sha256=hashlib.sha256(payload).hexdigest(),
-        byte_size=len(payload),
-        source_uri="https://example.invalid/polymer-recipe",
-        license_id="CC-BY-4.0",
-        model="polymer-recipe-json",
-        coverage="unit-test",
-    )
-    policy = ExternalArtifactPolicy(
-        tmp_path,
-        maximum_bytes=4096,
-        allowed_license_ids=("CC-BY-4.0",),
-        allowed_suffixes=(".json",),
-    )
-    admitted = admit_external_artifact("recipe.json", manifest, policy=policy)
-    result = pc.polymer_recipe_from_admitted_json(
-        admitted,
-        manifest,
-        phx.atomistic.AtomisticUnitSystem.reduced(),
-        policy=policy,
-    )
-
-    assert result.recipe.material_id == "two-chain-network"
-
-
-def test_nonperiodic_reaction_epoch_is_atomic_and_network_observable() -> None:
     adapted = pc.polymer_recipe_from_mapping(
         _source(), phx.atomistic.AtomisticUnitSystem.reduced()
     )
@@ -134,9 +100,6 @@ def test_nonperiodic_reaction_epoch_is_atomic_and_network_observable() -> None:
     assert repair.event.reaction_kind is pc.PolymerReactionKind.REPAIR
     assert int(repaired_network.component_count) == 2
     np.testing.assert_allclose(repaired_network.conversion, 0.0)
-
-
-def test_periodic_cure_requires_explicit_winding_and_detects_spanning_cycle() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 8.0)
     adapted = pc.polymer_recipe_from_mapping(
         _source(), phx.atomistic.AtomisticUnitSystem.reduced(), cell=cell
@@ -170,3 +133,34 @@ def test_periodic_cure_requires_explicit_winding_and_detects_spanning_cycle() ->
     assert int(network.cycle_rank) == 1
     assert network.periodic_spanning
     np.testing.assert_array_equal(second.state.image_counts[2:4], [[1, 0, 0], [1, 0, 0]])
+
+
+def test_admitted_recipe_requires_the_exact_trusted_manifest(tmp_path: Any) -> None:
+    payload = json.dumps(_source()).encode()
+    (tmp_path / "recipe.json").write_bytes(payload)
+    manifest = ArtifactManifest(
+        artifact_id="polymer-recipe",
+        producer="independent-test",
+        version="1",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        byte_size=len(payload),
+        source_uri="https://example.invalid/polymer-recipe",
+        license_id="CC-BY-4.0",
+        model="polymer-recipe-json",
+        coverage="unit-test",
+    )
+    policy = ExternalArtifactPolicy(
+        tmp_path,
+        maximum_bytes=4096,
+        allowed_license_ids=("CC-BY-4.0",),
+        allowed_suffixes=(".json",),
+    )
+    admitted = admit_external_artifact("recipe.json", manifest, policy=policy)
+    result = pc.polymer_recipe_from_admitted_json(
+        admitted,
+        manifest,
+        phx.atomistic.AtomisticUnitSystem.reduced(),
+        policy=policy,
+    )
+
+    assert result.recipe.material_id == "two-chain-network"

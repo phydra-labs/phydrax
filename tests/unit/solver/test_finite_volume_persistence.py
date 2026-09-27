@@ -190,7 +190,7 @@ def _replace_journal(state: Any, journal: Any, *, content_state: Any = None) -> 
     )
 
 
-def test_case_schema_is_content_addressed_and_strict() -> None:
+def test_finite_volume_persistence_scenario_1() -> None:
     runtime, _, _ = _prepared_runtime()
     execution = phx.solver.FiniteVolumeExecutionSpec(1.0, 1000)
     case = phx.solver.FiniteVolumeCaseSpec(
@@ -210,6 +210,72 @@ def test_case_schema_is_content_addressed_and_strict() -> None:
         phx.solver.FiniteVolumeCaseSpec.validate_dict(
             {**payload, "misspelled_flux": "HLLC"}
         )
+    _, _, state = _prepared_runtime()
+    initial = state.topology_journal.epoch_table[0]
+    malformed_epoch = initial.to_archive_record()
+    malformed_epoch["geometry_id"] = "changed-geometry"
+    with pytest.raises(ValueError, match="epoch archive identity"):
+        phx.discretization.TopologyEpoch.from_archive_record(malformed_epoch)
+    malformed_artifacts = state.topology_journal.artifact_table[0].to_archive_record()
+    malformed_artifacts["prepared_id"] = "changed-preparation"
+    with pytest.raises(ValueError, match="artifacts archive identity"):
+        phx.solver.FiniteVolumeTopologyArtifacts.from_archive_record(
+            malformed_artifacts,
+            initial,
+        )
+
+    request = phx.solver.FiniteVolumeTopologyEventRequest(
+        phx.solver.TopologyEventKind.REMESH,
+        initial.epoch_id,
+        "requested-topology",
+        reason="archive-validation",
+    )
+    journal = state.topology_journal.append_requested(request, 7, state.time).fail(
+        0,
+        result_id="rejected-topology",
+    )
+    malformed_journal = copy.deepcopy(journal.to_archive_record())
+    malformed_journal["events"][0]["state"] = int(phx.solver.TopologyEventState.COMMITTED)
+    with pytest.raises(ValueError, match="committed event"):
+        phx.solver.FiniteVolumeTopologyEventJournal.from_archive_record(
+            malformed_journal,
+            journal.archive_arrays(),
+        )
+    payload = {
+        "name": "loaded-euler",
+        "grid": {
+            "cells": 16,
+            "lower": 0.0,
+            "upper": 1.0,
+            "periodic": True,
+        },
+        "equation": {
+            "type": "ideal_gas_euler",
+            "gamma": 1.4,
+            "gas_constant": 1.0,
+        },
+        "method": {
+            "reconstruction": "muscl",
+            "flux": "hllc",
+        },
+        "boundary": {"type": "periodic"},
+        "execution": {"end_time": 0.1, "maximum_steps": 100},
+        "precision": {"dtype": "float64"},
+    }
+    prepared = phx.solver.load_finite_volume_case(payload)
+    assert isinstance(
+        prepared.discretization,
+        phx.discretization.FiniteVolumeDiscretization,
+    )
+
+    assert prepared.discretization.cell_shape == (16,)
+    assert prepared.runtime.dynamics.system.component_names == (
+        "density",
+        "momentum_0",
+        "total_energy",
+    )
+    with pytest.raises(ValueError, match="unknown"):
+        phx.solver.load_finite_volume_case({**payload, "misspelled_method": "hllc"})
 
 
 def test_checkpoint_roundtrip_preserves_exact_runtime_state(tmp_path: Any) -> None:
@@ -467,40 +533,6 @@ def test_checkpoint_rejects_manifest_corruption(tmp_path: Any) -> None:
         phx.solver.read_finite_volume_checkpoint(path, plan)
 
 
-def test_topology_archive_reconstruction_rejects_malformed_epoch_and_event() -> None:
-    _, _, state = _prepared_runtime()
-    initial = state.topology_journal.epoch_table[0]
-    malformed_epoch = initial.to_archive_record()
-    malformed_epoch["geometry_id"] = "changed-geometry"
-    with pytest.raises(ValueError, match="epoch archive identity"):
-        phx.discretization.TopologyEpoch.from_archive_record(malformed_epoch)
-    malformed_artifacts = state.topology_journal.artifact_table[0].to_archive_record()
-    malformed_artifacts["prepared_id"] = "changed-preparation"
-    with pytest.raises(ValueError, match="artifacts archive identity"):
-        phx.solver.FiniteVolumeTopologyArtifacts.from_archive_record(
-            malformed_artifacts,
-            initial,
-        )
-
-    request = phx.solver.FiniteVolumeTopologyEventRequest(
-        phx.solver.TopologyEventKind.REMESH,
-        initial.epoch_id,
-        "requested-topology",
-        reason="archive-validation",
-    )
-    journal = state.topology_journal.append_requested(request, 7, state.time).fail(
-        0,
-        result_id="rejected-topology",
-    )
-    malformed_journal = copy.deepcopy(journal.to_archive_record())
-    malformed_journal["events"][0]["state"] = int(phx.solver.TopologyEventState.COMMITTED)
-    with pytest.raises(ValueError, match="committed event"):
-        phx.solver.FiniteVolumeTopologyEventJournal.from_archive_record(
-            malformed_journal,
-            journal.archive_arrays(),
-        )
-
-
 def test_output_plan_is_explicitly_optional_when_h5py_is_unavailable(
     tmp_path: Any,
 ) -> None:
@@ -514,44 +546,6 @@ def test_output_plan_is_explicitly_optional_when_h5py_is_unavailable(
         assert index == 0
         assert Path(plan.hdf5_path).exists()
         assert Path(plan.xdmf_path).exists()
-
-
-def test_allowlisted_case_loader_builds_portable_runtime() -> None:
-    payload = {
-        "name": "loaded-euler",
-        "grid": {
-            "cells": 16,
-            "lower": 0.0,
-            "upper": 1.0,
-            "periodic": True,
-        },
-        "equation": {
-            "type": "ideal_gas_euler",
-            "gamma": 1.4,
-            "gas_constant": 1.0,
-        },
-        "method": {
-            "reconstruction": "muscl",
-            "flux": "hllc",
-        },
-        "boundary": {"type": "periodic"},
-        "execution": {"end_time": 0.1, "maximum_steps": 100},
-        "precision": {"dtype": "float64"},
-    }
-    prepared = phx.solver.load_finite_volume_case(payload)
-    assert isinstance(
-        prepared.discretization,
-        phx.discretization.FiniteVolumeDiscretization,
-    )
-
-    assert prepared.discretization.cell_shape == (16,)
-    assert prepared.runtime.dynamics.system.component_names == (
-        "density",
-        "momentum_0",
-        "total_energy",
-    )
-    with pytest.raises(ValueError, match="unknown"):
-        phx.solver.load_finite_volume_case({**payload, "misspelled_method": "hllc"})
 
 
 def test_interrupted_checkpoint_trajectory_matches_uninterrupted(tmp_path: Any) -> None:

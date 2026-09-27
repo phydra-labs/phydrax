@@ -45,7 +45,7 @@ def _linear_kernel(parameters: Any, states: Any) -> Any:
     return parameters.reshape(parameter_shape) * jnp.sum(states, axis=-1)
 
 
-def test_open_factor_capabilities_are_enforced_and_reported() -> None:
+def test_advanced_inference_scenario_1() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
     selections = (
         phx.pgm.VariableSelection(variables, [0]),
@@ -88,9 +88,6 @@ def test_open_factor_capabilities_are_enforced_and_reported() -> None:
     unsupported_graph = phx.pgm.DiscreteFactorGraph((variables,), (unsupported,))
     with pytest.raises(ValueError, match="sum-product"):
         phx.pgm.prepare_belief_propagation(unsupported_graph)
-
-
-def test_sparse_enumerated_bp_never_materializes_dense_support() -> None:
     variables = phx.pgm.DiscreteVariableGroup(
         "x",
         shape=(2,),
@@ -129,9 +126,6 @@ def test_sparse_enumerated_bp_never_materializes_dense_support() -> None:
     assert result.factor_probabilities[0].shape == (1, 3)
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(result.factor_probabilities[0][0], supported_probabilities)
-
-
-def test_precision_policy_places_factor_messages_and_outputs_by_stage() -> None:
     graph = _chain_graph(2)
     precision = phx.pgm.FactorGraphPrecisionPolicy(
         evaluation_dtype="float32",
@@ -155,7 +149,7 @@ def test_precision_policy_places_factor_messages_and_outputs_by_stage() -> None:
     assert dict(result.provenance.configuration)["accumulation_dtype"] == "float64"
 
 
-def test_directed_forest_and_native_batches_match_exact_inference() -> None:
+def test_advanced_inference_scenario_2() -> None:
     graph = _chain_graph(4)
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_belief_propagation(graph)
@@ -186,9 +180,6 @@ def test_directed_forest_and_native_batches_match_exact_inference() -> None:
     assert jnp.all(batched.results.successful)
     assert packed.num_graphs == 2
     assert len(phx.pgm.enumerate_packed_factor_graphs(packed)) == 2
-
-
-def test_loopy_schedule_acceleration_and_qualified_implicit_root() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_belief_propagation(
         graph,
@@ -226,9 +217,6 @@ def test_loopy_schedule_acceleration_and_qualified_implicit_root() -> None:
             state,
             schedule=phx.pgm.BeliefPropagationSchedulePolicy("forest"),
         )
-
-
-def test_elimination_junction_law_and_map_bounds_are_truthful() -> None:
     graph = _chain_graph()
     exact = phx.pgm.enumerate_factor_graph(graph)
     plan = phx.pgm.plan_variable_elimination(graph)
@@ -289,7 +277,7 @@ def test_elimination_junction_law_and_map_bounds_are_truthful() -> None:
         )
 
 
-def test_explicit_evidence_must_match_structure_and_flat_state_axis() -> None:
+def test_advanced_inference_scenario_3() -> None:
     graph = _chain_graph(2)
     prepared = phx.pgm.prepare_belief_propagation(graph)
     wrong_structure = phx.pgm.VariableStateValues(
@@ -334,9 +322,6 @@ def test_explicit_evidence_must_match_structure_and_flat_state_axis() -> None:
         phx.pgm.run_belief_propagation(prepared, malformed)
     with pytest.raises(ValueError, match="shape"):
         phx.pgm.run_implicit_belief_propagation(prepared, malformed)
-
-
-def test_implicit_bp_preserves_feasible_negative_infinity_support() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(2,), num_states=2)
     factor = phx.pgm.DenseTableFactorGroup(
         (
@@ -369,9 +354,6 @@ def test_implicit_bp_preserves_feasible_negative_infinity_support() -> None:
         phx.pgm.initialize_belief_propagation(impossible_prepared),
     ).inference
     assert impossible.status == int(phx.pgm.BeliefPropagationStatus.INFEASIBLE)
-
-
-def test_bethe_likelihood_rejects_unconverged_inference() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_belief_propagation(graph)
     inference = phx.pgm.run_belief_propagation(

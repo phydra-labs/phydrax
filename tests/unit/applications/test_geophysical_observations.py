@@ -151,7 +151,7 @@ def _case(*, stochastic: Any = False, lineage: Any = None, mask: Any = None) -> 
     return problem, truth, layout
 
 
-def test_station_vertical_interpolation_and_periodic_transpose() -> None:
+def test_geophysical_observations_scenario_1() -> None:
     source = _space(("longitude", "pressure"), (4, 3), "longitude-pressure-grid")
     quantity = GeophysicalQuantity("temperature", "temperature", KELVIN)
     operator = prepare_tensor_observation_operator(
@@ -209,9 +209,6 @@ def test_station_vertical_interpolation_and_periodic_transpose() -> None:
             source_support_id="different-grid",
             time=GeophysicalTimeSpec(),
         )
-
-
-def test_missing_qc_representativeness_and_physical_unit_conversion() -> None:
     operator = _operator(GeophysicalQuantity("pressure", "pressure", PASCAL))
     prepared = prepare_geophysical_observations(
         operator,
@@ -258,41 +255,36 @@ def test_missing_qc_representativeness_and_physical_unit_conversion() -> None:
             time=operator.time,
             target_support_id=operator.transfer.target.support_id,
         )
+    for mismatch in ["shape", "mask", "quantity", "time", "support", "temporal"]:
+        operator = _operator()
+        values = [[1.0, 2.0]]
+        kwargs = {}
+        if mismatch == "shape":
+            values = [[1.0]]
+        elif mismatch == "mask":
+            kwargs["availability"] = np.array([True, False])
+        elif mismatch == "quantity":
+            kwargs["quantity"] = GeophysicalQuantity("temperature", "temperature", KELVIN)
+        elif mismatch == "time":
+            kwargs["time"] = GeophysicalTimeSpec(calendar="360_day", unit="d")
+        elif mismatch == "support":
+            kwargs["target_support_id"] = "same-shape-other-stations"
+        else:
+            kwargs["temporal"] = TemporalSupport("mean", [[0.0, 1.0]], "end")
+        with pytest.raises(ValueError):
+            _prepare(operator, values, **kwargs)
+        if mismatch == "temporal":
+            with pytest.raises(ValueError, match="instantaneous"):
+                GeophysicalObservationOperator(
+                    operator.transfer,
+                    operator.quantity,
+                    time=operator.time,
+                    # ty: ignore[invalid-argument-type]
+                    temporal=kwargs["temporal"],
+                )
 
 
-@pytest.mark.parametrize(
-    "mismatch", ["shape", "mask", "quantity", "time", "support", "temporal"]
-)
-def test_shape_support_quantity_and_time_semantics_rejected(mismatch: Any) -> None:
-    operator = _operator()
-    values = [[1.0, 2.0]]
-    kwargs = {}
-    if mismatch == "shape":
-        values = [[1.0]]
-    elif mismatch == "mask":
-        kwargs["availability"] = np.array([True, False])
-    elif mismatch == "quantity":
-        kwargs["quantity"] = GeophysicalQuantity("temperature", "temperature", KELVIN)
-    elif mismatch == "time":
-        kwargs["time"] = GeophysicalTimeSpec(calendar="360_day", unit="d")
-    elif mismatch == "support":
-        kwargs["target_support_id"] = "same-shape-other-stations"
-    else:
-        kwargs["temporal"] = TemporalSupport("mean", [[0.0, 1.0]], "end")
-    with pytest.raises(ValueError):
-        _prepare(operator, values, **kwargs)
-    if mismatch == "temporal":
-        with pytest.raises(ValueError, match="instantaneous"):
-            GeophysicalObservationOperator(
-                operator.transfer,
-                operator.quantity,
-                time=operator.time,
-                # ty: ignore[invalid-argument-type]
-                temporal=kwargs["temporal"],
-            )
-
-
-def test_linear_gaussian_limit_with_partial_missing_observations() -> None:
+def test_geophysical_observations_scenario_2() -> None:
     mask = np.array([[True, False], [True, True]])
     problem, truth, _ = _case(mask=mask)
     state = initialize_ensemble_filter(jax.random.key(5), problem, ensemble_size=12)
@@ -328,9 +320,6 @@ def test_linear_gaussian_limit_with_partial_missing_observations() -> None:
         assert int(record.observed_count) == len(selected)
     assert np.linalg.norm(mean - np.asarray(truth[-1])) < initial_error * 0.1
     assert np.trace(covariance) < 0.03
-
-
-def test_all_missing_keeps_mean_and_native_inflation_scales_covariance() -> None:
     problem, _, _ = _case(mask=np.zeros((2, 2), dtype="bool"))
     state = initialize_ensemble_filter(
         jax.random.key(8), problem, ensemble_size=10, inflation=1.2
@@ -346,45 +335,6 @@ def test_all_missing_keeps_mean_and_native_inflation_scales_covariance() -> None
         atol=1e-12,
     )
     assert int(step.observed_count) == 0
-
-
-def test_restart_preserves_internal_noise_and_axis_lineage(tmp_path: Any) -> None:
-    lineage = _lineage()
-    key = jax.random.key(27)
-    np.testing.assert_array_equal(
-        jax.random.key_data(lineage.key(key, "internal_stochastic", member=4, step=7)),
-        jax.random.key_data(
-            _lineage(reverse=True).key(key, "internal_stochastic", member=4, step=7)
-        ),
-    )
-    assert not np.array_equal(
-        jax.random.key_data(lineage.key(key, "initial_condition")),
-        jax.random.key_data(lineage.key(key, "internal_stochastic")),
-    )
-    problem, _, _ = _case(stochastic=True, lineage=lineage)
-    altered, _, _ = _case(stochastic=True, lineage=_lineage(internal="other-noise"))
-    state = initialize_ensemble_filter(key, problem, ensemble_size=10)
-    # Changing internal forcing must not resample the initial-condition axis.
-    np.testing.assert_array_equal(
-        state.ensemble,
-        initialize_ensemble_filter(key, altered, ensemble_size=10).ensemble,
-    )
-    state, _ = ensemble_filter_step(problem, state)
-    path = tmp_path / "restart.npz"
-    write_ensemble_filter_checkpoint(path, problem, state)
-    restarted = read_ensemble_filter_checkpoint(path, problem, ensemble_size=10)
-    uninterrupted, _ = ensemble_filter_step(problem, state)
-    resumed, _ = ensemble_filter_step(problem, restarted)
-    np.testing.assert_array_equal(resumed.ensemble, uninterrupted.ensemble)
-    np.testing.assert_array_equal(
-        jax.random.key_data(resumed.root_key), jax.random.key_data(key)
-    )
-    assert resumed.step_index == 2
-    with pytest.raises(CheckpointCompatibilityError):
-        read_ensemble_filter_checkpoint(path, altered, ensemble_size=10)
-
-
-def test_analysis_heat_inventory_and_native_smoothing() -> None:
     problem, truth, layout = _case()
     result = ensemble_transform_kalman_filter(
         jax.random.key(9),
@@ -427,6 +377,42 @@ def test_analysis_heat_inventory_and_native_smoothing() -> None:
                 ),
             ),
         )
+
+
+def test_restart_preserves_internal_noise_and_axis_lineage(tmp_path: Any) -> None:
+    lineage = _lineage()
+    key = jax.random.key(27)
+    np.testing.assert_array_equal(
+        jax.random.key_data(lineage.key(key, "internal_stochastic", member=4, step=7)),
+        jax.random.key_data(
+            _lineage(reverse=True).key(key, "internal_stochastic", member=4, step=7)
+        ),
+    )
+    assert not np.array_equal(
+        jax.random.key_data(lineage.key(key, "initial_condition")),
+        jax.random.key_data(lineage.key(key, "internal_stochastic")),
+    )
+    problem, _, _ = _case(stochastic=True, lineage=lineage)
+    altered, _, _ = _case(stochastic=True, lineage=_lineage(internal="other-noise"))
+    state = initialize_ensemble_filter(key, problem, ensemble_size=10)
+    # Changing internal forcing must not resample the initial-condition axis.
+    np.testing.assert_array_equal(
+        state.ensemble,
+        initialize_ensemble_filter(key, altered, ensemble_size=10).ensemble,
+    )
+    state, _ = ensemble_filter_step(problem, state)
+    path = tmp_path / "restart.npz"
+    write_ensemble_filter_checkpoint(path, problem, state)
+    restarted = read_ensemble_filter_checkpoint(path, problem, ensemble_size=10)
+    uninterrupted, _ = ensemble_filter_step(problem, state)
+    resumed, _ = ensemble_filter_step(problem, restarted)
+    np.testing.assert_array_equal(resumed.ensemble, uninterrupted.ensemble)
+    np.testing.assert_array_equal(
+        jax.random.key_data(resumed.root_key), jax.random.key_data(key)
+    )
+    assert resumed.step_index == 2
+    with pytest.raises(CheckpointCompatibilityError):
+        read_ensemble_filter_checkpoint(path, altered, ensemble_size=10)
 
 
 def test_native_model_adapter_rejects_wrong_support_clock_and_changing_shape() -> None:

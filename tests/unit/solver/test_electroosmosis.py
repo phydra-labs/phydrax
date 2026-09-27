@@ -66,7 +66,7 @@ def _resolved_plan() -> Any:
     return operators, plan
 
 
-def test_resolved_electroosmotic_equilibrium_commits_atomically() -> None:
+def test_electroosmosis_scenario_1() -> None:
     operators, plan = _resolved_plan()
     concentrations = jnp.ones((8, 8, 2))
     velocity = tuple(
@@ -81,9 +81,6 @@ def test_resolved_electroosmotic_equilibrium_commits_atomically() -> None:
     np.testing.assert_allclose(result.ledger.species_content_defect, 0.0)
     assert result.ledger.divergence_norm < 1.0e-12
     assert result.force.fluid_power == 0.0
-
-
-def test_resolved_electroosmotic_failure_rolls_back_whole_state() -> None:
     operators, plan = _resolved_plan()
     concentrations = jnp.ones((8, 8, 2))
     velocity = tuple(
@@ -97,9 +94,6 @@ def test_resolved_electroosmotic_failure_rolls_back_whole_state() -> None:
     np.testing.assert_array_equal(result.accepted.concentrations, state.concentrations)
     for accepted, incoming in zip(result.accepted.velocity, state.velocity, strict=True):
         np.testing.assert_array_equal(accepted, incoming)
-
-
-def test_thin_edl_slip_admits_only_electroneutral_thin_low_dukhin_state() -> None:
     plan = phx.solver.ThinEDLElectroosmoticSlipPlan(
         permittivity=7.0e-10,
         dynamic_viscosity=1.0e-3,

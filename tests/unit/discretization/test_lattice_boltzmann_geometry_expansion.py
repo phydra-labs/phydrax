@@ -54,7 +54,7 @@ def _prepare_amr(plan: Any, *, kinematic_viscosity: Any = 0.05) -> Any:
     return plan.prepare(precision, scalings), rates, tuple(scalings)
 
 
-def test_geometry_epoch_and_population_transfer_are_conservative() -> None:
+def test_lattice_boltzmann_geometry_expansion_scenario_1() -> None:
     discretization = _discretization()
     source_snapshot = phx.discretization.LatticeBoltzmannGeometrySnapshot.all_fluid(
         discretization
@@ -80,9 +80,13 @@ def test_geometry_epoch_and_population_transfer_are_conservative() -> None:
     assert result.evidence.passed
     assert not bool(target.fluid_mask[3, 4])
     assert jnp.all(jnp.isfinite(result.populations))
-
-
-def test_amr_restriction_and_prolongation_preserve_moments() -> None:
+    with pytest.raises(ValueError, match="LatticeBoltzmannGeometrySensitivityPolicy"):
+        LatticeBoltzmannGeometrySensitivityPolicy(
+            mode=phx.BranchDifferentiationPolicy.FROZEN_DECISION
+        )
+    with pytest.raises(TypeError, match="BranchDifferentiationPolicy"):
+        # ty: ignore[invalid-argument-type]
+        LatticeBoltzmannGeometrySensitivityPolicy(mode="branchwise")
     lattice = phx.discretization.D2Q9()
     transfer = LatticeBoltzmannAMRTransferPlan(lattice)
     fine = jnp.broadcast_to(jnp.asarray(lattice.weights), (8, 8, 9))
@@ -94,9 +98,6 @@ def test_amr_restriction_and_prolongation_preserve_moments() -> None:
     assert restricted.successful
     assert prolonged_evidence.successful
     np.testing.assert_allclose(prolonged, fine, atol=1e-14)
-
-
-def test_ratio_two_amr_subcycles_only_active_fine_blocks() -> None:
     lattice = phx.discretization.D2Q9()
     transfer = LatticeBoltzmannAMRTransferPlan(lattice)
     plan = phx.discretization.LatticeBoltzmannAMRPlan(transfer)
@@ -162,9 +163,6 @@ def test_ratio_two_amr_subcycles_only_active_fine_blocks() -> None:
         fine[~fine_active],
     )
     np.testing.assert_array_equal(failed.accepted_state.level_populations[1], fine)
-
-
-def test_ratio_three_three_level_amr_recurses_with_static_substeps() -> None:
     lattice = phx.discretization.D2Q9()
     transfer = LatticeBoltzmannAMRTransferPlan(lattice, refinement_ratio=3)
     plan = phx.discretization.LatticeBoltzmannAMRPlan(
@@ -203,7 +201,7 @@ def test_ratio_three_three_level_amr_recurses_with_static_substeps() -> None:
         np.testing.assert_allclose(actual, expected, atol=1.0e-14)
 
 
-def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time() -> None:
+def test_lattice_boltzmann_geometry_expansion_scenario_2() -> None:
     lattice = phx.discretization.D2Q9()
     transfer = phx.discretization.LatticeBoltzmannAMRTransferPlan(lattice)
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
@@ -311,9 +309,6 @@ def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time() 
     assert not failed.successful
     np.testing.assert_array_equal(failed.accepted_state.level_populations[0], coarse)
     np.testing.assert_array_equal(failed.accepted_state.level_populations[1], fine)
-
-
-def test_fixed_branch_geometry_jvp_has_explicit_validity() -> None:
     policy = LatticeBoltzmannGeometrySensitivityPolicy(
         mode=phx.BranchDifferentiationPolicy.BRANCHWISE
     )
@@ -342,19 +337,6 @@ def test_fixed_branch_geometry_jvp_has_explicit_validity() -> None:
         is phx.GradientLevel.ALMOST_EVERYWHERE
     )
     assert contract.conditions == ("executed-branch",)
-
-
-def test_geometry_sensitivity_policy_rejects_unsupported_branch_policies() -> None:
-    with pytest.raises(ValueError, match="LatticeBoltzmannGeometrySensitivityPolicy"):
-        LatticeBoltzmannGeometrySensitivityPolicy(
-            mode=phx.BranchDifferentiationPolicy.FROZEN_DECISION
-        )
-    with pytest.raises(TypeError, match="BranchDifferentiationPolicy"):
-        # ty: ignore[invalid-argument-type]
-        LatticeBoltzmannGeometrySensitivityPolicy(mode="branchwise")
-
-
-def test_immersed_direct_forcing_balances_body_load_and_target_velocity() -> None:
     discretization = _discretization()
     plan = phx.discretization.ImmersedBoundaryForcingPlan(
         discretization,
@@ -435,7 +417,7 @@ def test_multiblock_exchange_is_same_step_and_orientation_reciprocal() -> None:
     )
 
 
-def test_identity_mapped_lattice_preserves_a_constant_free_stream() -> None:
+def test_lattice_boltzmann_geometry_expansion_scenario_3() -> None:
     count = 8
     cell_grid = phx.discretization.TensorGridPlan(
         (
@@ -479,6 +461,72 @@ def test_identity_mapped_lattice_preserves_a_constant_free_stream() -> None:
     assert result.successful
     np.testing.assert_allclose(result.evidence.free_stream_residual, 0.0, atol=1e-14)
     np.testing.assert_array_equal(result.populations, populations)
+    discretization = _discretization((32, 32))
+    geometry = phx.geometry.Circle((0.5, 0.5), 0.2).compile()
+    prepared = phx.discretization.prepare_lattice_boltzmann_link_geometry(
+        discretization,
+        geometry,
+        body_name="circle",
+    )
+    blocked = jnp.isfinite(prepared.link_geometry.link_fraction)
+
+    assert prepared.evidence.passed
+    assert prepared.evidence.blocked_link_count > 0
+    assert prepared.link_geometry.body_names == ("circle",)
+    assert jnp.all(
+        (prepared.boundary_fraction[blocked] > 0.0)
+        & (prepared.boundary_fraction[blocked] <= 1.0)
+    )
+    np.testing.assert_allclose(
+        jnp.sqrt(jnp.sum(prepared.boundary_normals[blocked] ** 2, axis=-1)),
+        1.0,
+        atol=1e-12,
+    )
+    centers = jnp.asarray(discretization.grid.points).reshape(
+        discretization.grid.shape + (2,)
+    )
+    velocities = jnp.asarray(discretization.velocity_set.velocities)
+    intersection = centers[..., None, :] - (
+        prepared.boundary_fraction[..., None] * discretization.cell_size * velocities
+    )
+    expected_normal = intersection - jnp.asarray((0.5, 0.5))
+    expected_normal = (
+        expected_normal / jnp.sqrt(jnp.sum(expected_normal**2, axis=-1))[..., None]
+    )
+    np.testing.assert_allclose(
+        prepared.boundary_normals[blocked],
+        expected_normal[blocked],
+        atol=2e-12,
+    )
+    coordinates = jnp.asarray(
+        (
+            (0.0, 0.0),
+            (0.0, 0.5),
+            (0.0, 1.0),
+        ),
+        dtype=jnp.float64,
+    )
+    parabolic = phx.equations.ParabolicVelocityProfilePlan(2, 0)
+    parabolic_parameters = phx.equations.ParabolicVelocityParameters(
+        jnp.asarray((0.0, 0.5)),
+        0.5,
+        0.02,
+    )
+    parabola = parabolic(0.0, coordinates, parabolic_parameters)
+    np.testing.assert_allclose(parabola[:, 0], jnp.asarray((0.0, 0.02, 0.0)))
+
+    womersley = phx.equations.WomersleyVelocityProfilePlan(2, 0)
+    womersley_parameters = phx.equations.WomersleyVelocityParameters(
+        jnp.asarray((0.0, 0.5)),
+        0.5,
+        2.0 * jnp.pi,
+        2.0,
+        0.02,
+    )
+    first = womersley(0.0, coordinates, womersley_parameters)
+    period = womersley(1.0, coordinates, womersley_parameters)
+    np.testing.assert_allclose(first[:, 0], jnp.asarray((0.0, 0.02, 0.0)), atol=2e-12)
+    np.testing.assert_allclose(period, first, atol=2e-12)
 
 
 def test_moving_sdf_refreshes_links_and_stages_topology_at_accepted_step() -> None:
@@ -519,77 +567,3 @@ def test_moving_sdf_refreshes_links_and_stages_topology_at_accepted_step() -> No
     assert committed.committed
     assert committed.transfer_evidence is not None
     assert committed.transfer_evidence.passed
-
-
-def test_compiled_geometry_bridge_produces_certified_curved_link_metadata() -> None:
-    discretization = _discretization((32, 32))
-    geometry = phx.geometry.Circle((0.5, 0.5), 0.2).compile()
-    prepared = phx.discretization.prepare_lattice_boltzmann_link_geometry(
-        discretization,
-        geometry,
-        body_name="circle",
-    )
-    blocked = jnp.isfinite(prepared.link_geometry.link_fraction)
-
-    assert prepared.evidence.passed
-    assert prepared.evidence.blocked_link_count > 0
-    assert prepared.link_geometry.body_names == ("circle",)
-    assert jnp.all(
-        (prepared.boundary_fraction[blocked] > 0.0)
-        & (prepared.boundary_fraction[blocked] <= 1.0)
-    )
-    np.testing.assert_allclose(
-        jnp.sqrt(jnp.sum(prepared.boundary_normals[blocked] ** 2, axis=-1)),
-        1.0,
-        atol=1e-12,
-    )
-    centers = jnp.asarray(discretization.grid.points).reshape(
-        discretization.grid.shape + (2,)
-    )
-    velocities = jnp.asarray(discretization.velocity_set.velocities)
-    intersection = centers[..., None, :] - (
-        prepared.boundary_fraction[..., None] * discretization.cell_size * velocities
-    )
-    expected_normal = intersection - jnp.asarray((0.5, 0.5))
-    expected_normal = (
-        expected_normal / jnp.sqrt(jnp.sum(expected_normal**2, axis=-1))[..., None]
-    )
-    np.testing.assert_allclose(
-        prepared.boundary_normals[blocked],
-        expected_normal[blocked],
-        atol=2e-12,
-    )
-
-
-def test_parabolic_and_womersley_profiles_have_declared_centerline_and_wall_values() -> (
-    None
-):
-    coordinates = jnp.asarray(
-        (
-            (0.0, 0.0),
-            (0.0, 0.5),
-            (0.0, 1.0),
-        ),
-        dtype=jnp.float64,
-    )
-    parabolic = phx.equations.ParabolicVelocityProfilePlan(2, 0)
-    parabolic_parameters = phx.equations.ParabolicVelocityParameters(
-        jnp.asarray((0.0, 0.5)),
-        0.5,
-        0.02,
-    )
-    parabola = parabolic(0.0, coordinates, parabolic_parameters)
-    np.testing.assert_allclose(parabola[:, 0], jnp.asarray((0.0, 0.02, 0.0)))
-
-    womersley = phx.equations.WomersleyVelocityProfilePlan(2, 0)
-    womersley_parameters = phx.equations.WomersleyVelocityParameters(
-        jnp.asarray((0.0, 0.5)),
-        0.5,
-        2.0 * jnp.pi,
-        2.0,
-        0.02,
-    )
-    first = womersley(0.0, coordinates, womersley_parameters)
-    period = womersley(1.0, coordinates, womersley_parameters)
-    np.testing.assert_allclose(first[:, 0], jnp.asarray((0.0, 0.02, 0.0)), atol=2e-12)
-    np.testing.assert_allclose(period, first, atol=2e-12)

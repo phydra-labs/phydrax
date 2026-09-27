@@ -134,79 +134,85 @@ def test_three_level_cycle_policies_execute_distinct_recursive_schedules() -> No
     )
 
 
-@pytest.mark.parametrize("direction", ("forward", "backward", "symmetric"))
-def test_gauss_seidel_is_jittable_and_reuses_triangular_analysis(direction: Any) -> None:
-    space = la.ArraySpace((3,), dtype=jnp.float64)
-    matrix = jnp.asarray([[4.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 3.0]])
-    operator = la.DenseLinearOperator(
-        matrix,
-        source=space,
-        target=space,
-        operator_id=f"gauss-seidel-{direction}",
-    )
-    builder = la.GaussSeidelPreconditionerBuilder(direction=direction)
-    materialization = la.MaterializationPolicy(
-        max_entries=1_000,
-        max_bytes=1_000_000,
-    )
-    action = builder.prepare(operator, materialization=materialization)
-    residual = jnp.asarray([1.0, -2.0, 0.5])
-    if direction == "forward":
-        expected = jnp.linalg.solve(jnp.tril(matrix), residual)
-    elif direction == "backward":
-        expected = jnp.linalg.solve(jnp.triu(matrix), residual)
-    else:
-        first = jnp.linalg.solve(jnp.tril(matrix), residual)
-        expected = first + jnp.linalg.solve(jnp.triu(matrix), residual - matrix @ first)
+def test_gauss_seidel_is_jittable_and_reuses_triangular_analysis() -> None:
+    for direction in ("forward", "backward", "symmetric"):
+        space = la.ArraySpace((3,), dtype=jnp.float64)
+        matrix = jnp.asarray([[4.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 3.0]])
+        operator = la.DenseLinearOperator(
+            matrix,
+            source=space,
+            target=space,
+            operator_id=f"gauss-seidel-{direction}",
+        )
+        builder = la.GaussSeidelPreconditionerBuilder(direction=direction)
+        materialization = la.MaterializationPolicy(
+            max_entries=1_000,
+            max_bytes=1_000_000,
+        )
+        action = builder.prepare(operator, materialization=materialization)
+        residual = jnp.asarray([1.0, -2.0, 0.5])
+        if direction == "forward":
+            expected = jnp.linalg.solve(jnp.tril(matrix), residual)
+        elif direction == "backward":
+            expected = jnp.linalg.solve(jnp.triu(matrix), residual)
+        else:
+            first = jnp.linalg.solve(jnp.tril(matrix), residual)
+            expected = first + jnp.linalg.solve(
+                jnp.triu(matrix), residual - matrix @ first
+            )
 
-    assert jnp.allclose(jax.jit(lambda value: action.apply(value))(residual), expected)
+        assert jnp.allclose(
+            jax.jit(lambda value: action.apply(value))(residual), expected
+        )
 
-    updated_operator = la.DenseLinearOperator(
-        matrix + jnp.diag(jnp.asarray([0.5, 0.25, 0.75])),
-        source=space,
-        target=space,
-        operator_id=operator.operator_id,
-    )
-    refreshed = builder.refresh(
-        action,
-        updated_operator,
-        materialization=materialization,
-    )
-    original_factors = tuple(
-        factor
-        for factor in (action.forward_factor, action.backward_factor)
-        if factor is not None
-    )
-    refreshed_factors = tuple(
-        factor
-        for factor in (refreshed.forward_factor, refreshed.backward_factor)
-        if factor is not None
-    )
-
-    assert len(original_factors) == len(refreshed_factors)
-    assert all(
-        new.analysis is old.analysis
-        for old, new in zip(original_factors, refreshed_factors, strict=True)
-    )
-    assert all(
-        not jnp.allclose(old.values, new.values)
-        for old, new in zip(original_factors, refreshed_factors, strict=True)
-    )
-
-    changed_pattern = (
-        matrix.at[0, 1].set(0.0) if direction == "backward" else matrix.at[1, 0].set(0.0)
-    )
-    with pytest.raises(ValueError, match="unchanged triangular pattern"):
-        builder.refresh(
+        updated_operator = la.DenseLinearOperator(
+            matrix + jnp.diag(jnp.asarray([0.5, 0.25, 0.75])),
+            source=space,
+            target=space,
+            operator_id=operator.operator_id,
+        )
+        refreshed = builder.refresh(
             action,
-            la.DenseLinearOperator(
-                changed_pattern,
-                source=space,
-                target=space,
-                operator_id=operator.operator_id,
-            ),
+            updated_operator,
             materialization=materialization,
         )
+        original_factors = tuple(
+            factor
+            for factor in (action.forward_factor, action.backward_factor)
+            if factor is not None
+        )
+        refreshed_factors = tuple(
+            factor
+            for factor in (refreshed.forward_factor, refreshed.backward_factor)
+            if factor is not None
+        )
+
+        assert len(original_factors) == len(refreshed_factors)
+        assert all(
+            new.analysis is old.analysis
+            for old, new in zip(original_factors, refreshed_factors, strict=True)
+        )
+        assert all(
+            not jnp.allclose(old.values, new.values)
+            for old, new in zip(original_factors, refreshed_factors, strict=True)
+        )
+
+        changed_pattern = (
+            matrix.at[0, 1].set(0.0)
+            if direction == "backward"
+            else matrix.at[1, 0].set(0.0)
+        )
+        with pytest.raises(ValueError, match="unchanged triangular pattern"):
+            builder.refresh(
+                action,
+                la.DenseLinearOperator(
+                    changed_pattern,
+                    source=space,
+                    target=space,
+                    operator_id=operator.operator_id,
+                ),
+                materialization=materialization,
+            )
 
 
 def test_sparse_coarse_factor_and_smoother_refresh_share_symbolic_state() -> None:
@@ -402,9 +408,8 @@ def test_smoothed_aggregation_rejects_fine_level_storage_before_setup() -> None:
         builder.prepare_hierarchy(operator, materialization=materialization)
 
 
-@pytest.mark.parametrize(
-    ("triangle", "matrix", "right_hand_side", "expected"),
-    (
+def test_implicit_unit_triangular_solve_retains_first_stored_offdiagonal() -> None:
+    for triangle, matrix, right_hand_side, expected in (
         (
             "upper",
             jnp.asarray([[0.0, 2.0], [0.0, 0.0]]),
@@ -417,29 +422,22 @@ def test_smoothed_aggregation_rejects_fine_level_storage_before_setup() -> None:
             jnp.asarray([1.0, 2.0]),
             jnp.asarray([1.0, -1.0]),
         ),
-    ),
-)
-def test_implicit_unit_triangular_solve_retains_first_stored_offdiagonal(
-    triangle: Any,
-    matrix: Any,
-    right_hand_side: Any,
-    expected: Any,
-) -> None:
-    operator = _sparse_map(matrix)
-    storage = operator.sparse_storage()
-    analysis = la.analyze_sparse_triangular(
-        storage,
-        triangle=triangle,
-        unit_diagonal=True,
-    )
-    result = la.solve_sparse_triangular(
-        analysis,
-        storage.values,
-        right_hand_side,
-    )
+    ):
+        operator = _sparse_map(matrix)
+        storage = operator.sparse_storage()
+        analysis = la.analyze_sparse_triangular(
+            storage,
+            triangle=triangle,
+            unit_diagonal=True,
+        )
+        result = la.solve_sparse_triangular(
+            analysis,
+            storage.values,
+            right_hand_side,
+        )
 
-    assert result.status == int(la.SparseTriangularStatus.SUCCESS)
-    assert jnp.allclose(result.value, expected)
+        assert result.status == int(la.SparseTriangularStatus.SUCCESS)
+        assert jnp.allclose(result.value, expected)
 
 
 def test_cholesky_factor_action_preserves_builder_property_evidence() -> None:

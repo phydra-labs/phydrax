@@ -244,7 +244,7 @@ def _runtime(
     return integration_plan.prepare(spatial, regional, reactions)
 
 
-def test_regional_effect_types_are_distinct_and_assignment_is_complete() -> None:
+def test_cardiovascular_ep_integration_scenario_1() -> None:
     effects = (
         ScarCore(0),
         ScarBorderZone(0),
@@ -280,9 +280,6 @@ def test_regional_effect_types_are_distinct_and_assignment_is_complete() -> None
     )
     assert type(effects[0]) is not type(effects[1])
     assert type(effects[1]) is not type(effects[2])
-
-
-def test_homogeneous_worksets_route_reaction_and_exact_gate_lanes() -> None:
     second_effect = ScarBorderZone(
         1,
         capacitance_scale=2.0,
@@ -326,6 +323,24 @@ def test_homogeneous_worksets_route_reaction_and_exact_gate_lanes() -> None:
         0.950625,
         rtol=2.0e-6,
     )
+    runtime = _runtime(
+        macro_dt_ms=0.2,
+        macro_step_count=2,
+        splitting=StrangSplit(),
+        event_ticks=(0, 2),
+        checkpoint_stride=1,
+    )
+    state = initialize_physical_monodomain(runtime)
+    misaligned = jnp.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=jnp.float32)
+    result = step_physical_monodomain(runtime, state, MonodomainMacroInputs(misaligned))
+
+    assert not bool(result.evidence.successful)
+    assert bool(result.evidence.rolled_back)
+    assert not bool(result.evidence.checkpoint_written)
+    assert not bool(result.evidence.event_aligned)
+    assert np.all(np.isfinite(np.asarray(result.evidence.diffusion_residual_norm_uA)))
+    np.testing.assert_array_equal(result.state.voltage_mV, state.voltage_mV)
+    np.testing.assert_array_equal(result.state.tick, state.tick)
 
 
 def test_strang_split_converges_faster_than_lie_for_affine_monodomain() -> None:
@@ -359,28 +374,7 @@ def test_strang_split_converges_faster_than_lie_for_affine_monodomain() -> None:
     assert strang_fine < 0.2 * lie_fine
 
 
-def test_event_misalignment_rolls_back_and_retains_original_evidence() -> None:
-    runtime = _runtime(
-        macro_dt_ms=0.2,
-        macro_step_count=2,
-        splitting=StrangSplit(),
-        event_ticks=(0, 2),
-        checkpoint_stride=1,
-    )
-    state = initialize_physical_monodomain(runtime)
-    misaligned = jnp.asarray(((0.0, 0.0), (1.0, 0.0)), dtype=jnp.float32)
-    result = step_physical_monodomain(runtime, state, MonodomainMacroInputs(misaligned))
-
-    assert not bool(result.evidence.successful)
-    assert bool(result.evidence.rolled_back)
-    assert not bool(result.evidence.checkpoint_written)
-    assert not bool(result.evidence.event_aligned)
-    assert np.all(np.isfinite(np.asarray(result.evidence.diffusion_residual_norm_uA)))
-    np.testing.assert_array_equal(result.state.voltage_mV, state.voltage_mV)
-    np.testing.assert_array_equal(result.state.tick, state.tick)
-
-
-def test_checkpoint_restores_complete_accepted_state() -> None:
+def test_cardiovascular_ep_integration_scenario_2() -> None:
     runtime = _runtime(
         macro_dt_ms=0.1,
         macro_step_count=2,
@@ -421,9 +415,6 @@ def test_checkpoint_restores_complete_accepted_state() -> None:
     assert int(fallback.evidence.source_slot) == 0
     np.testing.assert_allclose(fallback.state.voltage_mV, state.voltage_mV)
     assert int(fallback.state.tick) == int(state.tick)
-
-
-def test_explicit_reference_has_no_implicit_method_fallback() -> None:
     assignment = _two_workset_assignment()
     operator = _operator(np.zeros((2, 2)), "zero-reference-diffusion")
     spatial = PhysicalMonodomainSpatialBinding(
@@ -454,9 +445,6 @@ def test_explicit_reference_has_no_implicit_method_fallback() -> None:
     assert runtime.half_diffusion_solve is None
     with pytest.raises(ValueError, match="explicit linear method"):
         ImplicitThetaDiffusion(0.5, LinearSolvePolicy())
-
-
-def test_generic_tensor_diffusion_action_is_bound_without_local_assembly() -> None:
     assignment = _two_workset_assignment()
     operator = _operator(np.zeros((2, 2)), "tensor-action-discretization")
     action = TensorDiffusionAction(
@@ -522,7 +510,7 @@ def test_spatial_binding_identity_changes_with_physical_content() -> None:
     assert baseline_state.checkpoints.runtime_id != changed_state.checkpoints.runtime_id
 
 
-def test_candidate_commit_rejects_a_different_complete_source_state() -> None:
+def test_cardiovascular_ep_integration_scenario_3() -> None:
     runtime = _runtime(
         macro_dt_ms=0.1,
         macro_step_count=2,
@@ -547,9 +535,6 @@ def test_candidate_commit_rejects_a_different_complete_source_state() -> None:
     )
     with pytest.raises((ValueError, RuntimeError), match="source state does not match"):
         commit_physical_monodomain_candidate(runtime, different_checkpoint, candidate)
-
-
-def test_cadence_and_horizon_are_enforced() -> None:
     runtime = _runtime(
         macro_dt_ms=0.1,
         macro_step_count=1,
@@ -575,9 +560,6 @@ def test_cadence_and_horizon_are_enforced() -> None:
         integrate_physical_monodomain(
             runtime, accepted, zero_scheduled_monodomain_inputs(runtime)
         )
-
-
-def test_tp06_prepared_reaction_advances_through_physical_monodomain() -> None:
     assignment = RegionalElectrophysiologyPlan(
         1, (RegionalPhenotype("tp06-epicardium", 0),)
     ).prepare(

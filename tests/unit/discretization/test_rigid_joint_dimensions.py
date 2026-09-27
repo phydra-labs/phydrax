@@ -43,7 +43,7 @@ def _planar_bodies() -> Any:
     return bodies, reference
 
 
-def test_planar_ball_joint_uses_native_se2_projection() -> None:
+def test_planar_contracts() -> None:
     bodies, reference = _planar_bodies()
     graph = RigidJointGraphPlan(
         ball=BallJointSetPlan(
@@ -65,9 +65,6 @@ def test_planar_ball_joint_uses_native_se2_projection() -> None:
     assert result.evaluation.diagnostics.maximum_position_residual < 1.0e-10
     assert result.evaluation.diagnostics.constraint_rank == 2
     assert dynamics.joints.row_layout.row_count == 2
-
-
-def test_planar_prismatic_coordinate_and_forbidden_rows_are_objective() -> None:
     bodies, reference = _planar_bodies()
     graph = RigidJointGraphPlan(
         prismatic=PrismaticJointSetPlan(
@@ -100,9 +97,6 @@ def test_planar_prismatic_coordinate_and_forbidden_rows_are_objective() -> None:
     forbidden_residuals = graph.residuals(forbidden)
     assert jnp.max(jnp.abs(forbidden_residuals.prismatic_translation)) > 0.0
     assert jnp.max(jnp.abs(forbidden_residuals.prismatic_rotation)) > 0.0
-
-
-def test_planar_distance_joint_has_scaled_nonzero_gradient() -> None:
     bodies, reference = _planar_bodies()
     graph = RigidJointGraphPlan(
         distance=DistanceJointSetPlan(

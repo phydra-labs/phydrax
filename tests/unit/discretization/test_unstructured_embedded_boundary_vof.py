@@ -121,23 +121,23 @@ def test_embedded_boundary_has_exact_full_fluid_and_solid_limits() -> None:
     assert solid.evidence.minimum_nonzero_volume_fraction == 0.0
 
 
-@pytest.mark.parametrize("sliver_width", [1.0e-40, 1.0e-50])
-def test_embedded_boundary_rejects_float32_extreme_slivers(sliver_width: Any) -> None:
-    with jax.enable_x64(True):
-        discretization = _quadrilateral_grid(nx=1, ny=1)
-    with jax.enable_x64(False):
-        assert discretization.vertices.dtype == jnp.float64
-        vertex_values = np.asarray(
-            (sliver_width, -1.0, sliver_width, -1.0), dtype=np.float64
-        )
-        plan = phx.discretization.EmbeddedBoundaryPlan(
-            discretization,
-            lambda points, values: values,
-            field_id=f"float32-extreme-sliver-{sliver_width}",
-        )
+def test_embedded_boundary_rejects_float32_extreme_slivers() -> None:
+    for sliver_width in [1.0e-40, 1.0e-50]:
+        with jax.enable_x64(True):
+            discretization = _quadrilateral_grid(nx=1, ny=1)
+        with jax.enable_x64(False):
+            assert discretization.vertices.dtype == jnp.float64
+            vertex_values = np.asarray(
+                (sliver_width, -1.0, sliver_width, -1.0), dtype=np.float64
+            )
+            plan = phx.discretization.EmbeddedBoundaryPlan(
+                discretization,
+                lambda points, values: values,
+                field_id=f"float32-extreme-sliver-{sliver_width}",
+            )
 
-        with pytest.raises(ValueError, match="target dtype"):
-            plan.prepare(vertex_values)
+            with pytest.raises(ValueError, match="target dtype"):
+                plan.prepare(vertex_values)
 
 
 def test_embedded_boundary_identity_fingerprints_realized_metric_dtype() -> None:

@@ -15,7 +15,7 @@ from tests.unit.topology._fixtures import (
 )
 
 
-def test_exact_integer_matrix_and_identity_chain_map() -> None:
+def test_advanced_topology_scenario_1() -> None:
     matrix = phx.topology.ExactIntegerCOO(
         2,
         2,
@@ -47,9 +47,6 @@ def test_exact_integer_matrix_and_identity_chain_map() -> None:
             source_id="x",
             target_id="y",
         )
-
-
-def test_induced_identity_and_mapping_cone_are_exact() -> None:
     complex = phx.topology.CellSubcomplex.full(filled_triangle_topology())
     identity = phx.topology.CellularChainMap.identity(complex)
     homology = phx.topology.compute_homology(
@@ -65,9 +62,6 @@ def test_induced_identity_and_mapping_cone_are_exact() -> None:
 
     np.testing.assert_array_equal(induced.homology_maps[0].matrix, [[1]])
     assert cone.acyclic
-
-
-def test_filtered_identity_has_zero_shift() -> None:
     _, complex, filtration = filled_triangle_filtration()
     filtered = phx.topology.FilteredCellularChainMap(
         phx.topology.CellularChainMap.identity(complex),
@@ -99,7 +93,7 @@ def test_filtered_identity_has_zero_shift() -> None:
     assert filtered_contraction.epsilon == 0.0
 
 
-def test_extended_persistence_and_persistent_cohomology() -> None:
+def test_advanced_topology_scenario_2() -> None:
     _, _, filtration = filled_triangle_filtration()
     extended = phx.topology.compute_extended_persistence(
         filtration,
@@ -114,9 +108,6 @@ def test_extended_persistence_and_persistent_cohomology() -> None:
     assert extended.extended_positive.interval_count >= 1
     assert cohomology.terminal_cocycles[0].generator_count == 1
     assert cohomology.annotations[0].essential_pair_indices.shape == (1,)
-
-
-def test_terminal_cocycles_are_dual_to_their_essential_intervals() -> None:
     vertices = phx.discretization.EntitySet(
         "two-components",
         0,
@@ -148,9 +139,6 @@ def test_terminal_cocycles_are_dual_to_their_essential_intervals() -> None:
         basis_entities.append(int(np.asarray(vertices.entity_ids)[int(cells[0])]))
 
     np.testing.assert_array_equal(basis_entities, birth_entities)
-
-
-def test_field_snapshot_series_and_ensemble_summary() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     plan = phx.topology.FieldTopologyPlan(
@@ -168,7 +156,7 @@ def test_field_snapshot_series_and_ensemble_summary() -> None:
     assert summary.mean_betti.shape == (3, 3)
 
 
-def test_diagram_distances_are_zero_on_identity() -> None:
+def test_advanced_topology_scenario_3() -> None:
     _, _, filtration = filled_triangle_filtration()
     diagram = phx.topology.compute_persistence(
         filtration,
@@ -189,9 +177,6 @@ def test_diagram_distances_are_zero_on_identity() -> None:
     assert float(bottleneck.distance) == pytest.approx(0.0)
     assert bool(sliced.valid)
     assert float(sliced.distance) == pytest.approx(0.0)
-
-
-def test_rational_and_integral_homology_distinguish_torsion() -> None:
     complex = phx.topology.CellSubcomplex.full(projective_plane_topology())
     rational = phx.topology.compute_rational_homology_basis(complex)
     integral = phx.topology.compute_integral_homology(complex)
@@ -199,9 +184,6 @@ def test_rational_and_integral_homology_distinguish_torsion() -> None:
     assert rational.degree(1).generator_count == 0
     assert integral.degree(1).free_rank == 0
     assert integral.degree(1).torsion_invariants == (2,)
-
-
-def test_elementary_morse_cancellation_preserves_interval_homology() -> None:
     boundary_zero = phx.topology.ExactIntegerCOO.zero(
         0,
         2,
@@ -224,7 +206,7 @@ def test_elementary_morse_cancellation_preserves_interval_homology() -> None:
     assert reduced.reduced.counts == (1, 0)
 
 
-def test_vineyard_and_zigzag_topology_evolution() -> None:
+def test_advanced_topology_scenario_4() -> None:
     topology, complex, filtration = filled_triangle_filtration()
     vineyard = phx.topology.compute_vineyard(
         (filtration, filtration),
@@ -260,9 +242,6 @@ def test_vineyard_and_zigzag_topology_evolution() -> None:
     np.testing.assert_array_equal(zigzag.betti_history[:, 0], [0, 1, 0])
     assert topology.topology_id == complex.topology.topology_id
     assert monotone.persistence.pairing.pair_count >= 1
-
-
-def test_zigzag_rejects_initial_and_inserted_cells_outside_ambient_subcomplex() -> None:
     topology = filled_triangle_topology()
     ambient = phx.topology.CellSubcomplex(
         topology,
@@ -299,9 +278,6 @@ def test_zigzag_rejects_initial_and_inserted_cells_outside_ambient_subcomplex() 
             (operation,),
             coefficients=field,
         )
-
-
-def test_local_homology_and_certified_implicit_evidence() -> None:
     complex = phx.topology.CellSubcomplex.full(filled_triangle_topology())
     local = phx.topology.compute_cell_local_homology(
         complex,

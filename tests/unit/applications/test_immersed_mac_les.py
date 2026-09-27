@@ -106,7 +106,7 @@ def _taylor_green(discretization: Any) -> Any:
     )
 
 
-def test_fixed_immersed_les_binds_owner_ids_and_zero_coefficient_parity() -> None:
+def test_fixed_immersed_contracts() -> None:
     discretization, operators, momentum, pressure, plan, immersed_dynamics = _route(
         coefficient=0.0
     )
@@ -142,9 +142,6 @@ def test_fixed_immersed_les_binds_owner_ids_and_zero_coefficient_parity() -> Non
     ):
         np.testing.assert_allclose(immersed_rate, dns_rate, rtol=0.0, atol=0.0)
     assert operators.prepared_id == plan.projection.operators.prepared_id
-
-
-def test_fixed_immersed_les_uses_fluid_volume_filter_and_zero_solid_stress() -> None:
     fraction = jnp.ones((4, 4, 4)).at[0, 0, 0].set(0.0).at[1, 1, 1].set(0.125)
     discretization, _, _, _, _, dynamics = _route(fraction=fraction)
     velocity = _taylor_green(discretization)
@@ -164,11 +161,63 @@ def test_fixed_immersed_les_uses_fluid_volume_filter_and_zero_solid_stress() -> 
     assert stage.model_result.kinematic_viscosity[0, 0, 0] == 0.0
     assert jnp.all(stage.model_result.specific_deviatoric_stress[0, 0, 0] == 0.0)
     assert stage.model_result.kinematic_viscosity[1, 1, 1] >= 0.0
+    count = 4
+    specs = (
+        phx.discretization.UniformCellAxisSpec(count, periodic=True),
+        phx.discretization.UniformCellAxisSpec(count, periodic=True),
+        phx.discretization.UniformCellAxisSpec(count),
+    )
+    grid = phx.discretization.TensorGridPlan(specs, axis_names=("x", "y", "z")).prepare(
+        jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
+    )
+    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
+    operators = phx.discretization.MACOperatorPlan(discretization).prepare()
+    boundaries = phx.discretization.MACBoundaryPlan(
+        operators,
+        (
+            phx.discretization.MACBoundarySide("z", "lower", "pressure-outlet"),
+            phx.discretization.MACBoundarySide("z", "upper", "pressure-outlet"),
+        ),
+    ).prepare()
+    momentum = phx.discretization.MACMomentumPlan(
+        operators, boundaries=boundaries
+    ).prepare()
+    position = jnp.asarray([[0.5, 0.5, 0.5]])
+    markers = phx.discretization.LagrangianMarkerSetPlan(
+        jnp.asarray([1]), position, jnp.asarray([1.0])
+    ).prepare()
+    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
+    immersed = phx.solver.MACImmersedBoundaryProjectionPlan(
+        operators, transfer, boundaries=boundaries
+    )
+    resolved_filter = ResolvedLESFilter(
+        "open-immersed-grid",
+        family="implicit-grid-volume",
+        axis_names=("x", "y", "z"),
+        topology="tensor-product",
+        boundary_class="wall-bounded",
+        scale_rule="volume-equivalent",
+        commutation_status="unmodeled",
+        repeated_filter_semantics="unmodeled",
+    )
+    provenance = LESParameterProvenance(
+        resolved_filter,
+        discretization.prepared_id,
+        "incompressible-unit-density",
+        source_kind="user",
+        evidence_ids=(),
+    )
+    les = MACAlgebraicLESPlan(SmagorinskyLESPlan(0.1).prepare(provenance))
+    plan = FixedImmersedMACLESPlan(
+        les,
+        immersed,
+        markers.kinematics(position, jnp.zeros_like(position)),
+        jnp.ones(discretization.cell_shape),
+        geometry_id="open-refusal",
+    )
 
-
-def test_fixed_immersed_les_vector_wall_traction_is_tangent_dissipative_and_applied() -> (
-    None
-):
+    with pytest.raises(ValueError, match="no-slip, open, inflow"):
+        plan.prepare(momentum, molecular_viscosity=0.01)
     discretization, _, _, _, plan, dynamics = _route(wall=True)
     state = dynamics.pack_velocity(_taylor_green(discretization))
 
@@ -185,9 +234,45 @@ def test_fixed_immersed_les_vector_wall_traction_is_tangent_dissipative_and_appl
         components.sgs, stage.sgs_rate, stage.wall_rate, strict=True
     ):
         np.testing.assert_allclose(total, sgs + wall, rtol=2.0e-12, atol=2.0e-12)
+    for motion in ("moving", "deforming"):
+        _, _, momentum, _, plan, _ = _route()
+        refused = FixedImmersedMACLESPlan(
+            plan.algebraic_les,
+            plan.projection,
+            plan.marker_motion.kinematics,
+            plan.cell_fluid_fraction,
+            geometry_id=plan.geometry_id,
+            motion=motion,
+        )
+        with pytest.raises(ValueError, match="stationary fixed geometry"):
+            refused.prepare(momentum, molecular_viscosity=0.01)
+    _, _, momentum, _, plan, _ = _route()
+    distributed = FixedImmersedMACLESPlan(
+        plan.algebraic_les,
+        plan.projection,
+        plan.marker_motion.kinematics,
+        plan.cell_fluid_fraction,
+        geometry_id=plan.geometry_id,
+        distributed=True,
+    )
+    with pytest.raises(ValueError, match="Distributed immersed MAC LES"):
+        distributed.prepare(momentum, molecular_viscosity=0.01)
+
+    wrong_wall = FixedImmersedMACLESPlan(
+        plan.algebraic_les,
+        plan.projection,
+        plan.marker_motion.kinematics,
+        plan.cell_fluid_fraction,
+        geometry_id=plan.geometry_id,
+        wall_stress=VectorEquilibriumWallStressPlan().prepare(2),
+        marker_wall_normal=jnp.asarray([[1.0, 0.0, 0.0]]),
+        marker_sample_distance=jnp.asarray([0.2]),
+    )
+    with pytest.raises(ValueError, match="prepared in 3D"):
+        wrong_wall.prepare(momentum, molecular_viscosity=0.01)
 
 
-def test_vector_wall_stress_changes_normal_constrained_step_trajectory() -> None:
+def test_immersed_mac_les_scenario_1() -> None:
     discretization, _, _, _, baseline_plan, baseline = _route(wall=False)
     _, _, _, _, wall_plan, wall_dynamics = _route(wall=True)
     state = baseline.pack_velocity(
@@ -215,9 +300,6 @@ def test_vector_wall_stress_changes_normal_constrained_step_trajectory() -> None
     assert jnp.linalg.norm(baseline_step.projection.marker_slip) < 2.0e-7
     assert jnp.linalg.norm(wall_step.projection.marker_slip) < 2.0e-7
     assert jnp.linalg.norm(wall_step.state - baseline_step.state) > 1.0e-12
-
-
-def test_immersed_methods_apply_sgs_project_and_restart_sbdf2_history() -> None:
     discretization, operators, _, _, plan, dynamics = _route(coefficient=0.12)
     velocity = tuple(0.03 * value for value in _taylor_green(discretization))
     state = dynamics.project_state(velocity)
@@ -274,9 +356,6 @@ def test_immersed_methods_apply_sgs_project_and_restart_sbdf2_history() -> None:
     )
     assert jnp.linalg.norm(advanced.projection.divergence_after) < 2.0e-7
     assert jnp.linalg.norm(advanced.projection.marker_slip) < 2.0e-7
-
-
-def test_immersed_les_step_ledger_closes_impulse_and_transfer_work() -> None:
     discretization, _, _, _, plan, dynamics = _route(coefficient=0.08)
     velocity = tuple(0.05 * value for value in _taylor_green(discretization))
     state = dynamics.pack_velocity(velocity)
@@ -336,105 +415,3 @@ def test_fixed_immersed_les_stage_is_jittable_and_has_velocity_jvp() -> None:
     assert tangent.shape == state.shape
     assert jnp.all(jnp.isfinite(compiled))
     assert jnp.all(jnp.isfinite(tangent))
-
-
-@pytest.mark.parametrize("motion", ("moving", "deforming"))
-def test_fixed_immersed_les_prepare_refuses_nonfixed_geometry(motion: Any) -> None:
-    _, _, momentum, _, plan, _ = _route()
-    refused = FixedImmersedMACLESPlan(
-        plan.algebraic_les,
-        plan.projection,
-        plan.marker_motion.kinematics,
-        plan.cell_fluid_fraction,
-        geometry_id=plan.geometry_id,
-        motion=motion,
-    )
-    with pytest.raises(ValueError, match="stationary fixed geometry"):
-        refused.prepare(momentum, molecular_viscosity=0.01)
-
-
-def test_fixed_immersed_les_prepare_refuses_distributed_and_wrong_wall_route() -> None:
-    _, _, momentum, _, plan, _ = _route()
-    distributed = FixedImmersedMACLESPlan(
-        plan.algebraic_les,
-        plan.projection,
-        plan.marker_motion.kinematics,
-        plan.cell_fluid_fraction,
-        geometry_id=plan.geometry_id,
-        distributed=True,
-    )
-    with pytest.raises(ValueError, match="Distributed immersed MAC LES"):
-        distributed.prepare(momentum, molecular_viscosity=0.01)
-
-    wrong_wall = FixedImmersedMACLESPlan(
-        plan.algebraic_les,
-        plan.projection,
-        plan.marker_motion.kinematics,
-        plan.cell_fluid_fraction,
-        geometry_id=plan.geometry_id,
-        wall_stress=VectorEquilibriumWallStressPlan().prepare(2),
-        marker_wall_normal=jnp.asarray([[1.0, 0.0, 0.0]]),
-        marker_sample_distance=jnp.asarray([0.2]),
-    )
-    with pytest.raises(ValueError, match="prepared in 3D"):
-        wrong_wall.prepare(momentum, molecular_viscosity=0.01)
-
-
-def test_fixed_immersed_les_refuses_open_outer_boundary_at_prepare() -> None:
-    count = 4
-    specs = (
-        phx.discretization.UniformCellAxisSpec(count, periodic=True),
-        phx.discretization.UniformCellAxisSpec(count, periodic=True),
-        phx.discretization.UniformCellAxisSpec(count),
-    )
-    grid = phx.discretization.TensorGridPlan(specs, axis_names=("x", "y", "z")).prepare(
-        jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
-    )
-    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
-    operators = phx.discretization.MACOperatorPlan(discretization).prepare()
-    boundaries = phx.discretization.MACBoundaryPlan(
-        operators,
-        (
-            phx.discretization.MACBoundarySide("z", "lower", "pressure-outlet"),
-            phx.discretization.MACBoundarySide("z", "upper", "pressure-outlet"),
-        ),
-    ).prepare()
-    momentum = phx.discretization.MACMomentumPlan(
-        operators, boundaries=boundaries
-    ).prepare()
-    position = jnp.asarray([[0.5, 0.5, 0.5]])
-    markers = phx.discretization.LagrangianMarkerSetPlan(
-        jnp.asarray([1]), position, jnp.asarray([1.0])
-    ).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
-    immersed = phx.solver.MACImmersedBoundaryProjectionPlan(
-        operators, transfer, boundaries=boundaries
-    )
-    resolved_filter = ResolvedLESFilter(
-        "open-immersed-grid",
-        family="implicit-grid-volume",
-        axis_names=("x", "y", "z"),
-        topology="tensor-product",
-        boundary_class="wall-bounded",
-        scale_rule="volume-equivalent",
-        commutation_status="unmodeled",
-        repeated_filter_semantics="unmodeled",
-    )
-    provenance = LESParameterProvenance(
-        resolved_filter,
-        discretization.prepared_id,
-        "incompressible-unit-density",
-        source_kind="user",
-        evidence_ids=(),
-    )
-    les = MACAlgebraicLESPlan(SmagorinskyLESPlan(0.1).prepare(provenance))
-    plan = FixedImmersedMACLESPlan(
-        les,
-        immersed,
-        markers.kinematics(position, jnp.zeros_like(position)),
-        jnp.ones(discretization.cell_shape),
-        geometry_id="open-refusal",
-    )
-
-    with pytest.raises(ValueError, match="no-slip, open, inflow"):
-        plan.prepare(momentum, molecular_viscosity=0.01)

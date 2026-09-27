@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_event_driven_jump_finds_norm_threshold_events() -> None:
+def test_open_quantum_production_scenario_1() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         3.0, jnp.asarray([0.0j, 1.0 + 0.0j])
     )
@@ -27,9 +27,6 @@ def test_event_driven_jump_finds_norm_threshold_events() -> None:
     assert (
         jnp.max(jnp.where(result.events.active, result.events.root_residuals, 0.0)) < 1e-5
     )
-
-
-def test_mps_canonicalization_and_tebd_identity() -> None:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
@@ -48,9 +45,6 @@ def test_mps_canonicalization_and_tebd_identity() -> None:
     )
     assert bool(tebd.valid)
     assert jnp.allclose(evolved.to_dense(), canonical.to_dense())
-
-
-def test_mps_jump_and_locally_purified_channel() -> None:
     state = phx.tensor_network.product_mps(
         jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
     )
@@ -92,9 +86,6 @@ def test_mps_jump_and_locally_purified_channel() -> None:
         maximum_purification_dimension=2,
     )
     assert bool(purified.valid)
-
-
-def test_heom_continuation_and_nonmarkovian_comparison() -> None:
     density = jnp.asarray([[0.6 + 0.0j, 0.0j], [0.0j, 0.4 + 0.0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.05, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
@@ -114,7 +105,7 @@ def test_heom_continuation_and_nonmarkovian_comparison() -> None:
     assert bool(comparison.valid)
 
 
-def test_map_level_nonmarkovian_physicality() -> None:
+def test_open_quantum_production_scenario_2() -> None:
     identity = jnp.eye(4, dtype="complex128")
     report = phx.operators.quantum.analyze_dynamical_map_series(
         jnp.stack((identity, identity)), 2
@@ -122,6 +113,26 @@ def test_map_level_nonmarkovian_physicality() -> None:
     assert bool(report.valid)
     assert bool(report.cp_valid)
     assert bool(report.cp_divisible)
+    identity = jnp.eye(4, dtype="complex128")
+    density = jnp.asarray([[0.7 + 0.0j, 0.0j], [0.0j, 0.3 + 0.0j]])
+    process = phx.tensor_network.markov_process_tensor((identity,), density)
+    causality = phx.tensor_network.validate_process_comb_causality(process)
+    assert bool(causality.valid)
+
+    sigma_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
+    operator = phx.solver.StateVectorOperator.from_matrix(sigma_x, operator_id="x")
+    problem = phx.solver.NeuralJumpProjectionProblem(
+        lambda parameters: jnp.asarray(
+            [jnp.cos(parameters[0]), jnp.sin(parameters[0])]
+        ).astype("complex128"),
+        jnp.asarray([0.1]),
+        operator,
+    )
+    result = phx.solver.solve_neural_jump_projection(
+        problem, learning_rate=0.1, iterations=20
+    )
+    assert bool(result.valid)
+    assert result.infidelity_history[-1] < result.infidelity_history[0]
 
 
 def test_adaptive_fock_continuation_and_fermionic_gaussian() -> None:
@@ -144,26 +155,3 @@ def test_adaptive_fock_continuation_and_fermionic_gaussian() -> None:
     assert bool(stationary.valid)
     result = phx.solver.solve_fermionic_gaussian(fermionic, step_size=0.05, steps=2)
     assert bool(result.valid)
-
-
-def test_process_causality_and_neural_jump_projection() -> None:
-    identity = jnp.eye(4, dtype="complex128")
-    density = jnp.asarray([[0.7 + 0.0j, 0.0j], [0.0j, 0.3 + 0.0j]])
-    process = phx.tensor_network.markov_process_tensor((identity,), density)
-    causality = phx.tensor_network.validate_process_comb_causality(process)
-    assert bool(causality.valid)
-
-    sigma_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
-    operator = phx.solver.StateVectorOperator.from_matrix(sigma_x, operator_id="x")
-    problem = phx.solver.NeuralJumpProjectionProblem(
-        lambda parameters: jnp.asarray(
-            [jnp.cos(parameters[0]), jnp.sin(parameters[0])]
-        ).astype("complex128"),
-        jnp.asarray([0.1]),
-        operator,
-    )
-    result = phx.solver.solve_neural_jump_projection(
-        problem, learning_rate=0.1, iterations=20
-    )
-    assert bool(result.valid)
-    assert result.infidelity_history[-1] < result.infidelity_history[0]

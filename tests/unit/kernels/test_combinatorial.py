@@ -29,7 +29,7 @@ def _hamming_laplacian(points: Any) -> Any:
     return np.diag(np.sum(adjacency, axis=1)) - adjacency
 
 
-def test_hamming_heat_kernel_matches_explicit_full_laplacian_spectrum() -> None:
+def test_combinatorial_scenario_1() -> None:
     points = _hamming_points(2, 3)
     diffusion_time = 0.23
     kernel = phx.kernels.HammingSpectralKernel(
@@ -46,18 +46,6 @@ def test_hamming_heat_kernel_matches_explicit_full_laplacian_spectrum() -> None:
 
     assert jnp.allclose(kernel.matrix(points, points), expected, atol=1e-10)
     assert jnp.allclose(kernel.diagonal(points), 1.0)
-
-
-def test_hypercube_is_exact_binary_hamming_specialization() -> None:
-    points = _hamming_points(4, 2)
-    multiplier = phx.kernels.MaternSpectralMultiplier(0.7, 1.3)
-    hamming = phx.kernels.HammingSpectralKernel(4, 2, multiplier, max_level=3)
-    hypercube = phx.kernels.HypercubeSpectralKernel(4, multiplier, max_level=3)
-
-    assert jnp.allclose(hamming.matrix(points, points), hypercube.matrix(points, points))
-
-
-def test_hamming_kernel_is_invariant_to_coordinate_and_symbol_permutations() -> None:
     points = _hamming_points(3, 3)
     kernel = phx.kernels.HammingSpectralKernel(
         3,
@@ -71,9 +59,35 @@ def test_hamming_kernel_is_invariant_to_coordinate_and_symbol_permutations() -> 
     assert jnp.allclose(
         kernel.matrix(points, points), kernel.matrix(transformed, transformed)
     )
+    multiplier = phx.kernels.HeatSpectralMultiplier(0.2)
+    with pytest.raises(ValueError, match="max_level"):
+        phx.kernels.HammingSpectralKernel(3, 2, multiplier, max_level=4)
 
+    kernel = phx.kernels.HammingSpectralKernel(3, 2, multiplier)
+    for invalid in (
+        jnp.asarray([[0.0, 1.0, 0.5]]),
+        jnp.asarray([[0, 1, 2]]),
+    ):
+        with pytest.raises(Exception, match="in-range integers"):
+            kernel.matrix(invalid, invalid)
+    with pytest.raises(ValueError, match="one Hamming point"):
+        kernel.pairwise(jnp.asarray([[0, 0, 0], [1, 1, 1]]), jnp.zeros((3,)))
+    kernel = phx.kernels.HammingSpectralKernel(
+        2,
+        3,
+        phx.kernels.HeatSpectralMultiplier(0.2),
+    )
+    with pytest.raises(TypeError, match="real coordinates"):
+        kernel.matrix(
+            jnp.asarray([[0.0 + 1.0j, 1.0 + 0.0j]]),
+            jnp.asarray([[0, 1]]),
+        )
+    points = _hamming_points(4, 2)
+    multiplier = phx.kernels.MaternSpectralMultiplier(0.7, 1.3)
+    hamming = phx.kernels.HammingSpectralKernel(4, 2, multiplier, max_level=3)
+    hypercube = phx.kernels.HypercubeSpectralKernel(4, multiplier, max_level=3)
 
-def test_truncated_hamming_levels_remain_positive_semidefinite() -> None:
+    assert jnp.allclose(hamming.matrix(points, points), hypercube.matrix(points, points))
     points = _hamming_points(4, 3)
     kernel = phx.kernels.HammingSpectralKernel(
         4,
@@ -110,32 +124,3 @@ def test_high_dimensional_hamming_recurrence_and_gradients_are_finite() -> None:
 
     assert jnp.isfinite(value)
     assert jnp.all(jnp.isfinite(jnp.asarray(gradients)))
-
-
-def test_hamming_kernel_rejects_invalid_symbols_and_level_cutoffs() -> None:
-    multiplier = phx.kernels.HeatSpectralMultiplier(0.2)
-    with pytest.raises(ValueError, match="max_level"):
-        phx.kernels.HammingSpectralKernel(3, 2, multiplier, max_level=4)
-
-    kernel = phx.kernels.HammingSpectralKernel(3, 2, multiplier)
-    for invalid in (
-        jnp.asarray([[0.0, 1.0, 0.5]]),
-        jnp.asarray([[0, 1, 2]]),
-    ):
-        with pytest.raises(Exception, match="in-range integers"):
-            kernel.matrix(invalid, invalid)
-    with pytest.raises(ValueError, match="one Hamming point"):
-        kernel.pairwise(jnp.asarray([[0, 0, 0], [1, 1, 1]]), jnp.zeros((3,)))
-
-
-def test_hamming_kernel_rejects_complex_coordinates_before_integer_projection() -> None:
-    kernel = phx.kernels.HammingSpectralKernel(
-        2,
-        3,
-        phx.kernels.HeatSpectralMultiplier(0.2),
-    )
-    with pytest.raises(TypeError, match="real coordinates"):
-        kernel.matrix(
-            jnp.asarray([[0.0 + 1.0j, 1.0 + 0.0j]]),
-            jnp.asarray([[0, 1]]),
-        )

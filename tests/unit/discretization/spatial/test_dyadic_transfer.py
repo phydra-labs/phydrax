@@ -24,7 +24,7 @@ def _refined_pair() -> Any:
     return plan, coarse, fine
 
 
-def test_dyadic_average_prolongation_and_restriction_are_conservative() -> None:
+def test_dyadic_contracts() -> None:
     _, coarse, fine = _refined_pair()
     coarse_values = jnp.where(coarse.leaf_active, 3.5, 0.0)
     prolongation = DyadicCellTransferPlan(coarse, fine)
@@ -38,9 +38,6 @@ def test_dyadic_average_prolongation_and_restriction_are_conservative() -> None:
     assert bool(coarse_result.successful)
     np.testing.assert_allclose(coarse_result.values[coarse.leaf_active], 3.5)
     np.testing.assert_allclose(coarse_result.conservation_residual, 0.0, atol=1e-14)
-
-
-def test_dyadic_content_transfer_preserves_total_content() -> None:
     _, coarse, fine = _refined_pair()
     coarse_content = jnp.where(coarse.leaf_active, 8.0, 0.0)
     prolongation = DyadicCellTransferPlan(coarse, fine)

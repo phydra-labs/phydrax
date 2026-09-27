@@ -18,21 +18,16 @@ from phydrax.signal import (
 )
 
 
-@pytest.mark.parametrize("up,down", ((1, 1), (2, 1), (1, 3), (3, 2), (4, 2)))
-def test_raw_upfirdn_matches_scipy_without_ratio_reduction_or_tap_scaling(
-    up: Any, down: Any
-) -> None:
-    values = np.asarray((1.0, -0.5, 2.0, 0.25))
-    taps = np.asarray((0.2, 0.5, -0.1, 0.3, 0.7))
+def test_resampling_scenario_1() -> None:
+    for up, down in ((1, 1), (2, 1), (1, 3), (3, 2), (4, 2)):
+        values = np.asarray((1.0, -0.5, 2.0, 0.25))
+        taps = np.asarray((0.2, 0.5, -0.1, 0.3, 0.7))
 
-    actual = upfirdn(values, taps, up=up, down=down)
-    expected = scipy_signal.upfirdn(taps, values, up=up, down=down)
+        actual = upfirdn(values, taps, up=up, down=down)
+        expected = scipy_signal.upfirdn(taps, values, up=up, down=down)
 
-    assert actual.shape == expected.shape
-    assert np.allclose(actual, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_upfirdn_preserves_middle_axis_and_complex_values() -> None:
+        assert actual.shape == expected.shape
+        assert np.allclose(actual, expected, rtol=1e-12, atol=1e-12)
     values = (
         jnp.arange(2 * 5 * 3, dtype="float64").reshape((2, 5, 3)).astype("complex128")
     )
@@ -50,17 +45,14 @@ def test_upfirdn_preserves_middle_axis_and_complex_values() -> None:
 
     assert output.shape == expected.shape
     assert np.allclose(output, expected, rtol=1e-12, atol=1e-12)
+    for up, down in ((3, 2), (5, 7), (4, 2), (147, 160)):
+        values = np.linspace(-1.0, 1.0, 23)
 
+        actual = resample_poly(values, up, down)
+        expected = scipy_signal.resample_poly(values, up, down, window=("kaiser", 5.0))
 
-@pytest.mark.parametrize("up,down", ((3, 2), (5, 7), (4, 2), (147, 160)))
-def test_finite_resample_poly_matches_scipy_default_alignment(up: Any, down: Any) -> None:
-    values = np.linspace(-1.0, 1.0, 23)
-
-    actual = resample_poly(values, up, down)
-    expected = scipy_signal.resample_poly(values, up, down, window=("kaiser", 5.0))
-
-    assert actual.shape == ((values.size * up + down - 1) // down,)
-    assert np.allclose(actual, expected, rtol=1e-11, atol=1e-11)
+        assert actual.shape == ((values.size * up + down - 1) // down,)
+        assert np.allclose(actual, expected, rtol=1e-11, atol=1e-11)
 
 
 def test_explicit_prototype_matches_scipy_and_rejects_even_centering() -> None:

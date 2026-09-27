@@ -84,7 +84,7 @@ def _unit_cube_anatomy() -> Any:
     return mesh, anatomy.CardiacBoundaryRoles(mesh, role_faces, profile=profile)
 
 
-def test_anatomy_microstructure_drives_phenomenological_ep() -> None:
+def test_cardiovascular_workflows_scenario_1() -> None:
     mesh, roles = _unit_cube_anatomy()
     fields = (
         anatomy.HarmonicCoordinatePlan(
@@ -123,9 +123,6 @@ def test_anatomy_microstructure_drives_phenomenological_ep() -> None:
     assert bool(microstructure.evidence.all_successful)
     assert bool(candidate.evidence.successful)
     assert runtime.plan.diffusivity.diffusivity_id == diffusivity.diffusivity_id
-
-
-def test_circulation_work_and_observation_loop_share_sign_and_units() -> None:
     pressure_kpa = jnp.asarray([1.0, 3.0, 3.0, 1.0, 1.0])
     volume_mm3 = jnp.asarray([3.0, 3.0, 1.0, 1.0, 3.0])
     observed = observations.PressureVolumeLoopPlan(

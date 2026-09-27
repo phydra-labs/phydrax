@@ -48,7 +48,7 @@ def _state(plan: Any, parameters: Any) -> Any:
     )
 
 
-def test_zero_current_dfn_recovers_open_circuit_equilibrium() -> None:
+def test_dfn_scenario_1() -> None:
     plan = phx.applications.battery.IsothermalDFNPlan(3, 2, 3, 4)
     parameters = _parameters()
     state = _state(plan, parameters)
@@ -67,9 +67,6 @@ def test_zero_current_dfn_recovers_open_circuit_equilibrium() -> None:
         step.accepted_state.electrolyte_concentration_mol_m3,
         state.electrolyte_concentration_mol_m3,
     )
-
-
-def test_dfn_current_step_is_finite_and_mass_directions_are_physical() -> None:
     plan = phx.applications.battery.IsothermalDFNPlan(3, 2, 3, 4)
     parameters = _parameters()
     state = _state(plan, parameters)
@@ -84,9 +81,6 @@ def test_dfn_current_step_is_finite_and_mass_directions_are_physical() -> None:
     assert jnp.mean(
         result.accepted_state.positive_particle_concentration_mol_m3
     ) > jnp.mean(state.positive_particle_concentration_mol_m3)
-
-
-def test_series_pack_commits_cells_atomically_and_sums_voltage() -> None:
     cell = phx.applications.battery.IsothermalDFNPlan(2, 2, 2, 3)
     parameters = _parameters()
     state = _state(cell, parameters)

@@ -10,13 +10,10 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_fourier_grid_sampler_is_owned_by_layer_namespace() -> None:
+def test_fourier_grid_sampling_scenario_1() -> None:
     assert "sample_fourier_grid" in phx.nn.layers.__all__
     assert "sample_fourier_grid" not in vars(phx.nn.models)
     assert "sample_fourier_grid" not in vars(phx.nn)
-
-
-def test_fourier_grid_sampler_uses_normalized_periodic_coordinates() -> None:
     size = 9
     nodes = -1.0 + 2.0 * jnp.arange(size, dtype="float64") / size
     values = jnp.stack(
@@ -46,9 +43,6 @@ def test_fourier_grid_sampler_uses_normalized_periodic_coordinates() -> None:
     assert support.shape == (3,)
     assert jnp.all(support)
     assert jnp.allclose(output, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_fourier_grid_sampler_supports_physical_nodes_batches_and_chunking() -> None:
     batch_size = 2
     size = 8
     origin = 3.0
@@ -90,9 +84,6 @@ def test_fourier_grid_sampler_supports_physical_nodes_batches_and_chunking() -> 
     assert direct.shape == (batch_size, 3, 2)
     assert jnp.allclose(chunked, direct, rtol=2e-8, atol=2e-8)
     assert jnp.allclose(direct[1], 2.0 * direct[0], rtol=1e-12, atol=1e-12)
-
-
-def test_public_fourier_resample_evaluates_shifted_uniform_grid() -> None:
     source_size = 8
     target_size = 11
     offset = 0.125

@@ -25,7 +25,7 @@ def _direct(positions: Any, masses: Any, softening: Any) -> Any:
     )
 
 
-def test_octree_barnes_hut_fmm_and_treepm_are_finite() -> None:
+def test_cosmology_tree_gravity_scenario_1() -> None:
     positions = jnp.asarray(
         [
             [0.1, 0.1, 0.1],
@@ -72,9 +72,6 @@ def test_octree_barnes_hut_fmm_and_treepm_are_finite() -> None:
         periodic.acceleration,
     )
     assert bool(calibration.successful)
-
-
-def test_cartesian_fmm_operators_complete_all_six_passes() -> None:
     space = cosmology.CartesianExpansionSpace(1)
     operators = cosmology.CartesianFMMOperators(space, 1.0, 0.01)
     positions = jnp.asarray([[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]])
@@ -88,9 +85,6 @@ def test_cartesian_fmm_operators_complete_all_six_passes() -> None:
     assert jnp.isfinite(potential)
     assert jnp.all(jnp.isfinite(acceleration))
     assert jnp.all(jnp.isfinite(direct))
-
-
-def test_high_order_plane_fmm_converges_and_reports_resources() -> None:
     positions = jnp.asarray(
         [
             [0.08, 0.10, 0.12],
@@ -135,7 +129,7 @@ def test_high_order_plane_fmm_converges_and_reports_resources() -> None:
     assert errors[2] < 5.0e-2
 
 
-def test_plane_fmm_capacity_failure_is_fail_closed() -> None:
+def test_cosmology_tree_gravity_scenario_2() -> None:
     positions = jnp.asarray(
         [
             [0.1, 0.1, 0.1],
@@ -162,9 +156,6 @@ def test_plane_fmm_capacity_failure_is_fail_closed() -> None:
     assert result.fmm_evidence is not None
     assert not bool(result.fmm_evidence.successful)
     np.testing.assert_array_equal(result.acceleration, 0.0)
-
-
-def test_treepm_cartesian_fmm_short_range_matches_split_reference() -> None:
     positions = jnp.asarray(
         [
             [0.10, 0.10, 0.10],
@@ -226,9 +217,6 @@ def test_treepm_cartesian_fmm_short_range_matches_split_reference() -> None:
         result.short_range_acceleration,
     )
     assert bool(calibration.successful)
-
-
-def test_treepm_rejects_full_range_cartesian_fmm() -> None:
     split = cosmology.TreePMSplitPolicy(0.1, 0.5, "treepm-fmm-reject")
     full_range = cosmology.UniformFMMPlan(
         1.0,
@@ -237,9 +225,6 @@ def test_treepm_rejects_full_range_cartesian_fmm() -> None:
     )
     with pytest.raises(ValueError, match="split scale"):
         cosmology.TreePMPlan(full_range, split)
-
-
-def test_distributed_particle_layout_assigns_key_ranges() -> None:
     layout = cosmology.DistributedParticleLayout(
         2, 16, jnp.asarray([0, 32, 64], dtype=jnp.uint32)
     )

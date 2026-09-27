@@ -3,7 +3,6 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import pytest
 
 import phydrax as phx
 from phydrax.solver._dae_events import _DAEEventRootArguments
@@ -29,31 +28,23 @@ def _system(**hooks: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "initialization",
-    (
+def test_dae_trial_domain_scenario_1() -> None:
+    for initialization in (
         phx.solver.DAEInitializationSpec.index_one(),
         phx.solver.DAEInitializationSpec.check_only(),
-    ),
-)
-def test_initialization_rejects_domain_before_physical_evaluation(
-    initialization: Any,
-) -> None:
-    problem = phx.solver.DifferentialAlgebraicProblem(
-        _system(),
-        jnp.asarray([-1.0]),
-        initial_state_rate=jnp.zeros(1),
-        initialization=initialization,
-        args=jnp.asarray([0.0, 0.35]),
-    )
-    result = phx.solver.initialize_dae(problem, 0.0)
-    assert not result.valid
-    assert result.status == int(phx.solver.DAEInitializationStatus.DOMAIN_FAILURE)
-    assert result.domain_failures == 1
-    assert jnp.array_equal(result.state, jnp.asarray([-1.0]))
-
-
-def test_invalid_stage_predictor_is_rejected_without_clipping_or_residual_call() -> None:
+    ):
+        problem = phx.solver.DifferentialAlgebraicProblem(
+            _system(),
+            jnp.asarray([-1.0]),
+            initial_state_rate=jnp.zeros(1),
+            initialization=initialization,
+            args=jnp.asarray([0.0, 0.35]),
+        )
+        result = phx.solver.initialize_dae(problem, 0.0)
+        assert not result.valid
+        assert result.status == int(phx.solver.DAEInitializationStatus.DOMAIN_FAILURE)
+        assert result.domain_failures == 1
+        assert jnp.array_equal(result.state, jnp.asarray([-1.0]))
     problem = phx.solver.DifferentialAlgebraicProblem(
         _system(),
         jnp.ones(1),
@@ -67,6 +58,20 @@ def test_invalid_stage_predictor_is_rejected_without_clipping_or_residual_call()
     assert result.initialization.valid
     assert result.attempt_history.domain_failures[0] == 1
     assert result.attempt_history.residual_evaluations[0] == 0
+    problem = phx.solver.DifferentialAlgebraicProblem(
+        _system(),
+        jnp.ones(1),
+        initial_state_rate=jnp.ones(1),
+        args=jnp.asarray([1.0, 0.35]),
+    )
+    grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.5]), time_id="invalid-event-reset")
+    result = phx.solver.solve_dae(
+        problem, grid, event_plan=_event_plan(invalid_reset=True)
+    )
+    assert not result.successful
+    assert result.events.event_count == 1
+    assert not result.events.valid[0]
+    assert result.events.domain_failures > 0
 
 
 def _event_plan(*, invalid_reset: Any = False) -> Any:
@@ -90,23 +95,6 @@ def _event_plan(*, invalid_reset: Any = False) -> Any:
         (reset,),
         phx.solver.DAEConsistencyPolicy(1e-8, 1e-8, 1e-8),
     )
-
-
-def test_event_reset_consistency_rejects_invalid_state_without_evaluating_it() -> None:
-    problem = phx.solver.DifferentialAlgebraicProblem(
-        _system(),
-        jnp.ones(1),
-        initial_state_rate=jnp.ones(1),
-        args=jnp.asarray([1.0, 0.35]),
-    )
-    grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.5]), time_id="invalid-event-reset")
-    result = phx.solver.solve_dae(
-        problem, grid, event_plan=_event_plan(invalid_reset=True)
-    )
-    assert not result.successful
-    assert result.events.event_count == 1
-    assert not result.events.valid[0]
-    assert result.events.domain_failures > 0
 
 
 def _root_diagonal_setup(unknown: Any, arguments: Any, source: Any, target: Any) -> Any:
@@ -187,8 +175,8 @@ def test_native_setup_actions_cover_initialization_stage_event_and_replay() -> N
     assert jnp.allclose(gradient, tangent, atol=1e-7)
 
 
-def test_bordered_event_trials_outside_bracket_are_rejected_not_clipped() -> None:
-    from phydrax.solver._dae_events import _DAEEventRootArguments, _DAEEventRootResidual
+def test_dae_trial_domain_scenario_2() -> None:
+    from phydrax.solver._dae_events import _DAEEventRootResidual
 
     system = _system()
     guard = lambda time, state, args: time - args[1]
@@ -222,9 +210,6 @@ def test_bordered_event_trials_outside_bracket_are_rejected_not_clipped() -> Non
     assert not result.successful
     assert result.diagnostics.domain_failures > 0
     assert 0.5 < result.state[-1] <= 1.0
-
-
-def test_mapped_native_initialization_keeps_invalid_lane_outside_physics() -> None:
     problem = phx.solver.DifferentialAlgebraicProblem(
         _system(),
         jnp.ones(1),

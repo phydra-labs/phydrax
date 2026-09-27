@@ -118,7 +118,7 @@ def _pathwise_law(*, forcing: Any = 0.0) -> Any:
     )
 
 
-def test_marginal_transition_is_process_distribution_and_preserves_forcing() -> None:
+def test_stochastic_operator_transition_scenario_1() -> None:
     law = _marginal_law(forcing=0.25)
     state = jnp.zeros((2, 4))
     distribution = law.marginal_transition(state, t0=0.1, t1=0.5)
@@ -133,9 +133,6 @@ def test_marginal_transition_is_process_distribution_and_preserves_forcing() -> 
     invalid = _marginal_law(uncertainty_source="observation")
     with pytest.raises(ValueError, match="process uncertainty"):
         invalid.marginal_transition(state, t0=0.0, t1=0.2)
-
-
-def test_marginal_rollout_replays_and_exports_process_uncertainty() -> None:
     law = _marginal_law()
     times = jnp.asarray([0.0, 0.2, 0.5])
     first = phx.nn.operator.training.marginal_operator_rollout(
@@ -181,9 +178,6 @@ def test_marginal_rollout_replays_and_exports_process_uncertainty() -> None:
     assert predictive.samples.dims == ("case", "__phydra_uq_process", "time", "x")
     assert predictive.sample_axes[0].source == "process"
     assert predictive.mean().data.shape == (2, 3, 4)
-
-
-def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle() -> None:
     law = _pathwise_law(forcing=0.3)
     driver = phx.stochastic.WienerRealization(
         jr.key(3),

@@ -27,7 +27,7 @@ from phydrax.metrix import (
 )
 
 
-def test_complex_structure_family_preserves_pivot_and_evaluates_deformations() -> None:
+def test_calabi_yau_observables_scenario_1() -> None:
     base = TrainableHomogeneousHypersurface(
         # ty: ignore[invalid-argument-type]
         ((2, 0), (1, 1), (0, 2)),
@@ -47,9 +47,6 @@ def test_complex_structure_family_preserves_pivot_and_evaluates_deformations() -
     np.testing.assert_allclose(values, ((2.0,),))
     deformed = family.deformed(jnp.asarray((0.25 + 0.0j,)))
     np.testing.assert_allclose(deformed.coefficients, (1.0, 0.25, 1.0))
-
-
-def test_chern_character_form_and_sampled_number_use_explicit_convention() -> None:
     curvature = jnp.asarray(
         [
             [[[-2.0j * np.pi]]],
@@ -84,6 +81,34 @@ def test_chern_character_form_and_sampled_number_use_explicit_convention() -> No
         source_id="u1-second-character-control",
     )
     np.testing.assert_allclose(second_character.coefficients[0, 0], 1.0, atol=1e-12)
+    measure = _measure()
+    representatives = jnp.asarray(
+        (
+            ((1.0 + 0.0j,), (0.0j,)),
+            ((0.0j,), (1.0 + 0.0j,)),
+            ((1.0 + 0.0j,), (0.0j,)),
+            ((0.0j,), (1.0 + 0.0j,)),
+        )
+    )
+    yukawa = jnp.zeros((4, 2, 2, 2), dtype=jnp.complex128)
+    yukawa = yukawa.at[:, 0, 0, 0].set(1.0)
+    yukawa = yukawa.at[:, 1, 1, 1].set(2.0)
+    plan = CalabiYauModuliObservablePlan(
+        ("u", "v"),
+        representative_kind="harmonic",
+        representative_source_id="analytic-orthogonal-control",
+        batch_count=2,
+    )
+    result = evaluate_calabi_yau_moduli_observables(
+        PreparedCalabiYauModuliSamples(plan, measure, representatives, yukawa)
+    )
+    np.testing.assert_allclose(result.weil_petersson_metric, 0.5 * jnp.eye(2))
+    np.testing.assert_allclose(result.yukawa_couplings[0, 0, 0], 1.0)
+    np.testing.assert_allclose(result.yukawa_couplings[1, 1, 1], 2.0)
+    np.testing.assert_allclose(result.hermiticity_residual, 0.0)
+    np.testing.assert_allclose(result.yukawa_symmetry_residual, 0.0)
+    assert bool(result.accepted)
+    assert bool(result.authoritative)
 
 
 def _measure() -> Any:
@@ -116,38 +141,7 @@ def _measure() -> Any:
     )
 
 
-def test_sampled_harmonic_moduli_observables_report_wp_yukawa_and_batch_errors() -> None:
-    measure = _measure()
-    representatives = jnp.asarray(
-        (
-            ((1.0 + 0.0j,), (0.0j,)),
-            ((0.0j,), (1.0 + 0.0j,)),
-            ((1.0 + 0.0j,), (0.0j,)),
-            ((0.0j,), (1.0 + 0.0j,)),
-        )
-    )
-    yukawa = jnp.zeros((4, 2, 2, 2), dtype=jnp.complex128)
-    yukawa = yukawa.at[:, 0, 0, 0].set(1.0)
-    yukawa = yukawa.at[:, 1, 1, 1].set(2.0)
-    plan = CalabiYauModuliObservablePlan(
-        ("u", "v"),
-        representative_kind="harmonic",
-        representative_source_id="analytic-orthogonal-control",
-        batch_count=2,
-    )
-    result = evaluate_calabi_yau_moduli_observables(
-        PreparedCalabiYauModuliSamples(plan, measure, representatives, yukawa)
-    )
-    np.testing.assert_allclose(result.weil_petersson_metric, 0.5 * jnp.eye(2))
-    np.testing.assert_allclose(result.yukawa_couplings[0, 0, 0], 1.0)
-    np.testing.assert_allclose(result.yukawa_couplings[1, 1, 1], 2.0)
-    np.testing.assert_allclose(result.hermiticity_residual, 0.0)
-    np.testing.assert_allclose(result.yukawa_symmetry_residual, 0.0)
-    assert bool(result.accepted)
-    assert bool(result.authoritative)
-
-
-def test_algebraic_representatives_never_promote_to_harmonic_authority() -> None:
+def test_calabi_yau_observables_scenario_2() -> None:
     measure = _measure()
     representatives = jnp.ones((4, 1, 1), dtype=jnp.complex128)
     yukawa = jnp.ones((4, 1, 1, 1), dtype=jnp.complex128)
@@ -163,9 +157,6 @@ def test_algebraic_representatives_never_promote_to_harmonic_authority() -> None
     assert bool(result.accepted)
     assert not bool(result.authoritative)
     assert "not-harmonic" in result.claim
-
-
-def test_projective_integral_masks_invalid_sample_values_before_reduction() -> None:
     points = jnp.asarray(
         (
             (1.0 + 0.0j, 0.0j),

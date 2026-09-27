@@ -28,7 +28,7 @@ def _transport(source: Any, source_weights: Any, target: Any, target_weights: An
     )
 
 
-def test_two_point_martingale_transport_has_exact_conditional_means_and_dual() -> None:
+def test_martingale_scenario_1() -> None:
     base = _transport([-1.0, 1.0], [0.5, 0.5], [-2.0, 2.0], [0.5, 0.5])
     problem = phx.transport.MartingaleTransportProblem(base)
     result = phx.transport.solve_martingale_transport(problem)
@@ -42,9 +42,6 @@ def test_two_point_martingale_transport_has_exact_conditional_means_and_dual() -
     )
     assert result.evidence.martingale_defect <= problem.constraint_tolerance
     assert result.dual.maximum_inequality_violation <= problem.constraint_tolerance
-
-
-def test_scalar_convex_order_failure_is_explicit_before_optimization() -> None:
     base = _transport([-2.0, 2.0], [0.5, 0.5], [-1.0, 1.0], [0.5, 0.5])
     result = phx.transport.solve_martingale_transport(
         phx.transport.MartingaleTransportProblem(base)
@@ -58,11 +55,6 @@ def test_scalar_convex_order_failure_is_explicit_before_optimization() -> None:
     assert int(result.status) == int(
         phx.transport.MartingaleTransportStatus.CONVEX_ORDER_VIOLATION
     )
-
-
-def test_marginals_alone_cannot_hide_a_martingale_defect_or_relabel_classical_ot() -> (
-    None
-):
     base = _transport([-1.0, 1.0], [0.5, 0.5], [-1.0, 1.0], [0.5, 0.5])
     problem = phx.transport.MartingaleTransportProblem(base)
     swapped = jnp.asarray([[0.0, 0.5], [0.5, 0.0]])

@@ -356,92 +356,109 @@ def test_retained_proof_roundtrip_and_equation_only_admission(
         )
 
 
-@pytest.mark.parametrize("mutation", ("manifest-content", "different-source"))
 def test_distribution_mapping_cannot_relabel_scientific_evidence(
-    release_fixture: Any, mutation: Any
+    release_fixture: Any,
 ) -> None:
-    bundle, _, policy, _, signers = release_fixture
-    manifest = json.loads(bundle.distribution_manifest_json)
-    manifest["source_build_id"] = canonical_fingerprint({"test-only-different-source": 1})
-    if mutation == "different-source":
-        manifest["distribution_id"] = canonical_fingerprint(
-            {key: value for key, value in manifest.items() if key != "distribution_id"}
+    for mutation in ("manifest-content", "different-source"):
+        bundle, _, policy, _, signers = release_fixture
+        manifest = json.loads(bundle.distribution_manifest_json)
+        manifest["source_build_id"] = canonical_fingerprint(
+            {"test-only-different-source": 1}
         )
-    changed = replace(
-        bundle,
-        distribution_id=manifest["distribution_id"],
-        distribution_manifest_json=canonical_json(manifest),
-    )
-    if mutation == "different-source":
-        approval = SignedQualificationRecord.sign(
-            changed.approval_record(THERMAL_ECM_SUPPORT.support_tuple_id),
-            signers["approve"],
-            role="criterion-approver",
-            issued_at=2,
-            expires_at=300,
+        if mutation == "different-source":
+            manifest["distribution_id"] = canonical_fingerprint(
+                {
+                    key: value
+                    for key, value in manifest.items()
+                    if key != "distribution_id"
+                }
+            )
+        changed = replace(
+            bundle,
+            distribution_id=manifest["distribution_id"],
+            distribution_manifest_json=canonical_json(manifest),
         )
-        changed = replace(changed, attestations=(*changed.attestations, approval))
-    with pytest.raises(ValueError):
-        build_battery_release(
-            THERMAL_ECM_CANDIDATE,
-            changed,
-            trust_policy=policy,
-            at_time=80,
-            expires_at=200,
-        )
+        if mutation == "different-source":
+            approval = SignedQualificationRecord.sign(
+                changed.approval_record(THERMAL_ECM_SUPPORT.support_tuple_id),
+                signers["approve"],
+                role="criterion-approver",
+                issued_at=2,
+                expires_at=300,
+            )
+            changed = replace(changed, attestations=(*changed.attestations, approval))
+        with pytest.raises(ValueError):
+            build_battery_release(
+                THERMAL_ECM_CANDIDATE,
+                changed,
+                trust_policy=policy,
+                at_time=80,
+                expires_at=200,
+            )
 
 
-@pytest.mark.parametrize(
-    "mutation",
-    ("tamper", "stale", "revoked", "distribution", "dependency", "replay", "opaque"),
-)
-def test_production_admission_fails_closed(release_fixture: Any, mutation: Any) -> None:
-    bundle, proof, policy, _, _ = release_fixture
-    token = _admit(release_fixture)
-    if mutation == "tamper":
-        signature = bundle.attestations[0]
-        changed = replace(signature, content_json="{}")
-        policy.proofs = (
-            replace(
-                proof,
-                bundle=replace(bundle, attestations=(changed, *bundle.attestations[1:])),
-            ),
-        )
-    elif mutation == "revoked":
-        policy.roles.store.revoke("execute", 110)
-    elif mutation == "dependency":
-        policy.proofs = (
-            replace(
-                proof,
-                bundle=replace(
-                    bundle,
-                    dependencies=(
-                        SupportDependency(
-                            "missing", THERMAL_ECM_SUPPORT.support_tuple_id
+def test_production_admission_fails_closed(
+    release_fixture: Any,
+) -> None:
+    for mutation in (
+        "tamper",
+        "stale",
+        "revoked",
+        "distribution",
+        "dependency",
+        "replay",
+        "opaque",
+    ):
+        bundle, proof, policy, _, _ = release_fixture
+        token = _admit(release_fixture)
+        if mutation == "tamper":
+            signature = bundle.attestations[0]
+            changed = replace(signature, content_json="{}")
+            policy.proofs = (
+                replace(
+                    proof,
+                    bundle=replace(
+                        bundle, attestations=(changed, *bundle.attestations[1:])
+                    ),
+                ),
+            )
+        elif mutation == "revoked":
+            policy.roles.store.revoke("execute", 110)
+        elif mutation == "dependency":
+            policy.proofs = (
+                replace(
+                    proof,
+                    bundle=replace(
+                        bundle,
+                        dependencies=(
+                            SupportDependency(
+                                "missing", THERMAL_ECM_SUPPORT.support_tuple_id
+                            ),
                         ),
                     ),
                 ),
-            ),
-        )
-    elif mutation == "replay":
-        policy.proofs = (
-            replace(
-                proof,
-                bundle=replace(bundle, replay=replace(bundle.replay, reused_caches=True)),
-            ),
-        )
-    elif mutation == "opaque":
-        policy.proofs = ()
-    with pytest.raises((ValueError, RuntimeError)):
-        validate_battery_execution_admission(
-            proof.profile,
-            THERMAL_ECM_SUPPORT,
-            token,
-            distribution_id="distribution:other"
-            if mutation == "distribution"
-            else TEST_DISTRIBUTION_ID,
-            at_time=180 if mutation == "stale" else 100,
-        )
+            )
+        elif mutation == "replay":
+            policy.proofs = (
+                replace(
+                    proof,
+                    bundle=replace(
+                        bundle, replay=replace(bundle.replay, reused_caches=True)
+                    ),
+                ),
+            )
+        elif mutation == "opaque":
+            policy.proofs = ()
+        with pytest.raises((ValueError, RuntimeError)):
+            validate_battery_execution_admission(
+                proof.profile,
+                THERMAL_ECM_SUPPORT,
+                token,
+                distribution_id="distribution:other"
+                if mutation == "distribution"
+                else TEST_DISTRIBUTION_ID,
+                at_time=180 if mutation == "stale" else 100,
+            )
 
 
 def test_expiry_is_capped_by_typed_evidence_and_unknown_candidates_refused(

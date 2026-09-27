@@ -40,7 +40,7 @@ def _site_gauge(shape: Any) -> Any:
     return jnp.asarray(diagonal), jnp.asarray(inverse)
 
 
-def test_frontier_p_form_placement_and_complexified_gauge_invariance() -> None:
+def test_frontier_contracts() -> None:
     two_form = PFormLatticePlan((2, 3, 4), 2)
     values = jnp.zeros(two_form.configuration_shape(2), dtype=jnp.complex128)
     field = ComplexifiedPFormField(two_form, values)
@@ -83,9 +83,6 @@ def test_frontier_p_form_placement_and_complexified_gauge_invariance() -> None:
     )
     assert bool(gauge_evidence.invariant)
     assert "reference-only" in gauge_evidence.claim
-
-
-def test_frontier_bfss_action_and_ward_pfaffian_controls_are_explicit() -> None:
     prepared = prepare_bfss(BFSSPlan(4, 3, 2, coupling=1.2, time_spacing=0.1, mass=0.2))
     key = jax.random.key(91)
     keys = jax.random.split(key, 4)

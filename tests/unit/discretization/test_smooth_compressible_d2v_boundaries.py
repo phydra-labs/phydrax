@@ -63,7 +63,7 @@ def _content(plan: Any, state: Any) -> Any:
     return jnp.concatenate((mass[None], momentum, energy[None]))
 
 
-def test_d2v17_compiled_topology_owns_long_links_and_double_reflects_corners() -> None:
+def test_smooth_compressible_d2v_boundaries_scenario_1() -> None:
     quadrature = _quadrature()
     plan = SpecularAdiabaticD2VBoundaryPlan(
         quadrature, (6, 6), (1.0, 1.0), 1.0, retain_history=True
@@ -107,9 +107,6 @@ def test_d2v17_compiled_topology_owns_long_links_and_double_reflects_corners() -
         result.candidate_state.total_energy_populations[0, 0, incoming],
         state.total_energy_populations[1, 1, reflected],
     )
-
-
-def test_periodic_axis_wraps_before_the_other_axis_applies_specular_law() -> None:
     quadrature = _quadrature()
     plan = SpecularAdiabaticD2VBoundaryPlan(
         quadrature,
@@ -134,9 +131,6 @@ def test_periodic_axis_wraps_before_the_other_axis_applies_specular_law() -> Non
         result.candidate_state.total_energy_populations[0, 0, incoming],
         state.total_energy_populations[4, 1, y_reflected],
     )
-
-
-def test_periodic_plan_matches_exact_coupled_pull_and_has_no_boundary_exchange() -> None:
     quadrature = _quadrature()
     plan = PeriodicD2VBoundaryPlan(quadrature, (6, 6), (1.0, 1.0), 1.0)
     state = _unique_state()
@@ -165,9 +159,6 @@ def test_periodic_plan_matches_exact_coupled_pull_and_has_no_boundary_exchange()
         result.candidate_state.total_energy_populations, expected_energy
     )
     np.testing.assert_allclose(result.mass_momentum_energy_exchange, 0.0, atol=1.0e-10)
-
-
-def test_matching_uniform_reservoir_is_stationary_without_model_evaluation() -> None:
     quadrature = _quadrature()
     particles = jnp.arange(1, 18, dtype=jnp.float64) / 32.0
     energy = jnp.arange(18, 35, dtype=jnp.float64) / 16.0
@@ -196,7 +187,7 @@ def test_matching_uniform_reservoir_is_stationary_without_model_evaluation() -> 
     np.testing.assert_array_equal(result.mass_momentum_energy_exchange, jnp.zeros((4,)))
 
 
-def test_reservoir_replaces_incoming_links_only_under_exclusive_ownership() -> None:
+def test_smooth_compressible_d2v_boundaries_scenario_2() -> None:
     quadrature = _quadrature()
     state = _unique_state()
     particles = 1000.0 + jnp.arange(17, dtype=jnp.float64)
@@ -235,38 +226,6 @@ def test_reservoir_replaces_incoming_links_only_under_exclusive_ownership() -> N
         result.candidate_state.total_energy_populations[~reservoir],
         gathered_energy[~reservoir],
     )
-
-
-def test_stationary_specular_wall_has_zero_mass_energy_flux_and_normal_impulse() -> None:
-    quadrature = _quadrature()
-    plan = SpecularAdiabaticD2VBoundaryPlan(
-        quadrature,
-        (6, 6),
-        (1.0, 1.0),
-        1.0,
-        periodic_axes=(True, False),
-    )
-    state = _unique_state()
-
-    result = plan.route(state)
-
-    assert bool(result.successful)
-    np.testing.assert_allclose(
-        result.mass_momentum_energy_exchange[jnp.asarray((0, 1, 3))],
-        jnp.asarray((0.0, 0.0, 0.0)),
-        atol=1.0e-10,
-    )
-    assert abs(float(result.mass_momentum_energy_exchange[2])) > 0.0
-    np.testing.assert_allclose(
-        result.wall_momentum_impulse + result.mass_momentum_energy_exchange[1:3],
-        0.0,
-        atol=1.0e-12,
-    )
-    np.testing.assert_array_equal(result.heat_exchange, jnp.asarray(0.0))
-    np.testing.assert_array_equal(result.wall_work, jnp.asarray(0.0))
-
-
-def test_reservoir_ledger_is_actual_accepted_population_content_change() -> None:
     quadrature = _quadrature()
     state = _unique_state()
     face_particles = jnp.stack(
@@ -293,9 +252,32 @@ def test_reservoir_ledger_is_actual_accepted_population_content_change() -> None
     np.testing.assert_array_equal(result.wall_momentum_impulse, jnp.zeros((2,)))
     np.testing.assert_array_equal(result.heat_exchange, jnp.asarray(0.0))
     np.testing.assert_array_equal(result.wall_work, jnp.asarray(0.0))
+    quadrature = _quadrature()
+    plan = SpecularAdiabaticD2VBoundaryPlan(
+        quadrature,
+        (6, 6),
+        (1.0, 1.0),
+        1.0,
+        periodic_axes=(True, False),
+    )
+    state = _unique_state()
 
+    result = plan.route(state)
 
-def test_incompatible_reservoir_corner_refuses_without_explicit_corner_data() -> None:
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        result.mass_momentum_energy_exchange[jnp.asarray((0, 1, 3))],
+        jnp.asarray((0.0, 0.0, 0.0)),
+        atol=1.0e-10,
+    )
+    assert abs(float(result.mass_momentum_energy_exchange[2])) > 0.0
+    np.testing.assert_allclose(
+        result.wall_momentum_impulse + result.mass_momentum_energy_exchange[1:3],
+        0.0,
+        atol=1.0e-12,
+    )
+    np.testing.assert_array_equal(result.heat_exchange, jnp.asarray(0.0))
+    np.testing.assert_array_equal(result.wall_work, jnp.asarray(0.0))
     quadrature = _quadrature()
     state = _uniform_state(jnp.ones((17,)), 2.0 * jnp.ones((17,)))
     face_particles = jnp.stack(
@@ -331,7 +313,7 @@ def test_incompatible_reservoir_corner_refuses_without_explicit_corner_data() ->
     assert bool(accepted.successful)
 
 
-def test_invalid_reservoir_target_rolls_back_both_population_fields_atomically() -> None:
+def test_smooth_compressible_d2v_boundaries_scenario_3() -> None:
     quadrature = _quadrature()
     state = _uniform_state(jnp.ones((17,)), 2.0 * jnp.ones((17,)))
     invalid_particles = jnp.ones((4, 17)).at[0, 1].set(-1.0)
@@ -359,11 +341,6 @@ def test_invalid_reservoir_target_rolls_back_both_population_fields_atomically()
         state.total_energy_populations,
     )
     np.testing.assert_array_equal(result.mass_momentum_energy_exchange, jnp.zeros((4,)))
-
-
-def test_zero_gradient_outflow_accepts_outward_flow_and_refuses_backflow_atomically() -> (
-    None
-):
     quadrature = _quadrature()
     positive_x = _direction(quadrature, (1, 0))
     negative_x = _direction(quadrature, (-1, 0))
@@ -403,7 +380,7 @@ def test_zero_gradient_outflow_accepts_outward_flow_and_refuses_backflow_atomica
     np.testing.assert_array_equal(refused.mass_momentum_energy_exchange, jnp.zeros((4,)))
 
 
-def test_maxwell_zero_accommodation_is_the_specular_limit() -> None:
+def test_maxwell_contracts() -> None:
     quadrature = _quadrature()
     diffuse_particles = quadrature.weights
     diffuse_energy = 3.0 * diffuse_particles
@@ -439,9 +416,6 @@ def test_maxwell_zero_accommodation_is_the_specular_limit() -> None:
         maxwell_result.candidate_state.total_energy_populations,
         specular_result.candidate_state.total_energy_populations,
     )
-
-
-def test_maxwell_diffuse_density_closes_mass_and_splits_heat_from_wall_work() -> None:
     quadrature = _quadrature()
     diffuse_particles = quadrature.weights
     diffuse_energy = 3.0 * diffuse_particles
@@ -481,9 +455,6 @@ def test_maxwell_diffuse_density_closes_mass_and_splits_heat_from_wall_work() ->
         rtol=0.0,
         atol=1.0e-12,
     )
-
-
-def test_maxwell_refuses_invalid_diffuse_data_and_nonpositive_candidate() -> None:
     quadrature = _quadrature()
     diffuse_particles = quadrature.weights
     diffuse_energy = 3.0 * diffuse_particles

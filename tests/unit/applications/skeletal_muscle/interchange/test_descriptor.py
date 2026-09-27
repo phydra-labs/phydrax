@@ -130,7 +130,7 @@ def _inventory(
     )
 
 
-def test_descriptor_is_immutable_and_force_owner_is_identity() -> None:
+def test_descriptor_scenario_1() -> None:
     provider = _descriptor()
     native = _descriptor(force_owner="de-groote")
     assert provider.descriptor_id != native.descriptor_id
@@ -138,36 +138,6 @@ def test_descriptor_is_immutable_and_force_owner_is_identity() -> None:
         provider.force_owner = "de-groote"
     with pytest.raises(ValueError, match="atomic"):
         _descriptor(force_owner="provider-native+de-groote")
-
-
-def test_host_preparation_verifies_identity_and_lowers_maps() -> None:
-    prepared = prepare_external_model_descriptor(_descriptor(), _inventory())
-    assert prepared.evidence.successful
-    assert jnp.allclose(prepared.coordinate_to_phydrax(jnp.asarray([125.0])), 1.25)
-    assert jnp.allclose(prepared.actuator_to_external(jnp.asarray([0.4])), 0.4)
-    assert jnp.allclose(prepared.sensor_to_phydrax(jnp.asarray([[-12.0]])), 12.0)
-    leaves = jax.tree_util.tree_leaves(prepared)
-    assert any(leaf is prepared.sensor_scale for leaf in leaves)
-
-
-def test_host_preparation_rejects_compiled_identity_with_evidence() -> None:
-    with pytest.raises(ExternalModelPreparationError) as raised:
-        prepare_external_model_descriptor(
-            _descriptor(), _inventory(compiled_sha256="e" * 64)
-        )
-    assert not raised.value.evidence.successful
-    assert raised.value.evidence.descriptor_id == _descriptor().descriptor_id
-    assert raised.value.evidence.failure_reasons == (
-        "compiled SHA-256 digest does not match the descriptor",
-    )
-
-
-def test_host_inventory_rejects_incomplete_channel_identity() -> None:
-    with pytest.raises(ValueError, match="coordinate_channels"):
-        _inventory(coordinate_channels=())
-
-
-def test_descriptor_rejects_a_broken_compile_chain() -> None:
     descriptor = _descriptor()
     with pytest.raises(ValueError, match="ordered chain"):
         ExternalModelDescriptor(
@@ -191,9 +161,24 @@ def test_descriptor_rejects_a_broken_compile_chain() -> None:
             sensor_map=descriptor.sensor_map,
             force_owner=descriptor.force_owner,
         )
-
-
-def test_prepared_affine_maps_are_jittable() -> None:
+    prepared = prepare_external_model_descriptor(_descriptor(), _inventory())
+    assert prepared.evidence.successful
+    assert jnp.allclose(prepared.coordinate_to_phydrax(jnp.asarray([125.0])), 1.25)
+    assert jnp.allclose(prepared.actuator_to_external(jnp.asarray([0.4])), 0.4)
+    assert jnp.allclose(prepared.sensor_to_phydrax(jnp.asarray([[-12.0]])), 12.0)
+    leaves = jax.tree_util.tree_leaves(prepared)
+    assert any(leaf is prepared.sensor_scale for leaf in leaves)
+    with pytest.raises(ExternalModelPreparationError) as raised:
+        prepare_external_model_descriptor(
+            _descriptor(), _inventory(compiled_sha256="e" * 64)
+        )
+    assert not raised.value.evidence.successful
+    assert raised.value.evidence.descriptor_id == _descriptor().descriptor_id
+    assert raised.value.evidence.failure_reasons == (
+        "compiled SHA-256 digest does not match the descriptor",
+    )
+    with pytest.raises(ValueError, match="coordinate_channels"):
+        _inventory(coordinate_channels=())
     prepared = prepare_external_model_descriptor(_descriptor(), _inventory())
     mapped = eqx.filter_jit(prepared.coordinate_to_phydrax)(
         jnp.asarray([[100.0], [150.0]])

@@ -133,9 +133,7 @@ def _decode(request: Any, policy: Any, response: Any) -> Any:
     )
 
 
-def test_generic_slice_decodes_isolated_numerical_witness_data_without_execution() -> (
-    None
-):
+def test_homotopy_geometry_scenario_1() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -159,9 +157,6 @@ def test_generic_slice_decodes_isolated_numerical_witness_data_without_execution
     assert decoded.output.degree == 2
     assert decoded.output.system_id == system.system_id
     assert decoded.run is None
-
-
-def test_request_and_result_reject_malformed_slices() -> None:
     system = _parabola_system()
     with pytest.raises(ValueError, match="codimension"):
         HomotopyGeometryRequest.generic_slice(
@@ -189,9 +184,6 @@ def test_request_and_result_reject_malformed_slices() -> None:
     )
     with pytest.raises(ValueError, match="width"):
         _decode(request, HomotopyGeometryPolicy(path_capacity=2), response)
-
-
-def test_monodromy_decode_rejects_malformed_permutation() -> None:
     system = _parabola_system()
     witness = _parabola_witness(system)
     request = HomotopyGeometryRequest.monodromy(
@@ -216,7 +208,7 @@ def test_monodromy_decode_rejects_malformed_permutation() -> None:
         _decode(request, HomotopyGeometryPolicy(path_capacity=2), response)
 
 
-def test_partial_path_failure_is_retained_instead_of_promoted_to_success() -> None:
+def test_homotopy_geometry_scenario_2() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -238,9 +230,6 @@ def test_partial_path_failure_is_retained_instead_of_promoted_to_success() -> No
     assert decoded.paths.successful_count == 1
     assert decoded.output.degree == 1
     assert not decoded.successful
-
-
-def test_budget_exhaustion_retains_unattempted_path_inventory() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -262,9 +251,6 @@ def test_budget_exhaustion_retains_unattempted_path_inventory() -> None:
     assert decoded.status is HomotopyGeometryStatus.BUDGET_EXHAUSTED
     assert decoded.paths.budget_exhausted
     assert decoded.paths.records[1].status.value == "not-attempted"
-
-
-def test_trace_test_failure_is_an_explicit_non_success_outcome() -> None:
     system = _parabola_system()
     witness = _parabola_witness(system)
     request = HomotopyGeometryRequest.trace_test(
@@ -298,7 +284,7 @@ def test_trace_test_failure_is_an_explicit_non_success_outcome() -> None:
     assert not decoded.successful
 
 
-def test_provider_identity_mismatch_is_retained_as_identity_failure() -> None:
+def test_homotopy_geometry_scenario_3() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -321,9 +307,6 @@ def test_provider_identity_mismatch_is_retained_as_identity_failure() -> None:
     assert decoded.output is None
     assert decoded.paths is None
     assert "provider_id" in decoded.error
-
-
-def test_image_degree_decodes_a_pseudo_witness_without_certification_claim() -> None:
     system = _parabola_system()
     map_system = SparsePolynomialSystem.from_coo(
         ("x", "y"),
@@ -366,9 +349,6 @@ def test_image_degree_decodes_a_pseudo_witness_without_certification_claim() -> 
     assert decoded.output.map_id == "x-projection"
     with pytest.raises(AttributeError):
         _ = decoded.output.certified
-
-
-def test_membership_output_uses_qualified_witness_transport_evidence() -> None:
     system = _parabola_system()
     witness = _parabola_witness(system)
     request = HomotopyGeometryRequest.membership(
@@ -394,7 +374,7 @@ def test_membership_output_uses_qualified_witness_transport_evidence() -> None:
     assert "not-exact-ideal-membership" in decoded.output.claim
 
 
-def test_response_status_cannot_falsely_claim_success_over_failed_paths() -> None:
+def test_homotopy_geometry_scenario_4() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -417,9 +397,6 @@ def test_response_status_cannot_falsely_claim_success_over_failed_paths() -> Non
     extra_field["unbounded_diagnostic"] = "not admitted"
     with pytest.raises(ValueError, match="exact protocol fields"):
         _decode(request, HomotopyGeometryPolicy(path_capacity=2), extra_field)
-
-
-def test_response_requires_boolean_budget_and_trace_flags() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,
@@ -469,9 +446,6 @@ def test_response_requires_boolean_budget_and_trace_flags() -> None:
             HomotopyGeometryPolicy(path_capacity=6),
             trace_response,
         )
-
-
-def test_seed_echo_and_endpoint_bijection_are_enforced() -> None:
     system = _parabola_system()
     request = HomotopyGeometryRequest.generic_slice(
         system,

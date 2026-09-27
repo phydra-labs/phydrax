@@ -108,7 +108,7 @@ def _parameter_leaves(tree: Any) -> Any:
     return jax.tree_util.tree_leaves(parameters)
 
 
-def test_integration_plan_trains_only_the_learned_law() -> None:
+def test_learned_constitutive_scenario_1() -> None:
     fixed = phx.equations.ConstitutiveModel(
         lambda strain, state, parameters, time, dt: phx.equations.ConstitutiveResponse(
             parameters * strain, state
@@ -136,6 +136,77 @@ def test_integration_plan_trains_only_the_learned_law() -> None:
             # ty: ignore[invalid-argument-type]
             ((phx.equations.MaterialSiteId("raw"), _Cubic(1.0, 0.0)),)
         )
+    with pytest.raises(ValueError, match="implicit-requires-c1"):
+        _uniaxial_law(_mlp(jax.nn.relu, 1, 1))
+    with pytest.raises(ValueError, match="regularity-undeclared"):
+        _uniaxial_law(_mlp(lambda x: x * jnp.tanh(x), 1, 1))
+    unitless = phx.ValuePort(
+        "test.stress",
+        event_shape=(1,),
+        component_ids=("stress[0]",),
+        representation="engineering",
+    )
+    with pytest.raises(ValueError, match="declare component dimensions"):
+        phx.equations.LearnedConstitutiveModel(
+            _Cubic(1.0, 0.0),
+            _port("strain", 1, _DIMENSIONLESS),
+            unitless,
+            # ty: ignore[invalid-argument-type]
+            lower=[-1.0],
+            # ty: ignore[invalid-argument-type]
+            upper=[1.0],
+            model_id="unitless",
+        )
+    coarse = phx.ComponentPrecisionContract(
+        input_dtype="float64",
+        parameter_dtype="float64",
+        compute_dtype="float64",
+        accumulation_dtype="float64",
+        output_dtype="float64",
+        absolute_error_floor=1e-6,
+    )
+    with pytest.raises(ValueError, match="below the declared component"):
+        _root_material(_Cubic(1.0, 2.0, precision=coarse), tolerance=1e-10)
+    material = _root_material(_Cubic(1.0, 2.0, precision=coarse), tolerance=1e-6)
+    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
+    relative = phx.ComponentPrecisionContract(
+        input_dtype="float64",
+        parameter_dtype="float64",
+        compute_dtype="float64",
+        accumulation_dtype="float64",
+        output_dtype="float64",
+        relative_error_floor=1e-3,
+    )
+    with pytest.raises(ValueError, match="residual_scale"):
+        _root_material(_Cubic(1.0, 2.0, precision=relative), tolerance=1e-10)
+    with pytest.raises(ValueError, match="below the declared component"):
+        _root_material(
+            _Cubic(1.0, 2.0, precision=relative), tolerance=1e-10, residual_scale=1.0
+        )
+    material = _root_material(
+        _Cubic(1.0, 2.0, precision=relative), tolerance=1e-3, residual_scale=1.0
+    )
+    assert material.residual_scale == 1.0
+    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
+    ports = phx.ModelPorts(
+        inputs=(_port("state", 1, _DIMENSIONLESS),),
+        outputs=(_port("response", 1, _PASCAL),),
+    )
+    model = _PortedCubic(_Cubic(1.0, 2.0), ports)
+    with pytest.raises(ValueError, match="local-implicit-material'.*owner_ports"):
+        _root_material(model)
+
+    mapping = phx.PortMapping(
+        # ty: ignore[invalid-argument-type]
+        inputs=[(ports.inputs[0].port_id,) * 2],
+        # ty: ignore[invalid-argument-type]
+        outputs=[(ports.outputs[0].port_id,) * 2],
+    )
+    material = _root_material(model, ports=ports, port_mapping=mapping)
+    evidence = material.binding.contract().port_binding
+    assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
+    assert evidence.dimensions_verified
+    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
 
 
 def test_learned_law_tangent_agrees_with_jvp_and_vjp() -> None:
@@ -204,30 +275,6 @@ def test_out_of_support_site_keeps_primal_but_poisons_its_derivatives() -> None:
     assert bool(jnp.isnan(invalid_gradient.modulus))
 
 
-def test_learned_law_admission_requires_c1_regularity_and_declared_units() -> None:
-    with pytest.raises(ValueError, match="implicit-requires-c1"):
-        _uniaxial_law(_mlp(jax.nn.relu, 1, 1))
-    with pytest.raises(ValueError, match="regularity-undeclared"):
-        _uniaxial_law(_mlp(lambda x: x * jnp.tanh(x), 1, 1))
-    unitless = phx.ValuePort(
-        "test.stress",
-        event_shape=(1,),
-        component_ids=("stress[0]",),
-        representation="engineering",
-    )
-    with pytest.raises(ValueError, match="declare component dimensions"):
-        phx.equations.LearnedConstitutiveModel(
-            _Cubic(1.0, 0.0),
-            _port("strain", 1, _DIMENSIONLESS),
-            unitless,
-            # ty: ignore[invalid-argument-type]
-            lower=[-1.0],
-            # ty: ignore[invalid-argument-type]
-            upper=[1.0],
-            model_id="unitless",
-        )
-
-
 def _inverse_residual(model: Any, state: Any, target: Any) -> Any:
     return model(state) - target
 
@@ -291,43 +338,6 @@ def test_unresolved_learned_local_root_is_invalid_and_poisons_its_derivative() -
     assert bool(jnp.isnan(gradient).all())
 
 
-def test_learned_local_root_tolerance_respects_the_declared_error_floor() -> None:
-    coarse = phx.ComponentPrecisionContract(
-        input_dtype="float64",
-        parameter_dtype="float64",
-        compute_dtype="float64",
-        accumulation_dtype="float64",
-        output_dtype="float64",
-        absolute_error_floor=1e-6,
-    )
-    with pytest.raises(ValueError, match="below the declared component"):
-        _root_material(_Cubic(1.0, 2.0, precision=coarse), tolerance=1e-10)
-    material = _root_material(_Cubic(1.0, 2.0, precision=coarse), tolerance=1e-6)
-    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
-
-
-def test_learned_local_root_relative_floor_requires_a_declared_residual_scale() -> None:
-    relative = phx.ComponentPrecisionContract(
-        input_dtype="float64",
-        parameter_dtype="float64",
-        compute_dtype="float64",
-        accumulation_dtype="float64",
-        output_dtype="float64",
-        relative_error_floor=1e-3,
-    )
-    with pytest.raises(ValueError, match="residual_scale"):
-        _root_material(_Cubic(1.0, 2.0, precision=relative), tolerance=1e-10)
-    with pytest.raises(ValueError, match="below the declared component"):
-        _root_material(
-            _Cubic(1.0, 2.0, precision=relative), tolerance=1e-10, residual_scale=1.0
-        )
-    material = _root_material(
-        _Cubic(1.0, 2.0, precision=relative), tolerance=1e-3, residual_scale=1.0
-    )
-    assert material.residual_scale == 1.0
-    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)
-
-
 class _PortedCubic(phx.AbstractArrayModel):
     cubic: _Cubic
     ports: phx.ModelPorts
@@ -355,25 +365,3 @@ class _PortedCubic(phx.AbstractArrayModel):
 
     def model_ports(self) -> Any:
         return self.ports
-
-
-def test_learned_local_root_binds_port_declaring_models_only_through_ports() -> None:
-    ports = phx.ModelPorts(
-        inputs=(_port("state", 1, _DIMENSIONLESS),),
-        outputs=(_port("response", 1, _PASCAL),),
-    )
-    model = _PortedCubic(_Cubic(1.0, 2.0), ports)
-    with pytest.raises(ValueError, match="local-implicit-material'.*owner_ports"):
-        _root_material(model)
-
-    mapping = phx.PortMapping(
-        # ty: ignore[invalid-argument-type]
-        inputs=[(ports.inputs[0].port_id,) * 2],
-        # ty: ignore[invalid-argument-type]
-        outputs=[(ports.outputs[0].port_id,) * 2],
-    )
-    material = _root_material(model, ports=ports, port_mapping=mapping)
-    evidence = material.binding.contract().port_binding
-    assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
-    assert evidence.dimensions_verified
-    assert bool(material.evaluate(jnp.zeros(1), jnp.asarray([0.5])).valid)

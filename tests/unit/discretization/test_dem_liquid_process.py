@@ -54,7 +54,7 @@ def _compile_liquid(*, initial_film: Any = 5.0e-4, evaporation_flux: Any = 0.0) 
     )
 
 
-def test_bridge_birth_draws_from_films_and_rupture_returns_liquid() -> None:
+def test_dem_liquid_process_scenario_1() -> None:
     compiled = _compile_liquid()
     state = compiled.initialize_state(
         0.0,
@@ -87,9 +87,6 @@ def test_bridge_birth_draws_from_films_and_rupture_returns_liquid() -> None:
     assert jnp.allclose(evaluation.liquid.next_state.film_volume, 5.0e-4)
     assert jnp.isclose(jnp.sum(evaluation.liquid.bridge_volume), 0.0)
     assert jnp.abs(evaluation.liquid.next_state.balance_residual) < 1.0e-12
-
-
-def test_limited_inventory_allocates_deterministically_without_creating_liquid() -> None:
     compiled = _compile_liquid(initial_film=2.0e-4)
     state = compiled.initialize_state(
         0.0,
@@ -102,9 +99,6 @@ def test_limited_inventory_allocates_deterministically_without_creating_liquid()
     assert jnp.allclose(state.liquid.film_volume, 0.0)
     assert jnp.isclose(state.liquid.initial_total_volume, 4.0e-4)
     assert jnp.abs(state.liquid.balance_residual) < 1.0e-12
-
-
-def test_surface_area_evaporation_is_conservative_and_replay_safe() -> None:
     compiled = _compile_liquid(evaporation_flux=1.0e6)
     state = compiled.initialize_state(
         0.0,

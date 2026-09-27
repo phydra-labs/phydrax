@@ -18,7 +18,7 @@ def _pivot_values(rows: Any) -> Any:
     return jnp.take_along_axis(rows, indices[..., None], axis=-1)[..., 0]
 
 
-def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts() -> None:
+def test_subspaces_scenario_1() -> None:
     base = jnp.array(
         [
             [-2.0, 0.0, 1.0],
@@ -57,43 +57,6 @@ def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts() 
     assert jnp.all(jnp.real(pivots) >= 0.0)
     assert result.derivative_contract.route is DerivativeRoute.SPECTRAL
     assert "basis representatives" in " ".join(result.derivative_contract.conditions)
-
-
-def test_pca_projector_prediction_fit_feature_and_fit_weight_gradients_are_finite() -> (
-    None
-):
-    features = jnp.array(
-        [
-            [-2.0, 0.2, 1.0],
-            [-1.0, 1.1, 0.4],
-            [0.1, -0.3, 0.8],
-            [1.2, -1.0, -0.2],
-            [2.1, 0.4, -1.1],
-        ]
-    )
-    point = jnp.array([0.3, -0.4, 1.2])
-    model = PCA(2).fit_batch(MLBatch(features)).as_trainable()
-
-    prediction_gradient = jax.grad(lambda value: jnp.sum(jnp.square(model(value))))(point)
-
-    def feature_loss(value: Any) -> Any:
-        fitted = PCA(2).fit_batch(MLBatch(value)).as_trainable()
-        # ty: ignore[unresolved-attribute]
-        return jnp.sum(jnp.square(fitted.project(point)))
-
-    def weight_loss(weight: Any) -> Any:
-        fitted = PCA(2).fit_batch(MLBatch(features, sample_weight=weight)).as_trainable()
-        # ty: ignore[unresolved-attribute]
-        return jnp.sum(jnp.square(fitted.project(point)))
-
-    feature_gradient = jax.grad(feature_loss)(features)
-    weight_gradient = jax.grad(weight_loss)(jnp.arange(1.0, 6.0))
-    assert jnp.all(jnp.isfinite(prediction_gradient))
-    assert jnp.all(jnp.isfinite(feature_gradient))
-    assert jnp.all(jnp.isfinite(weight_gradient))
-
-
-def test_truncated_svd_is_origin_anchored_jittable_and_vmappable() -> None:
     features = jnp.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     result = TruncatedSVD(2).fit_batch(MLBatch(features))
     model = result.as_trainable()
@@ -108,11 +71,6 @@ def test_truncated_svd_is_origin_anchored_jittable_and_vmappable() -> None:
     # ty: ignore[unresolved-attribute]
     assert jax.vmap(model.transform)(points).shape == (2, 2)
     assert model.input_binding().batch_mode == "blockwise"
-
-
-def test_physical_pod_centering_mask_complex_phase_and_inverse_are_metric_correct() -> (
-    None
-):
     coefficients = jnp.array(
         [[-2.0, 0.0], [-1.0, 1.0], [0.0, -1.0], [1.0, 1.0], [2.0, -1.0]]
     )
@@ -157,7 +115,41 @@ def test_physical_pod_centering_mask_complex_phase_and_inverse_are_metric_correc
     assert jnp.all(jnp.real(pivots) >= 0.0)
 
 
-def test_repeated_spectrum_disables_canonical_basis_gradient_diagnostic() -> None:
+def test_pca_projector_prediction_fit_feature_and_fit_weight_gradients_are_finite() -> (
+    None
+):
+    features = jnp.array(
+        [
+            [-2.0, 0.2, 1.0],
+            [-1.0, 1.1, 0.4],
+            [0.1, -0.3, 0.8],
+            [1.2, -1.0, -0.2],
+            [2.1, 0.4, -1.1],
+        ]
+    )
+    point = jnp.array([0.3, -0.4, 1.2])
+    model = PCA(2).fit_batch(MLBatch(features)).as_trainable()
+
+    prediction_gradient = jax.grad(lambda value: jnp.sum(jnp.square(model(value))))(point)
+
+    def feature_loss(value: Any) -> Any:
+        fitted = PCA(2).fit_batch(MLBatch(value)).as_trainable()
+        # ty: ignore[unresolved-attribute]
+        return jnp.sum(jnp.square(fitted.project(point)))
+
+    def weight_loss(weight: Any) -> Any:
+        fitted = PCA(2).fit_batch(MLBatch(features, sample_weight=weight)).as_trainable()
+        # ty: ignore[unresolved-attribute]
+        return jnp.sum(jnp.square(fitted.project(point)))
+
+    feature_gradient = jax.grad(feature_loss)(features)
+    weight_gradient = jax.grad(weight_loss)(jnp.arange(1.0, 6.0))
+    assert jnp.all(jnp.isfinite(prediction_gradient))
+    assert jnp.all(jnp.isfinite(feature_gradient))
+    assert jnp.all(jnp.isfinite(weight_gradient))
+
+
+def test_subspaces_scenario_2() -> None:
     features = jnp.array([[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]])
     result = PCA(1, differentiate="basis").fit_batch(MLBatch(features))
 
@@ -165,9 +157,6 @@ def test_repeated_spectrum_disables_canonical_basis_gradient_diagnostic() -> Non
     assert not result.diagnostics.canonicalization_valid
     assert not result.diagnostics.basis_gradient_supported
     assert jnp.isclose(result.diagnostics.minimum_eigengap, 0.0, atol=1e-6)
-
-
-def test_incremental_pca_merges_immutable_chunks_and_matches_batch_projector() -> None:
     features = jnp.array(
         [
             [-3.0, -1.0, -4.0],

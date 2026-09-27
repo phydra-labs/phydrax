@@ -18,7 +18,7 @@ def _quaternion_coordinates(base_shape: Any = (1,)) -> Any:
     return algebra, coordinates
 
 
-def test_diffrax_coordinates_preserve_quaternion_public_layout() -> None:
+def test_algebra_state_backends_scenario_1() -> None:
     algebra, coordinates = _quaternion_coordinates()
     product = algebra.prepare_product()
     imaginary = jnp.asarray([0.0, 1.0, 0.0, 0.0])
@@ -47,9 +47,6 @@ def test_diffrax_coordinates_preserve_quaternion_public_layout() -> None:
     assert isinstance(evidence, phx.linalg.RealCoordinateEvidence)
     assert evidence.map_id == coordinates.coordinate_id
     assert evidence.coordinate_shape == (4, 1)
-
-
-def test_delay_and_segmented_delay_accept_real_algebra_coordinates() -> None:
     initial = jnp.asarray([[1.0, 0.0, 0.0, 0.0]])
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.zeros_like(state),
@@ -77,9 +74,6 @@ def test_delay_and_segmented_delay_accept_real_algebra_coordinates() -> None:
 
     assert jnp.array_equal(whole.states, jnp.broadcast_to(initial, whole.states.shape))
     assert jnp.array_equal(segmented.states, whole.states)
-
-
-def test_jump_differential_keeps_algebra_state_separate_from_real_hazards() -> None:
     initial = jnp.asarray([[1.0, 0.0, 0.0, 0.0]])
     differential = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.zeros_like(state),
@@ -113,7 +107,7 @@ def test_jump_differential_keeps_algebra_state_separate_from_real_hazards() -> N
     )
 
 
-def test_rough_dynamics_accept_explicit_real_octonion_coordinates() -> None:
+def test_algebra_state_backends_scenario_2() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     direction = jnp.eye(8)[1]
@@ -137,9 +131,6 @@ def test_rough_dynamics_accept_explicit_real_octonion_coordinates() -> None:
 
     assert solution.states.shape == (1, 8)
     assert jnp.all(jnp.isfinite(solution.states))
-
-
-def test_unit_complex_quaternion_and_nonassociative_geometry_boundaries() -> None:
     complex_geometry = phx.metrix.algebra.UnitComplexStateGeometry()
     quaternion_geometry = phx.metrix.algebra.UnitQuaternionStateGeometry()
     complex_point = jnp.asarray([1.0, 0.0])

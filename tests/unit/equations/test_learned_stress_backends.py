@@ -268,7 +268,7 @@ def _mac_prepared(
     return discretization, operators, momentum, prepared
 
 
-def test_periodic_backend_owns_conservative_divergence_projection_and_work() -> None:
+def test_learned_stress_backends_scenario_1() -> None:
     space, prepared = _periodic_prepared(
         policy="dissipative", predictor=_signed_viscosity_predictor
     )
@@ -298,9 +298,6 @@ def test_periodic_backend_owns_conservative_divergence_projection_and_work() -> 
         0.0,
         atol=2.0e-10,
     )
-
-
-def test_periodic_bounded_backscatter_preserves_policy_activity_jit_and_jvp() -> None:
     space, prepared = _periodic_prepared(
         policy="bounded_backscatter",
         fraction=0.2,
@@ -324,9 +321,6 @@ def test_periodic_bounded_backscatter_preserves_policy_activity_jit_and_jvp() ->
     np.testing.assert_allclose(compiled.projected_rate, eager.projected_rate, atol=2e-9)
     assert jnp.all(jnp.isfinite(derivative))
     assert prepared.projector.divergence_norm(derivative) < 2.0e-9
-
-
-def test_mac_backend_owns_conservative_divergence_projection_and_work() -> None:
     discretization, operators, momentum, prepared = _mac_prepared(policy="dissipative")
     velocity = _mac_velocity(discretization)
     result = prepared(velocity, momentum.boundaries.homogeneous_stage())
@@ -349,9 +343,6 @@ def test_mac_backend_owns_conservative_divergence_projection_and_work() -> None:
     ):
         np.testing.assert_array_equal(physical, projected)
     np.testing.assert_array_equal(result.integrated_work, result.projected_work)
-
-
-def test_mac_signed_backend_is_jittable_and_forward_differentiable() -> None:
     discretization, _, momentum, prepared = _mac_prepared()
     velocity = _mac_velocity(discretization)
     boundary_stage = momentum.boundaries.homogeneous_stage()
@@ -371,32 +362,27 @@ def test_mac_signed_backend_is_jittable_and_forward_differentiable() -> None:
     ):
         np.testing.assert_allclose(actual, expected, atol=2.0e-9)
     assert all(jnp.all(jnp.isfinite(component)) for component in derivative)
+    for backend in ("periodic", "mac"):
+        if backend == "periodic":
+            space, prepared = _periodic_prepared(predictor=_nonfinite_predictor)
+            arguments = (
+                prepared.projector.project(space.project(_periodic_velocity(space))),
+            )
+        else:
+            discretization, _, momentum, prepared = _mac_prepared(
+                predictor=_nonfinite_predictor
+            )
+            arguments = (
+                _mac_velocity(discretization),
+                momentum.boundaries.homogeneous_stage(),
+            )
+
+        with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="nonfinite"):
+            result = prepared(*arguments)
+            jax.block_until_ready(result.learned_result.stress)
 
 
-@pytest.mark.parametrize("backend", ("periodic", "mac"))
-def test_invalid_learned_prediction_is_refused_without_zero_fallback(
-    backend: Any,
-) -> None:
-    if backend == "periodic":
-        space, prepared = _periodic_prepared(predictor=_nonfinite_predictor)
-        arguments = (
-            prepared.projector.project(space.project(_periodic_velocity(space))),
-        )
-    else:
-        discretization, _, momentum, prepared = _mac_prepared(
-            predictor=_nonfinite_predictor
-        )
-        arguments = (
-            _mac_velocity(discretization),
-            momentum.boundaries.homogeneous_stage(),
-        )
-
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="nonfinite"):
-        result = prepared(*arguments)
-        jax.block_until_ready(result.learned_result.stress)
-
-
-def test_adapters_refuse_incompatible_abi_layout_filter_and_mac_grid() -> None:
+def test_learned_stress_backends_scenario_2() -> None:
     space = _periodic_space()
     wrong_order = tuple(reversed(LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS))
     wrong_abi = _binding(
@@ -451,9 +437,6 @@ def test_adapters_refuse_incompatible_abi_layout_filter_and_mac_grid() -> None:
     )
     with pytest.raises(ValueError, match="periodic-uniform"):
         MACLearnedStressPlan(binding).prepare(momentum, projection)
-
-
-def test_learned_adapters_remain_separate_from_static_algebraic_models() -> None:
     space, first = _periodic_prepared(artifact="learned-artifact-a")
     _, second = _periodic_prepared(artifact="learned-artifact-b")
     provenance = LESParameterProvenance(

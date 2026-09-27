@@ -37,7 +37,7 @@ def _state() -> Any:
     return topology, phx.discretization.VariablePatchHierarchyState(topology, (field,))
 
 
-def test_variable_patch_partition_roundtrip_is_canonical_and_explicit() -> None:
+def test_variable_patch_partition_contracts() -> None:
     topology, state = _state()
     partition = phx.discretization.VariablePatchPartitionPlan(2, ((1,),)).prepare(
         topology
@@ -51,9 +51,6 @@ def test_variable_patch_partition_roundtrip_is_canonical_and_explicit() -> None:
     assert successor.index == topology.epoch.index + 1
     assert successor.topology_id == topology.epoch.topology_id
     assert successor.partition_id == partition.partition_id
-
-
-def test_variable_patch_partition_is_deterministic_under_positive_costs() -> None:
     topology, _ = _state()
     plan = phx.discretization.VariablePatchPartitionPlan(2, ((1,),))
     first = plan.prepare(topology, costs=((jnp.asarray([2.0, 1.0]),),))

@@ -18,7 +18,7 @@ from phydrax.uq import (
 )
 
 
-def test_stochastic_transfer_reuses_control_frequency_response() -> None:
+def test_stochastic_spectra_scenario_1() -> None:
     a = jnp.array([[-2.0]])
     b = jnp.array([[3.0]])
     c = jnp.array([[4.0]])
@@ -34,9 +34,6 @@ def test_stochastic_transfer_reuses_control_frequency_response() -> None:
         transfer.process_to_output, c[None, ...] @ expected.resolvent
     )
     assert transfer.diagnostics.method_id == expected.method_id
-
-
-def test_siso_state_output_and_cross_spectra_match_analytic_values() -> None:
     a = jnp.array([[-2.0]])
     b = jnp.array([[1.0]])
     c = jnp.array([[3.0]])
@@ -69,9 +66,6 @@ def test_siso_state_output_and_cross_spectra_match_analytic_values() -> None:
     np.testing.assert_allclose(spectra.state_input_cross_spectrum[:, 0, 0], h_xu * 2.0)
     np.testing.assert_allclose(spectra.output_input_cross_spectrum[:, 0, 0], h_yu * 2.0)
     assert bool(jnp.all(spectra.valid))
-
-
-def test_mimo_spectra_are_hermitian_positive_semidefinite() -> None:
     a = jnp.array([[-2.0, 0.5], [-0.25, -1.0]])
     b = jnp.array([[1.0, 0.2], [0.5, -0.4]])
     c = jnp.array([[1.0, 0.5], [-0.25, 1.0]])

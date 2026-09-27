@@ -15,7 +15,7 @@ def _beam_section() -> Any:
     return mn.WarpingBeamSection(base, 0.1, 0.0, 3.0)
 
 
-def test_warping_beam_and_bracing_energy() -> None:
+def test_advanced_stability_scenario_1() -> None:
     section = _beam_section()
     state = mn.evaluate_warping_beam(
         2.0,
@@ -39,9 +39,6 @@ def test_warping_beam_and_bracing_energy() -> None:
         jnp.asarray((30.0,)),
     )
     assert brace.total_reaction > 0.0
-
-
-def test_fiber_section_elastic_plastic_transaction() -> None:
     geometry = mn.FiberSectionGeometry(
         jnp.asarray(((-0.5, 0.0), (0.5, 0.0))),
         jnp.asarray((0.5, 0.5)),
@@ -65,9 +62,6 @@ def test_fiber_section_elastic_plastic_transaction() -> None:
     assert jnp.allclose(
         committed.committed.plastic_strain, plastic.trial_history.plastic_strain
     )
-
-
-def test_gbt_finite_strip_shell_hierarchy() -> None:
     section = mn.ThinWalledSection(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 0.2))),
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),

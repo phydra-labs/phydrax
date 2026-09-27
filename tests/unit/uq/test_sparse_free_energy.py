@@ -63,7 +63,7 @@ def _sparse_dataset(
     )
 
 
-def test_sparse_pairwise_bar_builds_connected_network_from_disjoint_groups() -> None:
+def test_sparse_pairwise_contracts() -> None:
     dataset = _sparse_dataset(3, ((0, 1, 1.0, 0), (1, 2, 2.0, 1)))
     result = phx.uq.sparse_pairwise_free_energy_network(
         dataset,
@@ -73,9 +73,6 @@ def test_sparse_pairwise_bar_builds_connected_network_from_disjoint_groups() -> 
     np.testing.assert_allclose(result.network_result.free_energies, [0.0, 1.0, 3.0])
     assert len(result.edge_observations) == 2
     assert bool(result.successful)
-
-
-def test_sparse_pairwise_network_reports_disconnected_explicit_graph() -> None:
     dataset = _sparse_dataset(4, ((0, 1, 1.0, 0), (2, 3, 1.5, 1)))
     result = phx.uq.sparse_pairwise_free_energy_network(
         dataset,
@@ -86,9 +83,13 @@ def test_sparse_pairwise_network_reports_disconnected_explicit_graph() -> None:
         phx.uq.FreeEnergyStatus.DISCONNECTED
     )
     assert not bool(result.successful)
-
-
-def test_sparse_pairwise_bar_rejects_missing_reverse_cross_coverage() -> None:
+    dataset = _sparse_dataset(3, ((0, 1, 1.0, 0), (1, 2, 2.0, 0)))
+    with pytest.raises(ValueError, match="share dependence groups"):
+        phx.uq.sparse_pairwise_free_energy_network(
+            dataset,
+            (("state-0", "state-1"), ("state-1", "state-2")),
+            reference_state_id="state-0",
+        )
     dataset = _sparse_dataset(
         2,
         ((0, 1, 1.0, 0),),
@@ -98,15 +99,5 @@ def test_sparse_pairwise_bar_rejects_missing_reverse_cross_coverage() -> None:
         phx.uq.sparse_pairwise_free_energy_network(
             dataset,
             (("state-0", "state-1"),),
-            reference_state_id="state-0",
-        )
-
-
-def test_sparse_pairwise_network_rejects_shared_dependence_groups() -> None:
-    dataset = _sparse_dataset(3, ((0, 1, 1.0, 0), (1, 2, 2.0, 0)))
-    with pytest.raises(ValueError, match="share dependence groups"):
-        phx.uq.sparse_pairwise_free_energy_network(
-            dataset,
-            (("state-0", "state-1"), ("state-1", "state-2")),
             reference_state_id="state-0",
         )

@@ -112,9 +112,7 @@ def _zero_hamiltonian() -> Any:
     return jnp.zeros((2, 2), dtype=jnp.complex128)
 
 
-def test_two_level_cayley_oscillation_preserves_psd_hermiticity_trace_and_charge() -> (
-    None
-):
+def test_coherent_dark_transport_scenario_1() -> None:
     plan = _plan()
     density = jnp.asarray([[[[[1.0, 0.0], [0.0, 0.0]]]]], dtype=jnp.complex128)
     state = coherent_density_matrix_state(plan, density, time=0.0)
@@ -153,9 +151,6 @@ def test_two_level_cayley_oscillation_preserves_psd_hermiticity_trace_and_charge
     np.testing.assert_array_equal(step.state.frame_time, plan.frame.time)
     np.testing.assert_array_equal(step.state.frame_scale_factor, plan.frame.scale_factor)
     assert step.state.frame_realization_id == plan.frame.realization_id()
-
-
-def test_local_kraus_dephasing_is_completely_positive_and_trace_preserving() -> None:
     plan = _plan()
     plus = 0.5 * jnp.ones((2, 2), dtype=jnp.complex128)
     state = coherent_density_matrix_state(plan, plus[None, None, None], time=0.0)
@@ -192,11 +187,6 @@ def test_local_kraus_dephasing_is_completely_positive_and_trace_preserving() -> 
     np.testing.assert_allclose(step.state.evidence.trace_density, 1.0, atol=1.0e-12)
     assert bool(step.state.evidence.positive_semidefinite)
     assert bool(step.accepted)
-
-
-def test_coherent_transaction_rolls_back_a_candidate_outside_plan_conservation_policy() -> (
-    None
-):
     plan = _plan()
     state = coherent_density_matrix_state(
         plan,

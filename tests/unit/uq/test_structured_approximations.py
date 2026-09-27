@@ -13,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_gaussian_prior_whitening_roundtrips_normal_and_lognormal_coordinates() -> None:
+def test_structured_approximations_scenario_1() -> None:
     space = phx.uq.ParameterSpace(
         {
             "coefficient": jnp.array([1.5, -0.5]),
@@ -45,11 +45,6 @@ def test_gaussian_prior_whitening_roundtrips_normal_and_lognormal_coordinates() 
             position,
         )
     )
-
-
-def test_structured_whitening_and_transformed_covariance_match_analytic_delta_method() -> (
-    None
-):
     location = 0.3
     scale = 0.4
     space = phx.uq.ParameterSpace(
@@ -81,6 +76,15 @@ def test_structured_whitening_and_transformed_covariance_match_analytic_delta_me
 
     draws = structured.sample_unconstrained(jr.key(4), num_samples=30_000)
     assert jnp.var(draws) == pytest.approx(expected_unconstrained, rel=0.04)
+    space = phx.uq.ParameterSpace(jnp.zeros(2), priors=phx.uq.Normal(0.0, 1.0))
+    problem = phx.uq.PosteriorProblem(space, lambda value: -0.5 * jnp.sum(value**2))
+
+    with pytest.raises(ValueError, match="Gauss-Newton residual"):
+        phx.uq.fit_laplace(
+            problem,
+            curvature="diagonal",
+            likelihood_curvature="ggn",
+        )
 
 
 def test_ggn_fisher_curvature_matches_linear_gaussian_posterior() -> None:
@@ -111,19 +115,7 @@ def test_ggn_fisher_curvature_matches_linear_gaussian_posterior() -> None:
     assert jnp.allclose(covariance, jnp.linalg.inv(precision), atol=2e-6)
 
 
-def test_ggn_requires_an_explicit_normalized_residual_contract() -> None:
-    space = phx.uq.ParameterSpace(jnp.zeros(2), priors=phx.uq.Normal(0.0, 1.0))
-    problem = phx.uq.PosteriorProblem(space, lambda value: -0.5 * jnp.sum(value**2))
-
-    with pytest.raises(ValueError, match="Gauss-Newton residual"):
-        phx.uq.fit_laplace(
-            problem,
-            curvature="diagonal",
-            likelihood_curvature="ggn",
-        )
-
-
-def test_named_parameter_subspace_selects_exact_array_leaves() -> None:
+def test_structured_approximations_scenario_2() -> None:
     model = {
         "encoder": {"weight": jnp.ones((2, 2)), "bias": jnp.zeros(2)},
         "head": {"weight": jnp.ones((1, 2)), "bias": jnp.zeros(1)},
@@ -137,9 +129,6 @@ def test_named_parameter_subspace_selects_exact_array_leaves() -> None:
     assert named.leaf_paths == (paths[1], paths[3])
     with pytest.raises(ValueError, match="Unknown parameter leaf paths"):
         phx.nn.parameters.ParameterSubspace.from_leaf_paths(model, ["['missing']"])
-
-
-def test_parameter_subspace_selects_disjoint_branched_subtrees_by_exact_path() -> None:
     model = {
         "branches": (
             {

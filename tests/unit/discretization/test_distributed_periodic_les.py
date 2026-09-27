@@ -112,7 +112,7 @@ def _distributed(scientific: Any, schedule: Any = "slab", **kwargs: Any) -> Any:
     ).prepare()
 
 
-def test_distributed_periodic_les_single_device_parity_and_backend_identity() -> None:
+def test_distributed_periodic_contracts() -> None:
     space = _space()
     scientific = _scientific(space)
     distributed = _distributed(scientific)
@@ -137,9 +137,6 @@ def test_distributed_periodic_les_single_device_parity_and_backend_identity() ->
     assert stage.projected_rate.sharding == distributed.execution.modal_layout.sharding(
         distributed.execution.topology
     )
-
-
-def test_distributed_periodic_les_slab_pencil_layout_invariance_and_global_work() -> None:
     space = _space()
     scientific = _scientific(space)
     state = _velocity(space)
@@ -179,32 +176,6 @@ def test_distributed_periodic_les_slab_pencil_layout_invariance_and_global_work(
     assert bool(slab_stage.energy_consistent)
     assert slab.preparation.reduction_axes == ("spectral",)
     assert pencil.preparation.reduction_axes == ("py", "px")
-
-
-def test_distributed_periodic_les_has_no_host_gather_and_restart_is_layout_bound(
-    monkeypatch: Any,
-) -> None:
-    space = _space()
-    distributed = _distributed(_scientific(space))
-    state = _velocity(space)
-
-    with monkeypatch.context() as guard:
-        guard.setattr(
-            jax,
-            "device_get",
-            lambda *_args, **_kwargs: pytest.fail("host gather is forbidden"),
-        )
-        stage = distributed.evaluate(state)
-        restart = distributed.restart_evidence(stage.projected_rate)
-        restored = distributed.restore(restart)
-
-    np.testing.assert_allclose(restored, stage.projected_rate, rtol=0.0, atol=0.0)
-    assert restart.sharding_preserved
-    assert restart.layout_id == distributed.execution.modal_layout.layout_id
-    assert restart.topology_id == distributed.execution.topology.topology_id
-
-
-def test_distributed_periodic_les_real_multi_device_slab_pencil_when_available() -> None:
     devices = tuple(jax.devices("cpu"))
     if len(devices) < 4:
         pytest.skip(
@@ -253,6 +224,53 @@ def test_distributed_periodic_les_real_multi_device_slab_pencil_when_available()
     assert len(pencil_stage.projected_rate.addressable_shards) == 4
     assert slab_stage.reduction_axes == ("spectral",)
     assert pencil_stage.reduction_axes == ("py", "px")
+    space = _space()
+    distributed = _distributed(_scientific(space))
+    state = _velocity(space)
+
+    eager = distributed.evaluate(state).projected_rate
+    compiled = jax.jit(lambda value: distributed.evaluate(value).projected_rate)(state)
+    direction = jnp.ones_like(state)
+    _, tangent = jax.jvp(
+        lambda value: distributed.evaluate(value).projected_rate,
+        (state,),
+        (direction,),
+    )
+    restriction = distributed.step_restriction(
+        state,
+        0.01,
+        stage=distributed.evaluate(state),
+    )
+
+    np.testing.assert_allclose(compiled, eager, rtol=2e-8, atol=2e-8)
+    assert jnp.all(jnp.isfinite(tangent))
+    assert jnp.isfinite(restriction.advective)
+    assert jnp.isfinite(restriction.combined_diffusive)
+    assert bool(restriction.finite)
+    assert restriction.backend_id == distributed.prepared_id
+
+
+def test_distributed_periodic_les_has_no_host_gather_and_restart_is_layout_bound(
+    monkeypatch: Any,
+) -> None:
+    space = _space()
+    distributed = _distributed(_scientific(space))
+    state = _velocity(space)
+
+    with monkeypatch.context() as guard:
+        guard.setattr(
+            jax,
+            "device_get",
+            lambda *_args, **_kwargs: pytest.fail("host gather is forbidden"),
+        )
+        stage = distributed.evaluate(state)
+        restart = distributed.restart_evidence(stage.projected_rate)
+        restored = distributed.restore(restart)
+
+    np.testing.assert_allclose(restored, stage.projected_rate, rtol=0.0, atol=0.0)
+    assert restart.sharding_preserved
+    assert restart.layout_id == distributed.execution.modal_layout.layout_id
+    assert restart.topology_id == distributed.execution.topology.topology_id
 
 
 def test_distributed_periodic_les_resource_and_support_refusals_are_exact(
@@ -279,30 +297,3 @@ def test_distributed_periodic_les_resource_and_support_refusals_are_exact(
     monkeypatch.setattr(jax, "devices", lambda *_args, **_kwargs: [])
     with pytest.raises(RuntimeError, match="unavailable"):
         unavailable.prepare()
-
-
-def test_distributed_periodic_les_restriction_jit_and_jvp() -> None:
-    space = _space()
-    distributed = _distributed(_scientific(space))
-    state = _velocity(space)
-
-    eager = distributed.evaluate(state).projected_rate
-    compiled = jax.jit(lambda value: distributed.evaluate(value).projected_rate)(state)
-    direction = jnp.ones_like(state)
-    _, tangent = jax.jvp(
-        lambda value: distributed.evaluate(value).projected_rate,
-        (state,),
-        (direction,),
-    )
-    restriction = distributed.step_restriction(
-        state,
-        0.01,
-        stage=distributed.evaluate(state),
-    )
-
-    np.testing.assert_allclose(compiled, eager, rtol=2e-8, atol=2e-8)
-    assert jnp.all(jnp.isfinite(tangent))
-    assert jnp.isfinite(restriction.advective)
-    assert jnp.isfinite(restriction.combined_diffusive)
-    assert bool(restriction.finite)
-    assert restriction.backend_id == distributed.prepared_id

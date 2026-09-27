@@ -18,7 +18,7 @@ from phydrax.ml.kernel_methods import (
 from phydrax.uq import GaussianProcessLikelihoodState
 
 
-def test_kernel_ridge_requires_explicit_sparse_materialization() -> None:
+def test_kernel_edge_contracts_scenario_1() -> None:
     dense = jnp.array(
         [[1.0, 0.0, 2.0], [0.0, -1.0, 0.5], [2.0, 1.0, 0.0], [-1.0, 0.0, 1.0]]
     )
@@ -34,9 +34,6 @@ def test_kernel_ridge_requires_explicit_sparse_materialization() -> None:
     explicit_model = recipe.fit_batch(MLBatch(sparse.to_dense(), targets)).as_trainable()
     assert jnp.allclose(dense_model(dense), explicit_model(dense), atol=2e-5)
     assert jax.vmap(dense_model)(dense).shape == (4,)
-
-
-def test_masked_nonfinite_rows_are_excluded_and_negative_weights_fail_closed() -> None:
     features = jnp.array([[0.0], [jnp.nan], [1.0], [2.0]])
     targets = jnp.array([0.0, jnp.nan, 1.0, 2.0])
     result = KernelRidgeRecipe(SquaredExponentialKernel(), alpha=0.1).fit_batch(
@@ -54,9 +51,6 @@ def test_masked_nonfinite_rows_are_excluded_and_negative_weights_fail_closed() -
                 sample_weight=jnp.array([1.0, -1.0, 1.0, 1.0]),
             )
         )
-
-
-def test_approximation_capacity_and_kernel_support_fail_closed() -> None:
     x = jnp.arange(10.0).reshape((5, 2))
     insufficient = NystromRecipe(SquaredExponentialKernel(), n_components=3).fit_batch(
         MLBatch(x, sample_mask=jnp.array([True, False, False, False, True]))

@@ -1,10 +1,4 @@
-#
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
-
-
-from typing import Any
-
+import jax
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -14,67 +8,42 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import trace
 
 
-def test_trace_simple_matrix_function() -> None:
-    geom = phx.domain.GeometryDomain(
+def test_trace_matches_real_complex_spacetime_references_and_metadata() -> None:
+    geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    spacetime = geometry @ TimeInterval(0.0, 1.0)
 
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([[x[0], 0], [0, x[1]]])
+    @geometry.Function("x")
+    def matrix(x: jax.Array) -> jax.Array:
+        return jnp.asarray([[x[0], 0.0], [0.0, x[1]]])
 
-    trace_u = trace(u)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
-    result = jnp.asarray(trace_u(pts).data)
+    @geometry.Function("x")
+    def complex_matrix(x: jax.Array) -> jax.Array:
+        return jnp.asarray([[x[0], 0.0], [0.0, 1j * x[1]]])
 
-    expected = 5.0
-    assert jnp.allclose(result, expected)
+    @spacetime.Function("x", "t")
+    def time_dependent(x: jax.Array, time: jax.Array) -> jax.Array:
+        return jnp.asarray([[x[0] * time, 0.0], [0.0, x[1] * time]])
 
-
-def test_trace_time_dependent_matrix_function() -> None:
-    dom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    ) @ TimeInterval(0.0, 1.0)
-
-    @dom.Function("x", "t")
-    def u(x: Any, t: Any) -> Any:
-        return jnp.array([[x[0] * t, 0.0], [0.0, x[1] * t]])
-
-    trace_u = trace(u)
-    pts = frozendict(
-        {
-            "x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,)),
-            "t": cx.AxisArray(jnp.array(0.5), dims=()),
-        }
+    points = frozendict({"x": cx.AxisArray(jnp.asarray([2.0, 3.0]), dims=(None,))})
+    cases = (
+        ("real", trace(matrix), points, 5.0),
+        ("complex", trace(complex_matrix), points, 2.0 + 3.0j),
+        (
+            "spacetime",
+            trace(time_dependent),
+            frozendict(
+                {
+                    "x": cx.AxisArray(jnp.asarray([2.0, 3.0]), dims=(None,)),
+                    "t": cx.AxisArray(jnp.asarray(0.5), dims=()),
+                }
+            ),
+            2.5,
+        ),
     )
-    result = jnp.asarray(trace_u(pts).data)
+    for case_id, function, batch, expected in cases:
+        assert jnp.allclose(jnp.asarray(function(batch).data), expected), case_id
 
-    expected = 2.5  # 0.5*(2+3)
-    assert jnp.allclose(result, expected)
-
-
-def test_trace_complex_function() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([[x[0], 0], [0, 1j * x[1]]])
-
-    trace_u = trace(u)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
-    result = jnp.asarray(trace_u(pts).data)
-
-    expected = 2.0 + 3.0j
-    assert jnp.allclose(result, expected)
-
-
-def test_trace_preserves_metadata() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-
-    u = geom.Function("x")(lambda x: jnp.eye(2)).with_metadata(**{"tag": "keep"})
-    tr = trace(u)
-    assert tr.metadata == u.metadata
+    annotated = geometry.Function("x")(lambda x: jnp.eye(2)).with_metadata(tag="keep")
+    assert trace(annotated).metadata == annotated.metadata

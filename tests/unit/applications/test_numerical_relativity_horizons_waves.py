@@ -34,7 +34,7 @@ from phydrax.applications.numerical_relativity._wave_extraction import (
 )
 
 
-def test_schwarzschild_and_kerr_surface_geometry_matches_analytic_values() -> None:
+def test_numerical_relativity_horizons_waves_scenario_1() -> None:
     surface_plan = SphericalSurfacePlan(3)
     mass = 1.0
     surface = surface_plan.constant(mass / 2.0)
@@ -70,55 +70,6 @@ def test_schwarzschild_and_kerr_surface_geometry_matches_analytic_values() -> No
     np.testing.assert_allclose(kerr.christodoulou_mass, 2.0)
     np.testing.assert_allclose(kerr.dimensionless_spin, 0.5)
     assert bool(kerr.physically_valid)
-
-
-def test_mots_is_not_promoted_without_complete_outermost_search_evidence() -> None:
-    surface_plan = SphericalSurfacePlan(3)
-    mots_plan = MOTSSolvePlan(surface_plan, residual_tolerance=1.0e-8, maximum_steps=20)
-
-    def two_surface_expansion(surface: Any) -> Any:
-        radius = surface_plan.radius(surface)
-        return (radius - 1.0) * (radius - 2.0)
-
-    solved = jax.jit(lambda seed: mots_plan.solve(seed, two_surface_expansion))(
-        surface_plan.constant(1.8)
-    )
-    assert solved.surface.coefficients.shape == surface_plan.coefficient_shape
-    assert solved.outgoing_expansion.shape == surface_plan.sample_shape
-    assert bool(solved.converged)
-    assert bool(solved.qualified)
-    assert bool(solved.stability.stable)
-    assert bool(solved.stability.derivative_valid)
-    assert not bool(solved.derivative_valid)
-    np.testing.assert_allclose(surface_plan.mean_radius(solved.surface), 2.0, atol=1e-7)
-
-    # ty: ignore[invalid-argument-type]
-    search = ApparentHorizonSearchPlan(mots_plan, (0.8, 1.2, 2.2))
-    incomplete = search.search(two_surface_expansion)
-    assert not bool(incomplete.certified)
-    assert int(incomplete.status) == int(ApparentHorizonSearchStatus.INCOMPLETE)
-
-    multiple = search.search(two_surface_expansion, search_complete=True)
-    assert int(multiple.search.found_count) == 2
-    assert int(multiple.status) == int(ApparentHorizonSearchStatus.MULTIPLE_SURFACES)
-    assert bool(multiple.certified)
-    np.testing.assert_allclose(surface_plan.mean_radius(multiple.surface), 2.0, atol=1e-7)
-
-    def no_physical_surface(surface: Any) -> Any:
-        return surface_plan.radius(surface) + 1.0
-
-    no_surface = search.search(
-        no_physical_surface,
-        excluded=jnp.ones((search.candidate_capacity,), dtype="bool"),
-        search_complete=True,
-    )
-    assert int(no_surface.search.found_count) == 0
-    assert bool(no_surface.search.no_surface_certified)
-    assert not bool(no_surface.certified)
-    assert int(no_surface.status) == int(ApparentHorizonSearchStatus.NO_SURFACE)
-
-
-def test_psi4_respects_explicit_sign_and_spin_frame_conventions() -> None:
     surface_plan = SphericalSurfacePlan(3)
     multipole_plan = SpinWeightedMultipolePlan(3)
     sample_shape = multipole_plan.transform.sample_shape
@@ -157,9 +108,6 @@ def test_psi4_respects_explicit_sign_and_spin_frame_conventions() -> None:
     assert bool(canonical.qualified)
     assert bool(sign_reversed.qualified)
     assert bool(quarter_turn.qualified)
-
-
-def test_multipole_strain_and_finite_radius_evidence_converges_at_fixed_shapes() -> None:
     multipole_plan = SpinWeightedMultipolePlan(4)
     coefficients = (
         jnp.zeros(multipole_plan.transform.coefficient_shape, dtype=jnp.complex128)
@@ -206,3 +154,49 @@ def test_multipole_strain_and_finite_radius_evidence_converges_at_fixed_shapes()
     assert bool(extrapolated.order_convergence.converged)
     assert bool(extrapolated.qualified)
     np.testing.assert_allclose(extrapolated.asymptotic_waveform, asymptotic, atol=1e-10)
+
+
+def test_mots_is_not_promoted_without_complete_outermost_search_evidence() -> None:
+    surface_plan = SphericalSurfacePlan(3)
+    mots_plan = MOTSSolvePlan(surface_plan, residual_tolerance=1.0e-8, maximum_steps=20)
+
+    def two_surface_expansion(surface: Any) -> Any:
+        radius = surface_plan.radius(surface)
+        return (radius - 1.0) * (radius - 2.0)
+
+    solved = jax.jit(lambda seed: mots_plan.solve(seed, two_surface_expansion))(
+        surface_plan.constant(1.8)
+    )
+    assert solved.surface.coefficients.shape == surface_plan.coefficient_shape
+    assert solved.outgoing_expansion.shape == surface_plan.sample_shape
+    assert bool(solved.converged)
+    assert bool(solved.qualified)
+    assert bool(solved.stability.stable)
+    assert bool(solved.stability.derivative_valid)
+    assert not bool(solved.derivative_valid)
+    np.testing.assert_allclose(surface_plan.mean_radius(solved.surface), 2.0, atol=1e-7)
+
+    # ty: ignore[invalid-argument-type]
+    search = ApparentHorizonSearchPlan(mots_plan, (0.8, 1.2, 2.2))
+    incomplete = search.search(two_surface_expansion)
+    assert not bool(incomplete.certified)
+    assert int(incomplete.status) == int(ApparentHorizonSearchStatus.INCOMPLETE)
+
+    multiple = search.search(two_surface_expansion, search_complete=True)
+    assert int(multiple.search.found_count) == 2
+    assert int(multiple.status) == int(ApparentHorizonSearchStatus.MULTIPLE_SURFACES)
+    assert bool(multiple.certified)
+    np.testing.assert_allclose(surface_plan.mean_radius(multiple.surface), 2.0, atol=1e-7)
+
+    def no_physical_surface(surface: Any) -> Any:
+        return surface_plan.radius(surface) + 1.0
+
+    no_surface = search.search(
+        no_physical_surface,
+        excluded=jnp.ones((search.candidate_capacity,), dtype="bool"),
+        search_complete=True,
+    )
+    assert int(no_surface.search.found_count) == 0
+    assert bool(no_surface.search.no_surface_certified)
+    assert not bool(no_surface.certified)
+    assert int(no_surface.status) == int(ApparentHorizonSearchStatus.NO_SURFACE)

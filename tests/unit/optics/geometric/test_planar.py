@@ -22,7 +22,7 @@ def _direction(angle: Any) -> Any:
     return jnp.asarray((jnp.sin(angle), 0.0, jnp.cos(angle)))
 
 
-def test_matched_and_oblique_snell_fresnel_energy_conservation() -> None:
+def test_planar_scenario_1() -> None:
     matched = evaluate_refractive_interface(
         jnp.asarray((0.0, 0.0, 4.0)),
         jnp.asarray((0.0, 0.0, 2.0)),
@@ -54,9 +54,6 @@ def test_matched_and_oblique_snell_fresnel_energy_conservation() -> None:
     )
     assert bool(oblique.transmission_valid)
     assert float(oblique.energy_balance_error) < 2e-6
-
-
-def test_brewster_reflection_and_total_internal_reflection_phase() -> None:
     brewster = evaluate_refractive_interface(
         _direction(jnp.arctan(1.5)),
         jnp.asarray((0.0, 0.0, 1.0)),
@@ -78,9 +75,6 @@ def test_brewster_reflection_and_total_internal_reflection_phase() -> None:
     np.testing.assert_allclose(tir.transmittance, (0.0, 0.0))
     assert bool(jnp.all(jnp.imag(tir.reflection_amplitudes) < 0.0))
     np.testing.assert_allclose(tir.transmitted_directions, (0.0, 0.0, 0.0))
-
-
-def test_wrong_side_and_grazing_incidence_are_distinct() -> None:
     wrong_side = evaluate_refractive_interface(
         jnp.asarray((0.0, 0.0, -1.0)),
         jnp.asarray((0.0, 0.0, 1.0)),
@@ -100,7 +94,7 @@ def test_wrong_side_and_grazing_incidence_are_distinct() -> None:
     assert not bool(grazing.reflection_valid)
 
 
-def test_zero_capacity_and_inactive_suffix_have_fixed_identity_semantics() -> None:
+def test_planar_scenario_2() -> None:
     empty = PlanarRefractiveStack(np.empty((0, 3)), np.empty((0, 3)), np.asarray((1.2,)))
     origin = jnp.asarray(((0.0, 0.0, 0.0), (1.0, -2.0, 3.0)))
     direction = jnp.asarray(((0.0, 0.0, 2.0), (0.0, 3.0, 4.0)))
@@ -133,9 +127,6 @@ def test_zero_capacity_and_inactive_suffix_have_fixed_identity_semantics() -> No
     assert int(result.traversed_surfaces) == 1
     np.testing.assert_allclose(result.rays.origins, (0.0, 0.0, 1.0))
     np.testing.assert_allclose(result.rays.refractive_indices, 1.5)
-
-
-def test_two_interface_parallel_slab_recovers_angle_and_accumulates_paths() -> None:
     first_angle = jnp.deg2rad(30.0)
     stack = PlanarRefractiveStack(
         # ty: ignore[invalid-argument-type]
@@ -163,9 +154,6 @@ def test_two_interface_parallel_slab_recovers_angle_and_accumulates_paths() -> N
         expected_first + 1.5 * expected_second,
     )
     np.testing.assert_allclose(result.rays.origins[2], 2.0)
-
-
-def test_first_failure_retains_last_successful_ray_and_path() -> None:
     stack = PlanarRefractiveStack(
         # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],

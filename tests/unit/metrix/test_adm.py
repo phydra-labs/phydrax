@@ -36,47 +36,42 @@ def _reference_fields() -> Any:
     return lapse, shift, spatial_metric
 
 
-@pytest.mark.parametrize("convention", ("mostly_plus", "mostly_minus"))
-def test_adm_decomposition_round_trips_reference_fields_in_batches(
-    convention: Any,
-) -> None:
-    chart = _chart()
-    lapse, shift, spatial_metric = _reference_fields()
-    metric = phx.metrix.adm_metric(
-        lapse,
-        shift,
-        spatial_metric,
-        chart=chart,
-        convention=convention,
-    )
-    points = jnp.array(
-        [[0.0, 0.2, -0.1, 0.3], [0.5, -0.2, 0.4, -0.3]],
-    )
-    decomposition = phx.metrix.decompose_adm_metric(metric, points)
-    expected_lapse = jax.vmap(lapse)(points)
-    expected_shift = jax.vmap(shift)(points)
-    expected_spatial = jax.vmap(spatial_metric)(points)
-    matrices = metric(points)
+def test_adm_contracts() -> None:
+    for convention in ("mostly_plus", "mostly_minus"):
+        chart = _chart()
+        lapse, shift, spatial_metric = _reference_fields()
+        metric = phx.metrix.adm_metric(
+            lapse,
+            shift,
+            spatial_metric,
+            chart=chart,
+            convention=convention,
+        )
+        points = jnp.array(
+            [[0.0, 0.2, -0.1, 0.3], [0.5, -0.2, 0.4, -0.3]],
+        )
+        decomposition = phx.metrix.decompose_adm_metric(metric, points)
+        expected_lapse = jax.vmap(lapse)(points)
+        expected_shift = jax.vmap(shift)(points)
+        expected_spatial = jax.vmap(spatial_metric)(points)
+        matrices = metric(points)
 
-    assert jnp.allclose(decomposition.lapse, expected_lapse)
-    assert jnp.allclose(decomposition.shift, expected_shift)
-    assert jnp.allclose(decomposition.spatial_metric, expected_spatial)
-    assert jnp.allclose(decomposition.spacetime_metric(), matrices)
-    assert jnp.allclose(decomposition.spacetime_inverse, metric.inverse(points))
+        assert jnp.allclose(decomposition.lapse, expected_lapse)
+        assert jnp.allclose(decomposition.shift, expected_shift)
+        assert jnp.allclose(decomposition.spatial_metric, expected_spatial)
+        assert jnp.allclose(decomposition.spacetime_metric(), matrices)
+        assert jnp.allclose(decomposition.spacetime_inverse, metric.inverse(points))
 
-    report = phx.metrix.validate_adm_decomposition(
-        decomposition,
-        reference_metric=matrices,
-    )
-    assert bool(report.valid)
-    assert bool(report.signature_matches)
-    assert report.minimum_lapse > 0.0
-    assert report.minimum_spatial_eigenvalue > 0.0
-    assert report.maximum_inverse_residual < 1e-10
-    assert report.maximum_reconstruction_residual < 1e-12
-
-
-def test_adm_parameterization_enforces_lapse_and_spatial_positivity_under_jit() -> None:
+        report = phx.metrix.validate_adm_decomposition(
+            decomposition,
+            reference_metric=matrices,
+        )
+        assert bool(report.valid)
+        assert bool(report.signature_matches)
+        assert report.minimum_lapse > 0.0
+        assert report.minimum_spatial_eigenvalue > 0.0
+        assert report.maximum_inverse_residual < 1e-10
+        assert report.maximum_reconstruction_residual < 1e-12
     chart = _chart()
     parameterization = phx.metrix.ADMParameterization(
         lambda q: jnp.asarray(-100.0, dtype=q.dtype),
@@ -108,6 +103,22 @@ def test_adm_parameterization_enforces_lapse_and_spatial_positivity_under_jit() 
         ).valid
     )
     assert jnp.all(jnp.isfinite(matrices))
+    decomposition = phx.metrix.ADMDecomposition(
+        jnp.asarray(-1.0),
+        jnp.zeros((3,)),
+        jnp.diag(jnp.array([1.0, -0.5, 2.0])),
+        chart=_chart(),
+    )
+    report = phx.metrix.validate_adm_decomposition(decomposition)
+
+    assert not bool(report.valid)
+    assert not bool(report.lapse_positive)
+    assert report.minimum_spatial_eigenvalue < 0.0
+    with pytest.raises(ValueError, match="ADM validation failed"):
+        phx.metrix.validate_adm_decomposition(
+            decomposition,
+            raise_on_error=True,
+        )
 
 
 def test_parameterized_adm_metric_is_differentiable_in_every_raw_field() -> None:
@@ -140,25 +151,6 @@ def test_parameterized_adm_metric_is_differentiable_in_every_raw_field() -> None
         gradient[ignored_upper_triangle],
         jnp.zeros((3,), dtype=gradient.dtype),
     )
-
-
-def test_adm_validation_reports_invalid_fields_without_repairing_them() -> None:
-    decomposition = phx.metrix.ADMDecomposition(
-        jnp.asarray(-1.0),
-        jnp.zeros((3,)),
-        jnp.diag(jnp.array([1.0, -0.5, 2.0])),
-        chart=_chart(),
-    )
-    report = phx.metrix.validate_adm_decomposition(decomposition)
-
-    assert not bool(report.valid)
-    assert not bool(report.lapse_positive)
-    assert report.minimum_spatial_eigenvalue < 0.0
-    with pytest.raises(ValueError, match="ADM validation failed"):
-        phx.metrix.validate_adm_decomposition(
-            decomposition,
-            raise_on_error=True,
-        )
 
 
 def test_adm_parameterization_rejects_invalid_static_and_field_contracts() -> None:

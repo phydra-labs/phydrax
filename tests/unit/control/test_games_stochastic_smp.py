@@ -6,7 +6,6 @@
 from typing import Any
 
 import jax.numpy as jnp
-import pytest
 
 from phydrax.control.games._layout import PlayerControlPartition
 from phydrax.control.games._stochastic_smp import (
@@ -117,7 +116,7 @@ def _evaluate(
     )
 
 
-def test_game_smp_retains_only_each_players_owned_action_rows() -> None:
+def test_games_stochastic_smp_scenario_1() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]]],
         actions=[[[0.0, 0.0]]],
@@ -149,48 +148,6 @@ def test_game_smp_retains_only_each_players_owned_action_rows() -> None:
     assert not result.feedback_claim
     assert not result.feedback_nash_claim
     assert not result.markov_perfect_claim
-
-
-@pytest.mark.parametrize("sample_role", ["training", "holdout"])
-def test_zero_empirical_game_smp_residual_does_not_claim_open_loop_nash(
-    sample_role: Any,
-) -> None:
-    paths = _paths(
-        states=[[[0.0], [0.0]], [[0.0], [0.0]]],
-        actions=[[[0.0, 0.0]], [[0.0, 0.0]]],
-        noise=[[[0.0]], [[0.0]]],
-        clusters=[0, 1],
-    )
-    zero_action = lambda context, state, action, args: jnp.zeros((2,))
-    result = _evaluate(
-        _problem(1, (zero_action, zero_action)),
-        paths,
-        jnp.zeros((2, 2, 1), dtype=jnp.int32),
-        sample_role=sample_role,
-        convexity_checked=(True, True),
-        convexity_evidence=(
-            "row Hamiltonian convex in row action",
-            "column Hamiltonian convex in column action",
-        ),
-    )
-
-    assert result.certificate == "OPEN_LOOP_NASH_SMP_STATIONARY"
-    assert jnp.all(result.stationary)
-    assert jnp.allclose(result.conditional_owned_stationarity_residuals, 0.0)
-    assert jnp.allclose(result.maximum_residual_norms, 0.0)
-    assert result.path_evidence.sample_role == sample_role
-    assert result.convexity_checked == (True, True)
-    assert all(item is not None for item in result.convexity_evidence)
-    assert not result.sufficient
-    assert not result.population_stationarity_claim
-    assert not result.population_nash_claim
-    assert not result.open_loop_nash_claim
-    assert not result.feedback_claim
-    assert not result.feedback_nash_claim
-    assert not result.markov_perfect_claim
-
-
-def test_game_smp_preserves_common_private_information_and_cluster_evidence() -> None:
     paths = _paths(
         states=[
             [[0.0], [0.0]],
@@ -239,3 +196,37 @@ def test_game_smp_preserves_common_private_information_and_cluster_evidence() ->
     assert result.path_evidence.sample_id == "game-holdout-4"
     assert not result.feedback_claim
     assert not result.markov_perfect_claim
+    for sample_role in ["training", "holdout"]:
+        paths = _paths(
+            states=[[[0.0], [0.0]], [[0.0], [0.0]]],
+            actions=[[[0.0, 0.0]], [[0.0, 0.0]]],
+            noise=[[[0.0]], [[0.0]]],
+            clusters=[0, 1],
+        )
+        zero_action = lambda context, state, action, args: jnp.zeros((2,))
+        result = _evaluate(
+            _problem(1, (zero_action, zero_action)),
+            paths,
+            jnp.zeros((2, 2, 1), dtype=jnp.int32),
+            sample_role=sample_role,
+            convexity_checked=(True, True),
+            convexity_evidence=(
+                "row Hamiltonian convex in row action",
+                "column Hamiltonian convex in column action",
+            ),
+        )
+
+        assert result.certificate == "OPEN_LOOP_NASH_SMP_STATIONARY"
+        assert jnp.all(result.stationary)
+        assert jnp.allclose(result.conditional_owned_stationarity_residuals, 0.0)
+        assert jnp.allclose(result.maximum_residual_norms, 0.0)
+        assert result.path_evidence.sample_role == sample_role
+        assert result.convexity_checked == (True, True)
+        assert all(item is not None for item in result.convexity_evidence)
+        assert not result.sufficient
+        assert not result.population_stationarity_claim
+        assert not result.population_nash_claim
+        assert not result.open_loop_nash_claim
+        assert not result.feedback_claim
+        assert not result.feedback_nash_claim
+        assert not result.markov_perfect_claim

@@ -73,7 +73,7 @@ def _diffusion_problem(lower_target: Any, upper_target: Any) -> Any:
     )
 
 
-def test_arbitrary_depth_cell_ghosts_extend_linear_field_exactly() -> None:
+def test_fd_boundary_program_scenario_1() -> None:
     runtime = phx.discretization.CellGhostBoundary(
         0,
         "dirichlet",
@@ -91,11 +91,6 @@ def test_arbitrary_depth_cell_ghosts_extend_linear_field_exactly() -> None:
         rtol=0.0,
         atol=0.0,
     )
-
-
-def test_stage_boundary_program_evaluates_time_parameter_and_tangential_coordinate() -> (
-    None
-):
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -145,9 +140,6 @@ def test_stage_boundary_program_evaluates_time_parameter_and_tangential_coordina
     np.testing.assert_allclose(lower, expected, rtol=2e-12, atol=2e-12)
     np.testing.assert_allclose(upper, expected, rtol=2e-12, atol=2e-12)
     assert workspace.for_axis("x").shape == (8, 3)
-
-
-def test_corner_policy_requires_explicit_tensor_product_realization() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -202,7 +194,7 @@ def test_corner_policy_requires_explicit_tensor_product_realization() -> None:
     assert workspace.tensor_values.shape == (6, 7)
 
 
-def test_conforming_interface_runtime_enforces_field_and_outward_flux_jumps() -> None:
+def test_fd_boundary_program_scenario_2() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(5),),
         axis_names=("x",),
@@ -251,9 +243,6 @@ def test_conforming_interface_runtime_enforces_field_and_outward_flux_jumps() ->
 
     np.testing.assert_allclose(right - left, 2.0)
     np.testing.assert_allclose(left_flux + right_flux, 3.0)
-
-
-def test_native_cell_compiler_uses_boundary_ghosts_for_second_derivative() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(32),),
         axis_names=("x",),
@@ -270,9 +259,6 @@ def test_native_cell_compiler_uses_boundary_ghosts_for_second_derivative() -> No
     derivative = compiled(jnp.asarray(0.0), state, None)
 
     np.testing.assert_allclose(derivative, 0.0, rtol=0.0, atol=2e-11)
-
-
-def test_native_nodal_compiler_differentiates_time_dependent_dirichlet_data() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(33),),
         axis_names=("x",),

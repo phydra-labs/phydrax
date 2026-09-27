@@ -112,7 +112,7 @@ def test_coupled_vehicle_and_tracking_closure() -> None:
         astro.TrackingObservationPlan(stations, bad_schedule)
 
 
-def test_variational_od_and_mission_closure() -> None:
+def test_mission_closure_scenario_1() -> None:
     astro = phx.applications.astrodynamics
     variational = astro.VariationalPropagationPlan(
         lambda t, x, p, args: p[0] * x,
@@ -137,9 +137,6 @@ def test_variational_od_and_mission_closure() -> None:
         jnp.asarray([2.0, 0.0, 0.0]),
     )
     assert bool(access.visible)
-
-
-def test_mission_geometry_covariance_and_od_controls_reject_invalid_inputs() -> None:
     astro = phx.applications.astrodynamics
     access = astro.AccessPlan().evaluate(
         jnp.asarray([1.0, 0.0, 0.0]),

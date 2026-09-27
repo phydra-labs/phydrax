@@ -70,7 +70,7 @@ def _scalar_factory(rate: float, *, singular_first_forward: bool = False) -> Any
     )
 
 
-def test_bdf_symbols_and_balanced_radius_policy_are_explicit() -> None:
+def test_convolution_quadrature_scenario_1() -> None:
     zeta = jnp.asarray([0.0 + 0.0j, 0.2 - 0.3j])
     assert jnp.allclose(bdf_symbol(zeta, "bdf1"), 1.0 - zeta)
     assert jnp.allclose(
@@ -83,9 +83,6 @@ def test_bdf_symbols_and_balanced_radius_policy_are_explicit() -> None:
     assert radius**64 == pytest.approx(1.0e-10)
     explicit = ConvolutionQuadratureContourPolicy(radius=0.82, tolerance=1.0e-8)
     assert explicit.resolve(128) == 0.82
-
-
-def test_contour_fft_round_trip_retains_every_history_sample() -> None:
     with jax.enable_x64():
         contour = prepare_convolution_quadrature_contour(
             0.125,
@@ -110,9 +107,6 @@ def test_contour_fft_round_trip_retains_every_history_sample() -> None:
     assert transformed.shape == (16, 2)
     assert jnp.allclose(recovered, history, rtol=2.0e-13, atol=2.0e-13)
     assert not contour.conjugate_symmetric
-
-
-def test_scalar_transfer_matches_direct_cq_weight_oracle() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.7)
         prepared = prepare_convolution_quadrature(
@@ -164,7 +158,7 @@ def _terminal_smooth_forcing_error(method: str, steps: int) -> float:
     return float(jnp.abs(terminal - exact))
 
 
-def test_bdf1_and_bdf2_show_their_expected_convergence_orders() -> None:
+def test_convolution_quadrature_scenario_2() -> None:
     with jax.enable_x64():
         bdf1_coarse = _terminal_smooth_forcing_error("bdf1", 24)
         bdf1_fine = _terminal_smooth_forcing_error("bdf1", 48)
@@ -174,9 +168,6 @@ def test_bdf1_and_bdf2_show_their_expected_convergence_orders() -> None:
     assert bdf1_coarse / bdf1_fine > 1.7
     assert bdf2_coarse / bdf2_fine > 3.2
     assert bdf2_fine < bdf1_fine
-
-
-def test_conjugacy_reduction_matches_full_contour_and_rejects_complex_history() -> None:
     with jax.enable_x64():
         full_factory, full_calls = _scalar_factory(0.4)
         reduced_factory, reduced_calls = _scalar_factory(0.4)
@@ -213,9 +204,6 @@ def test_conjugacy_reduction_matches_full_contour_and_rejects_complex_history() 
     assert reduced.resource_evidence.solved_node_count_per_action == 9
     with pytest.raises(TypeError, match="real history"):
         reduced.apply(history.astype(jnp.complex128))
-
-
-def test_causal_reconstruction_cannot_see_future_samples_or_truncate_old_ones() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.25)
         prepared = prepare_convolution_quadrature(
@@ -237,7 +225,7 @@ def test_causal_reconstruction_cannot_see_future_samples_or_truncate_old_ones() 
     assert not first.error_evidence.history_truncated
 
 
-def test_any_failed_node_invalidates_the_complete_history_and_retains_results() -> None:
+def test_convolution_quadrature_scenario_3() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.5, singular_first_forward=True)
         prepared = prepare_convolution_quadrature(
@@ -255,9 +243,6 @@ def test_any_failed_node_invalidates_the_complete_history_and_retains_results() 
     assert len(result.node_results) == prepared.contour.fft_length
     assert jnp.any(result.error_evidence.node_statuses != 0)
     assert not bool(result.error_evidence.node_solves_successful)
-
-
-def test_total_history_transpose_and_adjoint_are_exact_for_batched_rhs_axes() -> None:
     with jax.enable_x64():
         base = jnp.asarray([[0.8 + 0.2j, -0.3 + 0.1j], [0.4j, 1.1 - 0.2j]])
         factory, _ = _system_factory(
@@ -291,9 +276,6 @@ def test_total_history_transpose_and_adjoint_are_exact_for_batched_rhs_axes() ->
     assert jnp.allclose(bilinear_left, bilinear_right, rtol=3.0e-11, atol=3.0e-11)
     assert jnp.allclose(hermitian_left, hermitian_right, rtol=3.0e-11, atol=3.0e-11)
     assert adjointed.parameter_indices == tuple((-index) % 16 for index in range(16))
-
-
-def test_resource_error_and_scientific_scope_evidence_are_retained() -> None:
     with jax.enable_x64():
         factory, _ = _scalar_factory(0.9)
         prepared = prepare_convolution_quadrature(

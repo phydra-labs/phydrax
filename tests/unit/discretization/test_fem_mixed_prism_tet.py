@@ -58,7 +58,7 @@ def _discretization() -> Any:
     return phx.discretization.FiniteElementPlan(_mixed_mesh(), _field()).prepare()
 
 
-def test_mixed_prism_tetra_p1_uses_polyhedral_topology_and_shared_vertex_dofs() -> None:
+def test_mixed_prism_contracts() -> None:
     discretization = _discretization()
     mesh = discretization.mesh
     dof_map = discretization.dof_maps[0]
@@ -80,9 +80,6 @@ def test_mixed_prism_tetra_p1_uses_polyhedral_topology_and_shared_vertex_dofs() 
         np.sort(np.asarray(connectivity.face_vertex_values)[start:stop]),
         (3, 4, 5),
     )
-
-
-def test_mixed_prism_tetra_selected_cell_region_integrates_only_that_region() -> None:
     discretization = _discretization()
     mesh = discretization.mesh
     cells = mesh.entity_set(3)
@@ -110,16 +107,10 @@ def test_mixed_prism_tetra_selected_cell_region_integrates_only_that_region() ->
         rtol=1.0e-12,
         atol=1.0e-12,
     )
-
-
-def test_mixed_prism_tetra_rejects_high_order_conforming_field() -> None:
     mesh = _mixed_mesh()
 
     with pytest.raises(ValueError, match="conforming.*degree 1 only"):
         phx.discretization.FiniteElementPlan(mesh, _field(degree=2))
-
-
-def test_mixed_prism_tetra_rejects_discontinuous_and_vector_admission() -> None:
     mesh = _mixed_mesh()
     discontinuous = phx.discretization.FiniteElementFieldSpec(
         "u",

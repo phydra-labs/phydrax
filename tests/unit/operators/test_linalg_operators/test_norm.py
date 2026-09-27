@@ -1,10 +1,4 @@
-#
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
-
-
-from typing import Any
-
+import jax
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -14,83 +8,46 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import norm
 
 
-def test_norm_simple_vector_function() -> None:
-    geom = phx.domain.GeometryDomain(
+def test_norm_matches_real_complex_ordered_spacetime_references_and_metadata() -> None:
+    geometry = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    spacetime = geometry @ TimeInterval(0.0, 2.0)
 
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([x[0], x[1]])
+    @geometry.Function("x")
+    def vector(x: jax.Array) -> jax.Array:
+        return jnp.asarray([x[0], x[1]])
 
-    norm_u = norm(u)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([3.0, 4.0]), dims=(None,))})
-    result = jnp.asarray(norm_u(pts).data)
+    @geometry.Function("x")
+    def complex_vector(x: jax.Array) -> jax.Array:
+        return jnp.asarray([x[0], 1j * x[1]])
 
-    expected = 5.0  # sqrt(3^2 + 4^2)
-    assert jnp.allclose(result, expected)
+    @spacetime.Function("x", "t")
+    def time_dependent(x: jax.Array, time: jax.Array) -> jax.Array:
+        return jnp.asarray([x[0] * time, x[1] * time])
 
-
-def test_norm_custom_order() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    positive = frozendict({"x": cx.AxisArray(jnp.asarray([3.0, 4.0]), dims=(None,))})
+    negative = frozendict({"x": cx.AxisArray(jnp.asarray([3.0, -4.0]), dims=(None,))})
+    cases = (
+        ("euclidean", norm(vector), positive, 5.0),
+        ("l1", norm(vector, order=1), negative, 7.0),
+        ("complex", norm(complex_vector), positive, 5.0),
+        (
+            "spacetime",
+            norm(time_dependent),
+            frozendict(
+                {
+                    "x": cx.AxisArray(jnp.asarray([3.0, 4.0]), dims=(None,)),
+                    "t": cx.AxisArray(jnp.asarray(2.0), dims=()),
+                }
+            ),
+            10.0,
+        ),
     )
+    for case_id, function, points, expected in cases:
+        assert jnp.allclose(jnp.asarray(function(points).data), expected), case_id
 
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([x[0], x[1]])
-
-    norm_u = norm(u, order=1)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([3.0, -4.0]), dims=(None,))})
-    result = jnp.asarray(norm_u(pts).data)
-
-    expected = 7.0  # |3| + |-4| = 7
-    assert jnp.allclose(result, expected)
-
-
-def test_norm_time_dependent_function() -> None:
-    dom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    ) @ TimeInterval(0.0, 2.0)
-
-    @dom.Function("x", "t")
-    def u(x: Any, t: Any) -> Any:
-        return jnp.array([x[0] * t, x[1] * t])
-
-    norm_u = norm(u)
-    pts = frozendict(
-        {
-            "x": cx.AxisArray(jnp.array([3.0, 4.0]), dims=(None,)),
-            "t": cx.AxisArray(jnp.array(2.0), dims=()),
-        }
+    annotated = geometry.Function("x")(lambda x: jnp.asarray([1.0, 2.0])).with_metadata(
+        tag=1
     )
-    result = jnp.asarray(norm_u(pts).data)
-
-    expected = 10.0  # 2*sqrt(3^2 + 4^2) = 2*5 = 10
-    assert jnp.allclose(result, expected)
-
-
-def test_norm_complex_function() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([x[0], 1j * x[1]])
-
-    norm_u = norm(u)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([3.0, 4.0]), dims=(None,))})
-    result = jnp.asarray(norm_u(pts).data)
-
-    expected = 5.0  # sqrt(3^2 + 4^2)
-    assert jnp.allclose(result, expected)
-
-
-def test_norm_preserves_metadata() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-    u = geom.Function("x")(lambda x: jnp.array([1.0, 2.0])).with_metadata(**{"tag": 1})
-    out = norm(u)
-    assert out.metadata == u.metadata
+    assert norm(annotated).metadata == annotated.metadata

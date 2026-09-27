@@ -1,5 +1,4 @@
 import math
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -10,7 +9,7 @@ import scipy.special
 import phydrax as phx
 
 
-def test_cylindrical_bessel_family_matches_scipy_across_regimes() -> None:
+def test_cylindrical_contracts() -> None:
     orders = np.asarray([0.0, 1e-8, 0.3, 0.5, 1.0, 2.3, 10.0, 49.0, 100.0, 499.0, 500.0])
     arguments = np.geomspace(1e-12, 1e4, 55)
     v, x = np.meshgrid(orders, arguments, indexing="ij")
@@ -27,9 +26,6 @@ def test_cylindrical_bessel_family_matches_scipy_across_regimes() -> None:
             actual[finite], expected[finite], rtol=3e-10, atol=3e-13
         )
         assert np.all(~np.isfinite(expected) | np.isfinite(actual))
-
-
-def test_cylindrical_bessel_float32_values_match_scipy() -> None:
     orders = np.asarray([0.0, 0.3, 1.0, 2.3, 10.0, 49.0], dtype=np.float32)
     arguments = np.geomspace(1e-4, 100.0, 50, dtype=np.float32)
     v, x = np.meshgrid(orders, arguments, indexing="ij")
@@ -41,77 +37,46 @@ def test_cylindrical_bessel_float32_values_match_scipy() -> None:
         expected = reference(v, x)
         finite = np.isfinite(expected)
         np.testing.assert_allclose(actual[finite], expected[finite], rtol=2e-4, atol=2e-6)
-
-
-@pytest.mark.parametrize(
-    ("dtype", "rtol"),
-    [
+    for dtype, rtol in [
         (jnp.float32, 3e-6),
         (jnp.float64, 3e-15),
-    ],
-)
-def test_cylindrical_zero_order_at_smallest_positive_argument(
-    dtype: Any, rtol: Any
-) -> None:
-    x = jnp.nextafter(jnp.asarray(0.0, dtype=dtype), jnp.asarray(1.0, dtype=dtype))
-    j_value = np.asarray(phx.special.jv(0.0, x))
-    y_value = np.asarray(phx.special.yv(0.0, x))
-    assert j_value.dtype == np.dtype(dtype)
-    assert y_value.dtype == np.dtype(dtype)
-    assert j_value == 1.0
-    assert np.isfinite(y_value)
-    expected_y = (2.0 / math.pi) * (np.log(np.asarray(x)) - np.log(2.0) + np.euler_gamma)
-    np.testing.assert_allclose(y_value, expected_y, rtol=rtol)
+    ]:
+        x = jnp.nextafter(jnp.asarray(0.0, dtype=dtype), jnp.asarray(1.0, dtype=dtype))
+        j_value = np.asarray(phx.special.jv(0.0, x))
+        y_value = np.asarray(phx.special.yv(0.0, x))
+        assert j_value.dtype == np.dtype(dtype)
+        assert y_value.dtype == np.dtype(dtype)
+        assert j_value == 1.0
+        assert np.isfinite(y_value)
+        expected_y = (2.0 / math.pi) * (
+            np.log(np.asarray(x)) - np.log(2.0) + np.euler_gamma
+        )
+        np.testing.assert_allclose(y_value, expected_y, rtol=rtol)
+    assert jax.grad(jax.grad(lambda x: phx.special.jv(0.0, x)))(0.0) == pytest.approx(
+        -0.5
+    )
+    assert jax.grad(jax.grad(lambda x: phx.special.jv(2.0, x)))(0.0) == pytest.approx(
+        0.25
+    )
+    assert np.isposinf(jax.grad(lambda x: phx.special.yv(0.0, x))(0.0))
+    assert np.isneginf(jax.grad(jax.grad(lambda x: phx.special.yv(0.0, x)))(0.0))
 
-
-def test_cylindrical_half_order_gradient_at_smallest_float64_is_finite() -> None:
+    first = np.asarray(phx.special.hankel1(0.0, 0.0))
+    second = np.asarray(phx.special.hankel2(0.0, 0.0))
+    assert first.real == 1.0
+    assert second.real == 1.0
+    assert np.isneginf(first.imag)
+    assert np.isposinf(second.imag)
     x = jnp.nextafter(
         jnp.asarray(0.0, dtype=jnp.float64),
         jnp.asarray(1.0, dtype=jnp.float64),
     )
     expected = np.exp(
-        np.log(0.5)
-        - 0.5 * np.log(2.0)
-        - math.lgamma(1.5)
-        - 0.5 * np.log(np.asarray(x))
+        np.log(0.5) - 0.5 * np.log(2.0) - math.lgamma(1.5) - 0.5 * np.log(np.asarray(x))
     )
     derivative = np.asarray(jax.grad(lambda argument: phx.special.jv(0.5, argument))(x))
     assert np.isfinite(derivative)
     np.testing.assert_allclose(derivative, expected, rtol=3e-14)
-
-
-def test_hankel_composition_conjugacy_and_half_integer_values() -> None:
-    v = jnp.asarray([0.0, 0.3, 2.3, 10.0])[:, None]
-    x = jnp.geomspace(0.1, 100.0, 30)[None, :]
-    first = phx.special.hankel1(v, x)
-    second = phx.special.hankel2(v, x)
-    np.testing.assert_allclose(
-        np.asarray(second), np.conj(np.asarray(first)), rtol=2e-14, atol=2e-14
-    )
-    np.testing.assert_allclose(
-        np.asarray(first),
-        np.asarray(phx.special.jv(v, x) + 1j * phx.special.yv(v, x)),
-        rtol=0.0,
-        atol=0.0,
-    )
-
-    arguments = jnp.asarray([0.2, 1.0, 10.0, 100.0])
-    scale = jnp.sqrt(2.0 / (math.pi * arguments))
-    np.testing.assert_allclose(
-        np.asarray(phx.special.jv(0.5, arguments)),
-        np.asarray(scale * jnp.sin(arguments)),
-        rtol=3e-13,
-        atol=2e-14,
-    )
-    np.testing.assert_allclose(
-        np.asarray(phx.special.yv(0.5, arguments)),
-        np.asarray(-scale * jnp.cos(arguments)),
-        rtol=3e-13,
-        atol=2e-14,
-    )
-
-
-def test_cylindrical_half_order_large_argument_retains_phase() -> None:
     argument = jnp.asarray(1e20, dtype=jnp.float64)
     expected = jnp.sqrt(2.0 / (math.pi * argument)) * jnp.sin(argument)
     np.testing.assert_allclose(
@@ -120,9 +85,6 @@ def test_cylindrical_half_order_large_argument_retains_phase() -> None:
         rtol=float(8.0 * np.finfo(np.float64).eps),
         atol=0.0,
     )
-
-
-def test_cylindrical_recurrence_wronskian_and_argument_derivatives() -> None:
     orders = jnp.asarray([0.0, 0.3, 2.3, 10.0, 100.0, 500.0])
     arguments = jnp.asarray([0.2, 1.0, 3.0, 10.0, 300.0, 500.0])
     for function in (phx.special.jv, phx.special.yv):
@@ -149,27 +111,6 @@ def test_cylindrical_recurrence_wronskian_and_argument_derivatives() -> None:
         rtol=2e-9,
         atol=2e-13,
     )
-
-
-def test_cylindrical_zero_argument_derivatives_and_hankel_limits() -> None:
-    assert jax.grad(jax.grad(lambda x: phx.special.jv(0.0, x)))(0.0) == pytest.approx(
-        -0.5
-    )
-    assert jax.grad(jax.grad(lambda x: phx.special.jv(2.0, x)))(0.0) == pytest.approx(
-        0.25
-    )
-    assert np.isposinf(jax.grad(lambda x: phx.special.yv(0.0, x))(0.0))
-    assert np.isneginf(jax.grad(jax.grad(lambda x: phx.special.yv(0.0, x)))(0.0))
-
-    first = np.asarray(phx.special.hankel1(0.0, 0.0))
-    second = np.asarray(phx.special.hankel2(0.0, 0.0))
-    assert first.real == 1.0
-    assert second.real == 1.0
-    assert np.isneginf(first.imag)
-    assert np.isposinf(second.imag)
-
-
-def test_cylindrical_order_derivatives_match_scipy() -> None:
     order = 0.3
     argument = 2.0
     step = np.cbrt(np.finfo(np.float64).eps) * (1.0 + abs(order))
@@ -211,9 +152,6 @@ def test_cylindrical_order_derivatives_match_scipy() -> None:
             np.asarray(actual), np.asarray(explicit), rtol=2e-12, atol=2e-13
         )
         np.testing.assert_allclose(np.asarray(actual), expected, rtol=2e-7, atol=2e-9)
-
-
-def test_cylindrical_boundaries_domains_broadcasting_and_dtype() -> None:
     orders = jnp.asarray([0.0, 0.5, 1.0, 2.0])[:, None]
     arguments = jnp.asarray([0.0, 1.0])[None, :]
     assert phx.special.jv(orders, arguments).shape == (4, 2)
@@ -240,4 +178,35 @@ def test_cylindrical_boundaries_domains_broadcasting_and_dtype() -> None:
             jnp.asarray(0.3, dtype=jnp.float32), jnp.asarray(1.0, dtype=jnp.float32)
         ).dtype
         == jnp.complex64
+    )
+
+
+def test_hankel_composition_conjugacy_and_half_integer_values() -> None:
+    v = jnp.asarray([0.0, 0.3, 2.3, 10.0])[:, None]
+    x = jnp.geomspace(0.1, 100.0, 30)[None, :]
+    first = phx.special.hankel1(v, x)
+    second = phx.special.hankel2(v, x)
+    np.testing.assert_allclose(
+        np.asarray(second), np.conj(np.asarray(first)), rtol=2e-14, atol=2e-14
+    )
+    np.testing.assert_allclose(
+        np.asarray(first),
+        np.asarray(phx.special.jv(v, x) + 1j * phx.special.yv(v, x)),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+    arguments = jnp.asarray([0.2, 1.0, 10.0, 100.0])
+    scale = jnp.sqrt(2.0 / (math.pi * arguments))
+    np.testing.assert_allclose(
+        np.asarray(phx.special.jv(0.5, arguments)),
+        np.asarray(scale * jnp.sin(arguments)),
+        rtol=3e-13,
+        atol=2e-14,
+    )
+    np.testing.assert_allclose(
+        np.asarray(phx.special.yv(0.5, arguments)),
+        np.asarray(-scale * jnp.cos(arguments)),
+        rtol=3e-13,
+        atol=2e-14,
     )

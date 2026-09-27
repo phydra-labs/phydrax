@@ -87,7 +87,7 @@ def _affine_model(*, basis_matrix: Any = None) -> Any:
     return problem, phx.rom.prepare_affine_linear_rom(problem, coefficients)
 
 
-def test_affine_rom_precomputes_lift_cross_terms_and_audits_physical_state() -> None:
+def test_affine_rom_contracts() -> None:
     _, model = _affine_model()
     evaluation = model.evaluate(jnp.asarray([0.5], dtype=jnp.float64), reconstruct=True)
 
@@ -108,9 +108,6 @@ def test_affine_rom_precomputes_lift_cross_terms_and_audits_physical_state() -> 
     )
     assert bool(audit.valid)
     np.testing.assert_allclose(audit.state_error_norm, 0.0, atol=1e-12)
-
-
-def test_affine_rom_is_invariant_to_trial_and_test_coordinates() -> None:
     _, canonical = _affine_model()
     _, rescaled = _affine_model(basis_matrix=[[2.0, 0.0], [0.0, 0.5], [0.0, 0.0]])
     inputs = jnp.asarray([0.25], dtype=jnp.float64)
@@ -119,9 +116,6 @@ def test_affine_rom_is_invariant_to_trial_and_test_coordinates() -> None:
 
     np.testing.assert_allclose(left.reconstructed_state, right.reconstructed_state)
     np.testing.assert_allclose(left.observations[0].value, right.observations[0].value)
-
-
-def test_affine_rom_refuses_unsupported_input_before_solve() -> None:
     _, model = _affine_model()
     evaluation = model.evaluate(jnp.asarray([2.0], dtype=jnp.float64), reconstruct=True)
 

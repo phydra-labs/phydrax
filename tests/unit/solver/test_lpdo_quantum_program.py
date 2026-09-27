@@ -16,7 +16,7 @@ def _product_lpdo(local_states: Any) -> Any:
     )
 
 
-def test_lpdo_program_matches_dense_kraus_execution_and_preserves_psd() -> None:
+def test_lpdo_program_contracts() -> None:
     layout = Q.HilbertRegisterLayout(("q0", "q1"), (2, 2))
     gamma = jnp.asarray(0.2)
     kraus = jnp.stack(
@@ -59,9 +59,6 @@ def test_lpdo_program_matches_dense_kraus_execution_and_preserves_psd() -> None:
     )
     assert jnp.min(eigenvalues) >= -1e-10
     assert jnp.allclose(result.final_state.raw_trace(), 1.0, atol=1e-9)
-
-
-def test_lpdo_program_executes_one_site_identity_kraus_route() -> None:
     layout = Q.HilbertRegisterLayout(("q0", "q1"), (2, 2))
     channel = jnp.eye(2, dtype=jnp.complex128)[None, ...]
     program = Q.QuantumProgram(

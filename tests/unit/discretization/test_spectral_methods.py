@@ -16,7 +16,7 @@ def _fourier(count: Any = 16) -> Any:
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def test_fourier_modal_roundtrip_derivative_parseval_and_gradient() -> None:
+def test_spectral_methods_scenario_1() -> None:
     space = _fourier(16)
     x = space.axes[0].nodes
     values = 0.3 + jnp.sin(2.0 * jnp.pi * x) - 0.2 * jnp.cos(6.0 * jnp.pi * x)
@@ -37,9 +37,6 @@ def test_fourier_modal_roundtrip_derivative_parseval_and_gradient() -> None:
     assert jnp.allclose(derivative, expected, rtol=1e-10, atol=1e-10)
     assert jnp.allclose(physical_norm, modal_norm, rtol=1e-11, atol=1e-11)
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_tensor_spectral_noise_basis_tracks_modal_and_point_value_spaces() -> None:
     space = _fourier(8)
     modal = phx.stochastic.SpatialNoiseBasis.from_spectrum(space, 0.1, rank=3)
     refined_modal = phx.stochastic.SpatialNoiseBasis.from_spectrum(
@@ -75,9 +72,6 @@ def test_tensor_spectral_noise_basis_tracks_modal_and_point_value_spaces() -> No
     assert modal.state_shape == space.modal_shape
     assert physical.state_shape == bounded.physical_shape
     assert bounded.modal_shape != bounded.physical_shape
-
-
-def test_padding_dealiasing_removes_near_cutoff_quadratic_alias() -> None:
     space = _fourier(12)
     x = space.axes[0].nodes
     coefficients = space.project(jnp.sin(10.0 * jnp.pi * x))
@@ -103,7 +97,7 @@ def test_padding_dealiasing_removes_near_cutoff_quadratic_alias() -> None:
     assert jnp.allclose(method_product, product, rtol=1e-11, atol=1e-11)
 
 
-def test_chebyshev_and_legendre_derivatives_are_polynomial_exact() -> None:
+def test_spectral_methods_scenario_2() -> None:
     for basis in (
         phx.discretization.ChebyshevBasisPlan(12),
         phx.discretization.LegendreBasisPlan(12),
@@ -119,9 +113,6 @@ def test_chebyshev_and_legendre_derivatives_are_polynomial_exact() -> None:
         actual = space.derivative_values(space.project(values), axis=0)
 
         assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-10)
-
-
-def test_constrained_legendre_basis_and_boundary_lift_satisfy_endpoint_data() -> None:
     boundary = phx.discretization.SpectralBoundaryConditionPlan.dirichlet()
     base_plan = phx.discretization.LegendreBasisPlan(12)
     constrained = phx.discretization.ConstrainedBasisPlan(base_plan, boundary)
@@ -156,9 +147,6 @@ def test_constrained_legendre_basis_and_boundary_lift_satisfy_endpoint_data() ->
     assert jnp.allclose(upper, 0.0, atol=1e-10)
     assert jnp.allclose(lift_lower, 1.0, atol=1e-10)
     assert jnp.allclose(lift_upper, -2.0, atol=1e-10)
-
-
-def test_galerkin_poisson_and_generalized_tau_use_internal_linalg() -> None:
     boundary = phx.discretization.SpectralBoundaryConditionPlan.dirichlet()
     space = phx.discretization.TensorSpectralPlan(
         (

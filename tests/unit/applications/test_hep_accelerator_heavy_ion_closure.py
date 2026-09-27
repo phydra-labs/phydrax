@@ -16,7 +16,7 @@ def _rotation_map(angle: Any) -> Any:
     return jnp.asarray([[cosine, sine], [-sine, cosine]])
 
 
-def test_ring_map_optics_tracking_and_wake_are_bounded() -> None:
+def test_hep_accelerator_heavy_ion_closure_scenario_1() -> None:
     accelerator = phx.applications.accelerator
     convention = accelerator.AcceleratorConvention()
     matrix = jnp.zeros((6, 6))
@@ -67,9 +67,6 @@ def test_ring_map_optics_tracking_and_wake_are_bounded() -> None:
     )
     assert bool(wake.finite)
     assert jnp.any(wake.kicks != 0.0)
-
-
-def test_qcd_transport_and_flow_observables_preserve_physics_contracts() -> None:
     qcd = phx.applications.lattice_field
     table = qcd.QCDTransportTable(
         jnp.asarray([0.15, 0.25]),

@@ -53,7 +53,7 @@ def _positions(count: Any = 8) -> Any:
     return lattice + perturbation
 
 
-def test_barotropic_sph_density_matches_direct_periodic_sum() -> None:
+def test_barotropic_sph_scenario_1() -> None:
     compiled = _periodic_problem()
     position = _positions()
     displacement = position[:, None, :] - position[None, :, :]
@@ -67,21 +67,6 @@ def test_barotropic_sph_density_matches_direct_periodic_sum() -> None:
     )
 
     assert jnp.allclose(compiled.dynamics.density(position), direct, atol=2e-14)
-
-
-def test_analytic_pressure_gradient_is_the_discrete_energy_gradient() -> None:
-    compiled = _periodic_problem()
-    position = _positions()
-    analytic = compiled.dynamics.potential_gradient(0.0, position, None)
-    reference = jax.grad(
-        lambda configuration: compiled.dynamics.potential_energy(0.0, configuration, None)
-    )(position)
-
-    assert jnp.allclose(analytic, reference, rtol=2e-11, atol=2e-13)
-    assert jnp.allclose(jnp.sum(-analytic, axis=0), 0.0, atol=2e-14)
-
-
-def test_barotropic_sph_is_translation_invariant_and_rotation_covariant() -> None:
     compiled = _periodic_problem()
     position = _positions()
     reference = compiled.dynamics.internal_potential_gradient(position)
@@ -110,38 +95,6 @@ def test_barotropic_sph_is_translation_invariant_and_rotation_covariant() -> Non
     gradient = planar.dynamics.internal_potential_gradient(square)
     rotated = planar.dynamics.internal_potential_gradient(square @ rotation.T)
     assert jnp.allclose(rotated, gradient @ rotation.T, rtol=2e-11, atol=2e-12)
-
-
-def test_external_potential_and_linearization_preserve_discrete_ad_contract() -> None:
-    def harmonic(time: Any, position: Any, stiffness: Any) -> Any:
-        del time
-        return 0.5 * stiffness * jnp.sum(position * position)
-
-    compiled = _periodic_problem(
-        external_potential=harmonic,
-        external_potential_id="potential:harmonic",
-    )
-    position = _positions()
-    stiffness = jnp.asarray(0.4)
-    analytic, jvp, vjp = compiled.dynamics.linearize(0.0, position, stiffness)
-    reference = jax.grad(
-        lambda configuration: compiled.dynamics.potential_energy(
-            0.0, configuration, stiffness
-        )
-    )(position)
-    direction = jnp.cos(3.0 * position)
-    cotangent = jnp.sin(5.0 * position)
-
-    assert jnp.allclose(analytic, reference, rtol=2e-11, atol=2e-13)
-    assert jnp.allclose(
-        jnp.vdot(jvp(direction), cotangent),
-        jnp.vdot(direction, vjp(cotangent)[0]),
-        rtol=2e-11,
-        atol=2e-13,
-    )
-
-
-def test_barotropic_sph_phase_layout_diagnostics_and_step_restriction() -> None:
     compiled = _periodic_problem()
     position = _positions()
     velocity = 0.01 * jnp.cos(2.0 * jnp.pi * position)
@@ -163,9 +116,15 @@ def test_barotropic_sph_phase_layout_diagnostics_and_step_restriction() -> None:
     assert jnp.isfinite(restriction.acoustic)
     assert jnp.isfinite(restriction.force)
     assert restriction.selected > 0.0
+    compiled = _periodic_problem()
+    position = _positions()
+    analytic = compiled.dynamics.potential_gradient(0.0, position, None)
+    reference = jax.grad(
+        lambda configuration: compiled.dynamics.potential_energy(0.0, configuration, None)
+    )(position)
 
-
-def test_cell_list_matches_dense_force_energy_and_linearization() -> None:
+    assert jnp.allclose(analytic, reference, rtol=2e-11, atol=2e-13)
+    assert jnp.allclose(jnp.sum(-analytic, axis=0), 0.0, atol=2e-14)
     dense = _periodic_problem()
     particles = dense.dynamics.particles
     method = dense.dynamics.method
@@ -226,9 +185,6 @@ def test_cell_list_matches_dense_force_energy_and_linearization() -> None:
         cell.discretization_bundle.record(cell.dynamics.neighborhood.key).artifact_kind
         == "cell-list-particle-neighborhood"
     )
-
-
-def test_cell_list_compilation_validates_search_and_realization_contracts() -> None:
     dense = _periodic_problem()
     method = dense.dynamics.method
     box = dense.dynamics.neighborhood.box
@@ -260,3 +216,32 @@ def test_cell_list_compilation_validates_search_and_realization_contracts() -> N
                 realization="dense_pairs"
             ),
         )
+
+
+def test_external_potential_and_linearization_preserve_discrete_ad_contract() -> None:
+    def harmonic(time: Any, position: Any, stiffness: Any) -> Any:
+        del time
+        return 0.5 * stiffness * jnp.sum(position * position)
+
+    compiled = _periodic_problem(
+        external_potential=harmonic,
+        external_potential_id="potential:harmonic",
+    )
+    position = _positions()
+    stiffness = jnp.asarray(0.4)
+    analytic, jvp, vjp = compiled.dynamics.linearize(0.0, position, stiffness)
+    reference = jax.grad(
+        lambda configuration: compiled.dynamics.potential_energy(
+            0.0, configuration, stiffness
+        )
+    )(position)
+    direction = jnp.cos(3.0 * position)
+    cotangent = jnp.sin(5.0 * position)
+
+    assert jnp.allclose(analytic, reference, rtol=2e-11, atol=2e-13)
+    assert jnp.allclose(
+        jnp.vdot(jvp(direction), cotangent),
+        jnp.vdot(direction, vjp(cotangent)[0]),
+        rtol=2e-11,
+        atol=2e-13,
+    )

@@ -23,7 +23,7 @@ def _quadratic_problem(target: Any = jnp.asarray([1.2, 2.2])) -> Any:
     )
 
 
-def test_map_candidate_search_finds_exact_correlated_catalog_minimum() -> None:
+def test_map_candidate_contracts() -> None:
     problem = _quadratic_problem()
     candidates = phx.optim.FiniteProductSpace(
         phx.optim.FiniteAxis(
@@ -66,9 +66,6 @@ def test_map_candidate_search_finds_exact_correlated_catalog_minimum() -> None:
     replay = phx.uq.search_map_candidates(problem, candidates)
     assert replay.flat_index == result.flat_index
     assert replay.candidate_signature == result.candidate_signature
-
-
-def test_map_candidate_space_can_factor_independent_structured_coordinates() -> None:
     position = {"offset": jnp.asarray(0.0), "slope": jnp.zeros((2,))}
     space = phx.uq.ParameterSpace(position, log_prior=lambda _: jnp.zeros(()))
     problem = phx.uq.PosteriorProblem(
@@ -103,9 +100,6 @@ def test_map_candidate_space_can_factor_independent_structured_coordinates() -> 
     assert result.position is not None
     np.testing.assert_array_equal(result.position["offset"], 1.0)
     np.testing.assert_array_equal(result.position["slope"], jnp.asarray([2.0, 3.0]))
-
-
-def test_map_candidate_search_reports_partial_and_complete_invalidity() -> None:
     space = phx.uq.ParameterSpace(
         jnp.asarray(0.0),
         log_prior=lambda _: jnp.zeros(()),
@@ -144,9 +138,6 @@ def test_map_candidate_search_reports_partial_and_complete_invalidity() -> None:
     assert invalid.objective_evaluations == 3
     assert invalid.valid_evaluations == 0
     assert invalid.invalid_evaluations == 3
-
-
-def test_map_candidate_search_rejects_incompatible_candidate_points() -> None:
     problem = _quadratic_problem()
 
     wrong_structure = phx.optim.FiniteProductSpace(

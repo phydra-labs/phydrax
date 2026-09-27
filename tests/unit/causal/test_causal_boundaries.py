@@ -62,7 +62,7 @@ def _binary_problem(schema: causal.CausalSchema, probabilities: np.ndarray) -> A
     return causal.CausalProblem(dataset=dataset, design=design, query=query)
 
 
-def test_bow_arc_returns_hedge_nonidentification() -> None:
+def test_causal_boundaries_scenario_1() -> None:
     schema = causal.CausalSchema(
         (
             causal.CausalVariable(name="x", scale=causal.VariableScale.BINARY),
@@ -83,9 +83,6 @@ def test_bow_arc_returns_hedge_nonidentification() -> None:
     assert result.witness is not None
     with pytest.raises(ValueError, match="successful identification"):
         causal.issue_identification_certificate(result, problem)
-
-
-def test_frontdoor_general_id_matches_brute_force_intervention() -> None:
     schema = causal.CausalSchema(
         tuple(
             causal.CausalVariable(name=name, scale=causal.VariableScale.BINARY)
@@ -131,9 +128,6 @@ def test_frontdoor_general_id_matches_brute_force_intervention() -> None:
     assert float(evaluated.reference_mean) == pytest.approx(
         intervention_mean[0], abs=1e-9
     )
-
-
-def test_completed_graph_rejects_noncompleted_orientation() -> None:
     schema = causal.CausalSchema(
         tuple(causal.CausalVariable(name=name) for name in ("a", "b", "c"))
     )
@@ -153,7 +147,7 @@ def test_completed_graph_rejects_noncompleted_orientation() -> None:
         )
 
 
-def test_g_square_and_conservative_fci_are_evidence_bounded() -> None:
+def test_causal_boundaries_scenario_2() -> None:
     repeats = 50
     x = np.tile(np.asarray([0, 0, 1, 1]), repeats)
     y = np.tile(np.asarray([0, 1, 0, 1]), repeats)
@@ -186,9 +180,6 @@ def test_g_square_and_conservative_fci_are_evidence_bounded() -> None:
     assert discovery.successful
     assert isinstance(discovery.graph, causal.CausalPAG)
     assert discovery.graph.endpoint_edges == ()
-
-
-def test_exact_bounded_ges_returns_score_equivalence_class() -> None:
     rng = np.random.default_rng(21)
     x = rng.normal(size=300)
     y = 1.5 * x + rng.normal(scale=0.4, size=300)
@@ -215,9 +206,6 @@ def test_exact_bounded_ges_returns_score_equivalence_class() -> None:
     assert isinstance(result.graph, causal.CausalCPDAG)
     assert result.graph.directed_edges == ()
     assert result.graph.undirected_edges == (("x", "y"),)
-
-
-def test_idc_evaluates_conditional_interventional_distribution() -> None:
     schema = causal.CausalSchema(
         tuple(
             causal.CausalVariable(name=name, scale=causal.VariableScale.BINARY)

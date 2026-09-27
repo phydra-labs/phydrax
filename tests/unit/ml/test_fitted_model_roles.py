@@ -42,16 +42,13 @@ def _parameter_leaves(model: Any) -> Any:
     return jax.tree_util.tree_leaves(partition_parameters(model)[0])
 
 
-def test_fitted_ridge_is_frozen_until_explicitly_unfrozen() -> None:
+def test_fitted_contracts() -> None:
     result = phx.ml.fit(phx.ml.linear.RidgeRecipe(1e-3), _features(), _targets())
 
     assert set(_roles(result.model).values()) == {ArrayRole.FIXED}
     roles = _roles(result.as_trainable())
     assert roles[".coefficients"] is ArrayRole.PARAMETER
     assert roles[".intercept"] is ArrayRole.PARAMETER
-
-
-def test_fitted_knn_training_set_never_trains() -> None:
     batch = MLBatch(_features(), _targets())
     regressor = KNeighborsRegressorRecipe(2).fit_batch(batch).as_trainable()
     labels = jnp.array([0, 0, 0, 1, 1, 1])
@@ -66,9 +63,6 @@ def test_fitted_knn_training_set_never_trains() -> None:
         assert roles[".support"] is ArrayRole.FIXED
         assert _parameter_leaves(model) == []
     assert _roles(regressor)[".targets"] is ArrayRole.FIXED
-
-
-def test_fitted_hard_tree_trains_leaf_values_not_thresholds() -> None:
     model = (
         DecisionTreeRegressor(max_depth=2)
         .fit_batch(MLBatch(_features(), _targets()))
@@ -78,9 +72,6 @@ def test_fitted_hard_tree_trains_leaf_values_not_thresholds() -> None:
 
     assert roles[".threshold"] is ArrayRole.FIXED
     assert roles[".leaf_value"] is ArrayRole.PARAMETER
-
-
-def test_fitted_scaler_statistics_never_train() -> None:
     model = StandardScaler().fit_batch(MLBatch(_features())).as_trainable()
 
     _roles(model)

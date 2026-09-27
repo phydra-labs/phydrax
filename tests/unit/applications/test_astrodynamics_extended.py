@@ -31,7 +31,7 @@ def _provenance(context: Any) -> Any:
     )
 
 
-def test_lambert_quarter_circle_and_multirevolution_capacity() -> None:
+def test_astrodynamics_extended_scenario_1() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     result = astro.solve_lambert(
@@ -50,9 +50,6 @@ def test_lambert_quarter_circle_and_multirevolution_capacity() -> None:
     np.testing.assert_allclose(
         result.arrival_velocity[0], jnp.asarray([-1.0, 0.0, 0.0]), atol=2.0e-9
     )
-
-
-def test_typed_array_adapter_converts_values_without_changing_context_semantics() -> None:
     astro = phx.applications.astrodynamics
     assert astro.AstrodynamicsScaleContract is phx.DimensionalScaleContract
     context = _context("earth", "icrf")
@@ -73,6 +70,83 @@ def test_typed_array_adapter_converts_values_without_changing_context_semantics(
     assert state.context.frame.frame_id == context.frame.frame_id
     assert state.context.epoch.epoch_id == context.epoch.epoch_id
     assert state.context.epoch.time_scale == "TT"
+    astro = phx.applications.astrodynamics
+    source_context = _context("earth", "icrf")
+    target_context = astro.AstrodynamicsContext(
+        source_context.scale,
+        source_context.epoch,
+        astro.FrameDefinition("earth", "rotated", pseudo_inertial=True),
+    )
+    provenance = _provenance(source_context)
+    offset = astro.TimeScaleTransform.tai_to_tt(provenance).apply(jnp.asarray(1.0))
+    assert bool(offset.valid)
+    np.testing.assert_allclose(offset.relative_seconds, 33.184, atol=1.0e-12)
+    bounded = astro.TimeScaleTransform(
+        "UTC",
+        "TAI",
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([0.0, 0.0]),
+        provenance,
+        interpolation="linear",
+    )
+    route = astro.PreparedTimeRoute(
+        (bounded, astro.TimeScaleTransform.tai_to_tt(provenance))
+    ).apply(jnp.asarray(2.0))
+    assert not bool(route.valid)
+    assert int(route.status) == int(astro.AstrodynamicsStatus.INVALID_DOMAIN)
+
+    evaluator = astro.ConstantKinematicEvaluator(
+        jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    )
+    transform = astro.KinematicFrameTransform(
+        evaluator,
+        source_context.frame,
+        target_context.frame,
+        transform_id="quarter-turn",
+    )
+    state = astro.CartesianOrbitState(
+        jnp.asarray([1.0, 0.0, 0.0]), jnp.zeros(3), source_context
+    )
+    rotated, evidence = transform.apply(state, 0.0, target_context)
+    restored, _ = transform.apply_inverse(rotated, 0.0, source_context)
+    assert bool(evidence.valid)
+    np.testing.assert_allclose(restored.position, state.position, atol=1.0e-12)
+
+    kilometer_scale = astro.AstrodynamicsScaleContract(
+        phx.units.KILOMETER,
+        phx.units.KILOGRAM,
+        phx.units.SECOND,
+    )
+    mismatched_target = astro.AstrodynamicsContext(
+        kilometer_scale,
+        source_context.epoch,
+        target_context.frame,
+    )
+    with pytest.raises(ValueError, match="matching scale contracts"):
+        transform.apply(state, 0.0, mismatched_target)
+    mismatched_source = astro.AstrodynamicsContext(
+        kilometer_scale,
+        source_context.epoch,
+        source_context.frame,
+    )
+    with pytest.raises(ValueError, match="matching scale contracts"):
+        transform.apply_inverse(rotated, 0.0, mismatched_source)
+
+    catalog = astro.CelestialBodyCatalog(
+        ("sun",), jnp.asarray([1.0]), jnp.asarray([1.0]), source_context
+    )
+    ephemeris = astro.TabulatedEphemeris(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[[2.0, 0.0, 0.0, 0.0, 0.0, 0.0]], [[2.0, 1.0, 0.0, 0.0, 1.0, 0.0]]]),
+        catalog,
+        provenance,
+    )
+    sample = ephemeris.evaluate(0.5, 0)
+    third_body = astro.ThirdBodyGravity(ephemeris, 0).evaluate(
+        0.5, jnp.asarray([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
+    )
+    assert bool(sample.valid)
+    assert bool(third_body.valid)
 
 
 def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units() -> None:
@@ -162,87 +236,7 @@ def test_sgp4_adapter_preserves_teme_utc_context_while_converting_units() -> Non
         )
 
 
-def test_time_frame_ephemeris_and_third_body_contracts() -> None:
-    astro = phx.applications.astrodynamics
-    source_context = _context("earth", "icrf")
-    target_context = astro.AstrodynamicsContext(
-        source_context.scale,
-        source_context.epoch,
-        astro.FrameDefinition("earth", "rotated", pseudo_inertial=True),
-    )
-    provenance = _provenance(source_context)
-    offset = astro.TimeScaleTransform.tai_to_tt(provenance).apply(jnp.asarray(1.0))
-    assert bool(offset.valid)
-    np.testing.assert_allclose(offset.relative_seconds, 33.184, atol=1.0e-12)
-    bounded = astro.TimeScaleTransform(
-        "UTC",
-        "TAI",
-        jnp.asarray([0.0, 1.0]),
-        jnp.asarray([0.0, 0.0]),
-        provenance,
-        interpolation="linear",
-    )
-    route = astro.PreparedTimeRoute(
-        (bounded, astro.TimeScaleTransform.tai_to_tt(provenance))
-    ).apply(jnp.asarray(2.0))
-    assert not bool(route.valid)
-    assert int(route.status) == int(astro.AstrodynamicsStatus.INVALID_DOMAIN)
-
-    evaluator = astro.ConstantKinematicEvaluator(
-        jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    )
-    transform = astro.KinematicFrameTransform(
-        evaluator,
-        source_context.frame,
-        target_context.frame,
-        transform_id="quarter-turn",
-    )
-    state = astro.CartesianOrbitState(
-        jnp.asarray([1.0, 0.0, 0.0]), jnp.zeros(3), source_context
-    )
-    rotated, evidence = transform.apply(state, 0.0, target_context)
-    restored, _ = transform.apply_inverse(rotated, 0.0, source_context)
-    assert bool(evidence.valid)
-    np.testing.assert_allclose(restored.position, state.position, atol=1.0e-12)
-
-    kilometer_scale = astro.AstrodynamicsScaleContract(
-        phx.units.KILOMETER,
-        phx.units.KILOGRAM,
-        phx.units.SECOND,
-    )
-    mismatched_target = astro.AstrodynamicsContext(
-        kilometer_scale,
-        source_context.epoch,
-        target_context.frame,
-    )
-    with pytest.raises(ValueError, match="matching scale contracts"):
-        transform.apply(state, 0.0, mismatched_target)
-    mismatched_source = astro.AstrodynamicsContext(
-        kilometer_scale,
-        source_context.epoch,
-        source_context.frame,
-    )
-    with pytest.raises(ValueError, match="matching scale contracts"):
-        transform.apply_inverse(rotated, 0.0, mismatched_source)
-
-    catalog = astro.CelestialBodyCatalog(
-        ("sun",), jnp.asarray([1.0]), jnp.asarray([1.0]), source_context
-    )
-    ephemeris = astro.TabulatedEphemeris(
-        jnp.asarray([0.0, 1.0]),
-        jnp.asarray([[[2.0, 0.0, 0.0, 0.0, 0.0, 0.0]], [[2.0, 1.0, 0.0, 0.0, 1.0, 0.0]]]),
-        catalog,
-        provenance,
-    )
-    sample = ephemeris.evaluate(0.5, 0)
-    third_body = astro.ThirdBodyGravity(ephemeris, 0).evaluate(
-        0.5, jnp.asarray([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
-    assert bool(sample.valid)
-    assert bool(third_body.valid)
-
-
-def test_direct_nbody_and_cr3bp_invariants() -> None:
+def test_astrodynamics_extended_scenario_2() -> None:
     astro = phx.applications.astrodynamics
     context = _context("barycenter")
     particles = phx.discretization.particle.ParticleSetPlan(
@@ -286,9 +280,6 @@ def test_direct_nbody_and_cr3bp_invariants() -> None:
         # ty: ignore[invalid-argument-type]
         derivative = cr3bp.vector_field(0.0, jnp.concatenate((point, jnp.zeros(3))))
         np.testing.assert_allclose(derivative, 0.0, atol=2.0e-10)
-
-
-def test_spacecraft_burn_and_measurement_adapters() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     particles = phx.discretization.particle.ParticleSetPlan(
@@ -334,9 +325,6 @@ def test_spacecraft_burn_and_measurement_adapters() -> None:
     assert bool(measurements.valid[0])
     np.testing.assert_allclose(measurements.predicted[0, 0], 2.0)
     np.testing.assert_allclose(measurements.jacobian[0, 0, 3], 1.0)
-
-
-def test_environment_force_parameters_are_finite_physical_and_identity_defining() -> None:
     astro = phx.applications.astrodynamics
     context = _context()
     atmosphere = astro.ExponentialAtmosphere(1.0, 1.0, 0.0, 1.0)

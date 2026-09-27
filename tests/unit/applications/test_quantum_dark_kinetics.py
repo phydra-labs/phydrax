@@ -120,7 +120,7 @@ def _plan(*, coupling: Any = True, threshold: Any = 0.5) -> Any:
     )
 
 
-def test_state_has_explicit_support_units_frame_and_separate_condensate() -> None:
+def test_quantum_dark_kinetics_scenario_1() -> None:
     plan = _plan()
     state = plan.initialize(
         jnp.asarray([[[0.4], [0.0]]]),
@@ -137,9 +137,6 @@ def test_state_has_explicit_support_units_frame_and_separate_condensate() -> Non
     np.testing.assert_array_equal(state.frame_token, plan.frame.frame_token)
     assert state.frame_scope == "homogeneous-frame-broadcast"
     assert state.species_plan_ids == (plan.species[0].species_plan_id,)
-
-
-def test_qualified_condensate_transition_preserves_number_and_is_reported() -> None:
     plan = _plan()
     state = plan.initialize(
         jnp.asarray([[[0.8]]]),
@@ -156,9 +153,6 @@ def test_qualified_condensate_transition_preserves_number_and_is_reported() -> N
     np.testing.assert_allclose(result.evidence.number_defect, 0.0, atol=1.0e-7)
     np.testing.assert_array_equal(result.accepted_state.time, plan.frame.time)
     assert result.evidence.qualification_id == "condensate-reference-evidence"
-
-
-def test_condensation_without_qualified_coupling_is_refused_and_rolled_back() -> None:
     plan = _plan(coupling=False)
     state = plan.initialize(
         jnp.asarray([[[0.8]]]),

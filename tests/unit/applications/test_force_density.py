@@ -36,7 +36,7 @@ def _three_node_problem(*, compression: bool = False) -> Any:
     return problem, inputs
 
 
-def test_force_density_structure_rejects_unanchored_coordinate_and_self_loop() -> None:
+def test_force_density_scenario_1() -> None:
     with pytest.raises(ValueError, match="constrain every translation"):
         fd.ForceDensityStructure.from_edges(
             jnp.asarray(((0, 1),), dtype=jnp.int32),
@@ -51,11 +51,6 @@ def test_force_density_structure_rejects_unanchored_coordinate_and_self_loop() -
             2,
             fixed_nodes=(0,),
         )
-
-
-def test_force_density_structure_preserves_parallel_members_and_partial_restraints() -> (
-    None
-):
     structure = fd.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (0, 1)), dtype=jnp.int32),
         2,
@@ -71,9 +66,33 @@ def test_force_density_structure_preserves_parallel_members_and_partial_restrain
         constrained_dofs=structure.constrained_dofs,
     )
     assert reconstructed.structure_id == structure.structure_id
-
-
-def test_three_node_tension_and_compression_are_mirrors_with_balanced_reactions() -> None:
+    problem, inputs = _three_node_problem()
+    with pytest.raises(Exception, match="magnitude or sign"):
+        fd.force_density_equilibrium(
+            problem,
+            fd.ForceDensityInputs(
+                jnp.asarray((1.0, -1.0)),
+                inputs.prescribed_values,
+                inputs.load_parameters,
+            ),
+        )
+    with pytest.raises(Exception, match="magnitude or sign"):
+        fd.force_density_equilibrium(
+            problem,
+            fd.ForceDensityInputs(
+                jnp.asarray((1.0, 0.0)),
+                inputs.prescribed_values,
+                inputs.load_parameters,
+            ),
+        )
+    problem, inputs = _three_node_problem()
+    mismatched = fd.ForceDensityInputs(
+        inputs.force_densities,
+        inputs.prescribed_values,
+        inputs.load_parameters.astype(jnp.float32),
+    )
+    with pytest.raises(TypeError, match="share the force-density coordinate dtype"):
+        fd.force_density_equilibrium(problem, mismatched)
     tension_problem, tension_inputs = _three_node_problem()
     compression_problem, compression_inputs = _three_node_problem(compression=True)
     tension = fd.force_density_equilibrium(tension_problem, tension_inputs)
@@ -89,9 +108,6 @@ def test_three_node_tension_and_compression_are_mirrors_with_balanced_reactions(
     assert tension.diagnostics.global_balance_norm <= 1.0e-10
     assert jnp.all(tension.state.axial_forces > 0.0)
     assert jnp.all(compression.state.axial_forces < 0.0)
-
-
-def test_member_orientation_does_not_change_equilibrium() -> None:
     problem, inputs = _three_node_problem()
     expected = fd.force_density_equilibrium(problem, inputs)
     reversed_structure = fd.ForceDensityStructure.from_edges(
@@ -117,7 +133,7 @@ def test_member_orientation_does_not_change_equilibrium() -> None:
     assert jnp.allclose(actual.state.axial_forces, expected.state.axial_forces)
 
 
-def test_sparse_force_density_solve_matches_direct_dense_equations() -> None:
+def test_force_density_scenario_2() -> None:
     edges = np.asarray(((0, 1), (1, 2), (2, 3), (0, 2)), dtype=np.int32)
     structure = fd.ForceDensityStructure.from_edges(edges, 4, 2, fixed_nodes=(0, 3))
     positions = jnp.asarray(((0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (3.0, 0.0)))
@@ -140,9 +156,6 @@ def test_sparse_force_density_solve_matches_direct_dense_equations() -> None:
     )
     assert result.successful
     assert jnp.allclose(result.state.positions[free], expected, atol=1.0e-10)
-
-
-def test_all_constrained_structure_returns_reactions_without_linear_solve() -> None:
     structure = fd.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -165,9 +178,6 @@ def test_all_constrained_structure_returns_reactions_without_linear_solve() -> N
         ),
         0.0,
     )
-
-
-def test_prepared_refresh_reuses_symbolic_plan_and_changes_numeric_solution() -> None:
     problem, inputs = _three_node_problem()
     plan = fd.plan_force_density(problem, inputs)
     prepared = fd.prepare_force_density(plan, inputs)
@@ -217,36 +227,3 @@ def test_force_density_solution_map_has_finite_q_load_and_support_derivatives() 
     ) / (2.0 * epsilon)
     assert all(jnp.all(jnp.isfinite(gradient)) for gradient in gradients)
     assert tangent == pytest.approx(finite_difference, rel=2.0e-5, abs=2.0e-6)
-
-
-def test_force_density_sign_and_magnitude_contracts_fail_closed() -> None:
-    problem, inputs = _three_node_problem()
-    with pytest.raises(Exception, match="magnitude or sign"):
-        fd.force_density_equilibrium(
-            problem,
-            fd.ForceDensityInputs(
-                jnp.asarray((1.0, -1.0)),
-                inputs.prescribed_values,
-                inputs.load_parameters,
-            ),
-        )
-    with pytest.raises(Exception, match="magnitude or sign"):
-        fd.force_density_equilibrium(
-            problem,
-            fd.ForceDensityInputs(
-                jnp.asarray((1.0, 0.0)),
-                inputs.prescribed_values,
-                inputs.load_parameters,
-            ),
-        )
-
-
-def test_force_density_load_output_must_share_coordinate_dtype() -> None:
-    problem, inputs = _three_node_problem()
-    mismatched = fd.ForceDensityInputs(
-        inputs.force_densities,
-        inputs.prescribed_values,
-        inputs.load_parameters.astype(jnp.float32),
-    )
-    with pytest.raises(TypeError, match="share the force-density coordinate dtype"):
-        fd.force_density_equilibrium(problem, mismatched)

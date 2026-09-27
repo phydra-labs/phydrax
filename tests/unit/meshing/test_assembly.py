@@ -7,7 +7,7 @@ import phydrax as phx
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
 
 
-def test_assembly_preserves_compact_carriers_and_binds_spline_geometry_revision() -> None:
+def test_assembly_contracts() -> None:
     contract = phx.SpatialCoordinateContract.si()
     tensor = phx.discretization.TensorGridPlan(
         (
@@ -55,11 +55,6 @@ def test_assembly_preserves_compact_carriers_and_binds_spline_geometry_revision(
     with pytest.raises(ValueError, match="coefficient vertices"):
         # ty: ignore[invalid-argument-type]
         parts[2].scope(0, [0])
-
-
-def test_assembly_rejects_duplicate_part_ownership_and_coordinate_frame_mismatch() -> (
-    None
-):
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))

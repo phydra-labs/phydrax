@@ -106,9 +106,7 @@ def _contacts(support: Any) -> Any:
     )
 
 
-def test_aligned_heterojunction_equilibrium_preserves_density_and_displacement_jumps() -> (
-    None
-):
+def test_semiconductor_advanced_runtime_scenario_1() -> None:
     left = _material("left", _bands("left-bands", 0.56, -0.56, 2.8e25, 1.04e25))
     right = _material(
         "right", _bands("right-bands", 0.72, -0.38, 1.7e25, 8e24), permittivity=9.5
@@ -152,11 +150,6 @@ def test_aligned_heterojunction_equilibrium_preserves_density_and_displacement_j
         atol=1e-31,
     )
     assert float(point.evidence.charge_balance_relative_error) < 1e-10
-
-
-def test_thermionic_interface_adds_only_algebraic_traces_and_balances_at_equilibrium() -> (
-    None
-):
     left = _material("left", _bands("left-bands", 0.56, -0.56, 2.8e25, 1.04e25))
     right = _material("right", _bands("right-bands", 0.72, -0.38, 1.7e25, 8e24))
     support = sc.TransportSupport.interval(np.linspace(0.0, 1e-6, 8), area=1e-12)
@@ -196,11 +189,6 @@ def test_thermionic_interface_adds_only_algebraic_traces_and_balances_at_equilib
     assert bool(point.successful)
     np.testing.assert_array_equal(device.edge_fluxes(point.coordinates)[0][3], 0.0)
     np.testing.assert_array_equal(device.edge_fluxes(point.coordinates)[1][3], 0.0)
-
-
-def test_carrier_and_lattice_energy_storage_round_trip_uses_extensive_inventories() -> (
-    None
-):
     bands = _bands("energy-bands", 0.56, -0.56, 2.8e25, 1.04e25)
     material = _material("energy-material", bands, carrier_energy=True)
     support = sc.TransportSupport.interval(np.linspace(0.0, 1e-6, 7), area=1e-12)

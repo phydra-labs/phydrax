@@ -93,7 +93,7 @@ def _torus_surface(major_count: Any = 3, minor_count: Any = 3) -> Any:
     )
 
 
-def test_oriented_complex_boundary_and_rwg_divergence_identities() -> None:
+def test_maxwell_boundary3d_scenario_1() -> None:
     space = _space()
     surface = space.surface
     tolerance = 50.0 * jnp.finfo(surface.vertices.dtype).eps
@@ -117,9 +117,6 @@ def test_oriented_complex_boundary_and_rwg_divergence_identities() -> None:
         * surface.edge_lengths[surface.face_edges]
         / surface.face_areas[:, None],
     )
-
-
-def test_rwg_is_edge_based_tangential_and_conforming_not_a_scalar_face_space() -> None:
     space = _space()
     surface = space.surface
     tolerance = 50.0 * jnp.finfo(surface.vertices.dtype).eps
@@ -142,9 +139,6 @@ def test_rwg_is_edge_based_tangential_and_conforming_not_a_scalar_face_space() -
             0.7,
             policy=_policy(),
         )
-
-
-def test_maxwell_efie_complex_transpose_and_adjoint_are_distinct_and_exact() -> None:
     prepared = _prepared()
     operator = prepared.operator
     x = (
@@ -175,7 +169,7 @@ def test_maxwell_efie_complex_transpose_and_adjoint_are_distinct_and_exact() -> 
     )
 
 
-def test_off_surface_maxwell_green_dyadic_action_and_duals_are_finite() -> None:
+def test_maxwell_boundary3d_scenario_2() -> None:
     prepared = _prepared()
     action = prepare_maxwell_electric_field_action_3d(
         prepared,
@@ -210,9 +204,6 @@ def test_off_surface_maxwell_green_dyadic_action_and_duals_are_finite() -> None:
             jnp.asarray([[3.0, 0.5, 0.25], [-2.5, 1.5, 0.75]]),
             max_targets=1,
         )
-
-
-def test_bounded_sphere_like_pec_efie_solve_is_finite() -> None:
     prepared = _prepared()
     centers = prepared.current_space.surface.face_centroids
     incident = jnp.exp(1j * prepared.wavenumber * centers[:, 2])[:, None] * jnp.asarray(
@@ -231,9 +222,6 @@ def test_bounded_sphere_like_pec_efie_solve_is_finite() -> None:
     assert result.relative_residual < tolerance
     assert not result.assembly_report.continuum_discretization_error_estimated
     assert "CFIE or interior-resonance removal" in result.assembly_report.non_goals
-
-
-def test_low_frequency_orientation_and_topology_risks_fail_closed() -> None:
     space = _space()
     with pytest.raises(ValueError, match="Low-frequency EFIE rejected"):
         prepare_maxwell_efie_3d(space, 1.0e-3, policy=_policy())

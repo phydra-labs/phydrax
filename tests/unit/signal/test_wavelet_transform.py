@@ -45,30 +45,27 @@ def _pywavelets_coefficients(values: Any, transform: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("shape,axes,levels,wavelet,boundary", _CASES)
-def test_discrete_wavelet_transform_matches_pywavelets_and_roundtrips(
-    shape: Any, axes: Any, levels: Any, wavelet: Any, boundary: Any
-) -> None:
-    values = np.random.default_rng(831).normal(size=shape)
-    transform = DiscreteWaveletTransform(
-        axes,
-        levels=levels,
-        wavelet=wavelet,
-        boundary=boundary,
-    )
+def test_discrete_wavelet_transform_contracts() -> None:
+    for shape, axes, levels, wavelet, boundary in _CASES:
+        values = np.random.default_rng(831).normal(size=shape)
+        transform = DiscreteWaveletTransform(
+            axes,
+            levels=levels,
+            wavelet=wavelet,
+            boundary=boundary,
+        )
 
-    actual = transform.analysis(values)
-    expected = _pywavelets_coefficients(values, transform)
+        actual = transform.analysis(values)
+        expected = _pywavelets_coefficients(values, transform)
 
-    assert np.allclose(actual.scaling, expected[0], rtol=1e-12, atol=1e-12)
-    for detail_level, expected_level in zip(actual.details, expected[1:], strict=True):
-        for label, band in zip(transform.detail_labels, detail_level, strict=True):
-            key = "".join("ad"[value] for value in label)
-            assert np.allclose(band, expected_level[key], rtol=1e-12, atol=1e-12)
-    assert np.allclose(transform.synthesis(actual), values, rtol=5e-12, atol=5e-12)
-
-
-def test_discrete_wavelet_transform_is_jittable_vmappable_and_differentiable() -> None:
+        assert np.allclose(actual.scaling, expected[0], rtol=1e-12, atol=1e-12)
+        for detail_level, expected_level in zip(
+            actual.details, expected[1:], strict=True
+        ):
+            for label, band in zip(transform.detail_labels, detail_level, strict=True):
+                key = "".join("ad"[value] for value in label)
+                assert np.allclose(band, expected_level[key], rtol=1e-12, atol=1e-12)
+        assert np.allclose(transform.synthesis(actual), values, rtol=5e-12, atol=5e-12)
     transform = DiscreteWaveletTransform(
         (-2,), levels=3, wavelet="db2", boundary="periodization"
     )
@@ -90,9 +87,6 @@ def test_discrete_wavelet_transform_is_jittable_vmappable_and_differentiable() -
     assert jnp.allclose(reconstructed, values, rtol=1e-12, atol=1e-12)
     assert jnp.allclose(mapped, values, rtol=1e-12, atol=1e-12)
     assert jnp.allclose(gradient, 2.0 * values, rtol=1e-11, atol=1e-11)
-
-
-def test_discrete_wavelet_transform_is_shape_independent_and_plan_safe() -> None:
     transform = DiscreteWaveletTransform(
         (-2,), levels=2, wavelet="db2", boundary="periodization"
     )
@@ -112,9 +106,6 @@ def test_discrete_wavelet_transform_is_shape_independent_and_plan_safe() -> None
     )
     with pytest.raises(ValueError, match="different transform"):
         incompatible.synthesis(short_coefficients)
-
-
-def test_discrete_wavelet_transform_rejects_invalid_configuration_and_shapes() -> None:
     with pytest.raises(ValueError, match="at least one axis"):
         DiscreteWaveletTransform((), levels=1)
     with pytest.raises(ValueError, match="unique"):

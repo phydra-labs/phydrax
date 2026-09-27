@@ -1,7 +1,3 @@
-from typing import Any
-
-import pytest
-
 import phydrax as phx
 
 
@@ -85,14 +81,11 @@ PUBLIC_STAGE10 = {
 }
 
 
-@pytest.mark.parametrize(
-    ("namespace", "symbol"),
-    [
+def test_stage10_symbols_are_public_and_declared() -> None:
+    for namespace, symbol in [
         (namespace, symbol)
         for namespace, symbols in PUBLIC_STAGE10.items()
         for symbol in symbols
-    ],
-)
-def test_stage10_symbols_are_public_and_declared(namespace: Any, symbol: Any) -> None:
-    assert symbol in namespace.__all__
-    assert getattr(namespace, symbol) is not None
+    ]:
+        assert symbol in namespace.__all__
+        assert getattr(namespace, symbol) is not None

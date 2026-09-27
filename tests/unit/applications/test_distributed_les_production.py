@@ -177,7 +177,7 @@ def _compiled(
     return space, local, source, distributed, constant_power, state
 
 
-def test_distributed_full_flow_single_device_parity_forcing_jit_and_jvp() -> None:
+def test_distributed_contracts() -> None:
     _, local, _, distributed, _, state = _compiled()
 
     local_stage = local.stage(jnp.asarray(0.0), state)
@@ -236,48 +236,77 @@ def test_distributed_full_flow_single_device_parity_forcing_jit_and_jvp() -> Non
     assert bool(forcing_result.successful)
     assert bool(forced_stage.forcing_successful)
     assert float(jnp.max(jnp.abs(forced_stage.rates.forcing_rate))) > 0.0
-
-
-@pytest.mark.parametrize("scheme", ("etdrk2", "etdrk4", "ssprk33", "ssprk54"))
-def test_distributed_fixed_step_accepts_and_rejects_transactionally(scheme: Any) -> None:
-    space, _, _, dynamics, _, state = _compiled()
-    coordinates = phx.discretization.HermitianSpectralCoordinates(
-        space, component_shape=(3,)
+    devices = tuple(jax.devices("cpu"))
+    if len(devices) < 4:
+        pytest.skip("Four forced CPU devices are required for slab/pencil execution.")
+    _, _, _, slab, _, state = _compiled(
+        count=8,
+        schedule="slab",
+        devices=devices[:4],
     )
-    method = DistributedPeriodicLESMethodPlan(scheme, safety_factor=0.8).prepare(
-        dynamics, coordinates
+    _, _, _, pencil, _, _ = _compiled(
+        count=8,
+        schedule="pencil",
+        devices=devices[:4],
     )
-    restriction = method.step_restriction(0.0, state)
-    selected = (
-        restriction.etdrk_selected
-        if scheme.startswith("etdrk")
-        else restriction.fully_explicit_selected
-    )
-    accepted_step = min(1.0e-4, 0.1 * float(selected))
-    accepted = method.step(
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0),
-        state,
-        jnp.asarray(accepted_step),
-        None,
-    )
-    rejected = method.step(
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0),
-        state,
-        jnp.asarray(0.81 * float(selected)),
-        None,
-    )
+    slab_stage = slab.stage(0.0, state)
+    pencil_state = pencil.project_state(state)
+    pencil_stage = pencil.stage(0.0, pencil_state)
 
-    assert bool(accepted.successful)
-    assert not bool(rejected.successful)
-    np.testing.assert_array_equal(rejected.accepted_state, state)
-    assert isinstance(accepted.accepted_state.sharding, NamedSharding)
-    assert accepted.accepted_state.sharding == state.sharding
-    assert method.method_id != method.plan.plan_id
+    np.testing.assert_allclose(
+        slab_stage.rates.total_rate,
+        pencil_stage.rates.total_rate,
+        rtol=4.0e-8,
+        atol=4.0e-8,
+    )
+    assert len(slab_stage.rates.total_rate.addressable_shards) == 4
+    assert len(pencil_stage.rates.total_rate.addressable_shards) == 4
+    assert (
+        slab_stage.rates.total_rate.sharding
+        == slab.backend.execution.modal_layout.sharding(slab.backend.execution.topology)
+    )
+    assert (
+        pencil_stage.rates.total_rate.sharding
+        == pencil.backend.execution.modal_layout.sharding(
+            pencil.backend.execution.topology
+        )
+    )
+    for scheme in ("etdrk2", "etdrk4", "ssprk33", "ssprk54"):
+        space, _, _, dynamics, _, state = _compiled()
+        coordinates = phx.discretization.HermitianSpectralCoordinates(
+            space, component_shape=(3,)
+        )
+        method = DistributedPeriodicLESMethodPlan(scheme, safety_factor=0.8).prepare(
+            dynamics, coordinates
+        )
+        restriction = method.step_restriction(0.0, state)
+        selected = (
+            restriction.etdrk_selected
+            if scheme.startswith("etdrk")
+            else restriction.fully_explicit_selected
+        )
+        accepted_step = min(1.0e-4, 0.1 * float(selected))
+        accepted = method.step(
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0.0),
+            state,
+            jnp.asarray(accepted_step),
+            None,
+        )
+        rejected = method.step(
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0.0),
+            state,
+            jnp.asarray(0.81 * float(selected)),
+            None,
+        )
 
-
-def test_distributed_method_rejects_failed_forcing_and_foreign_coordinates() -> None:
+        assert bool(accepted.successful)
+        assert not bool(rejected.successful)
+        np.testing.assert_array_equal(rejected.accepted_state, state)
+        assert isinstance(accepted.accepted_state.sharding, NamedSharding)
+        assert accepted.accepted_state.sharding == state.sharding
+        assert method.method_id != method.plan.plan_id
     space, _, _, dynamics, _, state = _compiled(forcing=True)
     coordinates = phx.discretization.HermitianSpectralCoordinates(
         space, component_shape=(3,)
@@ -537,41 +566,3 @@ def test_distributed_production_resource_refusal_precedes_runtime(tmp_path: Any)
         ).prepare()
     assert caught.value.report.total_bytes > caught.value.report.maximum_bytes
     assert not (tmp_path / "unprepared-runtime").exists()
-
-
-def test_distributed_full_flow_real_multi_device_slab_pencil_when_available() -> None:
-    devices = tuple(jax.devices("cpu"))
-    if len(devices) < 4:
-        pytest.skip("Four forced CPU devices are required for slab/pencil execution.")
-    _, _, _, slab, _, state = _compiled(
-        count=8,
-        schedule="slab",
-        devices=devices[:4],
-    )
-    _, _, _, pencil, _, _ = _compiled(
-        count=8,
-        schedule="pencil",
-        devices=devices[:4],
-    )
-    slab_stage = slab.stage(0.0, state)
-    pencil_state = pencil.project_state(state)
-    pencil_stage = pencil.stage(0.0, pencil_state)
-
-    np.testing.assert_allclose(
-        slab_stage.rates.total_rate,
-        pencil_stage.rates.total_rate,
-        rtol=4.0e-8,
-        atol=4.0e-8,
-    )
-    assert len(slab_stage.rates.total_rate.addressable_shards) == 4
-    assert len(pencil_stage.rates.total_rate.addressable_shards) == 4
-    assert (
-        slab_stage.rates.total_rate.sharding
-        == slab.backend.execution.modal_layout.sharding(slab.backend.execution.topology)
-    )
-    assert (
-        pencil_stage.rates.total_rate.sharding
-        == pencil.backend.execution.modal_layout.sharding(
-            pencil.backend.execution.topology
-        )
-    )

@@ -45,7 +45,7 @@ def _problem() -> Any:
     )
 
 
-def test_full_lag_kalman_smoother_matches_batch_rts_and_zero_lag_filter() -> None:
+def test_fixed_lag_scenario_1() -> None:
     filtered = phx.uq.kalman_filter(_problem())
     zero = phx.uq.fixed_lag_kalman_smoother(filtered, 0)
     full = phx.uq.fixed_lag_kalman_smoother(filtered, 10)
@@ -57,9 +57,6 @@ def test_full_lag_kalman_smoother_matches_batch_rts_and_zero_lag_filter() -> Non
     assert jnp.allclose(full.covariances, expected.covariances)
     assert jnp.array_equal(full.horizons, jnp.asarray([2, 2, 2]))
     assert jnp.all(full.valid)
-
-
-def test_particle_fixed_lag_weights_are_normalized_and_trace_genealogy() -> None:
     filtered = phx.uq.bootstrap_particle_filter(
         jr.key(9),
         _problem(),

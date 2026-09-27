@@ -59,7 +59,7 @@ def _translated_endpoints(
     )
 
 
-def test_flow_matching_loss_is_zero_for_exact_conditional_velocity() -> None:
+def test_flow_matching_contracts() -> None:
     endpoints = _translated_endpoints(offset=jnp.asarray([2.0, -1.0]))
     interpolant = phx.transport.LinearEndpointInterpolant((2,))
     term = phx.terms.FlowMatchingTerm("velocity", endpoints, interpolant)
@@ -74,9 +74,6 @@ def test_flow_matching_loss_is_zero_for_exact_conditional_velocity() -> None:
     assert jnp.allclose(diagnostics.root_mean_squared_component_error, 0.0)
     assert diagnostics.finite
     assert diagnostics.valid_fraction == 1.0
-
-
-def test_flow_matching_passes_pair_aligned_context_to_velocity_field() -> None:
     target = jnp.asarray([[1.0, 2.0], [-3.0, 4.0], [2.5, -1.5]])
     endpoints = phx.transport.independent_endpoint_coupling(
         jnp.zeros((1, 2)),
@@ -93,9 +90,6 @@ def test_flow_matching_passes_pair_aligned_context_to_velocity_field() -> None:
     velocity = _velocity_function(_ContextVelocity(), 2, with_context=True)
 
     assert jnp.allclose(term.loss({"velocity": velocity}, key=jr.key(9)), 0.0)
-
-
-def test_flow_matching_term_trains_constant_translation_field() -> None:
     endpoints = _translated_endpoints(count=64, dimension=2, offset=[1.5, -0.5])
     velocity = _velocity_function(_ConstantVelocity(jnp.zeros((2,))), 2)
     term = phx.terms.FlowMatchingTerm(

@@ -25,7 +25,7 @@ def _zero_drift(time: Any, state: Any, args: Any) -> Any:
     return jnp.zeros_like(state)
 
 
-def test_qft_deterministic_ensemble_preserves_paths_and_weighted_moments() -> None:
+def test_qft_contracts() -> None:
     problem = DifferentialProblem(
         _zero_drift,
         jnp.asarray([0.0]),
@@ -54,9 +54,6 @@ def test_qft_deterministic_ensemble_preserves_paths_and_weighted_moments() -> No
             # ty: ignore[invalid-argument-type]
             [0.0, 1.0]
         )
-
-
-def test_qft_weighted_reducer_masks_invalid_paths_without_changing_shape() -> None:
     # ty: ignore[invalid-argument-type]
     reducer = WeightedEnsembleReducer([1.0, 2.0, 100.0], [True, True, False])
     values = jnp.asarray([[1.0, 2.0], [4.0, 8.0], [jnp.nan, jnp.nan]])
@@ -64,9 +61,6 @@ def test_qft_weighted_reducer_masks_invalid_paths_without_changing_shape() -> No
     np.testing.assert_allclose(reducer.mean(values), [3.0, 6.0])
     np.testing.assert_allclose(reducer.effective_sample_size, 1.8)
     assert bool(reducer.successful)
-
-
-def test_qft_scalar_and_mmst_recipes_encode_declared_second_moments() -> None:
     coordinates = jnp.asarray(
         (
             ((-1.0,), (-1.0,)),

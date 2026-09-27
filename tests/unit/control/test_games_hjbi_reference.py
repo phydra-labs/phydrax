@@ -55,7 +55,7 @@ def _static_game(
     )
 
 
-def test_declared_minmax_orders_and_all_four_action_selectors_are_independent() -> None:
+def test_games_hjbi_reference_scenario_1() -> None:
     canonical = solve_discrete_hjbi_reference(
         _static_game(
             lower_order="max_min",
@@ -94,36 +94,30 @@ def test_declared_minmax_orders_and_all_four_action_selectors_are_independent() 
     assert not bool(mutated.evidence.canonical_saddle_action_orders)
     assert not bool(mutated.saddle)
     assert mutated.status_label == "NONCANONICAL_SADDLE_ACTION_ORDERS"
+    for identical_order in ("max_min", "min_max"):
+        result = solve_discrete_hjbi_reference(
+            _static_game(
+                lower_order=identical_order,
+                upper_order=identical_order,
+                payoff=_matrix_payoff,
+                problem_id=f"identical-{identical_order}-orders",
+            ),
+            refinement_absolute_tolerance=0.0,
+            refinement_relative_tolerance=0.0,
+            isaacs_absolute_tolerance=0.0,
+            isaacs_relative_tolerance=0.0,
+        )
 
-
-@pytest.mark.parametrize("identical_order", ("max_min", "min_max"))
-def test_identical_action_orders_cannot_turn_a_non_isaacs_game_into_a_saddle(
-    identical_order: Any,
-) -> None:
-    result = solve_discrete_hjbi_reference(
-        _static_game(
-            lower_order=identical_order,
-            upper_order=identical_order,
-            payoff=_matrix_payoff,
-            problem_id=f"identical-{identical_order}-orders",
-        ),
-        refinement_absolute_tolerance=0.0,
-        refinement_relative_tolerance=0.0,
-        isaacs_absolute_tolerance=0.0,
-        isaacs_relative_tolerance=0.0,
-    )
-
-    np.testing.assert_allclose(result.lower_values, result.upper_values)
-    assert result.evidence.maximum_isaacs_gap == 0.0
-    assert bool(result.evidence.refinement_passed)
-    assert bool(result.evidence.isaacs_gap_passed)
-    assert not bool(result.evidence.canonical_saddle_action_orders)
-    assert not bool(result.saddle)
-    assert int(result.status) == int(DiscreteHJBIStatus.NONCANONICAL_SADDLE_ACTION_ORDERS)
-    assert result.status_label == "NONCANONICAL_SADDLE_ACTION_ORDERS"
-
-
-def test_non_isaacs_game_reports_gap_and_never_receives_saddle_label() -> None:
+        np.testing.assert_allclose(result.lower_values, result.upper_values)
+        assert result.evidence.maximum_isaacs_gap == 0.0
+        assert bool(result.evidence.refinement_passed)
+        assert bool(result.evidence.isaacs_gap_passed)
+        assert not bool(result.evidence.canonical_saddle_action_orders)
+        assert not bool(result.saddle)
+        assert int(result.status) == int(
+            DiscreteHJBIStatus.NONCANONICAL_SADDLE_ACTION_ORDERS
+        )
+        assert result.status_label == "NONCANONICAL_SADDLE_ACTION_ORDERS"
     result = solve_discrete_hjbi_reference(
         _static_game(
             lower_order="max_min",
@@ -143,9 +137,7 @@ def test_non_isaacs_game_reports_gap_and_never_receives_saddle_label() -> None:
     assert "SADDLE" not in result.status_label
 
 
-def test_discrete_saddle_label_requires_operator_boundary_refinement_and_gap_gates() -> (
-    None
-):
+def test_games_hjbi_reference_scenario_2() -> None:
     problem = _static_game(
         lower_order="max_min",
         upper_order="min_max",
@@ -177,9 +169,6 @@ def test_discrete_saddle_label_requires_operator_boundary_refinement_and_gap_gat
     assert result.status_label == "SUCCESS_DISCRETE_SADDLE_REFERENCE"
     assert int(result.status) == int(DiscreteHJBIStatus.SUCCESS_DISCRETE_SADDLE_REFERENCE)
     assert result.evidence.scope == "declared-bounded-grid-discrete-residuals-only"
-
-
-def test_single_action_positive_diffusion_reduces_to_scalar_heat_solution() -> None:
     sigma = 0.2
     terminal_time = 0.1
     grid = BoundedUniformGrid1D(-1.0, 1.0, 21)
@@ -208,9 +197,6 @@ def test_single_action_positive_diffusion_reduces_to_scalar_heat_solution() -> N
     np.testing.assert_allclose(result.lower_values, expected, rtol=2e-6, atol=2e-6)
     np.testing.assert_allclose(result.upper_values, expected, rtol=2e-6, atol=2e-6)
     assert bool(result.saddle)
-
-
-def test_refinement_failure_prevents_saddle_even_when_isaacs_gap_is_zero() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 7)
     time_grid = TimeGrid(jnp.linspace(0.0, 0.1, 5), time_id="hjbi-refinement")
     terminal = np.asarray(grid.points) ** 4
@@ -275,7 +261,7 @@ def test_invalid_action_order_is_rejected_before_coefficient_callbacks_execute()
     assert calls == []
 
 
-def test_corrected_scalar_lq_hjbi_formula_accepts_well_posed_gamma_cases() -> None:
+def test_games_hjbi_reference_scenario_3() -> None:
     time_grid = TimeGrid(jnp.asarray([0.0, 0.1, 0.2]), time_id="scalar-lq-hjbi")
 
     for gamma in (2.0, 1.0, 0.8):
@@ -301,9 +287,6 @@ def test_corrected_scalar_lq_hjbi_formula_accepts_well_posed_gamma_cases() -> No
         scalar_lq_hjbi_solution(time_grid, terminal_weight=1.0, gamma=1.0).denominator,
         1.0,
     )
-
-
-def test_scalar_lq_hjbi_rejects_nonpositive_gamma_and_singular_riccati_horizon() -> None:
     short_grid = TimeGrid(jnp.asarray([0.0, 0.2]), time_id="gamma-gate")
     with pytest.raises(ValueError, match="strictly positive"):
         scalar_lq_hjbi_solution(short_grid, terminal_weight=1.0, gamma=0.0)

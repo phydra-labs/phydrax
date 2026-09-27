@@ -22,7 +22,7 @@ class _RandomBranch(eqx.Module):
         return x + jr.normal(key, x.shape)
 
 
-def test_adaptive_residual_is_exact_identity_at_initialization() -> None:
+def test_adaptive_residual_contracts() -> None:
     layer = AdaptiveResidual(_AffineBranch(jnp.asarray(2.0)))
     x = jnp.asarray([-1.0, 0.5, 3.0])
 
@@ -31,16 +31,13 @@ def test_adaptive_residual_is_exact_identity_at_initialization() -> None:
         lambda alpha: eqx.tree_at(lambda node: node.alpha, layer, alpha)(x).sum()
     )(layer.alpha)
     assert jnp.allclose(alpha_gradient, x.sum())
-
-
-def test_adaptive_residual_is_exact_branch_at_unit_gate_and_forwards_context() -> None:
     layer = AdaptiveResidual(_AffineBranch(jnp.asarray(-0.5)), initial_alpha=1.0)
     x = jnp.asarray([1.0, -2.0])
 
     assert jnp.array_equal(layer(x, jnp.asarray(0.25)), -0.5 * x + 0.25)
-
-
-def test_adaptive_residual_channel_gates_broadcast_over_leading_axes() -> None:
+    layer = AdaptiveResidual(lambda x: x[..., :1])
+    with pytest.raises(ValueError, match="output shape"):
+        layer(jnp.ones((2, 3)))
     layer = AdaptiveResidual(
         lambda x: 3.0 * x,
         channel_size=3,
@@ -50,17 +47,8 @@ def test_adaptive_residual_channel_gates_broadcast_over_leading_axes() -> None:
 
     expected = jnp.broadcast_to(jnp.asarray([1.0, 2.0, 3.0]), x.shape)
     assert jnp.array_equal(eqx.filter_jit(layer)(x), expected)
-
-
-def test_adaptive_residual_propagates_explicit_random_keys() -> None:
     layer = AdaptiveResidual(_RandomBranch(), initial_alpha=1.0)
     x = jnp.zeros(5)
     key = jr.key(4)
 
     assert jnp.array_equal(layer(x, key=key), jr.normal(key, x.shape))
-
-
-def test_adaptive_residual_rejects_shape_changing_branches() -> None:
-    layer = AdaptiveResidual(lambda x: x[..., :1])
-    with pytest.raises(ValueError, match="output shape"):
-        layer(jnp.ones((2, 3)))

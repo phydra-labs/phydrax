@@ -46,7 +46,7 @@ def _drivers(runtime: Any, emission: Any = (10.0, 20.0, 3.0)) -> Any:
     )
 
 
-def test_reservoir_zero_near_zero_and_equilibrium_limits() -> None:
+def test_reduced_climate_scenario_1() -> None:
     model = GasBoxModel(((1.0,), (1.0,), (1.0,)), ((0.0,), (1.0e-14,), (0.2,)))
     boxes = jnp.asarray([[2.0], [3.0], [10.0]])
     rates = jnp.asarray((1.0, 2.0, 2.0))
@@ -72,6 +72,54 @@ def test_reservoir_zero_near_zero_and_equilibrium_limits() -> None:
     np.testing.assert_allclose(
         jax.grad(lambda x: decay_average(x))(jnp.asarray(0.0)), -0.5, atol=1.0e-14
     )
+    model = GasBoxModel(
+        response_coefficients=((0.02, 0.4, 0.01), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    )
+    boxes = 5.0 * model.fractions
+    sink = jnp.asarray((30.0, 0.0, 0.0))
+    emission = jnp.asarray((11.0, -1.0, 3.0))
+    forward = model.advance(
+        boxes,
+        sink,
+        jnp.asarray(1.0),
+        jnp.asarray(0.75),
+        emission,
+        model.background,
+        ("emissions",) * 3,
+    )
+    inverse = model.advance(
+        boxes,
+        sink,
+        jnp.asarray(1.0),
+        jnp.asarray(0.75),
+        jnp.zeros(3),
+        model.concentration(forward.boxes),
+        ("concentration",) * 3,
+    )
+    assert bool(forward.successful & inverse.successful)
+    np.testing.assert_allclose(inverse.emissions, emission, atol=2.0e-12, rtol=2.0e-12)
+    np.testing.assert_allclose(inverse.boxes, forward.boxes, atol=2.0e-12, rtol=2.0e-12)
+    np.testing.assert_allclose(
+        inverse.sink_increment, forward.sink_increment, atol=2.0e-12
+    )
+    for coefficients, iterations in (
+        (((0.0, 1.0e5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), 64),
+        (((0.0, 0.5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), 1),
+    ):
+        model = GasBoxModel(
+            response_coefficients=coefficients,
+            solve_iterations=iterations,
+            solve_tolerance=1.0e-12,
+        )
+        runtime = _runtime(ReducedClimatePlan(gases=model))
+        state = runtime.initial_state(temperature=(1.0, 0.0))
+        drivers = jax.tree.map(lambda value: value[0], _drivers(runtime))
+        rejected = runtime.step(state, drivers)
+        assert not bool(rejected.successful)
+        for old, accepted in zip(
+            jax.tree.leaves(state), jax.tree.leaves(rejected.state), strict=True
+        ):
+            np.testing.assert_array_equal(accepted, old)
 
 
 def test_inactive_nan_drivers_do_not_poison_reservoir_parameter_gradients() -> None:
@@ -121,39 +169,6 @@ def test_inactive_nan_drivers_do_not_poison_reservoir_parameter_gradients() -> N
     )
 
 
-def test_concentration_inverse_roundtrip_uses_same_frozen_lifetime() -> None:
-    model = GasBoxModel(
-        response_coefficients=((0.02, 0.4, 0.01), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
-    )
-    boxes = 5.0 * model.fractions
-    sink = jnp.asarray((30.0, 0.0, 0.0))
-    emission = jnp.asarray((11.0, -1.0, 3.0))
-    forward = model.advance(
-        boxes,
-        sink,
-        jnp.asarray(1.0),
-        jnp.asarray(0.75),
-        emission,
-        model.background,
-        ("emissions",) * 3,
-    )
-    inverse = model.advance(
-        boxes,
-        sink,
-        jnp.asarray(1.0),
-        jnp.asarray(0.75),
-        jnp.zeros(3),
-        model.concentration(forward.boxes),
-        ("concentration",) * 3,
-    )
-    assert bool(forward.successful & inverse.successful)
-    np.testing.assert_allclose(inverse.emissions, emission, atol=2.0e-12, rtol=2.0e-12)
-    np.testing.assert_allclose(inverse.boxes, forward.boxes, atol=2.0e-12, rtol=2.0e-12)
-    np.testing.assert_allclose(
-        inverse.sink_increment, forward.sink_increment, atol=2.0e-12
-    )
-
-
 def test_lifetime_root_is_certified_and_has_implicit_sensitivity() -> None:
     model = GasBoxModel(
         response_coefficients=((0.0, 0.5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
@@ -174,28 +189,7 @@ def test_lifetime_root_is_certified_and_has_implicit_sensitivity() -> None:
     )
 
 
-def test_infeasible_lifetime_and_exhausted_solve_commit_nothing() -> None:
-    for coefficients, iterations in (
-        (((0.0, 1.0e5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), 64),
-        (((0.0, 0.5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)), 1),
-    ):
-        model = GasBoxModel(
-            response_coefficients=coefficients,
-            solve_iterations=iterations,
-            solve_tolerance=1.0e-12,
-        )
-        runtime = _runtime(ReducedClimatePlan(gases=model))
-        state = runtime.initial_state(temperature=(1.0, 0.0))
-        drivers = jax.tree.map(lambda value: value[0], _drivers(runtime))
-        rejected = runtime.step(state, drivers)
-        assert not bool(rejected.successful)
-        for old, accepted in zip(
-            jax.tree.leaves(state), jax.tree.leaves(rejected.state), strict=True
-        ):
-            np.testing.assert_array_equal(accepted, old)
-
-
-def test_multilayer_exchange_budget_equilibrium_and_singular_heating() -> None:
+def test_reduced_climate_scenario_2() -> None:
     model = MultilayerEnergyBalance((8.0, 40.0, 120.0), (0.8, 0.3), feedback=1.25)
     result = model.advance(
         jnp.asarray((0.1, -0.3, 0.7)), jnp.asarray(17.0), jnp.asarray(3.0)
@@ -211,9 +205,6 @@ def test_multilayer_exchange_budget_equilibrium_and_singular_heating() -> None:
     np.testing.assert_allclose(singular.temperature, (4.5,), atol=1.0e-13)
     np.testing.assert_allclose(singular.surface_temperature_integral, 16.25, atol=1.0e-13)
     assert abs(float(singular.energy_residual)) < 1.0e-13
-
-
-def test_named_forcing_overlap_background_and_driver_replacement() -> None:
     forcing = Myhre1998Forcing(("solar", "volcanic"))
     background = jnp.asarray((278.0, 730.0, 270.0))
     baseline = forcing.evaluate(
@@ -245,9 +236,6 @@ def test_named_forcing_overlap_background_and_driver_replacement() -> None:
     )
     np.testing.assert_allclose(replaced.total, 5.7, atol=1.0e-13)
     np.testing.assert_array_equal(replaced.components[jnp.asarray((2, 4))], 0.0)
-
-
-def test_forcing_driven_gases_neither_decay_nor_solve_inactive_lifetimes() -> None:
     gas = GasBoxModel(
         response_coefficients=((0.0, 1.0e5, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
     )
@@ -345,7 +333,7 @@ def test_rollout_budgets_and_native_restart_parity(tmp_path: Any) -> None:
         read_reduced_climate_checkpoint(path, changed_runtime, initial, drivers)
 
 
-def test_failed_native_rollout_freezes_at_last_accepted_boundary() -> None:
+def test_reduced_climate_scenario_3() -> None:
     runtime = _runtime(steps=4)
     initial = runtime.initial_state()
     drivers = _drivers(runtime)
@@ -358,9 +346,6 @@ def test_failed_native_rollout_freezes_at_last_accepted_boundary() -> None:
     for leaf in jax.tree.leaves(result.states):
         np.testing.assert_array_equal(leaf[-1], leaf[1])
     np.testing.assert_array_equal(result.valid, (True, True, False, False, False))
-
-
-def test_geophysical_clock_and_explicit_duration_give_same_physics() -> None:
     plan = ReducedClimatePlan()
     years = _runtime(plan, steps=1)
     clock = GeophysicalTimeSpec(unit="d")

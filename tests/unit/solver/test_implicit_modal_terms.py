@@ -69,7 +69,7 @@ def _function(scale: Any, space: Any, *, diffusivity: Any = 0.05) -> Any:
     return modal.as_domain_function(time)
 
 
-def test_compiled_modal_residual_matches_exact_heat_evolution() -> None:
+def test_implicit_modal_terms_scenario_1() -> None:
     space, compiled = _compiled_heat()
     function = _function(1.0, space)
     term = phx.terms.CompiledModalResidualTerm(
@@ -81,9 +81,16 @@ def test_compiled_modal_residual_matches_exact_heat_evolution() -> None:
     loss = term.loss({"u_hat": function}, key=jr.key(1))
 
     assert loss < 1e-24
+    _space, compiled = _compiled_heat(count=4)
+    other_space, _ = _compiled_heat(count=6)
+    term = phx.terms.CompiledModalResidualTerm(
+        compiled,
+        function_name="u_hat",
+        times=jnp.asarray([0.0]),
+    )
 
-
-def test_modal_observation_ignores_unobserved_nonfinite_targets() -> None:
+    with pytest.raises(ValueError, match="different discretizations"):
+        term.loss({"u_hat": _function(1.0, other_space)})
     space, _compiled = _compiled_heat()
     function = _function(1.0, space)
     target = function.func(0.0)[None, ...]
@@ -98,9 +105,6 @@ def test_modal_observation_ignores_unobserved_nonfinite_targets() -> None:
     )
 
     assert term.loss({"u_hat": function}, key=jr.key(2)) == 0.0
-
-
-def test_functional_solver_updates_implicit_modal_parameters() -> None:
     space, compiled = _compiled_heat()
     exact = _function(1.0, space)
     trainable = _function(0.0, space)
@@ -135,16 +139,3 @@ def test_functional_solver_updates_implicit_modal_parameters() -> None:
     assert final < initial
     # ty: ignore[unresolved-attribute]
     assert trained.functions["u_hat"].func.model.scale > 0.0
-
-
-def test_compiled_modal_residual_rejects_incompatible_discretization() -> None:
-    _space, compiled = _compiled_heat(count=4)
-    other_space, _ = _compiled_heat(count=6)
-    term = phx.terms.CompiledModalResidualTerm(
-        compiled,
-        function_name="u_hat",
-        times=jnp.asarray([0.0]),
-    )
-
-    with pytest.raises(ValueError, match="different discretizations"):
-        term.loss({"u_hat": _function(1.0, other_space)})

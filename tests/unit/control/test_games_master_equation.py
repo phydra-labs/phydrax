@@ -41,7 +41,7 @@ def _one_state_problem(
     )
 
 
-def test_simplex_enumeration_is_the_complete_exact_count_grid() -> None:
+def test_games_master_equation_scenario_1() -> None:
     lattice = FinitePopulationSimplexLattice(num_states=3, population_size=2)
 
     assert lattice.num_laws == 6
@@ -65,9 +65,6 @@ def test_simplex_enumeration_is_the_complete_exact_count_grid() -> None:
     with pytest.raises(ValueError, match="not an exact empirical law"):
         # ty: ignore[invalid-argument-type]
         lattice.index_of_law([0.25, 0.75, 0.0])
-
-
-def test_one_state_reduction_is_the_scalar_backward_recursion() -> None:
     problem = _one_state_problem(
         horizon=3,
         running_cost=lambda time, state, action, law, args: 2.0,
@@ -82,6 +79,26 @@ def test_one_state_reduction_is_the_scalar_backward_recursion() -> None:
     np.testing.assert_allclose(result.U[:, 0, 0], [11.0, 9.0, 7.0, 5.0])
     np.testing.assert_array_equal(result.selectors, 0)
     np.testing.assert_allclose(result.law_transition_table, 1.0)
+    problem = FiniteStateMasterEquationProblem(
+        (0, 1),
+        ("randomize",),
+        1,
+        2,
+        lambda time, state, action, law, args: jnp.asarray([0.5, 0.5]),
+        lambda time, state, action, law, args: 0.0,
+        lambda state, law, args: 0.0,
+        selector_id="only-action",
+        problem_id="two-draw-exact-multinomial",
+    )
+
+    result = solve_finite_state_master_equation_reference(problem)
+
+    assert result.valid
+    np.testing.assert_allclose(
+        result.law_transition_table[0],
+        np.tile(np.asarray([0.25, 0.5, 0.25]), (3, 1)),
+    )
+    assert result.aggregate_transition_mode == "exact-state-wise-multinomial"
 
 
 def test_two_state_terminal_model_propagates_physical_and_empirical_laws_exactly() -> (
@@ -117,30 +134,7 @@ def test_two_state_terminal_model_propagates_physical_and_empirical_laws_exactly
     assert result.law_transition_table[0, all_one, all_zero] == pytest.approx(1.0)
 
 
-def test_default_population_kernel_is_the_exact_multinomial_law() -> None:
-    problem = FiniteStateMasterEquationProblem(
-        (0, 1),
-        ("randomize",),
-        1,
-        2,
-        lambda time, state, action, law, args: jnp.asarray([0.5, 0.5]),
-        lambda time, state, action, law, args: 0.0,
-        lambda state, law, args: 0.0,
-        selector_id="only-action",
-        problem_id="two-draw-exact-multinomial",
-    )
-
-    result = solve_finite_state_master_equation_reference(problem)
-
-    assert result.valid
-    np.testing.assert_allclose(
-        result.law_transition_table[0],
-        np.tile(np.asarray([0.25, 0.5, 0.25]), (3, 1)),
-    )
-    assert result.aggregate_transition_mode == "exact-state-wise-multinomial"
-
-
-def test_population_size_is_explicit_refinement_metadata() -> None:
+def test_games_master_equation_scenario_2() -> None:
     coarse = solve_finite_state_master_equation_reference(
         FiniteStateMasterEquationProblem(
             (0, 1),
@@ -175,6 +169,37 @@ def test_population_size_is_explicit_refinement_metadata() -> None:
     assert fine.evidence.lattice_size == 5
     assert fine.evidence.empirical_law_step == 0.25
     assert coarse.evidence.refinement_id != fine.evidence.refinement_id
+    problem = FiniteStateMasterEquationProblem(
+        (0, 1),
+        ("bad",),
+        1,
+        2,
+        lambda time, state, action, law, args: jnp.asarray([0.4, 0.4]),
+        lambda time, state, action, law, args: 0.0,
+        lambda state, law, args: 0.0,
+        selector_id="only-action",
+        problem_id="invalid-transition-simplex",
+    )
+
+    result = solve_finite_state_master_equation_reference(problem)
+
+    assert (
+        result.status == FiniteStateMasterEquationStatus.INVALID_TRANSITION_PROBABILITIES
+    )
+    assert not result.valid
+    assert result.evidence.simplex_probability_residual == pytest.approx(0.2)
+    assert "probability simplex" in result.termination_detail
+    problem = _one_state_problem(
+        actions=("first", "second"),
+        running_cost=lambda time, state, action, law, args: 3.0,
+    )
+
+    result = solve_finite_state_master_equation_reference(problem)
+
+    assert result.valid
+    np.testing.assert_array_equal(result.selectors, 0)
+    assert result.selected_action(0, 0, 0) == "first"
+    assert result.selector_id == "declared-action-order:first-minimum"
 
 
 def test_law_dependent_cost_switches_the_deterministic_action() -> None:
@@ -211,44 +236,7 @@ def test_law_dependent_cost_switches_the_deterministic_action() -> None:
     assert result.selected_action(0, 0, all_zero) == "right"
 
 
-def test_invalid_transition_probability_is_a_stable_failed_result() -> None:
-    problem = FiniteStateMasterEquationProblem(
-        (0, 1),
-        ("bad",),
-        1,
-        2,
-        lambda time, state, action, law, args: jnp.asarray([0.4, 0.4]),
-        lambda time, state, action, law, args: 0.0,
-        lambda state, law, args: 0.0,
-        selector_id="only-action",
-        problem_id="invalid-transition-simplex",
-    )
-
-    result = solve_finite_state_master_equation_reference(problem)
-
-    assert (
-        result.status == FiniteStateMasterEquationStatus.INVALID_TRANSITION_PROBABILITIES
-    )
-    assert not result.valid
-    assert result.evidence.simplex_probability_residual == pytest.approx(0.2)
-    assert "probability simplex" in result.termination_detail
-
-
-def test_selector_ties_use_first_declared_action_and_record_its_id() -> None:
-    problem = _one_state_problem(
-        actions=("first", "second"),
-        running_cost=lambda time, state, action, law, args: 3.0,
-    )
-
-    result = solve_finite_state_master_equation_reference(problem)
-
-    assert result.valid
-    np.testing.assert_array_equal(result.selectors, 0)
-    assert result.selected_action(0, 0, 0) == "first"
-    assert result.selector_id == "declared-action-order:first-minimum"
-
-
-def test_bellman_action_minimum_terminal_and_probability_residuals_are_returned() -> None:
+def test_games_master_equation_scenario_3() -> None:
     result = solve_finite_state_master_equation_reference(
         _one_state_problem(
             horizon=2,
@@ -269,9 +257,6 @@ def test_bellman_action_minimum_terminal_and_probability_residuals_are_returned(
     np.testing.assert_allclose(result.evidence.action_minimum_residuals, 0.0)
     np.testing.assert_allclose(result.evidence.terminal_residuals, 0.0)
     np.testing.assert_allclose(result.evidence.simplex_probability_residuals, 0.0)
-
-
-def test_declared_aggregate_transition_is_used_only_as_an_exact_lattice_kernel() -> None:
     problem = FiniteStateMasterEquationProblem(
         (0, 1),
         ("hold",),
@@ -295,9 +280,6 @@ def test_declared_aggregate_transition_is_used_only_as_an_exact_lattice_kernel()
     assert result.valid
     np.testing.assert_allclose(result.law_transition_table[:, :, all_zero], 1.0)
     assert result.aggregate_transition_mode == "declared-lattice-probabilities"
-
-
-def test_certificate_and_neighbor_evidence_make_no_continuous_or_mfc_claim() -> None:
     problem = FiniteStateMasterEquationProblem(
         (0, 1),
         ("stay",),

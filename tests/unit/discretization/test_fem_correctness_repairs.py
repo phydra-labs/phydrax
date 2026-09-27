@@ -22,7 +22,7 @@ def _field() -> Any:
     )
 
 
-def test_embedded_finite_element_local_metric_uses_the_gram_inverse() -> None:
+def test_fem_correctness_repairs_scenario_1() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 1.0))),
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
@@ -41,9 +41,6 @@ def test_embedded_finite_element_local_metric_uses_the_gram_inverse() -> None:
     assert metric.inverse_jacobian.shape[-2:] == (2, 3)
     assert jnp.all(jnp.isfinite(metric.inverse_jacobian))
     assert jnp.all(metric.physical_weights > 0.0)
-
-
-def test_local_finite_element_provider_rejects_a_foreign_cell_domain() -> None:
     target_mesh = phx.discretization.CellMesh.from_triangles(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
@@ -65,9 +62,6 @@ def test_local_finite_element_provider_rejects_a_foreign_cell_domain() -> None:
             maximum_derivative_order=1,
             kernel_mode="dense",
         )
-
-
-def test_mapped_tensor_metric_identity_includes_coordinate_content() -> None:
     sbp = TensorGLLSBPPlan(2).prepare()
     x, y = jnp.meshgrid(sbp.nodes, sbp.nodes, indexing="ij")
     coordinates = jnp.stack((x, y), axis=-1)[None, ...]

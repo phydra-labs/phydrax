@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_geometry_supports_distinct_structures_and_weighted_pairing() -> None:
+def test_geometry_and_coordinates_scenario_1() -> None:
     state_space = phx.linalg.PyTreeSpace(
         {"x": jnp.zeros((2,), dtype=jnp.float64)},
         pairing=phx.linalg.DiagonalPairing(
@@ -47,9 +47,6 @@ def test_geometry_supports_distinct_structures_and_weighted_pairing() -> None:
         result.branch.geometry.state_norm({"x": jnp.ones((2,))}),
         np.sqrt(5.0),
     )
-
-
-def test_parameter_path_corrector_preserves_explicit_weighted_jacobian_spaces() -> None:
     space = phx.linalg.ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -88,9 +85,6 @@ def test_parameter_path_corrector_preserves_explicit_weighted_jacobian_spaces() 
     np.testing.assert_allclose(result.points[-1].state, [1.0, 1.0])
     for point in result.points:
         np.testing.assert_allclose(point.state, point.parameters, atol=1e-10)
-
-
-def test_native_complex_nonholomorphic_branch_uses_real_execution_coordinates() -> None:
     public_space = phx.linalg.ArraySpace((1,), dtype=jnp.complex128)
     coordinates = phx.linalg.ComplexCartesianCoordinates(public_space)
     representation = phx.continuation.ContinuationRepresentationPolicy(
@@ -130,7 +124,7 @@ def test_native_complex_nonholomorphic_branch_uses_real_execution_coordinates() 
     assert result.provenance.representation_id == representation.policy_id
 
 
-def test_finite_algebra_public_axis_round_trips_through_continuation() -> None:
+def test_geometry_and_coordinates_scenario_2() -> None:
     coordinates = phx.linalg.AlgebraCoordinatePlan(
         phx.metrix.algebra.QuaternionAlgebraSpec(),
         public_storage="real_coordinates",
@@ -163,9 +157,6 @@ def test_finite_algebra_public_axis_round_trips_through_continuation() -> None:
         result.branch.geometry.representation.state_coordinates.coordinate_id
         == coordinates.coordinate_id
     )
-
-
-def test_complex_execution_requires_an_explicit_real_coordinate_map() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
     )
@@ -177,9 +168,6 @@ def test_complex_execution_requires_an_explicit_real_coordinate_map() -> None:
             jnp.asarray(0.0),
             phx.continuation.plan_continuation(problem, num_steps=1),
         )
-
-
-def test_constrained_spectral_coordinates_preserve_the_declared_subspace() -> None:
     spectral = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(8),),
         axis_names=("x",),
@@ -213,7 +201,7 @@ def test_constrained_spectral_coordinates_preserve_the_declared_subspace() -> No
     )
 
 
-def test_refresh_rejects_changed_representation_geometry() -> None:
+def test_geometry_and_coordinates_scenario_3() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
         problem_id="geometry-refresh",
@@ -232,9 +220,6 @@ def test_refresh_rejects_changed_representation_geometry() -> None:
             jnp.zeros((2,)),
             jnp.asarray(0.0),
         )
-
-
-def test_stability_uses_realified_complex_execution_operator() -> None:
     public_space = phx.linalg.ArraySpace((1,), dtype=jnp.complex128)
     coordinates = phx.linalg.ComplexCartesianCoordinates(public_space)
     representation = phx.continuation.ContinuationRepresentationPolicy(
@@ -256,9 +241,6 @@ def test_stability_uses_realified_complex_execution_operator() -> None:
     values = np.asarray(evidence.eigenvalues)
     np.testing.assert_allclose(np.real(values), 0.3, atol=1e-10)
     np.testing.assert_allclose(np.sort(np.imag(values)), [-1.0, 1.0], atol=1e-10)
-
-
-def test_stability_rejects_nonendomorphic_execution_spaces() -> None:
     state_space = phx.linalg.PyTreeSpace(
         {"x": jnp.zeros((1,), dtype=jnp.float64)},
         space_id="nonendomorphic-state",

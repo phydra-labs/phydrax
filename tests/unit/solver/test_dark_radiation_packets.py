@@ -129,7 +129,7 @@ def _plan_and_state(*, capacity: Any = 2, event_capacity: Any = 2) -> Any:
     return units, frame, plan, admission.accepted_state
 
 
-def test_minkowski_and_flrw_scattering_propagation_redshift_and_polarization() -> None:
+def test_dark_radiation_packets_scenario_1() -> None:
     units, frame0, plan, state = _plan_and_state()
     frame1 = _frame(units, time=1.0, scale_factor=2.0, snapshot=2)
     mueller = jnp.diag(jnp.asarray((1.0, 0.5, 0.5, 0.5)))
@@ -161,9 +161,6 @@ def test_minkowski_and_flrw_scattering_propagation_redshift_and_polarization() -
         result.exchange.radiation_four_force, -result.exchange.matter_four_force
     )
     assert bool(plan.valid(result.accepted_state))
-
-
-def test_absorption_event_four_force_and_event_capacity_rollback() -> None:
     units, frame0, plan, state = _plan_and_state(event_capacity=1)
     frame1 = _frame(units, time=0.5, scale_factor=1.0, snapshot=2)
     absorbed = plan.advance(

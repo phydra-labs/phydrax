@@ -42,7 +42,7 @@ def _two_cell_mesh() -> Any:
     )
 
 
-def test_smooth_modal_tail_selects_p_and_reproduces_tensor_polynomial() -> None:
+def test_adaptive_hp_workflows_scenario_1() -> None:
     nodes = np.linspace(-1.0, 1.0, 5)
     x, y = np.meshgrid(nodes, nodes, indexing="ij")
     values = 1.0 + x + y + x * y + x**2
@@ -67,9 +67,6 @@ def test_smooth_modal_tail_selects_p_and_reproduces_tensor_polynomial() -> None:
     epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
     # ty: ignore[unresolved-attribute]
     assert epoch.discretization.dof_maps[0].global_dof_count > 0
-
-
-def test_mixed_regular_and_singular_cells_choose_p_and_h_in_one_candidate() -> None:
     topology, geometry = initial_finite_element_hp_topology(_two_cell_mesh(), 2, 24)
     smoothness = np.zeros((topology.capacity, topology.dimension))
     smoothness[0] = (1.0e-9, 1.0e-3)

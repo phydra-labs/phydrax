@@ -35,7 +35,7 @@ from phydrax.equations import (
 )
 
 
-def test_recoloring_is_label_symmetric_and_conserves_required_moments() -> None:
+def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     lattice = D2Q9()
     weights = jnp.asarray(lattice.weights)
     red = jnp.asarray([[0.7, 0.3], [0.4, 0.8]], dtype=jnp.float64)
@@ -61,9 +61,6 @@ def test_recoloring_is_label_symmetric_and_conserves_required_moments() -> None:
         oe.contract("...q,qd->...d", total, lattice.velocities),
         atol=1e-14,
     )
-
-
-def test_csf_circle_has_laplace_curvature_and_label_symmetry() -> None:
     lattice = D2Q9()
     count = 96
     coordinates = jnp.arange(count, dtype=jnp.float64) - 0.5 * count
@@ -82,9 +79,6 @@ def test_csf_circle_has_laplace_curvature_and_label_symmetry() -> None:
     np.testing.assert_allclose(fields.force_density, swapped.force_density, atol=2e-12)
     pressure_jump = 0.04 * jnp.mean(jnp.abs(fields.curvature[interface]))
     np.testing.assert_allclose(pressure_jump, 0.04 / radius, rtol=0.2)
-
-
-def test_static_and_natural_wetting_primitives_enforce_boundary_contracts() -> None:
     interface = jnp.asarray([[[1.0, 0.0]]], dtype=jnp.float64)
     wall = jnp.asarray([[[0.0, 1.0]]], dtype=jnp.float64)
     mask = jnp.asarray([[True]])
@@ -106,7 +100,7 @@ def test_static_and_natural_wetting_primitives_enforce_boundary_contracts() -> N
     )
 
 
-def test_free_energy_force_stress_and_phase_population_moments_are_explicit() -> None:
+def test_lattice_boltzmann_phase_models_scenario_2() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     coordinates = jnp.arange(24, dtype=jnp.float64)
@@ -144,9 +138,6 @@ def test_free_energy_force_stress_and_phase_population_moments_are_explicit() ->
         jnp.swapaxes(fields.symmetric_stress, -1, -2),
         atol=1e-14,
     )
-
-
-def test_interfacial_and_free_energy_coefficients_are_differentiable() -> None:
     lattice = D2Q9()
     coordinate = jnp.arange(32, dtype=jnp.float64)
     x, _ = jnp.meshgrid(coordinate, coordinate, indexing="ij")
@@ -176,9 +167,6 @@ def test_interfacial_and_free_energy_coefficients_are_differentiable() -> None:
     assert bulk_gradient > 0.0
     planar_gradient = isotropic_gradient(phase, lattice)
     assert jnp.all(jnp.isfinite(planar_gradient))
-
-
-def test_lbm_and_application_double_well_share_one_constitutive_source() -> None:
     lattice = D2Q9()
     phase = jnp.linspace(-0.8, 0.8, 16, dtype=jnp.float64).reshape((4, 4))
     bulk = jnp.asarray(0.08)

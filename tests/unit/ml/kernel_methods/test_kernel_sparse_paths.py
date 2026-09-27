@@ -50,7 +50,7 @@ def _assert_sparse_rejected(recipe: Any, batch: Any, *, key: Any = None) -> None
         recipe.fit_batch(batch, key=key)
 
 
-def test_dense_only_kernel_machines_reject_sparse_features_explicitly() -> None:
+def test_dense_only_contracts() -> None:
     sparse, targets, labels = _sparse_data()
     kernel = SquaredExponentialKernel(length_scale=0.9)
     recipes_and_targets = (
@@ -69,9 +69,6 @@ def test_dense_only_kernel_machines_reject_sparse_features_explicitly() -> None:
     for recipe, target in recipes_and_targets:
         _assert_sparse_rejected(recipe, MLBatch(sparse, target))
     _assert_sparse_rejected(OneClassSVMRecipe(kernel, iterations=4), MLBatch(sparse))
-
-
-def test_dense_only_spectral_maps_reject_sparse_features_explicitly() -> None:
     sparse, _, _ = _sparse_data()
     kernel = SquaredExponentialKernel(length_scale=0.9)
 
@@ -82,9 +79,6 @@ def test_dense_only_spectral_maps_reject_sparse_features_explicitly() -> None:
         MLBatch(sparse),
         key=jax.random.key(29),
     )
-
-
-def test_dense_only_exact_and_finite_gp_factors_reject_sparse_features() -> None:
     sparse, _, labels = _sparse_data()
     exact_state = GaussianProcessLikelihoodState(
         kernel=SquaredExponentialKernel(length_scale=0.9),

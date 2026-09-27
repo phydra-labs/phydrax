@@ -38,7 +38,7 @@ def test_recursive_lift_uses_davie_bracket_orientation_and_explicit_fields() -> 
     assert jnp.allclose(explicit, lifted)
 
 
-def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration() -> None:
+def test_rough_logode_scenario_1() -> None:
     default = phx.solver.LogODE()
     repeated = phx.solver.LogODE()
     loose = phx.solver.LogODE(stepsize_controller=dfx.PIDController(rtol=1e-4, atol=1e-6))
@@ -76,6 +76,127 @@ def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration() -> No
         )
         == 4
     )
+    times = jnp.linspace(0.0, 1.0, 5)
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        jnp.zeros((5, 1)),
+        depth=3,
+        coarse_indices=(0, 2, 4),
+        joint_time=True,
+    )
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.zeros(state.shape + (1,)),
+        jnp.asarray([0.0]),
+        driver_dimension=1,
+        drift=lambda time, state, args: jnp.ones_like(state) * time,
+        time_dependent=True,
+    )
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        save_times=jnp.asarray([0.5, 1.0]),
+        solver=phx.solver.LogODE(),
+    )
+
+    assert jnp.allclose(solution.states[:, 0], jnp.asarray([0.125, 0.5]), atol=2e-8)
+    assert solution.successful
+    times = jnp.asarray([0.0, 0.5, 1.0])
+    values = jnp.stack((times, -times), axis=0)[..., None]
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        values,
+        depth=3,
+        coarse_indices=(0, 1, 2),
+        sample_shape=(2,),
+        joint_time=True,
+    )
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.ones(state.shape + (1,)),
+        jnp.asarray([0.0]),
+        driver_dimension=1,
+        drift=lambda time, state, args: jnp.ones_like(state),
+    )
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        save_times=jnp.asarray([1.0]),
+        solver=phx.solver.LogODE(),
+    )
+
+    assert solution.states.shape == (2, 1, 1)
+    assert solution.statuses.shape == (2, 2)
+    assert jnp.all(solution.successful)
+    assert jnp.allclose(solution.states[:, 0, 0], jnp.asarray([2.0, 0.0]))
+    times = jnp.asarray([0.0, 1.0])
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        jnp.asarray([[0.0], [0.5]]),
+        depth=2,
+        joint_time=True,
+    )
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: (time * state)[..., None],
+        jnp.asarray([1.0]),
+        driver_dimension=1,
+        drift=lambda time, state, args: 0.2 * state,
+        time_dependent=True,
+    )
+
+    with pytest.raises(ValueError, match="autonomous explicit operators"):
+        phx.solver.solve_rough_differential(
+            problem,
+            control,
+            solver=phx.solver.LinearLogODE((jnp.asarray([[0.2]]), jnp.asarray([[0.5]]))),
+        )
+    times = jnp.asarray([0.0, 1.0])
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        times[:, None],
+        depth=1,
+    )
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.ones((3, 1)),
+        jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+        driver_dimension=1,
+        geometry=geometry,
+    )
+
+    with pytest.raises(ValueError, match="equal point, local, and tangent spaces"):
+        phx.solver.solve_rough_differential(
+            problem,
+            control,
+            solver=phx.solver.LinearLogODE((jnp.eye(4),)),
+        )
+    control = phx.stochastic.LogSignatureControl.from_values(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.0], [1.0]]),
+        depth=2,
+    )
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0]))
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.stack((matrix @ state,), axis=-1),
+        jnp.asarray([1.0, 1.0]),
+        driver_dimension=1,
+    )
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        solver=phx.solver.LinearLogODE(
+            (matrix,),
+            matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
+                "arnoldi",
+                max_dimension=1,
+                error_tolerance=1e-12,
+            ),
+        ),
+    )
+
+    assert solution.statuses.shape == (1,)
+    assert int(solution.statuses[0]) != 0
+    assert not bool(solution.successful)
+    assert int(solution.statistics["num_accepted_steps"][0]) == 0
+    assert int(solution.statistics["num_rejected_steps"][0]) == 1
 
 
 def test_general_and_linear_logode_agree_for_noncommuting_linear_system() -> None:
@@ -147,88 +268,7 @@ def test_general_and_linear_logode_agree_for_noncommuting_linear_system() -> Non
     assert int(general.statistics["num_accepted_steps"][0]) > 0
 
 
-def test_joint_time_channel_integrates_drift_and_time_dependent_fields() -> None:
-    times = jnp.linspace(0.0, 1.0, 5)
-    control = phx.stochastic.LogSignatureControl.from_values(
-        times,
-        jnp.zeros((5, 1)),
-        depth=3,
-        coarse_indices=(0, 2, 4),
-        joint_time=True,
-    )
-    problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: jnp.zeros(state.shape + (1,)),
-        jnp.asarray([0.0]),
-        driver_dimension=1,
-        drift=lambda time, state, args: jnp.ones_like(state) * time,
-        time_dependent=True,
-    )
-    solution = phx.solver.solve_rough_differential(
-        problem,
-        control,
-        save_times=jnp.asarray([0.5, 1.0]),
-        solver=phx.solver.LogODE(),
-    )
-
-    assert jnp.allclose(solution.states[:, 0], jnp.asarray([0.125, 0.5]), atol=2e-8)
-    assert solution.successful
-
-
-def test_joint_time_logode_batches_sample_paths() -> None:
-    times = jnp.asarray([0.0, 0.5, 1.0])
-    values = jnp.stack((times, -times), axis=0)[..., None]
-    control = phx.stochastic.LogSignatureControl.from_values(
-        times,
-        values,
-        depth=3,
-        coarse_indices=(0, 1, 2),
-        sample_shape=(2,),
-        joint_time=True,
-    )
-    problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: jnp.ones(state.shape + (1,)),
-        jnp.asarray([0.0]),
-        driver_dimension=1,
-        drift=lambda time, state, args: jnp.ones_like(state),
-    )
-    solution = phx.solver.solve_rough_differential(
-        problem,
-        control,
-        save_times=jnp.asarray([1.0]),
-        solver=phx.solver.LogODE(),
-    )
-
-    assert solution.states.shape == (2, 1, 1)
-    assert solution.statuses.shape == (2, 2)
-    assert jnp.all(solution.successful)
-    assert jnp.allclose(solution.states[:, 0, 0], jnp.asarray([2.0, 0.0]))
-
-
-def test_linear_logode_rejects_time_dependent_problem() -> None:
-    times = jnp.asarray([0.0, 1.0])
-    control = phx.stochastic.LogSignatureControl.from_values(
-        times,
-        jnp.asarray([[0.0], [0.5]]),
-        depth=2,
-        joint_time=True,
-    )
-    problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: (time * state)[..., None],
-        jnp.asarray([1.0]),
-        driver_dimension=1,
-        drift=lambda time, state, args: 0.2 * state,
-        time_dependent=True,
-    )
-
-    with pytest.raises(ValueError, match="autonomous explicit operators"):
-        phx.solver.solve_rough_differential(
-            problem,
-            control,
-            solver=phx.solver.LinearLogODE((jnp.asarray([[0.2]]), jnp.asarray([[0.5]]))),
-        )
-
-
-def test_logode_exposes_failed_inner_diffrax_status() -> None:
+def test_rough_logode_scenario_2() -> None:
     control = phx.stochastic.LogSignatureControl.from_values(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[0.0], [1.0]]),
@@ -249,41 +289,6 @@ def test_logode_exposes_failed_inner_diffrax_status() -> None:
     assert int(solution.statuses[0]) != 0
     assert not bool(solution.successful)
     assert int(solution.statistics["num_steps"][0]) == 1
-
-
-def test_logode_local_retraction_preserves_special_orthogonal_state() -> None:
-    times = jnp.linspace(0.0, 1.0, 5)
-    angle = 0.7
-    control = phx.stochastic.LogSignatureControl.from_values(
-        times,
-        (angle * times)[:, None],
-        depth=2,
-        coarse_indices=(0, 2, 4),
-    )
-    generator = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
-    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
-    problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: jnp.stack((state @ generator,), axis=-1),
-        jnp.eye(2),
-        driver_dimension=1,
-        geometry=geometry,
-    )
-    solution = phx.solver.solve_rough_differential(
-        problem, control, solver=phx.solver.LogODE()
-    )
-    expected = jax.scipy.linalg.expm(angle * generator)
-
-    assert solution.successful
-    assert geometry.contains(solution.states)
-    assert jnp.allclose(solution.states[-1], expected, atol=2e-9)
-    assert jnp.allclose(
-        jnp.swapaxes(solution.states, -1, -2) @ solution.states,
-        jnp.eye(2),
-        atol=2e-9,
-    )
-
-
-def test_logode_preserves_quaternion_point_local_and_tangent_spaces() -> None:
     times = jnp.linspace(0.0, 1.0, 5)
     total_increment = 0.4
     control = phx.stochastic.LogSignatureControl.from_values(
@@ -315,32 +320,35 @@ def test_logode_preserves_quaternion_point_local_and_tangent_spaces() -> None:
     assert solution.successful
     assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
     assert bool(geometry.contains(solution.states[-1]))
-
-
-def test_linear_logode_rejects_unequal_quaternion_spaces() -> None:
-    times = jnp.asarray([0.0, 1.0])
+    times = jnp.linspace(0.0, 1.0, 5)
+    angle = 0.7
     control = phx.stochastic.LogSignatureControl.from_values(
         times,
-        times[:, None],
-        depth=1,
+        (angle * times)[:, None],
+        depth=2,
+        coarse_indices=(0, 2, 4),
     )
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    generator = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
+    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: jnp.ones((3, 1)),
-        jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+        lambda time, state, args: jnp.stack((state @ generator,), axis=-1),
+        jnp.eye(2),
         driver_dimension=1,
         geometry=geometry,
     )
+    solution = phx.solver.solve_rough_differential(
+        problem, control, solver=phx.solver.LogODE()
+    )
+    expected = jax.scipy.linalg.expm(angle * generator)
 
-    with pytest.raises(ValueError, match="equal point, local, and tangent spaces"):
-        phx.solver.solve_rough_differential(
-            problem,
-            control,
-            solver=phx.solver.LinearLogODE((jnp.eye(4),)),
-        )
-
-
-def test_logode_local_retraction_preserves_spd_state_and_refines() -> None:
+    assert solution.successful
+    assert geometry.contains(solution.states)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-9)
+    assert jnp.allclose(
+        jnp.swapaxes(solution.states, -1, -2) @ solution.states,
+        jnp.eye(2),
+        atol=2e-9,
+    )
     times = jnp.linspace(0.0, 1.0, 9)
     total_increment = 0.7
     values = (total_increment * times)[:, None]
@@ -378,9 +386,6 @@ def test_logode_local_retraction_preserves_spd_state_and_refines() -> None:
     assert jnp.linalg.norm(fine.states[-1] - expected) < jnp.linalg.norm(
         coarse.states[-1] - expected
     )
-
-
-def test_depth_three_accepts_hurst_point_three_while_depth_two_rejects() -> None:
     process = phx.stochastic.FractionalGaussianProcess(0.3, 0.2)
     realization = phx.stochastic.FractionalGaussianRealization(
         process,
@@ -450,35 +455,3 @@ def test_logode_is_jittable_batched_and_differentiable() -> None:
         rtol=2e-7,
         atol=2e-8,
     )
-
-
-def test_linear_logode_rejects_unconverged_matrix_function_intervals() -> None:
-    control = phx.stochastic.LogSignatureControl.from_values(
-        jnp.asarray([0.0, 1.0]),
-        jnp.asarray([[0.0], [1.0]]),
-        depth=2,
-    )
-    matrix = jnp.diag(jnp.asarray([1.0, 2.0]))
-    problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: jnp.stack((matrix @ state,), axis=-1),
-        jnp.asarray([1.0, 1.0]),
-        driver_dimension=1,
-    )
-    solution = phx.solver.solve_rough_differential(
-        problem,
-        control,
-        solver=phx.solver.LinearLogODE(
-            (matrix,),
-            matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
-                "arnoldi",
-                max_dimension=1,
-                error_tolerance=1e-12,
-            ),
-        ),
-    )
-
-    assert solution.statuses.shape == (1,)
-    assert int(solution.statuses[0]) != 0
-    assert not bool(solution.successful)
-    assert int(solution.statistics["num_accepted_steps"][0]) == 0
-    assert int(solution.statistics["num_rejected_steps"][0]) == 1

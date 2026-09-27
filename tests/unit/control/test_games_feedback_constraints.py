@@ -189,7 +189,7 @@ def _solve(
     return solve_feedback_quasi_nash_model(problem, plan=_plan())
 
 
-def test_unconstrained_model_reduces_to_the_local_lq_suggestion() -> None:
+def test_games_feedback_constraints_scenario_1() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -215,9 +215,6 @@ def test_unconstrained_model_reduces_to_the_local_lq_suggestion() -> None:
     )
     assert result.multipliers.shape == (1, 0)
     assert result.kkt_ranks[0] == partition.joint_control_size
-
-
-def test_active_bound_returns_affine_control_and_positive_multiplier() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -241,9 +238,6 @@ def test_active_bound_returns_affine_control_and_positive_multiplier() -> None:
     np.testing.assert_allclose(result.active_residuals, [[0.0]], atol=2.0e-5)
     assert result.licq_ranks[0] == 1
     assert result.own_minimum_curvatures[0, 0] > 0.0
-
-
-def test_private_and_shared_variational_multipliers_have_distinct_layouts() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -283,9 +277,7 @@ def test_private_and_shared_variational_multipliers_have_distinct_layouts() -> N
     np.testing.assert_allclose(result.variational_multipliers, [[1.0]], atol=2.0e-5)
 
 
-def test_generic_shared_rows_keep_player_multiplier_copies_and_report_nonisolation() -> (
-    None
-):
+def test_games_feedback_constraints_scenario_2() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -318,9 +310,6 @@ def test_generic_shared_rows_keep_player_multiplier_copies_and_report_nonisolati
     assert not bool(result.policy_authoritative)
     assert not bool(result.unique_feedback_sensitivity_available)
     assert not result.generic_gne_existence_rejected
-
-
-def test_linearly_dependent_active_private_rows_fail_licq() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -352,9 +341,6 @@ def test_linearly_dependent_active_private_rows_fail_licq() -> None:
     assert result.licq_ranks[0] == 1
     assert result.active_multiplier_counts[0] == 2
     assert result.status == int(FeedbackQuasiNashStatus.LICQ_FAILURE)
-
-
-def test_zero_active_inequality_multiplier_fails_strict_complementarity() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -376,7 +362,7 @@ def test_zero_active_inequality_multiplier_fails_strict_complementarity() -> Non
     assert result.status == int(FeedbackQuasiNashStatus.STRICT_COMPLEMENTARITY_FAILURE)
 
 
-def test_inactive_violation_is_reported_without_an_active_set_switch() -> None:
+def test_games_feedback_constraints_scenario_3() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     suggestion = _local_suggestion(
         partition,
@@ -399,9 +385,6 @@ def test_inactive_violation_is_reported_without_an_active_set_switch() -> None:
     np.testing.assert_allclose(result.maximum_inactive_violations, [1.0], atol=2.0e-5)
     assert result.status == int(FeedbackQuasiNashStatus.INACTIVE_CONSTRAINT_VIOLATION)
     assert not bool(result.active_set[0, 0])
-
-
-def test_nonsymmetric_coupled_private_kkt_can_be_singular_despite_licq() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     suggestion = _local_suggestion(
         partition,
@@ -435,9 +418,6 @@ def test_nonsymmetric_coupled_private_kkt_can_be_singular_despite_licq() -> None
     assert result.kkt_ranks[0] == 2
     assert result.status == int(FeedbackQuasiNashStatus.COUPLED_KKT_RANK_DEFICIENT)
     assert not bool(result.policy_authoritative)
-
-
-def test_player_permutation_permutes_policy_and_owned_multiplier_layout() -> None:
     original_partition = PlayerControlPartition(("left", "right"), (1, 1))
     original = _local_suggestion(
         original_partition,

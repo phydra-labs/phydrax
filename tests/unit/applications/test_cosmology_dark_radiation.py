@@ -25,7 +25,7 @@ def _packet(packet_id: Any = 41) -> Any:
     )
 
 
-def test_packet_export_preserves_four_momentum_identity_and_time_level() -> None:
+def test_cosmology_dark_radiation_scenario_1() -> None:
     plan = DarkRadiationLedgerPlan(2, speed_of_light=1.0)
     initial = plan.empty()
     packet = _packet()
@@ -55,9 +55,6 @@ def test_packet_export_preserves_four_momentum_identity_and_time_level() -> None
     assert float(result.accepted_ledger.physical_energy[0]) == 1.0
     assert float(result.accepted_ledger.emission_scale_factors[0]) == 0.75
     assert bool(result.evidence.ledger_unchanged_on_failure)
-
-
-def test_capacity_and_four_momentum_failures_roll_back_every_ledger_leaf() -> None:
     plan = DarkRadiationLedgerPlan(1)
     initial = plan.empty()
     first_packet = _packet(10)
@@ -86,9 +83,6 @@ def test_capacity_and_four_momentum_failures_roll_back_every_ledger_leaf() -> No
     )
     assert bool(eqx.tree_equal(imbalance.accepted_ledger, initial))
     assert bool(imbalance.evidence.ledger_unchanged_on_failure)
-
-
-def test_runtime_dtype_tolerance_and_causal_four_vectors_fail_closed() -> None:
     plan = DarkRadiationLedgerPlan(1)
     ledger = plan.empty(dtype=jnp.float32)
     packet = DarkRadiationPacket(

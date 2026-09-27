@@ -34,7 +34,7 @@ def _periodic_spaces(dimension: Any, count: Any) -> Any:
     return grid, spectral
 
 
-def test_periodic_vic_conserves_deposition_and_returns_divergence_free_velocity() -> None:
+def test_periodic_contracts() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
         jnp.ones((2,)),
@@ -75,9 +75,6 @@ def test_periodic_vic_conserves_deposition_and_returns_divergence_free_velocity(
     assert evaluation.velocity_gradient.shape == (2, 2, 2)
     assert evaluation.vorticity.shape == (2,)
     assert bool(evaluation.successful)
-
-
-def test_periodic_vic_rejects_nonzero_total_vorticity() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
         jnp.ones((2,)),
@@ -103,9 +100,6 @@ def test_periodic_vic_rejects_nonzero_total_vorticity() -> None:
     )
     with pytest.raises(Exception, match="zero total integrated vorticity"):
         prepared.evaluate(source, target)
-
-
-def test_periodic_three_dimensional_vic_returns_velocity_gradient() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
         jnp.ones((2,)),

@@ -23,7 +23,7 @@ def _scipy_cartesian(n: Any, m: Any, vector: Any) -> Any:
     return scipy.special.sph_harm_y(n, m, theta, phi)
 
 
-def test_scalar_harmonics_match_scipy_at_poles_and_representative_modes() -> None:
+def test_spherical_harmonic_scenario_1() -> None:
     theta = np.asarray(
         [
             0.0,
@@ -59,9 +59,6 @@ def test_scalar_harmonics_match_scipy_at_poles_and_representative_modes() -> Non
             rtol=5.0e-12,
             atol=2.0e-14,
         )
-
-
-def test_normalization_and_negative_order_identities() -> None:
     nodes, weights = np.polynomial.legendre.leggauss(32)
     theta = jnp.asarray(np.arccos(nodes))
     for m in (0, 2, 5):
@@ -79,9 +76,6 @@ def test_normalization_and_negative_order_identities() -> None:
     negative = phx.special.sph_harm_y(7, -3, theta, phi)
     np.testing.assert_allclose(negative_legendre, -positive_legendre, rtol=2e-13)
     np.testing.assert_allclose(negative, -jnp.conj(positive), rtol=2e-13)
-
-
-def test_high_order_normalized_diagonal_avoids_raw_legendre_overflow() -> None:
     theta = jnp.asarray(jnp.pi / 2.0)
     actual = phx.special.sph_legendre_p(200, 200, theta)
     expected = scipy.special.sph_legendre_p(200, 200, float(theta))[0]
@@ -91,7 +85,7 @@ def test_high_order_normalized_diagonal_avoids_raw_legendre_overflow() -> None:
     np.testing.assert_allclose(actual, expected, rtol=8e-13, atol=2e-14)
 
 
-def test_broadcasting_and_dtype_promotion() -> None:
+def test_spherical_harmonic_scenario_2() -> None:
     theta = jnp.asarray([[0.3], [1.2]], dtype=jnp.float16)
     phi = jnp.asarray([0.2, 1.0, 2.4], dtype=jnp.float32)
     harmonic = phx.special.sph_harm_y(3, -2, theta, phi)
@@ -117,9 +111,6 @@ def test_broadcasting_and_dtype_promotion() -> None:
         ).dtype
         == jnp.complex128
     )
-
-
-def test_structural_degree_order_and_cartesian_shape_validation() -> None:
     with pytest.raises(ValueError):
         phx.special.sph_legendre_p(-1, 0, 0.4)
     with pytest.raises(ValueError):
@@ -148,9 +139,6 @@ def test_structural_degree_order_and_cartesian_shape_validation() -> None:
         jax.jit(lambda degree: phx.special.sph_harm_y(degree, 0, 0.4, 0.7))(
             jnp.asarray(2)
         )
-
-
-def test_cartesian_matches_angular_and_respects_scale_and_antipodal_parity() -> None:
     theta = np.asarray([0.2, 0.8, 1.6, 2.9])
     phi = np.asarray([0.1, 2.0, 4.2, 5.8])
     directions = _cartesian(theta, phi)
@@ -163,9 +151,6 @@ def test_cartesian_matches_angular_and_respects_scale_and_antipodal_parity() -> 
     np.testing.assert_allclose(cartesian, angular, rtol=3e-12, atol=3e-14)
     np.testing.assert_allclose(scaled, cartesian, rtol=3e-12, atol=3e-14)
     np.testing.assert_allclose(antipodal, -cartesian, rtol=3e-12, atol=3e-14)
-
-
-def test_cartesian_invalid_lanes_are_isolated() -> None:
     directions = jnp.asarray(
         [
             [0.2, -0.3, 0.9],

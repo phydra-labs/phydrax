@@ -9,7 +9,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 import phydrax as phx
 
@@ -22,7 +21,7 @@ def _termination(*, steps: Any = 50, tolerance: Any = 1e-7) -> Any:
     )
 
 
-def test_bounds_broadcast_over_pytrees_and_report_activity() -> None:
+def test_constrained_optimization_scenario_1() -> None:
     parameters = {"a": jnp.array([-2.0, 0.5]), "b": jnp.array(3.0)}
     bounds = phx.optim.Bounds(
         {"a": jnp.array([-1.0, 0.0]), "b": jnp.array(-2.0)},
@@ -39,96 +38,30 @@ def test_bounds_broadcast_over_pytrees_and_report_activity() -> None:
     active = bounds.active_mask(projected, gradient)
     np.testing.assert_array_equal(active["a"], jnp.array([True, False]))
     assert active["b"]
-
-
-@pytest.mark.parametrize(
-    "method",
-    [
+    for method in [
         phx.optim.ProjectedGradient(),
         phx.optim.ActiveSetNewton(),
         phx.optim.ProjectedLBFGS(),
-    ],
-)
-def test_bound_methods_converge_to_active_corner_with_feasible_iterates(
-    method: Any,
-) -> None:
-    bounds = phx.optim.Bounds(
-        jnp.array([0.0, -1.0]),
-        jnp.array([1.0, 2.0]),
-    )
-    result = phx.optim.minimize(
-        lambda value, _: jnp.sum((value - jnp.array([2.0, -3.0])) ** 2),
-        jnp.array([-4.0, 4.0]),
-        bounds=bounds,
-        method=method,
-        termination=_termination(steps=100),
-    )
-
-    np.testing.assert_allclose(result.parameters, jnp.array([1.0, -1.0]), atol=1e-7)
-    assert result.status == phx.optim.OptimizationStatus.SUCCESS
-    assert result.diagnostics.primal_feasibility == 0.0
-    assert result.diagnostics.dual_feasibility < 1e-7
-    assert result.diagnostics.complementarity < 1e-10
-    assert result.diagnostics.active_constraints == 2
-    assert result.provenance.globalization == "projected-armijo"
-
-
-@pytest.mark.parametrize(
-    "method",
-    [
-        phx.optim.ProjectedGradient(),
-        phx.optim.ActiveSetNewton(),
-        phx.optim.ProjectedLBFGS(),
-    ],
-)
-def test_bound_methods_stage_large_budget_and_backtracked_step(method: Any) -> None:
-    problem = phx.optim.MinimizationProblem(
-        lambda value, target: 5.0 * jnp.sum((value - target) ** 2),
-        bounds=phx.optim.Bounds(-20.0, 20.0),
-    )
-    termination = phx.optim.OptimizationTermination(
-        absolute_optimality=1e-8,
-        relative_optimality=0.0,
-        maximum_steps=1_000_000,
-    )
-
-    def solve(target: Any) -> Any:
-        return phx.optim.minimize(
-            problem,
-            jnp.array([0.0]),
+    ]:
+        bounds = phx.optim.Bounds(
+            jnp.array([0.0, -1.0]),
+            jnp.array([1.0, 2.0]),
+        )
+        result = phx.optim.minimize(
+            lambda value, _: jnp.sum((value - jnp.array([2.0, -3.0])) ** 2),
+            jnp.array([-4.0, 4.0]),
+            bounds=bounds,
             method=method,
-            termination=termination,
-            args=target,
+            termination=_termination(steps=100),
         )
 
-    target = jnp.array([1.0])
-    eager = solve(target)
-    compiled = eqx.filter_jit(solve)(target)
-
-    np.testing.assert_allclose(compiled.parameters, eager.parameters, atol=1e-8)
-    np.testing.assert_allclose(compiled.objective, eager.objective, atol=1e-8)
-    assert (
-        int(compiled.status)
-        == int(eager.status)
-        == int(phx.optim.OptimizationStatus.SUCCESS)
-    )
-    compiled_diagnostics = jax.tree.leaves(compiled.diagnostics)
-    eager_diagnostics = jax.tree.leaves(eager.diagnostics)
-    assert len(compiled_diagnostics) == len(eager_diagnostics)
-    for compiled_value, eager_value in zip(
-        compiled_diagnostics,
-        eager_diagnostics,
-        strict=True,
-    ):
-        np.testing.assert_allclose(compiled_value, eager_value, atol=1e-8)
-    assert int(compiled.diagnostics.accepted_steps) >= 1
-    if not isinstance(method, phx.optim.ActiveSetNewton):
-        assert int(compiled.diagnostics.globalization_evaluations) > int(
-            compiled.diagnostics.iterations
-        )
-
-
-def test_bound_method_can_reject_infeasible_initial_point_by_policy() -> None:
+        np.testing.assert_allclose(result.parameters, jnp.array([1.0, -1.0]), atol=1e-7)
+        assert result.status == phx.optim.OptimizationStatus.SUCCESS
+        assert result.diagnostics.primal_feasibility == 0.0
+        assert result.diagnostics.dual_feasibility < 1e-7
+        assert result.diagnostics.complementarity < 1e-10
+        assert result.diagnostics.active_constraints == 2
+        assert result.provenance.globalization == "projected-armijo"
     problem = phx.optim.MinimizationProblem(
         lambda value, _: jnp.sum(value**2),
         bounds=phx.optim.Bounds(0.0, 1.0),
@@ -141,6 +74,79 @@ def test_bound_method_can_reject_infeasible_initial_point_by_policy() -> None:
 
     assert result.status == phx.optim.OptimizationStatus.INFEASIBLE
     assert result.diagnostics.primal_feasibility == 2.0
+    for method, tolerance in [
+        (phx.optim.AugmentedLagrangian(inner_maximum_steps=40), 1e-4),
+        (phx.optim.SQP(), 1e-6),
+    ]:
+        result = phx.optim.minimize(
+            _mixed_constraint_problem(),
+            jnp.array([0.5, 0.5]),
+            method=method,
+            termination=_termination(steps=25, tolerance=tolerance),
+        )
+
+        np.testing.assert_allclose(result.parameters, jnp.array([0.0, 1.0]), atol=5e-4)
+        assert result.status == phx.optim.OptimizationStatus.SUCCESS
+        assert result.diagnostics.primal_feasibility <= tolerance
+        assert result.diagnostics.dual_feasibility <= tolerance
+        assert result.diagnostics.complementarity <= tolerance
+        assert result.diagnostics.active_constraints >= 1
+        if isinstance(method, phx.optim.AugmentedLagrangian):
+            assert result.diagnostics.setup_refreshes > 0
+            assert result.diagnostics.numeric_refreshes > 0
+            assert result.diagnostics.hvp_evaluations > 0
+
+
+def test_bound_methods_stage_large_budget_and_backtracked_step() -> None:
+    for method in [
+        phx.optim.ProjectedGradient(),
+        phx.optim.ActiveSetNewton(),
+        phx.optim.ProjectedLBFGS(),
+    ]:
+        problem = phx.optim.MinimizationProblem(
+            lambda value, target: 5.0 * jnp.sum((value - target) ** 2),
+            bounds=phx.optim.Bounds(-20.0, 20.0),
+        )
+        termination = phx.optim.OptimizationTermination(
+            absolute_optimality=1e-8,
+            relative_optimality=0.0,
+            maximum_steps=1_000_000,
+        )
+
+        def solve(target: Any) -> Any:
+            return phx.optim.minimize(
+                problem,
+                jnp.array([0.0]),
+                method=method,
+                termination=termination,
+                args=target,
+            )
+
+        target = jnp.array([1.0])
+        eager = solve(target)
+        compiled = eqx.filter_jit(solve)(target)
+
+        np.testing.assert_allclose(compiled.parameters, eager.parameters, atol=1e-8)
+        np.testing.assert_allclose(compiled.objective, eager.objective, atol=1e-8)
+        assert (
+            int(compiled.status)
+            == int(eager.status)
+            == int(phx.optim.OptimizationStatus.SUCCESS)
+        )
+        compiled_diagnostics = jax.tree.leaves(compiled.diagnostics)
+        eager_diagnostics = jax.tree.leaves(eager.diagnostics)
+        assert len(compiled_diagnostics) == len(eager_diagnostics)
+        for compiled_value, eager_value in zip(
+            compiled_diagnostics,
+            eager_diagnostics,
+            strict=True,
+        ):
+            np.testing.assert_allclose(compiled_value, eager_value, atol=1e-8)
+        assert int(compiled.diagnostics.accepted_steps) >= 1
+        if not isinstance(method, phx.optim.ActiveSetNewton):
+            assert int(compiled.diagnostics.globalization_evaluations) > int(
+                compiled.diagnostics.iterations
+            )
 
 
 def _mixed_constraint_problem() -> Any:
@@ -164,36 +170,7 @@ def _mixed_constraint_problem() -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    ("method", "tolerance"),
-    [
-        (phx.optim.AugmentedLagrangian(inner_maximum_steps=40), 1e-4),
-        (phx.optim.SQP(), 1e-6),
-    ],
-)
-def test_nonlinear_constrained_methods_satisfy_kkt_system(
-    method: Any, tolerance: Any
-) -> None:
-    result = phx.optim.minimize(
-        _mixed_constraint_problem(),
-        jnp.array([0.5, 0.5]),
-        method=method,
-        termination=_termination(steps=25, tolerance=tolerance),
-    )
-
-    np.testing.assert_allclose(result.parameters, jnp.array([0.0, 1.0]), atol=5e-4)
-    assert result.status == phx.optim.OptimizationStatus.SUCCESS
-    assert result.diagnostics.primal_feasibility <= tolerance
-    assert result.diagnostics.dual_feasibility <= tolerance
-    assert result.diagnostics.complementarity <= tolerance
-    assert result.diagnostics.active_constraints >= 1
-    if isinstance(method, phx.optim.AugmentedLagrangian):
-        assert result.diagnostics.setup_refreshes > 0
-        assert result.diagnostics.numeric_refreshes > 0
-        assert result.diagnostics.hvp_evaluations > 0
-
-
-def test_sqp_reports_failed_restoration_for_infeasible_nonlinear_equation() -> None:
+def test_constrained_optimization_scenario_2() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda value, _: jnp.sum(value**2),
         constraints=(
@@ -217,6 +194,35 @@ def test_sqp_reports_failed_restoration_for_infeasible_nonlinear_equation() -> N
     )
     assert result.diagnostics.primal_feasibility >= 1.0
     assert result.diagnostics.direction_fallbacks >= 1
+    problem = phx.optim.MinimizationProblem(
+        lambda value, _: jnp.sum((value - 2.0) ** 2),
+        constraints=(
+            phx.optim.NonlinearConstraint(
+                lambda value, _: value,
+                lower=0.0,
+                constraint_id="nonnegative",
+            ),
+        ),
+    )
+    result = phx.optim.minimize(
+        problem,
+        jnp.asarray([1.0]),
+        method=phx.optim.AugmentedLagrangian(
+            maximum_outer_steps=4,
+            inner_maximum_steps=8,
+        ),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=4,
+            maximum_evaluations=1,
+        ),
+    )
+
+    assert int(result.status) == int(
+        phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    assert int(result.diagnostics.iterations) == 0
 
 
 def _assert_constrained_diagnostics_match(compiled: Any, eager: Any) -> None:
@@ -252,9 +258,8 @@ def _assert_constrained_diagnostics_match(compiled: Any, eager: Any) -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("method", "tolerance"),
-    [
+def test_constrained_native_methods_filtered_jit_match_large_budget_eager() -> None:
+    for method, tolerance in [
         (
             phx.optim.AugmentedLagrangian(
                 maximum_outer_steps=100_000,
@@ -263,37 +268,32 @@ def _assert_constrained_diagnostics_match(compiled: Any, eager: Any) -> None:
             1e-4,
         ),
         (phx.optim.SQP(), 1e-6),
-    ],
-)
-def test_constrained_native_methods_filtered_jit_match_large_budget_eager(
-    method: Any,
-    tolerance: Any,
-) -> None:
-    problem = _mixed_constraint_problem()
-    termination = _termination(steps=100_000, tolerance=tolerance)
+    ]:
+        problem = _mixed_constraint_problem()
+        termination = _termination(steps=100_000, tolerance=tolerance)
 
-    def solve(initial: Any) -> Any:
-        return phx.optim.minimize(
-            problem,
-            initial,
-            method=method,
-            termination=termination,
+        def solve(initial: Any) -> Any:
+            return phx.optim.minimize(
+                problem,
+                initial,
+                method=method,
+                termination=termination,
+            )
+
+        initial = jnp.array([0.5, 0.5])
+        eager = solve(initial)
+        compiled = eqx.filter_jit(solve)(initial)
+
+        assert compiled.status.shape == ()
+        assert jnp.issubdtype(compiled.status.dtype, jnp.integer)
+        assert (
+            int(compiled.status)
+            == int(eager.status)
+            == int(phx.optim.OptimizationStatus.SUCCESS)
         )
-
-    initial = jnp.array([0.5, 0.5])
-    eager = solve(initial)
-    compiled = eqx.filter_jit(solve)(initial)
-
-    assert compiled.status.shape == ()
-    assert jnp.issubdtype(compiled.status.dtype, jnp.integer)
-    assert (
-        int(compiled.status)
-        == int(eager.status)
-        == int(phx.optim.OptimizationStatus.SUCCESS)
-    )
-    np.testing.assert_allclose(compiled.parameters, eager.parameters, atol=tolerance)
-    np.testing.assert_allclose(compiled.objective, eager.objective, atol=tolerance)
-    _assert_constrained_diagnostics_match(compiled, eager)
+        np.testing.assert_allclose(compiled.parameters, eager.parameters, atol=tolerance)
+        np.testing.assert_allclose(compiled.objective, eager.objective, atol=tolerance)
+        _assert_constrained_diagnostics_match(compiled, eager)
 
 
 def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate() -> None:
@@ -334,9 +334,8 @@ def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate() -> No
     _assert_constrained_diagnostics_match(compiled, eager)
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
+def test_native_constrained_methods_support_jvp_vmap_and_pytree_parameters() -> None:
+    for method in [
         phx.optim.AugmentedLagrangian(
             maximum_outer_steps=12,
             inner_maximum_steps=30,
@@ -345,108 +344,69 @@ def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate() -> No
         phx.optim.PrimalDualInteriorPoint(
             mode="matrix-free-centered",
         ),
-    ],
-)
-def test_native_constrained_methods_support_jvp_vmap_and_pytree_parameters(
-    method: Any,
-) -> None:
-    constraint = phx.optim.NonlinearConstraint(
-        lambda parameters, target: parameters["state"] - target,
-        lower=0.0,
-        upper=0.0,
-    )
-    problem = phx.optim.MinimizationProblem(
-        lambda parameters, target: jnp.sum((parameters["state"] - target) ** 2),
-        constraints=(constraint,),
-    )
-    termination = _termination(steps=40, tolerance=1e-8)
+    ]:
+        constraint = phx.optim.NonlinearConstraint(
+            lambda parameters, target: parameters["state"] - target,
+            lower=0.0,
+            upper=0.0,
+        )
+        problem = phx.optim.MinimizationProblem(
+            lambda parameters, target: jnp.sum((parameters["state"] - target) ** 2),
+            constraints=(constraint,),
+        )
+        termination = _termination(steps=40, tolerance=1e-8)
 
-    def solution(target: Any) -> Any:
-        return phx.optim.minimize(
-            problem,
-            {"state": jnp.array([0.0])},
-            method=method,
-            termination=termination,
-            args=target,
-        ).parameters["state"][0]
+        def solution(target: Any) -> Any:
+            return phx.optim.minimize(
+                problem,
+                {"state": jnp.array([0.0])},
+                method=method,
+                termination=termination,
+                args=target,
+            ).parameters["state"][0]
 
-    targets = jnp.array([1.0, 1.5])
-    mapped = jax.vmap(solution)(targets)
-    value, derivative = jax.jvp(
-        solution,
-        (jnp.array(1.25),),
-        (jnp.array(0.3),),
-    )
+        targets = jnp.array([1.0, 1.5])
+        mapped = jax.vmap(solution)(targets)
+        value, derivative = jax.jvp(
+            solution,
+            (jnp.array(1.25),),
+            (jnp.array(0.3),),
+        )
 
-    np.testing.assert_allclose(mapped, targets, atol=2e-5)
-    np.testing.assert_allclose(value, 1.25, atol=2e-5)
-    np.testing.assert_allclose(derivative, 0.3, atol=2e-5)
+        np.testing.assert_allclose(mapped, targets, atol=2e-5)
+        np.testing.assert_allclose(value, 1.25, atol=2e-5)
+        np.testing.assert_allclose(derivative, 0.3, atol=2e-5)
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
+def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters() -> None:
+    for method in [
         phx.optim.ProjectedGradient(),
         phx.optim.ProjectedLBFGS(),
         phx.optim.ActiveSetNewton(),
-    ],
-)
-def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters(method: Any) -> None:
-    problem = phx.optim.MinimizationProblem(
-        lambda parameters, target: jnp.sum((parameters["state"] - target) ** 2),
-        bounds=phx.optim.Bounds(-2.0, 2.0),
-    )
-    termination = _termination(steps=30, tolerance=1e-8)
+    ]:
+        problem = phx.optim.MinimizationProblem(
+            lambda parameters, target: jnp.sum((parameters["state"] - target) ** 2),
+            bounds=phx.optim.Bounds(-2.0, 2.0),
+        )
+        termination = _termination(steps=30, tolerance=1e-8)
 
-    def solution(target: Any) -> Any:
-        return phx.optim.minimize(
-            problem,
-            {"state": jnp.array([0.0])},
-            method=method,
-            termination=termination,
-            args=target,
-        ).parameters["state"][0]
+        def solution(target: Any) -> Any:
+            return phx.optim.minimize(
+                problem,
+                {"state": jnp.array([0.0])},
+                method=method,
+                termination=termination,
+                args=target,
+            ).parameters["state"][0]
 
-    targets = jnp.array([0.5, 1.0])
-    mapped = jax.vmap(solution)(targets)
-    value, derivative = jax.jvp(
-        solution,
-        (jnp.array(0.75),),
-        (jnp.array(0.2),),
-    )
+        targets = jnp.array([0.5, 1.0])
+        mapped = jax.vmap(solution)(targets)
+        value, derivative = jax.jvp(
+            solution,
+            (jnp.array(0.75),),
+            (jnp.array(0.2),),
+        )
 
-    np.testing.assert_allclose(mapped, targets, atol=2e-6)
-    np.testing.assert_allclose(value, 0.75, atol=2e-6)
-    np.testing.assert_allclose(derivative, 0.2, atol=2e-6)
-
-
-def test_augmented_lagrangian_refuses_outer_subsolve_without_remaining_budget() -> None:
-    problem = phx.optim.MinimizationProblem(
-        lambda value, _: jnp.sum((value - 2.0) ** 2),
-        constraints=(
-            phx.optim.NonlinearConstraint(
-                lambda value, _: value,
-                lower=0.0,
-                constraint_id="nonnegative",
-            ),
-        ),
-    )
-    result = phx.optim.minimize(
-        problem,
-        jnp.asarray([1.0]),
-        method=phx.optim.AugmentedLagrangian(
-            maximum_outer_steps=4,
-            inner_maximum_steps=8,
-        ),
-        termination=phx.optim.OptimizationTermination(
-            absolute_optimality=0.0,
-            relative_optimality=0.0,
-            maximum_steps=4,
-            maximum_evaluations=1,
-        ),
-    )
-
-    assert int(result.status) == int(
-        phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
-    )
-    assert int(result.diagnostics.iterations) == 0
+        np.testing.assert_allclose(mapped, targets, atol=2e-6)
+        np.testing.assert_allclose(value, 0.75, atol=2e-6)
+        np.testing.assert_allclose(derivative, 0.2, atol=2e-6)

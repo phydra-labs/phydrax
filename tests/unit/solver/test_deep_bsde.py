@@ -49,7 +49,7 @@ def _constant(domain: Any, value: Any) -> Any:
     return phx.domain.DomainFunction(domain=domain, deps=(), func=jnp.asarray(value))
 
 
-def test_deep_bsde_rollout_reproduces_linear_brownian_solution() -> None:
+def test_deep_bsde_scenario_1() -> None:
     paths = _brownian_paths()
     problem = _problem(paths)
     domain = phx.domain.Interval1d(-1.0, 1.0)
@@ -73,6 +73,44 @@ def test_deep_bsde_rollout_reproduces_linear_brownian_solution() -> None:
     assert objective.diagnostics(
         {"initial": initial, "control": control}, batch=paths
     ).passed
+    paths = BSDEPathBatch(
+        jnp.asarray([0.0, 0.5, 1.0]),
+        jnp.zeros((8, 3, 1)),
+        jnp.zeros((8, 2, 1)),
+        sample_shape=(8,),
+        state_shape=(1,),
+        noise_shape=(1,),
+        path_id="deterministic",
+        process_id="deterministic",
+    )
+    problem = _problem(paths, terminal=lambda state, args: jnp.asarray([2.0]))
+    domain = phx.domain.Interval1d(-1.0, 1.0)
+    solver = phx.solver.FunctionalSolver(
+        functions={
+            "initial": domain.Parameter(jnp.asarray([0.0])),
+            "control": _constant(domain, [[0.0]]),
+        },
+        terms=(),
+    )
+
+    result = solve_deep_bsde(
+        solver,
+        problem,
+        initial_value_name="initial",
+        control_name="control",
+        num_iter=30,
+        optim=optax.sgd(0.25),
+        sampling_mode="fixed",
+        fixed_paths=paths,
+        validation_paths=paths,
+        keep_best=False,
+    )
+
+    assert result.diagnostics.terminal_rmse < 1e-8
+    assert jnp.allclose(result.diagnostics.initial_mean, jnp.asarray([2.0]), atol=1e-8)
+    assert result.diagnostics.passed
+    assert result.solver.terms == solver.terms
+    assert jnp.allclose(solver["initial"].func(), jnp.asarray([0.0]))
 
 
 def test_deep_bsde_masks_nonfinite_invalid_terminal_gradient() -> None:
@@ -113,44 +151,3 @@ def test_deep_bsde_masks_nonfinite_invalid_terminal_gradient() -> None:
 
     assert value == 2.25
     assert gradient == 3.0
-
-
-def test_solve_deep_bsde_trains_initial_value_and_removes_temporary_objective() -> None:
-    paths = BSDEPathBatch(
-        jnp.asarray([0.0, 0.5, 1.0]),
-        jnp.zeros((8, 3, 1)),
-        jnp.zeros((8, 2, 1)),
-        sample_shape=(8,),
-        state_shape=(1,),
-        noise_shape=(1,),
-        path_id="deterministic",
-        process_id="deterministic",
-    )
-    problem = _problem(paths, terminal=lambda state, args: jnp.asarray([2.0]))
-    domain = phx.domain.Interval1d(-1.0, 1.0)
-    solver = phx.solver.FunctionalSolver(
-        functions={
-            "initial": domain.Parameter(jnp.asarray([0.0])),
-            "control": _constant(domain, [[0.0]]),
-        },
-        terms=(),
-    )
-
-    result = solve_deep_bsde(
-        solver,
-        problem,
-        initial_value_name="initial",
-        control_name="control",
-        num_iter=30,
-        optim=optax.sgd(0.25),
-        sampling_mode="fixed",
-        fixed_paths=paths,
-        validation_paths=paths,
-        keep_best=False,
-    )
-
-    assert result.diagnostics.terminal_rmse < 1e-8
-    assert jnp.allclose(result.diagnostics.initial_mean, jnp.asarray([2.0]), atol=1e-8)
-    assert result.diagnostics.passed
-    assert result.solver.terms == solver.terms
-    assert jnp.allclose(solver["initial"].func(), jnp.asarray([0.0]))

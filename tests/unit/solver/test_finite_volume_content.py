@@ -443,44 +443,33 @@ def test_stage_rate_update_rejects_ledger_shape_mismatch() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    (
-        "include_volumes",
-        "include_geometry_version",
-        "include_evidence_version",
-    ),
-    (
+def test_stage_rate_update_requires_complete_ale_target_certificate() -> None:
+    for include_volumes, include_geometry_version, include_evidence_version in (
         (True, False, False),
         (False, True, False),
         (False, False, True),
         (True, True, False),
         (True, False, True),
         (False, True, True),
-    ),
-)
-def test_stage_rate_update_requires_complete_ale_target_certificate(
-    include_volumes: Any,
-    include_geometry_version: Any,
-    include_evidence_version: Any,
-) -> None:
-    state = _state()
-    ledger = _source_ledger(jnp.zeros_like(state.conservative_content))
-    target = {}
-    if include_volumes:
-        target["target_cell_volumes"] = jnp.asarray((2.5, 3.5))
-    if include_geometry_version:
-        target["target_geometry_version"] = jnp.asarray(1)
-    if include_evidence_version:
-        target["target_evidence_version"] = jnp.asarray(1)
+    ):
+        state = _state()
+        ledger = _source_ledger(jnp.zeros_like(state.conservative_content))
+        target = {}
+        if include_volumes:
+            target["target_cell_volumes"] = jnp.asarray((2.5, 3.5))
+        if include_geometry_version:
+            target["target_geometry_version"] = jnp.asarray(1)
+        if include_evidence_version:
+            target["target_evidence_version"] = jnp.asarray(1)
 
-    with pytest.raises(ValueError, match="must be supplied together"):
-        apply_stage_rate_euler_update(
-            state,
-            ledger,
-            0.1,
-            target_time=jnp.asarray(0.6),
-            **target,
-        )
+        with pytest.raises(ValueError, match="must be supplied together"):
+            apply_stage_rate_euler_update(
+                state,
+                ledger,
+                0.1,
+                target_time=jnp.asarray(0.6),
+                **target,
+            )
 
 
 def test_stage_rate_update_rejects_nonpositive_active_target_volumes() -> None:

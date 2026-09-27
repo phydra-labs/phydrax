@@ -136,9 +136,7 @@ class BlockAMRConservationPlan(StrictModule, NonTrainableState):
                 for local in np.ndindex(coarse_plan.block_shape):
                     if not covered[(int(coarse_slot),) + local]:
                         continue
-                    coarse_index = int(coarse_slot) * prod(
-                        coarse_plan.block_shape
-                    ) + int(
+                    coarse_index = int(coarse_slot) * prod(coarse_plan.block_shape) + int(
                         np.ravel_multi_index(local, coarse_plan.block_shape)
                     )
                     lower = tuple(

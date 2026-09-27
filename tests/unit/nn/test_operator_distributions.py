@@ -32,7 +32,7 @@ def _batch(*, cases: Any = 2, size: Any = 6, masked: Any = False) -> Any:
     )
 
 
-def test_gaussian_distribution_matches_dense_log_density_and_masks_samples() -> None:
+def test_operator_distributions_scenario_1() -> None:
     batch = _batch(masked=True)
     query = batch.require_single_query()
     mean = jnp.arange(12, dtype="float64").reshape((2, 6)) / 10.0
@@ -78,11 +78,41 @@ def test_gaussian_distribution_matches_dense_log_density_and_masks_samples() -> 
     assert jnp.array_equal(distribution.marginal_variance()[:, -1], jnp.zeros((2,)))
     with pytest.raises(ValueError, match="target must have shape"):
         distribution.log_prob(target[:, :-1])
-
-
-def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gradient() -> (
-    None
-):
+    fixed_base = phx.nn.operator.architectures.FNO(
+        n_modes=(2,),
+        in_channels="scalar",
+        out_channels=2,
+        width=4,
+        depth=1,
+        coordinate_embedding=False,
+        source_key="state",
+        key=jr.key(10),
+    )
+    phx.nn.operator.architectures.GaussianFunctionOperator(
+        fixed_base,
+        factor_rank=1,
+        scale_mode="fixed",
+    )
+    with pytest.raises(ValueError, match="must emit 3"):
+        phx.nn.operator.architectures.GaussianFunctionOperator(
+            fixed_base,
+            factor_rank=1,
+            scale_mode="learned",
+        )
+    with pytest.raises(ValueError, match="scale_mode"):
+        phx.nn.operator.architectures.GaussianFunctionOperator(
+            fixed_base,
+            factor_rank=1,
+            # ty: ignore[invalid-argument-type]
+            scale_mode="invalid",
+        )
+    with pytest.raises(ValueError, match="finite"):
+        phx.nn.operator.architectures.GaussianFunctionOperator(
+            fixed_base,
+            factor_rank=1,
+            scale_mode="fixed",
+            fixed_scale=float("nan"),
+        )
     batch = _batch()
     base = phx.nn.operator.architectures.FNO(
         n_modes=(2,),
@@ -130,43 +160,3 @@ def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gra
     assert jnp.isfinite(loss)
     assert leaves
     assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
-
-
-def test_gaussian_operator_parameter_contract_distinguishes_fixed_and_learned_scale() -> (
-    None
-):
-    fixed_base = phx.nn.operator.architectures.FNO(
-        n_modes=(2,),
-        in_channels="scalar",
-        out_channels=2,
-        width=4,
-        depth=1,
-        coordinate_embedding=False,
-        source_key="state",
-        key=jr.key(10),
-    )
-    phx.nn.operator.architectures.GaussianFunctionOperator(
-        fixed_base,
-        factor_rank=1,
-        scale_mode="fixed",
-    )
-    with pytest.raises(ValueError, match="must emit 3"):
-        phx.nn.operator.architectures.GaussianFunctionOperator(
-            fixed_base,
-            factor_rank=1,
-            scale_mode="learned",
-        )
-    with pytest.raises(ValueError, match="scale_mode"):
-        phx.nn.operator.architectures.GaussianFunctionOperator(
-            fixed_base,
-            factor_rank=1,
-            # ty: ignore[invalid-argument-type]
-            scale_mode="invalid",
-        )
-    with pytest.raises(ValueError, match="finite"):
-        phx.nn.operator.architectures.GaussianFunctionOperator(
-            fixed_base,
-            factor_rank=1,
-            scale_mode="fixed",
-            fixed_scale=float("nan"),
-        )

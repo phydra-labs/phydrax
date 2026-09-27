@@ -70,7 +70,7 @@ def _solver(
     )
 
 
-def test_one_atom_unequal_mass_matches_generalized_kl_analytic_solution() -> None:
+def test_unbalanced_scenario_1() -> None:
     source_mass = 2.0
     target_mass = 5.0
     cost = 3.0
@@ -107,9 +107,6 @@ def test_one_atom_unequal_mass_matches_generalized_kl_analytic_solution() -> Non
         + result.target_marginal_regularization,
     )
     assert jnp.allclose(result.regularized_cost, result.dual_cost, atol=1e-9)
-
-
-def test_asymmetric_penalties_have_oriented_physical_semantics() -> None:
     source = _measure([[0.0]], [2.0])
     target = _measure([[1.0]], [5.0])
     source_relaxed = _solver()(
@@ -126,9 +123,6 @@ def test_asymmetric_penalties_have_oriented_physical_semantics() -> None:
     )
     assert source_relaxed.problem.source_marginal_penalty == 0.2
     assert source_relaxed.problem.target_marginal_penalty == 4.0
-
-
-def test_large_marginal_penalties_recover_balanced_sinkhorn_for_unit_mass() -> None:
     source = phx.integration.discrete(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         cx.AxisArray(jnp.asarray([0.2, 0.5, 0.3]), dims=("atom",)),
@@ -165,43 +159,40 @@ def test_large_marginal_penalties_recover_balanced_sinkhorn_for_unit_mass() -> N
     )
 
 
-@pytest.mark.parametrize("block_size", [1, 2, 4, 8])
-def test_dense_and_blockwise_unbalanced_solutions_and_actions_agree(
-    block_size: Any,
-) -> None:
-    source = _measure(
-        jnp.linspace(-1.0, 1.0, 5)[:, None],
-        [1.0, 2.0, 0.5, 3.0, 1.5],
-    )
-    target = _measure(
-        jnp.linspace(-0.8, 1.4, 7)[:, None],
-        [1.0, 0.5, 2.0, 1.0, 0.2, 0.8, 1.5],
-    )
-    problem = _problem(source, target)
-    dense = _solver()(problem)
-    blockwise = _solver(block_size=block_size)(problem)
-    payload = jnp.arange(15.0).reshape((5, 3))
-    target_payload = jnp.arange(14.0).reshape((7, 2))
+def test_unbalanced_scenario_2() -> None:
+    for block_size in [1, 2, 4, 8]:
+        source = _measure(
+            jnp.linspace(-1.0, 1.0, 5)[:, None],
+            [1.0, 2.0, 0.5, 3.0, 1.5],
+        )
+        target = _measure(
+            jnp.linspace(-0.8, 1.4, 7)[:, None],
+            [1.0, 0.5, 2.0, 1.0, 0.2, 0.8, 1.5],
+        )
+        problem = _problem(source, target)
+        dense = _solver()(problem)
+        blockwise = _solver(block_size=block_size)(problem)
+        payload = jnp.arange(15.0).reshape((5, 3))
+        target_payload = jnp.arange(14.0).reshape((7, 2))
 
-    assert dense.converged & blockwise.converged
-    assert blockwise.provenance.execution == "blockwise"
-    assert jnp.allclose(blockwise.dense_plan(), dense.dense_plan(), rtol=1e-9, atol=1e-10)
-    assert jnp.allclose(
-        blockwise.apply_source_to_target(payload),
-        dense.apply_source_to_target(payload),
-        rtol=1e-9,
-        atol=1e-10,
-    )
-    assert jnp.allclose(
-        blockwise.apply_target_to_source(target_payload),
-        dense.apply_target_to_source(target_payload),
-        rtol=1e-9,
-        atol=1e-10,
-    )
-    assert jnp.allclose(blockwise.regularized_cost, dense.regularized_cost, rtol=1e-9)
-
-
-def test_masked_atoms_remain_zero_without_changing_static_plan_shape() -> None:
+        assert dense.converged & blockwise.converged
+        assert blockwise.provenance.execution == "blockwise"
+        assert jnp.allclose(
+            blockwise.dense_plan(), dense.dense_plan(), rtol=1e-9, atol=1e-10
+        )
+        assert jnp.allclose(
+            blockwise.apply_source_to_target(payload),
+            dense.apply_source_to_target(payload),
+            rtol=1e-9,
+            atol=1e-10,
+        )
+        assert jnp.allclose(
+            blockwise.apply_target_to_source(target_payload),
+            dense.apply_target_to_source(target_payload),
+            rtol=1e-9,
+            atol=1e-10,
+        )
+        assert jnp.allclose(blockwise.regularized_cost, dense.regularized_cost, rtol=1e-9)
     source = _measure(
         [[0.0], [jnp.nan], [2.0]],
         [1.0, jnp.nan, 3.0],
@@ -220,9 +211,6 @@ def test_masked_atoms_remain_zero_without_changing_static_plan_shape() -> None:
     assert jnp.array_equal(plan[1], jnp.zeros((3,)))
     assert jnp.array_equal(plan[:, 2], jnp.zeros((3,)))
     assert result.problem.source.event_shape == (1,)
-
-
-def test_joint_mass_scaling_follows_declared_product_reference_kl_convention() -> None:
     epsilon = 0.7
     source_penalty = 1.3
     target_penalty = 2.1
@@ -278,7 +266,7 @@ def test_unbalanced_solver_is_jittable_vmappable_and_differentiable() -> None:
     assert jnp.all(jnp.isfinite(mapped))
 
 
-def test_nonconvergence_and_transport_mass_collapse_have_distinct_statuses() -> None:
+def test_unbalanced_scenario_3() -> None:
     problem = _problem(
         _measure([[0.0], [1.0]], [1.0, 2.0]),
         _measure([[10.0], [12.0]], [2.0, 1.0]),
@@ -304,11 +292,6 @@ def test_nonconvergence_and_transport_mass_collapse_have_distinct_statuses() -> 
     assert collapsed.diagnostics.status == int(
         phx.transport.TransportStatus.TRANSPORT_MASS_COLLAPSED
     )
-
-
-def test_unbalanced_divergence_keeps_three_solves_mass_correction_and_prepared_target() -> (
-    None
-):
     source = _measure([[0.0], [1.0]], [1.0, 2.0])
     target = _measure([[0.5], [1.5]], [2.0, 3.0])
     solver = _solver()
@@ -333,9 +316,43 @@ def test_unbalanced_divergence_keeps_three_solves_mass_correction_and_prepared_t
     assert jnp.allclose(result.value, prepared.value, atol=1e-10)
     assert jnp.allclose(identical.value, 0.0, atol=1e-12)
     assert prepared.target_self is reference.target_self
+    source = _measure([[0.0], [1.0]], [1.0, 2.0])
+    target = _measure([[10.0], [12.0]], [2.0, 3.0])
+    reference = phx.transport.prepare_unbalanced_sinkhorn_reference(
+        target,
+        cost=phx.transport.SquaredEuclideanCost(),
+        solver=_solver(),
+        source_marginal_penalty=1.3,
+        target_marginal_penalty=2.1,
+    )
+    bad_reference = eqx.tree_at(
+        lambda item: item.solver,
+        reference,
+        _solver(max_iterations=1, tolerance=0.0),
+    )
+    term = phx.terms.SpatialUnbalancedSinkhornDivergenceTerm(
+        lambda _: source,
+        bad_reference,
+    )
 
-
-def test_density_and_materialized_realization_inputs_preserve_physical_mass() -> None:
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
+        jax.block_until_ready(term.term_evaluation({}).value)
+    transport_symbols = {
+        "PreparedUnbalancedSinkhornReference",
+        "UnbalancedSinkhorn",
+        "UnbalancedSinkhornDiagnostics",
+        "UnbalancedSinkhornDivergenceResult",
+        "UnbalancedSinkhornResult",
+        "UnbalancedTransportProblem",
+        "prepare_unbalanced_sinkhorn_reference",
+        "require_unbalanced_converged",
+        "unbalanced_problem",
+        "unbalanced_sinkhorn_divergence",
+        "unbalanced_sinkhorn_divergence_against",
+    }
+    assert transport_symbols <= set(phx.transport.__all__)
+    assert "spatial_unbalanced_sinkhorn_divergence" in phx.uq.__all__
+    assert "SpatialUnbalancedSinkhornDivergenceTerm" in phx.terms.__all__
     base = _measure([[0.0], [1.0]], [1.0, 2.0], provenance="base-intensity")
     density = phx.integration.density(base, jnp.log(jnp.asarray([2.0, 3.0])))
     realization = phx.integration.materialize(base)
@@ -380,46 +397,3 @@ def test_uq_and_training_term_use_unbalanced_transport_only_for_physical_measure
     assert jnp.allclose(evaluation.value, 2.0 * metric.value)
     assert evaluation.diagnostics.cross.problem.source_mass == 3.0
     assert evaluation.diagnostics.cross.problem.target_mass == 5.0
-
-
-def test_unbalanced_training_term_rejects_nonconverged_scientific_solve() -> None:
-    source = _measure([[0.0], [1.0]], [1.0, 2.0])
-    target = _measure([[10.0], [12.0]], [2.0, 3.0])
-    reference = phx.transport.prepare_unbalanced_sinkhorn_reference(
-        target,
-        cost=phx.transport.SquaredEuclideanCost(),
-        solver=_solver(),
-        source_marginal_penalty=1.3,
-        target_marginal_penalty=2.1,
-    )
-    bad_reference = eqx.tree_at(
-        lambda item: item.solver,
-        reference,
-        _solver(max_iterations=1, tolerance=0.0),
-    )
-    term = phx.terms.SpatialUnbalancedSinkhornDivergenceTerm(
-        lambda _: source,
-        bad_reference,
-    )
-
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
-        jax.block_until_ready(term.term_evaluation({}).value)
-
-
-def test_unbalanced_public_catalogs_are_explicit() -> None:
-    transport_symbols = {
-        "PreparedUnbalancedSinkhornReference",
-        "UnbalancedSinkhorn",
-        "UnbalancedSinkhornDiagnostics",
-        "UnbalancedSinkhornDivergenceResult",
-        "UnbalancedSinkhornResult",
-        "UnbalancedTransportProblem",
-        "prepare_unbalanced_sinkhorn_reference",
-        "require_unbalanced_converged",
-        "unbalanced_problem",
-        "unbalanced_sinkhorn_divergence",
-        "unbalanced_sinkhorn_divergence_against",
-    }
-    assert transport_symbols <= set(phx.transport.__all__)
-    assert "spatial_unbalanced_sinkhorn_divergence" in phx.uq.__all__
-    assert "SpatialUnbalancedSinkhornDivergenceTerm" in phx.terms.__all__

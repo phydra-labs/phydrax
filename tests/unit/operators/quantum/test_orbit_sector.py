@@ -118,7 +118,7 @@ def _matrix(operator: Any) -> Any:
     return jnp.stack(tuple(operator.mv(column) for column in identity), axis=1)
 
 
-def test_translation_character_sectors_project_three_site_ring_exactly() -> None:
+def test_orbit_sector_scenario_1() -> None:
     prepared, direct = _ring_exchange(3)
     generator = _translation_generator(direct.site_ids, direct.site_dimensions)
     eigenvalues = []
@@ -139,9 +139,6 @@ def test_translation_character_sectors_project_three_site_ring_exactly() -> None
         sorted(np.real(eigenvalues)), (-1.0, -1.0, 2.0), atol=1e-12
     )
     np.testing.assert_allclose(np.imag(eigenvalues), 0.0, atol=1e-12)
-
-
-def test_two_site_exchange_even_and_odd_sectors_match_full_projection() -> None:
     prepared, direct = _ring_exchange(2)
     generator = _translation_generator(direct.site_ids, direct.site_dimensions)
     even = _prepare_character_basis(direct, generator, 1.0)
@@ -155,9 +152,6 @@ def test_two_site_exchange_even_and_odd_sectors_match_full_projection() -> None:
     np.testing.assert_allclose(_matrix(even_operator), ((2.0,),), atol=1e-12)
     np.testing.assert_allclose(_matrix(odd_operator), ((-2.0,),), atol=1e-12)
     assert not bool(even.contains((1, 0)))
-
-
-def test_stabilizer_incompatible_character_is_rejected_as_empty() -> None:
     direct = FixedSpinProjectionBasis(
         ("a", "b", "c"),
         (1, 1, 1),
@@ -173,7 +167,7 @@ def test_stabilizer_incompatible_character_is_rejected_as_empty() -> None:
         prepare_orbit_sector_basis(action)
 
 
-def test_fermion_site_permutation_retains_car_parity() -> None:
+def test_orbit_sector_scenario_2() -> None:
     order = FermionModeOrder(("a", "b"))
     direct = FixedCardinalityFermionBasis(order, 2, resources=_basis_resources())
     swap = MonomialConfigurationGenerator(
@@ -192,9 +186,6 @@ def test_fermion_site_permutation_retains_car_parity() -> None:
     assert compatible.dimension == 1
     with pytest.raises(ValueError, match="empty"):
         _prepare_character_basis(direct, swap, 1.0)
-
-
-def test_noninvariant_action_is_rejected_before_reduced_execution() -> None:
     spaces = (LocalSpacePlan.spin("a", 1), LocalSpacePlan.spin("b", 1))
     sz = np.diag((-1.0, 1.0))
     prepared = prepare_quantum_lattice(

@@ -39,7 +39,7 @@ def _isochoric_fiber_stretch(stretch: Any) -> Any:
     return jnp.diag(jnp.asarray((stretch, transverse, transverse)))
 
 
-def test_material_parameters_are_dynamic_jax_leaves() -> None:
+def test_skeletal_muscle_continuum_scenario_1() -> None:
     parameters = EngelhardtGasam2025Parameters.published_multiload_fit()
     leaves = jax.tree_util.tree_leaves(parameters)
 
@@ -51,9 +51,43 @@ def test_material_parameters_are_dynamic_jax_leaves() -> None:
     assert parameters_lane.parameters.peak_active_nominal_stress_pa is not None
     assert parameters_lane.plan is None
     assert fixed.plan is material.plan
+    material = _material(0.25)
+    foreign = _material(0.5, material_id="foreign-gasam")
+    commit = foreign.propose_activation(0.75).commit()
 
+    assert commit.prepared_id == foreign.prepared_id
+    np.testing.assert_array_equal(commit.source_state_id, foreign.state.state_id)
+    np.testing.assert_array_equal(commit.source_activation, foreign.state.activation)
+    with pytest.raises(ValueError, match="different prepared material"):
+        material.with_commit(commit)
 
-def test_uniform_architecture_normalizes_and_is_sign_indifferent() -> None:
+    np.testing.assert_array_equal(material.state.activation, 0.25)
+    np.testing.assert_array_equal(material.state.state_id, 0)
+    material = _material(0.25)
+    first = material.propose_activation(0.5).commit()
+    stale = material.propose_activation(0.75).commit()
+    advanced = material.with_commit(first)
+
+    assert first.prepared_id == material.prepared_id
+    np.testing.assert_array_equal(first.source_state_id, material.state.state_id)
+    np.testing.assert_array_equal(first.source_activation, material.state.activation)
+    assert advanced.state.state_id != material.state.state_id
+    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
+        advanced.with_commit(stale)
+
+    np.testing.assert_array_equal(advanced.state.activation, 0.5)
+    np.testing.assert_array_equal(advanced.state.state_id, first.state.state_id)
+    material = _material(0.25)
+    left = material.with_commit(material.propose_activation(0.5).commit())
+    right = material.with_commit(material.propose_activation(0.75).commit())
+    left_commit = left.propose_activation(0.9).commit()
+
+    np.testing.assert_array_equal(left_commit.source_state_id, right.state.state_id)
+    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
+        right.with_commit(left_commit)
+
+    np.testing.assert_array_equal(right.state.activation, 0.75)
+    np.testing.assert_array_equal(right.state.state_id, 1)
     plan = UniformFiberArchitecturePlan("longitudinal")
     positive = plan.prepare(jnp.asarray((4.0, 0.0, 0.0)))
     negative = plan.prepare(jnp.asarray((-4.0, 0.0, 0.0)))
@@ -61,9 +95,6 @@ def test_uniform_architecture_normalizes_and_is_sign_indifferent() -> None:
     assert bool(positive.evidence.valid)
     np.testing.assert_allclose(positive.reference_direction, (1.0, 0.0, 0.0))
     np.testing.assert_allclose(positive.structural_tensor, negative.structural_tensor)
-
-
-def test_passive_reference_and_source_force_length_limits() -> None:
     passive = _material(0.0)
     identity = jnp.eye(3)
     response = passive.evaluate(identity, 0.0)
@@ -100,7 +131,7 @@ def test_active_energy_derivative_recovers_source_nominal_force_length() -> None
     np.testing.assert_allclose(active_increment, expected, rtol=5.0e-5, atol=5.0e-2)
 
 
-def test_complete_active_potential_is_objective_and_has_consistent_tangent() -> None:
+def test_skeletal_muscle_continuum_scenario_2() -> None:
     material = _material(0.8)
     deformation = jnp.asarray(((1.08, 0.06, 0.0), (0.01, 0.97, 0.03), (0.0, 0.02, 0.96)))
     direction = jnp.asarray(((0.02, -0.01, 0.0), (0.01, 0.0, 0.015), (0.0, -0.01, -0.02)))
@@ -135,9 +166,6 @@ def test_complete_active_potential_is_objective_and_has_consistent_tangent() -> 
         atol=3.0e-2,
     )
     np.testing.assert_allclose(stress_jvp, tangent_jvp, rtol=5.0e-5, atol=5.0e-2)
-
-
-def test_invalid_activation_candidate_rolls_back_whole_material_state() -> None:
     material = _material(0.25)
     candidate = material.propose_activation(1.25)
     commit = candidate.commit()
@@ -152,55 +180,6 @@ def test_invalid_activation_candidate_rolls_back_whole_material_state() -> None:
     assert not bool(compiled.committed)
     np.testing.assert_array_equal(compiled.state.activation, material.state.activation)
     assert selected.state.state_id == material.state.state_id
-
-
-def test_material_commit_rejects_a_foreign_prepared_owner_without_mutation() -> None:
-    material = _material(0.25)
-    foreign = _material(0.5, material_id="foreign-gasam")
-    commit = foreign.propose_activation(0.75).commit()
-
-    assert commit.prepared_id == foreign.prepared_id
-    np.testing.assert_array_equal(commit.source_state_id, foreign.state.state_id)
-    np.testing.assert_array_equal(commit.source_activation, foreign.state.activation)
-    with pytest.raises(ValueError, match="different prepared material"):
-        material.with_commit(commit)
-
-    np.testing.assert_array_equal(material.state.activation, 0.25)
-    np.testing.assert_array_equal(material.state.state_id, 0)
-
-
-def test_material_commit_rejects_a_stale_source_state_without_mutation() -> None:
-    material = _material(0.25)
-    first = material.propose_activation(0.5).commit()
-    stale = material.propose_activation(0.75).commit()
-    advanced = material.with_commit(first)
-
-    assert first.prepared_id == material.prepared_id
-    np.testing.assert_array_equal(first.source_state_id, material.state.state_id)
-    np.testing.assert_array_equal(first.source_activation, material.state.activation)
-    assert advanced.state.state_id != material.state.state_id
-    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
-        advanced.with_commit(stale)
-
-    np.testing.assert_array_equal(advanced.state.activation, 0.5)
-    np.testing.assert_array_equal(advanced.state.state_id, first.state.state_id)
-
-
-def test_material_commit_rejects_a_source_mismatched_sibling_state() -> None:
-    material = _material(0.25)
-    left = material.with_commit(material.propose_activation(0.5).commit())
-    right = material.with_commit(material.propose_activation(0.75).commit())
-    left_commit = left.propose_activation(0.9).commit()
-
-    np.testing.assert_array_equal(left_commit.source_state_id, right.state.state_id)
-    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
-        right.with_commit(left_commit)
-
-    np.testing.assert_array_equal(right.state.activation, 0.75)
-    np.testing.assert_array_equal(right.state.state_id, 1)
-
-
-def test_qualification_reports_local_not_global_active_stability() -> None:
     material = _material(0.65)
     deformation = _isochoric_fiber_stretch(1.0)
     rate = jnp.asarray(((0.01, 0.002, 0.0), (0.0, -0.005, 0.0), (0.0, 0.0, -0.005)))

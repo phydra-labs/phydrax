@@ -25,7 +25,7 @@ requires_meshcore = pytest.mark.skipif(
 )
 
 
-def test_identity_returns_canonical_polygon_area_and_centroid() -> None:
+def test_convex_intersections_scenario_1() -> None:
     result = intersect_convex_polygons(
         TRIANGLE, TRIANGLE, source_id="left", target_id="right"
     )
@@ -43,34 +43,12 @@ def test_identity_returns_canonical_polygon_area_and_centroid() -> None:
             TRIANGLE, TRIANGLE, source_id="left", target_id="right"
         ).pair_id
     )
-
-
-def test_containment_returns_the_inner_polygon() -> None:
     # No square corner lies on the oblique edge, so every decision is certified
     # by the floating-point filter alone.
     inner = np.asarray([[0.25, 0.25], [0.75, 0.25], [0.25, 0.5]])
     contained = intersect_convex_polygons(SQUARE, inner)
     assert contained.status is IntersectionStatus.SUCCESS
     assert contained.area == pytest.approx(0.0625)
-
-
-@pytest.mark.meshcore
-@requires_meshcore
-def test_analytic_partial_triangle_overlap_with_exact_contacts() -> None:
-    # The intersection is the triangle (0, 0), (1, 0), (0, 1) clipped by the
-    # x+y <= 1/2 half-plane, whose area is 1/8.  The constructed vertices lie
-    # exactly on the oblique clipping line, a zero only exact predicates certify.
-    partial = intersect_convex_polygons(
-        np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
-        np.asarray([[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]]),
-        precision=EXACT,
-    )
-    assert partial.status is IntersectionStatus.SUCCESS
-    assert partial.area == pytest.approx(0.125)
-    np.testing.assert_allclose(partial.centroid, [1.0 / 6.0, 1.0 / 6.0])
-
-
-def test_partial_quad_overlap_and_permutation_canonicalization() -> None:
     left = np.asarray([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]])
     right = np.asarray([[1.0, -0.5], [3.0, -0.5], [3.0, 0.5], [1.0, 0.5]])
     expected = np.asarray([[1.0, 0.0], [2.0, 0.0], [2.0, 0.5], [1.0, 0.5]])
@@ -89,7 +67,23 @@ def test_partial_quad_overlap_and_permutation_canonicalization() -> None:
     assert rotated.area == reference.area == reversed_order.area
 
 
-def test_shared_edge_and_vertex_are_explicit_zero_measure_contacts() -> None:
+@pytest.mark.meshcore
+@requires_meshcore
+def test_analytic_partial_triangle_overlap_with_exact_contacts() -> None:
+    # The intersection is the triangle (0, 0), (1, 0), (0, 1) clipped by the
+    # x+y <= 1/2 half-plane, whose area is 1/8.  The constructed vertices lie
+    # exactly on the oblique clipping line, a zero only exact predicates certify.
+    partial = intersect_convex_polygons(
+        np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+        np.asarray([[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]]),
+        precision=EXACT,
+    )
+    assert partial.status is IntersectionStatus.SUCCESS
+    assert partial.area == pytest.approx(0.125)
+    np.testing.assert_allclose(partial.centroid, [1.0 / 6.0, 1.0 / 6.0])
+
+
+def test_convex_intersections_scenario_2() -> None:
     edge = intersect_convex_polygons(SQUARE, SQUARE + [1.0, 0.0])
     vertex = intersect_convex_polygons(SQUARE, SQUARE + [1.0, 1.0])
 
@@ -101,18 +95,12 @@ def test_shared_edge_and_vertex_are_explicit_zero_measure_contacts() -> None:
     assert vertex.area == 0.0
     np.testing.assert_allclose(vertex.vertices, [[1.0, 1.0]])
     np.testing.assert_allclose(vertex.centroid, [1.0, 1.0])
-
-
-def test_unresolved_filtered_predicate_fails_closed() -> None:
     result = intersect_convex_polygons(SLIVER, SLIVER, precision=FILTERED)
 
     assert result.status is IntersectionStatus.UNCERTAIN_PREDICATE
     assert result.predicate_evidence.mode is PredicateMode.FILTERED
     assert result.predicate_evidence.uncertain
     assert result.predicate_evidence.uncertain_count > 0
-
-
-def test_certified_thin_triangle_is_not_rejected() -> None:
     thin = np.asarray([[0.0, 0.0], [1.0, 1.0e-16], [1.0, 0.0]])
     result = intersect_convex_polygons(thin, thin, precision=FILTERED)
 
@@ -132,7 +120,7 @@ def test_exact_predicates_resolve_the_sliver() -> None:
     assert result.area == 5.75 * 2.0**-48
 
 
-def test_nonconvex_and_nonfinite_inputs_are_rejected() -> None:
+def test_convex_intersections_scenario_3() -> None:
     nonconvex = np.asarray([[0.0, 0.0], [2.0, 0.0], [1.0, 0.5], [2.0, 2.0], [0.0, 2.0]])
     crossing = np.asarray([[0.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]])
 
@@ -150,9 +138,6 @@ def test_nonconvex_and_nonfinite_inputs_are_rejected() -> None:
         ).status
         is IntersectionStatus.NONFINITE_INPUT
     )
-
-
-def test_intersection_areas_conserve_a_partition_without_jit() -> None:
     lower = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
     upper = np.asarray([[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     first = intersect_convex_polygons(lower, SQUARE)

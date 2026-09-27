@@ -169,7 +169,7 @@ def test_governed_external_and_field_references_are_content_verified_and_evidenc
     assert report["passed"]
 
 
-def test_time_leaps_planetary_ellipsoid_and_vector_petrophysics_are_explicit() -> None:
+def test_geophysics_production_qualification_scenario_1() -> None:
     source = phx.interchange.bounded_resource_from_bytes(
         b"leap", limits=phx.interchange.ResourceLimits(100, 1, 1, 1, 0)
     ).manifest
@@ -226,6 +226,99 @@ def test_time_leaps_planetary_ellipsoid_and_vector_petrophysics_are_explicit() -
     facies = geo.FaciesProbabilityPlan(("sand", "clay"), [[1.0, 10.0], [3.0, 30.0]])
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(facies.mixture([0.0, 0.0]), [2.0, 20.0], rtol=1e-12)
+    grid = geo.AcousticGrid((7, 7), (1.0, 1.0))
+    # ty: ignore[invalid-argument-type]
+    acquisition = geo.SeismicAcquisition(grid, [[3.0, 3.0]], [[4.0, 3.0]])
+    forward = geo.ConstantDensityAcousticPlan(grid, 0.1, 4, 2.0)
+    source = jnp.zeros((4, 1)).at[0, 0].set(0.1)
+    observed = forward.simulate(1.5, acquisition, source).traces.values
+    layout = CoordinateLayout(tuple(f"sample-{index}" for index in range(observed.size)))
+    covariance = DiagonalCovarianceAction(jnp.ones(observed.size), layout)
+    shot = geo.AcousticShot(acquisition, source, observed, covariance)
+    inversion = geo.AcousticWaveformInversionPlan(forward, (shot,), replay="full")
+    result = inversion.evaluate(jnp.asarray(1.5))
+    np.testing.assert_allclose(result.objective, 0.0, atol=1e-14)
+    np.testing.assert_allclose(result.gradient, 0.0, atol=1e-12)
+    rtm = inversion.rtm(jnp.asarray(1.5))
+    np.testing.assert_allclose(rtm.image, 0.0, atol=1e-12)
+    projection = geo.AcousticSourceProjectionPlan(
+        inversion, 0, source[None, ...], jnp.asarray(1.5)
+    ).evaluate()
+    # ty: ignore[unresolved-attribute]
+    np.testing.assert_allclose(projection.parameters, [1.0], atol=1e-10)
+
+    # ty: ignore[invalid-argument-type]
+    spectrum = geo.StandardLinearSolidSpectrum([0.5], [0.1])
+    anisotropic = geo.PeriodicAnisotropicViscoelasticPlan(grid, 0.01, 2, spectrum)
+    stiffness = geo.ElasticStiffness.isotropic(2.0, 1.0, 2)
+    state, observations = anisotropic.simulate(
+        1.0,
+        stiffness,
+        # ty: ignore[invalid-argument-type]
+        geo.ElasticAcquisition(grid, [[3.0, 3.0]], [[4.0, 3.0]]),
+        jnp.zeros((2, 1, 2)),
+    )
+    np.testing.assert_allclose(state.velocity_m_s, 0.0)
+    np.testing.assert_allclose(observations, 0.0)
+    other_grid = geo.AcousticGrid((7, 7), (2.0, 1.0))
+    with pytest.raises(ValueError, match="another grid"):
+        anisotropic.simulate(
+            1.0,
+            stiffness,
+            # ty: ignore[invalid-argument-type]
+            geo.ElasticAcquisition(other_grid, [[3.0, 3.0]], [[4.0, 3.0]]),
+            jnp.zeros((2, 1, 2)),
+        )
+    # ty: ignore[invalid-argument-type]
+    layered = geo.LayeredEarthModel([100.0], [0.01, 0.001])
+    plan, expected = geo.MagnetotelluricResponsePlan.from_layered(
+        layered, jnp.asarray([1.0, 10.0])
+    )
+    magnetic = jnp.broadcast_to(jnp.eye(2, dtype="complex128"), (2, 2, 2))
+    response = plan.evaluate(expected, magnetic)
+    assert response.finite
+    np.testing.assert_allclose(response.impedance_ohm, expected)
+
+    remote = jnp.asarray(
+        [
+            [[1.0, 0.0], [1.0, 0.0]],
+            [[0.0, 1.0], [0.0, 1.0]],
+            [[1.0, 1.0], [1.0, -1.0]],
+            [[1.0, -1.0], [-1.0, 1.0]],
+        ],
+        dtype="complex128",
+    )
+    electric = phx.ein.contract("fij,wfj->wfi", expected, remote)
+    estimated, coherence = geo.RemoteReferenceMTPlan().estimate(electric, remote, remote)
+    np.testing.assert_allclose(estimated, expected, atol=1e-12)
+    np.testing.assert_allclose(coherence, 1.0, atol=1e-12)
+
+    # ty: ignore[invalid-argument-type]
+    love = geo.LayeredLoveWavePlan([100.0], [2000.0, 2500.0], [1200.0, 2200.0])
+    # ty: ignore[invalid-argument-type]
+    modes = love.solve([5.0, 10.0])
+    assert jnp.any(modes.mode_valid)
+    assert jnp.all(
+        (modes.phase_velocities_m_s[modes.mode_valid] > 1200.0)
+        & (modes.phase_velocities_m_s[modes.mode_valid] < 2200.0)
+    )
+
+    support = SeriesSupport(np.arange(16) * 0.1)
+    values = jnp.sin(2 * jnp.pi * jnp.arange(16) / 8)
+    series = SampledSeries(support, values, series_id="qualified-ambient-noise")
+    correlation = geo.AmbientNoiseCorrelationPlan(8, 4, 0.1).evaluate(series, series)
+    assert correlation.successful
+    assert jnp.argmax(correlation.correlation) == 4
+    shifted = SampledSeries(
+        SeriesSupport(np.arange(16) * 0.1 + 0.05),
+        values,
+        series_id="shifted-ambient-noise",
+    )
+    with pytest.raises(Exception, match="connected uniformly sampled clock"):
+        geo.AmbientNoiseCorrelationPlan(8, 4, 0.1).evaluate(series, shifted)
+    frequency, ratio = geo.HVSRPlan(0.1).evaluate(2 * values, 2 * values, values)
+    assert frequency.shape == ratio.shape
+    np.testing.assert_allclose(ratio[2], 2.0, rtol=1e-6)
 
 
 def test_distributed_operator_topology_transfer_and_physics_preconditioners_are_paired() -> (
@@ -370,106 +463,7 @@ def test_distributed_operator_topology_transfer_and_physics_preconditioners_are_
     np.testing.assert_allclose(cpr.apply([2.0, 4.0]), [1.0, 0.0])
 
 
-def test_fwi_rtm_source_projection_and_anisotropic_equilibrium_are_exact() -> None:
-    grid = geo.AcousticGrid((7, 7), (1.0, 1.0))
-    # ty: ignore[invalid-argument-type]
-    acquisition = geo.SeismicAcquisition(grid, [[3.0, 3.0]], [[4.0, 3.0]])
-    forward = geo.ConstantDensityAcousticPlan(grid, 0.1, 4, 2.0)
-    source = jnp.zeros((4, 1)).at[0, 0].set(0.1)
-    observed = forward.simulate(1.5, acquisition, source).traces.values
-    layout = CoordinateLayout(tuple(f"sample-{index}" for index in range(observed.size)))
-    covariance = DiagonalCovarianceAction(jnp.ones(observed.size), layout)
-    shot = geo.AcousticShot(acquisition, source, observed, covariance)
-    inversion = geo.AcousticWaveformInversionPlan(forward, (shot,), replay="full")
-    result = inversion.evaluate(jnp.asarray(1.5))
-    np.testing.assert_allclose(result.objective, 0.0, atol=1e-14)
-    np.testing.assert_allclose(result.gradient, 0.0, atol=1e-12)
-    rtm = inversion.rtm(jnp.asarray(1.5))
-    np.testing.assert_allclose(rtm.image, 0.0, atol=1e-12)
-    projection = geo.AcousticSourceProjectionPlan(
-        inversion, 0, source[None, ...], jnp.asarray(1.5)
-    ).evaluate()
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_allclose(projection.parameters, [1.0], atol=1e-10)
-
-    # ty: ignore[invalid-argument-type]
-    spectrum = geo.StandardLinearSolidSpectrum([0.5], [0.1])
-    anisotropic = geo.PeriodicAnisotropicViscoelasticPlan(grid, 0.01, 2, spectrum)
-    stiffness = geo.ElasticStiffness.isotropic(2.0, 1.0, 2)
-    state, observations = anisotropic.simulate(
-        1.0,
-        stiffness,
-        # ty: ignore[invalid-argument-type]
-        geo.ElasticAcquisition(grid, [[3.0, 3.0]], [[4.0, 3.0]]),
-        jnp.zeros((2, 1, 2)),
-    )
-    np.testing.assert_allclose(state.velocity_m_s, 0.0)
-    np.testing.assert_allclose(observations, 0.0)
-    other_grid = geo.AcousticGrid((7, 7), (2.0, 1.0))
-    with pytest.raises(ValueError, match="another grid"):
-        anisotropic.simulate(
-            1.0,
-            stiffness,
-            # ty: ignore[invalid-argument-type]
-            geo.ElasticAcquisition(other_grid, [[3.0, 3.0]], [[4.0, 3.0]]),
-            jnp.zeros((2, 1, 2)),
-        )
-
-
-def test_layered_mt_surface_wave_and_noise_processing_recover_known_responses() -> None:
-    # ty: ignore[invalid-argument-type]
-    layered = geo.LayeredEarthModel([100.0], [0.01, 0.001])
-    plan, expected = geo.MagnetotelluricResponsePlan.from_layered(
-        layered, jnp.asarray([1.0, 10.0])
-    )
-    magnetic = jnp.broadcast_to(jnp.eye(2, dtype="complex128"), (2, 2, 2))
-    response = plan.evaluate(expected, magnetic)
-    assert response.finite
-    np.testing.assert_allclose(response.impedance_ohm, expected)
-
-    remote = jnp.asarray(
-        [
-            [[1.0, 0.0], [1.0, 0.0]],
-            [[0.0, 1.0], [0.0, 1.0]],
-            [[1.0, 1.0], [1.0, -1.0]],
-            [[1.0, -1.0], [-1.0, 1.0]],
-        ],
-        dtype="complex128",
-    )
-    electric = phx.ein.contract("fij,wfj->wfi", expected, remote)
-    estimated, coherence = geo.RemoteReferenceMTPlan().estimate(electric, remote, remote)
-    np.testing.assert_allclose(estimated, expected, atol=1e-12)
-    np.testing.assert_allclose(coherence, 1.0, atol=1e-12)
-
-    # ty: ignore[invalid-argument-type]
-    love = geo.LayeredLoveWavePlan([100.0], [2000.0, 2500.0], [1200.0, 2200.0])
-    # ty: ignore[invalid-argument-type]
-    modes = love.solve([5.0, 10.0])
-    assert jnp.any(modes.mode_valid)
-    assert jnp.all(
-        (modes.phase_velocities_m_s[modes.mode_valid] > 1200.0)
-        & (modes.phase_velocities_m_s[modes.mode_valid] < 2200.0)
-    )
-
-    support = SeriesSupport(np.arange(16) * 0.1)
-    values = jnp.sin(2 * jnp.pi * jnp.arange(16) / 8)
-    series = SampledSeries(support, values, series_id="qualified-ambient-noise")
-    correlation = geo.AmbientNoiseCorrelationPlan(8, 4, 0.1).evaluate(series, series)
-    assert correlation.successful
-    assert jnp.argmax(correlation.correlation) == 4
-    shifted = SampledSeries(
-        SeriesSupport(np.arange(16) * 0.1 + 0.05),
-        values,
-        series_id="shifted-ambient-noise",
-    )
-    with pytest.raises(Exception, match="connected uniformly sampled clock"):
-        geo.AmbientNoiseCorrelationPlan(8, 4, 0.1).evaluate(series, shifted)
-    frequency, ratio = geo.HVSRPlan(0.1).evaluate(2 * values, 2 * values, values)
-    assert frequency.shape == ratio.shape
-    np.testing.assert_allclose(ratio[2], 2.0, rtol=1e-6)
-
-
-def test_dispersive_gpr_uses_passive_ade_cpml_runtime() -> None:
+def test_geophysics_production_qualification_scenario_2() -> None:
     bridge = _bridge()
     pulse = geo.GaussianDerivativeWaveform(10.0, 0.1)
     source = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
@@ -497,9 +491,6 @@ def test_dispersive_gpr_uses_passive_ade_cpml_runtime() -> None:
     assert result.finite
     assert result.passive
     np.testing.assert_allclose(pulse(0.1), 0.0, atol=1e-15)
-
-
-def test_native_map_ensemble_pcn_and_monitoring_workflows_execute() -> None:
     objective = lambda value: 0.5 * jnp.sum((value - 2.0) ** 2)
     hessian = lambda _parameters, direction: direction
     map_plan = geo.MatrixFreeMAPPlan(

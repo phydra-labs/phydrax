@@ -71,7 +71,7 @@ def _dimer() -> Any:
     )
 
 
-def test_water_volume_change_and_upstream_transport_preserve_component_moles() -> None:
+def test_porous_reactive_transport_scenario_1() -> None:
     d = _geometry()
     face = int(np.flatnonzero(np.asarray(d.neighbor_cells) >= 0)[0])
     owner, neighbor = int(d.owner_cells[face]), int(d.neighbor_cells[face])
@@ -91,11 +91,6 @@ def test_water_volume_change_and_upstream_transport_preserve_component_moles() -
     np.testing.assert_allclose(result.concentrations[neighbor], [4.0 / 3.0], atol=1e-10)
     np.testing.assert_allclose(result.face_component_rates[face], [0.03], atol=1e-11)
     np.testing.assert_allclose(result.component_balance, 0.0, atol=1e-11)
-
-
-def test_boundary_injection_zero_initial_inventory_and_outflow_use_correct_states() -> (
-    None
-):
     d = _geometry()
     faces = np.flatnonzero(
         (np.asarray(d.neighbor_cells) < 0) & (np.asarray(d.owner_cells) == 0)
@@ -133,9 +128,6 @@ def test_boundary_injection_zero_initial_inventory_and_outflow_use_correct_state
             1.0,
             TransportBoundary(d, 1),
         )
-
-
-def test_rotated_spd_hybrid_dispersion_preserves_affine_field_and_physical_flux() -> None:
     d = _geometry()
     tensor = jnp.asarray(((2.0, 0.4, 0.2), (0.4, 1.5, -0.1), (0.2, -0.1, 1.0)))
     gradient = jnp.asarray((0.3, -0.2, 0.4))
@@ -183,9 +175,7 @@ def test_mass_action_component_balance_and_native_forward_reverse_derivatives() 
     np.testing.assert_allclose(result.mass_action_residual, 0.0, atol=1e-10)
 
 
-def test_declared_charge_replacement_exposes_open_component_and_davies_activities() -> (
-    None
-):
+def test_porous_reactive_transport_scenario_2() -> None:
     acid = MassActionSystem(
         ("H+", "A-"),
         ("HA",),
@@ -224,11 +214,6 @@ def test_declared_charge_replacement_exposes_open_component_and_davies_activitie
     ):
         # ty: ignore[invalid-argument-type]
         salt.solve([1000.0, 1000.0], initial_concentrations=[1000.0, 1000.0])
-
-
-def test_mineral_exhaustion_and_precipitation_move_identical_stoichiometric_moles() -> (
-    None
-):
     aqueous = MassActionSystem(
         ("A",),
         (),
@@ -280,38 +265,6 @@ def test_mineral_exhaustion_and_precipitation_move_identical_stoichiometric_mole
     absent = unseeded.step([2.0], [0.0], 1.0, 1.0, [1.0], initial_concentrations=[2.0])
     np.testing.assert_allclose(absent.component_inventory, [2.0], atol=1e-10)
     np.testing.assert_allclose(absent.mineral_inventory, [0.0], atol=1e-12)
-
-
-def _exchange(d: Any) -> Any:
-    surface = UnstructuredFiniteVolumePlan(
-        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
-        triangles=np.asarray(((0, 1, 2),)),
-    ).prepare()
-    return FractureMatrixExchange(
-        d,
-        surface,
-        # ty: ignore[invalid-argument-type]
-        [0, 1],
-        # ty: ignore[invalid-argument-type]
-        [0, 0],
-        parent_global_ids=d.cell_global_ids,
-        aperture=0.02,
-        porosity=1.0,
-        # ty: ignore[invalid-argument-type]
-        contact_areas=[0.5, 0.5],
-        # ty: ignore[invalid-argument-type]
-        distances=[0.25, 0.25],
-        # ty: ignore[invalid-argument-type]
-        origin=[0.0, 0.0, 0.0],
-        # ty: ignore[invalid-argument-type]
-        tangent_axes=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        fracture_id="resolved-plane-z0",
-    )
-
-
-def test_fracture_storage_parent_exchange_and_water_balance_are_mixed_dimensional() -> (
-    None
-):
     d = _geometry()
     exchange = _exchange(d)
     np.testing.assert_allclose(exchange.water_volumes(), [0.01], atol=1e-12)
@@ -355,6 +308,33 @@ def test_fracture_storage_parent_exchange_and_water_balance_are_mixed_dimensiona
     )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="overfill"):
         exchange.step(oldm, oldf, vm, vf, jnp.asarray([0.01, 0.01]), 1.0)
+
+
+def _exchange(d: Any) -> Any:
+    surface = UnstructuredFiniteVolumePlan(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        triangles=np.asarray(((0, 1, 2),)),
+    ).prepare()
+    return FractureMatrixExchange(
+        d,
+        surface,
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        [0, 0],
+        parent_global_ids=d.cell_global_ids,
+        aperture=0.02,
+        porosity=1.0,
+        # ty: ignore[invalid-argument-type]
+        contact_areas=[0.5, 0.5],
+        # ty: ignore[invalid-argument-type]
+        distances=[0.25, 0.25],
+        # ty: ignore[invalid-argument-type]
+        origin=[0.0, 0.0, 0.0],
+        # ty: ignore[invalid-argument-type]
+        tangent_axes=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        fracture_id="resolved-plane-z0",
+    )
 
 
 def test_reactive_split_transports_totals_then_solves_real_chemistry_and_solids() -> None:

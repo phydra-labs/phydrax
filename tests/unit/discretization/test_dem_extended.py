@@ -71,7 +71,7 @@ def _compile(
     )
 
 
-def test_energy_ledger_is_source_resolved_rejection_safe_and_qualifiable() -> None:
+def test_dem_extended_scenario_1() -> None:
     compiled = _compile(phx.discretization.LinearSpringDashpotNormalPlan(1.0e4))
     state = compiled.initialize_state(
         0.0,
@@ -120,6 +120,129 @@ def test_energy_ledger_is_source_resolved_rejection_safe_and_qualifiable() -> No
     assert not rejected.successful
     assert rejected.rejection_reasons & int(phx.discretization.DEMRejectionReason.OVERLAP)
     assert rejected.accepted_state.energy.accepted_steps == 0
+    box = phx.discretization.ParticleBox(
+        jnp.asarray([-1.0, -1.0]),
+        jnp.asarray([1.0, 1.0]),
+        periodic_axes=(False, False),
+    )
+    base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
+    verlet = phx.discretization.VerletParticleNeighborhoodPlan(base, 1.0, 0.2)
+    execution = phx.discretization.ParticleExecutionPolicy(
+        realization="cell_edge_list", kernel_backend="verlet_fused"
+    )
+    compiled = _compile(
+        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+        neighborhood=verlet,
+        execution=execution,
+    )
+    positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
+    state = compiled.initialize_state(0.0, positions, jnp.zeros((2, 2)))
+    detail = compiled.dynamics.step_detailed(
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        state,
+        jnp.asarray(1.0e-5),
+        None,
+    )
+    assert detail.successful
+    assert not detail.accepted_state.neighborhood_cache.rebuilt
+    assert detail.accepted_state.neighborhood_cache.rebuild_count == 1
+
+    batch = phx.discretization.initialize_dem_batch(
+        compiled.dynamics,
+        jnp.asarray(0.0),
+        jnp.stack((positions, positions + jnp.asarray([0.0, 0.05]))),
+        jnp.zeros((2, 2, 2)),
+    )
+    batched = phx.discretization.batch_step_detailed(
+        compiled.dynamics,
+        batch,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        jnp.asarray(1.0e-5),
+        phx.discretization.DEMBatchExecutionPlan(),
+    )
+    assert jnp.all(batched.successful)
+
+    hierarchy = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
+        jnp.asarray([0.5, 0.5]),
+        jnp.asarray([0.1, 0.6]),
+        2,
+        1,
+        box,
+        skin=0.1,
+    )
+    particles = compiled.dynamics.bodies.particles
+    hierarchy_state = hierarchy.prepare(particles).build(positions)
+    assert hierarchy_state.successful
+    assert hierarchy_state.pair_count == 1
+    hierarchy_compiled = _compile(
+        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+        neighborhood=hierarchy,
+    )
+    hierarchy_runtime = hierarchy_compiled.initialize_state(
+        0.0, positions, jnp.zeros((2, 2))
+    )
+    hierarchy_step = hierarchy_compiled.dynamics.step_detailed(
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        hierarchy_runtime,
+        jnp.asarray(1.0e-5),
+        None,
+    )
+    assert hierarchy_step.successful
+    assert hierarchy_step.accepted_state.particle_history.valid[0]
+
+    underresolved = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
+        jnp.asarray([0.49, 0.49]),
+        jnp.asarray([0.1, 0.6]),
+        2,
+        1,
+        box,
+    )
+    with pytest.raises(ValueError, match="contact-law envelopes"):
+        _compile(
+            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+            neighborhood=underresolved,
+        )
+    for mode in [
+        phx.discretization.DEMBatchExecutionMode.ALWAYS_BUILD,
+        phx.discretization.DEMBatchExecutionMode.UNIFORM_REBUILD,
+    ]:
+        box = phx.discretization.ParticleBox(
+            jnp.asarray([-1.0, -1.0]),
+            jnp.asarray([1.0, 1.0]),
+            periodic_axes=(False, False),
+        )
+        base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
+        compiled = _compile(
+            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+            neighborhood=phx.discretization.VerletParticleNeighborhoodPlan(
+                base, 1.0, 0.2
+            ),
+        )
+        positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
+        batch = phx.discretization.initialize_dem_batch(
+            compiled.dynamics,
+            jnp.asarray(0.0),
+            jnp.stack((positions, positions)),
+            jnp.zeros((2, 2, 2)),
+        )
+        uncached = eqx.tree_at(
+            lambda value: value.neighborhood_cache,
+            batch,
+            None,
+            is_leaf=lambda value: value is None,
+        )
+        with pytest.raises(ValueError, match="requires a neighborhood cache"):
+            phx.discretization.batch_step_detailed(
+                compiled.dynamics,
+                uncached,
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(0.0),
+                jnp.asarray(1.0e-5),
+                phx.discretization.DEMBatchExecutionPlan(mode),
+            )
 
 
 def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain() -> None:
@@ -211,136 +334,6 @@ def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain() -> None:
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
             cohesion=bridge,
             barriers=(barrier,),
-        )
-
-
-def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority() -> None:
-    box = phx.discretization.ParticleBox(
-        jnp.asarray([-1.0, -1.0]),
-        jnp.asarray([1.0, 1.0]),
-        periodic_axes=(False, False),
-    )
-    base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
-    verlet = phx.discretization.VerletParticleNeighborhoodPlan(base, 1.0, 0.2)
-    execution = phx.discretization.ParticleExecutionPolicy(
-        realization="cell_edge_list", kernel_backend="verlet_fused"
-    )
-    compiled = _compile(
-        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-        neighborhood=verlet,
-        execution=execution,
-    )
-    positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
-    state = compiled.initialize_state(0.0, positions, jnp.zeros((2, 2)))
-    detail = compiled.dynamics.step_detailed(
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0),
-        state,
-        jnp.asarray(1.0e-5),
-        None,
-    )
-    assert detail.successful
-    assert not detail.accepted_state.neighborhood_cache.rebuilt
-    assert detail.accepted_state.neighborhood_cache.rebuild_count == 1
-
-    batch = phx.discretization.initialize_dem_batch(
-        compiled.dynamics,
-        jnp.asarray(0.0),
-        jnp.stack((positions, positions + jnp.asarray([0.0, 0.05]))),
-        jnp.zeros((2, 2, 2)),
-    )
-    batched = phx.discretization.batch_step_detailed(
-        compiled.dynamics,
-        batch,
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0e-5),
-        phx.discretization.DEMBatchExecutionPlan(),
-    )
-    assert jnp.all(batched.successful)
-
-    hierarchy = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
-        jnp.asarray([0.5, 0.5]),
-        jnp.asarray([0.1, 0.6]),
-        2,
-        1,
-        box,
-        skin=0.1,
-    )
-    particles = compiled.dynamics.bodies.particles
-    hierarchy_state = hierarchy.prepare(particles).build(positions)
-    assert hierarchy_state.successful
-    assert hierarchy_state.pair_count == 1
-    hierarchy_compiled = _compile(
-        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-        neighborhood=hierarchy,
-    )
-    hierarchy_runtime = hierarchy_compiled.initialize_state(
-        0.0, positions, jnp.zeros((2, 2))
-    )
-    hierarchy_step = hierarchy_compiled.dynamics.step_detailed(
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0),
-        hierarchy_runtime,
-        jnp.asarray(1.0e-5),
-        None,
-    )
-    assert hierarchy_step.successful
-    assert hierarchy_step.accepted_state.particle_history.valid[0]
-
-    underresolved = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
-        jnp.asarray([0.49, 0.49]),
-        jnp.asarray([0.1, 0.6]),
-        2,
-        1,
-        box,
-    )
-    with pytest.raises(ValueError, match="contact-law envelopes"):
-        _compile(
-            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-            neighborhood=underresolved,
-        )
-
-
-@pytest.mark.parametrize(
-    "mode",
-    [
-        phx.discretization.DEMBatchExecutionMode.ALWAYS_BUILD,
-        phx.discretization.DEMBatchExecutionMode.UNIFORM_REBUILD,
-    ],
-)
-def test_batched_verlet_step_without_neighborhood_cache_is_rejected(mode: Any) -> None:
-    box = phx.discretization.ParticleBox(
-        jnp.asarray([-1.0, -1.0]),
-        jnp.asarray([1.0, 1.0]),
-        periodic_axes=(False, False),
-    )
-    base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
-    compiled = _compile(
-        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-        neighborhood=phx.discretization.VerletParticleNeighborhoodPlan(base, 1.0, 0.2),
-    )
-    positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
-    batch = phx.discretization.initialize_dem_batch(
-        compiled.dynamics,
-        jnp.asarray(0.0),
-        jnp.stack((positions, positions)),
-        jnp.zeros((2, 2, 2)),
-    )
-    uncached = eqx.tree_at(
-        lambda value: value.neighborhood_cache,
-        batch,
-        None,
-        is_leaf=lambda value: value is None,
-    )
-    with pytest.raises(ValueError, match="requires a neighborhood cache"):
-        phx.discretization.batch_step_detailed(
-            compiled.dynamics,
-            uncached,
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0.0),
-            jnp.asarray(1.0e-5),
-            phx.discretization.DEMBatchExecutionPlan(mode),
         )
 
 

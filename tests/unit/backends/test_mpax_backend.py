@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_mpax_capabilities_are_lazy_and_specific() -> None:
+def test_mpax_backend_scenario_1() -> None:
     availability = phx.backends.mpax_availability()
     capabilities = availability.capabilities
 
@@ -22,6 +22,13 @@ def test_mpax_capabilities_are_lazy_and_specific() -> None:
     assert method_capabilities.dense
     assert not method_capabilities.sparse
     assert not method_capabilities.matrix_free
+    problem = phx.optim.QuadraticProgram(jnp.eye(1), jnp.zeros(1))
+    policy = phx.optim.ConvexSolvePolicy(phx.optim.MPAXr2HPDHG())
+
+    with pytest.raises(ValueError, match="does not support QPs"):
+        phx.optim.plan_convex_program(problem, policy)
+    with pytest.raises(ValueError, match="bounded finite budget"):
+        phx.backends.MPAXPlan("rapdhg", unroll=True, iteration_limit=100_000)
 
 
 def test_missing_mpax_raises_selected_backend_error() -> None:
@@ -30,16 +37,3 @@ def test_missing_mpax_raises_selected_backend_error() -> None:
         pytest.skip("MPAX is installed in this environment.")
     with pytest.raises(phx.backends.BackendUnavailableError, match="mpax"):
         phx.backends.prepare_mpax()
-
-
-def test_mpax_methods_validate_problem_kind_before_provider_import() -> None:
-    problem = phx.optim.QuadraticProgram(jnp.eye(1), jnp.zeros(1))
-    policy = phx.optim.ConvexSolvePolicy(phx.optim.MPAXr2HPDHG())
-
-    with pytest.raises(ValueError, match="does not support QPs"):
-        phx.optim.plan_convex_program(problem, policy)
-
-
-def test_unrolled_mpax_requires_finite_bounded_iteration_capacity() -> None:
-    with pytest.raises(ValueError, match="bounded finite budget"):
-        phx.backends.MPAXPlan("rapdhg", unroll=True, iteration_limit=100_000)

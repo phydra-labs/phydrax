@@ -20,7 +20,7 @@ from phydrax._classification import (
 )
 
 
-def test_hard_classification_kernels_preserve_likelihood_contracts() -> None:
+def test_classification_objectives_scenario_1() -> None:
     binary_logits = jnp.asarray([-10_000.0, 10_000.0])
     binary_target = jnp.asarray([0, 1])
     assert jnp.all(
@@ -40,9 +40,6 @@ def test_hard_classification_kernels_preserve_likelihood_contracts() -> None:
     )
     invalid = categorical_log_prob_from_logits(logits, jnp.asarray([-1.0, 3.0]))
     assert jnp.all(jnp.isneginf(invalid))
-
-
-def test_soft_categorical_cross_entropy_validates_simplex_without_renormalizing() -> None:
     logits = jnp.asarray([[2.0, -1.0, 0.3]])
     target = jnp.asarray([[0.25, 0.5, 0.25]])
     expected = -jnp.sum(target * jax.nn.log_softmax(logits, axis=-1), axis=-1)
@@ -54,9 +51,6 @@ def test_soft_categorical_cross_entropy_validates_simplex_without_renormalizing(
             logits, jnp.asarray([[0.2, 0.2, 0.2]])
         )[0]
     )
-
-
-def test_focal_gamma_zero_matches_nll_in_value_and_gradient() -> None:
     binary_logits = jnp.asarray([-2.0, 0.3, 1.7])
     binary_target = jnp.asarray([0, 1, 1])
     np.testing.assert_allclose(
@@ -79,9 +73,6 @@ def test_focal_gamma_zero_matches_nll_in_value_and_gradient() -> None:
         categorical_focal_risk_from_logits(logits, labels, gamma=0.0),
         -categorical_log_prob_from_logits(logits, labels),
     )
-
-
-def test_focal_weights_remain_traceable() -> None:
     logits = jnp.asarray([[1.2, -0.4, 0.1], [-0.7, 0.3, 1.6]])
     labels = jnp.asarray([0, 2])
 
@@ -116,7 +107,7 @@ def test_focal_weights_remain_traceable() -> None:
     assert jnp.all(jnp.isfinite(binary))
 
 
-def test_classification_dispatch_rejects_unknown_selectors() -> None:
+def test_classification_objectives_scenario_2() -> None:
     with pytest.raises(ValueError, match="Unknown classification kind"):
         # ty: ignore[invalid-argument-type]
         classification_probabilities(jnp.ones((2,)), kind="other")
@@ -128,9 +119,20 @@ def test_classification_dispatch_rejects_unknown_selectors() -> None:
             # ty: ignore[invalid-argument-type]
             objective="other",
         )
-
-
-def test_target_masks_sanitize_invalid_inactive_values_before_scoring() -> None:
+    focal = phx.ml.ClassificationObjective.focal(
+        gamma=1.5,
+        alpha=(1.0, 2.0, 3.0),
+    )
+    assert focal.to_dict() == {
+        "kind": "focal",
+        "gamma": 1.5,
+        "alpha": (1.0, 2.0, 3.0),
+        "thresholds": None,
+    }
+    ordinal = phx.ml.ClassificationObjective.nll(thresholds=(-1.0, 0.0, 2.0))
+    assert ordinal.thresholds == (-1.0, 0.0, 2.0)
+    with pytest.raises(ValueError, match="strictly increasing"):
+        phx.ml.ClassificationObjective.nll(thresholds=(0.0, 0.0))
     logits = jnp.asarray([[2.0, -1.0], [jnp.nan, jnp.nan]])
     labels = jnp.asarray([0, -99])
     mask = jnp.asarray([True, False])
@@ -157,9 +159,14 @@ def test_target_masks_sanitize_invalid_inactive_values_before_scoring() -> None:
     )(logits)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.all(gradient[1] == 0.0)
-
-
-def test_ordinal_probabilities_and_log_prob_are_ordered_and_normalized() -> None:
+    multilabel = phx.ml.TargetSchema("multilabel", names=("wet", "warm"))
+    assert multilabel.num_labels == 2
+    ordinal = phx.ml.TargetSchema("ordinal", class_labels=("none", "mild", "severe"))
+    assert ordinal.num_classes == 3
+    with pytest.raises(ValueError, match="named label"):
+        phx.ml.TargetSchema("multilabel")
+    with pytest.raises(ValueError, match="at least three"):
+        phx.ml.TargetSchema("ordinal", class_labels=("low", "high"))
     thresholds = jnp.asarray([-1.0, 0.5, 2.0])
     location = jnp.asarray([-2.0, 0.0, 3.0])
     probabilities = classification_probabilities(
@@ -187,31 +194,3 @@ def test_ordinal_probabilities_and_log_prob_are_ordered_and_normalized() -> None
         probabilities,
         atol=2e-15,
     )
-
-
-def test_classification_objective_is_canonical_and_json_safe() -> None:
-    focal = phx.ml.ClassificationObjective.focal(
-        gamma=1.5,
-        alpha=(1.0, 2.0, 3.0),
-    )
-    assert focal.to_dict() == {
-        "kind": "focal",
-        "gamma": 1.5,
-        "alpha": (1.0, 2.0, 3.0),
-        "thresholds": None,
-    }
-    ordinal = phx.ml.ClassificationObjective.nll(thresholds=(-1.0, 0.0, 2.0))
-    assert ordinal.thresholds == (-1.0, 0.0, 2.0)
-    with pytest.raises(ValueError, match="strictly increasing"):
-        phx.ml.ClassificationObjective.nll(thresholds=(0.0, 0.0))
-
-
-def test_target_schema_distinguishes_multilabel_ordinal_and_ranking() -> None:
-    multilabel = phx.ml.TargetSchema("multilabel", names=("wet", "warm"))
-    assert multilabel.num_labels == 2
-    ordinal = phx.ml.TargetSchema("ordinal", class_labels=("none", "mild", "severe"))
-    assert ordinal.num_classes == 3
-    with pytest.raises(ValueError, match="named label"):
-        phx.ml.TargetSchema("multilabel")
-    with pytest.raises(ValueError, match="at least three"):
-        phx.ml.TargetSchema("ordinal", class_labels=("low", "high"))

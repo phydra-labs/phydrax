@@ -10,7 +10,7 @@ from phydrax.meshing.providers._poisson import (
 )
 
 
-def test_poisson_reconstructs_translated_sphere_without_sample_lineage() -> None:
+def test_poisson_contracts() -> None:
     pytest.importorskip("open3d")
     count = 400
     z = 1.0 - 2.0 * (np.arange(count) + 0.5) / count
@@ -43,9 +43,6 @@ def test_poisson_reconstructs_translated_sphere_without_sample_lineage() -> None
     assert result.boundary.metadata.source_id != source.source_id
     assert result.associations == ()
     assert result.labels == ()
-
-
-def test_poisson_requires_nonzero_supplied_normals() -> None:
     with pytest.raises(ValueError, match="nonzero"):
         OrientedPointCloud(
             np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))),

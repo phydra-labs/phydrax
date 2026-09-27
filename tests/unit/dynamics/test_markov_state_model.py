@@ -21,7 +21,7 @@ def _state_data(assignments: Any, *, step: Any = 1.0) -> Any:
     )
 
 
-def test_hard_and_soft_reversible_models_agree_and_obey_detailed_balance() -> None:
+def test_markov_state_model_scenario_1() -> None:
     assignments = jnp.asarray([0, 0, 1, 1, 0, 1, 1, 0] * 20, dtype=jnp.int32)
     data = _state_data(assignments)
     hard = phx.dynamics.identification.fit_markov_state_model(
@@ -41,9 +41,6 @@ def test_hard_and_soft_reversible_models_agree_and_obey_detailed_balance() -> No
         atol=1.0e-12,
     )
     assert hard.diagnostics.detailed_balance_residual < 1.0e-12
-
-
-def test_disconnected_markov_model_reports_nonunique_support() -> None:
     assignments = jnp.asarray([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     reset = jnp.zeros((assignments.size - 1,), dtype="bool").at[2].set(True)
     data = phx.dynamics.TrajectoryData(
@@ -60,9 +57,6 @@ def test_disconnected_markov_model_reports_nonunique_support() -> None:
     assert bool(model.valid)
     assert not bool(model.diagnostics.irreducible)
     assert int(model.diagnostics.communicating_class_count) == 2
-
-
-def test_chapman_kolmogorov_validation_uses_independent_long_lag() -> None:
     assignments = jnp.asarray([0, 0, 1, 1, 0, 0, 1, 1] * 30, dtype=jnp.int32)
     data = _state_data(assignments, step=0.5)
     short = phx.dynamics.identification.fit_markov_state_model(

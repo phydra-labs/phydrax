@@ -23,7 +23,7 @@ def _query(index: Any, lower: Any, upper: Any, **kwargs: Any) -> Any:
     )
 
 
-def test_identity_and_containment_emit_source_and_target_ids() -> None:
+def test_bvh_overlap_scenario_1() -> None:
     index = build_host_aabb_overlap_bvh(
         [[0.0, 0.0], [3.0, 3.0]],
         [[2.0, 2.0], [4.0, 4.0]],
@@ -44,9 +44,6 @@ def test_identity_and_containment_emit_source_and_target_ids() -> None:
     assert result.source_local_ids.tolist() == [5]
     assert result.target_local_ids.tolist() == [7]
     assert result.content_identity
-
-
-def test_touching_boxes_are_excluded_unless_zero_measure_is_requested() -> None:
     index = build_host_aabb_overlap_bvh([[0.0, 0.0]], [[1.0, 1.0]], global_ids=[4])
     lower = [[1.0, 0.0]]
     upper = [[2.0, 1.0]]
@@ -55,9 +52,6 @@ def test_touching_boxes_are_excluded_unless_zero_measure_is_requested() -> None:
     assert excluded.candidate_count == 0
     assert included.candidate_count == 1
     assert excluded.content_identity != included.content_identity
-
-
-def test_candidates_are_stably_sorted_and_permutation_invariant() -> None:
     index_a = build_host_aabb_overlap_bvh(
         [[0.0, 0.0], [0.0, 0.0]],
         [[3.0, 3.0], [2.0, 2.0]],
@@ -83,15 +77,12 @@ def test_candidates_are_stably_sorted_and_permutation_invariant() -> None:
     assert first.content_identity == second.content_identity
 
 
-def test_tolerance_covers_positive_measure_boundary_roundoff() -> None:
+def test_bvh_overlap_scenario_2() -> None:
     index = build_host_aabb_overlap_bvh(
         [[0.0, 0.0]], [[1.0, 1.0]], global_ids=[1], absolute_tolerance=1e-10
     )
     result = _query(index, [[1.0 - 5e-12, 0.0]], [[2.0, 1.0]], source_global_ids=[2])
     assert result.candidate_count == 1
-
-
-def test_candidate_and_memory_limits_fail_closed() -> None:
     index = build_host_aabb_overlap_bvh([[0.0, 0.0]], [[2.0, 2.0]], global_ids=[1])
     kwargs = {"source_global_ids": [2, 3], "source_local_ids": [0, 1]}
     candidate_limited = _query(
@@ -113,9 +104,6 @@ def test_candidate_and_memory_limits_fail_closed() -> None:
     assert candidate_limited.candidate_count == 0
     assert memory_limited.status is OverlapSearchStatus.MEMORY_LIMIT
     assert memory_limited.candidate_count == 0
-
-
-def test_invalid_bounds_fail_closed() -> None:
     index = build_host_aabb_overlap_bvh([[0.0, np.nan]], [[1.0, 1.0]], global_ids=[1])
     assert index.status is OverlapSearchStatus.INVALID_BOUNDS
     result = _query(index, [[0.0, 0.0]], [[1.0, 1.0]])
@@ -123,7 +111,7 @@ def test_invalid_bounds_fail_closed() -> None:
     assert result.candidate_count == 0
 
 
-def test_repeated_queries_are_deterministic() -> None:
+def test_bvh_overlap_scenario_3() -> None:
     index = build_host_aabb_overlap_bvh(
         [[-1.0, -1.0], [0.0, 0.0]],
         [[2.0, 2.0], [3.0, 3.0]],
@@ -135,9 +123,6 @@ def test_repeated_queries_are_deterministic() -> None:
     assert first.content_identity == second.content_identity
     assert np.array_equal(first.source_global_ids, second.source_global_ids)
     assert np.array_equal(first.target_global_ids, second.target_global_ids)
-
-
-def test_every_brute_force_candidate_is_returned_in_canonical_order() -> None:
     rng = np.random.default_rng(4)
     target_lower = np.round(rng.random((150, 3)) * 8.0) / 8.0
     target_upper = target_lower + np.round(rng.random((150, 3)) * 2.0) / 8.0 + 0.125

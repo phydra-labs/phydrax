@@ -31,21 +31,18 @@ def _modal(space: Any) -> Any:
     return coefficients
 
 
-@pytest.mark.parametrize("spin", [-2, -1, 1, 2])
-def test_spin_point_evaluation_matches_s2fft_reconstruction(spin: Any) -> None:
-    space = _complex_space(5, spin)
-    coefficients = _modal(space)
-    theta, phi = jnp.meshgrid(
-        space.transform.theta,
-        space.transform.phi,
-        indexing="ij",
-    )
-    actual = eqx.filter_jit(space.evaluate_angles)(coefficients, theta, phi)
-    expected = space.reconstruct(coefficients)
-    np.testing.assert_allclose(actual, expected, rtol=4e-11, atol=4e-12)
-
-
-def test_spin_frame_rotation_and_framed_pole_are_explicit() -> None:
+def test_spherical_spin_evaluation_scenario_1() -> None:
+    for spin in [-2, -1, 1, 2]:
+        space = _complex_space(5, spin)
+        coefficients = _modal(space)
+        theta, phi = jnp.meshgrid(
+            space.transform.theta,
+            space.transform.phi,
+            indexing="ij",
+        )
+        actual = eqx.filter_jit(space.evaluate_angles)(coefficients, theta, phi)
+        expected = space.reconstruct(coefficients)
+        np.testing.assert_allclose(actual, expected, rtol=4e-11, atol=4e-12)
     spin = 2
     space = _complex_space(4, spin)
     coefficients = _modal(space)
@@ -82,9 +79,6 @@ def test_spin_frame_rotation_and_framed_pole_are_explicit() -> None:
     assert jnp.isfinite(tangent)
     with pytest.raises(Exception, match="requires an explicit tangent_frame"):
         space.evaluate(coefficients, north)
-
-
-def test_high_spin_stable_route_is_finite() -> None:
     space = _complex_space(9, 8)
     coefficients = _modal(space)
     value = space.evaluate_angles(coefficients, 0.7, -0.2)

@@ -130,7 +130,7 @@ def _whole_cell_assembly() -> Any:
     ).prepare()
 
 
-def test_sparse_stoichiometry_conservation_and_nonnegative_propensities() -> None:
+def test_systems_biology_scenario_1() -> None:
     network = _closed_conversion()
     np.testing.assert_array_equal(network.stoichiometry, np.asarray([[-1, 1], [1, -1]]))
     np.testing.assert_allclose(
@@ -144,6 +144,44 @@ def test_sparse_stoichiometry_conservation_and_nonnegative_propensities() -> Non
     np.testing.assert_allclose(evaluation.conservation_residual, 0.0, atol=1.0e-12)
     boundary = network.evaluate(jnp.asarray([0.0, 5.0]))
     assert float(boundary.propensities[0]) == 0.0
+    network = _closed_conversion()
+    with pytest.raises(ValueError, match="stoichiometry_capacity"):
+        StoichiometricNetworkPlan(
+            network.plan.name,
+            network.plan.compartments,
+            network.plan.species,
+            network.plan.processes,
+            # ty: ignore[invalid-argument-type]
+            stoichiometry_capacity=2.0,
+        )
+    with pytest.raises(ValueError, match="substeps"):
+        # ty: ignore[invalid-argument-type]
+        MultirateScheduleEntry("process", 2.0)
+    compartment = CompartmentSpec("cell", 1.0)
+    with pytest.raises(ValueError, match="incompatible"):
+        StoichiometricNetworkPlan(
+            "mixed-units",
+            (compartment,),
+            (
+                SpeciesSpec("molecules", "cell", unit="molecule"),
+                SpeciesSpec("amount", "cell", unit="mol"),
+            ),
+            (
+                StoichiometricProcessSpec(
+                    "invalid-conversion",
+                    {"molecules": -1, "amount": 1},
+                    MassActionPropensity(1.0, {"molecules": 1}),
+                ),
+            ),
+        )
+    network = _closed_conversion()
+    parameters = network.propensity_parameters.at[0, 0].set(jnp.nan)
+    evaluation = network.evaluate(
+        jnp.asarray([20.0, 5.0]), StoichiometricRuntime(parameters)
+    )
+    assert not bool(evaluation.successful)
+    assert not bool(evaluation.parameter_valid)
+    assert bool(jnp.all(jnp.isnan(evaluation.propensities)))
 
 
 def test_thermochemical_binding_requires_exact_reactants_orders_and_content() -> None:
@@ -213,51 +251,7 @@ def test_thermochemical_binding_requires_exact_reactants_orders_and_content() ->
     assert first.binding_id != second.binding_id
 
 
-def test_plan_capacities_and_stoichiometric_units_are_exact() -> None:
-    network = _closed_conversion()
-    with pytest.raises(ValueError, match="stoichiometry_capacity"):
-        StoichiometricNetworkPlan(
-            network.plan.name,
-            network.plan.compartments,
-            network.plan.species,
-            network.plan.processes,
-            # ty: ignore[invalid-argument-type]
-            stoichiometry_capacity=2.0,
-        )
-    with pytest.raises(ValueError, match="substeps"):
-        # ty: ignore[invalid-argument-type]
-        MultirateScheduleEntry("process", 2.0)
-    compartment = CompartmentSpec("cell", 1.0)
-    with pytest.raises(ValueError, match="incompatible"):
-        StoichiometricNetworkPlan(
-            "mixed-units",
-            (compartment,),
-            (
-                SpeciesSpec("molecules", "cell", unit="molecule"),
-                SpeciesSpec("amount", "cell", unit="mol"),
-            ),
-            (
-                StoichiometricProcessSpec(
-                    "invalid-conversion",
-                    {"molecules": -1, "amount": 1},
-                    MassActionPropensity(1.0, {"molecules": 1}),
-                ),
-            ),
-        )
-
-
-def test_invalid_runtime_parameters_fail_closed() -> None:
-    network = _closed_conversion()
-    parameters = network.propensity_parameters.at[0, 0].set(jnp.nan)
-    evaluation = network.evaluate(
-        jnp.asarray([20.0, 5.0]), StoichiometricRuntime(parameters)
-    )
-    assert not bool(evaluation.successful)
-    assert not bool(evaluation.parameter_valid)
-    assert bool(jnp.all(jnp.isnan(evaluation.propensities)))
-
-
-def test_opposing_reservoir_flows_remain_separate_in_ledgers() -> None:
+def test_systems_biology_scenario_2() -> None:
     compartment = CompartmentSpec("cell", 1.0)
     network = StoichiometricNetworkPlan(
         "reservoir-ledgers",
@@ -283,9 +277,6 @@ def test_opposing_reservoir_flows_remain_separate_in_ledgers() -> None:
     np.testing.assert_allclose(evaluation.source_rate, [10.0, 0.0])
     np.testing.assert_allclose(evaluation.sink_rate, [8.0, 0.0])
     np.testing.assert_allclose(evaluation.conservation_residual, 0.0, atol=1.0e-12)
-
-
-def test_supported_nonlinear_propensities_are_finite_and_nonnegative() -> None:
     compartment = CompartmentSpec("cell", 2.0)
     species = tuple(
         SpeciesSpec(name, "cell")
@@ -315,9 +306,6 @@ def test_supported_nonlinear_propensities_are_finite_and_nonnegative() -> None:
     assert bool(result.successful)
     assert bool(jnp.all(jnp.isfinite(result.propensities)))
     assert bool(jnp.all(result.propensities >= 0.0))
-
-
-def test_exact_ssa_reuses_native_realization_reproducibly() -> None:
     network = _closed_conversion()
     process = network.exact_jump_process()
     realization = PoissonClockRealization(
@@ -348,7 +336,7 @@ def test_exact_ssa_reuses_native_realization_reproducibly() -> None:
     np.testing.assert_allclose(jnp.sum(first.states, axis=-1), 50.0)
 
 
-def test_cle_ensemble_mean_agrees_with_deterministic_step_in_large_count_regime() -> None:
+def test_systems_biology_scenario_3() -> None:
     network = _closed_conversion()
     state = jnp.asarray([10_000.0, 10_000.0])
     duration = jnp.asarray(0.05)
@@ -371,9 +359,6 @@ def test_cle_ensemble_mean_agrees_with_deterministic_step_in_large_count_regime(
     assert not bool(endpoint_limited.evidence.regime_valid)
     zero_intensity = network.cle_step(jnp.asarray([0.0, 100.0]), 0.01, jax.random.key(5))
     assert not bool(zero_intensity.evidence.differentiable)
-
-
-def test_telegraph_stationary_moments_and_gradient_sanity() -> None:
     model = TelegraphGeneExpressionPlan(2.0, 3.0, 12.0, 4.0, 1.5).prepare()
     moments = model.stationary_moments()
     np.testing.assert_allclose(moments.promoter_mean, 0.4)
@@ -413,9 +398,6 @@ def test_telegraph_stationary_moments_and_gradient_sanity() -> None:
     identifiability = model.identifiability_evidence()
     assert identifiability.rank == 4
     assert not bool(identifiability.locally_identifiable)
-
-
-def test_capture_and_background_count_likelihood_is_exact() -> None:
     measurement = CountMeasurementPlan(0.5, 0.0, observation_capacity=8).prepare()
     evaluation = measurement.log_likelihood(1, 2)
     assert bool(evaluation.valid)
@@ -438,7 +420,7 @@ def test_capture_and_background_count_likelihood_is_exact() -> None:
     assert not bool(measurement.log_likelihood(9, 10).valid)
 
 
-def test_evidence_bindings_reject_conflicts_and_cover_prepared_identity() -> None:
+def test_systems_biology_scenario_4() -> None:
     model = TelegraphGeneExpressionPlan(2.0, 3.0, 12.0, 4.0, 1.5).prepare()
     reference = BiologicalReference("doi", "10.example/gene", "table:2")
     fact = BiologicalFact("ecoli", "transcription-rate", 12.0, "s^-1", reference)
@@ -499,9 +481,6 @@ def test_evidence_bindings_reject_conflicts_and_cover_prepared_identity() -> Non
     conflicting = BiologicalFact("ecoli", "transcription-rate", 11.0, "s^-1", reference)
     with pytest.raises(ValueError, match="Conflicting biological facts"):
         bind_biological_evidence(model, (fact, conflicting), (condition,), (assertion,))
-
-
-def test_whole_cell_rechecks_regime_after_shared_deltas_are_coupled() -> None:
     compartment = CompartmentSpec("cell", 1.0)
     drain = StoichiometricNetworkPlan(
         "drain",
@@ -537,9 +516,6 @@ def test_whole_cell_rechecks_regime_after_shared_deltas_are_coupled() -> None:
     assert not bool(evaluation.regime_valid)
     assert not bool(evaluation.valid)
     assert not bool(evaluation.commit(state).committed)
-
-
-def test_whole_cell_exchange_conservation_atomic_commit_and_rollback() -> None:
     assembly = _whole_cell_assembly()
     with pytest.raises(ValueError, match="reservoir"):
         WholeCellAssemblyPlan(

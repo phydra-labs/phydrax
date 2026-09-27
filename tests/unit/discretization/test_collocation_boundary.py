@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_chebyshev_collocation_differentiates_polynomials_and_solves_poisson() -> None:
+def test_collocation_boundary_scenario_1() -> None:
     collocation = phx.discretization.ChebyshevCollocation(17)
     nodes = collocation.nodes
 
@@ -23,9 +23,6 @@ def test_chebyshev_collocation_differentiates_polynomials_and_solves_poisson() -
     assert jnp.allclose(first, 4.0 * nodes**3, atol=1e-9)
     assert jnp.allclose(second, 12.0 * nodes**2, atol=1e-8)
     assert jnp.allclose(solution, nodes**2 - 1.0, atol=1e-8)
-
-
-def test_low_rank_boundary_correction_enforces_constraints_exactly() -> None:
     operator = jnp.asarray(
         [
             [2.0, -1.0, 0.0],
@@ -39,17 +36,11 @@ def test_low_rank_boundary_correction_enforces_constraints_exactly() -> None:
     solution = plan.solve(jnp.zeros((3,)), jnp.asarray([1.0, 3.0]))
 
     assert jnp.allclose(solution, jnp.asarray([1.0, 2.0, 3.0]), atol=1e-7)
-
-
-def test_low_rank_boundary_correction_rejects_singular_capacitance() -> None:
     operator = jnp.asarray([[0.0, 1.0], [1.0, 0.0]])
 
     with pytest.raises(ValueError, match="capacitance is singular"):
         # ty: ignore[invalid-argument-type]
         phx.linalg.LowRankBoundaryCorrectionPlan(operator, [0])
-
-
-def test_collocation_and_boundary_correction_refuse_unsafe_dense_budgets() -> None:
     with pytest.raises(ValueError, match="maximum_dimension"):
         phx.discretization.ChebyshevCollocation(33, maximum_dimension=16)
 

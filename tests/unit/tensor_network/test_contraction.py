@@ -24,7 +24,7 @@ def _matrix_structure() -> Any:
     )
 
 
-def test_labeled_plan_preserves_output_order_refresh_and_jit() -> None:
+def test_contraction_scenario_1() -> None:
     structure = _matrix_structure()
     plan = tn.plan_contraction(structure, dtype="float64", optimizer="optimal")
     left = jnp.arange(6.0).reshape((2, 3))
@@ -44,11 +44,6 @@ def test_labeled_plan_preserves_output_order_refresh_and_jit() -> None:
     assert refreshed.numeric_version == prepared.numeric_version + 1
     assert refreshed_result.evidence.replay_id != result.evidence.replay_id
     assert jnp.allclose(refreshed_result.value, ((left + 1.0) @ right).T)
-
-
-def test_contraction_structure_supports_hyperedges_and_rejects_resource_overflow() -> (
-    None
-):
     hyperedge = tn.ContractionStructure(
         tuple(
             tn.ContractionOperand(f"operand-{index}", (tn.ContractionLeg("shared", 2),))
@@ -74,9 +69,6 @@ def test_contraction_structure_supports_hyperedges_and_rejects_resource_overflow
             dtype="float64",
             resources=tn.ContractionResourcePolicy(maximum_intermediate_elements=1),
         )
-
-
-def test_contraction_workspace_accounts_for_precision_widening() -> None:
     structure = _matrix_structure()
     narrow = tn.plan_contraction(
         structure,
@@ -107,18 +99,12 @@ def test_contraction_workspace_accounts_for_precision_widening() -> None:
                 maximum_workspace_bytes=narrow.cost.peak_live_bytes
             ),
         )
-
-
-def test_contraction_planner_deadline_is_enforced_during_search() -> None:
     with pytest.raises(TimeoutError, match="planning exceeded"):
         tn.plan_contraction(
             _matrix_structure(),
             dtype="float32",
             planner=tn.ContractionPlannerPolicy(maximum_planning_seconds=1e-9),
         )
-
-
-def test_prepared_mps_and_mpo_inner_consumers_match_native_environments() -> None:
     identity = jnp.eye(2, dtype=jnp.complex128)
     pauli_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     state = tn.product_mps(jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128))

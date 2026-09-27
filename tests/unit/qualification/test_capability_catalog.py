@@ -30,7 +30,7 @@ def _candidate(capability: str = "core.linear-solve") -> CapabilityProfile:
     )
 
 
-def test_candidate_catalog_roundtrip_and_lookup() -> None:
+def test_capability_catalog_scenario_1() -> None:
     profile = _candidate()
     declaration = CapabilityDeclaration(
         profile.capability,
@@ -56,9 +56,6 @@ def test_candidate_catalog_roundtrip_and_lookup() -> None:
         profile.capability
     )
     assert restored.by_disposition("candidate") == restored.declarations
-
-
-def test_candidate_factory_deduplicates_identical_profiles() -> None:
     profile = _candidate()
     declarations = declarations_from_profiles(
         (profile, profile),
@@ -67,9 +64,6 @@ def test_candidate_factory_deduplicates_identical_profiles() -> None:
 
     assert len(declarations) == 1
     assert declarations[0].profiles == (profile,)
-
-
-def test_catalog_refuses_duplicate_public_symbol_ownership() -> None:
     first = _candidate("core.first")
     second = _candidate("core.second")
     declarations = tuple(
@@ -86,9 +80,6 @@ def test_catalog_refuses_duplicate_public_symbol_ownership() -> None:
 
     with pytest.raises(ValueError, match="owned by both"):
         CapabilityCatalog(declarations)
-
-
-def test_catalog_refuses_unknown_dependency_and_cycle() -> None:
     profile = _candidate("core.first")
     with pytest.raises(ValueError, match="unknown dependencies"):
         CapabilityCatalog(
@@ -126,9 +117,6 @@ def test_catalog_refuses_unknown_dependency_and_cycle() -> None:
                 ),
             )
         )
-
-
-def test_released_declaration_requires_complete_evidence_and_public_surface() -> None:
     support = SupportTuple("core.linear-solve", {"precision": "float64"})
     gates = tuple(dimension.value for dimension in EvidenceDimension)
     release_evidence = tuple(
@@ -176,7 +164,7 @@ def test_released_declaration_requires_complete_evidence_and_public_surface() ->
     assert declaration.disposition is CapabilityDisposition.RELEASED
 
 
-def test_nonreleased_declaration_refuses_released_profile() -> None:
+def test_capability_catalog_scenario_2() -> None:
     support = SupportTuple("core.linear-solve", {"precision": "float64"})
     gate = ReleaseGateEvidence(
         "numerical",
@@ -204,9 +192,6 @@ def test_nonreleased_declaration_refuses_released_profile() -> None:
             profiles=(profile,),
             nonclaims=("not-released",),
         )
-
-
-def test_reduced_order_declarations_name_their_maturity() -> None:
     from phydrax.qualification import builtin_capability_catalog
     from phydrax.rom import rom_capability_catalog
 

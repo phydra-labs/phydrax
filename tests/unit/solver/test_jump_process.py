@@ -19,7 +19,7 @@ def _counting_process(*, rate: Any = 2.0, process_id: Any = "counting") -> Any:
     )
 
 
-def test_deterministic_jump_record_preserves_invalid_saltation_evidence() -> None:
+def test_jump_process_scenario_1() -> None:
     policy = HybridReplayPolicy(1)
     tape = empty_hybrid_event_tape(policy, jnp.asarray([0.0]), schedule_id="grazing")
 
@@ -43,9 +43,6 @@ def test_deterministic_jump_record_preserves_invalid_saltation_evidence() -> Non
     assert recorded.active[0]
     assert not recorded.saltation_valid[0]
     assert recorded.event_count == 1
-
-
-def test_poisson_clock_growth_preserves_every_existing_path_event_prefix() -> None:
     small = phx.stochastic.PoissonClockRealization(
         jr.key(0),
         2,
@@ -70,9 +67,6 @@ def test_poisson_clock_growth_preserves_every_existing_path_event_prefix() -> No
     assert jnp.array_equal(small.mark_keys, extended.mark_keys[..., :4])
     assert jnp.array_equal(extended.thresholds, wider.thresholds[:2])
     assert jnp.array_equal(extended.mark_keys, wider.mark_keys[:2])
-
-
-def test_jump_event_batch_has_explicit_status_and_left_right_state_semantics() -> None:
     events = phx.stochastic.JumpEventBatch(
         jnp.asarray([[0.5, 0.0]]),
         jnp.asarray([[0, 0]]),
@@ -95,7 +89,7 @@ def test_jump_event_batch_has_explicit_status_and_left_right_state_semantics() -
     assert phx.stochastic.jump_status_name(phx.stochastic.JUMP_MAX_EVENTS) == "max_events"
 
 
-def test_chemical_jump_propensities_and_conservation_are_combinatorial() -> None:
+def test_jump_process_scenario_2() -> None:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
@@ -151,9 +145,6 @@ def test_chemical_jump_propensities_and_conservation_are_combinatorial() -> None
         process.conservation_residual(jnp.asarray([3.0, 4.0]), reference),
         jnp.zeros((2,)),
     )
-
-
-def test_exact_jump_solvers_replay_and_recover_poisson_moments() -> None:
     process = _counting_process()
     realization = phx.stochastic.PoissonClockRealization(
         jr.key(1),
@@ -212,9 +203,6 @@ def test_exact_jump_solvers_replay_and_recover_poisson_moments() -> None:
     assert trajectory.realizations == (realization,)
     assert trajectory.metadata["process_id"] == process.process_id
     assert trajectory.metadata["jump_algorithm"] == "next_reaction"
-
-
-def test_marked_compound_poisson_records_marks_and_post_states() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray([3.0]),
         lambda state, channel, mark, args: state + mark[None],
@@ -254,7 +242,7 @@ def test_marked_compound_poisson_records_marks_and_post_states() -> None:
     )
 
 
-def test_finite_state_generator_matches_two_state_chain_and_boundary_policies() -> None:
+def test_jump_process_scenario_3() -> None:
     forward, backward = 2.0, 3.0
     process = phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray(
@@ -288,9 +276,6 @@ def test_finite_state_generator_matches_two_state_chain_and_boundary_policies() 
     leaked = phx.solver.finite_state_generator(birth, states, boundary_policy="leak")
     assert jnp.allclose(suppressed.matrix.sum(axis=-1), 0.0)
     assert jnp.allclose(leaked.matrix.sum(axis=-1), -leaked.escaped_rates)
-
-
-def test_event_capacity_exhaustion_is_explicit_not_an_infinite_sentinel() -> None:
     process = _counting_process(rate=100.0, process_id="overflow")
     realization = phx.stochastic.PoissonClockRealization(
         jr.key(3),
@@ -313,9 +298,6 @@ def test_event_capacity_exhaustion_is_explicit_not_an_infinite_sentinel() -> Non
     assert jnp.all(solution.events.status == phx.stochastic.JUMP_MAX_EVENTS)
     assert jnp.all(solution.events.counts == 1)
     assert not jnp.any(solution.valid)
-
-
-def test_direct_ssa_lane_pool_preserves_semantic_path_results() -> None:
     process = _counting_process(process_id="pooled-direct-ssa")
     realization = phx.stochastic.PoissonClockRealization(
         jr.key(11),

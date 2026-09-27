@@ -87,7 +87,7 @@ def _assert_exact_journal(left: Any, right: Any) -> None:
         np.testing.assert_array_equal(left_array, right.archive_arrays()[name])
 
 
-def test_einfeldt_fallback_is_consistent_and_has_finite_bounds() -> None:
+def test_finite_volume_runtime_scenario_1() -> None:
     system = phx.equations.EulerSystem()
     state = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 1.0]]))
     result = phx.discretization.EinfeldtHLLFluxPlan().face_flux(system, state, state, 0)
@@ -95,9 +95,6 @@ def test_einfeldt_fallback_is_consistent_and_has_finite_bounds() -> None:
         result.normal_flux, system.physical_flux(state, 0), rtol=1e-12
     )
     assert jnp.all(jnp.isfinite(result.max_speed))
-
-
-def test_global_flux_blending_preserves_conservation_and_admissibility() -> None:
     system = phx.equations.EulerSystem()
     fallback = system.primitive_to_conserved(
         jnp.asarray([[1.0, 0.0, 1.0], [1.0, 0.0, 1.0]])
@@ -113,9 +110,40 @@ def test_global_flux_blending_preserves_conservation_and_admissibility() -> None
     np.testing.assert_allclose(
         jnp.sum(result.state, axis=0), jnp.sum(high, axis=0), atol=2e-10
     )
+    cells = 6
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(cells),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    system = phx.equations.EulerSystem()
+    discretization = phx.discretization.FiniteVolumePlan(
+        grid, component_names=system.component_names
+    ).prepare()
+    primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (cells, 3))
+    state = system.primitive_to_conserved(primitive)
+    low_flux = jnp.zeros((cells + 1, 3))
+    high_flux = low_flux.at[3, 0].set(100.0)
+    result = phx.discretization.FluxPositivityPlan().limit_face_fluxes(
+        system,
+        state,
+        (high_flux,),
+        (low_flux,),
+        jnp.zeros_like(state),
+        jnp.asarray(0.1),
+        discretization,
+    )
+
+    assert result.report.activated
+    assert jnp.all(system.admissible(result.state))
+    assert result.face_blend_factors[0][3] < 1.0
+    np.testing.assert_allclose(
+        jnp.sum(discretization.cell_volumes[..., None] * result.state, axis=0),
+        jnp.sum(discretization.cell_volumes[..., None] * state, axis=0),
+        atol=2e-11,
+    )
 
 
-def test_runtime_initialization_binds_static_content_and_round_trips_averages() -> None:
+def test_runtime_contracts() -> None:
     runtime, average = _runtime(cells=20)
     state = runtime.initialize_state(average, 0.25, 0.001)
     volumes = runtime.dynamics.effective_volumes.reshape((-1,))
@@ -155,9 +183,6 @@ def test_runtime_initialization_binds_static_content_and_round_trips_averages() 
         runtime.initial_topology_artifacts.prepared_id
         == runtime.dynamics.discretization.prepared_id
     )
-
-
-def test_runtime_accepts_admissible_step_and_advances_state_atomically() -> None:
     runtime, state = _runtime()
     initial = runtime.initialize_state(state, 0.0, 0.002)
     result = runtime.advance(initial)
@@ -222,9 +247,6 @@ def test_runtime_accepts_admissible_step_and_advances_state_atomically() -> None
         rtol=2e-11,
         atol=2e-11,
     )
-
-
-def test_runtime_rejects_invalid_initial_state_without_mutating_content() -> None:
     runtime, state = _runtime(retries=1)
     invalid = state.at[0, 0].set(-1.0)
     initial = runtime.initialize_state(invalid, 0.0, 0.01)
@@ -272,55 +294,6 @@ def test_runtime_rejects_invalid_initial_state_without_mutating_content() -> Non
         rejected_ledger.source_integral,
         jnp.zeros_like(rejected_ledger.source_integral),
     )
-
-
-def test_runtime_step_is_jittable_and_status_is_bounded() -> None:
-    runtime, state = _runtime(cells=32)
-    initial = runtime.initialize_state(state, 0.0, 0.001)
-    result = eqx.filter_jit(runtime.advance)(initial)
-
-    assert result.runtime_state.last_status in (
-        int(phx.solver.FiniteVolumeRunStatus.SUCCESS),
-        int(phx.solver.FiniteVolumeRunStatus.RECOVERED_REJECTION),
-    )
-    assert result.retries <= runtime.policy.maximum_retries
-
-
-def test_face_local_positivity_blending_preserves_shared_flux_conservation() -> None:
-    cells = 6
-    grid = phx.discretization.TensorGridPlan(
-        (phx.discretization.UniformCellAxisSpec(cells),),
-        axis_names=("x",),
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
-    system = phx.equations.EulerSystem()
-    discretization = phx.discretization.FiniteVolumePlan(
-        grid, component_names=system.component_names
-    ).prepare()
-    primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (cells, 3))
-    state = system.primitive_to_conserved(primitive)
-    low_flux = jnp.zeros((cells + 1, 3))
-    high_flux = low_flux.at[3, 0].set(100.0)
-    result = phx.discretization.FluxPositivityPlan().limit_face_fluxes(
-        system,
-        state,
-        (high_flux,),
-        (low_flux,),
-        jnp.zeros_like(state),
-        jnp.asarray(0.1),
-        discretization,
-    )
-
-    assert result.report.activated
-    assert jnp.all(system.admissible(result.state))
-    assert result.face_blend_factors[0][3] < 1.0
-    np.testing.assert_allclose(
-        jnp.sum(discretization.cell_volumes[..., None] * result.state, axis=0),
-        jnp.sum(discretization.cell_volumes[..., None] * state, axis=0),
-        atol=2e-11,
-    )
-
-
-def test_runtime_exposes_one_stable_accepted_flux_integral_ledger() -> None:
     runtime, state = _runtime(cells=24)
     result = runtime.advance(runtime.initialize_state(state, 0.0, 0.001))
     second = runtime.advance(result.runtime_state)
@@ -335,9 +308,18 @@ def test_runtime_exposes_one_stable_accepted_flux_integral_ledger() -> None:
         (block.block_id, block.route_id)
         for block in second.accepted_flux_integrals.blocks
     )
+    runtime, state = _runtime(cells=32)
+    initial = runtime.initialize_state(state, 0.0, 0.001)
+    result = eqx.filter_jit(runtime.advance)(initial)
+
+    assert result.runtime_state.last_status in (
+        int(phx.solver.FiniteVolumeRunStatus.SUCCESS),
+        int(phx.solver.FiniteVolumeRunStatus.RECOVERED_REJECTION),
+    )
+    assert result.retries <= runtime.policy.maximum_retries
 
 
-def test_mapped_runtime_high_order_fallback_and_ledger_routes_are_deterministic() -> None:
+def test_finite_volume_runtime_scenario_2() -> None:
     left_runtime, left_average = _runtime(cells=18, mapped=True)
     right_runtime, right_average = _runtime(cells=18, mapped=True)
     assert isinstance(
@@ -370,9 +352,6 @@ def test_mapped_runtime_high_order_fallback_and_ledger_routes_are_deterministic(
         0.0,
         atol=2e-11,
     )
-
-
-def test_mapped_runtime_admits_arbitrary_normal_hllc_and_refuses_axis_only_roe() -> None:
     runtime, average = _runtime(
         cells=18,
         mapped=True,
@@ -383,54 +362,6 @@ def test_mapped_runtime_admits_arbitrary_normal_hllc_and_refuses_axis_only_roe()
     assert bool(runtime.advance(initial).accepted)
     with pytest.raises(ValueError, match="arbitrary-normal numerical flux"):
         _runtime(cells=18, mapped=True, interface_solver=phx.discretization.RoeFluxPlan())
-
-
-def test_static_accepted_ledger_accounts_source_and_boundary_content() -> None:
-    source_vector = jnp.asarray((0.0, 0.0, 0.2))
-
-    def source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
-        del time, coordinates, args
-        return jnp.broadcast_to(source_vector, state.shape)
-
-    runtime, state = _runtime(cells=24, source=source)
-    initial = runtime.initialize_state(state, 0.0, 0.001)
-    result = runtime.advance(initial)
-
-    assert result.accepted
-    ledger = result.accepted_flux_integrals
-    content_change = (
-        result.runtime_state.content_state.conservative_content
-        - initial.content_state.conservative_content
-    )
-    np.testing.assert_allclose(
-        ledger.scatter_content_integral(),
-        content_change,
-        rtol=2e-11,
-        atol=2e-11,
-    )
-    expected_source_integral = (
-        result.accepted_step_size
-        * initial.content_state.effective_cell_volumes[:, None]
-        * source_vector
-    )
-    np.testing.assert_allclose(
-        ledger.source_integral,
-        expected_source_integral,
-        rtol=2e-10,
-        atol=2e-11,
-    )
-    source_sum, boundary_sum, net_cell_sum = ledger.conservation_sums()
-    expected_source = jnp.sum(expected_source_integral, axis=0)
-    np.testing.assert_allclose(source_sum, expected_source, rtol=2e-10, atol=2e-11)
-    np.testing.assert_allclose(
-        source_sum - boundary_sum,
-        net_cell_sum,
-        rtol=2e-11,
-        atol=2e-11,
-    )
-
-
-def test_unstructured_accepted_step_coupling_sets_journal_capacity() -> None:
     vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     system = phx.equations.EulerSystem(2)
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -480,3 +411,48 @@ def test_unstructured_accepted_step_coupling_sets_journal_capacity() -> None:
     assert state.topology_journal.capacity == 3
     assert state.topology_journal.epoch_table == (runtime.initial_topology_epoch,)
     assert state.topology_journal.current_epoch_id == runtime.topology_epoch_id
+
+
+def test_static_accepted_ledger_accounts_source_and_boundary_content() -> None:
+    source_vector = jnp.asarray((0.0, 0.0, 0.2))
+
+    def source(time: Any, state: Any, coordinates: Any, args: Any) -> Any:
+        del time, coordinates, args
+        return jnp.broadcast_to(source_vector, state.shape)
+
+    runtime, state = _runtime(cells=24, source=source)
+    initial = runtime.initialize_state(state, 0.0, 0.001)
+    result = runtime.advance(initial)
+
+    assert result.accepted
+    ledger = result.accepted_flux_integrals
+    content_change = (
+        result.runtime_state.content_state.conservative_content
+        - initial.content_state.conservative_content
+    )
+    np.testing.assert_allclose(
+        ledger.scatter_content_integral(),
+        content_change,
+        rtol=2e-11,
+        atol=2e-11,
+    )
+    expected_source_integral = (
+        result.accepted_step_size
+        * initial.content_state.effective_cell_volumes[:, None]
+        * source_vector
+    )
+    np.testing.assert_allclose(
+        ledger.source_integral,
+        expected_source_integral,
+        rtol=2e-10,
+        atol=2e-11,
+    )
+    source_sum, boundary_sum, net_cell_sum = ledger.conservation_sums()
+    expected_source = jnp.sum(expected_source_integral, axis=0)
+    np.testing.assert_allclose(source_sum, expected_source, rtol=2e-10, atol=2e-11)
+    np.testing.assert_allclose(
+        source_sum - boundary_sum,
+        net_cell_sum,
+        rtol=2e-11,
+        atol=2e-11,
+    )

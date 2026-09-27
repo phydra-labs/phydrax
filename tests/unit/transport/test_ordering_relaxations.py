@@ -21,7 +21,7 @@ from phydrax.transport._ordering import (
 )
 
 
-def test_weighted_pav_preserves_weighted_mean_and_has_weight_jvp() -> None:
+def test_ordering_relaxations_scenario_1() -> None:
     values = jnp.asarray([3.0, -1.0, 2.0, 0.5])
     weights = jnp.asarray([0.5, 2.0, 1.0, 3.0])
     ordered = fast_weighted_soft_sort(values, weights, temperature=0.4)
@@ -37,9 +37,6 @@ def test_weighted_pav_preserves_weighted_mean_and_has_weight_jvp() -> None:
     )
     assert jnp.all(jnp.isfinite(ranks))
     assert jnp.all(jnp.isfinite(tangent))
-
-
-def test_straight_through_sort_separates_hard_forward_and_soft_gradient() -> None:
     values = jnp.asarray([2.0, 1.0, 1.0])
     result = straight_through_sort(values, PAVOrdering(0.5))
     # ty: ignore[invalid-argument-type]
@@ -49,9 +46,6 @@ def test_straight_through_sort_separates_hard_forward_and_soft_gradient() -> Non
         lambda value: jnp.sum(straight_through_sort(value, PAVOrdering(0.5)) ** 2)
     )(values)
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_sinkhorn_ordering_dispatch_orders_both_directions() -> None:
     values = jnp.asarray([3.0, -1.0, 2.0, 0.5])
     method = SinkhornOrdering(0.1)
     ascending = ordered_values(values, method)

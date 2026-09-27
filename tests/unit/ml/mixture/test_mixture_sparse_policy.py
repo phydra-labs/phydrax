@@ -21,15 +21,10 @@ def _sparse_batch() -> Any:
     return MLBatch(features)
 
 
-@pytest.mark.parametrize(
-    "recipe",
-    [
+def test_gaussian_mixture_families_reject_implicit_sparse_materialization() -> None:
+    for recipe in [
         GaussianMixture(1, initialization="first"),
         BayesianGaussianMixture(1, initialization="first"),
-    ],
-)
-def test_gaussian_mixture_families_reject_implicit_sparse_materialization(
-    recipe: Any,
-) -> None:
-    with pytest.raises(TypeError, match="requires dense features"):
-        recipe.fit_batch(_sparse_batch())
+    ]:
+        with pytest.raises(TypeError, match="requires dense features"):
+            recipe.fit_batch(_sparse_batch())

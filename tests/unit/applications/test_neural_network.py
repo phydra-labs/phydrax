@@ -105,7 +105,7 @@ def _source_runtime(
     ).prepare()
 
 
-def test_endogenous_lif_delay_keeps_emission_weight_during_inflight_learning() -> None:
+def test_neural_network_scenario_1() -> None:
     runtime = ep.NeuralNetworkPlan(
         (ep.NeuralCellPlan("pre", _lif()), ep.NeuralCellPlan("post", _lif())),
         ep.SynapseNetworkPlan(
@@ -160,11 +160,6 @@ def test_endogenous_lif_delay_keeps_emission_weight_during_inflight_learning() -
     np.testing.assert_allclose(
         second.state.relations.weight, [learned_weight], atol=1.0e-8
     )
-
-
-def test_heterogeneous_point_and_cable_cells_preserve_endpoint_charge_and_parameters() -> (
-    None
-):
     morphology = ep.CellMorphologyPlan(
         "two-compartment",
         (
@@ -207,9 +202,6 @@ def test_heterogeneous_point_and_cable_cells_preserve_endpoint_charge_and_parame
         atol=1.0e-13,
     )
     assert int(result.state.spikes.count) == 0
-
-
-def test_hh_spike_observation_never_resets_or_truncates_the_action_potential() -> None:
     cable = _single_cable(ep.HodgkinHuxleyNaK())
     runtime = ep.NeuralNetworkPlan(
         (ep.NeuralCellPlan("hh", cable, threshold_mV=0.0, rearm_mV=-40.0),),
@@ -230,7 +222,7 @@ def test_hh_spike_observation_never_resets_or_truncates_the_action_potential() -
     assert float(result.voltage_mV[-1, 0]) < -40.0
 
 
-def test_voltage_recording_overflow_rolls_back_already_pending_transport() -> None:
+def test_neural_network_scenario_2() -> None:
     runtime = _source_runtime(
         recording_capacity=1, external_spikes=((0.25, "source"), (1.25, "source"))
     )
@@ -241,18 +233,12 @@ def test_voltage_recording_overflow_rolls_back_already_pending_transport() -> No
     assert int(rejected.evidence.status) & int(ep.NeuralStatus.RECORDING_CAPACITY)
     assert not bool(rejected.evidence.successful)
     _assert_same_state(rejected.state, first.state)
-
-
-def test_queue_overflow_cannot_partially_deliver_a_source_fanout() -> None:
     runtime = _source_runtime(queue_capacity=1, fanout=2)
     state = ep.initialize_neural_network(runtime)
     rejected = ep.step_neural_network(runtime, state)
     assert int(rejected.evidence.status) & int(ep.NeuralStatus.EVENT_CAPACITY)
     assert not bool(rejected.evidence.successful)
     _assert_same_state(rejected.state, state)
-
-
-def test_spike_recording_overflow_cannot_commit_same_time_emissions() -> None:
     runtime = _source_runtime(
         spike_capacity=1, external_spikes=((0.25, "source"), (0.25, "source"))
     )
@@ -263,18 +249,13 @@ def test_spike_recording_overflow_cannot_commit_same_time_emissions() -> None:
     _assert_same_state(rejected.state, state)
 
 
-def test_event_work_exhaustion_rolls_back_delivery_and_learning_together() -> None:
+def test_neural_network_scenario_3() -> None:
     runtime = _source_runtime(maximum_events_per_step=1, delay=0.0)
     state = ep.initialize_neural_network(runtime)
     rejected = ep.step_neural_network(runtime, state)
     assert int(rejected.evidence.status) & int(ep.NeuralStatus.EVENT_WORK_EXHAUSTED)
     assert not bool(rejected.evidence.successful)
     _assert_same_state(rejected.state, state)
-
-
-def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_route() -> (
-    None
-):
     runtime = ep.NeuralNetworkPlan(
         (
             ep.NeuralCellPlan("old", ep.SpikeSource()),
@@ -364,11 +345,6 @@ def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_
         [0.7 * np.exp(-1.25 / 5.0)],
         atol=1.0e-10,
     )
-
-
-def test_same_time_zero_delay_events_and_boundary_checkpoint_continue_exactly_once() -> (
-    None
-):
     runtime = ep.NeuralNetworkPlan(
         (
             ep.NeuralCellPlan("a", ep.SpikeSource()),
@@ -455,7 +431,7 @@ def test_isolated_physical_lif_numerical_root_has_conditional_current_gradient()
     )
 
 
-def test_clock_initial_time_must_share_the_prepared_grid() -> None:
+def test_neural_network_scenario_4() -> None:
     runtime = ep.NeuralNetworkPlan(
         (ep.NeuralCellPlan("cell", _lif(threshold=0.0)),),
         ep.SynapseNetworkPlan((1,), 1, 0.0, 1.0, execution="clock"),
@@ -465,9 +441,6 @@ def test_clock_initial_time_must_share_the_prepared_grid() -> None:
     ).prepare()
     with pytest.raises(ValueError, match="grid-aligned"):
         ep.initialize_neural_network(runtime, time_ms=0.25)
-
-
-def test_checkpoint_identity_binds_fixed_capacities() -> None:
     first = _source_runtime(recording_capacity=2)
     second = _source_runtime(recording_capacity=3)
     assert first.runtime_id != second.runtime_id

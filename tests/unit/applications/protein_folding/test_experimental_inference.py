@@ -74,9 +74,7 @@ def _joint_problem() -> Any:
     return prepare_protein_experiments((plan,), parameters), plan, parameters
 
 
-def test_joint_multichannel_fit_predicts_unseen_conditions_and_reports_covariance() -> (
-    None
-):
+def test_experimental_inference_scenario_1() -> None:
     problem, _, _ = _joint_problem()
     initial = float(jnp.sum(problem.residual(problem.initial_coordinates) ** 2))
     fit = fit_protein_experiments(
@@ -104,9 +102,6 @@ def test_joint_multichannel_fit_predicts_unseen_conditions_and_reports_covarianc
         problem.observations[0].prepare_prediction(
             ExperimentConditions(t, d), groups=("new-channel",) * t.size
         )
-
-
-def test_single_isotherm_does_not_identify_enthalpy_or_manufacture_covariance() -> None:
     model = TwoStateUnfolding()
     d = np.linspace(0, 6000, 21)
     t = np.full_like(d, 298.15)
@@ -143,9 +138,6 @@ def test_single_isotherm_does_not_identify_enthalpy_or_manufacture_covariance() 
     fit = fit_protein_experiments(problem)
     assert fit.covariance is None
     np.testing.assert_allclose(fit.predict()[0], plan.observed, atol=2e-5)
-
-
-def test_active_mask_correlated_noise_and_explicit_prior_density() -> None:
     model = TwoStateUnfolding()
     conditions = ExperimentConditions([298.15] * 3, [0, 2500, 5000])
     root = np.array([[0.2, 0], [0.06, 0.19]])
@@ -198,7 +190,7 @@ def test_active_mask_correlated_noise_and_explicit_prior_density() -> None:
         )
 
 
-def test_real_kinetic_fit_and_time_conversion_predict_unseen_denaturant() -> None:
+def test_experimental_inference_scenario_2() -> None:
     model = ChevronKinetics()
     d = np.linspace(0, 7000, 31)
     kt = model.convention.thermal_constant * 298.15
@@ -243,9 +235,6 @@ def test_real_kinetic_fit_and_time_conversion_predict_unseen_denaturant() -> Non
             (replace(plan, conditions=ExperimentConditions(np.full_like(d, 310), d)),),
             parameters,
         )
-
-
-def test_preparation_refuses_wrong_basis_zero_dimer_and_irreversible_data() -> None:
     _, plan, parameters = _joint_problem()
     with pytest.raises(ValueError):
         prepare_protein_experiments((replace(plan, reversible=False),), parameters)
@@ -261,9 +250,6 @@ def test_preparation_refuses_wrong_basis_zero_dimer_and_irreversible_data() -> N
         prepare_protein_experiments(
             (replace(plan, source_kind="experimental"),), parameters
         )
-
-
-def test_phi_preserves_paired_draws_and_marks_unresolved_denominators() -> None:
     convention = ThermodynamicConvention()
     kt = convention.thermal_constant * convention.reference_temperature
     wt = np.array([[8.0, 9.0, 10.0], [8.5, 9.5, 10.5]])

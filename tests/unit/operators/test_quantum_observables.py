@@ -37,7 +37,7 @@ def _paulis() -> Any:
     return x, z
 
 
-def test_local_observable_state_density_and_target_order() -> None:
+def test_quantum_observables_scenario_1() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     _, z = _paulis()
     state = jnp.asarray([0.0, 1.0, 0.0, 0.0], dtype=jnp.complex128)
@@ -55,9 +55,6 @@ def test_local_observable_state_density_and_target_order() -> None:
         ("b", "a"),
     )
     assert jnp.allclose(local_state_expectation(layout, ordered, state), 3.0)
-
-
-def test_dense_observable_plan_groups_targets_and_preserves_output_order() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     x, z = _paulis()
     program = QuantumProgram(
@@ -81,9 +78,6 @@ def test_dense_observable_plan_groups_targets_and_preserves_output_order() -> No
     assert plan.cost.target_group_count == 2
     assert result.diagnostics.status == int(DenseQuantumExpectationStatus.SUCCESS)
     assert jnp.allclose(result.real_values, jnp.asarray([1.0, 0.0, 1.0]))
-
-
-def test_dense_observable_plan_supports_state_and_density_batches() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     _, z = _paulis()
     observable = LocalObservable(z, ("q",))
@@ -109,9 +103,6 @@ def test_dense_observable_plan_supports_state_and_density_batches() -> None:
     expected = jnp.asarray([[1.0], [-1.0]])
     assert jnp.allclose(state_result.real_values, expected)
     assert jnp.allclose(density_result.real_values, expected)
-
-
-def test_nonhermitian_observable_is_not_certified_real() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     raising = LocalObservable(
         jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=jnp.complex128),

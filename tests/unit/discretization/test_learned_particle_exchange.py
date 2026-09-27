@@ -131,7 +131,7 @@ def _schema() -> Any:
     )
 
 
-def test_central_learned_exchange_conserves_linear_and_angular_momentum() -> None:
+def test_learned_particle_exchange_scenario_1() -> None:
     pairs, geometry = _pairs_and_geometry()
     plan = phx.nn.operator.adapters.PairwiseExchangeBindingPlan(
         _schema(),
@@ -153,9 +153,6 @@ def test_central_learned_exchange_conserves_linear_and_angular_momentum() -> Non
     np.testing.assert_allclose(result.ledger.torque, 0.0, atol=1e-6)
     assert result.ledger.pair_count == 2
     np.testing.assert_allclose(result.pair_values[2], 0.0)
-
-
-def test_noncentral_vector_exchange_only_claims_linear_conservation() -> None:
     pairs, geometry = _pairs_and_geometry()
     plan = phx.nn.operator.adapters.PairwiseExchangeBindingPlan(
         _schema(),
@@ -171,9 +168,6 @@ def test_noncentral_vector_exchange_only_claims_linear_conservation() -> None:
     assert bool(result.successful)
     np.testing.assert_allclose(result.ledger.total_exchange, 0.0, atol=1e-6)
     assert float(jnp.abs(result.ledger.torque)) > 0.0
-
-
-def test_relation_and_artifact_mismatches_are_rejected() -> None:
     pairs, geometry = _pairs_and_geometry()
     plan = phx.nn.operator.adapters.PairwiseExchangeBindingPlan(
         _schema(),

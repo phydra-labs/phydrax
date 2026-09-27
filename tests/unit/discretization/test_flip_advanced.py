@@ -23,7 +23,7 @@ def _mac(count: Any = 8) -> Any:
     return grid, finite_volume, mac
 
 
-def test_particle_level_set_capillarity_and_ghost_projection() -> None:
+def test_flip_advanced_scenario_1() -> None:
     grid, finite_volume, mac = _mac()
     position = jnp.asarray([[0.4, 0.4], [0.5, 0.4], [0.4, 0.5], [0.5, 0.5]])
     geometry = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.15).evaluate(
@@ -46,9 +46,6 @@ def test_particle_level_set_capillarity_and_ghost_projection() -> None:
     )
     assert result.successful
     assert result.projection.air_pressure_defect == 0.0
-
-
-def test_nonperiodic_level_set_faces_do_not_compare_opposite_boundaries() -> None:
     grid, _, _ = _mac(count=4)
     geometry = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.1).evaluate(
         jnp.asarray(((0.05, 0.5),)),
@@ -59,9 +56,6 @@ def test_nonperiodic_level_set_faces_do_not_compare_opposite_boundaries() -> Non
         geometry.face_fraction[0][-1, :],
         geometry.cell_fraction[-1, :],
     )
-
-
-def test_cut_cell_and_variational_viscosity_are_finite_and_dissipative() -> None:
     grid, finite_volume, mac = _mac()
     position = jnp.asarray([[0.35, 0.35], [0.55, 0.35], [0.35, 0.55], [0.55, 0.55]])
     interface = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.2).evaluate(
@@ -105,7 +99,7 @@ def test_cut_cell_and_variational_viscosity_are_finite_and_dissipative() -> None
     assert result.energy_increase < 1e-8
 
 
-def test_flip_reseeding_preserves_mass_and_momentum() -> None:
+def test_flip_reseeding_contracts() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(6), jnp.ones((6,)), ambient_dimension=2
     ).prepare()
@@ -136,9 +130,6 @@ def test_flip_reseeding_preserves_mass_and_momentum() -> None:
     assert result.successful
     np.testing.assert_allclose(result.mass_defect, 0.0, atol=1e-12)
     np.testing.assert_allclose(result.momentum_defect, 0.0, atol=1e-12)
-
-
-def test_flip_reseeding_merges_the_complete_cell_excess() -> None:
     count = 10
     support = phx.discretization.ParticleSetPlan(
         jnp.arange(count),

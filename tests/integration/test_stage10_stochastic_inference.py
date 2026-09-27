@@ -42,7 +42,7 @@ def _linear_gaussian_problem() -> Any:
     )
 
 
-def test_particle_and_ensemble_filters_recover_analytic_kalman_moments() -> None:
+def test_stage10_stochastic_inference_scenario_1() -> None:
     problem = _linear_gaussian_problem()
     exact = phx.uq.kalman_filter(problem)
     particles = phx.uq.bootstrap_particle_filter(
@@ -74,6 +74,33 @@ def test_particle_and_ensemble_filters_recover_analytic_kalman_moments() -> None
     assert jnp.abs(particle_variance - exact_variance) < 0.03
     assert jnp.abs(ensemble_mean - exact_mean) < 0.05
     assert jnp.abs(ensemble_variance - exact_variance) < 0.03
+    realization = phx.stochastic.WienerRealization(
+        jr.key(82),
+        (1,),
+        support=(0.0, 1.0),
+        sample_shape=(512,),
+        tolerance=1e-4,
+        noise_id="heat-wiener",
+        label="analytic-heat",
+    )
+    coarse_problem, coarse_value, coarse = _heat_bsde_evaluation(realization, 8)
+    _, _, fine = _heat_bsde_evaluation(realization, 32)
+    coarse_local_mse = jnp.mean(coarse.local_residuals**2)
+    fine_local_mse = jnp.mean(fine.local_residuals**2)
+    coarse_global_mse = jnp.mean(coarse.global_residual**2)
+    fine_global_mse = jnp.mean(fine.global_residual**2)
+
+    assert fine_local_mse < 0.2 * coarse_local_mse
+    assert fine_global_mse < 0.45 * coarse_global_mse
+    assert jnp.allclose(
+        phx.stochastic.semilinear_pde_residual(
+            coarse_problem,
+            coarse_value,
+            jnp.asarray(0.3),
+            jnp.asarray([0.4]),
+        ),
+        0.0,
+    )
 
 
 def _heat_bsde_evaluation(realization: Any, num_steps: Any) -> Any:
@@ -119,34 +146,4 @@ def _heat_bsde_evaluation(realization: Any, num_steps: Any) -> Any:
             value,
             control_mode="autodiff",
         ),
-    )
-
-
-def test_heat_bsde_discrete_residual_refines_at_analytic_rate() -> None:
-    realization = phx.stochastic.WienerRealization(
-        jr.key(82),
-        (1,),
-        support=(0.0, 1.0),
-        sample_shape=(512,),
-        tolerance=1e-4,
-        noise_id="heat-wiener",
-        label="analytic-heat",
-    )
-    coarse_problem, coarse_value, coarse = _heat_bsde_evaluation(realization, 8)
-    _, _, fine = _heat_bsde_evaluation(realization, 32)
-    coarse_local_mse = jnp.mean(coarse.local_residuals**2)
-    fine_local_mse = jnp.mean(fine.local_residuals**2)
-    coarse_global_mse = jnp.mean(coarse.global_residual**2)
-    fine_global_mse = jnp.mean(fine.global_residual**2)
-
-    assert fine_local_mse < 0.2 * coarse_local_mse
-    assert fine_global_mse < 0.45 * coarse_global_mse
-    assert jnp.allclose(
-        phx.stochastic.semilinear_pde_residual(
-            coarse_problem,
-            coarse_value,
-            jnp.asarray(0.3),
-            jnp.asarray([0.4]),
-        ),
-        0.0,
     )

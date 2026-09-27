@@ -53,7 +53,7 @@ def test_exact_fit_preserves_unsorted_nodes_payloads_and_derivatives() -> None:
     )
 
 
-def test_weighted_least_squares_recovers_polynomial_with_duplicate_nodes() -> None:
+def test_bspline_interpolation_scenario_1() -> None:
     nodes = jnp.concatenate((jnp.linspace(-1.0, 1.0, 40), jnp.asarray([0.0, 0.0])))
     target = lambda value: 0.7 * value**3 - 0.2 * value**2 + 1.3 * value - 0.1
     values = target(nodes)
@@ -76,9 +76,6 @@ def test_weighted_least_squares_recovers_polynomial_with_duplicate_nodes() -> No
     assert np.allclose(
         np.asarray(interpolant(query)), np.asarray(target(query)), atol=2e-12
     )
-
-
-def test_smoothing_reduces_sobolev_energy_for_noisy_data() -> None:
     nodes = jnp.linspace(-1.0, 1.0, 80)
     clean = jnp.sin(2.5 * jnp.pi * nodes)
     noisy = clean + 0.12 * jax.random.normal(jax.random.key(0), nodes.shape)
@@ -112,9 +109,6 @@ def test_smoothing_reduces_sobolev_energy_for_noisy_data() -> None:
     assert np.linalg.norm(np.asarray(smoothed(nodes) - clean)) < np.linalg.norm(
         np.asarray(noisy - clean)
     )
-
-
-def test_natural_periodic_and_explicit_boundary_jets_are_exact() -> None:
     nodes = jnp.linspace(0.0, 1.0, 12)
     values = jnp.sin(2.0 * jnp.pi * nodes)
     natural = phx.operators.fit_bspline(

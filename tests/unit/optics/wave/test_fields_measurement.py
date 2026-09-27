@@ -29,7 +29,7 @@ def _finite_space(shape: Any = (5, 7)) -> Any:
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "finite-window")
 
 
-def test_plane_space_validates_dimension_topology_and_field_shapes() -> None:
+def test_fields_measurement_scenario_1() -> None:
     one_dimensional = TensorGridPlan((UniformAxisSpec(5),), axis_names=("u",)).prepare(
         jnp.asarray([[-1.0], [1.0]])
     )
@@ -54,9 +54,6 @@ def test_plane_space_validates_dimension_topology_and_field_shapes() -> None:
         TangentialPlaneField(space, jnp.ones((5, 7)), 2.0, 0.0)
     with pytest.raises(ValueError, match="must have shape"):
         IntensityPlane(space, jnp.ones((5, 7, 1)), 2.0, 0.0)
-
-
-def test_plane_space_composes_grid_coordinates_and_rigid_frame() -> None:
     grid = TensorGridPlan(
         (UniformAxisSpec(3), UniformAxisSpec(4)),
         axis_names=("u", "v"),
@@ -72,9 +69,6 @@ def test_plane_space_composes_grid_coordinates_and_rigid_frame() -> None:
         space.transverse_coordinates + jnp.asarray([1.0, 2.0]),
     )
     assert jnp.all(space.world_points[..., 2] == 3.0)
-
-
-def test_square_law_scalar_tangential_parity_and_physical_integration() -> None:
     space = _finite_space()
     scalar = ScalarPlaneField(space, (1.0 + 2.0j) * jnp.ones(space.shape), 7.0, 0.25)
     tangential = TangentialPlaneField(

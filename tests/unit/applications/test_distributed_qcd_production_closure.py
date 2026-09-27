@@ -65,7 +65,7 @@ def _su2_links(shape: tuple[int, ...]) -> np.ndarray:
     return links
 
 
-def test_global_ownership_is_exact_and_plaquettes_are_never_double_counted() -> None:
+def test_distributed_qcd_production_closure_scenario_1() -> None:
     plan = LatticeDecompositionPlan((4, 6), (2, 3), periodic=(False, False))
     owners = np.asarray(plan.ownership.site_owner)
     assert np.array_equal(np.bincount(owners), np.full((6,), 4))
@@ -83,11 +83,6 @@ def test_global_ownership_is_exact_and_plaquettes_are_never_double_counted() -> 
     assert int(np.asarray(plan.ownership.face_valid).sum()) == 3 * 5
     assert np.all(link_counts == 1)
     assert np.array_equal(face_counts, np.asarray(plan.ownership.face_valid))
-
-
-def test_parity_halo_exchange_reconstructs_reference_without_touching_other_parity() -> (
-    None
-):
     plan = LatticeDecompositionPlan((6, 4), (3, 2))
     global_values = jnp.arange(plan.site_count, dtype=jnp.float64) + 1.0
     owned = plan.pack_owned_sites(global_values)
@@ -108,9 +103,6 @@ def test_parity_halo_exchange_reconstructs_reference_without_touching_other_pari
     reference = np.asarray(plan.pack_reference_sites(global_values))
     assert np.array_equal(np.asarray(even_complete)[halo & even], reference[halo & even])
     assert np.all(np.asarray(even_complete)[halo & ~even] == 0.0)
-
-
-def test_projected_spinor_halo_reconstructs_directional_block_rhs() -> None:
     plan = LatticeDecompositionPlan((6, 4), (3, 2))
     spinor = (
         np.arange(plan.site_count * 2 * 1 * 3, dtype=np.float64)
@@ -157,7 +149,7 @@ class _DiagonalDslash:
         return jnp.conj(self.diagonal) * value
 
 
-def test_native_block_dslash_preserves_the_true_rhs_axis() -> None:
+def test_distributed_qcd_production_closure_scenario_2() -> None:
     provider = NativeJaxLatticeProvider()
     diagonal = np.asarray([1.0 + 2.0j, 3.0 - 0.5j])[:, None, None]
     operator = _DiagonalDslash(diagonal)
@@ -171,6 +163,47 @@ def test_native_block_dslash_preserves_the_true_rhs_axis() -> None:
         provider.block_dslash(operator, right_hand_sides, adjoint=True),
         np.conj(diagonal)[..., None] * right_hand_sides,
     )
+    capabilities = LatticeKernelCapabilities(
+        "gauge-action-only",
+        ("gauge.wilson_action",),
+        ("complex128",),
+        ("single_device",),
+        ("jit",),
+        native_complex=True,
+    )
+    status = LatticeProviderStatus(
+        capabilities,
+        available=True,
+        reason="focused test provider",
+    )
+    status.require("gauge.wilson_action", np.complex128)
+    with pytest.raises(LatticeKernelCapabilityError) as refusal:
+        status.require("gauge.wilson_force", np.complex128)
+    assert refusal.value.capability == "gauge.wilson_force"
+    links = _su2_links((4, 4))
+    serial = DistributedGaugeTheoryPlan(
+        LatticeDecompositionPlan((4, 4), (1, 1)),
+        5.7,
+    ).prepare()
+    distributed = DistributedGaugeTheoryPlan(
+        LatticeDecompositionPlan((4, 4), (2, 2)),
+        5.7,
+    ).prepare()
+
+    serial_action = serial.gauge_action(links)
+    distributed_action = distributed.gauge_action(links)
+    assert bool(serial_action.successful)
+    assert bool(distributed_action.successful)
+    assert float(serial_action.value) > 0.0
+    np.testing.assert_allclose(distributed_action.value, serial_action.value, rtol=1e-13)
+
+    staples = np.roll(links, 1, axis=0) + np.roll(links, -1, axis=0)
+    serial_force = serial.gauge_force(links, staples)
+    distributed_force = distributed.gauge_force(links, staples)
+    assert bool(serial_force.successful)
+    assert bool(distributed_force.successful)
+    assert float(jnp.linalg.norm(serial_force.value)) > 0.0
+    np.testing.assert_allclose(distributed_force.value, serial_force.value, rtol=1e-13)
 
 
 def test_native_archive_is_rank_independent_and_checksum_bound(tmp_path: Path) -> None:
@@ -273,50 +306,3 @@ def test_interchange_validates_endian_precision_and_round_trips(
     wrong = "little" if byte_order == "big" else "big"
     with pytest.raises(ValueError, match="byte order"):
         read_gauge_interchange(path, expected_byte_order=wrong)
-
-
-def test_provider_capability_refusal_is_operation_specific() -> None:
-    capabilities = LatticeKernelCapabilities(
-        "gauge-action-only",
-        ("gauge.wilson_action",),
-        ("complex128",),
-        ("single_device",),
-        ("jit",),
-        native_complex=True,
-    )
-    status = LatticeProviderStatus(
-        capabilities,
-        available=True,
-        reason="focused test provider",
-    )
-    status.require("gauge.wilson_action", np.complex128)
-    with pytest.raises(LatticeKernelCapabilityError) as refusal:
-        status.require("gauge.wilson_force", np.complex128)
-    assert refusal.value.capability == "gauge.wilson_force"
-
-
-def test_serial_and_distributed_gauge_action_and_force_are_equal() -> None:
-    links = _su2_links((4, 4))
-    serial = DistributedGaugeTheoryPlan(
-        LatticeDecompositionPlan((4, 4), (1, 1)),
-        5.7,
-    ).prepare()
-    distributed = DistributedGaugeTheoryPlan(
-        LatticeDecompositionPlan((4, 4), (2, 2)),
-        5.7,
-    ).prepare()
-
-    serial_action = serial.gauge_action(links)
-    distributed_action = distributed.gauge_action(links)
-    assert bool(serial_action.successful)
-    assert bool(distributed_action.successful)
-    assert float(serial_action.value) > 0.0
-    np.testing.assert_allclose(distributed_action.value, serial_action.value, rtol=1e-13)
-
-    staples = np.roll(links, 1, axis=0) + np.roll(links, -1, axis=0)
-    serial_force = serial.gauge_force(links, staples)
-    distributed_force = distributed.gauge_force(links, staples)
-    assert bool(serial_force.successful)
-    assert bool(distributed_force.successful)
-    assert float(jnp.linalg.norm(serial_force.value)) > 0.0
-    np.testing.assert_allclose(distributed_force.value, serial_force.value, rtol=1e-13)

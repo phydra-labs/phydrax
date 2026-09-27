@@ -21,7 +21,7 @@ def _refine(plan: Any, topology: Any, slot: Any) -> Any:
     return plan.adapt(topology, refine_mask=mask)
 
 
-def test_dyadic_refinement_is_covering_balanced_and_stably_identified() -> None:
+def test_dyadic_contracts() -> None:
     plan = _plan()
     root = plan.prepare()
     first = _refine(plan, root, int(root.root_slot))
@@ -48,36 +48,6 @@ def test_dyadic_refinement_is_covering_balanced_and_stably_identified() -> None:
         for index in np.flatnonzero(np.asarray(second.accepted.leaf_active))
     }
     assert retained_keys <= next_keys
-
-
-def test_dyadic_coarsening_requires_complete_requested_siblings() -> None:
-    plan = _plan()
-    refined = _refine(plan, plan.prepare(), 0).accepted
-    leaves = np.flatnonzero(np.asarray(refined.leaf_active))
-    partial_mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[leaves[0]].set(True)
-    partial = plan.adapt(refined, coarsen_mask=partial_mask)
-    assert bool(partial.accepted_candidate)
-    assert int(partial.evidence.accepted_coarsenings) == 0
-    assert int(partial.accepted.evidence.active_leaves) == 4
-
-    complete_mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[leaves].set(True)
-    complete = plan.adapt(refined, coarsen_mask=complete_mask)
-    assert bool(complete.accepted_candidate)
-    assert int(complete.evidence.accepted_coarsenings) == 1
-    assert int(complete.accepted.evidence.active_leaves) == 1
-
-
-def test_dyadic_capacity_failure_preserves_previous_topology() -> None:
-    plan = _plan(capacity=1)
-    root = plan.prepare()
-    transition = _refine(plan, root, 0)
-    assert not bool(transition.accepted_candidate)
-    assert int(transition.evidence.required_capacity) > plan.cell_capacity
-    assert transition.accepted.topology_id == root.topology_id
-    np.testing.assert_array_equal(transition.accepted.leaf_active, root.leaf_active)
-
-
-def test_dyadic_refinement_closes_two_to_one_face_balance() -> None:
     plan = _plan()
     level_one = _refine(plan, plan.prepare(), 0).accepted
     level_one_slot = next(
@@ -95,3 +65,24 @@ def test_dyadic_refinement_closes_two_to_one_face_balance() -> None:
     assert bool(transition.accepted_candidate)
     assert int(transition.evidence.balance_refinements) > 0
     assert bool(transition.accepted.evidence.two_to_one_balanced)
+    plan = _plan()
+    refined = _refine(plan, plan.prepare(), 0).accepted
+    leaves = np.flatnonzero(np.asarray(refined.leaf_active))
+    partial_mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[leaves[0]].set(True)
+    partial = plan.adapt(refined, coarsen_mask=partial_mask)
+    assert bool(partial.accepted_candidate)
+    assert int(partial.evidence.accepted_coarsenings) == 0
+    assert int(partial.accepted.evidence.active_leaves) == 4
+
+    complete_mask = jnp.zeros((plan.cell_capacity,), dtype="bool").at[leaves].set(True)
+    complete = plan.adapt(refined, coarsen_mask=complete_mask)
+    assert bool(complete.accepted_candidate)
+    assert int(complete.evidence.accepted_coarsenings) == 1
+    assert int(complete.accepted.evidence.active_leaves) == 1
+    plan = _plan(capacity=1)
+    root = plan.prepare()
+    transition = _refine(plan, root, 0)
+    assert not bool(transition.accepted_candidate)
+    assert int(transition.evidence.required_capacity) > plan.cell_capacity
+    assert transition.accepted.topology_id == root.topology_id
+    np.testing.assert_array_equal(transition.accepted.leaf_active, root.leaf_active)

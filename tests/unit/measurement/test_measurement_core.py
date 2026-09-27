@@ -12,9 +12,7 @@ def _quantity(
     return phx.measurement.QuantitySpec("test", name, name, unit, key)
 
 
-def test_quantity_fields_keep_sample_validity_separate_from_components_and_units() -> (
-    None
-):
+def test_measurement_core_scenario_1() -> None:
     support = phx.measurement.IndexSampleSupport((2,), ("sample",))
     layout = phx.measurement.ValueLayout(
         phx.measurement.ValueKind.VECTOR,
@@ -40,9 +38,6 @@ def test_quantity_fields_keep_sample_validity_separate_from_components_and_units
     assert bool(prepared.successful)
     with pytest.raises(ValueError, match="component_frame_id"):
         phx.measurement.ValueLayout(phx.measurement.ValueKind.VECTOR, (2,))
-
-
-def test_measurement_comparison_requires_semantic_and_support_compatibility() -> None:
     support = phx.measurement.IndexSampleSupport((2,), ("sample",))
     sampling = phx.measurement.SamplingSemantics(
         phx.measurement.SpatialSamplingKind.POINT
@@ -93,9 +88,6 @@ def test_measurement_comparison_requires_semantic_and_support_compatibility() ->
     ).prepare()
     with pytest.raises(ValueError, match="quantity identities differ"):
         phx.observation.MeasurementComparisonPlan(observed).evaluate(incompatible)
-
-
-def test_complex_measurement_residual_uses_hermitian_magnitude() -> None:
     support = phx.measurement.IndexSampleSupport((1,), ("sample",))
     quantity = _quantity("complex-signal", "test.complex-signal")
     layout = phx.measurement.ValueLayout(phx.measurement.ValueKind.COMPLEX_SCALAR)
@@ -123,7 +115,7 @@ def test_complex_measurement_residual_uses_hermitian_magnitude() -> None:
     assert bool(result.successful)
 
 
-def test_time_and_lineage_do_not_collapse_acquisition_semantics() -> None:
+def test_measurement_core_scenario_2() -> None:
     axis = phx.measurement.SampleTimeAxis.uniform(
         "camera-clock", 3, 0.5, phx.units.SECOND
     )
@@ -138,9 +130,6 @@ def test_time_and_lineage_do_not_collapse_acquisition_semantics() -> None:
             phx.measurement.DataOrigin.SYNTHETIC,
             phx.measurement.DataStage.RAW,
         )
-
-
-def test_physical_supports_require_three_dimensions_and_typed_monotone_time() -> None:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
         coordinate_system="cartesian",

@@ -24,7 +24,7 @@ def _signed_coordinates(
     )
 
 
-def test_signed_projection_round_trip_and_isometry_respect_the_involution() -> None:
+def test_signed_spectral_coordinates_scenario_1() -> None:
     coordinates = _signed_coordinates()
     state = jnp.asarray(
         (1.0 + 2.0j, 2.0 + 3.0j, -4.0 + 5.0j, 6.0 + 7.0j, 8.0 - 9.0j, -1.0j),
@@ -60,67 +60,47 @@ def test_signed_projection_round_trip_and_isometry_respect_the_involution() -> N
     assert np.asarray(real)[1] == pytest.approx(projected_host[3].imag)
     assert coordinates.evidence.norm_relation == "isometry"
     assert float(coordinates.defect(projected)) == pytest.approx(0.0)
+    for coefficient_dtype, coordinate_dtype in (
+        (jnp.complex64, jnp.float32),
+        (jnp.complex128, jnp.float64),
+    ):
+        coordinates = SignedHermitianSpectralCoordinates(
+            (3,),
+            np.asarray((0, 2, 1)),
+            np.asarray((1, -1, -1)),
+            coefficient_dtype=coefficient_dtype,
+            layout_id=f"precision-{jnp.dtype(coefficient_dtype).name}",
+        )
+        real = jnp.asarray((1.25, -2.0, 0.75), dtype=coordinate_dtype)
 
+        state = coordinates.from_real_coordinates(real)
 
-@pytest.mark.parametrize(
-    ("coefficient_dtype", "coordinate_dtype"),
-    ((jnp.complex64, jnp.float32), (jnp.complex128, jnp.float64)),
-)
-def test_signed_coordinates_preserve_real_and_complex_precision(
-    coefficient_dtype: type[np.complex64] | type[np.complex128],
-    coordinate_dtype: type[np.float32] | type[np.float64],
-) -> None:
-    coordinates = SignedHermitianSpectralCoordinates(
-        (3,),
-        np.asarray((0, 2, 1)),
-        np.asarray((1, -1, -1)),
-        coefficient_dtype=coefficient_dtype,
-        layout_id=f"precision-{jnp.dtype(coefficient_dtype).name}",
-    )
-    real = jnp.asarray((1.25, -2.0, 0.75), dtype=coordinate_dtype)
-
-    state = coordinates.from_real_coordinates(real)
-
-    assert state.dtype == jnp.dtype(coefficient_dtype)
-    assert coordinates.coordinate_space.dtype == np.dtype(coordinate_dtype)
-    assert coordinates.to_real_coordinates(state).dtype == jnp.dtype(coordinate_dtype)
-    np.testing.assert_allclose(
-        np.asarray(coordinates.to_real_coordinates(state)), np.asarray(real)
-    )
-    np.testing.assert_allclose(
-        np.asarray(state[2]), -np.conj(np.asarray(state[1])), atol=1e-6
-    )
-
-
-@pytest.mark.parametrize(
-    ("partners", "signs", "valid_mask", "message"),
-    (
+        assert state.dtype == jnp.dtype(coefficient_dtype)
+        assert coordinates.coordinate_space.dtype == np.dtype(coordinate_dtype)
+        assert coordinates.to_real_coordinates(state).dtype == jnp.dtype(coordinate_dtype)
+        np.testing.assert_allclose(
+            np.asarray(coordinates.to_real_coordinates(state)), np.asarray(real)
+        )
+        np.testing.assert_allclose(
+            np.asarray(state[2]), -np.conj(np.asarray(state[1])), atol=1e-6
+        )
+    for partners, signs, valid_mask, message in (
         ((0, 1, 3), (1, 1, 1), None, "out-of-range"),
         ((0, 0, 2), (1, 1, 1), None, "involution"),
         ((1, 0, 2), (1, 1, 1), (True, False, True), "invariant"),
         ((0, 2, 1), (1, 1, -1), None, "compose"),
         ((0, 2, 1), (1, 0, 0), None, "only real"),
-    ),
-)
-def test_signed_coordinates_reject_invalid_involution_maps(
-    partners: tuple[int, ...],
-    signs: tuple[int, ...],
-    valid_mask: tuple[bool, ...] | None,
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        SignedHermitianSpectralCoordinates(
-            (3,),
-            np.asarray(partners),
-            np.asarray(signs),
-            # ty: ignore[invalid-argument-type]
-            valid_mask=valid_mask,
-            coefficient_dtype=jnp.complex128,
-            layout_id="invalid-map",
-        )
-
-
-def test_signed_coordinates_reject_real_coefficient_storage() -> None:
+    ):
+        with pytest.raises(ValueError, match=message):
+            SignedHermitianSpectralCoordinates(
+                (3,),
+                np.asarray(partners),
+                np.asarray(signs),
+                # ty: ignore[invalid-argument-type]
+                valid_mask=valid_mask,
+                coefficient_dtype=jnp.complex128,
+                layout_id="invalid-map",
+            )
     with pytest.raises(TypeError, match="complex dtype"):
         SignedHermitianSpectralCoordinates(
             (1,),
@@ -129,9 +109,6 @@ def test_signed_coordinates_reject_real_coefficient_storage() -> None:
             coefficient_dtype=jnp.float64,
             layout_id="real-coefficients",
         )
-
-
-def test_tensor_spectral_real_coordinates_follow_prepared_precision() -> None:
     for physical_dtype, coefficient_dtype, coordinate_dtype in (
         (jnp.float32, jnp.complex64, jnp.float32),
         (jnp.float64, jnp.complex128, jnp.float64),
@@ -153,9 +130,6 @@ def test_tensor_spectral_real_coordinates_follow_prepared_precision() -> None:
         np.testing.assert_allclose(
             np.asarray(coordinates.to_real_coordinates(state)), np.asarray(real)
         )
-
-
-def test_spherical_real_coordinates_apply_signed_phases_and_mask_padding() -> None:
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     coordinates = space.real_coordinates(component_shape=(2,))
     raw = jnp.arange(np.prod(coordinates.state_shape), dtype=jnp.float64).reshape(
@@ -191,7 +165,7 @@ def test_spherical_real_coordinates_apply_signed_phases_and_mask_padding() -> No
     )
 
 
-def test_complex_spherical_space_rejects_real_field_coordinates() -> None:
+def test_signed_spectral_coordinates_scenario_2() -> None:
     precision = phx.discretization.SpectralPrecisionPolicy(jnp.complex128)
     space = phx.discretization.SphericalSpectralPlan(
         3, reality=False, precision=precision
@@ -199,9 +173,6 @@ def test_complex_spherical_space_rejects_real_field_coordinates() -> None:
 
     with pytest.raises(ValueError, match="do not have a real-field involution"):
         space.real_coordinates()
-
-
-def test_lattice_real_coordinates_pair_each_harmonic_with_its_conjugate() -> None:
     lattice = LatticeHarmonicPlan.parallelogramic((5,), (9,)).prepare(
         jnp.asarray(((2.0, 0.0),), dtype=jnp.float64)
     )

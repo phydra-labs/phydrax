@@ -21,7 +21,7 @@ def _edge_structure(*, all_fixed: bool = True) -> Any:
     )
 
 
-def test_fixed_and_reference_edge_loads_conserve_total_force() -> None:
+def test_force_density_loads_scenario_1() -> None:
     structure = _edge_structure()
     positions = jnp.asarray(((0.0, 0.0), (2.0, 0.0)))
     fixed = fd.FixedNodalLoadModel()
@@ -38,9 +38,6 @@ def test_fixed_and_reference_edge_loads_conserve_total_force() -> None:
     assert jnp.allclose(nodal, jnp.asarray(((0.0, -3.0), (0.0, -3.0))))
     assert jnp.allclose(jnp.sum(nodal, axis=0), jnp.asarray((0.0, -6.0)))
     assert bool(line.valid(structure, positions, parameters))
-
-
-def test_current_edge_load_tracks_length_and_orientation_without_changing_total() -> None:
     forward = _edge_structure()
     reverse = fd.ForceDensityStructure.from_edges(
         jnp.asarray(((1, 0),), dtype=jnp.int32),
@@ -55,9 +52,6 @@ def test_current_edge_load_tracks_length_and_orientation_without_changing_total(
     assert jnp.allclose(model.nodal_loads(forward, positions, parameters), expected)
     assert jnp.allclose(model.nodal_loads(reverse, positions, parameters), expected)
     assert bool(model.valid(forward, positions, parameters))
-
-
-def test_surface_pressure_integrates_oriented_triangle_and_quadrilateral() -> None:
     triangle_connectivity = phx.discretization.polygonal_connectivity(
         jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
         None,
@@ -151,9 +145,7 @@ def _current_line_problem(line_load: float) -> Any:
     return problem, inputs, initial
 
 
-def test_position_dependent_edge_load_uses_nonlinear_root_and_certifies_residual() -> (
-    None
-):
+def test_force_density_loads_scenario_2() -> None:
     problem, inputs, initial = _current_line_problem(-0.1)
     result = fd.force_density_equilibrium(
         problem,
@@ -171,6 +163,19 @@ def test_position_dependent_edge_load_uses_nonlinear_root_and_certifies_residual
     assert result.state.positions[1, 1] < 0.0
     assert result.diagnostics.free_residual_norm <= 1.0e-9
     assert result.nonlinear_result.diagnostics.residual_evaluations >= 1
+    structure = _edge_structure()
+    positions = jnp.asarray(((0.0, 0.0), (2.0, 0.0)))
+    model = fd.CompositeForceDensityLoadModel(
+        (fd.FixedNodalLoadModel(), fd.EdgeLineLoadModel(measure="current"))
+    )
+    parameters = (
+        jnp.asarray(((1.0, 0.0), (0.0, 0.0))),
+        jnp.asarray(((0.0, -2.0),)),
+    )
+    expected = jnp.asarray(((1.0, -2.0), (0.0, -2.0)))
+    assert model.depends_on_positions
+    assert jnp.allclose(model.nodal_loads(structure, positions, parameters), expected)
+    assert bool(model.valid(structure, positions, parameters))
 
 
 def test_position_dependent_solve_has_implicit_load_derivative() -> None:
@@ -195,19 +200,3 @@ def test_position_dependent_solve_has_implicit_load_derivative() -> None:
     ) / (2.0 * epsilon)
     assert jnp.isfinite(derivative)
     assert derivative == pytest.approx(finite_difference, rel=2.0e-3, abs=2.0e-5)
-
-
-def test_composite_load_model_sums_children_and_preserves_dependency() -> None:
-    structure = _edge_structure()
-    positions = jnp.asarray(((0.0, 0.0), (2.0, 0.0)))
-    model = fd.CompositeForceDensityLoadModel(
-        (fd.FixedNodalLoadModel(), fd.EdgeLineLoadModel(measure="current"))
-    )
-    parameters = (
-        jnp.asarray(((1.0, 0.0), (0.0, 0.0))),
-        jnp.asarray(((0.0, -2.0),)),
-    )
-    expected = jnp.asarray(((1.0, -2.0), (0.0, -2.0)))
-    assert model.depends_on_positions
-    assert jnp.allclose(model.nodal_loads(structure, positions, parameters), expected)
-    assert bool(model.valid(structure, positions, parameters))

@@ -31,7 +31,7 @@ def _field(
     )
 
 
-def test_tensor_field_port_uses_space_identity_and_named_layout_axes() -> None:
+def test_discrete_space_ports_scenario_1() -> None:
     layout = TensorDofLayout(("i", "j"), (2, 3))
     field = _field("u", layout)
     port = field.value_port()
@@ -48,17 +48,11 @@ def test_tensor_field_port_uses_space_identity_and_named_layout_axes() -> None:
     assert port.variance == "primal"
     assert port.dimensions is None
     assert (port.frame_id, port.normalization_id) == (None, None)
-
-
-def test_component_axes_leave_axis_keys_undeclared() -> None:
     port = _field("v", TensorDofLayout(("i",), (2,), component_shape=(3,))).value_port()
 
     assert port.event_shape == (2, 3)
     assert len(port.component_ids) == 6
     assert port.axis_keys is None
-
-
-def test_entity_modal_and_block_layout_event_structure() -> None:
     entity = _field(
         "flux",
         EntityDofLayout("faces", 4, 4, component_shape=(2,)),
@@ -93,7 +87,7 @@ def test_entity_modal_and_block_layout_event_structure() -> None:
     assert block.axis_keys is None
 
 
-def test_dual_vector_space_declares_dual_variance() -> None:
+def test_discrete_space_ports_scenario_2() -> None:
     layout = TensorDofLayout(("i",), (3,))
 
     primal = _field("r", layout).value_port()
@@ -101,9 +95,6 @@ def test_dual_vector_space_declares_dual_variance() -> None:
 
     assert dual.variance == "dual"
     assert primal.port_id != dual.port_id
-
-
-def test_ports_are_deterministic_and_distinguish_declared_identity() -> None:
     layout = TensorDofLayout(("i",), (3,))
 
     port = _field("u", layout).value_port()
@@ -115,8 +106,5 @@ def test_ports_are_deterministic_and_distinguish_declared_identity() -> None:
         != _field("u", layout, representation="cell_average").value_port().port_id
     )
     assert port.port_id != _field("u", TensorDofLayout(("k",), (3,))).value_port().port_id
-
-
-def test_field_without_coefficients_has_no_port() -> None:
     with pytest.raises(ValueError, match="'empty'"):
         _field("empty", EntityDofLayout("cells", 0, 0)).value_port()

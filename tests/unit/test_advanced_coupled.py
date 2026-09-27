@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_coupled_ehd_step_conserves_signed_free_charge() -> None:
+def test_advanced_coupled_scenario_1() -> None:
     solver = phx.electrohydrodynamics.CoupledElectrohydrodynamicSolver.create(
         jnp.asarray((1.0, 1.0)),
         jnp.eye(2),
@@ -22,9 +22,6 @@ def test_coupled_ehd_step_conserves_signed_free_charge() -> None:
     assert jnp.isclose(step.charge_balance_residual_c, 0, atol=1e-12)
     assert jnp.isclose(jnp.sum(step.state.free_charge_density_c_m3), 0, atol=1e-12)
     assert step.ledger.electric_energy_j > 0
-
-
-def test_many_particle_phoresis_includes_hydrodynamic_interactions() -> None:
     solver = phx.phoresis.HydrodynamicPhoreticSolver.create(
         1.0, jnp.asarray((0.5, 0.5)), 3
     )
@@ -46,9 +43,6 @@ def test_many_particle_phoresis_includes_hydrodynamic_interactions() -> None:
     expected_gap = 2.0 + 0.1 * (step.velocity_m_s[1, 0] - step.velocity_m_s[0, 0])
     assert jnp.isclose(step.minimum_surface_separation_m, expected_gap, rtol=1e-12)
     assert step.force_power_w > 0
-
-
-def test_spatial_piezoelectric_system_closes_reciprocal_block_residual() -> None:
     system = phx.smart_materials.SpatialPiezoelectricSystem.create(
         jnp.asarray(((2.0,),)),
         jnp.asarray(((3.0,),)),
@@ -58,9 +52,6 @@ def test_spatial_piezoelectric_system_closes_reciprocal_block_residual() -> None
     assert bool(result.successful)
     assert result.residual_norm < 1e-12
     assert jnp.isfinite(result.electric_enthalpy_j)
-
-
-def test_spatial_chemo_mechanics_conserves_species_and_dissipates() -> None:
     system = phx.chemo_mechanics.SpatialChemoMechanicalSystem.create(
         jnp.asarray(((2.0,),)),
         jnp.eye(2),
@@ -80,7 +71,7 @@ def test_spatial_chemo_mechanics_conserves_species_and_dissipates() -> None:
     assert result.dissipation_rate >= 0
 
 
-def test_mass_conserving_ehl_tracks_cavitation_and_elastic_pressure() -> None:
+def test_advanced_coupled_scenario_2() -> None:
     solver = phx.tribology.MassConservingEHLSolver.create(
         jnp.ones(3),
         jnp.ones(3),
@@ -100,9 +91,6 @@ def test_mass_conserving_ehl_tracks_cavitation_and_elastic_pressure() -> None:
     assert step.state.pressure_pa[0] > 0
     assert jnp.isclose(step.state.pressure_pa[1], 0, atol=1e-9)
     assert step.complementarity_residual_pa < 1e-8
-
-
-def test_enclosure_radiation_is_reciprocal_and_energy_conserving() -> None:
     enclosure = phx.thermal_systems.DiffuseGrayEnclosure.create(
         jnp.asarray((1.0, 1.0)),
         jnp.asarray((1.0, 1.0)),
@@ -113,9 +101,6 @@ def test_enclosure_radiation_is_reciprocal_and_energy_conserving() -> None:
     assert jnp.isclose(result.enclosure_balance_w, 0, atol=1e-10)
     assert result.surface_power_w[0] < 0
     assert result.surface_power_w[1] > 0
-
-
-def test_boiling_curve_and_wall_step_are_energy_closed() -> None:
     curve = phx.thermal_systems.PoolBoilingCurve(
         373.0,
         100.0,
@@ -132,7 +117,7 @@ def test_boiling_curve_and_wall_step_are_energy_closed() -> None:
     assert jnp.isclose(wall.energy_balance_residual_j_m2, 0, atol=1e-12)
 
 
-def test_cryogenic_boiloff_and_venting_close_mass_energy_ledgers() -> None:
+def test_advanced_coupled_scenario_3() -> None:
     model = phx.thermal_systems.CryogenicTankModel(
         1.0, 1000.0, 100.0, 100.0, 10.0, 5.0, 10.0, 100.0
     )
@@ -145,9 +130,6 @@ def test_cryogenic_boiloff_and_venting_close_mass_energy_ledgers() -> None:
     assert step.vented_mass_kg > 0
     assert jnp.isclose(step.mass_balance_residual_kg, 0, atol=1e-12)
     assert jnp.isclose(step.energy_balance_residual_j, 0, atol=1e-10)
-
-
-def test_ablation_step_partitions_sensible_and_recession_energy() -> None:
     model = phx.thermal_systems.AblationSurfaceModel(
         1000.0, 1000.0, 500.0, 1.0e6, 0.0, 1.0
     )
@@ -158,9 +140,6 @@ def test_ablation_step_partitions_sensible_and_recession_energy() -> None:
     assert jnp.isclose(step.state.surface_temperature_k, 500.0)
     assert jnp.isclose(step.recession_m, 1e-4)
     assert jnp.isclose(step.energy_balance_residual_j_m2, 0)
-
-
-def test_crossflow_membrane_module_conserves_every_species() -> None:
     module = phx.membranes.CrossflowMembraneModule.create(
         jnp.asarray((1.0, 1.0)),
         jnp.asarray((1e-6, 0.5e-6)),
@@ -173,7 +152,7 @@ def test_crossflow_membrane_module_conserves_every_species() -> None:
     assert result.stage_cut > 0
 
 
-def test_segmented_catalyst_preserves_declared_atomic_inventory() -> None:
+def test_advanced_coupled_scenario_4() -> None:
     reactor = phx.surface_chemistry.SegmentedCatalyticReactor.create(
         jnp.asarray((1.0, 1.0)),
         jnp.asarray(((-1.0, 1.0),)),
@@ -189,9 +168,6 @@ def test_segmented_catalyst_preserves_declared_atomic_inventory() -> None:
     assert jnp.allclose(result.conserved_quantity_residual, 0, atol=1e-12)
     assert result.species_molar_flow_mol_s[-1, 1] > 0
     assert result.temperature_k[-1] > 300.0
-
-
-def test_stop_system_couples_thermal_mechanical_and_optical_fields() -> None:
     system = phx.optomechanics.SpatialOptomechanicalSystem.create(
         jnp.diag(jnp.asarray((2.0, 3.0))),
         jnp.diag(jnp.asarray((4.0, 5.0))),

@@ -18,7 +18,7 @@ def _embed(operator: Any, site: Any, sites: Any) -> Any:
     return value
 
 
-def test_prefix_quadratic_mpo_matches_dense_definition() -> None:
+def test_prefix_quadratic_contracts() -> None:
     charge = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128)
     generators = (charge, charge, charge)
     offsets = jnp.asarray([0.2, -0.1, 0.3])
@@ -40,22 +40,6 @@ def test_prefix_quadratic_mpo_matches_dense_definition() -> None:
     assert result.evidence.hermitian
     assert result.evidence.maximum_bond_dimension <= 3
     assert jnp.allclose(result.operator.to_dense(), expected, atol=1e-12)
-
-
-def test_prefix_quadratic_mpo_bond_dimension_is_chain_independent() -> None:
-    charge = jnp.asarray([[0.5, 0.0], [0.0, -0.5]], dtype=jnp.complex128)
-    result = phx.tensor_network.build_prefix_quadratic_mpo(
-        (charge,) * 12,
-        jnp.linspace(-0.2, 0.3, 12),
-        prefix_weights=jnp.concatenate((jnp.ones((11,)), jnp.zeros((1,)))),
-    )
-
-    assert result.evidence.site_count == 12
-    assert result.evidence.active_prefix_count == 11
-    assert result.evidence.maximum_bond_dimension == 3
-
-
-def test_prefix_quadratic_mpo_handles_one_site_and_rejects_nonhermitian_input() -> None:
     charge = jnp.asarray([[1.0, 0.0], [0.0, -1.0]])
     result = phx.tensor_network.build_prefix_quadratic_mpo(
         (charge,),
@@ -70,3 +54,13 @@ def test_prefix_quadratic_mpo_handles_one_site_and_rejects_nonhermitian_input() 
             (jnp.asarray([[0.0, 1.0], [0.0, 0.0]]),),
             jnp.asarray([0.0]),
         )
+    charge = jnp.asarray([[0.5, 0.0], [0.0, -0.5]], dtype=jnp.complex128)
+    result = phx.tensor_network.build_prefix_quadratic_mpo(
+        (charge,) * 12,
+        jnp.linspace(-0.2, 0.3, 12),
+        prefix_weights=jnp.concatenate((jnp.ones((11,)), jnp.zeros((1,)))),
+    )
+
+    assert result.evidence.site_count == 12
+    assert result.evidence.active_prefix_count == 11
+    assert result.evidence.maximum_bond_dimension == 3

@@ -123,9 +123,7 @@ def _transpose(
         ),
         *(value for value, is_zero in zip(cotangents, zero, strict=True) if not is_zero),
     )
-    cotangent_values, logs = jax.tree.unflatten(
-        output_tree, _bind(transposed, inputs)
-    )
+    cotangent_values, logs = jax.tree.unflatten(output_tree, _bind(transposed, inputs))
     if jax.tree.leaves(logs):
         raise RuntimeError("Domain conditional transpose produced unexpected logs.")
     values = iter(cotangent_values)

@@ -50,7 +50,7 @@ def _two_level_kubo(shift: Any = 0.0) -> Any:
     )
 
 
-def test_kubo_separates_drude_and_regular_response_with_passivity_and_f_sum() -> None:
+def test_periodic_transport_scenario_1() -> None:
     plan = _two_level_kubo()
     raw = plan.raw_transitions()
     gap_frequency = 1.5 * _E / 1.0545718176461565e-34
@@ -74,9 +74,6 @@ def test_kubo_separates_drude_and_regular_response_with_passivity_and_f_sum() ->
             jnp.asarray([0.0, gap_frequency]),
             KuboLinewidth(0.02 * _E, mechanism_id="declared-elastic-linewidth"),
         )
-
-
-def test_kubo_is_energy_shift_invariant_and_drude_is_degenerate_gauge_invariant() -> None:
     unshifted = _two_level_kubo().raw_transitions()
     shifted = _two_level_kubo(4.0 * _E).raw_transitions()
     assert jnp.allclose(unshifted.transition_factors, shifted.transition_factors)
@@ -112,9 +109,6 @@ def test_kubo_is_energy_shift_invariant_and_drude_is_degenerate_gauge_invariant(
         **common,
     ).raw_transitions()
     assert jnp.allclose(original.drude_weight, changed.drude_weight)
-
-
-def test_collinear_spin_response_requires_commutator_closure() -> None:
     energies = jnp.asarray([[0.0, 2.0 * _E]])
     conserved = conserved_collinear_spin_evidence(
         energies,
@@ -132,6 +126,22 @@ def test_collinear_spin_response_requires_commutator_closure() -> None:
     assert not bool(mixed.conserved)
     with pytest.raises(ValueError, match=r"\[H,Sz\]=0"):
         require_conserved_collinear_spin(mixed)
+    base = _boltzmann_plan(1.0e-14).evaluate()
+    doubled = _boltzmann_plan(2.0e-14).evaluate()
+
+    assert jnp.allclose(
+        doubled.electrical_conductivity_siemens_per_m,
+        2.0 * base.electrical_conductivity_siemens_per_m,
+    )
+    assert jnp.allclose(
+        doubled.electronic_thermal_conductivity_watt_per_m_kelvin,
+        2.0 * base.electronic_thermal_conductivity_watt_per_m_kelvin,
+    )
+    assert jnp.allclose(doubled.seebeck_volt_per_kelvin, base.seebeck_volt_per_kelvin)
+    assert jnp.allclose(base.peltier_volt, 350.0 * base.seebeck_volt_per_kelvin)
+    assert int(base.evidence.electrical_rank) == 2
+    assert bool(base.evidence.passive)
+    assert not base.evidence.relaxation_inferred_from_linewidth
 
 
 def _boltzmann_plan(tau: Any, shift: Any = 0.0, *, rank_deficient: Any = False) -> Any:
@@ -158,25 +168,6 @@ def _boltzmann_plan(tau: Any, shift: Any = 0.0, *, rank_deficient: Any = False) 
         temperature_kelvin=350.0,
         cell_volume_m3=2.0e-28,
     )
-
-
-def test_constant_tau_boltzmann_scales_transport_and_obeys_onsager() -> None:
-    base = _boltzmann_plan(1.0e-14).evaluate()
-    doubled = _boltzmann_plan(2.0e-14).evaluate()
-
-    assert jnp.allclose(
-        doubled.electrical_conductivity_siemens_per_m,
-        2.0 * base.electrical_conductivity_siemens_per_m,
-    )
-    assert jnp.allclose(
-        doubled.electronic_thermal_conductivity_watt_per_m_kelvin,
-        2.0 * base.electronic_thermal_conductivity_watt_per_m_kelvin,
-    )
-    assert jnp.allclose(doubled.seebeck_volt_per_kelvin, base.seebeck_volt_per_kelvin)
-    assert jnp.allclose(base.peltier_volt, 350.0 * base.seebeck_volt_per_kelvin)
-    assert int(base.evidence.electrical_rank) == 2
-    assert bool(base.evidence.passive)
-    assert not base.evidence.relaxation_inferred_from_linewidth
 
 
 def test_boltzmann_is_energy_shift_invariant_and_refuses_missing_velocity_rank() -> None:

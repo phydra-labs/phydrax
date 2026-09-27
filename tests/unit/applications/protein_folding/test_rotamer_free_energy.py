@@ -117,7 +117,7 @@ def _fixture(
     return term, system, jnp.asarray(positions)
 
 
-def test_heterogeneous_exact_energy_matches_independent_enumeration() -> None:
+def test_rotamer_free_energy_scenario_1() -> None:
     term, system, positions = _fixture(loop=True)
     prepared = term.prepare(system)
     tables, valid = prepared.log_factors(positions)
@@ -141,9 +141,6 @@ def test_heterogeneous_exact_energy_matches_independent_enumeration() -> None:
     )
     for marginal in np.split(np.asarray(result.variable_probabilities), [2, 5]):
         np.testing.assert_allclose(marginal.sum(), 1.0, atol=1e-12)
-
-
-def test_tree_implicit_jitted_energy_marginals_and_forces_match_exact() -> None:
     exact_term, system, positions = _fixture()
     bethe_term, _, _ = _fixture(method="bethe")
     exact = exact_term.prepare(system)
@@ -164,9 +161,6 @@ def test_tree_implicit_jitted_energy_marginals_and_forces_match_exact() -> None:
         exact.evaluate(positions).variable_probabilities,
         atol=2e-9,
     )
-
-
-def test_native_force_path_is_scalar_gradient_and_rigid_covariant() -> None:
     term, system, positions = _fixture(loop=True, method="bethe")
     program = AtomisticPotentialProgram((term,)).prepare(system)
     relation = (
@@ -199,7 +193,7 @@ def test_native_force_path_is_scalar_gradient_and_rigid_covariant() -> None:
     )
 
 
-def test_loopy_approximation_and_force_error_at_tighter_tolerance() -> None:
+def test_rotamer_free_energy_scenario_2() -> None:
     exact_term, system, positions = _fixture(loop=True, amplitude=0.1)
     tight_term, _, _ = _fixture(loop=True, method="bethe", amplitude=0.1, tolerance=1e-12)
     loose_term, _, _ = _fixture(loop=True, method="bethe", amplitude=0.1, tolerance=1e-5)
@@ -233,9 +227,6 @@ def test_loopy_approximation_and_force_error_at_tighter_tolerance() -> None:
         exact.evaluate(positions).variable_probabilities,
         atol=2e-3,
     )
-
-
-def test_atom_reordering_preserves_identity_bound_observables() -> None:
     term, system, positions = _fixture()
     permutation = np.asarray([8, 0, 6, 2, 5, 1, 7, 3, 4])
     permuted_term, permuted_system, reordered = _fixture(permutation=permutation)
@@ -245,9 +236,6 @@ def test_atom_reordering_preserves_identity_bound_observables() -> None:
     np.testing.assert_allclose(
         np.asarray(first.atom_energy)[permutation], second.atom_energy, atol=1e-12
     )
-
-
-def test_invalid_geometry_and_unqualified_loopy_branch_fail_without_fallback() -> None:
     term, system, positions = _fixture()
     result = eqx.filter_jit(term.prepare(system).evaluate)(
         positions.at[1].set(positions[0])
@@ -262,7 +250,7 @@ def test_invalid_geometry_and_unqualified_loopy_branch_fail_without_fallback() -
     assert bool(jnp.isnan(result.energy))
 
 
-def test_nonconvergence_and_model_contract_refusals() -> None:
+def test_rotamer_free_energy_scenario_3() -> None:
     term, system, positions = _fixture(
         loop=True, method="bethe", maximum_steps=1, tolerance=1e-14
     )
@@ -308,26 +296,25 @@ def test_nonconvergence_and_model_contract_refusals() -> None:
         )
     with pytest.raises(ValueError):
         term.parameters.source.require_uncertainty()
-
-
-@pytest.mark.parametrize("loop", [False, True])
-def test_underflowed_finite_unary_populations_preserve_native_forces(loop: Any) -> None:
-    exact_term, system, positions = _fixture(loop=loop, unary_gap=1000.0)
-    bethe_term, _, _ = _fixture(loop=loop, method="bethe", unary_gap=1000.0)
-    exact = AtomisticPotentialProgram((exact_term,)).prepare(system)
-    bethe = AtomisticPotentialProgram((bethe_term,)).prepare(system)
-    relation = (
-        DenseParticleNeighborhoodPlan(system.capacity * (system.capacity - 1) // 2)
-        .prepare(system.particles)
-        .build(positions)
-    )
-    reference = jax.jit(lambda q: exact.evaluate(q, relation))(positions)
-    result = jax.jit(lambda q: bethe.evaluate(q, relation))(positions)
-    # ty: ignore[unresolved-attribute]
-    beliefs = bethe.terms[0].evaluate(positions)
-    assert bool(reference.successful & result.successful & beliefs.derivative_qualified)
-    np.testing.assert_array_equal(
-        beliefs.variable_probabilities, [1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0]
-    )
-    np.testing.assert_allclose(result.energy, reference.energy, atol=2e-8)
-    np.testing.assert_allclose(result.forces, reference.forces, atol=2e-8)
+    for loop in [False, True]:
+        exact_term, system, positions = _fixture(loop=loop, unary_gap=1000.0)
+        bethe_term, _, _ = _fixture(loop=loop, method="bethe", unary_gap=1000.0)
+        exact = AtomisticPotentialProgram((exact_term,)).prepare(system)
+        bethe = AtomisticPotentialProgram((bethe_term,)).prepare(system)
+        relation = (
+            DenseParticleNeighborhoodPlan(system.capacity * (system.capacity - 1) // 2)
+            .prepare(system.particles)
+            .build(positions)
+        )
+        reference = jax.jit(lambda q: exact.evaluate(q, relation))(positions)
+        result = jax.jit(lambda q: bethe.evaluate(q, relation))(positions)
+        # ty: ignore[unresolved-attribute]
+        beliefs = bethe.terms[0].evaluate(positions)
+        assert bool(
+            reference.successful & result.successful & beliefs.derivative_qualified
+        )
+        np.testing.assert_array_equal(
+            beliefs.variable_probabilities, [1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0]
+        )
+        np.testing.assert_allclose(result.energy, reference.energy, atol=2e-8)
+        np.testing.assert_allclose(result.forces, reference.forces, atol=2e-8)

@@ -180,13 +180,10 @@ def _hfss_fixture() -> Any:
     return profile, result
 
 
-def test_hfss_qualifies_eigenmode_epr_and_signed_capacitance_targets() -> None:
+def test_device_design_adapters_scenario_1() -> None:
     profile, result = _hfss_fixture()
     values, _ = read_hfss_design_result(json.dumps(result).encode(), profile)
     assert values == (5e9, 2e6, 1.1e6, 0.75, -3.2)
-
-
-def test_hfss_rejects_mode_crossing_in_eigenmode_or_epr_results() -> None:
     profile, result = _hfss_fixture()
     result["eigenmode_frequency_hz"] = [7.1e9, 5.1e9]
     with pytest.raises(ValueError, match="mode identity"):
@@ -195,9 +192,6 @@ def test_hfss_rejects_mode_crossing_in_eigenmode_or_epr_results() -> None:
     result["epr_frequency_hz"] = [7.1e9, 5.1e9]
     with pytest.raises(ValueError, match="mode identity"):
         read_hfss_design_result(json.dumps(result).encode(), profile)
-
-
-def test_hfss_rejects_unconverged_tampered_or_unpinned_evidence() -> None:
     profile, result = _hfss_fixture()
     result["eigenmode_convergence"]["data"][-1][1] = 0.1
     with pytest.raises(ValueError, match="convergence tolerance"):
@@ -210,12 +204,65 @@ def test_hfss_rejects_unconverged_tampered_or_unpinned_evidence() -> None:
     result["packages"]["pyaedt"]["version"] = "unqualified"
     with pytest.raises(ValueError, match="dependency version mismatch"):
         read_hfss_design_result(json.dumps(result).encode(), profile)
-
-
-def test_hfss_target_schema_has_no_s_parameter_substitute() -> None:
     with pytest.raises(ValueError, match="quantity and label arity"):
         # ty: ignore[invalid-argument-type]
         HFSSDesignTarget("s21", "s_parameter", ("port1", "port2"), 0.0, 1.0)
+    bins = read_gym_detector_metrics(*_detector_fixture())
+    first = bins[0]
+    assert first.eta_range == (-3.4, -2.0)
+    assert first.momentum_range_gev == (1.0, 2.0)
+    assert first.momentum_resolution_percent == 1.5
+    assert first.momentum_fit_error_percent == 0.2
+    assert first.generated_tracks == 100
+    assert first.estimated_reconstructed_tracks == 90
+    assert first.kalman_binomial_error == pytest.approx(
+        math.sqrt(first.kalman_inefficiency * (1 - first.kalman_inefficiency) / 100)
+    )
+    with pytest.raises(ValueError, match="every declared"):
+        read_gym_detector_metrics(*_detector_fixture(drop_last=True))
+    for bad_bin, reason in [
+        ({"dp_p_p": "nan"}, "Nonfinite"),
+        ({"error_dp_p_p": 0}, "fit is not qualified"),
+        ({"OverFlowUnderFlowFlag": 1}, "overflow/underflow"),
+        (
+            {
+                "EventsInBin": 20,
+                "KF_InEfficiency": 0.1,
+                "error_KF_InEfficiency": math.sqrt(0.1 * 0.9 / 20),
+            },
+            "Insufficient reconstructed tracks",
+        ),
+        ({"error_KF_InEfficiency": 0.2}, "binomial error"),
+    ]:
+        with pytest.raises(ValueError, match=reason):
+            read_gym_detector_metrics(*_detector_fixture(bad_bin=bad_bin))
+    parameters, fits = _detector_fixture()
+    rows = list(csv.DictReader(io.StringIO(fits.decode())))
+    rows[0]["Chi2_dpp"] = "220"
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    with pytest.raises(ValueError, match="reduced chi-square"):
+        read_gym_detector_metrics(parameters, output.getvalue().encode())
+    inputs = {
+        "G4_Barrel_EIC.C": (
+            b"void BarrelSetup(PHG4Reco* g4Reco)\npitch / 10000. / sqrt(12.)\npitch / 10000. / sqrt(12.)\n"
+        ),
+        "G4_FST_EIC.C": (
+            b'Form("SI_L%i_THICKNESS", j + 1)]*Units::um\nForm("SI_L%i_THICKNESS", j)]*Units::um\n'
+        ),
+        "G4_TrackingSupport.C": (b'Form("SI_L%i_THICKNESS", ilyr)] * Units::um\n'),
+    }
+    corrected, records = _correct_gym_sources(inputs)
+    assert len(records) == 5
+    assert [record["stage"] for record in records] == [1, 2, 3, 4, 5]
+    for record in records:
+        assert record["before_sha256"] != record["after_sha256"]
+        assert record["before"].encode() not in corrected[record["path"]]
+    assert b"double BarrelSetup" in corrected["G4_Barrel_EIC.C"]
+    assert corrected["G4_Barrel_EIC.C"].count(b"pitch / sqrt(12.)") == 2
+    assert corrected["G4_FST_EIC.C"].count(b"9.37 / 100.") == 2
 
 
 def _detector_fixture(*, bad_bin: Any = None, drop_last: Any = False) -> Any:
@@ -295,79 +342,6 @@ def _detector_fixture(*, bad_bin: Any = None, drop_last: Any = False) -> Any:
             fit.update({**identity, "Chi2_dpp": 18, "NDF_dpp": 20})
             fit_writer.writerow(fit)
     return parameters.getvalue().encode(), fits.getvalue().encode()
-
-
-def test_detector_parser_preserves_fit_and_binomial_uncertainty() -> None:
-    bins = read_gym_detector_metrics(*_detector_fixture())
-    first = bins[0]
-    assert first.eta_range == (-3.4, -2.0)
-    assert first.momentum_range_gev == (1.0, 2.0)
-    assert first.momentum_resolution_percent == 1.5
-    assert first.momentum_fit_error_percent == 0.2
-    assert first.generated_tracks == 100
-    assert first.estimated_reconstructed_tracks == 90
-    assert first.kalman_binomial_error == pytest.approx(
-        math.sqrt(first.kalman_inefficiency * (1 - first.kalman_inefficiency) / 100)
-    )
-    with pytest.raises(ValueError, match="every declared"):
-        read_gym_detector_metrics(*_detector_fixture(drop_last=True))
-
-
-@pytest.mark.parametrize(
-    "bad_bin, reason",
-    [
-        ({"dp_p_p": "nan"}, "Nonfinite"),
-        ({"error_dp_p_p": 0}, "fit is not qualified"),
-        ({"OverFlowUnderFlowFlag": 1}, "overflow/underflow"),
-        (
-            {
-                "EventsInBin": 20,
-                "KF_InEfficiency": 0.1,
-                "error_KF_InEfficiency": math.sqrt(0.1 * 0.9 / 20),
-            },
-            "Insufficient reconstructed tracks",
-        ),
-        ({"error_KF_InEfficiency": 0.2}, "binomial error"),
-    ],
-)
-def test_detector_failures_never_become_training_penalties(
-    bad_bin: Any, reason: Any
-) -> None:
-    with pytest.raises(ValueError, match=reason):
-        read_gym_detector_metrics(*_detector_fixture(bad_bin=bad_bin))
-
-
-def test_detector_rejects_excessive_reduced_chi_squared() -> None:
-    parameters, fits = _detector_fixture()
-    rows = list(csv.DictReader(io.StringIO(fits.decode())))
-    rows[0]["Chi2_dpp"] = "220"
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
-    writer.writeheader()
-    writer.writerows(rows)
-    with pytest.raises(ValueError, match="reduced chi-square"):
-        read_gym_detector_metrics(parameters, output.getvalue().encode())
-
-
-def test_corrected_silicon_profile_records_every_exact_source_stage() -> None:
-    inputs = {
-        "G4_Barrel_EIC.C": (
-            b"void BarrelSetup(PHG4Reco* g4Reco)\npitch / 10000. / sqrt(12.)\npitch / 10000. / sqrt(12.)\n"
-        ),
-        "G4_FST_EIC.C": (
-            b'Form("SI_L%i_THICKNESS", j + 1)]*Units::um\nForm("SI_L%i_THICKNESS", j)]*Units::um\n'
-        ),
-        "G4_TrackingSupport.C": (b'Form("SI_L%i_THICKNESS", ilyr)] * Units::um\n'),
-    }
-    corrected, records = _correct_gym_sources(inputs)
-    assert len(records) == 5
-    assert [record["stage"] for record in records] == [1, 2, 3, 4, 5]
-    for record in records:
-        assert record["before_sha256"] != record["after_sha256"]
-        assert record["before"].encode() not in corrected[record["path"]]
-    assert b"double BarrelSetup" in corrected["G4_Barrel_EIC.C"]
-    assert corrected["G4_Barrel_EIC.C"].count(b"pitch / sqrt(12.)") == 2
-    assert corrected["G4_FST_EIC.C"].count(b"9.37 / 100.") == 2
 
 
 def _settings() -> Any:

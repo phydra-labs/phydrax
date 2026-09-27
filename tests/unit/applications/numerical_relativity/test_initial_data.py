@@ -40,7 +40,7 @@ def _pair(momentum: Any = 0.0) -> Any:
     return first, second
 
 
-def test_minkowski_fields_constraints_and_shared_adm_exchange_contract() -> None:
+def test_initial_data_scenario_1() -> None:
     points = jnp.asarray(((0.2, -0.3, 0.4), (1.0, 2.0, -1.0)))
     field = MinkowskiInitialData()
     data = field(points)
@@ -65,9 +65,6 @@ def test_minkowski_fields_constraints_and_shared_adm_exchange_contract() -> None
     assert isinstance(geometry, ADMGridGeometry)
     assert bool(geometry.all_active_valid)
     assert jnp.allclose(geometry.inverse_spatial_metric, jnp.eye(3))
-
-
-def test_isotropic_schwarzschild_single_hole_limit_and_adm_mass() -> None:
     mass = 1.2
     field = IsotropicSchwarzschildInitialData(mass)
     point = jnp.asarray((4.0, 0.0, 0.0))
@@ -98,9 +95,6 @@ def test_isotropic_schwarzschild_single_hole_limit_and_adm_mass() -> None:
     assert bool(charges.physically_valid)
     assert jnp.allclose(charges.mass, mass, rtol=2.0e-2)
     assert jnp.allclose(charges.linear_momentum, 0.0, atol=1.0e-10)
-
-
-def test_nonspinning_kerr_schild_reduces_to_schwarzschild_kerr_schild() -> None:
     mass = 0.8
     radius = 3.0
     data = KerrSchildInitialData(mass)(jnp.asarray((radius, 0.0, 0.0)))
@@ -115,7 +109,7 @@ def test_nonspinning_kerr_schild_reduces_to_schwarzschild_kerr_schild() -> None:
     assert jnp.all(jnp.isfinite(data.extrinsic_curvature))
 
 
-def test_brill_lindquist_and_bowen_york_are_exchange_symmetric() -> None:
+def test_initial_data_scenario_2() -> None:
     pair = _pair(momentum=0.04)
     points = jnp.asarray(((0.0, 0.4, 0.2), (1.3, -0.5, 0.7)))
 
@@ -137,9 +131,6 @@ def test_brill_lindquist_and_bowen_york_are_exchange_symmetric() -> None:
     schwarzschild = IsotropicSchwarzschildInitialData(1.0)(location)
     assert jnp.allclose(single_brill.conformal_factor, schwarzschild.conformal_factor)
     assert jnp.allclose(single_brill.spatial_metric, schwarzschild.spatial_metric)
-
-
-def test_two_puncture_tuning_derivative_predicate_is_a_dynamic_boolean_array() -> None:
     plan = TwoPunctureHamiltonianPlan(_pair(momentum=0.025), resolution=4)
     evidence = plan.tuning_evidence(jnp.zeros(plan.shape))
     dynamic, _ = eqx.partition(evidence, eqx.is_array)
@@ -148,9 +139,6 @@ def test_two_puncture_tuning_derivative_predicate_is_a_dynamic_boolean_array() -
     assert evidence.derivative_valid.shape == ()
     assert evidence.derivative_valid.dtype == jnp.bool_
     assert not bool(evidence.derivative_valid)
-
-
-def test_matrix_free_two_puncture_newton_krylov_reduces_residual_and_restarts() -> None:
     plan = TwoPunctureHamiltonianPlan(
         _pair(momentum=0.025),
         resolution=4,

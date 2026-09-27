@@ -36,7 +36,7 @@ def _material_model() -> Any:
     )
 
 
-def test_role_specific_coefficients_produce_constant_planck_and_rosseland_means() -> None:
+def test_radiation_material_scenario_1() -> None:
     grid = phx.equations.SpectralFrequencyGrid(
         jnp.asarray((1.0e12, 2.0e12, 3.0e12)),
         jnp.asarray((0.5e12, 1.0e12, 0.5e12)),
@@ -66,9 +66,6 @@ def test_role_specific_coefficients_produce_constant_planck_and_rosseland_means(
     np.testing.assert_allclose(means.planck_absorption, 2.0, rtol=1.0e-12)
     np.testing.assert_allclose(means.rosseland_transport, 3.0, rtol=1.0e-12)
     assert bool(means.successful)
-
-
-def test_radiation_matter_exchange_is_exactly_conservative() -> None:
     model = _material_model()
     species_density = jnp.asarray((1.0,))
     thermal = model.evaluate_density_temperature(species_density, jnp.asarray(700.0))
@@ -93,30 +90,21 @@ def test_radiation_matter_exchange_is_exactly_conservative() -> None:
         rtol=1.0e-12,
     )
     assert bool(result.successful)
-
-
-@pytest.mark.parametrize(
-    ("temperature_axis", "pressure_axis"),
-    (
+    for temperature_axis, pressure_axis in (
         (jnp.asarray((200.0, jnp.nan)), jnp.asarray((1.0e4, 1.0e6))),
         (jnp.asarray((200.0, 1000.0)), jnp.asarray((1.0e4, jnp.inf))),
-    ),
-)
-def test_radiation_coefficient_table_rejects_nonfinite_axes(
-    temperature_axis: Any,
-    pressure_axis: Any,
-) -> None:
-    grid = phx.equations.SpectralFrequencyGrid(
-        jnp.asarray((1.0e12, 2.0e12)),
-        jnp.asarray((0.5e12, 0.5e12)),
-    )
-
-    with pytest.raises(ValueError, match="table is invalid"):
-        phx.equations.RadiationCoefficientTable(
-            temperature_axis,
-            pressure_axis,
-            grid,
-            jnp.ones((2, 2, 2)),
-            phx.equations.RadiationCoefficientRole.ABSORPTION,
-            provenance="invalid-axis-regression",
+    ):
+        grid = phx.equations.SpectralFrequencyGrid(
+            jnp.asarray((1.0e12, 2.0e12)),
+            jnp.asarray((0.5e12, 0.5e12)),
         )
+
+        with pytest.raises(ValueError, match="table is invalid"):
+            phx.equations.RadiationCoefficientTable(
+                temperature_axis,
+                pressure_axis,
+                grid,
+                jnp.ones((2, 2, 2)),
+                phx.equations.RadiationCoefficientRole.ABSORPTION,
+                provenance="invalid-axis-regression",
+            )

@@ -46,7 +46,7 @@ def _field(x_values: Any, y_values: Any) -> Any:
     )
 
 
-def test_factorized_form_matches_dense_contraction_without_full_grid() -> None:
+def test_factorized_eigenspace_scenario_1() -> None:
     field = _field(
         [[0.0, 1.0], [1.0, 1.0]],
         [[1.0, 0.0], [1.0, 1.0]],
@@ -68,9 +68,6 @@ def test_factorized_form_matches_dense_contraction_without_full_grid() -> None:
     assert evaluation.full_point_count == 4
     assert evaluation.maximum_local_point_count == 2
     assert jnp.allclose(evaluation.value, expected, atol=2e-12)
-
-
-def test_factorized_variational_eigenspace_assembles_gradient_energy() -> None:
     field = _field(
         [[0.0, 1.0], [1.0, 1.0]],
         [[1.0, 0.0], [1.0, 1.0]],
@@ -104,9 +101,14 @@ def test_factorized_variational_eigenspace_assembles_gradient_energy() -> None:
         atol=2e-12,
     )
     assert jnp.allclose(result.eigenvalues, jnp.asarray([4.0 / 3.0, 4.0]), atol=2e-12)
+    field = _field(
+        [[0.0, 1.0], [1.0, 1.0]],
+        [[1.0, 0.0], [1.0, 1.0]],
+    )
+    mask = cx.AxisArray(jnp.ones((2, 2), dtype="bool"), dims=("x", "y"))
 
-
-def test_separable_mlp_factor_and_partial_paths_match_dense_evaluation() -> None:
+    with pytest.raises(ValueError, match="separable weights"):
+        phx.integration.factorized_inner_product(field, field, _batch(mask=mask))
     model = phx.nn.models.SeparableMLP(
         in_size=2,
         out_size=2,
@@ -131,14 +133,3 @@ def test_separable_mlp_factor_and_partial_paths_match_dense_evaluation() -> None
 
     assert jnp.allclose(factorized.contract().data, dense, atol=2e-12)
     assert jnp.allclose(derivative.contract().data, dense_derivative, atol=2e-11)
-
-
-def test_factorized_assembly_rejects_coupled_masks() -> None:
-    field = _field(
-        [[0.0, 1.0], [1.0, 1.0]],
-        [[1.0, 0.0], [1.0, 1.0]],
-    )
-    mask = cx.AxisArray(jnp.ones((2, 2), dtype="bool"), dims=("x", "y"))
-
-    with pytest.raises(ValueError, match="separable weights"):
-        phx.integration.factorized_inner_product(field, field, _batch(mask=mask))

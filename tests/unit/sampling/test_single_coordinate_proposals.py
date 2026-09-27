@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_single_coordinate_gaussian_proposal_is_normalized_and_symmetric() -> None:
+def test_single_coordinate_contracts() -> None:
     proposal = phx.sampling.SingleCoordinateGaussianProposal(0.3)
     current = jnp.asarray([0.1, -0.2, 0.4, 0.7])
     move = proposal.propose(jax.random.key(1), current)
@@ -23,9 +23,6 @@ def test_single_coordinate_gaussian_proposal_is_normalized_and_symmetric() -> No
         move.payload.displacement,
         move.position[move.payload.index] - current[move.payload.index],
     )
-
-
-def test_single_coordinate_periodic_proposal_crosses_principal_seam() -> None:
     proposal = phx.sampling.SingleCoordinatePeriodicProposal(2.0 * jnp.pi, 1.2)
     current = jnp.asarray([jnp.pi - 0.01])
     move = proposal.propose(jax.random.key(8), current)
@@ -35,9 +32,6 @@ def test_single_coordinate_periodic_proposal_crosses_principal_seam() -> None:
     assert jnp.all(move.position < jnp.pi)
     assert jnp.allclose(move.log_forward, move.log_reverse)
     assert jnp.abs(move.payload.displacement) <= 1.2
-
-
-def test_single_coordinate_proposals_reject_nonlocal_transitions() -> None:
     proposal = phx.sampling.SingleCoordinateGaussianProposal(0.4)
     current = jnp.zeros((3,))
     proposed = jnp.asarray([0.2, -0.1, 0.0])
@@ -47,9 +41,6 @@ def test_single_coordinate_proposals_reject_nonlocal_transitions() -> None:
         proposal.sample(jax.random.key(0), jnp.arange(3))
     with pytest.raises(ValueError, match="period / 2"):
         phx.sampling.SingleCoordinatePeriodicProposal(2.0, 1.1)
-
-
-def test_single_coordinate_proposals_are_jittable() -> None:
     current = jnp.zeros((8,))
     gaussian = phx.sampling.SingleCoordinateGaussianProposal(0.1)
     periodic = phx.sampling.SingleCoordinatePeriodicProposal(2.0 * jnp.pi, 0.5)

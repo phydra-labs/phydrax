@@ -24,7 +24,7 @@ def _atom(
     )
 
 
-def test_models_author_insertions_and_alternate_coordinates_are_retained() -> None:
+def test_pdb_identity_scenario_1() -> None:
     lines = [
         "MODEL        1",
         _atom(1, alt="A", occupancy=0.6),
@@ -49,9 +49,6 @@ def test_models_author_insertions_and_alternate_coordinates_are_retained() -> No
     assert selected[0].occupancy == 0.4
     second = select_pdb_model(rows, "2", alternate_locations={})
     assert second[0].position == (4.0, 2.0, 3.0)
-
-
-def test_incomplete_elements_zero_occupancy_and_duplicate_serials_refuse() -> None:
     with pytest.raises(ValueError, match="element"):
         read_pdb_atom_records(_atom(1)[:76], source_id="bad-source")
     with pytest.raises(ValueError, match="repeated atom serial"):

@@ -53,7 +53,7 @@ def _forced_method() -> Any:
     return LatticeBoltzmannMethodPlan(BGKCollisionPlan(), forcing=GuoForcingPlan())
 
 
-def test_color_gradient_compiler_routes_both_populations_and_fails_atomically() -> None:
+def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     discretization = _discretization()
     method = ColorGradientLBMMethod(_forced_method(), maximum_capillary_number=10.0)
     compiled = compile_color_gradient_lattice_boltzmann_problem(
@@ -93,11 +93,6 @@ def test_color_gradient_compiler_routes_both_populations_and_fails_atomically() 
     np.testing.assert_array_equal(
         rejected.accepted_state.blue_populations, state.blue_populations
     )
-
-
-def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_energy() -> (
-    None
-):
     discretization = _discretization()
     method = FreeEnergyLBMMethod(
         _forced_method(),
@@ -161,9 +156,6 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
     np.testing.assert_array_equal(
         rejected.accepted_state.phase_populations, state.phase_populations
     )
-
-
-def test_free_energy_lbm_rejects_grid_beyond_declared_capacity() -> None:
     discretization = _discretization()
     method = FreeEnergyLBMMethod(
         _forced_method(),

@@ -49,7 +49,7 @@ def _reacting_system() -> Any:
     return phx.equations.HomogeneousMixtureEulerSystem(model), mechanism
 
 
-def test_reacting_mixture_uses_full_species_and_full_chemical_energy() -> None:
+def test_reacting_flow_scenario_1() -> None:
     system, mechanism = _reacting_system()
     primitive = jnp.asarray((0.04, 0.32, 0.0, 0.0, 1200.0))
     state = system.primitive_to_conserved(primitive)
@@ -69,9 +69,6 @@ def test_reacting_mixture_uses_full_species_and_full_chemical_energy() -> None:
     assert candidate[2] > state[2]
     assert bool(system.admissible(candidate))
     assert bool(rate.successful)
-
-
-def test_homogeneous_mixture_flux_and_bounds_are_finite() -> None:
     system, _ = _reacting_system()
     primitive = jnp.asarray((0.04, 0.32, 0.18, 2.0, 900.0))
     state = system.primitive_to_conserved(primitive)

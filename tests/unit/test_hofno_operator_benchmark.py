@@ -36,16 +36,13 @@ def _collocation_poisson_solution(source: Any) -> Any:
     return np.fft.ifft2(solution_hat, axes=(-2, -1)).real
 
 
-def test_benchmark_parameter_count_uses_real_degrees_of_freedom() -> None:
+def test_hofno_operator_benchmark_scenario_1() -> None:
     model = _ComplexParameters(
         weight=jnp.ones((2, 3), dtype=jnp.complex128),
         real_bias=jnp.ones((4,), dtype=jnp.float64),
     )
 
     assert parameter_count(model) == 16
-
-
-def test_polynomial_poisson_targets_are_alias_free_reference_projections() -> None:
     scenario = polynomial_poisson_scenario(
         resolution=8,
         num_cases=3,
@@ -76,9 +73,6 @@ def test_polynomial_poisson_targets_are_alias_free_reference_projections() -> No
         set(scenario.case_ids).isdisjoint(evaluation.case_ids)
         for evaluation in scenario.evaluations
     )
-
-
-def test_controlled_hofno_candidates_train_on_corrected_scenario() -> None:
     scenario = polynomial_poisson_scenario(
         resolution=8,
         num_cases=2,

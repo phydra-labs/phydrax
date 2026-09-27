@@ -49,7 +49,7 @@ def _thermal_loss(
     return x @ covariance @ x.T + noise
 
 
-def test_product_thermal_reduction_entropy_and_ppt_margin() -> None:
+def test_gaussian_entanglement_closure_scenario_1() -> None:
     occupations = (0.25, 1.5)
     covariance = np.diag(
         (
@@ -78,9 +78,6 @@ def test_product_thermal_reduction_entropy_and_ppt_margin() -> None:
     assert bool(report.ppt)
     assert bool(report.valid)
     assert float(report.minimum_ppt_margin) >= 0.0
-
-
-def test_two_mode_squeezed_state_has_exact_ppt_spectrum_and_log_negativity() -> None:
     squeezing = 0.73
     covariance = _two_mode_squeezed(squeezing)
     state = BosonicGaussianState(np.zeros(4), covariance)
@@ -110,9 +107,6 @@ def test_two_mode_squeezed_state_has_exact_ppt_spectrum_and_log_negativity() -> 
     )
     assert not bool(report.ppt)
     assert float(report.minimum_ppt_margin) < 0.0
-
-
-def test_thermal_loss_separability_threshold_is_reported_without_clipping() -> None:
     covariance = _two_mode_squeezed(0.81)
     environment_occupation = 0.2
     threshold = environment_occupation / (environment_occupation + 1.0)

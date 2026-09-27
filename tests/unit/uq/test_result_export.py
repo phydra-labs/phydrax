@@ -217,6 +217,7 @@ def test_map_candidate_search_archives_preserve_valid_and_invalid_evidence(
 
 
 def test_arviz_adapter_preserves_chain_draw_parameter_and_sampler_dimensions() -> None:
+    pytest.importorskip("arviz", reason="requires the optional ArviZ adapter")
     problem = _problem()
     result = phx.uq.sample_nuts(
         problem,
@@ -323,6 +324,7 @@ def test_sgmcmc_result_and_mixing_report_have_portable_archives(tmp_path: Any) -
 
 
 def test_sgmcmc_arviz_export_preserves_approximation_and_thermostat_semantics() -> None:
+    pytest.importorskip("arviz", reason="requires the optional ArviZ adapter")
     result = _sgmcmc_result()
     inference_data = phx.uq.to_arviz(result)
     posterior = inference_data["posterior"].dataset

@@ -24,7 +24,7 @@ def _gas_schema() -> Any:
     )
 
 
-def test_nasa7_constant_heat_capacity_identities_and_derivative() -> None:
+def test_chemical_thermodynamics_scenario_1() -> None:
     schema = _gas_schema()
     coefficients = jnp.asarray([[[3.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]])
     plan = phx.equations.NASASpeciesThermodynamicsPlan(
@@ -58,9 +58,6 @@ def test_nasa7_constant_heat_capacity_identities_and_derivative() -> None:
     )
     assert fields.successful
     assert not plan.evaluate(jnp.asarray(100.0)).successful
-
-
-def test_polynomial_thermodynamics_and_particle_energy_inversion() -> None:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("solid",),
         (phx.equations.ChemicalPhaseKind.SOLID,),

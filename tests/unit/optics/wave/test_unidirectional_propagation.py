@@ -118,7 +118,7 @@ def _plan(space: Any, time_space: Any, omega: Any, steps: Any, **overrides: Any)
     )
 
 
-def test_zero_susceptibility_has_linear_parity_and_dispersive_phase() -> None:
+def test_unidirectional_propagation_scenario_1() -> None:
     space, time_space = _grids()
     mode = 9
     field = _mode_field(space, time_space, mode)
@@ -143,9 +143,6 @@ def test_zero_susceptibility_has_linear_parity_and_dispersive_phase() -> None:
     assert jnp.all(result.response_evaluation.analytic_nonlinear_polarization == 0.0)
     assert jnp.all(result.response_evaluation.analytic_free_current == 0.0)
     assert jnp.all(result.response_evaluation.ledger.optical_work_density == 0.0)
-
-
-def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement() -> None:
     space, time_space = _grids()
     mode = 12
     amplitude = 0.8
@@ -181,9 +178,6 @@ def test_scalar_kerr_matches_b_integral_and_has_fourth_order_refinement() -> Non
     assert errors[-1] < 1.0e-5
     assert errors[0] / errors[1] >= 8.0
     assert errors[1] / errors[2] >= 8.0
-
-
-def test_phase_matched_chi2_preserves_manley_rowe_energy() -> None:
     space, time_space = _grids()
     time = time_space.coordinates
     fundamental_mode = 5
@@ -219,7 +213,7 @@ def test_phase_matched_chi2_preserves_manley_rowe_energy() -> None:
     assert jnp.abs(final_energy / initial_energy - 1.0) < 1.0e-4
 
 
-def test_spectral_edge_violation_has_explicit_status() -> None:
+def test_unidirectional_propagation_scenario_2() -> None:
     space, time_space = _grids()
     field = _mode_field(space, time_space, 31)
     plan = _plan(
@@ -240,6 +234,17 @@ def test_spectral_edge_violation_has_explicit_status() -> None:
     assert result.status == int(UnidirectionalPropagationStatus.SPECTRAL_EDGE_LIMIT)
     assert not result.successful
     assert result.evidence.spectral_edge_fraction > 0.99
+    space, time_space = _grids()
+    plan = _plan(
+        space,
+        time_space,
+        8.0,
+        4,
+        maximum_workspace_bytes=1,
+    )
+
+    with pytest.raises(ValueError, match="maximum_workspace_bytes"):
+        prepare_unidirectional_propagation(plan, _constant_law())
 
 
 def test_execution_is_deterministic_and_has_smooth_runtime_gradients() -> None:
@@ -288,17 +293,3 @@ def test_execution_is_deterministic_and_has_smooth_runtime_gradients() -> None:
     dispersion_gradient = jax.grad(dispersion_objective)(law.coefficients)
     assert jnp.all(jnp.isfinite(dispersion_gradient))
     assert jnp.any(dispersion_gradient != 0.0)
-
-
-def test_workspace_is_rejected_before_cartesian_propagation_preparation() -> None:
-    space, time_space = _grids()
-    plan = _plan(
-        space,
-        time_space,
-        8.0,
-        4,
-        maximum_workspace_bytes=1,
-    )
-
-    with pytest.raises(ValueError, match="maximum_workspace_bytes"):
-        prepare_unidirectional_propagation(plan, _constant_law())

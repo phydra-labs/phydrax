@@ -20,7 +20,7 @@ def _operators() -> Any:
     )
 
 
-def test_pressure_correction_eliminates_identity_divergence() -> None:
+def test_incompressible_flow_multirate_scenario_1() -> None:
     flow = phx.applications.incompressible_flow
     state = flow.IncompressibleFlowState(jnp.asarray([1.0, 2.0]), jnp.zeros((2,)))
     updated, diagnostics = flow.pressure_correction_step(
@@ -35,9 +35,6 @@ def test_pressure_correction_eliminates_identity_divergence() -> None:
     assert diagnostics.divergence_before > 0.0
     assert diagnostics.divergence_after == 0.0
     assert diagnostics.successful
-
-
-def test_oifs_history_combination_preserves_normalized_partial_sum() -> None:
     flow = phx.applications.incompressible_flow
     history = (jnp.asarray([1.0]), jnp.asarray([3.0]), jnp.asarray([5.0]))
     coefficients = jnp.asarray([1.0, 2.0, 1.0])
@@ -45,17 +42,11 @@ def test_oifs_history_combination_preserves_normalized_partial_sum() -> None:
     combined = flow.oifs_history_combination(history, coefficients)
 
     assert jnp.allclose(combined, jnp.asarray([3.0]))
-
-
-def test_multirate_trace_history_predicts_linear_trace() -> None:
     history = phx.solver.DGTraceHistory.empty(3, (1,), jnp.float64)
     history = history.update(jnp.asarray([1.0]), 0.0)
     history = history.update(jnp.asarray([3.0]), 1.0)
 
     assert jnp.allclose(history.predict(2.0), jnp.asarray([5.0]), atol=1.0e-12)
-
-
-def test_multirate_interface_flux_is_exactly_conservative() -> None:
     result = phx.solver.conservative_multirate_flux(
         jnp.asarray([2.0]),
         jnp.asarray([1.0]),

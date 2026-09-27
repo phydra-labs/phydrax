@@ -68,9 +68,7 @@ def _corpus(cases: Any, *, binding_id: Any = "binding-a", loss_id: Any = "loss-a
     )
 
 
-def test_residual_corpus_is_targetless_provenance_complete_and_content_addressed() -> (
-    None
-):
+def test_residual_corpus_contracts() -> None:
     cases = (_case(0), _case(1))
 
     first = _corpus(cases)
@@ -83,9 +81,6 @@ def test_residual_corpus_is_targetless_provenance_complete_and_content_addressed
     assert first.training_provenance["operator_correction_binding_id"] == "binding-a"
     assert _corpus(cases, binding_id="binding-b").corpus_id != first.corpus_id
     assert _corpus(cases, loss_id="loss-b").corpus_id != first.corpus_id
-
-
-def test_residual_corpus_rejects_missing_identity_and_nonfinite_active_values() -> None:
     missing = _case(0, identities={"solver_execution_id": "solve-0"})
     with pytest.raises(ValueError, match="missing.*operator_id"):
         _corpus((missing,))

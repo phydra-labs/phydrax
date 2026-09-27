@@ -94,7 +94,7 @@ def _parameters(mass_ratio: Any = 2.0) -> Any:
     }
 
 
-def test_nr_surrogate_reconstructs_polynomial_nodes_and_mode_symmetry() -> None:
+def test_nr_surrogate_contracts() -> None:
     plan = _surrogate_plan()
     result = eqx.filter_jit(plan.evaluate_modes)(_parameters())
     coordinates = phx.applications.astrophysics.gravitational_waves.aligned_spin_surrogate_coordinates(
@@ -138,9 +138,6 @@ def test_nr_surrogate_reconstructs_polynomial_nodes_and_mode_symmetry() -> None:
         )
     assert np.isfinite(float(derivative))
     assert float(derivative) != 0.0
-
-
-def test_nr_surrogate_reports_time_support_and_physical_distance_scaling() -> None:
     plan = _surrogate_plan()
     geometric = plan.evaluate_geometric(
         jnp.asarray([-2.0, -0.5, 0.5, 2.0]),
@@ -222,9 +219,6 @@ def test_nr_surrogate_reports_time_support_and_physical_distance_scaling() -> No
     assert int(unsupported.status) == int(
         phx.applications.astrophysics.gravitational_waves.GravitationalWaveStatus.OUTSIDE_WAVEFORM_SUPPORT
     )
-
-
-def test_nr_surrogate_keeps_caller_provenance_unqualified_and_enforces_caps() -> None:
     gw = phx.applications.astrophysics.gravitational_waves
     template = _surrogate_plan()
     native = template.artifact

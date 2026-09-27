@@ -26,52 +26,54 @@ def _embedded(deformation: Any) -> Any:
     return jnp.eye(3, dtype=deformation.dtype).at[:2, :2].set(deformation)
 
 
-@pytest.mark.parametrize("dimension", [2, 3])
-def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(
-    dimension: Any,
-) -> None:
-    parameters = _parameters()
-    form = phx.applications.solid_mechanics.neo_hookean_form("u", parameters)
-    action = form.actions[0]
-    assert isinstance(action, phx.equations.LocalFunctionalAction)
+def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model() -> None:
+    for dimension in [2, 3]:
+        parameters = _parameters()
+        form = phx.applications.solid_mechanics.neo_hookean_form("u", parameters)
+        action = form.actions[0]
+        assert isinstance(action, phx.equations.LocalFunctionalAction)
 
-    displacement_gradient = (
-        jnp.asarray([[0.08, 0.02], [0.05, -0.04]])
-        if dimension == 2
-        else jnp.asarray([[0.08, 0.02, 0.01], [0.05, -0.04, 0.03], [0.0, 0.02, 0.06]])
-    )
-    points = jnp.zeros((1, 1, dimension))
+        displacement_gradient = (
+            jnp.asarray([[0.08, 0.02], [0.05, -0.04]])
+            if dimension == 2
+            else jnp.asarray([[0.08, 0.02, 0.01], [0.05, -0.04, 0.03], [0.0, 0.02, 0.06]])
+        )
+        points = jnp.zeros((1, 1, dimension))
 
-    def total_energy(gradient: Any) -> Any:
-        return jnp.sum(
-            action.term.density(
-                {"u": phx.variational.LocalFieldJet(gradient=gradient[None, None])},
-                phx.variational.LocalGeometry(points),
-                phx.variational.FunctionalContext(),
+        def total_energy(gradient: Any) -> Any:
+            return jnp.sum(
+                action.term.density(
+                    {"u": phx.variational.LocalFieldJet(gradient=gradient[None, None])},
+                    phx.variational.LocalGeometry(points),
+                    phx.variational.FunctionalContext(),
+                )
             )
+
+        actual_energy = total_energy(displacement_gradient)
+        actual_derivative = jax.grad(total_energy)(displacement_gradient)
+        actual_tangent = jax.hessian(total_energy)(displacement_gradient)
+        deformation = jnp.eye(dimension) + displacement_gradient
+        deformation_3d = _embedded(deformation)
+        expected_energy = phx.applications.solid_mechanics.neo_hookean_reference_energy(
+            deformation_3d, parameters
+        )
+        expected_piola = phx.applications.solid_mechanics.neo_hookean_first_piola(
+            deformation_3d, parameters
+        )[:dimension, :dimension]
+        expected_tangent = phx.operators.mechanics.neo_hookean_tangent(
+            deformation, parameters
+        )[:dimension, :dimension, :dimension, :dimension]
+
+        np.testing.assert_allclose(actual_energy, expected_energy, rtol=2e-12, atol=2e-12)
+        np.testing.assert_allclose(
+            actual_derivative, expected_piola, rtol=2e-11, atol=2e-11
+        )
+        np.testing.assert_allclose(
+            actual_tangent, expected_tangent, rtol=3e-11, atol=3e-11
         )
 
-    actual_energy = total_energy(displacement_gradient)
-    actual_derivative = jax.grad(total_energy)(displacement_gradient)
-    actual_tangent = jax.hessian(total_energy)(displacement_gradient)
-    deformation = jnp.eye(dimension) + displacement_gradient
-    deformation_3d = _embedded(deformation)
-    expected_energy = phx.applications.solid_mechanics.neo_hookean_reference_energy(
-        deformation_3d, parameters
-    )
-    expected_piola = phx.applications.solid_mechanics.neo_hookean_first_piola(
-        deformation_3d, parameters
-    )[:dimension, :dimension]
-    expected_tangent = phx.operators.mechanics.neo_hookean_tangent(
-        deformation, parameters
-    )[:dimension, :dimension, :dimension, :dimension]
 
-    np.testing.assert_allclose(actual_energy, expected_energy, rtol=2e-12, atol=2e-12)
-    np.testing.assert_allclose(actual_derivative, expected_piola, rtol=2e-11, atol=2e-11)
-    np.testing.assert_allclose(actual_tangent, expected_tangent, rtol=3e-11, atol=3e-11)
-
-
-def test_neo_hookean_form_compiles_vector_plane_strain_identity_residual() -> None:
+def test_neo_hookean_contracts() -> None:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
     mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
@@ -87,9 +89,6 @@ def test_neo_hookean_form_compiles_vector_plane_strain_identity_residual() -> No
 
     for leaf in jax.tree.leaves(residual):
         np.testing.assert_allclose(leaf, 0.0, atol=2e-12)
-
-
-def test_neo_hookean_form_rejects_incompatible_component_dimension() -> None:
     form = phx.applications.solid_mechanics.neo_hookean_form("u", _parameters())
     action = form.actions[0]
     gradients = jnp.zeros((1, 1, 2, 3))

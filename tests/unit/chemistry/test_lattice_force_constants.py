@@ -11,7 +11,7 @@ from phydrax.discretization import PeriodicCell
 from phydrax.sparse import EdgeRelation
 
 
-def test_ifc2_retains_raw_error_and_enforces_pair_asr_rotation() -> None:
+def test_lattice_force_constants_scenario_1() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
     # ty: ignore[invalid-argument-type]
@@ -42,9 +42,6 @@ def test_ifc2_retains_raw_error_and_enforces_pair_asr_rotation() -> None:
     assert float(artifact.constraints.corrected_rotational_residual) < 1.0e-12
     assert bool(artifact.constraints.successful)
     np.testing.assert_array_equal(artifact.reverse_indices, [2, 1, 0])
-
-
-def test_primitive_supercell_image_map_resolves_exact_ifc_routes() -> None:
     cell = PeriodicCell(np.eye(3))
     image_map = PrimitiveSupercellImageMap(
         # ty: ignore[invalid-argument-type]

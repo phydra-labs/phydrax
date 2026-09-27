@@ -1,11 +1,9 @@
-from typing import Any
-
 import pytest
 
 from phydrax.metrix._spacetime_conventions import RelativityConvention
 
 
-def test_canonical_relativity_convention_round_trips_with_stable_identity() -> None:
+def test_spacetime_conventions_scenario_1() -> None:
     convention = RelativityConvention.canonical()
     restored = RelativityConvention.from_dict(convention.to_dict())
 
@@ -18,11 +16,7 @@ def test_canonical_relativity_convention_round_trips_with_stable_identity() -> N
     assert convention.fourier_sign == -1
     assert restored.convention_id == convention.convention_id
     assert restored.to_dict() == convention.to_dict()
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
+    for field, value in [
         ("metric_signature", "mostly_minus"),
         ("riemann_sign", -1),
         ("extrinsic_curvature_sign", 1),
@@ -30,29 +24,22 @@ def test_canonical_relativity_convention_round_trips_with_stable_identity() -> N
         ("future_time_orientation", -1),
         ("azimuthal_orientation", -1),
         ("fourier_sign", 1),
-    ],
-)
-def test_every_relativity_convention_choice_changes_content_identity(
-    field: Any, value: Any
-) -> None:
-    canonical = RelativityConvention.canonical()
-    values = {
-        "metric_signature": canonical.metric_signature,
-        "riemann_sign": canonical.riemann_sign,
-        "extrinsic_curvature_sign": canonical.extrinsic_curvature_sign,
-        "spacetime_orientation": canonical.spacetime_orientation,
-        "future_time_orientation": canonical.future_time_orientation,
-        "azimuthal_orientation": canonical.azimuthal_orientation,
-        "fourier_sign": canonical.fourier_sign,
-    }
-    values[field] = value
+    ]:
+        canonical = RelativityConvention.canonical()
+        values = {
+            "metric_signature": canonical.metric_signature,
+            "riemann_sign": canonical.riemann_sign,
+            "extrinsic_curvature_sign": canonical.extrinsic_curvature_sign,
+            "spacetime_orientation": canonical.spacetime_orientation,
+            "future_time_orientation": canonical.future_time_orientation,
+            "azimuthal_orientation": canonical.azimuthal_orientation,
+            "fourier_sign": canonical.fourier_sign,
+        }
+        values[field] = value
 
-    changed = RelativityConvention(**values)
+        changed = RelativityConvention(**values)
 
-    assert changed.convention_id != canonical.convention_id
-
-
-def test_relativity_convention_rejects_ambiguous_signs_and_tampered_payloads() -> None:
+        assert changed.convention_id != canonical.convention_id
     with pytest.raises(ValueError, match="either -1 or \\+1"):
         RelativityConvention(riemann_sign=0)
     with pytest.raises(TypeError, match="integer sign"):

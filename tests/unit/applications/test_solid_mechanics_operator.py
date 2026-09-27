@@ -250,7 +250,7 @@ def _trained(problem: Any) -> Any:
     )
 
 
-def test_parameter_law_preserves_hierarchy_correlations_and_split_identity() -> None:
+def test_solid_mechanics_operator_scenario_1() -> None:
     spec = _spec()
     assert spec.contains({"length": 1.0, "family": "base"})
     assert not spec.contains({"length": 1.0, "family": "base", "reinforcement": 0.2})
@@ -269,9 +269,6 @@ def test_parameter_law_preserves_hierarchy_correlations_and_split_identity() -> 
     leaked = mop.MechanicsParameterDistribution(spec, (same_point,))
     with pytest.raises(ValueError, match="not held-out"):
         distribution.assert_disjoint(leaked)
-
-
-def test_case_risk_reduces_complete_cases_and_reports_batch_max_semantics() -> None:
     values = jnp.asarray([1.0, 4.0, 4.0])
     weights = jnp.asarray([0.5, 0.25, 0.25])
     weighted = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
@@ -287,9 +284,6 @@ def test_case_risk_reduces_complete_cases_and_reports_batch_max_semantics() -> N
         # ty: ignore[invalid-argument-type]
         invalid = weighted(values, probability_weights=weights, valid=(True, False, True))
         jax.block_until_ready(invalid)
-
-
-def test_geometry_and_trial_adapter_keep_physical_measure_and_domain_explicit() -> None:
     realization = _realization(_spec(), 2.0, weight=1.0, case_id="geometry")
     geometry = _geometry(realization)
     reference = jnp.asarray([[0.0], [0.5], [1.0]])
@@ -315,7 +309,7 @@ def test_geometry_and_trial_adapter_keep_physical_measure_and_domain_explicit() 
         jax.block_until_ready(jacobian)
 
 
-def test_energy_loss_integrates_each_geometry_before_parameter_risk() -> None:
+def test_solid_mechanics_operator_scenario_2() -> None:
     reduction = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
     distribution = _distribution((1.0, 2.0), (0.25, 0.75), distribution_id="train")
     problem = _problem(distribution, reduction)
@@ -334,9 +328,6 @@ def test_energy_loss_integrates_each_geometry_before_parameter_risk() -> None:
         result.cases.measure_ids["internal_energy"][0]
         != result.cases.measure_ids["internal_energy"][1]
     )
-
-
-def test_residual_and_mixed_problems_retain_named_nonpotential_blocks() -> None:
     reduction = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
     distribution = _distribution((1.0,), (1.0,), distribution_id="blocks")
     builder = _builder(distribution, reduction, split="train")
@@ -414,9 +405,6 @@ def test_residual_and_mixed_problems_retain_named_nonpotential_blocks() -> None:
         "pressure_gauge",
     )
     assert mixed_result.cases.formulation == "mixed"
-
-
-def test_support_qualification_and_adaptation_are_explicitly_separate() -> None:
     reduction = phx.nn.operator.training.MechanicsCaseReduction("weighted_mean")
     training = _distribution((1.0, 2.0), (0.5, 0.5), distribution_id="training")
     held_out = _distribution((1.5, 3.0), (0.5, 0.5), distribution_id="held-out")

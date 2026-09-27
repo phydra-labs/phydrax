@@ -29,7 +29,7 @@ def _cloud(count: Any = 32) -> Any:
     return 0.05 + 0.9 * jax.random.uniform(key, (count, 3))
 
 
-def test_zero_opening_tree_matches_direct_without_dense_tree_storage() -> None:
+def test_particle_tree_gravity_scenario_1() -> None:
     positions = _cloud()
     masses = jnp.linspace(0.5, 1.5, positions.shape[0])
     tree = cosmology.ParticleOctreePlan3D(
@@ -51,9 +51,6 @@ def test_zero_opening_tree_matches_direct_without_dense_tree_storage() -> None:
     assert int(result.evidence.direct_particle_interactions) == 32 * 31
     assert tree.leaf_mass.size == (tree.depth + 1) * positions.shape[0]
     assert tree.leaf_mass.size < 8**tree.depth
-
-
-def test_barnes_hut_accepts_far_nodes_and_jits() -> None:
     positions = _cloud(64)
     masses = jnp.ones((64,))
     tree = cosmology.ParticleOctreePlan3D(
@@ -76,6 +73,17 @@ def test_barnes_hut_accepts_far_nodes_and_jits() -> None:
         reference
     )
     assert relative_error < 0.15
+    positions = _cloud(8).at[-1].set(jnp.asarray((jnp.nan, jnp.nan, jnp.nan)))
+    masses = jnp.ones((8,)).at[-1].set(jnp.nan)
+    active = jnp.arange(8) < 7
+    tree = cosmology.ParticleOctreePlan3D((1.0, 1.0, 1.0), 4).prepare(
+        positions, masses, active
+    )
+    result = cosmology.BarnesHutGravityPlan(
+        1.0, softening=0.05, opening_angle=0.5
+    ).evaluate(tree)
+    assert bool(result.successful)
+    np.testing.assert_array_equal(result.acceleration[-1], 0.0)
 
 
 def test_barnes_hut_fixed_topology_position_gradient_is_finite() -> None:
@@ -97,20 +105,6 @@ def test_barnes_hut_fixed_topology_position_gradient_is_finite() -> None:
     gradient = jax.grad(objective)(positions)
     assert bool(jnp.all(jnp.isfinite(gradient)))
     assert float(jnp.linalg.norm(gradient)) > 0.0
-
-
-def test_inactive_nonfinite_particles_are_ignored() -> None:
-    positions = _cloud(8).at[-1].set(jnp.asarray((jnp.nan, jnp.nan, jnp.nan)))
-    masses = jnp.ones((8,)).at[-1].set(jnp.nan)
-    active = jnp.arange(8) < 7
-    tree = cosmology.ParticleOctreePlan3D((1.0, 1.0, 1.0), 4).prepare(
-        positions, masses, active
-    )
-    result = cosmology.BarnesHutGravityPlan(
-        1.0, softening=0.05, opening_angle=0.5
-    ).evaluate(tree)
-    assert bool(result.successful)
-    np.testing.assert_array_equal(result.acceleration[-1], 0.0)
 
 
 def test_periodic_barnes_hut_excludes_inactive_capacity() -> None:

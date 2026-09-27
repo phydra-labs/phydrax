@@ -137,28 +137,23 @@ def test_cardiac_transfer_reports_coverage_constant_adjoint_and_configuration() 
     assert bool(result.evidence.accepted)
 
 
-@pytest.mark.parametrize(
-    "epoch",
-    (
+def test_cardiac_transfer_invalidates_every_geometry_and_reference_epoch() -> None:
+    for epoch in (
         (5, 7, 2, 3),
         (4, 8, 2, 3),
         (4, 7, 3, 3),
         (4, 7, 2, 4),
-    ),
-)
-def test_cardiac_transfer_invalidates_every_geometry_and_reference_epoch(
-    epoch: Any,
-) -> None:
-    transfer = _cardiac_transfer()
-    result = transfer.apply(
-        jnp.asarray((2.0, 4.0), dtype=jnp.float32),
-        cv.anatomy.CardiacTransferEpoch(*epoch),
-        configuration_id=transfer.configuration.configuration_id,
-    )
+    ):
+        transfer = _cardiac_transfer()
+        result = transfer.apply(
+            jnp.asarray((2.0, 4.0), dtype=jnp.float32),
+            cv.anatomy.CardiacTransferEpoch(*epoch),
+            configuration_id=transfer.configuration.configuration_id,
+        )
 
-    assert not bool(result.evidence.epoch_matches)
-    assert not bool(result.evidence.accepted)
-    assert jnp.allclose(result.value, jnp.asarray((2.0, 3.0, 4.0)))
+        assert not bool(result.evidence.epoch_matches)
+        assert not bool(result.evidence.accepted)
+        assert jnp.allclose(result.value, jnp.asarray((2.0, 3.0, 4.0)))
 
 
 def test_cardiac_transfer_fails_closed_for_configuration_coverage_and_claims() -> None:
@@ -337,51 +332,49 @@ def _high_order_geometry(cell_kind: Any, *, degree: Any = 2) -> Any:
     return plan, coordinate_spec, epoch
 
 
-@pytest.mark.parametrize(
-    ("cell_kind", "expected_measure", "quadrature_order"),
-    (("tetrahedron", 1.0 / 6.0, 5), ("hexahedron", 1.0, 4)),
-)
-def test_high_order_p2_q2_geometry_qualifies_jacobian_and_measure(
-    cell_kind: Any, expected_measure: Any, quadrature_order: Any
-) -> None:
-    plan, coordinate_spec, epoch = _high_order_geometry(cell_kind)
-    prepared = plan.prepare()
-    reference_coordinates = coordinate_spec.coordinates
-    curved_coordinates = reference_coordinates.at[:, 2].add(
-        0.05 * reference_coordinates[:, 0] * (1.0 - reference_coordinates[:, 0])
-    )
-    candidate = prepared.evaluate(
-        curved_coordinates,
-        epoch,
-        boundary_role_id=plan.boundary_role_id,
-        boundary_profile_id=plan.boundary_profile.profile_id,
-    )
-
-    def integrated_measure(coordinates: Any) -> Any:
-        result = prepared.evaluate(
-            coordinates,
+def test_high_order_p2_q2_geometry_qualifies_jacobian_and_measure() -> None:
+    for cell_kind, expected_measure, quadrature_order in (
+        ("tetrahedron", 1.0 / 6.0, 5),
+        ("hexahedron", 1.0, 4),
+    ):
+        plan, coordinate_spec, epoch = _high_order_geometry(cell_kind)
+        prepared = plan.prepare()
+        reference_coordinates = coordinate_spec.coordinates
+        curved_coordinates = reference_coordinates.at[:, 2].add(
+            0.05 * reference_coordinates[:, 0] * (1.0 - reference_coordinates[:, 0])
+        )
+        candidate = prepared.evaluate(
+            curved_coordinates,
             epoch,
             boundary_role_id=plan.boundary_role_id,
             boundary_profile_id=plan.boundary_profile.profile_id,
         )
-        return jnp.sum(result.block_cell_measures_mm3[0])
 
-    gradient = jax.grad(integrated_measure)(curved_coordinates)
+        def integrated_measure(coordinates: Any) -> Any:
+            result = prepared.evaluate(
+                coordinates,
+                epoch,
+                boundary_role_id=plan.boundary_role_id,
+                boundary_profile_id=plan.boundary_profile.profile_id,
+            )
+            return jnp.sum(result.block_cell_measures_mm3[0])
 
-    assert prepared.quadrature_orders == (quadrature_order,)
-    assert bool(candidate.evidence.fixed_topology)
-    assert bool(candidate.evidence.orientation_valid)
-    assert bool(candidate.evidence.measure_valid)
-    assert bool(candidate.evidence.accepted)
-    assert not jnp.array_equal(curved_coordinates, reference_coordinates)
-    assert jnp.allclose(
-        candidate.block_cell_measures_mm3[0],
-        jnp.asarray((expected_measure,)),
-        rtol=2.0e-5,
-        atol=2.0e-6,
-    )
-    assert gradient.shape == coordinate_spec.coordinates.shape
-    assert jnp.all(jnp.isfinite(gradient))
+        gradient = jax.grad(integrated_measure)(curved_coordinates)
+
+        assert prepared.quadrature_orders == (quadrature_order,)
+        assert bool(candidate.evidence.fixed_topology)
+        assert bool(candidate.evidence.orientation_valid)
+        assert bool(candidate.evidence.measure_valid)
+        assert bool(candidate.evidence.accepted)
+        assert not jnp.array_equal(curved_coordinates, reference_coordinates)
+        assert jnp.allclose(
+            candidate.block_cell_measures_mm3[0],
+            jnp.asarray((expected_measure,)),
+            rtol=2.0e-5,
+            atol=2.0e-6,
+        )
+        assert gradient.shape == coordinate_spec.coordinates.shape
+        assert jnp.all(jnp.isfinite(gradient))
 
 
 def test_high_order_geometry_rejects_inversion_without_runtime_fallback() -> None:

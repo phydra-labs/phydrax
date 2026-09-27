@@ -37,7 +37,7 @@ def _crossing_closed_green() -> Any:
     )
 
 
-def test_creation_annihilation_order_channel_routes_and_wraps_are_explicit() -> None:
+def test_two_particle_green_scenario_1() -> None:
     direct = FermionicTwoParticleChannelConvention("particle-hole-direct")
     crossed = FermionicTwoParticleChannelConvention("particle-hole-crossed")
     pair = FermionicTwoParticleChannelConvention("particle-particle")
@@ -63,9 +63,6 @@ def test_creation_annihilation_order_channel_routes_and_wraps_are_explicit() -> 
     assert bool(routing.exact)
     np.testing.assert_array_equal(routing.wraps, [0, 0, 0, 1])
     np.testing.assert_array_equal(routing.wrapped_external_labels, [1, -1, 1, -1])
-
-
-def test_crossing_and_cyclic_rechanneling_preserve_the_same_four_external_legs() -> None:
     green = _crossing_closed_green()
     evidence = fermionic_crossing_evidence(green)
 
@@ -83,9 +80,6 @@ def test_crossing_and_cyclic_rechanneling_preserve_the_same_four_external_legs()
         FermionicTwoParticleChannelConvention("particle-hole-direct"),
     )
     np.testing.assert_array_equal(round_trip.values, green.values)
-
-
-def test_two_particle_payload_is_rejected_before_oversized_allocation_contract() -> None:
     labels = jnp.arange(2)
     values = jnp.zeros((2, 2, 2, 1, 1, 1, 1))
     with pytest.raises(ValueError, match="maximum_elements"):

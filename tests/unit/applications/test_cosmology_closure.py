@@ -40,7 +40,7 @@ def _cosmology_context() -> Any:
     return scale, background, provenance
 
 
-def test_cosmology_scale_units_round_trip_and_reject_cross_reference_conversion() -> None:
+def test_cosmology_closure_scenario_1() -> None:
     cosmology = phx.applications.cosmology
     scale = cosmology.CODE_COSMOLOGY_SCALE
     assert cosmology.CosmologyScaleContract is phx.DimensionalScaleContract
@@ -80,9 +80,6 @@ def test_cosmology_scale_units_round_trip_and_reject_cross_reference_conversion(
             scale.mass_unit,
             phx.units.SECOND,
         )
-
-
-def test_early_universe_and_boltzmann_closure() -> None:
     cosmology = phx.applications.cosmology
     scale, background, provenance = _cosmology_context()
     relic = cosmology.RelicBackgroundPlan(1.0).evaluate(jnp.asarray([0.5, 1.0]))
@@ -106,9 +103,6 @@ def test_early_universe_and_boltzmann_closure() -> None:
         1.0,
         rtol=1e-6,
     )
-
-
-def test_nonlinear_lensing_and_compact_object_closure() -> None:
     cosmology = phx.applications.cosmology
     multiplicity = cosmology.HaloMassFunctionPlan().multiplicity(jnp.asarray([0.5, 1.0]))
     assert bool(jnp.all(multiplicity > 0.0))
@@ -133,7 +127,7 @@ def test_nonlinear_lensing_and_compact_object_closure() -> None:
 cosmology = phx.applications.cosmology
 
 
-def test_physical_dependency_projection_checks_only_shared_parameters() -> None:
+def test_cosmology_closure_scenario_2() -> None:
     first = cosmology.CosmologyPhysicalState(
         # ty: ignore[invalid-argument-type]
         [70.0, 0.3, 2.1e-9],
@@ -163,9 +157,6 @@ def test_physical_dependency_projection_checks_only_shared_parameters() -> None:
             )
         )
     assert first.content_id() != second.content_id()
-
-
-def test_artifact_envelope_has_content_identity() -> None:
     artifact = cosmology.ScientificArtifactEnvelope(
         artifact_kind="fixture",
         content_digest="abc123",
@@ -177,9 +168,6 @@ def test_artifact_envelope_has_content_identity() -> None:
         status="complete",
     )
     assert artifact.artifact_id
-
-
-def test_product_contract_meet_keeps_owned_model_parameters() -> None:
     constant = phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT)
     combined = NATIVE_DIFFERENTIATION.meet(constant)
     assert combined.supported_surfaces == (phx.DerivativeSurface.MODEL_PARAMETER,)

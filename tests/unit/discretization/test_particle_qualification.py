@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_dimensionless_constraint_residuals_reject_percent_level_density_error() -> None:
+def test_particle_qualification_scenario_1() -> None:
     residuals = phx.discretization.particle_constraint_residuals(
         jnp.asarray([1.012416, 1.0]),
         1.0,
@@ -20,9 +20,6 @@ def test_dimensionless_constraint_residuals_reject_percent_level_density_error()
 
     assert residuals.relative_density_linf > 0.01
     assert not profile.constraints_satisfied(residuals)
-
-
-def test_execution_success_is_distinct_from_production_qualification() -> None:
     profile = phx.discretization.ParticleQualificationProfile()
     evidence = (
         phx.discretization.ParticleClaimEvidence(
@@ -42,9 +39,6 @@ def test_execution_success_is_distinct_from_production_qualification() -> None:
     assert result.execution_successful
     assert not result.numerical_constraints_satisfied
     assert not result.production_gate_satisfied
-
-
-def test_iisph_and_dfsph_lenient_execution_do_not_pass_production_gate() -> None:
     count = 6
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(

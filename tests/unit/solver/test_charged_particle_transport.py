@@ -55,7 +55,7 @@ def _plan(*, stopping: Any = 1000.0, box_length: Any = 2.0) -> Any:
     )
 
 
-def test_condensed_history_csda_range_and_kinetic_energy_ledger() -> None:
+def test_charged_particle_transport_scenario_1() -> None:
     plan = _plan()
     result = plan.simulate(
         jnp.asarray(((0.5, 0.5, 0.1),)),
@@ -69,9 +69,6 @@ def test_condensed_history_csda_range_and_kinetic_energy_ledger() -> None:
     np.testing.assert_allclose(result.deposited_energy, 1000.0, atol=1e-8)
     np.testing.assert_allclose(result.path_length, 0.99, atol=2e-3)
     np.testing.assert_allclose(result.maximum_kinetic_ledger_residual, 0.0, atol=1e-9)
-
-
-def test_boundary_escape_and_positron_annihilation_are_distinct_ledgers() -> None:
     escaping = _plan(stopping=1.0, box_length=0.5).simulate(
         jnp.asarray(((0.5, 0.5, 0.1),)),
         jnp.asarray(((0.0, 0.0, 1.0),)),

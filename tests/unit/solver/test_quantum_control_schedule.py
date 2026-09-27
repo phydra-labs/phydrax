@@ -25,7 +25,7 @@ def _piecewise_constant() -> Any:
     )
 
 
-def test_quantum_control_sampling_applies_iq_carrier_delay_and_support() -> None:
+def test_quantum_control_schedule_scenario_1() -> None:
     parameterization = _piecewise_constant()
     line = s.QuantumControlLine(
         parameterization,
@@ -57,38 +57,26 @@ def test_quantum_control_sampling_applies_iq_carrier_delay_and_support() -> None
     assert jnp.allclose(result.term_coefficients[:, 0], expected_line)
     assert jnp.allclose(result.term_coefficients[:, 1], -0.2 * expected_line)
     assert result.line_values[0, 0] == 0.0
-
-
-def test_control_schedule_gradients_reach_coefficients_phase_delay_and_transfer() -> None:
     parameterization = _piecewise_constant()
-    time_grid = jnp.asarray([0.5, 0.75, 1.0])
-
-    def objective(in_phase: Any, phase: Any, delay: Any, transfer: Any) -> Any:
-        line = s.QuantumControlLine(
+    with pytest.raises(ValueError, match="parameter_shape"):
+        s.QuantumControlLine(
             parameterization,
-            in_phase,
-            carrier=s.QuantumCarrier(angular_rate=1.3, phase=phase, delay=delay),
+            jnp.asarray([1.0]),
             support_start=0.0,
             support_stop=1.0,
         )
-        schedule = s.QuantumControlSchedule(
-            (line,),
-            s.LinearQuantumControlTransfer(transfer),
-        )
-        return jnp.sum(
-            s.sample_quantum_control_schedule(schedule, time_grid).term_coefficients
-        )
-
-    gradients = jax.grad(objective, argnums=(0, 1, 2, 3))(
-        jnp.asarray([0.7, 1.1]),
-        jnp.asarray(0.2),
-        jnp.asarray(0.1),
-        jnp.asarray([[0.8]]),
+    line = s.QuantumControlLine(
+        parameterization,
+        jnp.asarray([1.0, 1.0]),
+        support_start=1.0,
+        support_stop=0.0,
     )
-    assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
-
-
-def test_sampled_controls_assemble_with_constant_drift() -> None:
+    assert not bool(line.valid)
+    with pytest.raises(ValueError, match="line count"):
+        s.QuantumControlSchedule(
+            (line,),
+            s.LinearQuantumControlTransfer(jnp.eye(2)),
+        )
     x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
     z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
     layout = q.HilbertRegisterLayout(("q",), (2,))
@@ -123,24 +111,30 @@ def test_sampled_controls_assemble_with_constant_drift() -> None:
     assert jnp.allclose(assembled.coefficients[:, 1], jnp.asarray([0.2, 0.4]))
 
 
-def test_quantum_control_schedule_rejects_incompatible_shapes() -> None:
+def test_control_schedule_gradients_reach_coefficients_phase_delay_and_transfer() -> None:
     parameterization = _piecewise_constant()
-    with pytest.raises(ValueError, match="parameter_shape"):
-        s.QuantumControlLine(
+    time_grid = jnp.asarray([0.5, 0.75, 1.0])
+
+    def objective(in_phase: Any, phase: Any, delay: Any, transfer: Any) -> Any:
+        line = s.QuantumControlLine(
             parameterization,
-            jnp.asarray([1.0]),
+            in_phase,
+            carrier=s.QuantumCarrier(angular_rate=1.3, phase=phase, delay=delay),
             support_start=0.0,
             support_stop=1.0,
         )
-    line = s.QuantumControlLine(
-        parameterization,
-        jnp.asarray([1.0, 1.0]),
-        support_start=1.0,
-        support_stop=0.0,
-    )
-    assert not bool(line.valid)
-    with pytest.raises(ValueError, match="line count"):
-        s.QuantumControlSchedule(
+        schedule = s.QuantumControlSchedule(
             (line,),
-            s.LinearQuantumControlTransfer(jnp.eye(2)),
+            s.LinearQuantumControlTransfer(transfer),
         )
+        return jnp.sum(
+            s.sample_quantum_control_schedule(schedule, time_grid).term_coefficients
+        )
+
+    gradients = jax.grad(objective, argnums=(0, 1, 2, 3))(
+        jnp.asarray([0.7, 1.1]),
+        jnp.asarray(0.2),
+        jnp.asarray(0.1),
+        jnp.asarray([[0.8]]),
+    )
+    assert all(jnp.all(jnp.isfinite(value)) for value in gradients)

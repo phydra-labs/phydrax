@@ -12,7 +12,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_parameter_space_bijectors_density_and_gradient_are_consistent() -> None:
+def test_parameter_contracts() -> None:
     initial = {
         "bounded": jnp.asarray(0.0),
         "free": jnp.asarray([-0.25, 0.5]),
@@ -61,9 +61,6 @@ def test_parameter_space_bijectors_density_and_gradient_are_consistent() -> None
     assert all(
         jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree_util.tree_leaves(gradient)
     )
-
-
-def test_parameter_subspace_reconstructs_only_explicitly_selected_leaves() -> None:
     tree = {
         "feature": {"weight": jnp.arange(6.0).reshape(2, 3)},
         "last": {"bias": jnp.asarray([0.5]), "weight": jnp.ones((3, 1))},

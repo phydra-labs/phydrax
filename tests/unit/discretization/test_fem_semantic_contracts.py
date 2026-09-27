@@ -39,7 +39,7 @@ def _unit_hex_mesh() -> Any:
     return phx.discretization.CellMesh(coordinates, (block,))
 
 
-def test_field_representation_is_independent_of_conformity() -> None:
+def test_fem_semantic_contracts_scenario_1() -> None:
     mesh = _triangle_mesh()
     h1 = phx.discretization.lagrange_element("triangle", 1)
     l2 = phx.discretization.discontinuous_element("triangle", 1)
@@ -67,9 +67,6 @@ def test_field_representation_is_independent_of_conformity() -> None:
         phx.discretization.nedelec_element("triangle").representation
         == "circulation_moment"
     )
-
-
-def test_coefficient_layouts_have_distinct_bound_identities() -> None:
     discretization = phx.discretization.FiniteElementPlan(
         _triangle_mesh(),
         phx.discretization.FiniteElementFieldSpec(
@@ -148,9 +145,6 @@ def test_coefficient_layouts_have_distinct_bound_identities() -> None:
         field_space_id=discretization.field_spaces[0].field_space_id,
     )
     assert jnp.array_equal(oriented, jnp.asarray([[2.0, -3.0]]))
-
-
-def test_run_configuration_round_trips_one_execution_vocabulary() -> None:
     configuration = phx.solver.FiniteElementRunConfiguration(
         realization="matrix_free",
         local_kernel="sum_factorized",
@@ -169,7 +163,7 @@ def test_run_configuration_round_trips_one_execution_vocabulary() -> None:
         )
 
 
-def test_transfer_distinguishes_raw_dual_and_hilbert_adjoint() -> None:
+def test_fem_semantic_contracts_scenario_2() -> None:
     source_mass = jnp.asarray([0.5, 0.5])
     target_mass = jnp.asarray([0.25, 0.5, 0.25])
     primal = jnp.asarray([[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]])
@@ -200,9 +194,6 @@ def test_transfer_distinguishes_raw_dual_and_hilbert_adjoint() -> None:
         jnp.vdot(transfer.apply(source), target_mass * target),
         jnp.vdot(source, source_mass * adjoint),
     )
-
-
-def test_q1_hexahedral_volume_contract_is_executable() -> None:
     mesh = _unit_hex_mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,

@@ -162,7 +162,7 @@ def _dense_batch() -> Any:
     )
 
 
-def test_feature_union_dense_outputs_are_ordered_prefixed_and_differentiable() -> None:
+def test_parallel_columns_scenario_1() -> None:
     batch = _dense_batch()
     result = FeatureUnion(
         (("left", _DenseScaleRecipe(2.0)), ("right", _DenseScaleRecipe(-1.0)))
@@ -206,9 +206,6 @@ def test_feature_union_dense_outputs_are_ordered_prefixed_and_differentiable() -
     )
     # ty: ignore[unresolved-attribute]
     assert len(fitted.fit_results) == 2
-
-
-def test_feature_union_supports_all_sparse_and_rejects_mixed_joins() -> None:
     batch = _dense_batch()
     sparse_result = FeatureUnion(
         (
@@ -241,9 +238,6 @@ def test_feature_union_supports_all_sparse_and_rejects_mixed_joins() -> None:
     )
     with pytest.raises(TypeError, match="sparse and dense"):
         mixed.fit_batch(batch, key=jax.random.key(2))
-
-
-def test_column_transformer_resolves_names_indices_and_remainder_schema() -> None:
     batch = _dense_batch()
     recipe = ColumnTransformer(
         (
@@ -298,9 +292,6 @@ def test_column_transformer_resolves_names_indices_and_remainder_schema() -> Non
     assert jnp.array_equal(transformed.sample_weight, batch.sample_weight)
     assert jnp.array_equal(transformed.groups, batch.groups)
     assert jnp.allclose(fitted(batch.features), transformed.features)
-
-
-def test_column_transformer_rejects_duplicate_unknown_and_duplicate_names() -> None:
     batch = _dense_batch()
     duplicate_columns = ColumnTransformer((("bad", _DenseScaleRecipe(1.0), ("a", "a")),))
     with pytest.raises(ValueError, match="cannot select a feature twice"):

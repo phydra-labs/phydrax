@@ -20,7 +20,7 @@ from phydrax.tensor_network._anyon import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_frontier_fusion_categories_satisfy_pentagon_and_hexagon() -> None:
+def test_frontier_contracts() -> None:
     for category in (z2_fusion_category(), fibonacci_fusion_category()):
         assert bool(category.coherence.coherent)
         assert float(category.coherence.f_unitarity_residual) < 5e-9
@@ -28,9 +28,6 @@ def test_frontier_fusion_categories_satisfy_pentagon_and_hexagon() -> None:
         assert float(category.coherence.pentagon_residual) < 5e-9
         assert float(category.coherence.hexagon_residual) < 5e-9
         assert category.coherence.claim == "finite-explicit-f-r-data-only"
-
-
-def test_frontier_string_net_plaquette_is_a_commuting_projector() -> None:
     category = z2_fusion_category()
     prepared = prepare_string_net_hamiltonian(
         StringNetPlan(
@@ -65,9 +62,6 @@ def test_frontier_string_net_plaquette_is_a_commuting_projector() -> None:
     )
     assert bool(prepared.evidence.projector_identities)
     assert "reference-only" in prepared.evidence.claim
-
-
-def test_frontier_anyonic_contraction_enforces_dual_charge_and_quantum_trace() -> None:
     category = z2_fusion_category()
     left = AnyonicTensor(
         category,

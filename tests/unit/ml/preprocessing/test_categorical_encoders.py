@@ -24,7 +24,7 @@ def _schema() -> Any:
     return CategoricalSchema(((0, 1), (10, 20, 30)), names=("color", "size"))
 
 
-def test_categorical_schema_is_explicit_finite_unique_and_fixed_capacity() -> None:
+def test_categorical_encoders_scenario_1() -> None:
     schema = _schema()
     assert schema.feature_count == 2
     assert schema.category_counts == (2, 3)
@@ -39,9 +39,6 @@ def test_categorical_schema_is_explicit_finite_unique_and_fixed_capacity() -> No
     with pytest.raises(TypeError, match="numeric"):
         # ty: ignore[invalid-argument-type]
         CategoricalSchema((("red", "blue"),))
-
-
-def test_ordinal_encoder_fail_and_indicator_policies_names_inverse_jit_and_vmap() -> None:
     schema = _schema()
     training = phx.ml.MLBatch(
         jnp.array([[0, 10], [1, 20], [0, 30]]),
@@ -82,9 +79,6 @@ def test_ordinal_encoder_fail_and_indicator_policies_names_inverse_jit_and_vmap(
         is phx.GradientLevel.NONE
     )
     assert "ordinal_codes" in result.derivative_contract.nondifferentiable_outputs
-
-
-def test_onehot_encoder_schema_unknown_indicator_inverse_and_hard_contract() -> None:
     schema = _schema()
     batch = phx.ml.MLBatch(
         jnp.array([[0, 10], [1, 20], [0, 30]]),

@@ -54,7 +54,7 @@ def test_weakly_compressible_problem_requires_stable_forcing_identity() -> None:
         )
 
 
-def test_wc_sph_compiler_initializes_continuity_density_once_by_summation() -> None:
+def test_wc_sph_contracts() -> None:
     particles, method, neighborhood, problem = _components(continuity=True)
     compiled = phx.equations.compile_weakly_compressible_sph_problem(
         problem, particles, method, neighborhood=neighborhood
@@ -79,9 +79,6 @@ def test_wc_sph_compiler_initializes_continuity_density_once_by_summation() -> N
         compiled.discretization_bundle.record(compiled.dynamics.key).artifact_kind
         == "weakly-compressible-sph-dynamics"
     )
-
-
-def test_wc_sph_summation_state_rejects_explicit_density() -> None:
     particles, method, neighborhood, problem = _components(continuity=False)
     compiled = phx.equations.compile_weakly_compressible_sph_problem(
         problem, particles, method, neighborhood=neighborhood
@@ -92,9 +89,6 @@ def test_wc_sph_summation_state_rejects_explicit_density() -> None:
     assert compiled.initialize_state(position, velocity).shape == (6, 2)
     with pytest.raises(ValueError, match="does not accept density"):
         compiled.initialize_state(position, velocity, jnp.ones((6,)))
-
-
-def test_wc_sph_compiler_validates_cell_search_and_execution_backend() -> None:
     particles, method, _, problem = _components(continuity=True)
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])

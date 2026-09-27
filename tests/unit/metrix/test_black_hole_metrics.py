@@ -38,7 +38,7 @@ def _charts() -> Any:
     return boyer_lindquist, ingoing
 
 
-def test_exact_metrics_have_schwarzschild_limits_and_future_horizon_regularity() -> None:
+def test_black_hole_metrics_scenario_1() -> None:
     boyer_lindquist, ingoing = _charts()
     mass = 1.7
     exterior = jnp.array([0.2, 6.0, 0.9, -0.4])
@@ -78,9 +78,6 @@ def test_exact_metrics_have_schwarzschild_limits_and_future_horizon_regularity()
     np.testing.assert_allclose(matrix[0, 1], 1.0, rtol=0, atol=0)
     expected_determinant = -((2.0 * mass) ** 4) * np.sin(1.1) ** 2
     np.testing.assert_allclose(jnp.linalg.det(matrix), expected_determinant)
-
-
-def test_ingoing_kerr_is_regular_on_the_future_horizon_and_retains_spin_sign() -> None:
     boyer_lindquist, ingoing = _charts()
     mass = 2.0
     spin = 1.1
@@ -122,9 +119,6 @@ def test_ingoing_kerr_is_regular_on_the_future_horizon_and_retains_spin_sign() -
         )(point),
         -ingoing_positive,
     )
-
-
-def test_boyer_lindquist_to_ingoing_transition_has_exact_jacobian_and_pullback() -> None:
     boyer_lindquist, ingoing = _charts()
     mass = 2.0
     point = jnp.array([0.3, 7.0, 1.1, -0.2])
@@ -175,7 +169,7 @@ def test_boyer_lindquist_to_ingoing_transition_has_exact_jacobian_and_pullback()
         )
 
 
-def test_kerr_roots_are_stable_and_overextremal_inputs_are_not_clipped() -> None:
+def test_black_hole_metrics_scenario_2() -> None:
     near_extremal_spin = np.nextafter(1.0, 0.0)
     expected_gap = np.sqrt((1.0 - near_extremal_spin) * (1.0 + near_extremal_spin))
     near_extremal = kerr_horizon_radii(1.0, near_extremal_spin)
@@ -226,9 +220,6 @@ def test_kerr_roots_are_stable_and_overextremal_inputs_are_not_clipped() -> None
         jnp.array([0.0, 2.0 * mass]),
         atol=2e-16,
     )
-
-
-def test_metric_domains_distinguish_axis_ring_horizon_and_invalid_parameters() -> None:
     boyer_lindquist, ingoing = _charts()
     mass = 1.0
     spin = 0.6
@@ -320,9 +311,6 @@ def test_metric_domains_distinguish_axis_ring_horizon_and_invalid_parameters() -
         chart=ingoing,
     )
     assert int(schwarzschild_axis.status) == int(ExactMetricDomainStatus.AXIS)
-
-
-def test_stationary_invariants_and_metric_maps_support_jit_vmap_and_grad() -> None:
     _, ingoing = _charts()
     mass = 1.3
     radius = 5.0

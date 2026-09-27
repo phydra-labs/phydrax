@@ -1661,9 +1661,7 @@ def _dense_host_eigensolve(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, bool, int]:
     combined_dtype = np.result_type(matrix.dtype, mass.dtype)
     if np.issubdtype(combined_dtype, np.complexfloating):
-        scipy_dtype = (
-            np.complex64 if combined_dtype.itemsize <= 8 else np.complex128
-        )
+        scipy_dtype = np.complex64 if combined_dtype.itemsize <= 8 else np.complex128
     elif np.issubdtype(combined_dtype, np.floating):
         scipy_dtype = np.float32 if combined_dtype.itemsize <= 4 else np.float64
     else:

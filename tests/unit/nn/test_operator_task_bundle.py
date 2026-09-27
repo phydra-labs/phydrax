@@ -160,7 +160,7 @@ def _trained(
     )
 
 
-def test_operator_task_is_canonical_and_rejects_unknown_sources() -> None:
+def test_operator_task_contracts() -> None:
     task = _task()
     restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
 
@@ -217,9 +217,23 @@ def test_operator_task_is_canonical_and_rejects_unknown_sources() -> None:
                 case_shape=batch.case_shape,
             )
         )
+    payload = _task().to_dict()
+    payload["schema_version"] = 1
+
+    with pytest.raises(ValueError, match="current canonical fields"):
+        phx.nn.operator.OperatorTask.from_dict(payload)
+    legacy_field = _task().to_dict()
+    legacy_field["fields"][0]["dimension"] = [0.0]
+    with pytest.raises(TypeError, match="canonical mapping"):
+        phx.nn.operator.OperatorTask.from_dict(legacy_field)
+
+    legacy_query = _task().to_dict()
+    legacy_query["queries"][0]["coordinate_dimensions"] = [[1.0]]
+    with pytest.raises(TypeError, match="canonical mappings"):
+        phx.nn.operator.OperatorTask.from_dict(legacy_query)
 
 
-def test_trained_operator_applies_physical_transforms_around_model_execution() -> None:
+def test_trained_operator_contracts() -> None:
     trained = _trained()
     batch = _batch()
     prepared = trained.prepare(batch)
@@ -251,45 +265,6 @@ def test_trained_operator_applies_physical_transforms_around_model_execution() -
     )
     with pytest.raises(ValueError, match="different runtime contract"):
         other_dtype.predict_prepared(prepared)
-
-
-def test_normalized_output_pipeline_enforces_physical_conservation(tmp_path: Any) -> None:
-    pipeline = phx.nn.operator.training.OperatorOutputPipeline(
-        phx.nn.operator.training.ConservationProjection("solution", source_name="u")
-    )
-    trained = _trained(output_pipeline=pipeline)
-    batch = _batch()
-    prediction = trained.predict(batch)
-    source_total = phx.nn.operator.training.operator_integral(
-        batch.input("u").values,
-        batch.input("u"),
-        case_shape=batch.case_shape,
-    )
-    predicted_total = phx.nn.operator.training.operator_integral(
-        prediction.field("solution").values,
-        batch.query("solution-query"),
-        case_shape=batch.case_shape,
-    )
-
-    assert jnp.allclose(predicted_total, source_total)
-    destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
-    restored = phx.nn.operator.training.load_trained_operator(destination)
-    restored_total = phx.nn.operator.training.operator_integral(
-        restored.predict(batch).field("solution").values,
-        batch.query("solution-query"),
-        case_shape=batch.case_shape,
-    )
-    manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
-    assert jnp.allclose(restored_total, source_total)
-    assert "format_version" not in manifest.to_dict()
-    assert manifest.precision_evidence == trained.precision_evidence.to_dict()
-    assert restored.precision_evidence == trained.precision_evidence
-    assert manifest.output_pipeline_fingerprint == pipeline.fingerprint
-    assert restored.output_pipeline is not None
-    assert restored.output_pipeline.fingerprint == pipeline.fingerprint
-
-
-def test_trained_operator_preserves_multiple_named_outputs_and_queries() -> None:
     source_coordinates = jnp.linspace(0.0, 1.0, 4)[:, None]
     batch = phx.nn.operator.OperatorBatch(
         inputs={
@@ -394,6 +369,42 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries() -> None
     assert prediction.field("flux").values.shape == (2, 2)
 
 
+def test_normalized_output_pipeline_enforces_physical_conservation(tmp_path: Any) -> None:
+    pipeline = phx.nn.operator.training.OperatorOutputPipeline(
+        phx.nn.operator.training.ConservationProjection("solution", source_name="u")
+    )
+    trained = _trained(output_pipeline=pipeline)
+    batch = _batch()
+    prediction = trained.predict(batch)
+    source_total = phx.nn.operator.training.operator_integral(
+        batch.input("u").values,
+        batch.input("u"),
+        case_shape=batch.case_shape,
+    )
+    predicted_total = phx.nn.operator.training.operator_integral(
+        prediction.field("solution").values,
+        batch.query("solution-query"),
+        case_shape=batch.case_shape,
+    )
+
+    assert jnp.allclose(predicted_total, source_total)
+    destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
+    restored = phx.nn.operator.training.load_trained_operator(destination)
+    restored_total = phx.nn.operator.training.operator_integral(
+        restored.predict(batch).field("solution").values,
+        batch.query("solution-query"),
+        case_shape=batch.case_shape,
+    )
+    manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
+    assert jnp.allclose(restored_total, source_total)
+    assert "format_version" not in manifest.to_dict()
+    assert manifest.precision_evidence == trained.precision_evidence.to_dict()
+    assert restored.precision_evidence == trained.precision_evidence
+    assert manifest.output_pipeline_fingerprint == pipeline.fingerprint
+    assert restored.output_pipeline is not None
+    assert restored.output_pipeline.fingerprint == pipeline.fingerprint
+
+
 def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path: Any) -> None:
     batch = _batch()
     task = _fixed_task()
@@ -465,23 +476,6 @@ def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path: Any) ->
     assert dict(restored.fixed_query_fingerprints) == {"solution-query": fingerprint}
     with pytest.raises(ValueError, match="different physical geometry"):
         restored.predict(altered)
-
-
-def test_operator_task_serialization_rejects_noncanonical_fields() -> None:
-    payload = _task().to_dict()
-    payload["schema_version"] = 1
-
-    with pytest.raises(ValueError, match="current canonical fields"):
-        phx.nn.operator.OperatorTask.from_dict(payload)
-    legacy_field = _task().to_dict()
-    legacy_field["fields"][0]["dimension"] = [0.0]
-    with pytest.raises(TypeError, match="canonical mapping"):
-        phx.nn.operator.OperatorTask.from_dict(legacy_field)
-
-    legacy_query = _task().to_dict()
-    legacy_query["queries"][0]["coordinate_dimensions"] = [[1.0]]
-    with pytest.raises(TypeError, match="canonical mappings"):
-        phx.nn.operator.OperatorTask.from_dict(legacy_query)
 
 
 def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path: Any) -> None:

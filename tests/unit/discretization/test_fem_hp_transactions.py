@@ -29,7 +29,7 @@ def _topology(degrees: Any) -> Any:
     )
 
 
-def test_hp_degree_buckets_are_fixed_capacity_and_deterministic() -> None:
+def test_fem_hp_transactions_scenario_1() -> None:
     topology = _topology(((2, 1), (1, 1), (2, 1), (3, 2), (0, 0), (0, 0)))
     first = finite_element_hp_workset_plan(topology)
     second = finite_element_hp_workset_plan(topology)
@@ -59,9 +59,6 @@ def test_hp_degree_buckets_are_fixed_capacity_and_deterministic() -> None:
         np.asarray(((2, 3, 4), (0, 0, 0)), dtype=np.int32),
     )
     assert finite_element_hp_workset_plan(hex_topology).dimension == 3
-
-
-def test_p_transfer_roles_remain_distinct() -> None:
     accepted = _topology(((2, 1), (1, 1), (2, 1), (3, 2), (0, 0), (0, 0)))
     candidate = _topology(((3, 2), (1, 1), (2, 2), (3, 2), (0, 0), (0, 0)))
     primal = np.asarray((((1.0, 0.0), (0.0, 1.0), (0.5, 0.5)),))
@@ -99,9 +96,6 @@ def test_p_transfer_roles_remain_distinct() -> None:
         np.asarray(transfer.apply_pairing_adjoint(target_dual)[1]),
         pairing_adjoint[0] @ np.asarray(target_dual[1]),
     )
-
-
-def test_refinement_and_coarsening_lineage_have_fixed_quad_child_capacity() -> None:
     coarse = FiniteElementHPTopology(
         "quadrilateral",
         "coarse-quad-mesh",

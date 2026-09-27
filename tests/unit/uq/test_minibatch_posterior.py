@@ -46,7 +46,7 @@ def _active_values(source: Any, epoch: Any) -> Any:
     )
 
 
-def test_array_minibatch_source_is_deterministic_complete_and_padded() -> None:
+def test_minibatch_posterior_scenario_1() -> None:
     data = jnp.arange(7)
     source = phx.uq.ArrayMinibatchSource(data, batch_size=3, seed=11)
     duplicate = phx.uq.ArrayMinibatchSource(data, batch_size=3, seed=11)
@@ -77,9 +77,13 @@ def test_array_minibatch_source_is_deterministic_complete_and_padded() -> None:
     assert not jnp.array_equal(_active_values(source, 2), _active_values(source, 3))
     assert first[-1].data[-1] == first[-1].data[0]
     assert not bool(first[-1].factor_mask[-1])
-
-
-def test_array_minibatch_source_fingerprint_covers_data_and_configuration() -> None:
+    for data, batch_size, message in [
+        (jnp.asarray(1.0), 2, "positive leading axis"),
+        ({"x": jnp.ones((3,)), "y": jnp.ones((2,))}, 2, "share"),
+        (jnp.ones((3,)), 0, "batch_size"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            phx.uq.ArrayMinibatchSource(data, batch_size=batch_size)
     baseline = phx.uq.ArrayMinibatchSource(jnp.arange(6), batch_size=4, seed=2)
     changed_data = phx.uq.ArrayMinibatchSource(
         jnp.arange(6).at[0].set(9), batch_size=4, seed=2
@@ -104,24 +108,6 @@ def test_array_minibatch_source_fingerprint_covers_data_and_configuration() -> N
         baseline.fingerprint
         == "f34f5cdd683240ee35417b73c9f42c14eb1ca3191e661b53c15a3ca6c71acfd2"
     )
-
-
-@pytest.mark.parametrize(
-    ("data", "batch_size", "message"),
-    [
-        (jnp.asarray(1.0), 2, "positive leading axis"),
-        ({"x": jnp.ones((3,)), "y": jnp.ones((2,))}, 2, "share"),
-        (jnp.ones((3,)), 0, "batch_size"),
-    ],
-)
-def test_array_minibatch_source_rejects_invalid_contracts(
-    data: Any, batch_size: Any, message: Any
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        phx.uq.ArrayMinibatchSource(data, batch_size=batch_size)
-
-
-def test_likelihood_batch_requires_a_nonempty_boolean_factor_mask() -> None:
     with pytest.raises(ValueError, match="one-dimensional"):
         phx.uq.LikelihoodBatch(
             jnp.ones((2,)),
@@ -146,9 +132,6 @@ def test_likelihood_batch_requires_a_nonempty_boolean_factor_mask() -> None:
             sampling_probabilities=jnp.ones((2,)),
             estimator_weights=jnp.ones((2,)),
         )
-
-
-def test_minibatch_posterior_scales_only_active_likelihood_factors() -> None:
     data = jnp.asarray([0.5, 1.0, 2.0, 4.0, 8.0])
     problem = _problem(data)
     batch = phx.uq.LikelihoodBatch(
@@ -175,9 +158,6 @@ def test_minibatch_posterior_scales_only_active_likelihood_factors() -> None:
     assert problem.predict(position, 3.0) == 3.0 * physical
     assert problem.conditional_observation_variance(position) == 0.25
     assert jnp.isfinite(problem.sample_observation(jax.random.key(1), position))
-
-
-def test_minibatch_posterior_rejects_wrong_factor_shapes() -> None:
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
     batch = phx.uq.LikelihoodBatch(
         jnp.ones((3,)),
@@ -197,9 +177,6 @@ def test_minibatch_posterior_rejects_wrong_factor_shapes() -> None:
         scalar_problem.log_density_estimate(space.initial, batch)
     with pytest.raises(ValueError, match="one scalar"):
         short_problem.log_density_estimate(space.initial, batch)
-
-
-def test_minibatch_diagnostics_reconstruct_full_density_and_gradient() -> None:
     data = jnp.linspace(0.2, 1.4, 7)
     source = phx.uq.ArrayMinibatchSource(data, batch_size=3, seed=4)
     diagnostics = phx.uq.diagnose_minibatch_posterior(_problem(data), source)
@@ -212,9 +189,6 @@ def test_minibatch_diagnostics_reconstruct_full_density_and_gradient() -> None:
     assert diagnostics.full_gradient_matches
     assert diagnostics.capabilities.prediction
     assert diagnostics.capabilities.control_variates
-
-
-def test_minibatch_diagnostics_report_population_and_full_density_mismatches() -> None:
     data = jnp.linspace(-1.0, 1.0, 5)
     source = phx.uq.ArrayMinibatchSource(data, batch_size=2, seed=5)
     diagnostics = phx.uq.diagnose_minibatch_posterior(

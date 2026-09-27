@@ -9,7 +9,7 @@ import phydrax as phx
 CONTEXT = phx.stochastic.StateSpaceStepContext.empty()
 
 
-def test_exact_lti_ou_brownian_and_affine_offset() -> None:
+def test_linear_gaussian_scenario_1() -> None:
     ou = phx.stochastic.LinearGaussianDynamics(
         jnp.asarray([[-0.7]]),
         jnp.asarray([[1.3]]),
@@ -48,9 +48,6 @@ def test_exact_lti_ou_brownian_and_affine_offset() -> None:
     assert jnp.allclose(shared.transition, brownian_parameters.transition)
     assert jnp.allclose(shared.offset, brownian_parameters.offset)
     assert jnp.allclose(shared.covariance, brownian_parameters.covariance)
-
-
-def test_exact_lti_nonnormal_semigroup_and_zero_duration() -> None:
     dynamics = phx.stochastic.LinearGaussianDynamics(
         jnp.asarray([[-1.0, 4.0], [0.0, -1.0]]),
         jnp.asarray([[1.0], [0.25]]),
@@ -89,9 +86,6 @@ def test_exact_lti_nonnormal_semigroup_and_zero_duration() -> None:
     assert jnp.array_equal(zero.transition, jnp.eye(2))
     assert jnp.array_equal(zero.offset, jnp.zeros(2))
     assert jnp.array_equal(zero.covariance, jnp.zeros((2, 2)))
-
-
-def test_exact_lti_is_jittable_vmappable_and_differentiable() -> None:
     dynamics = phx.stochastic.LinearGaussianDynamics(
         jnp.asarray([[-0.4]]),
         jnp.asarray([[0.8]]),
@@ -110,9 +104,6 @@ def test_exact_lti_is_jittable_vmappable_and_differentiable() -> None:
     assert batched.transition.shape == (3, 1, 1)
     assert jnp.array_equal(batched.covariance[0], jnp.zeros((1, 1)))
     assert jnp.allclose(derivative, 0.8**2 * jnp.exp(-0.8 * 0.7))
-
-
-def test_singular_transition_sampling_log_density_and_provenance() -> None:
     dynamics = phx.stochastic.LinearGaussianDynamics(
         jnp.zeros((2, 2)),
         jnp.asarray([[1.0], [0.0]]),
@@ -161,9 +152,6 @@ def test_singular_transition_sampling_log_density_and_provenance() -> None:
 
     with pytest.raises(TypeError, match="offset must be omitted"):
         phx.stochastic.LinearGaussianTransitionKernel(dynamics, offset=jnp.ones(2))
-
-
-def test_legacy_transition_constructor_uses_one_parameterization_object() -> None:
     kernel = phx.stochastic.LinearGaussianTransitionKernel(
         jnp.eye(2, dtype=jnp.int32),
         jnp.diag(jnp.asarray([1, 2], dtype=jnp.int32)),

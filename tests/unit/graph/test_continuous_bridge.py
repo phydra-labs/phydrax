@@ -57,7 +57,7 @@ def _uniform_interval_bridge(segment_count: Any, chart: Any) -> Any:
     )
 
 
-def test_continuous_cochain_projection_converges_under_uniform_refinement() -> None:
+def test_continuous_bridge_scenario_1() -> None:
     chart = phx.metrix.CoordinateChart("refinement_line", ("x",))
     scalar = phx.metrix.DifferentialForm(
         lambda point: jnp.exp(point[0]),
@@ -87,9 +87,6 @@ def test_continuous_cochain_projection_converges_under_uniform_refinement() -> N
         assert fine.maximum_residual < coarse.maximum_residual / 7.0
     assert not bool(stokes_reports[-2].valid)
     assert bool(stokes_reports[-1].valid)
-
-
-def test_oriented_segment_bridge_commutes_with_exterior_derivative() -> None:
     complex = phx.graph.cochain_complex_from_incidences(
         (2, 1),
         (jnp.array([[-1.0], [1.0]]),),
@@ -134,9 +131,6 @@ def test_oriented_segment_bridge_commutes_with_exterior_derivative() -> None:
     assert jnp.allclose(projection.values, jnp.array([0.0, 1.0, 0.0]))
     assert bool(report.valid)
     assert report.maximum_residual < 1e-12
-
-
-def test_zero_cell_parameterization_enforces_point_value_semantics() -> None:
     with pytest.raises(ValueError, match="Zero-cell sampling"):
         phx.graph.OrientedCellParameterization(
             0,

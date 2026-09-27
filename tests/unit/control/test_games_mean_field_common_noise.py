@@ -243,7 +243,7 @@ def _balanced_initial() -> Any:
     )
 
 
-def test_two_public_scenarios_keep_distinct_conditional_laws_and_histories() -> None:
+def test_games_mean_field_common_noise_scenario_1() -> None:
     histories = (jnp.asarray([-0.5, -1.0]), jnp.asarray([0.5, 1.0]))
     observed = []
     problem = _problem(
@@ -297,9 +297,6 @@ def test_two_public_scenarios_keep_distinct_conditional_laws_and_histories() -> 
     assert result.best_response_path_ids[0][0].startswith("best-response-paths:")
     # ty: ignore[unresolved-attribute]
     assert result.induced_source_path_ids[0][0].startswith("independent-forward-paths:")
-
-
-def test_scenario_permutation_preserves_id_keyed_conditional_evidence() -> None:
     initial = _balanced_initial()
     histories = (jnp.asarray([-1.0]), jnp.asarray([1.0]))
     labels = (("a", "b", "c", "d"), ("e", "f", "g", "h"))
@@ -335,9 +332,6 @@ def test_scenario_permutation_preserves_id_keyed_conditional_evidence() -> None:
     np.testing.assert_allclose(
         first.aggregate_distance_history[0], second.aggregate_distance_history[0]
     )
-
-
-def test_zero_probability_atom_is_retained_but_not_required_or_evaluated() -> None:
     histories = (jnp.asarray([-1.0]), jnp.asarray([9.0]))
     observed = []
     problem = _problem(
@@ -363,7 +357,7 @@ def test_zero_probability_atom_is_retained_but_not_required_or_evaluated() -> No
     assert all(entry[2] is histories[0] for entry in observed)
 
 
-def test_positive_atom_with_one_independent_cluster_is_rejected() -> None:
+def test_games_mean_field_common_noise_scenario_2() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -378,9 +372,6 @@ def test_positive_atom_with_one_independent_cluster_is_rejected() -> None:
     assert not result.valid
     assert result.independent_cluster_count_history[0, 0] == 1
     assert not result.best_response_validity_history[0, 0]
-
-
-def test_conditional_forward_laws_must_use_distinct_idiosyncratic_paths() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -395,9 +386,6 @@ def test_conditional_forward_laws_must_use_distinct_idiosyncratic_paths() -> Non
     assert result.status == CommonNoiseMeanFieldStatus.INVALID_INDUCED_LAW
     assert not result.valid
     assert result.induced_flow_validity_history[0].tolist() == [True, False]
-
-
-def test_matching_unconditional_mean_cannot_replace_conditional_consistency() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -481,7 +469,7 @@ def test_damping_is_applied_separately_inside_each_conditional_law() -> None:
     assert result.law_mixture_id == "conditional-exact-union-support-mixture"
 
 
-def test_subunit_conditional_damping_requires_an_identified_law_mixture() -> None:
+def test_games_mean_field_common_noise_scenario_3() -> None:
     with pytest.raises(ValueError, match="must be supplied together"):
         _problem(
             _balanced_initial(),
@@ -507,9 +495,6 @@ def test_subunit_conditional_damping_requires_an_identified_law_mixture() -> Non
         solve_common_noise_mean_field_fixed_point(
             problem, _plan(maximum_iterations=1, damping=0.5)
         )
-
-
-def test_invalid_conditional_law_mixture_callback_fails_closed() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -530,8 +515,6 @@ def test_invalid_conditional_law_mixture_callback_fails_closed() -> None:
     ]
     assert not result.valid
 
-
-def test_unit_conditional_damping_uses_each_induced_law_directly() -> None:
     def forbidden_mixture(
         current: Any, induced: Any, damping: Any, iteration: Any, history: Any, args: Any
     ) -> None:
@@ -562,7 +545,7 @@ def test_unit_conditional_damping_uses_each_induced_law_directly() -> None:
     assert all(flow.source_path_id is not None for flow in result.conditional_flows)
 
 
-def test_nonconvergent_conditional_map_exhausts_outer_capacity() -> None:
+def test_games_mean_field_common_noise_scenario_4() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),
@@ -581,9 +564,6 @@ def test_nonconvergent_conditional_map_exhausts_outer_capacity() -> None:
     np.testing.assert_allclose(result.distance_history, 2.0)
     assert jnp.all(result.scenario_iteration_validity_history)
     assert not result.converged
-
-
-def test_success_label_is_candidate_evidence_without_unconditional_or_mfc_claim() -> None:
     problem = _problem(
         _balanced_initial(),
         (jnp.asarray([-1.0]), jnp.asarray([1.0])),

@@ -29,7 +29,7 @@ from phydrax.applications.electrophysiology._neurons import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_lif_charge_includes_outward_synapse_affinity_and_inward_injection() -> None:
+def test_point_neurons_scenario_1() -> None:
     model = LeakyIntegrateAndFire(0.2, 0.01, -65.0, -45.0, -68.0)
     initial = np.asarray([-70.0, -62.0, -55.0])
     injected = np.asarray([0.1, -0.03, 0.2])
@@ -44,26 +44,6 @@ def test_lif_charge_includes_outward_synapse_affinity_and_inward_injection() -> 
     equilibrium = (-0.65 + injected - synaptic_offset) / total_g
     expected = equilibrium + (initial - equilibrium) * np.exp(-total_g * elapsed / 0.2)
     np.testing.assert_allclose(result.voltage_mV, expected, rtol=2.0e-13, atol=2.0e-13)
-
-
-def test_zero_leak_charge_has_finite_parameter_and_current_sensitivities() -> None:
-    model = LeakyIntegrateAndFire(0.25, 0.0, -65.0, -45.0, -68.0)
-    state = initialize_point_neuron(model, -60.0)
-    elapsed, current = 3.0, 0.1
-
-    def voltage(leak: Any, injected: Any) -> Any:
-        varied = eqx.tree_at(lambda value: value.leak_conductance_uS, model, leak)
-        return advance_point_neuron(varied, state, elapsed, injected).voltage_mV
-
-    value, derivatives = jax.value_and_grad(voltage, argnums=(0, 1))(
-        jnp.asarray(0.0), jnp.asarray(current)
-    )
-    expected_leak = (-65.0 + 60.0) * elapsed / 0.25 - current * elapsed**2 / (2 * 0.25**2)
-    np.testing.assert_allclose(value, -60.0 + current * elapsed / 0.25, atol=1.0e-13)
-    np.testing.assert_allclose(derivatives, [expected_leak, elapsed / 0.25], atol=1.0e-12)
-
-
-def test_refractory_release_inside_vector_segment_preserves_exact_free_charge() -> None:
     model = LeakyIntegrateAndFire(0.2, 0.01, -65.0, -45.0, -70.0, refractory_ms=2.0)
     # ty: ignore[invalid-argument-type]
     before = initialize_point_neuron(model, [-45.0, -45.0])
@@ -75,9 +55,6 @@ def test_refractory_release_inside_vector_segment_preserves_exact_free_charge() 
     released = advance_point_neuron(model, result, 1.0, 0.2, time_ms=5.0)
     expected_second = equilibrium + (-70.0 - equilibrium) * np.exp(-0.01 / 0.2)
     np.testing.assert_allclose(released.voltage_mV[1], expected_second, atol=1.0e-12)
-
-
-def test_adex_reset_increment_and_refractory_adaptation_remain_physical() -> None:
     model = AdaptiveExponentialIntegrateAndFire(
         0.2,
         0.01,
@@ -104,6 +81,36 @@ def test_adex_reset_increment_and_refractory_adaptation_remain_physical() -> Non
     np.testing.assert_allclose(
         split.adaptation_nA, after_release.adaptation_nA, atol=1.0e-14
     )
+    with pytest.raises(ValueError):
+        AdaptiveExponentialIntegrateAndFire(
+            0.2,
+            0.01,
+            -65.0,
+            -50.0,
+            -60.0,
+            2.0,
+            0.002,
+            100.0,
+            0.03,
+            exponential_threshold_mV=-45.0,
+        )
+
+
+def test_zero_leak_charge_has_finite_parameter_and_current_sensitivities() -> None:
+    model = LeakyIntegrateAndFire(0.25, 0.0, -65.0, -45.0, -68.0)
+    state = initialize_point_neuron(model, -60.0)
+    elapsed, current = 3.0, 0.1
+
+    def voltage(leak: Any, injected: Any) -> Any:
+        varied = eqx.tree_at(lambda value: value.leak_conductance_uS, model, leak)
+        return advance_point_neuron(varied, state, elapsed, injected).voltage_mV
+
+    value, derivatives = jax.value_and_grad(voltage, argnums=(0, 1))(
+        jnp.asarray(0.0), jnp.asarray(current)
+    )
+    expected_leak = (-65.0 + 60.0) * elapsed / 0.25 - current * elapsed**2 / (2 * 0.25**2)
+    np.testing.assert_allclose(value, -60.0 + current * elapsed / 0.25, atol=1.0e-13)
+    np.testing.assert_allclose(derivatives, [expected_leak, elapsed / 0.25], atol=1.0e-12)
 
 
 def test_adex_subthreshold_segment_matches_independent_ode_and_differentiates() -> None:
@@ -155,22 +162,6 @@ def test_adex_subthreshold_segment_matches_independent_ode_and_differentiates() 
     ) / (2 * epsilon)
     assert float(derivative) < 0.0
     np.testing.assert_allclose(derivative, finite_difference, rtol=2.0e-6, atol=1.0e-9)
-
-
-def test_adex_distinguishes_exponential_onset_from_spike_cutoff() -> None:
-    with pytest.raises(ValueError):
-        AdaptiveExponentialIntegrateAndFire(
-            0.2,
-            0.01,
-            -65.0,
-            -50.0,
-            -60.0,
-            2.0,
-            0.002,
-            100.0,
-            0.03,
-            exponential_threshold_mV=-45.0,
-        )
 
 
 def test_threshold_hysteresis_does_not_refire_a_plateau_or_subthreshold_chatter() -> None:

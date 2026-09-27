@@ -19,7 +19,7 @@ def _complex_trainable_leaf_count(value: Any) -> Any:
     return sum(int(jnp.iscomplexobj(leaf)) for leaf in jax.tree.leaves(parameters))
 
 
-def test_complex_interchange_state_is_canonical_and_rejects_invalid_entries() -> None:
+def test_complex_parameters_scenario_1() -> None:
     first = phx.export.ComplexInterchangeState.from_entries(
         "trainable-parameters",
         "external-model",
@@ -76,9 +76,6 @@ def test_complex_interchange_state_is_canonical_and_rejects_invalid_entries() ->
             role="weight",
             trainable=True,
         )
-
-
-def test_complex_linear_and_low_rank_exact_round_trip() -> None:
     dense = phx.nn.layers.ComplexLinear(in_size=2, out_size=3, key=jr.key(0))
     dense_state = phx.export.export_complex_parameters(dense)
     dense_target = phx.nn.layers.ComplexLinear(in_size=2, out_size=3, key=jr.key(1))
@@ -117,9 +114,6 @@ def test_complex_linear_and_low_rank_exact_round_trip() -> None:
         low_rank.materialize_weight(),
     )
     assert _complex_trainable_leaf_count(low_rank_restored) == 0
-
-
-def test_holomorphic_mlp_round_trip_preserves_values_jets_and_architecture() -> None:
     model = phx.nn.models.HolomorphicMLP(
         in_size=2,
         out_size=2,
@@ -162,9 +156,6 @@ def test_holomorphic_mlp_round_trip_preserves_values_jets_and_architecture() -> 
     )
     with pytest.raises(ValueError, match="architecture mismatch"):
         phx.export.import_complex_parameters(incompatible, state)
-
-
-def test_polynomial_potential_and_multivariate_frame_coordinates_round_trip() -> None:
     potential = phx.equations.HolomorphicPolynomialPotential(
         2,
         3,
@@ -216,7 +207,7 @@ def _constrained_holomorphic(free: Any) -> Any:
     )
 
 
-def test_constrained_import_recovers_free_coordinates_and_rejects_projection() -> None:
+def test_complex_parameters_scenario_2() -> None:
     source = _constrained_holomorphic(jnp.linspace(-0.2, 0.3, 6))
     destination = _constrained_holomorphic(jnp.zeros((6,)))
     state = phx.export.export_complex_parameters(source)
@@ -249,9 +240,6 @@ def test_constrained_import_recovers_free_coordinates_and_rejects_projection() -
     )
     with pytest.raises(ValueError, match="affine set"):
         phx.export.import_complex_parameters(destination, invalid)
-
-
-def test_meromorphic_coefficients_and_trainable_poles_round_trip() -> None:
     poles = phx.equations.PoleSet(jnp.asarray([2.0 + 0.2j]), (2,))
     frame = phx.equations.MeromorphicLinearFrame(2, poles)
     operator = phx.equations.HolomorphicConstraintOperatorPlan(
@@ -287,9 +275,6 @@ def test_meromorphic_coefficients_and_trainable_poles_round_trip() -> None:
     pole_restored = phx.export.import_complex_parameters(pole_target, pole_state)
     assert jnp.array_equal(pole_restored.locations, trainable_poles.locations)
     assert _complex_trainable_leaf_count(pole_restored) == 0
-
-
-def test_import_precision_policy_rejects_narrowing_by_default() -> None:
     source = phx.nn.layers.ComplexLinear(in_size=2, out_size=2, key=jr.key(9))
     source = eqx.tree_at(
         lambda layer: (

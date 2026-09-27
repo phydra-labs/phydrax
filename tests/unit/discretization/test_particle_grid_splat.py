@@ -43,7 +43,7 @@ def _particles(
     ).prepare()
 
 
-def test_multilinear_deposit_distinguishes_content_and_density() -> None:
+def test_particle_grid_splat_scenario_1() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(
         _particles(particle_ids=(2, 1))
     )
@@ -65,9 +65,6 @@ def test_multilinear_deposit_distinguishes_content_and_density() -> None:
     assert jnp.array_equal(
         result.balance.require_closed_conservation(result.content), result.content
     )
-
-
-def test_periodic_deposit_wraps_across_the_seam() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid(4, periodic=True)).prepare(
         _particles(1)
     )
@@ -78,9 +75,6 @@ def test_periodic_deposit_wraps_across_the_seam() -> None:
     assert jnp.allclose(result.content, jnp.asarray([1.0, 0.0, 0.0, 1.0]))
     assert jnp.sum(result.content) == 2.0
     assert result.balance.closed_domain_conservation_valid
-
-
-def test_nonperiodic_boundary_rejects_or_accounts_for_dropped_content() -> None:
     particles = _particles(1)
     position = jnp.asarray([[-0.1]])
     rejecting = phx.discretization.ParticleGridSplatPlan(
@@ -104,7 +98,7 @@ def test_nonperiodic_boundary_rejects_or_accounts_for_dropped_content() -> None:
     assert not dropped.balance.closed_domain_conservation_valid
 
 
-def test_inactive_nonfinite_storage_is_numerically_inert() -> None:
+def test_particle_grid_splat_scenario_2() -> None:
     particles = _particles(2, active_mask=jnp.asarray([True, False]))
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(particles)
     state = prepared.build(jnp.asarray([[0.5], [jnp.nan]]))
@@ -114,9 +108,6 @@ def test_inactive_nonfinite_storage_is_numerically_inert() -> None:
     assert state.invalid_geometry_count == 0
     assert jnp.allclose(result.content, jnp.asarray([0.0, 2.0, 0.0]))
     assert result.balance.active_source_total == 2.0
-
-
-def test_vector_complex_payload_preserves_trailing_shape_and_balance() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(_particles())
     state = prepared.build(jnp.asarray([[0.25], [0.75]]))
     payload = jnp.asarray([[1.0 + 2.0j, 3.0], [2.0 - 1.0j, -4.0]])
@@ -125,9 +116,6 @@ def test_vector_complex_payload_preserves_trailing_shape_and_balance() -> None:
     assert result.content.shape == (3, 2)
     assert jnp.allclose(jnp.sum(result.content, axis=0), jnp.sum(payload, axis=0))
     assert result.balance.maximum_absolute_balance_defect < 1e-12
-
-
-def test_reconstruction_and_gather_keep_coverage_explicit() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid()).prepare(_particles())
     state = prepared.build(jnp.asarray([[0.25], [0.75]]))
     reconstructed = prepared.reconstruct(
@@ -142,9 +130,6 @@ def test_reconstruction_and_gather_keep_coverage_explicit() -> None:
     assert reconstructed.zero_coverage_count == 0
     assert jnp.allclose(gathered.values, jnp.asarray([0.5, 1.5]))
     assert jnp.all(gathered.support)
-
-
-def test_reconstruction_zero_coverage_and_weight_validation() -> None:
     prepared = phx.discretization.ParticleGridSplatPlan(_grid(5)).prepare(_particles(1))
     state = prepared.build(jnp.asarray([[0.0]]))
     result = prepared.reconstruct(state, jnp.asarray([7.0]), jnp.asarray([1.0]))
@@ -180,7 +165,7 @@ def test_vmap_keeps_independent_cases_and_shared_structure() -> None:
     assert jnp.allclose(batched, sequential)
 
 
-def test_deterministic_and_compensated_results_ignore_storage_permutation() -> None:
+def test_particle_grid_splat_scenario_3() -> None:
     grid = _grid(5)
     ids = jnp.asarray([30, 10, 20])
     position = jnp.asarray([[0.2], [0.55], [0.8]])
@@ -207,9 +192,6 @@ def test_deterministic_and_compensated_results_ignore_storage_permutation() -> N
             first_result.balance.balance_defect,
             second_result.balance.balance_defect,
         )
-
-
-def test_plan_rejects_incompatible_dimension_resources_and_state() -> None:
     grid = _grid()
     with pytest.raises(ValueError, match="dimensions"):
         phx.discretization.ParticleGridSplatPlan(grid).prepare(_particles(1, dimension=2))
@@ -225,6 +207,23 @@ def test_plan_rejects_incompatible_dimension_resources_and_state() -> None:
     state = first.build(jnp.asarray([[0.25], [0.75]]))
     with pytest.raises(ValueError, match="different prepared transfer"):
         second.deposit_content(state, jnp.ones((2,)))
+    public = vars(phx.discretization)
+    expected = {
+        "AbstractStructuredSplatAssignment",
+        "MultilinearSplatAssignment",
+        "ParticleGridSplatPlan",
+        "PreparedParticleGridSplat",
+        "SplatAssignmentCapabilities",
+        "TensorBSplineSplatAssignment",
+    }
+
+    assert expected <= public.keys()
+    assert "ConservativeParticleGridTransferPlan" not in public
+    assert "ParticleGridRelation" not in public
+    assert "PreparedParticleGridTransfer" not in public
+    assert "deposit_routes" not in public
+    assert "splax" not in sys.modules
+    assert "warp" not in sys.modules
 
 
 def test_execution_policy_validation_and_frozen_geometry() -> None:
@@ -248,26 +247,6 @@ def test_execution_policy_validation_and_frozen_geometry() -> None:
 
     gradient = jax.grad(loss)(jnp.asarray([[0.25], [0.75]]))
     assert jnp.all(gradient == 0.0)
-
-
-def test_splatting_public_api_is_provider_neutral() -> None:
-    public = vars(phx.discretization)
-    expected = {
-        "AbstractStructuredSplatAssignment",
-        "MultilinearSplatAssignment",
-        "ParticleGridSplatPlan",
-        "PreparedParticleGridSplat",
-        "SplatAssignmentCapabilities",
-        "TensorBSplineSplatAssignment",
-    }
-
-    assert expected <= public.keys()
-    assert "ConservativeParticleGridTransferPlan" not in public
-    assert "ParticleGridRelation" not in public
-    assert "PreparedParticleGridTransfer" not in public
-    assert "deposit_routes" not in public
-    assert "splax" not in sys.modules
-    assert "warp" not in sys.modules
 
 
 def test_mesh_splat_barycentric_and_compact_routes_are_conservative() -> None:

@@ -20,7 +20,7 @@ def _deterministic_observation(time: Any, context: Any) -> Any:
     return jnp.asarray((context.args["deterministic_loading"], 0.0))
 
 
-def test_named_components_compile_known_transition_and_observation_blocks() -> None:
+def test_structural_state_space_scenario_1() -> None:
     components = (
         phx.stochastic.DampedTrendComponent(
             "trend",
@@ -120,9 +120,6 @@ def test_named_components_compile_known_transition_and_observation_blocks() -> N
         == model.metadata["structural_component_order"]
     )
     assert provenance[4].transition_id == "physical-deterministic-transition"
-
-
-def test_physical_time_closed_forms_for_level_trend_and_damping() -> None:
     context = phx.stochastic.StateSpaceStepContext.empty()
     level = phx.stochastic.LocalLevelComponent(
         "level", process_variance=0.25, initial_variance=2.0
@@ -155,9 +152,6 @@ def test_physical_time_closed_forms_for_level_trend_and_damping() -> None:
         damped.transition_matrix(0.0, 2.0, context),
         jnp.asarray(((1.0, 0.75), (0.0, 0.25))),
     )
-
-
-def test_compiled_prior_preserves_physical_cases_and_observation_masks() -> None:
     model = phx.stochastic.compile_structural_state_space(
         (
             phx.stochastic.LocalLevelComponent(
@@ -210,9 +204,8 @@ def test_compiled_prior_preserves_physical_cases_and_observation_masks() -> None
     assert jnp.all(result.successful)
 
 
-@pytest.mark.parametrize(
-    "components, message",
-    [
+def test_structural_state_space_scenario_2() -> None:
+    for components, message in [
         (
             (
                 phx.stochastic.LocalLevelComponent("level", process_variance=0.1),
@@ -262,54 +255,21 @@ def test_compiled_prior_preserves_physical_cases_and_observation_masks() -> None
             ),
             "label-unidentifiable",
         ),
-    ],
-)
-def test_compiler_rejects_redundant_or_unidentifiable_combinations(
-    components: Any, message: Any
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        phx.stochastic.compile_structural_state_space(components, 0.2)
-
-
-def test_fixed_multicoefficient_regression_is_rejected_as_unidentifiable() -> None:
+    ]:
+        with pytest.raises(ValueError, match=message):
+            phx.stochastic.compile_structural_state_space(components, 0.2)
     with pytest.raises(ValueError, match="unidentifiable"):
         phx.stochastic.RegressionComponent(
             "fixed",
             jnp.asarray((1.0, 2.0)),
             initial_coefficients=jnp.zeros((2,)),
         )
-
-
-def test_zero_fixed_regression_design_is_rejected_as_unidentifiable() -> None:
     with pytest.raises(ValueError, match="identically zero.*unidentifiable"):
         phx.stochastic.RegressionComponent(
             "zero-design",
             jnp.asarray((0.0,)),
             initial_coefficients=jnp.asarray((1.0,)),
         )
-
-
-def test_process_noise_compiles_as_independent_endpoint_noise() -> None:
-    component = phx.stochastic.ProcessNoiseComponent("white", variance=0.5)
-
-    model = phx.stochastic.compile_structural_state_space((component,), 0.25)
-    context = phx.stochastic.StateSpaceStepContext.empty()
-    assert isinstance(model.transition, phx.stochastic.LinearGaussianTransitionKernel)
-    assert isinstance(model.observation, phx.stochastic.LinearGaussianObservationModel)
-    transition_matrix, _, process_covariance = model.transition.parameters(
-        jnp.asarray(0.0), jnp.asarray(1.0), context
-    )
-    observation_matrix, _, observation_covariance = model.observation.parameters(
-        jnp.asarray(1.0), context
-    )
-
-    assert jnp.array_equal(transition_matrix, jnp.zeros((1, 1)))
-    assert jnp.array_equal(process_covariance, jnp.asarray([[0.5]]))
-    assert jnp.array_equal(observation_matrix, jnp.ones((1, 1)))
-    assert jnp.array_equal(observation_covariance, jnp.asarray([[0.25]]))
-
-
-def test_zero_observation_variance_has_exact_support_and_mask_semantics() -> None:
     model = phx.stochastic.compile_structural_state_space(
         (
             phx.stochastic.LocalLevelComponent(
@@ -352,7 +312,24 @@ def test_zero_observation_variance_has_exact_support_and_mask_semantics() -> Non
     assert masked == 0.0
 
 
-def test_dense_compiler_rejects_unsupported_state_size() -> None:
+def test_structural_state_space_scenario_3() -> None:
+    component = phx.stochastic.ProcessNoiseComponent("white", variance=0.5)
+
+    model = phx.stochastic.compile_structural_state_space((component,), 0.25)
+    context = phx.stochastic.StateSpaceStepContext.empty()
+    assert isinstance(model.transition, phx.stochastic.LinearGaussianTransitionKernel)
+    assert isinstance(model.observation, phx.stochastic.LinearGaussianObservationModel)
+    transition_matrix, _, process_covariance = model.transition.parameters(
+        jnp.asarray(0.0), jnp.asarray(1.0), context
+    )
+    observation_matrix, _, observation_covariance = model.observation.parameters(
+        jnp.asarray(1.0), context
+    )
+
+    assert jnp.array_equal(transition_matrix, jnp.zeros((1, 1)))
+    assert jnp.array_equal(process_covariance, jnp.asarray([[0.5]]))
+    assert jnp.array_equal(observation_matrix, jnp.ones((1, 1)))
+    assert jnp.array_equal(observation_covariance, jnp.asarray([[0.25]]))
     trend = phx.stochastic.TrendComponent("trend", level_variance=0.1, slope_variance=0.1)
 
     with pytest.raises(ValueError, match="at most 1 states"):

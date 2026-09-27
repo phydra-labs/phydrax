@@ -62,7 +62,7 @@ def _edge_ids(graph: Any) -> Any:
     return set(zip(left.tolist(), right.tolist(), strict=True))
 
 
-def test_dense_and_cell_physical_graphs_have_identical_undirected_edges() -> None:
+def test_particle_graph_scenario_1() -> None:
     dense, cell, position = _compiled_pair()
     dense_graph = dense.dynamics.graph_view(position, directed=False)
     cell_graph = cell.dynamics.graph_view(position, directed=False)
@@ -77,9 +77,6 @@ def test_dense_and_cell_physical_graphs_have_identical_undirected_edges() -> Non
     assert jnp.array_equal(relation.source_indices, cell_graph.senders)
     assert jnp.array_equal(relation.target_indices, cell_graph.receivers)
     assert jnp.array_equal(relation.valid, cell_graph.edge_mask)
-
-
-def test_directed_particle_graph_duplicates_and_reverses_every_route() -> None:
     _, cell, position = _compiled_pair()
     graph = cell.dynamics.graph_view(position, directed=True)
     half = graph.senders.shape[0] // 2
@@ -93,9 +90,6 @@ def test_directed_particle_graph_duplicates_and_reverses_every_route() -> None:
         -graph.edges["displacement"][half:],
     )
     assert jnp.allclose(graph.edges["distance"][:half], graph.edges["distance"][half:])
-
-
-def test_graph_view_refuses_an_overflowed_relation() -> None:
     count = 4
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count), jnp.ones((count,)), ambient_dimension=1

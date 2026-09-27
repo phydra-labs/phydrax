@@ -54,7 +54,7 @@ def _search(population_size: Any = 8, max_generations: Any = 2) -> Any:
     )
 
 
-def test_search_is_reproducible_bounded_and_preserves_provenance() -> None:
+def test_global_control_search_scenario_1() -> None:
     problem, parameterization = _quadratic_problem()
     shape = parameterization.parameter_shape
     lower = -jnp.ones(shape)
@@ -121,9 +121,6 @@ def test_search_is_reproducible_bounded_and_preserves_provenance() -> None:
     assert result.method_id == "bounded-differential-evolution-control-search"
     np.testing.assert_array_equal(jr.key_data(result.key), jr.key_data(jr.key(40)))
     assert np.all(np.diff(np.asarray(result.best_objective_history)) <= 0.0)
-
-
-def test_coefficient_layout_and_bounds_are_strict_and_never_repaired() -> None:
     problem, parameterization = _quadratic_problem()
     search = _search(population_size=4, max_generations=0)
     shape = parameterization.parameter_shape
@@ -165,9 +162,6 @@ def test_coefficient_layout_and_bounds_are_strict_and_never_repaired() -> None:
         midpoint.population_coefficients[0],
         -0.5 * jnp.ones(shape),
     )
-
-
-def test_invalid_candidates_are_counted_without_hiding_valid_rollouts() -> None:
     times = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]),
         time_id="invalid-search-time",
@@ -233,7 +227,7 @@ def test_invalid_candidates_are_counted_without_hiding_valid_rollouts() -> None:
     assert jnp.all(jnp.isinf(invalid_result.population_objectives))
 
 
-def test_population_evaluation_preserves_case_and_coefficient_axes() -> None:
+def test_global_control_search_scenario_2() -> None:
     initial_states = jnp.asarray([[0.0], [0.25]])
     problem, parameterization = _quadratic_problem(initial_state=initial_states)
     shape = problem.case_shape + parameterization.parameter_shape
@@ -256,9 +250,6 @@ def test_population_evaluation_preserves_case_and_coefficient_axes() -> None:
         result.objective,
         jnp.sum(result.evaluation.sampled_loss.total),
     )
-
-
-def test_bspline_search_improves_objective_and_emits_a_local_control_seed() -> None:
     problem, _ = _quadratic_problem(num_steps=4)
     grid = phx.nn.models.BSplineGrid(
         jnp.asarray([0.0, 0.0, 0.5, 1.0, 1.0]),
@@ -309,9 +300,6 @@ def test_bspline_search_improves_objective_and_emits_a_local_control_seed() -> N
         seeded.trajectory.controls,
         result.trajectory.controls,
     )
-
-
-def test_differential_search_rollouts_respect_piecewise_constant_jumps() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.5]), time_id="search-control-jump"
     )

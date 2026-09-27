@@ -98,7 +98,7 @@ def _quaternion_conjugate(value: Any) -> Any:
     return jnp.concatenate((value[:1], -value[1:]))
 
 
-def test_preparation_derives_stable_topology_layouts_and_reference_pose() -> None:
+def test_reduced_articulation_scenario_1() -> None:
     body_ids, reference, articulation = _chain()
 
     assert isinstance(articulation, PreparedReducedArticulation)
@@ -164,9 +164,6 @@ def test_preparation_derives_stable_topology_layouts_and_reference_pose() -> Non
         articulation.pack_state(state.configuration, state.velocity), packed
     )
     assert articulation.state_layout.geometry.contains(packed)
-
-
-def test_reduced_articulation_geometry_certifies_four_space_duality() -> None:
     _, _, articulation = _chain()
     layout = articulation.state_layout
     geometry = layout.geometry
@@ -204,9 +201,6 @@ def test_reduced_articulation_geometry_certifies_four_space_duality() -> None:
 
     with pytest.raises(Exception, match="principal-angle cut locus"):
         geometry.retract(state, local.at[0].set(jnp.pi))
-
-
-def test_hinge_and_prismatic_forward_geometry_is_parent_frame_exact() -> None:
     body_ids, _, articulation = _chain()
     angle = 0.5 * jnp.pi
     extension = 0.25
@@ -242,7 +236,7 @@ def test_hinge_and_prismatic_forward_geometry_is_parent_frame_exact() -> None:
     )
 
 
-def test_configuration_retraction_difference_and_body_jvp_are_consistent() -> None:
+def test_reduced_articulation_scenario_2() -> None:
     body_ids, _, articulation = _chain()
     configuration = jnp.asarray([0.3, 0.1])
     velocity = jnp.asarray([0.4, -0.2])
@@ -287,9 +281,6 @@ def test_configuration_retraction_difference_and_body_jvp_are_consistent() -> No
         (velocity,),
     )
     assert jnp.allclose(frame_jacobian.mv(velocity)[:3], frame_position_jvp, atol=1.0e-12)
-
-
-def test_body_load_pullback_reports_finite_power_duality() -> None:
     _, _, articulation = _chain()
     configuration = jnp.asarray([0.4, -0.15])
     velocity = jnp.asarray([0.7, -0.3])
@@ -325,9 +316,6 @@ def test_body_load_pullback_reports_finite_power_duality() -> None:
     assert jnp.allclose(evidence.body_power, body_power, atol=1.0e-12)
     assert jnp.allclose(evidence.generalized_power, velocity @ generalized_load)
     assert jnp.abs(evidence.residual) < 1.0e-12
-
-
-def test_malformed_disconnected_reversed_and_missing_tree_inputs_reject() -> None:
     body_ids, reference, articulation = _chain()
     graph = articulation.graph
 
@@ -397,7 +385,7 @@ def test_malformed_disconnected_reversed_and_missing_tree_inputs_reject() -> Non
         ).prepare(duplicate_graph, duplicate_reference)
 
 
-def test_cyclic_ball_distance_and_non_3d_tree_inputs_reject() -> None:
+def test_reduced_articulation_scenario_3() -> None:
     cycle_ids, cycle_bodies, cycle_reference = _prepared_bodies(6)
     cycle_graph = phx.discretization.RigidJointGraphPlan(
         prismatic=phx.discretization.PrismaticJointSetPlan(
@@ -459,66 +447,60 @@ def test_cyclic_ball_distance_and_non_3d_tree_inputs_reject() -> None:
             body_ids_2d[:1],
             body_ids_2d[1:],
         ).prepare(graph_2d, reference_2d)
-
-
-@pytest.mark.parametrize(
-    ("extra_kind", "body_count"),
-    (("ball", 4), ("distance", 2), ("prismatic", 6)),
-)
-def test_unconsumed_graph_joints_reject(extra_kind: Any, body_count: Any) -> None:
-    body_ids, bodies, reference = _prepared_bodies(body_count)
-    edge_count = body_count - 1
-    tree_ids = jnp.arange(70, 70 + edge_count)
-    tree_anchors = jnp.pad(
-        (jnp.arange(edge_count, dtype=jnp.float64) + 0.5)[:, None],
-        ((0, 0), (0, 2)),
-    )
-    tree_joint = phx.discretization.HingeJointSetPlan(
-        tree_ids,
-        body_ids[:-1],
-        body_ids[1:],
-        tree_anchors,
-        jnp.broadcast_to(jnp.asarray([0.0, 0.0, 1.0]), (edge_count, 3)),
-    )
-    extra_id = jnp.asarray([99])
-    if extra_kind == "ball":
-        graph_plan = phx.discretization.RigidJointGraphPlan(
-            hinge=tree_joint,
-            ball=phx.discretization.BallJointSetPlan(
-                extra_id,
-                body_ids[:1],
-                body_ids[-1:],
-                jnp.asarray([[1.5, 0.0, 0.0]]),
-            ),
+    for extra_kind, body_count in (("ball", 4), ("distance", 2), ("prismatic", 6)):
+        body_ids, bodies, reference = _prepared_bodies(body_count)
+        edge_count = body_count - 1
+        tree_ids = jnp.arange(70, 70 + edge_count)
+        tree_anchors = jnp.pad(
+            (jnp.arange(edge_count, dtype=jnp.float64) + 0.5)[:, None],
+            ((0, 0), (0, 2)),
         )
-    elif extra_kind == "distance":
-        graph_plan = phx.discretization.RigidJointGraphPlan(
-            hinge=tree_joint,
-            distance=phx.discretization.DistanceJointSetPlan(
-                extra_id,
-                body_ids[:1],
-                body_ids[-1:],
-                jnp.asarray([[0.0, 0.0, 0.0]]),
-                jnp.asarray([[1.0, 0.0, 0.0]]),
-            ),
-        )
-    else:
-        graph_plan = phx.discretization.RigidJointGraphPlan(
-            hinge=tree_joint,
-            prismatic=phx.discretization.PrismaticJointSetPlan(
-                extra_id,
-                body_ids[:1],
-                body_ids[-1:],
-                jnp.asarray([[2.5, 0.0, 0.0]]),
-                jnp.asarray([[1.0, 0.0, 0.0]]),
-            ),
-        )
-    graph = graph_plan.prepare(bodies, reference)
-
-    with pytest.raises(ValueError, match="neither selected tree edges"):
-        ReducedArticulationPlan(
-            int(body_ids[0]),
+        tree_joint = phx.discretization.HingeJointSetPlan(
             tree_ids,
             body_ids[:-1],
             body_ids[1:],
-        ).prepare(graph, reference)
+            tree_anchors,
+            jnp.broadcast_to(jnp.asarray([0.0, 0.0, 1.0]), (edge_count, 3)),
+        )
+        extra_id = jnp.asarray([99])
+        if extra_kind == "ball":
+            graph_plan = phx.discretization.RigidJointGraphPlan(
+                hinge=tree_joint,
+                ball=phx.discretization.BallJointSetPlan(
+                    extra_id,
+                    body_ids[:1],
+                    body_ids[-1:],
+                    jnp.asarray([[1.5, 0.0, 0.0]]),
+                ),
+            )
+        elif extra_kind == "distance":
+            graph_plan = phx.discretization.RigidJointGraphPlan(
+                hinge=tree_joint,
+                distance=phx.discretization.DistanceJointSetPlan(
+                    extra_id,
+                    body_ids[:1],
+                    body_ids[-1:],
+                    jnp.asarray([[0.0, 0.0, 0.0]]),
+                    jnp.asarray([[1.0, 0.0, 0.0]]),
+                ),
+            )
+        else:
+            graph_plan = phx.discretization.RigidJointGraphPlan(
+                hinge=tree_joint,
+                prismatic=phx.discretization.PrismaticJointSetPlan(
+                    extra_id,
+                    body_ids[:1],
+                    body_ids[-1:],
+                    jnp.asarray([[2.5, 0.0, 0.0]]),
+                    jnp.asarray([[1.0, 0.0, 0.0]]),
+                ),
+            )
+        graph = graph_plan.prepare(bodies, reference)
+
+        with pytest.raises(ValueError, match="neither selected tree edges"):
+            ReducedArticulationPlan(
+                int(body_ids[0]),
+                tree_ids,
+                body_ids[:-1],
+                body_ids[1:],
+            ).prepare(graph, reference)

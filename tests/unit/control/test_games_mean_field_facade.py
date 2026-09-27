@@ -100,7 +100,7 @@ def _solve(facade: Any, paths: Any) -> Any:
     )
 
 
-def test_frozen_law_facade_preserves_problem_law_and_evidence_identity() -> None:
+def test_games_mean_field_facade_scenario_1() -> None:
     facade, paths, base, adapter, law = _facade(
         [[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]]
     )
@@ -122,9 +122,31 @@ def test_frozen_law_facade_preserves_problem_law_and_evidence_identity() -> None
     assert result.base_problem_id == base.problem_id
     assert jnp.array_equal(result.law_weights, law.weights)
     assert jnp.array_equal(result.law_particle_validity, law.valid)
+    particles = [[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]]
+    invalid, paths, _, _, _ = _facade(
+        particles,
+        valid=jnp.asarray([[True, True, True], [False, False, False]]),
+        flow_id="invalid-flow",
+    )
+    degenerate, _, _, _, _ = _facade(
+        particles,
+        weights=jnp.asarray([[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]]),
+        flow_id="degenerate-flow",
+    )
 
+    invalid_result = _solve(invalid, paths)
+    degenerate_result = _solve(degenerate, paths)
 
-def test_frozen_law_facade_delegates_bsde_and_hamiltonian_evaluation() -> None:
+    assert not invalid_result.law_evidence_valid
+    assert invalid_result.status == FrozenLawBestResponseStatus.INVALID_LAW_EVIDENCE
+    assert not invalid_result.valid
+    assert degenerate_result.law_evidence_valid
+    assert jnp.allclose(degenerate_result.law_effective_sample_sizes, 1.0)
+    assert not degenerate_result.effective_sample_size_sufficient
+    assert (
+        degenerate_result.status == FrozenLawBestResponseStatus.LOW_EFFECTIVE_SAMPLE_SIZE
+    )
+    assert not degenerate_result.valid
     facade, paths, base, _, _ = _facade([[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]])
     value = lambda time, state: jnp.zeros((1,))
     control = lambda time, state: jnp.ones((1, 1))
@@ -158,37 +180,6 @@ def test_frozen_law_facade_delegates_bsde_and_hamiltonian_evaluation() -> None:
     assert result.hamiltonian_evidence.finite
     assert result.status == FrozenLawBestResponseStatus.SUCCESS
     assert result.valid
-
-
-def test_frozen_law_facade_fails_closed_for_invalid_and_degenerate_law_evidence() -> None:
-    particles = [[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]]
-    invalid, paths, _, _, _ = _facade(
-        particles,
-        valid=jnp.asarray([[True, True, True], [False, False, False]]),
-        flow_id="invalid-flow",
-    )
-    degenerate, _, _, _, _ = _facade(
-        particles,
-        weights=jnp.asarray([[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]]),
-        flow_id="degenerate-flow",
-    )
-
-    invalid_result = _solve(invalid, paths)
-    degenerate_result = _solve(degenerate, paths)
-
-    assert not invalid_result.law_evidence_valid
-    assert invalid_result.status == FrozenLawBestResponseStatus.INVALID_LAW_EVIDENCE
-    assert not invalid_result.valid
-    assert degenerate_result.law_evidence_valid
-    assert jnp.allclose(degenerate_result.law_effective_sample_sizes, 1.0)
-    assert not degenerate_result.effective_sample_size_sufficient
-    assert (
-        degenerate_result.status == FrozenLawBestResponseStatus.LOW_EFFECTIVE_SAMPLE_SIZE
-    )
-    assert not degenerate_result.valid
-
-
-def test_frozen_law_label_is_only_a_candidate_evaluation_certificate() -> None:
     facade, paths, _, _, _ = _facade([[[0.0], [0.0], [0.0]], [[2.0], [2.0], [2.0]]])
     result = _solve(facade, paths)
 
@@ -200,11 +191,6 @@ def test_frozen_law_label_is_only_a_candidate_evaluation_certificate() -> None:
     assert not result.mean_field_game_equilibrium_claimed
     assert not result.mean_field_control_optimum_claimed
     assert not result.finite_population_game_claimed
-
-
-def test_changing_only_supplied_frozen_law_changes_candidate_without_consistency_claim() -> (
-    None
-):
     low, paths, _, _, _ = _facade(
         [[[0.0], [0.0], [0.0]], [[0.0], [0.0], [0.0]]],
         supplied_law_id="law:low",

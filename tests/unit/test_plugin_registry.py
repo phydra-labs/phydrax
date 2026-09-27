@@ -34,15 +34,12 @@ _same_named_activation.__qualname__ = _activation.__qualname__
 _same_named_activation.__name__ = _activation.__name__
 
 
-def test_plugin_registration_is_exported_once_at_the_root() -> None:
+def test_plugin_registry_scenario_1() -> None:
     assert "OperatorArchitectureCodec" in phx.__all__
     assert "register_operator_architecture_codec" in phx.__all__
     assert "register_artifact_value" in phx.__all__
     assert not hasattr(phx.nn.operator.training, "OperatorArchitectureCodec")
     assert not hasattr(phx.nn.operator.training, "register_operator_architecture_codec")
-
-
-def test_architecture_codecs_resolve_by_exact_type_and_explicit_id() -> None:
     codec = phx.register_operator_architecture_codec(
         phx.OperatorArchitectureCodec("test.registry:engine-v1", _RegisteredEngine)
     )
@@ -58,9 +55,6 @@ def test_architecture_codecs_resolve_by_exact_type_and_explicit_id() -> None:
     # No lookup by class name or entry point: unknown IDs fail closed.
     with pytest.raises(ValueError, match="Unknown operator architecture ID"):
         phx.operator_architecture_codec("_RegisteredEngine")
-
-
-def test_architecture_codec_registration_rejects_ambiguous_identities() -> None:
     phx.register_operator_architecture_codec(
         phx.OperatorArchitectureCodec("test.registry:ambiguous-v1", _OtherEngine)
     )
@@ -72,9 +66,6 @@ def test_architecture_codec_registration_rejects_ambiguous_identities() -> None:
         phx.register_operator_architecture_codec(
             phx.OperatorArchitectureCodec("test.registry:ambiguous-v2", _OtherEngine)
         )
-
-
-def test_artifact_values_resolve_by_object_identity() -> None:
     phx.register_artifact_value("test.registry:activation", _activation)
 
     assert phx.artifact_value_id(_activation) == "test.registry:activation"

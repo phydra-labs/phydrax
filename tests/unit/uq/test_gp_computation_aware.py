@@ -64,7 +64,7 @@ def _problem(count: Any = 10) -> Any:
     return points, observations, mean
 
 
-def test_full_rank_actions_recover_exact_gp_and_exact_log_evidence() -> None:
+def test_gp_computation_aware_scenario_1() -> None:
     points, observations, mean = _problem(9)
     state = _state()
     exact = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
@@ -95,9 +95,26 @@ def test_full_rank_actions_recover_exact_gp_and_exact_log_evidence() -> None:
         atol=1e-10,
         rtol=1e-10,
     )
+    points, observations, mean = _problem(8)
+    state = _state()
+    factor = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+        points,
+        observations,
+    ).factor(
+        state=state,
+        actions=phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
+            jr.key(5), points.size, 3
+        ),
+        computation=phx.uq.GaussianProcessComputationPolicy(
+            max_condition_covariance_bytes=64,
+        ),
+    )
+    query = jnp.linspace(0.0, 1.0, 12)
 
-
-def test_action_basis_changes_leave_posterior_and_elbo_invariant() -> None:
+    moments = factor.latent_moments(observations - mean, query)
+    assert moments[0].shape == query.shape
+    with pytest.raises(ValueError, match="latent_moments"):
+        factor.condition(observations - mean, query)
     points, observations, mean = _problem(11)
     state = _state()
     key_s, key_r = jr.split(jr.key(11))
@@ -125,9 +142,6 @@ def test_action_basis_changes_leave_posterior_and_elbo_invariant() -> None:
         second_condition.covariance,
         atol=1e-8,
     )
-
-
-def test_lower_rank_covariance_is_conservative_and_nested_actions_reduce_it() -> None:
     points, observations, mean = _problem(10)
     state = _state()
     model = phx.uq.ComputationAwareGaussianProcessDiscrepancy(points, observations)
@@ -165,7 +179,7 @@ def test_lower_rank_covariance_is_conservative_and_nested_actions_reduce_it() ->
     assert residual.shape == observations.shape
 
 
-def test_diagonal_moments_match_full_condition_and_factor_reuses_residuals() -> None:
+def test_gp_computation_aware_scenario_2() -> None:
     points, observations, mean = _problem(12)
     state = _state(noise=jnp.linspace(0.04, 0.09, points.size))
     actions = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
@@ -190,9 +204,6 @@ def test_diagonal_moments_match_full_condition_and_factor_reuses_residuals() -> 
     assert jnp.allclose(second.covariance, direct_second.covariance)
     assert conditioner.storage_elements < query.size * points.size + query.size**2
     assert first.output_dims == ("query",)
-
-
-def test_chunked_kernel_action_never_requests_full_left_design() -> None:
     points, observations, mean = _problem(14)
     state = phx.uq.GaussianProcessLikelihoodState(
         kernel=BlockLimitedSquaredExponentialKernel(1),
@@ -218,32 +229,6 @@ def test_chunked_kernel_action_never_requests_full_left_design() -> None:
     assert factor.diagnostics.kernel_row_batch_size >= 1
     assert predicted_mean.shape == points.shape
     assert jnp.all(predicted_variance >= 0.0)
-
-
-def test_full_covariance_resource_limit_preserves_diagonal_prediction() -> None:
-    points, observations, mean = _problem(8)
-    state = _state()
-    factor = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
-        points,
-        observations,
-    ).factor(
-        state=state,
-        actions=phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
-            jr.key(5), points.size, 3
-        ),
-        computation=phx.uq.GaussianProcessComputationPolicy(
-            max_condition_covariance_bytes=64,
-        ),
-    )
-    query = jnp.linspace(0.0, 1.0, 12)
-
-    moments = factor.latent_moments(observations - mean, query)
-    assert moments[0].shape == query.shape
-    with pytest.raises(ValueError, match="latent_moments"):
-        factor.condition(observations - mean, query)
-
-
-def test_rank_deficient_actions_retain_failure_evidence_and_fail_on_use() -> None:
     points, observations, mean = _problem(7)
     duplicate = jnp.stack((jnp.ones(points.size), jnp.ones(points.size)), axis=1)
     factor = phx.uq.ComputationAwareGaussianProcessDiscrepancy(

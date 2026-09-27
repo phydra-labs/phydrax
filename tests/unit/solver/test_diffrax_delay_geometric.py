@@ -62,47 +62,39 @@ def _geometric_solver(name: Any, geometry: Any) -> Any:
     raise AssertionError(name)
 
 
-@pytest.mark.parametrize(
-    "solver_name",
-    (
+def test_diffrax_delay_geometric_scenario_1() -> None:
+    for solver_name in (
         "euler",
         "rkmk-midpoint",
         "rkmk-rk4",
         "commutator-free",
         "deterministic-srkmk",
-    ),
-)
-def test_fixed_geometric_delay_solvers_preserve_so_and_dense_history(
-    solver_name: Any,
-) -> None:
-    problem = _so_delay_problem()
-    solver = _geometric_solver(solver_name, problem.state_geometry)
-    solution = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=jnp.linspace(0.0, 0.8, 9),
-        solver=solver,
-        stepsize_controller=dfx.ConstantStepSize(),
-        dt0=0.04,
-        dense=True,
-        max_steps=128,
-    )
-    assert solution.interpolation is not None
+    ):
+        problem = _so_delay_problem()
+        solver = _geometric_solver(solver_name, problem.state_geometry)
+        solution = phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=jnp.linspace(0.0, 0.8, 9),
+            solver=solver,
+            stepsize_controller=dfx.ConstantStepSize(),
+            dt0=0.04,
+            dense=True,
+            max_steps=128,
+        )
+        assert solution.interpolation is not None
 
-    off_grid = solution.evaluate(jnp.asarray([0.013, 0.177, 0.333, 0.619, 0.791]))
-    _assert_so2(solution.states)
-    _assert_so2(off_grid)
-    assert jnp.all(jax.vmap(problem.state_geometry.contains)(off_grid))
-    assert solution.solver_id == solver.solver_id
-    assert solution.resolved_method == solver.resolved_method
-    assert solution.metadata["state_geometry_id"] == problem.state_geometry_id
-    assert solution.stats["controller_mode"] == "fixed"
-    assert solution.stats["stage_abscissae"] == solver.stage_abscissae
-    assert solution.interpolation.history.computed_history.interpolation_cls is (
-        phx.solver.GeometricLocalInterpolation
-    )
-
-
-def test_geometric_stage_contract_is_static_explicit_and_causal_bound_is_closed() -> None:
+        off_grid = solution.evaluate(jnp.asarray([0.013, 0.177, 0.333, 0.619, 0.791]))
+        _assert_so2(solution.states)
+        _assert_so2(off_grid)
+        assert jnp.all(jax.vmap(problem.state_geometry.contains)(off_grid))
+        assert solution.solver_id == solver.solver_id
+        assert solution.resolved_method == solver.resolved_method
+        assert solution.metadata["state_geometry_id"] == problem.state_geometry_id
+        assert solution.stats["controller_mode"] == "fixed"
+        assert solution.stats["stage_abscissae"] == solver.stage_abscissae
+        assert solution.interpolation.history.computed_history.interpolation_cls is (
+            phx.solver.GeometricLocalInterpolation
+        )
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     euler = phx.solver.GeometricEuler(geometry)
     midpoint = phx.solver.RKMK(geometry, method="midpoint")
@@ -143,6 +135,108 @@ def test_geometric_stage_contract_is_static_explicit_and_causal_bound_is_closed(
             initial_discontinuities=(),
             max_steps=8,
         )
+    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
+    noise = phx.solver.DelayWienerTerm(
+        "rotation",
+        lambda time, state, memory, args: (state @ _GENERATOR)[..., None],
+        (1,),
+        structure="commutative",
+        basis_id="basis:geometric-delay-so2",
+    )
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: state @ _GENERATOR,
+        lambda time, args: jnp.eye(2),
+        (phx.solver.ConstantDelay("past", 0.2),),
+        t0=0.0,
+        t1=0.4,
+        wiener_terms=(noise,),
+        interpretation="ito",
+        state_geometry=geometry,
+    )
+    with pytest.raises(ValueError, match="Itô geometry"):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=jnp.asarray([0.4]),
+            realization=phx.stochastic.WienerRealization(
+                jr.key(21),
+                (1,),
+                support=(0.0, 0.4),
+                noise_id=problem.noise_id,
+            ),
+            solver=phx.solver.SRKMK(geometry),
+            dt0=0.05,
+        )
+    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
+    history = lambda time, args: jnp.eye(2)
+    tangent_drift = lambda time, state, memory, args: state @ _GENERATOR
+
+    distributed = phx.solver.DistributedDelay(
+        "spread",
+        lambda time, lag, state, args: jnp.asarray(1.0),
+        (0.1, 0.2),
+    )
+    with pytest.raises(ValueError, match="explicit reducer"):
+        phx.solver.DelayDifferentialProblem(
+            tangent_drift,
+            history,
+            (distributed,),
+            t0=0.0,
+            t1=0.4,
+            state_geometry=geometry,
+        )
+
+    neutral = phx.solver.DerivativeDelay(
+        "velocity",
+        phx.solver.ConstantDelay("point", 0.2),
+    )
+    neutral_problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["velocity"],
+        history,
+        (neutral,),
+        t0=0.0,
+        t1=0.4,
+        history_derivative=lambda time, args: _GENERATOR,
+        state_geometry=geometry,
+    )
+    assert jnp.allclose(neutral_problem.initial_right_derivative, _GENERATOR)
+
+    transported_neutral = phx.solver.DerivativeDelay(
+        "transported-velocity",
+        phx.solver.ConstantDelay("point", 0.2),
+        transport=lambda delayed, current, derivative, args: current @ _GENERATOR,
+    )
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="not tangent at the delayed state",
+    ):
+        phx.solver.DelayDifferentialProblem(
+            tangent_drift,
+            history,
+            (transported_neutral,),
+            t0=0.0,
+            t1=0.4,
+            history_derivative=lambda time, args: jnp.ones((2, 2)),
+            state_geometry=geometry,
+        )
+
+    euclidean = phx.metrix.EuclideanStateGeometry()
+    euclidean_problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["velocity"],
+        history,
+        (neutral,),
+        t0=0.0,
+        t1=0.2,
+        history_derivative=lambda time, args: jnp.zeros((2, 2)),
+        state_geometry=euclidean,
+    )
+    solution = phx.solver.solve_diffrax_delay(
+        euclidean_problem,
+        save_times=jnp.asarray([0.2]),
+        solver=phx.solver.GeometricEuler(euclidean),
+        dt0=0.1,
+        max_steps=8,
+    )
+    assert jnp.allclose(solution.states[0], jnp.eye(2))
 
 
 def test_euclidean_matrix_geometric_delay_matches_euler_and_rkmk_converges() -> None:
@@ -361,81 +455,7 @@ def test_geometric_delay_rejects_solver_geometry_drift_history_and_controller_mi
         )
 
 
-def test_non_euclidean_distributed_and_neutral_delays_require_geometry_maps() -> None:
-    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
-    history = lambda time, args: jnp.eye(2)
-    tangent_drift = lambda time, state, memory, args: state @ _GENERATOR
-
-    distributed = phx.solver.DistributedDelay(
-        "spread",
-        lambda time, lag, state, args: jnp.asarray(1.0),
-        (0.1, 0.2),
-    )
-    with pytest.raises(ValueError, match="explicit reducer"):
-        phx.solver.DelayDifferentialProblem(
-            tangent_drift,
-            history,
-            (distributed,),
-            t0=0.0,
-            t1=0.4,
-            state_geometry=geometry,
-        )
-
-    neutral = phx.solver.DerivativeDelay(
-        "velocity",
-        phx.solver.ConstantDelay("point", 0.2),
-    )
-    neutral_problem = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["velocity"],
-        history,
-        (neutral,),
-        t0=0.0,
-        t1=0.4,
-        history_derivative=lambda time, args: _GENERATOR,
-        state_geometry=geometry,
-    )
-    assert jnp.allclose(neutral_problem.initial_right_derivative, _GENERATOR)
-
-    transported_neutral = phx.solver.DerivativeDelay(
-        "transported-velocity",
-        phx.solver.ConstantDelay("point", 0.2),
-        transport=lambda delayed, current, derivative, args: current @ _GENERATOR,
-    )
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="not tangent at the delayed state",
-    ):
-        phx.solver.DelayDifferentialProblem(
-            tangent_drift,
-            history,
-            (transported_neutral,),
-            t0=0.0,
-            t1=0.4,
-            history_derivative=lambda time, args: jnp.ones((2, 2)),
-            state_geometry=geometry,
-        )
-
-    euclidean = phx.metrix.EuclideanStateGeometry()
-    euclidean_problem = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["velocity"],
-        history,
-        (neutral,),
-        t0=0.0,
-        t1=0.2,
-        history_derivative=lambda time, args: jnp.zeros((2, 2)),
-        state_geometry=euclidean,
-    )
-    solution = phx.solver.solve_diffrax_delay(
-        euclidean_problem,
-        save_times=jnp.asarray([0.2]),
-        solver=phx.solver.GeometricEuler(euclidean),
-        dt0=0.1,
-        max_steps=8,
-    )
-    assert jnp.allclose(solution.states[0], jnp.eye(2))
-
-
-def test_stratonovich_geometric_delay_preserves_manifold_and_replays_path() -> None:
+def test_diffrax_delay_geometric_scenario_2() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     noise = phx.solver.DelayWienerTerm(
         "rotation",
@@ -498,6 +518,89 @@ def test_stratonovich_geometric_delay_preserves_manifold_and_replays_path() -> N
     assert solution.solver_name == "SRKMK"
     assert solution.solver_id == replay.solver_id
     assert solution.stats["continuous_extension"] == "srkmk-wiener-path"
+    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
+    noise = phx.solver.DelayWienerTerm(
+        "normal",
+        lambda time, state, memory, args: jnp.ones((2, 2, 1)),
+        (1,),
+        structure="commutative",
+        basis_id="basis:non-tangent-so2",
+    )
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: jnp.zeros_like(state),
+        lambda time, args: jnp.eye(2),
+        (phx.solver.ConstantDelay("past", 0.1),),
+        t0=0.0,
+        t1=0.1,
+        wiener_terms=(noise,),
+        interpretation="stratonovich",
+        state_geometry=geometry,
+    )
+    realization = phx.stochastic.WienerRealization(
+        jr.key(22),
+        (1,),
+        support=(0.0, 0.1),
+        noise_id=problem.noise_id,
+    )
+
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="diffusion must be tangent-compatible",
+    ):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=jnp.asarray([0.1]),
+            realization=realization,
+            dt0=0.05,
+            max_steps=8,
+        )
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        phx.solver.CommutatorFreeTableau(
+            abscissae=(0.0, -0.5),
+            stage_coefficients=((), (1.0,)),
+            composition_coefficients=((0.5, 0.5),),
+            order=2,
+            tableau_id="tableau:invalid-negative-stage",
+        )
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: angular_velocity,
+        lambda time, args: base,
+        (phx.solver.ConstantDelay("past", 0.1),),
+        t0=0.0,
+        t1=0.2,
+        state_geometry=geometry,
+    )
+
+    solution = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=jnp.asarray([0.0, 0.1, 0.2]),
+        solver=phx.solver.RKMK(geometry, method="midpoint"),
+        dt0=0.1,
+        dense=True,
+        max_steps=8,
+    )
+
+    expected = geometry.retract(base, 0.2 * angular_velocity)
+    assert problem.state_shape == (4,)
+    assert problem.tangent_shape == (3,)
+    assert problem.local_shape == (3,)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
+    # ty: ignore[unresolved-attribute]
+    assert solution.interpolation.derivative(jnp.asarray(0.15)).shape == (3,)
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    with pytest.raises(ValueError, match="physical tangent shape"):
+        phx.solver.DelayDifferentialProblem(
+            lambda time, state, memory, args: jnp.zeros_like(state),
+            lambda time, args: jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            (phx.solver.ConstantDelay("past", 0.1),),
+            t0=0.0,
+            t1=0.2,
+            state_geometry=geometry,
+        )
 
 
 def test_stratonovich_geometric_advanced_memory_replays_all_history_modes() -> None:
@@ -599,132 +702,3 @@ def test_stratonovich_geometric_advanced_memory_replays_all_history_modes() -> N
         "first-order-pathwise-untracked"
     )
     assert full.metadata["distributed_delay_quadrature"][0]["node_count"] == 4
-
-
-def test_geometric_delay_rejects_stochastic_ito_geometry() -> None:
-    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
-    noise = phx.solver.DelayWienerTerm(
-        "rotation",
-        lambda time, state, memory, args: (state @ _GENERATOR)[..., None],
-        (1,),
-        structure="commutative",
-        basis_id="basis:geometric-delay-so2",
-    )
-    problem = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: state @ _GENERATOR,
-        lambda time, args: jnp.eye(2),
-        (phx.solver.ConstantDelay("past", 0.2),),
-        t0=0.0,
-        t1=0.4,
-        wiener_terms=(noise,),
-        interpretation="ito",
-        state_geometry=geometry,
-    )
-    with pytest.raises(ValueError, match="Itô geometry"):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=jnp.asarray([0.4]),
-            realization=phx.stochastic.WienerRealization(
-                jr.key(21),
-                (1,),
-                support=(0.0, 0.4),
-                noise_id=problem.noise_id,
-            ),
-            solver=phx.solver.SRKMK(geometry),
-            dt0=0.05,
-        )
-
-
-def test_stratonovich_geometric_delay_rejects_normal_diffusion() -> None:
-    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
-    noise = phx.solver.DelayWienerTerm(
-        "normal",
-        lambda time, state, memory, args: jnp.ones((2, 2, 1)),
-        (1,),
-        structure="commutative",
-        basis_id="basis:non-tangent-so2",
-    )
-    problem = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: jnp.zeros_like(state),
-        lambda time, args: jnp.eye(2),
-        (phx.solver.ConstantDelay("past", 0.1),),
-        t0=0.0,
-        t1=0.1,
-        wiener_terms=(noise,),
-        interpretation="stratonovich",
-        state_geometry=geometry,
-    )
-    realization = phx.stochastic.WienerRealization(
-        jr.key(22),
-        (1,),
-        support=(0.0, 0.1),
-        noise_id=problem.noise_id,
-    )
-
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="diffusion must be tangent-compatible",
-    ):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=jnp.asarray([0.1]),
-            realization=realization,
-            dt0=0.05,
-            max_steps=8,
-        )
-
-
-def test_commutator_free_tableau_rejects_noncausal_stage_abscissa() -> None:
-    with pytest.raises(ValueError, match="finite and nonnegative"):
-        phx.solver.CommutatorFreeTableau(
-            abscissae=(0.0, -0.5),
-            stage_coefficients=((), (1.0,)),
-            composition_coefficients=((0.5, 0.5),),
-            order=2,
-            tableau_id="tableau:invalid-negative-stage",
-        )
-
-
-def test_quaternion_delay_uses_physical_tangent_and_local_spaces() -> None:
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
-    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
-    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
-    problem = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: angular_velocity,
-        lambda time, args: base,
-        (phx.solver.ConstantDelay("past", 0.1),),
-        t0=0.0,
-        t1=0.2,
-        state_geometry=geometry,
-    )
-
-    solution = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=jnp.asarray([0.0, 0.1, 0.2]),
-        solver=phx.solver.RKMK(geometry, method="midpoint"),
-        dt0=0.1,
-        dense=True,
-        max_steps=8,
-    )
-
-    expected = geometry.retract(base, 0.2 * angular_velocity)
-    assert problem.state_shape == (4,)
-    assert problem.tangent_shape == (3,)
-    assert problem.local_shape == (3,)
-    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
-    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
-    # ty: ignore[unresolved-attribute]
-    assert solution.interpolation.derivative(jnp.asarray(0.15)).shape == (3,)
-
-
-def test_quaternion_delay_rejects_point_storage_drift_shape() -> None:
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
-    with pytest.raises(ValueError, match="physical tangent shape"):
-        phx.solver.DelayDifferentialProblem(
-            lambda time, state, memory, args: jnp.zeros_like(state),
-            lambda time, args: jnp.asarray([1.0, 0.0, 0.0, 0.0]),
-            (phx.solver.ConstantDelay("past", 0.1),),
-            t0=0.0,
-            t1=0.2,
-            state_geometry=geometry,
-        )

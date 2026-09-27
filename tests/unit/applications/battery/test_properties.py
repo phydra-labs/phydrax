@@ -31,7 +31,7 @@ def _table(values: Any = (1.0, 2.0, 4.0), *, source_mask: Any = None) -> Any:
     )
 
 
-def test_tabulated_property_reports_bounds_and_strict_support() -> None:
+def test_properties_scenario_1() -> None:
     law = _table()
     result = law.evaluate(jnp.asarray((-0.1, 0.25, 1.1)))
     np.testing.assert_array_equal(result.support, np.asarray((False, True, False)))
@@ -42,13 +42,28 @@ def test_tabulated_property_reports_bounds_and_strict_support() -> None:
     masked_result = masked(jnp.asarray((0.25, 0.75)))
     np.testing.assert_array_equal(masked_result.support, np.asarray((False, False)))
     np.testing.assert_allclose(masked_result.values, 0.0)
-
-
-def test_property_value_bounds_fail_closed() -> None:
     with pytest.raises(Exception, match="outside declared value bounds"):
         _table(values=(1.0, 6.0, 4.0))
     with pytest.raises(ValueError, match="at least two active"):
         _table(source_mask=(True, False, False))
+    constant = ConstantPropertyLaw(
+        jnp.asarray(2.0),
+        jnp.asarray((250.0, 350.0)),
+        value_bounds=(0.0, 3.0),
+        quantity="heat-capacity",
+        coordinate="temperature",
+        value_unit="J/K",
+        coordinate_unit="K",
+        source_id="test:constant",
+    )
+    table = _table()
+    queries = jnp.linspace(0.0, 1.0, 7)
+    constant_result, table_result = jax.jit(lambda x: (constant(x), table(x)))(queries)
+    assert constant_result.values.shape == (7,)
+    assert constant_result.support.shape == (7,)
+    assert table_result.values.shape == (7,)
+    assert table_result.support.shape == (7,)
+    np.testing.assert_allclose(constant.evaluate(300.0, derivative_order=1).values, 0.0)
 
 
 def test_property_jvp_tracks_dynamic_values_and_query() -> None:
@@ -74,27 +89,6 @@ def test_property_jvp_tracks_dynamic_values_and_query() -> None:
     )
     np.testing.assert_allclose(value, 3.5)
     np.testing.assert_allclose(tangent, 0.7)
-
-
-def test_constant_and_tabulated_laws_have_static_jit_shapes() -> None:
-    constant = ConstantPropertyLaw(
-        jnp.asarray(2.0),
-        jnp.asarray((250.0, 350.0)),
-        value_bounds=(0.0, 3.0),
-        quantity="heat-capacity",
-        coordinate="temperature",
-        value_unit="J/K",
-        coordinate_unit="K",
-        source_id="test:constant",
-    )
-    table = _table()
-    queries = jnp.linspace(0.0, 1.0, 7)
-    constant_result, table_result = jax.jit(lambda x: (constant(x), table(x)))(queries)
-    assert constant_result.values.shape == (7,)
-    assert constant_result.support.shape == (7,)
-    assert table_result.values.shape == (7,)
-    assert table_result.support.shape == (7,)
-    np.testing.assert_allclose(constant.evaluate(300.0, derivative_order=1).values, 0.0)
 
 
 def test_concentration_temperature_law_support_constant_special_case_and_jvp() -> None:

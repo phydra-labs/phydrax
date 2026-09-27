@@ -100,7 +100,7 @@ def test_runtime_geometry_precision_identity_and_projection_are_operational() ->
     )
 
 
-def test_component_and_mixed_block_spaces_solve_through_native_linalg() -> None:
+def test_finite_element_completion_scenario_1() -> None:
     mesh = _square_mesh()
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
@@ -138,9 +138,6 @@ def test_component_and_mixed_block_spaces_solve_through_native_linalg() -> None:
     assert pressure.shape == (5,)
     # ty: ignore[unresolved-attribute]
     assert compiled.state_space.names == ("u", "p")
-
-
-def test_domains_rules_and_entity_coefficients_select_exact_cells() -> None:
     discretization = _scalar_discretization()
     cells = discretization.mesh.topology.entity_sets[2]
     selection = phx.discretization.EntitySelection(
@@ -171,9 +168,6 @@ def test_domains_rules_and_entity_coefficients_select_exact_cells() -> None:
 
     assert jnp.allclose(jnp.sum(residual), -0.25)
     assert domain.selection_id == selection.selection_id
-
-
-def test_energy_custom_residual_and_interior_flux_share_one_compiler() -> None:
     discretization = _scalar_discretization()
     state = jnp.asarray([0.0, 1.0, 2.0, 1.0, 1.0])
     functional = phx.variational.Functional(
@@ -234,7 +228,7 @@ def test_energy_custom_residual_and_interior_flux_share_one_compiler() -> None:
     assert jnp.linalg.norm(dg_residual) > 0.0
 
 
-def test_curved_compatible_local_and_hdg_spaces_are_executable() -> None:
+def test_finite_element_completion_scenario_2() -> None:
     base = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
     mesh = phx.discretization.CellMesh.from_triangles(
         base,
@@ -281,9 +275,6 @@ def test_curved_compatible_local_and_hdg_spaces_are_executable() -> None:
     assert ne.field_spaces[0].conformity == "Hcurl"
     assert jnp.allclose(reconstructed, 1.0)
     assert hdg.local_trace_dof_count == 3
-
-
-def test_explicit_rule_hdiv_functional_honors_shared_dof_orientations() -> None:
     mesh = _square_mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,

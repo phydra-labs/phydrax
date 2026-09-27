@@ -102,7 +102,7 @@ def _axial_modal_network(*, repeated: bool = False) -> Any:
     return problem, inputs, initial
 
 
-def test_local_and_generalized_buckling_match_closed_forms() -> None:
+def test_member_network_verification_scenario_1() -> None:
     structure, definition, _, _ = _axial_network()
     local = mn.local_euler_buckling(
         definition,
@@ -123,9 +123,6 @@ def test_local_and_generalized_buckling_match_closed_forms() -> None:
     assert linear.successful
     assert linear.critical_factor == pytest.approx(5.0)
     assert jnp.allclose(linear.load_factors, 5.0)
-
-
-def test_tangent_stability_and_continuation_are_native() -> None:
     structure, definition, problem, initial = _axial_network()
     inputs = _inputs(structure, definition, 5.0)
     result = mn.member_network_equilibrium(problem, inputs, initial)
@@ -141,9 +138,6 @@ def test_tangent_stability_and_continuation_are_native() -> None:
     assert stability.eigen_residual < 1.0e-8
     assert stability.mass_orthogonality_error < 1.0e-8
     assert continuation.problem_id.endswith("load-continuation")
-
-
-def test_tangent_stability_cannot_mix_equilibrium_and_independent_inputs() -> None:
     structure, definition, problem, initial = _axial_network()
     accepted_inputs = _inputs(structure, definition, 5.0)
     equilibrium = mn.member_network_equilibrium(
@@ -160,9 +154,22 @@ def test_tangent_stability_cannot_mix_equilibrium_and_independent_inputs() -> No
     with pytest.raises(TypeError):
         # ty: ignore[too-many-positional-arguments]
         mn.tangent_stability(problem, mismatched_inputs, equilibrium)
-
-
-def test_modal_stability_handles_rigid_modes_and_rejects_nonpositive_mass() -> None:
+    structure, definition, problem, initial = _axial_network()
+    inputs = _inputs(structure, definition, 5.0)
+    equilibrium = mn.member_network_equilibrium(problem, inputs, initial)
+    rejected = eqx.tree_at(
+        lambda value: value.status,
+        equilibrium,
+        jnp.asarray(int(mn.MemberNetworkStatus.NONLINEAR_SOLVE_FAILED)),
+    )
+    stability = mn.tangent_stability(
+        problem,
+        rejected,
+        mass=jnp.ones((1, 1)),
+    )
+    assert not stability.equilibrium_accepted
+    assert not stability.physical_tangent
+    assert not stability.modal_valid
     problem, inputs, initial = _axial_modal_network()
     equilibrium = mn.member_network_equilibrium(
         problem,
@@ -202,9 +209,6 @@ def test_modal_stability_handles_rigid_modes_and_rejects_nonpositive_mass() -> N
             rigid_mode_count=1,
         )
         invalid.eigenvalues.block_until_ready()
-
-
-def test_modal_tracking_marks_low_overlap_and_crossings_ambiguous() -> None:
     problem, inputs, initial = _axial_modal_network()
     equilibrium = mn.member_network_equilibrium(
         problem,
@@ -257,26 +261,7 @@ def test_modal_tracking_marks_low_overlap_and_crossings_ambiguous() -> None:
     assert not crossing.modal_valid
 
 
-def test_tangent_stability_does_not_certify_an_unaccepted_equilibrium() -> None:
-    structure, definition, problem, initial = _axial_network()
-    inputs = _inputs(structure, definition, 5.0)
-    equilibrium = mn.member_network_equilibrium(problem, inputs, initial)
-    rejected = eqx.tree_at(
-        lambda value: value.status,
-        equilibrium,
-        jnp.asarray(int(mn.MemberNetworkStatus.NONLINEAR_SOLVE_FAILED)),
-    )
-    stability = mn.tangent_stability(
-        problem,
-        rejected,
-        mass=jnp.ones((1, 1)),
-    )
-    assert not stability.equilibrium_accepted
-    assert not stability.physical_tangent
-    assert not stability.modal_valid
-
-
-def test_construction_sequence_transfers_state_and_load_operations() -> None:
+def test_member_network_verification_scenario_2() -> None:
     structure, definition, problem, initial = _axial_network()
     empty = _inputs(structure, definition, 0.0)
     loaded = _inputs(structure, definition, 5.0)
@@ -306,9 +291,6 @@ def test_construction_sequence_transfers_state_and_load_operations() -> None:
         1.05
     )
     assert result.checkpoint.completed_stage == 1
-
-
-def test_sizing_catalog_and_verification_report_governing_evidence() -> None:
     structure, definition, problem, initial = _axial_network()
     inputs = _inputs(structure, definition, 5.0)
     equilibrium = mn.member_network_equilibrium(problem, inputs, initial)

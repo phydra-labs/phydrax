@@ -24,7 +24,7 @@ from phydrax.solver._open_certificates import (
 )
 
 
-def test_finite_subspace_cayley_retains_norm_energy_and_reversibility() -> None:
+def test_quantum_certificates_capability_closure_scenario_1() -> None:
     overlap = jnp.eye(2, dtype=jnp.complex64)
     hamiltonian = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex64)
     problem = FiniteVariationalSubspaceTDVPProblem(
@@ -39,9 +39,6 @@ def test_finite_subspace_cayley_retains_norm_energy_and_reversibility() -> None:
     assert jnp.max(jnp.abs(result.norm_drifts)) < 1e-5
     assert jnp.max(jnp.abs(result.energy_drifts)) < 1e-5
     assert result.claim.startswith("cayley")
-
-
-def test_finite_subspace_cayley_rejects_cross_problem_plan_reuse() -> None:
     overlap = jnp.eye(2, dtype=jnp.complex64)
     hamiltonian = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex64)
     source = FiniteVariationalSubspaceTDVPProblem(
@@ -60,6 +57,80 @@ def test_finite_subspace_cayley_rejects_cross_problem_plan_reuse() -> None:
 
     with pytest.raises(ValueError, match="different finite-subspace problem"):
         solve_finite_subspace_tdvp(other, plan)
+    identity = jnp.eye(2, dtype=jnp.complex64).reshape(-1)
+    trace = jnp.array([1, 0, 0, 1], dtype=jnp.complex64)
+    liouvillian = 0.5 * identity[:, None] @ trace[None, :] - jnp.eye(
+        4, dtype=jnp.complex64
+    )
+    steady = certify_finite_lindblad_steady_state(liouvillian, 2)
+    assert bool(steady.valid)
+    assert bool(steady.unique)
+    assert jnp.allclose(steady.density, jnp.eye(2) / 2, atol=1e-5)
+
+    refinement = certify_finite_refinement(
+        jnp.array([2, 4, 8]),
+        jnp.array([1.0, 0.6, 0.5]),
+        jnp.array([0.2, 0.05, 0.01]),
+        axis="cutoff",
+        tolerance=0.11,
+    )
+    assert bool(refinement.stabilized)
+    assert refinement.estimate_kind == "difference"
+
+    design = jnp.array([[1.0, 0.0], [0.0, 0.0]])
+    gauge = jnp.array([[0.0], [1.0]])
+    identified = certify_process_identifiability(design, gauge, design_id="finite-design")
+    assert bool(identified.valid)
+    assert bool(identified.identifiable)
+    identity = jnp.eye(2, dtype=jnp.complex64).reshape(-1)
+    trace = jnp.array([1, 0, 0, 1], dtype=jnp.complex64)
+    liouvillian = 0.5 * identity[:, None] @ trace[None, :] - jnp.eye(
+        4, dtype=jnp.complex64
+    )
+    metric = jnp.eye(4, dtype=jnp.complex64)
+    baseline = certify_finite_lindblad_steady_state(
+        liouvillian,
+        2,
+        detailed_balance_symmetrizer=metric,
+    )
+    rescaled = certify_finite_lindblad_steady_state(
+        liouvillian,
+        2,
+        detailed_balance_symmetrizer=7.0 * metric,
+    )
+
+    assert bool(baseline.valid)
+    assert bool(rescaled.valid)
+    assert jnp.allclose(baseline.certified_gap, rescaled.certified_gap)
+    assert jnp.allclose(baseline.certified_gap, 1.0)
+
+    growing = liouvillian.at[1, 1].add(1.5)
+    invalid = certify_finite_lindblad_steady_state(
+        growing,
+        2,
+        detailed_balance_symmetrizer=metric,
+    )
+    assert not bool(invalid.valid)
+    assert bool(invalid.unique)
+    assert bool(invalid.physical)
+    assert jnp.isnan(invalid.certified_gap)
+    resource = ElectronicVMCResourcePlan(
+        8,
+        determinant_count=2,
+        maximum_pair_elements=10_000,
+        maximum_determinant_work=10_000,
+    )
+    assert resource.electron_count == 8
+    one = jnp.eye(2, dtype=jnp.complex64)
+    two = jnp.zeros((2, 2, 2, 2), dtype=jnp.complex64)
+    operator = ElectronicIntegralHamiltonian(
+        one,
+        two,
+        representation="four-component-no-pair",
+        projector_id="positive-energy:finite-basis",
+    )
+    assert bool(operator.valid)
+    assert "no-pair" in operator.claim
 
 
 def test_adaptive_tdvp_separates_sampling_uncertainty_from_temporal_defect() -> None:
@@ -178,86 +249,3 @@ def test_adaptive_tdvp_exhausts_constant_sampling_noise_without_step_collapse() 
     assert not jnp.any(result.accepted_attempts)
     assert jnp.allclose(result.attempt_step_sizes, 0.05)
     assert jnp.allclose(result.sampling_uncertainties, 5e-3)
-
-
-def test_finite_steady_state_refinement_and_quotient_identifiability_claims() -> None:
-    identity = jnp.eye(2, dtype=jnp.complex64).reshape(-1)
-    trace = jnp.array([1, 0, 0, 1], dtype=jnp.complex64)
-    liouvillian = 0.5 * identity[:, None] @ trace[None, :] - jnp.eye(
-        4, dtype=jnp.complex64
-    )
-    steady = certify_finite_lindblad_steady_state(liouvillian, 2)
-    assert bool(steady.valid)
-    assert bool(steady.unique)
-    assert jnp.allclose(steady.density, jnp.eye(2) / 2, atol=1e-5)
-
-    refinement = certify_finite_refinement(
-        jnp.array([2, 4, 8]),
-        jnp.array([1.0, 0.6, 0.5]),
-        jnp.array([0.2, 0.05, 0.01]),
-        axis="cutoff",
-        tolerance=0.11,
-    )
-    assert bool(refinement.stabilized)
-    assert refinement.estimate_kind == "difference"
-
-    design = jnp.array([[1.0, 0.0], [0.0, 0.0]])
-    gauge = jnp.array([[0.0], [1.0]])
-    identified = certify_process_identifiability(design, gauge, design_id="finite-design")
-    assert bool(identified.valid)
-    assert bool(identified.identifiable)
-
-
-def test_detailed_balance_gap_is_scale_invariant_and_rejects_growth() -> None:
-    identity = jnp.eye(2, dtype=jnp.complex64).reshape(-1)
-    trace = jnp.array([1, 0, 0, 1], dtype=jnp.complex64)
-    liouvillian = 0.5 * identity[:, None] @ trace[None, :] - jnp.eye(
-        4, dtype=jnp.complex64
-    )
-    metric = jnp.eye(4, dtype=jnp.complex64)
-    baseline = certify_finite_lindblad_steady_state(
-        liouvillian,
-        2,
-        detailed_balance_symmetrizer=metric,
-    )
-    rescaled = certify_finite_lindblad_steady_state(
-        liouvillian,
-        2,
-        detailed_balance_symmetrizer=7.0 * metric,
-    )
-
-    assert bool(baseline.valid)
-    assert bool(rescaled.valid)
-    assert jnp.allclose(baseline.certified_gap, rescaled.certified_gap)
-    assert jnp.allclose(baseline.certified_gap, 1.0)
-
-    growing = liouvillian.at[1, 1].add(1.5)
-    invalid = certify_finite_lindblad_steady_state(
-        growing,
-        2,
-        detailed_balance_symmetrizer=metric,
-    )
-    assert not bool(invalid.valid)
-    assert bool(invalid.unique)
-    assert bool(invalid.physical)
-    assert jnp.isnan(invalid.certified_gap)
-
-
-def test_resource_admission_and_finite_no_pair_metadata() -> None:
-    resource = ElectronicVMCResourcePlan(
-        8,
-        determinant_count=2,
-        maximum_pair_elements=10_000,
-        maximum_determinant_work=10_000,
-    )
-    assert resource.electron_count == 8
-    one = jnp.eye(2, dtype=jnp.complex64)
-    two = jnp.zeros((2, 2, 2, 2), dtype=jnp.complex64)
-    operator = ElectronicIntegralHamiltonian(
-        one,
-        two,
-        representation="four-component-no-pair",
-        projector_id="positive-energy:finite-basis",
-    )
-    assert bool(operator.valid)
-    assert "no-pair" in operator.claim

@@ -65,7 +65,7 @@ def _assert_tree_allclose(left: Any, right: Any, *, atol: Any = 1.0e-10) -> None
         assert jnp.allclose(left_leaf, right_leaf, atol=atol)
 
 
-def test_rigid_quaternion_geometry_uses_physical_angular_four_spaces() -> None:
+def test_rigid_state_geometry_scenario_1() -> None:
     bodies, state = _prepared_state(3)
     geometry = RigidBodyStateGeometry(bodies)
     local = geometry.local_space.unflatten(
@@ -123,9 +123,6 @@ def test_rigid_quaternion_geometry_uses_physical_angular_four_spaces() -> None:
     assert geometry.supports_exact_differential
     assert geometry.supports_transport
     assert geometry.supports_isometric_transport
-
-
-def test_planar_rigid_geometry_keeps_equal_sized_angle_roles_exact() -> None:
     bodies, state = _prepared_state(2)
     geometry = RigidBodyStateGeometry(bodies)
     local = geometry.local_space.unflatten(

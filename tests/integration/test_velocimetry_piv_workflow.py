@@ -48,7 +48,7 @@ def _plan(
     )
 
 
-def test_plan_prepare_run_and_one_shot_preserve_result_stages_and_provenance() -> None:
+def test_velocimetry_piv_workflow_scenario_1() -> None:
     first, second, geometry, pair = _translated_pair()
     plan = _plan()
     prepared = plan.prepare(geometry)
@@ -76,9 +76,6 @@ def test_plan_prepare_run_and_one_shot_preserve_result_stages_and_provenance() -
     assert result.retention.correlation.shape == (5, 5, 9, 9)
     assert result.prepared_id == convenient.prepared_id == prepared.prepared_id
     assert result.raw.provenance[:2] == (pair.pair_id, prepared.prepared_id)
-
-
-def test_symmetric_multipass_deformation_adds_residual_to_previous_prediction() -> None:
     _, _, geometry, pair = _translated_pair()
     plan = PIVPlan(
         (
@@ -102,9 +99,6 @@ def test_symmetric_multipass_deformation_adds_residual_to_previous_prediction() 
         atol=0.2,
     )
     assert result.raw.provenance[-1] == "symmetric"
-
-
-def test_ensemble_accumulates_observed_lags_and_disparity_retains_support() -> None:
     _, _, geometry, pair = _translated_pair()
     prepared = _plan().prepare(geometry)
     result = prepared.run(pair)

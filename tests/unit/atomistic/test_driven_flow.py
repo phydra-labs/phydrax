@@ -39,7 +39,7 @@ def _periodic_dynamics() -> Any:
     return cell, dynamics
 
 
-def test_evolving_cell_and_lees_edwards_remap_preserve_cartesian_positions() -> None:
+def test_driven_flow_scenario_1() -> None:
     flow = phx.atomistic.driven_flow
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     plan = flow.EvolvingFlowCellPlan(cell)
@@ -62,9 +62,6 @@ def test_evolving_cell_and_lees_edwards_remap_preserve_cartesian_positions() -> 
         + remapped.accepted_image_counts @ remapped.accepted_state.vectors
     )
     np.testing.assert_allclose(new_unwrapped, old_unwrapped)
-
-
-def test_planar_kraynik_reinelt_recurrence_resets_lattice() -> None:
     flow = phx.atomistic.driven_flow
     plan = flow.PlanarKraynikReineltPlan(0.2, 25.0, 5.0)
     state = plan.initialize()
@@ -81,9 +78,6 @@ def test_planar_kraynik_reinelt_recurrence_resets_lattice() -> None:
         atol=1.0e-9,
     )
     assert plan.generalized.certification_residual < 1.0e-10
-
-
-def test_sllod_uses_peculiar_momenta_and_rolls_back_failed_cell_step() -> None:
     flow = phx.atomistic.driven_flow
     cell, dynamics = _periodic_dynamics()
     cell_plan = flow.EvolvingFlowCellPlan(cell)
@@ -110,7 +104,7 @@ def test_sllod_uses_peculiar_momenta_and_rolls_back_failed_cell_step() -> None:
     )
 
 
-def test_total_driven_stress_uses_peculiar_momentum_and_tension_sign() -> None:
+def test_driven_flow_scenario_2() -> None:
     _, dynamics = _periodic_dynamics()
     thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
         phx.atomistic.AtomisticPhaseSpaceMeasurePlan(dynamics.system),
@@ -134,9 +128,6 @@ def test_total_driven_stress_uses_peculiar_momentum_and_tension_sign() -> None:
     np.testing.assert_allclose(result.kinetic_pressure_tensor[0, 0], 2.0e-3)
     np.testing.assert_allclose(result.total_cauchy_stress[0, 0], -2.0e-3)
     np.testing.assert_allclose(result.pressure, 2.0e-3 / 3.0)
-
-
-def test_shear_protocol_work_ledger_and_steady_rheology() -> None:
     flow = phx.atomistic.driven_flow
     protocol = flow.HomogeneousFlowProtocolPlan("steady-shear", rate=2.0)
     evaluated = protocol.evaluate(0.5)
@@ -165,9 +156,6 @@ def test_shear_protocol_work_ledger_and_steady_rheology() -> None:
     np.testing.assert_allclose(result.apparent_viscosity, 2.0)
     np.testing.assert_allclose(result.first_normal_stress_difference, 2.0)
     np.testing.assert_allclose(result.second_normal_stress_difference, 0.5)
-
-
-def test_laos_recovers_storage_loss_harmonics_and_cycle_work() -> None:
     flow = phx.atomistic.driven_flow
     amplitude = 2.0
     frequency = 3.0

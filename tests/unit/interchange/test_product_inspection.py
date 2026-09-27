@@ -43,7 +43,7 @@ def _two_phase_case() -> Any:
     )
 
 
-def test_two_phase_host_inspection_keeps_candidate_and_rollback_distinct() -> None:
+def test_product_inspection_scenario_1() -> None:
     two_phase, candidate_state, accepted_state = _two_phase_case()
     rejected = phx.solver.FixedStepResult(
         candidate_state,
@@ -90,6 +90,31 @@ def test_two_phase_host_inspection_keeps_candidate_and_rollback_distinct() -> No
     assert not np.array_equal(
         candidate_fields["alpha"].values, accepted_fields["alpha"].values
     )
+    finite_volume, particles, active, compiled, state = _flip_case()
+    result = compiled.step_detailed(state, jnp.asarray(1.0e-4))
+
+    candidate, accepted = flip_inspection_frames(
+        compiled, result, result_id="flip:attempt-1"
+    )
+
+    assert candidate.frame.state_kind == "candidate"
+    assert accepted.frame.state_kind == "accepted"
+    assert candidate.frame.result_id != accepted.frame.result_id
+    fields = {field.name: field for field in candidate.frame.fields}
+    position_field = fields["position"]
+    assert position_field.values.shape == (particles.capacity, 2)
+    np.testing.assert_array_equal(position_field.valid, np.asarray(active))
+    np.testing.assert_array_equal(
+        position_field.values,
+        np.asarray(result.candidate_state.particles.position),
+    )
+    assert not position_field.values.flags.writeable
+    assert position_field.unit_id is None
+    assert fields["attempt_pre_grid_velocity:x"].location == "face"
+    assert (
+        fields["attempt_pre_grid_velocity:x"].layout_id
+        == finite_volume.face_layouts[0].layout_id
+    )
 
 
 def _flip_case() -> Any:
@@ -120,31 +145,3 @@ def _flip_case() -> Any:
     )
     state = compiled.initialize_state(position, jnp.zeros_like(position))
     return finite_volume, particles, active, compiled, state
-
-
-def test_flip_host_inspection_preserves_capacity_masks_and_face_layouts() -> None:
-    finite_volume, particles, active, compiled, state = _flip_case()
-    result = compiled.step_detailed(state, jnp.asarray(1.0e-4))
-
-    candidate, accepted = flip_inspection_frames(
-        compiled, result, result_id="flip:attempt-1"
-    )
-
-    assert candidate.frame.state_kind == "candidate"
-    assert accepted.frame.state_kind == "accepted"
-    assert candidate.frame.result_id != accepted.frame.result_id
-    fields = {field.name: field for field in candidate.frame.fields}
-    position_field = fields["position"]
-    assert position_field.values.shape == (particles.capacity, 2)
-    np.testing.assert_array_equal(position_field.valid, np.asarray(active))
-    np.testing.assert_array_equal(
-        position_field.values,
-        np.asarray(result.candidate_state.particles.position),
-    )
-    assert not position_field.values.flags.writeable
-    assert position_field.unit_id is None
-    assert fields["attempt_pre_grid_velocity:x"].location == "face"
-    assert (
-        fields["attempt_pre_grid_velocity:x"].layout_id
-        == finite_volume.face_layouts[0].layout_id
-    )

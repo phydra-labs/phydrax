@@ -41,7 +41,7 @@ def _manifest() -> Any:
     )
 
 
-def test_iree_manifest_round_trip_is_strict_and_json_safe() -> None:
+def test_iree_contracts() -> None:
     manifest = _manifest()
     restored = phx.export.IREEArtifactManifest.from_dict(
         json.loads(json.dumps(manifest.to_dict()))
@@ -51,24 +51,6 @@ def test_iree_manifest_round_trip_is_strict_and_json_safe() -> None:
     invalid["unknown"] = 1
     with pytest.raises(ValueError, match="not canonical"):
         phx.export.IREEArtifactManifest.from_dict(invalid)
-
-
-class _HostArray:
-    def __init__(self, value: Any) -> None:
-        self._value = np.asarray(value)
-
-    def to_host(self) -> Any:
-        return self._value
-
-
-def _fake_executable(manifest: Any, result: Any) -> Any:
-    executable = object.__new__(phx.export.IREEExecutable)
-    executable.manifest = manifest
-    executable._function = lambda *_: result
-    return executable
-
-
-def test_iree_executable_validates_each_ordered_heterogeneous_output() -> None:
     manifest = replace(
         _manifest(),
         output_names=("prediction", "accepted", "iteration"),
@@ -127,6 +109,21 @@ def test_iree_executable_validates_each_ordered_heterogeneous_output() -> None:
                 _HostArray(np.asarray((3,), dtype=np.int32)),
             ),
         )(argument)
+
+
+class _HostArray:
+    def __init__(self, value: Any) -> None:
+        self._value = np.asarray(value)
+
+    def to_host(self) -> Any:
+        return self._value
+
+
+def _fake_executable(manifest: Any, result: Any) -> Any:
+    executable = object.__new__(phx.export.IREEExecutable)
+    executable.manifest = manifest
+    executable._function = lambda *_: result
+    return executable
 
 
 def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(

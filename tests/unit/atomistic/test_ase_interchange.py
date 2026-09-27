@@ -207,31 +207,28 @@ def test_unsupported_state_is_fully_declared_and_require_lossless_rejects(
         require_lossless(report)
 
 
-@pytest.mark.parametrize(
-    ("location", "name"),
-    [
+def test_required_unsupported_semantics_are_rejected(
+    ase: Any,
+) -> None:
+    for location, name in [
         ("info", "occupancy"),
         ("info", "topology"),
         ("info", "units"),
         ("array", "spins"),
-    ],
-)
-def test_required_unsupported_semantics_are_rejected(
-    ase: Any, location: Any, name: Any
-) -> None:
-    source = _identified_atoms(ase)
-    if location == "info":
-        source.info[name] = {"opaque": object()}
-    else:
-        source.new_array(name, np.ones((len(source),), dtype="float64"))
+    ]:
+        source = _identified_atoms(ase)
+        if location == "info":
+            source.info[name] = {"opaque": object()}
+        else:
+            source.new_array(name, np.ones((len(source),), dtype="float64"))
 
-    with pytest.raises(AdapterError) as error:
-        phx.atomistic.interchange.from_ase_atoms(source, SCALE)
+        with pytest.raises(AdapterError) as error:
+            phx.atomistic.interchange.from_ase_atoms(source, SCALE)
 
-    assert error.value.status in (
-        AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
-        AdapterStatus.INCONSISTENT_SOURCE,
-    )
+        assert error.value.status in (
+            AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+            AdapterStatus.INCONSISTENT_SOURCE,
+        )
 
 
 def test_incompatible_units_and_malformed_periodic_cells_are_rejected(ase: Any) -> None:

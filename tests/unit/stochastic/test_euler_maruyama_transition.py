@@ -43,7 +43,7 @@ def _scalar_kernel(scale: Any = -0.5, diffusion: Any = 0.3) -> Any:
     )
 
 
-def test_wiener_coefficient_matrix_flattens_only_state_and_noise_axes() -> None:
+def test_euler_maruyama_transition_scenario_1() -> None:
     term = phx.solver.WienerTerm(
         "matrix-state",
         lambda time, state, args: jnp.arange(8.0).reshape((2, 2, 2)),
@@ -55,9 +55,6 @@ def test_wiener_coefficient_matrix_flattens_only_state_and_noise_axes() -> None:
 
     assert matrix.shape == (4, 2)
     assert jnp.array_equal(matrix, jnp.arange(8.0).reshape((4, 2)))
-
-
-def test_euler_maruyama_matches_scalar_gaussian_and_is_differentiable() -> None:
     kernel = _scalar_kernel()
     context = phx.stochastic.StateSpaceStepContext.empty()
     state = jnp.asarray([2.0])
@@ -85,9 +82,6 @@ def test_euler_maruyama_matches_scalar_gaussian_and_is_differentiable() -> None:
         lambda candidate: candidate.log_prob(next_state, state, start, end, context)
     )(kernel)
     assert jnp.isfinite(gradient.system.vector_field.model.scale)
-
-
-def test_euler_maruyama_exposes_drift_and_dispersion_without_density_work() -> None:
     kernel = _scalar_kernel()
     context = phx.stochastic.StateSpaceStepContext.empty()
     state = jnp.asarray([2.0])
@@ -105,9 +99,6 @@ def test_euler_maruyama_exposes_drift_and_dispersion_without_density_work() -> N
         parameters.factor,
         jnp.sqrt(jnp.asarray(0.4)) * dispersion,
     )
-
-
-def test_euler_maruyama_preserves_rectangular_singular_diffusion() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: jnp.zeros_like(state),
         state_layout=phx.dynamics.StateLayout((2,)),
@@ -136,9 +127,6 @@ def test_euler_maruyama_preserves_rectangular_singular_diffusion() -> None:
     assert jnp.isneginf(
         kernel.log_prob(mean + jnp.asarray([0.2, 0.41]), state, 0.0, 0.25, context)
     )
-
-
-def test_euler_maruyama_handles_multiaxis_state_and_invalid_interval() -> None:
     state_layout = phx.dynamics.StateLayout((2, 2))
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: jnp.ones_like(state),
@@ -167,9 +155,6 @@ def test_euler_maruyama_handles_multiaxis_state_and_invalid_interval() -> None:
     assert invalid_sample.process_id == "matrix-state-diffusion"
     assert invalid_sample.approximation_id == "euler-maruyama"
     assert jnp.isneginf(kernel.log_prob(state, state, 1.0, 1.0, context))
-
-
-def test_trajectory_quasi_likelihood_respects_masks_weights_inputs_and_ids() -> None:
     state_layout = phx.dynamics.StateLayout((1,))
     input_layout = phx.dynamics.InputLayout((1,))
     system = phx.dynamics.ContinuousSystem(

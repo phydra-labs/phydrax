@@ -33,9 +33,7 @@ def _features() -> Any:
     )
 
 
-def test_isolation_forest_requires_key_has_exact_tree_capacity_and_is_deterministic() -> (
-    None
-):
+def test_isolation_forest_scenario_1() -> None:
     features = _features()
     recipe = IsolationForestRecipe(n_estimators=5, max_depth=3, contamination=0.2)
 
@@ -77,9 +75,71 @@ def test_isolation_forest_requires_key_has_exact_tree_capacity_and_is_determinis
     assert contract.supported_surfaces == ()
     assert contract.route is DerivativeRoute.STOPPED
     assert "exactly 2^(max_depth+1)-1" in " ".join(contract.conditions)
+    base = _features()
+    features = jnp.stack((base, base * jnp.array([1.1, 0.9])), axis=0)
+    targets = jnp.stack(
+        (jnp.sum(features, axis=-1), jnp.prod(features, axis=-1)), axis=-1
+    )
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
+    sample_mask = jnp.array([True, True, True, True, True, True, False])
+    weights = jnp.array([1.0, 1.5, 7.0, 0.8, 1.3, 1.1, 9.0])
+    recipe = IsolationForestRecipe(n_estimators=3, max_depth=2, contamination=0.2)
+    result = recipe.fit_batch(
+        MLBatch(
+            features,
+            targets,
+            feature_mask=feature_mask,
+            sample_mask=sample_mask,
+            sample_weight=weights,
+            measure_weight=50.0,
+        ),
+        key=jax.random.key(21),
+    )
+    model = result.as_trainable()
+    queries = features[:, :3] + 0.05
 
+    # ty: ignore[unresolved-attribute]
+    assert model.case_shape == (2,)
+    # ty: ignore[unresolved-attribute]
+    assert model.feature_indices.shape == (2, 3, 7)
+    assert model(queries).shape == (2, 3)
+    assert model(jnp.array([0.1, -0.2])).shape == (2,)
+    assert result.model(queries).shape == (2, 3)
+    assert jnp.array_equal(result.diagnostics.effective_samples, jnp.array([5, 5]))
+    features = _features()
+    complex_features = features.astype(jnp.complex64) + 0.1j
+    recipe = IsolationForestRecipe(n_estimators=2, max_depth=2, contamination=0.2)
 
-def test_hard_isolation_forest_is_exactly_stopped_and_relaxed_model_is_smooth() -> None:
+    with pytest.raises(TypeError, match="undefined for complex"):
+        recipe.fit_batch(MLBatch(complex_features), key=jax.random.key(30))
+    with pytest.raises(ValueError, match="max_depth"):
+        IsolationForestRecipe(max_depth=13)
+
+    model = recipe.fit_batch(MLBatch(features), key=jax.random.key(31)).as_trainable()
+    with pytest.raises(TypeError, match="undefined for complex"):
+        model(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
+    with pytest.raises(TypeError, match="requires real"):
+        # ty: ignore[unresolved-attribute]
+        model.relaxed()(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
+    features = _features()
+    sparse = SparseFeatures(
+        features,
+        jnp.broadcast_to(jnp.arange(2, dtype=jnp.int32), features.shape),
+        feature_count=2,
+    )
+
+    with pytest.raises(TypeError, match="requires dense features"):
+        IsolationForestRecipe(n_estimators=2, max_depth=2).fit_batch(
+            MLBatch(sparse), key=jax.random.key(32)
+        )
+    mask = jnp.array([True, False, False, False, False, False, False])
+    result = IsolationForestRecipe(
+        n_estimators=2, max_depth=2, contamination=0.2
+    ).fit_batch(MLBatch(_features(), sample_mask=mask), key=jax.random.key(40))
+
+    assert not result.valid
+    assert result.status == ML_INSUFFICIENT_DATA
+    assert result.diagnostics.effective_samples == 1
     features = _features()
     hard = (
         IsolationForestRecipe(n_estimators=7, max_depth=3, contamination=0.2)
@@ -137,82 +197,3 @@ def test_hard_isolation_forest_is_exactly_stopped_and_relaxed_model_is_smooth() 
     assert jax.vmap(hard)(points).shape == (3,)
     assert jax.jit(smooth)(points).shape == (3,)
     assert jax.vmap(smooth)(points).shape == (3,)
-
-
-def test_isolation_forest_preserves_case_axes_masks_weights_and_frozen_execution() -> (
-    None
-):
-    base = _features()
-    features = jnp.stack((base, base * jnp.array([1.1, 0.9])), axis=0)
-    targets = jnp.stack(
-        (jnp.sum(features, axis=-1), jnp.prod(features, axis=-1)), axis=-1
-    )
-    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
-    sample_mask = jnp.array([True, True, True, True, True, True, False])
-    weights = jnp.array([1.0, 1.5, 7.0, 0.8, 1.3, 1.1, 9.0])
-    recipe = IsolationForestRecipe(n_estimators=3, max_depth=2, contamination=0.2)
-    result = recipe.fit_batch(
-        MLBatch(
-            features,
-            targets,
-            feature_mask=feature_mask,
-            sample_mask=sample_mask,
-            sample_weight=weights,
-            measure_weight=50.0,
-        ),
-        key=jax.random.key(21),
-    )
-    model = result.as_trainable()
-    queries = features[:, :3] + 0.05
-
-    # ty: ignore[unresolved-attribute]
-    assert model.case_shape == (2,)
-    # ty: ignore[unresolved-attribute]
-    assert model.feature_indices.shape == (2, 3, 7)
-    assert model(queries).shape == (2, 3)
-    assert model(jnp.array([0.1, -0.2])).shape == (2,)
-    assert result.model(queries).shape == (2, 3)
-    assert jnp.array_equal(result.diagnostics.effective_samples, jnp.array([5, 5]))
-
-
-def test_isolation_forest_rejects_complex_ordering_and_invalid_capacity() -> None:
-    features = _features()
-    complex_features = features.astype(jnp.complex64) + 0.1j
-    recipe = IsolationForestRecipe(n_estimators=2, max_depth=2, contamination=0.2)
-
-    with pytest.raises(TypeError, match="undefined for complex"):
-        recipe.fit_batch(MLBatch(complex_features), key=jax.random.key(30))
-    with pytest.raises(ValueError, match="max_depth"):
-        IsolationForestRecipe(max_depth=13)
-
-    model = recipe.fit_batch(MLBatch(features), key=jax.random.key(31)).as_trainable()
-    with pytest.raises(TypeError, match="undefined for complex"):
-        model(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
-    with pytest.raises(TypeError, match="requires real"):
-        # ty: ignore[unresolved-attribute]
-        model.relaxed()(jnp.array([0.2 + 0.1j, -0.3 + 0.2j]))
-
-
-def test_isolation_forest_rejects_sparse_features_explicitly() -> None:
-    features = _features()
-    sparse = SparseFeatures(
-        features,
-        jnp.broadcast_to(jnp.arange(2, dtype=jnp.int32), features.shape),
-        feature_count=2,
-    )
-
-    with pytest.raises(TypeError, match="requires dense features"):
-        IsolationForestRecipe(n_estimators=2, max_depth=2).fit_batch(
-            MLBatch(sparse), key=jax.random.key(32)
-        )
-
-
-def test_isolation_forest_insufficient_data_is_an_invalid_status_value() -> None:
-    mask = jnp.array([True, False, False, False, False, False, False])
-    result = IsolationForestRecipe(
-        n_estimators=2, max_depth=2, contamination=0.2
-    ).fit_batch(MLBatch(_features(), sample_mask=mask), key=jax.random.key(40))
-
-    assert not result.valid
-    assert result.status == ML_INSUFFICIENT_DATA
-    assert result.diagnostics.effective_samples == 1

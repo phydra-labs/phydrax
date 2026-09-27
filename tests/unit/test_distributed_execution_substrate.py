@@ -71,7 +71,7 @@ from phydrax.linalg import (
 )
 
 
-def test_root_import_consumes_bootstrap_environment_before_package_loading() -> None:
+def test_distributed_execution_substrate_scenario_1() -> None:
     root = Path(__file__).parents[2]
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(root)
@@ -95,20 +95,6 @@ def test_root_import_consumes_bootstrap_environment_before_package_loading() -> 
         text=True,
     )
     assert result.returncode == 0, result.stderr
-
-
-def _inventory() -> ResourceInventory:
-    return ResourceInventory(
-        1,
-        0,
-        (
-            DeviceResource(0, 0, 0, "cpu", "cpu"),
-            DeviceResource(0, 1, 1, "cpu", "cpu"),
-        ),
-    )
-
-
-def test_inventory_identity_excludes_process_local_visibility() -> None:
     first = ResourceInventory(
         2,
         0,
@@ -126,9 +112,6 @@ def test_inventory_identity_excludes_process_local_visibility() -> None:
         ),
     )
     assert first.inventory_id == second.inventory_id
-
-
-def test_execution_plan_admits_complete_distributed_candidate_and_round_trips() -> None:
     inventory = _inventory()
     requirements = ExecutionRequirements(
         "distributed-test",
@@ -189,7 +172,18 @@ def test_execution_plan_admits_complete_distributed_candidate_and_round_trips() 
         type(plan).from_payload(unknown_field)
 
 
-def test_process_symmetric_child_groups_are_disjoint() -> None:
+def _inventory() -> ResourceInventory:
+    return ResourceInventory(
+        1,
+        0,
+        (
+            DeviceResource(0, 0, 0, "cpu", "cpu"),
+            DeviceResource(0, 1, 1, "cpu", "cpu"),
+        ),
+    )
+
+
+def test_distributed_execution_substrate_scenario_2() -> None:
     parent = ExecutionGroupSpec(
         "root",
         (0, 1),
@@ -202,6 +196,102 @@ def test_process_symmetric_child_groups_are_disjoint() -> None:
     assert set(groups[0].device_keys) | set(groups[1].device_keys) == set(
         parent.device_keys
     )
+    operator = DistributedLinearOperator(
+        lambda value: 4.0 * value,
+        lambda value: 4.0 * value,
+        (4,),
+        (4,),
+        operator_id="four-identity",
+    )
+    pairing = DistributedPairing(jnp.asarray([True, True, True, False]))
+    right_hand_side = jnp.asarray([4.0, 8.0, 12.0, 0.0])
+    result = solve_distributed_pcg(
+        operator,
+        right_hand_side,
+        pairing,
+        DistributedKrylovPolicy(8, relative_tolerance=1.0e-12),
+    )
+    np.testing.assert_allclose(result.value, jnp.asarray([1.0, 2.0, 3.0, 0.0]))
+    assert bool(result.converged)
+    for weights in (
+        jnp.asarray([1.0, 0.0]),
+        jnp.asarray([1.0, -1.0]),
+        jnp.asarray([1.0, jnp.nan]),
+    ):
+        with pytest.raises(ValueError, match="finite and strictly positive"):
+            DistributedPairing(jnp.asarray([True, True]), weights=weights)
+
+        padded = DistributedPairing(
+            jnp.asarray([True, False]),
+            weights=jnp.asarray([2.0, jnp.nan]),
+        )
+        assert padded.inner(jnp.asarray([3.0, 1.0]), jnp.asarray([4.0, 1.0])) == 24.0
+
+        with pytest.raises(TypeError, match="real numeric"):
+            DistributedPairing(
+                jnp.asarray([True, False]),
+                weights=jnp.asarray([1.0 + 0.0j, 0.0 + 1.0j]),
+            )
+    for solver in (
+        solve_distributed_gmres,
+        solve_distributed_fgmres,
+        solve_distributed_minres,
+    ):
+        diagonal = jnp.asarray([2.0, 3.0, 4.0, 1.0])
+        operator = DistributedLinearOperator(
+            lambda value: diagonal * value,
+            lambda value: diagonal * value,
+            (4,),
+            (4,),
+            operator_id="positive-diagonal",
+        )
+        pairing = DistributedPairing(jnp.asarray([True, True, True, False]))
+        right_hand_side = jnp.asarray([2.0, 6.0, 12.0, 0.0])
+        schwarz = DistributedAdditiveSchwarzPreconditioner(
+            (lambda value: value / diagonal, lambda value: value / diagonal),
+            (jnp.full((4,), 0.5), jnp.full((4,), 0.5)),
+            preconditioner_id="two-copy-partition-of-unity",
+        )
+
+        result = solver(
+            operator,
+            right_hand_side,
+            pairing,
+            DistributedKrylovPolicy(
+                8,
+                relative_tolerance=1.0e-12,
+                restart=4,
+            ),
+            preconditioner=schwarz,
+        )
+
+        np.testing.assert_allclose(result.value, jnp.asarray([1.0, 2.0, 3.0, 0.0]))
+        assert bool(result.converged)
+        assert result.residual_norm < 1.0e-10
+    operator = DistributedLinearOperator(
+        lambda value: 5.0 * value,
+        lambda value: 5.0 * value,
+        (3,),
+        (3,),
+        operator_id="five-identity",
+    )
+    pairing = DistributedPairing(jnp.ones((3,), dtype="bool"))
+    right = jnp.asarray([[5.0, 10.0], [10.0, -5.0], [15.0, 20.0]])
+
+    result = solve_distributed_block_krylov(
+        operator,
+        right,
+        pairing,
+        DistributedKrylovPolicy(6, relative_tolerance=1.0e-12, restart=3),
+        method="gmres",
+    )
+
+    np.testing.assert_allclose(result.value, right / 5.0)
+    np.testing.assert_array_equal(result.converged, jnp.asarray((True, True)))
+    assert result.iterations.shape == (2,)
+    assert APPLE_METAL_PROFILE.experimental
+    with pytest.raises(ValueError, match="float64"):
+        APPLE_METAL_PROFILE.require(scope="single_device", dtype="float64")
 
 
 def test_grouped_workset_preserves_canonical_identity_and_group_assignment() -> None:
@@ -460,118 +550,3 @@ def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_alloca
             # ty: ignore[invalid-argument-type]
             None,
         )
-
-
-def test_distributed_pcg_uses_owned_pairing_and_global_consensus() -> None:
-    operator = DistributedLinearOperator(
-        lambda value: 4.0 * value,
-        lambda value: 4.0 * value,
-        (4,),
-        (4,),
-        operator_id="four-identity",
-    )
-    pairing = DistributedPairing(jnp.asarray([True, True, True, False]))
-    right_hand_side = jnp.asarray([4.0, 8.0, 12.0, 0.0])
-    result = solve_distributed_pcg(
-        operator,
-        right_hand_side,
-        pairing,
-        DistributedKrylovPolicy(8, relative_tolerance=1.0e-12),
-    )
-    np.testing.assert_allclose(result.value, jnp.asarray([1.0, 2.0, 3.0, 0.0]))
-    assert bool(result.converged)
-
-
-@pytest.mark.parametrize(
-    "weights",
-    (
-        jnp.asarray([1.0, 0.0]),
-        jnp.asarray([1.0, -1.0]),
-        jnp.asarray([1.0, jnp.nan]),
-    ),
-)
-def test_distributed_pairing_requires_positive_finite_owned_weights(weights: Any) -> None:
-    with pytest.raises(ValueError, match="finite and strictly positive"):
-        DistributedPairing(jnp.asarray([True, True]), weights=weights)
-
-    padded = DistributedPairing(
-        jnp.asarray([True, False]),
-        weights=jnp.asarray([2.0, jnp.nan]),
-    )
-    assert padded.inner(jnp.asarray([3.0, 1.0]), jnp.asarray([4.0, 1.0])) == 24.0
-
-    with pytest.raises(TypeError, match="real numeric"):
-        DistributedPairing(
-            jnp.asarray([True, False]),
-            weights=jnp.asarray([1.0 + 0.0j, 0.0 + 1.0j]),
-        )
-
-
-@pytest.mark.parametrize(
-    "solver",
-    (solve_distributed_gmres, solve_distributed_fgmres, solve_distributed_minres),
-)
-def test_distributed_general_krylov_methods_retain_owned_residual_evidence(
-    solver: Any,
-) -> None:
-    diagonal = jnp.asarray([2.0, 3.0, 4.0, 1.0])
-    operator = DistributedLinearOperator(
-        lambda value: diagonal * value,
-        lambda value: diagonal * value,
-        (4,),
-        (4,),
-        operator_id="positive-diagonal",
-    )
-    pairing = DistributedPairing(jnp.asarray([True, True, True, False]))
-    right_hand_side = jnp.asarray([2.0, 6.0, 12.0, 0.0])
-    schwarz = DistributedAdditiveSchwarzPreconditioner(
-        (lambda value: value / diagonal, lambda value: value / diagonal),
-        (jnp.full((4,), 0.5), jnp.full((4,), 0.5)),
-        preconditioner_id="two-copy-partition-of-unity",
-    )
-
-    result = solver(
-        operator,
-        right_hand_side,
-        pairing,
-        DistributedKrylovPolicy(
-            8,
-            relative_tolerance=1.0e-12,
-            restart=4,
-        ),
-        preconditioner=schwarz,
-    )
-
-    np.testing.assert_allclose(result.value, jnp.asarray([1.0, 2.0, 3.0, 0.0]))
-    assert bool(result.converged)
-    assert result.residual_norm < 1.0e-10
-
-
-def test_distributed_block_krylov_preserves_per_rhs_evidence() -> None:
-    operator = DistributedLinearOperator(
-        lambda value: 5.0 * value,
-        lambda value: 5.0 * value,
-        (3,),
-        (3,),
-        operator_id="five-identity",
-    )
-    pairing = DistributedPairing(jnp.ones((3,), dtype="bool"))
-    right = jnp.asarray([[5.0, 10.0], [10.0, -5.0], [15.0, 20.0]])
-
-    result = solve_distributed_block_krylov(
-        operator,
-        right,
-        pairing,
-        DistributedKrylovPolicy(6, relative_tolerance=1.0e-12, restart=3),
-        method="gmres",
-    )
-
-    np.testing.assert_allclose(result.value, right / 5.0)
-    np.testing.assert_array_equal(result.converged, jnp.asarray((True, True)))
-    assert result.iterations.shape == (2,)
-
-
-def test_experimental_vendor_profile_rejects_unsupported_precision() -> None:
-    assert APPLE_METAL_PROFILE.experimental
-    with pytest.raises(ValueError, match="float64"):
-        APPLE_METAL_PROFILE.require(scope="single_device", dtype="float64")

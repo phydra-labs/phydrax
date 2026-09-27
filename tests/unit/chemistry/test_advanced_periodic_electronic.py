@@ -77,7 +77,7 @@ def _pencil(*, generalized: Any = False, reference_electron_count: Any = 2.0) ->
     return mesh, pencil, mean_field
 
 
-def test_prepared_ewald_enforces_neutrality_and_reports_background_evidence() -> None:
+def test_advanced_periodic_electronic_scenario_1() -> None:
     cell = _cell()
     positions = np.asarray([[0.2, 0.3, 0.4], [1.2, 0.3, 0.4]])
     neutral = periodic.PeriodicEwaldPlan(
@@ -114,9 +114,6 @@ def test_prepared_ewald_enforces_neutrality_and_reports_background_evidence() ->
     assert bool(background.evidence.background_applied)
     assert background.energy_ledger.component_names[-1] == "uniform-background"
     assert float(background.energy_ledger.components[-1]) < 0.0
-
-
-def test_governed_gth_local_and_nonlocal_components_retain_units_and_source() -> None:
     channel = periodic.GTHProjectorChannel(0, 0.4, [[0.25, 0.0], [0.0, 0.1]])
     manifest = _manifest("gth-fixture")
     plan = periodic.GTHPseudopotentialPlan(
@@ -136,51 +133,6 @@ def test_governed_gth_local_and_nonlocal_components_retain_units_and_source() ->
     assert nonlocal_.energy_unit == phx.units.ELECTRONVOLT
     np.testing.assert_allclose(nonlocal_.energy, 0.35, atol=1.0e-12)
     assert np.all(np.isfinite(np.asarray(local.values)))
-
-
-def test_spin_scf_closes_restricted_generalized_insulator_evidence() -> None:
-    mesh, pencil, mean_field = _pencil(generalized=True)
-    result = periodic.SpinPeriodicSCFPlan(
-        mesh,
-        phx.chemistry.PeriodicElectronicSectorPlan(2.0),
-        pencil,
-        mean_field,
-        reference_kind="restricted",
-    ).evaluate()
-
-    assert bool(result.successful)
-    assert result.reference_kind == "restricted"
-    np.testing.assert_allclose(result.occupations[:, :, 0], 1.0, atol=1.0e-12)
-    np.testing.assert_allclose(result.evidence.electron_count_residual, 0.0, atol=1.0e-12)
-    assert float(result.evidence.commutator_residual) <= 1.0e-9
-    assert float(result.evidence.eigenpair_residual) <= 1.0e-9
-    np.testing.assert_allclose(result.energy_ledger.closure_residual, 0.0, atol=1.0e-12)
-
-
-def test_spin_scf_closes_collinear_finite_temperature_metal_counts() -> None:
-    mesh, pencil, mean_field = _pencil(reference_electron_count=1.0)
-    result = periodic.SpinPeriodicSCFPlan(
-        mesh,
-        phx.chemistry.PeriodicElectronicSectorPlan(1.0, spin_magnetization=0.4),
-        pencil,
-        mean_field,
-        reference_kind="collinear",
-        reference_spin_populations=[[0.7, 0.0], [0.3, 0.0]],
-        smearing_energy=0.15,
-    ).evaluate()
-    weighted = np.sum(
-        np.asarray(mesh.weights)[None, :, None] * np.asarray(result.occupations),
-        axis=(1, 2),
-    )
-
-    assert bool(result.successful)
-    np.testing.assert_allclose(weighted, [0.7, 0.3], atol=1.0e-10)
-    assert float(result.entropy) > 0.0
-    assert float(result.free_energy) < float(result.energy)
-    assert float(result.evidence.free_energy_residual) <= 1.0e-12
-
-
-def test_governed_gamma_gdf_is_production_while_local_gth_fftdf_is_candidate() -> None:
     manifest = _manifest("gamma-gdf-integrals")
     factors = phx.operators.quantum.gaussian.FactorizedERITensor(
         # ty: ignore[invalid-argument-type]
@@ -235,6 +187,42 @@ def test_governed_gamma_gdf_is_production_while_local_gth_fftdf_is_candidate() -
         2.0,
         atol=2.0e-6,
     )
+    mesh, pencil, mean_field = _pencil(generalized=True)
+    result = periodic.SpinPeriodicSCFPlan(
+        mesh,
+        phx.chemistry.PeriodicElectronicSectorPlan(2.0),
+        pencil,
+        mean_field,
+        reference_kind="restricted",
+    ).evaluate()
+
+    assert bool(result.successful)
+    assert result.reference_kind == "restricted"
+    np.testing.assert_allclose(result.occupations[:, :, 0], 1.0, atol=1.0e-12)
+    np.testing.assert_allclose(result.evidence.electron_count_residual, 0.0, atol=1.0e-12)
+    assert float(result.evidence.commutator_residual) <= 1.0e-9
+    assert float(result.evidence.eigenpair_residual) <= 1.0e-9
+    np.testing.assert_allclose(result.energy_ledger.closure_residual, 0.0, atol=1.0e-12)
+    mesh, pencil, mean_field = _pencil(reference_electron_count=1.0)
+    result = periodic.SpinPeriodicSCFPlan(
+        mesh,
+        phx.chemistry.PeriodicElectronicSectorPlan(1.0, spin_magnetization=0.4),
+        pencil,
+        mean_field,
+        reference_kind="collinear",
+        reference_spin_populations=[[0.7, 0.0], [0.3, 0.0]],
+        smearing_energy=0.15,
+    ).evaluate()
+    weighted = np.sum(
+        np.asarray(mesh.weights)[None, :, None] * np.asarray(result.occupations),
+        axis=(1, 2),
+    )
+
+    assert bool(result.successful)
+    np.testing.assert_allclose(weighted, [0.7, 0.3], atol=1.0e-10)
+    assert float(result.entropy) > 0.0
+    assert float(result.free_energy) < float(result.energy)
+    assert float(result.evidence.free_energy_residual) <= 1.0e-12
 
 
 def test_stationary_periodic_derivatives_close_complete_force_stress_ledger() -> None:

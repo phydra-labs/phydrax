@@ -348,7 +348,7 @@ def _complete_case(
     return profile, bundle, trust, signers, verifiers
 
 
-def test_complete_exact_tuple_requires_separate_release_decision() -> None:
+def test_cardiovascular_commercial_scenario_1() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case()
     candidate = evaluate_cardiovascular_release_candidate(
         profile,
@@ -379,9 +379,6 @@ def test_complete_exact_tuple_requires_separate_release_decision() -> None:
     assert assessment.capability_profile.released
     assert assessment.require_commercial_ready() == assessment.assessment_id
     assert not profile.use_policy.grants_commercial_license
-
-
-def test_claims_matrix_is_exact_and_profile_rejects_nonlocal_or_regulated_tuple() -> None:
     support = _support()
     decision = CardiovascularClaimDecision(
         support,
@@ -429,9 +426,6 @@ def test_claims_matrix_is_exact_and_profile_rejects_nonlocal_or_regulated_tuple(
                 profile.security_policy,
                 profile.use_policy,
             )
-
-
-def test_profile_refuses_permissive_privacy_security_and_medical_use() -> None:
     support = _support()
     profile, _ = _profile_parts(support)
     permissive_privacy = CardiovascularPrivacyPolicy(phi_allowed=True)
@@ -449,7 +443,7 @@ def test_profile_refuses_permissive_privacy_security_and_medical_use() -> None:
         replace(profile, use_policy=regulated_use)
 
 
-def test_absent_release_artifacts_produce_deterministic_current_blockers() -> None:
+def test_cardiovascular_commercial_scenario_2() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case()
     g5 = CardiovascularGateEvidence.issue(
         CardiovascularReleaseGate.G5_PROVENANCE_SUPPLY_CHAIN,
@@ -496,9 +490,6 @@ def test_absent_release_artifacts_produce_deterministic_current_blockers() -> No
             decided_at=21,
             rationale="Cannot override missing evidence.",
         )
-
-
-def test_artifact_dependencies_and_freshness_fail_closed() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case(artifact_expires_at=15)
     candidate = evaluate_cardiovascular_release_candidate(
         profile,
@@ -532,9 +523,6 @@ def test_artifact_dependencies_and_freshness_fail_closed() -> None:
     assert (
         "missing-artifact-dependency:supply-chain-attestation:absent-build-reference"
     ) in blockers
-
-
-def test_failed_stale_and_unapproved_gate_evidence_are_distinct() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case()
     replacements = {
         CardiovascularReleaseGate.G1_CODE_VERIFICATION: dict(
@@ -603,7 +591,7 @@ def test_failed_stale_and_unapproved_gate_evidence_are_distinct() -> None:
     )
 
 
-def test_non_claim_signatures_scope_and_freshness_are_enforced() -> None:
+def test_cardiovascular_commercial_scenario_3() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case()
     original = bundle.non_claims[0]
     tampered = CardiovascularSignedNonClaim(
@@ -662,9 +650,6 @@ def test_non_claim_signatures_scope_and_freshness_are_enforced() -> None:
     damaged_record["statement"] = "Different exclusion."
     with pytest.raises(ValueError, match="invalid content address"):
         CardiovascularSignedNonClaim.from_record(damaged_record)
-
-
-def test_gate_and_release_decision_signatures_are_verified_not_resigned() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case()
     tampered_gate = replace(bundle.gates[0], signature="00")
     tampered_bundle = replace(
@@ -704,9 +689,6 @@ def test_gate_and_release_decision_signatures_are_verified_not_resigned() -> Non
     )
     assert not assessment.commercial_ready
     assert "release-decision-signature:invalid" in assessment.blockers
-
-
-def test_lifecycle_completion_and_independent_reviewer_are_required() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case()
     running = RunRecord(
         "qualification-run",
@@ -772,7 +754,7 @@ def test_lifecycle_completion_and_independent_reviewer_are_required() -> None:
         )
 
 
-def test_rejected_or_mismatched_release_decision_never_releases() -> None:
+def test_cardiovascular_commercial_scenario_4() -> None:
     profile, bundle, trust, signers, verifiers = _complete_case()
     candidate = evaluate_cardiovascular_release_candidate(
         profile,
@@ -823,9 +805,6 @@ def test_rejected_or_mismatched_release_decision_never_releases() -> None:
     assert mismatch_assessment.blockers == (
         "release-decision-candidate-mismatch:different-candidate",
     )
-
-
-def test_release_rechecks_trust_freshness_at_decision_time() -> None:
     profile, bundle, _, signers, verifiers = _complete_case()
     short_trust = HMACSHA256TrustPolicy(
         {"release-index-signer": b"index-key"},
@@ -859,9 +838,6 @@ def test_release_rechecks_trust_freshness_at_decision_time() -> None:
             if blocker.startswith("release-time-rejected-evidence:")
         ]
     ) == len(CardiovascularReleaseGate)
-
-
-def test_dependency_profiles_must_be_complete_released_and_fresh() -> None:
     dependency_support = SupportTuple(
         "cardiovascular.solver", {"route": "native", "precision": "float64"}
     )

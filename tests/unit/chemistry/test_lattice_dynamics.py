@@ -45,7 +45,7 @@ def _ifc(
     )
 
 
-def test_monatomic_nearest_neighbor_dispersion_uses_canonical_family() -> None:
+def test_lattice_dynamics_scenario_1() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(np.eye(3))
     # ty: ignore[invalid-argument-type]
@@ -70,9 +70,6 @@ def test_monatomic_nearest_neighbor_dispersion_uses_canonical_family() -> None:
     assert bool(result.successful)
     np.testing.assert_allclose(result.angular_frequencies[0], 0.0, atol=1.0e-7)
     np.testing.assert_allclose(result.angular_frequencies[1], np.sqrt(2.0), atol=1.0e-12)
-
-
-def test_directional_3d_loto_splits_only_longitudinal_optical_mode() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(2.0 * np.eye(3))
     # ty: ignore[invalid-argument-type]

@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_path_value_and_coordinate_functionals_use_signature_kernel() -> None:
+def test_path_contracts() -> None:
     paths = jnp.asarray(
         [
             [[0.0], [0.2], [0.6]],
@@ -40,9 +40,6 @@ def test_path_value_and_coordinate_functionals_use_signature_kernel() -> None:
     covariance = phx.uq.functional_kernel_matrix(kernel, derivative_design, value_design)
     oracle = jax.jacrev(lambda path: kernel.matrix(path[None], paths)[0])(paths[0])
     assert jnp.allclose(covariance[0], oracle[:, 1, 0], atol=2e-4)
-
-
-def test_path_blocks_may_vary_knot_count_and_padding_derivatives_fail() -> None:
     kernel = phx.kernels.SignaturePDEKernel(phx.kernels.SquaredExponentialKernel())
     short = phx.uq.FunctionalObservationBlock(
         jnp.zeros((1, 2, 1)),

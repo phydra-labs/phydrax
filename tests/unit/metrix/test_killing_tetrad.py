@@ -45,41 +45,36 @@ def _spherical_minkowski_metric(coordinates: Any) -> Any:
     return jnp.diag(jnp.asarray((-1.0, 1.0, radius**2, radius**2 * jnp.sin(polar) ** 2)))
 
 
-@pytest.mark.parametrize("metric_signature", ("mostly_plus", "mostly_minus"))
-def test_stationary_axial_killing_fields_and_inner_product_evidence(
-    metric_signature: Any,
-) -> None:
-    chart = _spherical_chart("kerr-killing")
-    metric = kerr_boyer_lindquist_metric(
-        1.0, 0.7, chart=chart, convention=metric_signature
-    )
-    points = jnp.asarray(((0.0, 4.0, 0.9, 0.2), (0.3, 6.0, 1.2, -0.4)))
-    stationary = stationary_killing_vector(points)
-    axial = axial_killing_vector(points)
-    evidence = stationary_axial_inner_product_evidence(metric, points)
+def test_killing_tetrad_scenario_1() -> None:
+    for metric_signature in ("mostly_plus", "mostly_minus"):
+        chart = _spherical_chart("kerr-killing")
+        metric = kerr_boyer_lindquist_metric(
+            1.0, 0.7, chart=chart, convention=metric_signature
+        )
+        points = jnp.asarray(((0.0, 4.0, 0.9, 0.2), (0.3, 6.0, 1.2, -0.4)))
+        stationary = stationary_killing_vector(points)
+        axial = axial_killing_vector(points)
+        evidence = stationary_axial_inner_product_evidence(metric, points)
 
-    assert stationary.shape == (2, 4)
-    assert axial.shape == (2, 4)
-    assert jnp.all(stationary[:, 0] == 1.0)
-    assert jnp.all(axial[:, 3] == 1.0)
-    assert jnp.all(evidence.finite)
-    assert jnp.all(evidence.stationary_timelike)
-    assert jnp.all(evidence.axial_spacelike)
-    assert jnp.all(evidence.orbit_plane_lorentzian)
-    assert jnp.all(evidence.qualified)
-    assert jnp.all(evidence.derivative_valid)
+        assert stationary.shape == (2, 4)
+        assert axial.shape == (2, 4)
+        assert jnp.all(stationary[:, 0] == 1.0)
+        assert jnp.all(axial[:, 3] == 1.0)
+        assert jnp.all(evidence.finite)
+        assert jnp.all(evidence.stationary_timelike)
+        assert jnp.all(evidence.axial_spacelike)
+        assert jnp.all(evidence.orbit_plane_lorentzian)
+        assert jnp.all(evidence.qualified)
+        assert jnp.all(evidence.derivative_valid)
 
-    stationary_residual = maximum_killing_equation_residual(
-        metric, stationary_killing_vector, points
-    )
-    axial_residual = maximum_killing_equation_residual(
-        metric, axial_killing_vector, points
-    )
-    assert jnp.allclose(stationary_residual, 0.0, atol=2e-12)
-    assert jnp.allclose(axial_residual, 0.0, atol=2e-12)
-
-
-def test_ergoregion_classification_does_not_invalidate_zamo_orbit_plane() -> None:
+        stationary_residual = maximum_killing_equation_residual(
+            metric, stationary_killing_vector, points
+        )
+        axial_residual = maximum_killing_equation_residual(
+            metric, axial_killing_vector, points
+        )
+        assert jnp.allclose(stationary_residual, 0.0, atol=2e-12)
+        assert jnp.allclose(axial_residual, 0.0, atol=2e-12)
     chart = _spherical_chart("kerr-ergoregion")
     metric = kerr_boyer_lindquist_metric(1.0, 0.8, chart=chart)
     point = jnp.asarray((0.0, 1.8, jnp.pi / 2.0, 0.0))
@@ -95,63 +90,60 @@ def test_ergoregion_classification_does_not_invalidate_zamo_orbit_plane() -> Non
     assert tetrad.qualified
     assert tetrad.inner_products.maximum_absolute_residual < 2e-12
     assert tetrad.time_vector[0] > 0.0
-
-
-@pytest.mark.parametrize("metric_signature", ("mostly_plus", "mostly_minus"))
-def test_schwarzschild_zamo_limit_orientation_dual_and_projection_round_trips(
-    metric_signature: Any,
-) -> None:
-    chart = _spherical_chart("schwarzschild-zamo")
-    mass = 1.3
-    radius = 5.2
-    polar = 1.1
-    point = jnp.asarray((0.0, radius, polar, 0.2))
-    metric = schwarzschild_metric(mass, chart=chart, convention=metric_signature)
-    tetrad = zamo_observer_tetrad(
-        metric, point, source_id=f"schwarzschild-{metric_signature}"
-    )
-    factor = 1.0 - 2.0 * mass / radius
-    expected = jnp.diag(
-        jnp.asarray(
-            (
-                1.0 / jnp.sqrt(factor),
-                jnp.sqrt(factor),
-                1.0 / radius,
-                1.0 / (radius * jnp.sin(polar)),
+    for metric_signature in ("mostly_plus", "mostly_minus"):
+        chart = _spherical_chart("schwarzschild-zamo")
+        mass = 1.3
+        radius = 5.2
+        polar = 1.1
+        point = jnp.asarray((0.0, radius, polar, 0.2))
+        metric = schwarzschild_metric(mass, chart=chart, convention=metric_signature)
+        tetrad = zamo_observer_tetrad(
+            metric, point, source_id=f"schwarzschild-{metric_signature}"
+        )
+        factor = 1.0 - 2.0 * mass / radius
+        expected = jnp.diag(
+            jnp.asarray(
+                (
+                    1.0 / jnp.sqrt(factor),
+                    jnp.sqrt(factor),
+                    1.0 / radius,
+                    1.0 / (radius * jnp.sin(polar)),
+                )
             )
         )
-    )
 
-    assert jnp.allclose(tetrad.vectors, expected, atol=2e-12)
-    assert jnp.allclose(tetrad.inner_products.maximum_absolute_residual, 0.0, atol=2e-12)
-    assert tetrad.orientation == 1.0
-    assert tetrad.orientation_residual == 0.0
-    assert tetrad.time_direction_residual == 0.0
-    assert tetrad.finite
-    assert tetrad.physically_valid
-    assert tetrad.qualified
-    assert tetrad.derivative_valid
-    assert jnp.allclose(
-        jnp.einsum("ai,bi->ab", tetrad_dual(tetrad), tetrad.vectors),
-        jnp.eye(4),
-        atol=2e-12,
-    )
+        assert jnp.allclose(tetrad.vectors, expected, atol=2e-12)
+        assert jnp.allclose(
+            tetrad.inner_products.maximum_absolute_residual, 0.0, atol=2e-12
+        )
+        assert tetrad.orientation == 1.0
+        assert tetrad.orientation_residual == 0.0
+        assert tetrad.time_direction_residual == 0.0
+        assert tetrad.finite
+        assert tetrad.physically_valid
+        assert tetrad.qualified
+        assert tetrad.derivative_valid
+        assert jnp.allclose(
+            jnp.einsum("ai,bi->ab", tetrad_dual(tetrad), tetrad.vectors),
+            jnp.eye(4),
+            atol=2e-12,
+        )
 
-    vector = jnp.asarray((0.4, -0.3, 0.2, 0.7))
-    covector = jnp.asarray((-0.5, 0.6, -0.1, 0.9))
-    vector_components = tetrad_project_vector(tetrad, vector)
-    covector_components = tetrad_project_covector(tetrad, covector)
-    assert jnp.allclose(
-        tetrad_reconstruct_vector(tetrad, vector_components), vector, atol=2e-12
-    )
-    assert jnp.allclose(
-        tetrad_reconstruct_covector(tetrad, covector_components),
-        covector,
-        atol=2e-12,
-    )
+        vector = jnp.asarray((0.4, -0.3, 0.2, 0.7))
+        covector = jnp.asarray((-0.5, 0.6, -0.1, 0.9))
+        vector_components = tetrad_project_vector(tetrad, vector)
+        covector_components = tetrad_project_covector(tetrad, covector)
+        assert jnp.allclose(
+            tetrad_reconstruct_vector(tetrad, vector_components), vector, atol=2e-12
+        )
+        assert jnp.allclose(
+            tetrad_reconstruct_covector(tetrad, covector_components),
+            covector,
+            atol=2e-12,
+        )
 
 
-def test_declared_time_and_spacetime_orientations_control_tetrad_evidence() -> None:
+def test_killing_tetrad_scenario_2() -> None:
     chart = CoordinateChart("oriented-flat", ("t", "x", "y", "z"))
     metric = minkowski_metric(chart)
     convention = RelativityConvention(
@@ -174,9 +166,6 @@ def test_declared_time_and_spacetime_orientations_control_tetrad_evidence() -> N
     assert tetrad.time_direction_residual == 0.0
     assert tetrad.qualified
     assert tetrad.convention.convention_id == convention.convention_id
-
-
-def test_zamo_reports_axis_and_regular_horizon_as_observer_domain_failures() -> None:
     chart = _spherical_chart("observer-domain")
     spherical_flat = LorentzianMetric(_spherical_minkowski_metric, chart=chart)
     axis = zamo_observer_tetrad(
@@ -207,47 +196,46 @@ def test_zamo_reports_axis_and_regular_horizon_as_observer_domain_failures() -> 
     assert not horizon.derivative_valid
     assert horizon.domain.margin == 0.0
     assert horizon.domain.status == int(MetricDomainStatus.REJECTED)
+    for metric_signature in ("mostly_plus", "mostly_minus"):
+        for spin in (0.6, -0.6):
+            chart = _spherical_chart("kerr-principal")
+            mass = 1.4
+            metric = kerr_boyer_lindquist_metric(
+                mass, spin, chart=chart, convention=metric_signature
+            )
+            point = jnp.asarray((0.2, 5.0, 1.0, -0.4))
+            tetrad = kerr_principal_null_tetrad(
+                metric,
+                mass,
+                spin,
+                point,
+                source_id=f"kerr-M{mass}-a{spin}-{metric_signature}",
+            )
+
+            assert tetrad.finite
+            assert tetrad.domain_valid
+            assert tetrad.physically_valid
+            assert tetrad.qualified
+            assert tetrad.derivative_valid
+            assert jnp.sign(jnp.real(tetrad.outgoing[3])) == jnp.sign(spin)
+            assert jnp.allclose(
+                tetrad.polarization_conjugate, jnp.conj(tetrad.polarization)
+            )
+            assert tetrad.inner_products.maximum_absolute_residual < 3e-12
+            assert jnp.allclose(
+                jnp.einsum("ai,bi->ab", tetrad.dual_covectors, tetrad.vectors),
+                jnp.eye(4),
+                atol=3e-12,
+            )
+
+            vector = jnp.asarray((0.4, -0.3, 0.2, 0.7), dtype="complex128")
+            components = tetrad_project_vector(tetrad, vector)
+            assert jnp.allclose(
+                tetrad_reconstruct_vector(tetrad, components), vector, atol=3e-12
+            )
 
 
-@pytest.mark.parametrize("metric_signature", ("mostly_plus", "mostly_minus"))
-@pytest.mark.parametrize("spin", (0.6, -0.6))
-def test_kerr_principal_null_tetrad_normalization_and_dual(
-    metric_signature: Any, spin: Any
-) -> None:
-    chart = _spherical_chart("kerr-principal")
-    mass = 1.4
-    metric = kerr_boyer_lindquist_metric(
-        mass, spin, chart=chart, convention=metric_signature
-    )
-    point = jnp.asarray((0.2, 5.0, 1.0, -0.4))
-    tetrad = kerr_principal_null_tetrad(
-        metric,
-        mass,
-        spin,
-        point,
-        source_id=f"kerr-M{mass}-a{spin}-{metric_signature}",
-    )
-
-    assert tetrad.finite
-    assert tetrad.domain_valid
-    assert tetrad.physically_valid
-    assert tetrad.qualified
-    assert tetrad.derivative_valid
-    assert jnp.sign(jnp.real(tetrad.outgoing[3])) == jnp.sign(spin)
-    assert jnp.allclose(tetrad.polarization_conjugate, jnp.conj(tetrad.polarization))
-    assert tetrad.inner_products.maximum_absolute_residual < 3e-12
-    assert jnp.allclose(
-        jnp.einsum("ai,bi->ab", tetrad.dual_covectors, tetrad.vectors),
-        jnp.eye(4),
-        atol=3e-12,
-    )
-
-    vector = jnp.asarray((0.4, -0.3, 0.2, 0.7), dtype="complex128")
-    components = tetrad_project_vector(tetrad, vector)
-    assert jnp.allclose(tetrad_reconstruct_vector(tetrad, components), vector, atol=3e-12)
-
-
-def test_principal_null_tetrad_has_exact_schwarzschild_limit_and_domain_mask() -> None:
+def test_killing_tetrad_scenario_3() -> None:
     chart = _spherical_chart("schwarzschild-principal")
     mass = 1.0
     radius = 4.0
@@ -288,9 +276,6 @@ def test_principal_null_tetrad_has_exact_schwarzschild_limit_and_domain_mask() -
     assert not horizon.qualified
     assert not horizon.derivative_valid
     assert jnp.all(horizon.vectors == 0.0)
-
-
-def test_overextremal_kerr_still_has_local_principal_null_directions() -> None:
     chart = _spherical_chart("overextremal-principal")
     metric = kerr_boyer_lindquist_metric(1.0, 1.2, chart=chart)
     tetrad = kerr_principal_null_tetrad(
@@ -304,9 +289,6 @@ def test_overextremal_kerr_still_has_local_principal_null_directions() -> None:
     assert tetrad.domain_valid
     assert tetrad.qualified
     assert tetrad.inner_products.maximum_absolute_residual < 3e-12
-
-
-def test_identities_are_immutable_and_bind_source_and_convention() -> None:
     chart = _spherical_chart("identity")
     metric = schwarzschild_metric(1.0, chart=chart)
     point = jnp.asarray((0.0, 4.0, 1.0, 0.0))

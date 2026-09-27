@@ -90,24 +90,25 @@ def test_reference_asset_rejects_indirect_mutable_source(tmp_path: Any) -> None:
         verify_files(tmp_path, entries)
 
 
-@pytest.mark.parametrize(
-    "last_row, expected_error",
-    [
+def test_reference_history_rejects_incomplete_or_invalid_output(
+    tmp_path: Any,
+) -> None:
+    for last_row, expected_error in [
         ("", "Incomplete reference history"),
         ("0.015,2,1e-4\n", "Wrong reference time grid"),
         ("0.02,nan,1e-4\n", "Nonfinite reference history"),
         ("0.02,2,-1e-4\n", "Nonpositive reference volume"),
         ("0.02,2\n", "Malformed reference row"),
-    ],
-)
-def test_reference_history_rejects_incomplete_or_invalid_output(
-    tmp_path: Any, last_row: Any, expected_error: Any
-) -> None:
-    path = tmp_path / "force.csv"
-    beginning = "Time [s],Total [N],Volume [m^3]\n0,0,1e-4\n0.01,1,1e-4\n"
-    times = [0.0, 0.01, 0.02]
-    path.write_text(beginning + "0.02,2,1e-4\n")
-    assert validate_history(path, times) == {"samples": 3, "start_s": 0.0, "end_s": 0.02}
-    path.write_text(beginning + last_row)
-    with pytest.raises(ValueError, match=expected_error):
-        validate_history(path, times)
+    ]:
+        path = tmp_path / "force.csv"
+        beginning = "Time [s],Total [N],Volume [m^3]\n0,0,1e-4\n0.01,1,1e-4\n"
+        times = [0.0, 0.01, 0.02]
+        path.write_text(beginning + "0.02,2,1e-4\n")
+        assert validate_history(path, times) == {
+            "samples": 3,
+            "start_s": 0.0,
+            "end_s": 0.02,
+        }
+        path.write_text(beginning + last_row)
+        with pytest.raises(ValueError, match=expected_error):
+            validate_history(path, times)

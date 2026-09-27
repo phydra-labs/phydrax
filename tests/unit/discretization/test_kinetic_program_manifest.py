@@ -21,7 +21,7 @@ from phydrax.discretization.lattice_boltzmann import (
 )
 
 
-def test_athermal_manifest_has_complete_ordered_state_and_exchange_contract() -> None:
+def test_kinetic_program_manifest_scenario_1() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     manifest = athermal_lattice_boltzmann_manifest(
@@ -38,9 +38,6 @@ def test_athermal_manifest_has_complete_ordered_state_and_exchange_contract() ->
         range(len(manifest.stages))
     )
     assert manifest.stages[2].exchange_fields == ("post_collision",)
-
-
-def test_coupled_manifest_records_separate_population_conservation_channels() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     manifest = coupled_population_manifest(
@@ -56,9 +53,6 @@ def test_coupled_manifest_records_separate_population_conservation_channels() ->
     assert manifest.field("hydrodynamic").conserved_channels == ("mass", "momentum")
     assert manifest.field("phase").conserved_channels == ("phase_mass",)
     assert set(manifest.checkpoint_fields) == {"hydrodynamic", "phase"}
-
-
-def test_manifest_rejects_unavailable_reads_duplicate_orders_and_missing_halos() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     initial = KineticFieldSpec(
@@ -104,7 +98,7 @@ def test_manifest_rejects_unavailable_reads_duplicate_orders_and_missing_halos()
         )
 
 
-def test_reactive_manifest_composes_thermal_and_species_dependencies() -> None:
+def test_kinetic_program_manifest_scenario_2() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     thermal = transport_population_manifest(
@@ -157,9 +151,6 @@ def test_reactive_manifest_composes_thermal_and_species_dependencies() -> None:
         "diagnostics",
     )
     assert dvm.checkpoint_fields == ("dvm_populations",)
-
-
-def test_spatial_smooth_compressible_manifest_checkpoints_only_coupled_state() -> None:
     manifest = smooth_compressible_spatial_dvm_manifest(
         "d2v17-test",
         "precision-test",
@@ -190,9 +181,6 @@ def test_spatial_smooth_compressible_manifest_checkpoints_only_coupled_state() -
     )
     assert manifest.field("source").initialized
     assert manifest.field("boundary_history").initialized
-
-
-def test_spatial_smooth_compressible_manifest_records_coupled_dependencies() -> None:
     manifest = smooth_compressible_spatial_dvm_manifest(
         "d2v17-test",
         "precision-test",
@@ -223,9 +211,6 @@ def test_spatial_smooth_compressible_manifest_records_coupled_dependencies() -> 
     assert all(
         stage.failure_scope is KineticFailureScope.ATOMIC for stage in manifest.stages
     )
-
-
-def test_spatial_smooth_compressible_manifest_omits_disabled_runtime_state() -> None:
     manifest = smooth_compressible_spatial_dvm_manifest(
         "d2v17-test",
         "precision-test",
@@ -256,9 +241,6 @@ def test_spatial_smooth_compressible_manifest_omits_disabled_runtime_state() -> 
         "particle_populations",
         "total_energy_populations",
     )
-
-
-def test_spatial_smooth_compressible_manifest_rejects_invalid_configuration() -> None:
     arguments = ("d2v17-test", "precision-test", 17, 2)
     with pytest.raises(ValueError, match="halo width must be positive"):
         smooth_compressible_spatial_dvm_manifest(*arguments, 0, False, False, False)

@@ -32,7 +32,7 @@ def _quadratic_functional() -> Any:
     )
 
 
-def test_domain_function_binding_executes_portable_functional() -> None:
+def test_variational_functional_scenario_1() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinate = domain.Function("x")(lambda x: x[0])
     field = domain.Parameter(2.0) * coordinate
@@ -51,9 +51,6 @@ def test_domain_function_binding_executes_portable_functional() -> None:
     assert len(terms) == 1
     assert terms[0].objective_vars == ("u",)
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0 / 3.0, atol=1.0e-12)
-
-
-def test_domain_function_binding_validates_field_and_region_maps() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Function("x")(lambda x: x[0])
     target = phx.integration.over(domain.component())
@@ -70,9 +67,6 @@ def test_domain_function_binding_validates_field_and_region_maps() -> None:
             {"body": source},
             geometry_variables={"body": "x"},
         )
-
-
-def test_boundary_normal_accepts_density_wrapped_component_target() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     boundary = domain.component({"x": phx.domain.Boundary()})
     field = domain.Function("x")(lambda x: x[0])
@@ -108,9 +102,6 @@ def test_boundary_normal_accepts_density_wrapped_component_target() -> None:
     )
 
     assert len(terms) == 1
-
-
-def test_boundary_normal_rejects_component_sum_target_with_contract_error() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     left = domain.component(
         {"x": phx.domain.Boundary()}, where={"x": lambda point: point[0] < 0.5}

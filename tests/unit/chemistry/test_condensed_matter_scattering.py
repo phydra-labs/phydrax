@@ -24,9 +24,7 @@ def _elastic_plan(plan_type: Any, positions: Any) -> Any:
     )
 
 
-def test_elastic_xray_and_neutron_intensities_are_origin_invariant_and_friedel_symmetric() -> (
-    None
-):
+def test_condensed_matter_scattering_scenario_1() -> None:
     q = np.asarray([[2.0 * np.pi, 0.0, 0.0], [-2.0 * np.pi, 0.0, 0.0]])
     positions = np.asarray([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
     shifted = positions + np.asarray([0.137, -0.23, 0.41])
@@ -53,9 +51,6 @@ def test_elastic_xray_and_neutron_intensities_are_origin_invariant_and_friedel_s
     np.testing.assert_allclose(neutron.intensities, 0.0, atol=1.0e-28)
     assert bool(xray.evidence.successful)
     assert bool(neutron.evidence.successful)
-
-
-def test_exact_two_level_dynamic_structure_closes_sum_and_detailed_balance() -> None:
     beta = 1.3
     energies = np.asarray([0.0, 1.0])
     probabilities = np.exp(-beta * energies)

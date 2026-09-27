@@ -27,7 +27,7 @@ def _scalar_problem() -> Any:
     )
 
 
-def test_zero_noise_is_an_exact_reduction_to_affine_finite_horizon_lqr() -> None:
+def test_lqg_state_feedback_scenario_1() -> None:
     a, b, q, r, qf = _scalar_problem()
     q = jnp.ones_like(q)
     c = jnp.asarray([[0.2], [-0.1]])
@@ -102,9 +102,6 @@ def test_zero_noise_is_an_exact_reduction_to_affine_finite_horizon_lqr() -> None
         jnp.zeros((3,)),
     )
     np.testing.assert_array_equal(result.value.constants, deterministic.value.constants)
-
-
-def test_scalar_trace_recursion_and_initial_gaussian_cost_are_analytic() -> None:
     a, b, q, r, qf = _scalar_problem()
     result = finite_horizon_lqg_state_feedback(
         a,
@@ -144,9 +141,6 @@ def test_scalar_trace_recursion_and_initial_gaussian_cost_are_analytic() -> None
         result.covariance_minimum_eigenvalues,
         [0.75, 5.0],
     )
-
-
-def test_case_axes_are_preserved_without_time_or_case_broadcasting() -> None:
     case_shape = (2, 3)
     horizon = 2
     a = jnp.broadcast_to(jnp.ones((horizon, 1, 1)), case_shape + (horizon, 1, 1))

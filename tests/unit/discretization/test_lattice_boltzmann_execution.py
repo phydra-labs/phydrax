@@ -68,7 +68,7 @@ def _execution_step(
     )
 
 
-def test_lbm_halo_routes_cover_every_velocity_offset_and_codimension() -> None:
+def test_lattice_boltzmann_execution_scenario_1() -> None:
     for velocity_set in (D2Q9(), D3Q19(), D3Q27()):
         halo = LatticeBoltzmannHaloSchedule(
             velocity_set,
@@ -94,11 +94,6 @@ def test_lbm_halo_routes_cover_every_velocity_offset_and_codimension() -> None:
             sum(value != 0 for value in offset) for offset in velocity_set.velocity_tuples
         }
         assert {route.codimension for route in halo.routes} == expected_codimensions
-
-
-def test_lbm_reference_halo_exchange_is_direction_selected_for_faces_and_corners() -> (
-    None
-):
     velocity_set = D2Q9()
     halo = LatticeBoltzmannHaloSchedule(
         velocity_set,
@@ -118,9 +113,6 @@ def test_lbm_reference_halo_exchange_is_direction_selected_for_faces_and_corners
     np.testing.assert_allclose(exchanged[0, 0, 0, 0, corner], float(corner))
     np.testing.assert_allclose(exchanged[0, 0, 0, -1, corner], 0.0)
     np.testing.assert_allclose(exchanged[0, 0, 1:3, 1:4], blocks[0, 0])
-
-
-def test_sharded_lbm_plan_records_unpartitioned_trailing_q_metadata() -> None:
     velocity_set = D2Q9()
     reference = ReferenceLatticeBoltzmannExecutionPlan(
         velocity_set,
@@ -151,9 +143,6 @@ def test_sharded_lbm_plan_records_unpartitioned_trailing_q_metadata() -> None:
     np.testing.assert_allclose(realized.final_populations, populations + 0.25)
     with pytest.raises(ValueError, match="only the JAX backend"):
         ShardedLatticeBoltzmannExecutionPlan(reference, halo, backend="numpy")
-
-
-def test_aa_even_odd_storage_is_canonical_equivalent_and_checkpoint_exact() -> None:
     velocity_set = D2Q9()
     plan = AALatticeBoltzmannPlan(velocity_set)
     canonical = jnp.arange(
@@ -188,7 +177,7 @@ def test_aa_even_odd_storage_is_canonical_equivalent_and_checkpoint_exact() -> N
     np.testing.assert_array_equal(plan.canonical(restored), canonical + 1.0)
 
 
-def test_fused_realization_preserves_failure_and_diagnostic_reference_behavior() -> None:
+def test_lattice_boltzmann_execution_scenario_2() -> None:
     velocity_set = D2Q9()
     reference = ReferenceLatticeBoltzmannExecutionPlan(
         velocity_set,
@@ -234,9 +223,6 @@ def test_fused_realization_preserves_failure_and_diagnostic_reference_behavior()
     np.testing.assert_array_equal(production.populations, expected.populations)
     assert production.provenance.execution_kind == "fused"
     assert realized.provenance.backend == "jax"
-
-
-def test_prepared_distributed_dynamics_matches_actual_hydrodynamic_reference() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4, periodic=True),

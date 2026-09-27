@@ -32,7 +32,7 @@ def _binary_implications(power_limit: Any) -> Any:
     )
 
 
-def test_binary_implication_contradiction_has_original_coordinate_farkas_proof() -> None:
+def test_mixed_integer_program_scenario_1() -> None:
     program = _binary_implications(0.0)
     certificate = mip_native._linear_bound_certificate(
         program.relaxation.as_quadratic_program(),
@@ -45,9 +45,6 @@ def test_binary_implication_contradiction_has_original_coordinate_farkas_proof()
     result = phx.optim.solve_mixed_integer_program(program)
     assert result.status == phx.optim.MixedIntegerStatus.INFEASIBLE
     assert not result.successful
-
-
-def test_near_feasible_binary_implications_are_not_pruned_without_a_proof() -> None:
     program = _binary_implications(0.5 + 1e-6)
     assert (
         mip_native._linear_bound_certificate(
@@ -59,9 +56,6 @@ def test_near_feasible_binary_implications_are_not_pruned_without_a_proof() -> N
     result = phx.optim.solve_mixed_integer_program(program)
     assert result.successful
     assert jnp.allclose(result.primal, jnp.asarray([1.0, 1.0, 0.5]), atol=2e-6)
-
-
-def test_mixed_integer_preserves_linear_identity_and_refreshes_numeric_data() -> None:
     first = phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
             jnp.asarray([-1.0]),

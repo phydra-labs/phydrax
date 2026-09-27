@@ -31,7 +31,7 @@ def _fold_problem() -> Any:
     )
 
 
-def test_public_prepare_refresh_run_contract_preserves_symbolic_identity() -> None:
+def test_core_scenario_1() -> None:
     problem = _fold_problem()
     plan = phx.continuation.plan_continuation(
         problem,
@@ -68,9 +68,6 @@ def test_public_prepare_refresh_run_contract_preserves_symbolic_identity() -> No
     assert result.provenance.corrector_linear_plan_id
     assert int(result.provenance.corrector_linear_numeric_version) >= 0
     assert result.provenance.corrector_preconditioner_plan_id == ""
-
-
-def test_preconditioned_corrector_reports_preserved_linear_plan_identity() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - jnp.asarray([coordinate, 2.0 * coordinate]),
         problem_id="preconditioned-linear-curve",
@@ -100,6 +97,54 @@ def test_preconditioned_corrector_reports_preserved_linear_plan_identity() -> No
     assert int(result.diagnostics.corrector_jacobian_preparations) >= 1
     assert int(result.diagnostics.corrector_numeric_refreshes) >= 1
     assert int(result.provenance.corrector_linear_numeric_version) >= 1
+    result = phx.continuation.continue_branch(
+        _fold_problem(),
+        {"x": jnp.asarray(1.0)},
+        jnp.asarray(0.0),
+        num_steps=12,
+        method=phx.continuation.PseudoArclengthContinuation(
+            initial_step=0.18,
+            maximum_step=0.24,
+        ),
+    )
+
+    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
+    assert len(result.points) == 13
+    assert result.fold_brackets
+    bracket = result.fold_brackets[0]
+    assert bracket.kind == "fold-candidate"
+    assert not bracket.certified
+    assert float(bracket.left_indicator) * float(bracket.right_indicator) <= 0.0
+    parameter_tangents = np.asarray(
+        [float(point.tangent_coordinate) for point in result.points]
+    )
+    assert np.any(parameter_tangents > 0.0)
+    assert np.any(parameter_tangents < 0.0)
+    assert max(float(point.residual_norm) for point in result.points) <= 1e-8
+    assert any(event.kind == "fold-candidate" for event in result.events)
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, _: state - coordinate,
+        problem_id="pseudo-target",
+    )
+    inverse_sqrt_two = jnp.asarray(1.0 / np.sqrt(2.0))
+    result = phx.continuation.continue_branch(
+        problem,
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        num_steps=5,
+        method=phx.continuation.PseudoArclengthContinuation(
+            initial_step=0.4,
+            minimum_step=0.05,
+            maximum_step=0.4,
+        ),
+        initial_tangent=(inverse_sqrt_two, inverse_sqrt_two),
+        terminal_coordinate=0.65,
+    )
+
+    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
+    assert float(result.points[-1].coordinate) == pytest.approx(0.65)
+    assert float(result.points[-1].state) == pytest.approx(0.65)
+    assert result.termination_reason == "terminal coordinate reached"
 
 
 def test_generic_nonlinear_corrector_runs_without_prepared_root_reuse() -> None:
@@ -140,35 +185,7 @@ def test_generic_nonlinear_corrector_runs_without_prepared_root_reuse() -> None:
     )
 
 
-def test_pseudo_arclength_traverses_fold_with_uncertified_explicit_bracket() -> None:
-    result = phx.continuation.continue_branch(
-        _fold_problem(),
-        {"x": jnp.asarray(1.0)},
-        jnp.asarray(0.0),
-        num_steps=12,
-        method=phx.continuation.PseudoArclengthContinuation(
-            initial_step=0.18,
-            maximum_step=0.24,
-        ),
-    )
-
-    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
-    assert len(result.points) == 13
-    assert result.fold_brackets
-    bracket = result.fold_brackets[0]
-    assert bracket.kind == "fold-candidate"
-    assert not bracket.certified
-    assert float(bracket.left_indicator) * float(bracket.right_indicator) <= 0.0
-    parameter_tangents = np.asarray(
-        [float(point.tangent_coordinate) for point in result.points]
-    )
-    assert np.any(parameter_tangents > 0.0)
-    assert np.any(parameter_tangents < 0.0)
-    assert max(float(point.residual_norm) for point in result.points) <= 1e-8
-    assert any(event.kind == "fold-candidate" for event in result.events)
-
-
-def test_event_localization_refines_fold_indicator_without_certifying_it() -> None:
+def test_core_scenario_2() -> None:
     problem = _fold_problem()
     result = phx.continuation.continue_branch(
         problem,
@@ -222,9 +239,6 @@ def test_event_localization_refines_fold_indicator_without_certifying_it() -> No
         phx.continuation.EventLocalizationStatus.INVALID_BRACKET
     )
     assert invalid.point is None
-
-
-def test_natural_parameter_continuation_exposes_turning_point_limitation() -> None:
     result = phx.continuation.continue_branch(
         _fold_problem(),
         {"x": jnp.asarray(1.0)},
@@ -246,9 +260,69 @@ def test_natural_parameter_continuation_exposes_turning_point_limitation() -> No
     assert all(float(point.coordinate) <= 1.0 for point in result.points)
     assert all(float(point.tangent_coordinate) >= 0.0 for point in result.points)
     assert any(event.kind == "corrector-failure" for event in result.events)
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, _: state - coordinate,
+        parameter_lower=0.0,
+        parameter_upper=2.0,
+        problem_id="exact-natural-target",
+    )
+    result = phx.continuation.continue_branch(
+        problem,
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        num_steps=10,
+        method=phx.continuation.NaturalParameterContinuation(
+            initial_step=0.3,
+            minimum_step=0.3,
+            maximum_step=0.3,
+        ),
+        terminal_coordinate=1.0,
+    )
 
+    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
+    assert float(result.points[-1].coordinate) == 1.0
+    assert float(result.points[-1].state) == pytest.approx(1.0)
+    assert result.provenance.terminal_coordinate == 1.0
+    assert result.termination_reason == "terminal coordinate reached"
+    assert any(event.kind == "coordinate-target" for event in result.events)
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, _: state - coordinate,
+    )
+    plan = phx.continuation.plan_continuation(
+        problem,
+        num_steps=1,
+        method=phx.continuation.NaturalParameterContinuation(direction=1),
+        terminal_coordinate=-1.0,
+    )
 
-def test_hopf_monitoring_records_conjugate_pair_crossing_bracket() -> None:
+    with pytest.raises(ValueError, match="opposite"):
+        phx.continuation.prepare_continuation(
+            problem,
+            jnp.asarray(0.0),
+            jnp.asarray(0.0),
+            plan,
+        )
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, _: state - 2.0 * coordinate,
+        problem_id="affine-tangent-predictor",
+    )
+    result = phx.continuation.continue_branch(
+        problem,
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        num_steps=3,
+        method=phx.continuation.NaturalParameterContinuation(
+            predictor="tangent",
+            initial_step=0.2,
+        ),
+    )
+
+    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
+    assert all(int(point.corrector_iterations) == 0 for point in result.points)
+    np.testing.assert_allclose(
+        np.asarray([point.state for point in result.points]),
+        2.0 * np.asarray([point.coordinate for point in result.points]),
+    )
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, parameter, _: (
             jnp.asarray([[parameter, -1.0], [1.0, parameter]]) @ state
@@ -283,7 +357,7 @@ def test_hopf_monitoring_records_conjugate_pair_crossing_bracket() -> None:
     assert "not a certified bifurcation" in event.message
 
 
-def test_general_krylov_stability_uses_public_restarted_arnoldi_contract() -> None:
+def test_core_scenario_3() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: (
             jnp.asarray(
@@ -319,9 +393,6 @@ def test_general_krylov_stability_uses_public_restarted_arnoldi_contract() -> No
         atol=1e-5,
     )
     assert evidence.analyzer_id == "general-krylov-stability"
-
-
-def test_self_adjoint_krylov_stability_reports_leading_unstable_mode() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: jnp.asarray([-2.0, -1.0, 0.5]) * state - coordinate,
         problem_id="self-adjoint-krylov-diagonal",
@@ -334,9 +405,6 @@ def test_self_adjoint_krylov_stability_reports_leading_unstable_mode() -> None:
     assert not evidence.full_spectrum
     np.testing.assert_allclose(float(evidence.leading_real_part), 0.5, atol=1e-8)
     assert int(evidence.unstable_count) == 1
-
-
-def test_rejected_correctors_contract_step_deterministically() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, parameter, _: state**2 + parameter + 1.0,
         problem_id="no-real-root",
@@ -424,35 +492,7 @@ def test_branch_monitor_and_switch_hook_consume_explicit_branch_models() -> None
     assert len(seeds) == len(result.points)
 
 
-def test_natural_continuation_lands_on_exact_terminal_coordinate() -> None:
-    problem = phx.continuation.ParameterContinuationProblem(
-        lambda state, coordinate, _: state - coordinate,
-        parameter_lower=0.0,
-        parameter_upper=2.0,
-        problem_id="exact-natural-target",
-    )
-    result = phx.continuation.continue_branch(
-        problem,
-        jnp.asarray(0.0),
-        jnp.asarray(0.0),
-        num_steps=10,
-        method=phx.continuation.NaturalParameterContinuation(
-            initial_step=0.3,
-            minimum_step=0.3,
-            maximum_step=0.3,
-        ),
-        terminal_coordinate=1.0,
-    )
-
-    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
-    assert float(result.points[-1].coordinate) == 1.0
-    assert float(result.points[-1].state) == pytest.approx(1.0)
-    assert result.provenance.terminal_coordinate == 1.0
-    assert result.termination_reason == "terminal coordinate reached"
-    assert any(event.kind == "coordinate-target" for event in result.events)
-
-
-def test_corrected_initial_point_may_be_terminal_coordinate() -> None:
+def test_core_scenario_4() -> None:
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
         problem_id="initial-target",
@@ -470,55 +510,6 @@ def test_corrected_initial_point_may_be_terminal_coordinate() -> None:
     assert len(result.points) == 1
     assert float(result.points[0].state) == pytest.approx(1.0)
     assert any(event.kind == "coordinate-target" for event in result.events)
-
-
-def test_natural_target_rejects_opposite_direction() -> None:
-    problem = phx.continuation.ParameterContinuationProblem(
-        lambda state, coordinate, _: state - coordinate,
-    )
-    plan = phx.continuation.plan_continuation(
-        problem,
-        num_steps=1,
-        method=phx.continuation.NaturalParameterContinuation(direction=1),
-        terminal_coordinate=-1.0,
-    )
-
-    with pytest.raises(ValueError, match="opposite"):
-        phx.continuation.prepare_continuation(
-            problem,
-            jnp.asarray(0.0),
-            jnp.asarray(0.0),
-            plan,
-        )
-
-
-def test_pseudo_arclength_localizes_corrected_terminal_section() -> None:
-    problem = phx.continuation.ParameterContinuationProblem(
-        lambda state, coordinate, _: state - coordinate,
-        problem_id="pseudo-target",
-    )
-    inverse_sqrt_two = jnp.asarray(1.0 / np.sqrt(2.0))
-    result = phx.continuation.continue_branch(
-        problem,
-        jnp.asarray(0.0),
-        jnp.asarray(0.0),
-        num_steps=5,
-        method=phx.continuation.PseudoArclengthContinuation(
-            initial_step=0.4,
-            minimum_step=0.05,
-            maximum_step=0.4,
-        ),
-        initial_tangent=(inverse_sqrt_two, inverse_sqrt_two),
-        terminal_coordinate=0.65,
-    )
-
-    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
-    assert float(result.points[-1].coordinate) == pytest.approx(0.65)
-    assert float(result.points[-1].state) == pytest.approx(0.65)
-    assert result.termination_reason == "terminal coordinate reached"
-
-
-def test_required_target_reports_exhaustion_and_target_corrector_failure() -> None:
     linear = phx.continuation.ParameterContinuationProblem(
         lambda state, coordinate, _: state - coordinate,
     )
@@ -556,33 +547,6 @@ def test_required_target_reports_exhaustion_and_target_corrector_failure() -> No
     assert exhausted.status == phx.continuation.ContinuationStatus.TARGET_NOT_REACHED
     assert failed.status == phx.continuation.ContinuationStatus.TARGET_CORRECTOR_FAILED
     assert any(event.kind == "target-corrector-retry" for event in failed.events)
-
-
-def test_natural_tangent_predictor_is_exact_for_affine_branch() -> None:
-    problem = phx.continuation.ParameterContinuationProblem(
-        lambda state, coordinate, _: state - 2.0 * coordinate,
-        problem_id="affine-tangent-predictor",
-    )
-    result = phx.continuation.continue_branch(
-        problem,
-        jnp.asarray(0.0),
-        jnp.asarray(0.0),
-        num_steps=3,
-        method=phx.continuation.NaturalParameterContinuation(
-            predictor="tangent",
-            initial_step=0.2,
-        ),
-    )
-
-    assert result.status == phx.continuation.ContinuationStatus.SUCCESS
-    assert all(int(point.corrector_iterations) == 0 for point in result.points)
-    np.testing.assert_allclose(
-        np.asarray([point.state for point in result.points]),
-        2.0 * np.asarray([point.coordinate for point in result.points]),
-    )
-
-
-def test_bordered_tangent_crosses_fold_with_small_tangent_residual() -> None:
     result = phx.continuation.continue_branch(
         _fold_problem(),
         {"x": jnp.asarray(1.0)},

@@ -3,7 +3,6 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from phydrax.discretization.spatial import (
     MortonAddressPlan,
@@ -62,118 +61,115 @@ def _squared_distances(
     return np.sum(relative * relative, axis=-1)
 
 
-@pytest.mark.parametrize(
-    ("dimension", "periodic", "exclude_self", "radius"),
-    [
+def test_nearest_neighbors_match_brute_force_on_clustered_points() -> None:
+    for dimension, periodic, exclude_self, radius in [
         (2, False, False, None),
         (2, True, True, None),
         (3, False, True, None),
         (3, True, False, 0.08),
-    ],
-)
-def test_nearest_neighbors_match_brute_force_on_clustered_points(
-    dimension: int, periodic: bool, exclude_self: bool, radius: float | None
-) -> None:
-    rng = np.random.default_rng(7 + dimension)
-    source = _clustered(rng, 400, dimension, periodic=periodic)
-    source_ids = rng.permutation(400).astype(np.int64) * 3 + 11
-    active = rng.uniform(size=400) > 0.1
-    if exclude_self:
-        target, target_ids = source, source_ids
-    else:
-        jittered = source[rng.integers(0, 400, 80)] + rng.normal(
-            scale=0.01, size=(80, dimension)
-        )
-        jittered = np.mod(jittered, 1.0) if periodic else np.clip(jittered, 0.0, 0.999)
-        target = np.concatenate((source[:40], jittered))
-        target_ids = np.arange(120, dtype=np.int64)
-    k = 6
-    result = MortonNeighborQueryPlan(
-        _address(dimension, periodic=periodic),
-        source.shape[0],
-        target.shape[0],
-        k,
-        maximum_candidates=256,
-        target_chunk_size=32,
-    ).query(
-        jnp.asarray(source),
-        jnp.asarray(target),
-        source_mask=jnp.asarray(active),
-        source_stable_ids=jnp.asarray(source_ids),
-        target_stable_ids=jnp.asarray(target_ids),
-        exclude_self=exclude_self,
-        radius=radius,
-    )
-
-    assert bool(result.evidence.successful)
-    np.testing.assert_array_equal(result.status, MortonNeighborQueryStatus.COMPLETE)
-    distances = _squared_distances(target, source, periodic=periodic)
-    eligible = active[None, :] & np.ones_like(distances, dtype=bool)
-    if exclude_self:
-        eligible &= source_ids[None, :] != target_ids[:, None]
-    if radius is not None:
-        eligible &= distances <= radius**2
-    for row in range(target.shape[0]):
-        candidates = np.flatnonzero(eligible[row])
-        order = np.lexsort((source_ids[candidates], distances[row, candidates]))
-        expected = candidates[order][:k]
-        count = int(result.counts[row])
-        assert count == expected.size
-        np.testing.assert_array_equal(result.source_indices[row, :count], expected)
-        np.testing.assert_allclose(
-            distances[row, np.asarray(result.source_indices[row, :count])],
-            distances[row, expected],
+    ]:
+        rng = np.random.default_rng(7 + dimension)
+        source = _clustered(rng, 400, dimension, periodic=periodic)
+        source_ids = rng.permutation(400).astype(np.int64) * 3 + 11
+        active = rng.uniform(size=400) > 0.1
+        if exclude_self:
+            target, target_ids = source, source_ids
+        else:
+            jittered = source[rng.integers(0, 400, 80)] + rng.normal(
+                scale=0.01, size=(80, dimension)
+            )
+            jittered = (
+                np.mod(jittered, 1.0) if periodic else np.clip(jittered, 0.0, 0.999)
+            )
+            target = np.concatenate((source[:40], jittered))
+            target_ids = np.arange(120, dtype=np.int64)
+        k = 6
+        result = MortonNeighborQueryPlan(
+            _address(dimension, periodic=periodic),
+            source.shape[0],
+            target.shape[0],
+            k,
+            maximum_candidates=256,
+            target_chunk_size=32,
+        ).query(
+            jnp.asarray(source),
+            jnp.asarray(target),
+            source_mask=jnp.asarray(active),
+            source_stable_ids=jnp.asarray(source_ids),
+            target_stable_ids=jnp.asarray(target_ids),
+            exclude_self=exclude_self,
+            radius=radius,
         )
 
+        assert bool(result.evidence.successful)
+        np.testing.assert_array_equal(result.status, MortonNeighborQueryStatus.COMPLETE)
+        distances = _squared_distances(target, source, periodic=periodic)
+        eligible = active[None, :] & np.ones_like(distances, dtype=bool)
+        if exclude_self:
+            eligible &= source_ids[None, :] != target_ids[:, None]
+        if radius is not None:
+            eligible &= distances <= radius**2
+        for row in range(target.shape[0]):
+            candidates = np.flatnonzero(eligible[row])
+            order = np.lexsort((source_ids[candidates], distances[row, candidates]))
+            expected = candidates[order][:k]
+            count = int(result.counts[row])
+            assert count == expected.size
+            np.testing.assert_array_equal(result.source_indices[row, :count], expected)
+            np.testing.assert_allclose(
+                distances[row, np.asarray(result.source_indices[row, :count])],
+                distances[row, expected],
+            )
 
-@pytest.mark.parametrize(
-    ("dimension", "periodic", "pair_once"),
-    [(2, False, False), (2, True, True), (3, True, False), (3, False, True)],
-)
-def test_radius_relation_matches_brute_force_on_clustered_points(
-    dimension: int, periodic: bool, pair_once: bool
-) -> None:
-    rng = np.random.default_rng(31 + dimension)
-    points = _clustered(rng, 300, dimension, periodic=periodic)
-    ids = rng.permutation(300).astype(np.int64) + 1000
-    radius = 0.06
-    result = MortonRadiusRelationPlan(
-        _address(dimension, periodic=periodic),
-        300,
-        300,
-        20_000,
-        maximum_candidates=300,
-        target_chunk_size=64,
-    ).query(
-        jnp.asarray(points),
-        jnp.asarray(points),
-        radius,
-        source_stable_ids=jnp.asarray(ids),
-        target_stable_ids=jnp.asarray(ids),
-        exclude_self=True,
-        pair_once=pair_once,
-    )
 
-    assert bool(result.evidence.successful)
-    distances = _squared_distances(points, points, periodic=periodic)
-    target, source = np.nonzero(distances <= radius**2)
-    keep = ids[target] != ids[source]
-    if pair_once:
-        keep &= ids[source] > ids[target]
-        first, second = target[keep], source[keep]
-    else:
-        first, second = source[keep], target[keep]
-    major = ids[first] if pair_once else ids[second]
-    minor = ids[second] if pair_once else ids[first]
-    order = np.lexsort((minor, major))
-    valid = np.asarray(result.relation.valid)
-    assert int(result.evidence.required_pairs) == order.size
-    np.testing.assert_array_equal(
-        np.asarray(result.relation.source_indices)[valid], first[order]
-    )
-    np.testing.assert_array_equal(
-        np.asarray(result.relation.target_indices)[valid], second[order]
-    )
+def test_radius_relation_matches_brute_force_on_clustered_points() -> None:
+    for dimension, periodic, pair_once in [
+        (2, False, False),
+        (2, True, True),
+        (3, True, False),
+        (3, False, True),
+    ]:
+        rng = np.random.default_rng(31 + dimension)
+        points = _clustered(rng, 300, dimension, periodic=periodic)
+        ids = rng.permutation(300).astype(np.int64) + 1000
+        radius = 0.06
+        result = MortonRadiusRelationPlan(
+            _address(dimension, periodic=periodic),
+            300,
+            300,
+            20_000,
+            maximum_candidates=300,
+            target_chunk_size=64,
+        ).query(
+            jnp.asarray(points),
+            jnp.asarray(points),
+            radius,
+            source_stable_ids=jnp.asarray(ids),
+            target_stable_ids=jnp.asarray(ids),
+            exclude_self=True,
+            pair_once=pair_once,
+        )
+
+        assert bool(result.evidence.successful)
+        distances = _squared_distances(points, points, periodic=periodic)
+        target, source = np.nonzero(distances <= radius**2)
+        keep = ids[target] != ids[source]
+        if pair_once:
+            keep &= ids[source] > ids[target]
+            first, second = target[keep], source[keep]
+        else:
+            first, second = source[keep], target[keep]
+        major = ids[first] if pair_once else ids[second]
+        minor = ids[second] if pair_once else ids[first]
+        order = np.lexsort((minor, major))
+        valid = np.asarray(result.relation.valid)
+        assert int(result.evidence.required_pairs) == order.size
+        np.testing.assert_array_equal(
+            np.asarray(result.relation.source_indices)[valid], first[order]
+        )
+        np.testing.assert_array_equal(
+            np.asarray(result.relation.target_indices)[valid], second[order]
+        )
 
 
 def test_duplicate_and_equidistant_ties_order_by_stable_id() -> None:

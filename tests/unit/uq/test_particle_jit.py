@@ -51,7 +51,7 @@ def _problem() -> Any:
     )
 
 
-def test_bootstrap_particle_filter_runs_as_one_jitted_scan() -> None:
+def test_particle_jit_scenario_1() -> None:
     problem = _problem()
     compiled = jax.jit(
         lambda key: phx.uq.bootstrap_particle_filter(
@@ -71,9 +71,6 @@ def test_bootstrap_particle_filter_runs_as_one_jitted_scan() -> None:
     assert jnp.array_equal(result.particles, replay.particles)
     assert jnp.array_equal(result.ancestor_indices, replay.ancestor_indices)
     assert jnp.array_equal(result.resampled, replay.resampled)
-
-
-def test_jitted_scan_matches_streaming_particle_steps_exactly() -> None:
     problem = _problem()
     key = jax.random.key(2)
     scan = phx.uq.bootstrap_particle_filter(

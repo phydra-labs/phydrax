@@ -81,7 +81,7 @@ def _gravity(topology: Any) -> Any:
     return routing, cosmology.BlockAMRGravityPlan(operator, routing)
 
 
-def test_n_level_particle_routing_uses_canonical_topology_and_conserves_deposit() -> None:
+def test_cosmology_amr_scenario_1() -> None:
     _, topology = _hierarchy()
     routing, _ = _gravity(topology)
     positions = jnp.asarray([[0.49], [0.40], [0.05]])
@@ -115,11 +115,6 @@ def test_n_level_particle_routing_uses_canonical_topology_and_conserves_deposit(
     gathered = routing.gather(assignment, level_field)
     assert bool(gathered.successful)
     np.testing.assert_allclose(gathered.values[:, 0], [3.0, 2.0, 1.0])
-
-
-def test_composite_gravity_uses_one_linalg_solve_and_conservative_interface_routes() -> (
-    None
-):
     _, topology = _hierarchy()
     routing, gravity = _gravity(topology)
     positions = jnp.asarray([[0.49], [0.40], [0.05]])
@@ -151,9 +146,6 @@ def test_composite_gravity_uses_one_linalg_solve_and_conservative_interface_rout
     assert all(
         np.all(np.isfinite(np.asarray(value))) for value in result.gravity.acceleration
     )
-
-
-def test_block_amr_epoch_commit_is_atomic_for_flux_gravity_and_routing_failure() -> None:
     prepared, topology = _hierarchy()
     runtime = _runtime(prepared, topology)
     previous_state = _runtime_state(runtime)

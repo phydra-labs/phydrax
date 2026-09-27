@@ -13,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_finite_axis_validates_correlated_array_payloads() -> None:
+def test_finite_contracts() -> None:
     axis = phx.optim.FiniteAxis(
         {
             "scalar": jnp.asarray([1.0, 2.0, 3.0]),
@@ -41,9 +41,6 @@ def test_finite_axis_validates_correlated_array_payloads() -> None:
         )
     with pytest.raises(TypeError, match="numerical or boolean"):
         phx.optim.FiniteAxis("abc")
-
-
-def test_finite_product_indexing_preserves_structure_and_never_clips() -> None:
     space = phx.optim.FiniteProductSpace(
         {
             "x": phx.optim.FiniteAxis(jnp.asarray([10.0, 20.0])),
@@ -87,9 +84,6 @@ def test_finite_product_indexing_preserves_structure_and_never_clips() -> None:
         selected_last["pair"]["vector"],
         space.take(5)["pair"]["vector"],
     )
-
-
-def test_finite_product_signature_covers_content_layout_and_dtype() -> None:
     first = phx.optim.FiniteProductSpace(
         (
             phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0])),
@@ -120,35 +114,6 @@ def test_finite_product_signature_covers_content_layout_and_dtype() -> None:
     assert first.signature() == replay.signature()
     assert first.signature() != changed.signature()
     assert first.signature() != regrouped.signature()
-
-
-def test_finite_exhaustive_search_matches_dense_oracle_for_all_batch_layouts() -> None:
-    space = phx.optim.FiniteProductSpace(
-        (
-            phx.optim.FiniteAxis(jnp.asarray([-1.0, 1.0])),
-            phx.optim.FiniteAxis(jnp.asarray([0.0, 2.0, 4.0])),
-        )
-    )
-
-    def evaluator(point: Any) -> Any:
-        score = (point[0] - 1.0) ** 2 + (point[1] - 2.0) ** 2
-        return score, jnp.asarray(True)
-
-    for batch_size in (None, 1, 2, 4, 6, 20):
-        result = phx.optim.search_finite(
-            evaluator,
-            space,
-            phx.optim.FiniteMinimum(),
-            search=phx.optim.FiniteExhaustiveSearch(batch_size),
-        )
-        assert result.scores[0] == pytest.approx(0.0)
-        assert int(result.flat_indices[0]) == 4
-        assert tuple(int(index[0]) for index in result.product_indices) == (1, 1)
-        assert int(result.attempted_evaluations) == 6
-        assert int(result.invalid_evaluations) == 0
-
-
-def test_finite_search_session_observes_batches_and_stops_at_boundary() -> None:
     space = phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.arange(6.0)))
     events = []
 
@@ -181,9 +146,20 @@ def test_finite_search_session_observes_batches_and_stops_at_boundary() -> None:
         int(phx.execution.IterationPhase.TERMINAL),
     ]
     assert int(events[-1].record.metrics.attempted_evaluations) == 2
+    assert phx.optim.FiniteExhaustiveSearch().effective_batch_size(5) == 1
+    assert phx.optim.FiniteExhaustiveSearch(batch_size=10).effective_batch_size(5) == 5
+    with pytest.raises(TypeError, match="positive integer"):
+        phx.optim.FiniteExhaustiveSearch(True)
+    with pytest.raises(ValueError, match="positive"):
+        phx.optim.FiniteExhaustiveSearch(0)
 
-
-def test_finite_top_k_has_stable_ties_and_pareto_is_nondominated() -> None:
+    space = phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0])))
+    with pytest.raises(TypeError, match="floating"):
+        phx.optim.search_finite(
+            lambda value: (value.astype("int64"), jnp.asarray(True)), space
+        )
+    with pytest.raises(ValueError, match="boolean scalar"):
+        phx.optim.search_finite(lambda value: (value, jnp.asarray([True])), space)
     space = phx.optim.FiniteProductSpace(
         phx.optim.FiniteAxis(jnp.asarray([-2.0, -1.0, 1.0, 2.0]))
     )
@@ -207,6 +183,36 @@ def test_finite_top_k_has_stable_ties_and_pareto_is_nondominated() -> None:
         selected[:, None] < selected[None, :], axis=-1
     )
     assert not jnp.any(dominates)
+    huge = object.__new__(phx.optim.FiniteAxis)
+    object.__setattr__(huge, "size", 2**32)
+    with pytest.raises(OverflowError, match="64-bit"):
+        phx.optim.FiniteProductSpace((huge, huge))
+
+
+def test_finite_exhaustive_search_matches_dense_oracle_for_all_batch_layouts() -> None:
+    space = phx.optim.FiniteProductSpace(
+        (
+            phx.optim.FiniteAxis(jnp.asarray([-1.0, 1.0])),
+            phx.optim.FiniteAxis(jnp.asarray([0.0, 2.0, 4.0])),
+        )
+    )
+
+    def evaluator(point: Any) -> Any:
+        score = (point[0] - 1.0) ** 2 + (point[1] - 2.0) ** 2
+        return score, jnp.asarray(True)
+
+    for batch_size in (None, 1, 2, 4, 6, 20):
+        result = phx.optim.search_finite(
+            evaluator,
+            space,
+            phx.optim.FiniteMinimum(),
+            search=phx.optim.FiniteExhaustiveSearch(batch_size),
+        )
+        assert result.scores[0] == pytest.approx(0.0)
+        assert int(result.flat_indices[0]) == 4
+        assert tuple(int(index[0]) for index in result.product_indices) == (1, 1)
+        assert int(result.attempted_evaluations) == 6
+        assert int(result.invalid_evaluations) == 0
 
 
 def test_finite_minimum_counts_declared_and_nonfinite_invalidity() -> None:
@@ -228,30 +234,6 @@ def test_finite_minimum_counts_declared_and_nonfinite_invalidity() -> None:
     assert jnp.isnan(invalid.scores[0])
     assert int(invalid.flat_indices[0]) == -1
     assert int(invalid.invalid_evaluations) == 5
-
-
-def test_finite_search_configuration_and_evaluator_contract_are_strict() -> None:
-    assert phx.optim.FiniteExhaustiveSearch().effective_batch_size(5) == 1
-    assert phx.optim.FiniteExhaustiveSearch(batch_size=10).effective_batch_size(5) == 5
-    with pytest.raises(TypeError, match="positive integer"):
-        phx.optim.FiniteExhaustiveSearch(True)
-    with pytest.raises(ValueError, match="positive"):
-        phx.optim.FiniteExhaustiveSearch(0)
-
-    space = phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0])))
-    with pytest.raises(TypeError, match="floating"):
-        phx.optim.search_finite(
-            lambda value: (value.astype("int64"), jnp.asarray(True)), space
-        )
-    with pytest.raises(ValueError, match="boolean scalar"):
-        phx.optim.search_finite(lambda value: (value, jnp.asarray([True])), space)
-
-
-def test_finite_space_cardinality_overflow_is_rejected() -> None:
-    huge = object.__new__(phx.optim.FiniteAxis)
-    object.__setattr__(huge, "size", 2**32)
-    with pytest.raises(OverflowError, match="64-bit"):
-        phx.optim.FiniteProductSpace((huge, huge))
 
 
 def test_precedence_simultaneous_group_branches_atomically_with_combined_resources() -> (

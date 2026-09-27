@@ -11,7 +11,7 @@ import pytest
 import phydrax as phx
 
 
-def test_spatial_noise_separates_basis_runtime_and_certification_precision() -> None:
+def test_precision_scenario_1() -> None:
     precision = phx.stochastic.SpatialNoisePrecisionPolicy(
         construction_dtype="float64",
         basis_storage_dtype="float32",
@@ -35,9 +35,6 @@ def test_spatial_noise_separates_basis_runtime_and_certification_precision() -> 
     assert basis.quadrature_weights.dtype == jnp.float64
     assert basis.diffusion.dtype == jnp.float32
     assert basis.precision_evidence.evidence_id
-
-
-def test_spatial_noise_factory_uses_construction_then_storage_precision() -> None:
     precision = phx.stochastic.SpatialNoisePrecisionPolicy(
         construction_dtype="float64",
         basis_storage_dtype="float32",
@@ -57,30 +54,6 @@ def test_spatial_noise_factory_uses_construction_then_storage_precision() -> Non
     assert basis.diffusion.dtype == jnp.float32
     assert basis.approximation is not None
     assert basis.approximation.method == "dense_eigh"
-
-
-def _level(index: Any, *, parent: Any = None, witness: Any = None) -> Any:
-    return phx.stochastic.StochasticLevelSpec(
-        f"level-{index}",
-        index,
-        refinement_axes=("space",),
-        resolutions=(1.0 / (index + 1),),
-        state_shape=(4,),
-        problem_id="problem",
-        observable_id="observable",
-        solver_id="solver",
-        approximation_id=f"approx-{index}",
-        parent_level_id=parent,
-        discretization_id=f"space-{index}",
-        basis_id=f"basis-{index}",
-        state_transfer_id=None,
-        noise_coupling="shared" if index == 0 else "nested",
-        noise_witness=witness,
-        metadata={"noise_family_id": "family"},
-    )
-
-
-def test_nested_noise_requires_a_passing_projection_witness() -> None:
     base = _level(0)
     with pytest.raises(ValueError, match="passing projection witness"):
         phx.stochastic.StochasticCouplingPlan(
@@ -100,9 +73,6 @@ def test_nested_noise_requires_a_passing_projection_witness() -> None:
     )
     assert hierarchy.coupled
     assert hierarchy.level(1).noise_witness is witness
-
-
-def test_semidiscrete_spde_composes_spatial_and_noise_precision_evidence() -> None:
     fd_precision = phx.discretization.FDExecutionPrecisionPolicy(
         coefficient_dtype="float32",
         field_dtype="float32",
@@ -146,4 +116,25 @@ def test_semidiscrete_spde_composes_spatial_and_noise_precision_evidence() -> No
     assert spde.precision_evidence_id == spde.precision_evidence.evidence_id
     assert spde.discretization_bundle.records[-1].precision_evidence_id == (
         spde.precision_evidence_id
+    )
+
+
+def _level(index: Any, *, parent: Any = None, witness: Any = None) -> Any:
+    return phx.stochastic.StochasticLevelSpec(
+        f"level-{index}",
+        index,
+        refinement_axes=("space",),
+        resolutions=(1.0 / (index + 1),),
+        state_shape=(4,),
+        problem_id="problem",
+        observable_id="observable",
+        solver_id="solver",
+        approximation_id=f"approx-{index}",
+        parent_level_id=parent,
+        discretization_id=f"space-{index}",
+        basis_id=f"basis-{index}",
+        state_transfer_id=None,
+        noise_coupling="shared" if index == 0 else "nested",
+        noise_witness=witness,
+        metadata={"noise_family_id": "family"},
     )

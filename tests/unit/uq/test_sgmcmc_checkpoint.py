@@ -4,13 +4,13 @@
 
 from typing import Any, cast
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
 import phydrax.uq._sgmcmc as sgmcmc_module
+from tests._support.assertions import assert_tree_equal
 
 
 def _problem_source(*, seed: Any = 17, batch_size: Any = 3) -> Any:
@@ -28,19 +28,14 @@ def _problem_source(*, seed: Any = 17, batch_size: Any = 3) -> Any:
     return problem, source
 
 
-def _assert_tree_equal(left: Any, right: Any) -> None:
-    comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
-    assert all(jax.tree_util.tree_leaves(comparisons))
-
-
 def _assert_exact_result(left: Any, right: Any) -> None:
-    _assert_tree_equal(left.samples, right.samples)
-    _assert_tree_equal(left.unconstrained_samples, right.unconstrained_samples)
-    _assert_tree_equal(left.final_states, right.final_states)
-    _assert_tree_equal(left.burnin_states, right.burnin_states)
-    _assert_tree_equal(left.diagnostics.rhat, right.diagnostics.rhat)
-    _assert_tree_equal(left.diagnostics.bulk_ess, right.diagnostics.bulk_ess)
-    _assert_tree_equal(left.diagnostics.tail_ess, right.diagnostics.tail_ess)
+    assert_tree_equal(left.samples, right.samples)
+    assert_tree_equal(left.unconstrained_samples, right.unconstrained_samples)
+    assert_tree_equal(left.final_states, right.final_states)
+    assert_tree_equal(left.burnin_states, right.burnin_states)
+    assert_tree_equal(left.diagnostics.rhat, right.diagnostics.rhat)
+    assert_tree_equal(left.diagnostics.bulk_ess, right.diagnostics.bulk_ess)
+    assert_tree_equal(left.diagnostics.tail_ess, right.diagnostics.tail_ess)
     assert jnp.array_equal(left.gradient_norm, right.gradient_norm)
     assert jnp.array_equal(left.log_density, right.log_density)
     if left.thermostat is None:

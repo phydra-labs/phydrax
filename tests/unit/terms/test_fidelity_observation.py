@@ -73,7 +73,7 @@ def _dataset() -> Any:
     return phx.fidelity.FidelityDataset(hierarchy, cases, tuple(evaluations))
 
 
-def test_fidelity_observations_become_exact_fixed_residual_penalty() -> None:
+def test_fidelity_contracts() -> None:
     dataset = _dataset()
     geometry = phx.domain.Interval1d(-1.0, 1.0)
     prepared = phx.terms.prepare_fidelity_observation_penalty(
@@ -94,9 +94,6 @@ def test_fidelity_observations_become_exact_fixed_residual_penalty() -> None:
     with pytest.raises(ValueError, match="metadata"):
         # ty: ignore[unresolved-attribute]
         prepared.term.condition.target(other)
-
-
-def test_fidelity_split_requirements_reserve_target_groups() -> None:
     dataset = _dataset()
     split = phx.fidelity.split_fidelity_dataset(
         dataset,

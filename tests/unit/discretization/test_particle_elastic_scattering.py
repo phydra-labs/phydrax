@@ -8,7 +8,7 @@ import phydrax as phx
 scatter_elastic_pairs = phx.discretization.particle.scatter_elastic_pairs
 
 
-def test_unequal_mass_elastic_scattering_reports_exact_pair_invariants() -> None:
+def test_particle_elastic_scattering_scenario_1() -> None:
     first = jnp.asarray(((2.0, -1.0, 0.5), (-0.4, 0.2, 0.8)))
     second = jnp.asarray(((-1.0, 0.5, -0.25), (0.3, -0.7, 0.1)))
     first_mass = jnp.asarray((2.0, 7.0))
@@ -35,9 +35,6 @@ def test_unequal_mass_elastic_scattering_reports_exact_pair_invariants() -> None
         + second_mass[:, None] * result.second_velocity
     ) / (first_mass + second_mass)[:, None]
     np.testing.assert_allclose(center_after, center_before, atol=2e-14)
-
-
-def test_zero_relative_speed_and_masks_are_exact_no_injection_paths() -> None:
     first = jnp.asarray(((1.0, 2.0, 3.0), (4.0, 0.0, -1.0)))
     second = jnp.asarray(((1.0, 2.0, 3.0), (-2.0, 1.0, 0.0)))
     result = scatter_elastic_pairs(
@@ -55,9 +52,6 @@ def test_zero_relative_speed_and_masks_are_exact_no_injection_paths() -> None:
     np.testing.assert_array_equal(result.second_velocity, second)
     np.testing.assert_array_equal(result.momentum_defect, 0.0)
     np.testing.assert_array_equal(result.kinetic_energy_defect, 0.0)
-
-
-def test_selected_nonpositive_mass_fails_closed_without_mutating_pair() -> None:
     first = jnp.asarray(((1.0, 0.0, 0.0),))
     second = jnp.asarray(((-1.0, 0.0, 0.0),))
     result = scatter_elastic_pairs(

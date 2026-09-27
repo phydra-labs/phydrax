@@ -12,7 +12,7 @@ from phydrax.applications.compact_objects._self_force import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_mode_sum_subtracts_regularization_and_sums_fitted_tail() -> None:
+def test_mode_sum_contracts() -> None:
     regularization = ModeSumRegularizationParameters(
         jnp.asarray((1.0, -0.5)),
         jnp.asarray((2.0, 0.25)),
@@ -63,9 +63,6 @@ def test_mode_sum_subtracts_regularization_and_sums_fitted_tail() -> None:
     assert bool(result.physically_valid)
     assert bool(result.qualified)
     assert bool(result.derivative_valid)
-
-
-def test_mode_sum_reports_unresolved_tail_instead_of_claiming_convergence() -> None:
     regularization = ModeSumRegularizationParameters(
         0.0,
         0.0,

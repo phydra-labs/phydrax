@@ -180,9 +180,7 @@ def _case(prepared: Any, *, constant_density: Any = False) -> Any:
     return state, arguments
 
 
-def test_control_volume_scale_is_directional_volume_equivalent_and_scales_with_mesh() -> (
-    None
-):
+def test_unstructured_les_scenario_1() -> None:
     reference = _operators(scale=1.0).discretization
     dilated = _operators(scale=2.0).discretization
     widths = reference.directional_control_volume_widths()
@@ -196,9 +194,6 @@ def test_control_volume_scale_is_directional_volume_equivalent_and_scales_with_m
     )
     np.testing.assert_allclose(dilated_widths, 2.0 * widths, rtol=2e-12, atol=2e-12)
     assert jnp.max(jnp.ptp(widths, axis=-1)) > 0.0
-
-
-def test_constant_density_shared_flux_zero_coefficient_and_separate_ledgers() -> None:
     prepared = _prepared(coefficient=0.0)
     state, arguments = _case(prepared, constant_density=True)
     result = prepared.semidiscrete_rate(state, *arguments)
@@ -251,11 +246,6 @@ def test_constant_density_shared_flux_zero_coefficient_and_separate_ledgers() ->
     np.testing.assert_allclose(result.evidence.shared_scalar_mass_flux_residual, 0.0)
     np.testing.assert_allclose(result.evidence.shared_enthalpy_mass_flux_residual, 0.0)
     assert result.evidence.successful
-
-
-def test_skew_nonorthogonal_manufactured_low_mach_path_is_conservative_and_dissipative() -> (
-    None
-):
     prepared = _prepared(coefficient=0.08)
     state, arguments = _case(prepared)
     result = prepared.semidiscrete_rate(state, *arguments)
@@ -300,7 +290,7 @@ def test_skew_nonorthogonal_manufactured_low_mach_path_is_conservative_and_dissi
     assert result.evidence.resource_evidence_id == discretization.preparation.report_id
 
 
-def test_static_ksgs_reuses_mass_flux_and_keeps_transport_conservative() -> None:
+def test_unstructured_les_scenario_2() -> None:
     prepared = _prepared(ksgs=True)
     state, arguments = _case(prepared)
     centers = prepared.operators.discretization.cell_centers
@@ -336,9 +326,6 @@ def test_static_ksgs_reuses_mass_flux_and_keeps_transport_conservative() -> None
     )
     assert result.evidence.conservative
     assert result.evidence.successful
-
-
-def test_refuses_unsupported_geometry_filter_scale_and_nonpositive_transport() -> None:
     prepared = _prepared()
     state, arguments = _case(prepared)
     bad_density = UnstructuredLowMachLESState(

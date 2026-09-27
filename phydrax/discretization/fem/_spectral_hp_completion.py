@@ -147,9 +147,7 @@ def refine_anisotropic_hp_cells(
         sorted(
             (slot_by_id[int(value)] for value in marked),
             key=lambda slot: (
-                _host_integer(
-                    roots[_host_integer(slot, "cell slot")], "root cell ID"
-                ),
+                _host_integer(roots[_host_integer(slot, "cell slot")], "root cell ID"),
                 _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
             ),
         ),

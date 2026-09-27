@@ -223,16 +223,11 @@ wandb = [
 tests = [
     "PyWavelets>=1.10.0,<2",
     "build123d>=0.13.0,<0.14",
+    "hypothesis>=6.168.1,<7",
     "polars>=1.44.2,<2",
     "tensorboard>=2.21.0,<3",
     "trimesh>=5.1.0,<6",
     "pytest>=9.1.1,<10",
-    "pytest-clarity>=1.0.1,<2",
-    "pytest-impacted>=0.32.0,<0.33",
-    "pytest-rerunfailures>=16.7,<17",
-    "pytest-sugar>=1.1.1,<2",
-    "pytest-tia>=1.1.1,<2",
-    "pytest-testmon>=2.2.0,<3",
     "pytest-xdist>=3.8.0,<4",
 ]
 velocimetry-images = [
@@ -397,6 +392,8 @@ dataclass-field-order = "ignore"
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
+testpaths = ["tests"]
+strict = true
 markers = [
     "opticstudio_live: requires a licensed local OpticStudio installation",
     "meshing_gmsh: requires the optional real Gmsh provider",
@@ -408,6 +405,7 @@ markers = [
     "homotopy_continuation_live: requires an explicitly pinned Julia and HomotopyContinuation environment",
     "macaulay2_live: requires an explicitly pinned Macaulay2 executable",
     "typecheck: runs the pinned ty checker over static typing fixtures",
+    "strict_jax: enforces strict dtype/rank promotion and warnings at native-JAX contract surfaces",
     "meshcore: requires the native phydrax-meshcore library (installed or PHYDRAX_MESHCORE_LIBRARY)",
 ]
 filterwarnings = [

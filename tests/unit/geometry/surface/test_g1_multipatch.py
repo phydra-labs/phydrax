@@ -41,7 +41,7 @@ def _planar_two_patch_coefficients() -> Any:
     return jnp.stack((left, right))
 
 
-def test_two_patch_shared_edge_has_canonical_reversed_halfedge_orientation() -> None:
+def test_g1_multipatch_scenario_1() -> None:
     topology = _two_patch_topology()
     shared = np.asarray(topology.shared_halfedges)[0]
 
@@ -58,9 +58,6 @@ def test_two_patch_shared_edge_has_canonical_reversed_halfedge_orientation() -> 
     residual = constraints.residual(_planar_two_patch_coefficients())
     assert constraints.constraint_count == 6
     assert jnp.allclose(residual, 0.0)
-
-
-def test_g0_and_g1_constraints_and_sampled_seam_jets_vanish_for_planar_join() -> None:
     topology = _two_patch_topology()
     coefficients = _planar_two_patch_coefficients()
     g0 = BiquinticGluingConstraints(topology, GluingContinuity.G0)
@@ -85,9 +82,6 @@ def test_g0_and_g1_constraints_and_sampled_seam_jets_vanish_for_planar_join() ->
     assert evidence.transverse_residual.shape == (1, 5, 3)
     assert evidence.maximum_value_residual == pytest.approx(0.0, abs=2.0e-6)
     assert evidence.maximum_first_derivative_residual == pytest.approx(0.0, abs=2.0e-6)
-
-
-def test_regular_four_patch_vertex_is_supported() -> None:
     topology = PreparedHalfEdgePatchTopology(
         ("lower_left", "lower_right", "upper_left", "upper_right"),
         (
@@ -109,7 +103,7 @@ def test_regular_four_patch_vertex_is_supported() -> None:
     )
 
 
-def test_extraordinary_boundary_vertex_is_classified_and_g1_basis_fails_closed() -> None:
+def test_g1_multipatch_scenario_2() -> None:
     topology = PreparedHalfEdgePatchTopology(
         ("lower_left", "right", "upper"),
         (
@@ -128,9 +122,6 @@ def test_extraordinary_boundary_vertex_is_classified_and_g1_basis_fails_closed()
         BiquinticGluingBasis(constraints)
     assert captured.value.status is G1PatchStatus.EXTRAORDINARY_BOUNDARY_UNSUPPORTED
     assert captured.value.unsupported_vertex_labels == ("x",)
-
-
-def test_native_nullspace_reconstructs_and_projects_g1_coefficients() -> None:
     constraints = BiquinticGluingConstraints(_two_patch_topology(), GluingContinuity.G1)
     basis = BiquinticGluingBasis(constraints, relative_rank_tolerance=1.0e-6)
 
@@ -152,9 +143,6 @@ def test_native_nullspace_reconstructs_and_projects_g1_coefficients() -> None:
     assert jnp.max(jnp.abs(projection.residual_after)) < jnp.max(
         jnp.abs(projection.residual_before)
     )
-
-
-def test_malformed_shared_edge_orientation_is_rejected_before_preparation() -> None:
     with pytest.raises(PatchTopologyError, match="opposite") as captured:
         PreparedHalfEdgePatchTopology(
             ("first", "second"),

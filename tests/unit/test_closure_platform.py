@@ -76,7 +76,7 @@ def test_lifecycle_model_round_trip(tmp_path: Path) -> None:
     np.testing.assert_array_equal(query.fields[0].values, values)
 
 
-def test_unit_square_nurbs_has_local_geometry_certificate() -> None:
+def test_closure_platform_scenario_1() -> None:
     from phydrax.discretization import iga
     from phydrax.discretization.iga._certificate import (
         CertificateDisposition,
@@ -103,9 +103,6 @@ def test_unit_square_nurbs_has_local_geometry_certificate() -> None:
 
     assert certificate.disposition is CertificateDisposition.PASS
     assert certificate.cells
-
-
-def test_spline_de_rham_complex_squares_to_zero() -> None:
     from phydrax.discretization import iga
     from phydrax.discretization.iga._compatible import SplineDeRhamComplex
 
@@ -113,9 +110,6 @@ def test_spline_de_rham_complex_squares_to_zero() -> None:
     complex_ = SplineDeRhamComplex((grid, grid))
 
     np.testing.assert_allclose(complex_.d_squared_defects, 0.0, atol=1.0e-13)
-
-
-def test_thb_certificate_and_goal_marking_are_deterministic() -> None:
     from phydrax.discretization.iga._adaptive import DWREstimate, QoICertificate
     from phydrax.discretization.iga._identity import OverlayCellId
     from phydrax.discretization.iga._thb import THBHierarchy, THBLevel
@@ -160,15 +154,12 @@ def test_thb_certificate_and_goal_marking_are_deterministic() -> None:
     ).passed
 
 
-def test_capability_names_reject_pascal_case_namespaces() -> None:
+def test_closure_platform_scenario_2() -> None:
     with pytest.raises(ValueError, match="lowercase dotted"):
         phx.qualification.SupportTuple(
             "IGA.Core.Tensor",
             {"backend": "cpu"},
         )
-
-
-def test_capability_registry_signs_and_requires_profile() -> None:
     support = phx.qualification.SupportTuple(
         "iga.tensor",
         {"dimension": 2, "backend": "cpu", "precision": "float64"},
@@ -207,9 +198,6 @@ def test_capability_registry_signs_and_requires_profile() -> None:
     )
 
     assert selected.profile_id == profile.profile_id
-
-
-def test_in_process_service_executes_authorized_provider() -> None:
     analysis, execution = _analysis_and_execution()
     service = phx.service.InProcessReferenceService(
         _Validator(),

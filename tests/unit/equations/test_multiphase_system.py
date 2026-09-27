@@ -25,22 +25,52 @@ def eos() -> Any:
     )
 
 
-@pytest.mark.parametrize("dimension", [1, 2, 3])
-def test_layout_is_static_and_explicit(dimension: Any) -> None:
-    layout = TwoMaterialVOFStateLayout(dimension)
-    assert layout.component_count == dimension + 4
-    assert layout.component_names == (
-        "partial_mass_0",
-        "partial_mass_1",
-        *(f"momentum_{axis}" for axis in range(dimension)),
-        "total_energy",
-        "alpha_0",
+def test_multiphase_system_scenario_1() -> None:
+    for dimension in [1, 2, 3]:
+        layout = TwoMaterialVOFStateLayout(dimension)
+        assert layout.component_count == dimension + 4
+        assert layout.component_names == (
+            "partial_mass_0",
+            "partial_mass_1",
+            *(f"momentum_{axis}" for axis in range(dimension)),
+            "total_energy",
+            "alpha_0",
+        )
+        assert layout.alpha_index == dimension + 3
+        assert layout.energy_index == dimension + 2
+        assert tuple(range(layout.momentum_start, layout.momentum_stop)) == tuple(
+            range(2, dimension + 2)
+        )
+    for alpha in (1.0e-4, 1.0 - 1.0e-4):
+        floor_eos = TwoMaterialEOSClosure(
+            IdealGasMaterial(1.4),
+            StiffenedGasMaterial(4.4, 2.0, 1.0),
+            alpha_floor=1.0e-4,
+            mass_floor=1.0e-8,
+        )
+        system = TwoMaterialVOFSystem(1, eos=floor_eos)
+        primitive = jnp.asarray([1.2, 0.7, 0.8, 2.5, alpha], dtype=jnp.float64)
+
+        conserved = system.primitive_to_conserved(primitive)
+        compiled_conserved = jax.jit(system.primitive_to_conserved)(primitive)
+
+        assert bool(system.admissible(conserved))
+        assert bool(jax.jit(system.admissible)(compiled_conserved))
+        np.testing.assert_allclose(
+            system.conserved_to_primitive(conserved), primitive, rtol=2.0e-12
+        )
+        np.testing.assert_allclose(
+            jax.jit(system.conserved_to_primitive)(compiled_conserved),
+            primitive,
+            rtol=2.0e-12,
+        )
+    equal_eos = TwoMaterialEOSClosure(
+        IdealGasMaterial(1.4),
+        IdealGasMaterial(1.4),
     )
-    assert layout.alpha_index == dimension + 3
-    assert layout.energy_index == dimension + 2
-    assert tuple(range(layout.momentum_start, layout.momentum_stop)) == tuple(
-        range(2, dimension + 2)
-    )
+    system = TwoMaterialVOFSystem(1, eos=equal_eos)
+    state = _state(system, alpha=0.4)
+    assert system.dilatation_coefficient(state) == 0.0
 
 
 def _state(system: Any, *, alpha: Any = 0.35, velocity: Any = (0.8, -0.2, 0.15)) -> Any:
@@ -95,32 +125,6 @@ def test_admissibility_pure_phase_and_fail_closed(eos: Any) -> None:
     assert not bool(system.admissible(pure0.at[1].set(eos.mass_floor)))
 
 
-@pytest.mark.parametrize("alpha", (1.0e-4, 1.0 - 1.0e-4))
-def test_system_round_trips_active_alpha_floor_boundaries(alpha: Any) -> None:
-    floor_eos = TwoMaterialEOSClosure(
-        IdealGasMaterial(1.4),
-        StiffenedGasMaterial(4.4, 2.0, 1.0),
-        alpha_floor=1.0e-4,
-        mass_floor=1.0e-8,
-    )
-    system = TwoMaterialVOFSystem(1, eos=floor_eos)
-    primitive = jnp.asarray([1.2, 0.7, 0.8, 2.5, alpha], dtype=jnp.float64)
-
-    conserved = system.primitive_to_conserved(primitive)
-    compiled_conserved = jax.jit(system.primitive_to_conserved)(primitive)
-
-    assert bool(system.admissible(conserved))
-    assert bool(jax.jit(system.admissible)(compiled_conserved))
-    np.testing.assert_allclose(
-        system.conserved_to_primitive(conserved), primitive, rtol=2.0e-12
-    )
-    np.testing.assert_allclose(
-        jax.jit(system.conserved_to_primitive)(compiled_conserved),
-        primitive,
-        rtol=2.0e-12,
-    )
-
-
 def test_jit_grad_and_dtype(eos: Any) -> None:
     system = TwoMaterialVOFSystem(2, eos=eos)
     state = _state(system)
@@ -152,27 +156,19 @@ def test_material_identity_is_part_of_system_identity(eos: Any) -> None:
     assert floor_altered.system_id != first.system_id
 
 
-@pytest.mark.parametrize("alpha", [0.0, 1.0])
-def test_kapila_coefficient_is_exactly_zero_in_pure_phases(eos: Any, alpha: Any) -> None:
-    system = TwoMaterialVOFSystem(2, eos=eos)
-    state = _state(system, alpha=alpha)
-    density_0, density_1 = system.phase_densities(state)
-    sound_0, sound_1 = system.phase_sound_speeds(state)
-    assert system.dilatation_coefficient(state) == 0.0
-    assert jnp.isfinite(density_0)
-    assert jnp.isfinite(density_1)
-    assert jnp.isfinite(sound_0)
-    assert jnp.isfinite(sound_1)
-
-
-def test_kapila_coefficient_is_exactly_zero_for_equal_materials() -> None:
-    equal_eos = TwoMaterialEOSClosure(
-        IdealGasMaterial(1.4),
-        IdealGasMaterial(1.4),
-    )
-    system = TwoMaterialVOFSystem(1, eos=equal_eos)
-    state = _state(system, alpha=0.4)
-    assert system.dilatation_coefficient(state) == 0.0
+def test_kapila_coefficient_is_exactly_zero_in_pure_phases(
+    eos: Any,
+) -> None:
+    for alpha in [0.0, 1.0]:
+        system = TwoMaterialVOFSystem(2, eos=eos)
+        state = _state(system, alpha=alpha)
+        density_0, density_1 = system.phase_densities(state)
+        sound_0, sound_1 = system.phase_sound_speeds(state)
+        assert system.dilatation_coefficient(state) == 0.0
+        assert jnp.isfinite(density_0)
+        assert jnp.isfinite(density_1)
+        assert jnp.isfinite(sound_0)
+        assert jnp.isfinite(sound_1)
 
 
 def test_mixed_stiffened_ideal_kapila_coefficient_has_expected_sign(eos: Any) -> None:

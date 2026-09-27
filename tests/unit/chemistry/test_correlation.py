@@ -59,7 +59,7 @@ def _h2_store() -> Any:
     return state, store
 
 
-def test_mp2_and_fci_lower_the_same_converged_reference_energy() -> None:
+def test_correlation_scenario_1() -> None:
     state, store = _h2_store()
     correlation = phx.chemistry.electronic_structure.correlation
     mp2 = correlation.MP2Plan().evaluate(store)
@@ -72,6 +72,15 @@ def test_mp2_and_fci_lower_the_same_converged_reference_energy() -> None:
         mp2.total_energy, state.total_energy + mp2.correlation_energy
     )
     np.testing.assert_allclose(fci.energies[0], -1.13728383, atol=5.0e-8)
+    _, store = _h2_store()
+    correlation = phx.chemistry.electronic_structure.correlation
+    casci = correlation.CASCIPlan((0, 1), 1, 1)
+    casscf = correlation.CASSCFPlan(casci).evaluate(store)
+
+    assert bool(casscf.successful)
+    np.testing.assert_allclose(casscf.orbital_rotation, np.eye(2), atol=0.0)
+    np.testing.assert_allclose(casscf.orbital_gradient_norms, [0.0], atol=0.0)
+    np.testing.assert_allclose(casscf.casci.energies[0], -1.13728383, atol=5.0e-8)
 
 
 def test_pyscf_ccsd_closes_right_and_lambda_residuals_and_reaches_fci_for_two_electrons() -> (
@@ -93,15 +102,3 @@ def test_pyscf_ccsd_closes_right_and_lambda_residuals_and_reaches_fci_for_two_el
     assert bool(resumed.successful)
     assert int(resumed.iterations) >= int(result.iterations)
     np.testing.assert_allclose(resumed.total_energy, result.total_energy, atol=2.0e-12)
-
-
-def test_full_active_space_casscf_reduces_to_casci_without_external_rotations() -> None:
-    _, store = _h2_store()
-    correlation = phx.chemistry.electronic_structure.correlation
-    casci = correlation.CASCIPlan((0, 1), 1, 1)
-    casscf = correlation.CASSCFPlan(casci).evaluate(store)
-
-    assert bool(casscf.successful)
-    np.testing.assert_allclose(casscf.orbital_rotation, np.eye(2), atol=0.0)
-    np.testing.assert_allclose(casscf.orbital_gradient_norms, [0.0], atol=0.0)
-    np.testing.assert_allclose(casscf.casci.energies[0], -1.13728383, atol=5.0e-8)

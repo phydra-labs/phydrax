@@ -10,7 +10,7 @@ from phydrax.continuation._stability_pencil import (
 )
 
 
-def test_projected_rectangular_residual_requires_declared_lift_and_project() -> None:
+def test_stability_pencil_scenario_1() -> None:
     residual = lambda state, coordinate, args: jnp.asarray(
         [state[0] + state[1], state[0] - state[1], 2.0 * state[0]]
     )
@@ -28,9 +28,6 @@ def test_projected_rectangular_residual_requires_declared_lift_and_project() -> 
     assert jax.jit(lambda state: pencil.matrices(state, 0.0)[0])(
         jnp.zeros((2,))
     ).shape == (2, 2)
-
-
-def test_real_block_hopf_locus_has_local_frequency_and_phase_evidence() -> None:
     pencil = ContinuationStabilityPencil(
         lambda state, parameters, args: (
             jnp.asarray([[parameters[0], -1.0], [1.0, parameters[0]]]),
@@ -61,9 +58,6 @@ def test_real_block_hopf_locus_has_local_frequency_and_phase_evidence() -> None:
     assert evidence.frequency > 0
     assert evidence.normalization_residual < 1.0e-7
     assert evidence.phase_residual < 1.0e-7
-
-
-def test_generalized_pencil_omits_hopf_indicator_without_conjugate_pair() -> None:
     pencil = ContinuationStabilityPencil(
         lambda state, coordinate, args: (
             jnp.asarray([[coordinate, 0.0], [0.0, -1.0]]),

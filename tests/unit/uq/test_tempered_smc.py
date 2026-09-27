@@ -10,7 +10,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_parameter_space_draws_prior_particles_in_unconstrained_coordinates() -> None:
+def test_tempered_smc_scenario_1() -> None:
     space = phx.uq.ParameterSpace(
         {"location": jnp.zeros(2), "rate": jnp.asarray(0.0)},
         priors={
@@ -31,9 +31,6 @@ def test_parameter_space_draws_prior_particles_in_unconstrained_coordinates() ->
     assert jnp.std(position["location"]) == pytest.approx(2.0, rel=0.03)
     assert jnp.mean(position["rate"]) == pytest.approx(0.2, abs=0.015)
     assert jnp.all(physical["rate"] > 0.0)
-
-
-def test_tempered_smc_recovers_conjugate_gaussian_and_reports_schedule() -> None:
     observation = 1.2
     prior_scale = 2.0
     observation_scale = 0.5
@@ -75,9 +72,6 @@ def test_tempered_smc_recovers_conjugate_gaussian_and_reports_schedule() -> None
     assert posterior.sample_axes == (0,)
     # ty: ignore[invalid-argument-type]
     assert jnp.allclose(jnp.exp(posterior.log_weights), result.final_weights)
-
-
-def test_tempered_smc_requires_prior_particles_for_custom_prior_density() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             jnp.asarray(0.0),
@@ -95,9 +89,6 @@ def test_tempered_smc_requires_prior_particles_for_custom_prior_density() -> Non
             num_particles=20,
             prior_position_sampler=lambda key, count: jr.normal(key, (count - 1,)),
         )
-
-
-def test_tempered_smc_observation_prediction_preserves_particle_axes() -> None:
     space = phx.uq.ParameterSpace(
         jnp.asarray(0.0),
         priors=phx.uq.Normal(0.0, 1.0),

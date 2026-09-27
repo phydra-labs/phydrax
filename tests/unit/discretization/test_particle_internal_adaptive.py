@@ -74,7 +74,7 @@ def _state(hierarchy: Any) -> Any:
     )
 
 
-def test_particle_internal_amr_refines_locally_and_conserves_extensive_state() -> None:
+def test_particle_internal_adaptive_scenario_1() -> None:
     hierarchy = _hierarchy()
     state = _state(hierarchy)
     result = phx.discretization.adapt_particle_internal_mesh(
@@ -91,9 +91,6 @@ def test_particle_internal_amr_refines_locally_and_conserves_extensive_state() -
     assert jnp.max(jnp.abs(result.evidence.species_residual)) < 1.0e-12
     assert jnp.max(jnp.abs(result.evidence.pore_volume_residual)) < 1.0e-12
     assert jnp.max(jnp.abs(result.evidence.surface_area_residual)) < 1.0e-12
-
-
-def test_particle_internal_amr_coarsening_preserves_bounded_progress() -> None:
     hierarchy = _hierarchy()
     state = _state(hierarchy)
     policy = phx.discretization.ParticleInternalAdaptationPolicy(
@@ -111,9 +108,6 @@ def test_particle_internal_amr_coarsening_preserves_bounded_progress() -> None:
         (coarsened.accepted_state.coarse_reaction_progress >= 0.0)
         & (coarsened.accepted_state.coarse_reaction_progress <= 1.0)
     )
-
-
-def test_particle_internal_amr_overflow_requests_growth_atomically() -> None:
     hierarchy = _hierarchy(maximum_refined_cells=1)
     state = _state(hierarchy)
     result = phx.discretization.adapt_particle_internal_mesh(
@@ -126,9 +120,6 @@ def test_particle_internal_amr_overflow_requests_growth_atomically() -> None:
     assert result.growth_required
     assert result.required_additional_cells == 1
     assert jnp.array_equal(result.accepted_state.coarse_refined, state.coarse_refined)
-
-
-def test_coarse_fine_flux_correction_uses_extensive_register_once() -> None:
     hierarchy = _hierarchy()
     coarse = jnp.asarray([1.0, 2.0])
     register = phx.discretization.UnstructuredAMRFluxRegister(

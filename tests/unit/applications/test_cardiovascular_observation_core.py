@@ -94,7 +94,7 @@ def _synthetic_derivation() -> DerivationRecord:
     )
 
 
-def test_spatial_affine_roundtrip_and_lps_ras_conversion() -> None:
+def test_cardiovascular_observation_core_scenario_1() -> None:
     affine = _lps_affine()
     indices = np.asarray([[0.25, 1.5, 2.0], [4.0, 3.0, 2.0]])
     world_lps = affine.index_to_world(indices)
@@ -104,9 +104,6 @@ def test_spatial_affine_roundtrip_and_lps_ras_conversion() -> None:
     world_ras = ras.index_to_world(indices)
     np.testing.assert_allclose(world_ras, world_lps * np.asarray([-1.0, -1.0, 1.0]))
     np.testing.assert_allclose(ras.world_to_index(world_ras), indices)
-
-
-def test_qform_sform_agreement_and_conflict_are_explicit() -> None:
     affine = _lps_affine()
     matrix = np.eye(4)
     resolved = ImageIndexAffine.from_qform_sform(
@@ -128,9 +125,6 @@ def test_qform_sform_agreement_and_conflict_are_explicit() -> None:
             coordinate_contract=affine.coordinate_contract,
             axis_convention=ImageAxisConvention.LPS,
         )
-
-
-def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
     affine = _lps_affine()
     deidentification, rights = _safe_identities()
     values = np.arange(8.0).reshape((2, 2, 2))
@@ -178,7 +172,7 @@ def test_medical_asset_refuses_phi_and_incomplete_deidentification() -> None:
         )
 
 
-def test_observation_record_is_an_immutable_host_channel() -> None:
+def test_cardiovascular_observation_core_scenario_2() -> None:
     time_axis = SampleTimeAxis("pressure-clock", np.asarray([0.0, 1.0]), MILLISECOND)
     support = IndexSampleSupport((2,), ("time",), time_axis, 0)
     quantity = QuantitySpec(
@@ -202,9 +196,6 @@ def test_observation_record_is_an_immutable_host_channel() -> None:
     assert not record.valid_mask.flags.writeable
     with pytest.raises(ValueError):
         record.values[0] = 11.0
-
-
-def test_voxel_coverage_transpose_and_jvp() -> None:
     affine = ImageIndexAffine(
         np.eye(4),
         "voxel-ijk",
@@ -237,9 +228,6 @@ def test_voxel_coverage_transpose_and_jvp() -> None:
     jvp = operator.jvp(values, tangent)
     expected_tangent = operator.apply(tangent).values
     np.testing.assert_allclose(np.asarray(jvp.tangent), np.asarray(expected_tangent))
-
-
-def test_tetrahedral_surface_and_time_p1_sampling() -> None:
     nodes = np.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
@@ -276,7 +264,7 @@ def test_tetrahedral_surface_and_time_p1_sampling() -> None:
     assert int(temporal_result.evidence.covered_count) == 2
 
 
-def test_cine_timing_has_periodic_phase_and_conservative_frame_widths() -> None:
+def test_cardiovascular_observation_core_scenario_3() -> None:
     timebase = SampleTimeAxis.uniform("cine-clock", 4, 200.0, MILLISECOND)
     timing = CineTimingPlan(timebase, 800.0, 0.0).prepare().evaluate()
     np.testing.assert_allclose(
@@ -286,9 +274,6 @@ def test_cine_timing_has_periodic_phase_and_conservative_frame_widths() -> None:
     assert float(jnp.sum(timing.frame_duration_ms)) == pytest.approx(800.0)
     assert float(timing.evidence.phase_coverage) == pytest.approx(0.75)
     assert bool(timing.evidence.successful)
-
-
-def test_registration_translation_inverse_consistency_and_folding() -> None:
     points = np.asarray([[0.0, 0.0, 0.0], [1.0, 2.0, 3.0]])
     prepared = RegistrationEvaluationPlan(
         points,
@@ -339,9 +324,6 @@ def test_registration_translation_inverse_consistency_and_folding() -> None:
     assert not bool(folded.evidence.successful)
     with pytest.raises(ValueError, match="unsuccessful"):
         prepared.commit(folded)
-
-
-def test_green_lagrange_and_eulerian_synthetic_stretch() -> None:
     deformation_gradient = jnp.diag(jnp.asarray([2.0, 1.0, 1.0]))[None, ...]
     green = green_lagrange_strain(deformation_gradient)
     eulerian = eulerian_strain(deformation_gradient)

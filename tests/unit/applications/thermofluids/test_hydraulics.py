@@ -61,7 +61,7 @@ def _initialize(process: Any, initial_values: Any) -> Any:
     return compilation.reconstruction(result.state, result.state_rate)
 
 
-def test_circular_hydraulic_network_solves_pressure_drop_and_directed_flow() -> None:
+def test_hydraulics_scenario_1() -> None:
     tf = phx.applications.thermofluids
     fluid = _fluid()
     law = tf.HydraulicChannelPlan.circular(
@@ -100,9 +100,6 @@ def test_circular_hydraulic_network_solves_pressure_drop_and_directed_flow() -> 
     unsupported = law.evaluate(1.0, 101425.0, 101325.0)
     assert not bool(unsupported.header.globally_eligible)
     assert bool(jnp.isnan(unsupported.pressure_drop))
-
-
-def test_rectangular_resistance_is_orientation_symmetric_and_bounded() -> None:
     tf = phx.applications.thermofluids
     first = tf.HydraulicChannelPlan.rectangular(
         _fluid(), width=2.0e-3, height=1.0e-3, length=0.1, series_terms=32
@@ -113,9 +110,6 @@ def test_rectangular_resistance_is_orientation_symmetric_and_bounded() -> None:
 
     np.testing.assert_allclose(first.resistance, second.resistance)
     assert first.truncation_error_bound <= 1.0e-8
-
-
-def test_compliance_and_inertance_encode_storage_and_momentum_equations() -> None:
     tf = phx.applications.thermofluids
     compliance = tf.hydraulic_compliance_component(
         "compliance",
@@ -169,7 +163,7 @@ def test_compliance_and_inertance_encode_storage_and_momentum_equations() -> Non
     )
 
 
-def test_calibrated_hydraulic_response_never_extrapolates() -> None:
+def test_hydraulics_scenario_2() -> None:
     tf = phx.applications.thermofluids
     response = tf.MonotoneHydraulicResponsePlan(
         _fluid(),
@@ -185,9 +179,6 @@ def test_calibrated_hydraulic_response_never_extrapolates() -> None:
     np.testing.assert_allclose(reverse.pressure_drop, -forward.pressure_drop)
     assert not bool(outside.header.globally_eligible)
     assert bool(jnp.isnan(outside.pressure_drop))
-
-
-def test_fixed_reduced_hydraulic_response_has_no_truth_fallback() -> None:
     tf = phx.applications.thermofluids
     response = tf.HydraulicReducedResponsePlan(
         _fluid(),

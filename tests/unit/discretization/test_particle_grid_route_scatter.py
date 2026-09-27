@@ -44,28 +44,36 @@ def _manual(state: Any, payload: Any, target_size: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
-def test_route_payload_scatter_matches_manual_sum(accumulation: Any) -> None:
-    prepared = _prepared(accumulation=accumulation)
-    position = jnp.asarray([[0.13], [0.52], [0.88]])
-    state = prepared.build(position)
-    payload = jnp.arange(
-        prepared.particles.capacity * prepared.route_width * 2,
-        dtype=jnp.float64,
-    ).reshape((prepared.particles.capacity, prepared.route_width, 2))
+def test_particle_grid_route_scatter_scenario_1() -> None:
+    for accumulation in ["fast", "deterministic", "compensated"]:
+        prepared = _prepared(accumulation=accumulation)
+        position = jnp.asarray([[0.13], [0.52], [0.88]])
+        state = prepared.build(position)
+        payload = jnp.arange(
+            prepared.particles.capacity * prepared.route_width * 2,
+            dtype=jnp.float64,
+        ).reshape((prepared.particles.capacity, prepared.route_width, 2))
 
-    result = prepared.scatter_route_payload(state, payload)
-    expected = _manual(state, payload, prepared.target_size).reshape(
-        prepared.target_shape + (2,)
-    )
+        result = prepared.scatter_route_payload(state, payload)
+        expected = _manual(state, payload, prepared.target_size).reshape(
+            prepared.target_shape + (2,)
+        )
 
-    assert isinstance(result, phx.discretization.SplatRouteScatterResult)
-    assert bool(result.successful)
-    assert int(result.valid_route_count) == int(jnp.sum(state.stencil.valid))
-    np.testing.assert_allclose(result.values, expected, rtol=2e-13, atol=2e-13)
+        assert isinstance(result, phx.discretization.SplatRouteScatterResult)
+        assert bool(result.successful)
+        assert int(result.valid_route_count) == int(jnp.sum(state.stencil.valid))
+        np.testing.assert_allclose(result.values, expected, rtol=2e-13, atol=2e-13)
+    prepared = _prepared()
+    state = prepared.build(jnp.asarray([[0.13], [0.52], [0.88]]))
+    with pytest.raises(ValueError, match="Route payload must begin"):
+        prepared.scatter_route_payload(state, jnp.ones((3, 2)))
 
-
-def test_deterministic_route_scatter_is_particle_id_order_invariant() -> None:
+    foreign = _prepared(particle_ids=(1, 2, 3))
+    with pytest.raises(ValueError, match="different prepared transfer"):
+        foreign.scatter_route_payload(
+            state,
+            jnp.ones((3, prepared.route_width, 1)),
+        )
     position = jnp.asarray([[0.13], [0.52], [0.88]])
     payload = jnp.arange(18, dtype=jnp.float64).reshape((3, 3, 2))
     first = _prepared(particle_ids=(7, 2, 11))
@@ -127,17 +135,3 @@ def test_route_scatter_jit_vmap_jvp_vjp_and_finite_difference() -> None:
         - objective(base_payload - epsilon * tangent)
     ) / (2.0 * epsilon)
     np.testing.assert_allclose(directional, finite, rtol=2e-8, atol=2e-9)
-
-
-def test_route_scatter_rejects_wrong_layout_and_foreign_state() -> None:
-    prepared = _prepared()
-    state = prepared.build(jnp.asarray([[0.13], [0.52], [0.88]]))
-    with pytest.raises(ValueError, match="Route payload must begin"):
-        prepared.scatter_route_payload(state, jnp.ones((3, 2)))
-
-    foreign = _prepared(particle_ids=(1, 2, 3))
-    with pytest.raises(ValueError, match="different prepared transfer"):
-        foreign.scatter_route_payload(
-            state,
-            jnp.ones((3, prepared.route_width, 1)),
-        )

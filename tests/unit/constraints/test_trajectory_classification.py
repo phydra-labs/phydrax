@@ -70,70 +70,69 @@ def _binary_case_term(domain: Any, *, case_time: Any = "start", **kwargs: Any) -
     )
 
 
-@pytest.mark.parametrize("make_domain", [_regular_domain, _irregular_domain])
-def test_case_classification_start_and_end_times(make_domain: Any) -> None:
-    domain = make_domain()
-    start_batch = _binary_case_term(domain, case_time="start").sample(key=jr.key(0))
-    end_batch = _binary_case_term(domain, case_time="end").sample(key=jr.key(1))
+def test_trajectory_classification_scenario_1() -> None:
+    for make_domain in [_regular_domain, _irregular_domain]:
+        domain = make_domain()
+        start_batch = _binary_case_term(domain, case_time="start").sample(key=jr.key(0))
+        end_batch = _binary_case_term(domain, case_time="end").sample(key=jr.key(1))
 
-    expected_start = (
-        domain.start_times[start_batch.case_indices]
-        if isinstance(domain, IrregularTrajectoryDatasetDomain)
-        else jnp.full(start_batch.times.shape, domain.start)
-    )
-    assert jnp.allclose(start_batch.times, expected_start)
-    assert jnp.allclose(end_batch.times, domain.end_times[end_batch.case_indices])
-    assert jnp.issubdtype(start_batch.target.dtype, jnp.integer)
+        expected_start = (
+            domain.start_times[start_batch.case_indices]
+            if isinstance(domain, IrregularTrajectoryDatasetDomain)
+            else jnp.full(start_batch.times.shape, domain.start)
+        )
+        assert jnp.allclose(start_batch.times, expected_start)
+        assert jnp.allclose(end_batch.times, domain.end_times[end_batch.case_indices])
+        assert jnp.issubdtype(start_batch.target.dtype, jnp.integer)
+    for make_domain, fixed_time in [(_regular_domain, 0.5), (_irregular_domain, 0.25)]:
+        domain = make_domain()
+        batch = _binary_case_term(domain, case_time=fixed_time).sample(key=jr.key(2))
 
+        assert jnp.allclose(batch.times, fixed_time)
+        starts = (
+            domain.start_times[batch.case_indices]
+            if isinstance(domain, IrregularTrajectoryDatasetDomain)
+            else jnp.full(batch.times.shape, domain.start)
+        )
+        assert jnp.all(starts <= batch.times)
+        assert jnp.all(batch.times <= domain.end_times[batch.case_indices])
+    for make_domain in [_regular_domain, _irregular_domain]:
+        domain = make_domain()
+        targets = jnp.full((domain.size, domain.max_length), 99, dtype=jnp.int32)
+        valid = jnp.arange(domain.max_length)[None, :] < domain.lengths[:, None]
+        labels = jnp.arange(domain.max_length)[None, :] % 2
+        targets = jnp.where(valid, labels, targets)
+        term = RaggedTimeSeriesClassificationTerm(
+            "classify",
+            domain.component(),
+            targets,
+            TargetSchema("binary", class_labels=(0, 1)),
+            sampling=_paired_sampling(64),
+            selection="observation_uniform",
+            interpolation="nearest",
+        )
 
-@pytest.mark.parametrize(
-    ("make_domain", "fixed_time"),
-    [(_regular_domain, 0.5), (_irregular_domain, 0.25)],
-)
-def test_case_classification_fixed_time_samples_only_valid_cases(
-    make_domain: Any, fixed_time: Any
-) -> None:
-    domain = make_domain()
-    batch = _binary_case_term(domain, case_time=fixed_time).sample(key=jr.key(2))
-
-    assert jnp.allclose(batch.times, fixed_time)
-    starts = (
-        domain.start_times[batch.case_indices]
-        if isinstance(domain, IrregularTrajectoryDatasetDomain)
-        else jnp.full(batch.times.shape, domain.start)
-    )
-    assert jnp.all(starts <= batch.times)
-    assert jnp.all(batch.times <= domain.end_times[batch.case_indices])
-
-
-@pytest.mark.parametrize("make_domain", [_regular_domain, _irregular_domain])
-def test_hard_ragged_nearest_lookup_preserves_labels_and_skips_padding(
-    make_domain: Any,
-) -> None:
-    domain = make_domain()
-    targets = jnp.full((domain.size, domain.max_length), 99, dtype=jnp.int32)
-    valid = jnp.arange(domain.max_length)[None, :] < domain.lengths[:, None]
-    labels = jnp.arange(domain.max_length)[None, :] % 2
-    targets = jnp.where(valid, labels, targets)
-    term = RaggedTimeSeriesClassificationTerm(
-        "classify",
-        domain.component(),
-        targets,
-        TargetSchema("binary", class_labels=(0, 1)),
-        sampling=_paired_sampling(64),
-        selection="observation_uniform",
-        interpolation="nearest",
-    )
-
-    batch = term.sample(key=jr.key(3))
-    assert jnp.issubdtype(batch.target.dtype, jnp.integer)
-    assert batch.target.shape == batch.time_indices.shape
-    assert jnp.all(batch.time_indices < domain.lengths[batch.case_indices])
-    assert jnp.array_equal(batch.target, targets[batch.case_indices, batch.time_indices])
-    assert not bool(jnp.any(batch.target == 99))
-
-
-def test_shared_trajectory_data_batches_preserve_discrete_target_dtype() -> None:
+        batch = term.sample(key=jr.key(3))
+        assert jnp.issubdtype(batch.target.dtype, jnp.integer)
+        assert batch.target.shape == batch.time_indices.shape
+        assert jnp.all(batch.time_indices < domain.lengths[batch.case_indices])
+        assert jnp.array_equal(
+            batch.target, targets[batch.case_indices, batch.time_indices]
+        )
+        assert not bool(jnp.any(batch.target == 99))
+    domain = _regular_domain()
+    targets = jnp.zeros((domain.size, domain.max_length), dtype=jnp.int32)
+    with pytest.raises(ValueError, match="Hard.*nearest"):
+        RaggedTimeSeriesClassificationTerm(
+            "classify",
+            domain.component(),
+            targets,
+            TargetSchema("binary", class_labels=(0, 1)),
+            sampling=_paired_sampling(),
+            objective=ClassificationObjective.soft_cross_entropy(),
+            selection="case_time_uniform",
+            interpolation="linear",
+        )
     domain = _regular_domain()
     case_term = TrajectoryCaseDataTerm(
         "value",
@@ -153,44 +152,23 @@ def test_shared_trajectory_data_batches_preserve_discrete_target_dtype() -> None
     assert ragged_term.sample(key=jr.key(13)).target.dtype == jnp.bool_
 
 
-@pytest.mark.parametrize(
-    "selection", ["observation_uniform", "case_uniform", "case_time_uniform"]
-)
-def test_ragged_selection_policies_respect_case_subset(selection: Any) -> None:
-    domain = _regular_domain()
-    targets = jnp.zeros((domain.size, domain.max_length), dtype="bool")
-    term = RaggedTimeSeriesClassificationTerm(
-        "classify",
-        domain.component(),
-        targets,
-        TargetSchema("binary", class_labels=(0, 1)),
-        sampling=_paired_sampling(32),
-        selection=selection,
-        case_indices=jnp.asarray([2], dtype=jnp.int32),
-    )
-
-    batch = term.sample(key=jr.key(4))
-    assert jnp.all(batch.case_indices == 2)
-    assert jnp.all(batch.time_indices < domain.lengths[batch.case_indices])
-
-
-def test_hard_targets_reject_linear_interpolation() -> None:
-    domain = _regular_domain()
-    targets = jnp.zeros((domain.size, domain.max_length), dtype=jnp.int32)
-    with pytest.raises(ValueError, match="Hard.*nearest"):
-        RaggedTimeSeriesClassificationTerm(
+def test_trajectory_classification_scenario_2() -> None:
+    for selection in ["observation_uniform", "case_uniform", "case_time_uniform"]:
+        domain = _regular_domain()
+        targets = jnp.zeros((domain.size, domain.max_length), dtype="bool")
+        term = RaggedTimeSeriesClassificationTerm(
             "classify",
             domain.component(),
             targets,
             TargetSchema("binary", class_labels=(0, 1)),
-            sampling=_paired_sampling(),
-            objective=ClassificationObjective.soft_cross_entropy(),
-            selection="case_time_uniform",
-            interpolation="linear",
+            sampling=_paired_sampling(32),
+            selection=selection,
+            case_indices=jnp.asarray([2], dtype=jnp.int32),
         )
 
-
-def test_soft_multiclass_linear_interpolation_stays_on_simplex() -> None:
+        batch = term.sample(key=jr.key(4))
+        assert jnp.all(batch.case_indices == 2)
+        assert jnp.all(batch.time_indices < domain.lengths[batch.case_indices])
     domain = _regular_domain()
     time = jnp.arange(domain.max_length, dtype="float64")
     probability = jnp.broadcast_to(
@@ -212,9 +190,6 @@ def test_soft_multiclass_linear_interpolation_stays_on_simplex() -> None:
     assert batch.target.shape == (48, 2)
     assert jnp.all(batch.target >= 0.0)
     assert jnp.allclose(jnp.sum(batch.target, axis=-1), 1.0, atol=1e-6)
-
-
-def test_soft_multiclass_linear_rejects_invalid_active_simplex() -> None:
     domain = _regular_domain()
     probability = jnp.full((domain.size, domain.max_length, 3), 1.0 / 3.0)
     probability = probability.at[1, 1].set(jnp.asarray([0.8, 0.8, -0.6]))
@@ -229,6 +204,37 @@ def test_soft_multiclass_linear_rejects_invalid_active_simplex() -> None:
             selection="case_time_uniform",
             interpolation="linear",
         )
+    domain = TrajectoryDatasetDomain(
+        jnp.asarray([[0.0], [1.0], [2.0]]),
+        jnp.asarray([3, 3, 3]),
+        dt=0.5,
+        measure="time_integral_sum",
+    )
+    targets = jnp.zeros((domain.size, domain.max_length), dtype="bool")
+    with pytest.raises(ValueError, match="Physical.*sum"):
+        RaggedTimeSeriesClassificationTerm(
+            "classify",
+            domain.component(),
+            targets,
+            TargetSchema("binary", class_labels=(0, 1)),
+            sampling=_paired_sampling(),
+            selection="case_time_uniform",
+            measure="physical",
+            reduction="mean",
+        )
+
+    term = RaggedTimeSeriesClassificationTerm(
+        "classify",
+        domain.component(),
+        targets,
+        TargetSchema("binary", class_labels=(0, 1)),
+        sampling=_paired_sampling(32),
+        selection="case_time_uniform",
+        measure="physical",
+        reduction="sum",
+    )
+    batch = term.sample(key=jr.key(8))
+    assert jnp.allclose(jnp.sum(batch.geometry_weight), 3.0)
 
 
 def test_multilabel_case_time_grid_retains_case_time_and_label_axes() -> None:
@@ -419,40 +425,6 @@ def test_ordinal_case_classification_uses_scalar_latent_and_ordered_thresholds()
     loss = term.loss({"classify": latent}, key=jr.key(7))
     assert loss.shape == ()
     assert jnp.isfinite(loss)
-
-
-def test_physical_measure_requires_sum_and_preserves_trajectory_mass() -> None:
-    domain = TrajectoryDatasetDomain(
-        jnp.asarray([[0.0], [1.0], [2.0]]),
-        jnp.asarray([3, 3, 3]),
-        dt=0.5,
-        measure="time_integral_sum",
-    )
-    targets = jnp.zeros((domain.size, domain.max_length), dtype="bool")
-    with pytest.raises(ValueError, match="Physical.*sum"):
-        RaggedTimeSeriesClassificationTerm(
-            "classify",
-            domain.component(),
-            targets,
-            TargetSchema("binary", class_labels=(0, 1)),
-            sampling=_paired_sampling(),
-            selection="case_time_uniform",
-            measure="physical",
-            reduction="mean",
-        )
-
-    term = RaggedTimeSeriesClassificationTerm(
-        "classify",
-        domain.component(),
-        targets,
-        TargetSchema("binary", class_labels=(0, 1)),
-        sampling=_paired_sampling(32),
-        selection="case_time_uniform",
-        measure="physical",
-        reduction="sum",
-    )
-    batch = term.sample(key=jr.key(8))
-    assert jnp.allclose(jnp.sum(batch.geometry_weight), 3.0)
 
 
 def test_observation_uniform_grid_uses_global_inverse_proposal_weights() -> None:

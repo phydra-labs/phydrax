@@ -87,7 +87,7 @@ def _transport(mu: Any = _DEFAULT_MU) -> Any:
     )
 
 
-def test_prepared_cross_sections_retain_sources_and_enforce_requested_rights() -> None:
+def test_photon_transport_scenario_1() -> None:
     plan = _transport()
     assert len(set(plan.cross_sections.source_table_ids)) == 3
     assert len(plan.cross_sections.source_provenance_ids) == 3
@@ -112,9 +112,6 @@ def test_prepared_cross_sections_retain_sources_and_enforce_requested_rights() -
             jnp.asarray((1.0,)),
             commercial_use=True,
         )
-
-
-def test_prepared_cross_sections_preserve_each_source_interpolation_policy() -> None:
     energy_grid = phx.equations.PhotonEnergyGrid(
         jnp.asarray((500.0, 2000.0))
         * float(phx.units.conversion_factor(phx.units.ELECTRONVOLT, phx.units.JOULE))
@@ -135,9 +132,6 @@ def test_prepared_cross_sections_preserve_each_source_interpolation_policy() -> 
 
     assert bool(evaluated.successful)
     np.testing.assert_allclose(evaluated.coefficients, (4.0, 0.0, 0.0))
-
-
-def test_delta_tracking_matches_beer_lambert_and_closes_kerma_ledger() -> None:
     count = 8192
     plan = _transport()
     result = plan.simulate(
@@ -154,9 +148,6 @@ def test_delta_tracking_matches_beer_lambert_and_closes_kerma_ledger() -> None:
     assert jnp.all(
         (result.material_kerma[:, 0] == 0.0) | (result.material_kerma[:, 0] == 1000.0)
     )
-
-
-def test_semantic_history_ids_are_invariant_to_batch_placement() -> None:
     plan = _transport(mu=0.5)
     origins = jnp.broadcast_to(jnp.asarray((0.5, 0.5, 0.0)), (4, 3))
     directions = jnp.broadcast_to(jnp.asarray((0.0, 0.0, 1.0)), (4, 3))

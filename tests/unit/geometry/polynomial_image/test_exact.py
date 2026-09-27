@@ -11,7 +11,7 @@ from phydrax.geometry.polynomial_image import (
 )
 
 
-def test_sparse_rational_composition_proves_twisted_cubic_containment_only() -> None:
+def test_exact_scenario_1() -> None:
     map_support = SparsePolynomialSupport(
         ("t",),
         ("x", "y", "z"),
@@ -51,9 +51,6 @@ def test_sparse_rational_composition_proves_twisted_cubic_containment_only() -> 
     assert proof.claims.ideal_equality is EvidenceDisposition.NOT_ASSESSED
     assert proof.claims.real_geometry is EvidenceDisposition.NOT_ASSESSED
     assert proof.claims.topology is EvidenceDisposition.NOT_ASSESSED
-
-
-def test_nonzero_exact_composition_is_retained_as_rejection_evidence() -> None:
     map_support = SparsePolynomialSupport(
         ("t",),
         ("x",),

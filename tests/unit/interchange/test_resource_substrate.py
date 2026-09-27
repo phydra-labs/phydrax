@@ -221,7 +221,7 @@ def test_opened_resource_set_reads_from_admitted_directory_generation(
     assert payload == b"admitted"
 
 
-def test_external_archive_preflights_paths_and_reads_exact_members() -> None:
+def test_resource_substrate_scenario_1() -> None:
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", b"{}")
@@ -249,9 +249,6 @@ def test_external_archive_preflights_paths_and_reads_exact_members() -> None:
             limits=_archive_limits(),
         )
     assert caught.value.reason == "policy"
-
-
-def test_external_archive_counts_directory_entries_before_member_decode() -> None:
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w") as archive:
         archive.mkdir("one/")
@@ -277,6 +274,54 @@ def test_external_archive_counts_directory_entries_before_member_decode() -> Non
         )
 
     assert caught.value.reason == "limit"
+    limits = _resource_limits()
+    with pytest.raises(ResourceReadError):
+        decode_json_resource(
+            bounded_resource_from_bytes(b'{"value": 1, "value": 2}', limits=limits)
+        )
+
+    decoded = decode_json_resource(
+        bounded_resource_from_bytes(
+            json.dumps({"value": [1, 2, 3]}).encode(),
+            limits=limits,
+        )
+    )
+    assert decoded.value == {"value": [1, 2, 3]}
+    assert decoded.resource.manifest.observed_nodes == 5
+
+    with pytest.raises(ResourceReadError) as caught:
+        decode_xml_resource(
+            bounded_resource_from_bytes(
+                b'<!DOCTYPE data [<!ENTITY x "boom">]><data>&x;</data>',
+                limits=limits,
+            )
+        )
+    assert caught.value.reason == "policy"
+    limits = _resource_limits()
+    encoded = io.BytesIO()
+    np.save(encoded, np.arange(6, dtype=np.float64).reshape(2, 3), allow_pickle=False)
+    decoded = decode_npy_resource(
+        bounded_resource_from_bytes(encoded.getvalue(), limits=limits)
+    )
+    np.testing.assert_array_equal(decoded.value, np.arange(6).reshape(2, 3))
+    assert not decoded.value.flags.writeable
+
+    archive = io.BytesIO()
+    np.savez(archive, values=np.arange(4, dtype=np.int32))
+    decoded_archive = decode_npz_resource(
+        bounded_resource_from_bytes(archive.getvalue(), limits=limits),
+        expected_names=("values",),
+    )
+    np.testing.assert_array_equal(decoded_archive.arrays["values"], np.arange(4))
+
+    objects = io.BytesIO()
+    np.save(objects, np.asarray([{"unsafe": True}], dtype=object), allow_pickle=True)
+    with pytest.raises(ResourceReadError) as caught:
+        decode_npy_resource(
+            bounded_resource_from_bytes(objects.getvalue(), limits=limits),
+            limits=NumpyFormatLimits(max_container_bytes=1_000_000),
+        )
+    assert caught.value.reason == "policy"
 
 
 def test_external_archive_counts_headers_before_zipinfo_materialization(
@@ -361,60 +406,6 @@ def test_publication_exposes_only_complete_file_and_resource_set(tmp_path: Path)
     assert replacement.replaced_existing is True
     assert (bundle / "manifest.json").read_bytes() == b'{"generation": 2}'
     assert not (bundle / "data").exists()
-
-
-def test_document_decoders_reject_duplicate_json_and_xml_doctype() -> None:
-    limits = _resource_limits()
-    with pytest.raises(ResourceReadError):
-        decode_json_resource(
-            bounded_resource_from_bytes(b'{"value": 1, "value": 2}', limits=limits)
-        )
-
-    decoded = decode_json_resource(
-        bounded_resource_from_bytes(
-            json.dumps({"value": [1, 2, 3]}).encode(),
-            limits=limits,
-        )
-    )
-    assert decoded.value == {"value": [1, 2, 3]}
-    assert decoded.resource.manifest.observed_nodes == 5
-
-    with pytest.raises(ResourceReadError) as caught:
-        decode_xml_resource(
-            bounded_resource_from_bytes(
-                b'<!DOCTYPE data [<!ENTITY x "boom">]><data>&x;</data>',
-                limits=limits,
-            )
-        )
-    assert caught.value.reason == "policy"
-
-
-def test_numpy_decoders_preflight_pickle_and_preserve_read_only_arrays() -> None:
-    limits = _resource_limits()
-    encoded = io.BytesIO()
-    np.save(encoded, np.arange(6, dtype=np.float64).reshape(2, 3), allow_pickle=False)
-    decoded = decode_npy_resource(
-        bounded_resource_from_bytes(encoded.getvalue(), limits=limits)
-    )
-    np.testing.assert_array_equal(decoded.value, np.arange(6).reshape(2, 3))
-    assert not decoded.value.flags.writeable
-
-    archive = io.BytesIO()
-    np.savez(archive, values=np.arange(4, dtype=np.int32))
-    decoded_archive = decode_npz_resource(
-        bounded_resource_from_bytes(archive.getvalue(), limits=limits),
-        expected_names=("values",),
-    )
-    np.testing.assert_array_equal(decoded_archive.arrays["values"], np.arange(4))
-
-    objects = io.BytesIO()
-    np.save(objects, np.asarray([{"unsafe": True}], dtype=object), allow_pickle=True)
-    with pytest.raises(ResourceReadError) as caught:
-        decode_npy_resource(
-            bounded_resource_from_bytes(objects.getvalue(), limits=limits),
-            limits=NumpyFormatLimits(max_container_bytes=1_000_000),
-        )
-    assert caught.value.reason == "policy"
 
 
 def test_hdf5_inspection_and_reference_admission(tmp_path: Path) -> None:

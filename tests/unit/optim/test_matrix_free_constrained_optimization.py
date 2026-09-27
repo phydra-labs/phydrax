@@ -88,7 +88,7 @@ def test_primal_dual_newton_krylov_solves_mixed_constraints_without_jacobians(
     assert result.certificate.inequality_sources == ("constraint:1:0:upper",)
 
 
-def test_primal_dual_canonical_layout_includes_parameter_bounds() -> None:
+def test_primal_dual_contracts() -> None:
     problem = phx.optim.MinimizationProblem(
         lambda parameters, _: jnp.sum((parameters - 2.0) ** 2),
         bounds=phx.optim.Bounds(-jnp.inf, 1.0),
@@ -118,53 +118,6 @@ def test_primal_dual_canonical_layout_includes_parameter_bounds() -> None:
     assert result.certificate.dual_feasibility < 1e-7
     # ty: ignore[unresolved-attribute]
     assert result.certificate.complementarity < 1e-7
-
-
-def test_primal_dual_eager_and_filtered_jit_agree_with_large_step_limit() -> None:
-    problem = phx.optim.MinimizationProblem(
-        lambda parameters, target: jnp.sum((parameters - target) ** 2),
-        bounds=phx.optim.Bounds(-jnp.inf, 1.0),
-        problem_id="compiled-primal-dual",
-    )
-    method = phx.optim.PrimalDualInteriorPoint(
-        mode="matrix-free-centered",
-    )
-    termination = _termination(steps=100_000)
-
-    def solve(target: Any) -> Any:
-        return phx.optim.minimize(
-            problem,
-            jnp.array([0.0]),
-            method=method,
-            termination=termination,
-            args=target,
-        )
-
-    eager = solve(jnp.array(2.0))
-    compiled = eqx.filter_jit(solve)(jnp.array(2.0))
-
-    np.testing.assert_allclose(compiled.parameters, eager.parameters, atol=2e-6)
-    np.testing.assert_allclose(
-        compiled.certificate.stationarity_residual,
-        eager.certificate.stationarity_residual,
-        atol=2e-6,
-    )
-    assert (
-        int(compiled.status)
-        == int(eager.status)
-        == int(phx.optim.OptimizationStatus.SUCCESS)
-    )
-    assert int(compiled.diagnostics.iterations) == int(eager.diagnostics.iterations)
-    assert int(compiled.diagnostics.setup_refreshes) == 1
-    assert int(compiled.diagnostics.numeric_refreshes) == int(
-        eager.diagnostics.numeric_refreshes
-    )
-    assert int(compiled.diagnostics.numeric_refreshes) == (
-        int(compiled.diagnostics.linear_solves) + 1
-    )
-
-
-def test_primal_dual_filtered_jit_supports_function_operator_preconditioner() -> None:
     dtype = jnp.asarray(0.0).dtype
     kkt_space = phx.linalg.BlockSpace(
         (
@@ -213,9 +166,6 @@ def test_primal_dual_filtered_jit_supports_function_operator_preconditioner() ->
     np.testing.assert_allclose(result.parameters, jnp.array([1.0]), atol=2e-6)
     assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
     assert result.diagnostics.numeric_refreshes == (result.diagnostics.linear_solves + 1)
-
-
-def test_primal_dual_final_certificate_promotes_exhausted_budget_to_success() -> None:
     equality = phx.optim.NonlinearConstraint(
         lambda parameters, _: parameters,
         lower=1.0,
@@ -247,9 +197,6 @@ def test_primal_dual_final_certificate_promotes_exhausted_budget_to_success() ->
     assert result.certificate.primal_feasibility <= 1e-7
     # ty: ignore[unresolved-attribute]
     assert result.certificate.dual_feasibility <= 1e-7
-
-
-def test_primal_dual_handles_redundant_equalities_matrix_free() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda parameters, _: jnp.repeat(jnp.sum(parameters)[None], 2),
         lower=1.0,
@@ -272,9 +219,6 @@ def test_primal_dual_handles_redundant_equalities_matrix_free() -> None:
     np.testing.assert_allclose(result.parameters, jnp.array([2.0, -1.0]), atol=2e-6)
     assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
     assert result.diagnostics.primal_feasibility < 1e-7
-
-
-def test_primal_dual_reports_explicit_restoration_failure() -> None:
     impossible = phx.optim.NonlinearConstraint(
         lambda parameters, _: jnp.ones_like(parameters),
         lower=0.0,
@@ -306,6 +250,50 @@ def test_primal_dual_reports_explicit_restoration_failure() -> None:
         # ty: ignore[unresolved-attribute]
         result.certificate.stationarity_residual,
         jnp.array([0.0]),
+    )
+
+
+def test_primal_dual_eager_and_filtered_jit_agree_with_large_step_limit() -> None:
+    problem = phx.optim.MinimizationProblem(
+        lambda parameters, target: jnp.sum((parameters - target) ** 2),
+        bounds=phx.optim.Bounds(-jnp.inf, 1.0),
+        problem_id="compiled-primal-dual",
+    )
+    method = phx.optim.PrimalDualInteriorPoint(
+        mode="matrix-free-centered",
+    )
+    termination = _termination(steps=100_000)
+
+    def solve(target: Any) -> Any:
+        return phx.optim.minimize(
+            problem,
+            jnp.array([0.0]),
+            method=method,
+            termination=termination,
+            args=target,
+        )
+
+    eager = solve(jnp.array(2.0))
+    compiled = eqx.filter_jit(solve)(jnp.array(2.0))
+
+    np.testing.assert_allclose(compiled.parameters, eager.parameters, atol=2e-6)
+    np.testing.assert_allclose(
+        compiled.certificate.stationarity_residual,
+        eager.certificate.stationarity_residual,
+        atol=2e-6,
+    )
+    assert (
+        int(compiled.status)
+        == int(eager.status)
+        == int(phx.optim.OptimizationStatus.SUCCESS)
+    )
+    assert int(compiled.diagnostics.iterations) == int(eager.diagnostics.iterations)
+    assert int(compiled.diagnostics.setup_refreshes) == 1
+    assert int(compiled.diagnostics.numeric_refreshes) == int(
+        eager.diagnostics.numeric_refreshes
+    )
+    assert int(compiled.diagnostics.numeric_refreshes) == (
+        int(compiled.diagnostics.linear_solves) + 1
     )
 
 

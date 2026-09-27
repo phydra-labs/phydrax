@@ -31,7 +31,7 @@ def _component(matrix: Any, name: Any) -> Any:
     )
 
 
-def test_selected_full_parity_and_noninvasive_hierarchical_probe() -> None:
+def test_network_scenario_1() -> None:
     through = _component([[0.0, 1.0], [1.0, 0.0]], "through")
     inner = ScatteringNetwork(
         (ScatteringInstance("a", through), ScatteringInstance("b", through)),
@@ -56,9 +56,6 @@ def test_selected_full_parity_and_noninvasive_hierarchical_probe() -> None:
     assert bool(result.diagnostics.successful)
     assert result.probe_ids == ("nested/middle",)
     assert jnp.allclose(result.external_outgoing[:, 0], jnp.asarray([0.0, 1.0]))
-
-
-def test_unit_gain_closed_loop_reports_singular_without_regularization() -> None:
     reflector = _component([[1.0]], "reflector")
     matched = _component([[0.0]], "matched")
     network = ScatteringNetwork(
@@ -75,9 +72,6 @@ def test_unit_gain_closed_loop_reports_singular_without_regularization() -> None
     prepared = prepare_scattering_network(network, jnp.asarray(1.0))
     result = solve_scattering_network(prepared, jnp.asarray([[1.0]]))
     assert int(result.diagnostics.status) == int(ScatteringNetworkStatus.SINGULAR)
-
-
-def test_scattering_rhs_resource_envelope_is_enforced_before_allocation() -> None:
     through = _component([[0.0, 1.0], [1.0, 0.0]], "through")
     network = ScatteringNetwork(
         (ScatteringInstance("device", through),),

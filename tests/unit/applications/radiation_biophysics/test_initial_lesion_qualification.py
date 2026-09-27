@@ -235,9 +235,7 @@ def _form_prediction(
     )
 
 
-def test_history_coverage_preserves_reported_zeros_without_inventing_missing_zeros() -> (
-    None
-):
+def test_initial_lesion_qualification_scenario_1() -> None:
     profile = _profile()
     coverage = profile.coverage(("OH",), (0.0, 1.0))
 
@@ -246,6 +244,65 @@ def test_history_coverage_preserves_reported_zeros_without_inventing_missing_zer
     assert profile.histories[2] not in coverage.zero_chemical_histories
     assert coverage.missing_references == ("dosimetry", "transport", "chemical-G")
     assert not coverage.complete
+    profile = _profile()
+    assay = rad.PlasmidGelAssay(
+        np.eye(3),
+        np.zeros(3),
+        _reference("bound-gel-law"),
+        calibration_covariance=np.zeros((12, 12)),
+    )
+    calibration = _gel("day-cal", "tuple-zero", "bound-calibration")
+    locked = _gel("day-locked", "tuple-hit", "bound-locked")
+    evaluation = rad.evaluate_plasmid_gel(
+        assay, locked, _form_prediction(profile, locked)
+    )
+    stages = tuple(
+        rad.RadiationStageEvidence(
+            stage,
+            (f"{stage}-condition",),
+            (1.0,),
+            (1.0,),
+            (0.1,),
+            GRAY,
+            _reference(
+                f"{stage}-evidence",
+                commercial_use_permitted=stage != "dosimetry",
+            ),
+            "external-reference",
+            2.0,
+            (
+                "unrelated-history-profile"
+                if stage == "transport"
+                else profile.profile_id,
+            ),
+        )
+        for stage in (
+            "dosimetry",
+            "transport",
+            "chemical-G",
+            "target-reactions",
+            "lesion-yields",
+        )
+    )
+    assessment = rad.assess_radiation_initial_lesions(
+        profile,
+        calibration,
+        locked,
+        evaluation,
+        stages,
+        required_species_ids=("OH",),
+        required_sample_times=(0.0, 1.0),
+        campaign=_campaign(),
+        claim=_claim(),
+        maximum_day_macro_standardized_rms=2.0,
+        commercial_use=True,
+    )
+
+    assert "history-profile-stage-binding:transport" in assessment.missing_prerequisites
+    assert any(
+        item.startswith("stage-rights:dosimetry:")
+        for item in assessment.missing_prerequisites
+    )
 
 
 def test_gel_observation_law_propagates_calibration_and_rejects_nonprobabilities() -> (
@@ -502,67 +559,3 @@ def test_staged_assessment_binds_history_and_blocks_missing_calibration_uncertai
     )
     assert failed.status == "failed"
     assert "irradiation-day-leakage" in failed.failed_checks
-
-
-def test_domain_stage_evidence_requires_profile_lineage_and_requested_use_rights() -> (
-    None
-):
-    profile = _profile()
-    assay = rad.PlasmidGelAssay(
-        np.eye(3),
-        np.zeros(3),
-        _reference("bound-gel-law"),
-        calibration_covariance=np.zeros((12, 12)),
-    )
-    calibration = _gel("day-cal", "tuple-zero", "bound-calibration")
-    locked = _gel("day-locked", "tuple-hit", "bound-locked")
-    evaluation = rad.evaluate_plasmid_gel(
-        assay, locked, _form_prediction(profile, locked)
-    )
-    stages = tuple(
-        rad.RadiationStageEvidence(
-            stage,
-            (f"{stage}-condition",),
-            (1.0,),
-            (1.0,),
-            (0.1,),
-            GRAY,
-            _reference(
-                f"{stage}-evidence",
-                commercial_use_permitted=stage != "dosimetry",
-            ),
-            "external-reference",
-            2.0,
-            (
-                "unrelated-history-profile"
-                if stage == "transport"
-                else profile.profile_id,
-            ),
-        )
-        for stage in (
-            "dosimetry",
-            "transport",
-            "chemical-G",
-            "target-reactions",
-            "lesion-yields",
-        )
-    )
-    assessment = rad.assess_radiation_initial_lesions(
-        profile,
-        calibration,
-        locked,
-        evaluation,
-        stages,
-        required_species_ids=("OH",),
-        required_sample_times=(0.0, 1.0),
-        campaign=_campaign(),
-        claim=_claim(),
-        maximum_day_macro_standardized_rms=2.0,
-        commercial_use=True,
-    )
-
-    assert "history-profile-stage-binding:transport" in assessment.missing_prerequisites
-    assert any(
-        item.startswith("stage-rights:dosimetry:")
-        for item in assessment.missing_prerequisites
-    )

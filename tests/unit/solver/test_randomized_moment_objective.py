@@ -44,7 +44,7 @@ def _batch(component: Any, target: Any, left: Any, right: Any = None) -> Any:
     )
 
 
-def test_randomized_moment_u_statistic_and_plugin_have_declared_values() -> None:
+def test_randomized_moment_objective_scenario_1() -> None:
     component, condition, target, source, functions = _problem()
     batch = _batch(component, target, (0.0, 1.0, 0.0, 1.0))
     unbiased = phx.terms.RandomizedMomentPenalty(
@@ -71,9 +71,6 @@ def test_randomized_moment_u_statistic_and_plugin_have_declared_values() -> None
     assert jnp.allclose(diagnostics.plug_in_moment_norm, 0.5, atol=1e-12)
     assert diagnostics.passed
     assert len(diagnostics.integration_diagnostics) == 4
-
-
-def test_randomized_moment_independent_product_uses_independent_group_mean() -> None:
     component, condition, target, source, functions = _problem()
     batch = _batch(
         component,
@@ -89,31 +86,6 @@ def test_randomized_moment_independent_product_uses_independent_group_mean() -> 
     )
 
     assert jnp.allclose(objective.loss(functions, batch=batch), 0.125, atol=1e-12)
-
-
-def test_moment_penalty_rejects_resampled_stochastic_integration() -> None:
-    _component, condition, _target, source, _functions = _problem()
-
-    with pytest.raises(ValueError, match="RandomizedMomentPenalty"):
-        phx.terms.MomentPenalty(condition, source)
-
-
-def test_fixed_random_realization_remains_an_explicit_moment_objective() -> None:
-    component, condition, target, source, functions = _problem()
-    realization = phx.integration.materialize(
-        target,
-        source.plan,
-        key=jr.key(1),
-    )
-    objective = phx.terms.MomentPenalty(
-        condition,
-        phx.integration.fixed(realization),
-    )
-
-    assert jnp.isfinite(objective.loss(functions))
-
-
-def test_randomized_moment_requires_random_per_step_source() -> None:
     component, condition, _target, _source, _functions = _problem()
     deterministic = phx.integration.per_step(
         phx.integration.mean_over(component),
@@ -122,9 +94,6 @@ def test_randomized_moment_requires_random_per_step_source() -> None:
 
     with pytest.raises(ValueError, match="randomized integration plan"):
         phx.terms.RandomizedMomentPenalty(condition, deterministic)
-
-
-def test_randomized_moment_batch_requires_two_equal_groups() -> None:
     component, _condition, target, _source, _functions = _problem()
     realization = _realization(component, target, 0.5)
 
@@ -135,9 +104,6 @@ def test_randomized_moment_batch_requires_two_equal_groups() -> None:
             (realization, realization),
             (realization, realization, realization),
         )
-
-
-def test_randomized_moment_precision_widens_and_nests_integration_evidence() -> None:
     _component, condition, _target, source, functions = _problem()
     precision = phx.integration.IntegrationPrecisionPolicy(
         evaluation_dtype="float32",
@@ -156,3 +122,19 @@ def test_randomized_moment_precision_widens_and_nests_integration_evidence() -> 
     assert diagnostics.objective.dtype == jnp.float64
     assert dict(diagnostics.precision_evidence.observed)["accumulation"] == "float64"
     assert len(diagnostics.precision_evidence.children) == 4
+    _component, condition, _target, source, _functions = _problem()
+
+    with pytest.raises(ValueError, match="RandomizedMomentPenalty"):
+        phx.terms.MomentPenalty(condition, source)
+    component, condition, target, source, functions = _problem()
+    realization = phx.integration.materialize(
+        target,
+        source.plan,
+        key=jr.key(1),
+    )
+    objective = phx.terms.MomentPenalty(
+        condition,
+        phx.integration.fixed(realization),
+    )
+
+    assert jnp.isfinite(objective.loss(functions))

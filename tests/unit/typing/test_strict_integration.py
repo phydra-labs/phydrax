@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import copy
-from typing import Any
+import threading
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -15,6 +18,14 @@ from phydrax._model._structure import (
     pack_model_array_tree,
 )
 from phydrax.equations import ChemicalComponentCatalog
+from tests._support.assertions import assert_tree_equal
+
+
+pytestmark = pytest.mark.strict_jax
+
+
+if TYPE_CHECKING:
+    from phydrax.typing import Float32 as CheckerOnlyFloat
 
 
 class NodeDim(pt.Dim, minimum=1):
@@ -23,6 +34,13 @@ class NodeDim(pt.Dim, minimum=1):
 
 class ComponentDim(pt.Dim):
     pass
+
+
+class ElementDim(pt.Dim):
+    pass
+
+
+type Basis = Literal["nodal", "modal"]
 
 
 class Field(StrictModule):
@@ -71,9 +89,38 @@ class Concrete(AbstractOptedIn):
     values: pt.Float64[NodeDim]
 
 
-def test_construction_accepts_and_refuses_structural_contracts() -> None:
-    field = Field(jnp.zeros((3,)), 3)
+class Catalog(StrictModule):
+    __strict_contract__ = True
 
+    names: pt.Identifiers[ComponentDim] = eqx.field(static=True)
+    masses: pt.Float64[ComponentDim]
+    composition: pt.Int32[ElementDim, ComponentDim]
+    basis: Basis = eqx.field(static=True)
+    note: str = eqx.field(static=True)
+    count: pt.Size[ComponentDim] = eqx.field(static=True)
+
+
+def _catalog(
+    *,
+    names: tuple[str, ...] = ("h2", "o2"),
+    masses: jax.Array | None = None,
+    composition: jax.Array | None = None,
+    basis: Basis = "nodal",
+    note: str = "free text is static-only",
+    count: int = 2,
+) -> Catalog:
+    if masses is None:
+        masses = jnp.asarray((2.0, 32.0))
+    if composition is None:
+        composition = jnp.asarray(((2, 0), (0, 2)), dtype=jnp.int32)
+    return Catalog(names, masses, composition, basis, note, count)
+
+
+@pytest.mark.filterwarnings("ignore:A JAX array is being set as static")
+def test_construction_fails_in_declaration_order_and_keeps_literal_runtime_types() -> (
+    None
+):
+    field = Field(jnp.zeros((3,)), 3)
     assert field.count == 3
     with pytest.raises(ValueError):
         Field(jnp.zeros((3,)), 4)
@@ -83,93 +130,93 @@ def test_construction_accepts_and_refuses_structural_contracts() -> None:
         # ty: ignore[invalid-argument-type]
         Field(np.zeros((3,)), 3)
 
-
-def test_structural_checks_add_no_equations_and_no_host_transfers() -> None:
-    def build(opted: Any) -> Any:
-        def run(values: Any) -> Any:
-            module = Field(values, 3) if opted else Twin(values, 3)
-            return module.values
-
-        return run
-
-    opted = jax.make_jaxpr(build(True))(jnp.zeros((3,)))
-    twin = jax.make_jaxpr(build(False))(jnp.zeros((3,)))
-    assert len(opted.jaxpr.eqns) == len(twin.jaxpr.eqns) == 0
-    with jax.transfer_guard_device_to_host("disallow"):
-        Field(jnp.zeros((3,)), 3)
-
-
-def test_leaves_and_static_structure_match_an_unchecked_twin() -> None:
-    values = jnp.arange(3.0)
-    opted = jax.tree_util.tree_flatten(Field(values, 3))
-    twin = jax.tree_util.tree_flatten(Twin(values, 3))
-
-    assert [leaf.shape for leaf in opted[0]] == [leaf.shape for leaf in twin[0]]
-    assert opted[1].num_leaves == twin[1].num_leaves
+    pt.validate(_catalog())
+    with pytest.raises(ValueError, match="masses"):
+        _catalog(masses=jnp.asarray((2.0, 32.0, 18.0)))
+    with pytest.raises(ValueError, match="count"):
+        _catalog(count=3)
+    with pytest.raises(TypeError, match="masses"):
+        _catalog(masses=jnp.asarray((2, 32), dtype=jnp.int32), count=3)
+    with pytest.raises(TypeError, match="basis"):
+        # ty: ignore[invalid-argument-type]
+        _catalog(basis=np.str_("nodal"))
+    with pytest.raises(ValueError, match="basis"):
+        # ty: ignore[invalid-argument-type]
+        _catalog(basis="spectral")
 
 
-def test_owner_check_init_runs_before_structural_checks() -> None:
-    with pytest.raises(RuntimeError, match="owner invariant"):
-        Checked(jnp.asarray(1.0))
+def test_strict_integration_scenario_1() -> None:
+    class Plain(StrictModule):
+        masses: pt.Float64[ComponentDim]
 
+    with pytest.raises(TypeError):
+        pt.validate(Plain(jnp.zeros((1,))))
+    with pytest.raises(TypeError):
+        pt.validate(object())
 
-def test_the_first_failing_field_in_declaration_order_is_reported() -> None:
+    class EmptyOptIn(StrictModule):
+        __strict_contract__ = True
+
+        note: str = eqx.field(static=True)
+
+    with pytest.raises(TypeError):
+        EmptyOptIn("x")
+
+    DirectAnnotation = type(
+        "DirectAnnotation",
+        (StrictModule,),
+        {
+            "__module__": __name__,
+            "__strict_contract__": True,
+            "__annotations__": {"values": pt.Float64[ComponentDim]},
+        },
+    )
+    # ty: ignore[too-many-positional-arguments]
+    pt.validate(DirectAnnotation(jnp.zeros((2,))))
+
+    class Hidden(StrictModule):
+        __strict_contract__ = True
+
+        values: CheckerOnlyFloat[ComponentDim]
+
+    with pytest.raises(TypeError, match="Hidden.values"):
+        Hidden(jnp.zeros((1,), dtype=jnp.float32))
+
+    class Misplaced(StrictModule):
+        __strict_contract__ = True
+
+        values: list[pt.Float64[ComponentDim]] = eqx.field(static=True)
+
+    with pytest.raises(TypeError, match="Misplaced.values"):
+        Misplaced([])
+
+    class AbstractHolder(StrictModule):
+        __strict_contract__ = True
+
+        masses: pt.Float64[ComponentDim]
+
+    class Holder(AbstractHolder):
+        count: pt.Size[ComponentDim] = eqx.field(static=True)
+
+    pt.validate(Holder(jnp.zeros((2,)), 2))
+    with pytest.raises(ValueError):
+        Holder(jnp.zeros((2,)), 3)
     with pytest.raises(ValueError, match="right"):
         Pair(jnp.zeros((2,)), jnp.zeros((3,)))
     with pytest.raises(TypeError, match="left"):
         Pair(jnp.zeros((2,), dtype=jnp.int32), jnp.zeros((5, 5, 5)))
-
-
-def test_failed_union_alternatives_roll_back_their_bindings() -> None:
     pair = Pair(jnp.zeros((2,)), jnp.zeros((2, 4)))
-
     assert pair.right.shape == (2, 4)
 
-
-def test_nested_modules_bind_dimensions_in_independent_scopes() -> None:
     outer = Outer(Field(jnp.zeros((5,)), 5), jnp.zeros((2,)))
-
     pt.validate(outer)
 
-
-def test_abstract_opt_in_is_inherited_by_concrete_modules() -> None:
     Concrete(jnp.zeros((2,)))
     with pytest.raises(TypeError):
         Concrete(jnp.zeros((2,), dtype=jnp.int32))
     with pytest.raises(TypeError):
         # ty: ignore[missing-argument]
         AbstractOptedIn()
-
-
-def test_transformations_do_not_validate_but_explicit_validation_does() -> None:
-    field = Field(jnp.zeros((3,)), 3)
-    widened = eqx.tree_at(lambda module: module.values, field, jnp.zeros((4,)))
-    doubled = jax.tree_util.tree_map(lambda leaf: 2.0 * leaf, field)
-
-    pt.validate(doubled)
-    with pytest.raises(ValueError):
-        pt.validate(widened)
-    outer = Outer(Field(jnp.zeros((5,)), 5), jnp.zeros((2,)))
-    with pytest.raises(ValueError, match="Field.values"):
-        pt.validate(eqx.tree_at(lambda module: module.inner, outer, widened))
-
-
-def test_filter_jit_and_filter_vmap_check_at_trace_time() -> None:
-    @eqx.filter_jit
-    def build(values: Any) -> Any:
-        return Field(values, 3)
-
-    assert build(jnp.zeros((3,))).values.shape == (3,)
-    with pytest.raises(ValueError):
-        build(jnp.zeros((4,)))
-
-    stacked = eqx.filter_vmap(lambda values: Field(values, 3))(jnp.zeros((2, 3)))
-    assert stacked.values.shape == (2, 3)
-    with pytest.raises(ValueError):
-        pt.validate(stacked)
-
-
-def test_array_recipe_round_trip_validates_the_restored_model() -> None:
     catalog = ChemicalComponentCatalog(
         ("H2", "O2"),
         np.asarray((2.016, 31.998)),
@@ -183,11 +230,83 @@ def test_array_recipe_round_trip_validates_the_restored_model() -> None:
     assert restored.catalog_id == catalog.catalog_id
     np.testing.assert_array_equal(restored.molar_masses, catalog.molar_masses)
 
-    # A self-consistent recipe whose mass extent disagrees with the static
-    # component count restores structurally and is refused by its contract.
     tampered_recipe = copy.deepcopy(recipe)
     tampered_recipe["fields"]["molar_masses"]["shape"] = [3]
     tampered_arrays = dict(arrays)
     tampered_arrays["model/000000"] = np.ones((3,), dtype=np.float64)
     with pytest.raises(ValueError, match="molar_masses"):
         model_from_array_recipe(tampered_recipe, tampered_arrays, prefix="model")
+
+
+def test_structural_validation_has_no_numerical_equations_or_extra_leaves() -> None:
+    def build_opted(values: jax.Array) -> jax.Array:
+        return Field(values, 3).values
+
+    def build_twin(values: jax.Array) -> jax.Array:
+        return Twin(values, 3).values
+
+    opted_jaxpr = jax.make_jaxpr(build_opted)(jnp.zeros((3,)))
+    twin_jaxpr = jax.make_jaxpr(build_twin)(jnp.zeros((3,)))
+    assert len(opted_jaxpr.jaxpr.eqns) == len(twin_jaxpr.jaxpr.eqns) == 0
+
+    values = jnp.arange(3.0)
+    opted_leaves, opted_tree = jax.tree_util.tree_flatten(Field(values, 3))
+    twin_leaves, twin_tree = jax.tree_util.tree_flatten(Twin(values, 3))
+    assert [leaf.shape for leaf in opted_leaves] == [leaf.shape for leaf in twin_leaves]
+    assert opted_tree.num_leaves == twin_tree.num_leaves
+
+    with jax.transfer_guard_device_to_host("disallow"):
+        Field(jnp.zeros((3,)), 3)
+    with pytest.raises(RuntimeError, match="owner invariant"):
+        Checked(jnp.asarray(1.0))
+
+
+def test_transformations_require_explicit_validation_and_trace_at_construction() -> None:
+    field = Field(jnp.zeros((3,)), 3)
+    widened = eqx.tree_at(lambda module: module.values, field, jnp.zeros((4,)))
+    doubled = jax.tree_util.tree_map(lambda leaf: 2.0 * leaf, field)
+    pt.validate(doubled)
+    with pytest.raises(ValueError):
+        pt.validate(widened)
+
+    outer = Outer(Field(jnp.zeros((5,)), 5), jnp.zeros((2,)))
+    with pytest.raises(ValueError, match="Field.values"):
+        pt.validate(eqx.tree_at(lambda module: module.inner, outer, widened))
+
+    @eqx.filter_jit
+    def build(values: jax.Array) -> Field:
+        return Field(values, 3)
+
+    assert build(jnp.zeros((3,))).values.shape == (3,)
+    with pytest.raises(ValueError):
+        build(jnp.zeros((4,)))
+
+    stacked = eqx.filter_vmap(lambda values: Field(values, 3))(jnp.zeros((2, 3)))
+    assert stacked.values.shape == (2, 3)
+    with pytest.raises(ValueError):
+        pt.validate(stacked)
+
+
+def test_concurrent_first_construction_compiles_one_consistent_plan() -> None:
+    class Concurrent(StrictModule):
+        __strict_contract__ = True
+
+        masses: pt.Float64[ComponentDim]
+
+    values = jnp.zeros((2,))
+    errors: list[Exception] = []
+
+    def run() -> None:
+        try:
+            Concurrent(values)
+        except Exception as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    threads = [threading.Thread(target=run) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+    assert_tree_equal(Concurrent(values), Concurrent(values))

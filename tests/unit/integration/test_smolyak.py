@@ -21,7 +21,7 @@ def _product_intervals(dimension: Any) -> Any:
     return phx.domain.ProductDomain(*factors)
 
 
-def test_conventional_sparse_grid_growth_and_diagnostics_in_eight_dimensions() -> None:
+def test_smolyak_scenario_1() -> None:
     domain = _product_intervals(8)
     plan = phx.integration.SparseGridPlan(8, 3)
     realization = phx.integration.materialize(
@@ -40,9 +40,6 @@ def test_conventional_sparse_grid_growth_and_diagnostics_in_eight_dimensions() -
     assert estimate.diagnostics.num_terms == 45
     assert estimate.diagnostics.axis_rules == ("clenshaw-curtis",) * 8
     assert "rules-clenshaw-curtis" in estimate.provenance.realization
-
-
-def test_sparse_plan_accepts_real_anisotropy_and_validates_rule_contract() -> None:
     plan = phx.integration.SparseGridPlan(
         3,
         4,
@@ -64,9 +61,31 @@ def test_sparse_plan_accepts_real_anisotropy_and_validates_rule_contract() -> No
             2,
             axis_rules=("clenshaw-curtis",),
         )
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
 
+    with pytest.raises(TypeError, match="requires a probability factor"):
+        phx.integration.materialize(
+            phx.integration.over(interval.component()),
+            phx.integration.SparseGridPlan(1, 2, axis_rules="gauss-hermite"),
+        )
+    with pytest.raises(ValueError, match="bounded probability support"):
+        phx.integration.materialize(
+            phx.integration.over(normal.component()),
+            phx.integration.SparseGridPlan(1, 2),
+        )
+    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    function = interval.Function("x")(
+        lambda x: jnp.stack((x + 1j * x**2, x**4 - 2j * x**3))
+    )
+    realization = phx.integration.materialize(
+        phx.integration.over(interval.component()),
+        phx.integration.SparseGridPlan(1, 4),
+    )
 
-def test_gauss_hermite_integrates_shifted_normal_moments() -> None:
+    value = jax.jit(lambda: phx.integration.reduce(function, realization).value.data)()
+
+    assert jnp.allclose(value, jnp.asarray([2j / 3.0, 0.4 + 0j]), atol=1e-11)
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(2.0, 3.0),
         label="z",
@@ -83,9 +102,6 @@ def test_gauss_hermite_integrates_shifted_normal_moments() -> None:
     expected = jnp.asarray([1.0, 2.0, 13.0, 62.0])
     assert estimate.successful
     assert jnp.allclose(jnp.asarray(estimate.value.data), expected, atol=1e-11)
-
-
-def test_gauss_hermite_uses_lognormal_reference_transform() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.LogNormal(0.1, 0.2),
         label="z",
@@ -103,7 +119,7 @@ def test_gauss_hermite_uses_lognormal_reference_transform() -> None:
     )
 
 
-def test_mixed_physical_uniform_and_normal_axes_preserve_measure_semantics() -> None:
+def test_smolyak_scenario_2() -> None:
     x = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     u = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="u")
     z = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
@@ -125,9 +141,6 @@ def test_mixed_physical_uniform_and_normal_axes_preserve_measure_semantics() -> 
 
     assert estimate.successful
     assert estimate.value.data == pytest.approx(4.0, abs=1e-11)
-
-
-def test_gaussian_sparse_grid_supports_normalized_density_targets() -> None:
     probability = phx.domain.ProbabilityDomain(
         phx.uq.Normal(0.0, 1.0),
         label="z",
@@ -144,40 +157,6 @@ def test_gaussian_sparse_grid_supports_normalized_density_targets() -> None:
 
     assert estimate.successful
     assert estimate.value.data == pytest.approx(0.2, abs=1e-10)
-
-
-def test_sparse_grid_rejects_incompatible_factor_rule_pairs() -> None:
-    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
-
-    with pytest.raises(TypeError, match="requires a probability factor"):
-        phx.integration.materialize(
-            phx.integration.over(interval.component()),
-            phx.integration.SparseGridPlan(1, 2, axis_rules="gauss-hermite"),
-        )
-    with pytest.raises(ValueError, match="bounded probability support"):
-        phx.integration.materialize(
-            phx.integration.over(normal.component()),
-            phx.integration.SparseGridPlan(1, 2),
-        )
-
-
-def test_sparse_grid_preserves_complex_vector_outputs_under_jit_reduction() -> None:
-    interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    function = interval.Function("x")(
-        lambda x: jnp.stack((x + 1j * x**2, x**4 - 2j * x**3))
-    )
-    realization = phx.integration.materialize(
-        phx.integration.over(interval.component()),
-        phx.integration.SparseGridPlan(1, 4),
-    )
-
-    value = jax.jit(lambda: phx.integration.reduce(function, realization).value.data)()
-
-    assert jnp.allclose(value, jnp.asarray([2j / 3.0, 0.4 + 0j]), atol=1e-11)
-
-
-def test_builtin_probability_reference_transforms_round_trip() -> None:
     distributions = (
         phx.uq.Uniform(-2.0, 4.0),
         phx.uq.Normal(1.0, 3.0),

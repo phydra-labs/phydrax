@@ -48,7 +48,7 @@ def _operator(
     )
 
 
-def test_exact_low_rank_nystrom_action_matches_shifted_inverse_and_jit() -> None:
+def test_linalg_randomized_preconditioning_scenario_1() -> None:
     matrix = jnp.diag(jnp.asarray([4.0, 2.0, 0.0, 0.0]))
     operator = _operator(matrix)
     builder = la.RandomizedNystromPreconditionerBuilder(
@@ -72,9 +72,6 @@ def test_exact_low_rank_nystrom_action_matches_shifted_inverse_and_jit() -> None
     assert action.diagnostics.setup_matvec_count == 2
     assert bool(action.diagnostics.valid)
     assert action.properties.certifies("positive_definite")
-
-
-def test_randomized_nystrom_preconditions_native_pcg_without_changing_solution() -> None:
     diagonal = jnp.asarray([20.0, 8.0, 2.0, 0.5])
     base = _operator(jnp.diag(diagonal), operator_id="nystrom-pcg-base")
     shifted = _operator(
@@ -118,9 +115,40 @@ def test_randomized_nystrom_preconditions_native_pcg_without_changing_solution()
     assert result.diagnostics.iterations < unpreconditioned.diagnostics.iterations
     assert result.provenance.preconditioner_plan_id is not None
     assert result.provenance.preconditioner_apply_workspace_bytes_per_rhs > 0
+    operator = _operator(jnp.diag(jnp.arange(1.0, 7.0)))
+    builder = la.RandomizedNystromPreconditionerBuilder(
+        2,
+        oversampling=3,
+        shift=0.5,
+    )
+    cost = builder.cost_for(operator)
 
+    assert cost.accepted
+    assert cost.setup_matvec_count == 5
+    assert cost.storage_bytes > 0
+    assert cost.preparation_workspace_bytes > cost.storage_bytes
+    with pytest.raises(ValueError, match="rank"):
+        la.RandomizedNystromPreconditionerBuilder(0)
+    with pytest.raises(ValueError, match="shift"):
+        la.RandomizedNystromPreconditionerBuilder(1, shift=0.0)
+    operator = _operator(jnp.eye(2))
+    with pytest.raises(ValueError, match=r"rank \+ oversampling"):
+        la.RandomizedNystromPreconditionerBuilder(2, oversampling=1).cost_for(operator)
 
-def test_numeric_refresh_reuses_or_redraws_probes_without_shape_changes() -> None:
+    uncertified = la.DenseLinearOperator(jnp.eye(2))
+    with pytest.raises(ValueError, match="self-adjointness"):
+        la.RandomizedNystromPreconditionerBuilder(
+            1,
+            oversampling=1,
+        ).cost_for(uncertified)
+
+    indefinite = _operator(jnp.diag(jnp.asarray([1.0, -0.5])))
+    with pytest.raises(RuntimeError, match="indefinite"):
+        la.RandomizedNystromPreconditionerBuilder(
+            1,
+            oversampling=1,
+            shift=0.1,
+        ).prepare(indefinite, materialization=la.MaterializationPolicy())
     first = _operator(jnp.diag(jnp.asarray([5.0, 3.0, 1.0, 0.2])))
     second = _operator(
         jnp.diag(jnp.asarray([6.0, 2.0, 0.8, 0.1])),
@@ -186,43 +214,3 @@ def test_complex_hermitian_nystrom_action_is_finite_and_self_adjoint() -> None:
         rtol=1e-6,
         atol=1e-7,
     )
-
-
-def test_randomized_nystrom_cost_reports_fixed_sketch_work() -> None:
-    operator = _operator(jnp.diag(jnp.arange(1.0, 7.0)))
-    builder = la.RandomizedNystromPreconditionerBuilder(
-        2,
-        oversampling=3,
-        shift=0.5,
-    )
-    cost = builder.cost_for(operator)
-
-    assert cost.accepted
-    assert cost.setup_matvec_count == 5
-    assert cost.storage_bytes > 0
-    assert cost.preparation_workspace_bytes > cost.storage_bytes
-
-
-def test_randomized_nystrom_rejects_invalid_configuration_and_operator_claims() -> None:
-    with pytest.raises(ValueError, match="rank"):
-        la.RandomizedNystromPreconditionerBuilder(0)
-    with pytest.raises(ValueError, match="shift"):
-        la.RandomizedNystromPreconditionerBuilder(1, shift=0.0)
-    operator = _operator(jnp.eye(2))
-    with pytest.raises(ValueError, match=r"rank \+ oversampling"):
-        la.RandomizedNystromPreconditionerBuilder(2, oversampling=1).cost_for(operator)
-
-    uncertified = la.DenseLinearOperator(jnp.eye(2))
-    with pytest.raises(ValueError, match="self-adjointness"):
-        la.RandomizedNystromPreconditionerBuilder(
-            1,
-            oversampling=1,
-        ).cost_for(uncertified)
-
-    indefinite = _operator(jnp.diag(jnp.asarray([1.0, -0.5])))
-    with pytest.raises(RuntimeError, match="indefinite"):
-        la.RandomizedNystromPreconditionerBuilder(
-            1,
-            oversampling=1,
-            shift=0.1,
-        ).prepare(indefinite, materialization=la.MaterializationPolicy())

@@ -1,8 +1,6 @@
-#
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
+from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 import equinox as eqx
 import jax
@@ -11,229 +9,129 @@ import pytest
 from phydrax._frozendict import frozendict
 
 
-class TestFrozenDict:
-    def test_init(self) -> None:
-        # Test initialization with dict
-        d = {"a": 1, "b": 2}
-        fd = frozendict(d)
-        assert fd["a"] == 1
-        assert fd["b"] == 2
+def test_frozendict_scenario_1() -> None:
+    expected = {"a": 1, "b": 2}
+    constructions = (
+        frozendict(expected),
+        frozendict(a=1, b=2),
+        frozendict([("a", 1), ("b", 2)]),
+        frozendict(frozendict(a=1, b=2)),
+    )
+    for value in constructions:
+        assert isinstance(value, Mapping)
+        assert dict(value) == expected
+        assert {**value} == expected
+        assert value.get("a") == 1
+        assert value.get("missing") is None
+        assert value.get("missing", 3) == 3
+        assert set(value.keys()) == {"a", "b"}
+        assert set(value.values()) == {1, 2}
+        assert set(value.items()) == {("a", 1), ("b", 2)}
+        assert len(value) == 2
+        assert "a" in value and "missing" not in value
+        assert set(iter(value)) == {"a", "b"}
 
-        # Test initialization with keyword arguments
-        fd = frozendict(a=1, b=2)
-        assert fd["a"] == 1
-        assert fd["b"] == 2
+    tuple_keys = frozendict({(1, 2): "a", (3, 4): "b"})
+    assert tuple_keys[(1, 2)] == "a"
+    assert tuple_keys[(3, 4)] == "b"
 
-        # Test initialization with items
-        fd = frozendict([("a", 1), ("b", 2)])
-        assert fd["a"] == 1
-        assert fd["b"] == 2
+    empty = frozendict()
+    assert not empty
+    assert list(empty.keys()) == list(empty.values()) == list(empty.items()) == []
+    assert hash(empty) == hash(frozenset())
+    value = frozendict(a=1, b=2)
+    with pytest.raises(TypeError):
+        value["a"] = 3
+    with pytest.raises(TypeError):
+        del value["a"]
+    with pytest.raises(TypeError):
+        value.clear()
+    with pytest.raises(TypeError):
+        value.pop("a")
+    with pytest.raises(TypeError):
+        value.popitem()
+    with pytest.raises(TypeError):
+        value.setdefault("c", 3)
+    with pytest.raises(TypeError):
+        value.update({"c": 3})
+    first = frozendict(a=1, b=2)
+    equal = frozendict(a=1, b=2)
+    different = frozendict(a=1, b=3)
+    assert first == equal == {"a": 1, "b": 2}
+    assert first != different
+    assert first != [("a", 1), ("b", 2)]
+    assert first != 42
+    assert hash(first) == hash(equal)
+    assert hash(first) != hash(different)
+    keyed = {first: "first", different: "different"}
+    assert keyed[equal] == "first"
+    assert keyed[different] == "different"
 
-        # Test initialization with another frozendict
-        fd1 = frozendict(a=1, b=2)
-        fd2 = frozendict(fd1)
-        assert fd2["a"] == 1
-        assert fd2["b"] == 2
+    nested = frozendict(a=1, b=frozendict(c=2, d=3))
+    assert nested["b"] == frozendict(c=2, d=3)
+    with pytest.raises(TypeError):
+        nested["b"]["c"] = 4
 
-    def test_immutability(self) -> None:
-        fd = frozendict(a=1, b=2)
+    unhashable = frozendict(a=[1, 2, 3], b=[4, 5, 6])
+    assert unhashable["a"] == [1, 2, 3]
+    with pytest.raises(TypeError):
+        hash(unhashable)
 
-        # Test that assignment raises TypeError
-        with pytest.raises(TypeError):
-            fd["a"] = 3
 
-        # Test that deletion raises TypeError
-        with pytest.raises(TypeError):
-            del fd["a"]
+def test_frozendict_scenario_2() -> None:
+    left = frozendict({"b": 2, "a": 1})
+    right = frozendict({"a": 1, "b": 2})
+    assert tuple(left) == ("a", "b")
+    assert left == right
+    assert jax.tree.structure(left) == jax.tree.structure(right)
+    assert jax.tree.leaves(left) == jax.tree.leaves(right)
 
-        # Test that clear raises TypeError
-        with pytest.raises(TypeError):
-            fd.clear()
+    boolean_key = frozendict({True: "value"})
+    integer_key = frozendict({1: "value"})
+    floating_key = frozendict({1.0: "value"})
+    assert tuple(boolean_key) == tuple(integer_key) == tuple(floating_key) == (1,)
+    assert jax.tree.structure(boolean_key) == jax.tree.structure(integer_key)
+    assert jax.tree.structure(integer_key) == jax.tree.structure(floating_key)
 
-        # Test that pop raises TypeError
-        with pytest.raises(TypeError):
-            fd.pop("a")
+    value = frozendict({"direction": 1.0, 3: 2.0, "offset": 3.0})
+    paths = [
+        jax.tree_util.keystr(path)
+        for path, _ in jax.tree_util.tree_flatten_with_path(value)[0]
+    ]
+    assert [path.rsplit("[", 1)[-1] for path in paths] == [
+        "3]",
+        "'direction']",
+        "'offset']",
+    ]
+    mapped = jax.tree.map(lambda item: 2.0 * item, value)
+    assert jax.tree.structure(mapped) == jax.tree.structure(value)
+    assert mapped == frozendict({"direction": 2.0, 3: 4.0, "offset": 6.0})
 
-        # Test that popitem raises TypeError
-        with pytest.raises(TypeError):
-            fd.popitem()
+    class CustomKey:
+        pass
 
-        # Test that setdefault raises TypeError
-        with pytest.raises(TypeError):
-            fd.setdefault("c", 3)
+    with pytest.raises(TypeError, match="canonical"):
+        frozendict({CustomKey(): 1})
+    with pytest.raises(ValueError, match="finite"):
+        frozendict({float("nan"): 1})
+    tree = {"metadata": frozendict(), "value": 1.0}
+    updated = eqx.tree_at(lambda item: item["value"], tree, 2.0)
+    assert jax.tree.structure(updated) == jax.tree.structure(tree)
+    assert eqx.tree_equal(updated, {"metadata": frozendict(), "value": 2.0})
 
-        # Test that update raises TypeError
-        with pytest.raises(TypeError):
-            fd.update({"c": 3})
 
-    def test_get(self) -> None:
-        fd = frozendict(a=1, b=2)
-        assert fd.get("a") == 1
-        assert fd.get("c") is None
-        assert fd.get("c", 3) == 3
+def test_generic_annotations_preserve_mapping_and_value_covariance() -> None:
+    def total(mapping: Mapping[str, int]) -> int:
+        return sum(mapping.values())
 
-    def test_keys_values_items(self) -> None:
-        fd = frozendict(a=1, b=2)
-        assert set(fd.keys()) == {"a", "b"}
-        assert set(fd.values()) == {1, 2}
-        assert set(fd.items()) == {("a", 1), ("b", 2)}
+    value: frozendict[str, int] = frozendict(a=1, b=2)
+    assert total(value) == 3
 
-    def test_len(self) -> None:
-        fd = frozendict(a=1, b=2)
-        assert len(fd) == 2
+    class Animal:
+        pass
 
-    def test_contains(self) -> None:
-        fd = frozendict(a=1, b=2)
-        assert "a" in fd
-        assert "c" not in fd
+    class Dog(Animal):
+        pass
 
-    def test_iter(self) -> None:
-        fd = frozendict(a=1, b=2)
-        keys = set()
-        for key in fd:
-            keys.add(key)
-        assert keys == {"a", "b"}
-
-    def test_hash(self) -> None:
-        fd1 = frozendict(a=1, b=2)
-        fd2 = frozendict(a=1, b=2)
-        fd3 = frozendict(a=1, b=3)
-
-        # Same content should have same hash
-        assert hash(fd1) == hash(fd2)
-
-        # Different content should have different hash
-        assert hash(fd1) != hash(fd3)
-
-        # Can be used as dict key
-        d = {fd1: "value1", fd3: "value2"}
-        assert d[fd1] == "value1"
-        assert d[fd2] == "value1"  # fd2 has same hash as fd1
-        assert d[fd3] == "value2"
-
-    def test_equality(self) -> None:
-        fd1 = frozendict(a=1, b=2)
-        fd2 = frozendict(a=1, b=2)
-        fd3 = frozendict(a=1, b=3)
-        d = {"a": 1, "b": 2}
-
-        # Same content should be equal
-        assert fd1 == fd2
-
-        # Different content should not be equal
-        assert fd1 != fd3
-
-        # Should be equal to a regular dict with same content
-        assert fd1 == d
-
-        # Should not be equal to non-mapping types
-        assert fd1 != [("a", 1), ("b", 2)]
-        assert fd1 != 42
-
-    def test_nested_frozendict(self) -> None:
-        # Test with nested frozendict
-        nested = frozendict(a=1, b=frozendict(c=2, d=3))
-        assert nested["b"]["c"] == 2
-        assert nested["b"]["d"] == 3
-
-        # Ensure nested frozendict is also immutable
-        with pytest.raises(TypeError):
-            nested["b"]["c"] = 4
-
-    def test_with_unhashable_values(self) -> None:
-        # Should work with unhashable values like lists
-        fd = frozendict(a=[1, 2, 3], b=[4, 5, 6])
-        assert fd["a"] == [1, 2, 3]
-
-        # But can't be hashed if values are unhashable
-        with pytest.raises(TypeError):
-            hash(fd)
-
-    def test_with_complex_keys(self) -> None:
-        # Test with tuple keys (which are hashable)
-        fd = frozendict({(1, 2): "a", (3, 4): "b"})
-        assert fd[(1, 2)] == "a"
-        assert fd[(3, 4)] == "b"
-
-    def test_equivalent_mappings_have_one_canonical_pytree_layout(self) -> None:
-        left = frozendict({"b": 2, "a": 1})
-        right = frozendict({"a": 1, "b": 2})
-
-        assert tuple(left) == ("a", "b")
-        assert left == right
-        assert jax.tree.structure(left) == jax.tree.structure(right)
-        assert jax.tree.leaves(left) == jax.tree.leaves(right)
-
-        boolean_key = frozendict({True: "value"})
-        integer_key = frozendict({1: "value"})
-        floating_key = frozendict({1.0: "value"})
-        assert tuple(boolean_key) == tuple(integer_key) == tuple(floating_key) == (1,)
-        assert jax.tree.structure(boolean_key) == jax.tree.structure(integer_key)
-        assert jax.tree.structure(integer_key) == jax.tree.structure(floating_key)
-
-    def test_leaf_key_paths_name_the_mapping_keys(self) -> None:
-        fd = frozendict({"direction": 1.0, 3: 2.0, "offset": 3.0})
-        paths = [
-            jax.tree_util.keystr(path)
-            for path, _ in jax.tree_util.tree_flatten_with_path(fd)[0]
-        ]
-
-        assert [path.rsplit("[", 1)[-1] for path in paths] == [
-            "3]",
-            "'direction']",
-            "'offset']",
-        ]
-        mapped = jax.tree.map(lambda value: 2.0 * value, fd)
-        assert jax.tree.structure(mapped) == jax.tree.structure(fd)
-        assert mapped == frozendict({"direction": 2.0, 3: 4.0, "offset": 6.0})
-
-    def test_noncanonical_key_kinds_are_rejected(self) -> None:
-        class CustomKey:
-            pass
-
-        with pytest.raises(TypeError, match="canonical"):
-            frozendict({CustomKey(): 1})
-        with pytest.raises(ValueError, match="finite"):
-            frozendict({float("nan"): 1})
-
-    def test_mapping_protocol(self) -> None:
-        # Test that frozendict implements the Mapping protocol
-        fd = frozendict(a=1, b=2)
-        assert isinstance(fd, Mapping)
-
-        # Test dict methods that should work with any Mapping
-        assert dict(fd) == {"a": 1, "b": 2}
-        assert {**fd} == {"a": 1, "b": 2}
-
-    def test_empty_frozendict(self) -> None:
-        fd = frozendict()
-        assert len(fd) == 0
-        assert list(fd.keys()) == []
-        assert list(fd.values()) == []
-        assert list(fd.items()) == []
-        assert hash(fd) == hash(frozenset())
-
-    def test_structural_update_preserves_empty_mapping_layout(self) -> None:
-        tree = {"metadata": frozendict(), "value": 1.0}
-        updated = eqx.tree_at(lambda item: item["value"], tree, 2.0)
-
-        assert jax.tree.structure(updated) == jax.tree.structure(tree)
-        assert eqx.tree_equal(updated, {"metadata": frozendict(), "value": 2.0})
-
-    def test_type_annotations(self) -> None:
-        # Test that type annotations work as expected
-        def takes_mapping(m: Mapping[str, int]) -> int:
-            return sum(m.values())
-
-        fd: frozendict[str, int] = frozendict(a=1, b=2)
-        assert takes_mapping(fd) == 3
-
-        # Test covariance of value type
-        class Animal:
-            pass
-
-        class Dog(Animal):
-            pass
-
-        fd_animals: frozendict[str, Animal] = frozendict(pet=Dog())
-        assert isinstance(fd_animals["pet"], Animal)
+    animals: frozendict[str, Animal] = frozendict(pet=Dog())
+    assert isinstance(animals["pet"], Animal)

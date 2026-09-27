@@ -29,7 +29,7 @@ def _polar_transition() -> Any:
     )
 
 
-def test_chart_transition_batches_derivatives_inverse_and_composition() -> None:
+def test_chart_metric_tensor_scenario_1() -> None:
     polar, cartesian, transition = _polar_transition()
     points = jnp.array([[2.0, 0.3], [1.5, -0.4]])
 
@@ -58,57 +58,6 @@ def test_chart_transition_batches_derivatives_inverse_and_composition() -> None:
     )
     with pytest.raises(ValueError, match="mismatched intermediate charts"):
         transition.compose(incompatible)
-
-
-def test_metric_constructors_pullback_jets_validation_and_parameter_gradients() -> None:
-    polar, cartesian, transition = _polar_transition()
-    cartesian_metric = phx.metrix.euclidean_metric(cartesian)
-    metric = phx.metrix.pullback_metric(cartesian_metric, transition)
-    point = jnp.array([2.0, 0.4])
-    batch = jnp.array([[2.0, 0.4], [3.0, -0.2]])
-
-    assert jnp.allclose(metric(point), jnp.diag(jnp.array([1.0, 4.0])), atol=1e-10)
-    assert jnp.allclose(metric.inverse(point), jnp.diag(jnp.array([1.0, 0.25])))
-    assert jnp.allclose(metric.volume_density(batch), jnp.array([2.0, 3.0]))
-    assert jnp.allclose(jax.jit(metric)(batch), metric(batch))
-
-    jet = phx.metrix.metric_jet(metric, point, order=2)
-    assert jet.first_derivative is not None
-    assert jet.second_derivative is not None
-    assert jet.matrix.shape == (2, 2)
-    assert jet.first_derivative.shape == (2, 2, 2)
-    assert jet.second_derivative.shape == (2, 2, 2, 2)
-    assert jnp.allclose(jet.first_derivative[1, 1], jnp.array([4.0, 0.0]))
-    assert jnp.allclose(jet.second_derivative[1, 1, 0, 0], 2.0)
-
-    report = phx.metrix.validate_metric(metric, batch)
-    assert bool(report.valid)
-    assert report.minimum_eigenvalue > 0.0
-
-    asymmetric = phx.metrix.RiemannianMetric(
-        lambda q: jnp.array([[1.0, q[0]], [0.0, 1.0]]),
-        chart=polar,
-    )
-    invalid = phx.metrix.validate_metric(asymmetric, point, raise_on_error=False)
-    assert not bool(invalid.valid)
-    with pytest.raises(ValueError, match="Metric validation failed"):
-        phx.metrix.validate_metric(asymmetric, point)
-
-    def learned_log_volume(parameter: Any) -> Any:
-        learned = phx.metrix.cholesky_metric(
-            lambda q: jnp.array([[parameter + q[0], 0.0], [0.2, parameter]]),
-            chart=polar,
-            minimum_diagonal=1e-3,
-        )
-        return learned.log_volume_density(point)
-
-    value = learned_log_volume(jnp.array(0.7))
-    derivative = jax.jit(jax.grad(learned_log_volume))(jnp.array(0.7))
-    assert jnp.isfinite(value)
-    assert jnp.isfinite(derivative)
-
-
-def test_tensor_index_operations_and_coordinate_transformation_laws() -> None:
     source = phx.metrix.CoordinateChart("source", ("x", "y"))
     target = phx.metrix.CoordinateChart("target", ("u", "v"))
     transition = phx.metrix.ChartTransition(
@@ -195,9 +144,6 @@ def test_tensor_index_operations_and_coordinate_transformation_laws() -> None:
         ),
         40.0,
     )
-
-
-def test_tensor_contracts_reject_invalid_variance_and_shapes() -> None:
     chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
     metric = phx.metrix.euclidean_metric(chart)
     point = jnp.zeros(2)
@@ -218,3 +164,51 @@ def test_tensor_contracts_reject_invalid_variance_and_shapes() -> None:
             phx.metrix.VECTOR_TENSOR,
             point,
         )
+
+
+def test_metric_constructors_pullback_jets_validation_and_parameter_gradients() -> None:
+    polar, cartesian, transition = _polar_transition()
+    cartesian_metric = phx.metrix.euclidean_metric(cartesian)
+    metric = phx.metrix.pullback_metric(cartesian_metric, transition)
+    point = jnp.array([2.0, 0.4])
+    batch = jnp.array([[2.0, 0.4], [3.0, -0.2]])
+
+    assert jnp.allclose(metric(point), jnp.diag(jnp.array([1.0, 4.0])), atol=1e-10)
+    assert jnp.allclose(metric.inverse(point), jnp.diag(jnp.array([1.0, 0.25])))
+    assert jnp.allclose(metric.volume_density(batch), jnp.array([2.0, 3.0]))
+    assert jnp.allclose(jax.jit(metric)(batch), metric(batch))
+
+    jet = phx.metrix.metric_jet(metric, point, order=2)
+    assert jet.first_derivative is not None
+    assert jet.second_derivative is not None
+    assert jet.matrix.shape == (2, 2)
+    assert jet.first_derivative.shape == (2, 2, 2)
+    assert jet.second_derivative.shape == (2, 2, 2, 2)
+    assert jnp.allclose(jet.first_derivative[1, 1], jnp.array([4.0, 0.0]))
+    assert jnp.allclose(jet.second_derivative[1, 1, 0, 0], 2.0)
+
+    report = phx.metrix.validate_metric(metric, batch)
+    assert bool(report.valid)
+    assert report.minimum_eigenvalue > 0.0
+
+    asymmetric = phx.metrix.RiemannianMetric(
+        lambda q: jnp.array([[1.0, q[0]], [0.0, 1.0]]),
+        chart=polar,
+    )
+    invalid = phx.metrix.validate_metric(asymmetric, point, raise_on_error=False)
+    assert not bool(invalid.valid)
+    with pytest.raises(ValueError, match="Metric validation failed"):
+        phx.metrix.validate_metric(asymmetric, point)
+
+    def learned_log_volume(parameter: Any) -> Any:
+        learned = phx.metrix.cholesky_metric(
+            lambda q: jnp.array([[parameter + q[0], 0.0], [0.2, parameter]]),
+            chart=polar,
+            minimum_diagonal=1e-3,
+        )
+        return learned.log_volume_density(point)
+
+    value = learned_log_volume(jnp.array(0.7))
+    derivative = jax.jit(jax.grad(learned_log_volume))(jnp.array(0.7))
+    assert jnp.isfinite(value)
+    assert jnp.isfinite(derivative)

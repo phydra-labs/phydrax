@@ -77,7 +77,7 @@ def _term(
     return term, _velocity_function(_ConstantVelocity(jnp.asarray((velocity,))))
 
 
-def test_logit_normal_time_sampling_is_bounded_and_reproducible() -> None:
+def test_physics_flow_matching_scenario_1() -> None:
     policy = phx.terms.LogitNormalTimeSamplingPolicy(
         0.1,
         0.9,
@@ -90,9 +90,6 @@ def test_logit_normal_time_sampling_is_bounded_and_reproducible() -> None:
     assert jnp.array_equal(first, second)
     assert jnp.all(first > 0.1)
     assert jnp.all(first < 0.9)
-
-
-def test_exact_constant_velocity_satisfies_both_shared_batch_objectives() -> None:
     term, velocity = _term(4, velocity=1.0)
     batch = term.sample(key=jr.key(7))
     flow, physics = term.objective_components(
@@ -111,9 +108,6 @@ def test_exact_constant_velocity_satisfies_both_shared_batch_objectives() -> Non
     assert diagnostics.active_steps == 4
     assert diagnostics.terminal_valid_fraction == 1.0
     assert diagnostics.finite
-
-
-def test_endpoint_refinement_reduces_nonlinear_euler_error() -> None:
     endpoints = _endpoints(count=1)
     interpolant = phx.transport.LinearEndpointInterpolant((1,))
     batch = phx.terms.FlowMatchingBatch(

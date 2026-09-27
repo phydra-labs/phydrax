@@ -35,7 +35,7 @@ def _value(amplitude: Any) -> Any:
     )
 
 
-def test_even_and_odd_projection_obey_sector_characters() -> None:
+def test_quantum_symmetry_scenario_1() -> None:
     model = _TableAmplitude(
         jnp.asarray([1.0 + 0.2j, 0.5 - 0.1j, -0.25 + 0.8j, 1.3 + 0.4j])
     )
@@ -50,6 +50,20 @@ def test_even_and_odd_projection_obey_sector_characters() -> None:
     expected_odd = 0.5 * (_value(model(configuration)) - _value(model(flipped)))
     assert jnp.allclose(_value(even(configuration)), expected_even)
     assert jnp.allclose(_value(odd(configuration)), expected_odd)
+    with pytest.raises(ValueError, match="closed"):
+        phx.operators.FiniteSignedPermutationSymmetry(
+            jnp.asarray([[0, 1], [1, 0]]),
+            jnp.asarray([[1, 1], [-1, 1]]),
+            jnp.asarray([1.0, 1.0]),
+        )
+    with pytest.raises(ValueError, match="one-dimensional representation"):
+        _z2([1.0, 1.0j])
+    with pytest.raises(ValueError, match="site permutation"):
+        phx.operators.FiniteSignedPermutationSymmetry(
+            jnp.asarray([[0, 0]]),
+            jnp.ones((1, 2)),
+            jnp.ones((1,)),
+        )
 
 
 def test_symmetry_projection_preserves_finite_parameter_gradients() -> None:
@@ -66,20 +80,3 @@ def test_symmetry_projection_preserves_finite_parameter_gradients() -> None:
     gradient = jax.grad(objective)(values)
 
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_signed_permutation_group_and_character_laws_are_validated() -> None:
-    with pytest.raises(ValueError, match="closed"):
-        phx.operators.FiniteSignedPermutationSymmetry(
-            jnp.asarray([[0, 1], [1, 0]]),
-            jnp.asarray([[1, 1], [-1, 1]]),
-            jnp.asarray([1.0, 1.0]),
-        )
-    with pytest.raises(ValueError, match="one-dimensional representation"):
-        _z2([1.0, 1.0j])
-    with pytest.raises(ValueError, match="site permutation"):
-        phx.operators.FiniteSignedPermutationSymmetry(
-            jnp.asarray([[0, 0]]),
-            jnp.ones((1, 2)),
-            jnp.ones((1,)),
-        )

@@ -96,7 +96,7 @@ def _trace_plan(times: Any, *, terminal_positions: Any, caustic_distance: Any) -
     )
 
 
-def test_offline_generators_converge_backward_and_report_caustics() -> None:
+def test_advanced_horizons_scenario_1() -> None:
     times = np.linspace(0.0, 1.0, 9)
     transverse_rate = 2.0
     history = _completed_minkowski_history(times, transverse_rate=transverse_rate)
@@ -125,18 +125,6 @@ def test_offline_generators_converge_backward_and_report_caustics() -> None:
     assert not bool(trace.derivative_valid)
     assert int(trace.status) & int(EventHorizonStatus.CAUSTIC_DETECTED)
     assert trace.generator_trajectories.shape == (len(times), 2, 3)
-
-
-def test_event_horizon_history_must_be_completed_before_tracing() -> None:
-    with pytest.raises(ValueError, match="completed"):
-        _completed_minkowski_history(
-            np.linspace(0.0, 1.0, 3),
-            transverse_rate=0.0,
-            completed=False,
-        )
-
-
-def test_offline_event_horizon_trace_fails_closed_outside_completed_coverage() -> None:
     times = np.linspace(0.0, 1.0, 5)
     history = _completed_minkowski_history(times, transverse_rate=0.0)
     terminal = np.asarray(((0.0, -2.5, 0.0), (0.0, 2.5, 0.0)))
@@ -147,6 +135,57 @@ def test_offline_event_horizon_trace_fails_closed_outside_completed_coverage() -
     assert not bool(trace.qualified)
     assert int(trace.status) & int(EventHorizonStatus.OUTSIDE_HISTORY_COVERAGE)
     assert bool(trace.global_history_complete)
+    with pytest.raises(ValueError, match="completed"):
+        _completed_minkowski_history(
+            np.linspace(0.0, 1.0, 3),
+            transverse_rate=0.0,
+            completed=False,
+        )
+    times = np.linspace(0.0, 2.0, 5)
+    energy_flux = 0.04
+    masses = 1.0 + energy_flux * times
+    mots, geometries = _quasilocal_slices(masses)
+    dynamical_worldtube = QuasilocalHorizonWorldtube(
+        times,
+        mots,
+        geometries,
+        np.full(times.shape, energy_flux),
+        np.zeros(times.shape),
+        np.zeros(times.shape),
+        np.zeros(times.shape),
+        np.ones(times.shape),
+        worldtube_name="analytic-dynamical-worldtube",
+    )
+    plan = DynamicalHorizonBalancePlan(
+        len(times), absolute_tolerance=2.0e-7, relative_tolerance=2.0e-6
+    )
+    dynamical = plan.evaluate(dynamical_worldtube)
+    np.testing.assert_allclose(dynamical.energy_balance_residual, 0.0, atol=2.0e-7)
+    np.testing.assert_allclose(
+        dynamical.angular_momentum_balance_residual, 0.0, atol=2.0e-7
+    )
+    assert np.all(np.asarray(dynamical.regime) == int(HorizonWorldtubeRegime.DYNAMICAL))
+    assert bool(dynamical.qualified)
+
+    isolated_mots, isolated_geometries = _quasilocal_slices(
+        np.ones_like(times), mots_derivative_valid=False
+    )
+    isolated_worldtube = QuasilocalHorizonWorldtube(
+        times,
+        isolated_mots,
+        isolated_geometries,
+        np.zeros(times.shape),
+        np.zeros(times.shape),
+        np.zeros(times.shape),
+        np.zeros(times.shape),
+        np.zeros(times.shape),
+        worldtube_name="analytic-isolated-worldtube",
+    )
+    isolated = plan.evaluate(isolated_worldtube)
+    assert np.all(np.asarray(isolated.isolated))
+    assert np.all(np.asarray(isolated.regime) == int(HorizonWorldtubeRegime.ISOLATED))
+    assert bool(isolated.qualified)
+    assert not bool(isolated.derivative_valid)
 
 
 def _quasilocal_slices(masses: Any, *, mots_derivative_valid: Any = True) -> Any:
@@ -229,54 +268,6 @@ def _quasilocal_slices(masses: Any, *, mots_derivative_valid: Any = True) -> Any
             )
         )
     return tuple(mots), tuple(geometries)
-
-
-def test_dynamical_and_isolated_worldtube_flux_laws_are_quasilocal() -> None:
-    times = np.linspace(0.0, 2.0, 5)
-    energy_flux = 0.04
-    masses = 1.0 + energy_flux * times
-    mots, geometries = _quasilocal_slices(masses)
-    dynamical_worldtube = QuasilocalHorizonWorldtube(
-        times,
-        mots,
-        geometries,
-        np.full(times.shape, energy_flux),
-        np.zeros(times.shape),
-        np.zeros(times.shape),
-        np.zeros(times.shape),
-        np.ones(times.shape),
-        worldtube_name="analytic-dynamical-worldtube",
-    )
-    plan = DynamicalHorizonBalancePlan(
-        len(times), absolute_tolerance=2.0e-7, relative_tolerance=2.0e-6
-    )
-    dynamical = plan.evaluate(dynamical_worldtube)
-    np.testing.assert_allclose(dynamical.energy_balance_residual, 0.0, atol=2.0e-7)
-    np.testing.assert_allclose(
-        dynamical.angular_momentum_balance_residual, 0.0, atol=2.0e-7
-    )
-    assert np.all(np.asarray(dynamical.regime) == int(HorizonWorldtubeRegime.DYNAMICAL))
-    assert bool(dynamical.qualified)
-
-    isolated_mots, isolated_geometries = _quasilocal_slices(
-        np.ones_like(times), mots_derivative_valid=False
-    )
-    isolated_worldtube = QuasilocalHorizonWorldtube(
-        times,
-        isolated_mots,
-        isolated_geometries,
-        np.zeros(times.shape),
-        np.zeros(times.shape),
-        np.zeros(times.shape),
-        np.zeros(times.shape),
-        np.zeros(times.shape),
-        worldtube_name="analytic-isolated-worldtube",
-    )
-    isolated = plan.evaluate(isolated_worldtube)
-    assert np.all(np.asarray(isolated.isolated))
-    assert np.all(np.asarray(isolated.regime) == int(HorizonWorldtubeRegime.ISOLATED))
-    assert bool(isolated.qualified)
-    assert not bool(isolated.derivative_valid)
 
 
 def test_area_law_checks_every_worldtube_interval() -> None:

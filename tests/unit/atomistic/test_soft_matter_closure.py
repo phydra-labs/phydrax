@@ -26,7 +26,7 @@ from phydrax.atomistic._soft_matter import (
 )
 
 
-def test_static_structure_factor_resolves_forward_peak_and_extinction() -> None:
+def test_soft_matter_closure_scenario_1() -> None:
     positions = jnp.asarray([[[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]]])
     plan = StaticStructureFactorPlan(
         # ty: ignore[invalid-argument-type]
@@ -41,9 +41,6 @@ def test_static_structure_factor_resolves_forward_peak_and_extinction() -> None:
     np.testing.assert_allclose(result.values, [2.0, 0.0], atol=1.0e-14)
     with pytest.raises(ValueError, match="resource bounds"):
         static_structure_factor(plan, jnp.zeros((3, 2, 3)))
-
-
-def test_unwrapped_all_origin_msd_and_vacf_are_lag_resolved() -> None:
     times = jnp.asarray([0.0, 1.0, 2.0])
     positions = jnp.asarray(
         [
@@ -66,9 +63,6 @@ def test_unwrapped_all_origin_msd_and_vacf_are_lag_resolved() -> None:
     np.testing.assert_allclose(result.mean_squared_displacement, [0.0, 0.04, 0.16])
     np.testing.assert_allclose(result.velocity_autocorrelation, 0.04)
     np.testing.assert_array_equal(result.origin_counts, [3, 2, 1])
-
-
-def test_diffusion_fit_retains_einstein_and_green_kubo_evidence() -> None:
     diffusion = 0.2
     lag_times = jnp.arange(5.0)
     msd = 6.0 * diffusion * lag_times

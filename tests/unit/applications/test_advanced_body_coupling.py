@@ -67,7 +67,7 @@ def _body(*, moving: Any = True, modal: Any = False, drag: Any = 0.0) -> Any:
     )
 
 
-def test_mapped_marker_transfer_is_adjoint() -> None:
+def test_advanced_body_coupling_scenario_1() -> None:
     hydro, continuation = _hydrodynamics()
     view = hydro.view(continuation.state)
     body_plan = _body(moving=False)
@@ -79,9 +79,6 @@ def test_mapped_marker_transfer_is_adjoint() -> None:
 
     assert bool(evidence.valid)
     assert jnp.abs(evidence.adjoint_defect) <= 1.0e-6
-
-
-def test_fixed_and_moving_rigid_body_constraints_close() -> None:
     hydro, continuation = _hydrodynamics()
     view = hydro.view(continuation.state)
     for moving in (False, True):
@@ -102,9 +99,6 @@ def test_fixed_and_moving_rigid_body_constraints_close() -> None:
         assert bool(evidence.successful)
         assert evidence.constraint_residual <= 1.0e-6
         assert jnp.isfinite(evidence.viscous_dissipation)
-
-
-def test_modal_hydroelastic_state_advances_with_finite_work() -> None:
     hydro, continuation = _hydrodynamics()
     body_plan = _body(moving=True, modal=True)
     body = body_plan.initial_state(position=(2.0, 2.0, -0.5))

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pytest
 
 from benchmarks._runtime import capture_environment
 from benchmarks.advanced_solvers.adapters import adapter_names, load_adapter
@@ -624,6 +625,7 @@ def test_slepc_initial_space_is_seed_deterministic() -> None:
 
 
 def test_control_horizon_campaign_reports_warm_and_sparse_evidence() -> None:
+    pytest.importorskip("clarabel", reason="requires the optional Clarabel provider")
     report = run_control_horizon_campaign((2,), seed=17, warmup=0, repeats=1)
     row = report["rows"][0]
 

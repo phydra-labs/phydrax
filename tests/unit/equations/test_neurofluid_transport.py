@@ -63,7 +63,7 @@ def _runtime(*, boundary_flux: Any = None, removal_rate: Any = None) -> Any:
     ).prepare()
 
 
-def test_metric_network_and_embedded_transfer_are_conservative() -> None:
+def test_neurofluid_transport_scenario_1() -> None:
     runtime = _runtime()
     transfer = runtime.exchange.transfer
     sampled = transfer.average(np.asarray((3.0,)))
@@ -73,9 +73,6 @@ def test_metric_network_and_embedded_transfer_are_conservative() -> None:
         np.asarray((3.0,)), np.asarray((1.0, 2.0))
     )
     np.testing.assert_allclose(np.sum(bulk) + np.sum(network), 0.0, atol=1e-12)
-
-
-def test_backward_euler_and_imex_preserve_constant_closed_state() -> None:
     runtime = _runtime()
     state = phx.equations.MixedDimensionalTransportState(
         # ty: ignore[invalid-argument-type]
@@ -94,9 +91,6 @@ def test_backward_euler_and_imex_preserve_constant_closed_state() -> None:
         np.testing.assert_allclose(step.state.reservoirs, state.reservoirs, atol=1e-11)
         assert bool(step.accepted)
         assert bool(step.ledger.successful)
-
-
-def test_boundary_outflow_and_removal_close_mass_ledger() -> None:
     runtime = _runtime(boundary_flux=0.1, removal_rate=0.2)
     state = phx.equations.MixedDimensionalTransportState(
         # ty: ignore[invalid-argument-type]

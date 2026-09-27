@@ -53,7 +53,7 @@ def _field(time_space: Any, values: Any, *, carrier: Any = 100.0) -> Any:
     )
 
 
-def test_linear_envelope_propagation_matches_exact_spectral_phase() -> None:
+def test_envelope_propagation_scenario_1() -> None:
     time = _time(128, 10.0)
     values = jnp.exp(-0.5 * (time.coordinates / 1.5) ** 2).astype(jnp.complex128)
     field = _field(time, values)
@@ -90,9 +90,6 @@ def test_linear_envelope_propagation_matches_exact_spectral_phase() -> None:
     np.testing.assert_allclose(
         result.evidence.fixed_step_refinement_error, 0.0, atol=1e-13
     )
-
-
-def test_fundamental_nls_soliton_preserves_intensity_and_adaptive_path() -> None:
     time = _time(256, 20.0)
     values = (1.0 / jnp.cosh(time.coordinates)).astype(jnp.complex128)
     field = _field(time, values)
@@ -142,9 +139,6 @@ def test_fundamental_nls_soliton_preserves_intensity_and_adaptive_path() -> None
         rtol=3e-3,
         atol=3e-4,
     )
-
-
-def test_delayed_raman_and_self_steepening_response_is_explicit_and_finite() -> None:
     time = _time(128, 10.0)
     coordinates = time.coordinates
     kernel = jnp.where(coordinates >= 0.0, jnp.exp(-coordinates / 0.8), 0.0)

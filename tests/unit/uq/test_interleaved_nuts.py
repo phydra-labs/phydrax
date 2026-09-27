@@ -9,7 +9,6 @@ import blackjax
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import pytest
 
 from phydrax.uq._interleaved_nuts import build_interleaved_nuts_advancer
 
@@ -69,83 +68,124 @@ def _assert_tree_close(left: Any, right: Any, *, atol: Any = 1e-12) -> None:
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-@pytest.mark.parametrize("dense", [False, True])
-def test_interleaved_nuts_matches_blackjax_for_unequal_chain_work(dense: Any) -> None:
-    positions = jnp.asarray([[0.2, -0.7], [1.3, 0.1], [-0.5, 2.0]])
-    states = jax.vmap(lambda position: blackjax.nuts.init(position, _logdensity))(
-        positions
-    )
-    step_sizes = jnp.asarray([0.2, 0.35, 0.5])
-    if dense:
-        inverse_mass_matrices = jnp.asarray(
-            [
-                [[1.2, 0.1], [0.1, 0.9]],
-                [[0.8, -0.05], [-0.05, 1.4]],
-                [[1.5, 0.2], [0.2, 0.7]],
-            ]
+def test_interleaved_nuts_contracts() -> None:
+    for dense in [False, True]:
+        positions = jnp.asarray([[0.2, -0.7], [1.3, 0.1], [-0.5, 2.0]])
+        states = jax.vmap(lambda position: blackjax.nuts.init(position, _logdensity))(
+            positions
         )
-    else:
-        inverse_mass_matrices = jnp.asarray([[1.0, 1.0], [0.8, 1.3], [1.5, 0.6]])
-    draw_keys = _draw_keys(101, num_chains=3, num_draws=5)
-    baseline_states, (baseline_draws, baseline_info) = _run_blackjax(
-        _logdensity,
-        states,
-        draw_keys,
-        step_sizes,
-        inverse_mass_matrices,
-        max_num_doublings=6,
-    )
-    advancer = build_interleaved_nuts_advancer(
-        _logdensity,
-        max_num_doublings=6,
-    )
-    final_states, samples, metrics, stats = advancer(
-        states,
-        step_sizes,
-        inverse_mass_matrices,
-        draw_keys,
-    )
+        step_sizes = jnp.asarray([0.2, 0.35, 0.5])
+        if dense:
+            inverse_mass_matrices = jnp.asarray(
+                [
+                    [[1.2, 0.1], [0.1, 0.9]],
+                    [[0.8, -0.05], [-0.05, 1.4]],
+                    [[1.5, 0.2], [0.2, 0.7]],
+                ]
+            )
+        else:
+            inverse_mass_matrices = jnp.asarray([[1.0, 1.0], [0.8, 1.3], [1.5, 0.6]])
+        draw_keys = _draw_keys(101, num_chains=3, num_draws=5)
+        baseline_states, (baseline_draws, baseline_info) = _run_blackjax(
+            _logdensity,
+            states,
+            draw_keys,
+            step_sizes,
+            inverse_mass_matrices,
+            max_num_doublings=6,
+        )
+        advancer = build_interleaved_nuts_advancer(
+            _logdensity,
+            max_num_doublings=6,
+        )
+        final_states, samples, metrics, stats = advancer(
+            states,
+            step_sizes,
+            inverse_mass_matrices,
+            draw_keys,
+        )
 
-    _assert_tree_close(samples, baseline_draws.position)
-    _assert_tree_close(final_states, baseline_states)
-    assert jnp.allclose(
-        metrics["log_density"],
-        baseline_draws.logdensity,
-        rtol=0.0,
-        atol=1e-12,
-    )
-    assert jnp.allclose(
-        metrics["acceptance_rate"],
-        baseline_info.acceptance_rate,
-        rtol=0.0,
-        atol=1e-12,
-    )
-    assert jnp.allclose(
-        metrics["energy"],
-        baseline_info.energy,
-        rtol=0.0,
-        atol=1e-12,
-    )
-    assert jnp.array_equal(metrics["divergent"], baseline_info.is_divergent)
-    assert jnp.array_equal(
-        metrics["num_integration_steps"],
-        baseline_info.num_integration_steps,
-    )
-    assert jnp.array_equal(
-        metrics["num_trajectory_expansions"],
-        baseline_info.num_trajectory_expansions,
-    )
-    _assert_tree_close(
-        final_states.position,
-        jax.tree_util.tree_map(lambda value: value[:, -1], samples),
-        atol=0.0,
-    )
-    interleaved_steps = jnp.max(jnp.sum(metrics["num_integration_steps"], axis=1))
-    lockstep_steps = jnp.sum(jnp.max(metrics["num_integration_steps"], axis=0))
-    assert stats.num_scheduler_steps == interleaved_steps
-    assert interleaved_steps <= lockstep_steps
-    if not dense:
-        assert interleaved_steps < lockstep_steps
+        _assert_tree_close(samples, baseline_draws.position)
+        _assert_tree_close(final_states, baseline_states)
+        assert jnp.allclose(
+            metrics["log_density"],
+            baseline_draws.logdensity,
+            rtol=0.0,
+            atol=1e-12,
+        )
+        assert jnp.allclose(
+            metrics["acceptance_rate"],
+            baseline_info.acceptance_rate,
+            rtol=0.0,
+            atol=1e-12,
+        )
+        assert jnp.allclose(
+            metrics["energy"],
+            baseline_info.energy,
+            rtol=0.0,
+            atol=1e-12,
+        )
+        assert jnp.array_equal(metrics["divergent"], baseline_info.is_divergent)
+        assert jnp.array_equal(
+            metrics["num_integration_steps"],
+            baseline_info.num_integration_steps,
+        )
+        assert jnp.array_equal(
+            metrics["num_trajectory_expansions"],
+            baseline_info.num_trajectory_expansions,
+        )
+        _assert_tree_close(
+            final_states.position,
+            jax.tree_util.tree_map(lambda value: value[:, -1], samples),
+            atol=0.0,
+        )
+        interleaved_steps = jnp.max(jnp.sum(metrics["num_integration_steps"], axis=1))
+        lockstep_steps = jnp.sum(jnp.max(metrics["num_integration_steps"], axis=0))
+        assert stats.num_scheduler_steps == interleaved_steps
+        assert interleaved_steps <= lockstep_steps
+        if not dense:
+            assert interleaved_steps < lockstep_steps
+    for step_size, max_num_doublings, expect_all_divergent in [
+        (0.01, 1, False),
+        (20.0, 3, True),
+    ]:
+        positions = jnp.asarray([[1.0, 1.0], [-1.0, 0.5]])
+        states = jax.vmap(lambda position: blackjax.nuts.init(position, _logdensity))(
+            positions
+        )
+        step_sizes = jnp.full((2,), step_size)
+        inverse_mass_matrices = jnp.ones((2, 2))
+        draw_keys = _draw_keys(333, num_chains=2, num_draws=2)
+        _, (_, baseline_info) = _run_blackjax(
+            _logdensity,
+            states,
+            draw_keys,
+            step_sizes,
+            inverse_mass_matrices,
+            max_num_doublings=max_num_doublings,
+        )
+        _, _, metrics, _ = build_interleaved_nuts_advancer(
+            _logdensity,
+            max_num_doublings=max_num_doublings,
+        )(
+            states,
+            step_sizes,
+            inverse_mass_matrices,
+            draw_keys,
+        )
+
+        assert jnp.array_equal(metrics["divergent"], baseline_info.is_divergent)
+        assert jnp.array_equal(
+            metrics["num_integration_steps"],
+            baseline_info.num_integration_steps,
+        )
+        assert jnp.array_equal(
+            metrics["num_trajectory_expansions"],
+            baseline_info.num_trajectory_expansions,
+        )
+        assert bool(jnp.all(metrics["divergent"])) is expect_all_divergent
+        if max_num_doublings == 1:
+            assert jnp.all(metrics["num_trajectory_expansions"] == 1)
 
 
 def test_interleaved_nuts_preserves_pytree_positions_and_nonzero_draw_indices() -> None:
@@ -189,51 +229,3 @@ def test_interleaved_nuts_preserves_pytree_positions_and_nonzero_draw_indices() 
         baseline_info.num_integration_steps,
     )
     assert jnp.array_equal(metrics["divergent"], baseline_info.is_divergent)
-
-
-@pytest.mark.parametrize(
-    ("step_size", "max_num_doublings", "expect_all_divergent"),
-    [(0.01, 1, False), (20.0, 3, True)],
-)
-def test_interleaved_nuts_matches_depth_and_divergence_termination(
-    step_size: Any,
-    max_num_doublings: Any,
-    expect_all_divergent: Any,
-) -> None:
-    positions = jnp.asarray([[1.0, 1.0], [-1.0, 0.5]])
-    states = jax.vmap(lambda position: blackjax.nuts.init(position, _logdensity))(
-        positions
-    )
-    step_sizes = jnp.full((2,), step_size)
-    inverse_mass_matrices = jnp.ones((2, 2))
-    draw_keys = _draw_keys(333, num_chains=2, num_draws=2)
-    _, (_, baseline_info) = _run_blackjax(
-        _logdensity,
-        states,
-        draw_keys,
-        step_sizes,
-        inverse_mass_matrices,
-        max_num_doublings=max_num_doublings,
-    )
-    _, _, metrics, _ = build_interleaved_nuts_advancer(
-        _logdensity,
-        max_num_doublings=max_num_doublings,
-    )(
-        states,
-        step_sizes,
-        inverse_mass_matrices,
-        draw_keys,
-    )
-
-    assert jnp.array_equal(metrics["divergent"], baseline_info.is_divergent)
-    assert jnp.array_equal(
-        metrics["num_integration_steps"],
-        baseline_info.num_integration_steps,
-    )
-    assert jnp.array_equal(
-        metrics["num_trajectory_expansions"],
-        baseline_info.num_trajectory_expansions,
-    )
-    assert bool(jnp.all(metrics["divergent"])) is expect_all_divergent
-    if max_num_doublings == 1:
-        assert jnp.all(metrics["num_trajectory_expansions"] == 1)

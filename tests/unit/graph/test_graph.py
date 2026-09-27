@@ -20,15 +20,59 @@ def _make_graph() -> vx.GraphIR:
     )
 
 
-def test_graph_ir_counts_and_edge_index() -> None:
+def test_graph_scenario_1() -> None:
     graph = _make_graph()
     assert graph.num_graphs == 1
     assert graph.num_nodes == 3
     assert graph.num_edges == 3
     assert graph.edge_index.shape == (2, 3)
+    for senders, receivers, n_node, n_edge, message in [
+        ([1], [0], [1, 1], [1, 0], r"Graph 0.*sender 1.*\[0, 1\)"),
+        ([0], [1], [1, 1], [1, 0], r"Graph 0.*receiver 1.*\[0, 1\)"),
+        ([0], [1], [1, 1], [0, 1], r"Graph 1.*sender 0.*\[1, 2\)"),
+        ([0], [0], [0, 1], [1, 0], r"Graph 0.*sender 0.*\[0, 0\)"),
+    ]:
+        node_count = sum(n_node)
+        edge_count = sum(n_edge)
+        with pytest.raises(ValueError, match=message):
+            vx.GraphIR(
+                nodes=jnp.zeros((node_count, 1)),
+                edges=jnp.zeros((edge_count, 1)),
+                senders=jnp.asarray(senders, dtype=jnp.int32),
+                receivers=jnp.asarray(receivers, dtype=jnp.int32),
+                n_node=jnp.asarray(n_node, dtype=jnp.int32),
+                n_edge=jnp.asarray(n_edge, dtype=jnp.int32),
+            )
+    for n_node, n_edge, senders, receivers in [
+        ([1, 1], [1, 1], [0, 1], [0, 1]),
+        ([1, 1], [0, 1], [1], [1]),
+        ([0, 1], [0, 1], [0], [0]),
+        ([0, 0], [0, 0], [], []),
+    ]:
+        graph = vx.GraphIR(
+            nodes=jnp.zeros((sum(n_node), 1)),
+            edges=jnp.zeros((sum(n_edge), 1)),
+            senders=jnp.asarray(senders, dtype=jnp.int32),
+            receivers=jnp.asarray(receivers, dtype=jnp.int32),
+            n_node=jnp.asarray(n_node, dtype=jnp.int32),
+            n_edge=jnp.asarray(n_edge, dtype=jnp.int32),
+        )
+        graph.validate(strict=False)
+    graph = vx.GraphIR(
+        nodes=jnp.zeros((2, 1)),
+        edges=jnp.zeros((1, 1)),
+        senders=jnp.asarray([1]),
+        receivers=jnp.asarray([1]),
+        n_node=jnp.asarray([1, 1]),
+        n_edge=jnp.asarray([1, 0]),
+        validate=False,
+    )
 
-
-def test_batch_unbatch_graphs_roundtrip() -> None:
+    with pytest.raises(ValueError, match=r"Graph 0.*node interval \[0, 1\)"):
+        graph.validate(strict=False)
+    graph = _make_graph()
+    counts = vx.graph_counts(graph)
+    assert counts == {"n_graph": 1, "n_node": 3, "n_edge": 3}
     g1 = _make_graph()
     g2 = _make_graph().replace(nodes=jnp.array([[4.0], [5.0], [6.0]]), validate=True)
 
@@ -44,82 +88,6 @@ def test_batch_unbatch_graphs_roundtrip() -> None:
     assert pieces[1].num_edges == g2.num_edges
     assert jnp.array_equal(pieces[0].senders, g1.senders)
     assert jnp.array_equal(pieces[1].receivers, g2.receivers)
-
-
-def test_graph_counts_helper() -> None:
-    graph = _make_graph()
-    counts = vx.graph_counts(graph)
-    assert counts == {"n_graph": 1, "n_node": 3, "n_edge": 3}
-
-
-@pytest.mark.parametrize(
-    ("senders", "receivers", "n_node", "n_edge", "message"),
-    [
-        ([1], [0], [1, 1], [1, 0], r"Graph 0.*sender 1.*\[0, 1\)"),
-        ([0], [1], [1, 1], [1, 0], r"Graph 0.*receiver 1.*\[0, 1\)"),
-        ([0], [1], [1, 1], [0, 1], r"Graph 1.*sender 0.*\[1, 2\)"),
-        ([0], [0], [0, 1], [1, 0], r"Graph 0.*sender 0.*\[0, 0\)"),
-    ],
-)
-def test_graph_ir_rejects_cross_graph_edge_ownership(
-    senders: Any,
-    receivers: Any,
-    n_node: Any,
-    n_edge: Any,
-    message: Any,
-) -> None:
-    node_count = sum(n_node)
-    edge_count = sum(n_edge)
-    with pytest.raises(ValueError, match=message):
-        vx.GraphIR(
-            nodes=jnp.zeros((node_count, 1)),
-            edges=jnp.zeros((edge_count, 1)),
-            senders=jnp.asarray(senders, dtype=jnp.int32),
-            receivers=jnp.asarray(receivers, dtype=jnp.int32),
-            n_node=jnp.asarray(n_node, dtype=jnp.int32),
-            n_edge=jnp.asarray(n_edge, dtype=jnp.int32),
-        )
-
-
-@pytest.mark.parametrize(
-    ("n_node", "n_edge", "senders", "receivers"),
-    [
-        ([1, 1], [1, 1], [0, 1], [0, 1]),
-        ([1, 1], [0, 1], [1], [1]),
-        ([0, 1], [0, 1], [0], [0]),
-        ([0, 0], [0, 0], [], []),
-    ],
-)
-def test_graph_ir_accepts_graph_local_edges_with_empty_neighbors(
-    n_node: Any,
-    n_edge: Any,
-    senders: Any,
-    receivers: Any,
-) -> None:
-    graph = vx.GraphIR(
-        nodes=jnp.zeros((sum(n_node), 1)),
-        edges=jnp.zeros((sum(n_edge), 1)),
-        senders=jnp.asarray(senders, dtype=jnp.int32),
-        receivers=jnp.asarray(receivers, dtype=jnp.int32),
-        n_node=jnp.asarray(n_node, dtype=jnp.int32),
-        n_edge=jnp.asarray(n_edge, dtype=jnp.int32),
-    )
-    graph.validate(strict=False)
-
-
-def test_graph_ir_ownership_is_independent_of_strict_size_checks() -> None:
-    graph = vx.GraphIR(
-        nodes=jnp.zeros((2, 1)),
-        edges=jnp.zeros((1, 1)),
-        senders=jnp.asarray([1]),
-        receivers=jnp.asarray([1]),
-        n_node=jnp.asarray([1, 1]),
-        n_edge=jnp.asarray([1, 0]),
-        validate=False,
-    )
-
-    with pytest.raises(ValueError, match=r"Graph 0.*node interval \[0, 1\)"):
-        graph.validate(strict=False)
 
 
 def test_missing_jraph_errors_provide_phydrax_install_guidance(monkeypatch: Any) -> None:

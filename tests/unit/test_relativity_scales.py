@@ -8,7 +8,7 @@ from phydrax._physical import DimensionalScaleContract, RelativityScaleContract
 from phydrax.units import KILOGRAM
 
 
-def test_si_relativity_scale_round_trips_mass_and_quantum_quantities() -> None:
+def test_relativity_scales_scenario_1() -> None:
     scale = RelativityScaleContract.si()
 
     assert scale.gravitational_constant == Fraction(66_743, 10**15)
@@ -37,9 +37,6 @@ def test_si_relativity_scale_round_trips_mass_and_quantum_quantities() -> None:
     assert jnp.all(jnp.isfinite(entropies))
     assert jnp.all(entropies > 0.0)
     assert jnp.allclose(scale.entropy_to_area(entropies), areas, rtol=2e-6)
-
-
-def test_relativity_conversion_does_not_clip_or_repair_numeric_inputs() -> None:
     scale = RelativityScaleContract.si()
     values = jnp.asarray([-1.0, jnp.nan])
 
@@ -47,24 +44,6 @@ def test_relativity_conversion_does_not_clip_or_repair_numeric_inputs() -> None:
 
     assert converted[0] < 0.0
     assert jnp.isnan(converted[1])
-
-
-def test_geometric_scale_sets_classical_constants_to_one_without_erasing_quantum_constants() -> (
-    None
-):
-    scale = RelativityScaleContract.geometric(KILOGRAM)
-
-    assert scale.gravitational_constant == 1
-    assert scale.speed_of_light == 1
-    assert scale.reduced_planck_constant > 0
-    assert scale.boltzmann_constant > 0
-    assert float(scale.mass_to_geometric_length(jnp.asarray(3.0))) == pytest.approx(3.0)
-    assert float(scale.mass_to_geometric_time(jnp.asarray(3.0))) == pytest.approx(3.0)
-    assert scale.temperature_unit.dimension.terms == (("temperature", 1, 1),)
-    assert scale.entropy_unit == scale.boltzmann_constant_unit
-
-
-def test_relativity_scale_payload_is_content_addressed_and_tamper_evident() -> None:
     scale = RelativityScaleContract.si()
     restored = RelativityScaleContract.from_dict(scale.to_dict())
 
@@ -75,11 +54,6 @@ def test_relativity_scale_payload_is_content_addressed_and_tamper_evident() -> N
     payload["speed_of_light"] = {"numerator": 1, "denominator": 1}
     with pytest.raises(ValueError, match="fingerprint"):
         RelativityScaleContract.from_dict(payload)
-
-
-def test_relativity_scale_rejects_invalid_constants_and_requires_quantum_declaration_for_quantum_maps() -> (
-    None
-):
     dimensional = DimensionalScaleContract.si()
     constants = ("6.67430e-11", 299_792_458, "1.054571817e-34", "1.380649e-23")
 
@@ -100,3 +74,13 @@ def test_relativity_scale_rejects_invalid_constants_and_requires_quantum_declara
         classical.area_to_entropy(1.0)
     with pytest.raises(ValueError, match="explicitly declared"):
         classical.surface_gravity_to_temperature(1.0)
+    scale = RelativityScaleContract.geometric(KILOGRAM)
+
+    assert scale.gravitational_constant == 1
+    assert scale.speed_of_light == 1
+    assert scale.reduced_planck_constant > 0
+    assert scale.boltzmann_constant > 0
+    assert float(scale.mass_to_geometric_length(jnp.asarray(3.0))) == pytest.approx(3.0)
+    assert float(scale.mass_to_geometric_time(jnp.asarray(3.0))) == pytest.approx(3.0)
+    assert scale.temperature_unit.dimension.terms == (("temperature", 1, 1),)
+    assert scale.entropy_unit == scale.boltzmann_constant_unit

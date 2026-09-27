@@ -41,7 +41,7 @@ def _read_events(buffer: io.StringIO) -> list[dict[str, object]]:
     return [json.loads(line) for line in buffer.getvalue().splitlines()]
 
 
-def test_logging_is_disabled_by_default() -> None:
+def test_logging_scenario_1() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
     try:
@@ -49,9 +49,6 @@ def test_logging_is_disabled_by_default() -> None:
     finally:
         pxlogging.remove_sink(handler_id)
     assert buffer.getvalue() == ""
-
-
-def test_json_sink_emits_canonical_privacy_bounded_event() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
     pxlogging.enable()
@@ -86,9 +83,6 @@ def test_json_sink_emits_canonical_privacy_bounded_event() -> None:
     # ty: ignore[unsupported-operator]
     assert "path" not in event["source"]
     assert buffer.getvalue().count("\n") == 1
-
-
-def test_context_nesting_restores_previous_values() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
     pxlogging.enable()
@@ -109,7 +103,7 @@ def test_context_nesting_restores_previous_values() -> None:
     ]
 
 
-def test_async_tasks_keep_independent_context() -> None:
+def test_logging_scenario_2() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
     pxlogging.enable()
@@ -130,9 +124,6 @@ def test_async_tasks_keep_independent_context() -> None:
     # ty: ignore[not-subscriptable]
     contexts = {event["context"]["run_id"] for event in _read_events(buffer)}
     assert contexts == {"run-a", "run-b"}
-
-
-def test_sink_removal_does_not_remove_application_handler() -> None:
     phydrax_buffer = io.StringIO()
     application_buffer = io.StringIO()
     application_handler = logger.add(application_buffer, format="{message}")
@@ -145,6 +136,20 @@ def test_sink_removal_does_not_remove_application_handler() -> None:
         logger.remove(application_handler)
     assert application_buffer.getvalue() == "application remains\n"
     assert phydrax_buffer.getvalue() == ""
+    buffer = io.StringIO()
+    handler_id = pxlogging.add_text_sink(buffer)
+    pxlogging.enable()
+    try:
+        with pxlogging.context(run_id="run-1"):
+            pxlogging.emit("INFO", "runtime.operation.completed", "One\nline", value=2)
+    finally:
+        pxlogging.remove_sink(handler_id)
+
+    output = buffer.getvalue()
+    assert output.count("\n") == 1
+    assert "runtime.operation.completed" in output
+    assert 'context={"run_id":"run-1"}' in output
+    assert 'fields={"value":2}' in output
 
 
 def test_json_file_sink_is_owner_only(tmp_path: Path) -> None:
@@ -163,24 +168,7 @@ def test_json_file_sink_is_owner_only(tmp_path: Path) -> None:
     )
 
 
-def test_text_sink_is_single_line_and_structured() -> None:
-    buffer = io.StringIO()
-    handler_id = pxlogging.add_text_sink(buffer)
-    pxlogging.enable()
-    try:
-        with pxlogging.context(run_id="run-1"):
-            pxlogging.emit("INFO", "runtime.operation.completed", "One\nline", value=2)
-    finally:
-        pxlogging.remove_sink(handler_id)
-
-    output = buffer.getvalue()
-    assert output.count("\n") == 1
-    assert "runtime.operation.completed" in output
-    assert 'context={"run_id":"run-1"}' in output
-    assert 'fields={"value":2}' in output
-
-
-def test_event_collections_are_bounded() -> None:
+def test_logging_scenario_3() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
     pxlogging.enable()
@@ -199,9 +187,6 @@ def test_event_collections_are_bounded() -> None:
     assert len(event["fields"]["values"]) < 1_000
     # ty: ignore[unsupported-operator]
     assert "fields.values.*" in event["omitted_fields"]
-
-
-def test_training_iteration_kind_emits_canonical_logging_event() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
     pxlogging.enable()
@@ -223,9 +208,6 @@ def test_training_iteration_kind_emits_canonical_logging_event() -> None:
     assert event["fields"]["iteration_kind"] == "run_start"
     # ty: ignore[not-subscriptable]
     assert event["fields"]["metrics"] == [{"name": "loss", "value": 1.25}]
-
-
-def test_training_controller_can_deliver_without_duplicate_log_event() -> None:
     buffer = io.StringIO()
     delivered = []
     session = IterationSession(
@@ -252,9 +234,6 @@ def test_training_controller_can_deliver_without_duplicate_log_event() -> None:
     assert len(delivered) == 1
     assert delivered[0].record.metrics.metric("loss") == 1.25
     assert controller.progress.iteration_session_cursor == 1
-
-
-def test_training_selection_rejects_nonfinite_metrics_without_mutation() -> None:
     with pytest.raises(ValueError, match="best_value must be finite"):
         TrainingProgress(best_value=float("nan"))
 

@@ -37,7 +37,7 @@ def _interface(*, orientation: Any = None) -> Any:
     )
 
 
-def test_conforming_multiblock_topology_certifies_physical_trace_coincidence() -> None:
+def test_multiblock_fd_scenario_1() -> None:
     left = _block(((0.0, 0.0), (0.5, 1.0)))
     right = _block(((0.5, 0.0), (1.0, 1.0)))
     prepared = phx.discretization.MultiblockGridPlan(
@@ -51,9 +51,6 @@ def test_conforming_multiblock_topology_certifies_physical_trace_coincidence() -
     assert report.conforming
     assert report.geometry_residual < 1e-14
     assert prepared.block("left").prepared_id == left.prepared_id
-
-
-def test_reflected_tangential_orientation_aligns_reversed_mapped_block() -> None:
     left_reference = _block(((0.0, 0.0), (1.0, 1.0)), shape=(17, 17))
     right_reference = _block(((0.0, 0.0), (1.0, 1.0)), shape=(17, 17))
     left = phx.discretization.MappedTensorGridPlan(
@@ -83,9 +80,6 @@ def test_reflected_tangential_orientation_aligns_reversed_mapped_block() -> None
 
     assert prepared.interface_reports[0].passed
     assert prepared.interface_reports[0].geometry_residual < 2e-12
-
-
-def test_nonconforming_nested_interface_and_norm_compatible_mortar() -> None:
     left = _block(((0.0, 0.0), (0.5, 1.0)), shape=(33, 9))
     right = _block(((0.5, 0.0), (1.0, 1.0)), shape=(33, 17))
     prepared = phx.discretization.MultiblockGridPlan(
@@ -118,9 +112,51 @@ def test_nonconforming_nested_interface_and_norm_compatible_mortar() -> None:
         rtol=2e-12,
         atol=2e-12,
     )
+    left_grid = _block(((0.0, 0.0), (0.5, 1.0)), shape=(33, 9))
+    right_grid = _block(((0.5, 0.0), (1.0, 1.0)), shape=(33, 17))
+    multiblock = phx.discretization.MultiblockGridPlan(
+        (("left", left_grid), ("right", right_grid)),
+        (_interface(),),
+    ).prepare()
+    left_sbp = phx.discretization.SBPDerivativePlan(
+        left_grid,
+        "x",
+        interior_order=4,
+    ).prepare()
+    right_sbp = phx.discretization.SBPDerivativePlan(
+        right_grid,
+        "x",
+        interior_order=4,
+    ).prepare()
+    left_x = left_grid.axes[0].nodes[:, None]
+    left_y = left_grid.axes[1].nodes[None, :]
+    right_x = right_grid.axes[0].nodes[:, None]
+    right_y = right_grid.axes[1].nodes[None, :]
+    left_state = (left_x / 0.5) * (1.0 + 0.2 * jnp.sin(jnp.pi * left_y))
+    right_state = ((1.0 - right_x) / 0.5) * (0.4 + 0.1 * jnp.cos(2.0 * jnp.pi * right_y))
+    coupling = phx.discretization.MultiblockSATCoupling(
+        multiblock,
+        "middle",
+        left_sbp,
+        right_sbp,
+        1.0,
+        flux="central",
+    )
+
+    left_sat, right_sat = coupling.corrections(left_state, right_state)
+    left_rhs = -left_sbp.operator.mv(left_state) + left_sat
+    right_rhs = -right_sbp.operator.mv(right_state) + right_sat
+    energy_rate = 2.0 * (
+        jnp.sum(left_sbp.norm_weights * left_state * left_rhs)
+        + jnp.sum(right_sbp.norm_weights * right_state * right_rhs)
+    )
+
+    assert coupling.interpolation is not None
+    assert coupling.interpolation.compatibility_residual < 1e-12
+    np.testing.assert_allclose(energy_rate, 0.0, rtol=0.0, atol=2e-9)
 
 
-def test_multiblock_sat_central_flux_conserves_energy_and_upwind_dissipates() -> None:
+def test_multiblock_fd_scenario_2() -> None:
     left_grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(33),),
         axis_names=("x",),
@@ -182,54 +218,6 @@ def test_multiblock_sat_central_flux_conserves_energy_and_upwind_dissipates() ->
 
     np.testing.assert_allclose(rates[0], 0.0, rtol=0.0, atol=2e-10)
     assert rates[1] < rates[0]
-
-
-def test_nonconforming_multiblock_sat_uses_norm_adjoint_mortar_transfer() -> None:
-    left_grid = _block(((0.0, 0.0), (0.5, 1.0)), shape=(33, 9))
-    right_grid = _block(((0.5, 0.0), (1.0, 1.0)), shape=(33, 17))
-    multiblock = phx.discretization.MultiblockGridPlan(
-        (("left", left_grid), ("right", right_grid)),
-        (_interface(),),
-    ).prepare()
-    left_sbp = phx.discretization.SBPDerivativePlan(
-        left_grid,
-        "x",
-        interior_order=4,
-    ).prepare()
-    right_sbp = phx.discretization.SBPDerivativePlan(
-        right_grid,
-        "x",
-        interior_order=4,
-    ).prepare()
-    left_x = left_grid.axes[0].nodes[:, None]
-    left_y = left_grid.axes[1].nodes[None, :]
-    right_x = right_grid.axes[0].nodes[:, None]
-    right_y = right_grid.axes[1].nodes[None, :]
-    left_state = (left_x / 0.5) * (1.0 + 0.2 * jnp.sin(jnp.pi * left_y))
-    right_state = ((1.0 - right_x) / 0.5) * (0.4 + 0.1 * jnp.cos(2.0 * jnp.pi * right_y))
-    coupling = phx.discretization.MultiblockSATCoupling(
-        multiblock,
-        "middle",
-        left_sbp,
-        right_sbp,
-        1.0,
-        flux="central",
-    )
-
-    left_sat, right_sat = coupling.corrections(left_state, right_state)
-    left_rhs = -left_sbp.operator.mv(left_state) + left_sat
-    right_rhs = -right_sbp.operator.mv(right_state) + right_sat
-    energy_rate = 2.0 * (
-        jnp.sum(left_sbp.norm_weights * left_state * left_rhs)
-        + jnp.sum(right_sbp.norm_weights * right_state * right_rhs)
-    )
-
-    assert coupling.interpolation is not None
-    assert coupling.interpolation.compatibility_residual < 1e-12
-    np.testing.assert_allclose(energy_rate, 0.0, rtol=0.0, atol=2e-9)
-
-
-def test_duplicate_physical_face_connections_are_rejected() -> None:
     left = _block(((0.0, 0.0), (0.5, 1.0)))
     right = _block(((0.5, 0.0), (1.0, 1.0)))
 

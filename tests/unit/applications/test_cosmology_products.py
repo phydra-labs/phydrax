@@ -69,7 +69,7 @@ def _power(
     )
 
 
-def test_expansion_growth_and_matter_power_products_preserve_realization() -> None:
+def test_cosmology_products_scenario_1() -> None:
     scale, background, provenance = _context()
     nodes = jnp.asarray([0.25, 0.5, 1.0])
     expansion = cosmology.ExpansionHistory(
@@ -93,9 +93,6 @@ def test_expansion_growth_and_matter_power_products_preserve_realization() -> No
         jax.block_until_ready(
             background.realization.require_compatible(other.realization, jnp.asarray(1.0))
         )
-
-
-def test_power_descriptor_allows_signed_cross_but_not_negative_auto() -> None:
     _, background, provenance = _context()
     cross = _power(
         background,
@@ -112,49 +109,6 @@ def test_power_descriptor_allows_signed_cross_but_not_negative_auto() -> None:
             [[1.0, -0.2, 0.5], [1.0, 0.1, 0.5]],
         )
         jax.block_until_ready(invalid.power_values)
-
-
-def test_differentiability_policies_are_enforced() -> None:
-    _, native_background, native_provenance = _context(NATIVE_DIFFERENTIATION)
-
-    def native_value(amplitude: Any) -> Any:
-        values = amplitude * jnp.asarray([[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]])
-        return _power(native_background, native_provenance, values).evaluate(1.5, 0.75)
-
-    assert jax.grad(native_value)(jnp.asarray(1.0)) != 0.0
-
-    _, coordinate_background, coordinate_provenance = _context(
-        phx.DerivativeContract.smooth((phx.DerivativeSurface.INPUT,))
-    )
-
-    def stored_value(amplitude: Any) -> Any:
-        values = amplitude * jnp.asarray([[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]])
-        return _power(coordinate_background, coordinate_provenance, values).evaluate(
-            1.5, 0.75
-        )
-
-    np.testing.assert_allclose(jax.grad(stored_value)(jnp.asarray(1.0)), 0.0)
-    table = _power(
-        coordinate_background,
-        coordinate_provenance,
-        [[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]],
-    )
-    assert jax.grad(lambda k: table.evaluate(k, 0.75))(jnp.asarray(1.5)) != 0.0
-
-    _, constant_background, constant_provenance = _context(
-        phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT)
-    )
-    constant = _power(
-        constant_background,
-        constant_provenance,
-        [[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]],
-    )
-    np.testing.assert_allclose(
-        jax.grad(lambda k: constant.evaluate(k, 0.75))(jnp.asarray(1.5)), 0.0
-    )
-
-
-def test_linear_transfer_and_neutrino_power_reconstruction() -> None:
     scale, background, provenance = _context()
     descriptor = cosmology.LinearTransferDescriptor(
         ("density/cold_baryon", "density/massive_neutrino_total"),
@@ -201,3 +155,43 @@ def test_linear_transfer_and_neutrino_power_reconstruction() -> None:
     total = cosmology.reconstruct_total_matter_power(cb, nu, cross, 0.8, 0.2)
     np.testing.assert_allclose(total.power_values, 3.24)
     assert total.descriptor.left_field == "total_matter"
+
+
+def test_differentiability_policies_are_enforced() -> None:
+    _, native_background, native_provenance = _context(NATIVE_DIFFERENTIATION)
+
+    def native_value(amplitude: Any) -> Any:
+        values = amplitude * jnp.asarray([[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]])
+        return _power(native_background, native_provenance, values).evaluate(1.5, 0.75)
+
+    assert jax.grad(native_value)(jnp.asarray(1.0)) != 0.0
+
+    _, coordinate_background, coordinate_provenance = _context(
+        phx.DerivativeContract.smooth((phx.DerivativeSurface.INPUT,))
+    )
+
+    def stored_value(amplitude: Any) -> Any:
+        values = amplitude * jnp.asarray([[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]])
+        return _power(coordinate_background, coordinate_provenance, values).evaluate(
+            1.5, 0.75
+        )
+
+    np.testing.assert_allclose(jax.grad(stored_value)(jnp.asarray(1.0)), 0.0)
+    table = _power(
+        coordinate_background,
+        coordinate_provenance,
+        [[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]],
+    )
+    assert jax.grad(lambda k: table.evaluate(k, 0.75))(jnp.asarray(1.5)) != 0.0
+
+    _, constant_background, constant_provenance = _context(
+        phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT)
+    )
+    constant = _power(
+        constant_background,
+        constant_provenance,
+        [[1.0, 2.0, 4.0], [2.0, 4.0, 8.0]],
+    )
+    np.testing.assert_allclose(
+        jax.grad(lambda k: constant.evaluate(k, 0.75))(jnp.asarray(1.5)), 0.0
+    )

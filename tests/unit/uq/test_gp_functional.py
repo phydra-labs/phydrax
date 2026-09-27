@@ -16,7 +16,7 @@ def _design(points: Any, functional: Any, name: Any) -> Any:
     return phx.uq.FunctionalDesign.from_inputs(points, functional, name=name)
 
 
-def test_squared_exponential_functional_covariances_match_closed_forms() -> None:
+def test_gp_functional_scenario_1() -> None:
     length_scale = jnp.array([0.4, 0.7])
     kernel = phx.kernels.SquaredExponentialKernel(length_scale=length_scale)
     left = jnp.array([[-0.2, 0.3], [0.4, -0.1]])
@@ -60,9 +60,6 @@ def test_squared_exponential_functional_covariances_match_closed_forms() -> None
     assert jnp.allclose(value_directional, expected_directional)
     assert jnp.allclose(laplacian_value, expected_laplacian)
     assert jnp.allclose(laplacian_diagonal, expected_laplacian_diagonal)
-
-
-def test_functional_exact_and_fitc_conditioning_are_finite_and_block_ordered() -> None:
     points = jnp.linspace(0.05, 0.95, 9)
     derivative_points = jnp.linspace(0.1, 0.9, 7)
     value = phx.uq.value_functional(1)
@@ -116,6 +113,23 @@ def test_functional_exact_and_fitc_conditioning_are_finite_and_block_ordered() -
     assert sparse.covariance.shape == (9, 9)
     assert jnp.all(exact.variance >= 0.0)
     assert jnp.all(sparse.variance >= 0.0)
+    design = _design(
+        jnp.array([0.2, 0.5]),
+        phx.uq.laplacian_functional(1),
+        "laplacian",
+    )
+
+    with pytest.raises(ValueError, match="requires order 2"):
+        phx.uq.functional_kernel_diagonal(
+            phx.kernels.Matern32Kernel(length_scale=0.4),
+            design,
+        )
+
+    supported = phx.uq.functional_kernel_diagonal(
+        phx.kernels.Matern52Kernel(length_scale=0.4),
+        design,
+    )
+    assert jnp.allclose(supported, 25.0 / 0.4**4)
 
 
 def test_dynamic_differential_operator_coefficients_are_jittable_and_differentiable() -> (
@@ -140,23 +154,3 @@ def test_dynamic_differential_operator_coefficients_are_jittable_and_differentia
     assert jnp.allclose(eager, compiled)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.any(jnp.abs(gradient) > 0.0)
-
-
-def test_functional_regularity_gate_rejects_unsupported_laplacian() -> None:
-    design = _design(
-        jnp.array([0.2, 0.5]),
-        phx.uq.laplacian_functional(1),
-        "laplacian",
-    )
-
-    with pytest.raises(ValueError, match="requires order 2"):
-        phx.uq.functional_kernel_diagonal(
-            phx.kernels.Matern32Kernel(length_scale=0.4),
-            design,
-        )
-
-    supported = phx.uq.functional_kernel_diagonal(
-        phx.kernels.Matern52Kernel(length_scale=0.4),
-        design,
-    )
-    assert jnp.allclose(supported, 25.0 / 0.4**4)

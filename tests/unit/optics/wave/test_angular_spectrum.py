@@ -40,14 +40,11 @@ def _finite_space(shape: Any = (31, 32)) -> Any:
     return PlaneFieldSpace(grid, RigidFrame.identity(3), "finite-window")
 
 
-def test_topology_requires_periodic_no_pad_or_finite_explicit_pad_crop() -> None:
+def test_angular_spectrum_scenario_1() -> None:
     with pytest.raises(ValueError, match="requires padding=None"):
         AngularSpectrumPlan(2).prepare(_periodic_space())
     with pytest.raises(ValueError, match="requires explicit positive padding"):
         AngularSpectrumPlan().prepare(_finite_space())
-
-
-def test_zero_distance_is_identity_on_periodic_cell() -> None:
     space = _periodic_space()
     coordinates = space.transverse_coordinates
     values = jnp.exp(-(coordinates[..., 0] ** 2 + coordinates[..., 1] ** 2))
@@ -61,9 +58,6 @@ def test_zero_distance_is_identity_on_periodic_cell() -> None:
     assert result.successful
     assert result.status == int(AngularSpectrumStatus.SUCCESS)
     assert jnp.allclose(result.cropped_energy, 0.0)
-
-
-def test_single_fourier_mode_accumulates_exact_longitudinal_phase() -> None:
     space = _periodic_space(shape=(18, 20))
     coordinates = space.transverse_coordinates
     transverse_wavevector = jnp.asarray([2.0, -3.0])
@@ -82,7 +76,7 @@ def test_single_fourier_mode_accumulates_exact_longitudinal_phase() -> None:
     assert jnp.allclose(result.field.values, expected, rtol=2e-5, atol=2e-5)
 
 
-def test_complex_medium_wavenumber_has_explicit_phase_and_attenuation() -> None:
+def test_angular_spectrum_scenario_2() -> None:
     space = _periodic_space(shape=(10, 12))
     field = ScalarPlaneField(space, jnp.ones(space.shape), 13.0, 0.0)
     distance = 0.7
@@ -94,9 +88,6 @@ def test_complex_medium_wavenumber_has_explicit_phase_and_attenuation() -> None:
 
     expected = jnp.exp(1j * medium_wavenumber * distance)
     assert jnp.allclose(result.field.values, expected, rtol=2e-5, atol=2e-5)
-
-
-def test_outgoing_branch_decays_evanescent_mode() -> None:
     space = _periodic_space(shape=(16, 16))
     coordinates = space.transverse_coordinates
     transverse_wavenumber = 3.0
@@ -117,9 +108,6 @@ def test_outgoing_branch_decays_evanescent_mode() -> None:
         rtol=2e-5,
         atol=2e-5,
     )
-
-
-def test_finite_window_odd_even_padding_crops_to_same_grid_and_spreads_gaussian() -> None:
     space = _finite_space()
     coordinates = space.transverse_coordinates
     values = jnp.exp(
@@ -139,9 +127,6 @@ def test_finite_window_odd_even_padding_crops_to_same_grid_and_spreads_gaussian(
     assert propagated.field.values.shape == space.shape
     assert jnp.max(jnp.abs(propagated.field.values)) < jnp.max(jnp.abs(values))
     assert propagated.successful
-
-
-def test_finite_window_leakage_is_explicit_failure() -> None:
     space = _finite_space(shape=(17, 18))
     values = jnp.zeros(space.shape, dtype="complex128").at[8, 9].set(1.0)
     field = ScalarPlaneField(space, values, 5.0, 0.0)

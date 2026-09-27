@@ -1,5 +1,3 @@
-from typing import Any
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +7,7 @@ import phydrax as phx
 from phydrax._numerics import fejer_first_data
 
 
-def test_axis_domains_encode_finite_and_unbounded_support() -> None:
+def test_axis_domains_scenario_1() -> None:
     interval = phx.discretization.AxisDomain.interval(-2.0, 3.0)
     periodic = phx.discretization.AxisDomain.periodic(0.0, 2.0 * jnp.pi)
     positive = phx.discretization.AxisDomain.half_line(1.5)
@@ -28,11 +26,7 @@ def test_axis_domains_encode_finite_and_unbounded_support() -> None:
     assert line.finite_bounds is None
     with pytest.raises(ValueError, match="finite length"):
         _ = line.length
-
-
-@pytest.mark.parametrize(
-    ("factory", "error", "message"),
-    (
+    for factory, error, message in (
         (
             lambda: phx.discretization.AxisDomain.interval(1.0, 0.0),
             eqx.EquinoxRuntimeError,
@@ -44,18 +38,9 @@ def test_axis_domains_encode_finite_and_unbounded_support() -> None:
             ValueError,
             "direction",
         ),
-    ),
-)
-def test_axis_domains_reject_invalid_support(
-    factory: Any, error: Any, message: Any
-) -> None:
-    with pytest.raises(error, match=message):
-        factory()
-
-
-def test_point_primary_tensor_measure_uses_declared_quadrature_and_endpoint_flags() -> (
-    None
-):
+    ):
+        with pytest.raises(error, match=message):
+            factory()
     domain = phx.discretization.AxisDomain.interval(-1.0, 1.0)
     gauss = phx.discretization.TensorSpectralPlan(
         (phx.discretization.LegendreBasisPlan(8, node_rule="gauss"),)
@@ -70,9 +55,6 @@ def test_point_primary_tensor_measure_uses_declared_quadrature_and_endpoint_flag
     assert not bool(gauss.grid.primary_entity_layout.upper_boundary_masks[0].any())
     assert bool(lobatto.grid.primary_entity_layout.lower_boundary_masks[0][0])
     assert bool(lobatto.grid.primary_entity_layout.upper_boundary_masks[0][-1])
-
-
-def test_first_fejer_rule_is_endpoint_free_and_polynomial_exact() -> None:
     rule = fejer_first_data(8)
 
     assert jnp.all(jnp.abs(rule.nodes) < 1.0)

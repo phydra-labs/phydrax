@@ -182,7 +182,7 @@ def _anisotropic_kernel(*, maximum_speed: Any = 3.0) -> Any:
     )
 
 
-def test_constant_isotropic_kernel_specialization_regresses_existing_path() -> None:
+def test_cosmology_sidm_anisotropic_scenario_1() -> None:
     value = 0.01
     legacy, _, state, _ = _case(cosmology.SIDMCrossSectionPlan(value))
     species = DarkSectorSpeciesPlan("chi", 1.0)
@@ -220,9 +220,6 @@ def test_constant_isotropic_kernel_specialization_regresses_existing_path() -> N
         rtol=0.0,
         atol=2e-15,
     )
-
-
-def test_velocity_dependent_anisotropic_events_are_stable_and_conservative() -> None:
     plan, pm, state, neighborhood = _case(_anisotropic_kernel())
     base = neighborhood.pair_relation
     permutation = jnp.arange(base.capacity - 1, -1, -1)
@@ -271,9 +268,6 @@ def test_velocity_dependent_anisotropic_events_are_stable_and_conservative() -> 
         second.accepted_state.canonical_momenta,
         atol=2e-14,
     )
-
-
-def test_anisotropic_kernel_domain_failure_rolls_back_atomically() -> None:
     plan, _, state, _ = _case(_anisotropic_kernel(maximum_speed=0.5))
     result = plan.collide(state, jr.key(3), 2, 0.1)
 
@@ -282,9 +276,6 @@ def test_anisotropic_kernel_domain_failure_rolls_back_atomically() -> None:
     np.testing.assert_array_equal(
         result.accepted_state.canonical_momenta, state.canonical_momenta
     )
-
-
-def test_anisotropic_event_capacity_failure_rolls_back_atomically() -> None:
     plan, _, state, _ = _case(_anisotropic_kernel(), maximum_events=0)
     result = plan.collide(state, jr.key(31), 9, 2.0)
 

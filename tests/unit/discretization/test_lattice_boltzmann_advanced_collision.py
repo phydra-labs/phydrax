@@ -42,7 +42,7 @@ def _state(lattice: Any) -> Any:
     return precision, density, velocity, equilibrium
 
 
-def test_d3q27_and_custom_lattice_certification_are_explicit() -> None:
+def test_lattice_boltzmann_advanced_collision_scenario_1() -> None:
     lattice = D3Q27()
     assert lattice.population_count == 27
     assert lattice.supports("kbc")
@@ -54,9 +54,6 @@ def test_d3q27_and_custom_lattice_certification_are_explicit() -> None:
     )
     assert custom.supports("athermal-hydrodynamics")
     assert custom.capability_evidence.hydrodynamic_isotropy_order == 4
-
-
-def test_mrt_regularized_smagorinsky_and_moment_collisions_conserve() -> None:
     lattice = D2Q9()
     precision, density, velocity, equilibrium = _state(lattice)
     perturbation = jnp.asarray((0.0, 1.0, 1.0, -1.0, -1.0, 0.5, 0.5, -0.5, -0.5)) * 1e-5
@@ -88,9 +85,6 @@ def test_mrt_regularized_smagorinsky_and_moment_collisions_conserve() -> None:
         )
         np.testing.assert_allclose(new_mass, old_mass, atol=2e-12)
         np.testing.assert_allclose(new_momentum, old_momentum, atol=2e-12)
-
-
-def test_mrt_guo_and_entropic_equilibrium_paths_are_certified() -> None:
     lattice = D2Q9()
     precision, density, velocity, equilibrium = _state(lattice)
     force = jnp.broadcast_to(jnp.asarray((1e-6, -2e-6)), velocity.shape)
@@ -119,9 +113,6 @@ def test_mrt_guo_and_entropic_equilibrium_paths_are_certified() -> None:
         )
         assert result.successful
         np.testing.assert_allclose(result.populations, equilibrium, atol=2e-12)
-
-
-def test_float32_float64_and_mixed_storage_keep_explicit_population_dtype() -> None:
     lattice = D2Q9()
     density = jnp.ones((2, 2))
     velocity = jnp.zeros((2, 2, 2))

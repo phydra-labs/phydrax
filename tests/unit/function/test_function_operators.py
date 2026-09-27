@@ -6,6 +6,7 @@
 import operator
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -16,6 +17,7 @@ from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
     DomainFunction,
     Interval1d,
+    PointBatch,
     SampleLayout,
     TimeInterval,
 )
@@ -25,189 +27,79 @@ from phydrax.operators.differential._hooks import blend_with_gate
 
 
 @pytest.fixture
-def interval() -> Any:
+def interval() -> Interval1d:
     return Interval1d(0.0, 1.0)
 
 
 @pytest.fixture
-def sample_batch(interval: Any) -> Any:
+def sample_batch(interval: Interval1d) -> PointBatch:
     component = interval.component()
     structure = SampleLayout((("x",),))
-    return component.sample(phx.domain.PointSampling(8, layout=structure), key=jr.key(0))
+    batch = component.sample(
+        phx.domain.PointSampling(8, layout=structure),
+        key=jr.key(0),
+    )
+    assert isinstance(batch, PointBatch)
+    return batch
 
 
-def test_function_binding_does_not_infer_key_from_signature(
-    sample_batch: Any, interval: Any
+def test_function_binding_passes_only_explicit_runtime_arguments(
+    sample_batch: PointBatch,
+    interval: Interval1d,
 ) -> None:
     @interval.Function("x")
-    def function(x: Any, *, key: Any = None) -> Any:
+    def implicit_key(x: jax.Array, *, key: jax.Array | None = None) -> jax.Array:
         del x
-        return jnp.asarray(key is None, dtype="float64")
+        return jnp.asarray(key is None, dtype=jnp.float64)
 
-    assert isinstance(function.func, phx.domain.PointwiseEvaluator)
-    out = function(sample_batch, key=jr.key(1))
-    assert jnp.all(out.data == 1.0)
-
-
-def test_function_binding_explicitly_passes_key(sample_batch: Any, interval: Any) -> None:
-    @interval.Function(
-        "x",
-        binding=phx.domain.FunctionBinding(pass_key=True),
-    )
-    def function(x: Any, *, key: Any) -> Any:
+    @interval.Function("x", binding=phx.domain.FunctionBinding(pass_key=True))
+    def keyed(x: jax.Array, *, key: jax.Array) -> jax.Array:
         del x
         return jr.uniform(key)
 
-    key = jr.key(2)
-    out = function(sample_batch, key=key)
-    assert jnp.allclose(jnp.asarray(out.data), jr.uniform(key))
-
-
-def test_function_binding_explicitly_passes_iteration(
-    sample_batch: Any, interval: Any
-) -> None:
-    @interval.Function(
-        "x",
-        binding=phx.domain.FunctionBinding(pass_iter=True),
-    )
-    def function(x: Any, *, iter_: Any) -> Any:
+    @interval.Function("x", binding=phx.domain.FunctionBinding(pass_iter=True))
+    def iterated(x: jax.Array, *, iter_: int) -> jax.Array:
         return iter_ * x[0]
 
-    out = function(sample_batch, iter_=3)
+    assert isinstance(implicit_key.func, phx.domain.PointwiseEvaluator)
+    assert jnp.all(implicit_key(sample_batch, key=jr.key(1)).data == 1.0)
+    key = jr.key(2)
+    assert jnp.allclose(jnp.asarray(keyed(sample_batch, key=key).data), jr.uniform(key))
     expected = 3.0 * sample_batch.points["x"].data[..., 0]
-    assert jnp.allclose(jnp.asarray(out.data), expected)
+    assert jnp.allclose(jnp.asarray(iterated(sample_batch, iter_=3).data), expected)
 
 
-def test_add(sample_batch: Any, interval: Any) -> None:
+def test_function_arithmetic_matches_the_corresponding_array_operations(
+    sample_batch: PointBatch,
+    interval: Interval1d,
+) -> None:
     @interval.Function("x")
-    def f(x: Any) -> Any:
+    def first(x: jax.Array) -> jax.Array:
         return x[0] + 1.0
 
     @interval.Function("x")
-    def g(x: Any) -> Any:
-        return 2.0 * x[0]
-
-    h = f + g
-    assert jnp.allclose(
-        jnp.asarray(h(sample_batch).data), f(sample_batch).data + g(sample_batch).data
-    )
-
-
-def test_radd(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    h = 3.0 + f
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 + f(sample_batch).data)
-
-
-def test_sub(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    @interval.Function("x")
-    def g(x: Any) -> Any:
-        return 2.0 * x[0]
-
-    h = f - g
-    assert jnp.allclose(
-        jnp.asarray(h(sample_batch).data), f(sample_batch).data - g(sample_batch).data
-    )
-
-
-def test_rsub(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    h = 3.0 - f
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 - f(sample_batch).data)
-
-
-def test_mul(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    @interval.Function("x")
-    def g(x: Any) -> Any:
-        return 2.0 * x[0]
-
-    h = f * g
-    assert jnp.allclose(
-        jnp.asarray(h(sample_batch).data), f(sample_batch).data * g(sample_batch).data
-    )
-
-
-def test_rmul(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    h = 3.0 * f
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 * f(sample_batch).data)
-
-
-def test_truediv(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    @interval.Function("x")
-    def g(x: Any) -> Any:
+    def second(x: jax.Array) -> jax.Array:
         return 2.0 * x[0] + 1.0
 
-    h = f / g
-    assert jnp.allclose(
-        jnp.asarray(h(sample_batch).data), f(sample_batch).data / g(sample_batch).data
+    first_values = jnp.asarray(first(sample_batch).data)
+    second_values = jnp.asarray(second(sample_batch).data)
+    cases = (
+        ("add", first + second, first_values + second_values),
+        ("radd", 3.0 + first, 3.0 + first_values),
+        ("sub", first - second, first_values - second_values),
+        ("rsub", 3.0 - first, 3.0 - first_values),
+        ("mul", first * second, first_values * second_values),
+        ("rmul", 3.0 * first, 3.0 * first_values),
+        ("div", first / second, first_values / second_values),
+        ("rdiv", 3.0 / first, 3.0 / first_values),
+        ("pow", first**2.0, first_values**2.0),
+        ("rpow", 3.0**first, 3.0**first_values),
+        ("abs", abs(-first), jnp.abs(-first_values)),
+        ("neg", -first, -first_values),
     )
-
-
-def test_rtruediv(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    h = 3.0 / f
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 / f(sample_batch).data)
-
-
-def test_pow(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] + 1.0
-
-    h = f**2.0
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), f(sample_batch).data ** 2.0)
-
-
-def test_rpow(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0]
-
-    h = 3.0**f
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 ** f(sample_batch).data)
-
-
-def test_abs(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return -x[0]
-
-    h = abs(f)
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), jnp.abs(f(sample_batch).data))
-
-
-def test_neg(sample_batch: Any, interval: Any) -> None:
-    @interval.Function("x")
-    def f(x: Any) -> Any:
-        return x[0]
-
-    h = -f
-    assert jnp.allclose(jnp.asarray(h(sample_batch).data), -f(sample_batch).data)
+    for case_id, function, expected in cases:
+        actual = jnp.asarray(function(sample_batch).data)
+        assert jnp.allclose(actual, expected), case_id
 
 
 def test_transpose(sample_batch: Any, interval: Any) -> None:
@@ -303,44 +195,43 @@ def test_constant_with_dependencies_works_on_coord_separable_batch() -> None:
     assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
-def test_rank1_leading_broadcast_op_mul() -> None:
-    w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
-    u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
-    out = _rank1_leading_broadcast_op(operator.mul, w, u)
-    expected = w[:, None] * u
-    assert jnp.allclose(out, expected)
+def test_rank1_broadcast_operations_preserve_leading_axis_semantics() -> None:
+    weights = jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float64)
+    values = jnp.arange(12.0, dtype=jnp.float64).reshape((3, 4))
+    division_weights = jnp.asarray([1.0, 2.0, 4.0], dtype=jnp.float64)
+    positive_values = values + 1.0
+    cases = (
+        (
+            "mul",
+            _rank1_leading_broadcast_op(operator.mul, weights, values),
+            weights[:, None] * values,
+        ),
+        (
+            "div",
+            _rank1_leading_broadcast_op(
+                operator.truediv,
+                positive_values,
+                division_weights,
+            ),
+            positive_values / division_weights[:, None],
+        ),
+        (
+            "add",
+            _rank1_leading_broadcast_op(operator.add, values, weights),
+            values + weights[:, None],
+        ),
+        (
+            "sub",
+            _rank1_leading_broadcast_op(operator.sub, values, weights),
+            values - weights[:, None],
+        ),
+    )
+    for case_id, actual, expected in cases:
+        assert jnp.allclose(actual, expected), case_id
 
-
-def test_rank1_leading_broadcast_op_div() -> None:
-    w = jnp.array([1.0, 2.0, 4.0], dtype="float64")
-    u = jnp.arange(12.0, dtype="float64").reshape((3, 4)) + 1.0
-    out = _rank1_leading_broadcast_op(operator.truediv, u, w)
-    expected = u / w[:, None]
-    assert jnp.allclose(out, expected)
-
-
-def test_rank1_leading_broadcast_op_add() -> None:
-    w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
-    u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
-    out = _rank1_leading_broadcast_op(operator.add, u, w)
-    expected = u + w[:, None]
-    assert jnp.allclose(out, expected)
-
-
-def test_rank1_leading_broadcast_op_sub() -> None:
-    w = jnp.array([1.0, 2.0, 3.0], dtype="float64")
-    u = jnp.arange(12.0, dtype="float64").reshape((3, 4))
-    out = _rank1_leading_broadcast_op(operator.sub, u, w)
-    expected = u - w[:, None]
-    assert jnp.allclose(out, expected)
-
-
-def test_rank1_leading_broadcast_op_mul_outer_for_mismatched_rank1() -> None:
-    x = jnp.array([1.0, 2.0, 3.0], dtype="float64")
-    t = jnp.array([4.0, 5.0], dtype="float64")
-    out = _rank1_leading_broadcast_op(operator.mul, x, t)
-    expected = x[:, None] * t[None, :]
-    assert jnp.allclose(out, expected)
+    time_values = jnp.asarray([4.0, 5.0], dtype=jnp.float64)
+    outer = _rank1_leading_broadcast_op(operator.mul, weights, time_values)
+    assert jnp.allclose(outer, weights[:, None] * time_values[None, :])
 
 
 def test_blend_with_gate_matches_manual_expression() -> None:

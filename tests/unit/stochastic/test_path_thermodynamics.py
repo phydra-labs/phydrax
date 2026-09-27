@@ -26,7 +26,7 @@ def _paths() -> Any:
     )
 
 
-def test_normalized_path_thermodynamics_obeys_reversal_and_fluctuation_identity() -> None:
+def test_path_thermodynamics_scenario_1() -> None:
     paths = _paths()
     forward = jnp.asarray([0.6, 0.3, 0.1])
     reverse = jnp.asarray([0.3, 0.3, 0.4])
@@ -73,9 +73,6 @@ def test_normalized_path_thermodynamics_obeys_reversal_and_fluctuation_identity(
         -result.path_entropy_production,
         atol=1.0e-14,
     )
-
-
-def test_path_thermodynamics_retains_failed_detailed_balance_evidence() -> None:
     paths = _paths()
     plan = DiscretePathThermodynamicsPlan(
         1.0,

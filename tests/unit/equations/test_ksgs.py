@@ -93,7 +93,7 @@ def _all_state_equal(left: Any, right: Any) -> Any:
     )
 
 
-def test_static_zero_and_exact_equilibrium_limits() -> None:
+def test_ksgs_scenario_1() -> None:
     plan = StaticKSGSPlan(_coefficients(), _provenance())
     zero = plan.evaluate(plan.initialize_state(0.0), _base_inputs())
     assert zero.eddy_viscosity == 0.0
@@ -112,9 +112,6 @@ def test_static_zero_and_exact_equilibrium_limits() -> None:
     np.testing.assert_allclose(equilibrium.contributions.dissipation, 1.0)
     np.testing.assert_allclose(equilibrium.contributions.rhs, 0.0, atol=1.0e-7)
     assert not bool(equilibrium.evidence.production_limited)
-
-
-def test_eddy_and_diffusion_coefficients_scale_without_changing_dissipation() -> None:
     gradient = jnp.diag(jnp.asarray((0.1, -0.1, 0.0)))
     inputs = _base_inputs(gradient)
     first_plan = StaticKSGSPlan(_coefficients(eddy=0.5), _provenance())
@@ -139,9 +136,6 @@ def test_eddy_and_diffusion_coefficients_scale_without_changing_dissipation() ->
     )
     np.testing.assert_allclose(pre_operator.eddy_viscosity, second.eddy_viscosity)
     np.testing.assert_allclose(pre_operator.diffusivity, second.diffusivity)
-
-
-def test_production_dissipation_signs_and_explicit_production_limit() -> None:
     plan = StaticKSGSPlan(_coefficients(limit=2.0), _provenance())
     gradient = jnp.diag(jnp.asarray((10.0, -10.0, 0.0)))
     result = plan.evaluate(
@@ -157,7 +151,7 @@ def test_production_dissipation_signs_and_explicit_production_limit() -> None:
     np.testing.assert_allclose(result.contributions.rhs, 0.5)
 
 
-def test_buoyancy_has_stable_sink_and_unstable_source_signs() -> None:
+def test_ksgs_scenario_2() -> None:
     plan = BuoyancyKSGSPlan(_coefficients(), _provenance())
     state = plan.initialize_state(1.0)
     base = _base_inputs()
@@ -168,9 +162,6 @@ def test_buoyancy_has_stable_sink_and_unstable_source_signs() -> None:
     np.testing.assert_allclose(
         stable.contributions.buoyancy, -unstable.contributions.buoyancy
     )
-
-
-def test_dynamic_update_history_acceptance_and_exact_restart_identity() -> None:
     plan = DynamicKSGSPlan(
         _coefficients(eddy=0.25),
         _provenance(),
@@ -207,9 +198,6 @@ def test_dynamic_update_history_acceptance_and_exact_restart_identity() -> None:
     np.testing.assert_allclose(
         uninterrupted.contributions.rhs, resumed.contributions.rhs, rtol=0.0, atol=0.0
     )
-
-
-def test_dynamic_filter_semantics_are_compatible_and_non_aliasing() -> None:
     provenance = _provenance()
     coefficients = _coefficients()
     ratio = 2.0
@@ -250,9 +238,6 @@ def test_dynamic_filter_semantics_are_compatible_and_non_aliasing() -> None:
     )
     plan = DynamicKSGSPlan(coefficients, commuting_provenance, sharp_test_filter, ratio)
     assert plan.test_filter.filter_id == sharp_test_filter.filter_id
-
-
-def test_low_re_damping_and_viscous_dissipation_are_explicit() -> None:
     plan = LowReKSGSPlan(_coefficients(), LowReKSGSCoefficients(2.0, 2.0), _provenance())
     result = plan.evaluate(
         plan.initialize_state(1.0),
@@ -268,7 +253,7 @@ def test_low_re_damping_and_viscous_dissipation_are_explicit() -> None:
     assert bool(result.evidence.dissipation_nonnegative)
 
 
-def test_negative_kinetic_energy_is_refused_without_a_floor_eager_and_jit() -> None:
+def test_ksgs_scenario_3() -> None:
     plan = StaticKSGSPlan(_coefficients(), _provenance())
     inputs = _base_inputs()
     with pytest.raises(Exception, match="negative"):
@@ -281,6 +266,9 @@ def test_negative_kinetic_energy_is_refused_without_a_floor_eager_and_jit() -> N
     )
     with pytest.raises(Exception, match="negative"):
         compiled(jnp.asarray(-1.0)).block_until_ready()
+    plan = StaticKSGSPlan(_coefficients(), _provenance())
+    result = plan.evaluate(plan.initialize_state(1.0), _base_inputs(diffusion=jnp.nan))
+    assert not bool(result.evidence.finite)
 
 
 def test_static_transition_is_jittable_differentiable_and_fixed_shape() -> None:
@@ -317,9 +305,3 @@ def test_static_transition_is_jittable_differentiable_and_fixed_shape() -> None:
         ),
         result.state,
     )
-
-
-def test_nonfinite_backend_term_is_reported_by_evidence() -> None:
-    plan = StaticKSGSPlan(_coefficients(), _provenance())
-    result = plan.evaluate(plan.initialize_state(1.0), _base_inputs(diffusion=jnp.nan))
-    assert not bool(result.evidence.finite)

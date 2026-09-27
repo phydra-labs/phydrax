@@ -42,7 +42,7 @@ def _report(status: AdapterStatus, *, losses: Any = ()) -> AdapterReport:
     )
 
 
-def test_report_construction_preserves_transformations_as_static_metadata() -> None:
+def test_report_scenario_1() -> None:
     transformation = _transformation()
     report = _report(AdapterStatus.DECLARED_LOSS, losses=(transformation,))
 
@@ -58,18 +58,12 @@ def test_report_construction_preserves_transformations_as_static_metadata() -> N
     assert leaves == []
     assert restored.status == AdapterStatus.DECLARED_LOSS
     assert restored.losses == (transformation,)
-
-
-def test_report_construction_rejects_inconsistent_loss_accounting() -> None:
     transformation = _transformation()
 
     with pytest.raises(ValueError, match="lossless report"):
         _report(AdapterStatus.LOSSLESS, losses=(transformation,))
     with pytest.raises(ValueError, match="declared-loss report"):
         _report(AdapterStatus.DECLARED_LOSS)
-
-
-def test_require_lossless_accepts_lossless_and_reports_declared_loss() -> None:
     require_lossless(_report(AdapterStatus.LOSSLESS))
 
     declared = _report(AdapterStatus.DECLARED_LOSS, losses=(_transformation(),))

@@ -34,7 +34,7 @@ def _plane_wave(grid: Any, mode: Any = 2) -> Any:
     return jnp.exp(2j * jnp.pi * mode * coordinate)
 
 
-def test_periodic_fd_plane_wave_converges_to_spectral_kinetic_authority() -> None:
+def test_cosmology_wave_fd_scenario_1() -> None:
     errors = []
     action = 2.0e-4
     for count in (24, 48):
@@ -53,9 +53,6 @@ def test_periodic_fd_plane_wave_converges_to_spectral_kinetic_authority() -> Non
         assert float(residual) < 1.0e-10
 
     assert errors[1] < 0.3 * errors[0]
-
-
-def test_cayley_action_closes_weighted_norm_and_self_adjoint_residual() -> None:
     grid = _grid(32)
     prepared = PeriodicWaveFiniteDifferencePlan(1.0).prepare(grid)
     coordinate = grid.points[:, 0].reshape(grid.shape)
@@ -76,9 +73,6 @@ def test_cayley_action_closes_weighted_norm_and_self_adjoint_residual() -> None:
     assert float(result.diagnostics.cayley_relative_residual) < 1.0e-10
     assert float(result.diagnostics.self_adjoint_residual) < 1.0e-11
     assert float(result.diagnostics.norm_relative_error) < 1.0e-9
-
-
-def test_cayley_solve_honors_configured_iteration_cap_and_rolls_back() -> None:
     grid = _grid(24)
     prepared = PeriodicWaveFiniteDifferencePlan(
         1.0,
@@ -109,9 +103,6 @@ def test_cayley_solve_honors_configured_iteration_cap_and_rolls_back() -> None:
     assert int(result.kinetic_solve.diagnostics.iterations) <= 1
     assert not bool(result.successful)
     np.testing.assert_array_equal(result.state.psi, state.psi)
-
-
-def test_nonzero_fd_action_requires_advancing_time_and_obeys_phase_gate() -> None:
     grid = _grid(24)
     coordinate = grid.points[:, 0].reshape(grid.shape)
     state_psi = jnp.exp(6j * jnp.pi * coordinate)
@@ -140,7 +131,7 @@ def test_nonzero_fd_action_requires_advancing_time_and_obeys_phase_gate() -> Non
     np.testing.assert_array_equal(result.state.psi, state.psi)
 
 
-def test_contact_action_is_symmetric_around_cayley_drift() -> None:
+def test_contact_contracts() -> None:
     grid = _grid(24)
     prepared = PeriodicWaveFiniteDifferencePlan(
         1.0,
@@ -188,9 +179,6 @@ def test_contact_action_is_symmetric_around_cayley_drift() -> None:
         jnp.max(jnp.abs(result.candidate_state.psi - unsplit.candidate_state.psi))
         > 1.0e-12
     )
-
-
-def test_contact_alias_gate_uses_pretruncated_wave_before_density_product() -> None:
     grid = _grid(24)
     prepared = PeriodicWaveFiniteDifferencePlan(
         1.0,
@@ -208,9 +196,6 @@ def test_contact_alias_gate_uses_pretruncated_wave_before_density_product() -> N
     assert float(action.input_truncation_defect) < 1.0e-4
     assert float(action.aliasing_defect) > 1.0e-3
     assert not bool(action.successful)
-
-
-def test_contact_interaction_has_distinct_identity_and_transactional_gates() -> None:
     grid = _grid(24)
     accepted = PeriodicWaveFiniteDifferencePlan(
         1.0,

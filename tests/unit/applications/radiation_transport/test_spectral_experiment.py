@@ -8,9 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_correlated_k_quadrature_and_sensor_response_reconstruct_scalar_transfer() -> (
-    None
-):
+def test_spectral_experiment_scenario_1() -> None:
     transfer = phx.applications.astrophysics.RayTransferPlan(
         jnp.asarray(((1.0, 2.0),)), ray_id="one-ray"
     )
@@ -33,9 +31,6 @@ def test_correlated_k_quadrature_and_sensor_response_reconstruct_scalar_transfer
     assert bool(result.successful)
     np.testing.assert_allclose(result.band_radiance[:, 0], (7.5, 9.0))
     np.testing.assert_allclose(result.measured_radiance, (8.7,))
-
-
-def test_polarized_spectral_experiment_preserves_stokes_cone() -> None:
     sensor = phx.applications.radiation_transport.RadiativeSensorPlan(
         jnp.asarray((0.25, 0.75)), sensor_id="polarized-two-frequency"
     )

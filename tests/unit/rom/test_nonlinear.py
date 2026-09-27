@@ -155,7 +155,7 @@ def _residual_basis(full: Any, role: Any, source: Any) -> Any:
     )
 
 
-def test_full_galerkin_and_deim_agree_on_collateral_span() -> None:
+def test_nonlinear_scenario_1() -> None:
     full, reduction = _reduction()
     state = jnp.asarray([2.0, 3.0, 0.0], dtype=jnp.float64)
     galerkin = phx.rom.FullResidualGalerkin(reduction, _Residual(full))
@@ -169,9 +169,6 @@ def test_full_galerkin_and_deim_agree_on_collateral_span() -> None:
 
     np.testing.assert_allclose(deim.evaluate(provider, state), expected)
     assert deim.node_indices.size == 2
-
-
-def test_lspg_and_gnat_solve_same_time_discrete_residual() -> None:
     full, reduction = _reduction()
     stage = _StageResidual(full)
     lspg = phx.rom.ReducedLSPGProblem(reduction, stage)
@@ -203,9 +200,6 @@ def test_lspg_and_gnat_solve_same_time_discrete_residual() -> None:
         full_result.parameters,
         atol=1e-7,
     )
-
-
-def test_ecsw_selects_nonnegative_element_quadrature_and_reproduces_target() -> None:
     _, reduction = _reduction()
     training_contributions = jnp.asarray(
         [

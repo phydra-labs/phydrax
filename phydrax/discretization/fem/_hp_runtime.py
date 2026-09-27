@@ -51,10 +51,9 @@ _HEX_FACETS = (
     (3, 0, 4, 7),
 )
 
+
 def _host_integer(value: object, name: str, /) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-        value, (int, np.integer)
-    ):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
         raise TypeError(f"{name} must be an integer.")
     return int(value)
 
@@ -759,9 +758,7 @@ def refine_tensor_hp_cells(
         sorted(
             (slot_by_id[int(value)] for value in marked_ids),
             key=lambda slot: (
-                _host_integer(
-                    roots[_host_integer(slot, "cell slot")], "root cell ID"
-                ),
+                _host_integer(roots[_host_integer(slot, "cell slot")], "root cell ID"),
                 _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
             ),
         ),
@@ -905,9 +902,7 @@ def coarsen_tensor_hp_cells(
         sorted(
             (slot_by_id[int(value)] for value in parent_ids),
             key=lambda slot: (
-                _host_integer(
-                    roots[_host_integer(slot, "cell slot")], "root cell ID"
-                ),
+                _host_integer(roots[_host_integer(slot, "cell slot")], "root cell ID"),
                 _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
             ),
         ),
@@ -1434,9 +1429,7 @@ def balanced_hp_refinement_ids(
         sorted(
             requested,
             key=lambda slot: (
-                _host_integer(
-                    roots[_host_integer(slot, "cell slot")], "root cell ID"
-                ),
+                _host_integer(roots[_host_integer(slot, "cell slot")], "root cell ID"),
                 _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
             ),
         ),
@@ -1446,9 +1439,7 @@ def balanced_hp_refinement_ids(
         sorted(
             closure - requested,
             key=lambda slot: (
-                _host_integer(
-                    roots[_host_integer(slot, "cell slot")], "root cell ID"
-                ),
+                _host_integer(roots[_host_integer(slot, "cell slot")], "root cell ID"),
                 _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
             ),
         ),
@@ -1462,9 +1453,7 @@ def balanced_hp_refinement_ids(
                     _host_integer(
                         roots[_host_integer(slot, "cell slot")], "root cell ID"
                     ),
-                    _host_integer(
-                        paths[_host_integer(slot, "cell slot")], "path code"
-                    ),
+                    _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
                 ),
             ),
             dtype=np.int32,

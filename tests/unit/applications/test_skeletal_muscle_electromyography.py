@@ -18,12 +18,9 @@ from phydrax.applications.skeletal_muscle.electromyography import (
 )
 
 
-def test_skeletal_muscle_parent_exports_electromyography_namespace() -> None:
+def test_skeletal_muscle_electromyography_scenario_1() -> None:
     assert skeletal_muscle.electromyography is electromyography
     assert "electromyography" in skeletal_muscle.__all__
-
-
-def test_event_template_superposition_mask_and_fractional_delay() -> None:
     template = jnp.asarray([[[0.0, 1.0, 2.0, 1.0, 0.0]]])
     prepared = MotorUnitActionPotentialTemplatePlan(
         template,
@@ -48,9 +45,6 @@ def test_event_template_superposition_mask_and_fractional_delay() -> None:
     np.testing.assert_allclose(masked.voltage_V, single.voltage_V)
     np.testing.assert_allclose(double.voltage_V[0, 2], 2.0)
     np.testing.assert_allclose(half.voltage_V[0, 1], 0.5)
-
-
-def test_event_template_retains_aligned_final_nonzero_sample() -> None:
     prepared = MotorUnitActionPotentialTemplatePlan(
         jnp.asarray([[[1.0, 2.0, 3.0]]]),
         1.0,
@@ -69,9 +63,6 @@ def test_event_template_retains_aligned_final_nonzero_sample() -> None:
     np.testing.assert_allclose(result.voltage_V[0], (1.0, 2.0, 3.0))
     assert bool(result.evidence.template_support_complete)
     assert bool(result.evidence.successful)
-
-
-def test_template_support_is_incomplete_when_any_active_event_is_clipped() -> None:
     prepared = MotorUnitActionPotentialTemplatePlan(
         jnp.asarray([[[1.0, 2.0, 3.0]]]),
         1.0,
@@ -125,7 +116,7 @@ def _conductor(depth: Any = -0.01, *, muscle_longitudinal_conductivity: Any = 0.
     )
 
 
-def test_planar_conductor_plan_identity_includes_physical_parameters() -> None:
+def test_planar_contracts() -> None:
     baseline = _conductor()
     different_depth = _conductor(-0.02)
     different_conductivity = _conductor(muscle_longitudinal_conductivity=0.6)
@@ -134,14 +125,22 @@ def test_planar_conductor_plan_identity_includes_physical_parameters() -> None:
         len({baseline.plan_id, different_depth.plan_id, different_conductivity.plan_id})
         == 3
     )
+    source = _neutral_source().at[0, 0].set(1.0)
+    result = _conductor().evaluate(source)
+    assert not bool(result.evidence.successful)
+    assert not bool(result.evidence.source_charge_neutral)
 
-
-def _neutral_source() -> Any:
-    source = jnp.zeros((8, 8), dtype=jnp.complex128)
-    return source.at[1, 0].set(1.0).at[-1, 0].set(1.0)
-
-
-def test_planar_surface_conductor_zero_mode_reality_and_depth_attenuation() -> None:
+    frequency = _frequencies()
+    nonneutral = PetersenRostalski2019PlanarConductorPlan(
+        frequency,
+        frequency,
+        jnp.ones((8, 8), dtype=jnp.complex128),
+        jnp.asarray(((0.0, 0.0),)),
+        jnp.asarray((1.0,)),
+        _conductor().parameters,
+    ).evaluate(_neutral_source())
+    assert not bool(nonneutral.evidence.successful)
+    assert not bool(nonneutral.evidence.montage_charge_neutral)
     source = _neutral_source()
     shallow = _conductor(-0.005)
     deep = _conductor(-0.02)
@@ -160,20 +159,6 @@ def test_planar_surface_conductor_zero_mode_reality_and_depth_attenuation() -> N
     )
 
 
-def test_planar_conductor_rejects_non_neutral_source_and_montage() -> None:
-    source = _neutral_source().at[0, 0].set(1.0)
-    result = _conductor().evaluate(source)
-    assert not bool(result.evidence.successful)
-    assert not bool(result.evidence.source_charge_neutral)
-
-    frequency = _frequencies()
-    nonneutral = PetersenRostalski2019PlanarConductorPlan(
-        frequency,
-        frequency,
-        jnp.ones((8, 8), dtype=jnp.complex128),
-        jnp.asarray(((0.0, 0.0),)),
-        jnp.asarray((1.0,)),
-        _conductor().parameters,
-    ).evaluate(_neutral_source())
-    assert not bool(nonneutral.evidence.successful)
-    assert not bool(nonneutral.evidence.montage_charge_neutral)
+def _neutral_source() -> Any:
+    source = jnp.zeros((8, 8), dtype=jnp.complex128)
+    return source.at[1, 0].set(1.0).at[-1, 0].set(1.0)

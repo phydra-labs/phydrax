@@ -66,9 +66,7 @@ def _absorbing_interaction(system: Any) -> Any:
     )
 
 
-def test_multigroup_and_neutrino_exchange_balance_energy_momentum_and_lepton_number() -> (
-    None
-):
+def test_advanced_relativistic_radiation_scenario_1() -> None:
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     multigroup = GRMultigroupM1RadiationSystem(
@@ -118,9 +116,6 @@ def test_multigroup_and_neutrino_exchange_balance_energy_momentum_and_lepton_num
     np.testing.assert_allclose(neutrino_exchange.lepton_balance_residual, 0.0)
     assert bool(jnp.all(neutrino_exchange.electron_fraction_source > 0.0))
     assert bool(jnp.all(neutrino_exchange.qualified))
-
-
-def test_vet_discrete_ordinates_and_monte_carlo_recover_isotropic_pressure() -> None:
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     directions = jnp.asarray(

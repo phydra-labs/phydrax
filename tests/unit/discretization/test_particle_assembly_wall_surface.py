@@ -24,7 +24,7 @@ class IntervalGeometry:
         return jnp.where(points[:, :1] < 0.5, -1.0, 1.0)
 
 
-def test_particle_assembly_and_bipartite_relations_preserve_population_identity() -> None:
+def test_particle_assembly_wall_surface_scenario_1() -> None:
     fluid = phx.discretization.ParticleSetPlan(
         # ty: ignore[invalid-argument-type]
         [0, 1],
@@ -72,9 +72,6 @@ def test_particle_assembly_and_bipartite_relations_preserve_population_identity(
     assert state.successful
     assert state.relation.target_population_id == fluid_population.population_id
     assert state.relation.source_population_id == wall_population.population_id
-
-
-def test_wall_generation_volume_and_adami_reaction_are_finite_and_reciprocal() -> None:
     kernel = phx.discretization.WendlandC2SPHKernel(1)
     wall = phx.discretization.WallParticleGenerationPlan(
         IntervalGeometry(), kernel, 0.25, 0.3, layers=1
@@ -121,9 +118,6 @@ def test_wall_generation_volume_and_adami_reaction_are_finite_and_reciprocal() -
         0.0,
         atol=1e-13,
     )
-
-
-def test_free_surface_detection_marks_truncated_support_and_pressure_correction() -> None:
     particles = phx.discretization.ParticleSetPlan(
         np.arange(5), np.full((5,), 0.1), ambient_dimension=1
     ).prepare()

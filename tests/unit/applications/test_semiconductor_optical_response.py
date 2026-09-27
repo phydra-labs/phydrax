@@ -43,7 +43,7 @@ def _linear(**overrides: Any) -> Any:
     )
 
 
-def test_linearized_response_preserves_transparency_and_power_field_factor_two() -> None:
+def test_semiconductor_optical_response_scenario_1() -> None:
     plan = _linear()
     transparent = evaluate_semiconductor_optical_response(plan, 1.5e24, 300.0, 1.0e15)
     populated = evaluate_semiconductor_optical_response(plan, 2.0e24, 300.0, 1.0e15)
@@ -56,9 +56,6 @@ def test_linearized_response_preserves_transparency_and_power_field_factor_two()
     assert populated.successful
     assert populated.evidence.model_provenance == plan.provenance
     assert populated.evidence.model_id == plan.model_id
-
-
-def test_active_region_projection_is_volume_and_mode_explicit() -> None:
     projection = ActiveRegionOpticalProjection(
         jnp.asarray((1.0, 2.0, 1.0)) * 1.0e-18,
         jnp.asarray((0.0, 1.0, 0.5)),
@@ -86,11 +83,6 @@ def test_active_region_projection_is_volume_and_mode_explicit() -> None:
     assert result.evidence.projection_id == projection.projection_id
     assert result.evidence.projection_provenance == projection.provenance
     assert result.successful
-
-
-def test_tabulated_response_interpolates_all_three_physical_axes_without_extrapolation() -> (
-    None
-):
     density = np.asarray((1.0, 3.0)) * 1.0e24
     temperature = np.asarray((290.0, 330.0))
     frequency = np.asarray((0.9, 1.1)) * 1.0e15

@@ -34,7 +34,7 @@ def _cell_grid(shape: Any, *, periodic: Any = None) -> Any:
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def test_structured_finite_volume_has_exact_cell_and_face_geometry() -> None:
+def test_finite_volume_geometry_scenario_1() -> None:
     grid = _cell_grid((4, 3))
     discretization = phx.discretization.FiniteVolumePlan(
         grid,
@@ -55,18 +55,12 @@ def test_structured_finite_volume_has_exact_cell_and_face_geometry() -> None:
     assert all(
         space.representation == "flux_moment" for space in discretization.face_spaces
     )
-
-
-def test_periodic_faces_are_unique_and_one_dimensional_measure_is_one() -> None:
     grid = _cell_grid((7,), periodic=(True,))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
 
     assert discretization.face_layouts[0].shape == (7,)
     np.testing.assert_allclose(discretization.face_measures[0], jnp.ones((7,)))
     np.testing.assert_allclose(discretization.cell_volumes, jnp.full((7,), 1.0 / 7.0))
-
-
-def test_interval_quadrature_weights_define_nonuniform_cell_edges() -> None:
     axis = phx.discretization.AxisDiscretization(
         nodes=jnp.asarray([0.1, 0.45, 0.85]),
         quad_weights=jnp.asarray([0.2, 0.5, 0.3]),
@@ -86,7 +80,7 @@ def test_interval_quadrature_weights_define_nonuniform_cell_edges() -> None:
     np.testing.assert_allclose(discretization.cell_centers[:, 0], [0.1, 0.45, 0.85])
 
 
-def test_nonuniform_cell_axis_rejects_inconsistent_centers() -> None:
+def test_finite_volume_geometry_scenario_2() -> None:
     axis = phx.discretization.AxisDiscretization(
         nodes=jnp.asarray([0.1, 0.4]),
         quad_weights=jnp.asarray([0.2, 0.8]),
@@ -98,9 +92,6 @@ def test_nonuniform_cell_axis_rejects_inconsistent_centers() -> None:
     )
     with pytest.raises(ValueError, match="cell centers"):
         phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
-
-
-def test_finite_volume_rejects_point_primary_support_and_duplicate_components() -> None:
     point_grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))

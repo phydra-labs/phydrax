@@ -32,7 +32,7 @@ def _burgers_pair() -> Any:
     )
 
 
-def test_scalar_convex_entropy_pair_matches_burgers_identities() -> None:
+def test_entropy_pairs_scenario_1() -> None:
     pair = _burgers_pair()
     states = jnp.asarray([[-0.7], [0.2], [1.1]])
     reference = jnp.asarray([[-0.3], [0.4], [0.9]])
@@ -56,27 +56,6 @@ def test_scalar_convex_entropy_pair_matches_burgers_identities() -> None:
     )
     assert jnp.allclose(pair.entropy_potential(states, 0), states[..., 0] ** 3 / 6.0)
     assert jnp.allclose(pair.symmetrizer_action(states, jnp.ones_like(states)), 1.0)
-
-
-def test_entropy_pair_interface_residual_matches_conservative_and_dissipative_fluxes() -> (
-    None
-):
-    pair = _burgers_pair()
-    left = jnp.asarray([[-0.5], [0.2]])
-    right = jnp.asarray([[0.7], [-0.4]])
-    conservative_flux = (
-        pair.entropy_potential(right, 0) - pair.entropy_potential(left, 0)
-    ) / (pair.entropy_variables(right)[..., 0] - pair.entropy_variables(left)[..., 0])
-    conservative_flux = conservative_flux[..., None]
-    residual = pair.interface_entropy_residual(left, right, conservative_flux, 0)
-    assert jnp.allclose(residual, 0.0)
-    dissipative_flux = conservative_flux - 0.5 * (right - left)
-    assert jnp.all(
-        pair.interface_entropy_residual(left, right, dissipative_flux, 0) <= 1e-8
-    )
-
-
-def test_euler_entropy_pair_matches_existing_variables_and_all_axes() -> None:
     system = phx.equations.EulerSystem(2)
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     primitive = jnp.asarray(
@@ -114,65 +93,6 @@ def test_euler_entropy_pair_matches_existing_variables_and_all_axes() -> None:
         pair.entropy_potential(state, 1),
         state[..., 2],
     )
-
-
-def test_entropy_pair_methods_are_jittable_and_batch_local() -> None:
-    pair = _burgers_pair()
-    states = jnp.asarray([[-0.4], [0.6], [1.2]])
-    directions = jnp.asarray([[0.3], [-0.1], [0.8]])
-    relative = jax.jit(pair.relative_entropy)(states, states + directions)
-    action = jax.jit(pair.symmetrizer_action)(states, directions)
-    assert relative.shape == (3,)
-    assert action.shape == states.shape
-    assert jnp.allclose(relative, 0.5 * directions[..., 0] ** 2)
-    assert jnp.allclose(action, directions)
-
-
-def test_entropy_validation_reports_invalid_pair_without_raising_when_requested() -> None:
-    pair = _burgers_pair()
-    invalid = phx.equations.ConvexEntropyPair(
-        pair.system,
-        lambda state: 0.5 * state[..., 0] ** 2,
-        lambda state: 2.0 * state,
-        lambda state, axis, args: state[..., 0] ** 3 / 3.0,
-        pair.admissible_function,
-        entropy_id="wrong-variables",
-    )
-    report = phx.equations.validate_convex_entropy_pair(
-        invalid,
-        jnp.asarray([[-0.2], [0.4]]),
-        raise_on_error=False,
-    )
-    assert not bool(report.valid)
-    assert report.maximum_entropy_variable_residual > 0.0
-    assert report.maximum_flux_compatibility_residual > 0.0
-
-    with pytest.raises(ValueError, match="Convex entropy pair validation failed"):
-        phx.equations.validate_convex_entropy_pair(
-            invalid,
-            jnp.asarray([[-0.2], [0.4]]),
-        )
-
-
-def test_entropy_pair_rejects_wrong_shapes_axes_and_domains() -> None:
-    pair = _burgers_pair()
-    with pytest.raises(ValueError, match="trailing component dimension"):
-        pair.entropy(jnp.ones((2, 2)))
-    with pytest.raises(ValueError, match="Entropy flux axis"):
-        pair.entropy_flux(jnp.ones((2, 1)), 1)
-    with pytest.raises(Exception, match="outside entropy pair"):
-        pair.entropy(jnp.asarray([[jnp.nan]]))
-    with pytest.raises(ValueError, match="comparison states must match"):
-        phx.equations.validate_convex_entropy_pair(
-            pair,
-            jnp.ones((2, 1)),
-            comparison_states=jnp.ones((3, 1)),
-        )
-
-
-def test_public_entropy_methods_reject_nonfinite_states_with_permissive_predicate() -> (
-    None
-):
     base = _burgers_pair()
     pair = phx.equations.ConvexEntropyPair(
         base.system,
@@ -195,7 +115,42 @@ def test_public_entropy_methods_reject_nonfinite_states_with_permissive_predicat
         jax.jit(pair.entropy)(invalid)
 
 
-def test_entropy_pair_rejects_nonfloating_callable_outputs() -> None:
+def test_entropy_contracts() -> None:
+    pair = _burgers_pair()
+    left = jnp.asarray([[-0.5], [0.2]])
+    right = jnp.asarray([[0.7], [-0.4]])
+    conservative_flux = (
+        pair.entropy_potential(right, 0) - pair.entropy_potential(left, 0)
+    ) / (pair.entropy_variables(right)[..., 0] - pair.entropy_variables(left)[..., 0])
+    conservative_flux = conservative_flux[..., None]
+    residual = pair.interface_entropy_residual(left, right, conservative_flux, 0)
+    assert jnp.allclose(residual, 0.0)
+    dissipative_flux = conservative_flux - 0.5 * (right - left)
+    assert jnp.all(
+        pair.interface_entropy_residual(left, right, dissipative_flux, 0) <= 1e-8
+    )
+    pair = _burgers_pair()
+    states = jnp.asarray([[-0.4], [0.6], [1.2]])
+    directions = jnp.asarray([[0.3], [-0.1], [0.8]])
+    relative = jax.jit(pair.relative_entropy)(states, states + directions)
+    action = jax.jit(pair.symmetrizer_action)(states, directions)
+    assert relative.shape == (3,)
+    assert action.shape == states.shape
+    assert jnp.allclose(relative, 0.5 * directions[..., 0] ** 2)
+    assert jnp.allclose(action, directions)
+    pair = _burgers_pair()
+    with pytest.raises(ValueError, match="trailing component dimension"):
+        pair.entropy(jnp.ones((2, 2)))
+    with pytest.raises(ValueError, match="Entropy flux axis"):
+        pair.entropy_flux(jnp.ones((2, 1)), 1)
+    with pytest.raises(Exception, match="outside entropy pair"):
+        pair.entropy(jnp.asarray([[jnp.nan]]))
+    with pytest.raises(ValueError, match="comparison states must match"):
+        phx.equations.validate_convex_entropy_pair(
+            pair,
+            jnp.ones((2, 1)),
+            comparison_states=jnp.ones((3, 1)),
+        )
     base = _burgers_pair()
     state = jnp.asarray([[0.2]])
     integer_entropy = phx.equations.ConvexEntropyPair(
@@ -229,9 +184,52 @@ def test_entropy_pair_rejects_nonfloating_callable_outputs() -> None:
         complex_variables.entropy_variables(state)
     with pytest.raises(TypeError, match="real floating-point"):
         complex_flux.entropy_flux(state, 0)
+    pair = _burgers_pair()
+    invalid = phx.equations.ConvexEntropyPair(
+        pair.system,
+        lambda state: 0.5 * state[..., 0] ** 2,
+        lambda state: 2.0 * state,
+        lambda state, axis, args: state[..., 0] ** 3 / 3.0,
+        pair.admissible_function,
+        entropy_id="wrong-variables",
+    )
+    report = phx.equations.validate_convex_entropy_pair(
+        invalid,
+        jnp.asarray([[-0.2], [0.4]]),
+        raise_on_error=False,
+    )
+    assert not bool(report.valid)
+    assert report.maximum_entropy_variable_residual > 0.0
+    assert report.maximum_flux_compatibility_residual > 0.0
 
+    with pytest.raises(ValueError, match="Convex entropy pair validation failed"):
+        phx.equations.validate_convex_entropy_pair(
+            invalid,
+            jnp.asarray([[-0.2], [0.4]]),
+        )
+    base = _burgers_pair()
+    with pytest.raises(ValueError, match="must be non-empty"):
+        phx.equations.validate_convex_entropy_pair(
+            base,
+            jnp.asarray([[0.2]]),
+            axes=(),
+        )
 
-def test_entropy_flux_and_validation_propagate_runtime_args() -> None:
+    singular_variables = phx.equations.ConvexEntropyPair(
+        base.system,
+        base.entropy_function,
+        lambda state: jnp.sqrt(state**2),
+        base.entropy_flux_function,
+        base.admissible_function,
+        entropy_id="singular-variable-jacobian",
+    )
+    report = phx.equations.validate_convex_entropy_pair(
+        singular_variables,
+        jnp.asarray([[0.0]]),
+        raise_on_error=False,
+    )
+    assert not bool(report.finite)
+    assert not bool(report.valid)
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: 0.5 * args["scale"] * state**2,
@@ -265,29 +263,3 @@ def test_entropy_flux_and_validation_propagate_runtime_args() -> None:
         pair.entropy_potential(state, 0, args),
         args["scale"] * state[..., 0] ** 3 / 6.0,
     )
-
-
-def test_entropy_validation_rejects_empty_axes_and_reports_nonfinite_evidence() -> None:
-    base = _burgers_pair()
-    with pytest.raises(ValueError, match="must be non-empty"):
-        phx.equations.validate_convex_entropy_pair(
-            base,
-            jnp.asarray([[0.2]]),
-            axes=(),
-        )
-
-    singular_variables = phx.equations.ConvexEntropyPair(
-        base.system,
-        base.entropy_function,
-        lambda state: jnp.sqrt(state**2),
-        base.entropy_flux_function,
-        base.admissible_function,
-        entropy_id="singular-variable-jacobian",
-    )
-    report = phx.equations.validate_convex_entropy_pair(
-        singular_variables,
-        jnp.asarray([[0.0]]),
-        raise_on_error=False,
-    )
-    assert not bool(report.finite)
-    assert not bool(report.valid)

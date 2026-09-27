@@ -93,7 +93,7 @@ def _nonfinite_gradient_solver() -> Any:
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_optax_line_search_rejects_nonfinite_gradient_without_committing() -> None:
+def test_functional_training_runtime_scenario_1() -> None:
     solver = _nonfinite_gradient_solver()
     accepted_steps = []
 
@@ -120,6 +120,37 @@ def test_optax_line_search_rejects_nonfinite_gradient_without_committing() -> No
         trained.training_state.current_functions["u"].func(),
         jnp.asarray([0.0]),
     )
+    layout = phx.terms.ResidualBlockLayout(("first", "second"))
+    solver = _fixed_interval_solver(blocks=layout)
+    params, fixed = partition_functional_parameters(solver.functions)
+    prepared = solver.objective.prepare_training(
+        (0,),
+        scale=1.0,
+        evaluation_key=jr.key(1),
+        sampling_key=jr.key(2),
+        iteration=1,
+    )
+    residual = prepare_functional_residual(prepared, params, fixed, solver.enforcement)
+
+    assert residual.layout.logical_blocks == ((0, "first"), (0, "second"))
+    assert jnp.allclose(residual.loss(params), solver.loss(key=jr.key(3)))
+    first = residual.layout.logical_indices(0, "first")
+    second = residual.layout.logical_indices(0, "second")
+    assert first.size == second.size == 4
+    solver = _fixed_interval_solver()
+    params, fixed = partition_functional_parameters(solver.functions)
+    prepared = solver.objective.prepare_training(
+        (0,),
+        scale=1.0,
+        evaluation_key=jr.key(4),
+        sampling_key=jr.key(5),
+        iteration=1,
+    )
+    update = prepare_functional_update(prepared, params, fixed, solver.enforcement)
+
+    assert isinstance(update, PreparedFunctionalUpdate)
+    physical = update.physical_values(solver.functions).total
+    assert jnp.allclose(update.surrogate_loss(params, fixed), physical)
 
 
 @pytest.mark.parametrize(
@@ -197,43 +228,6 @@ def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
             eqx.filter(state.kernel_state, eqx.is_array),
         )
     )
-
-
-def test_residual_block_layout_preserves_authored_loss_and_root_partition() -> None:
-    layout = phx.terms.ResidualBlockLayout(("first", "second"))
-    solver = _fixed_interval_solver(blocks=layout)
-    params, fixed = partition_functional_parameters(solver.functions)
-    prepared = solver.objective.prepare_training(
-        (0,),
-        scale=1.0,
-        evaluation_key=jr.key(1),
-        sampling_key=jr.key(2),
-        iteration=1,
-    )
-    residual = prepare_functional_residual(prepared, params, fixed, solver.enforcement)
-
-    assert residual.layout.logical_blocks == ((0, "first"), (0, "second"))
-    assert jnp.allclose(residual.loss(params), solver.loss(key=jr.key(3)))
-    first = residual.layout.logical_indices(0, "first")
-    second = residual.layout.logical_indices(0, "second")
-    assert first.size == second.size == 4
-
-
-def test_prepared_update_separates_equal_physical_and_untransformed_surrogate() -> None:
-    solver = _fixed_interval_solver()
-    params, fixed = partition_functional_parameters(solver.functions)
-    prepared = solver.objective.prepare_training(
-        (0,),
-        scale=1.0,
-        evaluation_key=jr.key(4),
-        sampling_key=jr.key(5),
-        iteration=1,
-    )
-    update = prepare_functional_update(prepared, params, fixed, solver.enforcement)
-
-    assert isinstance(update, PreparedFunctionalUpdate)
-    physical = update.physical_values(solver.functions).total
-    assert jnp.allclose(update.surrogate_loss(params, fixed), physical)
 
 
 def test_functional_checkpoint_resume_matches_uninterrupted_steps(
@@ -541,7 +535,7 @@ def test_functional_session_cursor_resumes_in_memory(tmp_path: Any) -> None:
     assert [event.sequence for event in events] == list(range(session.cursor))
 
 
-def test_standard_optax_gradient_accumulation_preserves_update_semantics() -> None:
+def test_functional_training_runtime_scenario_2() -> None:
     solver = _fixed_interval_solver()
     standard = solver.solve(
         num_iter=2,
@@ -572,6 +566,47 @@ def test_standard_optax_gradient_accumulation_preserves_update_semantics() -> No
         standard["u"].func(),
         accumulated["u"].func(),
     )
+    for optimizer in (
+        phx.optim.GaussNewton(),
+        phx.optim.NewtonKrylov(),
+        optax.chain(
+            optax.sgd(0.1),
+            optax.scale_by_backtracking_linesearch(max_backtracking_steps=1),
+        ),
+    ):
+        with pytest.raises(ValueError, match="only by standard Optax"):
+            _fixed_interval_solver().solve(
+                num_iter=1,
+                optim=optimizer,
+                gradient_accumulation=2,
+                keep_best=False,
+                log_every=0,
+            )
+    plan = phx.solver.FunctionalTrainingPlan(
+        diagnostics=phx.solver.FunctionalDiagnosticsPolicy(every=1),
+    )
+    with pytest.raises(ValueError, match="does not support stateful"):
+        _fixed_interval_solver().solve(
+            num_iter=1,
+            optim=optax.sgd(0.05),
+            gradient_accumulation=2,
+            keep_best=False,
+            log_every=0,
+            training=plan,
+        )
+    solver = _fixed_interval_solver(evaluation=True)
+    plan = phx.solver.FunctionalTrainingPlan(
+        selection=phx.solver.FunctionalSelectionPolicy(every=1)
+    )
+    trained = solver.solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        log_every=0,
+        training=plan,
+    )
+    assert trained.training_state is not None
+    assert trained.training_state.progress.best_value is not None
+    assert trained.training_state.progress.best_step in (1, 2)
 
 
 def test_accumulated_functional_checkpoint_resume_is_exact(tmp_path: Any) -> None:
@@ -645,46 +680,6 @@ def test_accumulated_functional_checkpoint_resume_is_exact(tmp_path: Any) -> Non
             training=checkpoint_plan,
             target_policy=target_policy,
             resume=True,
-        )
-
-
-@pytest.mark.parametrize(
-    "optimizer",
-    (
-        phx.optim.GaussNewton(),
-        phx.optim.NewtonKrylov(),
-        optax.chain(
-            optax.sgd(0.1),
-            optax.scale_by_backtracking_linesearch(max_backtracking_steps=1),
-        ),
-    ),
-    ids=("least-squares", "iterative", "optax-linesearch"),
-)
-def test_gradient_accumulation_rejects_nonstandard_functional_backends(
-    optimizer: Any,
-) -> None:
-    with pytest.raises(ValueError, match="only by standard Optax"):
-        _fixed_interval_solver().solve(
-            num_iter=1,
-            optim=optimizer,
-            gradient_accumulation=2,
-            keep_best=False,
-            log_every=0,
-        )
-
-
-def test_gradient_accumulation_rejects_stateful_functional_preparation() -> None:
-    plan = phx.solver.FunctionalTrainingPlan(
-        diagnostics=phx.solver.FunctionalDiagnosticsPolicy(every=1),
-    )
-    with pytest.raises(ValueError, match="does not support stateful"):
-        _fixed_interval_solver().solve(
-            num_iter=1,
-            optim=optax.sgd(0.05),
-            gradient_accumulation=2,
-            keep_best=False,
-            log_every=0,
-            training=plan,
         )
 
 
@@ -934,23 +929,7 @@ def test_target_policy_keep_best_requires_fixed_selection_and_resumes_exactly(
         )
 
 
-def test_fixed_evaluation_selection_is_recorded() -> None:
-    solver = _fixed_interval_solver(evaluation=True)
-    plan = phx.solver.FunctionalTrainingPlan(
-        selection=phx.solver.FunctionalSelectionPolicy(every=1)
-    )
-    trained = solver.solve(
-        num_iter=2,
-        optim=optax.sgd(0.05),
-        log_every=0,
-        training=plan,
-    )
-    assert trained.training_state is not None
-    assert trained.training_state.progress.best_value is not None
-    assert trained.training_state.progress.best_step in (1, 2)
-
-
-def test_exact_nonlinear_correction_freezes_base_and_restores_physical_scale() -> None:
+def test_functional_training_runtime_scenario_3() -> None:
     solver = _fixed_interval_solver()
     correction = solver.functions["u"].domain.Parameter(jnp.asarray([0.5, 1.0]))
     problem = phx.solver.prepare_functional_correction(
@@ -970,9 +949,6 @@ def test_exact_nonlinear_correction_freezes_base_and_restores_physical_scale() -
         scaled_loss,
         finalized.loss(key=jr.key(9)) / 0.1**2,
     )
-
-
-def test_training_policy_publishes_finite_ntk_diagnostics() -> None:
     trained = _fixed_interval_solver().solve(
         num_iter=1,
         optim=optax.sgd(0.01),
@@ -992,9 +968,6 @@ def test_training_policy_publishes_finite_ntk_diagnostics() -> None:
     assert "ntk/trace" in trained.training_diagnostics
     assert bool(trained.training_diagnostics["ntk/finite"])
     assert trained.training_diagnostics["ntk/trace"] > 0.0
-
-
-def test_frozen_correction_field_preserves_explicit_derivative_rules() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(2.0).with_derivative_rule(
         phx.domain.CallbackDerivativeRule(lambda **kwargs: domain.Parameter(7.0))

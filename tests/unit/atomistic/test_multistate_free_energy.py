@@ -92,7 +92,7 @@ def _initial_states(dynamics: Any, table: Any, positions: Any) -> Any:
     )
 
 
-def test_compiled_thermodynamic_rows_gather_numerically_under_jit() -> None:
+def test_multistate_free_energy_scenario_1() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0, 4.0], 2, sams=True)
     rows = eqx.filter_jit(table.state_at_replica)(jnp.asarray([2, 0]))
 
@@ -128,9 +128,6 @@ def test_compiled_thermodynamic_rows_gather_numerically_under_jit() -> None:
             exchange=sampling.AtomisticReplicaExchangePlan(1),
             run_id="wrong-qualified-target",
         )
-
-
-def test_exchange_ladder_dependence_and_rng_are_bound_to_run_identity() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     np.testing.assert_array_equal(runtime.plan.dependence_group_indices, [0, 0])
     with pytest.raises(ValueError, match="dependence group"):
@@ -162,9 +159,6 @@ def test_exchange_ladder_dependence_and_rng_are_bound_to_run_identity() -> None:
     assert not bool(
         jnp.array_equal(first.dynamics.random_key, second.dynamics.random_key)
     )
-
-
-def test_unbound_bias_and_missing_constraint_executor_are_rejected() -> None:
     dynamics, _, _ = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     measure = sampling.AtomisticPhaseSpaceMeasurePlan(dynamics.system)
     with pytest.raises(ValueError, match="bias cross-evaluation"):
@@ -210,7 +204,7 @@ def test_unbound_bias_and_missing_constraint_executor_are_rejected() -> None:
         ).prepare(unconstrained)
 
 
-def test_sams_adaptation_draws_are_not_equilibrium_samples() -> None:
+def test_multistate_free_energy_scenario_2() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0, 3.0], 2, sams=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     initial = runtime.initialize(
@@ -237,9 +231,6 @@ def test_sams_adaptation_draws_are_not_equilibrium_samples() -> None:
     assert result.qualification_id == runtime.plan.qualification.qualification_id
     assert not result.sampling_exact
     assert result.sampling_bias_bound == 1.0
-
-
-def test_valid_rejected_exchange_consumes_counter_and_rebases_ledgers() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     positions = (
         jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
@@ -270,9 +261,6 @@ def test_valid_rejected_exchange_consumes_counter_and_rebases_ledgers() -> None:
         iteration.state.dynamics.energy.kinetic_energy
         + iteration.state.dynamics.energy.potential_energy,
     )
-
-
-def test_accepted_temperature_swap_rescales_momenta_and_keeps_force_current() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     velocity = jnp.asarray([[0.2, 0.0, 0.0], [0.2, 0.0, 0.0]])
@@ -315,7 +303,7 @@ def test_accepted_temperature_swap_rescales_momenta_and_keeps_force_current() ->
     )
 
 
-def test_invalid_iteration_rolls_back_every_action_counter() -> None:
+def test_multistate_free_energy_scenario_3() -> None:
     dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
     position = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
     initial = runtime.initialize(
@@ -344,6 +332,37 @@ def test_invalid_iteration_rolls_back_every_action_counter() -> None:
     np.testing.assert_array_equal(
         iteration.state.dynamics.kinematics.positions,
         invalid.dynamics.kinematics.positions,
+    )
+    dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
+    position = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
+    initial = runtime.initialize(
+        _initial_states(dynamics, table, (position, position)),
+        [0, 1],
+        jax.random.key(71),
+    )
+    plan = sampling.AtomisticMultistateSegmentPlan(
+        runtime,
+        2,
+        0,
+        0,
+        runtime.initial_continuation_id,
+    )
+
+    eager = plan.run(initial)
+    compiled = eqx.filter_jit(plan.run)(initial)
+
+    np.testing.assert_array_equal(compiled.sample_active, eager.sample_active)
+    np.testing.assert_array_equal(
+        compiled.reduced_potentials,
+        eager.reduced_potentials,
+    )
+    np.testing.assert_array_equal(
+        compiled.successor_state.state_at_replica,
+        eager.successor_state.state_at_replica,
+    )
+    np.testing.assert_array_equal(
+        compiled.successor_state.continuation_token,
+        eager.successor_state.continuation_token,
     )
 
 
@@ -406,37 +425,3 @@ def test_r_and_k_are_distinct_and_failed_segment_padding_is_canonical(
 
     with pytest.raises(eqx.EquinoxRuntimeError, match="predecessor identity"):
         segment_plan.run(restored.state)
-
-
-def test_multistate_segment_is_jittable_and_matches_eager() -> None:
-    dynamics, table, runtime = _prepared_runtime([1.0, 2.0], 2, exchange=True)
-    position = jnp.asarray([[0.0, 0.0, 0.0], [1.1, 0.0, 0.0]])
-    initial = runtime.initialize(
-        _initial_states(dynamics, table, (position, position)),
-        [0, 1],
-        jax.random.key(71),
-    )
-    plan = sampling.AtomisticMultistateSegmentPlan(
-        runtime,
-        2,
-        0,
-        0,
-        runtime.initial_continuation_id,
-    )
-
-    eager = plan.run(initial)
-    compiled = eqx.filter_jit(plan.run)(initial)
-
-    np.testing.assert_array_equal(compiled.sample_active, eager.sample_active)
-    np.testing.assert_array_equal(
-        compiled.reduced_potentials,
-        eager.reduced_potentials,
-    )
-    np.testing.assert_array_equal(
-        compiled.successor_state.state_at_replica,
-        eager.successor_state.state_at_replica,
-    )
-    np.testing.assert_array_equal(
-        compiled.successor_state.continuation_token,
-        eager.successor_state.continuation_token,
-    )

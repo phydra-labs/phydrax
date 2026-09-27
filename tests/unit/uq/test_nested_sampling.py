@@ -312,7 +312,7 @@ def test_exact_rejection_is_only_an_explicit_failed_geometry_fallback() -> None:
     assert recovered.final_state.adaptation.fallback_draws > 0
 
 
-def test_nested_sampling_rejects_incomplete_prior_topology() -> None:
+def test_nested_sampling_contracts() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             {"x": jnp.asarray(0.0), "y": jnp.asarray(0.0)},
@@ -335,6 +335,24 @@ def test_nested_sampling_rejects_incomplete_prior_topology() -> None:
     )
     with pytest.raises(ValueError, match="classify every parameter leaf exactly"):
         phx.uq.sample_nested(problem, key=jr.key(32), plan=plan)
+    problem = phx.uq.PosteriorProblem(
+        phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0)),
+        lambda _value: -jnp.inf,
+    )
+    result = phx.uq.sample_nested(
+        problem,
+        key=jr.key(21),
+        plan=_continuous_plan(
+            initial_live=8,
+            max_dead_points=16,
+            max_likelihood_evaluations=64,
+            maximum_attempts=4,
+        ),
+    )
+
+    assert int(result.status) == phx.uq.NESTED_SAMPLING_NO_FINITE_LIVE_POINT
+    assert not result.valid
+    assert not result.converged
 
 
 def test_nested_sampling_rejects_nondeterministic_likelihood() -> None:
@@ -359,29 +377,6 @@ def test_nested_sampling_rejects_nondeterministic_likelihood() -> None:
                 maximum_attempts=4,
             ),
         )
-
-
-def test_nested_sampling_returns_explicit_status_when_every_live_point_is_zero_mass() -> (
-    None
-):
-    problem = phx.uq.PosteriorProblem(
-        phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0)),
-        lambda _value: -jnp.inf,
-    )
-    result = phx.uq.sample_nested(
-        problem,
-        key=jr.key(21),
-        plan=_continuous_plan(
-            initial_live=8,
-            max_dead_points=16,
-            max_likelihood_evaluations=64,
-            maximum_attempts=4,
-        ),
-    )
-
-    assert int(result.status) == phx.uq.NESTED_SAMPLING_NO_FINITE_LIVE_POINT
-    assert not result.valid
-    assert not result.converged
 
 
 def test_nested_result_exports_portable_weighted_record(

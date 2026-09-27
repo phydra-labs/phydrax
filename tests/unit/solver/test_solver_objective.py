@@ -124,7 +124,7 @@ def _root_misfit(owner: Any, case: Any) -> Any:
     )
 
 
-def test_accelerator_under_a_solution_map_is_refused_before_tracing() -> None:
+def test_solver_objective_scenario_1() -> None:
     solve = _Richardson(jnp.eye(2), None)
     refused = phx.solver.SolverObjective(
         solve,
@@ -155,6 +155,41 @@ def test_accelerator_under_a_solution_map_is_refused_before_tracing() -> None:
     )
     gradient = jax.grad(lambda tree: work.evaluate(tree).value)(_Relaxation(0.1))
     assert float(jnp.abs(gradient.log_omega)) > 0.0
+    reduced = _gain_objective("reduce-support")
+    evaluation = reduced.evaluate(_Gain(0.5))
+    assert evaluation.support == 2.0
+    assert int(evaluation.failures) == 1
+    assert evaluation.accepted.tolist() == [True, True, False]
+    expected = ((0.5 * 1.0 - 1.0) ** 2 + (0.5 * 2.0 - 1.0) ** 2) / 2.0
+    assert float(evaluation.value) == pytest.approx(expected)
+
+    gradient = jax.grad(lambda tree: reduced.evaluate(tree).value)(_Gain(0.5))
+    # d/dg mean((g sqrt(x) - 1)^2) over the two accepted cases only.
+    assert float(gradient.gain) == pytest.approx((2 * (0.5 - 1.0) * 1.0 + 0.0) / 2.0)
+
+    rejected = _gain_objective("reject-attempt").evaluate(_Gain(0.5))
+    assert jnp.isnan(rejected.value)
+    assert rejected.support == 3.0
+    tree = (
+        phx.bind_component(_Response(0.5), phx.ComponentAuthority.MODEL),
+        _Relaxation(0.5),
+    )
+    cases = (jnp.asarray([[0.4, -0.2]]), jnp.asarray([[0.2, -0.1]]))
+    objective = phx.solver.SolverObjective(
+        None,
+        lambda solve, component: _Equilibrium(component[0]),
+        _root_misfit,
+        objective_id="balance",
+        cases=cases,
+    )
+
+    evaluation = objective.evaluate(tree)
+    assert evaluation.trained == (("[0].model.gain", "model"),)
+    assert evaluation.stopped == (("[1].log_omega", "accelerator"),)
+    assert "[0]:derivative-supported" in evaluation.derivative_evidence
+    gradient = eqx.filter_grad(lambda value: objective.evaluate(value).value)(tree)
+    assert float(jnp.abs(gradient[0].model.gain)) > 0.0
+    assert float(gradient[1].log_omega) == 0.0
 
 
 def test_stochastic_component_needs_one_frozen_realization() -> None:
@@ -233,24 +268,6 @@ def _gain_objective(accepted_results: Any) -> Any:
         cases=jnp.asarray([1.0, 4.0, -1.0]),
         accepted_results=accepted_results,
     )
-
-
-def test_failed_cases_reduce_support_with_exact_zero_derivative() -> None:
-    reduced = _gain_objective("reduce-support")
-    evaluation = reduced.evaluate(_Gain(0.5))
-    assert evaluation.support == 2.0
-    assert int(evaluation.failures) == 1
-    assert evaluation.accepted.tolist() == [True, True, False]
-    expected = ((0.5 * 1.0 - 1.0) ** 2 + (0.5 * 2.0 - 1.0) ** 2) / 2.0
-    assert float(evaluation.value) == pytest.approx(expected)
-
-    gradient = jax.grad(lambda tree: reduced.evaluate(tree).value)(_Gain(0.5))
-    # d/dg mean((g sqrt(x) - 1)^2) over the two accepted cases only.
-    assert float(gradient.gain) == pytest.approx((2 * (0.5 - 1.0) * 1.0 + 0.0) / 2.0)
-
-    rejected = _gain_objective("reject-attempt").evaluate(_Gain(0.5))
-    assert jnp.isnan(rejected.value)
-    assert rejected.support == 3.0
 
 
 class _OffsetGain(phx.AbstractComponentSlot):
@@ -336,26 +353,3 @@ def test_fixed_work_objective_fails_cases_that_exit_early() -> None:
     assert evaluation.work.tolist() == [3]
     assert not bool(evaluation.accepted[0])
     assert jnp.isnan(evaluation.value)
-
-
-def test_mixed_component_trains_its_admitted_group_and_stops_the_rest() -> None:
-    tree = (
-        phx.bind_component(_Response(0.5), phx.ComponentAuthority.MODEL),
-        _Relaxation(0.5),
-    )
-    cases = (jnp.asarray([[0.4, -0.2]]), jnp.asarray([[0.2, -0.1]]))
-    objective = phx.solver.SolverObjective(
-        None,
-        lambda solve, component: _Equilibrium(component[0]),
-        _root_misfit,
-        objective_id="balance",
-        cases=cases,
-    )
-
-    evaluation = objective.evaluate(tree)
-    assert evaluation.trained == (("[0].model.gain", "model"),)
-    assert evaluation.stopped == (("[1].log_omega", "accelerator"),)
-    assert "[0]:derivative-supported" in evaluation.derivative_evidence
-    gradient = eqx.filter_grad(lambda value: objective.evaluate(value).value)(tree)
-    assert float(jnp.abs(gradient[0].model.gain)) > 0.0
-    assert float(gradient[1].log_omega) == 0.0

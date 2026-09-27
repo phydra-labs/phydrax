@@ -81,49 +81,43 @@ def _contact_dimension(topology: Any, first: Any, second: Any) -> Any:
     return best
 
 
-@pytest.mark.parametrize(
-    ("shape", "periodic", "stencil"),
-    [
+def test_forest_amr_scenario_1() -> None:
+    for shape, periodic, stencil in [
         ((2, 2), (False, True), "face"),
         ((2, 2), (False, True), "corner"),
         ((1, 1, 2), (True, False, False), "edge"),
-    ],
-)
-def test_adversarial_refinement_closes_to_two_to_one_balance(
-    shape: Any, periodic: Any, stencil: Any
-) -> None:
-    plan = _plan(
-        shape,
-        maximum_level=5 if len(shape) == 2 else 4,
-        periodic=periodic,
-        balance=stencil,
-    )
-    compiler = phx.discretization.ForestTopologyCompiler(plan)
-    topology = compiler.initialize(0).topology
-    target = np.asarray(plan.root_shape) << plan.maximum_level
-    point = (target // 2)[None, :]
-    closures = 0
-    for _ in range(plan.maximum_level):
-        # ty: ignore[invalid-argument-type]
-        slot = topology.locate_cells([plan.maximum_level], point)
-        result = _refine_slots(compiler, topology, slot)
-        assert result.status.successful
-        closures += result.evidence.balance_refinements
-        topology = result.topology
-    levels = topology.leaf_levels()
-    codimension = {"face": 1, "edge": min(2, plan.dimension), "corner": plan.dimension}[
-        stencil
-    ]
-    assert closures > 0
-    assert levels.max() == plan.maximum_level
-    for first, second in itertools.combinations(range(topology.leaf_count), 2):
-        if abs(int(levels[first]) - int(levels[second])) > 1:
-            assert _contact_dimension(topology, first, second) < (
-                plan.dimension - codimension
-            )
-
-
-def test_face_routes_list_each_shared_face_once_and_mark_hanging_faces() -> None:
+    ]:
+        plan = _plan(
+            shape,
+            maximum_level=5 if len(shape) == 2 else 4,
+            periodic=periodic,
+            balance=stencil,
+        )
+        compiler = phx.discretization.ForestTopologyCompiler(plan)
+        topology = compiler.initialize(0).topology
+        target = np.asarray(plan.root_shape) << plan.maximum_level
+        point = (target // 2)[None, :]
+        closures = 0
+        for _ in range(plan.maximum_level):
+            # ty: ignore[invalid-argument-type]
+            slot = topology.locate_cells([plan.maximum_level], point)
+            result = _refine_slots(compiler, topology, slot)
+            assert result.status.successful
+            closures += result.evidence.balance_refinements
+            topology = result.topology
+        levels = topology.leaf_levels()
+        codimension = {
+            "face": 1,
+            "edge": min(2, plan.dimension),
+            "corner": plan.dimension,
+        }[stencil]
+        assert closures > 0
+        assert levels.max() == plan.maximum_level
+        for first, second in itertools.combinations(range(topology.leaf_count), 2):
+            if abs(int(levels[first]) - int(levels[second])) > 1:
+                assert _contact_dimension(topology, first, second) < (
+                    plan.dimension - codimension
+                )
     plan = _plan((2, 1), maximum_level=3, periodic=(True, False))
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     topology = compiler.initialize(1).topology
@@ -163,9 +157,6 @@ def test_face_routes_list_each_shared_face_once_and_mark_hanging_faces() -> None
     assert np.all(
         np.asarray(workset.face_levels)[valid] == np.maximum(minus_levels, plus_levels)
     )
-
-
-def test_parent_child_transfer_conserves_content_and_constants() -> None:
     plan = _plan((2, 2), maximum_level=4, periodic=(True, True))
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     source = compiler.initialize(2).topology
@@ -203,7 +194,7 @@ def test_parent_child_transfer_conserves_content_and_constants() -> None:
     )
 
 
-def test_refine_then_coarsen_round_trip_restores_leaves_and_averages() -> None:
+def test_forest_amr_scenario_2() -> None:
     plan = _plan((2, 1), maximum_level=3)
     compiler = phx.discretization.ForestTopologyCompiler(plan)
     source = compiler.initialize(1).topology
@@ -229,9 +220,6 @@ def test_refine_then_coarsen_round_trip_restores_leaves_and_averages() -> None:
         up.values
     )
     np.testing.assert_allclose(down.values, values, rtol=0.0, atol=1e-15)
-
-
-def test_adaptation_refuses_leaf_capacity_overflow_atomically() -> None:
     plan = phx.discretization.ForestPlan(
         _grid((2, 2)),
         maximum_level=3,
@@ -247,6 +235,40 @@ def test_adaptation_refuses_leaf_capacity_overflow_atomically() -> None:
     assert result.evidence.target_leaf_count == 13
     with pytest.raises(ValueError, match=r"\{-1, 0, 1\}"):
         compiler.adapt(source, _marks(source, [2, 0, 0, 0]))
+    plan = _plan((2, 1), maximum_level=3, periodic=(False, True))
+    compiler = phx.discretization.ForestTopologyCompiler(plan)
+    coarse = _refine_slots(compiler, compiler.initialize(1).topology, (0, 3)).topology
+    fine = _refine_slots(compiler, coarse, (0, 1, 5)).topology
+    coarse_complex = phx.discretization.ForestCochainComplex(coarse)
+    fine_complex = phx.discretization.ForestCochainComplex(fine)
+    # A cylinder (periodic y, bounded x) has Euler characteristic zero.
+    for complex_ in (coarse_complex, fine_complex):
+        counts = complex_.entity_counts
+        assert counts[0] - counts[1] + counts[2] == 0
+    family = phx.discretization.ForestCochainTransfer(coarse_complex, fine_complex)
+    rng = np.random.default_rng(7)
+    for degree in range(plan.dimension + 1):
+        transfer = family.transfer(degree)
+        cochain = jnp.asarray(
+            rng.normal(size=(coarse_complex.spaces[degree].size,))
+            * np.asarray(coarse_complex.entity_valid[degree])
+        )
+        prolonged = transfer.prolongation.mv(cochain)
+        np.testing.assert_allclose(
+            transfer.restriction.mv(prolonged), cochain, atol=1e-13
+        )
+        if degree < plan.dimension:
+            np.testing.assert_allclose(
+                fine_complex.coboundary(degree).mv(prolonged),
+                family.transfer(degree + 1).prolongation.mv(
+                    coarse_complex.coboundary(degree).mv(cochain)
+                ),
+                atol=1e-13,
+            )
+        else:
+            np.testing.assert_allclose(jnp.sum(prolonged), jnp.sum(cochain), atol=1e-13)
+    with pytest.raises(ValueError, match="must refine"):
+        phx.discretization.ForestCochainTransfer(fine_complex, coarse_complex)
 
 
 def test_subcycled_reflux_restores_exact_conservation() -> None:
@@ -319,43 +341,6 @@ def test_mapped_roots_transfer_conserves_chart_volumes() -> None:
         jnp.arange(source.signature.leaf_capacity, dtype=jnp.float64)
     )
     assert bool(transferred.successful)
-
-
-def test_cochain_prolongation_commutes_and_restriction_is_its_left_inverse() -> None:
-    plan = _plan((2, 1), maximum_level=3, periodic=(False, True))
-    compiler = phx.discretization.ForestTopologyCompiler(plan)
-    coarse = _refine_slots(compiler, compiler.initialize(1).topology, (0, 3)).topology
-    fine = _refine_slots(compiler, coarse, (0, 1, 5)).topology
-    coarse_complex = phx.discretization.ForestCochainComplex(coarse)
-    fine_complex = phx.discretization.ForestCochainComplex(fine)
-    # A cylinder (periodic y, bounded x) has Euler characteristic zero.
-    for complex_ in (coarse_complex, fine_complex):
-        counts = complex_.entity_counts
-        assert counts[0] - counts[1] + counts[2] == 0
-    family = phx.discretization.ForestCochainTransfer(coarse_complex, fine_complex)
-    rng = np.random.default_rng(7)
-    for degree in range(plan.dimension + 1):
-        transfer = family.transfer(degree)
-        cochain = jnp.asarray(
-            rng.normal(size=(coarse_complex.spaces[degree].size,))
-            * np.asarray(coarse_complex.entity_valid[degree])
-        )
-        prolonged = transfer.prolongation.mv(cochain)
-        np.testing.assert_allclose(
-            transfer.restriction.mv(prolonged), cochain, atol=1e-13
-        )
-        if degree < plan.dimension:
-            np.testing.assert_allclose(
-                fine_complex.coboundary(degree).mv(prolonged),
-                family.transfer(degree + 1).prolongation.mv(
-                    coarse_complex.coboundary(degree).mv(cochain)
-                ),
-                atol=1e-13,
-            )
-        else:
-            np.testing.assert_allclose(jnp.sum(prolonged), jnp.sum(cochain), atol=1e-13)
-    with pytest.raises(ValueError, match="must refine"):
-        phx.discretization.ForestCochainTransfer(fine_complex, coarse_complex)
 
 
 def test_vertex_interpolation_reproduces_linear_fields_across_hanging_vertices() -> None:

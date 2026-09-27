@@ -3,7 +3,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from phydrax.applications.semiconductor._quantities import (
     BOLTZMANN_CONSTANT_SI as KB,
@@ -34,7 +33,7 @@ def _bands(statistics: Any = "boltzmann") -> Any:
     )
 
 
-def test_lattice_capacity_is_energy_derivative_and_has_invertible_datum() -> None:
+def test_semiconductor_thermal_scenario_1() -> None:
     law = ConstantLatticeHeatCapacity(
         2e6,
         reference_temperature=300.0,
@@ -55,9 +54,6 @@ def test_lattice_capacity_is_energy_derivative_and_has_invertible_datum() -> Non
     np.testing.assert_allclose(
         volume * (law.internal_energy(450.0) - law.internal_energy(350.0)), 6e-10
     )
-
-
-def test_thermal_boundary_is_passive_and_exactly_closes_reservoir_power() -> None:
     conductor = ThermalConductance(
         0.04,
         # ty: ignore[invalid-argument-type]
@@ -72,9 +68,6 @@ def test_thermal_boundary_is_passive_and_exactly_closes_reservoir_power() -> Non
     )
     assert np.all(result.entropy_production >= 0)
     np.testing.assert_allclose(result.entropy_production[-1], 0.02)
-
-
-def test_degenerate_carrier_relaxation_uses_shared_energy_and_cancels_heat() -> None:
     bands = _bands("fermi-dirac")
     law = CarrierEnergyRelaxation(
         bands,
@@ -101,35 +94,37 @@ def test_degenerate_carrier_relaxation_uses_shared_energy_and_cancels_heat() -> 
     assert float(result.equilibrium_internal_energy) > 1.5 * density * KB * 300.0
 
 
-@pytest.mark.parametrize("carrier,charge_sign", [("electron", -1), ("hole", 1)])
-def test_carrier_face_energy_closes_band_work_and_gauge_change(
-    carrier: Any, charge_sign: Any
-) -> None:
-    transport = CarrierEnergyTransport(
-        _bands(),
-        carrier,
-        0.5,
-        # ty: ignore[invalid-argument-type]
-        temperature_range=(200.0, 1200.0),
-        provenance="synthetic parabolic enthalpy/Fourier moment closure",
-    )
-    flux, nl, nr, tl, tr, metric = -2e10, 1e22, 3e22, 500.0, 300.0, 2e-8
-    # Electron band edges at different potentials share the same -q psi shift.
-    bl, br = 0.6 * Q, 0.2 * Q
-    result = transport.evaluate(flux, nl, nr, tl, tr, bl, br, metric)
-    expected_kinetic = flux * 2.5 * KB * tr + 0.5 * metric * (tl - tr)
-    np.testing.assert_allclose(result.kinetic_power, expected_kinetic)
-    left_total = result.left_kinetic_source + result.left_band_storage_source
-    right_total = result.right_kinetic_source + result.right_band_storage_source
-    np.testing.assert_allclose(left_total, -result.total_power)
-    np.testing.assert_allclose(right_total, result.total_power)
-    band_work = -charge_sign * (bl - br) * flux
-    np.testing.assert_allclose(
-        result.left_kinetic_source + result.right_kinetic_source, band_work
-    )
-    shifted = transport.evaluate(flux, nl, nr, tl, tr, bl + Q, br + Q, metric)
-    np.testing.assert_allclose(shifted.left_kinetic_source, result.left_kinetic_source)
-    np.testing.assert_allclose(shifted.right_kinetic_source, result.right_kinetic_source)
-    np.testing.assert_allclose(
-        shifted.total_power - result.total_power, -charge_sign * Q * flux
-    )
+def test_carrier_face_energy_closes_band_work_and_gauge_change() -> None:
+    for carrier, charge_sign in [("electron", -1), ("hole", 1)]:
+        transport = CarrierEnergyTransport(
+            _bands(),
+            carrier,
+            0.5,
+            # ty: ignore[invalid-argument-type]
+            temperature_range=(200.0, 1200.0),
+            provenance="synthetic parabolic enthalpy/Fourier moment closure",
+        )
+        flux, nl, nr, tl, tr, metric = -2e10, 1e22, 3e22, 500.0, 300.0, 2e-8
+        # Electron band edges at different potentials share the same -q psi shift.
+        bl, br = 0.6 * Q, 0.2 * Q
+        result = transport.evaluate(flux, nl, nr, tl, tr, bl, br, metric)
+        expected_kinetic = flux * 2.5 * KB * tr + 0.5 * metric * (tl - tr)
+        np.testing.assert_allclose(result.kinetic_power, expected_kinetic)
+        left_total = result.left_kinetic_source + result.left_band_storage_source
+        right_total = result.right_kinetic_source + result.right_band_storage_source
+        np.testing.assert_allclose(left_total, -result.total_power)
+        np.testing.assert_allclose(right_total, result.total_power)
+        band_work = -charge_sign * (bl - br) * flux
+        np.testing.assert_allclose(
+            result.left_kinetic_source + result.right_kinetic_source, band_work
+        )
+        shifted = transport.evaluate(flux, nl, nr, tl, tr, bl + Q, br + Q, metric)
+        np.testing.assert_allclose(
+            shifted.left_kinetic_source, result.left_kinetic_source
+        )
+        np.testing.assert_allclose(
+            shifted.right_kinetic_source, result.right_kinetic_source
+        )
+        np.testing.assert_allclose(
+            shifted.total_power - result.total_power, -charge_sign * Q * flux
+        )

@@ -512,8 +512,7 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
             for index in range(discretization.component_count)
         )
         reported = tuple(
-            float(item)
-            for item in jax.device_get(diagnostics.conservation_defect)
+            float(item) for item in jax.device_get(diagnostics.conservation_defect)
         )
         results[name] = {
             "seconds": seconds,

@@ -145,7 +145,7 @@ def _plans() -> Any:
     return string, cluster
 
 
-def test_declared_dark_string_spectrum_is_normalized_and_conservative() -> None:
+def test_dark_hadronization_scenario_1() -> None:
     string, _ = _plans()
     result = fragment_dark_string(
         string,
@@ -168,11 +168,6 @@ def test_declared_dark_string_spectrum_is_normalized_and_conservative() -> None:
         atol=1e-6,
     )
     np.testing.assert_allclose(jnp.sum(result.output_charges), 0.0, atol=1e-12)
-
-
-def test_dark_cluster_decay_and_fission_normalize_channels_and_preserve_lineage_quantities() -> (
-    None
-):
     _, cluster = _plans()
     parent = jnp.asarray((10.0, 1.0, -0.5, 0.25))
     decay = decay_dark_cluster(

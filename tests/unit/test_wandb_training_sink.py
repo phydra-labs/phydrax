@@ -75,7 +75,7 @@ def _event(
     )
 
 
-def test_wandb_sink_defines_axes_and_maps_typed_training_metrics() -> None:
+def test_wandb_sink_contracts() -> None:
     run = _FakeRun()
     sink = WandbTrainingSink(run)
 
@@ -117,9 +117,6 @@ def test_wandb_sink_defines_axes_and_maps_typed_training_metrics() -> None:
         }
     ]
     assert "phydrax/session_id" not in run.logged[0]
-
-
-def test_wandb_sink_filters_updates_but_keeps_validation_and_terminal() -> None:
     run = _FakeRun()
     sink = WandbTrainingSink(run, update_every=2)
 
@@ -153,9 +150,6 @@ def test_wandb_sink_filters_updates_but_keeps_validation_and_terminal() -> None:
     ]
     assert run.logged[0]["eval/loss"] == 2.0
     assert run.logged[1]["phydrax/lifecycle/run_terminal/completed_steps"] == 1
-
-
-def test_wandb_sink_bounds_redacts_and_normalizes_metrics() -> None:
     run = _FakeRun()
     sink = WandbTrainingSink(run, maximum_metrics=5)
 
@@ -183,6 +177,26 @@ def test_wandb_sink_bounds_redacts_and_normalizes_metrics() -> None:
     assert "train/overflow" not in payload
     assert payload["phydrax/nonfinite_metric_count"] == 1
     assert payload["phydrax/omitted_metric_count"] == 3
+    run = _FakeRun()
+    sink = WandbTrainingSink(run)
+    record = IterationRecord(
+        IterationCoordinates(IterationPhase.COMMIT, 1, committed=True),
+        0,
+        jnp.asarray(1.0),
+    )
+    event = HostIterationEvent("session", "event", 0, _scope(), record)
+
+    with pytest.raises(TypeError, match="typed training events"):
+        sink.emit(event)
+    with pytest.raises(TypeError, match="define_metric"):
+        # ty: ignore[invalid-argument-type]
+        WandbTrainingSink(object())
+    with pytest.raises(ValueError, match="update_every"):
+        WandbTrainingSink(_FakeRun(), update_every=0)
+    with pytest.raises(ValueError, match="maximum_metrics"):
+        WandbTrainingSink(_FakeRun(), maximum_metrics=0)
+    with pytest.raises(ValueError, match="sink_id"):
+        WandbTrainingSink(_FakeRun(), sink_id=" ")
 
 
 def test_wandb_sink_disables_after_provider_failure(phydrax_events: Any) -> None:
@@ -208,29 +222,3 @@ def test_wandb_sink_disables_after_provider_failure(phydrax_events: Any) -> None
         "sink_id": "wandb-training",
     }
     assert "provider credential secret" not in str(records[0])
-
-
-def test_wandb_sink_rejects_nontraining_records() -> None:
-    run = _FakeRun()
-    sink = WandbTrainingSink(run)
-    record = IterationRecord(
-        IterationCoordinates(IterationPhase.COMMIT, 1, committed=True),
-        0,
-        jnp.asarray(1.0),
-    )
-    event = HostIterationEvent("session", "event", 0, _scope(), record)
-
-    with pytest.raises(TypeError, match="typed training events"):
-        sink.emit(event)
-
-
-def test_wandb_sink_validates_constructor_contract() -> None:
-    with pytest.raises(TypeError, match="define_metric"):
-        # ty: ignore[invalid-argument-type]
-        WandbTrainingSink(object())
-    with pytest.raises(ValueError, match="update_every"):
-        WandbTrainingSink(_FakeRun(), update_every=0)
-    with pytest.raises(ValueError, match="maximum_metrics"):
-        WandbTrainingSink(_FakeRun(), maximum_metrics=0)
-    with pytest.raises(ValueError, match="sink_id"):
-        WandbTrainingSink(_FakeRun(), sink_id=" ")

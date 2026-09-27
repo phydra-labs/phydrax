@@ -77,7 +77,7 @@ def _reference() -> Any:
     )
 
 
-def test_tokamak_core_plant_uses_transactional_runtime() -> None:
+def test_platform_scenario_1() -> None:
     transport = phx.applications.tokamak.TokamakCoreTransportPlan(
         _geometry(), 1.0
     ).prepare()
@@ -111,9 +111,6 @@ def test_tokamak_core_plant_uses_transactional_runtime() -> None:
     np.testing.assert_allclose(
         step.accepted_state.payload, reset_result.accepted_state.payload
     )
-
-
-def test_tokamak_shot_record_reuses_governed_measurement_assets() -> None:
     time = phx.measurement.SampleTimeAxis.uniform("shot-time", 3, 0.1, phx.units.SECOND)
     support = phx.measurement.IndexSampleSupport(
         (3, 2),
@@ -160,9 +157,6 @@ def test_tokamak_shot_record_reuses_governed_measurement_assets() -> None:
 
     assert record.assets[0].content_id == asset.content_id
     assert record.record_id in split.training_record_ids
-
-
-def test_imas_equilibrium_mapping_round_trips_exact_native_semantics() -> None:
     equilibrium = _equilibrium()
     exported = phx.applications.tokamak.interchange.export_imas_equilibrium_slice(
         equilibrium,

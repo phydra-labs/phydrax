@@ -16,7 +16,7 @@ from phydrax.qualification import (
 )
 
 
-def test_candidate_registry_rejects_a_prefix_compatible_circuit_substitution() -> None:
+def test_expansion_gates_scenario_1() -> None:
     attributes = dict(qualification.CIRCUIT_ECM_SUPPORT.attributes)
     attributes["model_id"] = "battery:ecm:circuit-connected-unqualified"
     substituted = SupportTuple("battery.simulation", attributes)
@@ -25,9 +25,6 @@ def test_candidate_registry_rejects_a_prefix_compatible_circuit_substitution() -
     )
     with pytest.raises(ValueError):
         qualification.validate_battery_candidate_profile(profile, substituted)
-
-
-def test_gate_names_and_signed_opaque_ids_cannot_authorize_pack_entry() -> None:
     gates = tuple(
         ReleaseGateEvidence(
             name,

@@ -71,9 +71,7 @@ def _observation(
     )
 
 
-def test_peer_manifest_freezes_revisions_and_runtime_identity_without_schema_metadata() -> (
-    None
-):
+def test_best_nonlinear_campaigns_scenario_1() -> None:
     manifest_path = (
         Path(__file__).parents[2]
         / "benchmarks"
@@ -111,9 +109,6 @@ def test_peer_manifest_freezes_revisions_and_runtime_identity_without_schema_met
         "singular-start-rational",
         "tiny-column-underflow",
     }
-
-
-def test_family_profile_penalizes_failed_certificates_without_mixing_work_units() -> None:
     observations = [
         _observation(case_id, implementation, certified, work)
         for case_id, implementation, certified, work in (
@@ -136,9 +131,6 @@ def test_family_profile_penalizes_failed_certificates_without_mixing_work_units(
     assert slow_tau2.eligible_cases == 2
     assert slow_tau2.fraction == 1.0
     assert fast_tau2.fraction == 0.5
-
-
-def test_backend_claims_and_independent_certificates_remain_separate() -> None:
     false_success = _observation("a", "backend", False, 1.0, backend=True)
     false_failure = _observation("b", "backend", True, 1.0, backend=False)
     audit = superiority_audit([false_success, false_failure])
@@ -196,7 +188,7 @@ def test_campaign_output_is_flat_json_without_schema_records(tmp_path: Any) -> N
     assert "Infinity" not in output.read_text()
 
 
-def test_runner_messages_reject_revision_and_initial_fingerprint_mismatches() -> None:
+def test_best_nonlinear_campaigns_scenario_2() -> None:
     spec = PeerSpec(
         "peer",
         "a" * 40,
@@ -230,9 +222,6 @@ def test_runner_messages_reject_revision_and_initial_fingerprint_mismatches() ->
     wrong_revision = {**response, "source_revision": "b" * 40}
     with pytest.raises(ValueError, match="revision"):
         validate_peer_response(request, wrong_revision)
-
-
-def test_unavailable_observation_serializes_with_nulls() -> None:
     available = _observation("case", "implementation", True, 1.0)
     unavailable = CampaignObservation(
         # ty: ignore[invalid-argument-type]
@@ -263,15 +252,12 @@ def test_unavailable_observation_serializes_with_nulls() -> None:
     payload = json.dumps(asdict(unavailable), allow_nan=False)
     assert '"certificate_value": null' in payload
     assert "Infinity" not in payload
-
-
-def test_global_rastrigin_uses_dimension_scaled_known_zero_target() -> None:
     rastrigin = _global_cases()["rastrigin"]
     assert float(rastrigin(jnp.zeros(4))) == 0.0
     assert float(rastrigin(jnp.ones(4))) > 0.0
 
 
-def test_lagged_root_campaign_uses_declared_quasilinear_models() -> None:
+def test_best_nonlinear_campaigns_scenario_3() -> None:
     case = _root_cases()["quasilinear-diffusion"]
     initial = jnp.asarray(case.initial)
     previous = jnp.asarray(case.args)
@@ -286,17 +272,11 @@ def test_lagged_root_campaign_uses_declared_quasilinear_models() -> None:
     assert observation.work_counts["residual_evaluations"] > 0
     assert observation.work_counts["jvp_evaluations"] > 0
     assert observation.work_counts["linear_iterations"] > 0
-
-
-def test_lagged_root_campaign_retains_unsupported_case_rows() -> None:
     observation = _run_root("brown-almost-linear", "phydrax-lagged")
 
     assert not observation.available
     assert observation.availability_reason == "unsupported-mathematics"
     assert observation.certified is None
-
-
-def test_root_descriptor_fingerprint_covers_case_content() -> None:
     cases = _root_cases()
     domain = cases["domain-restricted"]
     tiny = cases["tiny-column-underflow"]
@@ -357,9 +337,6 @@ def test_root_descriptor_fingerprint_covers_case_content() -> None:
     assert payload["case_fingerprint"] == tiny.content_fingerprint
     assert payload["initial_fingerprint"] == tiny.content_fingerprint
     json.dumps(payload, allow_nan=False)
-
-
-def test_native_and_external_root_rows_share_the_physical_certificate() -> None:
     solution = np.asarray([0.0, 0.0])
     native = _root_raw_observation(
         "singular-start-rational",
@@ -392,7 +369,7 @@ def test_native_and_external_root_rows_share_the_physical_certificate() -> None:
     assert native.certificate_components == external.certificate_components
 
 
-def test_physical_root_certificate_rejects_initial_norm_false_positive() -> None:
+def test_best_nonlinear_campaigns_scenario_4() -> None:
     case = _root_cases()["diagonal-polynomial"]
     parameters = np.asarray(case.args)
     candidate = np.sqrt(parameters)
@@ -409,6 +386,23 @@ def test_physical_root_certificate_rejects_initial_norm_false_positive() -> None
     assert old_normalized_value <= case.termination.absolute_residual
     # ty: ignore[unsupported-operator]
     assert physical_norm > components["physical_residual_threshold"]
+    assert certified is False
+    observation = _run_root("tiny-column-underflow", "phydrax-scaled-newton")
+
+    assert observation.available
+    assert observation.certified
+    assert observation.work_counts["scale_preparation_residual_evaluations"] == 1.0
+    assert observation.work == observation.work_counts["residual_evaluations"]
+    assert observation.work > 1.0
+    case = _root_cases()["tiny-column-underflow"]
+    certified, physical_norm, components = _independent_root_certificate(
+        case,
+        np.asarray([2.0, 0.0]),
+    )
+
+    assert physical_norm <= case.termination.absolute_residual
+    assert components["solver_scaled_residual_norm"] == pytest.approx(3.0)
+    assert components["known_root_error"] == pytest.approx(3.0)
     assert certified is False
 
 
@@ -450,26 +444,3 @@ def test_ineligible_root_row_skips_without_residual_or_solver_work(
     assert observation.cold_seconds is None
     assert observation.warmup_seconds == ()
     assert observation.steady_seconds == ()
-
-
-def test_scaled_newton_counts_scale_preparation_as_work() -> None:
-    observation = _run_root("tiny-column-underflow", "phydrax-scaled-newton")
-
-    assert observation.available
-    assert observation.certified
-    assert observation.work_counts["scale_preparation_residual_evaluations"] == 1.0
-    assert observation.work == observation.work_counts["residual_evaluations"]
-    assert observation.work > 1.0
-
-
-def test_tiny_column_wrong_root_fails_known_root_gate() -> None:
-    case = _root_cases()["tiny-column-underflow"]
-    certified, physical_norm, components = _independent_root_certificate(
-        case,
-        np.asarray([2.0, 0.0]),
-    )
-
-    assert physical_norm <= case.termination.absolute_residual
-    assert components["solver_scaled_residual_norm"] == pytest.approx(3.0)
-    assert components["known_root_error"] == pytest.approx(3.0)
-    assert certified is False

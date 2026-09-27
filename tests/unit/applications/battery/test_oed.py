@@ -573,37 +573,34 @@ def _expected_jacobian(amplitudes: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("criterion", ("d_optimal", "a_optimal", "e_optimal"))
-def test_linear_sensitivity_fisher_and_native_criteria(criterion: Any) -> None:
-    prepared = _oed(criterion=criterion)
-    amplitudes = jnp.asarray((1.0, 2.0))
-    result = evaluate_battery_oed(prepared, amplitudes)
-    expected_jacobian = _expected_jacobian((1.0, 2.0))
-    expected_fisher = expected_jacobian.T @ expected_jacobian
-    if criterion == "d_optimal":
-        expected_criterion = np.linalg.slogdet(expected_fisher)[1]
-    elif criterion == "a_optimal":
-        expected_criterion = -np.trace(np.linalg.inv(expected_fisher))
-    else:
-        expected_criterion = np.linalg.eigvalsh(expected_fisher)[0]
+def test_oed_scenario_1() -> None:
+    for criterion in ("d_optimal", "a_optimal", "e_optimal"):
+        prepared = _oed(criterion=criterion)
+        amplitudes = jnp.asarray((1.0, 2.0))
+        result = evaluate_battery_oed(prepared, amplitudes)
+        expected_jacobian = _expected_jacobian((1.0, 2.0))
+        expected_fisher = expected_jacobian.T @ expected_jacobian
+        if criterion == "d_optimal":
+            expected_criterion = np.linalg.slogdet(expected_fisher)[1]
+        elif criterion == "a_optimal":
+            expected_criterion = -np.trace(np.linalg.inv(expected_fisher))
+        else:
+            expected_criterion = np.linalg.eigvalsh(expected_fisher)[0]
 
-    np.testing.assert_allclose(result.whitened_jacobian, expected_jacobian, rtol=2e-5)
-    np.testing.assert_allclose(result.fisher_information, expected_fisher, rtol=3e-5)
-    np.testing.assert_allclose(result.information, expected_fisher, rtol=3e-5)
-    np.testing.assert_allclose(result.criterion.value, expected_criterion, rtol=5e-5)
-    assert bool(result.valid)
-    np.testing.assert_allclose(
-        prepared.sensitivity_action(amplitudes, jnp.asarray((1.0, 0.0, 0.0))),
-        expected_jacobian[:, 0],
-        rtol=2e-5,
-    )
-    assert result.battery_run_id
-    assert result.protocol_values_digest
-    assert result.initial_state_digest
-    assert result.parameters_digest
-
-
-def test_candidate_ranking_and_native_finite_search_are_exact() -> None:
+        np.testing.assert_allclose(result.whitened_jacobian, expected_jacobian, rtol=2e-5)
+        np.testing.assert_allclose(result.fisher_information, expected_fisher, rtol=3e-5)
+        np.testing.assert_allclose(result.information, expected_fisher, rtol=3e-5)
+        np.testing.assert_allclose(result.criterion.value, expected_criterion, rtol=5e-5)
+        assert bool(result.valid)
+        np.testing.assert_allclose(
+            prepared.sensitivity_action(amplitudes, jnp.asarray((1.0, 0.0, 0.0))),
+            expected_jacobian[:, 0],
+            rtol=2e-5,
+        )
+        assert result.battery_run_id
+        assert result.protocol_values_digest
+        assert result.initial_state_digest
+        assert result.parameters_digest
     prepared = _oed()
     candidates = BatteryOEDCandidateSet(jnp.asarray(((0.5, 0.5), (1.0, 1.0), (2.0, 2.0))))
     problem = prepare_battery_oed_enumeration(prepared, candidates)
@@ -620,9 +617,6 @@ def test_candidate_ranking_and_native_finite_search_are_exact() -> None:
     # ty: ignore[unresolved-attribute]
     assert search.landscape_valid.tolist() == [True, True, True]
     assert problem.candidate_ids == candidates.candidate_ids
-
-
-def test_support_failures_are_invalid_and_duration_is_fixed() -> None:
     prepared = _oed()
     outside = prepared.evaluate(jnp.asarray((4.0, 0.0)))
     assert not bool(outside.current_valid)
@@ -640,7 +634,7 @@ def test_support_failures_are_invalid_and_duration_is_fixed() -> None:
         prepared.evaluate(jnp.asarray((1.0,)))
 
 
-def test_failed_model_and_ledger_paths_are_infeasible_not_finite_scores() -> None:
+def test_oed_scenario_2() -> None:
     model_failure = _oed(domain_ok=False)
     model_result = model_failure.evaluate(jnp.asarray((1.0, 1.0)))
     assert not bool(model_result.simulation_valid)
@@ -662,9 +656,6 @@ def test_failed_model_and_ledger_paths_are_infeasible_not_finite_scores() -> Non
     ).evaluator(jnp.asarray((1.0, 1.0)))
     assert not bool(ledger_valid)
     assert bool(jnp.isnan(ledger_score))
-
-
-def test_jit_gradients_native_problem_and_provenance_are_deterministic() -> None:
     first = _oed()
     second = _oed()
     assert first.plan_id == second.plan_id
@@ -695,9 +686,6 @@ def test_jit_gradients_native_problem_and_provenance_are_deterministic() -> None
     assert bool(jnp.isfinite(value))
     assert gradient.shape == amplitudes.shape
     assert bool(jnp.all(jnp.isfinite(gradient)))
-
-
-def test_observed_voltage_values_do_not_leak_into_local_design_information() -> None:
     baseline = _oed(observation_shift=0.0)
     shifted_observations = _oed(observation_shift=5.0)
     amplitudes = jnp.asarray((1.25, 1.75))

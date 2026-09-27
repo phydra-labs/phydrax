@@ -34,7 +34,7 @@ def _one_dimensional_plan(*, periodic: Any = False) -> Any:
     )
 
 
-def test_variable_patch_entity_views_share_owner_at_patch_interface() -> None:
+def test_variable_patch_contracts() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _one_dimensional_plan()
     ).initial_topology()
@@ -49,9 +49,6 @@ def test_variable_patch_entity_views_share_owner_at_patch_interface() -> None:
     assert nodes.global_indices[0, 4] == nodes.global_indices[1, 0]
     assert int(nodes.owned[0, 4]) + int(nodes.owned[1, 0]) == 1
     assert complex_.complex.dimension == 1
-
-
-def test_variable_patch_entity_ids_survive_refinement_of_other_entities() -> None:
     plan = _one_dimensional_plan()
     compiler = phx.discretization.VariablePatchTopologyCompiler(plan)
     initial = compiler.initial_topology()
@@ -79,9 +76,6 @@ def test_variable_patch_entity_ids_survive_refinement_of_other_entities() -> Non
         old.complex.incidences[0].relation.route_shape
         == new.complex.incidences[0].relation.route_shape
     )
-
-
-def test_variable_patch_periodic_entities_identify_wrap_nodes() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _one_dimensional_plan(periodic=True)
     ).initial_topology()
@@ -96,9 +90,6 @@ def test_variable_patch_periodic_entities_identify_wrap_nodes() -> None:
     assert complex_.complex.entities(1).num_active == 8
     nodes = complex_.view(0, (), 0)
     assert nodes.global_indices[0, 0] == nodes.global_indices[1, 4]
-
-
-def test_variable_patch_entity_incidence_capacity_rejects_overflow() -> None:
     topology = phx.discretization.VariablePatchTopologyCompiler(
         _one_dimensional_plan()
     ).initial_topology()
@@ -111,9 +102,6 @@ def test_variable_patch_entity_incidence_capacity_rejects_overflow() -> None:
 
     with pytest.raises(ValueError, match="incidence route capacity"):
         plan.prepare(topology)
-
-
-def test_variable_patch_two_dimensional_entity_complex_has_exact_chain() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),

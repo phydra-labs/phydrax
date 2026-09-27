@@ -32,7 +32,7 @@ def _scalar_system(dimension: Any) -> Any:
     )
 
 
-def test_mapped_identity_preserves_cartesian_measures_and_constant_free_stream() -> None:
+def test_finite_volume_mapped_amr_scenario_1() -> None:
     reference = phx.discretization.FiniteVolumePlan(_grid((6, 5))).prepare()
     mapped = phx.discretization.MappedFiniteVolumePlan(
         reference, lambda point: point, mapping_id="identity"
@@ -57,9 +57,6 @@ def test_mapped_identity_preserves_cartesian_measures_and_constant_free_stream()
     np.testing.assert_allclose(mapped.cell_volumes, reference.cell_volumes, rtol=1e-12)
     residual = compiled(jnp.asarray(0.0), jnp.ones(mapped.state_shape))
     np.testing.assert_allclose(residual, 0.0, atol=2e-12)
-
-
-def test_warped_mapped_geometry_preserves_constant_flux_divergence() -> None:
     reference = phx.discretization.FiniteVolumePlan(_grid((8, 7))).prepare()
     mapped = phx.discretization.MappedFiniteVolumePlan(
         reference,
@@ -90,6 +87,26 @@ def test_warped_mapped_geometry_preserves_constant_flux_divergence() -> None:
     residual = compiled(jnp.asarray(0.0), jnp.ones(mapped.state_shape))
     np.testing.assert_allclose(residual, 0.0, atol=2e-11)
     assert jnp.all(mapped.cell_volumes > 0.0)
+    left = phx.discretization.FiniteVolumePlan(_grid((6,))).prepare()
+    right = phx.discretization.FiniteVolumePlan(_grid((5,))).prepare()
+    plan = phx.discretization.ConservativeMultiblockInterfacePlan(
+        left,
+        right,
+        0,
+        0,
+        phx.discretization.InterfaceOrientation(0),
+        phx.discretization.RusanovFluxPlan(),
+    )
+    result = plan.flux(
+        _scalar_system(1),
+        jnp.ones(left.state_shape),
+        2.0 * jnp.ones(right.state_shape),
+    )
+
+    np.testing.assert_allclose(result.conservation_defect, 0.0, atol=1e-13)
+    np.testing.assert_allclose(
+        result.left_integrated_flux + result.right_integrated_flux, 0.0, atol=1e-13
+    )
 
 
 def test_mapped_geometry_applies_face_closure_on_mapped_normals() -> None:
@@ -139,30 +156,7 @@ def test_mapped_geometry_applies_face_closure_on_mapped_normals() -> None:
     )
 
 
-def test_conforming_multiblock_interface_uses_one_conservative_flux() -> None:
-    left = phx.discretization.FiniteVolumePlan(_grid((6,))).prepare()
-    right = phx.discretization.FiniteVolumePlan(_grid((5,))).prepare()
-    plan = phx.discretization.ConservativeMultiblockInterfacePlan(
-        left,
-        right,
-        0,
-        0,
-        phx.discretization.InterfaceOrientation(0),
-        phx.discretization.RusanovFluxPlan(),
-    )
-    result = plan.flux(
-        _scalar_system(1),
-        jnp.ones(left.state_shape),
-        2.0 * jnp.ones(right.state_shape),
-    )
-
-    np.testing.assert_allclose(result.conservation_defect, 0.0, atol=1e-13)
-    np.testing.assert_allclose(
-        result.left_integrated_flux + result.right_integrated_flux, 0.0, atol=1e-13
-    )
-
-
-def test_nested_multiblock_interface_sums_fine_fluxes_to_coarse_faces() -> None:
+def test_finite_volume_mapped_amr_scenario_2() -> None:
     left = phx.discretization.FiniteVolumePlan(_grid((4, 3))).prepare()
     right = phx.discretization.FiniteVolumePlan(_grid((4, 6))).prepare()
     plan = phx.discretization.ConservativeMultiblockInterfacePlan(
@@ -182,9 +176,6 @@ def test_nested_multiblock_interface_sums_fine_fluxes_to_coarse_faces() -> None:
     assert result.left_integrated_flux.shape == (3, 1)
     assert result.right_integrated_flux.shape == (6, 1)
     np.testing.assert_allclose(result.conservation_defect, 0.0, atol=1e-13)
-
-
-def test_integrated_flux_register_applies_oriented_reflux_correction() -> None:
     register = phx.discretization.FluxRegister(
         jnp.asarray([[2.0], [3.0]]),
         jnp.asarray([[5.0], [1.0]]),

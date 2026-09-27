@@ -151,9 +151,7 @@ def _solve_exact_profile(problem: Any, controls: Any, inequality_multipliers: An
     return solve_prepared_open_loop_gne(prepared)
 
 
-def test_shared_resource_continuum_endpoints_keep_unequal_player_multiplier_copies() -> (
-    None
-):
+def test_games_generalized_nash_scenario_1() -> None:
     constraints = _two_player_shared_resource()
     problem = _separable_problem(
         (2.0, 2.0), constraints=constraints, problem_id="test:gne-endpoints"
@@ -180,38 +178,6 @@ def test_shared_resource_continuum_endpoints_keep_unequal_player_multiplier_copi
     assert left.physical_shared_residuals.shape == (1,)
     assert left.multiplier_layout.num_multipliers == 2
     assert left.multiplier_layout.shared_slice == (2, 2)
-
-
-def test_variational_midpoint_is_one_generic_gne_without_common_multiplier_claim() -> (
-    None
-):
-    constraints = _two_player_shared_resource()
-    problem = _separable_problem(
-        (2.0, 2.0), constraints=constraints, problem_id="test:ve-is-gne"
-    )
-
-    midpoint = _solve_exact_profile(problem, (0.5, 0.5), (1.5, 1.5))
-
-    np.testing.assert_allclose(midpoint.controls[0], (0.5, 0.5), atol=2.0e-6)
-    np.testing.assert_allclose(
-        midpoint.player_shared_multiplier_copies[0], (1.5,), atol=2.0e-6
-    )
-    np.testing.assert_allclose(
-        midpoint.player_shared_multiplier_copies[1], (1.5,), atol=2.0e-6
-    )
-    assert midpoint.certificate_label == OPEN_LOOP_GENERALIZED_NASH_KKT
-    assert midpoint.global_gap_certificate_label == GLOBAL_CONVEX_GNE_GAP_EVIDENCE
-    assert not midpoint.multiplier_layout.variational
-    assert not midpoint.common_multiplier_imposed
-    assert not midpoint.variational_equilibrium_claimed
-    assert "variational" not in midpoint.certification_claim.lower()
-    assert not bool(midpoint.global_gap_evidence_available)
-    assert bool(midpoint.nonuniqueness_evidence)
-    assert int(midpoint.branch_dimension) == 1
-    assert int(midpoint.status) == int(OpenLoopGNEStatus.RESIDUAL_VALID_NONISOLATED)
-
-
-def test_shared_participant_subset_allocates_no_multiplier_to_nonparticipant() -> None:
     partition = PlayerControlPartition(("player-0", "player-1", "player-2"), (1, 1, 1))
     resource = _path_inequality(
         lambda time, state, control, args: control[0] + control[1] - 1.0,
@@ -242,11 +208,30 @@ def test_shared_participant_subset_allocates_no_multiplier_to_nonparticipant() -
     assert plan.multiplier_layout.player_slices == ((0, 1), (1, 2), (2, 2))
     assert result.physical_constraint_residuals.shape == (1,)
     assert bool(result.original_kkt_valid)
+    constraints = _two_player_shared_resource()
+    problem = _separable_problem(
+        (2.0, 2.0), constraints=constraints, problem_id="test:ve-is-gne"
+    )
 
+    midpoint = _solve_exact_profile(problem, (0.5, 0.5), (1.5, 1.5))
 
-def test_private_and_shared_constraints_retain_one_physical_copy_and_player_blocks() -> (
-    None
-):
+    np.testing.assert_allclose(midpoint.controls[0], (0.5, 0.5), atol=2.0e-6)
+    np.testing.assert_allclose(
+        midpoint.player_shared_multiplier_copies[0], (1.5,), atol=2.0e-6
+    )
+    np.testing.assert_allclose(
+        midpoint.player_shared_multiplier_copies[1], (1.5,), atol=2.0e-6
+    )
+    assert midpoint.certificate_label == OPEN_LOOP_GENERALIZED_NASH_KKT
+    assert midpoint.global_gap_certificate_label == GLOBAL_CONVEX_GNE_GAP_EVIDENCE
+    assert not midpoint.multiplier_layout.variational
+    assert not midpoint.common_multiplier_imposed
+    assert not midpoint.variational_equilibrium_claimed
+    assert "variational" not in midpoint.certification_claim.lower()
+    assert not bool(midpoint.global_gap_evidence_available)
+    assert bool(midpoint.nonuniqueness_evidence)
+    assert int(midpoint.branch_dimension) == 1
+    assert int(midpoint.status) == int(OpenLoopGNEStatus.RESIDUAL_VALID_NONISOLATED)
     constraints = _two_player_shared_resource(include_private=True)
     problem = _separable_problem(
         (2.0, 2.0), constraints=constraints, problem_id="test:private-shared-gne"
@@ -301,9 +286,7 @@ def test_best_response_gap_uses_minimizer_sign_and_complete_audit_enables_global
     assert int(result.status) == int(OpenLoopGNEStatus.ORIGINAL_KKT_FAILURE)
 
 
-def test_complete_best_response_audits_publish_separate_global_convex_gap_evidence() -> (
-    None
-):
+def test_games_generalized_nash_scenario_2() -> None:
     problem = _separable_problem((1.0, 2.0), problem_id="test:global-gap-gne")
 
     result = solve_open_loop_gne(problem, audit_best_responses=True)
@@ -314,6 +297,49 @@ def test_complete_best_response_audits_publish_separate_global_convex_gap_eviden
     assert float(result.global_gne_gap_bound) <= 2.0e-5
     assert result.certificate_label == OPEN_LOOP_GENERALIZED_NASH_KKT
     assert result.global_gap_certificate_label == GLOBAL_CONVEX_GNE_GAP_EVIDENCE
+    partition = PlayerControlPartition(("player-0", "player-1"), (1, 1))
+    problem = FiniteHorizonLQOpenLoopGNEProblem(
+        jnp.zeros((1, 1, 1)),
+        jnp.zeros((1, 1, 2)),
+        jnp.zeros((1,)),
+        jnp.zeros((2, 1, 1, 1)),
+        jnp.zeros((2, 1, 2, 2)),
+        jnp.zeros((2, 1, 1)),
+        partition,
+        problem_id="test:nonunique-gne",
+    )
+
+    result = solve_open_loop_gne(problem, jnp.asarray(((0.25, -0.75),)))
+
+    np.testing.assert_allclose(result.controls[0], (0.25, -0.75), atol=1.0e-7)
+    assert bool(result.nonuniqueness_evidence)
+    assert int(result.branch_dimension) == 2
+    assert not bool(result.branch_isolated)
+    assert bool(result.valid)
+    assert int(result.status) == int(OpenLoopGNEStatus.RESIDUAL_VALID_NONISOLATED)
+    partition = PlayerControlPartition(("player-0", "player-1"), (1, 1))
+    unilateral = _path_inequality(
+        lambda time, state, control, args: control[0] + control[1] - 1.0,
+        "player-zero-coupled-feasible-set",
+        scope=GameConstraintScope.PLAYER_OWNED_COUPLED,
+        participants=("player-0", "player-1"),
+        owner="player-0",
+        control_dependencies=("player-0", "player-1"),
+    )
+    constraints = OpenLoopGameConstraints(partition, (unilateral,))
+    problem = _separable_problem(
+        (2.0, 0.0),
+        constraints=constraints,
+        problem_id="test:player-owned-coupled-gne",
+    )
+    result = _solve_exact_profile(problem, (1.0, 0.0), (1.0,))
+
+    np.testing.assert_allclose(result.controls[0], (1.0, 0.0), atol=2.0e-6)
+    np.testing.assert_allclose(result.player_multipliers[0], (1.0,), atol=2.0e-6)
+    assert result.player_multipliers[1].shape == (0,)
+    assert result.multiplier_layout.num_multipliers == 1
+    assert result.physical_constraint_residuals.shape == (1,)
+    assert bool(result.original_kkt_valid)
 
 
 def test_failed_inner_best_response_solve_has_stable_status_and_no_global_bound(
@@ -354,56 +380,7 @@ def test_failed_inner_best_response_solve_has_stable_status_and_no_global_bound(
     assert not bool(result.valid)
 
 
-def test_zero_game_reports_nonisolated_branch_without_fabricating_uniqueness() -> None:
-    partition = PlayerControlPartition(("player-0", "player-1"), (1, 1))
-    problem = FiniteHorizonLQOpenLoopGNEProblem(
-        jnp.zeros((1, 1, 1)),
-        jnp.zeros((1, 1, 2)),
-        jnp.zeros((1,)),
-        jnp.zeros((2, 1, 1, 1)),
-        jnp.zeros((2, 1, 2, 2)),
-        jnp.zeros((2, 1, 1)),
-        partition,
-        problem_id="test:nonunique-gne",
-    )
-
-    result = solve_open_loop_gne(problem, jnp.asarray(((0.25, -0.75),)))
-
-    np.testing.assert_allclose(result.controls[0], (0.25, -0.75), atol=1.0e-7)
-    assert bool(result.nonuniqueness_evidence)
-    assert int(result.branch_dimension) == 2
-    assert not bool(result.branch_isolated)
-    assert bool(result.valid)
-    assert int(result.status) == int(OpenLoopGNEStatus.RESIDUAL_VALID_NONISOLATED)
-
-
-def test_player_owned_coupled_constraint_has_only_the_owner_multiplier() -> None:
-    partition = PlayerControlPartition(("player-0", "player-1"), (1, 1))
-    unilateral = _path_inequality(
-        lambda time, state, control, args: control[0] + control[1] - 1.0,
-        "player-zero-coupled-feasible-set",
-        scope=GameConstraintScope.PLAYER_OWNED_COUPLED,
-        participants=("player-0", "player-1"),
-        owner="player-0",
-        control_dependencies=("player-0", "player-1"),
-    )
-    constraints = OpenLoopGameConstraints(partition, (unilateral,))
-    problem = _separable_problem(
-        (2.0, 0.0),
-        constraints=constraints,
-        problem_id="test:player-owned-coupled-gne",
-    )
-    result = _solve_exact_profile(problem, (1.0, 0.0), (1.0,))
-
-    np.testing.assert_allclose(result.controls[0], (1.0, 0.0), atol=2.0e-6)
-    np.testing.assert_allclose(result.player_multipliers[0], (1.0,), atol=2.0e-6)
-    assert result.player_multipliers[1].shape == (0,)
-    assert result.multiplier_layout.num_multipliers == 1
-    assert result.physical_constraint_residuals.shape == (1,)
-    assert bool(result.original_kkt_valid)
-
-
-def test_dependent_active_rows_report_failed_player_cq_and_singular_branch() -> None:
+def test_games_generalized_nash_scenario_3() -> None:
     partition = PlayerControlPartition(("player-0",), (1,))
     first = _path_inequality(
         lambda time, state, control, args: control[0],
@@ -434,11 +411,6 @@ def test_dependent_active_rows_report_failed_player_cq_and_singular_branch() -> 
     assert int(result.branch_dimension) == 1
     assert not bool(result.branch_regular)
     assert not bool(result.regularity_certified)
-
-
-def test_case_axes_jit_and_refresh_preserve_topology_and_change_numeric_solution() -> (
-    None
-):
     first = _separable_problem(
         jnp.asarray(((1.0, 2.0), (3.0, -1.0))),
         problem_id="test:case-refresh-gne",

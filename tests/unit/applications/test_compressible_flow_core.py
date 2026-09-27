@@ -67,7 +67,7 @@ def _uniform_primitive(system: Any, shape: Any = ()) -> Any:
     return jnp.concatenate((species, velocity, temperature), axis=-1)
 
 
-def test_reference_characteristic_acoustic_entropy_and_vorticity_waves() -> None:
+def test_compressible_flow_core_scenario_1() -> None:
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     points = jnp.stack(
         jnp.meshgrid(jnp.linspace(0.0, 1.0, 5), jnp.linspace(0.0, 1.0, 4)),
@@ -84,9 +84,6 @@ def test_reference_characteristic_acoustic_entropy_and_vorticity_waves() -> None
         np.testing.assert_allclose(
             evidence.transverse_velocity_residual, 0.0, atol=2.0e-5
         )
-
-
-def test_full_species_normal_flux_reflection_and_characteristic_modes() -> None:
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     state = system.primitive_to_conserved(_uniform_primitive(system))
     normal = jnp.asarray((0.6, 0.8))
@@ -115,9 +112,30 @@ def test_full_species_normal_flux_reflection_and_characteristic_modes() -> None:
         jnp.full((system.species_count + system.dimension - 1,), convective),
         rtol=1.0e-5,
     )
-
-
-def test_conservative_mixture_forcing_work_and_named_budget_decomposition() -> None:
+    system = HomogeneousMixtureEulerSystem(_model(), 1)
+    far_field = system.primitive_to_conserved(_uniform_primitive(system))
+    interior_primitive = _uniform_primitive(system).at[system.species_count].set(-0.1)
+    interior = system.primitive_to_conserved(interior_primitive)
+    result = CharacteristicNonreflectingBoundaryPlan().apply(
+        system, interior, far_field, jnp.asarray((1.0,))
+    )
+    assert result.boundary_state.shape == (system.component_count,)
+    assert bool(result.ledger.admissible)
+    state = jnp.broadcast_to(interior, (6, system.component_count))
+    sponge = CompressibleSpongePlan(
+        system,
+        far_field,
+        strength=2.0,
+        start_coordinate=0.5,
+        end_coordinate=1.0,
+    )
+    sponge_result = sponge.apply(state, jnp.linspace(0.0, 1.0, 6), step_size=0.1)
+    assert sponge_result.ledger.species_mass_rate.shape == (system.species_count,)
+    np.testing.assert_allclose(
+        jnp.sum(sponge_result.ledger.species_mass_rate),
+        sponge_result.ledger.mass_rate,
+    )
+    assert bool(sponge_result.ledger.finite)
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     state = system.primitive_to_conserved(_uniform_primitive(system, (3,)))
     forcing = CompressibleForcingPlan(
@@ -154,7 +172,7 @@ def test_conservative_mixture_forcing_work_and_named_budget_decomposition() -> N
     assert bool(budget.complete)
 
 
-def test_favre_raw_moments_spectra_and_wall_thermal_statistics() -> None:
+def test_compressible_flow_core_scenario_2() -> None:
     nx, ny = 6, 4
     system = HomogeneousMixtureEulerSystem(_model(), 2)
     primitive = _uniform_primitive(system, (nx, ny))
@@ -181,36 +199,6 @@ def test_favre_raw_moments_spectra_and_wall_thermal_statistics() -> None:
     assert not bool(jnp.any(statistics.wall_units_available))
     assert statistics.wall_shear.shape == (2, 2)
     assert statistics.solenoidal_spectrum.shape == (nx, ny)
-
-
-def test_full_species_characteristic_boundary_and_sponge_ledgers() -> None:
-    system = HomogeneousMixtureEulerSystem(_model(), 1)
-    far_field = system.primitive_to_conserved(_uniform_primitive(system))
-    interior_primitive = _uniform_primitive(system).at[system.species_count].set(-0.1)
-    interior = system.primitive_to_conserved(interior_primitive)
-    result = CharacteristicNonreflectingBoundaryPlan().apply(
-        system, interior, far_field, jnp.asarray((1.0,))
-    )
-    assert result.boundary_state.shape == (system.component_count,)
-    assert bool(result.ledger.admissible)
-    state = jnp.broadcast_to(interior, (6, system.component_count))
-    sponge = CompressibleSpongePlan(
-        system,
-        far_field,
-        strength=2.0,
-        start_coordinate=0.5,
-        end_coordinate=1.0,
-    )
-    sponge_result = sponge.apply(state, jnp.linspace(0.0, 1.0, 6), step_size=0.1)
-    assert sponge_result.ledger.species_mass_rate.shape == (system.species_count,)
-    np.testing.assert_allclose(
-        jnp.sum(sponge_result.ledger.species_mass_rate),
-        sponge_result.ledger.mass_rate,
-    )
-    assert bool(sponge_result.ledger.finite)
-
-
-def test_finite_x_boundary_layer_owns_canonical_composition_and_temperature() -> None:
     model = _model()
     system = HomogeneousMixtureEulerSystem(model, 2)
     inflow = FiniteXBoundaryLayerInflowPlan(

@@ -172,9 +172,7 @@ def _seed(plan: Any) -> Any:
     return result.state
 
 
-def test_finite_epoch_cascade_restarts_to_arbitrary_depth_with_stable_durable_work_ids() -> (
-    None
-):
+def test_unbounded_decay_cascade_scenario_1() -> None:
     plan = _contracts()
     state = _seed(plan)
     depth = 20
@@ -220,9 +218,6 @@ def test_finite_epoch_cascade_restarts_to_arbitrary_depth_with_stable_durable_wo
             assert not bool(admission.refused)
             state = admission.state
     assert float(resident.frontier_values[0, 7]) == depth
-
-
-def test_prompt_and_delayed_proper_time_paths_remain_distinct() -> None:
     prompt_plan = _contracts(lifetime=0.01, prompt_cutoff=0.1)
     prompt = evolve_decay_cascade_epoch(
         prompt_plan,
@@ -244,9 +239,6 @@ def test_prompt_and_delayed_proper_time_paths_remain_distinct() -> None:
     )
     assert not bool(delayed.prompt[0])
     assert bool(delayed.delayed[0])
-
-
-def test_product_capacity_backpressure_is_atomic_and_retains_parent_frontier() -> None:
     plan = _contracts(product_capacity=1)
     state = _seed(plan)
     evidence = evolve_decay_cascade_epoch(

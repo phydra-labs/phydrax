@@ -112,7 +112,7 @@ def test_common_fermi_is_exact_detailed_balance_with_full_linear_conductance() -
         np.testing.assert_allclose(actual_species, expected_species, rtol=2e-13)
 
 
-def test_srh_is_pair_recombination_and_resolves_near_equilibrium_imbalance() -> None:
+def test_semiconductor_continuum_scenario_1() -> None:
     prepared = _resistor()
     u = prepared.plan.equilibrium_coordinates()
     u = u.at[:, 1].set(1e-12)
@@ -131,9 +131,6 @@ def test_srh_is_pair_recombination_and_resolves_near_equilibrium_imbalance() -> 
     assert bool(jnp.all(rate > 0))
     generation = prepared.recombination(u.at[:, 1].set(-1e-12))
     assert bool(jnp.all(generation < 0))
-
-
-def test_multidimensional_flux_and_srh_satisfy_terminal_charge_continuity() -> None:
     prepared = _resistor(multidimensional=True)
     support = prepared.plan.support
     x, y = support.positions[:, 0] / 1e-6, support.positions[:, 1] / 0.6e-6
@@ -152,9 +149,6 @@ def test_multidimensional_flux_and_srh_satisfy_terminal_charge_continuity() -> N
     )
     currents = prepared.terminal_current(u)
     np.testing.assert_allclose(jnp.sum(currents), integrated_charge_residual, rtol=2e-13)
-
-
-def test_storage_derivative_is_density_dependent_and_algebraic_rows_are_empty() -> None:
     prepared = PreparedSemiconductorDevice(
         mos_capacitor(semiconductor_nodes=5, oxide_nodes=3)
     )
@@ -179,7 +173,7 @@ def test_storage_derivative_is_density_dependent_and_algebraic_rows_are_empty() 
     np.testing.assert_array_equal(prepared.storage(u)[~prepared.differential_mask], 0)
 
 
-def test_uniform_resistor_has_analytic_positive_into_device_current() -> None:
+def test_semiconductor_continuum_scenario_2() -> None:
     prepared = _resistor()
     plan = prepared.plan
     voltage = 0.075
@@ -194,9 +188,6 @@ def test_uniform_resistor_has_analytic_positive_into_device_current() -> None:
     np.testing.assert_allclose(
         prepared.terminal_current(u), jnp.asarray([expected, -expected]), rtol=2e-13
     )
-
-
-def test_pure_dielectric_capacitor_charge_and_displacement_current_signs() -> None:
     area, length, permittivity = 1e-12, 1e-6, 3.9 * 8.8541878128e-12
     support = TransportSupport.interval(
         np.asarray([0, 0.1, 0.35, 0.8, 1.0]) * length, area=area
@@ -244,9 +235,6 @@ def test_pure_dielectric_capacitor_charge_and_displacement_current_signs() -> No
         0,
         atol=2e-14,
     )
-
-
-def test_failed_biased_native_solve_never_reports_valid_operating_point() -> None:
     prepared = PreparedSemiconductorDevice(pn_junction(nodes=17))
     equilibrium = prepared.equilibrium()
     assert bool(equilibrium.successful)
@@ -264,6 +252,21 @@ def test_failed_biased_native_solve_never_reports_valid_operating_point() -> Non
     assert not bool(point.evidence.valid)
     assert not bool(point.nonlinear_result.successful)
     assert point.evidence.scaled_residual_norm > 1e-12
+    prepared = PreparedSemiconductorDevice(pn_junction(nodes=17))
+    failed = prepared.equilibrium(
+        termination=NonlinearTermination(
+            absolute_residual=1e-12,
+            relative_residual=0,
+            maximum_steps=1,
+        )
+    )
+    assert not bool(failed.successful)
+    point = prepared.solve(jnp.zeros(2), initial=failed)
+    assert bool(point.nonlinear_result.successful)
+    assert not bool(point.successful)
+    assert not bool(point.evidence.valid)
+    # ty: ignore[unresolved-attribute]
+    assert not bool(point.initial_result.successful)
 
 
 def test_numeric_refresh_rebinds_material_doping_and_normalization() -> None:
@@ -293,21 +296,3 @@ def test_numeric_refresh_rebinds_material_doping_and_normalization() -> None:
     np.testing.assert_allclose(
         refreshed.jacobian.operator.mv(direction), expected, rtol=2e-12, atol=1e-12
     )
-
-
-def test_failed_equilibrium_prerequisite_survives_a_converged_new_root() -> None:
-    prepared = PreparedSemiconductorDevice(pn_junction(nodes=17))
-    failed = prepared.equilibrium(
-        termination=NonlinearTermination(
-            absolute_residual=1e-12,
-            relative_residual=0,
-            maximum_steps=1,
-        )
-    )
-    assert not bool(failed.successful)
-    point = prepared.solve(jnp.zeros(2), initial=failed)
-    assert bool(point.nonlinear_result.successful)
-    assert not bool(point.successful)
-    assert not bool(point.evidence.valid)
-    # ty: ignore[unresolved-attribute]
-    assert not bool(point.initial_result.successful)

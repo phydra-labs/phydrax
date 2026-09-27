@@ -28,7 +28,7 @@ def _rigid_pair() -> Any:
     return particles, bodies, kinematics
 
 
-def test_rigid_body_lie_step_and_clump_owner_component_contracts() -> None:
+def test_dem_shapes_bonds_scenario_1() -> None:
     particles, bodies, kinematics = _rigid_pair()
     load = phx.discretization.RigidBodyLoad(
         jnp.zeros((2, 3)), jnp.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]])
@@ -68,9 +68,6 @@ def test_rigid_body_lie_step_and_clump_owner_component_contracts() -> None:
     assert expanded.valid.shape == (4,)
     assert jnp.sum(expanded.valid) == 4
     assert jnp.unique(expanded.component_pair_keys, axis=0).shape[0] == 4
-
-
-def test_triangle_and_shape_agnostic_sphere_contact_geometry() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([3]), jnp.asarray([1.0]), ambient_dimension=3
     ).prepare()
@@ -90,9 +87,6 @@ def test_triangle_and_shape_agnostic_sphere_contact_geometry() -> None:
     assert jnp.isclose(result.geometry.overlap[0], 0.1)
     batch = result.geometry.as_contact_batch()
     assert batch.normal.shape == (1, 3)
-
-
-def test_fixed_bond_elasticity_damage_and_irreversibility() -> None:
     particles, bodies, kinematics = _rigid_pair()
     plan = phx.discretization.FixedBondGraphPlan(
         jnp.asarray([1]),
@@ -119,9 +113,6 @@ def test_fixed_bond_elasticity_damage_and_irreversibility() -> None:
     assert updated.damage[0] > 0.0
     assert updated.damage[0] >= state.damage[0]
     assert updated.cumulative_fracture_energy[0] >= 0.0
-
-
-def test_fixed_pool_topology_split_conserves_mass_and_momentum() -> None:
     plan = phx.discretization.TopologyEventPlan(3, 2, 2, 3)
     state = phx.discretization.TopologyPoolState(
         jnp.asarray([10, 11, 12], dtype=jnp.int64),

@@ -95,7 +95,7 @@ _SUBPACKAGE_MODULES = {
 }
 
 
-def test_cardiovascular_root_owns_only_cross_domain_contracts_and_subpackages() -> None:
+def test_cardiovascular_public_api_scenario_1() -> None:
     assert applications.cardiovascular is cardiovascular
     expected = list(_SUBPACKAGE_MODULES)
     for module_name in ("_case", "_commercial", "_execution", "_quantities"):
@@ -108,9 +108,6 @@ def test_cardiovascular_root_owns_only_cross_domain_contracts_and_subpackages() 
     assert len(cardiovascular.__all__) == len(set(cardiovascular.__all__))
     assert "HarmonicCoordinatePlan" not in cardiovascular.__all__
     assert "PressureVolumeLoopPlan" not in cardiovascular.__all__
-
-
-def test_each_domain_facade_exports_each_owned_symbol_once() -> None:
     for subpackage_name, module_names in _SUBPACKAGE_MODULES.items():
         facade = getattr(cardiovascular, subpackage_name)
         expected: list[str] = []
@@ -121,9 +118,6 @@ def test_each_domain_facade_exports_each_owned_symbol_once() -> None:
                 assert getattr(facade, name) is getattr(module, name)
         assert facade.__all__ == expected
         assert len(facade.__all__) == len(set(facade.__all__))
-
-
-def test_shared_substrates_keep_their_generic_public_owners() -> None:
     assert phydrax.ArrayArchiveLimits.__module__ == "phydrax._array_archive"
     assert equations.TensorDiffusionAction.__module__ == "phydrax.equations._variational"
     assert lifecycle.SupportBundleAuthorization.__module__ == "phydrax.lifecycle._archive"

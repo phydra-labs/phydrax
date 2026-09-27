@@ -178,7 +178,7 @@ def _artifact(*, external: Any = False, commercial_use: Any = False) -> Any:
     )
 
 
-def test_external_artifact_binds_rights_provenance_and_stops_table_gradients() -> None:
+def test_thermal_dark_rates_scenario_1() -> None:
     artifact = _artifact(external=True)
 
     assert artifact.evidence.qualified
@@ -193,9 +193,6 @@ def test_external_artifact_binds_rights_provenance_and_stops_table_gradients() -
     np.testing.assert_allclose(derivative, 0.0)
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         _artifact(external=True, commercial_use=True)
-
-
-def test_htl_has_vacuum_limit_ward_identity_and_only_spacelike_landau_support() -> None:
     units, frame = _units_and_frame()
     vacuum = HTLPolarizationPlan(0.0, units, frame).evaluate(
         jnp.asarray((0.5, 4.0)), jnp.asarray((1.0, 1.0))
@@ -213,11 +210,6 @@ def test_htl_has_vacuum_limit_ward_identity_and_only_spacelike_landau_support() 
     np.testing.assert_allclose(response.longitudinal[1].imag, 0.0, atol=0.0)
     np.testing.assert_allclose(response.evidence.ward_residual, 0.0, atol=2.0e-7)
     assert bool(jnp.all(response.evidence.valid))
-
-
-def test_lpm_fixed_basis_matches_diagonal_analytic_solution_and_subtracts_overlap() -> (
-    None
-):
     units, frame = _units_and_frame()
     plan = LPMIntegralPlan(
         jnp.asarray((0.0,)),
@@ -254,7 +246,7 @@ def test_lpm_fixed_basis_matches_diagonal_analytic_solution_and_subtracts_overla
     np.testing.assert_allclose(free.rate, 0.0, atol=2.0e-7)
 
 
-def test_eos_identities_stability_covariance_and_domain_refusal_are_explicit() -> None:
+def test_thermal_dark_rates_scenario_2() -> None:
     artifact = _artifact()
     plan = ThermalDarkRatePlan(artifact)
     state = plan.evaluate(2.0)
@@ -272,9 +264,6 @@ def test_eos_identities_stability_covariance_and_domain_refusal_are_explicit() -
     assert not bool(refused.valid)
     assert int(refused.status) == int(ThermalKernelStatus.OUTSIDE_TEMPERATURE_SUPPORT)
     assert bool(jnp.isnan(refused.rates[0]))
-
-
-def test_zero_eos_covariance_keeps_canonical_qualification_evidence() -> None:
     units, frame = _units_and_frame()
     species_ids = (
         DarkSectorSpeciesPlan(

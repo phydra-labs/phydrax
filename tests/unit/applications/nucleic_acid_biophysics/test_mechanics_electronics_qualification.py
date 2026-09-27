@@ -133,7 +133,7 @@ def _fit_mechanics(calibration: Any, locked: Any, **overrides: Any) -> Any:
     )
 
 
-def test_restricted_mechanics_propagates_fit_covariance_to_locked_units() -> None:
+def test_mechanics_electronics_qualification_scenario_1() -> None:
     model, _ = make_fixture(4)
     source = _reference("mechanical-response")
     calibration = _mechanical_data("cal", ("prep-a", "prep-b"), model, source)
@@ -196,9 +196,6 @@ def test_restricted_mechanics_propagates_fit_covariance_to_locked_units() -> Non
             issued_at=1,
             expires_at=100,
         )
-
-
-def test_nearly_singular_mechanics_fit_is_inconclusive_despite_binary_rank() -> None:
     model, _ = make_fixture(4)
     source = _reference("ill-conditioned-response")
     calibration = _mechanical_data(
@@ -214,9 +211,6 @@ def test_nearly_singular_mechanics_fit_is_inconclusive_despite_binary_rank() -> 
     assert "parameter-identifiability" in assessment.missing_prerequisites
     assert assessment.parameter_covariance is None
     assert assessment.locked_prediction_standard_errors is None
-
-
-def test_mechanics_reports_unavailable_training_rights_as_inconclusive() -> None:
     model, _ = make_fixture(4)
     source = _reference("restricted-response", training=False)
     calibration = _mechanical_data("cal", ("prep-a", "prep-b"), model, source)
@@ -369,7 +363,7 @@ def _electronic_prediction(series: Any, campaign: Any, values: Any, *, model: An
     )
 
 
-def test_electronic_fit_rejects_forged_execution_identity() -> None:
+def test_electronic_contracts() -> None:
     series = _electronic_series()
     campaign = _electronic_campaign(series)
     parameters = np.asarray([0.25, -0.5])
@@ -412,78 +406,6 @@ def test_electronic_fit_rejects_forged_execution_identity() -> None:
             code,
             forged,
         )
-
-
-def _prediction_evidence(prediction: Any) -> Any:
-    records = []
-    for stage in (
-        "parameter-identifiability",
-        "predictive-calibration",
-        "locked-prediction",
-    ):
-        subjects = (
-            prediction.campaign_id,
-            prediction.model_id,
-            prediction.fit_id,
-            *prediction.fit_integrity_ids,
-        )
-        if stage == "locked-prediction":
-            subjects = (*subjects, prediction.prediction_id)
-        records.append(
-            QualificationEvidence(
-                "scientific",
-                "passed",
-                subjects,
-                build_id="test-build",
-                environment_id="test-environment",
-                backend="cpu",
-                topology="single-device",
-                precision="float64",
-                reduction="deterministic",
-                replay_id="test-replay",
-                criteria_ids=(stage,),
-                raw_artifact_ids=(f"raw:{stage}:{prediction.model_id}",),
-                reviewer_id="test-reviewer",
-                issued_at=1,
-                expires_at=100,
-                reason=f"{stage} passed",
-                campaign_start_record_ids=(),
-                campaign_observation_record_ids=(),
-            )
-        )
-    return tuple(records)
-
-
-def _failed_locked_evidence(prediction: Any) -> Any:
-    return QualificationEvidence(
-        "scientific",
-        "failed",
-        (
-            prediction.campaign_id,
-            prediction.model_id,
-            prediction.fit_id,
-            *prediction.fit_integrity_ids,
-            prediction.prediction_id,
-        ),
-        build_id="test-build",
-        environment_id="test-environment",
-        backend="cpu",
-        topology="single-device",
-        precision="float64",
-        reduction="deterministic",
-        replay_id="failed-replay",
-        criteria_ids=("locked-prediction",),
-        raw_artifact_ids=(f"raw:failed:{prediction.model_id}",),
-        reviewer_id="test-reviewer",
-        issued_at=1,
-        expires_at=100,
-        reason="locked prediction failed",
-        campaign_start_record_ids=(),
-        campaign_observation_record_ids=(),
-    )
-
-
-def test_electronic_comparison_requires_frozen_heldout_model_lineage() -> None:
     series = _electronic_series()
     observed = np.asarray(series.values)
     campaign = _electronic_campaign(series)
@@ -629,6 +551,75 @@ def test_electronic_comparison_requires_frozen_heldout_model_lineage() -> None:
             issued_at=1,
             expires_at=100,
         )
+
+
+def _prediction_evidence(prediction: Any) -> Any:
+    records = []
+    for stage in (
+        "parameter-identifiability",
+        "predictive-calibration",
+        "locked-prediction",
+    ):
+        subjects = (
+            prediction.campaign_id,
+            prediction.model_id,
+            prediction.fit_id,
+            *prediction.fit_integrity_ids,
+        )
+        if stage == "locked-prediction":
+            subjects = (*subjects, prediction.prediction_id)
+        records.append(
+            QualificationEvidence(
+                "scientific",
+                "passed",
+                subjects,
+                build_id="test-build",
+                environment_id="test-environment",
+                backend="cpu",
+                topology="single-device",
+                precision="float64",
+                reduction="deterministic",
+                replay_id="test-replay",
+                criteria_ids=(stage,),
+                raw_artifact_ids=(f"raw:{stage}:{prediction.model_id}",),
+                reviewer_id="test-reviewer",
+                issued_at=1,
+                expires_at=100,
+                reason=f"{stage} passed",
+                campaign_start_record_ids=(),
+                campaign_observation_record_ids=(),
+            )
+        )
+    return tuple(records)
+
+
+def _failed_locked_evidence(prediction: Any) -> Any:
+    return QualificationEvidence(
+        "scientific",
+        "failed",
+        (
+            prediction.campaign_id,
+            prediction.model_id,
+            prediction.fit_id,
+            *prediction.fit_integrity_ids,
+            prediction.prediction_id,
+        ),
+        build_id="test-build",
+        environment_id="test-environment",
+        backend="cpu",
+        topology="single-device",
+        precision="float64",
+        reduction="deterministic",
+        replay_id="failed-replay",
+        criteria_ids=("locked-prediction",),
+        raw_artifact_ids=(f"raw:failed:{prediction.model_id}",),
+        reviewer_id="test-reviewer",
+        issued_at=1,
+        expires_at=100,
+        reason="locked prediction failed",
+        campaign_start_record_ids=(),
+        campaign_observation_record_ids=(),
+    )
 
 
 def test_charge_transfer_populations_and_predictions_obey_probability_support() -> None:

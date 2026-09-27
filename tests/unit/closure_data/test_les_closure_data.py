@@ -84,9 +84,7 @@ def _velocity_field(source: Any) -> Any:
     )
 
 
-def test_periodic_filter_matches_modal_transfer_retained_modes_nyquist_and_constants() -> (
-    None
-):
+def test_les_closure_data_scenario_1() -> None:
     source, resolved, context = _context((8, 8, 8), (4, 4, 4))
     coarse_coefficients = jnp.zeros(resolved.modal_shape, dtype=jnp.complex128)
     coarse_coefficients = coarse_coefficients.at[1, 0, 0].set(1.25 - 0.5j)
@@ -108,20 +106,12 @@ def test_periodic_filter_matches_modal_transfer_retained_modes_nyquist_and_const
         jnp.ones(resolved.physical_shape),
         atol=1e-12,
     )
-
-
-def test_periodic_product_filter_projects_the_source_product_not_separate_factors() -> (
-    None
-):
     source, resolved, context = _context()
     x, y, _ = _coordinates(source)
     left = jnp.sin(x) + 0.4 * jnp.cos(5.0 * y)
     right = jnp.cos(y) - 0.3 * jnp.sin(4.0 * x)
     expected = resolved.reconstruct(context.modal_transfer(source.project(left * right)))
     np.testing.assert_allclose(context.filter_product(left, right), expected, atol=2e-12)
-
-
-def test_reynolds_stress_conventions_divergence_and_positive_forward_sign() -> None:
     source, resolved, context = _context()
     velocity = _velocity_field(source)
     derivatives = tuple(spectral_derivative_operator(resolved, axis) for axis in range(3))
@@ -168,9 +158,6 @@ def test_reynolds_stress_conventions_divergence_and_positive_forward_sign() -> N
     assert reference.filter_id == context.resolved_filter.filter_id
     assert reference.target_id == transfer.target_id
     assert reference.analysis_dag_id == dag.dag_id
-
-
-def test_named_generic_scalar_flux_uses_the_same_exact_projection() -> None:
     source, _, context = _context()
     velocity = _velocity_field(source)
     x, y, z = _coordinates(source)
@@ -196,9 +183,7 @@ def test_named_generic_scalar_flux_uses_the_same_exact_projection() -> None:
     assert target.target_kind == "scalar_flux"
 
 
-def test_filter_identity_transfer_derivative_and_source_resolution_mismatches_refuse() -> (
-    None
-):
+def test_les_closure_data_scenario_2() -> None:
     source = _space((8, 8, 8))
     resolved = _space((4, 4, 4))
     wrong_axes_filter = ResolvedLESFilter(
@@ -242,9 +227,6 @@ def test_filter_identity_transfer_derivative_and_source_resolution_mismatches_re
             _filter(),
             reference_manifest_id="reference",
         )
-
-
-def test_les_additions_do_not_change_existing_filter_energy_or_pair_semantics() -> None:
     prepared = FilterSpec.identity().prepare((4, 4, 4))
     values = jnp.ones((4, 4, 4, 3))
     np.testing.assert_array_equal(prepared(values), values)

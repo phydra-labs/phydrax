@@ -49,7 +49,7 @@ def _batch(*, source_mask: Any = None) -> Any:
     )
 
 
-def test_graph_batch_roundtrip_preserves_all_masks() -> None:
+def test_operator_topology_scenario_1() -> None:
     first = _graph(masked=False)
     second = _graph(masked=True)
     batched = phx.graph.batch_graphs((first, second))
@@ -79,9 +79,6 @@ def test_graph_batch_roundtrip_preserves_all_masks() -> None:
         assert jnp.array_equal(actual.node_mask, expected.node_mask)
         assert jnp.array_equal(actual.edge_mask, expected.edge_mask)
         assert jnp.array_equal(actual.graph_mask, expected.graph_mask)
-
-
-def test_operator_topology_materializes_and_gathers_case_local_graph_fields() -> None:
     batch = _batch(source_mask=jnp.asarray([[True, True, False], [True, True, True]]))
     graph = phx.nn.operator.operator_graph_from_samples(
         batch.input("u"), case_shape=batch.case_shape
@@ -102,9 +99,6 @@ def test_operator_topology_materializes_and_gathers_case_local_graph_fields() ->
         graph.nodes["features"], jnp.asarray([0.0, 1.0, 0.0, 3.0, 4.0, 5.0])
     )
     assert jnp.array_equal(gathered, jnp.asarray([[0.0, 1.0, 0.0], [3.0, 4.0, 5.0]]))
-
-
-def test_operator_topology_materializes_edge_and_global_entity_fields() -> None:
     graph = _graph()
     edge_topology = phx.nn.operator.OperatorTopology.from_graph(graph, site="edge")
     edge_samples = phx.nn.operator.FunctionSamples(
@@ -142,11 +136,6 @@ def test_operator_topology_materializes_edge_and_global_entity_fields() -> None:
     assert jnp.array_equal(global_graph.globals["features"], jnp.asarray([7.0]))
     # ty: ignore[invalid-argument-type]
     assert jnp.array_equal(global_values, global_samples.values)
-
-
-def test_native_graph_operator_executes_graphir_and_is_jittable_and_differentiable() -> (
-    None
-):
     batch = _batch()
     processor = phx.graph.GraphNeuralOperator(
         input_key="features",
@@ -183,7 +172,7 @@ def test_native_graph_operator_executes_graphir_and_is_jittable_and_differentiab
     assert jnp.all(jnp.isfinite(input_gradient))
 
 
-def test_topology_survives_padding_stacking_slicing_and_sampling() -> None:
+def test_operator_topology_scenario_2() -> None:
     topology = phx.nn.operator.OperatorTopology.from_graph(_graph())
     samples = phx.nn.operator.FunctionSamples(
         values=jnp.asarray([1.0, 2.0, 3.0]),
@@ -208,9 +197,19 @@ def test_topology_survives_padding_stacking_slicing_and_sampling() -> None:
     sliced_u = sliced.input("u")
     assert sliced_u.topology is not None
     assert sliced_u.topology.case_shape == ()
+    first = phx.nn.operator.OperatorTopology.from_graph(_graph())
+    changed_graph = _graph().replace(
+        senders=jnp.asarray([0, 0, 2]),
+        receivers=jnp.asarray([1, 2, 0]),
+    )
+    second = phx.nn.operator.OperatorTopology.from_graph(changed_graph)
 
-
-def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites() -> None:
+    assert phx.nn.operator.operator_graph_fingerprint(
+        first.graph
+    ) != phx.nn.operator.operator_graph_fingerprint(second.graph)
+    assert phx.nn.operator.operator_topology_fingerprint(
+        first
+    ) != phx.nn.operator.operator_topology_fingerprint(second)
     complex_graph = phx.graph.triangle_mesh_to_simplicial_graph(
         jnp.asarray([[0, 1, 2], [0, 2, 3]]),
         num_vertices=4,
@@ -228,25 +227,6 @@ def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites() -> N
     assert (
         vertices.graph_fingerprint == edges.graph_fingerprint == faces.graph_fingerprint
     )
-
-
-def test_topology_fingerprint_changes_with_connectivity_not_only_sample_shape() -> None:
-    first = phx.nn.operator.OperatorTopology.from_graph(_graph())
-    changed_graph = _graph().replace(
-        senders=jnp.asarray([0, 0, 2]),
-        receivers=jnp.asarray([1, 2, 0]),
-    )
-    second = phx.nn.operator.OperatorTopology.from_graph(changed_graph)
-
-    assert phx.nn.operator.operator_graph_fingerprint(
-        first.graph
-    ) != phx.nn.operator.operator_graph_fingerprint(second.graph)
-    assert phx.nn.operator.operator_topology_fingerprint(
-        first
-    ) != phx.nn.operator.operator_topology_fingerprint(second)
-
-
-def test_stack_operator_batches_broadcasts_shared_inner_case_topology() -> None:
     first = _batch()
     second = _batch()
     stacked = phx.nn.operator.stack_operator_batches(

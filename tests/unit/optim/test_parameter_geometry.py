@@ -27,7 +27,7 @@ def _mixed_geometry(parameters: Any = None) -> Any:
     )
 
 
-def test_parameter_geometry_paths_binding_and_public_exports() -> None:
+def test_parameter_geometry_contracts() -> None:
     parameters = _mixed_parameters()
     paths = phx.optim.ParameterGeometry.array_leaf_paths(parameters)
     geometry = _mixed_geometry(parameters)
@@ -39,9 +39,6 @@ def test_parameter_geometry_paths_binding_and_public_exports() -> None:
     assert "ParameterGeometry" in phx.optim.__all__
     assert "riemannian_sgd" in phx.optim.__all__
     assert "riemannian_momentum" in phx.optim.__all__
-
-
-def test_parameter_geometry_mixes_leaf_metrics_without_flattening() -> None:
     parameters = _mixed_parameters()
     geometry = _mixed_geometry(parameters)
     gradients = {
@@ -61,9 +58,6 @@ def test_parameter_geometry_mixes_leaf_metrics_without_flattening() -> None:
     assert jnp.allclose(jnp.linalg.norm(destination["sphere"]), 1.0)
     assert geometry.constraint_residuals(destination).keys() == {"['sphere']"}
     assert geometry.maximum_constraint_residual(destination) < 1e-12
-
-
-def test_parameter_geometry_transport_preserves_mixed_tree_structure() -> None:
     parameters = _mixed_parameters()
     geometry = _mixed_geometry(parameters)
     tangent = {
@@ -86,9 +80,6 @@ def test_parameter_geometry_transport_preserves_mixed_tree_structure() -> None:
         0.0,
         atol=1e-12,
     )
-
-
-def test_parameter_geometry_supports_leading_manifold_product_axes() -> None:
     parameters = {
         "directions": jnp.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
     }
@@ -105,9 +96,38 @@ def test_parameter_geometry_supports_leading_manifold_product_axes() -> None:
 
     assert bool(geometry.contains(destination))
     assert destination["directions"].shape == (3, 3)
+    parameters = _mixed_parameters()
 
+    with pytest.raises(ValueError, match="at least one manifold"):
+        phx.optim.ParameterGeometry.from_leaf_paths(parameters, {})
+    with pytest.raises(ValueError, match="Unknown.*missing"):
+        phx.optim.ParameterGeometry.from_leaf_paths(
+            parameters,
+            {"['missing']": phx.metrix.SphereManifold(3)},
+        )
+    with pytest.raises(ValueError, match="outside"):
+        phx.optim.ParameterGeometry.from_leaf_paths(
+            {"sphere": jnp.ones((3,))},
+            {"['sphere']": phx.metrix.SphereManifold(3)},
+        )
+    with pytest.raises(ValueError, match="trailing shape"):
+        phx.optim.ParameterGeometry.from_leaf_paths(
+            {"sphere": jnp.array([1.0, 0.0])},
+            {"['sphere']": phx.metrix.SphereManifold(3)},
+        )
+    with pytest.raises(TypeError, match="real floating-point"):
+        phx.optim.ParameterGeometry.from_leaf_paths(
+            {"sphere": jnp.array([1.0 + 0.0j, 0.0j, 0.0j])},
+            {"['sphere']": phx.metrix.SphereManifold(3)},
+        )
 
-def test_parameter_geometry_factor_moments_follow_product_axes_and_weights() -> None:
+    geometry = _mixed_geometry(parameters)
+    with pytest.raises(ValueError, match="PyTree structure"):
+        geometry.validate({"different": jnp.ones((3,))})
+    with pytest.raises(ValueError, match="must have shape"):
+        geometry.validate(
+            {"euclidean": jnp.ones((3,)), "sphere": jnp.array([1.0, 0.0, 0.0])}
+        )
     parameters = {
         "directions": jnp.array(
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -149,41 +169,6 @@ def test_parameter_geometry_factor_moments_follow_product_axes_and_weights() -> 
         jnp.array([[0.0, 1.5, 2.0], [10.0, 0.0, 24.0]]),
     )
     assert jnp.array_equal(scaled["offset"], jnp.array([6.0, 12.0]))
-
-
-def test_parameter_geometry_rejects_invalid_bindings_and_reuse() -> None:
-    parameters = _mixed_parameters()
-
-    with pytest.raises(ValueError, match="at least one manifold"):
-        phx.optim.ParameterGeometry.from_leaf_paths(parameters, {})
-    with pytest.raises(ValueError, match="Unknown.*missing"):
-        phx.optim.ParameterGeometry.from_leaf_paths(
-            parameters,
-            {"['missing']": phx.metrix.SphereManifold(3)},
-        )
-    with pytest.raises(ValueError, match="outside"):
-        phx.optim.ParameterGeometry.from_leaf_paths(
-            {"sphere": jnp.ones((3,))},
-            {"['sphere']": phx.metrix.SphereManifold(3)},
-        )
-    with pytest.raises(ValueError, match="trailing shape"):
-        phx.optim.ParameterGeometry.from_leaf_paths(
-            {"sphere": jnp.array([1.0, 0.0])},
-            {"['sphere']": phx.metrix.SphereManifold(3)},
-        )
-    with pytest.raises(TypeError, match="real floating-point"):
-        phx.optim.ParameterGeometry.from_leaf_paths(
-            {"sphere": jnp.array([1.0 + 0.0j, 0.0j, 0.0j])},
-            {"['sphere']": phx.metrix.SphereManifold(3)},
-        )
-
-    geometry = _mixed_geometry(parameters)
-    with pytest.raises(ValueError, match="PyTree structure"):
-        geometry.validate({"different": jnp.ones((3,))})
-    with pytest.raises(ValueError, match="must have shape"):
-        geometry.validate(
-            {"euclidean": jnp.ones((3,)), "sphere": jnp.array([1.0, 0.0, 0.0])}
-        )
 
 
 def test_unselected_complex_leaf_uses_real_hermitian_metric() -> None:

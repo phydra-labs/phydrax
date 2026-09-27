@@ -8,7 +8,6 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 import phydrax as phx
 
@@ -56,48 +55,43 @@ def _case(schedule: Any, *, clamp_x: Any = False) -> Any:
     return compiled, arguments, position
 
 
-@pytest.mark.parametrize(
-    ("schedule", "code", "stress_first", "second_transfer"),
-    [
+def test_mpm_schedules_scenario_1() -> None:
+    for schedule, code, stress_first, second_transfer in [
         (phx.discretization.USLMPMSchedule(), 0, False, False),
         (phx.discretization.USFMPMSchedule(), 1, True, False),
         (phx.discretization.MUSLMPMSchedule(), 2, False, True),
-    ],
-)
-def test_explicit_schedule_phase_identity_and_translation(
-    schedule: Any, code: Any, stress_first: Any, second_transfer: Any
-) -> None:
-    compiled, arguments, position = _case(schedule)
-    velocity = jnp.broadcast_to(jnp.asarray((0.08, -0.03)), position.shape)
-    state = compiled.initialize_state(position, velocity, jnp.full((4,), 0.01), arguments)
-    detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
+    ]:
+        compiled, arguments, position = _case(schedule)
+        velocity = jnp.broadcast_to(jnp.asarray((0.08, -0.03)), position.shape)
+        state = compiled.initialize_state(
+            position, velocity, jnp.full((4,), 0.01), arguments
+        )
+        detail = compiled.dynamics.step_detailed(state, 0.001, arguments)
 
-    assert bool(detail.successful)
-    assert int(detail.diagnostics.schedule.schedule_code) == code
-    assert bool(detail.diagnostics.schedule.stress_updated_first) is stress_first
-    assert (
-        bool(detail.diagnostics.schedule.second_momentum_extrapolation) is second_transfer
-    )
-    assert bool(detail.diagnostics.schedule.successful)
-    assert detail.grid.mass.shape == (1,) + compiled.dynamics.splat.target_shape
-    np.testing.assert_allclose(
-        detail.accepted_state.particles.position,
-        position + 0.001 * velocity,
-        rtol=2e-11,
-        atol=2e-11,
-    )
-    np.testing.assert_allclose(
-        detail.accepted_state.particles.velocity,
-        velocity,
-        rtol=2e-11,
-        atol=2e-11,
-    )
-    if second_transfer:
-        assert detail.diagnostics.schedule.second_transfer_mass_defect < 1e-12
-        assert detail.diagnostics.schedule.second_transfer_momentum_defect < 1e-10
-
-
-def test_musl_reapplies_prescribed_constraints_after_second_transfer() -> None:
+        assert bool(detail.successful)
+        assert int(detail.diagnostics.schedule.schedule_code) == code
+        assert bool(detail.diagnostics.schedule.stress_updated_first) is stress_first
+        assert (
+            bool(detail.diagnostics.schedule.second_momentum_extrapolation)
+            is second_transfer
+        )
+        assert bool(detail.diagnostics.schedule.successful)
+        assert detail.grid.mass.shape == (1,) + compiled.dynamics.splat.target_shape
+        np.testing.assert_allclose(
+            detail.accepted_state.particles.position,
+            position + 0.001 * velocity,
+            rtol=2e-11,
+            atol=2e-11,
+        )
+        np.testing.assert_allclose(
+            detail.accepted_state.particles.velocity,
+            velocity,
+            rtol=2e-11,
+            atol=2e-11,
+        )
+        if second_transfer:
+            assert detail.diagnostics.schedule.second_transfer_mass_defect < 1e-12
+            assert detail.diagnostics.schedule.second_transfer_momentum_defect < 1e-10
     compiled, arguments, position = _case(
         phx.discretization.MUSLMPMSchedule(), clamp_x=True
     )
@@ -111,9 +105,6 @@ def test_musl_reapplies_prescribed_constraints_after_second_transfer() -> None:
     )
     assert detail.diagnostics.schedule.second_constraint_work <= 0.0
     assert detail.diagnostics.energy.boundary_work <= 0.0
-
-
-def test_default_explicit_method_remains_usl_minus() -> None:
     method = phx.discretization.ExplicitMPMMethodPlan()
     assert isinstance(method.schedule, phx.discretization.USLMPMSchedule)
     assert method.schedule.common_name == "usl-minus"

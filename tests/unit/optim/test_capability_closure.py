@@ -11,7 +11,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_finite_top_k_pareto_and_landscape_are_index_stable() -> None:
+def test_capability_closure_scenario_1() -> None:
     space = phx.optim.FiniteProductSpace(
         phx.optim.FiniteAxis(jnp.asarray([3.0, 1.0, 1.0, 2.0]))
     )
@@ -36,6 +36,32 @@ def test_finite_top_k_pareto_and_landscape_are_index_stable() -> None:
         direct[:, None] < direct[None, :], axis=-1
     )
     assert not jnp.any(dominates)
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        source_size=2,
+        target_size=2,
+    )
+    matrix = phx.sparse.SparseLinearMap(relation, jnp.asarray([1.0, 1.0]))
+    program = phx.optim.ConicProgram(
+        None,
+        jnp.asarray([1.0, 1.0]),
+        matrix,
+        jnp.asarray([1.0, 1.0]),
+        phx.optim.NonnegativeCone(2),
+    )
+    method = phx.optim.NativeHomogeneousConic()
+    assert program.constraint_is_sparse
+    assert method.capabilities.sparse
+    # ty: ignore[unresolved-attribute]
+    assert program.constraint_matrix.sparse_storage().nnz == 2
+    relaxation = phx.optim.LinearProgram(jnp.asarray([1.0, 0.0]))
+    try:
+        phx.optim.MixedIntegerProgram(relaxation, integer_indices=(0,))
+    except ValueError as error:
+        assert "finite bounds" in str(error)
+    else:
+        raise AssertionError("unbounded integer coordinate was accepted")
 
 
 def test_mixed_differential_evolution_decodes_domain_members_and_guards_invalid() -> None:
@@ -63,35 +89,3 @@ def test_mixed_differential_evolution_decodes_domain_members_and_guards_invalid(
     assert jnp.all(
         jnp.isin(result.population["category"], jnp.asarray([10.0, 20.0, 40.0]))
     )
-
-
-def test_sparse_conic_program_retains_relation_and_native_method_capability() -> None:
-    relation = phx.sparse.EdgeRelation(
-        jnp.asarray([0, 1], dtype=jnp.int32),
-        jnp.asarray([0, 1], dtype=jnp.int32),
-        source_size=2,
-        target_size=2,
-    )
-    matrix = phx.sparse.SparseLinearMap(relation, jnp.asarray([1.0, 1.0]))
-    program = phx.optim.ConicProgram(
-        None,
-        jnp.asarray([1.0, 1.0]),
-        matrix,
-        jnp.asarray([1.0, 1.0]),
-        phx.optim.NonnegativeCone(2),
-    )
-    method = phx.optim.NativeHomogeneousConic()
-    assert program.constraint_is_sparse
-    assert method.capabilities.sparse
-    # ty: ignore[unresolved-attribute]
-    assert program.constraint_matrix.sparse_storage().nnz == 2
-
-
-def test_bounded_mixed_integer_program_rejects_unbounded_discrete_roles() -> None:
-    relaxation = phx.optim.LinearProgram(jnp.asarray([1.0, 0.0]))
-    try:
-        phx.optim.MixedIntegerProgram(relaxation, integer_indices=(0,))
-    except ValueError as error:
-        assert "finite bounds" in str(error)
-    else:
-        raise AssertionError("unbounded integer coordinate was accepted")

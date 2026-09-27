@@ -46,7 +46,7 @@ def _data(steps: Any = 300) -> Any:
     )
 
 
-def test_variational_training_selects_executable_canonical_coordinate() -> None:
+def test_variational_kinetic_training_scenario_1() -> None:
     data = _data()
     policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
         maximum_steps=4,
@@ -74,9 +74,6 @@ def test_variational_training_selects_executable_canonical_coordinate() -> None:
         jnp.asarray([0.4, -0.2])
     )
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_training_capacity_and_shape_fail_closed() -> None:
     data = _data(20)
     policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
         maximum_steps=0, maximum_transitions=5
@@ -91,6 +88,29 @@ def test_training_capacity_and_shape_fail_closed() -> None:
             policy=policy,
             n_modes=1,
         )
+    data = _data(40)
+    encoder = _UnsupportedEncoder()
+    policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
+        maximum_steps=3,
+        validation_interval=2,
+        maximum_transitions=100,
+    )
+
+    result = phx.dynamics.identification.fit_variational_kinetic_model(
+        encoder,
+        data,
+        jax.random.key(3),
+        model_id="unsupported-encoder",
+        policy=policy,
+        n_modes=1,
+    )
+
+    assert result.progress.update_step == 0
+    # ty: ignore[unresolved-attribute]
+    assert jnp.array_equal(result.model.weight, encoder.weight)
+    assert not bool(result.valid)
+    assert result.history.steps.tolist() == [0, 1]
+    assert not bool(result.history.valid[-1])
 
 
 def test_variational_training_checkpoint_roundtrip(tmp_path: Any) -> None:
@@ -156,29 +176,3 @@ class _UnsupportedEncoder(AbstractArrayModel):
     def __call__(self, value: Any, /, *, key: Any = None) -> Any:
         del key
         return value @ self.weight * jnp.nan
-
-
-def test_unsuccessful_score_commits_no_update_and_stops_infeasible() -> None:
-    data = _data(40)
-    encoder = _UnsupportedEncoder()
-    policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
-        maximum_steps=3,
-        validation_interval=2,
-        maximum_transitions=100,
-    )
-
-    result = phx.dynamics.identification.fit_variational_kinetic_model(
-        encoder,
-        data,
-        jax.random.key(3),
-        model_id="unsupported-encoder",
-        policy=policy,
-        n_modes=1,
-    )
-
-    assert result.progress.update_step == 0
-    # ty: ignore[unresolved-attribute]
-    assert jnp.array_equal(result.model.weight, encoder.weight)
-    assert not bool(result.valid)
-    assert result.history.steps.tolist() == [0, 1]
-    assert not bool(result.history.valid[-1])

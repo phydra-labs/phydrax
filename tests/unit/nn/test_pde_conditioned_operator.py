@@ -97,7 +97,7 @@ def _tokens(constant: float, *, constant_first: bool = False) -> Any:
     )
 
 
-def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts() -> None:
+def test_pde_conditioned_operator_contracts() -> None:
     model = _model()
     batch = _batch()
     tokens = _tokens(1.0)
@@ -157,9 +157,6 @@ def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts() -> No
         model.__call_operator_batch__(batch)
     with pytest.raises(ValueError, match="already contains input 'pde'"):
         model(PDEConditionedInput(conditioned, tokens))
-
-
-def test_pde_conditioned_operator_supports_scalar_and_heterogeneous_case_tokens() -> None:
     model = _model()
     batch = _batch(identical=True)
     scalar_tokens = _tokens(1.0)
@@ -176,9 +173,6 @@ def test_pde_conditioned_operator_supports_scalar_and_heterogeneous_case_tokens(
     assert jnp.allclose(scalar_output[0], scalar_output[1])
     assert not jnp.allclose(eager[0], eager[1], rtol=1e-5, atol=1e-6)
     assert jnp.allclose(compiled, eager, rtol=1e-5, atol=1e-6)
-
-
-def test_pde_conditioned_operator_rejects_invalid_token_case_shape() -> None:
     model = _model()
     batch = _batch()
     wrong_case_tokens = phx.equations.stack_pde_tokens(
@@ -190,9 +184,6 @@ def test_pde_conditioned_operator_rejects_invalid_token_case_shape() -> None:
         match="PDE token batch shape must be scalar or match OperatorBatch case_shape",
     ):
         model(PDEConditionedInput(batch, wrong_case_tokens))
-
-
-def test_pde_conditioned_operator_has_finite_wrapper_gradients() -> None:
     model = _model()
     value = PDEConditionedInput(_batch(), _tokens(1.0))
 

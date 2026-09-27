@@ -68,9 +68,7 @@ def _segy(
     return bytes(text + binary) + b"".join(records)
 
 
-def test_explicit_rev1_profile_preserves_trace_gaps_clock_geometry_and_dead_validity() -> (
-    None
-):
+def test_segy_scenario_1() -> None:
     data = _segy()
     result = decode_segy_bytes(
         data,
@@ -96,9 +94,6 @@ def test_explicit_rev1_profile_preserves_trace_gaps_clock_geometry_and_dead_vali
     )
     np.testing.assert_allclose(result.series.values, [[1, -2, 3], [4, 5, 6]])
     np.testing.assert_array_equal(result.series.sample_valid, [[True] * 3, [False] * 3])
-
-
-def test_profile_rejects_byte_order_calibration_and_clock_ambiguity() -> None:
     data = _segy(sequences=(1,), identifications=(1,), samples=((1.0, 2.0, 3.0),))
     with pytest.raises(SEGYDecodeError, match="revision"):
         decode_segy_bytes(

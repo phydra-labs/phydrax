@@ -35,7 +35,7 @@ def _trainable_arrays(tree: Any) -> Any:
     return tuple(jax.tree_util.tree_leaves(parameters))
 
 
-def test_field_transforms_preserve_values_axes_and_semantics() -> None:
+def test_function_transforms_scenario_1() -> None:
     domain = Interval1d(0.0, 1.0)
     batch = _sample_batch(domain)
 
@@ -75,6 +75,26 @@ def test_field_transforms_preserve_values_axes_and_semantics() -> None:
     assert expected_value.domain is vector_logits.domain
     assert expected_value.deps == vector_logits.deps
     assert expected_value.metadata == vector_logits.metadata
+    domain = Interval1d(0.0, 1.0)
+    field = domain.Function("x")(lambda x: jnp.asarray([x[0], -x[0]]))
+    with pytest.raises(ValueError, match="terminal output axis"):
+        softmax_field(field, axis=0)
+    domain = Interval1d(0.0, 1.0)
+    field = softmax_field(domain.Function("x")(lambda x: jnp.asarray([x[0], -x[0]])))
+
+    with pytest.raises(ValueError, match="terminal output axis"):
+        # ty: ignore[invalid-argument-type]
+        expectation_field(field, [0.0, 1.0], axis=0)
+    with pytest.raises(ValueError, match="one-dimensional"):
+        expectation_field(field, 1.0)
+    with pytest.raises(ValueError, match="one-dimensional"):
+        expectation_field(field, jnp.empty((0,)))
+    with pytest.raises(ValueError, match="finite"):
+        # ty: ignore[invalid-argument-type]
+        expectation_field(field, [0.0, jnp.inf])
+    with pytest.raises(ValueError, match="length must match"):
+        # ty: ignore[invalid-argument-type]
+        expectation_field(field, [0.0, 1.0, 2.0])(_sample_batch(domain))
 
 
 def test_field_transforms_are_differentiable() -> None:
@@ -101,32 +121,6 @@ def test_field_transforms_are_differentiable() -> None:
         return jnp.sum(probabilities * jnp.asarray([-1.0, 0.25, 3.0]))
 
     assert jnp.allclose(vector_grad, jax.grad(reference)(0.4))
-
-
-def test_softmax_rejects_nonterminal_axis() -> None:
-    domain = Interval1d(0.0, 1.0)
-    field = domain.Function("x")(lambda x: jnp.asarray([x[0], -x[0]]))
-    with pytest.raises(ValueError, match="terminal output axis"):
-        softmax_field(field, axis=0)
-
-
-def test_expectation_validates_values_axis_and_runtime_class_count() -> None:
-    domain = Interval1d(0.0, 1.0)
-    field = softmax_field(domain.Function("x")(lambda x: jnp.asarray([x[0], -x[0]])))
-
-    with pytest.raises(ValueError, match="terminal output axis"):
-        # ty: ignore[invalid-argument-type]
-        expectation_field(field, [0.0, 1.0], axis=0)
-    with pytest.raises(ValueError, match="one-dimensional"):
-        expectation_field(field, 1.0)
-    with pytest.raises(ValueError, match="one-dimensional"):
-        expectation_field(field, jnp.empty((0,)))
-    with pytest.raises(ValueError, match="finite"):
-        # ty: ignore[invalid-argument-type]
-        expectation_field(field, [0.0, jnp.inf])
-    with pytest.raises(ValueError, match="length must match"):
-        # ty: ignore[invalid-argument-type]
-        expectation_field(field, [0.0, 1.0, 2.0])(_sample_batch(domain))
 
 
 class _LinearLogits(eqx.Module):

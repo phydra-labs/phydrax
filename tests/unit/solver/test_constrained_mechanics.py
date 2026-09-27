@@ -23,7 +23,7 @@ def _plan() -> Any:
     )
 
 
-def test_shake_rattle_preserves_position_and_velocity_constraints() -> None:
+def test_shake_rattle_contracts() -> None:
     state = phx.solver.ConstrainedMechanicalState(
         jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0))
     )
@@ -40,9 +40,6 @@ def test_shake_rattle_preserves_position_and_velocity_constraints() -> None:
     assert jnp.allclose(
         jnp.vdot(result.state.configuration, result.state.momentum), 0.0, atol=1.0e-10
     )
-
-
-def test_shake_rattle_rejects_nonpositive_step_without_committing() -> None:
     state = phx.solver.ConstrainedMechanicalState(
         jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0))
     )

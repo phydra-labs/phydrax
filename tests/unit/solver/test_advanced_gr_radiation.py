@@ -95,7 +95,7 @@ def _geometry(
     )
 
 
-def test_periodic_gr_m1_preserves_uniform_stream_and_closes_balance_ledger() -> None:
+def test_advanced_gr_radiation_scenario_1() -> None:
     scale, convention = _contracts()
     system = GRGrayM1RadiationSystem(scale, convention)
     grid = phx.discretization.TensorGridPlan(
@@ -123,11 +123,6 @@ def test_periodic_gr_m1_preserves_uniform_stream_and_closes_balance_ledger() -> 
     np.testing.assert_allclose(result.state.radiation_state, state.radiation_state)
     np.testing.assert_allclose(result.attempted_ledger.balance_defect, 0.0, atol=1.0e-7)
     assert bool(result.attempted_ledger.qualified)
-
-
-def test_m1_vacuum_boundary_removes_incoming_flux_and_reflective_boundary_flips_it() -> (
-    None
-):
     scale, convention = _contracts()
     system = GRGrayM1RadiationSystem(scale, convention)
     geometry = _geometry(scale, convention)
@@ -146,9 +141,6 @@ def test_m1_vacuum_boundary_removes_incoming_flux_and_reflective_boundary_flips_
     np.testing.assert_allclose(transmitted, outgoing)
     np.testing.assert_allclose(mirrored[1], -incoming[1])
     assert bool(clipped_valid & transmitted_valid & mirrored_valid)
-
-
-def test_force_free_transition_is_hysteretic_and_balances_restoration_energy() -> None:
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     eos = GammaLawEOS(scale, 4.0 / 3.0, minimum_density=1.0e-12)
@@ -188,9 +180,7 @@ def test_force_free_transition_is_hysteretic_and_balances_restoration_energy() -
     assert float(jnp.abs(restored.ledger.reservoir_energy_change)) > 0.0
 
 
-def test_polarized_absorption_and_faraday_rotation_feed_back_exact_four_momentum() -> (
-    None
-):
+def test_advanced_gr_radiation_scenario_2() -> None:
     scale, convention = _contracts()
     geometry = _geometry(scale, convention)
     plan = GRPolarizedRadiationFeedbackPlan(scale, convention, jnp.asarray((1.0, 1.0)))
@@ -217,6 +207,94 @@ def test_polarized_absorption_and_faraday_rotation_feed_back_exact_four_momentum
     np.testing.assert_allclose(result.ledger.energy_balance_residual, 0.0, atol=1.0e-7)
     np.testing.assert_allclose(result.ledger.momentum_balance_residual, 0.0, atol=1.0e-7)
     assert bool(result.stress_energy.valid)
+    base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
+    state = base.initialize(
+        conserved,
+        radiation,
+        stages[0],
+        magnetic_flux=magnetic_flux,
+    )
+    result = base.advance(state, 0.0, 1.0e-5, stages)
+
+    assert bool(result.accepted)
+    np.testing.assert_allclose(
+        result.state.material_state, state.material_state, atol=1.0e-7
+    )
+    np.testing.assert_allclose(
+        result.state.radiation_state, state.radiation_state, atol=1.0e-7
+    )
+    np.testing.assert_allclose(
+        result.accepted_ledger.source_energy_defect, 0.0, atol=1.0e-8
+    )
+    np.testing.assert_allclose(
+        result.accepted_ledger.source_momentum_defect, 0.0, atol=1.0e-8
+    )
+    base, _, conserved, radiation, _, stages = _coupled_grrmhd_fixture()
+    interaction = GRGrayRadiationInteractionPlan(
+        base.radiation_transport.system,
+        ConstantGRGrayOpacityPlan(
+            planck_absorption=0.5,
+            planck_emission=0.0,
+            rosseland_transport=0.5,
+        ),
+    )
+    source = GRRMHDImplicitSourcePlan(
+        base.material_transport.system,
+        interaction,
+        caloric_temperature_scale=1.0,
+    )
+    result = source.advance(conserved, radiation, 0.05, stages[0].cell)
+
+    assert bool(result.accepted)
+    assert bool(jnp.all(result.radiation_state[..., 0] < radiation[..., 0]))
+    np.testing.assert_allclose(result.ledger.energy_defect, 0.0, atol=1.0e-10)
+    np.testing.assert_allclose(result.ledger.momentum_defect, 0.0, atol=1.0e-10)
+    assert bool(jnp.all(result.ledger.jacobian_fallback))
+    assert not bool(result.derivative_valid)
+    base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
+    runtime_state = base.initialize(
+        conserved,
+        radiation,
+        stages[0],
+        magnetic_flux=magnetic_flux,
+    )
+    method = FixedGridGRRMHDProductionMethod(base, fixed_step_size=1.0e-5)
+    state = method.initialize(runtime_state)
+    arguments = GRRMHDProductionArguments(stages, None, 0.0)
+    # ty: ignore[invalid-argument-type]
+    result = method.step(0, 0.0, state, 1.0e-5, arguments)
+
+    assert bool(result.successful)
+    assert int(result.accepted_state.runtime_state.accepted_step) == 1
+    assert float(result.accepted_state.runtime_state.time) == 1.0e-5
+    base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
+    state = base.initialize(
+        conserved,
+        radiation,
+        stages[0],
+        magnetic_flux=magnetic_flux,
+    )
+    adapter = GRRMHDZ4cStageAdapter(
+        base,
+        lambda _address, stage: stage,
+        stage_geometry_id="flat-stage",
+        topology_id=stages[0].cell.topology_id,
+    )
+    address = CoupledStageAddress(
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        jnp.asarray(1.0e-5),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        topology_id=stages[0].cell.topology_id,
+    )
+    arguments = GRRMHDCouplingArguments(None, 0.0, stages[0])
+    checked = adapter.geometry_for(stages[0].cell, address, arguments)
+    projection = adapter.stress_energy_at_stage(state, checked.cell, address, arguments)
+
+    assert checked.stage_geometry_id == stages[0].stage_geometry_id
+    assert bool(jnp.all(projection.valid))
+    assert bool(jnp.all(projection.energy_density > 0.0))
 
 
 def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepton_fraction() -> (
@@ -404,108 +482,6 @@ def _coupled_grrmhd_fixture(*, conductivity: Any = 0.0) -> Any:
         magnetic_flux,
         stages,
     )
-
-
-def test_uniform_grrmhd_imex_step_preserves_equilibrium_and_all_ledgers() -> None:
-    base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
-    state = base.initialize(
-        conserved,
-        radiation,
-        stages[0],
-        magnetic_flux=magnetic_flux,
-    )
-    result = base.advance(state, 0.0, 1.0e-5, stages)
-
-    assert bool(result.accepted)
-    np.testing.assert_allclose(
-        result.state.material_state, state.material_state, atol=1.0e-7
-    )
-    np.testing.assert_allclose(
-        result.state.radiation_state, state.radiation_state, atol=1.0e-7
-    )
-    np.testing.assert_allclose(
-        result.accepted_ledger.source_energy_defect, 0.0, atol=1.0e-8
-    )
-    np.testing.assert_allclose(
-        result.accepted_ledger.source_momentum_defect, 0.0, atol=1.0e-8
-    )
-
-
-def test_uniform_implicit_four_force_accepts_absorption_and_preserves_total_energy() -> (
-    None
-):
-    base, _, conserved, radiation, _, stages = _coupled_grrmhd_fixture()
-    interaction = GRGrayRadiationInteractionPlan(
-        base.radiation_transport.system,
-        ConstantGRGrayOpacityPlan(
-            planck_absorption=0.5,
-            planck_emission=0.0,
-            rosseland_transport=0.5,
-        ),
-    )
-    source = GRRMHDImplicitSourcePlan(
-        base.material_transport.system,
-        interaction,
-        caloric_temperature_scale=1.0,
-    )
-    result = source.advance(conserved, radiation, 0.05, stages[0].cell)
-
-    assert bool(result.accepted)
-    assert bool(jnp.all(result.radiation_state[..., 0] < radiation[..., 0]))
-    np.testing.assert_allclose(result.ledger.energy_defect, 0.0, atol=1.0e-10)
-    np.testing.assert_allclose(result.ledger.momentum_defect, 0.0, atol=1.0e-10)
-    assert bool(jnp.all(result.ledger.jacobian_fallback))
-    assert not bool(result.derivative_valid)
-
-
-def test_grrmhd_production_adapter_commits_only_the_accepted_fixed_step() -> None:
-    base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
-    runtime_state = base.initialize(
-        conserved,
-        radiation,
-        stages[0],
-        magnetic_flux=magnetic_flux,
-    )
-    method = FixedGridGRRMHDProductionMethod(base, fixed_step_size=1.0e-5)
-    state = method.initialize(runtime_state)
-    arguments = GRRMHDProductionArguments(stages, None, 0.0)
-    # ty: ignore[invalid-argument-type]
-    result = method.step(0, 0.0, state, 1.0e-5, arguments)
-
-    assert bool(result.successful)
-    assert int(result.accepted_state.runtime_state.accepted_step) == 1
-    assert float(result.accepted_state.runtime_state.time) == 1.0e-5
-
-
-def test_grrmhd_z4c_adapter_combines_material_and_radiation_stress_at_one_stage() -> None:
-    base, _, conserved, radiation, magnetic_flux, stages = _coupled_grrmhd_fixture()
-    state = base.initialize(
-        conserved,
-        radiation,
-        stages[0],
-        magnetic_flux=magnetic_flux,
-    )
-    adapter = GRRMHDZ4cStageAdapter(
-        base,
-        lambda _address, stage: stage,
-        stage_geometry_id="flat-stage",
-        topology_id=stages[0].cell.topology_id,
-    )
-    address = CoupledStageAddress(
-        jnp.asarray(0.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0e-5),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        topology_id=stages[0].cell.topology_id,
-    )
-    arguments = GRRMHDCouplingArguments(None, 0.0, stages[0])
-    checked = adapter.geometry_for(stages[0].cell, address, arguments)
-    projection = adapter.stress_energy_at_stage(state, checked.cell, address, arguments)
-
-    assert checked.stage_geometry_id == stages[0].stage_geometry_id
-    assert bool(jnp.all(projection.valid))
-    assert bool(jnp.all(projection.energy_density > 0.0))
 
 
 def test_zero_conductivity_resistive_step_leaves_electric_field_and_charge_unchanged() -> (

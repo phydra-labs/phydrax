@@ -22,7 +22,7 @@ def _particles(dimension: Any, count: Any) -> Any:
     ).prepare()
 
 
-def test_population_initialization_rejects_invalid_active_stable_ids() -> None:
+def test_vortex_particle_scenario_1() -> None:
     plan = phx.discretization.VortexPopulationPlan(2, 2)
     with pytest.raises(RuntimeError, match="stable IDs"):
         plan.initialize(
@@ -40,11 +40,6 @@ def test_population_initialization_rejects_invalid_active_stable_ids() -> None:
             jnp.ones((2,)),
             stable_ids=jnp.asarray((-1, 6)),
         )
-
-
-def test_direct_2d_excludes_only_explicit_self_and_preserves_coincident_distinct_blob() -> (
-    None
-):
     request = phx.discretization.VortexFieldRequest(
         velocity=True,
         velocity_gradient=True,
@@ -77,9 +72,6 @@ def test_direct_2d_excludes_only_explicit_self_and_preserves_coincident_distinct
     assert jnp.all(jnp.isfinite(result.velocity_gradient))
     assert jnp.all(jnp.isfinite(result.vorticity))
     assert bool(result.successful)
-
-
-def test_direct_2d_chunking_and_permutation_leave_fields_unchanged() -> None:
     position = jnp.asarray(((-0.3, 0.2), (0.5, -0.1), (0.1, 0.7)))
     circulation = jnp.asarray((0.7, -0.4, 0.9))
     core = jnp.asarray((0.2, 0.3, 0.25))
@@ -122,9 +114,6 @@ def test_direct_2d_chunking_and_permutation_leave_fields_unchanged() -> None:
 
     np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(permuted, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_direct_plan_rejects_resource_overflow_before_execution() -> None:
     plan = phx.operators.GaussianDirectVortexPlan2D(
         maximum_sources=4,
         maximum_targets=4,
@@ -132,9 +121,6 @@ def test_direct_plan_rejects_resource_overflow_before_execution() -> None:
     )
     with pytest.raises(ValueError, match="interactions"):
         plan.prepare(source_capacity=4, target_capacity=4)
-
-
-def test_pse_is_exactly_conservative_for_unequal_particle_volumes() -> None:
     plan = phx.operators.GaussianParticleStrengthExchangePlan(
         2,
         0.5,
@@ -149,9 +135,6 @@ def test_pse_is_exactly_conservative_for_unequal_particle_volumes() -> None:
     np.testing.assert_allclose(jnp.sum(evaluation.rate), 0.0, atol=1e-14)
     assert bool(evaluation.diagnostics.conservative)
     assert bool(evaluation.successful)
-
-
-def test_pse_particle_box_exchanges_only_through_periodic_axes() -> None:
     source = phx.discretization.VortexSourceState(
         jnp.asarray(((0.02, 0.5), (0.98, 0.5))),
         jnp.asarray((1.0, -1.0)),
@@ -191,9 +174,7 @@ def test_pse_particle_box_exchanges_only_through_periodic_axes() -> None:
         )
 
 
-def test_compiled_2d_pair_is_differentiable_and_keeps_mass_distinct_from_circulation() -> (
-    None
-):
+def test_vortex_particle_scenario_2() -> None:
     particles = _particles(2, 2)
     properties = phx.discretization.VortexParticleProperties(
         jnp.full((2,), 0.1),
@@ -222,9 +203,6 @@ def test_compiled_2d_pair_is_differentiable_and_keeps_mass_distinct_from_circula
     np.testing.assert_allclose(
         compiled.dynamics.state_layout.unpack(state).strength, circulation
     )
-
-
-def test_classic_3d_dynamics_adds_velocity_gradient_stretching() -> None:
     particles = _particles(3, 2)
     properties = phx.discretization.VortexParticleProperties(
         jnp.full((2,), 0.2),

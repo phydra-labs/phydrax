@@ -44,7 +44,7 @@ def _structure(
     )
 
 
-def test_h_and_h2_coulomb_values_and_analytic_hydrogen_local_energy() -> None:
+def test_quantum_electronic_scenario_1() -> None:
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     hamiltonian = phx.operators.ElectronicCoulombHamiltonian(hydrogen, 1)
     coordinate = jnp.asarray([[[2.0, 0.0, 0.0]]], dtype=jnp.float64)
@@ -68,9 +68,6 @@ def test_h_and_h2_coulomb_values_and_analytic_hydrogen_local_energy() -> None:
     )
     assert h2.valid[0]
     assert jnp.allclose(h2.value[0], -1.5)
-
-
-def test_helium_coulomb_symmetry_translation_and_rotation_invariance() -> None:
     helium = _structure([2], [[0.0, 0.0, 0.0]], name="He")
     hamiltonian = phx.operators.ElectronicCoulombHamiltonian(helium, 2)
     electrons = jnp.asarray([[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]], dtype=jnp.float64)
@@ -92,9 +89,6 @@ def test_helium_coulomb_symmetry_translation_and_rotation_invariance() -> None:
         model, transformed_hamiltonian, transformed
     )
     assert jnp.allclose(transformed_value.value, baseline.value)
-
-
-def test_exact_and_chunked_kinetic_trace_match_with_jit_vjp_and_gradient() -> None:
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     exact = phx.operators.ElectronicCoulombHamiltonian(
         hydrogen,
@@ -139,7 +133,7 @@ def test_exact_and_chunked_kinetic_trace_match_with_jit_vjp_and_gradient() -> No
     assert jnp.allclose(cotangent, direct)
 
 
-def test_coincident_singularities_are_invalid_and_never_clipped() -> None:
+def test_quantum_electronic_scenario_2() -> None:
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     hamiltonian = phx.operators.ElectronicCoulombHamiltonian(hydrogen, 1)
     estimate = phx.operators.evaluate_local_operator(
@@ -167,9 +161,6 @@ def test_coincident_singularities_are_invalid_and_never_clipped() -> None:
     assert nuclear.status[0] == int(
         phx.operators.LocalOperatorStatus.SINGULAR_CONFIGURATION
     )
-
-
-def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion() -> None:
     bad_scale = phx.atomistic.AtomisticUnitSystem.reduced().scale
     bad_structure = phx.atomistic.AtomicStructure(
         jnp.asarray([1], dtype=jnp.int32),
@@ -199,11 +190,6 @@ def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion() 
     )
     assert estimate.valid[0]
     assert jnp.allclose(estimate.value[0], -14.3996454784255, rtol=1e-12)
-
-
-def test_periodic_electronic_systems_and_stochastic_trace_are_explicitly_rejected() -> (
-    None
-):
     periodic = _structure(
         [1],
         [[0.0, 0.0, 0.0]],
@@ -218,9 +204,7 @@ def test_periodic_electronic_systems_and_stochastic_trace_are_explicitly_rejecte
         phx.operators.ElectronicKineticPolicy(trace_method="stochastic")
 
 
-def test_initial_walkers_and_state_dependent_proposal_are_replayable_and_corrected() -> (
-    None
-):
+def test_quantum_electronic_scenario_3() -> None:
     hydrogen = _structure([1], [[0.0, 0.0, 0.0]], name="H")
     first = phx.operators.electronic_initial_walkers(jr.key(7), hydrogen, 1, 8)
     second = phx.operators.electronic_initial_walkers(jr.key(7), hydrogen, 1, 8)
@@ -236,6 +220,75 @@ def test_initial_walkers_and_state_dependent_proposal_are_replayable_and_correct
     assert jnp.isfinite(forward)
     assert jnp.isfinite(reverse)
     assert not jnp.allclose(forward, reverse)
+    self_energy, self_evidence = phx.operators.periodic_coulomb_energy(
+        jnp.asarray([[0.125, 0.25, 0.375]]),
+        jnp.asarray([1.0]),
+        jnp.eye(3),
+        real_image_radius=0,
+        reciprocal_radius=0,
+        screening=1.0,
+        uniform_background=True,
+    )
+    assert jnp.isfinite(self_energy)
+    assert bool(self_evidence.valid)
+
+    coincident_energy, coincident_evidence = phx.operators.periodic_coulomb_energy(
+        jnp.asarray([[0.125, 0.25, 0.375], [0.125, 0.25, 0.375]]),
+        jnp.asarray([1.0, -1.0]),
+        jnp.eye(3),
+        real_image_radius=0,
+        reciprocal_radius=0,
+        screening=1.0,
+    )
+    assert not jnp.isfinite(coincident_energy)
+    assert not bool(coincident_evidence.valid)
+    for real_image_radius in [0, 1, 3]:
+        energy, evidence = phx.operators.periodic_coulomb_energy(
+            jnp.asarray([[0.125, 0.25, 0.375], [2.125, -2.75, 4.375]]),
+            jnp.asarray([1.0, -1.0]),
+            jnp.eye(3),
+            real_image_radius=real_image_radius,
+            reciprocal_radius=0,
+            screening=1.0,
+        )
+
+        assert not jnp.isfinite(energy)
+        assert not bool(evidence.valid)
+    positions = jnp.asarray([[0.125, 0.25, 0.375], [0.625, 0.75, 0.875]])
+    shifts = jnp.asarray([[2.0, -3.0, 4.0], [-1.0, 5.0, -2.0]])
+    charges = jnp.asarray([1.0, -1.0])
+    cell = jnp.asarray([[1.5, 0.1, 0.0], [0.0, 1.25, 0.2], [0.1, 0.0, 1.75]])
+    baseline_energy, baseline_evidence = phx.operators.periodic_coulomb_energy(
+        positions,
+        charges,
+        cell,
+        real_image_radius=1,
+        reciprocal_radius=1,
+        screening=0.8,
+    )
+    wrapped_energy, wrapped_evidence = phx.operators.periodic_coulomb_energy(
+        positions + shifts,
+        charges,
+        cell,
+        real_image_radius=1,
+        reciprocal_radius=1,
+        screening=0.8,
+    )
+
+    assert jnp.allclose(wrapped_energy, baseline_energy)
+    assert eqx.tree_equal(wrapped_evidence, baseline_evidence)
+    one_body = jnp.zeros((4, 4), dtype=jnp.complex64)
+    two_body = jnp.zeros((4, 4, 4, 4), dtype=jnp.complex64)
+    two_body = two_body.at[0, 1, 2, 3].set(1.0)
+    two_body = two_body.at[1, 0, 2, 3].set(-1.0)
+    two_body = two_body.at[0, 1, 3, 2].set(-1.0)
+    two_body = two_body.at[1, 0, 3, 2].set(1.0)
+
+    hamiltonian = phx.operators.ElectronicIntegralHamiltonian(one_body, two_body)
+
+    assert jnp.allclose(hamiltonian.antisymmetry_residual, 0.0)
+    assert hamiltonian.hermiticity_residual > 0.0
+    assert not bool(hamiltonian.valid)
 
 
 def _with_antisymmetric_hermitian_pair(
@@ -285,89 +338,6 @@ def _explicit_two_body_matrix_element(two_body: Any, bra: Any, ket: Any) -> Any:
                             + 0.25 * phase * two_body[first, second, third, fourth]
                         )
     return element
-
-
-def test_finite_ewald_excludes_only_same_particle_zero_image_self_terms() -> None:
-    self_energy, self_evidence = phx.operators.periodic_coulomb_energy(
-        jnp.asarray([[0.125, 0.25, 0.375]]),
-        jnp.asarray([1.0]),
-        jnp.eye(3),
-        real_image_radius=0,
-        reciprocal_radius=0,
-        screening=1.0,
-        uniform_background=True,
-    )
-    assert jnp.isfinite(self_energy)
-    assert bool(self_evidence.valid)
-
-    coincident_energy, coincident_evidence = phx.operators.periodic_coulomb_energy(
-        jnp.asarray([[0.125, 0.25, 0.375], [0.125, 0.25, 0.375]]),
-        jnp.asarray([1.0, -1.0]),
-        jnp.eye(3),
-        real_image_radius=0,
-        reciprocal_radius=0,
-        screening=1.0,
-    )
-    assert not jnp.isfinite(coincident_energy)
-    assert not bool(coincident_evidence.valid)
-
-
-@pytest.mark.parametrize("real_image_radius", [0, 1, 3])
-def test_finite_ewald_rejects_periodically_equivalent_particles_at_every_cutoff(
-    real_image_radius: Any,
-) -> None:
-    energy, evidence = phx.operators.periodic_coulomb_energy(
-        jnp.asarray([[0.125, 0.25, 0.375], [2.125, -2.75, 4.375]]),
-        jnp.asarray([1.0, -1.0]),
-        jnp.eye(3),
-        real_image_radius=real_image_radius,
-        reciprocal_radius=0,
-        screening=1.0,
-    )
-
-    assert not jnp.isfinite(energy)
-    assert not bool(evidence.valid)
-
-
-def test_finite_ewald_canonicalizes_wrapped_fractional_positions() -> None:
-    positions = jnp.asarray([[0.125, 0.25, 0.375], [0.625, 0.75, 0.875]])
-    shifts = jnp.asarray([[2.0, -3.0, 4.0], [-1.0, 5.0, -2.0]])
-    charges = jnp.asarray([1.0, -1.0])
-    cell = jnp.asarray([[1.5, 0.1, 0.0], [0.0, 1.25, 0.2], [0.1, 0.0, 1.75]])
-    baseline_energy, baseline_evidence = phx.operators.periodic_coulomb_energy(
-        positions,
-        charges,
-        cell,
-        real_image_radius=1,
-        reciprocal_radius=1,
-        screening=0.8,
-    )
-    wrapped_energy, wrapped_evidence = phx.operators.periodic_coulomb_energy(
-        positions + shifts,
-        charges,
-        cell,
-        real_image_radius=1,
-        reciprocal_radius=1,
-        screening=0.8,
-    )
-
-    assert jnp.allclose(wrapped_energy, baseline_energy)
-    assert eqx.tree_equal(wrapped_evidence, baseline_evidence)
-
-
-def test_integral_hamiltonian_validity_includes_two_body_bra_ket_hermiticity() -> None:
-    one_body = jnp.zeros((4, 4), dtype=jnp.complex64)
-    two_body = jnp.zeros((4, 4, 4, 4), dtype=jnp.complex64)
-    two_body = two_body.at[0, 1, 2, 3].set(1.0)
-    two_body = two_body.at[1, 0, 2, 3].set(-1.0)
-    two_body = two_body.at[0, 1, 3, 2].set(-1.0)
-    two_body = two_body.at[1, 0, 3, 2].set(1.0)
-
-    hamiltonian = phx.operators.ElectronicIntegralHamiltonian(one_body, two_body)
-
-    assert jnp.allclose(hamiltonian.antisymmetry_residual, 0.0)
-    assert hamiltonian.hermiticity_residual > 0.0
-    assert not bool(hamiltonian.valid)
 
 
 def test_double_connections_use_exact_spectator_dependent_fermionic_parity() -> None:

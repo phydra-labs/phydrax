@@ -50,7 +50,7 @@ def _log_discount_definition(curve_id: Any, role: Any) -> Any:
     )
 
 
-def test_single_curve_bootstrap_recovers_a_flat_curve_and_quote_jacobian() -> None:
+def test_bootstrap_scenario_1() -> None:
     definition = _log_discount_definition("usd-discount", "discount")
     instruments = (
         DepositBootstrapInstrument(
@@ -85,9 +85,6 @@ def test_single_curve_bootstrap_recovers_a_flat_curve_and_quote_jacobian() -> No
     )
     # ty: ignore[unresolved-attribute]
     assert result.curves.curve("usd-discount").node_quote_jacobian.shape == (3, 2)
-
-
-def test_joint_two_curve_bootstrap_uses_discounted_projection_cashflows() -> None:
     discount_definition = _log_discount_definition("discount", "discount")
     projection_definition = _log_discount_definition("projection", "projection")
     instruments = (
@@ -160,9 +157,6 @@ def test_joint_two_curve_bootstrap_uses_discounted_projection_cashflows() -> Non
         jnp.array([0.0, -projection_rate, -2.0 * projection_rate]),
         atol=3e-6,
     )
-
-
-def test_bootstrap_success_requires_independent_instrument_repricing() -> None:
     definition = _log_discount_definition("discount", "discount")
     instruments = tuple(
         DepositBootstrapInstrument(

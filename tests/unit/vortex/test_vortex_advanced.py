@@ -14,7 +14,7 @@ import phydrax as phx
 from phydrax.operators.integral.vortex._fmm_complete import VortexFMMPlan
 
 
-def test_reformulated_vpm_and_relaxation_report_their_invariants() -> None:
+def test_vortex_advanced_scenario_1() -> None:
     strength = jnp.asarray(((1.0, 0.2, 0.0), (0.0, 1.0, 0.1)))
     stretching = jnp.asarray(((0.2, -0.1, 0.0), (0.1, 0.3, -0.1)))
     core = jnp.asarray((0.2, 0.3))
@@ -33,11 +33,6 @@ def test_reformulated_vpm_and_relaxation_report_their_invariants() -> None:
     assert bool(rate.finite & relaxed.finite)
     assert jnp.max(relaxed.alignment_after - relaxed.alignment_before) >= 0.0
     assert relaxed.magnitude_residual < 1e-12
-
-
-def test_barnes_hut_backend_matches_direct_for_small_cloud_and_detects_staleness() -> (
-    None
-):
     position = jnp.asarray(((-0.6, -0.2), (-0.2, 0.3), (0.3, -0.4), (0.7, 0.2)))
     circulation = jnp.asarray((0.5, -0.3, 0.8, -0.4))
     core = jnp.full((4,), 0.1)
@@ -82,9 +77,6 @@ def test_barnes_hut_backend_matches_direct_for_small_cloud_and_detects_staleness
     assert bool(accelerated.successful)
     assert not bool(stale.successful)
     assert bool(stale.diagnostics.backend_diagnostics.stale_topology)
-
-
-def test_vortex_dynamics_rejects_a_stale_backend_evaluation() -> None:
     reference = jnp.asarray(((-0.5, 0.0), (0.5, 0.0)))
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(2),
@@ -117,7 +109,7 @@ def test_vortex_dynamics_rejects_a_stale_backend_evaluation() -> None:
         compiled.dynamics(0.0, state)
 
 
-def test_actuator_sources_and_passive_probes_are_distinct() -> None:
+def test_vortex_advanced_scenario_2() -> None:
     filament = phx.applications.vortex_flow.actuator_line_sources(
         jnp.asarray(((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 2.0, 0.0))),
         jnp.asarray((1.0, 0.5)),
@@ -133,9 +125,6 @@ def test_actuator_sources_and_passive_probes_are_distinct() -> None:
     assert filament.topology.segment_capacity == 2
     assert probes.position.shape == (1, 3)
     assert jnp.linalg.norm(velocity.velocity) > 0.0
-
-
-def test_random_vortex_solver_uses_named_antithetic_realizations() -> None:
     direct = phx.operators.GaussianDirectVortexPlan2D(
         maximum_sources=2,
     ).prepare(source_capacity=2, target_capacity=2)
@@ -161,9 +150,6 @@ def test_random_vortex_solver_uses_named_antithetic_realizations() -> None:
     assert result.evidence.antithetic
     assert result.evidence.weak_moment_residual < 1e-12
     assert bool(result.successful)
-
-
-def test_native_learned_vorticity_reconstruction_is_divergence_free() -> None:
     count = 8
     coordinates = jnp.arange(count) / count
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
@@ -180,7 +166,7 @@ def test_native_learned_vorticity_reconstruction_is_divergence_free() -> None:
     assert bool(result.successful)
 
 
-def test_nonlinear_vortex_step_closure_solves_polar_circulation_root() -> None:
+def test_vortex_advanced_scenario_3() -> None:
     span = jnp.linspace(-1.0, 1.0, 4)
     leading = jnp.stack(
         (jnp.zeros_like(span), span, jnp.zeros_like(span)),
@@ -210,9 +196,6 @@ def test_nonlinear_vortex_step_closure_solves_polar_circulation_root() -> None:
     assert result.residual_norm < 1e-6
     assert jnp.all(jnp.isfinite(result.panel_force))
     assert bool(result.successful)
-
-
-def test_equilibrium_wall_closure_and_bounded_load_recovery_report_evidence() -> None:
     wall = phx.discretization.EquilibriumWallVortexClosurePlan(
         1.0,
         1.0e-3,

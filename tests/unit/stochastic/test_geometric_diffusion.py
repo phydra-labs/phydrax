@@ -5,7 +5,7 @@ import pytest
 import phydrax as phx
 
 
-def test_subspace_law_has_hausdorff_density_and_basis_invariant_samples() -> None:
+def test_geometric_diffusion_scenario_1() -> None:
     layout = phx.stochastic.AffineSubspaceLayout(
         jnp.asarray([1.0, -1.0]),
         jnp.asarray([[1.0], [2.0]]),
@@ -21,9 +21,6 @@ def test_subspace_law_has_hausdorff_density_and_basis_invariant_samples() -> Non
     assert jnp.all(law.contains(samples))
     assert jnp.all(jnp.isfinite(law.log_prob(samples)))
     assert not law.contains(jnp.asarray([1.0, 0.0]))
-
-
-def test_subspace_and_trajectory_identities_include_numeric_support() -> None:
     reference = phx.stochastic.AffineSubspaceLayout(
         jnp.asarray([0.0, 0.0]),
         jnp.asarray([[1.0], [0.0]]),
@@ -52,9 +49,6 @@ def test_subspace_and_trajectory_identities_include_numeric_support() -> None:
         valid_time=jnp.asarray([True, True, False]),
     )
     assert full.layout_id != padded.layout_id
-
-
-def test_field_diffusion_preserves_mode_coordinates_across_mesh_transfer() -> None:
     source_basis = phx.stochastic.SpatialNoiseBasis(
         jnp.eye(2),
         jnp.asarray([1.0, 0.5]),
@@ -84,9 +78,6 @@ def test_field_diffusion_preserves_mode_coordinates_across_mesh_transfer() -> No
     )
     perturbed = diffusion.perturb(jr.key(1), field, time=0.2)
     assert jnp.all(jnp.isfinite(perturbed))
-
-
-def test_sphere_reverse_diffusion_preserves_membership_and_tangent_score() -> None:
     manifold = phx.metrix.SphereManifold(3)
     process = phx.stochastic.IsotropicRiemannianDiffusion(
         manifold,
@@ -111,7 +102,7 @@ def test_sphere_reverse_diffusion_preserves_membership_and_tangent_score() -> No
     assert jnp.allclose(jnp.linalg.vector_norm(result.final_state), 1.0, atol=1e-10)
 
 
-def test_complex_normal_and_vp_diffusion_use_explicit_real_coordinate_score() -> None:
+def test_geometric_diffusion_scenario_2() -> None:
     law = phx.stochastic.ComplexNormalLaw(
         jnp.asarray([0.2 + 0.1j]),
         jnp.asarray([1.3]),
@@ -129,9 +120,6 @@ def test_complex_normal_and_vp_diffusion_use_explicit_real_coordinate_score() ->
     perturbed = process.perturb(jr.key(4), samples[0], time=0.4)
     assert jnp.iscomplexobj(perturbed)
     assert perturbed.shape == (1,)
-
-
-def test_path_increment_diffusion_keeps_initial_state_and_enforces_causality() -> None:
     layout = phx.stochastic.TrajectoryEventLayout.from_increments(
         jnp.asarray([0.0, 0.5, 1.0]), (1,)
     )
@@ -146,9 +134,6 @@ def test_path_increment_diffusion_keeps_initial_state_and_enforces_causality() -
     assert jnp.allclose(perturbed[0], path[0])
     assert jnp.all(jnp.isfinite(perturbed))
     process.require_causal_mask(jnp.tril(jnp.ones((3, 3), dtype="bool")))
-
-
-def test_path_layout_keeps_padded_nodes_fixed_and_rejects_active_padding_modes() -> None:
     times = jnp.asarray([0.0, 0.5, 1.0])
     valid = jnp.asarray([True, True, False])
     layout = phx.stochastic.TrajectoryEventLayout(

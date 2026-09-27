@@ -71,7 +71,7 @@ def _solver(*, block_size: Any = None, **kwargs: Any) -> Any:
     return phx.transport.SinkhornBarycenter(0.25, **options)
 
 
-def test_identical_measures_preserve_symmetric_weights_mass_and_couplings() -> None:
+def test_barycenters_scenario_1() -> None:
     measure = _measure(
         [[-1.0, 0.5], [1.0, -0.5]],
         [0.5, 0.5],
@@ -91,9 +91,6 @@ def test_identical_measures_preserve_symmetric_weights_mass_and_couplings() -> N
     assert result.provenance.approximate is False
     assert result.diagnostics.residual_history.ndim == 1
     assert result.diagnostics.per_measure_residual_history.shape[0] == 2
-
-
-def test_dirac_translated_weighted_and_permuted_barycenters_are_physical() -> None:
     left = _measure([[0.0]], [1.0], provenance="left-dirac")
     right = _measure([[2.0]], [1.0], provenance="right-dirac")
     support = _measure([[0.0], [2.0]], [0.5, 0.5], provenance="declared")
@@ -128,9 +125,6 @@ def test_dirac_translated_weighted_and_permuted_barycenters_are_physical() -> No
             left_weighted.problem.measure_weights * left_weighted.per_measure_objectives
         ),
     )
-
-
-def test_atom_permutation_does_not_change_declared_support_barycenter() -> None:
     first = _measure([[-1.0], [0.5], [2.0]], [0.2, 0.3, 0.5])
     permuted = _measure([[2.0], [-1.0], [0.5]], [0.5, 0.2, 0.3])
     second = _measure([[-0.5], [1.5]], [0.4, 0.6])
@@ -144,7 +138,7 @@ def test_atom_permutation_does_not_change_declared_support_barycenter() -> None:
     assert jnp.allclose(direct.objective, reordered.objective, atol=1e-9)
 
 
-def test_padded_unequal_support_and_dense_blockwise_execution_agree() -> None:
+def test_barycenters_scenario_2() -> None:
     first = _measure([[0.0], [1.0]], [0.25, 0.75], provenance="two-atoms")
     second = _measure(
         [[-1.0], [0.5], [2.0], [99.0]],
@@ -167,9 +161,6 @@ def test_padded_unequal_support_and_dense_blockwise_execution_agree() -> None:
     assert blockwise.provenance.execution == "blockwise"
     assert jnp.all(dense.padded_couplings()[:, -1:, :] >= 0.0)
     assert jnp.allclose(dense.padded_couplings()[1, -1], 0.0)
-
-
-def test_problem_rejects_invalid_mass_measure_weights_and_encoding() -> None:
     support = _measure([[0.0], [1.0]], [0.5, 0.5], mass=2.0)
     wrong_mass = _measure([[0.0], [1.0]], [0.5, 0.5], mass=3.0)
     correct = _measure([[0.0], [1.0]], [0.5, 0.5], mass=2.0)
@@ -193,9 +184,6 @@ def test_problem_rejects_invalid_mass_measure_weights_and_encoding() -> None:
         encoders=(None, lambda points: points[..., :1]),
     )
     assert compatible.feature_size == 1
-
-
-def test_external_measure_realization_replay_is_supported() -> None:
     first = _measure([[0.0], [1.0]], [0.5, 0.5])
     second = phx.integration.weighted(
         jnp.asarray([[1.0], [2.0]]),
@@ -242,7 +230,7 @@ def test_fixed_barycenter_is_jittable_vmappable_and_differentiable() -> None:
     assert jnp.isfinite(gradient)
 
 
-def test_free_support_midpoint_retains_every_inner_solve_and_provenance() -> None:
+def test_barycenters_scenario_3() -> None:
     left = _measure([[0.0]], [1.0], provenance="left")
     right = _measure([[2.0]], [1.0], provenance="right")
     initialization = _measure([[0.25]], [1.0], provenance="explicit-initialization")
@@ -271,9 +259,6 @@ def test_free_support_midpoint_retains_every_inner_solve_and_provenance() -> Non
         replay.diagnostics.objective_history,
     )
     assert result.as_target().target_mass == 1.0
-
-
-def test_free_support_reports_collapse_without_repairing_support() -> None:
     left = _measure([[0.0]], [1.0])
     right = _measure([[2.0]], [1.0])
     initialization = _measure([[-0.1], [0.1]], [0.5, 0.5])
@@ -297,9 +282,6 @@ def test_free_support_reports_collapse_without_repairing_support() -> None:
         phx.transport.status_message(phx.transport.TransportStatus.SUPPORT_COLLAPSE)
         == "free barycenter support collapsed"
     )
-
-
-def test_free_support_rejects_nonquadratic_barycentric_costs() -> None:
     first = _measure([[0.0], [1.0]], [0.5, 0.5])
     second = _measure([[1.0], [2.0]], [0.5, 0.5])
     support = _measure([[0.25], [1.25]], [0.5, 0.5])
@@ -313,9 +295,6 @@ def test_free_support_rejects_nonquadratic_barycentric_costs() -> None:
 
     with pytest.raises(TypeError, match="squared or weighted squared Euclidean"):
         solver(problem)
-
-
-def test_fixed_solver_reports_declared_stagnation_status() -> None:
     first = _measure([[-2.0], [0.4], [3.0]], [0.1, 0.2, 0.7])
     second = _measure([[-1.0], [1.0]], [0.8, 0.2])
     support = _measure([[-2.5], [0.0], [2.5]], [0.2, 0.3, 0.5])
@@ -333,9 +312,6 @@ def test_fixed_solver_reports_declared_stagnation_status() -> None:
         phx.transport.TransportStatus.MARGINAL_STAGNATION
     )
     assert not result.converged
-
-
-def test_barycenter_public_catalog_is_exactly_declared() -> None:
     symbols = {
         "BarycenterDiagnostics",
         "BarycenterProblemProvenance",

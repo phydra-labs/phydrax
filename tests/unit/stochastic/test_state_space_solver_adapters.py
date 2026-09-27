@@ -38,7 +38,7 @@ class _ScalarPathwiseTransition(phx.stochastic.AbstractPathwiseTransition):
         return first + second
 
 
-def test_differential_transition_adapts_ode_and_sde_solvers() -> None:
+def test_state_space_solver_adapters_scenario_1() -> None:
     ode = phx.stochastic.DifferentialTransitionKernel(
         lambda time, state, context: state * context.args,
         state_shape=(1,),
@@ -80,9 +80,6 @@ def test_differential_transition_adapts_ode_and_sde_solvers() -> None:
     )(jnp.asarray(0.0), jnp.asarray(1.0))
     assert traced.valid
     assert jnp.allclose(traced.values, jnp.exp(1.0), rtol=1e-5)
-
-
-def test_jump_and_hybrid_transition_adapters_preserve_solver_status() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, context: jnp.asarray([1.0]) + 0.0 * context.step_index,
         lambda state, channel, mark, context: (
@@ -128,9 +125,6 @@ def test_jump_and_hybrid_transition_adapters_preserve_solver_status() -> None:
     assert traced_jump.status == phx.stochastic.JUMP_SUCCESS
     assert traced_hybrid.status == phx.stochastic.JUMP_SUCCESS
     assert hybrid_sample.values[0] >= 1.0
-
-
-def test_scalar_transition_batches_keep_per_member_validity() -> None:
     transition = phx.stochastic.PathwiseTransitionKernel(
         _ScalarPathwiseTransition(),
         lambda _key, _t0, _t1, _context: jnp.asarray([1.0, 1.0, 1.0]),
@@ -171,7 +165,7 @@ def test_scalar_transition_batches_keep_per_member_validity() -> None:
     assert scalar_sample.valid.shape == (2,)
 
 
-def test_finite_state_transition_has_exact_normalized_mass_and_filters() -> None:
+def test_state_space_solver_adapters_scenario_2() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, context: jnp.where(
             state[0] < 2, jnp.asarray([1.0]), jnp.asarray([0.0])
@@ -220,9 +214,6 @@ def test_finite_state_transition_has_exact_normalized_mass_and_filters() -> None
     assert jnp.allclose(jnp.sum(probabilities), 1.0)
     assert result.successful
     assert jnp.all(jnp.isin(result.particles, states))
-
-
-def test_operator_pathwise_transition_filters_complete_fields() -> None:
     axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 4, endpoint=False),

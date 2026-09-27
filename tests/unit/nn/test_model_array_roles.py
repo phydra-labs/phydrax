@@ -63,18 +63,49 @@ def _fno() -> Any:
     )
 
 
-@pytest.mark.parametrize("build", [_mlp, _fno, _deeponet], ids=["mlp", "fno", "deeponet"])
-def test_stock_models_train_their_weights_without_declarations(build: Any) -> None:
-    model = build()
-    resolution = require_parameter_roles(model, context="stock model")
+def test_model_array_roles_scenario_1() -> None:
+    for build in [_mlp, _fno, _deeponet]:
+        model = build()
+        resolution = require_parameter_roles(model, context="stock model")
 
-    parameters = _paths_with(resolution, ArrayRole.PARAMETER)
-    assert parameters
-    assert all(".weight" not in path or path in parameters for path in resolution.paths)
-    trained, state, fixed = partition_parameters(model)
-    assert jax.tree_util.tree_leaves(state) == []
-    restored = combine_parameters(trained, state, fixed)
-    assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(model)
+        parameters = _paths_with(resolution, ArrayRole.PARAMETER)
+        assert parameters
+        assert all(
+            ".weight" not in path or path in parameters for path in resolution.paths
+        )
+        trained, state, fixed = partition_parameters(model)
+        assert jax.tree_util.tree_leaves(state) == []
+        restored = combine_parameters(trained, state, fixed)
+        assert jax.tree_util.tree_structure(restored) == jax.tree_util.tree_structure(
+            model
+        )
+    frozen = _FixedPlan(FrozenModel(_mlp()), jnp.asarray(2.0))
+    resolution = require_parameter_roles(frozen, context="plan")
+    assert set(resolution.roles) == {ArrayRole.FIXED}
+
+    silent = _FixedPlan(_mlp(), jnp.asarray(2.0))
+    with pytest.raises(ValueError, match="parameter-under-fixed-ancestor"):
+        require_parameter_roles(silent, context="plan")
+    model = _mlp()
+    specs = {
+        path: phx.nn.parameters.LowRankSpec(rank=1)
+        for path in phx.nn.parameters.low_rank_sites(model)
+    }
+    adapted, _ = phx.nn.parameters.adapt_low_rank(model, specs, key=jr.key(4))
+    resolution = require_parameter_roles(adapted, context="low-rank model")
+
+    weight_paths = {
+        path
+        for path in _paths_with(resolution, ArrayRole.PARAMETER)
+        if ".weight." in path
+    }
+    assert weight_paths
+    assert all(path.endswith((".left", ".right")) for path in weight_paths)
+    assert all(
+        resolution.role_of(path) is ArrayRole.FIXED
+        for path in resolution.paths
+        if path.endswith(".weight.base")
+    )
 
 
 def _context_batch() -> Any:
@@ -118,40 +149,7 @@ class _FixedPlan(StrictModule, NonTrainableState):
     scale: Array
 
 
-def test_frozen_model_inside_fixed_plan_is_frozen_on_purpose() -> None:
-    frozen = _FixedPlan(FrozenModel(_mlp()), jnp.asarray(2.0))
-    resolution = require_parameter_roles(frozen, context="plan")
-    assert set(resolution.roles) == {ArrayRole.FIXED}
-
-    silent = _FixedPlan(_mlp(), jnp.asarray(2.0))
-    with pytest.raises(ValueError, match="parameter-under-fixed-ancestor"):
-        require_parameter_roles(silent, context="plan")
-
-
-def test_low_rank_adapted_model_trains_only_its_factors() -> None:
-    model = _mlp()
-    specs = {
-        path: phx.nn.parameters.LowRankSpec(rank=1)
-        for path in phx.nn.parameters.low_rank_sites(model)
-    }
-    adapted, _ = phx.nn.parameters.adapt_low_rank(model, specs, key=jr.key(4))
-    resolution = require_parameter_roles(adapted, context="low-rank model")
-
-    weight_paths = {
-        path
-        for path in _paths_with(resolution, ArrayRole.PARAMETER)
-        if ".weight." in path
-    }
-    assert weight_paths
-    assert all(path.endswith((".left", ".right")) for path in weight_paths)
-    assert all(
-        resolution.role_of(path) is ArrayRole.FIXED
-        for path in resolution.paths
-        if path.endswith(".weight.base")
-    )
-
-
-def test_recurrent_sequence_model_is_a_trainable_root_and_batches_are_fixed() -> None:
+def test_model_array_roles_scenario_2() -> None:
     model = RecurrentSequenceModel(GRUCell(2, 3, dtype=jnp.float64, key=jr.key(5)))
     batch = RecurrentBatch(jnp.ones((1, 4, 2)), jnp.ones((1, 4), dtype=bool))
 
@@ -159,14 +157,18 @@ def test_recurrent_sequence_model_is_a_trainable_root_and_batches_are_fixed() ->
     assert set(model_roles.roles) == {ArrayRole.PARAMETER}
     batch_roles = require_parameter_roles(batch, context="recurrent batch")
     assert set(batch_roles.roles) == {ArrayRole.FIXED}
-
-
-def test_variational_ansatz_is_a_trainable_root() -> None:
     amplitude = phx.nn.quantum.RestrictedBoltzmannAmplitude(
         jnp.zeros(3), jnp.zeros(2), jnp.full((2, 3), 0.1)
     )
     resolution = require_parameter_roles(amplitude, context="ansatz")
     assert set(resolution.roles) == {ArrayRole.PARAMETER}
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    model = _StatefulModel()
+
+    with pytest.raises(ValueError, match=r"Domain\.Model.*MODEL_STATE.*running_mean"):
+        domain.Model("x")(model)
+    with pytest.raises(ValueError, match=r"Domain\.Function.*MODEL_STATE"):
+        domain.Function("x")(model)
 
 
 class _StatefulModel(AbstractArrayModel):
@@ -184,13 +186,3 @@ class _StatefulModel(AbstractArrayModel):
     def __call__(self, x: Any, /, *, key: Any = None) -> Any:
         del key
         return jnp.dot(self.weight, x - self.running_mean)
-
-
-def test_domain_bindings_reject_model_state() -> None:
-    domain = phx.domain.Interval1d(0.0, 1.0)
-    model = _StatefulModel()
-
-    with pytest.raises(ValueError, match=r"Domain\.Model.*MODEL_STATE.*running_mean"):
-        domain.Model("x")(model)
-    with pytest.raises(ValueError, match=r"Domain\.Function.*MODEL_STATE"):
-        domain.Function("x")(model)

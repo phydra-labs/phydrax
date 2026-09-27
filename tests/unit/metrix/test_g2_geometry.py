@@ -11,7 +11,7 @@ def _chart(name: Any = "g2") -> Any:
     return phx.metrix.CoordinateChart(name, tuple(f"x{index}" for index in range(7)))
 
 
-def test_octonion_bridge_cross_product_and_forms_share_one_convention() -> None:
+def test_g2_geometry_scenario_1() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     bridge = phx.metrix.OctonionG2Bridge(algebra, _chart())
     left = jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -26,9 +26,6 @@ def test_octonion_bridge_cross_product_and_forms_share_one_convention() -> None:
     )
     assert jnp.array_equal(coefficients, bridge.coefficients)
     assert bridge.associative_tensor().shape == (7, 7, 7)
-
-
-def test_canonical_flat_g2_structure_is_compatible_closed_and_ricci_flat() -> None:
     bridge = phx.metrix.OctonionG2Bridge(
         phx.metrix.algebra.OctonionAlgebraSpec(), _chart()
     )
@@ -49,9 +46,6 @@ def test_canonical_flat_g2_structure_is_compatible_closed_and_ricci_flat() -> No
     assert report.maximum_metric_compatibility_residual < 1e-12
     assert report.maximum_volume_normalization_residual < 1e-12
     assert jnp.allclose(volume[..., 0], 7.0, atol=1e-12)
-
-
-def test_g2_validation_separates_algebraic_and_torsion_failures() -> None:
     chart = _chart()
     bridge = phx.metrix.OctonionG2Bridge(phx.metrix.algebra.OctonionAlgebraSpec(), chart)
     perturbed = bridge.coefficients.at[0].add(0.1)
@@ -86,9 +80,6 @@ def test_g2_validation_separates_algebraic_and_torsion_failures() -> None:
     assert not bool(torsion.closed)
     assert not bool(torsion.torsion_free)
     assert not bool(torsion.valid)
-
-
-def test_g2_validation_is_jittable_when_runtime_errors_are_disabled() -> None:
     bridge = phx.metrix.OctonionG2Bridge(
         phx.metrix.algebra.OctonionAlgebraSpec(), _chart()
     )
@@ -101,9 +92,6 @@ def test_g2_validation_is_jittable_when_runtime_errors_are_disabled() -> None:
     )
 
     assert validate(jnp.zeros((7,))) < 1e-12
-
-
-def test_g2_geometry_rejects_invalid_charts_forms_and_lie_group_inference() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     chart = _chart()
     bridge = phx.metrix.OctonionG2Bridge(algebra, chart)

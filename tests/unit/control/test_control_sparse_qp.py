@@ -7,6 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -92,6 +93,7 @@ def test_sparse_control_compilation_preserves_shared_case_batches() -> None:
 
 
 def test_sparse_prepared_control_refresh_and_solution_match_dense() -> None:
+    pytest.importorskip("clarabel", reason="requires the optional Clarabel provider")
     compilation_policy = phx.control.LinearControlCompilationPolicy("sparse")
     prepared = phx.control.prepare_linear_quadratic_control(
         _problem(),

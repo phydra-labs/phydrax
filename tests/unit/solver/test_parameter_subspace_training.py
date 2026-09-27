@@ -41,7 +41,7 @@ def _solver() -> Any:
     )
 
 
-def test_functional_solver_optimizes_only_explicit_low_rank_factors() -> None:
+def test_functional_solver_contracts() -> None:
     solver = _solver()
     subspace = phx.nn.parameters.low_rank_parameter_subspace(solver.functions)
     initial_loss = solver.loss(key=jr.key(2))
@@ -65,9 +65,6 @@ def test_functional_solver_optimizes_only_explicit_low_rank_factors() -> None:
     )
     frozen_equal = eqx.tree_equal(subspace.frozen, rebased.frozen)
     assert bool(frozen_equal)
-
-
-def test_functional_solver_requires_matching_low_rank_subspace() -> None:
     solver = _solver()
     with pytest.raises(ValueError, match="requires an explicit"):
         solver.solve(num_iter=1, optim=optax.sgd(1e-2), log_every=0)
@@ -83,9 +80,6 @@ def test_functional_solver_requires_matching_low_rank_subspace() -> None:
             parameter_subspace=unrelated,
             log_every=0,
         )
-
-
-def test_functional_solver_rejects_non_optax_subspace_backend() -> None:
     solver = _solver()
     subspace = phx.nn.parameters.low_rank_parameter_subspace(solver.functions)
     with pytest.raises(ValueError, match="unsupported by KFAC"):

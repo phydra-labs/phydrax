@@ -16,7 +16,7 @@ from phydrax.discretization import (
 )
 
 
-def test_spectral_discretization_obeys_weighted_analysis_synthesis_identities() -> None:
+def test_modal_plans_scenario_1() -> None:
     weights = np.array([0.4, 0.7, 1.1, 0.8])
     raw = np.eye(4) / np.sqrt(weights)[:, None]
     plan = SpectralDecomposition.from_eigenpairs(
@@ -32,9 +32,6 @@ def test_spectral_discretization_obeys_weighted_analysis_synthesis_identities() 
     assert np.allclose(projection, np.eye(4), atol=1e-12)
     assert np.array_equal(plan.group_ids, np.array([0, 1, 1, 2]))
     assert plan.decomposition_id == "weighted-coordinate-basis"
-
-
-def test_one_modal_transform_supports_distinct_operator_spectra() -> None:
     decomposition = SpectralDecomposition.from_eigenpairs(
         np.array([0.0, 1.0, 4.0, 9.0]),
         np.eye(4),
@@ -52,9 +49,6 @@ def test_one_modal_transform_supports_distinct_operator_spectra() -> None:
     assert discrete.spectrum_id != decomposition.spectrum_id
     assert discrete.classification == "discrete"
     assert np.array_equal(discrete.nullspace_mask, np.array([True, False, False, False]))
-
-
-def test_trigonometric_transforms_tensorize_without_dense_runtime_storage() -> None:
     dct = phx.discretization.trigonometric_modal_transform("dct", 2, 8)
     dst = phx.discretization.trigonometric_modal_transform("dst", 1, 8)
     values = jnp.arange(8.0)
@@ -70,7 +64,7 @@ def test_trigonometric_transforms_tensorize_without_dense_runtime_storage() -> N
     )
 
 
-def test_transform_diagonal_solve_projects_only_under_explicit_policy() -> None:
+def test_modal_plans_scenario_2() -> None:
     matrix = jnp.diag(jnp.asarray([0.0, 2.0, 3.0]))
     space = phx.linalg.ArraySpace((3,))
     operator = phx.linalg.DenseLinearOperator(
@@ -97,11 +91,6 @@ def test_transform_diagonal_solve_projects_only_under_explicit_policy() -> None:
     assert jnp.allclose(result.compatibility_residual, 1.0)
     assert jnp.allclose(result.residual_norm, 0.0)
     assert result.converged
-
-
-def test_truncated_spectral_discretization_is_a_weighted_self_adjoint_projection() -> (
-    None
-):
     weights = np.array([0.5, 0.7, 1.0, 1.2, 0.9])
     rng = np.random.default_rng(23)
     candidate = rng.normal(size=(5, 3))
@@ -119,9 +108,6 @@ def test_truncated_spectral_discretization_is_a_weighted_self_adjoint_projection
     assert np.allclose(plan.analysis @ plan.synthesis, np.eye(3), atol=1e-12)
     assert np.allclose(projection @ projection, projection, atol=1e-12)
     assert np.allclose(mass @ projection, projection.T @ mass, atol=1e-12)
-
-
-def test_sparse_stiffness_solver_recovers_path_graph_low_modes() -> None:
     count = 300
     stiffness = scipy_sparse.diags(
         (
@@ -152,9 +138,7 @@ def test_sparse_stiffness_solver_recovers_path_graph_low_modes() -> None:
     )
 
 
-def test_basis_transform_plan_reconstructs_its_modal_subspace_and_differentiates() -> (
-    None
-):
+def test_modal_plans_scenario_3() -> None:
     nodes = jnp.arange(17, dtype="float64") / 17.0
     weights = jnp.full((17,), 1.0 / 17.0)
     plan = BasisTransformPlan(
@@ -179,9 +163,6 @@ def test_basis_transform_plan_reconstructs_its_modal_subspace_and_differentiates
     )
     assert jnp.allclose(reconstructed, values, rtol=1e-12, atol=1e-12)
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_modal_plans_reject_invalid_geometry_and_memory_limits() -> None:
     with pytest.raises(ValueError, match="positive"):
         SpectralDecomposition.from_eigenpairs(
             np.array([0.0]),

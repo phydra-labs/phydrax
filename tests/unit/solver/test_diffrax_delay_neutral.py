@@ -99,7 +99,7 @@ def _solve_transformed_neutral(
     )
 
 
-def test_neutral_scalar_uses_exact_prehistory_and_native_dense_derivative() -> None:
+def test_diffrax_delay_neutral_scenario_1() -> None:
     problem = _smooth_neutral_problem(jnp.asarray([1.0]))
     solution = _solve_smooth(problem, dense=True, rtol=1e-9, atol=1e-11)
     exact = jnp.exp(0.35 * solution.times)
@@ -115,9 +115,6 @@ def test_neutral_scalar_uses_exact_prehistory_and_native_dense_derivative() -> N
     )
     assert bool(problem.initial_derivative_compatible)
     assert solution.metadata["delay_mode"] == "declared-neutral"
-
-
-def test_neutral_matrix_state_preserves_shape_and_manufactured_solution() -> None:
     base = jnp.asarray([[1.0, -0.5], [0.25, 2.0]])
     problem = _smooth_neutral_problem(base, t1=0.9)
     solution = _solve_smooth(problem, rtol=2e-9, atol=2e-11)
@@ -125,6 +122,57 @@ def test_neutral_matrix_state_preserves_shape_and_manufactured_solution() -> Non
 
     assert solution.states.shape == expected.shape
     assert jnp.allclose(solution.states, expected, rtol=4e-7, atol=4e-8)
+    problem = _smooth_neutral_problem(jnp.asarray([1.0]), t1=0.8)
+    solver = dfx.ImplicitEuler(
+        root_finder=optx.Newton(rtol=1e-10, atol=1e-10),
+        root_find_max_steps=50,
+    )
+    solution = _solve_smooth(
+        problem,
+        solver=solver,
+        stepsize_controller=dfx.ConstantStepSize(),
+        dt0=0.02,
+    )
+
+    assert solution.stats["controller_mode"] == "fixed"
+    assert jnp.allclose(
+        solution.states[-1, 0],
+        jnp.exp(0.35 * problem.t1),
+        rtol=8e-3,
+        atol=8e-4,
+    )
+    with pytest.raises(ValueError, match="history_derivative is required"):
+        phx.solver.DelayDifferentialProblem(
+            lambda time, state, memory, args: memory["velocity"],
+            lambda time, args: jnp.asarray([time]),
+            (
+                phx.solver.DerivativeDelay(
+                    "velocity",
+                    phx.solver.ConstantDelay("lag", 0.5),
+                ),
+            ),
+            t0=0.0,
+            t1=1.0,
+        )
+    derivative_term = phx.solver.DerivativeDelay(
+        "velocity",
+        phx.solver.ConstantDelay("lag", 0.5),
+    )
+    wiener_term = phx.solver.DelayWienerTerm(
+        "noise",
+        lambda time, state, memory, args: jnp.ones((1, 1)),
+        (1,),
+    )
+    with pytest.raises(ValueError, match="Stochastic neutral"):
+        phx.solver.DelayDifferentialProblem(
+            lambda time, state, memory, args: memory["velocity"],
+            lambda time, args: jnp.asarray([time]),
+            (derivative_term,),
+            t0=0.0,
+            t1=1.0,
+            history_derivative=lambda time, args: jnp.ones((1,)),
+            wiener_terms=(wiener_term,),
+        )
 
 
 def test_neutral_derivative_jump_has_one_sided_knot_semantics_and_provenance() -> None:
@@ -184,28 +232,6 @@ def test_neutral_derivative_jump_has_one_sided_knot_semantics_and_provenance() -
     assert jnp.allclose(solution.stats["neutral_discontinuity_horizon"], 3.6)
 
 
-def test_neutral_implicit_euler_supports_fixed_causal_steps() -> None:
-    problem = _smooth_neutral_problem(jnp.asarray([1.0]), t1=0.8)
-    solver = dfx.ImplicitEuler(
-        root_finder=optx.Newton(rtol=1e-10, atol=1e-10),
-        root_find_max_steps=50,
-    )
-    solution = _solve_smooth(
-        problem,
-        solver=solver,
-        stepsize_controller=dfx.ConstantStepSize(),
-        dt0=0.02,
-    )
-
-    assert solution.stats["controller_mode"] == "fixed"
-    assert jnp.allclose(
-        solution.states[-1, 0],
-        jnp.exp(0.35 * problem.t1),
-        rtol=8e-3,
-        atol=8e-4,
-    )
-
-
 def test_neutral_fixed_step_euler_has_first_order_convergence() -> None:
     problem = _smooth_neutral_problem(jnp.asarray([1.0]), t1=0.8)
 
@@ -249,45 +275,7 @@ def test_neutral_solution_gradient_flows_through_native_derivative_history() -> 
     assert jnp.allclose(jax.grad(terminal)(amplitude), expected_gradient, rtol=2e-5)
 
 
-def test_derivative_delay_requires_explicit_history_derivative() -> None:
-    with pytest.raises(ValueError, match="history_derivative is required"):
-        phx.solver.DelayDifferentialProblem(
-            lambda time, state, memory, args: memory["velocity"],
-            lambda time, args: jnp.asarray([time]),
-            (
-                phx.solver.DerivativeDelay(
-                    "velocity",
-                    phx.solver.ConstantDelay("lag", 0.5),
-                ),
-            ),
-            t0=0.0,
-            t1=1.0,
-        )
-
-
-def test_stochastic_neutral_problem_is_rejected_before_execution() -> None:
-    derivative_term = phx.solver.DerivativeDelay(
-        "velocity",
-        phx.solver.ConstantDelay("lag", 0.5),
-    )
-    wiener_term = phx.solver.DelayWienerTerm(
-        "noise",
-        lambda time, state, memory, args: jnp.ones((1, 1)),
-        (1,),
-    )
-    with pytest.raises(ValueError, match="Stochastic neutral"):
-        phx.solver.DelayDifferentialProblem(
-            lambda time, state, memory, args: memory["velocity"],
-            lambda time, args: jnp.asarray([time]),
-            (derivative_term,),
-            t0=0.0,
-            t1=1.0,
-            history_derivative=lambda time, args: jnp.ones((1,)),
-            wiener_terms=(wiener_term,),
-        )
-
-
-def test_nontrivial_manifold_neutral_term_uses_geometry_transport() -> None:
+def test_diffrax_delay_neutral_scenario_2() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: memory["velocity"],
@@ -305,9 +293,6 @@ def test_nontrivial_manifold_neutral_term_uses_geometry_transport() -> None:
     )
     assert problem.neutral
     assert jnp.allclose(problem.initial_right_derivative, jnp.zeros((2, 2)))
-
-
-def test_manifold_neutral_transport_must_return_current_state_tangent() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError),
@@ -328,9 +313,6 @@ def test_manifold_neutral_transport_must_return_current_state_tangent() -> None:
             history_derivative=lambda time, args: jnp.zeros((2, 2)),
             state_geometry=geometry,
         )
-
-
-def test_trivial_geometry_does_not_require_neutral_transport() -> None:
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: memory["velocity"],
         lambda time, args: jnp.asarray([jnp.exp(time)]),
@@ -348,7 +330,7 @@ def test_trivial_geometry_does_not_require_neutral_transport() -> None:
     assert problem.neutral
 
 
-def test_state_dependent_neutral_jump_roots_propagate_to_the_solve_horizon() -> None:
+def test_diffrax_delay_neutral_scenario_3() -> None:
     factor = 0.5
     final_time = 2.6
     first_root = 1.0 / 0.9
@@ -386,53 +368,26 @@ def test_state_dependent_neutral_jump_roots_propagate_to_the_solve_horizon() -> 
     assert solution.stats["state_dependent_tracking"] == "high-order-dynamic-roots"
     assert int(solution.stats["num_dynamic_discontinuity_roots"]) == 2
     assert int(solution.stats["num_internal_discontinuity_restarts"]) >= 2
-
-
-@pytest.mark.parametrize("endpoint_weight", [0.0, 0.15])
-def test_transformed_neutral_manufactured_solution_and_recovery_provenance(
-    endpoint_weight: Any,
-) -> None:
-    problem = _transformed_neutral_problem(
-        endpoint_weight=endpoint_weight,
-        t1=0.8,
-    )
-    solution = _solve_transformed_neutral(problem, 0.01, dense=True)
-    expected = jnp.exp(0.3 * solution.times)
-
-    assert jnp.allclose(solution.states[:, 0], expected, rtol=2e-3, atol=2e-4)
-    query = jnp.asarray([0.13, 0.41, 0.77])
-    assert jnp.allclose(
-        solution.evaluate(query)[:, 0],
-        jnp.exp(0.3 * query),
-        rtol=2e-3,
-        atol=2e-4,
-    )
-    expected_mode = "implicit-root" if endpoint_weight else "explicit"
-    assert solution.stats["neutral_recovery_mode"] == expected_mode
-    assert solution.metadata["delay_mode"] == "transformed-neutral"
-    assert solution.resolved_method == "Euler:transformed-neutral-method-of-steps"
-
-
-def test_transformed_neutral_euler_has_first_order_convergence() -> None:
-    problem = _transformed_neutral_problem(t1=0.8)
-
-    def error(step: Any) -> Any:
-        solution = phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=jnp.asarray([problem.t1]),
-            dt0=step,
-            max_steps=128,
+    for endpoint_weight in [0.0, 0.15]:
+        problem = _transformed_neutral_problem(
+            endpoint_weight=endpoint_weight,
+            t1=0.8,
         )
-        return jnp.abs(solution.states[0, 0] - jnp.exp(0.3 * problem.t1))
+        solution = _solve_transformed_neutral(problem, 0.01, dense=True)
+        expected = jnp.exp(0.3 * solution.times)
 
-    coarse = error(0.1)
-    medium = error(0.05)
-    fine = error(0.025)
-    assert coarse / medium > 1.7
-    assert medium / fine > 1.7
-
-
-def test_transformed_neutral_full_rolling_and_segmented_execution_agree() -> None:
+        assert jnp.allclose(solution.states[:, 0], expected, rtol=2e-3, atol=2e-4)
+        query = jnp.asarray([0.13, 0.41, 0.77])
+        assert jnp.allclose(
+            solution.evaluate(query)[:, 0],
+            jnp.exp(0.3 * query),
+            rtol=2e-3,
+            atol=2e-4,
+        )
+        expected_mode = "implicit-root" if endpoint_weight else "explicit"
+        assert solution.stats["neutral_recovery_mode"] == expected_mode
+        assert solution.metadata["delay_mode"] == "transformed-neutral"
+        assert solution.resolved_method == "Euler:transformed-neutral-method-of-steps"
     problem = _transformed_neutral_problem(endpoint_weight=0.15, t1=1.2)
     whole = _solve_transformed_neutral(problem, 0.05, dense=True)
     rolling = _solve_transformed_neutral(
@@ -457,6 +412,65 @@ def test_transformed_neutral_full_rolling_and_segmented_execution_agree() -> Non
     assert segmented.stats["neutral_recovery_mode"] == "implicit-root"
     assert segmented.metadata["delay_mode"] == "segmented-transformed-neutral"
     assert int(segmented.stats["num_segments"]) > 1
+    problem = phx.solver.NeutralDelayProblem(
+        lambda time, memory, args: jnp.zeros((1,)),
+        lambda time, state, memory, args: jnp.ones((1,)),
+        lambda time, args: jnp.ones((1,)),
+        (phx.solver.ConstantDelay("past", 0.5),),
+        endpoint_neutral=lambda time, state, memory, args: state + 1.0,
+        recovery_max_steps=2,
+        t0=0.0,
+        t1=0.2,
+    )
+
+    with pytest.raises(
+        eqx.EquinoxRuntimeError,
+        match="maximum number of steps was reached in the nonlinear solver",
+    ):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=jnp.asarray([0.2]),
+            dt0=0.1,
+            max_steps=4,
+        )
+    problem = _transformed_neutral_problem()
+    with pytest.raises(ValueError, match="requires diffrax.Euler"):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=jnp.asarray([0.8]),
+            solver=dfx.Heun(),
+            dt0=0.05,
+        )
+
+    with pytest.raises(ValueError, match="requires Euclidean state geometry"):
+        phx.solver.NeutralDelayProblem(
+            lambda time, memory, args: 0.1 * memory["past"],
+            lambda time, state, memory, args: state,
+            lambda time, args: jnp.eye(2),
+            (phx.solver.ConstantDelay("past", 0.4),),
+            state_geometry=phx.metrix.SpecialOrthogonalStateGeometry(2),
+            t0=0.0,
+            t1=0.8,
+        )
+
+
+def test_transformed_neutral_euler_has_first_order_convergence() -> None:
+    problem = _transformed_neutral_problem(t1=0.8)
+
+    def error(step: Any) -> Any:
+        solution = phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=jnp.asarray([problem.t1]),
+            dt0=step,
+            max_steps=128,
+        )
+        return jnp.abs(solution.states[0, 0] - jnp.exp(0.3 * problem.t1))
+
+    coarse = error(0.1)
+    medium = error(0.05)
+    fine = error(0.025)
+    assert coarse / medium > 1.7
+    assert medium / fine > 1.7
 
 
 def test_transformed_neutral_implicit_recovery_is_jittable_vectorizable_and_differentiable() -> (
@@ -481,49 +495,3 @@ def test_transformed_neutral_implicit_recovery_is_jittable_vectorizable_and_diff
 
     assert jnp.allclose(jax.vmap(terminal)(amplitudes), amplitudes * unit, rtol=2e-7)
     assert jnp.allclose(jax.grad(terminal)(jnp.asarray(1.0)), unit, rtol=2e-7)
-
-
-def test_transformed_neutral_nonconvergent_endpoint_recovery_raises() -> None:
-    problem = phx.solver.NeutralDelayProblem(
-        lambda time, memory, args: jnp.zeros((1,)),
-        lambda time, state, memory, args: jnp.ones((1,)),
-        lambda time, args: jnp.ones((1,)),
-        (phx.solver.ConstantDelay("past", 0.5),),
-        endpoint_neutral=lambda time, state, memory, args: state + 1.0,
-        recovery_max_steps=2,
-        t0=0.0,
-        t1=0.2,
-    )
-
-    with pytest.raises(
-        eqx.EquinoxRuntimeError,
-        match="maximum number of steps was reached in the nonlinear solver",
-    ):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=jnp.asarray([0.2]),
-            dt0=0.1,
-            max_steps=4,
-        )
-
-
-def test_transformed_neutral_rejects_unsupported_solver_and_geometry() -> None:
-    problem = _transformed_neutral_problem()
-    with pytest.raises(ValueError, match="requires diffrax.Euler"):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=jnp.asarray([0.8]),
-            solver=dfx.Heun(),
-            dt0=0.05,
-        )
-
-    with pytest.raises(ValueError, match="requires Euclidean state geometry"):
-        phx.solver.NeutralDelayProblem(
-            lambda time, memory, args: 0.1 * memory["past"],
-            lambda time, state, memory, args: state,
-            lambda time, args: jnp.eye(2),
-            (phx.solver.ConstantDelay("past", 0.4),),
-            state_geometry=phx.metrix.SpecialOrthogonalStateGeometry(2),
-            t0=0.0,
-            t1=0.8,
-        )

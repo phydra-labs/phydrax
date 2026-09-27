@@ -54,49 +54,49 @@ def _specification(provider: Any, source: Any, size: Any, *, hard: Any = False) 
     )
 
 
-@pytest.mark.parametrize("scale,triangle_soup", ((1.0, False), (0.001, True)))
-def test_native_ftetwild_filters_exterior_and_handles_duplicate_surface_seams(
-    scale: Any, triangle_soup: Any
-) -> None:
-    if find_spec("wildmeshing") is None:
-        pytest.skip("optional wildmeshing binding is not installed")
-    source = _source(scale, triangle_soup=triangle_soup)
-    provider = FTetWildProvider(
-        FTetWildOptions(
-            envelope_distance=0.005 * scale,
-            maximum_iterations=20,
+def test_native_ftetwild_filters_exterior_and_handles_duplicate_surface_seams() -> None:
+    for scale, triangle_soup in ((1.0, False), (0.001, True)):
+        if find_spec("wildmeshing") is None:
+            pytest.skip("optional wildmeshing binding is not installed")
+        source = _source(scale, triangle_soup=triangle_soup)
+        provider = FTetWildProvider(
+            FTetWildOptions(
+                envelope_distance=0.005 * scale,
+                maximum_iterations=20,
+            )
         )
-    )
-    result = provider.plan(
-        source, _specification(provider, source, 0.3 * scale)
-    ).execute()
-    points = np.asarray(result.mesh.coordinates)
-    cells = points[np.asarray(result.mesh.blocks[0].vertices)]
-    volumes = np.linalg.det(cells[:, 1:] - cells[:, :1]) / 6
-    assert np.all(volumes > 0)
-    assert volumes.sum() == pytest.approx(scale**3 / 6, rel=0.03)
-    centroids = cells.mean(axis=1)
-    assert np.all(centroids >= -0.005 * scale)
-    assert np.all(centroids.sum(axis=1) <= 1.015 * scale)
-    achieved = dict(result.compliance.achieved)
-    assert achieved["maximum_sampled_boundary_deviation"] <= 0.005 * scale
-    assert result.boundary is not None
-    # ty: ignore[unresolved-attribute]
-    assert not np.any(np.asarray(result.boundary.mesh.connectivity.boundary_edges))
-    assert not result.associations[0].exact
-    assert not result.associations[0].complete
-    assert result.audit.passed and result.compliance.passed
-    assert not np.intersect1d(
-        result.mesh.vertex_global_ids, source.mesh.vertex_global_ids
-    ).size
-    assert not np.intersect1d(
-        result.mesh.blocks[0].global_ids, source.mesh.blocks[0].global_ids
-    ).size
-    assert phx.meshing.MeshingCapability.LINEAGE not in result.provider.capabilities
-    assert result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
+        result = provider.plan(
+            source, _specification(provider, source, 0.3 * scale)
+        ).execute()
+        points = np.asarray(result.mesh.coordinates)
+        cells = points[np.asarray(result.mesh.blocks[0].vertices)]
+        volumes = np.linalg.det(cells[:, 1:] - cells[:, :1]) / 6
+        assert np.all(volumes > 0)
+        assert volumes.sum() == pytest.approx(scale**3 / 6, rel=0.03)
+        centroids = cells.mean(axis=1)
+        assert np.all(centroids >= -0.005 * scale)
+        assert np.all(centroids.sum(axis=1) <= 1.015 * scale)
+        achieved = dict(result.compliance.achieved)
+        assert achieved["maximum_sampled_boundary_deviation"] <= 0.005 * scale
+        assert result.boundary is not None
+        # ty: ignore[unresolved-attribute]
+        assert not np.any(np.asarray(result.boundary.mesh.connectivity.boundary_edges))
+        assert not result.associations[0].exact
+        assert not result.associations[0].complete
+        assert result.audit.passed and result.compliance.passed
+        assert not np.intersect1d(
+            result.mesh.vertex_global_ids, source.mesh.vertex_global_ids
+        ).size
+        assert not np.intersect1d(
+            result.mesh.blocks[0].global_ids, source.mesh.blocks[0].global_ids
+        ).size
+        assert phx.meshing.MeshingCapability.LINEAGE not in result.provider.capabilities
+        assert (
+            result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
+        )
 
 
-def test_ftetwild_rejects_hard_sizing_without_silently_weakening_it() -> None:
+def test_ftetwild_contracts() -> None:
     source = _source()
     provider = FTetWildProvider()
     with pytest.raises(phx.meshing.MeshingFailure) as caught:
@@ -105,9 +105,6 @@ def test_ftetwild_rejects_hard_sizing_without_silently_weakening_it() -> None:
         caught.value.category
         is phx.meshing.MeshingFailureCategory.UNSUPPORTED_COMBINATION
     )
-
-
-def test_ftetwild_rejects_a_scope_bound_to_another_surface() -> None:
     source, other = _source(), _source(2.0)
     provider = FTetWildProvider()
     with pytest.raises(phx.meshing.MeshingFailure) as caught:

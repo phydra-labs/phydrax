@@ -61,7 +61,7 @@ def _density(state: Any) -> Any:
     return state[:, None] * jnp.conj(state[None, :])
 
 
-def test_wigner_dipole_selection_and_radiative_branching_normalization() -> None:
+def test_atomic_quantum_closure_scenario_1() -> None:
     ground, excited, sink = _manifolds()
     np.testing.assert_allclose(wigner_3j(0, 2, 2, 0, 0, 0), -1.0 / np.sqrt(3.0))
     np.testing.assert_allclose(wigner_6j(0, 0, 0, 2, 2, 2), 1.0 / np.sqrt(3.0))
@@ -95,16 +95,10 @@ def test_wigner_dipole_selection_and_radiative_branching_normalization() -> None
     np.testing.assert_allclose(
         prepared.evidence.branching_normalization_residual, 0.0, atol=1e-14
     )
-
-
-def test_forbidden_drive_is_rejected_during_preparation() -> None:
     ground, _, sink = _manifolds()
     forbidden = CoherentDrive("ground", "leakage-sink", 1.0, np.asarray((0.0, 1.0, 0.0)))
     with pytest.raises(ValueError, match="selection rules"):
         AtomicQuantumPlan((ground, sink), drives=(forbidden,)).prepare()
-
-
-def test_coherent_drive_compilation_is_frame_covariant() -> None:
     ground, excited, _ = _manifolds()
     polarization = np.asarray((0.3 + 0.2j, 0.5, -0.1 + 0.4j))
     angles = np.asarray((0.31, -0.42, 0.17))
@@ -136,7 +130,7 @@ def test_coherent_drive_compilation_is_frame_covariant() -> None:
     )
 
 
-def test_compiled_lindblad_and_finite_channel_are_trace_preserving() -> None:
+def test_atomic_quantum_closure_scenario_2() -> None:
     ground, excited, sink = _manifolds()
     prepared = AtomicQuantumPlan(
         (ground, excited, sink),
@@ -163,9 +157,6 @@ def test_compiled_lindblad_and_finite_channel_are_trace_preserving() -> None:
     )
     assert not bool(nonphysical.valid)
     assert jnp.all(nonphysical.density_trace_residuals == 1.0)
-
-
-def test_density_and_quantum_trajectory_observables_agree() -> None:
     ground, excited, _ = _manifolds()
     prepared = AtomicQuantumPlan(
         (ground, excited),

@@ -92,7 +92,7 @@ def _point_batch(
     )
 
 
-def test_geometry_informed_flower_runs_jit_and_has_finite_gradients() -> None:
+def test_geometry_informed_flower_scenario_1() -> None:
     model = _model(key=jr.key(1))
     batch = _point_batch()
 
@@ -109,59 +109,91 @@ def test_geometry_informed_flower_runs_jit_and_has_finite_gradients() -> None:
     assert jnp.isfinite(loss)
     assert gradient_leaves
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in gradient_leaves)
-
-
-@pytest.mark.parametrize("support_kind", ("occupancy", "sdf"))
-def test_geometry_informed_flower_projects_explicit_hard_latent_support(
-    support_kind: Any,
-) -> None:
-    nodes = (jnp.arange(8, dtype="float64") + 0.5) / 8.0
-    sdf = jnp.abs(nodes - 0.5) - 0.3
-    expected_mask = sdf < 0.0
-    support_values = (
-        expected_mask.astype("float64") if support_kind == "occupancy" else sdf
-    )
-    batch = phx.nn.operator.OperatorBatch(
-        inputs={
-            "u": phx.nn.operator.FunctionSamples(
-                values=jnp.sin(2.0 * jnp.pi * nodes),
-                coordinates=nodes[:, None],
-                quadrature_weights=jnp.full((8,), 1.0 / 8.0),
-                mask=expected_mask,
-            ),
-            "support": phx.nn.operator.FunctionSamples(
-                values=support_values,
-                coordinates=nodes[:, None],
-            ),
-        },
-        queries={
-            "query": phx.nn.operator.FunctionSamples(
-                values=None,
-                coordinates=nodes[expected_mask, None],
-            )
-        },
-    )
-    model = _model(
-        key=jr.key(2),
-        flower_levels=2,
-        latent_support_key="support",
-        latent_support_kind=support_kind,
-        latent_support_neighbors=1,
-    )
+    query_weights = jnp.array([0.1, 0.2, 0.25, 0.25, 0.2])
+    query_mask = jnp.array([True, True, False, True, True])
+    batch = _point_batch(query_weights=query_weights, query_mask=query_mask)
+    model = _model(key=jr.key(4), conserve_mass=True)
 
     output, diagnostics = model.evaluate_with_diagnostics(batch)
+    source = batch.input("u")
+    source_mass = jnp.sum(jnp.asarray(source.values) * source.weights())
+    target_mass = jnp.sum(output * batch.require_single_query().weights())
 
-    assert output.shape == (int(jnp.sum(expected_mask)),)
-    assert jnp.all(jnp.isfinite(output))
-    assert jnp.array_equal(diagnostics.latent_mask, expected_mask)
-    assert jnp.allclose(diagnostics.latent_support, support_values)
+    assert output[2] == 0.0
+    assert jnp.allclose(target_mass, source_mass, rtol=1e-12, atol=1e-12)
+    assert jnp.allclose(diagnostics.source_mass[..., 0], source_mass)
+    assert jnp.allclose(diagnostics.target_mass_after_projection[..., 0], source_mass)
+    assert diagnostics.conservation_correction is not None
+
+    missing_query_measure = _point_batch()
+    with pytest.raises(ValueError, match="explicit query quadrature"):
+        model(missing_query_measure)
+    for support_kind in ("occupancy", "sdf"):
+        nodes = (jnp.arange(8, dtype="float64") + 0.5) / 8.0
+        sdf = jnp.abs(nodes - 0.5) - 0.3
+        expected_mask = sdf < 0.0
+        support_values = (
+            expected_mask.astype("float64") if support_kind == "occupancy" else sdf
+        )
+        batch = phx.nn.operator.OperatorBatch(
+            inputs={
+                "u": phx.nn.operator.FunctionSamples(
+                    values=jnp.sin(2.0 * jnp.pi * nodes),
+                    coordinates=nodes[:, None],
+                    quadrature_weights=jnp.full((8,), 1.0 / 8.0),
+                    mask=expected_mask,
+                ),
+                "support": phx.nn.operator.FunctionSamples(
+                    values=support_values,
+                    coordinates=nodes[:, None],
+                ),
+            },
+            queries={
+                "query": phx.nn.operator.FunctionSamples(
+                    values=None,
+                    coordinates=nodes[expected_mask, None],
+                )
+            },
+        )
+        model = _model(
+            key=jr.key(2),
+            flower_levels=2,
+            latent_support_key="support",
+            latent_support_kind=support_kind,
+            latent_support_neighbors=1,
+        )
+
+        output, diagnostics = model.evaluate_with_diagnostics(batch)
+
+        assert output.shape == (int(jnp.sum(expected_mask)),)
+        assert jnp.all(jnp.isfinite(output))
+        assert jnp.array_equal(diagnostics.latent_mask, expected_mask)
+        assert jnp.allclose(diagnostics.latent_support, support_values)
+        assert isinstance(
+            diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics
+        )
+        assert len(diagnostics.processor.blocks) == 3
+    condition = jnp.array([[0.0], [1.0]])
+    batch = _point_batch(cases=2, condition=condition)
+    model = _model(
+        key=jr.key(3),
+        conditioning_channels={"dt": 1},
+    )
+
+    output, diagnostics = eqx.filter_jit(
+        lambda current, data: current.evaluate_with_diagnostics(data)
+    )(model, batch)
+
+    assert output.shape == (2, 5)
+    assert jnp.max(jnp.abs(output[0] - output[1])) > 1e-8
+    assert isinstance(
+        diagnostics, phx.nn.operator.architectures.GeometryOperatorDiagnostics
+    )
     assert isinstance(
         diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics
     )
-    assert len(diagnostics.processor.blocks) == 3
-
-
-def test_latent_inverse_distance_support_reproduces_constant_fields_far_away() -> None:
+    assert diagnostics.processor.level_shapes == ((8,),)
+    assert jnp.allclose(model(batch), output)
     nodes = (jnp.arange(8, dtype="float64") + 0.5) / 8.0
     support_coordinates = (100.0 + jnp.arange(8, dtype="float64"))[:, None]
     batch = phx.nn.operator.OperatorBatch(
@@ -195,49 +227,3 @@ def test_latent_inverse_distance_support_reproduces_constant_fields_far_away() -
 
     assert jnp.allclose(diagnostics.latent_support, 0.25)
     assert jnp.all(diagnostics.latent_mask)
-
-
-def test_geometry_informed_flower_propagates_case_conditions_and_diagnostics() -> None:
-    condition = jnp.array([[0.0], [1.0]])
-    batch = _point_batch(cases=2, condition=condition)
-    model = _model(
-        key=jr.key(3),
-        conditioning_channels={"dt": 1},
-    )
-
-    output, diagnostics = eqx.filter_jit(
-        lambda current, data: current.evaluate_with_diagnostics(data)
-    )(model, batch)
-
-    assert output.shape == (2, 5)
-    assert jnp.max(jnp.abs(output[0] - output[1])) > 1e-8
-    assert isinstance(
-        diagnostics, phx.nn.operator.architectures.GeometryOperatorDiagnostics
-    )
-    assert isinstance(
-        diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics
-    )
-    assert diagnostics.processor.level_shapes == ((8,),)
-    assert jnp.allclose(model(batch), output)
-
-
-def test_geometry_informed_flower_enforces_end_to_end_conservation() -> None:
-    query_weights = jnp.array([0.1, 0.2, 0.25, 0.25, 0.2])
-    query_mask = jnp.array([True, True, False, True, True])
-    batch = _point_batch(query_weights=query_weights, query_mask=query_mask)
-    model = _model(key=jr.key(4), conserve_mass=True)
-
-    output, diagnostics = model.evaluate_with_diagnostics(batch)
-    source = batch.input("u")
-    source_mass = jnp.sum(jnp.asarray(source.values) * source.weights())
-    target_mass = jnp.sum(output * batch.require_single_query().weights())
-
-    assert output[2] == 0.0
-    assert jnp.allclose(target_mass, source_mass, rtol=1e-12, atol=1e-12)
-    assert jnp.allclose(diagnostics.source_mass[..., 0], source_mass)
-    assert jnp.allclose(diagnostics.target_mass_after_projection[..., 0], source_mass)
-    assert diagnostics.conservation_correction is not None
-
-    missing_query_measure = _point_batch()
-    with pytest.raises(ValueError, match="explicit query quadrature"):
-        model(missing_query_measure)

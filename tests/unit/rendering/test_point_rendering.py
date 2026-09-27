@@ -22,7 +22,7 @@ from phydrax.rendering import (
 )
 
 
-def test_noiseless_gaussian_raster_is_deterministic_and_flux_audited() -> None:
+def test_point_rendering_scenario_1() -> None:
     geometry = ImagePlaneSupport((21, 25))
     rasterizer = GaussianRasterizer(6, cutoff=3.0)
     row_column = jnp.asarray([[10.25, 12.5], [4.0, 6.0]])
@@ -37,9 +37,6 @@ def test_noiseless_gaussian_raster_is_deterministic_and_flux_audited() -> None:
     assert jnp.allclose(first.evidence.deposited_flux, jnp.asarray([7.0, 0.0]))
     assert first.evidence.supported_count == 1
     assert first.successful
-
-
-def test_gaussian_raster_exposes_border_and_support_overflow() -> None:
     geometry = ImagePlaneSupport((12, 12))
     rasterizer = GaussianRasterizer(3, cutoff=3.0)
     result = rasterizer.render(
@@ -54,29 +51,6 @@ def test_gaussian_raster_exposes_border_and_support_overflow() -> None:
     assert result.evidence.overflow.tolist() == [False, True]
     assert result.evidence.status.tolist() == [RASTER_CLIPPED, RASTER_SUPPORT_OVERFLOW]
     assert not result.successful
-
-
-def test_fixed_topology_gaussian_raster_has_finite_coordinate_derivative() -> None:
-    geometry = ImagePlaneSupport((17, 17))
-    rasterizer = GaussianRasterizer(5, cutoff=3.0)
-    columns = jnp.arange(17, dtype="float64")[None, :]
-
-    def image_column_moment(column: Any) -> Any:
-        result = rasterizer.render(
-            geometry,
-            jnp.asarray([[8.25, column]]),
-            jnp.asarray([1.0]),
-            jnp.asarray([1.0]),
-            jnp.asarray([True]),
-        )
-        return jnp.sum(result.image * columns)
-
-    derivative = jax.grad(image_column_moment)(jnp.asarray(8.25))
-    assert jnp.isfinite(derivative)
-    assert derivative > 0.0
-
-
-def test_tiled_gaussian_raster_matches_reference_and_reports_route_capacity() -> None:
     geometry = ImagePlaneSupport((21, 25))
     coordinates = jnp.asarray([[10.25, 12.5], [4.0, 6.0]])
     amplitude = jnp.asarray([7.0, 3.0])
@@ -103,6 +77,26 @@ def test_tiled_gaussian_raster_matches_reference_and_reports_route_capacity() ->
     assert tiled.evidence.route_count == reference.evidence.route_count
     assert not bool(tiled.evidence.route_overflow)
     assert bool(tiled.successful)
+
+
+def test_fixed_topology_gaussian_raster_has_finite_coordinate_derivative() -> None:
+    geometry = ImagePlaneSupport((17, 17))
+    rasterizer = GaussianRasterizer(5, cutoff=3.0)
+    columns = jnp.arange(17, dtype="float64")[None, :]
+
+    def image_column_moment(column: Any) -> Any:
+        result = rasterizer.render(
+            geometry,
+            jnp.asarray([[8.25, column]]),
+            jnp.asarray([1.0]),
+            jnp.asarray([1.0]),
+            jnp.asarray([True]),
+        )
+        return jnp.sum(result.image * columns)
+
+    derivative = jax.grad(image_column_moment)(jnp.asarray(8.25))
+    assert jnp.isfinite(derivative)
+    assert derivative > 0.0
 
 
 def test_photometry_separates_noiseless_response_noise_and_sensor_mask() -> None:

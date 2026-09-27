@@ -220,7 +220,7 @@ def _correlated_nonlinear_problem(*, normalized: Any = True) -> Any:
     )
 
 
-def test_single_mode_full_smoother_matches_kalman_rts_for_masks_and_padding() -> None:
+def test_rao_blackwellized_smoothing_scenario_1() -> None:
     rb_problem, kalman_problem = _constant_mode_problems()
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(1), rb_problem, num_particles=4, resampling_policy="never"
@@ -268,9 +268,6 @@ def test_single_mode_full_smoother_matches_kalman_rts_for_masks_and_padding() ->
         == 0
     )
     assert jnp.all(result.successful)
-
-
-def test_first_conditional_transition_uses_sampled_initial_nonlinear_state() -> None:
     rb_problem, linear_problem = _initial_mode_dependent_problems()
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(3), rb_problem, num_particles=4, resampling_policy="never"
@@ -291,9 +288,6 @@ def test_first_conditional_transition_uses_sampled_initial_nonlinear_state() -> 
         result.linear_covariances,
         jnp.broadcast_to(expected.covariances, result.linear_covariances.shape),
     )
-
-
-def test_backward_path_prefixes_are_stable_and_resampling_policies_are_coherent() -> None:
     problem, _ = _constant_mode_problems()
     never = phx.uq.rao_blackwellized_particle_filter(
         jr.key(5), problem, num_particles=4, resampling_policy="never"
@@ -318,9 +312,6 @@ def test_backward_path_prefixes_are_stable_and_resampling_policies_are_coherent(
     assert jnp.all(
         jax.lax.stop_gradient(short.particle_indices) == short.particle_indices
     )
-
-
-def test_backward_simulation_uses_full_correlated_transition_density() -> None:
     problem = _correlated_nonlinear_problem()
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(8), problem, num_particles=4, resampling_policy="never"
@@ -375,9 +366,6 @@ def test_backward_simulation_uses_full_correlated_transition_density() -> None:
     assert separations[terminal] > 0.15
     assert full_error < diagonal_error
     assert jnp.max(jnp.abs(empirical - full_probability)) < 0.1
-
-
-def test_backward_simulation_rejects_missing_normalized_transition_density() -> None:
     filtered = phx.uq.rao_blackwellized_particle_filter(
         jr.key(10),
         _correlated_nonlinear_problem(normalized=False),

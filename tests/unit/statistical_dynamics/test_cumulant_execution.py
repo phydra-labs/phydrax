@@ -59,7 +59,7 @@ def _coupled_plan(
     return layout, plan.prepare()
 
 
-def test_analytical_ou_lyapunov_covariance_uses_native_matrix_equation() -> None:
+def test_cumulant_execution_scenario_1() -> None:
     forcing = ForcingCovariance(jnp.diag(jnp.asarray([2.0, 8.0])))
     result = solve_stationary_covariance(
         jnp.diag(jnp.asarray([-1.0, -2.0])),
@@ -69,9 +69,6 @@ def test_analytical_ou_lyapunov_covariance_uses_native_matrix_equation() -> None
     assert bool(result.successful)
     np.testing.assert_allclose(result.covariance, jnp.diag(jnp.asarray([1.0, 2.0])))
     np.testing.assert_allclose(result.residual, 0.0, atol=1e-12)
-
-
-def test_ce2_and_gce2_equal_the_corresponding_symmetric_ensemble_moments() -> None:
     mean = jnp.asarray([0.3])
     covariance = jnp.asarray([[0.7]])
     members = jnp.asarray(
@@ -98,9 +95,6 @@ def test_ce2_and_gce2_equal_the_corresponding_symmetric_ensemble_moments() -> No
         np.testing.assert_allclose(
             tendency.covariance[0, 0], ensemble_covariance_tendency, atol=1e-12
         )
-
-
-def test_generic_second_cumulant_rejects_eddy_eddy_to_eddy_dynamics() -> None:
     layout = SecondCumulantLayout(2, [0])
     quadratic = jnp.zeros((2, 2, 2)).at[1, 1, 1].set(1.0)
     dynamics = QuadraticDynamics(jnp.zeros(2), jnp.zeros((2, 2)), quadratic)
@@ -115,7 +109,7 @@ def test_generic_second_cumulant_rejects_eddy_eddy_to_eddy_dynamics() -> None:
         )
 
 
-def test_psd_hermitian_and_rank_gates_are_fail_closed_without_repair() -> None:
+def test_cumulant_execution_scenario_2() -> None:
     layout, _ = _coupled_plan()
     wrong_layout = DenseCumulantState(
         jnp.zeros(1), jnp.eye(1), layout_id="another-layout"
@@ -142,9 +136,6 @@ def test_psd_hermitian_and_rank_gates_are_fail_closed_without_repair() -> None:
     full = DenseCumulantState(jnp.zeros(1), jnp.eye(1), layout_id=layout.layout_id)
     with pytest.raises(ValueError, match="exceeds the eddy covariance dimension"):
         factorize_cumulant(layout, full, RankAdaptationPolicy(0, 2))
-
-
-def test_cumulant_gates_reject_nonfinite_tolerances() -> None:
     layout, _ = _coupled_plan()
     state = DenseCumulantState(
         jnp.zeros(1),
@@ -165,9 +156,6 @@ def test_cumulant_gates_reject_nonfinite_tolerances() -> None:
                 hermitian_tolerance=tolerance,
                 psd_tolerance=tolerance,
             )
-
-
-def test_dense_and_factor_paths_match_before_explicit_rank_adaptation() -> None:
     layout, prepared = _coupled_plan()
     dense = DenseCumulantState(
         jnp.asarray([0.2]), jnp.asarray([[0.5]]), layout_id=layout.layout_id
@@ -195,7 +183,7 @@ def test_dense_and_factor_paths_match_before_explicit_rank_adaptation() -> None:
     )
 
 
-def test_factor_execution_records_explicit_rank_growth() -> None:
+def test_cumulant_execution_scenario_3() -> None:
     layout = SecondCumulantLayout(3, [0])
     dynamics = QuadraticDynamics(
         jnp.zeros(3),
@@ -224,9 +212,6 @@ def test_factor_execution_records_explicit_rank_growth() -> None:
     assert bool(result.rank_event.triggered)
     assert int(result.rank_event.old_rank) == 1
     assert int(result.rank_event.new_rank) == 2
-
-
-def test_continuation_restart_and_distributed_topology_relation() -> None:
     layout, prepared = _coupled_plan()
     initial = DenseCumulantState(
         jnp.zeros(1), jnp.asarray([[0.1]]), layout_id=layout.layout_id
@@ -263,9 +248,6 @@ def test_continuation_restart_and_distributed_topology_relation() -> None:
 
     with pytest.raises(MemoryError, match="maximum_local_bytes"):
         DistributedCovarianceLayout(100, 1, maximum_local_bytes=100)
-
-
-def test_zero_step_execution_validates_initial_state_and_checkpoint_identity() -> None:
     layout, prepared = _coupled_plan()
     invalid = DenseCumulantState(
         jnp.zeros(1),

@@ -38,7 +38,7 @@ def _marginal(values: Any, probabilities: Any, maturity: Any) -> Any:
     )
 
 
-def test_option_marginals_are_checked_in_declared_numeraire_units() -> None:
+def test_diagnostics_scenario_1() -> None:
     feasible = option_marginal_convex_order(
         _marginal([-1.0, 1.0], [0.5, 0.5], 1.0),
         _marginal([-2.0, 2.0], [0.5, 0.5], 2.0),
@@ -50,9 +50,6 @@ def test_option_marginals_are_checked_in_declared_numeraire_units() -> None:
 
     assert bool(feasible.feasible)
     assert not bool(reversed_order.feasible)
-
-
-def test_static_option_grid_reports_butterfly_violation_without_global_claim() -> None:
     valid = OptionCallSlice(
         # ty: ignore[invalid-argument-type]
         [80.0, 100.0, 120.0],

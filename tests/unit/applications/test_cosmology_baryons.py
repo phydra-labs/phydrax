@@ -77,7 +77,7 @@ def _case(count: Any = 8) -> Any:
     return background, gas, plan, state
 
 
-def test_uniform_comoving_euler_has_adiabatic_expansion_scaling() -> None:
+def test_uniform_contracts() -> None:
     background, gas, _, state = _case()
     zero = jnp.zeros((state.gas.cell_average.shape[0], 1))
     evolved, diagnostics = gas.advance(background, state.gas, 0.51, zero, zero)
@@ -85,11 +85,6 @@ def test_uniform_comoving_euler_has_adiabatic_expansion_scaling() -> None:
     assert bool(diagnostics.successful)
     np.testing.assert_allclose(evolved.cell_average[:, 0], 1.0, rtol=1e-12)
     np.testing.assert_allclose(evolved.cell_average[:, 2], expected_energy, rtol=2e-5)
-
-
-def test_uniform_gas_particle_epoch_uses_shared_zero_force_and_commits_atomically() -> (
-    None
-):
     background, _, plan, state = _case()
     shared = plan.shared_gravity(state)
     assert bool(shared.successful)

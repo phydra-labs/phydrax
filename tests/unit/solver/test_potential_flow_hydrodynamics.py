@@ -84,7 +84,7 @@ def submerged_problem() -> Any:
     return prepared, result
 
 
-def test_finite_depth_dispersion_root_has_residual_and_provenance() -> None:
+def test_potential_flow_hydrodynamics_scenario_1() -> None:
     root = solve_finite_depth_dispersion_3d(
         1.7,
         9.81,
@@ -102,9 +102,6 @@ def test_finite_depth_dispersion_root_has_residual_and_provenance() -> None:
     assert root.unit_system_id == "si-water"
     assert root.ambient_dimension == 3
     assert root.non_goals == ("capillary dispersion", "current-modified dispersion")
-
-
-def test_finite_depth_green_is_reciprocal_and_retains_tail_evidence() -> None:
     green = prepare_free_surface_green_3d(
         1.7,
         9.81,
@@ -135,6 +132,36 @@ def test_finite_depth_green_is_reciprocal_and_retains_tail_evidence() -> None:
     assert green.errors.wavenumber_cutoff > green.wavenumber
     assert not green.errors.continuum_discretization_error_estimated
     assert not green.errors.quadrature_convergence_estimated
+    cube = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
+    hydrostatics = prepare_hydrostatic_properties_3d(
+        _region(cube, feature_id="surface-piercing-cube"),
+        fluid_density=1000.0,
+        gravity=10.0,
+        frame_id="tank-z-up",
+        unit_system_id="si-water",
+    )
+
+    assert jnp.allclose(hydrostatics.displaced_volume, 4.0, rtol=1.0e-12)
+    assert jnp.allclose(hydrostatics.center_of_buoyancy, jnp.asarray((0.0, 0.0, -0.5)))
+    assert jnp.allclose(hydrostatics.waterplane_area, 4.0, rtol=1.0e-12)
+    assert jnp.allclose(hydrostatics.waterplane_centroid, jnp.zeros((3,)))
+    assert jnp.allclose(hydrostatics.restoring_matrix[2, 2], 40_000.0)
+    assert hydrostatics.waterline_loop_count == 1
+    assert hydrostatics.frame_id == "tank-z-up"
+    assert hydrostatics.unit_system_id == "si-water"
+
+    touching = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    touching.apply_translation((0.0, 0.0, 0.5))
+    with pytest.raises(ValueError, match="Waterline vertices"):
+        prepare_hydrostatic_properties_3d(
+            _region(touching, feature_id="invalid-waterline-cube")
+        )
+    with pytest.raises(ValueError, match="strictly submerged"):
+        prepare_free_surface_hydrodynamics_3d(
+            _region(cube, feature_id="invalid-radiation-waterline-cube"),
+            2.0,
+            policy=_fast_policy(),
+        )
 
 
 def test_submerged_sphere_symmetry_reciprocity_and_radiated_power(
@@ -203,36 +230,3 @@ def test_resource_and_error_evidence_is_explicit(submerged_problem: Any) -> None
     assert not report.collocation_error_estimated
     assert result.resource_evidence[0] == report.resident_bytes
     assert "no continuum collocation" in result.error_evidence[-1]
-
-
-def test_transversal_cube_hydrostatics_and_waterline_invalidity() -> None:
-    cube = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
-    hydrostatics = prepare_hydrostatic_properties_3d(
-        _region(cube, feature_id="surface-piercing-cube"),
-        fluid_density=1000.0,
-        gravity=10.0,
-        frame_id="tank-z-up",
-        unit_system_id="si-water",
-    )
-
-    assert jnp.allclose(hydrostatics.displaced_volume, 4.0, rtol=1.0e-12)
-    assert jnp.allclose(hydrostatics.center_of_buoyancy, jnp.asarray((0.0, 0.0, -0.5)))
-    assert jnp.allclose(hydrostatics.waterplane_area, 4.0, rtol=1.0e-12)
-    assert jnp.allclose(hydrostatics.waterplane_centroid, jnp.zeros((3,)))
-    assert jnp.allclose(hydrostatics.restoring_matrix[2, 2], 40_000.0)
-    assert hydrostatics.waterline_loop_count == 1
-    assert hydrostatics.frame_id == "tank-z-up"
-    assert hydrostatics.unit_system_id == "si-water"
-
-    touching = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
-    touching.apply_translation((0.0, 0.0, 0.5))
-    with pytest.raises(ValueError, match="Waterline vertices"):
-        prepare_hydrostatic_properties_3d(
-            _region(touching, feature_id="invalid-waterline-cube")
-        )
-    with pytest.raises(ValueError, match="strictly submerged"):
-        prepare_free_surface_hydrodynamics_3d(
-            _region(cube, feature_id="invalid-radiation-waterline-cube"),
-            2.0,
-            policy=_fast_policy(),
-        )

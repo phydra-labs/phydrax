@@ -62,7 +62,7 @@ def _case(*, geometry_ad: Any = "piecewise") -> Any:
     return compiled, arguments, initial, mesh
 
 
-def test_mpm_retention_modes_have_identical_final_state() -> None:
+def test_mpm_rollout_scenario_1() -> None:
     compiled, arguments, initial, mesh = _case()
     trajectory = phx.solver.ScheduledMPMRolloutPlan(
         compiled.dynamics, mesh, retention="trajectory"
@@ -86,6 +86,42 @@ def test_mpm_retention_modes_have_identical_final_state() -> None:
             jax.tree.leaves(reference), jax.tree.leaves(candidate), strict=True
         ):
             np.testing.assert_allclose(left, right, rtol=1e-12, atol=1e-12)
+    compiled, arguments, initial, mesh = _case(geometry_ad="piecewise")
+    plan = phx.solver.ScheduledMPMRolloutPlan(
+        compiled.dynamics,
+        mesh,
+        replay=phx.solver.MPMReplayPolicy("step"),
+    )
+    particle_direction, argument_direction = _directions(initial)
+    report = plan.gradient_report(
+        lambda final, _: jnp.sum(final.particles.position**2),
+        initial,
+        arguments,
+        particle_direction,
+        argument_direction,
+        epsilon=1e-5,
+    )
+
+    assert report.gradient_kind == "piecewise-discrete"
+    assert bool(report.branch_matched)
+    assert report.jvp_vjp_residual < 1e-9
+    assert report.finite_difference_residual < 1e-6
+    compiled, arguments, initial, mesh = _case(geometry_ad="frozen")
+    plan = phx.solver.ScheduledMPMRolloutPlan(compiled.dynamics, mesh)
+    particle_direction, argument_direction = _directions(initial)
+    report = plan.gradient_report(
+        lambda final, _: jnp.sum(final.particles.velocity**2),
+        initial,
+        arguments,
+        particle_direction,
+        argument_direction,
+    )
+
+    assert report.gradient_kind == "frozen-surrogate"
+    assert not bool(report.branch_matched)
+    assert jnp.isnan(report.finite_difference_derivative)
+    assert jnp.isnan(report.finite_difference_residual)
+    assert report.jvp_vjp_residual < 1e-9
 
 
 def test_full_step_and_block_replay_match_primal_and_gradients() -> None:
@@ -146,45 +182,3 @@ def _directions(initial: Any) -> Any:
         phx.applications.solid_mechanics.NeoHookeanParameters(0.1, 0.2)
     )
     return particle_direction, argument_direction
-
-
-def test_piecewise_gradient_report_matches_jvp_vjp_and_finite_difference() -> None:
-    compiled, arguments, initial, mesh = _case(geometry_ad="piecewise")
-    plan = phx.solver.ScheduledMPMRolloutPlan(
-        compiled.dynamics,
-        mesh,
-        replay=phx.solver.MPMReplayPolicy("step"),
-    )
-    particle_direction, argument_direction = _directions(initial)
-    report = plan.gradient_report(
-        lambda final, _: jnp.sum(final.particles.position**2),
-        initial,
-        arguments,
-        particle_direction,
-        argument_direction,
-        epsilon=1e-5,
-    )
-
-    assert report.gradient_kind == "piecewise-discrete"
-    assert bool(report.branch_matched)
-    assert report.jvp_vjp_residual < 1e-9
-    assert report.finite_difference_residual < 1e-6
-
-
-def test_frozen_gradient_report_does_not_claim_ordinary_finite_difference() -> None:
-    compiled, arguments, initial, mesh = _case(geometry_ad="frozen")
-    plan = phx.solver.ScheduledMPMRolloutPlan(compiled.dynamics, mesh)
-    particle_direction, argument_direction = _directions(initial)
-    report = plan.gradient_report(
-        lambda final, _: jnp.sum(final.particles.velocity**2),
-        initial,
-        arguments,
-        particle_direction,
-        argument_direction,
-    )
-
-    assert report.gradient_kind == "frozen-surrogate"
-    assert not bool(report.branch_matched)
-    assert jnp.isnan(report.finite_difference_derivative)
-    assert jnp.isnan(report.finite_difference_residual)
-    assert report.jvp_vjp_residual < 1e-9

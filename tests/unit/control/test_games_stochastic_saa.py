@@ -84,7 +84,7 @@ def _quadratic_problem(
     )
 
 
-def test_weighted_stochastic_quadratic_game_solves_owned_saa_root_and_holds_out() -> None:
+def test_games_stochastic_saa_scenario_1() -> None:
     problem = _quadratic_problem()
     training = _noise([-2.0, 0.5, 3.0], "train")
     holdout = _noise(
@@ -118,9 +118,6 @@ def test_weighted_stochastic_quadratic_game_solves_owned_saa_root_and_holds_out(
     assert result.training_realization_ids == training.realization_ids
     assert result.holdout_realization_ids == holdout.realization_ids
     assert result.training_bundle_id != result.holdout_bundle_id
-
-
-def test_complete_player_gradients_are_formed_before_owned_rows_are_selected() -> None:
     problem = _quadratic_problem()
     training = _noise([-1.0, 2.0], "ownership-train")
     holdout = _noise([4.0, 6.0], "ownership-holdout")
@@ -146,6 +143,29 @@ def test_complete_player_gradients_are_formed_before_owned_rows_are_selected() -
     np.testing.assert_allclose(
         result.training_owned_path_gradients[:, 1], complete[:, 1, 1]
     )
+    problem = _quadratic_problem()
+    training = _noise([-3.0, 0.0, 4.0], "frozen-train")
+    holdout = _noise([6.0, 8.0, 10.0], "frozen-holdout")
+    prepared = prepare_stochastic_policy_game(
+        plan_stochastic_policy_game(problem),
+        problem,
+        jnp.asarray([3.0, -5.0]),
+        training,
+        holdout,
+    )
+
+    first = solve_prepared_stochastic_policy_game(prepared)
+    second = solve_prepared_stochastic_policy_game(prepared)
+
+    np.testing.assert_array_equal(first.parameters, second.parameters)
+    np.testing.assert_array_equal(first.original_residual, second.original_residual)
+    np.testing.assert_array_equal(first.training_path_costs, second.training_path_costs)
+    np.testing.assert_array_equal(first.root_status, second.root_status)
+    np.testing.assert_array_equal(
+        first.root_diagnostics.residual_evaluations,
+        second.root_diagnostics.residual_evaluations,
+    )
+    assert first.training_realization_ids == second.training_realization_ids
 
 
 def test_pathwise_gradient_is_not_the_gradient_of_a_mutated_mean_trajectory() -> None:
@@ -178,33 +198,7 @@ def test_pathwise_gradient_is_not_the_gradient_of_a_mutated_mean_trajectory() ->
     np.testing.assert_allclose(residual_at_path_mean, [-2.0], atol=1e-6)
 
 
-def test_prepared_training_bundle_is_frozen_common_randomness_across_solves() -> None:
-    problem = _quadratic_problem()
-    training = _noise([-3.0, 0.0, 4.0], "frozen-train")
-    holdout = _noise([6.0, 8.0, 10.0], "frozen-holdout")
-    prepared = prepare_stochastic_policy_game(
-        plan_stochastic_policy_game(problem),
-        problem,
-        jnp.asarray([3.0, -5.0]),
-        training,
-        holdout,
-    )
-
-    first = solve_prepared_stochastic_policy_game(prepared)
-    second = solve_prepared_stochastic_policy_game(prepared)
-
-    np.testing.assert_array_equal(first.parameters, second.parameters)
-    np.testing.assert_array_equal(first.original_residual, second.original_residual)
-    np.testing.assert_array_equal(first.training_path_costs, second.training_path_costs)
-    np.testing.assert_array_equal(first.root_status, second.root_status)
-    np.testing.assert_array_equal(
-        first.root_diagnostics.residual_evaluations,
-        second.root_diagnostics.residual_evaluations,
-    )
-    assert first.training_realization_ids == second.training_realization_ids
-
-
-def test_training_and_holdout_realization_identity_must_be_disjoint() -> None:
+def test_games_stochastic_saa_scenario_2() -> None:
     problem = _quadratic_problem()
     training = _noise([0.0, 1.0], "shared")
     holdout = PreparedControlledNoise(
@@ -225,9 +219,6 @@ def test_training_and_holdout_realization_identity_must_be_disjoint() -> None:
             training,
             holdout,
         )
-
-
-def test_training_and_holdout_coupling_id_must_identify_independence() -> None:
     problem = _quadratic_problem()
     training = _noise([0.0, 1.0], "coupled-train", coupling_id="same-coupling")
     holdout = _noise([2.0, 3.0], "coupled-holdout", coupling_id="same-coupling")
@@ -240,9 +231,6 @@ def test_training_and_holdout_coupling_id_must_identify_independence() -> None:
             training,
             holdout,
         )
-
-
-def test_refresh_requires_same_topology_and_entirely_new_realization_ids() -> None:
     problem = _quadratic_problem()
     initial_training = _noise([0.0, 1.0], "refresh-old-train")
     initial_holdout = _noise([2.0, 3.0], "refresh-old-holdout")
@@ -280,6 +268,21 @@ def test_refresh_requires_same_topology_and_entirely_new_realization_ids() -> No
             problem,
             training_noise=_noise([1.0, 2.0, 3.0], "wrong-count"),
         )
+    problem = _quadratic_problem(suffix="jit")
+    prepared = prepare_stochastic_policy_game(
+        plan_stochastic_policy_game(problem),
+        problem,
+        jnp.asarray([4.0, -3.0]),
+        _noise([-1.0, 1.0, 2.0], "jit-train"),
+        _noise([3.0, 5.0, 7.0], "jit-holdout"),
+    )
+    eager = solve_prepared_stochastic_policy_game(prepared)
+    compiled = eqx.filter_jit(solve_prepared_stochastic_policy_game)(prepared)
+
+    np.testing.assert_allclose(compiled.parameters, eager.parameters)
+    np.testing.assert_allclose(compiled.original_residual, eager.original_residual)
+    np.testing.assert_allclose(compiled.holdout_path_costs, eager.holdout_path_costs)
+    np.testing.assert_array_equal(compiled.status, eager.status)
 
 
 def test_case_axes_are_separate_from_path_player_and_parameter_axes() -> None:
@@ -410,24 +413,6 @@ def test_nonfinite_callback_cost_and_holdout_cost_have_stable_statuses() -> None
         StochasticPolicyGameStatus.NONFINITE_HOLDOUT_PATH_COSTS
     )
     assert bool(jnp.any(~holdout_result.holdout_cluster_valid))
-
-
-def test_filtered_jit_preserves_frozen_bundle_solution_and_evidence() -> None:
-    problem = _quadratic_problem(suffix="jit")
-    prepared = prepare_stochastic_policy_game(
-        plan_stochastic_policy_game(problem),
-        problem,
-        jnp.asarray([4.0, -3.0]),
-        _noise([-1.0, 1.0, 2.0], "jit-train"),
-        _noise([3.0, 5.0, 7.0], "jit-holdout"),
-    )
-    eager = solve_prepared_stochastic_policy_game(prepared)
-    compiled = eqx.filter_jit(solve_prepared_stochastic_policy_game)(prepared)
-
-    np.testing.assert_allclose(compiled.parameters, eager.parameters)
-    np.testing.assert_allclose(compiled.original_residual, eager.original_residual)
-    np.testing.assert_allclose(compiled.holdout_path_costs, eager.holdout_path_costs)
-    np.testing.assert_array_equal(compiled.status, eager.status)
 
 
 def test_result_never_claims_population_or_feedback_nash() -> None:

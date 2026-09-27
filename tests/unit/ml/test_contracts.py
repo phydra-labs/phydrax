@@ -89,7 +89,7 @@ class _ScaleRecipe(phx.ml.AbstractRecipe):
         )
 
 
-def test_batch_preserves_case_sample_output_and_weight_semantics() -> None:
+def test_contracts_scenario_1() -> None:
     features = jnp.arange(24.0).reshape(2, 4, 3)
     targets = jnp.arange(16.0).reshape(2, 4, 2)
     batch = phx.ml.MLBatch(
@@ -111,9 +111,6 @@ def test_batch_preserves_case_sample_output_and_weight_semantics() -> None:
     assert selected.features.shape == (2, 2, 3)
     # ty: ignore[invalid-argument-type]
     assert jnp.allclose(selected.targets, targets[:, jnp.array([3, 0])])
-
-
-def test_sparse_features_are_explicit_and_preserve_duplicate_entries() -> None:
     sparse = phx.ml.SparseFeatures(
         jnp.array([[1.0, 2.0], [3.0, 4.0]]),
         jnp.array([[0, 2], [1, 1]]),
@@ -128,9 +125,6 @@ def test_sparse_features_are_explicit_and_preserve_duplicate_entries() -> None:
     )
     with pytest.raises(ValueError, match="feature_mask is unsupported"):
         phx.ml.MLBatch(sparse, feature_mask=jnp.ones((2, 3), dtype="bool"))
-
-
-def test_fit_is_pure_frozen_and_remains_differentiable_when_called() -> None:
     recipe = _ScaleRecipe()
     features = jnp.ones((3, 1))
     targets = jnp.array([1.0, 2.0, 5.0])
@@ -146,9 +140,6 @@ def test_fit_is_pure_frozen_and_remains_differentiable_when_called() -> None:
     assert result.as_trainable() is result.model.model
     gradient = jax.grad(lambda value: jnp.sum(result.model(value)))(jnp.array([2.0]))
     assert jnp.allclose(gradient, jnp.array([1.5]))
-
-
-def test_fit_result_admits_declared_derivatives_and_rejects_undeclared_surfaces() -> None:
     result = phx.ml.fit(_ScaleRecipe(), jnp.ones((3, 1)), jnp.array([1.0, 2.0, 5.0]))
 
     mixed = phx.DifferentiationRequest((_FIT_TARGETS, _PARAMETER, _INPUT))
@@ -185,7 +176,7 @@ def test_fit_result_admits_declared_derivatives_and_rejects_undeclared_surfaces(
         )
 
 
-def test_frozen_model_preserves_binding_and_prediction_capabilities() -> None:
+def test_contracts_scenario_2() -> None:
     frozen = FrozenModel(_BlockClassifier())
     values = jnp.asarray(((1.0,), (-2.0,)))
 
@@ -198,9 +189,6 @@ def test_frozen_model_preserves_binding_and_prediction_capabilities() -> None:
 
     with pytest.raises(AttributeError):
         FrozenModel(_ScaleModel(1.0)).predict(values)
-
-
-def test_existing_batch_rejects_duplicate_metadata() -> None:
     batch = phx.ml.MLBatch(jnp.ones((3, 1)), jnp.ones((3,)))
     with pytest.raises(ValueError, match="cannot accompany"):
         phx.ml.fit(_ScaleRecipe(), batch, sample_weight=jnp.ones((3,)))

@@ -35,9 +35,7 @@ def _transport(order: Any = 5, points: Any = 64) -> Any:
     return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_weno_rusanov_flux_difference_preserves_constants_and_global_conservation() -> (
-    None
-):
+def test_reconstruction_splitting_scenario_1() -> None:
     dynamics = _transport()
     constant = jnp.full((64, 1), 2.5)
     varying = jnp.sin(2.0 * jnp.pi * jnp.arange(64) / 64.0)[:, None]
@@ -47,6 +45,16 @@ def test_weno_rusanov_flux_difference_preserves_constants_and_global_conservatio
 
     assert jnp.allclose(constant_rate, 0.0)
     assert jnp.allclose(jnp.sum(varying_rate), 0.0, atol=1e-5)
+    dynamics = _transport().dynamics
+    state = jnp.ones((64, 1))
+
+    result = (
+        phx.solver.UnsplitFiniteVolumeSSPRK3Plan(dynamics)
+        .advance(jnp.asarray(0.0), state, 0.005)
+        .state
+    )
+
+    assert jnp.allclose(result, state)
 
 
 def test_weno5_smooth_face_reconstruction_converges_faster_than_third_order() -> None:
@@ -65,16 +73,3 @@ def test_weno5_smooth_face_reconstruction_converges_faster_than_third_order() ->
     fine = error(80)
 
     assert coarse / fine > 16.0
-
-
-def test_ssprk3_step_preserves_constant_transport_state() -> None:
-    dynamics = _transport().dynamics
-    state = jnp.ones((64, 1))
-
-    result = (
-        phx.solver.UnsplitFiniteVolumeSSPRK3Plan(dynamics)
-        .advance(jnp.asarray(0.0), state, 0.005)
-        .state
-    )
-
-    assert jnp.allclose(result, state)

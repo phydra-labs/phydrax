@@ -44,67 +44,69 @@ def _block_problem() -> Any:
     return matrix, la.LinearSystem(operator, problem_id="block-krylov-problem")
 
 
-@pytest.mark.parametrize("method", [la.BlockGMRES(restart=4), la.BlockCG()])
-def test_true_block_krylov_handles_dependent_and_zero_rhs_columns(method: Any) -> None:
-    matrix, problem = _block_problem()
-    first = jnp.asarray([1.0, 2.0, -1.0, 0.5])
-    second = jnp.asarray([-2.0, 0.0, 1.0, 3.0])
-    rhs = jnp.stack((first, second, first + second, jnp.zeros_like(first)), axis=1)
-    layout = la.RHSLayout((4,))
-    policy = la.LinearSolvePolicy(
-        method,
-        differentiation=la.DifferentiationPolicy("none"),
-        tolerance=la.TolerancePolicy(relative=1e-10, absolute=1e-12, max_steps=20),
-    )
-    prepared = la.prepare(problem, policy, rhs_layout=layout)
-    result = la.solve(prepared, rhs)
-    compiled = jax.jit(lambda values: la.solve(prepared, values).value)(rhs)
-    expected = jnp.linalg.solve(matrix, rhs)
-
-    assert jnp.allclose(result.value, expected, rtol=1e-8, atol=1e-9)
-    assert jnp.allclose(compiled, expected, rtol=1e-8, atol=1e-9)
-    assert jnp.all(result.successful)
-    assert result.provenance.rhs_mode == "true-block"
-    assert jnp.all(result.diagnostics.effective_block_rank <= rhs.shape[1])
-    assert jnp.any(result.diagnostics.deflated_rhs_count >= 1)
-    with pytest.raises(ValueError, match="RHS layout|right-hand side|trailing"):
-        la.solve(prepared, first)
-
-
-@pytest.mark.parametrize("method", [la.BlockGMRES(restart=4), la.BlockCG()])
-def test_true_block_krylov_emits_vector_iteration_records(method: Any) -> None:
-    _, problem = _block_problem()
-    rhs = jnp.asarray(
-        [
-            [1.0, -2.0],
-            [2.0, 0.0],
-            [-1.0, 1.0],
-            [0.5, 3.0],
-        ]
-    )
-    prepared = la.prepare(
-        problem,
-        la.LinearSolvePolicy(
+def test_true_block_krylov_handles_dependent_and_zero_rhs_columns() -> None:
+    for method in [la.BlockGMRES(restart=4), la.BlockCG()]:
+        matrix, problem = _block_problem()
+        first = jnp.asarray([1.0, 2.0, -1.0, 0.5])
+        second = jnp.asarray([-2.0, 0.0, 1.0, 3.0])
+        rhs = jnp.stack((first, second, first + second, jnp.zeros_like(first)), axis=1)
+        layout = la.RHSLayout((4,))
+        policy = la.LinearSolvePolicy(
             method,
             differentiation=la.DifferentiationPolicy("none"),
             tolerance=la.TolerancePolicy(relative=1e-10, absolute=1e-12, max_steps=20),
-        ),
-        rhs_layout=la.RHSLayout((2,)),
-    )
-    result = la.solve(
-        prepared,
-        rhs,
-        iteration=phx.execution.IterationPlan(
-            granularity="inner-iteration",
-            observers=(phx.execution.IterationTraceObserver(20),),
-        ),
-    )
+        )
+        prepared = la.prepare(problem, policy, rhs_layout=layout)
+        result = la.solve(prepared, rhs)
+        compiled = jax.jit(lambda values: la.solve(prepared, values).value)(rhs)
+        expected = jnp.linalg.solve(matrix, rhs)
 
-    assert jnp.all(result.successful)
-    assert result.iteration_evidence is not None
-    trace = result.iteration_evidence.observer_outputs[0]
-    assert int(trace.stored_count) > 0
-    assert trace.records.metrics.residual_norm.shape[1:] == (2,)
+        assert jnp.allclose(result.value, expected, rtol=1e-8, atol=1e-9)
+        assert jnp.allclose(compiled, expected, rtol=1e-8, atol=1e-9)
+        assert jnp.all(result.successful)
+        assert result.provenance.rhs_mode == "true-block"
+        assert jnp.all(result.diagnostics.effective_block_rank <= rhs.shape[1])
+        assert jnp.any(result.diagnostics.deflated_rhs_count >= 1)
+        with pytest.raises(ValueError, match="RHS layout|right-hand side|trailing"):
+            la.solve(prepared, first)
+
+
+def test_true_block_krylov_emits_vector_iteration_records() -> None:
+    for method in [la.BlockGMRES(restart=4), la.BlockCG()]:
+        _, problem = _block_problem()
+        rhs = jnp.asarray(
+            [
+                [1.0, -2.0],
+                [2.0, 0.0],
+                [-1.0, 1.0],
+                [0.5, 3.0],
+            ]
+        )
+        prepared = la.prepare(
+            problem,
+            la.LinearSolvePolicy(
+                method,
+                differentiation=la.DifferentiationPolicy("none"),
+                tolerance=la.TolerancePolicy(
+                    relative=1e-10, absolute=1e-12, max_steps=20
+                ),
+            ),
+            rhs_layout=la.RHSLayout((2,)),
+        )
+        result = la.solve(
+            prepared,
+            rhs,
+            iteration=phx.execution.IterationPlan(
+                granularity="inner-iteration",
+                observers=(phx.execution.IterationTraceObserver(20),),
+            ),
+        )
+
+        assert jnp.all(result.successful)
+        assert result.iteration_evidence is not None
+        trace = result.iteration_evidence.observer_outputs[0]
+        assert int(trace.stored_count) > 0
+        assert trace.records.metrics.residual_norm.shape[1:] == (2,)
 
 
 def test_scalar_multi_rhs_remains_a_distinct_pseudo_block_path() -> None:
@@ -332,33 +334,31 @@ def test_planned_layout_is_authoritative_for_one_shot_and_transformed_solves() -
         )
 
 
-@pytest.mark.parametrize("method", [la.BlockGMRES(restart=3), la.BlockCG()])
-@pytest.mark.parametrize("scale", [1e-20, 1e20])
-def test_block_rank_deflation_is_invariant_under_nonzero_scaling(
-    method: Any, scale: Any
-) -> None:
-    matrix, problem = _block_problem()
-    rhs = scale * jnp.eye(4)[:, :2]
-    policy = la.LinearSolvePolicy(
-        method,
-        differentiation=la.DifferentiationPolicy("none"),
-        tolerance=la.TolerancePolicy(relative=1e-10, absolute=0.0, max_steps=20),
-    )
-    result = la.solve(
-        problem,
-        rhs,
-        policy=policy,
-        rhs_layout=la.RHSLayout((2,)),
-    )
+def test_block_rank_deflation_is_invariant_under_nonzero_scaling() -> None:
+    for method in [la.BlockGMRES(restart=3), la.BlockCG()]:
+        for scale in [1e-20, 1e20]:
+            matrix, problem = _block_problem()
+            rhs = scale * jnp.eye(4)[:, :2]
+            policy = la.LinearSolvePolicy(
+                method,
+                differentiation=la.DifferentiationPolicy("none"),
+                tolerance=la.TolerancePolicy(relative=1e-10, absolute=0.0, max_steps=20),
+            )
+            result = la.solve(
+                problem,
+                rhs,
+                policy=policy,
+                rhs_layout=la.RHSLayout((2,)),
+            )
 
-    assert jnp.all(result.successful)
-    assert jnp.all(result.diagnostics.effective_block_rank == 2)
-    assert jnp.allclose(
-        result.value,
-        jnp.linalg.solve(matrix, rhs),
-        rtol=1e-8,
-        atol=1e-30 if scale < 1.0 else 1e5,
-    )
+            assert jnp.all(result.successful)
+            assert jnp.all(result.diagnostics.effective_block_rank == 2)
+            assert jnp.allclose(
+                result.value,
+                jnp.linalg.solve(matrix, rhs),
+                rtol=1e-8,
+                atol=1e-30 if scale < 1.0 else 1e5,
+            )
 
 
 def test_block_breakdown_reports_executed_iterations_and_empty_system_succeeds() -> None:
@@ -480,73 +480,73 @@ def test_recycled_state_is_fixed_capacity_jittable_and_explicitly_rebuildable() 
     assert jnp.all(rebuilt.image_basis == 0)
 
 
-@pytest.mark.parametrize("method", [la.BlockGMRES(restart=2), la.BlockCG()])
-def test_true_block_orthogonalization_respects_declared_pairing(method: Any) -> None:
-    space = la.ArraySpace(
-        (2,),
-        dtype=jnp.float64,
-        pairing=la.DiagonalPairing(jnp.asarray([1e-4, 1e4])),
-    )
-    matrix = jnp.diag(jnp.asarray([2.0, 5.0]))
-    operator = la.DenseLinearOperator(
-        matrix,
-        source=space,
-        target=space,
-        properties=_positive_definite_properties(),
-    )
-    rhs = jnp.asarray([[1.0, 1.0], [1.0, -1.0]])
-    result = la.solve(
-        la.LinearSystem(operator),
-        rhs,
-        policy=la.LinearSolvePolicy(
-            method,
-            differentiation=la.DifferentiationPolicy("none"),
-            tolerance=la.TolerancePolicy(
-                relative=1e-12,
-                absolute=0.0,
-                max_steps=4,
+def test_true_block_orthogonalization_respects_declared_pairing() -> None:
+    for method in [la.BlockGMRES(restart=2), la.BlockCG()]:
+        space = la.ArraySpace(
+            (2,),
+            dtype=jnp.float64,
+            pairing=la.DiagonalPairing(jnp.asarray([1e-4, 1e4])),
+        )
+        matrix = jnp.diag(jnp.asarray([2.0, 5.0]))
+        operator = la.DenseLinearOperator(
+            matrix,
+            source=space,
+            target=space,
+            properties=_positive_definite_properties(),
+        )
+        rhs = jnp.asarray([[1.0, 1.0], [1.0, -1.0]])
+        result = la.solve(
+            la.LinearSystem(operator),
+            rhs,
+            policy=la.LinearSolvePolicy(
+                method,
+                differentiation=la.DifferentiationPolicy("none"),
+                tolerance=la.TolerancePolicy(
+                    relative=1e-12,
+                    absolute=0.0,
+                    max_steps=4,
+                ),
             ),
-        ),
-        rhs_layout=la.RHSLayout((2,)),
-    )
+            rhs_layout=la.RHSLayout((2,)),
+        )
 
-    assert jnp.all(result.successful)
-    assert jnp.all(result.diagnostics.effective_block_rank == 2)
-    assert jnp.allclose(
-        result.value,
-        jnp.linalg.solve(matrix, rhs),
-        rtol=1e-9,
-        atol=1e-10,
-    )
+        assert jnp.all(result.successful)
+        assert jnp.all(result.diagnostics.effective_block_rank == 2)
+        assert jnp.allclose(
+            result.value,
+            jnp.linalg.solve(matrix, rhs),
+            rtol=1e-9,
+            atol=1e-10,
+        )
 
 
-@pytest.mark.parametrize("method", [la.BlockGMRES(restart=3), la.BlockCG()])
-def test_true_block_rank_is_invariant_to_independent_rhs_column_scales(
-    method: Any,
-) -> None:
-    matrix, problem = _block_problem()
-    scales = jnp.asarray([1e-20, 1e20])
-    rhs = jnp.eye(4)[:, :2] * scales[None, :]
-    result = la.solve(
-        problem,
-        rhs,
-        policy=la.LinearSolvePolicy(
-            method,
-            differentiation=la.DifferentiationPolicy("none"),
-            tolerance=la.TolerancePolicy(
-                relative=1e-10,
-                absolute=0.0,
-                max_steps=20,
+def test_true_block_rank_is_invariant_to_independent_rhs_column_scales() -> None:
+    for method in [la.BlockGMRES(restart=3), la.BlockCG()]:
+        matrix, problem = _block_problem()
+        scales = jnp.asarray([1e-20, 1e20])
+        rhs = jnp.eye(4)[:, :2] * scales[None, :]
+        result = la.solve(
+            problem,
+            rhs,
+            policy=la.LinearSolvePolicy(
+                method,
+                differentiation=la.DifferentiationPolicy("none"),
+                tolerance=la.TolerancePolicy(
+                    relative=1e-10,
+                    absolute=0.0,
+                    max_steps=20,
+                ),
             ),
-        ),
-        rhs_layout=la.RHSLayout((2,)),
-    )
-    expected = jnp.linalg.solve(matrix, rhs)
-    relative_errors = jnp.linalg.norm(result.value - expected, axis=0) / jnp.linalg.norm(
-        expected,
-        axis=0,
-    )
+            rhs_layout=la.RHSLayout((2,)),
+        )
+        expected = jnp.linalg.solve(matrix, rhs)
+        relative_errors = jnp.linalg.norm(
+            result.value - expected, axis=0
+        ) / jnp.linalg.norm(
+            expected,
+            axis=0,
+        )
 
-    assert jnp.all(result.successful)
-    assert jnp.all(result.diagnostics.effective_block_rank == 2)
-    assert jnp.all(relative_errors < 1e-8)
+        assert jnp.all(result.successful)
+        assert jnp.all(result.diagnostics.effective_block_rank == 2)
+        assert jnp.all(relative_errors < 1e-8)

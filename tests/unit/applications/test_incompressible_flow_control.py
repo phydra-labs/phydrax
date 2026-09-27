@@ -77,7 +77,7 @@ def _all_dynamic_leaves_equal(left: Any, right: Any) -> Any:
     )
 
 
-def test_ssprk_exact_discrete_poiseuille_bulk_target() -> None:
+def test_incompressible_flow_control_scenario_1() -> None:
     discretization, _, dynamics = _channel()
     viscosity = 0.1
     acceleration = 0.2
@@ -106,9 +106,6 @@ def test_ssprk_exact_discrete_poiseuille_bulk_target() -> None:
         result.diagnostics.achieved, jnp.asarray((exact_discrete_bulk,)), atol=1.0e-9
     )
     assert result.diagnostics.resources.stage_map_evaluations == 3
-
-
-def test_prescribed_gradient_matches_compiler_forcing() -> None:
     discretization, operators, momentum, dynamics, initial = _periodic()
     gradient = jnp.asarray((-0.3, 0.0))
     forcing = MACConstantPressureGradientForcing(operators, gradient, density=1.0)
@@ -135,9 +132,23 @@ def test_prescribed_gradient_matches_compiler_forcing() -> None:
         result.state.state, direct_step.accepted_state, atol=1.0e-10
     )
     np.testing.assert_allclose(result.diagnostics.control, gradient, atol=0.0)
+    _, _, _, dynamics, initial = _periodic()
+    target = MACFlowControlTarget.prescribed_pressure_gradient(
+        lambda time: jnp.asarray((-time,)),
+        axes=(0,),
+        schedule_id="linear-pressure-gradient-stage-schedule",
+    )
+    prepared = MACFlowControlPlan(
+        phx.solver.SSPRK33FixedStepMethod(dynamics),
+        target,
+        projection_tolerance=1.0e-9,
+    ).prepare()
 
+    result = prepared.step(prepared.initialize(0.0, initial), step_size=0.1)
 
-def test_multi_axis_response_and_frozen_density_mass_flux() -> None:
+    assert result.successful
+    np.testing.assert_allclose(result.diagnostics.control, (-0.1,), atol=1.0e-12)
+    np.testing.assert_allclose(result.diagnostics.observed_flux, (0.005,), atol=1.0e-10)
     discretization, _, _, dynamics, initial = _periodic()
     method = phx.solver.SSPRK33FixedStepMethod(dynamics)
     bulk = MACFlowControlPlan(
@@ -189,7 +200,7 @@ def test_multi_axis_response_and_frozen_density_mass_flux() -> None:
         )
 
 
-def test_singular_wall_normal_response_fails_and_rolls_back_for_retry() -> None:
+def test_incompressible_flow_control_scenario_2() -> None:
     discretization, _, dynamics = _channel(count=4)
     initial = dynamics.project_state(
         tuple(jnp.zeros(layout.shape) for layout in discretization.face_layouts)
@@ -209,9 +220,6 @@ def test_singular_wall_normal_response_fails_and_rolls_back_for_retry() -> None:
     assert _all_dynamic_leaves_equal(failed.state, state)
     assert not retried.successful
     assert _all_dynamic_leaves_equal(retried.state, state)
-
-
-def test_imex_euler_constant_density_bulk_control_executes_full_stage_map() -> None:
     _, _, _, dynamics, initial = _periodic()
     prepared = MACFlowControlPlan(
         phx.solver.MACIMEXEulerMethod(
@@ -230,9 +238,6 @@ def test_imex_euler_constant_density_bulk_control_executes_full_stage_map() -> N
     np.testing.assert_allclose(
         result.diagnostics.response_matrix, ((-0.02 / 1.5,),), atol=1.0e-10
     )
-
-
-def test_sbdf2_startup_restart_preserves_complete_control_history() -> None:
     _, _, _, dynamics, initial = _periodic()
     prepared = MACFlowControlPlan(
         phx.solver.MACSBDF2Method(
@@ -258,26 +263,6 @@ def test_sbdf2_startup_restart_preserves_complete_control_history() -> None:
     assert restarted.successful
     assert uninterrupted.state.accepted_steps == 2
     assert _all_dynamic_leaves_equal(uninterrupted.state, restarted.state)
-
-
-def test_prescribed_gradient_schedule_is_evaluated_at_ssprk_stages() -> None:
-    _, _, _, dynamics, initial = _periodic()
-    target = MACFlowControlTarget.prescribed_pressure_gradient(
-        lambda time: jnp.asarray((-time,)),
-        axes=(0,),
-        schedule_id="linear-pressure-gradient-stage-schedule",
-    )
-    prepared = MACFlowControlPlan(
-        phx.solver.SSPRK33FixedStepMethod(dynamics),
-        target,
-        projection_tolerance=1.0e-9,
-    ).prepare()
-
-    result = prepared.step(prepared.initialize(0.0, initial), step_size=0.1)
-
-    assert result.successful
-    np.testing.assert_allclose(result.diagnostics.control, (-0.1,), atol=1.0e-12)
-    np.testing.assert_allclose(result.diagnostics.observed_flux, (0.005,), atol=1.0e-10)
 
 
 def test_target_schedule_control_and_prepared_identities_change() -> None:

@@ -43,7 +43,7 @@ def _model() -> Any:
     )
 
 
-def test_ideal_mixture_helmholtz_derives_consistent_caloric_state() -> None:
+def test_homogeneous_thermodynamics_scenario_1() -> None:
     model = _model()
     temperature = jnp.asarray(700.0)
     density = jnp.asarray(3.0)
@@ -66,9 +66,6 @@ def test_ideal_mixture_helmholtz_derives_consistent_caloric_state() -> None:
     np.testing.assert_allclose(chemical.log_fugacity_coefficient, 0.0, atol=1e-10)
     assert bool(state.evidence.successful)
     assert bool(chemical.successful)
-
-
-def test_density_energy_round_trip_is_batched_and_jittable() -> None:
     model = _model()
     species_density = jnp.asarray(((0.2, 0.8), (0.1, 0.5)))
     temperature = jnp.asarray((500.0, 1200.0))
@@ -81,9 +78,6 @@ def test_density_energy_round_trip_is_batched_and_jittable() -> None:
     np.testing.assert_allclose(solved.state.temperature, temperature, rtol=1e-10)
     np.testing.assert_allclose(solved.energy_residual, 0.0, atol=1e-6)
     np.testing.assert_array_equal(solved.successful, (True, True))
-
-
-def test_thermodynamic_validity_is_per_batch_entry() -> None:
     model = _model()
     state = model.evaluate(
         jnp.asarray((500.0, 5000.0)),
@@ -94,7 +88,7 @@ def test_thermodynamic_validity_is_per_batch_entry() -> None:
     np.testing.assert_array_equal(state.evidence.successful, (True, False))
 
 
-def test_component_catalog_supports_repeated_phase_occurrences() -> None:
+def test_homogeneous_thermodynamics_scenario_2() -> None:
     catalog = phx.equations.ChemicalComponentCatalog(
         ("water",),
         jnp.asarray((0.01801528,)),
@@ -125,9 +119,6 @@ def test_component_catalog_supports_repeated_phase_occurrences() -> None:
     np.testing.assert_allclose(schema.component_amount(jnp.asarray((1.0, 2.0, 3.0))), 6.0)
     assert schema.phase_count == 3
     assert schema.phase_slot_species_indices(2) == (2,)
-
-
-def test_homogeneous_mixture_euler_round_trip_flux_and_reflection() -> None:
     model = _model()
     system = phx.equations.HomogeneousMixtureEulerSystem(model, 2)
     primitive = jnp.asarray((0.2, 0.8, 3.0, -1.0, 900.0))

@@ -75,7 +75,7 @@ def _hierarchy_frame(*, time: Any, scale_factor: Any, snapshot: Any) -> Any:
     )
 
 
-def test_multigroup_m1_physical_c_redshift_exchange_reflux_and_gravity() -> None:
+def test_dark_radiation_moments_scenario_1() -> None:
     system = CosmologicalMultigroupM1System(
         jnp.asarray((1.0, 2.0, 4.0)),
         3,
@@ -138,9 +138,6 @@ def test_multigroup_m1_physical_c_redshift_exchange_reflux_and_gravity() -> None
     assert bool(projection.all_active_valid)
     assert projection.topology_id == "test-grid"
     assert projection.snapshot_token == 11
-
-
-def test_m1_realizability_repair_is_explicit_and_beam_risk_refuses() -> None:
     system = CosmologicalMultigroupM1System(
         jnp.asarray((1.0, 2.0)), physical_light_speed=1.0
     )
@@ -155,9 +152,6 @@ def test_m1_realizability_repair_is_explicit_and_beam_risk_refuses() -> None:
     assert bool(qualification.beam_risk)
     assert not bool(qualification.accepted)
     assert "crossing-beam" in qualification.refusal_reason
-
-
-def test_boltzmann_hierarchy_free_streaming_tight_coupling_and_line_of_sight() -> None:
     frame0 = _hierarchy_frame(time=0.0, scale_factor=1.0, snapshot=1)
     frame1 = _hierarchy_frame(time=0.01, scale_factor=1.001, snapshot=2)
     plan = DarkRadiationBoltzmannHierarchyPlan(

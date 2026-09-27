@@ -104,9 +104,7 @@ def _event(source: Any, nominal: Any, shape: Any) -> Any:
     )
 
 
-def test_exclusive_matching_bins_are_disjoint_with_inclusive_highest_multiplicity() -> (
-    None
-):
+def test_matching_runtime_scenario_1() -> None:
     assignment = assign_exclusive_matching_bins(
         jnp.asarray(
             ((30.0, 0.0, 0.0), (30.0, 20.0, 0.0), (30.0, 20.0, 15.0), (5.0, 0.0, 0.0))
@@ -125,11 +123,6 @@ def test_exclusive_matching_bins_are_disjoint_with_inclusive_highest_multiplicit
     np.testing.assert_array_equal(assignment.multiplicity, jnp.asarray((1, 2, 2, 0)))
     assert jnp.all(assignment.accepted)
     np.testing.assert_array_equal(assignment.resolved_count, jnp.asarray((1, 2, 3, 0)))
-
-
-def test_provider_record_preserves_signed_named_weights_normalization_and_revision_provenance() -> (
-    None
-):
     binding, normalization, revision = _provider_contracts()
     input_event = _event("hard-source", -2.0, -1.8)
     output_event = _event("shower-source", -2.0, -1.9)
@@ -159,9 +152,6 @@ def test_provider_record_preserves_signed_named_weights_normalization_and_revisi
     np.testing.assert_allclose(record.input_weights.values, ((-2.0, -1.8),))
     np.testing.assert_allclose(record.output_weights.values, ((-2.0, -1.9),))
     assert record.normalization.sum_weights == -2.0
-
-
-def test_provider_capability_mismatch_is_explicit_not_silently_accepted() -> None:
     binding, normalization, revision = _provider_contracts()
     record = record_provider_execution(
         binding,

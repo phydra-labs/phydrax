@@ -10,7 +10,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_affine_pullback_matches_manual_standardized_covariance() -> None:
+def test_transforms_scenario_1() -> None:
     coordinate = jnp.linspace(-2.0, 2.0, 12)
     points = jnp.stack((coordinate, 0.5 * coordinate**2), axis=1)
     transform = phx.kernels.AffineInputTransform.from_points(points)
@@ -30,9 +30,6 @@ def test_affine_pullback_matches_manual_standardized_covariance() -> None:
     )
     assert kernel.max_derivative_order == 2
     assert kernel.is_unit_diagonal
-
-
-def test_deep_kernel_features_remain_dynamic_differentiable_pytree_leaves() -> None:
     points = jnp.stack(
         (jnp.linspace(-1.0, 1.0, 10), jnp.linspace(0.0, 2.0, 10)),
         axis=1,

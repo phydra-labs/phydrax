@@ -52,7 +52,7 @@ def _submitted_order(instrument: Any) -> Any:
     )
 
 
-def test_submit_partial_fill_cancel_conserves_cash_inventory_and_replays() -> None:
+def test_semantics_scenario_1() -> None:
     usd, instrument = _instrument()
     ledger = ExecutionLedger(ExecutionInventory(instrument, usd))
     order = _submitted_order(instrument)
@@ -114,9 +114,6 @@ def test_submit_partial_fill_cancel_conserves_cash_inventory_and_replays() -> No
     assert replay.cash_residual == 0.0
     assert replay.inventory_residual == 0.0
     assert replay.pnl_residual == 0.0
-
-
-def test_duplicate_overfill_cancel_and_ambiguous_ordering_fail() -> None:
     usd, instrument = _instrument()
     ledger = ExecutionLedger(ExecutionInventory(instrument, usd))
     order = _submitted_order(instrument)

@@ -154,9 +154,7 @@ def _hdf5_result() -> Any:
     return result, payload, reference, profile
 
 
-def test_openxraymc_hdf5_preserves_profile_rights_losses_and_correlated_evidence() -> (
-    None
-):
+def test_external_radiation_scores_scenario_1() -> None:
     result, payload, reference, profile = _hdf5_result()
     assert result.profile_id == profile.profile_id
     assert (
@@ -176,9 +174,6 @@ def test_openxraymc_hdf5_preserves_profile_rights_losses_and_correlated_evidence
     damaged = payload[:-1] + bytes((payload[-1] ^ 1,))
     with pytest.raises(ValueError, match="checksum mismatch"):
         _openxraymc.import_openxraymc_hdf5(_resource(damaged), reference, profile)
-
-
-def test_openxraymc_hdf5_preflights_logical_shape_before_reading_payload() -> None:
     _, _, _, profile = _hdf5_result()
     stream = BytesIO()
     with h5py.File(stream, "w") as handle:
@@ -196,9 +191,6 @@ def test_openxraymc_hdf5_preflights_logical_shape_before_reading_payload() -> No
     reference = _manifest(payload, "logical-hdf5-score")
     with pytest.raises(ValueError, match="shape differs"):
         _openxraymc.import_openxraymc_hdf5(_resource(payload), reference, profile)
-
-
-def test_radiation_score_definition_distinguishes_physical_meanings_and_dij() -> None:
     definitions = (
         _score(RadiationQuantityKind.ABSORBED_DOSE),
         _score(RadiationQuantityKind.KERMA),
@@ -233,9 +225,6 @@ def test_radiation_score_definition_distinguishes_physical_meanings_and_dij() ->
             axes=("x", "y", "z", "beamlet"),
             representation="dij",
         )
-
-
-def test_moqui_npz_checks_exact_members_affine_and_semantic_requirements() -> None:
     values = np.asarray([3.0, 4.0], dtype="<f4").reshape((2, 1, 1))
     uncertainty = np.asarray([0.3, 0.4], dtype="<f4").reshape((2, 1, 1))
     stream = BytesIO()
@@ -281,9 +270,6 @@ def test_moqui_npz_checks_exact_members_affine_and_semantic_requirements() -> No
             _manifest(bad_payload, "moqui-bad-affine"),
             profile,
         )
-
-
-def test_moqui_embedded_mha_validates_geometry_and_refuses_absent_uncertainty() -> None:
     header = (
         "ObjectType = Image\n"
         "NDims = 3\n"
@@ -325,7 +311,7 @@ def test_moqui_embedded_mha_validates_geometry_and_refuses_absent_uncertainty() 
         )
 
 
-def test_mcgpu_raw_binds_configuration_identity_dij_and_declared_losses() -> None:
+def test_external_radiation_scores_scenario_2() -> None:
     config = b"ENGINE = MCGPU\nSCORE = DOSE_INFLUENCE\n"
     run = _run("MCGPU", "1.3", config_payload=config)
     score = _score(
@@ -378,9 +364,6 @@ def test_mcgpu_raw_binds_configuration_identity_dij_and_declared_losses() -> Non
             wrong_config,
             profile,
         )
-
-
-def test_qualification_is_research_only_and_profiles_expose_no_execution_api() -> None:
     result, _, _, _ = _hdf5_result()
     qualification = external_radiation_score_qualification((result,))
     assert qualification["successful"]

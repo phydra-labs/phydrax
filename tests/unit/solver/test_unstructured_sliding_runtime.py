@@ -51,7 +51,7 @@ def _artifacts(epoch: Any) -> Any:
     )
 
 
-def test_stationary_sliding_parity_and_coverage_evidence() -> None:
+def test_unstructured_sliding_runtime_scenario_1() -> None:
     plan = _plan()
     coupling = plan.coupling(0.0)
     values = jnp.asarray([[1.0], [3.0]])
@@ -60,9 +60,6 @@ def test_stationary_sliding_parity_and_coverage_evidence() -> None:
     assert float(coupling.coverage_error) <= plan.coverage_tolerance
     assert coupling.shift_precision == plan.shift_precision
     assert coupling.evidence_id
-
-
-def test_moving_shift_changes_routes_only_at_boundary() -> None:
     plan = _plan()
     stationary = plan.coupling(0.0)
     moved = plan.coupling(0.25)
@@ -72,9 +69,6 @@ def test_moving_shift_changes_routes_only_at_boundary() -> None:
     assert np.array_equal(
         np.asarray(stationary.left_measures), np.asarray(moved.left_measures)
     )
-
-
-def test_deterministic_shift_equivalence_and_precision_identity() -> None:
     plan = _plan(shift_precision=12)
     first = plan.coupling(0.25)
     equivalent = plan.coupling(1.25)
@@ -83,29 +77,12 @@ def test_deterministic_shift_equivalence_and_precision_identity() -> None:
     assert plan.plan_id != _plan(shift_precision=11).plan_id
 
 
-def test_equal_opposite_integrated_seam_flux_is_conservative() -> None:
+def test_unstructured_sliding_runtime_scenario_2() -> None:
     coupling = _plan().coupling(0.125)
     density = jnp.asarray([[2.0], [4.0]])
     left, right = coupling.integrated_seam_flux(density, 0.2)
     assert np.allclose(np.sum(left, axis=0) + np.sum(right, axis=0), 0.0)
     assert np.allclose(coupling.flux_conservation_defect(density * 0.2, right), 0.0)
-
-
-def test_fixed_stage_path_is_jittable_and_map_is_frozen() -> None:
-    coupling = _plan().coupling(0.125)
-    values = jnp.asarray([[2.0], [4.0]])
-
-    @jax.jit
-    def apply_map(state: Any) -> Any:
-        return coupling.interpolate_left_to_right(state)
-
-    first = apply_map(values)
-    second = apply_map(values)
-    assert np.array_equal(np.asarray(first), np.asarray(second))
-    assert coupling.normalized_shift == pytest.approx(0.125)
-
-
-def test_accepted_step_scheduler_creates_one_successor_event() -> None:
     initial = _epoch("initial")
     successor = _epoch("successor", index=1)
     successor_artifacts = _artifacts(successor)
@@ -144,9 +121,40 @@ def test_accepted_step_scheduler_creates_one_successor_event() -> None:
     assert result.events[0].accepted_step == 1
     assert result.events[0].payload_id == "coupling-evidence"
     assert result.journal.current_epoch_id == successor.epoch_id
+    system, discretization, _, _, runtime = _moving_sliding_runtime()
+    initial = runtime.initialize_state(
+        _nonuniform_state(system, discretization),
+        0.0,
+        2.0e-4,
+    )
+    first = runtime.advance(initial, {"sliding_shift": 0.2})
 
+    assert bool(np.asarray(first.accepted))
+    assert first.successor_runtime is not None
+    successor = first.successor_runtime
+    assert successor.sliding_initial_coupling is not None
+    assert successor.sliding_initial_coupling.normalized_shift == pytest.approx(0.2)
+    assert (
+        successor.sliding_initial_coupling.coupling_id
+        == first.runtime_state.sliding_coupling_id
+    )
+    assert (
+        first.runtime_state.content_state.topology_epoch_id
+        == first.runtime_state.topology_journal.current_epoch_id
+        == successor.topology_epoch_id
+    )
+    with pytest.raises(ValueError, match="successor runtime|journal"):
+        runtime.advance(first.runtime_state, {"sliding_shift": 0.2})
 
-def test_failed_coverage_transaction_rolls_back_without_successor() -> None:
+    second = successor.advance(first.runtime_state, {"sliding_shift": 0.2})
+    assert bool(np.asarray(second.accepted))
+    first_block = first.accepted_flux_integrals.blocks[-1]
+    second_block = second.accepted_flux_integrals.blocks[-1]
+    first_budget = _overset_budget(first_block, discretization.cell_count)
+    second_budget = _overset_budget(second_block, discretization.cell_count)
+    assert not np.allclose(first_budget, second_budget)
+    np.testing.assert_allclose(first_budget.sum(axis=0), 0.0, atol=1.0e-12)
+    np.testing.assert_allclose(second_budget.sum(axis=0), 0.0, atol=1.0e-12)
     initial = _epoch("initial")
     successor = _epoch("successor", index=1)
     successor_artifacts = _artifacts(successor)
@@ -187,16 +195,27 @@ def test_failed_coverage_transaction_rolls_back_without_successor() -> None:
     assert result.statuses == (TopologyEventStatus.FAILED_COVERAGE,)
 
 
-def test_restart_replay_preserves_shift_and_event_identity() -> None:
+def test_fixed_stage_path_is_jittable_and_map_is_frozen() -> None:
+    coupling = _plan().coupling(0.125)
+    values = jnp.asarray([[2.0], [4.0]])
+
+    @jax.jit
+    def apply_map(state: Any) -> Any:
+        return coupling.interpolate_left_to_right(state)
+
+    first = apply_map(values)
+    second = apply_map(values)
+    assert np.array_equal(np.asarray(first), np.asarray(second))
+    assert coupling.normalized_shift == pytest.approx(0.125)
+
+
+def test_unstructured_sliding_runtime_scenario_3() -> None:
     plan = _plan(shift_precision=13)
     coupling = plan.coupling(-0.375)
     replay = plan.coupling(coupling.normalized_shift)
     assert coupling.coupling_id == replay.coupling_id
     assert coupling.evidence_id == replay.evidence_id
     assert coupling.shift_precision == 13
-
-
-def test_rejected_step_cannot_enqueue_sliding_event() -> None:
     initial = _epoch("initial")
     scheduler = FiniteVolumeTopologyEventScheduler(
         FiniteVolumeTopologyEventJournal.allocate(
@@ -211,9 +230,6 @@ def test_rejected_step_cannot_enqueue_sliding_event() -> None:
     with pytest.raises(ValueError, match="accepted-step"):
         scheduler.submit(request, 0, 0.0, accepted=False)
     assert scheduler.pending_requests == ()
-
-
-def test_stale_sliding_request_is_rejected_before_artifact_use() -> None:
     initial = _epoch("initial")
     stale = _epoch("stale")
     scheduler = FiniteVolumeTopologyEventScheduler(
@@ -496,43 +512,6 @@ def test_moved_overset_correction_uses_stage_faces_and_grid_velocity() -> None:
     assert bool(np.asarray(jnp.any(jnp.abs(gradient) > 0.0)))
     correction = result.ale.stage_rate_ledgers[1].blocks[-1]
     assert correction.block_kind == "overset-correction"
-
-
-def test_accepted_shift_changes_overset_ledger_and_successor_runtime() -> None:
-    system, discretization, _, _, runtime = _moving_sliding_runtime()
-    initial = runtime.initialize_state(
-        _nonuniform_state(system, discretization),
-        0.0,
-        2.0e-4,
-    )
-    first = runtime.advance(initial, {"sliding_shift": 0.2})
-
-    assert bool(np.asarray(first.accepted))
-    assert first.successor_runtime is not None
-    successor = first.successor_runtime
-    assert successor.sliding_initial_coupling is not None
-    assert successor.sliding_initial_coupling.normalized_shift == pytest.approx(0.2)
-    assert (
-        successor.sliding_initial_coupling.coupling_id
-        == first.runtime_state.sliding_coupling_id
-    )
-    assert (
-        first.runtime_state.content_state.topology_epoch_id
-        == first.runtime_state.topology_journal.current_epoch_id
-        == successor.topology_epoch_id
-    )
-    with pytest.raises(ValueError, match="successor runtime|journal"):
-        runtime.advance(first.runtime_state, {"sliding_shift": 0.2})
-
-    second = successor.advance(first.runtime_state, {"sliding_shift": 0.2})
-    assert bool(np.asarray(second.accepted))
-    first_block = first.accepted_flux_integrals.blocks[-1]
-    second_block = second.accepted_flux_integrals.blocks[-1]
-    first_budget = _overset_budget(first_block, discretization.cell_count)
-    second_budget = _overset_budget(second_block, discretization.cell_count)
-    assert not np.allclose(first_budget, second_budget)
-    np.testing.assert_allclose(first_budget.sum(axis=0), 0.0, atol=1.0e-12)
-    np.testing.assert_allclose(second_budget.sum(axis=0), 0.0, atol=1.0e-12)
 
 
 def test_sliding_map_is_frozen_across_ale_retries() -> None:

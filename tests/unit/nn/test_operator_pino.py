@@ -47,7 +47,7 @@ def _batch(resolution: Any) -> Any:
     )
 
 
-def test_operator_context_is_coordinate_aware_and_differentiable() -> None:
+def test_operator_pino_scenario_1() -> None:
     model = _QuadraticQueryOperator()
     context = phx.nn.operator.adapters.bind_operator_context(model, _batch(9))
     values = context(jnp.asarray([[-0.4], [0.2], [0.7]]))
@@ -58,9 +58,6 @@ def test_operator_context_is_coordinate_aware_and_differentiable() -> None:
     prediction = context.domain_function(domain, "x")
     second_derivative = phx.operators.laplacian(prediction, var="x")
     assert jnp.allclose(second_derivative.func(jnp.asarray([0.3])), 2.0)
-
-
-def test_native_differential_pino_residual_holds_across_resolutions() -> None:
     domain = phx.domain.Interval1d(-1.0, 1.0)
     model = _QuadraticQueryOperator()
     function = domain.Model("x")(model)

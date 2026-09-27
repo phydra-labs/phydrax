@@ -12,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_source_capabilities_and_property_requirements_are_explicit() -> None:
+def test_contract_fields_topology_scenario_1() -> None:
     source = phx.discretization.VortexSourceState(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0))),
         jnp.asarray((1.0, -1.0)),
@@ -36,9 +36,6 @@ def test_source_capabilities_and_property_requirements_are_explicit() -> None:
     assert capabilities.requires_core_radius
     assert not capabilities.requires_volume
     np.testing.assert_allclose(source.safe_strength(), (1.0, 0.0))
-
-
-def test_singular_and_rosenhead_cores_recover_orientation_and_finite_center() -> None:
     displacement = jnp.asarray(((1.0, 0.0),))
     singular = phx.operators.SingularVortexKernel2D().evaluate(
         displacement,
@@ -58,9 +55,6 @@ def test_singular_and_rosenhead_cores_recover_orientation_and_finite_center() ->
     np.testing.assert_allclose(rosenhead.velocity, 0.0)
     assert rosenhead.vorticity[0] > 0.0
     assert bool(singular.finite & rosenhead.finite)
-
-
-def test_periodic_ewald_requires_compatible_mean_and_is_odd_under_swap() -> None:
     plan = phx.operators.PeriodicVortexEwaldPlan(
         (1.0, 1.0),
         splitting_parameter=6.0,
@@ -87,7 +81,7 @@ def test_periodic_ewald_requires_compatible_mean_and_is_odd_under_swap() -> None
     assert bool(result.successful)
 
 
-def test_population_transactions_preserve_strength_and_fail_closed_on_capacity() -> None:
+def test_contract_fields_topology_scenario_2() -> None:
     plan = phx.discretization.VortexPopulationPlan(3, 2)
     state, journal = plan.initialize(
         jnp.zeros((3, 2)),
@@ -124,9 +118,6 @@ def test_population_transactions_preserve_strength_and_fail_closed_on_capacity()
         atol=1e-12,
     )
     assert int(third.evidence.duplicate_id_count) == 0
-
-
-def test_core_spreading_and_vrm_return_finite_conservative_rates() -> None:
     source = phx.discretization.VortexSourceState(
         jnp.asarray(((-0.4, 0.0), (0.0, 0.0), (0.4, 0.0))),
         jnp.asarray((0.2, 0.6, 0.2)),
@@ -150,9 +141,6 @@ def test_core_spreading_and_vrm_return_finite_conservative_rates() -> None:
         atol=1e-8,
     )
     assert bool(redistributed.successful)
-
-
-def test_fmm_has_real_hierarchy_and_matches_direct_small_cloud() -> None:
     position = jnp.asarray(((-0.6, -0.2), (-0.2, 0.3), (0.3, -0.4), (0.7, 0.2)))
     strength = jnp.asarray((0.5, -0.3, 0.8, -0.4))
     core = jnp.full((4,), 0.08)
@@ -194,9 +182,6 @@ def test_fmm_has_real_hierarchy_and_matches_direct_small_cloud() -> None:
     )
     assert fmm_result.diagnostics.backend_diagnostics.m2l_count >= 0
     assert bool(fmm_result.successful)
-
-
-def test_fmm_adaptive_lists_match_direct_on_clustered_sources() -> None:
     rng = np.random.default_rng(13)
     position = np.clip(
         np.concatenate(
@@ -259,7 +244,7 @@ def test_fmm_adaptive_lists_match_direct_on_clustered_sources() -> None:
     )
 
 
-def test_three_dimensional_fmm_matches_direct_vector_vorticity() -> None:
+def test_contract_fields_topology_scenario_3() -> None:
     position = jnp.asarray(
         (
             (-0.5, -0.2, 0.1),
@@ -315,9 +300,6 @@ def test_three_dimensional_fmm_matches_direct_vector_vorticity() -> None:
         atol=1e-3,
     )
     assert bool(fmm_result.successful)
-
-
-def test_plane_vortex_fmm_preserves_vector_kernel_and_route_evidence() -> None:
     source_position = jnp.asarray(
         (
             (-0.5, -0.2, 0.1),
@@ -379,9 +361,6 @@ def test_plane_vortex_fmm_preserves_vector_kernel_and_route_evidence() -> None:
     assert result.velocity_gradient is not None
     assert result.diagnostics.backend_diagnostics.execution == "plane_dual"
     assert bool(result.successful)
-
-
-def test_corrected_p3m_and_free_space_fft_are_finite_authorities() -> None:
     count = 12
     grid = phx.discretization.TensorGridPlan(
         tuple(

@@ -43,7 +43,7 @@ def _context(payload: Any, cell: Any, labels: Any, centers: Any, source: Any) ->
     return PeriodicSourceContext(basis, ELECTRONVOLT, provenance)
 
 
-def test_hr_public_spec_bytes_apply_degeneracy_exactly_once() -> None:
+def test_wannier90_scenario_1() -> None:
     payload = (
         "independent one-orbital chain\n1\n3\n2 1 2\n-1 0 0 1 1 -2.0 0.0\n0 0 0 1 1 -1.0 0.0\n1 0 0 1 1 -2.0 0.0\n"
     ).encode()
@@ -57,9 +57,6 @@ def test_hr_public_spec_bytes_apply_degeneracy_exactly_once() -> None:
     np.testing.assert_allclose(
         imported.raw_hamiltonian_blocks[:, 0, 0], [-2.0, -1.0, -2.0]
     )
-
-
-def test_hr_requires_complete_context_digest_reverse_and_capacity() -> None:
     payload = (
         "bad reverse\n1\n2\n1 1\n-1 0 0 1 1 -1.0 0.0\n1 0 0 1 1 -2.0 0.0\n"
     ).encode()
@@ -75,9 +72,6 @@ def test_hr_requires_complete_context_digest_reverse_and_capacity() -> None:
     altered = payload + b" "
     with pytest.raises(ValueError, match="digest"):
         read_wannier90_hr(altered, context)
-
-
-def test_mmn_public_spec_bytes_require_exact_connectivity_coverage() -> None:
     payload = (
         "independent one-band links\n"
         "1 2 2\n"
@@ -111,9 +105,6 @@ def test_mmn_public_spec_bytes_require_exact_connectivity_coverage() -> None:
     bundle = lower_wannier90_mmn(imported, manifold)
     np.testing.assert_allclose(bundle.raw_overlaps, imported.raw_overlaps)
     assert bundle.source_id.startswith("wannier90-mmn:")
-
-
-def test_mmn_rejects_missing_edge_and_cell_mismatch() -> None:
     payload = (
         "missing link\n1 2 2\n1 2 0 0 0\n1.0 0.0\n1 2 -1 0 0\n1.0 0.0\n2 1 1 0 0\n1.0 0.0\n"
     ).encode()

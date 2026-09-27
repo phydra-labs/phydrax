@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import itertools
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +21,11 @@ from phydrax._numerics import (
 )
 
 
-def _brute_indices(dimension: Any, level: Any, anisotropy: Any) -> Any:
+def _brute_indices(
+    dimension: int,
+    level: int,
+    anisotropy: tuple[float, ...],
+) -> set[tuple[int, ...]]:
     budget = level - 1
     maxima = tuple(int(budget // weight) for weight in anisotropy)
     return {
@@ -33,7 +36,9 @@ def _brute_indices(dimension: Any, level: Any, anisotropy: Any) -> Any:
     }
 
 
-def _brute_coefficients(indices: Any) -> Any:
+def _brute_coefficients(
+    indices: set[tuple[int, ...]],
+) -> dict[tuple[int, ...], int]:
     dimension = len(next(iter(indices)))
     coefficients = {}
     for index in indices:
@@ -47,33 +52,29 @@ def _brute_coefficients(indices: Any) -> Any:
     return coefficients
 
 
-@pytest.mark.parametrize(
-    ("dimension", "level", "anisotropy"),
-    [
+def test_smolyak_numerics_scenario_1() -> None:
+    cases = (
         (1, 5, (1.0,)),
         (2, 4, (1.0, 1.0)),
         (3, 4, (1.0, 2.0, 0.75)),
         (4, 3, (2.0, 1.0, 1.5, 0.5)),
-    ],
-)
-def test_sparse_indices_and_mobius_coefficients_match_brute_reference(
-    dimension: Any, level: Any, anisotropy: Any
-) -> None:
-    expected_indices = _brute_indices(dimension, level, anisotropy)
-    actual_indices = {
-        dense_index(index, dimension)
-        for index in weighted_total_degree_indices(dimension, level, anisotropy)
-    }
-    actual_coefficients = {
-        dense_index(term.index, dimension): term.coefficient
-        for term in smolyak_terms(dimension, level, anisotropy)
-    }
-
-    assert actual_indices == expected_indices
-    assert actual_coefficients == _brute_coefficients(expected_indices)
-
-
-def test_real_anisotropy_includes_threshold_boundary_and_is_axis_equivariant() -> None:
+    )
+    for dimension, level, anisotropy in cases:
+        expected_indices = _brute_indices(dimension, level, anisotropy)
+        actual_indices = {
+            dense_index(index, dimension)
+            for index in weighted_total_degree_indices(dimension, level, anisotropy)
+        }
+        actual_coefficients = {
+            dense_index(term.index, dimension): term.coefficient
+            for term in smolyak_terms(dimension, level, anisotropy)
+        }
+        assert actual_indices == expected_indices, (dimension, level, anisotropy)
+        assert actual_coefficients == _brute_coefficients(expected_indices), (
+            dimension,
+            level,
+            anisotropy,
+        )
     indices = {
         dense_index(index, 2) for index in weighted_total_degree_indices(2, 2, (0.1, 0.2))
     }
@@ -85,27 +86,26 @@ def test_real_anisotropy_includes_threshold_boundary_and_is_axis_equivariant() -
     assert (10, 0) in indices
     assert (0, 5) in indices
     assert indices == permuted
+    cases = (
+        (1.0,),
+        (1.0, 2.0, 3.0),
+        (0.0, 1.0),
+        (-1.0, 1.0),
+        (np.nan, 1.0),
+        (np.inf, 1.0),
+    )
+    for anisotropy in cases:
+        with pytest.raises(ValueError, match="anisotropy"):
+            weighted_total_degree_indices(2, 3, anisotropy)
 
 
-@pytest.mark.parametrize(
-    "anisotropy",
-    [(1.0,), (1.0, 2.0, 3.0), (0.0, 1.0), (-1.0, 1.0), (np.nan, 1.0), (np.inf, 1.0)],
-)
-def test_invalid_anisotropy_is_rejected(anisotropy: Any) -> None:
-    with pytest.raises(ValueError, match="anisotropy"):
-        weighted_total_degree_indices(2, 3, anisotropy)
-
-
-def test_high_dimensional_low_level_construction_is_sparse() -> None:
+def test_smolyak_numerics_scenario_2() -> None:
     indices = weighted_total_degree_indices(32, 3)
     terms = smolyak_terms(32, 3)
 
     assert len(indices) == 561
     assert len(terms) == 561
     assert max(len(index) for index in indices) == 2
-
-
-def test_clenshaw_curtis_has_one_point_base_and_structural_nested_ids() -> None:
     base = clenshaw_curtis_data(1)
     assert jnp.array_equal(base.nodes, jnp.asarray([0.0]))
     assert jnp.array_equal(base.weights, jnp.asarray([2.0]))
@@ -120,9 +120,6 @@ def test_clenshaw_curtis_has_one_point_base_and_structural_nested_ids() -> None:
     assert smolyak_axis_data("clenshaw-curtis", 0).node_ids[0] in set(
         smolyak_axis_data("clenshaw-curtis", 4).node_ids
     )
-
-
-def test_leja_sequence_is_nested_by_identity() -> None:
     previous = ()
     for level in range(8):
         current = smolyak_axis_data("leja", level)
@@ -148,7 +145,7 @@ def test_barycentric_derivatives_are_finite_and_exact_at_nodes() -> None:
     weights = jnp.asarray(data.barycentric_weights)
     values = nodes**4 - 2.0 * nodes**2 + nodes
 
-    def interpolated(x: Any) -> Any:
+    def interpolated(x: jax.Array) -> jax.Array:
         return barycentric_interpolate(x, nodes, weights, values)
 
     first = jax.vmap(jax.grad(interpolated))(nodes)

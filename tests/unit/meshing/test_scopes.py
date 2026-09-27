@@ -17,7 +17,7 @@ def _scope(ids: Any, *, revision: Any = "r1") -> Any:
     )
 
 
-def test_scope_set_algebra_is_exact_and_revision_bound() -> None:
+def test_scopes_scenario_1() -> None:
     first = _scope([1, 2, 3])
     second = _scope([3, 4])
 
@@ -28,9 +28,6 @@ def test_scope_set_algebra_is_exact_and_revision_bound() -> None:
         first.union(_scope([5], revision="r2"))
     with pytest.raises(ValueError, match="empty"):
         first.difference(first)
-
-
-def test_scope_from_selection_resolves_persistent_ids_not_storage_rows() -> None:
     entities = phx.discretization.EntitySet(
         "faces",
         2,
@@ -57,9 +54,6 @@ def test_scope_from_selection_resolves_persistent_ids_not_storage_rows() -> None
         phx.meshing.MeshingScope.from_selection(
             "mesh", "r1", entities, selection.difference(selection)
         )
-
-
-def test_scope_from_selection_rejects_foreign_entity_set() -> None:
     entities = phx.discretization.EntitySet(
         "faces", 2, np.asarray((10, 20), dtype=np.int64)
     )
@@ -70,30 +64,19 @@ def test_scope_from_selection_rejects_foreign_entity_set() -> None:
 
     with pytest.raises(ValueError, match="supplied entity set"):
         phx.meshing.MeshingScope.from_selection("mesh", "r1", entities, selection)
-
-
-@pytest.mark.parametrize(
-    ("mask", "active_mask"),
-    (
+    for mask, active_mask in (
         ((True,), (True,)),
         ((True, False), (True, False)),
-    ),
-)
-def test_scope_from_selection_rejects_incompatible_selection_masks(
-    mask: Any, active_mask: Any
-) -> None:
-    entities = phx.discretization.EntitySet(
-        "faces", 2, np.asarray((10, 20), dtype=np.int64)
-    )
-    selection = phx.discretization.EntitySelection(
-        entities.entity_set_id, np.asarray(mask), active_mask=np.asarray(active_mask)
-    )
+    ):
+        entities = phx.discretization.EntitySet(
+            "faces", 2, np.asarray((10, 20), dtype=np.int64)
+        )
+        selection = phx.discretization.EntitySelection(
+            entities.entity_set_id, np.asarray(mask), active_mask=np.asarray(active_mask)
+        )
 
-    with pytest.raises(ValueError, match="capacity and active mask"):
-        phx.meshing.MeshingScope.from_selection("mesh", "r1", entities, selection)
-
-
-def test_zones_are_exclusive_while_labels_may_overlap() -> None:
+        with pytest.raises(ValueError, match="capacity and active mask"):
+            phx.meshing.MeshingScope.from_selection("mesh", "r1", entities, selection)
     first = _scope([1, 2])
     second = _scope([2, 3])
     zones = (
@@ -108,9 +91,6 @@ def test_zones_are_exclusive_while_labels_may_overlap() -> None:
         phx.meshing.MeshLabel("observed", second),
     )
     assert phx.meshing.validate_mesh_labels(labels) == labels
-
-
-def test_region_zone_metadata_and_patch_adjacency_are_structured_identity() -> None:
     scope = _scope([1, 2])
     zone = phx.meshing.MeshZone(
         "fluid",

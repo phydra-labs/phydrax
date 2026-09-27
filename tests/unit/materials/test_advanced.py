@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_material_property_rve_and_transfer() -> None:
+def test_advanced_scenario_1() -> None:
     # ty: ignore[invalid-argument-type]
     table = phx.materials.TabulatedProperty((300.0, 400.0), (10.0, 20.0), "Pa")
     assert jnp.isclose(table.evaluate(350.0), 15.0)
@@ -13,9 +13,6 @@ def test_material_property_rve_and_transfer() -> None:
     matrix = jnp.asarray(((0.5, 0.5), (0.25, 0.75)))
     field = phx.materials.transfer_material_field(matrix, jnp.asarray((2.0, 4.0)))
     assert jnp.allclose(field, jnp.asarray((3.0, 3.5)))
-
-
-def test_qmom_two_node_reproduces_moments() -> None:
     nodes = jnp.asarray((1.0, 3.0))
     weights = jnp.asarray((2.0, 1.0))
     moments = jnp.asarray([jnp.sum(weights * nodes**k) for k in range(4)])
@@ -23,9 +20,6 @@ def test_qmom_two_node_reproduces_moments() -> None:
     assert bool(result.realizable)
     assert jnp.allclose(result.nodes, nodes)
     assert jnp.allclose(result.weights, weights)
-
-
-def test_conservative_spatial_transfer_preserves_phase_inventory() -> None:
     state = phx.materials.MaterialState(
         jnp.asarray((300.0, 500.0)),
         jnp.asarray((1.0e5, 2.0e5)),

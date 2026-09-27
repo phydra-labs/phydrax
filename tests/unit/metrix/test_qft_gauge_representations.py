@@ -12,7 +12,7 @@ from phydrax.metrix._gauge_representation import (
 )
 
 
-def test_u1_charge_and_fundamental_actions_are_exact_representations() -> None:
+def test_qft_gauge_representations_scenario_1() -> None:
     u1 = UnitaryGroup(1)
     charged = U1ChargeRepresentation(u1, -2)
     phase = jnp.asarray([[jnp.exp(0.3j)]])
@@ -28,9 +28,6 @@ def test_u1_charge_and_fundamental_actions_are_exact_representations() -> None:
         fundamental.apply(su2.compose(left, right), vector),
         fundamental.apply(left, fundamental.apply(right, vector)),
     )
-
-
-def test_adjoint_action_preserves_lie_bracket_and_generator_dimension() -> None:
     group = SpecialUnitaryGroup(3)
     adjoint = AdjointGaugeRepresentation(group)
     element = group.exp(

@@ -146,48 +146,45 @@ def _edge_metric_lengths(mesh: Any, tensor: Any, /) -> Any:
     return np.sqrt(np.sum((delta @ tensor) * delta, axis=1))
 
 
-@pytest.mark.parametrize(
-    ("tensor", "perturbation"),
-    [(np.eye(2) / 0.2**2, 0.0), (np.diag((1.0 / 0.5**2, 1.0 / 0.1**2)), 0.3)],
-    ids=["isotropic", "anisotropic"],
-)
-def test_device_metric_adaptation_reaches_a_certified_unit_mesh(
-    tensor: Any, perturbation: Any
-) -> None:
-    source = _source(perturbation=perturbation)
-    result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
+def test_device_metric_adaptation_reaches_a_certified_unit_mesh() -> None:
+    for tensor, perturbation in [
+        (np.eye(2) / 0.2**2, 0.0),
+        (np.diag((1.0 / 0.5**2, 1.0 / 0.1**2)), 0.3),
+    ]:
+        source = _source(perturbation=perturbation)
+        result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
 
-    assert result.route is MeshAdaptationRoute.DEVICE_METRIC_2D
-    assert result.status is MeshAdaptationStatus.COMPLETE
-    assert result.evidence.converged and result.evidence.unit_fraction == 1.0
-    assert result.evidence.splits > 0
-    result.target.audit.require_passed()
-    lengths = _edge_metric_lengths(result.target.mesh, tensor)
-    assert np.all((lengths >= _LOWER - 1.0e-12) & (lengths <= _UPPER + 1.0e-12))
-    areas = _signed_areas(result.target.mesh)
-    assert np.all(areas > 0.0)
-    assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
+        assert result.route is MeshAdaptationRoute.DEVICE_METRIC_2D
+        assert result.status is MeshAdaptationStatus.COMPLETE
+        assert result.evidence.converged and result.evidence.unit_fraction == 1.0
+        assert result.evidence.splits > 0
+        result.target.audit.require_passed()
+        lengths = _edge_metric_lengths(result.target.mesh, tensor)
+        assert np.all((lengths >= _LOWER - 1.0e-12) & (lengths <= _UPPER + 1.0e-12))
+        areas = _signed_areas(result.target.mesh)
+        assert np.all(areas > 0.0)
+        assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
 
-    def field(points: Any) -> Any:
-        return 2.0 + 3.0 * points[:, 0] - 1.5 * points[:, 1]
+        def field(points: Any) -> Any:
+            return 2.0 + 3.0 * points[:, 0] - 1.5 * points[:, 1]
 
-    target = result.target.mesh
-    values = result.stencil.apply(
-        np.asarray(source.mesh.vertex_global_ids),
-        field(np.asarray(source.mesh.coordinates)),
-    )
-    order = np.argsort(np.asarray(target.vertex_global_ids))
-    rows = order[
-        np.searchsorted(
-            np.asarray(target.vertex_global_ids)[order],
-            np.asarray(result.stencil.target_global_ids),
+        target = result.target.mesh
+        values = result.stencil.apply(
+            np.asarray(source.mesh.vertex_global_ids),
+            field(np.asarray(source.mesh.coordinates)),
         )
-    ]
-    expected = field(np.asarray(target.coordinates)[rows])
-    np.testing.assert_allclose(np.asarray(values), expected, rtol=0.0, atol=1.0e-13)
+        order = np.argsort(np.asarray(target.vertex_global_ids))
+        rows = order[
+            np.searchsorted(
+                np.asarray(target.vertex_global_ids)[order],
+                np.asarray(result.stencil.target_global_ids),
+            )
+        ]
+        expected = field(np.asarray(target.coordinates)[rows])
+        np.testing.assert_allclose(np.asarray(values), expected, rtol=0.0, atol=1.0e-13)
 
 
-def test_device_metric_adaptation_preserves_zones_and_patches() -> None:
+def test_device_metric_scenario_1() -> None:
     source = _source(organized=True)
     result = _adapt(source, MetricMeshAdaptation(_metric(source, np.eye(2) / 0.12**2)))
     mesh = result.target.mesh
@@ -208,9 +205,19 @@ def test_device_metric_adaptation_preserves_zones_and_patches() -> None:
     assert np.all(points[patch_edges][:, :, 1] == 0.0)
     patch_length = np.sum(np.abs(np.diff(points[patch_edges][:, :, 0], axis=1)))
     assert patch_length == pytest.approx(1.0, abs=1.0e-14)
+    source = _source(perturbation=0.3)
+    request = MetricMeshAdaptation(
+        _metric(source, np.diag((1.0 / 0.3**2, 1.0 / 0.12**2)))
+    )
 
+    first = _adapt(source, request)
+    second = _adapt(source, request)
+    prepared = prepare_device_metric_adaptation(source, request, policy=_policy())
+    update = adapt_device_metric(prepared.layout, prepared.state)
+    epoch = commit_device_metric_adaptation(prepared, update.state)
 
-def test_device_relocation_moves_vertices_without_topology_change() -> None:
+    assert first.result_id == second.result_id == epoch.result_id
+    assert first.target.mesh.mesh_id == second.target.mesh.mesh_id
     source = _source(6, perturbation=0.35)
     result = _adapt(
         source, RelocationMeshAdaptation(_metric(source, np.eye(2) / 0.17**2))
@@ -224,11 +231,36 @@ def test_device_relocation_moves_vertices_without_topology_change() -> None:
         np.asarray(result.target.mesh.coordinates), np.asarray(source.mesh.coordinates)
     )
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
+    source = _source()
+    request = MetricMeshAdaptation(_metric(source, np.eye(2) / 0.2**2))
+    tiny = AdaptiveSimplexPolicy(vertex_capacity=25, cell_capacity=32)
+    prepared = prepare_device_metric_adaptation(source, request, policy=_policy(tiny))
+    update = adapt_device_metric(prepared.layout, prepared.state)
+    report = jax.device_get(update.report)
+    capacity = AdaptiveSimplexStatus.CAPACITY_EXCEEDED
 
-
-def test_stalled_metric_request_without_operations_preserves_source_but_not_convergence() -> (
-    None
-):
+    assert AdaptiveSimplexStatus(int(report.status)) & capacity
+    assert report.failed
+    assert report.splits == report.collapses == report.flips == report.relocations == 0
+    assert AdaptiveSimplexStatus(int(update.state.status_flags)) & capacity
+    # Every array but the recorded status is rolled back to the input.
+    _assert_same_arrays(
+        prepared.state,
+        eqx.tree_at(lambda state: state.flags, update.state, prepared.state.flags),
+    )
+    refused = adapt_device_metric(prepared.layout, update.state)
+    assert AdaptiveSimplexStatus(int(refused.report.status)) & capacity
+    assert bool(refused.report.failed)
+    assert int(refused.report.passes) == int(refused.report.splits) == 0
+    _assert_same_arrays(update.state, refused.state)
+    with pytest.raises(MeshingFailure) as failure:
+        commit_device_metric_adaptation(prepared, update.state)
+    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
+    with pytest.raises(MeshingFailure) as failure:
+        execute_mesh_adaptation(
+            prepare_mesh_adaptation(source, request, policy=_policy(tiny))
+        )
+    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
     source = _source()
     mesh = source.mesh
     edges = mesh.entity_set(1)
@@ -247,9 +279,6 @@ def test_stalled_metric_request_without_operations_preserves_source_but_not_conv
     assert result.transition is result.lineage is result.transfer is None
     assert result.evidence.stalled and not result.evidence.converged
     assert result.evidence.out_of_range_edges > 0
-
-
-def test_uncertain_device_predicates_escalate_without_applying_the_operation() -> None:
     # The slanted sides x = y / 2 and x = 1 + y / 2 are exactly straight, but
     # FILTERED_DEVICE certifies zero orientations only structurally: collapsing
     # or sliding a vertex of a slanted side needs host resolution.
@@ -290,54 +319,3 @@ def _assert_same_arrays(first: Any, second: Any, /) -> None:
         jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second), strict=True
     ):
         np.testing.assert_array_equal(np.asarray(after), np.asarray(before))
-
-
-def test_device_capacity_failure_is_recorded_refuses_later_calls_and_rejects_commit() -> (
-    None
-):
-    source = _source()
-    request = MetricMeshAdaptation(_metric(source, np.eye(2) / 0.2**2))
-    tiny = AdaptiveSimplexPolicy(vertex_capacity=25, cell_capacity=32)
-    prepared = prepare_device_metric_adaptation(source, request, policy=_policy(tiny))
-    update = adapt_device_metric(prepared.layout, prepared.state)
-    report = jax.device_get(update.report)
-    capacity = AdaptiveSimplexStatus.CAPACITY_EXCEEDED
-
-    assert AdaptiveSimplexStatus(int(report.status)) & capacity
-    assert report.failed
-    assert report.splits == report.collapses == report.flips == report.relocations == 0
-    assert AdaptiveSimplexStatus(int(update.state.status_flags)) & capacity
-    # Every array but the recorded status is rolled back to the input.
-    _assert_same_arrays(
-        prepared.state,
-        eqx.tree_at(lambda state: state.flags, update.state, prepared.state.flags),
-    )
-    refused = adapt_device_metric(prepared.layout, update.state)
-    assert AdaptiveSimplexStatus(int(refused.report.status)) & capacity
-    assert bool(refused.report.failed)
-    assert int(refused.report.passes) == int(refused.report.splits) == 0
-    _assert_same_arrays(update.state, refused.state)
-    with pytest.raises(MeshingFailure) as failure:
-        commit_device_metric_adaptation(prepared, update.state)
-    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
-    with pytest.raises(MeshingFailure) as failure:
-        execute_mesh_adaptation(
-            prepare_mesh_adaptation(source, request, policy=_policy(tiny))
-        )
-    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
-
-
-def test_device_metric_adaptation_is_deterministic() -> None:
-    source = _source(perturbation=0.3)
-    request = MetricMeshAdaptation(
-        _metric(source, np.diag((1.0 / 0.3**2, 1.0 / 0.12**2)))
-    )
-
-    first = _adapt(source, request)
-    second = _adapt(source, request)
-    prepared = prepare_device_metric_adaptation(source, request, policy=_policy())
-    update = adapt_device_metric(prepared.layout, prepared.state)
-    epoch = commit_device_metric_adaptation(prepared, update.state)
-
-    assert first.result_id == second.result_id == epoch.result_id
-    assert first.target.mesh.mesh_id == second.target.mesh.mesh_id

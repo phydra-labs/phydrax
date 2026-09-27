@@ -18,7 +18,7 @@ from phydrax.equations import (
 )
 
 
-def test_binary_closure_derives_energy_chemical_potential_and_symmetric_stress() -> None:
+def test_kinetic_thermodynamics_scenario_1() -> None:
     closure = BinaryPhaseThermodynamicClosure()
     parameters = BinaryThermodynamicParameters(0.08, 0.12)
     phase = jnp.linspace(-0.8, 0.8, 12, dtype=jnp.float64).reshape((3, 4))
@@ -41,9 +41,6 @@ def test_binary_closure_derives_energy_chemical_potential_and_symmetric_stress()
     )
     assert jnp.all(jnp.isfinite(fields.bulk_energy_density))
     assert jnp.all(jnp.isfinite(fields.gradient_energy_density))
-
-
-def test_binary_closure_characteristics_include_bulk_potential_scale() -> None:
     closure = BinaryPhaseThermodynamicClosure(DoubleWellFreeEnergy(2.0))
     parameters = BinaryThermodynamicParameters(0.08, 0.12)
     effective_bulk = 0.16
@@ -58,9 +55,6 @@ def test_binary_closure_characteristics_include_bulk_potential_scale() -> None:
         2.0 * np.sqrt(2.0 * effective_bulk * 0.12) / 3.0,
         rtol=2e-14,
     )
-
-
-def test_periodic_kinetic_thermodynamic_forces_have_zero_net_internal_force() -> None:
     lattice = D2Q9()
     closure = BinaryPhaseThermodynamicClosure()
     parameters = BinaryThermodynamicParameters(0.08, 0.12)

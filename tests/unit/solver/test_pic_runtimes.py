@@ -26,7 +26,7 @@ def _species(bridge: Any, offset: Any, sign: Any, name: Any, count: Any = 4) -> 
     return charged, transfer
 
 
-def test_electrostatic_pic_step_is_atomic_and_constraint_aware() -> None:
+def test_pic_runtimes_scenario_1() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
         axis_names=("x",),
@@ -53,6 +53,40 @@ def test_electrostatic_pic_step_is_atomic_and_constraint_aware() -> None:
     np.testing.assert_array_equal(
         rejected.accepted_state.particles[0].position, state.particles[0].position
     )
+    pic, maxwell = _electromagnetic_pic()
+    position = jnp.asarray([[0.25, 0.25, 0.25], [0.7, 0.6, 0.5]])
+    velocity = jnp.zeros((2, 3))
+    dt = 0.01 * maxwell.stable_dt
+    state = pic.initialize((position, position), (velocity, velocity), dt)
+    result = pic.step_detailed(state, dt)
+    assert result.successful
+    assert result.diagnostics.continuity_defect < 1.0e-10
+    assert result.diagnostics.particle_maxwell_charge_defect < 1.0e-10
+    assert result.diagnostics.electric_constraint < 1.0e-10
+    assert result.diagnostics.magnetic_constraint < 1.0e-10
+    pic, maxwell = _electromagnetic_pic()
+    position = jnp.asarray([[0.25, 0.25, 0.25], [0.7, 0.6, 0.5]])
+    positive_velocity = jnp.asarray([[0.1, 0.0, 0.0], [0.1, 0.0, 0.0]])
+    dt = 0.01 * maxwell.stable_dt
+    state = pic.initialize(
+        (position + jnp.asarray([0.002, 0.0, 0.0]), position),
+        (jnp.zeros((2, 3)), positive_velocity),
+        dt,
+    )
+    # A separated nonzero charge distribution has positive Coulomb energy.
+    charge = state.maxwell.primary.charge
+    field = pic.electrostatic.solve(charge)
+    weights = pic.electrostatic.bridge.cochain.hodge_stars[0]
+    assert jnp.sum(weights * charge * field.potential) > 0.0
+    np.testing.assert_allclose(
+        maxwell.electric_constraint(state.maxwell), 0.0, atol=1e-10
+    )
+
+    result = pic.step_detailed(state, dt)
+    assert result.successful
+    assert result.diagnostics.continuity_defect < 1e-10
+    assert result.diagnostics.particle_maxwell_charge_defect < 1e-10
+    assert result.diagnostics.electric_constraint < 1e-10
 
 
 def _electromagnetic_pic() -> Any:
@@ -77,43 +111,3 @@ def _electromagnetic_pic() -> Any:
     )
     pic = phx.solver.ElectromagneticPICPlan(maxwell, electrostatic, transfers, currents)
     return pic, maxwell
-
-
-def test_electromagnetic_pic_preserves_zero_current_constraints() -> None:
-    pic, maxwell = _electromagnetic_pic()
-    position = jnp.asarray([[0.25, 0.25, 0.25], [0.7, 0.6, 0.5]])
-    velocity = jnp.zeros((2, 3))
-    dt = 0.01 * maxwell.stable_dt
-    state = pic.initialize((position, position), (velocity, velocity), dt)
-    result = pic.step_detailed(state, dt)
-    assert result.successful
-    assert result.diagnostics.continuity_defect < 1.0e-10
-    assert result.diagnostics.particle_maxwell_charge_defect < 1.0e-10
-    assert result.diagnostics.electric_constraint < 1.0e-10
-    assert result.diagnostics.magnetic_constraint < 1.0e-10
-
-
-def test_electromagnetic_pic_preserves_gauss_with_charge_separation_and_current() -> None:
-    pic, maxwell = _electromagnetic_pic()
-    position = jnp.asarray([[0.25, 0.25, 0.25], [0.7, 0.6, 0.5]])
-    positive_velocity = jnp.asarray([[0.1, 0.0, 0.0], [0.1, 0.0, 0.0]])
-    dt = 0.01 * maxwell.stable_dt
-    state = pic.initialize(
-        (position + jnp.asarray([0.002, 0.0, 0.0]), position),
-        (jnp.zeros((2, 3)), positive_velocity),
-        dt,
-    )
-    # A separated nonzero charge distribution has positive Coulomb energy.
-    charge = state.maxwell.primary.charge
-    field = pic.electrostatic.solve(charge)
-    weights = pic.electrostatic.bridge.cochain.hodge_stars[0]
-    assert jnp.sum(weights * charge * field.potential) > 0.0
-    np.testing.assert_allclose(
-        maxwell.electric_constraint(state.maxwell), 0.0, atol=1e-10
-    )
-
-    result = pic.step_detailed(state, dt)
-    assert result.successful
-    assert result.diagnostics.continuity_defect < 1e-10
-    assert result.diagnostics.particle_maxwell_charge_defect < 1e-10
-    assert result.diagnostics.electric_constraint < 1e-10

@@ -8,7 +8,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_posterior_diagnostics_cover_compilation_vectorization_and_capabilities() -> None:
+def test_posterior_diagnostics_scenario_1() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             {
@@ -49,9 +49,6 @@ def test_posterior_diagnostics_cover_compilation_vectorization_and_capabilities(
     assert diagnostics.capabilities.gauss_newton_residual
     assert diagnostics.capabilities.automatic_flow_nuts_initialization
     assert diagnostics.as_dict()["failures"] == ()
-
-
-def test_posterior_diagnostics_report_nonfinite_density_and_gradient_locations() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             {"x": jnp.asarray(-1.0)},
@@ -66,9 +63,6 @@ def test_posterior_diagnostics_report_nonfinite_density_and_gradient_locations()
     assert "initial_log_density_nonfinite" in diagnostics.failures
     assert "initial_gradient_nonfinite" in diagnostics.failures
     assert diagnostics.nonfinite_gradient_locations == ("['x']",)
-
-
-def test_custom_prior_capabilities_do_not_claim_automatic_initialization() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             jnp.asarray(0.0),

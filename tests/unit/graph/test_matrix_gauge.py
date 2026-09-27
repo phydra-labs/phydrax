@@ -23,7 +23,7 @@ def _su2_links(space: Any) -> Any:
     return jax.vmap(lambda value: space.group.exp(space.group.hat(value)))(coordinates)
 
 
-def test_cell_boundary_paths_are_ordered_and_incidence_certified() -> None:
+def test_matrix_gauge_scenario_1() -> None:
     topology = _triangle()
     boundaries = phx.discretization.prepare_cell_boundary_paths(topology)
     paths = boundaries.paths
@@ -42,9 +42,6 @@ def test_cell_boundary_paths_are_ordered_and_incidence_certified() -> None:
         assert start == current
         current = end
     assert current == int(paths.start_vertices[0])
-
-
-def test_matrix_holonomy_is_covariant_and_closed_trace_invariant() -> None:
     topology = _triangle()
     boundary = phx.discretization.prepare_cell_boundary_paths(topology)
     space = phx.graph.MatrixGaugeLinkSpace(
@@ -83,9 +80,6 @@ def test_matrix_holonomy_is_covariant_and_closed_trace_invariant() -> None:
         space.group.inverse(vertices[open_paths.end_vertices[0]]),
     )
     assert jnp.allclose(transformed_open, expected, atol=1e-10)
-
-
-def test_reverse_path_holonomy_is_group_inverse() -> None:
     topology = _triangle()
     boundary = phx.discretization.prepare_cell_boundary_paths(topology)
     reverse = phx.discretization.reverse_oriented_paths(boundary.paths)
@@ -100,7 +94,7 @@ def test_reverse_path_holonomy_is_group_inverse() -> None:
     assert jnp.allclose(reverse_value, space.group.inverse(forward_value), atol=1e-10)
 
 
-def test_path_plan_rejects_discontinuity_and_invalid_padding() -> None:
+def test_matrix_gauge_scenario_2() -> None:
     topology = _triangle()
     boundary = phx.discretization.prepare_cell_boundary_paths(topology).paths
     edges = jnp.asarray(boundary.edge_indices)
@@ -120,9 +114,6 @@ def test_path_plan_rejects_discontinuity_and_invalid_padding() -> None:
             edges.at[0, 1].set(edges[0, 0]),
             signs,
         )
-
-
-def test_nonabelian_path_order_changes_holonomy() -> None:
     topology = _triangle()
     boundary = phx.discretization.prepare_cell_boundary_paths(topology).paths
     space = phx.graph.MatrixGaugeLinkSpace(

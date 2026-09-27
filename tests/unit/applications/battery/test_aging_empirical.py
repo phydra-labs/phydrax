@@ -122,7 +122,7 @@ def _assert_state_equal(actual: Any, expected: Any) -> None:
     )
 
 
-def test_exact_additive_law_and_stable_observables_are_recovered() -> None:
+def test_aging_empirical_scenario_1() -> None:
     coefficients = _coefficients()
     result = advance_empirical_aging(
         _topology(), coefficients, initial_empirical_aging_state(), _history()
@@ -164,9 +164,6 @@ def test_exact_additive_law_and_stable_observables_are_recovered() -> None:
         result.observables.capacity_loss_fraction + result.observables.state_of_health,
         1.0,
     )
-
-
-def test_time_weighted_quadrature_uses_every_nonlinear_stress_node() -> None:
     coefficients = _coefficients(
         calendar_soc_coefficient=1.1,
         throughput_soc_coefficient=-0.4,
@@ -207,9 +204,6 @@ def test_time_weighted_quadrature_uses_every_nonlinear_stress_node() -> None:
         result.stress_summary.throughput_exposure, expected_throughput, rtol=2.0e-6
     )
     assert not np.isclose(expected_calendar, endpoint_only_calendar)
-
-
-def test_zero_rates_advance_physical_coordinates_without_damage() -> None:
     coefficients = _coefficients(
         calendar_rate_per_s=0.0,
         throughput_rate_per_c=0.0,
@@ -229,7 +223,7 @@ def test_zero_rates_advance_physical_coordinates_without_damage() -> None:
     np.testing.assert_array_equal(result.observables.state_of_health, 1.0)
 
 
-def test_rest_has_calendar_exposure_but_signed_current_adds_equal_throughput() -> None:
+def test_aging_empirical_scenario_2() -> None:
     topology = _topology()
     coefficients = _coefficients()
     state = initial_empirical_aging_state()
@@ -263,9 +257,6 @@ def test_rest_has_calendar_exposure_but_signed_current_adds_equal_throughput() -
         discharge.accepted_state.charge_throughput_c,
     )
     assert charge.observables.total_damage > rest.observables.total_damage
-
-
-def test_adjacent_history_subdivision_is_exactly_invariant() -> None:
     support = _support(maximum_time_gap_s=2.0, maximum_macrostep_s=4.0)
     coefficients = _coefficients(
         calendar_activation_temperature_k=750.0,
@@ -322,9 +313,6 @@ def test_adjacent_history_subdivision_is_exactly_invariant() -> None:
         whole.observables.resistance_growth_fraction,
         rtol=2.0e-6,
     )
-
-
-def test_positive_declared_coefficients_give_monotone_one_way_outputs() -> None:
     topology = _topology()
     coefficients = _coefficients(
         calendar_activation_temperature_k=600.0,
@@ -361,25 +349,18 @@ def test_positive_declared_coefficients_give_monotone_one_way_outputs() -> None:
     assert second.observables.state_of_health < first.observables.state_of_health
 
 
-@pytest.mark.parametrize(
-    ("name", "value"),
-    (
+def test_aging_empirical_scenario_3() -> None:
+    for name, value in (
         ("calendar_rate_per_s", -1.0),
         ("throughput_rate_per_c", -1.0),
         ("calendar_exponent", 0.0),
         ("throughput_exponent", 0.0),
         ("capacity_loss_scale", -1.0),
         ("resistance_growth_scale", -1.0),
-    ),
-)
-def test_nonmonotone_physical_coefficients_are_rejected(name: Any, value: Any) -> None:
-    with pytest.raises(Exception, match="outside their physical domain"):
-        _coefficients(**{name: value})
-
-
-@pytest.mark.parametrize(
-    ("topology", "history", "expected_status"),
-    (
+    ):
+        with pytest.raises(Exception, match="outside their physical domain"):
+            _coefficients(**{name: value})
+    for topology, history, expected_status in (
         (
             _topology(),
             _history(times=(0.0, 2.0, 1.0)),
@@ -421,21 +402,14 @@ def test_nonmonotone_physical_coefficients_are_rejected(name: Any, value: Any) -
             _history(),
             EmpiricalAgingStatus.THROUGHPUT_OUT_OF_SUPPORT,
         ),
-    ),
-)
-def test_invalid_times_gaps_and_stress_support_fail_closed(
-    topology: Any, history: Any, expected_status: Any
-) -> None:
-    state = initial_empirical_aging_state()
-    result = advance_empirical_aging(topology, _coefficients(), state, history)
+    ):
+        state = initial_empirical_aging_state()
+        result = advance_empirical_aging(topology, _coefficients(), state, history)
 
-    assert not result.successful
-    assert result.status == int(expected_status)
-    _assert_state_equal(result.accepted_state, state)
-    np.testing.assert_array_equal(result.observables.total_damage, 0.0)
-
-
-def test_invalid_latent_state_and_history_shape_fail_explicitly() -> None:
+        assert not result.successful
+        assert result.status == int(expected_status)
+        _assert_state_equal(result.accepted_state, state)
+        np.testing.assert_array_equal(result.observables.total_damage, 0.0)
     invalid_state = EmpiricalAgingState(-0.1, 0.0, 0.0, 0.0)
     result = advance_empirical_aging(
         _topology(), _coefficients(), invalid_state, _history()
@@ -450,6 +424,48 @@ def test_invalid_latent_state_and_history_shape_fail_explicitly() -> None:
             initial_empirical_aging_state(),
             _history(),
         )
+    topology = _topology()
+    coefficients = _coefficients()
+    state = initial_empirical_aging_state()
+    history = _history(
+        temperature=(295.0, 305.0, 310.0),
+        state_of_charge=(0.3, 0.6, 0.8),
+        current=(-1.0, 2.0, -3.0),
+    )
+    before = tuple(
+        np.asarray(value).copy()
+        for value in (
+            history.times_s,
+            history.temperature_k,
+            history.state_of_charge,
+            history.current_a,
+            state.calendar_exposure,
+            state.throughput_exposure,
+            state.time_s,
+            state.charge_throughput_c,
+        )
+    )
+
+    first = advance_empirical_aging(topology, coefficients, state, history)
+    replay = advance_empirical_aging(topology, coefficients, state, history)
+
+    after = (
+        history.times_s,
+        history.temperature_k,
+        history.state_of_charge,
+        history.current_a,
+        state.calendar_exposure,
+        state.throughput_exposure,
+        state.time_s,
+        state.charge_throughput_c,
+    )
+    for actual, expected in zip(after, before, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    _assert_state_equal(first.accepted_state, replay.accepted_state)
+    np.testing.assert_array_equal(
+        first.observables.capacity_loss_fraction,
+        replay.observables.capacity_loss_fraction,
+    )
 
 
 def test_jit_vmap_and_gradients_cover_coefficients_and_stress_inputs() -> None:
@@ -518,48 +534,3 @@ def test_jit_vmap_and_gradients_cover_coefficients_and_stress_inputs() -> None:
     assert scale_gradient[0] > 0.0
     assert scale_gradient[1] > 0.0
     assert np.all(current_gradient > 0.0)
-
-
-def test_macrostep_is_pure_and_does_not_modify_supplied_inputs() -> None:
-    topology = _topology()
-    coefficients = _coefficients()
-    state = initial_empirical_aging_state()
-    history = _history(
-        temperature=(295.0, 305.0, 310.0),
-        state_of_charge=(0.3, 0.6, 0.8),
-        current=(-1.0, 2.0, -3.0),
-    )
-    before = tuple(
-        np.asarray(value).copy()
-        for value in (
-            history.times_s,
-            history.temperature_k,
-            history.state_of_charge,
-            history.current_a,
-            state.calendar_exposure,
-            state.throughput_exposure,
-            state.time_s,
-            state.charge_throughput_c,
-        )
-    )
-
-    first = advance_empirical_aging(topology, coefficients, state, history)
-    replay = advance_empirical_aging(topology, coefficients, state, history)
-
-    after = (
-        history.times_s,
-        history.temperature_k,
-        history.state_of_charge,
-        history.current_a,
-        state.calendar_exposure,
-        state.throughput_exposure,
-        state.time_s,
-        state.charge_throughput_c,
-    )
-    for actual, expected in zip(after, before, strict=True):
-        np.testing.assert_array_equal(actual, expected)
-    _assert_state_equal(first.accepted_state, replay.accepted_state)
-    np.testing.assert_array_equal(
-        first.observables.capacity_loss_fraction,
-        replay.observables.capacity_loss_fraction,
-    )

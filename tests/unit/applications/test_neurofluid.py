@@ -54,7 +54,7 @@ def _image(values: Any, unit: Any, asset_id: Any) -> Any:
     )
 
 
-def test_relaxivity_calibration_retains_negative_noisy_observations() -> None:
+def test_neurofluid_scenario_1() -> None:
     baseline = _image(np.full((2, 2, 2), 2.0), phx.units.SECOND, "baseline")
     contrast_values = np.full((2, 2, 2), 1.0)
     contrast_values[0, 0, 0] = 4.0
@@ -67,9 +67,6 @@ def test_relaxivity_calibration_retains_negative_noisy_observations() -> None:
     assert result.values[0, 0, 0] < 0.0
     assert bool(result.evidence.successful)
     assert not bool(result.evidence.nonnegative_state_candidate)
-
-
-def test_neurofluid_transport_units_derive_physical_scales() -> None:
     units = phx.applications.neurofluid.NeurofluidTransportUnits(
         phx.units.MILLIMETER, phx.units.SECOND, phx.units.MILLIMOLAR
     )
@@ -81,9 +78,6 @@ def test_neurofluid_transport_units_derive_physical_scales() -> None:
     )
     assert units.diffusivity_unit.dimension == diffusivity.dimension
     assert units.volume_flow_unit.dimension == volume_flow.dimension
-
-
-def test_periodic_flow_schedule_requires_complete_matching_cycle() -> None:
     schedule = phx.applications.neurofluid.FlowTransportSchedule(
         np.asarray((0.0, 0.5, 1.0)),
         np.asarray(((1.0,), (2.0,), (1.0,))),
@@ -100,7 +94,7 @@ def test_periodic_flow_schedule_requires_complete_matching_cycle() -> None:
     assert not bool(partial.successful)
 
 
-def test_image_space_inverse_reports_rank_and_builds_state_design_problem() -> None:
+def test_neurofluid_scenario_2() -> None:
     operator = phx.spatial_sampling.ObservationSamplingPlan(
         np.asarray(((0,), (1,))),
         np.ones((2, 1)),
@@ -133,9 +127,6 @@ def test_image_space_inverse_reports_rank_and_builds_state_design_problem() -> N
     state = forward(jnp.asarray((1.0, 2.0)))
     np.testing.assert_allclose(problem.residual(state, jnp.asarray((1.0, 2.0))), 0.0)
     np.testing.assert_allclose(problem.objective(state, jnp.asarray((1.0, 2.0))), 0.0)
-
-
-def test_rank_deficient_identifiability_reports_infinite_condition_number() -> None:
     operator = phx.spatial_sampling.ObservationSamplingPlan(
         np.asarray(((0,), (1,))),
         np.ones((2, 1)),
@@ -166,9 +157,6 @@ def test_rank_deficient_identifiability_reports_infinite_condition_number() -> N
     report = inverse.identifiability(np.asarray((1.0, 2.0)))
     assert not bool(report.full_rank)
     assert jnp.isinf(report.condition_number)
-
-
-def test_pipeline_manifest_requires_topological_order() -> None:
     first = phx.applications.neurofluid.NeurofluidPipelineStage(
         "ingest", "image-ingest", ("source",), ("image",)
     )

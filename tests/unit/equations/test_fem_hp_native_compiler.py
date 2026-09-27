@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_primary_compiler_accepts_prepared_hp_epoch_and_native_constraint() -> None:
+def test_fem_hp_native_compiler_scenario_1() -> None:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (
@@ -39,9 +39,6 @@ def test_primary_compiler_accepts_prepared_hp_epoch_and_native_constraint() -> N
     assert compiled.constraint_map is not None
     assert residual.shape == state.shape
     assert jnp.allclose(residual, 0.0)
-
-
-def test_multi_field_hp_epoch_and_physical_mass_projection_are_native() -> None:
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         (

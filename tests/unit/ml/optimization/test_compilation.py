@@ -35,7 +35,7 @@ def _stump(split_kind: Any) -> Any:
     )
 
 
-def test_affine_predictor_constraint_changes_observable_milp_optimum() -> None:
+def test_compilation_scenario_1() -> None:
     base = phx.optim.MixedIntegerProgram(
         phx.optim.LinearProgram(
             jnp.asarray([-1.0]),
@@ -69,48 +69,39 @@ def test_affine_predictor_constraint_changes_observable_milp_optimum() -> None:
 
     assert result.successful
     np.testing.assert_allclose(result.primal[:2], [0.0, 0.0], atol=1e-8)
+    for split_kind, expected in [(0, 3.0), (2, 2.0)]:
+        model = _stump(split_kind)
+        base = phx.optim.MixedIntegerProgram(
+            phx.optim.LinearProgram(
+                jnp.asarray([1.0]),
+                bounds=phx.optim.Bounds(0.0, 3.0),
+                problem_id="tree-base",
+            ),
+            integer_indices=(0,),
+            program_id="tree-base-mixed",
+        )
+        binding = phx.ml.optimization.bind_predictor_inputs(
+            base,
+            jnp.asarray([[1.0]]),
+            jnp.asarray([0.0]),
+            feature_layout_id=model.feature_schema.layout_id,
+        )
+        compilation = phx.ml.optimization.compile_tree_predictor_constraint(
+            model,
+            binding,
+            phx.ml.optimization.PredictorOutputConstraint(
+                15.0,
+                sense="lower",
+            ),
+        )
 
+        result = phx.optim.solve_mixed_integer_program(
+            phx.ml.optimization.augment_linear_program(base, compilation)
+        )
 
-@pytest.mark.parametrize(("split_kind", "expected"), [(0, 3.0), (2, 2.0)])
-def test_tree_compilation_preserves_strict_and_nonstrict_integer_ties(
-    split_kind: Any,
-    expected: Any,
-) -> None:
-    model = _stump(split_kind)
-    base = phx.optim.MixedIntegerProgram(
-        phx.optim.LinearProgram(
-            jnp.asarray([1.0]),
-            bounds=phx.optim.Bounds(0.0, 3.0),
-            problem_id="tree-base",
-        ),
-        integer_indices=(0,),
-        program_id="tree-base-mixed",
-    )
-    binding = phx.ml.optimization.bind_predictor_inputs(
-        base,
-        jnp.asarray([[1.0]]),
-        jnp.asarray([0.0]),
-        feature_layout_id=model.feature_schema.layout_id,
-    )
-    compilation = phx.ml.optimization.compile_tree_predictor_constraint(
-        model,
-        binding,
-        phx.ml.optimization.PredictorOutputConstraint(
-            15.0,
-            sense="lower",
-        ),
-    )
-
-    result = phx.optim.solve_mixed_integer_program(
-        phx.ml.optimization.augment_linear_program(base, compilation)
-    )
-
-    assert result.successful
-    assert result.primal[0] == pytest.approx(expected, abs=1e-7)
-    assert model(jnp.asarray([[result.primal[0]]]))[0] >= 15.0
-
-
-def test_tree_compilation_refuses_continuous_strict_split() -> None:
+        assert result.successful
+        assert result.primal[0] == pytest.approx(expected, abs=1e-7)
+        assert model(jnp.asarray([[result.primal[0]]]))[0] >= 15.0
     model = _stump(0)
     base = phx.optim.LinearProgram(
         jnp.asarray([0.0]),
@@ -129,9 +120,6 @@ def test_tree_compilation_refuses_continuous_strict_split() -> None:
             binding,
             phx.ml.optimization.PredictorOutputConstraint(15.0),
         )
-
-
-def test_convex_hull_support_returns_witness_and_blocks_extrapolation() -> None:
     base = phx.optim.LinearProgram(
         jnp.asarray([-1.0]),
         bounds=phx.optim.Bounds(0.0, 2.0),

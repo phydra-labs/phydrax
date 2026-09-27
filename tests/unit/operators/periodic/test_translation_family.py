@@ -33,7 +33,7 @@ def _chain(*, dense_limit: Any = 1024, finite_limit: Any = 1024) -> Any:
     )
 
 
-def test_reverse_coalescing_sparse_action_dense_and_derivative_agree() -> None:
+def test_translation_family_scenario_1() -> None:
     prepared = _chain()
     q = jnp.asarray([[0.0], [0.25]])
     dense = evaluate_periodic_translation_family(prepared, q)
@@ -48,9 +48,6 @@ def test_reverse_coalescing_sparse_action_dense_and_derivative_agree() -> None:
 
     compiled = jax.jit(lambda points, vectors: prepared.apply(points, vectors))
     np.testing.assert_allclose(compiled(q, jnp.ones((2, 1))), action)
-
-
-def test_refresh_preserves_structure_and_finite_boundaries_are_exact() -> None:
     prepared = _chain()
     doubled_state = PeriodicTranslationFamilyState(
         prepared.plan, 2.0 * prepared.state.values
@@ -71,9 +68,6 @@ def test_refresh_preserves_structure_and_finite_boundaries_are_exact() -> None:
     )
     assert refreshed.plan.plan_id == prepared.plan.plan_id
     assert refreshed.prepared_id != prepared.prepared_id
-
-
-def test_family_rejects_broken_adjoint_and_resources_before_materialization() -> None:
     prepared = _chain(dense_limit=1, finite_limit=2)
     with pytest.raises(ValueError, match="Hermitian adjoint"):
         PeriodicTranslationFamilyState(

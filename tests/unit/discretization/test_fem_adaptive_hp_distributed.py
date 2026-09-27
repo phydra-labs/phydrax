@@ -42,7 +42,7 @@ def _mesh() -> Any:
     )
 
 
-def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbors() -> None:
+def test_fem_adaptive_hp_distributed_scenario_1() -> None:
     topology, geometry = initial_finite_element_hp_topology(_mesh(), 2, 16)
     source_epoch = prepare_finite_element_hp_epoch(
         topology,
@@ -84,9 +84,6 @@ def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbors() -
     halo_valid = np.asarray(target_partition.worksets.halo_valid)
     assert np.count_nonzero(halo_valid[0]) == 1
     assert np.count_nonzero(halo_valid[1]) == 2
-
-
-def test_hp_ownership_inheritance_rejects_a_lineage_for_another_target() -> None:
     topology, geometry = initial_finite_element_hp_topology(_mesh(), 2, 16)
     source_epoch = prepare_finite_element_hp_epoch(
         topology,

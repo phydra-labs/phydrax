@@ -24,7 +24,7 @@ def _scale() -> Any:
     return RelativityScaleContract.geometric(KILOGRAM)
 
 
-def test_two_temperature_exchange_relaxes_exactly_without_creating_energy() -> None:
+def test_compact_object_plasma_closures_scenario_1() -> None:
     closure = TwoTemperatureElectronIonClosure(
         _scale(),
         equilibration_time=2.0,
@@ -51,9 +51,6 @@ def test_two_temperature_exchange_relaxes_exactly_without_creating_energy() -> N
     assert bool(result.converged)
     assert bool(result.qualified)
     assert bool(result.derivative_valid)
-
-
-def test_two_temperature_closure_rejects_unrepresented_kinetic_regimes() -> None:
     with pytest.raises(NotImplementedError, match="velocity-space kinetic"):
         TwoTemperatureElectronIonClosure(
             _scale(),
@@ -62,9 +59,6 @@ def test_two_temperature_closure_rejects_unrepresented_kinetic_regimes() -> None
             maximum_temperature=1.0e6,
             regime=PlasmaKineticRegime.FULL_PHASE_SPACE,
         )
-
-
-def test_bounded_nonthermal_record_has_content_identity_and_physical_moments() -> None:
     distribution = BoundedNonthermalParticleDistribution(
         _scale(),
         jnp.asarray((1.0, 2.0, 8.0)),
@@ -95,9 +89,6 @@ def test_bounded_nonthermal_record_has_content_identity_and_physical_moments() -
     assert bool(moments.qualified)
     assert distribution.distribution_id == same.distribution_id
     assert distribution.distribution_id != changed.distribution_id
-
-
-def test_nonthermal_record_rejects_unbounded_or_anisotropic_support() -> None:
     with pytest.raises(ValueError, match="invalid"):
         BoundedNonthermalParticleDistribution(
             _scale(),

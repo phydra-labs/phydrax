@@ -56,7 +56,7 @@ def test_q_batch_mixed_constrained_bo_has_exact_budget_and_replay() -> None:
     assert jnp.all(jnp.isfinite(first.acquisition_standard_errors))
 
 
-def test_no_pending_bo_starts_and_reports_finite_acquisition_error() -> None:
+def test_bayesian_optimization_scenario_1() -> None:
     domain = phx.uq.BayesianOptimizationDomain(
         jnp.asarray([0.5]),
         lower_bounds=jnp.asarray([0.0]),
@@ -83,9 +83,6 @@ def test_no_pending_bo_starts_and_reports_finite_acquisition_error() -> None:
     assert result.pending_count == 0
     assert result.evaluation_count == 4
     assert jnp.all(jnp.isfinite(result.acquisition_standard_errors))
-
-
-def test_bo_requires_two_fantasies_for_sample_standard_error() -> None:
     surrogate = phx.uq.GaussianProcessLikelihoodState(
         kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.4),
         noise_scale=0.01,
@@ -98,9 +95,6 @@ def test_bo_requires_two_fantasies_for_sample_standard_error() -> None:
             initial_evaluations=1,
             fantasy_count=1,
         )
-
-
-def test_pending_point_is_excluded_from_initial_and_space_filling_proposals() -> None:
     categorical = phx.optim.FiniteProductSpace(
         {"choice": phx.optim.FiniteAxis(jnp.arange(4.0))}
     )

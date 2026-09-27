@@ -77,7 +77,7 @@ def _solver(
     )
 
 
-def test_named_measure_lowering_preserves_mass_masks_events_and_provenance() -> None:
+def test_core_scenario_1() -> None:
     points = cx.AxisArray(
         jnp.asarray(
             [
@@ -114,9 +114,6 @@ def test_named_measure_lowering_preserves_mass_masks_events_and_provenance() -> 
     assert jnp.allclose(problem.mass, 3.0)
     assert problem.provenance.source == "source-grid"
     assert problem.provenance.target == "target-grid"
-
-
-def test_ground_costs_have_explicit_component_and_periodic_semantics() -> None:
     left = jnp.asarray([0.9, 2.0])
     right = jnp.asarray([0.1, 4.0])
 
@@ -136,9 +133,6 @@ def test_ground_costs_have_explicit_component_and_periodic_semantics() -> None:
         jnp.asarray([[1.0], [3.0]]),
     )
     assert jnp.array_equal(matrix, jnp.asarray([[1.0, 9.0], [1.0, 1.0]]))
-
-
-def test_symmetric_two_atom_problem_matches_analytic_entropic_plan() -> None:
     problem = _problem(
         [[0.0], [1.0]],
         [[0.0], [1.0]],
@@ -162,7 +156,7 @@ def test_symmetric_two_atom_problem_matches_analytic_entropic_plan() -> None:
     assert result.diagnostics.residual_history.ndim == 1
 
 
-def test_physical_mass_and_matrix_free_plan_actions_are_not_silently_normalized() -> None:
+def test_core_scenario_2() -> None:
     problem = _problem(
         [[0.0], [1.0], [2.0]],
         [[0.5], [1.5]],
@@ -200,40 +194,63 @@ def test_physical_mass_and_matrix_free_plan_actions_are_not_silently_normalized(
     )
     normalized_result = _solver()(normalized_problem)
     assert jnp.allclose(result.regularized_cost, 4.0 * normalized_result.regularized_cost)
+    for block_size in [1, 2, 4, 7]:
+        problem = _problem(
+            jnp.linspace(-1.0, 1.0, 5)[:, None],
+            jnp.linspace(-0.7, 1.4, 7)[:, None],
+            source_weights=[1.0, 2.0, 3.0, 2.0, 1.0],
+            target_weights=[1.0, 1.0, 2.0, 1.0, 3.0, 2.0, 1.0],
+        )
+        dense = _solver()(problem)
+        blockwise = _solver(block_size=block_size)(problem)
+        payload = jnp.arange(15.0).reshape((5, 3))
 
+        assert dense.converged & blockwise.converged
+        assert blockwise.provenance.execution == "blockwise"
+        assert jnp.allclose(
+            blockwise.regularized_cost, dense.regularized_cost, rtol=1e-9, atol=1e-9
+        )
+        assert jnp.allclose(
+            blockwise.source_potential, dense.source_potential, rtol=1e-8, atol=1e-8
+        )
+        assert jnp.allclose(
+            blockwise.target_potential, dense.target_potential, rtol=1e-8, atol=1e-8
+        )
+        assert jnp.allclose(
+            blockwise.dense_plan(), dense.dense_plan(), rtol=1e-8, atol=1e-9
+        )
+        assert jnp.allclose(
+            blockwise.apply_source_to_target(payload),
+            dense.apply_source_to_target(payload),
+            rtol=1e-8,
+            atol=1e-9,
+        )
+    source = _target(jnp.asarray([[0.0], [1.0], [2.0]]), [0.2, 0.3, 0.5])
+    target = _target(jnp.asarray([[0.3], [1.4], [2.4]]), [0.4, 0.2, 0.4])
+    problem = phx.transport.discrete_problem(
+        source,
+        target,
+        cost=phx.transport.SquaredEuclideanCost(),
+    )
+    solver = _solver(tolerance=1e-9)
+    direct = phx.transport.sinkhorn_divergence(problem, solver)
+    reference = phx.transport.prepare_sinkhorn_reference(
+        target,
+        cost=phx.transport.SquaredEuclideanCost(),
+        solver=solver,
+    )
+    prepared = phx.transport.sinkhorn_divergence_against(source, reference)
+    identity_problem = phx.transport.discrete_problem(
+        source,
+        source,
+        cost=phx.transport.SquaredEuclideanCost(),
+    )
+    identity = phx.transport.sinkhorn_divergence(identity_problem, solver)
 
-@pytest.mark.parametrize("block_size", [1, 2, 4, 7])
-def test_blockwise_solver_matches_dense_on_nondivisible_rectangular_problems(
-    block_size: Any,
-) -> None:
-    problem = _problem(
-        jnp.linspace(-1.0, 1.0, 5)[:, None],
-        jnp.linspace(-0.7, 1.4, 7)[:, None],
-        source_weights=[1.0, 2.0, 3.0, 2.0, 1.0],
-        target_weights=[1.0, 1.0, 2.0, 1.0, 3.0, 2.0, 1.0],
-    )
-    dense = _solver()(problem)
-    blockwise = _solver(block_size=block_size)(problem)
-    payload = jnp.arange(15.0).reshape((5, 3))
-
-    assert dense.converged & blockwise.converged
-    assert blockwise.provenance.execution == "blockwise"
-    assert jnp.allclose(
-        blockwise.regularized_cost, dense.regularized_cost, rtol=1e-9, atol=1e-9
-    )
-    assert jnp.allclose(
-        blockwise.source_potential, dense.source_potential, rtol=1e-8, atol=1e-8
-    )
-    assert jnp.allclose(
-        blockwise.target_potential, dense.target_potential, rtol=1e-8, atol=1e-8
-    )
-    assert jnp.allclose(blockwise.dense_plan(), dense.dense_plan(), rtol=1e-8, atol=1e-9)
-    assert jnp.allclose(
-        blockwise.apply_source_to_target(payload),
-        dense.apply_source_to_target(payload),
-        rtol=1e-8,
-        atol=1e-9,
-    )
+    assert direct.converged & prepared.converged & identity.converged
+    assert jnp.allclose(prepared.value, direct.value, rtol=1e-10, atol=1e-10)
+    assert jnp.allclose(identity.value, 0.0, atol=1e-12)
+    assert prepared.target_self is reference.target_self
 
 
 def test_solver_is_permutation_invariant_jittable_and_differentiable() -> None:
@@ -282,35 +299,6 @@ def test_solver_is_permutation_invariant_jittable_and_differentiable() -> None:
         jnp.sum(gradient * direction), finite_difference, rtol=2e-4, atol=2e-5
     )
     assert jnp.allclose(permuted_value, compiled, rtol=1e-10, atol=1e-10)
-
-
-def test_sinkhorn_divergence_and_prepared_reference_agree_without_clipping() -> None:
-    source = _target(jnp.asarray([[0.0], [1.0], [2.0]]), [0.2, 0.3, 0.5])
-    target = _target(jnp.asarray([[0.3], [1.4], [2.4]]), [0.4, 0.2, 0.4])
-    problem = phx.transport.discrete_problem(
-        source,
-        target,
-        cost=phx.transport.SquaredEuclideanCost(),
-    )
-    solver = _solver(tolerance=1e-9)
-    direct = phx.transport.sinkhorn_divergence(problem, solver)
-    reference = phx.transport.prepare_sinkhorn_reference(
-        target,
-        cost=phx.transport.SquaredEuclideanCost(),
-        solver=solver,
-    )
-    prepared = phx.transport.sinkhorn_divergence_against(source, reference)
-    identity_problem = phx.transport.discrete_problem(
-        source,
-        source,
-        cost=phx.transport.SquaredEuclideanCost(),
-    )
-    identity = phx.transport.sinkhorn_divergence(identity_problem, solver)
-
-    assert direct.converged & prepared.converged & identity.converged
-    assert jnp.allclose(prepared.value, direct.value, rtol=1e-10, atol=1e-10)
-    assert jnp.allclose(identity.value, 0.0, atol=1e-12)
-    assert prepared.target_self is reference.target_self
 
 
 def test_nonconvergence_and_invalid_measures_remain_explicit() -> None:

@@ -53,7 +53,7 @@ def _quad_mesh() -> Any:
     )
 
 
-def test_anisotropic_h_resize_and_compaction_preserve_forest_geometry() -> None:
+def test_spectral_hp_completion_scenario_1() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), (3, 2), 8)
     pattern = AnisotropicHPattern(2, (0,))
     refined = refine_anisotropic_hp_cells(
@@ -74,9 +74,6 @@ def test_anisotropic_h_resize_and_compaction_preserve_forest_geometry() -> None:
     assert compacted.active_count == 2
     assert compacted_geometry.geometry_id
     assert np.count_nonzero(np.asarray(routes) >= 0) == 3
-
-
-def test_geometry_order_nirregular_and_cut_quadrature_contracts() -> None:
     source_nodes = np.asarray(((0.0,), (1.0,)))
     target_nodes = np.asarray(((0.0,), (0.5,), (1.0,)))
     coordinates = np.asarray((((0.0, 0.0), (1.0, 0.2)),))
@@ -98,9 +95,6 @@ def test_geometry_order_nirregular_and_cut_quadrature_contracts() -> None:
     points = jnp.linspace(-1.0, 1.0, 9)[:, None]
     cut = LevelSetCutQuadrature(points, jnp.ones((9,)), points[:, 0])
     assert 0.0 < cut.volume_fraction < 1.0
-
-
-def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact() -> None:
     for dimension in (2, 3):
         complex_ = TensorDeRhamComplex(2, dimension)
         np.testing.assert_allclose(np.asarray(complex_.grad_curl_defect), 0.0)
@@ -187,7 +181,7 @@ def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact() -> None:
         assert high_order_pyramid.condition_number < 1.0e8
 
 
-def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction() -> None:
+def test_spectral_hp_completion_scenario_2() -> None:
     source = TensorDeRhamComplex(1, 2)
     target = TensorDeRhamComplex(2, 2)
     transfer = TensorDeRhamTransferPlan(source, target)
@@ -223,9 +217,6 @@ def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction() -> None:
     )
     assert len(refinement.child_maps) == 2
 
-
-def test_unfitted_and_interface_transfers_conserve() -> None:
-
     aggregation = UnfittedAggregationPlan(
         jnp.asarray((0.05, 0.8)),
         jnp.asarray(((1, -1), (0, -1)), dtype=jnp.int32),
@@ -244,9 +235,6 @@ def test_unfitted_and_interface_transfers_conserve() -> None:
         np.asarray(transfer.apply(jnp.asarray((2.0, 4.0)))),
         (2.0, 4.0),
     )
-
-
-def test_prism_and_pyramid_reference_families_prepare_real_cell_meshes() -> None:
     prism_points = jnp.asarray(
         (
             (0.0, 0.0, 0.0),

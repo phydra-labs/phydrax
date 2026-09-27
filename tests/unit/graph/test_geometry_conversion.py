@@ -20,24 +20,18 @@ class _DummyGeometry:
         self.mesh_faces = jnp.array([[0, 1, 2]], dtype=jnp.int32)
 
 
-def test_mesh_to_graph_bidirected_triangle() -> None:
+def test_geometry_conversion_scenario_1() -> None:
     geom = _DummyGeometry()
     graph = mesh_to_graph(geom.mesh_vertices, geom.mesh_faces)
     assert graph.num_nodes == 3
     assert graph.num_edges == 6
     assert graph.nodes.shape == (3, 3)
     assert graph.edges.shape == (6, 3)
-
-
-def test_mesh_to_graph_distance_edges() -> None:
     geom = _DummyGeometry()
     graph = mesh_to_graph(geom.mesh_vertices, geom.mesh_faces, edge_features="distance")
     assert graph.num_nodes == 3
     assert graph.num_edges == 6
     assert graph.edges.shape == (6, 1)
-
-
-def test_mesh_to_graph_geometry_features() -> None:
     geom = _DummyGeometry()
     graph = mesh_to_graph(
         geom.mesh_vertices,
@@ -64,9 +58,6 @@ def test_mesh_to_graph_geometry_features() -> None:
     assert jnp.all(graph.nodes["is_boundary"])
     assert graph.edges["distance"].shape == (6, 1)
     assert jnp.all(graph.edges["is_boundary"])
-
-
-def test_mesh_to_geometry_graph_exposes_boundary_components() -> None:
     geom = _DummyGeometry()
     bundle = mesh_to_geometry_graph(geom.mesh_vertices, geom.mesh_faces)
 
@@ -83,9 +74,6 @@ def test_mesh_to_geometry_graph_exposes_boundary_components() -> None:
     )
 
     assert jnp.allclose(jnp.asarray(batch["graph"]["positions"].data), geom.mesh_vertices)
-
-
-def test_mesh_to_geometry_graph_marks_shared_interface_edges() -> None:
     vertices = jnp.array(
         [
             [0.0, 0.0, 0.0],
@@ -102,9 +90,6 @@ def test_mesh_to_geometry_graph_marks_shared_interface_edges() -> None:
     assert bundle.interface_edges.shape == (2,)
     assert jnp.all(bundle.graph.edges["face_count"][bundle.interface_edges, 0] == 2)
     assert jnp.all(bundle.graph.edges["is_boundary"][bundle.boundary_edges, 0])
-
-
-def test_point_cloud_to_graph_knn_geometry_features() -> None:
     points = jnp.array(
         [
             [0.0, 0.0],

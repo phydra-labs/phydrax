@@ -38,36 +38,58 @@ def geometry_from_square(simple_square_mesh: Any) -> Any:
     )
 
 
-def test_initialization(geometry_from_square: Any) -> None:
-    assert isinstance(geometry_from_square, phx.domain.GeometryDomain)
-    assert geometry_from_square.geometry.kind is phx.geometry.GeometryKind.REGION
-    assert geometry_from_square.geometry.has_capability(
+def test_planar_mesh_geometry_preserves_measure_bounds_membership_and_capabilities(
+    geometry_from_square: Any,
+) -> None:
+    geometry = geometry_from_square
+    assert isinstance(geometry, phx.domain.GeometryDomain)
+    assert geometry.geometry.kind is phx.geometry.GeometryKind.REGION
+    assert geometry.geometry.has_capability(
         phx.geometry.GeometryCapability.BOUNDARY_ATLAS
+    )
+    assert np.isclose(float(geometry.area), 1.0, atol=1e-6)
+    assert np.allclose(
+        np.asarray(geometry.bounds, dtype=np.float64),
+        np.asarray([[-0.5, -0.5], [0.5, 0.5]]),
+        atol=1e-6,
+    )
+    assert bool(geometry._contains(jnp.asarray([[0.0, 0.0]], dtype=jnp.float64))[0])
+    assert not bool(geometry._contains(jnp.asarray([[2.0, 2.0]], dtype=jnp.float64))[0])
+    assert bool(geometry._on_boundary(jnp.asarray([[0.5, 0.0]], dtype=jnp.float64))[0])
+    assert not bool(
+        geometry._on_boundary(jnp.asarray([[0.0, 0.0]], dtype=jnp.float64))[0]
     )
 
 
-def test_area_property(geometry_from_square: Any) -> None:
-    geom = geometry_from_square
-    expected_area = 1.0  # Square with side length 1m
-    computed_area = float(geom.area)
-    assert np.isclose(computed_area, expected_area, atol=1e-6)
-
-
-def test_boundary_atlas_partition_matches_boundary_measure(
+def test_boundary_atlas_partition_and_chart_lowering_match_boundary_measure(
     geometry_from_square: Any,
 ) -> None:
-    geom = geometry_from_square
-    partition = phx.geometry.BoundaryAtlasPartition(geom.boundary_atlas)
+    geometry = geometry_from_square
+    partition = phx.geometry.BoundaryAtlasPartition(geometry.boundary_atlas)
     assert partition.num_strata == 4
-    assert np.isclose(float(partition.total_measure), float(geom.boundary_length_value))
-    points, strata, base_mass = partition.sample(
+    assert np.isclose(
+        float(partition.total_measure),
+        float(geometry.boundary_length_value),
+    )
+    sampled, strata, base_mass = partition.sample(
         8,
         key=jax.random.key(31),
         minimum_per_stratum=1,
     )
-    assert points.shape == (8, 2)
+    assert sampled.shape == (8, 2)
     assert set(map(int, strata)) == {0, 1, 2, 3}
     assert np.isclose(float(jnp.sum(base_mass)), 1.0)
+
+    component = geometry.component({"x": phx.domain.Boundary()})
+    realization = phx.integration.materialize(
+        phx.integration.over(component),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(5)),
+    )
+    points = realization.batch.points["x"].data
+    estimate = phx.integration.reduce(1.0, realization)
+    assert points.shape == (20, 2)
+    assert jnp.all(geometry._on_boundary(points))
+    assert jnp.allclose(jnp.asarray(estimate.value.data), geometry.boundary_length_value)
 
 
 def test_curved_boundary_normals_obey_divergence_theorem() -> None:
@@ -91,63 +113,15 @@ def test_curved_boundary_normals_obey_divergence_theorem() -> None:
     assert np.isclose(position_flux, 2.0 * float(geom.area), atol=1e-5)
 
 
-def test_boundary_chart_lowering_integrates_arclength_without_seam_duplication(
+def test_planar_mesh_sampling_respects_boundary_and_interior_support(
     geometry_from_square: Any,
 ) -> None:
-    geom = geometry_from_square
-    component = geom.component({"x": phx.domain.Boundary()})
-    target = phx.integration.over(component)
-    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(5))
-    realization = phx.integration.materialize(target, plan)
-    points = realization.batch.points["x"].data
-    estimate = phx.integration.reduce(1.0, realization)
-
-    assert points.shape == (20, 2)
-    assert jnp.all(geom._on_boundary(points))
-    assert jnp.allclose(jnp.asarray(estimate.value.data), geom.boundary_length_value)
-
-
-def test_bounds_property(geometry_from_square: Any) -> None:
-    geom = geometry_from_square
-    bounds = np.asarray(geom.bounds, dtype="float64")
-    expected_bounds = np.array([[-0.5, -0.5], [0.5, 0.5]])
-    assert np.allclose(bounds, expected_bounds, atol=1e-6)
-
-
-def test_contains_method(geometry_from_square: Any) -> None:
-    geom = geometry_from_square
-    inside_point = jnp.array([[0.0, 0.0]], dtype="float64")
-    outside_point = jnp.array([[2.0, 2.0]], dtype="float64")
-    assert geom._contains(inside_point)[0]
-    assert ~geom._contains(outside_point)[0]
-
-
-def test_on_boundary_method(geometry_from_square: Any) -> None:
-    geom = geometry_from_square
-    boundary_point = jnp.array([[0.5, 0.0]], dtype="float64")
-    interior_point = jnp.array([[0.0, 0.0]], dtype="float64")
-    assert geom._on_boundary(boundary_point)[0]
-    assert ~geom._on_boundary(interior_point)[0]
-
-
-def test_sample_boundary(geometry_from_square: Any) -> None:
-    geom = geometry_from_square
-    num_points = 100
-    sampled_points = geom.sample_boundary(num_points=num_points)
-    assert sampled_points.shape == (num_points, 2)
-    # Check if points are on boundary
-    distances = jax.vmap(geom.adf)(sampled_points)
-    assert np.allclose(distances, 0.0, atol=1e-8)
-
-
-def test_sample_interior(geometry_from_square: Any) -> None:
-    geom = geometry_from_square
-    num_points = 100
-    sampled_points = geom.sample_interior(num_points=num_points)
-    assert sampled_points.shape == (num_points, 2)
-    # Check if points are inside
-    distances = jax.vmap(geom.adf)(sampled_points)
-    assert np.all(distances <= 0.0)
+    geometry = geometry_from_square
+    boundary = geometry.sample_boundary(num_points=100)
+    interior = geometry.sample_interior(num_points=100)
+    assert boundary.shape == interior.shape == (100, 2)
+    assert np.allclose(jax.vmap(geometry.adf)(boundary), 0.0, atol=1e-8)
+    assert np.all(jax.vmap(geometry.adf)(interior) <= 0.0)
 
 
 def test_geometry_from_cad_file(tmp_path: Any) -> None:
@@ -195,7 +169,6 @@ def test_boundary_normals(geometry_from_square: Any) -> None:
 def test_sample_interior_separable(geometry_from_square: Any) -> None:
     """Test separable interior sampling through the geometry domain adapter."""
     import jax.random as jr
-    import numpy as np
 
     # Test with a single number for num_points
     key = jr.key(42)

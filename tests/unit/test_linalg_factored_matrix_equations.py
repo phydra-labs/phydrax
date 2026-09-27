@@ -86,7 +86,7 @@ def _policy(
     )
 
 
-def test_factored_solution_rank_masks_unused_fixed_capacity_columns() -> None:
+def test_linalg_factored_matrix_equations_scenario_1() -> None:
     left = jnp.asarray([[1.0, 100.0], [2.0, 200.0]])
     right = jnp.asarray([[3.0, 300.0], [4.0, 400.0], [5.0, 500.0]])
     general = la.FactoredMatrixSolution(left, right, rank=1)
@@ -98,43 +98,6 @@ def test_factored_solution_rank_masks_unused_fixed_capacity_columns() -> None:
 
     assert jnp.allclose(general.to_dense(), jnp.outer(left[:, 0], right[:, 0]))
     assert jnp.allclose(psd.to_dense(), jnp.outer(left[:, 0], left[:, 0]))
-
-
-def test_matrix_free_factored_lyapunov_matches_existing_exact_reference_without_materializing() -> (
-    None
-):
-    matrix, source_factor, problem = _problem()
-    result = la.solve_factored_matrix_equation(problem, policy=_policy())
-    forcing = source_factor @ source_factor.T
-    exact = la.solve_matrix_equation(
-        la.continuous_lyapunov_equation(matrix, forcing),
-        policy=la.MatrixEquationPolicy(
-            linear=la.LinearSolvePolicy(la.DenseLU()),
-        ),
-    )
-    reconstructed = result.solution.to_dense()
-    residual = matrix @ reconstructed + reconstructed @ matrix.T + forcing
-
-    assert result.status == int(la.FactoredMatrixEquationStatus.SUCCESS)
-    assert result.successful
-    assert result.solution.hermitian_positive_semidefinite
-    assert jnp.allclose(reconstructed, exact.value, rtol=2e-8, atol=2e-9)
-    assert jnp.linalg.norm(residual) < 2e-8
-    assert jnp.all(result.shifted_statuses == int(la.ShiftedSolveStatus.SUCCESS))
-    assert jnp.allclose(
-        result.certificate.residual_norm,
-        jnp.linalg.norm(residual),
-        rtol=2e-7,
-        atol=2e-10,
-    )
-    assert result.certificate.exact
-    assert result.provenance.operator_materialized is False
-    assert result.provenance.solution_materialized is False
-
-
-def test_factored_truncation_reports_rank_loss_storage_and_original_residual_certificate() -> (
-    None
-):
     matrix, source_factor, problem = _problem(problem_id="factored-truncated")
     result = la.solve_factored_matrix_equation(
         problem,
@@ -171,36 +134,6 @@ def test_factored_truncation_reports_rank_loss_storage_and_original_residual_cer
         rtol=2e-7,
         atol=2e-10,
     )
-
-
-def test_general_factored_solution_contract_reconstructs_u_v_adjoint() -> None:
-    left = jnp.asarray([[1.0, 0.5], [-2.0, 1.0], [0.25, -0.75]])
-    right = jnp.asarray([[1.0 + 0.5j, -1.0j], [0.25, 2.0], [-0.5j, 0.75], [1.5, -0.25j]])
-    solution = la.FactoredMatrixSolution(left, right)
-
-    assert solution.form == "general"
-    assert not solution.hermitian_positive_semidefinite
-    assert solution.rank == 2
-    assert jnp.allclose(solution.to_dense(), left @ jnp.conj(right.T))
-
-
-def test_shifted_failure_propagates_to_factored_status_and_per_shift_evidence() -> None:
-    _matrix, _source_factor, problem = _problem(problem_id="factored-failure")
-    failed = la.solve_factored_matrix_equation(
-        problem,
-        policy=_policy(max_dimension=1, residual_tolerance=1.0),
-    )
-
-    assert failed.status == int(la.FactoredMatrixEquationStatus.SHIFTED_SOLVE_FAILURE)
-    assert not failed.successful
-    assert jnp.any(failed.shifted_statuses != int(la.ShiftedSolveStatus.SUCCESS))
-    assert failed.shifted_statuses.shape == (4, 1)
-    assert not failed.diagnostics.converged
-
-
-def test_factored_public_lifecycle_refreshes_and_unsupported_dense_structures_are_rejected() -> (
-    None
-):
     matrix, source_factor, first = _problem(problem_id="factored-refresh")
     policy = _policy()
     plan = la.plan_factored_matrix_equation(first, policy)
@@ -245,3 +178,52 @@ def test_factored_public_lifecycle_refreshes_and_unsupported_dense_structures_ar
         "solve_factored_matrix_equation",
     )
     assert all(name in la.__all__ for name in public)
+    matrix, source_factor, problem = _problem()
+    result = la.solve_factored_matrix_equation(problem, policy=_policy())
+    forcing = source_factor @ source_factor.T
+    exact = la.solve_matrix_equation(
+        la.continuous_lyapunov_equation(matrix, forcing),
+        policy=la.MatrixEquationPolicy(
+            linear=la.LinearSolvePolicy(la.DenseLU()),
+        ),
+    )
+    reconstructed = result.solution.to_dense()
+    residual = matrix @ reconstructed + reconstructed @ matrix.T + forcing
+
+    assert result.status == int(la.FactoredMatrixEquationStatus.SUCCESS)
+    assert result.successful
+    assert result.solution.hermitian_positive_semidefinite
+    assert jnp.allclose(reconstructed, exact.value, rtol=2e-8, atol=2e-9)
+    assert jnp.linalg.norm(residual) < 2e-8
+    assert jnp.all(result.shifted_statuses == int(la.ShiftedSolveStatus.SUCCESS))
+    assert jnp.allclose(
+        result.certificate.residual_norm,
+        jnp.linalg.norm(residual),
+        rtol=2e-7,
+        atol=2e-10,
+    )
+    assert result.certificate.exact
+    assert result.provenance.operator_materialized is False
+    assert result.provenance.solution_materialized is False
+    left = jnp.asarray([[1.0, 0.5], [-2.0, 1.0], [0.25, -0.75]])
+    right = jnp.asarray([[1.0 + 0.5j, -1.0j], [0.25, 2.0], [-0.5j, 0.75], [1.5, -0.25j]])
+    solution = la.FactoredMatrixSolution(left, right)
+
+    assert solution.form == "general"
+    assert not solution.hermitian_positive_semidefinite
+    assert solution.rank == 2
+    assert jnp.allclose(solution.to_dense(), left @ jnp.conj(right.T))
+
+
+def test_shifted_failure_propagates_to_factored_status_and_per_shift_evidence() -> None:
+    _matrix, _source_factor, problem = _problem(problem_id="factored-failure")
+    failed = la.solve_factored_matrix_equation(
+        problem,
+        policy=_policy(max_dimension=1, residual_tolerance=1.0),
+    )
+
+    assert failed.status == int(la.FactoredMatrixEquationStatus.SHIFTED_SOLVE_FAILURE)
+    assert not failed.successful
+    assert jnp.any(failed.shifted_statuses != int(la.ShiftedSolveStatus.SUCCESS))
+    assert failed.shifted_statuses.shape == (4, 1)
+    assert not failed.diagnostics.converged

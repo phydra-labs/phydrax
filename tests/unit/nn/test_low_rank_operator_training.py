@@ -73,7 +73,7 @@ def _adapted_operator(seed: Any = 0, *, resolution: Any = 6) -> Any:
     return adapted, phx.nn.parameters.low_rank_parameter_subspace(adapted)
 
 
-def test_fit_operator_updates_only_low_rank_factor_subspace() -> None:
+def test_fit_operator_contracts() -> None:
     model, subspace = _adapted_operator()
     initial_factors = tuple(jax.tree.leaves(subspace.initial))
     result = phx.nn.operator.training.fit_operator(
@@ -95,9 +95,6 @@ def test_fit_operator_updates_only_low_rank_factor_subspace() -> None:
     )
     assert bool(eqx.tree_equal(subspace.frozen, rebased.frozen))
     assert jnp.isfinite(result.final_loss)
-
-
-def test_fit_operator_requires_explicit_low_rank_subspace() -> None:
     model, _ = _adapted_operator()
     with pytest.raises(ValueError, match="requires an explicit"):
         phx.nn.operator.training.fit_operator(

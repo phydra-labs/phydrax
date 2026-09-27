@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_bounded_cell_axis_has_distinct_cell_and_face_entities() -> None:
+def test_tensor_entities_scenario_1() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),),
         axis_names=("x",),
@@ -34,9 +34,6 @@ def test_bounded_cell_axis_has_distinct_cell_and_face_entities() -> None:
     assert pressure.vector_space.space_id != velocity.vector_space.space_id
     assert jnp.count_nonzero(faces.lower_boundary_masks[0]) == 1
     assert jnp.count_nonzero(faces.upper_boundary_masks[0]) == 1
-
-
-def test_periodic_cell_axis_quotients_point_entities_to_cell_count() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=True),),
         axis_names=("x",),
@@ -46,9 +43,6 @@ def test_periodic_cell_axis_quotients_point_entities_to_cell_count() -> None:
     assert grid.faces("x").shape == (8,)
     assert not jnp.any(grid.faces("x").lower_boundary_masks[0])
     assert not jnp.any(grid.faces("x").upper_boundary_masks[0])
-
-
-def test_two_dimensional_face_layouts_have_axis_specific_shapes() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(3),

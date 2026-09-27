@@ -43,6 +43,7 @@ from phydrax.equations._finite_element_variational import (
     FiniteElementForm,
     SourceAction,
 )
+from tests._support.assertions import assert_tree_equal
 
 
 def _mesh_problem(*, commanded: Any = False) -> Any:
@@ -242,31 +243,18 @@ def _context(state: Any, dt: Any = 0.1) -> Any:
     return PlantStepContext(state.time, state.time + dt, state.step_index)
 
 
-def _assert_tree_equal(first: Any, second: Any) -> None:
-    first_leaves = jax.tree.leaves(first)
-    second_leaves = jax.tree.leaves(second)
-    assert len(first_leaves) == len(second_leaves)
-    assert all(
-        jnp.array_equal(left, right)
-        for left, right in zip(first_leaves, second_leaves, strict=True)
-    )
-
-
-def test_reset_reports_complete_candidate_commit_and_current_sensor_evidence() -> None:
+def test_robot_soft_fem_scenario_1() -> None:
     plant = _plant()
     reset = plant.reset(jax.random.key(3), plant.parameters, initial_time=1.25)
 
     assert bool(reset.attempted)
     assert bool(reset.successful)
-    _assert_tree_equal(reset.candidate_state.payload, plant.reset_fallback)
-    _assert_tree_equal(reset.accepted_state.payload, plant.reset_fallback)
+    assert_tree_equal(reset.candidate_state.payload, plant.reset_fallback)
+    assert_tree_equal(reset.accepted_state.payload, plant.reset_fallback)
     assert reset.accepted_state.time == 1.25
     assert reset.accepted_state.step_index == 0
     assert bool(reset.evidence.observation.successful)
     assert reset.evidence.capability_ids == plant.capabilities.capability_ids
-
-
-def test_manufactured_translation_preserves_zero_strain_energy_and_observation() -> None:
     plant = _plant(initial_velocity=(0.4, -0.2, 0.1))
     source = _reset(plant)
     command = plant.load_layout.zero_command(source.payload.displacement.dtype)
@@ -288,9 +276,6 @@ def test_manufactured_translation_preserves_zero_strain_energy_and_observation()
     assert observation.displacement.shape == (1, 3)
     assert observation.force.shape == (1, 3)
     assert bool(observation.successful)
-
-
-def test_pressure_fiber_and_body_force_are_routed_by_name_into_native_fem_args() -> None:
     plant = _plant(commanded=True)
     source = _reset(plant)
     dtype = source.payload.displacement.dtype
@@ -315,7 +300,7 @@ def test_pressure_fiber_and_body_force_are_routed_by_name_into_native_fem_args()
     )
 
 
-def test_constitutive_history_is_complete_and_committed_only_on_acceptance() -> None:
+def test_robot_soft_fem_scenario_2() -> None:
     plant = _plant(material=True, constitutive=FEM_VISCOELASTICITY_CAPABILITY_ID)
     source = _reset(plant)
     command = plant.load_layout.zero_command(source.payload.displacement.dtype)
@@ -337,11 +322,6 @@ def test_constitutive_history_is_complete_and_committed_only_on_acceptance() -> 
         == plant.material_templates[0].state_version + 1
     )
     assert plant.capabilities.supports(FEM_VISCOELASTICITY_CAPABILITY_ID)
-
-
-def test_failed_admissibility_keeps_candidate_evidence_and_rolls_back_every_atom() -> (
-    None
-):
     plant = _plant(inverted=True, initial_velocity=(0.4, 0.0, 0.0))
     source = _reset(plant)
     source_digest = plant.state_digest(source)
@@ -352,10 +332,7 @@ def test_failed_admissibility_keeps_candidate_evidence_and_rolls_back_every_atom
     assert not bool(result.evidence.dynamics.candidate.admissibility.jacobian_valid)
     assert jnp.linalg.norm(result.candidate_state.payload.displacement) > 0.0
     assert plant.state_digest(result.accepted_state) == source_digest
-    _assert_tree_equal(result.accepted_state, source)
-
-
-def test_checkpoint_replay_is_deterministic_and_matches_exact_digests() -> None:
+    assert_tree_equal(result.accepted_state, source)
     plant = _plant(initial_velocity=(0.2, -0.1, 0.05))
     source = _reset(plant)
     checkpoint = plant.checkpoint(source)
@@ -383,7 +360,7 @@ def test_checkpoint_replay_is_deterministic_and_matches_exact_digests() -> None:
     assert plant.state_digest(replay.final_state) == expected[-1]
 
 
-def test_complete_state_and_control_codecs_round_trip_exactly() -> None:
+def test_robot_soft_fem_scenario_3() -> None:
     plant = _plant(material=True, constitutive=FEM_VISCOELASTICITY_CAPABILITY_ID)
     state = _reset(plant).payload
     dtype = state.displacement.dtype
@@ -398,13 +375,10 @@ def test_complete_state_and_control_codecs_round_trip_exactly() -> None:
         plant.control_codec.encode_command(command)
     )
 
-    _assert_tree_equal(decoded_state, state)
-    _assert_tree_equal(decoded_command, command)
+    assert_tree_equal(decoded_state, state)
+    assert_tree_equal(decoded_command, command)
     assert plant.capabilities.supports(FEM_EXACT_STATE_CODEC_CAPABILITY_ID)
     assert plant.capabilities.supports(FEM_EXACT_CONTROL_CODEC_CAPABILITY_ID)
-
-
-def test_capability_manifest_is_explicit_and_rejects_unimplemented_physics() -> None:
     linear = _plant()
     expected = (
         FEM_LINEAR_ELASTICITY_CAPABILITY_ID,

@@ -69,7 +69,7 @@ def _fixed_segmented(problem: Any, times: Any, **kwargs: Any) -> Any:
     )
 
 
-def test_segmented_and_one_shot_fixed_solves_are_equivalent() -> None:
+def test_segmented_contracts() -> None:
     problem = _problem(t1=3.0)
     times = jnp.linspace(0.0, 3.0, 31)
     one_shot = phx.solver.solve_diffrax_delay(
@@ -87,93 +87,6 @@ def test_segmented_and_one_shot_fixed_solves_are_equivalent() -> None:
     assert jnp.allclose(segmented.states, one_shot.states, rtol=2e-12, atol=2e-12)
     assert int(segmented.stats["num_segments"]) > 1
     assert segmented.stats["controller_mode"] == "fixed"
-
-
-def test_active_history_bytes_plateau_with_horizon() -> None:
-    short = _fixed_segmented(_problem(t1=2.0), jnp.asarray([2.0]))
-    long = _fixed_segmented(_problem(t1=8.0), jnp.asarray([8.0]))
-
-    assert short.stats["history_capacity"] == long.stats["history_capacity"]
-    assert short.stats["active_history_bytes"] == long.stats["active_history_bytes"]
-    assert long.continuation.active_history.size <= long.stats["history_capacity"]
-    assert int(long.stats["num_segments"]) > int(short.stats["num_segments"])
-
-
-def test_rolling_history_wrap_preserves_logical_lookup_order() -> None:
-    structure = {
-        "y0": jax.ShapeDtypeStruct((1,), jnp.float64),
-        "y1": jax.ShapeDtypeStruct((1,), jnp.float64),
-    }
-    history = RollingDelayHistory.allocate(
-        time=jnp.asarray(0.0),
-        dense_info_structure=structure,
-        capacity=3,
-        interpolation_cls=_LinearInterpolation,
-        maximum_lag=jnp.asarray(1.0),
-    )
-    for start in (0.0, 0.4, 0.8, 1.2):
-        history = history.append(
-            jnp.asarray(start),
-            jnp.asarray(start + 0.4),
-            {"y0": jnp.asarray([start]), "y1": jnp.asarray([start + 0.4])},
-        )
-
-    assert int(history.start) != 0
-    assert jnp.allclose(history.logical_starts, jnp.asarray([0.4, 0.8, 1.2]))
-    assert jnp.allclose(
-        history.values(jnp.asarray([0.5, 1.0, 1.5]))[:, 0],
-        jnp.asarray([0.5, 1.0, 1.5]),
-    )
-
-
-def test_rejected_candidate_history_is_functionally_isolated() -> None:
-    structure = {
-        "y0": jax.ShapeDtypeStruct((1,), jnp.float64),
-        "y1": jax.ShapeDtypeStruct((1,), jnp.float64),
-    }
-    accepted = RollingDelayHistory.allocate(
-        time=jnp.asarray(0.0),
-        dense_info_structure=structure,
-        capacity=4,
-        interpolation_cls=_LinearInterpolation,
-        maximum_lag=jnp.asarray(1.0),
-    ).append(
-        jnp.asarray(0.0),
-        jnp.asarray(0.25),
-        {"y0": jnp.asarray([0.0]), "y1": jnp.asarray([0.25])},
-    )
-    candidate = accepted.append(
-        jnp.asarray(0.25),
-        jnp.asarray(0.5),
-        {"y0": jnp.asarray([0.25]), "y1": jnp.asarray([10.0])},
-    )
-
-    assert accepted.size == 1
-    assert jnp.allclose(accepted.evaluate(jnp.asarray(0.25)), jnp.asarray([0.25]))
-    assert candidate.size == 2
-    assert jnp.allclose(candidate.evaluate(jnp.asarray(0.5)), jnp.asarray([10.0]))
-
-
-def test_rejected_diffrax_candidates_never_enter_rolling_history() -> None:
-    solution = phx.solver.solve_diffrax_delay_segmented(
-        _problem(t1=0.5, delay=1.0),
-        save_times=jnp.asarray([0.5]),
-        solver=dfx.Kvaerno5(),
-        dt0=0.5,
-        rtol=1e-10,
-        atol=1e-12,
-        history_capacity=64,
-        max_steps_per_segment=128,
-    )
-    active = solution.continuation.active_history
-
-    assert int(solution.stats["num_rejected_steps"]) > 0
-    assert active.size == int(solution.stats["num_accepted_steps"])
-    starts = active.logical_starts[: active.size]
-    assert jnp.all(jnp.diff(starts) > 0.0)
-
-
-def test_segmented_event_stops_archive_at_root_boundary() -> None:
     problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.ones_like(state),
         lambda time, args: jnp.zeros((1,)),
@@ -218,6 +131,189 @@ def test_segmented_event_stops_archive_at_root_boundary() -> None:
             jnp.asarray([solution.continuation.time, problem.t1]),
             continuation=solution.continuation,
         )
+    state_dependent = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["past"],
+        lambda time, args: jnp.ones((1,)),
+        (
+            phx.solver.StateDependentDelay(
+                "past",
+                lambda time, state, args: jnp.asarray(0.2),
+                minimum_delay=0.1,
+            ),
+        ),
+        t0=0.0,
+        t1=0.5,
+    )
+    with pytest.raises(ValueError, match="finite maximum lag"):
+        phx.solver.solve_diffrax_delay_segmented(
+            state_dependent,
+            save_times=jnp.asarray([0.5]),
+            history_capacity=16,
+        )
+
+    with pytest.raises(ValueError, match="explicit history_capacity"):
+        phx.solver.solve_diffrax_delay_segmented(
+            _problem(t1=0.5),
+            save_times=jnp.asarray([0.5]),
+            solver=dfx.Tsit5(),
+        )
+    bounded_state_dependent = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["past"],
+        lambda time, args: jnp.ones((1,)),
+        (
+            phx.solver.StateDependentDelay(
+                "past",
+                lambda time, state, args: jnp.asarray(0.2),
+                minimum_delay=0.1,
+                maximum_delay=0.3,
+            ),
+        ),
+        t0=0.0,
+        t1=0.8,
+    )
+    times = jnp.linspace(0.0, 0.8, 9)
+    whole = phx.solver.solve_diffrax_delay(
+        bounded_state_dependent,
+        save_times=times,
+        max_steps=4096,
+    )
+    segmented = phx.solver.solve_diffrax_delay_segmented(
+        bounded_state_dependent,
+        save_times=times,
+        history_capacity=64,
+        max_steps_per_segment=16,
+    )
+    assert jnp.allclose(segmented.states, whole.states, rtol=1e-7, atol=1e-8)
+    assert segmented.stats["state_dependent_tracking"] == "high-order-dynamic-roots"
+    assert segmented.stats["num_dynamic_discontinuity_roots"] > 0
+    assert segmented.stats["num_segments"] > 1
+
+    point = phx.solver.ConstantDelay("point", 0.2)
+    neutral = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["derivative"],
+        lambda time, args: jnp.ones((1,)),
+        (phx.solver.DerivativeDelay("derivative", point),),
+        t0=0.0,
+        t1=0.5,
+        history_derivative=lambda time, args: jnp.zeros((1,)),
+    )
+    neutral_segmented = phx.solver.solve_diffrax_delay_segmented(
+        neutral,
+        save_times=jnp.linspace(0.0, 0.5, 6),
+        solver=dfx.Tsit5(),
+        stepsize_controller=dfx.ConstantStepSize(),
+        dt0=0.05,
+        max_steps_per_segment=3,
+    )
+    assert jnp.allclose(neutral_segmented.states, 1.0)
+    assert neutral_segmented.stats["num_segments"] > 1
+    term = phx.solver.DistributedDelay(
+        "spread",
+        lambda time, lag, state, args: jnp.asarray(5.0),
+        (0.2, 0.4),
+        quadrature=phx.integration.GaussLegendreRule(4),
+    )
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["spread"],
+        lambda time, args: jnp.ones((1,)),
+        (term,),
+        t0=0.0,
+        t1=0.8,
+    )
+    times = jnp.linspace(0.0, 0.8, 9)
+    whole = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=times,
+        rtol=1e-9,
+        atol=1e-11,
+        max_steps=2048,
+    )
+    segmented = phx.solver.solve_diffrax_delay_segmented(
+        problem,
+        save_times=times,
+        rtol=1e-9,
+        atol=1e-11,
+        history_capacity=64,
+        max_steps_per_segment=8,
+    )
+
+    assert jnp.allclose(segmented.states, whole.states, rtol=1e-8, atol=1e-9)
+    assert segmented.stats["num_segments"] > 1
+
+
+def test_diffrax_delay_segmented_scenario_1() -> None:
+    short = _fixed_segmented(_problem(t1=2.0), jnp.asarray([2.0]))
+    long = _fixed_segmented(_problem(t1=8.0), jnp.asarray([8.0]))
+
+    assert short.stats["history_capacity"] == long.stats["history_capacity"]
+    assert short.stats["active_history_bytes"] == long.stats["active_history_bytes"]
+    assert long.continuation.active_history.size <= long.stats["history_capacity"]
+    assert int(long.stats["num_segments"]) > int(short.stats["num_segments"])
+    structure = {
+        "y0": jax.ShapeDtypeStruct((1,), jnp.float64),
+        "y1": jax.ShapeDtypeStruct((1,), jnp.float64),
+    }
+    history = RollingDelayHistory.allocate(
+        time=jnp.asarray(0.0),
+        dense_info_structure=structure,
+        capacity=3,
+        interpolation_cls=_LinearInterpolation,
+        maximum_lag=jnp.asarray(1.0),
+    )
+    for start in (0.0, 0.4, 0.8, 1.2):
+        history = history.append(
+            jnp.asarray(start),
+            jnp.asarray(start + 0.4),
+            {"y0": jnp.asarray([start]), "y1": jnp.asarray([start + 0.4])},
+        )
+
+    assert int(history.start) != 0
+    assert jnp.allclose(history.logical_starts, jnp.asarray([0.4, 0.8, 1.2]))
+    assert jnp.allclose(
+        history.values(jnp.asarray([0.5, 1.0, 1.5]))[:, 0],
+        jnp.asarray([0.5, 1.0, 1.5]),
+    )
+    structure = {
+        "y0": jax.ShapeDtypeStruct((1,), jnp.float64),
+        "y1": jax.ShapeDtypeStruct((1,), jnp.float64),
+    }
+    accepted = RollingDelayHistory.allocate(
+        time=jnp.asarray(0.0),
+        dense_info_structure=structure,
+        capacity=4,
+        interpolation_cls=_LinearInterpolation,
+        maximum_lag=jnp.asarray(1.0),
+    ).append(
+        jnp.asarray(0.0),
+        jnp.asarray(0.25),
+        {"y0": jnp.asarray([0.0]), "y1": jnp.asarray([0.25])},
+    )
+    candidate = accepted.append(
+        jnp.asarray(0.25),
+        jnp.asarray(0.5),
+        {"y0": jnp.asarray([0.25]), "y1": jnp.asarray([10.0])},
+    )
+
+    assert accepted.size == 1
+    assert jnp.allclose(accepted.evaluate(jnp.asarray(0.25)), jnp.asarray([0.25]))
+    assert candidate.size == 2
+    assert jnp.allclose(candidate.evaluate(jnp.asarray(0.5)), jnp.asarray([10.0]))
+    solution = phx.solver.solve_diffrax_delay_segmented(
+        _problem(t1=0.5, delay=1.0),
+        save_times=jnp.asarray([0.5]),
+        solver=dfx.Kvaerno5(),
+        dt0=0.5,
+        rtol=1e-10,
+        atol=1e-12,
+        history_capacity=64,
+        max_steps_per_segment=128,
+    )
+    active = solution.continuation.active_history
+
+    assert int(solution.stats["num_rejected_steps"]) > 0
+    assert active.size == int(solution.stats["num_accepted_steps"])
+    starts = active.logical_starts[: active.size]
+    assert jnp.all(jnp.diff(starts) > 0.0)
 
 
 @pytest.mark.filterwarnings("error:invalid value encountered in cast:RuntimeWarning")
@@ -278,7 +374,7 @@ def test_scalar_stochastic_segments_replay_one_realization() -> None:
     assert jnp.allclose(segmented.states, one_shot.states, rtol=1e-7, atol=1e-9)
 
 
-def test_continuation_restart_matches_uninterrupted_segments() -> None:
+def test_diffrax_delay_segmented_scenario_2() -> None:
     problem = _problem(t1=2.0, problem_id="restartable")
     full = _fixed_segmented(problem, jnp.asarray([2.0]))
     partial = _fixed_segmented(
@@ -296,9 +392,6 @@ def test_continuation_restart_matches_uninterrupted_segments() -> None:
     assert partial.backend_result is phx.solver.SegmentedDelayResult.segment_limit_reached
     assert jnp.allclose(restarted.states[-1], full.states[-1], rtol=2e-12, atol=2e-12)
     assert int(restarted.stats["num_segments"]) == int(full.stats["num_segments"])
-
-
-def test_adaptive_history_overflow_is_an_explicit_result() -> None:
     problem = _problem(t1=1.0)
     solution = phx.solver.solve_diffrax_delay_segmented(
         problem,
@@ -322,123 +415,6 @@ def test_adaptive_history_overflow_is_an_explicit_result() -> None:
             max_steps_per_segment=16,
             throw=True,
         )
-
-
-def test_segmented_requires_maximum_lag_and_adaptive_capacity() -> None:
-    state_dependent = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["past"],
-        lambda time, args: jnp.ones((1,)),
-        (
-            phx.solver.StateDependentDelay(
-                "past",
-                lambda time, state, args: jnp.asarray(0.2),
-                minimum_delay=0.1,
-            ),
-        ),
-        t0=0.0,
-        t1=0.5,
-    )
-    with pytest.raises(ValueError, match="finite maximum lag"):
-        phx.solver.solve_diffrax_delay_segmented(
-            state_dependent,
-            save_times=jnp.asarray([0.5]),
-            history_capacity=16,
-        )
-
-    with pytest.raises(ValueError, match="explicit history_capacity"):
-        phx.solver.solve_diffrax_delay_segmented(
-            _problem(t1=0.5),
-            save_times=jnp.asarray([0.5]),
-            solver=dfx.Tsit5(),
-        )
-
-
-def test_segmented_state_dependent_and_neutral_delays_match_whole_solve() -> None:
-    bounded_state_dependent = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["past"],
-        lambda time, args: jnp.ones((1,)),
-        (
-            phx.solver.StateDependentDelay(
-                "past",
-                lambda time, state, args: jnp.asarray(0.2),
-                minimum_delay=0.1,
-                maximum_delay=0.3,
-            ),
-        ),
-        t0=0.0,
-        t1=0.8,
-    )
-    times = jnp.linspace(0.0, 0.8, 9)
-    whole = phx.solver.solve_diffrax_delay(
-        bounded_state_dependent,
-        save_times=times,
-        max_steps=4096,
-    )
-    segmented = phx.solver.solve_diffrax_delay_segmented(
-        bounded_state_dependent,
-        save_times=times,
-        history_capacity=64,
-        max_steps_per_segment=16,
-    )
-    assert jnp.allclose(segmented.states, whole.states, rtol=1e-7, atol=1e-8)
-    assert segmented.stats["state_dependent_tracking"] == "high-order-dynamic-roots"
-    assert segmented.stats["num_dynamic_discontinuity_roots"] > 0
-    assert segmented.stats["num_segments"] > 1
-
-    point = phx.solver.ConstantDelay("point", 0.2)
-    neutral = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["derivative"],
-        lambda time, args: jnp.ones((1,)),
-        (phx.solver.DerivativeDelay("derivative", point),),
-        t0=0.0,
-        t1=0.5,
-        history_derivative=lambda time, args: jnp.zeros((1,)),
-    )
-    neutral_segmented = phx.solver.solve_diffrax_delay_segmented(
-        neutral,
-        save_times=jnp.linspace(0.0, 0.5, 6),
-        solver=dfx.Tsit5(),
-        stepsize_controller=dfx.ConstantStepSize(),
-        dt0=0.05,
-        max_steps_per_segment=3,
-    )
-    assert jnp.allclose(neutral_segmented.states, 1.0)
-    assert neutral_segmented.stats["num_segments"] > 1
-
-
-def test_segmented_distributed_delay_matches_whole_solve() -> None:
-    term = phx.solver.DistributedDelay(
-        "spread",
-        lambda time, lag, state, args: jnp.asarray(5.0),
-        (0.2, 0.4),
-        quadrature=phx.integration.GaussLegendreRule(4),
-    )
-    problem = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["spread"],
-        lambda time, args: jnp.ones((1,)),
-        (term,),
-        t0=0.0,
-        t1=0.8,
-    )
-    times = jnp.linspace(0.0, 0.8, 9)
-    whole = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=times,
-        rtol=1e-9,
-        atol=1e-11,
-        max_steps=2048,
-    )
-    segmented = phx.solver.solve_diffrax_delay_segmented(
-        problem,
-        save_times=times,
-        rtol=1e-9,
-        atol=1e-11,
-        history_capacity=64,
-        max_steps_per_segment=8,
-    )
-
-    assert jnp.allclose(segmented.states, whole.states, rtol=1e-8, atol=1e-9)
-    assert segmented.stats["num_segments"] > 1
 
 
 def test_whole_solve_jit_is_rejected_as_host_dynamic() -> None:

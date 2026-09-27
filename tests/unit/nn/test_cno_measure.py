@@ -125,9 +125,8 @@ def test_periodic_coordinate_features_have_equal_interior_and_seam_chords() -> N
     assert jnp.allclose(features[0], jnp.asarray([0.0, 1.0]))
 
 
-@pytest.mark.parametrize(
-    "axis",
-    (
+def test_cno_rejects_axes_outside_periodic_uniform_fourier_contract() -> None:
+    for axis in (
         phx.nn.operator.OperatorAxis("x", jnp.arange(5.0) / 5),
         phx.nn.operator.OperatorAxis(
             "x", jnp.arange(5.0) / 5, basis="legendre", periodic=True
@@ -145,31 +144,31 @@ def test_periodic_coordinate_features_have_equal_interior_and_seam_chords() -> N
             "x", jnp.asarray([0.0, 0.4, 0.7, 0.9]), periodic=True
         ),
         phx.nn.operator.OperatorAxis("x", jnp.asarray([0.0]), periodic=True),
-    ),
-)
-def test_cno_rejects_axes_outside_periodic_uniform_fourier_contract(axis: Any) -> None:
-    model = phx.nn.operator.architectures.CNO(
-        spatial_ndim=1,
-        width=3,
-        depth=1,
-        oversample_factor=1,
-        key=jr.key(20),
-    )
-    values = jnp.ones((axis.size,))
-    axis = phx.nn.operator.OperatorAxis(
-        axis.name,
-        axis.nodes,
-        quadrature_weights=jnp.ones((axis.size,)),
-        basis=axis.basis,
-        periodic=axis.periodic,
-    )
-    batch = phx.nn.operator.OperatorBatch(
-        inputs={"source": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))},
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
-    )
+    ):
+        model = phx.nn.operator.architectures.CNO(
+            spatial_ndim=1,
+            width=3,
+            depth=1,
+            oversample_factor=1,
+            key=jr.key(20),
+        )
+        values = jnp.ones((axis.size,))
+        axis = phx.nn.operator.OperatorAxis(
+            axis.name,
+            axis.nodes,
+            quadrature_weights=jnp.ones((axis.size,)),
+            basis=axis.basis,
+            periodic=axis.periodic,
+        )
+        batch = phx.nn.operator.OperatorBatch(
+            inputs={
+                "source": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))
+            },
+            queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
+        )
 
-    with pytest.raises(ValueError):
-        model(batch)
+        with pytest.raises(ValueError):
+            model(batch)
 
 
 def test_cno_rejects_noncoincident_source_and_query_axes() -> None:

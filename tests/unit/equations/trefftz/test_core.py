@@ -18,7 +18,7 @@ def _laplacian(function: Any, point: Any) -> Any:
     return jnp.trace(jax.hessian(function)(point))
 
 
-def test_similarity_and_resource_contracts_fail_closed() -> None:
+def test_core_scenario_1() -> None:
     # ty: ignore[invalid-argument-type]
     normalization = phx.equations.SimilarityNormalization([1.0, -2.0], 3.0)
     assert jnp.allclose(normalization(jnp.asarray([4.0, 1.0])), jnp.ones((2,)))
@@ -32,9 +32,6 @@ def test_similarity_and_resource_contracts_fail_closed() -> None:
     budget = phx.equations.TrefftzResourceBudget(maximum_rank=2)
     with pytest.raises(ValueError, match="resource budget"):
         phx.equations.HarmonicPolynomialBasis(2, 2, resources=budget)
-
-
-def test_construction_audits_are_paired_and_fail_each_block_independently() -> None:
     with pytest.raises(ValueError, match="block 1 failed"):
         _critical_construction_audit(
             (1e-12, 1e-8),
@@ -50,9 +47,6 @@ def test_construction_audits_are_paired_and_fail_each_block_independently() -> N
     )
     assert residual == 5e-9
     assert tolerance == 1e-8
-
-
-def test_canonical_harmonic_basis_is_deterministic_and_exact() -> None:
     first = phx.equations.HarmonicPolynomialBasis(3, 4)
     second = phx.equations.HarmonicPolynomialBasis(3, 4)
     assert first.rank == 25
@@ -113,7 +107,7 @@ def test_almansi_basis_is_polyharmonic_and_order_one_matches_harmonic_rank() -> 
     assert len(basis.construction_residuals) == basis.order
 
 
-def test_helmholtz_basis_canonicalizes_orientation_and_is_exact() -> None:
+def test_core_scenario_2() -> None:
     directions = jnp.asarray(
         [
             [1.0, 0.0, 0.0],
@@ -139,9 +133,6 @@ def test_helmholtz_basis_canonicalizes_orientation_and_is_exact() -> None:
         )
     with pytest.raises(ValueError, match="positive"):
         phx.equations.HelmholtzPlaneWaveBasis(3, 0.0, directions)
-
-
-def test_trial_space_audit_requires_supported_evaluation_accuracy() -> None:
     report = phx.equations.TrialSpaceAuditReport(
         finite=True,
         maximum_residual=0.0,
@@ -158,9 +149,6 @@ def test_trial_space_audit_requires_supported_evaluation_accuracy() -> None:
 
     assert not bool(report.valid)
     assert not bool(report.evaluation_accuracy_supported)
-
-
-def test_bound_trial_metadata_provenance_audit_and_enforcement_guard() -> None:
     # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     model = phx.equations.LinearTrefftzField(
@@ -206,7 +194,7 @@ def test_bound_trial_metadata_provenance_audit_and_enforcement_guard() -> None:
     )
 
 
-def test_direct_linear_trial_space_solve_recovers_harmonic_boundary_field() -> None:
+def test_direct_linear_contracts() -> None:
     # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     model = phx.equations.LinearTrefftzField(phx.equations.HarmonicPolynomialBasis(2, 1))
@@ -241,9 +229,6 @@ def test_direct_linear_trial_space_solve_recovers_harmonic_boundary_field() -> N
     learned = jnp.asarray(result.solver["u"](batch).data)
     truth = 0.5 + 1.25 * points[:, 0] - 0.75 * points[:, 1]
     assert jnp.allclose(learned, truth, atol=1e-10, rtol=1e-10)
-
-
-def test_direct_linear_solver_rejects_nonfixed_realizations() -> None:
     # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     field = domain.Model("x")(

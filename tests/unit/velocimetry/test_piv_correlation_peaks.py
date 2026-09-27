@@ -13,7 +13,7 @@ from phydrax.velocimetry.piv import (
 )
 
 
-def test_chunked_extended_correlation_recovers_row_column_shift_and_mask() -> None:
+def test_piv_correlation_peaks_scenario_1() -> None:
     first_values = jr.normal(jr.key(4), (3, 8, 8))
     margin = (3, 3)
     expected = jnp.asarray([1.0, -2.0])
@@ -39,9 +39,6 @@ def test_chunked_extended_correlation_recovers_row_column_shift_and_mask() -> No
     )
     assert jnp.array_equal(peaks.valid[:, 0], jnp.asarray([True, True, False]))
     assert jnp.all(correlation.overlap[:2, 4, 1] >= 64.0 - 1e-4)
-
-
-def test_linear_correlation_uses_overlap_mask_instead_of_wrapping() -> None:
     first_values = jr.normal(jr.key(5), (1, 8, 8))
     second_values = jnp.zeros_like(first_values)
     second_values = second_values.at[:, 1:, 2:].set(first_values[:, :-1, :-2])
@@ -62,9 +59,6 @@ def test_linear_correlation_uses_overlap_mask_instead_of_wrapping() -> None:
 
     assert jnp.array_equal(jnp.rint(peak.offsets_rc[0, 0]), jnp.asarray([1.0, 2.0]))
     assert correlation.overlap[0, 4, 5] == 42
-
-
-def test_circular_correlation_preserves_positive_row_down_shift() -> None:
     first_values = jr.normal(jr.key(7), (1, 8, 8))
     second_values = jnp.roll(first_values, (2, -1), axis=(-2, -1))
     mask = jnp.ones_like(first_values, dtype="bool")

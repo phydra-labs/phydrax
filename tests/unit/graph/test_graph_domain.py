@@ -23,7 +23,7 @@ def _make_graph() -> phx.graph.GraphIR:
     )
 
 
-def test_graph_domain_samples_node_batch() -> None:
+def test_graph_domain_contracts() -> None:
     domain = phx.domain.GraphDomain(_make_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
@@ -35,25 +35,6 @@ def test_graph_domain_samples_node_batch() -> None:
     assert axis is not None
     assert batch["graph"].dims == (axis, None)
     assert batch["graph"].data.shape == (3, 1)
-
-
-def test_graph_domain_function_evaluates_over_nodes() -> None:
-    domain = phx.domain.GraphDomain(_make_graph())
-    component = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.SampleLayout((("graph",),))
-    batch = component.sample(phx.domain.PointSampling(3, layout=structure), key=jr.key(1))
-
-    @domain.Function("graph")
-    def u(node: Any) -> Any:
-        return node[0] + 1.0
-
-    out = u(batch)
-    axis = batch.structure.axis_for("graph")
-    assert out.dims == (axis,)
-    assert jnp.allclose(jnp.asarray(out.data), jnp.array([1.0, 2.0, 3.0]))
-
-
-def test_graph_domain_samples_explicit_node_sets() -> None:
     domain = phx.domain.GraphDomain(_make_graph(), measure="count")
     # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
@@ -70,9 +51,6 @@ def test_graph_domain_samples_explicit_node_sets() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(component.mass.value, 2.0)
-
-
-def test_graph_domain_samples_explicit_edge_sets() -> None:
     domain = phx.domain.GraphDomain(_make_graph(), measure="count")
     # ty: ignore[invalid-argument-type]
     component = domain.component({"graph": phx.domain.InterfaceEdges([2, 0])})
@@ -89,9 +67,6 @@ def test_graph_domain_samples_explicit_edge_sets() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(component.mass.value, 2.0)
-
-
-def test_graph_domain_integral_measure_modes() -> None:
     graph = _make_graph()
     structure = phx.domain.SampleLayout((("graph",),))
 
@@ -114,6 +89,36 @@ def test_graph_domain_integral_measure_modes() -> None:
     )
     count_integral = phx.operators.integral(1.0, count_realization)
     assert jnp.allclose(jnp.asarray(count_integral.data), 3.0)
+    first_graph = _make_graph()
+    rerouted_graph = phx.graph.GraphIR(
+        nodes=first_graph.nodes,
+        edges=first_graph.edges,
+        senders=jnp.asarray([0, 2, 1], dtype=jnp.int32),
+        receivers=first_graph.receivers,
+        globals=first_graph.globals,
+        n_node=first_graph.n_node,
+        n_edge=first_graph.n_edge,
+    )
+    first = phx.domain.GraphDomain(first_graph)
+    rerouted = phx.domain.GraphDomain(rerouted_graph)
+
+    assert not first.same_support(rerouted)
+
+
+def test_graph_domain_function_evaluates_over_nodes() -> None:
+    domain = phx.domain.GraphDomain(_make_graph())
+    component = domain.component({"graph": phx.domain.Nodes()})
+    structure = phx.domain.SampleLayout((("graph",),))
+    batch = component.sample(phx.domain.PointSampling(3, layout=structure), key=jr.key(1))
+
+    @domain.Function("graph")
+    def u(node: Any) -> Any:
+        return node[0] + 1.0
+
+    out = u(batch)
+    axis = batch.structure.axis_for("graph")
+    assert out.dims == (axis,)
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([1.0, 2.0, 3.0]))
 
 
 def test_graph_domain_residual_penalty_is_zero() -> None:
@@ -135,20 +140,3 @@ def test_graph_domain_residual_penalty_is_zero() -> None:
 
     loss = term.loss({"u": u}, key=jr.key(2))
     assert loss < 1e-12
-
-
-def test_graph_domain_support_identity_includes_topology_values() -> None:
-    first_graph = _make_graph()
-    rerouted_graph = phx.graph.GraphIR(
-        nodes=first_graph.nodes,
-        edges=first_graph.edges,
-        senders=jnp.asarray([0, 2, 1], dtype=jnp.int32),
-        receivers=first_graph.receivers,
-        globals=first_graph.globals,
-        n_node=first_graph.n_node,
-        n_edge=first_graph.n_edge,
-    )
-    first = phx.domain.GraphDomain(first_graph)
-    rerouted = phx.domain.GraphDomain(rerouted_graph)
-
-    assert not first.same_support(rerouted)

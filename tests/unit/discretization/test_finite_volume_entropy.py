@@ -59,7 +59,7 @@ def _compiled_entropy_problem(
     return compiled, discretization, system_
 
 
-def test_conservation_compiler_accepts_entropy_pair_and_fingerprints_it() -> None:
+def test_finite_volume_entropy_scenario_1() -> None:
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     without_pair, _, _ = _compiled_entropy_problem(system=system)
@@ -68,11 +68,6 @@ def test_conservation_compiler_accepts_entropy_pair_and_fingerprints_it() -> Non
     assert with_pair.dynamics.entropy_pair is pair
     assert with_pair.dynamics.dynamics_id != without_pair.dynamics.dynamics_id
     assert with_pair.compilation_id != without_pair.compilation_id
-
-
-def test_finite_volume_entropy_diagnostics_are_volume_weighted_and_source_separated() -> (
-    None
-):
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     source = lambda time, state, coordinates, args: jnp.broadcast_to(
@@ -115,9 +110,6 @@ def test_finite_volume_entropy_diagnostics_are_volume_weighted_and_source_separa
     assert jnp.allclose(entropy.semidiscrete_entropy_rate, expected_source_rate)
     assert jnp.allclose(entropy.source_entropy_rate, expected_source_rate)
     assert jnp.allclose(entropy.convective_entropy_rate, 0.0)
-
-
-def test_entropy_total_uses_capacity_weighted_effective_volumes() -> None:
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(system)
     capacity = jnp.asarray([1.0, 1.5, 2.0, 2.5])
@@ -138,9 +130,6 @@ def test_entropy_total_uses_capacity_weighted_effective_volumes() -> None:
         diagnostics.entropy.total_entropy,
         jnp.sum(discretization.cell_volumes * capacity * pair.entropy(state)),
     )
-
-
-def test_entropy_pair_can_be_disabled_without_entropy_work() -> None:
     compiled, discretization, system = _compiled_entropy_problem()
     primitive = jnp.asarray([1.0, 0.0, 1.0])
     state = jnp.broadcast_to(
@@ -149,9 +138,6 @@ def test_entropy_pair_can_be_disabled_without_entropy_work() -> None:
     )
     _, diagnostics = compiled.residual_with_diagnostics(jnp.asarray(0.0), state)
     assert diagnostics.entropy is None
-
-
-def test_entropy_pair_mismatch_and_viscous_combinations_fail_at_compilation() -> None:
     system = phx.equations.EulerSystem()
     pair = phx.equations.ideal_gas_euler_entropy_pair(phx.equations.EulerSystem(2))
     with pytest.raises(ValueError, match="must target the conservation problem system"):

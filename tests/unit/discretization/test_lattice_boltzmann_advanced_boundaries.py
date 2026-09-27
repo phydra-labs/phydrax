@@ -17,7 +17,7 @@ from phydrax.discretization.lattice_boltzmann import (
 )
 
 
-def test_compiled_link_topology_enforces_write_once_stages() -> None:
+def test_lattice_boltzmann_advanced_boundaries_scenario_1() -> None:
     shape = (3, 3, 9)
     owner = np.full(shape, int(LatticeBoltzmannLinkOwner.LOCAL), dtype=np.int8)
     owner[0, 1, 1] = int(LatticeBoltzmannLinkOwner.HALFWAY)
@@ -52,9 +52,6 @@ def test_compiled_link_topology_enforces_write_once_stages() -> None:
 
     assert bool(streamed.written[1, 1, 0])
     assert not bool(streamed.written[0, 1, 1])
-
-
-def test_velocity_dependent_force_matches_linear_drag_root() -> None:
     drag = 0.2
     gravity = jnp.asarray((0.01, -0.02))
     plan = VelocityDependentAccelerationPlan(
@@ -76,9 +73,6 @@ def test_velocity_dependent_force_matches_linear_drag_root() -> None:
     expected_field = jnp.broadcast_to(expected, result.velocity.shape)
     np.testing.assert_allclose(result.velocity, expected_field, rtol=1e-7, atol=1e-9)
     np.testing.assert_allclose(result.force_density, gravity - drag * expected_field)
-
-
-def test_d3q27_body_diagonal_has_certified_opposite() -> None:
     lattice = D3Q27()
     assert np.array_equal(
         np.asarray(lattice.velocities)[np.asarray(lattice.opposite)],
@@ -86,7 +80,7 @@ def test_d3q27_body_diagonal_has_certified_opposite() -> None:
     )
 
 
-def test_staged_boundary_executes_stream_then_wall_without_overwrite() -> None:
+def test_lattice_boltzmann_advanced_boundaries_scenario_2() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(3, periodic=True),
@@ -147,9 +141,6 @@ def test_staged_boundary_executes_stream_then_wall_without_overwrite() -> None:
         -result.ledger.body_impulse,
         atol=1e-14,
     )
-
-
-def test_typed_face_compiler_assigns_open_parameter_order_and_corner_precedence() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(6),
@@ -210,9 +201,6 @@ def test_typed_face_compiler_assigns_open_parameter_order_and_corner_precedence(
         ),
     )
     assert jnp.all(jnp.isfinite(result.populations))
-
-
-def test_fixed_sdf_compiles_curved_bouzidi_links_and_body_identity() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(16, periodic=True),

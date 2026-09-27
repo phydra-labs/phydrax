@@ -36,7 +36,7 @@ def _population(name: Any, count: Any = 6) -> Any:
     )
 
 
-def test_native_multi_population_cells_match_dense_bipartite_pairs() -> None:
+def test_particle_commercial_hardening_scenario_1() -> None:
     target = _population("target")
     source = _population("source")
     # ty: ignore[invalid-argument-type]
@@ -88,9 +88,6 @@ def test_native_multi_population_cells_match_dense_bipartite_pairs() -> None:
     assert state.successful
     assert relation.successful
     assert pairs == dense_pairs
-
-
-def test_small_batched_solver_and_adaptive_root_report_residuals() -> None:
     matrix = jnp.asarray([[[2.0, 0.5], [0.5, 1.5]], [[1.0, 0.0], [0.0, 3.0]]])
     rhs = jnp.asarray([[1.0, 2.0], [2.0, 3.0]])
     result = phx.linalg.solve_small_linear(
@@ -107,9 +104,6 @@ def test_small_batched_solver_and_adaptive_root_report_residuals() -> None:
     assert jnp.max(result.residual_norm) < 1e-12
     assert root.successful
     assert root.residual < 1e-10
-
-
-def test_production_boundary_reconstruction_and_moments_are_explicit() -> None:
     kernel = phx.discretization.WendlandC2SPHKernel(1)
     wall = phx.discretization.WallParticleGenerationPlan(
         IntervalGeometry(), kernel, 0.25, 0.3, layers=1
@@ -124,7 +118,7 @@ def test_production_boundary_reconstruction_and_moments_are_explicit() -> None:
     assert certification.successful
 
 
-def test_shock_sensor_shifting_and_precision_certification_are_finite() -> None:
+def test_particle_commercial_hardening_scenario_2() -> None:
     previous = phx.discretization.ShockViscosityState(
         jnp.zeros((3,)), jnp.zeros((3,)), jnp.ones((3,)), jnp.asarray(0)
     )
@@ -144,9 +138,6 @@ def test_shock_sensor_shifting_and_precision_certification_are_finite() -> None:
 
     assert jnp.all(updated.alpha >= 0.0)
     assert certified.successful
-
-
-def test_iisph_operator_oracle_and_projection_qualification_are_separate() -> None:
     count = 5
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
@@ -179,9 +170,6 @@ def test_iisph_operator_oracle_and_projection_qualification_are_separate() -> No
     assert diagnostics.finite
     assert step.successful
     assert not step.production_qualified
-
-
-def test_reference_domain_decomposition_updates_halos_and_migration() -> None:
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
     plan = phx.discretization.ParticleDomainDecompositionPlan(2, 0.15, box)

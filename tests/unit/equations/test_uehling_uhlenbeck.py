@@ -43,9 +43,7 @@ def _occupancy(values: Any) -> Any:
     return jnp.asarray(values, dtype="float64").reshape((4, 1, 1))
 
 
-def test_shared_quantum_event_has_classical_limit_fermi_blocking_and_bose_enhancement() -> (
-    None
-):
+def test_uehling_uhlenbeck_scenario_1() -> None:
     dilute = _occupancy((1.0e-6, 2.0e-6, 3.0e-7, 4.0e-7))
     classical = _plan((0, 0, 0, 0)).event_flux(dilute)
     quantum = _plan((1, 1, 1, 1)).event_flux(dilute)
@@ -60,9 +58,6 @@ def test_shared_quantum_event_has_classical_limit_fermi_blocking_and_bose_enhanc
     classical_flux = _plan((0, 0, 0, 0)).event_flux(populated_outgoing)
     bose_flux = _plan((1, 1, 1, 1)).event_flux(populated_outgoing)
     assert float(bose_flux[0, 0]) > float(classical_flux[0, 0])
-
-
-def test_fd_and_be_equilibria_satisfy_pointwise_detailed_balance() -> None:
     energies = jnp.asarray((1.0, 2.0, 1.5, 1.5))
     chemical = jnp.asarray((0.1, 0.2, 0.15, 0.15))
     exponent = energies - chemical
@@ -79,9 +74,6 @@ def test_fd_and_be_equilibria_satisfy_pointwise_detailed_balance() -> None:
         0.0,
         atol=2.0e-7,
     )
-
-
-def test_subcycled_scatter_preserves_bounds_invariants_and_increases_entropy() -> None:
     plan = _plan(
         (
             QuantumStatistics.FERMI,
@@ -103,7 +95,7 @@ def test_subcycled_scatter_preserves_bounds_invariants_and_increases_entropy() -
     assert float(jnp.min(result.evidence.entropy_production)) >= -1.0e-7
 
 
-def test_invariant_and_h_theorem_evidence_is_pointwise_in_space() -> None:
+def test_uehling_uhlenbeck_scenario_2() -> None:
     plan = _plan((-1, -1, -1, -1), kernel=2.0)
     initial = jnp.asarray(
         (
@@ -120,9 +112,6 @@ def test_invariant_and_h_theorem_evidence_is_pointwise_in_space() -> None:
     assert result.evidence.four_momentum_defect.shape == (2, 4)
     assert result.evidence.entropy_production.shape == (2,)
     assert bool(jnp.all(result.evidence.entropy_production >= -1.0e-7))
-
-
-def test_substep_capacity_exhaustion_rolls_back_atomically() -> None:
     plan = _plan((-1, -1, -1, -1), kernel=100.0, maximum_substeps=1)
     initial = _occupancy((0.9, 0.9, 0.01, 0.01))
     result = plan.advance(initial, 1.0)

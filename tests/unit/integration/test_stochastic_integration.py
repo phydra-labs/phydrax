@@ -66,7 +66,7 @@ def _uniform_problem() -> Any:
     return domain, target
 
 
-def test_iid_monte_carlo_reports_sampling_standard_error() -> None:
+def test_stochastic_integration_scenario_1() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x**2)
 
@@ -82,9 +82,6 @@ def test_iid_monte_carlo_reports_sampling_standard_error() -> None:
     # ty: ignore[unsupported-operator]
     assert estimate.error_estimate > 0.0
     assert estimate.diagnostics.num_independent_replicates == 1
-
-
-def test_antithetic_error_uses_independent_pairs() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x)
     plan = phx.integration.MonteCarloPlan(512, design=phx.integration.AntitheticDesign())
@@ -95,9 +92,70 @@ def test_antithetic_error_uses_independent_pairs() -> None:
     assert estimate.error_kind == "antithetic-pair-standard-error"
     assert estimate.diagnostics.num_pairs == 256
     assert estimate.diagnostics.pair_covariance < 0.0
+    domain, base = _uniform_problem()
+    target = phx.integration.normalized_density(
+        base,
+        domain.Function("x")(lambda x: jnp.full_like(x, -jnp.inf)),
+    )
+    plan = phx.integration.MonteCarloPlan(
+        32,
+        design=phx.integration.AntitheticDesign(),
+    )
 
+    estimate = phx.integration.integrate(1.0, target, plan, key=jr.key(10))
 
-def test_latin_hypercube_does_not_claim_iid_uncertainty() -> None:
+    assert estimate.status == int(
+        phx.integration.IntegrationStatus.INVALID_NORMALIZATION_MASS
+    )
+    assert not estimate.successful
+    domain, target = _uniform_problem()
+    function = domain.Function("x")(lambda x: x**2)
+    one_pair = phx.integration.integrate(
+        function,
+        target,
+        phx.integration.MonteCarloPlan(
+            2,
+            design=phx.integration.AntitheticDesign(),
+        ),
+        key=jr.key(15),
+    )
+    latin_pairs = phx.integration.integrate(
+        function,
+        target,
+        phx.integration.MonteCarloPlan(
+            16,
+            design=phx.integration.AntitheticDesign(
+                phx.integration.LatinHypercubeDesign()
+            ),
+        ),
+        key=jr.key(16),
+    )
+
+    for estimate in (one_pair, latin_pairs):
+        assert estimate.successful
+        assert estimate.error_estimate is None
+        assert estimate.error_kind is None
+        assert estimate.diagnostics.standard_error is None
+    domain, _ = _uniform_problem()
+    target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
+    plan = phx.integration.MonteCarloPlan(
+        16,
+        design=phx.integration.AntitheticDesign(),
+    )
+
+    with pytest.raises(TypeError, match=r"Interior\(\)"):
+        phx.integration.materialize(target, plan, key=jr.key(17))
+    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    target = phx.integration.over(domain.component(), axes="x")
+    plan = phx.integration.MonteCarloPlan(
+        16,
+        design=phx.integration.AntitheticDesign(),
+    )
+
+    with pytest.raises(ValueError, match="coupled block"):
+        phx.integration.materialize(target, plan, key=jr.key(19))
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x**2)
     plan = phx.integration.MonteCarloPlan(
@@ -112,7 +170,7 @@ def test_latin_hypercube_does_not_claim_iid_uncertainty() -> None:
     assert estimate.diagnostics.standard_error is None
 
 
-def test_qmc_uncertainty_requires_independent_randomized_replicates() -> None:
+def test_stochastic_integration_scenario_2() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: x**2)
     deterministic = phx.integration.integrate(
@@ -135,9 +193,6 @@ def test_qmc_uncertainty_requires_independent_randomized_replicates() -> None:
     # ty: ignore[unsupported-operator]
     assert randomized.error_estimate >= 0.0
     assert randomized.diagnostics.replicate_estimates.shape == (4,)
-
-
-def test_importance_sampling_reports_raw_weight_diagnostics() -> None:
     probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     function = probability.Function("z")(lambda z: z**2)
     plan = phx.integration.ImportanceSamplingPlan(8192, phx.uq.Normal(1.0, 2.0))
@@ -155,9 +210,6 @@ def test_importance_sampling_reports_raw_weight_diagnostics() -> None:
     assert estimate.error_estimate > 0.0
     assert estimate.diagnostics.weights.weight_ess > 0.0
     assert jnp.allclose(estimate.diagnostics.normalizer_estimate, 1.0, atol=5e-2)
-
-
-def test_importance_sampling_reports_proposal_support_failure() -> None:
     probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
     plan = phx.integration.ImportanceSamplingPlan(256, phx.uq.Uniform(-1.0, 1.0))
 
@@ -172,9 +224,12 @@ def test_importance_sampling_reports_proposal_support_failure() -> None:
         phx.integration.IntegrationStatus.PROPOSAL_SUPPORT_FAILURE
     )
     assert not estimate.successful
+    probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
+    target = phx.integration.expectation(probability)
+    plan = phx.integration.ImportanceSamplingPlan(16, phx.uq.Normal(0.0, 1.0))
 
-
-def test_external_weighted_samples_do_not_invent_independence() -> None:
+    with pytest.raises(ValueError, match="requires key"):
+        phx.integration.materialize(target, plan)
     samples = jnp.asarray([1.0, 2.0, 3.0])
     log_weights = jnp.log(jnp.asarray([1.0, 2.0, 1.0]))
     target = phx.integration.weighted(samples, log_weights)
@@ -187,7 +242,7 @@ def test_external_weighted_samples_do_not_invent_independence() -> None:
     assert jnp.allclose(estimate.diagnostics.weights.weight_ess, 8.0 / 3.0)
 
 
-def test_control_variate_coefficients_fit_on_disjoint_iid_pilot() -> None:
+def test_stochastic_integration_scenario_3() -> None:
     domain, target = _uniform_problem()
     function = domain.Function("x")(lambda x: 3.0 * x + 2.0)
     control = domain.Function("x")(lambda x: x)
@@ -202,9 +257,6 @@ def test_control_variate_coefficients_fit_on_disjoint_iid_pilot() -> None:
     # ty: ignore[unsupported-operator]
     assert estimate.error_estimate < 1e-10
     assert estimate.num_evaluations == 960
-
-
-def test_explicit_stratification_preserves_physical_measure() -> None:
     square = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -231,9 +283,6 @@ def test_explicit_stratification_preserves_physical_measure() -> None:
     assert jnp.allclose(jnp.asarray(estimate.value.data), 4.0, atol=1e-12)
     assert estimate.error_kind == "stratified-standard-error"
     assert jnp.all(estimate.diagnostics.samples_per_stratum > 0)
-
-
-def test_direct_monte_carlo_excludes_fixed_component_labels() -> None:
     space = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     time = phx.domain.TimeInterval(0.0, 2.0)
     domain = phx.domain.ProductDomain(space, time)
@@ -248,28 +297,32 @@ def test_direct_monte_carlo_excludes_fixed_component_labels() -> None:
 
     assert estimate.successful
     assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
-
-
-def test_antithetic_zero_density_reports_invalid_normalization_mass() -> None:
-    domain, base = _uniform_problem()
-    target = phx.integration.normalized_density(
-        base,
-        domain.Function("x")(lambda x: jnp.full_like(x, -jnp.inf)),
+    restricted = phx.sampling.RandomizedQMCDesign(
+        sequence="sobol",
+        allow_arbitrary_count=False,
     )
-    plan = phx.integration.MonteCarloPlan(
-        32,
-        design=phx.integration.AntitheticDesign(),
+    with pytest.raises(ValueError, match="power of two"):
+        phx.sampling.materialize_design(
+            restricted,
+            count=6,
+            dimension=2,
+            key=jr.key(42),
+        )
+
+    arbitrary = phx.sampling.RandomizedQMCDesign(
+        sequence="sobol",
+        allow_arbitrary_count=True,
     )
-
-    estimate = phx.integration.integrate(1.0, target, plan, key=jr.key(10))
-
-    assert estimate.status == int(
-        phx.integration.IntegrationStatus.INVALID_NORMALIZATION_MASS
+    points = phx.sampling.materialize_design(
+        arbitrary,
+        count=6,
+        dimension=2,
+        key=jr.key(42),
     )
-    assert not estimate.successful
+    assert points.shape == (6, 2)
 
 
-def test_stratified_zero_density_reports_invalid_normalization_mass() -> None:
+def test_stochastic_integration_scenario_4() -> None:
     square = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -299,9 +352,6 @@ def test_stratified_zero_density_reports_invalid_normalization_mass() -> None:
         phx.integration.IntegrationStatus.INVALID_NORMALIZATION_MASS
     )
     assert not estimate.successful
-
-
-def test_weighted_samples_reject_degenerate_weights_and_nonfinite_values() -> None:
     invalid_weights = phx.integration.weighted(
         jnp.arange(4.0),
         jnp.full((4,), -jnp.inf),
@@ -327,52 +377,6 @@ def test_weighted_samples_reject_degenerate_weights_and_nonfinite_values() -> No
     )
     assert not weight_estimate.successful
     assert not value_estimate.successful
-
-
-def test_antithetic_errors_require_independent_replicate_pairs() -> None:
-    domain, target = _uniform_problem()
-    function = domain.Function("x")(lambda x: x**2)
-    one_pair = phx.integration.integrate(
-        function,
-        target,
-        phx.integration.MonteCarloPlan(
-            2,
-            design=phx.integration.AntitheticDesign(),
-        ),
-        key=jr.key(15),
-    )
-    latin_pairs = phx.integration.integrate(
-        function,
-        target,
-        phx.integration.MonteCarloPlan(
-            16,
-            design=phx.integration.AntitheticDesign(
-                phx.integration.LatinHypercubeDesign()
-            ),
-        ),
-        key=jr.key(16),
-    )
-
-    for estimate in (one_pair, latin_pairs):
-        assert estimate.successful
-        assert estimate.error_estimate is None
-        assert estimate.error_kind is None
-        assert estimate.diagnostics.standard_error is None
-
-
-def test_antithetic_sampling_rejects_boundary_component_selectors() -> None:
-    domain, _ = _uniform_problem()
-    target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
-    plan = phx.integration.MonteCarloPlan(
-        16,
-        design=phx.integration.AntitheticDesign(),
-    )
-
-    with pytest.raises(TypeError, match=r"Interior\(\)"):
-        phx.integration.materialize(target, plan, key=jr.key(17))
-
-
-def test_randomized_probability_sampling_and_evaluation_use_independent_keys() -> None:
     distribution = _EndpointSensitiveNormal()
     probability = phx.domain.ProbabilityDomain(distribution, label="z")
     target = phx.integration.expectation(probability)
@@ -397,21 +401,7 @@ def test_randomized_probability_sampling_and_evaluation_use_independent_keys() -
     )
 
 
-def test_antithetic_sampling_rejects_partial_coupled_target_axes() -> None:
-    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
-    y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
-    domain = phx.domain.ProductDomain(x, y)
-    target = phx.integration.over(domain.component(), axes="x")
-    plan = phx.integration.MonteCarloPlan(
-        16,
-        design=phx.integration.AntitheticDesign(),
-    )
-
-    with pytest.raises(ValueError, match="coupled block"):
-        phx.integration.materialize(target, plan, key=jr.key(19))
-
-
-def test_raw_weighted_scalar_integrand_broadcasts_over_samples() -> None:
+def test_stochastic_integration_scenario_5() -> None:
     target = phx.integration.weighted(
         jnp.arange(5.0),
         jnp.log(jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0])),
@@ -422,9 +412,19 @@ def test_raw_weighted_scalar_integrand_broadcasts_over_samples() -> None:
     assert estimate.successful
     assert jnp.allclose(jnp.asarray(estimate.value.data), 7.0, atol=1e-14)
     assert estimate.num_evaluations == 5
+    target = phx.integration.weighted(
+        jnp.ones((4,)),
+        jnp.full((4,), 1000.0),
+        normalized=False,
+        independent=True,
+    )
 
+    estimate = phx.integration.integrate(lambda values: values, target)
 
-def test_dependent_weighted_diagnostics_hide_both_standard_errors() -> None:
+    assert jnp.isinf(estimate.value.data)
+    assert jnp.isinf(estimate.diagnostics.normalizer_estimate)
+    assert estimate.status == int(phx.integration.IntegrationStatus.INVALID_WEIGHTS)
+    assert not estimate.successful
     target = phx.integration.weighted(
         jnp.asarray([1.0, 2.0, 4.0]),
         jnp.log(jnp.asarray([1.0, 2.0, 1.0])),
@@ -436,35 +436,32 @@ def test_dependent_weighted_diagnostics_hide_both_standard_errors() -> None:
     assert estimate.successful
     assert estimate.diagnostics.standard_error is None
     assert estimate.diagnostics.normalizer_standard_error is None
+    for sequence in ("sobol", "halton"):
+        probability = phx.domain.ProbabilityDomain(
+            _EndpointSensitiveNormal(),
+            label="z",
+        )
+        target = phx.integration.expectation(probability)
+        plan = phx.integration.QuasiMonteCarloPlan(
+            16,
+            sequence=sequence,
+            scrambled=False,
+            num_replicates=1,
+        )
+
+        realization = phx.integration.materialize(target, plan)
+        estimate = phx.integration.reduce(
+            probability.Function("z")(lambda z: z**2),
+            realization,
+        )
+
+        assert realization.key is None
+        assert jnp.all(jnp.isfinite(jnp.asarray(realization.batch.points["z"].data)))
+        assert estimate.successful
+        assert jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
-@pytest.mark.parametrize("sequence", ("sobol", "halton"))
-def test_deterministic_qmc_uses_open_probability_quantiles(sequence: Any) -> None:
-    probability = phx.domain.ProbabilityDomain(
-        _EndpointSensitiveNormal(),
-        label="z",
-    )
-    target = phx.integration.expectation(probability)
-    plan = phx.integration.QuasiMonteCarloPlan(
-        16,
-        sequence=sequence,
-        scrambled=False,
-        num_replicates=1,
-    )
-
-    realization = phx.integration.materialize(target, plan)
-    estimate = phx.integration.reduce(
-        probability.Function("z")(lambda z: z**2),
-        realization,
-    )
-
-    assert realization.key is None
-    assert jnp.all(jnp.isfinite(jnp.asarray(realization.batch.points["z"].data)))
-    assert estimate.successful
-    assert jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
-
-
-def test_identical_unbounded_importance_proposal_passes_support_probes() -> None:
+def test_stochastic_integration_scenario_6() -> None:
     distribution = _EndpointSensitiveNormal()
     probability = phx.domain.ProbabilityDomain(distribution, label="z")
     target = phx.integration.expectation(probability)
@@ -474,18 +471,6 @@ def test_identical_unbounded_importance_proposal_passes_support_probes() -> None
 
     assert estimate.successful
     assert estimate.status == int(phx.integration.IntegrationStatus.CONVERGED)
-
-
-def test_importance_sampling_requires_an_explicit_random_key() -> None:
-    probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
-    target = phx.integration.expectation(probability)
-    plan = phx.integration.ImportanceSamplingPlan(16, phx.uq.Normal(0.0, 1.0))
-
-    with pytest.raises(ValueError, match="requires key"):
-        phx.integration.materialize(target, plan)
-
-
-def test_large_measure_monte_carlo_rejects_overflowed_standard_error() -> None:
     upper = float(jnp.finfo(jnp.float64).max / 4.0)
     domain = phx.domain.ScalarInterval(0.0, upper, label="x")
     target = phx.integration.over(domain.component())
@@ -502,45 +487,3 @@ def test_large_measure_monte_carlo_rejects_overflowed_standard_error() -> None:
     assert jnp.all(jnp.isinf(estimate.diagnostics.standard_error))
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
     assert not estimate.successful
-
-
-def test_raw_weighted_reduction_rejects_log_weight_overflow() -> None:
-    target = phx.integration.weighted(
-        jnp.ones((4,)),
-        jnp.full((4,), 1000.0),
-        normalized=False,
-        independent=True,
-    )
-
-    estimate = phx.integration.integrate(lambda values: values, target)
-
-    assert jnp.isinf(estimate.value.data)
-    assert jnp.isinf(estimate.diagnostics.normalizer_estimate)
-    assert estimate.status == int(phx.integration.IntegrationStatus.INVALID_WEIGHTS)
-    assert not estimate.successful
-
-
-def test_direct_sobol_materialization_enforces_declared_count_policy() -> None:
-    restricted = phx.sampling.RandomizedQMCDesign(
-        sequence="sobol",
-        allow_arbitrary_count=False,
-    )
-    with pytest.raises(ValueError, match="power of two"):
-        phx.sampling.materialize_design(
-            restricted,
-            count=6,
-            dimension=2,
-            key=jr.key(42),
-        )
-
-    arbitrary = phx.sampling.RandomizedQMCDesign(
-        sequence="sobol",
-        allow_arbitrary_count=True,
-    )
-    points = phx.sampling.materialize_design(
-        arbitrary,
-        count=6,
-        dimension=2,
-        key=jr.key(42),
-    )
-    assert points.shape == (6, 2)

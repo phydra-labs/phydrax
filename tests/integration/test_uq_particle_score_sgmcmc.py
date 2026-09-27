@@ -74,7 +74,7 @@ def _parameterized_problem() -> Any:
     return stochastic_problem, source, parameterized
 
 
-def test_particle_genealogical_estimator_drives_jitted_sgld_end_to_end() -> None:
+def test_uq_particle_score_sgmcmc_scenario_1() -> None:
     problem, source, parameterized = _parameterized_problem()
     estimator = phx.uq.ParticleGenealogicalGradientEstimator(
         parameterized,
@@ -96,9 +96,29 @@ def test_particle_genealogical_estimator_drives_jitted_sgld_end_to_end() -> None
     assert result.samples["drift"].shape == (2, 4)
     assert jnp.all(jnp.isfinite(result.samples["drift"]))
     assert jnp.all(jnp.isfinite(result.gradient_norm))
+    problem, source, parameterized = _parameterized_problem()
+    control = phx.uq.build_sgmcmc_control_variate(
+        problem,
+        source,
+        problem.initial_position,
+    )
+    estimator = phx.uq.ParticleGenealogicalGradientEstimator(
+        parameterized,
+        num_particles=4,
+    )
 
-
-def test_explicit_autodiff_estimator_preserves_default_sgld_replay() -> None:
+    with pytest.raises(ValueError, match="does not support"):
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            key=jax.random.key(3),
+            step_size=1e-4,
+            num_chains=2,
+            num_burnin=1,
+            num_samples=4,
+            control_variate=control,
+            gradient_estimator=estimator,
+        )
     inputs = jnp.linspace(-1.0, 1.0, 6)
     source = phx.uq.ArrayMinibatchSource(inputs, batch_size=3, seed=2)
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
@@ -126,29 +146,3 @@ def test_explicit_autodiff_estimator_preserves_default_sgld_replay() -> None:
 
     assert jnp.array_equal(default.unconstrained_samples, explicit.unconstrained_samples)
     assert jnp.array_equal(default.gradient_norm, explicit.gradient_norm)
-
-
-def test_particle_gradient_estimator_rejects_existing_control_variate() -> None:
-    problem, source, parameterized = _parameterized_problem()
-    control = phx.uq.build_sgmcmc_control_variate(
-        problem,
-        source,
-        problem.initial_position,
-    )
-    estimator = phx.uq.ParticleGenealogicalGradientEstimator(
-        parameterized,
-        num_particles=4,
-    )
-
-    with pytest.raises(ValueError, match="does not support"):
-        phx.uq.sample_sgld(
-            problem,
-            source,
-            key=jax.random.key(3),
-            step_size=1e-4,
-            num_chains=2,
-            num_burnin=1,
-            num_samples=4,
-            control_variate=control,
-            gradient_estimator=estimator,
-        )

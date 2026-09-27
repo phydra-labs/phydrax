@@ -35,7 +35,7 @@ def _evidence() -> Any:
     return SpectralResponseEvidence(0.0, 0.0, 0.0, 0.0, True)
 
 
-def test_raw_lines_and_instrument_product_are_distinct_and_preserve_area() -> None:
+def test_condensed_matter_response_scenario_1() -> None:
     lines = SpectralResponseProduct(
         # ty: ignore[invalid-argument-type]
         [1.0, 2.0],
@@ -78,11 +78,6 @@ def test_raw_lines_and_instrument_product_are_distinct_and_preserve_area() -> No
         rtol=1.0e-8,
     )
     assert bool(result.evidence.successful)
-
-
-def test_stationary_instrument_refuses_line_strengths_instead_of_reinterpreting_them() -> (
-    None
-):
     lines = SpectralResponseProduct(
         # ty: ignore[invalid-argument-type]
         [1.0, 2.0],
@@ -108,11 +103,6 @@ def test_stationary_instrument_refuses_line_strengths_instead_of_reinterpreting_
     with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         apply_spectral_instrument(prepare_spectral_instrument(plan, [1.0]), lines)
-
-
-def test_fourier_positive_exponent_places_negative_phase_tone_at_positive_frequency() -> (
-    None
-):
     count = 64
     frequency = 5.0 / count
     time = np.arange(count)
@@ -131,9 +121,7 @@ def test_fourier_positive_exponent_places_negative_phase_tone_at_positive_freque
     assert bool(result.successful)
 
 
-def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign() -> (
-    None
-):
+def test_condensed_matter_response_scenario_2() -> None:
     raw = KuboRawTransitions(
         # ty: ignore[invalid-argument-type]
         np.zeros((1, 1)),
@@ -210,8 +198,6 @@ def test_optical_frontend_keeps_drude_separate_and_uses_retarded_dielectric_sign
     assert np.all(np.imag(dielectric_diagonal) > 0.0)
     np.testing.assert_allclose(result.drude_weight, np.eye(3) * 7.0)
 
-
-def test_periodic_provider_tensors_retain_selection_and_stokes_balance_evidence() -> None:
     class Phonons:
         fractional_qpoints = np.zeros((1, 3))
         angular_frequencies = np.asarray([[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]])

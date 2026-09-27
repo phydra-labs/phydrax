@@ -46,7 +46,7 @@ def _thermodynamics() -> Any:
     )
 
 
-def test_thermal_mode_energy_temperature_roundtrip_and_equilibrium_projection() -> None:
+def test_nonequilibrium_gas_scenario_1() -> None:
     thermodynamics = _thermodynamics()
     species_density = jnp.asarray((0.6, 0.2))
     mode_temperature = jnp.asarray((1800.0,))
@@ -67,9 +67,6 @@ def test_thermal_mode_energy_temperature_roundtrip_and_equilibrium_projection() 
         + jnp.sum(equilibrium.mode_energy_densities),
         rtol=2.0e-7,
     )
-
-
-def test_two_temperature_euler_roundtrip_flux_and_admissibility() -> None:
     system = phx.equations.TwoTemperatureMixtureEulerSystem(_thermodynamics(), 1)
     primitive = jnp.asarray((0.6, 0.2, 300.0, 1200.0, 1800.0))
     conserved = system.primitive_to_conserved(primitive)
@@ -81,6 +78,17 @@ def test_two_temperature_euler_roundtrip_flux_and_admissibility() -> None:
     assert flux.shape == conserved.shape
     assert jnp.all(jnp.isfinite(flux))
     assert system.frozen_sound_speed(conserved) > 0.0
+    system = phx.equations.TwoTemperatureMixtureEulerSystem(
+        _thermodynamics(),
+        1,
+        maximum_thermal_iterations=7,
+    )
+    primitive = jnp.asarray((0.6, 0.2, 10.0, 1200.0, 1800.0))
+    conserved = system.primitive_to_conserved(primitive)
+
+    recovered = system.recover_thermodynamics(conserved)
+
+    assert int(recovered.iteration_count) == 7
 
 
 def test_two_temperature_navier_stokes_diffuses_modal_energy_consistently() -> None:
@@ -119,17 +127,3 @@ def test_two_temperature_navier_stokes_diffuses_modal_energy_consistently() -> N
         rtol=4.0e-5,
         atol=4.0e-5,
     )
-
-
-def test_system_thermal_recovery_uses_its_iteration_limit() -> None:
-    system = phx.equations.TwoTemperatureMixtureEulerSystem(
-        _thermodynamics(),
-        1,
-        maximum_thermal_iterations=7,
-    )
-    primitive = jnp.asarray((0.6, 0.2, 10.0, 1200.0, 1800.0))
-    conserved = system.primitive_to_conserved(primitive)
-
-    recovered = system.recover_thermodynamics(conserved)
-
-    assert int(recovered.iteration_count) == 7

@@ -156,7 +156,7 @@ def _streaming_rational_policy() -> Any:
     )
 
 
-def test_remez_certificate_bounds_error_on_its_spectral_interval() -> None:
+def test_production_rhmc_pseudofermion_scenario_1() -> None:
     _, interval = _dirac_interval()
     target = power_rational_target(-0.5)
     approximation = _approximation(interval, target)
@@ -167,9 +167,6 @@ def test_remez_certificate_bounds_error_on_its_spectral_interval() -> None:
     assert float(approximation.maximum_relative_error) < 1.0e-6
     assert float(approximation.witness) >= float(interval.lower)
     assert float(approximation.witness) <= float(interval.upper)
-
-
-def test_two_flavor_and_rhmc_refresh_actions_recover_gaussian_identity() -> None:
     dirac, interval = _dirac_interval()
     two_flavor = TwoFlavorPseudofermionTerm(dirac, interval)
     two_refresh = refresh_pseudofermion(two_flavor, jax.random.key(1))
@@ -235,9 +232,6 @@ def test_two_flavor_and_rhmc_refresh_actions_recover_gaussian_identity() -> None
         rtol=2.0e-5,
         atol=1.0e-10,
     )
-
-
-def test_pseudofermion_force_matches_action_directional_derivative() -> None:
     dirac, interval = _dirac_interval()
     term = TwoFlavorPseudofermionTerm(dirac, interval)
     refresh = refresh_pseudofermion(term, jax.random.key(4))
@@ -267,7 +261,7 @@ def test_pseudofermion_force_matches_action_directional_derivative() -> None:
     assert bool(force.successful)
 
 
-def test_streaming_solve_evidence_reaches_rhmc_transition_and_samples() -> None:
+def test_production_rhmc_pseudofermion_scenario_2() -> None:
     dirac, interval = _dirac_interval()
     streaming = _streaming_rational_policy()
     term = TwoFlavorPseudofermionTerm(
@@ -309,32 +303,6 @@ def test_streaming_solve_evidence_reaches_rhmc_transition_and_samples() -> None:
     assert jnp.all(samples.initial_term_solve_error_bound_certified)
     assert jnp.all(samples.proposed_term_solve_error_bound_certified)
     assert jnp.all(samples.force_solve_error_bound_certified)
-
-
-def _bosonic_kernel(*, step_size: Any = 0.08, divergence_threshold: Any = 1000.0) -> Any:
-    geometry = FlatTorusStateGeometry(2.0 * np.pi)
-    action = SeparableActionTerm(
-        lambda q: 0.7 * jnp.sum(1.0 - jnp.cos(q)),
-        term_id="toy-cosine-action",
-    )
-    registry = SeparableActionRegistry((action,))
-    forces = NestedForcePlan((NestedForcePartition((0,), substeps=3),))
-    plan = plan_rhmc(
-        step_size=step_size,
-        trajectory_steps=4,
-        force_plan=forces,
-        divergence_threshold=divergence_threshold,
-    )
-    return prepare_rhmc(
-        registry,
-        plan,
-        jnp.zeros((2,), dtype=jnp.float64),
-        geometry=geometry,
-        local_coordinate_shape=(2,),
-    )
-
-
-def test_nested_force_map_is_reversible() -> None:
     kernel = _bosonic_kernel()
     position = jnp.asarray((0.2, -0.4))
     momentum = jnp.asarray((0.7, -0.3))
@@ -349,9 +317,6 @@ def test_nested_force_map_is_reversible() -> None:
     np.testing.assert_allclose(backward.configuration, position, atol=2.0e-12)
     np.testing.assert_allclose(backward.momentum, momentum, atol=2.0e-12)
     assert int(forward.force_evaluations) == kernel.plan.force_evaluations
-
-
-def test_nested_force_work_counts_every_term_evaluation() -> None:
     forces = NestedForcePlan(
         (
             NestedForcePartition((0, 1), substeps=2),
@@ -360,9 +325,6 @@ def test_nested_force_work_counts_every_term_evaluation() -> None:
     )
 
     assert forces.force_evaluations_per_step == 2 * 2 * 2 + 2 * 6
-
-
-def test_acceptance_uses_exact_endpoint_energy_and_rejection_rolls_back() -> None:
     kernel = _bosonic_kernel(step_size=0.9, divergence_threshold=1.0e-16)
     initial = jnp.asarray((0.9, -0.7))
     state = initialize_rhmc_state(kernel, initial, key=jax.random.key(8))
@@ -390,6 +352,29 @@ def test_acceptance_uses_exact_endpoint_energy_and_rejection_rolls_back() -> Non
     assert not bool(evidence.accepted)
     np.testing.assert_array_equal(transition.state.configuration, state.configuration)
     np.testing.assert_array_equal(transition.state.bosonic_action, state.bosonic_action)
+
+
+def _bosonic_kernel(*, step_size: Any = 0.08, divergence_threshold: Any = 1000.0) -> Any:
+    geometry = FlatTorusStateGeometry(2.0 * np.pi)
+    action = SeparableActionTerm(
+        lambda q: 0.7 * jnp.sum(1.0 - jnp.cos(q)),
+        term_id="toy-cosine-action",
+    )
+    registry = SeparableActionRegistry((action,))
+    forces = NestedForcePlan((NestedForcePartition((0,), substeps=3),))
+    plan = plan_rhmc(
+        step_size=step_size,
+        trajectory_steps=4,
+        force_plan=forces,
+        divergence_threshold=divergence_threshold,
+    )
+    return prepare_rhmc(
+        registry,
+        plan,
+        jnp.zeros((2,), dtype=jnp.float64),
+        geometry=geometry,
+        local_coordinate_shape=(2,),
+    )
 
 
 def test_production_restart_is_bitwise_deterministic() -> None:

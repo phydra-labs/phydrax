@@ -148,7 +148,7 @@ def _prepared_plane_contact(
     return bodies, plan.prepare(bodies)
 
 
-def test_joint_limit_free_active_and_release() -> None:
+def test_rigid_hard_contact_scenario_1() -> None:
     ids, bodies = _prepared_bodies(2, dimension=3, fixed_mask=[True, False])
     reference = _kinematics(bodies, jnp.zeros((2, 3)))
     hinge = phx.discretization.HingeJointSetPlan(
@@ -213,36 +213,30 @@ def test_joint_limit_free_active_and_release() -> None:
     assert released.successful
     assert released.evaluation.released_lower[0]
     assert released.evaluation.lower_impulse[0] == 0.0
-
-
-@pytest.mark.parametrize("restitution", [0.0, 0.5, 1.0])
-def test_sphere_plane_velocity_restitution_and_energy(restitution: Any) -> None:
-    bodies, prepared = _prepared_plane_contact(restitution=restitution)
-    kinematics = _kinematics(bodies, [[0.0, -2.0]])
-    geometry = _geometry(
-        [0.0, 1.0],
-        [0.0, -2.0],
-        left_arm=[0.0, -1.0],
-    )
-    result = prepared.evaluate(prepared.initial_state(), kinematics, geometry, 0.01)
-    assert result.successful
-    assert result.evaluation.impacting[0]
-    assert jnp.allclose(
-        result.evaluation.normal_velocity_after[0],
-        2.0 * restitution,
-        rtol=1.0e-6,
-        atol=1.0e-7,
-    )
-    assert result.evaluation.certificate.position_certified
-    assert result.evaluation.normal_impulse[0] > 0.0
-    assert result.evaluation.certificate.velocity_certified
-    assert result.evaluation.energy.noncreating
-    assert result.evaluation.energy.kinetic_after <= (
-        result.evaluation.energy.kinetic_before + 1.0e-8
-    )
-
-
-def test_sphere_sphere_equal_mass_normal_impulse() -> None:
+    for restitution in [0.0, 0.5, 1.0]:
+        bodies, prepared = _prepared_plane_contact(restitution=restitution)
+        kinematics = _kinematics(bodies, [[0.0, -2.0]])
+        geometry = _geometry(
+            [0.0, 1.0],
+            [0.0, -2.0],
+            left_arm=[0.0, -1.0],
+        )
+        result = prepared.evaluate(prepared.initial_state(), kinematics, geometry, 0.01)
+        assert result.successful
+        assert result.evaluation.impacting[0]
+        assert jnp.allclose(
+            result.evaluation.normal_velocity_after[0],
+            2.0 * restitution,
+            rtol=1.0e-6,
+            atol=1.0e-7,
+        )
+        assert result.evaluation.certificate.position_certified
+        assert result.evaluation.normal_impulse[0] > 0.0
+        assert result.evaluation.certificate.velocity_certified
+        assert result.evaluation.energy.noncreating
+        assert result.evaluation.energy.kinetic_after <= (
+            result.evaluation.energy.kinetic_before + 1.0e-8
+        )
     _, bodies = _prepared_bodies(2, dimension=3)
     prepared = HardContactRoutePlan(
         jnp.asarray([0]),
@@ -261,9 +255,6 @@ def test_sphere_sphere_equal_mass_normal_impulse() -> None:
     assert result.successful
     assert jnp.allclose(result.evaluation.normal_impulse, 1.0, rtol=1.0e-6)
     assert jnp.allclose(result.accepted_kinematics.velocity, 0.0, atol=1.0e-7)
-
-
-def test_resting_contact_does_not_reapply_restitution() -> None:
     bodies, prepared = _prepared_plane_contact(restitution=1.0)
     impact_kinematics = _kinematics(bodies, [[0.0, -1.0]])
     impact_geometry = _geometry([0.0, 1.0], [-0.0, -1.0], left_arm=[0.0, -1.0])
@@ -282,7 +273,7 @@ def test_resting_contact_does_not_reapply_restitution() -> None:
     assert jnp.allclose(resting.evaluation.normal_velocity_after, 0.0, atol=1.0e-8)
 
 
-def test_zero_friction_reduces_to_normal_contact() -> None:
+def test_rigid_hard_contact_scenario_2() -> None:
     bodies, prepared = _prepared_plane_contact(friction=0.0)
     kinematics = _kinematics(bodies, [[3.0, -1.0]])
     geometry = _geometry([0.0, 1.0], [3.0, -1.0], left_arm=[0.0, -1.0])
@@ -291,30 +282,21 @@ def test_zero_friction_reduces_to_normal_contact() -> None:
     assert jnp.all(result.evaluation.tangent_impulse == 0.0)
     assert jnp.allclose(result.accepted_kinematics.velocity[0, 0], 3.0)
     assert result.evaluation.certificate.cone_violation == 0.0
-
-
-@pytest.mark.parametrize(
-    ("friction", "expect_stick"),
-    [(1.0, True), (0.1, False)],
-)
-def test_incline_contact_stick_and_slip(friction: Any, expect_stick: Any) -> None:
-    bodies, prepared = _prepared_plane_contact(friction=friction)
-    normal = jnp.asarray([-0.5, jnp.sqrt(0.75)])
-    tangent = jnp.asarray([jnp.sqrt(0.75), 0.5])
-    relative_velocity = tangent - normal
-    kinematics = _kinematics(bodies, relative_velocity[None, :])
-    geometry = _geometry(normal, relative_velocity, left_arm=-normal)
-    result = prepared.evaluate(prepared.initial_state(), kinematics, geometry, 0.01)
-    assert result.successful
-    assert bool(result.evaluation.sticking[0]) is expect_stick
-    assert bool(result.evaluation.sliding[0]) is (not expect_stick)
-    tangent_norm = jnp.linalg.norm(result.evaluation.tangent_impulse[0])
-    cone_bound = friction * result.evaluation.normal_impulse[0]
-    assert tangent_norm <= cone_bound + 1.0e-8
-    assert result.evaluation.energy.friction_dissipation >= -1.0e-9
-
-
-def test_exact_cone_projection_and_spatial_basis_invariance() -> None:
+    for friction, expect_stick in [(1.0, True), (0.1, False)]:
+        bodies, prepared = _prepared_plane_contact(friction=friction)
+        normal = jnp.asarray([-0.5, jnp.sqrt(0.75)])
+        tangent = jnp.asarray([jnp.sqrt(0.75), 0.5])
+        relative_velocity = tangent - normal
+        kinematics = _kinematics(bodies, relative_velocity[None, :])
+        geometry = _geometry(normal, relative_velocity, left_arm=-normal)
+        result = prepared.evaluate(prepared.initial_state(), kinematics, geometry, 0.01)
+        assert result.successful
+        assert bool(result.evaluation.sticking[0]) is expect_stick
+        assert bool(result.evaluation.sliding[0]) is (not expect_stick)
+        tangent_norm = jnp.linalg.norm(result.evaluation.tangent_impulse[0])
+        cone_bound = friction * result.evaluation.normal_impulse[0]
+        assert tangent_norm <= cone_bound + 1.0e-8
+        assert result.evaluation.energy.friction_dissipation >= -1.0e-9
     planar = project_isotropic_coulomb_impulse(
         jnp.asarray([1.0]), jnp.asarray([[2.0]]), jnp.asarray([0.5])
     )
@@ -344,7 +326,7 @@ def test_exact_cone_projection_and_spatial_basis_invariance() -> None:
     assert jnp.all(jnp.isfinite(ball.derivative_tangent))
 
 
-def test_capacity_validation_and_geometry_failure_roll_back_atomically() -> None:
+def test_rigid_hard_contact_scenario_3() -> None:
     _, bodies = _prepared_bodies(1, dimension=2)
     with pytest.raises(ValueError, match="capacity"):
         HardContactRoutePlan(
@@ -395,9 +377,6 @@ def test_capacity_validation_and_geometry_failure_roll_back_atomically() -> None
             state,
         )
     )
-
-
-def test_hard_contact_is_jittable_with_static_capacity() -> None:
     bodies, prepared = _prepared_plane_contact(friction=0.4, restitution=0.5)
     state = prepared.initial_state()
     kinematics = _kinematics(bodies, [[0.25, -1.0]])

@@ -22,7 +22,7 @@ def _artifact() -> Any:
     )
 
 
-def test_s3_geometry_geodesic_kdk_and_parallel_transport() -> None:
+def test_s3_contracts() -> None:
     manifold = cosmology.S3ManifoldPlan(2.0)
     q = jnp.asarray([[2.0, 0.0, 0.0, 0.0]])
     tangent = jnp.asarray([[0.0, 0.1, 0.0, 0.0]])
@@ -48,9 +48,6 @@ def test_s3_geometry_geodesic_kdk_and_parallel_transport() -> None:
     assert bool(result.successful)
     assert result.norm_defect < 1e-12
     assert result.tangent_defect < 1e-12
-
-
-def test_s3_harmonic_poisson_and_particle_transfer() -> None:
     evaluation = jnp.asarray([[1.0, 1.0], [1.0, -1.0], [1.0, 1.0], [1.0, -1.0]])
     gradient = jnp.zeros((4, 2, 4)).at[:, 1, 1].set(jnp.asarray([1.0, -1.0, 1.0, -1.0]))
     basis = cosmology.S3HarmonicBasisPlan(

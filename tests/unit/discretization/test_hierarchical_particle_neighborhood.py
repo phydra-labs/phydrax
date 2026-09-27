@@ -20,7 +20,7 @@ def _physical_pairs(state: Any) -> Any:
     return set(zip(left.tolist(), right.tolist(), strict=True))
 
 
-def test_sparse_hierarchy_matches_dense_radius_authority_across_levels_and_seam() -> None:
+def test_hierarchical_particle_neighborhood_scenario_1() -> None:
     particle_ids = jnp.asarray([60, 10, 40, 20, 50, 30])
     interaction_radii = jnp.asarray([0.05, 0.05, 0.1, 0.2, 0.4, 0.4])
     positions = jnp.asarray(
@@ -98,9 +98,6 @@ def test_sparse_hierarchy_matches_dense_radius_authority_across_levels_and_seam(
     )
     assert remap.successful
     assert jnp.sum(remap.continued) == moved.pair_count
-
-
-def test_sparse_hierarchy_fails_closed_on_pair_and_cell_overflow() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(4), jnp.ones((4,)), ambient_dimension=2
     ).prepare()
@@ -143,9 +140,6 @@ def test_sparse_hierarchy_fails_closed_on_pair_and_cell_overflow() -> None:
             box,
             maximum_candidate_slots=1,
         ).prepare(particles)
-
-
-def test_hierarchical_neighborhood_supports_bounded_four_dimensional_routes() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(3),
         jnp.ones((3,)),

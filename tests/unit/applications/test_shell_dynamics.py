@@ -46,7 +46,7 @@ def _folded_square(angle: float = 0.45) -> Any:
     return SQUARE.at[3].set(SQUARE[0] + rotated)
 
 
-def test_flat_reference_has_zero_energy_and_finite_geometry_evidence() -> None:
+def test_shell_dynamics_scenario_1() -> None:
     prepared = _prepared_square()
     evaluation = prepared.evaluate(SQUARE)
 
@@ -58,9 +58,6 @@ def test_flat_reference_has_zero_energy_and_finite_geometry_evidence() -> None:
     assert jnp.allclose(evaluation.geometry.orientation_ratio, 1.0)
     assert bool(evaluation.geometry.valid)
     assert bool(evaluation.finite)
-
-
-def test_membrane_energy_matches_constant_green_strain() -> None:
     material = _material()
     reference = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     plan = TriangularShellPlan(
@@ -77,9 +74,18 @@ def test_membrane_energy_matches_constant_green_strain() -> None:
     expected = 0.5 * 0.5 * 0.2 * (strain @ material.membrane_matrix @ strain)
     assert evaluation.membrane_energy == pytest.approx(float(expected), rel=1.0e-10)
     assert evaluation.bending_energy == pytest.approx(0.0, abs=1.0e-12)
+    thin = _prepared_square(thickness=0.1)
+    thick = _prepared_square(thickness=0.2)
 
+    affine = SQUARE.at[:, 0].multiply(1.05)
+    thin_membrane = thin.evaluate(affine).membrane_energy
+    thick_membrane = thick.evaluate(affine).membrane_energy
+    assert thick_membrane / thin_membrane == pytest.approx(2.0, rel=1.0e-10)
 
-def test_energy_and_force_are_invariant_under_proper_rigid_motion() -> None:
+    folded = _folded_square()
+    thin_bending = thin.evaluate(folded).bending_energy
+    thick_bending = thick.evaluate(folded).bending_energy
+    assert thick_bending / thin_bending == pytest.approx(8.0, rel=1.0e-10)
     prepared = _prepared_square()
     positions = _folded_square()
     original = prepared.evaluate(positions)
@@ -115,7 +121,7 @@ def test_energy_and_force_are_invariant_under_proper_rigid_motion() -> None:
     assert bool(transformed.valid)
 
 
-def test_isometric_cylindrical_fold_has_only_hinge_bending_response() -> None:
+def test_shell_dynamics_scenario_2() -> None:
     prepared = _prepared_square()
     folded = _folded_square()
     evaluation = prepared.evaluate(folded)
@@ -124,24 +130,6 @@ def test_isometric_cylindrical_fold_has_only_hinge_bending_response() -> None:
     assert evaluation.bending_energy > 0.0
     assert jnp.linalg.norm(evaluation.forces) > 0.0
     assert bool(evaluation.valid)
-
-
-def test_membrane_and_bending_have_linear_and_cubic_thickness_scaling() -> None:
-    thin = _prepared_square(thickness=0.1)
-    thick = _prepared_square(thickness=0.2)
-
-    affine = SQUARE.at[:, 0].multiply(1.05)
-    thin_membrane = thin.evaluate(affine).membrane_energy
-    thick_membrane = thick.evaluate(affine).membrane_energy
-    assert thick_membrane / thin_membrane == pytest.approx(2.0, rel=1.0e-10)
-
-    folded = _folded_square()
-    thin_bending = thin.evaluate(folded).bending_energy
-    thick_bending = thick.evaluate(folded).bending_energy
-    assert thick_bending / thin_bending == pytest.approx(8.0, rel=1.0e-10)
-
-
-def test_fixed_nodes_remain_at_reference_during_damped_explicit_step() -> None:
     fixed = jnp.asarray((True, True, False, False))
     shell_plan = TriangularShellPlan(
         TRIANGLES,
@@ -166,39 +154,6 @@ def test_fixed_nodes_remain_at_reference_during_damped_explicit_step() -> None:
     assert jnp.array_equal(result.accepted_state.velocities[fixed], jnp.zeros((2, 3)))
     assert jnp.any(result.accepted_state.positions[~fixed, 2] > 0.0)
     assert result.evaluation.kinetic_energy > 0.0
-
-
-def test_degenerate_reference_and_inconsistent_orientation_are_rejected() -> None:
-    material = _material()
-    one_triangle = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
-    collinear = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)))
-    plan = TriangularShellPlan(one_triangle, material, thickness=0.1, density=1.0)
-    with pytest.raises(ValueError, match="degenerate"):
-        plan.prepare(collinear)
-
-    same_edge_direction = jnp.asarray(((0, 1, 2), (0, 1, 3)), dtype=jnp.int32)
-    with pytest.raises(ValueError, match="opposite interior-edge orientations"):
-        TriangularShellPlan(same_edge_direction, material, thickness=0.1, density=1.0)
-
-
-def test_inverted_triangle_is_reported_and_rolls_back_dynamics() -> None:
-    shell_plan = TriangularShellPlan(TRIANGLES, _material(), thickness=0.1, density=2.0)
-    prepared = shell_plan.prepare(SQUARE)
-    inverted = SQUARE.at[3].set(jnp.asarray((1.0, 0.0, 0.0)))
-    evaluation = prepared.evaluate(inverted)
-    assert bool(evaluation.geometry.inverted[1])
-    assert not bool(evaluation.valid)
-
-    dynamics = ShellDynamicsPlan(shell_plan).prepare(SQUARE)
-    state = dynamics.initialize_state(inverted)
-    result = dynamics.step(state, jnp.asarray(0.0), 0.1 * dynamics.stable_step_size)
-    assert not bool(result.successful)
-    assert int(result.rejection_reasons) & int(ShellRejectionReason.INVALID_STATE)
-    assert jnp.array_equal(result.accepted_state.positions, state.positions)
-    assert jnp.array_equal(result.accepted_state.velocities, state.velocities)
-
-
-def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry() -> None:
     triangles = jnp.asarray(((0, 1, 2), (3, 4, 5)), dtype=jnp.int32)
     positions = jnp.asarray(
         (
@@ -241,9 +196,33 @@ def test_fixed_capacity_self_contact_payload_matches_hard_contact_geometry() -> 
     assert collision_surface.plan.physical_radius == pytest.approx(0.05)
     assert bool(epoch.successful)
     assert epoch.candidate_count > 0
+    material = _material()
+    one_triangle = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
+    collinear = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)))
+    plan = TriangularShellPlan(one_triangle, material, thickness=0.1, density=1.0)
+    with pytest.raises(ValueError, match="degenerate"):
+        plan.prepare(collinear)
+
+    same_edge_direction = jnp.asarray(((0, 1, 2), (0, 1, 3)), dtype=jnp.int32)
+    with pytest.raises(ValueError, match="opposite interior-edge orientations"):
+        TriangularShellPlan(same_edge_direction, material, thickness=0.1, density=1.0)
 
 
-def test_evaluation_and_step_are_jittable_and_unstable_step_rolls_back() -> None:
+def test_shell_dynamics_scenario_3() -> None:
+    shell_plan = TriangularShellPlan(TRIANGLES, _material(), thickness=0.1, density=2.0)
+    prepared = shell_plan.prepare(SQUARE)
+    inverted = SQUARE.at[3].set(jnp.asarray((1.0, 0.0, 0.0)))
+    evaluation = prepared.evaluate(inverted)
+    assert bool(evaluation.geometry.inverted[1])
+    assert not bool(evaluation.valid)
+
+    dynamics = ShellDynamicsPlan(shell_plan).prepare(SQUARE)
+    state = dynamics.initialize_state(inverted)
+    result = dynamics.step(state, jnp.asarray(0.0), 0.1 * dynamics.stable_step_size)
+    assert not bool(result.successful)
+    assert int(result.rejection_reasons) & int(ShellRejectionReason.INVALID_STATE)
+    assert jnp.array_equal(result.accepted_state.positions, state.positions)
+    assert jnp.array_equal(result.accepted_state.velocities, state.velocities)
     shell_plan = TriangularShellPlan(TRIANGLES, _material(), thickness=0.1, density=2.0)
     prepared = shell_plan.prepare(SQUARE)
     compiled_evaluation = eqx.filter_jit(prepared.evaluate)(

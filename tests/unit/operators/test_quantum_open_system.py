@@ -53,7 +53,7 @@ def test_pure_dephasing_lindblad_residual_is_zero() -> None:
     assert jnp.allclose(residual.func(0.61), 0.0, atol=1e-11)
 
 
-def test_lindblad_dissipator_preserves_trace_and_hermiticity() -> None:
+def test_lindblad_contracts() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     factor = time.Function()(
         jnp.asarray([[1.0 + 0.2j, 0.3], [0.4j, 0.8 - 0.1j]], dtype="complex128")
@@ -75,6 +75,20 @@ def test_lindblad_dissipator_preserves_trace_and_hermiticity() -> None:
     assert jnp.allclose(value, separate.func(), atol=1e-12)
     assert jnp.allclose(jnp.trace(value), 0.0, atol=1e-12)
     assert jnp.allclose(value, jnp.conj(value.T), atol=1e-12)
+    time = phx.domain.TimeInterval(0.0, 1.0)
+    density = time.Function()(jnp.eye(2) / 2.0)
+    larger = time.Function()(jnp.eye(3))
+    rectangular = time.Function()(jnp.ones((2, 3)))
+    invalid_collapse: Any = object()
+
+    with pytest.raises(TypeError, match="contain only DomainFunctions"):
+        phx.operators.lindblad_dissipator(density, [invalid_collapse])
+    with pytest.raises(TypeError, match="DomainFunction or a sequence"):
+        phx.operators.lindblad_dissipator(density, invalid_collapse)
+    with pytest.raises(ValueError, match="square matrix"):
+        phx.operators.lindblad_dissipator(density, rectangular).func()
+    with pytest.raises(ValueError, match="dimensions must match"):
+        phx.operators.lindblad_dissipator(density, larger).func()
 
 
 def test_empty_lindblad_collection_reduces_to_von_neumann_dynamics() -> None:
@@ -114,20 +128,3 @@ def test_lindblad_dissipator_is_parameter_differentiable() -> None:
 
     derivative = jax.jit(jax.grad(ground_population_rate))(0.7)
     assert jnp.allclose(derivative, 1.0, atol=1e-12)
-
-
-def test_lindblad_operators_validate_collections_and_dimensions() -> None:
-    time = phx.domain.TimeInterval(0.0, 1.0)
-    density = time.Function()(jnp.eye(2) / 2.0)
-    larger = time.Function()(jnp.eye(3))
-    rectangular = time.Function()(jnp.ones((2, 3)))
-    invalid_collapse: Any = object()
-
-    with pytest.raises(TypeError, match="contain only DomainFunctions"):
-        phx.operators.lindblad_dissipator(density, [invalid_collapse])
-    with pytest.raises(TypeError, match="DomainFunction or a sequence"):
-        phx.operators.lindblad_dissipator(density, invalid_collapse)
-    with pytest.raises(ValueError, match="square matrix"):
-        phx.operators.lindblad_dissipator(density, rectangular).func()
-    with pytest.raises(ValueError, match="dimensions must match"):
-        phx.operators.lindblad_dissipator(density, larger).func()

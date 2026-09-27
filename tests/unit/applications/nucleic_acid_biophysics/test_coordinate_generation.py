@@ -90,7 +90,7 @@ def _fixture(polymer: Any = "DNA") -> Any:
     return mapping, support, x
 
 
-def test_nucleic_provider_preserves_unit_equivalence_and_stable_atom_mapping() -> None:
+def test_nucleic_provider_contracts() -> None:
     mapping, support, x = _fixture()
     rights = _rights()
     order = (3, 1, 0, 2)
@@ -114,11 +114,6 @@ def test_nucleic_provider_preserves_unit_equivalence_and_stable_atom_mapping() -
     _, rna_support, _ = _fixture("RNA")
     with pytest.raises(ValueError):
         map_nucleic_hypothesis(result.hypotheses[0], rna_support)
-
-
-def test_nucleic_provider_refuses_incomplete_training_and_inherited_weight_restrictions() -> (
-    None
-):
     mapping, support, x = _fixture()
     rights, restricted = _rights(), _rights(training=False)
     provenance = CoordinateProviderProvenance(

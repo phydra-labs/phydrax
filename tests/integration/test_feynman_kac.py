@@ -95,7 +95,7 @@ def test_feynman_kac_constant_killing_and_diffusion_gradient() -> None:
     assert gradient < 0.0
 
 
-def test_ornstein_uhlenbeck_terminal_mean_matches_euler_reference() -> None:
+def test_feynman_kac_scenario_1() -> None:
     slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 64, role="path")
     theta = 0.7
     sigma = 0.4
@@ -113,9 +113,6 @@ def test_ornstein_uhlenbeck_terminal_mean_matches_euler_reference() -> None:
 
     assert jnp.abs(estimate.value - expected) < 5.0 * estimate.standard_error
     assert jnp.allclose(estimate.effective_sample_size, estimate.num_paths)
-
-
-def test_discrete_first_passage_converges_to_brownian_interval_survival() -> None:
     final_time = 0.5
     sigma = 0.5
     slicing = phx.discretization.TemporalMesh.uniform(0.0, final_time, 256, role="path")

@@ -129,7 +129,7 @@ def _packed_affine_batch() -> Any:
     return RecurrentBatch((transitions, additions), valid, reset=reset)
 
 
-def test_recurrent_batch_rejects_ambiguous_padding_and_resets() -> None:
+def test_recurrent_scenario_1() -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="after padding"):
         batch = RecurrentBatch(
             jnp.ones((4, 2)),
@@ -144,9 +144,6 @@ def test_recurrent_batch_rejects_ambiguous_padding_and_resets() -> None:
             reset=jnp.asarray([False, True, False]),
         )
         jax.block_until_ready(batch.valid)
-
-
-def test_affine_serial_and_associative_execution_match_with_resets_and_padding() -> None:
     recurrence = AffineRecurrence(jnp.asarray([1.0, -0.5]))
     batch = _packed_affine_batch()
 
@@ -169,9 +166,6 @@ def test_affine_serial_and_associative_execution_match_with_resets_and_padding()
     transition, addition = batch.inputs
     reset_step = transition[1, 2] * recurrence.initial + addition[1, 2]
     assert jnp.allclose(serial.states[1, 2], reset_step)
-
-
-def test_affine_chunking_preserves_canonical_reset_state() -> None:
     recurrence = AffineRecurrence(jnp.asarray([1.0, -0.5]))
     transitions = jnp.asarray(
         [
@@ -215,9 +209,6 @@ def test_affine_chunking_preserves_canonical_reset_state() -> None:
             jnp.concatenate((first.states, second.states)),
             whole.states,
         )
-
-
-def test_affine_composition_order_matches_dense_matrix_serial_execution() -> None:
     recurrence = AffineRecurrence(jnp.asarray([0.3, -0.2]), mode="matrix")
     transitions = jnp.asarray(
         [
@@ -232,6 +223,19 @@ def test_affine_composition_order_matches_dense_matrix_serial_execution() -> Non
     serial = run_affine_recurrence(recurrence, batch, execution="serial")
     associative = run_affine_recurrence(recurrence, batch, execution="associative")
     assert jnp.allclose(serial.states, associative.states, atol=1e-6, rtol=1e-6)
+    cell = _RandomAccumulator(3)
+    inputs = jnp.ones((4, 3))
+    valid = jnp.asarray([True, True, False, False])
+    batch = RecurrentBatch(inputs, valid)
+    key = jr.key(12)
+
+    result = jax.jit(lambda current: run_recurrent(cell, current, key=key))(batch)
+    repeated = run_recurrent(cell, batch, key=key)
+
+    assert jnp.array_equal(result.outputs, repeated.outputs)
+    assert jnp.array_equal(result.outputs[2:], jnp.zeros((2, 3)))
+    assert jnp.array_equal(result.states[2], result.states[1])
+    assert jnp.array_equal(result.final_state, result.states[-1])
 
 
 def test_affine_execution_has_matching_finite_gradients_and_vmap_behavior() -> None:
@@ -262,24 +266,6 @@ def test_affine_execution_has_matching_finite_gradients_and_vmap_behavior() -> N
         )
     )(jnp.stack((additions, 2.0 * additions)))
     assert batched.shape == (2, 3, 2)
-
-
-def test_generic_recurrent_cell_masks_outputs_and_propagates_keys_deterministically() -> (
-    None
-):
-    cell = _RandomAccumulator(3)
-    inputs = jnp.ones((4, 3))
-    valid = jnp.asarray([True, True, False, False])
-    batch = RecurrentBatch(inputs, valid)
-    key = jr.key(12)
-
-    result = jax.jit(lambda current: run_recurrent(cell, current, key=key))(batch)
-    repeated = run_recurrent(cell, batch, key=key)
-
-    assert jnp.array_equal(result.outputs, repeated.outputs)
-    assert jnp.array_equal(result.outputs[2:], jnp.zeros((2, 3)))
-    assert jnp.array_equal(result.states[2], result.states[1])
-    assert jnp.array_equal(result.final_state, result.states[-1])
 
 
 def test_physical_time_and_intervals_reach_serial_and_associative_dispatch() -> None:

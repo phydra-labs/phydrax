@@ -217,7 +217,7 @@ def _rows(mesh: Any, points: Any) -> Any:
     )
 
 
-def test_bisection_propagates_corner_edge_and_face_classes() -> None:
+def test_cad_curving_scenario_1() -> None:
     projection = _plate_projection()
     mesh = _plate_mesh((1.2, 1.2))
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
@@ -263,6 +263,44 @@ def test_bisection_propagates_corner_edge_and_face_classes() -> None:
     )
     assert np.all(classes[interior, 0] == 2)
     assert np.all(classes[~interior, 0] < 2)
+    projection = _plate_projection()
+    mesh = _plate_mesh((1.2, 1.2))
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    removed, corner, hole = _rows(mesh, [[0.0, -2.0], [2.0, -2.0], [1.0, 0.0]])
+
+    target, lineage = _collapse(mesh, removed, corner)
+    legal = phx.meshing.propagate_association(
+        association, lineage, mesh, target, projection, policy=_POLICY
+    )
+    assert legal.complete
+    target, lineage = _collapse(mesh, removed, hole)
+    with pytest.raises(phx.meshing.AssociationPropagationError) as error:
+        phx.meshing.propagate_association(
+            association, lineage, mesh, target, projection, policy=_POLICY
+        )
+    assert error.value.target_ids.tolist() == [int(mesh.vertex_global_ids[hole])]
+    projection = _plate_projection()
+    source_mesh = _plate_mesh((1.2, 1.2))
+    association = phx.meshing.associate_mesh_vertices(
+        source_mesh, projection, policy=_POLICY
+    )
+    source = phx.meshing.certify_cell_mesh(
+        source_mesh, _CONTRACT, associations=(association,)
+    )
+    target = phx.meshing.certify_cell_mesh(_plate_mesh((1.3, -1.1)), _CONTRACT)
+
+    derived = phx.meshing.rederive_association(
+        association, source, target, projection, policy=_POLICY
+    )
+    shared = np.asarray(source_mesh.coordinates)[:12]
+    classes, _ = _classes(derived, target.mesh)
+    source_classes, _ = _classes(association, source_mesh)
+
+    assert derived.complete
+    assert derived.provenance is phx.meshing.GeometryAssociationProvenance.CLASSIFICATION
+    np.testing.assert_array_equal(
+        classes[_rows(target.mesh, shared)], source_classes[_rows(source_mesh, shared)]
+    )
 
 
 def _collapse(mesh: Any, removed: Any, kept: Any) -> Any:
@@ -290,51 +328,7 @@ def _collapse(mesh: Any, removed: Any, kept: Any) -> Any:
     return target, MeshLineage(mesh.topology_id, target.topology_id, (record,))
 
 
-def test_collapses_must_keep_a_vertex_bounding_the_removed_class() -> None:
-    projection = _plate_projection()
-    mesh = _plate_mesh((1.2, 1.2))
-    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
-    removed, corner, hole = _rows(mesh, [[0.0, -2.0], [2.0, -2.0], [1.0, 0.0]])
-
-    target, lineage = _collapse(mesh, removed, corner)
-    legal = phx.meshing.propagate_association(
-        association, lineage, mesh, target, projection, policy=_POLICY
-    )
-    assert legal.complete
-    target, lineage = _collapse(mesh, removed, hole)
-    with pytest.raises(phx.meshing.AssociationPropagationError) as error:
-        phx.meshing.propagate_association(
-            association, lineage, mesh, target, projection, policy=_POLICY
-        )
-    assert error.value.target_ids.tolist() == [int(mesh.vertex_global_ids[hole])]
-
-
-def test_rederivation_after_unknown_lineage_recovers_classes() -> None:
-    projection = _plate_projection()
-    source_mesh = _plate_mesh((1.2, 1.2))
-    association = phx.meshing.associate_mesh_vertices(
-        source_mesh, projection, policy=_POLICY
-    )
-    source = phx.meshing.certify_cell_mesh(
-        source_mesh, _CONTRACT, associations=(association,)
-    )
-    target = phx.meshing.certify_cell_mesh(_plate_mesh((1.3, -1.1)), _CONTRACT)
-
-    derived = phx.meshing.rederive_association(
-        association, source, target, projection, policy=_POLICY
-    )
-    shared = np.asarray(source_mesh.coordinates)[:12]
-    classes, _ = _classes(derived, target.mesh)
-    source_classes, _ = _classes(association, source_mesh)
-
-    assert derived.complete
-    assert derived.provenance is phx.meshing.GeometryAssociationProvenance.CLASSIFICATION
-    np.testing.assert_array_equal(
-        classes[_rows(target.mesh, shared)], source_classes[_rows(source_mesh, shared)]
-    )
-
-
-def test_p2_sphere_curving_raises_the_geometric_convergence_order() -> None:
+def test_cad_curving_scenario_2() -> None:
     projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
     policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1)
     errors = []
@@ -354,11 +348,6 @@ def test_p2_sphere_curving_raises_the_geometric_convergence_order() -> None:
     # Straight facets converge at second order; P2 curving at least at third.
     assert 3.0 < straight_coarse / straight_fine < 5.0
     assert curved_coarse / curved_fine > 7.0
-
-
-def test_p2_cylinder_curving_is_certified_and_periodic_nodes_follow_the_isometry() -> (
-    None
-):
     projection = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
     mesh = _cylinder_mesh(2, 2)
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
@@ -413,6 +402,22 @@ def test_p2_cylinder_curving_is_certified_and_periodic_nodes_follow_the_isometry
         nodes[top_nodes[target_rows]], nodes[bottom_nodes[source_rows]] + translation
     )
     assert np.max(np.abs(nodes[top_nodes] - straight[top_nodes])) > 0.01
+    projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
+    mesh = _icosphere(1)
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+    policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1)
+    curved = phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+
+    accepted = phx.meshing.verify_curved_geometry(
+        curved.geometry, mesh, association, projection, policy=policy
+    )
+    straight = phx.meshing.verify_curved_geometry(
+        curved.straight, mesh, association, projection, policy=policy
+    )
+    assert accepted.accepted
+    assert accepted.certificate.all_certified
+    assert not straight.accepted
+    assert straight.maximum_residual > 0.01
 
 
 def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it() -> None:
@@ -487,22 +492,3 @@ def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted
     assert not np.array_equal(
         replaced.geometry.coordinates, projected.geometry.coordinates
     )
-
-
-def test_verification_certifies_existing_high_order_geometry() -> None:
-    projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
-    mesh = _icosphere(1)
-    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
-    policy = phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=1)
-    curved = phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
-
-    accepted = phx.meshing.verify_curved_geometry(
-        curved.geometry, mesh, association, projection, policy=policy
-    )
-    straight = phx.meshing.verify_curved_geometry(
-        curved.straight, mesh, association, projection, policy=policy
-    )
-    assert accepted.accepted
-    assert accepted.certificate.all_certified
-    assert not straight.accepted
-    assert straight.maximum_residual > 0.01

@@ -28,7 +28,7 @@ def _packed_columns(complex_ir: Any, degree: Any, columns: Any) -> Any:
     return packed.at[:, start : start + columns.shape[0]].set(columns.T)
 
 
-def test_hodge_sectors_span_cochains_and_satisfy_differential_invariants() -> None:
+def test_hodge_contracts() -> None:
     complex_ir = _annulus_complex()
     spectra = phx.graph.cochain_hodge_sector_spectra(complex_ir, 1)
 
@@ -65,21 +65,6 @@ def test_hodge_sectors_span_cochains_and_satisfy_differential_invariants() -> No
     assert jnp.allclose(coexact_codifferential, 0.0, atol=1e-8)
     assert jnp.allclose(harmonic_derivative, 0.0, atol=1e-8)
     assert jnp.allclose(harmonic_codifferential, 0.0, atol=1e-8)
-
-
-def _hodge_kernel(spectra: Any) -> Any:
-    return phx.kernels.CochainHodgeSpectralKernel(
-        spectra,
-        harmonic_multiplier=phx.kernels.HeatSpectralMultiplier(0.0),
-        exact_multiplier=phx.kernels.MaternSpectralMultiplier(0.6, 1.2),
-        coexact_multiplier=phx.kernels.MaternSpectralMultiplier(0.9, 1.7),
-        harmonic_amplitude=0.5,
-        exact_amplitude=0.8,
-        coexact_amplitude=0.7,
-    )
-
-
-def test_hodge_sector_covariance_is_orientation_conjugate_and_finite_feature() -> None:
     complex_ir = _annulus_complex()
     spectra = phx.graph.cochain_hodge_sector_spectra(complex_ir, 1)
     kernel = _hodge_kernel(spectra)
@@ -109,9 +94,6 @@ def test_hodge_sector_covariance_is_orientation_conjugate_and_finite_feature() -
         edge_signs[:, None] * matrix * edge_signs[None, :],
         atol=1e-8,
     )
-
-
-def test_hodge_sector_sum_reuses_weight_space_gp_inference() -> None:
     complex_ir = _annulus_complex()
     kernel = _hodge_kernel(phx.graph.cochain_hodge_sector_spectra(complex_ir, 1))
     entities = jnp.tile(complex_ir.cell_entities(1), 2)
@@ -128,4 +110,16 @@ def test_hodge_sector_sum_reuses_weight_space_gp_inference() -> None:
     assert isinstance(factor, phx.uq.FiniteFeatureGaussianProcessFactor)
     assert jnp.allclose(
         factor.log_probability(residual), dense.log_probability(residual), atol=1e-8
+    )
+
+
+def _hodge_kernel(spectra: Any) -> Any:
+    return phx.kernels.CochainHodgeSpectralKernel(
+        spectra,
+        harmonic_multiplier=phx.kernels.HeatSpectralMultiplier(0.0),
+        exact_multiplier=phx.kernels.MaternSpectralMultiplier(0.6, 1.2),
+        coexact_multiplier=phx.kernels.MaternSpectralMultiplier(0.9, 1.7),
+        harmonic_amplitude=0.5,
+        exact_amplitude=0.8,
+        coexact_amplitude=0.7,
     )

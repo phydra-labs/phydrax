@@ -21,7 +21,7 @@ def _attention_graph() -> phx.graph.GraphIR:
     )
 
 
-def test_graph_attention_operator_uses_edge_bias_softmax() -> None:
+def test_graph_attention_contracts() -> None:
     graph = _attention_graph()
     model = phx.graph.GraphAttentionOperator(
         logit_fn=lambda edges, sent, recv, globals_: jnp.zeros((sent.shape[0],)),
@@ -33,9 +33,22 @@ def test_graph_attention_operator_uses_edge_bias_softmax() -> None:
     out = model(graph)
 
     assert jnp.allclose(out.nodes["attn"][:, 0], jnp.array([0.0, 0.0, 2.5]))
+    bundle = phx.graph.radius_query_graph(
+        jnp.array([[0.0], [1.0]]),
+        jnp.array([[0.5]]),
+        radius=1.0,
+        source_features=jnp.array([[1.0], [3.0]]),
+        weight_kind=None,
+    )
 
+    out = phx.graph.GraphAttentionOperator(
+        logit_fn=lambda edges, sent, recv, globals_: jnp.zeros((sent.shape[0],)),
+        input_key="features",
+        output_key="attn",
+        target_node_type=bundle.target_type,
+    )(bundle.graph)
 
-def test_graph_attention_operator_masks_padding_edges() -> None:
+    assert jnp.allclose(out.nodes["attn"][:, 0], jnp.array([0.0, 0.0, 2.0]))
     graph = _attention_graph().replace(
         edge_mask=jnp.array([True, False]),
         validate=False,
@@ -69,25 +82,6 @@ def test_graph_attention_operator_supports_multihead_logits() -> None:
 
     assert out.nodes["attn"].shape == (3, 2)
     assert jnp.allclose(out.nodes["attn"][2], jnp.array([2.0, 2.0]))
-
-
-def test_graph_attention_operator_can_mask_to_query_targets() -> None:
-    bundle = phx.graph.radius_query_graph(
-        jnp.array([[0.0], [1.0]]),
-        jnp.array([[0.5]]),
-        radius=1.0,
-        source_features=jnp.array([[1.0], [3.0]]),
-        weight_kind=None,
-    )
-
-    out = phx.graph.GraphAttentionOperator(
-        logit_fn=lambda edges, sent, recv, globals_: jnp.zeros((sent.shape[0],)),
-        input_key="features",
-        output_key="attn",
-        target_node_type=bundle.target_type,
-    )(bundle.graph)
-
-    assert jnp.allclose(out.nodes["attn"][:, 0], jnp.array([0.0, 0.0, 2.0]))
 
 
 def test_graph_attention_operator_wraps_as_graph_model() -> None:

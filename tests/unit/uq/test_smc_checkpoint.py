@@ -4,13 +4,13 @@
 
 from typing import Any, cast
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
 import phydrax.uq._smc as smc_module
+from tests._support.assertions import assert_tree_equal
 
 
 def _problem(observation: Any = 1.1) -> Any:
@@ -21,11 +21,6 @@ def _problem(observation: Any = 1.1) -> Any:
         ),
         lambda value: -0.5 * ((value - observation) / 0.25) ** 2,
     )
-
-
-def _assert_tree_equal(left: Any, right: Any) -> None:
-    comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
-    assert all(jax.tree_util.tree_leaves(comparisons))
 
 
 @pytest.mark.parametrize("resampling_method", ["systematic", "stratified"])
@@ -78,9 +73,9 @@ def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
         resume_from=checkpoint,
     )
 
-    _assert_tree_equal(resumed.state, direct.state)
-    _assert_tree_equal(resumed.samples, direct.samples)
-    _assert_tree_equal(resumed.unconstrained_samples, direct.unconstrained_samples)
+    assert_tree_equal(resumed.state, direct.state)
+    assert_tree_equal(resumed.samples, direct.samples)
+    assert_tree_equal(resumed.unconstrained_samples, direct.unconstrained_samples)
     assert jnp.array_equal(resumed.final_weights, direct.final_weights)
     assert jnp.array_equal(resumed.temperatures, direct.temperatures)
     assert jnp.array_equal(

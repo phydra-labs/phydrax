@@ -24,7 +24,7 @@ def _normal_log_density(value: Any, *, location: Any = 0.0) -> Any:
     return -0.5 * (value - location) ** 2 - 0.5 * jnp.log(2.0 * jnp.pi)
 
 
-def test_independence_mh_uses_both_proposal_density_terms_and_rejects_nonfinite() -> None:
+def test_flow_proposal_scenario_1() -> None:
     current = jnp.asarray([0.25])
     proposal = jnp.asarray([[1.5], [jnp.nan]])
     current_target = _normal_log_density(current[0])
@@ -49,6 +49,48 @@ def test_independence_mh_uses_both_proposal_density_terms_and_rejects_nonfinite(
     assert not info.accepted[1]
     assert info.nonfinite[1]
     assert jnp.array_equal(final.position, proposal[0])
+    replay = _initialize_replay(
+        num_chains=2,
+        capacity_per_chain=3,
+        dimension=1,
+        dtype=jnp.float32,
+    )
+    samples = jnp.arange(10, dtype=jnp.float32).reshape((2, 5, 1))
+    keys = jax.vmap(lambda key: jr.split(key, 5))(jr.split(jr.key(5), 2))
+
+    first = jax.jit(_update_replay)(replay, samples, keys)
+    second = jax.jit(_update_replay)(replay, samples, keys)
+
+    assert jnp.array_equal(first.values, second.values)
+    assert jnp.array_equal(first.size, jnp.asarray([3, 3]))
+    assert jnp.array_equal(first.seen, jnp.asarray([5, 5]))
+    assert _replay_data(first).shape == (6, 1)
+    scalar_data = jnp.linspace(-2.0, 2.0, 16)[:, None]
+    vector_data = jnp.stack((scalar_data[:, 0], scalar_data[:, 0] ** 2), axis=1)
+    scalar = _build_default_flow(
+        jr.key(6),
+        scalar_data,
+        flow_layers=1,
+        nn_width=8,
+        nn_depth=1,
+    )
+    vector = _build_default_flow(
+        jr.key(7),
+        vector_data,
+        flow_layers=1,
+        nn_width=8,
+        nn_depth=1,
+    )
+
+    scalar_sample, scalar_log_density = scalar.sample_and_log_prob(jr.key(8))
+    vector_sample, vector_log_density = vector.sample_and_log_prob(jr.key(9))
+
+    assert scalar.shape == (1,)
+    assert vector.shape == (2,)
+    assert scalar_sample.shape == (1,)
+    assert vector_sample.shape == (2,)
+    assert jnp.isfinite(scalar_log_density)
+    assert jnp.isfinite(vector_log_density)
 
 
 def test_asymmetric_independence_mh_recovers_the_target_not_the_proposal() -> None:
@@ -96,54 +138,6 @@ def test_asymmetric_independence_mh_recovers_the_target_not_the_proposal() -> No
     assert jnp.abs(jnp.mean(retained)) < 0.05
     assert jnp.abs(jnp.var(retained) - 1.0) < 0.08
     assert jnp.abs(jnp.mean(retained) - 1.0) > 0.8
-
-
-def test_chain_stratified_reservoir_is_bounded_and_reproducible() -> None:
-    replay = _initialize_replay(
-        num_chains=2,
-        capacity_per_chain=3,
-        dimension=1,
-        dtype=jnp.float32,
-    )
-    samples = jnp.arange(10, dtype=jnp.float32).reshape((2, 5, 1))
-    keys = jax.vmap(lambda key: jr.split(key, 5))(jr.split(jr.key(5), 2))
-
-    first = jax.jit(_update_replay)(replay, samples, keys)
-    second = jax.jit(_update_replay)(replay, samples, keys)
-
-    assert jnp.array_equal(first.values, second.values)
-    assert jnp.array_equal(first.size, jnp.asarray([3, 3]))
-    assert jnp.array_equal(first.seen, jnp.asarray([5, 5]))
-    assert _replay_data(first).shape == (6, 1)
-
-
-def test_default_flow_supports_scalar_and_vector_events() -> None:
-    scalar_data = jnp.linspace(-2.0, 2.0, 16)[:, None]
-    vector_data = jnp.stack((scalar_data[:, 0], scalar_data[:, 0] ** 2), axis=1)
-    scalar = _build_default_flow(
-        jr.key(6),
-        scalar_data,
-        flow_layers=1,
-        nn_width=8,
-        nn_depth=1,
-    )
-    vector = _build_default_flow(
-        jr.key(7),
-        vector_data,
-        flow_layers=1,
-        nn_width=8,
-        nn_depth=1,
-    )
-
-    scalar_sample, scalar_log_density = scalar.sample_and_log_prob(jr.key(8))
-    vector_sample, vector_log_density = vector.sample_and_log_prob(jr.key(9))
-
-    assert scalar.shape == (1,)
-    assert vector.shape == (2,)
-    assert scalar_sample.shape == (1,)
-    assert vector_sample.shape == (2,)
-    assert jnp.isfinite(scalar_log_density)
-    assert jnp.isfinite(vector_log_density)
 
 
 def test_flow_training_caps_oversized_batches_to_the_training_split() -> None:

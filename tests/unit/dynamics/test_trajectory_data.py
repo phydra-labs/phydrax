@@ -37,7 +37,7 @@ def _ragged_data() -> Any:
     )
 
 
-def test_trajectory_data_preserves_padding_resets_and_case_axes() -> None:
+def test_trajectory_data_scenario_1() -> None:
     data = _ragged_data()
 
     assert data.case_shape == (2,)
@@ -50,9 +50,6 @@ def test_trajectory_data_preserves_padding_resets_and_case_axes() -> None:
         np.asarray(pairs.valid),
         np.asarray([[True, True, False, True], [True, True, False, False]]),
     )
-
-
-def test_trajectory_data_rejects_cross_reset_transition_marked_valid() -> None:
     with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="reset"):
         phx.dynamics.TrajectoryData(
             jnp.arange(4.0),
@@ -62,9 +59,6 @@ def test_trajectory_data_rejects_cross_reset_transition_marked_valid() -> None:
             transition_valid=jnp.ones((3,), dtype="bool"),
             source_id="invalid-reset",
         )
-
-
-def test_delay_embedding_never_crosses_a_reset() -> None:
     coordinates = jnp.arange(7.0)
     data = phx.dynamics.TrajectoryData(
         coordinates,
@@ -89,9 +83,6 @@ def test_delay_embedding_never_crosses_a_reset() -> None:
     np.testing.assert_allclose(
         np.asarray(embedded.states[2]), np.asarray([2.0, 4.0, 0.0, 0.0])
     )
-
-
-def test_evolution_adapter_retains_system_layout_and_provenance() -> None:
     system = phx.dynamics.DiscreteSystem(
         lambda coordinate, state, args: state + args,
         state_layout=phx.dynamics.StateLayout((1,), component_names=("population",)),
@@ -115,7 +106,7 @@ def test_evolution_adapter_retains_system_layout_and_provenance() -> None:
     assert data.source_id == f"evolution:{trajectory.evolution_id}"
 
 
-def test_memory_solution_adapter_preserves_delay_masks_and_solver_identity() -> None:
+def test_trajectory_data_scenario_2() -> None:
     solution = phx.solver.MemoryEquationSolution(
         times=jnp.asarray([0.0, 0.25, 0.5, 0.75]),
         states=jnp.asarray([[1.0], [0.9], [0.82], [0.75]]),
@@ -137,6 +128,41 @@ def test_memory_solution_adapter_preserves_delay_masks_and_solver_identity() -> 
         np.asarray(data.sample_valid), [True, True, True, False]
     )
     np.testing.assert_array_equal(np.asarray(data.transition_valid), [True, True, False])
+    layout = phx.dynamics.StateLayout((1,))
+    coordinates = jnp.asarray([0.0, 1.0])
+    states = jnp.asarray([[0.0], [1.0]])
+
+    with pytest.raises(ValueError, match="input_valid requires inputs"):
+        phx.dynamics.TrajectoryData(
+            coordinates,
+            states,
+            state_layout=layout,
+            input_valid=jnp.asarray([True]),
+            source_id="orphan-input-validity",
+        )
+    with pytest.raises(ValueError, match="must remain 'transitions'"):
+        phx.dynamics.TrajectoryData(
+            coordinates,
+            states,
+            state_layout=layout,
+            input_alignment="samples",
+            source_id="orphan-input-alignment",
+        )
+    layout = phx.dynamics.StateLayout((1,))
+    first = phx.dynamics.TrajectoryData(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.0], [1.0]]),
+        state_layout=layout,
+        source_id="reused-source",
+    )
+    changed = phx.dynamics.TrajectoryData(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.0], [2.0]]),
+        state_layout=layout,
+        source_id="reused-source",
+    )
+
+    assert first.dataset_id != changed.dataset_id
 
 
 def test_fixed_step_adapter_requires_declared_projection_and_retained_trajectory() -> (
@@ -190,44 +216,3 @@ def test_fixed_step_adapter_requires_declared_projection_and_retained_trajectory
             projection_id="first-column",
             state_layout=layout,
         )
-
-
-def test_autonomous_trajectory_rejects_orphan_input_metadata() -> None:
-    layout = phx.dynamics.StateLayout((1,))
-    coordinates = jnp.asarray([0.0, 1.0])
-    states = jnp.asarray([[0.0], [1.0]])
-
-    with pytest.raises(ValueError, match="input_valid requires inputs"):
-        phx.dynamics.TrajectoryData(
-            coordinates,
-            states,
-            state_layout=layout,
-            input_valid=jnp.asarray([True]),
-            source_id="orphan-input-validity",
-        )
-    with pytest.raises(ValueError, match="must remain 'transitions'"):
-        phx.dynamics.TrajectoryData(
-            coordinates,
-            states,
-            state_layout=layout,
-            input_alignment="samples",
-            source_id="orphan-input-alignment",
-        )
-
-
-def test_default_dataset_identity_includes_numeric_content_and_axis_semantics() -> None:
-    layout = phx.dynamics.StateLayout((1,))
-    first = phx.dynamics.TrajectoryData(
-        jnp.asarray([0.0, 1.0]),
-        jnp.asarray([[0.0], [1.0]]),
-        state_layout=layout,
-        source_id="reused-source",
-    )
-    changed = phx.dynamics.TrajectoryData(
-        jnp.asarray([0.0, 1.0]),
-        jnp.asarray([[0.0], [2.0]]),
-        state_layout=layout,
-        source_id="reused-source",
-    )
-
-    assert first.dataset_id != changed.dataset_id

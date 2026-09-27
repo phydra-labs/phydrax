@@ -35,7 +35,7 @@ def _node_complex() -> Any:
     ).prepare(topology)[0]
 
 
-def test_entity_gather_scatter_is_exact_signed_transpose_at_shared_node() -> None:
+def test_entity_contracts() -> None:
     complex_ = _node_complex()
     plan = phx.discretization.VariablePatchEntityExecutionPlan(complex_, 0)
     state = phx.discretization.VariablePatchEntityFieldState(
@@ -57,11 +57,6 @@ def test_entity_gather_scatter_is_exact_signed_transpose_at_shared_node() -> Non
     assert jnp.allclose(left, right)
     assert local[0][0, 4] == local[0][1, 0]
     assert scattered[4] == 2.0
-
-
-def test_entity_execution_supports_oriented_edges_without_patch_local_duplication() -> (
-    None
-):
     complex_ = _node_complex()
     plan = phx.discretization.VariablePatchEntityExecutionPlan(complex_, 1)
     state = phx.discretization.VariablePatchEntityFieldState(

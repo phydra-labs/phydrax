@@ -35,7 +35,7 @@ def _taylor_green(discretization: Any) -> Any:
     )
 
 
-def test_mac_momentum_certifies_weighted_skew_and_dissipative_diffusion() -> None:
+def test_mac_momentum_scenario_1() -> None:
     discretization, operators, momentum = _periodic()
     velocity = _taylor_green(discretization)
     convection = momentum.convection(velocity)
@@ -49,27 +49,6 @@ def test_mac_momentum_certifies_weighted_skew_and_dissipative_diffusion() -> Non
     assert jnp.linalg.norm(operators.divergence(velocity)) < 2e-12
     assert jnp.abs(space.inner(velocity, convection)) < 2e-10
     assert jnp.real(space.inner(velocity, diffusion)) < 0.0
-
-
-def test_mac_momentum_is_jittable_and_differentiable_in_flat_coordinates() -> None:
-    discretization, operators, momentum = _periodic(6)
-    initial = operators.velocity_space.flatten(_taylor_green(discretization))
-
-    def objective(coordinates: Any) -> Any:
-        velocity = operators.velocity_space.unflatten(coordinates)
-        convection = momentum.convection(tuple(velocity))
-        rate = operators.velocity_space.flatten(convection)
-        return 0.5 * jnp.vdot(rate, rate).real
-
-    eager = objective(initial)
-    compiled = jax.jit(objective)(initial)
-    gradient = jax.jit(jax.grad(objective))(initial)
-
-    np.testing.assert_allclose(compiled, eager, rtol=1e-12, atol=1e-12)
-    assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_mac_moving_wall_couette_profile_has_zero_momentum_rate() -> None:
     count = 8
     grid = phx.discretization.TensorGridPlan(
         (
@@ -108,9 +87,6 @@ def test_mac_moving_wall_couette_profile_has_zero_momentum_rate() -> None:
     assert diagnostics.boundary_defect < 1e-13
     assert max(float(jnp.max(jnp.abs(value))) for value in convection) < 2e-12
     assert max(float(jnp.max(jnp.abs(value))) for value in diffusion) < 2e-11
-
-
-def test_mac_wall_boundaries_report_normal_flux_incompatibility() -> None:
     bounded_grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(4),
@@ -141,9 +117,6 @@ def test_mac_wall_boundaries_report_normal_flux_incompatibility() -> None:
 
     assert not stage.successful
     assert jnp.abs(stage.compatibility_defect) > 0.0
-
-
-def test_three_dimensional_mac_constant_velocity_has_zero_rate() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -162,3 +135,21 @@ def test_three_dimensional_mac_constant_velocity_has_zero_rate() -> None:
     assert operators.velocity_space.size == sum(value.size for value in velocity)
     assert max(float(jnp.max(jnp.abs(value))) for value in convection) < 2e-12
     assert max(float(jnp.max(jnp.abs(value))) for value in diffusion) < 2e-12
+
+
+def test_mac_momentum_is_jittable_and_differentiable_in_flat_coordinates() -> None:
+    discretization, operators, momentum = _periodic(6)
+    initial = operators.velocity_space.flatten(_taylor_green(discretization))
+
+    def objective(coordinates: Any) -> Any:
+        velocity = operators.velocity_space.unflatten(coordinates)
+        convection = momentum.convection(tuple(velocity))
+        rate = operators.velocity_space.flatten(convection)
+        return 0.5 * jnp.vdot(rate, rate).real
+
+    eager = objective(initial)
+    compiled = jax.jit(objective)(initial)
+    gradient = jax.jit(jax.grad(objective))(initial)
+
+    np.testing.assert_allclose(compiled, eager, rtol=1e-12, atol=1e-12)
+    assert jnp.all(jnp.isfinite(gradient))

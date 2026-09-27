@@ -43,7 +43,7 @@ def _octahedral_quadrature() -> Any:
     )
 
 
-def test_characteristic_minkowski_and_analytic_outgoing_wave_controls() -> None:
+def test_characteristic_bms_scenario_1() -> None:
     nine = 9
     times = np.linspace(-1.0, 1.0, nine)
     inverse_radius = np.asarray((0.25, 0.125, 0.0))
@@ -105,9 +105,6 @@ def test_characteristic_minkowski_and_analytic_outgoing_wave_controls() -> None:
     )
     assert float(wave.waveform.maximum_hypersurface_residual) < 1.0e-7
     assert bool(wave.qualified)
-
-
-def test_bms_quadrature_rejects_asymmetric_l_one_moments() -> None:
     directions = np.asarray(
         (
             (1.0, 0.0, 0.0),
@@ -129,9 +126,6 @@ def test_bms_quadrature_rejects_asymmetric_l_one_moments() -> None:
             declared_gram,
             supported_bandlimit=1,
         )
-
-
-def test_bms_boost_and_translation_controls_preserve_poincare_laws() -> None:
     plan = _octahedral_quadrature()
     times = np.asarray((0.0, 1.0))
     mass = 2.0

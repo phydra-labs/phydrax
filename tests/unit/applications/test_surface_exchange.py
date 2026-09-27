@@ -33,7 +33,7 @@ def _air(thermo: Any, temperature: Any, vapor: Any, volume: Any = 100.0) -> Any:
     return density, mass * (1 - vapor), mass * vapor, energy
 
 
-def test_neutral_bulk_analytic_fluxes_no_gradient_and_no_wind() -> None:
+def test_surface_exchange_scenario_1() -> None:
     thermo = MoistThermodynamicPlan()
     plan = BulkSurfaceExchangePlan(
         heat_transfer_coefficient=1.5e-3,
@@ -69,9 +69,6 @@ def test_neutral_bulk_analytic_fluxes_no_gradient_and_no_wind() -> None:
                 jnp.stack((rates.sensible_heat, rates.water_mass, rates.water_enthalpy)),
                 jnp.zeros(3),
             )
-
-
-def test_stability_reduces_stable_and_enhances_unstable_ventilation() -> None:
     thermo = MoistThermodynamicPlan()
     neutral = BulkSurfaceExchangePlan(stability="neutral")
     stability = BulkSurfaceExchangePlan()
@@ -82,67 +79,64 @@ def test_stability_reduces_stable_and_enhances_unstable_ventilation() -> None:
         ratio = adjusted.sensible_heat / base.sensible_heat
         assert ratio > 1 if enhanced else 0 < ratio < 1
         np.testing.assert_allclose(adjusted.water_mass / base.water_mass, ratio)
+    for surface_t, air_t, vapor in [(300.0, 295.0, 0.004), (290.0, 300.0, 0.017)]:
+        thermo = MoistThermodynamicPlan(
+            latent_vaporization=2.6e6, liquid_heat_capacity=4200.0
+        )
+        slab_plan = WetSlabPlan(thermo, dry_heat_capacity=5e5)
+        slab = slab_plan.initialize(surface_t, 20.0)
+        exchange = BulkSurfaceExchangePlan(
+            heat_transfer_coefficient=0.0, stability="neutral"
+        )
+        density, dry, water, energy = _air(thermo, air_t, vapor)
+        rates = exchange.evaluate(
+            thermo, air_t, density, vapor, 1e5, surface_t, 5.0, 10.0
+        )
+        evaporation = surface_t > air_t
+        assert rates.successful
+        assert rates.water_mass > 0 if evaporation else rates.water_mass < 0
+        donor_t = surface_t if evaporation else air_t
+        hv = thermo.phase_enthalpies(donor_t)[1]
+        np.testing.assert_allclose(rates.water_enthalpy, rates.water_mass * hv)
+        result = paired_surface_transfer(
+            thermo,
+            slab_plan,
+            slab,
+            dry,
+            water,
+            energy,
+            100.0,
+            water_mass=100.0 * rates.water_mass,
+            energy=100.0 * (rates.sensible_heat + rates.water_enthalpy),
+        )
+        assert result.successful
+        final_t = slab_plan.temperature(result.slab_state, thermo)
+        assert final_t < surface_t if evaporation else final_t > surface_t
+        # Phase-change cooling/warming follows the varying inventory caloric law,
+        # rather than adding a second latent heat to the advected vapor enthalpy.
+        hl = thermo.phase_enthalpies(surface_t)[2]
+        final_capacity = (
+            slab_plan.dry_heat_capacity
+            + result.slab_state.water_mass * thermo.liquid_heat_capacity
+        )
+        np.testing.assert_allclose(
+            final_t - surface_t,
+            -result.water_mass * (hv - hl) / final_capacity,
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            result.air_water_mass + result.slab_state.water_mass,
+            water + slab.water_mass,
+            atol=1e-13,
+        )
+        np.testing.assert_allclose(
+            result.air_internal_energy + result.slab_state.energy,
+            energy + slab.energy,
+            atol=1e-8,
+        )
 
 
-@pytest.mark.parametrize(
-    "surface_t,air_t,vapor", [(300.0, 295.0, 0.004), (290.0, 300.0, 0.017)]
-)
-def test_evaporation_cools_dew_warms_with_exact_donor_energy(
-    surface_t: Any, air_t: Any, vapor: Any
-) -> None:
-    thermo = MoistThermodynamicPlan(
-        latent_vaporization=2.6e6, liquid_heat_capacity=4200.0
-    )
-    slab_plan = WetSlabPlan(thermo, dry_heat_capacity=5e5)
-    slab = slab_plan.initialize(surface_t, 20.0)
-    exchange = BulkSurfaceExchangePlan(heat_transfer_coefficient=0.0, stability="neutral")
-    density, dry, water, energy = _air(thermo, air_t, vapor)
-    rates = exchange.evaluate(thermo, air_t, density, vapor, 1e5, surface_t, 5.0, 10.0)
-    evaporation = surface_t > air_t
-    assert rates.successful
-    assert rates.water_mass > 0 if evaporation else rates.water_mass < 0
-    donor_t = surface_t if evaporation else air_t
-    hv = thermo.phase_enthalpies(donor_t)[1]
-    np.testing.assert_allclose(rates.water_enthalpy, rates.water_mass * hv)
-    result = paired_surface_transfer(
-        thermo,
-        slab_plan,
-        slab,
-        dry,
-        water,
-        energy,
-        100.0,
-        water_mass=100.0 * rates.water_mass,
-        energy=100.0 * (rates.sensible_heat + rates.water_enthalpy),
-    )
-    assert result.successful
-    final_t = slab_plan.temperature(result.slab_state, thermo)
-    assert final_t < surface_t if evaporation else final_t > surface_t
-    # Phase-change cooling/warming follows the varying inventory caloric law,
-    # rather than adding a second latent heat to the advected vapor enthalpy.
-    hl = thermo.phase_enthalpies(surface_t)[2]
-    final_capacity = (
-        slab_plan.dry_heat_capacity
-        + result.slab_state.water_mass * thermo.liquid_heat_capacity
-    )
-    np.testing.assert_allclose(
-        final_t - surface_t,
-        -result.water_mass * (hv - hl) / final_capacity,
-        atol=1e-12,
-    )
-    np.testing.assert_allclose(
-        result.air_water_mass + result.slab_state.water_mass,
-        water + slab.water_mass,
-        atol=1e-13,
-    )
-    np.testing.assert_allclose(
-        result.air_internal_energy + result.slab_state.energy,
-        energy + slab.energy,
-        atol=1e-8,
-    )
-
-
-def test_water_inventory_changes_heat_capacity_without_duplicate_temperature() -> None:
+def test_surface_exchange_scenario_2() -> None:
     thermo = MoistThermodynamicPlan()
     plan = WetSlabPlan(thermo, dry_heat_capacity=1e5)
     state = plan.initialize(300.0, jnp.asarray((0.0, 100.0)))
@@ -159,9 +153,6 @@ def test_water_inventory_changes_heat_capacity_without_duplicate_temperature() -
         WetSlabPlan(thermo, minimum_temperature=250.0)
     # ty: ignore[invalid-argument-type]
     assert not plan.admissible(WetSlabState(1.0, -1.0), thermo)
-
-
-def test_batched_exhaustion_rejects_both_inventories_without_capping() -> None:
     thermo = MoistThermodynamicPlan()
     plan = WetSlabPlan(thermo)
     slab = plan.initialize(300.0, jnp.asarray((1.0, 0.001)))
@@ -196,9 +187,6 @@ def test_batched_exhaustion_rejects_both_inventories_without_capping() -> None:
         energy + slab.energy,
         atol=1e-8,
     )
-
-
-def test_dew_cannot_remove_unavailable_vapor_and_freezing_rejects() -> None:
     thermo = MoistThermodynamicPlan()
     plan = WetSlabPlan(thermo)
     slab = plan.initialize(thermo.reference_temperature, 1.0)
@@ -226,7 +214,7 @@ def test_dew_cannot_remove_unavailable_vapor_and_freezing_rejects() -> None:
         assert result.slab_state.water_mass == slab.water_mass
 
 
-def test_bulk_rejects_boiling_and_nonphysical_ventilation() -> None:
+def test_surface_exchange_scenario_3() -> None:
     thermo = MoistThermodynamicPlan()
     plan = BulkSurfaceExchangePlan()
     result = plan.evaluate(
@@ -240,6 +228,23 @@ def test_bulk_rejects_boiling_and_nonphysical_ventilation() -> None:
         jnp.asarray((10.0, 10.0, 0.0)),
     )
     assert not jnp.any(result.successful)
+    thermo = MoistThermodynamicPlan()
+    exchange = BulkSurfaceExchangePlan(stability="neutral")
+    vapor = _saturation_humidity(thermo, 300.0)
+    donor_switch = exchange.evaluate(thermo, 295.0, 1.1, vapor, 1e5, 300.0, 5.0, 10.0)
+    equal_donors = exchange.evaluate(thermo, 300.0, 1.1, vapor, 1e5, 300.0, 5.0, 10.0)
+    assert donor_switch.successful and not donor_switch.derivative_valid
+    assert equal_donors.successful and equal_donors.derivative_valid
+    unstable = BulkSurfaceExchangePlan()
+    calm = unstable.evaluate(thermo, 295.0, 1.1, 0.005, 1e5, 300.0, 0.0, 10.0)
+    assert calm.successful and not calm.derivative_valid
+    assert calm.sensible_heat == 0 and calm.water_mass == 0
+    invalid = eqx.tree_at(
+        lambda p: p.moisture_transfer_coefficient, exchange, jnp.asarray(-0.001)
+    )
+    assert not invalid.evaluate(
+        thermo, 295.0, 1.1, vapor, 1e5, 300.0, 5.0, 10.0
+    ).successful
 
 
 def test_flux_and_slab_response_derivatives_match_finite_differences() -> None:
@@ -299,26 +304,6 @@ def test_flux_and_slab_response_derivatives_match_finite_differences() -> None:
     batched = jax.vmap(observable)(jnp.stack((parameters, parameters.at[0].add(1.0))))
     np.testing.assert_allclose(batched[0], observable(parameters))
     np.testing.assert_allclose(batched[1], observable(parameters.at[0].add(1.0)))
-
-
-def test_nonsmooth_donor_and_calm_branches_do_not_certify_ad() -> None:
-    thermo = MoistThermodynamicPlan()
-    exchange = BulkSurfaceExchangePlan(stability="neutral")
-    vapor = _saturation_humidity(thermo, 300.0)
-    donor_switch = exchange.evaluate(thermo, 295.0, 1.1, vapor, 1e5, 300.0, 5.0, 10.0)
-    equal_donors = exchange.evaluate(thermo, 300.0, 1.1, vapor, 1e5, 300.0, 5.0, 10.0)
-    assert donor_switch.successful and not donor_switch.derivative_valid
-    assert equal_donors.successful and equal_donors.derivative_valid
-    unstable = BulkSurfaceExchangePlan()
-    calm = unstable.evaluate(thermo, 295.0, 1.1, 0.005, 1e5, 300.0, 0.0, 10.0)
-    assert calm.successful and not calm.derivative_valid
-    assert calm.sensible_heat == 0 and calm.water_mass == 0
-    invalid = eqx.tree_at(
-        lambda p: p.moisture_transfer_coefficient, exchange, jnp.asarray(-0.001)
-    )
-    assert not invalid.evaluate(
-        thermo, 295.0, 1.1, vapor, 1e5, 300.0, 5.0, 10.0
-    ).successful
 
 
 def test_zero_moisture_coefficient_retains_dew_donor_directional_derivative() -> None:

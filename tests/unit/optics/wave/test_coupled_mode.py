@@ -22,7 +22,7 @@ from phydrax.optics.wave._coupled_mode import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_uniform_no_grating_has_exact_phase_loss_and_power_closure() -> None:
+def test_coupled_mode_scenario_1() -> None:
     grid = jnp.linspace(0.0, 2.0, 9)
     plan = BidirectionalCoupledModePlan(
         grid,
@@ -47,9 +47,6 @@ def test_uniform_no_grating_has_exact_phase_loss_and_power_closure() -> None:
     )
     assert result.evidence.power_balance_residual < 1.0e-12
     assert result.status == int(BidirectionalCoupledModeStatus.SUCCESS)
-
-
-def test_exact_scattering_stays_finite_deep_inside_uniform_stop_band() -> None:
     strength_length = 800.0
     plan = BidirectionalCoupledModePlan(
         jnp.asarray((0.0, 1.0)),
@@ -66,9 +63,6 @@ def test_exact_scattering_stays_finite_deep_inside_uniform_stop_band() -> None:
     assert result.evidence.passivity_excess < 1.0e-12
     assert result.evidence.reciprocity_error < 1.0e-14
     assert result.successful
-
-
-def test_stable_section_composition_is_reciprocal_for_two_sided_batches() -> None:
     sections = 128
     plan = BidirectionalCoupledModePlan(
         jnp.linspace(0.0, 0.08, sections + 1),

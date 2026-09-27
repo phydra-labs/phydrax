@@ -44,7 +44,7 @@ def _model(*, eta: Any = None) -> Any:
     return hydrodynamics, method, continuation
 
 
-def test_free_surface_rest_is_preserved_by_coupled_step() -> None:
+def test_free_surface_hydrodynamics_workflow_scenario_1() -> None:
     hydrodynamics, method, continuation = _model()
 
     result = method.step(
@@ -61,9 +61,6 @@ def test_free_surface_rest_is_preserved_by_coupled_step() -> None:
     )
     assert result.accepted_state.ledger.divergence_residual <= 1e-7
     assert result.accepted_state.ledger.kinematic_residual <= 1e-7
-
-
-def test_small_graph_wave_advances_with_closed_volume() -> None:
     x = jnp.arange(4)[:, None]
     eta = jnp.broadcast_to(1.0e-4 * jnp.sin(2.0 * jnp.pi * x / 4), (4, 4))
     hydrodynamics, method, continuation = _model(eta=eta)
@@ -82,9 +79,6 @@ def test_small_graph_wave_advances_with_closed_volume() -> None:
     assert bool(result.successful)
     assert jnp.all(jnp.isfinite(view.eta))
     assert abs(float(result.accepted_state.ledger.volume_change)) <= 1e-7
-
-
-def test_uniform_scalar_content_follows_mesh_gcl() -> None:
     hydrodynamics, method, continuation = _model()
     state = continuation.state
     geometry = hydrodynamics.surface.geometry(0.0, state.eta, jnp.zeros_like(state.eta))

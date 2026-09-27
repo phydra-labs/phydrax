@@ -7,7 +7,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import ML_SUCCESS, MLBatch
@@ -42,9 +41,8 @@ _BLOCK_DATA = jnp.array(
 _BLOCK_WEIGHT = jnp.array([1.0, 1.2, 0.9, 1.1])
 
 
-@pytest.mark.parametrize(
-    "recipe, features, weights, point",
-    [
+def test_each_smooth_clustering_family_honors_declared_fit_gradients() -> None:
+    for recipe, features, weights, point in [
         (
             AffinityPropagation(
                 2,
@@ -80,39 +78,36 @@ _BLOCK_WEIGHT = jnp.array([1.0, 1.2, 0.9, 1.1])
             _BLOCK_WEIGHT,
             _BLOCK_DATA[0],
         ),
-    ],
-)
-def test_each_smooth_clustering_family_honors_declared_fit_gradients(
-    recipe: Any, features: Any, weights: Any, point: Any
-) -> None:
-    def feature_loss(values: Any) -> Any:
-        return recipe.fit_batch(MLBatch(values, sample_weight=weights)).as_trainable()(
-            point
-        )[0]
+    ]:
 
-    def weight_loss(value: Any) -> Any:
-        return recipe.fit_batch(MLBatch(features, sample_weight=value)).as_trainable()(
-            point
-        )[0]
+        def feature_loss(values: Any) -> Any:
+            return recipe.fit_batch(
+                MLBatch(values, sample_weight=weights)
+            ).as_trainable()(point)[0]
 
-    result = recipe.fit_batch(MLBatch(features, sample_weight=weights))
-    feature_gradient = jax.grad(feature_loss)(features)
-    weight_gradient = jax.grad(weight_loss)(weights)
+        def weight_loss(value: Any) -> Any:
+            return recipe.fit_batch(
+                MLBatch(features, sample_weight=value)
+            ).as_trainable()(point)[0]
 
-    assert result.status == ML_SUCCESS
-    contract = result.derivative_contract
-    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
-    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
-    assert (
-        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
-    )
-    assert jnp.all(jnp.isfinite(feature_gradient))
-    assert jnp.all(jnp.isfinite(weight_gradient))
+        result = recipe.fit_batch(MLBatch(features, sample_weight=weights))
+        feature_gradient = jax.grad(feature_loss)(features)
+        weight_gradient = jax.grad(weight_loss)(weights)
+
+        assert result.status == ML_SUCCESS
+        contract = result.derivative_contract
+        assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+        assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+        assert (
+            contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+            is GradientLevel.CONDITIONAL
+        )
+        assert jnp.all(jnp.isfinite(feature_gradient))
+        assert jnp.all(jnp.isfinite(weight_gradient))
 
 
-@pytest.mark.parametrize(
-    "factory, features, weights, point",
-    [
+def test_each_smooth_clustering_family_honors_declared_hyperparameter_gradient() -> None:
+    for factory, features, weights, point in [
         (
             lambda temperature: AffinityPropagation(
                 2,
@@ -152,20 +147,16 @@ def test_each_smooth_clustering_family_honors_declared_fit_gradients(
             _BLOCK_WEIGHT,
             _BLOCK_DATA[0],
         ),
-    ],
-)
-def test_each_smooth_clustering_family_honors_declared_hyperparameter_gradient(
-    factory: Any, features: Any, weights: Any, point: Any
-) -> None:
-    gradient = jax.grad(
-        lambda temperature: (
-            factory(temperature)
-            .fit_batch(MLBatch(features, sample_weight=weights))
-            .as_trainable()(point)[0]
-        )
-    )(jnp.asarray(0.7))
+    ]:
+        gradient = jax.grad(
+            lambda temperature: (
+                factory(temperature)
+                .fit_batch(MLBatch(features, sample_weight=weights))
+                .as_trainable()(point)[0]
+            )
+        )(jnp.asarray(0.7))
 
-    assert jnp.isfinite(gradient)
+        assert jnp.isfinite(gradient)
 
 
 def test_density_soft_membership_has_declared_parameter_gradient() -> None:

@@ -35,7 +35,7 @@ def _tda_manifold(amplitudes: Any, energies: Any) -> Any:
     )
 
 
-def test_rpa_representation_and_analytic_tda_couplings_close_exact_small_models() -> None:
+def test_excited_advanced_scenario_1() -> None:
     rpa = phx.chemistry.RandomPhaseApproximationPlan(
         jnp.asarray([[1.0]]),
         jnp.asarray([[0.2]]),
@@ -75,9 +75,6 @@ def test_rpa_representation_and_analytic_tda_couplings_close_exact_small_models(
         [0.0, -0.2, 0.0],
         atol=1.0e-13,
     )
-
-
-def test_overlap_tracking_recovers_swapped_roots() -> None:
     previous = _tda_manifold(jnp.eye(2), [1.0, 2.0])
     current = _tda_manifold(jnp.asarray([[0.0, 1.0], [1.0, 0.0]]), [1.1, 1.9])
     tracking = phx.chemistry.track_excited_states(previous, current)

@@ -31,7 +31,7 @@ def _model() -> Any:
     )
 
 
-def test_electronic_state_derives_spin_population_without_using_site_charges() -> None:
+def test_contracts_scenario_1() -> None:
     neutral = _system([8, 1], [15.999, 1.008], charges=[7.5, -7.5])
     prepared = phx.chemistry.MolecularElectronicSectorPlan(0, 2).prepare(neutral)
 
@@ -42,15 +42,9 @@ def test_electronic_state_derives_spin_population_without_using_site_charges() -
     charged = phx.chemistry.MolecularElectronicSectorPlan(1, 1).prepare(neutral)
     assert charged.electron_count == 8
     assert charged.alpha_electron_count == charged.beta_electron_count == 4
-
-
-def test_impossible_electron_spin_parity_is_rejected() -> None:
     hydrogen = _system([1], [1.008])
     with pytest.raises(ValueError, match="incompatible parity"):
         phx.chemistry.MolecularElectronicSectorPlan(0, 1).prepare(hydrogen)
-
-
-def test_open_shell_state_requires_an_open_shell_reference() -> None:
     radical = _system([8, 1], [15.999, 1.008])
     state = phx.chemistry.MolecularElectronicSectorPlan(0, 2)
     request = phx.chemistry.GroundStateTaskPlan.energy_and_forces()
@@ -70,7 +64,7 @@ def test_open_shell_state_requires_an_open_shell_reference() -> None:
     assert calculation.state.beta_electron_count == 4
 
 
-def test_model_provider_and_property_identities_are_independent() -> None:
+def test_contracts_scenario_2() -> None:
     system = _system([1, 1], [1.008, 1.008])
     state = phx.chemistry.MolecularElectronicSectorPlan(0, 1)
     request = phx.chemistry.GroundStateTaskPlan.energy_and_forces()
@@ -98,9 +92,6 @@ def test_model_provider_and_property_identities_are_independent() -> None:
     assert (
         first.prepare(calculation).prepared_id != second.prepare(calculation).prepared_id
     )
-
-
-def test_property_and_provider_capability_mismatches_fail_before_execution() -> None:
     with pytest.raises(ValueError, match="also request forces"):
         phx.chemistry.GroundStateTaskPlan(
             (
@@ -124,9 +115,6 @@ def test_property_and_provider_capability_mismatches_fail_before_execution() -> 
     )
     with pytest.raises(phx.chemistry.ElectronicCapabilityError):
         capabilities.require(calculation)
-
-
-def test_single_system_and_molar_energy_conversion_remain_explicit_inverses() -> None:
     forward = phx.atomistic.single_system_energy_to_molar_factor(
         phx.units.ELECTRONVOLT,
         phx.units.KILOJOULE_PER_MOLE,
@@ -142,7 +130,7 @@ def test_single_system_and_molar_energy_conversion_remain_explicit_inverses() ->
     assert phx.units.INVERSE_CENTIMETER.dimension == phx.units.LENGTH**-1
 
 
-def test_excited_roots_are_not_encoded_in_ground_state_sector() -> None:
+def test_contracts_scenario_3() -> None:
     with pytest.raises(TypeError, match="state_index"):
         phx.chemistry.MolecularElectronicSectorPlan(
             0,
@@ -150,9 +138,6 @@ def test_excited_roots_are_not_encoded_in_ground_state_sector() -> None:
             # ty: ignore[unknown-argument]
             state_index=1,
         )
-
-
-def test_unsupported_electronic_context_is_rejected_before_provider_evaluation() -> None:
     system = _system([1, 1], [1.008, 1.008])
     calculation = phx.chemistry.ElectronicCalculationPlan(
         system,

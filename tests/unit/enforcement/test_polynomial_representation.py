@@ -58,7 +58,7 @@ def _so3_action(support: Any) -> Any:
     )
 
 
-def test_so3_quadratics_split_into_scalar_and_traceless_casimir_blocks() -> None:
+def test_polynomial_representation_scenario_1() -> None:
     support = _quadratic_support()
     action = _so3_action(support)
 
@@ -94,9 +94,6 @@ def test_so3_quadratics_split_into_scalar_and_traceless_casimir_blocks() -> None
     )
     traceless = np.asarray(blocks[1].basis)
     assert np.allclose(np.sum(traceless[diagonal], axis=0), 0.0, atol=1e-5)
-
-
-def test_finite_cyclic_complex_weight_classes_partition_monomials() -> None:
     support = SparsePolynomialSupport(
         ("z",),
         ("p",),
@@ -140,11 +137,6 @@ def test_finite_cyclic_complex_weight_classes_partition_monomials() -> None:
         for block in classes
     ]
     assert np.allclose(sum(projectors), np.eye(support.term_count), atol=1e-5)
-
-
-def test_invalid_finite_generators_are_rejected_and_near_relations_are_ambiguous() -> (
-    None
-):
     support = SparsePolynomialSupport(("x",), ("p",), (0,), ((0,),))
     table = np.asarray(((0, 1), (1, 0)), dtype="int64")
 

@@ -46,7 +46,7 @@ def _tracks_by_source(snapshot: Any) -> Any:
     }
 
 
-def test_stable_tracks_survive_row_reordering_and_ties_are_deterministic() -> None:
+def test_cosmology_halo_lineage_scenario_1() -> None:
     plan = ParticleCoreLineagePlan(2, 3, 2, 16)
     first = plan.build(
         # ty: ignore[invalid-argument-type]
@@ -79,9 +79,6 @@ def test_stable_tracks_survive_row_reordering_and_ties_are_deterministic() -> No
     )
     accepted = np.asarray(contested.tracer_evidence.accepted_mask[0])
     assert accepted.tolist() == [False, True, False]
-
-
-def test_missing_core_evidence_never_creates_a_false_descendant() -> None:
     plan = ParticleCoreLineagePlan(2, 2, 1, 8)
     malformed_claim = MergerMatchResult(
         jnp.asarray([0, -1]),
@@ -101,9 +98,6 @@ def test_missing_core_evidence_never_creates_a_false_descendant() -> None:
     assert not bool(result.descendant_mask[0, 0])
     assert not bool(result.tracer_evidence.accepted_mask[0, 0])
     assert int(result.snapshots[1].track_ids[0]) != int(result.snapshots[0].track_ids[0])
-
-
-def test_sink_descendant_and_reresolution_remain_distinct_representable_states() -> None:
     plan = ParticleCoreLineagePlan(3, 2, 1, 16)
     result = plan.build(
         # ty: ignore[invalid-argument-type]

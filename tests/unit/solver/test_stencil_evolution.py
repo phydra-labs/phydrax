@@ -23,7 +23,7 @@ def _periodic_grid(points: Any = 64) -> Any:
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def test_staggered_acoustic_plan_prepares_locations_cfl_and_sensors() -> None:
+def test_stencil_evolution_scenario_1() -> None:
     grid = _periodic_grid()
     acoustic = phx.solver.StaggeredAcousticPlan(
         grid,
@@ -44,9 +44,6 @@ def test_staggered_acoustic_plan_prepares_locations_cfl_and_sensors() -> None:
     assert acoustic.stable_dt < (grid.axes[0].nodes[1] - grid.axes[0].nodes[0])
     assert jnp.allclose(acoustic.observe(state), pressure[jnp.asarray([0, 16, 32])])
     assert len(acoustic.discretization.locations) == 2
-
-
-def test_staggered_leapfrog_has_bounded_energy_drift_on_periodic_medium() -> None:
     grid = _periodic_grid()
     acoustic = phx.solver.StaggeredAcousticPlan(
         grid,
@@ -65,9 +62,6 @@ def test_staggered_leapfrog_has_bounded_energy_drift_on_periodic_medium() -> Non
     final_energy = acoustic.energy(state)
 
     assert jnp.abs(final_energy - initial_energy) / initial_energy < 2e-2
-
-
-def test_split_field_pml_profiles_are_nonnegative_and_decay_energy() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(41),),
         axis_names=("x",),
@@ -98,42 +92,6 @@ def test_split_field_pml_profiles_are_nonnegative_and_decay_energy() -> None:
     assert jnp.min(pressure_rate) < 0.0
     assert jnp.allclose(pressure_rate[10:-10], 0.0)
     assert acoustic.energy(stepped) < acoustic.energy(state)
-
-
-def test_multidimensional_pml_damps_only_matching_pressure_split() -> None:
-    grid = phx.discretization.TensorGridPlan(
-        (
-            phx.discretization.UniformCellAxisSpec(21),
-            phx.discretization.UniformCellAxisSpec(19),
-        ),
-        axis_names=("x", "y"),
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
-    acoustic = phx.solver.StaggeredAcousticPlan(
-        grid,
-        bulk_modulus=1.0,
-        density=1.0,
-        pml=phx.solver.SplitFieldPMLPlan(
-            (4, 0),
-            maximum_attenuation=8.0,
-        ),
-    ).prepare()
-    first = jnp.ones(acoustic.pressure_shape)
-    state = acoustic.pack_split(
-        (first, -first),
-        tuple(jnp.zeros(shape) for shape in acoustic.velocity_shapes),
-    )
-
-    drift = acoustic.drift(jnp.asarray(0.0), state, None)
-    pressure_rate, velocity_rate = acoustic.unpack_split(drift)
-
-    assert jnp.allclose(state.pressure, 0.0)
-    assert jnp.min(pressure_rate[0]) < 0.0
-    assert jnp.allclose(pressure_rate[0][6:-6], 0.0)
-    assert jnp.allclose(pressure_rate[1], 0.0)
-    assert all(jnp.allclose(rate, 0.0) for rate in velocity_rate)
-
-
-def test_split_field_pml_suppresses_outgoing_pulse_reflection() -> None:
     points = 96
     width = 16
     grid = phx.discretization.TensorGridPlan(
@@ -165,3 +123,33 @@ def test_split_field_pml_suppresses_outgoing_pulse_reflection() -> None:
 
     reflected_amplitude = jnp.max(jnp.abs(state.pressure[width:-width]))
     assert reflected_amplitude < 1.5e-2
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(21),
+            phx.discretization.UniformCellAxisSpec(19),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    acoustic = phx.solver.StaggeredAcousticPlan(
+        grid,
+        bulk_modulus=1.0,
+        density=1.0,
+        pml=phx.solver.SplitFieldPMLPlan(
+            (4, 0),
+            maximum_attenuation=8.0,
+        ),
+    ).prepare()
+    first = jnp.ones(acoustic.pressure_shape)
+    state = acoustic.pack_split(
+        (first, -first),
+        tuple(jnp.zeros(shape) for shape in acoustic.velocity_shapes),
+    )
+
+    drift = acoustic.drift(jnp.asarray(0.0), state, None)
+    pressure_rate, velocity_rate = acoustic.unpack_split(drift)
+
+    assert jnp.allclose(state.pressure, 0.0)
+    assert jnp.min(pressure_rate[0]) < 0.0
+    assert jnp.allclose(pressure_rate[0][6:-6], 0.0)
+    assert jnp.allclose(pressure_rate[1], 0.0)
+    assert all(jnp.allclose(rate, 0.0) for rate in velocity_rate)

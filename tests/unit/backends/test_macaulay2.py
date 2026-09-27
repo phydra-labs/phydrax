@@ -129,48 +129,48 @@ def _encoded(payload: Any) -> Any:
     return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
-@pytest.mark.parametrize("operation", tuple(ExactSymbolicOperation))
 def test_closed_operations_build_data_only_requests_and_parse_exact_fake_results(
-    provider: Any, operation: Any
+    provider: Any,
 ) -> None:
-    prepared = _prepared(provider, operation)
-    request = macaulay2_request_record(prepared)
+    for operation in tuple(ExactSymbolicOperation):
+        prepared = _prepared(provider, operation)
+        request = macaulay2_request_record(prepared)
 
-    assert request["operation"] == operation.value
-    assert request["variables"] == [
-        f"x{index}" for index in range(prepared.plan.system.variable_count)
-    ]
-    assert "schema" not in request
-    assert not {"code", "packages", "paths"}.intersection(request)
-    if operation is ExactSymbolicOperation.ELIMINATE:
-        variable_indices = [1]
-        exponents = [[0], [1]]
-    else:
-        variable_indices = [0]
-        exponents = [[0], [2]]
-    payload = _response(
-        prepared,
-        {
-            "variable_indices": variable_indices,
-            "equation_count": 1,
-            "equation_indices": [0, 0],
-            "exponents": exponents,
-            "coefficients": ["-1", "1"],
-        },
-    )
-    result = parse_macaulay2_result(
-        _encoded(payload), prepared, run_artifact_id="fake-worker-run"
-    )
+        assert request["operation"] == operation.value
+        assert request["variables"] == [
+            f"x{index}" for index in range(prepared.plan.system.variable_count)
+        ]
+        assert "schema" not in request
+        assert not {"code", "packages", "paths"}.intersection(request)
+        if operation is ExactSymbolicOperation.ELIMINATE:
+            variable_indices = [1]
+            exponents = [[0], [1]]
+        else:
+            variable_indices = [0]
+            exponents = [[0], [2]]
+        payload = _response(
+            prepared,
+            {
+                "variable_indices": variable_indices,
+                "equation_count": 1,
+                "equation_indices": [0, 0],
+                "exponents": exponents,
+                "coefficients": ["-1", "1"],
+            },
+        )
+        result = parse_macaulay2_result(
+            _encoded(payload), prepared, run_artifact_id="fake-worker-run"
+        )
 
-    assert result.status is ExactSymbolicStatus.SUCCESS
-    # ty: ignore[unresolved-attribute]
-    assert result.output.coefficients == ("-1", "1")
-    # ty: ignore[unresolved-attribute]
-    assert result.evidence.claim == "exact_claimed_by_external_provider"
-    # ty: ignore[unresolved-attribute]
-    assert result.evidence.run_artifact_id == "fake-worker-run"
-    # ty: ignore[unresolved-attribute]
-    assert "operation-variable-order" in result.evidence.independently_checked
+        assert result.status is ExactSymbolicStatus.SUCCESS
+        # ty: ignore[unresolved-attribute]
+        assert result.output.coefficients == ("-1", "1")
+        # ty: ignore[unresolved-attribute]
+        assert result.evidence.claim == "exact_claimed_by_external_provider"
+        # ty: ignore[unresolved-attribute]
+        assert result.evidence.run_artifact_id == "fake-worker-run"
+        # ty: ignore[unresolved-attribute]
+        assert "operation-variable-order" in result.evidence.independently_checked
 
 
 def test_malformed_output_and_duplicate_fields_are_rejected(provider: Any) -> None:
@@ -201,13 +201,22 @@ def test_response_identity_mismatch_is_distinct_from_malformed_output(
         parse_macaulay2_result(_encoded(payload), prepared)
 
 
-def test_unavailable_provider_requires_explicit_environment_and_has_no_fallback() -> None:
+def test_macaulay2_scenario_1() -> None:
     availability = macaulay2_availability()
 
     assert not availability.available
     assert "discovery is disabled" in availability.reason
     with pytest.raises(BackendUnavailableError, match="macaulay2"):
         availability.require("algebraic.exact.groebner_basis")
+    system = _bivariate_system()
+
+    with pytest.raises(ValueError, match="variable_count"):
+        plan_exact_symbolic(
+            system,
+            ExactSymbolicOperation.ELIMINATE,
+            EliminateArguments((0,)),
+            maximum_variable_count=1,
+        )
 
 
 def test_zero_polynomial_payload_is_a_valid_exact_result(provider: Any) -> None:
@@ -229,20 +238,6 @@ def test_zero_polynomial_payload_is_a_valid_exact_result(provider: Any) -> None:
     # ty: ignore[unresolved-attribute]
     assert result.output.coefficients == ("0",)
     assert result.externally_claimed_exact
-
-
-def test_exact_symbolic_resource_limits_refuse_oversized_dimensions_before_prepare() -> (
-    None
-):
-    system = _bivariate_system()
-
-    with pytest.raises(ValueError, match="variable_count"):
-        plan_exact_symbolic(
-            system,
-            ExactSymbolicOperation.ELIMINATE,
-            EliminateArguments((0,)),
-            maximum_variable_count=1,
-        )
 
 
 def test_installation_inventory_is_verified_for_availability(tmp_path: Any) -> None:

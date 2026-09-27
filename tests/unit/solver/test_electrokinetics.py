@@ -50,7 +50,7 @@ def _periodic_electrolyte() -> Any:
     )
 
 
-def test_periodic_pnp_preserves_uniform_boltzmann_equilibrium() -> None:
+def test_electrokinetics_scenario_1() -> None:
     plan = _periodic_electrolyte()
     concentrations = jnp.ones((16, 2))
     evaluation = plan.evaluate(concentrations)
@@ -63,9 +63,6 @@ def test_periodic_pnp_preserves_uniform_boltzmann_equilibrium() -> None:
     coupled = coupling.evaluate(evaluation)
     assert bool(coupled.header.globally_eligible)
     np.testing.assert_allclose(coupled.power_defect, 0.0, atol=1e-14)
-
-
-def test_pnp_step_is_conservative_and_energy_dissipative() -> None:
     plan = _periodic_electrolyte()
     coordinate = (jnp.arange(16) + 0.5) / 16.0
     perturbation = 0.05 * jnp.sin(2.0 * jnp.pi * coordinate)
@@ -81,57 +78,6 @@ def test_pnp_step_is_conservative_and_energy_dissipative() -> None:
         atol=2e-10,
     )
     assert result.evaluation.total_free_energy <= before.total_free_energy + 1e-8
-
-
-def test_nonzero_dirichlet_electrostatic_lift_is_exact() -> None:
-    grid = phx.discretization.TensorGridPlan(
-        (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
-        axis_names=("x",),
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
-    bridge = phx.discretization.StructuredCochainBridge(grid)
-    boundary = phx.solver.CochainElectrostaticBoundaryPlan.dirichlet(
-        bridge,
-        jnp.asarray(2.0),
-    )
-    plan = phx.solver.CochainElectrostaticPlan(bridge, boundary)
-    result = plan.solve(jnp.zeros((bridge.cochain.cell_counts[0],)))
-
-    assert result.successful
-    np.testing.assert_allclose(result.potential, 2.0, atol=1e-9)
-    np.testing.assert_allclose(result.electric, 0.0, atol=1e-9)
-
-
-def test_bernoulli_has_finite_forward_and_reverse_derivatives_at_extremes() -> None:
-    bernoulli = phx.discretization.stable_bernoulli
-    arguments = jnp.asarray([-1.0e20, -1000.0, -1.0, 0.0, 1.0, 1000.0, 1.0e20])
-    values, forward = jax.jvp(bernoulli, (arguments,), (jnp.ones_like(arguments),))
-    reverse = jax.jit(jax.grad(lambda x: jnp.sum(bernoulli(x))))(arguments)
-
-    assert jnp.all(jnp.isfinite(values))
-    assert jnp.all(jnp.isfinite(forward))
-    assert jnp.all(jnp.isfinite(reverse))
-    np.testing.assert_allclose(forward, reverse, atol=1e-14)
-    np.testing.assert_allclose(values[::3], [1.0e20, 1.0, 0.0], atol=1e-14)
-    np.testing.assert_allclose(reverse[::3], [-1.0, -0.5, 0.0], atol=1e-14)
-    np.testing.assert_allclose(jax.grad(jax.grad(bernoulli))(0.0), 1.0 / 6.0)
-
-
-def test_sg_flux_has_physical_diffusion_drift_and_boltzmann_directions() -> None:
-    flux = phx.discretization.scharfetter_gummel_flux
-    # At zero drift, material moves from high to low concentration.
-    np.testing.assert_allclose(flux(3.0, 1.0, 0.0, 2.0), 4.0)
-    # Uniform density moves down the drift potential, with the exact drift rate.
-    np.testing.assert_allclose(flux(3.0, 3.0, 2.0, 2.0), -12.0)
-    difference = jnp.asarray([-3.0, -1.0, 0.0, 1.0, 3.0])
-    np.testing.assert_allclose(
-        flux(1.0, jnp.exp(-difference), difference), 0.0, atol=1e-14
-    )
-    np.testing.assert_allclose(
-        flux(3.0, 1.0, difference), -flux(1.0, 3.0, -difference), atol=1e-14
-    )
-
-
-def test_pnp_ideal_diffusion_is_not_counted_twice() -> None:
     plan = _periodic_electrolyte()
     coordinate = plan.electrostatic.bridge.cochain.coordinates[0][:, 0]
     density = 1.0 + 0.2 * jnp.cos(2.0 * jnp.pi * coordinate)
@@ -151,9 +97,6 @@ def test_pnp_ideal_diffusion_is_not_counted_twice() -> None:
     assert evaluation.flux.free_energy_dissipation > 0.0
     np.testing.assert_allclose(evaluation.concentration_rate, expected_rate, atol=1e-12)
     np.testing.assert_allclose(evaluation.flux.species_mass_defect, 0.0, atol=1e-14)
-
-
-def test_pnp_preserves_nonuniform_boltzmann_equilibrium_with_fixed_charge() -> None:
     plan = _periodic_electrolyte()
     coordinate = plan.electrostatic.bridge.cochain.coordinates[0][:, 0]
     thermal_voltage = (
@@ -184,9 +127,48 @@ def test_pnp_preserves_nonuniform_boltzmann_equilibrium_with_fixed_charge() -> N
     np.testing.assert_allclose(evaluation.flux.edge_flux, 0.0, atol=1e-12)
     np.testing.assert_allclose(evaluation.concentration_rate, 0.0, atol=1e-10)
     np.testing.assert_allclose(evaluation.flux.species_mass_defect, 0.0, atol=1e-14)
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    bridge = phx.discretization.StructuredCochainBridge(grid)
+    boundary = phx.solver.CochainElectrostaticBoundaryPlan.dirichlet(
+        bridge,
+        jnp.asarray(2.0),
+    )
+    plan = phx.solver.CochainElectrostaticPlan(bridge, boundary)
+    result = plan.solve(jnp.zeros((bridge.cochain.cell_counts[0],)))
+
+    assert result.successful
+    np.testing.assert_allclose(result.potential, 2.0, atol=1e-9)
+    np.testing.assert_allclose(result.electric, 0.0, atol=1e-9)
 
 
-def test_positive_charge_and_nonzero_dirichlet_data_give_correct_poisson_field() -> None:
+def test_electrokinetics_scenario_2() -> None:
+    bernoulli = phx.discretization.stable_bernoulli
+    arguments = jnp.asarray([-1.0e20, -1000.0, -1.0, 0.0, 1.0, 1000.0, 1.0e20])
+    values, forward = jax.jvp(bernoulli, (arguments,), (jnp.ones_like(arguments),))
+    reverse = jax.jit(jax.grad(lambda x: jnp.sum(bernoulli(x))))(arguments)
+
+    assert jnp.all(jnp.isfinite(values))
+    assert jnp.all(jnp.isfinite(forward))
+    assert jnp.all(jnp.isfinite(reverse))
+    np.testing.assert_allclose(forward, reverse, atol=1e-14)
+    np.testing.assert_allclose(values[::3], [1.0e20, 1.0, 0.0], atol=1e-14)
+    np.testing.assert_allclose(reverse[::3], [-1.0, -0.5, 0.0], atol=1e-14)
+    np.testing.assert_allclose(jax.grad(jax.grad(bernoulli))(0.0), 1.0 / 6.0)
+    flux = phx.discretization.scharfetter_gummel_flux
+    # At zero drift, material moves from high to low concentration.
+    np.testing.assert_allclose(flux(3.0, 1.0, 0.0, 2.0), 4.0)
+    # Uniform density moves down the drift potential, with the exact drift rate.
+    np.testing.assert_allclose(flux(3.0, 3.0, 2.0, 2.0), -12.0)
+    difference = jnp.asarray([-3.0, -1.0, 0.0, 1.0, 3.0])
+    np.testing.assert_allclose(
+        flux(1.0, jnp.exp(-difference), difference), 0.0, atol=1e-14
+    )
+    np.testing.assert_allclose(
+        flux(3.0, 1.0, difference), -flux(1.0, 3.0, -difference), atol=1e-14
+    )
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),

@@ -18,7 +18,7 @@ def _single_triangle() -> phx.graph.SimplicialComplexGraph:
     )
 
 
-def test_triangle_mesh_to_simplicial_graph_builds_signed_cell_complex() -> None:
+def test_graph_simplicial_scenario_1() -> None:
     bundle = _single_triangle()
     graph = bundle.graph
 
@@ -38,9 +38,6 @@ def test_triangle_mesh_to_simplicial_graph_builds_signed_cell_complex() -> None:
             dtype=jnp.int32,
         ),
     )
-
-
-def test_simplicial_bundle_components_select_cells_and_incidences() -> None:
     bundle = _single_triangle()
     domain = phx.domain.GraphDomain(bundle.graph, measure="count")
     structure = phx.domain.SampleLayout((("graph",),))
@@ -62,18 +59,12 @@ def test_simplicial_bundle_components_select_cells_and_incidences() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert vertices.mass.value == 3.0
-
-
-def test_simplicial_hodge_laplacian_zero_for_constant_zero_form() -> None:
     graph = _single_triangle().graph
     graph = graph.replace(nodes={**graph.nodes, "u": jnp.ones((7,))}, validate=False)
 
     out = phx.graph.SimplicialHodgeLaplacian(0, input_key="u", output_key="lap_u")(graph)
 
     assert jnp.allclose(out.nodes["lap_u"], jnp.zeros((7,)))
-
-
-def test_simplicial_hodge_laplacian_known_zero_form_on_triangle() -> None:
     graph = _single_triangle().graph
     u = jnp.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     graph = graph.replace(nodes={**graph.nodes, "u": u}, validate=False)
@@ -84,9 +75,6 @@ def test_simplicial_hodge_laplacian_known_zero_form_on_triangle() -> None:
         out.nodes["lap_u"],
         jnp.array([-1.0, 2.0, -1.0, 0.0, 0.0, 0.0, 0.0]),
     )
-
-
-def test_simplicial_hodge_laplacian_known_one_form_circulation() -> None:
     graph = _single_triangle().graph
     alpha = jnp.array([0.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0])
     graph = graph.replace(nodes={**graph.nodes, "alpha": alpha}, validate=False)

@@ -53,35 +53,32 @@ def test_point_observation_returns_exact_finite_values_and_selected_components()
     assert action.evidence.exact_scope == "finite_restriction"
 
 
-@pytest.mark.parametrize(
-    "provider_type",
-    (IDWCardinalCorrectionProvider, CompactCardinalCorrectionProvider),
-)
-def test_cardinal_provider_is_identity_on_every_anchor(provider_type: Any) -> None:
-    domain = Interval1d(0.0, 1.0)
-    anchors = _point_batch(domain, [0.0, 0.3, 1.0])
-    observation = PointObservationAction("u", anchors)
-    provider = provider_type(
-        observation,
-        domain,
-        support_radius=0.45,
-        snap_tolerance_squared=0.0,
-    )
-    residual = jnp.asarray([1.5, -2.0, 4.25])
+def test_cardinal_observation_providers_scenario_1() -> None:
+    for provider_type in (
+        IDWCardinalCorrectionProvider,
+        CompactCardinalCorrectionProvider,
+    ):
+        domain = Interval1d(0.0, 1.0)
+        anchors = _point_batch(domain, [0.0, 0.3, 1.0])
+        observation = PointObservationAction("u", anchors)
+        provider = provider_type(
+            observation,
+            domain,
+            support_radius=0.45,
+            snap_tolerance_squared=0.0,
+        )
+        residual = jnp.asarray([1.5, -2.0, 4.25])
 
-    correction = provider.candidate_action().lift(residual)[0]
+        correction = provider.candidate_action().lift(residual)[0]
 
-    np.testing.assert_allclose(
-        correction(anchors).data,
-        residual,
-        rtol=0.0,
-        atol=1.0e-12,
-    )
-    assert provider.evidence.restriction_scope == "exact_finite_observations"
-    assert not provider.evidence.interpolation_exact_off_support
-
-
-def test_cardinal_lift_scatter_preserves_unselected_output_components() -> None:
+        np.testing.assert_allclose(
+            correction(anchors).data,
+            residual,
+            rtol=0.0,
+            atol=1.0e-12,
+        )
+        assert provider.evidence.restriction_scope == "exact_finite_observations"
+        assert not provider.evidence.interpolation_exact_off_support
     domain = Interval1d(0.0, 1.0)
     anchors = _point_batch(domain, [0.0, 0.5, 1.0])
     observation = PointObservationAction("velocity", anchors, components=(2, 0))
@@ -108,22 +105,16 @@ def test_cardinal_lift_scatter_preserves_unselected_output_components() -> None:
         rtol=0.0,
         atol=1.0e-12,
     )
+    for provider_type in (
+        IDWCardinalCorrectionProvider,
+        CompactCardinalCorrectionProvider,
+    ):
+        domain = Interval1d(0.0, 1.0)
+        duplicate_anchors = _point_batch(domain, [0.0, 0.5, 0.5])
+        observation = PointObservationAction("u", duplicate_anchors)
 
-
-@pytest.mark.parametrize(
-    "provider_type",
-    (IDWCardinalCorrectionProvider, CompactCardinalCorrectionProvider),
-)
-def test_cardinal_providers_reject_duplicate_anchors(provider_type: Any) -> None:
-    domain = Interval1d(0.0, 1.0)
-    duplicate_anchors = _point_batch(domain, [0.0, 0.5, 0.5])
-    observation = PointObservationAction("u", duplicate_anchors)
-
-    with pytest.raises(ValueError, match="pairwise distinct"):
-        provider_type(observation, domain)
-
-
-def test_idw_source_envelope_attenuates_only_the_enabled_source() -> None:
+        with pytest.raises(ValueError, match="pairwise distinct"):
+            provider_type(observation, domain)
     domain = Interval1d(0.0, 2.0)
     anchors = _point_batch(domain, [0.0, 2.0])
     query = _point_batch(domain, [1.0])

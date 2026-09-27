@@ -24,7 +24,7 @@ def _batch(domain: Any, count: Any = 9) -> Any:
     )
 
 
-def test_cartesian_cover_has_exact_local_domains_pairing_and_audit() -> None:
+def test_subdomain_decomposition_scenario_1() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(
         domain,
@@ -58,9 +58,6 @@ def test_cartesian_cover_has_exact_local_domains_pairing_and_audit() -> None:
         (middle.start, middle.end),
         (1.0 / 3.0 - 1.0 / 15.0, 2.0 / 3.0 + 1.0 / 15.0),
     )
-
-
-def test_cartesian_cover_splits_one_scalar_factor_in_a_product_domain() -> None:
     space = phx.domain.Interval1d(-1.0, 1.0)
     time = phx.domain.TimeInterval(0.0, 1.0)
     domain = space @ time
@@ -93,6 +90,51 @@ def test_cartesian_cover_splits_one_scalar_factor_in_a_product_domain() -> None:
         pairing.trace(family.fields[1], side="right")(batch).data,
         0.5,
     )
+    domain = phx.domain.Interval1d(-2.0, 2.0)
+    cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
+    left, right = cover.patches
+    normalized = phx.domain.normalized_patch_coordinate(left, "x")
+
+    assert normalized.func(jnp.asarray([-2.0]), key=jr.key(0))[0] == pytest.approx(-1.0)
+    assert normalized.func(jnp.asarray([0.0]), key=jr.key(0))[0] == pytest.approx(1.0)
+    assert normalized.func(jnp.asarray([0.5]), key=jr.key(0))[0] > 1.0
+
+    family = phx.domain.LocalFieldFamily(
+        "u",
+        cover,
+        {
+            left.patch_id: left.domain.Function()(1.0),
+            right.patch_id: right.domain.Function()(3.0),
+        },
+    )
+    broken = phx.domain.broken_field(family)
+    pairing = cover.pairings[0]
+    batch = pairing.component.sample(
+        phx.domain.PointSampling(4),
+        key=jr.key(2),
+    )
+
+    np.testing.assert_allclose(
+        broken.trace(pairing.pairing_id, side="left")(batch).data, 1.0
+    )
+    np.testing.assert_allclose(
+        broken.trace(pairing.pairing_id, side="right")(batch).data,
+        3.0,
+    )
+    with pytest.raises(TypeError):
+        broken.as_domain_function()
+    owned = broken.as_domain_function(ownership="first")
+    np.testing.assert_allclose(
+        owned.func(jnp.asarray([-1.0]), key=jr.key(3)),
+        1.0,
+    )
+    evaluate = jax.jit(
+        lambda coordinate: owned.func(
+            jnp.asarray([coordinate]),
+            key=jr.key(3),
+        )
+    )
+    np.testing.assert_allclose(evaluate(-1.0), 1.0)
 
 
 def test_partition_of_unity_uses_sparse_active_fields_and_differentiable_windows() -> (
@@ -160,51 +202,3 @@ def test_partition_of_unity_uses_sparse_active_fields_and_differentiable_windows
         phx.domain.LocalFieldFamily("safe", cover, safe_fields)
     )
     assert jnp.isfinite(sparse.func(jnp.asarray([0.1]), key=jr.key(1)))
-
-
-def test_normalized_coordinate_is_unclipped_and_broken_field_is_side_aware() -> None:
-    domain = phx.domain.Interval1d(-2.0, 2.0)
-    cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
-    left, right = cover.patches
-    normalized = phx.domain.normalized_patch_coordinate(left, "x")
-
-    assert normalized.func(jnp.asarray([-2.0]), key=jr.key(0))[0] == pytest.approx(-1.0)
-    assert normalized.func(jnp.asarray([0.0]), key=jr.key(0))[0] == pytest.approx(1.0)
-    assert normalized.func(jnp.asarray([0.5]), key=jr.key(0))[0] > 1.0
-
-    family = phx.domain.LocalFieldFamily(
-        "u",
-        cover,
-        {
-            left.patch_id: left.domain.Function()(1.0),
-            right.patch_id: right.domain.Function()(3.0),
-        },
-    )
-    broken = phx.domain.broken_field(family)
-    pairing = cover.pairings[0]
-    batch = pairing.component.sample(
-        phx.domain.PointSampling(4),
-        key=jr.key(2),
-    )
-
-    np.testing.assert_allclose(
-        broken.trace(pairing.pairing_id, side="left")(batch).data, 1.0
-    )
-    np.testing.assert_allclose(
-        broken.trace(pairing.pairing_id, side="right")(batch).data,
-        3.0,
-    )
-    with pytest.raises(TypeError):
-        broken.as_domain_function()
-    owned = broken.as_domain_function(ownership="first")
-    np.testing.assert_allclose(
-        owned.func(jnp.asarray([-1.0]), key=jr.key(3)),
-        1.0,
-    )
-    evaluate = jax.jit(
-        lambda coordinate: owned.func(
-            jnp.asarray([coordinate]),
-            key=jr.key(3),
-        )
-    )
-    np.testing.assert_allclose(evaluate(-1.0), 1.0)

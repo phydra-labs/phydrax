@@ -35,7 +35,7 @@ def _euclidean_actions(algebra: Any) -> Any:
     )
 
 
-def test_clifford_grade_representation_round_trip_and_field_schema() -> None:
+def test_clifford_layers_scenario_1() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -78,9 +78,6 @@ def test_clifford_grade_representation_round_trip_and_field_schema() -> None:
             clifford_layout=representation,
             offset=(0.0, 1.0, 0.0, 0.0),
         )
-
-
-def test_grade_linear_matches_explicit_channel_mixing_with_leading_axes() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     input_representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -133,9 +130,6 @@ def test_grade_linear_matches_explicit_channel_mixing_with_leading_axes() -> Non
     assert result.dtype == expected.dtype
     np.testing.assert_allclose(result, expected)
     np.testing.assert_allclose(jax.jit(layer)(values), expected)
-
-
-def test_grade_linear_and_gate_are_euclidean_equivariant() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -171,9 +165,6 @@ def test_grade_linear_and_gate_are_euclidean_equivariant() -> None:
     assert bool(gate_report.valid)
     trainable, _model_state, _ = phx.partition_parameters(layer)
     assert sum(leaf.size for leaf in jax.tree.leaves(trainable)) > 0
-
-
-def test_geometric_product_layer_is_equivariant_and_transformable() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     representation = phx.nn.operator.representations.CliffordGradeRepresentation(
         algebra,
@@ -200,7 +191,7 @@ def test_geometric_product_layer_is_equivariant_and_transformable() -> None:
     )
 
 
-def test_indefinite_gate_and_nonuniform_product_channels_are_rejected() -> None:
+def test_clifford_layers_scenario_2() -> None:
     indefinite = phx.nn.operator.representations.CliffordGradeRepresentation(
         cl.CliffordAlgebraSpec((1, -1)),
         (1, 1, 1),
@@ -217,9 +208,6 @@ def test_indefinite_gate_and_nonuniform_product_channels_are_rejected() -> None:
     )
     with pytest.raises(ValueError, match="common positive latent multiplicity"):
         phx.nn.operator.layers.CliffordGeometricProductLayer(nonuniform)
-
-
-def test_finite_metric_group_cannot_substitute_for_sampled_boost_set() -> None:
     algebra = cl.CliffordAlgebraSpec((1, -1))
     boost = cl.lorentz_boost_action(algebra, 1, 0.2)
     audit_set = cl.MetricIsometryAuditSet(algebra, (boost, boost.inverse()))

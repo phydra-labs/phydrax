@@ -87,7 +87,7 @@ def _plan(**kwargs: Any) -> Any:
     return GaussianProcessMultiObjectiveBayesianOptimization(5, **options)
 
 
-def test_exact_hypervolume_and_tied_finite_minimization_dominance() -> None:
+def test_multiobjective_bayesian_optimization_scenario_1() -> None:
     front = jnp.asarray([[1.0, 4.0], [2.0, 2.0], [4.0, 1.0]])
     reference = jnp.asarray([5.0, 5.0])
     assert float(hypervolume(front, reference)) == 11.0
@@ -103,9 +103,6 @@ def test_exact_hypervolume_and_tied_finite_minimization_dominance() -> None:
     assert not bool(dominance_matrix(rows)[0, 3])
     assert bool(dominance_matrix(rows)[1, 6])
     assert float(hypervolume(jnp.empty((0, 2)), reference)) == 0.0
-
-
-def test_exact_3d_hypervolume_matches_box_inclusion_exclusion() -> None:
     points = np.asarray(
         [[1.0, 4.0, 1.0], [2.0, 2.0, 2.0], [4.0, 1.0, 1.0], [2.0, 2.0, 2.0]]
     )
@@ -117,9 +114,6 @@ def test_exact_3d_hypervolume_matches_box_inclusion_exclusion() -> None:
             expected += (-1) ** (count + 1) * intersection
     assert float(hypervolume(points, reference)) == expected
     assert float(jax.jit(hypervolume)(points, reference)) == expected
-
-
-def test_qhvi_filters_each_member_instead_of_rejecting_a_partly_feasible_batch() -> None:
     baseline = jnp.asarray([[[1.0, 4.0], [2.0, 2.0], [4.0, 1.0]]])
     candidates = jnp.asarray([[[1.0, 1.0], [0.0, 0.0]]])
     gains = _sample_hvi(
@@ -139,11 +133,6 @@ def test_qhvi_filters_each_member_instead_of_rejecting_a_partly_feasible_batch()
         jnp.asarray([5.0, 5.0]),
     )
     assert float(gains[0]) == 6.0
-
-
-def test_pending_is_in_the_sampled_attained_set_not_only_a_conditioning_location() -> (
-    None
-):
     point = _domain().decode(jnp.asarray([0.9]))
     plan = _plan(fantasy_count=64)
     encoded = jnp.asarray([[0.1]])
@@ -164,7 +153,7 @@ def test_pending_is_in_the_sampled_attained_set_not_only_a_conditioning_location
     assert float(without_pending[0]) > 0.1
 
 
-def test_historical_baseline_is_joint_latent_not_the_noisy_observed_front() -> None:
+def test_multiobjective_bayesian_optimization_scenario_2() -> None:
     plan = _plan(objective_surrogate=_state(noise=1.0), fantasy_count=64)
     # A candidate already in B cannot improve B, despite high observation noise.
     # Plugging the noisy observed vector into the baseline gives spurious gain.
@@ -180,11 +169,6 @@ def test_historical_baseline_is_joint_latent_not_the_noisy_observed_front() -> N
     )
     assert float(estimates[0]) < 1e-4
     assert float(errors[0]) < 1e-4
-
-
-def test_correlated_latent_draws_preserve_output_covariance_and_exclude_observation_noise() -> (
-    None
-):
     state = _state(noise=2.0)
     plan = _plan(objective_surrogate=state, fantasy_count=8192)
     gp = _PreparedGP(
@@ -209,6 +193,21 @@ def test_correlated_latent_draws_preserve_output_covariance_and_exclude_observat
     )
     with pytest.raises((RuntimeError, ValueError), match="positive semidefinite"):
         _psd_factors(jnp.asarray([[1.0, 2.0], [2.0, 1.0]]), 1e-6)
+    with pytest.raises(ValueError, match="two or three"):
+        hypervolume(jnp.zeros((2, 4)), jnp.ones((4,)))
+    with pytest.raises(ValueError, match="capacity"):
+        hypervolume(jnp.zeros((3, 2)), jnp.ones((2,)), max_points=2)
+    with pytest.raises(ValueError, match="strictly positive"):
+        MultiObjectiveBayesianOptimizationProblem(
+            lambda point, key: jnp.zeros((2,)),
+            _domain(),
+            objective_names=("a", "b"),
+            directions=("min", "max"),
+            # ty: ignore[invalid-argument-type]
+            scales=[1.0, 0.0],
+            # ty: ignore[invalid-argument-type]
+            reference=[2.0, -2.0],
+        )
 
 
 def test_seeded_mixed_noisy_constrained_q_batches_replay_and_keep_vector_front() -> None:
@@ -292,52 +291,31 @@ def test_invalid_physics_is_guarded_and_excluded_from_gp_training() -> None:
     assert len(calls) == result.evaluation_count - 1
 
 
-@pytest.mark.parametrize(
-    "limits",
-    [
+def test_all_resource_limits_fail_before_physical_evaluation() -> None:
+    for limits in [
         {"max_training_points": 4},
         {"max_pending_points": 1},
         {"max_baseline_points": 5},
         {"max_hypervolume_points": 5},
         {"max_working_bytes": 1},
         {"max_hypervolume_work": 1},
-    ],
-)
-def test_all_resource_limits_fail_before_physical_evaluation(limits: Any) -> None:
-    calls = []
+    ]:
+        calls = []
 
-    def objective(point: Any, key: Any) -> Any:
-        calls.append(point)
-        return jnp.zeros((2,))
+        def objective(point: Any, key: Any) -> Any:
+            calls.append(point)
+            return jnp.zeros((2,))
 
-    problem = _problem(
-        objective=objective,
-        pending=(
-            _domain().decode(jnp.asarray([0.1])),
-            _domain().decode(jnp.asarray([0.9])),
-        ),
-    )
-    with pytest.raises(ValueError, match="capacity|bytes|max_hypervolume_work"):
-        multiobjective_bayesian_optimize(problem, _plan(**limits), jr.key(5))
-    assert calls == []
-
-
-def test_unsupported_geometry_and_hypervolume_capacity_are_explicit() -> None:
-    with pytest.raises(ValueError, match="two or three"):
-        hypervolume(jnp.zeros((2, 4)), jnp.ones((4,)))
-    with pytest.raises(ValueError, match="capacity"):
-        hypervolume(jnp.zeros((3, 2)), jnp.ones((2,)), max_points=2)
-    with pytest.raises(ValueError, match="strictly positive"):
-        MultiObjectiveBayesianOptimizationProblem(
-            lambda point, key: jnp.zeros((2,)),
-            _domain(),
-            objective_names=("a", "b"),
-            directions=("min", "max"),
-            # ty: ignore[invalid-argument-type]
-            scales=[1.0, 0.0],
-            # ty: ignore[invalid-argument-type]
-            reference=[2.0, -2.0],
+        problem = _problem(
+            objective=objective,
+            pending=(
+                _domain().decode(jnp.asarray([0.1])),
+                _domain().decode(jnp.asarray([0.9])),
+            ),
         )
+        with pytest.raises(ValueError, match="capacity|bytes|max_hypervolume_work"):
+            multiobjective_bayesian_optimize(problem, _plan(**limits), jr.key(5))
+        assert calls == []
 
 
 def test_three_objectives_respect_maximization_and_physical_scales() -> None:

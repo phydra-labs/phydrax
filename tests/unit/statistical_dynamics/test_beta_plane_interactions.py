@@ -31,7 +31,7 @@ def _problem(count: Any = 8, *, beta: Any = 2.0) -> Any:
     return BarotropicBetaPlane(space, beta=beta)
 
 
-def test_beta_plane_rossby_wave_inversion_and_budgets() -> None:
+def test_beta_plane_interactions_scenario_1() -> None:
     problem = _problem()
     space = problem.discretization
     x = space.axes[0].nodes[:, None]
@@ -68,62 +68,6 @@ def test_beta_plane_rossby_wave_inversion_and_budgets() -> None:
     np.testing.assert_allclose(budgets.energy_rate, 0.0, atol=1e-11)
     np.testing.assert_allclose(budgets.enstrophy_rate, 0.0, atol=1e-11)
     assert bool(budgets.successful)
-
-
-def test_dealiased_jacobian_conserves_energy_and_enstrophy() -> None:
-    problem = _problem(beta=0.0)
-    space = problem.discretization
-    x = space.axes[0].nodes[:, None]
-    y = space.axes[1].nodes[None, :]
-    vorticity = space.project(jnp.cos(x) + 0.4 * jnp.cos(2.0 * y) + 0.3 * jnp.sin(x + y))
-    nonlinear = problem.nonlinear_tendency(vorticity)
-    budgets = problem.budgets(
-        vorticity,
-        tendency=nonlinear,
-        nonlinear_tendency=nonlinear,
-    )
-
-    np.testing.assert_allclose(budgets.nonlinear_energy_rate, 0.0, atol=2e-11)
-    np.testing.assert_allclose(budgets.nonlinear_enstrophy_rate, 0.0, atol=2e-11)
-
-
-def test_hermitian_masks_close_and_ql_gql_reach_exact_limits() -> None:
-    problem = _problem()
-    space = problem.discretization
-    partition = InteractionPartition.zonal_mean(
-        space,
-        zonal_axis=0,
-        admissibility_mask=problem.admissibility_mask,
-    )
-    assert bool(partition.mask_is_closed())
-    x = space.axes[0].nodes[:, None]
-    y = space.axes[1].nodes[None, :]
-    state = problem.project_state(
-        space.project(jnp.cos(y) + jnp.cos(x + y) + 0.25 * jnp.sin(2.0 * x - y))
-    )
-
-    ql = partition.select(problem.bilinear_tendency, state, model="ql")
-    gql = partition.select(problem.bilinear_tendency, state, model="gql")
-    np.testing.assert_allclose(ql, gql, atol=2e-11)
-
-    all_low = InteractionPartition.from_wavenumber_cutoff(
-        space,
-        100,
-        admissibility_mask=problem.admissibility_mask,
-    )
-    nl = all_low.select(problem.bilinear_tendency, state, model="nl")
-    gql_limit = all_low.select(problem.bilinear_tendency, state, model="gql")
-    continued = partition.select(
-        problem.bilinear_tendency,
-        state,
-        model="ql",
-        interaction_coordinate=1.0,
-    )
-    np.testing.assert_allclose(gql_limit, nl, atol=2e-11)
-    np.testing.assert_allclose(continued, problem.nonlinear_tendency(state), atol=2e-11)
-
-
-def test_beta_plane_coordinates_drive_exact_prepared_gce2_owner() -> None:
     problem = _problem(6, beta=0.0)
     partition = InteractionPartition.from_wavenumber_cutoff(
         problem.discretization,
@@ -162,3 +106,50 @@ def test_beta_plane_coordinates_drive_exact_prepared_gce2_owner() -> None:
     assert bool(result.evidence.accepted)
     np.testing.assert_allclose(result.state.mean, 0.0, atol=1e-12)
     np.testing.assert_allclose(result.state.covariance, 0.0, atol=1e-12)
+    problem = _problem(beta=0.0)
+    space = problem.discretization
+    x = space.axes[0].nodes[:, None]
+    y = space.axes[1].nodes[None, :]
+    vorticity = space.project(jnp.cos(x) + 0.4 * jnp.cos(2.0 * y) + 0.3 * jnp.sin(x + y))
+    nonlinear = problem.nonlinear_tendency(vorticity)
+    budgets = problem.budgets(
+        vorticity,
+        tendency=nonlinear,
+        nonlinear_tendency=nonlinear,
+    )
+
+    np.testing.assert_allclose(budgets.nonlinear_energy_rate, 0.0, atol=2e-11)
+    np.testing.assert_allclose(budgets.nonlinear_enstrophy_rate, 0.0, atol=2e-11)
+    problem = _problem()
+    space = problem.discretization
+    partition = InteractionPartition.zonal_mean(
+        space,
+        zonal_axis=0,
+        admissibility_mask=problem.admissibility_mask,
+    )
+    assert bool(partition.mask_is_closed())
+    x = space.axes[0].nodes[:, None]
+    y = space.axes[1].nodes[None, :]
+    state = problem.project_state(
+        space.project(jnp.cos(y) + jnp.cos(x + y) + 0.25 * jnp.sin(2.0 * x - y))
+    )
+
+    ql = partition.select(problem.bilinear_tendency, state, model="ql")
+    gql = partition.select(problem.bilinear_tendency, state, model="gql")
+    np.testing.assert_allclose(ql, gql, atol=2e-11)
+
+    all_low = InteractionPartition.from_wavenumber_cutoff(
+        space,
+        100,
+        admissibility_mask=problem.admissibility_mask,
+    )
+    nl = all_low.select(problem.bilinear_tendency, state, model="nl")
+    gql_limit = all_low.select(problem.bilinear_tendency, state, model="gql")
+    continued = partition.select(
+        problem.bilinear_tendency,
+        state,
+        model="ql",
+        interaction_coordinate=1.0,
+    )
+    np.testing.assert_allclose(gql_limit, nl, atol=2e-11)
+    np.testing.assert_allclose(continued, problem.nonlinear_tendency(state), atol=2e-11)

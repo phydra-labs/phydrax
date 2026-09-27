@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -37,7 +35,7 @@ from phydrax.equations._finite_volume_advanced import (
 from phydrax.equations._hyperbolic_systems import ShallowWaterSystem
 
 
-def test_polyhedral_cube_geometry_is_closed_and_positive() -> None:
+def test_fv_capability_closure_scenario_1() -> None:
     coordinates = np.asarray(
         [
             (0, 0, 0),
@@ -81,9 +79,6 @@ def test_polyhedral_cube_geometry_is_closed_and_positive() -> None:
     np.testing.assert_allclose(
         np.sum(np.asarray(finite_volume.area_vectors), axis=0), 0.0, atol=1e-14
     )
-
-
-def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face() -> None:
     coordinates = np.asarray(
         [
             (0, 0, 0),
@@ -148,9 +143,6 @@ def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face() -> None
     np.add.at(cell_flux, owner, face_flux)
     np.add.at(cell_flux, neighbor[interior], -face_flux[interior])
     np.testing.assert_allclose(cell_flux, 0.0, atol=1e-14)
-
-
-def test_equilibrium_weno_z_preserves_constant_surface_and_reports_dry_fallback() -> None:
     bed = jnp.asarray((0.0, 0.2, 0.5, 0.9, 1.0, 0.7, 0.3, 0.1))
     surface = jnp.ones_like(bed)
     state = jnp.stack((surface - bed, jnp.zeros_like(bed)), axis=-1)
@@ -159,39 +151,33 @@ def test_equilibrium_weno_z_preserves_constant_surface_and_reports_dry_fallback(
     np.testing.assert_allclose(left[..., 0] + bed_left, 1.0, atol=2e-6)
     np.testing.assert_allclose(right[..., 0] + bed_right, 1.0, atol=2e-6)
     assert np.asarray(evidence.dry_stencil_fallback).any()
-
-
-@pytest.mark.parametrize(
-    "lower",
-    (
+    for lower in (
         lower_triangle_unstructured_shallow_water,
         lower_sbp_shallow_water,
         lower_global_spectral_shallow_water,
         lower_dgsem_shallow_water,
-    ),
-)
-def test_method_wide_shallow_water_lowerings_preserve_lake_at_rest(lower: Any) -> None:
-    bed = jnp.asarray((0.0, 0.2, 0.5, 0.1))
-    bathymetry = PreparedShallowWaterBathymetry(
-        bed,
-        bed.shape,
-        geometry_id="backend-grid",
-        precision_id="float32",
-        dtype=jnp.float32,
-    )
-    derivative = lambda value, axis, args: jnp.roll(value, -1) - jnp.roll(value, 1)
-    prepared = lower(
-        bathymetry=bathymetry,
-        derivative=derivative,
-        dimension=1,
-        gravity=9.81,
-        geometry_id="backend-grid",
-    )
-    state = jnp.stack((1.0 - bed, jnp.zeros_like(bed)), axis=-1)
-    np.testing.assert_allclose(prepared.residual(state), 0.0)
+    ):
+        bed = jnp.asarray((0.0, 0.2, 0.5, 0.1))
+        bathymetry = PreparedShallowWaterBathymetry(
+            bed,
+            bed.shape,
+            geometry_id="backend-grid",
+            precision_id="float32",
+            dtype=jnp.float32,
+        )
+        derivative = lambda value, axis, args: jnp.roll(value, -1) - jnp.roll(value, 1)
+        prepared = lower(
+            bathymetry=bathymetry,
+            derivative=derivative,
+            dimension=1,
+            gravity=9.81,
+            geometry_id="backend-grid",
+        )
+        state = jnp.stack((1.0 - bed, jnp.zeros_like(bed)), axis=-1)
+        np.testing.assert_allclose(prepared.residual(state), 0.0)
 
 
-def test_arbitrary_normal_hydrostatic_flux_has_zero_lake_mass_and_ale_gcl_flux() -> None:
+def test_fv_capability_closure_scenario_2() -> None:
     system = ShallowWaterSystem(2)
     plan = ShallowWaterHydrostaticHLLPlan()
     normal = jnp.asarray((3.0, 4.0)) / 5.0
@@ -202,9 +188,6 @@ def test_arbitrary_normal_hydrostatic_flux_has_zero_lake_mass_and_ale_gcl_flux()
     np.testing.assert_allclose(result.normal_flux[0], 0.0, atol=1e-7)
     np.testing.assert_allclose(result.left_correction[0], 0.0)
     np.testing.assert_allclose(result.right_correction[0], 0.0)
-
-
-def test_typed_open_boundaries_and_declared_geostrophic_reference() -> None:
     policy = ShallowWaterWetDryPolicy()
     discharge = ShallowWaterNormalDischargeBoundary(
         lambda t, x, args: jnp.ones(x.shape[:-1]),
@@ -243,9 +226,6 @@ def test_typed_open_boundaries_and_declared_geostrophic_reference() -> None:
         prepared.deviation_residual(lambda state, args: state, prepared.reference_state),
         prepared.reference_state,
     )
-
-
-def test_multilayer_exner_les_and_subfloat_precision_contracts() -> None:
     coupling = HydrostaticLayerCoupling.from_densities(jnp.asarray((1025.0, 1000.0)))
     system = MultilayerShallowWaterSystem(coupling, 1)
     state = jnp.asarray((1.0, 0.5, 0.0, 0.0))

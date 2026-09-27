@@ -31,7 +31,7 @@ def _grid() -> Any:
     return TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="time:grid")
 
 
-def test_control_foundation_constructor_guards_are_explicit() -> None:
+def test_control_foundation_scenario_1() -> None:
     with pytest.raises(ValueError, match="at least two"):
         TimeGrid(jnp.asarray([0.0]), time_id="short")
     with pytest.raises(ValueError, match="strictly increasing"):
@@ -60,9 +60,6 @@ def test_control_foundation_constructor_guards_are_explicit() -> None:
             jnp.zeros((3,)),
             problem_id="bad-state",
         )
-
-
-def test_discrete_rollout_preserves_case_time_axes_and_gradients() -> None:
     grid = _grid()
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
@@ -112,9 +109,33 @@ def test_discrete_rollout_preserves_case_time_axes_and_gradients() -> None:
         )
     )(scalar_coefficients)
     assert np.allclose(np.asarray(gradient), np.asarray([[7.0], [8.0]]))
+    grid = _grid()
+    dynamics = make_discrete_control_dynamics(
+        lambda time, state, control, args: jnp.full_like(state, jnp.nan),
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="failed-feedback-transition",
+    )
+    policy = AffineFeedbackPolicy(
+        jnp.zeros((grid.num_steps, 1, 1)),
+        jnp.ones((grid.num_steps, 1)),
+        time_grid=grid,
+        state_size=1,
+        policy_id="failed-feedback-policy",
+    )
+    problem = ControlProblem(
+        dynamics,
+        grid,
+        jnp.zeros((1,)),
+        problem_id="failed-feedback-discrete",
+    )
 
+    trajectory = problem.rollout(policy, jnp.asarray(0.0))
 
-def test_grid_bound_parameterization_rejects_same_size_different_physical_grid() -> None:
+    np.testing.assert_array_equal(trajectory.valid, jnp.array([True, False, False]))
+    assert int(trajectory.status) == CONTROL_DYNAMICS_FAILED
+    assert np.isfinite(np.asarray(trajectory.controls[0])).all()
+    assert np.isnan(np.asarray(trajectory.controls[1])).all()
     problem_grid = _grid()
     other_grid = TimeGrid(
         jnp.asarray([0.0, 0.25, 1.0]),
@@ -145,37 +166,7 @@ def test_grid_bound_parameterization_rejects_same_size_different_physical_grid()
         problem.rollout(parameterization, jnp.zeros((2, 1)))
 
 
-def test_discrete_rollout_masks_failed_feedback_policy_cases() -> None:
-    grid = _grid()
-    dynamics = make_discrete_control_dynamics(
-        lambda time, state, control, args: jnp.full_like(state, jnp.nan),
-        state_shape=(1,),
-        control_shape=(1,),
-        dynamics_id="failed-feedback-transition",
-    )
-    policy = AffineFeedbackPolicy(
-        jnp.zeros((grid.num_steps, 1, 1)),
-        jnp.ones((grid.num_steps, 1)),
-        time_grid=grid,
-        state_size=1,
-        policy_id="failed-feedback-policy",
-    )
-    problem = ControlProblem(
-        dynamics,
-        grid,
-        jnp.zeros((1,)),
-        problem_id="failed-feedback-discrete",
-    )
-
-    trajectory = problem.rollout(policy, jnp.asarray(0.0))
-
-    np.testing.assert_array_equal(trajectory.valid, jnp.array([True, False, False]))
-    assert int(trajectory.status) == CONTROL_DYNAMICS_FAILED
-    assert np.isfinite(np.asarray(trajectory.controls[0])).all()
-    assert np.isnan(np.asarray(trajectory.controls[1])).all()
-
-
-def test_sampled_loss_and_sampled_feasibility_remain_distinct() -> None:
+def test_control_foundation_scenario_2() -> None:
     grid = _grid()
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
@@ -206,9 +197,6 @@ def test_sampled_loss_and_sampled_feasibility_remain_distinct() -> None:
     assert result.feasibility.method_id == "control-constraint:sampled-grid-noncertifying"
     assert int(result.status) == CONTROL_INFEASIBLE
     assert bool(result.valid)
-
-
-def test_differential_rollout_is_differentiable_and_propagates_backend_failure() -> None:
     grid = _grid()
     dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: control,
@@ -279,9 +267,6 @@ def test_differential_rollout_is_differentiable_and_propagates_backend_failure()
     assert not bool(failed.successful)
     assert not bool(jnp.all(failed.valid))
     assert "maximum number of solver steps" in str(failed.backend_status)
-
-
-def test_differential_failed_feedback_reconstruction_masks_invalid_states() -> None:
     grid = _grid()
     dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: -state + control,

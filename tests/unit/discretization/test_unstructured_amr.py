@@ -63,7 +63,7 @@ def _hierarchy() -> Any:
     )
 
 
-def test_unstructured_amr_selection_transfer_and_composite_integral() -> None:
+def test_unstructured_amr_contracts() -> None:
     hierarchy = _hierarchy()
     selection = eqx.filter_jit(hierarchy.select)(
         jnp.asarray((2.0, 1.0)), jnp.asarray(0.0)
@@ -88,9 +88,6 @@ def test_unstructured_amr_selection_transfer_and_composite_integral() -> None:
     np.testing.assert_allclose(
         hierarchy.composite_integral(coarse, fine, selection), coarse_integral
     )
-
-
-def test_unstructured_amr_preserves_bounded_volume_fraction_and_reflux_budget() -> None:
     hierarchy = _hierarchy()
     alpha = jnp.asarray((1.0, 0.2))
     fine_alpha = hierarchy.prolong(alpha)
@@ -108,9 +105,6 @@ def test_unstructured_amr_preserves_bounded_volume_fraction_and_reflux_budget() 
     old_integral = jnp.sum(hierarchy.coarse.cell_volumes[:, None] * coarse_state, axis=0)
     new_integral = jnp.sum(hierarchy.coarse.cell_volumes[:, None] * refluxed, axis=0)
     np.testing.assert_allclose(new_integral, old_integral)
-
-
-def test_unstructured_amr_register_rejects_nonfinite_flux_and_negative_step_ids() -> None:
     with pytest.raises(Exception, match="must be finite"):
         phx.discretization.UnstructuredAMRFluxRegister(
             jnp.asarray(((jnp.nan, 0.0), (0.0, 0.0)))
@@ -121,9 +115,6 @@ def test_unstructured_amr_register_rejects_nonfinite_flux_and_negative_step_ids(
             jnp.zeros((2, 2)),
             accepted_steps=np.asarray((-1,), dtype=np.int32),
         )
-
-
-def test_unstructured_amr_ties_are_deterministic_at_fixed_capacity() -> None:
     hierarchy = _hierarchy()
     selection = hierarchy.select(jnp.asarray((1.0, 1.0)), jnp.asarray(0.5))
     np.testing.assert_array_equal(selection.coarse_refined, (True, False))

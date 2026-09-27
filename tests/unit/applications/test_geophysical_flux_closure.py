@@ -48,7 +48,7 @@ def _energy(thermo: Any, dry: Any, vapor: Any, liquid: Any = 0.0, ice: Any = 0.0
     )
 
 
-def test_paired_flux_cancels_inventory_on_nonuniform_layers_and_scales_with_dt() -> None:
+def test_geophysical_flux_closure_scenario_1() -> None:
     binding, thermo = _binding()
     dry = binding.measure.weights
     vapor = jnp.asarray([0.04, 0.12, 0.32])
@@ -82,11 +82,6 @@ def test_paired_flux_cancels_inventory_on_nonuniform_layers_and_scales_with_dt()
     )
     np.testing.assert_allclose(longer.vapor_increment, 2 * result.vapor_increment)
     assert longer.binding_id != result.binding_id
-
-
-def test_vapor_donor_cannot_borrow_liquid_or_throughflow_and_native_step_rejects() -> (
-    None
-):
     binding, thermo = _binding()
     dry, vapor, liquid = (
         binding.measure.weights,
@@ -127,9 +122,6 @@ def test_vapor_donor_cannot_borrow_liquid_or_throughflow_and_native_step_rejects
     np.testing.assert_array_equal(rejected.state.vapor_mass, state.vapor_mass)
     np.testing.assert_array_equal(rejected.state.rain_mass, state.rain_mass)
     assert float(rejected.state.time) == float(state.time)
-
-
-def test_measure_units_reference_and_runtime_interval_are_bound() -> None:
     binding, thermo = _binding()
     dry, vapor = binding.measure.weights, jnp.asarray([[0.02, 0.04, 0.08]])
     energy = _energy(thermo, dry, vapor)
@@ -192,7 +184,7 @@ def _nonuniform_transfer(thermo: Any, *, bad: Any = False) -> Any:
     return ConservativeColumnTransfer(transfer, sm, tm, thermo.plan_id)
 
 
-def test_native_measure_restriction_preserves_extensives_and_separates_numerics() -> None:
+def test_geophysical_flux_closure_scenario_2() -> None:
     original_binding, thermo = _binding()
     transfer = _nonuniform_transfer(thermo)
     binding = replace(
@@ -245,9 +237,6 @@ def test_native_measure_restriction_preserves_extensives_and_separates_numerics(
             # ty: ignore[invalid-argument-type]
             interval_bounds=[[0.0, 3.0]],
         )
-
-
-def test_equal_total_distinct_cases_cannot_broadcast_one_fine_endpoint() -> None:
     original, thermo = _binding()
     transfer = _nonuniform_transfer(thermo)
     binding = replace(

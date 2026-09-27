@@ -102,7 +102,7 @@ def _execution_group(devices: Any, axis_name: Any = "block_parts") -> Any:
     return ExecutionGroup(specification, devices)
 
 
-def test_partition_ownership_is_local_and_independent_of_compilation_history() -> None:
+def test_distributed_block_amr_scenario_1() -> None:
     hierarchy = _hierarchy()
     compiler, direct = _compiled(hierarchy)
     initial = compiler.initialize().topology
@@ -123,11 +123,6 @@ def test_partition_ownership_is_local_and_independent_of_compilation_history() -
             np.asarray(first.topology.levels[level].active)
         ]
         assert np.all(active_owners[:-1] <= active_owners[1:])
-
-
-def test_canonical_pack_unpack_masks_inactive_nonfinite_payloads_and_allows_empty_parts() -> (
-    None
-):
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     fd, prepared = _prepare(hierarchy, compiled, 3)
@@ -152,9 +147,6 @@ def test_canonical_pack_unpack_masks_inactive_nonfinite_payloads_and_allows_empt
 
     fine_valid_by_part = np.sum(np.asarray(prepared.layouts[1].local_block_valid), axis=1)
     assert np.count_nonzero(fine_valid_by_part == 0) == 2
-
-
-def test_route_phases_are_symmetric_include_zero_payload_and_have_exact_reverse() -> None:
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     fd, prepared = _prepare(hierarchy, compiled, 3)
@@ -201,7 +193,7 @@ def test_route_phases_are_symmetric_include_zero_payload_and_have_exact_reverse(
     )
 
 
-def test_repartition_migrates_packed_values_by_stable_block_id() -> None:
+def test_distributed_block_amr_scenario_2() -> None:
     hierarchy = _hierarchy(cells=16, fine_capacity=16)
     _, compiled = _compiled(hierarchy, coarse_slot=3, coarse_cell=1)
     fd, source = _prepare(hierarchy, compiled, 2)
@@ -221,11 +213,6 @@ def test_repartition_migrates_packed_values_by_stable_block_id() -> None:
 
     for expected, actual in zip(state.levels, restored.levels, strict=True):
         np.testing.assert_allclose(actual.values, expected.safe_values())
-
-
-def test_resource_evidence_counts_the_real_allocations_exactly_and_manifest_is_canonical() -> (
-    None
-):
     hierarchy = _hierarchy()
     _, compiled = _compiled(hierarchy)
     _, prepared = _prepare(hierarchy, compiled, 3)
@@ -264,6 +251,23 @@ def test_resource_evidence_counts_the_real_allocations_exactly_and_manifest_is_c
         for level in compiled.topology.levels
     ]
     assert "shard_payload" not in manifest
+    for old_time, new_time, fill_time in (
+        (jnp.nan, 1.0, 0.5),
+        (1.0, 0.0, 0.5),
+    ):
+        hierarchy = _hierarchy()
+        _, compiled = _compiled(hierarchy)
+        fd, prepared = _prepare(hierarchy, compiled, 3)
+        state = _state(compiled.topology, fd)
+
+        with pytest.raises(Exception, match="FillPatch time"):
+            result = prepared.serial_fill_patch(
+                state,
+                coarse_old_time=old_time,
+                coarse_new_time=new_time,
+                fill_time=fill_time,
+            )
+            jax.block_until_ready(result.workspaces[1].values)
 
 
 def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation() -> None:
@@ -316,33 +320,6 @@ def test_serial_packed_fill_patch_and_reverse_match_canonical_foundation() -> No
     )
     for expected, actual in zip(canonical_reverse, combined_packed_reverse, strict=True):
         np.testing.assert_allclose(actual, expected)
-
-
-@pytest.mark.parametrize(
-    ("old_time", "new_time", "fill_time"),
-    (
-        (jnp.nan, 1.0, 0.5),
-        (1.0, 0.0, 0.5),
-    ),
-)
-def test_serial_fill_patch_rejects_nonfinite_or_reversed_time_intervals(
-    old_time: Any,
-    new_time: Any,
-    fill_time: Any,
-) -> None:
-    hierarchy = _hierarchy()
-    _, compiled = _compiled(hierarchy)
-    fd, prepared = _prepare(hierarchy, compiled, 3)
-    state = _state(compiled.topology, fd)
-
-    with pytest.raises(Exception, match="FillPatch time"):
-        result = prepared.serial_fill_patch(
-            state,
-            coarse_old_time=old_time,
-            coarse_new_time=new_time,
-            fill_time=fill_time,
-        )
-        jax.block_until_ready(result.workspaces[1].values)
 
 
 @pytest.mark.skipif(

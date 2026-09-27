@@ -222,7 +222,7 @@ def _dynamic_velocity(prepared: Any) -> Any:
     )
 
 
-def test_ocean_les_requires_explicit_complete_named_scalar_declarations() -> None:
+def test_ocean_mac_les_scenario_1() -> None:
     discretization = _discretization()
     reference = phx.applications.ocean.LinearSeawaterReference()
     with pytest.raises(ValueError, match="explicit named scalar SGS"):
@@ -246,9 +246,62 @@ def test_ocean_les_requires_explicit_complete_named_scalar_declarations() -> Non
             algebraic_les=_algebraic_les(discretization),
             scalar_sgs=incomplete,
         )
+    imposed = phx.discretization.MACScalarBoundaryCondition("flux", 3.0e-5)
+    _, ocean = _ocean_with_algebraic_les(temperature_flux=imposed)
+    state = ocean.initial_state(
+        _velocity(ocean),
+        _temperature_profile(ocean, stable=True),
+        _salinity(ocean),
+    )
+    stage = ocean.dynamics.stage(0.0, state)
+    result = stage.scalar_fluxes[ocean.plan.reference.temperature_name]
 
+    np.testing.assert_allclose(
+        jnp.take(result.diffusive_fluxes[2], -1, axis=2),
+        -3.0e-5,
+    )
+    np.testing.assert_allclose(
+        jnp.take(result.boundary_diffusive_fluxes[2], -1, axis=2),
+        -3.0e-5,
+    )
+    np.testing.assert_allclose(
+        jnp.take(result.molecular_diffusive_fluxes[2], -1, axis=2),
+        0.0,
+    )
+    np.testing.assert_allclose(
+        jnp.take(result.sgs_diffusive_fluxes[2], -1, axis=2),
+        0.0,
+    )
+    _, ocean = _ocean_with_ksgs(StaticKSGSPlan)
+    velocity = tuple(
+        jnp.zeros(layout.shape) for layout in ocean.operators.discretization.face_layouts
+    )
+    kinetic = jnp.full(ocean.operators.discretization.cell_shape, 2.0e-4)
+    coordinates = ocean.initial_state(
+        velocity,
+        jnp.full(
+            ocean.operators.discretization.cell_shape,
+            ocean.plan.reference.reference_temperature,
+        ),
+        _salinity(ocean),
+        sgs_kinetic_energy=kinetic,
+    )
+    continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
+        coordinates
+    )
+    result = phx.applications.ocean.OceanBoussinesqSSPRK33Method(ocean).step(
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        continuation,
+        jnp.asarray(1.0e8),
+        None,
+    )
 
-def test_named_runtime_scalar_sgs_flux_and_ledgers_are_separated() -> None:
+    assert not bool(result.successful)
+    np.testing.assert_array_equal(
+        result.accepted_state.coordinates,
+        continuation.coordinates,
+    )
     discretization = _discretization(periodic_vertical=True)
     operators = phx.discretization.MACOperatorPlan(discretization).prepare()
     layout = MACScalarLayout(operators, ("salinity", "temperature"))
@@ -304,6 +357,23 @@ def test_named_runtime_scalar_sgs_flux_and_ledgers_are_separated() -> None:
     assert diagnostics.fields["temperature"].sgs_diffusive_variance_rate < 0.0
     np.testing.assert_allclose(result["salinity"].sgs_diffusive_divergence, 0.0)
     assert bool(diagnostics.success)
+    _, ocean = _ocean_with_algebraic_les()
+    stable = ocean.initial_state(
+        _velocity(ocean),
+        _temperature_profile(ocean, stable=True),
+        _salinity(ocean),
+    )
+    unstable = ocean.initial_state(
+        _velocity(ocean),
+        _temperature_profile(ocean, stable=False),
+        _salinity(ocean),
+    )
+
+    stable_stage = ocean.dynamics.stage(0.0, stable)
+    unstable_stage = ocean.dynamics.stage(0.0, unstable)
+
+    assert stable_stage.buoyancy.molecular_potential_energy_mixing > 0.0
+    assert unstable_stage.buoyancy.molecular_potential_energy_mixing < 0.0
 
 
 def test_ocean_les_uses_one_momentum_stage_for_scalar_ratios_and_energy_ledgers(
@@ -355,56 +425,7 @@ def test_ocean_les_uses_one_momentum_stage_for_scalar_ratios_and_energy_ledgers(
     assert not bool(restriction.success)
 
 
-def test_ocean_les_prescribed_surface_flux_is_total_and_not_duplicated() -> None:
-    imposed = phx.discretization.MACScalarBoundaryCondition("flux", 3.0e-5)
-    _, ocean = _ocean_with_algebraic_les(temperature_flux=imposed)
-    state = ocean.initial_state(
-        _velocity(ocean),
-        _temperature_profile(ocean, stable=True),
-        _salinity(ocean),
-    )
-    stage = ocean.dynamics.stage(0.0, state)
-    result = stage.scalar_fluxes[ocean.plan.reference.temperature_name]
-
-    np.testing.assert_allclose(
-        jnp.take(result.diffusive_fluxes[2], -1, axis=2),
-        -3.0e-5,
-    )
-    np.testing.assert_allclose(
-        jnp.take(result.boundary_diffusive_fluxes[2], -1, axis=2),
-        -3.0e-5,
-    )
-    np.testing.assert_allclose(
-        jnp.take(result.molecular_diffusive_fluxes[2], -1, axis=2),
-        0.0,
-    )
-    np.testing.assert_allclose(
-        jnp.take(result.sgs_diffusive_fluxes[2], -1, axis=2),
-        0.0,
-    )
-
-
-def test_stable_and_unstable_ocean_mixing_have_opposite_potential_energy_signs() -> None:
-    _, ocean = _ocean_with_algebraic_les()
-    stable = ocean.initial_state(
-        _velocity(ocean),
-        _temperature_profile(ocean, stable=True),
-        _salinity(ocean),
-    )
-    unstable = ocean.initial_state(
-        _velocity(ocean),
-        _temperature_profile(ocean, stable=False),
-        _salinity(ocean),
-    )
-
-    stable_stage = ocean.dynamics.stage(0.0, stable)
-    unstable_stage = ocean.dynamics.stage(0.0, unstable)
-
-    assert stable_stage.buoyancy.molecular_potential_energy_mixing > 0.0
-    assert unstable_stage.buoyancy.molecular_potential_energy_mixing < 0.0
-
-
-def test_zero_coefficient_les_has_no_les_parity() -> None:
+def test_ocean_mac_les_scenario_2() -> None:
     discretization, les_ocean = _ocean_with_algebraic_les(coefficient=0.0)
     reference = les_ocean.plan.reference
     baseline = phx.applications.ocean.CartesianBoussinesqOceanPlan(
@@ -431,6 +452,157 @@ def test_zero_coefficient_les_has_no_les_parity() -> None:
         np.testing.assert_allclose(
             les_stage.scalar_rates[name], baseline_stage.scalar_rates[name]
         )
+    discretization, prepared = _dynamic_mac()
+    assert prepared.test_filter is not None
+    assert prepared.test_filter.plan.test_filter.filter_id == (
+        prepared.plan.test_filter.filter_id
+    )
+    assert prepared.test_filter.test_filter_ratio == (2.0, 2.0, 2.0)
+    assert prepared.test_filter.boundary_support == "periodic-wrap-only"
+
+    kinetic = jnp.full(discretization.cell_shape, 2.0e-4)
+    viscosity = jnp.full(discretization.cell_shape, 1.0e-4)
+    initial, transport = prepared.prepare_transport(kinetic, viscosity)
+    velocity = _dynamic_velocity(prepared)
+    boundary_stage = prepared.momentum.boundaries.homogeneous_stage()
+    zeros = jnp.zeros(discretization.cell_shape)
+    paused = prepared.evaluate(
+        velocity,
+        boundary_stage,
+        initial,
+        transport,
+        zeros,
+        viscosity,
+        zeros,
+        accept_update=False,
+    )
+    updated = prepared.evaluate(
+        velocity,
+        boundary_stage,
+        initial,
+        transport,
+        zeros,
+        viscosity,
+        zeros,
+        accept_update=True,
+    )
+    for left, right in zip(
+        jax.tree.leaves(paused.result.state),
+        jax.tree.leaves(initial),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(left, right)
+    assert jnp.any(updated.result.state.dynamic_updates == 1)
+    assert jnp.all(updated.result.state.eddy_viscosity_coefficient >= 0.0)
+    assert jnp.any(
+        updated.result.state.eddy_viscosity_coefficient
+        != initial.eddy_viscosity_coefficient
+    )
+    assert bool(updated.success)
+    discretization, prepared = _dynamic_mac()
+    kinetic = jnp.full(discretization.cell_shape, 2.0e-4)
+    viscosity = jnp.full(discretization.cell_shape, 1.0e-4)
+    initial, transport = prepared.prepare_transport(kinetic, viscosity)
+    zeros = jnp.zeros(discretization.cell_shape)
+    accepted = prepared.evaluate(
+        _dynamic_velocity(prepared),
+        prepared.momentum.boundaries.homogeneous_stage(),
+        initial,
+        transport,
+        zeros,
+        viscosity,
+        zeros,
+        accept_update=True,
+    )
+    committed = accepted.result.state
+    continued, next_transport = prepared.prepare_transport(
+        kinetic,
+        viscosity,
+        continuation_state=committed,
+    )
+    rejected = prepared.evaluate(
+        tuple(
+            jnp.roll(component, 1, axis=0) for component in _dynamic_velocity(prepared)
+        ),
+        prepared.momentum.boundaries.homogeneous_stage(),
+        continued,
+        next_transport,
+        zeros,
+        viscosity,
+        zeros,
+        accept_update=False,
+    )
+    for left, right in zip(
+        jax.tree.leaves(rejected.result.state),
+        jax.tree.leaves(committed),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(left, right)
+    discretization = _discretization()
+    reference = phx.applications.ocean.LinearSeawaterReference()
+    plan = LowReKSGSPlan(
+        _ksgs_coefficients(),
+        LowReKSGSCoefficients(0.01, 1.0),
+        _provenance(discretization),
+    )
+    ocean = phx.applications.ocean.CartesianBoussinesqOceanPlan(
+        phx.applications.ocean.OceanAxisConvention(),
+        reference,
+        viscosity=1.0e-4,
+        scalar_sgs=_scalar_sgs(reference),
+        ksgs=plan,
+        ksgs_field_name="sgs_kinetic_energy",
+    ).prepare(discretization, boundaries=_no_slip_boundaries(discretization))
+    z = ocean.operators.discretization.cell_centers[..., 2]
+    kinetic = (0.02 + 0.01 * (z + 1.0)) ** 2
+    state = ocean.initial_state(
+        _velocity(ocean),
+        _temperature_profile(ocean, stable=True),
+        _salinity(ocean),
+        sgs_kinetic_energy=kinetic,
+    )
+    stage = ocean.dynamics.stage(0.0, state)
+    assert stage.ksgs is not None
+    assert ocean.prepared_ksgs is not None
+    wall_distance = ocean.prepared_ksgs.wall_distance
+    assert wall_distance is not None
+    assert jnp.all(wall_distance > 0.0)
+    undamped = (
+        plan.coefficients.eddy_viscosity
+        * ocean.prepared_ksgs.filter_scale.equivalent_width
+        * jnp.sqrt(kinetic)
+    )
+    assert jnp.all(stage.ksgs.result.eddy_viscosity < undamped)
+    assert jnp.any(stage.ksgs.result.contributions.low_re_dissipation > 0.0)
+    continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
+        state,
+        ksgs_state=stage.ksgs.result.state,
+    )
+    diagnostic = phx.applications.ocean.ocean_diagnostic_view(ocean, 0.0, continuation)
+    # ty: ignore[no-matching-overload]
+    np.testing.assert_allclose(
+        diagnostic.ksgs_wall_distance,
+        wall_distance,
+    )
+    # ty: ignore[no-matching-overload]
+    np.testing.assert_allclose(
+        diagnostic.ksgs_low_re_dissipation,
+        stage.ksgs.result.contributions.low_re_dissipation,
+    )
+    assert bool(stage.success)
+    discretization = _discretization()
+    operators = phx.discretization.MACOperatorPlan(discretization).prepare()
+    momentum = phx.discretization.MACMomentumPlan(
+        operators,
+        boundaries=_free_slip_boundaries(discretization).prepare(),
+    ).prepare()
+    plan = LowReKSGSPlan(
+        _ksgs_coefficients(),
+        LowReKSGSCoefficients(1.0, 1.0),
+        _provenance(discretization),
+    )
+    with pytest.raises(ValueError, match="resolved no-slip wall"):
+        PreparedMACKSGS(plan, momentum, "sgs_kinetic_energy")
 
 
 def test_static_and_buoyant_ksgs_are_prognostic_positive_and_restart_complete(
@@ -492,199 +664,3 @@ def test_static_and_buoyant_ksgs_are_prognostic_positive_and_restart_complete(
                 strict=True,
             )
         )
-
-
-def test_ocean_ksgs_step_rejects_a_negative_candidate_without_flooring() -> None:
-    _, ocean = _ocean_with_ksgs(StaticKSGSPlan)
-    velocity = tuple(
-        jnp.zeros(layout.shape) for layout in ocean.operators.discretization.face_layouts
-    )
-    kinetic = jnp.full(ocean.operators.discretization.cell_shape, 2.0e-4)
-    coordinates = ocean.initial_state(
-        velocity,
-        jnp.full(
-            ocean.operators.discretization.cell_shape,
-            ocean.plan.reference.reference_temperature,
-        ),
-        _salinity(ocean),
-        sgs_kinetic_energy=kinetic,
-    )
-    continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
-        coordinates
-    )
-    result = phx.applications.ocean.OceanBoussinesqSSPRK33Method(ocean).step(
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0),
-        continuation,
-        jnp.asarray(1.0e8),
-        None,
-    )
-
-    assert not bool(result.successful)
-    np.testing.assert_array_equal(
-        result.accepted_state.coordinates,
-        continuation.coordinates,
-    )
-
-
-def test_dynamic_ksgs_uses_exact_periodic_uniform_filter_and_updates_history() -> None:
-    discretization, prepared = _dynamic_mac()
-    assert prepared.test_filter is not None
-    assert prepared.test_filter.plan.test_filter.filter_id == (
-        prepared.plan.test_filter.filter_id
-    )
-    assert prepared.test_filter.test_filter_ratio == (2.0, 2.0, 2.0)
-    assert prepared.test_filter.boundary_support == "periodic-wrap-only"
-
-    kinetic = jnp.full(discretization.cell_shape, 2.0e-4)
-    viscosity = jnp.full(discretization.cell_shape, 1.0e-4)
-    initial, transport = prepared.prepare_transport(kinetic, viscosity)
-    velocity = _dynamic_velocity(prepared)
-    boundary_stage = prepared.momentum.boundaries.homogeneous_stage()
-    zeros = jnp.zeros(discretization.cell_shape)
-    paused = prepared.evaluate(
-        velocity,
-        boundary_stage,
-        initial,
-        transport,
-        zeros,
-        viscosity,
-        zeros,
-        accept_update=False,
-    )
-    updated = prepared.evaluate(
-        velocity,
-        boundary_stage,
-        initial,
-        transport,
-        zeros,
-        viscosity,
-        zeros,
-        accept_update=True,
-    )
-    for left, right in zip(
-        jax.tree.leaves(paused.result.state),
-        jax.tree.leaves(initial),
-        strict=True,
-    ):
-        np.testing.assert_array_equal(left, right)
-    assert jnp.any(updated.result.state.dynamic_updates == 1)
-    assert jnp.all(updated.result.state.eddy_viscosity_coefficient >= 0.0)
-    assert jnp.any(
-        updated.result.state.eddy_viscosity_coefficient
-        != initial.eddy_viscosity_coefficient
-    )
-    assert bool(updated.success)
-
-
-def test_dynamic_ksgs_rejected_update_retains_committed_history_exactly() -> None:
-    discretization, prepared = _dynamic_mac()
-    kinetic = jnp.full(discretization.cell_shape, 2.0e-4)
-    viscosity = jnp.full(discretization.cell_shape, 1.0e-4)
-    initial, transport = prepared.prepare_transport(kinetic, viscosity)
-    zeros = jnp.zeros(discretization.cell_shape)
-    accepted = prepared.evaluate(
-        _dynamic_velocity(prepared),
-        prepared.momentum.boundaries.homogeneous_stage(),
-        initial,
-        transport,
-        zeros,
-        viscosity,
-        zeros,
-        accept_update=True,
-    )
-    committed = accepted.result.state
-    continued, next_transport = prepared.prepare_transport(
-        kinetic,
-        viscosity,
-        continuation_state=committed,
-    )
-    rejected = prepared.evaluate(
-        tuple(
-            jnp.roll(component, 1, axis=0) for component in _dynamic_velocity(prepared)
-        ),
-        prepared.momentum.boundaries.homogeneous_stage(),
-        continued,
-        next_transport,
-        zeros,
-        viscosity,
-        zeros,
-        accept_update=False,
-    )
-    for left, right in zip(
-        jax.tree.leaves(rejected.result.state),
-        jax.tree.leaves(committed),
-        strict=True,
-    ):
-        np.testing.assert_array_equal(left, right)
-
-
-def test_low_re_ksgs_resolves_wall_distance_damping_and_sqrt_k_gradient() -> None:
-    discretization = _discretization()
-    reference = phx.applications.ocean.LinearSeawaterReference()
-    plan = LowReKSGSPlan(
-        _ksgs_coefficients(),
-        LowReKSGSCoefficients(0.01, 1.0),
-        _provenance(discretization),
-    )
-    ocean = phx.applications.ocean.CartesianBoussinesqOceanPlan(
-        phx.applications.ocean.OceanAxisConvention(),
-        reference,
-        viscosity=1.0e-4,
-        scalar_sgs=_scalar_sgs(reference),
-        ksgs=plan,
-        ksgs_field_name="sgs_kinetic_energy",
-    ).prepare(discretization, boundaries=_no_slip_boundaries(discretization))
-    z = ocean.operators.discretization.cell_centers[..., 2]
-    kinetic = (0.02 + 0.01 * (z + 1.0)) ** 2
-    state = ocean.initial_state(
-        _velocity(ocean),
-        _temperature_profile(ocean, stable=True),
-        _salinity(ocean),
-        sgs_kinetic_energy=kinetic,
-    )
-    stage = ocean.dynamics.stage(0.0, state)
-    assert stage.ksgs is not None
-    assert ocean.prepared_ksgs is not None
-    wall_distance = ocean.prepared_ksgs.wall_distance
-    assert wall_distance is not None
-    assert jnp.all(wall_distance > 0.0)
-    undamped = (
-        plan.coefficients.eddy_viscosity
-        * ocean.prepared_ksgs.filter_scale.equivalent_width
-        * jnp.sqrt(kinetic)
-    )
-    assert jnp.all(stage.ksgs.result.eddy_viscosity < undamped)
-    assert jnp.any(stage.ksgs.result.contributions.low_re_dissipation > 0.0)
-    continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
-        state,
-        ksgs_state=stage.ksgs.result.state,
-    )
-    diagnostic = phx.applications.ocean.ocean_diagnostic_view(ocean, 0.0, continuation)
-    # ty: ignore[no-matching-overload]
-    np.testing.assert_allclose(
-        diagnostic.ksgs_wall_distance,
-        wall_distance,
-    )
-    # ty: ignore[no-matching-overload]
-    np.testing.assert_allclose(
-        diagnostic.ksgs_low_re_dissipation,
-        stage.ksgs.result.contributions.low_re_dissipation,
-    )
-    assert bool(stage.success)
-
-
-def test_low_re_ksgs_refuses_free_slip_only_wall_distance() -> None:
-    discretization = _discretization()
-    operators = phx.discretization.MACOperatorPlan(discretization).prepare()
-    momentum = phx.discretization.MACMomentumPlan(
-        operators,
-        boundaries=_free_slip_boundaries(discretization).prepare(),
-    ).prepare()
-    plan = LowReKSGSPlan(
-        _ksgs_coefficients(),
-        LowReKSGSCoefficients(1.0, 1.0),
-        _provenance(discretization),
-    )
-    with pytest.raises(ValueError, match="resolved no-slip wall"):
-        PreparedMACKSGS(plan, momentum, "sgs_kinetic_energy")

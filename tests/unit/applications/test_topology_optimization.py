@@ -178,7 +178,7 @@ class _WarmRollbackMethod(optim.AbstractStateDesignMethod):
         )
 
 
-def test_density_filter_projection_and_fixed_regions_remain_differentiable() -> None:
+def test_topology_optimization_scenario_1() -> None:
     transform = _density_transform(
         3,
         radius=1.5,
@@ -195,18 +195,12 @@ def test_density_filter_projection_and_fixed_regions_remain_differentiable() -> 
     assert gradient[0] == pytest.approx(0.0)
     assert gradient[2] == pytest.approx(0.0)
     assert jnp.isfinite(gradient[1]) and gradient[1] > 0.0
-
-
-def test_material_interpolation_has_exact_endpoints_and_finite_gradient() -> None:
     interpolation = MaterialInterpolation(10.0, minimum=0.1, penalty=3.0)
     values = interpolation(jnp.asarray((0.0, 1.0, 0.5)))
 
     assert values[0] == pytest.approx(0.1)
     assert values[1] == pytest.approx(10.0)
     assert jax.grad(lambda density: interpolation(density))(jnp.asarray(0.5)) > 0.0
-
-
-def test_multi_load_maximum_ties_have_symmetric_sensitivities() -> None:
     aggregation = Aggregation("maximum")
     sensitivities = aggregation.sensitivities(jnp.asarray((3.0, 3.0)))
     problem = _mechanics_problem(
@@ -228,9 +222,7 @@ def test_multi_load_maximum_ties_have_symmetric_sensitivities() -> None:
     assert values[0] == pytest.approx(values[1])
 
 
-def test_hill_mandel_evidence_accepts_power_equivalence_and_rejects_periodic_defect() -> (
-    None
-):
+def test_topology_optimization_scenario_2() -> None:
     homogenization = PeriodicHomogenizationCase(
         jnp.asarray((0.5,)),
         case_id="periodic-x",
@@ -262,9 +254,6 @@ def test_hill_mandel_evidence_accepts_power_equivalence_and_rejects_periodic_def
     assert accepted.power_defect == pytest.approx(0.0)
     assert not rejected.accepted
     assert load_case.context is homogenization
-
-
-def test_fe_state_root_rejects_a_large_realized_residual() -> None:
     bad_solver = FiniteElementStateSolver(
         lambda problem, design, initial, args: MechanicsStateCandidate(initial),
         solver_id="bad-fe",
@@ -278,9 +267,6 @@ def test_fe_state_root_rejects_a_large_realized_residual() -> None:
 
     assert not result.acceptance.accepted
     assert result.acceptance.residual_norm > result.acceptance.threshold
-
-
-def test_independent_adjoint_evidence_rejects_wrong_transpose_root() -> None:
     problem = _mechanics_problem(_diagonal_fe_solver())
     state_problem = problem.as_state_design_problem()
     design = jnp.full((2,), 0.5)
@@ -325,7 +311,7 @@ def test_fe_and_neural_variational_roots_give_the_same_reduced_gradient() -> Non
     assert jnp.allclose(neural_gradient, fe_gradient, rtol=1.0e-6, atol=1.0e-8)
 
 
-def test_neural_proposal_rolls_back_exactly_before_mandatory_fe_root() -> None:
+def test_topology_optimization_scenario_3() -> None:
     fe_solver = _diagonal_fe_solver()
     neural_solver = NeuralVariationalStateSolver(
         lambda problem, design, initial, args: jax.tree.map(
@@ -349,8 +335,6 @@ def test_neural_proposal_rolls_back_exactly_before_mandatory_fe_root() -> None:
     assert root.final_fe_reanalysis
     assert root.state_equation.acceptance.accepted
 
-
-def test_out_of_support_neural_operator_is_not_evaluated() -> None:
     def forbidden_proposal(problem: Any, design: Any, initial: Any, args: Any) -> None:
         raise AssertionError("An out-of-support learned operator was evaluated.")
 
@@ -374,9 +358,6 @@ def test_out_of_support_neural_operator_is_not_evaluated() -> None:
     assert not root.proposal.supported
     assert root.proposal.rollback_applied
     assert root.state_equation.acceptance.accepted
-
-
-def test_continuation_failure_rolls_back_to_last_accepted_design() -> None:
     problem = _mechanics_problem(_diagonal_fe_solver(), count=1)
     schedule = TopologyContinuationSchedule(
         (
@@ -399,7 +380,7 @@ def test_continuation_failure_rolls_back_to_last_accepted_design() -> None:
     assert not result.continuation_completed
 
 
-def test_nonlinear_branch_gate_is_part_of_state_acceptance() -> None:
+def test_topology_optimization_scenario_4() -> None:
     gate = MechanicsBranchGate(("primary",))
     problem = _mechanics_problem(
         _diagonal_fe_solver(),
@@ -414,19 +395,16 @@ def test_nonlinear_branch_gate_is_part_of_state_acceptance() -> None:
     assert result.residual_norm <= result.acceptance.threshold
     assert not result.acceptance.admissible
     assert not result.acceptance.accepted
+    for event in ("contact", "fracture"):
+        gate = MechanicsBranchGate(("primary",))
+        evidence = gate.evaluate(
+            "primary",
+            contact_event=event == "contact",
+            fracture_event=event == "fracture",
+        )
 
-
-@pytest.mark.parametrize("event", ("contact", "fracture"))
-def test_contact_and_fracture_topology_events_are_rejected(event: str) -> None:
-    gate = MechanicsBranchGate(("primary",))
-    evidence = gate.evaluate(
-        "primary",
-        contact_event=event == "contact",
-        fracture_event=event == "fracture",
-    )
-
-    assert not evidence.accepted
-    assert evidence.contact_event or evidence.fracture_event
+        assert not evidence.accepted
+        assert evidence.contact_event or evidence.fracture_event
 
 
 def test_reference_reanalysis_requires_transfer_primal_and_adjoint_evidence() -> None:

@@ -39,7 +39,7 @@ def _slab(
     )
 
 
-def test_one_device_is_real_identity_realization_with_round_trip_and_derivative() -> None:
+def test_distributed_spectral_scenario_1() -> None:
     plan = _slab()
     x = jnp.arange(8)[:, None, None] * (2.0 * jnp.pi / 8.0)
     y = jnp.arange(8)[None, :, None] * (2.0 * jnp.pi / 8.0)
@@ -56,9 +56,6 @@ def test_one_device_is_real_identity_realization_with_round_trip_and_derivative(
     assert restored.sharding == plan.physical_layout.sharding(plan.topology)
     assert modal.sharding == plan.modal_layout.sharding(plan.topology)
     assert plan.report.host_gather is False
-
-
-def test_padding_round_trip_global_reductions_and_autodiff() -> None:
     plan = _slab((6, 6, 4), padded_shape=(10, 12, 8))
     key = jax.random.key(8)
     modal = (
@@ -91,6 +88,37 @@ def test_padding_round_trip_global_reductions_and_autodiff() -> None:
     )
     gradient = pullback(jnp.ones(plan.spatial_shape, dtype=jnp.float32))[0]
     np.testing.assert_allclose(gradient, jnp.ones_like(gradient), rtol=2e-5, atol=2e-5)
+    devices = tuple(jax.devices("cpu"))
+    if len(devices) >= 4:
+        topology = SpectralMeshTopology(
+            (2, 2),
+            devices=devices[:4],
+            axis_names=("channel_x", "channel_z"),
+        )
+    elif len(devices) >= 2:
+        topology = SpectralMeshTopology(
+            (2,),
+            devices=devices[:2],
+            axis_names=("channel_x",),
+        )
+    else:
+        topology = SpectralMeshTopology.one_device()
+    plan = DistributedSpectralExecutionPlan(
+        topology,
+        (8, 7, 8),
+        schedule="channel",
+        state_shape=(3,),
+        horizontal_axes=(0, 2),
+    )
+    assert plan.physical_layout.partition[1] is None
+    assert plan.modal_layout.partition[1] is None
+    assert plan.report.zero_mode_atomic
+    state = jnp.arange(8 * 7 * 8 * 3, dtype=jnp.float32)
+    state = state.reshape((8, 7, 8, 3)).astype(jnp.complex64)
+    zero = plan.channel_zero_mode(state)
+    np.testing.assert_array_equal(zero, state[0, :, 0, :])
+    doubled = plan.execute_channel(lambda value: 2.0 * value, state)
+    np.testing.assert_array_equal(doubled, 2.0 * state)
 
 
 def test_rotational_dealiasing_matches_full_complex_reference_and_projector_adapter() -> (
@@ -130,40 +158,6 @@ def test_rotational_dealiasing_matches_full_complex_reference_and_projector_adap
         jnp.fft.fftn(jnp.cross(physical, curl), axes=(0, 1, 2), norm="ortho")
     )
     np.testing.assert_allclose(distributed, reference, rtol=3e-5, atol=3e-5)
-
-
-def test_channel_distribution_keeps_y_replicated_and_zero_mode_atomic() -> None:
-    devices = tuple(jax.devices("cpu"))
-    if len(devices) >= 4:
-        topology = SpectralMeshTopology(
-            (2, 2),
-            devices=devices[:4],
-            axis_names=("channel_x", "channel_z"),
-        )
-    elif len(devices) >= 2:
-        topology = SpectralMeshTopology(
-            (2,),
-            devices=devices[:2],
-            axis_names=("channel_x",),
-        )
-    else:
-        topology = SpectralMeshTopology.one_device()
-    plan = DistributedSpectralExecutionPlan(
-        topology,
-        (8, 7, 8),
-        schedule="channel",
-        state_shape=(3,),
-        horizontal_axes=(0, 2),
-    )
-    assert plan.physical_layout.partition[1] is None
-    assert plan.modal_layout.partition[1] is None
-    assert plan.report.zero_mode_atomic
-    state = jnp.arange(8 * 7 * 8 * 3, dtype=jnp.float32)
-    state = state.reshape((8, 7, 8, 3)).astype(jnp.complex64)
-    zero = plan.channel_zero_mode(state)
-    np.testing.assert_array_equal(zero, state[0, :, 0, :])
-    doubled = plan.execute_channel(lambda value: 2.0 * value, state)
-    np.testing.assert_array_equal(doubled, 2.0 * state)
 
 
 def test_resource_refusal_topology_mismatch_and_no_host_gather_guardrails(

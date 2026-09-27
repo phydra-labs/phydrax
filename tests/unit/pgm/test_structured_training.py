@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_ising_and_potts_constructors_preserve_declared_scores_and_cardinality() -> None:
+def test_structured_training_scenario_1() -> None:
     ising = phx.pgm.ising_factor_graph(
         jnp.asarray([0.2, -0.1]),
         jnp.asarray([[0, 1]]),
@@ -31,9 +31,6 @@ def test_ising_and_potts_constructors_preserve_declared_scores_and_cardinality()
 
     assert exact.map_assignment.dtype == jnp.int32
     assert int(exact.map_assignment[0]) == 280
-
-
-def test_logical_and_cardinality_factors_match_declared_hard_semantics() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(3,), num_states=2)
     logical = phx.pgm.LogicalFactorGroup(
         (
@@ -55,6 +52,25 @@ def test_logical_and_cardinality_factors_match_declared_hard_semantics() -> None
     assert jnp.isfinite(phx.pgm.factor_graph_log_score(graph, jnp.asarray([1, 0, 1])))
     assert jnp.isneginf(phx.pgm.factor_graph_log_score(graph, jnp.asarray([1, 1, 1])))
     assert jnp.isneginf(phx.pgm.factor_graph_log_score(graph, jnp.asarray([1, 0, 0])))
+    graph = phx.pgm.ising_factor_graph(
+        jnp.zeros((2,)),
+        jnp.asarray([[0, 1]]),
+        jnp.asarray([0.0]),
+    )
+    moments = phx.pgm.factor_graph_moments(
+        graph,
+        jnp.asarray([[0, 0], [0, 1], [0, 1], [1, 1]]),
+    )
+
+    assert moments[0].shape == (2, 2)
+    assert moments[1].shape == (1, 2, 2)
+    assert jnp.allclose(moments[1][0], jnp.asarray([[0.25, 0.5], [0.0, 0.25]]))
+
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="outside graph support",
+    ):
+        phx.pgm.factor_graph_moments(graph, jnp.asarray([[0, 2]]))
 
 
 def test_exact_likelihood_and_contrastive_divergence_have_correct_values_and_gradients() -> (
@@ -135,25 +151,3 @@ def test_exact_likelihood_and_contrastive_divergence_have_correct_values_and_gra
             jnp.asarray([[0]]),
             exact,
         )
-
-
-def test_factor_graph_moments_return_empirical_configuration_probabilities() -> None:
-    graph = phx.pgm.ising_factor_graph(
-        jnp.zeros((2,)),
-        jnp.asarray([[0, 1]]),
-        jnp.asarray([0.0]),
-    )
-    moments = phx.pgm.factor_graph_moments(
-        graph,
-        jnp.asarray([[0, 0], [0, 1], [0, 1], [1, 1]]),
-    )
-
-    assert moments[0].shape == (2, 2)
-    assert moments[1].shape == (1, 2, 2)
-    assert jnp.allclose(moments[1][0], jnp.asarray([[0.25, 0.5], [0.0, 0.25]]))
-
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="outside graph support",
-    ):
-        phx.pgm.factor_graph_moments(graph, jnp.asarray([[0, 2]]))

@@ -28,7 +28,7 @@ from phydrax.discretization.lattice_boltzmann._thermal import (
 )
 
 
-def test_thermal_energy_distribution_round_trips_temperature_and_moments() -> None:
+def test_lattice_boltzmann_thermochemistry_scenario_1() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     plan = ThermalLatticeBoltzmannPlan(2.5, 0.4, reference_temperature=300.0)
@@ -55,9 +55,6 @@ def test_thermal_energy_distribution_round_trips_temperature_and_moments() -> No
     )
     assert collided.successful
     np.testing.assert_allclose(collided.populations, equilibrium, atol=1e-12)
-
-
-def test_species_distributions_preserve_each_scalar_moment() -> None:
     lattice = D2Q9()
     precision = LatticeBoltzmannPrecisionPolicy()
     plan = SpeciesLatticeBoltzmannPlan(jnp.asarray((0.1, 0.2)))
@@ -85,9 +82,6 @@ def test_species_distributions_preserve_each_scalar_moment() -> None:
     assert result.successful
     np.testing.assert_allclose(result.populations, equilibrium, atol=1e-12)
     assert plan.species_count == 2
-
-
-def test_boussinesq_force_uses_declared_reference_temperature_and_gravity() -> None:
     plan = BoussinesqCouplingPlan(
         2.0,
         0.1,

@@ -29,7 +29,7 @@ def _eos() -> Any:
     return GammaLawEOS(scale, 4.0 / 3.0, minimum_density=0.0)
 
 
-def test_michel_bondi_solution_satisfies_both_relativistic_integrals() -> None:
+def test_compact_object_accretion_scenario_1() -> None:
     plan = MichelBondiAccretionPlan(
         _eos(),
         1.0,
@@ -59,9 +59,6 @@ def test_michel_bondi_solution_satisfies_both_relativistic_integrals() -> None:
     )
     assert float(solution.radial_four_velocity[0]) < -plan.critical_radial_speed
     assert float(solution.radial_four_velocity[2]) > -plan.critical_radial_speed
-
-
-def test_fishbone_moncrief_torus_has_constant_first_integral_and_magnetic_seed() -> None:
     plan = FishboneMoncriefTorusPlan(
         _eos(),
         1.0,
@@ -98,9 +95,6 @@ def test_fishbone_moncrief_torus_has_constant_first_integral_and_magnetic_seed()
     np.testing.assert_allclose(data.vector_potential_covector[:, :2], 0.0)
     np.testing.assert_allclose(data.primitive[..., 5:8], 0.0)
     assert float(data.primitive[0, 4]) > plan.atmosphere_pressure
-
-
-def test_ingoing_kerr_grid_lowers_consistent_cell_and_face_adm_stages() -> None:
     eos = _eos()
     grid = phx.discretization.TensorGridPlan(
         (

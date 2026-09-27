@@ -26,7 +26,7 @@ def _atlas_plan() -> Any:
     return atlas, quadrature, plan
 
 
-def test_boundary_atlas_materializes_oriented_weighted_surfels() -> None:
+def test_surfel_atlas_scenario_1() -> None:
     atlas, _, plan = _atlas_plan()
     prepared = plan.prepare(atlas, 0.0)
     materialized = prepared.materialize(atlas, 0.0)
@@ -48,9 +48,6 @@ def test_boundary_atlas_materializes_oriented_weighted_surfels() -> None:
         rtol=1.0e-12,
         atol=1.0e-12,
     )
-
-
-def test_atlas_surfel_materialization_adapts_to_marker_kinematics() -> None:
     atlas, quadrature, plan = _atlas_plan()
     prepared = plan.prepare(atlas, 0.0)
     materialized = eqx.filter_jit(prepared.materialize)(
@@ -67,9 +64,6 @@ def test_atlas_surfel_materialization_adapts_to_marker_kinematics() -> None:
     kinematics = materialized.marker_kinematics(markers)
     np.testing.assert_allclose(kinematics.position, materialized.geometry.position)
     np.testing.assert_allclose(kinematics.velocity, materialized.velocity)
-
-
-def test_marker_materialization_rejects_out_of_range_chart_indices() -> None:
     atlas, _, _ = _atlas_plan()
     invalid = phx.geometry.ImmersedMarkerQuadraturePlan(
         jnp.asarray((0,)),

@@ -56,7 +56,7 @@ def _quadratic_problem(*, condition: Any = False) -> Any:
     )
 
 
-def test_full_closure_detects_residual_outside_retained_projection() -> None:
+def test_spectral_residual_compiler_scenario_1() -> None:
     space = _fourier_space()
     x = space.axes[0].nodes
     wave_number = space.modal_shape[0] // 2 - 1
@@ -87,9 +87,6 @@ def test_full_closure_detects_residual_outside_retained_projection() -> None:
     assert full.report.evaluation_shape == (23,)
     # ty: ignore[unresolved-attribute]
     assert full.residual_coefficients(state)[0].shape == (23,)
-
-
-def test_all_coordinate_chebyshev_time_derivative_is_exact_and_differentiable() -> None:
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     field = phx.equations.PDEField("u", coordinates=("t",))
     u = phx.equations.PDEExpression.field("u")
@@ -124,9 +121,6 @@ def test_all_coordinate_chebyshev_time_derivative_is_exact_and_differentiable() 
     assert energy < 1e-20
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.sqrt(jnp.real(jnp.vdot(gradient, gradient))) < 1e-8
-
-
-def test_nonpolynomial_full_residual_requires_explicit_approximation() -> None:
     space = _fourier_space(8)
     problem = _quadratic_problem()
     u = phx.equations.PDEExpression.field("u")
@@ -152,7 +146,7 @@ def test_nonpolynomial_full_residual_requires_explicit_approximation() -> None:
     assert not compiled.report.exact
 
 
-def test_conditions_are_rejected_unless_external_handling_is_explicit() -> None:
+def test_spectral_residual_compiler_scenario_2() -> None:
     space = _fourier_space(8)
     problem = _quadratic_problem(condition=True)
     method = phx.discretization.PseudospectralMethodPlan(
@@ -170,9 +164,6 @@ def test_conditions_are_rejected_unless_external_handling_is_explicit() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert compiled.report.condition_handling == "external"
-
-
-def test_closure_plan_rejects_unsupported_capacity_and_basis() -> None:
     space = _fourier_space(12)
     with pytest.raises(ValueError, match="maximum_evaluation_modes"):
         phx.discretization.PolynomialClosureDealiasingPlan(
@@ -189,9 +180,6 @@ def test_closure_plan_rejects_unsupported_capacity_and_basis() -> None:
             sine,
             required_polynomial_degree=2,
         )
-
-
-def test_periodic_coordinate_values_do_not_claim_finite_exactness() -> None:
     space = _fourier_space(8)
     x = phx.equations.PDECoordinate(
         "x",

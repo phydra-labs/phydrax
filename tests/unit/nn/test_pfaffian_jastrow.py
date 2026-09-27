@@ -179,7 +179,7 @@ def test_complex_pfaffian_phase_and_jastrow_log_compose_without_phase_loss() -> 
     assert jnp.allclose(value.phase, jnp.exp(0.55j))
 
 
-def test_constructor_and_callable_outputs_require_exact_finite_shapes() -> None:
+def test_pfaffian_jastrow_scenario_1() -> None:
     with pytest.raises(ValueError, match="positive and even"):
         PfaffianJastrowAmplitude(
             _two_particle_pairing,
@@ -207,9 +207,6 @@ def test_constructor_and_callable_outputs_require_exact_finite_shapes() -> None:
     wrong_jastrow = _amplitude(_two_particle_pairing, lambda coordinates: jnp.zeros((1,)))
     with pytest.raises(ValueError, match="jastrow"):
         wrong_jastrow(jnp.asarray([[0.0], [1.0]]))
-
-
-def test_incremental_target_rejects_unsupported_mixed_precision_lu() -> None:
     status = FailurePolicy("status")
     update_policy = LowRankSolvePolicy(
         LinearSolvePolicy(
@@ -231,6 +228,103 @@ def test_incremental_target_rejects_unsupported_mixed_precision_lu() -> None:
             update_policy=update_policy,
             maximum_chains=1,
         )
+    model = _amplitude(_two_particle_pairing)
+    target = pfaffian_jastrow_incremental_target(
+        model,
+        capacity=2,
+        update_policy=_update_policy(),
+        maximum_chains=1,
+    )
+    current = jnp.asarray([[0.0], [1.0]])
+    proposed = jnp.asarray([[0.0], [0.0]])
+    state = target.initialize(current)
+
+    proposal = target.propose(state, proposed, _payload(1, -1.0))
+
+    assert not proposal.valid
+    assert not proposal.proposed_cache.native_valid
+    assert not proposal.proposed_cache.compact_eligible
+    assert jnp.isneginf(proposal.proposed_cache.log_abs)
+    model = _incremental_amplitude()
+    target = _incremental_target(model)
+    current = _coordinates()
+    proposed = current.at[2, 0].add(0.15)
+    state = target.initialize(current)
+    proposal = target.propose(state, proposed, _payload(2, 0.15))
+    exact_current, exact_proposed = model(current), model(proposed)
+
+    assert isinstance(state.cache, PfaffianJastrowCache)
+    assert proposal.valid
+    assert proposal.proposed_cache.compact_update
+    assert not proposal.proposed_cache.rebased
+    assert proposal.proposed_cache.native_valid
+    assert proposal.proposed_cache.sequence.active_rank == 2
+    assert jnp.allclose(
+        proposal.log_ratio,
+        2.0 * (exact_proposed.log_abs - exact_current.log_abs),
+        rtol=2e-5,
+        atol=2e-6,
+    )
+    assert jnp.allclose(
+        proposal.proposed_cache.phase,
+        exact_proposed.phase,
+        rtol=2e-5,
+        atol=2e-6,
+    )
+
+    rejected = target.commit(state, proposed, proposal, jnp.asarray(False))
+    accepted = target.commit(state, proposed, proposal, jnp.asarray(True))
+    assert jnp.array_equal(rejected.position, current)
+    assert jnp.array_equal(rejected.cache.pairing_matrix, state.cache.pairing_matrix)
+    assert rejected.cache.sequence.active_rank == 0
+    assert jnp.array_equal(accepted.position, proposed)
+    assert accepted.cache.sequence.active_rank == 2
+    assert jnp.allclose(accepted.log_target, 2.0 * exact_proposed.log_abs)
+    model = _incremental_amplitude()
+    target = _incremental_target(model, capacity=2)
+    current = _coordinates()
+    first_position = current.at[0, 0].add(0.1)
+    initial = target.initialize(current)
+    first = target.propose(initial, first_position, _payload(0, 0.1))
+    accepted = target.commit(initial, first_position, first, jnp.asarray(True))
+    second_position = first_position.at[3, 0].add(-0.12)
+    second = target.propose(accepted, second_position, _payload(3, -0.12))
+    exact = model(second_position)
+
+    assert first.proposed_cache.compact_update
+    assert accepted.cache.sequence.remaining_capacity == 0
+    assert second.valid
+    assert second.proposed_cache.rebased
+    assert second.proposed_cache.sequence.active_rank == 0
+    assert jnp.allclose(
+        accepted.log_target + second.log_ratio,
+        2.0 * exact.log_abs,
+        rtol=2e-5,
+        atol=2e-6,
+    )
+    assert jnp.allclose(second.proposed_cache.phase, exact.phase)
+    model = _incremental_amplitude()
+    target = _incremental_target(model, capacity=4, refresh_cadence=2)
+    current = _coordinates()
+    proposed = current.at[1, 0].add(0.13)
+    initial = target.initialize(current)
+    proposal = target.propose(initial, proposed, _payload(1, 0.13))
+    accepted = target.commit(initial, proposed, proposal, jnp.asarray(True))
+    refreshed = eqx.filter_jit(lambda state: target.refresh(state))(accepted)
+
+    assert target.refresh_cadence == 2
+    assert accepted.cache.sequence.active_rank == 2
+    assert refreshed.valid
+    assert refreshed.cache.rebased
+    assert refreshed.cache.sequence.active_rank == 0
+    assert jnp.allclose(refreshed.log_target, 2.0 * model(proposed).log_abs)
+    assert jnp.allclose(refreshed.cache.phase, model(proposed).phase)
+    amplitude = _amplitude(lambda coordinates: jnp.zeros((2, 2)))
+    value = amplitude(jnp.asarray([[0.0], [1.0]]))
+
+    assert not value.valid
+    assert not value.nonzero
+    assert jnp.isneginf(value.log_abs)
 
 
 def test_required_skew_policy_failure_propagates_to_amplitude_validity() -> None:
@@ -254,38 +348,7 @@ def test_required_skew_policy_failure_propagates_to_amplitude_validity() -> None
     assert not value.nonzero
 
 
-def test_pfaffian_node_is_an_invalid_zero_amplitude() -> None:
-    amplitude = _amplitude(lambda coordinates: jnp.zeros((2, 2)))
-    value = amplitude(jnp.asarray([[0.0], [1.0]]))
-
-    assert not value.valid
-    assert not value.nonzero
-    assert jnp.isneginf(value.log_abs)
-
-
-def test_incremental_target_rejects_a_pfaffian_node_without_singular_solve_state() -> (
-    None
-):
-    model = _amplitude(_two_particle_pairing)
-    target = pfaffian_jastrow_incremental_target(
-        model,
-        capacity=2,
-        update_policy=_update_policy(),
-        maximum_chains=1,
-    )
-    current = jnp.asarray([[0.0], [1.0]])
-    proposed = jnp.asarray([[0.0], [0.0]])
-    state = target.initialize(current)
-
-    proposal = target.propose(state, proposed, _payload(1, -1.0))
-
-    assert not proposal.valid
-    assert not proposal.proposed_cache.native_valid
-    assert not proposal.proposed_cache.compact_eligible
-    assert jnp.isneginf(proposal.proposed_cache.log_abs)
-
-
-def test_external_vmap_and_jit_preserve_canonical_batch_shape() -> None:
+def test_pfaffian_jastrow_scenario_2() -> None:
     amplitude = _amplitude(
         _two_particle_pairing,
         lambda coordinates: 0.1 * jnp.sum(coordinates),
@@ -307,6 +370,42 @@ def test_external_vmap_and_jit_preserve_canonical_batch_shape() -> None:
     assert jnp.all(values.valid)
     assert jnp.allclose(values.log_abs, expected)
     assert jnp.allclose(values.phase, jnp.ones((3,), dtype=values.phase.dtype))
+    policy = _update_policy()
+    factory = eqx.Partial(
+        pfaffian_jastrow_incremental_target,
+        capacity=4,
+        update_policy=policy,
+        maximum_chains=4,
+        refresh_cadence=3,
+        locality_tolerance=1e-5,
+    )
+    model = PfaffianJastrowAmplitude(
+        _ScaledPairing(jnp.asarray(1.0)),
+        _complex_four_particle_jastrow,
+        particle_count=4,
+        spatial_dimension=1,
+        pairing_id="scaled-local-four-particle-pairing",
+        cusp_id="complex-quadratic-cusp",
+        policy=_policy(),
+    )
+    changed_model = eqx.tree_at(
+        lambda amplitude: amplitude.pairing_evaluator.scale,
+        model,
+        jnp.asarray(1.4),
+    )
+    original_target = factory(model)
+    changed_target = factory(changed_model)
+    kernel = MetropolisHastings(SingleCoordinateGaussianProposal(0.1))
+    state = kernel.initialize(original_target, _coordinates()[None, ...])
+    rebound = eqx.filter_jit(lambda value: kernel.rebind(changed_target, value))(state)
+    exact = 2.0 * changed_model(_coordinates()).log_abs
+
+    assert original_target.target_id == changed_target.target_id
+    assert rebound.target_id == state.target_id
+    assert rebound.step_index == state.step_index
+    assert jnp.all(rebound.valid)
+    assert jnp.allclose(rebound.log_target, exact[None])
+    assert jnp.allclose(rebound.cache.phase, changed_model(_coordinates()).phase[None])
 
 
 def test_coordinate_first_and_second_derivatives_match_away_from_nodes() -> None:
@@ -346,46 +445,6 @@ def test_coordinate_first_and_second_derivatives_match_away_from_nodes() -> None
     assert jnp.all(jnp.isfinite(hessian))
     assert jnp.allclose(gradient, expected_gradient, rtol=2e-5, atol=2e-6)
     assert jnp.allclose(hessian, expected_hessian, rtol=2e-5, atol=2e-6)
-
-
-def test_incremental_target_compact_ratio_phase_and_acceptance_selection_are_exact() -> (
-    None
-):
-    model = _incremental_amplitude()
-    target = _incremental_target(model)
-    current = _coordinates()
-    proposed = current.at[2, 0].add(0.15)
-    state = target.initialize(current)
-    proposal = target.propose(state, proposed, _payload(2, 0.15))
-    exact_current, exact_proposed = model(current), model(proposed)
-
-    assert isinstance(state.cache, PfaffianJastrowCache)
-    assert proposal.valid
-    assert proposal.proposed_cache.compact_update
-    assert not proposal.proposed_cache.rebased
-    assert proposal.proposed_cache.native_valid
-    assert proposal.proposed_cache.sequence.active_rank == 2
-    assert jnp.allclose(
-        proposal.log_ratio,
-        2.0 * (exact_proposed.log_abs - exact_current.log_abs),
-        rtol=2e-5,
-        atol=2e-6,
-    )
-    assert jnp.allclose(
-        proposal.proposed_cache.phase,
-        exact_proposed.phase,
-        rtol=2e-5,
-        atol=2e-6,
-    )
-
-    rejected = target.commit(state, proposed, proposal, jnp.asarray(False))
-    accepted = target.commit(state, proposed, proposal, jnp.asarray(True))
-    assert jnp.array_equal(rejected.position, current)
-    assert jnp.array_equal(rejected.cache.pairing_matrix, state.cache.pairing_matrix)
-    assert rejected.cache.sequence.active_rank == 0
-    assert jnp.array_equal(accepted.position, proposed)
-    assert accepted.cache.sequence.active_rank == 2
-    assert jnp.allclose(accepted.log_target, 2.0 * exact_proposed.log_abs)
 
 
 def test_incremental_target_nonlocal_pairing_change_takes_exact_full_rebase() -> None:
@@ -459,32 +518,6 @@ def test_incremental_target_never_approximates_weak_nonlocal_pairing_changes() -
     )
 
 
-def test_incremental_target_rebases_when_fixed_capacity_is_exhausted() -> None:
-    model = _incremental_amplitude()
-    target = _incremental_target(model, capacity=2)
-    current = _coordinates()
-    first_position = current.at[0, 0].add(0.1)
-    initial = target.initialize(current)
-    first = target.propose(initial, first_position, _payload(0, 0.1))
-    accepted = target.commit(initial, first_position, first, jnp.asarray(True))
-    second_position = first_position.at[3, 0].add(-0.12)
-    second = target.propose(accepted, second_position, _payload(3, -0.12))
-    exact = model(second_position)
-
-    assert first.proposed_cache.compact_update
-    assert accepted.cache.sequence.remaining_capacity == 0
-    assert second.valid
-    assert second.proposed_cache.rebased
-    assert second.proposed_cache.sequence.active_rank == 0
-    assert jnp.allclose(
-        accepted.log_target + second.log_ratio,
-        2.0 * exact.log_abs,
-        rtol=2e-5,
-        atol=2e-6,
-    )
-    assert jnp.allclose(second.proposed_cache.phase, exact.phase)
-
-
 def test_incremental_target_jit_vmap_matches_full_evaluation_for_multiple_chains() -> (
     None
 ):
@@ -545,68 +578,8 @@ def test_incremental_target_jit_vmap_matches_full_evaluation_for_multiple_chains
     )
 
 
-def test_incremental_target_scheduled_exact_refresh_rebases_compact_history() -> None:
-    model = _incremental_amplitude()
-    target = _incremental_target(model, capacity=4, refresh_cadence=2)
-    current = _coordinates()
-    proposed = current.at[1, 0].add(0.13)
-    initial = target.initialize(current)
-    proposal = target.propose(initial, proposed, _payload(1, 0.13))
-    accepted = target.commit(initial, proposed, proposal, jnp.asarray(True))
-    refreshed = eqx.filter_jit(lambda state: target.refresh(state))(accepted)
-
-    assert target.refresh_cadence == 2
-    assert accepted.cache.sequence.active_rank == 2
-    assert refreshed.valid
-    assert refreshed.cache.rebased
-    assert refreshed.cache.sequence.active_rank == 0
-    assert jnp.allclose(refreshed.log_target, 2.0 * model(proposed).log_abs)
-    assert jnp.allclose(refreshed.cache.phase, model(proposed).phase)
-
-
 class _ScaledPairing(eqx.Module):
     scale: jax.Array
 
     def __call__(self, coordinates: Any) -> Any:
         return self.scale * _local_four_particle_pairing(coordinates)
-
-
-def test_model_bound_target_factory_rebinds_parameter_changes_with_stable_identity() -> (
-    None
-):
-    policy = _update_policy()
-    factory = eqx.Partial(
-        pfaffian_jastrow_incremental_target,
-        capacity=4,
-        update_policy=policy,
-        maximum_chains=4,
-        refresh_cadence=3,
-        locality_tolerance=1e-5,
-    )
-    model = PfaffianJastrowAmplitude(
-        _ScaledPairing(jnp.asarray(1.0)),
-        _complex_four_particle_jastrow,
-        particle_count=4,
-        spatial_dimension=1,
-        pairing_id="scaled-local-four-particle-pairing",
-        cusp_id="complex-quadratic-cusp",
-        policy=_policy(),
-    )
-    changed_model = eqx.tree_at(
-        lambda amplitude: amplitude.pairing_evaluator.scale,
-        model,
-        jnp.asarray(1.4),
-    )
-    original_target = factory(model)
-    changed_target = factory(changed_model)
-    kernel = MetropolisHastings(SingleCoordinateGaussianProposal(0.1))
-    state = kernel.initialize(original_target, _coordinates()[None, ...])
-    rebound = eqx.filter_jit(lambda value: kernel.rebind(changed_target, value))(state)
-    exact = 2.0 * changed_model(_coordinates()).log_abs
-
-    assert original_target.target_id == changed_target.target_id
-    assert rebound.target_id == state.target_id
-    assert rebound.step_index == state.step_index
-    assert jnp.all(rebound.valid)
-    assert jnp.allclose(rebound.log_target, exact[None])
-    assert jnp.allclose(rebound.cache.phase, changed_model(_coordinates()).phase[None])

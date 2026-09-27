@@ -76,46 +76,66 @@ def test_multiplicative_exact_scale_target_uses_identical_merit_and_one_trial() 
     )
 
 
-@pytest.mark.parametrize("correction", ["additive", "multiplicative"])
-def test_anchor_interpolation_is_exact_even_across_large_physical_offsets(
-    correction: Any,
-) -> None:
-    model = AnchoredResponseModel(
-        _response,
-        correction=correction,
-        **({"minimum_denominator": 1e-15} if correction == "multiplicative" else {}),
+def test_anchored_target_scenario_1() -> None:
+    for correction in ["additive", "multiplicative"]:
+        model = AnchoredResponseModel(
+            _response,
+            correction=correction,
+            **({"minimum_denominator": 1e-15} if correction == "multiplicative" else {}),
+        )
+        model_anchor = jnp.asarray([1.0e12, 1.0e-8])
+        fine_anchor = jnp.asarray([1.0e-8, 1.0e12])
+        np.testing.assert_array_equal(
+            model.correct(model_anchor, model_anchor, fine_anchor), fine_anchor
+        )
+    result = solve_anchored_target(
+        _problem(target=2.0, bounds=phx.optim.Bounds(0.0, 1.0)),
+        jnp.asarray([0.0]),
     )
-    model_anchor = jnp.asarray([1.0e12, 1.0e-8])
-    fine_anchor = jnp.asarray([1.0e-8, 1.0e12])
-    np.testing.assert_array_equal(
-        model.correct(model_anchor, model_anchor, fine_anchor), fine_anchor
-    )
-
-
-@pytest.mark.parametrize("denominator", [0.0, 1e-13, -1e-13])
-def test_unsafe_multiplicative_anchor_is_rejected_without_a_physical_trial(
-    denominator: Any,
-) -> None:
-    def model(design: Any, args: Any) -> Any:
-        del args
-        return design + denominator, jnp.asarray(True), design
-
-    problem = AnchoredTargetProblem(
-        _response,
-        AnchoredResponseModel(
-            model, correction="multiplicative", minimum_denominator=1e-10
-        ),
-        targets=jnp.asarray([1.0]),
-        scales=1.0,
-        response_names=("load",),
-        bounds=phx.optim.Bounds(-2.0, 2.0),
-    )
-    result = solve_anchored_target(problem, jnp.asarray([0.0]))
     assert not result.successful
-    assert int(result.status) == int(phx.optim.OptimizationStatus.CERTIFICATION_FAILED)
-    assert int(result.evaluations) == 1
-    np.testing.assert_array_equal(result.design, [0.0])
-    np.testing.assert_array_equal(result.values, [0.0])
+    assert int(result.status) == int(phx.optim.OptimizationStatus.STAGNATION)
+    np.testing.assert_allclose(result.design, [1.0], atol=1e-8)
+    np.testing.assert_allclose(result.target_error, 1.0, atol=1e-8)
+    assert int(result.evaluations) == 2
+    result = solve_anchored_target(
+        _problem(),
+        jnp.asarray([0.0]),
+        method=AnchoredTargetMethod(initial_radius=0.1, maximum_evaluations=2),
+    )
+    assert not result.successful
+    assert result.accepted
+    assert int(result.status) == int(
+        phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    np.testing.assert_allclose(result.design, [0.1], atol=1e-8)
+    assert result.target_error > 0.8
+
+
+def test_unsafe_multiplicative_anchor_is_rejected_without_a_physical_trial() -> None:
+    for denominator in [0.0, 1e-13, -1e-13]:
+
+        def model(design: Any, args: Any) -> Any:
+            del args
+            return design + denominator, jnp.asarray(True), design
+
+        problem = AnchoredTargetProblem(
+            _response,
+            AnchoredResponseModel(
+                model, correction="multiplicative", minimum_denominator=1e-10
+            ),
+            targets=jnp.asarray([1.0]),
+            scales=1.0,
+            response_names=("load",),
+            bounds=phx.optim.Bounds(-2.0, 2.0),
+        )
+        result = solve_anchored_target(problem, jnp.asarray([0.0]))
+        assert not result.successful
+        assert int(result.status) == int(
+            phx.optim.OptimizationStatus.CERTIFICATION_FAILED
+        )
+        assert int(result.evaluations) == 1
+        np.testing.assert_array_equal(result.design, [0.0])
+        np.testing.assert_array_equal(result.values, [0.0])
 
 
 def test_wrong_model_rejections_keep_fixed_anchor_and_consume_budget() -> None:
@@ -179,34 +199,7 @@ def test_invalid_initial_physics_never_claims_target_success() -> None:
     assert int(result.iterations) == 0
 
 
-def test_bound_stationarity_is_not_unmet_target_success() -> None:
-    result = solve_anchored_target(
-        _problem(target=2.0, bounds=phx.optim.Bounds(0.0, 1.0)),
-        jnp.asarray([0.0]),
-    )
-    assert not result.successful
-    assert int(result.status) == int(phx.optim.OptimizationStatus.STAGNATION)
-    np.testing.assert_allclose(result.design, [1.0], atol=1e-8)
-    np.testing.assert_allclose(result.target_error, 1.0, atol=1e-8)
-    assert int(result.evaluations) == 2
-
-
-def test_budget_exhaustion_is_not_partial_target_success() -> None:
-    result = solve_anchored_target(
-        _problem(),
-        jnp.asarray([0.0]),
-        method=AnchoredTargetMethod(initial_radius=0.1, maximum_evaluations=2),
-    )
-    assert not result.successful
-    assert result.accepted
-    assert int(result.status) == int(
-        phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
-    )
-    np.testing.assert_allclose(result.design, [0.1], atol=1e-8)
-    assert result.target_error > 0.8
-
-
-def test_physical_constraints_share_canonical_order_and_block_infeasible_target() -> None:
+def test_anchored_target_scenario_2() -> None:
     constraints = (
         phx.optim.NonlinearConstraint(
             lambda point, args: point[1],
@@ -236,6 +229,19 @@ def test_physical_constraints_share_canonical_order_and_block_infeasible_target(
     expected = 0.5 * ((x - 1.0) ** 2 + 10.0 * x**2)
     np.testing.assert_allclose(result.merit, expected, atol=1e-10)
     np.testing.assert_allclose(result.history["ratio"][0], 1.0, atol=1e-10)
+    with pytest.raises(ValueError):
+        AnchoredResponseModel(_response, correction="multiplicative")
+    with pytest.raises(ValueError):
+        _problem(realization="resampled")
+    with pytest.raises(ValueError):
+        AnchoredTargetProblem(
+            _response,
+            AnchoredResponseModel(_response),
+            targets=[1.0, 2.0],
+            response_names=("force", "force"),
+            scales=1.0,
+            bounds=phx.optim.Bounds(),
+        )
 
 
 def test_coupled_native_implicit_predictor_matches_physical_target() -> None:
@@ -299,22 +305,6 @@ def test_invalid_predictor_does_not_spend_physical_trial_budget() -> None:
     assert int(result.status) == int(phx.optim.OptimizationStatus.CERTIFICATION_FAILED)
     assert int(result.evaluations) == 1
     np.testing.assert_array_equal(result.design, [0.0])
-
-
-def test_named_physical_scales_and_frozen_realization_are_explicit() -> None:
-    with pytest.raises(ValueError):
-        AnchoredResponseModel(_response, correction="multiplicative")
-    with pytest.raises(ValueError):
-        _problem(realization="resampled")
-    with pytest.raises(ValueError):
-        AnchoredTargetProblem(
-            _response,
-            AnchoredResponseModel(_response),
-            targets=[1.0, 2.0],
-            response_names=("force", "force"),
-            scales=1.0,
-            bounds=phx.optim.Bounds(),
-        )
 
 
 def test_host_blackbox_is_never_traced_and_matches_target() -> None:

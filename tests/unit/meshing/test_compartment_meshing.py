@@ -27,6 +27,10 @@ def _manifest() -> Any:
 
 @pytest.mark.meshing_ftetwild
 def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> None:
+    pytest.importorskip(
+        "wildmeshing",
+        reason="requires the optional fTetWild provider",
+    )
     contract = phx.SpatialCoordinateContract(
         phx.units.MILLIMETER,
         coordinate_system="cartesian-lps",

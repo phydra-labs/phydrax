@@ -17,7 +17,7 @@ from phydrax.integration import from_samples, over
 from phydrax.operators.integral import integral
 
 
-def test_dataset_domain_samples_points_batch() -> None:
+def test_dataset_domain_contracts() -> None:
     data = jnp.arange(10.0, dtype="float64").reshape((10, 1))
     dom = DatasetDomain(data)
     component = dom.component()
@@ -30,9 +30,6 @@ def test_dataset_domain_samples_points_batch() -> None:
     field = batch["data"]
     assert field.dims == (axis, None)
     assert field.data.shape == (4, 1)
-
-
-def test_dataset_domain_points_from_indices_carries_internal_indices() -> None:
     data = jnp.arange(10.0, dtype="float64").reshape((5, 2))
     dom = DatasetDomain(data)
     structure = SampleLayout((("data",),))
@@ -44,9 +41,6 @@ def test_dataset_domain_points_from_indices_carries_internal_indices() -> None:
     assert batch["data"].dims == (axis, None)
     assert jnp.allclose(jnp.asarray(batch["data"].data), data[indices])
     assert jnp.all(batch[DATASET_INDEX_KEY].data == indices)
-
-
-def test_dataset_domain_integral_probability_measure_is_average() -> None:
     data = jnp.zeros((5, 2), dtype="float64")
     dom = DatasetDomain(data, measure="probability")
     component = dom.component()
@@ -57,9 +51,6 @@ def test_dataset_domain_integral_probability_measure_is_average() -> None:
     realization = from_samples(over(component), batch)
     out = integral(u, realization)
     assert jnp.allclose(jnp.asarray(out.data), 1.0)
-
-
-def test_dataset_domain_integral_count_measure_is_sum() -> None:
     data = jnp.zeros((5, 2), dtype="float64")
     dom = DatasetDomain(data, measure="count")
     component = dom.component()
@@ -70,9 +61,6 @@ def test_dataset_domain_integral_count_measure_is_sum() -> None:
     realization = from_samples(over(component), batch)
     out = integral(u, realization)
     assert jnp.allclose(jnp.asarray(out.data), 5.0)
-
-
-def test_dataset_domain_with_coord_separable_geometry_sampling() -> None:
     data = jnp.arange(6.0, dtype="float64")
     data_dom = DatasetDomain(data)
     geom = Interval1d(0.0, 1.0)

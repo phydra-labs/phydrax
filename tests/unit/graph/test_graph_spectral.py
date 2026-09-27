@@ -21,7 +21,7 @@ def _two_node_graph(nodes: Any = None) -> phx.graph.GraphIR:
     )
 
 
-def test_graph_laplacian_apply_matches_two_node_stencil() -> None:
+def test_graph_contracts() -> None:
     graph = _two_node_graph()
 
     out = phx.graph.graph_laplacian_apply(
@@ -32,9 +32,6 @@ def test_graph_laplacian_apply_matches_two_node_stencil() -> None:
     )
 
     assert jnp.allclose(out[:, 0], jnp.array([-2.0, 2.0]))
-
-
-def test_graph_laplacian_operator_supports_mapping_keys() -> None:
     graph = _two_node_graph(
         nodes={
             "position": jnp.array([[0.0], [1.0]]),
@@ -52,9 +49,6 @@ def test_graph_laplacian_operator_supports_mapping_keys() -> None:
     assert jnp.allclose(out.nodes["lap_u"], jnp.array([-2.0, 2.0]))
     assert "position" in out.nodes
     assert "u" in out.nodes
-
-
-def test_graph_polynomial_filter_linear_laplacian_term() -> None:
     graph = _two_node_graph()
     filt = phx.graph.GraphPolynomialFilter(
         jnp.array([0.0, 1.0]),
@@ -65,9 +59,6 @@ def test_graph_polynomial_filter_linear_laplacian_term() -> None:
     out = filt(graph)
 
     assert jnp.allclose(out.nodes[:, 0], jnp.array([-2.0, 2.0]))
-
-
-def test_graph_polynomial_filter_feature_mixing_coefficients() -> None:
     graph = _two_node_graph()
     coeffs = jnp.array([[[1.0, 2.0]]])
 
@@ -75,9 +66,6 @@ def test_graph_polynomial_filter_feature_mixing_coefficients() -> None:
 
     assert out.nodes.shape == (2, 2)
     assert jnp.allclose(out.nodes, jnp.array([[1.0, 2.0], [3.0, 6.0]]))
-
-
-def test_graph_chebyshev_filter_identity_and_first_scaled_term() -> None:
     graph = _two_node_graph()
     identity = phx.graph.GraphChebyshevFilter(
         jnp.array([1.0]),
@@ -91,29 +79,6 @@ def test_graph_chebyshev_filter_identity_and_first_scaled_term() -> None:
 
     assert jnp.allclose(identity(graph).nodes, graph.nodes)
     assert jnp.allclose(first(graph).nodes[:, 0], jnp.array([-3.0, -1.0]))
-
-
-def test_graph_spectral_filter_wraps_as_domain_graph_model() -> None:
-    graph = _two_node_graph()
-    domain = phx.domain.GraphDomain(graph)
-    component = domain.component({"graph": phx.domain.Nodes()})
-    batch = component.sample(
-        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
-    )
-
-    @domain.Function("graph")
-    def u(node: Any) -> Any:
-        return node[0]
-
-    filt = domain.GraphModel(
-        phx.graph.GraphPolynomialFilter(jnp.array([1.0])),
-        input_fn=u,
-    )
-
-    assert jnp.allclose(jnp.asarray(filt(batch).data), jnp.array([1.0, 3.0]))
-
-
-def test_graph_spectral_filter_preserves_padding_entries() -> None:
     graph0 = _two_node_graph()
     graph1 = phx.graph.GraphIR(
         nodes=jnp.array([[0.0], [1.0], [2.0]]),
@@ -142,3 +107,23 @@ def test_graph_spectral_filter_preserves_padding_entries() -> None:
     assert out.nodes.shape == (6, 1)
     assert jnp.allclose(out.nodes[:5, 0], jnp.array([-2.0, 2.0, 0.0, 1.0, 1.0]))
     assert jnp.allclose(out.nodes[5, 0], 0.0)
+
+
+def test_graph_spectral_filter_wraps_as_domain_graph_model() -> None:
+    graph = _two_node_graph()
+    domain = phx.domain.GraphDomain(graph)
+    component = domain.component({"graph": phx.domain.Nodes()})
+    batch = component.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
+
+    @domain.Function("graph")
+    def u(node: Any) -> Any:
+        return node[0]
+
+    filt = domain.GraphModel(
+        phx.graph.GraphPolynomialFilter(jnp.array([1.0])),
+        input_fn=u,
+    )
+
+    assert jnp.allclose(jnp.asarray(filt(batch).data), jnp.array([1.0, 3.0]))

@@ -14,84 +14,67 @@ import pytest
 import phydrax as phx
 
 
-def test_hyperrectangle_basic_measures() -> None:
-    geom = phx.domain.HyperRectangle(
-        lower=jnp.array([-1.0, 0.0, 2.0]),
-        upper=jnp.array([1.0, 3.0, 6.0]),
+def test_hyperrectangle_contracts() -> None:
+    geometry = phx.domain.HyperRectangle(
+        lower=jnp.asarray([-1.0, 0.0, 2.0]),
+        upper=jnp.asarray([1.0, 3.0, 6.0]),
     )
+    assert geometry.label == "x"
+    assert geometry.spatial_dim == 3
+    assert np.allclose(
+        np.asarray(geometry.bounds),
+        [[-1.0, 0.0, 2.0], [1.0, 3.0, 6.0]],
+    )
+    assert np.isclose(float(geometry.volume), 24.0)
+    assert np.isclose(float(geometry.boundary_measure_value), 52.0)
 
-    assert geom.label == "x"
-    assert geom.spatial_dim == 3
-    assert np.allclose(np.asarray(geom.bounds), [[-1.0, 0.0, 2.0], [1.0, 3.0, 6.0]])
-    assert np.isclose(float(geom.volume), 24.0)
+    planar = phx.domain.HyperRectangle(
+        lower=jnp.asarray([0.0, -1.0]),
+        upper=jnp.asarray([2.0, 3.0]),
+    )
+    points = jnp.asarray([[1.0, 0.0], [0.0, 0.0], [2.0, 3.0], [3.0, 0.0]])
+    np.testing.assert_array_equal(planar._contains(points), [True, True, True, False])
+    np.testing.assert_array_equal(
+        planar._on_boundary(points),
+        [False, True, True, False],
+    )
+    expected_normals = jnp.asarray(
+        [[-1.0, 0.0], [1.0 / jnp.sqrt(2.0), 1.0 / jnp.sqrt(2.0)]]
+    )
+    np.testing.assert_allclose(
+        planar._boundary_normals(jnp.asarray([[0.0, 0.0], [2.0, 3.0]])),
+        expected_normals,
+    )
+    signed_distance = planar.adf(points)
+    assert signed_distance[0] < 0.0
+    assert np.isclose(float(signed_distance[1]), 0.0)
+    assert np.isclose(float(signed_distance[2]), 0.0)
+    assert signed_distance[3] > 0.0
 
-    # Surface area of a 2 x 3 x 4 cuboid: 2 * (3*4 + 2*4 + 2*3).
-    assert np.isclose(float(geom.boundary_measure_value), 52.0)
-
-
-def test_hyperrectangle_rejects_invalid_bounds() -> None:
     with pytest.raises(ValueError, match="matching shapes"):
         phx.domain.HyperRectangle(lower=jnp.zeros((2,)), upper=jnp.ones((3,)))
-
     with pytest.raises(ValueError, match="upper > lower"):
         phx.domain.HyperRectangle(
-            lower=jnp.array([0.0, 1.0]), upper=jnp.array([1.0, 1.0])
+            lower=jnp.asarray([0.0, 1.0]),
+            upper=jnp.asarray([1.0, 1.0]),
         )
-
-
-def test_hyperrectangle_contains_boundary_normals_and_adf() -> None:
-    geom = phx.domain.HyperRectangle(
-        lower=jnp.array([0.0, -1.0]), upper=jnp.array([2.0, 3.0])
+    geometry = phx.domain.HyperRectangle(
+        lower=jnp.asarray([-1.0, 0.0]),
+        upper=jnp.asarray([1.0, 2.0]),
     )
-    pts = jnp.array(
-        [
-            [1.0, 0.0],
-            [0.0, 0.0],
-            [2.0, 3.0],
-            [3.0, 0.0],
-        ]
-    )
-
-    assert np.allclose(np.asarray(geom._contains(pts)), [True, True, True, False])
-    assert np.allclose(np.asarray(geom._on_boundary(pts)), [False, True, True, False])
-
-    normals = geom._boundary_normals(jnp.array([[0.0, 0.0], [2.0, 3.0]]))
-    expected = jnp.array([[-1.0, 0.0], [1.0 / jnp.sqrt(2.0), 1.0 / jnp.sqrt(2.0)]])
-    assert np.allclose(np.asarray(normals), np.asarray(expected))
-
-    sdf = geom.adf(pts)
-    assert sdf[0] < 0.0
-    assert np.isclose(float(sdf[1]), 0.0)
-    assert np.isclose(float(sdf[2]), 0.0)
-    assert sdf[3] > 0.0
-
-
-def test_hyperrectangle_sampling_shapes_and_membership() -> None:
-    geom = phx.domain.HyperRectangle(
-        lower=jnp.array([-1.0, 0.0]), upper=jnp.array([1.0, 2.0])
+    interior = geometry.sample_interior(16, key=jr.key(0))
+    boundary = geometry.sample_boundary(16, key=jr.key(1))
+    assert interior.shape == boundary.shape == (16, 2)
+    assert bool(jnp.all(geometry._contains(interior)))
+    assert bool(jnp.all(geometry._on_boundary(boundary)))
+    np.testing.assert_allclose(
+        jnp.linalg.norm(geometry._boundary_normals(boundary), axis=-1),
+        1.0,
     )
 
-    interior = geom.sample_interior(16, key=jr.key(0))
-    assert interior.shape == (16, 2)
-    assert bool(jnp.all(geom._contains(interior)))
-
-    boundary = geom.sample_boundary(16, key=jr.key(1))
-    assert boundary.shape == (16, 2)
-    assert bool(jnp.all(geom._on_boundary(boundary)))
-    normals = geom._boundary_normals(boundary)
-    assert np.allclose(np.asarray(jnp.linalg.norm(normals, axis=-1)), 1.0)
-
-
-def test_hyperrectangle_rejects_hammersley_with_rejection_filters() -> None:
-    geom = phx.domain.HyperRectangle(
-        lower=jnp.asarray([0.0, 0.0]),
-        upper=jnp.asarray([1.0, 1.0]),
-    )
-
-    unfiltered = geom.sample_interior(4, sampler="hammersley", key=jr.key(2))
+    unfiltered = geometry.sample_interior(4, sampler="hammersley", key=jr.key(2))
     assert unfiltered.shape == (4, 2)
-
-    for sample in (geom.sample_interior, geom.sample_boundary):
+    for sample in (geometry.sample_interior, geometry.sample_boundary):
         with pytest.raises(ValueError, match="prefix-stable or randomized"):
             sample(
                 4,
@@ -100,8 +83,25 @@ def test_hyperrectangle_rejects_hammersley_with_rejection_filters() -> None:
                 key=jr.key(3),
             )
 
-
-def test_hyperrectangle_reflects_large_adaptive_moves_under_jit() -> None:
+    grid_geometry = phx.domain.HyperRectangle(
+        lower=jnp.asarray([0.0, 1.0]),
+        upper=jnp.asarray([2.0, 3.0]),
+    )
+    grid = grid_geometry.component().sample(
+        phx.domain.GridSampling(
+            {
+                "x": (
+                    phx.discretization.UniformAxisSpec(5),
+                    phx.discretization.UniformAxisSpec(7),
+                )
+            }
+        ),
+        key=jr.key(0),
+    )
+    x0, x1 = grid["x"]
+    assert x0.data.shape == (5,)
+    assert x1.data.shape == (7,)
+    assert grid.coord_mask_by_label["x"].data.shape == (5, 7)
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([-1.0, 0.0]),
         upper=jnp.array([1.0, 2.0]),
@@ -114,28 +114,25 @@ def test_hyperrectangle_reflects_large_adaptive_moves_under_jit() -> None:
     assert bool(jnp.all(result.valid))
     assert bool(jnp.all(geom._contains(result.points)))
     assert bool(jnp.all(result.reflection_count > 0))
-
-
-def test_hyperrectangle_coord_separable_sampling() -> None:
-    geom = phx.domain.HyperRectangle(
-        lower=jnp.array([0.0, 1.0]), upper=jnp.array([2.0, 3.0])
-    )
-    batch = geom.component().sample(
-        phx.domain.GridSampling(
-            {
-                "x": (
-                    phx.discretization.UniformAxisSpec(5),
-                    phx.discretization.UniformAxisSpec(7),
-                )
-            }
-        ),
+    geom = phx.domain.HyperRectangle(lower=jnp.zeros((6,)), upper=jnp.ones((6,)))
+    model = phx.nn.models.SeparableMLP(
+        in_size=6,
+        out_size="scalar",
+        latent_size=4,
+        width_size=8,
+        depth=1,
         key=jr.key(0),
     )
+    u = geom.Model("x")(model)
 
-    x0, x1 = batch["x"]
-    assert x0.data.shape == (5,)
-    assert x1.data.shape == (7,)
-    assert batch.coord_mask_by_label["x"].data.shape == (5, 7)
+    batch = geom.component().sample(
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("x",),))),
+        key=jr.key(0),
+    )
+    out = u(batch)
+    axis = batch.structure.axis_for("x")
+    assert out.dims == (axis,)
+    assert out.data.shape == (3,)
 
 
 def test_hyperrectangle_finite_observation_with_stacked_points() -> None:
@@ -160,25 +157,3 @@ def test_hyperrectangle_finite_observation_with_stacked_points() -> None:
 
     loss = term.loss({"u": u}, key=jr.key(0))
     assert loss < 1e-10
-
-
-def test_hyperrectangle_domain_model_gets_vector_points() -> None:
-    geom = phx.domain.HyperRectangle(lower=jnp.zeros((6,)), upper=jnp.ones((6,)))
-    model = phx.nn.models.SeparableMLP(
-        in_size=6,
-        out_size="scalar",
-        latent_size=4,
-        width_size=8,
-        depth=1,
-        key=jr.key(0),
-    )
-    u = geom.Model("x")(model)
-
-    batch = geom.component().sample(
-        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("x",),))),
-        key=jr.key(0),
-    )
-    out = u(batch)
-    axis = batch.structure.axis_for("x")
-    assert out.dims == (axis,)
-    assert out.data.shape == (3,)

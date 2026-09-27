@@ -63,7 +63,7 @@ def _constant(
     )
 
 
-def test_cauchy_and_sellmeier_reference_formulas_use_angular_frequency() -> None:
+def test_materials_scenario_1() -> None:
     wave_speed = 3.0e8
     wavelength = 0.5e-6
     omega = 2.0 * np.pi * wave_speed / wavelength
@@ -95,9 +95,6 @@ def test_cauchy_and_sellmeier_reference_formulas_use_angular_frequency() -> None
         expected_sellmeier,
         rtol=2e-6,
     )
-
-
-def test_lorentz_drude_formula_selects_passive_square_root() -> None:
     law = LorentzDrudeRefractiveIndex(
         4.0,
         jnp.asarray([3.0, 2.0]),
@@ -114,9 +111,6 @@ def test_lorentz_drude_formula_selects_passive_square_root() -> None:
     np.testing.assert_allclose(value**2, epsilon, rtol=2e-6)
     assert float(jnp.imag(value)) >= 0.0
     assert law.passive_branch == "positive-imaginary"
-
-
-def test_tabulated_complex_interpolation_and_linear_continuation() -> None:
     law = TabulatedComplexRefractiveIndex(
         jnp.asarray([1.0, 2.0, 3.0]),
         jnp.asarray([1.0 + 0.1j, 2.0 + 0.2j, 4.0 + 0.4j]),
@@ -135,7 +129,7 @@ def test_tabulated_complex_interpolation_and_linear_continuation() -> None:
     np.testing.assert_array_equal(evaluation.accepted, np.asarray([True, True]))
 
 
-def test_validity_rejection_and_clamping_are_status_bearing() -> None:
+def test_materials_scenario_2() -> None:
     rejected = evaluate_refractive_index(_constant(1.5), jnp.asarray([0.0, 0.5, 2.0]))
     np.testing.assert_array_equal(rejected.accepted, np.asarray([False, False, True]))
     np.testing.assert_array_equal(rejected.status, np.asarray([3, 3, 0]))
@@ -151,11 +145,13 @@ def test_validity_rejection_and_clamping_are_status_bearing() -> None:
     np.testing.assert_array_equal(clamped.status, np.asarray([1, 1]))
     np.testing.assert_array_equal(clamped.extrapolated, np.asarray([True, True]))
     np.testing.assert_allclose(clamped.evaluated_angular_frequency, [1.0, 10.0])
-
-
-def test_medium_wavenumber_uses_explicit_reference_wave_speed() -> None:
     law = _constant(1.5)
     np.testing.assert_allclose(medium_wavenumber(law, 6.0), 3.0)
+    lowering = lower_to_geometric_index(_constant(1.5 + 0.01j), 2.0)
+    assert not bool(lowering.accepted)
+    assert int(lowering.status) == 2
+    assert np.isnan(float(lowering.refractive_index))
+    np.testing.assert_allclose(lowering.imaginary_magnitude, 0.01)
 
 
 def test_cauchy_frequency_gradient_matches_closed_form() -> None:
@@ -176,15 +172,7 @@ def test_cauchy_frequency_gradient_matches_closed_form() -> None:
     np.testing.assert_allclose(jax.grad(evaluated_index)(omega), expected, rtol=2e-6)
 
 
-def test_geometric_lowering_rejects_loss_without_dropping_it() -> None:
-    lowering = lower_to_geometric_index(_constant(1.5 + 0.01j), 2.0)
-    assert not bool(lowering.accepted)
-    assert int(lowering.status) == 2
-    assert np.isnan(float(lowering.refractive_index))
-    np.testing.assert_allclose(lowering.imaginary_magnitude, 0.01)
-
-
-def test_passive_ray_attenuation_uses_power_loss_and_retains_provenance() -> None:
+def test_materials_scenario_3() -> None:
     law = _constant(1.5 + 0.25j, passive_branch="positive-imaginary")
     attenuation = lower_to_passive_ray_attenuation(law, 6.0, reference_speed=3.0)
 
@@ -198,17 +186,11 @@ def test_passive_ray_attenuation_uses_power_loss_and_retains_provenance() -> Non
     assert attenuation.law_id == law.law_id
     assert attenuation.provenance_id == law.provenance.provenance_id
     assert attenuation.evaluation.provenance_id == attenuation.provenance_id
-
-
-def test_passive_ray_attenuation_rejects_gain_and_unprovenanced_loss() -> None:
     with pytest.raises(ValueError, match="gain"):
         lower_to_passive_ray_attenuation(_constant(1.5 - 0.1j), 2.0, reference_speed=3.0)
 
     with pytest.raises(ValueError, match="branch evidence"):
         lower_to_passive_ray_attenuation(_constant(1.5 + 0.1j), 2.0, reference_speed=3.0)
-
-
-def test_passive_ray_attenuation_requires_explicit_extrapolation_admission() -> None:
     law = _constant(
         1.5 + 0.1j,
         extrapolation="clamp",
@@ -228,32 +210,6 @@ def test_passive_ray_attenuation_requires_explicit_extrapolation_admission() -> 
         2.0 * 0.5 * 0.1 / 3.0,
     )
     assert bool(attenuation.evaluation.extrapolated)
-
-
-def test_maxwell_lowering_is_isotropic_nonmagnetic_epsilon_n_squared() -> None:
-    law = _constant(1.5 + 0.1j)
-    material = lower_to_frequency_maxwell_material(law, 2.0, material_id="sampled-index")
-    np.testing.assert_allclose(material.permittivity, (1.5 + 0.1j) ** 2)
-    np.testing.assert_allclose(material.permeability, 1.0)
-    np.testing.assert_allclose(material.magnetoelectric_xi, 0.0)
-    np.testing.assert_allclose(material.magnetoelectric_zeta, 0.0)
-    assert material.reciprocal is True
-    assert material.passive is True
-    assert material.origin_evidence_id == law.provenance.provenance_id
-
-
-def test_maxwell_lowering_derives_passivity_from_epsilon_not_index_sheet() -> None:
-    law = _constant(-1.0 + 0.1j)
-    material = lower_to_frequency_maxwell_material(
-        law, 2.0, material_id="negative-index-active-epsilon"
-    )
-
-    np.testing.assert_allclose(material.permittivity, (-1.0 + 0.1j) ** 2)
-    assert float(jnp.imag(material.permittivity)) < 0.0
-    assert material.passive is False
-
-
-def test_passive_tabulated_branch_rejects_gain_samples() -> None:
     with pytest.raises(ValueError, match="Im.n."):
         TabulatedComplexRefractiveIndex(
             jnp.asarray([1.0, 2.0]),
@@ -264,9 +220,6 @@ def test_passive_tabulated_branch_rejects_gain_samples() -> None:
             law_id="gain-table",
             passive_branch="positive-imaginary",
         )
-
-
-def test_passive_constant_uses_positive_real_tie_break() -> None:
     with pytest.raises(ValueError, match="Re.n."):
         ConstantRefractiveIndex(
             -1.0,
@@ -276,3 +229,20 @@ def test_passive_constant_uses_positive_real_tie_break() -> None:
             law_id="wrong-sheet",
             passive_branch="positive-imaginary",
         )
+    law = _constant(1.5 + 0.1j)
+    material = lower_to_frequency_maxwell_material(law, 2.0, material_id="sampled-index")
+    np.testing.assert_allclose(material.permittivity, (1.5 + 0.1j) ** 2)
+    np.testing.assert_allclose(material.permeability, 1.0)
+    np.testing.assert_allclose(material.magnetoelectric_xi, 0.0)
+    np.testing.assert_allclose(material.magnetoelectric_zeta, 0.0)
+    assert material.reciprocal is True
+    assert material.passive is True
+    assert material.origin_evidence_id == law.provenance.provenance_id
+    law = _constant(-1.0 + 0.1j)
+    material = lower_to_frequency_maxwell_material(
+        law, 2.0, material_id="negative-index-active-epsilon"
+    )
+
+    np.testing.assert_allclose(material.permittivity, (-1.0 + 0.1j) ** 2)
+    assert float(jnp.imag(material.permittivity)) < 0.0
+    assert material.passive is False

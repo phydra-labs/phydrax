@@ -61,7 +61,7 @@ def _plan() -> Any:
     )
 
 
-def test_cable_current_sharing_joule_heat_and_energy_ledgers_close() -> None:
+def test_cable_scenario_1() -> None:
     plan = _plan()
     state = plan.initialize(150.0, jnp.full((3,), 4.0), jnp.full((3,), 4.0))
     result = plan.advance(state, 1.0e-6, 0.0)
@@ -78,9 +78,6 @@ def test_cable_current_sharing_joule_heat_and_energy_ledgers_close() -> None:
     assert bool(result.candidate.protection_active)
     np.testing.assert_allclose(result.evidence.electrical_energy_residual, 0.0, atol=1e-7)
     np.testing.assert_allclose(result.evidence.thermal_energy_residual, 0.0, atol=1e-7)
-
-
-def test_invalid_cable_step_rolls_back_circuit_and_thermal_state() -> None:
     plan = _plan()
     state = plan.initialize(50.0, jnp.full((3,), 4.0), jnp.full((3,), 4.0))
     result = plan.advance(state, -1.0e-3, 0.0)

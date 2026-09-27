@@ -52,7 +52,7 @@ def _material() -> Any:
     )
 
 
-def test_homogenized_crossbridge_driver_commits_both_routes_atomically() -> None:
+def test_skeletal_muscle_cell_continuum_scenario_1() -> None:
     source = _source_candidate()
     material = _material()
     coupling = HomogenizedShortenGasamCouplingPlan(
@@ -72,9 +72,6 @@ def test_homogenized_crossbridge_driver_commits_both_routes_atomically() -> None
     )
     assert committed.material.state.state_id != material.state.state_id
     assert candidate.evidence.force_owner == "engelhardt-gasam-2025"
-
-
-def test_invalid_calibration_rolls_back_fiber_and_material() -> None:
     source = _source_candidate()
     material = _material()
     coupling = HomogenizedShortenGasamCouplingPlan(

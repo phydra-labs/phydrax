@@ -31,7 +31,7 @@ def _prepared(
     )
 
 
-def test_nonuniform_spherical_shell_fluxes_are_conservative_and_origin_regular() -> None:
+def test_radial_species_scenario_1() -> None:
     prepared = _prepared(reference_faces=jnp.asarray([0.0, 0.1, 0.45, 1.0]))
     outer_scale = jnp.asarray([2.0])
     metrics = prepared.mesh.metrics(outer_scale)
@@ -90,9 +90,6 @@ def test_nonuniform_spherical_shell_fluxes_are_conservative_and_origin_regular()
     assert jnp.allclose(result.conservation_defect, 0.0, atol=1.0e-12)
     assert jnp.allclose(result.explicit_dt_limit, expected_dt_limit)
     assert jnp.all(result.successful)
-
-
-def test_runtime_diffusivity_and_inactive_entries_are_masked_without_failure() -> None:
     prepared = _prepared()
     outer_scale = jnp.asarray([1.0, 0.0])
     active = jnp.asarray([True, False])
@@ -143,9 +140,6 @@ def test_runtime_diffusivity_and_inactive_entries_are_masked_without_failure() -
     assert jnp.all(base.successful)
     assert jnp.isinf(immobile.explicit_dt_limit[0])
     assert jnp.all(immobile.successful)
-
-
-def test_ambiguous_runtime_broadcasting_is_rejected() -> None:
     prepared = _prepared()
     amounts = jnp.ones((2, 3, 2))
     with pytest.raises(ValueError, match="cell_diffusivity"):

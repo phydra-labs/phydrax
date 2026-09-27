@@ -37,7 +37,7 @@ def _collocated_operators(nx: Any = 6, ny: Any = 5) -> Any:
     )
 
 
-def test_collocated_gradient_divergence_gauge_and_rhie_chow_contracts() -> None:
+def test_unstructured_incompressible_scenario_1() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     centers = discretization.cell_centers
@@ -89,9 +89,6 @@ def test_collocated_gradient_divergence_gauge_and_rhie_chow_contracts() -> None:
     )
     np.testing.assert_allclose(arithmetic, 0.0)
     assert jnp.max(jnp.abs(rhie_chow[operators.interior_faces])) > 0.0
-
-
-def test_pressure_projection_recovers_discrete_gradient_and_removes_divergence() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(
@@ -140,9 +137,6 @@ def test_pressure_projection_recovers_discrete_gradient_and_removes_divergence()
         rtol=2e-9,
         atol=2e-9,
     )
-
-
-def test_pressure_projection_rejects_incompatible_boundary_flux() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(
@@ -163,9 +157,6 @@ def test_pressure_projection_rejects_incompatible_boundary_flux() -> None:
     assert result.compatibility_defect > 0.0
     assert result.divergence_norm > 0.0
     assert not bool(result.converged)
-
-
-def test_pressure_projection_refreshes_nonuniform_momentum_inverse() -> None:
     operators = _collocated_operators()
     discretization = operators.discretization
     projection = phx.solver.UnstructuredPressureProjectionPlan(

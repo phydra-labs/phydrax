@@ -41,7 +41,7 @@ def _bounded_second_derivative(resolution: Any) -> Any:
     )
 
 
-def test_prepared_stencil_operator_carries_matrix_free_evidence_reports() -> None:
+def test_fd_certification_scenario_1() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -66,18 +66,12 @@ def test_prepared_stencil_operator_carries_matrix_free_evidence_reports() -> Non
     assert operator.conservation_report.constant_state_residual < 1e-12
     # ty: ignore[unsupported-operator]
     assert operator.conservation_report.global_balance_residual < 1e-12
-
-
-def test_bounded_derivative_does_not_claim_unverified_global_conservation() -> None:
     _, operator = _bounded_operator(17)
     report = operator.conservation_report
 
     assert report.global_balance_residual is None
     assert report.conservative is None
     assert report.constant_state_residual < 1e-12
-
-
-def test_unknown_stability_evidence_cannot_carry_a_residual() -> None:
     with pytest.raises(ValueError, match="Unknown evidence"):
         phx.discretization.FDStabilityReport(
             "semibounded",
@@ -89,7 +83,7 @@ def test_unknown_stability_evidence_cannot_carry_a_residual() -> None:
         )
 
 
-def test_manufactured_case_derives_forcing_by_time_differentiation() -> None:
+def test_manufactured_contracts() -> None:
     prepared = _bounded_second_derivative(17)
     case = phx.equations.ManufacturedPDECase(
         lambda time, points, args: (1.0 + time) * jnp.exp(points[:, 0]),
@@ -105,9 +99,6 @@ def test_manufactured_case_derives_forcing_by_time_differentiation() -> None:
         rtol=2e-12,
         atol=2e-12,
     )
-
-
-def test_manufactured_convergence_separates_interior_and_boundary_rates() -> None:
     case = phx.equations.ManufacturedPDECase(
         lambda time, points, args: jnp.exp(points[:, 0]),
         lambda time, points, args: jnp.exp(points[:, 0]),

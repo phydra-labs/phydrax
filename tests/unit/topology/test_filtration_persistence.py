@@ -19,7 +19,7 @@ from tests.unit.topology._fixtures import (
 )
 
 
-def test_vertex_support_requires_explicit_geometric_closure() -> None:
+def test_filtration_persistence_scenario_1() -> None:
     topology = filled_triangle_topology()
     support = filled_triangle_vertex_support(topology)
     assert support.topology_id == topology.topology_id
@@ -33,9 +33,6 @@ def test_vertex_support_requires_explicit_geometric_closure() -> None:
                 np.asarray([[0, 1, 2]], dtype=np.int32),
             ),
         )
-
-
-def test_explicit_filtration_rejects_face_monotonicity_violation() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     with pytest.raises(ValueError, match="face monotonicity"):
@@ -48,9 +45,6 @@ def test_explicit_filtration_rejects_face_monotonicity_violation() -> None:
             ),
             source_id="invalid",
         )
-
-
-def test_selected_filtration_values_must_be_finite() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     with pytest.raises(ValueError, match="finite"):
@@ -65,7 +59,7 @@ def test_selected_filtration_values_must_be_finite() -> None:
         )
 
 
-def test_lower_and_upper_star_builders_preserve_face_order() -> None:
+def test_filtration_persistence_scenario_2() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     support = filled_triangle_vertex_support(topology)
@@ -86,9 +80,6 @@ def test_lower_and_upper_star_builders_preserve_face_order() -> None:
     np.testing.assert_allclose(upper.values[2], [0.0])
     assert np.all(np.diff(np.asarray(lower.canonical_order_values)) >= 0)
     assert np.all(np.diff(np.asarray(upper.canonical_order_values)) >= 0)
-
-
-def test_prepared_vertex_filtration_is_jittable_and_batched() -> None:
     topology = filled_triangle_topology()
     complex = phx.topology.CellSubcomplex.full(topology)
     support = filled_triangle_vertex_support(topology)
@@ -104,9 +95,6 @@ def test_prepared_vertex_filtration_is_jittable_and_batched() -> None:
     assert result[1].shape == (2, 3)
     assert result[2].shape == (2, 1)
     np.testing.assert_allclose(result[2], [[2.0], [2.0]])
-
-
-def test_triangle_persistence_has_essential_component_and_finite_loop() -> None:
     _, _, filtration = filled_triangle_filtration()
     result = phx.topology.compute_persistence(
         filtration,
@@ -125,7 +113,7 @@ def test_triangle_persistence_has_essential_component_and_finite_loop() -> None:
     assert result.pairing.representatives.pair_count == result.pairing.pair_count
 
 
-def test_induced_relative_persistence_uses_quotient_boundary() -> None:
+def test_filtration_persistence_scenario_3() -> None:
     topology, complex, filtration = filled_triangle_filtration()
     boundary = phx.topology.CellSubcomplex.from_subsets(topology, "boundary")
     result = phx.topology.compute_persistence(
@@ -139,9 +127,6 @@ def test_induced_relative_persistence_uses_quotient_boundary() -> None:
     np.testing.assert_allclose(diagram.birth_values, [2.0])
     np.testing.assert_array_equal(diagram.has_finite_death, [False])
     assert result.pairing.layout_id != complex.layout.layout_id
-
-
-def test_relative_subcomplex_must_share_filtration_topology() -> None:
     _, _, filtration = filled_triangle_filtration()
     other = phx.geometry.simplicial.TriangleTopology(
         jnp.asarray([[0, 1, 2]], dtype=jnp.int32),
@@ -154,9 +139,6 @@ def test_relative_subcomplex_must_share_filtration_topology() -> None:
             coefficients=phx.topology.PrimeField(2),
             relative_to=other_boundary,
         )
-
-
-def test_packed_diagram_separates_padding_and_essential_bars() -> None:
     _, _, filtration = filled_triangle_filtration()
     result = phx.topology.compute_persistence(
         filtration,
@@ -174,7 +156,7 @@ def test_packed_diagram_separates_padding_and_essential_bars() -> None:
         result.pack(1)
 
 
-def test_frozen_pairing_evaluates_batches_and_detects_full_order_change() -> None:
+def test_filtration_persistence_scenario_4() -> None:
     _, _, filtration = filled_triangle_filtration()
     result = phx.topology.compute_persistence(
         filtration,
@@ -194,6 +176,25 @@ def test_frozen_pairing_evaluates_batches_and_detects_full_order_change() -> Non
     )
     invalid = frozen.evaluate(changed)
     assert not bool(invalid.ordering_valid)
+    topology = filled_triangle_topology()
+    complex = phx.topology.CellSubcomplex.full(topology)
+    tied = phx.topology.CellFiltration(
+        complex,
+        (
+            jnp.zeros((3,)),
+            jnp.zeros((3,)),
+            jnp.ones((1,)),
+        ),
+        source_id="ties",
+    )
+    diagram = phx.topology.compute_persistence(
+        tied,
+        coefficients=phx.topology.PrimeField(2),
+    ).diagram()
+
+    np.testing.assert_array_equal(diagram.degrees, [0, 1])
+    np.testing.assert_allclose(diagram.birth_values, [0.0, 0.0])
+    np.testing.assert_allclose(diagram.death_values, [0.0, 1.0])
 
 
 def test_frozen_pairing_endpoint_gather_has_local_gradient() -> None:
@@ -214,25 +215,3 @@ def test_frozen_pairing_endpoint_gather_has_local_gradient() -> None:
     assert gradient.shape == (3,)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.any(gradient != 0)
-
-
-def test_tied_relabeling_preserves_diagram_not_cell_pairing() -> None:
-    topology = filled_triangle_topology()
-    complex = phx.topology.CellSubcomplex.full(topology)
-    tied = phx.topology.CellFiltration(
-        complex,
-        (
-            jnp.zeros((3,)),
-            jnp.zeros((3,)),
-            jnp.ones((1,)),
-        ),
-        source_id="ties",
-    )
-    diagram = phx.topology.compute_persistence(
-        tied,
-        coefficients=phx.topology.PrimeField(2),
-    ).diagram()
-
-    np.testing.assert_array_equal(diagram.degrees, [0, 1])
-    np.testing.assert_allclose(diagram.birth_values, [0.0, 0.0])
-    np.testing.assert_allclose(diagram.death_values, [0.0, 1.0])

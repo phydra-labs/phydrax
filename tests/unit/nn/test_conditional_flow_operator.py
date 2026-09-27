@@ -67,9 +67,7 @@ def _model(dataset: Any, *, seed: Any = 0) -> Any:
     )
 
 
-def test_native_flow_operator_distribution_batches_samples_logs_and_differentiates() -> (
-    None
-):
+def test_native_flow_contracts() -> None:
     dataset = _dataset()
     model = _model(dataset)
     batch = dataset.batch
@@ -117,9 +115,6 @@ def test_native_flow_operator_distribution_batches_samples_logs_and_differentiat
     assert configuration["condition_inputs"] == ("state",)
     assert configuration["uncertainty_source"] == "process"
     assert model.operator_contract.capabilities.topology == "unused"
-
-
-def test_native_flow_fixed_masks_and_positive_scale_survive_trainable_updates() -> None:
     layer = phx.nn.flows.AffineCouplingLayer(
         2,
         0,
@@ -152,11 +147,6 @@ def test_native_flow_fixed_masks_and_positive_scale_survive_trainable_updates() 
     )
     assert jnp.all(updated.scale > 0.0)
     assert jnp.isfinite(updated.log_prob(updated.location))
-
-
-def test_native_flow_fixed_query_accepts_loader_broadcast_but_rejects_changed_geometry() -> (
-    None
-):
     dataset = _dataset()
     model = _model(dataset)
     loader = phx.nn.operator.training.OperatorBatchLoader(
@@ -182,9 +172,6 @@ def test_native_flow_fixed_query_accepts_loader_broadcast_but_rejects_changed_ge
     )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="fixed reference"):
         jax.block_until_ready(model.distribution(changed).location)
-
-
-def test_native_flow_operator_trains_through_fit_operator() -> None:
     dataset = _dataset()
     result = phx.nn.operator.training.fit_operator(
         _model(dataset),

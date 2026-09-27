@@ -36,7 +36,7 @@ def _level(
     )
 
 
-def test_hierarchy_validates_order_parent_and_transfer_identity() -> None:
+def test_stochastic_hierarchy_scenario_1() -> None:
     levels = (
         _level(0),
         _level(1, parent="level-0"),
@@ -84,9 +84,6 @@ def test_hierarchy_validates_order_parent_and_transfer_identity() -> None:
             (_level(0), _level(1, parent="wrong-parent")),
             hierarchy_id="bad-parent",
         )
-
-
-def test_multi_axis_and_independent_noise_are_explicit() -> None:
     level = phx.stochastic.StochasticLevelSpec(
         "base",
         0,
@@ -105,9 +102,6 @@ def test_multi_axis_and_independent_noise_are_explicit() -> None:
         (level,), hierarchy_id="multi", allow_multi_axis=True
     )
     assert hierarchy.refinement_axes == ("time", "space")
-
-
-def test_tensor_grid_transfer_preserves_nested_nodes_constants_and_jit() -> None:
     transfer = phx.discretization.TensorGridStateTransfer(
         (5, 5),
         (3, 3),

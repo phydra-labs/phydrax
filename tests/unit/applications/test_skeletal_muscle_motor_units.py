@@ -36,7 +36,7 @@ def _random(state: Any, key: Any = jr.key(17)) -> Any:
     )
 
 
-def test_source_distributions_and_truncated_normal_statistics() -> None:
+def test_skeletal_muscle_motor_units_scenario_1() -> None:
     prepared = _prepared(capacity=32)
     state = prepared.initialize()
     candidate = prepared.evaluate(
@@ -56,9 +56,6 @@ def test_source_distributions_and_truncated_normal_statistics() -> None:
     assert scores.max() <= 3.9
     assert abs(scores.mean()) < 0.1
     assert abs(scores.std(ddof=1) - 1.0) < 0.1
-
-
-def test_stochastic_step_replays_exactly_and_commits_once() -> None:
     prepared = _prepared()
     state = prepared.initialize()
     random_input = _random(state)
@@ -78,9 +75,6 @@ def test_stochastic_step_replays_exactly_and_commits_once() -> None:
     stale = commit_fuglevand_winter_patla_1993(replay, committed)
     np.testing.assert_array_equal(stale.motor_unit_force, committed.motor_unit_force)
     assert int(stale.random_step) == 1
-
-
-def test_event_overflow_rolls_back_whole_state_including_rng_counter() -> None:
     prepared = _prepared(capacity=1)
     state = prepared.initialize()
     candidate = prepared.evaluate(

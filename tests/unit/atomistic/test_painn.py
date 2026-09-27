@@ -52,7 +52,7 @@ def _structure(positions: Any = None) -> Any:
     return AtomicStructure([8, 1, 1], positions, [15.999, 1.008, 1.008], SCALE)
 
 
-def test_energy_invariant_force_equivariant_under_rigid_motion() -> None:
+def test_painn_scenario_1() -> None:
     model = _model()
     structure = _structure()
     reference = energy_and_forces(model, structure, _execution())
@@ -68,9 +68,6 @@ def test_energy_invariant_force_equivariant_under_rigid_motion() -> None:
     np.testing.assert_allclose(
         observed.forces[0], reference.forces[0] @ rotation.T, rtol=2e-9, atol=2e-9
     )
-
-
-def test_atom_permutation_preserves_energy_and_permutes_force() -> None:
     model = _model()
     structure = _structure()
     permutation = np.asarray([2, 0, 1])
@@ -87,9 +84,6 @@ def test_atom_permutation_preserves_energy_and_permutes_force() -> None:
     np.testing.assert_allclose(
         observed.forces[0], reference.forces[0][permutation], rtol=2e-9, atol=2e-9
     )
-
-
-def test_conservative_force_matches_scalar_energy_finite_difference() -> None:
     model = _model()
     batch = AtomisticBatch.from_structure(_structure())
     prediction = energy_and_forces(model, batch, _execution())
@@ -112,7 +106,7 @@ def test_conservative_force_matches_scalar_energy_finite_difference() -> None:
     assert not prediction.provenance.stress_available
 
 
-def test_smooth_cutoff_has_zero_force_at_boundary() -> None:
+def test_painn_scenario_2() -> None:
     model = _model()
     structure = AtomicStructure(
         # ty: ignore[invalid-argument-type]
@@ -146,9 +140,6 @@ def test_smooth_cutoff_has_zero_force_at_boundary() -> None:
     )
     at = model(structure, _execution())
     assert abs(float(below - at)) < 1e-7
-
-
-def test_one_two_disconnected_and_coincident_atoms_are_well_defined() -> None:
     model = _model()
     # ty: ignore[invalid-argument-type]
     one = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], SCALE)
@@ -183,6 +174,23 @@ def test_one_two_disconnected_and_coincident_atoms_are_well_defined() -> None:
     np.testing.assert_allclose(
         model(disconnected, _execution()), separate, rtol=1e-12, atol=1e-12
     )
+    precision = AtomisticPrecisionPolicy(
+        coordinate_dtype="float32",
+        compute_dtype="float32",
+        reduction_dtype="float32",
+        output_dtype="float32",
+    )
+    structure = AtomicStructure(
+        # ty: ignore[invalid-argument-type]
+        [1, 1],
+        np.asarray([[0.0, 0.0, 0.0], [0.9, 0.0, 0.0]], dtype=np.float32),
+        np.asarray([1.0, 1.0], dtype=np.float32),
+        SCALE,
+        coordinate_dtype="float32",
+    )
+    prediction = energy_and_forces(_model(precision=precision), structure, _execution())
+    assert prediction.energy.dtype == jnp.float32
+    assert prediction.forces.dtype == jnp.float32
 
 
 def test_jit_vjp_and_second_order_parameter_derivative() -> None:
@@ -211,27 +219,7 @@ def test_jit_vjp_and_second_order_parameter_derivative() -> None:
     assert bool(jnp.all(jnp.isfinite(second)))
 
 
-def test_precision_policy_controls_prediction_storage() -> None:
-    precision = AtomisticPrecisionPolicy(
-        coordinate_dtype="float32",
-        compute_dtype="float32",
-        reduction_dtype="float32",
-        output_dtype="float32",
-    )
-    structure = AtomicStructure(
-        # ty: ignore[invalid-argument-type]
-        [1, 1],
-        np.asarray([[0.0, 0.0, 0.0], [0.9, 0.0, 0.0]], dtype=np.float32),
-        np.asarray([1.0, 1.0], dtype=np.float32),
-        SCALE,
-        coordinate_dtype="float32",
-    )
-    prediction = energy_and_forces(_model(precision=precision), structure, _execution())
-    assert prediction.energy.dtype == jnp.float32
-    assert prediction.forces.dtype == jnp.float32
-
-
-def test_periodic_metadata_is_preserved_then_rejected_by_painn() -> None:
+def test_painn_scenario_3() -> None:
     periodic = AtomicStructure(
         # ty: ignore[invalid-argument-type]
         [1],
@@ -247,11 +235,6 @@ def test_periodic_metadata_is_preserved_then_rejected_by_painn() -> None:
     assert periodic.has_periodic_metadata
     with pytest.raises(ValueError, match="nonperiodic"):
         energy_and_forces(_model(), periodic, _execution())
-
-
-def test_neighbor_overflow_returns_invalid_typed_prediction_and_direct_energy_fails() -> (
-    None
-):
     structure = AtomicStructure(
         # ty: ignore[invalid-argument-type]
         [1, 1],
@@ -268,9 +251,6 @@ def test_neighbor_overflow_returns_invalid_typed_prediction_and_direct_energy_fa
     assert bool(jnp.isnan(prediction.energy[0]))
     with pytest.raises(Exception, match="overflow"):
         model(structure, _execution(0))
-
-
-def test_atomwise_update_is_canonical_norm_conditioned_three_head_equation() -> None:
     interaction = _PaiNNInteraction(4, 3, jr.key(21))
     scalar = jr.normal(jr.key(22), (3, 4))
     vector = jr.normal(jr.key(23), (3, 3, 4))
@@ -295,7 +275,7 @@ def test_atomwise_update_is_canonical_norm_conditioned_three_head_equation() -> 
     np.testing.assert_allclose(observed_vector, expected_vector, rtol=1e-12, atol=1e-12)
 
 
-def test_nonfinite_padding_geometry_is_inert_before_neural_messages() -> None:
+def test_painn_scenario_4() -> None:
     structure = AtomicStructure(
         # ty: ignore[invalid-argument-type]
         [1, 1, 0],
@@ -312,9 +292,6 @@ def test_nonfinite_padding_geometry_is_inert_before_neural_messages() -> None:
     assert bool(jnp.all(jnp.isfinite(prediction.energy)))
     assert bool(jnp.all(jnp.isfinite(prediction.forces)))
     np.testing.assert_allclose(prediction.forces[0, 2], 0.0)
-
-
-def test_potential_revision_distinguishes_same_architecture_models() -> None:
     first = _model(seed=31)
     second = _model(seed=32)
     first_revision = atomistic_potential_revision(first)
@@ -328,9 +305,6 @@ def test_potential_revision_distinguishes_same_architecture_models() -> None:
     provenance = energy_and_forces(first, _structure(), _execution()).provenance
     assert provenance.architecture_id == first.architecture_id
     assert provenance.potential_revision_id == first_revision.revision_id
-
-
-def test_force_is_cast_to_output_dtype_when_coordinate_dtype_differs() -> None:
     precision = AtomisticPrecisionPolicy(
         coordinate_dtype="float64",
         compute_dtype="float32",
@@ -346,9 +320,7 @@ def test_force_is_cast_to_output_dtype_when_coordinate_dtype_differs() -> None:
     assert prediction.net_torque.dtype == jnp.float32
 
 
-def test_parameter_updates_change_the_potential_revision_and_fixed_leaves_do_not() -> (
-    None
-):
+def test_painn_scenario_5() -> None:
     original = _model(seed=51)
     updated = eqx.tree_at(
         lambda potential: potential.embedding,
@@ -368,20 +340,12 @@ def test_parameter_updates_change_the_potential_revision_and_fixed_leaves_do_not
     assert atomistic_potential_revision(fixed_update).revision_id == (
         original_revision.revision_id
     )
-
-
-def test_prediction_provenance_requires_concrete_parameters() -> None:
     model = _model()
     structure = _structure()
     with pytest.raises(TypeError):
         jax.jit(lambda potential: energy_and_forces(potential, structure, _execution()))(
             model
         )
-
-
-def test_torque_uses_reduction_precision_before_output_cast_for_huge_coordinates() -> (
-    None
-):
     precision = AtomisticPrecisionPolicy(
         coordinate_dtype="float64",
         compute_dtype="float32",

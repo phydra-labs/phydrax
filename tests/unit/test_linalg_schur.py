@@ -23,7 +23,7 @@ def _problem(matrix: Any, *, operator_id: Any = "general-schur") -> Any:
     )
 
 
-def test_complex_schur_reconstructs_nonnormal_operator_and_reports_spectrum() -> None:
+def test_linalg_schur_scenario_1() -> None:
     matrix = jnp.asarray(
         [
             [1.0, 8.0, 0.0],
@@ -45,9 +45,6 @@ def test_complex_schur_reconstructs_nonnormal_operator_and_reports_spectrum() ->
     assert np.allclose(actual_eigenvalues, expected_eigenvalues, rtol=1e-11, atol=1e-12)
     assert result.diagnostics.departure_from_normality > 0.5
     assert result.provenance.ordering == "backend Schur order; no eigenvalue reordering"
-
-
-def test_schur_relation_and_column_diagnostics_hold_for_complex_operator() -> None:
     matrix = jnp.asarray(
         [
             [1.0 + 2.0j, 3.0 - 1.0j, 0.5j],
@@ -67,9 +64,49 @@ def test_schur_relation_and_column_diagnostics_hold_for_complex_operator() -> No
         float(jnp.linalg.norm(relation))
     )
     assert result.diagnostics.unitarity_error < 1e-12
+    problem = _problem(jnp.eye(4), operator_id="budgeted-schur")
+    materialization_policy = eig.SchurSolvePolicy(
+        materialization=la.MaterializationPolicy(max_entries=15)
+    )
+    prepared = eig.prepare_schur_eigensolve
+    with pytest.raises(la.LinearCapabilityError, match="exceeding"):
+        prepared(problem, materialization_policy)
 
+    resource_policy = eig.SchurSolvePolicy(
+        resources=eig.SchurResourcePolicy(preparation_bytes=127)
+    )
+    with pytest.raises(ValueError, match="preparation estimate"):
+        eig.plan_schur_eigensolve(problem, resource_policy)
+    matrix = jnp.asarray(
+        [
+            [1.0, 8.0, 0.0],
+            [-2.0, 1.0, 3.0],
+            [0.0, 0.0, 4.0],
+        ]
+    )
+    policy = eig.SchurSolvePolicy(
+        tolerance=eig.SchurTolerancePolicy(relative=0.0, absolute=0.0)
+    )
+    result = eig.schur_eigensolve(
+        _problem(matrix, operator_id="strict-schur"), policy=policy
+    )
 
-def test_defective_jordan_block_preserves_schur_semantics_without_eigenvectors() -> None:
+    assert result.status == int(eig.SchurSolveStatus.RESIDUAL_TOLERANCE_NOT_MET)
+    assert not result.successful
+    assert not result.diagnostics.converged
+    with pytest.raises(ValueError, match="finite"):
+        eig.prepare_schur_eigensolve(
+            _problem(jnp.asarray([[1.0, jnp.nan], [0.0, 2.0]]), operator_id="nan-schur")
+        )
+
+    prepared = eig.prepare_schur_eigensolve(
+        _problem(jnp.eye(2), operator_id="first-schur")
+    )
+    with pytest.raises(ValueError, match="different symbolic"):
+        eig.refresh_schur_eigensolve(
+            prepared,
+            _problem(2.0 * jnp.eye(2), operator_id="second-schur"),
+        )
     matrix = jnp.asarray(
         [
             [2.0, 1.0, 0.0],
@@ -110,55 +147,3 @@ def test_prepared_schur_is_jittable_and_refreshes_under_same_symbolic_plan() -> 
         np.sort_complex(np.asarray(second.eigenvalues)),
         np.sort_complex(np.asarray(jnp.linalg.eigvals(second_matrix))),
     )
-
-
-def test_schur_planning_enforces_materialization_and_resource_budgets() -> None:
-    problem = _problem(jnp.eye(4), operator_id="budgeted-schur")
-    materialization_policy = eig.SchurSolvePolicy(
-        materialization=la.MaterializationPolicy(max_entries=15)
-    )
-    prepared = eig.prepare_schur_eigensolve
-    with pytest.raises(la.LinearCapabilityError, match="exceeding"):
-        prepared(problem, materialization_policy)
-
-    resource_policy = eig.SchurSolvePolicy(
-        resources=eig.SchurResourcePolicy(preparation_bytes=127)
-    )
-    with pytest.raises(ValueError, match="preparation estimate"):
-        eig.plan_schur_eigensolve(problem, resource_policy)
-
-
-def test_schur_status_reports_an_unsatisfied_zero_tolerance() -> None:
-    matrix = jnp.asarray(
-        [
-            [1.0, 8.0, 0.0],
-            [-2.0, 1.0, 3.0],
-            [0.0, 0.0, 4.0],
-        ]
-    )
-    policy = eig.SchurSolvePolicy(
-        tolerance=eig.SchurTolerancePolicy(relative=0.0, absolute=0.0)
-    )
-    result = eig.schur_eigensolve(
-        _problem(matrix, operator_id="strict-schur"), policy=policy
-    )
-
-    assert result.status == int(eig.SchurSolveStatus.RESIDUAL_TOLERANCE_NOT_MET)
-    assert not result.successful
-    assert not result.diagnostics.converged
-
-
-def test_schur_rejects_nonfinite_inputs_and_incompatible_refreshes() -> None:
-    with pytest.raises(ValueError, match="finite"):
-        eig.prepare_schur_eigensolve(
-            _problem(jnp.asarray([[1.0, jnp.nan], [0.0, 2.0]]), operator_id="nan-schur")
-        )
-
-    prepared = eig.prepare_schur_eigensolve(
-        _problem(jnp.eye(2), operator_id="first-schur")
-    )
-    with pytest.raises(ValueError, match="different symbolic"):
-        eig.refresh_schur_eigensolve(
-            prepared,
-            _problem(2.0 * jnp.eye(2), operator_id="second-schur"),
-        )

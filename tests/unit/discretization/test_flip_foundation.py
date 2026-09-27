@@ -27,9 +27,7 @@ def _mac(count: Any = 8, *, periodic: Any = False) -> Any:
     return grid, finite_volume, operators, boundaries
 
 
-def test_free_surface_projection_sets_air_pressure_and_projects_liquid_divergence() -> (
-    None
-):
+def test_flip_foundation_scenario_1() -> None:
     _, finite_volume, operators, boundaries = _mac()
     projection = phx.solver.MACFreeSurfaceProjectionPlan(
         operators, boundaries=boundaries, tolerance=1e-7
@@ -47,9 +45,6 @@ def test_free_surface_projection_sets_air_pressure_and_projects_liquid_divergenc
     assert result.active_divergence_norm < 1e-6
     assert result.air_pressure_defect == 0.0
     np.testing.assert_allclose(jnp.where(~liquid, result.pressure, 0.0), 0.0)
-
-
-def test_free_surface_projection_rejects_empty_liquid_mask() -> None:
     _, finite_volume, operators, boundaries = _mac()
     projection = phx.solver.MACFreeSurfaceProjectionPlan(operators, boundaries=boundaries)
     velocity = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
@@ -57,9 +52,6 @@ def test_free_surface_projection_rejects_empty_liquid_mask() -> None:
         velocity, jnp.zeros(finite_volume.cell_shape, dtype="bool"), 1.0e-3
     )
     assert not result.successful
-
-
-def test_flip_transfer_preserves_cell_volume_and_face_momentum_numerators() -> None:
     _, finite_volume, operators, _ = _mac(periodic=True)
     position = jnp.asarray([[0.2, 0.2], [0.4, 0.3], [0.7, 0.65]])
     velocity = jnp.asarray([[1.0, 0.2], [-0.3, 0.7], [0.5, -0.4]])
@@ -81,16 +73,10 @@ def test_flip_transfer_preserves_cell_volume_and_face_momentum_numerators() -> N
     g2p = transfer.grid_to_particle(routes, p2g.velocity, p2g.velocity)
     assert g2p.successful
     np.testing.assert_allclose(g2p.flip_increment, 0.0, atol=1e-14)
-
-
-def test_flip_method_validates_explicit_pic_fraction() -> None:
     with pytest.raises(ValueError, match="pic_fraction"):
         phx.discretization.flip.FLIPMethodPlan(1.1)
     assert phx.discretization.flip.FLIPMethodPlan(0.0).pic_fraction == 0.0
     assert phx.discretization.flip.FLIPMethodPlan(1.0).pic_fraction == 1.0
-
-
-def test_sparse_flip_transfer_uses_compact_cell_and_face_storage() -> None:
     grid_plan = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),
@@ -126,9 +112,6 @@ def test_sparse_flip_transfer_uses_compact_cell_and_face_storage() -> None:
     assert all(value.shape == (32,) for value in p2g.velocity)
     np.testing.assert_allclose(g2p.pic_velocity, velocity, atol=1.0e-12)
     np.testing.assert_allclose(g2p.flip_increment, 0.0, atol=1.0e-14)
-
-
-def test_sparse_flip_pressure_and_particle_step_commit_atomically() -> None:
     grid_plan = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8, periodic=True),

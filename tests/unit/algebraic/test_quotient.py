@@ -28,7 +28,7 @@ def _univariate_quadratic(constant: float) -> SparsePolynomialSystem:
     )
 
 
-def test_x_squared_minus_one_recovers_both_roots_and_replays_original_system() -> None:
+def test_quotient_scenario_1() -> None:
     system = _univariate_quadratic(-1.0)
 
     result = solve_quotient_roots(system, polish=True)
@@ -44,9 +44,6 @@ def test_x_squared_minus_one_recovers_both_roots_and_replays_original_system() -
     np.testing.assert_allclose(replayed, result.original_residuals)
     np.testing.assert_allclose(replayed, 0.0, atol=2e-6)
     assert bool(jnp.all(result.polished))
-
-
-def test_small_bivariate_finite_system_has_jointly_consistent_roots() -> None:
     system = SparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("circle", "diagonal"),
@@ -65,9 +62,6 @@ def test_small_bivariate_finite_system_has_jointly_consistent_roots() -> None:
     )
     np.testing.assert_allclose(result.original_residuals, 0.0, atol=3e-6)
     assert result.evidence.cluster_count == 2
-
-
-def test_repeated_root_is_returned_as_an_explicit_ambiguity_not_a_success() -> None:
     system = _univariate_quadratic(0.0)
 
     result = solve_quotient_roots(system)
@@ -79,7 +73,7 @@ def test_repeated_root_is_returned_as_an_explicit_ambiguity_not_a_success() -> N
     np.testing.assert_allclose(result.replay(system), 0.0, atol=1e-7)
 
 
-def test_rank_policy_ambiguity_stops_before_quotient_basis_selection() -> None:
+def test_quotient_scenario_2() -> None:
     system = _univariate_quadratic(-1.0)
     policy = QuotientRootPolicy(
         rank=QuotientRankPolicy(
@@ -96,9 +90,6 @@ def test_rank_policy_ambiguity_stops_before_quotient_basis_selection() -> None:
     assert int(prepared.preparation.possible_rank) == 1
     assert int(result.status) == int(QuotientRootStatus.RANK_AMBIGUOUS)
     assert result.root_count == 0
-
-
-def test_resource_policy_rejects_before_monomial_allocation() -> None:
     system = _univariate_quadratic(-1.0)
     policy = QuotientRootPolicy(resources=QuotientRootResourcePolicy(maximum_monomials=2))
 
@@ -110,9 +101,6 @@ def test_resource_policy_rejects_before_monomial_allocation() -> None:
     assert plan.monomials.shape == (0, 1)
     assert int(result.status) == int(QuotientRootStatus.RESOURCE_REJECTED)
     assert result.root_count == 0
-
-
-def test_coefficient_refresh_preserves_support_plan_and_changes_root_replay() -> None:
     first = _univariate_quadratic(-1.0)
     second = first.with_coefficients(jnp.asarray((-4.0, 1.0)))
     plan = plan_quotient_roots(first.support)

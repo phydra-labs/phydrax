@@ -97,7 +97,7 @@ def _clocks(plan: Any, count: Any) -> Any:
     )
 
 
-def test_transparent_terrestrial_workflow_replays_guards_and_crossing_measure() -> None:
+def test_terrestrial_dark_matter_workflow_scenario_1() -> None:
     plan = _plan()
     paths = _paths(4)
     clocks = _clocks(plan, 4)
@@ -127,9 +127,6 @@ def test_transparent_terrestrial_workflow_replays_guards_and_crossing_measure() 
         replay.solution.deterministic_events.event_times,
         equal_nan=True,
     )
-
-
-def test_inactive_terrestrial_paths_are_safe_filled_and_excluded() -> None:
     plan = _plan()
     base = _paths(2)
     states = jnp.asarray(base.samples).at[1].set(jnp.nan)
@@ -149,9 +146,6 @@ def test_inactive_terrestrial_paths_are_safe_filled_and_excluded() -> None:
         int(TransportOutcome.UNRESOLVED),
     ]
     assert result.detector_crossings.diagnostics.crossing_count == 2
-
-
-def test_guard_capacity_failure_is_numerical_not_a_transmission_outcome() -> None:
     plan = _plan(maximum_guard_events=3)
     result = plan.simulate(_paths(2), _clocks(plan, 2), jnp.asarray((0.0, 6.0)))
 

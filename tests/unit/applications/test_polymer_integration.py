@@ -5,7 +5,7 @@ import phydrax as phx
 from phydrax.applications import polymer_field_theory as pft, polymer_liquids as pl
 
 
-def test_particle_form_factor_lowers_into_prism_and_observation_product() -> None:
+def test_particle_contracts() -> None:
     layout = phx.atomistic.PolymerChainLayoutPlan(
         # ty: ignore[invalid-argument-type]
         [[0, 1], [2, 3]],
@@ -51,9 +51,6 @@ def test_particle_form_factor_lowers_into_prism_and_observation_product() -> Non
     )
     assert result.successful
     assert vector.values.shape == (4,)
-
-
-def test_particle_and_scft_scattering_adapters_preserve_product_identity() -> None:
     positions = jnp.asarray([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
     debye = phx.atomistic.debye_scattering(
         phx.atomistic.DebyeScatteringPlan(

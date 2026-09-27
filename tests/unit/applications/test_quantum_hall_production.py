@@ -42,7 +42,7 @@ def _scale() -> Any:
     )
 
 
-def test_landau_manifold_separates_physical_flux_from_orbital_spin() -> None:
+def test_quantum_hall_production_scenario_1() -> None:
     lowest = qh.MonopoleLandauLevel(5, 0, qh.SPIN_POLARIZED_ELECTRON)
     second = qh.MonopoleLandauLevel(5, 1, qh.SPIN_POLARIZED_ELECTRON)
 
@@ -51,9 +51,6 @@ def test_landau_manifold_separates_physical_flux_from_orbital_spin() -> None:
     assert second.twice_orbital_spin == 7
     assert second.orbital_count == 8
     assert second.twice_monopole_strength == lowest.twice_monopole_strength
-
-
-def test_higher_landau_coulomb_channels_are_finite_and_complete() -> None:
     manifold = qh.MonopoleLandauLevel(5, 1, qh.SPIN_POLARIZED_ELECTRON)
     sphere = qh.HaldaneSpherePlan(
         2,
@@ -67,9 +64,6 @@ def test_higher_landau_coulomb_channels_are_finite_and_complete() -> None:
 
     assert tuple(channel for channel, _ in result.relative_channels) == (1, 3, 5, 7)
     assert np.all(np.isfinite(tuple(value for _, value in result.relative_channels)))
-
-
-def test_modular_charge_basis_selects_magnetic_momentum_without_enumeration() -> None:
     basis = FixedAbelianChargeBasis(
         ("m0", "m1", "m2"),
         (((0, 0), (1, 0)), ((0, 0), (1, 1)), ((0, 0), (1, 2))),
@@ -87,7 +81,7 @@ def test_modular_charge_basis_selects_magnetic_momentum_without_enumeration() ->
     assert int(basis.rank(np.asarray((0, 1, 0)))) == 0
 
 
-def test_effective_mixing_is_hermitian_and_refuses_singular_denominators() -> None:
+def test_quantum_hall_production_scenario_2() -> None:
     active = qh.MonopoleLandauLevel(3, 0, qh.SPIN_POLARIZED_ELECTRON)
     virtual = qh.MonopoleLandauLevel(3, 1, qh.SPIN_POLARIZED_ELECTRON)
     plan = qh.LandauLevelMixingEffectivePlan(
@@ -106,9 +100,6 @@ def test_effective_mixing_is_hermitian_and_refuses_singular_denominators() -> No
         result.two_body_correction, np.conj(result.two_body_correction.T)
     )
     assert bool(result.successful)
-
-
-def test_many_body_twist_bundle_has_zero_chern_for_constant_manifold() -> None:
     states = np.zeros((3, 3, 2, 1), dtype=np.complex128)
     states[..., 0, 0] = 1.0
     result = many_body_twist_chern(states, np.ones((3, 3)))
@@ -116,9 +107,6 @@ def test_many_body_twist_bundle_has_zero_chern_for_constant_manifold() -> None:
     assert int(result.nearest_integer) == 0
     np.testing.assert_allclose(result.normalization_residual, 0.0)
     assert bool(result.successful)
-
-
-def test_sheet_hall_response_recovers_one_conductance_quantum() -> None:
     charge = 1.602_176_634e-19
     plan = PeriodicSheetHallPlan(
         np.asarray(((-1.0,), (-1.0,))),
@@ -138,14 +126,11 @@ def test_sheet_hall_response_recovers_one_conductance_quantum() -> None:
     assert bool(result.successful)
 
 
-def test_wigner_three_j_matches_spin_half_singlet_value() -> None:
+def test_quantum_hall_production_scenario_3() -> None:
     np.testing.assert_allclose(
         su2_wigner_3j(1, 1, 0, 1, -1, 0),
         1.0 / np.sqrt(2.0),
     )
-
-
-def test_explicit_multilevel_and_torus_sectors_lower_matrix_free() -> None:
     manifold = qh.MonopoleLandauLevel(1, 0, qh.SPIN_POLARIZED_ELECTRON)
     term = qh.ProjectedOrbitalTerm((0,), (0,), 1.0)
     prepared = qh.prepare_multi_landau_level_sphere(
@@ -172,9 +157,6 @@ def test_explicit_multilevel_and_torus_sectors_lower_matrix_free() -> None:
     np.testing.assert_allclose(
         torus.operator.mv(jnp.ones((1,), dtype=jnp.complex128)), 1.0
     )
-
-
-def test_infinite_cylinder_reuses_uniform_vumps_with_charge_identity() -> None:
     state = UniformMatrixProductState(
         (jnp.asarray((0.0, 1.0), dtype=jnp.complex128)[None, :, None],)
     )
@@ -202,7 +184,7 @@ def test_infinite_cylinder_reuses_uniform_vumps_with_charge_identity() -> None:
     assert bool(result.successful)
 
 
-def test_localized_transport_preserves_input_and_propagates_solve_evidence() -> None:
+def test_quantum_hall_production_scenario_4() -> None:
     rates = np.asarray(((7.0, 1.0), (1.0, 7.0)))
     original = rates.copy()
     plan = qh.LocalizedHallNetworkPlan(
@@ -218,9 +200,6 @@ def test_localized_transport_preserves_input_and_propagates_solve_evidence() -> 
     np.testing.assert_allclose(result.populations, (2.0, 1.0))
     assert bool(result.linear_solve.successful)
     assert bool(result.successful)
-
-
-def test_open_transport_retains_unsymmetrized_failed_density_evidence() -> None:
     liouvillian = np.asarray(
         (
             (1.0, 0.0, 0.0, 0.0),
@@ -243,6 +222,22 @@ def test_open_transport_retains_unsymmetrized_failed_density_evidence() -> None:
     np.testing.assert_allclose(result.density_matrix[1, 0], 0.0)
     assert bool(result.linear_solve.successful)
     assert not bool(result.successful)
+    problem = _three_terminal_problem()
+    foreign = _coherent_fixture(problem, problem_id="foreign-problem")
+    with pytest.raises(ValueError, match="identities"):
+        solver.solve_dephasing_probes(
+            problem,
+            foreign,
+            solver.TransportProbePlan((2,)),
+        )
+
+    coherent = _coherent_fixture(problem)
+    with pytest.raises(ValueError, match="physical contact"):
+        solver.solve_dephasing_probes(
+            problem,
+            coherent,
+            solver.TransportProbePlan((0, 1, 2)),
+        )
 
 
 def _three_terminal_problem() -> Any:
@@ -284,26 +279,7 @@ def _coherent_fixture(problem: Any, *, problem_id: Any = None) -> Any:
     )
 
 
-def test_transport_probes_reject_foreign_and_singular_contact_rosters() -> None:
-    problem = _three_terminal_problem()
-    foreign = _coherent_fixture(problem, problem_id="foreign-problem")
-    with pytest.raises(ValueError, match="identities"):
-        solver.solve_dephasing_probes(
-            problem,
-            foreign,
-            solver.TransportProbePlan((2,)),
-        )
-
-    coherent = _coherent_fixture(problem)
-    with pytest.raises(ValueError, match="physical contact"):
-        solver.solve_dephasing_probes(
-            problem,
-            coherent,
-            solver.TransportProbePlan((0, 1, 2)),
-        )
-
-
-def test_voltage_probe_reports_native_linear_solve_status() -> None:
+def test_quantum_hall_production_scenario_5() -> None:
     problem = _three_terminal_problem()
     result = solver.solve_voltage_probes(
         problem,
@@ -314,9 +290,6 @@ def test_voltage_probe_reports_native_linear_solve_status() -> None:
     assert int(result.linear_solve_status) == 0
     assert result.problem_id == problem.problem_id
     assert bool(result.successful)
-
-
-def test_scba_rejects_nonvector_local_coupling_roster() -> None:
     energies = np.linspace(-1.0, 1.0, 8)
     matrices = np.broadcast_to(np.eye(2), (8, 2, 2))
     with pytest.raises(ValueError, match="coupling"):
@@ -329,9 +302,6 @@ def test_scba_rejects_nonvector_local_coupling_roster() -> None:
             phonon_bins=1,
             phonon_occupation=0.0,
         )
-
-
-def test_multiterminal_coherent_maps_the_energy_grid() -> None:
     problem = _three_terminal_problem()
     result = solver.solve_multiterminal_coherent(problem)
 

@@ -25,7 +25,7 @@ def _domain_model_solver(model: Any) -> FunctionalSolver:
     return FunctionalSolver(functions={"u": u}, terms=[])
 
 
-def test_add_model_loss_contributes_to_solver_loss_without_constraints() -> None:
+def test_model_losses_scenario_1() -> None:
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -36,9 +36,6 @@ def test_add_model_loss_contributes_to_solver_loss_without_constraints() -> None
     solver = _domain_model_solver(model)
 
     assert jnp.allclose(solver.loss(key=jr.key(0)), 6.0)
-
-
-def test_standalone_add_model_loss_helper_matches_method_api() -> None:
     base = MLP(
         in_size=1,
         out_size="scalar",
@@ -50,9 +47,6 @@ def test_standalone_add_model_loss_helper_matches_method_api() -> None:
     solver = _domain_model_solver(model)
 
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0)
-
-
-def test_model_with_loss_preserves_wrapped_forward_call() -> None:
     base = MLP(
         in_size=1,
         out_size="scalar",
@@ -63,9 +57,6 @@ def test_model_with_loss_preserves_wrapped_forward_call() -> None:
     x = jnp.asarray([0.25])
 
     assert jnp.allclose(model(x, key=jr.key(0)), base(x, key=jr.key(0)))
-
-
-def test_model_loss_is_optimized_by_solve() -> None:
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -87,6 +78,46 @@ def test_model_loss_is_optimized_by_solve() -> None:
     final_loss = trained.loss(key=jr.key(0))
 
     assert final_loss < init_loss
+    domain = Interval1d(0.0, 1.0)
+    model = MLP(
+        in_size=1,
+        out_size="scalar",
+        hidden_sizes=(),
+        key=jr.key(3),
+    ).add_model_loss(lambda m: 2.0, label="shared")
+    u = domain.Model("x")(model)
+    v = domain.Model("x")(model)
+
+    solver = FunctionalSolver(functions={"u": u, "v": v}, terms=[])
+
+    assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0)
+    domain = Interval1d(0.0, 1.0)
+    model = ScaleModel(init=1.0).add_model_loss(
+        lambda m: m.weight**2,
+        label="l2",
+    )
+    u = domain.Model("x")(model)
+    component = domain.component()
+    batch = component.points({"x": jnp.asarray([[1.0]])})
+    target = domain.Function()(1.0)
+    observation = Observation("u", component, target, label="data")
+    data = ObservationPenalty(
+        observation,
+        fixed(from_samples(mean_over(component), batch)),
+    )
+    tx = optax.sgd(0.1)
+    solver = FunctionalSolver(functions={"u": u}, terms=[data])
+
+    trained = solver.solve(
+        num_iter=1,
+        optim=optax.GradientTransformation(tx.init, tx.update),
+        keep_best=False,
+        log_every=0,
+    )
+
+    batch = component.points({"x": jnp.asarray([[1.0]])})
+    pred = jnp.asarray(trained.functions["u"](batch).data).reshape(())
+    assert jnp.allclose(pred, 0.8, atol=1e-6)
 
 
 class CustomLossModel(_AbstractBaseModel):
@@ -123,59 +154,10 @@ class ScaleModel(_AbstractBaseModel):
         return self.weight * jnp.asarray(x)
 
 
-def test_custom_model_dunder_loss_contributes_to_solver_loss() -> None:
+def test_model_losses_scenario_2() -> None:
     solver = _domain_model_solver(CustomLossModel(init=0.5))
 
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.25)
-
-
-def test_model_loss_regularizes_domain_model_forward_weights() -> None:
-    domain = Interval1d(0.0, 1.0)
-    model = ScaleModel(init=1.0).add_model_loss(
-        lambda m: m.weight**2,
-        label="l2",
-    )
-    u = domain.Model("x")(model)
-    component = domain.component()
-    batch = component.points({"x": jnp.asarray([[1.0]])})
-    target = domain.Function()(1.0)
-    observation = Observation("u", component, target, label="data")
-    data = ObservationPenalty(
-        observation,
-        fixed(from_samples(mean_over(component), batch)),
-    )
-    tx = optax.sgd(0.1)
-    solver = FunctionalSolver(functions={"u": u}, terms=[data])
-
-    trained = solver.solve(
-        num_iter=1,
-        optim=optax.GradientTransformation(tx.init, tx.update),
-        keep_best=False,
-        log_every=0,
-    )
-
-    batch = component.points({"x": jnp.asarray([[1.0]])})
-    pred = jnp.asarray(trained.functions["u"](batch).data).reshape(())
-    assert jnp.allclose(pred, 0.8, atol=1e-6)
-
-
-def test_model_loss_is_deduped_for_shared_model_aliases() -> None:
-    domain = Interval1d(0.0, 1.0)
-    model = MLP(
-        in_size=1,
-        out_size="scalar",
-        hidden_sizes=(),
-        key=jr.key(3),
-    ).add_model_loss(lambda m: 2.0, label="shared")
-    u = domain.Model("x")(model)
-    v = domain.Model("x")(model)
-
-    solver = FunctionalSolver(functions={"u": u, "v": v}, terms=[])
-
-    assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0)
-
-
-def test_loss_wrapper_preserves_domain_model_metadata() -> None:
     domain = Interval1d(0.0, 1.0)
     model = SeparableMLP(
         in_size=2,

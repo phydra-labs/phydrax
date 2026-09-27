@@ -32,7 +32,7 @@ def _cluster_data() -> Any:
     )
 
 
-def test_kernel_density_preserves_measure_weights_masks_chunking_and_gradients() -> None:
+def test_neighbor_geometry_contracts_scenario_1() -> None:
     features = _cluster_data()
     measure = jnp.array([1.0, 2.0, 1.0, 0.5, 1.5, 2.0])
     result = KernelDensityRecipe(0.45, weight_policy="measure").fit_batch(
@@ -72,9 +72,6 @@ def test_kernel_density_preserves_measure_weights_masks_chunking_and_gradients()
     assert jnp.all(jnp.isfinite(input_gradient))
     assert jnp.isfinite(bandwidth_gradient)
     assert jnp.all(jnp.isfinite(feature_gradient))
-
-
-def test_local_outlier_factor_uses_chunked_weighted_geometry_and_hard_output() -> None:
     inliers = _cluster_data()
     features = jnp.concatenate((inliers, jnp.array([[5.0, 5.0]])), axis=0)
     weights = jnp.array([1.0, 2.0, 1.0, 1.0, 2.0, 1.0, 0.5])
@@ -94,9 +91,6 @@ def test_local_outlier_factor_uses_chunked_weighted_geometry_and_hard_output() -
     assert result.diagnostics.method == "chunked-local-outlier-factor"
     assert "neighbor_indices" in result.derivative_contract.nondifferentiable_outputs
     assert "predict" in result.derivative_contract.nondifferentiable_outputs
-
-
-def test_nearest_centroid_probabilities_cases_masks_and_hard_contract() -> None:
     features = _cluster_data()
     labels = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     cases = jnp.stack((features, features + jnp.array([0.1, -0.2])), axis=0)
@@ -126,7 +120,7 @@ def test_nearest_centroid_probabilities_cases_masks_and_hard_contract() -> None:
     )
 
 
-def test_nca_embedding_geometry_unrolled_gradients_jit_and_vmap() -> None:
+def test_neighbor_geometry_contracts_scenario_2() -> None:
     features = _cluster_data()
     labels = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     recipe = NeighborhoodComponentsAnalysisRecipe(
@@ -161,9 +155,6 @@ def test_nca_embedding_geometry_unrolled_gradients_jit_and_vmap() -> None:
     )(features)
     assert jnp.all(jnp.isfinite(prediction_gradient))
     assert jnp.all(jnp.isfinite(feature_gradient))
-
-
-def test_mahalanobis_unsupervised_and_supervised_whitening_geometry() -> None:
     features = _cluster_data()
     labels = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
     unsupervised = MahalanobisMetricRecipe(ridge=1e-3).fit_batch(MLBatch(features))

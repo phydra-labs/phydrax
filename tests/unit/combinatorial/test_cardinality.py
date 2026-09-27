@@ -28,34 +28,37 @@ def _brute(costs: Any, count: Any, valid: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("count", [0, 1, 2, 4])
-def test_cardinality_matches_enumeration_and_certifies_boundary(count: Any) -> None:
-    costs = np.asarray([2.0, -1.0, -1.0, 3.0])
-    valid = np.asarray([True, True, True, True])
-    expected = _brute(costs, count, valid)
-    space = phx.combinatorial.CardinalitySpace(4, count, valid=valid)
-    result = phx.combinatorial.solve_combinatorial(
-        phx.combinatorial.LinearCombinatorialProblem(space, jnp.asarray(costs)),
-        phx.combinatorial.StableCardinalityOracle(),
-    )
+def test_cardinality_contracts() -> None:
+    for count in [0, 1, 2, 4]:
+        costs = np.asarray([2.0, -1.0, -1.0, 3.0])
+        valid = np.asarray([True, True, True, True])
+        expected = _brute(costs, count, valid)
+        space = phx.combinatorial.CardinalitySpace(4, count, valid=valid)
+        result = phx.combinatorial.solve_combinatorial(
+            phx.combinatorial.LinearCombinatorialProblem(space, jnp.asarray(costs)),
+            phx.combinatorial.StableCardinalityOracle(),
+        )
 
-    assert expected is not None
-    np.testing.assert_array_equal(result.decision.indices, jnp.asarray(expected))
-    np.testing.assert_array_equal(
-        result.features,
-        jnp.asarray([index in expected for index in range(4)], dtype="float64"),
-    )
-    np.testing.assert_allclose(result.objective_value, costs[list(expected)].sum())
-    assert result.status == int(phx.combinatorial.CombinatorialStatus.OPTIMAL)
-    assert result.certificate.optimality_proven
-    if 0 < count < 4:
-        assert result.certificate.tie_available
-        assert result.certificate.tie_margin >= 0.0
-    else:
-        assert not result.certificate.tie_available
-
-
-def test_cardinality_masks_infeasibility_and_batches_under_jit() -> None:
+        assert expected is not None
+        np.testing.assert_array_equal(result.decision.indices, jnp.asarray(expected))
+        np.testing.assert_array_equal(
+            result.features,
+            jnp.asarray([index in expected for index in range(4)], dtype="float64"),
+        )
+        np.testing.assert_allclose(result.objective_value, costs[list(expected)].sum())
+        assert result.status == int(phx.combinatorial.CombinatorialStatus.OPTIMAL)
+        assert result.certificate.optimality_proven
+        if 0 < count < 4:
+            assert result.certificate.tie_available
+            assert result.certificate.tie_margin >= 0.0
+        else:
+            assert not result.certificate.tie_available
+    with pytest.raises(ValueError, match="positive"):
+        phx.combinatorial.CardinalitySpace(0, 0)
+    with pytest.raises(ValueError, match=r"\[0, size\]"):
+        phx.combinatorial.CardinalitySpace(3, 4)
+    with pytest.raises(ValueError, match="shape"):
+        phx.combinatorial.CardinalitySpace(3, 1, valid=jnp.ones((2,), dtype="bool"))
     space = phx.combinatorial.CardinalitySpace(
         4,
         2,
@@ -110,18 +113,6 @@ def test_cardinality_masks_infeasibility_and_batches_under_jit() -> None:
         -jnp.ones((2,), dtype=jnp.int32),
     )
     np.testing.assert_array_equal(nonfinite.features, jnp.zeros((4,)))
-
-
-def test_cardinality_rejects_invalid_static_contracts() -> None:
-    with pytest.raises(ValueError, match="positive"):
-        phx.combinatorial.CardinalitySpace(0, 0)
-    with pytest.raises(ValueError, match=r"\[0, size\]"):
-        phx.combinatorial.CardinalitySpace(3, 4)
-    with pytest.raises(ValueError, match="shape"):
-        phx.combinatorial.CardinalitySpace(3, 1, valid=jnp.ones((2,), dtype="bool"))
-
-
-def test_cardinality_oracle_honors_required_and_forbidden_items() -> None:
     space = phx.combinatorial.CardinalitySpace(4, 2)
     problem = phx.combinatorial.LinearCombinatorialProblem(
         space,
@@ -142,9 +133,6 @@ def test_cardinality_oracle_honors_required_and_forbidden_items() -> None:
     assert execution.valid
     np.testing.assert_array_equal(execution.result.decision.indices, [0, 2])
     assert execution.restriction_violation == 0.0
-
-
-def test_cardinality_oracle_proves_incompatible_requirements_infeasible() -> None:
     space = phx.combinatorial.CardinalitySpace(3, 1)
     restriction = phx.combinatorial.CombinatorialFeatureRestriction(
         space,

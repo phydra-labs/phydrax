@@ -73,7 +73,7 @@ def _target(*, failures: Any = False) -> Any:
     )
 
 
-def test_fixed_mlmc_runs_through_canonical_integration_dispatch() -> None:
+def test_multilevel_scenario_1() -> None:
     target = _target()
     plan = phx.integration.MultilevelMonteCarloPlan(
         samples_per_level=(4096, 2048, 1024),
@@ -100,9 +100,6 @@ def test_fixed_mlmc_runs_through_canonical_integration_dispatch() -> None:
         < estimate.diagnostics.correction_variance_norms[1]
     )
     assert estimate.diagnostics.mean_costs[2] > estimate.diagnostics.mean_costs[1]
-
-
-def test_adaptive_mlmc_allocates_by_variance_and_cost() -> None:
     target = _target()
     plan = phx.integration.MultilevelMonteCarloPlan(
         initial_samples=32,
@@ -124,9 +121,6 @@ def test_adaptive_mlmc_allocates_by_variance_and_cost() -> None:
     assert jnp.all(estimate.diagnostics.sample_counts >= 32)
     assert estimate.diagnostics.sample_counts[0] > estimate.diagnostics.sample_counts[2]
     assert estimate.diagnostics.weak_convergence_order > 0.0
-
-
-def test_failed_pairs_are_masked_and_replaced_by_new_prefix_indices() -> None:
     target = _target(failures=True)
     plan = phx.integration.MultilevelMonteCarloPlan(
         samples_per_level=(64, 64, 64),

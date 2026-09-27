@@ -8,12 +8,11 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-import pytest
 
 import phydrax as phx
 
 
-def test_diffusion_girsanov_recovers_shifted_gaussian_expectation() -> None:
+def test_measure_change_scenario_1() -> None:
     num_paths = 32_768
     drift_shift = 0.7
     increments = jr.normal(jr.key(41), (num_paths, 1, 1))
@@ -42,9 +41,6 @@ def test_diffusion_girsanov_recovers_shifted_gaussian_expectation() -> None:
     assert estimate.successful
     assert jnp.allclose(jnp.asarray(estimate.value.data), drift_shift, atol=0.03)
     assert jnp.allclose(estimate.diagnostics.normalizer_estimate, 1.0, atol=0.03)
-
-
-def test_diffusion_measure_change_rejects_partial_invalid_paths() -> None:
     controls = jnp.ones((2, 2, 1))
     increments = jnp.ones((2, 2, 1))
     valid = jnp.asarray([[True, True], [True, False]])
@@ -58,19 +54,6 @@ def test_diffusion_measure_change_rejects_partial_invalid_paths() -> None:
 
     assert jnp.array_equal(change.valid, jnp.asarray([True, False]))
     assert jnp.isneginf(change.log_likelihood_ratio[1])
-
-
-def _jump_events() -> Any:
-    return phx.stochastic.JumpEventBatch(
-        jnp.asarray([[0.0, 0.0], [0.2, 0.7], [0.5, 0.0]]),
-        jnp.zeros((3, 2), dtype=jnp.int32),
-        jnp.zeros((3, 2)),
-        jnp.asarray([[False, False], [True, True], [True, False]]),
-        jnp.zeros((3,), dtype=jnp.int32),
-    )
-
-
-def test_jump_measure_change_matches_poisson_likelihood_ratio() -> None:
     events = _jump_events()
     proposal = jnp.full((3, 1, 1), 2.0)
     target = jnp.full((3, 1, 1), 3.0)
@@ -90,9 +73,6 @@ def test_jump_measure_change_matches_poisson_likelihood_ratio() -> None:
     assert jnp.allclose(change.compensator, 1.0)
     assert jnp.all(change.valid)
     assert jnp.all(change.support_valid)
-
-
-def test_jump_measure_change_reports_support_failure_and_zero_target_density() -> None:
     events = _jump_events()
     proposal = jnp.full((3, 1, 1), 2.0)
     target = jnp.zeros((3, 1, 1))
@@ -122,25 +102,30 @@ def test_jump_measure_change_reports_support_failure_and_zero_target_density() -
     assert estimate.status == int(
         phx.integration.IntegrationStatus.PROPOSAL_SUPPORT_FAILURE
     )
+    for event_time in [jnp.nan, -0.1, 1.1]:
+        events = phx.stochastic.JumpEventBatch(
+            jnp.asarray([[event_time]]),
+            jnp.zeros((1, 1), dtype=jnp.int32),
+            jnp.zeros((1, 1)),
+            jnp.ones((1, 1), dtype=jnp.bool_),
+            jnp.zeros((1,), dtype=jnp.int32),
+        )
+        change = phx.stochastic.jump_measure_change(
+            events,
+            jnp.asarray([0.0, 1.0]),
+            jnp.ones((1, 1, 1)),
+            jnp.ones((1, 1, 1)),
+        )
+
+        assert not change.valid[0]
+        assert jnp.isneginf(change.log_likelihood_ratio[0])
 
 
-@pytest.mark.parametrize("event_time", [jnp.nan, -0.1, 1.1])
-def test_jump_measure_change_rejects_active_events_outside_partition(
-    event_time: Any,
-) -> None:
-    events = phx.stochastic.JumpEventBatch(
-        jnp.asarray([[event_time]]),
-        jnp.zeros((1, 1), dtype=jnp.int32),
-        jnp.zeros((1, 1)),
-        jnp.ones((1, 1), dtype=jnp.bool_),
-        jnp.zeros((1,), dtype=jnp.int32),
+def _jump_events() -> Any:
+    return phx.stochastic.JumpEventBatch(
+        jnp.asarray([[0.0, 0.0], [0.2, 0.7], [0.5, 0.0]]),
+        jnp.zeros((3, 2), dtype=jnp.int32),
+        jnp.zeros((3, 2)),
+        jnp.asarray([[False, False], [True, True], [True, False]]),
+        jnp.zeros((3,), dtype=jnp.int32),
     )
-    change = phx.stochastic.jump_measure_change(
-        events,
-        jnp.asarray([0.0, 1.0]),
-        jnp.ones((1, 1, 1)),
-        jnp.ones((1, 1, 1)),
-    )
-
-    assert not change.valid[0]
-    assert jnp.isneginf(change.log_likelihood_ratio[0])

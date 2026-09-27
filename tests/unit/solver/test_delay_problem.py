@@ -22,7 +22,7 @@ def _drift(time: Any, state: Any, memory: Any, args: Any) -> Any:
     return args * state + memory["short"] - memory["long"]
 
 
-def test_delay_problem_declares_named_shape_stable_memory() -> None:
+def test_delay_contracts() -> None:
     problem = phx.solver.DelayDifferentialProblem(
         _drift,
         _history,
@@ -45,44 +45,6 @@ def test_delay_problem_declares_named_shape_stable_memory() -> None:
     # ty: ignore[invalid-argument-type]
     assert jnp.isclose(problem.maximum_delay, 0.7)
     assert problem.problem_id == "named-vector-delay"
-
-
-def test_delay_values_support_static_name_and_index_access_under_jit() -> None:
-    values = phx.solver.DelayValues(
-        ("matrix", "other"),
-        (jnp.arange(4.0).reshape(2, 2), jnp.ones((2, 2))),
-    )
-
-    operation = eqx.filter_jit(
-        lambda memory: memory["matrix"] + 2.0 * memory[1] + memory[-2]
-    )
-    assert jnp.array_equal(
-        operation(values),
-        2.0 * jnp.arange(4.0).reshape(2, 2) + 2.0,
-    )
-    assert values.stacked.shape == (2, 2, 2)
-    with pytest.raises(KeyError, match="missing"):
-        _ = values["missing"]
-
-
-def test_delay_problem_is_a_transformable_pytree() -> None:
-    def terminal(scale: Any) -> Any:
-        problem = phx.solver.DelayDifferentialProblem(
-            lambda time, state, memory, args: args * memory[0],
-            lambda time, args: args * jnp.ones((2, 3)),
-            (phx.solver.ConstantDelay("lag", 0.4),),
-            t0=0.0,
-            t1=1.0,
-            args=scale,
-        )
-        return jnp.sum(problem.initial_state) + problem.minimum_delay
-
-    observed = jax.jit(jax.vmap(terminal))(jnp.asarray([1.0, 2.0]))
-    assert jnp.allclose(observed, jnp.asarray([6.4, 12.4]))
-    assert jnp.isclose(jax.grad(terminal)(2.0), 6.0)
-
-
-def test_delay_problem_validates_term_names_and_history_shapes() -> None:
     history = lambda time, args: jnp.ones((2,))
     drift = lambda time, state, memory, args: state
 
@@ -125,9 +87,6 @@ def test_delay_problem_validates_term_names_and_history_shapes() -> None:
             t0=0.0,
             t1=1.0,
         )
-
-
-def test_delay_problem_requires_neutral_prehistory_derivative() -> None:
     delayed_derivative = phx.solver.DerivativeDelay(
         "velocity",
         phx.solver.ConstantDelay("source", 0.25),
@@ -150,9 +109,6 @@ def test_delay_problem_requires_neutral_prehistory_derivative() -> None:
         t1=1.0,
     )
     assert problem.neutral
-
-
-def test_delay_problem_validates_stochastic_coefficient_shape_and_identity() -> None:
     wiener_term = phx.solver.DelayWienerTerm(
         "forcing",
         lambda time, state, memory, args: jnp.ones(state.shape + (2,)),
@@ -188,31 +144,55 @@ def test_delay_problem_validates_stochastic_coefficient_shape_and_identity() -> 
             t0=0.0,
             t1=1.0,
         )
-
-
-@pytest.mark.parametrize("delay", [0.0, -0.1, jnp.inf, jnp.nan])
-def test_constant_delay_rejects_nonpositive_or_nonfinite_values(delay: Any) -> None:
-    with pytest.raises(Exception, match="finite and positive"):
-        phx.solver.ConstantDelay("invalid", delay)
-
-
-@pytest.mark.parametrize(
-    ("t0", "t1", "message"),
-    [
+    for t0, t1, message in [
         (0.0, 0.0, "t1 > t0"),
         (1.0, 0.0, "t1 > t0"),
         (jnp.nan, 1.0, "finite"),
         (0.0, jnp.inf, "finite"),
-    ],
-)
-def test_delay_problem_rejects_invalid_time_intervals(
-    t0: Any, t1: Any, message: Any
-) -> None:
-    with pytest.raises(Exception, match=message):
-        phx.solver.DelayDifferentialProblem(
-            lambda time, state, memory, args: state,
-            lambda time, args: jnp.ones((1,)),
-            (phx.solver.ConstantDelay("lag", 0.2),),
-            t0=t0,
-            t1=t1,
+    ]:
+        with pytest.raises(Exception, match=message):
+            phx.solver.DelayDifferentialProblem(
+                lambda time, state, memory, args: state,
+                lambda time, args: jnp.ones((1,)),
+                (phx.solver.ConstantDelay("lag", 0.2),),
+                t0=t0,
+                t1=t1,
+            )
+    values = phx.solver.DelayValues(
+        ("matrix", "other"),
+        (jnp.arange(4.0).reshape(2, 2), jnp.ones((2, 2))),
+    )
+
+    operation = eqx.filter_jit(
+        lambda memory: memory["matrix"] + 2.0 * memory[1] + memory[-2]
+    )
+    assert jnp.array_equal(
+        operation(values),
+        2.0 * jnp.arange(4.0).reshape(2, 2) + 2.0,
+    )
+    assert values.stacked.shape == (2, 2, 2)
+    with pytest.raises(KeyError, match="missing"):
+        _ = values["missing"]
+
+
+def test_delay_problem_is_a_transformable_pytree() -> None:
+    def terminal(scale: Any) -> Any:
+        problem = phx.solver.DelayDifferentialProblem(
+            lambda time, state, memory, args: args * memory[0],
+            lambda time, args: args * jnp.ones((2, 3)),
+            (phx.solver.ConstantDelay("lag", 0.4),),
+            t0=0.0,
+            t1=1.0,
+            args=scale,
         )
+        return jnp.sum(problem.initial_state) + problem.minimum_delay
+
+    observed = jax.jit(jax.vmap(terminal))(jnp.asarray([1.0, 2.0]))
+    assert jnp.allclose(observed, jnp.asarray([6.4, 12.4]))
+    assert jnp.isclose(jax.grad(terminal)(2.0), 6.0)
+
+
+def test_constant_delay_rejects_nonpositive_or_nonfinite_values() -> None:
+    for delay in [0.0, -0.1, jnp.inf, jnp.nan]:
+        with pytest.raises(Exception, match="finite and positive"):
+            phx.solver.ConstantDelay("invalid", delay)

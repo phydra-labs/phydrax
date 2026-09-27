@@ -99,7 +99,7 @@ def _integrate(
     )
 
 
-def test_stage_scatter_uses_owner_outward_signs_and_adds_source_rate() -> None:
+def test_finite_volume_flux_ledger_scenario_1() -> None:
     ledger = _stage(
         [[2.0, 3.0], [5.0, 7.0]],
         [[0.5, 1.0], [1.5, 2.0]],
@@ -111,42 +111,30 @@ def test_stage_scatter_uses_owner_outward_signs_and_adds_source_rate() -> None:
     )
     assert ledger.units == "content/time"
     assert ledger.blocks[0].units == "content/time"
-
-
-def test_stage_rate_block_schema_contains_no_time_increment() -> None:
     field_names = {field.name for field in fields(ConservationStageFluxRateBlock)}
 
     assert "flux_rate" in field_names
     assert "dt" not in field_names
     assert "time_increment" not in field_names
+    ledger = _stage(
+        [[1.0], [2.0]],
+        [[0.0], [0.0]],
+        evidence_policy_id="evidence-policy:ale-gcl",
+        evidence_version=9,
+    )
 
-
-def test_ssprk33_integrates_rates_exactly_and_multiplies_by_dt_once() -> None:
-    rate1 = np.asarray([[6.0, 12.0], [18.0, 24.0]])
-    rate2 = np.asarray([[12.0, 18.0], [24.0, 30.0]])
-    rate3 = np.asarray([[30.0, 36.0], [42.0, 48.0]])
-    source1 = np.asarray([[3.0, 6.0], [9.0, 12.0]])
-    source2 = np.asarray([[6.0, 9.0], [12.0, 15.0]])
-    source3 = np.asarray([[15.0, 18.0], [21.0, 24.0]])
-    stage1 = _stage(rate1, source1, geometry_version=10)
-    stage2 = _stage(rate2, source2, geometry_version=11)
-    stage3 = _stage(rate3, source3, geometry_version=12)
-    dt = 0.3
-
-    accepted = _integrate(stage1, stage2, stage3, dt, start_version=10, end_version=13)
-
-    expected_flux = dt * (rate1 / 6.0 + rate2 / 6.0 + 2.0 * rate3 / 3.0)
-    expected_source = dt * (source1 / 6.0 + source2 / 6.0 + 2.0 * source3 / 3.0)
-    np.testing.assert_allclose(accepted.blocks[0].flux_integral, expected_flux)
-    np.testing.assert_allclose(accepted.source_integral, expected_source)
-    np.testing.assert_array_equal(stage1.blocks[0].flux_rate, rate1)
-    assert accepted.units == "content"
-    assert accepted.blocks[0].units == "content"
-
-
-def test_accepted_ledger_retains_dynamic_temporal_provenance_without_fingerprinting_it() -> (
-    None
-):
+    assert ledger.evidence_policy_id == "evidence-policy:ale-gcl"
+    assert int(ledger.evidence_version) == 9
+    with pytest.raises(ValueError, match="nonempty canonical string"):
+        _stage(
+            [[1.0], [2.0]],
+            [[0.0], [0.0]],
+            evidence_policy_id=" evidence-policy:ale-gcl ",
+        )
+    with pytest.raises(ValueError, match="scalar"):
+        _stage([[1.0], [2.0]], [[0.0], [0.0]], evidence_version=[1])
+    with pytest.raises(TypeError, match="integer dtype"):
+        _stage([[1.0], [2.0]], [[0.0], [0.0]], evidence_version=1.0)
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
     field_names = {field.name for field in fields(AcceptedConservationIntegralLedger)}
     assert {"start_time", "end_time", "accepted_step"} <= field_names
@@ -175,9 +163,147 @@ def test_accepted_ledger_retains_dynamic_temporal_provenance_without_fingerprint
     assert float(first.end_time) == pytest.approx(1.75)
     assert int(first.accepted_step) == 8
     assert first.ledger_id == second.ledger_id
+    with pytest.raises(Exception, match="exactly zero on inactive cells"):
+        AcceptedConservationIntegralLedger(
+            (),
+            jnp.asarray([[0.0], [1.0]]),
+            jnp.asarray([True, False]),
+            geometry_family_id="geometry-family:mesh",
+            geometry_layout_id="geometry-layout:mesh",
+            stage_geometry_versions=(jnp.asarray(1), jnp.asarray(2), jnp.asarray(3)),
+            start_geometry_version=jnp.asarray(1),
+            end_geometry_version=jnp.asarray(4),
+            evidence_policy_id="evidence-policy:gcl",
+            stage_evidence_versions=(
+                jnp.asarray(1),
+                jnp.asarray(2),
+                jnp.asarray(3),
+            ),
+            start_evidence_version=jnp.asarray(1),
+            end_evidence_version=jnp.asarray(4),
+            start_topology_epoch_id="topology:0",
+            end_topology_epoch_id="topology:0",
+            start_time=jnp.asarray(0.0),
+            end_time=jnp.asarray(0.1),
+            accepted_step=jnp.asarray(1),
+        )
+    stages = tuple(
+        _stage(
+            [[1.0], [2.0]],
+            [[0.0], [0.0]],
+            geometry_version=geometry_version,
+            evidence_version=evidence_version,
+        )
+        for geometry_version, evidence_version in ((7, 70), (8, 83), (9, 91))
+    )
+    accepted = _integrate(
+        *stages,
+        start_version=7,
+        end_version=10,
+        start_evidence_version=70,
+        end_evidence_version=104,
+    )
+
+    np.testing.assert_array_equal(
+        [int(version) for version in accepted.stage_geometry_versions], [7, 8, 9]
+    )
+    np.testing.assert_array_equal(
+        [int(version) for version in accepted.stage_evidence_versions], [70, 83, 91]
+    )
+    assert int(accepted.start_geometry_version) == 7
+    assert int(accepted.end_geometry_version) == 10
+    assert int(accepted.start_evidence_version) == 70
+    assert int(accepted.end_evidence_version) == 104
+
+    with pytest.raises(Exception, match="first stage geometry version"):
+        invalid = _integrate(
+            *stages,
+            start_version=6,
+            end_version=10,
+            start_evidence_version=70,
+        )
+        jax.block_until_ready(invalid.source_integral)
+    with pytest.raises(Exception, match="first stage evidence version"):
+        invalid = _integrate(
+            *stages,
+            start_version=7,
+            end_version=10,
+            start_evidence_version=69,
+        )
+        jax.block_until_ready(invalid.source_integral)
+    stage = _stage(
+        [[2.0, 3.0], [5.0, 7.0]],
+        [[1.0, 2.0], [3.0, 4.0]],
+    )
+    accepted = _integrate(stage, stage, stage, 0.5)
+
+    source_sum, boundary_outward_sum, net_cell_sum = accepted.conservation_sums()
+    np.testing.assert_allclose(source_sum, np.asarray([2.0, 3.0]))
+    np.testing.assert_allclose(boundary_outward_sum, np.asarray([2.5, 3.5]))
+    np.testing.assert_allclose(net_cell_sum, source_sum - boundary_outward_sum)
+    left_patch = ConservationStageFluxRateBlock(
+        jnp.asarray([[2.0]]),
+        jnp.asarray([0], dtype=jnp.int32),
+        jnp.asarray([-1], dtype=jnp.int32),
+        jnp.asarray([True]),
+        "faces:wall-left",
+        "physical",
+    )
+    right_patch = ConservationStageFluxRateBlock(
+        jnp.asarray([[3.0]]),
+        jnp.asarray([1], dtype=jnp.int32),
+        jnp.asarray([-1], dtype=jnp.int32),
+        jnp.asarray([True]),
+        "faces:wall-right",
+        "physical",
+    )
+
+    ledger = ConservationStageLedger(
+        (left_patch, right_patch),
+        jnp.zeros((2, 1)),
+        jnp.asarray([True, True]),
+        geometry_family_id="geometry-family:mesh",
+        geometry_layout_id="geometry-layout:mesh",
+        geometry_version=jnp.asarray(1, dtype=jnp.int32),
+        evidence_policy_id="evidence-policy:gcl",
+        evidence_version=jnp.asarray(1, dtype=jnp.int32),
+        topology_epoch_id="topology:0",
+    )
+
+    assert tuple(block.block_kind for block in ledger.blocks) == (
+        "physical",
+        "physical",
+    )
+    assert ledger.blocks[0].route_id != ledger.blocks[1].route_id
+    np.testing.assert_array_equal(ledger.scatter_content_rate(), [[-2.0], [-3.0]])
+    accepted = _integrate(ledger, ledger, ledger, start_version=1, end_version=2)
+    assert tuple(block.block_kind for block in accepted.blocks) == (
+        "physical",
+        "physical",
+    )
 
 
-def test_ssprk33_accepts_dtype_roundoff_but_rejects_interval_mismatch() -> None:
+def test_ssprk33_contracts() -> None:
+    rate1 = np.asarray([[6.0, 12.0], [18.0, 24.0]])
+    rate2 = np.asarray([[12.0, 18.0], [24.0, 30.0]])
+    rate3 = np.asarray([[30.0, 36.0], [42.0, 48.0]])
+    source1 = np.asarray([[3.0, 6.0], [9.0, 12.0]])
+    source2 = np.asarray([[6.0, 9.0], [12.0, 15.0]])
+    source3 = np.asarray([[15.0, 18.0], [21.0, 24.0]])
+    stage1 = _stage(rate1, source1, geometry_version=10)
+    stage2 = _stage(rate2, source2, geometry_version=11)
+    stage3 = _stage(rate3, source3, geometry_version=12)
+    dt = 0.3
+
+    accepted = _integrate(stage1, stage2, stage3, dt, start_version=10, end_version=13)
+
+    expected_flux = dt * (rate1 / 6.0 + rate2 / 6.0 + 2.0 * rate3 / 3.0)
+    expected_source = dt * (source1 / 6.0 + source2 / 6.0 + 2.0 * source3 / 3.0)
+    np.testing.assert_allclose(accepted.blocks[0].flux_integral, expected_flux)
+    np.testing.assert_allclose(accepted.source_integral, expected_source)
+    np.testing.assert_array_equal(stage1.blocks[0].flux_rate, rate1)
+    assert accepted.units == "content"
+    assert accepted.blocks[0].units == "content"
     stage = _stage([[1.0], [2.0]], [[0.0], [0.0]])
     start = jnp.asarray(1.0, dtype=jnp.float32)
     dt = jnp.asarray(0.1, dtype=jnp.float32)
@@ -203,6 +329,119 @@ def test_ssprk33_accepts_dtype_roundoff_but_rejects_interval_mismatch() -> None:
             end_time=jnp.asarray(1.2, dtype=jnp.float32),
         )
         jax.block_until_ready(invalid.source_integral)
+    common = dict(
+        flux_rate=[[2.0], [0.0]],
+        source_rate=[[1.0], [0.0]],
+        active_cell_mask=(True, False),
+        owner=(0, 0),
+        neighbor=(-1, -1),
+        active=(True, False),
+    )
+    stage1 = _stage(**common, geometry_version=1)
+    stage2 = _stage(**common, geometry_version=2)
+    stage3 = _stage(**common, geometry_version=3)
+
+    accepted = _integrate(stage1, stage2, stage3, start_version=1, end_version=4)
+
+    np.testing.assert_array_equal(accepted.active_cell_mask, [True, False])
+    np.testing.assert_array_equal(accepted.source_integral[1], [0.0])
+    np.testing.assert_array_equal(accepted.scatter_content_integral()[1], [0.0])
+
+    changed = _stage(
+        [[2.0], [0.0]],
+        [[1.0], [0.0]],
+        active_cell_mask=(True, True),
+        owner=(0, 0),
+        neighbor=(-1, -1),
+        active=(True, False),
+        geometry_version=2,
+    )
+    with pytest.raises(Exception, match="identical active-cell masks"):
+        mismatched = _integrate(stage1, changed, stage3, start_version=1, end_version=4)
+        jax.block_until_ready(mismatched.source_integral)
+
+    changed_family = _stage(
+        **common, geometry_version=2, geometry_family_id="geometry-family:other"
+    )
+    with pytest.raises(ValueError, match="share one geometry family"):
+        _integrate(stage1, changed_family, stage3, start_version=1, end_version=4)
+    stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
+    changed_layout = _stage(
+        [[1.0], [2.0]],
+        [[0.0], [0.0]],
+        geometry_layout_id="geometry-layout:changed",
+        geometry_version=2,
+    )
+    changed_policy = _stage(
+        [[1.0], [2.0]],
+        [[0.0], [0.0]],
+        geometry_version=2,
+        evidence_policy_id="evidence-policy:changed",
+    )
+    changed_route = _stage(
+        [[1.0], [2.0]],
+        [[0.0], [0.0]],
+        geometry_version=2,
+        owner=(1, 1),
+        neighbor=(0, -1),
+    )
+
+    with pytest.raises(ValueError, match="one geometry layout"):
+        _integrate(stage1, changed_layout, stage1, start_version=1)
+    with pytest.raises(ValueError, match="one evidence policy"):
+        _integrate(stage1, changed_policy, stage1, start_version=1)
+    with pytest.raises(ValueError, match="identical block IDs, block kinds, and routes"):
+        _integrate(stage1, changed_route, stage1, start_version=1)
+    stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
+    changed_stage = _stage(
+        [[1.0], [2.0]],
+        [[0.0], [0.0]],
+        geometry_version=2,
+        topology_epoch_id="topology:changed",
+    )
+
+    with pytest.raises(ValueError, match="one topology epoch"):
+        _integrate(stage1, changed_stage, stage1, start_version=1)
+    with pytest.raises(ValueError, match="end_topology_epoch_id"):
+        AcceptedConservationIntegralLedger.integrate_ssprk33(
+            stage1,
+            stage1,
+            stage1,
+            0.1,
+            start_geometry_version=jnp.asarray(1),
+            end_geometry_version=jnp.asarray(2),
+            start_evidence_version=jnp.asarray(1),
+            end_evidence_version=jnp.asarray(2),
+            start_topology_epoch_id="topology:0",
+            end_topology_epoch_id="topology:changed",
+            start_time=jnp.asarray(0.0),
+            end_time=jnp.asarray(0.1),
+            accepted_step=jnp.asarray(1),
+        )
+    with pytest.raises(ValueError, match="cannot span a topology epoch change"):
+        AcceptedConservationIntegralLedger(
+            (),
+            jnp.zeros((2, 1)),
+            jnp.asarray([True, True]),
+            geometry_family_id="geometry-family:mesh",
+            geometry_layout_id="geometry-layout:mesh",
+            stage_geometry_versions=(jnp.asarray(1), jnp.asarray(2), jnp.asarray(3)),
+            start_geometry_version=jnp.asarray(1),
+            end_geometry_version=jnp.asarray(4),
+            evidence_policy_id="evidence-policy:gcl",
+            stage_evidence_versions=(
+                jnp.asarray(1),
+                jnp.asarray(2),
+                jnp.asarray(3),
+            ),
+            start_evidence_version=jnp.asarray(1),
+            end_evidence_version=jnp.asarray(4),
+            start_topology_epoch_id="topology:0",
+            end_topology_epoch_id="topology:changed",
+            start_time=jnp.asarray(0.0),
+            end_time=jnp.asarray(0.1),
+            accepted_step=jnp.asarray(1),
+        )
 
 
 @pytest.mark.parametrize(
@@ -255,52 +494,7 @@ def test_accepted_ledger_requires_nonnegative_scalar_integer_step(
         jax.block_until_ready(invalid.source_integral)
 
 
-def test_repeated_semantic_block_kinds_are_allowed_when_ids_and_routes_are_unique() -> (
-    None
-):
-    left_patch = ConservationStageFluxRateBlock(
-        jnp.asarray([[2.0]]),
-        jnp.asarray([0], dtype=jnp.int32),
-        jnp.asarray([-1], dtype=jnp.int32),
-        jnp.asarray([True]),
-        "faces:wall-left",
-        "physical",
-    )
-    right_patch = ConservationStageFluxRateBlock(
-        jnp.asarray([[3.0]]),
-        jnp.asarray([1], dtype=jnp.int32),
-        jnp.asarray([-1], dtype=jnp.int32),
-        jnp.asarray([True]),
-        "faces:wall-right",
-        "physical",
-    )
-
-    ledger = ConservationStageLedger(
-        (left_patch, right_patch),
-        jnp.zeros((2, 1)),
-        jnp.asarray([True, True]),
-        geometry_family_id="geometry-family:mesh",
-        geometry_layout_id="geometry-layout:mesh",
-        geometry_version=jnp.asarray(1, dtype=jnp.int32),
-        evidence_policy_id="evidence-policy:gcl",
-        evidence_version=jnp.asarray(1, dtype=jnp.int32),
-        topology_epoch_id="topology:0",
-    )
-
-    assert tuple(block.block_kind for block in ledger.blocks) == (
-        "physical",
-        "physical",
-    )
-    assert ledger.blocks[0].route_id != ledger.blocks[1].route_id
-    np.testing.assert_array_equal(ledger.scatter_content_rate(), [[-2.0], [-3.0]])
-    accepted = _integrate(ledger, ledger, ledger, start_version=1, end_version=2)
-    assert tuple(block.block_kind for block in accepted.blocks) == (
-        "physical",
-        "physical",
-    )
-
-
-def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes() -> None:
+def test_finite_volume_flux_ledger_scenario_2() -> None:
     first = ConservationStageFluxRateBlock(
         jnp.ones((1, 1)),
         jnp.asarray([0], dtype=jnp.int32),
@@ -350,6 +544,45 @@ def test_ledger_rejects_duplicate_block_ids_and_duplicate_routes() -> None:
             # ty: ignore[invalid-argument-type]
             **kwargs,
         )
+    with pytest.raises(TypeError, match="boolean dtype"):
+        ConservationStageFluxRateBlock(
+            jnp.ones((1, 2)),
+            jnp.asarray([0], dtype=jnp.int32),
+            jnp.asarray([-1], dtype=jnp.int32),
+            jnp.asarray([1], dtype=jnp.int32),
+            "faces:a",
+            "physical",
+        )
+    with pytest.raises(ValueError, match="connect a cell to itself"):
+        ConservationStageFluxRateBlock(
+            jnp.ones((1, 2)),
+            jnp.asarray([0], dtype=jnp.int32),
+            jnp.asarray([0], dtype=jnp.int32),
+            jnp.asarray([True]),
+            "faces:a",
+            "physical",
+        )
+    with pytest.raises(Exception, match="finite values"):
+        _stage([[jnp.nan], [0.0]], [[0.0], [0.0]])
+    with pytest.raises(Exception, match="finite values"):
+        _stage([[0.0], [0.0]], [[jnp.inf], [0.0]])
+    with pytest.raises(TypeError, match="boolean dtype"):
+        _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(1, 1))
+    with pytest.raises(ValueError, match="one value per cell"):
+        _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(True,))
+    with pytest.raises(Exception, match="active route through an inactive cell"):
+        _stage(
+            [[1.0], [0.0]],
+            [[0.0], [0.0]],
+            active_cell_mask=(True, False),
+            owner=(0, 0),
+            neighbor=(1, -1),
+            active=(True, False),
+        )
+    with pytest.raises(ValueError, match="scalar"):
+        _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=[1])
+    with pytest.raises(TypeError, match="integer dtype"):
+        _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1.0)
 
 
 @pytest.mark.parametrize(
@@ -372,91 +605,6 @@ def test_stage_ledger_rejects_every_nonzero_source_rate_on_inactive_cells(
             neighbor=(-1, -1),
             active=(True, False),
         )
-
-
-def test_accepted_ledger_rejects_nonzero_source_integral_on_inactive_cells() -> None:
-    with pytest.raises(Exception, match="exactly zero on inactive cells"):
-        AcceptedConservationIntegralLedger(
-            (),
-            jnp.asarray([[0.0], [1.0]]),
-            jnp.asarray([True, False]),
-            geometry_family_id="geometry-family:mesh",
-            geometry_layout_id="geometry-layout:mesh",
-            stage_geometry_versions=(jnp.asarray(1), jnp.asarray(2), jnp.asarray(3)),
-            start_geometry_version=jnp.asarray(1),
-            end_geometry_version=jnp.asarray(4),
-            evidence_policy_id="evidence-policy:gcl",
-            stage_evidence_versions=(
-                jnp.asarray(1),
-                jnp.asarray(2),
-                jnp.asarray(3),
-            ),
-            start_evidence_version=jnp.asarray(1),
-            end_evidence_version=jnp.asarray(4),
-            start_topology_epoch_id="topology:0",
-            end_topology_epoch_id="topology:0",
-            start_time=jnp.asarray(0.0),
-            end_time=jnp.asarray(0.1),
-            accepted_step=jnp.asarray(1),
-        )
-
-
-def test_active_cell_mask_is_exact_boolean_and_has_one_entry_per_cell() -> None:
-    with pytest.raises(TypeError, match="boolean dtype"):
-        _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(1, 1))
-    with pytest.raises(ValueError, match="one value per cell"):
-        _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(True,))
-
-
-def test_active_face_routes_cannot_own_or_neighbor_an_inactive_cell() -> None:
-    with pytest.raises(Exception, match="active route through an inactive cell"):
-        _stage(
-            [[1.0], [0.0]],
-            [[0.0], [0.0]],
-            active_cell_mask=(True, False),
-            owner=(0, 0),
-            neighbor=(1, -1),
-            active=(True, False),
-        )
-
-
-def test_ssprk33_preserves_active_mask_and_rejects_stage_mask_mismatch() -> None:
-    common = dict(
-        flux_rate=[[2.0], [0.0]],
-        source_rate=[[1.0], [0.0]],
-        active_cell_mask=(True, False),
-        owner=(0, 0),
-        neighbor=(-1, -1),
-        active=(True, False),
-    )
-    stage1 = _stage(**common, geometry_version=1)
-    stage2 = _stage(**common, geometry_version=2)
-    stage3 = _stage(**common, geometry_version=3)
-
-    accepted = _integrate(stage1, stage2, stage3, start_version=1, end_version=4)
-
-    np.testing.assert_array_equal(accepted.active_cell_mask, [True, False])
-    np.testing.assert_array_equal(accepted.source_integral[1], [0.0])
-    np.testing.assert_array_equal(accepted.scatter_content_integral()[1], [0.0])
-
-    changed = _stage(
-        [[2.0], [0.0]],
-        [[1.0], [0.0]],
-        active_cell_mask=(True, True),
-        owner=(0, 0),
-        neighbor=(-1, -1),
-        active=(True, False),
-        geometry_version=2,
-    )
-    with pytest.raises(Exception, match="identical active-cell masks"):
-        mismatched = _integrate(stage1, changed, stage3, start_version=1, end_version=4)
-        jax.block_until_ready(mismatched.source_integral)
-
-    changed_family = _stage(
-        **common, geometry_version=2, geometry_family_id="geometry-family:other"
-    )
-    with pytest.raises(ValueError, match="share one geometry family"):
-        _integrate(stage1, changed_family, stage3, start_version=1, end_version=4)
 
 
 def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout() -> None:
@@ -573,169 +721,6 @@ def test_dynamic_ale_versions_and_rates_share_one_jit_geometry_layout() -> None:
     assert int(second.accepted_step) == 9
 
 
-def test_stage_evidence_identity_requires_canonical_policy_and_scalar_integer_version() -> (
-    None
-):
-    ledger = _stage(
-        [[1.0], [2.0]],
-        [[0.0], [0.0]],
-        evidence_policy_id="evidence-policy:ale-gcl",
-        evidence_version=9,
-    )
-
-    assert ledger.evidence_policy_id == "evidence-policy:ale-gcl"
-    assert int(ledger.evidence_version) == 9
-    with pytest.raises(ValueError, match="nonempty canonical string"):
-        _stage(
-            [[1.0], [2.0]],
-            [[0.0], [0.0]],
-            evidence_policy_id=" evidence-policy:ale-gcl ",
-        )
-    with pytest.raises(ValueError, match="scalar"):
-        _stage([[1.0], [2.0]], [[0.0], [0.0]], evidence_version=[1])
-    with pytest.raises(TypeError, match="integer dtype"):
-        _stage([[1.0], [2.0]], [[0.0], [0.0]], evidence_version=1.0)
-
-
-def test_geometry_versions_are_dynamic_scalar_integers() -> None:
-    with pytest.raises(ValueError, match="scalar"):
-        _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=[1])
-    with pytest.raises(TypeError, match="integer dtype"):
-        _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1.0)
-
-
-def test_accepted_geometry_and_evidence_endpoints_are_retained_and_match_stage_one() -> (
-    None
-):
-    stages = tuple(
-        _stage(
-            [[1.0], [2.0]],
-            [[0.0], [0.0]],
-            geometry_version=geometry_version,
-            evidence_version=evidence_version,
-        )
-        for geometry_version, evidence_version in ((7, 70), (8, 83), (9, 91))
-    )
-    accepted = _integrate(
-        *stages,
-        start_version=7,
-        end_version=10,
-        start_evidence_version=70,
-        end_evidence_version=104,
-    )
-
-    np.testing.assert_array_equal(
-        [int(version) for version in accepted.stage_geometry_versions], [7, 8, 9]
-    )
-    np.testing.assert_array_equal(
-        [int(version) for version in accepted.stage_evidence_versions], [70, 83, 91]
-    )
-    assert int(accepted.start_geometry_version) == 7
-    assert int(accepted.end_geometry_version) == 10
-    assert int(accepted.start_evidence_version) == 70
-    assert int(accepted.end_evidence_version) == 104
-
-    with pytest.raises(Exception, match="first stage geometry version"):
-        invalid = _integrate(
-            *stages,
-            start_version=6,
-            end_version=10,
-            start_evidence_version=70,
-        )
-        jax.block_until_ready(invalid.source_integral)
-    with pytest.raises(Exception, match="first stage evidence version"):
-        invalid = _integrate(
-            *stages,
-            start_version=7,
-            end_version=10,
-            start_evidence_version=69,
-        )
-        jax.block_until_ready(invalid.source_integral)
-
-
-def test_ssprk33_rejects_geometry_layout_evidence_policy_or_route_mismatch() -> None:
-    stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
-    changed_layout = _stage(
-        [[1.0], [2.0]],
-        [[0.0], [0.0]],
-        geometry_layout_id="geometry-layout:changed",
-        geometry_version=2,
-    )
-    changed_policy = _stage(
-        [[1.0], [2.0]],
-        [[0.0], [0.0]],
-        geometry_version=2,
-        evidence_policy_id="evidence-policy:changed",
-    )
-    changed_route = _stage(
-        [[1.0], [2.0]],
-        [[0.0], [0.0]],
-        geometry_version=2,
-        owner=(1, 1),
-        neighbor=(0, -1),
-    )
-
-    with pytest.raises(ValueError, match="one geometry layout"):
-        _integrate(stage1, changed_layout, stage1, start_version=1)
-    with pytest.raises(ValueError, match="one evidence policy"):
-        _integrate(stage1, changed_policy, stage1, start_version=1)
-    with pytest.raises(ValueError, match="identical block IDs, block kinds, and routes"):
-        _integrate(stage1, changed_route, stage1, start_version=1)
-
-
-def test_ssprk33_cannot_span_a_topology_epoch_change() -> None:
-    stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
-    changed_stage = _stage(
-        [[1.0], [2.0]],
-        [[0.0], [0.0]],
-        geometry_version=2,
-        topology_epoch_id="topology:changed",
-    )
-
-    with pytest.raises(ValueError, match="one topology epoch"):
-        _integrate(stage1, changed_stage, stage1, start_version=1)
-    with pytest.raises(ValueError, match="end_topology_epoch_id"):
-        AcceptedConservationIntegralLedger.integrate_ssprk33(
-            stage1,
-            stage1,
-            stage1,
-            0.1,
-            start_geometry_version=jnp.asarray(1),
-            end_geometry_version=jnp.asarray(2),
-            start_evidence_version=jnp.asarray(1),
-            end_evidence_version=jnp.asarray(2),
-            start_topology_epoch_id="topology:0",
-            end_topology_epoch_id="topology:changed",
-            start_time=jnp.asarray(0.0),
-            end_time=jnp.asarray(0.1),
-            accepted_step=jnp.asarray(1),
-        )
-    with pytest.raises(ValueError, match="cannot span a topology epoch change"):
-        AcceptedConservationIntegralLedger(
-            (),
-            jnp.zeros((2, 1)),
-            jnp.asarray([True, True]),
-            geometry_family_id="geometry-family:mesh",
-            geometry_layout_id="geometry-layout:mesh",
-            stage_geometry_versions=(jnp.asarray(1), jnp.asarray(2), jnp.asarray(3)),
-            start_geometry_version=jnp.asarray(1),
-            end_geometry_version=jnp.asarray(4),
-            evidence_policy_id="evidence-policy:gcl",
-            stage_evidence_versions=(
-                jnp.asarray(1),
-                jnp.asarray(2),
-                jnp.asarray(3),
-            ),
-            start_evidence_version=jnp.asarray(1),
-            end_evidence_version=jnp.asarray(4),
-            start_topology_epoch_id="topology:0",
-            end_topology_epoch_id="topology:changed",
-            start_time=jnp.asarray(0.0),
-            end_time=jnp.asarray(0.1),
-            accepted_step=jnp.asarray(1),
-        )
-
-
 @pytest.mark.parametrize(
     ("dt", "message"),
     [
@@ -759,7 +744,7 @@ def test_ssprk33_rejects_invalid_time_increment(dt: Any, message: Any) -> None:
         jax.block_until_ready(invalid.source_integral)
 
 
-def test_inactive_faces_are_zeroed_before_scatter_and_accepted_integration() -> None:
+def test_finite_volume_flux_ledger_scenario_3() -> None:
     stage1 = _stage(
         [[2.0, 4.0], [1000.0, 2000.0]],
         [[0.0, 0.0], [0.0, 0.0]],
@@ -785,47 +770,6 @@ def test_inactive_faces_are_zeroed_before_scatter_and_accepted_integration() -> 
     np.testing.assert_array_equal(stage1.blocks[0].flux_rate[1], np.zeros(2))
     accepted = _integrate(stage1, stage2, stage3, 0.5, start_version=1)
     np.testing.assert_array_equal(accepted.blocks[0].flux_integral[1], np.zeros(2))
-
-
-def test_accepted_conservation_sums_use_content_without_measure_division() -> None:
-    stage = _stage(
-        [[2.0, 3.0], [5.0, 7.0]],
-        [[1.0, 2.0], [3.0, 4.0]],
-    )
-    accepted = _integrate(stage, stage, stage, 0.5)
-
-    source_sum, boundary_outward_sum, net_cell_sum = accepted.conservation_sums()
-    np.testing.assert_allclose(source_sum, np.asarray([2.0, 3.0]))
-    np.testing.assert_allclose(boundary_outward_sum, np.asarray([2.5, 3.5]))
-    np.testing.assert_allclose(net_cell_sum, source_sum - boundary_outward_sum)
-
-
-def test_ledger_validates_routes_components_masks_and_finiteness() -> None:
-    with pytest.raises(TypeError, match="boolean dtype"):
-        ConservationStageFluxRateBlock(
-            jnp.ones((1, 2)),
-            jnp.asarray([0], dtype=jnp.int32),
-            jnp.asarray([-1], dtype=jnp.int32),
-            jnp.asarray([1], dtype=jnp.int32),
-            "faces:a",
-            "physical",
-        )
-    with pytest.raises(ValueError, match="connect a cell to itself"):
-        ConservationStageFluxRateBlock(
-            jnp.ones((1, 2)),
-            jnp.asarray([0], dtype=jnp.int32),
-            jnp.asarray([0], dtype=jnp.int32),
-            jnp.asarray([True]),
-            "faces:a",
-            "physical",
-        )
-    with pytest.raises(Exception, match="finite values"):
-        _stage([[jnp.nan], [0.0]], [[0.0], [0.0]])
-    with pytest.raises(Exception, match="finite values"):
-        _stage([[0.0], [0.0]], [[jnp.inf], [0.0]])
-
-
-def test_static_ledger_ids_include_evidence_policy_but_exclude_dynamic_versions() -> None:
     first = _stage(
         [[1.0], [2.0]],
         [[0.0], [0.0]],
@@ -895,9 +839,6 @@ def test_static_ledger_ids_include_evidence_policy_but_exclude_dynamic_versions(
     assert accepted1.ledger_id != changed_policy_accepted.ledger_id
     assert first.blocks[0].rate_block_id != ""
     assert accepted1.blocks[0].integral_block_id != ""
-
-
-def test_empty_block_ledger_derives_concrete_shape_and_is_immutable() -> None:
     ledger = ConservationStageLedger(
         (),
         jnp.asarray([[1.0, 2.0], [3.0, 4.0]]),
@@ -980,7 +921,7 @@ def _amr_accepted_ledger(
     )
 
 
-def test_amr_route_aggregation_and_register_use_one_canonical_interval_union() -> None:
+def test_amr_contracts() -> None:
     plan = _amr_conservation_plan()
     coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
     fine = (
@@ -1005,6 +946,39 @@ def test_amr_route_aggregation_and_register_use_one_canonical_interval_union() -
     np.testing.assert_allclose(register.accumulated_time, 0.2)
     refluxed = plan.reflux((jnp.zeros((1, 2, 1)),), register)
     np.testing.assert_allclose(refluxed[0], [[[0.4], [0.0]]], atol=1.0e-7)
+    plan = _amr_conservation_plan()
+    ledger = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
+
+    with pytest.raises(ValueError, match="exactly one block"):
+        plan.aggregate_accepted_route((ledger,), "route:not-in-ledger")
+    plan = _amr_conservation_plan()
+    coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
+    fine = (
+        _amr_accepted_ledger([[0.05], [0.2]], 2.0, 2.1, 100, plan),
+        _amr_accepted_ledger([[0.15], [0.4]], 2.1, 2.2, 101, plan),
+    )
+    route = coarse.blocks[0].route_id
+    register = plan.flux_register(
+        coarse,
+        fine,
+        route,
+        route,
+        lambda value: value,
+        jnp.asarray([True, True]),
+    )
+    foreign = phx.discretization.FluxRegister(
+        register.coarse_flux,
+        register.fine_flux,
+        register.interface_mask,
+        accumulated_time=register.accumulated_time,
+        orientation=register.orientation,
+        refinement_ratio=register.refinement_ratio,
+        register_id=register.register_id,
+        owner_id="foreign-amr-plan",
+    )
+
+    with pytest.raises(ValueError, match="another AMR conservation plan"):
+        plan.reflux((jnp.zeros((1, 2, 1)),), foreign)
 
 
 @pytest.mark.parametrize(
@@ -1067,14 +1041,6 @@ def test_amr_register_rejects_noncanonical_fine_interval_union(
         jax.block_until_ready(register.coarse_flux)
 
 
-def test_amr_route_aggregation_rejects_unbound_route_identity() -> None:
-    plan = _amr_conservation_plan()
-    ledger = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
-
-    with pytest.raises(ValueError, match="exactly one block"):
-        plan.aggregate_accepted_route((ledger,), "route:not-in-ledger")
-
-
 @pytest.mark.parametrize(
     ("second_versions", "message"),
     [
@@ -1105,34 +1071,3 @@ def test_amr_route_aggregation_requires_contiguous_dynamic_versions(
             first.blocks[0].route_id,
         )
         jax.block_until_ready(result)
-
-
-def test_amr_reflux_rejects_same_shaped_register_from_another_plan() -> None:
-    plan = _amr_conservation_plan()
-    coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
-    fine = (
-        _amr_accepted_ledger([[0.05], [0.2]], 2.0, 2.1, 100, plan),
-        _amr_accepted_ledger([[0.15], [0.4]], 2.1, 2.2, 101, plan),
-    )
-    route = coarse.blocks[0].route_id
-    register = plan.flux_register(
-        coarse,
-        fine,
-        route,
-        route,
-        lambda value: value,
-        jnp.asarray([True, True]),
-    )
-    foreign = phx.discretization.FluxRegister(
-        register.coarse_flux,
-        register.fine_flux,
-        register.interface_mask,
-        accumulated_time=register.accumulated_time,
-        orientation=register.orientation,
-        refinement_ratio=register.refinement_ratio,
-        register_id=register.register_id,
-        owner_id="foreign-amr-plan",
-    )
-
-    with pytest.raises(ValueError, match="another AMR conservation plan"):
-        plan.reflux((jnp.zeros((1, 2, 1)),), foreign)

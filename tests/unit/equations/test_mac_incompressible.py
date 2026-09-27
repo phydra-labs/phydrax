@@ -51,7 +51,7 @@ def _taylor_green(discretization: Any) -> Any:
     )
 
 
-def test_mac_compiler_projects_packs_and_diagnoses_physical_velocity() -> None:
+def test_mac_incompressible_scenario_1() -> None:
     discretization, operators, compiled = _compiled()
     velocity = _taylor_green(discretization)
     state = compiled.project_state(velocity)
@@ -72,9 +72,6 @@ def test_mac_compiler_projects_packs_and_diagnoses_physical_velocity() -> None:
     np.testing.assert_allclose(
         operators.velocity_space.flatten(physical), state, atol=2e-10
     )
-
-
-def test_mac_compiler_advances_one_projected_ssprk_step() -> None:
     discretization, operators, compiled = _compiled()
     state = compiled.project_state(_taylor_green(discretization))
     method = phx.solver.SSPRK33FixedStepMethod(compiled)
@@ -91,37 +88,6 @@ def test_mac_compiler_advances_one_projected_ssprk_step() -> None:
     assert result.successful
     assert jnp.linalg.norm(operators.divergence(velocity)) < 2e-9
     assert jnp.linalg.norm(result.accepted_state - state) > 0.0
-
-
-def test_mac_compiler_short_horizon_forcing_gradient_is_finite() -> None:
-    def forcing(_time: Any, velocity: Any, amplitude: Any) -> Any:
-        return (jnp.ones_like(velocity[0]) * amplitude, jnp.zeros_like(velocity[1]))
-
-    discretization, _, compiled = _compiled(
-        forcing=forcing,
-        forcing_id="uniform-x-force",
-        viscosity=0.0,
-    )
-    state = compiled.project_state(_taylor_green(discretization))
-    method = phx.solver.SSPRK33FixedStepMethod(compiled)
-
-    def terminal_energy(amplitude: Any) -> Any:
-        result = method.step(
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0.0),
-            state,
-            jnp.asarray(5.0e-4),
-            amplitude,
-        )
-        velocity = compiled.unpack_velocity(result.accepted_state)
-        return 0.5 * compiled.momentum.operators.velocity_space.inner(velocity, velocity)
-
-    gradient = jax.jit(jax.grad(terminal_energy))(jnp.asarray(0.2))
-
-    assert jnp.isfinite(gradient)
-
-
-def test_mac_compiler_rejects_nonunit_density_projection() -> None:
     discretization, operators, compiled = _compiled()
     projection = phx.solver.MACPressureProjectionPlan(operators, density=2.0)
 
@@ -135,9 +101,6 @@ def test_mac_compiler_rejects_nonunit_density_projection() -> None:
         compiled.project_state(_taylor_green(discretization)).shape
         == compiled.state_shape
     )
-
-
-def test_bounded_mac_compiler_preserves_exact_couette_equilibrium() -> None:
     count = 8
     grid = phx.discretization.TensorGridPlan(
         (
@@ -191,3 +154,31 @@ def test_bounded_mac_compiler_preserves_exact_couette_equilibrium() -> None:
     assert diagnostics.divergence_norm < 2e-10
     assert diagnostics.boundary_defect < 2e-12
     assert jnp.max(jnp.abs(rate)) < 2e-10
+
+
+def test_mac_compiler_short_horizon_forcing_gradient_is_finite() -> None:
+    def forcing(_time: Any, velocity: Any, amplitude: Any) -> Any:
+        return (jnp.ones_like(velocity[0]) * amplitude, jnp.zeros_like(velocity[1]))
+
+    discretization, _, compiled = _compiled(
+        forcing=forcing,
+        forcing_id="uniform-x-force",
+        viscosity=0.0,
+    )
+    state = compiled.project_state(_taylor_green(discretization))
+    method = phx.solver.SSPRK33FixedStepMethod(compiled)
+
+    def terminal_energy(amplitude: Any) -> Any:
+        result = method.step(
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0.0),
+            state,
+            jnp.asarray(5.0e-4),
+            amplitude,
+        )
+        velocity = compiled.unpack_velocity(result.accepted_state)
+        return 0.5 * compiled.momentum.operators.velocity_space.inner(velocity, velocity)
+
+    gradient = jax.jit(jax.grad(terminal_energy))(jnp.asarray(0.2))
+
+    assert jnp.isfinite(gradient)

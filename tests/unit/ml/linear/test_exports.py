@@ -61,7 +61,7 @@ EXPECTED_EXPORTS = {
 }
 
 
-def test_linear_package_exports_complete_intentional_surface() -> None:
+def test_exports_scenario_1() -> None:
     assert set(linear.__all__) == EXPECTED_EXPORTS
     for name in EXPECTED_EXPORTS:
         assert getattr(linear, name).__module__.startswith("phydrax.ml.linear")
@@ -71,9 +71,6 @@ def test_linear_package_exports_complete_intentional_surface() -> None:
             assert issubclass(value, AbstractRecipe)
         elif name.endswith("Model"):
             assert issubclass(value, AbstractArrayModel)
-
-
-def test_recipes_and_fitted_models_are_immutable_modules() -> None:
     recipe = linear.OLSRecipe()
     with pytest.raises(AttributeError):
         recipe.fit_intercept = False
@@ -85,9 +82,6 @@ def test_recipes_and_fitted_models_are_immutable_modules() -> None:
     ).as_trainable()
     with pytest.raises(AttributeError):
         fitted.intercept = jnp.asarray(0.0)
-
-
-def test_generic_public_model_types_execute_their_declared_semantics() -> None:
     coefficients = jnp.array([[1.0], [-0.5]])
     intercept = jnp.array([0.2])
     inputs = jnp.array([[2.0, 1.0], [-1.0, 0.5]])

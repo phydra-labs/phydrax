@@ -76,7 +76,7 @@ def _junction_surface() -> Any:
     return SurfaceModel(mesh, _metadata("unit-junction"))
 
 
-def test_finite_open_screen_solve_and_edge_evidence() -> None:
+def test_scalar_screens3d_scenario_1() -> None:
     prepared = prepare_scalar_screen_single_layer_dp0_3d(_square_screen())
     expected_density = jnp.asarray((0.75, -0.25))
     boundary_values = prepared.forward(expected_density)
@@ -92,9 +92,6 @@ def test_finite_open_screen_solve_and_edge_evidence() -> None:
     np.testing.assert_allclose(
         result.predicted_boundary_values, boundary_values, rtol=2.0e-5, atol=2.0e-6
     )
-
-
-def test_dense_forward_transpose_and_adjoint_are_exact_algebraic_actions() -> None:
     prepared = prepare_scalar_screen_single_layer_dp0_3d(_square_screen())
     left = jnp.asarray((0.3, -0.7))
     right = jnp.asarray((1.2, 0.4))
@@ -111,9 +108,6 @@ def test_dense_forward_transpose_and_adjoint_are_exact_algebraic_actions() -> No
         rtol=0.0,
         atol=0.0,
     )
-
-
-def test_crack_sides_remain_distinct_and_jump_density_route_is_explicit() -> None:
     sides = ScalarCrackSideMetadata3D("rock-minus", "rock-plus")
     prepared = prepare_scalar_screen_single_layer_dp0_3d(
         _square_screen(), crack_sides=sides

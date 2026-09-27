@@ -52,7 +52,7 @@ def _tetrahedron() -> Any:
     return structure, positions
 
 
-def test_nonlinear_plan_refresh_preserves_template_and_updates_setup_numerics() -> None:
+def test_force_density_completion_scenario_1() -> None:
     structure, positions, _, _ = _cable()
     model = fd.EdgeLineLoadModel(measure="current")
     problem = fd.ForceDensityProblem(structure, load_model=model, sign_mode="tension")
@@ -80,9 +80,6 @@ def test_nonlinear_plan_refresh_preserves_template_and_updates_setup_numerics() 
         prepared.nonlinear_solve.numeric_version
     )
     assert fd.solve_force_density(refreshed).successful
-
-
-def test_force_density_plan_identity_covers_termination_and_load_tree_contract() -> None:
     structure, positions, _, _ = _cable()
     problem = fd.ForceDensityProblem(
         structure,
@@ -117,9 +114,6 @@ def test_force_density_plan_identity_covers_termination_and_load_tree_contract()
             ),
             initial_positions=positions,
         )
-
-
-def test_self_weight_surface_traction_and_component_ledger_conserve_loads() -> None:
     structure, positions = _tetrahedron()
     lengths = jnp.sqrt(
         jnp.sum(
@@ -145,9 +139,7 @@ def test_self_weight_surface_traction_and_component_ledger_conserve_loads() -> N
     assert jnp.allclose(state.total, state.components[0] + state.components[1])
 
 
-def test_pneumatic_pressure_uses_closed_volume_law_and_rejects_wrong_orientation() -> (
-    None
-):
+def test_force_density_completion_scenario_2() -> None:
     structure, positions = _tetrahedron()
     volume = fd.enclosed_surface_volume(structure, positions)
     assert volume == pytest.approx(1.0 / 6.0)
@@ -161,9 +153,6 @@ def test_pneumatic_pressure_uses_closed_volume_law_and_rejects_wrong_orientation
     assert jnp.all(jnp.isfinite(loads))
     reflected = positions.at[:, 2].multiply(-1.0)
     assert not bool(model.valid(structure, reflected, jnp.asarray(2.0)))
-
-
-def test_surface_pressure_rejects_folded_q4_and_observables_detect_warp() -> None:
     connectivity = phx.discretization.polygonal_connectivity(
         None, jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32), 4
     )
@@ -187,43 +176,6 @@ def test_surface_pressure_rejects_folded_q4_and_observables_detect_warp() -> Non
     assert fd.surface_planarity_residual(structure, planar, 1.0) == pytest.approx(0.0)
     assert jnp.abs(fd.surface_planarity_residual(structure, warped, 1.0)[0]) > 0.0
     assert jnp.allclose(fd.surface_rectangularity_residual(structure, planar, 1.0), 0.0)
-
-
-def test_pressure_loaded_tetrahedron_solves_and_has_implicit_derivative() -> None:
-    structure, positions = _tetrahedron()
-    problem = fd.ForceDensityProblem(
-        structure,
-        load_model=fd.SurfacePressureLoadModel(),
-        sign_mode="tension",
-    )
-    sample = fd.ForceDensityInputs(
-        jnp.full((structure.member_count,), 20.0),
-        structure.prescribed_values(positions),
-        jnp.full((structure.surface_connectivity.cell_count,), 0.01),
-    )
-    plan = fd.plan_force_density(problem, sample, initial_positions=positions)
-
-    def top_height(pressure: Any) -> Any:
-        inputs = fd.ForceDensityInputs(
-            sample.force_densities,
-            sample.prescribed_values,
-            jnp.full((structure.surface_connectivity.cell_count,), pressure),
-        )
-        solved = fd.solve_force_density(
-            fd.prepare_force_density(plan, inputs, initial_positions=positions)
-        )
-        return solved.state.positions[3, 2]
-
-    result = fd.solve_force_density(
-        fd.prepare_force_density(plan, sample, initial_positions=positions)
-    )
-    derivative = jax.grad(top_height)(jnp.asarray(0.01))
-    assert result.successful
-    assert result.nonlinear_result is not None
-    assert jnp.isfinite(derivative)
-
-
-def test_batch_affine_reciprocal_and_per_graph_evidence() -> None:
     structure, positions, problem, inputs = _cable()
     plan = fd.plan_force_density(problem, inputs)
     batched = fd.solve_force_density_batch(
@@ -275,6 +227,40 @@ def test_batch_affine_reciprocal_and_per_graph_evidence() -> None:
     affine_result = fd.force_density_equilibrium(affine_problem, affine_inputs)
     assert affine_result.successful
     assert affine_result.state.positions[1, 0] == pytest.approx(1.0)
+
+
+def test_pressure_loaded_tetrahedron_solves_and_has_implicit_derivative() -> None:
+    structure, positions = _tetrahedron()
+    problem = fd.ForceDensityProblem(
+        structure,
+        load_model=fd.SurfacePressureLoadModel(),
+        sign_mode="tension",
+    )
+    sample = fd.ForceDensityInputs(
+        jnp.full((structure.member_count,), 20.0),
+        structure.prescribed_values(positions),
+        jnp.full((structure.surface_connectivity.cell_count,), 0.01),
+    )
+    plan = fd.plan_force_density(problem, sample, initial_positions=positions)
+
+    def top_height(pressure: Any) -> Any:
+        inputs = fd.ForceDensityInputs(
+            sample.force_densities,
+            sample.prescribed_values,
+            jnp.full((structure.surface_connectivity.cell_count,), pressure),
+        )
+        solved = fd.solve_force_density(
+            fd.prepare_force_density(plan, inputs, initial_positions=positions)
+        )
+        return solved.state.positions[3, 2]
+
+    result = fd.solve_force_density(
+        fd.prepare_force_density(plan, sample, initial_positions=positions)
+    )
+    derivative = jax.grad(top_height)(jnp.asarray(0.01))
+    assert result.successful
+    assert result.nonlinear_result is not None
+    assert jnp.isfinite(derivative)
 
 
 def test_mechanism_self_stress_and_constitutive_stability_are_distinct() -> None:

@@ -17,7 +17,7 @@ def _ising_chain(length: Any = 4, coupling: Any = 0.35) -> Any:
     )
 
 
-def test_gibbs_coloring_is_deterministic_and_rejects_invalid_parallel_stage() -> None:
+def test_gibbs_scenario_1() -> None:
     graph = _ising_chain()
     first = phx.pgm.prepare_chromatic_gibbs(graph)
     second = phx.pgm.prepare_chromatic_gibbs(graph)
@@ -30,43 +30,6 @@ def test_gibbs_coloring_is_deterministic_and_rejects_invalid_parallel_stage() ->
             graph,
             phx.pgm.ChromaticGibbs(jnp.zeros((4,), dtype=jnp.int32)),
         )
-
-
-def test_gibbs_is_jittable_persistent_and_chain_prefix_stable() -> None:
-    graph = _ising_chain()
-    prepared = phx.pgm.prepare_chromatic_gibbs(graph)
-    state_two = phx.pgm.initialize_gibbs(
-        prepared,
-        jnp.asarray([[0, 0, 0, 0], [1, 1, 1, 1]]),
-    )
-    state_three = phx.pgm.initialize_gibbs(
-        prepared,
-        jnp.asarray([[0, 0, 0, 0], [1, 1, 1, 1], [0, 1, 0, 1]]),
-    )
-    schedule = phx.pgm.GibbsSchedule(warmup_sweeps=2, num_draws=6, sweeps_per_draw=2)
-
-    def run(state: Any) -> Any:
-        return phx.pgm.sample_gibbs(
-            prepared,
-            state,
-            key=jr.key(7),
-            schedule=schedule,
-        )
-
-    eager = run(state_two)
-    compiled = eqx.filter_jit(run)(state_two)
-    extended = run(state_three)
-
-    assert jnp.array_equal(eager.samples, compiled.samples)
-    assert jnp.array_equal(eager.samples, extended.samples[:2])
-    assert jnp.array_equal(eager.transition_valid, extended.transition_valid[:2])
-    assert eager.samples.shape == (2, 6, 4)
-    assert eager.transition_valid.shape == (2, 6, 2)
-    assert eager.final_state.sweep_index == 14
-    assert eager.diagnostics.mixing_available
-
-
-def test_gibbs_clamping_preserves_sites_and_chain_measure_preserves_correlation() -> None:
     graph = _ising_chain(3)
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
     initial = jnp.asarray([[1, 0, 0], [1, 1, 1]])
@@ -87,32 +50,6 @@ def test_gibbs_clamping_preserves_sites_and_chain_measure_preserves_correlation(
         "__phydrax_markov_draw",
     )
     assert target.provenance.startswith("markov:chromatic-gibbs")
-
-
-def test_impossible_conditional_preserves_state_and_reports_failure() -> None:
-    variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
-    factor = phx.pgm.DenseTableFactorGroup(
-        (phx.pgm.VariableSelection.all(variables),),
-        jnp.full((1, 2), -jnp.inf),
-    )
-    graph = phx.pgm.DiscreteFactorGraph((variables,), (factor,))
-    prepared = phx.pgm.prepare_chromatic_gibbs(graph)
-    state = phx.pgm.GibbsState(
-        jnp.asarray([[0]], dtype=jnp.int32),
-        jnp.asarray([-jnp.inf]),
-        valid=jnp.asarray([False]),
-    )
-    updated, info = phx.pgm.gibbs_sweep(prepared, state, jr.key(0))
-
-    assert jnp.array_equal(updated.positions, state.positions)
-    assert not info.valid[0]
-    assert info.invalid_conditional_count[0] == 1
-    # An impossible conditional implies an infeasible input state; invalid input
-    # state status takes precedence while the infeasible site is still counted.
-    assert info.status[0] == int(phx.pgm.GibbsTransitionStatus.INVALID_STATE)
-
-
-def test_gibbs_empirical_distribution_matches_exact_two_spin_law() -> None:
     graph = _ising_chain(2, coupling=0.4)
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
@@ -152,3 +89,57 @@ def test_gibbs_empirical_distribution_matches_exact_two_spin_law() -> None:
     )
 
     assert jnp.allclose(empirical, expected, atol=0.04)
+    variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
+    factor = phx.pgm.DenseTableFactorGroup(
+        (phx.pgm.VariableSelection.all(variables),),
+        jnp.full((1, 2), -jnp.inf),
+    )
+    graph = phx.pgm.DiscreteFactorGraph((variables,), (factor,))
+    prepared = phx.pgm.prepare_chromatic_gibbs(graph)
+    state = phx.pgm.GibbsState(
+        jnp.asarray([[0]], dtype=jnp.int32),
+        jnp.asarray([-jnp.inf]),
+        valid=jnp.asarray([False]),
+    )
+    updated, info = phx.pgm.gibbs_sweep(prepared, state, jr.key(0))
+
+    assert jnp.array_equal(updated.positions, state.positions)
+    assert not info.valid[0]
+    assert info.invalid_conditional_count[0] == 1
+    # An impossible conditional implies an infeasible input state; invalid input
+    # state status takes precedence while the infeasible site is still counted.
+    assert info.status[0] == int(phx.pgm.GibbsTransitionStatus.INVALID_STATE)
+
+
+def test_gibbs_is_jittable_persistent_and_chain_prefix_stable() -> None:
+    graph = _ising_chain()
+    prepared = phx.pgm.prepare_chromatic_gibbs(graph)
+    state_two = phx.pgm.initialize_gibbs(
+        prepared,
+        jnp.asarray([[0, 0, 0, 0], [1, 1, 1, 1]]),
+    )
+    state_three = phx.pgm.initialize_gibbs(
+        prepared,
+        jnp.asarray([[0, 0, 0, 0], [1, 1, 1, 1], [0, 1, 0, 1]]),
+    )
+    schedule = phx.pgm.GibbsSchedule(warmup_sweeps=2, num_draws=6, sweeps_per_draw=2)
+
+    def run(state: Any) -> Any:
+        return phx.pgm.sample_gibbs(
+            prepared,
+            state,
+            key=jr.key(7),
+            schedule=schedule,
+        )
+
+    eager = run(state_two)
+    compiled = eqx.filter_jit(run)(state_two)
+    extended = run(state_three)
+
+    assert jnp.array_equal(eager.samples, compiled.samples)
+    assert jnp.array_equal(eager.samples, extended.samples[:2])
+    assert jnp.array_equal(eager.transition_valid, extended.transition_valid[:2])
+    assert eager.samples.shape == (2, 6, 4)
+    assert eager.transition_valid.shape == (2, 6, 2)
+    assert eager.final_state.sweep_index == 14
+    assert eager.diagnostics.mixing_available

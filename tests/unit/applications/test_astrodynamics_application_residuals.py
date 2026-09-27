@@ -45,9 +45,7 @@ def _event_vector_field(time: Any, state: Any, args: Any) -> Any:
     return jnp.zeros_like(state)
 
 
-def test_single_pair_regularization_crosses_close_orbit_and_rolls_back_ambiguity() -> (
-    None
-):
+def test_astrodynamics_application_residuals_scenario_1() -> None:
     context = _context()
     radius = 0.1
     speed = np.sqrt(2.0 / radius)
@@ -82,9 +80,56 @@ def test_single_pair_regularization_crosses_close_orbit_and_rolls_back_ambiguity
     assert not bool(rejected.successful)
     np.testing.assert_array_equal(rejected.positions, crowded)
     np.testing.assert_array_equal(rejected.velocities, crowded_velocity)
+    context = _context()
+    gravity_context = astro.AstrodynamicsContext(
+        context.scale,
+        context.epoch,
+        astro.FrameDefinition("earth", "ITRS", pseudo_inertial=False),
+    )
+    ephemeris_context = astro.AstrodynamicsContext(
+        context.scale,
+        astro.ReferenceEpoch(astro.TimeInstant(astro.JulianDate(2451545.0), "TDB")),
+        astro.FrameDefinition("solar-system-barycenter", "ICRF", pseudo_inertial=True),
+    )
+    wrong_ephemeris_epoch = astro.AstrodynamicsContext(
+        context.scale,
+        context.epoch,
+        ephemeris_context.frame,
+    )
+    store = astro.bundled_astronomy_data_store()
+    assert set(astro.ASTRONOMY_ASSET_MANIFESTS) == {
+        "leap_seconds.json",
+        "eop_cip_2024.json",
+        "earth_gravity_degree4.json",
+        "sun_earth_moon_chebyshev.json",
+        "iau_precession_nutation.json",
+    }
+    leap = astro.load_bundled_leap_seconds(store)
+    assert leap.tai_minus_utc[-1] == 37
+    eop = astro.load_bundled_earth_orientation(store)
+    assert bool(eop.evaluate(0.0).valid)
+    assert not bool(eop.evaluate(6.0 * 86400.0).valid)
+    with pytest.raises(ValueError, match="source frame"):
+        astro.load_bundled_earth_gravity(context, store)
+    gravity = astro.load_bundled_earth_gravity(gravity_context, store)
+    assert gravity.maximum_degree == 4
+    assert gravity.context.context_id == gravity_context.context_id
+    with pytest.raises(ValueError, match="source frame"):
+        astro.load_bundled_sun_earth_moon_ephemeris(context, store)
+    with pytest.raises(ValueError, match="source epoch"):
+        astro.load_bundled_sun_earth_moon_ephemeris(wrong_ephemeris_epoch, store)
+    ephemeris = astro.load_bundled_sun_earth_moon_ephemeris(ephemeris_context, store)
+    assert bool(ephemeris.evaluate(0.0, 1).valid)
+    assert ephemeris.catalog.context.context_id == ephemeris_context.context_id
+    assert not bool(ephemeris.evaluate(2.0 * 86400.0, 1).valid)
+    iau = astro.load_bundled_iau_coefficients(store)
+    assert iau.coefficient("epsilon_0").shape == ()
+    assert iau.coefficient("psib").shape == (5,)
+    assert iau.angle_unit.symbol == "arcsecond"
+    assert iau.angle_unit.dimension == phx.units.ANGLE
 
 
-def test_tle_static_regimes_resonances_and_range_failure() -> None:
+def test_tle_contracts() -> None:
     record = _record(10.0)
     with pytest.raises(ValueError, match="continuous solver epoch"):
         astro.ReferenceEpoch(record.epoch)
@@ -148,9 +193,6 @@ def test_tle_static_regimes_resonances_and_range_failure() -> None:
     nonfinite = twelve_hour.propagate(jnp.nan)
     assert not bool(nonfinite.valid)
     assert int(nonfinite.status) == int(astro.AstrodynamicsStatus.NONFINITE_INPUT)
-
-
-def test_tle_matches_vallado_near_earth_and_resonant_deep_space_vectors() -> None:
     cases = (
         (
             "near-earth",
@@ -294,53 +336,3 @@ def test_astrodynamics_event_opaque_callables_require_declared_identity() -> Non
     )
     assert declared_inner.event_id != declared_outer.event_id
     assert declared_inner.hybrid.plan_id != declared_outer.hybrid.plan_id
-
-
-def test_bundled_astronomy_assets_are_typed_bounded_and_offline() -> None:
-    context = _context()
-    gravity_context = astro.AstrodynamicsContext(
-        context.scale,
-        context.epoch,
-        astro.FrameDefinition("earth", "ITRS", pseudo_inertial=False),
-    )
-    ephemeris_context = astro.AstrodynamicsContext(
-        context.scale,
-        astro.ReferenceEpoch(astro.TimeInstant(astro.JulianDate(2451545.0), "TDB")),
-        astro.FrameDefinition("solar-system-barycenter", "ICRF", pseudo_inertial=True),
-    )
-    wrong_ephemeris_epoch = astro.AstrodynamicsContext(
-        context.scale,
-        context.epoch,
-        ephemeris_context.frame,
-    )
-    store = astro.bundled_astronomy_data_store()
-    assert set(astro.ASTRONOMY_ASSET_MANIFESTS) == {
-        "leap_seconds.json",
-        "eop_cip_2024.json",
-        "earth_gravity_degree4.json",
-        "sun_earth_moon_chebyshev.json",
-        "iau_precession_nutation.json",
-    }
-    leap = astro.load_bundled_leap_seconds(store)
-    assert leap.tai_minus_utc[-1] == 37
-    eop = astro.load_bundled_earth_orientation(store)
-    assert bool(eop.evaluate(0.0).valid)
-    assert not bool(eop.evaluate(6.0 * 86400.0).valid)
-    with pytest.raises(ValueError, match="source frame"):
-        astro.load_bundled_earth_gravity(context, store)
-    gravity = astro.load_bundled_earth_gravity(gravity_context, store)
-    assert gravity.maximum_degree == 4
-    assert gravity.context.context_id == gravity_context.context_id
-    with pytest.raises(ValueError, match="source frame"):
-        astro.load_bundled_sun_earth_moon_ephemeris(context, store)
-    with pytest.raises(ValueError, match="source epoch"):
-        astro.load_bundled_sun_earth_moon_ephemeris(wrong_ephemeris_epoch, store)
-    ephemeris = astro.load_bundled_sun_earth_moon_ephemeris(ephemeris_context, store)
-    assert bool(ephemeris.evaluate(0.0, 1).valid)
-    assert ephemeris.catalog.context.context_id == ephemeris_context.context_id
-    assert not bool(ephemeris.evaluate(2.0 * 86400.0, 1).valid)
-    iau = astro.load_bundled_iau_coefficients(store)
-    assert iau.coefficient("epsilon_0").shape == ()
-    assert iau.coefficient("psib").shape == (5,)
-    assert iau.angle_unit.symbol == "arcsecond"
-    assert iau.angle_unit.dimension == phx.units.ANGLE

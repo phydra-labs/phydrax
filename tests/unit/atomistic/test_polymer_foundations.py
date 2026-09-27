@@ -76,7 +76,7 @@ def _polymer_runtime() -> Any:
     return dynamics, thermodynamic, layout, profile
 
 
-def test_shifted_lennard_jones_is_continuous_wca_parameterization() -> None:
+def test_polymer_foundations_scenario_1() -> None:
     cutoff = 2.0 ** (1.0 / 6.0)
     dynamics, thermodynamic, _, _ = _polymer_runtime()
     positions = jnp.asarray(
@@ -116,6 +116,49 @@ def test_shifted_lennard_jones_is_continuous_wca_parameterization() -> None:
             switch_distance=1.0,
             shift_energy_at_cutoff=True,
         )
+    _, _, layout, _ = _polymer_runtime()
+    positions = jnp.asarray(
+        [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]]]
+    )
+    conformation = phx.atomistic.polymer_conformation(layout, positions)
+    assert conformation.successful
+    np.testing.assert_allclose(conformation.centers_of_mass, [[[1.5, 0.0, 0.0]]])
+    np.testing.assert_allclose(conformation.end_to_end_squared, [[9.0]])
+    np.testing.assert_allclose(conformation.radius_of_gyration_squared, [[1.25]])
+
+    contour_plan = phx.atomistic.PolymerContourStatisticsPlan(layout, 2, 1.1)
+    contour = phx.atomistic.polymer_contour_statistics(contour_plan, positions)
+    assert contour.successful
+    np.testing.assert_allclose(contour.internal_distance_squared, [[[1.0, 4.0]]])
+    np.testing.assert_allclose(contour.contact_probability, [[[1.0, 0.0]]])
+
+    debye = phx.atomistic.debye_scattering(
+        phx.atomistic.DebyeScatteringPlan(
+            # ty: ignore[invalid-argument-type]
+            [0.0, 1.0],
+            maximum_frames=1,
+            maximum_particles=4,
+            block_size=2,
+        ),
+        positions,
+    )
+    assert debye.successful
+    np.testing.assert_allclose(debye.values[0], 4.0)
+
+    partial = phx.atomistic.partial_structure_factors(
+        phx.atomistic.PartialStructureFactorPlan(
+            # ty: ignore[invalid-argument-type]
+            [[0.0, 0.0, 0.0]],
+            1,
+            maximum_frames=1,
+            maximum_particles=4,
+        ),
+        positions,
+        # ty: ignore[invalid-argument-type]
+        [0, 0, 0, 0],
+    )
+    assert partial.successful
+    np.testing.assert_allclose(partial.values, [[[4.0]]])
 
 
 def test_fene_domain_and_kremer_grest_profile_evidence() -> None:
@@ -169,49 +212,3 @@ def test_fene_domain_and_kremer_grest_profile_evidence() -> None:
     )
     assert not invalid.successful
     assert jnp.isnan(invalid.energy)
-
-
-def test_polymer_observables_retain_normalization_and_contour_semantics() -> None:
-    _, _, layout, _ = _polymer_runtime()
-    positions = jnp.asarray(
-        [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]]]
-    )
-    conformation = phx.atomistic.polymer_conformation(layout, positions)
-    assert conformation.successful
-    np.testing.assert_allclose(conformation.centers_of_mass, [[[1.5, 0.0, 0.0]]])
-    np.testing.assert_allclose(conformation.end_to_end_squared, [[9.0]])
-    np.testing.assert_allclose(conformation.radius_of_gyration_squared, [[1.25]])
-
-    contour_plan = phx.atomistic.PolymerContourStatisticsPlan(layout, 2, 1.1)
-    contour = phx.atomistic.polymer_contour_statistics(contour_plan, positions)
-    assert contour.successful
-    np.testing.assert_allclose(contour.internal_distance_squared, [[[1.0, 4.0]]])
-    np.testing.assert_allclose(contour.contact_probability, [[[1.0, 0.0]]])
-
-    debye = phx.atomistic.debye_scattering(
-        phx.atomistic.DebyeScatteringPlan(
-            # ty: ignore[invalid-argument-type]
-            [0.0, 1.0],
-            maximum_frames=1,
-            maximum_particles=4,
-            block_size=2,
-        ),
-        positions,
-    )
-    assert debye.successful
-    np.testing.assert_allclose(debye.values[0], 4.0)
-
-    partial = phx.atomistic.partial_structure_factors(
-        phx.atomistic.PartialStructureFactorPlan(
-            # ty: ignore[invalid-argument-type]
-            [[0.0, 0.0, 0.0]],
-            1,
-            maximum_frames=1,
-            maximum_particles=4,
-        ),
-        positions,
-        # ty: ignore[invalid-argument-type]
-        [0, 0, 0, 0],
-    )
-    assert partial.successful
-    np.testing.assert_allclose(partial.values, [[[4.0]]])

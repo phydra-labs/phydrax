@@ -20,7 +20,7 @@ def _dense_weighted_gram(
     )
 
 
-def test_empirical_gram_matches_weighted_centered_dense_reference() -> None:
+def test_linalg_empirical_scenario_1() -> None:
     matrix = jnp.asarray(
         [[1.0, 2.0, -1.0], [2.0, -1.0, 0.5], [4.0, 0.0, 3.0], [3.0, 1.0, 2.0]]
     )
@@ -41,9 +41,39 @@ def test_empirical_gram_matches_weighted_centered_dense_reference() -> None:
     assert operator.rank_upper_bound == 2
     assert operator.properties.certifies("self_adjoint")
     assert operator.properties.certifies("positive_definite")
+    features = phx.linalg.DenseLinearOperator(jnp.ones((3, 2)))
+    with pytest.raises(ValueError, match="shape"):
+        phx.linalg.EmpiricalGramLinearOperator(features, jnp.ones((2,)))
+    with pytest.raises(ValueError, match="finite, non-negative"):
+        phx.linalg.EmpiricalGramLinearOperator(features, jnp.asarray([1.0, -1.0, 1.0]))
+    with pytest.raises(ValueError, match="positive mass"):
+        phx.linalg.EmpiricalGramLinearOperator(features, jnp.zeros((3,)))
+    matrix = jnp.asarray([[1.0 + 1.0j, 2.0], [0.5j, -1.0 + 2.0j], [3.0, 0.25 - 0.5j]])
+    weights = jnp.asarray([1.0, 3.0, 2.0])
+    direction = jnp.asarray([0.2 + 0.1j, -0.3 + 0.4j])
+    operator = phx.linalg.EmpiricalGramLinearOperator(
+        phx.linalg.DenseLinearOperator(matrix),
+        weights,
+        centered=False,
+    )
+    dense = _dense_weighted_gram(matrix, weights, centered=False, damping=0.0)
 
+    assert jnp.allclose(operator.mv(direction), dense @ direction)
+    assert jnp.allclose(operator.adjoint_mv(direction), jnp.conj(dense.T) @ direction)
+    assert jnp.allclose(operator.transpose_mv(direction), dense.T @ direction)
+    features = jnp.asarray([[1.0, 0.0], [0.0, 2.0], [1.0, 1.0]])
+    operator = phx.linalg.EmpiricalGramLinearOperator(
+        phx.linalg.DenseLinearOperator(features),
+        jnp.ones((3,)),
+        centered=True,
+        damping=0.2,
+    )
+    rhs = jnp.asarray([0.5, -0.25])
+    dense = _dense_weighted_gram(features, jnp.ones((3,)), centered=True, damping=0.2)
+    result = phx.linalg.solve(phx.linalg.LinearSystem(operator), rhs)
 
-def test_zero_weight_rows_mask_nonfinite_features_before_differentiation() -> None:
+    assert result.successful
+    assert jnp.allclose(result.value, jnp.linalg.solve(dense, rhs), atol=1e-10)
     matrix = jnp.asarray([[1.0, 2.0], [jnp.nan, jnp.nan], [3.0, -1.0]])
     operator = phx.linalg.EmpiricalGramLinearOperator(
         phx.linalg.DenseLinearOperator(matrix),
@@ -63,51 +93,6 @@ def test_zero_weight_rows_mask_nonfinite_features_before_differentiation() -> No
     assert jnp.allclose(operator.mv(direction), expected @ direction)
     gradient = jax.grad(lambda value: jnp.sum(operator.mv(value) ** 2))(direction)
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_empirical_gram_complex_adjoint_and_transpose_are_distinct_and_correct() -> None:
-    matrix = jnp.asarray([[1.0 + 1.0j, 2.0], [0.5j, -1.0 + 2.0j], [3.0, 0.25 - 0.5j]])
-    weights = jnp.asarray([1.0, 3.0, 2.0])
-    direction = jnp.asarray([0.2 + 0.1j, -0.3 + 0.4j])
-    operator = phx.linalg.EmpiricalGramLinearOperator(
-        phx.linalg.DenseLinearOperator(matrix),
-        weights,
-        centered=False,
-    )
-    dense = _dense_weighted_gram(matrix, weights, centered=False, damping=0.0)
-
-    assert jnp.allclose(operator.mv(direction), dense @ direction)
-    assert jnp.allclose(operator.adjoint_mv(direction), jnp.conj(dense.T) @ direction)
-    assert jnp.allclose(operator.transpose_mv(direction), dense.T @ direction)
-
-
-def test_empirical_gram_solves_through_existing_linear_runtime() -> None:
-    features = jnp.asarray([[1.0, 0.0], [0.0, 2.0], [1.0, 1.0]])
-    operator = phx.linalg.EmpiricalGramLinearOperator(
-        phx.linalg.DenseLinearOperator(features),
-        jnp.ones((3,)),
-        centered=True,
-        damping=0.2,
-    )
-    rhs = jnp.asarray([0.5, -0.25])
-    dense = _dense_weighted_gram(features, jnp.ones((3,)), centered=True, damping=0.2)
-    result = phx.linalg.solve(phx.linalg.LinearSystem(operator), rhs)
-
-    assert result.successful
-    assert jnp.allclose(result.value, jnp.linalg.solve(dense, rhs), atol=1e-10)
-
-
-def test_empirical_gram_rejects_invalid_weights_and_shapes() -> None:
-    features = phx.linalg.DenseLinearOperator(jnp.ones((3, 2)))
-    with pytest.raises(ValueError, match="shape"):
-        phx.linalg.EmpiricalGramLinearOperator(features, jnp.ones((2,)))
-    with pytest.raises(ValueError, match="finite, non-negative"):
-        phx.linalg.EmpiricalGramLinearOperator(features, jnp.asarray([1.0, -1.0, 1.0]))
-    with pytest.raises(ValueError, match="positive mass"):
-        phx.linalg.EmpiricalGramLinearOperator(features, jnp.zeros((3,)))
-
-
-def test_public_fisher_action_uses_uncentered_empirical_geometry() -> None:
     scores = jnp.asarray([[1.0, 2.0], [3.0, -1.0], [0.5, 4.0]])
     vector = jnp.asarray([0.2, -0.4])
     weights = jnp.asarray([1.0, 2.0, 3.0])

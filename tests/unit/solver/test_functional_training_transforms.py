@@ -41,7 +41,7 @@ def _negated_map(value: Any) -> Any:
     return -value
 
 
-def test_relaxation_map_identity_is_content_addressed_or_declared() -> None:
+def test_functional_training_transforms_scenario_1() -> None:
     first_plain = phx.solver.ResidualRelaxationMap("u", _identity_map)
     assert (
         phx.solver.ResidualRelaxationMap("u", _identity_map).map_id == first_plain.map_id
@@ -66,9 +66,6 @@ def test_relaxation_map_identity_is_content_addressed_or_declared() -> None:
         operator_numeric_id="negation-map",
     )
     assert identity.map_id != negation.map_id
-
-
-def test_pseudo_transient_root_uses_explicit_relaxation_map() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     current = domain.Parameter(jnp.asarray(2.0))
     previous = domain.Parameter(jnp.asarray(1.0))
@@ -111,9 +108,6 @@ def test_pseudo_transient_root_uses_explicit_relaxation_map() -> None:
 
     assert jnp.allclose(update.surrogate_loss(params, fixed), 25.0)
     assert jnp.allclose(update.physical_values(solver.functions).total, 4.0)
-
-
-def test_gauss_newton_uses_pseudo_transient_residual_roots() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(
         functions={"u": domain.Parameter(jnp.asarray(2.0))},
@@ -154,7 +148,7 @@ def test_gauss_newton_uses_pseudo_transient_residual_roots() -> None:
     assert jnp.allclose(trained.functions["u"].func(), 1.0, atol=1e-8)
 
 
-def test_causal_gates_reduce_later_slab_contribution() -> None:
+def test_functional_training_transforms_scenario_2() -> None:
     domain = phx.domain.TimeInterval(0.0, 1.0)
     field = domain.Parameter(jnp.asarray(1.0))
     term = _fixed_term(
@@ -191,30 +185,6 @@ def test_causal_gates_reduce_later_slab_contribution() -> None:
     expected = 0.25 * (1.0 + 3.0 * jnp.exp(-1.0))
     assert jnp.allclose(update.surrogate_loss(params, fixed), expected)
     assert jnp.allclose(update.physical_values(solver.functions).total, 1.0)
-
-
-def _two_term_solver(points: Any = ((0.2,), (0.8,))) -> Any:
-    domain = phx.domain.Interval1d(0.0, 1.0)
-    u = domain.Parameter(jnp.asarray(1.0))
-    v = domain.Parameter(jnp.asarray(10.0))
-    first = _fixed_term(
-        domain,
-        "u",
-        lambda value: value,
-        points=points,
-        label="u",
-    )
-    second = _fixed_term(
-        domain,
-        "v",
-        lambda value: value,
-        points=points,
-        label="v",
-    )
-    return phx.solver.FunctionalSolver(functions={"u": u, "v": v}, terms=(first, second))
-
-
-def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment() -> None:
     solver = _two_term_solver()
     params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
@@ -251,9 +221,6 @@ def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment() 
     assert update.term_multipliers[0] > update.term_multipliers[1]
     assert jnp.allclose(update.intra_gradient_alignment, 0.0, atol=1e-6)
     assert update.diagnostic_gradient is not None
-
-
-def test_ntk_trace_balancing_preserves_equal_linear_sensitivities() -> None:
     # One point per term makes each block NTK a 1x1 matrix, so every Rademacher
     # probe measures its trace exactly and the balance is realization-independent.
     solver = _two_term_solver(points=((0.5,),))
@@ -288,6 +255,27 @@ def test_ntk_trace_balancing_preserves_equal_linear_sensitivities() -> None:
 
     assert jnp.allclose(update.term_multipliers, jnp.ones((2,)), atol=1e-5)
     assert jnp.all(jnp.isfinite(update.balance_statistics))
+
+
+def _two_term_solver(points: Any = ((0.2,), (0.8,))) -> Any:
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    u = domain.Parameter(jnp.asarray(1.0))
+    v = domain.Parameter(jnp.asarray(10.0))
+    first = _fixed_term(
+        domain,
+        "u",
+        lambda value: value,
+        points=points,
+        label="u",
+    )
+    second = _fixed_term(
+        domain,
+        "v",
+        lambda value: value,
+        points=points,
+        label="v",
+    )
+    return phx.solver.FunctionalSolver(functions={"u": u, "v": v}, terms=(first, second))
 
 
 def test_stateful_transforms_tolerate_unselected_sampled_terms() -> None:

@@ -90,7 +90,7 @@ def _single_point_plan(
     )
 
 
-def test_pe_mb_cancellation_and_reinforcement_are_complex_before_magnitude() -> None:
+def test_sbs_scenario_1() -> None:
     cancellation = solve_sbs(
         _single_point_plan(photoelastic_sign=1.0).prepare(), _interaction()
     )
@@ -107,9 +107,6 @@ def test_pe_mb_cancellation_and_reinforcement_are_complex_before_magnitude() -> 
     np.testing.assert_allclose(reinforcement.Q_total, _EPSILON_0)
     assert reinforcement.gain > 0.0
     assert int(reinforcement.status) == int(SBSStatus.SUCCESS)
-
-
-def test_overlap_phase_covariance_and_gain_rescaling_invariance() -> None:
     baseline = solve_sbs(_single_point_plan().prepare(), _interaction())
     pump_scale = 2.0j
     stokes_scale = -3.0
@@ -130,9 +127,6 @@ def test_overlap_phase_covariance_and_gain_rescaling_invariance() -> None:
         abs(scaled.normalized_Q_total), abs(baseline.normalized_Q_total), rtol=1e-12
     )
     np.testing.assert_allclose(scaled.gain, baseline.gain, rtol=1e-12)
-
-
-def test_selection_rule_phase_matching_loss_and_units() -> None:
     tensor = np.zeros((2, 2, 2, 2))
     tensor[0, 0, 0, 0] = 1.0
     strain = np.zeros((2, 2, 2))

@@ -823,10 +823,7 @@ def polynomial_action_constraints(
     source_weights = np.asarray(
         [
             _monomial_metric(
-                tuple(
-                    int(value)
-                    for value in np.take(support_exponents, index, axis=0)
-                )
+                tuple(int(value) for value in np.take(support_exponents, index, axis=0))
             )
             for index in range(support.term_count)
         ],

@@ -194,42 +194,49 @@ def _fixed_smoothing_transition_objective(value: Any, result: Any, smoother: Any
     return total
 
 
-@pytest.mark.parametrize("method", ["systematic", "multinomial"])
-def test_resampling_ancestry_is_the_exact_post_resampling_genealogy(method: Any) -> None:
-    result = phx.uq.bootstrap_particle_filter(
-        jr.key(1),
-        _problem(),
-        num_particles=24,
-        resampling_method=method,
-        resampling_policy="always",
-    )
-
-    for step in range(result.problem.observations.num_steps):
-        assert jnp.array_equal(
-            result.particles[step],
-            result.predicted_particles[step, result.ancestor_indices[step]],
+def test_particle_smoothing_scenario_1() -> None:
+    for method in ["systematic", "multinomial"]:
+        result = phx.uq.bootstrap_particle_filter(
+            jr.key(1),
+            _problem(),
+            num_particles=24,
+            resampling_method=method,
+            resampling_policy="always",
         )
 
-    smoother = phx.uq.full_particle_smoother(result)
-    terminal = result.problem.observations.num_steps - 1
-    lineage = jnp.arange(result.num_particles, dtype=jnp.int32)
-    for step in range(terminal, 0, -1):
-        lineage = result.ancestor_indices[step, lineage]
-    assert jnp.array_equal(smoother.lineage_indices[0], lineage)
-    expected = jax.scipy.special.logsumexp(
-        jnp.where(
-            lineage[None, :] == jnp.arange(result.num_particles)[:, None],
-            result.log_weights[terminal][None, :],
-            -jnp.inf,
-        ),
-        axis=-1,
-    )
-    expected = expected - jax.scipy.special.logsumexp(expected)
-    assert jnp.allclose(smoother.log_weights[0], expected)
-    assert smoother.ancestry_gradient == "stop"
+        for step in range(result.problem.observations.num_steps):
+            assert jnp.array_equal(
+                result.particles[step],
+                result.predicted_particles[step, result.ancestor_indices[step]],
+            )
 
-
-def test_no_resampling_paths_keep_identity_genealogy() -> None:
+        smoother = phx.uq.full_particle_smoother(result)
+        terminal = result.problem.observations.num_steps - 1
+        lineage = jnp.arange(result.num_particles, dtype=jnp.int32)
+        for step in range(terminal, 0, -1):
+            lineage = result.ancestor_indices[step, lineage]
+        assert jnp.array_equal(smoother.lineage_indices[0], lineage)
+        expected = jax.scipy.special.logsumexp(
+            jnp.where(
+                lineage[None, :] == jnp.arange(result.num_particles)[:, None],
+                result.log_weights[terminal][None, :],
+                -jnp.inf,
+            ),
+            axis=-1,
+        )
+        expected = expected - jax.scipy.special.logsumexp(expected)
+        assert jnp.allclose(smoother.log_weights[0], expected)
+        assert smoother.ancestry_gradient == "stop"
+    weights = jnp.log(jnp.asarray([0.6, 0.3, 0.1]))
+    for method in ("systematic", "multinomial"):
+        _, tangent = jax.jvp(
+            lambda values: phx.uq.resample_indices(
+                jr.key(13), values, method=method
+            ).astype("float64"),
+            (weights,),
+            (jnp.ones_like(weights),),
+        )
+        assert jnp.array_equal(tangent, jnp.zeros_like(tangent))
     result = phx.uq.bootstrap_particle_filter(
         jr.key(2),
         _problem(),
@@ -258,9 +265,6 @@ def test_no_resampling_paths_keep_identity_genealogy() -> None:
     for path in paths:
         candidate = jnp.all(result.particles == path[:, None, :], axis=(0, 2))
         assert jnp.any(candidate)
-
-
-def test_backward_probabilities_match_direct_enumeration() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(4),
         _problem(),
@@ -306,7 +310,7 @@ def test_backward_probabilities_match_direct_enumeration() -> None:
     assert simulation.ancestry_gradient == "stop"
 
 
-def test_full_smoothing_is_not_the_fixed_lag_zero_approximation() -> None:
+def test_particle_smoothing_scenario_2() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(6),
         _problem(),
@@ -320,9 +324,6 @@ def test_full_smoothing_is_not_the_fixed_lag_zero_approximation() -> None:
     assert jnp.array_equal(fixed.horizons, jnp.arange(3, dtype=jnp.int32))
     assert not jnp.allclose(full.log_weights[0], fixed.log_weights[0])
     assert full.method_id == "full-particle-ancestry"
-
-
-def test_density_methods_reject_density_free_transitions_without_fallback() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(7),
         _problem(has_density=False),
@@ -338,6 +339,25 @@ def test_density_methods_reject_density_free_transitions_without_fallback() -> N
         phx.uq.particle_backward_simulation(jr.key(8), result)
     with pytest.raises(ValueError, match="normalized transition density"):
         phx.uq.sample_particle_backward_paths(jr.key(8), result)
+    result = phx.uq.bootstrap_particle_filter(
+        jr.key(91),
+        _problem(num_steps=1, transition_value=0.8),
+        num_particles=12,
+        resampling_policy="never",
+    )
+    smoother = phx.uq.particle_backward_smoother(result)
+    score = phx.uq.particle_fisher_score(smoother)
+    fisher = phx.uq.particle_fisher_information(smoother)
+
+    automatic = score.transition_score.parameterization.transition[0, 0]
+    finite_difference = (
+        _fixed_smoothing_transition_objective(0.8 + 1e-3, result, smoother)
+        - _fixed_smoothing_transition_objective(0.8 - 1e-3, result, smoother)
+    ) / (2e-3)
+
+    assert jnp.abs(automatic) > 1e-3
+    assert jnp.allclose(automatic, finite_difference, rtol=2e-3, atol=2e-3)
+    assert jnp.any(jnp.abs(fisher.information) > 1e-6)
 
 
 def test_particle_fisher_score_matches_fixed_smoothing_finite_difference() -> None:
@@ -363,28 +383,6 @@ def test_particle_fisher_score_matches_fixed_smoothing_finite_difference() -> No
     assert fisher.information.shape == (score.parameter_size, score.parameter_size)
     assert jnp.allclose(fisher.information, fisher.information.T)
     assert jnp.all(jnp.linalg.eigvalsh(fisher.information) >= -1e-8)
-
-
-def test_one_observation_fisher_score_counts_initial_transition_once() -> None:
-    result = phx.uq.bootstrap_particle_filter(
-        jr.key(91),
-        _problem(num_steps=1, transition_value=0.8),
-        num_particles=12,
-        resampling_policy="never",
-    )
-    smoother = phx.uq.particle_backward_smoother(result)
-    score = phx.uq.particle_fisher_score(smoother)
-    fisher = phx.uq.particle_fisher_information(smoother)
-
-    automatic = score.transition_score.parameterization.transition[0, 0]
-    finite_difference = (
-        _fixed_smoothing_transition_objective(0.8 + 1e-3, result, smoother)
-        - _fixed_smoothing_transition_objective(0.8 - 1e-3, result, smoother)
-    ) / (2e-3)
-
-    assert jnp.abs(automatic) > 1e-3
-    assert jnp.allclose(automatic, finite_difference, rtol=2e-3, atol=2e-3)
-    assert jnp.any(jnp.abs(fisher.information) > 1e-6)
 
 
 class _ScaledRandomWalk(phx.stochastic.AbstractTransitionKernel):
@@ -430,7 +428,7 @@ class _ScaledRandomWalk(phx.stochastic.AbstractTransitionKernel):
         )
 
 
-def test_particle_fisher_score_excludes_fixed_transition_leaves() -> None:
+def test_particle_smoothing_scenario_3() -> None:
     problem = _problem()
     walk = phx.stochastic.StateSpaceModel(
         problem.model.prior,
@@ -454,9 +452,6 @@ def test_particle_fisher_score_excludes_fixed_transition_leaves() -> None:
     assert score.transition_score.noise_scale is None
     assert score.flat_score.shape == (1,)
     assert jnp.all(jnp.isfinite(score.flat_score))
-
-
-def test_zero_mass_singular_transition_pairs_have_finite_fisher_score() -> None:
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.asarray([[0.4], [0.8]]),
@@ -612,16 +607,3 @@ def test_masks_cases_provenance_and_result_export(tmp_path: Any) -> None:
         archive.array("backward_log_probabilities"),
         backward.backward_log_probabilities,
     )
-
-
-def test_resampling_indices_have_zero_forward_sensitivity() -> None:
-    weights = jnp.log(jnp.asarray([0.6, 0.3, 0.1]))
-    for method in ("systematic", "multinomial"):
-        _, tangent = jax.jvp(
-            lambda values: phx.uq.resample_indices(
-                jr.key(13), values, method=method
-            ).astype("float64"),
-            (weights,),
-            (jnp.ones_like(weights),),
-        )
-        assert jnp.array_equal(tangent, jnp.zeros_like(tangent))

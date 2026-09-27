@@ -66,7 +66,7 @@ def test_prepared_linear_reduction_requires_declared_domain_functions() -> None:
     assert jnp.allclose(declared.data, 1.0 / 3.0, atol=1e-10)
 
 
-def test_prepared_replicated_qmc_averages_coefficient_actions() -> None:
+def test_prepared_contracts() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     target = phx.integration.over(domain.component())
     realization = phx.integration.materialize(
@@ -78,9 +78,6 @@ def test_prepared_replicated_qmc_averages_coefficient_actions() -> None:
 
     assert len(prepared.batches) == 4
     assert jnp.allclose(prepared.apply(1.0).data, 1.0)
-
-
-def test_prepared_additive_reduction_splits_evaluation_keys_per_term() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     domain = phx.domain.ProductDomain(x, t)

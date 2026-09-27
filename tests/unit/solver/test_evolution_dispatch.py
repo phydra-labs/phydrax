@@ -75,21 +75,15 @@ def _scalar_training_solver() -> FunctionalSolver:
     return FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_native_evolution_strategy_requires_antithetic_population() -> None:
+def test_evolution_dispatch_scenario_1() -> None:
     with pytest.raises(ValueError, match="even integer"):
         phx.optim.OpenEvolutionStrategy(3)
-
-
-def test_unrelated_optimizer_object_is_rejected_before_training() -> None:
     with pytest.raises(TypeError, match="Optax transformation"):
         solve(
             _DUMMY_SOLVER,
             optim=object(),
             config=FunctionalSolveConfig(num_iter=1),
         )
-
-
-def test_evaluation_parameters_remains_optax_only_for_evolution() -> None:
     algorithm = phx.optim.OpenEvolutionStrategy(8)
 
     with pytest.raises(ValueError, match="only for Optax"):
@@ -103,7 +97,7 @@ def test_evaluation_parameters_remains_optax_only_for_evolution() -> None:
         )
 
 
-def test_distribution_evolution_delivers_cadenced_session_metrics() -> None:
+def test_distribution_evolution_contracts() -> None:
     solver = _scalar_training_solver()
     events = []
     session = phx.execution.IterationSession(
@@ -136,9 +130,6 @@ def test_distribution_evolution_delivers_cadenced_session_metrics() -> None:
     ]
     assert int(events[1].record.metrics.update_step) == 2
     assert "train/loss" in events[1].record.metrics.metric_names
-
-
-def test_distribution_evolution_generation_without_finite_fitness_rolls_back() -> None:
     tree = _Mean(jnp.asarray([1.0, -2.0]))
     kernel = prepare_training_kernel(
         tree,

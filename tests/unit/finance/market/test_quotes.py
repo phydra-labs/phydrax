@@ -38,7 +38,7 @@ def _lineage(dataset: str = "quotes") -> DataLineage:
     return DataLineage("exchange-feed", dataset, publisher_id="venue")
 
 
-def test_future_correction_is_excluded_until_its_availability_clock() -> None:
+def test_quotes_scenario_1() -> None:
     key = QuoteKey("SOFR", "fixing", venue="administrator")
     original = QuoteObservation(key, 0.051, _timestamp(10, 20, "v1"), _lineage())
     correction = QuoteObservation(key, 0.052, _timestamp(10, 40, "v2"), _lineage())
@@ -58,9 +58,6 @@ def test_future_correction_is_excluded_until_its_availability_clock() -> None:
     assert jnp.isclose(corrected.value, 0.052)
     assert corrected.observation_id == correction.observation_id
     assert series.vintage_count == 2
-
-
-def test_duplicate_latest_vintages_require_an_explicit_tie_policy() -> None:
     key = QuoteKey("CPI", "fixing")
     first = QuoteObservation(key, 300.0, _timestamp(10, 20, "v1"), _lineage())
     second = QuoteObservation(key, 301.0, _timestamp(10, 20, "v2"), _lineage())
@@ -78,9 +75,6 @@ def test_duplicate_latest_vintages_require_an_explicit_tie_policy() -> None:
     assert rejected.duplicate_count == 2
     assert bool(selected.valid)
     assert jnp.isclose(selected.value, 301.0)
-
-
-def test_lineage_round_trip_and_derivation_preserve_data_provenance() -> None:
     raw = _lineage("raw-quotes")
     recovered = DataLineage.from_record(raw.to_record())
     derived = DataLineage.derived(
@@ -96,7 +90,7 @@ def test_lineage_round_trip_and_derivation_preserve_data_provenance() -> None:
     assert "model" not in derived.to_record()
 
 
-def test_point_in_time_panel_never_fills_a_missing_event_forward() -> None:
+def test_quotes_scenario_2() -> None:
     key = QuoteKey("AAPL", "close")
     observation = QuoteObservation(key, 100.0, _timestamp(10, 11, "v1"), _lineage())
     snapshot = MarketDataSnapshot(
@@ -115,9 +109,6 @@ def test_point_in_time_panel_never_fills_a_missing_event_forward() -> None:
     assert not bool(panel.valid_mask[1, 0])
     assert int(panel.status[1, 0]) == int(MarketStatus.MISSING_FACTOR)
     assert float(panel.values[1, 0]) == 0.0
-
-
-def test_snapshot_reports_staleness_crossed_quotes_and_causal_exclusion() -> None:
     bid = QuoteKey("AAPL", "bid", venue="XNAS")
     ask = QuoteKey("AAPL", "ask", venue="XNAS")
     late = QuoteKey("AAPL", "last", venue="XNAS")
@@ -143,9 +134,6 @@ def test_snapshot_reports_staleness_crossed_quotes_and_causal_exclusion() -> Non
     assert int(state.status[1]) & int(MarketStatus.CROSSED_QUOTE)
     assert int(state.status[2]) == int(MarketStatus.CAUSAL_TIME_VIOLATION)
     assert not bool(jnp.any(state.accepted))
-
-
-def test_snapshot_uses_event_and_knowledge_cutoffs_on_their_distinct_clocks() -> None:
     known = QuoteKey("AAPL", "known")
     future = QuoteKey("AAPL", "future")
     snapshot = MarketDataSnapshot(

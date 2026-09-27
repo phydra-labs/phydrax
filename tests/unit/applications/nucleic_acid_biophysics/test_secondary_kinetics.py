@@ -110,7 +110,7 @@ def _prepared(
     )
 
 
-def test_partition_and_pair_legality_preserve_labeled_identity() -> None:
+def test_secondary_kinetics_scenario_1() -> None:
     first = StrandComplexPartition(("a", "b", "c"), (("c",), ("b", "a")))
     second = StrandComplexPartition(("a", "b", "c"), (("a", "b"), ("c",)))
     assert first == second
@@ -133,34 +133,26 @@ def test_partition_and_pair_legality_preserve_labeled_identity() -> None:
     reverse = system.moves(move.after)[0]
     assert move.kind == "join" and reverse.kind == "split"
     assert reverse.after.fingerprint() == move.before.fingerprint()
-
-
-@pytest.mark.parametrize(
-    "rate_name", ["metropolis", "symmetric_barrier", "association_metropolis"]
-)
-def test_rate_ratios_and_labeled_combinatorics_match_partition_function(
-    rate_name: Any,
-) -> None:
-    system = _prepared(copies=2, alpha=7.0, rate_name=rate_name, pair_energy=-1.0)
-    generator = system.generator()
-    q = generator.matrix
-    equilibrium = system.equilibrium_probabilities()
-    assert jnp.allclose(q.sum(axis=1), 0.0, atol=1e-12)
-    assert jnp.all(jnp.diag(q) <= 0)
-    assert jnp.allclose(equilibrium[:, None] * q, equilibrium[None, :] * q.T, atol=1e-12)
-    # Two distinct T copies produce two elementary association channels, without
-    # duplicating a state by permutation of complex/member ordering.
-    bound_ratio = (equilibrium[1] + equilibrium[2]) / equilibrium[0]
-    assert jnp.allclose(bound_ratio, 2.0 * math.e / 7.0)
-    assert jnp.allclose(q[0, 1], q[0, 2])
-    for state in system.states:
-        assert all(
-            system.decode(system.encode(move.after)) == move.after
-            for move in system.moves(state)
+    for rate_name in ["metropolis", "symmetric_barrier", "association_metropolis"]:
+        system = _prepared(copies=2, alpha=7.0, rate_name=rate_name, pair_energy=-1.0)
+        generator = system.generator()
+        q = generator.matrix
+        equilibrium = system.equilibrium_probabilities()
+        assert jnp.allclose(q.sum(axis=1), 0.0, atol=1e-12)
+        assert jnp.all(jnp.diag(q) <= 0)
+        assert jnp.allclose(
+            equilibrium[:, None] * q, equilibrium[None, :] * q.T, atol=1e-12
         )
-
-
-def test_legal_toggles_cannot_create_crossings_or_second_partners_under_jit() -> None:
+        # Two distinct T copies produce two elementary association channels, without
+        # duplicating a state by permutation of complex/member ordering.
+        bound_ratio = (equilibrium[1] + equilibrium[2]) / equilibrium[0]
+        assert jnp.allclose(bound_ratio, 2.0 * math.e / 7.0)
+        assert jnp.allclose(q[0, 1], q[0, 2])
+        for state in system.states:
+            assert all(
+                system.decode(system.encode(move.after)) == move.after
+                for move in system.moves(state)
+            )
     system = _prepared(copies=2)
     state = system.encode(system.states[1])
     rates = eqx.filter_jit(system.process.intensities)(0.0, state)
@@ -171,7 +163,7 @@ def test_legal_toggles_cannot_create_crossings_or_second_partners_under_jit() ->
     assert jnp.all(jnp.isnan(system.process.intensities(0.0, jnp.asarray([-1]))))
 
 
-def test_native_generator_refuses_omitted_reachable_states_and_reports_leakage() -> None:
+def test_secondary_kinetics_scenario_2() -> None:
     system = _prepared()
     with pytest.raises(ValueError, match="omits reachable"):
         system.generator((system.states[0],))
@@ -189,11 +181,6 @@ def test_native_generator_refuses_omitted_reachable_states_and_reports_leakage()
             temperature=300.0,
             max_states=1,
         )
-
-
-def test_nearest_neighbor_and_loop_terms_are_consumed_and_missing_parameters_refuse() -> (
-    None
-):
     construct = NucleicAcidConstruct(("x",), ("GGAAACC",), ("DNA",), (False,))
     keys = construct.nucleotide_keys
     state = SecondaryStructureState(construct, ((keys[0], keys[6]), (keys[1], keys[5])))
@@ -214,9 +201,6 @@ def test_nearest_neighbor_and_loop_terms_are_consumed_and_missing_parameters_ref
         move.kind == "formation"
         for move in system.moves(SecondaryStructureState(construct))
     )
-
-
-def test_parameter_rights_chemistry_and_temperature_are_real_admission_gates() -> None:
     with pytest.raises(PermissionError):
         _model(commercial=False)
     system = _prepared()
@@ -235,7 +219,7 @@ def test_parameter_rights_chemistry_and_temperature_are_real_admission_gates() -
         )
 
 
-def test_elementary_concentration_scaling_does_not_change_dissociation() -> None:
+def test_secondary_kinetics_scenario_3() -> None:
     small, large = _prepared(alpha=1), _prepared(alpha=10)
     q_small, q_large = small.generator().matrix, large.generator().matrix
     assert jnp.allclose(q_small[0, 1], 10 * q_large[0, 1])
@@ -248,52 +232,46 @@ def test_elementary_concentration_scaling_does_not_change_dissociation() -> None
         unsupported.elementary_association_rate_constant(
             unsupported.moves(unsupported.states[0])[0]
         )
-
-
-@pytest.mark.parametrize("solver", [solve_next_reaction, solve_direct_ssa])
-def test_real_ssa_matches_exact_transients_and_first_passage(solver: Any) -> None:
-    system = _prepared()
-    target = system.joined_target(system.construct.strand_ids)
-    initial = system.encode(system.states[0])
-    clocks = PoissonClockRealization(
-        jr.key(812),
-        system.process.num_channels,
-        support=(0.0, 1.0),
-        max_events_per_channel=32,
-        sample_shape=(1024,),
-        process_id=system.process.process_id,
-    )
-    solution = solver(
-        system.process,
-        clocks,
-        initial,
-        t0=0.0,
-        t1=1.0,
-        save_times=jnp.asarray([0.0, 1.0]),
-        max_events=32,
-    )
-    hits = event_first_hit(solution, initial, target, t0=0.0, t1=1.0)
-    assert jnp.all(solution.successful)
-    expected_bound = float(system.generator().transition_matrix(1.0)[0, 1])
-    bound = np.asarray(solution.states[:, -1, 0]) == 1
-    assert abs(bound.mean() - expected_bound) < 5 * math.sqrt(
-        expected_bound * (1 - expected_bound) / 1024
-    )
-    first_probability = 1 - math.exp(-2.0)
-    assert abs(float(hits.hit.mean()) - first_probability) < 5 * math.sqrt(
-        first_probability * (1 - first_probability) / 1024
-    )
-    # Entering and exiting the target between the only saved nodes is still hit.
-    crossed_between_saves = hits.hit & (solution.states[:, -1, 0] == 0)
-    assert jnp.any(crossed_between_saves)
-    assert jnp.all(hits.time[crossed_between_saves] < 1.0)
-    exact = finite_generator_hitting(system.generator(), target.mask)
-    assert bool(exact.successful)
-    np.testing.assert_allclose(exact.hitting_probability, [1, 1])
-    np.testing.assert_allclose(exact.mean_first_passage_time, [0.5, 0.0])
-
-
-def test_event_first_hit_distinguishes_initial_censoring_and_capacity_failure() -> None:
+    for solver in [solve_next_reaction, solve_direct_ssa]:
+        system = _prepared()
+        target = system.joined_target(system.construct.strand_ids)
+        initial = system.encode(system.states[0])
+        clocks = PoissonClockRealization(
+            jr.key(812),
+            system.process.num_channels,
+            support=(0.0, 1.0),
+            max_events_per_channel=32,
+            sample_shape=(1024,),
+            process_id=system.process.process_id,
+        )
+        solution = solver(
+            system.process,
+            clocks,
+            initial,
+            t0=0.0,
+            t1=1.0,
+            save_times=jnp.asarray([0.0, 1.0]),
+            max_events=32,
+        )
+        hits = event_first_hit(solution, initial, target, t0=0.0, t1=1.0)
+        assert jnp.all(solution.successful)
+        expected_bound = float(system.generator().transition_matrix(1.0)[0, 1])
+        bound = np.asarray(solution.states[:, -1, 0]) == 1
+        assert abs(bound.mean() - expected_bound) < 5 * math.sqrt(
+            expected_bound * (1 - expected_bound) / 1024
+        )
+        first_probability = 1 - math.exp(-2.0)
+        assert abs(float(hits.hit.mean()) - first_probability) < 5 * math.sqrt(
+            first_probability * (1 - first_probability) / 1024
+        )
+        # Entering and exiting the target between the only saved nodes is still hit.
+        crossed_between_saves = hits.hit & (solution.states[:, -1, 0] == 0)
+        assert jnp.any(crossed_between_saves)
+        assert jnp.all(hits.time[crossed_between_saves] < 1.0)
+        exact = finite_generator_hitting(system.generator(), target.mask)
+        assert bool(exact.successful)
+        np.testing.assert_allclose(exact.hitting_probability, [1, 1])
+        np.testing.assert_allclose(exact.mean_first_passage_time, [0.5, 0.0])
     inert = JumpProcess(
         lambda t, state, args: jnp.zeros(1),
         lambda state, channel, mark, args: state,
@@ -354,7 +332,7 @@ def test_event_first_hit_distinguishes_initial_censoring_and_capacity_failure() 
     assert never_reached.observation_end == solution.events.times[0]
 
 
-def test_finite_absorption_keeps_non_hitting_classes_and_infinite_mfpt() -> None:
+def test_secondary_kinetics_scenario_4() -> None:
     process = JumpProcess(
         lambda t, state, args: jnp.where(
             state[0] == 0, jnp.asarray([1.0, 3.0]), jnp.zeros(2)
@@ -377,9 +355,6 @@ def test_finite_absorption_keeps_non_hitting_classes_and_infinite_mfpt() -> None
     )
     assert jnp.all(jnp.isinf(result.mean_first_passage_time[jnp.asarray([0, 2, 3])]))
     assert result.mean_first_passage_time[1] == 0.0
-
-
-def test_actual_ssa_capacity_failure_preserves_an_already_observed_first_hit() -> None:
     system = _prepared()
     initial = system.encode(system.states[0])
     clocks = PoissonClockRealization(
@@ -406,9 +381,6 @@ def test_actual_ssa_capacity_failure_preserves_an_already_observed_first_hit() -
     assert not bool(result.censored | result.incomplete)
     assert result.time == solution.events.times[0]
     assert not jnp.any(solution.valid)
-
-
-def test_first_hit_refuses_actual_hybrid_continuous_crossing_and_raw_ledger() -> None:
     process_id = "hybrid-continuous-crossing-before-first-event"
     clocks = PoissonClockRealization(
         jr.key(203),

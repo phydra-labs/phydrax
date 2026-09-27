@@ -20,7 +20,7 @@ from phydrax.applications.protein_folding.experiments import (
 from phydrax.units import JOULE, KILOJOULE_PER_MOLE
 
 
-def test_unfolding_sign_thermal_derivative_and_energy_basis() -> None:
+def test_experimental_populations_scenario_1() -> None:
     convention = ThermodynamicConvention()
     kt = convention.thermal_constant * 298.15
     populations = jax.jit(lambda g: jnp.exp(two_state_log_populations(g, kt)))(
@@ -46,9 +46,6 @@ def test_unfolding_sign_thermal_derivative_and_energy_basis() -> None:
         ThermodynamicConvention(energy_unit=JOULE, basis="molar")
     with pytest.raises(ValueError):
         ThermodynamicConvention(energy_unit=KILOJOULE_PER_MOLE, basis="single-system")
-
-
-def test_dimer_mass_action_infinite_dilution_and_extreme_gradients() -> None:
     kt, c0, dg = 2.5, 1000.0, 18.0
     concentration = jnp.logspace(-12, 6, 40)
     # ty: ignore[invalid-argument-type]
@@ -67,9 +64,6 @@ def test_dimer_mass_action_infinite_dilution_and_extreme_gradients() -> None:
     )
     assert np.isfinite(np.asarray(gradient(-2000.0))).all()
     assert np.isfinite(np.asarray(gradient(2000.0))).all()
-
-
-def test_consecutive_three_state_and_dimer_monomer_partition() -> None:
     convention = ThermodynamicConvention()
     t, d, c = jnp.array([298.15]), jnp.array([0.0]), jnp.array([0.25])
     model = ThreeStateUnfolding(convention)
@@ -94,7 +88,7 @@ def test_consecutive_three_state_and_dimer_monomer_partition() -> None:
     )
 
 
-def test_repeat_transfer_matches_enumeration_and_marginal_derivative() -> None:
+def test_experimental_populations_scenario_2() -> None:
     g, bonds, kt = jnp.array([-1.0, 2.0, -0.3]), jnp.array([-1.2, 0.5]), 2.5
     states = np.array(tuple(product((0.0, 1.0), repeat=3)))
     energy = states @ np.asarray(g) + (states[:, :-1] * states[:, 1:]) @ np.asarray(bonds)
@@ -110,9 +104,6 @@ def test_repeat_transfer_matches_enumeration_and_marginal_derivative() -> None:
     np.testing.assert_allclose(derivative, -marginal / kt, rtol=1e-12)
     singleton = repeat_transfer_statistics(jnp.array([-1.0]), jnp.empty(0), kt)
     np.testing.assert_allclose(singleton[1], [1 / (1 + np.exp(-1 / kt))])
-
-
-def test_parallel_paths_share_equilibrium_and_resolve_total_relaxation() -> None:
     model = ParallelPathKinetics()
     t, d = jnp.full(17, 298.15), jnp.linspace(0, 6000, 17)
     p = jnp.array([12.0, 0.004, 3.0, 0.001, 1.0, 0.002])

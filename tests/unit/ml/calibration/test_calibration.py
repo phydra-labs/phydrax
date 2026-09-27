@@ -96,9 +96,8 @@ def _multiclass() -> Any:
     return MulticlassCalibrationRecipe(num_classes=3, max_iterations=2, tolerance=1e3)
 
 
-@pytest.mark.parametrize(
-    ("recipe", "features", "targets", "schema", "model_type", "method"),
-    [
+def test_every_smooth_calibration_family_normalizes_labels_and_jit_vmap_outputs() -> None:
+    for recipe, features, targets, schema, model_type, method in [
         (
             _platt(),
             _BINARY_SCORES,
@@ -139,51 +138,48 @@ def _multiclass() -> Any:
             MulticlassCalibrationModel,
             "multiclass",
         ),
-    ],
-)
-def test_every_smooth_calibration_family_normalizes_labels_and_jit_vmap_outputs(
-    recipe: Any, features: Any, targets: Any, schema: Any, model_type: Any, method: Any
-) -> None:
-    result = recipe.fit_batch(MLBatch(features, targets, target_schema=schema))
-    model = result.as_trainable()
-    probability = result.model(features)
-    classes = len(schema.class_labels)
+    ]:
+        result = recipe.fit_batch(MLBatch(features, targets, target_schema=schema))
+        model = result.as_trainable()
+        probability = result.model(features)
+        classes = len(schema.class_labels)
 
-    assert isinstance(model, model_type)
-    assert bool(result.valid)
-    assert result.method == method
-    assert result.diagnostics.method == method
-    assert bool(result.diagnostics.converged)
-    assert probability.shape == (features.shape[0], classes)
-    assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0, atol=1e-6)
-    assert jnp.allclose(
-        jnp.exp(model.predict_log_proba(features)), probability, atol=1e-6
-    )
-    assert model.predict(features).shape == targets.shape
-    assert jnp.array_equal(model.labels, jnp.arange(classes))
-    assert model.target_schema.class_labels == schema.class_labels
-    assert jax.jit(model)(features[:2]).shape == (2, classes)
-    assert jax.vmap(model)(features[:2]).shape == (2, classes)
-    assert (
-        result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
-    )
-    assert (
-        result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
-        is GradientLevel.SMOOTH
-    )
-    assert (
-        result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
-        is GradientLevel.CONDITIONAL
-    )
-    assert (
-        result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
-        is GradientLevel.CONDITIONAL
-    )
-    assert (
-        result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
-        is GradientLevel.CONDITIONAL
-    )
-    assert result.derivative_contract.route is DerivativeRoute.UNROLLED
+        assert isinstance(model, model_type)
+        assert bool(result.valid)
+        assert result.method == method
+        assert result.diagnostics.method == method
+        assert bool(result.diagnostics.converged)
+        assert probability.shape == (features.shape[0], classes)
+        assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0, atol=1e-6)
+        assert jnp.allclose(
+            jnp.exp(model.predict_log_proba(features)), probability, atol=1e-6
+        )
+        assert model.predict(features).shape == targets.shape
+        assert jnp.array_equal(model.labels, jnp.arange(classes))
+        assert model.target_schema.class_labels == schema.class_labels
+        assert jax.jit(model)(features[:2]).shape == (2, classes)
+        assert jax.vmap(model)(features[:2]).shape == (2, classes)
+        assert (
+            result.derivative_contract.level(DerivativeSurface.INPUT)
+            is GradientLevel.SMOOTH
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+            is GradientLevel.SMOOTH
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+            is GradientLevel.CONDITIONAL
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+            is GradientLevel.CONDITIONAL
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+            is GradientLevel.CONDITIONAL
+        )
+        assert result.derivative_contract.route is DerivativeRoute.UNROLLED
 
 
 def test_platt_calibration_preserves_case_masks_product_weights_and_frozen_execution() -> (
@@ -248,9 +244,8 @@ def test_calibration_rejects_sparse_and_complex_logits_and_checks_new_sample_wid
         )
 
 
-@pytest.mark.parametrize(
-    ("recipe", "features", "targets", "probe"),
-    [
+def test_every_smooth_calibrator_has_declared_fit_input_and_parameter_gradients() -> None:
+    for recipe, features, targets, probe in [
         (_platt(), _BINARY_SCORES, _BINARY_TARGETS, jnp.array([0.3])),
         (
             _temperature(),
@@ -266,83 +261,81 @@ def test_calibration_rejects_sparse_and_complex_logits_and_checks_new_sample_wid
             _MULTICLASS_TARGETS,
             jnp.array([0.2, -0.3, 0.7]),
         ),
-    ],
-)
-def test_every_smooth_calibrator_has_declared_fit_input_and_parameter_gradients(
-    recipe: Any, features: Any, targets: Any, probe: Any
-) -> None:
-    weights = jnp.linspace(0.8, 1.3, features.shape[0])
+    ]:
+        weights = jnp.linspace(0.8, 1.3, features.shape[0])
 
-    def fit_loss(values: Any, sample_weight: Any, learning_rate: Any) -> Any:
-        configured = eqx.tree_at(lambda item: item.learning_rate, recipe, learning_rate)
-        model = configured.fit_batch(
-            MLBatch(values, targets, sample_weight=sample_weight)
+        def fit_loss(values: Any, sample_weight: Any, learning_rate: Any) -> Any:
+            configured = eqx.tree_at(
+                lambda item: item.learning_rate, recipe, learning_rate
+            )
+            model = configured.fit_batch(
+                MLBatch(values, targets, sample_weight=sample_weight)
+            ).as_trainable()
+            return jnp.sum(jnp.square(model.decision_function(probe)))
+
+        fit_gradients = jax.grad(fit_loss, argnums=(0, 1, 2))(
+            features, weights, recipe.learning_rate
+        )
+        model = recipe.fit_batch(
+            MLBatch(features, targets, sample_weight=weights)
         ).as_trainable()
-        return jnp.sum(jnp.square(model.decision_function(probe)))
+        input_gradient = jax.grad(
+            lambda value: jnp.sum(jnp.square(model.decision_function(value)))
+        )(probe)
+        if isinstance(model, PlattCalibrationModel):
+            parameter_gradient = jax.grad(
+                lambda value: jnp.sum(
+                    jnp.square(
+                        eqx.tree_at(
+                            lambda item: item.slope, model, value
+                        ).decision_function(probe)
+                    )
+                )
+            )(model.slope)
+        elif isinstance(model, TemperatureCalibrationModel):
+            parameter_gradient = jax.grad(
+                lambda value: jnp.sum(
+                    jnp.square(
+                        eqx.tree_at(
+                            lambda item: item.temperature, model, value
+                        ).decision_function(probe)
+                    )
+                )
+            )(model.temperature)
+        elif isinstance(model, VectorCalibrationModel):
+            parameter_gradient = jax.grad(
+                lambda value: jnp.sum(
+                    jnp.square(
+                        eqx.tree_at(
+                            lambda item: item.scale, model, value
+                        ).decision_function(probe)
+                    )
+                )
+            )(model.scale)
+        elif isinstance(model, MatrixCalibrationModel):
+            parameter_gradient = jax.grad(
+                lambda value: jnp.sum(
+                    jnp.square(
+                        eqx.tree_at(
+                            lambda item: item.matrix, model, value
+                        ).decision_function(probe)
+                    )
+                )
+            )(model.matrix)
+        else:
+            parameter_gradient = jax.grad(
+                lambda value: jnp.sum(
+                    jnp.square(
+                        eqx.tree_at(
+                            lambda item: item.slope, model, value
+                        ).decision_function(probe)
+                    )
+                )
+            )(model.slope)
 
-    fit_gradients = jax.grad(fit_loss, argnums=(0, 1, 2))(
-        features, weights, recipe.learning_rate
-    )
-    model = recipe.fit_batch(
-        MLBatch(features, targets, sample_weight=weights)
-    ).as_trainable()
-    input_gradient = jax.grad(
-        lambda value: jnp.sum(jnp.square(model.decision_function(value)))
-    )(probe)
-    if isinstance(model, PlattCalibrationModel):
-        parameter_gradient = jax.grad(
-            lambda value: jnp.sum(
-                jnp.square(
-                    eqx.tree_at(lambda item: item.slope, model, value).decision_function(
-                        probe
-                    )
-                )
-            )
-        )(model.slope)
-    elif isinstance(model, TemperatureCalibrationModel):
-        parameter_gradient = jax.grad(
-            lambda value: jnp.sum(
-                jnp.square(
-                    eqx.tree_at(
-                        lambda item: item.temperature, model, value
-                    ).decision_function(probe)
-                )
-            )
-        )(model.temperature)
-    elif isinstance(model, VectorCalibrationModel):
-        parameter_gradient = jax.grad(
-            lambda value: jnp.sum(
-                jnp.square(
-                    eqx.tree_at(lambda item: item.scale, model, value).decision_function(
-                        probe
-                    )
-                )
-            )
-        )(model.scale)
-    elif isinstance(model, MatrixCalibrationModel):
-        parameter_gradient = jax.grad(
-            lambda value: jnp.sum(
-                jnp.square(
-                    eqx.tree_at(lambda item: item.matrix, model, value).decision_function(
-                        probe
-                    )
-                )
-            )
-        )(model.matrix)
-    else:
-        parameter_gradient = jax.grad(
-            lambda value: jnp.sum(
-                jnp.square(
-                    eqx.tree_at(lambda item: item.slope, model, value).decision_function(
-                        probe
-                    )
-                )
-            )
-        )(model.slope)
-
-    assert all(jnp.all(jnp.isfinite(gradient)) for gradient in fit_gradients)
-    assert jnp.all(jnp.isfinite(input_gradient))
-    assert jnp.all(jnp.isfinite(parameter_gradient))
+        assert all(jnp.all(jnp.isfinite(gradient)) for gradient in fit_gradients)
+        assert jnp.all(jnp.isfinite(input_gradient))
+        assert jnp.all(jnp.isfinite(parameter_gradient))
 
 
 def test_exact_and_smooth_isotonic_are_monotone_distinct_and_extrapolate_constantly() -> (

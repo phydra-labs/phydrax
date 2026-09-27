@@ -27,7 +27,7 @@ def _oscillator_evolution() -> Any:
     )
 
 
-def test_evolution_refined_oriented_sections_and_return_map() -> None:
+def test_section_scenario_1() -> None:
     layout, evolution = _oscillator_evolution()
     grid = phx.dynamics.TimeGrid(
         jnp.linspace(0.0, 5.0 * jnp.pi, 43), time_id="section-grid"
@@ -66,9 +66,6 @@ def test_evolution_refined_oriented_sections_and_return_map() -> None:
     np.testing.assert_allclose(
         np.asarray(return_map.return_intervals[0]), 2.0 * np.pi, atol=2e-8
     )
-
-
-def test_callable_sections_preserve_case_axes_and_report_overflow() -> None:
     time = jnp.linspace(0.0, 6.0 * jnp.pi, 241)
     phases = jnp.asarray([0.0, 0.3])
     states = jnp.stack(
@@ -106,9 +103,6 @@ def test_callable_sections_preserve_case_axes_and_report_overflow() -> None:
     np.testing.assert_array_equal(np.asarray(crossings.count), [2, 2])
     np.testing.assert_array_equal(np.asarray(crossings.overflow), [True, True])
     assert bool(jnp.all(jnp.abs(crossings.section_values) < 1e-9))
-
-
-def test_discrete_evolution_refinement_is_rejected_before_bisection() -> None:
     layout = phx.dynamics.StateLayout((1,))
     evolution = phx.dynamics.DiscreteEvolution(
         phx.dynamics.DiscreteSystem(

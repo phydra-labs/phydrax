@@ -113,7 +113,7 @@ def _fitted_state_model(layout: Any, target_port: Any) -> Any:
     ).model
 
 
-def test_fitted_model_binds_to_continuous_system_through_explicit_ports() -> None:
+def test_model_system_scenario_1() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     tangent = layout.value_port(role="tangent")
@@ -139,9 +139,6 @@ def test_fitted_model_binds_to_continuous_system_through_explicit_ports() -> Non
     assert not evidence.dimensions_verified
     assert ("input", point.port_id, "dimensions") in evidence.unverified
     assert ("output", tangent.port_id, "dimensions") in evidence.unverified
-
-
-def test_fitted_model_binding_rejects_a_mismatched_owner_port() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     tangent = layout.value_port(role="tangent")
@@ -174,9 +171,6 @@ def test_fitted_model_binding_rejects_a_mismatched_owner_port() -> None:
         system(phx.dynamics.DiscreteStepContext(0.0, 0.1, 0), state),
         next_state_model(state),
     )
-
-
-def test_discrete_interval_ports_bind_only_in_owner_order() -> None:
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     source = _step_time_port("source-time")
@@ -211,9 +205,52 @@ def test_discrete_interval_ports_bind_only_in_owner_order() -> None:
             input_mode="interval",
             port_mapping=_identity_mapping((point, target, source), (point,)),
         )
+    model = _ScaledField(0.5)
+    system = phx.dynamics.discrete_model_system(
+        model,
+        state_layout=phx.dynamics.StateLayout((2,)),
+        system_id="scaled-step",
+        step_size=0.25,
+    )
+    state = jnp.asarray([2.0, -4.0])
+    context = phx.dynamics.DiscreteStepContext(1.0, 1.25, 0)
 
+    assert isinstance(system.transition, phx.dynamics.DiscreteModelTransition)
+    assert system.step_size == 0.25
+    assert jnp.array_equal(system(context, state), model(state))
+    assert jnp.array_equal(jax.jit(system)(context, state), model(state))
+    model = _ControlledStep(2.0)
+    system = phx.dynamics.discrete_model_system(
+        model,
+        state_layout=phx.dynamics.StateLayout((2,)),
+        input_layout=phx.dynamics.InputLayout((1,)),
+        system_id="controlled-step",
+        step_size=1.0,
+    )
+    state = jnp.asarray([1.0, 3.0])
+    control = jnp.asarray([0.5])
+    context = phx.dynamics.DiscreteStepContext(0.0, 1.0, 0)
 
-def test_portless_model_takes_no_port_mapping() -> None:
+    assert jnp.array_equal(
+        system(context, state, inputs=control),
+        model((state, control)),
+    )
+    layout = phx.dynamics.StateLayout((2,))
+
+    with pytest.raises(ValueError, match="pointwise"):
+        phx.dynamics.discrete_model_system(
+            _AxisStep(1.0),
+            state_layout=layout,
+            system_id="axis-step",
+            step_size=1.0,
+        )
+    with pytest.raises(ValueError, match="step_size"):
+        phx.dynamics.discrete_model_system(
+            _ScaledField(1.0),
+            state_layout=layout,
+            system_id="invalid-step",
+            step_size=0.0,
+        )
     layout = phx.dynamics.StateLayout((2,))
     point = layout.value_port(role="point")
     tangent = layout.value_port(role="tangent")
@@ -233,7 +270,7 @@ def test_portless_model_takes_no_port_mapping() -> None:
         )
 
 
-def test_continuous_model_system_preserves_trainable_model_leaves() -> None:
+def test_model_system_scenario_2() -> None:
     system = phx.dynamics.continuous_model_system(
         _ScaledField(2.0),
         state_layout=phx.dynamics.StateLayout((2,)),
@@ -245,9 +282,6 @@ def test_continuous_model_system_preserves_trainable_model_leaves() -> None:
     assert jnp.array_equal(jax.jit(system)(0.5, state), 2.0 * state)
     gradient = eqx.filter_grad(lambda candidate: jnp.sum(candidate(0.5, state)))(system)
     assert jnp.allclose(gradient.vector_field.model.scale, -2.0)
-
-
-def test_controlled_port_hamiltonian_binds_to_continuous_system() -> None:
     model = phx.nn.models.PortHamiltonianVectorField(
         state_size=2,
         control_size=1,
@@ -270,9 +304,6 @@ def test_controlled_port_hamiltonian_binds_to_continuous_system() -> None:
         atol=1e-12,
         rtol=1e-12,
     )
-
-
-def test_controlled_model_system_rejects_flat_input_binding() -> None:
     model = phx.nn.models.MLP(
         in_size=3,
         out_size=2,
@@ -286,59 +317,4 @@ def test_controlled_model_system_rejects_flat_input_binding() -> None:
             state_layout=phx.dynamics.StateLayout((2,)),
             input_layout=phx.dynamics.InputLayout((1,)),
             system_id="invalid-flat-model",
-        )
-
-
-def test_discrete_model_system_binds_complete_autonomous_next_state() -> None:
-    model = _ScaledField(0.5)
-    system = phx.dynamics.discrete_model_system(
-        model,
-        state_layout=phx.dynamics.StateLayout((2,)),
-        system_id="scaled-step",
-        step_size=0.25,
-    )
-    state = jnp.asarray([2.0, -4.0])
-    context = phx.dynamics.DiscreteStepContext(1.0, 1.25, 0)
-
-    assert isinstance(system.transition, phx.dynamics.DiscreteModelTransition)
-    assert system.step_size == 0.25
-    assert jnp.array_equal(system(context, state), model(state))
-    assert jnp.array_equal(jax.jit(system)(context, state), model(state))
-
-
-def test_discrete_model_system_uses_structured_interval_control() -> None:
-    model = _ControlledStep(2.0)
-    system = phx.dynamics.discrete_model_system(
-        model,
-        state_layout=phx.dynamics.StateLayout((2,)),
-        input_layout=phx.dynamics.InputLayout((1,)),
-        system_id="controlled-step",
-        step_size=1.0,
-    )
-    state = jnp.asarray([1.0, 3.0])
-    control = jnp.asarray([0.5])
-    context = phx.dynamics.DiscreteStepContext(0.0, 1.0, 0)
-
-    assert jnp.array_equal(
-        system(context, state, inputs=control),
-        model((state, control)),
-    )
-
-
-def test_discrete_model_system_rejects_axis_models_and_invalid_step_contracts() -> None:
-    layout = phx.dynamics.StateLayout((2,))
-
-    with pytest.raises(ValueError, match="pointwise"):
-        phx.dynamics.discrete_model_system(
-            _AxisStep(1.0),
-            state_layout=layout,
-            system_id="axis-step",
-            step_size=1.0,
-        )
-    with pytest.raises(ValueError, match="step_size"):
-        phx.dynamics.discrete_model_system(
-            _ScaledField(1.0),
-            state_layout=layout,
-            system_id="invalid-step",
-            step_size=0.0,
         )

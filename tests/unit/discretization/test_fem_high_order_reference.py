@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
-import pytest
 
 from phydrax.discretization.fem._generic import _degree_aware_reference_rule
 from phydrax.discretization.fem._high_order import (
@@ -35,46 +34,38 @@ from phydrax.integration._rules import (
 )
 
 
-@pytest.mark.parametrize(
-    ("rule", "order", "exact_degree"),
-    (
+def test_fem_high_order_reference_scenario_1() -> None:
+    for rule, order, exact_degree in (
         (GaussLegendreRule, 5, 9),
         (GaussLobattoLegendreRule, 6, 9),
-    ),
-)
-def test_legendre_rules_are_positive_and_polynomial_exact(
-    rule: Any, order: Any, exact_degree: Any
-) -> None:
-    prepared_rule = rule(order)
-    data = prepared_rule.data()
-    nodes = np.asarray(data.nodes)
-    weights = np.asarray(data.weights)
+    ):
+        prepared_rule = rule(order)
+        data = prepared_rule.data()
+        nodes = np.asarray(data.nodes)
+        weights = np.asarray(data.weights)
 
-    assert prepared_rule.exact_degree == exact_degree
-    assert data.degree == exact_degree
-    assert np.all(np.diff(nodes) > 0.0)
-    assert np.all(weights > 0.0)
-    assert np.isclose(np.sum(weights), 2.0)
-    reference = ReferenceIntervalRule(prepared_rule).materialize()
-    assert reference.points.shape == (order, 1)
-    assert np.all(np.asarray(reference.weights) > 0.0)
-    assert np.isclose(np.sum(np.asarray(reference.weights)), 1.0)
-    if rule is GaussLobattoLegendreRule:
-        assert np.array_equal(
-            np.asarray(reference.points)[[0, -1], 0],
-            np.asarray((0.0, 1.0)),
-        )
-    for degree in range(exact_degree + 1):
-        exact = 0.0 if degree % 2 else 2.0 / (degree + 1)
-        assert np.isclose(
-            np.sum(weights * nodes**degree),
-            exact,
-            rtol=2.0e-11,
-            atol=2.0e-11,
-        )
-
-
-def test_tetrahedral_degree_aware_rule_integrates_mass_degree_polynomial() -> None:
+        assert prepared_rule.exact_degree == exact_degree
+        assert data.degree == exact_degree
+        assert np.all(np.diff(nodes) > 0.0)
+        assert np.all(weights > 0.0)
+        assert np.isclose(np.sum(weights), 2.0)
+        reference = ReferenceIntervalRule(prepared_rule).materialize()
+        assert reference.points.shape == (order, 1)
+        assert np.all(np.asarray(reference.weights) > 0.0)
+        assert np.isclose(np.sum(np.asarray(reference.weights)), 1.0)
+        if rule is GaussLobattoLegendreRule:
+            assert np.array_equal(
+                np.asarray(reference.points)[[0, -1], 0],
+                np.asarray((0.0, 1.0)),
+            )
+        for degree in range(exact_degree + 1):
+            exact = 0.0 if degree % 2 else 2.0 / (degree + 1)
+            assert np.isclose(
+                np.sum(weights * nodes**degree),
+                exact,
+                rtol=2.0e-11,
+                atol=2.0e-11,
+            )
     polynomial_degree = 4
     points, weights = _degree_aware_reference_rule(
         "tetrahedron",
@@ -90,9 +81,6 @@ def test_tetrahedral_degree_aware_rule_integrates_mass_degree_polynomial() -> No
         expected,
         atol=2.0e-13,
     )
-
-
-def test_gll_family_uses_stable_barycentric_polynomial_reproduction() -> None:
     family = ReferenceNodalFamily("quadrilateral", 8)
     assert family.orders == (8, 8)
     nodes = family.nodes_by_axis[0]
@@ -125,9 +113,8 @@ def test_gll_family_uses_stable_barycentric_polynomial_reproduction() -> None:
     assert jnp.allclose(jnp.sum(family.quadrature_weights_by_axis[0]), 1.0)
 
 
-@pytest.mark.parametrize(
-    ("cell", "orders", "points_by_axis"),
-    (
+def test_anisotropic_contracts() -> None:
+    for cell, orders, points_by_axis in (
         (
             "quadrilateral",
             (2, 4),
@@ -142,81 +129,68 @@ def test_gll_family_uses_stable_barycentric_polynomial_reproduction() -> None:
                 jnp.asarray([0.25, 0.75]),
             ),
         ),
-    ),
-)
-def test_anisotropic_dense_and_factorized_reference_actions_agree(
-    cell: Any, orders: Any, points_by_axis: Any
-) -> None:
-    family = ReferenceNodalFamily(cell, orders)
-    tabulation = TensorProductTabulation(family, points_by_axis)
-    plan = SumFactorizationPlan(tabulation)
-    points = jnp.stack(
-        jnp.meshgrid(*points_by_axis, indexing="ij"),
-        axis=-1,
-    ).reshape((-1, len(orders)))
-    dense_values, dense_gradients = family.tabulate(points)
-    coefficients = jnp.linspace(
-        -0.75,
-        1.25,
-        math.prod(family.nodal_shape),
-    ).reshape(family.nodal_shape)
-    evaluation_shape = tuple(len(points) for points in points_by_axis)
-    value_seed = jnp.linspace(-1.0, 0.8, math.prod(evaluation_shape)).reshape(
-        evaluation_shape
-    )
-    gradient_seed = jnp.linspace(
-        -0.5,
-        1.5,
-        math.prod(evaluation_shape) * len(orders),
-    ).reshape(evaluation_shape + (len(orders),))
+    ):
+        family = ReferenceNodalFamily(cell, orders)
+        tabulation = TensorProductTabulation(family, points_by_axis)
+        plan = SumFactorizationPlan(tabulation)
+        points = jnp.stack(
+            jnp.meshgrid(*points_by_axis, indexing="ij"),
+            axis=-1,
+        ).reshape((-1, len(orders)))
+        dense_values, dense_gradients = family.tabulate(points)
+        coefficients = jnp.linspace(
+            -0.75,
+            1.25,
+            math.prod(family.nodal_shape),
+        ).reshape(family.nodal_shape)
+        evaluation_shape = tuple(len(points) for points in points_by_axis)
+        value_seed = jnp.linspace(-1.0, 0.8, math.prod(evaluation_shape)).reshape(
+            evaluation_shape
+        )
+        gradient_seed = jnp.linspace(
+            -0.5,
+            1.5,
+            math.prod(evaluation_shape) * len(orders),
+        ).reshape(evaluation_shape + (len(orders),))
 
-    dense_interpolation = oe.contract(
-        "qd,d->q", dense_values, coefficients.reshape((-1,))
-    )
-    dense_gradient = oe.contract(
-        "qdk,d->qk", dense_gradients, coefficients.reshape((-1,))
-    )
-    dense_interpolation_transpose = oe.contract(
-        "qd,q->d", dense_values, value_seed.reshape((-1,))
-    )
-    dense_gradient_transpose = oe.contract(
-        "qdk,qk->d",
-        dense_gradients,
-        gradient_seed.reshape((-1, len(orders))),
-    )
+        dense_interpolation = oe.contract(
+            "qd,d->q", dense_values, coefficients.reshape((-1,))
+        )
+        dense_gradient = oe.contract(
+            "qdk,d->qk", dense_gradients, coefficients.reshape((-1,))
+        )
+        dense_interpolation_transpose = oe.contract(
+            "qd,q->d", dense_values, value_seed.reshape((-1,))
+        )
+        dense_gradient_transpose = oe.contract(
+            "qdk,qk->d",
+            dense_gradients,
+            gradient_seed.reshape((-1, len(orders))),
+        )
 
-    assert family.orders == orders
-    assert tabulation.nodal_shape == family.nodal_shape
-    assert tabulation.evaluation_shape == evaluation_shape
-    assert jnp.allclose(
-        plan.interpolate(coefficients).reshape((-1,)),
-        dense_interpolation,
-        atol=2.0e-10,
-    )
-    assert jnp.allclose(
-        plan.gradient(coefficients).reshape((-1, len(orders))),
-        dense_gradient,
-        atol=2.0e-10,
-    )
-    assert jnp.allclose(
-        plan.interpolate_transpose(value_seed).reshape((-1,)),
-        dense_interpolation_transpose,
-        atol=2.0e-10,
-    )
-    assert jnp.allclose(
-        plan.gradient_transpose(gradient_seed).reshape((-1,)),
-        dense_gradient_transpose,
-        atol=2.0e-10,
-    )
-
-
-def _flatten_entity_dofs(element: Any) -> Any:
-    return tuple(
-        dof for dimension in element.entity_dofs for entity in dimension for dof in entity
-    )
-
-
-def test_anisotropic_quadrilateral_entity_partition_and_orientation() -> None:
+        assert family.orders == orders
+        assert tabulation.nodal_shape == family.nodal_shape
+        assert tabulation.evaluation_shape == evaluation_shape
+        assert jnp.allclose(
+            plan.interpolate(coefficients).reshape((-1,)),
+            dense_interpolation,
+            atol=2.0e-10,
+        )
+        assert jnp.allclose(
+            plan.gradient(coefficients).reshape((-1, len(orders))),
+            dense_gradient,
+            atol=2.0e-10,
+        )
+        assert jnp.allclose(
+            plan.interpolate_transpose(value_seed).reshape((-1,)),
+            dense_interpolation_transpose,
+            atol=2.0e-10,
+        )
+        assert jnp.allclose(
+            plan.gradient_transpose(gradient_seed).reshape((-1,)),
+            dense_gradient_transpose,
+            atol=2.0e-10,
+        )
     element = ReferenceNodalFamily("quadrilateral", (2, 3)).finite_element()
 
     assert tuple(entity[0] for entity in element.entity_dofs[0]) == (0, 8, 11, 3)
@@ -224,9 +198,6 @@ def test_anisotropic_quadrilateral_entity_partition_and_orientation() -> None:
     assert tuple(len(entity) for entity in element.entity_dofs[1]) == (1, 2, 1, 2)
     assert len(element.entity_dofs[2][0]) == 2
     assert tuple(sorted(_flatten_entity_dofs(element))) == tuple(range(12))
-
-
-def test_anisotropic_hexahedron_entity_partition_and_orientation() -> None:
     family = ReferenceNodalFamily("hexahedron", (2, 3, 4))
     element = family.finite_element()
 
@@ -266,6 +237,12 @@ def test_anisotropic_hexahedron_entity_partition_and_orientation() -> None:
     assert tuple(sorted(_flatten_entity_dofs(element))) == tuple(range(60))
 
 
+def _flatten_entity_dofs(element: Any) -> Any:
+    return tuple(
+        dof for dimension in element.entity_dofs for entity in dimension for dof in entity
+    )
+
+
 def _all_actions() -> Any:
     return (
         "interpolate",
@@ -301,73 +278,67 @@ def _prepare_hex(family: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    ("family", "prepare"),
-    (
+def test_fem_high_order_reference_scenario_2() -> None:
+    for family, prepare in (
         (ReferenceNodalFamily("quadrilateral", (3, 2)), _prepare_quad),
         (ReferenceNodalFamily("hexahedron", (2, 2, 2)), _prepare_hex),
-    ),
-)
-def test_prepared_quad_and_hex_trace_and_transpose_consistency(
-    family: Any, prepare: Any
-) -> None:
-    prepared = prepare(family)
-    coefficients = jnp.linspace(-0.6, 1.1, family.finite_element().local_dof_count)
-    volume_values = prepared.interpolate(coefficients)
-    volume_gradients = prepared.gradient(coefficients)
-    value_seed = jnp.linspace(-0.3, 0.7, volume_values.shape[0])
-    gradient_seed = jnp.linspace(
-        -0.9,
-        0.4,
-        volume_gradients.size,
-    ).reshape(volume_gradients.shape)
-    factorized = SumFactorizationPlan(prepared.tensor_tabulation)
+    ):
+        prepared = prepare(family)
+        coefficients = jnp.linspace(-0.6, 1.1, family.finite_element().local_dof_count)
+        volume_values = prepared.interpolate(coefficients)
+        volume_gradients = prepared.gradient(coefficients)
+        value_seed = jnp.linspace(-0.3, 0.7, volume_values.shape[0])
+        gradient_seed = jnp.linspace(
+            -0.9,
+            0.4,
+            volume_gradients.size,
+        ).reshape(volume_gradients.shape)
+        factorized = SumFactorizationPlan(prepared.tensor_tabulation)
 
-    assert prepared.report.tensor_factorized
-    assert prepared.report.point_count == prepared.weights.shape[0]
-    assert jnp.allclose(
-        factorized.interpolate(coefficients.reshape(family.nodal_shape)).reshape((-1,)),
-        volume_values,
-        atol=2.0e-10,
-    )
-    assert jnp.allclose(
-        factorized.gradient(coefficients.reshape(family.nodal_shape)).reshape(
-            volume_gradients.shape
-        ),
-        volume_gradients,
-        atol=2.0e-10,
-    )
-    assert jnp.allclose(
-        jnp.vdot(volume_values, value_seed),
-        jnp.vdot(coefficients, prepared.interpolate_transpose(value_seed)),
-        atol=2.0e-10,
-    )
-    assert jnp.allclose(
-        jnp.vdot(volume_gradients, gradient_seed),
-        jnp.vdot(coefficients, prepared.gradient_transpose(gradient_seed)),
-        atol=2.0e-10,
-    )
-    for facet in prepared.facets:
-        direct_values, direct_gradients = family.tabulate(facet.points)
-        trace_seed = jnp.linspace(-0.25, 0.75, facet.points.shape[0])
-        trace = prepared.trace(facet.facet_index, coefficients)
-
-        assert jnp.all(facet.weights > 0.0)
-        assert jnp.allclose(jnp.linalg.norm(facet.normals, axis=-1), 1.0)
-        assert jnp.allclose(facet.basis_values, direct_values, atol=2.0e-10)
-        assert jnp.allclose(facet.basis_gradients, direct_gradients, atol=2.0e-10)
-        assert jnp.allclose(trace, direct_values @ coefficients, atol=2.0e-10)
+        assert prepared.report.tensor_factorized
+        assert prepared.report.point_count == prepared.weights.shape[0]
         assert jnp.allclose(
-            jnp.vdot(trace, trace_seed),
-            jnp.vdot(
-                coefficients,
-                prepared.trace_transpose(facet.facet_index, trace_seed),
+            factorized.interpolate(coefficients.reshape(family.nodal_shape)).reshape(
+                (-1,)
             ),
+            volume_values,
             atol=2.0e-10,
         )
+        assert jnp.allclose(
+            factorized.gradient(coefficients.reshape(family.nodal_shape)).reshape(
+                volume_gradients.shape
+            ),
+            volume_gradients,
+            atol=2.0e-10,
+        )
+        assert jnp.allclose(
+            jnp.vdot(volume_values, value_seed),
+            jnp.vdot(coefficients, prepared.interpolate_transpose(value_seed)),
+            atol=2.0e-10,
+        )
+        assert jnp.allclose(
+            jnp.vdot(volume_gradients, gradient_seed),
+            jnp.vdot(coefficients, prepared.gradient_transpose(gradient_seed)),
+            atol=2.0e-10,
+        )
+        for facet in prepared.facets:
+            direct_values, direct_gradients = family.tabulate(facet.points)
+            trace_seed = jnp.linspace(-0.25, 0.75, facet.points.shape[0])
+            trace = prepared.trace(facet.facet_index, coefficients)
 
-
-def test_prepared_reference_identity_binds_rules_actions_and_precision() -> None:
+            assert jnp.all(facet.weights > 0.0)
+            assert jnp.allclose(jnp.linalg.norm(facet.normals, axis=-1), 1.0)
+            assert jnp.allclose(facet.basis_values, direct_values, atol=2.0e-10)
+            assert jnp.allclose(facet.basis_gradients, direct_gradients, atol=2.0e-10)
+            assert jnp.allclose(trace, direct_values @ coefficients, atol=2.0e-10)
+            assert jnp.allclose(
+                jnp.vdot(trace, trace_seed),
+                jnp.vdot(
+                    coefficients,
+                    prepared.trace_transpose(facet.facet_index, trace_seed),
+                ),
+                atol=2.0e-10,
+            )
     family = ReferenceNodalFamily("quadrilateral", 3)
     baseline = _prepare_quad(family)
     reordered = _prepare_quad(family, actions=tuple(reversed(_all_actions())))
@@ -387,9 +358,6 @@ def test_prepared_reference_identity_binds_rules_actions_and_precision() -> None
     assert baseline.prepared_id != other_precision.prepared_id
     assert baseline.report.report_id != fewer_actions.report.report_id
     assert baseline.report.precision_id != other_precision.report.precision_id
-
-
-def test_higher_order_simplex_integer_points_match_floating_tabulation() -> None:
     family = SimplexNodalFamily("triangle", 4)
     integer_points = jnp.asarray(((0, 0), (1, 0), (0, 1)), dtype=jnp.int32)
     floating_points = integer_points.astype("float64")
@@ -406,72 +374,66 @@ def test_higher_order_simplex_integer_points_match_floating_tabulation() -> None
         floating_gradients[0],
         atol=2.0e-10,
     )
+    for cell, order in (("triangle", 5), ("tetrahedron", 3)):
+        family = SimplexNodalFamily(cell, order)
+        dimension = family.nodes.shape[1]
+        nodal_values, _nodal_gradients = family.tabulate(family.nodes)
+        np.testing.assert_allclose(
+            nodal_values, np.eye(family.nodes.shape[0]), atol=2.0e-10
+        )
+        points = np.asarray(family.nodes) * 0.73 + 0.05
+        values, gradients = family.tabulate(points)
+        polynomial_nodes = np.asarray(family.nodes)[:, 0] ** order + 0.25 * np.asarray(
+            family.nodes
+        )[:, -1] ** min(order, 2)
+        expected = points[:, 0] ** order + 0.25 * points[:, -1] ** min(order, 2)
+        np.testing.assert_allclose(values @ polynomial_nodes, expected, atol=3.0e-9)
+        assert gradients.shape == (
+            points.shape[0],
+            family.nodes.shape[0],
+            dimension,
+        )
+
+        axis_rule = GaussLegendreRule(order + 2)
+        volume_rule = (
+            ReferenceTriangleRule(axis_rule)
+            if cell == "triangle"
+            else ReferenceTetrahedronRule(axis_rule)
+        )
+        facet_rule = (
+            ReferenceIntervalRule(axis_rule)
+            if cell == "triangle"
+            else ReferenceTriangleRule(axis_rule)
+        )
+        facet_count = 3 if cell == "triangle" else 4
+        reference = PreparedFiniteElementReference(
+            family.finite_element(),
+            volume_rule,
+            (facet_rule,) * facet_count,
+            (
+                "interpolate",
+                "interpolate_transpose",
+                "gradient",
+                "gradient_transpose",
+                "trace",
+                "trace_transpose",
+            ),
+            FiniteElementPrecisionPolicy(),
+        )
+        mass = oe.contract(
+            "q,qi,qj->ij",
+            reference.weights,
+            reference.basis_values,
+            reference.basis_values,
+        )
+        assert np.min(np.linalg.eigvalsh(np.asarray(mass))) > 0.0
+        for facet in reference.facets:
+            assert facet.normals.shape == facet.points.shape
+            assert jnp.all(facet.weights > 0.0)
+        assert family.condition_number < 1.0e5
 
 
-@pytest.mark.parametrize(
-    ("cell", "order"),
-    (("triangle", 5), ("tetrahedron", 3)),
-)
-def test_simplex_family_and_prepared_reference_reproduce_polynomials(
-    cell: Any, order: Any
-) -> None:
-    family = SimplexNodalFamily(cell, order)
-    dimension = family.nodes.shape[1]
-    nodal_values, _nodal_gradients = family.tabulate(family.nodes)
-    np.testing.assert_allclose(nodal_values, np.eye(family.nodes.shape[0]), atol=2.0e-10)
-    points = np.asarray(family.nodes) * 0.73 + 0.05
-    values, gradients = family.tabulate(points)
-    polynomial_nodes = np.asarray(family.nodes)[:, 0] ** order + 0.25 * np.asarray(
-        family.nodes
-    )[:, -1] ** min(order, 2)
-    expected = points[:, 0] ** order + 0.25 * points[:, -1] ** min(order, 2)
-    np.testing.assert_allclose(values @ polynomial_nodes, expected, atol=3.0e-9)
-    assert gradients.shape == (
-        points.shape[0],
-        family.nodes.shape[0],
-        dimension,
-    )
-
-    axis_rule = GaussLegendreRule(order + 2)
-    volume_rule = (
-        ReferenceTriangleRule(axis_rule)
-        if cell == "triangle"
-        else ReferenceTetrahedronRule(axis_rule)
-    )
-    facet_rule = (
-        ReferenceIntervalRule(axis_rule)
-        if cell == "triangle"
-        else ReferenceTriangleRule(axis_rule)
-    )
-    facet_count = 3 if cell == "triangle" else 4
-    reference = PreparedFiniteElementReference(
-        family.finite_element(),
-        volume_rule,
-        (facet_rule,) * facet_count,
-        (
-            "interpolate",
-            "interpolate_transpose",
-            "gradient",
-            "gradient_transpose",
-            "trace",
-            "trace_transpose",
-        ),
-        FiniteElementPrecisionPolicy(),
-    )
-    mass = oe.contract(
-        "q,qi,qj->ij",
-        reference.weights,
-        reference.basis_values,
-        reference.basis_values,
-    )
-    assert np.min(np.linalg.eigvalsh(np.asarray(mass))) > 0.0
-    for facet in reference.facets:
-        assert facet.normals.shape == facet.points.shape
-        assert jnp.all(facet.weights > 0.0)
-    assert family.condition_number < 1.0e5
-
-
-def test_facet_orientation_groups_have_exact_inverses_and_composition() -> None:
+def test_fem_high_order_reference_scenario_3() -> None:
     from phydrax.discretization._reference_cell import (
         facet_orientation_actions,
         facet_orientation_between,
@@ -493,13 +455,9 @@ def test_facet_orientation_groups_have_exact_inverses_and_composition() -> None:
             )
     action = facet_orientation_between((10, 20, 30), (20, 30, 10))
     assert action.permutation == (2, 0, 1)
-
-
-def test_triangular_physical_mortar_reproduces_total_degree_space() -> None:
     from phydrax.discretization.fem._mortar import (
         serial_finite_element_mortar_plan,
     )
-    from phydrax.integration import GaussLegendreRule, ReferenceTriangleRule
 
     family = SimplexNodalFamily("triangle", 2)
     rule = ReferenceTriangleRule(GaussLegendreRule(4)).materialize()
@@ -519,16 +477,8 @@ def test_triangular_physical_mortar_reproduces_total_degree_space() -> None:
     assert mortar.evidence.declared_polynomials_reproduced
     flux = jnp.linspace(-0.4, 0.6, rule.points.shape[0])
     np.testing.assert_allclose(mortar.conservation_residual(flux), 0.0, atol=3.0e-12)
-
-
-def test_entropy_reference_operators_close_generalized_sbp_identity() -> None:
     from phydrax.equations.fem._entropy_stability import (
         prepare_entropy_reference_operator,
-    )
-    from phydrax.integration import (
-        GaussLegendreRule,
-        ReferenceIntervalRule,
-        ReferenceTriangleRule,
     )
 
     family = SimplexNodalFamily("triangle", 3)

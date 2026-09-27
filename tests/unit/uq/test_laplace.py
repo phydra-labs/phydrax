@@ -34,7 +34,7 @@ def _gaussian_problem() -> Any:
     return problem, likelihood_precision
 
 
-def test_dense_laplace_recovers_correlated_gaussian_and_predicts_named_fields() -> None:
+def test_laplace_scenario_1() -> None:
     problem, likelihood_precision = _gaussian_problem()
     expected_covariance = jnp.linalg.inv(likelihood_precision + jnp.eye(6))
 
@@ -62,9 +62,57 @@ def test_dense_laplace_recovers_correlated_gaussian_and_predicts_named_fields() 
     assert prediction.samples.dims == ("__phydra_uq_draw", "x")
     assert prediction.samples.shape == (19, 2)
     assert jnp.all(jnp.asarray(prediction.valid.data))
+    problem, likelihood_precision = _gaussian_problem()
+    result = phx.uq.fit_laplace(problem, jnp.zeros(6))
+    assert isinstance(result, phx.uq.LaplaceResult)
+    design = jnp.asarray(
+        [[1.0, -0.5, 0.0, 0.25, 0.0, 0.1], [0.0, 0.2, 1.0, 0.0, -0.4, 0.3]]
+    )
+    expected = design @ result.covariance @ design.T
 
+    linearized = result.linearized_predict(design)
+    sampled = result.predict(
+        jr.key(17),
+        design,
+        num_samples=40_000,
+        batch_size=2_003,
+    )
+    assert isinstance(sampled, phx.uq.PredictiveField)
 
-def test_structured_laplax_curvatures_match_their_declared_approximations() -> None:
+    assert linearized.mean.dims == ("x",)
+    assert jnp.allclose(linearized.materialize_covariance().matrix, expected)
+    assert jnp.allclose(jnp.asarray(linearized.exact_variance().data), jnp.diag(expected))
+    assert jnp.allclose(
+        jnp.cov(jnp.asarray(sampled.samples.data), rowvar=False),
+        expected,
+        rtol=0.03,
+        atol=3e-3,
+    )
+    center = jnp.log(jnp.asarray(2.0))
+    precision = 999.0
+    space = phx.uq.ParameterSpace(
+        center,
+        priors=phx.uq.LogNormal(center, 1.0),
+        bijectors=phx.uq.ExpBijector(),
+    )
+    problem = phx.uq.PosteriorProblem(
+        space,
+        lambda physical: -0.5 * precision * (jnp.log(physical) - center) ** 2,
+        predict=lambda physical: cx.AxisArray(
+            jnp.atleast_1d(physical**2),
+            dims=("x",),
+        ),
+    )
+    result = phx.uq.fit_laplace(problem, center)
+    assert isinstance(result, phx.uq.LaplaceResult)
+    prediction = result.linearized_predict()
+
+    assert jnp.allclose(result.covariance, 1.0 / (precision + 1.0))
+    assert jnp.allclose(result.physical_covariance(), 4.0 / (precision + 1.0))
+    assert jnp.allclose(jnp.asarray(prediction.mean.data), jnp.asarray([4.0]))
+    assert jnp.allclose(
+        jnp.asarray(prediction.exact_variance().data), 64.0 / (precision + 1.0)
+    )
     problem, likelihood_precision = _gaussian_problem()
     probe = jnp.arange(1.0, 7.0)
     exact_covariance = jnp.linalg.inv(likelihood_precision + jnp.eye(6))
@@ -113,9 +161,37 @@ def test_structured_laplax_curvatures_match_their_declared_approximations() -> N
         assert draw.shape == (8, 6)
         assert jnp.all(jnp.isfinite(draw))
         assert jnp.all(jnp.isfinite(result.covariance_vector_product(probe)))
+    problem, likelihood_precision = _gaussian_problem()
+    result = phx.uq.fit_laplace(
+        problem,
+        jnp.zeros(6),
+        curvature="full",
+        prior_precision=1.0,
+    )
+    assert isinstance(result, phx.uq.StructuredLaplaceResult)
+    design = jnp.asarray(
+        [[1.0, 0.0, -0.3, 0.0, 0.2, 0.0], [0.0, 0.5, 0.0, 1.0, 0.0, -0.1]]
+    )
+    expected_parameter_covariance = jnp.linalg.inv(likelihood_precision + jnp.eye(6))
+    expected = design @ expected_parameter_covariance @ design.T
+    linearized = result.linearized_predict(design)
 
-
-def test_laplace_rejects_nonstationary_centers_and_implicit_regularization() -> None:
+    assert linearized.input_covariance_representation == "operator"
+    assert jnp.allclose(linearized.materialize_covariance().matrix, expected)
+    assert jnp.allclose(
+        result.physical_covariance_vector_product(jnp.arange(1.0, 7.0)),
+        expected_parameter_covariance @ jnp.arange(1.0, 7.0),
+    )
+    with pytest.raises(ValueError, match="estimate_variance"):
+        linearized.exact_variance()
+    estimate = linearized.estimate_variance(
+        jr.key(18),
+        num_probes=8_192,
+        batch_size=511,
+    )
+    assert jnp.allclose(
+        jnp.asarray(estimate.variance.data), jnp.diag(expected), atol=0.02
+    )
     problem, _ = _gaussian_problem()
 
     with pytest.raises(phx.uq.LaplaceCurvatureError, match="not stationary"):
@@ -155,94 +231,3 @@ def test_laplace_rejects_nonstationary_centers_and_implicit_regularization() -> 
             prior_precision=1.0,
             stationarity_tolerance=None,
         )
-
-
-def test_dense_laplace_linearized_prediction_matches_covariance_and_draws() -> None:
-    problem, likelihood_precision = _gaussian_problem()
-    result = phx.uq.fit_laplace(problem, jnp.zeros(6))
-    assert isinstance(result, phx.uq.LaplaceResult)
-    design = jnp.asarray(
-        [[1.0, -0.5, 0.0, 0.25, 0.0, 0.1], [0.0, 0.2, 1.0, 0.0, -0.4, 0.3]]
-    )
-    expected = design @ result.covariance @ design.T
-
-    linearized = result.linearized_predict(design)
-    sampled = result.predict(
-        jr.key(17),
-        design,
-        num_samples=40_000,
-        batch_size=2_003,
-    )
-    assert isinstance(sampled, phx.uq.PredictiveField)
-
-    assert linearized.mean.dims == ("x",)
-    assert jnp.allclose(linearized.materialize_covariance().matrix, expected)
-    assert jnp.allclose(jnp.asarray(linearized.exact_variance().data), jnp.diag(expected))
-    assert jnp.allclose(
-        jnp.cov(jnp.asarray(sampled.samples.data), rowvar=False),
-        expected,
-        rtol=0.03,
-        atol=3e-3,
-    )
-
-
-def test_dense_laplace_transports_covariance_through_parameter_bijectors() -> None:
-    center = jnp.log(jnp.asarray(2.0))
-    precision = 999.0
-    space = phx.uq.ParameterSpace(
-        center,
-        priors=phx.uq.LogNormal(center, 1.0),
-        bijectors=phx.uq.ExpBijector(),
-    )
-    problem = phx.uq.PosteriorProblem(
-        space,
-        lambda physical: -0.5 * precision * (jnp.log(physical) - center) ** 2,
-        predict=lambda physical: cx.AxisArray(
-            jnp.atleast_1d(physical**2),
-            dims=("x",),
-        ),
-    )
-    result = phx.uq.fit_laplace(problem, center)
-    assert isinstance(result, phx.uq.LaplaceResult)
-    prediction = result.linearized_predict()
-
-    assert jnp.allclose(result.covariance, 1.0 / (precision + 1.0))
-    assert jnp.allclose(result.physical_covariance(), 4.0 / (precision + 1.0))
-    assert jnp.allclose(jnp.asarray(prediction.mean.data), jnp.asarray([4.0]))
-    assert jnp.allclose(
-        jnp.asarray(prediction.exact_variance().data), 64.0 / (precision + 1.0)
-    )
-
-
-def test_structured_laplace_linearized_prediction_stays_matrix_free() -> None:
-    problem, likelihood_precision = _gaussian_problem()
-    result = phx.uq.fit_laplace(
-        problem,
-        jnp.zeros(6),
-        curvature="full",
-        prior_precision=1.0,
-    )
-    assert isinstance(result, phx.uq.StructuredLaplaceResult)
-    design = jnp.asarray(
-        [[1.0, 0.0, -0.3, 0.0, 0.2, 0.0], [0.0, 0.5, 0.0, 1.0, 0.0, -0.1]]
-    )
-    expected_parameter_covariance = jnp.linalg.inv(likelihood_precision + jnp.eye(6))
-    expected = design @ expected_parameter_covariance @ design.T
-    linearized = result.linearized_predict(design)
-
-    assert linearized.input_covariance_representation == "operator"
-    assert jnp.allclose(linearized.materialize_covariance().matrix, expected)
-    assert jnp.allclose(
-        result.physical_covariance_vector_product(jnp.arange(1.0, 7.0)),
-        expected_parameter_covariance @ jnp.arange(1.0, 7.0),
-    )
-    with pytest.raises(ValueError, match="estimate_variance"):
-        linearized.exact_variance()
-    estimate = linearized.estimate_variance(
-        jr.key(18),
-        num_probes=8_192,
-        batch_size=511,
-    )
-    assert jnp.allclose(
-        jnp.asarray(estimate.variance.data), jnp.diag(expected), atol=0.02
-    )

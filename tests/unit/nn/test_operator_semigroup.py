@@ -94,7 +94,7 @@ def _advance(batch: Any, prediction: Any) -> Any:
     )
 
 
-def test_exact_semigroup_has_zero_loss_with_batched_conditions() -> None:
+def test_operator_semigroup_scenario_1() -> None:
     batch = _batch()
     dt1 = jnp.asarray([0.1, 0.2, 0.3])
     dt2 = jnp.asarray([0.4, 0.3, 0.2])
@@ -111,9 +111,6 @@ def test_exact_semigroup_has_zero_loss_with_batched_conditions() -> None:
 
     assert loss.shape == ()
     assert jnp.allclose(loss, 0.0, atol=1e-12)
-
-
-def test_violating_channel_transition_is_positive_and_respects_query_measure() -> None:
     batch = _batch(channels=2)
     model = _ConditionedTransition(jnp.asarray(0.8), exact=False)
     dt1 = jnp.asarray([0.2, 0.3, 0.4])
@@ -145,9 +142,6 @@ def test_violating_channel_transition_is_positive_and_respects_query_measure() -
 
     assert mean > 0.0
     assert jnp.allclose(summed, 2.5 * mean * query_mass * channel_count)
-
-
-def test_violating_semigroup_objective_backpropagates_to_transition_parameters() -> None:
     batch = _batch()
     model = _ConditionedTransition(jnp.asarray(0.6), exact=False)
 
@@ -165,9 +159,6 @@ def test_violating_semigroup_objective_backpropagates_to_transition_parameters()
     assert loss > 0.0
     assert jnp.isfinite(gradient.rate)
     assert jnp.abs(gradient.rate) > 0.0
-
-
-def test_semigroup_objective_rejects_non_case_condition_shapes() -> None:
     batch = _batch()
 
     with pytest.raises(ValueError, match="dt1 must be scalar or"):
@@ -179,37 +170,31 @@ def test_semigroup_objective_rejects_non_case_condition_shapes() -> None:
             _condition,
             _advance,
         )
+    for key_mode in ["fold_in", "split"]:
+        batch = _batch()
+        objective = ConditionedSemigroupObjective(key_mode=key_mode)
+        root = jr.key(23)
 
+        first = objective(
+            _KeyedTransition(),
+            batch,
+            jnp.asarray([0.1, 0.2, 0.3]),
+            jnp.asarray([0.3, 0.2, 0.1]),
+            _condition,
+            _advance,
+            key=root,
+        )
+        repeated = objective(
+            _KeyedTransition(),
+            batch,
+            jnp.asarray([0.1, 0.2, 0.3]),
+            jnp.asarray([0.3, 0.2, 0.1]),
+            _condition,
+            _advance,
+            key=root,
+        )
 
-@pytest.mark.parametrize("key_mode", ["fold_in", "split"])
-def test_semigroup_evaluation_key_modes_are_deterministic(key_mode: Any) -> None:
-    batch = _batch()
-    objective = ConditionedSemigroupObjective(key_mode=key_mode)
-    root = jr.key(23)
-
-    first = objective(
-        _KeyedTransition(),
-        batch,
-        jnp.asarray([0.1, 0.2, 0.3]),
-        jnp.asarray([0.3, 0.2, 0.1]),
-        _condition,
-        _advance,
-        key=root,
-    )
-    repeated = objective(
-        _KeyedTransition(),
-        batch,
-        jnp.asarray([0.1, 0.2, 0.3]),
-        jnp.asarray([0.3, 0.2, 0.1]),
-        _condition,
-        _advance,
-        key=root,
-    )
-
-    assert jnp.array_equal(first, repeated)
-
-
-def test_semigroup_public_exports_are_available_from_nn_namespace() -> None:
+        assert jnp.array_equal(first, repeated)
     assert (
         phx.nn.operator.training.ConditionedSemigroupObjective
         is ConditionedSemigroupObjective

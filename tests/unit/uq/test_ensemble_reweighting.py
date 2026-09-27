@@ -117,7 +117,7 @@ def _precision_plan(
     )
 
 
-def test_two_state_bme_solution_and_reference_normalization_are_known() -> None:
+def test_ensemble_reweighting_scenario_1() -> None:
     theta = 0.5
     sigma = 0.25
     expected_excited_population = 0.8
@@ -136,9 +136,6 @@ def test_two_state_bme_solution_and_reference_normalization_are_known() -> None:
     assert bool(result.optimization_evidence.successful)
     assert bool(result.support_valid)
     assert not bool(result.physical_equilibrium_valid)
-
-
-def test_physical_support_requires_typed_converged_authorized_provenance() -> None:
     with pytest.raises(TypeError, match="typed physical provenance"):
         phx.uq.EnsembleSupport(
             np.zeros(3), "physical-equilibrium", "renamed-empirical-source"
@@ -162,9 +159,6 @@ def test_physical_support_requires_typed_converged_authorized_provenance() -> No
             "empirical",
             _physical_provenance("misapplied-physical-record"),
         )
-
-
-def test_reweighting_is_translation_invariant_and_covariance_whitened() -> None:
     support = phx.uq.EnsembleSupport(
         np.log([0.2, 0.5, 0.3]), "empirical", "three-state-collection"
     )
@@ -200,7 +194,7 @@ def test_reweighting_is_translation_invariant_and_covariance_whitened() -> None:
     )
 
 
-def test_uniform_observable_cannot_change_weights() -> None:
+def test_ensemble_reweighting_scenario_2() -> None:
     support = phx.uq.EnsembleSupport(
         np.log([0.1, 0.2, 0.7]), "empirical", "uniform-observable-support"
     )
@@ -214,9 +208,6 @@ def test_uniform_observable_cannot_change_weights() -> None:
         result.log_weights, support.log_reference_weights, atol=1.0e-12
     )
     assert bool(result.convex_support.within_support)
-
-
-def test_effective_support_policy_is_explicit_fractional_and_inclusive() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(3), "empirical", "ess-boundary-support")
     plan = _cholesky_plan([[1.0], [1.0], [1.0]], [1.0], 0.2, "ess-boundary-fit")
 
@@ -234,11 +225,6 @@ def test_effective_support_policy_is_explicit_fractional_and_inclusive() -> None
     assert not bool(boundary.support_valid)
     with pytest.raises(ValueError, match="must exceed one"):
         EnsembleSupportPolicy(1.0, 0.01)
-
-
-def test_effective_fraction_rejects_large_support_with_only_two_effective_samples() -> (
-    None
-):
     support = phx.uq.EnsembleSupport(
         np.zeros(100),
         "empirical",
@@ -258,9 +244,6 @@ def test_effective_fraction_rejects_large_support_with_only_two_effective_sample
     np.testing.assert_allclose(result.effective_sample_fraction, 0.02)
     assert bool(result.support_collapsed)
     assert not bool(result.support_valid)
-
-
-def test_support_collapse_and_out_of_convex_support_are_explicit() -> None:
     support = phx.uq.EnsembleSupport(
         np.zeros(5),
         "physical-equilibrium",
@@ -293,7 +276,7 @@ def test_support_collapse_and_out_of_convex_support_are_explicit() -> None:
     np.testing.assert_allclose(jnp.sum(jnp.exp(outside.log_weights)), 1.0)
 
 
-def test_nonfinite_whitening_reports_array_valued_dual_objective() -> None:
+def test_ensemble_reweighting_scenario_3() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(2), "empirical", "overflow-support")
     plan = _cholesky_plan([[0.0], [1.0e308]], [0.0], 1.0e-300, "overflow-calibration")
 
@@ -305,9 +288,6 @@ def test_nonfinite_whitening_reports_array_valued_dual_objective() -> None:
     assert not bool(evidence.successful)
     assert evidence.dual_objective.dtype == evidence.dual_gradient_norm.dtype
     assert bool(jnp.isposinf(evidence.dual_objective))
-
-
-def test_held_out_nonlinear_observable_is_averaged_per_conformation() -> None:
     support = phx.uq.EnsembleSupport(
         np.zeros(3), "empirical", "nonlinear-observable-support"
     )
@@ -332,9 +312,6 @@ def test_held_out_nonlinear_observable_is_averaged_per_conformation() -> None:
     )
     with pytest.raises(ValueError, match="usage='held-out'"):
         phx.uq.predict_held_out_observables(result, calibration)
-
-
-def test_renaming_an_observation_cannot_relabel_fitted_lineage_as_held_out() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(3), "empirical", "lineage-support")
     calibration = _cholesky_plan([[0.0], [1.0], [2.0]], [0.8], 0.3, "fit-observation")
     result = phx.uq.reweight_ensemble(
@@ -355,7 +332,7 @@ def test_renaming_an_observation_cannot_relabel_fitted_lineage_as_held_out() -> 
         phx.uq.predict_held_out_observables(result, renamed)
 
 
-def test_regularization_selection_refuses_held_out_outcomes() -> None:
+def test_ensemble_reweighting_scenario_4() -> None:
     support = phx.uq.EnsembleSupport(np.zeros(3), "empirical", "selection-support")
     calibration = _cholesky_plan([[0.0], [1.0], [2.0]], [0.8], 0.3, "fit-observation")
     selection = _cholesky_plan(
@@ -422,6 +399,71 @@ def test_regularization_selection_refuses_held_out_outcomes() -> None:
     )
     with pytest.raises(ValueError, match="model-selection lineages"):
         phx.uq.predict_held_out_observables(selected_fit, renamed_held_out)
+    physical = _closure_evidence("physical-equilibrium")
+    proposal_only = _closure_evidence("proposal-only")
+
+    assert physical.outcome == "passed"
+    assert bool(physical.valid)
+    assert bool(physical.equilibrium_evidence_valid)
+    assert bool(physical.kinetic_evidence_valid)
+    assert proposal_only.outcome == "inconclusive"
+    assert not bool(proposal_only.equilibrium_evidence_valid)
+    assert bool(proposal_only.kinetic_evidence_valid)
+    result, prediction, plan, equilibrium, kinetic = _closure_inputs(
+        "physical-equilibrium"
+    )
+    wrong_state_order = TwoStateKineticRecord(
+        3.0,
+        2.0,
+        0.09,
+        condition_id=plan.condition_id,
+        state_ids=tuple(reversed(plan.state_ids)),
+        observation_id=plan.kinetic_observation_id,
+        source_ids=plan.kinetic_source_ids,
+        forward_rate_unit=_PER_SECOND,
+        reverse_rate_unit=_PER_SECOND,
+    )
+    other_support = phx.uq.EnsembleSupport(
+        np.zeros(4),
+        "physical-equilibrium",
+        _physical_provenance("substituted-support"),
+    )
+    substituted_assignment = plan.state_assignment_record(
+        other_support,
+        ("unbound", "unbound", "bound", "bound"),
+        ("replica-a", "replica-b", "replica-a", "replica-b"),
+        "substituted-support-assignment",
+    )
+
+    with pytest.raises(ValueError, match="exactly match result support"):
+        plan.equilibrium_record(result, substituted_assignment, 0.08)
+    with pytest.raises(ValueError, match="exactly match the closure plan"):
+        _evaluate_closure(result, prediction, plan, equilibrium, wrong_state_order)
+    result, prediction, plan, _, _ = _closure_inputs("physical-equilibrium")
+    assignment = plan.state_assignment_record(
+        result.support,
+        ("unbound", "unbound", "bound", "bound"),
+        ("replica-a", "replica-b", "replica-a", "replica-b"),
+        "uncertainty-check-assignment",
+    )
+    equilibrium = plan.equilibrium_record(result, assignment, None)
+    imprecise_kinetic = plan.kinetic_record(
+        3.0,
+        2.0,
+        1.0,
+        forward_rate_unit=_PER_SECOND,
+        reverse_rate_unit=_PER_SECOND,
+    )
+
+    missing = _evaluate_closure(result, prediction, plan, equilibrium, imprecise_kinetic)
+    quantified = plan.equilibrium_record(result, assignment, 0.08)
+    excessive = _evaluate_closure(result, prediction, plan, quantified, imprecise_kinetic)
+
+    assert missing.outcome == "inconclusive"
+    assert not bool(missing.equilibrium_evidence_valid)
+    assert excessive.outcome == "inconclusive"
+    assert not bool(excessive.uncertainty_useful)
+    assert not bool(excessive.valid)
 
 
 def _closure_inputs(source_kind: Any) -> Any:
@@ -512,81 +554,7 @@ def _closure_evidence(source_kind: Any) -> Any:
     return _evaluate_closure(*_closure_inputs(source_kind))
 
 
-def test_thermodynamic_closure_requires_a_physical_reference_measure() -> None:
-    physical = _closure_evidence("physical-equilibrium")
-    proposal_only = _closure_evidence("proposal-only")
-
-    assert physical.outcome == "passed"
-    assert bool(physical.valid)
-    assert bool(physical.equilibrium_evidence_valid)
-    assert bool(physical.kinetic_evidence_valid)
-    assert proposal_only.outcome == "inconclusive"
-    assert not bool(proposal_only.equilibrium_evidence_valid)
-    assert bool(proposal_only.kinetic_evidence_valid)
-
-
-def test_thermodynamic_closure_rejects_mixed_record_identity() -> None:
-    result, prediction, plan, equilibrium, kinetic = _closure_inputs(
-        "physical-equilibrium"
-    )
-    wrong_state_order = TwoStateKineticRecord(
-        3.0,
-        2.0,
-        0.09,
-        condition_id=plan.condition_id,
-        state_ids=tuple(reversed(plan.state_ids)),
-        observation_id=plan.kinetic_observation_id,
-        source_ids=plan.kinetic_source_ids,
-        forward_rate_unit=_PER_SECOND,
-        reverse_rate_unit=_PER_SECOND,
-    )
-    other_support = phx.uq.EnsembleSupport(
-        np.zeros(4),
-        "physical-equilibrium",
-        _physical_provenance("substituted-support"),
-    )
-    substituted_assignment = plan.state_assignment_record(
-        other_support,
-        ("unbound", "unbound", "bound", "bound"),
-        ("replica-a", "replica-b", "replica-a", "replica-b"),
-        "substituted-support-assignment",
-    )
-
-    with pytest.raises(ValueError, match="exactly match result support"):
-        plan.equilibrium_record(result, substituted_assignment, 0.08)
-    with pytest.raises(ValueError, match="exactly match the closure plan"):
-        _evaluate_closure(result, prediction, plan, equilibrium, wrong_state_order)
-
-
-def test_unknown_or_excessive_closure_uncertainty_is_inconclusive() -> None:
-    result, prediction, plan, _, _ = _closure_inputs("physical-equilibrium")
-    assignment = plan.state_assignment_record(
-        result.support,
-        ("unbound", "unbound", "bound", "bound"),
-        ("replica-a", "replica-b", "replica-a", "replica-b"),
-        "uncertainty-check-assignment",
-    )
-    equilibrium = plan.equilibrium_record(result, assignment, None)
-    imprecise_kinetic = plan.kinetic_record(
-        3.0,
-        2.0,
-        1.0,
-        forward_rate_unit=_PER_SECOND,
-        reverse_rate_unit=_PER_SECOND,
-    )
-
-    missing = _evaluate_closure(result, prediction, plan, equilibrium, imprecise_kinetic)
-    quantified = plan.equilibrium_record(result, assignment, 0.08)
-    excessive = _evaluate_closure(result, prediction, plan, quantified, imprecise_kinetic)
-
-    assert missing.outcome == "inconclusive"
-    assert not bool(missing.equilibrium_evidence_valid)
-    assert excessive.outcome == "inconclusive"
-    assert not bool(excessive.uncertainty_useful)
-    assert not bool(excessive.valid)
-
-
-def test_closure_population_ratio_is_derived_from_bound_state_assignments() -> None:
+def test_ensemble_reweighting_scenario_5() -> None:
     result, prediction, plan, _, kinetic = _closure_inputs("physical-equilibrium")
     reversed_assignment = plan.state_assignment_record(
         result.support,
@@ -604,9 +572,6 @@ def test_closure_population_ratio_is_derived_from_bound_state_assignments() -> N
     assert evidence.outcome == "failed"
     assert evidence.equivalence_interval_upper > plan.equivalence_margin
     assert not bool(evidence.valid)
-
-
-def test_kinetic_rates_convert_compatible_reciprocal_time_units() -> None:
     result, prediction, plan, equilibrium, per_second = _closure_inputs(
         "physical-equilibrium"
     )

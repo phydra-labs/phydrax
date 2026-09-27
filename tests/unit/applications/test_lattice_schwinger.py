@@ -24,7 +24,7 @@ def _model(**kwargs: Any) -> Any:
     return phx.applications.lattice_field.SchwingerChainModel(4, **parameters)
 
 
-def test_schwinger_charge_and_flux_share_one_encoding() -> None:
+def test_schwinger_contracts() -> None:
     model = _model(external_flux=jnp.asarray([0.1, -0.2, 0.05]))
     staggered_vacuum = jnp.asarray([1, 0, 1, 0], dtype=jnp.int32)
     observables = phx.applications.lattice_field.schwinger_observables(
@@ -44,9 +44,6 @@ def test_schwinger_charge_and_flux_share_one_encoding() -> None:
         )
         == 0.0
     )
-
-
-def test_schwinger_local_and_mpo_hamiltonians_agree() -> None:
     model = _model(external_flux=jnp.asarray([0.1, -0.2, 0.05]))
     local = phx.applications.lattice_field.schwinger_local_hamiltonian(model)
     mpo = phx.applications.lattice_field.schwinger_mpo(model)
@@ -58,9 +55,6 @@ def test_schwinger_local_and_mpo_hamiltonians_agree() -> None:
     assert mpo.electric_evidence.hermitian
     assert mpo.electric_evidence.maximum_bond_dimension <= 3
     assert jnp.allclose(local_dense, mpo_dense, atol=1e-10)
-
-
-def test_schwinger_zero_coupling_and_background_flux_are_explicit() -> None:
     model = _model(
         gauge_coupling=0.0,
         left_boundary_flux=-0.3,
@@ -74,9 +68,6 @@ def test_schwinger_zero_coupling_and_background_flux_are_explicit() -> None:
 
     assert jnp.all(jnp.isfinite(flux))
     assert jnp.all(jnp.isfinite(dense))
-
-
-def test_schwinger_model_is_jittable_and_resource_guarded() -> None:
     model = _model()
     occupations = jnp.asarray([1, 0, 1, 0], dtype=jnp.int32)
     flux = jax.jit(
@@ -95,9 +86,6 @@ def test_schwinger_model_is_jittable_and_resource_guarded() -> None:
             mass=0.0,
             gauge_coupling=0.0,
         )
-
-
-def test_schwinger_background_schedules_match_direct_hamiltonians() -> None:
     model = _model(external_flux=jnp.asarray([0.05, -0.1, 0.02]))
     time_grid = jnp.asarray([0.0, 0.4, 1.0])
     backgrounds = jnp.asarray(

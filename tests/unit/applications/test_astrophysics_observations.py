@@ -17,7 +17,7 @@ def _context() -> Any:
     )
 
 
-def test_projection_and_occultation_limits_and_gradients() -> None:
+def test_astrophysics_observations_scenario_1() -> None:
     physics = phx.applications.astrophysics
     projection = physics.ObserverProjectionPlan(
         jnp.asarray([1.0, 0.0, 0.0]),
@@ -44,9 +44,6 @@ def test_projection_and_occultation_limits_and_gradients() -> None:
         (jnp.asarray(1.0),),
     )[1]
     assert bool(jnp.isfinite(tangent))
-
-
-def test_photon_counting_bandpass_and_poisson_composition() -> None:
     physics = phx.applications.astrophysics
     wavelength = jnp.asarray([4.0e-7, 5.0e-7, 6.0e-7])
     provenance = physics.ObservationDataProvenance.native("synthetic-filter")
@@ -71,9 +68,6 @@ def test_photon_counting_bandpass_and_poisson_composition() -> None:
     )
     log_prob = physics.transit_poisson_log_prob(result, jnp.asarray([1.0, 1.0]))
     assert bool(jnp.isfinite(log_prob))
-
-
-def test_response_ray_and_image_operators_are_composable() -> None:
     physics = phx.applications.astrophysics
     binned = physics.BinnedResponsePlan(jnp.eye(2), response_id="identity").evaluate(
         jnp.asarray([1.0, 2.0])

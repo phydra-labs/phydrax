@@ -44,7 +44,7 @@ def _network(
     )
 
 
-def test_same_spin_exchange_is_antisymmetric_and_batched_float64_is_canonical() -> None:
+def test_ferminet_scenario_1() -> None:
     network = _network(_structure([[0.0, 0.0, 0.0]], name="He"))
     electrons = jnp.asarray([[-0.8, 0.2, 0.1], [1.1, -0.3, 0.4]], dtype=jnp.float64)
     value = network(electrons)
@@ -59,9 +59,6 @@ def test_same_spin_exchange_is_antisymmetric_and_batched_float64_is_canonical() 
     assert batch.log_abs.shape == (2,)
     assert batch.log_abs.dtype == jnp.float64
     assert jnp.all(batch.valid)
-
-
-def test_opposite_spin_exchange_is_not_forced_to_a_spatial_sign_rule() -> None:
     network = _network(_structure([[0.0, 0.0, 0.0]], name="He"), spin_up=1, electrons=2)
     electrons = jnp.asarray([[-0.6, 0.4, 0.2], [1.2, -0.2, 0.3]], dtype=jnp.float64)
     value = network(electrons)
@@ -70,11 +67,6 @@ def test_opposite_spin_exchange_is_not_forced_to_a_spatial_sign_rule() -> None:
         exchanged.phase, -value.phase
     )
     assert not forced_antisymmetry
-
-
-def test_joint_nuclear_electron_translation_and_rotation_leave_amplitude_invariant() -> (
-    None
-):
     nuclei = _structure([[-0.7, 0.0, 0.0], [0.7, 0.0, 0.0]], name="H2")
     network = _network(nuclei, spin_up=1, electrons=2)
     electrons = jnp.asarray([[-0.4, 0.6, 0.1], [0.8, -0.2, -0.3]], dtype=jnp.float64)
@@ -95,7 +87,7 @@ def test_joint_nuclear_electron_translation_and_rotation_leave_amplitude_invaria
     assert jnp.allclose(transformed.phase, baseline.phase)
 
 
-def test_determinant_combination_is_log_stable_and_envelopes_decay() -> None:
+def test_ferminet_scenario_2() -> None:
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=8)
     decaying = eqx.tree_at(
@@ -122,47 +114,12 @@ def test_determinant_combination_is_log_stable_and_envelopes_decay() -> None:
     assert jnp.isfinite(near.log_abs)
     assert jnp.all(network.envelope_decay > 0.0)
     assert far.log_abs < near.log_abs
-
-
-def test_sparse_two_by_two_large_decay_determinant_remains_nonzero() -> None:
     raw_orbitals = jnp.asarray([[[1.0, 0.0], [0.0, 1.0]]], dtype=jnp.float64)
     log_envelope = jnp.asarray([[[-1000.0, -1.0], [-1.0, -1000.0]]], dtype=jnp.float64)
     sign, log_abs = _scaled_log_determinants(raw_orbitals, log_envelope)
     assert sign[0] == 1.0
     assert jnp.isfinite(log_abs[0])
     assert jnp.allclose(log_abs[0], -2000.0)
-
-
-def test_zero_dynamic_orbital_entry_retains_exact_logdet_gradient() -> None:
-    log_envelope = jnp.zeros((1, 2, 2), dtype=jnp.float64)
-
-    def logdet(entry: Any) -> Any:
-        raw_orbitals = (
-            jnp.asarray([[[1.0, 0.0], [1.0, 1.0]]], dtype=jnp.float64)
-            .at[0, 0, 1]
-            .set(entry)
-        )
-        return _scaled_log_determinants(raw_orbitals, log_envelope)[1][0]
-
-    assert jnp.allclose(jax.grad(logdet)(jnp.asarray(0.0)), -1.0)
-    assert jnp.allclose(jax.grad(jax.grad(logdet))(jnp.asarray(0.0)), -1.0)
-
-
-def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow() -> None:
-    subnormal = jnp.asarray(1e-320, dtype=jnp.float64)
-    raw_orbitals = jnp.asarray([[[subnormal, 0.0], [0.0, 1.0]]], dtype=jnp.float64)
-    log_envelope = jnp.asarray([[[736.0, 0.0], [0.0, 0.0]]], dtype=jnp.float64)
-    tangent = jnp.asarray([[[subnormal, 0.0], [0.0, 0.0]]], dtype=jnp.float64)
-
-    def logdet(values: Any) -> Any:
-        return _scaled_log_determinants(values, log_envelope)[1]
-
-    value, directional = jax.jvp(logdet, (raw_orbitals,), (tangent,))
-    assert jnp.all(jnp.isfinite(value))
-    assert jnp.allclose(directional[0], 1.0)
-
-
-def test_extreme_log_scale_tangents_remain_representable_and_inactive() -> None:
     value = jnp.asarray(1.0, dtype=jnp.float64)
     large_tangent = jnp.asarray(1e300, dtype=jnp.float64)
     negative_scale = jnp.asarray(-1000.0, dtype=jnp.float64)
@@ -213,6 +170,35 @@ def test_extreme_log_scale_tangents_remain_representable_and_inactive() -> None:
     assert zero_unary_scale_tangent == 0.0
     assert zero_bilinear_scale_tangent == 0.0
     assert zero_bilinear_value_tangent == 0.0
+
+
+def test_zero_dynamic_orbital_entry_retains_exact_logdet_gradient() -> None:
+    log_envelope = jnp.zeros((1, 2, 2), dtype=jnp.float64)
+
+    def logdet(entry: Any) -> Any:
+        raw_orbitals = (
+            jnp.asarray([[[1.0, 0.0], [1.0, 1.0]]], dtype=jnp.float64)
+            .at[0, 0, 1]
+            .set(entry)
+        )
+        return _scaled_log_determinants(raw_orbitals, log_envelope)[1][0]
+
+    assert jnp.allclose(jax.grad(logdet)(jnp.asarray(0.0)), -1.0)
+    assert jnp.allclose(jax.grad(jax.grad(logdet))(jnp.asarray(0.0)), -1.0)
+
+
+def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow() -> None:
+    subnormal = jnp.asarray(1e-320, dtype=jnp.float64)
+    raw_orbitals = jnp.asarray([[[subnormal, 0.0], [0.0, 1.0]]], dtype=jnp.float64)
+    log_envelope = jnp.asarray([[[736.0, 0.0], [0.0, 0.0]]], dtype=jnp.float64)
+    tangent = jnp.asarray([[[subnormal, 0.0], [0.0, 0.0]]], dtype=jnp.float64)
+
+    def logdet(values: Any) -> Any:
+        return _scaled_log_determinants(values, log_envelope)[1]
+
+    value, directional = jax.jvp(logdet, (raw_orbitals,), (tangent,))
+    assert jnp.all(jnp.isfinite(value))
+    assert jnp.allclose(directional[0], 1.0)
 
 
 def test_zero_multiplier_mixed_derivative_stays_in_signed_log_domain() -> None:
@@ -308,7 +294,7 @@ def test_inactive_huge_coefficient_does_not_hide_tiny_active_product() -> None:
     assert jnp.allclose(gradient[1], 1.0)
 
 
-def test_polynomial_determinant_resource_admission_and_limit_rejection() -> None:
+def test_ferminet_scenario_3() -> None:
     resource_plan = phx.operators.ElectronicVMCResourcePlan(
         4,
         determinant_count=1,
@@ -365,9 +351,6 @@ def test_polynomial_determinant_resource_admission_and_limit_rejection() -> None
             size + 1,
             resource_plan=resource_plan,
         )
-
-
-def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude() -> None:
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H-large-decay")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=1)
     network = eqx.tree_at(
@@ -388,9 +371,6 @@ def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude() 
     assert value.nonzero
     assert jnp.isfinite(value.log_abs)
     assert value.log_abs < -900.0
-
-
-def test_envelope_decay_floor_survives_softplus_underflow_and_normalizes_tail() -> None:
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H-decay-floor")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=1)
     network = eqx.tree_at(

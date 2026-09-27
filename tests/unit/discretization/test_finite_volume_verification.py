@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_error_norms_and_observed_order_use_physical_cell_measure() -> None:
+def test_finite_volume_verification_scenario_1() -> None:
     numerical = jnp.asarray([[1.1], [1.8], [3.2]])
     exact = jnp.asarray([[1.0], [2.0], [3.0]])
     volumes = jnp.asarray([0.2, 0.5, 0.3])
@@ -22,9 +22,6 @@ def test_error_norms_and_observed_order_use_physical_cell_measure() -> None:
     )
     np.testing.assert_allclose(convergence.observed_orders, [2.0, 2.0])
     assert convergence.passed
-
-
-def test_periodic_advection_case_exact_solution_advects_without_shape_loss() -> None:
     case = phx.equations.periodic_advection_verification_case(0.7)
     points = ((jnp.arange(16.0) + 0.5) / 16.0)[:, None]
     # ty: ignore[invalid-argument-type]
@@ -34,9 +31,6 @@ def test_periodic_advection_case_exact_solution_advects_without_shape_loss() -> 
 
     np.testing.assert_allclose(exact_period, initial, atol=2e-12)
     assert initial.shape == (16, 1)
-
-
-def test_sod_case_and_viscous_reference_profiles_are_physical() -> None:
     case = phx.equations.sod_verification_case()
     points = ((jnp.arange(20.0) + 0.5) / 20.0)[:, None]
     # ty: ignore[invalid-argument-type]

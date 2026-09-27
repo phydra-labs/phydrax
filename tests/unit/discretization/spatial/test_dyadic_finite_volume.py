@@ -26,7 +26,7 @@ def _discretization() -> tuple[
     return system, discretization
 
 
-def test_dyadic_finite_volume_faces_close_and_split_interfaces() -> None:
+def test_dyadic_finite_contracts() -> None:
     _, discretization = _discretization()
     assert discretization.cell_count == 4
     assert discretization.face_count == 12
@@ -47,6 +47,50 @@ def test_dyadic_finite_volume_faces_close_and_split_interfaces() -> None:
         jnp.sum(discretization.face_quadrature_weights, axis=1),
         discretization.face_measures,
     )
+    compiled, state = _constant_state_problem()
+    residual = eqx.filter_jit(compiled.dynamics)(jnp.asarray(0.0), state, None)
+    np.testing.assert_allclose(residual, 0.0, atol=1.0e-12)
+    compiled, state = _constant_state_problem()
+    dynamics = compiled.dynamics
+    assert isinstance(
+        dynamics, phx.discretization.PreparedUnstructuredFiniteVolumeDynamics
+    )
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics, phx.discretization.FluxPositivityPlan()
+    )
+    result = runtime.advance(runtime.initialize_state(state, 0.0, 1e-3))
+    assert bool(result.accepted)
+    np.testing.assert_allclose(result.runtime_state.cell_average(), state, atol=1.0e-12)
+    np.testing.assert_allclose(
+        result.accepted_flux_integrals.source_integral, 0.0, atol=1.0e-12
+    )
+    grid = phx.discretization.AdaptiveDyadicGridPlan(
+        phx.discretization.MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 3),
+        cell_capacity=64,
+    )
+    level_one = grid.adapt(
+        grid.prepare(),
+        refine_mask=jnp.zeros((grid.cell_capacity,), dtype="bool").at[0].set(True),
+    ).accepted
+    selected = next(
+        int(slot)
+        for slot in np.flatnonzero(np.asarray(level_one.leaf_active))
+        if int(level_one.prefixes[slot]) == 0
+    )
+    topology = grid.adapt(
+        level_one,
+        refine_mask=jnp.zeros((grid.cell_capacity,), dtype="bool").at[selected].set(True),
+    ).accepted
+    discretization = phx.discretization.DyadicFiniteVolumePlan(topology).prepare()
+    assert discretization.cell_count == 7
+    internal = discretization.neighbor_cells >= 0
+    assert bool(jnp.any(jnp.isclose(discretization.face_measures[internal], 0.25)))
+    closure = jnp.zeros_like(discretization.cell_centers)
+    closure = closure.at[discretization.owner_cells].add(discretization.area_vectors)
+    closure = closure.at[jnp.maximum(discretization.neighbor_cells, 0)].add(
+        jnp.where(internal[:, None], -discretization.area_vectors, 0.0)
+    )
+    np.testing.assert_allclose(closure, 0.0, atol=1.0e-14)
 
 
 def _constant_state_problem() -> tuple[phx.equations.CompiledConservationProblem, Array]:
@@ -75,56 +119,3 @@ def _constant_state_problem() -> tuple[phx.equations.CompiledConservationProblem
     )
     state = system.primitive_to_conserved(primitive)
     return compiled, state
-
-
-def test_dyadic_finite_volume_executes_existing_conservation_runtime() -> None:
-    compiled, state = _constant_state_problem()
-    residual = eqx.filter_jit(compiled.dynamics)(jnp.asarray(0.0), state, None)
-    np.testing.assert_allclose(residual, 0.0, atol=1.0e-12)
-
-
-def test_dyadic_finite_volume_runtime_advances_constant_state() -> None:
-    compiled, state = _constant_state_problem()
-    dynamics = compiled.dynamics
-    assert isinstance(
-        dynamics, phx.discretization.PreparedUnstructuredFiniteVolumeDynamics
-    )
-    runtime = phx.solver.PreparedFiniteVolumeRuntime(
-        dynamics, phx.discretization.FluxPositivityPlan()
-    )
-    result = runtime.advance(runtime.initialize_state(state, 0.0, 1e-3))
-    assert bool(result.accepted)
-    np.testing.assert_allclose(result.runtime_state.cell_average(), state, atol=1.0e-12)
-    np.testing.assert_allclose(
-        result.accepted_flux_integrals.source_integral, 0.0, atol=1.0e-12
-    )
-
-
-def test_dyadic_finite_volume_decomposes_coarse_fine_faces_conservatively() -> None:
-    grid = phx.discretization.AdaptiveDyadicGridPlan(
-        phx.discretization.MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 3),
-        cell_capacity=64,
-    )
-    level_one = grid.adapt(
-        grid.prepare(),
-        refine_mask=jnp.zeros((grid.cell_capacity,), dtype="bool").at[0].set(True),
-    ).accepted
-    selected = next(
-        int(slot)
-        for slot in np.flatnonzero(np.asarray(level_one.leaf_active))
-        if int(level_one.prefixes[slot]) == 0
-    )
-    topology = grid.adapt(
-        level_one,
-        refine_mask=jnp.zeros((grid.cell_capacity,), dtype="bool").at[selected].set(True),
-    ).accepted
-    discretization = phx.discretization.DyadicFiniteVolumePlan(topology).prepare()
-    assert discretization.cell_count == 7
-    internal = discretization.neighbor_cells >= 0
-    assert bool(jnp.any(jnp.isclose(discretization.face_measures[internal], 0.25)))
-    closure = jnp.zeros_like(discretization.cell_centers)
-    closure = closure.at[discretization.owner_cells].add(discretization.area_vectors)
-    closure = closure.at[jnp.maximum(discretization.neighbor_cells, 0)].add(
-        jnp.where(internal[:, None], -discretization.area_vectors, 0.0)
-    )
-    np.testing.assert_allclose(closure, 0.0, atol=1.0e-14)

@@ -48,7 +48,7 @@ def _typed_graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_graph_domain_samples_node_and_edge_type_components() -> None:
+def test_graph_typed_scenario_1() -> None:
     domain = phx.domain.GraphDomain(_typed_graph(), measure="count")
     structure = phx.domain.SampleLayout((("graph",),))
 
@@ -69,9 +69,6 @@ def test_graph_domain_samples_node_and_edge_type_components() -> None:
     assert jnp.allclose(edge_batch["graph"]["features"].data[:, 0], jnp.array([0.5, 2.5]))
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(edge_component.mass.value, 2.0)
-
-
-def test_graph_dataset_domain_resolves_node_types_per_case() -> None:
     domain = phx.domain.GraphDatasetDomain(_typed_graphs(), measure="count")
     batch = domain.points_from_indices(
         # ty: ignore[invalid-argument-type]
@@ -94,18 +91,12 @@ def test_graph_dataset_domain_resolves_node_types_per_case() -> None:
         domain.component({"graph": phx.domain.NodeType(1)}).mass.value,
         2.0,
     )
-
-
-def test_typed_graph_helpers_return_indices_and_components() -> None:
     graph = _typed_graph()
 
     assert jnp.allclose(phx.graph.node_type_indices(graph, 0), jnp.array([0, 2]))
     assert jnp.allclose(phx.graph.edge_type_indices(graph, 1), jnp.array([1]))
     assert isinstance(phx.graph.typed_nodes_component(1), phx.domain.NodeType)
     assert isinstance(phx.graph.typed_edges_component(0), phx.domain.EdgeType)
-
-
-def test_relational_graph_convolution_aggregates_by_edge_type() -> None:
     graph = _typed_graph()
     conv = phx.graph.RelationalGraphConvolution(
         jnp.array([10.0, 100.0]),
@@ -118,9 +109,6 @@ def test_relational_graph_convolution_aggregates_by_edge_type() -> None:
     assert jnp.allclose(out.nodes["updated"][:, 0], jnp.array([20.0, 310.0, 0.0]))
     assert "features" in out.nodes
     assert "type" in out.nodes
-
-
-def test_relational_graph_convolution_normalizes_per_receiver_relation() -> None:
     graph = phx.graph.GraphIR(
         nodes={
             "features": jnp.array([[1.0], [3.0], [5.0]]),

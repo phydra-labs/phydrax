@@ -16,7 +16,7 @@ def _plan() -> Any:
     ).prepare()
 
 
-def test_coupled_inductance_implicit_step_closes_energy_ledger() -> None:
+def test_coupled_inductance_contracts() -> None:
     prepared = _plan()
     result = prepared.step_implicit_euler(
         np.asarray([1.0, -0.5]), np.asarray([2.0, 1.0]), 0.1
@@ -26,9 +26,6 @@ def test_coupled_inductance_implicit_step_closes_energy_ledger() -> None:
     np.testing.assert_allclose(result.ledger.closure_residual_j, 0.0, atol=1.0e-12)
     assert result.energy.stored_energy_j > 0.0
     assert result.energy.resistive_power_w >= 0.0
-
-
-def test_coupled_inductance_rejects_nonreciprocal_matrix() -> None:
     with pytest.raises(ValueError, match="reciprocal"):
         phx.circuit.CoupledInductancePlan(
             np.asarray([[1.0, 0.2], [0.1, 1.0]]),

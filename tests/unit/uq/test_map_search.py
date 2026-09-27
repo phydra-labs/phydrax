@@ -26,7 +26,7 @@ def _multimodal_problem(initial: Any = -1.5) -> Any:
     return phx.uq.PosteriorProblem(space, log_likelihood)
 
 
-def test_global_search_finds_better_mode_and_composes_with_local_map() -> None:
+def test_map_search_scenario_1() -> None:
     problem = _multimodal_problem()
     search = phx.optim.DifferentialEvolutionSearch(
         32,
@@ -57,9 +57,6 @@ def test_global_search_finds_better_mode_and_composes_with_local_map() -> None:
     assert global_mode.objective_evaluations == 32 * (global_mode.generations + 1)
     assert global_mode.best_objective_history.shape == (global_mode.generations + 1,)
     assert np.all(np.diff(np.asarray(global_mode.best_objective_history)) <= 0.0)
-
-
-def test_search_preserves_nested_positions_bijectors_and_population_axes() -> None:
     initial = {
         "positive": jnp.asarray(0.0, dtype=jnp.float32),
         "bounded": jnp.asarray(0.0),
@@ -113,9 +110,41 @@ def test_search_preserves_nested_positions_bijectors_and_population_axes() -> No
     assert result.log_density == pytest.approx(-result.objective)
     # ty: ignore[unresolved-attribute]
     assert result.population_objectives.shape == (8,)
+    problem = _multimodal_problem(initial=0.0)
+    search = phx.optim.DifferentialEvolutionSearch(
+        8,
+        2,
+        relative_tolerance=0.0,
+        absolute_tolerance=0.0,
+        design=phx.sampling.SobolDesign(scrambled=True),
+    )
+    kwargs = {
+        "position_bounds": (jnp.asarray(-3.0), jnp.asarray(3.0)),
+    }
 
+    result = phx.uq.search_map(problem, search, key=jr.key(23), **kwargs)
+    replay = phx.uq.search_map(problem, search, key=jr.key(23), **kwargs)
+    different = phx.uq.search_map(problem, search, key=jr.key(24), **kwargs)
 
-def test_position_bounds_and_initial_position_are_strictly_validated() -> None:
+    np.testing.assert_array_equal(result.position, replay.position)
+    np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
+        result.population_positions,
+        # ty: ignore[unresolved-attribute]
+        replay.population_positions,
+    )
+    np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
+        result.population_objectives,
+        # ty: ignore[unresolved-attribute]
+        replay.population_objectives,
+    )
+    assert not np.array_equal(
+        # ty: ignore[unresolved-attribute]
+        np.asarray(result.population_positions),
+        # ty: ignore[unresolved-attribute]
+        np.asarray(different.population_positions),
+    )
     problem = _multimodal_problem(initial=0.0)
     search = phx.optim.DifferentialEvolutionSearch(4, 0)
 
@@ -216,41 +245,3 @@ def test_invalid_posterior_evaluations_are_counted_without_rejecting_search() ->
     assert jnp.isnan(invalid_result.objective)
     # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isinf(invalid_result.population_objectives))
-
-
-def test_search_replays_from_the_same_root_key() -> None:
-    problem = _multimodal_problem(initial=0.0)
-    search = phx.optim.DifferentialEvolutionSearch(
-        8,
-        2,
-        relative_tolerance=0.0,
-        absolute_tolerance=0.0,
-        design=phx.sampling.SobolDesign(scrambled=True),
-    )
-    kwargs = {
-        "position_bounds": (jnp.asarray(-3.0), jnp.asarray(3.0)),
-    }
-
-    result = phx.uq.search_map(problem, search, key=jr.key(23), **kwargs)
-    replay = phx.uq.search_map(problem, search, key=jr.key(23), **kwargs)
-    different = phx.uq.search_map(problem, search, key=jr.key(24), **kwargs)
-
-    np.testing.assert_array_equal(result.position, replay.position)
-    np.testing.assert_array_equal(
-        # ty: ignore[unresolved-attribute]
-        result.population_positions,
-        # ty: ignore[unresolved-attribute]
-        replay.population_positions,
-    )
-    np.testing.assert_array_equal(
-        # ty: ignore[unresolved-attribute]
-        result.population_objectives,
-        # ty: ignore[unresolved-attribute]
-        replay.population_objectives,
-    )
-    assert not np.array_equal(
-        # ty: ignore[unresolved-attribute]
-        np.asarray(result.population_positions),
-        # ty: ignore[unresolved-attribute]
-        np.asarray(different.population_positions),
-    )

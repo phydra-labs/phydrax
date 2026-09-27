@@ -20,7 +20,7 @@ def _batch(realization: Any) -> Any:
     return realization.batch.points
 
 
-def test_residual_penalty_mean_and_integral_reductions() -> None:
+def test_residual_penalty_scenario_1() -> None:
     geom = Interval1d(0.0, 2.0)
     component = geom.component()
     u = geom.Function()(0.0)
@@ -42,6 +42,73 @@ def test_residual_penalty_mean_and_integral_reductions() -> None:
     )
     loss_int = integral_term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss_int, 6.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+    component = geom.component()
+    one = geom.Function()(1.0)
+    condition = Residual("u", component, lambda _u: one)
+    sampled = component.sample(
+        phx.domain.GridSampling({"x": (7, 6)}),
+        key=jr.key(12),
+    )
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(condition.on),
+        sampled,
+    )
+    term = ResidualPenalty(
+        condition,
+        phx.integration.fixed(realization),
+        density=geom.Function()(2.0),
+    )
+    loss = term.loss({"u": geom.Function()(0.0)}, key=jr.key(13))
+    assert jnp.allclose(loss, 2.0)
+    geom = Interval1d(0.0, 1.0)
+    component = geom.component()
+    condition = Residual("u", component, lambda _u: geom.Function()(1.0))
+    source = phx.integration.per_step(
+        phx.integration.mean_over(condition.on),
+        phx.integration.MonteCarloPlan(8),
+    )
+    with pytest.raises(TypeError, match="DomainFunction"):
+        # ty: ignore[invalid-argument-type]
+        ResidualPenalty(condition, source, density=jnp.ones((4,)))
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+    component = geom.component()
+    condition = Residual("u", component, lambda field: field)
+    policy = phx.sampling.collocation.PeriodicCollocation(
+        refresh_every=1,
+        sampler="uniform",
+    )
+    target = phx.integration.mean_over(component)
+    term = ResidualPenalty(
+        condition,
+        phx.integration.adaptive(
+            target,
+            phx.domain.GridSampling({"x": (5, 4)}),
+            policy,
+        ),
+    )
+    batch = term.sample(key=jr.key(74))
+    assert isinstance(batch, GridBatch)
+    axis = batch.coord_axes_by_label["x"][0]
+    size = batch.points["x"][0].data.shape[0]
+    local_weight = cx.AxisArray(jnp.linspace(0.5, 1.5, size), dims=(axis,))
+    realization = term._adaptive_realization(
+        batch,
+        local_weight,
+        key=jr.key(75),
+    )
+    functions = {"u": geom.Function()(2.0)}
+    data = term._quadratic_residual_data(
+        functions,
+        realization=realization,
+    )
+    expected = term.loss(functions, realization=realization)
+
+    assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_residual_penalty_domainfunction_weight() -> None:
@@ -186,43 +253,6 @@ def test_residual_penalty_fixed_sampling_coord_separable() -> None:
     assert jnp.allclose(loss0, loss1)
 
 
-def test_residual_penalty_accepts_domainfunction_density() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-    component = geom.component()
-    one = geom.Function()(1.0)
-    condition = Residual("u", component, lambda _u: one)
-    sampled = component.sample(
-        phx.domain.GridSampling({"x": (7, 6)}),
-        key=jr.key(12),
-    )
-    realization = phx.integration.from_samples(
-        phx.integration.mean_over(condition.on),
-        sampled,
-    )
-    term = ResidualPenalty(
-        condition,
-        phx.integration.fixed(realization),
-        density=geom.Function()(2.0),
-    )
-    loss = term.loss({"u": geom.Function()(0.0)}, key=jr.key(13))
-    assert jnp.allclose(loss, 2.0)
-
-
-def test_residual_penalty_rejects_untyped_density() -> None:
-    geom = Interval1d(0.0, 1.0)
-    component = geom.component()
-    condition = Residual("u", component, lambda _u: geom.Function()(1.0))
-    source = phx.integration.per_step(
-        phx.integration.mean_over(condition.on),
-        phx.integration.MonteCarloPlan(8),
-    )
-    with pytest.raises(TypeError, match="DomainFunction"):
-        # ty: ignore[invalid-argument-type]
-        ResidualPenalty(condition, source, density=jnp.ones((4,)))
-
-
 def test_residual_penalty_source_validation() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
@@ -247,48 +277,48 @@ def test_residual_penalty_source_validation() -> None:
         )
 
 
-@pytest.mark.parametrize("reduction", ["mean", "integral"])
-def test_quadratic_residual_data_reconstructs_weighted_loss(reduction: Any) -> None:
-    geom = Interval1d(0.0, 2.0)
-    component = geom.component()
-    structure = phx.domain.SampleLayout((("x",),))
+def test_quadratic_residual_data_reconstructs_weighted_loss() -> None:
+    for reduction in ["mean", "integral"]:
+        geom = Interval1d(0.0, 2.0)
+        component = geom.component()
+        structure = phx.domain.SampleLayout((("x",),))
 
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return x[0] - 0.25
+        @geom.Function("x")
+        def u(x: Any) -> Any:
+            return x[0] - 0.25
 
-    @geom.Function("x")
-    def density(x: Any) -> Any:
-        return 1.0 + x[0]
+        @geom.Function("x")
+        def density(x: Any) -> Any:
+            return 1.0 + x[0]
 
-    condition = Residual("u", component, lambda field: field + 0.5)
-    target = (
-        phx.integration.mean_over(component)
-        if reduction == "mean"
-        else phx.integration.over(component)
-    )
-    sampled = component.sample(
-        phx.domain.PointSampling(31, layout=structure),
-        key=jr.key(70),
-    )
-    realization = phx.integration.from_samples(target, sampled, key=jr.key(71))
-    term = ResidualPenalty(
-        condition,
-        phx.integration.caller(target),
-        scale=2.5,
-        density=density,
-    )
-    data = term._quadratic_residual_data(
-        {"u": u},
-        realization=realization,
-    )
-    expected = term.loss({"u": u}, realization=realization)
+        condition = Residual("u", component, lambda field: field + 0.5)
+        target = (
+            phx.integration.mean_over(component)
+            if reduction == "mean"
+            else phx.integration.over(component)
+        )
+        sampled = component.sample(
+            phx.domain.PointSampling(31, layout=structure),
+            key=jr.key(70),
+        )
+        realization = phx.integration.from_samples(target, sampled, key=jr.key(71))
+        term = ResidualPenalty(
+            condition,
+            phx.integration.caller(target),
+            scale=2.5,
+            density=density,
+        )
+        data = term._quadratic_residual_data(
+            {"u": u},
+            realization=realization,
+        )
+        expected = term.loss({"u": u}, realization=realization)
 
-    assert len(data.residuals) == 1
-    assert len(data.coefficients) == 1
-    assert all(dim is not None for dim in data.coefficients[0].dims)
-    assert jnp.all(data.coefficients[0].data >= 0.0)
-    assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
+        assert len(data.residuals) == 1
+        assert len(data.coefficients) == 1
+        assert all(dim is not None for dim in data.coefficients[0].dims)
+        assert jnp.all(data.coefficients[0].data >= 0.0)
+        assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_quadratic_residual_data_reconstructs_component_sum_loss() -> None:
@@ -318,43 +348,4 @@ def test_quadratic_residual_data_reconstructs_component_sum_loss() -> None:
 
     assert len(data.residuals) == 2
     assert len(data.coefficients) == 2
-    assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_quadratic_residual_data_includes_adaptive_batch_weights() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-    component = geom.component()
-    condition = Residual("u", component, lambda field: field)
-    policy = phx.sampling.collocation.PeriodicCollocation(
-        refresh_every=1,
-        sampler="uniform",
-    )
-    target = phx.integration.mean_over(component)
-    term = ResidualPenalty(
-        condition,
-        phx.integration.adaptive(
-            target,
-            phx.domain.GridSampling({"x": (5, 4)}),
-            policy,
-        ),
-    )
-    batch = term.sample(key=jr.key(74))
-    assert isinstance(batch, GridBatch)
-    axis = batch.coord_axes_by_label["x"][0]
-    size = batch.points["x"][0].data.shape[0]
-    local_weight = cx.AxisArray(jnp.linspace(0.5, 1.5, size), dims=(axis,))
-    realization = term._adaptive_realization(
-        batch,
-        local_weight,
-        key=jr.key(75),
-    )
-    functions = {"u": geom.Function()(2.0)}
-    data = term._quadratic_residual_data(
-        functions,
-        realization=realization,
-    )
-    expected = term.loss(functions, realization=realization)
-
     assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)

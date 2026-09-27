@@ -70,7 +70,7 @@ def _geometry(grid: Any, scale: Any, convention: Any) -> Any:
     )
 
 
-def test_vector_potential_ct_preserves_discrete_divergence_and_faraday_balance() -> None:
+def test_grmhd_runtime_scenario_1() -> None:
     _, bridge = _periodic_grid(2, 4)
     gauge = GRMHDVectorPotentialGauge("weyl")
     plan = GRMHDConstrainedTransportPlan(bridge, gauge=gauge)
@@ -105,9 +105,6 @@ def test_vector_potential_ct_preserves_discrete_divergence_and_faraday_balance()
     np.testing.assert_allclose(ledger.vector_potential_defect, 0.0, atol=2.0e-7)
     assert bool(ledger.physically_valid)
     assert bool(ledger.qualified)
-
-
-def test_generalized_lorenz_gauge_has_fixed_cochain_shapes() -> None:
     _, bridge = _periodic_grid(3, 2)
     gauge = GRMHDVectorPotentialGauge(
         "generalized_lorenz", propagation_speed=0.8, damping_rate=0.1
@@ -124,9 +121,6 @@ def test_generalized_lorenz_gauge_has_fixed_cochain_shapes() -> None:
     assert rate.vector_potential_rate.shape == potential.shape
     assert rate.gauge_scalar_rate.shape == scalar.shape
     np.testing.assert_allclose(rate.faraday_defect, 0.0, atol=2.0e-7)
-
-
-def test_bounded_grid_constructs_boundary_aware_ct_with_zero_flux() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4, periodic=False),),
         axis_names=("x",),
@@ -140,9 +134,7 @@ def test_bounded_grid_constructs_boundary_aware_ct_with_zero_flux() -> None:
     np.testing.assert_allclose(plan.magnetic_divergence(state.magnetic_flux), 0.0)
 
 
-def test_conducting_grmhd_boundary_preserves_normal_flux_and_zeroes_tangential_emf() -> (
-    None
-):
+def test_grmhd_runtime_scenario_2() -> None:
     grid, _ = _periodic_grid(1, 4)
     scale = _scale()
     convention = RelativityConvention.canonical()
@@ -161,9 +153,6 @@ def test_conducting_grmhd_boundary_preserves_normal_flux_and_zeroes_tangential_e
     np.testing.assert_allclose(trace.exterior_primitive[..., 5], normal_magnetic)
     np.testing.assert_allclose(trace.boundary_electromotive[..., 1:], 0.0)
     assert bool(jnp.all(trace.physically_valid))
-
-
-def test_atomic_ssprk_acceptance_and_rejected_ledger_are_material_ct_consistent() -> None:
     grid, bridge = _periodic_grid(2, 2)
     scale = _scale()
     convention = RelativityConvention.canonical()

@@ -102,7 +102,7 @@ def _finite_problem() -> Any:
     )
 
 
-def test_graph_separation_adjustment_and_finite_identification() -> None:
+def test_causal_workflows_scenario_1() -> None:
     problem, graph, _, law = _finite_problem()
 
     backdoor = causal.enumerate_adjustment_sets(graph, treatment="t", outcome="y")
@@ -125,9 +125,6 @@ def test_graph_separation_adjustment_and_finite_identification() -> None:
     assert float(result.active_mean) == pytest.approx(0.7)
     assert float(result.reference_mean) == pytest.approx(0.2)
     assert float(result.effect) == pytest.approx(0.5)
-
-
-def test_latent_projection_and_perfect_intervention_cut_confounding() -> None:
     schema = causal.CausalSchema(
         (
             causal.CausalVariable(
@@ -151,9 +148,6 @@ def test_latent_projection_and_perfect_intervention_cut_confounding() -> None:
     assert isinstance(intervened, causal.CausalADMG)
     assert intervened.directed_edges == (("x", "y"),)
     assert intervened.bidirected_edges == ()
-
-
-def test_counterfactual_reuses_abducted_exogenous_state() -> None:
     schema = causal.CausalSchema(
         (
             causal.CausalVariable(name="x"),

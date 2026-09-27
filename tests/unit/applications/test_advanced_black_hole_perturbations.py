@@ -13,7 +13,7 @@ from phydrax.applications.compact_objects._advanced_perturbations import (
 jax.config.update("jax_enable_x64", True)
 
 
-def test_massive_scalar_parameters_recover_neutral_schwarzschild_limit() -> None:
+def test_advanced_black_hole_perturbations_scenario_1() -> None:
     mass = 2.0
     field_mass = 0.1
     plan = MassiveFieldQuasiBoundPlan(
@@ -41,9 +41,6 @@ def test_massive_scalar_parameters_recover_neutral_schwarzschild_limit() -> None
     assert bool(parameters.bound_state)
     assert bool(parameters.physically_valid)
     assert not bool(parameters.superradiant)
-
-
-def test_charged_kerr_newman_shooting_returns_equation_residual_and_fixed_path() -> None:
     plan = MassiveFieldQuasiBoundPlan(
         1.0,
         0.2,
@@ -74,9 +71,6 @@ def test_charged_kerr_newman_shooting_returns_equation_residual_and_fixed_path()
     assert bool(result.qualified)
     assert float(result.residual_norm) <= plan.residual_tolerance
     assert float(result.residual_norm) < abs(complex(result.hydrogenic_seed_residual))
-
-
-def test_simple_pole_residues_assemble_causal_green_functions() -> None:
     poles = jnp.asarray((1.0 - 0.1j, 2.0 - 0.2j))
     numerators = jnp.asarray((2.0 + 1.0j, -1.0 + 0.5j))
     wronskian_derivatives = jnp.asarray((4.0 + 0.0j, 2.0 - 1.0j))

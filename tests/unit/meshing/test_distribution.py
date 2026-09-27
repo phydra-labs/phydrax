@@ -60,7 +60,7 @@ def _compiled_fv(part: Any) -> Any:
     return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution() -> None:
+def test_distribution_scenario_1() -> None:
     part = _cell_part()
     native_ids = np.concatenate(
         [np.asarray(block.global_ids) for block in part.carrier.mesh.blocks]
@@ -84,9 +84,6 @@ def test_global_id_ownership_normalization_lowers_to_conservative_fe_execution()
         distribution.lower_finite_element(_cell_part(scale=2.0), _fe(part))
     with pytest.raises(ValueError, match="exact distribution mesh"):
         distribution.lower_finite_element(part, _fe(_cell_part(scale=2.0)))
-
-
-def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets() -> None:
     part = _cell_part(single=True)
     distribution = MeshDistribution(
         part, phx.discretization.CellPartition(np.asarray([0]), 1)
@@ -96,11 +93,35 @@ def test_fe_distribution_handles_no_interior_interfaces_without_fake_facets() ->
     np.testing.assert_allclose(
         phases.facet_ownership.route_equal_opposite(jnp.empty((0,))), [0.0]
     )
-
-
-def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_partition_geometry() -> (
-    None
-):
+    part, _ = _quad_mesh(8, 6)
+    distribution = phx.meshing.prepare_mesh_distribution(
+        part,
+        policy=phx.meshing.MeshPartitionPolicy(
+            phx.meshing.MeshPartitionKind.HILBERT, 3, halo_width=2
+        ),
+    )
+    phases = distribution.lower_finite_element(part, _fe(part))
+    ownership = phases.facet_ownership
+    np.testing.assert_array_equal(
+        np.sum(np.asarray(ownership.evaluation_mask), axis=0), 1
+    )
+    owner = np.asarray(distribution.partition.cell_owner)
+    facets = np.asarray(ownership.facet_cells)
+    evaluator = np.argmax(np.asarray(ownership.evaluation_mask), axis=0)
+    interface = owner[facets[:, 0]] != owner[facets[:, 1]]
+    assert np.any(interface)
+    assert np.all((evaluator == owner[facets[:, 0]]) | (evaluator == owner[facets[:, 1]]))
+    flux = jnp.arange(1.0, facets.shape[0] + 1.0)
+    np.testing.assert_allclose(
+        sum(ownership.route_partition(rank, flux) for rank in range(3)),
+        ownership.route_equal_opposite(flux),
+    )
+    field = jnp.arange(96.0)
+    np.testing.assert_allclose(
+        sum(phases.local_contribution(rank, field) for rank in range(3)), jnp.sum(field)
+    )
+    assert phases.worksets.owned_cells.shape[1] == np.max(np.bincount(owner))
+    assert phases.worksets.halo_cells.shape[1] < owner.size
     part = _cell_part()
     with pytest.raises(TypeError, match="integer vector"):
         phx.discretization.CellPartition(np.asarray([0.2, 1.0]), 2)
@@ -129,7 +150,7 @@ def test_distribution_rejects_fractional_ownership_missing_halos_and_wrong_parti
         )
 
 
-def test_tensor_halos_respect_periodic_topology_and_lower_to_real_fv_residual() -> None:
+def test_distribution_scenario_2() -> None:
     part = _grid_part()
     distribution = MeshDistribution.cartesian(part, (2,))
     np.testing.assert_array_equal(distribution.halo_global_ids[0], [4, 7])
@@ -159,6 +180,79 @@ def test_tensor_halos_respect_periodic_topology_and_lower_to_real_fv_residual() 
         serial_distribution.lower_finite_volume(changed, compiled.discretization)
     with pytest.raises(ValueError, match="grid revision"):
         runtime.compile_residual(_compiled_fv(changed).dynamics, 0.0)
+    for kind in [
+        phx.meshing.MeshPartitionKind.MORTON,
+        phx.meshing.MeshPartitionKind.HILBERT,
+    ]:
+        part, _ = _quad_mesh(12, 10)
+        weight_by_id = np.random.default_rng(7).uniform(0.5, 3.0, size=240)
+        native = np.asarray(part.carrier.mesh.blocks[0].global_ids)
+        weights = weight_by_id[native]
+        policy = phx.meshing.MeshPartitionPolicy(kind, 5)
+        distribution = phx.meshing.prepare_mesh_distribution(
+            part, policy=policy, cell_weights=weights
+        )
+        part_weights = np.bincount(
+            np.asarray(distribution.partition.cell_owner), weights=weights, minlength=5
+        )
+        np.testing.assert_allclose(distribution.evidence.part_weights, part_weights)
+        assert np.all(part_weights > 0)
+        assert (
+            float(distribution.evidence.imbalance)
+            <= 1 + 5 * weights.max() / weights.sum()
+        )
+        again = phx.meshing.prepare_mesh_distribution(
+            part, policy=policy, cell_weights=weights
+        )
+        assert again.distribution_id == distribution.distribution_id
+        block = part.carrier.mesh.blocks[0]
+        order = np.random.default_rng(3).permutation(240)
+        shuffled = MeshPart(
+            "shuffled",
+            phx.meshing.certify_cell_mesh(
+                phx.discretization.CellMesh.from_triangles(
+                    np.asarray(part.carrier.mesh.coordinates),
+                    np.asarray(block.vertices)[order],
+                    cell_global_ids=native[order],
+                ),
+                phx.SpatialCoordinateContract.si(),
+            ),
+        )
+        # ty: ignore[unresolved-attribute]
+        shuffled_native = np.asarray(shuffled.carrier.mesh.blocks[0].global_ids)
+        permuted = phx.meshing.prepare_mesh_distribution(
+            shuffled, policy=policy, cell_weights=weight_by_id[shuffled_native]
+        )
+        owner_by_id = np.empty((240,), dtype=np.int32)
+        owner_by_id[native] = np.asarray(distribution.partition.cell_owner)
+        np.testing.assert_array_equal(
+            permuted.partition.cell_owner, owner_by_id[shuffled_native]
+        )
+    for width in [0, 1, 2, 3]:
+        part, _ = _quad_mesh(9, 7)
+        distribution = phx.meshing.prepare_mesh_distribution(
+            part,
+            policy=phx.meshing.MeshPartitionPolicy(
+                phx.meshing.MeshPartitionKind.MORTON, 3, halo_width=width
+            ),
+        )
+        owner = np.asarray(distribution.partition.cell_owner)
+        expected = _brute_force_halos(part, owner, 3, width)
+        native = np.asarray(distribution.cell_global_ids)
+        for rank in range(3):
+            np.testing.assert_array_equal(
+                distribution.halo_global_ids[rank], expected[rank]
+            )
+            np.testing.assert_array_equal(
+                native[np.asarray(distribution.halo_rows[rank])], expected[rank]
+            )
+            owned = native[np.asarray(distribution.owned_rows[rank])]
+            np.testing.assert_array_equal(owned, np.sort(native[owner == rank]))
+            np.testing.assert_array_equal(
+                np.asarray(distribution.dependencies[rank]),
+                np.isin(np.arange(3), owner[np.isin(native, expected[rank])]),
+            )
+        assert int(distribution.evidence.halo_replicas) == sum(map(len, expected))
 
 
 def _quad_mesh(nx: Any, ny: Any, *, refine: Any = (), extend: Any = 0) -> Any:
@@ -260,113 +354,6 @@ def _brute_force_halos(part: Any, owner: Any, part_count: Any, width: Any) -> An
     return halos
 
 
-@pytest.mark.parametrize(
-    "kind", [phx.meshing.MeshPartitionKind.MORTON, phx.meshing.MeshPartitionKind.HILBERT]
-)
-def test_curve_partitions_meet_the_weight_bound_and_ignore_storage_order(
-    kind: Any,
-) -> None:
-    part, _ = _quad_mesh(12, 10)
-    weight_by_id = np.random.default_rng(7).uniform(0.5, 3.0, size=240)
-    native = np.asarray(part.carrier.mesh.blocks[0].global_ids)
-    weights = weight_by_id[native]
-    policy = phx.meshing.MeshPartitionPolicy(kind, 5)
-    distribution = phx.meshing.prepare_mesh_distribution(
-        part, policy=policy, cell_weights=weights
-    )
-    part_weights = np.bincount(
-        np.asarray(distribution.partition.cell_owner), weights=weights, minlength=5
-    )
-    np.testing.assert_allclose(distribution.evidence.part_weights, part_weights)
-    assert np.all(part_weights > 0)
-    assert float(distribution.evidence.imbalance) <= 1 + 5 * weights.max() / weights.sum()
-    again = phx.meshing.prepare_mesh_distribution(
-        part, policy=policy, cell_weights=weights
-    )
-    assert again.distribution_id == distribution.distribution_id
-    block = part.carrier.mesh.blocks[0]
-    order = np.random.default_rng(3).permutation(240)
-    shuffled = MeshPart(
-        "shuffled",
-        phx.meshing.certify_cell_mesh(
-            phx.discretization.CellMesh.from_triangles(
-                np.asarray(part.carrier.mesh.coordinates),
-                np.asarray(block.vertices)[order],
-                cell_global_ids=native[order],
-            ),
-            phx.SpatialCoordinateContract.si(),
-        ),
-    )
-    # ty: ignore[unresolved-attribute]
-    shuffled_native = np.asarray(shuffled.carrier.mesh.blocks[0].global_ids)
-    permuted = phx.meshing.prepare_mesh_distribution(
-        shuffled, policy=policy, cell_weights=weight_by_id[shuffled_native]
-    )
-    owner_by_id = np.empty((240,), dtype=np.int32)
-    owner_by_id[native] = np.asarray(distribution.partition.cell_owner)
-    np.testing.assert_array_equal(
-        permuted.partition.cell_owner, owner_by_id[shuffled_native]
-    )
-
-
-@pytest.mark.parametrize("width", [0, 1, 2, 3])
-def test_ghost_layers_match_brute_force_breadth_first_search(width: Any) -> None:
-    part, _ = _quad_mesh(9, 7)
-    distribution = phx.meshing.prepare_mesh_distribution(
-        part,
-        policy=phx.meshing.MeshPartitionPolicy(
-            phx.meshing.MeshPartitionKind.MORTON, 3, halo_width=width
-        ),
-    )
-    owner = np.asarray(distribution.partition.cell_owner)
-    expected = _brute_force_halos(part, owner, 3, width)
-    native = np.asarray(distribution.cell_global_ids)
-    for rank in range(3):
-        np.testing.assert_array_equal(distribution.halo_global_ids[rank], expected[rank])
-        np.testing.assert_array_equal(
-            native[np.asarray(distribution.halo_rows[rank])], expected[rank]
-        )
-        owned = native[np.asarray(distribution.owned_rows[rank])]
-        np.testing.assert_array_equal(owned, np.sort(native[owner == rank]))
-        np.testing.assert_array_equal(
-            np.asarray(distribution.dependencies[rank]),
-            np.isin(np.arange(3), owner[np.isin(native, expected[rank])]),
-        )
-    assert int(distribution.evidence.halo_replicas) == sum(map(len, expected))
-
-
-def test_fe_lowering_evaluates_every_interface_facet_exactly_once() -> None:
-    part, _ = _quad_mesh(8, 6)
-    distribution = phx.meshing.prepare_mesh_distribution(
-        part,
-        policy=phx.meshing.MeshPartitionPolicy(
-            phx.meshing.MeshPartitionKind.HILBERT, 3, halo_width=2
-        ),
-    )
-    phases = distribution.lower_finite_element(part, _fe(part))
-    ownership = phases.facet_ownership
-    np.testing.assert_array_equal(
-        np.sum(np.asarray(ownership.evaluation_mask), axis=0), 1
-    )
-    owner = np.asarray(distribution.partition.cell_owner)
-    facets = np.asarray(ownership.facet_cells)
-    evaluator = np.argmax(np.asarray(ownership.evaluation_mask), axis=0)
-    interface = owner[facets[:, 0]] != owner[facets[:, 1]]
-    assert np.any(interface)
-    assert np.all((evaluator == owner[facets[:, 0]]) | (evaluator == owner[facets[:, 1]]))
-    flux = jnp.arange(1.0, facets.shape[0] + 1.0)
-    np.testing.assert_allclose(
-        sum(ownership.route_partition(rank, flux) for rank in range(3)),
-        ownership.route_equal_opposite(flux),
-    )
-    field = jnp.arange(96.0)
-    np.testing.assert_allclose(
-        sum(phases.local_contribution(rank, field) for rank in range(3)), jnp.sum(field)
-    )
-    assert phases.worksets.owned_cells.shape[1] == np.max(np.bincount(owner))
-    assert phases.worksets.halo_cells.shape[1] < owner.size
-
-
 def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(
     monkeypatch: Any,
 ) -> None:
@@ -441,7 +428,7 @@ def _check_migration(transition: Any, parents: Any, source_values: Any) -> None:
     )
 
 
-def test_transition_keeps_balanced_inherited_owners_and_places_created_cells() -> None:
+def test_transition_contracts() -> None:
     source, _ = _quad_mesh(8, 8)
     policy = phx.meshing.MeshPartitionPolicy(
         phx.meshing.MeshPartitionKind.HILBERT, 4, maximum_imbalance=1.3
@@ -484,9 +471,6 @@ def test_transition_keeps_balanced_inherited_owners_and_places_created_cells() -
     )
     with pytest.raises(ValueError, match="stale"):
         transition.source.lower_finite_element(target, _fe(target))
-
-
-def test_transition_rebalances_with_minimal_rank_relabeling_and_migrates_fields() -> None:
     source, _ = _quad_mesh(8, 8)
     policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.HILBERT, 4)
     distribution = phx.meshing.prepare_mesh_distribution(source, policy=policy)

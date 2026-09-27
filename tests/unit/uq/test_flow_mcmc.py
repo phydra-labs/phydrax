@@ -74,9 +74,8 @@ def _nested_constrained_problem() -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    ("name", "value"),
-    [
+def test_flow_nuts_contracts() -> None:
+    for name, value in [
         ("num_adaptation_rounds", 0),
         ("num_stabilization_steps", -1),
         ("num_local_steps", 0),
@@ -84,14 +83,9 @@ def _nested_constrained_problem() -> Any:
         ("history_thinning", 5),
         ("learning_rate", 0.0),
         ("validation_fraction", 0.5),
-    ],
-)
-def test_flow_nuts_config_rejects_invalid_controls(name: Any, value: Any) -> None:
-    with pytest.raises(ValueError):
-        _small_config(**{name: value})
-
-
-def test_flow_nuts_preserves_transformed_parameters_and_result_contract() -> None:
+    ]:
+        with pytest.raises(ValueError):
+            _small_config(**{name: value})
     result = phx.uq.sample_flow_nuts(
         _positive_problem(),
         key=jr.key(10),
@@ -123,9 +117,6 @@ def test_flow_nuts_preserves_transformed_parameters_and_result_contract() -> Non
     assert result.history_memory_bytes > 0
     # ty: ignore[unresolved-attribute]
     assert prediction.samples.shape == (2, 8, 2)
-
-
-def test_flow_nuts_roundtrips_nested_positive_and_bounded_parameters() -> None:
     result = phx.uq.sample_flow_nuts(
         _nested_constrained_problem(),
         key=jr.key(14),
@@ -143,9 +134,6 @@ def test_flow_nuts_roundtrips_nested_positive_and_bounded_parameters() -> None:
     assert jnp.all(result.samples["nested"]["bounded"] > -1.0)
     assert jnp.all(result.samples["nested"]["bounded"] < 2.0)
     assert result.unconstrained_samples["nested"]["bounded"].shape == (2, 4)
-
-
-def test_flow_nuts_requires_explicit_starts_for_custom_joint_prior() -> None:
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(
             jnp.asarray(0.0),
@@ -163,9 +151,6 @@ def test_flow_nuts_requires_explicit_starts_for_custom_joint_prior() -> None:
             num_samples=4,
             config=_small_config(),
         )
-
-
-def test_flow_nuts_validates_leading_chain_axes_before_warmup() -> None:
     problem = _positive_problem()
 
     with pytest.raises(ValueError, match="shape"):
@@ -178,9 +163,6 @@ def test_flow_nuts_validates_leading_chain_axes_before_warmup() -> None:
             initial_positions={"rate": jnp.zeros((3,))},
             config=_small_config(),
         )
-
-
-def test_flow_nuts_sequential_and_vectorized_methods_share_semantic_keys() -> None:
     common: dict[str, Any] = {
         "key": jr.key(13),
         "num_chains": 2,

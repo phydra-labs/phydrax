@@ -183,7 +183,7 @@ def _soft_batch() -> Any:
     )
 
 
-def test_label_propagation_spreading_schema_masks_weights_cases_jit_and_grad() -> None:
+def test_semi_supervised_scenario_1() -> None:
     batch = _graph_batch(case=True)
     propagation = LabelPropagationRecipe(iterations=80, tolerance=1e-3).fit_batch(batch)
     spreading = LabelSpreadingRecipe(alpha=0.7, iterations=80, tolerance=1e-3).fit_batch(
@@ -207,9 +207,6 @@ def test_label_propagation_spreading_schema_masks_weights_cases_jit_and_grad() -
     )
     assert gradient.shape == batch.dense_features().shape
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_hard_label_reporting_is_distinct_and_preserves_external_vocabulary() -> None:
     batch = _graph_batch(case=False)
     result = HardLabelPropagationRecipe(
         LabelPropagationRecipe(iterations=80, tolerance=1e-3)
@@ -223,11 +220,6 @@ def test_hard_label_reporting_is_distinct_and_preserves_external_vocabulary() ->
     assert probabilities.shape == (6, 2)
     assert jnp.issubdtype(probabilities.dtype, jnp.inexact)
     assert result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
-
-
-def test_graph_models_fail_closed_for_complex_features_vocabularies_and_partial_masks() -> (
-    None
-):
     batch = _graph_batch(case=False)
     with pytest.raises(TypeError, match="real-valued features"):
         LabelPropagationRecipe().fit_batch(
@@ -253,7 +245,7 @@ def test_graph_models_fail_closed_for_complex_features_vocabularies_and_partial_
         )
 
 
-def test_soft_and_hard_self_training_are_distinct_keyed_and_deterministic() -> None:
+def test_soft_and_contracts() -> None:
     batch = _soft_batch()
     soft_recipe = SoftSelfTrainingRecipe(_PriorRecipe(), iterations=2, blend=0.5)
     hard_recipe = HardSelfTrainingRecipe(
@@ -275,9 +267,6 @@ def test_soft_and_hard_self_training_are_distinct_keyed_and_deterministic() -> N
         "pseudo_label_acceptance",
     }
     assert jax.jit(soft.as_trainable())(batch.dense_features()).shape == (5, 2)
-
-
-def test_soft_and_hard_one_class_compositions_gate_natively() -> None:
     x = jnp.array([[-2.0], [-0.5], [0.5], [2.0]])
     batch = MLBatch(x, jnp.array([0.0, 0.0, 1.0, 1.0]))
     soft_recipe = SoftOneClassCompositionRecipe(

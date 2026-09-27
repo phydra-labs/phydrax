@@ -50,7 +50,7 @@ def _problem() -> Any:
     )
 
 
-def test_window_inclusion_weights_reconstruct_every_full_path_factor() -> None:
+def test_state_space_buffered_scenario_1() -> None:
     plan = phx.uq.StateSpaceWindowPlan(
         6,
         target_length=3,
@@ -69,9 +69,6 @@ def test_window_inclusion_weights_reconstruct_every_full_path_factor() -> None:
 
     assert jnp.allclose(weighted_average, jnp.ones((plan.num_steps,)))
     assert jnp.all(plan.inclusion_probability > 0.0)
-
-
-def test_buffer_context_changes_bidirectional_amortized_conditioning() -> None:
     problem = _problem()
     family = phx.uq.AmortizedGaussianMarkovFamily.from_problem(
         problem,
@@ -95,9 +92,6 @@ def test_buffer_context_changes_bidirectional_amortized_conditioning() -> None:
         short.conditional_family.offsets,
         long.conditional_family.offsets,
     )
-
-
-def test_buffered_variational_training_replays_and_returns_full_context_family() -> None:
     problem = _problem()
     config = phx.uq.BufferedStateSpaceVariationalConfig(
         target_length=2,

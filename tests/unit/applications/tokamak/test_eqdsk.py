@@ -78,7 +78,7 @@ def _resource(payload: Any) -> Any:
     )
 
 
-def test_tokamak_flux_normalization_round_trip_is_complete() -> None:
+def test_eqdsk_scenario_1() -> None:
     canonical = phx.applications.tokamak.TokamakMagneticConvention.canonical()
     total_flux = phx.applications.tokamak.TokamakMagneticConvention(
         "total-weber",
@@ -94,9 +94,6 @@ def test_tokamak_flux_normalization_round_trip_is_complete() -> None:
     reverse = canonical.transform_to(total_flux)
     assert math.isclose(forward.poloidal_flux_factor, 1.0 / (2.0 * math.pi))
     assert math.isclose(forward.poloidal_flux_factor * reverse.poloidal_flux_factor, 1.0)
-
-
-def test_eqdsk_import_preserves_fields_and_canonicalizes_flux() -> None:
     payload = _eqdsk_bytes()
     canonical = phx.applications.tokamak.TokamakMagneticConvention.canonical()
     result = phx.applications.tokamak.interchange.import_eqdsk(
@@ -115,9 +112,6 @@ def test_eqdsk_import_preserves_fields_and_canonicalizes_flux() -> None:
     np.testing.assert_allclose(equilibrium.normalized_flux[1, 1], 0.0)
     np.testing.assert_allclose(equilibrium.normalized_flux[0, 0], 1.0)
     assert equilibrium.prepare().equilibrium_id == equilibrium.equilibrium_id
-
-
-def test_eqdsk_import_rejects_unsupported_trailing_fields() -> None:
     payload = _eqdsk_bytes() + b"1.0\n"
     with np.testing.assert_raises_regex(ValueError, "trailing numeric"):
         phx.applications.tokamak.interchange.import_eqdsk(

@@ -38,7 +38,7 @@ def _coordinate_field(grid: Any) -> Any:
     return SparseVoxelField(grid, values)
 
 
-def test_sparse_voxel_preparation_deduplicates_and_checks_capacity() -> None:
+def test_sparse_voxel_contracts() -> None:
     address = MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 3)
     plan = SparseVoxelGridPlan(address, brick_size=2, brick_capacity=2)
     grid = plan.prepare(jnp.asarray([[0, 0], [0, 0], [1, 1], [4, 4]]))
@@ -47,18 +47,12 @@ def test_sparse_voxel_preparation_deduplicates_and_checks_capacity() -> None:
     assert int(grid.evidence.duplicate_voxels) == 1
     with pytest.raises(ValueError, match="requires 3 bricks"):
         plan.prepare(jnp.asarray([[0, 0], [2, 2], [4, 4]]))
-
-
-def test_sparse_voxel_lookup_and_periodic_wrap() -> None:
     grid = _dense_grid(periodic=True)
     lookup = grid.lookup_integer(jnp.asarray([[0, 0], [7, 7], [8, -1]]))
     assert bool(jnp.all(lookup.supported))
     wrapped = grid.lookup_integer(jnp.asarray([[0, 7]]))
     np.testing.assert_array_equal(lookup.brick_slots[-1], wrapped.brick_slots[0])
     np.testing.assert_array_equal(lookup.local_slots[-1], wrapped.local_slots[0])
-
-
-def test_sparse_voxel_multilinear_interpolation_is_affine_exact() -> None:
     grid = _dense_grid()
     field = _coordinate_field(grid)
     points = jnp.asarray([[0.25, 0.25], [0.35, 0.6], [0.75, 0.5]])
@@ -67,9 +61,6 @@ def test_sparse_voxel_multilinear_interpolation_is_affine_exact() -> None:
     assert bool(jnp.all(result.supported))
     np.testing.assert_allclose(result.values, expected, rtol=1.0e-12, atol=1.0e-12)
     np.testing.assert_allclose(jnp.sum(result.weights, axis=1), 1.0)
-
-
-def test_sparse_voxel_missing_support_is_explicit() -> None:
     address = MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 3)
     grid = SparseVoxelGridPlan(address, brick_size=2, brick_capacity=1).prepare(
         jnp.asarray([[0, 0]])
@@ -85,9 +76,6 @@ def test_sparse_voxel_missing_support_is_explicit() -> None:
     ).sample_nearest(jnp.asarray([[0.8, 0.8]]))
     assert bool(background.supported[0])
     np.testing.assert_allclose(background.values, [3.0])
-
-
-def test_sparse_voxel_gather_and_deposit_jit_and_gradient() -> None:
     grid = _dense_grid()
     field = _coordinate_field(grid)
     point = jnp.asarray([[0.35, 0.45]])

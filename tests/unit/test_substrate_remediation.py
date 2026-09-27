@@ -10,7 +10,7 @@ from phydrax._balance_ledger import BalanceTerm, evaluate_balance
 from phydrax.linalg import DensePropertyVerificationPolicy, verify_dense_properties
 
 
-def test_dense_property_verification_and_local_root() -> None:
+def test_substrate_remediation_scenario_1() -> None:
     evidence = verify_dense_properties(
         jnp.asarray(((2.0, 0.5), (0.5, 1.0))),
         policy=DensePropertyVerificationPolicy(require_positive_definite=True),
@@ -27,9 +27,6 @@ def test_dense_property_verification_and_local_root() -> None:
     )
     np.testing.assert_allclose(root, jnp.asarray((2.0, 3.0)), atol=1e-8)
     assert bool(diagnostics.converged)
-
-
-def test_transaction_balance_runtime_and_affine_evolution() -> None:
     candidate = phx.lifecycle.TransactionalCandidate(
         jnp.asarray((1.0,)),
         jnp.asarray((2.0,)),

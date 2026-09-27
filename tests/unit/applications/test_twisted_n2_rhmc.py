@@ -60,9 +60,7 @@ def _fixture() -> Any:
     return prepared, coordinates
 
 
-def test_twisted_phase_quenched_pseudofermion_force_matches_directional_difference() -> (
-    None
-):
+def test_twisted_contracts() -> None:
     prepared, coordinates = _fixture()
     refresh = refresh_pseudofermion(
         prepared.pseudofermion, jax.random.key(3), links=coordinates
@@ -87,9 +85,6 @@ def test_twisted_phase_quenched_pseudofermion_force_matches_directional_differen
     force_derivative = -jnp.vdot(force.force, direction).real
     np.testing.assert_allclose(force_derivative, finite_difference, rtol=3e-4, atol=3e-5)
     assert bool(force.successful)
-
-
-def test_twisted_rhmc_runs_bounded_phase_quenched_transition() -> None:
     prepared, coordinates = _fixture()
     run = sample_twisted_n2_rhmc(
         prepared,
@@ -103,9 +98,6 @@ def test_twisted_rhmc_runs_bounded_phase_quenched_transition() -> None:
     assert int(run.evidence.membership_failure_count) == 0
     assert prepared.phase_quenched_power == 0.25
     assert "no-continuum" in run.evidence.claim
-
-
-def test_twisted_chain_retains_pfaffian_phase_and_overlap_evidence() -> None:
     prepared, coordinates = _fixture()
     run = sample_twisted_n2_rhmc(
         prepared,

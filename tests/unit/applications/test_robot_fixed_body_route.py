@@ -74,7 +74,7 @@ def _route() -> Any:
     return plan.prepare(articulation, local)
 
 
-def test_csr_route_length_jvp_and_transpose_are_exact_virtual_power_duals() -> None:
+def test_robot_fixed_body_route_scenario_1() -> None:
     route = _route()
     configuration = jnp.asarray([0.35, -0.2])
     velocity = jnp.asarray([0.7, -0.4])
@@ -108,6 +108,22 @@ def test_csr_route_length_jvp_and_transpose_are_exact_virtual_power_duals() -> N
     assert bool(evidence.successful)
     assert jnp.allclose(evidence.route_power_W, evidence.generalized_power_W)
     assert jnp.allclose(evidence.power_residual_W, 0.0, atol=1.0e-11)
+    body_ids, articulation = _articulation()
+    route = FixedBodyRoutePlan(
+        ("degenerate",), (0, 2), (int(body_ids[0]), int(body_ids[0]))
+    ).prepare(articulation, jnp.zeros((2, 3)))
+    evaluation = route.evaluate(jnp.zeros((2,)), jnp.ones((2,)))
+    assert not bool(evaluation.successful[0])
+
+    load, evidence = route.tensile_force_pullback(
+        jnp.zeros((2,)), jnp.ones((2,)), jnp.asarray([-1.0])
+    )
+    assert not bool(evidence.successful)
+    assert jnp.array_equal(load, jnp.zeros_like(load))
+    with pytest.raises(ValueError, match="at least two points"):
+        FixedBodyRoutePlan(("route",), (0, 1), (100,))
+    with pytest.raises(ValueError, match="CSR offsets"):
+        FixedBodyRoutePlan(("route",), (1, 3), (100, 101, 102))
 
 
 def test_route_is_jittable_vmappable_and_differentiable_in_local_coordinates() -> None:
@@ -128,25 +144,3 @@ def test_route_is_jittable_vmappable_and_differentiable_in_local_coordinates() -
     gradient = jax.grad(length_from_local)(route.local_positions_m)
     assert gradient.shape == route.local_positions_m.shape
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_degenerate_active_segment_and_compressive_input_fail_closed() -> None:
-    body_ids, articulation = _articulation()
-    route = FixedBodyRoutePlan(
-        ("degenerate",), (0, 2), (int(body_ids[0]), int(body_ids[0]))
-    ).prepare(articulation, jnp.zeros((2, 3)))
-    evaluation = route.evaluate(jnp.zeros((2,)), jnp.ones((2,)))
-    assert not bool(evaluation.successful[0])
-
-    load, evidence = route.tensile_force_pullback(
-        jnp.zeros((2,)), jnp.ones((2,)), jnp.asarray([-1.0])
-    )
-    assert not bool(evidence.successful)
-    assert jnp.array_equal(load, jnp.zeros_like(load))
-
-
-def test_plan_rejects_dynamic_or_invalid_topology_at_preparation() -> None:
-    with pytest.raises(ValueError, match="at least two points"):
-        FixedBodyRoutePlan(("route",), (0, 1), (100,))
-    with pytest.raises(ValueError, match="CSR offsets"):
-        FixedBodyRoutePlan(("route",), (1, 3), (100, 101, 102))

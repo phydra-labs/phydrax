@@ -62,7 +62,7 @@ class _FeatureMap(AbstractArrayModel):
         return jnp.asarray([state[0], state[1], state[0] * state[1]])
 
 
-def test_port_hamiltonian_structural_matrices_are_exactly_valid() -> None:
+def test_port_hamiltonian_scenario_1() -> None:
     model = PortHamiltonianVectorField(
         state_size=4,
         energy_width=10,
@@ -77,9 +77,6 @@ def test_port_hamiltonian_structural_matrices_are_exactly_valid() -> None:
     assert jnp.array_equal(jnp.diag(interconnection), jnp.zeros(4))
     assert jnp.allclose(dissipation, dissipation.T)
     assert jnp.min(jnp.linalg.eigvalsh(dissipation)) > 0.0
-
-
-def test_unforced_port_hamiltonian_energy_rate_equals_negative_dissipation() -> None:
     model = PortHamiltonianVectorField(
         state_size=3,
         energy_width=9,
@@ -93,9 +90,6 @@ def test_unforced_port_hamiltonian_energy_rate_equals_negative_dissipation() -> 
 
     assert jnp.all(rates <= 1e-10)
     assert jnp.allclose(rates, -dissipations, atol=1e-10, rtol=1e-10)
-
-
-def test_conservative_port_hamiltonian_has_zero_instantaneous_energy_rate() -> None:
     model = PortHamiltonianVectorField(
         state_size=4,
         energy_width=8,
@@ -109,7 +103,7 @@ def test_conservative_port_hamiltonian_has_zero_instantaneous_energy_rate() -> N
     assert jnp.allclose(rates, jnp.zeros_like(rates), atol=1e-10, rtol=0.0)
 
 
-def test_controlled_port_hamiltonian_obeys_the_power_balance() -> None:
+def test_port_hamiltonian_scenario_2() -> None:
     model = PortHamiltonianVectorField(
         state_size=3,
         control_size=2,
@@ -131,9 +125,6 @@ def test_controlled_port_hamiltonian_obeys_the_power_balance() -> None:
         rtol=1e-10,
     )
     assert model((state, control)).shape == (3,)
-
-
-def test_parameter_updates_cannot_break_hamiltonian_matrix_invariants() -> None:
     model = PortHamiltonianVectorField(
         state_size=3,
         energy_width=7,
@@ -152,9 +143,6 @@ def test_parameter_updates_cannot_break_hamiltonian_matrix_invariants() -> None:
 
     assert jnp.array_equal(interconnection, -interconnection.T)
     assert jnp.min(jnp.linalg.eigvalsh(dissipation)) > 0.0
-
-
-def test_state_dependent_structure_preserves_exact_power_balance() -> None:
     model = PortHamiltonianVectorField(
         state_size=3,
         energy=_QuadraticEnergy(),
@@ -185,7 +173,7 @@ def test_state_dependent_structure_preserves_exact_power_balance() -> None:
     assert jax.jit(model)((state, control)).shape == (3,)
 
 
-def test_semidefinite_dissipation_can_be_exactly_zero() -> None:
+def test_port_hamiltonian_scenario_3() -> None:
     model = PortHamiltonianVectorField(
         state_size=2,
         energy_width=4,
@@ -197,9 +185,6 @@ def test_semidefinite_dissipation_can_be_exactly_zero() -> None:
 
     assert jnp.array_equal(model.dissipation_factor(), jnp.zeros((2, 2)))
     assert jnp.array_equal(model.dissipation_matrix(), jnp.zeros((2, 2)))
-
-
-def test_feature_norm_potential_has_positive_coercive_tail() -> None:
     potential = FeatureNormPotential(
         _FeatureMap(),
         initial_quadratic=0.2,
@@ -211,9 +196,6 @@ def test_feature_norm_potential_has_positive_coercive_tail() -> None:
     assert potential.quadratic_coefficient() > 1e-4
     assert potential(10.0 * state) > potential(state)
     assert jnp.all(jnp.isfinite(jax.grad(potential)(state)))
-
-
-def test_fixed_onsager_subspace_is_excluded_from_trainable_parameters() -> None:
     model = FixedSubspaceOnsagerModel(
         jnp.zeros((2,)),
         jnp.eye(2),

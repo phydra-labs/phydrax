@@ -20,16 +20,13 @@ def _penalty(condition: Any, *, num_samples: Any = 8) -> Any:
     return phx.terms.ResidualPenalty(condition, source)
 
 
-def test_dirichlet_boundary_constraint_zero_when_satisfied() -> None:
+def test_boundary_constraints_scenario_1() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
     u = geom.Function()(2.0)
     c = _penalty(phx.conditions.Dirichlet("u", component, target=2.0))
     loss = c.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss, 0.0)
-
-
-def test_neumann_boundary_constraint_zero_when_satisfied() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 
@@ -37,9 +34,6 @@ def test_neumann_boundary_constraint_zero_when_satisfied() -> None:
     c = _penalty(phx.conditions.Neumann("u", component, target=0.0))
     loss = c.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss, 0.0)
-
-
-def test_robin_boundary_constraint_zero_when_satisfied() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
 

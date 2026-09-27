@@ -36,7 +36,7 @@ def _trainable_count(model: Any) -> Any:
     return sum(leaf.size for leaf in jax.tree.leaves(trainable))
 
 
-def test_refinement_is_exact_pure_and_allocates_only_selected_edges() -> None:
+def test_kan_capacity_adaptation_scenario_1() -> None:
     model = _model(per_input=True)
     evaluation = jax.random.uniform(jax.random.key(1), (48, 2), minval=-1.0, maxval=1.0)
     original_knots = np.asarray(model.layers[0].edge_basis.grid.grids[0].knots).copy()
@@ -69,9 +69,6 @@ def test_refinement_is_exact_pure_and_allocates_only_selected_edges() -> None:
         np.asarray(jax.vmap(model)(evaluation)),
         atol=2e-12,
     )
-
-
-def test_exact_coarsening_undoes_inserted_capacity_with_certificate() -> None:
     model = _model()
     refined, _ = phx.nn.models.refine_kan_edges(
         model,
@@ -96,9 +93,6 @@ def test_exact_coarsening_undoes_inserted_capacity_with_certificate() -> None:
         np.asarray(jax.vmap(model)(evaluation)),
         atol=2e-12,
     )
-
-
-def test_identical_hidden_block_layouts_preserve_scan_and_gradients() -> None:
     model = _model(scan=True)
     repeated_layers = range(1, len(model.layers) - 1)
     indicators = {

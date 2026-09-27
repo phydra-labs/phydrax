@@ -95,7 +95,7 @@ def _trajectory_block(
     )
 
 
-def test_constraint_and_multiplier_layouts_distinguish_ownership_concepts() -> None:
+def test_constraint_contracts() -> None:
     partition = PlayerControlPartition(("alpha", "beta", "gamma"), (1, 1, 1))
     local = _path_block(
         lambda time, state, control, args: state[0],
@@ -172,9 +172,6 @@ def test_constraint_and_multiplier_layouts_distinguish_ownership_concepts() -> N
     assert variational.shared_slice == (12, 13)
     assert variational.num_multipliers == 13
     assert variational.layout_id != generalized.layout_id
-
-
-def test_constraint_metadata_rejects_ambiguous_ownership_and_bound_forms() -> None:
     path = BoundedPathConstraint(
         lambda time, state, control, args: control[0],
         lower=-jnp.inf,
@@ -229,7 +226,7 @@ def test_constraint_metadata_rejects_ambiguous_ownership_and_bound_forms() -> No
         )
 
 
-def test_ordered_constraints_validate_partition_members_and_order() -> None:
+def test_games_constraint_foundation_scenario_1() -> None:
     partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
     unknown = _trajectory_block(
         lambda trajectory, args: trajectory.final_state[..., 0],
@@ -256,6 +253,52 @@ def test_ordered_constraints_validate_partition_members_and_order() -> None:
     )
     with pytest.raises(ValueError, match="partition order"):
         OpenLoopGameConstraints(partition, (reversed_participants,))
+    partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
+    shared_beta = _trajectory_block(
+        lambda trajectory, args: trajectory.final_state[..., 0],
+        "shared-beta-terminal",
+        scope=GameConstraintScope.SHARED,
+        participants=("beta",),
+        owner=None,
+        site=GameConstraintSite.TERMINAL,
+        equality=True,
+        state_dependent=True,
+    )
+    constraints = OpenLoopGameConstraints(partition, (shared_beta,))
+    trajectory = TrajectoryOptimizationView(
+        jnp.asarray((0.0, 1.0)),
+        jnp.asarray((((0.0,), (0.25,)), ((0.0,), (jnp.nan,)))),
+        jnp.zeros((2, 1, 2)),
+        case_shape=(2,),
+        state_shape=(1,),
+        control_shape=(2,),
+    )
+
+    evidence = evaluate_game_feasibility(constraints, trajectory)
+
+    np.testing.assert_array_equal(evidence.valid, np.asarray((True, False)))
+    np.testing.assert_array_equal(evidence.feasible, np.asarray((False, False)))
+    np.testing.assert_array_equal(
+        evidence.status,
+        np.asarray(
+            (
+                GameFeasibilityStatus.INFEASIBLE,
+                GameFeasibilityStatus.NONFINITE_RESIDUAL,
+            )
+        ),
+    )
+    np.testing.assert_allclose(evidence.maximum_violation[0], 0.25)
+    assert np.isinf(np.asarray(evidence.maximum_violation[1]))
+    np.testing.assert_array_equal(
+        evidence.player_valid,
+        np.asarray(((True, True), (True, False))),
+    )
+    np.testing.assert_array_equal(
+        evidence.player_feasible,
+        np.asarray(((True, False), (True, False))),
+    )
+    assert np.isnan(np.asarray(evidence.raw_residuals[0][1]))
+    assert np.isinf(np.asarray(evidence.violations[0][1]))
 
 
 def test_evaluation_preserves_path_terminal_and_trajectory_axes_and_evaluates_shared_once() -> (
@@ -373,55 +416,6 @@ def test_evaluation_preserves_path_terminal_and_trajectory_axes_and_evaluates_sh
     assert evidence.feasibility_scope == (
         "declared-open-loop-blocks-at-supplied-trajectory-sites"
     )
-
-
-def test_nonfinite_residual_is_case_local_and_scoped_to_shared_participants() -> None:
-    partition = PlayerControlPartition(("alpha", "beta"), (1, 1))
-    shared_beta = _trajectory_block(
-        lambda trajectory, args: trajectory.final_state[..., 0],
-        "shared-beta-terminal",
-        scope=GameConstraintScope.SHARED,
-        participants=("beta",),
-        owner=None,
-        site=GameConstraintSite.TERMINAL,
-        equality=True,
-        state_dependent=True,
-    )
-    constraints = OpenLoopGameConstraints(partition, (shared_beta,))
-    trajectory = TrajectoryOptimizationView(
-        jnp.asarray((0.0, 1.0)),
-        jnp.asarray((((0.0,), (0.25,)), ((0.0,), (jnp.nan,)))),
-        jnp.zeros((2, 1, 2)),
-        case_shape=(2,),
-        state_shape=(1,),
-        control_shape=(2,),
-    )
-
-    evidence = evaluate_game_feasibility(constraints, trajectory)
-
-    np.testing.assert_array_equal(evidence.valid, np.asarray((True, False)))
-    np.testing.assert_array_equal(evidence.feasible, np.asarray((False, False)))
-    np.testing.assert_array_equal(
-        evidence.status,
-        np.asarray(
-            (
-                GameFeasibilityStatus.INFEASIBLE,
-                GameFeasibilityStatus.NONFINITE_RESIDUAL,
-            )
-        ),
-    )
-    np.testing.assert_allclose(evidence.maximum_violation[0], 0.25)
-    assert np.isinf(np.asarray(evidence.maximum_violation[1]))
-    np.testing.assert_array_equal(
-        evidence.player_valid,
-        np.asarray(((True, True), (True, False))),
-    )
-    np.testing.assert_array_equal(
-        evidence.player_feasible,
-        np.asarray(((True, False), (True, False))),
-    )
-    assert np.isnan(np.asarray(evidence.raw_residuals[0][1]))
-    assert np.isinf(np.asarray(evidence.violations[0][1]))
 
 
 def test_schema_checks_precede_callbacks_and_return_shapes_are_enforced() -> None:

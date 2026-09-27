@@ -71,7 +71,7 @@ def _fusion_plan() -> Any:
     return phx.nuclear.ThermalFusionReactionPlan(channel, reactivity, table), channel
 
 
-def test_dt_fusion_closes_particle_charge_and_energy_ledgers() -> None:
+def test_fusion_scenario_1() -> None:
     plan, channel = _fusion_plan()
     thermal = 10.0 * float(
         phx.units.conversion_factor(phx.units.KILOELECTRONVOLT, phx.units.JOULE)
@@ -92,9 +92,6 @@ def test_dt_fusion_closes_particle_charge_and_energy_ledgers() -> None:
         np.sum(result.products.product_power_density_w_m3, axis=-1),
         result.total_power_density_w_m3,
     )
-
-
-def test_fusion_reactivity_rejects_out_of_support_temperature() -> None:
     plan, _ = _fusion_plan()
     result = plan.evaluate(
         np.asarray([1.0e19]), np.asarray([1.0e19]), np.asarray([1.0e-30])

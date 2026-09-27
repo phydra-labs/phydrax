@@ -9,7 +9,7 @@ import phydrax as phx
 from tests.unit.topology._fixtures import annulus_complex, filled_triangle_topology
 
 
-def test_harmonic_class_frame_controls_exact_periods() -> None:
+def test_harmonic_classes_scenario_1() -> None:
     complex_ir = annulus_complex()
     complex = phx.topology.CellSubcomplex.full(complex_ir.discretization.topology)
     rational = phx.topology.compute_rational_homology_basis(complex)
@@ -19,9 +19,6 @@ def test_harmonic_class_frame_controls_exact_periods() -> None:
 
     np.testing.assert_allclose(frame.periods(field), [2.0], atol=1e-7)
     assert float(constraint.residual(field)) < 1e-7
-
-
-def test_hodge_subspace_tracking_is_zero_for_identical_frames() -> None:
     complex_ir = annulus_complex()
     harmonic = phx.graph.compute_harmonic_subspace(complex_ir, max_modes=3)
     basis = harmonic.bases[1][:, : harmonic.ranks[1]]
@@ -36,9 +33,6 @@ def test_hodge_subspace_tracking_is_zero_for_identical_frames() -> None:
 
     np.testing.assert_allclose(tracking.principal_angles, 0.0, atol=1e-7)
     assert float(tracking.projector_residual) < 1e-7
-
-
-def test_conley_homology_requires_isolating_pair() -> None:
     topology = filled_triangle_topology()
     neighborhood = phx.topology.CellSubcomplex.full(topology)
     exit_set = phx.topology.CellSubcomplex(

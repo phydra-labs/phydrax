@@ -49,7 +49,7 @@ def _camera(
     )
 
 
-def test_zero_distortion_reduces_to_pinhole_and_rays_round_trip() -> None:
+def test_camera_scenario_1() -> None:
     camera = _camera(distortion=BrownConradyDistortion())
     point = jnp.asarray((1.0, 2.0, 10.0))
 
@@ -65,9 +65,6 @@ def test_zero_distortion_reduces_to_pinhole_and_rays_round_trip() -> None:
     assert bool(projection.valid)
     assert bool(ray.valid)
     assert int(ray.iterations) == 0
-
-
-def test_projection_uses_camera_to_world_pose_and_rejects_negative_depth() -> None:
     pose = CameraPose(RigidFrame(np.eye(3), np.asarray((1.0, 2.0, 3.0))))
     camera = _camera(pose=pose)
 
@@ -78,9 +75,6 @@ def test_projection_uses_camera_to_world_pose_and_rejects_negative_depth() -> No
     assert bool(centered.valid)
     assert not bool(behind.valid)
     assert int(behind.status) == int(ProjectionStatus.BEHIND_CAMERA)
-
-
-def test_brown_conrady_projection_unprojection_is_consistent() -> None:
     camera = _camera(
         distortion=BrownConradyDistortion(
             radial=(0.08, -0.01, 0.002),
@@ -96,7 +90,7 @@ def test_brown_conrady_projection_unprojection_is_consistent() -> None:
     assert int(ray.status) == int(RayStatus.SUCCESS)
 
 
-def test_refraction_reports_total_internal_reflection_and_parallel_failure() -> None:
+def test_camera_scenario_2() -> None:
     stack = PlanarRefractiveStack(
         # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
@@ -121,9 +115,6 @@ def test_refraction_reports_total_internal_reflection_and_parallel_failure() -> 
     assert int(tir.status) == int(SequentialOpticsStatus.TOTAL_INTERNAL_REFLECTION)
     assert not bool(parallel.valid)
     assert int(parallel.status) == int(SequentialOpticsStatus.PARALLEL)
-
-
-def test_refractive_projection_reports_nonconvergence_without_a_fallback() -> None:
     stack = PlanarRefractiveStack(
         # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
@@ -142,9 +133,6 @@ def test_refractive_projection_reports_nonconvergence_without_a_fallback() -> No
 
     assert not bool(result.valid)
     assert int(result.status) == int(ProjectionStatus.REFRACTION_NONCONVERGENCE)
-
-
-def test_refractive_camera_round_trip_and_explicit_status_mapping() -> None:
     stack = PlanarRefractiveStack(
         # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 1.0]],
@@ -194,9 +182,6 @@ def test_refractive_camera_round_trip_and_explicit_status_mapping() -> None:
     parallel = pixels_to_rays(parallel_camera, parallel_camera.intrinsics.principal_point)
     assert not bool(parallel.valid)
     assert int(parallel.status) == int(RayStatus.PARALLEL_INTERFACE)
-
-
-def test_all_ray_triangulation_and_parallel_ray_degeneracy() -> None:
     point = jnp.asarray((0.25, -0.5, 3.0))
     origins = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     directions = point[None, :] - origins
@@ -222,7 +207,7 @@ def test_all_ray_triangulation_and_parallel_ray_degeneracy() -> None:
     assert bool(jnp.all(jnp.isnan(degenerate.point)))
 
 
-def test_calibration_reports_unobservable_free_focal_lengths() -> None:
+def test_camera_scenario_3() -> None:
     camera = _camera()
     rig = CameraRig((camera,))
     points = jnp.asarray(
@@ -247,9 +232,6 @@ def test_calibration_reports_unobservable_free_focal_lengths() -> None:
     assert float(result.diagnostics.holdout_rms) == 0.0
     assert bool(jnp.all(jnp.isfinite(result.diagnostics.per_camera_holdout_rms)))
     assert result.optimization is None
-
-
-def test_calibration_updates_preserve_the_refractive_stack() -> None:
     stack = PlanarRefractiveStack(
         # ty: ignore[invalid-argument-type]
         [[0.0, 0.0, 0.5]],
@@ -292,9 +274,6 @@ def test_calibration_updates_preserve_the_refractive_stack() -> None:
     np.testing.assert_allclose(retained.interface_normals, stack.interface_normals)
     np.testing.assert_allclose(retained.refractive_indices, stack.refractive_indices)
     np.testing.assert_array_equal(retained.interface_active, stack.interface_active)
-
-
-def test_reference_camera_gauge_requires_fixed_reference_pose() -> None:
     free = np.zeros((2, 16), dtype="bool")
     free[:, 0] = True
     free[0, 10] = True

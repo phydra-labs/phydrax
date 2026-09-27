@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_interface_predictive_summary_retains_phase_measure_draws() -> None:
+def test_interface_uncertainty_scenario_1() -> None:
     samples = jnp.asarray(
         (
             (-1.0, 1.0),
@@ -30,9 +30,6 @@ def test_interface_predictive_summary_retains_phase_measure_draws() -> None:
     assert jnp.all(
         (summary.interface_probability >= 0.0) & (summary.interface_probability <= 1.0)
     )
-
-
-def test_active_acquisition_combines_signals_without_duplicate_points() -> None:
     points = jnp.arange(6.0)[:, None]
     result = phx.uq.select_interface_acquisition(
         points,
@@ -45,9 +42,6 @@ def test_active_acquisition_combines_signals_without_duplicate_points() -> None:
     assert result.indices.shape == (3,)
     assert jnp.unique(result.indices).size == 3
     assert 2 in set(map(int, result.indices))
-
-
-def test_active_acquisition_rejects_nonfinite_existing_points() -> None:
     with pytest.raises(ValueError, match="finite"):
         phx.uq.select_interface_acquisition(
             jnp.arange(3.0)[:, None],
@@ -56,9 +50,6 @@ def test_active_acquisition_rejects_nonfinite_existing_points() -> None:
             1,
             existing_points=jnp.asarray(((jnp.nan,),)),
         )
-
-
-def test_bounded_context_adaptation_improves_residual_without_leaving_ball() -> None:
     policy = phx.nn.operator.training.BoundedResidualAdaptationPolicy(
         iterations=20,
         learning_rate=0.2,

@@ -29,7 +29,7 @@ def _weekday_calendar(*holidays: FinanceDate) -> CalendarSnapshot:
     )
 
 
-def test_finance_date_and_day_counts_cover_leap_and_month_end_rules() -> None:
+def test_time_scenario_1() -> None:
     leap_day = FinanceDate.from_iso("2024-02-29")
     assert leap_day.isoformat() == "2024-02-29"
     assert FinanceDate.from_ymd(2024, 3, 1).ordinal - leap_day.ordinal == 1
@@ -52,9 +52,6 @@ def test_finance_date_and_day_counts_cover_leap_and_month_end_rules() -> None:
         FinanceDate.from_iso("2024-02-29"),
         DayCount.THIRTY_E_360,
     ) == pytest.approx(29.0 / 360.0)
-
-
-def test_modified_following_does_not_cross_the_calendar_month() -> None:
     calendar = _weekday_calendar()
     saturday_month_end = FinanceDate.from_iso("2021-07-31")
 
@@ -66,9 +63,6 @@ def test_modified_following_does_not_cross_the_calendar_month() -> None:
     )
     assert following.isoformat() == "2021-08-02"
     assert modified.isoformat() == "2021-07-30"
-
-
-def test_schedule_resolution_preserves_eom_short_stub_and_neutral_padding() -> None:
     rule = ScheduleRule(
         FinanceDate.from_iso("2024-01-31"),
         FinanceDate.from_iso("2024-05-15"),
@@ -98,7 +92,7 @@ def test_schedule_resolution_preserves_eom_short_stub_and_neutral_padding() -> N
     assert schedule.year_fractions[3] == pytest.approx(15.0 / 365.0)
 
 
-def test_long_front_stub_removes_the_first_regular_boundary() -> None:
+def test_time_scenario_2() -> None:
     rule = ScheduleRule(
         FinanceDate.from_iso("2024-01-15"),
         FinanceDate.from_iso("2024-05-31"),
@@ -115,9 +109,6 @@ def test_long_front_stub_removes_the_first_regular_boundary() -> None:
     assert FinanceDate(int(schedule.accrual_start_dates[0])).isoformat() == "2024-01-15"
     assert FinanceDate(int(schedule.accrual_end_dates[0])).isoformat() == "2024-02-29"
     assert schedule.period_count == 4
-
-
-def test_financial_timestamp_keeps_event_clock_independent_of_publication_clock() -> None:
     point_in_time = TemporalAdmissibilityPolicy(True, True, True)
     timestamp = FinancialTimestamp(300, 100, 110, 120, "vendor", point_in_time)
 
@@ -130,9 +121,6 @@ def test_financial_timestamp_keeps_event_clock_independent_of_publication_clock(
     no_future_effect = TemporalAdmissibilityPolicy(True, True, False)
     with pytest.raises(ValueError, match="admissibility policy"):
         FinancialTimestamp(121, 100, 110, 120, "vendor", no_future_effect)
-
-
-def test_calendar_semantic_identity_is_separate_from_snapshot_content() -> None:
     semantic = _weekday_calendar()
     revised = _weekday_calendar(FinanceDate.from_iso("2026-01-01"))
 

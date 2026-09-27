@@ -48,7 +48,7 @@ def _asset(name: Any, values: Any) -> Any:
     )
 
 
-def test_collection_relations_and_bounded_selection_remain_explicit() -> None:
+def test_multimodal_foundation_scenario_1() -> None:
     first, second = _asset("first", (1, 2, 3)), _asset("second", (4, 5, 6))
     relation = phx.measurement.MeasurementRelation(
         first.asset_id,
@@ -76,9 +76,6 @@ def test_collection_relations_and_bounded_selection_remain_explicit() -> None:
     np.testing.assert_allclose(selected.assets[0].field.values, (2, 3))
     assert selected.parent_collection_ids == (collection.content_id,)
     assert selected.relations == ()
-
-
-def test_affine_piecewise_clocks_and_frame_routes_are_bounded() -> None:
     source = phx.measurement.ClockIdentity("sensor", phx.units.SECOND, "relative")
     target = phx.measurement.ClockIdentity("experiment", phx.units.SECOND, "relative")
     affine = phx.measurement.AffineClockMap(

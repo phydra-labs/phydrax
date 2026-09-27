@@ -42,7 +42,7 @@ def _prepared() -> Any:
     return qcd.prepare_taylor_eos(estimate), convention, domain
 
 
-def test_taylor_eos_fields_derive_from_one_pressure_potential() -> None:
+def test_finite_density_qcd_production_scenario_1() -> None:
     qcd = phx.applications.lattice_field
     prepared, _, _ = _prepared()
     temperature = 0.2
@@ -56,46 +56,6 @@ def test_taylor_eos_fields_derive_from_one_pressure_potential() -> None:
     assert jnp.isclose(result.susceptibility_matrix[0, 0], 0.2)
     assert jnp.isclose(result.energy_over_temperature4, 3.0 * expected_pressure)
     assert jnp.abs(result.thermodynamic_identity_residual) < 1.0e-12
-
-
-@pytest.mark.parametrize("temperature_bounds", [(0.15,), (0.15, 0.25, 0.35)])
-def test_finite_density_domain_rejects_non_pair_temperature_bounds(
-    temperature_bounds: Any,
-) -> None:
-    qcd = phx.applications.lattice_field
-    with pytest.raises(ValueError, match="temperature"):
-        qcd.FiniteDensityDomain(
-            temperature_bounds,
-            ((-1.0, 1.0), (-0.5, 0.5), (-0.5, 0.5)),
-            maximum_total_order=2,
-        )
-
-
-def test_heavy_ion_constraints_solve_declared_charge_ratio() -> None:
-    qcd = phx.applications.lattice_field
-    prepared, _, _ = _prepared()
-    result = qcd.solve_heavy_ion_path(
-        prepared,
-        qcd.HeavyIonConstraintPlan(0.0, maximum_iterations=8),
-        0.2,
-        0.03,
-        initial_charge_strangeness=jnp.asarray([0.01, -0.01]),
-    )
-    assert bool(result.converged)
-    assert jnp.linalg.norm(result.residual) < 1.0e-10
-    assert jnp.allclose(result.chemical_potentials[1:], 0.0, atol=1.0e-10)
-    final_update = qcd.solve_heavy_ion_path(
-        prepared,
-        qcd.HeavyIonConstraintPlan(0.0, maximum_iterations=1),
-        0.2,
-        0.03,
-        initial_charge_strangeness=jnp.asarray([0.01, -0.01]),
-    )
-    assert bool(final_update.converged)
-    assert int(final_update.iterations) == 1
-
-
-def test_taylor_table_refuses_extrapolation_and_passes_stability_checks() -> None:
     qcd = phx.applications.lattice_field
     prepared, convention, domain = _prepared()
     table = qcd.build_taylor_eos_table(
@@ -138,6 +98,35 @@ def test_taylor_table_refuses_extrapolation_and_passes_stability_checks() -> Non
             source_kind=qcd.QCDTransportSourceKind.LATTICE_INFERRED,
             source_id="nonfinite-axis",
         )
+    for temperature_bounds in [(0.15,), (0.15, 0.25, 0.35)]:
+        qcd = phx.applications.lattice_field
+        with pytest.raises(ValueError, match="temperature"):
+            qcd.FiniteDensityDomain(
+                temperature_bounds,
+                ((-1.0, 1.0), (-0.5, 0.5), (-0.5, 0.5)),
+                maximum_total_order=2,
+            )
+    qcd = phx.applications.lattice_field
+    prepared, _, _ = _prepared()
+    result = qcd.solve_heavy_ion_path(
+        prepared,
+        qcd.HeavyIonConstraintPlan(0.0, maximum_iterations=8),
+        0.2,
+        0.03,
+        initial_charge_strangeness=jnp.asarray([0.01, -0.01]),
+    )
+    assert bool(result.converged)
+    assert jnp.linalg.norm(result.residual) < 1.0e-10
+    assert jnp.allclose(result.chemical_potentials[1:], 0.0, atol=1.0e-10)
+    final_update = qcd.solve_heavy_ion_path(
+        prepared,
+        qcd.HeavyIonConstraintPlan(0.0, maximum_iterations=1),
+        0.2,
+        0.03,
+        initial_charge_strangeness=jnp.asarray([0.01, -0.01]),
+    )
+    assert bool(final_update.converged)
+    assert int(final_update.iterations) == 1
 
 
 def test_multi_charge_canonical_transform_reports_finite_support() -> None:

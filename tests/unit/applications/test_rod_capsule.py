@@ -135,7 +135,7 @@ def _plane(normal: Any, offset: Any) -> Any:
     return PlaneContactGeometry(normal, offset, feature_policy=policy)
 
 
-def test_plan_owns_exact_feature_radius_labels_proxy_and_adjacency_policy() -> None:
+def test_rod_capsule_scenario_1() -> None:
     rod, plan, geometry = _geometry()
     features = geometry.surface_plan.feature_policy
     edge_slice = features.edge_slice
@@ -185,11 +185,6 @@ def test_plan_owns_exact_feature_radius_labels_proxy_and_adjacency_policy() -> N
     assert repeated.plan_id == plan.plan_id
     assert repeated.prepare(rod).prepared_id == geometry.prepared_id
     assert changed.plan_id != plan.plan_id
-
-
-def test_capsule_plane_witness_is_exact_for_endpoint_support_and_penetration_gap() -> (
-    None
-):
     rod, _, geometry = _geometry()
     positions, orientations = _skew_configuration(rod)
     positions = positions.at[0].set(jnp.asarray((0.0, 0.0, 2.0)))
@@ -214,9 +209,6 @@ def test_capsule_plane_witness_is_exact_for_endpoint_support_and_penetration_gap
         witness.capsule_witness[0] - witness.plane_witness[0],
         witness.gap[0] * witness.normal[0],
     )
-
-
-def test_capsule_capsule_witness_is_exact_and_rigid_motion_invariant() -> None:
     rod, _, geometry = _geometry()
     configuration = _skew_configuration(rod)
     pairs = jnp.asarray(((0, 3),), dtype=jnp.int32)
@@ -257,11 +249,6 @@ def test_capsule_capsule_witness_is_exact_and_rigid_motion_invariant() -> None:
         moved.right_capsule_witness[0],
         rotation @ witness.right_capsule_witness[0] + translation,
     )
-
-
-def test_spin_surface_velocity_and_native_effort_pullback_preserve_power_and_wrench() -> (
-    None
-):
     rod, _, geometry = _geometry()
     state = rod.initialize_state()
     configuration = rod.configuration_from_state(state)
@@ -305,7 +292,7 @@ def test_spin_surface_velocity_and_native_effort_pullback_preserve_power_and_wre
     assert surface_power == pytest.approx(native_power)
 
 
-def test_reduced_surface_pullback_is_the_true_dual_of_native_lift_and_spin_map() -> None:
+def test_rod_capsule_scenario_2() -> None:
     rod, _, geometry = _geometry()
     reduced = _reduced(rod)
     participant = prepare_reduced_rod_contact_participant(reduced, geometry)
@@ -352,9 +339,13 @@ def test_reduced_surface_pullback_is_the_true_dual_of_native_lift_and_spin_map()
     generic = participant.duality_evidence(coefficients, rates, node_effort)
     assert generic.finite
     assert generic.valid
+    first_rod, _, geometry = _geometry()
+    second_rod = _spatial_rod(stiffness_scale=2.0)
+    reduction = _reduced(second_rod)
 
-
-def test_adjacent_capsules_are_filtered_and_ambiguous_geometry_is_rejected() -> None:
+    assert first_rod.prepared_id != second_rod.prepared_id
+    with pytest.raises(ValueError, match="same PreparedRod"):
+        prepare_reduced_rod_contact_participant(reduction, geometry)
     rod, _, geometry = _geometry()
     adjacent = geometry.capsule_capsule_witness(
         rod.configuration_from_state(rod.initialize_state()),
@@ -394,13 +385,3 @@ def test_adjacent_capsules_are_filtered_and_ambiguous_geometry_is_rejected() -> 
             jnp.asarray((0.5,), dtype=jnp.float32),
             jnp.zeros((1, 3), dtype=jnp.float32),
         )
-
-
-def test_reduced_participant_rejects_geometry_owned_by_a_different_native_rod() -> None:
-    first_rod, _, geometry = _geometry()
-    second_rod = _spatial_rod(stiffness_scale=2.0)
-    reduction = _reduced(second_rod)
-
-    assert first_rod.prepared_id != second_rod.prepared_id
-    with pytest.raises(ValueError, match="same PreparedRod"):
-        prepare_reduced_rod_contact_participant(reduction, geometry)

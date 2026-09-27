@@ -39,7 +39,7 @@ from phydrax.finance.valuation._sensitivity import (
 )
 
 
-def test_black_scholes_benchmark_parity_and_all_implied_volatility_inversions() -> None:
+def test_finance_valuation_scenario_1() -> None:
     call = evaluate_black_scholes_european(
         BlackScholesModel(0.2), 100.0, 100.0, 1.0, 0.05
     )
@@ -69,9 +69,6 @@ def test_black_scholes_benchmark_parity_and_all_implied_volatility_inversions() 
         normal.value, -2.0, 1.0, 1.5, 0.95
     )
     assert jnp.allclose(recovered_normal.volatility, 8.0, rtol=2e-5)
-
-
-def test_lattice_refinement_and_pde_cross_engine_agree_with_analytic_value() -> None:
     model = BlackScholesModel(0.2)
     payoff = VanillaPayoff(100.0, OptionType.PUT)
     problem = LatticeProblem(model, payoff, 100.0, 1.0, 0.05)
@@ -92,9 +89,6 @@ def test_lattice_refinement_and_pde_cross_engine_agree_with_analytic_value() -> 
         ),
     )
     assert jnp.allclose(pde.value, analytic, atol=8e-2)
-
-
-def test_heston_characteristic_function_and_transform_engines_agree() -> None:
     model = HestonModel(2.0, 0.04, 0.2, -0.5, 0.04)
     assert jnp.allclose(
         heston_log_price_characteristic_function(model, 0.0, 100.0, 1.0, 0.03, 0.01),
@@ -126,7 +120,7 @@ class _QuadraticValuation(StrictModule):
         return parameters[0] ** 2 + 3.0 * parameters[1]
 
 
-def test_aad_and_bump_greeks_defend_first_and_second_order_contracts() -> None:
+def test_finance_valuation_scenario_2() -> None:
     request = GreekRequest(
         ("spot", "rate"),
         second_order_names=("spot",),
@@ -156,9 +150,6 @@ def test_aad_and_bump_greeks_defend_first_and_second_order_contracts() -> None:
     assert jnp.allclose(aad.second("spot"), 2.0)
     assert jnp.allclose(bumped.first_order, aad.first_order, rtol=1e-3)
     assert jnp.allclose(bumped.second("spot"), 2.0, rtol=2e-2)
-
-
-def test_self_financing_hedge_replay_is_exact_for_unit_underlying_claim() -> None:
     times = jnp.array([0.0, 0.5, 1.0])
     spots = jnp.array([100.0, 110.0, 105.0])
     replay = evaluate_hedge_replay(

@@ -112,7 +112,7 @@ def _kalman_problem() -> Any:
     )
 
 
-def test_rao_callbacks_observe_typed_input_context() -> None:
+def test_rao_blackwellized_scenario_1() -> None:
     input_signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray([0.0, 0.5, 1.0]),
         jnp.asarray([[0.0], [2.0], [4.0]]),
@@ -150,9 +150,6 @@ def test_rao_callbacks_observe_typed_input_context() -> None:
         ),
         jnp.asarray([5.0, 4.0, 6.0, 1.0]),
     )
-
-
-def test_single_mode_rao_blackwellized_filter_matches_exact_kalman_filter() -> None:
     result = phx.uq.rao_blackwellized_particle_filter(
         jr.key(5),
         _rao_blackwellized_problem(),
@@ -180,9 +177,6 @@ def test_single_mode_rao_blackwellized_filter_matches_exact_kalman_filter() -> N
     assert result.initial_linear_covariances.shape == (8, 1, 1)
     assert jnp.allclose(jnp.exp(result.initial_log_weights), 1.0 / 8.0)
     assert jnp.all(result.nonlinear_particles == 0)
-
-
-def test_diagonal_observation_covariance_matches_dense_conditioning() -> None:
     dense = phx.uq.rao_blackwellized_particle_filter(
         jr.key(17),
         _rao_blackwellized_problem(),

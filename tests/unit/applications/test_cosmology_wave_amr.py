@@ -98,7 +98,7 @@ def _field(prepared: Any, *, wave_number: Any = 2.0 * np.pi, packet: Any = True)
     return prepared.initialize(tuple(arrays), 1.0)
 
 
-def test_fixed_topology_packet_soliton_current_uses_global_composite_solves() -> None:
+def test_cosmology_wave_amr_scenario_1() -> None:
     prepared = _prepared()
     state = _field(prepared)
     result = prepared.step(state, 1.00005)
@@ -130,9 +130,18 @@ def test_fixed_topology_packet_soliton_current_uses_global_composite_solves() ->
         atol=0.0,
     )
     assert result.state.psi.topology.epoch.epoch_id == state.psi.topology.epoch.epoch_id
+    prepared = _prepared()
+    state = _field(prepared, packet=False)
+    tangent = tuple(0.01 * level.values for level in state.psi.levels)
 
+    action = prepared.fixed_topology_jvp(state, tangent, 1.00001)
 
-def test_amr_cayley_solve_honors_configured_iteration_cap_and_rolls_back() -> None:
+    assert len(action) == len(state.psi.levels)
+    assert all(
+        value.shape == level.values.shape and bool(jnp.all(jnp.isfinite(value)))
+        for value, level in zip(action, state.psi.levels, strict=True)
+    )
+    assert state.psi.topology.epoch.epoch_id == prepared.topology.epoch.epoch_id
     _, fd_plan, topology = _hierarchy(refined=True)
     prepared = WaveAMRDiscretizationPlan(
         fd_plan,
@@ -164,9 +173,6 @@ def test_amr_cayley_solve_honors_configured_iteration_cap_and_rolls_back() -> No
         strict=True,
     ):
         np.testing.assert_array_equal(actual.values, expected.values)
-
-
-def test_amr_kinetic_dispersion_phase_gate_rolls_back() -> None:
     _, fd_plan, topology = _hierarchy(refined=True)
     prepared = WaveAMRDiscretizationPlan(
         fd_plan,
@@ -190,9 +196,6 @@ def test_amr_kinetic_dispersion_phase_gate_rolls_back() -> None:
     assert bool(result.diagnostics.initial_poisson_closed)
     assert bool(result.diagnostics.final_poisson_closed)
     assert result.state.scale_factor == state.scale_factor
-
-
-def test_complex_fill_patch_is_globally_u1_equivariant() -> None:
     prepared = _prepared()
     state = _field(prepared)
     phase = jnp.exp(0.37j)
@@ -226,24 +229,7 @@ def test_complex_fill_patch_is_globally_u1_equivariant() -> None:
         )
 
 
-def test_fixed_topology_derivative_keeps_the_epoch_frozen() -> None:
-    prepared = _prepared()
-    state = _field(prepared, packet=False)
-    tangent = tuple(0.01 * level.values for level in state.psi.levels)
-
-    action = prepared.fixed_topology_jvp(state, tangent, 1.00001)
-
-    assert len(action) == len(state.psi.levels)
-    assert all(
-        value.shape == level.values.shape and bool(jnp.all(jnp.isfinite(value)))
-        for value, level in zip(action, state.psi.levels, strict=True)
-    )
-    assert state.psi.topology.epoch.epoch_id == prepared.topology.epoch.epoch_id
-
-
-def test_phase_aware_topology_transfer_preserves_mass_current_and_winding_evidence() -> (
-    None
-):
+def test_cosmology_wave_amr_scenario_2() -> None:
     _, fd_plan, topology = _hierarchy(refined=False)
     adaptivity = WaveAMRAdaptivityPlan(
         maximum_phase_change=0.01,
@@ -299,30 +285,6 @@ def test_phase_aware_topology_transfer_preserves_mass_current_and_winding_eviden
     assert bool(rejected.rolled_back)
     assert rejected.state.psi.topology.epoch.epoch_id == topology.epoch.epoch_id
     assert rejected.candidate_state.psi.topology.epoch.index == topology.epoch.index + 1
-
-
-def test_zero_current_transfer_uses_named_absolute_tolerance() -> None:
-    _, fd_plan, topology = _hierarchy(refined=False)
-    prepared = _prepared(
-        topology=topology,
-        fd_plan=fd_plan,
-        adaptivity=WaveAMRAdaptivityPlan(
-            maximum_density_contrast=0.01,
-            current_relative_tolerance=0.0,
-            current_absolute_tolerance=1.0e-12,
-            phase_defect_tolerance=1.0,
-        ),
-    )
-    state = _field(prepared, wave_number=0.0, packet=True)
-    transitioned = prepared.transition(state, prepared.propose_topology(state))
-
-    assert bool(transitioned.successful)
-    assert float(transitioned.evidence.current_absolute_defect) <= 1.0e-12
-    assert float(transitioned.evidence.current_relative_defect) == 0.0
-    assert bool(transitioned.evidence.current_preserved)
-
-
-def test_phase_aware_restriction_preserves_probability_current_and_winding() -> None:
     _, fd_plan, topology = _hierarchy(refined=True)
     prepared = _prepared(
         topology=topology,
@@ -347,9 +309,24 @@ def test_phase_aware_restriction_preserves_probability_current_and_winding() -> 
     assert bool(restricted.evidence.winding_preserved)
     assert float(restricted.evidence.probability_relative_defect) < 1.0e-10
     assert restricted.state.psi.topology.epoch.index == topology.epoch.index + 1
+    _, fd_plan, topology = _hierarchy(refined=False)
+    prepared = _prepared(
+        topology=topology,
+        fd_plan=fd_plan,
+        adaptivity=WaveAMRAdaptivityPlan(
+            maximum_density_contrast=0.01,
+            current_relative_tolerance=0.0,
+            current_absolute_tolerance=1.0e-12,
+            phase_defect_tolerance=1.0,
+        ),
+    )
+    state = _field(prepared, wave_number=0.0, packet=True)
+    transitioned = prepared.transition(state, prepared.propose_topology(state))
 
-
-def test_adaptive_capacity_failure_rolls_back_before_state_transition() -> None:
+    assert bool(transitioned.successful)
+    assert float(transitioned.evidence.current_absolute_defect) <= 1.0e-12
+    assert float(transitioned.evidence.current_relative_defect) == 0.0
+    assert bool(transitioned.evidence.current_preserved)
     _, fd_plan, topology = _hierarchy(fine_capacity=1, refined=False)
     adaptivity = WaveAMRAdaptivityPlan(maximum_phase_change=0.01)
     prepared = _prepared(topology=topology, fd_plan=fd_plan, adaptivity=adaptivity)

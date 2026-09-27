@@ -35,7 +35,7 @@ def _unit_square(case: Any) -> Any:
     return grid, geometry
 
 
-def test_s1_fixture_preserves_topology_runtime_and_exact_poisson_result() -> None:
+def test_s1_fixture_contracts() -> None:
     case = _FIXTURE["cases"]["exact_quadratic_poisson"]
     grid, geometry = _unit_square(case)
     plan = iga.IsogeometricPlan.isoparametric(
@@ -90,9 +90,6 @@ def test_s1_fixture_preserves_topology_runtime_and_exact_poisson_result() -> Non
         rtol=1.0e-11,
         atol=1.0e-12,
     )
-
-
-def test_s1_fixture_preserves_fixed_topology_numeric_refresh() -> None:
     case = _FIXTURE["cases"]["runtime_refresh"]
     grid, geometry = _unit_square(case)
     prepared = iga.IsogeometricPlan.isoparametric(

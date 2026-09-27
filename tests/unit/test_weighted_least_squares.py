@@ -16,7 +16,7 @@ from phydrax._numerics import (
 )
 
 
-def test_weighted_least_squares_recovers_multioutput_and_raw_coordinates() -> None:
+def test_weighted_least_squares_scenario_1() -> None:
     x = jnp.linspace(-2.0, 3.0, 17)
     design = jnp.stack((jnp.ones_like(x), x, x**2), axis=-1)
     expected = jnp.asarray([[1.0, -2.0], [0.5, 3.0], [-0.25, 0.75]])
@@ -41,9 +41,6 @@ def test_weighted_least_squares_recovers_multioutput_and_raw_coordinates() -> No
     )
     np.testing.assert_allclose(result.prediction, target, atol=2e-12)
     assert float(result.normal_equation_error) < 1e-12
-
-
-def test_masked_nonfinite_padding_is_inert() -> None:
     design = jnp.asarray([[1.0, 0.0], [1.0, 1.0], [jnp.nan, jnp.inf]])
     target = jnp.asarray([[2.0], [5.0], [jnp.nan]])
     mask = jnp.asarray([True, True, False])
@@ -59,9 +56,6 @@ def test_masked_nonfinite_padding_is_inert() -> None:
     np.testing.assert_allclose(result.coefficients[:, 0], jnp.asarray([2.0, 3.0]))
     assert int(result.sample_count) == 2
     assert not bool(result.valid_rows[-1])
-
-
-def test_complex_least_squares_uses_hermitian_geometry() -> None:
     design = jnp.asarray([[1.0 + 1.0j, 2.0], [2.0 - 1.0j, -1.0j], [0.5, 3.0 + 2.0j]])
     expected = jnp.asarray([[2.0 - 0.5j], [-1.0 + 3.0j]])
     target = design @ expected
@@ -72,7 +66,7 @@ def test_complex_least_squares_uses_hermitian_geometry() -> None:
     np.testing.assert_allclose(result.coefficients, expected, atol=2e-12)
 
 
-def test_unregularized_rank_deficiency_is_reported_without_repair() -> None:
+def test_weighted_least_squares_scenario_2() -> None:
     design = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
     target = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -81,9 +75,6 @@ def test_unregularized_rank_deficiency_is_reported_without_repair() -> None:
     assert not bool(result.valid)
     assert int(result.status) == LEAST_SQUARES_RANK_DEFICIENT
     assert int(result.rank) == 1
-
-
-def test_regularized_rank_deficiency_is_finite_and_diagnosed() -> None:
     design = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
     target = jnp.asarray([1.0, 2.0, 3.0])
 

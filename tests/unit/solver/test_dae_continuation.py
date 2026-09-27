@@ -34,7 +34,7 @@ def _policy() -> Any:
     )
 
 
-def test_segmented_continuation_matches_monolithic_accepted_history() -> None:
+def test_dae_continuation_scenario_1() -> None:
     problem = _problem()
     policy = _policy()
     full_grid = phx.dynamics.TimeGrid(
@@ -90,9 +90,6 @@ def test_segmented_continuation_matches_monolithic_accepted_history() -> None:
     assert jnp.allclose(segmented_times, full.step_history.accepted_times[:full_count])
     assert jnp.allclose(segmented_steps, full.step_history.step_sizes[:full_count])
     assert jnp.array_equal(segmented_orders, full.step_history.orders[:full_count])
-
-
-def test_continuation_recertifies_changed_arguments_and_reports_inconsistency() -> None:
     problem = _problem()
     policy = _policy()
     first_grid = phx.dynamics.TimeGrid(
@@ -117,9 +114,31 @@ def test_continuation_recertifies_changed_arguments_and_reports_inconsistency() 
     assert second.initialization.status == int(
         phx.solver.DAEInitializationStatus.RESIDUAL_TOO_LARGE
     )
+    policy = _policy()
+    first_problem = _problem(problem_id="continuation-source")
+    second_problem = _problem(problem_id="continuation-target")
+    first = phx.solver.solve_dae(
+        first_problem,
+        phx.dynamics.TimeGrid(
+            jnp.asarray((0.0, 0.1)),
+            time_id="continuation-source",
+        ),
+        policy=policy,
+    )
+    second_prepared = phx.solver.prepare_dae(
+        second_problem,
+        phx.dynamics.TimeGrid(
+            jnp.asarray((0.1, 0.2)),
+            time_id="continuation-target",
+        ),
+        policy=policy,
+    )
 
-
-def test_explicit_restart_resets_bdf_history_and_continuation_is_exclusive() -> None:
+    with pytest.raises(ValueError, match="problem identity"):
+        phx.solver.solve_dae(
+            second_prepared,
+            continuation=first.continuation,
+        )
     problem = _problem()
     policy = _policy()
     first_grid = phx.dynamics.TimeGrid(
@@ -144,33 +163,5 @@ def test_explicit_restart_resets_bdf_history_and_continuation_is_exclusive() -> 
         phx.solver.solve_dae(
             prepared,
             initial_state=first.states[-1],
-            continuation=first.continuation,
-        )
-
-
-def test_continuation_rejects_incompatible_problem_identity() -> None:
-    policy = _policy()
-    first_problem = _problem(problem_id="continuation-source")
-    second_problem = _problem(problem_id="continuation-target")
-    first = phx.solver.solve_dae(
-        first_problem,
-        phx.dynamics.TimeGrid(
-            jnp.asarray((0.0, 0.1)),
-            time_id="continuation-source",
-        ),
-        policy=policy,
-    )
-    second_prepared = phx.solver.prepare_dae(
-        second_problem,
-        phx.dynamics.TimeGrid(
-            jnp.asarray((0.1, 0.2)),
-            time_id="continuation-target",
-        ),
-        policy=policy,
-    )
-
-    with pytest.raises(ValueError, match="problem identity"):
-        phx.solver.solve_dae(
-            second_prepared,
             continuation=first.continuation,
         )

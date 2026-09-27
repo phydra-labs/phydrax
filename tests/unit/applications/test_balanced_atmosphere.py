@@ -27,7 +27,7 @@ def model_at(space: Any, levels: Any = 4, **kwargs: Any) -> Any:
     ).prepare()
 
 
-def test_nonzero_shear_independently_satisfies_hydrostatic_and_thermal_wind() -> None:
+def test_balanced_atmosphere_scenario_1() -> None:
     reference = DryGradientWindReference()
     pressure = np.geomspace(1200, 110000, 9)[:, None]
     latitude = np.linspace(-1.4, 1.4, 11)[None, :]
@@ -62,9 +62,6 @@ def test_nonzero_shear_independently_satisfies_hydrostatic_and_thermal_wind() ->
         atol=1e-10,
         rtol=0,
     )
-
-
-def test_surface_branch_and_zero_shear_equator_pole_limits() -> None:
     latitude = np.array([-np.pi / 2, -0.7, 0.0, 0.7, np.pi / 2])
     for shear in (-10.0, 0.0, 1e-12):
         reference = DryGradientWindReference(shear=shear)

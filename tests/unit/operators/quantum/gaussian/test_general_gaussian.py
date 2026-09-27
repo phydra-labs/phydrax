@@ -22,7 +22,7 @@ def _system(numbers: Any, positions: Any, particle_ids: Any) -> Any:
     )
 
 
-def test_boys_derivative_matches_next_order_across_numerical_regimes() -> None:
+def test_general_gaussian_scenario_1() -> None:
     gaussian = phx.operators.quantum.gaussian
     arguments = np.asarray([0.0, 1.0e-9, 0.2, 20.0, 100.0])
     values = gaussian.boys_values(1, arguments)
@@ -32,9 +32,6 @@ def test_boys_derivative_matches_next_order_across_numerical_regimes() -> None:
         derivative, -np.asarray(values)[:, 1], rtol=2.0e-11, atol=2.0e-13
     )
     np.testing.assert_allclose(values[0], [1.0, 1.0 / 3.0], rtol=0.0, atol=1.0e-14)
-
-
-def test_real_spherical_shells_are_metric_orthonormal_through_f() -> None:
     structure, system = _system([1], [[0.0, 0.0, 0.0]], [11])
     gaussian = phx.operators.quantum.gaussian
     shells = tuple(
@@ -57,9 +54,6 @@ def test_real_spherical_shells_are_metric_orthonormal_through_f() -> None:
     assert basis.cartesian_basis_function_count == 20
     assert basis.basis_function_count == 16
     np.testing.assert_allclose(overlap, np.eye(16), rtol=1.0e-12, atol=2.0e-12)
-
-
-def test_ao_spatial_gradient_matches_centered_difference_for_p_shell() -> None:
     structure, system = _system([1], [[0.0, 0.0, 0.0]], [17])
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan(
@@ -81,7 +75,7 @@ def test_ao_spatial_gradient_matches_centered_difference_for_p_shell() -> None:
     np.testing.assert_allclose(gradient, finite, rtol=2.0e-8, atol=2.0e-10)
 
 
-def test_direct_and_cholesky_routes_reproduce_dense_p_shell_eris() -> None:
+def test_general_gaussian_scenario_2() -> None:
     structure, system = _system([1], [[0.0, 0.0, 0.0]], [23])
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan(
@@ -104,11 +98,6 @@ def test_direct_and_cholesky_routes_reproduce_dense_p_shell_eris() -> None:
     np.testing.assert_allclose(direct.coulomb, expected_j, rtol=2.0e-11, atol=2.0e-12)
     np.testing.assert_allclose(direct.exchange, expected_k, rtol=2.0e-11, atol=2.0e-12)
     np.testing.assert_allclose(factorized.reconstruct(), eri, rtol=2.0e-11, atol=2.0e-12)
-
-
-def test_basis_exchange_record_preserves_general_contractions_and_artifact_identity() -> (
-    None
-):
     _, system = _system([8], [[0.0, 0.0, 0.0]], [31])
     gaussian = phx.operators.quantum.gaussian
     record = {
@@ -136,9 +125,6 @@ def test_basis_exchange_record_preserves_general_contractions_and_artifact_ident
     assert plan.source_artifact_id == "basis-artifact"
     assert tuple(shell.angular_momentum for shell in plan.shells) == (0, 1)
     assert basis.basis_function_count == 4
-
-
-def test_ecp_core_count_is_bound_to_nuclear_charge() -> None:
     _, system = _system([6], [[0.0, 0.0, 0.0]], [41])
     gaussian = phx.operators.quantum.gaussian
     channel = gaussian.ECPChannelPlan(

@@ -11,7 +11,7 @@ from phydrax.solver._rough_prepare import (
 from phydrax.stochastic._calculus import stratonovich_correction
 
 
-def test_stratonovich_correction_is_jittable_and_differentiable_on_fixed_route() -> None:
+def test_stochastic_calculus_prepare_scenario_1() -> None:
     vector_fields = lambda state: jnp.stack((state, 2.0 * state), axis=-1)
     compiled = jax.jit(
         lambda state: stratonovich_correction(vector_fields, state).correction
@@ -22,9 +22,6 @@ def test_stratonovich_correction_is_jittable_and_differentiable_on_fixed_route()
 
     assert jnp.allclose(correction, 2.5 * state)
     assert jnp.allclose(derivative, jnp.asarray([[2.5]]))
-
-
-def test_projected_stratonovich_route_retains_geometry_evidence() -> None:
     geometry = phx.metrix.EuclideanStateGeometry()
     result = stratonovich_correction(
         lambda state: state[..., None],
@@ -36,9 +33,6 @@ def test_projected_stratonovich_route_retains_geometry_evidence() -> None:
     assert result.geometry_id == geometry.geometry_id
     assert jnp.allclose(result.tangent_residual, 0.0)
     assert jnp.allclose(result.correction, jnp.asarray([0.35]))
-
-
-def test_rough_preparation_selects_existing_davie_route_and_executes() -> None:
     problem = phx.solver.RoughDifferentialProblem(
         lambda time, state, args: 0.8 * state[..., None],
         jnp.asarray([1.0]),
@@ -64,9 +58,6 @@ def test_rough_preparation_selects_existing_davie_route_and_executes() -> None:
     assert prepared.solver.solver_name == "Davie"
     assert solution.solver_id == "rough-solver:davie"
     assert solution.valid[0]
-
-
-def test_rough_preparation_fails_closed_on_insufficient_regularity() -> None:
     problem = phx.solver.RoughDifferentialProblem(
         lambda time, state, args: state[..., None],
         jnp.asarray([1.0]),

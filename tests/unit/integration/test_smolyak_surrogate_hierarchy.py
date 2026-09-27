@@ -47,7 +47,7 @@ def _adapter(*, deterministic_base: Any) -> Any:
     )
 
 
-def test_smolyak_control_hierarchy_recovers_fine_expectation() -> None:
+def test_smolyak_contracts() -> None:
     adapter = _adapter(deterministic_base=True)
     result = phx.integration.integrate(
         adapter.observable,
@@ -69,9 +69,6 @@ def test_smolyak_control_hierarchy_recovers_fine_expectation() -> None:
         adapter.surrogate_expectation,
     )
     assert result.diagnostics.correction_variance_norms[0] == 0.0
-
-
-def test_smolyak_fine_correction_is_paired_prefix_stable_and_lower_variance() -> None:
     adapter = _adapter(deterministic_base=False)
     root_key = jr.key(62)
     whole = adapter.sample(1, jnp.arange(1024), root_key)
@@ -90,9 +87,6 @@ def test_smolyak_fine_correction_is_paired_prefix_stable_and_lower_variance() ->
     correction = whole.fine_samples - whole.coarse_samples
     assert jnp.var(correction) < jnp.var(whole.fine_samples)
     assert jnp.all(whole.costs > 0.0)
-
-
-def test_smolyak_base_and_correction_use_independent_level_namespaces() -> None:
     adapter = _adapter(deterministic_base=False)
     indices = jnp.arange(16)
     root_key = jr.key(63)

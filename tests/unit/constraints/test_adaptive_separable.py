@@ -56,7 +56,7 @@ def _axis(population: Any, index: Any) -> Any:
     return jnp.asarray(values[index].data)
 
 
-def test_separable_population_tracks_logical_and_active_counts() -> None:
+def test_adaptive_separable_scenario_1() -> None:
     policy = PeriodicSeparableCollocation(refresh_every=2)
     domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
     component = domain.component()
@@ -72,9 +72,6 @@ def test_separable_population_tracks_logical_and_active_counts() -> None:
     assert int(population.logical_point_count) == 16 * 14
     assert 0 < int(population.active_logical_point_count) < 16 * 14
     assert tuple(population.axis_age_by_axis) == population.batch.coord_axes_by_label["x"]
-
-
-def test_periodic_separable_refresh_preserves_shape_and_changes_axes() -> None:
     policy = PeriodicSeparableCollocation(refresh_every=1)
     _domain, constraint, functions = _square_constraint(policy)
     initial = policy.initialize(constraint, key=jr.key(1))
@@ -90,9 +87,6 @@ def test_periodic_separable_refresh_preserves_shape_and_changes_axes() -> None:
     assert not jnp.allclose(_axis(refreshed, 0), _axis(initial, 0))
     assert int(refreshed.refresh_count) == 1
     assert int(refreshed.last_refresh) == 1
-
-
-def test_nested_dyadic_axis_materializes_fixed_capacity_metadata() -> None:
     discretization = NestedDyadicAxisSpec(9, initial_level=1).materialize(
         jnp.asarray(-1.0),
         jnp.asarray(1.0),

@@ -14,7 +14,7 @@ SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
 SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
-def test_tensor_product_constructs_vector_and_matrix_products() -> None:
+def test_quantum_composite_scenario_1() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
     one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
@@ -29,24 +29,6 @@ def test_tensor_product_constructs_vector_and_matrix_products() -> None:
         jnp.asarray([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
     )
     assert jnp.allclose(xz.func(), jnp.kron(SIGMA_X, SIGMA_Z))
-
-
-def test_tensor_product_joins_compatible_function_domains() -> None:
-    time = phx.domain.TimeInterval(0.0, 1.0)
-
-    @time.Function("t")
-    def rotating(t: Any) -> Any:
-        return jnp.asarray([jnp.cos(t), jnp.sin(t)])
-
-    fixed = time.Function()(jnp.asarray([1.0, 0.0]))
-    product = phx.operators.tensor_product(rotating, fixed)
-    point = 0.3
-
-    assert product.deps == ("t",)
-    assert jnp.allclose(product.func(point), jnp.kron(rotating.func(point), fixed.func()))
-
-
-def test_embed_operator_places_local_operator_on_selected_subsystem() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     sigma_x = time.Function()(SIGMA_X)
 
@@ -63,9 +45,6 @@ def test_embed_operator_places_local_operator_on_selected_subsystem() -> None:
 
     assert jnp.allclose(first.func(), jnp.kron(SIGMA_X, jnp.eye(3)))
     assert jnp.allclose(second.func(), jnp.kron(jnp.eye(3), SIGMA_X))
-
-
-def test_partial_trace_recovers_product_density_factors() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     factor_a = time.Function()(jnp.asarray([[1.0, 0.2], [0.0, 0.7]], dtype="complex128"))
     factor_b = time.Function()(
@@ -103,9 +82,6 @@ def test_partial_trace_recovers_product_density_factors() -> None:
     assert jnp.allclose(reduced_b.func(), density_b.func(), atol=1e-12)
     assert jnp.allclose(unchanged.func(), product.func(), atol=1e-12)
     assert jnp.allclose(total_trace.func(), 1.0, atol=1e-12)
-
-
-def test_partial_trace_preserves_untraced_subsystem_order() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     densities = []
     for population in (0.2, 0.4, 0.7):
@@ -119,6 +95,21 @@ def test_partial_trace_preserves_untraced_subsystem_order() -> None:
     )
 
     assert jnp.allclose(middle.func(), densities[1].func(), atol=1e-12)
+
+
+def test_tensor_product_joins_compatible_function_domains() -> None:
+    time = phx.domain.TimeInterval(0.0, 1.0)
+
+    @time.Function("t")
+    def rotating(t: Any) -> Any:
+        return jnp.asarray([jnp.cos(t), jnp.sin(t)])
+
+    fixed = time.Function()(jnp.asarray([1.0, 0.0]))
+    product = phx.operators.tensor_product(rotating, fixed)
+    point = 0.3
+
+    assert product.deps == ("t",)
+    assert jnp.allclose(product.func(point), jnp.kron(rotating.func(point), fixed.func()))
 
 
 def test_composite_operators_reject_ambiguous_or_invalid_shapes() -> None:

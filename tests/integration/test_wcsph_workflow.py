@@ -7,7 +7,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 import phydrax as phx
 
@@ -55,24 +54,26 @@ def _initial(amplitude: Any = 0.002) -> Any:
     return position, velocity
 
 
-@pytest.mark.parametrize("solver", [phx.solver.SSPRK33(), phx.solver.SSPRK54()])
-def test_wcsph_solves_through_native_ssprk_methods(solver: Any) -> None:
-    compiled = _compiled(viscosity=0.01)
-    position, velocity = _initial()
-    problem = compiled.as_differential_problem(position, velocity, t0=0.0, t1=0.002)
-    solution = phx.solver.solve_diffrax(
-        problem,
-        save_times=jnp.asarray([0.0, 0.001, 0.002]),
-        solver=solver,
-        dt0=2.0e-4,
-        max_steps=32,
-    )
+def test_wcsph_solves_through_native_ssprk_methods() -> None:
+    for solver in [phx.solver.SSPRK33(), phx.solver.SSPRK54()]:
+        compiled = _compiled(viscosity=0.01)
+        position, velocity = _initial()
+        problem = compiled.as_differential_problem(position, velocity, t0=0.0, t1=0.002)
+        solution = phx.solver.solve_diffrax(
+            problem,
+            save_times=jnp.asarray([0.0, 0.001, 0.002]),
+            solver=solver,
+            dt0=2.0e-4,
+            max_steps=32,
+        )
 
-    assert solution.backend_successful
-    assert solution.states.shape == (3, 8, 3)
-    assert jnp.all(solution.valid)
-    assert jnp.all(jnp.isfinite(solution.states))
-    assert solution.discretization_bundle_id == compiled.discretization_bundle.bundle_id
+        assert solution.backend_successful
+        assert solution.states.shape == (3, 8, 3)
+        assert jnp.all(solution.valid)
+        assert jnp.all(jnp.isfinite(solution.states))
+        assert (
+            solution.discretization_bundle_id == compiled.discretization_bundle.bundle_id
+        )
 
 
 def test_dense_and_cell_wcsph_trajectories_match() -> None:

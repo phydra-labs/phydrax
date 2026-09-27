@@ -38,7 +38,7 @@ def _grid(count: Any) -> Any:
     return points, np.concatenate((np.stack((a, b, c), 1), np.stack((a, c, d), 1)))
 
 
-def test_monitor_escalates_deterministically_from_accept_to_relocate_to_remesh() -> None:
+def test_mesh_motion_monitor_scenario_1() -> None:
     source = _certified(_POINTS, _CELLS)
     monitor = meshing.MeshMotionMonitor(source.mesh)
 
@@ -65,9 +65,6 @@ def test_monitor_escalates_deterministically_from_accept_to_relocate_to_remesh()
     assert folded.decision is Decision.RELOCATE
     assert "uncertified-cells" in folded.reasons
     assert folded.minimum_jacobian_ratio < 0.0
-
-
-def test_monitor_rejects_unrealized_boundaries_and_nonfinite_coordinates() -> None:
     source = _certified(_POINTS, _CELLS)
     monitor = meshing.MeshMotionMonitor(source.mesh)
     coordinates = np.asarray(source.mesh.coordinates)
@@ -81,9 +78,6 @@ def test_monitor_rejects_unrealized_boundaries_and_nonfinite_coordinates() -> No
     rejected = monitor.assess(nonfinite, boundary_residual=0.0)
     assert rejected.decision is Decision.REJECT
     assert rejected.certificate is None
-
-
-def test_advance_untangles_a_folded_mesh_with_a_bit_identical_boundary() -> None:
     source = _certified(_POINTS, _CELLS)
     monitor = meshing.MeshMotionMonitor(source.mesh)
     folded, center = _shifted_center(source, 0.6)
@@ -106,6 +100,34 @@ def test_advance_untangles_a_folded_mesh_with_a_bit_identical_boundary() -> None
     # ty: ignore[unresolved-attribute]
     assert advance.result.audit.passed
     assert advance.transition is None
+    points, cells = _grid(4)
+    source = _certified(points, cells)
+    monitor = meshing.MeshMotionMonitor(source.mesh)
+    squeezed = np.asarray(source.mesh.coordinates) * np.asarray((0.2, 1.0))
+
+    advance = meshing.advance_mesh_motion(
+        monitor, source, squeezed, boundary_residual=0.0
+    )
+
+    assert advance.decision is Decision.REMESH
+    assert not advance.accepted
+    assert advance.adaptation is None
+    assert advance.assessments[0].decision in (Decision.RELOCATE, Decision.REMESH)
+    assert advance.assessments[-1].decision is not Decision.ACCEPT_MOTION
+    # ty: ignore[unresolved-attribute]
+    assert advance.relocation.accepted
+    metric = advance.remesh_metric
+    # ty: ignore[unresolved-attribute]
+    assert metric.scope.source_id == advance.result.mesh.mesh_id
+    # The reference size h = 1/4 per vertex restores isotropic reference cells.
+    np.testing.assert_allclose(
+        # ty: ignore[unresolved-attribute]
+        np.asarray(metric.values)[:, 0, 0],
+        # ty: ignore[unresolved-attribute]
+        np.asarray(metric.values)[:, 1, 1],
+    )
+    # ty: ignore[unresolved-attribute]
+    assert np.all(np.asarray(metric.values)[:, 0, 0] > 1.0)
 
 
 def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted() -> None:
@@ -138,34 +160,3 @@ def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted(
     np.testing.assert_array_equal(
         admitted.result.mesh.coordinates, admitted.relocation.coordinates
     )
-
-
-def test_advance_requests_a_metric_remesh_when_relocation_cannot_recover() -> None:
-    points, cells = _grid(4)
-    source = _certified(points, cells)
-    monitor = meshing.MeshMotionMonitor(source.mesh)
-    squeezed = np.asarray(source.mesh.coordinates) * np.asarray((0.2, 1.0))
-
-    advance = meshing.advance_mesh_motion(
-        monitor, source, squeezed, boundary_residual=0.0
-    )
-
-    assert advance.decision is Decision.REMESH
-    assert not advance.accepted
-    assert advance.adaptation is None
-    assert advance.assessments[0].decision in (Decision.RELOCATE, Decision.REMESH)
-    assert advance.assessments[-1].decision is not Decision.ACCEPT_MOTION
-    # ty: ignore[unresolved-attribute]
-    assert advance.relocation.accepted
-    metric = advance.remesh_metric
-    # ty: ignore[unresolved-attribute]
-    assert metric.scope.source_id == advance.result.mesh.mesh_id
-    # The reference size h = 1/4 per vertex restores isotropic reference cells.
-    np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        np.asarray(metric.values)[:, 0, 0],
-        # ty: ignore[unresolved-attribute]
-        np.asarray(metric.values)[:, 1, 1],
-    )
-    # ty: ignore[unresolved-attribute]
-    assert np.all(np.asarray(metric.values)[:, 0, 0] > 1.0)

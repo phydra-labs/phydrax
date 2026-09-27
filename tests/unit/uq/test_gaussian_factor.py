@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_rectangular_factor_prediction_matches_dense_covariance_algebra() -> None:
+def test_gaussian_factor_scenario_1() -> None:
     mean = jnp.asarray([0.5, -1.0, 0.25])
     root = jnp.asarray([[1.0, 0.0], [0.5, 0.75], [-0.25, 0.4]])
     factor = phx.uq.GaussianFactor(root, factor_id="rectangular-prior")
@@ -42,11 +42,6 @@ def test_rectangular_factor_prediction_matches_dense_covariance_algebra() -> Non
     assert jnp.allclose(moments.cross_covariance, dense_covariance @ matrix.T)
     assert moments.factor.resolved_method == "qr-compression"
     assert bool(moments.valid)
-
-
-def test_rectangular_regression_evaluation_has_zero_input_output_cross_covariance() -> (
-    None
-):
     regression = phx.uq.GaussianRegression(
         jnp.asarray([[1.0, -0.5, 0.25], [0.2, 0.75, -1.0]]),
         jnp.asarray([0.1, -0.2]),
@@ -60,9 +55,6 @@ def test_rectangular_regression_evaluation_has_zero_input_output_cross_covarianc
     assert jnp.allclose(evaluated.mean, regression.matrix @ value + regression.offset)
     assert jnp.allclose(evaluated.covariance, regression.noise_factor.covariance)
     assert bool(evaluated.valid)
-
-
-def test_independent_factor_addition_and_explicit_regularization_are_preserved() -> None:
     covariance = jnp.asarray([[1.5, 0.25], [0.25, 0.5]])
     regularized = phx.uq.gaussian_factor_from_covariance(
         covariance,
@@ -84,9 +76,6 @@ def test_independent_factor_addition_and_explicit_regularization_are_preserved()
     assert summed.rank == 3
     assert bool(regularized.valid)
     assert int(regularized.status) == phx.uq.GAUSSIAN_FACTOR_SUCCESS
-
-
-def test_factor_addition_preserves_invalid_operand_provenance_and_metadata() -> None:
     nonhermitian = phx.uq.gaussian_factor_from_covariance(
         jnp.asarray([[1.0, 0.5], [0.0, 1.0]])
     )
@@ -127,7 +116,7 @@ def test_factor_addition_preserves_invalid_operand_provenance_and_metadata() -> 
     assert regularization_failure.regularization == -0.25
 
 
-def test_invalid_rank_tolerance_precedes_psd_diagnostics() -> None:
+def test_gaussian_factor_scenario_2() -> None:
     covariance = jnp.asarray([[1.0, 0.0], [0.0, -1.0]])
 
     for tolerance in (-1.0, jnp.nan):
@@ -137,9 +126,6 @@ def test_invalid_rank_tolerance_precedes_psd_diagnostics() -> None:
         )
         assert not bool(factor.valid)
         assert int(factor.status) == phx.uq.GAUSSIAN_FACTOR_INVALID_REGULARIZATION
-
-
-def test_singular_and_zero_noise_conditioning_remain_exact() -> None:
     prior = phx.uq.GaussianFactor(jnp.asarray([[1.0, 0.0], [0.0, 0.0]]))
     predicted = phx.uq.predict_affine_gaussian(
         jnp.asarray([0.0, 0.0]),
@@ -180,9 +166,6 @@ def test_singular_and_zero_noise_conditioning_remain_exact() -> None:
     assert jnp.array_equal(zero.covariance, jnp.zeros((2, 2)))
     assert phx.uq.gaussian_factor_quadratic_form(zero, jnp.zeros(2)) == 0.0
     assert jnp.isposinf(phx.uq.gaussian_factor_quadratic_form(zero, jnp.ones(2)))
-
-
-def test_singular_condition_rejects_observations_outside_the_gaussian_support() -> None:
     prior = phx.uq.GaussianFactor(jnp.asarray([[1.0], [0.0]]))
     output = phx.uq.predict_affine_gaussian(
         jnp.zeros(2),
@@ -202,9 +185,6 @@ def test_singular_condition_rejects_observations_outside_the_gaussian_support() 
 
     assert not bool(conditioned.valid)
     assert int(conditioned.status) == phx.uq.CONDITIONAL_GAUSSIAN_INCONSISTENT_CONDITION
-
-
-def test_conditioning_propagates_invalid_input_and_output_factors() -> None:
     invalid_input = phx.uq.gaussian_factor_from_covariance(
         jnp.asarray([[1.0, 0.25], [0.0, 1.0]]),
         hermitian_tolerance=0.0,
@@ -249,9 +229,40 @@ def test_conditioning_propagates_invalid_input_and_output_factors() -> None:
         assert int(evaluated.status) == phx.uq.CONDITIONAL_GAUSSIAN_INVALID_FACTOR
         assert not bool(conditioned.valid)
         assert int(conditioned.status) == phx.uq.CONDITIONAL_GAUSSIAN_INVALID_FACTOR
+    mean = jnp.asarray([0.4, -0.2])
+    covariance = jnp.asarray([[1.2, 0.3], [0.3, 0.8]])
+    prior = phx.uq.gaussian_factor_from_covariance(
+        covariance, rank_tolerance=1e-12, hermitian_tolerance=1e-12
+    )
+    matrix = jnp.asarray([[1.0, -0.5], [0.25, 0.75]])
+    offset = jnp.asarray([0.1, -0.3])
+    noise_covariance = jnp.asarray([[0.2, 0.05], [0.05, 0.15]])
+    noise = phx.uq.gaussian_factor_from_covariance(
+        noise_covariance, rank_tolerance=1e-12, hermitian_tolerance=1e-12
+    )
+    observed = jnp.asarray([0.7, -0.4])
+    output = phx.uq.predict_affine_gaussian(mean, prior, matrix, offset, noise)
+    conditioned = phx.uq.condition_gaussian(
+        mean,
+        prior,
+        output,
+        observed,
+        rank_tolerance=1e-10,
+        support_tolerance=1e-10,
+    )
+
+    output_mean = matrix @ mean + offset
+    innovation_covariance = matrix @ covariance @ matrix.T + noise_covariance
+    gain = covariance @ matrix.T @ jnp.linalg.inv(innovation_covariance)
+    expected_mean = mean + gain @ (observed - output_mean)
+    expected_covariance = covariance - gain @ matrix @ covariance
+
+    assert jnp.allclose(conditioned.mean, expected_mean, rtol=1e-7, atol=1e-7)
+    assert jnp.allclose(conditioned.covariance, expected_covariance, rtol=1e-7, atol=1e-7)
+    assert bool(conditioned.valid)
 
 
-def test_complex_factors_use_hermitian_adjoints_everywhere() -> None:
+def test_gaussian_factor_scenario_3() -> None:
     root = jnp.asarray(
         [[1.0 + 0.5j, 0.2 - 0.1j], [0.3j, 0.8 + 0.4j]],
         dtype=jnp.complex128,
@@ -281,9 +292,6 @@ def test_complex_factors_use_hermitian_adjoints_everywhere() -> None:
         jnp.real(jnp.vdot(residual, jnp.linalg.solve(covariance, residual))),
     )
     assert bool(reconstructed.valid)
-
-
-def test_nonhermitian_dense_input_is_diagnosed_without_silent_symmetrization() -> None:
     covariance = jnp.asarray([[1.0 + 0.0j, 0.0 + 0.5j], [0.0 + 0.5j, 1.0 + 0.0j]])
     factor = phx.uq.gaussian_factor_from_covariance(covariance, hermitian_tolerance=0.0)
 
@@ -292,31 +300,6 @@ def test_nonhermitian_dense_input_is_diagnosed_without_silent_symmetrization() -
     compressed = phx.uq.compress_gaussian_factor(factor)
     assert not bool(compressed.valid)
     assert int(compressed.status) == phx.uq.GAUSSIAN_FACTOR_NON_HERMITIAN
-
-
-def test_qr_compression_has_dense_equivalent_gradients() -> None:
-    root = jnp.asarray([[1.0, 0.25, -0.4, 0.8], [0.1, 1.2, 0.3, -0.2]])
-
-    def compressed_loss(value: Any) -> Any:
-        compressed = phx.uq.compress_gaussian_factor(phx.uq.GaussianFactor(value))
-        return jnp.sum(compressed.covariance**2)
-
-    def dense_loss(value: Any) -> Any:
-        covariance = value @ value.T
-        return jnp.sum(covariance**2)
-
-    compressed = phx.uq.compress_gaussian_factor(phx.uq.GaussianFactor(root))
-    assert compressed.factor.shape == (2, 2)
-    assert jnp.allclose(compressed.covariance, root @ root.T)
-    assert jnp.allclose(
-        jax.grad(compressed_loss)(root),
-        jax.grad(dense_loss)(root),
-        rtol=1e-6,
-        atol=1e-6,
-    )
-
-
-def test_gaussian_modules_are_jittable_pytrees_with_exact_reconstruction() -> None:
     factor = phx.uq.GaussianFactor(
         jnp.asarray([[1.0, 0.0], [0.25, 0.5]]), factor_id="tree-factor"
     )
@@ -361,40 +344,58 @@ def test_gaussian_modules_are_jittable_pytrees_with_exact_reconstruction() -> No
     rebuilt_moments = jax.tree_util.tree_unflatten(moment_structure, moment_leaves)
     assert rebuilt_moments.moments_id == "tree-moments"
     assert jnp.array_equal(rebuilt_moments.cross_covariance, factor.covariance)
-
-
-def test_conditioning_matches_dense_gaussian_formula() -> None:
-    mean = jnp.asarray([0.4, -0.2])
-    covariance = jnp.asarray([[1.2, 0.3], [0.3, 0.8]])
-    prior = phx.uq.gaussian_factor_from_covariance(
-        covariance, rank_tolerance=1e-12, hermitian_tolerance=1e-12
+    inner_noise = phx.uq.GaussianFactor(jnp.asarray([[0.3], [0.1]]))
+    outer_noise = phx.uq.GaussianFactor(jnp.asarray([[0.2], [-0.15]]))
+    inner = phx.uq.GaussianRegression(
+        jnp.asarray([[1.0, 0.25], [-0.5, 0.75]]),
+        jnp.asarray([0.2, -0.1]),
+        inner_noise,
+        regression_id="inner-smoothing-step",
     )
-    matrix = jnp.asarray([[1.0, -0.5], [0.25, 0.75]])
-    offset = jnp.asarray([0.1, -0.3])
-    noise_covariance = jnp.asarray([[0.2, 0.05], [0.05, 0.15]])
-    noise = phx.uq.gaussian_factor_from_covariance(
-        noise_covariance, rank_tolerance=1e-12, hermitian_tolerance=1e-12
+    outer = phx.uq.GaussianRegression(
+        jnp.asarray([[0.8, -0.3], [0.4, 1.1]]),
+        jnp.asarray([-0.2, 0.5]),
+        outer_noise,
+        regression_id="outer-smoothing-step",
     )
-    observed = jnp.asarray([0.7, -0.4])
-    output = phx.uq.predict_affine_gaussian(mean, prior, matrix, offset, noise)
-    conditioned = phx.uq.condition_gaussian(
-        mean,
-        prior,
-        output,
-        observed,
-        rank_tolerance=1e-10,
-        support_tolerance=1e-10,
+    composed = phx.uq.compose_gaussian_regressions(outer, inner)
+    value = jnp.asarray([0.7, -0.4])
+    evaluated = composed(value)
+
+    expected_matrix = outer.matrix @ inner.matrix
+    expected_offset = outer.matrix @ inner.offset + outer.offset
+    expected_covariance = (
+        outer.matrix @ inner_noise.covariance @ outer.matrix.T + outer_noise.covariance
     )
 
-    output_mean = matrix @ mean + offset
-    innovation_covariance = matrix @ covariance @ matrix.T + noise_covariance
-    gain = covariance @ matrix.T @ jnp.linalg.inv(innovation_covariance)
-    expected_mean = mean + gain @ (observed - output_mean)
-    expected_covariance = covariance - gain @ matrix @ covariance
+    assert jnp.allclose(composed.matrix, expected_matrix)
+    assert jnp.allclose(composed.offset, expected_offset)
+    assert jnp.allclose(composed.noise_factor.covariance, expected_covariance)
+    assert jnp.allclose(evaluated.mean, expected_matrix @ value + expected_offset)
+    assert jnp.allclose(evaluated.covariance, expected_covariance)
+    assert composed.resolved_method == "independent-affine-regression-composition"
 
-    assert jnp.allclose(conditioned.mean, expected_mean, rtol=1e-7, atol=1e-7)
-    assert jnp.allclose(conditioned.covariance, expected_covariance, rtol=1e-7, atol=1e-7)
-    assert bool(conditioned.valid)
+
+def test_qr_compression_has_dense_equivalent_gradients() -> None:
+    root = jnp.asarray([[1.0, 0.25, -0.4, 0.8], [0.1, 1.2, 0.3, -0.2]])
+
+    def compressed_loss(value: Any) -> Any:
+        compressed = phx.uq.compress_gaussian_factor(phx.uq.GaussianFactor(value))
+        return jnp.sum(compressed.covariance**2)
+
+    def dense_loss(value: Any) -> Any:
+        covariance = value @ value.T
+        return jnp.sum(covariance**2)
+
+    compressed = phx.uq.compress_gaussian_factor(phx.uq.GaussianFactor(root))
+    assert compressed.factor.shape == (2, 2)
+    assert jnp.allclose(compressed.covariance, root @ root.T)
+    assert jnp.allclose(
+        jax.grad(compressed_loss)(root),
+        jax.grad(dense_loss)(root),
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 def test_rank_aware_triangular_solve_handles_full_rank_singular_and_complex_cases() -> (
@@ -442,36 +443,3 @@ def test_rank_deficient_triangular_solve_has_finite_reverse_rhs_gradient() -> No
 
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.allclose(gradient, jnp.asarray([0.5, 0.0]))
-
-
-def test_gaussian_smoothing_regression_composition_matches_direct_moments() -> None:
-    inner_noise = phx.uq.GaussianFactor(jnp.asarray([[0.3], [0.1]]))
-    outer_noise = phx.uq.GaussianFactor(jnp.asarray([[0.2], [-0.15]]))
-    inner = phx.uq.GaussianRegression(
-        jnp.asarray([[1.0, 0.25], [-0.5, 0.75]]),
-        jnp.asarray([0.2, -0.1]),
-        inner_noise,
-        regression_id="inner-smoothing-step",
-    )
-    outer = phx.uq.GaussianRegression(
-        jnp.asarray([[0.8, -0.3], [0.4, 1.1]]),
-        jnp.asarray([-0.2, 0.5]),
-        outer_noise,
-        regression_id="outer-smoothing-step",
-    )
-    composed = phx.uq.compose_gaussian_regressions(outer, inner)
-    value = jnp.asarray([0.7, -0.4])
-    evaluated = composed(value)
-
-    expected_matrix = outer.matrix @ inner.matrix
-    expected_offset = outer.matrix @ inner.offset + outer.offset
-    expected_covariance = (
-        outer.matrix @ inner_noise.covariance @ outer.matrix.T + outer_noise.covariance
-    )
-
-    assert jnp.allclose(composed.matrix, expected_matrix)
-    assert jnp.allclose(composed.offset, expected_offset)
-    assert jnp.allclose(composed.noise_factor.covariance, expected_covariance)
-    assert jnp.allclose(evaluated.mean, expected_matrix @ value + expected_offset)
-    assert jnp.allclose(evaluated.covariance, expected_covariance)
-    assert composed.resolved_method == "independent-affine-regression-composition"

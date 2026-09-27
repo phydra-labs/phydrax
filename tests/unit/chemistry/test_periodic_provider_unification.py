@@ -93,7 +93,7 @@ def test_generic_provider_returns_complete_periodic_ground_state_payload() -> No
     assert result.header.geometry_id
 
 
-def test_generic_provider_rejects_incomplete_periodic_payload() -> None:
+def test_generic_provider_contracts() -> None:
     properties = (
         phx.chemistry.ElectronicProperty.ENERGY,
         phx.chemistry.ElectronicProperty.STRESS,
@@ -109,9 +109,6 @@ def test_generic_provider_rejects_incomplete_periodic_payload() -> None:
             -1.0,
             cell_vectors=5.0 * np.eye(3),
         )
-
-
-def test_generic_provider_returns_band_structure_payload() -> None:
     task = phx.chemistry.BandStructureTaskPlan(
         np.asarray([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])
     )

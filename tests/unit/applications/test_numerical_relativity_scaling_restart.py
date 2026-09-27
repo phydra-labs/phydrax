@@ -139,7 +139,7 @@ def _epoch(
     )
 
 
-def test_single_device_named_fields_and_authoritative_block_ownership_fillpatch() -> None:
+def test_numerical_relativity_scaling_restart_scenario_1() -> None:
     fixed = NumericalRelativityDistributedPlan(
         "z4c",
         (4, 4, 4),
@@ -186,9 +186,6 @@ def test_single_device_named_fields_and_authoritative_block_ownership_fillpatch(
     assert bool(halo.finite)
     assert not request.required
     assert halo.source_class.shape == halo.valid.shape
-
-
-def test_z4c_and_material_transfers_report_constraints_and_conservation() -> None:
     source = flat_z4c_state((2, 2, 2), grid_id="coarse")
     values = source.values.at[1].set(4.0).at[8].set(0.3)
     transferred, z4c_evidence = Z4cAMRTransferPlan(constraint_tolerance=2.0e-5).prolong(
@@ -232,31 +229,6 @@ def test_z4c_and_material_transfers_report_constraints_and_conservation() -> Non
     )
     assert bool(reflux.qualified)
     np.testing.assert_allclose(reflux.conservation_residual, 0.0, atol=1.0e-7)
-
-
-def test_amr_transfer_binding_content_ids_are_hashable_static_identities() -> None:
-    def bind(source: Any, target: Any) -> Any:
-        return AMRTransferBinding(
-            source,
-            target,
-            source_topology_id="coarse",
-            target_topology_id="fine",
-            source_epoch_id="epoch-0",
-            target_epoch_id="epoch-1",
-            field_name="material",
-            formulation="grhd",
-            transfer_plan_id="transfer",
-            transition_plan_id="transition",
-        )
-
-    source = jnp.arange(4.0)
-    binding = bind(source, 2.0 * source)
-    assert hash(binding) == hash(bind(source, 2.0 * source))
-    assert binding.source_content_id != bind(source + 1.0, 2.0 * source).source_content_id
-    assert eqx.filter_jit(lambda value, _: value + 1.0)(source, binding)[0] == 1.0
-
-
-def test_magnetic_transfer_and_emf_curl_reflux_preserve_divergence() -> None:
     coarse = _bridge(2)
     fine = _bridge(4)
     magnetic = coarse.pack_normal_flux(
@@ -310,6 +282,28 @@ def test_magnetic_transfer_and_emf_curl_reflux_preserve_divergence() -> None:
                 unrelated,
             ),
         )
+
+
+def test_amr_transfer_binding_content_ids_are_hashable_static_identities() -> None:
+    def bind(source: Any, target: Any) -> Any:
+        return AMRTransferBinding(
+            source,
+            target,
+            source_topology_id="coarse",
+            target_topology_id="fine",
+            source_epoch_id="epoch-0",
+            target_epoch_id="epoch-1",
+            field_name="material",
+            formulation="grhd",
+            transfer_plan_id="transfer",
+            transition_plan_id="transition",
+        )
+
+    source = jnp.arange(4.0)
+    binding = bind(source, 2.0 * source)
+    assert hash(binding) == hash(bind(source, 2.0 * source))
+    assert binding.source_content_id != bind(source + 1.0, 2.0 * source).source_content_id
+    assert eqx.filter_jit(lambda value, _: value + 1.0)(source, binding)[0] == 1.0
 
 
 def test_compiled_topology_transition_commits_or_retains_predecessor_on_overflow() -> (

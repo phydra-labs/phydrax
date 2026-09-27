@@ -33,7 +33,7 @@ from phydrax.tensor_network._core import MatrixProductState
 from phydrax.tensor_network._mpo import apply_mpo
 
 
-def test_periodic_schwinger_global_flux_theta_and_gauss_commutator() -> None:
+def test_hamiltonian_gauge_production_closure_scenario_1() -> None:
     model = PeriodicSchwingerModel(
         2,
         maximum_flux=1,
@@ -61,9 +61,6 @@ def test_periodic_schwinger_global_flux_theta_and_gauss_commutator() -> None:
     )
     assert evidence.gauge_invariant
     assert evidence.maximum_residual == 0.0
-
-
-def test_periodic_theta_shift_matches_neighboring_global_flux_sector() -> None:
     parameters = {
         "maximum_flux": 1,
         "lattice_spacing": 0.5,
@@ -88,9 +85,6 @@ def test_periodic_theta_shift_matches_neighboring_global_flux_sector() -> None:
         policy=MaterializationPolicy(max_entries=2000, max_bytes=1 << 20),
     )
     assert jnp.allclose(first_dense, shifted_dense)
-
-
-def test_compact_two_skeleton_dense_mpo_mps_and_gauss_evolution_agree() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     model = CompactU1GaugeModel(
         topology,
@@ -154,9 +148,6 @@ def test_compact_two_skeleton_dense_mpo_mps_and_gauss_evolution_agree() -> None:
     assert prepared.evidence.gauge_preserving
     assert result.evidence.valid
     assert result.evidence.final_leakage <= 1e-12
-
-
-def test_compact_u1_uses_the_two_skeleton_of_three_dimensional_topology() -> None:
     topology = tetrahedral_cell_complex(jnp.asarray(((0, 1, 2, 3),)), 4)
     model = CompactU1GaugeModel(
         topology,
@@ -171,9 +162,6 @@ def test_compact_u1_uses_the_two_skeleton_of_three_dimensional_topology() -> Non
     assert model.plaquette_count == topology.entities(2).count
     assert len(hamiltonian.terms) == model.link_count + model.plaquette_count
     assert compact_u1_gauss_network(model).vertex_count == topology.entities(0).count
-
-
-def test_product_formula_lcu_and_qubitization_counts_are_explicit() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     hamiltonian = compact_u1_hamiltonian(
         CompactU1GaugeModel(

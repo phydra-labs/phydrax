@@ -63,7 +63,7 @@ def _fermion_basis() -> Any:
     )
 
 
-def test_generated_dlr_records_and_meets_requested_tolerance() -> None:
+def test_qft_thermal_green_closure_scenario_1() -> None:
     basis = _fermion_basis()
 
     assert basis.frequencies.shape == (36,)
@@ -84,9 +84,6 @@ def test_generated_dlr_records_and_meets_requested_tolerance() -> None:
                 maximum_bytes=1024,
             ),
         )
-
-
-def test_fermionic_and_bosonic_kernels_are_finite_at_their_boundaries() -> None:
     tau = jnp.asarray([0.0, 2.0, 4.0])
     frequency = jnp.asarray([-2.0, 0.0, 2.0])
 
@@ -96,9 +93,6 @@ def test_fermionic_and_bosonic_kernels_are_finite_at_their_boundaries() -> None:
     assert jnp.all(jnp.isfinite(fermionic))
     assert jnp.all(jnp.isfinite(bosonic))
     assert bosonic[1, 1] == pytest.approx(-0.25)
-
-
-def test_single_and_multiple_poles_round_trip_through_tau_and_matsubara() -> None:
     basis = _fermion_basis()
     poles = jnp.asarray([-1.75, 0.4, 2.2])
     residues = jnp.asarray([0.2, 0.5, 0.3])
@@ -146,7 +140,7 @@ def test_single_and_multiple_poles_round_trip_through_tau_and_matsubara() -> Non
     assert jnp.allclose(evaluate_dlr_tau(derivative, tau), expected_derivative, atol=2e-5)
 
 
-def test_dlr_convolution_moments_and_tail_follow_frequency_algebra() -> None:
+def test_qft_thermal_green_closure_scenario_2() -> None:
     basis = _fermion_basis()
     left = dlr_from_poles(basis, jnp.asarray([-0.6]), jnp.asarray([0.75]), tolerance=2e-6)
     right = dlr_from_poles(basis, jnp.asarray([1.1]), jnp.asarray([0.4]), tolerance=2e-6)
@@ -172,9 +166,6 @@ def test_dlr_convolution_moments_and_tail_follow_frequency_algebra() -> None:
     tail = evaluate_matsubara_tail(moments, high_labels, beta=basis.beta)
     exact = evaluate_dlr_matsubara(left, high_labels)
     assert jnp.allclose(tail, exact, rtol=1e-7, atol=1e-9)
-
-
-def test_scalar_dyson_solve_and_self_energy_extraction_close_the_identity() -> None:
     beta = 5.0
     labels = jnp.arange(-12, 12)
     frequency = matsubara_frequencies(labels, beta=beta, statistics="fermionic")
@@ -191,11 +182,19 @@ def test_scalar_dyson_solve_and_self_energy_extraction_close_the_identity() -> N
     assert jnp.allclose(solved.green.values, expected)
     assert jnp.all(extracted.evidence.valid)
     assert jnp.allclose(extracted.self_energy.values, sigma_values, rtol=1e-6, atol=1e-7)
-
-
-def test_retarded_spectral_physicality_and_sector_channels_keep_invariants_separate() -> (
-    None
-):
+    grid = spectral_grid(-2.0, 2.0, 16)
+    plan = plan_scalar_fermionic_maximum_entropy(
+        grid,
+        alpha=1e-2,
+        expected_first_moment=0.0,
+        maximum_samples=8,
+    )
+    labels = jnp.arange(8)
+    matrix_samples = MatsubaraGreenFunction(
+        4.0, labels, jnp.ones((8, 1, 1), dtype=jnp.complex128)
+    )
+    with pytest.raises(ValueError, match="excludes matrix"):
+        prepare_scalar_fermionic_maximum_entropy(plan, matrix_samples)
     retarded = RetardedGreenFunction(
         jnp.asarray([-1.0, 1.0]),
         -1j * jnp.pi * jnp.ones((2,)),
@@ -227,23 +226,7 @@ def test_retarded_spectral_physicality_and_sector_channels_keep_invariants_separ
     assert jnp.allclose(evaluate_fermionic_thermal_channel(channel, z), 1.0 / (z - 1.0))
 
 
-def test_scalar_maxent_profile_refuses_matrix_continuation() -> None:
-    grid = spectral_grid(-2.0, 2.0, 16)
-    plan = plan_scalar_fermionic_maximum_entropy(
-        grid,
-        alpha=1e-2,
-        expected_first_moment=0.0,
-        maximum_samples=8,
-    )
-    labels = jnp.arange(8)
-    matrix_samples = MatsubaraGreenFunction(
-        4.0, labels, jnp.ones((8, 1, 1), dtype=jnp.complex128)
-    )
-    with pytest.raises(ValueError, match="excludes matrix"):
-        prepare_scalar_fermionic_maximum_entropy(plan, matrix_samples)
-
-
-def test_hubbard_atom_lehmann_sum_has_two_poles_and_unit_spectral_weight() -> None:
+def test_qft_thermal_green_closure_scenario_3() -> None:
     interaction = 4.0
     chemical_potential = interaction / 2.0
     energies = jnp.asarray(
@@ -271,9 +254,6 @@ def test_hubbard_atom_lehmann_sum_has_two_poles_and_unit_spectral_weight() -> No
             6.0,
             maximum_states=3,
         )
-
-
-def test_pade_recovers_a_single_pole_and_reports_rank_failure() -> None:
     beta = 12.0
     labels = jnp.arange(14)
     frequency = matsubara_frequencies(labels, beta=beta, statistics="fermionic")
@@ -303,9 +283,6 @@ def test_pade_recovers_a_single_pole_and_reports_rank_failure() -> None:
     assert int(failed.evidence.status) == int(ContinuationStatus.RANK_DEFICIENT)
     with pytest.raises(ValueError, match="maximum_bytes"):
         plan_pade_continuation(labels.size, maximum_bytes=1)
-
-
-def test_nonnegative_maxent_and_sparse_continuation_obey_sum_rules() -> None:
     beta = 10.0
     labels = jnp.arange(-24, 24)
     grid = spectral_grid(-4.0, 4.0, 64)

@@ -35,7 +35,7 @@ def _control_norm_constraint(limit: Any = 0.5) -> Any:
     )
 
 
-def test_linear_conic_compiler_preserves_soc_block_and_decision_layout() -> None:
+def test_conic_control_scenario_1() -> None:
     compilation = phx.control.compile_linear_conic_control(
         _problem(),
         stage_constraints=(_control_norm_constraint(),),
@@ -52,9 +52,6 @@ def test_linear_conic_compiler_preserves_soc_block_and_decision_layout() -> None
     assert conic.cone.cones[-1].contains(slack, tolerance=1e-12)
     np.testing.assert_allclose(slack, [0.5, -0.25], atol=1e-12)
     assert compilation.quadratic_compilation.constraint_layout.num_inequalities == 0
-
-
-def test_stage_soc_constraint_shape_mismatch_is_rejected() -> None:
     invalid = phx.control.StageSecondOrderConstraint(
         jnp.zeros((2, 1, 1)),
         jnp.zeros((2, 1, 1)),

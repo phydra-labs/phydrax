@@ -101,7 +101,7 @@ def _work(index: Any, parent: Any = None) -> Any:
     )
 
 
-def test_compile_signature_changes_with_species_topology_capacity_and_sharding() -> None:
+def test_dark_sector_epoch_runtime_scenario_1() -> None:
     base = _plan()
     revisions = (
         _plan(species="revised-species"),
@@ -113,9 +113,6 @@ def test_compile_signature_changes_with_species_topology_capacity_and_sharding()
     assert all(
         value.compile_signature_id != base.compile_signature_id for value in revisions
     )
-
-
-def test_fixed_epoch_spills_without_clipping_and_rolls_back_conservation() -> None:
     plan = _plan(work=1, frontier=2)
     initial = empty_dark_sector_epoch_state(plan, epoch_sequence=0)
     work = tuple(_work(index) for index in range(3))

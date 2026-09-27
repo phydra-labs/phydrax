@@ -206,7 +206,7 @@ def _event(plan: Any, particle_capacity: Any = 5) -> Any:
     )
 
 
-def test_sudakov_running_coupling_and_veto_bound_are_certified() -> None:
+def test_dark_shower_scenario_1() -> None:
     plan = _shower_plan()
     channel = plan.channels[0]
     z = jnp.linspace(plan.z_bounds[0], plan.z_bounds[1], 101)
@@ -217,9 +217,6 @@ def test_sudakov_running_coupling_and_veto_bound_are_certified() -> None:
     no_emission = sudakov_no_emission_probability(plan, channel, 10.0, 2.0)
     shorter_interval = sudakov_no_emission_probability(plan, channel, 10.0, 5.0)
     assert 0.0 < no_emission < shorter_interval < 1.0
-
-
-def test_splitting_preserves_ordering_recoil_charge_color_and_four_momentum() -> None:
     plan = _shower_plan()
     original = _event(plan)
     result = evolve_dark_shower_epoch(
@@ -268,9 +265,6 @@ def test_splitting_preserves_ordering_recoil_charge_color_and_four_momentum() ->
     )
     assert not bool(durable.rolled_back)
     assert int(durable.state.work_mask.sum()) == 2
-
-
-def test_split_capacity_is_atomic_and_reports_backpressure() -> None:
     plan = _shower_plan()
     original = _event(plan, particle_capacity=2)
     result = evolve_dark_shower_epoch(

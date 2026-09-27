@@ -26,7 +26,7 @@ def _grid(shape: Any = (3, 3, 3), *, periodic: Any = False) -> Any:
     ).prepare(jnp.asarray([[0.0] * len(shape), [1.0] * len(shape)]))
 
 
-def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable() -> None:
+def test_maxwell_amoeba_scenario_1() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid())
     n0, n1, n2, _ = bridge.cochain.cell_counts
     constitutive = phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
@@ -69,9 +69,6 @@ def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable() -> None
     assert report.electric_constraint_linf < 1e-8
     assert report.magnetic_constraint_linf < 1e-8
     assert report.pml_dissipation >= 0.0
-
-
-def test_periodic_and_bloch_cochain_derivatives_preserve_chain_identity() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid(periodic=True))
     values = jnp.sin(jnp.arange(bridge.cochain.cell_counts[0], dtype="float64"))
     np.testing.assert_allclose(
@@ -83,9 +80,6 @@ def test_periodic_and_bloch_cochain_derivatives_preserve_chain_identity() -> Non
     bloch = phx.solver.maxwell.BlochCochainCalculus(bridge, jnp.asarray([0.2, -0.1, 0.3]))
     np.testing.assert_allclose(bloch.chain_residual(0, values), 0.0, atol=2e-12)
     np.testing.assert_allclose(jnp.abs(bloch.phases), 1.0, atol=2e-12)
-
-
-def test_material_families_are_fail_closed_and_differentiable() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid((2, 2, 2)))
     layout = phx.solver.maxwell.MaxwellCochainLayout(bridge)
     n1 = bridge.cochain.cell_counts[1]
@@ -147,7 +141,7 @@ def test_material_families_are_fail_closed_and_differentiable() -> None:
     )
 
 
-def test_frequency_modes_adjoints_and_reversible_execution() -> None:
+def test_maxwell_amoeba_scenario_2() -> None:
     bridge = phx.discretization.StructuredCochainBridge(_grid((2, 2, 2)))
     runtime = phx.solver.CompatibleMaxwellPlan(bridge).prepare()
     state = runtime.initialize()
@@ -192,9 +186,6 @@ def test_frequency_modes_adjoints_and_reversible_execution() -> None:
         jnp.asarray([0.5, -0.25]),
     )
     assert report.passed
-
-
-def test_tetrahedral_whitney_hodge_is_positive_and_oriented() -> None:
     vertices = jnp.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
@@ -241,9 +232,6 @@ def test_tetrahedral_whitney_hodge_is_positive_and_oriented() -> None:
         0.0,
         atol=0.0,
     )
-
-
-def test_point_cloud_calculus_reproduces_polynomials_and_diffuses_energy() -> None:
     axis = jnp.linspace(-1.0, 1.0, 5)
     x, y = jnp.meshgrid(axis, axis, indexing="ij")
     points = jnp.stack((x.reshape(-1), y.reshape(-1)), axis=1)

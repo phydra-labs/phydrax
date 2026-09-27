@@ -25,7 +25,7 @@ def _manifest() -> Any:
     )
 
 
-def test_normalized_ros_records_lower_to_collection_and_frame_graph() -> None:
+def test_normalized_ros_contracts() -> None:
     profiles = (
         phx.sensing.RosTopicProfile(
             "/scan", "LaserScan", phx.sensing.RosMessageKind.LASER_SCAN, "sensor"
@@ -99,9 +99,6 @@ def test_normalized_ros_records_lower_to_collection_and_frame_graph() -> None:
     ).evaluate(0.5)
     np.testing.assert_allclose(translation, (0.5, 0.0, 0.0))
     assert bool(evidence.successful)
-
-
-def test_normalized_ros_image_camera_imu_odometry_and_joint_profiles() -> None:
     kinds = (
         ("/image", phx.sensing.RosMessageKind.IMAGE),
         ("/camera", phx.sensing.RosMessageKind.CAMERA_INFO),
@@ -173,7 +170,7 @@ def test_normalized_ros_image_camera_imu_odometry_and_joint_profiles() -> None:
     assert angular.metadata["ros_frame_id"] == "sensor"
 
 
-def test_e57_collection_preserves_scan_pose_invalidity_and_image_links() -> None:
+def test_adapters_scenario_1() -> None:
     reference = _manifest()
     contract = phx.SpatialCoordinateContract(
         phx.units.METER,
@@ -248,6 +245,121 @@ def test_e57_collection_preserves_scan_pose_invalidity_and_image_links() -> None
     assert result.scans[0].image_asset_ids == (anchor.asset_id,)
     # ty: ignore[not-subscriptable]
     assert not result.scans[0].points.support.active_mask[1]
+    radar_contract = phx.SpatialCoordinateContract(
+        phx.units.METER,
+        coordinate_system="cartesian",
+        reference_frame="radar-frame",
+    )
+    speed_unit = phx.units.derived_unit(
+        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
+    )
+    acquisition = phx.sensing.FMCWAcquisition(
+        77e9,
+        1e12,
+        1e-6,
+        1e-3,
+        np.zeros((2, 3)),
+        "radar",
+        radar_contract,
+        phx.units.SECOND,
+    )
+    radar = phx.sensing.FMCWTransformPlan(
+        acquisition,
+        8,
+        4,
+        propagation_speed=3e8,
+        propagation_speed_unit=speed_unit,
+    ).evaluate(np.ones((4, 8, 2), dtype=np.complex64))
+    assert radar.range_doppler_channels.shape == (4, 4, 2)
+    assert bool(radar.successful)
+
+    velocity_unit = phx.units.derived_unit(
+        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
+    )
+    radar_profile = phx.sensing.AutomotiveRadarProfile(
+        "radar-frame", phx.units.METER, velocity_unit, phx.units.BARN
+    ).lower(
+        np.asarray(((10.0, 0.1, -2.0, 3.0),)),
+        _manifest(),
+        asset_id="radar-detections",
+    )
+    assert len(radar_profile.assets) == 4
+    assert {asset.field.quantity.name for asset in radar_profile.assets} == {
+        "range",
+        "azimuth",
+        "radial-velocity",
+        "radar-cross-section",
+    }
+
+    axis = phx.measurement.SampleTimeAxis(
+        "sonar-time", np.linspace(0.0, 1.0, 8), phx.units.SECOND
+    )
+    sonar = phx.sensing.SonarAcquisition(
+        np.zeros(3),
+        np.asarray(((0, 0, 0), (0.1, 0, 0))),
+        1.0,
+        speed_unit,
+        axis,
+        phx.SpatialCoordinateContract(
+            phx.units.METER,
+            coordinate_system="cartesian",
+            reference_frame="tank",
+        ),
+        "sonar",
+    )
+    plan = phx.sensing.DelayAndSumBeamformingPlan(sonar, np.asarray(((0.5, 0.0, 0.0),)))
+    waveforms = np.zeros((2, 8))
+    waveforms[:, 4] = 1.0
+    image = plan.evaluate(waveforms)
+    assert image.image.shape == (1,)
+    assert bool(image.successful)
+    contract = phx.SpatialCoordinateContract(
+        phx.units.METER,
+        coordinate_system="cartesian",
+        reference_frame="sensor",
+    )
+    speed_unit = phx.units.derived_unit(
+        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
+    )
+    acquisition = phx.sensing.FMCWAcquisition(
+        77e9,
+        1e12,
+        1e-6,
+        1e-3,
+        np.zeros((1, 3)),
+        "radar",
+        contract,
+        phx.units.SECOND,
+    )
+    with pytest.raises(ValueError, match="fast_samples"):
+        phx.sensing.FMCWTransformPlan(
+            acquisition,
+            0,
+            4,
+            propagation_speed=3e8,
+            propagation_speed_unit=speed_unit,
+        )
+    with pytest.raises(ValueError, match="propagation_speed"):
+        phx.sensing.FMCWTransformPlan(
+            acquisition,
+            8,
+            4,
+            propagation_speed=np.nan,
+            propagation_speed_unit=speed_unit,
+        )
+    axis = phx.measurement.SampleTimeAxis(
+        "sonar", np.asarray((0.0, 1.0)), phx.units.SECOND
+    )
+    with pytest.raises(ValueError, match="sound speed"):
+        phx.sensing.SonarAcquisition(
+            np.zeros(3),
+            np.zeros((1, 3)),
+            np.nan,
+            speed_unit,
+            axis,
+            contract,
+            "sonar",
+        )
 
 
 def test_actual_e57_and_cfradial_adapters_are_bounded(tmp_path: Any) -> None:
@@ -545,124 +657,3 @@ def test_actual_xtf_side_scan_admission(tmp_path: Any) -> None:
         maximum_samples=8,
     )
     np.testing.assert_allclose(result.measurement.field.values, ((1, 2, 3, 4),))
-
-
-def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes() -> None:
-    radar_contract = phx.SpatialCoordinateContract(
-        phx.units.METER,
-        coordinate_system="cartesian",
-        reference_frame="radar-frame",
-    )
-    speed_unit = phx.units.derived_unit(
-        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
-    )
-    acquisition = phx.sensing.FMCWAcquisition(
-        77e9,
-        1e12,
-        1e-6,
-        1e-3,
-        np.zeros((2, 3)),
-        "radar",
-        radar_contract,
-        phx.units.SECOND,
-    )
-    radar = phx.sensing.FMCWTransformPlan(
-        acquisition,
-        8,
-        4,
-        propagation_speed=3e8,
-        propagation_speed_unit=speed_unit,
-    ).evaluate(np.ones((4, 8, 2), dtype=np.complex64))
-    assert radar.range_doppler_channels.shape == (4, 4, 2)
-    assert bool(radar.successful)
-
-    velocity_unit = phx.units.derived_unit(
-        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
-    )
-    radar_profile = phx.sensing.AutomotiveRadarProfile(
-        "radar-frame", phx.units.METER, velocity_unit, phx.units.BARN
-    ).lower(
-        np.asarray(((10.0, 0.1, -2.0, 3.0),)),
-        _manifest(),
-        asset_id="radar-detections",
-    )
-    assert len(radar_profile.assets) == 4
-    assert {asset.field.quantity.name for asset in radar_profile.assets} == {
-        "range",
-        "azimuth",
-        "radial-velocity",
-        "radar-cross-section",
-    }
-
-    axis = phx.measurement.SampleTimeAxis(
-        "sonar-time", np.linspace(0.0, 1.0, 8), phx.units.SECOND
-    )
-    sonar = phx.sensing.SonarAcquisition(
-        np.zeros(3),
-        np.asarray(((0, 0, 0), (0.1, 0, 0))),
-        1.0,
-        speed_unit,
-        axis,
-        phx.SpatialCoordinateContract(
-            phx.units.METER,
-            coordinate_system="cartesian",
-            reference_frame="tank",
-        ),
-        "sonar",
-    )
-    plan = phx.sensing.DelayAndSumBeamformingPlan(sonar, np.asarray(((0.5, 0.0, 0.0),)))
-    waveforms = np.zeros((2, 8))
-    waveforms[:, 4] = 1.0
-    image = plan.evaluate(waveforms)
-    assert image.image.shape == (1,)
-    assert bool(image.successful)
-
-
-def test_sensing_plans_refuse_invalid_physical_and_capacity_contracts() -> None:
-    contract = phx.SpatialCoordinateContract(
-        phx.units.METER,
-        coordinate_system="cartesian",
-        reference_frame="sensor",
-    )
-    speed_unit = phx.units.derived_unit(
-        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
-    )
-    acquisition = phx.sensing.FMCWAcquisition(
-        77e9,
-        1e12,
-        1e-6,
-        1e-3,
-        np.zeros((1, 3)),
-        "radar",
-        contract,
-        phx.units.SECOND,
-    )
-    with pytest.raises(ValueError, match="fast_samples"):
-        phx.sensing.FMCWTransformPlan(
-            acquisition,
-            0,
-            4,
-            propagation_speed=3e8,
-            propagation_speed_unit=speed_unit,
-        )
-    with pytest.raises(ValueError, match="propagation_speed"):
-        phx.sensing.FMCWTransformPlan(
-            acquisition,
-            8,
-            4,
-            propagation_speed=np.nan,
-            propagation_speed_unit=speed_unit,
-        )
-    axis = phx.measurement.SampleTimeAxis(
-        "sonar", np.asarray((0.0, 1.0)), phx.units.SECOND
-    )
-    with pytest.raises(ValueError, match="sound speed"):
-        phx.sensing.SonarAcquisition(
-            np.zeros(3),
-            np.zeros((1, 3)),
-            np.nan,
-            speed_unit,
-            axis,
-            contract,
-            "sonar",
-        )

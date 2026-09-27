@@ -31,16 +31,13 @@ def _feature_graph() -> phx.graph.GraphIR:
     )
 
 
-def test_row_mlp_maps_rows() -> None:
+def test_graph_architectures_scenario_1() -> None:
     mlp = phx.graph.RowMLP(2, 3, width_size=4, depth=2, key=jr.key(0))
 
     out = mlp(jnp.ones((5, 2)))
 
     assert out.shape == (5, 3)
     assert jnp.all(jnp.isfinite(out))
-
-
-def test_mesh_graph_net_outputs_node_predictions() -> None:
     model = phx.graph.MeshGraphNet(
         node_in_size=2,
         edge_in_size=3,
@@ -56,9 +53,6 @@ def test_mesh_graph_net_outputs_node_predictions() -> None:
     assert out.nodes.shape == (4, 1)
     assert out.edges.shape == (4, 8)
     assert jnp.all(jnp.isfinite(out.nodes))
-
-
-def test_mesh_graph_net_preserves_padding_masks() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[0.0], [1.0], [0.0]]),
         edges=jnp.array([[1.0], [0.0]]),
@@ -86,9 +80,6 @@ def test_mesh_graph_net_preserves_padding_masks() -> None:
     assert out.edge_mask is not None
     assert jnp.allclose(out.nodes[2], jnp.zeros((1,)))
     assert jnp.allclose(out.edges[1], jnp.zeros((4,)))
-
-
-def test_mesh_graph_net_wraps_as_domain_graph_model() -> None:
     graph = _feature_graph()
     domain = phx.domain.GraphDomain(graph)
     component = domain.component({"graph": phx.domain.Nodes()})
@@ -108,9 +99,6 @@ def test_mesh_graph_net_wraps_as_domain_graph_model() -> None:
     f = domain.GraphModel(model)
 
     assert f(batch).data.shape == (4, 1)
-
-
-def test_pool_graph_by_cluster_coalesces_edges_and_means_features() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[1.0], [3.0], [5.0], [7.0]]),
         edges=jnp.array([[1.0], [3.0], [9.0]]),

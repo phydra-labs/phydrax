@@ -30,7 +30,7 @@ def _space(*, component_shape: Any = ()) -> Any:
     return phx.discretization.ExplicitPolygonH1Plan(mesh, field).prepare()
 
 
-def test_auto_capability_selects_dense_matrix_free_and_affine_patch_solves() -> None:
+def test_explicit_polygon_h1_compiler_scenario_1() -> None:
     space = _space()
     constraint = phx.discretization.explicit_polygon_h1_dirichlet_constraint(space, "u")
     form = phx.equations.FiniteElementForm(
@@ -60,9 +60,6 @@ def test_auto_capability_selects_dense_matrix_free_and_affine_patch_solves() -> 
         and workset.signature.provider_selection_id is not None
         for workset in compiled._workset_program.worksets
     )
-
-
-def test_tensor_diffusion_uses_prepared_polygon_capability() -> None:
     space = _space()
     state = jnp.linspace(-0.4, 0.7, space.dof_map.global_dof_count)
     scalar = phx.equations.compile_finite_element_problem(
@@ -96,9 +93,6 @@ def test_tensor_diffusion_uses_prepared_polygon_capability() -> None:
         workset.signature.provider_selection_id is not None
         for workset in tensor._workset_program.worksets
     )
-
-
-def test_cell_actions_and_exact_transposes_use_the_same_basis() -> None:
     space = _space(component_shape=(2,))
     region = space.prepare_local_regions(
         space.cell_domain,
@@ -135,7 +129,7 @@ def test_cell_actions_and_exact_transposes_use_the_same_basis() -> None:
     )
 
 
-def test_boundary_load_and_functional_use_exterior_and_cell_worksets() -> None:
+def test_explicit_polygon_h1_compiler_scenario_2() -> None:
     space = _space()
     boundary_form = phx.equations.FiniteElementForm(
         "polygon-boundary",
@@ -171,9 +165,6 @@ def test_boundary_load_and_functional_use_exterior_and_cell_worksets() -> None:
         for workset in boundary._workset_program.worksets
     )
     assert jnp.allclose(compiled_functional.potential(jnp.ones((9,))), 4.0, atol=1e-10)
-
-
-def test_vector_constraint_selects_components_and_unoffered_modes_fail() -> None:
     space = _space(component_shape=(2,))
     constraint = phx.discretization.explicit_polygon_h1_dirichlet_constraint(
         space, "u", components=(0,)

@@ -16,7 +16,7 @@ def _domains() -> Any:
     return state @ phx.domain.TimeInterval(0.0, 1.0) @ observation
 
 
-def test_time_conditioned_likelihood_guidance_adds_exact_score_gradient() -> None:
+def test_advanced_diffusion_guidance_scenario_1() -> None:
     domain = _domains()
     base_function = domain.Function("x", "t")(lambda state, time: -state)
     likelihood = domain.Function("x", "t", "observation")(
@@ -41,9 +41,6 @@ def test_time_conditioned_likelihood_guidance_adds_exact_score_gradient() -> Non
     assert valid
     assert evaluations[0].exactness == "exact"
     assert jnp.allclose(score, expected)
-
-
-def test_classifier_free_guidance_marks_tempered_weights_heuristic() -> None:
     domain = _domains()
     # ty: ignore[possibly-missing-submodule]
     unconditional = phx._score_field.StateTimeScoreField(
@@ -78,9 +75,6 @@ def test_classifier_free_guidance_marks_tempered_weights_heuristic() -> None:
     assert valid
     assert evaluations[0].exactness == "exact"
     assert jnp.allclose(score, jnp.asarray([0.5, -0.5]))
-
-
-def test_general_reverse_problem_uses_operator_noise_and_covariance_divergence() -> None:
     process = phx.stochastic.StateDependentItoDiffusion(
         lambda time, state: -0.1 * state,
         lambda time, state: jnp.diag(0.5 + 0.1 * state**2),

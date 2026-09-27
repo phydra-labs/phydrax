@@ -53,7 +53,7 @@ def _case() -> Any:
     return compiled, arguments, initial
 
 
-def test_adaptive_mpm_retries_transactionally_and_builds_realized_mesh() -> None:
+def test_adaptive_mpm_contracts() -> None:
     compiled, arguments, initial = _case()
     plan = phx.solver.AdaptiveMPMRolloutPlan(
         compiled.dynamics,
@@ -88,9 +88,6 @@ def test_adaptive_mpm_retries_transactionally_and_builds_realized_mesh() -> None
         strict=True,
     ):
         np.testing.assert_allclose(adaptive, scheduled, rtol=1e-11, atol=1e-11)
-
-
-def test_adaptive_mpm_reports_step_capacity_without_partial_failure() -> None:
     compiled, arguments, initial = _case()
     plan = phx.solver.AdaptiveMPMRolloutPlan(
         compiled.dynamics,

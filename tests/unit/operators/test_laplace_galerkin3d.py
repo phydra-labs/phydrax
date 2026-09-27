@@ -35,7 +35,7 @@ def _prepared() -> Any:
     )
 
 
-def test_pair_coverage_gram_symmetry_and_blocked_dense_parity() -> None:
+def test_laplace_galerkin3d_scenario_1() -> None:
     prepared = _prepared()
     report = prepared.assembly_report
     dense = prepared.dense_oracle.matrix
@@ -71,9 +71,6 @@ def test_pair_coverage_gram_symmetry_and_blocked_dense_parity() -> None:
 
     diagonal = phx.linalg.assemble_diagonal(prepared.strong_operator)
     assert jnp.allclose(diagonal, jnp.diag(dense))
-
-
-def test_production_operator_refuses_materialization_and_reports_exact_cost() -> None:
     prepared = _prepared()
     with pytest.raises(phx.linalg.LinearCapabilityError, match="does not support"):
         phx.linalg.materialize(
@@ -88,9 +85,6 @@ def test_production_operator_refuses_materialization_and_reports_exact_cost() ->
     assert estimate.apply_workspace_bytes_per_rhs == (
         prepared.assembly_report.action_workspace_bytes_per_rhs
     )
-
-
-def test_dp0_potential_reconstruction_does_not_apply_area_or_permittivity() -> None:
     prepared = _prepared()
     coefficients = jnp.asarray([2.0, 0.0, -1.0, 0.5])
     potential = prepared.potential(coefficients)

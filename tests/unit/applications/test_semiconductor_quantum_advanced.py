@@ -55,7 +55,7 @@ def _device(*, onsite: Any = 2.0, mu: Any = 2.0) -> Any:
     )
 
 
-def test_optical_phonon_scba_closes_kms_particle_and_energy_ledgers() -> None:
+def test_semiconductor_quantum_advanced_scenario_1() -> None:
     device = _device()
     bath = sq.OpticalPhononBath(
         0.5 * Q, 0.03 * Q, 300.0, bath_id="synthetic weak optical phonon"
@@ -79,9 +79,6 @@ def test_optical_phonon_scba_closes_kms_particle_and_energy_ledgers() -> None:
         jnp.sum(result.energy_currents), jnp.sum(result.phonon_heat), atol=2e-18
     )
     np.testing.assert_allclose(jnp.sum(result.terminal_currents), 0.0, atol=2e-18)
-
-
-def test_unitary_lead_dilation_is_causal_conservative_and_refinable() -> None:
     device = _device()
     times = jnp.asarray([0.0, 1e-17, 2e-17])
     pulse = sq.QuantumPulse(times, jnp.zeros((2, 1)), jnp.zeros((2, 2)))
@@ -102,9 +99,6 @@ def test_unitary_lead_dilation_is_causal_conservative_and_refinable() -> None:
     kernel = sq.lead_memory_kernel(device.left, lags, sites=16)
     np.testing.assert_array_equal(kernel[0], 0.0j)
     assert np.isfinite(np.asarray(kernel[1:])).all()
-
-
-def test_coherent_noise_and_screened_ac_report_independent_physical_gates() -> None:
     device = _device()
     noise = sq.coherent_low_frequency_noise(device, tolerance=2e-5)
     assert bool(noise.successful)

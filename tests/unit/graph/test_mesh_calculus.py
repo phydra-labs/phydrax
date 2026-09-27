@@ -20,7 +20,7 @@ def _right_triangle() -> Any:
     return vertices, faces
 
 
-def test_mesh_geometry_primitives_for_right_triangle() -> None:
+def test_mesh_contracts() -> None:
     vertices, faces = _right_triangle()
 
     assert jnp.allclose(phx.graph.mesh_face_areas(vertices, faces), jnp.array([0.5]))
@@ -36,9 +36,6 @@ def test_mesh_geometry_primitives_for_right_triangle() -> None:
         phx.graph.mesh_vertex_normals(vertices, faces),
         jnp.tile(jnp.array([[0.0, 0.0, 1.0]]), (3, 1)),
     )
-
-
-def test_mesh_cotangent_weights_for_right_triangle() -> None:
     vertices, faces = _right_triangle()
 
     senders, receivers, weights = phx.graph.mesh_cotangent_weights(vertices, faces)
@@ -56,9 +53,6 @@ def test_mesh_cotangent_weights_for_right_triangle() -> None:
     assert lookup[(0, 2)] == lookup[(2, 0)] == 0.5
     assert abs(lookup[(1, 2)]) < 1e-7
     assert abs(lookup[(2, 1)]) < 1e-7
-
-
-def test_mesh_cotangent_weights_refuse_degenerate_face() -> None:
     vertices = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
     faces = jnp.array([[0, 1, 2]], dtype=jnp.int32)
 
@@ -66,23 +60,6 @@ def test_mesh_cotangent_weights_refuse_degenerate_face() -> None:
         phx.graph.mesh_cotangent_weights(vertices, faces)
     with pytest.raises(ValueError, match="degenerate"):
         phx.graph.mesh_to_cotangent_graph(vertices, faces)
-
-
-def test_mesh_to_cotangent_graph_attaches_mass_and_weights() -> None:
-    vertices, faces = _right_triangle()
-
-    bundle = phx.graph.mesh_to_cotangent_graph(vertices, faces)
-
-    assert bundle.graph.num_nodes == 3
-    assert bundle.graph.num_edges == 6
-    assert "mass" in bundle.graph.nodes
-    assert "cotangent_weight" in bundle.graph.edges
-    assert bundle.graph.nodes["mass"].shape == (3,)
-    assert bundle.graph.edges["cotangent_weight"].shape == (6,)
-    assert jnp.allclose(bundle.graph.nodes["mass"], jnp.full((3,), 1.0 / 6.0))
-
-
-def test_mesh_cotangent_laplacian_zero_for_constant_field() -> None:
     vertices, faces = _right_triangle()
     graph = phx.graph.mesh_to_cotangent_graph(vertices, faces).graph
     graph = graph.replace(
@@ -95,9 +72,6 @@ def test_mesh_cotangent_laplacian_zero_for_constant_field() -> None:
     )(graph)
 
     assert jnp.allclose(out.nodes["lap_u"], jnp.zeros((3,)))
-
-
-def test_mesh_cotangent_laplacian_known_linear_field_on_open_triangle() -> None:
     vertices, faces = _right_triangle()
     graph = phx.graph.mesh_to_cotangent_graph(vertices, faces).graph
     graph = graph.replace(
@@ -110,6 +84,17 @@ def test_mesh_cotangent_laplacian_known_linear_field_on_open_triangle() -> None:
     )(graph)
 
     assert jnp.allclose(out.nodes["lap_u"], jnp.array([3.0, -3.0, 0.0]))
+    vertices, faces = _right_triangle()
+
+    bundle = phx.graph.mesh_to_cotangent_graph(vertices, faces)
+
+    assert bundle.graph.num_nodes == 3
+    assert bundle.graph.num_edges == 6
+    assert "mass" in bundle.graph.nodes
+    assert "cotangent_weight" in bundle.graph.edges
+    assert bundle.graph.nodes["mass"].shape == (3,)
+    assert bundle.graph.edges["cotangent_weight"].shape == (6,)
+    assert jnp.allclose(bundle.graph.nodes["mass"], jnp.full((3,), 1.0 / 6.0))
 
 
 def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys() -> None:

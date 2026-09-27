@@ -157,9 +157,7 @@ def _spatial_series() -> Any:
     return dosimetry.TimeActivitySeries(image.measurement, transition), data
 
 
-def test_time_activity_trapezoid_is_six_becquerel_seconds_and_refuses_extrapolation() -> (
-    None
-):
+def test_internal_dosimetry_scenario_1() -> None:
     series, _ = _regional_series()
     result = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -178,9 +176,6 @@ def test_time_activity_trapezoid_is_six_becquerel_seconds_and_refuses_extrapolat
         dosimetry.TimeActivityIntegrationPlan(
             series.time_axis, -1.0, 3.0, phx.units.SECOND
         )
-
-
-def test_time_activity_result_binds_evidence_to_asset_and_radionuclide() -> None:
     series, _ = _regional_series()
     result = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -215,11 +210,6 @@ def test_time_activity_result_binds_evidence_to_asset_and_radionuclide() -> None
         dosimetry.TimeActivityIntegrationResult(
             result.asset, result.transition, wrong_radionuclide
         )
-
-
-def test_regional_s_values_apply_target_by_source_arithmetic_and_preserve_unknown_uncertainty() -> (
-    None
-):
     series, data = _regional_series()
     integrated = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -273,11 +263,6 @@ def test_regional_s_values_apply_target_by_source_arithmetic_and_preserve_unknow
     np.testing.assert_allclose(result.dose_gy, (12.0, 3.0))
     assert result.asset.field.uncertainty is None
     assert result.target_region_ids == ("target-a", "target-b")
-
-
-def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volume() -> (
-    None
-):
     series, data = _spatial_series()
     integrated = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND
@@ -303,9 +288,6 @@ def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volu
     np.testing.assert_allclose(result.dose_gy, expected)
     assert np.all(result.valid_mask)
     assert result.asset.field.uncertainty is None
-
-
-def test_spatial_dosimetry_refuses_wrong_quantity_and_grid() -> None:
     series, data = _spatial_series()
     integrated = dosimetry.TimeActivityIntegrationPlan(
         series.time_axis, 0.0, 3.0, phx.units.SECOND

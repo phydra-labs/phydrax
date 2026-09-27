@@ -68,7 +68,7 @@ def _problem() -> Any:
     return process, mean, variance, score, terminal, reverse
 
 
-def test_reverse_diffusion_recovers_gaussian_moments_and_replays() -> None:
+def test_score_diffusion_scenario_1() -> None:
     process, mean, variance, _, _, reverse = _problem()
     realization = reverse.realize(jr.key(0), (256,))
     first = reverse.solve(realization)
@@ -84,9 +84,21 @@ def test_reverse_diffusion_recovers_gaussian_moments_and_replays() -> None:
     trajectory = first.to_stochastic_trajectory()
     assert trajectory.states.shape == (256, 2, 1)
     assert jnp.array_equal(trajectory.states[:, 0], realization.terminal_states)
+    process, _, _, score, terminal, reverse = _problem()
+    realization = reverse.realize(jr.key(1), (2,))
+    with pytest.raises(ValueError, match="save_times"):
+        reverse.solve(realization, save_times=jnp.asarray([0.0, 1.0]))
 
-
-def test_probability_flow_reuses_continuous_density_contract() -> None:
+    other = phx.transport.ReverseDiffusion(
+        process,
+        score,
+        terminal,
+        score_id="different-score",
+        dt0=0.02,
+        wiener_tolerance=1e-4,
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        other.solve(realization)
     process, mean, variance, score, terminal, _ = _problem()
     system = phx.transport.probability_flow_system(
         process,
@@ -111,27 +123,6 @@ def test_probability_flow_reuses_continuous_density_contract() -> None:
 
     assert result.successful
     assert jnp.allclose(result.log_prob, target.log_prob(points), atol=2e-7, rtol=2e-7)
-
-
-def test_reverse_diffusion_rejects_invalid_realization_and_save_grid() -> None:
-    process, _, _, score, terminal, reverse = _problem()
-    realization = reverse.realize(jr.key(1), (2,))
-    with pytest.raises(ValueError, match="save_times"):
-        reverse.solve(realization, save_times=jnp.asarray([0.0, 1.0]))
-
-    other = phx.transport.ReverseDiffusion(
-        process,
-        score,
-        terminal,
-        score_id="different-score",
-        dt0=0.02,
-        wiener_tolerance=1e-4,
-    )
-    with pytest.raises(ValueError, match="does not match"):
-        other.solve(realization)
-
-
-def test_asymptotic_terminal_reference_remains_explicit() -> None:
     process = phx.stochastic.VariancePreservingDiffusion(2)
     reference = process.asymptotic_terminal_reference()
     assert reference.relationship == "asymptotic"

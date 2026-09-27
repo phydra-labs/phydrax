@@ -27,7 +27,7 @@ def test_complex_pointwise_transforms() -> None:
     assert jnp.allclose(phx.operators.imag_part(matrix).func(point), jnp.imag(value))
 
 
-def test_adjoint_reverses_matrix_product() -> None:
+def test_adjoint_contracts() -> None:
     time = phx.domain.TimeInterval(0.0, 1.0)
     a_value = jnp.asarray([[1.0 + 1.0j, 2.0], [0.0, -1.0j]])
     b_value = jnp.asarray([[0.5, 1.0j], [2.0 - 1.0j, 3.0]])
@@ -37,6 +37,11 @@ def test_adjoint_reverses_matrix_product() -> None:
     left = phx.operators.adjoint(a @ b)
     right = phx.operators.adjoint(b) @ phx.operators.adjoint(a)
     assert jnp.allclose(left.func(), right.func())
+    time = phx.domain.TimeInterval(0.0, 1.0)
+    vector = time.Function()(jnp.asarray([1.0, 2.0j]))
+
+    with pytest.raises(ValueError, match="at least two matrix axes"):
+        phx.operators.adjoint(vector).func()
 
 
 def test_complex_transforms_are_jittable_and_differentiable() -> None:
@@ -51,11 +56,3 @@ def test_complex_transforms_are_jittable_and_differentiable() -> None:
         return transformed.func(0.3)
 
     assert jnp.isfinite(jax.jit(jax.grad(value))(2.0))
-
-
-def test_adjoint_rejects_vector_values() -> None:
-    time = phx.domain.TimeInterval(0.0, 1.0)
-    vector = time.Function()(jnp.asarray([1.0, 2.0j]))
-
-    with pytest.raises(ValueError, match="at least two matrix axes"):
-        phx.operators.adjoint(vector).func()

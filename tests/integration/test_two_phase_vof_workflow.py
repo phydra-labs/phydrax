@@ -102,7 +102,7 @@ def _qualified_static_two_phase() -> Any:
     return discretization, geometry, prepared
 
 
-def test_plic_and_two_phase_state_are_bounded() -> None:
+def test_two_phase_vof_workflow_scenario_1() -> None:
     two_phase, _, continuation = _two_phase()
     view = two_phase.view(continuation.state)
 
@@ -110,9 +110,6 @@ def test_plic_and_two_phase_state_are_bounded() -> None:
     assert bool(view.topology.valid)
     assert jnp.all((view.alpha >= 0.0) & (view.alpha <= 1.0))
     assert jnp.all(view.density > 0.0)
-
-
-def test_consistent_vof_step_preserves_phase_volume_and_divergence() -> None:
     two_phase, method, continuation = _two_phase()
     initial_volume = jnp.sum(continuation.state.liquid_content)
 
@@ -130,9 +127,6 @@ def test_consistent_vof_step_preserves_phase_volume_and_divergence() -> None:
     assert result.accepted_state.evidence.divergence_residual <= 1e-7
     assert result.accepted_state.evidence.alpha_minimum >= -1e-12
     assert result.accepted_state.evidence.alpha_maximum <= 1.0 + 1e-12
-
-
-def test_qualified_static_solid_uses_fluid_content_and_rejects_triple_cut() -> None:
     discretization, geometry, two_phase = _qualified_static_two_phase()
     alpha = jnp.zeros(discretization.cell_shape).at[3:5, 3:5].set(1.0)
     state = two_phase.initial_state(alpha)
@@ -143,9 +137,6 @@ def test_qualified_static_solid_uses_fluid_content_and_rejects_triple_cut() -> N
     triple_cut = alpha.at[0, 0].set(0.5)
     with pytest.raises(ValueError, match="both solid and liquid-gas PLIC"):
         two_phase.initial_state(triple_cut)
-
-
-def test_qualified_static_solid_step_conserves_liquid_and_geometry_identity() -> None:
     discretization, geometry, two_phase = _qualified_static_two_phase()
     alpha = jnp.zeros(discretization.cell_shape).at[3:5, 3:5].set(1.0)
     state = two_phase.initial_state(alpha)
@@ -167,9 +158,6 @@ def test_qualified_static_solid_step_conserves_liquid_and_geometry_identity() ->
     np.testing.assert_allclose(
         jnp.sum(result.accepted_state.state.liquid_content), initial, atol=1.0e-10
     )
-
-
-def test_qualified_static_vof_stale_epoch_rolls_back_atomically() -> None:
     discretization, _, two_phase = _qualified_static_two_phase()
     alpha = jnp.zeros(discretization.cell_shape).at[3:5, 3:5].set(1.0)
     method = phx.applications.two_phase_flow.IncompressibleTwoPhaseVOFMethod(two_phase)

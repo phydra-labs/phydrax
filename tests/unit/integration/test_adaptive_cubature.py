@@ -18,31 +18,30 @@ def _cube_moment(exponents: Any) -> Any:
     return result
 
 
-@pytest.mark.parametrize("dimension", [2, 3])
-@pytest.mark.parametrize("degree", [7, 9, 11, 13])
-def test_genz_malik_rule_satisfies_declared_total_degree(
-    dimension: Any, degree: Any
-) -> None:
-    rule = phx.integration.GenzMalikRule(dimension, degree)
-    points = np.asarray(rule.prepared.points)
-    weights = np.asarray(rule.prepared.weights)
-    embedded = np.asarray(rule.prepared.embedded_weights)
+def test_adaptive_cubature_scenario_1() -> None:
+    for dimension in [2, 3]:
+        for degree in [7, 9, 11, 13]:
+            rule = phx.integration.GenzMalikRule(dimension, degree)
+            points = np.asarray(rule.prepared.points)
+            weights = np.asarray(rule.prepared.weights)
+            embedded = np.asarray(rule.prepared.embedded_weights)
 
-    for exponents in itertools.product(range(degree + 1), repeat=dimension):
-        total_degree = sum(exponents)
-        if total_degree > degree:
-            continue
-        values = np.prod(points ** np.asarray(exponents), axis=1)
-        assert np.isclose(weights @ values, _cube_moment(exponents), atol=2e-10)
-        if total_degree <= degree - 2:
-            assert np.isclose(embedded @ values, _cube_moment(exponents), atol=2e-10)
+            for exponents in itertools.product(range(degree + 1), repeat=dimension):
+                total_degree = sum(exponents)
+                if total_degree > degree:
+                    continue
+                values = np.prod(points ** np.asarray(exponents), axis=1)
+                assert np.isclose(weights @ values, _cube_moment(exponents), atol=2e-10)
+                if total_degree <= degree - 2:
+                    assert np.isclose(
+                        embedded @ values, _cube_moment(exponents), atol=2e-10
+                    )
 
-    assert np.all(np.abs(points) < 1.0)
-    assert np.allclose(np.sum(rule.prepared.split_weights, axis=1), 0.0)
-    assert rule.rule_id == phx.integration.GenzMalikRule(dimension, degree).rule_id
-
-
-def test_adaptive_rule_resource_guards_precede_expansion() -> None:
+            assert np.all(np.abs(points) < 1.0)
+            assert np.allclose(np.sum(rule.prepared.split_weights, axis=1), 0.0)
+            assert (
+                rule.rule_id == phx.integration.GenzMalikRule(dimension, degree).rule_id
+            )
     with pytest.raises(ValueError, match="145 points"):
         phx.integration.GenzMalikRule(4, 9, maximum_points=144)
     with pytest.raises(ValueError, match="maximum_rule_bytes"):
@@ -53,21 +52,6 @@ def test_adaptive_rule_resource_guards_precede_expansion() -> None:
             dimension=2,
             maximum_points=224,
         )
-
-
-def test_tensor_product_rule_shares_embedded_grid() -> None:
-    rule = phx.integration.TensorProductCubatureRule(
-        phx.integration.GaussKronrodRule(15), dimension=2
-    )
-    data = rule.prepared
-    assert rule.num_points == 225
-    assert np.isclose(np.sum(data.weights), 4.0)
-    assert np.isclose(np.sum(data.embedded_weights), 4.0)
-    assert np.allclose(np.sum(data.split_weights, axis=1), 0.0)
-    assert rule.negative_weight_mass == 0.0
-
-
-def test_adaptive_cubature_reports_rule_evidence_on_exact_polynomial() -> None:
     rule = phx.integration.GenzMalikRule(4, 9)
     plan = phx.integration.AdaptiveCubaturePlan(
         rule,
@@ -89,6 +73,65 @@ def test_adaptive_cubature_reports_rule_evidence_on_exact_polynomial() -> None:
     assert estimate.provenance.realization == rule.rule_id
     assert estimate.diagnostics.rule_id == rule.rule_id
     assert estimate.diagnostics.partition.split_indicators.shape == (16, 4)
+    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    target = phx.integration.over(domain.component(), axes="x")
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        throw=False,
+    )
+
+    with pytest.raises(ValueError, match="partial-axis"):
+        phx.integration.integrate(1.0, target, plan)
+    x = phx.domain.ScalarInterval(0.0, 2.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 3.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    target = phx.integration.mean_over(domain.component())
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        absolute_tolerance=1e-10,
+        max_cells=8,
+        throw=False,
+    )
+
+    estimate = phx.integration.integrate(1.0, target, plan)
+
+    assert estimate.successful
+    assert jnp.allclose(estimate.value.data, 1.0, atol=1e-12)
+    assert estimate.error_kind == "ratio-embedded-cubature-indicator"
+    x = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
+    y = phx.domain.ScalarInterval(-1.0, 1.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    base = phx.integration.over(domain.component())
+    target = phx.integration.normalized_density(
+        base,
+        domain.Function("x", "y")(lambda x, y: -30.0 + 0.0 * (x + y)),
+    )
+    function = domain.Function("x")(jnp.abs)
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        absolute_tolerance=1e-6,
+        relative_tolerance=0.0,
+        max_cells=1,
+        throw=False,
+    )
+
+    estimate = phx.integration.integrate(function, target, plan)
+
+    assert estimate.status == int(phx.integration.IntegrationStatus.REFINEMENT_STAGNATION)
+    assert estimate.diagnostics.status == estimate.status
+    assert estimate.diagnostics.num_evaluations == estimate.num_evaluations
+    assert estimate.diagnostics.estimated_error == estimate.error_estimate
+    rule = phx.integration.TensorProductCubatureRule(
+        phx.integration.GaussKronrodRule(15), dimension=2
+    )
+    data = rule.prepared
+    assert rule.num_points == 225
+    assert np.isclose(np.sum(data.weights), 4.0)
+    assert np.isclose(np.sum(data.embedded_weights), 4.0)
+    assert np.allclose(np.sum(data.split_weights, axis=1), 0.0)
+    assert rule.negative_weight_mass == 0.0
 
 
 def test_breakpoints_and_batch_cap_are_observable_contracts() -> None:
@@ -119,7 +162,7 @@ def test_breakpoints_and_batch_cap_are_observable_contracts() -> None:
     assert int(estimate.diagnostics.partition.count) == 2
 
 
-def test_split_indicator_refines_the_difficult_axis() -> None:
+def test_adaptive_cubature_scenario_2() -> None:
     plan = phx.integration.AdaptiveCubaturePlan(
         phx.integration.GenzMalikRule(2, 9),
         absolute_tolerance=1e-14,
@@ -138,9 +181,6 @@ def test_split_indicator_refines_the_difficult_axis() -> None:
     active_widths = widths[partition.active]
 
     assert jnp.min(active_widths[:, 0]) < jnp.min(active_widths[:, 1])
-
-
-def test_initial_evaluation_budget_is_never_overshot() -> None:
     rule = phx.integration.GenzMalikRule(2, 9)
     plan = phx.integration.AdaptiveCubaturePlan(
         rule,
@@ -159,9 +199,6 @@ def test_initial_evaluation_budget_is_never_overshot() -> None:
     )
     assert int(estimate.num_evaluations) == 0
     assert int(estimate.diagnostics.partition.count) == 0
-
-
-def test_nonfinite_integrand_fails_closed() -> None:
     plan = phx.integration.AdaptiveCubaturePlan(
         phx.integration.GenzMalikRule(2, 9), throw=False
     )
@@ -174,7 +211,7 @@ def test_nonfinite_integrand_fails_closed() -> None:
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
 
 
-def test_hyperrectangle_and_scalar_factors_share_one_cubature_layout() -> None:
+def test_adaptive_cubature_scenario_3() -> None:
     # ty: ignore[invalid-argument-type]
     space = phx.domain.HyperRectangle([0.0, 0.0], [1.0, 2.0], label="x")
     time = phx.domain.ScalarInterval(0.0, 1.0, label="t")
@@ -193,9 +230,6 @@ def test_hyperrectangle_and_scalar_factors_share_one_cubature_layout() -> None:
 
     assert estimate.successful
     assert jnp.allclose(estimate.value.data, 13.0 / 3.0, atol=1e-11)
-
-
-def test_physical_breakpoint_is_mapped_to_reference_cube() -> None:
     domain = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     function = domain.Function("x")(lambda x: jnp.abs(x - 1.0))
     rule = phx.integration.GenzMalikRule(1, 9)
@@ -214,36 +248,6 @@ def test_physical_breakpoint_is_mapped_to_reference_cube() -> None:
     assert estimate.successful
     assert jnp.allclose(estimate.value.data, 1.0, atol=1e-12)
     assert int(estimate.num_evaluations) == 2 * rule.num_points
-
-
-def test_adaptive_cubature_supports_jit_vmap_and_parameter_gradients() -> None:
-    plan = phx.integration.AdaptiveCubaturePlan(
-        phx.integration.GenzMalikRule(2, 9),
-        absolute_tolerance=1e-10,
-        max_cells=8,
-        throw=False,
-    )
-    precision = phx.integration.IntegrationPrecisionPolicy()
-
-    def integrate_parameter(parameter: Any) -> Any:
-        return phx.integration.adaptive_cubature_callable(
-            lambda x: parameter * (x[:, 0] ** 2 + x[:, 1] ** 2),
-            plan,
-            precision=precision,
-        ).value
-
-    compiled = jax.jit(integrate_parameter)(jnp.asarray(2.0))
-    mapped = jax.vmap(integrate_parameter)(jnp.asarray([1.0, 2.0]))
-    forward = jax.jacfwd(integrate_parameter)(jnp.asarray(2.0))
-    reverse = jax.jacrev(integrate_parameter)(jnp.asarray(2.0))
-
-    assert jnp.allclose(compiled, 16.0 / 3.0, atol=1e-11)
-    assert jnp.allclose(mapped, jnp.asarray([8.0 / 3.0, 16.0 / 3.0]), atol=1e-11)
-    assert jnp.allclose(forward, 8.0 / 3.0, atol=1e-11)
-    assert jnp.allclose(reverse, 8.0 / 3.0, atol=1e-11)
-
-
-def test_cusp_regression_cannot_report_false_convergence() -> None:
     coefficients = jnp.asarray(
         [0.2660088941584163, 0.4430043456880922, 0.4918098187571035]
     )
@@ -277,6 +281,33 @@ def test_cusp_regression_cannot_report_false_convergence() -> None:
     ) <= tolerance
 
 
+def test_adaptive_cubature_supports_jit_vmap_and_parameter_gradients() -> None:
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        absolute_tolerance=1e-10,
+        max_cells=8,
+        throw=False,
+    )
+    precision = phx.integration.IntegrationPrecisionPolicy()
+
+    def integrate_parameter(parameter: Any) -> Any:
+        return phx.integration.adaptive_cubature_callable(
+            lambda x: parameter * (x[:, 0] ** 2 + x[:, 1] ** 2),
+            plan,
+            precision=precision,
+        ).value
+
+    compiled = jax.jit(integrate_parameter)(jnp.asarray(2.0))
+    mapped = jax.vmap(integrate_parameter)(jnp.asarray([1.0, 2.0]))
+    forward = jax.jacfwd(integrate_parameter)(jnp.asarray(2.0))
+    reverse = jax.jacrev(integrate_parameter)(jnp.asarray(2.0))
+
+    assert jnp.allclose(compiled, 16.0 / 3.0, atol=1e-11)
+    assert jnp.allclose(mapped, jnp.asarray([8.0 / 3.0, 16.0 / 3.0]), atol=1e-11)
+    assert jnp.allclose(forward, 8.0 / 3.0, atol=1e-11)
+    assert jnp.allclose(reverse, 8.0 / 3.0, atol=1e-11)
+
+
 def test_normalized_density_retains_positive_mass_contract() -> None:
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
@@ -300,25 +331,6 @@ def test_normalized_density_retains_positive_mass_contract() -> None:
     assert estimate.error_kind == "ratio-embedded-cubature-indicator"
 
 
-def test_adaptive_cubature_normalizes_component_means_on_nonunit_domains() -> None:
-    x = phx.domain.ScalarInterval(0.0, 2.0, label="x")
-    y = phx.domain.ScalarInterval(0.0, 3.0, label="y")
-    domain = phx.domain.ProductDomain(x, y)
-    target = phx.integration.mean_over(domain.component())
-    plan = phx.integration.AdaptiveCubaturePlan(
-        phx.integration.GenzMalikRule(2, 9),
-        absolute_tolerance=1e-10,
-        max_cells=8,
-        throw=False,
-    )
-
-    estimate = phx.integration.integrate(1.0, target, plan)
-
-    assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 1.0, atol=1e-12)
-    assert estimate.error_kind == "ratio-embedded-cubature-indicator"
-
-
 def test_adaptive_cubature_domain_targets_require_declared_domain_functions() -> None:
     x = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 3.0, label="y")
@@ -338,43 +350,3 @@ def test_adaptive_cubature_domain_targets_require_declared_domain_functions() ->
         phx.integration.integrate(
             undeclared, phx.integration.over(domain.component()), plan
         )
-
-
-def test_adaptive_cubature_rejects_partial_coupled_axes() -> None:
-    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
-    y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
-    domain = phx.domain.ProductDomain(x, y)
-    target = phx.integration.over(domain.component(), axes="x")
-    plan = phx.integration.AdaptiveCubaturePlan(
-        phx.integration.GenzMalikRule(2, 9),
-        throw=False,
-    )
-
-    with pytest.raises(ValueError, match="partial-axis"):
-        phx.integration.integrate(1.0, target, plan)
-
-
-def test_adaptive_cubature_ratio_recertifies_error_and_diagnostics() -> None:
-    x = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    y = phx.domain.ScalarInterval(-1.0, 1.0, label="y")
-    domain = phx.domain.ProductDomain(x, y)
-    base = phx.integration.over(domain.component())
-    target = phx.integration.normalized_density(
-        base,
-        domain.Function("x", "y")(lambda x, y: -30.0 + 0.0 * (x + y)),
-    )
-    function = domain.Function("x")(jnp.abs)
-    plan = phx.integration.AdaptiveCubaturePlan(
-        phx.integration.GenzMalikRule(2, 9),
-        absolute_tolerance=1e-6,
-        relative_tolerance=0.0,
-        max_cells=1,
-        throw=False,
-    )
-
-    estimate = phx.integration.integrate(function, target, plan)
-
-    assert estimate.status == int(phx.integration.IntegrationStatus.REFINEMENT_STAGNATION)
-    assert estimate.diagnostics.status == estimate.status
-    assert estimate.diagnostics.num_evaluations == estimate.num_evaluations
-    assert estimate.diagnostics.estimated_error == estimate.error_estimate

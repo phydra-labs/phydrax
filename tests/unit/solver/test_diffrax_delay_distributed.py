@@ -57,7 +57,7 @@ def _polynomial_problem(order: Any) -> Any:
     )
 
 
-def test_gauss_legendre_distributed_delay_is_polynomially_exact() -> None:
+def test_diffrax_delay_distributed_scenario_1() -> None:
     times = jnp.linspace(0.0, 0.4, 9)
     solution = phx.solver.solve_diffrax_delay(
         _polynomial_problem(2),
@@ -75,6 +75,103 @@ def test_gauss_legendre_distributed_delay_is_polynomially_exact() -> None:
         rtol=2e-9,
         atol=2e-10,
     )
+    lower, upper = 0.25, 0.5
+    term = phx.solver.DistributedDelay(
+        "spread",
+        lambda time, lag, state, args: 1.0 / (upper - lower),
+        (lower, upper),
+        quadrature=phx.integration.ClenshawCurtisRule(level=3),
+    )
+    problem = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["spread"] - jnp.ones_like(state),
+        lambda time, args: jnp.ones((1,)),
+        (term,),
+        t0=0.0,
+        t1=0.35,
+    )
+    solution = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=jnp.asarray([0.0, 0.35]),
+        max_steps=256,
+    )
+    provenance = solution.metadata["distributed_delay_quadrature"][0]
+
+    assert term.node_count == 9
+    assert jnp.all(jnp.isfinite(term.nodes))
+    assert jnp.all(jnp.isfinite(term.weights))
+    assert jnp.allclose(solution.states, 1.0)
+    assert provenance["family"] == "ClenshawCurtisRule"
+    assert provenance["order"] == 9
+    assert provenance["node_count"] == 9
+    assert jnp.allclose(
+        jnp.stack(provenance["effective_lag_range"]),
+        jnp.asarray([lower, upper]),
+    )
+    with pytest.raises(TypeError, match="kernel must be callable"):
+        # ty: ignore[invalid-argument-type]
+        phx.solver.DistributedDelay("bad", 1.0, (0.2, 0.4))
+    with pytest.raises(TypeError, match="reducer must be callable"):
+        phx.solver.DistributedDelay(
+            "bad",
+            lambda time, lag, state, args: 1.0,
+            (0.2, 0.4),
+            # ty: ignore[invalid-argument-type]
+            reducer=1.0,
+        )
+    with pytest.raises(TypeError, match="Unsupported interval rule"):
+        phx.solver.DistributedDelay(
+            "bad",
+            lambda time, lag, state, args: 1.0,
+            (0.2, 0.4),
+            # ty: ignore[invalid-argument-type]
+            quadrature=phx.integration.AdaptiveQuadraturePlan(),
+        )
+    with pytest.raises(ValueError, match="bounds must be scalar"):
+        phx.solver.DistributedDelay(
+            "bad",
+            lambda time, lag, state, args: 1.0,
+            (jnp.asarray([0.2]), 0.4),
+        )
+    with pytest.raises(Exception, match="finite and exceed"):
+        phx.solver.DistributedDelay(
+            "bad",
+            lambda time, lag, state, args: 1.0,
+            (0.4, 0.4),
+        )
+    with pytest.raises(Exception, match="finite and nonnegative"):
+        phx.solver.DistributedDelay(
+            "bad",
+            lambda time, lag, state, args: 1.0,
+            (jnp.nan, 0.4),
+        )
+    open_rule = phx.solver.DistributedDelay(
+        "open_rule",
+        lambda time, lag, state, args: 1.0,
+        (0.0, 0.4),
+        quadrature=phx.integration.GaussLegendreRule(2),
+    )
+    assert open_rule.minimum_delay > 0.0
+    with pytest.raises(Exception, match="positive lags"):
+        phx.solver.DistributedDelay(
+            "bad",
+            lambda time, lag, state, args: 1.0,
+            (0.0, 0.4),
+            quadrature=phx.integration.ClenshawCurtisRule(level=2),
+        )
+
+    malformed = phx.solver.DistributedDelay(
+        "malformed",
+        lambda time, lag, state, args: jnp.ones((1,)),
+        (0.2, 0.4),
+    )
+    with pytest.raises(ValueError, match="exact state shape"):
+        phx.solver.DelayDifferentialProblem(
+            lambda time, state, memory, args: state,
+            lambda time, args: jnp.ones((2,)),
+            (malformed,),
+            t0=0.0,
+            t1=0.1,
+        )
 
 
 def test_distributed_delay_recovers_exponential_matrix_trajectory() -> None:
@@ -178,41 +275,6 @@ def test_mixed_point_and_distributed_terms_preserve_names_and_provenance() -> No
     assert jnp.allclose(effective_upper, spread.maximum_delay)
 
 
-def test_existing_fixed_interval_rule_materializes_without_parallel_rule_path() -> None:
-    lower, upper = 0.25, 0.5
-    term = phx.solver.DistributedDelay(
-        "spread",
-        lambda time, lag, state, args: 1.0 / (upper - lower),
-        (lower, upper),
-        quadrature=phx.integration.ClenshawCurtisRule(level=3),
-    )
-    problem = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["spread"] - jnp.ones_like(state),
-        lambda time, args: jnp.ones((1,)),
-        (term,),
-        t0=0.0,
-        t1=0.35,
-    )
-    solution = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=jnp.asarray([0.0, 0.35]),
-        max_steps=256,
-    )
-    provenance = solution.metadata["distributed_delay_quadrature"][0]
-
-    assert term.node_count == 9
-    assert jnp.all(jnp.isfinite(term.nodes))
-    assert jnp.all(jnp.isfinite(term.weights))
-    assert jnp.allclose(solution.states, 1.0)
-    assert provenance["family"] == "ClenshawCurtisRule"
-    assert provenance["order"] == 9
-    assert provenance["node_count"] == 9
-    assert jnp.allclose(
-        jnp.stack(provenance["effective_lag_range"]),
-        jnp.asarray([lower, upper]),
-    )
-
-
 def test_temporal_convergence_is_independent_of_quadrature_refinement() -> None:
     terminal = jnp.asarray([0.4])
     step_sizes = (0.1, 0.05, 0.025)
@@ -282,74 +344,6 @@ def test_kernel_and_interval_endpoints_support_jit_vmap_and_grad() -> None:
         (batched[:, 2] - batched[:, 1]) + 0.5 * (batched[:, 2] ** 2 - batched[:, 1] ** 2)
     )
     assert jnp.allclose(jax.vmap(terminal)(batched), batched_expected, atol=2e-9)
-
-
-def test_distributed_delay_validates_rule_kernel_shape_and_lag_bounds() -> None:
-    with pytest.raises(TypeError, match="kernel must be callable"):
-        # ty: ignore[invalid-argument-type]
-        phx.solver.DistributedDelay("bad", 1.0, (0.2, 0.4))
-    with pytest.raises(TypeError, match="reducer must be callable"):
-        phx.solver.DistributedDelay(
-            "bad",
-            lambda time, lag, state, args: 1.0,
-            (0.2, 0.4),
-            # ty: ignore[invalid-argument-type]
-            reducer=1.0,
-        )
-    with pytest.raises(TypeError, match="Unsupported interval rule"):
-        phx.solver.DistributedDelay(
-            "bad",
-            lambda time, lag, state, args: 1.0,
-            (0.2, 0.4),
-            # ty: ignore[invalid-argument-type]
-            quadrature=phx.integration.AdaptiveQuadraturePlan(),
-        )
-    with pytest.raises(ValueError, match="bounds must be scalar"):
-        phx.solver.DistributedDelay(
-            "bad",
-            lambda time, lag, state, args: 1.0,
-            (jnp.asarray([0.2]), 0.4),
-        )
-    with pytest.raises(Exception, match="finite and exceed"):
-        phx.solver.DistributedDelay(
-            "bad",
-            lambda time, lag, state, args: 1.0,
-            (0.4, 0.4),
-        )
-    with pytest.raises(Exception, match="finite and nonnegative"):
-        phx.solver.DistributedDelay(
-            "bad",
-            lambda time, lag, state, args: 1.0,
-            (jnp.nan, 0.4),
-        )
-    open_rule = phx.solver.DistributedDelay(
-        "open_rule",
-        lambda time, lag, state, args: 1.0,
-        (0.0, 0.4),
-        quadrature=phx.integration.GaussLegendreRule(2),
-    )
-    assert open_rule.minimum_delay > 0.0
-    with pytest.raises(Exception, match="positive lags"):
-        phx.solver.DistributedDelay(
-            "bad",
-            lambda time, lag, state, args: 1.0,
-            (0.0, 0.4),
-            quadrature=phx.integration.ClenshawCurtisRule(level=2),
-        )
-
-    malformed = phx.solver.DistributedDelay(
-        "malformed",
-        lambda time, lag, state, args: jnp.ones((1,)),
-        (0.2, 0.4),
-    )
-    with pytest.raises(ValueError, match="exact state shape"):
-        phx.solver.DelayDifferentialProblem(
-            lambda time, state, memory, args: state,
-            lambda time, args: jnp.ones((2,)),
-            (malformed,),
-            t0=0.0,
-            t1=0.1,
-        )
 
 
 def test_non_euclidean_distributed_delay_requires_valid_reducer() -> None:

@@ -57,9 +57,7 @@ def _base_method() -> Any:
     return CallableFixedStepMethod(_base_step, "passive-tracer-test-base")
 
 
-def test_fixed_step_wrapper_accepts_base_and_tracer_atomically_and_preserves_evidence() -> (
-    None
-):
+def test_fixed_step_contracts() -> None:
     discretization, transport = _transport()
     dtype = transport.tracer_space.vector_space.dtype
     velocity = (jnp.zeros(discretization.face_layouts[0].shape, dtype=dtype),)
@@ -88,9 +86,9 @@ def test_fixed_step_wrapper_accepts_base_and_tracer_atomically_and_preserves_evi
     np.testing.assert_array_equal(result.transform_correction_norm, 0.125)
     assert method.velocity_provider_id == "test-zero-velocity"
     assert method.method_id
-
-
-def test_fixed_step_wrapper_rolls_back_tracer_when_base_rejects() -> None:
+    _, transport = _transport()
+    with pytest.raises(ValueError, match="velocity_provider_id"):
+        MACPassiveTracerFixedStepMethod(_base_method(), transport, lambda state: (), "")
     discretization, transport = _transport()
     dtype = transport.tracer_space.vector_space.dtype
     velocity = (jnp.full(discretization.face_layouts[0].shape, 0.3, dtype=dtype),)
@@ -114,9 +112,6 @@ def test_fixed_step_wrapper_rolls_back_tracer_when_base_rejects() -> None:
     assert not jnp.array_equal(result.candidate_state.tracer, tracer)
     np.testing.assert_array_equal(result.accepted_state.base_state, state.base_state)
     np.testing.assert_array_equal(result.accepted_state.tracer, state.tracer)
-
-
-def test_fixed_step_wrapper_rolls_back_successful_base_when_tracer_fails() -> None:
     discretization, transport = _transport()
     dtype = transport.tracer_space.vector_space.dtype
     nonfinite_velocity = (
@@ -144,9 +139,3 @@ def test_fixed_step_wrapper_rolls_back_successful_base_when_tracer_fails() -> No
     np.testing.assert_array_equal(result.candidate_state.base_state, 8.0)
     np.testing.assert_array_equal(result.accepted_state.base_state, state.base_state)
     np.testing.assert_array_equal(result.accepted_state.tracer, state.tracer)
-
-
-def test_fixed_step_wrapper_requires_explicit_velocity_provider_identity() -> None:
-    _, transport = _transport()
-    with pytest.raises(ValueError, match="velocity_provider_id"):
-        MACPassiveTracerFixedStepMethod(_base_method(), transport, lambda state: (), "")

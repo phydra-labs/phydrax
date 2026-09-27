@@ -52,7 +52,7 @@ def _context() -> Any:
     return background, growth, power
 
 
-def test_limber_density_bias_scaling_and_lensing_finiteness() -> None:
+def test_cosmology_observables_scenario_1() -> None:
     background, _, power = _context()
     distance = cosmology.FLRWDistancePlan(light_speed=1.0, order=64)
     grid = cosmology.RadialGrid(jnp.linspace(0.1, 0.9, 48))
@@ -74,9 +74,6 @@ def test_limber_density_bias_scaling_and_lensing_finiteness() -> None:
     lensing_prediction = lensing_plan.predict(background, distance, power, (lensing,))
     assert bool(lensing_prediction.successful)
     assert jnp.all(lensing_prediction.values >= 0.0)
-
-
-def test_linear_kaiser_multipoles_and_ap_identity() -> None:
     background, growth, power = _context()
     distance = cosmology.FLRWDistancePlan(light_speed=1.0, order=64)
     plan = cosmology.LinearRSDMultipolePlan(jnp.asarray([0.1, 0.2, 0.5]), mu_order=64)

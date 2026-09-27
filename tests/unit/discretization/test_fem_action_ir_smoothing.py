@@ -21,7 +21,7 @@ def _tri_mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_finite_element_form_lowers_to_typed_actions_and_worksets() -> None:
+def test_fem_action_ir_smoothing_scenario_1() -> None:
     mesh = _tri_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)
@@ -44,9 +44,6 @@ def test_finite_element_form_lowers_to_typed_actions_and_worksets() -> None:
     assert all(workset.entity_indices.size for workset in workset_program.worksets)
     assert len(workset_program.worksets) == 2
     assert sum(workset.action_indices.size for workset in workset_program.worksets) == 2
-
-
-def test_high_order_tensor_family_partition_unity_and_sum_factorization() -> None:
     family = phx.discretization.fem.ReferenceNodalFamily(
         "quadrilateral", 3, node_set="gauss-lobatto"
     )
@@ -69,9 +66,6 @@ def test_high_order_tensor_family_partition_unity_and_sum_factorization() -> Non
         (3, 6),
         (6, 8),
     )
-
-
-def test_edge_and_node_smoothing_partition_patch_and_rigid_modes() -> None:
     mesh = _tri_mesh()
     smoothing = phx.discretization.fem.smoothing
     constitutive = smoothing.plane_stress_matrix(1.0, 0.3)
@@ -107,7 +101,7 @@ def test_edge_and_node_smoothing_partition_patch_and_rigid_modes() -> None:
     assert jnp.max(shifted.affine_reproduction_defect) > 1.0e-3
 
 
-def test_q4_plate_smoothing_keeps_channel_partitions_independent() -> None:
+def test_fem_action_ir_smoothing_scenario_2() -> None:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     block = phx.discretization.CellBlock(
         "quads", "quadrilateral", jnp.asarray([[0, 1, 2, 3]], dtype=jnp.int32)
@@ -120,9 +114,6 @@ def test_q4_plate_smoothing_keeps_channel_partitions_independent() -> None:
     assert channels.bending_gradient.shape == (3, 4, 2)
     assert channels.shear_average.shape == (1, 4)
     assert channels.nonlinear_gradient.shape == (3, 4, 2)
-
-
-def test_fully_smoothed_axisymmetric_stiffness_and_mass_are_symmetric() -> None:
     vertices = jnp.asarray([[1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0]])
     block = phx.discretization.CellBlock(
         "quads", "quadrilateral", jnp.asarray([[0, 1, 2, 3]], dtype=jnp.int32)
@@ -139,9 +130,6 @@ def test_fully_smoothed_axisymmetric_stiffness_and_mass_are_symmetric() -> None:
     assert jnp.allclose(stiffness, jnp.swapaxes(stiffness, -1, -2))
     assert jnp.allclose(mass, jnp.swapaxes(mass, -1, -2))
     assert jnp.all(jnp.linalg.eigvalsh(mass) >= -1.0e-12)
-
-
-def test_local_implicit_material_uses_implicit_jvp() -> None:
     material = phx.equations.fem.LocalImplicitMaterial(
         lambda state, target: state**2 - target,
         lambda state, target: phx.equations.ConstitutiveResponse(state, state),
@@ -205,7 +193,7 @@ def test_time_law_schedule_and_uniform_bisection_are_transactional() -> None:
     )
 
 
-def test_element_partial_and_p_transfer_operators_are_consistent() -> None:
+def test_fem_action_ir_smoothing_scenario_3() -> None:
     local_matrix = jnp.asarray([[[2.0, -1.0], [-1.0, 2.0]], [[2.0, -1.0], [-1.0, 2.0]]])
     gathers = jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32)
     element = phx.sparse.ElementTensorOperator(local_matrix, gathers, gathers, 3, 3)
@@ -239,9 +227,6 @@ def test_element_partial_and_p_transfer_operators_are_consistent() -> None:
     transfer = phx.discretization.fem.quadrilateral_p_transfer(coarse, fine)
     constant = jnp.ones((4,))
     assert jnp.allclose(transfer.prolong(constant), 1.0)
-
-
-def test_application_model_primitives_are_executable() -> None:
     cpfem = phx.applications.crystal_plasticity
     material = cpfem.CrystalPlasticityModel(
         (
@@ -270,9 +255,6 @@ def test_application_model_primitives_are_executable() -> None:
     assert contact_law.capabilities
     assert barrier > 0.0
     assert force_magnitude > 0.0
-
-
-def test_partition_and_local_adaptation_have_stable_routes() -> None:
     mesh = _tri_mesh()
     partition = phx.discretization.partition_cells_contiguous(mesh, 2)
     marked = phx.discretization.fem.maximum_mark(

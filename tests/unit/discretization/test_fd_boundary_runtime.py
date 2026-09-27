@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_cell_centered_dirichlet_neumann_and_robin_ghost_relations() -> None:
+def test_fd_boundary_runtime_scenario_1() -> None:
     values = jnp.asarray([1.0, 2.0, 3.0])
     dirichlet = phx.discretization.CellGhostBoundary(
         0,
@@ -51,9 +51,6 @@ def test_cell_centered_dirichlet_neumann_and_robin_ghost_relations() -> None:
         + (robin_values[-1] - values[-1]) / 0.5,
         8.0,
     )
-
-
-def test_periodic_ghosts_wrap_without_physical_boundary_data() -> None:
     runtime = phx.discretization.CellGhostBoundary(
         0,
         "periodic",
@@ -64,9 +61,6 @@ def test_periodic_ghosts_wrap_without_physical_boundary_data() -> None:
     result = runtime.fill(jnp.asarray([1.0, 2.0, 3.0]), jnp.nan, jnp.nan)
 
     assert jnp.allclose(result, jnp.asarray([3.0, 1.0, 2.0, 3.0, 1.0]))
-
-
-def test_nodal_runtime_sets_only_dirichlet_boundary_entities() -> None:
     runtime = phx.discretization.NodalBoundaryRuntime(
         0,
         "dirichlet",

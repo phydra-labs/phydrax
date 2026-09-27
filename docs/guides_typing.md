@@ -229,6 +229,12 @@ annotates all parameters and its return type. Only line-local
 suppressions are limited to deliberate negative tests, runtime-dynamic or external
 provider contracts that static stubs cannot express, and proven checker/stub defects.
 
+Negative tests may pair a line-local `ty: ignore[rule]` with the corresponding
+runtime refusal. This makes one case prove both the static consumer contract and
+the production boundary check; the unused-suppression gate detects a weakened
+static contract. Test fixtures and case factories remain precisely typed rather
+than erasing their inputs or results to `Any`. See [Testing Phydrax](guides_testing.md).
+
 The installed distribution is typed too: the wheel carries the PEP 561
 `py.typed` marker, and
 

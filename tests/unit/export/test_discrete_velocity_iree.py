@@ -210,7 +210,7 @@ def _install_fake_save(
     return calls
 
 
-def test_d2v_iree_modes_have_one_fixed_ordered_heterogeneous_abi() -> None:
+def test_d2v_iree_contracts() -> None:
     runtime, binding = _runtime_and_binding()
     state = _state(runtime)
     conserved = runtime.method.moments(state).conserved
@@ -285,6 +285,17 @@ def test_d2v_iree_modes_have_one_fixed_ordered_heterogeneous_abi() -> None:
             mode="one-step",
             step_count=2,
         )
+    runtime, binding = _runtime_and_binding()
+    _, foreign_binding = _runtime_and_binding(model_offset=0.1)
+    contract = d2v_iree.prepare_discrete_velocity_iree_contract(
+        runtime,
+        binding,
+        _state(runtime),
+        host_id="host-a",
+    )
+
+    with pytest.raises(ValueError, match="host, backend, or artifact identity"):
+        contract.require_compatible(runtime, foreign_binding, host_id="host-a")
 
 
 def test_d2v_iree_native_and_export_boundaries_agree_for_accept_and_reject(
@@ -409,17 +420,3 @@ def test_d2v_iree_refuses_parity_or_backend_identity_changes(
             host_id="host-a",
         )
     assert len(calls) == 1
-
-
-def test_d2v_iree_refuses_foreign_frozen_artifact_identity() -> None:
-    runtime, binding = _runtime_and_binding()
-    _, foreign_binding = _runtime_and_binding(model_offset=0.1)
-    contract = d2v_iree.prepare_discrete_velocity_iree_contract(
-        runtime,
-        binding,
-        _state(runtime),
-        host_id="host-a",
-    )
-
-    with pytest.raises(ValueError, match="host, backend, or artifact identity"):
-        contract.require_compatible(runtime, foreign_binding, host_id="host-a")

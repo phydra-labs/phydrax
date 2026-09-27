@@ -9,7 +9,7 @@ from opt_einsum import contract
 import phydrax as phx
 
 
-def test_nematic_basis_is_orthonormal_symmetric_and_traceless() -> None:
+def test_nematic_scenario_1() -> None:
     basis = phx.equations.NematicTensorBasis(3)
     compact = jnp.asarray((0.2, -0.1, 0.05, 0.03, -0.02))
     tensor = basis.decode(compact)
@@ -22,9 +22,6 @@ def test_nematic_basis_is_orthonormal_symmetric_and_traceless() -> None:
         jnp.eye(5),
         atol=2e-15,
     )
-
-
-def test_landau_de_gennes_molecular_field_and_electric_activity_are_finite() -> None:
     basis = phx.equations.NematicTensorBasis(3)
     closure = phx.equations.LandauDeGennesClosure(basis)
     parameters = phx.equations.LandauDeGennesParameters(
@@ -63,9 +60,6 @@ def test_landau_de_gennes_molecular_field_and_electric_activity_are_finite() -> 
     assert constitutive.successful
     np.testing.assert_allclose(fields.trace_residual, 0.0, atol=2e-15)
     assert jnp.all(jnp.isfinite(constitutive.active_stress))
-
-
-def test_fixed_anchoring_does_not_require_boundary_normals() -> None:
     basis = phx.equations.NematicTensorBasis(3)
     preferred = jnp.zeros((2, basis.component_count))
     plan = phx.equations.NematicAnchoringPlan(

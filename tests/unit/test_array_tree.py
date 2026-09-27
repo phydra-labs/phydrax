@@ -22,7 +22,7 @@ def _mixed_tree() -> Any:
     }
 
 
-def test_mixed_array_tree_schema_round_trips_and_records_intrinsic_metadata() -> None:
+def test_array_tree_scenario_1() -> None:
     tree = _mixed_tree()
     schema = ArrayPyTreeSchema.from_tree(tree, case_ndim=1)
 
@@ -53,9 +53,6 @@ def test_mixed_array_tree_schema_round_trips_and_records_intrinsic_metadata() ->
     assert schema.storage_bytes((3,)) == sum(
         np.asarray(value).nbytes for value in jax.tree_util.tree_leaves(tree)
     )
-
-
-def test_finite_mask_and_case_selection_preserve_leaf_dtypes_and_shapes() -> None:
     tree = _mixed_tree()
     schema = ArrayPyTreeSchema.from_tree(tree, case_ndim=1)
     zeros = schema.zeros((3,))
@@ -87,9 +84,6 @@ def test_finite_mask_and_case_selection_preserve_leaf_dtypes_and_shapes() -> Non
         jnp.asarray([[1.0, 2.0], [0.0, 0.0], [5.0, 6.0]]),
     )
     assert selected["zero"].shape == (3, 0, 2)
-
-
-def test_zero_sized_case_axes_remain_fixed_shape() -> None:
     tree = {
         "flags": jnp.zeros((0,), dtype="bool"),
         "values": jnp.zeros((0, 2), dtype=jnp.float32),

@@ -52,7 +52,7 @@ def _inputs(structure: Any, definition: Any, load: Any, rest_length: Any) -> Any
     )
 
 
-def test_product_state_geometry_composes_euclidean_blocks() -> None:
+def test_member_network_axial_scenario_1() -> None:
     geometry = phx.metrix.ProductStateGeometry(
         (
             phx.metrix.ProductStateGeometryBlock(
@@ -68,30 +68,6 @@ def test_product_state_geometry_composes_euclidean_blocks() -> None:
     assert bool(geometry.contains(state))
     assert jnp.allclose(geometry.retract(state, step), state + step)
     assert geometry.split_point(state)[0] == pytest.approx(jnp.asarray((1.0, 2.0)))
-
-
-def test_axial_member_equilibrium_matches_closed_form_and_derivative() -> None:
-    structure, definition, problem, initial = _axial_problem()
-    inputs = _inputs(structure, definition, 10.0, 1.0)
-    result = mn.member_network_equilibrium(problem, inputs, initial)
-    assert result.successful
-    assert result.state.kinematics.positions[1, 0] == pytest.approx(1.1, abs=1.0e-8)
-    assert result.state.assembly.axial_force[0] == pytest.approx(10.0, abs=1.0e-8)
-    assert result.diagnostics.residual_norm <= 1.0e-8
-
-    plan = mn.plan_member_network(problem, inputs, initial)
-
-    def displacement(load: Any) -> Any:
-        dynamic = _inputs(structure, definition, load, 1.0)
-        solved = mn.solve_member_network(
-            mn.prepare_member_network(plan, dynamic, initial)
-        )
-        return solved.state.kinematics.positions[1, 0]
-
-    assert jax.grad(displacement)(jnp.asarray(10.0)) == pytest.approx(0.01, rel=1.0e-5)
-
-
-def test_tension_only_cable_slackens_and_retensions_with_active_set_evidence() -> None:
     structure, definition, problem, initial = _axial_problem(cable=True, rest_length=1.1)
     slack_inputs = _inputs(structure, definition, 0.0, 1.1)
     plan = mn.plan_member_network(problem, slack_inputs, initial)
@@ -114,9 +90,6 @@ def test_tension_only_cable_slackens_and_retensions_with_active_set_evidence() -
     assert tension.equilibrium.state.assembly.axial_force[0] == pytest.approx(
         5.0, abs=1e-7
     )
-
-
-def test_force_density_bridge_infers_compatible_rest_lengths() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         3,
@@ -176,3 +149,24 @@ def test_force_density_bridge_infers_compatible_rest_lengths() -> None:
     assert realizability.successful
     assert realizability.constitutive_valid
     assert realizability.equilibrium_valid
+
+
+def test_axial_member_equilibrium_matches_closed_form_and_derivative() -> None:
+    structure, definition, problem, initial = _axial_problem()
+    inputs = _inputs(structure, definition, 10.0, 1.0)
+    result = mn.member_network_equilibrium(problem, inputs, initial)
+    assert result.successful
+    assert result.state.kinematics.positions[1, 0] == pytest.approx(1.1, abs=1.0e-8)
+    assert result.state.assembly.axial_force[0] == pytest.approx(10.0, abs=1.0e-8)
+    assert result.diagnostics.residual_norm <= 1.0e-8
+
+    plan = mn.plan_member_network(problem, inputs, initial)
+
+    def displacement(load: Any) -> Any:
+        dynamic = _inputs(structure, definition, load, 1.0)
+        solved = mn.solve_member_network(
+            mn.prepare_member_network(plan, dynamic, initial)
+        )
+        return solved.state.kinematics.positions[1, 0]
+
+    assert jax.grad(displacement)(jnp.asarray(10.0)) == pytest.approx(0.01, rel=1.0e-5)

@@ -86,7 +86,7 @@ def _certified(mesh: CellMesh) -> Any:
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def test_masked_simplex_structural_contract_refuses_transformed_layout() -> None:
+def test_device_adaptation_scenario_1() -> None:
     prepared = prepare_adaptive_simplex(
         _certified(_triangle_grid(1, 1)),
         policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION),
@@ -109,6 +109,112 @@ def test_masked_simplex_structural_contract_refuses_transformed_layout() -> None
     )
     with pytest.raises(TypeError, match="cells"):
         phx.typing.validate(wrong_dtype)
+    for mesh in [_triangle_grid(3, 3), _kuhn_grid(1)]:
+        source = _certified(mesh)
+        prepared = prepare_adaptive_simplex(
+            source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
+        )
+        marks = prepared.cell_marks(np.sort(_cell_ids(source.mesh))[::2])
+        state = refine_adaptive_simplex(prepared.layout, prepared.state, marks).state
+        geometry = phx.discretization.evaluate_masked_fv_geometry(state.mesh)
+        flux = jax.random.normal(jax.random.key(3), (geometry.face_capacity,))
+        residual = phx.discretization.masked_fv_flux_divergence(geometry, flux)
+        volumes = np.asarray(geometry.cell_volumes)
+        active = np.asarray(state.mesh.cell_active)
+        boundary = np.asarray(geometry.boundary_faces)
+        content = np.sum(volumes * np.asarray(residual))
+        assert np.isclose(content, -np.sum(np.asarray(flux)[boundary]), atol=1e-12)
+        assert np.all(np.asarray(residual)[~active] == 0.0)
+        assert np.isclose(np.sum(volumes[active]), 1.0, atol=1e-12)
+        ledger = phx.discretization.evaluate_masked_fv_conservation(
+            geometry, flux, jnp.zeros((state.mesh.cell_capacity,))
+        )
+        assert np.all(np.abs(np.asarray(ledger.residual)) < 1e-12)
+    for mesh in [_triangle_grid(4, 4), _kuhn_grid(2)]:
+        host_route = MeshAdaptationRoute.NATIVE_BISECTION
+        device_route = MeshAdaptationRoute.DEVICE_BISECTION
+        source = _certified(mesh)
+        marks = np.sort(_cell_ids(mesh))[::3]
+        host = _adapt(host_route, source, marks)
+        device = _adapt(device_route, source, marks)
+        _assert_same_target(host, device)
+        assert host.lineage.lineage_id == device.lineage.lineage_id
+
+        identifiers = np.sort(_cell_ids(host.target.mesh))
+        refine, coarsen = _corner_cells(host.target.mesh), identifiers[-40:]
+        coarsen = np.setdiff1d(coarsen, refine)
+        host = _adapt(host_route, host.target, refine, coarsen, hierarchy=host.hierarchy)
+        device = _adapt(
+            device_route, device.target, refine, coarsen, hierarchy=device.hierarchy
+        )
+        _assert_same_target(host, device)
+        np.testing.assert_array_equal(
+            np.asarray(host.evidence.rejected_coarsening_ids),
+            np.asarray(device.evidence.rejected_coarsening_ids),
+        )
+
+        everything = np.sort(_cell_ids(host.target.mesh))
+        host = _adapt(host_route, host.target, (), everything, hierarchy=host.hierarchy)
+        device = _adapt(
+            device_route, device.target, (), everything, hierarchy=device.hierarchy
+        )
+        _assert_same_target(host, device)
+        assert device.evidence.coarsened_vertices == host.evidence.coarsened_vertices > 0
+    source = _certified(_triangle_grid(4, 4))
+    scope, through = _guarded_diagonal(source)
+    marks = np.union1d(through, np.setdiff1d(_cell_ids(source.mesh), through)[[0, -1]])
+    host = _adapt(
+        MeshAdaptationRoute.NATIVE_BISECTION, source, marks, protected_scopes=(scope,)
+    )
+    device = _adapt(
+        MeshAdaptationRoute.DEVICE_BISECTION, source, marks, protected_scopes=(scope,)
+    )
+    assert device.status is MeshAdaptationStatus.PARTIAL
+    np.testing.assert_array_equal(
+        np.asarray(device.evidence.rejected_refinement_ids), through
+    )
+    _assert_same_target(host, device)
+    for route in (
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        MeshAdaptationRoute.DEVICE_BISECTION,
+    ):
+        rejected = _adapt(route, source, through, protected_scopes=(scope,))
+        assert rejected.status is MeshAdaptationStatus.PARTIAL
+        assert not rejected.status.converged
+        assert rejected.target.result_id == source.result_id
+        assert rejected.transition is rejected.lineage is rejected.transfer is None
+        np.testing.assert_array_equal(
+            np.asarray(rejected.evidence.rejected_refinement_ids), through
+        )
+    source = _certified(_triangle_grid(4, 4))
+    scope, _ = _guarded_diagonal(source)
+    partition = MeshPartitionPolicy(MeshPartitionKind.MORTON, 1)
+    distribution = prepare_mesh_distribution(MeshPart("domain", source), policy=partition)
+    policy = _policy(
+        MeshAdaptationRoute.DEVICE_BISECTION,
+        protected_scopes=(scope,),
+        distribution=distribution,
+        partition_policy=partition,
+    )
+    partitioned = partition_adaptive_simplex(
+        prepare_adaptive_simplex(source, policy=policy)
+    )
+    # Parts have no per-mark admissibility: the union closure splits the edge.
+    update = refine_adaptive_simplex_parts(
+        partitioned.layout,
+        partitioned.parts,
+        partitioned.states,
+        partitioned.cell_marks(_cell_ids(source.mesh)),
+    )
+    conflict = int(AdaptiveSimplexStatus.PROTECTED_CONFLICT)
+    assert np.all(np.asarray(update.report.status) & conflict)
+    assert np.all(np.asarray(update.state.status_flags) & conflict)
+    np.testing.assert_array_equal(
+        np.asarray(update.state.cursors), np.asarray(partitioned.states.cursors)
+    )
+    with pytest.raises(MeshingFailure) as rejection:
+        commit_partitioned_adaptive_simplex(partitioned, update.state)
+    assert rejection.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
 
 
 def _policy(route: Any, **options: Any) -> Any:
@@ -233,71 +339,7 @@ def _assert_same_arrays(first: Any, second: Any) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "mesh", [_triangle_grid(4, 4), _kuhn_grid(2)], ids=["triangles", "tetrahedra"]
-)
-def test_device_bisection_commits_the_host_meshes(mesh: Any) -> None:
-    host_route = MeshAdaptationRoute.NATIVE_BISECTION
-    device_route = MeshAdaptationRoute.DEVICE_BISECTION
-    source = _certified(mesh)
-    marks = np.sort(_cell_ids(mesh))[::3]
-    host = _adapt(host_route, source, marks)
-    device = _adapt(device_route, source, marks)
-    _assert_same_target(host, device)
-    assert host.lineage.lineage_id == device.lineage.lineage_id
-
-    identifiers = np.sort(_cell_ids(host.target.mesh))
-    refine, coarsen = _corner_cells(host.target.mesh), identifiers[-40:]
-    coarsen = np.setdiff1d(coarsen, refine)
-    host = _adapt(host_route, host.target, refine, coarsen, hierarchy=host.hierarchy)
-    device = _adapt(
-        device_route, device.target, refine, coarsen, hierarchy=device.hierarchy
-    )
-    _assert_same_target(host, device)
-    np.testing.assert_array_equal(
-        np.asarray(host.evidence.rejected_coarsening_ids),
-        np.asarray(device.evidence.rejected_coarsening_ids),
-    )
-
-    everything = np.sort(_cell_ids(host.target.mesh))
-    host = _adapt(host_route, host.target, (), everything, hierarchy=host.hierarchy)
-    device = _adapt(
-        device_route, device.target, (), everything, hierarchy=device.hierarchy
-    )
-    _assert_same_target(host, device)
-    assert device.evidence.coarsened_vertices == host.evidence.coarsened_vertices > 0
-
-
-def test_protected_marks_are_rejected_like_the_host_route() -> None:
-    source = _certified(_triangle_grid(4, 4))
-    scope, through = _guarded_diagonal(source)
-    marks = np.union1d(through, np.setdiff1d(_cell_ids(source.mesh), through)[[0, -1]])
-    host = _adapt(
-        MeshAdaptationRoute.NATIVE_BISECTION, source, marks, protected_scopes=(scope,)
-    )
-    device = _adapt(
-        MeshAdaptationRoute.DEVICE_BISECTION, source, marks, protected_scopes=(scope,)
-    )
-    assert device.status is MeshAdaptationStatus.PARTIAL
-    np.testing.assert_array_equal(
-        np.asarray(device.evidence.rejected_refinement_ids), through
-    )
-    _assert_same_target(host, device)
-    for route in (
-        MeshAdaptationRoute.NATIVE_BISECTION,
-        MeshAdaptationRoute.DEVICE_BISECTION,
-    ):
-        rejected = _adapt(route, source, through, protected_scopes=(scope,))
-        assert rejected.status is MeshAdaptationStatus.PARTIAL
-        assert not rejected.status.converged
-        assert rejected.target.result_id == source.result_id
-        assert rejected.transition is rejected.lineage is rejected.transfer is None
-        np.testing.assert_array_equal(
-            np.asarray(rejected.evidence.rejected_refinement_ids), through
-        )
-
-
-def test_uniform_refinement_start_matches_the_host_route() -> None:
+def test_device_adaptation_scenario_2() -> None:
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     source = _certified(
         CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
@@ -308,9 +350,6 @@ def test_uniform_refinement_start_matches_the_host_route() -> None:
     assert device.evidence.uniform_refinement_applied
     _assert_same_target(host, device)
     _assert_conforming(device.target.mesh, 3.5)
-
-
-def test_recreated_cells_inside_one_epoch_commit_the_host_target() -> None:
     """Refine, coarsen back, and refine again before one commit."""
 
     source = _certified(_triangle_grid(3, 3))
@@ -353,9 +392,6 @@ def test_recreated_cells_inside_one_epoch_commit_the_host_target() -> None:
         rtol=0.0,
         atol=1e-13,
     )
-
-
-def test_repeated_device_refinement_stays_conforming() -> None:
     source = _certified(_kuhn_grid(1))
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
@@ -419,9 +455,8 @@ def _geometry_failure(source: Any) -> Any:
     return prepared, state, jnp.zeros_like(state.mesh.cell_active)
 
 
-@pytest.mark.parametrize(
-    ("failure", "flag", "category"),
-    [
+def test_device_adaptation_scenario_3() -> None:
+    for failure, flag, category in [
         (
             _capacity_failure,
             AdaptiveSimplexStatus.CAPACITY_EXCEEDED,
@@ -437,66 +472,74 @@ def _geometry_failure(source: Any) -> Any:
             AdaptiveSimplexStatus.INVALID_GEOMETRY,
             MeshingFailureCategory.QUALITY_REJECTED,
         ),
-    ],
-    ids=["capacity", "closure", "geometry"],
-)
-def test_terminal_failure_is_recorded_refuses_later_calls_and_rejects_commit(
-    failure: Any, flag: Any, category: Any
-) -> None:
+    ]:
+        source = _certified(_triangle_grid(2, 2))
+        prepared, state, marks = failure(source)
+        layout = prepared.layout
+        failed = refine_adaptive_simplex(layout, state, marks)
+        assert AdaptiveSimplexStatus(int(failed.report.status)) & flag
+        assert bool(failed.report.failed)
+        assert AdaptiveSimplexStatus(int(failed.state.status_flags)) & flag
+        # Every array but the recorded status is rolled back to the input.
+        _assert_same_arrays(
+            state, eqx.tree_at(lambda value: value.clocks, failed.state, state.clocks)
+        )
+        for call in (refine_adaptive_simplex, coarsen_adaptive_simplex):
+            refused = call(layout, failed.state, failed.state.mesh.cell_active)
+            report = refused.report
+            assert AdaptiveSimplexStatus(int(report.status)) & flag
+            assert bool(report.failed)
+            assert int(report.accepted) == int(report.operations) == 0
+            assert int(report.iterations) == int(report.vertices) == 0
+            _assert_same_arrays(failed.state, refused.state)
+        with pytest.raises(MeshingFailure) as rejection:
+            commit_adaptive_simplex(prepared, failed.state)
+        assert rejection.value.category is category
     source = _certified(_triangle_grid(2, 2))
-    prepared, state, marks = failure(source)
-    layout = prepared.layout
-    failed = refine_adaptive_simplex(layout, state, marks)
-    assert AdaptiveSimplexStatus(int(failed.report.status)) & flag
-    assert bool(failed.report.failed)
-    assert AdaptiveSimplexStatus(int(failed.state.status_flags)) & flag
-    # Every array but the recorded status is rolled back to the input.
-    _assert_same_arrays(
-        state, eqx.tree_at(lambda value: value.clocks, failed.state, state.clocks)
-    )
-    for call in (refine_adaptive_simplex, coarsen_adaptive_simplex):
-        refused = call(layout, failed.state, failed.state.mesh.cell_active)
-        report = refused.report
-        assert AdaptiveSimplexStatus(int(report.status)) & flag
-        assert bool(report.failed)
-        assert int(report.accepted) == int(report.operations) == 0
-        assert int(report.iterations) == int(report.vertices) == 0
-        _assert_same_arrays(failed.state, refused.state)
-    with pytest.raises(MeshingFailure) as rejection:
-        commit_adaptive_simplex(prepared, failed.state)
-    assert rejection.value.category is category
-
-
-def test_protected_conflict_on_parts_rejects_the_epoch() -> None:
-    source = _certified(_triangle_grid(4, 4))
-    scope, _ = _guarded_diagonal(source)
-    partition = MeshPartitionPolicy(MeshPartitionKind.MORTON, 1)
-    distribution = prepare_mesh_distribution(MeshPart("domain", source), policy=partition)
     policy = _policy(
         MeshAdaptationRoute.DEVICE_BISECTION,
-        protected_scopes=(scope,),
-        distribution=distribution,
-        partition_policy=partition,
+        device_policy=AdaptiveSimplexPolicy(maximum_coarsening_passes=1),
     )
-    partitioned = partition_adaptive_simplex(
-        prepare_adaptive_simplex(source, policy=policy)
+    prepared = prepare_adaptive_simplex(source, policy=policy)
+    layout, state = prepared.layout, prepared.state
+    for _ in range(2):
+        state = refine_adaptive_simplex(layout, state, state.mesh.cell_active).state
+    coarsened = coarsen_adaptive_simplex(layout, state, state.mesh.cell_active)
+    assert AdaptiveSimplexStatus(int(coarsened.report.status)) & (
+        AdaptiveSimplexStatus.PASS_LIMIT
     )
-    # Parts have no per-mark admissibility: the union closure splits the edge.
-    update = refine_adaptive_simplex_parts(
-        partitioned.layout,
-        partitioned.parts,
-        partitioned.states,
-        partitioned.cell_marks(_cell_ids(source.mesh)),
+    assert int(coarsened.report.operations) > 0
+    assert AdaptiveSimplexStatus(int(coarsened.state.status_flags)) & (
+        AdaptiveSimplexStatus.PASS_LIMIT
     )
-    conflict = int(AdaptiveSimplexStatus.PROTECTED_CONFLICT)
-    assert np.all(np.asarray(update.report.status) & conflict)
-    assert np.all(np.asarray(update.state.status_flags) & conflict)
-    np.testing.assert_array_equal(
-        np.asarray(update.state.cursors), np.asarray(partitioned.states.cursors)
+    result = commit_adaptive_simplex(prepared, coarsened.state)
+    assert result.status is MeshAdaptationStatus.PASS_LIMIT
+    assert result.status.converged is False
+    # ty: ignore[unresolved-attribute]
+    assert 0 < result.evidence.coarsened_vertices < result.evidence.created_vertices
+    _assert_conforming(result.target.mesh, 1.0)
+    environment = dict(os.environ)
+    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
+    environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
+    completed = subprocess.run(
+        [sys.executable, "-c", _PARTS_SCRIPT],
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=True,
     )
-    with pytest.raises(MeshingFailure) as rejection:
-        commit_partitioned_adaptive_simplex(partitioned, update.state)
-    assert rejection.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
+    lines = dict(line.split(" ", 1) for line in completed.stdout.strip().splitlines())
+    assert lines["status"] == "0 0"
+    grown = np.asarray(lines["grown"].split(), dtype=np.int64)
+    assert grown[0] > 0 and np.count_nonzero(grown[1:]) > 0
+    for key in ("single", "lineage", "hierarchy", "host", "coordinates", "distribution"):
+        assert lines[key] == "True", key
+    capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    for key in ("failure", "flags"):
+        values = np.asarray(lines[key].split(), dtype=np.int64)
+        assert values.size == 4 and np.all(values & capacity), key
+    assert lines["rolled"] == lines["refused"] == "True"
+    assert lines["rejected"] == MeshingFailureCategory.RESOURCE_EXHAUSTED.value
 
 
 @pytest.mark.parametrize(
@@ -540,32 +583,6 @@ def test_uncertain_device_orientation_is_resolved_exactly_at_commit(
     with pytest.raises(MeshingFailure) as rejection:
         commit_adaptive_simplex(prepared, update.state)
     assert rejection.value.category is MeshingFailureCategory.QUALITY_REJECTED
-
-
-def test_pass_limited_coarsening_commits_an_unconverged_pass_limit() -> None:
-    source = _certified(_triangle_grid(2, 2))
-    policy = _policy(
-        MeshAdaptationRoute.DEVICE_BISECTION,
-        device_policy=AdaptiveSimplexPolicy(maximum_coarsening_passes=1),
-    )
-    prepared = prepare_adaptive_simplex(source, policy=policy)
-    layout, state = prepared.layout, prepared.state
-    for _ in range(2):
-        state = refine_adaptive_simplex(layout, state, state.mesh.cell_active).state
-    coarsened = coarsen_adaptive_simplex(layout, state, state.mesh.cell_active)
-    assert AdaptiveSimplexStatus(int(coarsened.report.status)) & (
-        AdaptiveSimplexStatus.PASS_LIMIT
-    )
-    assert int(coarsened.report.operations) > 0
-    assert AdaptiveSimplexStatus(int(coarsened.state.status_flags)) & (
-        AdaptiveSimplexStatus.PASS_LIMIT
-    )
-    result = commit_adaptive_simplex(prepared, coarsened.state)
-    assert result.status is MeshAdaptationStatus.PASS_LIMIT
-    assert result.status.converged is False
-    # ty: ignore[unresolved-attribute]
-    assert 0 < result.evidence.coarsened_vertices < result.evidence.created_vertices
-    _assert_conforming(result.target.mesh, 1.0)
 
 
 def _compact_poisson(mesh: CellMesh, source_term: Any) -> Any:
@@ -633,32 +650,6 @@ def test_masked_poisson_on_the_device_state_equals_the_committed_solve() -> None
         np.asarray(masked.value)[slots], np.asarray(expected), rtol=1e-9, atol=1e-11
     )
     assert np.all(np.asarray(masked.value)[~active] == 0.0)
-
-
-@pytest.mark.parametrize(
-    "mesh", [_triangle_grid(3, 3), _kuhn_grid(1)], ids=["triangles", "tetrahedra"]
-)
-def test_masked_finite_volume_conserves_on_the_device_state(mesh: Any) -> None:
-    source = _certified(mesh)
-    prepared = prepare_adaptive_simplex(
-        source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
-    )
-    marks = prepared.cell_marks(np.sort(_cell_ids(source.mesh))[::2])
-    state = refine_adaptive_simplex(prepared.layout, prepared.state, marks).state
-    geometry = phx.discretization.evaluate_masked_fv_geometry(state.mesh)
-    flux = jax.random.normal(jax.random.key(3), (geometry.face_capacity,))
-    residual = phx.discretization.masked_fv_flux_divergence(geometry, flux)
-    volumes = np.asarray(geometry.cell_volumes)
-    active = np.asarray(state.mesh.cell_active)
-    boundary = np.asarray(geometry.boundary_faces)
-    content = np.sum(volumes * np.asarray(residual))
-    assert np.isclose(content, -np.sum(np.asarray(flux)[boundary]), atol=1e-12)
-    assert np.all(np.asarray(residual)[~active] == 0.0)
-    assert np.isclose(np.sum(volumes[active]), 1.0, atol=1e-12)
-    ledger = phx.discretization.evaluate_masked_fv_conservation(
-        geometry, flux, jnp.zeros((state.mesh.cell_capacity,))
-    )
-    assert np.all(np.abs(np.asarray(ledger.residual)) < 1e-12)
 
 
 _PARTS_SCRIPT = textwrap.dedent(
@@ -816,28 +807,3 @@ _PARTS_SCRIPT = textwrap.dedent(
         print("rejected none")
     """
 )
-
-
-def test_partitioned_epochs_commit_the_host_mesh_and_fail_collectively() -> None:
-    environment = dict(os.environ)
-    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
-    environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
-    completed = subprocess.run(
-        [sys.executable, "-c", _PARTS_SCRIPT],
-        capture_output=True,
-        text=True,
-        env=environment,
-        check=True,
-    )
-    lines = dict(line.split(" ", 1) for line in completed.stdout.strip().splitlines())
-    assert lines["status"] == "0 0"
-    grown = np.asarray(lines["grown"].split(), dtype=np.int64)
-    assert grown[0] > 0 and np.count_nonzero(grown[1:]) > 0
-    for key in ("single", "lineage", "hierarchy", "host", "coordinates", "distribution"):
-        assert lines[key] == "True", key
-    capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
-    for key in ("failure", "flags"):
-        values = np.asarray(lines[key].split(), dtype=np.int64)
-        assert values.size == 4 and np.all(values & capacity), key
-    assert lines["rolled"] == lines["refused"] == "True"
-    assert lines["rejected"] == MeshingFailureCategory.RESOURCE_EXHAUSTED.value

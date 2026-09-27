@@ -579,9 +579,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 "prng_representation": {
                     "format": "legacy-key-data",
                     "dtype": "uint32",
-                    "implementation": str(
-                        jax.config.jax_default_prng_impl
-                    ),
+                    "implementation": str(jax.config.jax_default_prng_impl),
                 },
             }
         )

@@ -18,7 +18,7 @@ def _cell() -> Any:
     )
 
 
-def test_triclinic_minimum_image_matches_brute_lattice_enumeration() -> None:
+def test_dynamics_periodic_scenario_1() -> None:
     cell = _cell()
     displacement = jnp.asarray([2.7, 1.9, -2.2])
     observed = cell.minimum_image(displacement)
@@ -31,9 +31,6 @@ def test_triclinic_minimum_image_matches_brute_lattice_enumeration() -> None:
     )
     expected = candidates[np.argmin(np.sum(candidates * candidates, axis=1))]
     np.testing.assert_allclose(observed, expected, atol=1.0e-12)
-
-
-def test_metric_cell_list_matches_dense_physical_pairs() -> None:
     cell = _cell()
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
@@ -84,9 +81,6 @@ def test_metric_cell_list_matches_dense_physical_pairs() -> None:
         if valid
     }
     assert metric_pairs == dense_pairs
-
-
-def test_verlet_cell_deformation_enters_rebuild_certificate() -> None:
     cell = _cell()
     particles = phx.discretization.ParticleSetPlan(
         # ty: ignore[invalid-argument-type]
@@ -107,7 +101,7 @@ def test_verlet_cell_deformation_enters_rebuild_certificate() -> None:
     assert float(updated.maximum_cell_deformation) > 0.1
 
 
-def test_cell_stress_is_finite_symmetric_energy_derivative() -> None:
+def test_dynamics_periodic_scenario_2() -> None:
     cell = _cell()
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
@@ -138,9 +132,6 @@ def test_cell_stress_is_finite_symmetric_energy_derivative() -> None:
     assert bool(result.successful)
     assert bool(jnp.all(jnp.isfinite(result.stress)))
     np.testing.assert_allclose(result.stress, result.stress.T, atol=1.0e-12)
-
-
-def test_periodic_learned_graph_execution_is_explicit_and_finite() -> None:
     model_units = (
         phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     )
@@ -187,33 +178,6 @@ def test_periodic_learned_graph_execution_is_explicit_and_finite() -> None:
     result = program.evaluate(positions, relation, species=system.plan.atomic_numbers)
     assert bool(result.successful)
     assert bool(jnp.isfinite(result.energy))
-
-
-class _CutoffFreeGraphTerm(phx.atomistic.AbstractAtomisticEnergyTerm):
-    """Consumer graph term that declares a directed graph but no cutoff."""
-
-    learned: phx.atomistic.LearnedGraphPotentialTerm
-    name: str = eqx.field(static=True)
-    force_group: int = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
-    capabilities: phx.atomistic.AtomisticPotentialCapabilities
-    requirements: phx.atomistic.AtomisticPotentialRequirements
-
-    def __init__(self, learned: Any) -> None:
-        self.learned = learned
-        self.name = learned.name
-        self.force_group = learned.force_group
-        self.term_id = f"cutoff-free-{learned.term_id}"
-        self.capabilities = learned.capabilities
-        self.requirements = phx.atomistic.AtomisticPotentialRequirements(
-            pair_geometry=True, directed_graph=True
-        )
-
-    def prepare(self, system: Any, /) -> Any:
-        return self.learned.prepare(system)
-
-
-def test_directed_graph_terms_without_cutoff_are_rejected_at_preparation() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     system = phx.atomistic.AtomisticSystemPlan(
         # ty: ignore[invalid-argument-type]
@@ -244,3 +208,27 @@ def test_directed_graph_terms_without_cutoff_are_rejected_at_preparation() -> No
                 1, backend="particle"
             ),
         )
+
+
+class _CutoffFreeGraphTerm(phx.atomistic.AbstractAtomisticEnergyTerm):
+    """Consumer graph term that declares a directed graph but no cutoff."""
+
+    learned: phx.atomistic.LearnedGraphPotentialTerm
+    name: str = eqx.field(static=True)
+    force_group: int = eqx.field(static=True)
+    term_id: str = eqx.field(static=True)
+    capabilities: phx.atomistic.AtomisticPotentialCapabilities
+    requirements: phx.atomistic.AtomisticPotentialRequirements
+
+    def __init__(self, learned: Any) -> None:
+        self.learned = learned
+        self.name = learned.name
+        self.force_group = learned.force_group
+        self.term_id = f"cutoff-free-{learned.term_id}"
+        self.capabilities = learned.capabilities
+        self.requirements = phx.atomistic.AtomisticPotentialRequirements(
+            pair_geometry=True, directed_graph=True
+        )
+
+    def prepare(self, system: Any, /) -> Any:
+        return self.learned.prepare(system)

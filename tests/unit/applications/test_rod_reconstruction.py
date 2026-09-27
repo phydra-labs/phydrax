@@ -118,7 +118,7 @@ def _rotate(quaternion: Any, vector: Any) -> Any:
     return vector + quaternion[0] * doubled_cross + jnp.cross(imaginary, doubled_cross)
 
 
-def test_constant_material_strain_is_the_exact_se3_piece_exponential() -> None:
+def test_rod_reconstruction_scenario_1() -> None:
     reduction = _pcs_reduction()
     reconstruction = _prepared(reduction, (0.0, 0.37, 1.0))
     coefficients = jnp.asarray((0.08, -0.04, 0.12, 0.17, -0.11, 0.29), dtype=jnp.float64)
@@ -139,9 +139,6 @@ def test_constant_material_strain_is_the_exact_se3_piece_exponential() -> None:
     assert evaluation.native_discrepancy.finite
     assert evaluation.native_discrepancy.maximum_stretch_shear_error < 2.0e-10
     assert evaluation.native_discrepancy.maximum_bend_twist_error < 2.0e-10
-
-
-def test_variable_gvs_cf4_reconstruction_converges_under_fixed_refinement() -> None:
     reduction = _gvs_reduction()
     queries = (0.0, 0.17, 0.43, 0.79, 1.0)
     state = ReducedRodState(
@@ -172,9 +169,6 @@ def test_variable_gvs_cf4_reconstruction_converges_under_fixed_refinement() -> N
     assert comparison.medium_fine.maximum_scaled_frame_jvp < (
         comparison.coarse_medium.maximum_scaled_frame_jvp
     )
-
-
-def test_half_open_routes_are_deterministic_and_close_only_the_final_endpoint() -> None:
     reduction = _pcs_reduction(breakpoints=(0.0, 0.4, 1.0))
     queries = (1.0, 0.4, 0.0, 0.399, 0.73)
     first = _prepared(reduction, queries)
@@ -197,9 +191,7 @@ def test_half_open_routes_are_deterministic_and_close_only_the_final_endpoint() 
     assert jnp.array_equal(evaluation.arc_lengths, jnp.asarray(queries))
 
 
-def test_body_world_origin_and_frame_velocities_obey_moment_arm_identity_and_duality() -> (
-    None
-):
+def test_rod_reconstruction_scenario_2() -> None:
     reduction = _gvs_reduction()
     reconstruction = _prepared(
         reduction, (0.11, 0.37, 0.82, 1.0), refinement=3, tolerance=1.0
@@ -247,9 +239,6 @@ def test_body_world_origin_and_frame_velocities_obey_moment_arm_identity_and_dua
     assert jnp.vdot(effort, frame_velocity) == pytest.approx(
         jnp.vdot(reduced_effort, rates), rel=2.0e-11, abs=2.0e-11
     )
-
-
-def test_domain_chart_quadrature_and_comparison_mismatches_reject() -> None:
     pcs_reduction = _pcs_reduction()
     with pytest.raises(ValueError, match="rod domain"):
         _prepared(pcs_reduction, (0.0, 1.01))
@@ -293,9 +282,6 @@ def test_domain_chart_quadrature_and_comparison_mismatches_reject() -> None:
     ).evaluate(valid_state)
     with pytest.raises(ValueError, match="query-plan"):
         compare_reduced_rod_discretizations(first, other_queries)
-
-
-def test_two_level_comparison_marks_observed_order_unsupported() -> None:
     reduction = _gvs_reduction()
     state = ReducedRodState(
         jnp.asarray((0.09, 0.26, -0.19, 0.14, -0.08), dtype=jnp.float64),

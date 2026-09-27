@@ -25,7 +25,7 @@ from phydrax.optim import BranchAndBoundPolicy, BranchAndBoundStatus
 from phydrax.solver._radau_iia import RadauIIAMethod
 
 
-def test_radau_tableau_and_linear_ode_defects_for_stages_one_through_four() -> None:
+def test_dcd_control_capabilities_scenario_1() -> None:
     for stages in range(1, 5):
         method = RadauIIAMethod(stages)
         assert method.order == 2 * stages - 1
@@ -47,9 +47,6 @@ def test_radau_tableau_and_linear_ode_defects_for_stages_one_through_four() -> N
     assert defects.finite
     assert jnp.allclose(defects.stage_defects, 0.0)
     assert jnp.allclose(defects.endpoint_defects, 0.0)
-
-
-def test_affine_and_lipschitz_continuous_path_certificates_are_interval_wide() -> None:
     interpolant = ControlSegmentInterpolant(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[[0.0], [0.8]]]),
@@ -76,9 +73,6 @@ def test_affine_and_lipschitz_continuous_path_certificates_are_interval_wide() -
     )()
     assert certificate.certified
     assert jnp.all(certificate.upper_bounds <= 0.0)
-
-
-def test_complementarity_and_bounded_global_gap_evidence_fail_closed() -> None:
     constraint = ComplementarityConstraint(
         lambda value: (value, 1.0 - value),
         constraint_id="switch",
@@ -149,7 +143,7 @@ def test_exact_convex_control_certificate_uses_the_certified_optimizer() -> None
     assert jnp.allclose(certificate.global_lower_bound, 0.0)
 
 
-def test_supplied_control_incumbent_closes_gap_without_a_tree_incumbent() -> None:
+def test_dcd_control_capabilities_scenario_2() -> None:
     objective = lambda value: value[0] ** 2
     plan = BoundedControlCertificatePlan(
         objective,
@@ -177,9 +171,6 @@ def test_supplied_control_incumbent_closes_gap_without_a_tree_incumbent() -> Non
     assert jnp.allclose(certificate.objective, objective(certificate.incumbent))
     assert jnp.allclose(certificate.global_lower_bound, -0.75)
     assert jnp.allclose(certificate.absolute_gap, 0.75)
-
-
-def test_better_supplied_control_incumbent_replaces_the_tree_upper_bound() -> None:
     objective = lambda value: (value[0] - 1.0) ** 2
     plan = BoundedControlCertificatePlan(
         objective,
@@ -204,11 +195,6 @@ def test_better_supplied_control_incumbent_replaces_the_tree_upper_bound() -> No
     assert jnp.allclose(certificate.objective, 0.0)
     assert jnp.allclose(certificate.global_lower_bound, -3.0)
     assert jnp.allclose(certificate.absolute_gap, 3.0)
-
-
-def test_invalid_and_worse_supplied_control_incumbents_do_not_replace_tree_evidence() -> (
-    None
-):
     objective = lambda value: (value[0] - 0.25) ** 2
     plan = BoundedControlCertificatePlan(
         objective,

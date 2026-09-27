@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -17,36 +15,33 @@ from phydrax.applications.atmosphere._dry import (
 )
 
 
-@pytest.mark.parametrize("family,shape", [("isothermal", (6,)), ("isentropic", (4, 6))])
-def test_hydrostatic_reference_remains_at_rest_to_roundoff(
-    family: Any, shape: Any
-) -> None:
-    bounds = ((0.0,), (6000.0,)) if len(shape) == 1 else ((0.0, 0.0), (4000.0, 6000.0))
-    prepared = DryAtmospherePlan(
-        shape,
-        # ty: ignore[invalid-argument-type]
-        bounds,
-        reference=DryHydrostaticReference(family),
-    ).prepare()
-    initial = prepared.initial_state()
-    residual = eqx.filter_jit(prepared.balance.evaluate)(initial.conserved)
-    np.testing.assert_allclose(residual.residual, 0.0, atol=3e-10)
-    dt = 0.4 * eqx.filter_jit(prepared.stable_step)(initial)
-    result = eqx.filter_jit(prepared.rollout)(initial, jnp.full((3,), dt))
-    assert bool(result.successful)
-    np.testing.assert_allclose(
-        result.state.conserved, initial.conserved, rtol=2e-13, atol=2e-10
-    )
-    scale = jnp.maximum(
-        jnp.maximum(
-            jnp.abs(initial.initial_integral), jnp.abs(result.budget.source_integral)
-        ),
-        1.0,
-    )
-    np.testing.assert_allclose(result.budget.closure / scale, 0.0, atol=2e-10)
-
-
-def test_shared_mass_flux_closes_gravitational_energy_and_species_budgets() -> None:
+def test_dry_atmosphere_scenario_1() -> None:
+    for family, shape in [("isothermal", (6,)), ("isentropic", (4, 6))]:
+        bounds = (
+            ((0.0,), (6000.0,)) if len(shape) == 1 else ((0.0, 0.0), (4000.0, 6000.0))
+        )
+        prepared = DryAtmospherePlan(
+            shape,
+            # ty: ignore[invalid-argument-type]
+            bounds,
+            reference=DryHydrostaticReference(family),
+        ).prepare()
+        initial = prepared.initial_state()
+        residual = eqx.filter_jit(prepared.balance.evaluate)(initial.conserved)
+        np.testing.assert_allclose(residual.residual, 0.0, atol=3e-10)
+        dt = 0.4 * eqx.filter_jit(prepared.stable_step)(initial)
+        result = eqx.filter_jit(prepared.rollout)(initial, jnp.full((3,), dt))
+        assert bool(result.successful)
+        np.testing.assert_allclose(
+            result.state.conserved, initial.conserved, rtol=2e-13, atol=2e-10
+        )
+        scale = jnp.maximum(
+            jnp.maximum(
+                jnp.abs(initial.initial_integral), jnp.abs(result.budget.source_integral)
+            ),
+            1.0,
+        )
+        np.testing.assert_allclose(result.budget.closure / scale, 0.0, atol=2e-10)
     # ty: ignore[invalid-argument-type]
     prepared = DryAtmospherePlan((4, 6), ((0.0, 0.0), (4000.0, 6000.0))).prepare()
     coordinates = prepared.balance.discretization.cell_centers
@@ -69,9 +64,6 @@ def test_shared_mass_flux_closes_gravitational_energy_and_species_budgets() -> N
     np.testing.assert_allclose(closure[:3] / result.budget.species_mass, 0.0, atol=5e-14)
     np.testing.assert_allclose(closure[-1] / result.budget.total_energy, 0.0, atol=5e-14)
     assert float(jnp.max(jnp.abs(result.state.conserved[..., -2]))) > 0.0
-
-
-def test_prescribed_outflow_energy_uses_boundary_potential_and_restart_is_exact() -> None:
     prepared = DryAtmospherePlan(
         (6,),
         # ty: ignore[invalid-argument-type]
@@ -107,7 +99,7 @@ def test_prescribed_outflow_energy_uses_boundary_potential_and_restart_is_exact(
         other.restore(prepared.checkpoint(first.state))
 
 
-def test_invalid_and_unstable_states_are_not_clipped_or_partially_accepted() -> None:
+def test_dry_atmosphere_scenario_2() -> None:
     # ty: ignore[invalid-argument-type]
     prepared = DryAtmospherePlan((4,), ((0.0,), (2000.0,))).prepare()
     initial = prepared.initial_state()
@@ -122,9 +114,6 @@ def test_invalid_and_unstable_states_are_not_clipped_or_partially_accepted() -> 
     )
     assert int(result.state.accepted_steps) == 0
     assert float(result.state.time) == 0.0
-
-
-def test_reference_pressure_drop_agrees_with_integrated_column_weight() -> None:
     air = DryAir()
     prepared = DryAtmospherePlan(
         (8,),
@@ -147,9 +136,6 @@ def test_reference_pressure_drop_agrees_with_integrated_column_weight() -> None:
         air.heat_capacity_pressure,
         rtol=2e-12,
     )
-
-
-def test_vertical_periodicity_is_rejected_in_nonperiodic_gravity() -> None:
     with pytest.raises(ValueError, match="vertical gravity"):
         DryAtmospherePlan(
             (4,),

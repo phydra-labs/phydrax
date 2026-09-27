@@ -118,7 +118,7 @@ def test_root_branch_change_and_event_do_not_expose_gradients() -> None:
     assert jnp.all(jnp.isnan(event.finite_difference))
 
 
-def test_qnm_result_realification_retains_root_identity_and_status() -> None:
+def test_inverse_scenario_1() -> None:
     result = SimpleNamespace(
         angular_frequency=jnp.asarray(0.4 - 0.08j),
         separation_constant=jnp.asarray(2.1 + 0.03j),
@@ -136,9 +136,6 @@ def test_qnm_result_realification_retains_root_identity_and_status() -> None:
     assert evaluation.branch_id == "l2-m2-n0"
     assert evaluation.realization_id == "qnm:release-1"
     assert bool(evaluation.sensitivity_eligible)
-
-
-def test_stationary_kerr_result_adapter_retains_subextremal_branch() -> None:
     horizon = evaluate_stationary_kerr_horizon(KerrInput(2.0, 0.8))
     evaluation = kerr_thermodynamics_model_evaluation(
         horizon,

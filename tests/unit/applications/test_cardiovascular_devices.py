@@ -106,7 +106,7 @@ def _hydraulic_plan(*, oxygen_model: Any = None) -> ECMOCircuitPlan:
     )
 
 
-def test_tube_law_wave_speed_conservative_step_and_0d_port() -> None:
+def test_cardiovascular_devices_scenario_1() -> None:
     law = SquareRootTubeLaw(100.0, 10.0, reference_pressure_kPa=8.0)
     expected_speed = np.sqrt(10.0 / (2.0 * 1.06))
     np.testing.assert_allclose(law.wave_speed(100.0, 1.06), expected_speed)
@@ -146,9 +146,6 @@ def test_tube_law_wave_speed_conservative_step_and_0d_port() -> None:
     assert bool(inlet.successful) and bool(outlet.successful)
     assert float(inlet.flow_into_vessel_mm3_per_ms) > 0.0
     assert float(outlet.flow_into_vessel_mm3_per_ms) > 0.0
-
-
-def test_vascular_step_rejects_boundary_driven_cfl_violation() -> None:
     law = SquareRootTubeLaw(100.0, 10.0, reference_pressure_kPa=8.0)
     runtime = Vascular1DPlan(
         "boundary-cfl",
@@ -170,9 +167,6 @@ def test_vascular_step_rejects_boundary_driven_cfl_violation() -> None:
     assert int(result.evidence.status) & int(VascularStepStatus.CFL_VIOLATION)
     np.testing.assert_array_equal(result.state.area_mm2, state.area_mm2)
     np.testing.assert_array_equal(result.state.flow_mm3_per_ms, state.flow_mm3_per_ms)
-
-
-def test_characteristic_reflection_and_junction_conservation() -> None:
     matched = CharacteristicTerminal("matched", 8.0, 0.5)
     reflection = reflect_characteristic_wave(matched, 1.2, 0.5)
     assert bool(reflection.successful)
@@ -198,7 +192,7 @@ def test_characteristic_reflection_and_junction_conservation() -> None:
     )
 
 
-def test_pump_map_interpolates_and_refuses_extrapolation() -> None:
+def test_cardiovascular_devices_scenario_2() -> None:
     pump_map = _pump_map()
     inside = evaluate_pump_map(pump_map, 1.0, 3_000.0)
     assert bool(inside.successful)
@@ -208,27 +202,6 @@ def test_pump_map_interpolates_and_refuses_extrapolation() -> None:
     assert not bool(outside.successful)
     assert np.isnan(float(outside.head_kPa))
     assert int(outside.status) & int(PumpMapStatus.FLOW_OUT_OF_DOMAIN)
-
-
-def test_pacemaker_is_causal_rate_limited_and_exactly_replayable() -> None:
-    plan = PacemakerControllerPlan(60.0, 120.0, 250.0, 2.0, 4.0)
-    initial = initialize_pacemaker_controller(plan)
-    times = jnp.asarray([250.0, 500.0, 750.0, 1_000.0, 1_250.0, 1_500.0])
-    sensed = jnp.asarray([False, True, False, False, False, False])
-    first = replay_pacemaker_controller(plan, initial, times, sensed)
-    second = replay_pacemaker_controller(plan, initial, times, sensed)
-    np.testing.assert_array_equal(first.pacing_output_mA, second.pacing_output_mA)
-    np.testing.assert_array_equal(first.event, second.event)
-    assert int(first.event[-1]) & int(ControlEvent.PACED)
-    assert int(first.final_state.paced_count) == 1
-
-    rejected = step_pacemaker_controller(plan, first.final_state, 1_400.0, False)
-    assert not bool(rejected.successful)
-    np.testing.assert_allclose(rejected.state.time_ms, first.final_state.time_ms)
-    np.testing.assert_allclose(rejected.pacing_output_mA, 0.0)
-
-
-def test_pump_controller_future_samples_cannot_change_prior_commands_and_replay() -> None:
     plan = PumpControllerPlan(
         10.0,
         300.0,
@@ -258,9 +231,21 @@ def test_pump_controller_future_samples_cannot_change_prior_commands_and_replay(
     rejected = step_pump_controller(plan, first.final_state, 40.0, 2.5, 3.0)
     assert not bool(rejected.successful)
     np.testing.assert_allclose(rejected.state.speed_rpm, first.final_state.speed_rpm)
+    plan = PacemakerControllerPlan(60.0, 120.0, 250.0, 2.0, 4.0)
+    initial = initialize_pacemaker_controller(plan)
+    times = jnp.asarray([250.0, 500.0, 750.0, 1_000.0, 1_250.0, 1_500.0])
+    sensed = jnp.asarray([False, True, False, False, False, False])
+    first = replay_pacemaker_controller(plan, initial, times, sensed)
+    second = replay_pacemaker_controller(plan, initial, times, sensed)
+    np.testing.assert_array_equal(first.pacing_output_mA, second.pacing_output_mA)
+    np.testing.assert_array_equal(first.event, second.event)
+    assert int(first.event[-1]) & int(ControlEvent.PACED)
+    assert int(first.final_state.paced_count) == 1
 
-
-def test_hydraulic_ecmo_conserves_pressure_and_requires_explicit_oxygen_model() -> None:
+    rejected = step_pacemaker_controller(plan, first.final_state, 1_400.0, False)
+    assert not bool(rejected.successful)
+    np.testing.assert_allclose(rejected.state.time_ms, first.final_state.time_ms)
+    np.testing.assert_allclose(rejected.pacing_output_mA, 0.0)
     hydraulic_only = _hydraulic_plan()
     assert not hydraulic_only.gas_exchange_enabled
     assert not hydraulic_only.oxygenator.supports_gas_exchange
@@ -301,7 +286,7 @@ def test_hydraulic_ecmo_conserves_pressure_and_requires_explicit_oxygen_model() 
     assert float(enabled.oxygen_transfer_mL_per_ms) > 0.0
 
 
-def test_oxygen_components_inversion_mixing_and_transport_are_conservative() -> None:
+def test_cardiovascular_devices_scenario_3() -> None:
     model = BloodOxygenModel(15.0)
     content = evaluate_oxygen_content(model, 10.0)
     assert bool(content.successful)
@@ -347,9 +332,6 @@ def test_oxygen_components_inversion_mixing_and_transport_are_conservative() -> 
         result.evidence.candidate_inventory_mL,
         atol=1.0e-15,
     )
-
-
-def test_membrane_exchange_refuses_zero_flow_without_epsilon_division() -> None:
     model = BloodOxygenModel(14.0)
     membrane = MembraneOxygenatorModel(
         model,

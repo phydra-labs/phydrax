@@ -22,7 +22,7 @@ def _self_adjoint_properties() -> Any:
     )
 
 
-def test_shifted_family_solves_many_systems_from_one_shared_basis() -> None:
+def test_shifted_contracts() -> None:
     matrix = jnp.asarray([[4.0, 1.0, 0.0], [1.0, 3.0, 1.0], [0.0, 1.0, 2.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -49,9 +49,6 @@ def test_shifted_family_solves_many_systems_from_one_shared_basis() -> None:
     assert result.diagnostics.solve_matvec_count == 0
     assert jnp.all(result.diagnostics.residual_norm < 1e-11)
     assert jnp.allclose(result.solution(1), expected[1])
-
-
-def test_shifted_family_supports_complex_shifts_and_jitted_re_evaluation() -> None:
     matrix = jnp.asarray([[4.0, 1.0, 0.0], [1.0, 3.0, 1.0], [0.0, 1.0, 2.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -77,11 +74,22 @@ def test_shifted_family_supports_complex_shifts_and_jitted_re_evaluation() -> No
     assert jnp.issubdtype(result.value.dtype, jnp.complexfloating)
     assert result.all_successful
     assert jnp.allclose(result.value, expected, rtol=1e-11, atol=1e-11)
+    operator = la.DiagonalLinearOperator(
+        jnp.asarray([1.0, 2.0, 3.0]),
+        operator_id="singular-shifted-operator",
+    )
+    family = la.ShiftedLinearSystemFamily(operator, jnp.asarray([2.0, 4.0]))
+    policy = la.ShiftedSolvePolicy(max_dimension=3)
+    singular = la.solve_shifted(family, jnp.ones(3), policy=policy)
+    zero = la.solve_shifted(family, jnp.zeros(3), policy=policy)
 
-
-def test_shifted_truncation_reports_true_physical_residuals_without_false_success() -> (
-    None
-):
+    assert singular.status[0] == int(la.ShiftedSolveStatus.SINGULAR)
+    assert singular.diagnostics.rank[0] == 2
+    assert singular.diagnostics.residual_norm[0] > 0.9
+    assert singular.status[1] == int(la.ShiftedSolveStatus.SUCCESS)
+    assert zero.all_successful
+    assert jnp.array_equal(zero.value, jnp.zeros((2, 3)))
+    assert jnp.array_equal(zero.diagnostics.residual_norm, jnp.zeros(2))
     matrix = jnp.asarray(
         [
             [4.0, 1.0, 0.0, 0.0],
@@ -117,28 +125,6 @@ def test_shifted_truncation_reports_true_physical_residuals_without_false_succes
         rtol=1e-10,
         atol=1e-12,
     )
-
-
-def test_shifted_family_exposes_singular_systems_and_accepts_zero_rhs() -> None:
-    operator = la.DiagonalLinearOperator(
-        jnp.asarray([1.0, 2.0, 3.0]),
-        operator_id="singular-shifted-operator",
-    )
-    family = la.ShiftedLinearSystemFamily(operator, jnp.asarray([2.0, 4.0]))
-    policy = la.ShiftedSolvePolicy(max_dimension=3)
-    singular = la.solve_shifted(family, jnp.ones(3), policy=policy)
-    zero = la.solve_shifted(family, jnp.zeros(3), policy=policy)
-
-    assert singular.status[0] == int(la.ShiftedSolveStatus.SINGULAR)
-    assert singular.diagnostics.rank[0] == 2
-    assert singular.diagnostics.residual_norm[0] > 0.9
-    assert singular.status[1] == int(la.ShiftedSolveStatus.SUCCESS)
-    assert zero.all_successful
-    assert jnp.array_equal(zero.value, jnp.zeros((2, 3)))
-    assert jnp.array_equal(zero.diagnostics.residual_norm, jnp.zeros(2))
-
-
-def test_shifted_plan_enforces_whole_family_resource_budgets() -> None:
     operator = la.DiagonalLinearOperator(jnp.arange(1.0, 6.0))
     family = la.ShiftedLinearSystemFamily(operator, jnp.arange(6.0, 10.0))
     plan = la.plan_shifted_solve(
@@ -157,9 +143,6 @@ def test_shifted_plan_enforces_whole_family_resource_budgets() -> None:
     assert plan.cost.total_storage_bytes > plan.cost.solution_storage_bytes
     with pytest.raises(ValueError, match="storage estimate"):
         la.plan_shifted_solve(family, constrained)
-
-
-def test_shifted_refresh_preserves_plan_and_rebuilds_operator_rhs_and_shifts() -> None:
     first_matrix = jnp.asarray([[3.0, 0.5], [0.5, 2.0]])
     first_operator = la.DenseLinearOperator(
         first_matrix,
@@ -242,9 +225,7 @@ def _streaming_policy(*, max_dimension: Any = 2) -> Any:
     )
 
 
-def test_streaming_shifted_solve_uses_direct_residuals_and_spectral_error_bounds() -> (
-    None
-):
+def test_streaming_contracts() -> None:
     matrix = jnp.asarray(
         [[2.0 + 0.0j, 1.0j], [-1.0j, 3.0 + 0.0j]],
         dtype=jnp.complex128,
@@ -314,9 +295,6 @@ def test_streaming_shifted_solve_uses_direct_residuals_and_spectral_error_bounds
     )
     assert inadmissible.status[0] == int(la.ShiftedSolveStatus.INADMISSIBLE_SHIFT)
     assert inadmissible.status[1] == int(la.ShiftedSolveStatus.SUCCESS)
-
-
-def test_streaming_shifted_admission_rejects_unproved_and_nonreal_families() -> None:
     policy = _streaming_policy()
     unproved = la.DenseLinearOperator(
         jnp.eye(2),
@@ -364,9 +342,6 @@ def test_streaming_shifted_admission_rejects_unproved_and_nonreal_families() -> 
             execution="streaming",
             differentiation="none",
         )
-
-
-def test_streaming_zero_rhs_and_numeric_refresh_preserve_lifecycle_identity() -> None:
     properties = la.OperatorProperties(
         self_adjoint=True,
         positive_semidefinite=True,

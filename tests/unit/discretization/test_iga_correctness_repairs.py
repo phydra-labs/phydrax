@@ -101,7 +101,7 @@ def _interface_and_certificate() -> Any:
     return interface, certificate
 
 
-def test_field_specific_facet_actions_use_the_field_basis_on_the_common_overlay() -> None:
+def test_iga_correctness_repairs_scenario_1() -> None:
     geometry_grid = BSplineGrid.open_uniform(2, 1)
     field_grid = BSplineGrid.open_uniform(1, 2)
     geometry_basis = TensorSplineBasisSpec(
@@ -137,9 +137,6 @@ def test_field_specific_facet_actions_use_the_field_basis_on_the_common_overlay(
     assert all(region.reference_actions[0].local_width == 4 for region in regions)
     # ty: ignore[unresolved-attribute]
     assert all(region.geometry_actions.tensor_plan.local_size == 9 for region in regions)
-
-
-def test_anisotropic_direct_realization_uses_each_axis_degree() -> None:
     quadratic = BSplineGrid.open_uniform(2, 1)
     cubic = BSplineGrid.open_uniform(3, 1)
     basis = TensorSplineBasisSpec((quadratic, cubic), axis_names=("xi", "eta"))
@@ -147,9 +144,6 @@ def test_anisotropic_direct_realization_uses_each_axis_degree() -> None:
 
     assert realization.cell_gathers.shape == (1, 12)
     assert np.unique(np.asarray(realization.cell_gathers)).size == 12
-
-
-def test_partial_thb_basis_fails_partition_and_foreign_certificate_is_rejected() -> None:
     partial = THBHierarchy(
         # ty: ignore[invalid-argument-type]
         (THBLevel(0, "partial", (True,), (True, False)),),
@@ -189,7 +183,7 @@ def test_partial_thb_basis_fails_partition_and_foreign_certificate_is_rejected()
         )
 
 
-def test_mortar_plan_rejects_a_matrix_other_than_the_certified_coupling() -> None:
+def test_iga_correctness_repairs_scenario_2() -> None:
     interface, certificate = _interface_and_certificate()
     crosspoints = MortarCrosspointPlan(2, 2, owner_patch_id="left")
     coupling = np.eye(2)
@@ -207,9 +201,6 @@ def test_mortar_plan_rejects_a_matrix_other_than_the_certified_coupling() -> Non
             np.asarray(((1.0, 0.0), (0.0, 0.0))),
             stability,
         )
-
-
-def test_tspline_anchor_ids_must_be_dense_coefficient_indices() -> None:
     knots = LocalKnotVector2D(
         (0.0, 0.0, 0.0, 0.0, 1.0),
         (0.0, 0.0, 0.0, 0.0, 1.0),

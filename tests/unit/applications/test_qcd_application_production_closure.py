@@ -123,7 +123,7 @@ def _su3_square_geometry(*, decomposition: Any = None, shape: Any = (2, 2)) -> A
     )
 
 
-def test_gauge_normalization_topology_and_flow_identities() -> None:
+def test_qcd_application_production_closure_scenario_1() -> None:
     plan = HypercubicGaugeObservablePlan(
         (2, 2, 2, 2),
         lattice_spacing=0.125,
@@ -160,9 +160,6 @@ def test_gauge_normalization_topology_and_flow_identities() -> None:
     assert flowed.topology_id == geometry.link_space.topology.topology_id
     assert bool(jnp.all(flowed.valid))
     np.testing.assert_allclose(flowed.mean_plaquette, 1.0, atol=1.0e-12)
-
-
-def test_meson_and_baryon_contractions_obey_declared_spatial_normalization() -> None:
     spin, color = 2, 3
     identity = jnp.eye(spin * color, dtype=jnp.complex128).reshape(
         (spin, color, spin, color)
@@ -203,9 +200,6 @@ def test_meson_and_baryon_contractions_obey_declared_spatial_normalization() -> 
         normalize_color=True,
     )
     np.testing.assert_allclose(baryon, jnp.full((2,), 3.0))
-
-
-def test_measurement_streams_and_segment_merge_exclude_thermalization() -> None:
     schedule = MeasurementSchedule(
         12,
         thermalization_trajectories=4,
@@ -336,7 +330,7 @@ def _continuum_plan() -> Any:
     )
 
 
-def test_correlated_continuum_fit_and_resolution_volume_abstention() -> None:
+def test_qcd_application_production_closure_scenario_2() -> None:
     data = _continuum_data(
         (0.12, 0.12, 0.09, 0.09, 0.06, 0.06),
         (24, 32, 32, 40, 48, 64),
@@ -400,9 +394,6 @@ def test_correlated_continuum_fit_and_resolution_volume_abstention() -> None:
     ) in mixed.evidence.rejected_variations
 
     assert "insufficient-distinct-spatial-volumes" not in mixed.abstention_reasons
-
-
-def test_small_volume_dynamical_recipes_lower_to_native_contracts() -> None:
     geometry = _su3_square_geometry()
     schedule = MeasurementSchedule(
         6,

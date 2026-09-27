@@ -293,7 +293,7 @@ def test_enforce_blend_coord_separable_spacetime_runs() -> None:
     assert jnp.all(jnp.isfinite(out))
 
 
-def test_enforce_initial_rational_gate_bounded_fixed_start_value_only() -> None:
+def test_enforced_helpers_scenario_1() -> None:
     time = TimeInterval(0.0, 2.0)
     component = time.component({"t": FixedStart()})
 
@@ -304,6 +304,40 @@ def test_enforce_initial_rational_gate_bounded_fixed_start_value_only() -> None:
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 0.0, atol=1e-10)
     assert float(out[1]) < 1.0
+    time = TimeInterval(0.0, 2.0)
+    component = time.component({"t": FixedEnd()})
+
+    u = time.Function()(1.0)
+    u_enforced = enforce_initial(u, component, targets={0: 0.0}, gate_eps=1e-2)
+
+    batch = _points_on_time(time, jnp.array([2.0, 0.0], dtype="float64"))
+    out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
+    assert jnp.allclose(out[0], 0.0, atol=1e-10)
+    assert float(out[1]) < 1.0
+    time = TimeInterval(0.0, 2.0)
+    component = time.component({"t": FixedStart()})
+
+    u = time.Function()(1.0)
+    u_enforced = enforce_initial(u, component, targets={0: 2.0}, gate_eps=1e-2)
+    batch = time.component().sample(phx.domain.GridSampling({"t": FourierAxisSpec(8)}))
+    out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
+    assert jnp.allclose(out[0], 2.0, atol=1e-10)
+    assert jnp.all(jnp.isfinite(out))
+    for saturation_fraction, linear_fraction in (
+        (0.0, 0.5),
+        (0.6, 0.5),
+        (0.5, 0.0),
+        (0.5, 1.0),
+    ):
+        geom = Interval1d(0.0, 1.0)
+        component = geom.component({"x": Boundary()})
+
+        with pytest.raises(ValueError):
+            component.enforcement_gate(
+                var="x",
+                saturation_fraction=saturation_fraction,
+                linear_fraction=linear_fraction,
+            )
 
 
 def test_enforce_initial_rational_gate_enforces_first_derivative_fixed_start() -> None:
@@ -335,19 +369,6 @@ def test_enforce_initial_rational_gate_enforces_first_derivative_fixed_start() -
     assert float(out_end) <= float(raw_end) + 1e-10
 
 
-def test_enforce_initial_rational_gate_bounded_fixed_end_value_only() -> None:
-    time = TimeInterval(0.0, 2.0)
-    component = time.component({"t": FixedEnd()})
-
-    u = time.Function()(1.0)
-    u_enforced = enforce_initial(u, component, targets={0: 0.0}, gate_eps=1e-2)
-
-    batch = _points_on_time(time, jnp.array([2.0, 0.0], dtype="float64"))
-    out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
-    assert jnp.allclose(out[0], 0.0, atol=1e-10)
-    assert float(out[1]) < 1.0
-
-
 def test_enforce_dirichlet_scalar_var_supports_coord_separable_sampling() -> None:
     time = TimeInterval(0.0, 2.0)
     component = time.component({"t": FixedStart()})
@@ -362,18 +383,6 @@ def test_enforce_dirichlet_scalar_var_supports_coord_separable_sampling() -> Non
     batch = time.component().sample(phx.domain.GridSampling({"t": FourierAxisSpec(8)}))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 3.0, atol=1e-10)
-    assert jnp.all(jnp.isfinite(out))
-
-
-def test_enforce_initial_supports_coord_separable_sampling() -> None:
-    time = TimeInterval(0.0, 2.0)
-    component = time.component({"t": FixedStart()})
-
-    u = time.Function()(1.0)
-    u_enforced = enforce_initial(u, component, targets={0: 2.0}, gate_eps=1e-2)
-    batch = time.component().sample(phx.domain.GridSampling({"t": FourierAxisSpec(8)}))
-    out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
-    assert jnp.allclose(out[0], 2.0, atol=1e-10)
     assert jnp.all(jnp.isfinite(out))
 
 
@@ -397,25 +406,6 @@ def test_enforce_dirichlet_uses_dimensionless_geometry_gate() -> None:
     assert jnp.allclose(gate_values, jnp.array([0.0, 1.0, 0.0]))
     assert jnp.allclose(enforced_values, gate_values)
     assert jnp.allclose(sdf_values[1], -25.0)
-
-
-@pytest.mark.parametrize(
-    ("saturation_fraction", "linear_fraction"),
-    ((0.0, 0.5), (0.6, 0.5), (0.5, 0.0), (0.5, 1.0)),
-)
-def test_enforcement_gate_rejects_invalid_profile_fractions(
-    saturation_fraction: Any,
-    linear_fraction: Any,
-) -> None:
-    geom = Interval1d(0.0, 1.0)
-    component = geom.component({"x": Boundary()})
-
-    with pytest.raises(ValueError):
-        component.enforcement_gate(
-            var="x",
-            saturation_fraction=saturation_fraction,
-            linear_fraction=linear_fraction,
-        )
 
 
 def test_interval_derivative_ansatze_are_continuous_at_midpoint() -> None:

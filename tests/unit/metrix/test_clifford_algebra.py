@@ -19,7 +19,7 @@ def _basis(layout: Any) -> Any:
     return tuple(cl.basis_blade(layout, bitmap) for bitmap in layout.bitmaps)
 
 
-def test_euclidean_plane_multiplication_table_and_associativity() -> None:
+def test_clifford_algebra_scenario_1() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     layout = cl.CliffordBladeLayout.full(algebra)
     product = cl.prepare_product(algebra, layout, layout, backend="sparse")
@@ -42,9 +42,6 @@ def test_euclidean_plane_multiplication_table_and_associativity() -> None:
                     product(product(left, middle), right),
                     product(left, product(middle, right)),
                 )
-
-
-def test_signature_radical_and_sparse_closure_are_explicit() -> None:
     algebra = cl.CliffordAlgebraSpec((1, -1, 0))
     full = cl.CliffordBladeLayout.full(algebra)
     product = cl.prepare_product(algebra, full, full, backend="sparse")
@@ -75,9 +72,6 @@ def test_signature_radical_and_sparse_closure_are_explicit() -> None:
             vectors,
             output_layout=cl.CliffordBladeLayout.grades_layout(algebra, (0,)),
         )
-
-
-def test_product_kinds_involutions_and_layout_maps() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     full = cl.CliffordBladeLayout.full(algebra)
     vectors = cl.CliffordBladeLayout.grades_layout(algebra, (1,))
@@ -108,9 +102,6 @@ def test_product_kinds_involutions_and_layout_maps() -> None:
     assert jnp.array_equal(
         cl.embed_layout(extracted, vectors, full), jnp.asarray([0.0, 2.0, 3.0, 0.0])
     )
-
-
-def test_product_preserves_dtype_and_jax_transformability() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     layout = cl.CliffordBladeLayout.full(algebra)
     sparse = cl.prepare_product(algebra, layout, layout, backend="sparse")
@@ -127,15 +118,12 @@ def test_product_preserves_dtype_and_jax_transformability() -> None:
     assert sparse(complex_values, complex_values).dtype == jnp.complex128
 
 
-def test_resource_budget_rejects_before_layout_allocation() -> None:
+def test_clifford_algebra_scenario_2() -> None:
     budget = cl.CliffordResourceBudget(maximum_blades=3)
     algebra = cl.CliffordAlgebraSpec((1, 1), budget=budget)
     with pytest.raises(ValueError, match="budget allows 3"):
         cl.CliffordBladeLayout.full(algebra)
     assert cl.CliffordBladeLayout.grades_layout(algebra, (0, 1)).blade_count == 3
-
-
-def test_algebra_identity_is_independent_of_execution_budget_and_orientation() -> None:
     first = cl.CliffordAlgebraSpec((1, -1))
     second = cl.CliffordAlgebraSpec(
         (1, -1),

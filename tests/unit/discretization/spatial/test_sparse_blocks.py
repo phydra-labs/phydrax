@@ -25,7 +25,7 @@ def _index_space() -> Any:
     return plan.prepare(bounds), plan.prepare_index_space(bounds)
 
 
-def test_tensor_index_space_matches_dense_indexed_geometry_without_dense_points() -> None:
+def test_sparse_blocks_scenario_1() -> None:
     dense, index = _index_space()
     logical = jnp.asarray([0, 9, 63], dtype=jnp.int32)
     coordinates, supported = index.vertices().coordinates_at(logical)
@@ -36,9 +36,6 @@ def test_tensor_index_space_matches_dense_indexed_geometry_without_dense_points(
     assert jnp.all(supported & measure_supported)
     assert index.stored_axis_values == 32
     assert index.stored_axis_values < index.size
-
-
-def test_sparse_blocks_wrap_periodic_closure_and_align_transitions() -> None:
     _, index = _index_space()
     plan = phx.discretization.SparseBlockTopologyPlan(
         index,
@@ -59,9 +56,6 @@ def test_sparse_blocks_wrap_periodic_closure_and_align_transitions() -> None:
     assert int(second.generation) == 1
     assert bool(transition.key_transition.topology_changed)
     assert int(first.materialize_support().sum()) == 12
-
-
-def test_sparse_block_overflow_returns_no_usable_node_support() -> None:
     _, index = _index_space()
     plan = phx.discretization.SparseBlockTopologyPlan(
         index,

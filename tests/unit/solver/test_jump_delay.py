@@ -29,7 +29,7 @@ def _events(times: Any, marks: Any, *, capacity: Any = 3) -> Any:
     )
 
 
-def test_jump_delay_uses_right_continuous_history_at_exact_event_times() -> None:
+def test_jump_delay_contracts() -> None:
     base = phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: jnp.zeros_like(state),
         lambda time, args: jnp.ones((1,)),
@@ -66,9 +66,51 @@ def test_jump_delay_uses_right_continuous_history_at_exact_event_times() -> None
     assert jnp.array_equal(resolved.post_states[:, 0], jnp.asarray([4.0, 7.0, 0.0]))
     assert solution.stats["num_jumps"] == 2
     assert solution.metadata["jump_side_convention"] == "right-continuous"
+    base = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: memory["lag"],
+        lambda time, args: jnp.ones((1,)),
+        (phx.solver.ConstantDelay("lag", 0.5),),
+        t0=0.0,
+        t1=0.2,
+    )
+    problem = phx.solver.JumpDelayProblem(
+        base,
+        lambda time, state, memory, channel, mark, args: state + mark,
+        mark_shape=(1,),
+    )
+    solution = phx.solver.solve_jump_delay(
+        problem,
+        _events([], []),
+        save_times=jnp.asarray([0.0, 0.2]),
+        solver=dfx.Euler(),
+        dt0=0.05,
+        max_steps=16,
+    )
 
+    assert jnp.allclose(solution.states[:, 0], jnp.asarray([1.0, 1.2]))
+    assert solution.stats["num_jumps"] == 0
+    base = phx.solver.DelayDifferentialProblem(
+        lambda time, state, memory, args: jnp.zeros_like(state),
+        lambda time, args: jnp.ones((1,)),
+        (phx.solver.ConstantDelay("lag", 0.2),),
+        t0=0.0,
+        t1=1.0,
+    )
+    problem = phx.solver.JumpDelayProblem(
+        base,
+        lambda time, state, memory, channel, mark, args: state,
+        mark_shape=(1,),
+    )
 
-def test_jump_delay_replays_one_global_wiener_path_across_events() -> None:
+    for schedule in (_events([0.0], [1.0]), _events([0.7, 0.4], [1.0, 1.0])):
+        with pytest.raises(ValueError, match="strictly increasing"):
+            phx.solver.solve_jump_delay(
+                problem,
+                schedule,
+                save_times=jnp.asarray([1.0]),
+                solver=dfx.Euler(),
+                dt0=0.05,
+            )
     noise = phx.solver.DelayWienerTerm(
         "driver",
         lambda time, state, memory, args: 0.2 * jnp.ones(state.shape + (1,)),
@@ -115,54 +157,3 @@ def test_jump_delay_replays_one_global_wiener_path_across_events() -> None:
     assert jnp.allclose(solution.states[:, 0], expected, rtol=0.0, atol=5e-9)
     assert solution.realization is realization
     assert solution.metadata["driver_family"] == ("wiener-plus-finite-activity-jump")
-
-
-def test_jump_delay_accepts_an_empty_successful_schedule() -> None:
-    base = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: memory["lag"],
-        lambda time, args: jnp.ones((1,)),
-        (phx.solver.ConstantDelay("lag", 0.5),),
-        t0=0.0,
-        t1=0.2,
-    )
-    problem = phx.solver.JumpDelayProblem(
-        base,
-        lambda time, state, memory, channel, mark, args: state + mark,
-        mark_shape=(1,),
-    )
-    solution = phx.solver.solve_jump_delay(
-        problem,
-        _events([], []),
-        save_times=jnp.asarray([0.0, 0.2]),
-        solver=dfx.Euler(),
-        dt0=0.05,
-        max_steps=16,
-    )
-
-    assert jnp.allclose(solution.states[:, 0], jnp.asarray([1.0, 1.2]))
-    assert solution.stats["num_jumps"] == 0
-
-
-def test_jump_delay_rejects_endpoint_and_unsorted_events() -> None:
-    base = phx.solver.DelayDifferentialProblem(
-        lambda time, state, memory, args: jnp.zeros_like(state),
-        lambda time, args: jnp.ones((1,)),
-        (phx.solver.ConstantDelay("lag", 0.2),),
-        t0=0.0,
-        t1=1.0,
-    )
-    problem = phx.solver.JumpDelayProblem(
-        base,
-        lambda time, state, memory, channel, mark, args: state,
-        mark_shape=(1,),
-    )
-
-    for schedule in (_events([0.0], [1.0]), _events([0.7, 0.4], [1.0, 1.0])):
-        with pytest.raises(ValueError, match="strictly increasing"):
-            phx.solver.solve_jump_delay(
-                problem,
-                schedule,
-                save_times=jnp.asarray([1.0]),
-                solver=dfx.Euler(),
-                dt0=0.05,
-            )

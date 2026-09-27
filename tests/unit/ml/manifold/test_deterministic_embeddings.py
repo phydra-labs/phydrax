@@ -51,69 +51,62 @@ def _assert_finite_nonzero(array: Any) -> None:
     assert jnp.any(jnp.abs(array) > 1e-8)
 
 
-@pytest.mark.parametrize("variant", ["standard", "modified", "hessian", "ltsa"])
-def test_every_lle_variant_has_declared_schema_and_exact_transform_support(
-    variant: Any,
-) -> None:
-    recipe = LocallyLinearEmbeddingRecipe(1, n_neighbors=3, variant=variant)
-    result = recipe.fit_batch(MLBatch(_features()))
-    model = result.as_trainable()
+def test_deterministic_embeddings_scenario_1() -> None:
+    for variant in ["standard", "modified", "hessian", "ltsa"]:
+        recipe = LocallyLinearEmbeddingRecipe(1, n_neighbors=3, variant=variant)
+        result = recipe.fit_batch(MLBatch(_features()))
+        model = result.as_trainable()
 
-    assert isinstance(model, LocallyLinearEmbeddingModel)
-    assert model.training_features.shape == (8, 3)
-    assert model.training_embedding.shape == (8, 1)
-    assert result.diagnostics.eigenvalues.shape == (1,)
-    assert result.diagnostics.method == f"lle-{variant}"
-    assert result.derivative_contract.route is DerivativeRoute.SPECTRAL
-    assert (
-        result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
-        is GradientLevel.CONDITIONAL
-    )
-    assert (
-        result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
-        is GradientLevel.CONDITIONAL
-    )
-    assert (
-        result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
-        is GradientLevel.CONDITIONAL
-    )
-    assert (
-        result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
-        is GradientLevel.NONE
-    )
-
-    if variant in ("standard", "modified"):
-        assert model(jnp.array([0.2, -0.1, 0.4])).shape == (1,)
-        assert result.model(jnp.zeros((3, 3))).shape == (3, 1)
-        assert jax.jit(model)(jnp.zeros((3, 3))).shape == (3, 1)
-        assert jax.vmap(model)(jnp.zeros((3, 3))).shape == (3, 1)
-        # The barycentric extension jumps when the hard neighbor set changes.
+        assert isinstance(model, LocallyLinearEmbeddingModel)
+        assert model.training_features.shape == (8, 3)
+        assert model.training_embedding.shape == (8, 1)
+        assert result.diagnostics.eigenvalues.shape == (1,)
+        assert result.diagnostics.method == f"lle-{variant}"
+        assert result.derivative_contract.route is DerivativeRoute.SPECTRAL
         assert (
-            result.derivative_contract.level(DerivativeSurface.INPUT)
+            result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+            is GradientLevel.CONDITIONAL
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+            is GradientLevel.CONDITIONAL
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+            is GradientLevel.CONDITIONAL
+        )
+        assert (
+            result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
             is GradientLevel.NONE
         )
-        assert (
-            result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
-            is GradientLevel.ALMOST_EVERYWHERE
-        )
-        # ty: ignore[unresolved-attribute]
-        assert result.derivative_contract.regularity.continuity == -1
-    else:
-        assert (
-            result.derivative_contract.level(DerivativeSurface.INPUT)
-            is GradientLevel.NONE
-        )
-        assert (
-            result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
-            is GradientLevel.NONE
-        )
-        with pytest.raises(ValueError, match="not mathematically defined"):
-            model(jnp.array([0.2, -0.1, 0.4]))
 
-
-def test_lle_preserves_case_sample_feature_and_target_axes_and_statistical_weight_policy() -> (
-    None
-):
+        if variant in ("standard", "modified"):
+            assert model(jnp.array([0.2, -0.1, 0.4])).shape == (1,)
+            assert result.model(jnp.zeros((3, 3))).shape == (3, 1)
+            assert jax.jit(model)(jnp.zeros((3, 3))).shape == (3, 1)
+            assert jax.vmap(model)(jnp.zeros((3, 3))).shape == (3, 1)
+            # The barycentric extension jumps when the hard neighbor set changes.
+            assert (
+                result.derivative_contract.level(DerivativeSurface.INPUT)
+                is GradientLevel.NONE
+            )
+            assert (
+                result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+                is GradientLevel.ALMOST_EVERYWHERE
+            )
+            # ty: ignore[unresolved-attribute]
+            assert result.derivative_contract.regularity.continuity == -1
+        else:
+            assert (
+                result.derivative_contract.level(DerivativeSurface.INPUT)
+                is GradientLevel.NONE
+            )
+            assert (
+                result.derivative_contract.level(DerivativeSurface.MODEL_PARAMETER)
+                is GradientLevel.NONE
+            )
+            with pytest.raises(ValueError, match="not mathematically defined"):
+                model(jnp.array([0.2, -0.1, 0.4]))
     base = _features()
     features = jnp.stack((base, base * jnp.array([1.2, 0.8, 1.1])), axis=0)
     targets = jnp.stack(
@@ -155,11 +148,6 @@ def test_lle_preserves_case_sample_feature_and_target_axes_and_statistical_weigh
         # ty: ignore[unresolved-attribute]
         jnp.abs(second.as_trainable().training_embedding),
     )
-
-
-def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiable() -> (
-    None
-):
     features = _features()
     weights = jnp.array([1.0, 1.4, 0.8, 1.7, 1.2, 0.9, 1.5, 1.1])
     recipe = SpectralEmbeddingRecipe(2, n_neighbors=3, bandwidth=1.4)
@@ -205,7 +193,7 @@ def test_spectral_embedding_is_jittable_vmappable_and_conditionally_differentiab
     assert contract.route is DerivativeRoute.SPECTRAL
 
 
-def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform() -> None:
+def test_deterministic_embeddings_scenario_2() -> None:
     planar = _features()[:, :2]
     classical = MultidimensionalScalingRecipe(2, method="classical").fit_batch(
         MLBatch(planar)
@@ -253,9 +241,6 @@ def test_classical_mds_preserves_planar_distances_and_smacof_rejects_transform()
     ).fit_batch(MLBatch(planar))
     assert not nonconverged.valid
     assert nonconverged.status == ML_NONCONVERGED
-
-
-def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status() -> None:
     features = _features()
     result = IsomapRecipe(2, n_neighbors=3, max_samples=8).fit_batch(MLBatch(features))
     model = result.as_trainable()
@@ -298,9 +283,6 @@ def test_isomap_exposes_geodesic_invariants_capacity_and_connectivity_status() -
     assert not invalid.valid
     assert invalid.status == ML_INFEASIBLE
     assert invalid.diagnostics.connected_components == 2
-
-
-def test_complex_manifold_coordinates_use_hermitian_geometry() -> None:
     real = _features()
     complex_features = real + 0.2j * jnp.flip(real, axis=-1)
     graph = build_neighbor_graph(
@@ -318,9 +300,8 @@ def test_complex_manifold_coordinates_use_hermitian_geometry() -> None:
     assert jnp.all(jnp.isfinite(jnp.imag(transformed)))
 
 
-@pytest.mark.parametrize(
-    "recipe",
-    [
+def test_deterministic_manifold_fit_feature_and_weight_gradients_match_contract() -> None:
+    for recipe in [
         LocallyLinearEmbeddingRecipe(1, n_neighbors=3, variant="standard"),
         LocallyLinearEmbeddingRecipe(1, n_neighbors=3, variant="modified"),
         LocallyLinearEmbeddingRecipe(1, n_neighbors=3, variant="hessian"),
@@ -329,37 +310,38 @@ def test_complex_manifold_coordinates_use_hermitian_geometry() -> None:
         MultidimensionalScalingRecipe(1, method="classical"),
         MultidimensionalScalingRecipe(1, method="smacof", iterations=3, tolerance=1e6),
         IsomapRecipe(1, n_neighbors=3),
-    ],
-)
-def test_deterministic_manifold_fit_feature_and_weight_gradients_match_contract(
-    recipe: Any,
-) -> None:
-    features = _features()
-    weights = jnp.array([1.0, 1.2, 0.9, 1.4, 1.1, 0.8, 1.3, 1.05])
+    ]:
+        features = _features()
+        weights = jnp.array([1.0, 1.2, 0.9, 1.4, 1.1, 0.8, 1.3, 1.05])
 
-    def feature_loss(value: Any) -> Any:
-        fitted = recipe.fit_batch(MLBatch(value, sample_weight=weights)).as_trainable()
-        if isinstance(fitted, SpectralEmbeddingModel):
-            embedding = fitted.eigenvectors
-            coefficients = jnp.arange(1.0, embedding.shape[-2] + 1.0)
-            return jnp.sum(coefficients[:, None] * jnp.square(jnp.abs(embedding)))
-        return _transductive_loss(fitted)
+        def feature_loss(value: Any) -> Any:
+            fitted = recipe.fit_batch(
+                MLBatch(value, sample_weight=weights)
+            ).as_trainable()
+            if isinstance(fitted, SpectralEmbeddingModel):
+                embedding = fitted.eigenvectors
+                coefficients = jnp.arange(1.0, embedding.shape[-2] + 1.0)
+                return jnp.sum(coefficients[:, None] * jnp.square(jnp.abs(embedding)))
+            return _transductive_loss(fitted)
 
-    def weight_loss(value: Any) -> Any:
-        fitted = recipe.fit_batch(MLBatch(features, sample_weight=value)).as_trainable()
-        if isinstance(fitted, SpectralEmbeddingModel):
-            embedding = fitted.eigenvectors
-            coefficients = jnp.arange(1.0, embedding.shape[-2] + 1.0)
-            return jnp.sum(coefficients[:, None] * jnp.square(jnp.abs(embedding)))
-        return _transductive_loss(fitted)
+        def weight_loss(value: Any) -> Any:
+            fitted = recipe.fit_batch(
+                MLBatch(features, sample_weight=value)
+            ).as_trainable()
+            if isinstance(fitted, SpectralEmbeddingModel):
+                embedding = fitted.eigenvectors
+                coefficients = jnp.arange(1.0, embedding.shape[-2] + 1.0)
+                return jnp.sum(coefficients[:, None] * jnp.square(jnp.abs(embedding)))
+            return _transductive_loss(fitted)
 
-    feature_gradient = jax.grad(feature_loss)(features)
-    weight_gradient = jax.grad(weight_loss)(weights)
-    assert jnp.all(jnp.isfinite(feature_gradient))
-    assert jnp.all(jnp.isfinite(weight_gradient))
-    contract = recipe.fit_batch(MLBatch(features)).derivative_contract
-    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
-    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
-    assert (
-        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
-    )
+        feature_gradient = jax.grad(feature_loss)(features)
+        weight_gradient = jax.grad(weight_loss)(weights)
+        assert jnp.all(jnp.isfinite(feature_gradient))
+        assert jnp.all(jnp.isfinite(weight_gradient))
+        contract = recipe.fit_batch(MLBatch(features)).derivative_contract
+        assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+        assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+        assert (
+            contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+            is GradientLevel.CONDITIONAL
+        )

@@ -53,27 +53,26 @@ def _complex_payload_coefficients(limit: Any) -> Any:
     return coefficients.at[0, 0, 0, 0].set(jnp.nan + 1j * jnp.inf)
 
 
-@pytest.mark.parametrize("kind", ["regular", "irregular"])
-def test_complex_payload_synthesis_matches_explicit_mode_sum(kind: Any) -> None:
-    limit = 5
-    coefficients = _complex_payload_coefficients(limit)
-    points = jnp.asarray(
-        [
-            [[0.4, -0.2, 0.8], [-0.7, 0.5, 1.1]],
-            [[1.2, 0.3, -0.6], [0.25, 0.9, 0.45]],
-        ],
-        dtype=jnp.float64,
-    )
-    prepared = spectral_api.SolidHarmonicPlan(limit, kind=kind, reality=False).prepare()
-    actual = prepared.evaluate(coefficients, points)
-    expected = _explicit_synthesis(coefficients, points, kind)
+def test_solid_harmonic_scenario_1() -> None:
+    for kind in ["regular", "irregular"]:
+        limit = 5
+        coefficients = _complex_payload_coefficients(limit)
+        points = jnp.asarray(
+            [
+                [[0.4, -0.2, 0.8], [-0.7, 0.5, 1.1]],
+                [[1.2, 0.3, -0.6], [0.25, 0.9, 0.45]],
+            ],
+            dtype=jnp.float64,
+        )
+        prepared = spectral_api.SolidHarmonicPlan(
+            limit, kind=kind, reality=False
+        ).prepare()
+        actual = prepared.evaluate(coefficients, points)
+        expected = _explicit_synthesis(coefficients, points, kind)
 
-    assert actual.shape == points.shape[:-1] + coefficients.shape[2:]
-    assert actual.dtype == jnp.complex128
-    np.testing.assert_allclose(actual, expected, rtol=3e-12, atol=3e-12)
-
-
-def test_real_synthesis_uses_independent_half_and_signed_conjugacy() -> None:
+        assert actual.shape == points.shape[:-1] + coefficients.shape[2:]
+        assert actual.dtype == jnp.complex128
+        np.testing.assert_allclose(actual, expected, rtol=3e-12, atol=3e-12)
     limit = 5
     center = limit - 1
     coefficients = jnp.zeros((limit, 2 * limit - 1, 2), dtype=jnp.complex128)
@@ -104,9 +103,6 @@ def test_real_synthesis_uses_independent_half_and_signed_conjugacy() -> None:
     assert not jnp.iscomplexobj(actual)
     assert jnp.all(jnp.isfinite(actual))
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-13)
-
-
-def test_regular_origin_and_irregular_singular_lanes_survive_fused_synthesis() -> None:
     limit = 4
     center = limit - 1
     coefficients = jnp.zeros((limit, 2 * limit - 1), dtype=jnp.complex128)
@@ -141,7 +137,7 @@ def test_regular_origin_and_irregular_singular_lanes_survive_fused_synthesis() -
     )
 
 
-def test_fused_synthesis_is_jittable_and_has_explicit_sum_coordinate_jvp() -> None:
+def test_solid_harmonic_scenario_2() -> None:
     limit = 4
     coefficients = _complex_payload_coefficients(limit)[..., 0, 0]
     points = jnp.asarray([[0.4, -0.2, 0.8], [-0.5, 0.7, 1.2]], dtype=jnp.float64)
@@ -166,9 +162,6 @@ def test_fused_synthesis_is_jittable_and_has_explicit_sum_coordinate_jvp() -> No
         (direction,),
     )
     np.testing.assert_allclose(actual_jvp, expected_jvp, rtol=2e-11, atol=2e-11)
-
-
-def test_plan_dtype_validation_resources_and_provenance_contract() -> None:
     real = spectral_api.SolidHarmonicPlan(3, reality=True).prepare()
     complex_ = spectral_api.SolidHarmonicPlan(3, reality=False).prepare()
     coefficients = jnp.zeros((3, 5), dtype=jnp.complex64).at[0, 2].set(1.0)

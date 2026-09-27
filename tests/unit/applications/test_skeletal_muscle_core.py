@@ -81,7 +81,7 @@ EXPECTED_QUANTITIES = {
 }
 
 
-def test_skeletal_quantities_are_exact_complete_and_immutable() -> None:
+def test_skeletal_contracts() -> None:
     assert EXPECTED_QUANTITIES == set(SKELETAL_MUSCLE_QUANTITIES)
     assert len(
         {value.quantity_id for value in SKELETAL_MUSCLE_QUANTITIES.values()}
@@ -107,9 +107,6 @@ def test_skeletal_quantities_are_exact_complete_and_immutable() -> None:
     )
     assert skeletal_muscle_quantity("motor_unit_event_time").to_si(1.0) == 0.001
     assert skeletal_muscle_quantity("spindle_afferent_rate").to_si(1.0) == 1.0
-
-
-def test_skeletal_quantity_identity_is_domain_and_metadata_sensitive() -> None:
     baseline = SkeletalMuscleQuantitySpec(
         "drive",
         "dimensionless",

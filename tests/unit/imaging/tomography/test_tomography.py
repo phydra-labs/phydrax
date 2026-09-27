@@ -22,7 +22,7 @@ def _support(origin: Any = (-1.0, 0.5, 0.5), direction: Any = (1.0, 0.0, 0.0)) -
     return phx.imaging.tomography.ProjectionSupport(rays, (1,), ("view-0",))
 
 
-def test_voxel_projector_and_transpose_are_matched() -> None:
+def test_tomography_scenario_1() -> None:
     support = _support()
     plan = phx.imaging.tomography.VoxelXRayTransformPlan(
         support,
@@ -43,9 +43,6 @@ def test_voxel_projector_and_transpose_are_matched() -> None:
     left = np.vdot(np.asarray(projected.values), np.asarray((0.7,)))
     right = np.vdot(attenuation, np.asarray(plan.transpose(np.asarray((0.7,)))))
     np.testing.assert_allclose(left, right)
-
-
-def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual() -> None:
     detector = phx.imaging.tomography.BeerLambertPlan(np.asarray((100.0,)))
     response = detector.evaluate(np.asarray((np.log(2.0),)))
     np.testing.assert_allclose(response.expected_signal, (50.0,))
@@ -69,9 +66,6 @@ def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual() 
     solved = phx.imaging.tomography.IterativeCTPlan(plan, 4).solve(np.asarray((3.0,)))
     assert bool(solved.successful)
     assert solved.residual_norms[-1] <= solved.residual_norms[0]
-
-
-def test_tetrahedral_projector_has_matched_transpose() -> None:
     vertices = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64")
     support = _support(origin=(-1.0, 0.1, 0.1))
     transform = phx.imaging.tomography.TetrahedralXRayTransformPlan(

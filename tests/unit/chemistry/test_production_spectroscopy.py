@@ -5,7 +5,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_tda_tracking_preserves_parent_root_identity_across_reordering() -> None:
+def test_production_spectroscopy_scenario_1() -> None:
     dipole_unit = phx.units.derived_unit(
         "e*bohr", ((phx.units.ELEMENTARY_CHARGE, 1), (phx.units.BOHR, 1))
     )
@@ -41,9 +41,6 @@ def test_tda_tracking_preserves_parent_root_identity_across_reordering() -> None
     np.testing.assert_allclose(candidate.excitation_energies, [0.31, 0.19])
     assert bool(tracking.successful)
     np.testing.assert_array_equal(tracking.permutation, [1, 0])
-
-
-def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling() -> None:
     dipole_unit = phx.units.derived_unit(
         "e*bohr", ((phx.units.ELEMENTARY_CHARGE, 1), (phx.units.BOHR, 1))
     )
@@ -99,9 +96,6 @@ def test_tracked_manifolds_produce_antisymmetric_nonadiabatic_coupling() -> None
     assert coupling.energy_weighted_unit.dimension == (
         phx.units.ENERGY / phx.units.LENGTH
     )
-
-
-def test_uv_visible_broadening_preserves_strength_on_each_supported_axis() -> None:
     dipole_unit = phx.units.derived_unit(
         "e*bohr", ((phx.units.ELEMENTARY_CHARGE, 1), (phx.units.BOHR, 1))
     )

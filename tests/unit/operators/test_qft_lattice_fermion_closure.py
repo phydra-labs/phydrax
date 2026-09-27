@@ -106,7 +106,7 @@ def _dense_action(operator: Any) -> Any:
     return jnp.swapaxes(columns, -1, -2)
 
 
-def test_free_wilson_dispersion_matches_lattice_symbol() -> None:
+def test_qft_lattice_fermion_closure_scenario_1() -> None:
     boundary = _tensor_boundary(shape=(4, 4))
     operator = FreeWilsonDiracOperator(
         boundary,
@@ -132,9 +132,6 @@ def test_free_wilson_dispersion_matches_lattice_symbol() -> None:
     )
 
     assert jnp.allclose(operator.mv(field), expected, atol=2e-6)
-
-
-def test_wilson_covariance_and_gamma5_hermiticity() -> None:
     boundary, _, link_space, representation, transport = _periodic_square_gauge()
     links = link_space.identity().astype(jnp.complex64)
     operator = WilsonDiracOperator(
@@ -167,9 +164,6 @@ def test_wilson_covariance_and_gamma5_hermiticity() -> None:
     assert jnp.allclose(
         operator.adjoint_mv(field), operator.gamma5_conjugate_mv(field), atol=3e-5
     )
-
-
-def test_even_odd_schur_reconstructs_full_solution() -> None:
     boundary = _tensor_boundary(shape=(2, 2))
     operator = FreeWilsonDiracOperator(
         boundary,
@@ -194,7 +188,7 @@ def test_even_odd_schur_reconstructs_full_solution() -> None:
     assert jnp.allclose(prepared.reconstruct(reduced_solution, rhs), solution, atol=2e-5)
 
 
-def test_clover_inverse_and_adjoint_match_small_dense_reference() -> None:
+def test_qft_lattice_fermion_closure_scenario_2() -> None:
     boundary, _, link_space, representation, transport = _periodic_square_gauge()
     wilson = WilsonDiracOperator(
         boundary,
@@ -238,9 +232,6 @@ def test_clover_inverse_and_adjoint_match_small_dense_reference() -> None:
         jnp.conj(dense.T) @ vector,
         atol=3e-5,
     )
-
-
-def test_stout_smearing_preserves_group_and_is_differentiable() -> None:
     _, cell_topology, link_space, _, _ = _periodic_square_gauge()
     boundaries = prepare_cell_boundary_paths(cell_topology)
     staples = GaugeStaplePlan(link_space, boundaries)
@@ -270,9 +261,6 @@ def test_stout_smearing_preserves_group_and_is_differentiable() -> None:
     assert result.evidence.successful
     assert link_space.contains(result.links)
     assert jnp.isfinite(derivative)
-
-
-def test_overlap_rational_action_matches_small_dense_equivalence() -> None:
     boundary = _tensor_boundary(shape=(2, 2))
     kernel = FreeWilsonDiracOperator(
         boundary,

@@ -20,7 +20,7 @@ def _unit_kernel(lag: Any) -> Any:
     return jnp.ones_like(lag)
 
 
-def test_integral_heat_residual_includes_nonzero_initial_field() -> None:
+def test_integral_contracts() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     solution = domain.Function("x", "t")(
         lambda x, time: jnp.exp(-(jnp.pi**2) * time) * jnp.sin(jnp.pi * x[0])
@@ -38,9 +38,6 @@ def test_integral_heat_residual_includes_nonzero_initial_field() -> None:
 
     assert jnp.allclose(residual(points).data, 0.0, atol=2e-11)
     assert jnp.allclose(omitted_initial(points).data, 1.0, atol=2e-11)
-
-
-def test_integral_residual_equals_integrated_strong_residual() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     function = domain.Function("x", "t")(lambda x, time: time**2 * jnp.sin(jnp.pi * x[0]))
     initial = domain.Function("x")(lambda x: jnp.zeros_like(x[0]))

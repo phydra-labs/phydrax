@@ -41,7 +41,7 @@ def _make_regression_solver(seed: int, *, scan: bool = False) -> FunctionalSolve
     return FunctionalSolver(functions={"u": u}, terms=[term])
 
 
-def test_regression_2d_optax() -> None:
+def test_regression_2d_contracts() -> None:
     solver = _make_regression_solver(seed=0)
     init_loss = solver.loss(key=jr.key(0))
 
@@ -54,9 +54,6 @@ def test_regression_2d_optax() -> None:
     )
     final_loss = trained.loss(key=jr.key(0))
     assert final_loss < init_loss
-
-
-def test_regression_2d_optax_scan() -> None:
     solver = _make_regression_solver(seed=3, scan=True)
     init_loss = solver.loss(key=jr.key(0))
 
@@ -69,9 +66,6 @@ def test_regression_2d_optax_scan() -> None:
     )
     final_loss = trained.loss(key=jr.key(0))
     assert final_loss < init_loss
-
-
-def test_regression_2d_native_evolution() -> None:
     solver = _make_regression_solver(seed=1)
     init_loss = solver.loss(key=jr.key(0))
     algorithm = phx.optim.OpenEvolutionStrategy(
@@ -89,9 +83,6 @@ def test_regression_2d_native_evolution() -> None:
     )
     final_loss = trained.loss(key=jr.key(0))
     assert final_loss < init_loss
-
-
-def test_regression_2d_optax_lbfgs_linesearch() -> None:
     solver = _make_regression_solver(seed=2)
     init_loss = solver.loss(key=jr.key(0))
 

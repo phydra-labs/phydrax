@@ -4,7 +4,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_scale_artifact_and_observation_contracts_are_shared() -> None:
+def test_cross_domain_core_scenario_1() -> None:
     cosmology = phx.applications.cosmology
     astrodynamics = phx.applications.astrodynamics
     assert cosmology.CosmologyScaleContract is phx.DimensionalScaleContract
@@ -26,9 +26,6 @@ def test_scale_artifact_and_observation_contracts_are_shared() -> None:
     covariance = phx.observation.CholeskyCovarianceAction([[2.0]], target)
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(covariance.whiten([4.0]), [2.0])
-
-
-def test_core_gravity_is_shared_by_cosmology_and_astrodynamics() -> None:
     cosmology = phx.applications.cosmology
     astrodynamics = phx.applications.astrodynamics
     assert cosmology.BarnesHutGravityPlan is phx.solver.BarnesHutGravityPlan
@@ -45,9 +42,6 @@ def test_core_gravity_is_shared_by_cosmology_and_astrodynamics() -> None:
     )
     np.testing.assert_allclose(direct, result.acceleration, rtol=1e-10)
     assert bool(evidence.successful)
-
-
-def test_core_kdk_and_event_replay_adapters() -> None:
     coefficients = phx.solver.KDKCoefficients(0.5, 1.0, 0.5)
     kdk = phx.solver.KDKTransactionPlan((10.0,))
     # ty: ignore[invalid-argument-type]

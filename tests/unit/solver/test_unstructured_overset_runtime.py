@@ -104,7 +104,7 @@ def _nonuniform_state(
     return system.primitive_to_conserved(primitive)
 
 
-def test_donor_traces_and_accepted_correction_are_jit_safe_and_conservative() -> None:
+def test_unstructured_overset_runtime_scenario_1() -> None:
     system, discretization, overset, dynamics, runtime = _compiled()
     constant = jnp.ones((discretization.cell_count, system.component_count))
     np.testing.assert_allclose(eqx.filter_jit(overset.interpolate)(constant), 1.0)
@@ -135,6 +135,18 @@ def test_donor_traces_and_accepted_correction_are_jit_safe_and_conservative() ->
     assert scattered[0, 0] > 0.0
     assert scattered[1, 0] < 0.0
     np.testing.assert_allclose(scattered.sum(axis=0), 0.0, atol=1e-12)
+    with pytest.raises(ValueError, match="ineligible|hole"):
+        _compiled(hole_mask=np.asarray((True, False), dtype="bool"))
+    system, discretization, overset, dynamics, runtime = _compiled(epoch_id="epoch-a")
+    assert dynamics.coupling.overset_epoch_id == "epoch-a"
+    assert dynamics.overset_mapping_id == overset.identity
+    assert dynamics.overset_policy_id
+    assert runtime.runtime_id
+    _, _, stale_map, _, _ = _compiled(epoch_id="stale-epoch")
+    prepared = phx.discretization.UnstructuredFiniteVolumeCouplingPlan(
+        overset=stale_map
+    ).prepare(discretization)
+    assert prepared.overset_epoch_id == "stale-epoch"
 
 
 def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl() -> None:
@@ -194,24 +206,6 @@ def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl() -> No
     )
     np.testing.assert_allclose(route_speeds[1], route_speeds[0], rtol=1e-12)
     np.testing.assert_allclose(route_measures[1], route_measures[0], rtol=1e-12)
-
-
-def test_holes_cannot_be_donors_and_fail_closed() -> None:
-    with pytest.raises(ValueError, match="ineligible|hole"):
-        _compiled(hole_mask=np.asarray((True, False), dtype="bool"))
-
-
-def test_overset_map_epoch_and_geometry_are_compiler_identities() -> None:
-    system, discretization, overset, dynamics, runtime = _compiled(epoch_id="epoch-a")
-    assert dynamics.coupling.overset_epoch_id == "epoch-a"
-    assert dynamics.overset_mapping_id == overset.identity
-    assert dynamics.overset_policy_id
-    assert runtime.runtime_id
-    _, _, stale_map, _, _ = _compiled(epoch_id="stale-epoch")
-    prepared = phx.discretization.UnstructuredFiniteVolumeCouplingPlan(
-        overset=stale_map
-    ).prepare(discretization)
-    assert prepared.overset_epoch_id == "stale-epoch"
 
 
 def test_vof_overset_uses_one_donor_aperture_for_partial_mass_and_alpha_fluxes() -> None:

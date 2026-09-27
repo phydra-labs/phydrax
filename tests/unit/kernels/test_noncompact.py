@@ -94,7 +94,7 @@ def test_spd_random_features_are_fixed_psd_and_differentiable() -> None:
         kernel.pairwise(points[:2], points[0])
 
 
-def test_spd_plane_wave_uses_affine_metric_log_eigenvalue_coordinates() -> None:
+def test_noncompact_scenario_1() -> None:
     frequency = jnp.asarray([[0.3, -0.1]])
     proposal = phx.kernels.NoncompactFeatureProposal(
         frequency,
@@ -115,9 +115,6 @@ def test_spd_plane_wave_uses_affine_metric_log_eigenvalue_coordinates() -> None:
     )
 
     assert jnp.allclose(features[1, 0] / features[0, 0], expected_ratio)
-
-
-def test_importance_diagnostics_report_weight_degeneracy_and_uncertainty() -> None:
     hyperbolic = phx.kernels.HyperbolicRandomFeatureKernel(
         phx.kernels.hyperbolic_feature_proposal(jax.random.key(7), 2, 256),
         0.8,
@@ -138,9 +135,6 @@ def test_importance_diagnostics_report_weight_degeneracy_and_uncertainty() -> No
         assert jnp.isfinite(report.monte_carlo_standard_error)
         assert report.proposal_id == kernel.proposal.proposal_id
         assert report.finite_importance_variance
-
-
-def test_importance_diagnostics_are_stable_and_use_unbiased_standard_error() -> None:
     report = phx.kernels.ImportanceFeatureDiagnostics(
         jnp.log(jnp.asarray([1.0, 3.0])),
         "two-weights",
@@ -158,9 +152,6 @@ def test_importance_diagnostics_are_stable_and_use_unbiased_standard_error() -> 
     assert jnp.isfinite(extreme.monte_carlo_standard_error)
     assert jnp.allclose(extreme.normalizer_estimate, expected)
     assert jnp.allclose(extreme.monte_carlo_standard_error, expected)
-
-
-def test_importance_diagnostics_expose_unavailable_or_infinite_variance() -> None:
     singleton = phx.kernels.ImportanceFeatureDiagnostics(jnp.asarray([0.0]), "one")
     infinite_variance = phx.kernels.ImportanceFeatureDiagnostics(
         jnp.log(jnp.asarray([1.0, 3.0])),
@@ -176,9 +167,6 @@ def test_importance_diagnostics_expose_unavailable_or_infinite_variance() -> Non
             jnp.asarray([-jnp.inf, -jnp.inf]),
             "zero-mass",
         )
-
-
-def test_noncompact_matern_diagnostics_flag_infinite_cauchy_variance() -> None:
     proposal = phx.kernels.hyperbolic_feature_proposal(jax.random.key(10), 2, 32)
     report = phx.kernels.HyperbolicRandomFeatureKernel(
         proposal,
@@ -188,9 +176,21 @@ def test_noncompact_matern_diagnostics_flag_infinite_cauchy_variance() -> None:
 
     assert not report.finite_importance_variance
     assert jnp.isinf(report.monte_carlo_standard_error)
+    proposal = phx.kernels.hyperbolic_feature_proposal(jax.random.key(31), 2, 16)
+    kernel = phx.kernels.HyperbolicRandomFeatureKernel(proposal, 0.8, 1.5)
+    points = jnp.tile(_hyperbolic_points(), (8, 1))
+    model = phx.uq.ExactGaussianProcessDiscrepancy(
+        points,
+        jnp.zeros((points.shape[0],)),
+    )
+    state = phx.uq.GaussianProcessLikelihoodState(kernel=kernel, noise_scale=0.1)
+
+    assert isinstance(
+        model.factor(state=state), phx.uq.FiniteFeatureGaussianProcessFactor
+    )
 
 
-def test_resampling_is_explicit_and_fixed_proposal_prefixes_are_nested() -> None:
+def test_noncompact_scenario_2() -> None:
     key = jax.random.key(11)
     proposal = phx.kernels.hyperbolic_feature_proposal(key, 2, 128)
     repeated = phx.kernels.hyperbolic_feature_proposal(key, 2, 128)
@@ -207,45 +207,6 @@ def test_resampling_is_explicit_and_fixed_proposal_prefixes_are_nested() -> None
     assert proposal.prefix(32).proposal_id.endswith("prefix=32")
     assert jnp.array_equal(proposal.prefix(32).frequencies, proposal.frequencies[:32])
     assert resampled.proposal.proposal_id != proposal.proposal_id
-
-
-def test_fixed_noise_hyperbolic_features_converge_under_nested_rank_growth() -> None:
-    proposal = phx.kernels.hyperbolic_feature_proposal(
-        jax.random.key(21), 2, 2048, proposal_scale=1.0
-    )
-    points = _hyperbolic_points()
-
-    def covariance(count: Any) -> Any:
-        kernel = phx.kernels.HyperbolicRandomFeatureKernel(
-            proposal.prefix(count), 0.8, 1.5
-        )
-        matrix = kernel.matrix(points, points)
-        scale = jnp.mean(jnp.diag(matrix))
-        return matrix / scale
-
-    reference = covariance(2048)
-    small_error = jnp.linalg.norm(covariance(64) - reference)
-    large_error = jnp.linalg.norm(covariance(512) - reference)
-
-    assert large_error < small_error
-
-
-def test_noncompact_finite_features_reuse_weight_space_gp() -> None:
-    proposal = phx.kernels.hyperbolic_feature_proposal(jax.random.key(31), 2, 16)
-    kernel = phx.kernels.HyperbolicRandomFeatureKernel(proposal, 0.8, 1.5)
-    points = jnp.tile(_hyperbolic_points(), (8, 1))
-    model = phx.uq.ExactGaussianProcessDiscrepancy(
-        points,
-        jnp.zeros((points.shape[0],)),
-    )
-    state = phx.uq.GaussianProcessLikelihoodState(kernel=kernel, noise_scale=0.1)
-
-    assert isinstance(
-        model.factor(state=state), phx.uq.FiniteFeatureGaussianProcessFactor
-    )
-
-
-def test_real_noncompact_kernel_families_reject_complex_coordinates() -> None:
     hyperbolic = phx.kernels.HyperbolicRandomFeatureKernel(
         phx.kernels.hyperbolic_feature_proposal(jax.random.key(20), 2, 8),
         0.8,
@@ -267,3 +228,24 @@ def test_real_noncompact_kernel_families_reject_complex_coordinates() -> None:
             _spd_points().astype(jnp.complex128) + 0.1j,
             _spd_points(),
         )
+
+
+def test_fixed_noise_hyperbolic_features_converge_under_nested_rank_growth() -> None:
+    proposal = phx.kernels.hyperbolic_feature_proposal(
+        jax.random.key(21), 2, 2048, proposal_scale=1.0
+    )
+    points = _hyperbolic_points()
+
+    def covariance(count: Any) -> Any:
+        kernel = phx.kernels.HyperbolicRandomFeatureKernel(
+            proposal.prefix(count), 0.8, 1.5
+        )
+        matrix = kernel.matrix(points, points)
+        scale = jnp.mean(jnp.diag(matrix))
+        return matrix / scale
+
+    reference = covariance(2048)
+    small_error = jnp.linalg.norm(covariance(64) - reference)
+    large_error = jnp.linalg.norm(covariance(512) - reference)
+
+    assert large_error < small_error

@@ -235,7 +235,7 @@ def test_linear_families_preserve_real_precision_and_intercept_policy(dtype: Any
         assert jnp.all(model.intercept == 0.0)
 
 
-def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics() -> None:
+def test_least_sparse_scenario_1() -> None:
     features, targets = _regression_data()
     sparse = _operator_sparse(features)
     for recipe, model_type in (
@@ -296,9 +296,6 @@ def test_direct_solvers_operator_sparse_complex_and_failure_diagnostics() -> Non
     )
     assert jnp.isfinite(ill_conditioned.diagnostics.condition)
     assert ill_conditioned.diagnostics.condition > 1.0
-
-
-def test_sparse_fits_preserve_duplicate_entries_as_additive_feature_mass() -> None:
     features, targets = _regression_data()
     duplicate_sparse = SparseFeatures(
         jnp.stack(
@@ -328,9 +325,13 @@ def test_sparse_fits_preserve_duplicate_entries_as_additive_feature_mass() -> No
             rtol=1e-4,
             atol=1e-5,
         )
-
-
-def test_lasso_one_step_matches_weighted_proximal_gradient_equation() -> None:
+    features, targets = _regression_data()
+    result = LassoRecipe(0.1, max_iterations=1, tolerance=0.0).fit_batch(
+        MLBatch(features, targets)
+    )
+    assert result.status == ML_NONCONVERGED
+    with pytest.raises(ValueError, match="one group id per feature"):
+        GroupLassoRecipe((0, 1), max_iterations=2).fit_batch(MLBatch(features, targets))
     model = (
         LassoRecipe(
             0.5,
@@ -355,9 +356,10 @@ def test_lasso_one_step_matches_weighted_proximal_gradient_equation() -> None:
     assert jnp.all(model.intercept == 0.0)
 
 
-@pytest.mark.parametrize(
-    ("recipe", "model_type", "replace_strength", "strength"),
-    (
+def test_sparse_penalty_families_dense_operator_sparse_jit_vmap_and_fit_gradients() -> (
+    None
+):
+    for recipe, model_type, replace_strength, strength in (
         (
             LassoRecipe(0.05, max_iterations=4, tolerance=1e6),
             LassoModel,
@@ -388,44 +390,30 @@ def test_lasso_one_step_matches_weighted_proximal_gradient_equation() -> None:
             ),
             jnp.asarray(0.025),
         ),
-    ),
-)
-def test_sparse_penalty_families_dense_operator_sparse_jit_vmap_and_fit_gradients(
-    recipe: Any, model_type: Any, replace_strength: Any, strength: Any
-) -> None:
-    features, targets = _regression_data()
-    weights = jnp.linspace(0.5, 1.5, features.shape[0])
-    dense_result = recipe.fit_batch(MLBatch(features, targets, sample_weight=weights))
-    dense_model = dense_result.as_trainable()
-    assert isinstance(dense_model, model_type)
-    assert dense_model(features).shape == targets.shape
-    assert jax.jit(dense_model)(features).shape == targets.shape
-    assert jax.vmap(dense_model)(features).shape == targets.shape
-    _assert_model_gradients(dense_model, features)
-    sparse_model = recipe.fit_batch(
-        MLBatch(_operator_sparse(features), targets, sample_weight=weights)
-    ).as_trainable()
-    assert sparse_model(_operator_sparse(features)).shape == targets.shape
+    ):
+        features, targets = _regression_data()
+        weights = jnp.linspace(0.5, 1.5, features.shape[0])
+        dense_result = recipe.fit_batch(MLBatch(features, targets, sample_weight=weights))
+        dense_model = dense_result.as_trainable()
+        assert isinstance(dense_model, model_type)
+        assert dense_model(features).shape == targets.shape
+        assert jax.jit(dense_model)(features).shape == targets.shape
+        assert jax.vmap(dense_model)(features).shape == targets.shape
+        _assert_model_gradients(dense_model, features)
+        sparse_model = recipe.fit_batch(
+            MLBatch(_operator_sparse(features), targets, sample_weight=weights)
+        ).as_trainable()
+        assert sparse_model(_operator_sparse(features)).shape == targets.shape
 
-    def fit_loss(x: Any, y: Any, sample_weight: Any, hyperparameter: Any) -> Any:
-        fitted = (
-            replace_strength(recipe, hyperparameter)
-            .fit_batch(MLBatch(x, y, sample_weight=sample_weight))
-            .as_trainable()
+        def fit_loss(x: Any, y: Any, sample_weight: Any, hyperparameter: Any) -> Any:
+            fitted = (
+                replace_strength(recipe, hyperparameter)
+                .fit_batch(MLBatch(x, y, sample_weight=sample_weight))
+                .as_trainable()
+            )
+            return jnp.sum(jnp.square(fitted(features[:2])))
+
+        gradients = jax.grad(fit_loss, argnums=(0, 1, 2, 3))(
+            features, targets, weights, strength
         )
-        return jnp.sum(jnp.square(fitted(features[:2])))
-
-    gradients = jax.grad(fit_loss, argnums=(0, 1, 2, 3))(
-        features, targets, weights, strength
-    )
-    assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
-
-
-def test_sparse_penalty_nonconvergence_and_group_capacity_fail_closed() -> None:
-    features, targets = _regression_data()
-    result = LassoRecipe(0.1, max_iterations=1, tolerance=0.0).fit_batch(
-        MLBatch(features, targets)
-    )
-    assert result.status == ML_NONCONVERGED
-    with pytest.raises(ValueError, match="one group id per feature"):
-        GroupLassoRecipe((0, 1), max_iterations=2).fit_batch(MLBatch(features, targets))
+        assert all(jnp.all(jnp.isfinite(value)) for value in gradients)

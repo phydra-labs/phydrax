@@ -36,7 +36,7 @@ def test_flat_background_limits_and_parameter_gradient() -> None:
     np.testing.assert_allclose(derivative, finite_difference, rtol=2e-5)
 
 
-def test_curvature_and_cpl_expansion_match_closed_form() -> None:
+def test_cosmology_background_scenario_1() -> None:
     background = cosmology.FLRWBackground(
         70.0,
         0.3,
@@ -59,6 +59,44 @@ def test_curvature_and_cpl_expansion_match_closed_form() -> None:
         "dark_energy_w0",
         "dark_energy_wa",
     )
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="satisfying closure"):
+        value = cosmology.FLRWBackground(1.0, -0.1)
+        jax.block_until_ready(value.hubble_constant)
+    background = cosmology.FLRWBackground(1.0, 0.3)
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="Scale factor"):
+        jax.block_until_ready(background.hubble(0.0))
+    curved = cosmology.FLRWBackground(1.0, 0.3, curvature_density=0.01)
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError), match="zero spatial curvature"
+    ):
+        jax.block_until_ready(curved.require_flat(jnp.asarray(1.0)))
+    nodes = jnp.geomspace(1.0e-2, 1.0, 24)
+    background = cosmology.FLRWBackground(1.0, 1.0)
+    plan = cosmology.FLRWGrowthPlan(nodes)
+    history = eqx.filter_jit(plan.solve)(background)
+    np.testing.assert_allclose(history.first_order_growth, nodes, rtol=2e-6)
+    np.testing.assert_allclose(history.first_order_rate, 1.0, rtol=2e-6)
+    np.testing.assert_allclose(
+        history.second_order_growth,
+        (3.0 / 7.0) * nodes**2,
+        rtol=5e-6,
+    )
+    np.testing.assert_allclose(history.second_order_rate, 2.0, rtol=5e-6)
+
+    cpl = cosmology.FLRWBackground(
+        1.0,
+        0.3,
+        dark_energy_w0=-0.9,
+        dark_energy_wa=0.1,
+    )
+    cpl_history = plan.solve(cpl)
+    assert jnp.all(jnp.isfinite(cpl_history.first_order_growth))
+
+    curved = cosmology.FLRWBackground(1.0, 0.3, curvature_density=0.01)
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError), match="zero spatial curvature"
+    ):
+        jax.block_until_ready(plan.solve(curved).first_order_growth)
 
 
 def test_flrw_distance_plan_flat_milne_de_sitter_and_duality() -> None:
@@ -90,47 +128,3 @@ def test_flrw_distance_plan_flat_milne_de_sitter_and_duality() -> None:
         return plan.transverse_comoving_distance(model, 0.5)
 
     assert jnp.isfinite(jax.grad(transverse)(jnp.asarray(0.0)))
-
-
-def test_background_and_flat_execution_reject_invalid_domains() -> None:
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="satisfying closure"):
-        value = cosmology.FLRWBackground(1.0, -0.1)
-        jax.block_until_ready(value.hubble_constant)
-    background = cosmology.FLRWBackground(1.0, 0.3)
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="Scale factor"):
-        jax.block_until_ready(background.hubble(0.0))
-    curved = cosmology.FLRWBackground(1.0, 0.3, curvature_density=0.01)
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError), match="zero spatial curvature"
-    ):
-        jax.block_until_ready(curved.require_flat(jnp.asarray(1.0)))
-
-
-def test_growth_matches_einstein_de_sitter_and_supports_flat_cpl() -> None:
-    nodes = jnp.geomspace(1.0e-2, 1.0, 24)
-    background = cosmology.FLRWBackground(1.0, 1.0)
-    plan = cosmology.FLRWGrowthPlan(nodes)
-    history = eqx.filter_jit(plan.solve)(background)
-    np.testing.assert_allclose(history.first_order_growth, nodes, rtol=2e-6)
-    np.testing.assert_allclose(history.first_order_rate, 1.0, rtol=2e-6)
-    np.testing.assert_allclose(
-        history.second_order_growth,
-        (3.0 / 7.0) * nodes**2,
-        rtol=5e-6,
-    )
-    np.testing.assert_allclose(history.second_order_rate, 2.0, rtol=5e-6)
-
-    cpl = cosmology.FLRWBackground(
-        1.0,
-        0.3,
-        dark_energy_w0=-0.9,
-        dark_energy_wa=0.1,
-    )
-    cpl_history = plan.solve(cpl)
-    assert jnp.all(jnp.isfinite(cpl_history.first_order_growth))
-
-    curved = cosmology.FLRWBackground(1.0, 0.3, curvature_density=0.01)
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError), match="zero spatial curvature"
-    ):
-        jax.block_until_ready(plan.solve(curved).first_order_growth)

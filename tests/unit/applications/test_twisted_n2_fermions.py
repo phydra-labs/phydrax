@@ -36,7 +36,7 @@ def _fixture() -> Any:
     return theory, layout, coordinates
 
 
-def test_real_coordinate_layout_preserves_independent_complex_links() -> None:
+def test_twisted_n2_fermions_scenario_1() -> None:
     _, layout, coordinates = _fixture()
     configuration = layout.unpack(coordinates)
     recovered = layout.pack(configuration)
@@ -48,9 +48,6 @@ def test_real_coordinate_layout_preserves_independent_complex_links() -> None:
     evidence = layout.evidence(coordinates)
     np.testing.assert_allclose(evidence.roundtrip_residual, 0.0)
     assert bool(evidence.finite)
-
-
-def test_twisted_kahler_dirac_is_antisymmetric_and_has_exact_adjoint() -> None:
     theory, layout, coordinates = _fixture()
     operator = TwistedKahlerDiracOperator(theory, layout, coordinates)
     evidence = assess_twisted_fermion_algebra(
@@ -65,9 +62,6 @@ def test_twisted_kahler_dirac_is_antisymmetric_and_has_exact_adjoint() -> None:
     assert float(evidence.antisymmetry_residual) < 1e-12
     assert float(evidence.adjoint_residual) < 1e-12
     assert bool(evidence.interval_contains_spectrum)
-
-
-def test_regulated_operator_normal_is_kahler_normal_plus_mass_shift() -> None:
     theory, layout, coordinates = _fixture()
     kahler = TwistedKahlerDiracOperator(theory, layout, coordinates)
     regulated = RegulatedTwistedDiracOperator(kahler, theory.fermion_mass)

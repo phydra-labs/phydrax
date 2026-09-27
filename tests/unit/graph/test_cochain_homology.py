@@ -10,7 +10,7 @@ import phydrax as phx
 from tests.unit.topology._fixtures import annulus_complex
 
 
-def test_annulus_exact_betti_dimensions_match_absolute_harmonics() -> None:
+def test_cochain_homology_scenario_1() -> None:
     complex_ir = annulus_complex()
     harmonics, report = phx.graph.validate_hodge_homology(complex_ir, 1)
 
@@ -20,9 +20,6 @@ def test_annulus_exact_betti_dimensions_match_absolute_harmonics() -> None:
     assert bool(report.ranks_match)
     assert bool(report.complete)
     assert float(jnp.max(report.kernel_residuals)) < 1e-8
-
-
-def test_annulus_relative_homology_uses_boundary_pair() -> None:
     complex_ir = annulus_complex()
     harmonics, report = phx.graph.validate_hodge_homology(
         complex_ir,
@@ -34,9 +31,6 @@ def test_annulus_relative_homology_uses_boundary_pair() -> None:
     assert report.exact_dimension == 1
     assert report.harmonic_rank == 1
     assert bool(report.complete)
-
-
-def test_harmonic_kernel_certificate_is_compact_and_verified() -> None:
     complex_ir = annulus_complex()
     subspace, certificate, report = phx.graph.cochain_harmonic_kernel_certificate(
         complex_ir,
@@ -49,9 +43,6 @@ def test_harmonic_kernel_certificate_is_compact_and_verified() -> None:
     assert bool(certificate.valid)
     assert bool(report.complete)
     assert np.max(np.asarray(certificate.right_residual_norms)) < 1e-8
-
-
-def test_hodge_bridge_rejects_harmonics_from_other_boundary_policy() -> None:
     complex_ir = annulus_complex()
     relative = phx.graph.compute_harmonic_subspace(
         complex_ir,
@@ -65,9 +56,6 @@ def test_hodge_bridge_rejects_harmonics_from_other_boundary_policy() -> None:
             boundary_policy="absolute",
             harmonic_subspace=relative,
         )
-
-
-def test_hodge_bridge_rejects_harmonics_from_other_complex() -> None:
     left = annulus_complex()
     right = phx.graph.triangle_mesh_to_cochain_complex(
         np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),

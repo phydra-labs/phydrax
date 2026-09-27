@@ -23,7 +23,7 @@ def _augmented_reference(matrix: Any, state: Any, forcing: Any, duration: Any) -
     return (expm(duration * augmented) @ initial)[:size]
 
 
-def test_affine_exponential_step_handles_zero_and_singular_operator() -> None:
+def test_affine_exponential_scenario_1() -> None:
     matrix = jnp.asarray(((0.0, 1.0), (0.0, 0.0)), dtype=jnp.float64)
     state = jnp.asarray((2.0, 3.0), dtype=jnp.float64)
     forcing = jnp.asarray((1.0, 2.0), dtype=jnp.float64)
@@ -46,27 +46,6 @@ def test_affine_exponential_step_handles_zero_and_singular_operator() -> None:
     prepared_zero = prepared.step(state, 0.0)
     np.testing.assert_array_equal(prepared_zero.value, state)
     assert bool(prepared_zero.successful)
-
-
-def test_prepared_affine_identity_includes_matrix_and_source_content() -> None:
-    first = phx.dynamics.PreparedAffineLinearEvolution(
-        jnp.asarray([[0.0]]),
-        jnp.asarray([1.0]),
-    )
-    changed_matrix = phx.dynamics.PreparedAffineLinearEvolution(
-        jnp.asarray([[2.0]]),
-        jnp.asarray([1.0]),
-    )
-    changed_source = phx.dynamics.PreparedAffineLinearEvolution(
-        jnp.asarray([[0.0]]),
-        jnp.asarray([3.0]),
-    )
-
-    assert first.prepared_id != changed_matrix.prepared_id
-    assert first.prepared_id != changed_source.prepared_id
-
-
-def test_affine_exponential_step_supports_batched_dense_operators() -> None:
     matrices = jnp.asarray(
         (((-1.0, 0.0), (0.0, -2.0)), ((0.0, 1.0), (0.0, 0.0))),
         dtype=jnp.float64,
@@ -85,14 +64,26 @@ def test_affine_exponential_step_supports_batched_dense_operators() -> None:
 
     np.testing.assert_allclose(result.value, expected, rtol=1e-11, atol=1e-11)
     np.testing.assert_array_equal(result.successful, (True, True))
-
-
-def test_affine_exponential_step_rejects_invalid_duration() -> None:
     operator = phx.linalg.DenseLinearOperator(jnp.eye(2, dtype=jnp.float64))
     state = jnp.ones((2,), dtype=jnp.float64)
 
     with pytest.raises(Exception, match="duration must be non-negative"):
         phx.dynamics.affine_exponential_step(operator, state, state, -1.0)
+    first = phx.dynamics.PreparedAffineLinearEvolution(
+        jnp.asarray([[0.0]]),
+        jnp.asarray([1.0]),
+    )
+    changed_matrix = phx.dynamics.PreparedAffineLinearEvolution(
+        jnp.asarray([[2.0]]),
+        jnp.asarray([1.0]),
+    )
+    changed_source = phx.dynamics.PreparedAffineLinearEvolution(
+        jnp.asarray([[0.0]]),
+        jnp.asarray([3.0]),
+    )
+
+    assert first.prepared_id != changed_matrix.prepared_id
+    assert first.prepared_id != changed_source.prepared_id
 
 
 def test_reverse_parameter_gradient_survives_exact_krylov_breakdown() -> None:

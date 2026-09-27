@@ -10,7 +10,7 @@ from phydrax.enforcement import (
 from phydrax.linalg import ArraySpace
 
 
-def test_explicit_linear_representation_round_trips_without_model_introspection() -> None:
+def test_linear_representation_closure_scenario_1() -> None:
     field_spec = ProductFieldSpec(
         (FieldSpec("u", ArrayCodomain.from_shape((2,), dtype="float64")),)
     )
@@ -33,28 +33,6 @@ def test_explicit_linear_representation_round_trips_without_model_introspection(
     assert jnp.allclose(replaced["u"], jnp.asarray([3.0, 4.0]))
     assert representation.certificate.zero_preserving
     assert representation.certificate.round_trip_exact
-
-
-def _representation(field: Any) -> Any:
-    field_spec = ProductFieldSpec(
-        (FieldSpec(field, ArrayCodomain.from_shape((1,), dtype="float64")),)
-    )
-    space = ArraySpace((1,), dtype="float64")
-    return finite_feature_linear_representation(
-        field_spec,
-        space,
-        space,
-        lambda values: values[field],
-        lambda values, coefficients: {field: coefficients},
-        lambda coefficients: {field: coefficients},
-        lambda bound: None,
-        support_ids=(f"{field}-basis",),
-    )
-
-
-def test_replacement_preserves_unrepresented_fields_and_composes_disjoint_children() -> (
-    None
-):
     representation = ProductLinearRepresentation(
         (_representation("u"), _representation("v"))
     )
@@ -73,3 +51,20 @@ def test_replacement_preserves_unrepresented_fields_and_composes_disjoint_childr
     assert jnp.array_equal(replaced["u"], jnp.asarray([3.0]))
     assert jnp.array_equal(replaced["aux"], values["aux"])
     assert jnp.array_equal(replaced["v"], jnp.asarray([4.0]))
+
+
+def _representation(field: Any) -> Any:
+    field_spec = ProductFieldSpec(
+        (FieldSpec(field, ArrayCodomain.from_shape((1,), dtype="float64")),)
+    )
+    space = ArraySpace((1,), dtype="float64")
+    return finite_feature_linear_representation(
+        field_spec,
+        space,
+        space,
+        lambda values: values[field],
+        lambda values, coefficients: {field: coefficients},
+        lambda coefficients: {field: coefficients},
+        lambda bound: None,
+        support_ids=(f"{field}-basis",),
+    )

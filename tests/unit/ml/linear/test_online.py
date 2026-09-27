@@ -226,82 +226,86 @@ def test_perceptron_key_determinism_sparse_hard_outputs_and_unrolled_gradients()
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-@pytest.mark.parametrize("variant", ("pa1", "pa2"))
-def test_passive_aggressive_regression_and_classification_variants_sparse_and_gradients(
-    variant: Any,
-) -> None:
-    features, regression, classification = _online_data()
-    scalar_targets = regression[:, 0]
-    weights = jnp.linspace(0.8, 1.2, features.shape[0])
-    reg_recipe = PassiveAggressiveRegressorRecipe(
-        aggressiveness=0.5, epsilon=0.05, variant=variant, passes=2
-    )
-    cls_recipe = PassiveAggressiveClassifierRecipe(
-        aggressiveness=0.5, variant=variant, passes=2
-    )
-    reg_result = reg_recipe.fit_batch(
-        MLBatch(features, scalar_targets, sample_weight=weights),
-        key=jax.random.key(11),
-    )
-    cls_result = cls_recipe.fit_batch(
-        MLBatch(features, classification, sample_weight=weights),
-        key=jax.random.key(12),
-    )
-    reg_model = reg_result.as_trainable()
-    cls_model = cls_result.as_trainable()
-    assert isinstance(reg_model, PassiveAggressiveRegressorModel)
-    assert isinstance(cls_model, PassiveAggressiveClassifierModel)
-    assert reg_model(features).shape == scalar_targets.shape
-    assert cls_model(features).shape == classification.shape
-    assert cls_model.predict(features).shape == classification.shape
-    assert (
-        cls_result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
-        is GradientLevel.NONE
-    )
-    assert jax.jit(reg_model)(features).shape == scalar_targets.shape
-    assert jax.vmap(cls_model)(features).shape == classification.shape
-    _assert_model_gradients(reg_model, features[0])
-    _assert_model_gradients(cls_model, features[0])
-    sparse_reg = reg_recipe.fit_batch(
-        MLBatch(_sparse(features), scalar_targets), key=jax.random.key(13)
-    ).as_trainable()
-    sparse_cls = cls_recipe.fit_batch(
-        MLBatch(_sparse(features), classification), key=jax.random.key(14)
-    ).as_trainable()
-    assert sparse_reg(_sparse(features)).shape == scalar_targets.shape
-    assert sparse_cls(_sparse(features)).shape == classification.shape
-
-    def regression_loss(x: Any, y: Any, sample_weight: Any, aggressiveness: Any) -> Any:
-        fitted = (
-            eqx.tree_at(lambda item: item.aggressiveness, reg_recipe, aggressiveness)
-            .fit_batch(MLBatch(x, y, sample_weight=sample_weight), key=jax.random.key(15))
-            .as_trainable()
+def test_passive_aggressive_regression_and_classification_variants_sparse_and_gradients() -> (
+    None
+):
+    for variant in ("pa1", "pa2"):
+        features, regression, classification = _online_data()
+        scalar_targets = regression[:, 0]
+        weights = jnp.linspace(0.8, 1.2, features.shape[0])
+        reg_recipe = PassiveAggressiveRegressorRecipe(
+            aggressiveness=0.5, epsilon=0.05, variant=variant, passes=2
         )
-        return jnp.sum(jnp.square(fitted(features[:2])))
+        cls_recipe = PassiveAggressiveClassifierRecipe(
+            aggressiveness=0.5, variant=variant, passes=2
+        )
+        reg_result = reg_recipe.fit_batch(
+            MLBatch(features, scalar_targets, sample_weight=weights),
+            key=jax.random.key(11),
+        )
+        cls_result = cls_recipe.fit_batch(
+            MLBatch(features, classification, sample_weight=weights),
+            key=jax.random.key(12),
+        )
+        reg_model = reg_result.as_trainable()
+        cls_model = cls_result.as_trainable()
+        assert isinstance(reg_model, PassiveAggressiveRegressorModel)
+        assert isinstance(cls_model, PassiveAggressiveClassifierModel)
+        assert reg_model(features).shape == scalar_targets.shape
+        assert cls_model(features).shape == classification.shape
+        assert cls_model.predict(features).shape == classification.shape
+        assert (
+            cls_result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+            is GradientLevel.NONE
+        )
+        assert jax.jit(reg_model)(features).shape == scalar_targets.shape
+        assert jax.vmap(cls_model)(features).shape == classification.shape
+        _assert_model_gradients(reg_model, features[0])
+        _assert_model_gradients(cls_model, features[0])
+        sparse_reg = reg_recipe.fit_batch(
+            MLBatch(_sparse(features), scalar_targets), key=jax.random.key(13)
+        ).as_trainable()
+        sparse_cls = cls_recipe.fit_batch(
+            MLBatch(_sparse(features), classification), key=jax.random.key(14)
+        ).as_trainable()
+        assert sparse_reg(_sparse(features)).shape == scalar_targets.shape
+        assert sparse_cls(_sparse(features)).shape == classification.shape
 
-    regression_gradients = jax.grad(regression_loss, argnums=(0, 1, 2, 3))(
-        features, scalar_targets, weights, reg_recipe.aggressiveness
-    )
-    assert all(jnp.all(jnp.isfinite(value)) for value in regression_gradients)
-
-    def classification_loss(x: Any, sample_weight: Any, aggressiveness: Any) -> Any:
-        fitted = (
-            eqx.tree_at(lambda item: item.aggressiveness, cls_recipe, aggressiveness)
-            .fit_batch(
-                MLBatch(x, classification, sample_weight=sample_weight),
-                key=jax.random.key(16),
+        def regression_loss(
+            x: Any, y: Any, sample_weight: Any, aggressiveness: Any
+        ) -> Any:
+            fitted = (
+                eqx.tree_at(lambda item: item.aggressiveness, reg_recipe, aggressiveness)
+                .fit_batch(
+                    MLBatch(x, y, sample_weight=sample_weight), key=jax.random.key(15)
+                )
+                .as_trainable()
             )
-            .as_trainable()
+            return jnp.sum(jnp.square(fitted(features[:2])))
+
+        regression_gradients = jax.grad(regression_loss, argnums=(0, 1, 2, 3))(
+            features, scalar_targets, weights, reg_recipe.aggressiveness
         )
-        return jnp.sum(jnp.square(fitted(features[:2])))
+        assert all(jnp.all(jnp.isfinite(value)) for value in regression_gradients)
 
-    classification_gradients = jax.grad(classification_loss, argnums=(0, 1, 2))(
-        features, weights, cls_recipe.aggressiveness
-    )
-    assert all(jnp.all(jnp.isfinite(value)) for value in classification_gradients)
+        def classification_loss(x: Any, sample_weight: Any, aggressiveness: Any) -> Any:
+            fitted = (
+                eqx.tree_at(lambda item: item.aggressiveness, cls_recipe, aggressiveness)
+                .fit_batch(
+                    MLBatch(x, classification, sample_weight=sample_weight),
+                    key=jax.random.key(16),
+                )
+                .as_trainable()
+            )
+            return jnp.sum(jnp.square(fitted(features[:2])))
+
+        classification_gradients = jax.grad(classification_loss, argnums=(0, 1, 2))(
+            features, weights, cls_recipe.aggressiveness
+        )
+        assert all(jnp.all(jnp.isfinite(value)) for value in classification_gradients)
 
 
-def test_one_step_online_updates_match_weighted_equations() -> None:
+def test_online_scenario_1() -> None:
     features = jnp.array([[2.0]])
     weight = jnp.array([2.0])
     regression = (
@@ -333,9 +337,6 @@ def test_one_step_online_updates_match_weighted_equations() -> None:
     assert jnp.allclose(perceptron.coefficients, jnp.array([2.0]))
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(perceptron.intercept, 1.0)
-
-
-def test_online_updates_ignore_zero_weight_samples_exactly() -> None:
     features, regression, classification = _online_data()
     weights = jnp.ones((features.shape[0],)).at[2].set(0.0)
     changed_regression = regression.at[2].set(jnp.array([1e4, -1e4]))
@@ -363,9 +364,6 @@ def test_online_updates_ignore_zero_weight_samples_exactly() -> None:
     assert jnp.allclose(first_classifier.coefficients, second_classifier.coefficients)
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(first_classifier.intercept, second_classifier.intercept)
-
-
-def test_online_capacity_and_deterministic_no_shuffle_policy() -> None:
     features, regression, classification = _online_data()
     deterministic = SGDRegressorRecipe(passes=2, shuffle=False, fit_intercept=False)
     first = deterministic.fit_batch(MLBatch(features, regression)).as_trainable()

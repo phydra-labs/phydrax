@@ -74,7 +74,7 @@ def _batch(value: float, *, source_points: int) -> phx.nn.operator.OperatorBatch
     )
 
 
-def test_input_function_prediction_matches_explicit_ragged_draw_loop() -> None:
+def test_operator_input_propagation_scenario_1() -> None:
     model = _MaskedSourceMeanOperator()
     batches = (_batch(1.0, source_points=2), _batch(3.0, source_points=4))
     stacked = phx.nn.operator.stack_operator_batches(batches, case_axis="input_draw")
@@ -106,37 +106,6 @@ def test_input_function_prediction_matches_explicit_ragged_draw_loop() -> None:
         input_variance.field("output").values[prediction.output_mask()],
         1.0,
     )
-
-
-def _weighted_batch(value: float, *, source_points: int) -> phx.nn.operator.OperatorBatch:
-    query_axis = phx.nn.operator.OperatorAxis(
-        "x",
-        jnp.linspace(0.0, 1.0, 3),
-        quadrature_weights=jnp.asarray([0.25, 0.5, 0.25]),
-    )
-    source_axis = phx.nn.operator.OperatorAxis(
-        "x",
-        jnp.linspace(0.0, 1.0, source_points),
-        quadrature_weights=jnp.full((source_points,), 1.0 / source_points),
-    )
-    query = phx.nn.operator.FunctionSamples(
-        values=None,
-        axes=(query_axis,),
-        mask=jnp.asarray([[True, True, False], [True, True, True]]),
-    )
-    source = phx.nn.operator.FunctionSamples(
-        values=jnp.full((2, source_points), value),
-        axes=(source_axis,),
-    )
-    return phx.nn.operator.OperatorBatch(
-        inputs={"forcing": source},
-        queries={"query": query},
-        case_axes=("case",),
-        case_shape=(2,),
-    )
-
-
-def test_operator_linearized_covariance_preserves_geometry_and_masks() -> None:
     batch = _batch(2.0, source_points=4)
     linearization = phx.nn.operator.training.linearize_operator(
         _MaskedSourceMeanOperator(),
@@ -164,9 +133,6 @@ def test_operator_linearized_covariance_preserves_geometry_and_masks() -> None:
         jnp.asarray(result.exact_variance().data),
         jnp.diag(expected_covariance).reshape((2, 3)),
     )
-
-
-def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued() -> None:
     unweighted = phx.nn.operator.training.linearize_operator(
         _MaskedSourceMeanOperator(),
         _batch(1.0, source_points=4),
@@ -208,3 +174,31 @@ def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued(
         result.estimate_variance(jnp.asarray([0, 1], dtype=jnp.uint32), num_probes=8)
     with pytest.raises(ValueError, match="only vector products"):
         result.materialize_covariance()
+
+
+def _weighted_batch(value: float, *, source_points: int) -> phx.nn.operator.OperatorBatch:
+    query_axis = phx.nn.operator.OperatorAxis(
+        "x",
+        jnp.linspace(0.0, 1.0, 3),
+        quadrature_weights=jnp.asarray([0.25, 0.5, 0.25]),
+    )
+    source_axis = phx.nn.operator.OperatorAxis(
+        "x",
+        jnp.linspace(0.0, 1.0, source_points),
+        quadrature_weights=jnp.full((source_points,), 1.0 / source_points),
+    )
+    query = phx.nn.operator.FunctionSamples(
+        values=None,
+        axes=(query_axis,),
+        mask=jnp.asarray([[True, True, False], [True, True, True]]),
+    )
+    source = phx.nn.operator.FunctionSamples(
+        values=jnp.full((2, source_points), value),
+        axes=(source_axis,),
+    )
+    return phx.nn.operator.OperatorBatch(
+        inputs={"forcing": source},
+        queries={"query": query},
+        case_axes=("case",),
+        case_shape=(2,),
+    )

@@ -23,7 +23,7 @@ def _grid() -> Any:
     ).prepare(coordinates)
 
 
-def test_voxel_geometry_sampling_downgrades_field_certificate() -> None:
+def test_voxel_contracts() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.5, feature_id="sampled-sphere"
     ).compile()
@@ -47,9 +47,6 @@ def test_voxel_geometry_sampling_downgrades_field_certificate() -> None:
         jnp.all(samples.lower_bounds[samples.sign_certified] > 0.0)
         or jnp.any(samples.upper_bounds[samples.sign_certified] < 0.0)
     )
-
-
-def test_voxel_geometry_sampling_jits_and_tracks_parameters() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.5, feature_id="dynamic-sphere"
     ).compile()
@@ -68,9 +65,6 @@ def test_voxel_geometry_sampling_jits_and_tracks_parameters() -> None:
     assert bool(first.evidence.successful)
     assert bool(second.evidence.successful)
     assert not bool(jnp.allclose(first.field.values, second.field.values))
-
-
-def test_voxel_enclosure_rejects_an_unrelated_exact_sdf_geometry() -> None:
     certified = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.5, feature_id="certified-sphere"
     ).compile()

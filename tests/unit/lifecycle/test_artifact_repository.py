@@ -207,7 +207,7 @@ def test_duplicate_chunk_and_stale_writer_conflicts_are_fail_closed(
         repository.commit(stale, (stale_chunk,), committed_at=21)
 
 
-def test_s3_client_conditional_writes_and_repository_stale_writer_conflict() -> None:
+def test_s3_contracts() -> None:
     client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
     created = client.create_object("qualification/value", b"one")
     with pytest.raises(ObjectPreconditionError, match="already exists"):
@@ -243,9 +243,6 @@ def test_s3_client_conditional_writes_and_repository_stale_writer_conflict() -> 
     repository.commit(first, (first_chunk,), committed_at=20)
     with pytest.raises(ObjectPreconditionError):
         repository.commit(stale, (stale_chunk,), committed_at=21)
-
-
-def test_s3_metadata_guard_serializes_lease_and_garbage_collection() -> None:
     client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
     repository = S3ArtifactRepository(
         client,
@@ -334,9 +331,6 @@ def test_s3_metadata_guard_serializes_lease_and_garbage_collection() -> None:
     report = repository.collect_garbage(now=31)
     assert report.removed_artifact_ids == ("checkpoint-guarded",)
     assert report.removed_attempt_ids == ("attempt-guarded",)
-
-
-def test_s3_reader_uses_bounded_reads_and_detects_object_corruption() -> None:
     client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
     repository = S3ArtifactRepository(
         client,
@@ -547,7 +541,7 @@ def _support(topology: str) -> SupportTuple:
     )
 
 
-def test_same_and_topology_change_restart_admission_is_exact() -> None:
+def test_artifact_repository_scenario_1() -> None:
     source = _support("two-shards")
     target = _support("four-shards")
     same = TopologyRestartRelation(source, source, "bitwise")
@@ -576,6 +570,34 @@ def test_same_and_topology_change_restart_admission_is_exact() -> None:
     assert not admit_topology_restart(changed, strict).admitted
     assert admit_topology_restart(changed, qualified).admitted
     assert not admit_topology_restart(unsupported, qualified).admitted
+    support = _support("canonical")
+    relation = TopologyRestartRelation(support, support, "bitwise")
+    policy = TopologyRestartPolicy(allow_topology_change=False)
+    admission = admit_topology_restart(relation, policy)
+    first = CanonicalRestartChunk("state", 0, 4, hashlib.sha256(b"abcd").hexdigest())
+    hole = CanonicalRestartChunk("state", 5, 3, hashlib.sha256(b"fgh").hexdigest())
+    destination = DestinationShard("destination", "state", 0, 8)
+    with pytest.raises(ValueError, match="hole"):
+        prepare_direct_restore(
+            relation,
+            policy,
+            (first, hole),
+            (destination,),
+        )
+
+    second = CanonicalRestartChunk("state", 4, 4, hashlib.sha256(b"efgh").hexdigest())
+    overlapping = (
+        RestartChunkMapping(first.chunk_id, 0, "destination", 0, 4),
+        RestartChunkMapping(second.chunk_id, 0, "destination", 3, 4),
+    )
+    with pytest.raises(ValueError, match="canonical payload coordinates|overlap"):
+        DirectRestorePlan(
+            relation,
+            admission,
+            (first, second),
+            (destination,),
+            overlapping,
+        )
 
 
 def test_direct_restore_repartitions_without_execution_cache_or_global_gather() -> None:
@@ -631,34 +653,3 @@ def test_direct_restore_repartitions_without_execution_cache_or_global_gather() 
     assert bytes(output["destination-1"]) == b"defgh"
     assert report.transferred_bytes == 8
     assert max(requested) <= 4
-
-
-def test_restore_plan_rejects_chunk_holes_and_mapping_overlaps() -> None:
-    support = _support("canonical")
-    relation = TopologyRestartRelation(support, support, "bitwise")
-    policy = TopologyRestartPolicy(allow_topology_change=False)
-    admission = admit_topology_restart(relation, policy)
-    first = CanonicalRestartChunk("state", 0, 4, hashlib.sha256(b"abcd").hexdigest())
-    hole = CanonicalRestartChunk("state", 5, 3, hashlib.sha256(b"fgh").hexdigest())
-    destination = DestinationShard("destination", "state", 0, 8)
-    with pytest.raises(ValueError, match="hole"):
-        prepare_direct_restore(
-            relation,
-            policy,
-            (first, hole),
-            (destination,),
-        )
-
-    second = CanonicalRestartChunk("state", 4, 4, hashlib.sha256(b"efgh").hexdigest())
-    overlapping = (
-        RestartChunkMapping(first.chunk_id, 0, "destination", 0, 4),
-        RestartChunkMapping(second.chunk_id, 0, "destination", 3, 4),
-    )
-    with pytest.raises(ValueError, match="canonical payload coordinates|overlap"):
-        DirectRestorePlan(
-            relation,
-            admission,
-            (first, second),
-            (destination,),
-            overlapping,
-        )

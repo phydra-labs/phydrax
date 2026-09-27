@@ -50,7 +50,7 @@ def test_backend_probe_is_lazy_and_reports_missing_requirement_exactly(
     )
 
 
-def test_backend_capability_rejection_is_distinct_from_provider_availability() -> None:
+def test_backend_contracts() -> None:
     availability = phx.backends.BackendAvailability(
         capabilities=_capabilities(),
         available=True,
@@ -62,9 +62,6 @@ def test_backend_capability_rejection_is_distinct_from_provider_availability() -
     availability.require("linear.system")
     with pytest.raises(phx.backends.BackendUnavailableError, match="does not declare"):
         availability.require("eigen.general")
-
-
-def test_backend_transfer_evidence_preserves_array_scalars() -> None:
     evidence = phx.backends.BackendTransferEvidence(
         host_to_device_bytes=128,
         device_to_host_bytes=64,

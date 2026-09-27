@@ -47,7 +47,7 @@ def _grid(identifier: str = "replay-grid") -> Any:
     )
 
 
-def test_adaptive_rosenbrock_wrms_is_covariant_to_component_scale() -> None:
+def test_rosenbrock_replay_scenario_1() -> None:
     unit = phx.solver.solve_rosenbrock(
         _scaled_decay_problem(1.0),
         _grid("wrms-unit"),
@@ -72,6 +72,48 @@ def test_adaptive_rosenbrock_wrms_is_covariant_to_component_scale() -> None:
     scaled_adequacy = scaled.stats["replay_adequacy"]
     assert unit_adequacy.maximum_error_ratio <= 1.0
     assert scaled_adequacy.maximum_error_ratio <= 1.0
+    prepared = phx.solver.prepare_rosenbrock(
+        _scaled_decay_problem(1.0),
+        _grid("compatible"),
+        adaptive=_controller(),
+    )
+    source = phx.solver.solve_rosenbrock(prepared)
+    scheduled = phx.solver.schedule_rosenbrock(prepared, source)
+    incompatible = phx.solver.prepare_rosenbrock(
+        _scaled_decay_problem(1.0),
+        _grid("incompatible"),
+        adaptive=_controller(),
+    )
+
+    with pytest.raises(ValueError, match="configuration do not match"):
+        phx.solver.schedule_rosenbrock(incompatible, source)
+    with pytest.raises(ValueError, match="intrinsic shape"):
+        phx.solver.solve_scheduled_rosenbrock(
+            scheduled,
+            initial_state=jnp.ones((3,)),
+        )
+    with pytest.raises(ValueError, match="configuration overrides"):
+        phx.solver.solve_rosenbrock(prepared, adaptive=_controller())
+    step_count = int(source.stats["accepted_steps"])
+    wrong_bytes = prepared.replay_state_bytes + 8
+    replay_schedule = phx.solver.prepare_replay_schedule(
+        step_count,
+        wrong_bytes,
+        phx.solver.AdaptiveReplayPreparationPolicy(
+            wrong_bytes * 4,
+            step_count * 4,
+        ),
+    )
+    incompatible_replay = phx.solver.schedule_rosenbrock(
+        prepared,
+        source,
+        replay=phx.solver.FixedStepReplayPolicy(
+            "scheduled",
+            schedule=replay_schedule,
+        ),
+    )
+    with pytest.raises(ValueError, match="replay boundary bytes"):
+        phx.solver.solve_scheduled_rosenbrock(incompatible_replay)
 
 
 def test_scheduled_rosenbrock_replays_differentiates_and_refreshes_explicitly() -> None:
@@ -135,48 +177,3 @@ def test_scheduled_rosenbrock_replays_differentiates_and_refreshes_explicitly() 
     assert refreshed_result.successful
     assert refreshed.numeric_version == scheduled.numeric_version + 1
     assert refreshed.record_point_id != scheduled.record_point_id
-
-
-def test_scheduled_rosenbrock_rejects_incompatible_sources_and_inputs() -> None:
-    prepared = phx.solver.prepare_rosenbrock(
-        _scaled_decay_problem(1.0),
-        _grid("compatible"),
-        adaptive=_controller(),
-    )
-    source = phx.solver.solve_rosenbrock(prepared)
-    scheduled = phx.solver.schedule_rosenbrock(prepared, source)
-    incompatible = phx.solver.prepare_rosenbrock(
-        _scaled_decay_problem(1.0),
-        _grid("incompatible"),
-        adaptive=_controller(),
-    )
-
-    with pytest.raises(ValueError, match="configuration do not match"):
-        phx.solver.schedule_rosenbrock(incompatible, source)
-    with pytest.raises(ValueError, match="intrinsic shape"):
-        phx.solver.solve_scheduled_rosenbrock(
-            scheduled,
-            initial_state=jnp.ones((3,)),
-        )
-    with pytest.raises(ValueError, match="configuration overrides"):
-        phx.solver.solve_rosenbrock(prepared, adaptive=_controller())
-    step_count = int(source.stats["accepted_steps"])
-    wrong_bytes = prepared.replay_state_bytes + 8
-    replay_schedule = phx.solver.prepare_replay_schedule(
-        step_count,
-        wrong_bytes,
-        phx.solver.AdaptiveReplayPreparationPolicy(
-            wrong_bytes * 4,
-            step_count * 4,
-        ),
-    )
-    incompatible_replay = phx.solver.schedule_rosenbrock(
-        prepared,
-        source,
-        replay=phx.solver.FixedStepReplayPolicy(
-            "scheduled",
-            schedule=replay_schedule,
-        ),
-    )
-    with pytest.raises(ValueError, match="replay boundary bytes"):
-        phx.solver.solve_scheduled_rosenbrock(incompatible_replay)

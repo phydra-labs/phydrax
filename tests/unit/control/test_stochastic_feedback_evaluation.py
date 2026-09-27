@@ -128,7 +128,7 @@ def test_policy_cannot_observe_current_noise() -> None:
     np.testing.assert_allclose(paths.states[:, 1], [[5.0], [0.0]])
 
 
-def test_prepared_noise_is_bound_to_exact_physical_grid() -> None:
+def test_stochastic_feedback_evaluation_scenario_1() -> None:
     problem = _problem(num_steps=1)
     wrong_grid = TimeGrid(
         jnp.asarray([0.0, 2.0]),
@@ -154,9 +154,6 @@ def test_prepared_noise_is_bound_to_exact_physical_grid() -> None:
             prepared,
             policy_id="wrong-grid-policy",
         )
-
-
-def test_realization_replay_ids_and_antithetic_cluster_labels() -> None:
     problem = _problem(num_steps=2)
     grid = problem.time_grid
     realization = WienerRealization.antithetic(
@@ -193,9 +190,6 @@ def test_realization_replay_ids_and_antithetic_cluster_labels() -> None:
     np.testing.assert_array_equal(paths.independence_labels, [0, 0, 1, 1])
     assert int(evaluation.evidence.valid_path_count) == 4
     assert int(evaluation.evidence.independent_cluster_count) == 2
-
-
-def test_common_random_number_comparison_retains_pairing() -> None:
     problem = _problem(num_steps=1)
     prepared = _noise(jnp.asarray([[[0.5]], [[-0.25]], [[1.0]]]))
     left = rollout_feedback(
@@ -221,7 +215,7 @@ def test_common_random_number_comparison_retains_pairing() -> None:
     assert comparison.right_policy_id == "right"
 
 
-def test_comparison_rejects_mismatched_coupling() -> None:
+def test_stochastic_feedback_evaluation_scenario_2() -> None:
     problem = _problem(num_steps=1)
     increments = jnp.asarray([[[0.5]], [[-0.25]]])
     left_noise = _noise(increments, coupling_id="coupling:left")
@@ -232,9 +226,6 @@ def test_comparison_rejects_mismatched_coupling() -> None:
 
     with pytest.raises(ValueError, match="coupling IDs"):
         compare_feedback_policies(left, right)
-
-
-def test_invalid_noise_paths_remain_case_local() -> None:
     problem = _problem(num_steps=1)
     prepared = _noise(
         jnp.asarray([[[0.0]], [[1.0]], [[jnp.nan]]]),
@@ -265,37 +256,31 @@ def test_invalid_noise_paths_remain_case_local() -> None:
     )
     assert int(evaluation.status) == FeedbackPolicyEvaluationStatus.PARTIAL_PATH_FAILURE
     assert evaluation.evidence.coverage == "none"
-
-
-@pytest.mark.parametrize(
-    "risk",
-    [
+    for risk in [
         ExpectationRisk(),
         MeanVarianceRisk(0.25),
         CVaRRisk(0.5),
         EntropicRisk(0.2),
-    ],
-)
-def test_empirical_risk_uses_existing_optim_risk_exactly(risk: Any) -> None:
-    problem = _problem(num_steps=1)
-    prepared = _noise(jnp.asarray([[[0.0]], [[1.0]], [[3.0]]]))
-    evaluation = evaluate_feedback_policy(
-        problem,
-        lambda context, state, args: jnp.zeros((1,)),
-        prepared,
-        policy_id="zero",
-        risk=risk,
-        method="none",
-    )
-    weights = jnp.full((3,), 1.0 / 3.0)
+    ]:
+        problem = _problem(num_steps=1)
+        prepared = _noise(jnp.asarray([[[0.0]], [[1.0]], [[3.0]]]))
+        evaluation = evaluate_feedback_policy(
+            problem,
+            lambda context, state, args: jnp.zeros((1,)),
+            prepared,
+            policy_id="zero",
+            risk=risk,
+            method="none",
+        )
+        weights = jnp.full((3,), 1.0 / 3.0)
 
-    np.testing.assert_allclose(
-        evaluation.empirical_risk,
-        risk.evaluate(evaluation.paths.returns, weights),
-    )
-    np.testing.assert_allclose(evaluation.paths.returns, [1.0, 2.0, 4.0])
-    if not isinstance(risk, ExpectationRisk):
-        assert evaluation.evidence.coverage == "none"
+        np.testing.assert_allclose(
+            evaluation.empirical_risk,
+            risk.evaluate(evaluation.paths.returns, weights),
+        )
+        np.testing.assert_allclose(evaluation.paths.returns, [1.0, 2.0, 4.0])
+        if not isinstance(risk, ExpectationRisk):
+            assert evaluation.evidence.coverage == "none"
 
 
 def test_hoeffding_requires_bounds_and_training_data_has_no_coverage_claim() -> None:

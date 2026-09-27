@@ -5,7 +5,7 @@ import numpy as np
 from phydrax.applications.polymer_liquids import reptation as rep
 
 
-def test_particle_reptation_observables_use_unwrapped_time_origins() -> None:
+def test_polymer_reptation_scenario_1() -> None:
     base = jnp.asarray(
         [
             [0.0, 0.0, 0.0],
@@ -36,9 +36,6 @@ def test_particle_reptation_observables_use_unwrapped_time_origins() -> None:
     np.testing.assert_allclose(result.internal_msd, 0.0, atol=1.0e-12)
     np.testing.assert_allclose(result.end_to_end_correlation, 1.0)
     np.testing.assert_allclose(result.rouse_mode_msd, 0.0, atol=1.0e-12)
-
-
-def test_chain_scaling_and_linear_tube_spectra() -> None:
     scaling = rep.fit_chain_length_scaling(
         rep.ChainLengthScalingPlan(exponent_interval=(2.9, 3.1)),
         # ty: ignore[invalid-argument-type]
@@ -71,9 +68,6 @@ def test_chain_scaling_and_linear_tube_spectra() -> None:
     np.testing.assert_allclose(lm.rheology.relaxation_modulus[0], lm.zero_time_modulus)
     assert np.all(np.asarray(lm.rheology.storage_modulus) >= 0.0)
     assert np.all(np.asarray(lm.rheology.loss_modulus) >= 0.0)
-
-
-def test_slip_spring_birth_and_death_obey_metropolis_hastings_ratio() -> None:
     # ty: ignore[invalid-argument-type]
     prepared = rep.SlipSpringPlan(2, 1, 1.0, 2.0, 1.0).prepare([[0, 1]])
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])

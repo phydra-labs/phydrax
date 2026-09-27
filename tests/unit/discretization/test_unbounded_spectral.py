@@ -16,7 +16,7 @@ def _fourier(count: Any) -> Any:
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def test_hilbert_multiplier_zero_mean_nyquist_and_square_law() -> None:
+def test_unbounded_spectral_scenario_1() -> None:
     space = _fourier(16)
     x = space.axes[0].nodes
     values = 0.4 + jnp.cos(2.0 * jnp.pi * x) + (-1.0) ** jnp.arange(16)
@@ -35,9 +35,6 @@ def test_hilbert_multiplier_zero_mean_nyquist_and_square_law() -> None:
     np.testing.assert_allclose(twice, -supported, atol=2e-12)
     assert jnp.all(transformed[space.axes[0].modes.zero_mask] == 0.0)
     assert jnp.all(transformed[space.axes[0].modes.nyquist_mask] == 0.0)
-
-
-def test_modal_transfer_preserves_fourier_modes_and_constrained_traces() -> None:
     coarse = _fourier(8)
     fine = _fourier(12)
     x = coarse.axes[0].nodes
@@ -77,9 +74,6 @@ def test_modal_transfer_preserves_fourier_modes_and_constrained_traces() -> None
         constrained_fine,
     )
     assert constrained_transfer.report.trace_residual < 1e-10
-
-
-def test_modal_decay_uses_physical_norm_and_detects_empty_tail() -> None:
     space = _fourier(16)
     x = space.axes[0].nodes
     coefficients = space.project(jnp.sin(2.0 * jnp.pi * x))
@@ -96,9 +90,6 @@ def test_modal_decay_uses_physical_norm_and_detects_empty_tail() -> None:
     assert bool(report.finite)
     assert bool(zero.zero_reference_norm)
     assert zero.relative_tail_norms[0] == 0.0
-
-
-def test_rational_line_represents_algebraic_tail_and_projected_derivative() -> None:
     domain = phx.discretization.AxisDomain.real_line()
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.RationalChebyshevLineBasisPlan(8, 1.0),),
@@ -121,9 +112,6 @@ def test_rational_line_represents_algebraic_tail_and_projected_derivative() -> N
     assert space.axes[0].derivative_residual > 0.0
     assert jnp.all(jnp.isfinite(space.axes[0].nodes))
     assert jnp.all(jnp.isfinite(space.quadrature_weights))
-
-
-def test_rational_half_line_quadrature_and_scale_identity() -> None:
     domain = phx.discretization.AxisDomain.half_line(0.0)
     first = phx.discretization.TensorSpectralPlan(
         (phx.discretization.RationalChebyshevHalfLineBasisPlan(20, 2.0),)
@@ -139,7 +127,7 @@ def test_rational_half_line_quadrature_and_scale_identity() -> None:
         phx.discretization.prepare_spectral_modal_transfer(first, second)
 
 
-def test_linear_trace_constraints_support_robin_and_decay() -> None:
+def test_unbounded_spectral_scenario_2() -> None:
     domain = phx.discretization.AxisDomain.interval(-1.0, 1.0)
     robin = phx.discretization.SpectralBoundaryConditionPlan.robin(
         lower=(1.0, 1.0),
@@ -165,9 +153,6 @@ def test_linear_trace_constraints_support_robin_and_decay() -> None:
     ).prepare((phx.discretization.AxisDomain.real_line(),))
     assert line.axes[0].boundary == "decay"
     assert line.axes[0].derivative_matrix is not None
-
-
-def test_constrained_polynomial_physical_laplacian_rejects_modal_closure() -> None:
     domain = phx.discretization.AxisDomain.interval(-1.0, 1.0)
     space = phx.discretization.TensorSpectralPlan(
         (

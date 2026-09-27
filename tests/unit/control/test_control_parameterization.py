@@ -17,7 +17,7 @@ from phydrax.control import (
 from phydrax.dynamics import TimeGrid
 
 
-def test_piecewise_parameterizations_use_physical_time_and_exact_shapes() -> None:
+def test_control_parameterization_scenario_1() -> None:
     time_grid = TimeGrid(
         jnp.asarray([0.0, 0.5, 1.0]),
         time_id="physical-time",
@@ -46,9 +46,6 @@ def test_piecewise_parameterizations_use_physical_time_and_exact_shapes() -> Non
     with pytest.raises(eqx.EquinoxRuntimeError, match="outside its physical grid"):
         value = linear.evaluate(jnp.ones((3, 1)), jnp.asarray(1.1))
         jax.block_until_ready(value)
-
-
-def test_fixed_grid_bspline_is_differentiable_and_certifies_coefficient_bounds() -> None:
     grid = BSplineGrid.open_uniform(3, 4, interval=(0.0, 1.0))
     parameterization = BSplineControlParameterization(
         grid,
@@ -88,9 +85,6 @@ def test_fixed_grid_bspline_is_differentiable_and_certifies_coefficient_bounds()
     assert certificate.continuous_domain
     assert certificate.certificate_id == "control-bound:bspline-convex-hull"
     assert not bool(failed_certificate.certified)
-
-
-def test_bspline_refinement_uses_canonical_diagnosed_grid_transfer() -> None:
     old_grid = BSplineGrid.open_uniform(3, 3, interval=(0.0, 1.0))
     new_grid = BSplineGrid(
         jnp.sort(jnp.concatenate((old_grid.knots, jnp.asarray([0.2, 0.8])))),

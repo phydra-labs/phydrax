@@ -39,7 +39,7 @@ def _point_batch(domain: Any, points: Any) -> Any:
     )
 
 
-def test_panelization_rejects_same_named_geometrically_distinct_support() -> None:
+def test_panelization_contracts() -> None:
     source_geometry = phx.geometry.Circle(
         (0.0, 0.0),
         1.0,
@@ -63,9 +63,6 @@ def test_panelization_rejects_same_named_geometrically_distinct_support() -> Non
             quadrature_order=2,
             geometry=different_geometry,
         )
-
-
-def test_panelization_measure_and_reports_separate_pde_from_accuracy() -> None:
     panelization = _circle_panelization()
     assert jnp.allclose(panelization.boundary_measure, 2.0 * jnp.pi, atol=2e-11)
     potential = phx.operators.LaplaceLayerPotential2D(
@@ -200,7 +197,7 @@ def test_panelization_measure_and_reports_separate_pde_from_accuracy() -> None:
     assert discretization.panelization_id == panelization.panelization_id
 
 
-def test_finite_layer_sum_is_harmonic_independently_of_quadrature_accuracy() -> None:
+def test_layer_potential_scenario_1() -> None:
     panelization = _circle_panelization(panels=3, order=3)
     density = jnp.linspace(-0.7, 1.1, panelization.node_count)
     potential = phx.operators.LaplaceLayerPotential2D(
@@ -220,9 +217,6 @@ def test_finite_layer_sum_is_harmonic_independently_of_quadrature_accuracy() -> 
     refined = refined.with_density(refined_density)
     refined_residual = jnp.trace(jax.hessian(refined)(point))
     assert jnp.allclose(refined_residual, 0.0, atol=5e-10)
-
-
-def test_interior_circle_dirichlet_double_layer_recovers_constant_solution() -> None:
     panelization = _circle_panelization(panels=8, order=8)
     result = phx.solver.solve_interior_laplace_dirichlet_2d(
         panelization,

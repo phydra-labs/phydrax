@@ -20,7 +20,7 @@ def _termination(*, maximum_steps: Any = 40) -> Any:
     )
 
 
-def test_composite_problem_preserves_signed_scalar_semantics() -> None:
+def test_composite_optimization_scenario_1() -> None:
     problem = phx.optim.CompositeLeastSquaresProblem(
         lambda parameters, _: jnp.array([parameters[0] - 1.0]),
         lambda parameters, _: -0.25 * parameters[0] ** 2,
@@ -36,9 +36,54 @@ def test_composite_problem_preserves_signed_scalar_semantics() -> None:
     np.testing.assert_allclose(result.scalar_objective, -1.0, atol=1e-7)
     np.testing.assert_allclose(result.objective, -0.5, atol=1e-7)
     assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
+    problem = phx.optim.CompositeLeastSquaresProblem(
+        lambda parameters, _: parameters,
+        lambda parameters, _: parameters,
+    )
 
+    try:
+        problem.scalar_value(jnp.ones(2))
+    except TypeError as error:
+        assert "one real scalar" in str(error)
+    else:
+        raise AssertionError("A vector-valued scalar objective must be rejected.")
+    problem = phx.optim.CompositeLeastSquaresProblem(
+        lambda parameters, _: jnp.array([parameters[0] - 1.0]),
+        lambda parameters, _: -2.0 * parameters[0] ** 2 + 0.25 * parameters[0] ** 4,
+    )
+    method = phx.optim.GeneralizedGaussNewton(
+        initial_damping=1e-8,
+        damping_increase=10.0,
+        maximum_trials=3,
+    )
+    initial = jnp.array([0.1])
+    initial_objective = problem.objective(initial)
+    result = phx.optim.composite_least_squares(
+        problem,
+        initial,
+        method=method,
+        termination=_termination(maximum_steps=60),
+    )
 
-def test_generalized_gauss_newton_matches_linear_quadratic_solution() -> None:
+    assert result.objective < initial_objective
+    assert int(result.diagnostics.direction_fallbacks) > 0
+    assert jnp.all(jnp.isfinite(result.parameters))
+    problem = phx.optim.CompositeLeastSquaresProblem(
+        lambda parameters, target: parameters - target,
+        lambda parameters, _: 0.5 * jnp.sum(parameters**2),
+    )
+    solve = eqx.filter_jit(
+        lambda target: phx.optim.composite_least_squares(
+            problem,
+            jnp.zeros(2),
+            args=target,
+            termination=_termination(),
+        )
+    )
+
+    result = solve(jnp.array([2.0, -4.0]))
+    np.testing.assert_allclose(result.parameters, jnp.array([1.0, -2.0]), atol=1e-7)
+    assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
     design = jnp.array([[1.0, 2.0], [2.0, -1.0], [1.0, 1.0]])
     target = jnp.array([1.0, -2.0, 0.5])
     regularizer = jnp.array([[2.0, 0.25], [0.25, 1.0]])
@@ -65,60 +110,3 @@ def test_generalized_gauss_newton_matches_linear_quadratic_solution() -> None:
     assert int(result.diagnostics.hvp_evaluations) > 0
     assert int(result.diagnostics.jvp_evaluations) > 0
     assert int(result.diagnostics.vjp_evaluations) > 0
-
-
-def test_composite_optimizer_retries_indefinite_model_then_falls_back() -> None:
-    problem = phx.optim.CompositeLeastSquaresProblem(
-        lambda parameters, _: jnp.array([parameters[0] - 1.0]),
-        lambda parameters, _: -2.0 * parameters[0] ** 2 + 0.25 * parameters[0] ** 4,
-    )
-    method = phx.optim.GeneralizedGaussNewton(
-        initial_damping=1e-8,
-        damping_increase=10.0,
-        maximum_trials=3,
-    )
-    initial = jnp.array([0.1])
-    initial_objective = problem.objective(initial)
-    result = phx.optim.composite_least_squares(
-        problem,
-        initial,
-        method=method,
-        termination=_termination(maximum_steps=60),
-    )
-
-    assert result.objective < initial_objective
-    assert int(result.diagnostics.direction_fallbacks) > 0
-    assert jnp.all(jnp.isfinite(result.parameters))
-
-
-def test_composite_optimizer_compiles_with_dynamic_arguments() -> None:
-    problem = phx.optim.CompositeLeastSquaresProblem(
-        lambda parameters, target: parameters - target,
-        lambda parameters, _: 0.5 * jnp.sum(parameters**2),
-    )
-    solve = eqx.filter_jit(
-        lambda target: phx.optim.composite_least_squares(
-            problem,
-            jnp.zeros(2),
-            args=target,
-            termination=_termination(),
-        )
-    )
-
-    result = solve(jnp.array([2.0, -4.0]))
-    np.testing.assert_allclose(result.parameters, jnp.array([1.0, -2.0]), atol=1e-7)
-    assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
-
-
-def test_composite_problem_rejects_non_scalar_auxiliary_objective() -> None:
-    problem = phx.optim.CompositeLeastSquaresProblem(
-        lambda parameters, _: parameters,
-        lambda parameters, _: parameters,
-    )
-
-    try:
-        problem.scalar_value(jnp.ones(2))
-    except TypeError as error:
-        assert "one real scalar" in str(error)
-    else:
-        raise AssertionError("A vector-valued scalar objective must be rejected.")

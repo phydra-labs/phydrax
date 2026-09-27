@@ -54,7 +54,7 @@ def _state(compiled: Any, velocity: Any) -> Any:
     return compiled.initialize_state(position, velocity(position))
 
 
-def test_morris_viscosity_is_zero_for_uniform_translation() -> None:
+def test_sph_viscosity_scenario_1() -> None:
     compiled = _compiled(0.02)
     state = _state(compiled, lambda position: jnp.full_like(position, 0.3))
     diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
@@ -62,9 +62,6 @@ def test_morris_viscosity_is_zero_for_uniform_translation() -> None:
     assert jnp.array_equal(diagnostics.net_viscous_force, jnp.zeros((1,)))
     assert diagnostics.viscous_dissipation_rate == pytest.approx(0.0)
     assert diagnostics.viscous_positive_power_defect == pytest.approx(0.0)
-
-
-def test_morris_viscosity_is_pairwise_momentum_conservative_and_dissipative() -> None:
     compiled = _compiled(0.02)
     state = _state(compiled, lambda position: 0.1 * jnp.sin(2.0 * jnp.pi * position))
     diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
@@ -78,19 +75,6 @@ def test_morris_viscosity_is_pairwise_momentum_conservative_and_dissipative() ->
         -diagnostics.viscous_dissipation_rate,
         atol=2e-14,
     )
-
-
-def test_zero_morris_viscosity_produces_zero_viscous_rate() -> None:
-    compiled = _compiled(0.0)
-    state = _state(compiled, lambda position: 0.1 * jnp.sin(2.0 * jnp.pi * position))
-    diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
-
-    assert diagnostics.viscous_dissipation_rate == pytest.approx(0.0)
-    assert jnp.array_equal(diagnostics.net_viscous_force, jnp.zeros((1,)))
-    assert jnp.isinf(compiled.dynamics.stable_step(0.0, state, None).viscous)
-
-
-def test_morris_viscosity_dense_cell_and_derivative_parity() -> None:
     dense = _compiled(0.02, backend="dense")
     cell = _compiled(0.02, backend="cell")
     state = _state(dense, lambda position: 0.1 * jnp.sin(2.0 * jnp.pi * position))
@@ -108,3 +92,10 @@ def test_morris_viscosity_dense_cell_and_derivative_parity() -> None:
 
     assert jnp.allclose(cell_rate, dense_rate, rtol=2e-12, atol=2e-13)
     assert jnp.allclose(cell_jvp, dense_jvp, rtol=2e-10, atol=2e-11)
+    compiled = _compiled(0.0)
+    state = _state(compiled, lambda position: 0.1 * jnp.sin(2.0 * jnp.pi * position))
+    diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
+
+    assert diagnostics.viscous_dissipation_rate == pytest.approx(0.0)
+    assert jnp.array_equal(diagnostics.net_viscous_force, jnp.zeros((1,)))
+    assert jnp.isinf(compiled.dynamics.stable_step(0.0, state, None).viscous)

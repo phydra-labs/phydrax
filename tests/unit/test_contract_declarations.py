@@ -68,7 +68,7 @@ def _contract_fields(cls: type, /) -> tuple[str, ...]:
     return tuple(names)
 
 
-def test_every_contract_field_belongs_to_an_opted_in_module() -> None:
+def test_contract_declarations_scenario_1() -> None:
     undeclared = [
         f"{cls.__module__}.{cls.__qualname__}: {fields}"
         for cls in _strict_dataclasses()
@@ -76,17 +76,12 @@ def test_every_contract_field_belongs_to_an_opted_in_module() -> None:
         if not cls._strict_contract_ and (fields := _contract_fields(cls))
     ]
     assert undeclared == []
-
-
-def test_every_opted_in_module_compiles() -> None:
     # ty: ignore[unresolved-attribute]
     opted = [cls for cls in _strict_dataclasses() if cls._strict_contract_]
     assert opted
     for cls in opted:
         assert _typing_plan.class_plan(cls).fields
 
-
-def test_ordinary_function_annotations_do_not_opt_a_class_in() -> None:
     class Holder(StrictModule):
         values: jnp.ndarray
 
@@ -96,8 +91,6 @@ def test_ordinary_function_annotations_do_not_opt_a_class_in() -> None:
     assert not Holder._strict_contract_
     assert _contract_fields(Holder) == ()
 
-
-def test_unresolved_contract_annotations_fail_with_class_and_field_context() -> None:
     class Unresolved(StrictModule):
         __strict_contract__ = True
 
@@ -108,7 +101,7 @@ def test_unresolved_contract_annotations_fail_with_class_and_field_context() -> 
         Unresolved(jnp.zeros((1,)))
 
 
-def test_opt_in_may_only_be_declared_true() -> None:
+def test_contract_declarations_scenario_2() -> None:
     with pytest.raises(TypeError):
 
         class Withdrawn(StrictModule):
@@ -116,8 +109,6 @@ def test_opt_in_may_only_be_declared_true() -> None:
 
             values: jnp.ndarray
 
-
-def test_classes_that_are_not_dataclass_modules_cannot_opt_in() -> None:
     with pytest.raises(TypeError):
 
         class PlainStrict(Strict):

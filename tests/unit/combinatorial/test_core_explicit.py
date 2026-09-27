@@ -24,7 +24,7 @@ def _space(*, valid: Any = None) -> Any:
     )
 
 
-def test_linear_problem_validates_cost_feature_contract_and_refresh() -> None:
+def test_core_explicit_scenario_1() -> None:
     space = _space()
     problem = phx.combinatorial.LinearCombinatorialProblem(
         space,
@@ -61,9 +61,6 @@ def test_linear_problem_validates_cost_feature_contract_and_refresh() -> None:
                 "offset": jnp.ones((2,)),
             }
         )
-
-
-def test_explicit_oracle_keeps_decisions_features_and_stable_ties_distinct() -> None:
     space = _space()
     problem = phx.combinatorial.LinearCombinatorialProblem(
         space,
@@ -90,9 +87,6 @@ def test_explicit_oracle_keeps_decisions_features_and_stable_ties_distinct() -> 
     assert bool(result.all_success)
     assert result.provenance.tie_policy == "lowest-candidate-index"
     assert result.certificate.tie_available.shape == (2,)
-
-
-def test_explicit_oracle_reports_infeasible_and_nonfinite_instances() -> None:
     method = phx.combinatorial.ExhaustiveLinearOracle(batch_size=4)
     infeasible = phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
@@ -114,9 +108,6 @@ def test_explicit_oracle_reports_infeasible_and_nonfinite_instances() -> None:
     assert not infeasible.valid
     assert nonfinite.status == int(phx.combinatorial.CombinatorialStatus.NONFINITE_INPUT)
     assert not nonfinite.valid
-
-
-def test_public_combinatorial_exports_are_rooted_in_new_namespace() -> None:
     expected = {
         "DAGShortestPath",
         "ExhaustiveLinearOracle",

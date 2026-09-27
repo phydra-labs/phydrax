@@ -27,23 +27,17 @@ def _permute_mesh(points: np.ndarray, faces: np.ndarray, perm: np.ndarray) -> An
     return pts2, faces2
 
 
-def test_time_interval_equivalence() -> None:
+def test_domain_equivalence_scenario_1() -> None:
     a = TimeInterval(0.0, 1.0)
     b = TimeInterval(0.0, 1.0)
     c = TimeInterval(0.0, 2.0)
     assert a.same_support(b)
     assert not a.same_support(c)
-
-
-def test_interval1d_equivalence() -> None:
     a = Interval1d(0.0, 1.0)
     b = Interval1d(0.0, 1.0)
     c = Interval1d(0.0, 2.0)
     assert a.same_support(b)
     assert not a.same_support(c)
-
-
-def test_dataset_domain_equivalence() -> None:
     data1 = {
         "a": jnp.zeros((4, 2), dtype="float64"),
         "b": jnp.ones((4,), dtype="float64"),
@@ -67,7 +61,7 @@ def test_dataset_domain_equivalence() -> None:
     assert not dom1.same_support(dom5)
 
 
-def test_geometry2d_equivalence_strong() -> None:
+def test_domain_equivalence_scenario_2() -> None:
     points = np.array(
         [
             [0.0, 0.0, 0.0],
@@ -98,9 +92,6 @@ def test_geometry2d_equivalence_strong() -> None:
         phx.geometry.planar_region_from_source(mesh3, recenter=False).compile()
     )
     assert not geom1.same_support(geom3)
-
-
-def test_geometry3d_equivalence_strong() -> None:
     points = np.array(
         [
             [0.0, 0.0, 0.0],
@@ -140,16 +131,10 @@ def test_geometry3d_equivalence_strong() -> None:
         phx.geometry.mesh_region_from_source(mesh3, recenter=False).compile()
     )
     assert not geom1.same_support(geom3)
-
-
-def test_product_domain_label_collision_equivalent() -> None:
     a = Interval1d(0.0, 1.0)
     b = Interval1d(0.0, 1.0)
     dom = ProductDomain(a, b)
     assert dom.labels == ("x",)
-
-
-def test_product_domain_label_collision_not_equivalent() -> None:
     a = Interval1d(0.0, 1.0)
     b = Interval1d(0.0, 2.0)
     with pytest.raises(ValueError):

@@ -262,7 +262,7 @@ def _component(
     )
 
 
-def test_total_stress_has_exact_component_only_and_additive_limits() -> None:
+def test_full_dark_sector_runtime_scenario_1() -> None:
     stage = _stage()
     matter = _component(stage, "matter", 2.0, projection_id="matter-stress")
     radiation = _component(stage, "radiation", 0.5, projection_id="radiation-stress")
@@ -282,9 +282,6 @@ def test_total_stress_has_exact_component_only_and_additive_limits() -> None:
         matter.projection.stress_covariant + radiation.projection.stress_covariant,
     )
     assert bool(coupled.successful)
-
-
-def test_shared_stage_mismatch_is_refused() -> None:
     stage = _stage(snapshot_token=7)
     stale = _component(
         stage,
@@ -296,9 +293,6 @@ def test_shared_stage_mismatch_is_refused() -> None:
 
     with pytest.raises(Exception, match="stage snapshot token"):
         assemble_full_dark_sector_stress((stale,), stage)
-
-
-def test_dark_radiation_four_force_is_exactly_opposite() -> None:
     stage = _stage()
     radiation = jnp.asarray((0.3, 0.1, -0.2, 0.4))
 

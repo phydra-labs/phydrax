@@ -146,7 +146,7 @@ def _initial(protocol: Any) -> Any:
     )
 
 
-def test_dormant_material_has_no_topology_or_preactivation_force() -> None:
+def test_cotranslation_epochs_scenario_1() -> None:
     material, protocol = _fixture()
     runtime = protocol.stages[0].runtime
     state = _initial(protocol).state
@@ -179,9 +179,6 @@ def test_dormant_material_has_no_topology_or_preactivation_force() -> None:
     assert float(jnp.max(jnp.abs(activation.state.force.forces))) > 0.1
     np.testing.assert_array_equal(activation.state.force.forces[2], 0.0)
     assert material.topology.bond_indices.shape[0] == 2
-
-
-def test_insertion_sources_close_energy_mass_and_momentum_balance() -> None:
     _, protocol = _fixture()
     initial = _initial(protocol).state
     activation = activate_topology_epoch(
@@ -228,9 +225,6 @@ def test_insertion_sources_close_energy_mass_and_momentum_balance() -> None:
         energy.cumulative_balance_residual,
         atol=1e-12,
     )
-
-
-def test_activation_rebuilds_constraint_executor_and_projects_inserted_geometry() -> None:
     _, protocol = _fixture(constrained=True)
     first = protocol.run(_initial(protocol), stop_after_stage=1)
     assert first.successful
@@ -258,7 +252,7 @@ def test_activation_rebuilds_constraint_executor_and_projects_inserted_geometry(
     )
 
 
-def test_failed_work_admission_and_singular_insertion_rollback_without_mutation() -> None:
+def test_cotranslation_epochs_scenario_2() -> None:
     _, protocol = _fixture()
     initial = _initial(protocol).state
     transition = replace(protocol.transition(1), maximum_absolute_work=0.0)
@@ -286,6 +280,43 @@ def test_failed_work_admission_and_singular_insertion_rollback_without_mutation(
     )
     assert good.successful
     np.testing.assert_array_equal(good.state.random_key, initial.random_key)
+    _, protocol = _fixture()
+    with pytest.raises(ValueError):
+        replace(protocol, residue_particle_ids=(0, 1, 2))
+    with pytest.raises(ValueError):
+        replace(protocol.stages[1], codon="GCT")
+    with pytest.raises(ValueError):
+        replace(
+            protocol,
+            stages=(
+                protocol.stages[0],
+                replace(protocol.stages[1], codon="UGG"),
+                *protocol.stages[2:],
+            ),
+        )
+    with pytest.raises(ValueError):
+        replace(
+            protocol,
+            timing_calibration=_source(),
+            timing_calibration_scope="uncalibrated reduced timing",
+        )
+    with pytest.raises(PermissionError):
+        replace(protocol, parameter_source=_source(commercial=False), commercial_use=True)
+    _, protocol = _fixture()
+    observer = NascentChainObservations(
+        protocol.stages[1].runtime.system,
+        contact_particle_pairs=((101, 205), (205, 309)),
+        reference_distances=(1.0, 1.0),
+        contact_width=0.2,
+    )
+    observation = eqx.filter_jit(observer.evaluate)(
+        jnp.array([[0.0, 0, 0], [1.0, 0, 0], [50.0, 0, 0]])
+    )
+    np.testing.assert_allclose(observation.contact_similarity, 1.0)
+    assert int(observation.contact_count) == 1
+    assert bool(observation.contact_available) and not bool(
+        observation.entanglement_available
+    )
 
 
 def test_complete_protocol_checkpoint_replay_and_schedule_scope(tmp_path: Any) -> None:
@@ -319,50 +350,7 @@ def test_complete_protocol_checkpoint_replay_and_schedule_scope(tmp_path: Any) -
         changed.read_checkpoint(path, _initial(changed))
 
 
-def test_protocol_refuses_biological_and_identity_shortcuts() -> None:
-    _, protocol = _fixture()
-    with pytest.raises(ValueError):
-        replace(protocol, residue_particle_ids=(0, 1, 2))
-    with pytest.raises(ValueError):
-        replace(protocol.stages[1], codon="GCT")
-    with pytest.raises(ValueError):
-        replace(
-            protocol,
-            stages=(
-                protocol.stages[0],
-                replace(protocol.stages[1], codon="UGG"),
-                *protocol.stages[2:],
-            ),
-        )
-    with pytest.raises(ValueError):
-        replace(
-            protocol,
-            timing_calibration=_source(),
-            timing_calibration_scope="uncalibrated reduced timing",
-        )
-    with pytest.raises(PermissionError):
-        replace(protocol, parameter_source=_source(commercial=False), commercial_use=True)
-
-
-def test_contact_observation_preserves_future_coverage() -> None:
-    _, protocol = _fixture()
-    observer = NascentChainObservations(
-        protocol.stages[1].runtime.system,
-        contact_particle_pairs=((101, 205), (205, 309)),
-        reference_distances=(1.0, 1.0),
-        contact_width=0.2,
-    )
-    observation = eqx.filter_jit(observer.evaluate)(
-        jnp.array([[0.0, 0, 0], [1.0, 0, 0], [50.0, 0, 0]])
-    )
-    np.testing.assert_allclose(observation.contact_similarity, 1.0)
-    assert int(observation.contact_count) == 1
-    assert bool(observation.contact_available) and not bool(
-        observation.entanglement_available
-    )
-
-
-def test_gauss_entanglement_orientation_rigid_invariance_and_crossing_refusal() -> None:
+def test_cotranslation_epochs_scenario_3() -> None:
     ids = (11, 22, 33, 44)
     system = AtomisticSystemPlan(
         # ty: ignore[invalid-argument-type]
@@ -406,9 +394,6 @@ def test_gauss_entanglement_orientation_rigid_invariance_and_crossing_refusal() 
     crossing = observer.evaluate(positions.at[2:, 2].set(0.0))
     assert not bool(crossing.successful)
     np.testing.assert_allclose(crossing.curve_separation, 0.0)
-
-
-def test_ribosome_exclusion_and_tether_produce_conservative_nonzero_forces() -> None:
     _, protocol = _fixture()
     runtime = protocol.stages[0].runtime
     positions = jnp.array([[-1.5, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])

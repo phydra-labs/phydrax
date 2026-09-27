@@ -97,7 +97,7 @@ def _deep_applicability(training_path_id: Any) -> Any:
     )
 
 
-def test_deep_bsde_validation_cannot_be_relabeled_from_training() -> None:
+def test_frontier_candidates_scenario_1() -> None:
     result = _deep_result()
     separated = deep_bsde_independent_validation(
         _deep_applicability("training-path"),
@@ -120,57 +120,6 @@ def test_deep_bsde_validation_cannot_be_relabeled_from_training() -> None:
     assert bool(separated.valid)
     assert not reused.independent
     assert not bool(reused.valid)
-
-
-def _tensor_fixture(dense: Any, relative_tolerance: Any) -> Any:
-    law = _law()
-    grid = TensorizedGrid.uniform(((0.0, 1.0), (0.0, 1.0)), (2, 2))
-    approximation = TensorTrain.from_dense(
-        jnp.asarray(dense, dtype="float64"),
-        max_ranks=2,
-        relative_tolerance=relative_tolerance,
-    )
-    applicability = TensorValuationApplicability(
-        law,
-        grid,
-        contract_id="tensor-contract",
-        domain_id="tensor-domain",
-        support_id="tensor-support",
-        training_independence_id="tensor-training",
-        route="tt",
-        max_ranks=(2,),
-        validation_tolerance=1e-5,
-        reconstruction_tolerance=1e-5,
-        maximum_core_bytes=4096,
-        maximum_validation_points=4,
-    )
-    indices = jnp.asarray([[0, 0], [0, 1], [1, 0], [1, 1]])
-    validation = tensor_independent_validation(
-        applicability,
-        approximation,
-        indices,
-        jnp.asarray(dense, dtype="float64").reshape((-1,)),
-        validation_id="tensor-validation",
-        validation_independence_id="tensor-holdout",
-    )
-    support = TensorSupportEvidence(
-        0.0,
-        domain_id="tensor-domain",
-        support_id="tensor-support",
-        factor_layout_id=law.factor_layout_id,
-        evidence_id="tensor-support-evidence",
-        tolerance=0.0,
-    )
-    causality = TensorCausalityEvidence(
-        0.0,
-        filtration_id=law.filtration_id,
-        evidence_id="tensor-causality-evidence",
-        tolerance=0.0,
-    )
-    return law, applicability, approximation, validation, support, causality
-
-
-def test_tensor_reconstruction_and_rank_evidence_fail_closed() -> None:
     dense = jnp.asarray([[1.0, 2.0], [2.0, 4.0]])
     law, applicability, approximation, validation, support, causality = _tensor_fixture(
         dense, 1e-6
@@ -237,3 +186,51 @@ def test_tensor_reconstruction_and_rank_evidence_fail_closed() -> None:
     )
     assert saturated_candidate.evidence.rank.rank_saturated
     assert not bool(saturated_candidate.accepted)
+
+
+def _tensor_fixture(dense: Any, relative_tolerance: Any) -> Any:
+    law = _law()
+    grid = TensorizedGrid.uniform(((0.0, 1.0), (0.0, 1.0)), (2, 2))
+    approximation = TensorTrain.from_dense(
+        jnp.asarray(dense, dtype="float64"),
+        max_ranks=2,
+        relative_tolerance=relative_tolerance,
+    )
+    applicability = TensorValuationApplicability(
+        law,
+        grid,
+        contract_id="tensor-contract",
+        domain_id="tensor-domain",
+        support_id="tensor-support",
+        training_independence_id="tensor-training",
+        route="tt",
+        max_ranks=(2,),
+        validation_tolerance=1e-5,
+        reconstruction_tolerance=1e-5,
+        maximum_core_bytes=4096,
+        maximum_validation_points=4,
+    )
+    indices = jnp.asarray([[0, 0], [0, 1], [1, 0], [1, 1]])
+    validation = tensor_independent_validation(
+        applicability,
+        approximation,
+        indices,
+        jnp.asarray(dense, dtype="float64").reshape((-1,)),
+        validation_id="tensor-validation",
+        validation_independence_id="tensor-holdout",
+    )
+    support = TensorSupportEvidence(
+        0.0,
+        domain_id="tensor-domain",
+        support_id="tensor-support",
+        factor_layout_id=law.factor_layout_id,
+        evidence_id="tensor-support-evidence",
+        tolerance=0.0,
+    )
+    causality = TensorCausalityEvidence(
+        0.0,
+        filtration_id=law.filtration_id,
+        evidence_id="tensor-causality-evidence",
+        tolerance=0.0,
+    )
+    return law, applicability, approximation, validation, support, causality

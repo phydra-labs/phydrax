@@ -125,7 +125,7 @@ def _harmonic_fields() -> Any:
     return mesh, roles, plan, candidate.commit()
 
 
-def test_boundary_profiles_are_extensible_and_validate_closure_contracts() -> None:
+def test_cardiovascular_anatomy_scenario_1() -> None:
     mesh, roles = _affine_lv_slab()
     assert bool(roles.evidence.successful)
     assert int(roles.evidence.unassigned_face_count) == 0
@@ -156,9 +156,6 @@ def test_boundary_profiles_are_extensible_and_validate_closure_contracts() -> No
     )
     with pytest.raises(ValueError, match="disjoint face ownership"):
         CardiacBoundaryRoles(mesh, overlapping, profile=roles.profile)
-
-
-def test_chamber_profiles_and_coordinate_recipes_keep_explicit_semantics() -> None:
     lv_profile = left_ventricular_boundary_profile(
         endocardium="endo",
         epicardium="epi",
@@ -239,9 +236,15 @@ def test_chamber_profiles_and_coordinate_recipes_keep_explicit_semantics() -> No
         biventricular_coordinate_specs(roles=roles)
     with pytest.raises(ValueError, match="distinct names"):
         atrial_coordinate_specs(right_endocardium="la-endocardium")
-
-
-def test_affine_p1_harmonic_coordinates_reproduce_linear_fields_and_gradients() -> None:
+    vertices, triangles = _tetrahedral_cavity()
+    first = ChamberSurfacePlan("lv", vertices, triangles)
+    second = ChamberSurfacePlan("lv", vertices, triangles[::-1, ::-1])
+    assert first.plan_id == second.plan_id
+    assert first.prepare().surface_id == second.prepare().surface_id
+    open_vertices = jnp.concatenate((vertices, jnp.asarray(((1.0, 1.0, 1.0),))), axis=0)
+    open_faces = jnp.asarray(((0, 1, 2), (0, 2, 3), (0, 3, 1), (1, 3, 4)))
+    with pytest.raises(ValueError, match="exactly two faces per edge"):
+        ChamberSurfacePlan("open-lv", open_vertices, open_faces).prepare()
     mesh, _, plan, fields = _harmonic_fields()
     coordinates = np.asarray(mesh.coordinates)
     cells = np.asarray(mesh.blocks[0].vertices)
@@ -267,7 +270,7 @@ def test_affine_p1_harmonic_coordinates_reproduce_linear_fields_and_gradients() 
     assert plan.plan_id == HarmonicCoordinatePlan(mesh, plan.roles, plan.specs).plan_id
 
 
-def test_exact_helix_rule_material_frame_and_line_tensor_sign_invariance() -> None:
+def test_cardiovascular_anatomy_scenario_2() -> None:
     _, _, _, fields = _harmonic_fields()
     plan = VentricularMicrostructurePlan(
         "transmural",
@@ -321,9 +324,6 @@ def test_exact_helix_rule_material_frame_and_line_tensor_sign_invariance() -> No
         -np.asarray(microstructure.fiber),
         atol=4.0e-6,
     )
-
-
-def test_microstructure_degeneracy_is_fail_closed_without_epsilon_repair() -> None:
     _, _, _, fields = _harmonic_fields()
     degenerate_gradients = np.asarray(fields.cell_gradients).copy()
     degenerate_gradients[fields.coordinate_index("longitudinal")] = degenerate_gradients[
@@ -350,17 +350,6 @@ def test_microstructure_degeneracy_is_fail_closed_without_epsilon_repair() -> No
     assert not bool(candidate.evidence.all_successful)
     assert np.all(~np.asarray(candidate.evidence.nondegenerate))
     assert np.all(np.isnan(np.asarray(candidate.material_frame.fiber)))
-
-
-def _tetrahedral_cavity() -> Any:
-    vertices = jnp.asarray(
-        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-    )
-    scrambled_faces = jnp.asarray(((3, 2, 1), (2, 0, 3), (1, 3, 0), (0, 2, 1)))
-    return vertices, scrambled_faces
-
-
-def test_closed_chamber_orientation_volume_derivative_and_translation_evidence() -> None:
     vertices, triangles = _tetrahedral_cavity()
     surface = ChamberSurfacePlan("manufactured-lv-cavity", vertices, triangles).prepare()
     result = surface.evaluate().commit()
@@ -384,13 +373,9 @@ def test_closed_chamber_orientation_volume_derivative_and_translation_evidence()
     assert not bool(reflected_candidate.evidence.positive_orientation)
 
 
-def test_chamber_surface_ids_are_canonical_and_open_surfaces_are_rejected() -> None:
-    vertices, triangles = _tetrahedral_cavity()
-    first = ChamberSurfacePlan("lv", vertices, triangles)
-    second = ChamberSurfacePlan("lv", vertices, triangles[::-1, ::-1])
-    assert first.plan_id == second.plan_id
-    assert first.prepare().surface_id == second.prepare().surface_id
-    open_vertices = jnp.concatenate((vertices, jnp.asarray(((1.0, 1.0, 1.0),))), axis=0)
-    open_faces = jnp.asarray(((0, 1, 2), (0, 2, 3), (0, 3, 1), (1, 3, 4)))
-    with pytest.raises(ValueError, match="exactly two faces per edge"):
-        ChamberSurfacePlan("open-lv", open_vertices, open_faces).prepare()
+def _tetrahedral_cavity() -> Any:
+    vertices = jnp.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    scrambled_faces = jnp.asarray(((3, 2, 1), (2, 0, 3), (1, 3, 0), (0, 2, 1)))
+    return vertices, scrambled_faces

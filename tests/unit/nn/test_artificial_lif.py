@@ -8,7 +8,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from phydrax.nn.layers import (
     ArtificialLIFCell,
@@ -30,94 +29,86 @@ def _cell(**kwargs: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("reset_mode", ("subtract", "hard"))
-def test_lif_previous_spike_drive_and_single_spike_overflow(reset_mode: Any) -> None:
-    cell = _cell(reset_mode=reset_mode)
-    state, spikes = cell.step((jnp.array([0.2]), jnp.array([1.0])), jnp.array([8.0]))
-    # Half-life charging: .5*.2 + .5*(8 + .6*1) = 4.4. There is one
-    # binary spike, not four events; subtractive reset retains excess charge.
-    np.testing.assert_array_equal(spikes, [1.0])
-    np.testing.assert_allclose(state[0], [3.4 if reset_mode == "subtract" else 0.0])
-    unchanged, duplicate_spikes = cell.step_with_context(
-        state, jnp.array([100.0]), time=jnp.array(2.0), interval=jnp.array(0.0)
-    )
-    np.testing.assert_array_equal(duplicate_spikes, [0.0])
-    for actual, expected in zip(unchanged, state, strict=True):
-        np.testing.assert_array_equal(actual, expected)
+def test_artificial_lif_scenario_1() -> None:
+    for reset_mode in ("subtract", "hard"):
+        cell = _cell(reset_mode=reset_mode)
+        state, spikes = cell.step((jnp.array([0.2]), jnp.array([1.0])), jnp.array([8.0]))
+        # Half-life charging: .5*.2 + .5*(8 + .6*1) = 4.4. There is one
+        # binary spike, not four events; subtractive reset retains excess charge.
+        np.testing.assert_array_equal(spikes, [1.0])
+        np.testing.assert_allclose(state[0], [3.4 if reset_mode == "subtract" else 0.0])
+        unchanged, duplicate_spikes = cell.step_with_context(
+            state, jnp.array([100.0]), time=jnp.array(2.0), interval=jnp.array(0.0)
+        )
+        np.testing.assert_array_equal(duplicate_spikes, [0.0])
+        for actual, expected in zip(unchanged, state, strict=True):
+            np.testing.assert_array_equal(actual, expected)
+    for family in ("fast_sigmoid", "triangular"):
+        width = 0.5
+        cell = _cell(surrogate=family, surrogate_width=width)
+        charged = jnp.array([-0.5, 0.75, 1.0, 1.25, 2.5])[:, None]
+        state = cell.initial_state((5,), dtype=jnp.float32)
+        function = lambda inputs: cell.step(state, inputs)[1]
+        primal, tangent = jax.jvp(function, (2.0 * charged,), (jnp.ones_like(charged),))
+        scaled_margin = (np.asarray(charged) - 1.0) / width
+        slope = (
+            0.5 / (width * (1.0 + np.abs(scaled_margin)) ** 2)
+            if family == "fast_sigmoid"
+            else np.maximum(1.0 - np.abs(scaled_margin), 0.0) / width
+        )
+        np.testing.assert_array_equal(
+            primal, np.asarray(charged >= 1.0, dtype=np.float32)
+        )
+        np.testing.assert_allclose(tangent, 0.5 * slope, atol=1e-7)
+        np.testing.assert_allclose(
+            jax.grad(lambda inputs: jnp.sum(function(inputs)))(2.0 * charged),
+            0.5 * slope,
+            atol=1e-7,
+        )
+        _, zero_tangent = jax.jvp(function, (2.0 * charged,), (jnp.zeros_like(charged),))
+        np.testing.assert_array_equal(zero_tangent, jnp.zeros_like(charged))
+    for reset_mode in ("subtract", "hard"):
+        for detach in (False, True):
+            cell = _cell(reset_mode=reset_mode, detach_reset=detach, surrogate_width=0.5)
+            state = cell.initial_state((), dtype=jnp.float32)
+            (next_state, spike), (state_tangent, spike_tangent) = jax.jvp(
+                lambda inputs: cell.step(state, inputs),
+                (jnp.array([2.4]),),
+                (jnp.ones((1,)),),
+            )
+            charged = 1.2
+            slope = 1.0 / (2.0 * 0.5 * (1.0 + abs((charged - 1.0) / 0.5)) ** 2)
+            reset_slope = 0.0 if detach else slope
+            membrane_tangent = (
+                -0.5 * charged * reset_slope
+                if reset_mode == "hard"
+                else 0.5 * (1.0 - reset_slope)
+            )
+            np.testing.assert_array_equal(spike, [1.0])
+            np.testing.assert_allclose(
+                next_state[0], [0.0 if reset_mode == "hard" else 0.2], atol=1e-7
+            )
+            np.testing.assert_allclose(state_tangent[0], [membrane_tangent], atol=1e-7)
+            np.testing.assert_allclose(spike_tangent, [0.5 * slope], atol=1e-7)
+            np.testing.assert_allclose(state_tangent[1], spike_tangent, atol=1e-7)
 
 
-@pytest.mark.parametrize("family", ("fast_sigmoid", "triangular"))
-def test_spike_tangent_matches_declared_estimator_not_binary_finite_difference(
-    family: Any,
-) -> None:
-    width = 0.5
-    cell = _cell(surrogate=family, surrogate_width=width)
-    charged = jnp.array([-0.5, 0.75, 1.0, 1.25, 2.5])[:, None]
-    state = cell.initial_state((5,), dtype=jnp.float32)
-    function = lambda inputs: cell.step(state, inputs)[1]
-    primal, tangent = jax.jvp(function, (2.0 * charged,), (jnp.ones_like(charged),))
-    scaled_margin = (np.asarray(charged) - 1.0) / width
-    slope = (
-        0.5 / (width * (1.0 + np.abs(scaled_margin)) ** 2)
-        if family == "fast_sigmoid"
-        else np.maximum(1.0 - np.abs(scaled_margin), 0.0) / width
-    )
-    np.testing.assert_array_equal(primal, np.asarray(charged >= 1.0, dtype=np.float32))
-    np.testing.assert_allclose(tangent, 0.5 * slope, atol=1e-7)
-    np.testing.assert_allclose(
-        jax.grad(lambda inputs: jnp.sum(function(inputs)))(2.0 * charged),
-        0.5 * slope,
-        atol=1e-7,
-    )
-    _, zero_tangent = jax.jvp(function, (2.0 * charged,), (jnp.zeros_like(charged),))
-    np.testing.assert_array_equal(zero_tangent, jnp.zeros_like(charged))
+def test_reset_detachment_retains_previous_spike_recurrent_gradient() -> None:
+    for detach in (False, True):
+        cell = _cell(reset_mode="hard", detach_reset=detach, surrogate_width=0.5)
 
+        def second_spike(first_input: Any) -> Any:
+            state, _ = cell.step(cell.initial_state((), dtype=jnp.float32), first_input)
+            return cell.step(state, jnp.array([1.8]))[1]
 
-@pytest.mark.parametrize("reset_mode", ("subtract", "hard"))
-@pytest.mark.parametrize("detach", (False, True))
-def test_detached_reset_blocks_only_reset_spike_tangent(
-    reset_mode: Any, detach: Any
-) -> None:
-    cell = _cell(reset_mode=reset_mode, detach_reset=detach, surrogate_width=0.5)
-    state = cell.initial_state((), dtype=jnp.float32)
-    (next_state, spike), (state_tangent, spike_tangent) = jax.jvp(
-        lambda inputs: cell.step(state, inputs),
-        (jnp.array([2.4]),),
-        (jnp.ones((1,)),),
-    )
-    charged = 1.2
-    slope = 1.0 / (2.0 * 0.5 * (1.0 + abs((charged - 1.0) / 0.5)) ** 2)
-    reset_slope = 0.0 if detach else slope
-    membrane_tangent = (
-        -0.5 * charged * reset_slope
-        if reset_mode == "hard"
-        else 0.5 * (1.0 - reset_slope)
-    )
-    np.testing.assert_array_equal(spike, [1.0])
-    np.testing.assert_allclose(
-        next_state[0], [0.0 if reset_mode == "hard" else 0.2], atol=1e-7
-    )
-    np.testing.assert_allclose(state_tangent[0], [membrane_tangent], atol=1e-7)
-    np.testing.assert_allclose(spike_tangent, [0.5 * slope], atol=1e-7)
-    np.testing.assert_allclose(state_tangent[1], spike_tangent, atol=1e-7)
-
-
-@pytest.mark.parametrize("detach", (False, True))
-def test_reset_detachment_retains_previous_spike_recurrent_gradient(detach: Any) -> None:
-    cell = _cell(reset_mode="hard", detach_reset=detach, surrogate_width=0.5)
-
-    def second_spike(first_input: Any) -> Any:
-        state, _ = cell.step(cell.initial_state((), dtype=jnp.float32), first_input)
-        return cell.step(state, jnp.array([1.8]))[1]
-
-    spike, tangent = jax.jvp(second_spike, (jnp.array([2.4]),), (jnp.ones((1,)),))
-    # Both charged voltages are 1.2. With detached hard reset only the
-    # previous-spike recurrent path survives; with propagated reset the
-    # negative membrane-reset path also contributes to the second spike.
-    slope = 1.0 / (2.0 * 0.5 * (1.0 + 0.2 / 0.5) ** 2)
-    expected = (0.15 if detach else -0.15) * slope**2
-    np.testing.assert_array_equal(spike, [1.0])
-    np.testing.assert_allclose(tangent, [expected], atol=1e-7)
+        spike, tangent = jax.jvp(second_spike, (jnp.array([2.4]),), (jnp.ones((1,)),))
+        # Both charged voltages are 1.2. With detached hard reset only the
+        # previous-spike recurrent path survives; with propagated reset the
+        # negative membrane-reset path also contributes to the second spike.
+        slope = 1.0 / (2.0 * 0.5 * (1.0 + 0.2 / 0.5) ** 2)
+        expected = (0.15 if detach else -0.15) * slope**2
+        np.testing.assert_array_equal(spike, [1.0])
+        np.testing.assert_allclose(tangent, [expected], atol=1e-7)
 
 
 def test_physical_time_streaming_preserves_padding_resets_and_boundary_tangents() -> None:

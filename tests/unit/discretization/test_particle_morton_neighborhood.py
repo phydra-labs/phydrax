@@ -32,7 +32,7 @@ def _stable_pairs(state: Any) -> Any:
     return list(zip(left.tolist(), right.tolist(), strict=True))
 
 
-def test_morton_neighborhood_prepares_native_resources_and_stable_pairs() -> None:
+def test_morton_neighborhood_contracts() -> None:
     particles = _particles([40, 10, 30, 20])
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
@@ -53,9 +53,6 @@ def test_morton_neighborhood_prepares_native_resources_and_stable_pairs() -> Non
     np.testing.assert_array_equal(
         state.logical_to_storage[state.storage_to_logical], jnp.arange(4)
     )
-
-
-def test_morton_neighborhood_matches_cell_list_with_periodic_masks() -> None:
     particles = _particles([0, 1, 2, 3], dimension=2)
     box = phx.discretization.ParticleBox(
         # ty: ignore[invalid-argument-type]
@@ -88,9 +85,6 @@ def test_morton_neighborhood_matches_cell_list_with_periodic_masks() -> None:
     assert bool(invalid.domain_violation)
     assert int(invalid.domain_violation_count) == 1
     assert not bool(invalid.successful)
-
-
-def test_morton_neighborhood_pair_overflow_fails_closed() -> None:
     particles = _particles(range(4))
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
@@ -107,9 +101,6 @@ def test_morton_neighborhood_pair_overflow_fails_closed() -> None:
     assert int(state.pair_count) == 0
     assert not bool(state.successful)
     np.testing.assert_array_equal(state.pair_relation.valid, False)
-
-
-def test_morton_neighborhood_build_is_filter_jittable() -> None:
     particles = _particles(range(8))
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])

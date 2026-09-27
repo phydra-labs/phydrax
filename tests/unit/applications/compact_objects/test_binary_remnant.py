@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_uib2016_remnant_matches_reference_configurations() -> None:
+def test_binary_remnant_scenario_1() -> None:
     compact = phx.applications.compact_objects
     plan = compact.AlignedBinaryRemnantPlan()
     cases = (
@@ -32,9 +32,6 @@ def test_uib2016_remnant_matches_reference_configurations() -> None:
         assert result.successful
         assert bool(result.finite)
         assert bool(result.physically_valid)
-
-
-def test_aligned_remnant_fit_is_jittable_and_has_interior_derivatives() -> None:
     compact = phx.applications.compact_objects
     plan = compact.AlignedBinaryRemnantPlan()
     result = eqx.filter_jit(plan.evaluate)(36.0, 24.0, 0.5, 0.2)
@@ -46,9 +43,6 @@ def test_aligned_remnant_fit_is_jittable_and_has_interior_derivatives() -> None:
     assert bool(result.derivative_valid)
     assert np.isfinite(float(derivative))
     assert float(derivative) > 0.0
-
-
-def test_aligned_remnant_fit_fails_closed_outside_qualified_domain() -> None:
     compact = phx.applications.compact_objects
     plan = compact.AlignedBinaryRemnantPlan()
     outside_ratio = plan.evaluate(9.0, 1.0, 0.0, 0.0)

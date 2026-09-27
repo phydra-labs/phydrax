@@ -31,7 +31,7 @@ def _data() -> Any:
     return features, targets, labels
 
 
-def test_exact_regression_and_classification_dense_chunked_jit_vmap_parity() -> None:
+def test_native_neighbor_surface_scenario_1() -> None:
     features, targets, labels = _data()
     weights = jnp.array([1.0, 2.0, 1.0, 0.5, 1.5, 1.0])
     query = jnp.array([[-1.0, 0.1], [0.2, 0.0], [1.1, -0.1], [1.8, 0.7]])
@@ -56,9 +56,6 @@ def test_exact_regression_and_classification_dense_chunked_jit_vmap_parity() -> 
     assert cls_model.predict(query).dtype == jnp.int32
     assert "neighbor_indices" in reg_result.derivative_contract.nondifferentiable_outputs
     assert "predict" in cls_result.derivative_contract.nondifferentiable_outputs
-
-
-def test_neighbor_cases_masks_outputs_and_fixed_capacity_status_are_explicit() -> None:
     features, targets, labels = _data()
     case_features = jnp.stack((features, features + jnp.array([0.2, -0.1])), axis=0)
     case_targets = jnp.stack((targets, 2.0 * targets), axis=0)
@@ -83,9 +80,6 @@ def test_neighbor_cases_masks_outputs_and_fixed_capacity_status_are_explicit() -
     assert exhausted.status == ML_CAPACITY_EXHAUSTED
     # ty: ignore[unresolved-attribute]
     assert exhausted.as_trainable().support.shape == (3, 2)
-
-
-def test_neighbor_recipes_require_explicit_sparse_materialization() -> None:
     dense = jnp.array(
         [[1.0, 0.0, 2.0], [0.0, -1.0, 0.5], [2.0, 1.0, 0.0], [-1.0, 0.0, 1.0]]
     )
@@ -101,9 +95,6 @@ def test_neighbor_recipes_require_explicit_sparse_materialization() -> None:
         recipe.fit_batch(MLBatch(sparse, targets))
     explicit_model = recipe.fit_batch(MLBatch(sparse.to_dense(), targets)).as_trainable()
     assert jnp.allclose(dense_model(dense), explicit_model(dense))
-
-
-def test_soft_kernel_neighbors_are_smooth_and_distinct_from_hard_top_k() -> None:
     features, targets, labels = _data()
     query = jnp.array([[0.05, 0.1], [0.9, -0.2]])
     soft_reg_result = KernelNeighborsRegressorRecipe(temperature=0.4).fit_batch(

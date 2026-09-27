@@ -195,7 +195,7 @@ def _cohort_cases() -> tuple[CardiovascularTruthCase, ...]:
     return (*complete, invalid)
 
 
-def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe() -> None:
+def test_cardiovascular_learning_scenario_1() -> None:
     cases = _cohort_cases()
     batched = batch_fixed_topology_cohort(cases)
 
@@ -269,9 +269,6 @@ def test_fixed_topology_cohort_split_and_preprocessing_are_leakage_safe() -> Non
             "deidentification-policy",
             "deidentification-receipt-phi",
         )
-
-
-def test_canonical_random_field_has_covariance_and_exact_replay() -> None:
     coordinates = CanonicalCardiacCoordinates(
         jnp.asarray(
             [

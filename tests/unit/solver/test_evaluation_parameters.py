@@ -38,18 +38,12 @@ def _parameter_value(solver: Any) -> Any:
     return jnp.asarray(solver["u"].func()).reshape(())
 
 
-def test_public_solve_rejects_negative_iterations_before_optimizer_dispatch() -> None:
+def test_evaluation_parameters_scenario_1() -> None:
     with pytest.raises(ValueError, match="num_iter must be non-negative"):
         _scalar_solver(1.0).solve(num_iter=-1, optim=object())
-
-
-def test_public_zero_iteration_solve_returns_original_solver() -> None:
     solver = _scalar_solver(1.0)
 
     assert solver.solve(num_iter=0, optim=object()) is solver
-
-
-def test_standard_optimizer_best_score_keeps_its_preupdate_parameters() -> None:
     base_optimizer = optax.sgd(1.0)
     optimizer = optax.GradientTransformation(
         base_optimizer.init,
@@ -64,9 +58,6 @@ def test_standard_optimizer_best_score_keeps_its_preupdate_parameters() -> None:
     )
 
     assert jnp.allclose(_parameter_value(trained), 1.0)
-
-
-def test_schedule_free_returns_the_optimizer_evaluation_parameters() -> None:
     optimizer = optax.contrib.schedule_free(optax.sgd(0.1), 0.1)
     initial = jnp.asarray(2.0)
     state = optimizer.init(initial)

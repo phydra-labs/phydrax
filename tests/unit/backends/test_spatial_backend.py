@@ -15,7 +15,7 @@ from phydrax.backends import (
 from phydrax.discretization.spatial import MortonAddressPlan, MortonNeighborQueryPlan
 
 
-def test_pallas_squared_norm_matches_jax_and_has_native_jvp() -> None:
+def test_spatial_backend_scenario_1() -> None:
     relative = jnp.arange(30.0).reshape((5, 2, 3)) / 10
     expected = spatial_squared_norm(relative, backend="jax")
     actual = jax.jit(
@@ -39,9 +39,6 @@ def test_pallas_squared_norm_matches_jax_and_has_native_jvp() -> None:
     np.testing.assert_allclose(actual, expected)
     np.testing.assert_allclose(gradient, 2 * relative)
     assert pallas_spatial_availability(interpret=True).available
-
-
-def test_morton_query_pallas_leaf_kernel_matches_jax() -> None:
     source = jnp.asarray([[0.1], [0.3], [0.6], [0.9]])
     target = jnp.asarray([[0.2], [0.8]])
     address = MortonAddressPlan((0.0,), (1.0,), 16)

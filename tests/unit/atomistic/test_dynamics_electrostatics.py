@@ -25,7 +25,7 @@ def _system(*, cell: Any = None) -> Any:
     ).prepare()
 
 
-def test_direct_coulomb_matches_two_charge_reference() -> None:
+def test_dynamics_electrostatics_scenario_1() -> None:
     system = _system()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
         system.particles
@@ -38,9 +38,6 @@ def test_direct_coulomb_matches_two_charge_reference() -> None:
     evaluation = potential.evaluate(positions, state)
     np.testing.assert_allclose(evaluation.energy, -0.5, atol=1.0e-12)
     np.testing.assert_allclose(jnp.sum(evaluation.forces, axis=0), 0.0, atol=1.0e-12)
-
-
-def test_pme_is_finite_and_tracks_direct_ewald_reference() -> None:
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
@@ -60,9 +57,42 @@ def test_pme_is_finite_and_tracks_direct_ewald_reference() -> None:
     assert bool(observed.successful)
     np.testing.assert_allclose(observed.energy, expected.energy, rtol=2e-1, atol=2e-1)
     np.testing.assert_allclose(jnp.sum(observed.forces, axis=0), 0.0, atol=1.0e-3)
-
-
-def test_isotropic_barostat_produces_typed_detailed_balance_move() -> None:
+    cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
+    system = _system(cell=cell)
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
+        system.particles
+    )
+    potential = phx.atomistic.AtomisticPotentialProgram(
+        [phx.atomistic.ParticleMeshEwaldPotential(0.8, 2.5, (8, 8, 8))]
+    ).prepare(system)
+    dynamics = phx.atomistic.AtomisticDynamicsPlan(
+        system,
+        potential,
+        neighborhood,
+        phx.atomistic.VelocityVerletPlan(1.0e-3),
+    ).prepare()
+    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
+        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
+        ensemble="npt",
+        temperature=1.0,
+        pressure=0.0,
+    ).prepare(dynamics)
+    positions = jnp.asarray([[1.0, 1.0, 1.0], [3.0, 1.0, 1.0]])
+    state = dynamics.initialize_state(
+        positions,
+        thermodynamic,
+        velocity=jnp.zeros_like(positions),
+        key=jax.random.key(14),
+    )
+    move = phx.atomistic.apply_isotropic_monte_carlo_barostat(
+        dynamics,
+        state,
+        thermodynamic,
+        phx.atomistic.IsotropicMonteCarloBarostatPlan(0.01),
+        0,
+    )
+    assert bool(move.successful)
+    assert bool(jnp.isfinite(move.energy_after))
     cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = _system(cell=cell)
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
@@ -109,42 +139,3 @@ def test_isotropic_barostat_produces_typed_detailed_balance_move() -> None:
     assert bool(jnp.isfinite(move.log_acceptance_probability))
     assert float(move.volume_after) > 0.0
     assert move.accepted_state.cell_vectors.shape == (3, 3)
-
-
-def test_pme_supports_isotropic_npt_energy_re_evaluation() -> None:
-    cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
-    system = _system(cell=cell)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
-        system.particles
-    )
-    potential = phx.atomistic.AtomisticPotentialProgram(
-        [phx.atomistic.ParticleMeshEwaldPotential(0.8, 2.5, (8, 8, 8))]
-    ).prepare(system)
-    dynamics = phx.atomistic.AtomisticDynamicsPlan(
-        system,
-        potential,
-        neighborhood,
-        phx.atomistic.VelocityVerletPlan(1.0e-3),
-    ).prepare()
-    thermodynamic = phx.atomistic.AtomisticThermodynamicStatePlan(
-        phx.atomistic.AtomisticPhaseSpaceMeasurePlan(system),
-        ensemble="npt",
-        temperature=1.0,
-        pressure=0.0,
-    ).prepare(dynamics)
-    positions = jnp.asarray([[1.0, 1.0, 1.0], [3.0, 1.0, 1.0]])
-    state = dynamics.initialize_state(
-        positions,
-        thermodynamic,
-        velocity=jnp.zeros_like(positions),
-        key=jax.random.key(14),
-    )
-    move = phx.atomistic.apply_isotropic_monte_carlo_barostat(
-        dynamics,
-        state,
-        thermodynamic,
-        phx.atomistic.IsotropicMonteCarloBarostatPlan(0.01),
-        0,
-    )
-    assert bool(move.successful)
-    assert bool(jnp.isfinite(move.energy_after))

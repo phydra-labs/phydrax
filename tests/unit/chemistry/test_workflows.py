@@ -62,7 +62,7 @@ def _case() -> Any:
     return units, target, structure, system, surface
 
 
-def test_optimization_hessian_vibration_and_rrho_form_one_typed_workflow() -> None:
+def test_workflows_scenario_1() -> None:
     units, target, structure, system, surface = _case()
     convergence = phx.chemistry.MolecularGeometryConvergencePlan(
         maximum_force=1.0e-7,
@@ -119,9 +119,6 @@ def test_optimization_hessian_vibration_and_rrho_form_one_typed_workflow() -> No
     assert np.isfinite(float(thermochemistry.gibbs_energy))
     assert np.isfinite(float(molar.gibbs_energy))
     assert molar.energy_unit == phx.units.KILOJOULE_PER_MOLE
-
-
-def test_native_atomistic_program_adapts_to_the_same_surface_contract() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     system = phx.atomistic.AtomisticSystemPlan(
         # ty: ignore[invalid-argument-type]

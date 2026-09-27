@@ -151,7 +151,7 @@ def _loss(model: Any, batch: Any, policy: Any, objectives: Any = None) -> Any:
     return contribution.value, components
 
 
-def test_supervised_rollout_matches_manual_value_gradient_and_truncation() -> None:
+def test_neural_identification_scenario_1() -> None:
     data = _trajectory([1.0, 3.0, 7.0])
     batch = _source(data, 2).prepare(jnp.arange(2))
     full = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=2)
@@ -171,9 +171,6 @@ def test_supervised_rollout_matches_manual_value_gradient_and_truncation() -> No
     np.testing.assert_allclose(gradient.scale, -13.0)
     np.testing.assert_allclose(truncated_value, value)
     np.testing.assert_allclose(truncated_gradient.scale, -7.0)
-
-
-def test_rematerialization_and_semantic_chunk_keys_preserve_value_and_gradient() -> None:
     data = _trajectory([1.0, 1.5, 2.0, 2.5, 3.0])
     source = _source(data, 2)
     full_batch = source.prepare(jnp.arange(source.size))
@@ -219,9 +216,6 @@ def test_rematerialization_and_semantic_chunk_keys_preserve_value_and_gradient()
         left_contribution.numerator + right_contribution.numerator,
         plain_pair[0] * (left_contribution.support + right_contribution.support),
     )
-
-
-def test_lazy_windows_align_both_control_conventions_and_endpoint_evidence() -> None:
     transition_data = _trajectory(
         [0.0, 1.0, 3.0, 6.0],
         inputs=jnp.asarray([[1.0], [2.0], [3.0]], dtype=jnp.float32),
@@ -258,7 +252,7 @@ def test_lazy_windows_align_both_control_conventions_and_endpoint_evidence() -> 
     )
 
 
-def test_invalid_reset_nan_padding_is_sanitized_and_has_zero_support() -> None:
+def test_neural_identification_scenario_2() -> None:
     data = _trajectory(
         [1.0, 2.0, jnp.nan, jnp.nan],
         coordinates=[0.0, 1.0, jnp.nan, jnp.nan],
@@ -294,9 +288,6 @@ def test_invalid_reset_nan_padding_is_sanitized_and_has_zero_support() -> None:
     assert result.completed_steps == 0
     # ty: ignore[unresolved-attribute]
     np.testing.assert_array_equal(result.last_model.scale, jnp.asarray(2.0))
-
-
-def test_reference_branch_and_residual_objectives_match_manual_values() -> None:
     data = _trajectory([1.0, 2.0, 4.0])
     batch = _source(data, 2).prepare(jnp.arange(2))
     policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=2)
@@ -336,9 +327,6 @@ def test_reference_branch_and_residual_objectives_match_manual_values() -> None:
         lambda model: _loss(model, batch, policy, (stopped_term,))[0]
     )(_ScaledStep(1.5))
     assert not jnp.allclose(coupled_gradient.scale, stopped_gradient.scale)
-
-
-def test_full_reference_branch_equals_reference_generated_supervision() -> None:
     data = _trajectory([1.0, 2.0, 4.0])
     batch = _source(data, 2).prepare(jnp.arange(2))
     policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=2)
@@ -368,7 +356,7 @@ def test_full_reference_branch_equals_reference_generated_supervision() -> None:
     np.testing.assert_allclose(reference_pair[1].scale, supervised_pair[1].scale)
 
 
-def test_fixed_step_data_rejection_and_batch_accumulation_invariance() -> None:
+def test_neural_identification_scenario_3() -> None:
     bad = _trajectory([1.0, 2.0, 3.0], coordinates=[0.0, 1.0, 2.5])
     with pytest.raises(ValueError, match="step_size"):
         phx.dynamics.identification.fit_discrete_model(
@@ -417,6 +405,86 @@ def test_fixed_step_data_rejection_and_batch_accumulation_invariance() -> None:
     )
     # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(full.last_model.scale, accumulated.last_model.scale)
+    data = _trajectory([1.0, 2.0, 4.0])
+    policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(
+        max_horizon=2,
+        min_horizon=1,
+        transition_steps=2,
+        schedule="linear",
+    )
+
+    with pytest.raises(ValueError, match="positive mass"):
+        phx.dynamics.identification.fit_discrete_model(
+            _ScaledStep(1.0),
+            data,
+            state_layout=data.state_layout,
+            system_id="zero-prefix-mass",
+            step_size=1.0,
+            rollout_policy=policy,
+            objectives=(
+                phx.dynamics.identification.SupervisedDiscreteModelObjective(
+                    time_weights=(0.0, 1.0),
+                ),
+            ),
+            steps=0,
+        )
+    layout = phx.dynamics.StateLayout((2,))
+    point = layout.value_port(role="point")
+    ports = phx.ModelPorts(inputs=(point,), outputs=(point,))
+    model = PortedAffine(ports, out_size=2, weight=2.0 * jnp.eye(2))
+    context = phx.dynamics.DiscreteStepContext(0.0, 1.0, 0)
+    state = jnp.asarray([1.0, -1.0])
+    Direct = phx.dynamics.identification.DirectDiscreteModelRolloutTransition
+    unmapped = Direct(layout, step_size=1.0)
+    with pytest.raises(ValueError, match="port_mapping"):
+        unmapped.validate_model(model)
+    with pytest.raises(ValueError, match="explicit PortMapping"):
+        unmapped.evaluate(model, context, state, None, key=None, iteration=None)
+
+    transition = Direct(layout, step_size=1.0, port_mapping=in_order(ports, ports))
+    assert transition.owner_ports() == ports
+    transition.validate_model(model)
+    evidence = transition.component_binding(model).contract().port_binding
+    # ty: ignore[unresolved-attribute]
+    assert evidence.inputs == ((point.port_id, point.port_id),)
+    # ty: ignore[unresolved-attribute]
+    assert evidence.outputs == ((point.port_id, point.port_id),)
+    result = transition.evaluate(model, context, state, None, key=None, iteration=None)
+    np.testing.assert_allclose(result.accepted_state, [2.0, -2.0])
+    data = _trajectory([1.0, 2.0, 4.0])
+    policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=1)
+    common = {
+        "state_layout": data.state_layout,
+        "system_id": "keyless-deployment",
+        "step_size": 1.0,
+        "rollout_policy": policy,
+        "steps": 0,
+    }
+
+    with pytest.raises(TypeError):
+        phx.dynamics.identification.fit_discrete_model(
+            _KeyedStep(1.0),
+            data,
+            # ty: ignore[invalid-argument-type]
+            **common,
+        )
+
+    fitted = phx.dynamics.identification.fit_discrete_model(
+        _DropoutStep(2.0),
+        data,
+        # ty: ignore[invalid-argument-type]
+        **common,
+    )
+    state = jnp.asarray([3.0], dtype=jnp.float32)
+    context = phx.dynamics.DiscreteStepContext(
+        jnp.asarray(0.0),
+        jnp.asarray(1.0),
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+    np.testing.assert_allclose(
+        fitted.system.evaluate(context, state, None),
+        2.0 * state,
+    )
 
 
 def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path: Any) -> None:
@@ -545,92 +613,3 @@ def test_neural_checkpoint_rejects_path_traversal_and_replacement(
             # ty: ignore[invalid-argument-type]
             **common,
         )
-
-
-def test_rollout_coefficients_require_positive_mass_at_every_reachable_horizon() -> None:
-    data = _trajectory([1.0, 2.0, 4.0])
-    policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(
-        max_horizon=2,
-        min_horizon=1,
-        transition_steps=2,
-        schedule="linear",
-    )
-
-    with pytest.raises(ValueError, match="positive mass"):
-        phx.dynamics.identification.fit_discrete_model(
-            _ScaledStep(1.0),
-            data,
-            state_layout=data.state_layout,
-            system_id="zero-prefix-mass",
-            step_size=1.0,
-            rollout_policy=policy,
-            objectives=(
-                phx.dynamics.identification.SupervisedDiscreteModelObjective(
-                    time_weights=(0.0, 1.0),
-                ),
-            ),
-            steps=0,
-        )
-
-
-def test_fit_rejects_key_required_deployment_and_freezes_dropout_inference() -> None:
-    data = _trajectory([1.0, 2.0, 4.0])
-    policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(max_horizon=1)
-    common = {
-        "state_layout": data.state_layout,
-        "system_id": "keyless-deployment",
-        "step_size": 1.0,
-        "rollout_policy": policy,
-        "steps": 0,
-    }
-
-    with pytest.raises(TypeError):
-        phx.dynamics.identification.fit_discrete_model(
-            _KeyedStep(1.0),
-            data,
-            # ty: ignore[invalid-argument-type]
-            **common,
-        )
-
-    fitted = phx.dynamics.identification.fit_discrete_model(
-        _DropoutStep(2.0),
-        data,
-        # ty: ignore[invalid-argument-type]
-        **common,
-    )
-    state = jnp.asarray([3.0], dtype=jnp.float32)
-    context = phx.dynamics.DiscreteStepContext(
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(0, dtype=jnp.int32),
-    )
-    np.testing.assert_allclose(
-        fitted.system.evaluate(context, state, None),
-        2.0 * state,
-    )
-
-
-def test_rollout_transition_binds_port_declaring_models_through_layout_ports() -> None:
-    layout = phx.dynamics.StateLayout((2,))
-    point = layout.value_port(role="point")
-    ports = phx.ModelPorts(inputs=(point,), outputs=(point,))
-    model = PortedAffine(ports, out_size=2, weight=2.0 * jnp.eye(2))
-    context = phx.dynamics.DiscreteStepContext(0.0, 1.0, 0)
-    state = jnp.asarray([1.0, -1.0])
-    Direct = phx.dynamics.identification.DirectDiscreteModelRolloutTransition
-    unmapped = Direct(layout, step_size=1.0)
-    with pytest.raises(ValueError, match="port_mapping"):
-        unmapped.validate_model(model)
-    with pytest.raises(ValueError, match="explicit PortMapping"):
-        unmapped.evaluate(model, context, state, None, key=None, iteration=None)
-
-    transition = Direct(layout, step_size=1.0, port_mapping=in_order(ports, ports))
-    assert transition.owner_ports() == ports
-    transition.validate_model(model)
-    evidence = transition.component_binding(model).contract().port_binding
-    # ty: ignore[unresolved-attribute]
-    assert evidence.inputs == ((point.port_id, point.port_id),)
-    # ty: ignore[unresolved-attribute]
-    assert evidence.outputs == ((point.port_id, point.port_id),)
-    result = transition.evaluate(model, context, state, None, key=None, iteration=None)
-    np.testing.assert_allclose(result.accepted_state, [2.0, -2.0])

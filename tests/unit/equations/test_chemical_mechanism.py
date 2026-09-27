@@ -39,7 +39,7 @@ def _thermodynamics(schema: Any) -> Any:
     )
 
 
-def test_prepared_mechanism_preserves_elements_charge_and_zero_reactants() -> None:
+def test_chemical_mechanism_scenario_1() -> None:
     schema = _schema()
     mechanism = phx.equations.ChemicalMechanismIR(
         "association",
@@ -73,9 +73,6 @@ def test_prepared_mechanism_preserves_elements_charge_and_zero_reactants() -> No
     )
     np.testing.assert_array_equal(blocked.forward_progress_rates, (0.0,))
     assert blocked.successful
-
-
-def test_thermodynamically_reversible_equal_species_is_stationary() -> None:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A", "B"),
         (
@@ -121,9 +118,6 @@ def test_thermodynamically_reversible_equal_species_is_stationary() -> None:
     )
     np.testing.assert_allclose(fields.net_progress_rates, 0.0, atol=1e-12)
     np.testing.assert_allclose(fields.species_amount_rate, 0.0, atol=1e-12)
-
-
-def test_mechanism_rejects_unbalanced_reaction() -> None:
     schema = _schema()
     mechanism = phx.equations.ChemicalMechanismIR(
         "invalid",

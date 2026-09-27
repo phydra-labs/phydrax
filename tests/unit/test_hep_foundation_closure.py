@@ -90,7 +90,7 @@ def _event_plan() -> Any:
     )
 
 
-def test_host_event_pack_unpack_preserves_graph_and_reports_attribute_loss() -> None:
+def test_hep_foundation_closure_scenario_1() -> None:
     pp = phx.particle_physics
     event = pp.HostEventRecord(
         9,
@@ -141,9 +141,6 @@ def test_host_event_pack_unpack_preserves_graph_and_reports_attribute_loss() -> 
     assert unpacked[0].vertices[0].incoming_particle_ids == (10, 20)
     assert unpacked[0].vertices[0].outgoing_particle_ids == (30,)
     assert tuple(value.particle_id for value in unpacked[0].particles) == (10, 20, 30)
-
-
-def test_conditions_normalization_and_systematics_remain_distinct() -> None:
     context = _run_context()
     assert context.scientifically_admitted
     first = phx.particle_physics.ProcessNormalization(
@@ -179,9 +176,6 @@ def test_conditions_normalization_and_systematics_remain_distinct() -> None:
         .kind
         is phx.particle_physics.SystematicKind.CALIBRATION
     )
-
-
-def test_shared_binned_statistics_fit_and_governed_profile() -> None:
     stats = phx.particle_physics.statistics
     parameter = stats.StatisticalParameter(
         "signal-strength",

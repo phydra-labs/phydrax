@@ -67,7 +67,7 @@ def _assert_model_gradients(model: Any, point: Any) -> None:
     assert jnp.all(jnp.isfinite(intercept_gradient))
 
 
-def test_one_step_relaxed_robust_updates_match_weighted_subgradients() -> None:
+def test_robust_scenario_1() -> None:
     batch = MLBatch(
         jnp.array([[2.0]]),
         jnp.array([3.0]),
@@ -101,6 +101,42 @@ def test_one_step_relaxed_robust_updates_match_weighted_subgradients() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(quantile.coefficients, jnp.array([0.1]))
+    features, targets = _outlier_data()
+    weights = jnp.ones((features.shape[0],)).at[1].set(0.0)
+    changed = targets.at[1].set(jnp.array([1e4, -1e4]))
+    for recipe in (
+        HuberRegressorRecipe(max_iterations=3, tolerance=1e6),
+        QuantileRegressorRecipe(
+            solver="fixed-subgradient", max_iterations=3, tolerance=1e6
+        ),
+    ):
+        first = recipe.fit_batch(
+            MLBatch(features, targets, sample_weight=weights)
+        ).as_trainable()
+        second = recipe.fit_batch(
+            MLBatch(features, changed, sample_weight=weights)
+        ).as_trainable()
+        # ty: ignore[unresolved-attribute]
+        assert jnp.allclose(first.coefficients, second.coefficients)
+        # ty: ignore[unresolved-attribute]
+        assert jnp.allclose(first.intercept, second.intercept)
+    no_intercept = (
+        HuberRegressorRecipe(fit_intercept=False, max_iterations=2, tolerance=1e6)
+        .fit_batch(MLBatch(features, targets))
+        .as_trainable()
+    )
+    # ty: ignore[unresolved-attribute]
+    assert jnp.all(no_intercept.intercept == 0.0)
+    features, targets = _outlier_data()
+    result = HuberRegressorRecipe(max_iterations=1, tolerance=0.0).fit_batch(
+        MLBatch(features, targets)
+    )
+    assert result.status == ML_NONCONVERGED
+    with pytest.raises(TypeError, match="real-valued features"):
+        HuberRegressorRecipe(max_iterations=2).fit_batch(
+            MLBatch(features.astype(jnp.complex64), targets)
+        )
+    assert not result.valid
 
 
 def test_huber_relaxed_robust_loss_masks_weights_sparse_jit_vmap_and_gradients() -> None:
@@ -314,45 +350,3 @@ def test_theil_sen_requires_key_is_deterministic_sparse_and_capacity_bounded() -
         TheilSenRegressorRecipe(
             subset_size=features.shape[0] + 1, num_subsets=2
         ).fit_batch(MLBatch(features, targets), key=jax.random.key(0))
-
-
-def test_relaxed_robust_losses_ignore_zero_weight_target_changes() -> None:
-    features, targets = _outlier_data()
-    weights = jnp.ones((features.shape[0],)).at[1].set(0.0)
-    changed = targets.at[1].set(jnp.array([1e4, -1e4]))
-    for recipe in (
-        HuberRegressorRecipe(max_iterations=3, tolerance=1e6),
-        QuantileRegressorRecipe(
-            solver="fixed-subgradient", max_iterations=3, tolerance=1e6
-        ),
-    ):
-        first = recipe.fit_batch(
-            MLBatch(features, targets, sample_weight=weights)
-        ).as_trainable()
-        second = recipe.fit_batch(
-            MLBatch(features, changed, sample_weight=weights)
-        ).as_trainable()
-        # ty: ignore[unresolved-attribute]
-        assert jnp.allclose(first.coefficients, second.coefficients)
-        # ty: ignore[unresolved-attribute]
-        assert jnp.allclose(first.intercept, second.intercept)
-    no_intercept = (
-        HuberRegressorRecipe(fit_intercept=False, max_iterations=2, tolerance=1e6)
-        .fit_batch(MLBatch(features, targets))
-        .as_trainable()
-    )
-    # ty: ignore[unresolved-attribute]
-    assert jnp.all(no_intercept.intercept == 0.0)
-
-
-def test_relaxed_robust_nonconvergence_is_not_reported_as_valid() -> None:
-    features, targets = _outlier_data()
-    result = HuberRegressorRecipe(max_iterations=1, tolerance=0.0).fit_batch(
-        MLBatch(features, targets)
-    )
-    assert result.status == ML_NONCONVERGED
-    with pytest.raises(TypeError, match="real-valued features"):
-        HuberRegressorRecipe(max_iterations=2).fit_batch(
-            MLBatch(features.astype(jnp.complex64), targets)
-        )
-    assert not result.valid

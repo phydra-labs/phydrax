@@ -47,7 +47,7 @@ def _domain() -> phx.domain.GraphTrajectoryDatasetDomain:
     )
 
 
-def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes() -> None:
+def test_graph_trajectory_contracts() -> None:
     domain = _domain()
     component = domain.component(
         {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
@@ -69,6 +69,24 @@ def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes() -> Non
     assert jnp.allclose(
         jnp.asarray(batch[phx.domain.graph.GRAPH_TRAJECTORY_TIME_INDEX_KEY].data),
         jnp.array([1, 1, 2, 2, 2], dtype=jnp.int32),
+    )
+    base = _domain()
+    domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
+    component = domain.component(
+        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
+    )
+    batch = domain.points_from_case_time(
+        [0, 1],
+        [0.5, 1.0],
+        component=component,
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
+    )
+
+    assert batch.graph.node_mask is not None
+    assert batch.graph.nodes.shape == (6, 1)
+    assert batch["graph"].data.shape == (5, 1)
+    assert jnp.allclose(
+        jnp.asarray(batch["t"].data), jnp.array([0.5, 0.5, 1.0, 1.0, 1.0])
     )
 
 
@@ -186,24 +204,3 @@ def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view(
     )
 
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([0.75, 6.0]))
-
-
-def test_graph_trajectory_layout_packs_topology_but_exposes_real_time_rows() -> None:
-    base = _domain()
-    domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
-    component = domain.component(
-        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
-    )
-    batch = domain.points_from_case_time(
-        [0, 1],
-        [0.5, 1.0],
-        component=component,
-        structure=phx.domain.SampleLayout((("graph", "t"),)),
-    )
-
-    assert batch.graph.node_mask is not None
-    assert batch.graph.nodes.shape == (6, 1)
-    assert batch["graph"].data.shape == (5, 1)
-    assert jnp.allclose(
-        jnp.asarray(batch["t"].data), jnp.array([0.5, 0.5, 1.0, 1.0, 1.0])
-    )

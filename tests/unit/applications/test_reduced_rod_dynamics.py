@@ -101,7 +101,7 @@ def _kelvin_voigt_dynamics(*, gravity: Any = None, plan: Any = None) -> Any:
     return reduction, dynamics
 
 
-def test_typed_intrinsic_strain_control_flows_through_material_force_ledger() -> None:
+def test_reduced_rod_dynamics_scenario_1() -> None:
     reduction = _spatial_reduction()
     dynamics = prepare_reduced_rod_dynamics(reduction)
     passive = dynamics.initialize_material_control()
@@ -145,53 +145,47 @@ def test_typed_intrinsic_strain_control_flows_through_material_force_ledger() ->
     assert (
         evaluation.stretch_shear_material_result.control_id == "test-controlled-stretch"
     )
+    for coordinate in range(6):
+        reduction = _spatial_reduction()
+        dynamics = prepare_reduced_rod_dynamics(reduction)
+        coefficients = jnp.zeros((6,), dtype=jnp.float32).at[coordinate].set(0.08)
+        state = ReducedRodState(coefficients, jnp.zeros_like(coefficients))
+        evaluation = dynamics.evaluate(
+            state, step_size=jnp.asarray(0.1, dtype=jnp.float32)
+        )
 
+        stretch_increment = jnp.einsum(
+            "sdk,k->sd", reduction.stretch_shear_basis, coefficients
+        )
+        bend_increment = jnp.einsum("sdk,k->sd", reduction.bend_twist_basis, coefficients)
+        stretch_resultants = jnp.einsum(
+            "sij,sj->si",
+            reduction.rod.plan.stretch_shear_stiffness,
+            stretch_increment,
+        )
+        bend_resultants = jnp.einsum(
+            "sij,sj->si",
+            reduction.rod.plan.bend_twist_stiffness,
+            bend_increment,
+        )
+        expected = -jnp.einsum(
+            "sdk,sd,s->k",
+            reduction.stretch_shear_basis,
+            stretch_resultants,
+            reduction.rod.stretch_shear_measures,
+        ) - jnp.einsum(
+            "sdk,sd,s->k",
+            reduction.bend_twist_basis,
+            bend_resultants,
+            reduction.rod.bend_twist_measures,
+        )
 
-@pytest.mark.parametrize("coordinate", range(6))
-def test_pure_extension_shear_bend_and_twist_use_native_material_quadrature(
-    coordinate: Any,
-) -> None:
-    reduction = _spatial_reduction()
-    dynamics = prepare_reduced_rod_dynamics(reduction)
-    coefficients = jnp.zeros((6,), dtype=jnp.float32).at[coordinate].set(0.08)
-    state = ReducedRodState(coefficients, jnp.zeros_like(coefficients))
-    evaluation = dynamics.evaluate(state, step_size=jnp.asarray(0.1, dtype=jnp.float32))
-
-    stretch_increment = jnp.einsum(
-        "sdk,k->sd", reduction.stretch_shear_basis, coefficients
-    )
-    bend_increment = jnp.einsum("sdk,k->sd", reduction.bend_twist_basis, coefficients)
-    stretch_resultants = jnp.einsum(
-        "sij,sj->si",
-        reduction.rod.plan.stretch_shear_stiffness,
-        stretch_increment,
-    )
-    bend_resultants = jnp.einsum(
-        "sij,sj->si",
-        reduction.rod.plan.bend_twist_stiffness,
-        bend_increment,
-    )
-    expected = -jnp.einsum(
-        "sdk,sd,s->k",
-        reduction.stretch_shear_basis,
-        stretch_resultants,
-        reduction.rod.stretch_shear_measures,
-    ) - jnp.einsum(
-        "sdk,sd,s->k",
-        reduction.bend_twist_basis,
-        bend_resultants,
-        reduction.rod.bend_twist_measures,
-    )
-
-    assert jnp.allclose(
-        evaluation.forces.elastic_effort, expected, rtol=3.0e-5, atol=3.0e-6
-    )
-    assert jnp.allclose(evaluation.forces.kelvin_voigt_effort, 0.0, atol=2.0e-7)
-    assert evaluation.stretch_shear_material_result.evidence.valid
-    assert evaluation.bend_twist_material_result.evidence.valid
-
-
-def test_dense_mass_maps_tangents_to_true_duals_and_inverse_roundtrips() -> None:
+        assert jnp.allclose(
+            evaluation.forces.elastic_effort, expected, rtol=3.0e-5, atol=3.0e-6
+        )
+        assert jnp.allclose(evaluation.forces.kelvin_voigt_effort, 0.0, atol=2.0e-7)
+        assert evaluation.stretch_shear_material_result.evidence.valid
+        assert evaluation.bend_twist_material_result.evidence.valid
     reduction = _spatial_reduction()
     dynamics = prepare_reduced_rod_dynamics(reduction)
     coefficients = jnp.asarray(
@@ -227,7 +221,7 @@ def test_dense_mass_maps_tangents_to_true_duals_and_inverse_roundtrips() -> None
     assert inverse.solve_evidence.valid
 
 
-def test_fused_actions_match_dense_ad_authority_and_forward_inverse_roundtrip() -> None:
+def test_reduced_rod_dynamics_scenario_2() -> None:
     reduction, dynamics = _kelvin_voigt_dynamics()
     state = ReducedRodState(
         jnp.asarray((0.04, -0.03, 0.02, 0.025, -0.015, 0.01), dtype=jnp.float32),
@@ -284,9 +278,6 @@ def test_fused_actions_match_dense_ad_authority_and_forward_inverse_roundtrip() 
     assert forward.solve_evidence.valid
     assert forward.valid
     assert inverse.valid
-
-
-def test_gravity_native_and_direct_load_ledgers_preserve_effort_and_power() -> None:
     gravity_vector = jnp.asarray((0.0, -9.81, 0.4), dtype=jnp.float32)
     reduction, dynamics = _kelvin_voigt_dynamics(gravity=gravity_vector)
     state = ReducedRodState(
@@ -356,6 +347,23 @@ def test_gravity_native_and_direct_load_ledgers_preserve_effort_and_power() -> N
     assert jnp.allclose(ledger.effort_for_channel("actuation"), direct_value, atol=2.0e-6)
     assert ledger.power_valid
     assert ledger.valid
+    reduction = _spatial_reduction()
+    condition_plan = ReducedRodDenseCholeskyPlan(
+        condition_limit=1.000001,
+        pivot_tolerance=1.0e6,
+    )
+    dynamics = prepare_reduced_rod_dynamics(reduction, condition_plan)
+    coefficients = jnp.zeros((6,), dtype=jnp.float32)
+    evidence = dynamics.mass(coefficients).evidence
+
+    assert not evidence.conditioned
+    assert not evidence.pivot_valid
+    assert not evidence.valid
+
+    nonfinite = coefficients.at[0].set(jnp.nan)
+    nonfinite_evidence = dynamics.mass(nonfinite).evidence
+    assert not nonfinite_evidence.finite
+    assert not nonfinite_evidence.valid
 
 
 def test_matrix_free_policy_uses_only_fused_actions_and_records_fixed_work(
@@ -396,23 +404,3 @@ def test_matrix_free_policy_uses_only_fused_actions_and_records_fixed_work(
     assert inverse.solve_evidence.solver == "matrix_free_cg"
     assert inverse.solve_evidence.iterations <= plan.maximum_iterations
     assert inverse.solve_evidence.roundtrip_valid
-
-
-def test_mass_evidence_fails_closed_for_condition_pivot_and_nonfinite_inputs() -> None:
-    reduction = _spatial_reduction()
-    condition_plan = ReducedRodDenseCholeskyPlan(
-        condition_limit=1.000001,
-        pivot_tolerance=1.0e6,
-    )
-    dynamics = prepare_reduced_rod_dynamics(reduction, condition_plan)
-    coefficients = jnp.zeros((6,), dtype=jnp.float32)
-    evidence = dynamics.mass(coefficients).evidence
-
-    assert not evidence.conditioned
-    assert not evidence.pivot_valid
-    assert not evidence.valid
-
-    nonfinite = coefficients.at[0].set(jnp.nan)
-    nonfinite_evidence = dynamics.mass(nonfinite).evidence
-    assert not nonfinite_evidence.finite
-    assert not nonfinite_evidence.valid

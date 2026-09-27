@@ -889,10 +889,7 @@ def _prepare_numeric(
     basis_lookup = {index: column for column, index in enumerate(basis_indices)}
     pivot_lookup = {index: row for row, index in enumerate(pivot_indices)}
     monomial_lookup = {
-        tuple(
-            int(exponent)
-            for exponent in np.take(monomials, index, axis=0)
-        ): index
+        tuple(int(exponent) for exponent in np.take(monomials, index, axis=0)): index
         for index in range(monomials.shape[0])
     }
     multiplication = np.zeros(

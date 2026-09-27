@@ -12,7 +12,7 @@ from phydrax.nn.operator import (
 )
 
 
-def test_axis_dependency_reach_composes_sequentially_and_in_parallel() -> None:
+def test_operator_dependency_scenario_1() -> None:
     left = AxisDependencyReach(1, 3)
     right = AxisDependencyReach(4, 2)
 
@@ -20,9 +20,6 @@ def test_axis_dependency_reach_composes_sequentially_and_in_parallel() -> None:
     assert left.parallel(right) == AxisDependencyReach(4, 3)
     with pytest.raises(ValueError, match="non-negative"):
         AxisDependencyReach(-1, 0)
-
-
-def test_dependency_support_algebra_propagates_evidence_global_and_unknown() -> None:
     first = OperatorDependencySupport.finite(
         (AxisDependencyReach(1, 2), AxisDependencyReach(3, 4)),
         evidence="exact",
@@ -46,9 +43,6 @@ def test_dependency_support_algebra_propagates_evidence_global_and_unknown() -> 
     )
     assert first.sequential(OperatorDependencySupport.global_(2)).kind == "global"
     assert first.parallel(OperatorDependencySupport.unknown(2)).kind == "unknown"
-
-
-def test_dependency_scale_is_explicit_and_periodic_reach_saturates() -> None:
     support = OperatorDependencySupport.finite(
         (AxisDependencyReach(2, 2), AxisDependencyReach(1, 1))
     ).rescaled((0.25, 2.0))
@@ -62,9 +56,6 @@ def test_dependency_scale_is_explicit_and_periodic_reach_saturates() -> None:
 
     with pytest.raises(ValueError, match="explicitly rescaled"):
         support.sequential(OperatorDependencySupport.pointwise(2, scale=(1.0, 1.0)))
-
-
-def test_measure_convolution_authors_dilated_directional_reach() -> None:
     layer = phx.nn.layers.MeasureNormalizedConvND(
         spatial_ndim=2,
         in_channels=1,

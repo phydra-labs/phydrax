@@ -36,7 +36,7 @@ def _strict_policy() -> Any:
     )
 
 
-def test_dae_structure_broadcasts_roles_and_preserves_independent_scales() -> None:
+def test_dae_initialization_scenario_1() -> None:
     structure = phx.dynamics.DAEStructure(
         ("differential", "algebraic"),
         component_axis=-1,
@@ -69,9 +69,6 @@ def test_dae_structure_broadcasts_roles_and_preserves_independent_scales() -> No
         system.scaled_residual(0.0, jnp.ones((3, 2)), jnp.ones((3, 2))),
         jnp.full((3, 2), 0.2),
     )
-
-
-def test_mass_matrix_constructor_preserves_raw_implicit_residual() -> None:
     mass = jnp.asarray(((1.0, 0.0), (0.0, 0.0)))
     system = phx.dynamics.DifferentialAlgebraicSystem.from_mass_matrix(
         mass,
@@ -84,9 +81,6 @@ def test_mass_matrix_constructor_preserves_raw_implicit_residual() -> None:
     actual = system(0.0, jnp.asarray((2.0, 2.0)), jnp.asarray((-2.0, 7.0)))
 
     assert jnp.array_equal(actual, jnp.zeros(2))
-
-
-def test_index_one_initialization_fixes_differential_state_and_algebraic_rate() -> None:
     system = _semi_explicit_system()
     problem = phx.solver.DifferentialAlgebraicProblem(
         system,
@@ -134,7 +128,7 @@ def test_consistent_initialization_remains_inside_parameter_gradient() -> None:
     assert jnp.allclose(gradient, -2.0, atol=1e-9)
 
 
-def test_fixed_rate_and_check_only_modes_have_distinct_validity_contracts() -> None:
+def test_dae_initialization_scenario_2() -> None:
     system = _semi_explicit_system()
     fixed_rate_problem = phx.solver.DifferentialAlgebraicProblem(
         system,
@@ -170,9 +164,6 @@ def test_fixed_rate_and_check_only_modes_have_distinct_validity_contracts() -> N
     assert checked.nonlinear_result is None
     assert jnp.array_equal(checked.state, check_problem.initial_state)
     assert jnp.array_equal(checked.state_rate, check_problem.initial_state_rate)
-
-
-def test_custom_initialization_requires_one_unknown_per_residual_scalar() -> None:
     system = _semi_explicit_system()
     problem = phx.solver.DifferentialAlgebraicProblem(
         system,

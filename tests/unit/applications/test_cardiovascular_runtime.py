@@ -149,7 +149,7 @@ def _external_checkpoint(
     return create_lifecycle_archive(path, manifest=manifest, arrays={"state": array})
 
 
-def test_capacity_admission_is_atomic_and_single_device_evidence_is_observed() -> None:
+def test_cardiovascular_runtime_scenario_1() -> None:
     capacity = _capacity(maximum_events=2)
     admitted = admit_cardiovascular_capacity(
         capacity,
@@ -179,6 +179,18 @@ def test_capacity_admission_is_atomic_and_single_device_evidence_is_observed() -
     assert evidence.platform == jax.default_backend()
     assert evidence.device_id >= 0
     assert evidence.visible_backend_devices >= 1
+    secret = "patient-name=not-for-storage"
+    diagnostic = cardiovascular_runtime_diagnostic(
+        CardiovascularRuntimeStatus.STEP_REJECTED,
+        phase="qualification-failure-injection",
+        run_id="qualification:001",
+        entity_ids=("case:deidentified",),
+    )
+    encoded = repr(diagnostic)
+    assert secret not in encoded
+    assert secret not in diagnostic.message
+    assert diagnostic.code == "CARDIOVASCULAR_STEP_REJECTED"
+    assert diagnostic.run_id == "qualification:001"
 
 
 def test_lifecycle_checkpoint_serial_restart_lineage_capacity_and_corruption(
@@ -702,18 +714,3 @@ def test_scheduler_enforces_exact_callback_leaf_contract_at_every_boundary() -> 
         run_cardiovascular_schedule(
             prepared, initial, 1, wrong_nudge_shape, guards, normal_reset
         )
-
-
-def test_sanitized_diagnostic_never_retains_injected_sensitive_detail() -> None:
-    secret = "patient-name=not-for-storage"
-    diagnostic = cardiovascular_runtime_diagnostic(
-        CardiovascularRuntimeStatus.STEP_REJECTED,
-        phase="qualification-failure-injection",
-        run_id="qualification:001",
-        entity_ids=("case:deidentified",),
-    )
-    encoded = repr(diagnostic)
-    assert secret not in encoded
-    assert secret not in diagnostic.message
-    assert diagnostic.code == "CARDIOVASCULAR_STEP_REJECTED"
-    assert diagnostic.run_id == "qualification:001"

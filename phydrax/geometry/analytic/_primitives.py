@@ -649,6 +649,8 @@ class _OrthotopeKernel(GeometryKernel):
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
         center, size = self._parameters(state)
+        center = jnp.broadcast_to(center, points_.shape)
+        size = jnp.broadcast_to(size, points_.shape)
         offset = jnp.abs(points_ - center) - 0.5 * size
         maximum = jnp.max(offset, axis=-1)
         outside = _finite_norm(jnp.maximum(offset, 0.0))
@@ -657,11 +659,15 @@ class _OrthotopeKernel(GeometryKernel):
     def contains(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
         center, size = self._parameters(state)
+        center = jnp.broadcast_to(center, points_.shape)
+        size = jnp.broadcast_to(size, points_.shape)
         return jnp.all(jnp.abs(points_ - center) <= 0.5 * size, axis=-1)
 
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
         center, size = self._parameters(state)
+        center = jnp.broadcast_to(center, points_.shape)
+        size = jnp.broadcast_to(size, points_.shape)
         relative = points_ - center
         half = 0.5 * size
         face_gap = jnp.abs(jnp.abs(relative) - half)

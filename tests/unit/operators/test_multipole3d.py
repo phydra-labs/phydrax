@@ -48,9 +48,8 @@ def _direct(
     return jnp.sum(numerator * strengths[None, :] / (4.0 * jnp.pi * radii), axis=1)
 
 
-@pytest.mark.parametrize(
-    ("plan_type", "keyword", "kernel"),
-    [
+def test_multipole3d_scenario_1() -> None:
+    for plan_type, keyword, kernel in [
         (phx.operators.LaplaceMultipolePlan3D, {}, "laplace"),
         (phx.operators.HelmholtzMultipolePlan3D, {"wavenumber": 0.7}, "helmholtz"),
         (
@@ -58,45 +57,38 @@ def _direct(
             {"decay": 0.7},
             "modified-helmholtz",
         ),
-    ],
-)
-def test_complete_multipole_pipelines_match_direct_on_clustered_points(
-    plan_type: Any, keyword: Any, kernel: Any
-) -> None:
-    sources, targets, strengths = _clustered_cloud()
-    prepared = plan_type(
-        sources,
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
-        reference_targets=targets,
-        depth=4,
-        expansion_order=4,
-        source_leaf_occupancy=2,
-        **keyword,
-    ).prepare()
-    result = prepared.evaluate(sources, strengths, targets)
-    expected = _direct(kernel, sources, strengths, targets, 0.7)
-    # Expansion truncation scales with the absolute potential sum(|q| / (4 pi r)),
-    # not with the signed sum, which cancels about 450-fold at one screened target.
-    # At order 4 the Laplace tail bound sum(|q| rho**5 / (4 pi R (1 - rho))) of the
-    # realized V, W, and X routes stays below 7.5e-3 of that scale at every target;
-    # screened and low-frequency Helmholtz expansions share this geometric tail.
-    scale = _direct("laplace", sources, jnp.abs(strengths), targets)
-    np.testing.assert_array_less(jnp.abs(result.values - expected), 1e-2 * scale)
-    assert bool(result.successful)
-    assert int(result.p2m_count) == sources.shape[0]
-    assert int(result.m2m_count) > 0
-    assert int(result.m2l_count) > 0
-    assert int(result.p2l_count) > 0
-    assert int(result.l2l_count) > 0
-    assert int(result.l2p_count) == targets.shape[0]
-    assert int(result.m2p_count) > 0
-    assert int(result.p2p_count) > 0
-    assert bool(result.capacity.successful)
-    assert bool(result.truncation.well_separated)
-
-
-def test_level_octree_accepts_source_motion_within_padding() -> None:
+    ]:
+        sources, targets, strengths = _clustered_cloud()
+        prepared = plan_type(
+            sources,
+            [-1.0, -1.0, -1.0],
+            [1.0, 1.0, 1.0],
+            reference_targets=targets,
+            depth=4,
+            expansion_order=4,
+            source_leaf_occupancy=2,
+            **keyword,
+        ).prepare()
+        result = prepared.evaluate(sources, strengths, targets)
+        expected = _direct(kernel, sources, strengths, targets, 0.7)
+        # Expansion truncation scales with the absolute potential sum(|q| / (4 pi r)),
+        # not with the signed sum, which cancels about 450-fold at one screened target.
+        # At order 4 the Laplace tail bound sum(|q| rho**5 / (4 pi R (1 - rho))) of the
+        # realized V, W, and X routes stays below 7.5e-3 of that scale at every target;
+        # screened and low-frequency Helmholtz expansions share this geometric tail.
+        scale = _direct("laplace", sources, jnp.abs(strengths), targets)
+        np.testing.assert_array_less(jnp.abs(result.values - expected), 1e-2 * scale)
+        assert bool(result.successful)
+        assert int(result.p2m_count) == sources.shape[0]
+        assert int(result.m2m_count) > 0
+        assert int(result.m2l_count) > 0
+        assert int(result.p2l_count) > 0
+        assert int(result.l2l_count) > 0
+        assert int(result.l2p_count) == targets.shape[0]
+        assert int(result.m2p_count) > 0
+        assert int(result.p2p_count) > 0
+        assert bool(result.capacity.successful)
+        assert bool(result.truncation.well_separated)
     sources, _, strengths = _clustered_cloud()
     prepared = phx.operators.LaplaceMultipolePlan3D(
         sources,
@@ -122,9 +114,6 @@ def test_level_octree_accepts_source_motion_within_padding() -> None:
     far = sources + jnp.asarray([0.03, 0.0, 0.0])
     with pytest.raises(eqx.EquinoxRuntimeError, match="frozen-topology envelope"):
         prepared.evaluate(far, strengths)
-
-
-def test_laplace_elementary_translations_compose() -> None:
     prepared = phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
         [-2.0, -2.0, -2.0],
@@ -174,7 +163,7 @@ def test_laplace_elementary_translations_compose() -> None:
     )
 
 
-def test_plane_dual_laplace_matches_level_octree_and_direct_completion() -> None:
+def test_plane_contracts() -> None:
     source = jnp.asarray(
         [
             [-0.80, -0.75, -0.70],
@@ -239,9 +228,6 @@ def test_plane_dual_laplace_matches_level_octree_and_direct_completion() -> None
     assert int(plane_result.m2l_count) > 0
     assert int(plane_result.p2p_count) > 0
     assert bool(plane_result.capacity.successful)
-
-
-def test_plane_laplace_accepts_fixed_envelope_motion_and_jits() -> None:
     reference_sources = jnp.asarray(
         [[-0.70, -0.70, -0.70], [-0.65, -0.68, -0.66], [0.70, 0.70, 0.70]]
     )
@@ -283,9 +269,8 @@ def test_plane_laplace_accepts_fixed_envelope_motion_and_jits() -> None:
     np.testing.assert_allclose(result.values, direct, rtol=1e-2, atol=1e-4)
 
 
-@pytest.mark.parametrize(
-    ("plan_type", "keyword", "direct_factor"),
-    [
+def test_radial_plane_execution_is_wave_resolved_and_differentiable() -> None:
+    for plan_type, keyword, direct_factor in [
         (
             phx.operators.ModifiedHelmholtzMultipolePlan3D,
             {"decay": 0.7},
@@ -296,76 +281,72 @@ def test_plane_laplace_accepts_fixed_envelope_motion_and_jits() -> None:
             {"wavenumber": 0.7},
             lambda radius: jnp.exp(1j * 0.7 * radius),
         ),
-    ],
-)
-def test_radial_plane_execution_is_wave_resolved_and_differentiable(
-    plan_type: Any,
-    keyword: Any,
-    direct_factor: Any,
-) -> None:
-    source = jnp.asarray(
-        [
-            [-0.75, -0.70, -0.68],
-            [-0.68, -0.66, -0.65],
-            [-0.10, 0.25, 0.30],
-            [-0.04, 0.28, 0.26],
-            [0.68, 0.72, 0.70],
-            [0.74, 0.68, 0.73],
-        ]
-    )
-    target = jnp.asarray([[-0.68, -0.65, -0.64], [-0.08, 0.22, 0.28], [0.70, 0.70, 0.72]])
-    strengths = jnp.asarray([0.8, -0.3, 0.4, 1.1, -0.7, 0.2])
-    keywords = {
-        "reference_targets": target,
-        "depth": 3,
-        "expansion_order": 3,
-    }
-    level = plan_type(
-        source,
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
-        **keywords,
-        **keyword,
-    ).prepare()
-    plane = plan_type(
-        source,
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
-        execution="plane_dual",
-        source_leaf_occupancy=2,
-        target_leaf_occupancy=1,
-        plane_coarsening_factor=2,
-        plane_target_top_nodes=1,
-        maximum_plane_node_argument=0.5,
-        **keywords,
-        **keyword,
-    ).prepare()
-    plane_result = plane.evaluate(source, strengths, target)
-    level_result = level.evaluate(source, strengths, target)
-    radius = jnp.linalg.norm(target[:, None, :] - source[None, :, :], axis=-1)
-    direct = jnp.sum(
-        direct_factor(radius) * strengths[None, :] / (4.0 * jnp.pi * radius),
-        axis=1,
-    )
-    np.testing.assert_allclose(plane_result.values, direct, rtol=1.2e-2, atol=1e-4)
-    np.testing.assert_allclose(
-        plane_result.values,
-        level_result.values,
-        rtol=1.2e-2,
-        atol=1e-4,
-    )
-    assert bool(plane_result.successful)
-    assert int(plane_result.p2p_count) > 0
+    ]:
+        source = jnp.asarray(
+            [
+                [-0.75, -0.70, -0.68],
+                [-0.68, -0.66, -0.65],
+                [-0.10, 0.25, 0.30],
+                [-0.04, 0.28, 0.26],
+                [0.68, 0.72, 0.70],
+                [0.74, 0.68, 0.73],
+            ]
+        )
+        target = jnp.asarray(
+            [[-0.68, -0.65, -0.64], [-0.08, 0.22, 0.28], [0.70, 0.70, 0.72]]
+        )
+        strengths = jnp.asarray([0.8, -0.3, 0.4, 1.1, -0.7, 0.2])
+        keywords = {
+            "reference_targets": target,
+            "depth": 3,
+            "expansion_order": 3,
+        }
+        level = plan_type(
+            source,
+            [-1.0, -1.0, -1.0],
+            [1.0, 1.0, 1.0],
+            **keywords,
+            **keyword,
+        ).prepare()
+        plane = plan_type(
+            source,
+            [-1.0, -1.0, -1.0],
+            [1.0, 1.0, 1.0],
+            execution="plane_dual",
+            source_leaf_occupancy=2,
+            target_leaf_occupancy=1,
+            plane_coarsening_factor=2,
+            plane_target_top_nodes=1,
+            maximum_plane_node_argument=0.5,
+            **keywords,
+            **keyword,
+        ).prepare()
+        plane_result = plane.evaluate(source, strengths, target)
+        level_result = level.evaluate(source, strengths, target)
+        radius = jnp.linalg.norm(target[:, None, :] - source[None, :, :], axis=-1)
+        direct = jnp.sum(
+            direct_factor(radius) * strengths[None, :] / (4.0 * jnp.pi * radius),
+            axis=1,
+        )
+        np.testing.assert_allclose(plane_result.values, direct, rtol=1.2e-2, atol=1e-4)
+        np.testing.assert_allclose(
+            plane_result.values,
+            level_result.values,
+            rtol=1.2e-2,
+            atol=1e-4,
+        )
+        assert bool(plane_result.successful)
+        assert int(plane_result.p2p_count) > 0
 
-    weights = jnp.asarray([0.4, -0.2, 0.7])
+        weights = jnp.asarray([0.4, -0.2, 0.7])
 
-    def loss(position: Any) -> Any:
-        value = plane.evaluate(position, strengths, target).values
-        return jnp.real(jnp.vdot(weights, value))
+        def loss(position: Any) -> Any:
+            value = plane.evaluate(position, strengths, target).values
+            return jnp.real(jnp.vdot(weights, value))
 
-    gradient = jax.grad(loss)(source)
+        gradient = jax.grad(loss)(source)
 
-    assert bool(jnp.all(jnp.isfinite(gradient)))
+        assert bool(jnp.all(jnp.isfinite(gradient)))
 
 
 def test_plane_laplace_position_and_strength_gradients_match_level_route() -> None:

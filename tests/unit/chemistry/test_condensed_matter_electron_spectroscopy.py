@@ -16,9 +16,7 @@ from phydrax.chemistry.spectroscopy._loss import (
 )
 
 
-def test_arpes_requires_provider_matrix_elements_and_preserves_forbidden_channel() -> (
-    None
-):
+def test_condensed_matter_electron_spectroscopy_scenario_1() -> None:
     energy = np.linspace(-5.0, 5.0, 2001)
     gaussian = np.exp(-0.5 * (energy / 0.25) ** 2)
     gaussian /= np.trapezoid(gaussian, energy)
@@ -64,9 +62,6 @@ def test_arpes_requires_provider_matrix_elements_and_preserves_forbidden_channel
             ("sha256:matrix",),
             True,
         )
-
-
-def test_ters_off_hamann_refuses_negative_ldos_and_closes_current_integral() -> None:
     energy = np.linspace(-2.0, 2.0, 2001)
     bias = np.linspace(-1.0, 1.0, 401)
     # ty: ignore[invalid-argument-type]
@@ -100,9 +95,6 @@ def test_ters_off_hamann_refuses_negative_ldos_and_closes_current_integral() -> 
     zero = bias.size // 2
     np.testing.assert_allclose(result.current[0, zero], 0.0, atol=1.0e-14)
     np.testing.assert_allclose(result.raw_didv.values, 2.0, rtol=2.0e-8, atol=2.0e-8)
-
-
-def test_macroscopic_valence_eels_is_passive_and_refuses_q_zero() -> None:
     energy = np.linspace(0.01, 4.0, 2001)
     loss = 0.3 / ((energy - 1.2) ** 2 + 0.3**2)
     dielectric = 1.0 / (1.0 - 1.0j * loss)

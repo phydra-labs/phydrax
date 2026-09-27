@@ -35,7 +35,7 @@ def _rc_circuit(resistance: Any = 1.0) -> Any:
     )
 
 
-def test_temporal_harmonic_plan_differentiates_constant_and_sinusoid() -> None:
+def test_harmonic_balance_scenario_1() -> None:
     plan = phx.circuit.TemporalHarmonicPlan(2.0, 9, 2)
     constant = jnp.ones((9, 2))
     assert jnp.allclose(plan.derivative(constant), 0.0, atol=1e-12)
@@ -52,9 +52,6 @@ def test_temporal_harmonic_plan_differentiates_constant_and_sinusoid() -> None:
         )
     )
     assert jnp.isfinite(jax.grad(derivative_norm)(jnp.asarray(1.0)))
-
-
-def test_prepared_harmonic_balance_matches_convenience_solve() -> None:
     dae = phx.circuit.prepare_circuit_dae(_rc_circuit())
     waveform = jnp.ones((5, 1))
     plan = phx.circuit.plan_harmonic_balance(dae, 1.0, 5)
@@ -70,9 +67,6 @@ def test_prepared_harmonic_balance_matches_convenience_solve() -> None:
     assert jnp.allclose(result.coefficients, direct.coefficients)
     assert result.plan.plan_id == prepared.plan.plan_id
     assert result.prepared_id == prepared.prepared_id
-
-
-def test_harmonic_refresh_preserves_structure_and_updates_numeric_provenance() -> None:
     dae = phx.circuit.prepare_circuit_dae(_rc_circuit())
     waveform = jnp.ones((5, 1))
     prepared = phx.circuit.prepare_harmonic_balance(dae, waveform, 1.0)
@@ -88,9 +82,6 @@ def test_harmonic_refresh_preserves_structure_and_updates_numeric_provenance() -
 
     with pytest.raises(ValueError, match="replan is required"):
         phx.circuit.refresh_harmonic_balance(prepared, dae, jnp.ones((7, 1)), 1.0)
-
-
-def test_harmonic_resource_envelope_rejects_before_nonlinear_preparation() -> None:
     dae = phx.circuit.prepare_circuit_dae(_rc_circuit())
     with pytest.raises(MemoryError, match="maximum_samples"):
         phx.circuit.plan_harmonic_balance(
@@ -113,9 +104,6 @@ def test_harmonic_resource_envelope_rejects_before_nonlinear_preparation() -> No
             5,
             phx.circuit.HarmonicBalancePolicy(maximum_waveform_bytes=8),
         )
-
-
-def test_harmonic_preparation_rejects_wrong_waveform_shape_and_frequency() -> None:
     dae = phx.circuit.prepare_circuit_dae(_rc_circuit())
     with pytest.raises(ValueError, match="rank-two"):
         phx.circuit.prepare_harmonic_balance(dae, jnp.ones((5,)), 1.0)

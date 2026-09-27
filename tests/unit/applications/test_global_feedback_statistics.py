@@ -14,7 +14,7 @@ from tools.global_feedback_qualification import (
 )
 
 
-def test_spinup_and_incomplete_tail_do_not_bias_complete_block_means() -> None:
+def test_global_feedback_statistics_scenario_1() -> None:
     days = np.arange(1.0, 33.0)
     values = np.full_like(days, 2.0)
     values[:10], values[30:] = 100.0, 1000.0
@@ -23,18 +23,12 @@ def test_spinup_and_incomplete_tail_do_not_bias_complete_block_means() -> None:
     assert result["mean"] == 2.0
     assert not result["sampling_adequate"]
     assert not result["stationarity_consistent"]
-
-
-def test_long_correlated_drift_is_not_stationary_despite_many_samples() -> None:
     days = np.arange(1.0, 121.0)
     result = block_statistics(days, 280.0 + days / 100, spinup_days=20.0, block_days=10.0)
     assert result["complete_blocks"] == 10
     assert result["lag1_block_correlation"] > 0.3
     assert not result["sampling_adequate"]
     assert not result["stationarity_consistent"]
-
-
-def test_two_steps_do_not_produce_a_climate_confidence_interval() -> None:
     result = block_statistics(
         [20 / 86400, 40 / 86400], [290.0, 290.001], spinup_days=0.0, block_days=30.0
     )
@@ -69,7 +63,7 @@ def _response_record(
     }
 
 
-def test_statistical_response_requires_all_paired_numerical_sensitivities() -> None:
+def test_global_feedback_statistics_scenario_2() -> None:
     baseline, forced = _response_record("baseline"), _response_record("solar")
     without = compare(baseline, forced)
     assert without["sst_k"]["statistically_resolved_difference"]
@@ -89,9 +83,6 @@ def test_statistical_response_requires_all_paired_numerical_sensitivities() -> N
     assert not compare(baseline, forced, sensitivity_pairs=missing)["sst_k"][
         "response_claim_supported"
     ]
-
-
-def test_changed_response_or_unresolved_sensitivity_blocks_physical_claim() -> None:
     baseline, forced = _response_record("baseline"), _response_record("solar")
     pairs = {name: (baseline, forced) for name in REQUIRED_SENSITIVITIES}
     pairs["half_dt"] = (baseline, _response_record("solar", response_scale=1.2))
@@ -102,9 +93,6 @@ def test_changed_response_or_unresolved_sensitivity_blocks_physical_claim() -> N
     pairs["half_dt"] = (baseline, _response_record("solar", uncertainty_scale=2.0))
     uncertain = compare(baseline, forced, sensitivity_pairs=pairs)["sst_k"]
     assert not uncertain["response_claim_supported"]
-
-
-def test_filter_work_budget_cannot_disappear_in_zero_signed_accounting() -> None:
     baseline = _response_record("baseline")
     forced = _response_record("solar", absolute_filter_work=0.2)
     pairs = {name: (baseline, forced) for name in REQUIRED_SENSITIVITIES}

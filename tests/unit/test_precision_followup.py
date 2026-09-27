@@ -12,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_flow_matching_widens_before_the_event_reduction() -> None:
+def test_precision_followup_scenario_1() -> None:
     precision = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="float32",
         compute_dtype="float32",
@@ -36,9 +36,6 @@ def test_flow_matching_widens_before_the_event_reduction() -> None:
     assert value == reference
     assert value != late_cast
     assert dict(precision.evidence_for(state).observed)["accumulation"] == "float64"
-
-
-def test_newton_mixed_precision_preserves_state_and_certifies_in_float64() -> None:
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float32)
     problem = phx.nonlinear.NonlinearSystemProblem(
         lambda state, _: state**2 - 2.0,
@@ -71,9 +68,6 @@ def test_newton_mixed_precision_preserves_state_and_certifies_in_float64() -> No
     assert result.precision_evidence is not None
     assert dict(result.precision_evidence.observed)["certification"] == "float64"
     assert jnp.allclose(result.state, jnp.sqrt(2.0), rtol=1e-5)
-
-
-def test_ssprk_precision_survives_diffrax_time_promotion_and_dense_output() -> None:
     precision = phx.solver.TemporalPrecisionPolicy(
         state_dtype="float32",
         stage_dtype="float32",
@@ -124,7 +118,7 @@ def test_ssprk_precision_survives_diffrax_time_promotion_and_dense_output() -> N
         )
 
 
-def test_geometry_results_retain_precision_evidence_and_output_dtype() -> None:
+def test_precision_followup_scenario_2() -> None:
     precision = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="float32",
         compute_dtype="float64",
@@ -166,9 +160,6 @@ def test_geometry_results_retain_precision_evidence_and_output_dtype() -> None:
     assert dict(validation.precision_evidence.observed)["certification"] == "float64"
     assert mean.point.dtype == jnp.float32
     assert dict(mean.precision_evidence.observed)["accumulation"] == "float64"
-
-
-def test_cochain_and_information_geometry_use_explicit_precision_policies() -> None:
     precision = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="float32",
         compute_dtype="float64",
@@ -200,6 +191,49 @@ def test_cochain_and_information_geometry_use_explicit_precision_policies() -> N
     assert reduced == pytest.approx(2.25)
     assert gradient.dtype == jnp.float32
     assert jnp.allclose(gradient, jnp.asarray([4.0], dtype=jnp.float32))
+    hermitian_precision = phx.linalg.HermitianPrecisionPolicy(
+        compute_dtype="float64",
+        factorization_dtype="float64",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+        output_dtype="float32",
+    )
+    matrix = jnp.asarray(
+        [[2.0, 0.2 + 0.1j], [0.2 - 0.1j, 1.5]],
+        dtype=jnp.complex128,
+    )
+    root = phx.linalg.hermitian_sqrt(
+        matrix,
+        precision=hermitian_precision,
+    )
+
+    integration_precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float32",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+        output_dtype="float32",
+    )
+    chart = phx.metrix.CoordinateChart("line", ("x",))
+    metric = phx.metrix.euclidean_metric(chart)
+    measure = phx.metrix.WeightedRiemannianMeasure(
+        metric,
+        lambda point: jnp.zeros(point.shape[:-1], dtype=point.dtype),
+    )
+    normalization = phx.integration.normalize_metric_measure(
+        measure,
+        jnp.asarray([[0.0], [1.0]], dtype=jnp.float32),
+        jnp.asarray([0.5, 0.5], dtype=jnp.float32),
+        precision=integration_precision,
+    )
+
+    assert root.value.dtype == jnp.complex64
+    assert root.spectrum.eigenvectors.dtype == jnp.complex128
+    assert dict(root.spectrum.precision_evidence.observed)["factorization"] == (
+        "complex128"
+    )
+    assert normalization.mass.dtype == jnp.float32
+    assert normalization.log_mass.dtype == jnp.float64
+    assert dict(normalization.precision_evidence.observed)["accumulation"] == "float64"
 
 
 def test_finite_volume_precision_controls_runtime_reductions_and_restart(
@@ -283,53 +317,7 @@ def test_finite_volume_precision_controls_runtime_reductions_and_restart(
     assert restored.precision_evidence.evidence_id == precision.evidence().evidence_id
 
 
-def test_hermitian_and_metric_measure_precision_are_explicit() -> None:
-    hermitian_precision = phx.linalg.HermitianPrecisionPolicy(
-        compute_dtype="float64",
-        factorization_dtype="float64",
-        accumulation_dtype="float64",
-        decision_dtype="float64",
-        output_dtype="float32",
-    )
-    matrix = jnp.asarray(
-        [[2.0, 0.2 + 0.1j], [0.2 - 0.1j, 1.5]],
-        dtype=jnp.complex128,
-    )
-    root = phx.linalg.hermitian_sqrt(
-        matrix,
-        precision=hermitian_precision,
-    )
-
-    integration_precision = phx.integration.IntegrationPrecisionPolicy(
-        evaluation_dtype="float32",
-        accumulation_dtype="float64",
-        decision_dtype="float64",
-        output_dtype="float32",
-    )
-    chart = phx.metrix.CoordinateChart("line", ("x",))
-    metric = phx.metrix.euclidean_metric(chart)
-    measure = phx.metrix.WeightedRiemannianMeasure(
-        metric,
-        lambda point: jnp.zeros(point.shape[:-1], dtype=point.dtype),
-    )
-    normalization = phx.integration.normalize_metric_measure(
-        measure,
-        jnp.asarray([[0.0], [1.0]], dtype=jnp.float32),
-        jnp.asarray([0.5, 0.5], dtype=jnp.float32),
-        precision=integration_precision,
-    )
-
-    assert root.value.dtype == jnp.complex64
-    assert root.spectrum.eigenvectors.dtype == jnp.complex128
-    assert dict(root.spectrum.precision_evidence.observed)["factorization"] == (
-        "complex128"
-    )
-    assert normalization.mass.dtype == jnp.float32
-    assert normalization.log_mass.dtype == jnp.float64
-    assert dict(normalization.precision_evidence.observed)["accumulation"] == "float64"
-
-
-def test_optimization_models_certificates_and_sensitivities_retain_precision() -> None:
+def test_precision_followup_scenario_3() -> None:
     precision = phx.nonlinear.NonlinearPrecisionPolicy(
         state_dtype="float32",
         residual_dtype="float32",
@@ -400,9 +388,6 @@ def test_optimization_models_certificates_and_sensitivities_retain_precision() -
     assert sensitivity.precision_evidence is not None
     assert kkt.residual_norm.dtype == jnp.float64
     assert kkt.precision_evidence is not None
-
-
-def test_open_system_hierarchy_and_memory_archive_nested_precision() -> None:
     geometry = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="complex64",
         compute_dtype="complex64",
@@ -488,9 +473,6 @@ def test_open_system_hierarchy_and_memory_archive_nested_precision() -> None:
     assert memory.minimum_eigenvalues.dtype == jnp.float64
     assert "memory-quadrature" in dict(memory.precision_evidence.children)
     assert len(memory.approximation.precision_policy_ids) == 4
-
-
-def test_quantum_trajectory_ensemble_uses_widened_reductions() -> None:
     geometry = phx.metrix.GeometryPrecisionPolicy(
         coordinate_dtype="complex64",
         compute_dtype="complex64",

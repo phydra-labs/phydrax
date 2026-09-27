@@ -80,7 +80,7 @@ def _snapshot_runtime(*, periodic: Any = False) -> Any:
     return prepared, state
 
 
-def test_force_primitive_path_preserves_fixed_straight_chains() -> None:
+def test_polymer_entanglement_scenario_1() -> None:
     prepared, state = _snapshot_runtime()
     snapshot, snapshot_evidence = prepared.capture(state)
     ppa = ent.ForcePrimitivePathPlan(
@@ -99,9 +99,6 @@ def test_force_primitive_path_preserves_fixed_straight_chains() -> None:
     np.testing.assert_allclose(result.contour_lengths, [2.0, 2.0])
     np.testing.assert_allclose(result.endpoint_residual, 0.0)
     assert int(result.contact_state.count) == 0
-
-
-def test_entanglement_estimators_retain_named_conventions_and_uncertainty() -> None:
     result = ent.estimate_entanglement(
         ent.EntanglementEstimatorPlan(
             0.85,
@@ -123,9 +120,6 @@ def test_entanglement_estimators_retain_named_conventions_and_uncertainty() -> N
     multi = ent.multi_length_kink_entanglement([50.0, 100.0, 150.0], [1.0, 2.0, 3.0])
     assert multi.successful
     np.testing.assert_allclose(multi.entanglement_length, 50.0)
-
-
-def test_periodic_snapshot_and_z1plus_interchange_preserve_source_identity() -> None:
     prepared, state = _snapshot_runtime(periodic=True)
     snapshot, _ = prepared.capture(state)
     periodic = ent.periodic_primitive_path_evidence(snapshot)
@@ -150,9 +144,6 @@ def test_periodic_snapshot_and_z1plus_interchange_preserve_source_identity() -> 
     assert periodic.successful & oracle.successful
     assert artifact.source_snapshot_id == oracle.source_snapshot_id
     assert b"ITEM: ATOMS id mol xu yu zu" in artifact.payload
-
-
-def test_periodic_evidence_uses_last_active_bead_for_ragged_chains() -> None:
     positions = jnp.asarray(
         [
             [1.0, 1.0, 1.0],

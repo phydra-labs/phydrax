@@ -1,7 +1,3 @@
-from typing import Any
-
-import pytest
-
 import phydrax as phx
 
 
@@ -99,22 +95,16 @@ PUBLIC_HIGH_DIMENSIONAL_API = {
 }
 
 
-@pytest.mark.parametrize(
-    ("namespace_name", "symbol"),
-    [
+def test_high_dimensional_public_api_scenario_1() -> None:
+    for namespace_name, symbol in [
         (namespace_name, symbol)
         for namespace_name, symbols in PUBLIC_HIGH_DIMENSIONAL_API.items()
         for symbol in sorted(symbols)
-    ],
-)
-def test_high_dimensional_symbols_are_public(namespace_name: Any, symbol: Any) -> None:
-    namespace = getattr(phx, namespace_name)
+    ]:
+        namespace = getattr(phx, namespace_name)
 
-    assert getattr(namespace, symbol) is not None
-    assert symbol in namespace.__all__
-
-
-def test_dimension_estimators_are_public_from_differential_namespace() -> None:
+        assert getattr(namespace, symbol) is not None
+        assert symbol in namespace.__all__
     for symbol in PUBLIC_HIGH_DIMENSIONAL_API["operators"]:
         assert getattr(phx.operators.differential, symbol) is getattr(
             phx.operators, symbol

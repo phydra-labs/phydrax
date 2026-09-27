@@ -43,7 +43,7 @@ def _one_group() -> Any:
     )
 
 
-def test_multigroup_diffusion_fixed_source_is_balanced_and_nonnegative() -> None:
+def test_reactor_physics_scenario_1() -> None:
     geometry = phx.discretization.finite_volume.MetricLinePlan(
         # ty: ignore[invalid-argument-type]
         [0.0, 1.0, 2.0],
@@ -71,9 +71,6 @@ def test_multigroup_diffusion_fixed_source_is_balanced_and_nonnegative() -> None
     assert bool(result.successful)
     assert result.residual_norm < 1.0e-9
     assert np.all(result.scalar_flux_m2_s >= 0.0)
-
-
-def test_one_cell_criticality_recovers_generalized_eigenvalue() -> None:
     geometry = phx.discretization.finite_volume.MetricLinePlan(
         # ty: ignore[invalid-argument-type]
         [0.0, 1.0],
@@ -102,9 +99,6 @@ def test_one_cell_criticality_recovers_generalized_eigenvalue() -> None:
 
     assert bool(result.successful)
     np.testing.assert_allclose(result.k_effective, 2.0, rtol=1.0e-10)
-
-
-def test_delayed_neutron_equilibrium_is_stationary_at_zero_reactivity() -> None:
     plan = phx.applications.reactor_physics.DelayedNeutronKineticsPlan(
         np.asarray([0.004, 0.002]),
         np.asarray([0.1, 1.0]),

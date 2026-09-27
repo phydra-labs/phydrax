@@ -22,7 +22,7 @@ def _space(*, periodic: Any = False, shape: Any = (12, 12)) -> Any:
     )
 
 
-def test_uniform_phase_screen_and_open_filter_preserve_uniform_intensity() -> None:
+def test_wave_schlieren_scenario_1() -> None:
     space = _space()
     screen = phx.imaging.RefractivePhaseScreenPlan(space, 20.0)
     transmission, evidence = screen.evaluate(jnp.full(space.shape, 0.02))
@@ -41,9 +41,6 @@ def test_uniform_phase_screen_and_open_filter_preserve_uniform_intensity() -> No
     np.testing.assert_allclose(result.detector_intensity.values, 1.0, atol=1e-6)
     assert bool(result.evidence.successful)
     assert transmission.transmission.shape == space.shape
-
-
-def test_multislice_zero_perturbation_and_helmholtz_zero_susceptibility() -> None:
     space = _space(periodic=True)
     incident = phx.optics.wave.ScalarPlaneField(space, jnp.ones(space.shape), 10.0, 0.0)
     multislice = phx.imaging.MultisliceRefractivePlan(

@@ -96,7 +96,7 @@ def _context() -> ContractResolutionContext:
     )
 
 
-def test_cashflow_padding_is_exactly_neutral() -> None:
+def test_resolution_scenario_1() -> None:
     cashflows = _cashflows().pad(4)
 
     assert cashflows.active_count == 2
@@ -107,9 +107,11 @@ def test_cashflow_padding_is_exactly_neutral() -> None:
     )
     assert jnp.array_equal(cashflows.currency_index[2:], jnp.zeros((2,), dtype=jnp.int32))
     assert cashflows.obligation_ids[2:] == ("", "")
+    prepared = _cashflows().prepare(1)
 
-
-def test_settlement_date_is_resolved_on_the_pinned_host_calendar() -> None:
+    assert int(prepared.preparation_status) == int(CashflowStatus.CAPACITY_EXCEEDED)
+    assert not bool(jnp.any(prepared.accepted))
+    assert prepared.cashflows.capacity == 1
     terms = SettlementTerms(
         USD,
         settlement_lag_days=2,
@@ -129,17 +131,6 @@ def test_settlement_date_is_resolved_on_the_pinned_host_calendar() -> None:
             FinanceDate.from_iso("2027-01-08"),
             CalendarSnapshot("lon", (), (5, 6), "unit-test"),
         )
-
-
-def test_cashflow_preparation_reports_overflow_without_accepting_a_prefix() -> None:
-    prepared = _cashflows().prepare(1)
-
-    assert int(prepared.preparation_status) == int(CashflowStatus.CAPACITY_EXCEEDED)
-    assert not bool(jnp.any(prepared.accepted))
-    assert prepared.cashflows.capacity == 1
-
-
-def test_host_resolution_and_replay_are_content_deterministic() -> None:
     definition = _Contract("bond-1", _cashflows(), _settlement())
     plan = ContractResolutionPlan(definition, _context())
 
@@ -158,7 +149,7 @@ def test_host_resolution_and_replay_are_content_deterministic() -> None:
     assert int(mismatch.status) == int(ContractResolutionStatus.REPLAY_MISMATCH)
 
 
-def test_resolution_context_marks_future_reference_snapshot_causally_invalid() -> None:
+def test_resolution_scenario_2() -> None:
     reference = ReferenceDataSnapshot(
         (),
         (),
@@ -175,9 +166,6 @@ def test_resolution_context_marks_future_reference_snapshot_causally_invalid() -
 
     assert not context.accepted
     assert context.context_status & ContractResolutionStatus.CAUSAL_TIME_VIOLATION
-
-
-def test_contract_trade_and_position_remain_distinct_lifecycle_objects() -> None:
     definition = _Contract("bond-1", _cashflows(), _settlement())
     resolved = ContractResolutionPlan(definition, _context()).resolve()
     trade = Trade(

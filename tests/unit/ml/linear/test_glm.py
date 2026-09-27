@@ -74,47 +74,42 @@ def _assert_model_gradients(model: Any, point: Any) -> None:
     assert jnp.all(jnp.isfinite(intercept_gradient))
 
 
-@pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
-def test_bernoulli_and_poisson_family_kernels_match_glm_score_equations(
-    dtype: Any,
-) -> None:
-    scores = jnp.asarray([[-1.4, 0.2], [0.8, 2.1]], dtype=dtype)
-    binary = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=dtype)
-    counts = jnp.asarray([[0.0, 2.0], [3.0, 1.0]], dtype=dtype)
-    bernoulli = phx.uq.BernoulliFamily()
-    poisson = phx.uq.PoissonFamily()
-    bernoulli_natural = bernoulli.natural(scores[..., None])
-    poisson_natural = poisson.natural(scores[..., None])
+def test_glm_scenario_1() -> None:
+    for dtype in (jnp.float32, jnp.float64):
+        scores = jnp.asarray([[-1.4, 0.2], [0.8, 2.1]], dtype=dtype)
+        binary = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=dtype)
+        counts = jnp.asarray([[0.0, 2.0], [3.0, 1.0]], dtype=dtype)
+        bernoulli = phx.uq.BernoulliFamily()
+        poisson = phx.uq.PoissonFamily()
+        bernoulli_natural = bernoulli.natural(scores[..., None])
+        poisson_natural = poisson.natural(scores[..., None])
 
-    np_bernoulli_loss = jax.nn.softplus(scores) - binary * scores
-    np_poisson_loss = jnp.exp(scores) - counts * scores
-    np.testing.assert_allclose(
-        bernoulli.canonical_loss(bernoulli_natural, binary),
-        np_bernoulli_loss,
-        rtol=3e-7,
-        atol=3e-7,
-    )
-    np.testing.assert_allclose(
-        bernoulli.canonical_score(bernoulli_natural, binary)[..., 0],
-        jax.nn.sigmoid(scores) - binary,
-        rtol=3e-7,
-        atol=3e-7,
-    )
-    np.testing.assert_allclose(
-        poisson.canonical_loss(poisson_natural, counts),
-        np_poisson_loss,
-        rtol=3e-7,
-        atol=3e-7,
-    )
-    np.testing.assert_allclose(
-        poisson.canonical_score(poisson_natural, counts)[..., 0],
-        jnp.exp(scores) - counts,
-        rtol=3e-7,
-        atol=3e-7,
-    )
-
-
-def test_one_step_glm_updates_match_weighted_score_equations() -> None:
+        np_bernoulli_loss = jax.nn.softplus(scores) - binary * scores
+        np_poisson_loss = jnp.exp(scores) - counts * scores
+        np.testing.assert_allclose(
+            bernoulli.canonical_loss(bernoulli_natural, binary),
+            np_bernoulli_loss,
+            rtol=3e-7,
+            atol=3e-7,
+        )
+        np.testing.assert_allclose(
+            bernoulli.canonical_score(bernoulli_natural, binary)[..., 0],
+            jax.nn.sigmoid(scores) - binary,
+            rtol=3e-7,
+            atol=3e-7,
+        )
+        np.testing.assert_allclose(
+            poisson.canonical_loss(poisson_natural, counts),
+            np_poisson_loss,
+            rtol=3e-7,
+            atol=3e-7,
+        )
+        np.testing.assert_allclose(
+            poisson.canonical_score(poisson_natural, counts)[..., 0],
+            jnp.exp(scores) - counts,
+            rtol=3e-7,
+            atol=3e-7,
+        )
     features = jnp.array([[2.0]])
     weight = jnp.array([2.0])
     logistic = (
@@ -142,6 +137,35 @@ def test_one_step_glm_updates_match_weighted_score_equations() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(poisson.coefficients, jnp.array([0.8]))
+    features = _features()
+    weights = jnp.ones((features.shape[0],)).at[0].set(0.0)
+    binary = (features[:, 0] > 0.0).astype(jnp.int32)
+    flipped = binary.at[0].set(1 - binary[0])
+    logistic = LogisticRegressionRecipe(max_iterations=3, tolerance=1e6)
+    first_logistic = logistic.fit_batch(
+        MLBatch(features, binary, sample_weight=weights)
+    ).as_trainable()
+    second_logistic = logistic.fit_batch(
+        MLBatch(features, flipped, sample_weight=weights)
+    ).as_trainable()
+    # ty: ignore[unresolved-attribute]
+    assert jnp.allclose(first_logistic.coefficients, second_logistic.coefficients)
+    # ty: ignore[unresolved-attribute]
+    assert jnp.allclose(first_logistic.intercept, second_logistic.intercept)
+
+    counts = jnp.arange(1.0, features.shape[0] + 1.0)
+    changed_counts = counts.at[0].set(1e4)
+    poisson = PoissonRegressorRecipe(max_iterations=3, tolerance=1e6)
+    first_poisson = poisson.fit_batch(
+        MLBatch(features, counts, sample_weight=weights)
+    ).as_trainable()
+    second_poisson = poisson.fit_batch(
+        MLBatch(features, changed_counts, sample_weight=weights)
+    ).as_trainable()
+    # ty: ignore[unresolved-attribute]
+    assert jnp.allclose(first_poisson.coefficients, second_poisson.coefficients)
+    # ty: ignore[unresolved-attribute]
+    assert jnp.allclose(first_poisson.intercept, second_poisson.intercept)
 
 
 def test_binary_logistic_probabilities_labels_sparse_jit_vmap_and_declared_gradients() -> (
@@ -251,9 +275,10 @@ def test_multinomial_logistic_classes_case_axes_sparse_and_gradients() -> None:
     assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
-@pytest.mark.parametrize(
-    ("recipe", "model_type", "targets"),
-    (
+def test_log_link_glm_families_multioutput_sparse_prediction_and_all_fit_gradients() -> (
+    None
+):
+    for recipe, model_type, targets in (
         (
             PoissonRegressorRecipe(
                 l2_strength=0.1, learning_rate=1e-3, max_iterations=3, tolerance=1e6
@@ -279,80 +304,42 @@ def test_multinomial_logistic_classes_case_axes_sparse_and_gradients() -> None:
             TweedieModel,
             jnp.linspace(0.0, 3.0, 9),
         ),
-    ),
-)
-def test_log_link_glm_families_multioutput_sparse_prediction_and_all_fit_gradients(
-    recipe: Any, model_type: Any, targets: Any
-) -> None:
-    features = _features()
-    multioutput = jnp.stack((targets, targets + 0.5), axis=-1)
-    weights = jnp.linspace(0.7, 1.4, features.shape[0])
-    result = recipe.fit_batch(
-        MLBatch(
-            features,
-            multioutput,
-            target_mask=jnp.ones_like(multioutput, dtype="bool").at[1, 1].set(False),
-            sample_weight=weights,
+    ):
+        features = _features()
+        multioutput = jnp.stack((targets, targets + 0.5), axis=-1)
+        weights = jnp.linspace(0.7, 1.4, features.shape[0])
+        result = recipe.fit_batch(
+            MLBatch(
+                features,
+                multioutput,
+                target_mask=jnp.ones_like(multioutput, dtype="bool").at[1, 1].set(False),
+                sample_weight=weights,
+            )
         )
-    )
-    model = result.as_trainable()
-    assert isinstance(model, model_type)
-    assert model(features).shape == multioutput.shape
-    assert jnp.all(model(features) > 0.0)
-    assert jax.jit(model)(features).shape == multioutput.shape
-    assert jax.vmap(model)(features).shape == multioutput.shape
-    _assert_model_gradients(model, features[0])
+        model = result.as_trainable()
+        assert isinstance(model, model_type)
+        assert model(features).shape == multioutput.shape
+        assert jnp.all(model(features) > 0.0)
+        assert jax.jit(model)(features).shape == multioutput.shape
+        assert jax.vmap(model)(features).shape == multioutput.shape
+        _assert_model_gradients(model, features[0])
 
-    sparse_model = recipe.fit_batch(
-        MLBatch(_sparse(features), multioutput, sample_weight=weights)
-    ).as_trainable()
-    assert sparse_model(_sparse(features)).shape == multioutput.shape
-
-    def fit_loss(x: Any, y: Any, sample_weight: Any, strength: Any) -> Any:
-        fitted_recipe = eqx.tree_at(lambda item: item.l2_strength, recipe, strength)
-        fitted = fitted_recipe.fit_batch(
-            MLBatch(x, y, sample_weight=sample_weight)
+        sparse_model = recipe.fit_batch(
+            MLBatch(_sparse(features), multioutput, sample_weight=weights)
         ).as_trainable()
-        return jnp.sum(jnp.square(fitted(features[:2])))
+        assert sparse_model(_sparse(features)).shape == multioutput.shape
 
-    gradients = jax.grad(fit_loss, argnums=(0, 1, 2, 3))(
-        features, multioutput, weights, recipe.l2_strength
-    )
-    assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
+        def fit_loss(x: Any, y: Any, sample_weight: Any, strength: Any) -> Any:
+            fitted_recipe = eqx.tree_at(lambda item: item.l2_strength, recipe, strength)
+            fitted = fitted_recipe.fit_batch(
+                MLBatch(x, y, sample_weight=sample_weight)
+            ).as_trainable()
+            return jnp.sum(jnp.square(fitted(features[:2])))
 
-
-def test_zero_weight_samples_do_not_change_weighted_logistic_or_poisson_objectives() -> (
-    None
-):
-    features = _features()
-    weights = jnp.ones((features.shape[0],)).at[0].set(0.0)
-    binary = (features[:, 0] > 0.0).astype(jnp.int32)
-    flipped = binary.at[0].set(1 - binary[0])
-    logistic = LogisticRegressionRecipe(max_iterations=3, tolerance=1e6)
-    first_logistic = logistic.fit_batch(
-        MLBatch(features, binary, sample_weight=weights)
-    ).as_trainable()
-    second_logistic = logistic.fit_batch(
-        MLBatch(features, flipped, sample_weight=weights)
-    ).as_trainable()
-    # ty: ignore[unresolved-attribute]
-    assert jnp.allclose(first_logistic.coefficients, second_logistic.coefficients)
-    # ty: ignore[unresolved-attribute]
-    assert jnp.allclose(first_logistic.intercept, second_logistic.intercept)
-
-    counts = jnp.arange(1.0, features.shape[0] + 1.0)
-    changed_counts = counts.at[0].set(1e4)
-    poisson = PoissonRegressorRecipe(max_iterations=3, tolerance=1e6)
-    first_poisson = poisson.fit_batch(
-        MLBatch(features, counts, sample_weight=weights)
-    ).as_trainable()
-    second_poisson = poisson.fit_batch(
-        MLBatch(features, changed_counts, sample_weight=weights)
-    ).as_trainable()
-    # ty: ignore[unresolved-attribute]
-    assert jnp.allclose(first_poisson.coefficients, second_poisson.coefficients)
-    # ty: ignore[unresolved-attribute]
-    assert jnp.allclose(first_poisson.intercept, second_poisson.intercept)
+        gradients = jax.grad(fit_loss, argnums=(0, 1, 2, 3))(
+            features, multioutput, weights, recipe.l2_strength
+        )
+        assert all(jnp.all(jnp.isfinite(value)) for value in gradients)
 
 
 def test_glm_domain_failures_missing_classes_and_nonconvergence_are_honest() -> None:

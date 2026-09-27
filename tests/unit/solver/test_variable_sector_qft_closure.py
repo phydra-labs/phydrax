@@ -52,7 +52,7 @@ def _configuration(
     )
 
 
-def test_variable_sector_padding_invariance_and_inverse_factorial_measure() -> None:
+def test_variable_sector_qft_closure_scenario_1() -> None:
     space = VariableSectorSpace(4, 1, 2)
     left = _configuration([[1.0], [2.0], [100.0], [-20.0]], [1, 1, 0, 0], [0, 0, 1, 1])
     right = _configuration([[1.0], [2.0], [-8.0], [50.0]], [1, 1, 0, 0], [0, 0, 0, 0])
@@ -67,9 +67,6 @@ def test_variable_sector_padding_invariance_and_inverse_factorial_measure() -> N
     assert np.allclose(measure.sector_factor(left), 1.0 / math.factorial(2))
     mixed = _configuration([[1.0], [2.0], [3.0], [0.0]], [1, 1, 1, 0], [0, 1, 1, 0])
     assert np.allclose(measure.sector_factor(mixed), 1.0 / math.factorial(2))
-
-
-def test_variable_sector_birth_death_reverse_density_has_exact_combinatorics() -> None:
     space = VariableSectorSpace(3, 1, 1)
     proposal = VariableSectorProposal(
         space,
@@ -98,9 +95,6 @@ def test_variable_sector_birth_death_reverse_density_has_exact_combinatorics() -
     )
     assert np.allclose(forward_flux, reverse_flux)
     assert np.isfinite(proposal.log_prob(proposal.sample(jr.key(4), vacuum), vacuum))
-
-
-def test_variable_sector_pair_jacobian_and_exchange_are_reversible() -> None:
     space = VariableSectorSpace(4, 1, 2)
     proposal = VariableSectorProposal(
         space,
@@ -116,9 +110,6 @@ def test_variable_sector_pair_jacobian_and_exchange_are_reversible() -> None:
     pair = _configuration([[1.0], [2.0], [0.5], [-0.5]], [1, 1, 1, 1], [0, 1, 0, 1])
     assert np.isfinite(proposal.log_prob(pair, source))
     assert np.isfinite(proposal.log_prob(source, pair))
-
-
-def test_bosonic_and_fermionic_exchange_symmetry() -> None:
     space = VariableSectorSpace(3, 1, 1)
     first = _configuration([[-0.7], [0.4], [0.0]], [1, 1, 0], [0, 0, 0])
     swapped = _configuration([[0.4], [-0.7], [0.0]], [1, 1, 0], [0, 0, 0])
@@ -135,9 +126,6 @@ def test_bosonic_and_fermionic_exchange_symmetry() -> None:
     fermion_first, fermion_swapped = fermion(first), fermion(swapped)
     assert np.allclose(fermion_first.log_abs, fermion_swapped.log_abs)
     assert np.allclose(fermion_first.phase, -fermion_swapped.phase)
-
-
-def test_jastrow_cusp_and_coordinate_derivatives_are_visible() -> None:
     space = VariableSectorSpace(2, 1, 1)
     model = BosonicJastrowAmplitude(space, pair_cusp=0.75, pair_range=0.4)
     derivative = jax.grad(lambda radius: jnp.real(model.pair_log_factor(radius, 0, 0)))(
@@ -184,7 +172,7 @@ def test_free_and_quadratic_continuum_local_energy_references() -> None:
     assert np.allclose(quadratic.value, expected, rtol=1e-5)
 
 
-def test_pair_contact_and_particle_changing_local_operators_are_finite() -> None:
+def test_variable_sector_qft_closure_scenario_2() -> None:
     space = VariableSectorSpace(3, 1, 1)
     configuration = _configuration([[-0.5], [0.5], [0.0]], [1, 1, 0], [0, 0, 0])
     model = BosonicJastrowAmplitude(
@@ -201,9 +189,6 @@ def test_pair_contact_and_particle_changing_local_operators_are_finite() -> None
     assert pair.local_value(model, configuration).valid
     assert contact.local_value(model, configuration).valid
     assert changing.local_value(model, configuration).valid
-
-
-def test_stochastic_reconfiguration_solves_finite_reference_systems() -> None:
     derivatives = jnp.asarray(((-1.0, 0.0), (1.0, 0.0), (0.0, -2.0), (0.0, 2.0)))
     energies = jnp.asarray((-1.0, 1.0, -4.0, 4.0))
     result = solve_stochastic_reconfiguration(
@@ -215,34 +200,6 @@ def test_stochastic_reconfiguration_solves_finite_reference_systems() -> None:
     assert result.successful
     assert np.allclose(result.update, expected)
     assert result.residual_norm < 1e-5
-
-
-def _tail_evidence(*, accepted: bool, status: int | None = None) -> SectorTailEvidence:
-    status = (
-        0
-        if accepted
-        else (VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED if status is None else status)
-    )
-    return SectorTailEvidence(
-        total_histogram=jnp.asarray((128, 0, 0)),
-        species_histogram=jnp.asarray(((128, 0, 0),)),
-        sample_count=jnp.asarray(128),
-        cutoff_count=jnp.asarray(0 if accepted else 8),
-        cutoff_probability=jnp.asarray(0.0 if accepted else 0.0625),
-        cutoff_standard_error=jnp.asarray(0.0 if accepted else 0.02),
-        cutoff_upper_bound=jnp.asarray(0.01 if accepted else 0.12),
-        sufficient_samples=jnp.asarray(
-            status != VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES
-        ),
-        below_tolerance=jnp.asarray(accepted),
-        status=jnp.asarray(status),
-        capacity=2,
-        tolerance=0.05,
-        method="test-finite-reference",
-    )
-
-
-def test_real_and_imaginary_time_tdvp_evolution_and_tail_refusal() -> None:
     initial = jnp.asarray((1.0 + 0.0j,))
     real_plan = VariableSectorTDVPPlan(0.05, 4, evolution="real-time")
     real_result = evolve_variable_sector_tdvp(
@@ -281,6 +238,31 @@ def test_real_and_imaginary_time_tdvp_evolution_and_tail_refusal() -> None:
         ),
     )
     assert insufficient.status == VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES
+
+
+def _tail_evidence(*, accepted: bool, status: int | None = None) -> SectorTailEvidence:
+    status = (
+        0
+        if accepted
+        else (VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED if status is None else status)
+    )
+    return SectorTailEvidence(
+        total_histogram=jnp.asarray((128, 0, 0)),
+        species_histogram=jnp.asarray(((128, 0, 0),)),
+        sample_count=jnp.asarray(128),
+        cutoff_count=jnp.asarray(0 if accepted else 8),
+        cutoff_probability=jnp.asarray(0.0 if accepted else 0.0625),
+        cutoff_standard_error=jnp.asarray(0.0 if accepted else 0.02),
+        cutoff_upper_bound=jnp.asarray(0.01 if accepted else 0.12),
+        sufficient_samples=jnp.asarray(
+            status != VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES
+        ),
+        below_tolerance=jnp.asarray(accepted),
+        status=jnp.asarray(status),
+        capacity=2,
+        tolerance=0.05,
+        method="test-finite-reference",
+    )
 
 
 def test_reversible_jump_vmc_preserves_chain_state_and_reports_tail() -> None:

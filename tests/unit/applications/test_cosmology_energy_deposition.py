@@ -119,9 +119,7 @@ def _history(manifest: Any, *, redshift: Any = (1.0, 2.0, 4.0)) -> Any:
     return history
 
 
-def test_injection_preserves_source_redshift_metadata_and_reverses_to_increasing_scale_factor() -> (
-    None
-):
+def test_cosmology_energy_deposition_scenario_1() -> None:
     values = np.arange(12.0).reshape(3, 2, 2)
     injection = _injection(values, redshift=(1.0, 2.0, 4.0))
 
@@ -135,9 +133,6 @@ def test_injection_preserves_source_redshift_metadata_and_reverses_to_increasing
     np.testing.assert_allclose(decreasing.source_one_plus_redshift, [4.0, 2.0, 1.0])
     np.testing.assert_array_equal(decreasing.canonical_from_source_index, [0, 1, 2])
     assert decreasing.source_axis_direction == "decreasing"
-
-
-def test_native_cascade_action_has_complete_ledger_and_separate_cmb_energy() -> None:
     result = _kernel().apply(_injection())
 
     np.testing.assert_allclose(
@@ -158,9 +153,6 @@ def test_native_cascade_action_has_complete_ledger_and_separate_cmb_energy() -> 
         result.status, np.full(3, int(EnergyDepositionStatus.SUCCESS))
     )
     assert np.all(np.asarray(result.valid))
-
-
-def test_zero_injection_is_valid_physical_baseline_not_a_numerical_failure() -> None:
     result = _kernel().apply(_injection(np.zeros((3, 2, 2))))
 
     np.testing.assert_allclose(result.injected_energy_gev, 0.0)
@@ -173,7 +165,7 @@ def test_zero_injection_is_valid_physical_baseline_not_a_numerical_failure() -> 
     assert np.all(np.asarray(result.valid))
 
 
-def test_numerical_nonclosure_is_distinct_from_no_injection() -> None:
+def test_cosmology_energy_deposition_scenario_2() -> None:
     result = _kernel(escaped_fraction=0.2).apply(_injection())
 
     assert not np.any(np.asarray(result.valid))
@@ -181,19 +173,11 @@ def test_numerical_nonclosure_is_distinct_from_no_injection() -> None:
         result.status,
         np.full(3, int(EnergyDepositionStatus.KERNEL_ENERGY_NONCLOSURE)),
     )
-
-
-def test_cascade_domain_mismatch_is_rejected_without_table_clamping() -> None:
     outside = _injection(energy=(1.0, 4.0))
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError), match="no clamp|exact cascade table domain"
     ):
         jax.block_until_ready(_kernel().apply(outside).injected_energy_gev)
-
-
-def test_species_history_enforces_hydrogen_helium_electron_relation_and_projects_with_declared_loss() -> (
-    None
-):
     manifest = _manifest()
     history = _history(manifest)
 
@@ -240,7 +224,7 @@ def test_species_history_enforces_hydrogen_helium_electron_relation_and_projects
         )
 
 
-def test_external_history_and_injection_require_admitted_manifest_rights() -> None:
+def test_cosmology_energy_deposition_scenario_3() -> None:
     denied = _manifest(commercial=False)
     scale, background, provenance = _history_context(denied)
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
@@ -278,9 +262,6 @@ def test_external_history_and_injection_require_admitted_manifest_rights() -> No
             manifest=denied,
             commercial_use=True,
         )
-
-
-def test_generic_subprocess_provider_result_binds_history_ledger_and_manifest() -> None:
     manifest = _manifest()
     history = _history(manifest, redshift=(4.0, 2.0, 1.0))
     ledger = _kernel().apply(_injection())

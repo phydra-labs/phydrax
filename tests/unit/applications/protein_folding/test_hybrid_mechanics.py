@@ -233,7 +233,7 @@ def test_mixed_forces_obey_virtual_work_and_keep_fixed_reactions() -> None:
     )
 
 
-def test_disjoint_identity_and_site_binding_survive_protein_order() -> None:
+def test_hybrid_mechanics_scenario_1() -> None:
     model, state = _fixture()
     reordered, reordered_state = _fixture(order=(1, 0))
     identities = [record[2] for record in model.support_map.records]
@@ -289,9 +289,6 @@ def test_disjoint_identity_and_site_binding_survive_protein_order() -> None:
             frame_cross,
             model.protein_reference,
         )
-
-
-def test_linker_force_and_reference_linear_response() -> None:
     model, state = _fixture(cross_kwargs={"linker_stiffness": 2.0, "linker_length": 1.0})
     evaluation = model.evaluate(state)
     site = model.nucleotide_model.site_positions(state.nucleotide)[1]
@@ -318,50 +315,51 @@ def test_linker_force_and_reference_linear_response() -> None:
         ).forces[1, 0]
     )(0.0)
     np.testing.assert_allclose(response, -4.0, atol=1e-12)
-
-
-@pytest.mark.parametrize("physical_units", [False, True])
-def test_split_drift_uses_shared_old_force_and_correct_units(physical_units: Any) -> None:
-    units = (
-        AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
-        if physical_units
-        else AtomisticUnitSystem.reduced()
-    )
-    model, state = _fixture(units=units)
-    old = model.evaluate(state)
-    dt = 1e-3
-    result = jax.jit(lambda value, step: model.step(value, step))(state, dt)
-    assert bool(result.successful)
-    scale = units.force_to_momentum_rate
-    system = model.protein_network.system
-    bodies = model.nucleotide_model.bodies
-    expected_protein = (
-        state.protein.positions
-        + 0.5 * dt**2 * scale * old.protein_mobile_forces * system.inverse_masses[:, None]
-    )
-    expected_rigid = (
-        state.nucleotide.position
-        + 0.5
-        * dt**2
-        * scale
-        * old.nucleotide_mobile_load.force
-        * bodies.inverse_masses[:, None]
-    )
-    np.testing.assert_allclose(
-        result.state.protein.positions, expected_protein, atol=1e-13
-    )
-    np.testing.assert_allclose(
-        result.state.nucleotide.position, expected_rigid, atol=1e-13
-    )
-    expected_orientation = _quaternion_retract(
-        state.nucleotide.orientation,
-        0.5 * dt**2 * scale * old.nucleotide_mobile_load.torque,
-    )
-    np.testing.assert_allclose(
-        result.state.nucleotide.orientation, expected_orientation, atol=1e-13
-    )
-    np.testing.assert_array_equal(result.state.protein.momenta[0], 0.0)
-    assert not bool(model.step(state, 0.0).successful)
+    for physical_units in [False, True]:
+        units = (
+            AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+            if physical_units
+            else AtomisticUnitSystem.reduced()
+        )
+        model, state = _fixture(units=units)
+        old = model.evaluate(state)
+        dt = 1e-3
+        result = jax.jit(lambda value, step: model.step(value, step))(state, dt)
+        assert bool(result.successful)
+        scale = units.force_to_momentum_rate
+        system = model.protein_network.system
+        bodies = model.nucleotide_model.bodies
+        expected_protein = (
+            state.protein.positions
+            + 0.5
+            * dt**2
+            * scale
+            * old.protein_mobile_forces
+            * system.inverse_masses[:, None]
+        )
+        expected_rigid = (
+            state.nucleotide.position
+            + 0.5
+            * dt**2
+            * scale
+            * old.nucleotide_mobile_load.force
+            * bodies.inverse_masses[:, None]
+        )
+        np.testing.assert_allclose(
+            result.state.protein.positions, expected_protein, atol=1e-13
+        )
+        np.testing.assert_allclose(
+            result.state.nucleotide.position, expected_rigid, atol=1e-13
+        )
+        expected_orientation = _quaternion_retract(
+            state.nucleotide.orientation,
+            0.5 * dt**2 * scale * old.nucleotide_mobile_load.torque,
+        )
+        np.testing.assert_allclose(
+            result.state.nucleotide.orientation, expected_orientation, atol=1e-13
+        )
+        np.testing.assert_array_equal(result.state.protein.momenta[0], 0.0)
+        assert not bool(model.step(state, 0.0).successful)
 
 
 def test_kdk_energy_error_decreases_with_step_size() -> None:
@@ -385,7 +383,7 @@ def test_kdk_energy_error_decreases_with_step_size() -> None:
     assert float(fine_error) < 0.4 * float(coarse_error)
 
 
-def test_padding_never_gains_material_or_cross_interactions() -> None:
+def test_hybrid_mechanics_scenario_2() -> None:
     model, initial = _fixture()
     units = model.cross.units
     system = AtomisticSystemPlan(
@@ -426,9 +424,6 @@ def test_padding_never_gains_material_or_cross_interactions() -> None:
     )
     with pytest.raises(ValueError, match="active stable sites"):
         PreparedHybridModel(network, model.nucleotide_model, bad_cross, reference_source)
-
-
-def test_incompatible_scales_reference_rights_and_singular_sites_refuse() -> None:
     model, state = _fixture()
     different = HybridCrossInteractionPlan(
         # ty: ignore[invalid-argument-type]

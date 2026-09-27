@@ -58,15 +58,12 @@ def _constant_family(matrix: Any, *, hermitian: Any) -> Any:
     return prepare_periodic_translation_family(plan, state)
 
 
-def test_spin_matrices_use_s_not_pauli_and_obey_su2_casimir() -> None:
+def test_quantum_magnetism_superconductivity_scenario_1() -> None:
     sx, sy, sz, _, _ = spin_matrices(1)
     identity = jnp.eye(2)
     assert jnp.allclose(sx @ sy - sy @ sx, 1.0j * sz)
     assert jnp.allclose(sx @ sx + sy @ sy + sz @ sz, 0.75 * identity)
     assert jnp.allclose(jnp.linalg.eigvalsh(sz), jnp.asarray([-0.5, 0.5]))
-
-
-def test_heisenberg_dimer_lowers_to_fixed_projection_without_ambient_basis() -> None:
     model = heisenberg_spin_model(
         ("left", "right"),
         (1, 1),
@@ -103,9 +100,6 @@ def test_heisenberg_dimer_lowers_to_fixed_projection_without_ambient_basis() -> 
         axis=1,
     )
     assert jnp.allclose(jnp.linalg.eigvalsh(columns), jnp.asarray([-0.25, 0.75]))
-
-
-def test_dmi_orientation_and_fixed_sz_conservation_are_compiler_proved() -> None:
     resources = QuantumLatticeResourcePolicy(
         maximum_terms=16,
         maximum_factors_per_term=2,
@@ -153,7 +147,7 @@ def test_dmi_orientation_and_fixed_sz_conservation_are_compiler_proved() -> None
         )
 
 
-def test_collinear_lswt_returns_positive_krein_modes_and_rejects_instability() -> None:
+def test_quantum_magnetism_superconductivity_scenario_2() -> None:
     # ty: ignore[invalid-argument-type]
     reference = SpinWaveReferenceState([[0.0, 0.0, 1.0]], [1.0])
     # ty: ignore[invalid-argument-type]
@@ -199,9 +193,6 @@ def test_collinear_lswt_returns_positive_krein_modes_and_rejects_instability() -
     )
     with pytest.raises(ValueError, match="Krein|stability|branch"):
         evaluate_linear_spin_wave(unstable)
-
-
-def test_fermionic_bdg_phs_pair_antisymmetry_and_double_counting_are_explicit() -> None:
     order = FermionModeOrder(("up", "down"))
     pairing_plan = FermionicPairingPlan(
         order,

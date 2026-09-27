@@ -87,63 +87,59 @@ def test_newton_trust_region_preserves_pytree_and_reports_ratio_radius() -> None
     assert result.provenance.globalization == "trust-region-ratio"
 
 
-@pytest.mark.parametrize(
-    "beta_method",
-    [
+def test_nonlinear_conjugate_gradient_uses_selected_beta_without_restart() -> None:
+    for beta_method in [
         "fletcher-reeves",
         "polak-ribiere+",
         "hestenes-stiefel+",
         "dai-yuan",
-    ],
-)
-def test_nonlinear_conjugate_gradient_uses_selected_beta_without_restart(
-    beta_method: Any,
-) -> None:
-    def objective(parameters: Any) -> Any:
-        x, y = parameters
-        return 0.5 * x**2 + y**2 + 1e-3 * (x**4 + y**4)
+    ]:
 
-    method = phx.optim.NonlinearConjugateGradient(
-        beta_method=beta_method,
-        orthogonality_restart=0.99,
-        descent_safeguard=1e-12,
-        line_search=phx.optim.StrongWolfeLineSearch(
-            curvature=1e-3,
-            maximum_steps=60,
-        ),
-    )
-    parameters = jnp.array([0.25, 1.0])
-    state = method.prepare_state(objective, parameters)
-    next_parameters, next_state, _ = method.step(
-        objective,
-        parameters,
-        state,
-        termination=None,
-    )
+        def objective(parameters: Any) -> Any:
+            x, y = parameters
+            return 0.5 * x**2 + y**2 + 1e-3 * (x**4 + y**4)
 
-    old_gradient = state.gradient
-    new_gradient = next_state.gradient
-    difference = new_gradient - old_gradient
-    new_squared = jnp.vdot(new_gradient, new_gradient).real
-    old_squared = jnp.vdot(old_gradient, old_gradient).real
-    numerator = jnp.vdot(new_gradient, difference).real
-    denominator = jnp.vdot(state.direction, difference).real
-    if beta_method == "fletcher-reeves":
-        expected_beta = new_squared / old_squared
-    elif beta_method == "polak-ribiere+":
-        expected_beta = jnp.maximum(0.0, numerator / old_squared)
-    elif beta_method == "hestenes-stiefel+":
-        expected_beta = jnp.maximum(0.0, numerator / denominator)
-    else:
-        expected_beta = new_squared / denominator
-    expected_direction = -new_gradient + expected_beta * state.direction
+        method = phx.optim.NonlinearConjugateGradient(
+            beta_method=beta_method,
+            orthogonality_restart=0.99,
+            descent_safeguard=1e-12,
+            line_search=phx.optim.StrongWolfeLineSearch(
+                curvature=1e-3,
+                maximum_steps=60,
+            ),
+        )
+        parameters = jnp.array([0.25, 1.0])
+        state = method.prepare_state(objective, parameters)
+        next_parameters, next_state, _ = method.step(
+            objective,
+            parameters,
+            state,
+            termination=None,
+        )
 
-    assert bool(next_state.metrics.accepted)
-    assert not bool(next_state.metrics.direction_fallback)
-    assert not jnp.allclose(new_gradient, old_gradient)
-    assert jnp.abs(expected_beta) > 1e-8
-    assert jnp.allclose(next_state.direction, expected_direction, rtol=2e-5)
-    assert not jnp.allclose(next_parameters, parameters)
+        old_gradient = state.gradient
+        new_gradient = next_state.gradient
+        difference = new_gradient - old_gradient
+        new_squared = jnp.vdot(new_gradient, new_gradient).real
+        old_squared = jnp.vdot(old_gradient, old_gradient).real
+        numerator = jnp.vdot(new_gradient, difference).real
+        denominator = jnp.vdot(state.direction, difference).real
+        if beta_method == "fletcher-reeves":
+            expected_beta = new_squared / old_squared
+        elif beta_method == "polak-ribiere+":
+            expected_beta = jnp.maximum(0.0, numerator / old_squared)
+        elif beta_method == "hestenes-stiefel+":
+            expected_beta = jnp.maximum(0.0, numerator / denominator)
+        else:
+            expected_beta = new_squared / denominator
+        expected_direction = -new_gradient + expected_beta * state.direction
+
+        assert bool(next_state.metrics.accepted)
+        assert not bool(next_state.metrics.direction_fallback)
+        assert not jnp.allclose(new_gradient, old_gradient)
+        assert jnp.abs(expected_beta) > 1e-8
+        assert jnp.allclose(next_state.direction, expected_direction, rtol=2e-5)
+        assert not jnp.allclose(next_parameters, parameters)
 
 
 def test_nonlinear_conjugate_gradient_forced_restart_uses_steepest_descent() -> None:
@@ -168,7 +164,7 @@ def test_nonlinear_conjugate_gradient_forced_restart_uses_steepest_descent() -> 
     assert jnp.allclose(next_state.direction, -next_state.gradient)
 
 
-def test_builtin_proximal_functionals_have_exact_observable_maps() -> None:
+def test_optimization_extensions_scenario_1() -> None:
     vector = {"x": jnp.array([-2.0, -0.25, 3.0])}
     assert jnp.allclose(
         phx.optim.L1Functional(1.0).proximal(vector, 0.5)["x"],
@@ -213,66 +209,6 @@ def test_builtin_proximal_functionals_have_exact_observable_maps() -> None:
         atol=1e-6,
     )
     assert jnp.allclose(nuclear.value(matrix), 2.5)
-
-
-@pytest.mark.parametrize(
-    "method",
-    [
-        phx.optim.ProximalGradient(),
-        phx.optim.AcceleratedProximalGradient(),
-        phx.optim.ProximalNewton(inner_steps=30),
-    ],
-)
-def test_proximal_methods_report_composite_stationarity(method: Any) -> None:
-    target = jnp.array([2.0, -1.0, 0.1])
-
-    def smooth(parameters: Any, args: Any) -> Any:
-        del args
-        return 0.5 * jnp.vdot(parameters - target, parameters - target).real
-
-    problem = phx.optim.ProximalProblem(
-        smooth,
-        phx.optim.L1Functional(0.25),
-        problem_id="lasso-quadratic",
-    )
-    result = phx.optim.proximal_minimize(
-        problem,
-        jnp.zeros_like(target),
-        method=method,
-        termination=_termination(steps=200, evaluations=5000, tolerance=2e-5),
-    )
-
-    expected = jnp.sign(target) * jnp.maximum(jnp.abs(target) - 0.25, 0.0)
-    assert bool(result.successful)
-    assert jnp.allclose(result.parameters, expected, atol=2e-4)
-    assert result.composite_stationarity <= 2e-5
-    assert jnp.allclose(
-        result.composite_stationarity,
-        result.diagnostics.final_optimality_norm,
-    )
-
-
-def test_finite_difference_gauss_newton_works_with_stopped_residual_derivatives() -> None:
-    def residual(parameters: Any, args: Any) -> Any:
-        del args
-        return jax.lax.stop_gradient(parameters * parameters - 4.0)
-
-    result = phx.optim.least_squares(
-        residual,
-        jnp.array([3.0]),
-        method=phx.optim.FiniteDifferenceGaussNewton(),
-        termination=_termination(steps=50, evaluations=1000, tolerance=2e-4),
-    )
-
-    assert bool(result.successful)
-    assert jnp.allclose(result.parameters, jnp.array([2.0]), atol=2e-3)
-    assert result.diagnostics.jvp_evaluations == 0
-    assert result.diagnostics.vjp_evaluations == 0
-    assert result.diagnostics.jacobian_evaluations >= 1
-    assert not result.provenance.implicit_differentiation
-
-
-def test_filter_and_soc_accept_full_step_rejected_by_plain_merit_model() -> None:
     filter_policy = phx.optim.FilterGlobalization(
         objective_margin=0.9,
         violation_margin=1e-4,
@@ -329,9 +265,97 @@ def test_filter_and_soc_accept_full_step_rejected_by_plain_merit_model() -> None
         result.diagnostics.final_step_norm,
         jnp.linalg.norm(result.parameters - jnp.array([0.0, 1.0])),
     )
+    inactive = phx.optim.NonlinearConstraint(
+        lambda parameters, args: parameters,
+        lower=jnp.array([-100.0]),
+        upper=jnp.array([100.0]),
+        constraint_id="inactive-interval",
+    )
+    problem = phx.optim.MinimizationProblem(
+        lambda parameters, args: jnp.sum(parameters**4),
+        constraints=(inactive,),
+    )
+    initial = jnp.array([1.0])
+    result = phx.optim.minimize(
+        problem,
+        initial,
+        method=phx.optim.SQP(
+            filter_globalization=phx.optim.FilterGlobalization(),
+            hessian_scale=1.0,
+        ),
+        termination=_termination(steps=1, evaluations=100, tolerance=1e-12),
+    )
+
+    assert result.diagnostics.accepted_steps == 1
+    assert result.diagnostics.accepted_step_size < 1.0
+    assert result.objective < 1.0
+    result = phx.optim.least_squares(
+        lambda parameters, args: parameters - 1.0,
+        jnp.array([3.0, -2.0]),
+        method=phx.optim.FiniteDifferenceGaussNewton(),
+        termination=_termination(steps=5, evaluations=16, tolerance=1e-12),
+    )
+
+    assert result.status == int(phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert result.diagnostics.residual_evaluations == 16
+    assert result.diagnostics.globalization_evaluations == 1
 
 
-def test_predictor_corrector_reports_all_kkt_residuals() -> None:
+def test_proximal_methods_report_composite_stationarity() -> None:
+    for method in [
+        phx.optim.ProximalGradient(),
+        phx.optim.AcceleratedProximalGradient(),
+        phx.optim.ProximalNewton(inner_steps=30),
+    ]:
+        target = jnp.array([2.0, -1.0, 0.1])
+
+        def smooth(parameters: Any, args: Any) -> Any:
+            del args
+            return 0.5 * jnp.vdot(parameters - target, parameters - target).real
+
+        problem = phx.optim.ProximalProblem(
+            smooth,
+            phx.optim.L1Functional(0.25),
+            problem_id="lasso-quadratic",
+        )
+        result = phx.optim.proximal_minimize(
+            problem,
+            jnp.zeros_like(target),
+            method=method,
+            termination=_termination(steps=200, evaluations=5000, tolerance=2e-5),
+        )
+
+        expected = jnp.sign(target) * jnp.maximum(jnp.abs(target) - 0.25, 0.0)
+        assert bool(result.successful)
+        assert jnp.allclose(result.parameters, expected, atol=2e-4)
+        assert result.composite_stationarity <= 2e-5
+        assert jnp.allclose(
+            result.composite_stationarity,
+            result.diagnostics.final_optimality_norm,
+        )
+
+
+def test_finite_difference_gauss_newton_works_with_stopped_residual_derivatives() -> None:
+    def residual(parameters: Any, args: Any) -> Any:
+        del args
+        return jax.lax.stop_gradient(parameters * parameters - 4.0)
+
+    result = phx.optim.least_squares(
+        residual,
+        jnp.array([3.0]),
+        method=phx.optim.FiniteDifferenceGaussNewton(),
+        termination=_termination(steps=50, evaluations=1000, tolerance=2e-4),
+    )
+
+    assert bool(result.successful)
+    assert jnp.allclose(result.parameters, jnp.array([2.0]), atol=2e-3)
+    assert result.diagnostics.jvp_evaluations == 0
+    assert result.diagnostics.vjp_evaluations == 0
+    assert result.diagnostics.jacobian_evaluations >= 1
+    assert not result.provenance.implicit_differentiation
+
+
+def test_predictor_corrector_contracts() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda parameters, args: parameters,
         lower=jnp.array([1.0]),
@@ -371,9 +395,6 @@ def test_predictor_corrector_reports_all_kkt_residuals() -> None:
     )
     assert result.diagnostics.linear_solves >= 2
     assert result.provenance.globalization == "mehrotra-predictor-corrector-residual"
-
-
-def test_predictor_corrector_rejects_nonfinite_and_infeasible_inputs_explicitly() -> None:
     finite_constraint = phx.optim.NonlinearConstraint(
         lambda parameters, args: parameters,
         lower=jnp.array([0.0]),
@@ -420,6 +441,88 @@ def test_predictor_corrector_rejects_nonfinite_and_infeasible_inputs_explicitly(
         termination=_termination(steps=10, evaluations=500),
     )
     assert infeasible.status == int(phx.optim.OptimizationStatus.INFEASIBLE)
+    equality = phx.optim.NonlinearConstraint(
+        lambda parameters, args: parameters,
+        lower=jnp.array([0.0]),
+        upper=jnp.array([0.0]),
+    )
+    problem = phx.optim.MinimizationProblem(
+        lambda parameters, args: jnp.sum(parameters**2),
+        constraints=(equality,),
+    )
+
+    with pytest.raises(ValueError, match="requires at least one inequality"):
+        phx.optim.minimize(
+            problem,
+            jnp.array([0.0]),
+            method=phx.optim.PrimalDualInteriorPoint(
+                mode="matrix-free-predictor-corrector",
+            ),
+            termination=_termination(steps=2, evaluations=100),
+        )
+    dtype = jnp.asarray(0.0).dtype
+    kkt_space = phx.linalg.BlockSpace(
+        (
+            phx.linalg.ArraySpace((1,), dtype=dtype),
+            phx.linalg.ArraySpace((0,), dtype=dtype),
+        )
+    )
+    invalid_inverse = phx.linalg.FunctionLinearOperator(
+        lambda blocks: (
+            jnp.full_like(blocks[0], jnp.nan),
+            jnp.full_like(blocks[1], jnp.nan),
+        ),
+        source=kkt_space,
+        target=kkt_space,
+    )
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.MINRES(),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.OperatorPreconditioner(
+                invalid_inverse,
+                positive_definite=True,
+            )
+        ),
+        differentiation=phx.linalg.DifferentiationPolicy("none"),
+    )
+    problem = phx.optim.MinimizationProblem(
+        lambda parameters, args: jnp.sum((parameters - 2.0) ** 2),
+        bounds=phx.optim.Bounds(0.0, jnp.inf),
+    )
+    result = phx.optim.minimize(
+        problem,
+        jnp.array([1.0]),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-predictor-corrector",
+            linear_policy=policy,
+        ),
+        termination=_termination(steps=2, evaluations=100),
+    )
+
+    assert result.status == int(phx.optim.OptimizationStatus.LINEAR_SOLVE_FAILED)
+    assert result.status != int(phx.optim.OptimizationStatus.INFEASIBLE)
+    curved = phx.optim.NonlinearConstraint(
+        lambda parameters, args: parameters**2,
+        lower=jnp.array([0.25]),
+        upper=jnp.array([jnp.inf]),
+    )
+    problem = phx.optim.MinimizationProblem(
+        lambda parameters, args: 0.5 * jnp.sum((parameters - 2.0) ** 2),
+        constraints=(curved,),
+    )
+    result = phx.optim.minimize(
+        problem,
+        jnp.array([1.0]),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-predictor-corrector",
+            sufficient_decrease=0.999999,
+            maximum_line_search_steps=1,
+        ),
+        termination=_termination(steps=2, evaluations=100),
+    )
+
+    assert result.status == int(phx.optim.OptimizationStatus.LINE_SEARCH_FAILED)
+    assert result.status != int(phx.optim.OptimizationStatus.INFEASIBLE)
 
 
 def test_constrained_solver_accepts_traced_constraint_and_parameter_bounds() -> None:
@@ -531,46 +634,6 @@ def test_jitted_dynamic_upper_excludes_known_infinite_lower_from_primal_dual() -
     assert jnp.isfinite(result.diagnostics.complementarity)
 
 
-def test_filter_switches_to_armijo_at_feasible_point() -> None:
-    inactive = phx.optim.NonlinearConstraint(
-        lambda parameters, args: parameters,
-        lower=jnp.array([-100.0]),
-        upper=jnp.array([100.0]),
-        constraint_id="inactive-interval",
-    )
-    problem = phx.optim.MinimizationProblem(
-        lambda parameters, args: jnp.sum(parameters**4),
-        constraints=(inactive,),
-    )
-    initial = jnp.array([1.0])
-    result = phx.optim.minimize(
-        problem,
-        initial,
-        method=phx.optim.SQP(
-            filter_globalization=phx.optim.FilterGlobalization(),
-            hessian_scale=1.0,
-        ),
-        termination=_termination(steps=1, evaluations=100, tolerance=1e-12),
-    )
-
-    assert result.diagnostics.accepted_steps == 1
-    assert result.diagnostics.accepted_step_size < 1.0
-    assert result.objective < 1.0
-
-
-def test_finite_difference_gauss_newton_honors_exact_remaining_budget() -> None:
-    result = phx.optim.least_squares(
-        lambda parameters, args: parameters - 1.0,
-        jnp.array([3.0, -2.0]),
-        method=phx.optim.FiniteDifferenceGaussNewton(),
-        termination=_termination(steps=5, evaluations=16, tolerance=1e-12),
-    )
-
-    assert result.status == int(phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
-    assert result.diagnostics.residual_evaluations == 16
-    assert result.diagnostics.globalization_evaluations == 1
-
-
 def test_monotone_fista_recomputes_worse_extrapolated_candidate() -> None:
     problem = phx.optim.ProximalProblem(
         lambda parameters, args: 0.5 * jnp.sum(parameters**2),
@@ -597,94 +660,3 @@ def test_monotone_fista_recomputes_worse_extrapolated_candidate() -> None:
     assert next_state.objective <= state.objective
     assert jnp.allclose(next_parameters, jnp.array([0.5]))
     assert next_state.objective_evaluations - state.objective_evaluations == 4
-
-
-def test_predictor_corrector_rejects_equality_only_problem() -> None:
-    equality = phx.optim.NonlinearConstraint(
-        lambda parameters, args: parameters,
-        lower=jnp.array([0.0]),
-        upper=jnp.array([0.0]),
-    )
-    problem = phx.optim.MinimizationProblem(
-        lambda parameters, args: jnp.sum(parameters**2),
-        constraints=(equality,),
-    )
-
-    with pytest.raises(ValueError, match="requires at least one inequality"):
-        phx.optim.minimize(
-            problem,
-            jnp.array([0.0]),
-            method=phx.optim.PrimalDualInteriorPoint(
-                mode="matrix-free-predictor-corrector",
-            ),
-            termination=_termination(steps=2, evaluations=100),
-        )
-
-
-def test_predictor_corrector_reports_unusable_kkt_direction() -> None:
-    dtype = jnp.asarray(0.0).dtype
-    kkt_space = phx.linalg.BlockSpace(
-        (
-            phx.linalg.ArraySpace((1,), dtype=dtype),
-            phx.linalg.ArraySpace((0,), dtype=dtype),
-        )
-    )
-    invalid_inverse = phx.linalg.FunctionLinearOperator(
-        lambda blocks: (
-            jnp.full_like(blocks[0], jnp.nan),
-            jnp.full_like(blocks[1], jnp.nan),
-        ),
-        source=kkt_space,
-        target=kkt_space,
-    )
-    policy = phx.linalg.LinearSolvePolicy(
-        phx.linalg.MINRES(),
-        preconditioning=phx.linalg.PreconditioningPolicy(
-            phx.linalg.OperatorPreconditioner(
-                invalid_inverse,
-                positive_definite=True,
-            )
-        ),
-        differentiation=phx.linalg.DifferentiationPolicy("none"),
-    )
-    problem = phx.optim.MinimizationProblem(
-        lambda parameters, args: jnp.sum((parameters - 2.0) ** 2),
-        bounds=phx.optim.Bounds(0.0, jnp.inf),
-    )
-    result = phx.optim.minimize(
-        problem,
-        jnp.array([1.0]),
-        method=phx.optim.PrimalDualInteriorPoint(
-            mode="matrix-free-predictor-corrector",
-            linear_policy=policy,
-        ),
-        termination=_termination(steps=2, evaluations=100),
-    )
-
-    assert result.status == int(phx.optim.OptimizationStatus.LINEAR_SOLVE_FAILED)
-    assert result.status != int(phx.optim.OptimizationStatus.INFEASIBLE)
-
-
-def test_predictor_corrector_reports_exhausted_line_search() -> None:
-    curved = phx.optim.NonlinearConstraint(
-        lambda parameters, args: parameters**2,
-        lower=jnp.array([0.25]),
-        upper=jnp.array([jnp.inf]),
-    )
-    problem = phx.optim.MinimizationProblem(
-        lambda parameters, args: 0.5 * jnp.sum((parameters - 2.0) ** 2),
-        constraints=(curved,),
-    )
-    result = phx.optim.minimize(
-        problem,
-        jnp.array([1.0]),
-        method=phx.optim.PrimalDualInteriorPoint(
-            mode="matrix-free-predictor-corrector",
-            sufficient_decrease=0.999999,
-            maximum_line_search_steps=1,
-        ),
-        termination=_termination(steps=2, evaluations=100),
-    )
-
-    assert result.status == int(phx.optim.OptimizationStatus.LINE_SEARCH_FAILED)
-    assert result.status != int(phx.optim.OptimizationStatus.INFEASIBLE)

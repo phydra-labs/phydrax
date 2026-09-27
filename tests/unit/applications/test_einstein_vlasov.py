@@ -177,7 +177,7 @@ def _constraint_solver(*, converged: Any = True) -> Any:
     return solve
 
 
-def test_minkowski_and_homogeneous_flrw_geodesic_rates() -> None:
+def test_einstein_vlasov_scenario_1() -> None:
     momentum = jnp.asarray(((0.3, -0.2, 0.1), (0.0, 0.4, 0.0)))
     mass = jnp.asarray((1.0, 2.0))
     identity = jnp.broadcast_to(jnp.eye(3), (2, 3, 3))
@@ -208,9 +208,6 @@ def test_minkowski_and_homogeneous_flrw_geodesic_rates() -> None:
         momentum / (scale_factor**2 * flrw_energy[:, None]),
     )
     np.testing.assert_allclose(flrw.covariant_momentum_rate, 0.0)
-
-
-def test_single_shell_source_is_spherical_and_mass_shell_admissible() -> None:
     plan, _, particles, frame = _fixture(weights=jnp.full((6,), 0.25))
     deposited = plan.stress.deposit(particles, frame)
 
@@ -228,9 +225,6 @@ def test_single_shell_source_is_spherical_and_mass_shell_admissible() -> None:
         atol=1.0e-7,
     )
     assert bool(deposited.mass_shell_valid)
-
-
-def test_manufactured_source_enters_hamiltonian_and_momentum_constraints() -> None:
     weights = jnp.full((6,), 2.0e-6)
     plan, z4c, particles, frame = _fixture(weights=weights)
     deposited = plan.stress.deposit(particles, frame)
@@ -254,15 +248,12 @@ def test_manufactured_source_enters_hamiltonian_and_momentum_constraints() -> No
     assert float(jnp.max(jnp.abs(evaluated.constraints.momentum))) > 0.0
 
 
-def test_initial_data_requires_constraint_solve_evidence() -> None:
+def test_einstein_vlasov_scenario_2() -> None:
     plan, z4c, particles, _ = _fixture()
     refused = plan.admit_initial_data(z4c, particles, _constraint_solver(converged=False))
     assert not bool(refused.evidence.admitted)
     with pytest.raises(ValueError, match="constraint solve"):
         plan.initialize(z4c, particles, _constraint_solver(converged=False))
-
-
-def test_z4c_particle_step_recomputes_endpoint_source_and_commits_atomically() -> None:
     plan, z4c, particles, _ = _fixture()
     state = plan.initialize(z4c, particles, _constraint_solver())
     result = plan.advance(state)
@@ -282,9 +273,6 @@ def test_z4c_particle_step_recomputes_endpoint_source_and_commits_atomically() -
         np.asarray(state.particles.positions),
     )
     assert bool(result.evidence.qualified)
-
-
-def test_strong_field_refusal_rolls_back_geometry_and_particle_state() -> None:
     plan, z4c, particles, _ = _fixture(minimum_lapse=0.9)
     admitted = plan.initialize(z4c, particles, _constraint_solver())
     low_lapse = admitted.z4c.with_values(admitted.z4c.values.at[18].set(0.5))

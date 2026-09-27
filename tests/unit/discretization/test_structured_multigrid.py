@@ -19,7 +19,7 @@ def _cell_grid(points: Any, *, dimension: Any = 1) -> Any:
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
 
 
-def test_cell_restriction_is_conservative_and_both_transfers_preserve_constants() -> None:
+def test_structured_multigrid_scenario_1() -> None:
     fine = _cell_grid(16, dimension=2)
     coarse = _cell_grid(8, dimension=2)
     transfer = phx.discretization.StructuredTransferPlan(fine, coarse)
@@ -41,9 +41,6 @@ def test_cell_restriction_is_conservative_and_both_transfers_preserve_constants(
         atol=2e-12,
     )
     np.testing.assert_allclose(prolonged_constant, 1.0, rtol=0.0, atol=1e-14)
-
-
-def test_nodal_transfer_injects_nested_nodes_and_linearly_interpolates() -> None:
     fine = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(17),),
         axis_names=("x",),
@@ -74,6 +71,23 @@ def test_nodal_transfer_injects_nested_nodes_and_linearly_interpolates() -> None
         rtol=0.0,
         atol=2e-14,
     )
+    factors = []
+    for points in (32, 64, 128):
+        multigrid = _prepared_multigrid(points)
+        grid = multigrid.grids[0]
+        exact = jnp.sin(jnp.pi * grid.axes[0].nodes)
+        rhs = multigrid.level_operators[0].mv(exact)
+
+        result = multigrid.solve(rhs, cycles=7, tolerance=1e-7)
+        factors.append(
+            float((result.residual_norms[-1] / result.residual_norms[0]) ** (1 / 7))
+        )
+
+        assert result.residual_norms[-1] < 2e-5 * result.residual_norms[0]
+        np.testing.assert_allclose(result.value, exact, rtol=2e-6, atol=2e-7)
+
+    assert max(factors) - min(factors) < 0.04
+    assert max(factors) < 0.2
 
 
 def _prepared_multigrid(
@@ -94,29 +108,7 @@ def _prepared_multigrid(
     ).prepare()
 
 
-def test_structured_v_cycle_has_resolution_independent_convergence_factor() -> None:
-    factors = []
-    for points in (32, 64, 128):
-        multigrid = _prepared_multigrid(points)
-        grid = multigrid.grids[0]
-        exact = jnp.sin(jnp.pi * grid.axes[0].nodes)
-        rhs = multigrid.level_operators[0].mv(exact)
-
-        result = multigrid.solve(rhs, cycles=7, tolerance=1e-7)
-        factors.append(
-            float((result.residual_norms[-1] / result.residual_norms[0]) ** (1 / 7))
-        )
-
-        assert result.residual_norms[-1] < 2e-5 * result.residual_norms[0]
-        np.testing.assert_allclose(result.value, exact, rtol=2e-6, atol=2e-7)
-
-    assert max(factors) - min(factors) < 0.04
-    assert max(factors) < 0.2
-
-
-def test_variable_coefficient_two_dimensional_hierarchy_is_jittable_and_contracts_residual() -> (
-    None
-):
+def test_structured_multigrid_scenario_2() -> None:
     grid = _cell_grid(32, dimension=2)
     x = grid.axes[0].nodes[:, None]
     coefficient = jnp.where(x < 0.5, 1.0, 20.0)
@@ -142,9 +134,6 @@ def test_variable_coefficient_two_dimensional_hierarchy_is_jittable_and_contract
 
     assert len(multigrid.grids) >= 3
     assert after < 0.35 * before
-
-
-def test_all_neumann_coarse_pseudoinverse_handles_compatible_nullspace_rhs() -> None:
     grid = _cell_grid(64)
     diffusion = phx.discretization.ConservativeDiffusionPlan(grid).prepare(1.0)
     multigrid = phx.discretization.StructuredMultigridPlan(

@@ -43,9 +43,80 @@ INTENSITY = derived_unit("Jy/sr", ((JANSKY, 1), (STERADIAN, -1)))
 FREQUENCY = 230.0e9
 
 
-def test_jansky_has_exact_physical_si_contract() -> None:
+def test_gr_products_scenario_1() -> None:
     assert JANSKY.dimension == MASS / TIME**2
     assert JANSKY.scale_to_reference == Fraction(1, 10**26)
+    position = np.asarray([0.125, -0.25])
+    solid_angle = np.asarray([[0.2]])
+    flux = 3.5
+    stokes = np.zeros((4, 1, 1))
+    stokes[0, 0, 0] = flux / solid_angle[0, 0]
+    stokes[1, 0, 0] = 0.5 / solid_angle[0, 0]
+    image = _image(stokes, position.reshape((1, 1, 2)), solid_angle)
+    uv = np.asarray([[0.0, 0.0], [1.5, -0.5]])
+    sampling = _sampling(uv, [[0, 1], [0, 1]], ("A", "B"))
+
+    result = direct_stokes_visibilities(image, sampling)
+
+    phase = np.exp(-2j * np.pi * (uv @ position))
+    np.testing.assert_allclose(result.visibilities[0], flux * phase, rtol=2.0e-6)
+    np.testing.assert_allclose(result.visibilities[1], 0.5 * phase, rtol=2.0e-6)
+    np.testing.assert_array_equal(result.visibilities[2:], 0.0)
+    assert result.parent_product_ids == (image.content_id,)
+    sigma = 0.02
+    flux = 2.75
+    axis = np.linspace(-0.2, 0.2, 201)
+    spacing = axis[1] - axis[0]
+    x_coordinate, y_coordinate = np.meshgrid(axis, axis)
+    radius_squared = x_coordinate**2 + y_coordinate**2
+    intensity = flux / (2.0 * np.pi * sigma**2) * np.exp(-0.5 * radius_squared / sigma**2)
+    stokes = np.zeros((4, axis.size, axis.size))
+    stokes[0] = intensity
+    coordinates = np.stack((x_coordinate, y_coordinate), axis=-1)
+    solid_angle = np.full(intensity.shape, spacing**2)
+    image = _image(stokes, coordinates, solid_angle)
+    uv = np.asarray([[0.0, 0.0], [2.0, -1.5], [-3.0, 4.0]])
+    sampling = _sampling(uv, [[0, 1], [0, 1], [0, 1]], ("A", "B"))
+
+    result = direct_stokes_visibilities(image, sampling)
+
+    expected = flux * np.exp(-2.0 * np.pi**2 * sigma**2 * np.sum(uv**2, axis=1))
+    np.testing.assert_allclose(result.total_intensity.real, expected, rtol=2.0e-5)
+    np.testing.assert_allclose(result.total_intensity.imag, 0.0, atol=1.0e-6)
+    data, topology = _closure_fixture()
+    result = closure_products(data, topology)
+    intensity = np.asarray(data.total_intensity)
+    expected_bispectrum = intensity[0] * intensity[1] * np.conj(intensity[2])
+    expected_amplitude = abs(intensity[0] * intensity[3]) / abs(
+        intensity[2] * intensity[4]
+    )
+    np.testing.assert_allclose(result.bispectrum, [expected_bispectrum], rtol=2.0e-6)
+    np.testing.assert_allclose(result.closure_phase, [np.angle(expected_bispectrum)])
+    np.testing.assert_allclose(result.closure_amplitude, [expected_amplitude])
+    np.testing.assert_allclose(result.log_closure_amplitude, [np.log(expected_amplitude)])
+
+    gains = np.asarray(
+        [
+            1.2 * np.exp(0.7j),
+            0.8 * np.exp(-0.5j),
+            1.7 * np.exp(0.1j),
+            0.6 * np.exp(-0.8j),
+        ]
+    )
+    transformed = closure_products(apply_station_gains(data, gains), topology)
+    np.testing.assert_allclose(
+        transformed.closure_phase, result.closure_phase, atol=2.0e-6
+    )
+    np.testing.assert_allclose(
+        transformed.closure_amplitude, result.closure_amplitude, rtol=2.0e-6
+    )
+    np.testing.assert_allclose(
+        transformed.log_closure_amplitude,
+        result.log_closure_amplitude,
+        atol=2.0e-6,
+    )
+    assert bool(result.phase_physically_valid[0])
+    assert bool(result.amplitude_physically_valid[0])
 
 
 def _image(
@@ -82,49 +153,6 @@ def _image(
 
 def _sampling(uv: Any, pairs: Any, station_ids: Any) -> Any:
     return VisibilitySampling(uv, pairs, FREQUENCY, station_ids)
-
-
-def test_direct_point_source_has_exact_flux_and_fourier_phase() -> None:
-    position = np.asarray([0.125, -0.25])
-    solid_angle = np.asarray([[0.2]])
-    flux = 3.5
-    stokes = np.zeros((4, 1, 1))
-    stokes[0, 0, 0] = flux / solid_angle[0, 0]
-    stokes[1, 0, 0] = 0.5 / solid_angle[0, 0]
-    image = _image(stokes, position.reshape((1, 1, 2)), solid_angle)
-    uv = np.asarray([[0.0, 0.0], [1.5, -0.5]])
-    sampling = _sampling(uv, [[0, 1], [0, 1]], ("A", "B"))
-
-    result = direct_stokes_visibilities(image, sampling)
-
-    phase = np.exp(-2j * np.pi * (uv @ position))
-    np.testing.assert_allclose(result.visibilities[0], flux * phase, rtol=2.0e-6)
-    np.testing.assert_allclose(result.visibilities[1], 0.5 * phase, rtol=2.0e-6)
-    np.testing.assert_array_equal(result.visibilities[2:], 0.0)
-    assert result.parent_product_ids == (image.content_id,)
-
-
-def test_direct_centered_gaussian_matches_analytic_fourier_transform() -> None:
-    sigma = 0.02
-    flux = 2.75
-    axis = np.linspace(-0.2, 0.2, 201)
-    spacing = axis[1] - axis[0]
-    x_coordinate, y_coordinate = np.meshgrid(axis, axis)
-    radius_squared = x_coordinate**2 + y_coordinate**2
-    intensity = flux / (2.0 * np.pi * sigma**2) * np.exp(-0.5 * radius_squared / sigma**2)
-    stokes = np.zeros((4, axis.size, axis.size))
-    stokes[0] = intensity
-    coordinates = np.stack((x_coordinate, y_coordinate), axis=-1)
-    solid_angle = np.full(intensity.shape, spacing**2)
-    image = _image(stokes, coordinates, solid_angle)
-    uv = np.asarray([[0.0, 0.0], [2.0, -1.5], [-3.0, 4.0]])
-    sampling = _sampling(uv, [[0, 1], [0, 1], [0, 1]], ("A", "B"))
-
-    result = direct_stokes_visibilities(image, sampling)
-
-    expected = flux * np.exp(-2.0 * np.pi**2 * sigma**2 * np.sum(uv**2, axis=1))
-    np.testing.assert_allclose(result.total_intensity.real, expected, rtol=2.0e-5)
-    np.testing.assert_allclose(result.total_intensity.imag, 0.0, atol=1.0e-6)
 
 
 def _closure_fixture() -> Any:
@@ -164,44 +192,7 @@ def _closure_fixture() -> Any:
     return data, topology
 
 
-def test_bispectrum_and_closures_are_exact_and_station_gain_invariant() -> None:
-    data, topology = _closure_fixture()
-    result = closure_products(data, topology)
-    intensity = np.asarray(data.total_intensity)
-    expected_bispectrum = intensity[0] * intensity[1] * np.conj(intensity[2])
-    expected_amplitude = abs(intensity[0] * intensity[3]) / abs(
-        intensity[2] * intensity[4]
-    )
-    np.testing.assert_allclose(result.bispectrum, [expected_bispectrum], rtol=2.0e-6)
-    np.testing.assert_allclose(result.closure_phase, [np.angle(expected_bispectrum)])
-    np.testing.assert_allclose(result.closure_amplitude, [expected_amplitude])
-    np.testing.assert_allclose(result.log_closure_amplitude, [np.log(expected_amplitude)])
-
-    gains = np.asarray(
-        [
-            1.2 * np.exp(0.7j),
-            0.8 * np.exp(-0.5j),
-            1.7 * np.exp(0.1j),
-            0.6 * np.exp(-0.8j),
-        ]
-    )
-    transformed = closure_products(apply_station_gains(data, gains), topology)
-    np.testing.assert_allclose(
-        transformed.closure_phase, result.closure_phase, atol=2.0e-6
-    )
-    np.testing.assert_allclose(
-        transformed.closure_amplitude, result.closure_amplitude, rtol=2.0e-6
-    )
-    np.testing.assert_allclose(
-        transformed.log_closure_amplitude,
-        result.log_closure_amplitude,
-        atol=2.0e-6,
-    )
-    assert bool(result.phase_physically_valid[0])
-    assert bool(result.amplitude_physically_valid[0])
-
-
-def test_zero_visibility_has_explicit_safe_failure_status() -> None:
+def test_gr_products_scenario_2() -> None:
     data, topology = _closure_fixture()
     values = np.asarray(data.visibilities).copy()
     values[0, 0] = 0.0
@@ -224,9 +215,6 @@ def test_zero_visibility_has_explicit_safe_failure_status() -> None:
     np.testing.assert_array_equal(result.closure_amplitude, 0.0)
     np.testing.assert_array_equal(result.log_closure_amplitude, 0.0)
     assert bool(jnp.all(jnp.isfinite(result.bispectrum)))
-
-
-def test_polarization_products_use_physical_stokes_correlations_and_safe_ratios() -> None:
     sampling = _sampling([[0.0, 0.0]], [[0, 1]], ("A", "B"))
     values = np.asarray([[2.0], [0.5], [0.25], [0.1]], dtype="complex128")
     data = StokesVisibilityData(
@@ -261,9 +249,6 @@ def test_polarization_products_use_physical_stokes_correlations_and_safe_ratios(
     assert int(undefined.status[0]) == int(InterferometryStatus.ZERO_AMPLITUDE)
     np.testing.assert_array_equal(undefined.fractional_linear_polarization, 0.0)
     np.testing.assert_array_equal(undefined.fractional_circular_polarization, 0.0)
-
-
-def test_content_identities_bind_units_provenance_and_fixed_topology() -> None:
     coordinates = np.zeros((1, 1, 2))
     stokes = np.asarray([[[1.0]], [[0.0]], [[0.0]], [[0.0]]])
     image = _image(stokes, coordinates, np.ones((1, 1)))

@@ -12,7 +12,7 @@ import pytest
 from phydrax.ml import metrics
 
 
-def test_hard_calibration_bins_return_auditable_statistics() -> None:
+def test_calibration_probabilistic_scenario_1() -> None:
     target = jnp.array([0, 0, 1, 1])
     probability = jnp.array([0.1, 0.2, 0.8, 0.9])
 
@@ -26,9 +26,44 @@ def test_hard_calibration_bins_return_auditable_statistics() -> None:
     assert jnp.allclose(expected.empirical_frequency, jnp.array([0.0, 1.0]))
     assert jnp.allclose(expected.value, 0.15)
     assert jnp.allclose(maximum.value, 0.15)
+    target = jnp.array([0, 1])
+    probability = jnp.array([0.1, 0.6])
+    hard_gradient = jax.grad(
+        lambda values: (
+            metrics.expected_calibration_error(target, values, num_bins=2).value
+        )
+    )(probability)
+    smooth_gradient = jax.grad(
+        lambda values: (
+            metrics.smooth_maximum_calibration_error(
+                target,
+                values,
+                num_bins=2,
+                bin_temperature=0.2,
+                maximum_temperature=0.1,
+            ).value
+        )
+    )(probability)
 
+    assert jnp.all(jnp.isfinite(hard_gradient))
+    assert jnp.any(jnp.abs(hard_gradient) > 0.0)
+    assert jnp.all(jnp.isfinite(smooth_gradient))
+    assert jnp.any(jnp.abs(smooth_gradient) > 0.0)
 
-def test_smooth_calibration_surrogates_are_distinct_and_differentiable() -> None:
+    empty = metrics.expected_calibration_error(
+        target, probability, mask=jnp.zeros(2, dtype="bool")
+    )
+    single_class = metrics.expected_calibration_error(
+        jnp.zeros(2, dtype=jnp.int32), probability, num_bins=2
+    )
+    assert int(empty.status) == metrics.METRIC_EMPTY
+    assert bool(single_class.valid)
+    with pytest.raises(TypeError, match="complex"):
+        metrics.expected_calibration_error(
+            target,
+            probability.astype(jnp.complex64),
+            num_bins=2,
+        )
     target = jnp.array([0, 0, 1, 1])
     probability = jnp.array([0.1, 0.2, 0.8, 0.9])
     hard = metrics.expected_calibration_error(target, probability, num_bins=2)
@@ -63,92 +98,11 @@ def test_smooth_calibration_surrogates_are_distinct_and_differentiable() -> None
     assert jnp.isfinite(smooth_maximum.value)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.any(jnp.abs(gradient) > 0.0)
-
-
-def test_calibration_invalid_probability_is_explicit() -> None:
     result = metrics.expected_calibration_error(
         jnp.array([0, 1]), jnp.array([0.1, 1.2]), num_bins=2
     )
     assert not bool(result.valid)
     assert int(result.status) == metrics.METRIC_INVALID_INPUT
-
-
-def test_gaussian_interval_and_ordered_categorical_scores() -> None:
-    target = jnp.array([0.0, 0.0])
-    mean = jnp.zeros(2)
-    variance = jnp.ones(2)
-
-    negative_log_likelihood = metrics.gaussian_negative_log_likelihood(
-        target, mean, variance
-    )
-    dawid_sebastiani = metrics.dawid_sebastiani_score(target, mean, variance)
-    gaussian_crps = metrics.gaussian_crps(target, mean, jnp.ones(2))
-    interval = metrics.interval_score(target, -jnp.ones(2), jnp.ones(2), alpha=0.1)
-
-    assert jnp.allclose(negative_log_likelihood.value, 0.5 * jnp.log(2.0 * jnp.pi))
-    assert jnp.allclose(dawid_sebastiani.value, 0.0)
-    assert jnp.allclose(gaussian_crps.value, (jnp.sqrt(2.0) - 1.0) / jnp.sqrt(jnp.pi))
-    assert jnp.allclose(interval.value, 2.0)
-
-    labels = jnp.array([0, 2])
-    perfect = jnp.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    ranked = metrics.ranked_probability_score(labels, perfect)
-    spherical = metrics.spherical_score(labels, perfect)
-    assert jnp.allclose(ranked.value, 0.0)
-    assert jnp.allclose(spherical.value, 1.0)
-
-
-def test_empirical_crps_and_energy_score_definitions() -> None:
-    observation = jnp.array([0.0])
-    ensemble = jnp.array([[-1.0, 1.0]])
-    crps = metrics.crps_ensemble(observation, ensemble)
-    smooth_crps = metrics.smooth_crps_ensemble(observation, ensemble, smoothing=0.1)
-
-    vector_observation = jnp.array([[0.0, 0.0]])
-    vector_ensemble = jnp.array([[[-1.0, 1.0], [0.0, 0.0]]])
-    energy = metrics.energy_score(vector_observation, vector_ensemble)
-
-    assert jnp.allclose(crps.value, 0.5)
-    assert float(smooth_crps.value) < float(crps.value)
-    assert jnp.allclose(energy.value, 0.5)
-
-
-def test_probabilistic_scores_jit_and_grad_through_forecasts() -> None:
-    observation = jnp.array([0.0, 0.5])
-    ensemble = jnp.array([[-1.0, 1.0], [0.0, 1.0]])
-
-    compiled = jax.jit(
-        lambda values: (
-            metrics.smooth_crps_ensemble(observation, values, smoothing=0.1).value
-        )
-    )(ensemble)
-    gradient = jax.grad(
-        lambda values: (
-            metrics.smooth_crps_ensemble(observation, values, smoothing=0.1).value
-        )
-    )(ensemble)
-
-    assert jnp.isfinite(compiled)
-    assert jnp.all(jnp.isfinite(gradient))
-    assert jnp.any(jnp.abs(gradient) > 0.0)
-
-
-def test_probabilistic_complex_policy_supports_energy_but_rejects_gaussian() -> None:
-    observation = jnp.array([[0.0 + 0.0j]])
-    ensemble = jnp.array([[[1.0 + 1.0j, -1.0 - 1.0j]]])
-    energy = metrics.energy_score(observation, ensemble)
-    assert bool(energy.valid)
-    assert jnp.isfinite(energy.value)
-
-    with pytest.raises(TypeError, match="complex"):
-        metrics.gaussian_negative_log_likelihood(
-            jnp.array([0.0 + 1.0j]),
-            jnp.array([0.0 + 0.0j]),
-            jnp.ones(1),
-        )
-
-
-def test_calibration_norm_bins_weights_masks_case_axes_and_classwise_score() -> None:
     target = jnp.array([0, 1, 1])
     probability = jnp.array([0.1, 0.6, jnp.nan])
     weight = jnp.array([1.0, 3.0, 9.0])
@@ -242,48 +196,73 @@ def test_calibration_norm_bins_weights_masks_case_axes_and_classwise_score() -> 
     assert jnp.allclose(compiled, mapped)
 
 
-def test_hard_calibration_is_local_while_smooth_calibration_crosses_bins() -> None:
-    target = jnp.array([0, 1])
-    probability = jnp.array([0.1, 0.6])
-    hard_gradient = jax.grad(
-        lambda values: (
-            metrics.expected_calibration_error(target, values, num_bins=2).value
-        )
-    )(probability)
-    smooth_gradient = jax.grad(
-        lambda values: (
-            metrics.smooth_maximum_calibration_error(
-                target,
-                values,
-                num_bins=2,
-                bin_temperature=0.2,
-                maximum_temperature=0.1,
-            ).value
-        )
-    )(probability)
+def test_calibration_probabilistic_scenario_2() -> None:
+    target = jnp.array([0.0, 0.0])
+    mean = jnp.zeros(2)
+    variance = jnp.ones(2)
 
-    assert jnp.all(jnp.isfinite(hard_gradient))
-    assert jnp.any(jnp.abs(hard_gradient) > 0.0)
-    assert jnp.all(jnp.isfinite(smooth_gradient))
-    assert jnp.any(jnp.abs(smooth_gradient) > 0.0)
+    negative_log_likelihood = metrics.gaussian_negative_log_likelihood(
+        target, mean, variance
+    )
+    dawid_sebastiani = metrics.dawid_sebastiani_score(target, mean, variance)
+    gaussian_crps = metrics.gaussian_crps(target, mean, jnp.ones(2))
+    interval = metrics.interval_score(target, -jnp.ones(2), jnp.ones(2), alpha=0.1)
 
-    empty = metrics.expected_calibration_error(
-        target, probability, mask=jnp.zeros(2, dtype="bool")
-    )
-    single_class = metrics.expected_calibration_error(
-        jnp.zeros(2, dtype=jnp.int32), probability, num_bins=2
-    )
-    assert int(empty.status) == metrics.METRIC_EMPTY
-    assert bool(single_class.valid)
+    assert jnp.allclose(negative_log_likelihood.value, 0.5 * jnp.log(2.0 * jnp.pi))
+    assert jnp.allclose(dawid_sebastiani.value, 0.0)
+    assert jnp.allclose(gaussian_crps.value, (jnp.sqrt(2.0) - 1.0) / jnp.sqrt(jnp.pi))
+    assert jnp.allclose(interval.value, 2.0)
+
+    labels = jnp.array([0, 2])
+    perfect = jnp.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    ranked = metrics.ranked_probability_score(labels, perfect)
+    spherical = metrics.spherical_score(labels, perfect)
+    assert jnp.allclose(ranked.value, 0.0)
+    assert jnp.allclose(spherical.value, 1.0)
+    observation = jnp.array([0.0])
+    ensemble = jnp.array([[-1.0, 1.0]])
+    crps = metrics.crps_ensemble(observation, ensemble)
+    smooth_crps = metrics.smooth_crps_ensemble(observation, ensemble, smoothing=0.1)
+
+    vector_observation = jnp.array([[0.0, 0.0]])
+    vector_ensemble = jnp.array([[[-1.0, 1.0], [0.0, 0.0]]])
+    energy = metrics.energy_score(vector_observation, vector_ensemble)
+
+    assert jnp.allclose(crps.value, 0.5)
+    assert float(smooth_crps.value) < float(crps.value)
+    assert jnp.allclose(energy.value, 0.5)
+
+
+def test_probabilistic_contracts() -> None:
+    observation = jnp.array([0.0, 0.5])
+    ensemble = jnp.array([[-1.0, 1.0], [0.0, 1.0]])
+
+    compiled = jax.jit(
+        lambda values: (
+            metrics.smooth_crps_ensemble(observation, values, smoothing=0.1).value
+        )
+    )(ensemble)
+    gradient = jax.grad(
+        lambda values: (
+            metrics.smooth_crps_ensemble(observation, values, smoothing=0.1).value
+        )
+    )(ensemble)
+
+    assert jnp.isfinite(compiled)
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.any(jnp.abs(gradient) > 0.0)
+    observation = jnp.array([[0.0 + 0.0j]])
+    ensemble = jnp.array([[[1.0 + 1.0j, -1.0 - 1.0j]]])
+    energy = metrics.energy_score(observation, ensemble)
+    assert bool(energy.valid)
+    assert jnp.isfinite(energy.value)
+
     with pytest.raises(TypeError, match="complex"):
-        metrics.expected_calibration_error(
-            target,
-            probability.astype(jnp.complex64),
-            num_bins=2,
+        metrics.gaussian_negative_log_likelihood(
+            jnp.array([0.0 + 1.0j]),
+            jnp.array([0.0 + 0.0j]),
+            jnp.ones(1),
         )
-
-
-def test_probabilistic_output_axes_and_gaussian_gradients() -> None:
     target = jnp.zeros((2, 2))
     mean = jnp.array([[0.0, 1.0], [2.0, 0.0]])
     variance = jnp.ones((2, 2))
@@ -346,9 +325,6 @@ def test_probabilistic_output_axes_and_gaussian_gradients() -> None:
     )(mean)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.any(jnp.abs(gradient) > 0.0)
-
-
-def test_probabilistic_member_weights_masks_and_smooth_energy_gradient() -> None:
     observation = jnp.array([0.0])
     ensemble = jnp.array([[-1.0, 100.0, 1.0]])
     member_mask = jnp.array([True, False, True])
@@ -403,9 +379,6 @@ def test_probabilistic_member_weights_masks_and_smooth_energy_gradient() -> None
     assert jnp.any(jnp.abs(smooth_gradient) > 0.0)
     assert jnp.all(jnp.isfinite(crps_gradient))
     assert jnp.any(jnp.abs(crps_gradient) > 0.0)
-
-
-def test_probabilistic_invalid_empty_and_zero_denominator_states() -> None:
     target = jnp.array([0.0, 1.0])
     mean = jnp.zeros(2)
     invalid_likelihood = metrics.gaussian_negative_log_likelihood(

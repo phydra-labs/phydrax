@@ -64,7 +64,7 @@ def _hcurl_mesh() -> Any:
     return phx.discretization.CellMesh.from_tetrahedra(vertices, cells)
 
 
-def test_complete_and_point_electrode_models_are_finite_and_reciprocal() -> None:
+def test_production_modalities_scenario_1() -> None:
     mesh = _unit_tetra()
     finite = geo.FinitePatchDCPlan(mesh, _patch_survey(mesh))
     complete = geo.CompleteElectrodeDCPlan(finite, 0.01).prepare()
@@ -89,9 +89,6 @@ def test_complete_and_point_electrode_models_are_finite_and_reciprocal() -> None
     prediction = point.predict(1.0)
     assert prediction.shape == (1,)
     assert jnp.all(jnp.isfinite(prediction))
-
-
-def test_line_two_point_five_d_and_ip_responses_are_physical() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype="float64"),
         np.asarray(((0, 1, 2), (0, 2, 3))),
@@ -136,9 +133,6 @@ def test_line_two_point_five_d_and_ip_responses_are_physical() -> None:
     memory, current = debye.advance_memory(debye.initial_memory(()), 1.0, 0.1)
     assert jnp.all(memory > 0)
     assert current > 0
-
-
-def test_free_space_gravity_magnetics_and_continuation_obey_analytic_limits() -> None:
     # ty: ignore[invalid-argument-type]
     source = geo.GravityQuadratureSource([[0.0, 0.0, 0.0]], [1.0], [0], 1)
     coordinates = phx.interchange.GeospatialContract.local_cartesian(
@@ -182,7 +176,7 @@ def test_free_space_gravity_magnetics_and_continuation_obey_analytic_limits() ->
     np.testing.assert_allclose(continued, constant, atol=1e-12)
 
 
-def test_variable_elastic_cpml_travel_and_surface_wave_workflows_execute() -> None:
+def test_production_modalities_scenario_2() -> None:
     grid = geo.AcousticGrid((9, 9), (1.0, 1.0))
     # ty: ignore[invalid-argument-type]
     acquisition = geo.SeismicAcquisition(grid, [[4.0, 4.0]], [[5.0, 4.0]])
@@ -221,9 +215,6 @@ def test_variable_elastic_cpml_travel_and_surface_wave_workflows_execute() -> No
     np.testing.assert_allclose(travel.travel_times_s, [0.0, 0.5, 1.0])
     rayleigh = geo.HomogeneousRayleighWavePlan(3000.0, 1700.0)
     assert 0.85 * 1700 < rayleigh.phase_velocity_m_s < 1700
-
-
-def test_layered_frequency_and_time_domain_em_are_passive() -> None:
     # ty: ignore[invalid-argument-type]
     layered = geo.LayeredEarthModel([100.0], [1.0, 1.0])
     # ty: ignore[invalid-argument-type]
@@ -259,9 +250,6 @@ def test_layered_frequency_and_time_domain_em_are_passive() -> None:
     )
     assert time.successful
     assert jnp.all(time.dissipated_energy_J >= 0)
-
-
-def test_gpr_rejects_runtime_with_envelope_free_pic_current_source() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(3),

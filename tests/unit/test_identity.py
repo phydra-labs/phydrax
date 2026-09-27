@@ -58,7 +58,7 @@ def _cube(value: Any, *, scale: Any = 1.0) -> Any:
 _module_lambda = lambda value: value
 
 
-def test_plain_function_payload_is_content_addressed() -> None:
+def test_identity_scenario_1() -> None:
     payload = callable_payload(_square)
 
     assert callable_payload(_square) == payload
@@ -71,6 +71,24 @@ def test_plain_function_payload_is_content_addressed() -> None:
         nested["semantic_content_id"]
         != (strict_module_payload(_ActivatedCallable(_cube))["semantic_content_id"])
     )
+    for reader in (_weighted, _offset, _calls_weighted):
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            callable_payload(reader)
+        with pytest.raises(TypeError, match="requires explicit semantic and numeric"):
+            strict_module_payload(_ActivatedCallable(reader))
+        payload = callable_payload(reader, semantic_id="law", numeric_id="weights")
+        assert payload["numeric_content_id"] == "weights"
+    first = lambda value: value + 1.0
+    second = lambda value: value + 2.0
+
+    for opaque in (first, second, _module_lambda):
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            callable_payload(opaque)
+        with pytest.raises(TypeError, match="requires explicit semantic and numeric"):
+            strict_module_payload(_ActivatedCallable(opaque))
+    first_payload = callable_payload(first, semantic_id="shift", numeric_id="one")
+    second_payload = callable_payload(second, semantic_id="shift", numeric_id="two")
+    assert first_payload["numeric_content_id"] != second_payload["numeric_content_id"]
 
 
 _GLOBAL_WEIGHTS = jnp.asarray([1.0, 2.0])
@@ -94,16 +112,6 @@ def _scaled(value: Any) -> Any:
     return jnp.sin(value) * _GLOBAL_SCALE
 
 
-def test_functions_reading_global_arrays_are_opaque() -> None:
-    for reader in (_weighted, _offset, _calls_weighted):
-        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
-            callable_payload(reader)
-        with pytest.raises(TypeError, match="requires explicit semantic and numeric"):
-            strict_module_payload(_ActivatedCallable(reader))
-        payload = callable_payload(reader, semantic_id="law", numeric_id="weights")
-        assert payload["numeric_content_id"] == "weights"
-
-
 def test_plain_function_identity_follows_scalar_global_values(monkeypatch: Any) -> None:
     payload = callable_payload(_scaled)
     assert callable_payload(_scaled) == payload
@@ -116,21 +124,7 @@ def test_plain_function_identity_follows_scalar_global_values(monkeypatch: Any) 
     )
 
 
-def test_distinct_lambdas_never_share_an_identity() -> None:
-    first = lambda value: value + 1.0
-    second = lambda value: value + 2.0
-
-    for opaque in (first, second, _module_lambda):
-        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
-            callable_payload(opaque)
-        with pytest.raises(TypeError, match="requires explicit semantic and numeric"):
-            strict_module_payload(_ActivatedCallable(opaque))
-    first_payload = callable_payload(first, semantic_id="shift", numeric_id="one")
-    second_payload = callable_payload(second, semantic_id="shift", numeric_id="two")
-    assert first_payload["numeric_content_id"] != second_payload["numeric_content_id"]
-
-
-def test_opaque_callables_without_ids_are_refused() -> None:
+def test_identity_scenario_2() -> None:
     opaque_callables = (
         functools.partial(_square, scale=2.0),
         _AffineCallable([1.0]).__call__,
@@ -142,9 +136,6 @@ def test_opaque_callables_without_ids_are_refused() -> None:
             callable_payload(opaque)
     with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
         callable_payload(_square, semantic_id="square-law")
-
-
-def test_strict_module_payload_separates_semantics_from_numeric_realization() -> None:
     first = _AffineCallable([1.0, 2.0])
     second = _AffineCallable([3.0, 4.0])
 
@@ -165,9 +156,6 @@ def test_strict_module_payload_separates_semantics_from_numeric_realization() ->
     assert first_revision.semantic_id == second_revision.semantic_id
     assert first_revision.content_id != second_revision.content_id
     assert first_revision.revision_id != second_revision.revision_id
-
-
-def test_semantic_content_and_resource_identity_are_independent() -> None:
     content = {"law": "linear-elastic", "state_space": "cartesian"}
     first = SemanticProvenance(content, resource_ids={"mesh": "mesh-a"})
     second = SemanticProvenance(content, resource_ids={"mesh": "mesh-b"})
@@ -176,7 +164,7 @@ def test_semantic_content_and_resource_identity_are_independent() -> None:
     assert first.semantic_id != second.semantic_id
 
 
-def test_executable_signature_rejects_numeric_array_values() -> None:
+def test_identity_scenario_3() -> None:
     with pytest.raises(TypeError, match="integer sequences"):
         ExecutableSignature(shapes={"state": jnp.asarray([2])})
     with pytest.raises(TypeError, match="not arrays"):
@@ -185,27 +173,6 @@ def test_executable_signature_rejects_numeric_array_values() -> None:
         ExecutableSignature(algorithm_facts={"coefficients": jnp.asarray([1.0, 2.0])})
     with pytest.raises(TypeError, match="cannot contain a numeric array"):
         ExecutableSignature(backend_facts={"device_state": jnp.asarray(1)})
-
-
-def test_opaque_callable_requires_explicit_semantic_and_numeric_ids() -> None:
-    offset = 2.0
-
-    def closure(value: Any) -> Any:
-        return value + offset
-
-    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
-        callable_payload(closure)
-
-    payload = callable_payload(
-        closure,
-        semantic_id="translation-law",
-        numeric_id="translation-offset-two",
-    )
-    assert payload["semantic_content_id"] == "translation-law"
-    assert payload["numeric_content_id"] == "translation-offset-two"
-
-
-def test_pool_signature_delegates_to_the_generic_executable_signature() -> None:
     pool = PoolExecutionSignature(
         topology_id="pool-topology",
         method_id="pool-method",
@@ -224,26 +191,6 @@ def test_pool_signature_delegates_to_the_generic_executable_signature() -> None:
 
     assert pool.signature_id == generic.signature_id
     assert pool.executable_signature.signature_id == generic.signature_id
-
-
-def test_static_held_weights_are_part_of_the_executable_signature() -> None:
-    def signature(**callables: Any) -> Any:
-        return ExecutableSignature(
-            shapes={"x": (2,)}, dtypes={"x": "float32"}, static_callables=callables
-        ).signature_id
-
-    baseline = signature(response=_AffineCallable([1.0, 2.0]))
-    assert signature(response=_AffineCallable([1.0, 2.0])) == baseline
-    assert signature(response=_AffineCallable([1.0, 3.0])) != baseline
-    assert signature(response=_ActivatedCallable(_square)) != signature(
-        response=_ActivatedCallable(_cube)
-    )
-    assert signature() != baseline
-    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
-        signature(response=lambda value: value)
-
-
-def test_artifact_binding_identity_binds_all_three_identities() -> None:
     semantic = SemanticProvenance({"kind": "affine-response"})
     revision = NumericRevision(semantic, {"weight": jnp.asarray([1.0, 2.0])})
     signature = ExecutableSignature(shapes={"weight": (2,)})
@@ -278,3 +225,38 @@ def test_artifact_binding_identity_binds_all_three_identities() -> None:
         ArtifactBindingIdentity.from_record(
             {key: value for key, value in record.items() if key != "binding_id"}
         )
+
+
+def test_opaque_callable_requires_explicit_semantic_and_numeric_ids() -> None:
+    offset = 2.0
+
+    def closure(value: Any) -> Any:
+        return value + offset
+
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        callable_payload(closure)
+
+    payload = callable_payload(
+        closure,
+        semantic_id="translation-law",
+        numeric_id="translation-offset-two",
+    )
+    assert payload["semantic_content_id"] == "translation-law"
+    assert payload["numeric_content_id"] == "translation-offset-two"
+
+
+def test_static_held_weights_are_part_of_the_executable_signature() -> None:
+    def signature(**callables: Any) -> Any:
+        return ExecutableSignature(
+            shapes={"x": (2,)}, dtypes={"x": "float32"}, static_callables=callables
+        ).signature_id
+
+    baseline = signature(response=_AffineCallable([1.0, 2.0]))
+    assert signature(response=_AffineCallable([1.0, 2.0])) == baseline
+    assert signature(response=_AffineCallable([1.0, 3.0])) != baseline
+    assert signature(response=_ActivatedCallable(_square)) != signature(
+        response=_ActivatedCallable(_cube)
+    )
+    assert signature() != baseline
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        signature(response=lambda value: value)

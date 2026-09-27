@@ -32,7 +32,7 @@ def _electrolyte() -> Any:
     return schema, parameters, phx.equations.IdealDiluteElectrochemicalClosure(schema)
 
 
-def test_multiphase_electrolyte_derives_one_finite_stress_and_potential_set() -> None:
+def test_coupled_field_thermodynamics_scenario_1() -> None:
     _, electrolyte, electrochemical = _electrolyte()
     closure = phx.equations.MultiphaseElectrolyteClosure(
         phx.equations.BinaryPhaseThermodynamicClosure(), electrochemical
@@ -57,9 +57,6 @@ def test_multiphase_electrolyte_derives_one_finite_stress_and_potential_set() ->
     assert fields.successful
     assert fields.total_stress.shape == (4, 2, 2)
     assert jnp.all(jnp.isfinite(fields.ionic_electrochemical_potential))
-
-
-def test_electrolytic_nematic_composition_is_finite_and_dielectrically_positive() -> None:
     _, electrolyte, electrochemical = _electrolyte()
     basis = phx.equations.NematicTensorBasis(2)
     closure = phx.equations.ElectrolyticNematicClosure(

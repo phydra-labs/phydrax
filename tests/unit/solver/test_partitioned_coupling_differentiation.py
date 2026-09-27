@@ -101,7 +101,7 @@ def test_explicit_algorithmic_derivative_matches_single_sweep_map() -> None:
     assert float(jax.grad(observable)(jnp.asarray(1.0))) == pytest.approx(0.5)
 
 
-def test_explicit_coupling_vectorizes_over_runtime_parameters() -> None:
+def test_partitioned_coupling_differentiation_scenario_1() -> None:
     graph, states, values = _parameterized_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -119,9 +119,6 @@ def test_explicit_coupling_vectorizes_over_runtime_parameters() -> None:
     )(jnp.asarray([1.0, 2.0], dtype=jnp.float64))
 
     assert jnp.allclose(values, jnp.asarray([0.5, 1.0]))
-
-
-def test_none_differentiation_policy_stops_returned_state_gradients() -> None:
     graph, states, values = _parameterized_graph()
     prepared = cpl.prepare_coupling(
         graph,
@@ -139,6 +136,26 @@ def test_none_differentiation_policy_stops_returned_state_gradients() -> None:
     )(jnp.asarray(1.0))
 
     assert float(derivative) == pytest.approx(0.0)
+    graph, states, values = _parameterized_graph()
+    policy = cpl.ImplicitCouplingPolicy(
+        phx.nonlinear.FixedPointIteration(),
+        phx.nonlinear.NonlinearTermination(maximum_steps=10),
+        (
+            cpl.CouplingTolerance("a-input", absolute=1e-8),
+            cpl.CouplingTolerance("b-input", absolute=1e-8),
+        ),
+        fixed_point_sweep=cpl.CouplingSweep("jacobi"),
+    )
+
+    with pytest.raises(ValueError, match="general-root"):
+        cpl.prepare_coupling(
+            graph,
+            states,
+            values,
+            policy=policy,
+            differentiation=cpl.CouplingDifferentiationPolicy("implicit"),
+            args=jnp.asarray(1.0, dtype=jnp.float64),
+        )
 
 
 def test_implicit_root_derivative_matches_analytic_coupled_solution() -> None:
@@ -197,26 +214,3 @@ def test_implicit_root_derivative_composes_across_checkpointed_rollout() -> None
     derivative = jax.grad(observable)(jnp.asarray(1.0, dtype=jnp.float64))
 
     assert float(derivative) == pytest.approx(1.0 / 3.0, abs=1e-8)
-
-
-def test_implicit_differentiation_rejects_fixed_point_anderson() -> None:
-    graph, states, values = _parameterized_graph()
-    policy = cpl.ImplicitCouplingPolicy(
-        phx.nonlinear.FixedPointIteration(),
-        phx.nonlinear.NonlinearTermination(maximum_steps=10),
-        (
-            cpl.CouplingTolerance("a-input", absolute=1e-8),
-            cpl.CouplingTolerance("b-input", absolute=1e-8),
-        ),
-        fixed_point_sweep=cpl.CouplingSweep("jacobi"),
-    )
-
-    with pytest.raises(ValueError, match="general-root"):
-        cpl.prepare_coupling(
-            graph,
-            states,
-            values,
-            policy=policy,
-            differentiation=cpl.CouplingDifferentiationPolicy("implicit"),
-            args=jnp.asarray(1.0, dtype=jnp.float64),
-        )

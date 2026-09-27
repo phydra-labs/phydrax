@@ -21,9 +21,7 @@ def _dense_policy() -> Any:
     )
 
 
-def test_generalized_matrix_equation_operator_matches_terms_and_kronecker_matrix() -> (
-    None
-):
+def test_linalg_matrix_equations_scenario_1() -> None:
     left_one = jnp.asarray([[2.0, 1.0], [-1.0, 3.0]])
     right_one = jnp.asarray([[1.0, 2.0, 0.0], [0.0, -1.0, 1.0], [0.5, 0.0, 2.0]])
     left_two = jnp.asarray([[0.5, -0.25], [1.0, 0.75]])
@@ -42,9 +40,6 @@ def test_generalized_matrix_equation_operator_matches_terms_and_kronecker_matrix
     assert jnp.allclose(operator.mv(value), expected)
     assert jnp.allclose(operator._materialize(), expected_matrix)
     assert operator.source.shape == (2, 3)
-
-
-def test_complex_matrix_equation_adjoint_satisfies_frobenius_identity() -> None:
     left = jnp.asarray([[1.0 + 1.0j, 2.0], [0.5j, -1.0]])
     right = jnp.asarray([[2.0, -1.0j], [0.25 + 0.5j, 3.0]])
     operator = la.MatrixEquationLinearOperator(
@@ -56,9 +51,6 @@ def test_complex_matrix_equation_adjoint_satisfies_frobenius_identity() -> None:
     forward_inner = jnp.vdot(cotangent, operator.mv(value))
     adjoint_inner = jnp.vdot(operator.adjoint_mv(cotangent), value)
     assert jnp.allclose(forward_inner, adjoint_inner, rtol=1e-12, atol=1e-12)
-
-
-def test_rectangular_sylvester_solve_matches_dense_reference() -> None:
     left = jnp.asarray([[2.0, 1.0], [0.0, 3.0]])
     right = jnp.asarray([[4.0, -1.0, 0.5], [0.0, 5.0, 1.0], [0.0, 0.0, 6.0]])
     forcing = jnp.asarray([[1.0, 2.0, -1.0], [3.0, 4.0, 0.5]])
@@ -75,9 +67,7 @@ def test_rectangular_sylvester_solve_matches_dense_reference() -> None:
     assert result.provenance.convention == "A X + X B = C"
 
 
-def test_continuous_and_discrete_lyapunov_factories_preserve_hermitian_structure() -> (
-    None
-):
+def test_linalg_matrix_equations_scenario_2() -> None:
     continuous_operator = jnp.asarray([[-1.0 + 0.5j, 2.0], [0.0, -3.0 - 0.25j]])
     continuous_forcing = jnp.asarray([[2.0, 0.5j], [-0.5j, 1.0]])
     continuous_problem = la.continuous_lyapunov_equation(
@@ -115,11 +105,6 @@ def test_continuous_and_discrete_lyapunov_factories_preserve_hermitian_structure
     assert jnp.allclose(discrete.value, discrete.value.T, atol=1e-11)
     assert continuous.diagnostics.structure_satisfied
     assert discrete.diagnostics.structure_satisfied
-
-
-def test_prepared_matrix_equation_is_jittable_refreshable_and_accepts_new_forcing() -> (
-    None
-):
     first_left = jnp.asarray([[2.0, 0.5], [0.0, 3.0]])
     second_left = jnp.asarray([[1.5, -0.25], [0.25, 2.5]])
     right = jnp.asarray([[4.0, 0.25], [0.0, 5.0]])
@@ -158,30 +143,6 @@ def test_prepared_matrix_equation_is_jittable_refreshable_and_accepts_new_forcin
     assert jnp.allclose(
         second_left @ overridden.value + overridden.value @ right, override
     )
-
-
-def test_prepared_matrix_equation_derivative_with_respect_to_forcing_is_correct() -> None:
-    left = jnp.asarray([[2.0, 0.5], [0.0, 3.0]])
-    right = jnp.asarray([[4.0, 0.25], [0.0, 5.0]])
-    forcing = jnp.asarray([[1.0, 2.0], [3.0, -1.0]])
-    problem = la.sylvester_equation(left, right, forcing)
-    prepared = la.prepare_matrix_equation(problem, _dense_policy())
-    kronecker = jnp.kron(left, jnp.eye(2)) + jnp.kron(jnp.eye(2), right.T)
-
-    def actual_objective(rhs: Any) -> Any:
-        value = la.solve_matrix_equation(prepared, right_hand_side=rhs).value
-        return jnp.sum(value**2)
-
-    def expected_objective(rhs: Any) -> Any:
-        value = jnp.linalg.solve(kronecker, rhs.reshape(-1)).reshape((2, 2))
-        return jnp.sum(value**2)
-
-    actual = jax.jit(jax.grad(actual_objective))(forcing)
-    expected = jax.grad(expected_objective)(forcing)
-    assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
-
-
-def test_matrix_equation_validates_shape_structure_and_plan_identity() -> None:
     term = la.MatrixEquationTerm(jnp.eye(2), jnp.eye(3))
     with pytest.raises(ValueError, match="shape"):
         la.MatrixEquationProblem((term,), jnp.eye(2))
@@ -207,3 +168,24 @@ def test_matrix_equation_validates_shape_structure_and_plan_identity() -> None:
     plan = la.plan_matrix_equation(first)
     with pytest.raises(ValueError, match="different symbolic"):
         la.prepare_matrix_equation(second, plan)
+
+
+def test_prepared_matrix_equation_derivative_with_respect_to_forcing_is_correct() -> None:
+    left = jnp.asarray([[2.0, 0.5], [0.0, 3.0]])
+    right = jnp.asarray([[4.0, 0.25], [0.0, 5.0]])
+    forcing = jnp.asarray([[1.0, 2.0], [3.0, -1.0]])
+    problem = la.sylvester_equation(left, right, forcing)
+    prepared = la.prepare_matrix_equation(problem, _dense_policy())
+    kronecker = jnp.kron(left, jnp.eye(2)) + jnp.kron(jnp.eye(2), right.T)
+
+    def actual_objective(rhs: Any) -> Any:
+        value = la.solve_matrix_equation(prepared, right_hand_side=rhs).value
+        return jnp.sum(value**2)
+
+    def expected_objective(rhs: Any) -> Any:
+        value = jnp.linalg.solve(kronecker, rhs.reshape(-1)).reshape((2, 2))
+        return jnp.sum(value**2)
+
+    actual = jax.jit(jax.grad(actual_objective))(forcing)
+    expected = jax.grad(expected_objective)(forcing)
+    assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)

@@ -95,7 +95,7 @@ _OPEN_COR_FAST_TRACE = {
 }
 
 
-def test_source_identity_layouts_and_state_count_resolution() -> None:
+def test_skeletal_muscle_cellular_scenario_1() -> None:
     model = ShortenFastTwitchModel()
 
     assert model.source_revision == "637da9ef28f7992e40fe79947364a51a38ec818c"
@@ -121,9 +121,6 @@ def test_source_identity_layouts_and_state_count_resolution() -> None:
         assert len(layout.names) == len(layout.units) == len(layout.source_symbols)
         assert len(set(layout.names)) == layout.count
         assert all(symbol.count("/") == 1 for symbol in layout.source_symbols)
-
-
-def test_source_initial_rhs_and_current_reference_values() -> None:
     model = ShortenFastTwitchModel()
     state = model.initialize(dtype=jnp.float64)
     evaluation = model.evaluate(0.0, state)
@@ -174,9 +171,20 @@ def test_source_initial_rhs_and_current_reference_values() -> None:
         np.testing.assert_allclose(
             evaluation.algebraic_value(name), expected, rtol=2e-11, atol=2e-11
         )
+    protocol = ShortenPulseProtocol()
+    times = jnp.asarray([-1.0e-6, 0.0, 0.499999, 0.5, 49.999, 50.0, 50.5, 400.0, 400.5])
+    expected = jnp.asarray([0.0, 150.0, 150.0, 0.0, 0.0, 150.0, 0.0, 150.0, 0.0])
+    np.testing.assert_array_equal(protocol.current(times), expected)
+    np.testing.assert_allclose(
+        protocol.event_times_ms(),
+        np.stack((np.arange(9) * 50.0, np.arange(9) * 50.0 + 0.5), axis=-1).reshape(-1),
+    )
 
-
-def test_opencor_source_trajectory_current_calcium_and_tension_agreement() -> None:
+    with pytest.raises(ValueError, match="pin every stimulus"):
+        # ty: ignore[invalid-argument-type]
+        ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 1.0])
+    # ty: ignore[invalid-argument-type]
+    ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 0.5, 1.0])
     model = ShortenFastTwitchModel()
     grid = np.linspace(0.0, 1.0, 11)
     trajectory = (
@@ -201,26 +209,6 @@ def test_opencor_source_trajectory_current_calcium_and_tension_agreement() -> No
     )
     assert final.force_bearing_crossbridge_uM == final.tension_driver_uM
     assert final.cytosolic_calcium_uM.shape == (2,)
-
-
-def test_source_pulse_alignment_and_endpoint_convention() -> None:
-    protocol = ShortenPulseProtocol()
-    times = jnp.asarray([-1.0e-6, 0.0, 0.499999, 0.5, 49.999, 50.0, 50.5, 400.0, 400.5])
-    expected = jnp.asarray([0.0, 150.0, 150.0, 0.0, 0.0, 150.0, 0.0, 150.0, 0.0])
-    np.testing.assert_array_equal(protocol.current(times), expected)
-    np.testing.assert_allclose(
-        protocol.event_times_ms(),
-        np.stack((np.arange(9) * 50.0, np.arange(9) * 50.0 + 0.5), axis=-1).reshape(-1),
-    )
-
-    with pytest.raises(ValueError, match="pin every stimulus"):
-        # ty: ignore[invalid-argument-type]
-        ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 1.0])
-    # ty: ignore[invalid-argument-type]
-    ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 0.5, 1.0])
-
-
-def test_exact_gates_semigroup_and_stiffness_evidence() -> None:
     model = ShortenFastTwitchModel()
     state = model.initialize()
     full = model.exact_gate_update(0.75, state, 0.02)
@@ -236,7 +224,7 @@ def test_exact_gates_semigroup_and_stiffness_evidence() -> None:
     assert float(stiffness_ratio) > 1.0e6
 
 
-def test_failed_step_trajectory_pairs_rolled_back_time_and_values() -> None:
+def test_skeletal_muscle_cellular_scenario_2() -> None:
     # ty: ignore[invalid-argument-type]
     prepared = ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 0.5]).prepare()
     initial = prepared.initialize()
@@ -249,9 +237,6 @@ def test_failed_step_trajectory_pairs_rolled_back_time_and_values() -> None:
         trajectory.states,
         np.stack((misaligned.values, misaligned.values)),
     )
-
-
-def test_integration_schedule_is_fixed_and_identity_is_content_complete() -> None:
     model = ShortenFastTwitchModel()
     # ty: ignore[invalid-argument-type]
     plan = ShortenIntegrationPlan(model, [0.0, 0.5, 1.0])
@@ -275,9 +260,6 @@ def test_integration_schedule_is_fixed_and_identity_is_content_complete() -> Non
     assert different_grid.plan_id != plan.plan_id
     assert different_timing.plan_id != plan.plan_id
     assert different_amplitude.plan_id != plan.plan_id
-
-
-def test_rhs_is_jittable_vectorized_and_forward_differentiable() -> None:
     model = ShortenFastTwitchModel()
     state = model.initialize(dtype=jnp.float64)
     compiled = eqx.filter_jit(lambda configured, value: configured.rhs(0.75, value))

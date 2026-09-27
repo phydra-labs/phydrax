@@ -248,7 +248,7 @@ def _nonconcave_observation_problem() -> Any:
     )
 
 
-def test_linear_gaussian_exact_limit_matches_kalman_and_rts_with_masks() -> None:
+def test_bellman_scenario_1() -> None:
     problem = _time_varying_masked_problem()
     bellman = phx.uq.bellman_filter(problem, method="analytic")
     kalman = phx.uq.kalman_filter(problem, method="sequential")
@@ -271,9 +271,6 @@ def test_linear_gaussian_exact_limit_matches_kalman_and_rts_with_masks() -> None
     assert bellman.observed_counts[0, 2] == 0
     assert jnp.allclose(bellman.filtered_modes[1, 2], bellman.filtered_modes[1, 1])
     assert jnp.all(bellman.successful)
-
-
-def test_forced_optimization_matches_the_exact_linear_gaussian_engine() -> None:
     problem = _scalar_linear_problem()
     exact = phx.uq.bellman_filter(problem, method="analytic")
     optimized = phx.uq.bellman_filter(problem, method="optimization")
@@ -290,9 +287,6 @@ def test_forced_optimization_matches_the_exact_linear_gaussian_engine() -> None:
         exact.cumulative_pseudo_log_likelihood,
         atol=2e-6,
     )
-
-
-def test_streaming_steps_reproduce_batch_histories() -> None:
     problem = _scalar_linear_problem()
     batch = phx.uq.bellman_filter(problem)
     state = phx.uq.initialize_bellman_filter(problem)
@@ -310,7 +304,7 @@ def test_streaming_steps_reproduce_batch_histories() -> None:
     )
 
 
-def test_poisson_update_solves_stationarity_and_reports_observed_curvature() -> None:
+def test_bellman_scenario_2() -> None:
     result = phx.uq.bellman_filter(_poisson_problem(), method="optimization")
     mode = result.filtered_modes[..., 0]
     predicted_mode = result.predicted_modes[..., 0]
@@ -325,6 +319,42 @@ def test_poisson_update_solves_stationarity_and_reports_observed_curvature() -> 
         atol=2e-6,
     )
     assert jnp.all(result.successful)
+    problem = _nonconcave_observation_problem()
+    failed = phx.uq.bellman_filter(problem, method="optimization")
+    damped = phx.uq.bellman_filter(problem, method="optimization", curvature_damping=2.0)
+
+    assert failed.status[0] == phx.uq.BELLMAN_UPDATE_CURVATURE_FAILURE
+    assert not failed.mode_valid[0]
+    assert jnp.all(damped.mode_valid)
+    assert damped.curvature_damping == 2.0
+    assert jnp.all(jnp.linalg.eigvalsh(damped.filtered_information) > 0.0)
+    problem = _scalar_linear_problem()
+    failed = phx.uq.bellman_filter(problem, method="optimization", optimizer_max_steps=1)
+
+    assert failed.status[0] == phx.uq.BELLMAN_INITIALIZATION_OPTIMIZER_FAILURE
+    assert jnp.allclose(failed.filtered_modes[0], problem.model.prior.location)
+    with pytest.raises(ValueError, match="max_dimension"):
+        phx.uq.bellman_filter(problem, max_dimension=0)
+
+    transition = phx.stochastic.LinearGaussianTransitionKernel(
+        jnp.eye(1),
+        jnp.eye(1),
+        state_shape=(1,),
+        has_log_density=False,
+    )
+    no_density = phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            problem.model.prior,
+            transition,
+            problem.model.observation,
+            model_id="no-density-model",
+        ),
+        problem.observations,
+        initial_time=0.0,
+        problem_id="no-density-problem",
+    )
+    with pytest.raises(ValueError, match="normalized transition"):
+        phx.uq.bellman_filter(no_density, method="optimization")
 
 
 def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_profile() -> (
@@ -356,48 +386,6 @@ def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_pr
     assert jnp.allclose(result.predicted_information[0], expected, atol=2e-6)
     assert result.observed_counts[0] == 0
     assert result.incremental_pseudo_log_likelihood[0] == 0.0
-
-
-def test_curvature_failure_is_visible_and_declared_damping_repairs_it() -> None:
-    problem = _nonconcave_observation_problem()
-    failed = phx.uq.bellman_filter(problem, method="optimization")
-    damped = phx.uq.bellman_filter(problem, method="optimization", curvature_damping=2.0)
-
-    assert failed.status[0] == phx.uq.BELLMAN_UPDATE_CURVATURE_FAILURE
-    assert not failed.mode_valid[0]
-    assert jnp.all(damped.mode_valid)
-    assert damped.curvature_damping == 2.0
-    assert jnp.all(jnp.linalg.eigvalsh(damped.filtered_information) > 0.0)
-
-
-def test_solver_failure_freezes_state_and_dimension_and_density_guards_reject() -> None:
-    problem = _scalar_linear_problem()
-    failed = phx.uq.bellman_filter(problem, method="optimization", optimizer_max_steps=1)
-
-    assert failed.status[0] == phx.uq.BELLMAN_INITIALIZATION_OPTIMIZER_FAILURE
-    assert jnp.allclose(failed.filtered_modes[0], problem.model.prior.location)
-    with pytest.raises(ValueError, match="max_dimension"):
-        phx.uq.bellman_filter(problem, max_dimension=0)
-
-    transition = phx.stochastic.LinearGaussianTransitionKernel(
-        jnp.eye(1),
-        jnp.eye(1),
-        state_shape=(1,),
-        has_log_density=False,
-    )
-    no_density = phx.stochastic.StateSpaceProblem(
-        phx.stochastic.StateSpaceModel(
-            problem.model.prior,
-            transition,
-            problem.model.observation,
-            model_id="no-density-model",
-        ),
-        problem.observations,
-        initial_time=0.0,
-        problem_id="no-density-problem",
-    )
-    with pytest.raises(ValueError, match="normalized transition"):
-        phx.uq.bellman_filter(no_density, method="optimization")
 
 
 def test_bellman_pseudo_likelihood_gradient_matches_central_difference() -> None:

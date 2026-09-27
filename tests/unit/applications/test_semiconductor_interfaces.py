@@ -17,7 +17,7 @@ from phydrax.applications.semiconductor._quantities import BOLTZMANN_CONSTANT_SI
 jax.config.update("jax_enable_x64", True)
 
 
-def test_sheet_charge_and_dipole_have_material_sided_electrostatics() -> None:
+def test_semiconductor_interfaces_scenario_1() -> None:
     area, eps_l, eps_r, dl, dr = 1e-12, 2e-10, 1e-10, 2e-9, 3e-9
     charge, jump = 1e-18, 0.03
     state = interface_electrostatics(
@@ -59,18 +59,6 @@ def test_sheet_charge_and_dipole_have_material_sided_electrostatics() -> None:
     np.testing.assert_allclose(
         shifted.displacement_right, state.displacement_right, rtol=2e-14
     )
-
-
-def _law() -> Any:
-    return ThermionicInterface(
-        2e23,
-        temperature_range=(200.0, 600.0),
-        energy_reference="test intrinsic datum",
-        provenance="Specified analytic Maxwell-Boltzmann transmitting-mode spectrum",
-    )
-
-
-def test_thermionic_equilibrium_has_finite_correct_linear_response() -> None:
     law = _law()
     temperature, area = 300.0, 1e-12
     barrier = 5 * K * temperature
@@ -87,9 +75,6 @@ def test_thermionic_equilibrium_has_finite_correct_linear_response() -> None:
     np.testing.assert_allclose(
         flux(tiny_affinity), expected * jnp.expm1(tiny_affinity), rtol=2e-14
     )
-
-
-def test_thermionic_temperature_drive_closes_particle_energy_and_entropy() -> None:
     law = _law()
     tl, tr, area = 250.0, 450.0, 1e-12
     mu_l, mu_r, barrier = K * 300.0, -K * 300.0, 8 * K * 300.0
@@ -112,12 +97,18 @@ def test_thermionic_temperature_drive_closes_particle_energy_and_entropy() -> No
     np.testing.assert_allclose(
         shifted.energy_flux - result.energy_flux, 1e-18 * result.number_flux, rtol=5e-14
     )
-
-
-def test_interface_domain_failures_remain_explicit() -> None:
     result = _law().evaluate(0.0, 0.0, 300.0, 300.0, 0.0, 1e-12)
     assert not bool(
         result.successful
     )  # A degenerate reservoir is not admitted MB emission.
     geometric = interface_electrostatics(0.0, 1.0, 1e-10, 1e-10, 0.0, 1e-9, 1e-12)
     assert not bool(geometric.successful)
+
+
+def _law() -> Any:
+    return ThermionicInterface(
+        2e23,
+        temperature_range=(200.0, 600.0),
+        energy_reference="test intrinsic datum",
+        provenance="Specified analytic Maxwell-Boltzmann transmitting-mode spectrum",
+    )

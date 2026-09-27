@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_complex_and_quaternion_tables_have_exact_declared_laws() -> None:
+def test_finite_real_algebra_scenario_1() -> None:
     complex_algebra = phx.metrix.algebra.ComplexAlgebraSpec()
     quaternion = phx.metrix.algebra.QuaternionAlgebraSpec()
     complex_product = complex_algebra.prepare_product(backend="sparse")
@@ -32,9 +32,6 @@ def test_complex_and_quaternion_tables_have_exact_declared_laws() -> None:
     assert quaternion.properties.proven("associative")
     assert quaternion.properties.claim("commutative").status == "disproven"
     assert quaternion.properties.proven("division_algebra")
-
-
-def test_octonion_bracketing_and_cayley_dickson_property_loss_are_explicit() -> None:
     octonion = phx.metrix.algebra.OctonionAlgebraSpec()
     product = octonion.prepare_product(backend="sparse")
     basis = jnp.eye(8)
@@ -52,9 +49,6 @@ def test_octonion_bracketing_and_cayley_dickson_property_loss_are_explicit() -> 
     assert sedenion.properties.claim("alternative").status == "disproven"
     assert sedenion.properties.claim("division_algebra").status == "disproven"
     assert sedenion.properties.proven("has_zero_divisors")
-
-
-def test_multicomplex_zero_divisor_is_not_quaternion_multiplication() -> None:
     algebra = phx.metrix.algebra.MulticomplexAlgebraSpec(2)
     product = algebra.prepare_product(backend="sparse")
     left = jnp.asarray([1.0, 0.0, 0.0, 1.0])
@@ -70,7 +64,7 @@ def test_multicomplex_zero_divisor_is_not_quaternion_multiplication() -> None:
     assert restored.spec_id == algebra.spec_id
 
 
-def test_sparse_dense_lowered_and_differentiated_products_agree() -> None:
+def test_finite_real_algebra_scenario_2() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     sparse = algebra.prepare_product(backend="sparse")
     dense = algebra.prepare_product(backend="dense")
@@ -91,9 +85,6 @@ def test_sparse_dense_lowered_and_differentiated_products_agree() -> None:
     assert jnp.allclose(compiled, dense(left, right), atol=1e-12)
     assert jnp.all(jnp.isfinite(derivative))
     assert bool(report.passed)
-
-
-def test_lowered_algebra_product_preserves_nonfinal_coordinate_axis() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     layout = phx.metrix.algebra.AlgebraElementLayout(algebra, algebra_axis=0)
     product = phx.metrix.algebra.AlgebraProductPlan(
@@ -119,9 +110,6 @@ def test_lowered_algebra_product_preserves_nonfinal_coordinate_axis() -> None:
     assert bool(report.passed)
     assert output.shape == (4, 2)
     assert jnp.allclose(output, product(left, right))
-
-
-def test_custom_rational_table_and_resource_failures_are_exact() -> None:
     budget = phx.metrix.algebra.AlgebraResourceBudget(maximum_coordinates=2)
     algebra = phx.metrix.algebra.FiniteRealAlgebraSpec(
         "dual-number",

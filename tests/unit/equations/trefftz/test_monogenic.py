@@ -13,7 +13,7 @@ import phydrax as phx
 cl = phx.metrix.clifford
 
 
-def test_monogenic_basis_rank_is_deterministic_and_dirac_null() -> None:
+def test_monogenic_scenario_1() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1, 1))
     first = phx.equations.MonogenicPolynomialBasis(algebra, 2)
     second = phx.equations.MonogenicPolynomialBasis(algebra, 2)
@@ -25,9 +25,6 @@ def test_monogenic_basis_rank_is_deterministic_and_dirac_null() -> None:
     assert first.certificate.equation_family == "dirac"
     assert first.certificate.representation_id == algebra.algebra_id
     assert float(first.certificate.construction_residual) == 0.0
-
-
-def test_monogenic_analytic_partial_matches_forward_ad() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     basis = phx.equations.MonogenicPolynomialBasis(algebra, 3)
     point = jnp.asarray([0.2, -0.35])
@@ -40,9 +37,14 @@ def test_monogenic_analytic_partial_matches_forward_ad() -> None:
             basis.evaluate_partial(point, axis, 2),
             expected_second,
         )
-
-
-def test_dirac_square_matches_flat_signed_laplacian() -> None:
+    algebra = cl.CliffordAlgebraSpec((1, 1, 1))
+    resources = phx.equations.TrefftzResourceBudget(maximum_rank=10)
+    with pytest.raises(ValueError, match="exceeds its resource budget"):
+        phx.equations.MonogenicPolynomialBasis(
+            algebra,
+            2,
+            resources=resources,
+        )
     algebra = cl.CliffordAlgebraSpec((1, -1))
     layout = cl.CliffordBladeLayout.full(algebra)
     # ty: ignore[invalid-argument-type]
@@ -56,9 +58,6 @@ def test_dirac_square_matches_flat_signed_laplacian() -> None:
     expected = jnp.broadcast_to(jnp.asarray([-4.0, 0.0, 0.0, 0.0]), (5, 4))
 
     assert jnp.allclose(second(batch).data, expected)
-
-
-def test_bound_monogenic_field_audits_and_generic_algebra_drops_certificate() -> None:
     algebra = cl.CliffordAlgebraSpec((1, 1))
     basis = phx.equations.MonogenicPolynomialBasis(algebra, 2)
     model = phx.equations.LinearMonogenicField(
@@ -78,17 +77,6 @@ def test_bound_monogenic_field_audits_and_generic_algebra_drops_certificate() ->
     with pytest.raises(TypeError, match="no TrialSpaceCertificate"):
         # ty: ignore[invalid-argument-type]
         phx.equations.audit_trial_space(2.0 * field, batch)
-
-
-def test_monogenic_resource_budget_fails_before_basis_materialization() -> None:
-    algebra = cl.CliffordAlgebraSpec((1, 1, 1))
-    resources = phx.equations.TrefftzResourceBudget(maximum_rank=10)
-    with pytest.raises(ValueError, match="exceeds its resource budget"):
-        phx.equations.MonogenicPolynomialBasis(
-            algebra,
-            2,
-            resources=resources,
-        )
 
 
 def test_degenerate_monogenic_basis_and_dirac_are_rejected() -> None:

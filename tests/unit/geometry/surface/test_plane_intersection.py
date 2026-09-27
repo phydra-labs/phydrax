@@ -38,7 +38,7 @@ def _realization() -> Any:
     ).prepare()
 
 
-def test_plane_section_returns_deterministic_loop_and_exact_provenance() -> None:
+def test_plane_section_contracts() -> None:
     realization = _realization()
 
     first = realization.intersect_plane((0.0, 0.0, 0.25), (0.0, 0.0, 1.0))
@@ -60,9 +60,6 @@ def test_plane_section_returns_deterministic_loop_and_exact_provenance() -> None
         first.loops[0].source_edge_vertex_global_ids,
         second.loops[0].source_edge_vertex_global_ids,
     )
-
-
-def test_plane_section_reports_typed_unresolved_vertex_and_open_chain() -> None:
     realization = _realization()
     vertex_contact = realization.intersect_plane((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
 

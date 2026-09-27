@@ -37,7 +37,7 @@ def _runtime(diffusivity: Any = (0.1, 0.1)) -> Any:
     ).prepare()
 
 
-def test_prescribed_stimulus_support_is_left_closed_right_open() -> None:
+def test_skeletal_muscle_fibers_scenario_1() -> None:
     schedule = _schedule()
     at_start = schedule.current(0.0)
     before_end = schedule.current(0.049999)
@@ -48,9 +48,6 @@ def test_prescribed_stimulus_support_is_left_closed_right_open() -> None:
     assert not bool(jnp.any(at_end))
     assert not bool(jnp.any(at_start[1]))
     np.testing.assert_allclose(schedule.event_boundaries_ms(), [0.0, 0.05])
-
-
-def test_uniform_membrane_field_has_zero_no_flux_diffusion_increment() -> None:
     diffusive = _runtime((0.2, 0.3))
     nondiffusive = _runtime((0.0, 0.0))
     state = diffusive.initialize().values.at[..., 0].set(-70.0)
@@ -61,9 +58,6 @@ def test_uniform_membrane_field_has_zero_no_flux_diffusion_increment() -> None:
         jnp.asarray(1.0), state, None
     )
     np.testing.assert_allclose(diffusive_rate, local_rate, rtol=2.0e-12, atol=2.0e-12)
-
-
-def test_event_aligned_stimulated_step_advances_complete_bundle() -> None:
     runtime = _runtime()
     source = runtime.initialize()
     candidate = runtime.candidate(source, 0.05)

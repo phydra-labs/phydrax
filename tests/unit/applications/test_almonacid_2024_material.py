@@ -75,54 +75,62 @@ def _response(
     )
 
 
-@pytest.mark.parametrize("stretch", (0.4, 1.75))
-def test_active_length_support_retains_source_endpoint_value_and_one_sided_derivative(
-    stretch: Any,
-) -> None:
-    harmonics = (
-        (0.642587074375392, 1.290128342448810, 0.629168420414746),
-        (0.325979591577056, 5.308969899884336, -4.520101562237307),
-        (0.328204247867325, 6.744187042136006, 1.689155892259429),
-        (0.015388902741327, 19.823676877725276, -7.386155292116579),
-        (0.139240359517525, 8.038287396059996, 2.543022326676525),
-        (0.001801867529599, 32.237736486095052, -6.454098315528945),
-        (0.012560837549867, 23.117614057963024, -2.643346778503341),
+def test_almonacid_2024_material_scenario_1() -> None:
+    for stretch in (0.4, 1.75):
+        harmonics = (
+            (0.642587074375392, 1.290128342448810, 0.629168420414746),
+            (0.325979591577056, 5.308969899884336, -4.520101562237307),
+            (0.328204247867325, 6.744187042136006, 1.689155892259429),
+            (0.015388902741327, 19.823676877725276, -7.386155292116579),
+            (0.139240359517525, 8.038287396059996, 2.543022326676525),
+            (0.001801867529599, 32.237736486095052, -6.454098315528945),
+            (0.012560837549867, 23.117614057963024, -2.643346778503341),
+        )
+        value = sum(a * math.sin(w * stretch + p) for a, w, p in harmonics)
+        derivative = sum(a * w * math.cos(w * stretch + p) for a, w, p in harmonics)
+        outside = math.nextafter(stretch, -math.inf if stretch == 0.4 else math.inf)
+        actual, tangent = jax.value_and_grad(_active_force_length)(jnp.asarray(stretch))
+        np.testing.assert_allclose(actual, value, rtol=0, atol=2e-15)
+        np.testing.assert_allclose(tangent, derivative, rtol=0, atol=4e-15)
+        assert float(_active_force_length(jnp.asarray(outside))) == 0.0
+        assert float(jax.grad(_active_force_length)(jnp.asarray(outside))) == 0.0
+    F = jnp.diag(jnp.asarray((1.1, 0.97, 0.96)))
+    previous = 0.997 * F + jnp.diag(jnp.asarray((0.0, 0.002, 0.0)))
+    active = _response(F, previous=previous)
+    passive = _response(F, previous=previous, activation=0.0)
+    np.testing.assert_allclose(
+        active.passive_energy_density_J_per_m3,
+        passive.passive_energy_density_J_per_m3,
+        rtol=0,
+        atol=0,
     )
-    value = sum(a * math.sin(w * stretch + p) for a, w, p in harmonics)
-    derivative = sum(a * w * math.cos(w * stretch + p) for a, w, p in harmonics)
-    outside = math.nextafter(stretch, -math.inf if stretch == 0.4 else math.inf)
-    actual, tangent = jax.value_and_grad(_active_force_length)(jnp.asarray(stretch))
-    np.testing.assert_allclose(actual, value, rtol=0, atol=2e-15)
-    np.testing.assert_allclose(tangent, derivative, rtol=0, atol=4e-15)
-    assert float(_active_force_length(jnp.asarray(outside))) == 0.0
-    assert float(jax.grad(_active_force_length)(jnp.asarray(outside))) == 0.0
-
-
-@pytest.mark.parametrize(
-    "rate,value,derivative",
-    (
+    difference = active.kirchhoff_Pa - passive.kirchhoff_Pa
+    np.testing.assert_allclose(
+        difference, active.kirchhoff_active_Pa, rtol=2e-13, atol=1e-8
+    )
+    perturbation = jnp.asarray(((0.1, 0.02, 0.0), (0.0, -0.03, 0.0), (0.01, 0.0, 0.02)))
+    function = lambda x: _response(x, previous=previous).first_piola_Pa
+    tangent = jax.jvp(function, (F,), (perturbation,))[1]
+    h = 1e-6
+    finite_difference = (
+        function(F + h * perturbation) - function(F - h * perturbation)
+    ) / (2 * h)
+    np.testing.assert_allclose(tangent, finite_difference, rtol=2e-8, atol=0.02)
+    for rate, value, derivative in (
         (-1.2, 0.0, 0.0),
         (-0.25, 0.3503552027590582, 0.9703687419567255),
         (0.0, 1.0, 6.090887473114851),
         (0.05, 1.3743240862369306, 0.9678639805763023),
         (0.75, 1.5950466421954534, 0.0),
-    ),
-)
-def test_velocity_knots_have_source_right_branch_value_and_derivative(
-    rate: Any, value: Any, derivative: Any
-) -> None:
-    actual, tangent = jax.value_and_grad(_active_force_velocity)(jnp.asarray(rate))
-    np.testing.assert_allclose(actual, value, rtol=0, atol=2e-15)
-    np.testing.assert_allclose(tangent, derivative, rtol=0, atol=2e-15)
-    left = float(_active_force_velocity(jnp.asarray(rate - 1e-9)))
-    right = float(_active_force_velocity(jnp.asarray(rate + 1e-9)))
-    assert abs(left - value) < 2e-8
-    assert abs(right - value) < 2e-8
-
-
-@pytest.mark.parametrize(
-    "aponeurosis,stretch,stress,tangent",
-    (
+    ):
+        actual, tangent = jax.value_and_grad(_active_force_velocity)(jnp.asarray(rate))
+        np.testing.assert_allclose(actual, value, rtol=0, atol=2e-15)
+        np.testing.assert_allclose(tangent, derivative, rtol=0, atol=2e-15)
+        left = float(_active_force_velocity(jnp.asarray(rate - 1e-9)))
+        right = float(_active_force_velocity(jnp.asarray(rate + 1e-9)))
+        assert abs(left - value) < 2e-8
+        assert abs(right - value) < 2e-8
+    for aponeurosis, stretch, stress, tangent in (
         (False, 1.0, 0.0, 0.0),
         (False, 1.25, 0.1471153017268245, 1.176922413814596),
         (False, 1.5, 0.6561181989622077, 2.8951007640684696),
@@ -132,68 +140,64 @@ def test_velocity_knots_have_source_right_branch_value_and_derivative(
         (True, 1.01, 0.06168820342030671, 10.327640684061333),
         (True, 1.02, 0.22502363448694518, 22.33944552926633),
         (True, 1.15, 2.9605686155904847, 19.745861872326614),
-    ),
-)
-def test_passive_source_knots_and_energy_primitive(
-    aponeurosis: Any, stretch: Any, stress: Any, tangent: Any
-) -> None:
-    stress_function = lambda x: _passive_fiber(x, aponeurosis=aponeurosis)[0]
-    energy_function = lambda x: _passive_fiber(x, aponeurosis=aponeurosis)[1]
-    value, derivative = jax.value_and_grad(stress_function)(jnp.asarray(stretch))
-    np.testing.assert_allclose(value, stress, rtol=0, atol=3e-14)
-    np.testing.assert_allclose(derivative, tangent, rtol=0, atol=3e-13)
-    np.testing.assert_allclose(
-        jax.grad(energy_function)(jnp.asarray(stretch)),
-        stress / stretch,
-        rtol=0,
-        atol=3e-13,
-    )
-    np.testing.assert_allclose(
-        energy_function(jnp.asarray(stretch - 1e-9)),
-        energy_function(jnp.asarray(stretch + 1e-9)),
-        rtol=0,
-        atol=1e-8,
-    )
-
-
-@pytest.mark.parametrize("tissue,fraction", ((1, 0.37), (2, 0.0)))
-def test_passive_mixed_energy_generates_stress_and_symmetric_consistent_tangent(
-    tissue: Any, fraction: Any
-) -> None:
-    parameters = _parameters(tissue, fraction)
-    F = jnp.asarray(((1.19, 0.12, -0.03), (0.04, 0.94, 0.08), (0.01, 0.0, 1.02)))
-
-    def response(deformation: Any, dilation: Any) -> Any:
-        return _response(
-            deformation,
-            tissue=tissue,
-            parameters=parameters,
-            activation=0.0,
-            dilation=dilation,
-            dynamic=False,
+    ):
+        stress_function = lambda x: _passive_fiber(x, aponeurosis=aponeurosis)[0]
+        energy_function = lambda x: _passive_fiber(x, aponeurosis=aponeurosis)[1]
+        value, derivative = jax.value_and_grad(stress_function)(jnp.asarray(stretch))
+        np.testing.assert_allclose(value, stress, rtol=0, atol=3e-14)
+        np.testing.assert_allclose(derivative, tangent, rtol=0, atol=3e-13)
+        np.testing.assert_allclose(
+            jax.grad(energy_function)(jnp.asarray(stretch)),
+            stress / stretch,
+            rtol=0,
+            atol=3e-13,
+        )
+        np.testing.assert_allclose(
+            energy_function(jnp.asarray(stretch - 1e-9)),
+            energy_function(jnp.asarray(stretch + 1e-9)),
+            rtol=0,
+            atol=1e-8,
         )
 
-    def potential(deformation: Any, dilation: Any) -> Any:
-        point = response(deformation, dilation)
-        return point.passive_energy_density_J_per_m3 + 1700.0 * point.volume_constraint
 
-    point = response(F, 1.013)
-    gradient = jax.grad(potential, argnums=(0, 1))(F, 1.013)
-    np.testing.assert_allclose(gradient[0], point.first_piola_Pa, rtol=3e-12, atol=2e-7)
-    np.testing.assert_allclose(
-        gradient[1], point.dilation_residual_Pa, rtol=3e-13, atol=2e-8
-    )
-    stress_tangent = jax.jacfwd(lambda x: response(x, 1.013).first_piola_Pa)(F)
-    hessian = jax.hessian(lambda x: potential(x, 1.013))(F)
-    np.testing.assert_allclose(stress_tangent, hessian, rtol=2e-11, atol=3e-6)
-    np.testing.assert_allclose(
-        stress_tangent, stress_tangent.transpose(2, 3, 0, 1), rtol=2e-11, atol=3e-6
-    )
+def test_passive_mixed_energy_generates_stress_and_symmetric_consistent_tangent() -> None:
+    for tissue, fraction in ((1, 0.37), (2, 0.0)):
+        parameters = _parameters(tissue, fraction)
+        F = jnp.asarray(((1.19, 0.12, -0.03), (0.04, 0.94, 0.08), (0.01, 0.0, 1.02)))
+
+        def response(deformation: Any, dilation: Any) -> Any:
+            return _response(
+                deformation,
+                tissue=tissue,
+                parameters=parameters,
+                activation=0.0,
+                dilation=dilation,
+                dynamic=False,
+            )
+
+        def potential(deformation: Any, dilation: Any) -> Any:
+            point = response(deformation, dilation)
+            return (
+                point.passive_energy_density_J_per_m3 + 1700.0 * point.volume_constraint
+            )
+
+        point = response(F, 1.013)
+        gradient = jax.grad(potential, argnums=(0, 1))(F, 1.013)
+        np.testing.assert_allclose(
+            gradient[0], point.first_piola_Pa, rtol=3e-12, atol=2e-7
+        )
+        np.testing.assert_allclose(
+            gradient[1], point.dilation_residual_Pa, rtol=3e-13, atol=2e-8
+        )
+        stress_tangent = jax.jacfwd(lambda x: response(x, 1.013).first_piola_Pa)(F)
+        hessian = jax.hessian(lambda x: potential(x, 1.013))(F)
+        np.testing.assert_allclose(stress_tangent, hessian, rtol=2e-11, atol=3e-6)
+        np.testing.assert_allclose(
+            stress_tangent, stress_tangent.transpose(2, 3, 0, 1), rtol=2e-11, atol=3e-6
+        )
 
 
-def test_dynamic_stress_is_objective_and_uses_spatial_isochoric_rate_not_secant_length() -> (
-    None
-):
+def test_almonacid_2024_material_scenario_2() -> None:
     F = jnp.asarray(((1.17, 0.12, -0.03), (0.04, 0.92, 0.08), (0.01, 0.0, 1.04)))
     previous = jnp.asarray(((1.16, 0.10, -0.01), (0.03, 0.93, 0.07), (0.0, 0.01, 1.03)))
     direction = jnp.asarray((0.8, 0.0, 0.6))
@@ -232,11 +236,6 @@ def test_dynamic_stress_is_objective_and_uses_spatial_isochoric_rate_not_secant_
         point.passive_energy_density_J_per_m3,
         rtol=2e-12,
     )
-
-
-def test_fat_mixture_scales_actual_parts_and_bulk_without_double_normalizing_fat() -> (
-    None
-):
     F = jnp.diag(jnp.asarray((1.2, 0.96, 0.91)))
     pure = _response(F, parameters=_parameters(fraction=0.0))
     mixed = _response(F, parameters=_parameters(fraction=0.37))
@@ -265,54 +264,34 @@ def test_fat_mixture_scales_actual_parts_and_bulk_without_double_normalizing_fat
     np.testing.assert_allclose(fat.kirchhoff_base_Pa, expected, rtol=2e-13, atol=1e-8)
     np.testing.assert_allclose(fat.kirchhoff_active_Pa, 0.0, atol=0.0)
     np.testing.assert_allclose(fat.kirchhoff_passive_fiber_Pa, 0.0, atol=0.0)
-
-
-def test_active_power_is_separate_from_passive_energy_and_dynamic_tangent_includes_rate() -> (
-    None
-):
-    F = jnp.diag(jnp.asarray((1.1, 0.97, 0.96)))
-    previous = 0.997 * F + jnp.diag(jnp.asarray((0.0, 0.002, 0.0)))
-    active = _response(F, previous=previous)
-    passive = _response(F, previous=previous, activation=0.0)
-    np.testing.assert_allclose(
-        active.passive_energy_density_J_per_m3,
-        passive.passive_energy_density_J_per_m3,
-        rtol=0,
-        atol=0,
-    )
-    difference = active.kirchhoff_Pa - passive.kirchhoff_Pa
-    np.testing.assert_allclose(
-        difference, active.kirchhoff_active_Pa, rtol=2e-13, atol=1e-8
-    )
-    perturbation = jnp.asarray(((0.1, 0.02, 0.0), (0.0, -0.03, 0.0), (0.01, 0.0, 0.02)))
-    function = lambda x: _response(x, previous=previous).first_piola_Pa
-    tangent = jax.jvp(function, (F,), (perturbation,))[1]
-    h = 1e-6
-    finite_difference = (
-        function(F + h * perturbation) - function(F - h * perturbation)
-    ) / (2 * h)
-    np.testing.assert_allclose(tangent, finite_difference, rtol=2e-8, atol=0.02)
-
-
-@pytest.mark.parametrize(
-    "F",
-    (
+    for F in (
         ((-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
         ((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
         ((float("nan"), 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
-    ),
-)
-def test_invalid_deformation_never_becomes_finite_stress_or_zero_gradient(F: Any) -> None:
-    deformation = jnp.asarray(F)
-    point = _response(deformation, previous=jnp.eye(3))
-    assert not bool(point.admissible)
-    assert not bool(jnp.any(jnp.isfinite(point.first_piola_Pa)))
-    assert not bool(jnp.isfinite(point.passive_energy_density_J_per_m3))
-    stress = lambda x: _response(x, previous=jnp.eye(3)).first_piola_Pa
-    _, tangent = jax.jvp(stress, (deformation,), (jnp.ones((3, 3)),))
-    gradient = jax.grad(lambda x: jnp.sum(stress(x)))(deformation)
-    assert not bool(jnp.any(jnp.isfinite(tangent)))
-    assert not bool(jnp.any(jnp.isfinite(gradient)))
+    ):
+        deformation = jnp.asarray(F)
+        point = _response(deformation, previous=jnp.eye(3))
+        assert not bool(point.admissible)
+        assert not bool(jnp.any(jnp.isfinite(point.first_piola_Pa)))
+        assert not bool(jnp.isfinite(point.passive_energy_density_J_per_m3))
+        stress = lambda x: _response(x, previous=jnp.eye(3)).first_piola_Pa
+        _, tangent = jax.jvp(stress, (deformation,), (jnp.ones((3, 3)),))
+        gradient = jax.grad(lambda x: jnp.sum(stress(x)))(deformation)
+        assert not bool(jnp.any(jnp.isfinite(tangent)))
+        assert not bool(jnp.any(jnp.isfinite(gradient)))
+    parameters = eqx.tree_at(lambda p: p.fat_fraction, _parameters(2), jnp.asarray(0.1))
+    incompatible = _response(jnp.eye(3), tissue=2, parameters=parameters)
+    assert not bool(incompatible.admissible)
+    response = jax.jit(
+        jax.vmap(lambda dilation: _response(jnp.eye(3), dilation=dilation))
+    )
+    batch = response(jnp.asarray((1.0, 0.0, -1.0)))
+    np.testing.assert_array_equal(batch.admissible, (True, False, False))
+    assert bool(jnp.all(jnp.isnan(batch.first_piola_Pa[1:])))
+    invalid_parameters = eqx.tree_at(
+        lambda p: p.maximum_strain_rate_per_s, _parameters(), jnp.asarray(0.0)
+    )
+    assert not bool(_response(jnp.eye(3), parameters=invalid_parameters).admissible)
 
 
 def test_small_nonunit_direction_retains_finite_passive_energy_gradient() -> None:
@@ -337,19 +316,3 @@ def test_small_nonunit_direction_retains_finite_passive_energy_gradient() -> Non
         )
     )(deformation)
     np.testing.assert_allclose(gradient, response.first_piola_Pa, rtol=0, atol=1e-9)
-
-
-def test_invalid_mixed_state_and_aponeurosis_fat_are_rejected_inside_transforms() -> None:
-    parameters = eqx.tree_at(lambda p: p.fat_fraction, _parameters(2), jnp.asarray(0.1))
-    incompatible = _response(jnp.eye(3), tissue=2, parameters=parameters)
-    assert not bool(incompatible.admissible)
-    response = jax.jit(
-        jax.vmap(lambda dilation: _response(jnp.eye(3), dilation=dilation))
-    )
-    batch = response(jnp.asarray((1.0, 0.0, -1.0)))
-    np.testing.assert_array_equal(batch.admissible, (True, False, False))
-    assert bool(jnp.all(jnp.isnan(batch.first_piola_Pa[1:])))
-    invalid_parameters = eqx.tree_at(
-        lambda p: p.maximum_strain_rate_per_s, _parameters(), jnp.asarray(0.0)
-    )
-    assert not bool(_response(jnp.eye(3), parameters=invalid_parameters).admissible)

@@ -107,7 +107,7 @@ def _parabola_collection(witness: Any) -> Any:
     )
 
 
-def test_isolated_point_and_parabola_form_dimension_indexed_witness_collection() -> None:
+def test_positive_dimensional_scenario_1() -> None:
     group = PolynomialVariableGroup("plane", (0, 1))
     isolated = WitnessSet(
         "parabola-and-origin",
@@ -135,9 +135,6 @@ def test_isolated_point_and_parabola_form_dimension_indexed_witness_collection()
         np.asarray(collection.witness((1,)).points),
         np.asarray([[-1.0, 1.0], [1.0, 1.0]]),
     )
-
-
-def test_witness_and_multigraded_slice_validation_rejects_malformed_data() -> None:
     with pytest.raises(ValueError, match="exactly d"):
         WitnessSet(
             "system",
@@ -176,9 +173,6 @@ def test_witness_and_multigraded_slice_validation_rejects_malformed_data() -> No
             groups,
             (((1, 0), witness),),
         )
-
-
-def test_monodromy_validates_each_permutation_against_endpoint_inventory() -> None:
     witness = _parabola_witness()
     inventory = _success_inventory("loop-0", (1, 0), prefix="loop-0")
 
@@ -210,7 +204,7 @@ def test_monodromy_validates_each_permutation_against_endpoint_inventory() -> No
         )
 
 
-def test_path_inventories_preserve_partial_failure_and_budget_exhaustion() -> None:
+def test_positive_dimensional_scenario_2() -> None:
     partial = PathInventory(
         ("p0", "p1"),
         (
@@ -255,9 +249,6 @@ def test_path_inventories_preserve_partial_failure_and_budget_exhaustion() -> No
             (PathRecord("p0", "batch", 0, PathStatus.NOT_ATTEMPTED),),
             path_capacity=1,
         )
-
-
-def test_trace_failure_prevents_complete_decomposition_evidence_claim() -> None:
     witness = _parabola_witness()
     monodromy = _swap_monodromy(witness)
     trace = _trace(witness, 1.0e-3)
@@ -280,9 +271,6 @@ def test_trace_failure_prevents_complete_decomposition_evidence_claim() -> None:
     with pytest.raises(AttributeError):
         # ty: ignore[unresolved-attribute]
         _ = component.irreducible
-
-
-def test_passing_monodromy_and_trace_are_qualified_numerical_evidence_only() -> None:
     witness = _parabola_witness()
     monodromy = _swap_monodromy(witness)
     trace = _trace(witness, 0.0)

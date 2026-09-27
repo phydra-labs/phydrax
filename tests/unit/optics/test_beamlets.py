@@ -86,7 +86,7 @@ def _map(
     )
 
 
-def test_moving_beamlet_frames_are_deterministic_and_right_handed() -> None:
+def test_beamlets_scenario_1() -> None:
     # ty: ignore[invalid-argument-type]
     first = deterministic_beamlet_frame((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
     # ty: ignore[invalid-argument-type]
@@ -111,9 +111,6 @@ def test_moving_beamlet_frames_are_deterministic_and_right_handed() -> None:
         1.0,
         atol=2e-6,
     )
-
-
-def test_fundamental_beamlet_reconstructs_analytic_gaussian() -> None:
     state = gaussian_beamlets_at_waist(
         _ray(),
         # ty: ignore[invalid-argument-type]
@@ -135,9 +132,6 @@ def test_fundamental_beamlet_reconstructs_analytic_gaussian() -> None:
     np.testing.assert_allclose(result.field.values, expected, rtol=2e-5, atol=2e-6)
     assert int(result.evidence.tile_count) > 1
     assert bool(result.successful)
-
-
-def test_astigmatic_waist_rotation_rotates_complex_curvature() -> None:
     angle = jnp.pi / 4.0
     wavenumber = 5.0
     state = gaussian_beamlets_at_waist(
@@ -163,7 +157,7 @@ def test_astigmatic_waist_rotation_rotates_complex_curvature() -> None:
     assert bool(curvature.successful)
 
 
-def test_symplectic_transport_preserves_lagrange_invariant() -> None:
+def test_beamlets_scenario_2() -> None:
     input_frame = _frame()
     distance = 0.75
     output_frame = _frame(z=distance)
@@ -200,9 +194,6 @@ def test_symplectic_transport_preserves_lagrange_invariant() -> None:
     )
     assert float(transported.evidence.symplectic_error) < 1e-6
     assert bool(transported.successful)
-
-
-def test_certified_coupled_resonator_mode_survives_beamlet_round_trip() -> None:
     frame = _frame()
     phases = jnp.asarray((0.31, 0.67))
     curvature_axes = jnp.asarray((1.35, 0.72))
@@ -267,9 +258,6 @@ def test_certified_coupled_resonator_mode_survives_beamlet_round_trip() -> None:
         rtol=2e-7,
         atol=2e-8,
     )
-
-
-def test_uncertified_resonator_mode_cannot_seed_a_beamlet() -> None:
     frame = _frame()
     unstable_map = _map(
         jnp.diag(jnp.asarray((1.4, 1.2, 1.0 / 1.4, 1.0 / 1.2))),
@@ -295,7 +283,7 @@ def test_uncertified_resonator_mode_cannot_seed_a_beamlet() -> None:
         jax.block_until_ready(state.lagrangian_state)
 
 
-def test_free_space_transport_reconstructs_complex_gaussian_field() -> None:
+def test_beamlets_scenario_3() -> None:
     distance = 0.8
     waist_radius = 0.65
     medium_wavenumber = 6.0
@@ -348,9 +336,6 @@ def test_free_space_transport_reconstructs_complex_gaussian_field() -> None:
     np.testing.assert_allclose(result.field.values, expected, rtol=2e-5, atol=2e-6)
     assert bool(transported.successful)
     assert bool(result.successful)
-
-
-def test_transport_exposes_topology_and_caustic_failures() -> None:
     frame = _frame()
     state = gaussian_beamlets_at_waist(
         _ray(),
@@ -394,18 +379,6 @@ def test_transport_exposes_topology_and_caustic_failures() -> None:
     assert int(caustic.evidence.status) == int(BeamletStatus.CAUSTIC)
     assert not bool(mismatch.successful)
     assert not bool(caustic.successful)
-
-
-def _nine_ray_samples(step: Any) -> Any:
-    inputs = jnp.zeros((9, 4))
-    for axis in range(4):
-        inputs = inputs.at[1 + 2 * axis, axis].set(step)
-        inputs = inputs.at[2 + 2 * axis, axis].set(-step)
-    outputs = inputs + 0.4 * inputs**3
-    return NineRayTraceSamples(inputs, outputs, jnp.full((4,), step))
-
-
-def test_nine_ray_qualification_reports_centered_second_order_convergence() -> None:
     qualification = qualify_nine_ray_differential_map(
         _map(jnp.eye(4), _frame(), _frame()),
         _nine_ray_samples(0.1),
@@ -415,3 +388,12 @@ def test_nine_ray_qualification_reports_centered_second_order_convergence() -> N
     np.testing.assert_allclose(qualification.observed_order, 2.0, rtol=2e-4)
     assert float(qualification.relative_jacobian_error) > 0.0
     assert bool(qualification.valid)
+
+
+def _nine_ray_samples(step: Any) -> Any:
+    inputs = jnp.zeros((9, 4))
+    for axis in range(4):
+        inputs = inputs.at[1 + 2 * axis, axis].set(step)
+        inputs = inputs.at[2 + 2 * axis, axis].set(-step)
+    outputs = inputs + 0.4 * inputs**3
+    return NineRayTraceSamples(inputs, outputs, jnp.full((4,), step))

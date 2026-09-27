@@ -69,7 +69,7 @@ def _slab_surfaces(
     )
 
 
-def test_half_power_segment_closes_volume_and_surface_deposition() -> None:
+def test_nonsequential_scenario_1() -> None:
     vertices, triangles = _planes((0.0,))
     surfaces = NonSequentialSurfaceTable(
         vertices,
@@ -99,9 +99,6 @@ def test_half_power_segment_closes_volume_and_surface_deposition() -> None:
     np.testing.assert_allclose(result.absorbed_power, 1.0, rtol=2e-6)
     np.testing.assert_allclose(result.deposition_power_residual, 0.0, atol=2e-6)
     np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
-
-
-def test_attenuation_coefficients_fail_preflight_without_passive_provenance() -> None:
     vertices, triangles = _planes((0.0,))
     arguments = (
         vertices,
@@ -127,9 +124,6 @@ def test_attenuation_coefficients_fail_preflight_without_passive_provenance() ->
             *arguments,
             medium_power_attenuation_coefficients=jnp.asarray([0.1]),
         )
-
-
-def test_two_media_deposit_into_the_occupied_segment_medium() -> None:
     vertices, triangles = _planes((0.0, 2.0))
     surfaces = NonSequentialSurfaceTable(
         vertices,
@@ -167,7 +161,7 @@ def test_two_media_deposit_into_the_occupied_segment_medium() -> None:
     np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
 
 
-def test_absorber_triangles_accumulate_by_physical_surface() -> None:
+def test_nonsequential_scenario_2() -> None:
     vertices, triangles = _planes((0.0,))
     surfaces = NonSequentialSurfaceTable(
         vertices,
@@ -207,9 +201,6 @@ def test_absorber_triangles_accumulate_by_physical_surface() -> None:
         [[0.4], [0.6]],
     )
     np.testing.assert_allclose(result.surface_absorbed_power.sum(axis=0), [1.0])
-
-
-def test_explicit_zero_attenuation_preserves_lossless_trace() -> None:
     default_surfaces = _slab_surfaces()
     explicit_surfaces = _slab_surfaces(attenuation=jnp.zeros((2,)))
     common = dict(
@@ -282,6 +273,59 @@ def test_explicit_zero_attenuation_preserves_lossless_trace() -> None:
     np.testing.assert_allclose(explicit_result.volume_absorbed_power, 0.0)
     np.testing.assert_allclose(explicit_result.medium_absorbed_power, 0.0)
     np.testing.assert_allclose(explicit_result.surface_absorbed_power, 0.0)
+    prepared = prepare_nonsequential_optics(
+        NonSequentialOpticsPlan(
+            _slab_surfaces(
+                attenuation=jnp.asarray([np.log(2.0), 0.0]),
+                attenuation_model_ids=("incident-half-power", "lossless-glass"),
+            ),
+            maximum_interactions=1,
+            branch_capacity=2,
+            record_history=True,
+            power_tolerance=0.0,
+        )
+    )
+    result = trace_nonsequential_optics(
+        prepared, _single_ray(), jnp.asarray([1.0]), jnp.asarray([0])
+    )
+
+    first_powers = np.asarray(result.history_powers[0, 1])
+    first_live = np.asarray(result.history_live[0, 1])
+    np.testing.assert_allclose(first_powers[first_live], [0.02, 0.48], atol=2e-6)
+    np.testing.assert_allclose(result.volume_absorbed_power, 0.5, rtol=2e-6)
+    np.testing.assert_allclose(result.live_power, 0.5, rtol=2e-6)
+    np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
+    prepared = prepare_nonsequential_optics(
+        NonSequentialOpticsPlan(
+            _slab_surfaces(),
+            maximum_interactions=3,
+            branch_capacity=8,
+            record_history=True,
+            power_tolerance=0.0,
+        )
+    )
+    result = trace_nonsequential_optics(
+        prepared, _single_ray(), jnp.asarray([1.0]), jnp.asarray([0])
+    )
+    first_powers = np.asarray(result.history_powers[0, 1])
+    live_first = np.asarray(result.history_live[0, 1])
+    np.testing.assert_allclose(first_powers[live_first], [0.04, 0.96], atol=2e-6)
+    np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
+    np.testing.assert_allclose(
+        result.absorbed_power
+        + jnp.sum(result.detected_power, axis=-1)
+        + result.escaped_power
+        + result.discarded_power
+        + result.ambiguous_power
+        + result.truncated_power
+        + result.live_power,
+        result.launched_power,
+        atol=2e-6,
+    )
+    assert int(result.status[0]) in {
+        int(NonSequentialOpticsStatus.SUCCESS),
+        int(NonSequentialOpticsStatus.INTERACTION_CAPACITY_EXHAUSTED),
+    }
 
 
 def test_tiny_and_extreme_optical_depth_are_stable_and_keep_detector_separate() -> None:
@@ -331,66 +375,7 @@ def test_tiny_and_extreme_optical_depth_are_stable_and_keep_detector_separate() 
     np.testing.assert_allclose(extreme.power_ledger_residual, 0.0)
 
 
-def test_fresnel_branching_uses_power_after_segment_attenuation() -> None:
-    prepared = prepare_nonsequential_optics(
-        NonSequentialOpticsPlan(
-            _slab_surfaces(
-                attenuation=jnp.asarray([np.log(2.0), 0.0]),
-                attenuation_model_ids=("incident-half-power", "lossless-glass"),
-            ),
-            maximum_interactions=1,
-            branch_capacity=2,
-            record_history=True,
-            power_tolerance=0.0,
-        )
-    )
-    result = trace_nonsequential_optics(
-        prepared, _single_ray(), jnp.asarray([1.0]), jnp.asarray([0])
-    )
-
-    first_powers = np.asarray(result.history_powers[0, 1])
-    first_live = np.asarray(result.history_live[0, 1])
-    np.testing.assert_allclose(first_powers[first_live], [0.02, 0.48], atol=2e-6)
-    np.testing.assert_allclose(result.volume_absorbed_power, 0.5, rtol=2e-6)
-    np.testing.assert_allclose(result.live_power, 0.5, rtol=2e-6)
-    np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
-
-
-def test_fresnel_tree_candidates_and_complete_energy_ledger() -> None:
-    prepared = prepare_nonsequential_optics(
-        NonSequentialOpticsPlan(
-            _slab_surfaces(),
-            maximum_interactions=3,
-            branch_capacity=8,
-            record_history=True,
-            power_tolerance=0.0,
-        )
-    )
-    result = trace_nonsequential_optics(
-        prepared, _single_ray(), jnp.asarray([1.0]), jnp.asarray([0])
-    )
-    first_powers = np.asarray(result.history_powers[0, 1])
-    live_first = np.asarray(result.history_live[0, 1])
-    np.testing.assert_allclose(first_powers[live_first], [0.04, 0.96], atol=2e-6)
-    np.testing.assert_allclose(result.power_ledger_residual, 0.0, atol=2e-6)
-    np.testing.assert_allclose(
-        result.absorbed_power
-        + jnp.sum(result.detected_power, axis=-1)
-        + result.escaped_power
-        + result.discarded_power
-        + result.ambiguous_power
-        + result.truncated_power
-        + result.live_power,
-        result.launched_power,
-        atol=2e-6,
-    )
-    assert int(result.status[0]) in {
-        int(NonSequentialOpticsStatus.SUCCESS),
-        int(NonSequentialOpticsStatus.INTERACTION_CAPACITY_EXHAUSTED),
-    }
-
-
-def test_history_enabled_and_disabled_have_identical_terminal_trace() -> None:
+def test_nonsequential_scenario_3() -> None:
     surface = _slab_surfaces()
     common = dict(maximum_interactions=4, branch_capacity=12, power_tolerance=0.0)
     without_history = prepare_nonsequential_optics(
@@ -414,9 +399,6 @@ def test_history_enabled_and_disabled_have_identical_terminal_trace() -> None:
     np.testing.assert_array_equal(result_without.status, result_with.status)
     assert result_without.history_origins.shape[-3] == 0
     assert result_with.history_origins.shape[-3] == 5
-
-
-def test_mirror_detector_and_branch_capacity_ledgers() -> None:
     vertices, triangles = _planes((0.0,))
     mirror = NonSequentialSurfaceTable(
         vertices,
@@ -482,9 +464,6 @@ def test_mirror_detector_and_branch_capacity_ledgers() -> None:
     np.testing.assert_allclose(capacity_result.truncated_power, 0.96, atol=2e-6)
     np.testing.assert_allclose(capacity_result.live_power, 0.04, atol=2e-6)
     np.testing.assert_allclose(capacity_result.power_ledger_residual, 0.0, atol=2e-6)
-
-
-def test_transmission_only_records_omitted_fresnel_branch() -> None:
     modes = jnp.full(
         (4,), int(NonSequentialBranchMode.TRANSMISSION_ONLY), dtype=jnp.int32
     )

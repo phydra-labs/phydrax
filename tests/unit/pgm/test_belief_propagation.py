@@ -28,9 +28,7 @@ def _chain_graph(length: Any = 4) -> Any:
     return phx.pgm.DiscreteFactorGraph((variables,), (unary, interactions))
 
 
-def test_forest_sum_product_matches_exact_marginals_factor_beliefs_and_normalizer() -> (
-    None
-):
+def test_belief_propagation_scenario_1() -> None:
     graph = _chain_graph()
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_belief_propagation(
@@ -64,9 +62,6 @@ def test_forest_sum_product_matches_exact_marginals_factor_beliefs_and_normalize
         exact.factor_probabilities,
     ):
         assert jnp.allclose(inferred, expected, atol=1e-10)
-
-
-def test_forest_max_product_backtracks_consistent_exact_map() -> None:
     graph = _chain_graph()
     exact = phx.pgm.enumerate_factor_graph(graph)
     prepared = phx.pgm.prepare_belief_propagation(
@@ -86,9 +81,6 @@ def test_forest_max_product_backtracks_consistent_exact_map() -> None:
     assert jnp.array_equal(result.map_assignment, exact.map_assignment)
     # ty: ignore[unresolved-attribute]
     assert result.map_log_score == pytest.approx(float(exact.map_log_score))
-
-
-def test_loopy_result_reports_fixed_point_without_claiming_exactness() -> None:
     variables = phx.pgm.DiscreteVariableGroup("x", shape=(3,), num_states=2)
     edges = jnp.asarray([[0, 1], [1, 2], [2, 0]])
     factor = phx.pgm.DenseTableFactorGroup(
@@ -118,9 +110,6 @@ def test_loopy_result_reports_fixed_point_without_claiming_exactness() -> None:
     assert result.log_normalizer_kind == "bethe"
     # ty: ignore[unresolved-attribute]
     assert jnp.all(jnp.isfinite(result.variable_log_probabilities.values))
-
-
-def test_hard_evidence_remains_exact_and_never_creates_nan_messages() -> None:
     graph = _chain_graph(2)
     evidence = phx.pgm.pack_evidence(
         graph,

@@ -174,9 +174,7 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         self.right_axis = right_axis_
         self.left_side = left_side
         self.right_side = right_side
-        self.population_permutation_indices = tuple(
-            int(value) for value in permutation
-        )
+        self.population_permutation_indices = tuple(int(value) for value in permutation)
         self.inverse_population_permutation_indices = tuple(
             int(value) for value in inverse
         )

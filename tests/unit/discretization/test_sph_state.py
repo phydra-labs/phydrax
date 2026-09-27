@@ -24,7 +24,7 @@ def _particles() -> Any:
     ).prepare()
 
 
-def test_summation_density_state_layout_round_trips_and_masks_padding() -> None:
+def test_sph_state_scenario_1() -> None:
     layout = phx.discretization.WeaklyCompressibleSPHStateLayout(
         _particles(), density_evolved=False
     )
@@ -45,9 +45,6 @@ def test_summation_density_state_layout_round_trips_and_masks_padding() -> None:
         layout.pack(position, velocity, jnp.ones((3,)))
     with pytest.raises(ValueError, match="no density component"):
         layout.density(state)
-
-
-def test_continuity_density_state_layout_round_trips_density_and_rates() -> None:
     layout = phx.discretization.WeaklyCompressibleSPHStateLayout(
         _particles(), density_evolved=True
     )
@@ -75,9 +72,6 @@ def test_continuity_density_state_layout_round_trips_density_and_rates() -> None
         layout.pack(
             position, velocity, jnp.asarray([1.0, 0.0, jnp.nan])
         ).block_until_ready()
-
-
-def test_wcsph_state_layout_rejects_wrong_shapes() -> None:
     layout = phx.discretization.WeaklyCompressibleSPHStateLayout(
         _particles(), density_evolved=True
     )

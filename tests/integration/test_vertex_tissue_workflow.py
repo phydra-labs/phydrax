@@ -351,7 +351,7 @@ def _evaluate_event(
     return candidate, evaluation
 
 
-def test_t1_commits_only_a_four_cell_neighbor_exchange() -> None:
+def test_vertex_tissue_workflow_scenario_1() -> None:
     source_plan, source_positions = _t1_plan(exchanged=False)
     target_plan, target_positions = _t1_plan(exchanged=True)
     source = source_plan.prepare(source_positions)
@@ -370,9 +370,6 @@ def test_t1_commits_only_a_four_cell_neighbor_exchange() -> None:
     assert result.committed
     assert result.prepared.prepared_id != source.prepared_id
     assert jnp.array_equal(result.state.cell_fields, state.cell_fields)
-
-
-def test_t3_commits_a_vertex_edge_rearrangement_but_is_not_mislabeled_t1() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     target = _two_triangle_plan(flipped=True)
@@ -390,9 +387,6 @@ def test_t3_commits_a_vertex_edge_rearrangement_but_is_not_mislabeled_t1() -> No
     assert not commit_vertex_tissue_topology(
         source, state, t1_candidate, t1_evaluation
     ).committed
-
-
-def test_t3_rejects_identifier_only_relabeling() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     plan = source.plan
@@ -425,9 +419,6 @@ def test_t3_rejects_identifier_only_relabeling() -> None:
     assert not commit_vertex_tissue_topology(
         source, state, candidate, evaluation
     ).committed
-
-
-def test_candidate_is_bound_to_exact_source_state_and_commit_epoch() -> None:
     source_plan = _two_triangle_plan()
     source = source_plan.prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
@@ -464,38 +455,32 @@ def test_candidate_is_bound_to_exact_source_state_and_commit_epoch() -> None:
     assert other_result.prepared.prepared_id == other_epoch.prepared_id
 
 
-@pytest.mark.parametrize(
-    "kind",
-    (
+def test_vertex_tissue_workflow_scenario_2() -> None:
+    for kind in (
         VertexTissueEventKind.T2,
         VertexTissueEventKind.EXTRUSION,
         VertexTissueEventKind.APOPTOSIS,
-    ),
-)
-def test_removal_events_redistribute_conserved_field_and_preserve_survivor_lineage(
-    kind: Any,
-) -> None:
-    source = _two_triangle_plan().prepare(_SQUARE)
-    state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
-    target = _two_triangle_plan(remove_first=True)
-    candidate, evaluation = _evaluate_event(
-        source,
-        state,
-        kind,
-        target,
-        jnp.asarray(((0.0, 0.0), (1.0, 1.0))),
-    )
-    result = commit_vertex_tissue_topology(source, state, candidate, evaluation)
+    ):
+        source = _two_triangle_plan().prepare(_SQUARE)
+        state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
+        target = _two_triangle_plan(remove_first=True)
+        candidate, evaluation = _evaluate_event(
+            source,
+            state,
+            kind,
+            target,
+            jnp.asarray(((0.0, 0.0), (1.0, 1.0))),
+        )
+        result = commit_vertex_tissue_topology(source, state, candidate, evaluation)
 
-    assert evaluation.passed
-    assert result.committed
-    assert result.state.cell_fields[1, 0] == pytest.approx(10.0)
-    assert jnp.sum(result.state.cell_fields) == pytest.approx(jnp.sum(state.cell_fields))
-    assert result.prepared.plan.cell_ids[1] == 11
-    assert result.prepared.plan.cell_parent_ids[1] == 11
-
-
-def test_division_records_parent_generation_and_splits_conserved_field() -> None:
+        assert evaluation.passed
+        assert result.committed
+        assert result.state.cell_fields[1, 0] == pytest.approx(10.0)
+        assert jnp.sum(result.state.cell_fields) == pytest.approx(
+            jnp.sum(state.cell_fields)
+        )
+        assert result.prepared.plan.cell_ids[1] == 11
+        assert result.prepared.plan.cell_parent_ids[1] == 11
     source = _division_plan(divided=False).prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((10.0,), (0.0,))))
     target = _division_plan(divided=True)
@@ -515,9 +500,6 @@ def test_division_records_parent_generation_and_splits_conserved_field() -> None
     assert jnp.allclose(result.state.cell_fields[:, 0], jnp.asarray((4.0, 6.0)))
     assert result.prepared.plan.cell_parent_ids[1] == 10
     assert result.prepared.plan.cell_generation[1] == 1
-
-
-def test_division_rejects_transfer_from_a_cell_other_than_declared_parent() -> None:
     source_plan, positions = _division_with_neighbor(divided=False)
     target_plan, _ = _division_with_neighbor(divided=True)
     source = source_plan.prepare(positions)
@@ -542,9 +524,6 @@ def test_division_rejects_transfer_from_a_cell_other_than_declared_parent() -> N
     assert not evaluation.lineage_transfer_valid
     assert not evaluation.passed
     assert not result.committed
-
-
-def test_inactive_cell_fields_and_rates_cannot_be_accepted() -> None:
     plan = _division_plan(divided=False)
     tissue = plan.prepare(_SQUARE)
     with pytest.raises(ValueError, match="Inactive cell field"):
@@ -568,7 +547,7 @@ def test_inactive_cell_fields_and_rates_cannot_be_accepted() -> None:
     assert jnp.array_equal(step.state.cell_fields, state.cell_fields)
 
 
-def test_failed_quality_guard_and_explicit_rollback_leave_epoch_unchanged() -> None:
+def test_vertex_tissue_workflow_scenario_3() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     target = _two_triangle_plan(flipped=True)
@@ -591,9 +570,6 @@ def test_failed_quality_guard_and_explicit_rollback_leave_epoch_unchanged() -> N
     assert jnp.array_equal(rejected.state.positions, state.positions)
     assert not rolled_back.committed
     assert rolled_back.prepared.prepared_id == source.prepared_id
-
-
-def test_capacity_change_is_rejected_before_topology_commit() -> None:
     source = _two_triangle_plan().prepare(_SQUARE)
     state = source.initialize_state(jnp.asarray(((4.0,), (6.0,))))
     target = polygonal_vertex_tissue_plan(
@@ -623,6 +599,39 @@ def test_capacity_change_is_rejected_before_topology_commit() -> None:
     assert not evaluation.passed
     assert not result.committed
     assert result.prepared.prepared_id == source.prepared_id
+    source_plan, positions = _tetrahedron_epoch(transitioned=False)
+    target_plan, _ = _tetrahedron_epoch(transitioned=True)
+    source = source_plan.prepare(positions)
+    state = source.initialize_state(jnp.asarray(((7.0,),)))
+    edge_candidate, edge_evaluation = _evaluate_event(
+        source,
+        state,
+        VertexTissueEventKind.EDGE_TRANSITION,
+        target_plan,
+        jnp.ones((1, 1)),
+        positions,
+    )
+    face_candidate, face_evaluation = _evaluate_event(
+        source,
+        state,
+        VertexTissueEventKind.FACE_TRANSITION,
+        target_plan,
+        jnp.ones((1, 1)),
+        positions,
+    )
+    result = commit_vertex_tissue_topology(source, state, edge_candidate, edge_evaluation)
+
+    assert edge_evaluation.passed
+    assert edge_evaluation.manifold
+    assert edge_evaluation.orientation_valid
+    assert result.committed
+    assert result.prepared.plan.dimension == 3
+    assert result.prepared.prepared_id != source.prepared_id
+    assert result.state.cell_fields[0, 0] == pytest.approx(7.0)
+    assert not face_evaluation.kind_valid
+    assert not commit_vertex_tissue_topology(
+        source, state, face_candidate, face_evaluation
+    ).committed
 
 
 def _tetrahedron_epoch(*, transitioned: bool) -> Any:
@@ -658,41 +667,3 @@ def _tetrahedron_epoch(*, transitioned: bool) -> Any:
         field_names=("mass",),
     )
     return plan, positions
-
-
-def test_three_dimensional_edge_transition_cannot_be_mislabeled_as_face_transition() -> (
-    None
-):
-    source_plan, positions = _tetrahedron_epoch(transitioned=False)
-    target_plan, _ = _tetrahedron_epoch(transitioned=True)
-    source = source_plan.prepare(positions)
-    state = source.initialize_state(jnp.asarray(((7.0,),)))
-    edge_candidate, edge_evaluation = _evaluate_event(
-        source,
-        state,
-        VertexTissueEventKind.EDGE_TRANSITION,
-        target_plan,
-        jnp.ones((1, 1)),
-        positions,
-    )
-    face_candidate, face_evaluation = _evaluate_event(
-        source,
-        state,
-        VertexTissueEventKind.FACE_TRANSITION,
-        target_plan,
-        jnp.ones((1, 1)),
-        positions,
-    )
-    result = commit_vertex_tissue_topology(source, state, edge_candidate, edge_evaluation)
-
-    assert edge_evaluation.passed
-    assert edge_evaluation.manifold
-    assert edge_evaluation.orientation_valid
-    assert result.committed
-    assert result.prepared.plan.dimension == 3
-    assert result.prepared.prepared_id != source.prepared_id
-    assert result.state.cell_fields[0, 0] == pytest.approx(7.0)
-    assert not face_evaluation.kind_valid
-    assert not commit_vertex_tissue_topology(
-        source, state, face_candidate, face_evaluation
-    ).committed

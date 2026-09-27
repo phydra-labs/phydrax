@@ -148,7 +148,7 @@ def _case(
     return result
 
 
-def test_uniform_mixed_density_has_one_mean_removal_and_zero_force() -> None:
+def test_cosmology_mixed_matter_scenario_1() -> None:
     case = _case()
     prepared = WaveParticleCosmologyPlan(
         case["wave"], case["kdk"], case["particle_gravity"]
@@ -168,9 +168,6 @@ def test_uniform_mixed_density_has_one_mean_removal_and_zero_force() -> None:
     np.testing.assert_allclose(shared.component_force, 0.0, atol=1e-12)
     np.testing.assert_allclose(shared.total_force, 0.0, atol=1e-12)
     assert shared.particle_force_adjoint_defect < 1e-12
-
-
-def test_uniform_component_limits_reproduce_wave_and_particle_owners() -> None:
     case = _case(schedule=(1.0, 1.0001, 1.0002))
     prepared = WaveParticleCosmologyPlan(
         case["wave"], case["kdk"], case["particle_gravity"]
@@ -196,9 +193,6 @@ def test_uniform_component_limits_reproduce_wave_and_particle_owners() -> None:
     assert bool(jnp.all(mixed.diagnostics.time_level_consistent))
     assert bool(jnp.all(mixed.diagnostics.wave_norm_conserved))
     np.testing.assert_allclose(mixed.diagnostics.total_gravity_work, 0.0, atol=1e-12)
-
-
-def test_uniform_wave_particle_gas_limit_reproduces_gas_particle_owner() -> None:
     case = _case(gas=True)
     prepared = WaveParticleGasCosmologyPlan(
         case["wave"], case["kdk"], case["gas"], case["particle_gravity"]
@@ -233,9 +227,6 @@ def test_uniform_wave_particle_gas_limit_reproduces_gas_particle_owner() -> None
     assert bool(jnp.all(mixed.diagnostics.gas_pressure_positive))
     assert bool(jnp.all(mixed.diagnostics.gas_homogeneous_successful))
     np.testing.assert_allclose(mixed.diagnostics.component_gravity_work, 0.0, atol=1e-11)
-
-
-def test_rejected_mixed_interval_rolls_back_the_whole_state() -> None:
     policy = WaveDarkMatterStepPolicy(
         maximum_phase_radians=1.0e-12,
         minimum_de_broglie_cells=2.0,
@@ -270,9 +261,6 @@ def test_rejected_mixed_interval_rolls_back_the_whole_state() -> None:
     assert result.state.wave.scale_factor == initial.wave.scale_factor
     assert result.state.particles.scale_factor == initial.particles.scale_factor
     assert result.state.gas.scale_factor == initial.gas.scale_factor
-
-
-def test_mixed_plan_rejects_a_second_gravitational_constant_owner() -> None:
     case = _case()
     mismatched_owner = phx.solver.NewtonianSelfGravityPlan(0.051).prepare(
         case["particle_gravity"].gravity.transport
@@ -284,11 +272,6 @@ def test_mixed_plan_rejects_a_second_gravitational_constant_owner() -> None:
 
     with pytest.raises(ValueError, match="exactly one gravitational constant"):
         WaveParticleCosmologyPlan(case["wave"], case["kdk"], mismatched_gravity)
-
-
-def test_mixed_rollout_rejects_nan_component_time_levels_before_canonicalization() -> (
-    None
-):
     case = _case(gas=True)
     prepared = WaveParticleGasCosmologyPlan(
         case["wave"], case["kdk"], case["gas"], case["particle_gravity"]

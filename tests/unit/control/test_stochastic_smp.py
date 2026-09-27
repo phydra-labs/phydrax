@@ -7,7 +7,6 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import pytest
 
 from phydrax.control.stochastic._evaluation import (
     ControlledPathBatch,
@@ -125,7 +124,7 @@ def _evaluate(
     )
 
 
-def test_stochastic_smp_reduces_to_deterministic_pmp() -> None:
+def test_stochastic_smp_scenario_1() -> None:
     paths = _paths(
         states=[[[1.0], [0.5]], [[1.0], [0.5]]],
         actions=[[[-0.5]], [[-0.5]]],
@@ -151,42 +150,6 @@ def test_stochastic_smp_reduces_to_deterministic_pmp() -> None:
     assert not result.feedback_claim
     assert not result.markov_perfect_claim
     assert not result.global_optimality_claim
-
-
-@pytest.mark.parametrize("sample_role", ["training", "holdout"])
-def test_zero_empirical_smp_residual_does_not_claim_global_optimality(
-    sample_role: Any,
-) -> None:
-    paths = _paths(
-        states=[[[1.0], [0.5]], [[1.0], [0.5]]],
-        actions=[[[-0.5]], [[-0.5]]],
-        noise=[[[0.0]], [[0.0]]],
-        clusters=[0, 1],
-    )
-    result = _evaluate(
-        _problem(),
-        paths,
-        jnp.full((2, 2, 1), 0.5),
-        jnp.zeros((2, 1, 1, 1)),
-        convexity_checked=True,
-        convexity_evidence="jointly checked convex running and terminal costs",
-        sample_role=sample_role,
-    )
-
-    assert result.certificate == "OPEN_LOOP_SMP_STATIONARY"
-    assert jnp.all(result.stationary)
-    assert jnp.allclose(result.conditional_stationarity_residuals, 0.0)
-    assert jnp.allclose(result.maximum_residual_norms, 0.0)
-    assert result.path_evidence.sample_role == sample_role
-    assert result.convexity_checked
-    assert result.convexity_evidence is not None
-    assert not result.sufficient
-    assert not result.population_stationarity_claim
-    assert not result.global_optimality_claim
-    assert not result.feedback_claim
-
-
-def test_stochastic_smp_includes_q_sigma_action_term() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]], [[0.0], [0.0]]],
         actions=[[[0.0]], [[0.0]]],
@@ -207,9 +170,6 @@ def test_stochastic_smp_includes_q_sigma_action_term() -> None:
     assert jnp.allclose(mutated_derivative.hamiltonian_action_gradients, 0.0)
     assert not jnp.any(controlled_diffusion.stationary)
     assert jnp.all(mutated_derivative.stationary)
-
-
-def test_stochastic_smp_reports_terminal_adjoint_mismatch() -> None:
     paths = _paths(
         states=[[[0.0], [2.0]]],
         actions=[[[2.0]]],
@@ -224,9 +184,6 @@ def test_stochastic_smp_reports_terminal_adjoint_mismatch() -> None:
     assert not bool(result.stationary[0])
     assert jnp.allclose(result.terminal_adjoint_residuals[0], -2.0)
     assert float(result.terminal_adjoint_rms_norms[0]) == 2.0
-
-
-def test_stochastic_smp_quarantines_nonfinite_derivative_evidence() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]], [[1.0], [1.0]]],
         actions=[[[0.0]], [[0.0]]],
@@ -245,9 +202,6 @@ def test_stochastic_smp_quarantines_nonfinite_derivative_evidence() -> None:
     )
     assert jnp.isinf(result.maximum_residual_norms[1])
     assert int(result.path_evidence.valid_path_count) == 1
-
-
-def test_stochastic_smp_emits_no_valid_paths_when_every_path_is_invalid() -> None:
     paths = _paths(
         states=[[[0.0], [0.0]], [[0.0], [0.0]]],
         actions=[[[0.0]], [[0.0]]],
@@ -274,3 +228,31 @@ def test_stochastic_smp_emits_no_valid_paths_when_every_path_is_invalid() -> Non
 
     assert jnp.all(result.status == int(StochasticMaximumPrincipleStatus.NO_VALID_PATHS))
     assert int(result.path_evidence.valid_path_count) == 0
+    for sample_role in ["training", "holdout"]:
+        paths = _paths(
+            states=[[[1.0], [0.5]], [[1.0], [0.5]]],
+            actions=[[[-0.5]], [[-0.5]]],
+            noise=[[[0.0]], [[0.0]]],
+            clusters=[0, 1],
+        )
+        result = _evaluate(
+            _problem(),
+            paths,
+            jnp.full((2, 2, 1), 0.5),
+            jnp.zeros((2, 1, 1, 1)),
+            convexity_checked=True,
+            convexity_evidence="jointly checked convex running and terminal costs",
+            sample_role=sample_role,
+        )
+
+        assert result.certificate == "OPEN_LOOP_SMP_STATIONARY"
+        assert jnp.all(result.stationary)
+        assert jnp.allclose(result.conditional_stationarity_residuals, 0.0)
+        assert jnp.allclose(result.maximum_residual_norms, 0.0)
+        assert result.path_evidence.sample_role == sample_role
+        assert result.convexity_checked
+        assert result.convexity_evidence is not None
+        assert not result.sufficient
+        assert not result.population_stationarity_claim
+        assert not result.global_optimality_claim
+        assert not result.feedback_claim

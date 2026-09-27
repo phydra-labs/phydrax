@@ -292,6 +292,7 @@ def test_each_mixture_family_exercises_declared_fit_feature_and_weight_gradients
             regularization=regularization,
         ),
     ],
+    ids=("gaussian", "bayesian"),
 )
 def test_each_mixture_family_exercises_declared_fit_hyperparameter_gradient(
     factory: Any,

@@ -19,7 +19,7 @@ def _wing(panel_count: Any = 4) -> Any:
     return phx.discretization.LiftingSurfacePlan(leading, trailing).prepare()
 
 
-def test_regularized_filament_orientation_reverses_velocity() -> None:
+def test_vortex_lifting_boundaries_scenario_1() -> None:
     targets = jnp.asarray(((0.5, 1.0, 0.0),))
     start = jnp.asarray(((0.0, 0.0, 0.0),))
     end = jnp.asarray(((1.0, 0.0, 0.0),))
@@ -32,9 +32,6 @@ def test_regularized_filament_orientation_reverses_velocity() -> None:
 
     np.testing.assert_allclose(reverse, -forward, rtol=1e-12, atol=1e-12)
     assert jnp.linalg.norm(forward) > 0.0
-
-
-def test_steady_vortex_lattice_solves_impermeability_and_returns_lift() -> None:
     surface = _wing(6)
     plan = phx.solver.SteadyVortexLatticePlan(
         surface,
@@ -48,9 +45,6 @@ def test_steady_vortex_lattice_solves_impermeability_and_returns_lift() -> None:
     assert result.residual_norm < 1e-10
     assert result.total_force[2] > 0.0
     assert bool(result.successful)
-
-
-def test_uvlm_sheds_only_on_accepted_step_and_fails_closed_on_capacity() -> None:
     surface = _wing(2)
     bound = phx.solver.SteadyVortexLatticePlan(
         surface,
@@ -74,7 +68,7 @@ def test_uvlm_sheds_only_on_accepted_step_and_fails_closed_on_capacity() -> None
     )
 
 
-def test_cylinder_panel_solve_enforces_boundary_and_explicit_constraint() -> None:
+def test_vortex_lifting_boundaries_scenario_2() -> None:
     angle = jnp.linspace(0.0, 2.0 * jnp.pi, 25)
     vertices = jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
     geometry = phx.operators.FlowPanelGeometry2D.from_vertices(vertices)
@@ -87,11 +81,6 @@ def test_cylinder_panel_solve_enforces_boundary_and_explicit_constraint() -> Non
     assert jnp.abs(result.constraint_residual) < 1e-10
     assert jnp.all(jnp.isfinite(result.pressure_coefficient))
     assert bool(result.successful)
-
-
-def test_wall_transfer_and_bilinear_remesh_preserve_circulation_and_first_moment() -> (
-    None
-):
     angle = jnp.linspace(0.0, 2.0 * jnp.pi, 9)
     geometry = phx.operators.FlowPanelGeometry2D.from_vertices(
         jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
@@ -121,9 +110,6 @@ def test_wall_transfer_and_bilinear_remesh_preserve_circulation_and_first_moment
     assert bool(remesh.successful)
     assert jnp.abs(remesh.circulation_residual) < 1e-12
     assert jnp.max(jnp.abs(remesh.first_moment_residual)) < 1e-12
-
-
-def test_wall_transfer_overflow_preserves_the_accepted_pool() -> None:
     angle = jnp.linspace(0.0, 2.0 * jnp.pi, 9)
     geometry = phx.operators.FlowPanelGeometry2D.from_vertices(
         jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
@@ -144,9 +130,6 @@ def test_wall_transfer_overflow_preserves_the_accepted_pool() -> None:
     assert int(result.overflow_count) == geometry.length.size - 2
     np.testing.assert_array_equal(result.accepted.active, initial.active)
     np.testing.assert_allclose(result.accepted.circulation, initial.circulation)
-
-
-def test_rejected_wall_flux_cannot_commit_emitted_particles() -> None:
     angle = jnp.linspace(0.0, 2.0 * jnp.pi, 9)
     geometry = phx.operators.FlowPanelGeometry2D.from_vertices(
         jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)

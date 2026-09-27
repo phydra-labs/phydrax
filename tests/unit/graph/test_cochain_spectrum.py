@@ -41,7 +41,7 @@ def _cycle_graph() -> Any:
     )
 
 
-def test_graph_to_cochain_complex_canonicalizes_reciprocal_edges() -> None:
+def test_cochain_spectrum_scenario_1() -> None:
     complex_ir = phx.graph.graph_to_cochain_complex(
         _path_graph(),
         edge_weight_key="conductance",
@@ -54,9 +54,6 @@ def test_graph_to_cochain_complex_canonicalizes_reciprocal_edges() -> None:
     assert np.array_equal(np.asarray(incidence.signs), [-1.0, 1.0, -1.0, 1.0])
     assert jnp.allclose(complex_ir.hodge_stars[0], 1.0)
     assert jnp.allclose(complex_ir.hodge_stars[1], 1.0)
-
-
-def test_graph_to_cochain_complex_aggregates_parallel_reciprocal_edges() -> None:
     graph = _graph(
         2,
         [0, 0, 1, 1],
@@ -70,9 +67,6 @@ def test_graph_to_cochain_complex_aggregates_parallel_reciprocal_edges() -> None
 
     assert complex_ir.cell_counts == (2, 1)
     assert jnp.allclose(complex_ir.hodge_stars[1], jnp.asarray([3.0]))
-
-
-def test_graph_to_cochain_complex_validates_edge_semantics_and_measure() -> None:
     missing_reverse = _graph(2, [0], [1], [1.0])
     inconsistent = _graph(2, [0, 1], [1, 0], [1.0, 2.0])
     self_loop = _graph(2, [0], [0], [1.0])
@@ -92,9 +86,6 @@ def test_graph_to_cochain_complex_validates_edge_semantics_and_measure() -> None
             edge_weight_key="conductance",
             node_measure="degree",
         )
-
-
-def test_undirected_once_and_edge_mask_have_explicit_semantics() -> None:
     graph = _graph(
         3,
         [0, 1, 0],
@@ -110,9 +101,6 @@ def test_undirected_once_and_edge_mask_have_explicit_semantics() -> None:
 
     assert complex_ir.cell_counts == (3, 2)
     assert jnp.allclose(complex_ir.hodge_stars[1], jnp.asarray([2.0, 3.0]))
-
-
-def test_path_cochain_eigenspectrum_recovers_analytic_modes() -> None:
     complex_ir = phx.graph.graph_to_cochain_complex(
         _path_graph(), edge_weight_key="conductance"
     )
@@ -134,7 +122,7 @@ def test_path_cochain_eigenspectrum_recovers_analytic_modes() -> None:
     )
 
 
-def test_disconnected_isolated_node_remains_a_true_zero_mode() -> None:
+def test_cochain_spectrum_scenario_2() -> None:
     complex_ir = phx.graph.graph_to_cochain_complex(
         _graph(3, [0, 1], [1, 0], [1.0, 1.0]),
         edge_weight_key="conductance",
@@ -146,9 +134,6 @@ def test_disconnected_isolated_node_remains_a_true_zero_mode() -> None:
     )
 
     assert basis.zero_mode_count == 2
-
-
-def test_truncation_rejects_a_cut_through_degenerate_cycle_modes() -> None:
     complex_ir = phx.graph.graph_to_cochain_complex(
         _cycle_graph(), edge_weight_key="conductance"
     )
@@ -162,9 +147,6 @@ def test_truncation_rejects_a_cut_through_degenerate_cycle_modes() -> None:
     assert not basis.report.exact
     # ty: ignore[unresolved-attribute]
     assert basis.report.next_eigenvalue == pytest.approx(4.0)
-
-
-def test_sparse_tail_is_explicitly_uncertified_for_product_construction() -> None:
     node_count = 8
     forward = jnp.arange(node_count - 1, dtype=jnp.int32)
     backward = forward + 1
@@ -193,7 +175,7 @@ def test_sparse_tail_is_explicitly_uncertified_for_product_construction() -> Non
         )
 
 
-def test_zero_classification_uses_operator_scale_for_every_solver_path() -> None:
+def test_cochain_spectrum_scenario_3() -> None:
     graph = _graph(
         6,
         [0, 1, 2, 3, 4, 5],
@@ -210,9 +192,6 @@ def test_zero_classification_uses_operator_scale_for_every_solver_path() -> None
                 num_modes=4,
                 dense_threshold=dense_threshold,
             )
-
-
-def test_harmonic_nullity_uses_the_full_operator_scale_under_sparse_solves() -> None:
     graph = _graph(
         8,
         [0, 1, 1, 2, 2, 3, 4, 5, 5, 6, 6, 7],
@@ -228,9 +207,6 @@ def test_harmonic_nullity_uses_the_full_operator_scale_under_sparse_solves() -> 
             tolerance=1e-9,
             dense_threshold=1,
         )
-
-
-def test_relative_boundary_basis_zeroes_inactive_rows() -> None:
     complex_ir = phx.graph.graph_to_cochain_complex(
         _path_graph(), edge_weight_key="conductance"
     )

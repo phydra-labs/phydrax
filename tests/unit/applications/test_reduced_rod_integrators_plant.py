@@ -126,7 +126,7 @@ def _advance(
     return state
 
 
-def test_velocity_euler_is_velocity_first_and_first_order_time_convergent() -> None:
+def test_reduced_rod_integrators_plant_scenario_1() -> None:
     dynamics = _axial_dynamics()
     source = _initial_state(dynamics)
     step = jnp.asarray(1.0e-3, dtype=source.reduced_state.values.dtype)
@@ -186,9 +186,6 @@ def test_velocity_euler_is_velocity_first_and_first_order_time_convergent() -> N
     assert jnp.abs(fine.reduced_state.coefficients[0] - exact) < jnp.abs(
         coarse.reduced_state.coefficients[0] - exact
     )
-
-
-def test_implicit_midpoint_conservative_and_damped_ledgers_close() -> None:
     conservative = _axial_dynamics()
     source = _initial_state(conservative, coefficient=0.08, velocity=-0.1)
     policy = ReducedRodImplicitMidpoint(
@@ -222,9 +219,6 @@ def test_implicit_midpoint_conservative_and_damped_ledgers_close() -> None:
     assert bool(damped_ledger.balanced)
     assert damped_ledger.viscous_dissipation > 0.0
     assert damped_ledger.mechanical_energy_after < damped_ledger.mechanical_energy_before
-
-
-def test_material_mass_and_nonlinear_failures_roll_back_every_integration_leaf() -> None:
     dynamics = _axial_dynamics()
     source = _initial_state(dynamics, coefficient=0.1, velocity=0.2)
     explicit = ReducedRodSemiImplicitVelocityEuler(
@@ -285,7 +279,7 @@ def test_material_mass_and_nonlinear_failures_roll_back_every_integration_leaf()
     _assert_tree_arrays_equal(nonlinear_failure.accepted_state, source)
 
 
-def test_passive_plant_reset_step_rollback_checkpoint_replay_and_mass_revision() -> None:
+def test_reduced_rod_integrators_plant_scenario_2() -> None:
     dynamics = _axial_dynamics()
     plant = prepare_reduced_rod_plant(
         dynamics,
@@ -354,11 +348,6 @@ def test_passive_plant_reset_step_rollback_checkpoint_replay_and_mass_revision()
         jax.random.key_data(direct.accepted_state.key),
     )
     assert failed.candidate_state.time == failed_context.target_time
-
-
-def test_plant_material_mass_and_nonlinear_failures_roll_back_payload_clock_and_key() -> (
-    None
-):
     dynamics = _axial_dynamics()
     explicit_plant = prepare_reduced_rod_plant(
         dynamics,
@@ -457,9 +446,6 @@ def test_plant_material_mass_and_nonlinear_failures_roll_back_payload_clock_and_
     _assert_tree_arrays_equal(
         nonlinear_failure.accepted_state, nonlinear_reset.accepted_state
     )
-
-
-def test_differential_adapter_is_the_same_smooth_stateless_contact_free_law() -> None:
     dynamics = _axial_dynamics(viscosity=0.25)
     plant = prepare_reduced_rod_plant(
         dynamics,

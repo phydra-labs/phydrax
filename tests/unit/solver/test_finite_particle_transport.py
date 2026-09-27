@@ -65,7 +65,7 @@ def _plans(
     return population, plan
 
 
-def test_finite_radius_erosion_respects_fluid_side_and_particle_radius() -> None:
+def test_finite_particle_transport_scenario_1() -> None:
     circle = phx.geometry.Circle((0.0, 0.0), 1.0, feature_id="circle").compile()
     outside = phx.geometry.FiniteRadiusErosionPlan(
         circle, "outside", geometry_id="circle"
@@ -79,9 +79,6 @@ def test_finite_radius_erosion_respects_fluid_side_and_particle_radius() -> None
     ).evaluate(jnp.asarray(((0.25, 0.0),)), jnp.asarray((0.2,)))
     np.testing.assert_allclose(inside.clearance, 0.55)
     assert bool(inside.header.globally_eligible)
-
-
-def test_overdamped_particle_localizes_contact_and_slides_without_penetration() -> None:
     population, plan = _plans(
         motion=phx.discretization.FiniteParticleMotionKind.OVERDAMPED_STOKES
     )
@@ -98,9 +95,6 @@ def test_overdamped_particle_localizes_contact_and_slides_without_penetration() 
     np.testing.assert_allclose(result.accepted.position[0, 0], -1.1, atol=2.0e-7)
     assert result.accepted.population.active[0]
     assert result.accepted.event_count[0] == 1
-
-
-def test_inertial_drag_uses_declared_exact_local_substep_without_auto_switch() -> None:
     population, plan = _plans(
         motion=phx.discretization.FiniteParticleMotionKind.INERTIAL_STOKES
     )

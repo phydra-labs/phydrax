@@ -186,35 +186,32 @@ def _profile(
     )
 
 
-@pytest.mark.parametrize(("profile_name", "factory"), _FACTORIES)
-def test_all_full_closure_profiles_bind_independent_complete_support(
-    profile_name: Any,
-    factory: Any,
-) -> None:
-    claim = _profile(profile_name, factory)
-    support = dict(claim.support.attributes)
-    differentiation = claims.full_dark_sector_differentiation_contract(profile_name)
+def test_cosmology_full_dark_sector_claims_scenario_1() -> None:
+    for profile_name, factory in _FACTORIES:
+        claim = _profile(profile_name, factory)
+        support = dict(claim.support.attributes)
+        differentiation = claims.full_dark_sector_differentiation_contract(profile_name)
 
-    assert support["profile"] == profile_name
-    assert support["unit_contract_id"]
-    assert support["frame_id"]
-    assert support["frame_realization_id"]
-    assert support["frame_snapshot_token"] == 4
-    assert support["differentiation_contract_id"] == differentiation.contract_id
-    assert support["fixed_capacity"] is True
-    assert support["semantic_unboundedness"] == "durable-finite-epoch-chain"
-    assert support["production_inheritance"] is False
-    assert support["checkpoint_product"] not in support["analysis_output_products"].split(
-        ","
-    )
-    assert "changed-physics-unit-frame-or-support-identity" in claim.invalidation_triggers
-    assert "missing-or-inadmissible-source-rights" in claim.invalidation_triggers
-    assert set(value.metric_id for value in claim.criteria) == set(
-        claims.full_dark_sector_claim_metric_ids(profile_name)
-    )
-
-
-def test_claim_content_identity_changes_with_runtime_units_and_frame_snapshot() -> None:
+        assert support["profile"] == profile_name
+        assert support["unit_contract_id"]
+        assert support["frame_id"]
+        assert support["frame_realization_id"]
+        assert support["frame_snapshot_token"] == 4
+        assert support["differentiation_contract_id"] == differentiation.contract_id
+        assert support["fixed_capacity"] is True
+        assert support["semantic_unboundedness"] == "durable-finite-epoch-chain"
+        assert support["production_inheritance"] is False
+        assert support["checkpoint_product"] not in support[
+            "analysis_output_products"
+        ].split(",")
+        assert (
+            "changed-physics-unit-frame-or-support-identity"
+            in claim.invalidation_triggers
+        )
+        assert "missing-or-inadmissible-source-rights" in claim.invalidation_triggers
+        assert set(value.metric_id for value in claim.criteria) == set(
+            claims.full_dark_sector_claim_metric_ids(profile_name)
+        )
     name, factory = _FACTORIES[0]
     baseline_units = _units()
     baseline_frame = _frame(baseline_units)
@@ -246,9 +243,6 @@ def test_claim_content_identity_changes_with_runtime_units_and_frame_snapshot() 
     assert baseline.claim_id != changed_frame.claim_id
     assert baseline.claim_id != changed_normalization.claim_id
     assert claims.full_dark_sector_promotion_channel(baseline).endswith(baseline.claim_id)
-
-
-def test_exact_criteria_reserved_support_and_source_rights_are_enforced() -> None:
     name, factory = _FACTORIES[3]
     units = _units()
     frame = _frame(units)

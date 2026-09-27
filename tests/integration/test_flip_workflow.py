@@ -14,7 +14,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._sharp_measures import exact_sharp_geometry
 
 
-def test_fixed_population_flip_workflow_is_jittable_and_transactional() -> None:
+def test_flip_workflow_scenario_1() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8) for _ in range(2)),
         axis_names=("x", "y"),
@@ -44,6 +44,36 @@ def test_fixed_population_flip_workflow_is_jittable_and_transactional() -> None:
     assert result.diagnostics.momentum_balance_defect < 1.0e-12
     assert result.diagnostics.divergence_norm < 1.0e-6
     assert result.accepted_state.particles.position.shape == position.shape
+    _, geometry, transfer, _ = _qualified_flip_problem()
+    position = jnp.asarray([[0.20, 0.25], [0.30, 0.25], [0.20, 0.40], [0.30, 0.40]])
+    routes = transfer.build(position)
+    result = transfer.particle_to_grid(
+        routes, jnp.zeros_like(position), 1.0, geometry=geometry
+    )
+
+    assert result.successful
+    assert result.geometry_id == geometry.realization_id
+    assert jnp.all(result.liquid_fraction[0, :] == 0.0)
+    assert jnp.all(~result.face_support[0][0, :])
+    assert jnp.isclose(jnp.sum(result.particle_volume_content), 4.0)
+    _, geometry, _, compiled = _qualified_flip_problem()
+    position = jnp.asarray([[0.20, 0.25], [0.30, 0.25], [0.20, 0.40], [0.30, 0.40]])
+    state = compiled.initialize_state(position, jnp.zeros_like(position))
+    failed = eqx.tree_at(
+        lambda value: value.geometry.evidence.accepted,
+        compiled,
+        jnp.asarray(False),
+    )
+    result = failed.step_detailed(state, jnp.asarray(1.0e-4))
+
+    assert not result.successful
+    assert not result.diagnostics.geometry_accepted
+    assert result.accepted_state.geometry_id == geometry.realization_id
+    assert result.accepted_state.time == state.time
+    assert result.accepted_state.accepted_step == state.accepted_step
+    assert jnp.array_equal(
+        result.accepted_state.particles.position, state.particles.position
+    )
 
 
 def _qualified_flip_problem() -> Any:
@@ -119,39 +149,3 @@ def _qualified_flip_problem() -> Any:
         solid_boundary=collision,
     )
     return finite_volume, geometry, transfer, compiled
-
-
-def test_qualified_flip_transfer_normalizes_only_over_open_support() -> None:
-    _, geometry, transfer, _ = _qualified_flip_problem()
-    position = jnp.asarray([[0.20, 0.25], [0.30, 0.25], [0.20, 0.40], [0.30, 0.40]])
-    routes = transfer.build(position)
-    result = transfer.particle_to_grid(
-        routes, jnp.zeros_like(position), 1.0, geometry=geometry
-    )
-
-    assert result.successful
-    assert result.geometry_id == geometry.realization_id
-    assert jnp.all(result.liquid_fraction[0, :] == 0.0)
-    assert jnp.all(~result.face_support[0][0, :])
-    assert jnp.isclose(jnp.sum(result.particle_volume_content), 4.0)
-
-
-def test_qualified_flip_geometry_failure_rolls_back_whole_state() -> None:
-    _, geometry, _, compiled = _qualified_flip_problem()
-    position = jnp.asarray([[0.20, 0.25], [0.30, 0.25], [0.20, 0.40], [0.30, 0.40]])
-    state = compiled.initialize_state(position, jnp.zeros_like(position))
-    failed = eqx.tree_at(
-        lambda value: value.geometry.evidence.accepted,
-        compiled,
-        jnp.asarray(False),
-    )
-    result = failed.step_detailed(state, jnp.asarray(1.0e-4))
-
-    assert not result.successful
-    assert not result.diagnostics.geometry_accepted
-    assert result.accepted_state.geometry_id == geometry.realization_id
-    assert result.accepted_state.time == state.time
-    assert result.accepted_state.accepted_step == state.accepted_step
-    assert jnp.array_equal(
-        result.accepted_state.particles.position, state.particles.position
-    )

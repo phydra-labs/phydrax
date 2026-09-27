@@ -34,7 +34,7 @@ def _context(count: Any = 8) -> Any:
     return particles, kernel, position, neighborhood, geometry, physical, spacing
 
 
-def test_kernel_and_first_order_corrections_return_explicit_evidence() -> None:
+def test_sph_stabilization_adaptive_scenario_1() -> None:
     particles, kernel, _, neighborhood, geometry, physical, spacing = _context()
     density = jnp.ones((particles.capacity,))
     execution = phx.discretization.ParticleExecutionPolicy()
@@ -63,9 +63,6 @@ def test_kernel_and_first_order_corrections_return_explicit_evidence() -> None:
     assert jnp.all(normalization.completeness > 0.0)
     assert correction.correction_matrix.shape == (particles.capacity, 1, 1)
     assert jnp.all(jnp.isfinite(correction.residual_norm))
-
-
-def test_delta_sph_artificial_viscosity_and_shepard_are_operational() -> None:
     particles, kernel, position, neighborhood, geometry, physical, spacing = _context()
     density = 1.0 + 0.02 * jnp.sin(2.0 * jnp.pi * position[:, 0])
     sound = jnp.ones_like(density)
@@ -117,9 +114,6 @@ def test_delta_sph_artificial_viscosity_and_shepard_are_operational() -> None:
     assert jnp.allclose(jnp.sum(artificial.force, axis=0), 0.0, atol=1e-13)
     assert jnp.all(successful)
     assert jnp.all(renormalized > 0.0)
-
-
-def test_adaptive_h_computes_grad_h_and_variable_h_force() -> None:
     particles, kernel, _, neighborhood, geometry, _, spacing = _context()
     density = jnp.linspace(0.9, 1.1, particles.capacity)
     execution = phx.discretization.ParticleExecutionPolicy()

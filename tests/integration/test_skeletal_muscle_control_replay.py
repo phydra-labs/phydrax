@@ -92,7 +92,7 @@ def test_surrogate_decision_requires_causal_exact_control_replay() -> None:
     assert accepted.active_sample_count == 2
 
 
-def test_pure_relative_replay_handles_zero_exact_values_without_nan() -> None:
+def test_skeletal_muscle_control_replay_scenario_1() -> None:
     _, problem, parameterization, _ = _motor_control_problem()
     replay = SkeletalSurrogateReplayPlan(
         problem,
@@ -127,9 +127,6 @@ def test_pure_relative_replay_handles_zero_exact_values_without_nan() -> None:
     assert not bool(nonzero_evidence.accepted)
     assert jnp.all(jnp.isfinite(relative_gradient(zero_values)))
     assert jnp.all(jnp.isfinite(relative_gradient(nonzero_values)))
-
-
-def test_replay_promotes_integer_exact_values_before_comparison() -> None:
     _, problem, parameterization, _ = _motor_control_problem()
     replay = SkeletalSurrogateReplayPlan(
         problem,
@@ -155,6 +152,46 @@ def test_replay_promotes_integer_exact_values_before_comparison() -> None:
     assert jnp.isclose(evidence.maximum_absolute_error, 0.9)
     assert jnp.isclose(evidence.maximum_relative_error, 0.9)
     assert not bool(evidence.accepted)
+    _, problem, parameterization, _ = _motor_control_problem()
+    first_state_coordinate = SkeletalReplayObservationOperator(
+        lambda trajectory: trajectory.states[:-1, 0, 0],
+        "motor-unit-first-state-coordinate-observation",
+    )
+    second_state_coordinate = SkeletalReplayObservationOperator(
+        lambda trajectory: trajectory.states[:-1, 1, 0],
+        "motor-unit-second-state-coordinate-observation",
+    )
+    state_replay = SkeletalSurrogateReplayPlan(
+        problem,
+        parameterization,
+        first_state_coordinate,
+        jnp.ones((2,), dtype="bool"),
+        "same-surrogate",
+        "same-quantity",
+        absolute_tolerance=0.05,
+        relative_tolerance=0.02,
+    )
+    second_state_replay = SkeletalSurrogateReplayPlan(
+        problem,
+        parameterization,
+        second_state_coordinate,
+        jnp.ones((2,), dtype="bool"),
+        "same-surrogate",
+        "same-quantity",
+        absolute_tolerance=0.05,
+        relative_tolerance=0.02,
+    )
+    controls = jnp.full((2, 1), 20.0)
+    state_evidence = state_replay.evaluate(controls, jnp.zeros((2,)))
+    second_state_evidence = second_state_replay.evaluate(controls, jnp.zeros((2,)))
+
+    assert state_replay.plan_id != second_state_replay.plan_id
+    assert state_evidence.observation_operator_id == first_state_coordinate.operator_id
+    assert (
+        second_state_evidence.observation_operator_id
+        == second_state_coordinate.operator_id
+    )
+    assert state_evidence.replay_id != second_state_evidence.replay_id
 
 
 def test_surrogate_replay_rejects_exact_but_physically_infeasible_control() -> None:
@@ -196,51 +233,6 @@ def test_surrogate_replay_rejects_exact_but_physically_infeasible_control() -> N
     assert not bool(result.exact_result.feasibility.feasible)
     assert not bool(result.exact_result.successful)
     assert not bool(result.accepted)
-
-
-def test_exact_observation_operator_identity_prevents_replay_provenance_collision() -> (
-    None
-):
-    _, problem, parameterization, _ = _motor_control_problem()
-    first_state_coordinate = SkeletalReplayObservationOperator(
-        lambda trajectory: trajectory.states[:-1, 0, 0],
-        "motor-unit-first-state-coordinate-observation",
-    )
-    second_state_coordinate = SkeletalReplayObservationOperator(
-        lambda trajectory: trajectory.states[:-1, 1, 0],
-        "motor-unit-second-state-coordinate-observation",
-    )
-    state_replay = SkeletalSurrogateReplayPlan(
-        problem,
-        parameterization,
-        first_state_coordinate,
-        jnp.ones((2,), dtype="bool"),
-        "same-surrogate",
-        "same-quantity",
-        absolute_tolerance=0.05,
-        relative_tolerance=0.02,
-    )
-    second_state_replay = SkeletalSurrogateReplayPlan(
-        problem,
-        parameterization,
-        second_state_coordinate,
-        jnp.ones((2,), dtype="bool"),
-        "same-surrogate",
-        "same-quantity",
-        absolute_tolerance=0.05,
-        relative_tolerance=0.02,
-    )
-    controls = jnp.full((2, 1), 20.0)
-    state_evidence = state_replay.evaluate(controls, jnp.zeros((2,)))
-    second_state_evidence = second_state_replay.evaluate(controls, jnp.zeros((2,)))
-
-    assert state_replay.plan_id != second_state_replay.plan_id
-    assert state_evidence.observation_operator_id == first_state_coordinate.operator_id
-    assert (
-        second_state_evidence.observation_operator_id
-        == second_state_coordinate.operator_id
-    )
-    assert state_evidence.replay_id != second_state_evidence.replay_id
 
 
 def test_sampling_mpc_uses_exact_hard_motor_unit_rollouts() -> None:

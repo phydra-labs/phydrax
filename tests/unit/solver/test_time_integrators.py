@@ -35,7 +35,7 @@ def _decay_dae(rate: Any = 1.0) -> Any:
     )
 
 
-def test_diffrax_preflight_resolves_fixed_solver_and_records_configuration() -> None:
+def test_time_integrators_scenario_1() -> None:
     solution = phx.solver.solve_diffrax(
         _decay_problem(),
         save_times=jnp.asarray([0.0, 1.0]),
@@ -65,6 +65,48 @@ def test_diffrax_preflight_resolves_fixed_solver_and_records_configuration() -> 
             stepsize_controller=dfx.PIDController(rtol=1e-4, atol=1e-6),
             dt0=0.01,
         )
+    grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 21), time_id="theta")
+    theta = phx.solver.solve_dae(
+        _decay_dae(),
+        grid,
+        policy=phx.solver.DAESolvePolicy(
+            method=phx.solver.ThetaMethod(0.5, endpoint=True)
+        ),
+    )
+    factor = (1.0 - 0.5 * grid.durations[0]) / (1.0 + 0.5 * grid.durations[0])
+    assert theta.successful
+    assert theta.method_id.startswith("temporal:theta")
+    assert jnp.allclose(theta.states[-1, 0], factor**grid.num_steps, rtol=2e-6)
+
+    bdf5 = phx.solver.solve_dae(
+        _decay_dae(),
+        grid,
+        policy=phx.solver.DAESolvePolicy(method=phx.solver.BDFMethod(5)),
+    )
+    assert bdf5.successful
+    assert int(jnp.max(bdf5.step_history.orders)) == 5
+    assert jnp.allclose(bdf5.states[-1, 0], jnp.exp(-1.0), rtol=2e-3)
+    system = phx.dynamics.SecondOrderDifferentialSystem(
+        lambda time, configuration, velocity, acceleration, omega: (
+            acceleration + omega**2 * configuration
+        ),
+        state_shape=(1,),
+        system_id="test-second-order-oscillator",
+    )
+    problem = phx.dynamics.SecondOrderDifferentialProblem(
+        system,
+        jnp.asarray([1.0]),
+        jnp.asarray([0.0]),
+        initial_acceleration=jnp.asarray([-1.0]),
+        args=jnp.asarray(1.0),
+        problem_id="test-second-order-problem",
+    )
+    grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 41), time_id="generalized-alpha")
+    solution = phx.solver.solve_generalized_alpha(problem, grid)
+
+    assert solution.successful
+    assert jnp.allclose(solution.configurations[-1, 0], jnp.cos(1.0), atol=2e-4)
+    assert jnp.allclose(solution.velocities[-1, 0], -jnp.sin(1.0), atol=2e-4)
 
 
 def test_split_differential_problem_unlocks_kencarp_and_gradients() -> None:
@@ -168,30 +210,6 @@ def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fv_kernel() -> N
     assert result.temporal_method_id == "temporal:ssprk:3:3"
 
 
-def test_theta_endpoint_and_higher_bdf_follow_expected_decay() -> None:
-    grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 21), time_id="theta")
-    theta = phx.solver.solve_dae(
-        _decay_dae(),
-        grid,
-        policy=phx.solver.DAESolvePolicy(
-            method=phx.solver.ThetaMethod(0.5, endpoint=True)
-        ),
-    )
-    factor = (1.0 - 0.5 * grid.durations[0]) / (1.0 + 0.5 * grid.durations[0])
-    assert theta.successful
-    assert theta.method_id.startswith("temporal:theta")
-    assert jnp.allclose(theta.states[-1, 0], factor**grid.num_steps, rtol=2e-6)
-
-    bdf5 = phx.solver.solve_dae(
-        _decay_dae(),
-        grid,
-        policy=phx.solver.DAESolvePolicy(method=phx.solver.BDFMethod(5)),
-    )
-    assert bdf5.successful
-    assert int(jnp.max(bdf5.step_history.orders)) == 5
-    assert jnp.allclose(bdf5.states[-1, 0], jnp.exp(-1.0), rtol=2e-3)
-
-
 def test_matrix_free_rosenbrock_w_is_stable_and_differentiable() -> None:
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 33), time_id="rosenbrock")
     prepared = phx.solver.prepare_rosenbrock(_decay_problem(10.0), grid)
@@ -205,31 +223,7 @@ def test_matrix_free_rosenbrock_w_is_stable_and_differentiable() -> None:
     assert jnp.allclose(gradient, -jnp.exp(-10.0), rtol=5e-2, atol=2e-7)
 
 
-def test_generalized_alpha_tracks_undamped_oscillator() -> None:
-    system = phx.dynamics.SecondOrderDifferentialSystem(
-        lambda time, configuration, velocity, acceleration, omega: (
-            acceleration + omega**2 * configuration
-        ),
-        state_shape=(1,),
-        system_id="test-second-order-oscillator",
-    )
-    problem = phx.dynamics.SecondOrderDifferentialProblem(
-        system,
-        jnp.asarray([1.0]),
-        jnp.asarray([0.0]),
-        initial_acceleration=jnp.asarray([-1.0]),
-        args=jnp.asarray(1.0),
-        problem_id="test-second-order-problem",
-    )
-    grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 41), time_id="generalized-alpha")
-    solution = phx.solver.solve_generalized_alpha(problem, grid)
-
-    assert solution.successful
-    assert jnp.allclose(solution.configurations[-1, 0], jnp.cos(1.0), atol=2e-4)
-    assert jnp.allclose(solution.velocities[-1, 0], -jnp.sin(1.0), atol=2e-4)
-
-
-def test_variable_step_bdf_coefficients_satisfy_order_conditions_through_five() -> None:
+def test_time_integrators_scenario_2() -> None:
     from phydrax.solver._bdf_method import bdf_coefficients
 
     target = jnp.asarray(0.37)
@@ -243,9 +237,6 @@ def test_variable_step_bdf_coefficients_satisfy_order_conditions_through_five() 
                 jnp.asarray(0.0) if degree == 0 else degree * target ** (degree - 1)
             )
             assert jnp.allclose(observed, expected, rtol=1e-10, atol=1e-10)
-
-
-def test_rosenbrock_and_gauss_collocation_reach_declared_orders() -> None:
     problem = _decay_problem()
     exact = jnp.exp(-1.0)
     rosenbrock_errors = []
@@ -269,9 +260,6 @@ def test_rosenbrock_and_gauss_collocation_reach_declared_orders() -> None:
         ).states[-1, 0]
         gauss_errors.append(jnp.abs(value - exact))
     assert gauss_errors[0] / gauss_errors[1] > 15.0
-
-
-def test_partitioned_multirate_and_gauss_irk_preserve_declared_contracts() -> None:
     partition = phx.solver.StatePartition(
         {
             "slow": jnp.asarray([True, False]),

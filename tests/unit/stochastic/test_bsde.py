@@ -45,7 +45,7 @@ def _problem(paths: Any) -> Any:
     )
 
 
-def test_bsde_path_contract_rejects_misaligned_increments() -> None:
+def test_bsde_scenario_1() -> None:
     paths = _brownian_paths(num_paths=4, num_steps=3)
     assert paths.num_steps == 3
     assert jnp.all(paths.successful)
@@ -61,9 +61,46 @@ def test_bsde_path_contract_rejects_misaligned_increments() -> None:
             path_id="bad",
             process_id="brownian",
         )
+    paths = _brownian_paths(num_paths=32)
+    problem = _problem(paths)
+    domain = phx.domain.Interval1d(-5.0, 5.0) @ phx.domain.TimeInterval(0.0, 1.0)
+    value = domain.Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
+    objective = phx.terms.BSDETerm(
+        problem,
+        value_name="value",
+        control_mode="autodiff",
+        mode="joint",
+        sampling_mode="fixed",
+        fixed_paths=paths,
+    )
 
+    assert objective.sample() is paths
+    assert jnp.allclose(objective.loss({"value": value}), 0.0)
+    paths = _brownian_paths(num_paths=32)
+    problem = _problem(paths)
+    value = lambda time, state: jnp.asarray([state[0] + time])
+    control = lambda time, state: jnp.ones((1, 1))
 
-def test_exact_linear_bsde_has_zero_local_global_and_terminal_residuals() -> None:
+    for quadrature in ("left", "trapezoid"):
+        evaluation = phx.stochastic.evaluate_bsde(
+            problem,
+            paths,
+            value,
+            control_predictor=control,
+            quadrature=quadrature,
+        )
+        assert jnp.all(jnp.isfinite(evaluation.local_residuals))
+        assert phx.stochastic.bsde_objective_loss(evaluation, mode="joint") > 0.0
+
+    invalid_quadrature: Any = "midpoint"
+    with pytest.raises(ValueError, match="left.*trapezoid"):
+        phx.stochastic.evaluate_bsde(
+            problem,
+            paths,
+            value,
+            control_predictor=control,
+            quadrature=invalid_quadrature,
+        )
     paths = _brownian_paths()
     problem = _problem(paths)
     value = lambda time, state: jnp.asarray([state[0]])
@@ -84,9 +121,6 @@ def test_exact_linear_bsde_has_zero_local_global_and_terminal_residuals() -> Non
             phx.stochastic.bsde_objective_loss(evaluation, mode=mode), 0.0
         )
     assert phx.stochastic.bsde_diagnostics(evaluation).passed
-
-
-def test_scalar_bsde_preserves_sample_and_time_axes() -> None:
     times = jnp.asarray([0.0, 0.5, 1.0])
     increments = jnp.asarray([[0.2, -0.1], [-0.3, 0.4]])
     states = jnp.concatenate(
@@ -182,7 +216,7 @@ def test_bsde_objective_masks_nonfinite_invalid_paths_before_squaring() -> None:
     )
 
 
-def test_autodiff_control_matches_explicit_control_and_heat_pde_residual() -> None:
+def test_bsde_scenario_2() -> None:
     paths = _brownian_paths()
     problem = _problem(paths)
     linear_value = lambda time, state: jnp.asarray([state[0]])
@@ -226,55 +260,6 @@ def test_autodiff_control_matches_explicit_control_and_heat_pde_residual() -> No
         ),
         0.0,
     )
-
-
-def test_bsde_objective_integrates_domain_functions_and_fixed_paths() -> None:
-    paths = _brownian_paths(num_paths=32)
-    problem = _problem(paths)
-    domain = phx.domain.Interval1d(-5.0, 5.0) @ phx.domain.TimeInterval(0.0, 1.0)
-    value = domain.Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
-    objective = phx.terms.BSDETerm(
-        problem,
-        value_name="value",
-        control_mode="autodiff",
-        mode="joint",
-        sampling_mode="fixed",
-        fixed_paths=paths,
-    )
-
-    assert objective.sample() is paths
-    assert jnp.allclose(objective.loss({"value": value}), 0.0)
-
-
-def test_bsde_quadrature_modes_are_explicit_and_finite() -> None:
-    paths = _brownian_paths(num_paths=32)
-    problem = _problem(paths)
-    value = lambda time, state: jnp.asarray([state[0] + time])
-    control = lambda time, state: jnp.ones((1, 1))
-
-    for quadrature in ("left", "trapezoid"):
-        evaluation = phx.stochastic.evaluate_bsde(
-            problem,
-            paths,
-            value,
-            control_predictor=control,
-            quadrature=quadrature,
-        )
-        assert jnp.all(jnp.isfinite(evaluation.local_residuals))
-        assert phx.stochastic.bsde_objective_loss(evaluation, mode="joint") > 0.0
-
-    invalid_quadrature: Any = "midpoint"
-    with pytest.raises(ValueError, match="left.*trapezoid"):
-        phx.stochastic.evaluate_bsde(
-            problem,
-            paths,
-            value,
-            control_predictor=control,
-            quadrature=invalid_quadrature,
-        )
-
-
-def test_differential_solution_conversion_collapses_shared_batched_time_grid() -> None:
     times = jnp.linspace(0.0, 1.0, 4)
     realization = phx.stochastic.WienerRealization(
         jr.key(31),

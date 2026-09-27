@@ -72,35 +72,31 @@ def _values(solver: Any) -> Any:
     return direction, offset
 
 
-@pytest.mark.parametrize("jit", [False, True])
-def test_functional_solver_trains_mixed_manifold_and_euclidean_parameters(
-    jit: Any,
-) -> None:
-    solver = _geometric_solver()
-    initial_loss = solver.loss()
-    trained = solver.solve(
-        num_iter=35,
-        optim=_optimizer(solver),
-        keep_best=False,
-        jit=jit,
-        log_every=0,
-    )
-    direction, offset = _values(trained)
+def test_riemannian_functional_solver_scenario_1() -> None:
+    for jit in [False, True]:
+        solver = _geometric_solver()
+        initial_loss = solver.loss()
+        trained = solver.solve(
+            num_iter=35,
+            optim=_optimizer(solver),
+            keep_best=False,
+            jit=jit,
+            log_every=0,
+        )
+        direction, offset = _values(trained)
 
-    assert trained.loss() < initial_loss
-    assert jnp.allclose(jnp.linalg.norm(direction), 1.0, atol=1e-10)
-    assert direction[1] > 0.999
-    assert jnp.allclose(offset, 0.5, atol=2e-4)
-    assert (
-        trained.training_diagnostics["optimizer/riemannian/constraint_residual_max"]
-        < 1e-10
-    )
-    assert (
-        int(trained.training_diagnostics["optimizer/riemannian/num_manifold_leaves"]) == 1
-    )
-
-
-def test_functional_solver_accepts_transported_momentum() -> None:
+        assert trained.loss() < initial_loss
+        assert jnp.allclose(jnp.linalg.norm(direction), 1.0, atol=1e-10)
+        assert direction[1] > 0.999
+        assert jnp.allclose(offset, 0.5, atol=2e-4)
+        assert (
+            trained.training_diagnostics["optimizer/riemannian/constraint_residual_max"]
+            < 1e-10
+        )
+        assert (
+            int(trained.training_diagnostics["optimizer/riemannian/num_manifold_leaves"])
+            == 1
+        )
     solver = _geometric_solver()
     trained = solver.solve(
         num_iter=45,
@@ -115,6 +111,57 @@ def test_functional_solver_accepts_transported_momentum() -> None:
     assert jnp.allclose(jnp.linalg.norm(direction), 1.0, atol=1e-10)
     assert jnp.abs(offset - 0.5) < 0.01
     assert trained.training_diagnostics["optimizer/riemannian/momentum_norm"] > 0.0
+    for optimizer_name in ("conjugate_gradient", "lbfgs"):
+        solver = _geometric_solver()
+        geometry = _optimizer(solver).parameter_geometry
+        if optimizer_name == "conjugate_gradient":
+            optimizer = phx.optim.riemannian_conjugate_gradient(geometry)
+        else:
+            optimizer = phx.optim.riemannian_lbfgs(geometry, history_size=4)
+        initial_loss = solver.loss()
+
+        trained = solver.solve(
+            num_iter=12,
+            optim=optimizer,
+            keep_best=False,
+            jit=True,
+            log_every=0,
+        )
+        direction, _ = _values(trained)
+        diagnostics = trained.training_diagnostics
+
+        assert trained.loss() < initial_loss
+        assert jnp.allclose(jnp.linalg.norm(direction), 1.0, atol=1e-10)
+        assert diagnostics["optimizer/riemannian/line_search_evaluations"] >= 1
+        assert diagnostics["optimizer/riemannian/line_search_accepted"].dtype == jnp.bool_
+        assert diagnostics["optimizer/riemannian/line_search_reduction"] >= 0.0
+        assert diagnostics["optimizer/riemannian/restarted"].dtype == jnp.bool_
+        assert diagnostics["optimizer/riemannian/pair_accepted"].dtype == jnp.bool_
+    solver = _geometric_solver()
+    with pytest.raises(ValueError, match="unsupported for Riemannian"):
+        solver.solve(
+            num_iter=1,
+            optim=_optimizer(solver),
+            evaluation_parameters=lambda _state, parameters: parameters,
+            log_every=0,
+        )
+    solver = _geometric_solver()
+    parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
+    geometry = phx.optim.ParameterGeometry.from_leaf_paths(
+        parameters,
+        {"['point']": phx.metrix.SphereManifold(3)},
+    )
+    optimizer = phx.optim.riemannian_sgd(geometry)
+
+    with pytest.raises(ValueError, match="PyTree structure"):
+        solver.solve(
+            num_iter=1,
+            optim=optimizer,
+            jit=False,
+            log_every=0,
+        )
+    solver = _geometric_solver()
+    assert solver.solve(num_iter=0, optim=_optimizer(solver)) is solver
 
 
 def test_functional_solver_accepts_intrinsic_adaptive_moments(
@@ -145,37 +192,6 @@ def test_functional_solver_accepts_intrinsic_adaptive_moments(
     metric_names = {metric["name"] for metric in event["fields"]["metrics"]}
     assert "optimizer/riemannian/adaptive_denominator_minimum" in metric_names
     assert "optimizer/riemannian/adaptive_denominator_maximum" in metric_names
-
-
-@pytest.mark.parametrize("optimizer_name", ("conjugate_gradient", "lbfgs"))
-def test_functional_solver_supports_frozen_objective_line_search(
-    optimizer_name: Any,
-) -> None:
-    solver = _geometric_solver()
-    geometry = _optimizer(solver).parameter_geometry
-    if optimizer_name == "conjugate_gradient":
-        optimizer = phx.optim.riemannian_conjugate_gradient(geometry)
-    else:
-        optimizer = phx.optim.riemannian_lbfgs(geometry, history_size=4)
-    initial_loss = solver.loss()
-
-    trained = solver.solve(
-        num_iter=12,
-        optim=optimizer,
-        keep_best=False,
-        jit=True,
-        log_every=0,
-    )
-    direction, _ = _values(trained)
-    diagnostics = trained.training_diagnostics
-
-    assert trained.loss() < initial_loss
-    assert jnp.allclose(jnp.linalg.norm(direction), 1.0, atol=1e-10)
-    assert diagnostics["optimizer/riemannian/line_search_evaluations"] >= 1
-    assert diagnostics["optimizer/riemannian/line_search_accepted"].dtype == jnp.bool_
-    assert diagnostics["optimizer/riemannian/line_search_reduction"] >= 0.0
-    assert diagnostics["optimizer/riemannian/restarted"].dtype == jnp.bool_
-    assert diagnostics["optimizer/riemannian/pair_accepted"].dtype == jnp.bool_
 
 
 def test_riemannian_solver_logging_and_tensorboard_diagnostics(
@@ -212,37 +228,3 @@ def test_riemannian_solver_logging_and_tensorboard_diagnostics(
     assert "optimizer/riemannian/pair_accepted" in scalar_tags
     assert "optimizer/riemannian/adaptive_denominator_minimum" in scalar_tags
     assert "optimizer/riemannian/adaptive_denominator_maximum" in scalar_tags
-
-
-def test_riemannian_solver_rejects_ambient_evaluation_parameters() -> None:
-    solver = _geometric_solver()
-    with pytest.raises(ValueError, match="unsupported for Riemannian"):
-        solver.solve(
-            num_iter=1,
-            optim=_optimizer(solver),
-            evaluation_parameters=lambda _state, parameters: parameters,
-            log_every=0,
-        )
-
-
-def test_riemannian_solver_rejects_geometry_bound_to_another_tree() -> None:
-    solver = _geometric_solver()
-    parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
-    geometry = phx.optim.ParameterGeometry.from_leaf_paths(
-        parameters,
-        {"['point']": phx.metrix.SphereManifold(3)},
-    )
-    optimizer = phx.optim.riemannian_sgd(geometry)
-
-    with pytest.raises(ValueError, match="PyTree structure"):
-        solver.solve(
-            num_iter=1,
-            optim=optimizer,
-            jit=False,
-            log_every=0,
-        )
-
-
-def test_zero_iteration_geometric_solve_returns_original_solver() -> None:
-    solver = _geometric_solver()
-    assert solver.solve(num_iter=0, optim=_optimizer(solver)) is solver

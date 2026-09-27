@@ -85,9 +85,7 @@ def _terminal_cost(values: Any, player: Any, state: Any) -> Any:
     )
 
 
-def test_player_control_partition_round_trips_leading_axes_and_rejects_invalid_data() -> (
-    None
-):
+def test_games_lq_nash_scenario_1() -> None:
     partition = PlayerControlPartition(("pursuer", "evader"), (2, 1))
     controls = jnp.arange(24.0).reshape(2, 4, 3)
     pursuer, evader = partition.split_controls(controls)
@@ -116,11 +114,48 @@ def test_player_control_partition_round_trips_leading_axes_and_rejects_invalid_d
         partition.split_controls(jnp.zeros((2,)))
     with pytest.raises(ValueError, match="share leading axes"):
         partition.join_controls((jnp.zeros((2, 2)), jnp.zeros((3, 1))))
+    values = _rational_game()
+    baseline = _solve_rational()
+    control_permutation = jnp.asarray([1, 0])
+    player_permutation = jnp.asarray([1, 0])
+    permuted = finite_horizon_lq_feedback_nash(
+        values["dynamics_matrices"],
+        values["control_matrices"][..., control_permutation],
+        values["state_costs"][player_permutation],
+        values["control_costs"][player_permutation][..., control_permutation, :][
+            ..., control_permutation
+        ],
+        values["terminal_state_costs"][player_permutation],
+        PlayerControlPartition(("player-2", "player-1"), (1, 1)),
+        dynamics_bias=values["dynamics_bias"],
+        state_control_cross=values["state_control_cross"][player_permutation][
+            ..., control_permutation
+        ],
+        state_linear=values["state_linear"][player_permutation],
+        control_linear=values["control_linear"][player_permutation][
+            ..., control_permutation
+        ],
+        stage_constants=values["stage_constants"][player_permutation],
+        terminal_linear=values["terminal_linear"][player_permutation],
+        terminal_constants=values["terminal_constants"][player_permutation],
+        time_grid=values["time_grid"],
+    )
 
-
-def test_rational_affine_two_player_game_matches_closed_form_feedback_and_values() -> (
-    None
-):
+    assert bool(permuted.valid)
+    np.testing.assert_allclose(
+        permuted.feedback_gain[..., control_permutation, :],
+        baseline.feedback_gain,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        permuted.feedforward[..., control_permutation],
+        baseline.feedforward,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(permuted.values[1].matrices, baseline.values[0].matrices)
+    np.testing.assert_allclose(permuted.values[0].matrices, baseline.values[1].matrices)
     result = _solve_rational()
 
     assert bool(result.valid)
@@ -159,26 +194,6 @@ def test_rational_affine_two_player_game_matches_closed_form_feedback_and_values
     assert result.diagnostics.linear_backend == "jax-dense"
     assert result.diagnostics.maximum_stationarity_residual < 1e-13
     assert result.diagnostics.maximum_bellman_residual < 1e-13
-
-
-def test_feedback_and_feedforward_have_exact_jitted_gradients_through_coupled_solve() -> (
-    None
-):
-    values = _rational_game()
-
-    def feedback(beta: Any) -> Any:
-        return _solve_rational(beta, values).feedback_gain[0, 0, 0]
-
-    def feedforward(beta: Any) -> Any:
-        return _solve_rational(beta, values).feedforward[0, 0]
-
-    feedback_gradient = jax.jit(jax.grad(feedback))(jnp.asarray(1.0))
-    feedforward_gradient = jax.jit(jax.grad(feedforward))(jnp.asarray(1.0))
-    np.testing.assert_allclose(feedback_gradient, 87.0 / 169.0, rtol=2e-11)
-    np.testing.assert_allclose(feedforward_gradient, 55.0 / 169.0, rtol=2e-11)
-
-
-def test_one_player_game_matches_finite_horizon_lqr_on_shared_affine_domain() -> None:
     horizon = 3
     time_grid = phx.dynamics.TimeGrid(
         jnp.arange(horizon + 1, dtype="float64"),
@@ -242,6 +257,23 @@ def test_one_player_game_matches_finite_horizon_lqr_on_shared_affine_domain() ->
     np.testing.assert_allclose(
         game.values[0].constants, lqr.value.constants, rtol=2e-12, atol=2e-12
     )
+
+
+def test_feedback_and_feedforward_have_exact_jitted_gradients_through_coupled_solve() -> (
+    None
+):
+    values = _rational_game()
+
+    def feedback(beta: Any) -> Any:
+        return _solve_rational(beta, values).feedback_gain[0, 0, 0]
+
+    def feedforward(beta: Any) -> Any:
+        return _solve_rational(beta, values).feedforward[0, 0]
+
+    feedback_gradient = jax.jit(jax.grad(feedback))(jnp.asarray(1.0))
+    feedforward_gradient = jax.jit(jax.grad(feedforward))(jnp.asarray(1.0))
+    np.testing.assert_allclose(feedback_gradient, 87.0 / 169.0, rtol=2e-11)
+    np.testing.assert_allclose(feedforward_gradient, 55.0 / 169.0, rtol=2e-11)
 
 
 def test_multistage_policy_satisfies_unilateral_bellman_conditions_and_rolls_out() -> (
@@ -431,52 +463,7 @@ def test_multistage_policy_satisfies_unilateral_bellman_conditions_and_rolls_out
         )
 
 
-def test_player_permutation_preserves_physical_policy_and_permutes_values() -> None:
-    values = _rational_game()
-    baseline = _solve_rational()
-    control_permutation = jnp.asarray([1, 0])
-    player_permutation = jnp.asarray([1, 0])
-    permuted = finite_horizon_lq_feedback_nash(
-        values["dynamics_matrices"],
-        values["control_matrices"][..., control_permutation],
-        values["state_costs"][player_permutation],
-        values["control_costs"][player_permutation][..., control_permutation, :][
-            ..., control_permutation
-        ],
-        values["terminal_state_costs"][player_permutation],
-        PlayerControlPartition(("player-2", "player-1"), (1, 1)),
-        dynamics_bias=values["dynamics_bias"],
-        state_control_cross=values["state_control_cross"][player_permutation][
-            ..., control_permutation
-        ],
-        state_linear=values["state_linear"][player_permutation],
-        control_linear=values["control_linear"][player_permutation][
-            ..., control_permutation
-        ],
-        stage_constants=values["stage_constants"][player_permutation],
-        terminal_linear=values["terminal_linear"][player_permutation],
-        terminal_constants=values["terminal_constants"][player_permutation],
-        time_grid=values["time_grid"],
-    )
-
-    assert bool(permuted.valid)
-    np.testing.assert_allclose(
-        permuted.feedback_gain[..., control_permutation, :],
-        baseline.feedback_gain,
-        rtol=2e-12,
-        atol=2e-12,
-    )
-    np.testing.assert_allclose(
-        permuted.feedforward[..., control_permutation],
-        baseline.feedforward,
-        rtol=2e-12,
-        atol=2e-12,
-    )
-    np.testing.assert_allclose(permuted.values[1].matrices, baseline.values[0].matrices)
-    np.testing.assert_allclose(permuted.values[0].matrices, baseline.values[1].matrices)
-
-
-def test_jitted_mixed_cases_report_independent_numeric_failures() -> None:
+def test_games_lq_nash_scenario_2() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     time_grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 1.0]), time_id="mixed-cases")
     cases = 5
@@ -526,9 +513,6 @@ def test_jitted_mixed_cases_report_independent_numeric_failures() -> None:
         time_grid=time_grid,
     )
     np.testing.assert_allclose(result.feedback_gain[0], valid.feedback_gain)
-
-
-def test_rank_cutoff_and_condition_limit_are_distinct_from_lu_success() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     time_grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 1.0]), time_id="rank-policy")
     delta = 2.0**-20
@@ -590,9 +574,6 @@ def test_rank_cutoff_and_condition_limit_are_distinct_from_lu_success() -> None:
     np.testing.assert_allclose(
         accepted.diagnostics.coupled_condition_numbers, [1.0 / delta]
     )
-
-
-def test_structural_validation_rejects_shape_dtype_grid_and_tolerance_errors() -> None:
     values = _rational_game()
     required = (
         values["dynamics_matrices"],
@@ -643,7 +624,7 @@ def test_structural_validation_rejects_shape_dtype_grid_and_tolerance_errors() -
         )
 
 
-def test_reverse_failures_preserve_causal_stage_and_terminal_index() -> None:
+def test_games_lq_nash_scenario_3() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     time_grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.0]),
@@ -702,9 +683,6 @@ def test_reverse_failures_preserve_causal_stage_and_terminal_index() -> None:
         LQFeedbackNashStatus.DEPENDENCY_FAILED
     )
     assert not bool(terminal_failure.diagnostics.diagnostic_available[0])
-
-
-def test_public_surface_is_namespaced_under_control_games() -> None:
     expected = {
         "FiniteHorizonLQFeedbackNashDiagnostics",
         "FiniteHorizonLQFeedbackNashResult",

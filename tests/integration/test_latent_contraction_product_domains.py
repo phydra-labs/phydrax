@@ -137,7 +137,7 @@ def _scalar_field_from_dense(field: cx.AxisArray, axis: str) -> cx.AxisArray:
     return cx.AxisArray(data, dims=(axis,))
 
 
-def test_latent_contraction_product_domain_partials() -> None:
+def test_latent_contraction_contracts() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -201,9 +201,6 @@ def test_latent_contraction_product_domain_partials() -> None:
     _assert_array_allclose(eval_jit(du_dy, sep), expected_dy.data)
     _assert_array_allclose(eval_jit(du_dp, sep), expected_dp.data)
     _assert_array_allclose(eval_jit(du_dt, sep), expected_dt.data)
-
-
-def test_latent_contraction_product_domain_integral_over_x() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -244,9 +241,6 @@ def test_latent_contraction_product_domain_integral_over_x() -> None:
 
     eval_jit = eqx.filter_jit(lambda b: integral(u, from_samples(target, b)).data)
     _assert_array_allclose(eval_jit(sep), expected.data)
-
-
-def test_latent_contraction_product_domain_paired_dense_block() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -285,9 +279,6 @@ def test_latent_contraction_product_domain_paired_dense_block() -> None:
     _assert_field_allclose(u(sep), expected)
     eval_jit = eqx.filter_jit(lambda b: u(b).data)
     _assert_array_allclose(eval_jit(sep), expected.data)
-
-
-def test_latent_contraction_multi_coord_separable_labels() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )

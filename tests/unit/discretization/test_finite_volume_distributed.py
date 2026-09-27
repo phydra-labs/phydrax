@@ -38,7 +38,7 @@ def _compiled(cells: Any = 16) -> Any:
     return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
-def test_named_sharding_plan_validates_local_extent_and_shards_state() -> None:
+def test_finite_volume_distributed_scenario_1() -> None:
     plan = phx.discretization.FiniteVolumeDecompositionPlan(
         (16,), (1,), ("x",), halo_width=2
     )
@@ -48,9 +48,6 @@ def test_named_sharding_plan_validates_local_extent_and_shards_state() -> None:
     assert prepared.local_shape == (16,)
     assert prepared.report.device_count == 1
     assert state.sharding == prepared.cell_sharding
-
-
-def test_distributed_residual_matches_local_residual_on_one_device() -> None:
     compiled = _compiled()
     decomposition = phx.discretization.FiniteVolumeDecompositionPlan(
         (16,), (1,), ("x",), halo_width=1
@@ -62,9 +59,6 @@ def test_distributed_residual_matches_local_residual_on_one_device() -> None:
     local = compiled(0.0, state)
 
     np.testing.assert_allclose(distributed, local, rtol=1e-12, atol=1e-12)
-
-
-def test_periodic_halo_on_sharded_state_has_expected_wrapped_layers() -> None:
     decomposition = phx.discretization.FiniteVolumeDecompositionPlan(
         (8,), (1,), ("x",), halo_width=2
     ).prepare((jax.devices()[0],))

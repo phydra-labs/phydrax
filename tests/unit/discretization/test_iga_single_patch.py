@@ -38,7 +38,7 @@ def _prepared(*, degree: int = 2) -> Any:
     return grid, plan, plan.prepare(numeric_version="unit-square")
 
 
-def test_single_patch_topology_runtime_and_trace_constraint() -> None:
+def test_iga_single_patch_scenario_1() -> None:
     grid, plan, prepared = _prepared()
 
     assert prepared.basis.control_shape == (
@@ -66,9 +66,6 @@ def test_single_patch_topology_runtime_and_trace_constraint() -> None:
     correction = constraint.homogeneous_correction(constraint.reduced_space.zeros())
     assert correction.shape == prepared.basis.control_shape
     np.testing.assert_allclose(correction, 0.0)
-
-
-def test_anisotropic_isoparametric_axes_prepare() -> None:
     quadratic = iga.BSplineGrid.open_uniform(2, 1)
     cubic = iga.BSplineGrid.open_uniform(3, 1)
     xx, yy = jnp.meshgrid(

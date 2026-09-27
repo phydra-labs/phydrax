@@ -38,7 +38,7 @@ def _problem(*, state_dependent: Any = False) -> Any:
     )
 
 
-def test_reduced_mma_solves_design_only_constraint_with_adjoint_gradient() -> None:
+def test_state_design_mma_scenario_1() -> None:
     result = phx.optim.solve_state_design(
         _problem(),
         jnp.asarray(0.5),
@@ -54,9 +54,6 @@ def test_reduced_mma_solves_design_only_constraint_with_adjoint_gradient() -> No
     assert result.certificate.inequality_sources == ("design-limit:upper",)
     assert result.diagnostics.primal_feasibility <= 2.0e-5
     assert isinstance(result.method_evidence, phx.optim.MMAEvidence)
-
-
-def test_reduced_mma_solves_state_dependent_constraint() -> None:
     result = phx.optim.solve_state_design(
         _problem(state_dependent=True),
         jnp.asarray(0.5),
@@ -69,9 +66,6 @@ def test_reduced_mma_solves_state_dependent_constraint() -> None:
     assert float(result.design) == pytest.approx(0.8, abs=4.0e-4)
     assert float(result.state) == pytest.approx(0.8, abs=4.0e-4)
     assert result.diagnostics.linear_solves >= result.diagnostics.iterations
-
-
-def test_other_state_design_methods_reject_unhandled_constraints() -> None:
     problem = _problem()
     with pytest.raises(ValueError, match="use ReducedMMA"):
         phx.optim.solve_state_design(
@@ -89,11 +83,6 @@ def test_other_state_design_methods_reject_unhandled_constraints() -> None:
             method=phx.optim.SimultaneousKKT(),
             termination=_termination(steps=2),
         )
-
-
-def test_state_design_constraint_requires_scalar_finite_inequality_for_reduced_mma() -> (
-    None
-):
     vector_constraint = phx.optim.StateDesignConstraint(
         lambda state, design, _: jnp.stack((design, state)),
         upper=1.0,

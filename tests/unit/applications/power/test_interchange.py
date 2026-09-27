@@ -150,7 +150,7 @@ CGMES = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def test_matpower_analytic_power_flow_and_mw_cost() -> None:
+def test_interchange_scenario_1() -> None:
     adapted = parse_matpower(MATPOWER)
     result = solve_power_flow(adapted.network, study=adapted.study)
     assert bool(result.converged)
@@ -163,35 +163,6 @@ def test_matpower_analytic_power_flow_and_mw_cost() -> None:
     assert c2 * 0.3**2 + c1 * 0.3 + c0 == pytest.approx(0.01 * 15**2 + 2 * 15 + 3)
     assert adapted.report.valid
     assert adapted.report.status == AdapterStatus.DECLARED_LOSS
-
-
-def test_generator_voltage_changes_study_without_changing_passive_network() -> None:
-    original = parse_matpower(MATPOWER)
-    changed = parse_matpower(
-        MATPOWER.replace(
-            "1 10 0 50 -50 1 50 1 50 0",
-            "1 10 0 50 -50 1.04 50 1 50 0",
-        )
-    )
-    original_compiled = compile_network(original.network, original.study)
-    changed_compiled = compile_network(changed.network, changed.study)
-    np.testing.assert_allclose(original_compiled.ybus, changed_compiled.ybus)
-    result = solve_power_flow(changed.network, study=changed.study)
-    assert bool(result.converged)
-    assert abs(complex(result.voltage[0])) == pytest.approx(1.04, abs=2e-6)
-
-
-def test_same_bus_generator_voltage_disagreement_is_not_lost_in_study_mapping() -> None:
-    source = MATPOWER.replace(
-        "2 30 5 50 -50 1 50 0 50 0",
-        "1 30 5 50 -50 1.02 50 1 50 0",
-    )
-    with pytest.raises(PowerImportError) as failure:
-        parse_matpower(source)
-    assert not failure.value.report.valid
-
-
-def test_matpower_tap_phase_shunt_and_offline_branch_stamp() -> None:
     source = MATPOWER.replace("2 1 10 0 0 0", "2 1 10 0 1 2").replace(
         "1 2 0 0.1 0 100 0 0 0 0 1", "1 2 0 0.1 0.02 100 0 0 1.05 10 1"
     )
@@ -207,6 +178,34 @@ def test_matpower_tap_phase_shunt_and_offline_branch_stamp() -> None:
     )
     np.testing.assert_allclose(network.ybus, expected, rtol=2e-6, atol=2e-6)
     np.testing.assert_allclose(network.branch_admittance[1], 0)
+    for source in [
+        MATPOWER.replace("mpc.baseMVA = 50;", "mpc.baseMVA = 25 * 2;"),
+        MATPOWER.replace("2 0 0 3 0.01 2 3", "1 0 0 3 0.01 2 3"),
+        MATPOWER.replace("1 -360 360", "1 -30 30"),
+    ]:
+        with pytest.raises(PowerImportError) as failure:
+            parse_matpower(source)
+        assert not failure.value.report.valid
+    original = parse_matpower(MATPOWER)
+    changed = parse_matpower(
+        MATPOWER.replace(
+            "1 10 0 50 -50 1 50 1 50 0",
+            "1 10 0 50 -50 1.04 50 1 50 0",
+        )
+    )
+    original_compiled = compile_network(original.network, original.study)
+    changed_compiled = compile_network(changed.network, changed.study)
+    np.testing.assert_allclose(original_compiled.ybus, changed_compiled.ybus)
+    result = solve_power_flow(changed.network, study=changed.study)
+    assert bool(result.converged)
+    assert abs(complex(result.voltage[0])) == pytest.approx(1.04, abs=2e-6)
+    source = MATPOWER.replace(
+        "2 30 5 50 -50 1 50 0 50 0",
+        "1 30 5 50 -50 1.02 50 1 50 0",
+    )
+    with pytest.raises(PowerImportError) as failure:
+        parse_matpower(source)
+    assert not failure.value.report.valid
 
 
 def test_matpower_executable_rejected_without_side_effect(tmp_path: Any) -> None:
@@ -219,23 +218,7 @@ def test_matpower_executable_rejected_without_side_effect(tmp_path: Any) -> None
     assert not marker.exists()
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        MATPOWER.replace("mpc.baseMVA = 50;", "mpc.baseMVA = 25 * 2;"),
-        MATPOWER.replace("2 0 0 3 0.01 2 3", "1 0 0 3 0.01 2 3"),
-        MATPOWER.replace("1 -360 360", "1 -30 30"),
-    ],
-)
-def test_matpower_rejects_expressions_and_unsupported_active_semantics(
-    source: Any,
-) -> None:
-    with pytest.raises(PowerImportError) as failure:
-        parse_matpower(source)
-    assert not failure.value.report.valid
-
-
-def test_raw_dyr_machine_base_status_and_two_sided_transformer() -> None:
+def test_interchange_scenario_2() -> None:
     adapted = parse_psse(RAW, DYR)
     network = compile_network(adapted.network, adapted.study)
     # Original two-sided ideal winding ratios, not just a normalized field copy.
@@ -264,41 +247,24 @@ def test_raw_dyr_machine_base_status_and_two_sided_transformer() -> None:
         issue.path == "/DYR/1" and issue.category == "dropped"
         for issue in adapted.report.losses
     )
-
-
-@pytest.mark.parametrize(
-    "raw,dyr",
-    [
+    for raw, dyr in [
         (RAW, DYR.replace("GENCLS", "GENROU")),
         (RAW, ""),
         (RAW.replace("0, 50, 33", "0, 50, 35"), DYR),
         (RAW.replace("10, 0, 0, 0, 0, 0, 1, 1, 0", "10, 0, 1, 0, 0, 0, 1, 1, 0"), DYR),
         (RAW, DYR.replace("4.0 0.2", "0.0 0.2")),
-    ],
-)
-def test_raw_dyr_rejects_unknown_missing_and_unrepresentable_models(
-    raw: Any, dyr: Any
-) -> None:
-    with pytest.raises(PowerImportError) as failure:
-        parse_psse(raw, dyr)
-    assert not failure.value.report.valid
-
-
-@pytest.mark.parametrize(
-    "record",
-    [
+    ]:
+        with pytest.raises(PowerImportError) as failure:
+            parse_psse(raw, dyr)
+        assert not failure.value.report.valid
+    for record in [
         "system('untrusted')",
         "1, 1, 50, 1, 'ACTIVE AREA CONTROL'",
-    ],
-)
-def test_raw_tail_cannot_hide_executable_or_active_control_semantics(record: Any) -> None:
-    source = RAW.replace("Q\n", f"{record}\n0 / END OF AREA DATA\nQ\n")
-    with pytest.raises(PowerImportError) as failure:
-        parse_psse(source, DYR)
-    assert not failure.value.report.valid
-
-
-def test_cgmes_real_rdf_resource_links_units_and_inward_signs() -> None:
+    ]:
+        source = RAW.replace("Q\n", f"{record}\n0 / END OF AREA DATA\nQ\n")
+        with pytest.raises(PowerImportError) as failure:
+            parse_psse(source, DYR)
+        assert not failure.value.report.valid
     adapted = parse_cgmes(CGMES)
     network = compile_network(adapted.network, adapted.study)
     series = 1 / (0.01 + 0.1j)
@@ -315,9 +281,6 @@ def test_cgmes_real_rdf_resource_links_units_and_inward_signs() -> None:
     assert adapted.study.controls[0].kind == "reference"
     assert adapted.network.frequency == 50
     assert adapted.report.valid
-
-
-def test_cgmes_disconnected_load_does_not_inject() -> None:
     terminal = """<cim:Terminal rdf:ID="load1">
   <cim:Terminal.ConductingEquipment rdf:resource="#load"/>
   <cim:Terminal.TopologicalNode rdf:resource="#n2"/>
@@ -328,11 +291,7 @@ def test_cgmes_disconnected_load_does_not_inject() -> None:
     adapted = parse_cgmes(source)
     compiled = compile_network(adapted.network, adapted.study)
     np.testing.assert_allclose(compiled.specified_power[1], 0)
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
+    for source in [
         CGMES.replace(
             "<rdf:RDF",
             '<!DOCTYPE rdf:RDF [<!ENTITY x SYSTEM "file:///etc/passwd">]><rdf:RDF',
@@ -342,15 +301,10 @@ def test_cgmes_disconnected_load_does_not_inject() -> None:
         CGMES.replace("</rdf:RDF>", '<cim:Breaker rdf:ID="unknown"/></rdf:RDF>'),
         CGMES.replace('rdf:resource="#n2"', 'rdf:resource="#missing"'),
         CGMES.replace("EquipmentCore/3/1", "EquipmentCore/9/9"),
-    ],
-)
-def test_cgmes_rejects_entities_unknown_semantics_and_dangling_links(source: Any) -> None:
-    with pytest.raises(PowerImportError) as failure:
-        parse_cgmes(source)
-    assert not failure.value.report.valid
-
-
-def test_parser_resource_budgets_fail_closed() -> None:
+    ]:
+        with pytest.raises(PowerImportError) as failure:
+            parse_cgmes(source)
+        assert not failure.value.report.valid
     for limits in (
         PowerParserLimits(max_bytes=32),
         PowerParserLimits(max_rows=1),

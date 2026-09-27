@@ -45,7 +45,7 @@ def _evaluation(
     )
 
 
-def test_fixed_profile_sensitivity_is_audited_against_one_branch() -> None:
+def test_full_dark_sector_inference_scenario_1() -> None:
     policy = _policy()
     plan = FixedProfileSmoothSensitivityPlan(
         policy,
@@ -64,14 +64,59 @@ def test_fixed_profile_sensitivity_is_audited_against_one_branch() -> None:
     assert bool(result.successful)
     assert jnp.allclose(result.jvp, derivative)
     assert jnp.allclose(result.finite_difference, derivative, rtol=2.0e-4)
-
-
-def test_discrete_derivative_targets_are_refused() -> None:
     policy = _policy()
 
     for target in ("topology", "provider", "external-artifact"):
         with pytest.raises(ValueError, match="refuses"):
             policy.require_target(target)
+    policy = _policy()
+    plan = FullPathScoreCRNPlan(
+        policy,
+        jnp.ones((4,)),
+        parameter_count=1,
+        output_count=1,
+        required_law_components=("event-law", "radiation-law"),
+        minimum_effective_sample_size=4.0,
+        product_id="observable",
+        bias_standard_error_multiplier=0.0,
+        bias_absolute_tolerance=1.0e-3,
+    )
+    law = _law(policy)
+    center_values = jnp.asarray((1.0, -1.0, 1.0, -1.0))
+    epsilon = 1.0e-3
+    center = _batch(law, center_values)
+    lower = _batch(law, center_values - epsilon)
+    upper = _batch(law, center_values + epsilon)
+
+    result = plan.sensitivity(
+        center,
+        lower,
+        upper,
+        jnp.ones((1,)),
+        epsilon=epsilon,
+    )
+
+    assert bool(result.complete_probability_law)
+    assert bool(result.common_random_numbers)
+    assert bool(result.successful)
+    assert jnp.allclose(result.score_estimate, 1.0)
+    assert jnp.allclose(result.common_random_finite_difference, 1.0, rtol=2.0e-4)
+    policy = _policy()
+    plan = FullPathScoreCRNPlan(
+        policy,
+        jnp.ones((4,)),
+        parameter_count=1,
+        output_count=1,
+        required_law_components=("event-law", "radiation-law"),
+        minimum_effective_sample_size=2.0,
+        product_id="observable",
+    )
+    incomplete = _law(policy, complete=False)
+    values = jnp.asarray((1.0, -1.0, 1.0, -1.0))
+    batch = _batch(incomplete, values)
+
+    with pytest.raises(Exception, match="complete probability law"):
+        plan.sensitivity(batch, batch, batch, jnp.ones((1,)), epsilon=1.0e-3)
 
 
 def _law(
@@ -111,57 +156,3 @@ def _batch(
         successful=True,
         product_id="observable",
     )
-
-
-def test_full_path_score_and_common_random_difference_share_complete_law() -> None:
-    policy = _policy()
-    plan = FullPathScoreCRNPlan(
-        policy,
-        jnp.ones((4,)),
-        parameter_count=1,
-        output_count=1,
-        required_law_components=("event-law", "radiation-law"),
-        minimum_effective_sample_size=4.0,
-        product_id="observable",
-        bias_standard_error_multiplier=0.0,
-        bias_absolute_tolerance=1.0e-3,
-    )
-    law = _law(policy)
-    center_values = jnp.asarray((1.0, -1.0, 1.0, -1.0))
-    epsilon = 1.0e-3
-    center = _batch(law, center_values)
-    lower = _batch(law, center_values - epsilon)
-    upper = _batch(law, center_values + epsilon)
-
-    result = plan.sensitivity(
-        center,
-        lower,
-        upper,
-        jnp.ones((1,)),
-        epsilon=epsilon,
-    )
-
-    assert bool(result.complete_probability_law)
-    assert bool(result.common_random_numbers)
-    assert bool(result.successful)
-    assert jnp.allclose(result.score_estimate, 1.0)
-    assert jnp.allclose(result.common_random_finite_difference, 1.0, rtol=2.0e-4)
-
-
-def test_full_path_product_refuses_incomplete_probability_law() -> None:
-    policy = _policy()
-    plan = FullPathScoreCRNPlan(
-        policy,
-        jnp.ones((4,)),
-        parameter_count=1,
-        output_count=1,
-        required_law_components=("event-law", "radiation-law"),
-        minimum_effective_sample_size=2.0,
-        product_id="observable",
-    )
-    incomplete = _law(policy, complete=False)
-    values = jnp.asarray((1.0, -1.0, 1.0, -1.0))
-    batch = _batch(incomplete, values)
-
-    with pytest.raises(Exception, match="complete probability law"):
-        plan.sensitivity(batch, batch, batch, jnp.ones((1,)), epsilon=1.0e-3)

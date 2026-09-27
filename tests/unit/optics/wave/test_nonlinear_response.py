@@ -35,7 +35,7 @@ def _time_space(count: int) -> PulseTimeSpace:
     return PulseTimeSpace(grid, topology="periodic-cell")
 
 
-def test_scalar_projection_keeps_sum_and_difference_frequency_mixing() -> None:
+def test_nonlinear_response_scenario_1() -> None:
     count = 64
     samples = jnp.arange(count)
     fundamental = jnp.exp(-2j * jnp.pi * 7.0 * samples / count)
@@ -53,9 +53,6 @@ def test_scalar_projection_keeps_sum_and_difference_frequency_mixing() -> None:
     assert jnp.abs(spectrum[14]) > 0.0
     assert jnp.abs(spectrum[7]) > 0.0
     assert jnp.max(jnp.abs(spectrum[~_positive_mask(count)])) < 1.0e-11
-
-
-def test_instantaneous_susceptibility_implements_prepared_response_contract() -> None:
     count = 32
     time_space = _time_space(count)
     mask = _positive_mask(count)
@@ -86,9 +83,6 @@ def test_instantaneous_susceptibility_implements_prepared_response_contract() ->
         evaluation.ledger.energy_closure_defect,
         evaluation.ledger.optical_work_density - evaluation.ledger.material_work_density,
     )
-
-
-def test_oriented_tensor_response_is_rotation_covariant() -> None:
     chi2 = jnp.zeros((3, 3, 3), dtype=jnp.float64)
     chi2 = chi2.at[0, 1, 1].set(1.7e-12)
     chi2 = chi2.at[2, 0, 1].set(-0.4e-12)

@@ -61,7 +61,7 @@ def _spd_problem() -> Any:
     )
 
 
-def test_problem_validates_membership_and_rejects_ordinary_solver() -> None:
+def test_geometric_solver_scenario_1() -> None:
     geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
     with pytest.raises(Exception, match="outside state_geometry"):
         phx.solver.DifferentialProblem(
@@ -110,9 +110,6 @@ def test_problem_validates_membership_and_rejects_ordinary_solver() -> None:
     )
     assert exact_embedded.supports_exact_differential
     assert isinstance(phx.solver.RKMK(exact_embedded), phx.solver.RKMK)
-
-
-def test_euclidean_geometric_euler_agrees_with_ordinary_euler() -> None:
     geometry = phx.metrix.EuclideanStateGeometry()
     problem = phx.solver.DifferentialProblem(
         lambda time, state, rate: rate * state,
@@ -150,9 +147,6 @@ def test_euclidean_geometric_euler_agrees_with_ordinary_euler() -> None:
     invalid_solver: Any = dfx.Euler()
     with pytest.raises(TypeError, match="geometric-solver contract"):
         phx.solver.solver_state_geometry(invalid_solver)
-
-
-def test_stormer_verlet_runs_through_the_diffrax_backend() -> None:
     geometry = phx.metrix.EuclideanStateGeometry(
         geometry_id="state-geometry:canonical-phase"
     )
@@ -247,7 +241,7 @@ def test_rkmk_so_dense_output_jit_gradient_and_convergence() -> None:
     assert coarse_error / fine_error > 8.0
 
 
-def test_commutator_free_requires_shared_trivialization_and_spd_dense_rkmk() -> None:
+def test_geometric_solver_scenario_2() -> None:
     problem = _so_problem(rate=0.4)
     tableau = phx.solver.CommutatorFreeTableau(
         abscissae=(0.0, 1.0),
@@ -288,6 +282,97 @@ def test_commutator_free_requires_shared_trivialization_and_spd_dense_rkmk() -> 
     spd_dense = spd_solution.evaluate(jnp.linspace(0.0, 1.0, 21))
     assert jnp.all(jnp.linalg.eigvalsh(spd_solution.states) > 0.0)
     assert jnp.all(jnp.linalg.eigvalsh(spd_dense) > 0.0)
+    problem = _so_problem()
+    target = 0.4
+    event_time = jnp.sqrt(1.0 + 2.0 * target) - 1.0
+    event = dfx.Event(
+        lambda t, y, args, **kwargs: y[1, 0] - jnp.sin(target),
+        root_finder=optx.Newton(rtol=1e-8, atol=1e-8),
+    )
+    solution = phx.solver.solve_diffrax(
+        problem,
+        save_times=jnp.asarray([0.0, event_time]),
+        solver=phx.solver.RKMK(problem.state_geometry),
+        dt0=0.1,
+        event=event,
+        dense=True,
+    )
+
+    assert bool(solution.event_mask)
+    _assert_so(solution.states[solution.valid])
+    _assert_so(solution.evaluate(jnp.asarray([0.2, event_time])))
+    for solver_factory in (
+        lambda geometry: phx.solver.GeometricEuler(geometry),
+        lambda geometry: phx.solver.RKMK(geometry, method="midpoint"),
+        lambda geometry: phx.solver.CommutatorFreeSolver(geometry),
+    ):
+        geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+        base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+        angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
+        term = dfx.ODETerm(
+            lambda time, state, args: angular_velocity,
+        )
+        solver = solver_factory(geometry)
+
+        actual = solver.step(
+            term,
+            jnp.asarray(0.0),
+            jnp.asarray(0.25),
+            base,
+            None,
+            None,
+            False,
+        )[0]
+        expected = geometry.retract(base, 0.25 * angular_velocity)
+
+        assert actual.shape == (4,)
+        assert jnp.allclose(actual, expected, rtol=2e-6, atol=2e-7)
+        assert bool(geometry.contains(actual))
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    solver = phx.solver.GeometricEuler(geometry)
+    invalid = dfx.ODETerm(
+        lambda time, state, args: jnp.zeros_like(state),
+    )
+
+    with pytest.raises(ValueError, match="physical tangent shape"):
+        solver.step(
+            invalid,
+            jnp.asarray(0.0),
+            jnp.asarray(0.1),
+            jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            None,
+            None,
+            False,
+        )
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    local = jnp.asarray([0.3, -0.2, 0.1])
+    local_velocity = jnp.asarray([-0.4, 0.25, 0.15])
+    physical_cotangent = jnp.asarray([0.7, -0.1, 0.5])
+
+    point = geometry.retract(base, local)
+    physical_tangent = geometry.retraction_jvp(
+        base,
+        local,
+        local_velocity,
+    )
+    recovered_velocity = geometry.retraction_inverse_jvp(
+        base,
+        point,
+        physical_tangent,
+    )
+    local_cotangent = geometry.retraction_vjp(
+        base,
+        local,
+        physical_cotangent,
+    )
+
+    assert jnp.allclose(recovered_velocity, local_velocity, atol=2e-6)
+    assert jnp.allclose(
+        jnp.vdot(physical_cotangent, physical_tangent),
+        jnp.vdot(local_cotangent, local_velocity),
+        atol=2e-6,
+    )
 
 
 def test_commutator_free_midpoint_has_second_order_on_noncommuting_so3_flow() -> None:
@@ -334,115 +419,7 @@ def test_commutator_free_midpoint_has_second_order_on_noncommuting_so3_flow() ->
     assert coarse_error / fine_error > 3.5
 
 
-def test_geometric_event_uses_on_manifold_interpolation() -> None:
-    problem = _so_problem()
-    target = 0.4
-    event_time = jnp.sqrt(1.0 + 2.0 * target) - 1.0
-    event = dfx.Event(
-        lambda t, y, args, **kwargs: y[1, 0] - jnp.sin(target),
-        root_finder=optx.Newton(rtol=1e-8, atol=1e-8),
-    )
-    solution = phx.solver.solve_diffrax(
-        problem,
-        save_times=jnp.asarray([0.0, event_time]),
-        solver=phx.solver.RKMK(problem.state_geometry),
-        dt0=0.1,
-        event=event,
-        dense=True,
-    )
-
-    assert bool(solution.event_mask)
-    _assert_so(solution.states[solution.valid])
-    _assert_so(solution.evaluate(jnp.asarray([0.2, event_time])))
-
-
-@pytest.mark.parametrize(
-    "solver_factory",
-    (
-        lambda geometry: phx.solver.GeometricEuler(geometry),
-        lambda geometry: phx.solver.RKMK(geometry, method="midpoint"),
-        lambda geometry: phx.solver.CommutatorFreeSolver(geometry),
-    ),
-)
-def test_quaternion_solver_step_consumes_physical_tangent_space(
-    solver_factory: Any,
-) -> None:
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
-    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
-    angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
-    term = dfx.ODETerm(
-        lambda time, state, args: angular_velocity,
-    )
-    solver = solver_factory(geometry)
-
-    actual = solver.step(
-        term,
-        jnp.asarray(0.0),
-        jnp.asarray(0.25),
-        base,
-        None,
-        None,
-        False,
-    )[0]
-    expected = geometry.retract(base, 0.25 * angular_velocity)
-
-    assert actual.shape == (4,)
-    assert jnp.allclose(actual, expected, rtol=2e-6, atol=2e-7)
-    assert bool(geometry.contains(actual))
-
-
-def test_quaternion_chart_jvp_vjp_duality_and_inverse_jvp_are_distinct_roles() -> None:
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
-    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
-    local = jnp.asarray([0.3, -0.2, 0.1])
-    local_velocity = jnp.asarray([-0.4, 0.25, 0.15])
-    physical_cotangent = jnp.asarray([0.7, -0.1, 0.5])
-
-    point = geometry.retract(base, local)
-    physical_tangent = geometry.retraction_jvp(
-        base,
-        local,
-        local_velocity,
-    )
-    recovered_velocity = geometry.retraction_inverse_jvp(
-        base,
-        point,
-        physical_tangent,
-    )
-    local_cotangent = geometry.retraction_vjp(
-        base,
-        local,
-        physical_cotangent,
-    )
-
-    assert jnp.allclose(recovered_velocity, local_velocity, atol=2e-6)
-    assert jnp.allclose(
-        jnp.vdot(physical_cotangent, physical_tangent),
-        jnp.vdot(local_cotangent, local_velocity),
-        atol=2e-6,
-    )
-
-
-def test_quaternion_solver_rejects_point_storage_as_physical_tangent() -> None:
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
-    solver = phx.solver.GeometricEuler(geometry)
-    invalid = dfx.ODETerm(
-        lambda time, state, args: jnp.zeros_like(state),
-    )
-
-    with pytest.raises(ValueError, match="physical tangent shape"):
-        solver.step(
-            invalid,
-            jnp.asarray(0.0),
-            jnp.asarray(0.1),
-            jnp.asarray([1.0, 0.0, 0.0, 0.0]),
-            None,
-            None,
-            False,
-        )
-
-
-def test_diffrax_backend_preserves_unequal_quaternion_roles() -> None:
+def test_geometric_solver_scenario_3() -> None:
     geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
     base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
     angular_velocity = jnp.asarray([0.2, -0.1, 0.3])
@@ -466,9 +443,6 @@ def test_diffrax_backend_preserves_unequal_quaternion_roles() -> None:
     assert problem.local_shape == (3,)
     assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
     assert jnp.all(jax.vmap(geometry.contains)(solution.states))
-
-
-def test_srkmk_spd_corrector_uses_base_local_retraction() -> None:
     geometry = phx.metrix.SymmetricPositiveDefiniteStateGeometry(2)
     base = jnp.array([[2.0, 0.35], [0.35, 1.1]])
     constant_field = jnp.array([[0.2, -0.08], [-0.08, 0.12]])
@@ -505,9 +479,6 @@ def test_srkmk_spd_corrector_uses_base_local_retraction() -> None:
     expected = retraction.evaluate(0.5 * (first + corrected))
     assert jnp.allclose(actual, expected)
     assert bool(geometry.contains(actual))
-
-
-def test_srkmk_stratonovich_batch_preserves_so_and_rejects_ito() -> None:
     stratonovich = _so_problem(
         rate=0.0,
         stochastic=True,
