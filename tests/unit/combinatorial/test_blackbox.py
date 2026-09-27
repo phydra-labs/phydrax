@@ -20,7 +20,7 @@ def _catalog() -> Any:
     )
 
 
-def test_blackbox_pullback_matches_explicit_loss_interpolation_formula() -> None:
+def test_blackbox_contracts() -> None:
     space = _catalog()
     method = phx.combinatorial.ExhaustiveLinearOracle()
     policy = phx.combinatorial.BlackboxInterpolation(1.0)
@@ -40,6 +40,37 @@ def test_blackbox_pullback_matches_explicit_loss_interpolation_formula() -> None
     assert pullback.exact_theory_applicable
     assert not pullback.zero_gradient
     np.testing.assert_allclose(pullback.feature_change_norm, 2.0)
+    catalog = _catalog()
+    method = phx.combinatorial.ExhaustiveLinearOracle()
+    unchanged = phx.combinatorial.estimate_blackbox_pullback(
+        phx.combinatorial.LinearCombinatorialProblem(catalog, jnp.asarray([2.0])),
+        method,
+        jnp.asarray([0.01]),
+        policy=phx.combinatorial.BlackboxInterpolation(0.1),
+    )
+    np.testing.assert_array_equal(unchanged.gradient, jnp.zeros((1,)))
+    assert unchanged.zero_gradient
+
+    space = phx.combinatorial.CardinalitySpace(3, 1)
+    cardinality = phx.combinatorial.StableCardinalityOracle()
+    problem = phx.combinatorial.LinearCombinatorialProblem(
+        space,
+        jnp.asarray([[0.0, 1.0, 2.0], [2.0, 1.0, 0.0]]),
+    )
+    cotangent = jnp.asarray([[3.0, -3.0, 0.0], [0.0, -3.0, 3.0]])
+    pullback = phx.combinatorial.estimate_blackbox_pullback(
+        problem,
+        cardinality,
+        cotangent,
+        policy=phx.combinatorial.BlackboxInterpolation(1.0),
+    )
+    assert pullback.gradient.shape == (2, 3)
+    assert bool(jnp.all(pullback.valid))
+    np.testing.assert_allclose(jnp.sum(pullback.gradient, axis=-1), jnp.zeros((2,)))
+    with pytest.raises(ValueError, match="finite and positive"):
+        phx.combinatorial.BlackboxInterpolation(0.0)
+    with pytest.raises(ValueError, match="scalar"):
+        phx.combinatorial.BlackboxInterpolation(jnp.ones((2,)))
 
 
 def test_blackbox_custom_vjp_matches_explicit_pullback_under_jit() -> None:
@@ -69,40 +100,3 @@ def test_blackbox_custom_vjp_matches_explicit_pullback_under_jit() -> None:
 
     with pytest.raises(TypeError, match="forward-mode autodiff"):
         jax.jvp(loss, (jnp.asarray([1.0]),), (jnp.asarray([1.0]),))
-
-
-def test_blackbox_zero_gradient_and_batched_cardinality_pullback() -> None:
-    catalog = _catalog()
-    method = phx.combinatorial.ExhaustiveLinearOracle()
-    unchanged = phx.combinatorial.estimate_blackbox_pullback(
-        phx.combinatorial.LinearCombinatorialProblem(catalog, jnp.asarray([2.0])),
-        method,
-        jnp.asarray([0.01]),
-        policy=phx.combinatorial.BlackboxInterpolation(0.1),
-    )
-    np.testing.assert_array_equal(unchanged.gradient, jnp.zeros((1,)))
-    assert unchanged.zero_gradient
-
-    space = phx.combinatorial.CardinalitySpace(3, 1)
-    cardinality = phx.combinatorial.StableCardinalityOracle()
-    problem = phx.combinatorial.LinearCombinatorialProblem(
-        space,
-        jnp.asarray([[0.0, 1.0, 2.0], [2.0, 1.0, 0.0]]),
-    )
-    cotangent = jnp.asarray([[3.0, -3.0, 0.0], [0.0, -3.0, 3.0]])
-    pullback = phx.combinatorial.estimate_blackbox_pullback(
-        problem,
-        cardinality,
-        cotangent,
-        policy=phx.combinatorial.BlackboxInterpolation(1.0),
-    )
-    assert pullback.gradient.shape == (2, 3)
-    assert bool(jnp.all(pullback.valid))
-    np.testing.assert_allclose(jnp.sum(pullback.gradient, axis=-1), jnp.zeros((2,)))
-
-
-def test_blackbox_policy_rejects_nonpositive_or_nonscalar_lambda() -> None:
-    with pytest.raises(ValueError, match="finite and positive"):
-        phx.combinatorial.BlackboxInterpolation(0.0)
-    with pytest.raises(ValueError, match="scalar"):
-        phx.combinatorial.BlackboxInterpolation(jnp.ones((2,)))

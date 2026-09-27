@@ -12,7 +12,7 @@ from phydrax.operators.integral.multipole._cartesian_radial import (
 from phydrax.solver import CartesianExpansionSpace, CartesianFMMOperators
 
 
-def test_cartesian_expansion_layout_reaches_order_seven() -> None:
+def test_cartesian_fmm_algebra_scenario_1() -> None:
     expected = {1: 4, 2: 10, 3: 20, 5: 56, 7: 120}
     for order, count in expected.items():
         space = CartesianExpansionSpace(order)
@@ -22,39 +22,6 @@ def test_cartesian_expansion_layout_reaches_order_seven() -> None:
         for exponent, degree in zip(space.exponents, space.degrees, strict=True):
             assert degree <= order
             assert all(component >= 0 for component in exponent)
-
-
-def test_plummer_cartesian_derivatives_match_jax() -> None:
-    space = CartesianExpansionSpace(4)
-    displacement = jnp.asarray([0.7, -0.4, 0.2], dtype=jnp.float64)
-    softening = 0.13
-    gravity = 1.7
-    scale = jnp.asarray(2.0, dtype=displacement.dtype)
-    derivatives = plummer_scaled_cartesian_derivatives(
-        space.exponents,
-        displacement,
-        softening,
-        gravity,
-        scale,
-    )
-
-    def potential(value: Any) -> Any:
-        return -gravity / jnp.sqrt(jnp.sum(value * value) + (softening / scale) ** 2)
-
-    scaled = displacement / scale
-    functions = {0: potential}
-    tensors = {0: potential(scaled)}
-    for degree in range(1, 5):
-        functions[degree] = jax.jacfwd(functions[degree - 1])
-        tensors[degree] = functions[degree](scaled)
-    expected = []
-    for exponent in space.exponents:
-        axes = tuple(axis for axis, count in enumerate(exponent) for _ in range(count))
-        expected.append(tensors[sum(exponent)][axes] if axes else tensors[0])
-    np.testing.assert_allclose(derivatives, jnp.stack(expected), rtol=2e-11, atol=2e-11)
-
-
-def test_scaled_m2m_matches_direct_parent_moments() -> None:
     operators = CartesianFMMOperators(CartesianExpansionSpace(5), 1.0, 0.03)
     positions = jnp.asarray(
         [[0.03, -0.02, 0.01], [0.11, 0.04, -0.03], [-0.07, 0.02, 0.05]]
@@ -83,9 +50,6 @@ def test_scaled_m2m_matches_direct_parent_moments() -> None:
         scale=parent_scale,
     )
     np.testing.assert_allclose(translated, direct, rtol=2e-11, atol=2e-11)
-
-
-def test_scaled_l2l_preserves_polynomial_value_and_gradient() -> None:
     space = CartesianExpansionSpace(5)
     operators = CartesianFMMOperators(space, 1.0, 0.03)
     parent_scale = jnp.asarray(2.0)
@@ -111,9 +75,6 @@ def test_scaled_l2l_preserves_polynomial_value_and_gradient() -> None:
     )
     np.testing.assert_allclose(child_value, parent_value, rtol=2e-11, atol=2e-11)
     np.testing.assert_allclose(child_force, parent_force, rtol=2e-11, atol=2e-11)
-
-
-def test_m2l_force_converges_to_direct_plummer_force() -> None:
     source = jnp.asarray([[-0.08, 0.02, 0.01], [0.05, -0.04, 0.03], [0.02, 0.07, -0.02]])
     masses = jnp.asarray([1.0, 1.5, 0.75])
     source_center = jnp.zeros((3,))
@@ -144,3 +105,33 @@ def test_m2l_force_converges_to_direct_plummer_force() -> None:
         errors.append(float(jnp.sqrt(jnp.sum((force - direct) ** 2))))
     assert errors[2] < errors[1] < errors[0]
     assert errors[2] < 1.0e-7
+
+
+def test_plummer_cartesian_derivatives_match_jax() -> None:
+    space = CartesianExpansionSpace(4)
+    displacement = jnp.asarray([0.7, -0.4, 0.2], dtype=jnp.float64)
+    softening = 0.13
+    gravity = 1.7
+    scale = jnp.asarray(2.0, dtype=displacement.dtype)
+    derivatives = plummer_scaled_cartesian_derivatives(
+        space.exponents,
+        displacement,
+        softening,
+        gravity,
+        scale,
+    )
+
+    def potential(value: Any) -> Any:
+        return -gravity / jnp.sqrt(jnp.sum(value * value) + (softening / scale) ** 2)
+
+    scaled = displacement / scale
+    functions = {0: potential}
+    tensors = {0: potential(scaled)}
+    for degree in range(1, 5):
+        functions[degree] = jax.jacfwd(functions[degree - 1])
+        tensors[degree] = functions[degree](scaled)
+    expected = []
+    for exponent in space.exponents:
+        axes = tuple(axis for axis, count in enumerate(exponent) for _ in range(count))
+        expected.append(tensors[sum(exponent)][axes] if axes else tensors[0])
+    np.testing.assert_allclose(derivatives, jnp.stack(expected), rtol=2e-11, atol=2e-11)

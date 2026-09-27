@@ -178,7 +178,7 @@ def _runtime(
     return system, discretization, runtime
 
 
-def test_two_material_vof_runtime_reconstructs_each_stage_and_advances() -> None:
+def test_two_material_vof_runtime_scenario_1() -> None:
     system, discretization, runtime = _runtime()
     alpha = jnp.where(discretization.cell_centers[:, 0] < 0.5, 0.8, 0.2)
     primitive = jnp.stack(
@@ -203,9 +203,6 @@ def test_two_material_vof_runtime_reconstructs_each_stage_and_advances() -> None
     assert jnp.all(system.admissible(average))
     jitted = eqx.filter_jit(runtime.advance)(runtime_state)
     np.testing.assert_allclose(jitted.runtime_state.cell_average(), average)
-
-
-def test_two_material_vof_runtime_couples_conservative_phase_transfer_and_heat() -> None:
     system, discretization, runtime = _runtime(phase_change=True, thermal_diffusion=True)
     alpha = jnp.full((discretization.cell_count,), 0.6, dtype=jnp.float32)
     primitive = jnp.stack(
@@ -240,9 +237,6 @@ def test_two_material_vof_runtime_couples_conservative_phase_transfer_and_heat()
         rtol=2.0e-6,
         atol=2.0e-6,
     )
-
-
-def test_two_material_vof_strang_source_step_is_transactional() -> None:
     system, discretization, runtime = _runtime()
     vof = runtime.dynamics.coupling.vof
     assert vof is not None
@@ -284,46 +278,6 @@ def test_two_material_vof_strang_source_step_is_transactional() -> None:
     assert not rejected.accepted
     np.testing.assert_allclose(rejected.runtime_state.cell_average(), state)
     assert rejected.runtime_state.time == oversized.time
-
-
-def test_two_material_vof_runtime_reconstructs_plic_on_moved_stage_geometry() -> None:
-    def deform(time: Any, vertices: Any, args: Any) -> Any:
-        del args
-        interior = (
-            (vertices[:, 0] > 0.0)
-            & (vertices[:, 0] < 1.0)
-            & (vertices[:, 1] > 0.0)
-            & (vertices[:, 1] < 1.0)
-        )
-        return vertices.at[:, 0].add(jnp.where(interior, 0.02 * time, 0.0))
-
-    system, discretization, runtime = _runtime(
-        motion=deform, phase_change=True, thermal_diffusion=True
-    )
-    alpha = jnp.where(discretization.cell_centers[:, 0] < 0.5, 0.8, 0.2)
-    primitive = jnp.stack(
-        (
-            jnp.full_like(alpha, 1.2),
-            jnp.full_like(alpha, 0.7),
-            jnp.zeros_like(alpha),
-            jnp.zeros_like(alpha),
-            jnp.full_like(alpha, 2.5),
-            alpha,
-        ),
-        axis=-1,
-    )
-    state = system.primitive_to_conserved(primitive)
-    runtime_state = runtime.initialize_state(state, 0.0, 1.0e-4)
-    result = runtime.advance(runtime_state)
-    average = result.runtime_state.cell_average()
-
-    assert result.accepted
-    assert jnp.all(system.admissible(average))
-    assert jnp.all((average[:, system.alpha_index] >= 0.0))
-    assert jnp.all((average[:, system.alpha_index] <= 1.0))
-
-
-def test_stefan_heat_flux_uses_two_sided_stage_plic_reconstruction() -> None:
     system, discretization, runtime = _runtime()
     vof = runtime.dynamics.coupling.vof
     assert vof is not None
@@ -400,9 +354,6 @@ def test_stefan_heat_flux_uses_two_sided_stage_plic_reconstruction() -> None:
         jnp.sum(native_state[:, :2]),
         rtol=2.0e-6,
     )
-
-
-def test_vof_stage_alpha_changes_stage_apertures() -> None:
     system, discretization, runtime = _runtime()
     vof = runtime.dynamics.coupling.vof
     assert vof is not None
@@ -417,7 +368,44 @@ def test_vof_stage_alpha_changes_stage_apertures() -> None:
     assert jnp.all(second.interface_evidence)
 
 
-def test_zero_surface_tension_capillary_runtime_matches_vof_runtime() -> None:
+def test_two_material_vof_runtime_reconstructs_plic_on_moved_stage_geometry() -> None:
+    def deform(time: Any, vertices: Any, args: Any) -> Any:
+        del args
+        interior = (
+            (vertices[:, 0] > 0.0)
+            & (vertices[:, 0] < 1.0)
+            & (vertices[:, 1] > 0.0)
+            & (vertices[:, 1] < 1.0)
+        )
+        return vertices.at[:, 0].add(jnp.where(interior, 0.02 * time, 0.0))
+
+    system, discretization, runtime = _runtime(
+        motion=deform, phase_change=True, thermal_diffusion=True
+    )
+    alpha = jnp.where(discretization.cell_centers[:, 0] < 0.5, 0.8, 0.2)
+    primitive = jnp.stack(
+        (
+            jnp.full_like(alpha, 1.2),
+            jnp.full_like(alpha, 0.7),
+            jnp.zeros_like(alpha),
+            jnp.zeros_like(alpha),
+            jnp.full_like(alpha, 2.5),
+            alpha,
+        ),
+        axis=-1,
+    )
+    state = system.primitive_to_conserved(primitive)
+    runtime_state = runtime.initialize_state(state, 0.0, 1.0e-4)
+    result = runtime.advance(runtime_state)
+    average = result.runtime_state.cell_average()
+
+    assert result.accepted
+    assert jnp.all(system.admissible(average))
+    assert jnp.all((average[:, system.alpha_index] >= 0.0))
+    assert jnp.all((average[:, system.alpha_index] <= 1.0))
+
+
+def test_two_material_vof_runtime_scenario_2() -> None:
     system, discretization, plain = _runtime(capillary=False)
     _, _, capillary = _runtime(capillary=True)
     alpha = jnp.where(discretization.cell_centers[:, 0] < 0.5, 0.8, 0.2)
@@ -442,11 +430,6 @@ def test_zero_surface_tension_capillary_runtime_matches_vof_runtime() -> None:
         capillary_result.runtime_state.cell_average(),
         plain_result.runtime_state.cell_average(),
     )
-
-
-def test_positive_surface_tension_pure_phases_are_unchanged_eager_and_filter_jit() -> (
-    None
-):
     for pure_alpha in (0.0, 1.0):
         system, discretization, runtime = _runtime(
             capillary=True, surface_tension=1.0e8, embedded=True
@@ -494,9 +477,6 @@ def test_positive_surface_tension_pure_phases_are_unchanged_eager_and_filter_jit
         np.testing.assert_allclose(
             compiled.runtime_state.cell_average(), initial, rtol=0.0, atol=1e-14
         )
-
-
-def test_capillary_dominated_candidate_preserves_limit_and_hyperbolic_evidence() -> None:
     system, discretization, runtime = _runtime(
         capillary=True, surface_tension=1.0e4, embedded=True
     )
@@ -560,7 +540,7 @@ def test_capillary_dominated_candidate_preserves_limit_and_hyperbolic_evidence()
     )
 
 
-def test_embedded_vof_contact_angle_stage_runtime_is_explicit_and_finite() -> None:
+def test_two_material_vof_runtime_scenario_3() -> None:
     system, discretization, _ = _runtime()
     gradient = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(
         discretization
@@ -643,9 +623,6 @@ def test_embedded_vof_contact_angle_stage_runtime_is_explicit_and_finite() -> No
         second.runtime_state.content_state.topology_epoch_id
         == first.runtime_state.content_state.topology_epoch_id
     )
-
-
-def test_boundary_inflow_uses_exterior_composition_and_outflow_uses_owner_plic() -> None:
     velocity = 0.2
     system, discretization, runtime = _runtime(
         boundary_primitive=(1.0, 1.0, velocity, 0.0, 2.5, 1.0)

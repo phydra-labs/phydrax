@@ -23,7 +23,7 @@ def _normal_log_density(residual: Any, covariance: Any) -> Any:
     )
 
 
-def test_affine_measurement_likelihood_matches_normalized_scalar_gaussian() -> None:
+def test_measurement_likelihood_scenario_1() -> None:
     inputs = jnp.asarray([[0.5], [1.0], [2.0]])
     targets = jnp.asarray([1.4, 2.1, 3.8])
     parameters = {"intercept": jnp.asarray(0.4), "slope": jnp.asarray(1.8)}
@@ -45,9 +45,6 @@ def test_affine_measurement_likelihood_matches_normalized_scalar_gaussian() -> N
     assert jnp.allclose(term.per_case_log_prob(parameters), expected)
     assert jnp.allclose(term.log_prob(parameters), jnp.sum(expected))
     assert jnp.allclose(eqx.filter_jit(term.log_prob)(parameters), jnp.sum(expected))
-
-
-def test_multivariate_correlated_measurement_likelihood_matches_dense_reference() -> None:
     matrix = jnp.asarray([[1.2, -0.4], [0.3, 0.8]])
     inputs = jnp.asarray([[0.2, -0.1], [1.0, 0.5], [-0.4, 0.7]])
     targets = jnp.asarray([[0.4, -0.2], [0.9, 0.8], [-0.7, 0.3]])
@@ -89,9 +86,6 @@ def test_multivariate_correlated_measurement_likelihood_matches_dense_reference(
         rtol=1e-10,
         atol=1e-10,
     )
-
-
-def test_parameter_dependent_covariances_are_jittable_and_normalized() -> None:
     inputs = jnp.zeros((4, 1))
     targets = jnp.zeros((4,))
     term = phx.uq.LinearizedGaussianMeasurementLikelihood(
@@ -132,7 +126,7 @@ def test_parameter_dependent_covariances_are_jittable_and_normalized() -> None:
     )
 
 
-def test_callback_observation_covariance_is_validated_before_input_propagation() -> None:
+def test_measurement_likelihood_scenario_2() -> None:
     term = phx.uq.LinearizedGaussianMeasurementLikelihood(
         lambda slope, value: slope * value[0],
         jnp.ones((2, 1)),
@@ -142,9 +136,6 @@ def test_callback_observation_covariance_is_validated_before_input_propagation()
     )
 
     assert jnp.isneginf(term.log_prob(jnp.asarray(1.0)))
-
-
-def test_per_case_covariances_select_the_correct_external_minibatch_cases() -> None:
     inputs = jnp.arange(5.0)[:, None]
     targets = 1.3 * inputs[:, 0] + jnp.asarray([0.1, -0.2, 0.0, 0.3, -0.1])
     input_covariances = jnp.asarray([[[value]] for value in jnp.linspace(0.01, 0.05, 5)])
@@ -177,6 +168,42 @@ def test_per_case_covariances_select_the_correct_external_minibatch_cases() -> N
         case_indices=jnp.asarray([8]),
     )
     assert jnp.isneginf(invalid[0])
+    for input_covariance, observation_covariance, message in [
+        (jnp.asarray([[-0.1]]), jnp.asarray([[0.1]]), "positive semidefinite"),
+        (jnp.asarray([[0.1]]), jnp.asarray([[0.0]]), "positive definite"),
+        (
+            jnp.asarray([[0.1, 0.0], [0.0, 0.1]]),
+            jnp.asarray([[0.1]]),
+            "shape",
+        ),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            phx.uq.LinearizedGaussianMeasurementLikelihood(
+                lambda parameter, value: parameter * value[0],
+                jnp.ones((3, 1)),
+                jnp.ones((3,)),
+                input_covariance=input_covariance,
+                observation_covariance=observation_covariance,
+            )
+    term = phx.uq.LinearizedGaussianMeasurementLikelihood(
+        lambda parameter, value: parameter * value[0],
+        jnp.ones((2, 1)),
+        jnp.ones((2,)),
+        input_covariance=jnp.asarray([[0.0]]),
+        observation_covariance=jnp.asarray([[0.0]]),
+        stabilization=1.0e-3,
+    )
+
+    assert jnp.all(jnp.isfinite(term.per_case_log_prob(jnp.asarray(1.0))))
+    with pytest.raises(ValueError, match="max_output_dimension"):
+        phx.uq.LinearizedGaussianMeasurementLikelihood(
+            lambda parameter, value: jnp.asarray([parameter, value[0]]),
+            jnp.ones((2, 1)),
+            jnp.ones((2, 2)),
+            input_covariance=jnp.asarray([[0.1]]),
+            observation_covariance=jnp.eye(2),
+            max_output_dimension=1,
+        )
 
 
 def test_measurement_likelihood_reuses_the_native_minibatch_posterior_contract() -> None:
@@ -219,52 +246,3 @@ def test_measurement_likelihood_reuses_the_native_minibatch_posterior_contract()
     assert diagnostics.passed
     assert diagnostics.full_log_density_matches
     assert diagnostics.full_gradient_matches
-
-
-@pytest.mark.parametrize(
-    ("input_covariance", "observation_covariance", "message"),
-    [
-        (jnp.asarray([[-0.1]]), jnp.asarray([[0.1]]), "positive semidefinite"),
-        (jnp.asarray([[0.1]]), jnp.asarray([[0.0]]), "positive definite"),
-        (
-            jnp.asarray([[0.1, 0.0], [0.0, 0.1]]),
-            jnp.asarray([[0.1]]),
-            "shape",
-        ),
-    ],
-)
-def test_measurement_likelihood_rejects_invalid_covariance_contracts(
-    input_covariance: Any,
-    observation_covariance: Any,
-    message: Any,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        phx.uq.LinearizedGaussianMeasurementLikelihood(
-            lambda parameter, value: parameter * value[0],
-            jnp.ones((3, 1)),
-            jnp.ones((3,)),
-            input_covariance=input_covariance,
-            observation_covariance=observation_covariance,
-        )
-
-
-def test_measurement_likelihood_allows_only_explicit_singular_regularization() -> None:
-    term = phx.uq.LinearizedGaussianMeasurementLikelihood(
-        lambda parameter, value: parameter * value[0],
-        jnp.ones((2, 1)),
-        jnp.ones((2,)),
-        input_covariance=jnp.asarray([[0.0]]),
-        observation_covariance=jnp.asarray([[0.0]]),
-        stabilization=1.0e-3,
-    )
-
-    assert jnp.all(jnp.isfinite(term.per_case_log_prob(jnp.asarray(1.0))))
-    with pytest.raises(ValueError, match="max_output_dimension"):
-        phx.uq.LinearizedGaussianMeasurementLikelihood(
-            lambda parameter, value: jnp.asarray([parameter, value[0]]),
-            jnp.ones((2, 1)),
-            jnp.ones((2, 2)),
-            input_covariance=jnp.asarray([[0.1]]),
-            observation_covariance=jnp.eye(2),
-            max_output_dimension=1,
-        )

@@ -49,7 +49,7 @@ def _problem(values: Any, *, problem_id: Any) -> Any:
     )
 
 
-def test_amortized_family_is_normalized_and_conditions_on_observations() -> None:
+def test_amortized_contracts() -> None:
     first_problem = _problem([1.0, 2.0], problem_id="first")
     second_problem = _problem([-1.0, -2.0], problem_id="second")
     family = phx.uq.AmortizedGaussianMarkovFamily.from_problem(
@@ -73,9 +73,6 @@ def test_amortized_family_is_normalized_and_conditions_on_observations() -> None
         conditioned.conditional_family.offsets,
     )
     assert jax.tree.structure(family.encoder) == jax.tree.structure(conditioned.encoder)
-
-
-def test_amortized_full_path_training_returns_reusable_encoder() -> None:
     problem = _problem([1.0, 2.0], problem_id="training")
     result = phx.uq.fit_amortized_state_space_variational(
         problem,

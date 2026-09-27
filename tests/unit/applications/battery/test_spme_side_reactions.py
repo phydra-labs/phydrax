@@ -245,9 +245,7 @@ def _observable(adapter: Any, output: Any, name: Any) -> Any:
     return output.values[..., adapter.observable_names.index(name)]
 
 
-def test_local_side_current_uses_electrode_average_only_at_particle_boundary_and_rest_cancels() -> (
-    None
-):
+def test_spme_side_reactions_scenario_1() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -290,9 +288,6 @@ def test_local_side_current_uses_electrode_average_only_at_particle_boundary_and
         rtol=2.0e-6,
         atol=1.0e-15,
     )
-
-
-def test_porosity_changes_storage_effective_transport_and_local_film_voltage() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -377,9 +372,6 @@ def test_porosity_changes_storage_effective_transport_and_local_film_voltage() -
         _observable(adapter, output, "voltage:sei_film_correction_v"),
         aged.film_voltage_correction_v,
     )
-
-
-def test_zero_sei_is_exact_marquis_reduction_for_state_rate_and_observables() -> None:
     parameters = _parameters(rate=0.0, initial_film=0.0)
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -426,7 +418,7 @@ def test_zero_sei_is_exact_marquis_reduction_for_state_rate_and_observables() ->
     assert bool(_observable(adapter, output, "spme_sr:zero_sei_reduction"))
 
 
-def test_domain_and_two_spme_sr_asymptotic_assumptions_fail_explicitly() -> None:
+def test_spme_side_reactions_scenario_2() -> None:
     parameters = _parameters(rate=1.0e-11, maximum_current=0.02)
     adapter, prepared = _adapter(weak_threshold=1.0e-5, overpotential_threshold=1.0e-5)
     state = _state(adapter, prepared, parameters)
@@ -457,43 +449,6 @@ def test_domain_and_two_spme_sr_asymptotic_assumptions_fail_explicitly() -> None
     )
     assert not bool(invalid_output.domain_valid)
     assert bool(jnp.all(jnp.isfinite(invalid_output.values)))
-
-
-def test_jit_vmap_and_gradients_keep_fixed_local_field_shapes() -> None:
-    parameters = _parameters()
-    adapter, prepared = _adapter()
-    state = _state(adapter, prepared, parameters)
-    runtime = _runtime(parameters, 0.5)
-    problem = adapter.problem(prepared, state, runtime)
-    eager = problem.drift(jnp.asarray(0.0), state, runtime)
-    compiled = jax.jit(
-        lambda candidate: problem.drift(jnp.asarray(0.0), candidate, runtime)
-    )(state)
-    np.testing.assert_allclose(compiled.negative_amount_mol, eager.negative_amount_mol)
-    np.testing.assert_allclose(compiled.negative_porosity, eager.negative_porosity)
-
-    states = jax.tree.map(lambda value: jnp.stack((value, value)), state)
-    mapped = jax.vmap(
-        lambda candidate: (
-            prepared.evaluate(candidate, parameters, 0.5).sei_current_density_a_m3
-        )
-    )(states)
-    assert mapped.shape == (2, 4)
-
-    def side_current_for_rate(rate: Any) -> Any:
-        candidate = eqx.tree_at(
-            lambda value: value.sei_reaction_rate_m_s,
-            parameters,
-            rate,
-        )
-        return prepared.evaluate(state, candidate, 0.5).side_current_a
-
-    derivative = jax.grad(side_current_for_rate)(jnp.asarray(1.0e-14))
-    assert bool(jnp.isfinite(derivative))
-    assert float(derivative) > 0.0
-
-
-def test_orchestration_closes_lithium_charge_product_film_and_porosity_ledgers() -> None:
     parameters = _parameters()
     adapter = BrosaPlanellaSpmeSeiAdapter(
         BrosaPlanellaSpmeSeiPlan(
@@ -561,11 +516,6 @@ def test_orchestration_closes_lithium_charge_product_film_and_porosity_ledgers()
     np.testing.assert_allclose(
         ledger.total_lithium_conservation_residual_mol, 0.0, atol=1.0e-10
     )
-
-
-def test_state_is_strictly_isothermal_sei_only_without_thermal_or_plating_fields() -> (
-    None
-):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -589,3 +539,37 @@ def test_state_is_strictly_isothermal_sei_only_without_thermal_or_plating_fields
     )
     with np.testing.assert_raises(ValueError):
         adapter.problem(prepared, malformed, _runtime(parameters, 0.0))
+
+
+def test_jit_vmap_and_gradients_keep_fixed_local_field_shapes() -> None:
+    parameters = _parameters()
+    adapter, prepared = _adapter()
+    state = _state(adapter, prepared, parameters)
+    runtime = _runtime(parameters, 0.5)
+    problem = adapter.problem(prepared, state, runtime)
+    eager = problem.drift(jnp.asarray(0.0), state, runtime)
+    compiled = jax.jit(
+        lambda candidate: problem.drift(jnp.asarray(0.0), candidate, runtime)
+    )(state)
+    np.testing.assert_allclose(compiled.negative_amount_mol, eager.negative_amount_mol)
+    np.testing.assert_allclose(compiled.negative_porosity, eager.negative_porosity)
+
+    states = jax.tree.map(lambda value: jnp.stack((value, value)), state)
+    mapped = jax.vmap(
+        lambda candidate: (
+            prepared.evaluate(candidate, parameters, 0.5).sei_current_density_a_m3
+        )
+    )(states)
+    assert mapped.shape == (2, 4)
+
+    def side_current_for_rate(rate: Any) -> Any:
+        candidate = eqx.tree_at(
+            lambda value: value.sei_reaction_rate_m_s,
+            parameters,
+            rate,
+        )
+        return prepared.evaluate(state, candidate, 0.5).side_current_a
+
+    derivative = jax.grad(side_current_for_rate)(jnp.asarray(1.0e-14))
+    assert bool(jnp.isfinite(derivative))
+    assert float(derivative) > 0.0

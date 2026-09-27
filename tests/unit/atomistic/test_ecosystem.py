@@ -67,7 +67,7 @@ def _runtime() -> Any:
     return system, neighborhood, potential, dynamics, thermodynamic, state
 
 
-def test_identity_and_virtual_site_force_pullback() -> None:
+def test_ecosystem_scenario_1() -> None:
     physical_ids = np.asarray([10, 20, 30])
     sites = phx.atomistic.AtomisticInteractionSitePlan(
         # ty: ignore[invalid-argument-type]
@@ -106,9 +106,6 @@ def test_identity_and_virtual_site_force_pullback() -> None:
         lambda value: system.coordinate_map.realize(value).positions[3, 0]
     )(positions)
     np.testing.assert_allclose(pulled, gradient, atol=1e-12)
-
-
-def test_force_field_bundle_and_new_terms_are_energy_derived() -> None:
     system, units = _system()
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(3).prepare(
         system.particles
@@ -137,37 +134,6 @@ def test_force_field_bundle_and_new_terms_are_energy_derived() -> None:
     ).prepare()
     assert dict(bundle.preparation.resource_counts)["interaction_sites"] == 3
     assert bundle.system.plan.units.unit_system_id == units.unit_system_id
-
-
-def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path) -> None:
-    system, neighborhood, potential, dynamics, _, state = _runtime()
-    reporter = phx.atomistic.AtomisticReporterPlan(
-        phx.atomistic.interchange.ExtendedXYZTrajectoryPlan(tmp_path / "trajectory.xyz")
-    )
-    frame = reporter.frame(dynamics, state)
-    with reporter.sink.open(append=False) as writer:
-        writer.write(frame)
-    # ty: ignore[missing-argument]
-    with reporter.sink.open() as reader:
-        # ty: ignore[invalid-argument-type]
-        observed = tuple(reader)
-    assert len(observed) == 1
-    np.testing.assert_allclose(observed[0].positions, frame.positions)
-    h5 = phx.atomistic.interchange.H5MDTrajectoryPlan(tmp_path / "trajectory.h5")
-    with h5.open(append=False) as writer:
-        writer.write(frame)
-    with h5.open() as reader:
-        h5_frames = tuple(reader)
-    np.testing.assert_allclose(h5_frames[0].positions, frame.positions)
-    source = phx.atomistic.InMemoryTrajectorySourcePlan((frame,))
-    rerun = phx.atomistic.AtomisticRerunPlan(source, potential, neighborhood).run()
-    assert bool(rerun.successful)
-    np.testing.assert_allclose(
-        rerun.evaluations[0][0].energy, state.force.potential_energy
-    )
-
-
-def test_collective_variables_bias_and_replica_exchange() -> None:
     system, _, _, dynamics, thermodynamic, state = _runtime()
     cv = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
@@ -224,7 +190,35 @@ def test_collective_variables_bias_and_replica_exchange() -> None:
     assert bool(exchanged.successful)
 
 
-def test_committee_advanced_physics_and_distributed_contracts() -> None:
+def test_frame_xyz_h5md_and_rerun_roundtrip(tmp_path: Path) -> None:
+    system, neighborhood, potential, dynamics, _, state = _runtime()
+    reporter = phx.atomistic.AtomisticReporterPlan(
+        phx.atomistic.interchange.ExtendedXYZTrajectoryPlan(tmp_path / "trajectory.xyz")
+    )
+    frame = reporter.frame(dynamics, state)
+    with reporter.sink.open(append=False) as writer:
+        writer.write(frame)
+    # ty: ignore[missing-argument]
+    with reporter.sink.open() as reader:
+        # ty: ignore[invalid-argument-type]
+        observed = tuple(reader)
+    assert len(observed) == 1
+    np.testing.assert_allclose(observed[0].positions, frame.positions)
+    h5 = phx.atomistic.interchange.H5MDTrajectoryPlan(tmp_path / "trajectory.h5")
+    with h5.open(append=False) as writer:
+        writer.write(frame)
+    with h5.open() as reader:
+        h5_frames = tuple(reader)
+    np.testing.assert_allclose(h5_frames[0].positions, frame.positions)
+    source = phx.atomistic.InMemoryTrajectorySourcePlan((frame,))
+    rerun = phx.atomistic.AtomisticRerunPlan(source, potential, neighborhood).run()
+    assert bool(rerun.successful)
+    np.testing.assert_allclose(
+        rerun.evaluations[0][0].energy, state.force.potential_energy
+    )
+
+
+def test_ecosystem_scenario_2() -> None:
     system, neighborhood, potential, _, _, state = _runtime()
     other = phx.atomistic.AtomisticPotentialProgram(
         # ty: ignore[invalid-argument-type]
@@ -278,9 +272,6 @@ def test_committee_advanced_physics_and_distributed_contracts() -> None:
     np.testing.assert_allclose(
         jnp.sum(local_energy), state.force.potential_energy, atol=1.0e-12
     )
-
-
-def test_interaction_site_cv_rejects_cell_vectors_without_cell() -> None:
     physical_ids = np.asarray([10, 20, 30])
     sites = phx.atomistic.AtomisticInteractionSitePlan(
         # ty: ignore[invalid-argument-type]

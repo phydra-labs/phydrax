@@ -70,7 +70,7 @@ def _point_batch(
     )
 
 
-def test_function_samples_values_are_one_array_or_none() -> None:
+def test_operator_batch_protocol_scenario_1() -> None:
     # ty: ignore[invalid-argument-type]
     samples = phx.nn.operator.FunctionSamples(values=[[1.0], [2.0]])
     # ty: ignore[unresolved-attribute]
@@ -78,9 +78,6 @@ def test_function_samples_values_are_one_array_or_none() -> None:
     with pytest.raises(TypeError, match="one array or None"):
         # ty: ignore[invalid-argument-type]
         phx.nn.operator.FunctionSamples(values={"u": jnp.ones((2,))})
-
-
-def test_per_case_geometry_weights_and_metrics_reduce_independently() -> None:
     coordinates = jnp.array(
         [
             [[0.0], [0.5], [1.0]],
@@ -112,9 +109,54 @@ def test_per_case_geometry_weights_and_metrics_reduce_independently() -> None:
         reduction="none",
     )
     assert jnp.allclose(error, jnp.array([1.0, jnp.sqrt(5.9)]))
+    source_coordinates = jnp.array(
+        [
+            [[0.0], [0.5], [1.0]],
+            [[0.0], [0.25], [0.75]],
+        ]
+    )
+    query_coordinates = jnp.array(
+        [
+            [[0.0], [0.5]],
+            [[0.25], [0.75]],
+        ]
+    )
+    source = phx.nn.operator.FunctionSamples(
+        values=jnp.ones((2, 3)),
+        coordinates=source_coordinates,
+        quadrature_weights=jnp.full((2, 3), 1.0 / 3.0),
+    )
+    query = phx.nn.operator.FunctionSamples(
+        values=None,
+        coordinates=query_coordinates,
+        mask=jnp.array([[True, True], [True, False]]),
+    )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"u": source},
+        queries={"query": query},
+        case_axes=("case",),
+    )
+    branch = phx.nn.operator.architectures.IntegralBranchEncoder(
+        # ty: ignore[invalid-argument-type]
+        feature_model=_CoordinateFeature(2, 1),
+        latent_size=1,
+        coord_dim=1,
+    )
+    model = phx.nn.operator.architectures.DeepONet(
+        branch=branch,
+        # ty: ignore[invalid-argument-type]
+        trunk=_Trunk(),
+        coord_dim=1,
+        latent_size=1,
+    )
 
-
-def test_stack_operator_batches_pads_ragged_points_and_slices_cases() -> None:
+    prediction = model.evaluate(batch)
+    output = prediction.field("output")
+    assert output.values.shape == (2, 2)
+    assert output.spec.channels == "scalar"
+    assert prediction.case_axes == ("case",)
+    assert output.values[1, 1] == 0.0
+    assert not jnp.allclose(output.values[0], output.values[1])
     first = _point_batch(
         [[0.0], [1.0]],
         [1.0, 2.0],
@@ -199,7 +241,7 @@ def _fixed_grid_case_loader(*, mask: Any = None) -> Any:
     return task, tuple(loader.epoch(0))[0].batch
 
 
-def test_case_loader_retains_shared_fixed_grid_for_physical_task_evaluation() -> None:
+def test_operator_batch_protocol_scenario_2() -> None:
     task, batch = _fixed_grid_case_loader()
     task.validate_batch(batch)
     integrated = phx.nn.operator.training.operator_integral(
@@ -208,11 +250,6 @@ def test_case_loader_retains_shared_fixed_grid_for_physical_task_evaluation() ->
         case_shape=batch.case_shape,
     )
     assert jnp.allclose(integrated, jnp.asarray([2.0, 5.0]))
-
-
-def test_case_loader_does_not_collapse_explicit_case_geometry_even_when_values_match() -> (
-    None
-):
     for mask, expected in (
         (jnp.ones((2, 3), dtype="bool"), jnp.asarray([2.0, 5.0])),
         (
@@ -229,60 +266,34 @@ def test_case_loader_does_not_collapse_explicit_case_geometry_even_when_values_m
             case_shape=batch.case_shape,
         )
         assert jnp.allclose(integrated, expected)
-
-
-def test_per_case_deeponet_uses_case_specific_source_and_query_geometry() -> None:
-    source_coordinates = jnp.array(
-        [
-            [[0.0], [0.5], [1.0]],
-            [[0.0], [0.25], [0.75]],
-        ]
-    )
-    query_coordinates = jnp.array(
-        [
-            [[0.0], [0.5]],
-            [[0.25], [0.75]],
-        ]
-    )
+    coordinates = jnp.linspace(0.0, 1.0, 5)[:, None]
     source = phx.nn.operator.FunctionSamples(
-        values=jnp.ones((2, 3)),
-        coordinates=source_coordinates,
-        quadrature_weights=jnp.full((2, 3), 1.0 / 3.0),
-    )
-    query = phx.nn.operator.FunctionSamples(
-        values=None,
-        coordinates=query_coordinates,
-        mask=jnp.array([[True, True], [True, False]]),
+        values=jnp.arange(20.0).reshape((4, 5)),
+        coordinates=coordinates,
+        mask=jnp.asarray(
+            [
+                [True, True, True, True, True],
+                [True, True, False, False, False],
+                [True, True, True, False, False],
+                [True, False, False, False, False],
+            ]
+        ),
     )
     batch = phx.nn.operator.OperatorBatch(
         inputs={"u": source},
-        queries={"query": query},
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, coordinates=coordinates)
+        },
         case_axes=("case",),
+        case_shape=(4,),
     )
-    branch = phx.nn.operator.architectures.IntegralBranchEncoder(
-        # ty: ignore[invalid-argument-type]
-        feature_model=_CoordinateFeature(2, 1),
-        latent_size=1,
-        coord_dim=1,
-    )
-    model = phx.nn.operator.architectures.DeepONet(
-        branch=branch,
-        # ty: ignore[invalid-argument-type]
-        trunk=_Trunk(),
-        coord_dim=1,
-        latent_size=1,
-    )
-
-    prediction = model.evaluate(batch)
-    output = prediction.field("output")
-    assert output.values.shape == (2, 2)
-    assert output.spec.channels == "scalar"
-    assert prediction.case_axes == ("case",)
-    assert output.values[1, 1] == 0.0
-    assert not jnp.allclose(output.values[0], output.values[1])
-
-
-def test_local_integral_operator_supports_per_case_ragged_geometry() -> None:
+    sliced = batch.take(jnp.asarray([3, 1]))
+    # ty: ignore[unresolved-attribute]
+    assert sliced.input("u").coordinates.shape == (5, 1)
+    # ty: ignore[unresolved-attribute]
+    assert sliced.input("u").mask.shape == (2, 5)
+    # ty: ignore[invalid-argument-type]
+    assert jnp.array_equal(sliced.input("u").coordinates, coordinates)
     source_coordinates = jnp.array(
         [
             [[0.0], [0.5], [1.0]],
@@ -320,9 +331,6 @@ def test_local_integral_operator_supports_per_case_ragged_geometry() -> None:
     assert output.shape == (2, 2)
     assert jnp.allclose(output[0], jnp.array([2.3, 2.3]))
     assert jnp.allclose(output[1], jnp.array([5.0, 0.0]))
-
-
-def test_operator_batch_rejects_mismatched_case_layouts() -> None:
     source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((3, 4)),
         coordinates=jnp.ones((2, 4, 1)),
@@ -338,34 +346,3 @@ def test_operator_batch_rejects_mismatched_case_layouts() -> None:
             queries={"query": query},
             case_axes=("case",),
         )
-
-
-def test_case_slicing_preserves_shared_coordinates_with_per_case_masks() -> None:
-    coordinates = jnp.linspace(0.0, 1.0, 5)[:, None]
-    source = phx.nn.operator.FunctionSamples(
-        values=jnp.arange(20.0).reshape((4, 5)),
-        coordinates=coordinates,
-        mask=jnp.asarray(
-            [
-                [True, True, True, True, True],
-                [True, True, False, False, False],
-                [True, True, True, False, False],
-                [True, False, False, False, False],
-            ]
-        ),
-    )
-    batch = phx.nn.operator.OperatorBatch(
-        inputs={"u": source},
-        queries={
-            "query": phx.nn.operator.FunctionSamples(values=None, coordinates=coordinates)
-        },
-        case_axes=("case",),
-        case_shape=(4,),
-    )
-    sliced = batch.take(jnp.asarray([3, 1]))
-    # ty: ignore[unresolved-attribute]
-    assert sliced.input("u").coordinates.shape == (5, 1)
-    # ty: ignore[unresolved-attribute]
-    assert sliced.input("u").mask.shape == (2, 5)
-    # ty: ignore[invalid-argument-type]
-    assert jnp.array_equal(sliced.input("u").coordinates, coordinates)

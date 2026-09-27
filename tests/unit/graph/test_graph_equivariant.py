@@ -32,7 +32,7 @@ def _triangle_graph(positions: Any = None) -> phx.graph.GraphIR:
     )
 
 
-def test_euclidean_edge_features_are_rigid_motion_invariant() -> None:
+def test_graph_equivariant_scenario_1() -> None:
     graph = phx.graph.euclidean_edge_features(_triangle_graph())
     rotation = jnp.array([[0.0, -1.0], [1.0, 0.0]])
     translation = jnp.array([3.0, -2.0])
@@ -46,9 +46,6 @@ def test_euclidean_edge_features_are_rigid_motion_invariant() -> None:
     )
     expected_relative = oe.contract("ij,ej->ei", rotation, graph.edges["relative"])
     assert jnp.allclose(moved.edges["relative"], expected_relative)
-
-
-def test_gaussian_radial_basis_expands_distances() -> None:
     out = phx.graph.gaussian_radial_basis(
         jnp.array([[0.0], [1.0]]),
         jnp.array([0.0, 1.0]),
@@ -58,9 +55,6 @@ def test_gaussian_radial_basis_expands_distances() -> None:
     assert out.shape == (2, 2)
     assert jnp.allclose(out[0], jnp.array([1.0, jnp.exp(-2.0)]))
     assert jnp.allclose(out[1], jnp.array([jnp.exp(-2.0), 1.0]))
-
-
-def test_equivariant_graph_convolution_respects_rigid_motion() -> None:
     graph = _triangle_graph()
     moved_positions = graph.nodes["positions"] @ jnp.array([[0.0, -1.0], [1.0, 0.0]]).T
     moved = _triangle_graph(moved_positions + jnp.array([4.0, 5.0]))

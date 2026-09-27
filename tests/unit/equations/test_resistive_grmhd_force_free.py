@@ -42,7 +42,7 @@ def _geometry(scale: Any, convention: Any) -> Any:
     )
 
 
-def test_relativistic_ohm_closure_recovers_resistive_and_ideal_limits() -> None:
+def test_resistive_grmhd_force_free_scenario_1() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -76,9 +76,6 @@ def test_relativistic_ohm_closure_recovers_resistive_and_ideal_limits() -> None:
     )
     assert float(resistive.entropy_production) > 0.0
     assert not bool(resistive.ideal_limit)
-
-
-def test_force_free_projection_enforces_degeneracy_and_magnetic_dominance() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -96,9 +93,6 @@ def test_force_free_projection_enforces_degeneracy_and_magnetic_dominance() -> N
     assert float(projected.constraints.magnetic_dominance) > 0.0
     assert bool(projected.qualified)
     assert not bool(projected.derivative_valid)
-
-
-def test_force_free_current_closure_preserves_parallel_constraint_current() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -123,9 +117,6 @@ def test_force_free_current_closure_preserves_parallel_constraint_current() -> N
     np.testing.assert_allclose(source[:3], -result.current)
     np.testing.assert_allclose(source[3:], 0.0)
     assert bool(result.qualified)
-
-
-def test_force_free_coordinate_characteristics_remain_on_adm_light_cone() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)

@@ -40,7 +40,7 @@ def _mapping(system: Any) -> Any:
     )
 
 
-def test_center_of_mass_map_conserves_mass_charge_momentum_and_force() -> None:
+def test_molecular_coarse_graining_scenario_1() -> None:
     system = _fine_system()
     mapping = _mapping(system)
     positions = jnp.asarray(
@@ -61,9 +61,6 @@ def test_center_of_mass_map_conserves_mass_charge_momentum_and_force() -> None:
     assert result.charge_residual == 0.0
     assert not bool(jnp.any(mapping.coarse_system.plan.element_mask))
     assert jnp.array_equal(mapping.coarse_system.plan.atom_type_ids, jnp.asarray([0, 1]))
-
-
-def test_periodic_map_uses_image_counts_and_rejects_invalid_partition() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 10.0)
     system = _fine_system(cell=cell)
     mapping = _mapping(system)
@@ -81,9 +78,6 @@ def test_periodic_map_uses_image_counts_and_rejects_invalid_partition() -> None:
         phx.atomistic.MolecularCoarseMapPlan([100, 200], [0, 1], [0, -1, 1, 1]).prepare(
             system
         )
-
-
-def test_type_id_potential_accepts_coarse_particles_and_atomic_model_rejects() -> None:
     system = _fine_system()
     mapping = _mapping(system)
     positions = jnp.asarray(

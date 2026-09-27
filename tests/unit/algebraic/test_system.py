@@ -13,7 +13,7 @@ from phydrax.algebraic import (
 )
 
 
-def test_coo_factory_canonicalizes_support_and_coefficients_together() -> None:
+def test_system_scenario_1() -> None:
     first = SparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("f", "g"),
@@ -38,9 +38,6 @@ def test_coo_factory_canonicalizes_support_and_coefficients_together() -> None:
     )
     points = jnp.asarray(((0.0 + 0.0j, 0.0 + 0.0j), (1.0 + 2.0j, -0.5j)))
     np.testing.assert_allclose(first.evaluate(points), second.evaluate(points))
-
-
-def test_support_rejects_duplicate_coo_terms() -> None:
     with pytest.raises(ValueError, match="duplicate"):
         SparsePolynomialSupport(
             ("x",),
@@ -48,9 +45,6 @@ def test_support_rejects_duplicate_coo_terms() -> None:
             (0, 0),
             ((2,), (2,)),
         )
-
-
-def test_batched_complex_evaluation_and_zero_safe_analytic_jacobian() -> None:
     system = SparsePolynomialSystem.from_coo(
         ("x", "y"),
         ("f", "g"),

@@ -49,7 +49,7 @@ def _conductance_capacitance(device: Any) -> Any:
     return conductance, capacitance
 
 
-def test_uniform_small_signal_matches_distributed_conductor_and_displacement() -> None:
+def test_semiconductor_analysis_scenario_1() -> None:
     device = _uniform_device()
     point = device.equilibrium()
     frequencies = jnp.asarray([0.0, 1e5, 1e7])
@@ -64,9 +64,6 @@ def test_uniform_small_signal_matches_distributed_conductor_and_displacement() -
     # Both terminal KCL and invariance to a common-mode voltage must survive AC.
     np.testing.assert_allclose(jnp.sum(response.admittance, axis=1), 0.0, atol=1e-17)
     np.testing.assert_allclose(jnp.sum(response.admittance, axis=2), 0.0, atol=1e-17)
-
-
-def test_native_transient_keeps_carriers_and_initial_displacement_consistent() -> None:
     device = _uniform_device(5)
     point = device.equilibrium()
     slope = 2e5
@@ -93,11 +90,41 @@ def test_native_transient_keeps_carriers_and_initial_displacement_consistent() -
     np.testing.assert_allclose(
         p, jnp.broadcast_to(device.plan.intrinsic_density, p.shape), rtol=2e-7
     )
+    source = _triangle_result()
+    device = _triangle_device(source)
+    point = device.equilibrium()
+    transition = _geometry_transition(source, 1.0)
+    target = _triangle_device(transition.target)
+    accepted = sc.semiconductor_reprepare(
+        device, point, target, transition, source_result=source
+    )
+    assert bool(accepted.accepted)
+    np.testing.assert_allclose(
+        accepted.evidence.reinitialized_counts,
+        accepted.evidence.source_counts,
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(accepted.coordinates, point.coordinates, atol=1e-12)
 
+    enlarged = _geometry_transition(source, 2.0)
+    enlarged_device = _triangle_device(enlarged.target)
+    rejected = sc.semiconductor_reprepare(
+        device, point, enlarged_device, enlarged, source_result=source
+    )
+    assert not bool(rejected.accepted)
+    assert rejected.prepared is device
+    np.testing.assert_array_equal(rejected.coordinates, point.coordinates)
+    # Remapping itself conserves. The reservoir consistency projection would
+    # create carriers in the expanded physical volume, so it must not commit.
+    np.testing.assert_allclose(
+        rejected.evidence.transferred_counts, rejected.evidence.source_counts, rtol=1e-12
+    )
+    assert not bool(rejected.evidence.conservative)
 
-def test_depleted_pn_transient_resolves_screening_without_losing_terminal_charge() -> (
-    None
-):
+    with pytest.raises(ValueError, match="revision"):
+        sc.semiconductor_reprepare(
+            device, point, target, transition, source_result=transition.target
+        )
     length, area, slope = 4e-6, 1e-12, 5e6
     device = sc.PreparedSemiconductorDevice(sc.pn_junction(21, length=length, area=area))
     equilibrium = device.equilibrium()
@@ -123,6 +150,33 @@ def test_depleted_pn_transient_resolves_screening_without_losing_terminal_charge
         jnp.sum(result.terminal_currents, axis=-1),
         0.0,
         atol=1e-18,
+    )
+    device = sc.PreparedSemiconductorDevice(sc.pn_junction(21))
+    volts = jnp.array([0.025, 0.0])
+    point = device.solve(volts)
+    assert bool(point.successful)
+    ac = sc.semiconductor_small_signal(device, point, jnp.array([0.0, 1e6]))
+    sensitivity = sc.semiconductor_sensitivity(device, point)
+    assert bool(jnp.all(ac.evidence.successful))
+    assert bool(jnp.all(sensitivity.evidence.successful))
+    step = 1e-4
+    perturbation = jnp.array([step, 0.0])
+    upper = device.solve(volts + perturbation, initial=point)
+    lower = device.solve(volts - perturbation, initial=point)
+    assert bool(upper.successful & lower.successful)
+    finite_difference = (upper.terminal_currents - lower.terminal_currents) / (2 * step)
+    np.testing.assert_allclose(
+        sensitivity.derivatives[:, 0], finite_difference, rtol=2e-3, atol=1e-19
+    )
+    np.testing.assert_allclose(
+        ac.admittance[0].real, sensitivity.derivatives, rtol=2e-4, atol=1e-19
+    )
+    magnitude = np.max(np.abs(ac.admittance), axis=(1, 2))
+    assert np.all(
+        np.max(np.abs(np.sum(ac.admittance, axis=1)), axis=1) <= 1e-4 * magnitude
+    )
+    assert np.all(
+        np.max(np.abs(np.sum(ac.admittance, axis=2)), axis=1) <= 1e-4 * magnitude
     )
 
 
@@ -174,7 +228,7 @@ def test_implicit_bias_material_and_geometry_derivatives_match_ohms_law() -> Non
     np.testing.assert_allclose(sensitivity.derivatives, expected, rtol=2e-7, atol=1e-18)
 
 
-def test_circuit_law_preserves_si_signs_and_carrier_storage_dynamics() -> None:
+def test_semiconductor_analysis_scenario_2() -> None:
     device = _uniform_device()
     law = sc.SemiconductorCircuitLaw(device)
     voltage, slope = 0.003, 7e5
@@ -202,9 +256,6 @@ def test_circuit_law_preserves_si_signs_and_carrier_storage_dynamics() -> None:
         atol=1e-20,
     )
     np.testing.assert_allclose(value.auxiliary_residual, 0.0, atol=1e-10)
-
-
-def test_failed_linear_solve_never_exposes_admittance_as_valid() -> None:
     device = _uniform_device(11)
     point = device.equilibrium()
     policy = LinearSolvePolicy(
@@ -219,109 +270,6 @@ def test_failed_linear_solve_never_exposes_admittance_as_valid() -> None:
     assert bool(
         jnp.all(result.evidence.residual_norm > result.evidence.residual_threshold)
     )
-
-
-def _triangle_result() -> Any:
-    mesh = phx.discretization.CellMesh.from_triangles(
-        np.asarray([[0.0, 0.0], [1e-6, 0.0], [0.5e-6, np.sqrt(3.0) * 0.5e-6]]),
-        np.asarray([[0, 1, 2]], dtype=np.int32),
-        vertex_global_ids=np.asarray([11, 23, 37]),
-        cell_global_ids=np.asarray([101]),
-    )
-    return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-
-
-def _triangle_device(result: Any) -> Any:
-    support = sc.TransportSupport.from_meshing(result, transverse_measure=1e-6)
-    patch = phx.meshing.MeshPatch("reservoir", support.node_scope())
-    plan = sc.DevicePlan(
-        support,
-        sc.SemiconductorMaterial.silicon(),
-        contacts=(sc.OhmicContact("reservoir", patch),),
-    )
-    return sc.PreparedSemiconductorDevice(plan)
-
-
-def _geometry_transition(source_result: Any, scale: Any) -> Any:
-    source = source_result.mesh
-    moved = source.with_coordinates(scale * source.coordinates, numeric_version="next")
-    target = phx.meshing.certify_cell_mesh(moved, phx.SpatialCoordinateContract.si())
-    destination = target.mesh
-    ids = source.vertex_global_ids
-    source_set, target_set = (
-        source.entity_set(0).entity_set_id,
-        destination.entity_set(0).entity_set_id,
-    )
-    vertices = phx.meshing.EntityLineage(
-        0,
-        source_set,
-        target_set,
-        ids,
-        ids,
-        jnp.full(ids.shape, int(phx.meshing.EntityLineageKind.PRESERVED)),
-    )
-    lineage = phx.meshing.MeshLineage(
-        source.topology_id, destination.topology_id, (vertices,)
-    )
-    stencil = phx.meshing.VertexInterpolationStencil(
-        source_set,
-        target_set,
-        ids,
-        ids[:, None],
-        jnp.ones((ids.size, 1)),
-        jnp.ones((ids.size, 1), dtype="bool"),
-    )
-    return phx.meshing.CellMeshTransition(
-        source.mesh_id,
-        source.topology_id,
-        target,
-        lineage,
-        phx.meshing.MeshTransitionKind.REMESH,
-        vertex_stencil=stencil,
-    )
-
-
-def test_native_transfer_conserves_particles_and_rejects_reservoir_mass_creation_atomically() -> (
-    None
-):
-    source = _triangle_result()
-    device = _triangle_device(source)
-    point = device.equilibrium()
-    transition = _geometry_transition(source, 1.0)
-    target = _triangle_device(transition.target)
-    accepted = sc.semiconductor_reprepare(
-        device, point, target, transition, source_result=source
-    )
-    assert bool(accepted.accepted)
-    np.testing.assert_allclose(
-        accepted.evidence.reinitialized_counts,
-        accepted.evidence.source_counts,
-        rtol=1e-12,
-    )
-    np.testing.assert_allclose(accepted.coordinates, point.coordinates, atol=1e-12)
-
-    enlarged = _geometry_transition(source, 2.0)
-    enlarged_device = _triangle_device(enlarged.target)
-    rejected = sc.semiconductor_reprepare(
-        device, point, enlarged_device, enlarged, source_result=source
-    )
-    assert not bool(rejected.accepted)
-    assert rejected.prepared is device
-    np.testing.assert_array_equal(rejected.coordinates, point.coordinates)
-    # Remapping itself conserves. The reservoir consistency projection would
-    # create carriers in the expanded physical volume, so it must not commit.
-    np.testing.assert_allclose(
-        rejected.evidence.transferred_counts, rejected.evidence.source_counts, rtol=1e-12
-    )
-    assert not bool(rejected.evidence.conservative)
-
-    with pytest.raises(ValueError, match="revision"):
-        sc.semiconductor_reprepare(
-            device, point, target, transition, source_result=transition.target
-        )
-
-
-def test_coupled_nanoampere_circuit_dc_and_rc_transient_are_physically_scaled() -> None:
     device = _uniform_device(3)
     plan, support = device.plan, device.plan.support
     conductance, capacitance = _conductance_capacitance(device)
@@ -392,31 +340,61 @@ def test_coupled_nanoampere_circuit_dc_and_rc_transient_are_physically_scaled() 
     np.testing.assert_allclose(holes / plan.intrinsic_density, 1, rtol=1e-6)
 
 
-def test_depleted_junction_ac_and_implicit_response_match_biased_device_solves() -> None:
-    device = sc.PreparedSemiconductorDevice(sc.pn_junction(21))
-    volts = jnp.array([0.025, 0.0])
-    point = device.solve(volts)
-    assert bool(point.successful)
-    ac = sc.semiconductor_small_signal(device, point, jnp.array([0.0, 1e6]))
-    sensitivity = sc.semiconductor_sensitivity(device, point)
-    assert bool(jnp.all(ac.evidence.successful))
-    assert bool(jnp.all(sensitivity.evidence.successful))
-    step = 1e-4
-    perturbation = jnp.array([step, 0.0])
-    upper = device.solve(volts + perturbation, initial=point)
-    lower = device.solve(volts - perturbation, initial=point)
-    assert bool(upper.successful & lower.successful)
-    finite_difference = (upper.terminal_currents - lower.terminal_currents) / (2 * step)
-    np.testing.assert_allclose(
-        sensitivity.derivatives[:, 0], finite_difference, rtol=2e-3, atol=1e-19
+def _triangle_result() -> Any:
+    mesh = phx.discretization.CellMesh.from_triangles(
+        np.asarray([[0.0, 0.0], [1e-6, 0.0], [0.5e-6, np.sqrt(3.0) * 0.5e-6]]),
+        np.asarray([[0, 1, 2]], dtype=np.int32),
+        vertex_global_ids=np.asarray([11, 23, 37]),
+        cell_global_ids=np.asarray([101]),
     )
-    np.testing.assert_allclose(
-        ac.admittance[0].real, sensitivity.derivatives, rtol=2e-4, atol=1e-19
+    return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+
+
+def _triangle_device(result: Any) -> Any:
+    support = sc.TransportSupport.from_meshing(result, transverse_measure=1e-6)
+    patch = phx.meshing.MeshPatch("reservoir", support.node_scope())
+    plan = sc.DevicePlan(
+        support,
+        sc.SemiconductorMaterial.silicon(),
+        contacts=(sc.OhmicContact("reservoir", patch),),
     )
-    magnitude = np.max(np.abs(ac.admittance), axis=(1, 2))
-    assert np.all(
-        np.max(np.abs(np.sum(ac.admittance, axis=1)), axis=1) <= 1e-4 * magnitude
+    return sc.PreparedSemiconductorDevice(plan)
+
+
+def _geometry_transition(source_result: Any, scale: Any) -> Any:
+    source = source_result.mesh
+    moved = source.with_coordinates(scale * source.coordinates, numeric_version="next")
+    target = phx.meshing.certify_cell_mesh(moved, phx.SpatialCoordinateContract.si())
+    destination = target.mesh
+    ids = source.vertex_global_ids
+    source_set, target_set = (
+        source.entity_set(0).entity_set_id,
+        destination.entity_set(0).entity_set_id,
     )
-    assert np.all(
-        np.max(np.abs(np.sum(ac.admittance, axis=2)), axis=1) <= 1e-4 * magnitude
+    vertices = phx.meshing.EntityLineage(
+        0,
+        source_set,
+        target_set,
+        ids,
+        ids,
+        jnp.full(ids.shape, int(phx.meshing.EntityLineageKind.PRESERVED)),
+    )
+    lineage = phx.meshing.MeshLineage(
+        source.topology_id, destination.topology_id, (vertices,)
+    )
+    stencil = phx.meshing.VertexInterpolationStencil(
+        source_set,
+        target_set,
+        ids,
+        ids[:, None],
+        jnp.ones((ids.size, 1)),
+        jnp.ones((ids.size, 1), dtype="bool"),
+    )
+    return phx.meshing.CellMeshTransition(
+        source.mesh_id,
+        source.topology_id,
+        target,
+        lineage,
+        phx.meshing.MeshTransitionKind.REMESH,
+        vertex_stencil=stencil,
     )

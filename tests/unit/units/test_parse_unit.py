@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Any
 
 import pytest
 
@@ -21,7 +20,7 @@ from phydrax.units import (
 )
 
 
-def test_every_exported_catalog_unit_resolves_from_its_own_symbol() -> None:
+def test_parse_unit_scenario_1() -> None:
     catalog = {
         name: value
         for name, value in vars(units).items()
@@ -30,11 +29,7 @@ def test_every_exported_catalog_unit_resolves_from_its_own_symbol() -> None:
     assert catalog
     for name, unit in catalog.items():
         assert parse_unit(unit.symbol) == unit, name
-
-
-@pytest.mark.parametrize(
-    ("expression", "dimension", "scale"),
-    [
+    cases: tuple[tuple[str, DimensionSignature, Fraction], ...] = (
         ("kg/m^3", MASS / LENGTH**3, Fraction(1)),
         ("kg/(m^2*s)", MASS / (LENGTH**2 * TIME), Fraction(1)),
         ("(m/s)^2", VELOCITY**2, Fraction(1)),
@@ -47,20 +42,18 @@ def test_every_exported_catalog_unit_resolves_from_its_own_symbol() -> None:
         ("Pa*s2/m3", PRESSURE * TIME**2 / LENGTH**3, Fraction(1)),
         ("kPa m^-1", PRESSURE / LENGTH, Fraction(1000)),
         ("cm^(1/2)", LENGTH ** Fraction(1, 2), Fraction(1, 10)),
-        ("s J^-1/2 m^-1/2", TIME / (ENERGY * LENGTH) ** Fraction(1, 2), Fraction(1)),
+        (
+            "s J^-1/2 m^-1/2",
+            TIME / (ENERGY * LENGTH) ** Fraction(1, 2),
+            Fraction(1),
+        ),
         ("mm^+2 / ms", LENGTH**2 / TIME, Fraction(1, 1000)),
-    ],
-)
-def test_compound_expressions_resolve_to_exact_dimension_and_scale(
-    expression: Any, dimension: Any, scale: Any
-) -> None:
-    unit = parse_unit(expression)
-    assert unit.symbol == expression
-    assert unit.dimension == dimension
-    assert unit.scale_to_reference == scale
-
-
-def test_equivalent_spellings_share_dimension_and_scale() -> None:
+    )
+    for expression, dimension, scale in cases:
+        unit = parse_unit(expression)
+        assert unit.symbol == expression
+        assert unit.dimension == dimension, expression
+        assert unit.scale_to_reference == scale, expression
     left = parse_unit("kg/(m^2*s)")
     right = parse_unit("kg m^-2 s^-1")
     assert (left.dimension, left.scale_to_reference) == (
@@ -70,22 +63,15 @@ def test_equivalent_spellings_share_dimension_and_scale() -> None:
     assert parse_unit("kg/m3") == units.KILOGRAM_PER_CUBIC_METER
 
 
-def test_quotients_associate_left_to_right() -> None:
+def test_parse_unit_scenario_2() -> None:
     assert parse_unit("kg/m/s").dimension == DimensionSignature(
         {"mass": 1, "length": -1, "time": -1}
     )
-
-
-@pytest.mark.parametrize("expression", ["furlong", "m/fortnight", "W", "degC"])
-def test_unknown_symbols_raise_value_error_naming_the_expression(expression: Any) -> None:
-    with pytest.raises(ValueError, match="unknown unit symbol") as error:
-        parse_unit(expression)
-    assert repr(expression) in str(error.value)
-
-
-@pytest.mark.parametrize(
-    "expression",
-    [
+    for expression in ("furlong", "m/fortnight", "W", "degC"):
+        with pytest.raises(ValueError, match="unknown unit symbol") as error:
+            parse_unit(expression)
+        assert repr(expression) in str(error.value)
+    malformed = (
         "",
         " m",
         "kg//m",
@@ -99,19 +85,15 @@ def test_unknown_symbols_raise_value_error_naming_the_expression(expression: Any
         "m^1/0",
         "m.s",
         "J/kg K",
-    ],
-)
-def test_malformed_expressions_raise_value_error(expression: Any) -> None:
-    with pytest.raises(ValueError, match="Unit expression"):
-        parse_unit(expression)
+    )
+    for expression in malformed:
+        with pytest.raises(ValueError, match="Unit expression"):
+            parse_unit(expression)
 
 
-def test_rational_power_without_exact_scale_fails_closed() -> None:
+def test_parse_unit_scenario_3() -> None:
     with pytest.raises(ValueError, match="exact rational scale"):
         parse_unit("mm^(1/2)")
-
-
-def test_non_string_expression_is_a_type_error() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         parse_unit(units.METER)

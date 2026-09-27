@@ -92,7 +92,7 @@ def _finite_problem() -> Any:
     )
 
 
-def test_exact_linear_likelihood_matches_canonical_kalman_filter() -> None:
+def test_exact_contracts() -> None:
     problem = _linear_problem()
     expected = phx.uq.kalman_filter(problem)
     result = phx.uq.exact_state_space_log_likelihood(problem)
@@ -107,9 +107,6 @@ def test_exact_linear_likelihood_matches_canonical_kalman_filter() -> None:
         result.incremental_log_likelihood,
         expected.incremental_log_likelihood,
     )
-
-
-def test_exact_finite_state_likelihood_matches_enumerated_mixture() -> None:
     problem = _finite_problem()
     result = phx.uq.exact_state_space_log_likelihood(problem)
     transition_mass = jnp.asarray([jnp.exp(-1.0), 1.0 - jnp.exp(-1.0)])
@@ -133,6 +130,8 @@ def test_exact_finite_state_likelihood_matches_enumerated_mixture() -> None:
     assert result.total_log_likelihood == pytest.approx(expected)
     assert jnp.allclose(result.backend.predicted_probabilities[0], transition_mass)
     assert jnp.allclose(jnp.sum(result.backend.filtered_probabilities[0]), 1.0)
+    with pytest.raises(TypeError, match="finite-state likelihood requires"):
+        phx.uq.exact_state_space_log_likelihood(_linear_problem(), method="finite-state")
 
 
 def test_state_space_term_is_differentiable_and_reports_identifiability() -> None:
@@ -164,8 +163,3 @@ def test_state_space_term_is_differentiable_and_reports_identifiability() -> Non
     assert report.numerical_rank == 1
     assert report.full_rank
     assert report.observed_information.shape == (1, 1)
-
-
-def test_exact_dispatch_rejects_incompatible_backend() -> None:
-    with pytest.raises(TypeError, match="finite-state likelihood requires"):
-        phx.uq.exact_state_space_log_likelihood(_linear_problem(), method="finite-state")

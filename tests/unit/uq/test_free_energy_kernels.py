@@ -21,12 +21,28 @@ def _assert_tree_allclose(actual: Any, expected: Any) -> None:
         np.testing.assert_allclose(actual_leaf, expected_leaf, rtol=1.0e-10, atol=1.0e-12)
 
 
-def test_fep_kernel_lowers_and_matches_eager() -> None:
+def test_free_energy_kernels_scenario_1() -> None:
     values = jnp.asarray([0.0, 0.2, -0.1, 0.1])
     mask = jnp.asarray([True, True, True, True])
     weight = jnp.ones_like(values)
     lowered = jax.jit(fep_kernel).lower(values, mask, weight).compile()
     _assert_tree_allclose(lowered(values, mask, weight), fep_kernel(values, mask, weight))
+    values = jnp.asarray(
+        [
+            [1.9, 2.0, 2.1, 2.0],
+            [2.0, 2.1, 1.9, 2.0],
+            [2.1, 2.0, 1.9, 2.0],
+        ]
+    )
+    retained = jnp.ones_like(values, dtype="bool")
+    path = jnp.asarray([0.0, 0.5, 1.0])
+    lowered = (
+        jax.jit(thermodynamic_integration_kernel).lower(values, retained, path).compile()
+    )
+    _assert_tree_allclose(
+        lowered(values, retained, path),
+        thermodynamic_integration_kernel(values, retained, path),
+    )
 
 
 def test_bar_kernel_lowers_and_matches_eager() -> None:
@@ -51,25 +67,6 @@ def test_bar_kernel_lowers_and_matches_eager() -> None:
     _assert_tree_allclose(
         lowered(values, forward, reverse, weight),
         execute(values, forward, reverse, weight),
-    )
-
-
-def test_ti_kernel_lowers_and_matches_eager() -> None:
-    values = jnp.asarray(
-        [
-            [1.9, 2.0, 2.1, 2.0],
-            [2.0, 2.1, 1.9, 2.0],
-            [2.1, 2.0, 1.9, 2.0],
-        ]
-    )
-    retained = jnp.ones_like(values, dtype="bool")
-    path = jnp.asarray([0.0, 0.5, 1.0])
-    lowered = (
-        jax.jit(thermodynamic_integration_kernel).lower(values, retained, path).compile()
-    )
-    _assert_tree_allclose(
-        lowered(values, retained, path),
-        thermodynamic_integration_kernel(values, retained, path),
     )
 
 

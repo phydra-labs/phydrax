@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_ideal_mhd_entropy_and_oblique_reflection_are_finite_and_involutive() -> None:
+def test_additional_entropy_systems_scenario_1() -> None:
     system = phx.equations.IdealMHDSystem(2)
     primitive = jnp.asarray((1.0, 0.2, -0.1, 0.05, 1.0, 0.3, -0.2, 0.1))
     state = system.primitive_to_conserved(primitive)
@@ -24,9 +24,6 @@ def test_ideal_mhd_entropy_and_oblique_reflection_are_finite_and_involutive() ->
     np.testing.assert_allclose(
         jnp.dot(reflected[1:4], normal), -jnp.dot(momentum, normal), atol=3.0e-12
     )
-
-
-def test_shallow_water_total_energy_is_convex_entropy_pair() -> None:
     system = phx.equations.ShallowWaterSystem(2)
     state = jnp.asarray((2.0, 0.4, -0.2))
     pair = phx.equations.shallow_water_energy_pair(system)
@@ -34,9 +31,6 @@ def test_shallow_water_total_energy_is_convex_entropy_pair() -> None:
     assert pair.entropy(state) > 0.0
     assert jnp.all(jnp.isfinite(pair.entropy_variables(state)))
     assert jnp.isfinite(pair.entropy_flux(state, 0))
-
-
-def test_mhd_executes_through_nodal_conservation_compiler() -> None:
     system = phx.equations.IdealMHDSystem(1)
     mesh = phx.discretization.CellMesh(
         np.asarray(((0.0,), (1.0,))),

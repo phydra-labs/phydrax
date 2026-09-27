@@ -28,7 +28,7 @@ def _mesh_scope(ids: Any) -> Any:
     )
 
 
-def test_size_controls_validate_physical_bounds() -> None:
+def test_sizing_scenario_1() -> None:
     scope = _scope(2)
     control = phx.meshing.UniformSizeControl(
         scope,
@@ -46,33 +46,6 @@ def test_size_controls_validate_physical_bounds() -> None:
             minimum_size=0.2,
             maximum_size=0.3,
         )
-
-
-def test_layer_and_periodic_controls_are_revision_bound() -> None:
-    surface = _scope(2)
-    target_surface = _scope(2, ids=(2,))
-    volume = _scope(3)
-    schedule = phx.meshing.LayerSchedule.geometric(5, 1.0e-3, growth_rate=1.2)
-    layer = phx.meshing.BoundaryLayerControl(
-        surface,
-        schedule,
-        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
-        volume_scope=volume,
-        cap_scope=target_surface,
-    )
-    transform = np.eye(4)
-    transform[0, 3] = 1.0
-    periodic = phx.meshing.PeriodicConstraint(surface, surface, transform)
-
-    assert len(layer.schedule.thicknesses) == 5
-    assert periodic.transform.shape == (4, 4)
-    singular = np.eye(4)
-    singular[0, 0] = 0.0
-    with pytest.raises(ValueError, match="invertible"):
-        phx.meshing.PeriodicConstraint(surface, surface, singular)
-
-
-def test_size_resolution_rejects_hard_conflicts_and_enforces_gradation() -> None:
     scope = phx.meshing.MeshingScope(
         "mesh",
         "r1",
@@ -101,9 +74,27 @@ def test_size_resolution_rejects_hard_conflicts_and_enforces_gradation() -> None
     )
     assert report.field_id == field.field_id
     np.testing.assert_array_equal(field.sample_entity_ids, scope.entity_ids)
+    surface = _scope(2)
+    target_surface = _scope(2, ids=(2,))
+    volume = _scope(3)
+    schedule = phx.meshing.LayerSchedule.geometric(5, 1.0e-3, growth_rate=1.2)
+    layer = phx.meshing.BoundaryLayerControl(
+        surface,
+        schedule,
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        volume_scope=volume,
+        cap_scope=target_surface,
+    )
+    transform = np.eye(4)
+    transform[0, 3] = 1.0
+    periodic = phx.meshing.PeriodicConstraint(surface, surface, transform)
 
-
-def test_hard_growth_limits_bound_sizes_by_edge_length() -> None:
+    assert len(layer.schedule.thicknesses) == 5
+    assert periodic.transform.shape == (4, 4)
+    singular = np.eye(4)
+    singular[0, 0] = 0.0
+    with pytest.raises(ValueError, match="invertible"):
+        phx.meshing.PeriodicConstraint(surface, surface, singular)
     vertices = _mesh_scope((10, 20, 30))
     refined = _mesh_scope((10,))
     coarse = phx.meshing.UniformSizeControl(vertices, 1.0, maximum_growth_rate=1.2)
@@ -123,7 +114,7 @@ def test_hard_growth_limits_bound_sizes_by_edge_length() -> None:
     assert report.maximum_gradation_violation <= 1.0e-12
 
 
-def test_proximity_gaps_are_measured_between_facing_scopes() -> None:
+def test_sizing_scenario_2() -> None:
     source = _mesh_scope((1,))
     target = _mesh_scope((2,))
     control = phx.meshing.ProximitySizeControl(source, target, 3, maximum_size=1.0)
@@ -158,9 +149,6 @@ def test_proximity_gaps_are_measured_between_facing_scopes() -> None:
         phx.meshing.resolve_size_controls(
             (control,), points, entities, phx.meshing.SizeFieldDomain.SAMPLE_CLOUD
         )
-
-
-def test_resolved_sizes_compile_into_isotropic_metric_constraints() -> None:
     scope = _mesh_scope((4, 5))
     field, _ = phx.meshing.resolve_size_controls(
         (phx.meshing.UniformSizeControl(scope, 0.25),),
@@ -172,9 +160,6 @@ def test_resolved_sizes_compile_into_isotropic_metric_constraints() -> None:
     np.testing.assert_allclose(metric.values, np.tile(16.0 * np.eye(2), (2, 1, 1)))
     with pytest.raises(ValueError, match="entity IDs"):
         phx.meshing.size_field_metric(field, _mesh_scope((4, 6)))
-
-
-def test_metric_normalization_clamps_size_and_anisotropy() -> None:
     metric = phx.meshing.MeshMetricSamples(
         _mesh_scope((1, 2)),
         np.asarray((np.diag((1.0, 10_000.0)), np.diag((0.01, 1.0)))),

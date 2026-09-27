@@ -39,7 +39,7 @@ def _definition(curve_id: Any, representation: Any) -> Any:
     )
 
 
-def test_flat_zero_and_forward_representations_recover_the_same_curve() -> None:
+def test_curves_scenario_1() -> None:
     zero = PreparedCurve(
         _definition("zero", CurveRepresentation.ZERO_RATE),
         jnp.full((4,), 0.0275),
@@ -53,9 +53,6 @@ def test_flat_zero_and_forward_representations_recover_the_same_curve() -> None:
     expected = jnp.exp(-0.0275 * times)
     np.testing.assert_allclose(zero.discount_factor(times), expected, rtol=2e-6)
     np.testing.assert_allclose(forward.discount_factor(times), expected, rtol=2e-6)
-
-
-def test_negative_rates_produce_strictly_positive_discount_factors_above_one() -> None:
     curve = PreparedCurve(
         _definition("negative", CurveRepresentation.LOG_DISCOUNT),
         jnp.array([0.0, 0.01, 0.02, 0.05]),
@@ -64,9 +61,6 @@ def test_negative_rates_produce_strictly_positive_discount_factors_above_one() -
     discount = curve.discount_factor(jnp.array([0.5, 1.5, 6.0]))
     assert bool(jnp.all(discount > 1.0))
     assert bool(jnp.all(discount > 0.0))
-
-
-def test_nonpositive_discount_and_survival_inputs_are_refused() -> None:
     discount_definition = _definition("discount", CurveRepresentation.LOG_DISCOUNT)
     survival_definition = _definition("survival", CurveRepresentation.LOG_SURVIVAL)
 
@@ -80,7 +74,7 @@ def test_nonpositive_discount_and_survival_inputs_are_refused() -> None:
         )
 
 
-def test_extrapolation_is_never_inferred() -> None:
+def test_curves_scenario_2() -> None:
     definition = CurveDefinition(
         curve_id="bounded",
         role="test",
@@ -98,9 +92,6 @@ def test_extrapolation_is_never_inferred() -> None:
 
     with pytest.raises(Exception, match="above the last node"):
         curve.discount_factor(3.0)
-
-
-def test_node_and_quote_sensitivity_use_explicit_ordered_layouts() -> None:
     definition = _definition("sensitive", CurveRepresentation.ZERO_RATE)
     node_quote = jnp.diag(jnp.array([1.0, 2.0, 3.0, 4.0]))
     curve = PreparedCurve(
@@ -116,11 +107,6 @@ def test_node_and_quote_sensitivity_use_explicit_ordered_layouts() -> None:
     np.testing.assert_allclose(quote.jacobian, node.jacobian @ node_quote)
     assert node.input_ids == tuple(f"sensitive:node:{index}" for index in range(4))
     assert quote.input_ids == ("q0", "q1", "q2", "q3")
-
-
-def test_curve_set_lookup_is_by_explicit_identifier_and_refresh_preserves_topology() -> (
-    None
-):
     first = PreparedCurve(
         _definition("discount", CurveRepresentation.ZERO_RATE), jnp.zeros((4,))
     )

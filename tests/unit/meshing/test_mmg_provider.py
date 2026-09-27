@@ -161,56 +161,59 @@ def _members(mesh: Any, dimension: Any, scope: Any) -> Any:
 
 
 @requires_worker
-@pytest.mark.parametrize("kind", ("planar", "surface", "volume"))
 def test_mmg_routes_preserve_domain_measure_without_inventing_ids(
-    provider: Any, kind: Any
+    provider: Any,
 ) -> None:
-    if kind == "planar":
-        mesh = phx.discretization.CellMesh.from_triangles(
-            np.array(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
-            np.array(((0, 1, 2), (0, 2, 3))),
-            vertex_global_ids=np.array((90, 7, 52, 11)),
-            cell_global_ids=np.array((102, 55)),
-        )
-        expected = 1.0
-    else:
-        points = np.array(
-            ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-        )
-        if kind == "surface":
+    for kind in ("planar", "surface", "volume"):
+        if kind == "planar":
             mesh = phx.discretization.CellMesh.from_triangles(
-                points, np.array(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)))
+                np.array(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+                np.array(((0, 1, 2), (0, 2, 3))),
+                vertex_global_ids=np.array((90, 7, 52, 11)),
+                cell_global_ids=np.array((102, 55)),
             )
-            expected = 1.5 + np.sqrt(3.0) / 2
+            expected = 1.0
         else:
-            mesh = phx.discretization.CellMesh.from_tetrahedra(
-                points, np.array(((0, 1, 2, 3),))
+            points = np.array(
+                ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
             )
-            expected = 1 / 6
-    source = phx.meshing.certify_cell_mesh(mesh, CONTRACT)
-    result = provider.adapt(
-        source,
-        metric=_uniform_metric(provider, source.mesh, 0.25),
-        options=MmgOptions(hausdorff_distance=0.005),
-    )
-    measures = _cell_measures(result.mesh.mesh)
-    if kind != "surface":
-        assert np.all(measures > 0)
-    assert measures.sum() == pytest.approx(expected, rel=0.02)
-    assert result.mesh.audit.passed and result.mesh.compliance.passed
-    assert result.metric_representation == "scalar"
-    assert result.metric.scope.source_id == result.mesh.mesh.mesh_id
-    assert not np.intersect1d(
-        result.mesh.mesh.vertex_global_ids, source.mesh.vertex_global_ids
-    ).size
-    assert not np.intersect1d(
-        result.mesh.mesh.blocks[0].global_ids, source.mesh.blocks[0].global_ids
-    ).size
-    assert (
-        result.mesh.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
-    )
-    assert phx.meshing.MeshingCapability.LINEAGE not in result.mesh.provider.capabilities
-    assert result.mesh.adapter_reports[0].losses
+            if kind == "surface":
+                mesh = phx.discretization.CellMesh.from_triangles(
+                    points, np.array(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)))
+                )
+                expected = 1.5 + np.sqrt(3.0) / 2
+            else:
+                mesh = phx.discretization.CellMesh.from_tetrahedra(
+                    points, np.array(((0, 1, 2, 3),))
+                )
+                expected = 1 / 6
+        source = phx.meshing.certify_cell_mesh(mesh, CONTRACT)
+        result = provider.adapt(
+            source,
+            metric=_uniform_metric(provider, source.mesh, 0.25),
+            options=MmgOptions(hausdorff_distance=0.005),
+        )
+        measures = _cell_measures(result.mesh.mesh)
+        if kind != "surface":
+            assert np.all(measures > 0)
+        assert measures.sum() == pytest.approx(expected, rel=0.02)
+        assert result.mesh.audit.passed and result.mesh.compliance.passed
+        assert result.metric_representation == "scalar"
+        assert result.metric.scope.source_id == result.mesh.mesh.mesh_id
+        assert not np.intersect1d(
+            result.mesh.mesh.vertex_global_ids, source.mesh.vertex_global_ids
+        ).size
+        assert not np.intersect1d(
+            result.mesh.mesh.blocks[0].global_ids, source.mesh.blocks[0].global_ids
+        ).size
+        assert (
+            result.mesh.derivative_mode
+            is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
+        )
+        assert (
+            phx.meshing.MeshingCapability.LINEAGE not in result.mesh.provider.capabilities
+        )
+        assert result.mesh.adapter_reports[0].losses
 
 
 @requires_worker
@@ -353,63 +356,65 @@ def test_mmg_timeout_refuses_and_relaunches_a_fresh_session() -> None:
 
 
 @requires_worker
-@pytest.mark.parametrize("dimension", (2, 3))
 def test_mmg_retains_region_zones_and_boundary_patches(
-    provider: Any, dimension: Any
+    provider: Any,
 ) -> None:
-    source = _two_regions(dimension, 2)
-    size = 0.3 if dimension == 3 else 0.1
-    result = provider.adapt(source, metric=_uniform_metric(provider, source.mesh, size))
-    mesh = result.mesh.mesh
-    assert {zone.name for zone in result.mesh.zones} == {"left", "right"}
-    assert {patch.name for patch in result.mesh.patches} == {"inlet", "outlet"}
-    for name in ("left", "right"):
-        cells = np.asarray(_by_name(result.mesh.zones, name).scope.entity_ids)
-        assert _cell_measures(mesh, cells).sum() == pytest.approx(0.5, abs=1e-12)
-        centroids = _cell_corners(mesh, cells).mean(axis=1)
-        assert np.all((centroids[:, 0] < 0.5) == (name == "left"))
-    facet_x = np.asarray(mesh.coordinates)[_facets(mesh)][:, :, 0]
-    for name, x in (("inlet", 0.0), ("outlet", 1.0)):
-        selected = _members(
-            mesh, dimension - 1, _by_name(result.mesh.patches, name).scope
+    for dimension in (2, 3):
+        source = _two_regions(dimension, 2)
+        size = 0.3 if dimension == 3 else 0.1
+        result = provider.adapt(
+            source, metric=_uniform_metric(provider, source.mesh, size)
         )
-        assert np.array_equal(selected, np.all(facet_x == x, axis=1))
-    kinds = {reference.kind for reference in result.references.references}
-    assert kinds == {"region", "boundary"}
-    assert all(item.target_count > 0 for item in result.references.references)
+        mesh = result.mesh.mesh
+        assert {zone.name for zone in result.mesh.zones} == {"left", "right"}
+        assert {patch.name for patch in result.mesh.patches} == {"inlet", "outlet"}
+        for name in ("left", "right"):
+            cells = np.asarray(_by_name(result.mesh.zones, name).scope.entity_ids)
+            assert _cell_measures(mesh, cells).sum() == pytest.approx(0.5, abs=1e-12)
+            centroids = _cell_corners(mesh, cells).mean(axis=1)
+            assert np.all((centroids[:, 0] < 0.5) == (name == "left"))
+        facet_x = np.asarray(mesh.coordinates)[_facets(mesh)][:, :, 0]
+        for name, x in (("inlet", 0.0), ("outlet", 1.0)):
+            selected = _members(
+                mesh, dimension - 1, _by_name(result.mesh.patches, name).scope
+            )
+            assert np.array_equal(selected, np.all(facet_x == x, axis=1))
+        kinds = {reference.kind for reference in result.references.references}
+        assert kinds == {"region", "boundary"}
+        assert all(item.target_count > 0 for item in result.references.references)
 
 
 @requires_worker
-@pytest.mark.parametrize("dimension", (2, 3))
 def test_mmg_interpolates_linear_fields_with_transfer_evidence(
-    provider: Any, dimension: Any
+    provider: Any,
 ) -> None:
-    source = phx.meshing.certify_cell_mesh(_mesh(*_grid(dimension, 2)), CONTRACT)
-    gradient = np.arange(1.0, dimension + 1.0)
-    points = np.asarray(source.mesh.coordinates)
-    fields = (
-        _vertex_attribute(provider, source.mesh, "pressure", 0.5 + points @ gradient),
-        _vertex_attribute(provider, source.mesh, "velocity", points[:, ::-1] * 2.0),
-    )
-    size = 0.25 if dimension == 3 else 0.1
-    result = provider.adapt(
-        source, metric=_uniform_metric(provider, source.mesh, size), fields=fields
-    )
-    target = np.asarray(result.mesh.mesh.coordinates)
-    pressure = _by_name(result.mesh.attributes, "pressure")
-    velocity = _by_name(result.mesh.attributes, "velocity")
-    np.testing.assert_allclose(
-        np.asarray(pressure.values), 0.5 + target @ gradient, rtol=0, atol=1e-12
-    )
-    np.testing.assert_allclose(
-        np.asarray(velocity.values), target[:, ::-1] * 2.0, rtol=0, atol=1e-12
-    )
-    evidence = result.fields
-    assert evidence.method == "p1-barycentric-closest-simplex"
-    assert evidence.source_configuration == "source"
-    assert evidence.field_names == ("pressure", "velocity")
-    assert evidence.located_count == len(target)
-    assert evidence.projected_count == 0
+    for dimension in (2, 3):
+        source = phx.meshing.certify_cell_mesh(_mesh(*_grid(dimension, 2)), CONTRACT)
+        gradient = np.arange(1.0, dimension + 1.0)
+        points = np.asarray(source.mesh.coordinates)
+        fields = (
+            _vertex_attribute(provider, source.mesh, "pressure", 0.5 + points @ gradient),
+            _vertex_attribute(provider, source.mesh, "velocity", points[:, ::-1] * 2.0),
+        )
+        size = 0.25 if dimension == 3 else 0.1
+        result = provider.adapt(
+            source, metric=_uniform_metric(provider, source.mesh, size), fields=fields
+        )
+        target = np.asarray(result.mesh.mesh.coordinates)
+        pressure = _by_name(result.mesh.attributes, "pressure")
+        velocity = _by_name(result.mesh.attributes, "velocity")
+        np.testing.assert_allclose(
+            np.asarray(pressure.values), 0.5 + target @ gradient, rtol=0, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            np.asarray(velocity.values), target[:, ::-1] * 2.0, rtol=0, atol=1e-12
+        )
+        evidence = result.fields
+        assert evidence.method == "p1-barycentric-closest-simplex"
+        assert evidence.source_configuration == "source"
+        assert evidence.field_names == ("pressure", "velocity")
+        assert evidence.located_count == len(target)
+        assert evidence.projected_count == 0
 
 
 @requires_worker

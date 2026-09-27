@@ -84,7 +84,7 @@ def _tensor_batch() -> phx.nn.operator.OperatorBatch:
     )
 
 
-def test_homogeneous_operator_ensemble_matches_explicit_member_loop() -> None:
+def test_operator_ensemble_scenario_1() -> None:
     members = tuple(_KeyedOperator(scale) for scale in (1.0, 2.0, 3.0))
     ensemble = phx.uq.HomogeneousFunctionEnsemble.from_members(
         members,
@@ -117,9 +117,6 @@ def test_homogeneous_operator_ensemble_matches_explicit_member_loop() -> None:
         jnp.asarray(prediction.predictive.samples.data),
         jnp.where(prediction.output_mask()[None, ...], explicit, 0.0),
     )
-
-
-def test_heterogeneous_operator_ensemble_matches_explicit_member_loop() -> None:
     members = (_KeyedOperator(1.0), _KeyedOperator(-2.0))
     ensemble = phx.uq.HeterogeneousFunctionEnsemble(
         members,
@@ -147,9 +144,6 @@ def test_heterogeneous_operator_ensemble_matches_explicit_member_loop() -> None:
         jnp.asarray(prediction.predictive.samples.data),
         jnp.where(prediction.output_mask()[None, ...], explicit, 0.0),
     )
-
-
-def test_keyed_operator_sampling_is_reproducible_and_chunk_invariant() -> None:
     model = _KeyedOperator(1.0)
     batch = _point_batch()
     key = jr.key(12)
@@ -199,7 +193,7 @@ def test_keyed_operator_sampling_is_reproducible_and_chunk_invariant() -> None:
     )
 
 
-def test_operator_ensemble_preserves_crossed_input_sample_axis() -> None:
+def test_operator_ensemble_scenario_2() -> None:
     stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch()),
         case_axis="input_draw",
@@ -229,9 +223,6 @@ def test_operator_ensemble_preserves_crossed_input_sample_axis() -> None:
         "input",
     )
     assert prediction.case_axes == ("case",)
-
-
-def test_stochastic_prediction_rejects_draw_dependent_query_geometry() -> None:
     stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch(shift=0.1)),
         case_axis="input_draw",
@@ -247,9 +238,6 @@ def test_stochastic_prediction_rejects_draw_dependent_query_geometry() -> None:
             query_name="query",
             input_sample_axes=("input_draw",),
         )
-
-
-def test_fno_mc_dropout_and_inference_mode_operator_sampling() -> None:
     batch = _tensor_batch()
     model = phx.nn.operator.architectures.FNO(
         n_modes=(3,),

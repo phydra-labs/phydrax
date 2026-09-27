@@ -16,7 +16,7 @@ def _line() -> Any:
     ).prepare()
 
 
-def test_metric_line_face_incidence_telescopes_exactly() -> None:
+def test_metric_line_contracts() -> None:
     line = _line()
     flux = jnp.asarray([[2.0, -1.0], [3.0, 4.0], [-2.0, 5.0], [1.0, 7.0]])
     source = jnp.asarray([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])
@@ -27,9 +27,6 @@ def test_metric_line_face_incidence_telescopes_exactly() -> None:
     np.testing.assert_allclose(jnp.sum(amount_rate, axis=0), evidence.total_amount_rate)
     np.testing.assert_allclose(evidence.closure_residual, 0.0, atol=1.0e-14)
     assert bool(evidence.successful)
-
-
-def test_metric_line_total_amount_uses_physical_cell_measures() -> None:
     line = _line()
     density = jnp.asarray([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]])
     np.testing.assert_allclose(line.total_amount(density), [23.0, 46.0])

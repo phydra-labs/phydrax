@@ -1,8 +1,10 @@
-from typing import Any
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 import phydrax as phx
 from phydrax import (
@@ -13,20 +15,57 @@ from phydrax import (
 )
 
 
+type DifferentiationMode = Literal["mathematical", "rhs-only", "algorithmic", "none"]
+
 RHS = DerivativeSurface.SOLVER_ARGUMENT
 OPERATOR = DerivativeSurface.PHYSICAL_PARAMETER
 MATRIX = jnp.asarray([[4.0, 1.0, 0.3], [1.0, 3.0, 0.2], [0.3, 0.2, 5.0]])
 VECTOR = jnp.asarray([1.0, 2.0, 3.0])
 
 
+@dataclass(frozen=True, slots=True)
+class DerivativeCase:
+    case_id: str
+    mode: DifferentiationMode
+    route: DerivativeRoute
+    surfaces: tuple[DerivativeSurface, ...]
+    conditions: tuple[str, ...]
+
+
+CASES = (
+    DerivativeCase(
+        "mathematical",
+        "mathematical",
+        DerivativeRoute.IMPLICIT,
+        (RHS, OPERATOR),
+        ("solve-converged",),
+    ),
+    DerivativeCase(
+        "rhs-only",
+        "rhs-only",
+        DerivativeRoute.IMPLICIT,
+        (RHS,),
+        ("solve-converged",),
+    ),
+    DerivativeCase(
+        "algorithmic",
+        "algorithmic",
+        DerivativeRoute.UNROLLED,
+        (RHS, OPERATOR),
+        ("decisions-frozen",),
+    ),
+    DerivativeCase("none", "none", DerivativeRoute.STOPPED, (), ()),
+)
+
+
 def _solve(
-    mode: Any,
-    rhs: Any = VECTOR,
+    mode: DifferentiationMode,
+    rhs: jax.Array = VECTOR,
     *,
-    matrix: Any = MATRIX,
-    failing: Any = False,
-    rhs_layout: Any = None,
-) -> Any:
+    matrix: jax.Array = MATRIX,
+    failing: bool = False,
+    rhs_layout: phx.linalg.RHSLayout | None = None,
+) -> phx.linalg.LinearSolveResult:
     method = phx.linalg.FGMRES(restart=1) if failing else None
     tolerance = (
         phx.linalg.TolerancePolicy(relative=1e-14, absolute=0.0, max_steps=1)
@@ -42,70 +81,48 @@ def _solve(
     return phx.linalg.solve(problem, rhs, policy=policy, rhs_layout=rhs_layout)
 
 
-@pytest.mark.parametrize(
-    ("mode", "route", "surfaces", "conditions"),
-    (
-        ("mathematical", DerivativeRoute.IMPLICIT, (RHS, OPERATOR), ("solve-converged",)),
-        ("rhs-only", DerivativeRoute.IMPLICIT, (RHS,), ("solve-converged",)),
-        ("algorithmic", DerivativeRoute.UNROLLED, (RHS, OPERATOR), ("decisions-frozen",)),
-        ("none", DerivativeRoute.STOPPED, (), ()),
-    ),
-)
-def test_linear_solve_reports_the_contract_of_its_differentiation_mode(
-    mode: Any, route: Any, surfaces: Any, conditions: Any
-) -> None:
-    result = _solve(mode)
-    contract = result.derivative_contract
+def test_linear_solve_derivative_contract_scenario_1() -> None:
+    for case in CASES:
+        result = _solve(case.mode)
+        contract = result.derivative_contract
+        assert bool(result.successful), case.case_id
+        assert contract.route is case.route, case.case_id
+        assert contract.supported_surfaces == tuple(
+            sorted(case.surfaces, key=list(DerivativeSurface).index)
+        ), case.case_id
+        assert all(
+            contract.level(surface) is GradientLevel.SMOOTH for surface in case.surfaces
+        ), case.case_id
+        assert contract.conditions == case.conditions, case.case_id
+    rhs_only = _solve("rhs-only").derivative_contract
+    assert rhs_only.admit(DifferentiationRequest({RHS})).supported
+    operator_admission = rhs_only.admit(DifferentiationRequest({OPERATOR}))
+    assert not operator_admission.supported
+    assert operator_admission.level(OPERATOR) is GradientLevel.NONE
 
-    assert bool(result.successful)
-    assert contract.route is route
-    assert contract.supported_surfaces == tuple(
-        sorted(surfaces, key=list(DerivativeSurface).index)
-    )
-    assert all(contract.level(surface) is GradientLevel.SMOOTH for surface in surfaces)
-    assert contract.conditions == conditions
-
-
-def test_rhs_only_solves_stop_operator_derivatives() -> None:
-    contract = _solve("rhs-only").derivative_contract
-
-    assert contract.admit(DifferentiationRequest({RHS})).supported
-    admission = contract.admit(DifferentiationRequest({OPERATOR}))
-    assert not admission.supported
-    assert admission.level(OPERATOR) is GradientLevel.NONE
-
-
-def test_failed_mathematical_solve_reports_an_invalid_poisoned_derivative() -> None:
+    unrolled = _solve("algorithmic", failing=True)
+    stopped = _solve("none")
+    assert not bool(unrolled.successful)
+    assert bool(unrolled.derivative_valid)
+    assert bool(stopped.successful)
+    assert not bool(stopped.derivative_valid)
     failed = _solve("mathematical", failing=True)
     converged = _solve("mathematical")
-
     assert not bool(failed.successful)
     assert not bool(failed.derivative_valid)
     assert bool(converged.derivative_valid)
+
     gradient = jax.grad(
         lambda rhs: jnp.sum(_solve("mathematical", rhs, failing=True).value)
     )(VECTOR)
     assert not bool(jnp.all(jnp.isfinite(gradient)))
 
-
-def test_derivative_validity_is_reported_per_right_hand_side() -> None:
     stacked = jnp.stack([VECTOR, jnp.zeros(3)], axis=-1)
-    result = _solve(
+    batched = _solve(
         "mathematical",
         stacked,
         failing=True,
         rhs_layout=phx.linalg.RHSLayout((2,)),
     )
-
-    assert result.derivative_valid.tolist() == result.successful.tolist()
-    assert result.derivative_valid.tolist() == [False, True]
-
-
-def test_unrolled_and_stopped_contracts_do_not_depend_on_convergence() -> None:
-    unrolled = _solve("algorithmic", failing=True)
-    stopped = _solve("none")
-
-    assert not bool(unrolled.successful)
-    assert bool(unrolled.derivative_valid)
-    assert bool(stopped.successful)
-    assert not bool(stopped.derivative_valid)
+    assert batched.derivative_valid.tolist() == batched.successful.tolist()
+    assert batched.derivative_valid.tolist() == [False, True]

@@ -26,7 +26,7 @@ def _layout(**overrides: Any) -> StateLayout:
     return StateLayout((2, 2), **declaration)
 
 
-def test_point_port_carries_layout_storage_axes_and_geometry() -> None:
+def test_layout_ports_scenario_1() -> None:
     layout = _layout()
     port = layout.value_port()
 
@@ -43,9 +43,6 @@ def test_point_port_carries_layout_storage_axes_and_geometry() -> None:
     assert port.normalization_id is None
     assert port.variance == "neutral"
     assert port.representation == "state-point"
-
-
-def test_differential_ports_use_declared_role_spaces_and_variance() -> None:
     local_space = ArraySpace((3,), space_id="chart")
     tangent_space = ArraySpace((3,), space_id="velocity")
     layout = StateLayout(
@@ -73,9 +70,6 @@ def test_differential_ports_use_declared_role_spaces_and_variance() -> None:
     assert cotangent.space_id == DualSpace(tangent_space).space_id
     assert local.axis_keys is None and local.dimensions is None
     assert local.representation == "space-coordinates"
-
-
-def test_every_state_role_has_a_distinct_port_even_with_default_spaces() -> None:
     layout = StateLayout((3,))
     identifiers = {layout.value_port(role=role).port_id for role in _ROLES}
 
@@ -85,7 +79,7 @@ def test_every_state_role_has_a_distinct_port_even_with_default_spaces() -> None
     )
 
 
-def test_state_ports_are_deterministic_and_follow_layout_declarations() -> None:
+def test_layout_ports_scenario_2() -> None:
     port = _layout().value_port()
 
     assert _layout().value_port().port_id == port.port_id
@@ -97,22 +91,16 @@ def test_state_ports_are_deterministic_and_follow_layout_declarations() -> None:
     assert (
         _layout(component_names=("p", "q", "r", "s")).value_port().port_id != port.port_id
     )
-
-
-def test_scalar_state_point_port_has_one_component_and_no_axes() -> None:
     port = StateLayout((), layout_id="energy").value_port()
 
     assert port.event_shape == ()
     assert port.component_ids == ("x",)
     assert port.axis_keys == ()
-
-
-def test_unknown_state_role_is_rejected() -> None:
     with pytest.raises(ValueError, match="role must be"):
         _layout().value_port(role="velocity")  # ty: ignore[invalid-argument-type]
 
 
-def test_input_port_carries_layout_components_and_axes() -> None:
+def test_input_port_contracts() -> None:
     layout = InputLayout(
         (2,),
         axes=("actuator",),
@@ -130,9 +118,6 @@ def test_input_port_carries_layout_components_and_axes() -> None:
     assert (port.space_id, port.frame_id, port.normalization_id) == (None, None, None)
     assert port.variance == "neutral"
     assert port.representation == "input-array"
-
-
-def test_input_port_identity_follows_declared_roles_and_layout() -> None:
     control = InputLayout((2,), roles="control").value_port()
 
     assert InputLayout((2,), roles="control").value_port().port_id == control.port_id

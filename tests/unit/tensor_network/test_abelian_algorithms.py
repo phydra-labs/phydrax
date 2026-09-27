@@ -34,7 +34,7 @@ def _charged_bell_state() -> Any:
     return state, physical
 
 
-def test_global_cross_sector_truncation_reports_discarded_weight() -> None:
+def test_abelian_algorithms_scenario_1() -> None:
     state, _ = _charged_bell_state()
     gate = jnp.eye(4, dtype=jnp.complex128).reshape((2, 2, 2, 2))
     truncated, evidence = tn.apply_abelian_two_site_gate(
@@ -53,9 +53,6 @@ def test_global_cross_sector_truncation_reports_discarded_weight() -> None:
     assert jnp.allclose(
         truncated.to_dense(), jnp.asarray([0.0, 1.0, 0.0, 0.0]), atol=1e-9
     )
-
-
-def test_abelian_canonicalization_and_zero_tebd_preserve_state() -> None:
     state, physical = _charged_bell_state()
     canonical = tn.canonicalize_abelian_mps(state, center=1)
     zero = jnp.zeros((4, 4), dtype=jnp.complex128)

@@ -209,7 +209,7 @@ def _plan(
     )
 
 
-def test_analytic_one_period_fixed_point_retains_both_evidence_layers() -> None:
+def test_games_mean_field_fixed_point_scenario_1() -> None:
     initial = _law(1.0, "initial-fixed-point", "initial-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 1.0))
 
@@ -235,11 +235,6 @@ def test_analytic_one_period_fixed_point_retains_both_evidence_layers() -> None:
     np.testing.assert_allclose(result.distance_history[0], 0.0)
     assert result.best_response_validity_history[0]
     assert result.consistency_validity_history[0]
-
-
-def test_successful_frozen_response_does_not_hide_deliberately_wrong_induced_law() -> (
-    None
-):
     initial = _law(0.0, "wrong-law-initial", "wrong-law-input-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 3.0))
 
@@ -252,9 +247,6 @@ def test_successful_frozen_response_does_not_hide_deliberately_wrong_induced_law
     np.testing.assert_allclose(result.distance_history[0], 3.0)
     assert result.status == MeanFieldGameFixedPointStatus.MAX_ITERATIONS
     assert not result.valid
-
-
-def test_half_damping_forms_a_union_support_mixture_instead_of_a_midpoint() -> None:
     initial = _law(-1.0, "damping-initial", "damping-input-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 1.0))
 
@@ -277,7 +269,7 @@ def test_half_damping_forms_a_union_support_mixture_instead_of_a_midpoint() -> N
     assert result.law_mixture_id == "exact-union-support-mixture"
 
 
-def test_subunit_damping_requires_an_identified_law_mixture() -> None:
+def test_games_mean_field_fixed_point_scenario_2() -> None:
     initial = _law(-1.0, "missing-mixture-initial", "missing-mixture-paths")
     with pytest.raises(ValueError, match="must be supplied together"):
         _problem(
@@ -296,50 +288,6 @@ def test_subunit_damping_requires_an_identified_law_mixture() -> None:
 
     with pytest.raises(ValueError, match="law_mixture and law_mixture_id"):
         solve_mean_field_game_fixed_point(problem, _plan(1, damping=0.5))
-
-
-@pytest.mark.parametrize(
-    "invalid_kind", ["non-law", "reused-law", "midpoint", "claimed-source"]
-)
-def test_invalid_law_mixture_callback_fails_closed(invalid_kind: Any) -> None:
-    initial = _law(-1.0, "invalid-mixture-initial", "invalid-mixture-paths")
-
-    def invalid_mixture(
-        current: Any, induced: Any, damping: Any, iteration: Any, args: Any
-    ) -> Any:
-        if invalid_kind == "non-law":
-            return object()
-        if invalid_kind == "reused-law":
-            return current
-        if invalid_kind == "midpoint":
-            return _law(0.0, "synthesised-midpoint", None)
-        candidate = _law_mixture(current, induced, damping, iteration, args)
-        return EmpiricalMeanField(
-            candidate.times,
-            candidate.particles,
-            sample_shape=candidate.sample_shape,
-            state_shape=candidate.state_shape,
-            mean_field_id=candidate.mean_field_id,
-            weights=candidate.weights,
-            valid=candidate.valid,
-            source_path_id="falsely-claimed-source-paths",
-        )
-
-    problem = _problem(
-        initial,
-        lambda response, args: _induced(response, 1.0),
-        law_mixture=invalid_mixture,
-    )
-
-    result = solve_mean_field_game_fixed_point(
-        problem, _plan(1, tolerance=0.0, damping=0.5)
-    )
-
-    assert result.status == MeanFieldGameFixedPointStatus.INVALID_LAW_MIXTURE
-    assert not result.valid
-
-
-def test_unit_damping_uses_the_induced_law_without_calling_the_mixture() -> None:
     initial = _law(0.0, "unit-damping-initial", "unit-damping-paths")
 
     def forbidden_mixture(
@@ -360,9 +308,6 @@ def test_unit_damping_uses_the_induced_law_without_calling_the_mixture() -> None
     assert result.status == MeanFieldGameFixedPointStatus.MAX_ITERATIONS
     assert result.flow is result.induced_flow
     assert result.flow.source_path_id is not None
-
-
-def test_singular_nonconvergent_induced_map_exhausts_fixed_capacity() -> None:
     initial = _law(1.0, "oscillation-initial", "oscillation-input-paths")
     problem = _problem(
         initial,
@@ -381,7 +326,46 @@ def test_singular_nonconvergent_induced_map_exhausts_fixed_capacity() -> None:
     assert not result.converged
 
 
-def test_low_effective_sample_size_is_rejected_before_distance_acceptance() -> None:
+def test_invalid_law_mixture_callback_fails_closed() -> None:
+    for invalid_kind in ["non-law", "reused-law", "midpoint", "claimed-source"]:
+        initial = _law(-1.0, "invalid-mixture-initial", "invalid-mixture-paths")
+
+        def invalid_mixture(
+            current: Any, induced: Any, damping: Any, iteration: Any, args: Any
+        ) -> Any:
+            if invalid_kind == "non-law":
+                return object()
+            if invalid_kind == "reused-law":
+                return current
+            if invalid_kind == "midpoint":
+                return _law(0.0, "synthesised-midpoint", None)
+            candidate = _law_mixture(current, induced, damping, iteration, args)
+            return EmpiricalMeanField(
+                candidate.times,
+                candidate.particles,
+                sample_shape=candidate.sample_shape,
+                state_shape=candidate.state_shape,
+                mean_field_id=candidate.mean_field_id,
+                weights=candidate.weights,
+                valid=candidate.valid,
+                source_path_id="falsely-claimed-source-paths",
+            )
+
+        problem = _problem(
+            initial,
+            lambda response, args: _induced(response, 1.0),
+            law_mixture=invalid_mixture,
+        )
+
+        result = solve_mean_field_game_fixed_point(
+            problem, _plan(1, tolerance=0.0, damping=0.5)
+        )
+
+        assert result.status == MeanFieldGameFixedPointStatus.INVALID_LAW_MIXTURE
+        assert not result.valid
+
+
+def test_games_mean_field_fixed_point_scenario_3() -> None:
     initial = _law(0.0, "ess-initial", "ess-input-paths")
     problem = _problem(
         initial,
@@ -399,32 +383,6 @@ def test_low_effective_sample_size_is_rejected_before_distance_acceptance() -> N
     assert result.induced_flow_validity_history[0]
     assert not result.consistency_validity_history[0]
     assert jnp.isnan(result.distance_history[0])
-
-
-@pytest.mark.parametrize("reuse", ["flow", "source", "best-response-paths"])
-def test_induced_law_requires_new_flow_and_forward_path_identities(reuse: Any) -> None:
-    initial = _law(0.0, f"identity-initial:{reuse}", f"identity-input-paths:{reuse}")
-
-    def induced(response: Any, args: Any) -> Any:
-        if reuse == "flow":
-            return response.mean_field
-        if reuse == "source":
-            source = response.mean_field.source_path_id
-        else:
-            source = response.paths.path_id
-        return _induced(response, 0.0, source=source)
-
-    result = solve_mean_field_game_fixed_point(
-        _problem(initial, induced), _plan(maximum_iterations=1)
-    )
-
-    assert result.status == MeanFieldGameFixedPointStatus.INVALID_INDUCED_LAW
-    assert result.best_response_validity_history[0]
-    assert not result.induced_flow_validity_history[0]
-    assert jnp.isnan(result.distance_history[0])
-
-
-def test_invalid_response_invalid_law_and_nonfinite_metric_fail_closed() -> None:
     initial = _law(0.0, "failure-initial", "failure-input-paths")
     invalid_response = _problem(
         initial,
@@ -448,9 +406,6 @@ def test_invalid_response_invalid_law_and_nonfinite_metric_fail_closed() -> None
     assert not response_result.valid
     assert not law_result.valid
     assert not distance_result.valid
-
-
-def test_fixed_capacity_histories_and_ids_are_deterministic() -> None:
     initial = _law(0.0, "deterministic-initial", "deterministic-input-paths")
     problem = _problem(initial, lambda response, args: _induced(response, 1.0))
     plan = _plan(3, tolerance=0.0, damping=0.5)
@@ -470,6 +425,29 @@ def test_fixed_capacity_histories_and_ids_are_deterministic() -> None:
     assert first.current_flow_ids == second.current_flow_ids
     assert first.induced_flow_ids == second.induced_flow_ids
     assert first.current_flow_id == second.current_flow_id
+
+
+def test_induced_law_requires_new_flow_and_forward_path_identities() -> None:
+    for reuse in ["flow", "source", "best-response-paths"]:
+        initial = _law(0.0, f"identity-initial:{reuse}", f"identity-input-paths:{reuse}")
+
+        def induced(response: Any, args: Any) -> Any:
+            if reuse == "flow":
+                return response.mean_field
+            if reuse == "source":
+                source = response.mean_field.source_path_id
+            else:
+                source = response.paths.path_id
+            return _induced(response, 0.0, source=source)
+
+        result = solve_mean_field_game_fixed_point(
+            _problem(initial, induced), _plan(maximum_iterations=1)
+        )
+
+        assert result.status == MeanFieldGameFixedPointStatus.INVALID_INDUCED_LAW
+        assert result.best_response_validity_history[0]
+        assert not result.induced_flow_validity_history[0]
+        assert jnp.isnan(result.distance_history[0])
 
 
 def test_result_label_and_claim_boundaries_are_explicit() -> None:

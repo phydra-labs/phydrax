@@ -53,7 +53,7 @@ def _statepoint_bytes() -> Any:
     return buffer.getvalue()
 
 
-def test_openmc_statepoint_import_preserves_mean_uncertainty_and_realizations() -> None:
+def test_interchange_scenario_1() -> None:
     payload = _statepoint_bytes()
     groups = phx.nuclear.EnergyGroupStructure(
         # ty: ignore[invalid-argument-type]
@@ -79,9 +79,6 @@ def test_openmc_statepoint_import_preserves_mean_uncertainty_and_realizations() 
     assert result.flux.field.uncertainty is not None
     assert np.all(result.flux.field.uncertainty.values >= 0.0)
     assert result.asset.references[0].manifest_id == result.reference.manifest_id
-
-
-def test_dagmc_artifact_remains_opaque_and_source_bound() -> None:
     buffer = BytesIO()
     with h5py.File(buffer, "w") as handle:
         handle.create_group("tstt")

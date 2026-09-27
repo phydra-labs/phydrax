@@ -52,7 +52,7 @@ def _predictive(samples: Any, batch: Any) -> Any:
     )
 
 
-def test_operator_crps_matches_weighted_pointwise_reference() -> None:
+def test_operator_contracts() -> None:
     batch = _batch(
         [0.0, 0.5, 1.0],
         [0.2, 0.3, 0.5],
@@ -90,9 +90,6 @@ def test_operator_crps_matches_weighted_pointwise_reference() -> None:
 
     assert jnp.allclose(actual, expected)
     assert not jnp.allclose(actual, uniform)
-
-
-def test_operator_energy_score_matches_whole_field_reference() -> None:
     batch = _batch([0.0, 1.0], [0.25, 0.75])
     samples = jnp.asarray(
         [
@@ -124,9 +121,6 @@ def test_operator_energy_score_matches_whole_field_reference() -> None:
     )
 
     assert jnp.allclose(actual, expected)
-
-
-def test_operator_scores_are_invariant_to_equal_weight_point_splitting() -> None:
     base_batch = _batch([0.0, 1.0], [0.4, 0.6])
     split_batch = _batch([0.0, 1.0, 1.0], [0.4, 0.3, 0.3])
     base_samples = jnp.asarray(
@@ -150,9 +144,14 @@ def test_operator_scores_are_invariant_to_equal_weight_point_splitting() -> None
         phx.uq.operator_energy_score(base, base_target, reduction="none"),
         phx.uq.operator_energy_score(split, split_target, reduction="none"),
     )
+    batch = _batch([0.0, 1.0], [0.5, 0.5])
+    samples = jnp.ones((3, 2, 2)).at[1, 0, 0].set(jnp.nan)
+    prediction = _predictive(samples, batch)
 
-
-def test_operator_interval_pointwise_and_simultaneous_coverage_differ() -> None:
+    with pytest.raises(ValueError, match="every requested predictive draw"):
+        phx.uq.operator_ensemble_crps(prediction, jnp.ones((2, 2)))
+    with pytest.raises(ValueError, match="every requested predictive draw"):
+        phx.uq.operator_energy_score(prediction, jnp.ones((2, 2)))
     batch = _batch([0.0, 0.5, 1.0], [1.0, 1.0, 1.0])
     spec = phx.nn.operator.OperatorOutputSpec("scalar")
     lower = phx.nn.operator.OperatorPrediction.from_field(
@@ -205,14 +204,3 @@ def test_operator_interval_pointwise_and_simultaneous_coverage_differ() -> None:
     assert jnp.allclose(pointwise, jnp.asarray([1.0, 2.0 / 3.0]))
     assert jnp.array_equal(simultaneous, jnp.asarray([1.0, 0.0]))
     assert jnp.allclose(width, 2.0)
-
-
-def test_operator_scores_reject_invalid_predictive_draws() -> None:
-    batch = _batch([0.0, 1.0], [0.5, 0.5])
-    samples = jnp.ones((3, 2, 2)).at[1, 0, 0].set(jnp.nan)
-    prediction = _predictive(samples, batch)
-
-    with pytest.raises(ValueError, match="every requested predictive draw"):
-        phx.uq.operator_ensemble_crps(prediction, jnp.ones((2, 2)))
-    with pytest.raises(ValueError, match="every requested predictive draw"):
-        phx.uq.operator_energy_score(prediction, jnp.ones((2, 2)))

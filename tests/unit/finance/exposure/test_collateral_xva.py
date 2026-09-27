@@ -124,7 +124,7 @@ def _discount(times: Any, currency: Any, law_id: Any) -> Any:
     )
 
 
-def test_collateral_threshold_mta_and_lag_boundaries_are_exact() -> None:
+def test_collateral_xva_scenario_1() -> None:
     currency = Currency("USD", 2)
     agreement = _agreement(currency, threshold=10.0, mta=5.0)
     np.testing.assert_allclose(
@@ -142,9 +142,6 @@ def test_collateral_threshold_mta_and_lag_boundaries_are_exact() -> None:
     )
     np.testing.assert_allclose(lagged_path.calls, [[10.0, 0.0, 0.0]])
     np.testing.assert_allclose(lagged_path.balances, [[0.0, 10.0, 10.0]])
-
-
-def test_grid_boundary_default_is_closed_out_after_mpor_before_positive_part() -> None:
     currency = Currency("USD", 2)
     times = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     netting = NettingSet(
@@ -200,9 +197,6 @@ def test_grid_boundary_default_is_closed_out_after_mpor_before_positive_part() -
     np.testing.assert_allclose(exposure.netted_values, [[10.0, 12.0, 20.0, 30.0]])
     np.testing.assert_allclose(exposure.residual_values, [[10.0, 0.0, 20.0, 0.0]])
     np.testing.assert_allclose(exposure.positive_exposure, [[10.0, 0.0, 20.0, 0.0]])
-
-
-def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure() -> None:
     with pytest.raises(ValueError, match="Invalid paths"):
         PathWeighting(
             jnp.asarray([0.5, 0.5]),

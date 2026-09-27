@@ -65,7 +65,7 @@ def _system(*, maximum_magnetization: Any = 1.0e6) -> Any:
     return system, _geometry((), scale, convention)
 
 
-def test_minkowski_zero_field_valencia_limit_and_bounded_recovery() -> None:
+def test_relativistic_mhd_scenario_1() -> None:
     system, geometry = _system()
     primitive = jnp.asarray((1.2, 0.25, -0.1, 0.05, 0.18, 0.0, 0.0, 0.0))
     conserved = system.primitive_to_conserved(primitive, geometry)
@@ -105,9 +105,6 @@ def test_minkowski_zero_field_valencia_limit_and_bounded_recovery() -> None:
     )
     assert float(projection.projection_defect) < 2.0e-6
     assert float(projection.conservation_defect) < 3.0e-5
-
-
-def test_parallel_alfven_momentum_and_rotor_covariance_are_preserved() -> None:
     system, geometry = _system()
     primitive = jnp.asarray((0.9, 0.22, 0.0, 0.0, 0.08, 0.7, 0.0, 0.0))
     conserved = system.primitive_to_conserved(primitive, geometry)
@@ -135,9 +132,6 @@ def test_parallel_alfven_momentum_and_rotor_covariance_are_preserved() -> None:
         rtol=3.0e-6,
         atol=3.0e-6,
     )
-
-
-def test_hlle_shock_bounds_and_high_magnetization_status_are_explicit() -> None:
     system, geometry = _system()
     left_primitive = jnp.asarray((1.0, 0.1, 0.0, 0.0, 1.0, 0.2, 0.3, 0.0))
     right_primitive = jnp.asarray((0.125, -0.1, 0.0, 0.0, 0.1, 0.2, -0.3, 0.0))

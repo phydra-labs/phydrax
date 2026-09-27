@@ -104,7 +104,7 @@ def test_learned_smoother_inside_multigrid_is_the_only_parameter_lane() -> None:
     assert any(jnp.any(leaf != 0.0) for leaf in jax.tree.leaves(gradient))
 
 
-def test_learned_inner_inside_precision_cast_stays_parameter() -> None:
+def test_preconditioner_slots_scenario_1() -> None:
     space = la.ArraySpace((3,), dtype=jnp.float64)
     lowered = la.ArraySpace((3,), dtype=jnp.float32)
     learned = _LearnedScaling(_model(1, dtype=jnp.float32), lowered)
@@ -123,9 +123,6 @@ def test_learned_inner_inside_precision_cast_stays_parameter() -> None:
     )
     analytic_parameters, _, _ = phx.partition_parameters(analytic)
     assert not jax.tree.leaves(analytic_parameters)
-
-
-def test_preconditioner_slot_binds_models_with_accelerator_authority() -> None:
     contract = phx.bind_component(_model(2), la.AbstractPreconditioner).contract()
 
     assert contract.authority is phx.ComponentAuthority.ACCELERATOR

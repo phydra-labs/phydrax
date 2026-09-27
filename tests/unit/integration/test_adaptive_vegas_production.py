@@ -58,7 +58,7 @@ def test_vegas_calibrates_peaked_integral_and_freezes_production_grid() -> None:
     assert result.iteration_estimates.shape == (plan.production_iterations,)
 
 
-def test_vegas_plan_enforces_fixed_evaluation_guard() -> None:
+def test_adaptive_vegas_production_scenario_1() -> None:
     with pytest.raises(ValueError, match="max_evaluations"):
         VegasPlan(
             # ty: ignore[invalid-argument-type]
@@ -72,9 +72,6 @@ def test_vegas_plan_enforces_fixed_evaluation_guard() -> None:
             production_samples=100,
             max_evaluations=799,
         )
-
-
-def test_frozen_vegas_rejects_points_outside_the_unit_cube() -> None:
     evidence = VegasPreparationEvidence(
         iteration_estimates=jnp.zeros((1,)),
         marginal_weights=jnp.ones((1, 2)),

@@ -27,7 +27,7 @@ def _mesh() -> Any:
     )
 
 
-def test_zero_field_london_state_is_zero_and_divergence_free() -> None:
+def test_london_scenario_1() -> None:
     plan = phx.applications.superconductivity.ThinFilmLondonPlan(
         _mesh(), pearl_length=0.2, tolerance=1.0e-8
     )
@@ -37,9 +37,6 @@ def test_zero_field_london_state_is_zero_and_divergence_free() -> None:
     np.testing.assert_allclose(result.stream_function, 0.0, atol=1e-12)
     np.testing.assert_allclose(result.face_sheet_current, 0.0, atol=1e-12)
     np.testing.assert_allclose(result.total_energy, 0.0, atol=1e-12)
-
-
-def test_london_constraints_and_inductance_are_reciprocal() -> None:
     constraint = jnp.asarray(((1.0, -1.0, 0.0, 0.0, 0.0),))
     plan = phx.applications.superconductivity.ThinFilmLondonPlan(
         _mesh(),

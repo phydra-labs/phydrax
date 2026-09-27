@@ -37,7 +37,7 @@ def _so2_spectrum() -> Any:
     )
 
 
-def test_compact_heat_and_matern_kernels_have_psd_grams_and_tail_evidence() -> None:
+def test_compact_homogeneous_scenario_1() -> None:
     spectrum = _so2_spectrum()
     points = jnp.stack(tuple(_rotation(angle) for angle in (0.0, 0.3, 0.8, 1.4)))
     for kernel in (
@@ -55,9 +55,6 @@ def test_compact_heat_and_matern_kernels_have_psd_grams_and_tail_evidence() -> N
         assert bool(kernel.evidence(gram).positive_definite_capability)
         assert kernel.evidence(gram).truncation_tail_bound == spectrum.tail_bound
         assert jnp.allclose(kernel.diagonal(points), 1.0, atol=1e-6)
-
-
-def test_geodesic_exponential_exposes_branch_evidence_and_no_default_psd_claim() -> None:
     kernel = phx.kernels.GeodesicExponentialKernel(space="so", length_scale=0.8)
     left = _rotation(0.2)
     right = _rotation(0.7)
@@ -72,48 +69,6 @@ def test_geodesic_exponential_exposes_branch_evidence_and_no_default_psd_claim()
     assert not bool(cut.branch_valid)
     with pytest.raises(Exception):
         kernel.pairwise(_rotation(0.0), _rotation(jnp.pi))
-
-
-@pytest.mark.parametrize("residual", [0.0, 5e-5, 1e-4])
-def test_stiefel_log_accepts_finite_residual_at_or_below_tolerance(residual: Any) -> None:
-    point = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
-
-    def stiefel_log(left: Any, right: Any) -> Any:
-        return right - left, jnp.asarray(residual)
-
-    kernel = phx.kernels.GeodesicExponentialKernel(
-        space="stiefel",
-        length_scale=0.8,
-        branch_tolerance=1e-4,
-        stiefel_log=stiefel_log,
-    )
-    evidence = kernel.distance_evidence(point, point)
-    assert bool(evidence.branch_valid)
-    assert bool(evidence.valid)
-    assert jnp.allclose(kernel.pairwise(point, point), 1.0)
-
-
-@pytest.mark.parametrize("residual", [-1e-8, 1.01e-4, jnp.nan, jnp.inf])
-def test_stiefel_log_rejects_invalid_or_nonfinite_residual(residual: Any) -> None:
-    point = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
-
-    def stiefel_log(left: Any, right: Any) -> Any:
-        return right - left, jnp.asarray(residual)
-
-    kernel = phx.kernels.GeodesicExponentialKernel(
-        space="stiefel",
-        length_scale=0.8,
-        branch_tolerance=1e-4,
-        stiefel_log=stiefel_log,
-    )
-    evidence = kernel.distance_evidence(point, point)
-    assert not bool(evidence.branch_valid)
-    assert not bool(evidence.valid)
-    with pytest.raises(Exception):
-        kernel.pairwise(point, point)
-
-
-def test_uncertified_spectral_tail_fails_preparation() -> None:
     with pytest.raises(ValueError, match="certified truncation tail"):
         phx.kernels.PreparedCompactHomogeneousSpectrum(
             jnp.asarray([[0]]),
@@ -125,3 +80,42 @@ def test_uncertified_spectral_tail_fails_preparation() -> None:
             tail_certified=False,
             spectrum_id="uncertified",
         )
+
+
+def test_stiefel_log_accepts_finite_residual_at_or_below_tolerance() -> None:
+    for residual in [0.0, 5e-5, 1e-4]:
+        point = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+
+        def stiefel_log(left: Any, right: Any) -> Any:
+            return right - left, jnp.asarray(residual)
+
+        kernel = phx.kernels.GeodesicExponentialKernel(
+            space="stiefel",
+            length_scale=0.8,
+            branch_tolerance=1e-4,
+            stiefel_log=stiefel_log,
+        )
+        evidence = kernel.distance_evidence(point, point)
+        assert bool(evidence.branch_valid)
+        assert bool(evidence.valid)
+        assert jnp.allclose(kernel.pairwise(point, point), 1.0)
+
+
+def test_stiefel_log_rejects_invalid_or_nonfinite_residual() -> None:
+    for residual in [-1e-8, 1.01e-4, jnp.nan, jnp.inf]:
+        point = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+
+        def stiefel_log(left: Any, right: Any) -> Any:
+            return right - left, jnp.asarray(residual)
+
+        kernel = phx.kernels.GeodesicExponentialKernel(
+            space="stiefel",
+            length_scale=0.8,
+            branch_tolerance=1e-4,
+            stiefel_log=stiefel_log,
+        )
+        evidence = kernel.distance_evidence(point, point)
+        assert not bool(evidence.branch_valid)
+        assert not bool(evidence.valid)
+        with pytest.raises(Exception):
+            kernel.pairwise(point, point)

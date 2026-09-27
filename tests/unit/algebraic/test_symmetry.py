@@ -11,7 +11,7 @@ from phydrax.algebraic import (
 )
 
 
-def test_homogeneous_support_has_one_free_scaling_and_order_two_component() -> None:
+def test_symmetry_scenario_1() -> None:
     support = SparsePolynomialSupport(
         ("x", "y"),
         ("f",),
@@ -26,9 +26,6 @@ def test_homogeneous_support_has_one_free_scaling_and_order_two_component() -> N
     assert evidence.torsion_orders == (2,)
     assert len(evidence.torsion_generators) == 1
     assert evidence.status == "exact_support_lattice"
-
-
-def test_support_evidence_does_not_drop_explicit_zero_coefficient_terms() -> None:
     support = SparsePolynomialSupport(
         ("x",),
         ("f",),
@@ -42,9 +39,6 @@ def test_support_evidence_does_not_drop_explicit_zero_coefficient_terms() -> Non
     assert support_evidence.evidence_id == system_evidence.evidence_id
     assert system_evidence.free_rank == 0
     assert system_evidence.torsion_orders == (2,)
-
-
-def test_single_monomial_equation_leaves_every_variable_scaling_free() -> None:
     support = SparsePolynomialSupport(
         ("x", "y", "z"),
         ("f",),

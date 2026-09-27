@@ -121,16 +121,13 @@ def _history_witness(
     )
 
 
-def test_signorini_coulomb_projection_preserves_normal_complementarity() -> None:
+def test_rod_contact_lifecycle_scenario_1() -> None:
     projected = project_signorini_coulomb_product(
         jnp.asarray((1.0, 2.0)),
         jnp.asarray(0.5),
     )
 
     np.testing.assert_allclose(np.asarray(projected), np.asarray((1.0, 0.5)))
-
-
-def test_dense_and_lbvh_capsule_search_have_identical_stable_routes() -> None:
     edges = np.asarray(((0, 1), (1, 2), (2, 3)), dtype=np.int32)
     surface = _rod_surface(4, edges)
     positions = np.asarray(
@@ -163,9 +160,6 @@ def test_dense_and_lbvh_capsule_search_have_identical_stable_routes() -> None:
         np.asarray(lbvh_result.epoch.edge_edge.vertex_indices),
     )
     assert int(dense_result.evidence.adjacency_filtered_count) == 2
-
-
-def test_self_adjacency_and_explicit_vertex_pair_exclusions_are_authoritative() -> None:
     edges = np.asarray(((0, 1), (1, 2), (2, 3)), dtype=np.int32)
     pair_policy = ContactPairPolicy(
         4, excluded_vertex_pairs=np.asarray(((0, 3),), dtype=np.int64)
@@ -190,7 +184,7 @@ def test_self_adjacency_and_explicit_vertex_pair_exclusions_are_authoritative() 
     assert int(result.evidence.adjacency_filtered_count) == 3
 
 
-def test_search_capacity_overflow_is_fail_closed_with_required_evidence() -> None:
+def test_rod_contact_lifecycle_scenario_2() -> None:
     edges = np.asarray(((0, 1), (2, 3), (4, 5)), dtype=np.int32)
     surface = _rod_surface(6, edges, radius=0.2)
     positions = np.asarray(
@@ -214,9 +208,6 @@ def test_search_capacity_overflow_is_fail_closed_with_required_evidence() -> Non
     assert int(result.evidence.required_capacity) == 3
     assert int(result.evidence.overflow_count) == 2
     assert not np.any(np.asarray(result.epoch.edge_edge.valid))
-
-
-def test_static_plane_candidates_share_canonical_epoch_and_witness_order() -> None:
     edges = np.asarray(((0, 1), (2, 3)), dtype=np.int32)
     surface = _rod_surface(4, edges)
     positions = np.asarray(
@@ -244,9 +235,6 @@ def test_static_plane_candidates_share_canonical_epoch_and_witness_order() -> No
         ],
         _active_keys(result),
     )
-
-
-def test_manifold_birth_death_reorder_material_reset_and_objective_transport() -> None:
     normal = np.asarray(((0.0, 0.0, 1.0), (0.0, 0.0, 1.0)))
     frame = np.asarray(
         (
@@ -304,7 +292,7 @@ def test_manifold_birth_death_reorder_material_reset_and_objective_transport() -
     assert 30 in np.asarray(twice_missing.died_keys).tolist()
 
 
-def test_ccd_detects_analytic_capsule_plane_impact_without_shortening_silently() -> None:
+def test_rod_contact_lifecycle_scenario_3() -> None:
     surface = _rod_surface(2, np.asarray(((0, 1),), dtype=np.int32))
     start = np.asarray(((0.0, 0.0, 1.0), (1.0, 0.0, 1.0)))
     end = np.asarray(((0.0, 0.0, -1.0), (1.0, 0.0, -1.0)))
@@ -325,9 +313,36 @@ def test_ccd_detects_analytic_capsule_plane_impact_without_shortening_silently()
     assert float(result.safe_step_fraction) <= float(result.impact_fraction)
 
     np.testing.assert_allclose(float(result.impact_fraction), 0.45, atol=1.0e-7)
+    surface = _rod_surface(
+        4,
+        np.asarray(((0, 1), (2, 3)), dtype=np.int32),
+    )
+    start = np.asarray(
+        (
+            (-1.0, -1.0, 0.0),
+            (1.0, -1.0, 0.0),
+            (-1.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+        )
+    )
+    end = start.copy()
+    end[:2, 1] = 1.0
+    search = RodContactSearchPlan(
+        capacity=1,
+        activation_distance=0.0,
+    ).prepare(surface)
 
+    result = RodContactCCDPlan(
+        maximum_iterations=64,
+        distance_tolerance=1.0e-10,
+        safety_fraction=0.9,
+    ).evaluate(search, start, end)
 
-def test_supported_initial_plane_contact_cannot_mask_later_penetration() -> None:
+    assert bool(result.successful)
+    assert bool(result.evidence.impact_detected)
+    assert not bool(result.evidence.full_step_safe)
+    assert np.min(end[:2, 1]) > np.max(end[2:, 1])
+    np.testing.assert_allclose(float(result.impact_fraction), 0.4, atol=1.0e-7)
     surface = _rod_surface(2, np.asarray(((0, 1),), dtype=np.int32))
     start = np.asarray(((0.0, 0.0, 0.1), (1.0, 0.0, 1.1)))
     separated_end = np.asarray(((0.0, 0.0, 1.1), (1.0, 0.0, 0.1)))
@@ -361,42 +376,6 @@ def test_supported_initial_plane_contact_cannot_mask_later_penetration() -> None
     assert bool(separated.evidence.full_step_safe)
     assert not bool(penetrating.evidence.full_step_safe)
     assert bool(penetrating.evidence.impact_detected)
-
-
-def test_ccd_detects_transient_capsule_crossing_with_separated_endpoint() -> None:
-    surface = _rod_surface(
-        4,
-        np.asarray(((0, 1), (2, 3)), dtype=np.int32),
-    )
-    start = np.asarray(
-        (
-            (-1.0, -1.0, 0.0),
-            (1.0, -1.0, 0.0),
-            (-1.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-        )
-    )
-    end = start.copy()
-    end[:2, 1] = 1.0
-    search = RodContactSearchPlan(
-        capacity=1,
-        activation_distance=0.0,
-    ).prepare(surface)
-
-    result = RodContactCCDPlan(
-        maximum_iterations=64,
-        distance_tolerance=1.0e-10,
-        safety_fraction=0.9,
-    ).evaluate(search, start, end)
-
-    assert bool(result.successful)
-    assert bool(result.evidence.impact_detected)
-    assert not bool(result.evidence.full_step_safe)
-    assert np.min(end[:2, 1]) > np.max(end[2:, 1])
-    np.testing.assert_allclose(float(result.impact_fraction), 0.4, atol=1.0e-7)
-
-
-def test_composite_response_is_true_dual_action_reaction_and_dense_parity() -> None:
     normal = np.asarray(((1.0, 0.0, 0.0),))
     frame = np.asarray((((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),))
     witnesses = _history_witness((42,), normal, frame)

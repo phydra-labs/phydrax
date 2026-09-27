@@ -15,7 +15,7 @@ from phydrax.transport.continuous._field_density import (
 from phydrax.transport.continuous._injective_density import InjectiveContinuousFlowLaw
 
 
-def test_rectangular_assignment_is_exact_and_lexicographic() -> None:
+def test_structured_flow_density_scenario_1() -> None:
     costs = jnp.asarray([[0.0, 2.0, 2.0], [2.0, 0.0, 1.0]])
     result = solve_multidimensional_assignment(
         jnp.asarray([[0.0], [1.0]]),
@@ -29,9 +29,6 @@ def test_rectangular_assignment_is_exact_and_lexicographic() -> None:
     assert jnp.array_equal(result.source_indices, jnp.asarray([0, 1]))
     assert jnp.array_equal(result.target_indices, jnp.asarray([0, 2]))
     assert jnp.allclose(result.total_cost, 1.0)
-
-
-def test_injective_flow_uses_hausdorff_gram_jacobian() -> None:
     latent = DiagonalNormalLaw(jnp.zeros((1,)), jnp.ones((1,)), event_shape=(1,))
     law = InjectiveContinuousFlowLaw(
         latent,
@@ -49,9 +46,6 @@ def test_injective_flow_uses_hausdorff_gram_jacobian() -> None:
         latent.log_prob(jnp.asarray([0.3])) - 0.5 * jnp.log(5.0),
     )
     assert law.log_prob(jnp.asarray([0.3, 0.5])) == -jnp.inf
-
-
-def test_hybrid_flow_combines_counting_mass_and_conditional_density() -> None:
     left = DiagonalNormalLaw(jnp.asarray([-1.0]), jnp.asarray([0.5]), event_shape=(1,))
     right = DiagonalNormalLaw(jnp.asarray([1.0]), jnp.asarray([0.5]), event_shape=(1,))
     law = HybridFlowLaw(jnp.asarray([0.25, 0.75]), (left, right), mode_id="two-mode")

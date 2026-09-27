@@ -16,7 +16,7 @@ def _plan(*, nodes: int | None = None) -> MortonPointHierarchyPlan:
     )
 
 
-def test_point_hierarchy_partitions_active_points() -> None:
+def test_point_hierarchy_contracts() -> None:
     points = jnp.asarray(
         [
             [0.1, 0.1, 0.1],
@@ -44,9 +44,6 @@ def test_point_hierarchy_partitions_active_points() -> None:
     assert bool(
         jnp.all((active_children < 0) | (active_children < hierarchy.node_active.size))
     )
-
-
-def test_point_hierarchy_is_permutation_invariant_by_stable_id() -> None:
     points = jnp.asarray(
         [
             [0.1, 0.2, 0.3],
@@ -65,9 +62,6 @@ def test_point_hierarchy_is_permutation_invariant_by_stable_id() -> None:
     np.testing.assert_array_equal(first.node_prefixes, second.node_prefixes)
     np.testing.assert_array_equal(first.node_levels, second.node_levels)
     np.testing.assert_array_equal(first.node_active, second.node_active)
-
-
-def test_point_hierarchy_handles_empty_and_coincident_points() -> None:
     points = jnp.full((6, 3), 0.25)
     empty = _plan().build(points, active_mask=jnp.zeros((6,), dtype="bool"))
     assert bool(empty.evidence.successful)
@@ -78,9 +72,6 @@ def test_point_hierarchy_handles_empty_and_coincident_points() -> None:
     assert bool(coincident.evidence.successful)
     assert int(coincident.evidence.active_leaves) == 1
     assert int(coincident.evidence.maximum_leaf_occupancy) == 6
-
-
-def test_point_hierarchy_rejects_invalid_and_capacity_exhaustion() -> None:
     points = jnp.asarray(
         [
             [0.1, 0.1, 0.1],
@@ -98,9 +89,6 @@ def test_point_hierarchy_rejects_invalid_and_capacity_exhaustion() -> None:
     exhausted = _plan(nodes=1).build(points.at[-1].set(jnp.asarray([0.6, 0.4, 0.8])))
     assert not bool(exhausted.evidence.successful)
     assert int(exhausted.evidence.required_nodes) > 1
-
-
-def test_point_hierarchy_rejects_duplicate_ids_across_distinct_cells() -> None:
     points = jnp.asarray(
         [
             [0.1, 0.1, 0.1],
@@ -114,9 +102,6 @@ def test_point_hierarchy_rejects_duplicate_ids_across_distinct_cells() -> None:
     hierarchy = _plan().build(points, stable_ids=jnp.asarray([4, 7, 1, 7, 2, 3]))
     assert not bool(hierarchy.evidence.stable_ids_unique)
     assert not bool(hierarchy.evidence.successful)
-
-
-def test_point_hierarchy_build_and_refresh_jit() -> None:
     plan = _plan()
     points = jnp.asarray(
         [

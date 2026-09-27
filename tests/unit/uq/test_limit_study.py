@@ -24,7 +24,7 @@ def _data(coordinates: tuple[float, ...]) -> Any:
     )
 
 
-def test_limit_study_rejects_unknown_prespecified_datum_ids() -> None:
+def test_limit_study_contracts() -> None:
     plan = phx.uq.ScientificLimitStudyPlan(
         (phx.uq.ScientificLimitAxis("x", 0.0),),
         (
@@ -38,9 +38,6 @@ def test_limit_study_rejects_unknown_prespecified_datum_ids() -> None:
 
     with pytest.raises(ValueError, match="unknown datum IDs"):
         phx.uq.run_scientific_limit_study(plan, _data((1.0, 2.0, 3.0)))
-
-
-def test_limit_study_applies_minimum_span_in_transformed_coordinates() -> None:
     plan = phx.uq.ScientificLimitStudyPlan(
         (
             phx.uq.ScientificLimitAxis(

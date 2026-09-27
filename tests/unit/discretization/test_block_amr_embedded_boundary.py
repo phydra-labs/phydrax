@@ -39,9 +39,7 @@ def _geometry() -> Any:
     return plan, plan.state(0.0)
 
 
-def test_stationary_patch_embedded_boundary_clips_conservatively_and_marks_small_cells() -> (
-    None
-):
+def test_stationary_patch_contracts() -> None:
     geometry_plan, geometry = _geometry()
     embedded = phx.discretization.VariablePatchEmbeddedBoundaryPlan(
         geometry_plan.plan_id,
@@ -66,9 +64,6 @@ def test_stationary_patch_embedded_boundary_clips_conservatively_and_marks_small
     open_y = embedded.open_face_fractions[0][0][1][0]
     assert jnp.allclose(open_y[1, 1:], 0.2)
     assert embedded.evidence.maximum_face_closure_defect <= 1.0e-12
-
-
-def test_stationary_patch_embedded_boundary_rejects_ambiguous_vertex_crossing() -> None:
     geometry_plan, geometry = _geometry()
     plan = phx.discretization.VariablePatchEmbeddedBoundaryPlan(
         geometry_plan.plan_id,

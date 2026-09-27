@@ -36,7 +36,7 @@ def _taylor_green(discretization: Any) -> Any:
     )
 
 
-def test_named_scalar_buoyancy_compiler_closes_content_and_exchange_ledgers() -> None:
+def test_mac_scalar_variable_density_scenario_1() -> None:
     finite_volume, operators, momentum, projection = _periodic_core()
     scalar_problem = phx.discretization.MACScalarProblem(
         (
@@ -80,9 +80,6 @@ def test_named_scalar_buoyancy_compiler_closes_content_and_exchange_ledgers() ->
         jnp.asarray(0.0)
     )
     assert jnp.isfinite(gradient)
-
-
-def test_variable_density_constant_state_reduces_to_divergence_free_mac_flow() -> None:
     finite_volume, operators, momentum, _ = _periodic_core()
     variable = phx.discretization.MACVariableDensityPlan(momentum).prepare()
     projection = phx.solver.MACVariableDensityProjectionPlan(

@@ -153,9 +153,7 @@ _LANES = jnp.asarray(((0.9, 0.1), (0.9, 0.1)))
 _TEMPERATURES = jnp.asarray((1000.0, 3000.0))
 
 
-def test_header_marks_learned_lanes_eligible_and_records_out_of_support_fallback() -> (
-    None
-):
+def test_learned_chemistry_scenario_1() -> None:
     plan = _small_extent_plan()
     result = plan.advance(_LANES, _TEMPERATURES, 101325.0, 0.01)
 
@@ -170,6 +168,25 @@ def test_header_marks_learned_lanes_eligible_and_records_out_of_support_fallback
     assert result.header.evidence_id == plan.plan_id
     assert _small_extent_plan("other-model").component_id != plan.component_id
     assert result.derivative_contract.conditions == ("decisions-frozen",)
+    plan = _small_extent_plan()
+    result = plan.advance(_LANES, _TEMPERATURES, 101325.0, 0.01)
+
+    np.testing.assert_array_equal(result.derivative_valid, (True, False))
+    np.testing.assert_allclose(result.accepted_concentrations[0], (0.89, 0.11))
+    assert bool(jnp.all(jnp.isfinite(result.accepted_concentrations)))
+
+    jacobian = jax.jacfwd(
+        lambda values: (
+            plan.advance(values, _TEMPERATURES, 101325.0, 0.01).accepted_concentrations
+        )
+    )(_LANES)
+    assert bool(jnp.all(jnp.isfinite(jacobian[0])))
+    assert bool(jnp.all(jnp.isnan(jacobian[1])))
+    artifact = _artifact()
+    resolution = phx.require_parameter_roles(artifact, context="chemistry artifact")
+
+    assert phx.ArrayRole.PARAMETER not in resolution.roles
+    assert not jax.tree_util.tree_leaves(phx.partition_parameters(artifact)[0])
 
 
 def test_header_sets_domain_bit_for_nonphysical_learned_extent() -> None:
@@ -197,23 +214,6 @@ def test_header_sets_domain_bit_for_nonphysical_learned_extent() -> None:
     assert not bool(result.header.eligible)
     assert int(result.header.reason_bits) & negative_bit
     assert not int(result.header.reason_bits) & int(AdmissibilityReason.OUTSIDE_SUPPORT)
-
-
-def test_invalid_derivative_lanes_are_poisoned_without_changing_primals() -> None:
-    plan = _small_extent_plan()
-    result = plan.advance(_LANES, _TEMPERATURES, 101325.0, 0.01)
-
-    np.testing.assert_array_equal(result.derivative_valid, (True, False))
-    np.testing.assert_allclose(result.accepted_concentrations[0], (0.89, 0.11))
-    assert bool(jnp.all(jnp.isfinite(result.accepted_concentrations)))
-
-    jacobian = jax.jacfwd(
-        lambda values: (
-            plan.advance(values, _TEMPERATURES, 101325.0, 0.01).accepted_concentrations
-        )
-    )(_LANES)
-    assert bool(jnp.all(jnp.isfinite(jacobian[0])))
-    assert bool(jnp.all(jnp.isnan(jacobian[1])))
 
 
 class _ConstantExtent(phx.AbstractArrayModel):
@@ -246,14 +246,6 @@ def _artifact(model: Any = None) -> Any:
 def _target_loss(plan: Any) -> Any:
     result = plan.advance(jnp.asarray((0.9, 0.1)), 1000.0, 101325.0, 0.01)
     return jnp.sum((result.accepted_concentrations - jnp.asarray((0.87, 0.13))) ** 2)
-
-
-def test_frozen_chemistry_artifact_exposes_no_parameters() -> None:
-    artifact = _artifact()
-    resolution = phx.require_parameter_roles(artifact, context="chemistry artifact")
-
-    assert phx.ArrayRole.PARAMETER not in resolution.roles
-    assert not jax.tree_util.tree_leaves(phx.partition_parameters(artifact)[0])
 
 
 def test_explicit_trainable_chemistry_binding_trains_without_touching_the_artifact() -> (

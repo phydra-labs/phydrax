@@ -65,7 +65,7 @@ def _piecewise_exact(times: Any) -> Any:
     return 1.0 + times + 0.5 * jnp.maximum(times - 1.0, 0.0) ** 2
 
 
-def test_diffrax_delay_recovers_piecewise_method_of_steps_and_dense_output() -> None:
+def test_diffrax_delay_contracts() -> None:
     times = jnp.linspace(0.0, 2.0, 21)
     solution = phx.solver.solve_diffrax_delay(
         _piecewise_problem(),
@@ -88,6 +88,113 @@ def test_diffrax_delay_recovers_piecewise_method_of_steps_and_dense_output() -> 
     dense = solution.evaluate(query)
     assert dense.shape == (2, 2, 1)
     assert jnp.allclose(dense[..., 0], _piecewise_exact(query), atol=2e-7)
+    problem = _piecewise_problem(t1=0.5)
+    times = jnp.asarray([0.5])
+
+    invalid_problem: Any = object()
+    with pytest.raises(TypeError, match="DelayDifferentialProblem"):
+        phx.solver.solve_diffrax_delay(invalid_problem, save_times=times)
+    stochastic = _constant_delay_problem(
+        lambda time, state, delayed, args: delayed[0],
+        lambda time, args: jnp.ones((1,)),
+        jnp.asarray([0.2]),
+        t0=0.0,
+        t1=0.5,
+        diffusion=lambda time, state, delayed, args: jnp.ones((1, 1)),
+        noise_shape=(1,),
+    )
+    with pytest.raises(ValueError, match="WienerRealization"):
+        phx.solver.solve_diffrax_delay(stochastic, save_times=times)
+    with pytest.raises(ValueError, match="dt0"):
+        phx.solver.solve_diffrax_delay(problem, save_times=times, solver=dfx.Euler())
+    with pytest.raises(ValueError, match="state_geometry"):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=times,
+            solver=phx.solver.GeometricEuler(phx.metrix.EuclideanStateGeometry()),
+        )
+    with pytest.raises(ValueError, match="BacksolveAdjoint"):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=times,
+            adjoint=dfx.BacksolveAdjoint(),
+        )
+    with pytest.raises(ValueError, match="finite max_steps"):
+        phx.solver.solve_diffrax_delay(problem, save_times=times, max_steps=None)
+    with pytest.raises(ValueError, match="positive integer"):
+        phx.solver.solve_diffrax_delay(problem, save_times=times, max_steps=0)
+    with pytest.raises(ValueError, match="rank-1"):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=times,
+            initial_discontinuities=jnp.zeros((1, 1)),
+        )
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=times,
+            discontinuity_depth=-1,
+        )
+    with pytest.raises(ValueError, match="exceeds max_discontinuities"):
+        phx.solver.solve_diffrax_delay(
+            problem,
+            save_times=times,
+            max_discontinuities=1,
+        )
+
+    no_schedule = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=times,
+        initial_discontinuities=(),
+        max_steps=128,
+    )
+    assert no_schedule.stats["num_tracked_discontinuities"] == 0
+    assert not no_schedule.has_dense_interpolation
+    with pytest.raises(ValueError, match="no dense interpolation"):
+        no_schedule.evaluate(jnp.asarray(0.25))
+    problem = _constant_delay_problem(
+        lambda time, state, delayed, args: 0.2 * state,
+        lambda time, args: jnp.ones((1,)),
+        jnp.asarray([0.4]),
+        t0=0.0,
+        t1=0.3,
+    )
+    solution = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=jnp.asarray([0.3]),
+        adjoint=dfx.DirectAdjoint(),
+        max_steps=64,
+    )
+    assert jnp.allclose(solution.states[0, 0], jnp.exp(0.06), atol=2e-7)
+    problem = _constant_delay_problem(
+        lambda time, state, delayed, args: jnp.ones_like(state),
+        lambda time, args: jnp.asarray([0.0]),
+        jnp.asarray([0.5]),
+        t0=0.0,
+        t1=1.0,
+    )
+    event = dfx.Event(
+        lambda t, y, args, **kwargs: y[0] - 0.3,
+        root_finder=optx.Newton(rtol=1e-9, atol=1e-9),
+    )
+    solution = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=jnp.asarray([0.0, 0.2, 0.4, 0.8]),
+        event=event,
+        dense=True,
+    )
+
+    assert jnp.array_equal(solution.valid, jnp.asarray([True, True, False, False]))
+    assert bool(solution.event_mask)
+    assert jnp.allclose(
+        solution.evaluate(jnp.asarray([0.1, 0.3]))[:, 0],
+        jnp.asarray([0.1, 0.3]),
+    )
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="within the solved interval",
+    ):
+        solution.evaluate(jnp.asarray(0.31))
 
 
 def test_diffrax_delay_preserves_matrix_state_and_multiple_delay_ordering() -> None:
@@ -163,7 +270,7 @@ def test_diffrax_delay_supports_stiff_implicit_solver_and_stage_time_bound() -> 
     assert jnp.max(lengths) <= solution.stats["maximum_causal_step"] + 1e-14
 
 
-def test_rejected_steps_never_enter_accepted_delay_history() -> None:
+def test_diffrax_delay_backend_scenario_1() -> None:
     solution = phx.solver.solve_diffrax_delay(
         _piecewise_problem(),
         save_times=jnp.asarray([2.0]),
@@ -180,9 +287,6 @@ def test_rejected_steps_never_enter_accepted_delay_history() -> None:
     assert jnp.all(jnp.diff(history_buffer.starts[:used]) > 0.0)
     assert jnp.all(history_buffer.ends[:used] > history_buffer.starts[:used])
     assert jnp.allclose(solution.states[0, 0], 3.5, atol=2e-5)
-
-
-def test_delay_discontinuity_schedule_generates_additive_descendants() -> None:
     delays = jnp.asarray([1.0, jnp.sqrt(2.0)])
     sources = jnp.asarray([-0.25, 0.0])
     schedule = _delay_discontinuity_times(
@@ -212,6 +316,31 @@ def test_delay_discontinuity_schedule_generates_additive_descendants() -> None:
             depth=2,
             max_discontinuities=11,
         )
+    problem = _constant_delay_problem(
+        lambda time, state, delayed, args: jnp.conj(delayed[0]),
+        lambda time, args: jnp.asarray([1.0 + 0.25j]),
+        jnp.asarray([0.1]),
+        t0=0.0,
+        t1=0.2,
+    )
+    times = jnp.asarray([0.0, 0.1, 0.2])
+    whole = phx.solver.solve_diffrax_delay(
+        problem,
+        save_times=times,
+        dense=True,
+    )
+    segmented = phx.solver.solve_diffrax_delay_segmented(
+        problem,
+        save_times=times,
+        segment_policy=phx.solver.FixedCapacitySegmentPolicy(4, 128),
+        dt0=0.01,
+    )
+
+    assert whole.states.dtype == jnp.complex128
+    assert jnp.all(jnp.isfinite(whole.states))
+    assert jnp.all(jnp.isfinite(whole.evaluate(jnp.asarray([0.05, 0.15]))))
+    assert segmented.states.dtype == jnp.complex128
+    assert jnp.all(jnp.isfinite(segmented.states))
 
 
 def test_diffrax_delay_is_jittable_vectorizable_and_differentiable() -> None:
@@ -284,147 +413,3 @@ def test_diffrax_delay_differentiates_constant_delay_away_from_schedule_changes(
     expected = 0.5 * terminal_time**2 - delay * terminal_time
     assert jnp.allclose(terminal(delay), expected, atol=2e-9)
     assert jnp.allclose(jax.grad(terminal)(delay), -terminal_time, atol=2e-9)
-
-
-def test_diffrax_delay_event_bounds_saved_and_dense_values() -> None:
-    problem = _constant_delay_problem(
-        lambda time, state, delayed, args: jnp.ones_like(state),
-        lambda time, args: jnp.asarray([0.0]),
-        jnp.asarray([0.5]),
-        t0=0.0,
-        t1=1.0,
-    )
-    event = dfx.Event(
-        lambda t, y, args, **kwargs: y[0] - 0.3,
-        root_finder=optx.Newton(rtol=1e-9, atol=1e-9),
-    )
-    solution = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=jnp.asarray([0.0, 0.2, 0.4, 0.8]),
-        event=event,
-        dense=True,
-    )
-
-    assert jnp.array_equal(solution.valid, jnp.asarray([True, True, False, False]))
-    assert bool(solution.event_mask)
-    assert jnp.allclose(
-        solution.evaluate(jnp.asarray([0.1, 0.3]))[:, 0],
-        jnp.asarray([0.1, 0.3]),
-    )
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="within the solved interval",
-    ):
-        solution.evaluate(jnp.asarray(0.31))
-
-
-def test_diffrax_delay_validates_unsupported_configurations() -> None:
-    problem = _piecewise_problem(t1=0.5)
-    times = jnp.asarray([0.5])
-
-    invalid_problem: Any = object()
-    with pytest.raises(TypeError, match="DelayDifferentialProblem"):
-        phx.solver.solve_diffrax_delay(invalid_problem, save_times=times)
-    stochastic = _constant_delay_problem(
-        lambda time, state, delayed, args: delayed[0],
-        lambda time, args: jnp.ones((1,)),
-        jnp.asarray([0.2]),
-        t0=0.0,
-        t1=0.5,
-        diffusion=lambda time, state, delayed, args: jnp.ones((1, 1)),
-        noise_shape=(1,),
-    )
-    with pytest.raises(ValueError, match="WienerRealization"):
-        phx.solver.solve_diffrax_delay(stochastic, save_times=times)
-    with pytest.raises(ValueError, match="dt0"):
-        phx.solver.solve_diffrax_delay(problem, save_times=times, solver=dfx.Euler())
-    with pytest.raises(ValueError, match="state_geometry"):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=times,
-            solver=phx.solver.GeometricEuler(phx.metrix.EuclideanStateGeometry()),
-        )
-    with pytest.raises(ValueError, match="BacksolveAdjoint"):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=times,
-            adjoint=dfx.BacksolveAdjoint(),
-        )
-    with pytest.raises(ValueError, match="finite max_steps"):
-        phx.solver.solve_diffrax_delay(problem, save_times=times, max_steps=None)
-    with pytest.raises(ValueError, match="positive integer"):
-        phx.solver.solve_diffrax_delay(problem, save_times=times, max_steps=0)
-    with pytest.raises(ValueError, match="rank-1"):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=times,
-            initial_discontinuities=jnp.zeros((1, 1)),
-        )
-    with pytest.raises(ValueError, match="nonnegative integer"):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=times,
-            discontinuity_depth=-1,
-        )
-    with pytest.raises(ValueError, match="exceeds max_discontinuities"):
-        phx.solver.solve_diffrax_delay(
-            problem,
-            save_times=times,
-            max_discontinuities=1,
-        )
-
-    no_schedule = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=times,
-        initial_discontinuities=(),
-        max_steps=128,
-    )
-    assert no_schedule.stats["num_tracked_discontinuities"] == 0
-    assert not no_schedule.has_dense_interpolation
-    with pytest.raises(ValueError, match="no dense interpolation"):
-        no_schedule.evaluate(jnp.asarray(0.25))
-
-
-def test_diffrax_delay_accepts_direct_adjoint() -> None:
-    problem = _constant_delay_problem(
-        lambda time, state, delayed, args: 0.2 * state,
-        lambda time, args: jnp.ones((1,)),
-        jnp.asarray([0.4]),
-        t0=0.0,
-        t1=0.3,
-    )
-    solution = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=jnp.asarray([0.3]),
-        adjoint=dfx.DirectAdjoint(),
-        max_steps=64,
-    )
-    assert jnp.allclose(solution.states[0, 0], jnp.exp(0.06), atol=2e-7)
-
-
-def test_complex_delay_and_fixed_capacity_segmented_route_use_real_coordinates() -> None:
-    problem = _constant_delay_problem(
-        lambda time, state, delayed, args: jnp.conj(delayed[0]),
-        lambda time, args: jnp.asarray([1.0 + 0.25j]),
-        jnp.asarray([0.1]),
-        t0=0.0,
-        t1=0.2,
-    )
-    times = jnp.asarray([0.0, 0.1, 0.2])
-    whole = phx.solver.solve_diffrax_delay(
-        problem,
-        save_times=times,
-        dense=True,
-    )
-    segmented = phx.solver.solve_diffrax_delay_segmented(
-        problem,
-        save_times=times,
-        segment_policy=phx.solver.FixedCapacitySegmentPolicy(4, 128),
-        dt0=0.01,
-    )
-
-    assert whole.states.dtype == jnp.complex128
-    assert jnp.all(jnp.isfinite(whole.states))
-    assert jnp.all(jnp.isfinite(whole.evaluate(jnp.asarray([0.05, 0.15]))))
-    assert segmented.states.dtype == jnp.complex128
-    assert jnp.all(jnp.isfinite(segmented.states))

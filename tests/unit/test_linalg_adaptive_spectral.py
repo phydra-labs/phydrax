@@ -26,7 +26,7 @@ def _positive_properties() -> Any:
     )
 
 
-def test_adaptive_trace_stops_at_first_eligible_batch_for_zero_variance_samples() -> None:
+def test_adaptive_contracts() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 3.0, 4.0])
     operator = la.DenseLinearOperator(
         jnp.diag(diagonal),
@@ -62,9 +62,6 @@ def test_adaptive_trace_stops_at_first_eligible_batch_for_zero_variance_samples(
     assert jnp.all(jnp.isnan(result.samples[4:]))
     assert result.cost.first_stopping_matvec_budget == 16
     assert result.cost.maximum_matvec_budget == 48
-
-
-def test_adaptive_trace_hits_probe_budget_when_statistical_error_is_too_large() -> None:
     matrix = jnp.asarray([[3.0, 0.8, 0.2], [0.8, 2.0, 0.4], [0.2, 0.4, 1.5]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -92,9 +89,6 @@ def test_adaptive_trace_hits_probe_budget_when_statistical_error_is_too_large() 
     assert result.total_error_estimate > result.tolerance
     assert result.matvec_count == 24
     assert jnp.all(jnp.isfinite(result.samples))
-
-
-def test_adaptive_slq_never_claims_success_with_unresolved_krylov_truncation() -> None:
     matrix = jnp.asarray([[3.0, 0.8, 0.2], [0.8, 2.0, 0.4], [0.2, 0.4, 1.5]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -121,9 +115,30 @@ def test_adaptive_slq_never_claims_success_with_unresolved_krylov_truncation() -
     assert jnp.isinf(result.total_error_estimate)
     assert jnp.all(result.probe_statuses == int(la.StochasticProbeStatus.TRUNCATED))
     assert result.quantity == "log-determinant"
+    matrix = jnp.asarray([[2.0 + 0.0j, 1.0j], [-1.0j, 3.0 + 0.0j]])
+    operator = la.DenseLinearOperator(
+        matrix,
+        properties=_positive_properties(),
+    )
+    policy = la.AdaptiveStochasticPolicy(
+        min_probes=4,
+        max_probes=8,
+        batch_size=2,
+        max_dimension=2,
+        relative_tolerance=1.0,
+        absolute_tolerance=10.0,
+    )
+    result = la.adaptive_stochastic_trace(
+        operator,
+        key=jax.random.key(4),
+        policy=policy,
+    )
 
-
-def test_adaptive_log_determinant_is_reproducible_and_jittable() -> None:
+    assert result.finite
+    assert result.converged
+    assert result.num_probes == 4
+    assert jnp.isrealobj(result.estimate)
+    assert jnp.isclose(result.estimate, jnp.trace(matrix).real, atol=2.0)
     diagonal = jnp.asarray([1.0, 2.0, 3.0, 4.0])
     operator = la.DenseLinearOperator(
         jnp.diag(diagonal),
@@ -163,36 +178,6 @@ def test_adaptive_log_determinant_is_reproducible_and_jittable() -> None:
     assert jnp.allclose(compiled.estimate, expected, atol=1e-12)
     assert compiled.num_probes == first.num_probes
     assert compiled.converged
-
-
-def test_adaptive_slq_supports_complex_hermitian_operators() -> None:
-    matrix = jnp.asarray([[2.0 + 0.0j, 1.0j], [-1.0j, 3.0 + 0.0j]])
-    operator = la.DenseLinearOperator(
-        matrix,
-        properties=_positive_properties(),
-    )
-    policy = la.AdaptiveStochasticPolicy(
-        min_probes=4,
-        max_probes=8,
-        batch_size=2,
-        max_dimension=2,
-        relative_tolerance=1.0,
-        absolute_tolerance=10.0,
-    )
-    result = la.adaptive_stochastic_trace(
-        operator,
-        key=jax.random.key(4),
-        policy=policy,
-    )
-
-    assert result.finite
-    assert result.converged
-    assert result.num_probes == 4
-    assert jnp.isrealobj(result.estimate)
-    assert jnp.isclose(result.estimate, jnp.trace(matrix).real, atol=2.0)
-
-
-def test_adaptive_stochastic_policy_rejects_invalid_fixed_capacity_batches() -> None:
     with pytest.raises(ValueError, match="divide"):
         la.AdaptiveStochasticPolicy(
             min_probes=3,

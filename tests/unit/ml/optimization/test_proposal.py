@@ -26,7 +26,7 @@ def _program() -> Any:
     )
 
 
-def test_learned_proposal_is_audited_before_becoming_solver_input() -> None:
+def test_proposal_scenario_1() -> None:
     program = _program()
     manifest = phx.ml.optimization.MixedIntegerProposalManifest(
         program.structure_id,
@@ -49,9 +49,6 @@ def test_learned_proposal_is_audited_before_becoming_solver_input() -> None:
     )
     assert result.successful
     np.testing.assert_allclose(result.primal, [1.0, 0.25], atol=1e-7)
-
-
-def test_support_refusal_and_infeasible_continuous_value_block_admission() -> None:
     program = _program()
     manifest = phx.ml.optimization.MixedIntegerProposalManifest(
         program.structure_id,

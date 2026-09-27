@@ -128,7 +128,7 @@ def _two_stage_dominance_game() -> Any:
     )
 
 
-def test_information_values_preserve_only_the_declared_identity() -> None:
+def test_games_information_scenario_1() -> None:
     state = object()
     observation = object()
     full_state = FullStateInformation(information_id="plant-state")
@@ -145,11 +145,6 @@ def test_information_values_preserve_only_the_declared_identity() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[unknown-argument]
         centralized.policy_input(observation, latent_private_state=object())
-
-
-def test_gaussian_belief_validates_shape_finiteness_symmetry_and_semidefiniteness() -> (
-    None
-):
     belief = GaussianBelief(
         jnp.asarray([1.0, -2.0]),
         jnp.asarray([[2.0, 0.0], [0.0, 0.0]]),
@@ -167,11 +162,6 @@ def test_gaussian_belief_validates_shape_finiteness_symmetry_and_semidefinitenes
         GaussianBelief(jnp.zeros(2), jnp.asarray([[1.0, 1.0], [0.0, 1.0]]))
     with pytest.raises(ValueError, match="positive semidefinite"):
         GaussianBelief(jnp.zeros(2), jnp.asarray([[1.0, 0.0], [0.0, -1.0]]))
-
-
-def test_common_information_policy_cannot_receive_other_latent_types_or_raw_keys() -> (
-    None
-):
     result = solve_common_information_game(_coordination_game(), _first_selector())
 
     assert int(result.policy.action("row", 0, 0, 0)) == 0
@@ -186,7 +176,7 @@ def test_common_information_policy_cannot_receive_other_latent_types_or_raw_keys
         result.policy.action("column", 0, 0, 0, key=jnp.asarray([0, 1]))
 
 
-def test_bayes_evidence_is_normalized_on_positive_probability_support() -> None:
+def test_games_information_scenario_2() -> None:
     result = solve_common_information_game(_bayes_game(), _first_selector())
 
     np.testing.assert_allclose(result.bayes_normalizers[0, 0], [0.5, 0.5])
@@ -201,9 +191,6 @@ def test_bayes_evidence_is_normalized_on_positive_probability_support() -> None:
         result.bayes_evidence.normalization_residuals[0, 0], 0.0, atol=1.0e-7
     )
     assert bool(jnp.all(result.bayes_evidence.common_belief_consistent))
-
-
-def test_zero_probability_observation_has_explicit_unsupported_zero_posterior() -> None:
     result = solve_common_information_game(
         _bayes_game(zero_probability_observation=True), _first_selector()
     )
@@ -218,9 +205,6 @@ def test_zero_probability_observation_has_explicit_unsupported_zero_posterior() 
     np.testing.assert_array_equal(
         result.bayes_evidence.private_type_support[0][0, 0], [True, False]
     )
-
-
-def test_selector_identity_and_branch_change_the_selected_equilibrium() -> None:
     first = solve_common_information_game(_coordination_game(), _first_selector())
     last = solve_common_information_game(_coordination_game(), _last_selector())
 
@@ -235,7 +219,7 @@ def test_selector_identity_and_branch_change_the_selected_equilibrium() -> None:
     assert int(last.equilibrium_candidate_counts[0, 0]) == 2
 
 
-def test_tiny_common_information_game_has_analytic_backward_values() -> None:
+def test_games_information_scenario_3() -> None:
     result = solve_common_information_game(_two_stage_dominance_game(), _last_selector())
 
     assert bool(result.valid)
@@ -248,9 +232,6 @@ def test_tiny_common_information_game_has_analytic_backward_values() -> None:
     )
     assert int(result.policy.action("first", 0, 0, 0)) == 0
     assert int(result.policy.action("second", 1, 0, 0)) == 0
-
-
-def test_prescription_enumeration_rejects_capacity_above_the_declared_bound() -> None:
     with pytest.raises(ValueError, match="capacity 8 exceeds"):
         solve_common_information_game(
             _coordination_game(),

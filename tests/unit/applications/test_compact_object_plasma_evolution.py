@@ -74,7 +74,7 @@ def _grid_stage(scale: Any) -> Any:
     return discretization, lower_valencia_stage_geometry(discretization, geometry, 0.0)
 
 
-def test_physical_opacities_and_photon_number_sources_are_positive_and_balanced() -> None:
+def test_compact_object_plasma_evolution_scenario_1() -> None:
     scale = _scale()
     bremsstrahlung = ThermalBremsstrahlungGrayOpacityPlan(
         scale,
@@ -115,9 +115,6 @@ def test_physical_opacities_and_photon_number_sources_are_positive_and_balanced(
     assert bool(result.accepted)
     np.testing.assert_allclose(result.state.densitized_number, 1.05 / 1.1)
     np.testing.assert_allclose(result.ledger.balance_defect, 0.0, atol=1.0e-10)
-
-
-def test_two_temperature_coulomb_exchange_conserves_total_species_energy() -> None:
     scale = _scale()
     coulomb = TwoTemperatureElectronIonClosure(
         scale,
@@ -152,9 +149,6 @@ def test_two_temperature_coulomb_exchange_conserves_total_species_energy() -> No
         total,
     )
     assert bool(jnp.all(result.state.electron_temperature > state.electron_temperature))
-
-
-def test_pair_reactions_preserve_charge_stoichiometry_and_total_energy() -> None:
     plan = PairCreationAnnihilationPlan(
         pair_rest_energy=1.0,
         creation_coefficient=0.2,

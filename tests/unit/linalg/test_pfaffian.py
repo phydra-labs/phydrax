@@ -23,7 +23,7 @@ def _skew(value: Any) -> Any:
     return value - jnp.swapaxes(value, -1, -2)
 
 
-def test_real_complex_and_batched_values_obey_pfaffian_square_identity() -> None:
+def test_pfaffian_scenario_1() -> None:
     real = jnp.asarray(
         [
             [0.0, 2.0, -1.0, 0.5],
@@ -58,9 +58,6 @@ def test_real_complex_and_batched_values_obey_pfaffian_square_identity() -> None
     assert bool(jnp.all(batched.successful))
     assert not bool(jnp.any(batched.determinant_identity_verified))
     assert bool(jnp.all(jnp.isnan(batched.determinant_identity_residual)))
-
-
-def test_permutation_orientation_empty_and_odd_structural_values() -> None:
     upper = jnp.zeros((6, 6)).at[0, 1].set(2.0).at[2, 3].set(3.0).at[4, 5].set(5.0)
     matrix = upper - upper.T
     base = phx.linalg.evaluate_pfaffian(matrix)
@@ -83,9 +80,6 @@ def test_permutation_orientation_empty_and_odd_structural_values() -> None:
     assert bool(odd.singular)
     assert bool(odd.successful)
     assert not bool(odd.log_derivative_valid)
-
-
-def test_singular_and_near_singular_evidence_guards_log_derivatives() -> None:
     singular = jnp.zeros((4, 4), dtype=jnp.float64)
     singular_result = phx.linalg.evaluate_pfaffian(singular)
     assert singular_result.value == 0
@@ -192,7 +186,7 @@ def test_singular_and_near_singular_evidence_guards_log_derivatives() -> None:
     )
 
 
-def test_jit_vmap_refresh_and_regular_jvp_use_the_public_lifecycle() -> None:
+def test_pfaffian_scenario_2() -> None:
     matrix = _skew(
         jnp.asarray(
             [
@@ -223,9 +217,6 @@ def test_jit_vmap_refresh_and_regular_jvp_use_the_public_lifecycle() -> None:
     expected = 0.5 * first.value * jnp.trace(jnp.linalg.solve(matrix, direction))
     np.testing.assert_allclose(derivative, expected, rtol=1.0e-10, atol=1.0e-12)
     assert bool(first.log_derivative_valid)
-
-
-def test_resource_refusal_and_require_or_project_skew_policy() -> None:
     matrix = jnp.asarray([[0.2, 2.0], [-1.0, -0.1]])
     required = phx.linalg.evaluate_pfaffian(
         matrix,

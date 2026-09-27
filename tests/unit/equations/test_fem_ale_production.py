@@ -35,7 +35,7 @@ def _discretization() -> Any:
     ).prepare()
 
 
-def test_uniform_translation_satisfies_temporal_gcl_and_ale_flux() -> None:
+def test_fem_ale_production_scenario_1() -> None:
     discretization = _discretization()
     coordinates = discretization.default_runtime.coordinates
     velocity = jnp.broadcast_to(jnp.asarray((0.2, -0.1)), coordinates.shape)
@@ -62,9 +62,6 @@ def test_uniform_translation_satisfies_temporal_gcl_and_ale_flux() -> None:
         expected,
         atol=2.0e-12,
     )
-
-
-def test_conservative_remap_and_quality_recovery_preserve_valid_state() -> None:
     mass = jnp.asarray(((2.0, 0.5), (0.5, 1.5)))
     remap = ConservativeRemapPlan(mass, mass, mass)
     state = jnp.asarray(((1.0, 2.0), (3.0, 4.0)))

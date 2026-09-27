@@ -589,7 +589,7 @@ def test_ssprk_ale_routes_topology_geometry_and_evidence_versions_exactly() -> N
     )
 
 
-def test_conservative_remap_identity_is_jittable_and_exact() -> None:
+def test_unstructured_motion_remap_scenario_1() -> None:
     discretization = _quad_plan().prepare()
     count = discretization.cell_count
     remap = phx.discretization.UnstructuredConservativeRemapPlan(
@@ -624,9 +624,6 @@ def test_conservative_remap_identity_is_jittable_and_exact() -> None:
             method="incomplete",
             provenance="unit-test",
         )
-
-
-def test_average_remap_validates_active_volumes_and_masks_inactive_division() -> None:
     discretization = _quad_plan().prepare()
     count = discretization.cell_count
     remap = phx.discretization.UnstructuredConservativeRemapPlan(
@@ -669,9 +666,6 @@ def test_average_remap_validates_active_volumes_and_masks_inactive_division() ->
     assert jnp.all(jnp.isfinite(transferred))
     assert jnp.all(jnp.isfinite(derivative))
     np.testing.assert_array_equal(transferred[0], jnp.zeros_like(transferred[0]))
-
-
-def test_topology_changing_common_refinement_remap_preserves_integral() -> None:
     source_vertices = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )

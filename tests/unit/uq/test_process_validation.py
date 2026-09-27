@@ -71,7 +71,7 @@ def _temporal_diagnostics(*, mean_error: Any = 0.01, covariance_error: Any = 0.0
     )
 
 
-def test_complete_trajectory_scores_reject_independent_time_marginals() -> None:
+def test_process_validation_scenario_1() -> None:
     targets = _ar1(jr.key(0), (96, 6))
     path_forecast = _ar1(jr.key(1), (256, 96, 6))
     independent_time_forecast = jr.normal(jr.key(2), (256, 96, 6))
@@ -87,9 +87,6 @@ def test_complete_trajectory_scores_reject_independent_time_marginals() -> None:
         path_scores.trajectory_energy_score < independent_scores.trajectory_energy_score
     )
     assert path_scores.variogram_score < 0.75 * independent_scores.variogram_score
-
-
-def test_jump_event_diagnostics_recover_counts_channels_and_marks() -> None:
     candidate = _synthetic_events(jr.key(3))
     reference = _synthetic_events(jr.key(4))
 
@@ -117,9 +114,6 @@ def test_jump_event_diagnostics_recover_counts_channels_and_marks() -> None:
     )
     assert diagnostics.count_wasserstein_distance < 0.1
     assert diagnostics.channel_frequency_l1 < 0.03
-
-
-def test_first_passage_diagnostics_require_the_correct_analytic_law() -> None:
     hitting_times = jr.exponential(jr.key(5), (4096,))
     observed = hitting_times <= 2.0
     censored = jnp.where(observed, hitting_times, jnp.inf)
@@ -144,7 +138,7 @@ def test_first_passage_diagnostics_require_the_correct_analytic_law() -> None:
     assert not wrong.passed
 
 
-def test_paired_refinement_is_the_only_numerical_variance_evidence() -> None:
+def test_process_validation_scenario_2() -> None:
     exact = jnp.asarray([1.0, -2.0])
     fine_errors = jnp.asarray([[0.1, -0.2], [0.2, -0.1], [-0.1, 0.3]])
     fine = exact + fine_errors
@@ -179,9 +173,6 @@ def test_paired_refinement_is_the_only_numerical_variance_evidence() -> None:
     )
     with pytest.raises(ValueError, match="not refinement evidence"):
         phx.uq.predictive_variance_decomposition(mislabeled)
-
-
-def test_process_calibration_uses_disjoint_cases_and_retains_raw_scores() -> None:
     with pytest.raises(ValueError, match="must be disjoint"):
         phx.uq.ProcessValidationSplit(("shared",), ("shared",), ("test",))
 
@@ -222,9 +213,6 @@ def test_process_calibration_uses_disjoint_cases_and_retains_raw_scores() -> Non
     assert jnp.mean(report.calibrated_pointwise_coverage_error) < jnp.mean(
         report.raw_pointwise_coverage_error
     )
-
-
-def test_shift_matrix_requires_every_promoted_stochastic_shift() -> None:
     names = ("baseline", "horizon", "covariance", "initial", "regime")
     kinds = (
         "in_distribution",
@@ -269,7 +257,7 @@ def test_shift_matrix_requires_every_promoted_stochastic_shift() -> None:
         )
 
 
-def test_retention_report_rejects_broken_statistics_and_provenance() -> None:
+def test_process_validation_scenario_3() -> None:
     split = _split(calibration=19, test=128)
     targets = jr.normal(jr.key(9), (128, 3))
     samples = jr.normal(jr.key(10), (128, 128, 3))
@@ -363,9 +351,6 @@ def test_retention_report_rejects_broken_statistics_and_provenance() -> None:
     )
     with pytest.raises(RuntimeError, match="retention gates failed"):
         rejected.raise_for_failure()
-
-
-def test_trajectory_diagnostics_reject_unidentifiable_or_invalid_score_inputs() -> None:
     targets = jnp.zeros((4, 3))
     with pytest.raises(ValueError, match="at least two forecast realizations"):
         phx.uq.trajectory_score_diagnostics(jnp.zeros((1, 4, 3)), targets)
@@ -377,9 +362,6 @@ def test_trajectory_diagnostics_reject_unidentifiable_or_invalid_score_inputs() 
             targets,
             weights=weights,
         )
-
-
-def test_event_and_first_passage_diagnostics_reject_failed_path_evidence() -> None:
     events = _synthetic_events(jr.key(11), num_paths=8, capacity=4)
     failed = phx.stochastic.JumpEventBatch(
         events.times,

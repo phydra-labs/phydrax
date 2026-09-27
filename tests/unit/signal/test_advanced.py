@@ -125,6 +125,7 @@ def test_nonuniform_resampling_is_jittable_and_differentiable_in_source_times() 
         # ty: ignore[invalid-argument-type]
         lambda: phx.signal.StreamingFFTConvolutionPlan(jnp.ones((2,)), 4.5),
     ),
+    ids=("iir", "fir", "stft", "streaming-convolution"),
 )
 def test_signal_topology_sizes_require_exact_integers(call: Any) -> None:
     with pytest.raises(TypeError, match="integer"):

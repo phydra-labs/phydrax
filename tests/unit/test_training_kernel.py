@@ -222,7 +222,7 @@ class _CurvaturePreconditioned(AbstractKernelUpdateRule):
         return candidate, next_state, next_state, accepted
 
 
-def test_accepted_attempt_commits_every_training_quantity_and_runs_hooks() -> None:
+def test_training_kernel_scenario_1() -> None:
     kernel, state = _kernel(
         OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"),
         target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
@@ -248,9 +248,26 @@ def test_accepted_attempt_commits_every_training_quantity_and_runs_hooks() -> No
     assert bool(next_state.accepted_boundary)
     assert len(calls) == 1
     assert kernel.tree(next_state).target is kernel.fixed.target
-
-
-def test_lm_like_rule_grows_damping_across_finite_rejections_only() -> None:
+    root = jr.key(3)
+    accepted = [
+        training_accepted_site_key(
+            root, objective_id="fit", site="batch", accepted=4, microstep=0
+        )
+        for _ in range(2)
+    ]
+    attempts = [
+        training_site_key(root, objective_id="fit", site="batch", attempt=a, microstep=0)
+        for a in (4, 5)
+    ]
+    lanes = [
+        training_site_key(
+            root, objective_id="fit", site="batch", attempt=4, microstep=0, lane=lane
+        )
+        for lane in (0, 1)
+    ]
+    data = [jr.key_data(key) for key in (*accepted, *attempts, *lanes)]
+    assert np.array_equal(data[0], data[1])
+    assert len({tuple(np.asarray(value)) for value in data[1:]}) == 5
     kernel, state = _kernel(
         _DampedNewton(0.01),
         target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
@@ -291,9 +308,6 @@ def test_lm_like_rule_grows_damping_across_finite_rejections_only() -> None:
     assert int(state.finite_rejections) == 2
     assert int(state.consecutive_rejections) == 0
     assert len(hooks) == 1
-
-
-def test_kfac_like_rule_retains_curvature_on_a_finite_rejection() -> None:
     kernel, state = _kernel(_CurvaturePreconditioned(learning_rate=10.0))
     next_state, evidence = run_training_attempt(kernel, state, _payload())
 
@@ -307,7 +321,7 @@ def test_kfac_like_rule_retains_curvature_on_a_finite_rejection() -> None:
     _assert_trees_equal(next_state.model_state, state.model_state)
 
 
-def test_nonfinite_attempt_rolls_back_every_training_quantity() -> None:
+def test_training_kernel_scenario_2() -> None:
     kernel, state = _kernel(
         OptaxUpdateRule(optax.adam(0.1), rule_id="adam"),
         target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
@@ -334,44 +348,16 @@ def test_nonfinite_attempt_rolls_back_every_training_quantity() -> None:
     assert int(next_state.nonfinite_rejections) == 1
     assert int(next_state.consecutive_rejections) == 1
     assert not bool(next_state.accepted_boundary)
-
-
-@pytest.mark.parametrize("budget", [0, 2])
-def test_consecutive_rejection_budget_raises_a_domain_error(budget: Any) -> None:
-    kernel, state = _kernel(OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"), budget=budget)
-    for _ in range(budget):
-        state, _ = run_training_attempt(kernel, state, _payload(scale=jnp.nan))
-    with pytest.raises(TrainingRejectionBudgetError) as caught:
-        run_training_attempt(kernel, state, _payload(scale=jnp.nan))
-    assert caught.value.consecutive_rejections == budget + 1
-    assert caught.value.outcome is TrainingAttemptOutcome.NONFINITE
-
-
-def _serialized(payload: Any, like: Any) -> Any:
-    manifest = json.loads(json.dumps(payload.manifest))
-    stream = io.BytesIO()
-    eqx.tree_serialise_leaves(stream, payload.arrays)
-    stream.seek(0)
-    arrays = eqx.tree_deserialise_leaves(stream, like.arrays)
-    return TrainingCheckpointPayload(manifest, arrays)
-
-
-def _resumable_kernel(objective_id: Any = "fit") -> Any:
-    return _kernel(
-        OptaxUpdateRule(optax.adam(0.05), rule_id="adam"),
-        objectives=(_fit(_noisy_squared_error, objective_id=objective_id),),
-        target_policy=ExponentialMovingAverageTargetPolicy(decay=0.9),
-    )
-
-
-def _advance(kernel: Any, state: Any, steps: Any) -> Any:
-    for _ in range(steps):
-        state = kernel.accumulate(state, _payload(support=1.0))
-        state, _ = run_training_attempt(kernel, state, _payload(scale=0.5, support=3.0))
-    return state
-
-
-def test_resumed_checkpoint_equals_the_uninterrupted_run_bitwise() -> None:
+    for budget in [0, 2]:
+        kernel, state = _kernel(
+            OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"), budget=budget
+        )
+        for _ in range(budget):
+            state, _ = run_training_attempt(kernel, state, _payload(scale=jnp.nan))
+        with pytest.raises(TrainingRejectionBudgetError) as caught:
+            run_training_attempt(kernel, state, _payload(scale=jnp.nan))
+        assert caught.value.consecutive_rejections == budget + 1
+        assert caught.value.outcome is TrainingAttemptOutcome.NONFINITE
     kernel, initial = _resumable_kernel()
     like = build_training_checkpoint(kernel, initial)
     uninterrupted = _advance(kernel, initial, 4)
@@ -406,7 +392,31 @@ def test_resumed_checkpoint_equals_the_uninterrupted_run_bitwise() -> None:
     _assert_trees_equal(resumed, uninterrupted)
 
 
-def test_checkpoint_restore_fails_closed_on_identity_or_content_mismatch() -> None:
+def _serialized(payload: Any, like: Any) -> Any:
+    manifest = json.loads(json.dumps(payload.manifest))
+    stream = io.BytesIO()
+    eqx.tree_serialise_leaves(stream, payload.arrays)
+    stream.seek(0)
+    arrays = eqx.tree_deserialise_leaves(stream, like.arrays)
+    return TrainingCheckpointPayload(manifest, arrays)
+
+
+def _resumable_kernel(objective_id: Any = "fit") -> Any:
+    return _kernel(
+        OptaxUpdateRule(optax.adam(0.05), rule_id="adam"),
+        objectives=(_fit(_noisy_squared_error, objective_id=objective_id),),
+        target_policy=ExponentialMovingAverageTargetPolicy(decay=0.9),
+    )
+
+
+def _advance(kernel: Any, state: Any, steps: Any) -> Any:
+    for _ in range(steps):
+        state = kernel.accumulate(state, _payload(support=1.0))
+        state, _ = run_training_attempt(kernel, state, _payload(scale=0.5, support=3.0))
+    return state
+
+
+def test_training_kernel_scenario_3() -> None:
     kernel, initial = _resumable_kernel()
     state = _advance(kernel, initial, 1)
     payload = build_training_checkpoint(kernel, state, sharding_identity="mesh-a")
@@ -424,6 +434,48 @@ def test_checkpoint_restore_fails_closed_on_identity_or_content_mismatch() -> No
             TrainingCheckpointPayload(payload.manifest, tampered),
             sharding_identity="mesh-a",
         )
+    for forge in [
+        _forge_cursor,
+        _forge_rule_state,
+        _forge_model_state,
+        _forge_pending_model_state,
+        _forge_targets,
+        _forge_root_key,
+    ]:
+        kernel, initial = _resumable_kernel()
+        payload = build_training_checkpoint(kernel, _advance(kernel, initial, 2))
+        with pytest.raises(ValueError, match="content digest"):
+            restore_training_checkpoint(
+                kernel, TrainingCheckpointPayload(payload.manifest, forge(payload.arrays))
+            )
+    rule = OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd")
+    with pytest.raises(
+        ValueError, match=r"PARAMETER leaves \['\.weight'\].*trained tree"
+    ):
+        _kernel(rule, objectives=(_fit(_HeldWeight(jnp.asarray([1.0, 1.0]))),))
+    with pytest.raises(ValueError, match=r"MODEL_STATE leaves \['\.count'\]"):
+        _kernel(rule, objectives=(_fit(_HeldCounter(jnp.asarray(0.0))),))
+    kernel, state = _kernel(rule, objectives=(_fit(_HeldTarget(jnp.asarray(1.0))),))
+    _, evidence = run_training_attempt(kernel, state, _payload())
+    assert int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
+    weight = jnp.asarray([2.0, -1.0])
+    values = {}
+    for support_b in (1.0, 100.0):
+        kernel, state = _kernel(
+            OptaxUpdateRule(optax.sgd(1.0), rule_id="sgd"),
+            objectives=_two_objectives(3.0),
+        )
+        next_state, evidence = run_training_attempt(
+            kernel, state, _weighting_payload(support_b)
+        )
+        first, second = evidence.objective_values
+        values[support_b] = float(first)
+        np.testing.assert_allclose(first, jnp.sum((weight - 1.0) ** 2))
+        np.testing.assert_allclose(second, jnp.sum((weight + 2.0) ** 2) / support_b)
+        np.testing.assert_allclose(evidence.value, 0.5 * first + 3.0 * second)
+        gradient = 0.5 * 2.0 * (weight - 1.0) + 3.0 * 2.0 * (weight + 2.0) / support_b
+        np.testing.assert_allclose(next_state.parameters.weight, weight - gradient)
+    assert values[1.0] == values[100.0]
 
 
 def _forge_cursor(arrays: Any) -> Any:
@@ -457,26 +509,6 @@ def _forge_targets(arrays: Any) -> Any:
 
 def _forge_root_key(arrays: Any) -> Any:
     return {**arrays, "root_key_data": arrays["root_key_data"] + 1}
-
-
-@pytest.mark.parametrize(
-    "forge",
-    [
-        _forge_cursor,
-        _forge_rule_state,
-        _forge_model_state,
-        _forge_pending_model_state,
-        _forge_targets,
-        _forge_root_key,
-    ],
-)
-def test_checkpoint_restore_refuses_forged_state_lanes_and_cursors(forge: Any) -> None:
-    kernel, initial = _resumable_kernel()
-    payload = build_training_checkpoint(kernel, _advance(kernel, initial, 2))
-    with pytest.raises(ValueError, match="content digest"):
-        restore_training_checkpoint(
-            kernel, TrainingCheckpointPayload(payload.manifest, forge(payload.arrays))
-        )
 
 
 class _HeldWeight(StrictModule):
@@ -515,19 +547,6 @@ class _HeldTarget(StrictModule):
         )
 
 
-def test_objective_callables_may_hold_only_fixed_arrays() -> None:
-    rule = OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd")
-    with pytest.raises(
-        ValueError, match=r"PARAMETER leaves \['\.weight'\].*trained tree"
-    ):
-        _kernel(rule, objectives=(_fit(_HeldWeight(jnp.asarray([1.0, 1.0]))),))
-    with pytest.raises(ValueError, match=r"MODEL_STATE leaves \['\.count'\]"):
-        _kernel(rule, objectives=(_fit(_HeldCounter(jnp.asarray(0.0))),))
-    kernel, state = _kernel(rule, objectives=(_fit(_HeldTarget(jnp.asarray(1.0))),))
-    _, evidence = run_training_attempt(kernel, state, _payload())
-    assert int(evidence.outcome) == TrainingAttemptOutcome.ACCEPTED
-
-
 def _scaled_error(name: Any, center: Any) -> Any:
     def objective(
         parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
@@ -556,34 +575,42 @@ def _weighting_payload(support_b: Any) -> Any:
     }
 
 
-def test_second_objective_does_not_rescale_the_first() -> None:
-    weight = jnp.asarray([2.0, -1.0])
-    values = {}
-    for support_b in (1.0, 100.0):
-        kernel, state = _kernel(
-            OptaxUpdateRule(optax.sgd(1.0), rule_id="sgd"),
-            objectives=_two_objectives(3.0),
-        )
-        next_state, evidence = run_training_attempt(
-            kernel, state, _weighting_payload(support_b)
-        )
-        first, second = evidence.objective_values
-        values[support_b] = float(first)
-        np.testing.assert_allclose(first, jnp.sum((weight - 1.0) ** 2))
-        np.testing.assert_allclose(second, jnp.sum((weight + 2.0) ** 2) / support_b)
-        np.testing.assert_allclose(evidence.value, 0.5 * first + 3.0 * second)
-        gradient = 0.5 * 2.0 * (weight - 1.0) + 3.0 * 2.0 * (weight + 2.0) / support_b
-        np.testing.assert_allclose(next_state.parameters.weight, weight - gradient)
-    assert values[1.0] == values[100.0]
-
-
-def test_microbatches_of_one_objective_merge_by_support() -> None:
+def test_training_kernel_scenario_4() -> None:
     kernel, state = _kernel(OptaxUpdateRule(optax.sgd(1.0), rule_id="sgd"))
     state = kernel.accumulate(state, _payload(scale=1.0, support=1.0))
     _, evidence = run_training_attempt(kernel, state, _payload(scale=2.0, support=3.0))
     weight, target = jnp.asarray([2.0, -1.0]), jnp.asarray([0.5, 0.25])
     total = jnp.sum((weight - target) ** 2) + jnp.sum((weight - 2.0 * target) ** 2)
     np.testing.assert_allclose(evidence.value, total / 4.0)
+    tree = _LearnedAccelerator(jnp.asarray(0.5))
+    with pytest.raises(
+        ValueError,
+        match=r"no admissible training signal for accelerator parameters at \('\.gain',\)",
+    ):
+        prepare_training_kernel(
+            tree, (_SOLUTION,), _accelerator_spec(), root_authority=None
+        )
+    kernel = prepare_training_kernel(
+        tree, (_WORK,), _accelerator_spec(), root_authority=None
+    )
+    assert kernel.parameter_authorities == (ComponentAuthority.ACCELERATOR,)
+    network = phx.nn.models.MLP(
+        in_size=2, out_size="scalar", width_size=4, depth=1, key=jr.key(0)
+    )
+    tree = _BoundHolder(
+        bind_component(network, ComponentAuthority.ACCELERATOR), jnp.asarray(1.0)
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"no admissible training signal for accelerator parameters at "
+        r"\('\.binding\.model",
+    ):
+        prepare_training_kernel(
+            tree,
+            (_fit(),),
+            _accelerator_spec(),
+            root_authority=ComponentAuthority.MODEL,
+        )
 
 
 class _LearnedAccelerator(AbstractComponentSlot):
@@ -633,47 +660,12 @@ def _accelerator_spec() -> Any:
     )
 
 
-def test_accelerator_parameters_need_an_admissible_work_objective() -> None:
-    tree = _LearnedAccelerator(jnp.asarray(0.5))
-    with pytest.raises(
-        ValueError,
-        match=r"no admissible training signal for accelerator parameters at \('\.gain',\)",
-    ):
-        prepare_training_kernel(
-            tree, (_SOLUTION,), _accelerator_spec(), root_authority=None
-        )
-    kernel = prepare_training_kernel(
-        tree, (_WORK,), _accelerator_spec(), root_authority=None
-    )
-    assert kernel.parameter_authorities == (ComponentAuthority.ACCELERATOR,)
-
-
 class _BoundHolder(StrictModule):
     binding: ComponentBinding
     shift: jax.Array = parameter_field()
 
 
-def test_component_binding_authority_overrides_the_root_authority() -> None:
-    network = phx.nn.models.MLP(
-        in_size=2, out_size="scalar", width_size=4, depth=1, key=jr.key(0)
-    )
-    tree = _BoundHolder(
-        bind_component(network, ComponentAuthority.ACCELERATOR), jnp.asarray(1.0)
-    )
-    with pytest.raises(
-        ValueError,
-        match=r"no admissible training signal for accelerator parameters at "
-        r"\('\.binding\.model",
-    ):
-        prepare_training_kernel(
-            tree,
-            (_fit(),),
-            _accelerator_spec(),
-            root_authority=ComponentAuthority.MODEL,
-        )
-
-
-def test_each_objective_trains_only_the_authorities_that_admit_it() -> None:
+def test_training_kernel_scenario_5() -> None:
     tree = _AcceleratedSolver(_LearnedAccelerator(jnp.asarray(0.5)), jnp.asarray(1.0))
     kernel = prepare_training_kernel(
         tree,
@@ -694,34 +686,6 @@ def test_each_objective_trains_only_the_authorities_that_admit_it() -> None:
         prepare_training_kernel(
             tree, (_SOLUTION, _WORK), _accelerator_spec(), root_authority=None
         )
-
-
-class _PayloadNewtonRule(AbstractKernelUpdateRule):
-    """Rule that forms its own step from the raw payload (bypassing admission)."""
-
-    rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
-    rule_id: str = "payload-newton"
-
-    @property
-    def forms_own_derivatives(self) -> bool:
-        return True
-
-    def init(self, parameters: Any, /) -> Any:
-        return None
-
-    def propose(
-        self,
-        parameters: Any,
-        gradients: Any,
-        value: Any,
-        rule_state: Any,
-        context: Any,
-        /,
-    ) -> Any:
-        return parameters, rule_state, rule_state, jnp.asarray(True)
-
-
-def test_rules_reading_the_payload_require_every_group_to_admit_every_objective() -> None:
     tree = _AcceleratedSolver(_LearnedAccelerator(jnp.asarray(0.5)), jnp.asarray(1.0))
     spec = TrainingKernelSpec(
         _PayloadNewtonRule(), context="authority test", rejection_budget=0
@@ -732,9 +696,6 @@ def test_rules_reading_the_payload_require_every_group_to_admit_every_objective(
         prepare_training_kernel(
             tree, (_SOLUTION, _WORK), spec, root_authority=ComponentAuthority.MODEL
         )
-
-
-def test_rules_that_reevaluate_the_objective_refuse_microbatch_accumulation() -> None:
     kernel, state = _kernel(BacktrackingLineSearchRule(initial_step=4.0))
     with pytest.raises(ValueError, match="does not accumulate"):
         kernel.accumulate(state, _payload())
@@ -743,32 +704,6 @@ def test_rules_that_reevaluate_the_objective_refuse_microbatch_accumulation() ->
     assert float(evidence.value) > float(
         run_training_attempt(kernel, next_state, _payload())[1].value
     )
-
-
-def test_accepted_site_keys_repeat_across_attempts_and_attempt_keys_do_not() -> None:
-    root = jr.key(3)
-    accepted = [
-        training_accepted_site_key(
-            root, objective_id="fit", site="batch", accepted=4, microstep=0
-        )
-        for _ in range(2)
-    ]
-    attempts = [
-        training_site_key(root, objective_id="fit", site="batch", attempt=a, microstep=0)
-        for a in (4, 5)
-    ]
-    lanes = [
-        training_site_key(
-            root, objective_id="fit", site="batch", attempt=4, microstep=0, lane=lane
-        )
-        for lane in (0, 1)
-    ]
-    data = [jr.key_data(key) for key in (*accepted, *attempts, *lanes)]
-    assert np.array_equal(data[0], data[1])
-    assert len({tuple(np.asarray(value)) for value in data[1:]}) == 5
-
-
-def test_per_lane_parameters_train_as_independent_lanes() -> None:
     tree = _Regressor(
         jnp.asarray([[2.0, -1.0], [1.0, 1.0]]),
         jnp.zeros((2,)),
@@ -814,7 +749,32 @@ def test_per_lane_parameters_train_as_independent_lanes() -> None:
         )
 
 
-def test_zero_support_skips_do_not_spend_the_rejection_budget() -> None:
+class _PayloadNewtonRule(AbstractKernelUpdateRule):
+    """Rule that forms its own step from the raw payload (bypassing admission)."""
+
+    rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
+    rule_id: str = "payload-newton"
+
+    @property
+    def forms_own_derivatives(self) -> bool:
+        return True
+
+    def init(self, parameters: Any, /) -> Any:
+        return None
+
+    def propose(
+        self,
+        parameters: Any,
+        gradients: Any,
+        value: Any,
+        rule_state: Any,
+        context: Any,
+        /,
+    ) -> Any:
+        return parameters, rule_state, rule_state, jnp.asarray(True)
+
+
+def test_zero_support_contracts() -> None:
     kernel, state = _kernel(OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"), budget=0)
     initial = _leaves((state.parameters, state.rule_state, state.model_state))
     for _ in range(3):
@@ -834,20 +794,6 @@ def test_zero_support_skips_do_not_spend_the_rejection_budget() -> None:
     with pytest.raises(TrainingRejectionBudgetError) as raised:
         run_training_attempt(kernel, state, _payload(scale=jnp.nan))
     assert raised.value.outcome is TrainingAttemptOutcome.NONFINITE
-
-
-def _unsupported_counter(
-    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
-) -> Any:
-    del fixed, payload, keys
-    contribution = _ObjectiveContribution(jnp.sum(parameters.weight**2), 0.0)
-    counted = eqx.tree_at(
-        lambda state: state.calls, model_state, model_state.calls + 10.0
-    )
-    return contribution, counted, {}
-
-
-def test_zero_support_objective_commits_no_model_state_transition() -> None:
     kernel, state = _kernel(
         OptaxUpdateRule(optax.sgd(0.1), rule_id="sgd"),
         objectives=(_fit(), _fit(_unsupported_counter, objective_id="unsupported")),
@@ -863,6 +809,17 @@ def test_zero_support_objective_commits_no_model_state_transition() -> None:
     expected, _ = run_training_attempt(reference, reference_state, _payload())
     _assert_trees_equal(next_state.parameters, expected.parameters)
     _assert_trees_equal(next_state.model_state, expected.model_state)
+
+
+def _unsupported_counter(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any
+) -> Any:
+    del fixed, payload, keys
+    contribution = _ObjectiveContribution(jnp.sum(parameters.weight**2), 0.0)
+    counted = eqx.tree_at(
+        lambda state: state.calls, model_state, model_state.calls + 10.0
+    )
+    return contribution, counted, {}
 
 
 def test_evaluation_view_drives_evaluation_source_targets_from_the_start() -> None:

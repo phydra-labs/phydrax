@@ -91,34 +91,20 @@ def _bias_id() -> Any:
     return phx.geometry.ParameterId("ellipse", "layers[1].bias")
 
 
-@pytest.mark.parametrize(
-    "missing",
-    [
+def test_neural_implicit_scenario_1() -> None:
+    for missing in [
         "interior_points",
         "exterior_points",
         "sign_margin",
         "evaluation_error",
         "discovery_resolution",
-    ],
-)
-def test_construction_refuses_without_required_certificates(missing: Any) -> None:
-    with pytest.raises(ValueError, match=missing):
-        _region(_ellipse_network(), **{missing: None})
-
-
-def test_construction_refuses_unconstructible_lipschitz_bound_without_declaration() -> (
-    None
-):
+    ]:
+        with pytest.raises(ValueError, match=missing):
+            _region(_ellipse_network(), **{missing: None})
     with pytest.raises(ValueError, match="Lipschitz"):
         _region(_ellipse_network(skip_connection=True))
-
-
-def test_construction_refuses_failed_sign_margin() -> None:
     with pytest.raises(ValueError, match="interior_sign"):
         _region(_ellipse_network(), interior_points=((0.0, 0.6),))
-
-
-def test_three_dimensional_region_certifies_ball_topology() -> None:
     network = phx.nn.models.MLP(
         in_size=3, out_size="scalar", hidden_sizes=[6], activation=jax.nn.tanh, rwf=False
     )
@@ -145,6 +131,42 @@ def test_three_dimensional_region_certifies_ball_topology() -> None:
     assert topology.betti_numbers == (1, 0, 0)
     assert topology.boundary_components == (("outer", 2),)
     assert _GeometryCapability.BOUNDARY_NORMAL in ball.compile().capabilities
+    network = phx.nn.models.MLP(
+        in_size=2,
+        out_size="scalar",
+        hidden_sizes=[4],
+        activation=jax.nn.relu,
+        rwf=False,
+    )
+    # |x| + |y| - 0.55: a diamond whose zero set avoids the lattice nodes.
+    network = _set_weights(
+        network,
+        [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
+        [0.0, 0.0, 0.0, 0.0],
+        [[1.0, 1.0, 1.0, 1.0]],
+        [-0.55],
+    )
+    diamond = phx.geometry.NeuralImplicitRegion(
+        network,
+        ((-1.0, -1.0), (1.0, 1.0)),
+        interior_points=((0.0, 0.0),),
+        exterior_points=((0.9, 0.9),),
+        sign_margin=0.05,
+        evaluation_error=0.0,
+        gradient_margin=0.5,
+        discovery_resolution=17,
+        feature_id="diamond",
+    )
+    geometry = diamond.compile()
+    assert diamond.certificate.topology.betti_numbers == (1, 0)
+    assert (
+        geometry.field_certificate.regularity
+        is phx.geometry.FieldRegularity.PIECEWISE_SMOOTH
+    )
+    assert _GeometryCapability.REGION_QUERY in geometry.capabilities
+    assert _GeometryCapability.BOUNDARY_NORMAL not in geometry.capabilities
+    with pytest.raises(NotImplementedError):
+        geometry.boundary_normal(jnp.asarray([[0.55, 0.0]]))
 
 
 def test_smooth_region_has_negative_inside_sign_with_sampled_evidence(
@@ -187,46 +209,7 @@ def test_capabilities_are_only_the_evidenced_ones(region: Any) -> None:
         geometry.closest_point(jnp.zeros((1, 2)))
 
 
-def test_nonsmooth_network_does_not_advertise_normals() -> None:
-    network = phx.nn.models.MLP(
-        in_size=2,
-        out_size="scalar",
-        hidden_sizes=[4],
-        activation=jax.nn.relu,
-        rwf=False,
-    )
-    # |x| + |y| - 0.55: a diamond whose zero set avoids the lattice nodes.
-    network = _set_weights(
-        network,
-        [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
-        [0.0, 0.0, 0.0, 0.0],
-        [[1.0, 1.0, 1.0, 1.0]],
-        [-0.55],
-    )
-    diamond = phx.geometry.NeuralImplicitRegion(
-        network,
-        ((-1.0, -1.0), (1.0, 1.0)),
-        interior_points=((0.0, 0.0),),
-        exterior_points=((0.9, 0.9),),
-        sign_margin=0.05,
-        evaluation_error=0.0,
-        gradient_margin=0.5,
-        discovery_resolution=17,
-        feature_id="diamond",
-    )
-    geometry = diamond.compile()
-    assert diamond.certificate.topology.betti_numbers == (1, 0)
-    assert (
-        geometry.field_certificate.regularity
-        is phx.geometry.FieldRegularity.PIECEWISE_SMOOTH
-    )
-    assert _GeometryCapability.REGION_QUERY in geometry.capabilities
-    assert _GeometryCapability.BOUNDARY_NORMAL not in geometry.capabilities
-    with pytest.raises(NotImplementedError):
-        geometry.boundary_normal(jnp.asarray([[0.55, 0.0]]))
-
-
-def test_declared_lipschitz_bound_is_recorded_and_checked() -> None:
+def test_neural_implicit_scenario_2() -> None:
     declared = _region(_ellipse_network(), lipschitz_upper_bound=10.0)
     assert declared.certificate.lipschitz_evidence is phx.CapabilityEvidenceKind.DECLARED
     certificate = declared.compile().field_certificate
@@ -237,6 +220,52 @@ def test_declared_lipschitz_bound_is_recorded_and_checked() -> None:
     assert certificate.sign_reliability is not phx.geometry.SignReliability.RELIABLE
     with pytest.raises(ValueError, match="lipschitz_sampled_gradient"):
         _region(_ellipse_network(), lipschitz_upper_bound=0.1)
+    region = _region(_hidden_component_network())
+    geometry = region.compile()
+    hidden = 0.5 * (_HIDDEN_LOW + _HIDDEN_HIGH)
+
+    # The true region has a second component the lattice never sees.
+    np.testing.assert_array_equal(
+        np.asarray(
+            geometry.contains(
+                jnp.asarray([[hidden, hidden], [hidden, 0.9], [0.9, hidden]])
+            )
+        ),
+        [True, False, False],
+    )
+    assert region.certificate.topology.betti_numbers == (1, 0)
+    certificate = geometry.field_certificate
+    assert certificate.topology_identity is None
+    assert certificate.sign_reliability is not phx.geometry.SignReliability.RELIABLE
+    assert certificate.zero_set_accuracy is phx.geometry.ZeroSetAccuracy.APPROXIMATE
+    shift = jnp.asarray([0.05, 0.0])
+    network = _ShiftedField(_ellipse_network(), shift)
+    region = _region(network, lipschitz_upper_bound=10.0)
+    geometry = region.compile()
+
+    names = {parameter.name for parameter in region.parameter_ids}
+    assert names == {
+        "network.layers[0].weight",
+        "network.layers[0].bias",
+        "network.layers[1].weight",
+        "network.layers[1].bias",
+    }
+    assert geometry.schema.parameter_ids == region.parameter_ids
+    with pytest.raises(KeyError):
+        geometry.schema.index(phx.geometry.ParameterId("ellipse", "shift"))
+
+    # The fixed shift still acts on the field and survives recertification.
+    points = jnp.asarray([[0.0, 0.0], [0.5, 0.2], [1.2, 0.1]])
+    np.testing.assert_allclose(
+        np.asarray(geometry.boundary_field(points)),
+        np.asarray(jax.vmap(network.network)(points - shift)),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    bias = phx.geometry.ParameterId("ellipse", "network.layers[1].bias")
+    base = geometry.state.values[geometry.schema.index(bias)]
+    recertified = region.recertify(geometry.with_parameters({bias: base - 0.01}).state)
+    np.testing.assert_array_equal(np.asarray(recertified.network.shift), shift)
 
 
 # A lattice cell of the 25-point discovery lattice over `_BOUNDS` spans
@@ -308,27 +337,6 @@ def _hidden_component_network() -> Any:
     )
 
 
-def test_zero_set_component_between_samples_is_not_certified() -> None:
-    region = _region(_hidden_component_network())
-    geometry = region.compile()
-    hidden = 0.5 * (_HIDDEN_LOW + _HIDDEN_HIGH)
-
-    # The true region has a second component the lattice never sees.
-    np.testing.assert_array_equal(
-        np.asarray(
-            geometry.contains(
-                jnp.asarray([[hidden, hidden], [hidden, 0.9], [0.9, hidden]])
-            )
-        ),
-        [True, False, False],
-    )
-    assert region.certificate.topology.betti_numbers == (1, 0)
-    certificate = geometry.field_certificate
-    assert certificate.topology_identity is None
-    assert certificate.sign_reliability is not phx.geometry.SignReliability.RELIABLE
-    assert certificate.zero_set_accuracy is phx.geometry.ZeroSetAccuracy.APPROXIMATE
-
-
 class _ShiftedField(phx.AbstractArrayModel):
     """A network evaluated at `x - shift` with a FIXED shift."""
 
@@ -349,37 +357,6 @@ class _ShiftedField(phx.AbstractArrayModel):
 
     def model_execution_contract(self) -> Any:
         return self.network.model_execution_contract()
-
-
-def test_fixed_field_leaves_are_fixed_data_not_design_parameters() -> None:
-    shift = jnp.asarray([0.05, 0.0])
-    network = _ShiftedField(_ellipse_network(), shift)
-    region = _region(network, lipschitz_upper_bound=10.0)
-    geometry = region.compile()
-
-    names = {parameter.name for parameter in region.parameter_ids}
-    assert names == {
-        "network.layers[0].weight",
-        "network.layers[0].bias",
-        "network.layers[1].weight",
-        "network.layers[1].bias",
-    }
-    assert geometry.schema.parameter_ids == region.parameter_ids
-    with pytest.raises(KeyError):
-        geometry.schema.index(phx.geometry.ParameterId("ellipse", "shift"))
-
-    # The fixed shift still acts on the field and survives recertification.
-    points = jnp.asarray([[0.0, 0.0], [0.5, 0.2], [1.2, 0.1]])
-    np.testing.assert_allclose(
-        np.asarray(geometry.boundary_field(points)),
-        np.asarray(jax.vmap(network.network)(points - shift)),
-        rtol=0.0,
-        atol=1e-12,
-    )
-    bias = phx.geometry.ParameterId("ellipse", "network.layers[1].bias")
-    base = geometry.state.values[geometry.schema.index(bias)]
-    recertified = region.recertify(geometry.with_parameters({bias: base - 0.01}).state)
-    np.testing.assert_array_equal(np.asarray(recertified.network.shift), shift)
 
 
 def test_weights_update_through_the_design_state(region: Any) -> None:

@@ -28,7 +28,7 @@ def _zero(time: Any, state: Any, action: Any, args: Any) -> float:
     return 0.0
 
 
-def test_impulse_qvi_reports_complementarity_and_nested_refinement() -> None:
+def test_control_references_scenario_1() -> None:
     grid = BoundedUniformGrid1D(-1.0, 1.0, 9)
     time_grid = TimeGrid(jnp.linspace(0.0, 0.2, 5), time_id="qvi-grid")
     terminal = np.asarray(grid.points) ** 2
@@ -71,9 +71,6 @@ def test_impulse_qvi_reports_complementarity_and_nested_refinement() -> None:
         4 * (time_grid.num_times - 1) + 1,
         2 * (grid.num_points - 1) + 1,
     )
-
-
-def test_avellaneda_stoikov_inventory_skews_reservation_price_downward() -> None:
     time_grid = TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="as-grid")
     plan = AvellanedaStoikovPlan(
         risk_aversion=0.1,

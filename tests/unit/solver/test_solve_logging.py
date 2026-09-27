@@ -248,7 +248,7 @@ def test_solve_can_subsample_train_terms_and_log_all_terms(phydrax_events: Any) 
     assert "train/terms/001_train_b/value" in metric_names
 
 
-def test_solve_can_subsample_train_terms_without_term_logging() -> None:
+def test_solve_contracts() -> None:
     solver = _make_dataset_solver_with_two_train_terms()
 
     solver.solve(
@@ -259,9 +259,6 @@ def test_solve_can_subsample_train_terms_without_term_logging() -> None:
         log_terms=False,
         train_term_sample_size=1,
     )
-
-
-def test_solve_rejects_invalid_train_term_sample_size() -> None:
     solver = _make_dataset_solver_with_two_train_terms()
 
     with pytest.raises(ValueError, match="train_term_sample_size"):

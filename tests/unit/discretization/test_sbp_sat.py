@@ -19,35 +19,28 @@ def _grid(points: Any = 33, *, lower: Any = 0.0, upper: Any = 1.0) -> Any:
     ).prepare(jnp.asarray([[lower], [upper]]))
 
 
-@pytest.mark.parametrize("order", [2, 4, 6, 8])
-def test_diagonal_norm_sbp_families_certify_identity_and_closure_exactness(
-    order: Any,
-) -> None:
-    grid = _grid(41)
-    sbp = phx.discretization.SBPDerivativePlan(
-        grid,
-        "x",
-        interior_order=order,
-    ).prepare()
-    x = grid.axes[0].nodes
-    degree = order // 2
-    values = x**degree
-    exact = degree * x ** (degree - 1) if degree > 0 else jnp.zeros_like(x)
+def test_sbp_sat_scenario_1() -> None:
+    for order in [2, 4, 6, 8]:
+        grid = _grid(41)
+        sbp = phx.discretization.SBPDerivativePlan(
+            grid,
+            "x",
+            interior_order=order,
+        ).prepare()
+        x = grid.axes[0].nodes
+        degree = order // 2
+        values = x**degree
+        exact = degree * x ** (degree - 1) if degree > 0 else jnp.zeros_like(x)
 
-    derivative = sbp.operator.mv(values)
+        derivative = sbp.operator.mv(values)
 
-    assert sbp.stability_report.passed
-    assert sbp.operator.consistency_report.passed
-    assert sbp.operator.stencil_set.interior_accuracy_order == order
-    assert sbp.operator.stencil_set.closure_accuracy_order == order // 2
-    assert jnp.all(sbp.norm_weights > 0.0)
-    assert jnp.max(jnp.abs(sbp.identity_residual())) < 5e-11
-    np.testing.assert_allclose(derivative, exact, rtol=2e-8, atol=2e-8)
-
-
-def test_compatible_second_derivative_annihilates_constants_and_is_dissipative_on_zero_trace() -> (
-    None
-):
+        assert sbp.stability_report.passed
+        assert sbp.operator.consistency_report.passed
+        assert sbp.operator.stencil_set.interior_accuracy_order == order
+        assert sbp.operator.stencil_set.closure_accuracy_order == order // 2
+        assert jnp.all(sbp.norm_weights > 0.0)
+        assert jnp.max(jnp.abs(sbp.identity_residual())) < 5e-11
+        np.testing.assert_allclose(derivative, exact, rtol=2e-8, atol=2e-8)
     grid = _grid(65)
     sbp = phx.discretization.SBPDerivativePlan(
         grid,
@@ -67,9 +60,6 @@ def test_compatible_second_derivative_annihilates_constants_and_is_dissipative_o
     np.testing.assert_allclose(constant, 0.0, rtol=0.0, atol=2e-10)
     assert energy_rate < 0.0
     np.testing.assert_allclose(left, right, rtol=2e-11, atol=2e-11)
-
-
-def test_advection_inflow_sat_makes_discrete_energy_nonincreasing() -> None:
     grid = _grid(49)
     sbp = phx.discretization.SBPDerivativePlan(
         grid,
@@ -87,7 +77,7 @@ def test_advection_inflow_sat_makes_discrete_energy_nonincreasing() -> None:
     assert energy_rate <= 2e-10
 
 
-def test_conforming_central_and_upwind_sat_interfaces_have_expected_energy() -> None:
+def test_sbp_sat_scenario_2() -> None:
     left = phx.discretization.SBPDerivativePlan(
         _grid(33, lower=0.0, upper=0.5),
         "x",
@@ -123,9 +113,6 @@ def test_conforming_central_and_upwind_sat_interfaces_have_expected_energy() -> 
 
     np.testing.assert_allclose(rates[0], 0.0, rtol=0.0, atol=2e-10)
     assert rates[1] <= rates[0] + 2e-10
-
-
-def test_sbp_tensor_axis_preserves_other_entity_axes_and_norm_measure() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(33),
@@ -151,9 +138,6 @@ def test_sbp_tensor_axis_preserves_other_entity_axes_and_norm_measure() -> None:
         rtol=2e-10,
         atol=2e-10,
     )
-
-
-def test_sbp_family_rejects_grid_too_short_for_boundary_closures() -> None:
     with pytest.raises(ValueError, match="requires at least"):
         phx.discretization.SBPDerivativePlan(
             _grid(15),

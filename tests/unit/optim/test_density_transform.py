@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_conic_filter_has_positive_normalized_rows_and_preserves_box() -> None:
+def test_density_transform_scenario_1() -> None:
     plan = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [0.4], [1.1], [2.0]]),
         1.25,
@@ -30,9 +30,6 @@ def test_conic_filter_has_positive_normalized_rows_and_preserves_box() -> None:
     bounded = prepared.apply(jnp.asarray([0.0, 0.2, 0.8, 1.0]))
     np.testing.assert_allclose(constant, 0.37, rtol=0.0, atol=2.0e-15)
     assert bool(jnp.all((bounded >= 0.0) & (bounded <= 1.0)))
-
-
-def test_conic_filter_uses_physical_distance_and_nonuniform_measures() -> None:
     prepared = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [0.5], [2.0]]),
         1.1,
@@ -50,9 +47,6 @@ def test_conic_filter_uses_physical_distance_and_nonuniform_measures() -> None:
         ]
     )
     np.testing.assert_allclose(filtered, expected, rtol=2.0e-14, atol=2.0e-14)
-
-
-def test_fixed_region_is_context_not_a_design_input_and_is_restored_exactly() -> None:
     filter_plan = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         1.5,
@@ -74,9 +68,6 @@ def test_fixed_region_is_context_not_a_design_input_and_is_restored_exactly() ->
     physical = transform.apply(jnp.asarray([0.6, 0.0, 0.8]), jnp.asarray(5.0))
     assert float(physical[0]) == 1.0
     assert float(physical[2]) == 0.25
-
-
-def test_omitted_fixed_density_is_explicit_fixed_void() -> None:
     prepared = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [1.0]]),
         0.0,
@@ -85,7 +76,7 @@ def test_omitted_fixed_density_is_explicit_fixed_void() -> None:
     np.testing.assert_array_equal(prepared.apply(jnp.asarray([0.4, 0.9])), [0.4, 0.0])
 
 
-def test_zero_radius_is_identity_on_the_design_region() -> None:
+def test_density_transform_scenario_2() -> None:
     prepared = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [0.3], [1.8]]),
         0.0,
@@ -95,9 +86,6 @@ def test_zero_radius_is_identity_on_the_design_region() -> None:
     ).prepare()
     result = prepared.apply(jnp.asarray([0.1, 0.2, 0.9]))
     np.testing.assert_array_equal(result, [0.1, 0.75, 0.9])
-
-
-def test_tanh_projection_is_monotone_bounded_and_supports_dynamic_beta() -> None:
     projection = phx.optim.TanhDensityProjectionPlan(jnp.asarray(0.5))
     density = jnp.linspace(0.0, 1.0, 41)
     low_beta = projection.apply(density, jnp.asarray(1.0))
@@ -109,9 +97,6 @@ def test_tanh_projection_is_monotone_bounded_and_supports_dynamic_beta() -> None
     np.testing.assert_allclose(low_beta[endpoints], [0.0, 1.0], atol=2.0e-15)
     np.testing.assert_allclose(high_beta[endpoints], [0.0, 1.0], atol=2.0e-15)
     assert float(high_beta[10]) < float(low_beta[10])
-
-
-def test_radius_eta_beta_and_measures_are_validated() -> None:
     coordinates = jnp.asarray([[0.0], [1.0]])
     mask = jnp.ones((2,), dtype="bool")
     for radius in (-1.0, jnp.nan, jnp.inf):
@@ -134,7 +119,7 @@ def test_radius_eta_beta_and_measures_are_validated() -> None:
         projection.apply(jnp.asarray([0.25, 0.75]), jnp.asarray([2.0]))
 
 
-def test_sparse_resource_limit_fails_before_route_materialization() -> None:
+def test_density_transform_scenario_3() -> None:
     plan = phx.optim.ConicDensityFilterPlan(
         jnp.asarray([[0.0], [0.1], [0.2]]),
         1.0,
@@ -143,9 +128,6 @@ def test_sparse_resource_limit_fails_before_route_materialization() -> None:
     )
     with pytest.raises(ValueError, match="maximum_connections"):
         plan.prepare()
-
-
-def test_threshold_density_is_binary_inclusive_and_forward_only() -> None:
     density = jnp.asarray([0.0, 0.49, 0.5, 0.9, 1.0])
     binary = phx.optim.threshold_density(density, jnp.asarray(0.5))
     np.testing.assert_array_equal(binary, [0.0, 0.0, 1.0, 1.0, 1.0])
@@ -158,9 +140,6 @@ def test_threshold_density_is_binary_inclusive_and_forward_only() -> None:
     for eta in (-0.1, 1.1, jnp.nan):
         with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="eta"):
             phx.optim.threshold_density(density, eta)
-
-
-def test_density_transform_vjp_matches_centered_directional_difference() -> None:
     prepared = phx.optim.DensityTransformPlan(
         phx.optim.ConicDensityFilterPlan(
             jnp.asarray([[0.0], [0.5], [1.4], [2.2]]),

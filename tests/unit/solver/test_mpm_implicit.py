@@ -137,7 +137,7 @@ def test_implicit_step_rejects_invalid_tangent_or_deformation_jacobian(
     assert eqx.tree_equal(detail.accepted_state, rejected)
 
 
-def test_implicit_plane_stress_uses_condensed_material_tangent() -> None:
+def test_implicit_contracts() -> None:
     material = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )
@@ -155,9 +155,6 @@ def test_implicit_plane_stress_uses_condensed_material_tangent() -> None:
     assert bool(detail.successful)
     assert bool(detail.diagnostics.tangent_successful)
     assert jnp.all(detail.accepted_state.particles.material_state[:, -1] == 0.0)
-
-
-def test_implicit_j2_accepts_elastic_step_and_preserves_history_shape() -> None:
     material = phx.applications.solid_mechanics.FiniteStrainJ2MPMConstitutivePlan()
     compiled, position, volume = _compiled(material)
     arguments = phx.equations.MaterialPointArguments(

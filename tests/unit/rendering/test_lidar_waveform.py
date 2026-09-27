@@ -63,7 +63,7 @@ def _speed_unit() -> Any:
     return phx.units.derived_unit("m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1)))
 
 
-def test_hard_surface_waveform_and_return_extraction_recover_delay() -> None:
+def test_lidar_waveform_scenario_1() -> None:
     vertices, rays, surface = _surface_and_rays()
     support = _waveform_support(rays)
     pulse = _pulse()
@@ -83,9 +83,6 @@ def test_hard_surface_waveform_and_return_extraction_recover_delay() -> None:
     )
     assert bool(returns.successful)
     np.testing.assert_allclose(returns.delays[0, 0], 2.0, atol=0.05)
-
-
-def test_atmosphere_multipath_and_multiple_scattering_are_time_resolved() -> None:
     _, rays, _ = _surface_and_rays()
     support = _waveform_support(rays)
     pulse = _pulse()
@@ -127,9 +124,6 @@ def test_atmosphere_multipath_and_multiple_scattering_are_time_resolved() -> Non
     ).evaluate(jr.key(0))
     assert bool(scattered.evidence.successful)
     assert np.sum(np.asarray(scattered.values)) > 0.0
-
-
-def test_waveform_plans_refuse_incompatible_units_and_invalid_capacities() -> None:
     _, rays, _ = _surface_and_rays()
     support = _waveform_support(rays)
     pulse = _pulse()

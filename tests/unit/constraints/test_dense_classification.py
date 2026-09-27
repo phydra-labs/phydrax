@@ -49,7 +49,7 @@ def _binary_problem(
     return term, field, logits, targets
 
 
-def test_dense_site_named_axes_and_exact_binary_nll() -> None:
+def test_dense_contracts() -> None:
     term, field, logits, targets = _binary_problem()
     batch = term.observed_batch(key=jr.key(1))
     per_case = term.per_case_loss({"u": field}, batch)
@@ -59,9 +59,6 @@ def test_dense_site_named_axes_and_exact_binary_nll() -> None:
     assert batch.site_axes == ("__phydra_sep__x__0",)
     assert batch.target.shape == (3, 5)
     assert jnp.allclose(per_case, expected)
-
-
-def test_dense_masks_sanitize_poisoned_targets_before_geometry_weighting() -> None:
     target_mask = jnp.ones((3, 5), dtype="bool").at[:, 0].set(False)
     term, field, logits, targets = _binary_problem(
         target_mask=target_mask,
@@ -75,9 +72,6 @@ def test_dense_masks_sanitize_poisoned_targets_before_geometry_weighting() -> No
 
     assert jnp.all(jnp.isfinite(per_case))
     assert jnp.allclose(per_case, jnp.mean(pointwise[:, active], axis=1))
-
-
-def test_dense_case_weights_are_separate_from_support_reduction() -> None:
     case_weight = jnp.asarray([1.0, 2.0, 5.0])
     term, field, _, _ = _binary_problem(sample_weight=case_weight)
     batch = term.observed_batch()
@@ -87,6 +81,50 @@ def test_dense_case_weights_are_separate_from_support_reduction() -> None:
         term.loss({"u": field}, batch=batch),
         jnp.sum(case_weight * per_case) / jnp.sum(case_weight),
     )
+    data = phx.domain.DatasetDomain(jnp.asarray([0.0, 1.0]))
+    component = (data @ phx.domain.Interval1d(0.0, 1.0)).component()
+    schema = phx.ml.TargetSchema("binary", class_labels=(0, 1))
+
+    with pytest.raises(ValueError, match="fixed explicit axis"):
+        DenseSiteClassificationTerm(
+            "u",
+            component,
+            jnp.zeros((2, 4), dtype=jnp.int32),
+            schema,
+            sampling=phx.domain.GridSampling(
+                {"x": 4}, dense=phx.domain.PointSampling(2, design="uniform")
+            ),
+        )
+    with pytest.raises(ValueError, match="align exactly"):
+        DenseSiteClassificationTerm(
+            "u",
+            component,
+            jnp.zeros((2, 3), dtype=jnp.int32),
+            schema,
+            sampling=phx.domain.GridSampling(
+                {"x": UniformAxisSpec(4)},
+                dense=phx.domain.PointSampling(2, design="uniform"),
+            ),
+        )
+    term, field, _, _ = _binary_problem()
+    residual = phx.conditions.Residual("u", term.component, lambda candidate: candidate)
+    residual_term = phx.terms.ResidualPenalty(
+        residual,
+        phx.integration.per_step(
+            phx.integration.mean_over(term.component),
+            phx.domain.PointSampling(
+                8,
+                layout=phx.domain.SampleLayout((("data", "x"),)),
+                design="uniform",
+            ),
+        ),
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": field},
+        terms=(term, residual_term),
+    )
+
+    assert jnp.isfinite(solver.loss(key=jr.key(12)))
 
 
 def test_dense_hard_soft_and_multilabel_target_shapes() -> None:
@@ -202,56 +240,6 @@ def test_dense_integral_refinement_and_jit_gradient() -> None:
     assert jnp.abs(fine_value - exact_integral) < jnp.abs(coarse_value - exact_integral)
     gradient = jax.jit(jax.grad(lambda scale: evaluate(scale, coarse, coarse_batch)))(0.3)
     assert jnp.isfinite(gradient)
-
-
-def test_dense_rejects_resampled_site_coordinates_and_shape_mismatch() -> None:
-    data = phx.domain.DatasetDomain(jnp.asarray([0.0, 1.0]))
-    component = (data @ phx.domain.Interval1d(0.0, 1.0)).component()
-    schema = phx.ml.TargetSchema("binary", class_labels=(0, 1))
-
-    with pytest.raises(ValueError, match="fixed explicit axis"):
-        DenseSiteClassificationTerm(
-            "u",
-            component,
-            jnp.zeros((2, 4), dtype=jnp.int32),
-            schema,
-            sampling=phx.domain.GridSampling(
-                {"x": 4}, dense=phx.domain.PointSampling(2, design="uniform")
-            ),
-        )
-    with pytest.raises(ValueError, match="align exactly"):
-        DenseSiteClassificationTerm(
-            "u",
-            component,
-            jnp.zeros((2, 3), dtype=jnp.int32),
-            schema,
-            sampling=phx.domain.GridSampling(
-                {"x": UniformAxisSpec(4)},
-                dense=phx.domain.PointSampling(2, design="uniform"),
-            ),
-        )
-
-
-def test_dense_classification_composes_with_physics_residual_in_solver() -> None:
-    term, field, _, _ = _binary_problem()
-    residual = phx.conditions.Residual("u", term.component, lambda candidate: candidate)
-    residual_term = phx.terms.ResidualPenalty(
-        residual,
-        phx.integration.per_step(
-            phx.integration.mean_over(term.component),
-            phx.domain.PointSampling(
-                8,
-                layout=phx.domain.SampleLayout((("data", "x"),)),
-                design="uniform",
-            ),
-        ),
-    )
-    solver = phx.solver.FunctionalSolver(
-        functions={"u": field},
-        terms=(term, residual_term),
-    )
-
-    assert jnp.isfinite(solver.loss(key=jr.key(12)))
 
 
 def test_dense_zero_weight_skips_nonfinite_predictions() -> None:

@@ -34,7 +34,7 @@ def _subspace() -> Any:
     return root, ParameterSubspace.from_leaf_paths(root, paths)
 
 
-def test_parameter_subspace_pack_unpack_and_reconstruction_are_exact() -> None:
+def test_parameter_subspace_contracts() -> None:
     root, subspace = _subspace()
     packed = subspace.pack()
     selected = subspace.unpack(packed)
@@ -55,9 +55,6 @@ def test_parameter_subspace_pack_unpack_and_reconstruction_are_exact() -> None:
     )
     with pytest.raises(ValueError, match="exact dtype"):
         subspace.pack(wrong_dtype)
-
-
-def test_parameter_subspace_preserves_the_frozen_complement() -> None:
     root, _ = _subspace()
     paths = ParameterSubspace.array_leaf_paths(root)
     subspace = ParameterSubspace.from_leaf_paths(root, paths[:1])
@@ -72,9 +69,7 @@ def test_parameter_subspace_preserves_the_frozen_complement() -> None:
     assert eqx.tree_equal(original_frozen, moved_frozen)
 
 
-def test_weight_space_recurrence_matches_serial_execution_and_streaming_continuation() -> (
-    None
-):
+def test_weight_space_contracts() -> None:
     _, subspace = _subspace()
     associative = WeightSpaceRecurrentModel(
         subspace,
@@ -120,9 +115,6 @@ def test_weight_space_recurrence_matches_serial_execution_and_streaming_continua
     decoded = associative(batch, queries)
     assert decoded.shape == (7, 5)
     assert jnp.all(jnp.isfinite(decoded))
-
-
-def test_weight_space_reset_isolates_parameter_and_observation_state() -> None:
     _, subspace = _subspace()
     model = WeightSpaceRecurrentModel(
         subspace,
@@ -164,9 +156,6 @@ def test_weight_space_reset_isolates_parameter_and_observation_state() -> None:
         RecurrentBatch(values[4:], jnp.ones((4,), dtype="bool"))
     ).states
     assert jnp.allclose(packed, jnp.concatenate((first, second)), atol=2e-10, rtol=2e-10)
-
-
-def test_weight_space_model_is_jittable_differentiable_and_serializable() -> None:
     _, subspace = _subspace()
     model = WeightSpaceRecurrentModel(
         subspace,
@@ -198,9 +187,12 @@ def test_weight_space_model_is_jittable_differentiable_and_serializable() -> Non
     buffer.seek(0)
     restored = eqx.tree_deserialise_leaves(buffer, model)
     assert jnp.allclose(restored(batch, queries), expected, rtol=1e-13, atol=1e-13)
-
-
-def test_weight_space_operator_decodes_final_state_on_independent_queries() -> None:
+    root = _ComplexRoot(jnp.array([1.0 + 1.0j]))
+    subspace = ParameterSubspace(root, eqx.is_inexact_array)
+    model = WeightSpaceRecurrentModel(subspace, 1, 1, key=jr.key(9))
+    batch = RecurrentBatch(jnp.ones((3, 1)), jnp.ones((3,), dtype="bool"))
+    with pytest.raises(TypeError, match="homogeneous real or complex"):
+        model.parameter_trajectory(batch)
     _, subspace = _subspace()
     model = WeightSpaceOperator(
         subspace,
@@ -245,12 +237,3 @@ def test_weight_space_operator_decodes_final_state_on_independent_queries() -> N
     )
     with pytest.raises(ValueError, match="does not match out_channels"):
         mismatched(batch)
-
-
-def test_weight_space_model_rejects_mixed_real_and_complex_recurrence() -> None:
-    root = _ComplexRoot(jnp.array([1.0 + 1.0j]))
-    subspace = ParameterSubspace(root, eqx.is_inexact_array)
-    model = WeightSpaceRecurrentModel(subspace, 1, 1, key=jr.key(9))
-    batch = RecurrentBatch(jnp.ones((3, 1)), jnp.ones((3,), dtype="bool"))
-    with pytest.raises(TypeError, match="homogeneous real or complex"):
-        model.parameter_trajectory(batch)

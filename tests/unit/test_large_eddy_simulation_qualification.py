@@ -54,7 +54,7 @@ def _readdress_campaign(campaign: Any) -> None:
     )
 
 
-def test_campaign_and_matrix_ids_are_deterministic_content_addresses() -> None:
+def test_large_eddy_simulation_qualification_scenario_1() -> None:
     campaign, matrix = _loaded()
     second_campaign, second_matrix = _loaded()
     reordered = dict(reversed(tuple(campaign.items())))
@@ -67,9 +67,6 @@ def test_campaign_and_matrix_ids_are_deterministic_content_addresses() -> None:
     assert content_address(reordered) == content_address(campaign)
     assert "schema_version" not in canonical_json(campaign)
     assert "schema_version" not in canonical_json(matrix.to_record())
-
-
-def test_every_route_and_static_formula_has_an_exact_separate_support_tuple() -> None:
     campaign, _ = _loaded()
     cases = tuple(campaign["cases"])
     supports = tuple(
@@ -130,9 +127,38 @@ def test_every_route_and_static_formula_has_an_exact_separate_support_tuple() ->
         "immersed-mac-sbdf2-restart",
     } <= set(final_routes)
     assert len(set(final_routes.values())) == len(final_routes)
-
-
-def test_restart_tree_comparison_handles_bool_integer_and_numeric_leaves() -> None:
+    campaign, _ = _loaded()
+    by_name = {case["name"]: case for case in campaign["cases"]}
+    activity = {
+        "periodic-smagorinsky": "backend_activity_violation",
+        "periodic-amd": "backend_activity_violation",
+        "periodic-vreman": "backend_activity_violation",
+        "periodic-wale": "backend_activity_violation",
+        "periodic-dynamic-smagorinsky": "synthetic_stress_magnitude",
+        "periodic-dynamic-production": "dynamic_sgs_transfer_magnitude",
+        "mac-momentum-scalar-boussinesq": "momentum_sgs_action_magnitude",
+        "mac-prognostic-ksgs": "ksgs_eddy_viscosity_magnitude",
+        "mac-dynamic-ksgs": "mac_sgs_action_magnitude",
+        "ocean-low-re-ksgs": "low_re_dissipation_missing",
+        "mac-frozen-imex": "frozen_les_action_magnitude",
+        "mac-frozen-sbdf2": "frozen_les_action_magnitude",
+        "spectral-channel-wale": "subgrid_transfer_magnitude",
+        "channel-mixed-wall-stress": "channel_les_viscosity_magnitude",
+        "channel-complete-restriction": "channel_les_viscosity_magnitude",
+        "distributed-periodic-slab": "distributed_sgs_action_magnitude",
+        "distributed-full-flow-production": "distributed_sgs_action_magnitude",
+        "favre-compressible-smoke": "favre_stress_magnitude",
+        "favre-transported-sgs-dg": "negative_sgs_source_missing",
+        "unstructured-low-mach-smoke": "sgs_flux_magnitude",
+        "unstructured-pressure-continuation": "sgs_flux_magnitude",
+        "immersed-mac-wall-stress": "immersed_sgs_action_magnitude",
+        "immersed-mac-sbdf2-restart": "sgs_extrapolated_action_magnitude",
+        "learned-stress-periodic": "learned_stress_magnitude",
+        "learned-stress-mac": "learned_stress_magnitude",
+        "lbm-smagorinsky-smoke": "backend_evidence_failure",
+    }
+    for case_name, metric_name in activity.items():
+        assert metric_name in {metric["name"] for metric in by_name[case_name]["metrics"]}
     state = {
         "accepted": jnp.asarray((True, False)),
         "steps": jnp.asarray(2, dtype=jnp.int32),
@@ -151,7 +177,7 @@ def test_restart_tree_comparison_handles_bool_integer_and_numeric_leaves() -> No
     ) == pytest.approx(0.25)
 
 
-def test_ksgs_campaign_fields_bind_the_exact_coefficient_constructor() -> None:
+def test_large_eddy_simulation_qualification_scenario_2() -> None:
     campaign, _ = _loaded()
     cases = {
         case["name"]: case
@@ -185,9 +211,6 @@ def test_ksgs_campaign_fields_bind_the_exact_coefficient_constructor() -> None:
         cases["mac-prognostic-ksgs"]["coefficients"]["boussinesq_expansion"]
         != cases["mac-prognostic-ksgs"]["coefficients"]["buoyancy"]
     )
-
-
-def test_periodic_guard_and_unstructured_energy_gates_are_preregistered() -> None:
     campaign, _ = _loaded()
     static_cases = [
         case for case in campaign["cases"] if case["producer"] == "periodic-static"
@@ -237,9 +260,6 @@ def test_periodic_guard_and_unstructured_energy_gates_are_preregistered() -> Non
         "modeled_energy_split_residual",
         "total_energy_balance_failure",
     } <= {metric["name"] for metric in unstructured["metrics"]}
-
-
-def test_unstructured_pressure_measures_energy_and_viscosity_owner() -> None:
     campaign, _ = _loaded()
     case = next(
         value
@@ -270,6 +290,23 @@ def test_unstructured_pressure_measures_energy_and_viscosity_owner() -> None:
     assert measurements["viscosity_owner_identity_error"] == 0.0
     assert measurements["ksgs_state_failure"] == 0.0
     assert measurements["continuation_failure"] == 0.0
+    campaign, _ = _loaded()
+    case = next(
+        value
+        for value in campaign["cases"]
+        if value["name"] == "unstructured-low-mach-smoke"
+    )
+
+    measurements, _ = _run_unstructured(case, None)
+
+    assert isinstance(measurements["momentum_balance_residual"], float)
+    assert isinstance(measurements["scalar_balance_residual"], float)
+    assert measurements["momentum_balance_residual"] <= 2.0e-7
+    assert measurements["scalar_balance_residual"] <= 2.0e-7
+    assert measurements["normalized_positive_sgs_work"] <= 3.0e-6
+    assert measurements["sgs_work_dissipative_failure"] == 0.0
+    assert measurements["positive_work_refusal_failure"] == 0.0
+    assert measurements["algebraic_energy_status_failure"] == 0.0
 
 
 @pytest.mark.parametrize(
@@ -320,7 +357,7 @@ def test_cli_exit_code_tracks_coverage_after_artifact_emission(
     assert json.loads(capsys.readouterr().out) == candidate
 
 
-def test_active_dynamic_and_learned_backends_measure_nonzero_actions() -> None:
+def test_large_eddy_simulation_qualification_scenario_3() -> None:
     campaign, _ = _loaded()
     cases = {case["name"]: case for case in campaign["cases"]}
 
@@ -333,9 +370,6 @@ def test_active_dynamic_and_learned_backends_measure_nonzero_actions() -> None:
         assert measurements["learned_stress_magnitude"] >= 1.0e-12
         assert measurements["projected_rate_magnitude"] >= 1.0e-12
         assert measurements["energy_policy_failure"] == 0.0
-
-
-def test_channel_and_frozen_routes_use_deliberately_active_states() -> None:
     campaign, _ = _loaded()
     cases = {case["name"]: case for case in campaign["cases"]}
 
@@ -348,44 +382,6 @@ def test_channel_and_frozen_routes_use_deliberately_active_states() -> None:
     sbdf2, _ = _run_frozen_sbdf2(cases["mac-frozen-sbdf2"], None)
     assert imex["frozen_les_action_magnitude"] >= 1.0e-12
     assert sbdf2["frozen_les_action_magnitude"] >= 1.0e-12
-
-
-def test_every_nonzero_active_route_preregisters_an_activity_predicate() -> None:
-    campaign, _ = _loaded()
-    by_name = {case["name"]: case for case in campaign["cases"]}
-    activity = {
-        "periodic-smagorinsky": "backend_activity_violation",
-        "periodic-amd": "backend_activity_violation",
-        "periodic-vreman": "backend_activity_violation",
-        "periodic-wale": "backend_activity_violation",
-        "periodic-dynamic-smagorinsky": "synthetic_stress_magnitude",
-        "periodic-dynamic-production": "dynamic_sgs_transfer_magnitude",
-        "mac-momentum-scalar-boussinesq": "momentum_sgs_action_magnitude",
-        "mac-prognostic-ksgs": "ksgs_eddy_viscosity_magnitude",
-        "mac-dynamic-ksgs": "mac_sgs_action_magnitude",
-        "ocean-low-re-ksgs": "low_re_dissipation_missing",
-        "mac-frozen-imex": "frozen_les_action_magnitude",
-        "mac-frozen-sbdf2": "frozen_les_action_magnitude",
-        "spectral-channel-wale": "subgrid_transfer_magnitude",
-        "channel-mixed-wall-stress": "channel_les_viscosity_magnitude",
-        "channel-complete-restriction": "channel_les_viscosity_magnitude",
-        "distributed-periodic-slab": "distributed_sgs_action_magnitude",
-        "distributed-full-flow-production": "distributed_sgs_action_magnitude",
-        "favre-compressible-smoke": "favre_stress_magnitude",
-        "favre-transported-sgs-dg": "negative_sgs_source_missing",
-        "unstructured-low-mach-smoke": "sgs_flux_magnitude",
-        "unstructured-pressure-continuation": "sgs_flux_magnitude",
-        "immersed-mac-wall-stress": "immersed_sgs_action_magnitude",
-        "immersed-mac-sbdf2-restart": "sgs_extrapolated_action_magnitude",
-        "learned-stress-periodic": "learned_stress_magnitude",
-        "learned-stress-mac": "learned_stress_magnitude",
-        "lbm-smagorinsky-smoke": "backend_evidence_failure",
-    }
-    for case_name, metric_name in activity.items():
-        assert metric_name in {metric["name"] for metric in by_name[case_name]["metrics"]}
-
-
-def test_threshold_changes_cannot_reuse_a_preregistered_criterion() -> None:
     campaign, matrix = _loaded()
     changed = copy.deepcopy(campaign)
     case = changed["cases"][0]
@@ -399,7 +395,7 @@ def test_threshold_changes_cannot_reuse_a_preregistered_criterion() -> None:
         validate_campaign(changed, matrix)
 
 
-def test_missing_and_rightless_references_are_refused_before_execution() -> None:
+def test_large_eddy_simulation_qualification_scenario_4() -> None:
     with pytest.raises(ValueError, match="requires a reference manifest"):
         admit_reference(None, required=True)
 
@@ -432,9 +428,6 @@ def test_missing_and_rightless_references_are_refused_before_execution() -> None
 
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         admit_reference(rightless, required=True)
-
-
-def test_matrix_refuses_post_hoc_predicates_not_owned_by_a_case() -> None:
     campaign, matrix = _loaded()
     predicates = {name: dict(requirements) for name, requirements in matrix.predicates}
     predicates["posthoc.unassigned"] = dict(next(iter(predicates.values())))
@@ -445,29 +438,6 @@ def test_matrix_refuses_post_hoc_predicates_not_owned_by_a_case() -> None:
 
     with pytest.raises(ValueError, match="post-hoc or unassigned"):
         validate_campaign(changed_campaign, changed_matrix)
-
-
-def test_unstructured_vector_residuals_are_reduced_to_preregistered_scalars() -> None:
-    campaign, _ = _loaded()
-    case = next(
-        value
-        for value in campaign["cases"]
-        if value["name"] == "unstructured-low-mach-smoke"
-    )
-
-    measurements, _ = _run_unstructured(case, None)
-
-    assert isinstance(measurements["momentum_balance_residual"], float)
-    assert isinstance(measurements["scalar_balance_residual"], float)
-    assert measurements["momentum_balance_residual"] <= 2.0e-7
-    assert measurements["scalar_balance_residual"] <= 2.0e-7
-    assert measurements["normalized_positive_sgs_work"] <= 3.0e-6
-    assert measurements["sgs_work_dissipative_failure"] == 0.0
-    assert measurements["positive_work_refusal_failure"] == 0.0
-    assert measurements["algebraic_energy_status_failure"] == 0.0
-
-
-def test_immersed_wall_traction_and_normal_only_trajectory_are_measured() -> None:
     campaign, _ = _loaded()
     case = next(value for value in campaign["cases"] if value["producer"] == "immersed")
 
@@ -480,9 +450,6 @@ def test_immersed_wall_traction_and_normal_only_trajectory_are_measured() -> Non
     assert measurements["execution_failure"] == 0.0
     assert execution["temporal_method"] == ("immersed-imex-euler-normal-constraint")
     assert execution["sbdf2_evidence"] == "not-claimed"
-
-
-def test_immersed_sbdf2_measures_extrapolated_nonzero_sgs_action() -> None:
     campaign, _ = _loaded()
     case = next(
         value for value in campaign["cases"] if value["producer"] == "immersed-sbdf2"

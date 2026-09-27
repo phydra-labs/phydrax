@@ -59,7 +59,7 @@ def _grid_batch(*, periodic: Any = True, mask: Any = None) -> Any:
     )
 
 
-def test_dealiased_projected_product_removes_folded_retained_mode() -> None:
+def test_hofno_scenario_1() -> None:
     nodes = jnp.arange(16, dtype="float64") / 16.0
     values = jnp.cos(2.0 * jnp.pi * 7.0 * nodes)[:, None]
     collocation = _identity_quadratic_mixer("collocation")(values)[:, 0]
@@ -70,43 +70,34 @@ def test_dealiased_projected_product_removes_folded_retained_mode() -> None:
     assert jnp.abs(collocation_spectrum[2]) > 0.5
     assert jnp.abs(dealiased_spectrum[2]) < 1e-10
     assert jnp.max(jnp.abs(dealiased - jnp.mean(dealiased))) < 1e-10
-
-
-def test_dealiased_resampling_preserves_even_grid_nyquist_mode() -> None:
     values = ((-1.0) ** jnp.arange(16, dtype="float64"))[:, None]
     oversampled = _dealiased_spectral_resample(values, (21,))
     restored = _dealiased_spectral_resample(oversampled, (16,))
 
     assert restored.shape == values.shape
     assert jnp.allclose(restored, values, rtol=1e-12, atol=1e-12)
+    for ndim in (1, 2, 3):
+        size = 6
+        nodes = jnp.arange(size, dtype="float64") / size
+        values = jr.normal(jr.key(10 + ndim), (size,) * ndim)
+        model = phx.nn.operator.architectures.HOFNO(
+            n_modes=(2,) * ndim,
+            width=3,
+            depth=1,
+            ffn_expansion=2,
+            key=jr.key(ndim),
+        )
 
+        output = model((values,) + (nodes,) * ndim)
+        gradient = eqx.filter_grad(
+            lambda candidate: jnp.sum(candidate((values,) + (nodes,) * ndim) ** 2)
+        )(model)
+        leaves = jax.tree_util.tree_leaves(eqx.filter(gradient, eqx.is_inexact_array))
 
-@pytest.mark.parametrize("ndim", (1, 2, 3))
-def test_hofno_has_finite_nd_output_and_parameter_gradients(ndim: Any) -> None:
-    size = 6
-    nodes = jnp.arange(size, dtype="float64") / size
-    values = jr.normal(jr.key(10 + ndim), (size,) * ndim)
-    model = phx.nn.operator.architectures.HOFNO(
-        n_modes=(2,) * ndim,
-        width=3,
-        depth=1,
-        ffn_expansion=2,
-        key=jr.key(ndim),
-    )
-
-    output = model((values,) + (nodes,) * ndim)
-    gradient = eqx.filter_grad(
-        lambda candidate: jnp.sum(candidate((values,) + (nodes,) * ndim) ** 2)
-    )(model)
-    leaves = jax.tree_util.tree_leaves(eqx.filter(gradient, eqx.is_inexact_array))
-
-    assert output.shape == values.shape
-    assert jnp.all(jnp.isfinite(output))
-    assert leaves
-    assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
-
-
-def test_hofno_scan_matches_loop_under_jit() -> None:
+        assert output.shape == values.shape
+        assert jnp.all(jnp.isfinite(output))
+        assert leaves
+        assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
     nodes = jnp.arange(8, dtype="float64") / 8.0
     x, y = jnp.meshgrid(nodes, nodes, indexing="ij")
     values = jnp.sin(2.0 * jnp.pi * x) + jnp.cos(2.0 * jnp.pi * y)
@@ -129,9 +120,6 @@ def test_hofno_scan_matches_loop_under_jit() -> None:
         rtol=1e-10,
         atol=1e-10,
     )
-
-
-def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract() -> None:
     model = phx.nn.operator.architectures.HOFNO(
         n_modes=(3,),
         width=4,

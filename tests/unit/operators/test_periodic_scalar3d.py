@@ -66,7 +66,7 @@ def _small_policy(**overrides: Any) -> Any:
     return PeriodicEwaldPolicy3D(**arguments)
 
 
-def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent() -> None:
+def test_periodic_scalar3d_scenario_1() -> None:
     lattice = jnp.asarray([[2.0, 0.2, 0.0], [0.0, 1.7, 0.1], [0.0, 0.0, 1.4]])
     cell = PeriodicCell(lattice, origin=jnp.asarray([-0.1, 0.2, 0.3]))
     assert cell.ambient_dimension == 3
@@ -85,9 +85,6 @@ def test_affine_lattice_reciprocal_vectors_and_bloch_phase_are_consistent() -> N
     partially_periodic = PeriodicCell(jnp.eye(3), periodic_axes=(True, True, False))
     with pytest.raises(ValueError, match="fully periodic rank-3 PeriodicCell"):
         periodic_reciprocal_vectors_3d(partially_periodic)
-
-
-def test_absolutely_convergent_yukawa_matches_direct_images_and_bloch_character() -> None:
     cell = PeriodicCell(2.0 * jnp.eye(3))
     alpha = jnp.asarray([0.19, -0.11, 0.07])
     displacement = jnp.asarray([0.31, -0.27, 0.22])
@@ -133,9 +130,6 @@ def test_absolutely_convergent_yukawa_matches_direct_images_and_bloch_character(
             image_cutoff=2,
             max_image_count=10,
         )
-
-
-def test_modified_helmholtz_ewald_split_is_invariant_at_fixed_convergence() -> None:
     cell = PeriodicCell(2.0 * jnp.eye(3))
     displacement = jnp.asarray([0.29, 0.18, -0.24])
     alpha = jnp.asarray([0.13, 0.09, -0.05])
@@ -168,7 +162,7 @@ def test_modified_helmholtz_ewald_split_is_invariant_at_fixed_convergence() -> N
     assert jnp.allclose(first, second, rtol=3.0e-5, atol=3.0e-6)
 
 
-def test_laplace_neutrality_gauge_and_fail_closed_allocations() -> None:
+def test_periodic_scalar3d_scenario_2() -> None:
     cell = _cell()
     policy = _small_policy()
     operator = prepare_periodic_laplace_single_layer_dp0_3d(
@@ -209,9 +203,6 @@ def test_laplace_neutrality_gauge_and_fail_closed_allocations() -> None:
             certified_fractional_clearance=0.25,
             policy=_small_policy(max_matrix_entries=15),
         )
-
-
-def test_helmholtz_wood_mode_and_unsearched_tail_fail_with_typed_evidence() -> None:
     cell = _cell()
     policy = _small_policy(wood_tolerance=1.0e-8)
     with pytest.raises(PeriodicHelmholtzWoodAnomalyError) as caught:
@@ -231,11 +222,6 @@ def test_helmholtz_wood_mode_and_unsearched_tail_fail_with_typed_evidence() -> N
             wavenumber=5.0,
             policy=_small_policy(reciprocal_cutoff=1),
         )
-
-
-def test_all_family_operators_have_exact_algebraic_transposes_and_bounded_actions() -> (
-    None
-):
     cell = _cell()
     policy = _small_policy()
     modified = prepare_periodic_modified_helmholtz_single_layer_dp0_3d(

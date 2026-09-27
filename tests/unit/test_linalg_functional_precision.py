@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_native_gmres_uses_low_preconditioner_and_basis_with_high_residual() -> None:
+def test_linalg_functional_precision_scenario_1() -> None:
     la = phx.linalg
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=jnp.float64)
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
@@ -44,9 +44,6 @@ def test_native_gmres_uses_low_preconditioner_and_basis_with_high_residual() -> 
     assert estimate.preconditioner_preparation_workspace_bytes == 24
     assert estimate.preconditioner_apply_workspace_bytes_per_rhs == 32
     assert estimate.krylov_basis_bytes_per_rhs == 88
-
-
-def test_functional_precision_is_scoped_to_standard_optax() -> None:
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     parameter = domain.Parameter(2.0)
     objective = phx.terms.IntegralFunctional.from_operator(

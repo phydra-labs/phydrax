@@ -116,7 +116,7 @@ class MonomialScalarLatentModel(_AbstractBaseModel):
         return jnp.asarray([x**self.power], dtype="float64")
 
 
-def test_domain_model_blockwise_pointsbatch_singleton_blocks() -> None:
+def test_blockwise_latent_contraction_scenario_1() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -143,9 +143,6 @@ def test_domain_model_blockwise_pointsbatch_singleton_blocks() -> None:
     t_vals = jnp.asarray(batch.points["t"].data)
     expected = x_vals[:, None] * t_vals[None, :] + 1.0
     assert jnp.allclose(jnp.asarray(out.data), expected)
-
-
-def test_domain_model_warns_on_blockwise_fallback_for_paired_blocks() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -167,9 +164,6 @@ def test_domain_model_warns_on_blockwise_fallback_for_paired_blocks() -> None:
     t_vals = jnp.asarray(batch.points["t"].data)
     expected = x_vals * t_vals + 1.0
     assert jnp.allclose(jnp.asarray(out.data), expected)
-
-
-def test_latent_derivative_path_matches_exact_values() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -220,9 +214,6 @@ def test_latent_derivative_path_matches_exact_values() -> None:
     assert jnp.allclose(jnp.asarray(out_dt_partial.data), expected_dt_partial, atol=1e-6)
     assert jnp.allclose(jnp.asarray(out_dxx.data), expected_dxx, atol=1e-6)
     assert jnp.allclose(jnp.asarray(out_lap.data), expected_lap, atol=1e-6)
-
-
-def test_latent_derivative_path_flat_topology_matches_exact_values() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -251,32 +242,6 @@ def test_latent_derivative_path_flat_topology_matches_exact_values() -> None:
         expected_dt_tx, out_dt, t_axis=t_axis, x_axis=x_axis
     )
     assert jnp.allclose(jnp.asarray(out_dt.data), expected_dt, atol=1e-6)
-
-
-def test_latent_backend_ad_does_not_use_jet(monkeypatch: Any) -> None:
-    domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
-    model = LatentContractionModel(
-        latent_size=1,
-        out_size="scalar",
-        x=MonomialScalarLatentModel(2),
-        t=MonomialScalarLatentModel(3),
-    )
-    u = domain.Model("x", "t")(model)
-    du_dt = dt_n(u, var="t", order=2, backend="ad")
-    dxx = laplacian(u, var="x", backend="ad")
-
-    def _jet_fail(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("jet_dn should not be used for backend='ad'.")
-
-    monkeypatch.setattr(differential_domain_ops, "jet_dn", _jet_fail)
-
-    out_dt = du_dt.func(jnp.asarray([0.5]), 0.25)
-    out_dxx = dxx.func(jnp.asarray([0.5]), 0.25)
-    assert jnp.isfinite(jnp.asarray(out_dt))
-    assert jnp.isfinite(jnp.asarray(out_dxx))
-
-
-def test_latent_derivative_path_ignores_iter_kwarg() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -301,9 +266,6 @@ def test_latent_derivative_path_ignores_iter_kwarg() -> None:
     assert not fallback_msgs
     expected = (0.5**2) * (6.0 * 0.25)
     assert jnp.allclose(jnp.asarray(out), expected, atol=1e-6)
-
-
-def test_enforced_dirichlet_preserves_latent_derivative_fast_path() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -333,6 +295,29 @@ def test_enforced_dirichlet_preserves_latent_derivative_fast_path() -> None:
         jnp.asarray(0.4)
     )
     assert jnp.allclose(jnp.asarray(out), jnp.asarray(expected), atol=1e-6)
+
+
+def test_latent_backend_ad_does_not_use_jet(monkeypatch: Any) -> None:
+    domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+    model = LatentContractionModel(
+        latent_size=1,
+        out_size="scalar",
+        x=MonomialScalarLatentModel(2),
+        t=MonomialScalarLatentModel(3),
+    )
+    u = domain.Model("x", "t")(model)
+    du_dt = dt_n(u, var="t", order=2, backend="ad")
+    dxx = laplacian(u, var="x", backend="ad")
+
+    def _jet_fail(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("jet_dn should not be used for backend='ad'.")
+
+    monkeypatch.setattr(differential_domain_ops, "jet_dn", _jet_fail)
+
+    out_dt = du_dt.func(jnp.asarray([0.5]), 0.25)
+    out_dxx = dxx.func(jnp.asarray([0.5]), 0.25)
+    assert jnp.isfinite(jnp.asarray(out_dt))
+    assert jnp.isfinite(jnp.asarray(out_dxx))
 
 
 def test_latent_derivative_path_warns_on_auto_fallback(monkeypatch: Any) -> None:
@@ -425,7 +410,7 @@ def test_binary_expression_derivative_hook_composes() -> None:
     assert jnp.allclose(out, expected, atol=1e-6)
 
 
-def test_boundary_gate_style_blend_preserves_hook() -> None:
+def test_blockwise_latent_contraction_scenario_2() -> None:
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=1,
@@ -444,6 +429,19 @@ def test_boundary_gate_style_blend_preserves_hook() -> None:
     du_dt = dt_n(blended, var="t", order=1, backend="ad")
     out = jnp.asarray(du_dt.func(jnp.asarray([0.2], dtype="float64"), 0.4))
     assert out.shape == ()
+    domain, _, _, _ = _cube_batch()
+    u = domain.Model("a", "b", binding=_blockwise(output_layout="dependency_subset"))(
+        lambda x: jnp.sum(x[0]) + jnp.sum(x[1])
+    )
+    paired = domain.component().sample(
+        phx.domain.PointSampling(4, layout=SampleLayout((("a", "b", "c"),))),
+        key=jr.key(3),
+    )
+
+    with pytest.raises(ValueError, match="pointwise evaluation is undefined"):
+        u(paired)
+    with pytest.raises(ValueError, match="pointwise evaluation is undefined"):
+        u.func(jnp.asarray(0.5), jnp.asarray(1.5))
 
 
 def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch: Any) -> None:
@@ -643,19 +641,3 @@ def test_blockwise_output_layout_declarations_are_validated() -> None:
     with pytest.raises(ValueError, match=r"output_labels \('c', 'd'\) are not model"):
         try_blockwise_evaluation(model, ("a", "b"), batch, unknown)
     assert calls == []
-
-
-def test_reduced_blockwise_layout_refuses_pointwise_evaluation() -> None:
-    domain, _, _, _ = _cube_batch()
-    u = domain.Model("a", "b", binding=_blockwise(output_layout="dependency_subset"))(
-        lambda x: jnp.sum(x[0]) + jnp.sum(x[1])
-    )
-    paired = domain.component().sample(
-        phx.domain.PointSampling(4, layout=SampleLayout((("a", "b", "c"),))),
-        key=jr.key(3),
-    )
-
-    with pytest.raises(ValueError, match="pointwise evaluation is undefined"):
-        u(paired)
-    with pytest.raises(ValueError, match="pointwise evaluation is undefined"):
-        u.func(jnp.asarray(0.5), jnp.asarray(1.5))

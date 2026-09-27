@@ -22,7 +22,7 @@ def _finite_volume(*, periodic: Any, count: Any = 4) -> Any:
     return phx.discretization.FiniteVolumePlan(grid).prepare()
 
 
-def test_mac_marker_transfer_is_dual_measure_adjoint() -> None:
+def test_mac_ib_distributed_ale_scenario_1() -> None:
     finite_volume = _finite_volume(periodic=True)
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
     marker_position = jnp.asarray([[0.25, 0.25], [0.75, 0.75]])
@@ -44,9 +44,6 @@ def test_mac_marker_transfer_is_dual_measure_adjoint() -> None:
     assert jnp.max(jnp.abs(diagnostics.force_residual)) < 1e-10
     assert diagnostics.maximum_first_moment_residual < 1e-10
     assert jnp.max(jnp.abs(diagnostics.torque_residual)) < 1e-10
-
-
-def test_single_device_distributed_projection_preserves_global_contract() -> None:
     finite_volume = _finite_volume(periodic=True)
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
     momentum = phx.discretization.MACMomentumPlan(operators).prepare()
@@ -66,9 +63,6 @@ def test_single_device_distributed_projection_preserves_global_contract() -> Non
     assert projection.converged
     assert projection.divergence_norm < 1e-7
     assert projection.gauge_defect < 1e-8
-
-
-def test_identity_mapped_and_ale_geometries_preserve_free_stream() -> None:
     finite_volume = _finite_volume(periodic=False)
     mapped = phx.discretization.MappedMACGeometryPlan(
         finite_volume, lambda points: points, mapping_id="identity-map"
@@ -88,9 +82,6 @@ def test_identity_mapped_and_ale_geometries_preserve_free_stream() -> None:
     assert stage.maximum_gcl_residual < 1e-10
     assert result.success
     assert jnp.linalg.norm(result.divergence_after) < 1e-8
-
-
-def test_identity_remesh_epoch_preserves_cells_flux_and_momentum() -> None:
     finite_volume = _finite_volume(periodic=False)
     mapped = phx.discretization.MappedMACGeometryPlan(
         finite_volume, lambda points: points, mapping_id="identity-remesh-map"

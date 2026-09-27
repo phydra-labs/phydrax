@@ -52,7 +52,7 @@ def _su2_kernel(step_size: Any = 0.08) -> Any:
     return action, kernel
 
 
-def test_flat_torus_hmc_preserves_membership_and_replays_semantic_keys() -> None:
+def test_compact_group_hamiltonian_scenario_1() -> None:
     action, kernel = _u1_kernel()
     positions = jnp.stack(
         (
@@ -79,9 +79,6 @@ def test_flat_torus_hmc_preserves_membership_and_replays_semantic_keys() -> None
     assert jnp.all(jax.vmap(jax.vmap(action.geometry.contains))(first.samples))
     assert jnp.all(first.final_state.valid)
     assert jnp.all(jnp.isfinite(first.energy_error))
-
-
-def test_su2_hmc_preserves_group_and_uses_per_group_metric() -> None:
     action, kernel = _su2_kernel()
     identity = action.link_space.identity()
     coordinates = jnp.full(action.local_coordinate_shape, 0.03)
@@ -103,9 +100,6 @@ def test_su2_hmc_preserves_group_and_uses_per_group_metric() -> None:
     assert jnp.all(jax.vmap(jax.vmap(action.geometry.contains))(result.samples))
     assert jnp.all(result.final_state.valid)
     assert not jnp.any(result.membership_failure)
-
-
-def test_compact_group_hmc_adaptation_returns_frozen_kernel() -> None:
     action, kernel = _u1_kernel(step_size=0.1)
     state = phx.sampling.initialize_compact_group_hamiltonian_state(
         kernel,
@@ -128,9 +122,6 @@ def test_compact_group_hmc_adaptation_returns_frozen_kernel() -> None:
     assert adaptation.acceptance_history.shape == (3,)
     assert 0.01 < adaptation.kernel.step_size < 0.4
     assert adaptation.final_state.kernel_id == adaptation.kernel.kernel_id
-
-
-def test_compact_group_hmc_rejects_state_from_another_kernel() -> None:
     action, first = _u1_kernel(step_size=0.1)
     _, second = _u1_kernel(step_size=0.2)
     state = phx.sampling.initialize_compact_group_hamiltonian_state(
@@ -145,9 +136,6 @@ def test_compact_group_hmc_rejects_state_from_another_kernel() -> None:
             key=jax.random.key(17),
             num_draws=1,
         )
-
-
-def test_compact_group_hmc_rejects_wrong_measure_and_nonmembers() -> None:
     scalar = phx.operators.path_integral.Phi4LatticeAction(
         phx.discretization.StructuredCochainBridge(
             phx.discretization.TensorGridPlan(

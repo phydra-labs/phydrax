@@ -17,7 +17,7 @@ def _bundle() -> phx.graph.HypergraphBipartiteGraph:
     )
 
 
-def test_hypergraph_to_bipartite_graph_adds_typed_auxiliary_nodes() -> None:
+def test_hypergraph_contracts() -> None:
     bundle = _bundle()
     graph = bundle.graph
 
@@ -30,9 +30,6 @@ def test_hypergraph_to_bipartite_graph_adds_typed_auxiliary_nodes() -> None:
     )
     assert jnp.allclose(bundle.original_nodes, jnp.array([0, 1, 2], dtype=jnp.int32))
     assert jnp.allclose(bundle.hyperedge_nodes, jnp.array([3, 4], dtype=jnp.int32))
-
-
-def test_hypergraph_bundle_components_select_original_and_hyperedge_entities() -> None:
     bundle = _bundle()
     domain = phx.domain.GraphDomain(bundle.graph, measure="count")
     structure = phx.domain.SampleLayout((("graph",),))
@@ -56,12 +53,30 @@ def test_hypergraph_bundle_components_select_original_and_hyperedge_entities() -
     )
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(hyperedges.mass.value, 2.0)
-
-
-def test_hypergraph_convolution_computes_two_stage_means() -> None:
     out = phx.graph.HypergraphConvolution(output_key="u_next")(_bundle().graph)
 
     assert jnp.allclose(out.nodes["u_next"][:, 0], jnp.array([1.5, 2.0, 2.5, 1.5, 2.5]))
+    graph0 = _bundle().graph
+    graph1 = phx.graph.hypergraph_to_bipartite_graph(
+        ([0, 1, 2],),
+        node_features=jnp.array([[2.0], [4.0], [8.0]]),
+    ).graph
+    domain = phx.domain.GraphDatasetDomain((graph0, graph1))
+    batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        component=phx.domain.NodeType(0),
+        structure=phx.domain.SampleLayout((("graph",),)),
+    )
+
+    assert batch.graph.num_nodes == 9
+    assert jnp.allclose(
+        batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0, 2.0, 4.0, 8.0])
+    )
+    assert jnp.allclose(
+        jnp.asarray(batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data),
+        jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32),
+    )
 
 
 def test_hypergraph_convolution_wraps_as_graph_model_on_original_nodes() -> None:
@@ -84,27 +99,3 @@ def test_hypergraph_convolution_wraps_as_graph_model_on_original_nodes() -> None
     )
 
     assert jnp.allclose(model(batch).data[:, 0], jnp.array([1.5, 2.0, 2.5]))
-
-
-def test_hypergraph_bipartite_graph_batches_in_graph_dataset_domain() -> None:
-    graph0 = _bundle().graph
-    graph1 = phx.graph.hypergraph_to_bipartite_graph(
-        ([0, 1, 2],),
-        node_features=jnp.array([[2.0], [4.0], [8.0]]),
-    ).graph
-    domain = phx.domain.GraphDatasetDomain((graph0, graph1))
-    batch = domain.points_from_indices(
-        # ty: ignore[invalid-argument-type]
-        [0, 1],
-        component=phx.domain.NodeType(0),
-        structure=phx.domain.SampleLayout((("graph",),)),
-    )
-
-    assert batch.graph.num_nodes == 9
-    assert jnp.allclose(
-        batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0, 2.0, 4.0, 8.0])
-    )
-    assert jnp.allclose(
-        jnp.asarray(batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data),
-        jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32),
-    )

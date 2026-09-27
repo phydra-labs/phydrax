@@ -41,7 +41,7 @@ def _minkowski_preparation() -> Any:
     return prepare_flrw_modes(plan)
 
 
-def test_frontier_bogoliubov_normalization_is_preserved_by_mode_evolution() -> None:
+def test_frontier_contracts() -> None:
     prepared = _minkowski_preparation()
     initial = adiabatic_initial_state(prepared)
     evolution = jax.jit(evolve_flrw_modes)(prepared, initial)
@@ -54,9 +54,6 @@ def test_frontier_bogoliubov_normalization_is_preserved_by_mode_evolution() -> N
     assert float(evidence.maximum_normalization_residual) < 2e-12
     assert jnp.all(evidence.occupation_numbers >= 0.0)
     assert "finite-mode" in evidence.claim
-
-
-def test_frontier_hadamard_subtraction_conserves_minkowski_vacuum_stress() -> None:
     prepared = _minkowski_preparation()
     times = prepared.plan.conformal_times[:, None]
     frequency = prepared.frequencies

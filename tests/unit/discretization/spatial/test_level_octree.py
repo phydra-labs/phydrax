@@ -76,7 +76,7 @@ def _touching_leaf_level_gap(tree: Any) -> int:
     return gap
 
 
-def test_adaptive_octree_is_compact_and_places_every_point_in_one_leaf() -> None:
+def test_level_octree_scenario_1() -> None:
     points = _clustered_points(3)
     address = _address(3, depth=10)
     tree = AdaptiveOctreePlan(address, leaf_capacity=8).prepare(points)
@@ -111,9 +111,6 @@ def test_adaptive_octree_is_compact_and_places_every_point_in_one_leaf() -> None
     lower = np.asarray(tree.node_centers - tree.node_half_widths)[point_leaves]
     upper = np.asarray(tree.node_centers + tree.node_half_widths)[point_leaves]
     assert np.all((points >= lower) & (points < upper))
-
-
-def test_leaves_tile_the_address_box_for_arbitrary_query_points() -> None:
     tree = AdaptiveOctreePlan(_address(2), leaf_capacity=4).prepare(_clustered_points(2))
     queries = np.random.default_rng(5).uniform(0.0, 1.0, (400, 2))
     leaves = np.asarray(tree.locate(queries))
@@ -123,9 +120,6 @@ def test_leaves_tile_the_address_box_for_arbitrary_query_points() -> None:
     assert np.all((queries >= lower) & (queries < upper))
     outside = np.asarray(tree.locate(np.asarray([[1.0, 0.5], [-0.1, 0.2]])))
     np.testing.assert_array_equal(outside, [-1, -1])
-
-
-def test_balanced_octree_keeps_touching_leaves_within_one_level() -> None:
     points = _clustered_points(2)
     unbalanced = AdaptiveOctreePlan(_address(2), leaf_capacity=4).prepare(points)
     balanced = AdaptiveOctreePlan(_address(2), leaf_capacity=4, balanced=True).prepare(
@@ -136,49 +130,49 @@ def test_balanced_octree_keeps_touching_leaves_within_one_level() -> None:
     assert balanced.node_count > unbalanced.node_count
 
 
-@pytest.mark.parametrize(
-    ("dimension", "balanced", "padding"),
-    [(2, False, 0.0), (2, True, 0.03), (3, False, 0.0), (3, True, 0.02)],
-)
-def test_interaction_lists_cover_every_source_point_exactly_once(
-    dimension: int, balanced: bool, padding: float
-) -> None:
-    tree = AdaptiveOctreePlan(
-        _address(dimension),
-        leaf_capacity=4,
-        balanced=balanced,
-        separation_padding=padding,
-    ).prepare(_clustered_points(dimension, seed=dimension))
-    assert bool(tree.evidence.successful)
-    np.testing.assert_array_equal(_leaf_coverage(tree), 1)
-    for name in ("u_list", "v_list", "w_list", "x_list"):
-        assert int(getattr(tree, name).required_routes) > 0
+def test_interaction_lists_cover_every_source_point_exactly_once() -> None:
+    for dimension, balanced, padding in [
+        (2, False, 0.0),
+        (2, True, 0.03),
+        (3, False, 0.0),
+        (3, True, 0.02),
+    ]:
+        tree = AdaptiveOctreePlan(
+            _address(dimension),
+            leaf_capacity=4,
+            balanced=balanced,
+            separation_padding=padding,
+        ).prepare(_clustered_points(dimension, seed=dimension))
+        assert bool(tree.evidence.successful)
+        np.testing.assert_array_equal(_leaf_coverage(tree), 1)
+        for name in ("u_list", "v_list", "w_list", "x_list"):
+            assert int(getattr(tree, name).required_routes) > 0
 
-    levels = np.asarray(tree.node_levels)
-    leaf = np.asarray(tree.node_child_counts) == 0
-    occupied = np.asarray(tree.node_point_ends) > np.asarray(tree.node_point_starts)
+        levels = np.asarray(tree.node_levels)
+        leaf = np.asarray(tree.node_child_counts) == 0
+        occupied = np.asarray(tree.node_point_ends) > np.asarray(tree.node_point_starts)
 
-    def routes(name: Any) -> Any:
-        relation = getattr(tree, name).routes
-        valid = np.asarray(relation.valid)
-        return (
-            np.asarray(relation.target_indices)[valid],
-            np.asarray(relation.source_indices)[valid],
-        )
+        def routes(name: Any) -> Any:
+            relation = getattr(tree, name).routes
+            valid = np.asarray(relation.valid)
+            return (
+                np.asarray(relation.target_indices)[valid],
+                np.asarray(relation.source_indices)[valid],
+            )
 
-    for name in ("u_list", "v_list", "w_list", "x_list"):
-        assert np.all(occupied[routes(name)[1]])
-    targets, sources = routes("u_list")
-    assert np.all(leaf[targets] & leaf[sources])
-    targets, sources = routes("v_list")
-    assert np.all(levels[targets] == levels[sources])
-    targets, sources = routes("w_list")
-    assert np.all(leaf[targets] & (levels[sources] > levels[targets]))
-    targets, sources = routes("x_list")
-    assert np.all(leaf[sources] & (levels[sources] < levels[targets]))
+        for name in ("u_list", "v_list", "w_list", "x_list"):
+            assert np.all(occupied[routes(name)[1]])
+        targets, sources = routes("u_list")
+        assert np.all(leaf[targets] & leaf[sources])
+        targets, sources = routes("v_list")
+        assert np.all(levels[targets] == levels[sources])
+        targets, sources = routes("w_list")
+        assert np.all(leaf[targets] & (levels[sources] > levels[targets]))
+        targets, sources = routes("x_list")
+        assert np.all(leaf[sources] & (levels[sources] < levels[targets]))
 
 
-def test_interaction_list_rows_gather_target_routes() -> None:
+def test_level_octree_scenario_2() -> None:
     tree = AdaptiveOctreePlan(_address(2), leaf_capacity=4).prepare(_clustered_points(2))
     interaction = tree.u_list
     relation = interaction.routes
@@ -191,9 +185,6 @@ def test_interaction_list_rows_gather_target_routes() -> None:
     row_valid = np.asarray(row_valid)
     for leaf, row, mask in zip(leaves, rows, row_valid):
         np.testing.assert_array_equal(row[mask], sources[targets == leaf])
-
-
-def test_interaction_capacity_overflow_is_reported() -> None:
     points = _clustered_points(3)
     complete = AdaptiveOctreePlan(_address(3), leaf_capacity=4).prepare(points)
     bounded = AdaptiveOctreePlan(
@@ -220,9 +211,6 @@ def test_interaction_capacity_overflow_is_reported() -> None:
             getattr(complete, name).required_routes
         )
         assert not bool(getattr(complete, name).overflow)
-
-
-def test_plan_rejects_invalid_configuration_and_points() -> None:
     with pytest.raises(ValueError, match="periodic"):
         AdaptiveOctreePlan(
             MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 4, periodic_axes=(True, False)),

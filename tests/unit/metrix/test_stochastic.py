@@ -65,7 +65,7 @@ def test_coordinate_stratonovich_correction_supports_rectangular_noise_and_batch
     )
 
 
-def test_coordinate_and_covariant_drifts_agree_for_polar_brownian_motion() -> None:
+def test_stochastic_scenario_1() -> None:
     metric = _polar_metric()
     covariance = lambda q: metric.inverse(q)
     coordinate_drift = lambda q: jnp.array([0.5 / q[0], 0.0])
@@ -78,9 +78,6 @@ def test_coordinate_and_covariant_drifts_agree_for_polar_brownian_motion() -> No
         points,
     )
     assert jnp.allclose(covariant, 0.0, atol=1e-10)
-
-
-def test_covariant_generators_and_fokker_planck_are_chart_consistent() -> None:
     cartesian_chart = phx.metrix.CoordinateChart("cartesian", ("x", "y"))
     cartesian_metric = phx.metrix.euclidean_metric(cartesian_chart)
     polar_metric = _polar_metric()
@@ -138,6 +135,27 @@ def test_covariant_generators_and_fokker_planck_are_chart_consistent() -> None:
     )
     assert jnp.allclose(cartesian_forward, 2.0)
     assert jnp.allclose(polar_forward, cartesian_forward, atol=1e-9)
+    chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
+    metric = phx.metrix.euclidean_metric(chart)
+    point = jnp.zeros(2)
+    scalar = lambda q: jnp.dot(q, q)
+    drift = lambda q: jnp.zeros(2)
+
+    with pytest.raises(ValueError, match="either diffusion or covariance"):
+        phx.metrix.covariant_kolmogorov_generator(
+            scalar,
+            drift,
+            metric,
+            point,
+            diffusion=lambda q: jnp.eye(2),
+            covariance=lambda q: jnp.eye(2),
+        )
+    with pytest.raises(ValueError, match="diffusion"):
+        phx.metrix.coordinate_stratonovich_to_ito_drift(
+            drift,
+            lambda q: jnp.ones(2),
+            point,
+        )
 
 
 def test_covariant_stochastic_operators_support_vector_outputs_jit_and_gradients() -> (
@@ -189,27 +207,3 @@ def test_covariant_stochastic_operators_support_vector_outputs_jit_and_gradients
     derivative = jax.grad(value)(jnp.array(0.8))
     assert jnp.isfinite(derivative)
     assert not jnp.allclose(derivative, 0.0)
-
-
-def test_stochastic_geometry_rejects_ambiguous_or_malformed_coefficients() -> None:
-    chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
-    metric = phx.metrix.euclidean_metric(chart)
-    point = jnp.zeros(2)
-    scalar = lambda q: jnp.dot(q, q)
-    drift = lambda q: jnp.zeros(2)
-
-    with pytest.raises(ValueError, match="either diffusion or covariance"):
-        phx.metrix.covariant_kolmogorov_generator(
-            scalar,
-            drift,
-            metric,
-            point,
-            diffusion=lambda q: jnp.eye(2),
-            covariance=lambda q: jnp.eye(2),
-        )
-    with pytest.raises(ValueError, match="diffusion"):
-        phx.metrix.coordinate_stratonovich_to_ito_drift(
-            drift,
-            lambda q: jnp.ones(2),
-            point,
-        )

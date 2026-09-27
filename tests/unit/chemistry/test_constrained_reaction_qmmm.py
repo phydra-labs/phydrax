@@ -32,7 +32,7 @@ def _surface(system: Any, evaluator: Any, provider_id: Any) -> Any:
     )
 
 
-def test_distance_constrained_lagrangian_modes_remove_one_internal_degree() -> None:
+def test_constrained_reaction_qmmm_scenario_1() -> None:
     units = _units()
     positions = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     structure = phx.atomistic.AtomicStructure(
@@ -75,9 +75,6 @@ def test_distance_constrained_lagrangian_modes_remove_one_internal_degree() -> N
     assert result.rigid_mode_rank == 6
     assert result.vibration.internal_mode_count == 2
     assert result.vibration.stationary_point is phx.chemistry.StationaryPointKind.MINIMUM
-
-
-def test_anchored_cartesian_restraint_removes_only_tangent_rigid_modes() -> None:
     units = _units()
     positions = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     structure = phx.atomistic.AtomicStructure(
@@ -123,9 +120,6 @@ def test_anchored_cartesian_restraint_removes_only_tangent_rigid_modes() -> None
     assert result.constraint_rank == 3
     assert result.rigid_mode_rank == 3
     assert result.vibration.internal_mode_count == 3
-
-
-def test_named_constraint_constructors_share_zero_residual_convention() -> None:
     units = _units()
     positions = np.asarray(
         [

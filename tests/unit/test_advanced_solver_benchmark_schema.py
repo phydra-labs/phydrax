@@ -30,7 +30,7 @@ _PROVENANCE = {
 }
 
 
-def test_schema_requires_independent_finite_residual_and_backward_error() -> None:
+def test_schema_contracts() -> None:
     report = _report([_measured_row()])
     validate_report(report)
 
@@ -44,17 +44,11 @@ def test_schema_requires_independent_finite_residual_and_backward_error() -> Non
     invalid["rows"][0]["certificate"]["independently_computed"] = False
     with pytest.raises(SchemaError, match="independently computed"):
         validate_report(invalid)
-
-
-def test_schema_requires_report_repeat_count_to_match_solve_samples() -> None:
     report = _report([_measured_row()])
     report["campaign"]["repeats"] = 2
 
     with pytest.raises(SchemaError, match="must equal report.campaign.repeats"):
         validate_report(report)
-
-
-def test_schema_requires_precise_dependency_skip_and_no_fabricated_measurement() -> None:
     row = _measured_row()
     row["outcome"] = {
         "status": "skipped",
@@ -99,97 +93,16 @@ def test_schema_requires_precise_dependency_skip_and_no_fabricated_measurement()
     fabricated["certificate"]["relative_residual"] = 0.0
     with pytest.raises(SchemaError, match="must be null for a skip"):
         validate_report(_report([fabricated]))
-
-
-def test_comparison_rejects_protocol_changes_before_pairing_rows() -> None:
-    reference = _report([_measured_row()])
-    candidate = copy.deepcopy(reference)
-    candidate["campaign"]["seed"] = 8
-
-    with pytest.raises(IncomparableReportsError, match="campaign protocols differ"):
-        compare_reports(reference, candidate)
-
-
-def test_comparison_rejects_incomparable_certificate_relation() -> None:
-    row = _measured_row()
-    row["availability"]["capability"] = "eigen.general"
-    row["certificate"].update(
-        kind="eigenpair-relation",
-        capability="eigen.general",
-        details={
-            "requested_eigenpairs": 1,
-            "returned_eigenpairs": 1,
-            "count_satisfied": True,
-            "largest_magnitude_membership_error": 0.0,
-            "membership_tolerance": 1e-10,
-            "largest_magnitude_membership_satisfied": True,
-        },
-    )
-    reference = _report([row])
-    candidate = copy.deepcopy(reference)
-    candidate["rows"][0]["certificate"]["kind"] = "schur-relation"
-
-    with pytest.raises(IncomparableReportsError, match="different certificate identity"):
-        compare_reports(reference, candidate)
-
-
-def test_comparison_rejects_changed_transfer_contract() -> None:
-    reference = _report([_measured_row()])
-    candidate = copy.deepcopy(reference)
-    reference["rows"][0]["transfers"].update(
-        host_to_device_bytes=8,
-        host_to_device_timing_phase="setup",
-    )
-    candidate["rows"][0]["transfers"].update(
-        host_to_device_bytes=16,
-        host_to_device_timing_phase="setup",
-    )
-
-    with pytest.raises(IncomparableReportsError, match="transfer contract"):
-        compare_reports(reference, candidate)
-
-
-def test_schema_recomputes_timing_summaries_from_samples() -> None:
-    report = _report([_measured_row()])
-    report["rows"][0]["timing"]["solve"]["median_ms"] = 2.0
-
-    with pytest.raises(SchemaError, match="does not match samples_ms"):
-        validate_report(report)
-
-
-def test_schema_requires_exact_selected_cross_product_and_order() -> None:
     report = _report([_measured_row()])
     report["campaign"]["selected_adapters"] = ["fake", "missing"]
 
     with pytest.raises(SchemaError, match="exact selected case×adapter cross-product"):
         validate_report(report)
-
-
-def test_schema_requires_explicit_transfer_phase_evidence() -> None:
     report = _report([_measured_row()])
     report["rows"][0]["transfers"]["host_to_device_bytes"] = 8
 
     with pytest.raises(SchemaError, match="host_to_device_timing_phase"):
         validate_report(report)
-
-
-def test_schema_accepts_exact_transfers_spanning_multiple_measured_phases() -> None:
-    report = _report([_measured_row()])
-    transfers = report["rows"][0]["transfers"]
-    transfers["host_to_device_bytes"] = 24
-    transfers["host_to_device_timing_phase"] = "setup+preparation+solve"
-    transfers["device_to_host_bytes"] = 8
-    transfers["device_to_host_timing_phase"] = "solve+verification"
-
-    validate_report(report)
-
-    invalid = copy.deepcopy(report)
-    invalid["rows"][0]["transfers"]["host_to_device_timing_phase"] = "setup+refresh"
-    with pytest.raises(SchemaError, match="unmeasured timing phases"):
-        validate_report(invalid)
-
-
-def test_schema_requires_paired_differentiation_compilation_and_execution() -> None:
     report = _report([_measured_row()])
     report["rows"][0]["timing"]["differentiation_compilation"] = copy.deepcopy(
         report["rows"][0]["timing"]["setup"]
@@ -197,9 +110,6 @@ def test_schema_requires_paired_differentiation_compilation_and_execution() -> N
 
     with pytest.raises(SchemaError, match="compilation and execution counts must match"):
         validate_report(report)
-
-
-def test_schema_requires_differentiation_samples_to_match_campaign_repeats() -> None:
     report = _report([_measured_row()])
     timing = report["rows"][0]["timing"]
     timing["differentiation_compilation"] = copy.deepcopy(timing["setup"])
@@ -218,9 +128,6 @@ def test_schema_requires_differentiation_samples_to_match_campaign_repeats() -> 
         match="differentiation.count must equal report.campaign.repeats",
     ):
         validate_report(report)
-
-
-def test_schema_requires_independent_refreshed_problem_certificate() -> None:
     row = _measured_row()
     row["refresh"].update(
         applicable=True,
@@ -245,9 +152,24 @@ def test_schema_requires_independent_refreshed_problem_certificate() -> None:
     invalid["rows"][0]["refresh"]["independently_certified"] = False
     with pytest.raises(SchemaError, match="independently_certified must be true"):
         validate_report(invalid)
+    report = _report([_measured_row()])
+    report["rows"][0]["timing"]["solve"]["median_ms"] = 2.0
 
+    with pytest.raises(SchemaError, match="does not match samples_ms"):
+        validate_report(report)
+    report = _report([_measured_row()])
+    transfers = report["rows"][0]["transfers"]
+    transfers["host_to_device_bytes"] = 24
+    transfers["host_to_device_timing_phase"] = "setup+preparation+solve"
+    transfers["device_to_host_bytes"] = 8
+    transfers["device_to_host_timing_phase"] = "solve+verification"
 
-def test_schema_rejects_optimization_rows_without_stationarity_evidence() -> None:
+    validate_report(report)
+
+    invalid = copy.deepcopy(report)
+    invalid["rows"][0]["transfers"]["host_to_device_timing_phase"] = "setup+refresh"
+    with pytest.raises(SchemaError, match="unmeasured timing phases"):
+        validate_report(invalid)
     report = _report([_measured_row()])
     row = report["rows"][0]
     row["availability"]["capability"] = "optimization.unconstrained"
@@ -262,9 +184,6 @@ def test_schema_rejects_optimization_rows_without_stationarity_evidence() -> Non
 
     with pytest.raises(SchemaError, match="gradient_norm"):
         validate_report(report)
-
-
-def test_schema_rejects_continuation_success_without_fold_evidence() -> None:
     report = _report([_measured_row()])
     row = report["rows"][0]
     row["availability"]["capability"] = "continuation.fold"
@@ -283,6 +202,48 @@ def test_schema_rejects_continuation_success_without_fold_evidence() -> None:
 
     with pytest.raises(SchemaError, match="certified fold traversal"):
         validate_report(report)
+
+
+def test_comparison_contracts() -> None:
+    reference = _report([_measured_row()])
+    candidate = copy.deepcopy(reference)
+    candidate["campaign"]["seed"] = 8
+
+    with pytest.raises(IncomparableReportsError, match="campaign protocols differ"):
+        compare_reports(reference, candidate)
+    row = _measured_row()
+    row["availability"]["capability"] = "eigen.general"
+    row["certificate"].update(
+        kind="eigenpair-relation",
+        capability="eigen.general",
+        details={
+            "requested_eigenpairs": 1,
+            "returned_eigenpairs": 1,
+            "count_satisfied": True,
+            "largest_magnitude_membership_error": 0.0,
+            "membership_tolerance": 1e-10,
+            "largest_magnitude_membership_satisfied": True,
+        },
+    )
+    reference = _report([row])
+    candidate = copy.deepcopy(reference)
+    candidate["rows"][0]["certificate"]["kind"] = "schur-relation"
+
+    with pytest.raises(IncomparableReportsError, match="different certificate identity"):
+        compare_reports(reference, candidate)
+    reference = _report([_measured_row()])
+    candidate = copy.deepcopy(reference)
+    reference["rows"][0]["transfers"].update(
+        host_to_device_bytes=8,
+        host_to_device_timing_phase="setup",
+    )
+    candidate["rows"][0]["transfers"].update(
+        host_to_device_bytes=16,
+        host_to_device_timing_phase="setup",
+    )
+
+    with pytest.raises(IncomparableReportsError, match="transfer contract"):
+        compare_reports(reference, candidate)
 
 
 def _report(rows: Any) -> Any:

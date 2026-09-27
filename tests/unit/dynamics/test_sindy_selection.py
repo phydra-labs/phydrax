@@ -35,7 +35,7 @@ def _affine_map_problem() -> Any:
     )
 
 
-def test_selection_splits_complete_cases_and_retains_invalid_candidates() -> None:
+def test_sindy_selection_scenario_1() -> None:
     problem = _affine_map_problem()
     regressors = (
         phx.dynamics.identification.SequentialThresholdedLeastSquares(
@@ -75,9 +75,6 @@ def test_selection_splits_complete_cases_and_retains_invalid_candidates() -> Non
     )
     assert train_cases.isdisjoint(validation_cases)
     assert bool(jnp.all(jnp.isfinite(result.rollout_error[:2])))
-
-
-def test_ensemble_bootstrap_is_deterministic_and_reports_inclusion() -> None:
     problem = _affine_map_problem()
     regressor = phx.dynamics.identification.SequentialThresholdedLeastSquares(
         1e-8, threshold_space="physical"
@@ -114,9 +111,6 @@ def test_ensemble_bootstrap_is_deterministic_and_reports_inclusion() -> None:
         0.7,
         atol=1e-10,
     )
-
-
-def test_single_trajectory_selection_embargoes_overlapping_weak_windows() -> None:
     time = jnp.linspace(0.0, 4.0, 81)
     state = jnp.exp(-time)[:, None]
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
@@ -148,7 +142,7 @@ def test_single_trajectory_selection_embargoes_overlapping_weak_windows() -> Non
     )
 
 
-def test_sr3_l0_recovers_sparse_fourier_law_with_unbiased_refit() -> None:
+def test_sindy_selection_scenario_2() -> None:
     state = np.linspace(-np.pi, np.pi, 257, endpoint=False)[:, None]
     derivative = 1.2 * np.sin(state) - 0.7 * np.cos(2.0 * state)
     layout = phx.dynamics.StateLayout((1,), component_names=("angle",))
@@ -188,11 +182,6 @@ def test_sr3_l0_recovers_sparse_fourier_law_with_unbiased_refit() -> None:
     expected[names.index("cos(2*state:angle)")] = -0.7
     np.testing.assert_allclose(np.asarray(result.coefficients[0]), expected, atol=1e-11)
     assert result.regression.solver_diagnostics.objective.shape[0] == 201
-
-
-def test_identification_transform_supports_scalar_layout_and_selection_contracts() -> (
-    None
-):
     layout = phx.dynamics.StateLayout((), component_names=("temperature",))
     transform = phx.dynamics.identification.IdentificationStateTransform(
         layout,

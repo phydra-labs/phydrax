@@ -685,49 +685,42 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution() -> N
     assert jnp.allclose(term.loss({"u": u}), 1.0)
 
 
-@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
-@pytest.mark.parametrize(
-    ("name", "make"),
-    [
-        (
-            "coordinate bounds",
-            lambda value: PDECoordinate("x", "space", bounds=(0.0, value)),
-        ),
-        ("field scale", lambda value: PDEField("u", scale=(value,))),
-        (
-            "parameter scalar value",
-            lambda value: phx.equations.PDEParameter("a", value=value),
-        ),
-        (
-            "parameter vector value",
-            lambda value: phx.equations.PDEParameter(
-                "a",
-                value=(0.0, value),
-                components=2,
+def test_pde_numeric_metadata_rejects_nonfinite_during_construction() -> None:
+    for bad in [math.nan, math.inf, -math.inf]:
+        for name, make in [
+            (
+                "coordinate bounds",
+                lambda value: PDECoordinate("x", "space", bounds=(0.0, value)),
             ),
-        ),
-        (
-            "parameter scale",
-            lambda value: phx.equations.PDEParameter("a", scale=(value,)),
-        ),
-        ("expression value", lambda value: PDEExpression.constant(value)),
-        (
-            "nondimensionalization",
-            lambda value: PDEProblemIR(
-                coordinates=(),
-                fields=(),
-                nondimensionalization=(("reference", value),),
+            ("field scale", lambda value: PDEField("u", scale=(value,))),
+            (
+                "parameter scalar value",
+                lambda value: phx.equations.PDEParameter("a", value=value),
             ),
-        ),
-    ],
-)
-def test_pde_numeric_metadata_rejects_nonfinite_during_construction(
-    bad: Any,
-    name: Any,
-    make: Any,
-) -> None:
-    with pytest.raises(ValueError, match="finite"):
-        make(bad)
+            (
+                "parameter vector value",
+                lambda value: phx.equations.PDEParameter(
+                    "a",
+                    value=(0.0, value),
+                    components=2,
+                ),
+            ),
+            (
+                "parameter scale",
+                lambda value: phx.equations.PDEParameter("a", scale=(value,)),
+            ),
+            ("expression value", lambda value: PDEExpression.constant(value)),
+            (
+                "nondimensionalization",
+                lambda value: PDEProblemIR(
+                    coordinates=(),
+                    fields=(),
+                    nondimensionalization=(("reference", value),),
+                ),
+            ),
+        ]:
+            with pytest.raises(ValueError, match="finite"):
+                make(bad)
 
 
 def test_pde_dimension_signatures_are_exact_and_serialized_sparse() -> None:
@@ -913,9 +906,8 @@ def _token_arrays(tokens: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "expressions",
-    [
+def test_associative_expression_canonicalization_is_recursive() -> None:
+    for expressions in [
         lambda u, v, w, z: (
             ((u + v) + w) + z,
             u + (v + (w + z)),
@@ -928,28 +920,29 @@ def _token_arrays(tokens: Any) -> Any:
             (u * v) * (w * z),
             z * (w * (v * u)),
         ),
-    ],
-)
-def test_associative_expression_canonicalization_is_recursive(expressions: Any) -> None:
-    fields = tuple(PDEExpression.field(name) for name in ("u", "v", "w", "z"))
-    problems = tuple(
-        _canonical_expression_problem(expression) for expression in expressions(*fields)
-    )
-    payloads = tuple(pde_ir_to_json(problem) for problem in problems)
-    hashes = tuple(pde_ir_hash(problem) for problem in problems)
-    tokens = tuple(tokenize_pde_ir(problem, dimension_basis=()) for problem in problems)
-
-    assert len(set(payloads)) == 1
-    assert len(set(hashes)) == 1
-    for current in tokens[1:]:
-        assert all(
-            jnp.array_equal(left, right)
-            for left, right in zip(
-                _token_arrays(tokens[0]),
-                _token_arrays(current),
-                strict=True,
-            )
+    ]:
+        fields = tuple(PDEExpression.field(name) for name in ("u", "v", "w", "z"))
+        problems = tuple(
+            _canonical_expression_problem(expression)
+            for expression in expressions(*fields)
         )
+        payloads = tuple(pde_ir_to_json(problem) for problem in problems)
+        hashes = tuple(pde_ir_hash(problem) for problem in problems)
+        tokens = tuple(
+            tokenize_pde_ir(problem, dimension_basis=()) for problem in problems
+        )
+
+        assert len(set(payloads)) == 1
+        assert len(set(hashes)) == 1
+        for current in tokens[1:]:
+            assert all(
+                jnp.array_equal(left, right)
+                for left, right in zip(
+                    _token_arrays(tokens[0]),
+                    _token_arrays(current),
+                    strict=True,
+                )
+            )
 
 
 def test_nonassociative_expression_trees_remain_distinct() -> None:

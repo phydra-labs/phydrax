@@ -54,7 +54,7 @@ def _finite_volume(count: Any = 4) -> Any:
     return phx.discretization.FiniteVolumePlan(_grid(count, periodic=False)).prepare()
 
 
-def test_sparse_lbm_marker_transfer_preserves_transpose_force_torque_and_power() -> None:
+def test_cardiovascular_fsi_scenario_1() -> None:
     lattice = _lattice()
     position = jnp.asarray([[0.31, 0.37], [0.68, 0.59], [0.2, 0.8]])
     transfer_plan = SparseMarkerTransferPlan(
@@ -91,23 +91,6 @@ def test_sparse_lbm_marker_transfer_preserves_transpose_force_torque_and_power()
     assert jnp.max(jnp.abs(diagnostics.torque_residual)) < 1.0e-10
     assert jnp.abs(diagnostics.transpose_power_residual) < 1.0e-10
     assert jnp.abs(diagnostics.interface_power_residual) < 1.0e-10
-
-
-def test_fixed_marker_routes_fail_closed_after_losing_prepared_coverage() -> None:
-    lattice = _lattice()
-    initial = jnp.asarray([[0.45, 0.45]])
-    transfer = SparseMarkerTransferPlan(
-        lattice, jnp.asarray([7]), minimum_coverage=1.0
-    ).prepare(initial)
-
-    relation = transfer.relation(jnp.asarray([[0.9, 0.9]]))
-
-    assert not relation.evidence.successful
-    assert not bool(relation.evidence.covered[0])
-    assert relation.evidence.coverage_fraction[0] < transfer.plan.minimum_coverage
-
-
-def test_sparse_direct_forcing_couples_a_compliant_marker_without_dense_action() -> None:
     lattice = _lattice()
     position = jnp.asarray([[0.44, 0.53]])
     transfer = SparseMarkerTransferPlan(
@@ -135,6 +118,73 @@ def test_sparse_direct_forcing_couples_a_compliant_marker_without_dense_action()
     assert jnp.max(jnp.abs(result.evidence.transpose.force_residual)) < 1.0e-10
     assert jnp.max(jnp.abs(result.evidence.transpose.torque_residual)) < 1.0e-10
     assert result.force_density.shape == lattice.grid.shape + (2,)
+    lattice = _lattice()
+    initial = jnp.asarray([[0.45, 0.45]])
+    transfer = SparseMarkerTransferPlan(
+        lattice, jnp.asarray([7]), minimum_coverage=1.0
+    ).prepare(initial)
+
+    relation = transfer.relation(jnp.asarray([[0.9, 0.9]]))
+
+    assert not relation.evidence.successful
+    assert not bool(relation.evidence.covered[0])
+    assert relation.evidence.coverage_fraction[0] < transfer.plan.minimum_coverage
+    finite_volume = _finite_volume()
+    motion = phx.solver.MACALEGeometryPlan(
+        finite_volume,
+        lambda _time, points, _args: points,
+        lambda _time, points, _args: jnp.zeros_like(points),
+        mapping_id="cardio-identity-ale",
+    )
+    velocity = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
+    state = CardiovascularALEState(velocity, jnp.zeros(finite_volume.cell_shape))
+    accepted_plan = CardiovascularALEPlan(
+        motion,
+        ALEMinimumGapRoute(
+            lambda _geometry, gap: gap[0],
+            lambda _start, _end, _start_time, _end_time, gap: gap[1],
+            minimum_gap=0.05,
+            route_id="accepted-clearance",
+        ),
+    ).prepare()
+    accepted = accepted_plan.advance(
+        state,
+        0.0,
+        0.01,
+        jnp.asarray([[0.08, 0.09], [0.07, 0.08]]),
+    )
+
+    assert accepted.successful
+    assert accepted.evidence.gcl_certified
+    assert accepted.evidence.admissible
+    assert accepted.evidence.maximum_gcl_residual < 1.0e-10
+    assert accepted.evidence.gap.swept_certified
+
+    rejected_plan = CardiovascularALEPlan(
+        motion,
+        ALEMinimumGapRoute(
+            lambda _geometry, gap: gap[0],
+            lambda _start, _end, _start_time, _end_time, gap: gap[1],
+            minimum_gap=0.05,
+            route_id="rejected-clearance",
+        ),
+    ).prepare()
+    rejected = rejected_plan.advance(
+        state,
+        0.0,
+        0.01,
+        jnp.asarray([[0.08], [0.01]]),
+    )
+
+    assert not rejected.successful
+    assert rejected.evidence.gap.swept_certified
+    assert rejected.evidence.gap.minimum_gap == 0.01
+    assert rejected.status == int(ALETransitionStatus.MINIMUM_GAP_FAILURE)
+    assert all(
+        jnp.array_equal(new, old)
+        for new, old in zip(rejected.accepted_state.velocity, state.velocity, strict=True)
+    )
+    assert jnp.array_equal(rejected.accepted_state.pressure, state.pressure)
 
 
 def test_lbm_participant_gates_actual_post_advance_no_slip() -> None:
@@ -274,65 +324,6 @@ def test_partitioned_lbm_fem_builder_runs_added_mass_iteration() -> None:
     assert result.accepted_state.window_index == 1
 
 
-def test_conforming_ale_qualifies_gcl_and_rolls_back_on_minimum_gap() -> None:
-    finite_volume = _finite_volume()
-    motion = phx.solver.MACALEGeometryPlan(
-        finite_volume,
-        lambda _time, points, _args: points,
-        lambda _time, points, _args: jnp.zeros_like(points),
-        mapping_id="cardio-identity-ale",
-    )
-    velocity = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
-    state = CardiovascularALEState(velocity, jnp.zeros(finite_volume.cell_shape))
-    accepted_plan = CardiovascularALEPlan(
-        motion,
-        ALEMinimumGapRoute(
-            lambda _geometry, gap: gap[0],
-            lambda _start, _end, _start_time, _end_time, gap: gap[1],
-            minimum_gap=0.05,
-            route_id="accepted-clearance",
-        ),
-    ).prepare()
-    accepted = accepted_plan.advance(
-        state,
-        0.0,
-        0.01,
-        jnp.asarray([[0.08, 0.09], [0.07, 0.08]]),
-    )
-
-    assert accepted.successful
-    assert accepted.evidence.gcl_certified
-    assert accepted.evidence.admissible
-    assert accepted.evidence.maximum_gcl_residual < 1.0e-10
-    assert accepted.evidence.gap.swept_certified
-
-    rejected_plan = CardiovascularALEPlan(
-        motion,
-        ALEMinimumGapRoute(
-            lambda _geometry, gap: gap[0],
-            lambda _start, _end, _start_time, _end_time, gap: gap[1],
-            minimum_gap=0.05,
-            route_id="rejected-clearance",
-        ),
-    ).prepare()
-    rejected = rejected_plan.advance(
-        state,
-        0.0,
-        0.01,
-        jnp.asarray([[0.08], [0.01]]),
-    )
-
-    assert not rejected.successful
-    assert rejected.evidence.gap.swept_certified
-    assert rejected.evidence.gap.minimum_gap == 0.01
-    assert rejected.status == int(ALETransitionStatus.MINIMUM_GAP_FAILURE)
-    assert all(
-        jnp.array_equal(new, old)
-        for new, old in zip(rejected.accepted_state.velocity, state.velocity, strict=True)
-    )
-    assert jnp.array_equal(rejected.accepted_state.pressure, state.pressure)
-
-
 def _contact_residual() -> Any:
     contact = phx.applications.contact
     collision = phx.discretization.contact
@@ -445,7 +436,7 @@ def _stationary_leaflet_step(
     )
 
 
-def test_cut_cell_leaflet_contact_reports_leakage_without_sealing_claim() -> None:
+def test_cardiovascular_fsi_scenario_2() -> None:
     workflow = LeafletContactWorkflowPlan(
         _contact_residual(),
         _cut_cell_route(1.0),
@@ -465,11 +456,6 @@ def test_cut_cell_leaflet_contact_reports_leakage_without_sealing_claim() -> Non
     assert 0.0 < result.evidence.fluid.leakage_proxy <= 1.0
     assert not result.evidence.fluid.exact_sealing_certified
     assert not result.evidence.fluid.refinement_required
-
-
-def test_leaflet_leakage_failure_rolls_back_structure_and_cut_cell_state_atomically() -> (
-    None
-):
     workflow = LeafletContactWorkflowPlan(
         _contact_residual(),
         _cut_cell_route(0.5),

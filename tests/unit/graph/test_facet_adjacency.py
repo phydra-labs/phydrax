@@ -34,9 +34,7 @@ def _finite_element(mesh: Any) -> Any:
 TRIANGLES = ((0, 1, 4), (0, 4, 3), (1, 2, 5), (1, 5, 4))
 
 
-def test_facet_adjacency_identity_is_shared_by_finite_volume_finite_element_and_graph() -> (
-    None
-):
+def test_facet_adjacency_contracts() -> None:
     finite_volume = _finite_volume(TRIANGLES)
     fv = phx.graph.facet_adjacency(finite_volume)
     fe = phx.graph.facet_adjacency(_finite_element(finite_volume.mesh))
@@ -56,6 +54,25 @@ def test_facet_adjacency_identity_is_shared_by_finite_volume_finite_element_and_
 
     flipped = _finite_volume(((0, 1, 3), (1, 4, 3), (1, 2, 5), (1, 5, 4)))
     assert phx.graph.facet_adjacency(flipped).topology_id != fv.topology_id
+    for facets, owners, neighbors, error, match in [
+        ([0, 1], [0, 1], [1, 1], ValueError, "itself"),
+        ([0, 1], [0, 1], [1, -2], ValueError, "sentinel"),
+        ([0, 0], [0, 1], [1, -1], ValueError, "unique"),
+        ([0, 1], [0, 3], [1, -1], ValueError, "Owner"),
+        ([0.0, 1.0], [0, 1], [1, -1], TypeError, "integer"),
+    ]:
+        with pytest.raises(error, match=match):
+            phx.graph.FacetAdjacency(
+                np.asarray(facets),
+                np.asarray(owners),
+                np.asarray(neighbors),
+                cell_count=2,
+                cell_entity_set_id="cells",
+                facet_entity_set_id="facets",
+            )
+    with pytest.raises(TypeError, match="facet_adjacency"):
+        # ty: ignore[invalid-argument-type]
+        phx.graph.facet_adjacency(object())
 
 
 def test_physical_residual_and_mesh_graph_net_share_inert_boundary_routes() -> None:
@@ -110,33 +127,3 @@ def test_physical_residual_and_mesh_graph_net_share_inert_boundary_routes() -> N
         rtol=1e-13,
         atol=1e-13,
     )
-
-
-@pytest.mark.parametrize(
-    ("facets", "owners", "neighbors", "error", "match"),
-    [
-        ([0, 1], [0, 1], [1, 1], ValueError, "itself"),
-        ([0, 1], [0, 1], [1, -2], ValueError, "sentinel"),
-        ([0, 0], [0, 1], [1, -1], ValueError, "unique"),
-        ([0, 1], [0, 3], [1, -1], ValueError, "Owner"),
-        ([0.0, 1.0], [0, 1], [1, -1], TypeError, "integer"),
-    ],
-)
-def test_facet_adjacency_rejects_inconsistent_routes(
-    facets: Any, owners: Any, neighbors: Any, error: Any, match: Any
-) -> None:
-    with pytest.raises(error, match=match):
-        phx.graph.FacetAdjacency(
-            np.asarray(facets),
-            np.asarray(owners),
-            np.asarray(neighbors),
-            cell_count=2,
-            cell_entity_set_id="cells",
-            facet_entity_set_id="facets",
-        )
-
-
-def test_facet_adjacency_requires_a_mesh_discretization() -> None:
-    with pytest.raises(TypeError, match="facet_adjacency"):
-        # ty: ignore[invalid-argument-type]
-        phx.graph.facet_adjacency(object())

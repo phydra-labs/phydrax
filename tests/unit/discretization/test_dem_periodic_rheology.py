@@ -45,9 +45,7 @@ def _compile_periodic(control: Any, radii: Any) -> Any:
     )
 
 
-def test_prescribed_deforming_cell_preserves_fractional_positions_and_work_ledger() -> (
-    None
-):
+def test_dem_periodic_rheology_scenario_1() -> None:
     control = phx.discretization.DEMPeriodicCellControlPlan(
         jnp.asarray([[0.0, 0.2], [0.0, 0.0]]),
         strain_rate_mask=jnp.asarray([[False, True], [False, False]]),
@@ -87,9 +85,6 @@ def test_prescribed_deforming_cell_preserves_fractional_positions_and_work_ledge
         detail.accepted_state.periodic_cell.cumulative_work,
     )
     assert detail.evaluation.bulk_stress.successful
-
-
-def test_mixed_stress_strain_control_uses_periodic_contact_stress() -> None:
     control = phx.discretization.DEMPeriodicCellControlPlan(
         jnp.asarray([[0.0, 0.1], [0.0, 0.0]]),
         strain_rate_mask=jnp.asarray([[False, True], [False, False]]),
@@ -129,9 +124,6 @@ def test_mixed_stress_strain_control_uses_periodic_contact_stress() -> None:
             stress_mask=jnp.eye(2, dtype="bool"),
             stress_compliance=jnp.ones((2, 2)),
         )
-
-
-def test_cell_control_failure_rolls_back_atomically() -> None:
     control = phx.discretization.DEMPeriodicCellControlPlan(
         jnp.asarray([[0.0, 100.0], [0.0, 0.0]]),
         strain_rate_mask=jnp.asarray([[False, True], [False, False]]),
@@ -160,7 +152,7 @@ def test_cell_control_failure_rolls_back_atomically() -> None:
     )
 
 
-def test_periodic_envelope_and_explicit_bulk_stress_terms_are_auditable() -> None:
+def test_dem_periodic_rheology_scenario_2() -> None:
     envelope = phx.discretization.PeriodicNeighborhoodEnvelope(
         jnp.eye(2),
         minimum_singular_value=0.8,
@@ -188,85 +180,79 @@ def test_periodic_envelope_and_explicit_bulk_stress_terms_are_auditable() -> Non
     )
     assert bool(stress.successful)
     assert jnp.all(jnp.isfinite(stress.total_stress))
+    for inactive_mass in [jnp.nan, jnp.inf]:
+        plan = phx.discretization.DEMBulkStressPlan(
+            jnp.asarray((0.25, -0.5)),
+            include_contact=False,
+            include_kinetic=True,
+            include_body_force_moment=True,
+        )
+        arguments = {
+            "volume": jnp.asarray(2.0),
+            "contact_force": jnp.zeros((1, 2)),
+            "contact_displacement": jnp.zeros((1, 2)),
+            "particle_active": jnp.asarray((True, True, False)),
+        }
+        reference = plan.evaluate(
+            **arguments,
+            particle_mass=jnp.asarray((2.0, 3.0, 9.0)),
+            particle_velocity=jnp.asarray(((1.0, 2.0), (-1.0, 0.5), (0.0, 0.0))),
+            body_force=jnp.asarray(((3.0, -2.0), (-1.0, 4.0), (0.0, 0.0))),
+            particle_position=jnp.asarray(((1.5, 0.75), (-0.25, 1.25), (0.0, 0.0))),
+        )
+        stale = plan.evaluate(
+            **arguments,
+            particle_mass=jnp.asarray((2.0, 3.0, inactive_mass)),
+            particle_velocity=jnp.asarray(((1.0, 2.0), (-1.0, 0.5), (jnp.nan, jnp.inf))),
+            body_force=jnp.asarray(((3.0, -2.0), (-1.0, 4.0), (jnp.nan, jnp.inf))),
+            particle_position=jnp.asarray(
+                ((1.5, 0.75), (-0.25, 1.25), (jnp.inf, jnp.nan))
+            ),
+        )
 
+        stale_evidence = (
+            stale.contact_stress,
+            stale.kinetic_stress,
+            stale.barrier_stress,
+            stale.body_force_stress,
+            stale.total_stress,
+            stale.pressure,
+            stale.volume,
+            stale.symmetry_defect,
+            stale.origin,
+            stale.successful,
+        )
+        reference_evidence = (
+            reference.contact_stress,
+            reference.kinetic_stress,
+            reference.barrier_stress,
+            reference.body_force_stress,
+            reference.total_stress,
+            reference.pressure,
+            reference.volume,
+            reference.symmetry_defect,
+            reference.origin,
+            reference.successful,
+        )
+        for stale_value, reference_value in zip(
+            stale_evidence, reference_evidence, strict=True
+        ):
+            assert jnp.array_equal(stale_value, reference_value)
+        assert bool(reference.successful)
+        assert bool(stale.successful)
+    for active_mass in [jnp.nan, jnp.inf]:
+        stress = phx.discretization.DEMBulkStressPlan(
+            jnp.zeros((2,)),
+            include_contact=False,
+            include_kinetic=True,
+        ).evaluate(
+            volume=jnp.asarray(1.0),
+            contact_force=jnp.zeros((1, 2)),
+            contact_displacement=jnp.zeros((1, 2)),
+            particle_mass=jnp.asarray((active_mass, 2.0)),
+            particle_velocity=jnp.asarray(((1.0, -1.0), (0.5, 0.25))),
+            particle_active=jnp.asarray((True, True)),
+        )
 
-@pytest.mark.parametrize("inactive_mass", [jnp.nan, jnp.inf])
-def test_bulk_stress_ignores_nonfinite_inactive_particle_slots(
-    inactive_mass: Any,
-) -> None:
-    plan = phx.discretization.DEMBulkStressPlan(
-        jnp.asarray((0.25, -0.5)),
-        include_contact=False,
-        include_kinetic=True,
-        include_body_force_moment=True,
-    )
-    arguments = {
-        "volume": jnp.asarray(2.0),
-        "contact_force": jnp.zeros((1, 2)),
-        "contact_displacement": jnp.zeros((1, 2)),
-        "particle_active": jnp.asarray((True, True, False)),
-    }
-    reference = plan.evaluate(
-        **arguments,
-        particle_mass=jnp.asarray((2.0, 3.0, 9.0)),
-        particle_velocity=jnp.asarray(((1.0, 2.0), (-1.0, 0.5), (0.0, 0.0))),
-        body_force=jnp.asarray(((3.0, -2.0), (-1.0, 4.0), (0.0, 0.0))),
-        particle_position=jnp.asarray(((1.5, 0.75), (-0.25, 1.25), (0.0, 0.0))),
-    )
-    stale = plan.evaluate(
-        **arguments,
-        particle_mass=jnp.asarray((2.0, 3.0, inactive_mass)),
-        particle_velocity=jnp.asarray(((1.0, 2.0), (-1.0, 0.5), (jnp.nan, jnp.inf))),
-        body_force=jnp.asarray(((3.0, -2.0), (-1.0, 4.0), (jnp.nan, jnp.inf))),
-        particle_position=jnp.asarray(((1.5, 0.75), (-0.25, 1.25), (jnp.inf, jnp.nan))),
-    )
-
-    stale_evidence = (
-        stale.contact_stress,
-        stale.kinetic_stress,
-        stale.barrier_stress,
-        stale.body_force_stress,
-        stale.total_stress,
-        stale.pressure,
-        stale.volume,
-        stale.symmetry_defect,
-        stale.origin,
-        stale.successful,
-    )
-    reference_evidence = (
-        reference.contact_stress,
-        reference.kinetic_stress,
-        reference.barrier_stress,
-        reference.body_force_stress,
-        reference.total_stress,
-        reference.pressure,
-        reference.volume,
-        reference.symmetry_defect,
-        reference.origin,
-        reference.successful,
-    )
-    for stale_value, reference_value in zip(
-        stale_evidence, reference_evidence, strict=True
-    ):
-        assert jnp.array_equal(stale_value, reference_value)
-    assert bool(reference.successful)
-    assert bool(stale.successful)
-
-
-@pytest.mark.parametrize("active_mass", [jnp.nan, jnp.inf])
-def test_bulk_stress_fails_closed_for_nonfinite_active_mass(active_mass: Any) -> None:
-    stress = phx.discretization.DEMBulkStressPlan(
-        jnp.zeros((2,)),
-        include_contact=False,
-        include_kinetic=True,
-    ).evaluate(
-        volume=jnp.asarray(1.0),
-        contact_force=jnp.zeros((1, 2)),
-        contact_displacement=jnp.zeros((1, 2)),
-        particle_mass=jnp.asarray((active_mass, 2.0)),
-        particle_velocity=jnp.asarray(((1.0, -1.0), (0.5, 0.25))),
-        particle_active=jnp.asarray((True, True)),
-    )
-
-    assert not bool(stress.successful)
-    assert not bool(jnp.all(jnp.isfinite(stress.total_stress)))
+        assert not bool(stress.successful)
+        assert not bool(jnp.all(jnp.isfinite(stress.total_stress)))

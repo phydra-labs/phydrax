@@ -36,7 +36,7 @@ def _solve_training_candidate() -> Any:
     return training, heldout, result, plan
 
 
-def test_heldout_metric_evidence_retains_weights_ess_and_ancestry() -> None:
+def test_calabi_yau_evidence_scenario_1() -> None:
     training, _, result, plan = _solve_training_candidate()
     evidence = phx.solver.evaluate_calabi_yau_metric_evidence(
         result,
@@ -53,9 +53,6 @@ def test_heldout_metric_evidence_retains_weights_ess_and_ancestry() -> None:
     assert bool(evidence.kahler_by_construction)
     assert not bool(evidence.ricci_available)
     assert "no-exact-ricci-flat" in evidence.claim
-
-
-def test_frozen_metric_artifact_includes_heldout_evidence_identity() -> None:
     training, _, result, plan = _solve_training_candidate()
     evidence = phx.solver.evaluate_calabi_yau_metric_evidence(
         result,
@@ -73,9 +70,6 @@ def test_frozen_metric_artifact_includes_heldout_evidence_identity() -> None:
     point = plan.heldout_samples.homogeneous_points[0]
     evaluation = artifact.evaluate(training.hypersurface, point)
     assert jnp.all(jnp.isfinite(evaluation.metric))
-
-
-def test_metric_evidence_refuses_shared_train_holdout_points() -> None:
     campaign = phx.solver.prepare_elliptic_curve(jax.random.key(303), line_count=1)
     with pytest.raises(ValueError, match="share an exact point"):
         phx.solver.CalabiYauMetricEvidencePlan(

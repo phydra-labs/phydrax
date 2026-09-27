@@ -96,7 +96,7 @@ def _solver(
     )
 
 
-def test_positive_features_are_nonnegative_replayable_and_carry_probe_evidence() -> None:
+def test_scalable_scenario_1() -> None:
     problem = _problem(
         [[-0.3, 0.1], [0.0, -0.2], [0.25, 0.2]],
         [[-0.15, -0.1], [0.1, 0.15], [0.35, -0.05]],
@@ -136,11 +136,6 @@ def test_positive_features_are_nonnegative_replayable_and_carry_probe_evidence()
             factorization_id=left.factorization_id,
         )
         jax.block_until_ready(invalid.source_factors)
-
-
-def test_factorized_sinkhorn_matches_dense_plan_marginals_actions_and_objectives() -> (
-    None
-):
     problem = _problem(
         [[-0.35], [0.0], [0.3]],
         [[-0.2], [0.12], [0.4]],
@@ -198,9 +193,6 @@ def test_factorized_sinkhorn_matches_dense_plan_marginals_actions_and_objectives
         atol=2e-5,
     )
     assert jnp.allclose(plan, exact.dense_plan(), rtol=0.12, atol=0.04)
-
-
-def test_approximation_failure_zero_rows_and_extreme_translation_are_explicit() -> None:
     problem = _problem([[-0.4], [0.0], [0.35]], [[-0.25], [0.2], [0.45]])
     rejected = _solver(rank=2, probe_tolerance=0.0)(problem)
     assert not rejected.converged
@@ -292,9 +284,7 @@ def test_factorized_solver_is_jittable_vmappable_differentiable_and_preserves_ma
     )
 
 
-def test_scientific_particle_transform_keeps_approximation_provenance_and_rejects_failure() -> (
-    None
-):
+def test_scalable_scenario_2() -> None:
     particles = jnp.asarray(
         [
             [[-0.5], [0.0], [0.6]],
@@ -340,9 +330,6 @@ def test_scientific_particle_transform_keeps_approximation_provenance_and_reject
             solver=failing,
         )
         jax.block_until_ready(rejected.particles)
-
-
-def test_scalable_balanced_transport_public_catalog_is_complete() -> None:
     expected = {
         "AbstractBalancedTransportPlan",
         "AbstractBalancedTransportSolver",

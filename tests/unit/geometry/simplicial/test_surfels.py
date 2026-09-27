@@ -6,7 +6,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_simplicial_surfel_preserves_face_measure_and_orientation() -> None:
+def test_surfels_scenario_1() -> None:
     surface = phx.geometry.TriangleSurface(
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
         jnp.asarray(((0, 1, 2),)),
@@ -25,9 +25,6 @@ def test_simplicial_surfel_preserves_face_measure_and_orientation() -> None:
         is phx.discretization.SurfelAccuracy.EXACT
     )
     assert prepared.discretization.source_entity_ids[0] == 0
-
-
-def test_reversed_triangle_reverses_surfel_normal_without_changing_measure() -> None:
     vertices = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     first = phx.geometry.SimplicialSurfelPlan(
         phx.geometry.TriangleSurface(

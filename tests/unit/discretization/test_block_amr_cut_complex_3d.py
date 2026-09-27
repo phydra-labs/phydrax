@@ -71,7 +71,7 @@ def _resources(*, components: Any = 4) -> Any:
     )
 
 
-def test_canonical_hierarchy_preflight_accounts_component_capacity() -> None:
+def test_block_amr_cut_complex_3d_scenario_1() -> None:
     hierarchy = phx.discretization.canonicalize_patch_hierarchy(_topology())
     evidence = _resources(components=3).preflight(
         hierarchy,
@@ -84,9 +84,6 @@ def test_canonical_hierarchy_preflight_accounts_component_capacity() -> None:
     assert evidence.cell_slots == 1
     assert evidence.control_volume_slots == 3
     assert evidence.reserved_device_bytes > 3 * 5 * 8
-
-
-def test_three_dimensional_plane_cut_closes_volume_and_faces() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-x-0.37",
@@ -117,9 +114,6 @@ def test_three_dimensional_plane_cut_closes_volume_and_faces() -> None:
         atol=2.0e-6,
     )
     assert np.count_nonzero(np.asarray(complex_.face_kinds) == 2) > 0
-
-
-def test_subcell_piecewise_linear_field_preserves_disconnected_components() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: (points[:, 0] - 0.3) * (points[:, 0] - 0.7),
         "solid-slab",
@@ -147,7 +141,7 @@ def test_subcell_piecewise_linear_field_preserves_disconnected_components() -> N
     np.testing.assert_allclose(centers, np.asarray((0.17, 0.83)), atol=2.0e-6)
 
 
-def test_cut_complex_lowers_to_polyhedral_finite_volume_plan() -> None:
+def test_cut_contracts() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-fv",
@@ -165,9 +159,6 @@ def test_cut_complex_lowers_to_polyhedral_finite_volume_plan() -> None:
 
     assert prepared.cell_count == 1
     np.testing.assert_allclose(prepared.cell_volumes, jnp.asarray((0.63,)), atol=2.0e-6)
-
-
-def test_cut_complex_advances_through_public_finite_volume_runtime() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-runtime",
@@ -231,9 +222,93 @@ def test_cut_complex_advances_through_public_finite_volume_runtime() -> None:
         rtol=2.0e-6,
         atol=2.0e-7,
     )
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: points[:, 0] - 0.37,
+        "cochain-plane",
+        24,
+    )
+    complex_ = phx.discretization.MultivaluedCutCellPlan(
+        _topology(),
+        _identity,
+        "identity-map",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        _resources(),
+    ).prepare()
+    cochain = phx.discretization.CutCellCochainPlan(complex_).prepare()
+    topology = cochain.topology.topology
+    edge_count = topology.entities(1).count
+    face_count = topology.entities(2).count
+    edge_values = jnp.linspace(-0.3, 0.7, edge_count)
+    face_values = jnp.linspace(0.2, 1.1, face_count)
+    curl = topology.incidences[1].exterior_derivative().mv(edge_values)
+    divergence_of_curl = topology.incidences[2].exterior_derivative().mv(curl)
+
+    np.testing.assert_allclose(divergence_of_curl, 0.0, atol=2.0e-7)
+    assert bool(cochain.metrics.valid)
+    register = phx.solver.advanced.ElectromotiveForceRegister(
+        jnp.zeros((edge_count,)),
+        1.0e-3 * edge_values,
+        register_id="cut-cell-emf",
+    )
+    updated, diagnostics = phx.solver.advanced.CutCellCochainSynchronizationPlan(
+        cochain
+    ).reflux_curl(
+        face_values,
+        register,
+    )
+
+    assert updated.shape == face_values.shape
+    np.testing.assert_allclose(
+        diagnostics.divergence_after,
+        diagnostics.divergence_before,
+        atol=2.0e-7,
+    )
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: points[:, 0] - 0.37,
+        "cochain-transition-plane",
+        28,
+    )
+    complex_ = phx.discretization.MultivaluedCutCellPlan(
+        _topology(),
+        _identity,
+        "identity-map",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        _resources(),
+    ).prepare()
+    plan = phx.discretization.CutCellCochainPlan(complex_)
+    state = plan.prepare()
+    transfer = phx.discretization.CutCellCochainTransferPlan(
+        plan,
+        plan,
+        state,
+        state,
+    )
+
+    assert transfer.evidence.valid
+    assert transfer.evidence.maximum_commuting_defect == 0.0
+    for degree, entities in enumerate(state.topology.topology.entity_sets):
+        source = jnp.linspace(-0.4, 0.7, entities.count)
+        target = jnp.linspace(0.2, 0.9, entities.count)
+        mapped = transfer.apply(degree, source)
+        pullback = transfer.transpose(degree, target)
+        adjoint = transfer.adjoint(degree, target)
+        hodge = state.metrics.hodge_stars[degree]
+        np.testing.assert_allclose(mapped, source)
+        np.testing.assert_allclose(
+            jnp.vdot(mapped, target),
+            jnp.vdot(source, pullback),
+            rtol=2.0e-6,
+            atol=2.0e-7,
+        )
+        np.testing.assert_allclose(
+            jnp.vdot(mapped * hodge, target),
+            jnp.vdot(source * hodge, adjoint),
+            rtol=2.0e-6,
+            atol=2.0e-7,
+        )
 
 
-def test_metric_common_refinement_preserves_content_and_transpose_pairing() -> None:
+def test_block_amr_cut_complex_3d_scenario_2() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
         "plane-transition",
@@ -279,29 +354,6 @@ def test_metric_common_refinement_preserves_content_and_transpose_pairing() -> N
     lhs = jnp.vdot(result.target_content, target_cotangent)
     rhs = jnp.vdot(source_content, pullback)
     np.testing.assert_allclose(lhs, rhs, rtol=2.0e-6, atol=2.0e-7)
-
-
-def _plane_complex(offset: Any, x_cells: Any) -> Any:
-    body = phx.discretization.EmbeddedLevelSetBody(
-        lambda points, time, args: points[:, 0] - offset,
-        f"regrid-plane-{offset}",
-        15,
-    )
-    return phx.discretization.MultivaluedCutCellPlan(
-        _topology_x_cells(x_cells),
-        _identity,
-        "identity-map",
-        phx.discretization.EmbeddedLevelSetBodySet((body,)),
-        _resources(),
-    ).prepare()
-
-
-def _ordered_components(complex_: Any) -> Any:
-    count = complex_.component_count
-    return np.argsort(np.asarray(complex_.component_centers)[:count, 0])
-
-
-def test_nonmatching_regrid_transition_conserves_content_and_constants() -> None:
     # Source cells [0, 1/2], [1/2, 1] and target cells [0, 1/3], [1/3, 2/3],
     # [2/3, 1] share only the fluid region x > 0.37.
     source = _plane_complex(0.37, 2)
@@ -340,9 +392,6 @@ def test_nonmatching_regrid_transition_conserves_content_and_constants() -> None
         4.0,
         rtol=1.0e-12,
     )
-
-
-def test_nonmatching_regrid_transition_reports_incomplete_coverage() -> None:
     source = _plane_complex(0.37, 2)
     target = _plane_complex(0.45, 3)
 
@@ -373,9 +422,6 @@ def test_nonmatching_regrid_transition_reports_incomplete_coverage() -> None:
     np.testing.assert_allclose(
         transition.apply_average(constant)[:target_count], 4.0, rtol=1.0e-12
     )
-
-
-def test_multivalued_small_cell_redistribution_uses_aperture_neighbor() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.49,
         "small-sliver",
@@ -405,45 +451,6 @@ def test_multivalued_small_cell_redistribution_uses_aperture_neighbor() -> None:
     assert result.activated
     np.testing.assert_allclose(jnp.sum(result.redistributed_rate), 1.0)
     np.testing.assert_allclose(result.redistributed_rate[source, 0], 0.2, atol=2.0e-6)
-
-
-def test_polyhedral_viscous_residual_vanishes_for_constant_state() -> None:
-    body = phx.discretization.EmbeddedLevelSetBody(
-        lambda points, time, args: points[:, 0] - 0.37,
-        "viscous-plane",
-        19,
-    )
-    complex_ = phx.discretization.MultivaluedCutCellPlan(
-        _topology(),
-        _identity,
-        "identity-map",
-        phx.discretization.EmbeddedLevelSetBodySet((body,)),
-        _resources(),
-    ).prepare()
-    system = phx.equations.CompressibleNavierStokesSystem(
-        phx.equations.ConstantTransport(0.1, 0.2),
-        3,
-    )
-    discretization = complex_.finite_volume_plan(
-        component_names=system.component_names
-    ).prepare()
-    primitive = jnp.broadcast_to(
-        jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0)),
-        discretization.state_shape,
-    )
-    state = system.primitive_to_conserved(primitive)
-
-    residual = phx.discretization.ViscousFluxPlan().unstructured_residual(
-        system,
-        jnp.asarray(0.0),
-        state,
-        discretization,
-    )
-
-    np.testing.assert_allclose(residual, 0.0, atol=2.0e-7)
-
-
-def test_multivalued_composite_diffusion_solves_each_connected_nullspace() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: jnp.ones((points.shape[0],)),
         "full-fluid-diffusion",
@@ -481,7 +488,60 @@ def test_multivalued_composite_diffusion_solves_each_connected_nullspace() -> No
     )
 
 
-def test_moving_cut_cell_transaction_closes_swept_volume_and_content() -> None:
+def _plane_complex(offset: Any, x_cells: Any) -> Any:
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: points[:, 0] - offset,
+        f"regrid-plane-{offset}",
+        15,
+    )
+    return phx.discretization.MultivaluedCutCellPlan(
+        _topology_x_cells(x_cells),
+        _identity,
+        "identity-map",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        _resources(),
+    ).prepare()
+
+
+def _ordered_components(complex_: Any) -> Any:
+    count = complex_.component_count
+    return np.argsort(np.asarray(complex_.component_centers)[:count, 0])
+
+
+def test_block_amr_cut_complex_3d_scenario_3() -> None:
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: points[:, 0] - 0.37,
+        "viscous-plane",
+        19,
+    )
+    complex_ = phx.discretization.MultivaluedCutCellPlan(
+        _topology(),
+        _identity,
+        "identity-map",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        _resources(),
+    ).prepare()
+    system = phx.equations.CompressibleNavierStokesSystem(
+        phx.equations.ConstantTransport(0.1, 0.2),
+        3,
+    )
+    discretization = complex_.finite_volume_plan(
+        component_names=system.component_names
+    ).prepare()
+    primitive = jnp.broadcast_to(
+        jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0)),
+        discretization.state_shape,
+    )
+    state = system.primitive_to_conserved(primitive)
+
+    residual = phx.discretization.ViscousFluxPlan().unstructured_residual(
+        system,
+        jnp.asarray(0.0),
+        state,
+        discretization,
+    )
+
+    np.testing.assert_allclose(residual, 0.0, atol=2.0e-7)
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - (0.35 + 0.01 * time),
         "moving-plane",
@@ -521,52 +581,30 @@ def test_moving_cut_cell_transaction_closes_swept_volume_and_content() -> None:
         rtol=3.0e-6,
         atol=3.0e-7,
     )
-
-
-def test_cut_complex_cochains_preserve_chain_identity_and_reflux_curl_divergence() -> (
-    None
-):
-    body = phx.discretization.EmbeddedLevelSetBody(
-        lambda points, time, args: points[:, 0] - 0.37,
-        "cochain-plane",
-        24,
+    left = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: points[:, 0] - 0.25,
+        "left-solid",
+        31,
     )
-    complex_ = phx.discretization.MultivaluedCutCellPlan(
-        _topology(),
-        _identity,
-        "identity-map",
-        phx.discretization.EmbeddedLevelSetBodySet((body,)),
-        _resources(),
-    ).prepare()
-    cochain = phx.discretization.CutCellCochainPlan(complex_).prepare()
-    topology = cochain.topology.topology
-    edge_count = topology.entities(1).count
-    face_count = topology.entities(2).count
-    edge_values = jnp.linspace(-0.3, 0.7, edge_count)
-    face_values = jnp.linspace(0.2, 1.1, face_count)
-    curl = topology.incidences[1].exterior_derivative().mv(edge_values)
-    divergence_of_curl = topology.incidences[2].exterior_derivative().mv(curl)
+    right = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: 0.75 - points[:, 0],
+        "right-solid",
+        32,
+    )
+    points = jnp.asarray(((0.1, 0.5, 0.5), (0.5, 0.5, 0.5), (0.9, 0.5, 0.5)))
 
-    np.testing.assert_allclose(divergence_of_curl, 0.0, atol=2.0e-7)
-    assert bool(cochain.metrics.valid)
-    register = phx.solver.advanced.ElectromotiveForceRegister(
-        jnp.zeros((edge_count,)),
-        1.0e-3 * edge_values,
-        register_id="cut-cell-emf",
+    union, tags = phx.discretization.EmbeddedLevelSetBodySet((left, right)).evaluate(
+        points, jnp.asarray(0.0), None
     )
-    updated, diagnostics = phx.solver.advanced.CutCellCochainSynchronizationPlan(
-        cochain
-    ).reflux_curl(
-        face_values,
-        register,
-    )
+    difference, _ = phx.discretization.EmbeddedLevelSetBodySet(
+        (left, right),
+        operation="intersection",
+        body_signs=(1, -1),
+    ).evaluate(points, jnp.asarray(0.0), None)
 
-    assert updated.shape == face_values.shape
-    np.testing.assert_allclose(
-        diagnostics.divergence_after,
-        diagnostics.divergence_before,
-        atol=2.0e-7,
-    )
+    np.testing.assert_array_equal(union < 0.0, (True, False, True))
+    np.testing.assert_array_equal(tags, (31, 31, 32))
+    np.testing.assert_array_equal(difference < 0.0, (True, False, False))
 
 
 def test_adaptive_implicit_certificate_detects_corner_invisible_surface() -> None:
@@ -662,76 +700,3 @@ def test_localized_moving_step_resolves_multiple_enter_exit_events() -> None:
         rtol=5.0e-6,
         atol=5.0e-7,
     )
-
-
-def test_cut_cochain_transition_commutes_and_uses_metric_adjoint() -> None:
-    body = phx.discretization.EmbeddedLevelSetBody(
-        lambda points, time, args: points[:, 0] - 0.37,
-        "cochain-transition-plane",
-        28,
-    )
-    complex_ = phx.discretization.MultivaluedCutCellPlan(
-        _topology(),
-        _identity,
-        "identity-map",
-        phx.discretization.EmbeddedLevelSetBodySet((body,)),
-        _resources(),
-    ).prepare()
-    plan = phx.discretization.CutCellCochainPlan(complex_)
-    state = plan.prepare()
-    transfer = phx.discretization.CutCellCochainTransferPlan(
-        plan,
-        plan,
-        state,
-        state,
-    )
-
-    assert transfer.evidence.valid
-    assert transfer.evidence.maximum_commuting_defect == 0.0
-    for degree, entities in enumerate(state.topology.topology.entity_sets):
-        source = jnp.linspace(-0.4, 0.7, entities.count)
-        target = jnp.linspace(0.2, 0.9, entities.count)
-        mapped = transfer.apply(degree, source)
-        pullback = transfer.transpose(degree, target)
-        adjoint = transfer.adjoint(degree, target)
-        hodge = state.metrics.hodge_stars[degree]
-        np.testing.assert_allclose(mapped, source)
-        np.testing.assert_allclose(
-            jnp.vdot(mapped, target),
-            jnp.vdot(source, pullback),
-            rtol=2.0e-6,
-            atol=2.0e-7,
-        )
-        np.testing.assert_allclose(
-            jnp.vdot(mapped * hodge, target),
-            jnp.vdot(source * hodge, adjoint),
-            rtol=2.0e-6,
-            atol=2.0e-7,
-        )
-
-
-def test_embedded_body_set_supports_tagged_union_and_difference_csg() -> None:
-    left = phx.discretization.EmbeddedLevelSetBody(
-        lambda points, time, args: points[:, 0] - 0.25,
-        "left-solid",
-        31,
-    )
-    right = phx.discretization.EmbeddedLevelSetBody(
-        lambda points, time, args: 0.75 - points[:, 0],
-        "right-solid",
-        32,
-    )
-    points = jnp.asarray(((0.1, 0.5, 0.5), (0.5, 0.5, 0.5), (0.9, 0.5, 0.5)))
-
-    union, tags = phx.discretization.EmbeddedLevelSetBodySet((left, right)).evaluate(
-        points, jnp.asarray(0.0), None
-    )
-    difference, _ = phx.discretization.EmbeddedLevelSetBodySet(
-        (left, right),
-        operation="intersection",
-        body_signs=(1, -1),
-    ).evaluate(points, jnp.asarray(0.0), None)
-
-    np.testing.assert_array_equal(union < 0.0, (True, False, True))
-    np.testing.assert_array_equal(tags, (31, 31, 32))
-    np.testing.assert_array_equal(difference < 0.0, (True, False, False))

@@ -23,9 +23,7 @@ def _fixed_residual(condition: Any, num_samples: Any, key: Any) -> Any:
     )
 
 
-def test_manufactured_brownian_backward_constraint_is_zero_and_perturbation_is_not() -> (
-    None
-):
+def test_stochastic_constraints_scenario_1() -> None:
     domain = _spacetime()
     truth = 0.7
     observable = domain.Function("x", "t")(lambda x, t: x[0] ** 2 - truth**2 * t)
@@ -52,9 +50,6 @@ def test_manufactured_brownian_backward_constraint_is_zero_and_perturbation_is_n
 
     assert exact.loss({"u": observable}, key=jr.key(1)) < 1e-12
     assert perturbed.loss({"u": observable}, key=jr.key(1)) > 1e-3
-
-
-def test_stationary_ornstein_uhlenbeck_fokker_planck_constraint_is_zero() -> None:
     domain = phx.domain.Interval1d(-3.0, 3.0)
     theta, sigma = 0.8, 0.6
     density = domain.Function("x")(lambda x: jnp.exp(-theta * x[0] ** 2 / sigma**2))
@@ -70,11 +65,6 @@ def test_stationary_ornstein_uhlenbeck_fokker_planck_constraint_is_zero() -> Non
     constraint = _fixed_residual(condition, 48, jr.key(2))
 
     assert constraint.loss({"p": density}, key=jr.key(3)) < 1e-12
-
-
-def test_fokker_planck_stationary_and_evolution_modes_use_opposite_time_contracts() -> (
-    None
-):
     domain = _spacetime()
     density = domain.Function("x", "t")(lambda x, t: t)
     drift = domain.Function("x", "t")(lambda x, t: jnp.asarray([0.0]))
@@ -95,9 +85,42 @@ def test_fokker_planck_stationary_and_evolution_modes_use_opposite_time_contract
 
     assert stationary.loss({"p": density}, key=jr.key(5)) < 1e-12
     assert jnp.allclose(evolving.loss({"p": density}, key=jr.key(5)), 1.0)
+    domain = phx.domain.Interval1d(-1.0, 1.0)
+    density = domain.Function("x")(lambda x: jnp.asarray(0.5))
+    drift = domain.Function("x")(lambda x: jnp.asarray([0.0]))
+    dynamics_condition = phx.conditions.stochastic.FokkerPlanck(
+        "p",
+        domain.component(),
+        drift=drift,
+        evolution_var=None,
+    )
+    rule = phx.integration.GaussLegendreRule(12)
+    plan = phx.integration.FixedQuadraturePlan(rule)
+    dynamics_target = phx.integration.mean_over(dynamics_condition.on)
+    dynamics = phx.terms.ResidualPenalty(
+        dynamics_condition,
+        phx.integration.fixed(phx.integration.materialize(dynamics_target, plan)),
+    )
+    normalization_condition = phx.conditions.Moment(
+        "p",
+        domain.component(),
+        lambda p: p,
+        target=1.0,
+    )
+    normalization_target = phx.integration.over(normalization_condition.on)
+    normalization = phx.terms.MomentPenalty(
+        normalization_condition,
+        phx.integration.fixed(phx.integration.materialize(normalization_target, plan)),
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={"p": density},
+        terms=[dynamics, normalization],
+    )
+
+    assert solver.loss(key=jr.key(13)) < 1e-12
 
 
-def test_named_diffusion_field_is_jointly_optimized_by_functional_solver() -> None:
+def test_stochastic_constraints_scenario_2() -> None:
     domain = _spacetime()
     truth = 0.7
     observable = domain.Function("x", "t")(lambda x, t: x[0] ** 2 - truth**2 * t)
@@ -130,11 +153,6 @@ def test_named_diffusion_field_is_jointly_optimized_by_functional_solver() -> No
 
     assert trained.loss(key=jr.key(7)) < initial_loss * 1e-4
     assert jnp.allclose(learned, jnp.asarray([[truth]]), atol=2e-3)
-
-
-def test_stochastic_constraints_preserve_fixed_and_resampled_collocation_semantics() -> (
-    None
-):
     domain = _spacetime()
     observable = domain.Function("x", "t")(lambda x, t: x[0] ** 2 - t)
     drift = domain.Function("x", "t")(lambda x, t: jnp.asarray([0.0]))
@@ -176,45 +194,6 @@ def test_stochastic_constraints_preserve_fixed_and_resampled_collocation_semanti
     assert eqx.tree_equal(fixed.source.realization.batch, fixed_realization.batch)
     assert not eqx.tree_equal(random_a.batch, random_b.batch)
     assert fixed.loss({"u": observable}, key=jr.key(12)) < 1e-12
-
-
-def test_fokker_planck_constraint_composes_with_explicit_density_normalization() -> None:
-    domain = phx.domain.Interval1d(-1.0, 1.0)
-    density = domain.Function("x")(lambda x: jnp.asarray(0.5))
-    drift = domain.Function("x")(lambda x: jnp.asarray([0.0]))
-    dynamics_condition = phx.conditions.stochastic.FokkerPlanck(
-        "p",
-        domain.component(),
-        drift=drift,
-        evolution_var=None,
-    )
-    rule = phx.integration.GaussLegendreRule(12)
-    plan = phx.integration.FixedQuadraturePlan(rule)
-    dynamics_target = phx.integration.mean_over(dynamics_condition.on)
-    dynamics = phx.terms.ResidualPenalty(
-        dynamics_condition,
-        phx.integration.fixed(phx.integration.materialize(dynamics_target, plan)),
-    )
-    normalization_condition = phx.conditions.Moment(
-        "p",
-        domain.component(),
-        lambda p: p,
-        target=1.0,
-    )
-    normalization_target = phx.integration.over(normalization_condition.on)
-    normalization = phx.terms.MomentPenalty(
-        normalization_condition,
-        phx.integration.fixed(phx.integration.materialize(normalization_target, plan)),
-    )
-    solver = phx.solver.FunctionalSolver(
-        functions={"p": density},
-        terms=[dynamics, normalization],
-    )
-
-    assert solver.loss(key=jr.key(13)) < 1e-12
-
-
-def test_probability_flux_boundary_constraint_enforces_reflecting_current() -> None:
     domain = phx.domain.Interval1d(-2.0, 2.0)
     component = domain.component({"x": phx.domain.Boundary()})
     theta, sigma = 0.8, 0.6

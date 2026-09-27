@@ -26,35 +26,19 @@ def _catalog(**overrides: Any) -> Any:
     )
 
 
-def test_noninteger_charges_are_a_wrong_kind() -> None:
-    with pytest.raises(TypeError):
-        _catalog(charges=np.asarray((0.0, 0.0, 0.0)))
-
-
-def test_noninteger_composition_is_a_wrong_kind() -> None:
-    with pytest.raises(TypeError):
-        _catalog(element_composition=np.asarray(((2.0, 0.0, 2.0), (0.0, 2.0, 1.0))))
-
-
-def test_charge_shape_is_validated_before_charge_dtype() -> None:
-    with pytest.raises(ValueError):
-        _catalog(charges=np.asarray((0.0, 0.0)))
-
-
-def test_integer_charges_are_stored_as_int32() -> None:
-    catalog = _catalog(charges=np.asarray((0, 0, -1), dtype=np.int64))
-
-    assert catalog.charges.dtype == np.int32
-    np.testing.assert_array_equal(catalog.charges, (0, 0, -1))
-
-
 _CATALOG_ID = "442b8c4f9b35c0d8c217ffd9d8829587b4e1504a3295887b1808b0243527dadf"
 
 
-def test_valid_catalog_fields_identity_and_structure() -> None:
+def test_chemical_component_catalog_scenario_1() -> None:
+    with pytest.raises(TypeError):
+        _catalog(charges=np.asarray((0.0, 0.0, 0.0)))
+    with pytest.raises(TypeError):
+        _catalog(element_composition=np.asarray(((2.0, 0.0, 2.0), (0.0, 2.0, 1.0))))
+    with pytest.raises(ValueError):
+        _catalog(charges=np.asarray((0.0, 0.0)))
+
     catalog = _catalog(charges=np.asarray((0, 0, -1), dtype=np.int64))
     reference = _catalog()
-
     assert reference.catalog_id == _CATALOG_ID
     assert catalog.component_names == ("H2", "O2", "H2O")
     assert catalog.element_names == ("H", "O")
@@ -63,34 +47,27 @@ def test_valid_catalog_fields_identity_and_structure() -> None:
     assert catalog.molar_masses.dtype == jnp.float64
     assert catalog.element_composition.dtype == jnp.int32
     assert catalog.charges.dtype == jnp.int32
-    np.testing.assert_array_equal(catalog.element_composition, ((2, 0, 2), (0, 2, 1)))
+    np.testing.assert_array_equal(catalog.charges, (0, 0, -1))
+    np.testing.assert_array_equal(
+        catalog.element_composition,
+        ((2, 0, 2), (0, 2, 1)),
+    )
     leaves, treedef = jax.tree_util.tree_flatten(reference)
     assert [leaf.shape for leaf in leaves] == [(3,), (2, 3), (3,)]
     assert treedef == jax.tree_util.tree_structure(_catalog())
-
-
-def test_names_keep_surrounding_whitespace_and_elements_may_be_empty() -> None:
     padded = _catalog(component_names=(" H2", "O2", "H2O"))
     empty = _catalog(
-        element_names=(), element_composition=np.zeros((0, 3), dtype=np.int64)
+        element_names=(),
+        element_composition=np.zeros((0, 3), dtype=np.int64),
     )
-
+    parsed = _catalog(molar_masses=["2.0", "32.0", "18.0"])
     assert padded.component_names[0] == " H2"
     assert empty.element_count == 0
     assert empty.element_composition.shape == (0, 3)
-
-
-def test_mass_conversion_follows_numpy_float64_conversion() -> None:
-    parsed = _catalog(molar_masses=["2.0", "32.0", "18.0"])
-
     np.testing.assert_array_equal(parsed.molar_masses, (2.0, 32.0, 18.0))
     with pytest.raises(TypeError):
         _catalog(molar_masses=[2.0 + 1.0j, 32.0, 18.0])
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
+    cases = (
         {"component_names": ()},
         {"component_names": ("H2", "", "H2O")},
         {"component_names": ("H2", "H2", "H2O")},
@@ -102,16 +79,17 @@ def test_mass_conversion_follows_numpy_float64_conversion() -> None:
         {"molar_masses": np.asarray((2.0, 0.0, 18.0))},
         {"molar_masses": np.asarray((2.0, -32.0, 18.0))},
         {"element_composition": np.asarray(((2, 0, 2),), dtype=np.int32)},
-        {"element_composition": np.asarray(((2, 0, 2), (0, -2, 1)), dtype=np.int32)},
+        {
+            "element_composition": np.asarray(
+                ((2, 0, 2), (0, -2, 1)),
+                dtype=np.int32,
+            )
+        },
         {"charges": np.asarray((0, 0), dtype=np.int32)},
-    ],
-)
-def test_invalid_values_raise_value_errors(overrides: Any) -> None:
-    with pytest.raises(ValueError):
-        _catalog(**overrides)
-
-
-def test_empty_provenance_is_refused() -> None:
+    )
+    for overrides in cases:
+        with pytest.raises(ValueError):
+            _catalog(**overrides)
     with pytest.raises(ValueError):
         ChemicalComponentCatalog(
             ("H2",), np.asarray((2.016,)), ("H",), np.asarray(((2,),)), provenance=""

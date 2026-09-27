@@ -113,7 +113,7 @@ def _block(ledger: Any, kind: Any) -> Any:
     return next(block for block in ledger.blocks if block.block_kind == kind)
 
 
-def test_nonzero_time_free_stream_uses_true_ssprk_times_and_zero_cut_mass_flux() -> None:
+def test_unstructured_embedded_runtime_scenario_1() -> None:
     discretization, system, _, runtime = _runtime(
         lambda points, args: points[:, 0] - 0.25,
         field_id="nonzero-time-free-stream",
@@ -138,6 +138,115 @@ def test_nonzero_time_free_stream_uses_true_ssprk_times_and_zero_cut_mass_flux()
     )
     cut = _block(result.accepted_flux_integrals, "cut")
     np.testing.assert_allclose(cut.flux_integral[:, 0], 0.0, atol=2.0e-8)
+    discretization, system, _, runtime = _runtime(
+        lambda points, args: points[:, 0] - 0.75,
+        interface_solver=phx.discretization.HLLCFluxPlan(),
+        field_id="mixed-hllc",
+    )
+    initial = runtime.initialize_state(
+        _uniform(system, discretization, velocity=(0.0, 0.1)),
+        0.0,
+        1.0e-3,
+    )
+
+    result = runtime.advance(initial)
+
+    assert bool(result.accepted)
+    active = np.asarray(initial.content_state.active_cell_mask)
+    assert active.tolist() == [False, True]
+    np.testing.assert_array_equal(
+        initial.content_state.conservative_content[~active],
+        np.zeros((1, system.component_count)),
+    )
+    np.testing.assert_array_equal(
+        result.runtime_state.content_state.conservative_content[~active],
+        np.zeros((1, system.component_count)),
+    )
+    for stage in result.embedded.stage_metrics:
+        for face in stage.face_blocks:
+            owners = np.asarray(face.layout.owner_cells)
+            neighbors = np.asarray(face.layout.neighbor_cells)
+            assert np.all(active[owners])
+            assert np.all(active[neighbors[neighbors >= 0]])
+    system = phx.equations.EulerSystem(1)
+    active_state = system.primitive_to_conserved(
+        jnp.asarray(((1.0, 0.0, 1.0), (1.0, 0.0, 1.0)))
+    )
+    content = jnp.concatenate((jnp.zeros((1, 3)), active_state), axis=0)
+    active_cells = jnp.asarray((False, True, True))
+    blocks = (
+        phx.discretization.ConservationStageFluxRateBlock(
+            jnp.asarray(((12.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
+            (1,),
+            # ty: ignore[invalid-argument-type]
+            (-1,),
+            # ty: ignore[invalid-argument-type]
+            (True,),
+            "active-physical",
+            "physical",
+        ),
+        phx.discretization.ConservationStageFluxRateBlock(
+            jnp.asarray(((8.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
+            (1,),
+            # ty: ignore[invalid-argument-type]
+            (-1,),
+            # ty: ignore[invalid-argument-type]
+            (True,),
+            "active-cut",
+            "cut",
+        ),
+        phx.discretization.ConservationStageFluxRateBlock(
+            jnp.asarray(((2.0, 0.0, 0.0),)),
+            # ty: ignore[invalid-argument-type]
+            (1,),
+            # ty: ignore[invalid-argument-type]
+            (2,),
+            # ty: ignore[invalid-argument-type]
+            (True,),
+            "active-redistribution",
+            "small-cell-redistribution",
+        ),
+    )
+    kwargs = dict(
+        geometry_family_id="active-positivity-family",
+        geometry_layout_id="active-positivity-layout",
+        geometry_version=0,
+        evidence_policy_id="active-positivity-evidence",
+        evidence_version=0,
+        topology_epoch_id="active-positivity-epoch",
+    )
+    high = phx.discretization.ConservationStageLedger(
+        blocks,
+        jnp.zeros_like(content),
+        active_cells,
+        # ty: ignore[invalid-argument-type]
+        **kwargs,
+    )
+    fallback = phx.discretization.ConservationStageLedger(
+        tuple(block.with_flux_rate(jnp.zeros_like(block.flux_rate)) for block in blocks),
+        jnp.zeros_like(content),
+        active_cells,
+        # ty: ignore[invalid-argument-type]
+        **kwargs,
+    )
+
+    limited = phx.discretization.FluxPositivityPlan().limit_stage_rate_ledgers(
+        system,
+        content,
+        high,
+        fallback,
+        0.1,
+        jnp.asarray((0.0, 1.0, 1.0)),
+    )
+
+    assert bool(limited.report.fallback_valid)
+    assert bool(limited.report.limited_state_valid)
+    assert bool(limited.report.activated)
+    assert len(limited.face_blend_factors) == 3
+    np.testing.assert_array_equal(limited.euler_content[0], jnp.zeros((3,)))
+    assert jnp.all(system.admissible(limited.euler_cell_average[1:]))
 
 
 def test_outer_cut_and_physical_source_close_the_public_content_budget() -> None:
@@ -291,39 +400,6 @@ def test_asymmetric_cut_source_uses_fluid_centroids_before_inactive_masking() ->
     )
 
 
-def test_mixed_hllc_routes_and_content_never_assign_solid_ownership() -> None:
-    discretization, system, _, runtime = _runtime(
-        lambda points, args: points[:, 0] - 0.75,
-        interface_solver=phx.discretization.HLLCFluxPlan(),
-        field_id="mixed-hllc",
-    )
-    initial = runtime.initialize_state(
-        _uniform(system, discretization, velocity=(0.0, 0.1)),
-        0.0,
-        1.0e-3,
-    )
-
-    result = runtime.advance(initial)
-
-    assert bool(result.accepted)
-    active = np.asarray(initial.content_state.active_cell_mask)
-    assert active.tolist() == [False, True]
-    np.testing.assert_array_equal(
-        initial.content_state.conservative_content[~active],
-        np.zeros((1, system.component_count)),
-    )
-    np.testing.assert_array_equal(
-        result.runtime_state.content_state.conservative_content[~active],
-        np.zeros((1, system.component_count)),
-    )
-    for stage in result.embedded.stage_metrics:
-        for face in stage.face_blocks:
-            owners = np.asarray(face.layout.owner_cells)
-            neighbors = np.asarray(face.layout.neighbor_cells)
-            assert np.all(active[owners])
-            assert np.all(active[neighbors[neighbors >= 0]])
-
-
 def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume() -> None:
     stabilization = phx.discretization.EmbeddedBoundaryStabilizationPolicy(
         minimum_volume_fraction=0.2,
@@ -414,91 +490,7 @@ def test_sliver_redistribution_is_conservative_and_cfl_uses_stabilized_volume() 
     )
 
 
-def test_stage_positivity_blends_physical_cut_and_redistribution_on_active_cells() -> (
-    None
-):
-    system = phx.equations.EulerSystem(1)
-    active_state = system.primitive_to_conserved(
-        jnp.asarray(((1.0, 0.0, 1.0), (1.0, 0.0, 1.0)))
-    )
-    content = jnp.concatenate((jnp.zeros((1, 3)), active_state), axis=0)
-    active_cells = jnp.asarray((False, True, True))
-    blocks = (
-        phx.discretization.ConservationStageFluxRateBlock(
-            jnp.asarray(((12.0, 0.0, 0.0),)),
-            # ty: ignore[invalid-argument-type]
-            (1,),
-            # ty: ignore[invalid-argument-type]
-            (-1,),
-            # ty: ignore[invalid-argument-type]
-            (True,),
-            "active-physical",
-            "physical",
-        ),
-        phx.discretization.ConservationStageFluxRateBlock(
-            jnp.asarray(((8.0, 0.0, 0.0),)),
-            # ty: ignore[invalid-argument-type]
-            (1,),
-            # ty: ignore[invalid-argument-type]
-            (-1,),
-            # ty: ignore[invalid-argument-type]
-            (True,),
-            "active-cut",
-            "cut",
-        ),
-        phx.discretization.ConservationStageFluxRateBlock(
-            jnp.asarray(((2.0, 0.0, 0.0),)),
-            # ty: ignore[invalid-argument-type]
-            (1,),
-            # ty: ignore[invalid-argument-type]
-            (2,),
-            # ty: ignore[invalid-argument-type]
-            (True,),
-            "active-redistribution",
-            "small-cell-redistribution",
-        ),
-    )
-    kwargs = dict(
-        geometry_family_id="active-positivity-family",
-        geometry_layout_id="active-positivity-layout",
-        geometry_version=0,
-        evidence_policy_id="active-positivity-evidence",
-        evidence_version=0,
-        topology_epoch_id="active-positivity-epoch",
-    )
-    high = phx.discretization.ConservationStageLedger(
-        blocks,
-        jnp.zeros_like(content),
-        active_cells,
-        # ty: ignore[invalid-argument-type]
-        **kwargs,
-    )
-    fallback = phx.discretization.ConservationStageLedger(
-        tuple(block.with_flux_rate(jnp.zeros_like(block.flux_rate)) for block in blocks),
-        jnp.zeros_like(content),
-        active_cells,
-        # ty: ignore[invalid-argument-type]
-        **kwargs,
-    )
-
-    limited = phx.discretization.FluxPositivityPlan().limit_stage_rate_ledgers(
-        system,
-        content,
-        high,
-        fallback,
-        0.1,
-        jnp.asarray((0.0, 1.0, 1.0)),
-    )
-
-    assert bool(limited.report.fallback_valid)
-    assert bool(limited.report.limited_state_valid)
-    assert bool(limited.report.activated)
-    assert len(limited.face_blend_factors) == 3
-    np.testing.assert_array_equal(limited.euler_content[0], jnp.zeros((3,)))
-    assert jnp.all(system.admissible(limited.euler_cell_average[1:]))
-
-
-def test_full_fluid_embedded_runtime_matches_static_runtime() -> None:
+def test_unstructured_embedded_runtime_scenario_2() -> None:
     discretization, system, _, embedded_runtime = _runtime(
         lambda points, args: jnp.ones((points.shape[0],)),
         field_id="full-fluid-parity",
@@ -553,8 +545,6 @@ def test_full_fluid_embedded_runtime_matches_static_runtime() -> None:
         atol=3.0e-8,
     )
 
-
-def test_full_solid_hllc_skips_physics_and_advances_zero_content() -> None:
     def forbidden_source(time: Any, state: Any, centers: Any, args: Any) -> None:
         raise AssertionError("full-solid source must not be evaluated")
 
@@ -585,9 +575,6 @@ def test_full_solid_hllc_skips_physics_and_advances_zero_content() -> None:
         result.runtime_state.cell_average(),
         jnp.zeros_like(result.runtime_state.cell_average()),
     )
-
-
-def test_cfl_rejection_preserves_content_journal_and_publishes_zero_ledger() -> None:
     policy = phx.solver.FiniteVolumeStepPolicy(
         cfl=0.45,
         maximum_retries=0,

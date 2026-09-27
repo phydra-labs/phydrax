@@ -19,7 +19,7 @@ def _mesh() -> Any:
     )
 
 
-def test_action_ir_and_packed_facet_routes_are_explicit() -> None:
+def test_fem_fixed_mesh_stack_scenario_1() -> None:
     mesh = _mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.discontinuous_element("triangle", 1)
@@ -48,9 +48,6 @@ def test_action_ir_and_packed_facet_routes_are_explicit() -> None:
     assert facet.neighbor_local_entities.shape == facet.entity_indices.shape
     assert int(facet.owner_permutations[0]) == -int(facet.neighbor_permutations[0])
     assert dict(facet.neighbor_gathers)["u"].shape == dict(facet.gathers)["u"].shape
-
-
-def test_rectangular_element_tensor_has_exact_sparse_and_transpose_actions() -> None:
     matrices = jnp.asarray([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]])
     inputs = jnp.asarray([[0, 1]], dtype=jnp.int32)
     outputs = jnp.asarray([[0, 1, 2]], dtype=jnp.int32)
@@ -61,9 +58,6 @@ def test_rectangular_element_tensor_has_exact_sparse_and_transpose_actions() -> 
     assert jnp.allclose(operator.mv(value), matrices[0] @ value)
     assert jnp.allclose(operator.transpose_mv(covector), matrices[0].T @ covector)
     assert jnp.allclose(operator.as_sparse_coordinate().mv(value), operator.mv(value))
-
-
-def test_conforming_p3_routes_and_tensor_partial_action() -> None:
     mesh = _mesh()
     element = phx.discretization.lagrange_element("triangle", 3)
     discretization = phx.discretization.FiniteElementPlan(

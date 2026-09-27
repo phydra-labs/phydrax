@@ -20,7 +20,7 @@ def _sphere_geometry(parameters: Any) -> Any:
     )
 
 
-def test_riemannian_adam_matches_optax_adam_with_pointwise_euclidean_factors() -> None:
+def test_riemannian_contracts() -> None:
     parameters = {
         "free": jnp.array([1.5, -2.0]),
         "point": jnp.array([1.0, 0.0, 0.0]),
@@ -74,6 +74,111 @@ def test_riemannian_adam_matches_optax_adam_with_pointwise_euclidean_factors() -
     assert state.second_moment["point"].shape == ()
     assert jnp.array_equal(parameters["point"], jnp.array([1.0, 0.0, 0.0]))
     assert "riemannian_adam" in phx.optim.__all__
+    parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
+    geometry = _sphere_geometry(parameters)
+    invalid_amsgrad: Any = 1
+
+    with pytest.raises(ValueError, match="first_moment_decay"):
+        phx.optim.riemannian_adam(geometry, first_moment_decay=1.0)
+    with pytest.raises(ValueError, match="second_moment_decay"):
+        phx.optim.riemannian_adam(geometry, second_moment_decay=jnp.nan)
+    with pytest.raises(ValueError, match="epsilon"):
+        phx.optim.riemannian_adam(geometry, epsilon=0.0)
+    with pytest.raises(TypeError, match="amsgrad"):
+        phx.optim.riemannian_adam(geometry, amsgrad=invalid_amsgrad)
+
+    optimizer = phx.optim.riemannian_adam(geometry)
+    wrong_state = phx.optim.riemannian_sgd(geometry).init(parameters)
+    invalid_state: Any = wrong_state
+    with pytest.raises(TypeError, match="RiemannianAdamState"):
+        optimizer.update(
+            {"point": jnp.zeros((3,))},
+            invalid_state,
+            parameters,
+        )
+    parameters = {
+        "offset": jnp.array([0.2, -0.3]),
+        "point": jnp.array([1.0, 0.0, 0.0]),
+    }
+    geometry = _sphere_geometry(parameters)
+    optimizer = phx.optim.riemannian_adam(
+        geometry,
+        learning_rate=lambda step: 0.03 / (step + 1.0),
+        max_gradient_norm=0.8,
+    )
+    gradient = {
+        "offset": jnp.array([0.1, -0.4]),
+        "point": jnp.array([0.0, 2.0, -1.0]),
+    }
+    initial_state = optimizer.init(parameters)
+
+    eager_parameters, eager_state = optimizer.update(
+        gradient,
+        initial_state,
+        parameters,
+    )
+    compiled_parameters, compiled_state = eqx.filter_jit(optimizer.update)(
+        gradient,
+        initial_state,
+        parameters,
+    )
+
+    assert jax.tree.all(jax.tree.map(jnp.allclose, eager_parameters, compiled_parameters))
+    assert jax.tree.all(
+        jax.tree.map(
+            jnp.allclose,
+            eager_state.first_moment,
+            compiled_state.first_moment,
+        )
+    )
+    assert jax.tree.all(
+        jax.tree.map(
+            jnp.allclose,
+            eager_state.second_moment,
+            compiled_state.second_moment,
+        )
+    )
+    assert jnp.allclose(
+        eager_state.metrics.adaptive_denominator_maximum,
+        compiled_state.metrics.adaptive_denominator_maximum,
+    )
+    parameters = {
+        "point": jnp.array(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        )
+    }
+    geometry = _sphere_geometry(parameters)
+    optimizer = phx.optim.riemannian_adam(
+        geometry,
+        learning_rate=0.02,
+        first_moment_decay=0.6,
+        second_moment_decay=0.5,
+        amsgrad=True,
+    )
+    state = optimizer.init(parameters)
+    previous_maximum = state.maximum_second_moment["point"]
+
+    for scale in (2.0, 0.1, 1.0):
+        gradient = {
+            "point": scale
+            * jnp.array(
+                [[0.0, 1.0, -0.5], [0.5, 0.0, 1.0]],
+            )
+        }
+        parameters, state = optimizer.update(gradient, state, parameters)
+        assert jnp.all(state.maximum_second_moment["point"] >= previous_maximum)
+        assert jnp.allclose(
+            jnp.sum(parameters["point"] * state.first_moment["point"], axis=-1),
+            0.0,
+            atol=2e-6,
+        )
+        assert bool(geometry.contains(parameters))
+        previous_maximum = state.maximum_second_moment["point"]
+
+    metrics = optimizer.step_metrics(state)
+    assert metrics.adaptive_denominator_minimum > 0.0
+    assert metrics.adaptive_denominator_maximum >= metrics.adaptive_denominator_minimum
+    assert metrics.transported_tangent_residual < 2e-6
 
 
 def test_riemannian_adam_is_equivariant_under_ambient_orthogonal_changes() -> None:
@@ -145,117 +250,3 @@ def test_riemannian_adam_is_equivariant_under_ambient_orthogonal_changes() -> No
         state.second_moment["point"],
         atol=2e-6,
     )
-
-
-def test_riemannian_amsgrad_tracks_monotone_factor_moments_and_tangent_momentum() -> None:
-    parameters = {
-        "point": jnp.array(
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        )
-    }
-    geometry = _sphere_geometry(parameters)
-    optimizer = phx.optim.riemannian_adam(
-        geometry,
-        learning_rate=0.02,
-        first_moment_decay=0.6,
-        second_moment_decay=0.5,
-        amsgrad=True,
-    )
-    state = optimizer.init(parameters)
-    previous_maximum = state.maximum_second_moment["point"]
-
-    for scale in (2.0, 0.1, 1.0):
-        gradient = {
-            "point": scale
-            * jnp.array(
-                [[0.0, 1.0, -0.5], [0.5, 0.0, 1.0]],
-            )
-        }
-        parameters, state = optimizer.update(gradient, state, parameters)
-        assert jnp.all(state.maximum_second_moment["point"] >= previous_maximum)
-        assert jnp.allclose(
-            jnp.sum(parameters["point"] * state.first_moment["point"], axis=-1),
-            0.0,
-            atol=2e-6,
-        )
-        assert bool(geometry.contains(parameters))
-        previous_maximum = state.maximum_second_moment["point"]
-
-    metrics = optimizer.step_metrics(state)
-    assert metrics.adaptive_denominator_minimum > 0.0
-    assert metrics.adaptive_denominator_maximum >= metrics.adaptive_denominator_minimum
-    assert metrics.transported_tangent_residual < 2e-6
-
-
-def test_riemannian_adam_eager_and_jit_updates_agree() -> None:
-    parameters = {
-        "offset": jnp.array([0.2, -0.3]),
-        "point": jnp.array([1.0, 0.0, 0.0]),
-    }
-    geometry = _sphere_geometry(parameters)
-    optimizer = phx.optim.riemannian_adam(
-        geometry,
-        learning_rate=lambda step: 0.03 / (step + 1.0),
-        max_gradient_norm=0.8,
-    )
-    gradient = {
-        "offset": jnp.array([0.1, -0.4]),
-        "point": jnp.array([0.0, 2.0, -1.0]),
-    }
-    initial_state = optimizer.init(parameters)
-
-    eager_parameters, eager_state = optimizer.update(
-        gradient,
-        initial_state,
-        parameters,
-    )
-    compiled_parameters, compiled_state = eqx.filter_jit(optimizer.update)(
-        gradient,
-        initial_state,
-        parameters,
-    )
-
-    assert jax.tree.all(jax.tree.map(jnp.allclose, eager_parameters, compiled_parameters))
-    assert jax.tree.all(
-        jax.tree.map(
-            jnp.allclose,
-            eager_state.first_moment,
-            compiled_state.first_moment,
-        )
-    )
-    assert jax.tree.all(
-        jax.tree.map(
-            jnp.allclose,
-            eager_state.second_moment,
-            compiled_state.second_moment,
-        )
-    )
-    assert jnp.allclose(
-        eager_state.metrics.adaptive_denominator_maximum,
-        compiled_state.metrics.adaptive_denominator_maximum,
-    )
-
-
-def test_riemannian_adam_rejects_invalid_configuration_and_state() -> None:
-    parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
-    geometry = _sphere_geometry(parameters)
-    invalid_amsgrad: Any = 1
-
-    with pytest.raises(ValueError, match="first_moment_decay"):
-        phx.optim.riemannian_adam(geometry, first_moment_decay=1.0)
-    with pytest.raises(ValueError, match="second_moment_decay"):
-        phx.optim.riemannian_adam(geometry, second_moment_decay=jnp.nan)
-    with pytest.raises(ValueError, match="epsilon"):
-        phx.optim.riemannian_adam(geometry, epsilon=0.0)
-    with pytest.raises(TypeError, match="amsgrad"):
-        phx.optim.riemannian_adam(geometry, amsgrad=invalid_amsgrad)
-
-    optimizer = phx.optim.riemannian_adam(geometry)
-    wrong_state = phx.optim.riemannian_sgd(geometry).init(parameters)
-    invalid_state: Any = wrong_state
-    with pytest.raises(TypeError, match="RiemannianAdamState"):
-        optimizer.update(
-            {"point": jnp.zeros((3,))},
-            invalid_state,
-            parameters,
-        )

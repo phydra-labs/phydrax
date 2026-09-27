@@ -63,9 +63,7 @@ def _measure(points: Any, weights: Any, *, provenance: Any) -> Any:
     )
 
 
-def test_raw_predictive_sinkhorn_divergence_retains_all_three_solves_and_gradients() -> (
-    None
-):
+def test_transport_integrations_scenario_1() -> None:
     source = jnp.asarray([[0.0, 0.2], [1.0, 1.2], [2.0, 2.2]])
     identity = phx.uq.predictive_sinkhorn_divergence(source, source, epsilon=1.0)
     translated = phx.uq.predictive_sinkhorn_divergence(
@@ -93,11 +91,6 @@ def test_raw_predictive_sinkhorn_divergence_retains_all_three_solves_and_gradien
     assert translated.source_self.problem.shape == (3, 3)
     assert translated.target_self.problem.shape == (3, 3)
     assert jnp.isfinite(gradient)
-
-
-def test_operator_transport_metrics_keep_physical_cases_independent_and_replay_keys() -> (
-    None
-):
     batch = _batch([0.1, 0.2, 0.7])
     left_samples = jnp.asarray(
         [
@@ -144,9 +137,6 @@ def test_operator_transport_metrics_keep_physical_cases_independent_and_replay_k
     assert sliced.per_case[1] > 0.0
     assert jnp.array_equal(sliced.value, replay.value)
     assert jnp.array_equal(sliced.sliced.projections, replay.sliced.projections)
-
-
-def test_operator_transport_uses_quadrature_scaled_whole_events() -> None:
     batch = _batch([0.01, 0.09, 0.9])
     left_samples = jnp.zeros((3, 2, 3))
     right_samples = left_samples.at[..., 0].set(1.0)
@@ -174,11 +164,6 @@ def test_operator_transport_uses_quadrature_scaled_whole_events() -> None:
         rtol=1e-6,
         atol=1e-8,
     )
-
-
-def test_optimal_transport_ensemble_transform_preserves_weighted_mean_and_gradients() -> (
-    None
-):
     particles = jnp.asarray([[0.0], [1.0], [3.0]])
     weights = jnp.asarray([0.1, 0.2, 0.7])
     result = phx.uq.optimal_transport_ensemble_transform(
@@ -211,7 +196,7 @@ def test_optimal_transport_ensemble_transform_preserves_weighted_mean_and_gradie
     assert "transport" not in phx.uq.ResamplingMethod.__args__
 
 
-def test_batched_particle_transform_preserves_case_and_particle_layout() -> None:
+def test_transport_integrations_scenario_2() -> None:
     particles = jnp.asarray(
         [
             [[0.0], [1.0], [3.0]],
@@ -232,9 +217,6 @@ def test_batched_particle_transform_preserves_case_and_particle_layout() -> None
     assert result.transport.diagnostics.status.shape == (2,)
     assert jnp.all(result.transport.converged)
     assert jnp.allclose(result.transformed_mean, result.source_mean, atol=1e-8)
-
-
-def test_transport_functional_terms_return_scalar_values_and_native_diagnostics() -> None:
     solver = phx.transport.Sinkhorn(
         1.0,
         max_iterations=500,
@@ -290,9 +272,6 @@ def test_transport_functional_terms_return_scalar_values_and_native_diagnostics(
         "target_quantiles",
         "residuals",
     }
-
-
-def test_transport_terms_reject_nonconverged_training_solves() -> None:
     target = _measure([[0.0], [1.0]], [0.5, 0.5], provenance="reference")
     solver = phx.transport.Sinkhorn(
         0.05,
@@ -311,9 +290,6 @@ def test_transport_terms_reject_nonconverged_training_solves() -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
         evaluation = term.term_evaluation({})
         jax.block_until_ready(evaluation.value)
-
-
-def test_soft_quantile_functional_reports_regularity_and_solver_precedence() -> None:
     values = jnp.asarray([-2.0, -0.3, 1.4, 3.0])
     quantile_levels = jnp.asarray([0.0, 0.35, 1.0])
     solver = phx.transport.Sinkhorn(
@@ -360,11 +336,6 @@ def test_soft_quantile_functional_reports_regularity_and_solver_precedence() -> 
         squared.diagnostics["quantiles"][jnp.asarray([0, 2])],
         jnp.asarray([jnp.min(values), jnp.max(values)]),
     )
-
-
-def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_epsilon() -> (
-    None
-):
     term = phx.terms.SoftQuantileFunctional(
         lambda functions: functions["values"],
         jnp.asarray([0.25, 0.75]),
@@ -388,9 +359,6 @@ def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_eps
                 0.0,
                 epsilon=invalid,
             )
-
-
-def test_soft_quantile_functional_rejects_a_nonconverged_solver() -> None:
     solver = phx.transport.Sinkhorn(
         0.02,
         max_iterations=1,

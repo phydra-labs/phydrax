@@ -59,7 +59,7 @@ def _structured_program(*, exact_hessian: Any = False) -> Any:
     return program, point
 
 
-def test_ipopt_status_mapping_is_explicit() -> None:
+def test_structured_ipopt_contract_scenario_1() -> None:
     assert _mapped_status(0) == phx.optim.OptimizationStatus.SUCCESS
     assert _mapped_status(1) == phx.optim.OptimizationStatus.SUCCESS
     assert _mapped_status(2) == phx.optim.OptimizationStatus.INFEASIBLE
@@ -74,9 +74,6 @@ def test_ipopt_status_mapping_is_explicit() -> None:
     )
     assert _mapped_status(-13) == phx.optim.OptimizationStatus.NONFINITE_EVALUATION
     assert _mapped_status(-199) == phx.optim.OptimizationStatus.BACKEND_FAILED
-
-
-def test_ipopt_sparse_structures_are_canonical_and_duplicate_free() -> None:
     rows, cols, positions = _canonical_structure(
         jnp.asarray((1, 0, 1)),
         jnp.asarray((1, 1, 0)),
@@ -102,9 +99,6 @@ def test_ipopt_sparse_structures_are_canonical_and_duplicate_free() -> None:
     assert rows.tolist() == [0, 1, 1]
     assert cols.tolist() == [0, 0, 1]
     assert positions.tolist() == [0, 2, 3]
-
-
-def test_structured_callbacks_count_exact_sparse_work() -> None:
     program, point = _structured_program(exact_hessian=True)
     callbacks = _StructuredIpoptCallbacks(program, None)
     assert callbacks.objective(point) == pytest.approx(0.3125)
@@ -124,9 +118,6 @@ def test_structured_callbacks_count_exact_sparse_work() -> None:
     assert counts.intermediate == 1
     assert counts.host_to_device == 7
     assert counts.device_to_host == 5
-
-
-def test_structured_ipopt_options_cannot_override_owned_semantics() -> None:
     program, _ = _structured_program()
     termination = phx.optim.OptimizationTermination()
     method = phx.optim.IpoptMinimize(options={"print_level": 0})
@@ -145,9 +136,6 @@ def test_structured_ipopt_options_cannot_override_owned_semantics() -> None:
         phx.optim.IpoptMinimize(
             options={"hessian_approximation": "limited-memory"}
         )._structured_options(exact_program, termination)
-
-
-def test_structured_warm_start_tracks_source_and_rejects_invalid_duals() -> None:
     program, point = _structured_program()
     warm = program.warm_start(
         point,

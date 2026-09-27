@@ -84,7 +84,7 @@ def _hex_mesh(*, global_id: Any = 30) -> Any:
     )
 
 
-def test_quad_refinement_builds_stable_forest_mortars_and_coarsens() -> None:
+def test_fem_adaptive_hp_runtime_scenario_1() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), (2, 3), 16)
     initial_interfaces = finite_element_hp_interface_plan(topology, geometry)
     balanced_ids, closure = balanced_hp_refinement_ids(
@@ -130,6 +130,148 @@ def test_quad_refinement_builds_stable_forest_mortars_and_coarsens() -> None:
         np.asarray(coarsened.topology.cell_degrees)[:2],
         np.asarray(((2, 3), (2, 3))),
     )
+    topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
+    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
+    _, exterior = finite_element_hp_domains(epoch)
+    block = epoch.mesh.blocks[0]
+
+    for row, interface_row in enumerate(np.asarray(exterior.entity_indices)):
+        slot = int(np.asarray(epoch.interfaces.owner_slots)[interface_row])
+        local_facet = int(np.asarray(exterior.owner_local_entities)[row])
+        hp_points = _facet_vertices(topology, geometry, slot, local_facet)
+        owner_cell = int(np.asarray(exterior.owner_cells)[row])
+        mesh_points = np.asarray(epoch.mesh.coordinates)[
+            np.asarray(block.vertices)[owner_cell, np.asarray(_FACES[local_facet])]
+        ]
+
+        assert {tuple(point) for point in hp_points} == {
+            tuple(point) for point in mesh_points
+        }
+    topology, geometry = initial_finite_element_hp_topology(
+        _rotated_hex_pair_mesh(), 1, 40
+    )
+    refined = refine_tensor_hp_cells(
+        topology, geometry, jnp.asarray((30, 40), dtype=jnp.int64)
+    )
+    interfaces = finite_element_hp_interface_plan(refined.topology, refined.geometry)
+    active_mesh, _, _ = hp_active_cell_mesh(refined.topology, refined.geometry)
+
+    assert np.count_nonzero(np.asarray(interfaces.relation_mask("conforming"))) == 28
+    assert active_mesh.coordinates.shape[0] == 45
+    assert certify_finite_element_hp_geometry(
+        refined.topology, refined.geometry, interfaces
+    ).passed
+
+    deeper = refine_tensor_hp_cells(
+        refined.topology, refined.geometry, jnp.asarray((42,), dtype=jnp.int64)
+    )
+    deeper_interfaces = finite_element_hp_interface_plan(deeper.topology, deeper.geometry)
+
+    assert np.count_nonzero(np.asarray(deeper_interfaces.relation_mask("mortar"))) == 16
+    assert certify_finite_element_hp_geometry(
+        deeper.topology, deeper.geometry, deeper_interfaces
+    ).passed
+    with pytest.raises(ValueError, match="2:1 balance"):
+        refine_tensor_hp_cells(
+            deeper.topology, deeper.geometry, jnp.asarray((58,), dtype=jnp.int64)
+        )
+    topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
+    refined = refine_tensor_hp_cells(
+        topology,
+        geometry,
+        jnp.asarray((30,), dtype=jnp.int64),
+    )
+    _, foreign_geometry = initial_finite_element_hp_topology(
+        _hex_mesh(global_id=31),
+        2,
+        12,
+    )
+
+    with pytest.raises(ValueError, match="identities disagree"):
+        coarsen_tensor_hp_cells(
+            refined.topology,
+            foreign_geometry,
+            jnp.asarray((30,), dtype=jnp.int64),
+        )
+    mesh = CellMesh(
+        jnp.asarray(((0.0, 0.0), (2.0, 0.0), (1.5, 1.0), (0.0, 1.0))),
+        (
+            CellBlock(
+                "quad",
+                "quadrilateral",
+                jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
+                global_ids=jnp.asarray((10,), dtype=jnp.int64),
+            ),
+        ),
+    )
+    topology, geometry = initial_finite_element_hp_topology(mesh, 2, 8)
+    fine = refine_tensor_hp_cells(topology, geometry, jnp.asarray((10,), dtype=jnp.int64))
+    coarse = coarsen_tensor_hp_cells(
+        fine.topology, fine.geometry, jnp.asarray((10,), dtype=jnp.int64)
+    )
+    fine_epoch = prepare_finite_element_hp_epoch(
+        fine.topology, fine.geometry, "u", conformity="L2"
+    )
+    coarse_epoch = prepare_finite_element_hp_epoch(
+        coarse.topology, coarse.geometry, "u", conformity="L2"
+    )
+    transfer = finite_element_hp_transfer_plan(
+        fine_epoch, coarse_epoch, coarse.lineage, "u", "h-coarsening"
+    )
+    rng = np.random.default_rng(7)
+    fine_values = np.zeros((topology.capacity, transfer.primal.shape[2]))
+    for slot, count in zip(
+        np.asarray(transfer.source_slots),
+        np.asarray(transfer.source_dof_count),
+        strict=True,
+    ):
+        fine_values[slot, :count] = rng.normal(size=count)
+    projected = np.asarray(transfer.apply_l2_projection(jnp.asarray(fine_values)))
+    nodal = np.asarray(transfer.apply_primal(jnp.asarray(fine_values)))
+
+    parent = int(np.asarray(transfer.target_slots)[0])
+    parent_count = int(np.asarray(transfer.target_dof_count)[0])
+    # ty: ignore[unresolved-attribute]
+    parent_nodes = np.asarray(coarse_epoch.discretization.elements[0][0].reference_nodes)
+    # ty: ignore[unresolved-attribute]
+    child_nodes = np.asarray(fine_epoch.discretization.elements[0][0].reference_nodes)
+    nodes, weights = np.polynomial.legendre.leggauss(8)
+    nodes, weights = 0.5 * (nodes + 1.0), 0.5 * weights
+    points = np.stack(np.meshgrid(nodes, nodes, indexing="ij"), axis=-1).reshape((-1, 2))
+    point_weights = np.outer(weights, weights).reshape((-1,))
+    residual = np.zeros((parent_count,))
+    for child in np.asarray(transfer.source_slots):
+        lower = np.asarray(fine.geometry.reference_lower)[child]
+        upper = np.asarray(fine.geometry.reference_upper)[child]
+        measure = point_weights * _bilinear_measure(
+            np.asarray(fine.geometry.cell_vertices)[child], points
+        )
+        parent_basis = np.asarray(
+            tensor_trace_interpolation(parent_nodes, lower + points * (upper - lower))
+        )
+        child_basis = np.asarray(tensor_trace_interpolation(child_nodes, points))
+        difference = (
+            parent_basis @ projected[parent, :parent_count]
+            - child_basis @ fine_values[child, : child_nodes.shape[0]]
+        )
+        residual += parent_basis.T @ (measure * difference)
+
+    # ty: ignore[unresolved-attribute]
+    assert transfer.l2_evidence.successful
+    np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
+        np.asarray(transfer.l2_evidence.numerical_rank),
+        # ty: ignore[unresolved-attribute]
+        np.asarray(transfer.l2_evidence.dof_counts),
+    )
+    np.testing.assert_allclose(residual, 0.0, atol=1.0e-12)
+    assert not np.allclose(nodal[parent, :parent_count], projected[parent, :parent_count])
+    topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 8)
+    interfaces = finite_element_hp_interface_plan(topology, geometry)
+    epoch = FiniteElementHPEpoch(_quad_mesh(), topology, geometry, interfaces)
+
+    assert epoch.topology.topology_id == topology.topology_id
+    assert epoch.worksets.topology_id == topology.topology_id
 
 
 def test_hex_refinement_allocates_eight_curved_children() -> None:
@@ -152,48 +294,7 @@ def test_hex_refinement_allocates_eight_curved_children() -> None:
     assert np.all(np.isfinite(np.asarray(refined.geometry.cell_vertices)[1:9]))
 
 
-def test_hex_hp_domains_use_the_canonical_mesh_face_order() -> None:
-    topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
-    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
-    _, exterior = finite_element_hp_domains(epoch)
-    block = epoch.mesh.blocks[0]
-
-    for row, interface_row in enumerate(np.asarray(exterior.entity_indices)):
-        slot = int(np.asarray(epoch.interfaces.owner_slots)[interface_row])
-        local_facet = int(np.asarray(exterior.owner_local_entities)[row])
-        hp_points = _facet_vertices(topology, geometry, slot, local_facet)
-        owner_cell = int(np.asarray(exterior.owner_cells)[row])
-        mesh_points = np.asarray(epoch.mesh.coordinates)[
-            np.asarray(block.vertices)[owner_cell, np.asarray(_FACES[local_facet])]
-        ]
-
-        assert {tuple(point) for point in hp_points} == {
-            tuple(point) for point in mesh_points
-        }
-
-
-def test_hp_coarsening_rejects_geometry_from_another_topology() -> None:
-    topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
-    refined = refine_tensor_hp_cells(
-        topology,
-        geometry,
-        jnp.asarray((30,), dtype=jnp.int64),
-    )
-    _, foreign_geometry = initial_finite_element_hp_topology(
-        _hex_mesh(global_id=31),
-        2,
-        12,
-    )
-
-    with pytest.raises(ValueError, match="identities disagree"):
-        coarsen_tensor_hp_cells(
-            refined.topology,
-            foreign_geometry,
-            jnp.asarray((30,), dtype=jnp.int64),
-        )
-
-
-def test_modal_decay_and_hp_decision_separate_p_from_h() -> None:
+def test_fem_adaptive_hp_runtime_scenario_2() -> None:
     nodes = np.linspace(-1.0, 1.0, 4)
     x, y = np.meshgrid(nodes, nodes, indexing="ij")
     decay = tensor_modal_decay_estimate(
@@ -223,18 +324,6 @@ def test_modal_decay_and_hp_decision_separate_p_from_h() -> None:
     decision = finite_element_hp_decision(topology, estimate, maximum_degree=5)
     assert tuple(np.asarray(decision.target_degrees)[0]) == (3, 2)
     assert not bool(np.asarray(decision.refine)[0])
-
-
-def test_hp_epoch_requires_matching_prepared_components() -> None:
-    topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 8)
-    interfaces = finite_element_hp_interface_plan(topology, geometry)
-    epoch = FiniteElementHPEpoch(_quad_mesh(), topology, geometry, interfaces)
-
-    assert epoch.topology.topology_id == topology.topology_id
-    assert epoch.worksets.topology_id == topology.topology_id
-
-
-def test_prepared_hp_epoch_uses_bucket_elements_and_overlay_domains() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     refined = refine_tensor_hp_cells(
         topology,
@@ -255,45 +344,6 @@ def test_prepared_hp_epoch_uses_bucket_elements_and_overlay_domains() -> None:
     assert interior.kind == "interior_facet"
     assert exterior.kind == "exterior_facet"
     assert np.count_nonzero(np.asarray(epoch.interfaces.relation_mask("mortar"))) == 2
-
-
-def test_p_and_h_trace_constraints_preserve_polynomials_and_raw_duals() -> None:
-    master_nodes = jnp.asarray(((0.0,), (0.5,), (1.0,)))
-    p_slave_nodes = jnp.linspace(0.0, 1.0, 5)[:, None]
-    interpolation = tensor_trace_interpolation(master_nodes, p_slave_nodes)
-    plan = finite_element_hp_trace_constraint_plan(
-        8,
-        jnp.arange(3, 8, dtype=jnp.int32),
-        jnp.broadcast_to(jnp.arange(3, dtype=jnp.int32), (5, 3)),
-        interpolation,
-    )
-    master_values = master_nodes[:, 0] ** 2
-    full_values = plan.expand(master_values)
-
-    np.testing.assert_allclose(np.asarray(full_values[:3]), np.asarray(master_values))
-    np.testing.assert_allclose(
-        np.asarray(full_values[3:]),
-        np.asarray(p_slave_nodes[:, 0] ** 2),
-        atol=2.0e-14,
-    )
-    full_dual = jnp.linspace(0.2, 1.6, 8)
-    reduced = jnp.linspace(-0.5, 0.75, 3)
-    np.testing.assert_allclose(
-        jnp.vdot(plan.expand(reduced), full_dual),
-        jnp.vdot(reduced, plan.pullback_raw(full_dual)),
-        atol=2.0e-14,
-    )
-
-    child_points = jnp.asarray(((0.0,), (0.25,), (0.5,)))
-    child_interpolation = tensor_trace_interpolation(master_nodes, child_points)
-    np.testing.assert_allclose(
-        np.asarray(child_interpolation @ master_values),
-        np.asarray(child_points[:, 0] ** 2),
-        atol=2.0e-14,
-    )
-
-
-def test_prepared_h1_epoch_builds_master_trace_constraint_and_uniform_limit() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     refined = refine_tensor_hp_cells(
         topology,
@@ -326,6 +376,39 @@ def test_prepared_h1_epoch_builds_master_trace_constraint_and_uniform_limit() ->
         # ty: ignore[unresolved-attribute]
         np.asarray(uniform_plan.prolongation.as_dense()),
         np.eye(15),
+    )
+    master_nodes = jnp.asarray(((0.0,), (0.5,), (1.0,)))
+    p_slave_nodes = jnp.linspace(0.0, 1.0, 5)[:, None]
+    interpolation = tensor_trace_interpolation(master_nodes, p_slave_nodes)
+    plan = finite_element_hp_trace_constraint_plan(
+        8,
+        jnp.arange(3, 8, dtype=jnp.int32),
+        jnp.broadcast_to(jnp.arange(3, dtype=jnp.int32), (5, 3)),
+        interpolation,
+    )
+    master_values = master_nodes[:, 0] ** 2
+    full_values = plan.expand(master_values)
+
+    np.testing.assert_allclose(np.asarray(full_values[:3]), np.asarray(master_values))
+    np.testing.assert_allclose(
+        np.asarray(full_values[3:]),
+        np.asarray(p_slave_nodes[:, 0] ** 2),
+        atol=2.0e-14,
+    )
+    full_dual = jnp.linspace(0.2, 1.6, 8)
+    reduced = jnp.linspace(-0.5, 0.75, 3)
+    np.testing.assert_allclose(
+        jnp.vdot(plan.expand(reduced), full_dual),
+        jnp.vdot(reduced, plan.pullback_raw(full_dual)),
+        atol=2.0e-14,
+    )
+
+    child_points = jnp.asarray(((0.0,), (0.25,), (0.5,)))
+    child_interpolation = tensor_trace_interpolation(master_nodes, child_points)
+    np.testing.assert_allclose(
+        np.asarray(child_interpolation @ master_values),
+        np.asarray(child_points[:, 0] ** 2),
+        atol=2.0e-14,
     )
 
 
@@ -531,37 +614,6 @@ def _rotated_hex_pair_mesh() -> Any:
     )
 
 
-def test_hex_roots_with_opposed_face_frames_pair_and_balance_exactly() -> None:
-    topology, geometry = initial_finite_element_hp_topology(
-        _rotated_hex_pair_mesh(), 1, 40
-    )
-    refined = refine_tensor_hp_cells(
-        topology, geometry, jnp.asarray((30, 40), dtype=jnp.int64)
-    )
-    interfaces = finite_element_hp_interface_plan(refined.topology, refined.geometry)
-    active_mesh, _, _ = hp_active_cell_mesh(refined.topology, refined.geometry)
-
-    assert np.count_nonzero(np.asarray(interfaces.relation_mask("conforming"))) == 28
-    assert active_mesh.coordinates.shape[0] == 45
-    assert certify_finite_element_hp_geometry(
-        refined.topology, refined.geometry, interfaces
-    ).passed
-
-    deeper = refine_tensor_hp_cells(
-        refined.topology, refined.geometry, jnp.asarray((42,), dtype=jnp.int64)
-    )
-    deeper_interfaces = finite_element_hp_interface_plan(deeper.topology, deeper.geometry)
-
-    assert np.count_nonzero(np.asarray(deeper_interfaces.relation_mask("mortar"))) == 16
-    assert certify_finite_element_hp_geometry(
-        deeper.topology, deeper.geometry, deeper_interfaces
-    ).passed
-    with pytest.raises(ValueError, match="2:1 balance"):
-        refine_tensor_hp_cells(
-            deeper.topology, deeper.geometry, jnp.asarray((58,), dtype=jnp.int64)
-        )
-
-
 def _bilinear_measure(vertices: Any, points: Any) -> Any:
     x, y = points[:, 0], points[:, 1]
     d_first = np.stack((-(1.0 - y), 1.0 - y, y, -y), axis=1)
@@ -570,79 +622,3 @@ def _bilinear_measure(vertices: Any, points: Any) -> Any:
         (d_first @ vertices, d_second @ vertices), axis=-1
     )  # (points, space, reference)
     return np.abs(np.linalg.det(jacobian))
-
-
-def test_hp_coarsening_l2_projection_is_mass_orthogonal_on_curved_geometry() -> None:
-    mesh = CellMesh(
-        jnp.asarray(((0.0, 0.0), (2.0, 0.0), (1.5, 1.0), (0.0, 1.0))),
-        (
-            CellBlock(
-                "quad",
-                "quadrilateral",
-                jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
-                global_ids=jnp.asarray((10,), dtype=jnp.int64),
-            ),
-        ),
-    )
-    topology, geometry = initial_finite_element_hp_topology(mesh, 2, 8)
-    fine = refine_tensor_hp_cells(topology, geometry, jnp.asarray((10,), dtype=jnp.int64))
-    coarse = coarsen_tensor_hp_cells(
-        fine.topology, fine.geometry, jnp.asarray((10,), dtype=jnp.int64)
-    )
-    fine_epoch = prepare_finite_element_hp_epoch(
-        fine.topology, fine.geometry, "u", conformity="L2"
-    )
-    coarse_epoch = prepare_finite_element_hp_epoch(
-        coarse.topology, coarse.geometry, "u", conformity="L2"
-    )
-    transfer = finite_element_hp_transfer_plan(
-        fine_epoch, coarse_epoch, coarse.lineage, "u", "h-coarsening"
-    )
-    rng = np.random.default_rng(7)
-    fine_values = np.zeros((topology.capacity, transfer.primal.shape[2]))
-    for slot, count in zip(
-        np.asarray(transfer.source_slots),
-        np.asarray(transfer.source_dof_count),
-        strict=True,
-    ):
-        fine_values[slot, :count] = rng.normal(size=count)
-    projected = np.asarray(transfer.apply_l2_projection(jnp.asarray(fine_values)))
-    nodal = np.asarray(transfer.apply_primal(jnp.asarray(fine_values)))
-
-    parent = int(np.asarray(transfer.target_slots)[0])
-    parent_count = int(np.asarray(transfer.target_dof_count)[0])
-    # ty: ignore[unresolved-attribute]
-    parent_nodes = np.asarray(coarse_epoch.discretization.elements[0][0].reference_nodes)
-    # ty: ignore[unresolved-attribute]
-    child_nodes = np.asarray(fine_epoch.discretization.elements[0][0].reference_nodes)
-    nodes, weights = np.polynomial.legendre.leggauss(8)
-    nodes, weights = 0.5 * (nodes + 1.0), 0.5 * weights
-    points = np.stack(np.meshgrid(nodes, nodes, indexing="ij"), axis=-1).reshape((-1, 2))
-    point_weights = np.outer(weights, weights).reshape((-1,))
-    residual = np.zeros((parent_count,))
-    for child in np.asarray(transfer.source_slots):
-        lower = np.asarray(fine.geometry.reference_lower)[child]
-        upper = np.asarray(fine.geometry.reference_upper)[child]
-        measure = point_weights * _bilinear_measure(
-            np.asarray(fine.geometry.cell_vertices)[child], points
-        )
-        parent_basis = np.asarray(
-            tensor_trace_interpolation(parent_nodes, lower + points * (upper - lower))
-        )
-        child_basis = np.asarray(tensor_trace_interpolation(child_nodes, points))
-        difference = (
-            parent_basis @ projected[parent, :parent_count]
-            - child_basis @ fine_values[child, : child_nodes.shape[0]]
-        )
-        residual += parent_basis.T @ (measure * difference)
-
-    # ty: ignore[unresolved-attribute]
-    assert transfer.l2_evidence.successful
-    np.testing.assert_array_equal(
-        # ty: ignore[unresolved-attribute]
-        np.asarray(transfer.l2_evidence.numerical_rank),
-        # ty: ignore[unresolved-attribute]
-        np.asarray(transfer.l2_evidence.dof_counts),
-    )
-    np.testing.assert_allclose(residual, 0.0, atol=1.0e-12)
-    assert not np.allclose(nodal[parent, :parent_count], projected[parent, :parent_count])

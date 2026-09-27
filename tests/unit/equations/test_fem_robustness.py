@@ -22,7 +22,7 @@ from phydrax.equations.fem._robustness import (
 from phydrax.integration import GaussLegendreRule, ReferenceTriangleRule
 
 
-def test_conservative_subcell_projection_preserves_contents_and_constants() -> None:
+def test_fem_robustness_scenario_1() -> None:
     element = SimplexNodalFamily("triangle", 2).finite_element()
     plan = ConservativeSubcellPlan(element, ReferenceTriangleRule(GaussLegendreRule(6)))
     state = jnp.linspace(-0.2, 0.8, element.local_dof_count * 2).reshape(
@@ -53,9 +53,6 @@ def test_conservative_subcell_projection_preserves_contents_and_constants() -> N
         rtol=0.0,
         atol=0.0,
     )
-
-
-def test_sensor_hysteresis_keeps_correction_strength_until_release() -> None:
     plan = RobustnessSensorPlan(
         activation=0.2,
         release=0.1,
@@ -71,25 +68,6 @@ def test_sensor_hysteresis_keeps_correction_strength_until_release() -> None:
     assert retained.strength[0] > 0.0
     assert not bool(released.troubled[0])
     np.testing.assert_allclose(released.strength, 0.0, atol=0.0)
-
-
-def _ledger(block: Any, *, high: Any = None, low: Any = None) -> Any:
-    return ConservationStageLedger(
-        (block,),
-        jnp.zeros((2, 1)),
-        jnp.ones((2,), dtype="bool"),
-        geometry_family_id="geometry-family",
-        geometry_layout_id="geometry-layout",
-        geometry_version=0,
-        evidence_policy_id="evidence-policy",
-        evidence_version=0,
-        topology_epoch_id="topology-epoch",
-        high_order_blocks=(block,) if high is None else (high,),
-        low_order_blocks=(block,) if low is None else (low,),
-    )
-
-
-def test_correction_ladder_selects_shared_face_rate_and_conserves_content() -> None:
     high = ConservationStageFluxRateBlock(
         jnp.asarray(((10.0,),)),
         jnp.asarray((0,), dtype=jnp.int32),
@@ -112,3 +90,19 @@ def test_correction_ladder_selects_shared_face_rate_and_conserves_content() -> N
     np.testing.assert_allclose(jnp.sum(result.stage_content_rate, axis=0), 0.0)
     np.testing.assert_array_equal(result.correction_level, (0, 2))
     assert result.successful
+
+
+def _ledger(block: Any, *, high: Any = None, low: Any = None) -> Any:
+    return ConservationStageLedger(
+        (block,),
+        jnp.zeros((2, 1)),
+        jnp.ones((2,), dtype="bool"),
+        geometry_family_id="geometry-family",
+        geometry_layout_id="geometry-layout",
+        geometry_version=0,
+        evidence_policy_id="evidence-policy",
+        evidence_version=0,
+        topology_epoch_id="topology-epoch",
+        high_order_blocks=(block,) if high is None else (high,),
+        low_order_blocks=(block,) if low is None else (low,),
+    )

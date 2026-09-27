@@ -43,7 +43,7 @@ def _finite_space(shape: Any, bounds: Any, frame: Any = None) -> Any:
     )
 
 
-def test_identical_space_zero_distance_is_exact_identity_for_both_polarizations() -> None:
+def test_fresnel_scenario_1() -> None:
     space = _finite_space((17, 18), ((-2.0, -1.5), (2.0, 1.5)))
     coordinates = space.transverse_coordinates
     scalar_values = jnp.exp(
@@ -65,9 +65,6 @@ def test_identical_space_zero_distance_is_exact_identity_for_both_polarizations(
         assert result.successful
         assert result.status == int(FresnelPropagationStatus.SUCCESS)
         assert result.evidence.relative_power_error == 0.0
-
-
-def test_different_grid_direct_fresnel_reproduces_gaussian_beam_width_and_power() -> None:
     input_space = _finite_space((81, 83), ((-4.0, -4.0), (4.0, 4.0)))
     output_space = _finite_space((101, 103), ((-6.0, -6.0), (6.0, 6.0)))
     coordinates = input_space.transverse_coordinates
@@ -105,38 +102,6 @@ def test_different_grid_direct_fresnel_reproduces_gaussian_beam_width_and_power(
     assert jnp.allclose(rms_radius_squared, expected_radius_squared, rtol=1.5e-2)
     assert result.evidence.relative_power_error < 2.0e-2
     assert result.successful
-
-
-def test_direct_fresnel_distance_gradient_is_finite_and_nonzero() -> None:
-    input_space = _finite_space((25, 27), ((-2.0, -2.0), (2.0, 2.0)))
-    output_space = _finite_space((29, 31), ((-2.5, -2.5), (2.5, 2.5)))
-    coordinates = input_space.transverse_coordinates
-    field = ScalarPlaneField(
-        input_space,
-        jnp.exp(-jnp.sum(coordinates**2, axis=-1)),
-        10.0,
-        0.0,
-    )
-    prepared = prepare_direct_fresnel(
-        DirectFresnelPlan(
-            input_space,
-            output_space,
-            maximum_sampling_phase_step=100.0,
-            maximum_paraxial_angle=1.5,
-            maximum_power_error=1.0,
-        )
-    )
-
-    def objective(distance: Any) -> Any:
-        propagated = propagate_direct_fresnel(prepared, field, distance, 16.0)
-        return jnp.real(propagated.field.values[14, 15])
-
-    derivative = jax.grad(objective)(jnp.asarray(4.0))
-    assert jnp.isfinite(derivative)
-    assert derivative != 0.0
-
-
-def test_prepare_rejects_unsupported_topology_grid_frame_and_resources() -> None:
     finite = _finite_space((9, 10), ((-1.0, -1.0), (1.0, 1.0)))
     periodic_grid = TensorGridPlan(
         (FourierAxisSpec(8), FourierAxisSpec(8)), axis_names=("u", "v")
@@ -173,6 +138,35 @@ def test_prepare_rejects_unsupported_topology_grid_frame_and_resources() -> None
         prepare_direct_fresnel(
             DirectFresnelPlan(finite, finite, maximum_workspace_bytes=128)
         )
+
+
+def test_direct_fresnel_distance_gradient_is_finite_and_nonzero() -> None:
+    input_space = _finite_space((25, 27), ((-2.0, -2.0), (2.0, 2.0)))
+    output_space = _finite_space((29, 31), ((-2.5, -2.5), (2.5, 2.5)))
+    coordinates = input_space.transverse_coordinates
+    field = ScalarPlaneField(
+        input_space,
+        jnp.exp(-jnp.sum(coordinates**2, axis=-1)),
+        10.0,
+        0.0,
+    )
+    prepared = prepare_direct_fresnel(
+        DirectFresnelPlan(
+            input_space,
+            output_space,
+            maximum_sampling_phase_step=100.0,
+            maximum_paraxial_angle=1.5,
+            maximum_power_error=1.0,
+        )
+    )
+
+    def objective(distance: Any) -> Any:
+        propagated = propagate_direct_fresnel(prepared, field, distance, 16.0)
+        return jnp.real(propagated.field.values[14, 15])
+
+    derivative = jax.grad(objective)(jnp.asarray(4.0))
+    assert jnp.isfinite(derivative)
+    assert derivative != 0.0
 
 
 def test_zero_distance_different_spaces_and_accuracy_limits_are_explicit_failures() -> (

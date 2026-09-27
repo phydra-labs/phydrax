@@ -78,40 +78,37 @@ def _order4(generator: Any = "unit") -> Any:
     )
 
 
-@pytest.mark.parametrize("machine", (_classical(), _order4()))
-def test_machine_equilibrium_preserves_pf_power_on_unequal_mva_bases(
-    machine: Any,
-) -> None:
-    compiled = _network()
-    pf = solve_power_flow(compiled)
-    initialized = initialize_smib(compiled, pf, machine, infinite_bus="grid")
-    assert initialized.valid
-    assert jnp.max(jnp.abs(initialized.operating_residual)) < 1e-7
-    assert (
-        jnp.max(
-            jnp.abs(
-                initialized.consistency.state_rate[: initialized.model.differential_size]
+def test_dynamics_scenario_1() -> None:
+    for machine in (_classical(), _order4()):
+        compiled = _network()
+        pf = solve_power_flow(compiled)
+        initialized = initialize_smib(compiled, pf, machine, infinite_bus="grid")
+        assert initialized.valid
+        assert jnp.max(jnp.abs(initialized.operating_residual)) < 1e-7
+        assert (
+            jnp.max(
+                jnp.abs(
+                    initialized.consistency.state_rate[
+                        : initialized.model.differential_size
+                    ]
+                )
             )
+            < 1e-7
         )
-        < 1e-7
-    )
-    state = initialized.problem.initial_state
-    assert jnp.allclose(
-        initialized.model.machine_power(state), pf.generator_power, atol=1e-7
-    )
-    current = initialized.model.machine_currents(state)[0]
-    terminal_voltage = initialized.model.voltage(state)[1]
-    # Generated current is outward; machine current is twice network pu current
-    # on this 50 MVA machine in the 100 MVA system. No extra factor of three.
-    assert jnp.allclose(
-        terminal_voltage * jnp.conj(current) * 0.5, pf.generator_power[0], atol=1e-7
-    )
-    result = simulate_power_dynamics(initialized, np.linspace(0.0, 0.02, 5))
-    assert result.valid
-    assert jnp.allclose(result.final_state, state, rtol=1e-6, atol=1e-7)
-
-
-def test_multimachine_equilibrium_has_no_implicit_infinite_bus() -> None:
+        state = initialized.problem.initial_state
+        assert jnp.allclose(
+            initialized.model.machine_power(state), pf.generator_power, atol=1e-7
+        )
+        current = initialized.model.machine_currents(state)[0]
+        terminal_voltage = initialized.model.voltage(state)[1]
+        # Generated current is outward; machine current is twice network pu current
+        # on this 50 MVA machine in the 100 MVA system. No extra factor of three.
+        assert jnp.allclose(
+            terminal_voltage * jnp.conj(current) * 0.5, pf.generator_power[0], atol=1e-7
+        )
+        result = simulate_power_dynamics(initialized, np.linspace(0.0, 0.02, 5))
+        assert result.valid
+        assert jnp.allclose(result.final_state, state, rtol=1e-6, atol=1e-7)
     compiled = compile_network(
         PowerNetwork(
             buses=(Bus("reference"), Bus("plant")),
@@ -152,9 +149,6 @@ def test_multimachine_equilibrium_has_no_implicit_infinite_bus() -> None:
     result = simulate_power_dynamics(initialized, np.linspace(0.0, 0.01, 3))
     assert result.valid
     assert jnp.allclose(result.final_state, initialized.problem.initial_state, atol=1e-7)
-
-
-def test_fault_clear_and_breakers_reconstruct_voltage_without_state_jumps() -> None:
     compiled = _network()
     initialized = initialize_smib(
         compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
@@ -202,9 +196,28 @@ def test_fault_clear_and_breakers_reconstruct_voltage_without_state_jumps() -> N
         atol=1e-12,
     )
     assert abs(result.final_state[0] - initialized.problem.initial_state[0]) > 1e-6
+    compiled = _network()
+    initialized = initialize_smib(
+        compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
+    )
+    # This shunt makes the Norton-source maximum transferable load power far
+    # below the nonzero fixed P demand; impedance substitution would hide it.
+    result = simulate_power_dynamics(
+        initialized,
+        np.linspace(0.0, 0.01, 3),
+        events=(PowerEvent(0.0, "fault", "machine", admittance=1e4),),
+    )
+    assert not result.valid
+    assert result.load_model == "constant_power"
+    assert result.status == "event_failed"
+    # ty: ignore[unresolved-attribute]
+    assert not result.events[0].consistency.initialization.valid
+    assert not result.events[0].applied
+    assert result.segments[0].status == "not_run"
+    assert jnp.array_equal(result.final_state, initialized.problem.initial_state)
 
 
-def test_inadmissible_restart_is_not_adopted_and_later_work_is_not_run() -> None:
+def test_dynamics_scenario_2() -> None:
     compiled = _network()
     initialized = initialize_smib(
         compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
@@ -230,9 +243,6 @@ def test_inadmissible_restart_is_not_adopted_and_later_work_is_not_run() -> None
     assert all(segment.status == "not_run" for segment in result.segments[1:])
     assert jnp.array_equal(result.final_state, failed.before)
     assert jnp.allclose(result.final_time, 0.02)
-
-
-def test_source_free_island_failure_is_explicit() -> None:
     compiled = compile_network(
         PowerNetwork(
             buses=(Bus("grid"), Bus("machine"), Bus("load")),
@@ -264,9 +274,6 @@ def test_source_free_island_failure_is_explicit() -> None:
     assert not result.events[0].applied
     assert result.segments[-1].status == "not_run"
     assert jnp.array_equal(result.final_state, result.events[0].before)
-
-
-def test_unsupported_machine_coverage_and_controller_limits_fail_closed() -> None:
     compiled = _network()
     pf = solve_power_flow(compiled)
     with pytest.raises(ValueError, match="unknown generator"):
@@ -286,7 +293,7 @@ def test_unsupported_machine_coverage_and_controller_limits_fail_closed() -> Non
         PowerEvent(0.0, "fault", "machine", admittance=complex(float("inf")))
 
 
-def test_external_reference_is_explicit_and_pf_must_balance_this_network() -> None:
+def test_dynamics_scenario_3() -> None:
     compiled = _network()
     pf = solve_power_flow(compiled)
     with pytest.raises(ValueError, match="explicit infinite bus"):
@@ -305,11 +312,6 @@ def test_external_reference_is_explicit_and_pf_must_balance_this_network() -> No
     )
     with pytest.raises(ValueError, match="inconsistent with the supplied network"):
         initialize_smib(changed, pf, _classical(), infinite_bus="grid")
-
-
-def test_load_fidelity_preserves_pq_by_default_and_impedance_only_when_requested() -> (
-    None
-):
     compiled = _network()
     pf = solve_power_flow(compiled)
     pq = initialize_smib(compiled, pf, _classical(), infinite_bus="grid")
@@ -333,33 +335,6 @@ def test_load_fidelity_preserves_pq_by_default_and_impedance_only_when_requested
     result = simulate_power_dynamics(impedance, np.linspace(0.0, 0.01, 3))
     assert result.valid
     assert result.load_model == "constant_impedance"
-
-
-def test_fault_without_constant_power_solution_reports_native_restart_failure() -> None:
-    compiled = _network()
-    initialized = initialize_smib(
-        compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"
-    )
-    # This shunt makes the Norton-source maximum transferable load power far
-    # below the nonzero fixed P demand; impedance substitution would hide it.
-    result = simulate_power_dynamics(
-        initialized,
-        np.linspace(0.0, 0.01, 3),
-        events=(PowerEvent(0.0, "fault", "machine", admittance=1e4),),
-    )
-    assert not result.valid
-    assert result.load_model == "constant_power"
-    assert result.status == "event_failed"
-    # ty: ignore[unresolved-attribute]
-    assert not result.events[0].consistency.initialization.valid
-    assert not result.events[0].applied
-    assert result.segments[0].status == "not_run"
-    assert jnp.array_equal(result.final_state, initialized.problem.initial_state)
-
-
-def test_off_grid_events_preserve_requested_samples_with_native_adaptive_default() -> (
-    None
-):
     compiled = _network()
     initialized = initialize_smib(
         compiled, solve_power_flow(compiled), _classical(), infinite_bus="grid"

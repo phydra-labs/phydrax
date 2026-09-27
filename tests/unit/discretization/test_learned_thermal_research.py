@@ -80,9 +80,7 @@ def _energy_equilibrium(quadrature: Any, total_energy: Any = 2.4) -> Any:
     return result
 
 
-def test_pressure_extended_particle_equilibrium_has_exact_pressure_stress_moments() -> (
-    None
-):
+def test_learned_thermal_research_scenario_1() -> None:
     quadrature = _d2q9_quadrature()
     plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     density = jnp.asarray((1.2, 0.85))
@@ -119,9 +117,6 @@ def test_pressure_extended_particle_equilibrium_has_exact_pressure_stress_moment
         result.evidence.particle_stress_residual, 0.0, atol=4.0e-13
     )
     assert bool(jnp.all(result.evidence.minimum_population > 0.0))
-
-
-def test_pressure_extension_reference_state_has_zero_moment_correction() -> None:
     quadrature = _d2q9_quadrature()
     plan = PressureExtendedParticleEquilibriumPlan(quadrature)
 
@@ -145,9 +140,6 @@ def test_pressure_extension_reference_state_has_zero_moment_correction() -> None
     np.testing.assert_array_equal(
         refused.populations, jnp.zeros_like(refused.populations)
     )
-
-
-def test_positive_learned_family_preserves_native_energy_and_supplied_moments() -> None:
     quadrature = _d2q9_quadrature()
     statistics = _thermal_statistics(quadrature)
     parameters = jnp.asarray((0.3, 0.12, -0.07, -0.04, 0.025))
@@ -172,6 +164,27 @@ def test_positive_learned_family_preserves_native_energy_and_supplied_moments() 
         atol=2.0e-13,
     )
     assert plan.plan_id == result.plan_id == result.evidence.plan_id
+    quadrature = _d2q9_quadrature()
+    statistics = _thermal_statistics(quadrature)
+    plan = PositiveLearnedThermalEnergyPlan(
+        quadrature,
+        5,
+        maximum_absolute_natural_parameter=0.25,
+        maximum_logit_span=4.0,
+    )
+
+    result = plan.evaluate(
+        jnp.asarray(2.0),
+        statistics,
+        jnp.asarray((0.0, 0.3, 0.0, 0.0, 0.0)),
+    )
+
+    assert int(result.status) == int(
+        LearnedThermalResearchStatus.OUTSIDE_DECLARED_SUPPORT
+    )
+    assert not bool(result.successful)
+    assert not bool(result.evidence.within_declared_support)
+    np.testing.assert_array_equal(result.populations, jnp.zeros_like(result.populations))
 
 
 def test_positive_learned_family_differentiates_trunk_values_and_natural_parameters() -> (
@@ -199,33 +212,7 @@ def test_positive_learned_family_differentiates_trunk_values_and_natural_paramet
     assert float(jnp.linalg.norm(natural_gradient[1:])) > 1.0e-6
 
 
-def test_learned_family_refuses_values_outside_its_declared_support() -> None:
-    quadrature = _d2q9_quadrature()
-    statistics = _thermal_statistics(quadrature)
-    plan = PositiveLearnedThermalEnergyPlan(
-        quadrature,
-        5,
-        maximum_absolute_natural_parameter=0.25,
-        maximum_logit_span=4.0,
-    )
-
-    result = plan.evaluate(
-        jnp.asarray(2.0),
-        statistics,
-        jnp.asarray((0.0, 0.3, 0.0, 0.0, 0.0)),
-    )
-
-    assert int(result.status) == int(
-        LearnedThermalResearchStatus.OUTSIDE_DECLARED_SUPPORT
-    )
-    assert not bool(result.successful)
-    assert not bool(result.evidence.within_declared_support)
-    np.testing.assert_array_equal(result.populations, jnp.zeros_like(result.populations))
-
-
-def test_g_star_has_zero_limit_and_nonzero_stress_correction_without_energy_defect() -> (
-    None
-):
+def test_learned_thermal_research_scenario_2() -> None:
     quadrature = _d2q9_quadrature()
     particle_plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     thermal_plan = MatchedThermalCrossRelaxationPlan(quadrature)
@@ -276,11 +263,6 @@ def test_g_star_has_zero_limit_and_nonzero_stress_correction_without_energy_defe
     np.testing.assert_allclose(
         corrected.evidence.weighted_velocity_sum, 0.0, atol=2.0e-13
     )
-
-
-def test_prandtl_cross_relaxation_conserves_g_star_energy_and_has_unit_pr_zero_limit() -> (
-    None
-):
     quadrature = _d2q9_quadrature()
     particle_plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     thermal_plan = MatchedThermalCrossRelaxationPlan(quadrature)
@@ -332,9 +314,6 @@ def test_prandtl_cross_relaxation_conserves_g_star_energy_and_has_unit_pr_zero_l
         0.0,
         atol=1.0e-15,
     )
-
-
-def test_integer_frame_shift_roundtrips_and_obeys_raw_moment_transformations() -> None:
     quadrature = _d2q9_quadrature()
     particle_plan = PressureExtendedParticleEquilibriumPlan(quadrature)
     relative_velocity = jnp.asarray((0.09, -0.04))
@@ -386,9 +365,6 @@ def test_integer_frame_shift_roundtrips_and_obeys_raw_moment_transformations() -
     np.testing.assert_allclose(
         result.evidence.maximum_identity_residual, 0.0, atol=5.0e-13
     )
-
-
-def test_integer_frame_plan_reports_hull_refusal_and_rejects_unsupported_rules() -> None:
     quadrature = _d2q9_quadrature()
     plan = IntegerVelocityFrameShiftPlan(quadrature, jnp.asarray((1, 0)))
 

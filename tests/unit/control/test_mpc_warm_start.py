@@ -26,7 +26,7 @@ def _problem(initial: Any = 1.0, horizon: Any = 4) -> Any:
     )
 
 
-def test_prepared_control_refresh_preserves_layout_and_increments_version() -> None:
+def test_mpc_warm_start_scenario_1() -> None:
     initial = phx.control.prepare_linear_quadratic_control(_problem())
     refreshed = phx.control.refresh_linear_quadratic_control(
         initial,
@@ -39,9 +39,6 @@ def test_prepared_control_refresh_preserves_layout_and_increments_version() -> N
     assert initial.prepared.plan.plan_id == refreshed.prepared.plan.plan_id
     np.testing.assert_allclose(result.states[0], [2.0], atol=1e-10)
     assert result.successful
-
-
-def test_mpc_shifted_warm_starts_preserve_realized_solution() -> None:
     problem = _problem()
     cold = phx.control.solve_receding_horizon_mpc(
         problem,
@@ -65,9 +62,6 @@ def test_mpc_shifted_warm_starts_preserve_realized_solution() -> None:
     assert sum(int(result.iterations) for result in warm.qp_results[1:]) <= sum(
         int(result.iterations) for result in cold.qp_results[1:]
     )
-
-
-def test_external_mpc_warm_start_requires_policy_and_matching_solution() -> None:
     problem = _problem()
     seed = phx.control.solve_linear_quadratic_control(problem)
     controller = phx.control.RecedingHorizonMPC(

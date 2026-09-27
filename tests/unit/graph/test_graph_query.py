@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_radius_query_graph_builds_weighted_bipartite_geometry() -> None:
+def test_graph_query_scenario_1() -> None:
     source = jnp.array([[0.0], [1.0], [3.0]])
     target = jnp.array([[0.2], [2.6]])
 
@@ -38,9 +38,6 @@ def test_radius_query_graph_builds_weighted_bipartite_geometry() -> None:
     assert jnp.allclose(
         graph.nodes["features"][:, 0], jnp.array([1.0, 2.0, 3.0, 0.0, 0.0])
     )
-
-
-def test_radius_query_graph_uses_periodic_minimum_image() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.9]]),
         jnp.array([[0.1]]),
@@ -52,9 +49,6 @@ def test_radius_query_graph_uses_periodic_minimum_image() -> None:
     assert bundle.graph.num_edges == 1
     assert jnp.allclose(bundle.graph.edges["relative"], jnp.array([[0.2]]), atol=1e-7)
     assert jnp.allclose(bundle.graph.edges["distance"], jnp.array([[0.2]]), atol=1e-7)
-
-
-def test_knn_query_graph_and_cached_layout_replay() -> None:
     source = jnp.array([[0.0], [2.0], [5.0]])
     target = jnp.array([[1.0]])
     bundle = phx.graph.knn_query_graph(source, target, k=2, weight_kind=None)
@@ -71,9 +65,6 @@ def test_knn_query_graph_and_cached_layout_replay() -> None:
     assert jnp.allclose(bundle.graph.senders, jnp.array([0, 1], dtype=jnp.int32))
     assert jnp.allclose(bundle.graph.receivers, jnp.array([3, 3], dtype=jnp.int32))
     assert jnp.allclose(rebuilt.graph.edges["relative"], jnp.array([[2.0], [0.0]]))
-
-
-def test_query_graph_components_select_source_target_and_edges() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.0], [1.0]]),
         jnp.array([[0.5]]),
@@ -98,9 +89,22 @@ def test_query_graph_components_select_source_target_and_edges() -> None:
     assert jnp.allclose(edge_batch["graph"]["distance"].data[:, 0], jnp.array([0.5, 0.5]))
     # ty: ignore[unresolved-attribute]
     assert targets.mass.value == 1.0
+    neighborhood = phx.graph.query_neighbors(
+        jnp.array([[0.25], [0.75]]),
+        jnp.array([[0.0]]),
+        max_neighbors=2,
+        periodic_lengths=(1.0,),
+    )
+
+    assert jnp.array_equal(neighborhood.indices[0, 0], jnp.array([0, 1]))
+    assert jnp.allclose(neighborhood.distance[0, 0], jnp.array([0.25, 0.25]))
+    assert jnp.allclose(
+        neighborhood.relative[0, 0, :, 0],
+        jnp.array([-0.25, 0.25]),
+    )
 
 
-def test_graph_neural_operator_aggregates_query_sources_to_targets() -> None:
+def test_graph_query_scenario_2() -> None:
     bundle = phx.graph.radius_query_graph(
         jnp.array([[0.0], [1.0]]),
         jnp.array([[0.5]]),
@@ -117,43 +121,6 @@ def test_graph_neural_operator_aggregates_query_sources_to_targets() -> None:
     )(bundle.graph)
 
     assert jnp.allclose(out.nodes["gno"][:, 0], jnp.array([0.0, 0.0, 4.0]))
-
-
-def test_graph_neural_operator_wraps_as_graph_model_on_query_targets() -> None:
-    bundle = phx.graph.radius_query_graph(
-        jnp.array([[0.0], [1.0]]),
-        jnp.array([[0.5]]),
-        radius=1.0,
-        source_features=jnp.array([[1.0], [3.0]]),
-        weight_kind=None,
-    )
-    domain = phx.domain.GraphDomain(bundle.graph)
-    targets = domain.component({"graph": bundle.target_nodes_component()})
-    batch = targets.sample(
-        phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),)))
-    )
-
-    @domain.Function("graph")
-    def u(node: Any) -> Any:
-        return node.get("features")[0]
-
-    model = domain.GraphModel(
-        phx.graph.GraphNeuralOperator(
-            input_key="u",
-            output_key="gno",
-            edge_weight_key=None,
-            normalize=False,
-            target_node_type=bundle.target_type,
-        ),
-        input_fn=u,
-        input_key="u",
-        output_key="gno",
-    )
-
-    assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([4.0]))
-
-
-def test_batched_knn_query_graph_is_case_local_and_mask_aware() -> None:
     source = jnp.array(
         [
             [[0.0], [1.0], [2.0]],
@@ -192,6 +159,60 @@ def test_batched_knn_query_graph_is_case_local_and_mask_aware() -> None:
         graph.node_mask,
         jnp.array([True, True, True, True, True, True, True, False, True, False]),
     )
+    graph = phx.graph.batched_knn_graph(
+        jnp.array([[[0.0], [1.0], [3.0]], [[10.0], [11.0], [13.0]]]),
+        k=1,
+    )
+    assert graph.senders is not None
+    assert graph.receivers is not None
+
+    assert graph.senders.shape == (6,)
+    assert jnp.all(graph.senders != graph.receivers)
+    assert jnp.all(graph.senders[:3] < 3)
+    assert jnp.all(graph.senders[3:] >= 3)
+    points = jnp.array([[0.0], [1.0], [3.0], [6.0]])
+    neighborhood = phx.graph.query_neighbors(
+        points,
+        points,
+        max_neighbors=1,
+        exclude_self=True,
+        target_chunk_size=2,
+    )
+    assert jnp.array_equal(neighborhood.indices[0, :, 0], jnp.array([1, 0, 1, 2]))
+
+
+def test_graph_neural_operator_wraps_as_graph_model_on_query_targets() -> None:
+    bundle = phx.graph.radius_query_graph(
+        jnp.array([[0.0], [1.0]]),
+        jnp.array([[0.5]]),
+        radius=1.0,
+        source_features=jnp.array([[1.0], [3.0]]),
+        weight_kind=None,
+    )
+    domain = phx.domain.GraphDomain(bundle.graph)
+    targets = domain.component({"graph": bundle.target_nodes_component()})
+    batch = targets.sample(
+        phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),)))
+    )
+
+    @domain.Function("graph")
+    def u(node: Any) -> Any:
+        return node.get("features")[0]
+
+    model = domain.GraphModel(
+        phx.graph.GraphNeuralOperator(
+            input_key="u",
+            output_key="gno",
+            edge_weight_key=None,
+            normalize=False,
+            target_node_type=bundle.target_type,
+        ),
+        input_fn=u,
+        input_key="u",
+        output_key="gno",
+    )
+
+    assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([4.0]))
 
 
 def test_batched_query_graph_is_jittable_and_differentiable() -> None:
@@ -214,22 +235,6 @@ def test_batched_query_graph_is_jittable_and_differentiable() -> None:
     assert result.shape == (4, 1)
     assert jnp.all(jnp.isfinite(result))
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_query_neighbors_have_stable_ties_and_periodic_minimum_image() -> None:
-    neighborhood = phx.graph.query_neighbors(
-        jnp.array([[0.25], [0.75]]),
-        jnp.array([[0.0]]),
-        max_neighbors=2,
-        periodic_lengths=(1.0,),
-    )
-
-    assert jnp.array_equal(neighborhood.indices[0, 0], jnp.array([0, 1]))
-    assert jnp.allclose(neighborhood.distance[0, 0], jnp.array([0.25, 0.25]))
-    assert jnp.allclose(
-        neighborhood.relative[0, 0, :, 0],
-        jnp.array([-0.25, 0.25]),
-    )
 
 
 def test_query_neighbors_support_morton_execution_and_geometry_gradients() -> None:
@@ -263,29 +268,3 @@ def test_query_neighbors_support_morton_execution_and_geometry_gradients() -> No
     assert jnp.array_equal(neighborhood.indices[0, 0], jnp.array([0, 1]))
     assert jnp.allclose(neighborhood.distance[0, 0], jnp.array([0.25, 0.25]))
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_batched_homogeneous_knn_graph_excludes_self_edges() -> None:
-    graph = phx.graph.batched_knn_graph(
-        jnp.array([[[0.0], [1.0], [3.0]], [[10.0], [11.0], [13.0]]]),
-        k=1,
-    )
-    assert graph.senders is not None
-    assert graph.receivers is not None
-
-    assert graph.senders.shape == (6,)
-    assert jnp.all(graph.senders != graph.receivers)
-    assert jnp.all(graph.senders[:3] < 3)
-    assert jnp.all(graph.senders[3:] >= 3)
-
-
-def test_chunked_homogeneous_query_preserves_self_identity() -> None:
-    points = jnp.array([[0.0], [1.0], [3.0], [6.0]])
-    neighborhood = phx.graph.query_neighbors(
-        points,
-        points,
-        max_neighbors=1,
-        exclude_self=True,
-        target_chunk_size=2,
-    )
-    assert jnp.array_equal(neighborhood.indices[0, :, 0], jnp.array([1, 0, 1, 2]))

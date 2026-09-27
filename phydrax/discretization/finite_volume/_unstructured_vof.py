@@ -1628,9 +1628,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             order = np.asarray(
                 [
                     index
-                    for index, _ in sorted(
-                        enumerate(sort_keys), key=lambda item: item[1]
-                    )
+                    for index, _ in sorted(enumerate(sort_keys), key=lambda item: item[1])
                 ],
                 dtype=np.int32,
             )

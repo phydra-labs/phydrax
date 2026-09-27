@@ -93,7 +93,7 @@ def _state_and_snapshot(
     return case, y, conserved, plan, snapshot
 
 
-def test_density_weighted_baseflow_and_zero_growth_reduction() -> None:
+def test_compressible_slow_growth_scenario_1() -> None:
     case = _case()
     y = jnp.linspace(0.0, 1.0, 7)
     x = jnp.arange(3.0)[:, None]
@@ -119,9 +119,6 @@ def test_density_weighted_baseflow_and_zero_growth_reduction() -> None:
     np.testing.assert_allclose(result.source.conservative, 0.0)
     np.testing.assert_allclose(result.evidence.zero_source_residual, 0.0)
     assert bool(result.evidence.admissible)
-
-
-def test_temporal_manufactured_base_uses_only_temporal_dilation_derivative() -> None:
     case = _case()
     y = jnp.linspace(0.0, 1.0, 6)
     primitive_profile = jnp.stack(
@@ -145,9 +142,6 @@ def test_temporal_manufactured_base_uses_only_temporal_dilation_derivative() -> 
     expected = -growth_rate * y[:, None] * jnp.asarray((0.08, 0.12, 0.3, 0.05, 0.4))
     np.testing.assert_allclose(prepared.primitive_source_profile, expected, atol=1e-12)
     assert prepared.coordinate == "temporal"
-
-
-def test_modeled_spatial_requires_and_uses_supplied_streamwise_derivatives() -> None:
     _, y, _, _, snapshot_without_derivative = _state_and_snapshot()
     with pytest.raises(ValueError, match="streamwise base derivatives"):
         SpatialSlowGrowthModelPlan().prepare(snapshot_without_derivative)
@@ -171,7 +165,7 @@ def test_modeled_spatial_requires_and_uses_supplied_streamwise_derivatives() -> 
     assert not prepared.claims_spatial_dns
 
 
-def test_primitive_and_conservative_source_forms_are_algebraically_equal() -> None:
+def test_compressible_slow_growth_scenario_2() -> None:
     case, _, conserved, _, snapshot = _state_and_snapshot()
     prepared = TemporalSlowGrowthModelPlan(0.08, wall_indices=()).prepare(snapshot)
     result = prepared.evaluate(conserved)
@@ -204,9 +198,6 @@ def test_primitive_and_conservative_source_forms_are_algebraically_equal() -> No
     np.testing.assert_allclose(
         primitive_result.source.conservative, result.source.conservative, atol=1e-12
     )
-
-
-def test_adiabatic_and_isothermal_wall_thermal_constraints_are_distinct() -> None:
     _, _, _, _, snapshot = _state_and_snapshot()
     adiabatic = TemporalSlowGrowthModelPlan(0.1, wall_thermal_mode="adiabatic").prepare(
         snapshot
@@ -224,9 +215,6 @@ def test_adiabatic_and_isothermal_wall_thermal_constraints_are_distinct() -> Non
     )
     np.testing.assert_allclose(adiabatic.wall_thermal_residual, 0.0, atol=1e-12)
     np.testing.assert_allclose(isothermal.wall_thermal_residual, 0.0, atol=1e-12)
-
-
-def test_displacement_and_momentum_integral_constraints_are_enforced() -> None:
     _, _, conserved, _, snapshot = _state_and_snapshot()
     prepared = TemporalSlowGrowthModelPlan(
         0.04,
@@ -244,7 +232,7 @@ def test_displacement_and_momentum_integral_constraints_are_enforced() -> None:
     )
 
 
-def test_all_stages_share_frozen_snapshot_and_acceptance_advances_it() -> None:
+def test_compressible_slow_growth_scenario_3() -> None:
     case, y, conserved, plan, snapshot = _state_and_snapshot()
     continuation = SlowGrowthContinuation(snapshot, accepted_time=0.0)
     model = TemporalSlowGrowthModelPlan(0.05, wall_indices=())
@@ -272,9 +260,6 @@ def test_all_stages_share_frozen_snapshot_and_acceptance_advances_it() -> None:
     assert accepted.accepted_step == 1
     assert next_prepared.snapshot.snapshot_id == next_snapshot.snapshot_id
     assert next_prepared.prepared_id != prepared.prepared_id
-
-
-def test_rejected_parent_step_rolls_back_and_records_rejection_evidence() -> None:
     _, _, _, _, snapshot = _state_and_snapshot()
     continuation = SlowGrowthContinuation(snapshot, accepted_time=1.0)
     prepared = TemporalSlowGrowthModelPlan(0.03).prepare(
@@ -288,9 +273,6 @@ def test_rejected_parent_step_rolls_back_and_records_rejection_evidence() -> Non
     assert not evidence.accepted
     assert not evidence.continuation_advanced
     assert evidence.parent_continuation_id == evidence.resulting_continuation_id
-
-
-def test_continuation_restart_binds_exact_accepted_snapshot_and_coordinates() -> None:
     _, _, _, _, snapshot = _state_and_snapshot(sample_index=3)
     continuation = SlowGrowthContinuation(snapshot, accepted_step=3, accepted_time=0.75)
     restart = continuation.checkpoint()
@@ -301,7 +283,7 @@ def test_continuation_restart_binds_exact_accepted_snapshot_and_coordinates() ->
     assert restored.accepted_time == continuation.accepted_time
 
 
-def test_fixed_snapshot_source_jvp_and_vjp_obey_adjoint_identity() -> None:
+def test_compressible_slow_growth_scenario_4() -> None:
     _, _, conserved, _, snapshot = _state_and_snapshot()
     prepared = TemporalSlowGrowthModelPlan(0.07, wall_indices=()).prepare(snapshot)
     tangent = jnp.linspace(-0.2, 0.3, conserved.size).reshape(conserved.shape)
@@ -314,11 +296,6 @@ def test_fixed_snapshot_source_jvp_and_vjp_obey_adjoint_identity() -> None:
         rtol=1e-11,
         atol=1e-11,
     )
-
-
-def test_energy_entropy_base_residuals_and_finite_x_admission_keep_labels_separate() -> (
-    None
-):
     _, y, conserved, _, _ = _state_and_snapshot()
     derivative = jnp.stack(
         (

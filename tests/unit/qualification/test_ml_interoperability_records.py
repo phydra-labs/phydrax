@@ -72,7 +72,7 @@ def _gate(report: Any, gate_id: Any) -> Any:
     return entry
 
 
-def test_all_passing_gates_qualify_with_distinct_revalidated_chains() -> None:
+def test_ml_interoperability_records_scenario_1() -> None:
     report = _report(_passing())
 
     assert report["outcome"] == "passed"
@@ -96,122 +96,105 @@ def test_all_passing_gates_qualify_with_distinct_revalidated_chains() -> None:
         support_ids.add(support.support_tuple_id)
         criterion_ids.add(criterion.criterion_id)
     assert len(support_ids) == len(criterion_ids) == len(_ALL_GATES)
-
-
-def test_one_failed_scenario_fails_only_its_gate_and_the_report() -> None:
-    scenarios = _passing()
-    scenarios[4] = _outcome("G3", "first", "failed", "AssertionError: work grew")
-    report = _report(scenarios)
-
-    evidence = _gate(report, "G3")["evidence"]
-    assert (evidence["outcome"], evidence["reason"]) == (
+    failed_scenarios = _passing()
+    failed_scenarios[4] = _outcome(
+        "G3",
+        "first",
+        "failed",
+        "AssertionError: work grew",
+    )
+    failed = _report(failed_scenarios)
+    failed_evidence = _gate(failed, "G3")["evidence"]
+    assert (failed_evidence["outcome"], failed_evidence["reason"]) == (
         "failed",
         "unqualified-scenarios",
     )
-    assert _gate(report, "G3")["raw_output"]["unqualified_scenarios"] == 1
-    assert report["failed_gates"] == ["G3"]
-    assert report["outcome"] == "failed"
+    assert _gate(failed, "G3")["raw_output"]["unqualified_scenarios"] == 1
+    assert failed["failed_gates"] == ["G3"]
+    assert failed["outcome"] == "failed"
 
+    skipped_scenarios = _passing()
+    skipped_scenarios[0] = _outcome(
+        "G1",
+        "first",
+        "skipped",
+        "Skipped: provider missing",
+    )
+    skipped = _report(skipped_scenarios)
+    assert _gate(skipped, "G1")["evidence"]["outcome"] == "failed"
+    assert skipped["outcome"] == "failed"
 
-def test_skipped_scenario_does_not_qualify_its_gate() -> None:
-    scenarios = _passing()
-    scenarios[0] = _outcome("G1", "first", "skipped", "Skipped: provider missing")
-    report = _report(scenarios)
+    missing_scenarios = [
+        scenario
+        for scenario in _passing()
+        if runner.scenario_gate(scenario.nodeid) != "G21"
+    ]
+    missing = _report(missing_scenarios)
+    missing_evidence = _gate(missing, "G21")["evidence"]
+    assert (missing_evidence["outcome"], missing_evidence["reason"]) == (
+        "failed",
+        "no-gate-scenario",
+    )
+    assert missing["failed_gates"] == ["G21"]
 
-    assert _gate(report, "G1")["evidence"]["outcome"] == "failed"
-    assert report["outcome"] == "failed"
-
-
-def test_selected_gate_without_scenarios_fails() -> None:
-    scenarios = [s for s in _passing() if runner.scenario_gate(s.nodeid) != "G21"]
-    report = _report(scenarios)
-
-    evidence = _gate(report, "G21")["evidence"]
-    assert (evidence["outcome"], evidence["reason"]) == ("failed", "no-gate-scenario")
-    assert report["failed_gates"] == ["G21"]
-    assert report["outcome"] == "failed"
-
-
-def test_collection_failure_makes_every_gate_inconclusive() -> None:
-    report = _report([], collection_failed=True)
-
-    assert report["inconclusive_gates"] == list(_ALL_GATES)
-    assert {entry["evidence"]["reason"] for entry in report["gates"]} == {
+    collection_failure = _report([], collection_failed=True)
+    assert collection_failure["inconclusive_gates"] == list(_ALL_GATES)
+    assert {entry["evidence"]["reason"] for entry in collection_failure["gates"]} == {
         "suite-collection-failed"
     }
-    assert report["outcome"] == "inconclusive"
-
-
-def test_report_is_independent_of_scenario_observation_order() -> None:
+    assert collection_failure["outcome"] == "inconclusive"
     scenarios = _passing()
-
     assert runner.serialize_report(_report(scenarios)) == runner.serialize_report(
         _report(reversed(scenarios))
     )
 
-
-def test_changing_one_outcome_changes_only_that_gates_observation_and_evidence() -> None:
-    baseline = _report(_passing())
-    scenarios = _passing()
-    scenarios[10] = _outcome("G6", "first", "failed", "refusal missing")
-    changed = _report(scenarios)
-
+    baseline = _report(scenarios)
+    changed_scenarios = _passing()
+    changed_scenarios[10] = _outcome("G6", "first", "failed", "refusal missing")
+    changed = _report(changed_scenarios)
     for before, after in zip(baseline["gates"], changed["gates"], strict=True):
-        ids = (
+        identities = (
             lambda entry: entry["raw_output"]["raw_artifact_id"],
             lambda entry: entry["campaign_observation"]["observation_record_id"],
             lambda entry: entry["evidence"]["evidence_id"],
         )
-        for identity in ids:
+        for identity in identities:
             assert (identity(before) != identity(after)) == (before["gate"] == "G6")
         for key in ("support_tuple", "criterion", "campaign_start"):
             assert before[key] == after[key]
 
-
-def test_records_of_different_gates_cannot_be_combined() -> None:
-    report = _report(_passing())
-    _, _, g1_start, g1_observation, _ = _chain(_gate(report, "G1"))
-    _, g2_criterion, _, _, g2_evidence = _chain(_gate(report, "G2"))
-
+    _, _, g1_start, g1_observation, _ = _chain(_gate(baseline, "G1"))
+    _, g2_criterion, _, _, g2_evidence = _chain(_gate(baseline, "G2"))
     with pytest.raises(ValueError):
         validate_qualification_causality(
-            g2_criterion, g1_start, g1_observation, g2_evidence
+            g2_criterion,
+            g1_start,
+            g1_observation,
+            g2_evidence,
         )
 
 
-def test_scenario_gate_maps_parametrized_nodes_to_their_gate() -> None:
-    assert runner.scenario_gate(f"{_SUITE}::test_g12_rollback[PHYSICAL_MAY_COMMIT]") == (
-        "G12"
+def test_ml_interoperability_records_scenario_2() -> None:
+    assert (
+        runner.scenario_gate(f"{_SUITE}::test_g12_rollback[PHYSICAL_MAY_COMMIT]") == "G12"
     )
     assert runner.scenario_gate(f"{_SUITE}::test_g1_closure") == "G1"
-
-
-@pytest.mark.parametrize(
-    "nodeid",
-    [
+    invalid = (
         f"{_SUITE}::test_helper_builds_a_closure",
         f"{_SUITE}::test_g25_future_gate",
         f"{_SUITE}::test_g0_no_gate",
         "tests/integration/test_other.py::test_g1_closure",
-    ],
-)
-def test_scenario_gate_rejects_nodes_outside_the_gate_contract(nodeid: Any) -> None:
-    with pytest.raises(ValueError):
-        runner.scenario_gate(nodeid)
-
-
-def test_subset_selection_reports_missing_gates_and_is_inconclusive() -> None:
+    )
+    for nodeid in invalid:
+        with pytest.raises(ValueError):
+            runner.scenario_gate(nodeid)
     selection = ("G22", "G17")
     report = _report(_passing(selection), selection)
-
     assert report["passed_gates"] == ["G17", "G22"]
     assert report["missing_gates"] == [
         gate_id for gate_id in _ALL_GATES if gate_id not in selection
     ]
     assert report["failed_gates"] == report["inconclusive_gates"] == []
     assert report["outcome"] == "inconclusive"
-
-
-def test_scenario_of_an_unselected_gate_is_refused() -> None:
     with pytest.raises(ValueError):
-        _report(_passing(("G17", "G22")), ("G17",))
+        _report(_passing(selection), ("G17",))

@@ -32,7 +32,7 @@ def _dense_rational_action(matrix: Any, vector: Any, function: Any) -> Any:
     return value
 
 
-def test_partial_fraction_action_matches_dense_polynomial_and_resolvents() -> None:
+def test_linalg_rational_functions_scenario_1() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 1.0, 0.0],
@@ -59,9 +59,6 @@ def test_partial_fraction_action_matches_dense_polynomial_and_resolvents() -> No
     assert result.diagnostics.solve_matvec_count == 0
     assert result.diagnostics.residual_indicator < 1e-12
     assert "r_j/(p_j-z)" in result.provenance.convention
-
-
-def test_partial_fraction_scalar_evaluation_uses_pole_minus_argument_convention() -> None:
     function = la.PartialFractionRationalFunction(
         jnp.asarray([3.0, 5.0]),
         jnp.asarray([2.0, -1.0]),
@@ -71,9 +68,6 @@ def test_partial_fraction_scalar_evaluation_uses_pole_minus_argument_convention(
     expected = 1.0 + 0.5 * values + 2.0 / (3.0 - values) - 1.0 / (5.0 - values)
 
     assert jnp.allclose(function(values), expected)
-
-
-def test_prepared_rational_action_is_jittable_and_refreshes_numeric_state() -> None:
     first_matrix = jnp.asarray([[2.0, 0.5], [0.5, 3.0]])
     second_matrix = jnp.asarray([[1.5, -0.25], [-0.25, 2.5]])
     first_vector = jnp.asarray([1.0, -1.0])
@@ -123,6 +117,22 @@ def test_prepared_rational_action_is_jittable_and_refreshes_numeric_state() -> N
         rtol=1e-11,
         atol=1e-12,
     )
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 3.0]))
+    vector = jnp.asarray([1.0, 2.0, -1.0])
+    function = la.PartialFractionRationalFunction(
+        jnp.asarray([1.0, 5.0]),
+        jnp.asarray([0.0, 2.0]),
+        polynomial_coefficients=jnp.asarray([0.5]),
+    )
+    operator = la.DenseLinearOperator(matrix, operator_id="masked-pole")
+    result = la.rational_function_action(operator, vector, function)
+    expected = 0.5 * vector + 2.0 * jnp.linalg.solve(5.0 * jnp.eye(3) - matrix, vector)
+
+    assert result.diagnostics.shifted_status[0] == int(la.ShiftedSolveStatus.SINGULAR)
+    assert not result.diagnostics.active_poles[0]
+    assert result.status == int(la.RationalFunctionStatus.SUCCESS)
+    assert jnp.all(jnp.isfinite(result.value))
+    assert jnp.allclose(result.value, expected, rtol=1e-11, atol=1e-12)
 
 
 def test_rational_coefficients_are_differentiable_on_a_reusable_projection() -> None:
@@ -149,26 +159,7 @@ def test_rational_coefficients_are_differentiable_on_a_reusable_projection() -> 
     assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-11)
 
 
-def test_zero_residue_masks_an_irrelevant_singular_shift() -> None:
-    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 3.0]))
-    vector = jnp.asarray([1.0, 2.0, -1.0])
-    function = la.PartialFractionRationalFunction(
-        jnp.asarray([1.0, 5.0]),
-        jnp.asarray([0.0, 2.0]),
-        polynomial_coefficients=jnp.asarray([0.5]),
-    )
-    operator = la.DenseLinearOperator(matrix, operator_id="masked-pole")
-    result = la.rational_function_action(operator, vector, function)
-    expected = 0.5 * vector + 2.0 * jnp.linalg.solve(5.0 * jnp.eye(3) - matrix, vector)
-
-    assert result.diagnostics.shifted_status[0] == int(la.ShiftedSolveStatus.SINGULAR)
-    assert not result.diagnostics.active_poles[0]
-    assert result.status == int(la.RationalFunctionStatus.SUCCESS)
-    assert jnp.all(jnp.isfinite(result.value))
-    assert jnp.allclose(result.value, expected, rtol=1e-11, atol=1e-12)
-
-
-def test_active_singular_pole_propagates_failure_status() -> None:
+def test_linalg_rational_functions_scenario_2() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 3.0]))
     function = la.PartialFractionRationalFunction(
         jnp.asarray([1.0]),
@@ -182,9 +173,6 @@ def test_active_singular_pole_propagates_failure_status() -> None:
 
     assert result.status == int(la.RationalFunctionStatus.SHIFTED_SOLVE_FAILURE)
     assert not result.diagnostics.converged
-
-
-def test_rational_plan_enforces_aggregate_matvec_and_structure_contracts() -> None:
     operator = la.DenseLinearOperator(jnp.eye(3), operator_id="budget-rational")
     function = la.PartialFractionRationalFunction(
         jnp.asarray([4.0]),
@@ -210,9 +198,6 @@ def test_rational_plan_enforces_aggregate_matvec_and_structure_contracts() -> No
             incompatible,
             plan,
         )
-
-
-def test_streaming_rational_action_propagates_certified_solve_error_bound() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0]))
     operator = la.DenseLinearOperator(
         matrix,

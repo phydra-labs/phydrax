@@ -126,7 +126,7 @@ def _runtime(
     return plan.prepare(dt_ms)
 
 
-def test_exact_dimensional_aliev_panfilov_rates_and_singularity_evidence() -> None:
+def test_cardiovascular_ep_foundation_scenario_1() -> None:
     parameters = _parameters()
     state = AlievPanfilovState(jnp.asarray((0.2, 0.4)), jnp.asarray((0.1, 0.3)))
     source = jnp.asarray((0.01, -0.02))
@@ -158,9 +158,6 @@ def test_exact_dimensional_aliev_panfilov_rates_and_singularity_evidence() -> No
     assert not bool(singular.evidence.successful)
     assert bool(jnp.all(singular.rates.activation_per_ms == 0.0))
     assert bool(jnp.all(singular.rates.recovery_per_ms == 0.0))
-
-
-def test_diffusivity_is_fiber_sign_invariant_and_ids_cover_coefficients() -> None:
     fibers = jnp.asarray(((1.0, 2.0, 0.0), (-1.0, 0.0, 1.0)))
     # ty: ignore[invalid-argument-type]
     positive = CellwiseDiffusivity.from_fibers(fibers, (0.2, 0.3), 0.05)
@@ -182,9 +179,6 @@ def test_diffusivity_is_fiber_sign_invariant_and_ids_cover_coefficients() -> Non
         ("tau", 13.0),
     ):
         assert base_id != _parameters(**{name: value}).parameter_id
-
-
-def test_p1_row_sum_lumping_selected_cell_l2_projection_and_half_open_pulse() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -218,7 +212,7 @@ def test_p1_row_sum_lumping_selected_cell_l2_projection_and_half_open_pulse() ->
         plan.prepare(0.06)
 
 
-def test_diffusion_bound_and_stage_commit_fail_closed() -> None:
+def test_cardiovascular_ep_foundation_scenario_2() -> None:
     runtime = _runtime(cube_count=1, dt_ms=0.02, stop_ms=0.2)
     diffusion_only = PhenomenologicalMonodomainPlan(
         runtime.plan.discretization,
@@ -265,9 +259,6 @@ def test_diffusion_bound_and_stage_commit_fail_closed() -> None:
     foreign_candidate = other_runtime.evaluate(foreign)
     with pytest.raises(ValueError, match="must match"):
         runtime.commit(foreign_candidate, clean)
-
-
-def test_branchwise_online_activation_and_directed_chord_velocity() -> None:
     plan = ActivationObservationPlan(4, (0, 2, 3), threshold=0.5)
     state = initialize_activation_observation(
         plan, jnp.asarray((0.1, 0.0, 0.7, 0.2)), time_ms=0.0

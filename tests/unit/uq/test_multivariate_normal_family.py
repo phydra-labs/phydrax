@@ -36,7 +36,7 @@ def test_symmetric_coordinates_preserve_frobenius_geometry() -> None:
         smat(jnp.ones((5,)))
 
 
-def test_multivariate_normal_density_duality_and_fisher_match_references() -> None:
+def test_multivariate_normal_contracts() -> None:
     family = phx.uq.MultivariateNormalFamily(3)
     location = jnp.asarray([0.3, -0.8, 0.5])
     covariance = jnp.asarray([[1.4, 0.2, -0.1], [0.2, 0.9, 0.3], [-0.1, 0.3, 1.1]])
@@ -79,9 +79,6 @@ def test_multivariate_normal_density_duality_and_fisher_match_references() -> No
     )
     assert family.signature.dimension == 9
     assert bool(conversion.valid)
-
-
-def test_multivariate_normal_sampling_and_projection_recover_moments() -> None:
     family = phx.uq.MultivariateNormalFamily(2)
     location = jnp.asarray([0.4, -0.7])
     covariance = jnp.asarray([[1.3, 0.45], [0.45, 0.8]])
@@ -110,9 +107,6 @@ def test_multivariate_normal_sampling_and_projection_recover_moments() -> None:
     np.testing.assert_allclose(actual_covariance, expected_covariance, atol=5e-14)
     assert samples.shape == (50_000, 2)
     assert bool(projected.valid)
-
-
-def test_multivariate_normal_domain_reports_singular_empirical_covariance() -> None:
     family = phx.uq.MultivariateNormalFamily(2)
     singular = phx.uq.fit_exponential_family(
         family,
@@ -125,9 +119,6 @@ def test_multivariate_normal_domain_reports_singular_empirical_covariance() -> N
     assert not bool(singular.valid)
     assert int(singular.status) == phx.uq.EXPONENTIAL_FAMILY_MEAN_BOUNDARY
     assert int(exterior.status) == phx.uq.EXPONENTIAL_FAMILY_OUTSIDE_MEAN_DOMAIN
-
-
-def test_multivariate_normal_batches_jit_and_preserve_axes() -> None:
     family = phx.uq.MultivariateNormalFamily(2)
     locations = jnp.asarray([[0.0, 0.5], [1.0, -0.2]])
     covariances = jnp.asarray([[[1.0, 0.1], [0.1, 0.7]], [[0.8, -0.2], [-0.2, 1.4]]])
@@ -143,11 +134,6 @@ def test_multivariate_normal_batches_jit_and_preserve_axes() -> None:
     assert recovered.valid.shape == (2,)
     assert samples.shape == (7, 3, 2, 2)
     assert family.fisher_action(natural, jnp.ones_like(natural.values)).shape == (2, 5)
-
-
-def test_multivariate_normal_validation_is_scale_relative_batch_local_and_empty_safe() -> (
-    None
-):
     scalar_family = phx.uq.MultivariateNormalFamily(1)
     scalar_location = jnp.asarray([0.0])
     for variance in (1.0e-15, 1.0e15):
@@ -185,9 +171,6 @@ def test_multivariate_normal_validation_is_scale_relative_batch_local_and_empty_
         family.signature.dimension,
     )
     assert empty_conversion.valid.shape == (0,)
-
-
-def test_multivariate_normal_bridge_reuses_gaussian_factor_without_jitter() -> None:
     family = phx.uq.MultivariateNormalFamily(2)
     location = jnp.asarray([0.3, -0.6])
     covariance = jnp.asarray([[1.1, 0.35], [0.35, 0.7]])

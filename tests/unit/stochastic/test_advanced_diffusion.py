@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_array_complex_and_pytree_event_layouts_round_trip() -> None:
+def test_advanced_diffusion_scenario_1() -> None:
     array_layout = phx.stochastic.ArrayEventLayout((2, 2))
     array = jnp.arange(12.0).reshape((3, 2, 2))
     assert jnp.array_equal(
@@ -40,9 +40,6 @@ def test_array_complex_and_pytree_event_layouts_round_trip() -> None:
     assert jnp.array_equal(restored["right"], tree["right"])
     assert restored["left"].dtype == jnp.dtype(jnp.float32)
     assert restored["right"].dtype == jnp.dtype(jnp.float64)
-
-
-def test_gaussian_factor_law_distinguishes_lebesgue_and_hausdorff_scores() -> None:
     full = phx.uq.GaussianFactorLaw(
         jnp.zeros((2,)),
         phx.uq.GaussianFactor(jnp.asarray([[1.0, 0.0], [0.2, 0.8]])),
@@ -62,11 +59,6 @@ def test_gaussian_factor_law_distinguishes_lebesgue_and_hausdorff_scores() -> No
     assert not singular.contains(jnp.asarray([0.3, 0.1]))
     with pytest.raises(ValueError, match="no ambient Lebesgue score"):
         singular.score(jnp.asarray([0.3, 0.0]))
-
-
-def test_matrix_and_state_dependent_reverse_drift_include_correct_covariance_terms() -> (
-    None
-):
     matrix = phx.stochastic.MatrixGaussianDiffusion(
         -0.2 * jnp.eye(2), jnp.asarray([[0.5, 0.0], [0.1, 0.4]])
     )

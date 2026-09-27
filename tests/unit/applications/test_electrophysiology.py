@@ -48,7 +48,7 @@ def _branched() -> Any:
     return plan.prepare()
 
 
-def test_explicit_unit_conversion_and_dimension_validation() -> None:
+def test_electrophysiology_scenario_1() -> None:
     np.testing.assert_allclose(ep.convert_quantity(1.0, "V", "mV"), 1000.0)
     np.testing.assert_allclose(ep.convert_quantity(250.0, "pA", "nA"), 0.25)
     np.testing.assert_allclose(ep.convert_quantity(2.5, "mS", "uS"), 2500.0)
@@ -62,9 +62,6 @@ def test_explicit_unit_conversion_and_dimension_validation() -> None:
     shifted_time = UnitDefinition("shifted-ms", TIME, "shifted-time-reference", "1e-3")
     with pytest.raises(ValueError, match="shared reference system"):
         ep.conversion_factor(shifted_time, ep.ELECTROPHYSIOLOGY_UNITS.time)
-
-
-def test_uniform_branched_voltage_has_no_axial_current() -> None:
     morphology = _branched()
     runtime = ep.CableSolverPlan(0.1, residual_tolerance=1.0e-9).prepare(
         morphology, ep.MembraneProgram((ep.PassiveLeak(0.0, -65.0),))
@@ -74,52 +71,6 @@ def test_uniform_branched_voltage_has_no_axial_current() -> None:
     assert bool(result.evidence.successful)
     np.testing.assert_allclose(result.state.voltage_mV, state.voltage_mV, atol=1.0e-11)
     np.testing.assert_allclose(result.evidence.kirchhoff_residual_nA, 0.0, atol=1.0e-12)
-
-
-@pytest.mark.parametrize(
-    "scheme,theta", [("backward-euler", 1.0), ("crank-nicolson", 0.5)]
-)
-def test_passive_single_compartment_matches_analytic_theta_mode(
-    scheme: Any, theta: Any
-) -> None:
-    runtime = _single(ep.PassiveLeak(0.3, -65.0), dt=0.2, scheme=scheme)
-    state = ep.initialize_cable_state(runtime, jnp.asarray([-40.0]))
-    result = ep.step_cable(runtime, state, ep.zero_cable_inputs(runtime))
-    capacitance_rate = float(runtime.morphology.capacitance_nF[0]) / 0.2
-    conductance = 0.3 * float(runtime.morphology.membrane_area_um2[0]) * 1.0e-5
-    expected = (
-        (capacitance_rate - (1.0 - theta) * conductance) * -40.0 + conductance * -65.0
-    ) / (capacitance_rate + theta * conductance)
-    np.testing.assert_allclose(
-        result.state.voltage_mV, [expected], rtol=2.0e-12, atol=2.0e-12
-    )
-    assert bool(result.evidence.successful)
-    neutral = ep.zero_cable_inputs(runtime)
-
-    def voltage_for_current(current: Any) -> Any:
-        inputs = ep.CableStepInputs(
-            jnp.asarray([current]),
-            neutral.synaptic_conductance_uS,
-            neutral.synaptic_current_offset_nA,
-            neutral.voltage_clamp_mask,
-            neutral.voltage_clamp_target_mV,
-        )
-        return ep.step_cable(runtime, state, inputs).state.voltage_mV[0]
-
-    _, tangent = jax.jvp(
-        voltage_for_current,
-        (jnp.asarray(0.0),),
-        (jnp.asarray(1.0),),
-    )
-    np.testing.assert_allclose(
-        tangent,
-        1.0 / (capacitance_rate + theta * conductance),
-        rtol=2.0e-12,
-        atol=2.0e-12,
-    )
-
-
-def test_branched_cable_satisfies_kirchhoff_balance() -> None:
     morphology = _branched()
     runtime = ep.CableSolverPlan(0.1, residual_tolerance=1.0e-9).prepare(
         morphology, ep.MembraneProgram((ep.PassiveLeak(0.1, -68.0),))
@@ -140,7 +91,46 @@ def test_branched_cable_satisfies_kirchhoff_balance() -> None:
     )
 
 
-def test_exact_gate_update_and_hh_current_affinity() -> None:
+def test_passive_single_compartment_matches_analytic_theta_mode() -> None:
+    for scheme, theta in [("backward-euler", 1.0), ("crank-nicolson", 0.5)]:
+        runtime = _single(ep.PassiveLeak(0.3, -65.0), dt=0.2, scheme=scheme)
+        state = ep.initialize_cable_state(runtime, jnp.asarray([-40.0]))
+        result = ep.step_cable(runtime, state, ep.zero_cable_inputs(runtime))
+        capacitance_rate = float(runtime.morphology.capacitance_nF[0]) / 0.2
+        conductance = 0.3 * float(runtime.morphology.membrane_area_um2[0]) * 1.0e-5
+        expected = (
+            (capacitance_rate - (1.0 - theta) * conductance) * -40.0 + conductance * -65.0
+        ) / (capacitance_rate + theta * conductance)
+        np.testing.assert_allclose(
+            result.state.voltage_mV, [expected], rtol=2.0e-12, atol=2.0e-12
+        )
+        assert bool(result.evidence.successful)
+        neutral = ep.zero_cable_inputs(runtime)
+
+        def voltage_for_current(current: Any) -> Any:
+            inputs = ep.CableStepInputs(
+                jnp.asarray([current]),
+                neutral.synaptic_conductance_uS,
+                neutral.synaptic_current_offset_nA,
+                neutral.voltage_clamp_mask,
+                neutral.voltage_clamp_target_mV,
+            )
+            return ep.step_cable(runtime, state, inputs).state.voltage_mV[0]
+
+        _, tangent = jax.jvp(
+            voltage_for_current,
+            (jnp.asarray(0.0),),
+            (jnp.asarray(1.0),),
+        )
+        np.testing.assert_allclose(
+            tangent,
+            1.0 / (capacitance_rate + theta * conductance),
+            rtol=2.0e-12,
+            atol=2.0e-12,
+        )
+
+
+def test_electrophysiology_scenario_2() -> None:
     gate = jnp.asarray([0.2, 0.7])
     steady = jnp.asarray([0.8, 0.1])
     tau = jnp.asarray([2.0, 5.0])
@@ -168,9 +158,6 @@ def test_exact_gate_update_and_hh_current_affinity() -> None:
         evaluation.conductance_uS * (voltage_b - voltage_a),
         rtol=1.0e-13,
     )
-
-
-def test_nonfinite_updated_hh_gates_reject_entire_cable_transition() -> None:
     runtime = _single(ep.HodgkinHuxleyNaK(), dt=0.1)
     state = ep.initialize_cable_state(runtime, jnp.asarray([-65.0]))
     inputs = ep.CableStepInputs(
@@ -187,31 +174,6 @@ def test_nonfinite_updated_hh_gates_reject_entire_cable_transition() -> None:
     np.testing.assert_array_equal(result.state.membrane.gates, state.membrane.gates)
     np.testing.assert_array_equal(result.state.step_index, state.step_index)
     np.testing.assert_array_equal(result.state.time_ms, state.time_ms)
-
-
-def test_hodgkin_huxley_program_is_excitable_under_inward_current() -> None:
-    runtime = _single(ep.HodgkinHuxleyNaK(), ep.PassiveLeak(0.0, -65.0), dt=0.02)
-    state = ep.initialize_cable_state(runtime, jnp.asarray([-65.0]))
-    neutral = ep.zero_cable_inputs(runtime)
-
-    def advance(carry: Any, index: Any) -> Any:
-        current = jnp.where((index >= 50) & (index < 300), 10.0, 0.0)
-        inputs = ep.CableStepInputs(
-            jnp.asarray([current]),
-            neutral.synaptic_conductance_uS,
-            neutral.synaptic_current_offset_nA,
-            neutral.voltage_clamp_mask,
-            neutral.voltage_clamp_target_mV,
-        )
-        result = ep.step_cable(runtime, carry, inputs)
-        return result.state, result.state.voltage_mV[0]
-
-    _, voltage = jax.lax.scan(advance, state, jnp.arange(1000))
-    assert float(jnp.max(voltage)) > 0.0
-    assert float(voltage[-1]) < float(jnp.max(voltage)) - 20.0
-
-
-def test_current_and_voltage_clamp_signs_are_explicit() -> None:
     runtime = _single(ep.PassiveLeak(0.0, -65.0), dt=0.1)
     state = ep.initialize_cable_state(runtime, jnp.asarray([-65.0]))
     neutral = ep.zero_cable_inputs(runtime)
@@ -236,7 +198,29 @@ def test_current_and_voltage_clamp_signs_are_explicit() -> None:
     assert float(clamped.evidence.clamp_current_nA[0]) > 0.0
 
 
-def test_synapse_network_preserves_exact_voltage_affinity_and_delay() -> None:
+def test_hodgkin_huxley_program_is_excitable_under_inward_current() -> None:
+    runtime = _single(ep.HodgkinHuxleyNaK(), ep.PassiveLeak(0.0, -65.0), dt=0.02)
+    state = ep.initialize_cable_state(runtime, jnp.asarray([-65.0]))
+    neutral = ep.zero_cable_inputs(runtime)
+
+    def advance(carry: Any, index: Any) -> Any:
+        current = jnp.where((index >= 50) & (index < 300), 10.0, 0.0)
+        inputs = ep.CableStepInputs(
+            jnp.asarray([current]),
+            neutral.synaptic_conductance_uS,
+            neutral.synaptic_current_offset_nA,
+            neutral.voltage_clamp_mask,
+            neutral.voltage_clamp_target_mV,
+        )
+        result = ep.step_cable(runtime, carry, inputs)
+        return result.state, result.state.voltage_mV[0]
+
+    _, voltage = jax.lax.scan(advance, state, jnp.arange(1000))
+    assert float(jnp.max(voltage)) > 0.0
+    assert float(voltage[-1]) < float(jnp.max(voltage)) - 20.0
+
+
+def test_electrophysiology_scenario_3() -> None:
     plan = ep.SynapseNetworkPlan(
         (2, 2),
         3,
@@ -273,9 +257,6 @@ def test_synapse_network_preserves_exact_voltage_affinity_and_delay() -> None:
     np.testing.assert_allclose(offset, -conductance * 0.0, atol=1.0e-14)
     voltage = -60.0
     assert float(conductance * voltage + offset) < 0.0
-
-
-def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions() -> None:
     runtime = ep.SynapseNetworkPlan((1, 1), 2, 0.0, 1.0).prepare()
     relations = ep.initialize_synapse_network(runtime).relations
     event = ep.SynapseRelationEvent(
@@ -354,9 +335,6 @@ def test_dynamic_synaptogenesis_and_pair_stdp_are_candidate_commit_transitions()
     rejected = ep.evaluate_synapse_relation_event(full_runtime, full_state, event)
     assert not bool(rejected.successful)
     assert int(rejected.status) == int(ep.SynapseStatus.CAPACITY_EXCEEDED)
-
-
-def test_concentration_transfer_conserves_moles_charge_and_nernst_sign() -> None:
     runtime = ep.IonDynamicsPlan(
         (ep.IonSpecies("Na", 1), ep.IonSpecies("K", 1)),
         (2.0, 3.0),
@@ -409,7 +387,7 @@ def test_concentration_transfer_conserves_moles_charge_and_nernst_sign() -> None
         )
 
 
-def test_stochastic_channel_counts_are_reproducible_and_key_lineage_is_explicit() -> None:
+def test_electrophysiology_scenario_4() -> None:
     generator = jnp.asarray([[-0.2, 0.2], [0.1, -0.1]])
     runtime = ep.MarkovChannelPlan(generator, 3).prepare(0.5)
     state_a = ep.initialize_stochastic_channels(
@@ -446,9 +424,6 @@ def test_stochastic_channel_counts_are_reproducible_and_key_lineage_is_explicit(
         first.evidence.counts_before, first.evidence.counts_after
     )
     assert bool(first.evidence.successful)
-
-
-def test_swc_parser_validates_topology_and_reports_stable_mapping() -> None:
     text = """
     # id type x y z radius parent
     1 1 0 0 0 5 -1
@@ -486,9 +461,6 @@ def test_swc_parser_validates_topology_and_reports_stable_mapping() -> None:
         ep.parse_swc_text("1 1 0 0 0 1 -1\n2 3 1 0 0 1 9", "bad")
     with pytest.raises(ValueError, match="exactly one"):
         ep.parse_swc_text("1 1 0 0 0 1 -1\n2 1 1 0 0 1 -1", "bad")
-
-
-def test_rejected_cable_step_does_not_create_a_valid_recording() -> None:
     runtime = _single(
         ep.SodiumPotassiumPump(0.05, 10.0, 1.5),
         dt=0.1,

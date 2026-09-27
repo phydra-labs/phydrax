@@ -90,7 +90,7 @@ def _cylinder(
     ).prepare(source, coordinate_frame_id="manufactured-cylinder-z")
 
 
-def test_source_cosine_has_correct_sign_si_scale_and_sealed_terminal_balance() -> None:
+def test_skeletal_muscle_emg_current_cylinder_scenario_1() -> None:
     _, source, state = _source()
     accepted = _observe(source, state)
     z = np.asarray(source.plan.positions_m[0, :, 2])
@@ -115,9 +115,24 @@ def test_source_cosine_has_correct_sign_si_scale_and_sealed_terminal_balance() -
         accepted.transmembrane_current_A,
         rtol=1e-6,
     )
-
-
-def test_current_transaction_rejects_nonfinite_foreign_and_stale_voltage() -> None:
+    fiber, source, _ = _source()
+    with pytest.raises(ValueError, match="monodomain metric"):
+        PereiraBotelho2019FiberCurrentPlan(
+            ("f0",),
+            source.plan.positions_m * 2,
+            source.plan.radius_m,
+            geometry_source_id="scaled",
+            geometry_license="CC0-1.0",
+        ).prepare(fiber)
+    with pytest.raises(ValueError, match="one owner"):
+        PereiraBotelho2019FiberCurrentPlan(
+            ("f0", "f0"),
+            jnp.repeat(source.plan.positions_m, 2, axis=0),
+            # ty: ignore[invalid-argument-type]
+            [1e-5, 1e-5],
+            geometry_source_id="duplicated",
+            geometry_license="CC0-1.0",
+        )
     _, source, state = _source()
     prior = source.initialize()
     candidate = source.propose(
@@ -152,30 +167,6 @@ def test_current_transaction_rejects_nonfinite_foreign_and_stale_voltage() -> No
     committed = candidate.commit(prior, state)
     replay = candidate.commit(committed, state)
     assert int(replay.accepted_observations) == 1
-
-
-def test_source_metric_and_duplicate_ownership_are_not_inferred() -> None:
-    fiber, source, _ = _source()
-    with pytest.raises(ValueError, match="monodomain metric"):
-        PereiraBotelho2019FiberCurrentPlan(
-            ("f0",),
-            source.plan.positions_m * 2,
-            source.plan.radius_m,
-            geometry_source_id="scaled",
-            geometry_license="CC0-1.0",
-        ).prepare(fiber)
-    with pytest.raises(ValueError, match="one owner"):
-        PereiraBotelho2019FiberCurrentPlan(
-            ("f0", "f0"),
-            jnp.repeat(source.plan.positions_m, 2, axis=0),
-            # ty: ignore[invalid-argument-type]
-            [1e-5, 1e-5],
-            geometry_source_id="duplicated",
-            geometry_license="CC0-1.0",
-        )
-
-
-def test_cylinder_matches_homogeneous_neumann_green_function_and_aperture() -> None:
     _, source, state = _source()
     cylinder = _cylinder(source)
     n = np.arange(-2, 3)[:, None]
@@ -214,9 +205,6 @@ def test_cylinder_matches_homogeneous_neumann_green_function_and_aperture() -> N
     np.testing.assert_allclose(
         output.lead_voltage_V[0], expected[0] - expected[1], rtol=3e-5, atol=1e-12
     )
-
-
-def test_cylinder_rejects_non_neutral_current_and_stale_geometry() -> None:
     _, source, state = _source()
     cylinder = _cylinder(source)
     accepted = _observe(source, state)
@@ -238,9 +226,17 @@ def test_cylinder_rejects_non_neutral_current_and_stale_geometry() -> None:
     assert int(candidate.commit(prior, changed).accepted_observations) == 0
     with pytest.raises(ValueError, match="registered frame"):
         cylinder.plan.prepare(source, coordinate_frame_id="new-committed-geometry-frame")
-
-
-def test_cylinder_runtime_jit_and_aperture_suppression() -> None:
+    fiber, source, _ = _source(nodes=3)
+    folded = source.plan.positions_m.at[0, :, 2].set(jnp.asarray([0.0, 0.02, 0.0]))
+    folded_source = PereiraBotelho2019FiberCurrentPlan(
+        ("f0",),
+        folded,
+        source.plan.radius_m,
+        geometry_source_id="manufactured-foldback",
+        geometry_license="CC0-1.0",
+    ).prepare(fiber)
+    with pytest.raises(ValueError, match="foldback"):
+        _cylinder(folded_source)
     _, source, state = _source()
     cylinder = _cylinder(source)
     accepted = _observe(source, state)
@@ -255,17 +251,3 @@ def test_cylinder_runtime_jit_and_aperture_suppression() -> None:
     assert float(jnp.max(jnp.abs(wider.contact_lead_field_ohm))) < float(
         jnp.max(jnp.abs(cylinder.contact_lead_field_ohm))
     )
-
-
-def test_cylinder_rejects_collinear_fiber_foldback() -> None:
-    fiber, source, _ = _source(nodes=3)
-    folded = source.plan.positions_m.at[0, :, 2].set(jnp.asarray([0.0, 0.02, 0.0]))
-    folded_source = PereiraBotelho2019FiberCurrentPlan(
-        ("f0",),
-        folded,
-        source.plan.radius_m,
-        geometry_source_id="manufactured-foldback",
-        geometry_license="CC0-1.0",
-    ).prepare(fiber)
-    with pytest.raises(ValueError, match="foldback"):
-        _cylinder(folded_source)

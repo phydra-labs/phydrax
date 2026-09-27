@@ -31,7 +31,7 @@ def _spatial_rod() -> Any:
     )
 
 
-def test_load_ledger_preserves_source_frame_unit_and_channel_semantics() -> None:
+def test_rod_loads_scenario_1() -> None:
     contact = RodLoad(
         jnp.asarray(((1.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 0.0))),
         jnp.asarray(((0.0, 0.0, 0.5), (0.0, 0.0, 0.0))),
@@ -56,9 +56,6 @@ def test_load_ledger_preserves_source_frame_unit_and_channel_semantics() -> None
     assert ledger.moment_frame == "material"
     assert ledger.force_unit == "N"
     assert ledger.moment_unit == "N*m"
-
-
-def test_load_power_evidence_uses_native_dual_pairing_and_named_channels() -> None:
     rod = _spatial_rod()
     linear_velocity = jnp.asarray(((0.1, -0.2, 0.3), (0.4, 0.2, -0.1), (-0.3, 0.5, 0.6)))
     body_angular_velocity = jnp.asarray(((0.2, 0.4, -0.1), (-0.3, 0.1, 0.5)))
@@ -108,9 +105,6 @@ def test_load_power_evidence_uses_native_dual_pairing_and_named_channels() -> No
         evidence.source_power[2]
     )
     assert evidence.absolute_pairing_error == pytest.approx(0.0, abs=2.0e-6)
-
-
-def test_spatial_load_rejects_world_or_quaternion_storage_moments() -> None:
     with pytest.raises(ValueError, match="material frame"):
         RodLoad(
             jnp.zeros((3, 3)),
@@ -126,9 +120,6 @@ def test_spatial_load_rejects_world_or_quaternion_storage_moments() -> None:
             source_id="bad-shape",
             power_channel="external",
         )
-
-
-def test_reduced_bundle_keeps_native_source_order_and_channel_aggregation() -> None:
     first = RodLoad(
         jnp.zeros((3, 3)),
         jnp.zeros((2, 3)),

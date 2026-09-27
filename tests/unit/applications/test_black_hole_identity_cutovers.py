@@ -37,7 +37,7 @@ def _qnm_table(
     )
 
 
-def test_schwarzschild_1pn_identity_binds_parameters_and_scale_contract() -> None:
+def test_black_hole_identity_cutovers_scenario_1() -> None:
     astro = phx.applications.astrodynamics
     context = _astrodynamics_context()
     baseline = astro.Schwarzschild1PNForce(4.0, context, speed_of_light=10.0)
@@ -71,9 +71,6 @@ def test_schwarzschild_1pn_identity_binds_parameters_and_scale_contract() -> Non
         astro.Schwarzschild1PNForce(0.0, context)
     with pytest.raises(ValueError, match=r"shape \(6,\)"):
         baseline.evaluate(0.0, jnp.ones(5))
-
-
-def test_eos_and_tov_ids_bind_numeric_tables_labels_units_and_radial_grid() -> None:
     compact = phx.applications.compact_objects
     pressure = np.asarray([0.0, 0.1, 0.2])
     energy = np.asarray([1.0, 1.2, 1.4])
@@ -92,9 +89,6 @@ def test_eos_and_tov_ids_bind_numeric_tables_labels_units_and_radial_grid() -> N
     changed_grid = compact.TovPlan(baseline, np.asarray([0.01, 0.2, 0.5, 1.0]))
     changed_eos = compact.TovPlan(changed_content, radial_grid)
     assert len({plan.plan_id, changed_grid.plan_id, changed_eos.plan_id}) == 3
-
-
-def test_malformed_eos_tables_fail_before_entering_tov_workflows() -> None:
     compact = phx.applications.compact_objects
     with pytest.raises(ValueError, match="finite monotone"):
         # ty: ignore[invalid-argument-type]
@@ -118,6 +112,27 @@ def test_malformed_eos_tables_fail_before_entering_tov_workflows() -> None:
     with pytest.raises(ValueError, match="geometric units"):
         # ty: ignore[invalid-argument-type]
         compact.EquationOfStateTable([0.0, 0.1], [1.0, 1.2], unit_system="SI")
+    physics = phx.applications.astrophysics
+    provenance = physics.ObservationDataProvenance.native("catalog")
+
+    with pytest.raises(ValueError, match="positive damping times"):
+        # ty: ignore[invalid-argument-type]
+        physics.QnmModeTable([np.nan], [1.0], [[2, 2, 0]], provenance)
+    with pytest.raises(ValueError, match="positive damping times"):
+        # ty: ignore[invalid-argument-type]
+        physics.QnmModeTable([0.1], [0.0], [[2, 2, 0]], provenance)
+    with pytest.raises(ValueError, match="indices must be integers"):
+        # ty: ignore[invalid-argument-type]
+        physics.QnmModeTable([0.1], [1.0], [[2.0, 2.0, 0.5]], provenance)
+    with pytest.raises(ValueError, match="unique valid modes"):
+        # ty: ignore[invalid-argument-type]
+        physics.QnmModeTable([0.1, 0.2], [1.0, 2.0], [[2, 2, 0], [2, 2, 0]], provenance)
+    with pytest.raises(ValueError, match="unique valid modes"):
+        # ty: ignore[invalid-argument-type]
+        physics.QnmModeTable([0.1], [1.0], [[-1, 0, 0]], provenance)
+    with pytest.raises(TypeError, match="ObservationDataProvenance"):
+        # ty: ignore[invalid-argument-type]
+        physics.QnmModeTable([0.1], [1.0], [[2, 2, 0]], "catalog")
 
 
 def test_qnm_and_ringdown_ids_bind_content_units_convention_and_provenance() -> None:
@@ -157,27 +172,3 @@ def test_qnm_and_ringdown_ids_bind_content_units_convention_and_provenance() -> 
     ).time_domain(jnp.asarray([1.0]), jnp.asarray([1.0 + 0.0j]))
     np.testing.assert_allclose(cyclic, -np.exp(-0.5), atol=1.0e-7)
     np.testing.assert_allclose(angular, np.exp(-0.5 + 0.5j), atol=1.0e-7)
-
-
-def test_malformed_qnm_catalog_data_fail_explicitly() -> None:
-    physics = phx.applications.astrophysics
-    provenance = physics.ObservationDataProvenance.native("catalog")
-
-    with pytest.raises(ValueError, match="positive damping times"):
-        # ty: ignore[invalid-argument-type]
-        physics.QnmModeTable([np.nan], [1.0], [[2, 2, 0]], provenance)
-    with pytest.raises(ValueError, match="positive damping times"):
-        # ty: ignore[invalid-argument-type]
-        physics.QnmModeTable([0.1], [0.0], [[2, 2, 0]], provenance)
-    with pytest.raises(ValueError, match="indices must be integers"):
-        # ty: ignore[invalid-argument-type]
-        physics.QnmModeTable([0.1], [1.0], [[2.0, 2.0, 0.5]], provenance)
-    with pytest.raises(ValueError, match="unique valid modes"):
-        # ty: ignore[invalid-argument-type]
-        physics.QnmModeTable([0.1, 0.2], [1.0, 2.0], [[2, 2, 0], [2, 2, 0]], provenance)
-    with pytest.raises(ValueError, match="unique valid modes"):
-        # ty: ignore[invalid-argument-type]
-        physics.QnmModeTable([0.1], [1.0], [[-1, 0, 0]], provenance)
-    with pytest.raises(TypeError, match="ObservationDataProvenance"):
-        # ty: ignore[invalid-argument-type]
-        physics.QnmModeTable([0.1], [1.0], [[2, 2, 0]], "catalog")

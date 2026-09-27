@@ -47,7 +47,7 @@ def _block_until_ready(tree: Any) -> Any:
     )
 
 
-def test_mac_variational_viscosity_zero_action_and_frozen_binding() -> None:
+def test_mac_variational_contracts() -> None:
     discretization, _, momentum = _periodic()
     action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
     velocity = _taylor_green(discretization)
@@ -72,11 +72,6 @@ def test_mac_variational_viscosity_zero_action_and_frozen_binding() -> None:
     assert result.restriction_supported
     assert result.successful
     assert frozen.prepared_action is action
-
-
-def test_mac_variational_viscosity_has_positive_work_and_periodic_laplacian_limit() -> (
-    None
-):
     discretization, operators, momentum = _periodic(8)
     action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
     velocity = _taylor_green(discretization)
@@ -100,35 +95,6 @@ def test_mac_variational_viscosity_has_positive_work_and_periodic_laplacian_limi
     assert result.variational_defect < 2.0e-12
     assert result.operator_row_sum_bound > 0.0
     assert result.successful
-
-
-def test_mac_variational_viscosity_runtime_coefficient_is_jittable_and_has_jvp() -> None:
-    discretization, operators, momentum = _periodic(5)
-    action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
-    velocity = tuple(
-        jnp.sin(points[..., 0] + 2.0 * points[..., 1])
-        for points in discretization.face_centers
-    )
-    viscosity = 1.0 + jnp.arange(25, dtype=jnp.float64).reshape(5, 5) / 25.0
-    stage = momentum.boundaries.homogeneous_stage()
-
-    def runtime_rate(coefficient: Any) -> Any:
-        result = action.evaluate(velocity, coefficient, stage)
-        return operators.velocity_space.flatten(result.physical_diffusive_rate)
-
-    compiled = jax.jit(runtime_rate)
-    eager = runtime_rate(viscosity)
-    first = compiled(viscosity)
-    second = compiled(2.0 * viscosity)
-    _, tangent = jax.jvp(runtime_rate, (viscosity,), (jnp.full_like(viscosity, 0.1),))
-
-    np.testing.assert_allclose(first, eager, rtol=2.0e-12, atol=2.0e-12)
-    np.testing.assert_allclose(second, 2.0 * first, rtol=2.0e-12, atol=2.0e-12)
-    assert jnp.all(jnp.isfinite(tangent))
-    assert jnp.linalg.norm(tangent) > 0.0
-
-
-def test_mac_variational_viscosity_reports_boundary_affine_work() -> None:
     count = 6
     grid = phx.discretization.TensorGridPlan(
         (
@@ -193,21 +159,42 @@ def test_mac_variational_viscosity_reports_boundary_affine_work() -> None:
     assert not result.restriction_supported
     assert jnp.isinf(result.operator_row_sum_bound)
     assert result.successful
+    for invalid in [-1.0, jnp.inf, jnp.nan]:
+        discretization, _, momentum = _periodic(4)
+        action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
+        velocity = _taylor_green(discretization)
+        viscosity = jnp.full(discretization.cell_shape, invalid)
+
+        with pytest.raises(
+            (ValueError, eqx.EquinoxRuntimeError), match="finite and nonnegative"
+        ):
+            _block_until_ready(action.positive_operator_action(velocity, viscosity))
 
 
-@pytest.mark.parametrize("invalid", [-1.0, jnp.inf, jnp.nan])
-def test_mac_variational_viscosity_rejects_invalid_runtime_coefficients(
-    invalid: Any,
-) -> None:
-    discretization, _, momentum = _periodic(4)
+def test_mac_variational_viscosity_runtime_coefficient_is_jittable_and_has_jvp() -> None:
+    discretization, operators, momentum = _periodic(5)
     action = finite_volume_api.PreparedMACVariationalViscosityAction(momentum)
-    velocity = _taylor_green(discretization)
-    viscosity = jnp.full(discretization.cell_shape, invalid)
+    velocity = tuple(
+        jnp.sin(points[..., 0] + 2.0 * points[..., 1])
+        for points in discretization.face_centers
+    )
+    viscosity = 1.0 + jnp.arange(25, dtype=jnp.float64).reshape(5, 5) / 25.0
+    stage = momentum.boundaries.homogeneous_stage()
 
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError), match="finite and nonnegative"
-    ):
-        _block_until_ready(action.positive_operator_action(velocity, viscosity))
+    def runtime_rate(coefficient: Any) -> Any:
+        result = action.evaluate(velocity, coefficient, stage)
+        return operators.velocity_space.flatten(result.physical_diffusive_rate)
+
+    compiled = jax.jit(runtime_rate)
+    eager = runtime_rate(viscosity)
+    first = compiled(viscosity)
+    second = compiled(2.0 * viscosity)
+    _, tangent = jax.jvp(runtime_rate, (viscosity,), (jnp.full_like(viscosity, 0.1),))
+
+    np.testing.assert_allclose(first, eager, rtol=2.0e-12, atol=2.0e-12)
+    np.testing.assert_allclose(second, 2.0 * first, rtol=2.0e-12, atol=2.0e-12)
+    assert jnp.all(jnp.isfinite(tangent))
+    assert jnp.linalg.norm(tangent) > 0.0
 
 
 def test_variable_viscosity_stage_plan_delegates_to_prepared_action() -> None:

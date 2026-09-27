@@ -27,7 +27,7 @@ def _waveform_capabilities() -> Any:
     )
 
 
-def test_barycentric_waveform_interpolation_is_exact_and_capacity_padded() -> None:
+def test_partitioned_coupling_waveform_scenario_1() -> None:
     space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="waveform-scalar")
     source_plan = cpl.CouplingWaveformPlan(4, 2, (0.0, 0.5, 1.0))
     target_plan = cpl.CouplingWaveformPlan(5, 2, (0.0, 0.25, 0.75, 1.0))
@@ -49,6 +49,164 @@ def test_barycentric_waveform_interpolation_is_exact_and_capacity_padded() -> No
     )
     assert not transferred.grid.active[-1]
     assert transferred.values[-1, 0] == 0.0
+    graph, states, values = _waveform_graph()
+    prepared = cpl.prepare_coupling(
+        graph, states, values, policy=_waveform_fixed_point_policy()
+    )
+
+    result = eqx.filter_jit(cpl.advance_coupling_window)(
+        prepared, prepared.reference_state, 1.0, None
+    )
+
+    assert bool(result.successful)
+    assert bool(result.converged)
+    assert jnp.allclose(
+        result.accepted_state.exchange_values[0].values,
+        jnp.full((3, 1), 1.0 / 3.0),
+        atol=1e-8,
+    )
+    assert jnp.allclose(
+        result.accepted_state.exchange_values[1].values,
+        jnp.full((3, 1), 2.0 / 3.0),
+        atol=1e-8,
+    )
+    adaptation = cpl.CouplingWaveformAdaptationPolicy(
+        (0.25, 0.75), observable_tolerance=0.1
+    )
+    plan = cpl.CouplingWaveformPlan(
+        3, 1, (0.0, 1.0), adaptation=adaptation, plan_id="adaptive-grid"
+    )
+    refined, evidence, request = cpl.adapt_coupling_waveform_grid(
+        plan, plan.initial_grid(), jnp.asarray((0.2, 2.0)), "temperature"
+    )
+    assert evidence.activated
+    assert refined.sample_count == 3
+    assert jnp.allclose(refined.nodes, jnp.asarray((0.0, 0.75, 1.0)))
+    _, exhausted, request = cpl.adapt_coupling_waveform_grid(
+        plan, refined, jnp.asarray((2.0, 2.0)), "temperature"
+    )
+    assert exhausted.capacity_exhausted
+    assert request.required_samples == 4
+    waveform_plan = cpl.CouplingWaveformPlan(
+        3, 1, (0.0, 0.5, 1.0), plan_id="field-waveform-grid"
+    )
+    grid = waveform_plan.initial_grid()
+    source_space = _waveform_field_space("source")
+    target_space = _waveform_field_space("target")
+    matrix = jnp.asarray([[1.0, 0.25], [0.5, 1.0]])
+    adjoint = phx.linalg.DenseLinearOperator(
+        matrix.T,
+        source=target_space.vector_space,
+        target=source_space.vector_space,
+    )
+    transfer = phx.discretization.FieldTransfer(
+        source_space,
+        target_space,
+        phx.linalg.DenseLinearOperator(
+            matrix,
+            source=source_space.vector_space,
+            target=target_space.vector_space,
+        ),
+        dual_pullback_operator=adjoint,
+        hilbert_adjoint_operator=adjoint,
+        properties=phx.discretization.TransferProperties(adjoint_paired=True),
+    )
+    source_input = cpl.CouplingPort(
+        "source-input",
+        "input",
+        source_space.vector_space,
+        field_space=source_space,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
+        reference_scale=1.0,
+    )
+    source_output = cpl.CouplingPort(
+        "source-output",
+        "output",
+        source_space.vector_space,
+        field_space=source_space,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
+        reference_scale=1.0,
+    )
+    target_input = cpl.CouplingPort(
+        "target-input",
+        "input",
+        target_space.vector_space,
+        field_space=target_space,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
+        reference_scale=1.0,
+    )
+    target_output = cpl.CouplingPort(
+        "target-output",
+        "output",
+        target_space.vector_space,
+        field_space=target_space,
+        waveform_plan=waveform_plan,
+        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
+        reference_scale=1.0,
+    )
+    source_values = jnp.asarray([[1.0, 0.0], [2.0, 1.0], [3.0, 2.0]])
+    target_values = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]])
+    source_waveform = cpl.CouplingWaveform(grid, source_values, source_space.vector_space)
+    target_waveform = cpl.CouplingWaveform(grid, target_values, target_space.vector_space)
+    source = cpl.CallableCouplingSubsystem(
+        lambda window, state, inputs, args: cpl.CouplingSubsystemResult(
+            state, (source_waveform,), successful=True, status=0
+        ),
+        subsystem_id="source",
+        input_ports=(source_input,),
+        output_ports=(source_output,),
+        capabilities=_waveform_capabilities(),
+    )
+    target = cpl.CallableCouplingSubsystem(
+        lambda window, state, inputs, args: cpl.CouplingSubsystemResult(
+            state, (target_waveform,), successful=True, status=0
+        ),
+        subsystem_id="target",
+        input_ports=(target_input,),
+        output_ports=(target_output,),
+        capabilities=_waveform_capabilities(),
+    )
+    graph = cpl.CouplingGraph(
+        (source, target),
+        (
+            cpl.CouplingExchange(
+                "forward",
+                "source-output",
+                "target-input",
+                transfer=transfer,
+            ),
+            cpl.CouplingExchange(
+                "adjoint",
+                "target-output",
+                "source-input",
+                transfer=transfer,
+                use_adjoint=True,
+            ),
+        ),
+    )
+    zero_source = cpl.CouplingWaveform.constant(
+        grid, jnp.zeros(2), source_space.vector_space
+    )
+    zero_target = cpl.CouplingWaveform.constant(
+        grid, jnp.zeros(2), target_space.vector_space
+    )
+    prepared = cpl.prepare_coupling(
+        graph,
+        (jnp.zeros(1), jnp.zeros(1)),
+        (zero_target, zero_source),
+        policy=cpl.ExplicitCouplingPolicy(cpl.CouplingSweep("jacobi")),
+        differentiation=cpl.CouplingDifferentiationPolicy("algorithmic"),
+    )
+
+    result = cpl.advance_coupling_window(prepared, prepared.reference_state, 1.0)
+
+    adjoint_values = result.accepted_state.exchange_values[0].values
+    forward_values = result.accepted_state.exchange_values[1].values
+    assert jnp.allclose(forward_values, source_values @ matrix.T)
+    assert jnp.allclose(adjoint_values, target_values @ matrix)
 
 
 def _waveform_graph(*, parameterized: Any = False) -> Any:
@@ -145,30 +303,6 @@ def _waveform_fixed_point_policy() -> Any:
             cpl.CouplingTolerance("b-input", absolute=1e-9),
         ),
         fixed_point_sweep=cpl.CouplingSweep("jacobi"),
-    )
-
-
-def test_waveform_fixed_point_and_jit_certify_every_canonical_sample() -> None:
-    graph, states, values = _waveform_graph()
-    prepared = cpl.prepare_coupling(
-        graph, states, values, policy=_waveform_fixed_point_policy()
-    )
-
-    result = eqx.filter_jit(cpl.advance_coupling_window)(
-        prepared, prepared.reference_state, 1.0, None
-    )
-
-    assert bool(result.successful)
-    assert bool(result.converged)
-    assert jnp.allclose(
-        result.accepted_state.exchange_values[0].values,
-        jnp.full((3, 1), 1.0 / 3.0),
-        atol=1e-8,
-    )
-    assert jnp.allclose(
-        result.accepted_state.exchange_values[1].values,
-        jnp.full((3, 1), 2.0 / 3.0),
-        atol=1e-8,
     )
 
 
@@ -331,150 +465,7 @@ def _waveform_field_space(name: Any) -> Any:
     )
 
 
-def test_field_transfer_is_applied_samplewise_to_waveform_exchanges() -> None:
-    waveform_plan = cpl.CouplingWaveformPlan(
-        3, 1, (0.0, 0.5, 1.0), plan_id="field-waveform-grid"
-    )
-    grid = waveform_plan.initial_grid()
-    source_space = _waveform_field_space("source")
-    target_space = _waveform_field_space("target")
-    matrix = jnp.asarray([[1.0, 0.25], [0.5, 1.0]])
-    adjoint = phx.linalg.DenseLinearOperator(
-        matrix.T,
-        source=target_space.vector_space,
-        target=source_space.vector_space,
-    )
-    transfer = phx.discretization.FieldTransfer(
-        source_space,
-        target_space,
-        phx.linalg.DenseLinearOperator(
-            matrix,
-            source=source_space.vector_space,
-            target=target_space.vector_space,
-        ),
-        dual_pullback_operator=adjoint,
-        hilbert_adjoint_operator=adjoint,
-        properties=phx.discretization.TransferProperties(adjoint_paired=True),
-    )
-    source_input = cpl.CouplingPort(
-        "source-input",
-        "input",
-        source_space.vector_space,
-        field_space=source_space,
-        waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
-        reference_scale=1.0,
-    )
-    source_output = cpl.CouplingPort(
-        "source-output",
-        "output",
-        source_space.vector_space,
-        field_space=source_space,
-        waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
-        reference_scale=1.0,
-    )
-    target_input = cpl.CouplingPort(
-        "target-input",
-        "input",
-        target_space.vector_space,
-        field_space=target_space,
-        waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
-        reference_scale=1.0,
-    )
-    target_output = cpl.CouplingPort(
-        "target-output",
-        "output",
-        target_space.vector_space,
-        field_space=target_space,
-        waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
-        reference_scale=1.0,
-    )
-    source_values = jnp.asarray([[1.0, 0.0], [2.0, 1.0], [3.0, 2.0]])
-    target_values = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]])
-    source_waveform = cpl.CouplingWaveform(grid, source_values, source_space.vector_space)
-    target_waveform = cpl.CouplingWaveform(grid, target_values, target_space.vector_space)
-    source = cpl.CallableCouplingSubsystem(
-        lambda window, state, inputs, args: cpl.CouplingSubsystemResult(
-            state, (source_waveform,), successful=True, status=0
-        ),
-        subsystem_id="source",
-        input_ports=(source_input,),
-        output_ports=(source_output,),
-        capabilities=_waveform_capabilities(),
-    )
-    target = cpl.CallableCouplingSubsystem(
-        lambda window, state, inputs, args: cpl.CouplingSubsystemResult(
-            state, (target_waveform,), successful=True, status=0
-        ),
-        subsystem_id="target",
-        input_ports=(target_input,),
-        output_ports=(target_output,),
-        capabilities=_waveform_capabilities(),
-    )
-    graph = cpl.CouplingGraph(
-        (source, target),
-        (
-            cpl.CouplingExchange(
-                "forward",
-                "source-output",
-                "target-input",
-                transfer=transfer,
-            ),
-            cpl.CouplingExchange(
-                "adjoint",
-                "target-output",
-                "source-input",
-                transfer=transfer,
-                use_adjoint=True,
-            ),
-        ),
-    )
-    zero_source = cpl.CouplingWaveform.constant(
-        grid, jnp.zeros(2), source_space.vector_space
-    )
-    zero_target = cpl.CouplingWaveform.constant(
-        grid, jnp.zeros(2), target_space.vector_space
-    )
-    prepared = cpl.prepare_coupling(
-        graph,
-        (jnp.zeros(1), jnp.zeros(1)),
-        (zero_target, zero_source),
-        policy=cpl.ExplicitCouplingPolicy(cpl.CouplingSweep("jacobi")),
-        differentiation=cpl.CouplingDifferentiationPolicy("algorithmic"),
-    )
-
-    result = cpl.advance_coupling_window(prepared, prepared.reference_state, 1.0)
-
-    adjoint_values = result.accepted_state.exchange_values[0].values
-    forward_values = result.accepted_state.exchange_values[1].values
-    assert jnp.allclose(forward_values, source_values @ matrix.T)
-    assert jnp.allclose(adjoint_values, target_values @ matrix)
-
-
-def test_waveform_adaptation_activates_one_candidate_and_requests_growth() -> None:
-    adaptation = cpl.CouplingWaveformAdaptationPolicy(
-        (0.25, 0.75), observable_tolerance=0.1
-    )
-    plan = cpl.CouplingWaveformPlan(
-        3, 1, (0.0, 1.0), adaptation=adaptation, plan_id="adaptive-grid"
-    )
-    refined, evidence, request = cpl.adapt_coupling_waveform_grid(
-        plan, plan.initial_grid(), jnp.asarray((0.2, 2.0)), "temperature"
-    )
-    assert evidence.activated
-    assert refined.sample_count == 3
-    assert jnp.allclose(refined.nodes, jnp.asarray((0.0, 0.75, 1.0)))
-    _, exhausted, request = cpl.adapt_coupling_waveform_grid(
-        plan, refined, jnp.asarray((2.0, 2.0)), "temperature"
-    )
-    assert exhausted.capacity_exhausted
-    assert request.required_samples == 4
-
-
-def test_coupling_epoch_transition_is_explicit_and_atomic() -> None:
+def test_coupling_epoch_transition_contracts() -> None:
     graph, states, values = _waveform_graph()
     prepared = cpl.prepare_coupling(
         graph, states, values, policy=_waveform_fixed_point_policy()
@@ -569,9 +560,6 @@ def test_coupling_epoch_transition_is_explicit_and_atomic() -> None:
     assert not ignored.successful
     assert ignored.epoch.epoch_id == current_epoch.epoch_id
     assert ignored.state is prepared.reference_state
-
-
-def test_coupling_epoch_transition_rejects_stale_request_contract() -> None:
     graph, states, values = _waveform_graph()
     prepared = cpl.prepare_coupling(
         graph, states, values, policy=_waveform_fixed_point_policy()

@@ -26,9 +26,7 @@ def _periodic_fd(points: Any) -> Any:
     return phx.discretization.periodic_finite_difference(grid, accuracy_order=4)
 
 
-def test_periodic_interior_lowering_removes_per_row_metadata_and_matches_operator() -> (
-    None
-):
+def test_fd_execution_scenario_1() -> None:
     discretization = _periodic_fd(1024)
     reference = discretization.operator("d_x_1")
     execution = phx.discretization.lower_stencil_operator(reference)
@@ -43,9 +41,6 @@ def test_periodic_interior_lowering_removes_per_row_metadata_and_matches_operato
     assert execution.execution.report.lowered_metadata_bytes < 0.01 * (
         execution.execution.report.canonical_metadata_bytes
     )
-
-
-def test_bounded_execution_keeps_only_closures_and_preserves_transpose() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(257),),
         axis_names=("x",),
@@ -77,9 +72,6 @@ def test_bounded_execution_keeps_only_closures_and_preserves_transpose() -> None
     np.testing.assert_allclose(left, right, rtol=2e-12, atol=2e-12)
     assert execution.execution.report.closure_rows < 12
     assert execution.execution.report.interior_rows > 240
-
-
-def test_fused_pipeline_reuses_identical_source_operator_application() -> None:
     discretization = _periodic_fd(128)
     program = phx.discretization.StencilProgramPlan(
         discretization,
@@ -128,7 +120,7 @@ def _two_dimensional_halo_plan(periodic: Any) -> Any:
     return phx.discretization.FiniteDifferencePlan(grid, requests).prepare().halo_plan
 
 
-def test_distributed_schedule_fills_faces_edges_and_corners_with_periodicity() -> None:
+def test_fd_execution_scenario_2() -> None:
     schedule = phx.discretization.DistributedHaloSchedule(
         (4, 5),
         (1, 1),
@@ -144,9 +136,6 @@ def test_distributed_schedule_fills_faces_edges_and_corners_with_periodicity() -
     np.testing.assert_allclose(exchanged[0, 0, 0, 0], block[0, 0, -1, -1])
     np.testing.assert_allclose(exchanged[0, 0, -1, -1], block[0, 0, 0, 0])
     assert schedule.shard(block[0, 0]).sharding == schedule.sharding
-
-
-def test_distributed_physical_boundary_slots_are_zero_and_interior_is_explicit() -> None:
     schedule = phx.discretization.DistributedHaloSchedule(
         (4, 5),
         (1, 1),
@@ -160,9 +149,6 @@ def test_distributed_physical_boundary_slots_are_zero_and_interior_is_explicit()
     np.testing.assert_allclose(exchanged[0, 0, 0], 0.0)
     np.testing.assert_allclose(exchanged[0, 0, -1], 0.0)
     assert schedule.interior_slices() == (slice(2, 2), slice(2, 3))
-
-
-def test_compact_metadata_is_independent_of_periodic_interior_size() -> None:
     small = phx.discretization.lower_stencil_operator(_periodic_fd(128).operator("d_x_2"))
     large = phx.discretization.lower_stencil_operator(
         _periodic_fd(1024).operator("d_x_2")

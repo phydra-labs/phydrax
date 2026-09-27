@@ -79,7 +79,7 @@ def _velocity(state: Any) -> Any:
     )
 
 
-def test_pair_owned_drag_diffusion_is_momentum_energy_and_psd_conservative() -> None:
+def test_cosmology_sidm_frequent_scenario_1() -> None:
     plan, state = _case()
     dt = _step_for_drag(plan, state, 0.02)
     result = plan.apply(state, jr.key(5), 11, dt)
@@ -96,40 +96,6 @@ def test_pair_owned_drag_diffusion_is_momentum_energy_and_psd_conservative() -> 
     covariance = result.diagnostics.pair_diffusion_covariance
     eigenvalues = jnp.linalg.eigvalsh(covariance)
     assert bool(jnp.all(eigenvalues >= -2.0e-14))
-
-
-def test_sampled_first_and_second_kramers_moyal_moments_match_evidence() -> None:
-    plan, state = _case()
-    dt = _step_for_drag(plan, state, 0.01)
-    keys = jr.split(jr.key(73), 2048)
-
-    def sample(key: Any) -> Any:
-        result = plan.apply(state, key, 9, dt)
-        velocity = _velocity(result.accepted_state)
-        return velocity[0] - velocity[1], result.successful
-
-    relative_after, successful = jax.jit(jax.vmap(sample))(keys)
-    assert bool(jnp.all(successful))
-    relative_before = _velocity(state)[0] - _velocity(state)[1]
-    increments = relative_after - relative_before
-    reference = plan.apply(state, jr.key(0), 9, dt)
-    pair = jnp.argmax(reference.diagnostics.selected_pairs.astype(jnp.int32))
-    drag = reference.diagnostics.target_drag_fraction[pair]
-    expected_mean = -drag * relative_before
-    observed_mean = jnp.mean(increments, axis=0)
-    np.testing.assert_allclose(observed_mean, expected_mean, atol=2.0e-2)
-
-    centered = increments - observed_mean
-    observed_covariance = jnp.einsum("ni,nj->ij", centered, centered) / keys.shape[0]
-    expected_covariance = reference.diagnostics.pair_diffusion_covariance[pair]
-    np.testing.assert_allclose(
-        observed_covariance, expected_covariance, rtol=0.12, atol=2.0e-3
-    )
-
-
-def test_frequent_schedule_covers_every_supported_edge_once_with_aggregate_bound() -> (
-    None
-):
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((3, 1, 2)), jnp.ones((3,)), ambient_dimension=3
     ).prepare()
@@ -179,9 +145,63 @@ def test_frequent_schedule_covers_every_supported_edge_once_with_aggregate_bound
             <= plan.maximum_drag_fraction_per_step
         )
     )
+    plan, state = _case(maximum_drag=0.05)
+    dt = _step_for_drag(plan, state, 0.5)
+    result = plan.apply(state, jr.key(4), 3, dt)
 
+    assert not bool(result.diagnostics.timestep_valid)
+    assert not bool(result.successful)
+    for actual, expected in zip(
+        jax.tree.leaves(result.accepted_state),
+        jax.tree.leaves(state),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    plan, state = _case(weights=(2.0, 1.0))
+    result = plan.apply(state, jr.key(19), 2, 1.0e-3)
 
-def test_split_angle_sweep_reconstructs_full_kernel_without_gap_or_overlap() -> None:
+    assert not bool(result.diagnostics.equal_pair_weights)
+    assert not bool(result.successful)
+    for actual, expected in zip(
+        jax.tree.leaves(result.accepted_state),
+        jax.tree.leaves(state),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.asarray((1, 2)), jnp.ones((2,)), ambient_dimension=3
+    ).prepare()
+    box = phx.discretization.ParticleBox(jnp.zeros((3,)), jnp.ones((3,)))
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=box).prepare(
+        particles
+    )
+    first = DarkSectorSpeciesPlan("a", 1.0)
+    second = DarkSectorSpeciesPlan("b", 2.0)
+    kernel = TwoBodyDifferentialKernelPlan.constant_isotropic(first, 0.01)
+    kernel = eqx.tree_at(lambda value: value.second_species, kernel, second)
+    split = SmallAngleSplitPlan(kernel, 0.5)
+
+    with pytest.raises(ValueError, match="one elastic species"):
+        FrequentSmallAngleSIDMPlan(
+            neighborhood,
+            phx.discretization.WendlandC2SPHKernel(3),
+            split,
+            smoothing_length_comoving=0.5,
+        )
+    plan, _ = _case()
+    anisotropic_split = eqx.tree_at(
+        lambda value: value.kernel.azimuths,
+        plan.split,
+        jnp.asarray((0.0, jnp.pi, 2.0 * jnp.pi)),
+        is_leaf=lambda value: value is None,
+    )
+    with pytest.raises(ValueError, match="axisymmetric kernel"):
+        FrequentSmallAngleSIDMPlan(
+            plan.neighborhood,
+            plan.spatial_kernel,
+            anisotropic_split,
+            smoothing_length_comoving=plan.smoothing_length_comoving,
+        )
     species = DarkSectorSpeciesPlan("chi", 1.0)
     kernel = TwoBodyDifferentialKernelPlan.constant_isotropic(species, 0.2)
     small_transfer = []
@@ -209,33 +229,33 @@ def test_split_angle_sweep_reconstructs_full_kernel_without_gap_or_overlap() -> 
     assert np.all(np.diff(rare_transfer) > 0.0)
 
 
-def test_frequent_profile_refuses_invalid_timestep_without_switching_regime() -> None:
-    plan, state = _case(maximum_drag=0.05)
-    dt = _step_for_drag(plan, state, 0.5)
-    result = plan.apply(state, jr.key(4), 3, dt)
+def test_sampled_first_and_second_kramers_moyal_moments_match_evidence() -> None:
+    plan, state = _case()
+    dt = _step_for_drag(plan, state, 0.01)
+    keys = jr.split(jr.key(73), 2048)
 
-    assert not bool(result.diagnostics.timestep_valid)
-    assert not bool(result.successful)
-    for actual, expected in zip(
-        jax.tree.leaves(result.accepted_state),
-        jax.tree.leaves(state),
-        strict=True,
-    ):
-        np.testing.assert_array_equal(actual, expected)
+    def sample(key: Any) -> Any:
+        result = plan.apply(state, key, 9, dt)
+        velocity = _velocity(result.accepted_state)
+        return velocity[0] - velocity[1], result.successful
 
+    relative_after, successful = jax.jit(jax.vmap(sample))(keys)
+    assert bool(jnp.all(successful))
+    relative_before = _velocity(state)[0] - _velocity(state)[1]
+    increments = relative_after - relative_before
+    reference = plan.apply(state, jr.key(0), 9, dt)
+    pair = jnp.argmax(reference.diagnostics.selected_pairs.astype(jnp.int32))
+    drag = reference.diagnostics.target_drag_fraction[pair]
+    expected_mean = -drag * relative_before
+    observed_mean = jnp.mean(increments, axis=0)
+    np.testing.assert_allclose(observed_mean, expected_mean, atol=2.0e-2)
 
-def test_frequent_profile_refuses_unequal_packet_weights_without_partial_update() -> None:
-    plan, state = _case(weights=(2.0, 1.0))
-    result = plan.apply(state, jr.key(19), 2, 1.0e-3)
-
-    assert not bool(result.diagnostics.equal_pair_weights)
-    assert not bool(result.successful)
-    for actual, expected in zip(
-        jax.tree.leaves(result.accepted_state),
-        jax.tree.leaves(state),
-        strict=True,
-    ):
-        np.testing.assert_array_equal(actual, expected)
+    centered = increments - observed_mean
+    observed_covariance = jnp.einsum("ni,nj->ij", centered, centered) / keys.shape[0]
+    expected_covariance = reference.diagnostics.pair_diffusion_covariance[pair]
+    np.testing.assert_allclose(
+        observed_covariance, expected_covariance, rtol=0.12, atol=2.0e-3
+    )
 
 
 def test_tiny_unit_mass_relation_rejects_order_unity_relative_error() -> None:
@@ -249,45 +269,3 @@ def test_tiny_unit_mass_relation_rejects_order_unity_relative_error() -> None:
 
     assert not bool(result.diagnostics.mass_relation_valid)
     assert not bool(result.successful)
-
-
-def test_frequent_profile_refuses_nonidentical_species_kernel() -> None:
-    particles = phx.discretization.ParticleSetPlan(
-        jnp.asarray((1, 2)), jnp.ones((2,)), ambient_dimension=3
-    ).prepare()
-    box = phx.discretization.ParticleBox(jnp.zeros((3,)), jnp.ones((3,)))
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=box).prepare(
-        particles
-    )
-    first = DarkSectorSpeciesPlan("a", 1.0)
-    second = DarkSectorSpeciesPlan("b", 2.0)
-    kernel = TwoBodyDifferentialKernelPlan.constant_isotropic(first, 0.01)
-    kernel = eqx.tree_at(lambda value: value.second_species, kernel, second)
-    split = SmallAngleSplitPlan(kernel, 0.5)
-
-    with pytest.raises(ValueError, match="one elastic species"):
-        FrequentSmallAngleSIDMPlan(
-            neighborhood,
-            phx.discretization.WendlandC2SPHKernel(3),
-            split,
-            smoothing_length_comoving=0.5,
-        )
-
-
-def test_frequent_profile_refuses_azimuth_dependent_kernel_without_tensor_moments() -> (
-    None
-):
-    plan, _ = _case()
-    anisotropic_split = eqx.tree_at(
-        lambda value: value.kernel.azimuths,
-        plan.split,
-        jnp.asarray((0.0, jnp.pi, 2.0 * jnp.pi)),
-        is_leaf=lambda value: value is None,
-    )
-    with pytest.raises(ValueError, match="axisymmetric kernel"):
-        FrequentSmallAngleSIDMPlan(
-            plan.neighborhood,
-            plan.spatial_kernel,
-            anisotropic_split,
-            smoothing_length_comoving=plan.smoothing_length_comoving,
-        )

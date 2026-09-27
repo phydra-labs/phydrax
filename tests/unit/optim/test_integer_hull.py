@@ -16,7 +16,7 @@ def _quadratic_value(features: Any, target: Any) -> Any:
     return 0.5 * jnp.sum((features - target) ** 2)
 
 
-def test_integer_hull_quadratic_matches_exhaustive_cardinality_search() -> None:
+def test_integer_hull_contracts() -> None:
     target = jnp.asarray([0.2, 0.8, 0.0, 0.4])
     space = phx.combinatorial.CardinalitySpace(4, 2)
     problem = phx.optim.IntegerHullProblem(
@@ -52,9 +52,6 @@ def test_integer_hull_quadratic_matches_exhaustive_cardinality_search() -> None:
     assert result.certificate.lower_bound_certified
     assert result.work.oracle_calls > 0
     assert result.work.fw_steps > 0
-
-
-def test_integer_hull_root_with_integral_relaxation_finishes_without_branching() -> None:
     target = jnp.asarray([1.0, 0.0, 0.0])
     space = phx.combinatorial.CardinalitySpace(3, 1)
     problem = phx.optim.IntegerHullProblem(

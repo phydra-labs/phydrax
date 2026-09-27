@@ -75,9 +75,7 @@ def _zero_work(previous: Any, candidate: Any, args: Any) -> Any:
     return jnp.asarray(0.0)
 
 
-def test_manufactured_rigid_translation_newmark_step_has_zero_strain_and_energy_defect() -> (
-    None
-):
+def test_fem_dynamics_scenario_1() -> None:
     _, compiled = _tetrahedral_elasticity()
     state = _rigid_translation_state()
     rigid_displacement = jnp.broadcast_to(
@@ -110,6 +108,60 @@ def test_manufactured_rigid_translation_newmark_step_has_zero_strain_and_energy_
     assert bool(result.candidate.energy.available)
     assert bool(result.candidate.energy.finite)
     assert bool(result.candidate.energy.balanced)
+    discretization, _ = _tetrahedral_elasticity()
+    interpolation = prepare_finite_element_point_interpolation(
+        discretization,
+        "u",
+        "tetrahedra",
+        jnp.asarray((0,), dtype=jnp.int32),
+        jnp.asarray(((0.2, 0.3, 0.1),)),
+    )
+    displacement = jnp.arange(12.0).reshape((4, 3)) / 7.0
+    point_dual = jnp.asarray(((0.7, -0.4, 0.2),))
+    evidence = interpolation.duality_evidence(displacement, point_dual)
+
+    assert bool(evidence.valid)
+    assert jnp.abs(evidence.residual) < 1.0e-12
+    assert jnp.allclose(
+        jnp.sum(interpolation.transpose_scatter(point_dual), axis=0),
+        point_dual[0],
+    )
+    discretization, _ = _tetrahedral_elasticity()
+    interpolation = prepare_finite_element_point_interpolation(
+        discretization,
+        "u",
+        "tetrahedra",
+        jnp.asarray((0,), dtype=jnp.int32),
+        jnp.asarray(((0.2, 0.3, 0.1),)),
+    )
+    bodies, kinematics = _one_rigid_body(interpolation.reference_positions[0])
+    attachment = RigidDeformableAttachmentPlan(
+        interpolation,
+        bodies,
+        jnp.asarray((7,), dtype=jnp.int64),
+        jnp.zeros((1, 3)),
+    )
+    payload = attachment.kkt_payload(
+        jnp.zeros((4, 3)),
+        kinematics,
+        jnp.asarray(((1.2, -0.4, 0.7),)),
+    )
+    increments = (
+        jnp.arange(12.0).reshape((4, 3)) / 11.0,
+        jnp.asarray(((0.2, -0.1, 0.3),)),
+        jnp.asarray(((-0.4, 0.6, 0.1),)),
+    )
+    image = payload.operator.mv(increments)
+    transpose = payload.operator.transpose_mv(payload.multiplier)
+    kkt_duality = jnp.sum(image * payload.multiplier) - sum(
+        jnp.sum(value * dual) for value, dual in zip(increments, transpose, strict=True)
+    )
+
+    assert jnp.max(jnp.abs(payload.constraint_residual)) < 1.0e-12
+    assert bool(payload.certificate.valid)
+    assert jnp.max(jnp.abs(payload.certificate.force_balance)) < 1.0e-12
+    assert jnp.max(jnp.abs(payload.certificate.moment_balance)) < 1.0e-12
+    assert jnp.abs(kkt_duality) < 1.0e-12
 
 
 def test_implicit_newmark_root_exposes_velocity_derivative() -> None:
@@ -219,27 +271,6 @@ def test_accepted_step_commits_material_history_atomically() -> None:
     assert promoted.state_version == state.state_version + 1
 
 
-def test_prepared_interpolation_and_transpose_scatter_are_exact_duals() -> None:
-    discretization, _ = _tetrahedral_elasticity()
-    interpolation = prepare_finite_element_point_interpolation(
-        discretization,
-        "u",
-        "tetrahedra",
-        jnp.asarray((0,), dtype=jnp.int32),
-        jnp.asarray(((0.2, 0.3, 0.1),)),
-    )
-    displacement = jnp.arange(12.0).reshape((4, 3)) / 7.0
-    point_dual = jnp.asarray(((0.7, -0.4, 0.2),))
-    evidence = interpolation.duality_evidence(displacement, point_dual)
-
-    assert bool(evidence.valid)
-    assert jnp.abs(evidence.residual) < 1.0e-12
-    assert jnp.allclose(
-        jnp.sum(interpolation.transpose_scatter(point_dual), axis=0),
-        point_dual[0],
-    )
-
-
 def _one_rigid_body(position: Any) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray((7,), dtype=jnp.int64),
@@ -257,45 +288,6 @@ def _one_rigid_body(position: Any) -> Any:
         jnp.zeros((1, 3)),
     )
     return bodies, kinematics
-
-
-def test_attachment_kkt_loads_are_action_reaction_and_moment_balanced() -> None:
-    discretization, _ = _tetrahedral_elasticity()
-    interpolation = prepare_finite_element_point_interpolation(
-        discretization,
-        "u",
-        "tetrahedra",
-        jnp.asarray((0,), dtype=jnp.int32),
-        jnp.asarray(((0.2, 0.3, 0.1),)),
-    )
-    bodies, kinematics = _one_rigid_body(interpolation.reference_positions[0])
-    attachment = RigidDeformableAttachmentPlan(
-        interpolation,
-        bodies,
-        jnp.asarray((7,), dtype=jnp.int64),
-        jnp.zeros((1, 3)),
-    )
-    payload = attachment.kkt_payload(
-        jnp.zeros((4, 3)),
-        kinematics,
-        jnp.asarray(((1.2, -0.4, 0.7),)),
-    )
-    increments = (
-        jnp.arange(12.0).reshape((4, 3)) / 11.0,
-        jnp.asarray(((0.2, -0.1, 0.3),)),
-        jnp.asarray(((-0.4, 0.6, 0.1),)),
-    )
-    image = payload.operator.mv(increments)
-    transpose = payload.operator.transpose_mv(payload.multiplier)
-    kkt_duality = jnp.sum(image * payload.multiplier) - sum(
-        jnp.sum(value * dual) for value, dual in zip(increments, transpose, strict=True)
-    )
-
-    assert jnp.max(jnp.abs(payload.constraint_residual)) < 1.0e-12
-    assert bool(payload.certificate.valid)
-    assert jnp.max(jnp.abs(payload.certificate.force_balance)) < 1.0e-12
-    assert jnp.max(jnp.abs(payload.certificate.moment_balance)) < 1.0e-12
-    assert jnp.abs(kkt_duality) < 1.0e-12
 
 
 def test_duplicate_attachment_rows_fail_rank_preparation() -> None:

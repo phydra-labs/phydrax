@@ -244,9 +244,7 @@ def _long_link_routes(
     primary_face = np.asarray(topology.primary_face_index)
     secondary_face = np.asarray(topology.secondary_face_index)
     corner_index = np.asarray(topology.corner_index)
-    velocity_to_direction = {
-        velocity: index for index, velocity in enumerate(velocities)
-    }
+    velocity_to_direction = {velocity: index for index, velocity in enumerate(velocities)}
     owner_inventory_exact = bool(
         sum(topology.owner_counts) == int(np.prod(topology.population_shape))
         and set(np.unique(owner)).issubset(

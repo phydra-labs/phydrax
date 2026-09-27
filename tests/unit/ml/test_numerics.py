@@ -13,7 +13,7 @@ from phydrax.ml._contracts import (
 )
 
 
-def test_weighted_reductions_mask_zero_weight_nonfinite_values() -> None:
+def test_numerics_scenario_1() -> None:
     values = jnp.array([[1.0, 3.0], [jnp.nan, jnp.nan], [5.0, 7.0]])
     weights = jnp.array([1.0, 0.0, 3.0])
 
@@ -34,60 +34,6 @@ def test_weighted_reductions_mask_zero_weight_nonfinite_values() -> None:
     )
     assert jnp.allclose(means, jnp.array([[1.0, 3.0], [5.0, 7.0], [0.0, 0.0]]))
     assert jnp.array_equal(mean_mass, mass)
-
-
-def test_augmented_svd_solves_weighted_multioutput_and_differentiates() -> None:
-    design = jnp.array([[-2.0, 1.0], [-1.0, 2.0], [1.0, 1.0], [2.0, -1.0]])
-    coefficients = jnp.array([[2.0, -1.0], [0.5, 3.0]])
-    intercept = jnp.array([1.5, -2.0])
-    target = design @ coefficients + intercept
-    weights = jnp.array([1.0, 2.0, 3.0, 4.0])
-
-    result = numerics.solve_weighted_least_squares(design, target, weights)
-    assert bool(result.valid)
-    assert int(result.status) == ML_SUCCESS
-    assert jnp.allclose(result.coefficients, coefficients, atol=1e-10)
-    assert jnp.allclose(result.intercept, intercept, atol=1e-10)
-    assert jnp.allclose(result.residual_sum_squares, 0.0, atol=1e-20)
-
-    gradient = jax.grad(
-        lambda values: jnp.sum(
-            numerics.solve_weighted_least_squares(
-                design,
-                values,
-                weights,
-                ridge=0.1,
-            ).coefficients
-        )
-    )(target)
-    assert gradient.shape == target.shape
-    assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_least_squares_reports_invalid_weights_and_unidentified_intercept() -> None:
-    design = jnp.ones((3, 1))
-    target = jnp.arange(3.0)
-
-    invalid = numerics.solve_weighted_least_squares(
-        design,
-        target,
-        jnp.array([1.0, -1.0, 1.0]),
-    )
-    assert not bool(invalid.valid)
-    assert int(invalid.status) == ML_INFEASIBLE
-
-    unidentified = numerics.solve_weighted_least_squares(
-        design,
-        target,
-        jnp.zeros((3,)),
-        ridge=1.0,
-        regularize_intercept=False,
-    )
-    assert not bool(unidentified.valid)
-    assert int(unidentified.status) == ML_RANK_DEFICIENT
-
-
-def test_weighted_subspace_reconstructs_and_ignores_zero_weight_nan_rows() -> None:
     values = jnp.array(
         [
             [1.0, 2.0, 3.0],
@@ -113,9 +59,54 @@ def test_weighted_subspace_reconstructs_and_ignores_zero_weight_nan_rows() -> No
         )
     )(values.at[-1].set(0.0))
     assert jnp.all(jnp.isfinite(projector_gradient))
+    design = jnp.array([[-2.0, 1.0], [-1.0, 2.0], [1.0, 1.0], [2.0, -1.0]])
+    coefficients = jnp.array([[2.0, -1.0], [0.5, 3.0]])
+    intercept = jnp.array([1.5, -2.0])
+    target = design @ coefficients + intercept
+    weights = jnp.array([1.0, 2.0, 3.0, 4.0])
+
+    result = numerics.solve_weighted_least_squares(design, target, weights)
+    assert bool(result.valid)
+    assert int(result.status) == ML_SUCCESS
+    assert jnp.allclose(result.coefficients, coefficients, atol=1e-10)
+    assert jnp.allclose(result.intercept, intercept, atol=1e-10)
+    assert jnp.allclose(result.residual_sum_squares, 0.0, atol=1e-20)
+
+    gradient = jax.grad(
+        lambda values: jnp.sum(
+            numerics.solve_weighted_least_squares(
+                design,
+                values,
+                weights,
+                ridge=0.1,
+            ).coefficients
+        )
+    )(target)
+    assert gradient.shape == target.shape
+    assert jnp.all(jnp.isfinite(gradient))
+    design = jnp.ones((3, 1))
+    target = jnp.arange(3.0)
+
+    invalid = numerics.solve_weighted_least_squares(
+        design,
+        target,
+        jnp.array([1.0, -1.0, 1.0]),
+    )
+    assert not bool(invalid.valid)
+    assert int(invalid.status) == ML_INFEASIBLE
+
+    unidentified = numerics.solve_weighted_least_squares(
+        design,
+        target,
+        jnp.zeros((3,)),
+        ridge=1.0,
+        regularize_intercept=False,
+    )
+    assert not bool(unidentified.valid)
+    assert int(unidentified.status) == ML_RANK_DEFICIENT
 
 
-def test_pairwise_chunking_and_assignment_surfaces_are_consistent() -> None:
+def test_numerics_scenario_2() -> None:
     left = jnp.array([[0.0, 0.0], [1.0, 0.0], [3.0, 4.0]])
     right = jnp.array([[0.0, 0.0], [2.0, 0.0]])
     dense = numerics.pairwise_distances(left, right, metric="squared-euclidean")
@@ -132,9 +123,6 @@ def test_pairwise_chunking_and_assignment_surfaces_are_consistent() -> None:
     assert jnp.array_equal(numerics.hard_assignments(dense), jnp.array([0, 0, 1]))
     probabilities = numerics.soft_assignments(dense, temperature=0.5)
     assert jnp.allclose(jnp.sum(probabilities, axis=-1), 1.0)
-
-
-def test_histogram_statistics_and_xgboost_newton_formulas() -> None:
     bins = jnp.array([[0, 1], [1, 0], [1, 1]])
     gradients = jnp.array([1.0, jnp.nan, -2.0])
     hessians = jnp.array([2.0, jnp.nan, 4.0])
@@ -163,9 +151,6 @@ def test_histogram_statistics_and_xgboost_newton_formulas() -> None:
     )
     expected = 0.5 * (9.0 / 5.0 + 1.0 / 3.0 - 4.0 / 7.0)
     assert jnp.allclose(gain, expected)
-
-
-def test_proximal_and_fixed_iteration_primitives_have_fixed_shapes() -> None:
     projected = numerics.project_simplex(jnp.array([0.2, -0.5, 2.0]))
     assert jnp.all(projected >= 0.0)
     assert jnp.allclose(jnp.sum(projected), 1.0)

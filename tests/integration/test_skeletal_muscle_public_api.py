@@ -3,7 +3,7 @@ from phydrax.applications import skeletal_muscle
 from phydrax.applications.skeletal_muscle import motor_units
 
 
-def test_skeletal_muscle_facade_exports_only_owned_contracts() -> None:
+def test_skeletal_muscle_public_api_scenario_1() -> None:
     assert applications.skeletal_muscle is skeletal_muscle
     assert skeletal_muscle.__all__ == [
         "SKELETAL_MUSCLE_QUANTITIES",
@@ -27,9 +27,6 @@ def test_skeletal_muscle_facade_exports_only_owned_contracts() -> None:
     assert len(skeletal_muscle.__all__) == len(set(skeletal_muscle.__all__))
     assert "DiscreteSystem" not in skeletal_muscle.__all__
     assert "CardiovascularQuantitySpec" not in skeletal_muscle.__all__
-
-
-def test_motor_unit_facade_exports_each_concrete_symbol_once() -> None:
     expected = {
         "FuglevandForceVariabilityEvidence",
         "FuglevandWinterPatla1993Candidate",

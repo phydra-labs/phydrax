@@ -26,90 +26,44 @@ def _termination(*, maximum_steps: Any = 12) -> Any:
     )
 
 
-@pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_prepared_newton_refresh_reuses_linear_plan_and_updates_numerics(
-    method: Any,
-) -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, target: state - target,
-        problem_id=f"prepared-{method.method_id}",
-    )
-    prepared = nl.prepare_nonlinear(
-        problem,
-        jnp.asarray([0.0]),
-        method=method,
-        termination=_termination(),
-        args=jnp.asarray([2.0]),
-    )
+def test_prepared_contracts() -> None:
+    for method in (nl.NewtonKrylov(), nl.NewtonTrustRegion()):
+        problem = nl.NonlinearSystemProblem(
+            lambda state, target: state - target,
+            problem_id=f"prepared-{method.method_id}",
+        )
+        prepared = nl.prepare_nonlinear(
+            problem,
+            jnp.asarray([0.0]),
+            method=method,
+            termination=_termination(),
+            args=jnp.asarray([2.0]),
+        )
 
-    first = nl.solve_prepared_nonlinear(prepared)
-    refreshed = nl.refresh_nonlinear(
-        prepared,
-        problem,
-        first.state,
-        args=jnp.asarray([3.0]),
-    )
-    second = nl.solve_prepared_nonlinear(refreshed)
-
-    assert isinstance(first, nl.NonlinearResult)
-    assert isinstance(second, nl.NonlinearResult)
-    assert bool(first.successful)
-    assert bool(second.successful)
-    assert jnp.allclose(first.state, jnp.asarray([2.0]), atol=1e-6)
-    assert jnp.allclose(second.state, jnp.asarray([3.0]), atol=1e-6)
-    assert prepared.linear_plan_id == refreshed.linear_plan_id
-    assert prepared.linear_template_id == refreshed.linear_template_id
-    assert int(refreshed.numeric_version) == int(prepared.numeric_version) + 1
-    assert int(refreshed.linear_refresh_state.numeric_version) > int(
-        prepared.linear_refresh_state.numeric_version
-    )
-    assert int(first.diagnostics.setup_refreshes) == 1
-    assert int(second.diagnostics.setup_refreshes) == 0
-    assert first.provenance.linear_plan_id == second.provenance.linear_plan_id
-
-
-@pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_prepared_newton_refresh_and_solve_follow_existing_jit_pattern(
-    method: Any,
-) -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, target: state - target,
-        problem_id=f"prepared-jit-{method.method_id}",
-    )
-    prepared = nl.prepare_nonlinear(
-        problem,
-        jnp.asarray([0.0]),
-        method=method,
-        termination=_termination(),
-        args=jnp.asarray([1.0]),
-    )
-
-    def staged(target: Any) -> Any:
+        first = nl.solve_prepared_nonlinear(prepared)
         refreshed = nl.refresh_nonlinear(
             prepared,
             problem,
-            jnp.zeros_like(target),
-            args=target,
+            first.state,
+            args=jnp.asarray([3.0]),
         )
-        result = nl.solve_prepared_nonlinear(refreshed)
-        return (
-            result.state,
-            result.residual,
-            result.status,
-            refreshed.numeric_version,
-            refreshed.linear_refresh_state.numeric_version,
+        second = nl.solve_prepared_nonlinear(refreshed)
+
+        assert isinstance(first, nl.NonlinearResult)
+        assert isinstance(second, nl.NonlinearResult)
+        assert bool(first.successful)
+        assert bool(second.successful)
+        assert jnp.allclose(first.state, jnp.asarray([2.0]), atol=1e-6)
+        assert jnp.allclose(second.state, jnp.asarray([3.0]), atol=1e-6)
+        assert prepared.linear_plan_id == refreshed.linear_plan_id
+        assert prepared.linear_template_id == refreshed.linear_template_id
+        assert int(refreshed.numeric_version) == int(prepared.numeric_version) + 1
+        assert int(refreshed.linear_refresh_state.numeric_version) > int(
+            prepared.linear_refresh_state.numeric_version
         )
-
-    state, residual, status, version, linear_version = jax.jit(staged)(jnp.asarray([4.0]))
-
-    assert int(status) == int(nl.NonlinearStatus.SUCCESS)
-    assert jnp.allclose(state, jnp.asarray([4.0]), atol=1e-6)
-    assert jnp.allclose(residual, jnp.zeros(1), atol=1e-6)
-    assert int(version) == 1
-    assert int(linear_version) > int(prepared.linear_refresh_state.numeric_version)
-
-
-def test_prepared_nonlinear_solve_accepts_per_call_termination_budget() -> None:
+        assert int(first.diagnostics.setup_refreshes) == 1
+        assert int(second.diagnostics.setup_refreshes) == 0
+        assert first.provenance.linear_plan_id == second.provenance.linear_plan_id
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id="prepared-per-call-budget",
@@ -131,9 +85,6 @@ def test_prepared_nonlinear_solve_accepts_per_call_termination_budget() -> None:
     assert bool(completed.successful)
     assert jnp.allclose(completed.state, jnp.asarray([2.0]), atol=1e-5)
     assert limited.provenance.linear_plan_id == completed.provenance.linear_plan_id
-
-
-def test_prepared_nonlinear_refresh_rejects_changed_spaces() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state - target,
         problem_id="prepared-space-identity",
@@ -152,6 +103,88 @@ def test_prepared_nonlinear_refresh_rejects_changed_spaces() -> None:
             jnp.zeros(2),
             args=jnp.ones(2),
         )
+    public = {
+        "PreparedNonlinearSolve",
+        "prepare_nonlinear",
+        "refresh_nonlinear",
+        "solve_prepared_nonlinear",
+    }
+    assert public <= set(nl.__all__)
+    assert public <= set(vars(nl))
+
+    problem = nl.NonlinearSystemProblem(lambda state, args: state)
+    with pytest.raises(ValueError, match="only NewtonKrylov and NewtonTrustRegion"):
+        nl.prepare_nonlinear(
+            problem,
+            jnp.zeros(1),
+            method=nl.NonlinearGMRES(
+                nl.FunctionNonlinearUpdate(lambda state, args: state)
+            ),
+            termination=_termination(),
+        )
+    for method in (nl.NewtonKrylov(), nl.NewtonTrustRegion()):
+        problem = nl.NonlinearSystemProblem(
+            lambda state, target: state**2 - target,
+            problem_id=f"prepared-relative-step-{method.method_id}",
+        )
+        prepared = nl.prepare_nonlinear(
+            problem,
+            jnp.asarray([8.0]),
+            method=method,
+            termination=_termination(maximum_steps=20),
+            args=jnp.asarray([2.0]),
+        )
+
+        first, after_first = nl.step_prepared_nonlinear(prepared)
+        second, after_second = nl.step_prepared_nonlinear(after_first)
+
+        assert int(after_first.run.iteration) == 1
+        assert int(after_second.run.iteration) == 2
+        assert not jnp.array_equal(first.state, second.state)
+        assert float(second.diagnostics.final_residual_norm) < float(
+            first.diagnostics.final_residual_norm
+        )
+
+
+def test_prepared_newton_refresh_and_solve_follow_existing_jit_pattern() -> None:
+    for method in (nl.NewtonKrylov(), nl.NewtonTrustRegion()):
+        problem = nl.NonlinearSystemProblem(
+            lambda state, target: state - target,
+            problem_id=f"prepared-jit-{method.method_id}",
+        )
+        prepared = nl.prepare_nonlinear(
+            problem,
+            jnp.asarray([0.0]),
+            method=method,
+            termination=_termination(),
+            args=jnp.asarray([1.0]),
+        )
+
+        def staged(target: Any) -> Any:
+            refreshed = nl.refresh_nonlinear(
+                prepared,
+                problem,
+                jnp.zeros_like(target),
+                args=target,
+            )
+            result = nl.solve_prepared_nonlinear(refreshed)
+            return (
+                result.state,
+                result.residual,
+                result.status,
+                refreshed.numeric_version,
+                refreshed.linear_refresh_state.numeric_version,
+            )
+
+        state, residual, status, version, linear_version = jax.jit(staged)(
+            jnp.asarray([4.0])
+        )
+
+        assert int(status) == int(nl.NonlinearStatus.SUCCESS)
+        assert jnp.allclose(state, jnp.asarray([4.0]), atol=1e-6)
+        assert jnp.allclose(residual, jnp.zeros(1), atol=1e-6)
+        assert int(version) == 1
+        assert int(linear_version) > int(prepared.linear_refresh_state.numeric_version)
 
 
 def test_prepared_nonlinear_refresh_rejects_changed_linear_structure() -> None:
@@ -191,50 +224,3 @@ def test_prepared_nonlinear_refresh_rejects_changed_linear_structure() -> None:
             jnp.zeros(1),
             args={"scale": jnp.asarray(2.0), "operator_id": "jacobian-b"},
         )
-
-
-def test_prepared_nonlinear_rejects_unsupported_methods_and_is_public() -> None:
-    public = {
-        "PreparedNonlinearSolve",
-        "prepare_nonlinear",
-        "refresh_nonlinear",
-        "solve_prepared_nonlinear",
-    }
-    assert public <= set(nl.__all__)
-    assert public <= set(vars(nl))
-
-    problem = nl.NonlinearSystemProblem(lambda state, args: state)
-    with pytest.raises(ValueError, match="only NewtonKrylov and NewtonTrustRegion"):
-        nl.prepare_nonlinear(
-            problem,
-            jnp.zeros(1),
-            method=nl.NonlinearGMRES(
-                nl.FunctionNonlinearUpdate(lambda state, args: state)
-            ),
-            termination=_termination(),
-        )
-
-
-@pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_prepared_step_limit_is_relative_to_retained_iteration(method: Any) -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, target: state**2 - target,
-        problem_id=f"prepared-relative-step-{method.method_id}",
-    )
-    prepared = nl.prepare_nonlinear(
-        problem,
-        jnp.asarray([8.0]),
-        method=method,
-        termination=_termination(maximum_steps=20),
-        args=jnp.asarray([2.0]),
-    )
-
-    first, after_first = nl.step_prepared_nonlinear(prepared)
-    second, after_second = nl.step_prepared_nonlinear(after_first)
-
-    assert int(after_first.run.iteration) == 1
-    assert int(after_second.run.iteration) == 2
-    assert not jnp.array_equal(first.state, second.state)
-    assert float(second.diagnostics.final_residual_norm) < float(
-        first.diagnostics.final_residual_norm
-    )

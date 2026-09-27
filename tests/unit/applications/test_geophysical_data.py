@@ -269,48 +269,50 @@ def test_native_archive_rejects_semantic_and_payload_tampering(tmp_path: Any) ->
         GeophysicalData(descriptor, data.arrays)
 
 
-@pytest.mark.parametrize("scalar", [False, True])
-def test_time_support_follows_scalar_or_auxiliary_coordinate(scalar: Any) -> None:
-    xr = pytest.importorskip("xarray")
-    unit = derived_unit("kg/m2", ((KILOGRAM, 1), (METER, -2)))
-    dataset = xr.Dataset(
-        {
-            "rain": (
-                "t",
-                [6.0, 12.0],
-                {
-                    "standard_name": "precipitation_amount",
-                    "units": "kg m-2",
-                    "cell_methods": "time: sum",
-                },
-            ),
-            "time_bounds": (("t", "bounds"), [[0.0, 6.0], [6.0, 12.0]]),
-        },
-        coords={
-            "time": (
-                "t",
-                [6.0, 12.0],
-                {
-                    "standard_name": "time",
-                    "units": "hours since 2000-01-01",
-                    "bounds": "time_bounds",
-                },
-            )
-        },
-    )
-    if scalar:
-        dataset = dataset.isel(t=0)
-    data, _ = from_cf_dataset(
-        dataset, bindings={"rain": _binding("precipitation_amount", unit)}
-    )
-    support = data.descriptor["fields"]["rain"]["temporal"]
-    assert support["kind"] == "accumulation"
-    assert support["bounds"] == ([[0.0, 6.0]] if scalar else [[0.0, 6.0], [6.0, 12.0]])
-    exported, _ = to_cf_dataset(data)
-    np.testing.assert_array_equal(exported.rain.values, dataset.rain.values)
+def test_time_support_follows_scalar_or_auxiliary_coordinate() -> None:
+    for scalar in [False, True]:
+        xr = pytest.importorskip("xarray")
+        unit = derived_unit("kg/m2", ((KILOGRAM, 1), (METER, -2)))
+        dataset = xr.Dataset(
+            {
+                "rain": (
+                    "t",
+                    [6.0, 12.0],
+                    {
+                        "standard_name": "precipitation_amount",
+                        "units": "kg m-2",
+                        "cell_methods": "time: sum",
+                    },
+                ),
+                "time_bounds": (("t", "bounds"), [[0.0, 6.0], [6.0, 12.0]]),
+            },
+            coords={
+                "time": (
+                    "t",
+                    [6.0, 12.0],
+                    {
+                        "standard_name": "time",
+                        "units": "hours since 2000-01-01",
+                        "bounds": "time_bounds",
+                    },
+                )
+            },
+        )
+        if scalar:
+            dataset = dataset.isel(t=0)
+        data, _ = from_cf_dataset(
+            dataset, bindings={"rain": _binding("precipitation_amount", unit)}
+        )
+        support = data.descriptor["fields"]["rain"]["temporal"]
+        assert support["kind"] == "accumulation"
+        assert support["bounds"] == (
+            [[0.0, 6.0]] if scalar else [[0.0, 6.0], [6.0, 12.0]]
+        )
+        exported, _ = to_cf_dataset(data)
+        np.testing.assert_array_equal(exported.rain.values, dataset.rain.values)
 
 
-def test_native_custom_temperature_unit_exports_as_cf_reference_unit() -> None:
+def test_geophysical_data_scenario_1() -> None:
     milli = UnitDefinition(
         "application_temperature_tick",
         KELVIN.dimension,
@@ -327,6 +329,22 @@ def test_native_custom_temperature_unit_exports_as_cf_reference_unit() -> None:
     )
     restored, _ = from_cf_dataset(exported, bindings=bindings)
     np.testing.assert_allclose(restored.values("tas"), data.values("tas"), equal_nan=True)
+    dataset = _packed_dataset()
+    bindings = {"tas": _binding()}
+    with pytest.raises(ResourceReadError):
+        from_cf_dataset(
+            dataset, bindings=bindings, limits=ResourceLimits(1, 32, 100, 1000, 100)
+        )
+    with pytest.raises(AdapterError) as raised:
+        from_cf_dataset(
+            dataset, bindings=bindings, required_semantics=("uninterpreted_projection",)
+        )
+    assert raised.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    dataset.tas.attrs["cell_methods"] = "area: mean time: sum"
+    with pytest.raises(AdapterError):
+        from_cf_dataset(dataset, bindings=bindings)
+    with pytest.raises(AdapterError):
+        from_cf_dataset(dataset, bindings=bindings, purpose="exact-restart")
 
 
 def test_lwe_precipitation_rate_remains_volume_flux_not_mass_flux() -> None:
@@ -400,42 +418,25 @@ def test_directional_quantity_cannot_silently_reinterpret_wind_component() -> No
     np.testing.assert_array_equal(data.values("wind"), [4.0])
 
 
-def test_unknown_required_semantics_and_eager_limits_fail_closed() -> None:
-    dataset = _packed_dataset()
-    bindings = {"tas": _binding()}
-    with pytest.raises(ResourceReadError):
-        from_cf_dataset(
-            dataset, bindings=bindings, limits=ResourceLimits(1, 32, 100, 1000, 100)
-        )
-    with pytest.raises(AdapterError) as raised:
-        from_cf_dataset(
-            dataset, bindings=bindings, required_semantics=("uninterpreted_projection",)
-        )
-    assert raised.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
-    dataset.tas.attrs["cell_methods"] = "area: mean time: sum"
-    with pytest.raises(AdapterError):
-        from_cf_dataset(dataset, bindings=bindings)
-    with pytest.raises(AdapterError):
-        from_cf_dataset(dataset, bindings=bindings, purpose="exact-restart")
-
-
-@pytest.mark.parametrize(
-    ("format", "dependency", "suffix"),
-    [("netcdf", "scipy", ".nc"), ("zarr", "zarr", ".zarr")],
-)
 def test_actual_optional_cf_storage_round_trip(
-    tmp_path: Any, format: Any, dependency: Any, suffix: Any
+    tmp_path: Any,
 ) -> None:
-    pytest.importorskip(dependency)
-    bindings = {"tas": _binding()}
-    data, _ = from_cf_dataset(_packed_dataset(), bindings=bindings)
-    path = tmp_path / ("weather" + suffix)
-    write_cf(data, path, format=format)
-    restored, _ = read_cf(path, format=format, bindings=bindings)
-    np.testing.assert_array_equal(restored.valid("tas"), data.valid("tas"))
-    np.testing.assert_allclose(restored.values("tas"), data.values("tas"), equal_nan=True)
-    assert restored.descriptor["time"] == data.descriptor["time"]
-    assert restored.descriptor["provenance"]["resources"][0]["content_sha256"]
+    for format, dependency, suffix in [
+        ("netcdf", "scipy", ".nc"),
+        ("zarr", "zarr", ".zarr"),
+    ]:
+        pytest.importorskip(dependency)
+        bindings = {"tas": _binding()}
+        data, _ = from_cf_dataset(_packed_dataset(), bindings=bindings)
+        path = tmp_path / ("weather" + suffix)
+        write_cf(data, path, format=format)
+        restored, _ = read_cf(path, format=format, bindings=bindings)
+        np.testing.assert_array_equal(restored.valid("tas"), data.valid("tas"))
+        np.testing.assert_allclose(
+            restored.values("tas"), data.values("tas"), equal_nan=True
+        )
+        assert restored.descriptor["time"] == data.descriptor["time"]
+        assert restored.descriptor["provenance"]["resources"][0]["content_sha256"]
 
 
 def test_actual_optional_grib_decoder(tmp_path: Any) -> None:

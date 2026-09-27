@@ -20,7 +20,7 @@ def _sipg_discretization() -> Any:
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbor() -> None:
+def test_fem_sipg_scenario_1() -> None:
     discretization = _sipg_discretization()
     data = phx.equations.coefficient(
         lambda points, context: points[..., 0] + points[..., 1],
@@ -45,9 +45,6 @@ def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbor() -> Non
     )
 
     assert jnp.linalg.norm(compiled.full_residual(state)) < 1.0e-12
-
-
-def test_sipg_operator_is_symmetric_with_harmonic_cell_coefficient() -> None:
     discretization = _sipg_discretization()
     cells = discretization.mesh.topology.entity_sets[
         discretization.mesh.topological_dimension
@@ -74,9 +71,6 @@ def test_sipg_operator_is_symmetric_with_harmonic_cell_coefficient() -> None:
 
     defect = jnp.vdot(left, operator.mv(right)) - jnp.vdot(operator.mv(left), right)
     assert jnp.abs(defect) < 1.0e-10
-
-
-def test_pure_neumann_sipg_attaches_verified_component_nullspace() -> None:
     discretization = _sipg_discretization()
     form = phx.equations.fem.sipg_poisson_form(
         "u",

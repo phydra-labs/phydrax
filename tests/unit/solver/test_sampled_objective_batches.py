@@ -60,7 +60,7 @@ def _key_recorder(store: Any) -> Any:
     return record
 
 
-def test_optax_materializes_each_sampled_objective_once_per_update() -> None:
+def test_sampled_objective_batches_scenario_1() -> None:
     sampled_keys = []
     objective = _NestedSampledObjective(
         label="sampled",
@@ -78,6 +78,49 @@ def test_optax_materializes_each_sampled_objective_once_per_update() -> None:
 
     assert len(sampled_keys) == 4
     assert len(set(sampled_keys)) == 4
+    sampled_keys = []
+    objective = _NestedSampledObjective(
+        label="sampled",
+        recorder=_key_recorder(sampled_keys),
+        target_shift=0.0,
+    )
+
+    _solver(objective).solve(
+        num_iter=3,
+        optim=optax.sgd(0.1),
+        evaluation_parameters=lambda _state, params: params,
+        jit=False,
+        keep_best=True,
+        log_every=0,
+    )
+
+    assert len(sampled_keys) == 3
+    first_keys = []
+    second_keys = []
+    objectives = (
+        _NestedSampledObjective(
+            label="first",
+            recorder=_key_recorder(first_keys),
+            target_shift=0.0,
+        ),
+        _NestedSampledObjective(
+            label="second",
+            recorder=_key_recorder(second_keys),
+            target_shift=0.5,
+        ),
+    )
+
+    trained = _solver(*objectives).solve(
+        num_iter=2,
+        optim=optax.sgd(0.05),
+        jit=False,
+        keep_best=False,
+        log_every=0,
+    )
+
+    assert len(first_keys) == len(second_keys) == 2
+    assert all(left != right for left, right in zip(first_keys, second_keys, strict=True))
+    assert jnp.isfinite(jnp.asarray(trained["u"].func()).reshape(()))
 
 
 def test_optax_materializes_each_integration_realization_once_per_update(
@@ -122,52 +165,3 @@ def test_optax_materializes_each_integration_realization_once_per_update(
 
     assert len(materialization_keys) == 3
     assert len(set(materialization_keys)) == 3
-
-
-def test_selection_reuses_the_optimizer_update_batch() -> None:
-    sampled_keys = []
-    objective = _NestedSampledObjective(
-        label="sampled",
-        recorder=_key_recorder(sampled_keys),
-        target_shift=0.0,
-    )
-
-    _solver(objective).solve(
-        num_iter=3,
-        optim=optax.sgd(0.1),
-        evaluation_parameters=lambda _state, params: params,
-        jit=False,
-        keep_best=True,
-        log_every=0,
-    )
-
-    assert len(sampled_keys) == 3
-
-
-def test_nested_batches_and_multiple_objectives_use_distinct_subkeys() -> None:
-    first_keys = []
-    second_keys = []
-    objectives = (
-        _NestedSampledObjective(
-            label="first",
-            recorder=_key_recorder(first_keys),
-            target_shift=0.0,
-        ),
-        _NestedSampledObjective(
-            label="second",
-            recorder=_key_recorder(second_keys),
-            target_shift=0.5,
-        ),
-    )
-
-    trained = _solver(*objectives).solve(
-        num_iter=2,
-        optim=optax.sgd(0.05),
-        jit=False,
-        keep_best=False,
-        log_every=0,
-    )
-
-    assert len(first_keys) == len(second_keys) == 2
-    assert all(left != right for left, right in zip(first_keys, second_keys, strict=True))
-    assert jnp.isfinite(jnp.asarray(trained["u"].func()).reshape(()))

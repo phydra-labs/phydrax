@@ -239,7 +239,7 @@ def _batch() -> Any:
     )
 
 
-def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata() -> None:
+def test_pipeline_target_scenario_1() -> None:
     batch = _batch()
     contract = _contract(
         {
@@ -290,9 +290,15 @@ def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata() -
     assert jnp.allclose(jax.jit(lambda value: fitted(value))(point), fitted(point))
     gradient = jax.grad(lambda value: jnp.sum(fitted(value)))(point)
     assert jnp.allclose(gradient, jnp.ones_like(point))
+    result = Pipeline(
+        (
+            ("first", _StatusRecipe(phx.ml.ML_INSUFFICIENT_DATA)),
+            ("second", _StatusRecipe(phx.ml.ML_CAPACITY_EXHAUSTED)),
+        )
+    ).fit_batch(phx.ml.MLBatch(jnp.ones((3, 1))))
 
-
-def test_pipeline_propagates_feature_masks_and_case_dependent_bindings() -> None:
+    assert int(result.status) == phx.ml.ML_CAPACITY_EXHAUSTED
+    assert int(result.diagnostics.status) == phx.ml.ML_CAPACITY_EXHAUSTED
     masked = phx.ml.MLBatch(
         jnp.asarray([[1.0, 2.0], [3.0, 99.0], [5.0, 6.0]]),
         feature_mask=jnp.asarray([[True, True], [True, False], [True, True]]),
@@ -330,23 +336,6 @@ def test_pipeline_propagates_feature_masks_and_case_dependent_bindings() -> None
 
     assert case_model.input_binding().batch_mode == "blockwise"
     assert jnp.allclose(case_model(case_batch.features), expected)
-
-
-def test_pipeline_reports_the_most_severe_child_status() -> None:
-    result = Pipeline(
-        (
-            ("first", _StatusRecipe(phx.ml.ML_INSUFFICIENT_DATA)),
-            ("second", _StatusRecipe(phx.ml.ML_CAPACITY_EXHAUSTED)),
-        )
-    ).fit_batch(phx.ml.MLBatch(jnp.ones((3, 1))))
-
-    assert int(result.status) == phx.ml.ML_CAPACITY_EXHAUSTED
-    assert int(result.diagnostics.status) == phx.ml.ML_CAPACITY_EXHAUSTED
-
-
-def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts() -> (
-    None
-):
     features = jnp.array([[0.0], [1.0], [2.0], [3.0]])
     targets = jnp.array([2.0, 4.0, 8.0, 10.0])
     weights = jnp.array([1.0, 1.0, 2.0, 0.0])
@@ -381,9 +370,6 @@ def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts
     assert contract.route is DerivativeRoute.DIRECT
     assert "Positive total sample weight is held fixed." in contract.conditions
     assert any("inverse_transform" in condition for condition in contract.conditions)
-
-
-def test_transformed_target_regressor_rejects_non_regression_target_semantics() -> None:
     batch = phx.ml.MLBatch(
         jnp.ones((3, 1)),
         jnp.array([0, 1, 0]),

@@ -14,7 +14,7 @@ def _contract() -> Any:
     )
 
 
-def test_constant_structured_index_preserves_straight_hamiltonian_rays() -> None:
+def test_graded_index_scenario_1() -> None:
     field = phx.optics.geometric.StructuredRefractiveIndexField(
         np.ones((4, 4, 4)),
         # ty: ignore[invalid-argument-type]
@@ -33,9 +33,6 @@ def test_constant_structured_index_preserves_straight_hamiltonian_rays() -> None
     np.testing.assert_allclose(result.state.geometric_lengths, (1.0,), atol=1e-12)
     np.testing.assert_allclose(result.state.optical_lengths, (1.0,), atol=1e-12)
     assert bool(result.evidence.successful)
-
-
-def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence() -> None:
     vertices = np.asarray(((0, 0, 0), (2, 0, 0), (0, 2, 0), (0, 0, 2)), dtype="float64")
     field = phx.optics.geometric.TetrahedralRefractiveIndexField(
         vertices,
@@ -91,9 +88,6 @@ def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence() -> None:
     result = plan.evaluate(positions, directions)
     np.testing.assert_allclose(result.prediction.values, 0.0, atol=1e-12)
     assert bool(result.successful)
-
-
-def test_smooth_focusing_index_detects_a_caustic_without_clipping() -> None:
     field = phx.optics.geometric.AnalyticRefractiveIndexField(
         lambda point: 1.0 - 0.1 * (point[0] - 2.0) ** 2,
         _contract(),

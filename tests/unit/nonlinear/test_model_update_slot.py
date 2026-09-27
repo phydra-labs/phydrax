@@ -73,7 +73,7 @@ def _apply(update: Any, state: Any, target: Any) -> Any:
     return nl.apply_prepared_nonlinear_update(prepared, state, args=target)[0]
 
 
-def test_out_of_domain_or_nonfinite_learned_proposals_never_report_success() -> None:
+def test_model_update_slot_scenario_1() -> None:
     state, target = jnp.asarray([1.0]), jnp.asarray([2.0])
 
     # ty: ignore[invalid-argument-type, missing-argument]
@@ -102,9 +102,6 @@ def test_out_of_domain_or_nonfinite_learned_proposals_never_report_success() -> 
     )
     assert not bool(result.successful)
     assert jnp.array_equal(result.state, state)
-
-
-def test_globalization_re_evaluates_the_residual_of_an_overshooting_proposal() -> None:
     state, target = jnp.asarray([1.0]), jnp.asarray([2.0])
     # ty: ignore[invalid-argument-type, missing-argument]
     update = nl.FunctionNonlinearUpdate(_Correction(_Gain(3.0)), update_id="learned")
@@ -129,9 +126,6 @@ def test_globalization_re_evaluates_the_residual_of_an_overshooting_proposal() -
     # 2 * iterations + 2; every backtracking trial is an extra evaluation of the
     # original residual that the proposal alone never paid for.
     assert int(result.diagnostics.residual_evaluations) > 2 * iterations + 2
-
-
-def test_models_bind_as_accelerator_components_and_keep_parameters() -> None:
     # ty: ignore[invalid-argument-type, missing-argument]
     model = _Gain(0.5)
     update = nl.FunctionNonlinearUpdate(_Correction(model))
@@ -155,7 +149,7 @@ def test_models_bind_as_accelerator_components_and_keep_parameters() -> None:
         nl.FunctionNonlinearUpdate(model)
 
 
-def test_port_declaring_models_bind_through_the_callable_owner_ports() -> None:
+def test_model_update_slot_scenario_2() -> None:
     owner = phx.ModelPorts(
         inputs=(full_port("root.defect", (1,)),),
         outputs=(full_port("root.correction", (1,)),),
@@ -180,9 +174,6 @@ def test_port_declaring_models_bind_through_the_callable_owner_ports() -> None:
     assert jnp.allclose(
         _apply(update, jnp.asarray([1.0]), jnp.asarray([2.0])).state, jnp.asarray([1.5])
     )
-
-
-def test_capabilities_follow_the_bound_model_execution_contract() -> None:
     # ty: ignore[invalid-argument-type, missing-argument]
     native = nl.FunctionNonlinearUpdate(_Correction(_Gain(0.5)))
     # ty: ignore[invalid-argument-type, missing-argument]

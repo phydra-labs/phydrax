@@ -37,7 +37,7 @@ def optics(
     )
 
 
-def test_transparent_column_preserves_boundary_fluxes_and_surface_kirchhoff_law() -> None:
+def test_column_radiation_scenario_1() -> None:
     plan = ColumnRadiationPlan(optics(), surface_albedo=0.3, surface_emissivity=0.7)
     result = eqx.filter_jit(plan.evaluate)(
         jnp.array([210.0, 280.0]),
@@ -59,9 +59,6 @@ def test_transparent_column_preserves_boundary_fluxes_and_surface_kirchhoff_law(
     np.testing.assert_allclose(result.surface_heating, 280.0 + 80.0 - emitted)
     np.testing.assert_allclose(result.space_heating, -result.surface_heating)
     np.testing.assert_allclose(result.budget_residual, 0.0, atol=1e-12)
-
-
-def test_absorbing_slab_matches_independent_beer_and_lte_boundary_solution() -> None:
     sw_depth, lw_depth = 0.37, 0.82
     plan = ColumnRadiationPlan(
         optics(sw=(sw_depth, 0.0, 0.0, 0.0), lw=(lw_depth, 0.0, 0.0, 0.0)),
@@ -85,9 +82,6 @@ def test_absorbing_slab_matches_independent_beer_and_lte_boundary_solution() -> 
     net = sw_up + lw_up - sw_down - lw_down
     np.testing.assert_allclose(result.heating, net[1:] - net[:-1], atol=1e-11)
     np.testing.assert_allclose(result.budget_residual, 0.0, atol=1e-11)
-
-
-def test_scattering_slab_matches_independent_two_stream_fundamental_solution() -> None:
     absorption, scattering, g, albedo = 0.23, 1.4, 0.6, 0.31
     plan = ColumnRadiationPlan(
         optics(
@@ -120,7 +114,7 @@ def test_scattering_slab_matches_independent_two_stream_fundamental_solution() -
     )
 
 
-def test_conservative_scattering_thick_and_perfectly_reflecting_limits() -> None:
+def test_column_radiation_scenario_2() -> None:
     scattering_depth = 1.0e20
     plan = ColumnRadiationPlan(
         optics(scatter=(scattering_depth, 0, 0, 0)),
@@ -161,9 +155,6 @@ def test_conservative_scattering_thick_and_perfectly_reflecting_limits() -> None
         400.0 * scattering_depth / (1 + scattering_depth),
         rtol=2e-12,
     )
-
-
-def test_opaque_blackbody_and_isothermal_bath_are_distinct_limits() -> None:
     plan = ColumnRadiationPlan(optics(lw=(1000.0, 0, 0, 0)), surface_emissivity=1.0)
     # ty: ignore[invalid-argument-type]
     outgoing = plan.evaluate([250.0], [1.0], [0.0], [0.0], [0.0], 300.0, 0.0)
@@ -197,9 +188,6 @@ def test_opaque_blackbody_and_isothermal_bath_are_distinct_limits() -> None:
     np.testing.assert_allclose(equilibrium.heating, 0.0, atol=2e-11)
     np.testing.assert_allclose(equilibrium.surface_heating, 0.0, atol=2e-11)
     np.testing.assert_allclose(equilibrium.space_heating, 0.0, atol=2e-11)
-
-
-def test_composing_homogeneous_layers_preserves_both_band_solutions() -> None:
     plan = ColumnRadiationPlan(
         optics(
             sw=(0.04, 0.2, 0.3, 0.5),
@@ -250,7 +238,7 @@ def test_composing_homogeneous_layers_preserves_both_band_solutions() -> None:
     np.testing.assert_allclose(split.budget_residual, 0.0, atol=1e-10)
 
 
-def test_water_cloud_and_solar_forcing_change_actual_band_transfers() -> None:
+def test_column_radiation_scenario_3() -> None:
     plan = ColumnRadiationPlan(
         optics(
             lw=(0, 0.2, 1.0, 1.0), scatter=(0, 0, 20.0, 10.0), asymmetry=(0, 0, 0.8, 0.6)
@@ -285,12 +273,6 @@ def test_water_cloud_and_solar_forcing_change_actual_band_transfers() -> None:
         brighter.shortwave_upward_flux, 2 * cloud.shortwave_upward_flux
     )
     np.testing.assert_allclose(brighter.longwave_upward_flux, cloud.longwave_upward_flux)
-    # No sign claim about total cloud forcing: SW reflection and LW absorption compete.
-
-
-def test_invalid_batch_columns_are_rejected_atomically_without_poisoning_neighbors() -> (
-    None
-):
     plan = ColumnRadiationPlan(optics(sw=(0.1, 0, 0, 0), lw=(0.2, 0, 0, 0)))
     t = jnp.array([[[250.0, 280.0], [250.0, -1.0]], [[250.0, 280.0], [jnp.nan, 280.0]]])
     water = jnp.zeros((2, 2, 2)).at[1, 0, 0].set(2.0)
@@ -319,40 +301,32 @@ def test_invalid_batch_columns_are_rejected_atomically_without_poisoning_neighbo
     rejected = invalid.evaluate([260.0], [1.0], [0.0], [0.0], [0.0], 300.0, 400.0)
     assert not rejected.successful
     np.testing.assert_array_equal(rejected.upward_flux, 0.0)
-
-
-def test_optical_zero_boundary_has_finite_correct_native_derivative() -> None:
-    plan = ColumnRadiationPlan(
-        optics(sw=(1, 0, 0, 0), lw=(1, 0, 0, 0)), surface_albedo=0.0
-    )
-
-    def observable(scale: Any) -> Any:
-        calibrated = eqx.tree_at(
-            lambda p: (p.shortwave_absorption_scale, p.longwave_absorption_scale),
-            plan,
-            (jnp.full(4, scale), jnp.full(4, scale)),
+    with pytest.raises(ValueError, match="nonnegative"):
+        optics(sw=(-1, 0, 0, 0))
+    with pytest.raises(ValueError, match="asymmetry"):
+        optics(asymmetry=(0, 0, 1.1, 0))
+    with pytest.raises(ValueError, match="reference_id"):
+        ColumnOpticalProperties(
+            shortwave_absorption=[0] * 4,
+            shortwave_scattering=[0] * 4,
+            longwave_absorption=[0] * 4,
+            reference_id="",
         )
-        result = calibrated.evaluate([250.0], [2.0], [0.0], [0.0], [0.0], 300.0, 400.0)
-        return jnp.stack(
-            (result.shortwave_downward_flux[-1], result.longwave_upward_flux[0])
+    with pytest.raises(ValueError, match="common positive length"):
+        ColumnRadiationPlan(optics()).evaluate(
+            # ty: ignore[invalid-argument-type]
+            [250.0, 270.0],
+            # ty: ignore[invalid-argument-type]
+            [1.0],
+            # ty: ignore[invalid-argument-type]
+            [0.0],
+            # ty: ignore[invalid-argument-type]
+            [0.0],
+            # ty: ignore[invalid-argument-type]
+            [0.0],
+            300.0,
+            400.0,
         )
-
-    derivative = jax.jacfwd(observable)(0.0)
-    np.testing.assert_allclose(
-        derivative, [-1600.0, -4 * SIGMA * (300.0**4 - 250.0**4)], rtol=2e-12
-    )
-    parameters, model_state, fixed = partition_parameters(plan)
-    restored = combine_parameters(parameters, model_state, fixed)
-    differentiated = eqx.filter_grad(
-        lambda p: (
-            p.evaluate([250.0], [2.0], [0.0], [0.0], [0.0], 300.0, 400.0).space_heating
-        )
-    )(restored)
-    assert jnp.isfinite(differentiated.longwave_absorption_scale).all()
-    assert differentiated.longwave_absorption_scale[0] < 0.0
-
-
-def test_falling_precipitation_is_neither_dry_gas_nor_suspended_cloud_optics() -> None:
     plan = ColumnRadiationPlan(
         optics(sw=(0.03, 0.1, 0.2, 0.3), scatter=(0.01, 0, 3, 2), lw=(0.07, 0.3, 4, 2)),
     )
@@ -404,30 +378,32 @@ def test_falling_precipitation_is_neither_dry_gas_nor_suspended_cloud_optics() -
     np.testing.assert_array_equal(rejected.heating, 0.0)
 
 
-def test_invalid_optical_data_and_layer_shapes_are_explicit_errors() -> None:
-    with pytest.raises(ValueError, match="nonnegative"):
-        optics(sw=(-1, 0, 0, 0))
-    with pytest.raises(ValueError, match="asymmetry"):
-        optics(asymmetry=(0, 0, 1.1, 0))
-    with pytest.raises(ValueError, match="reference_id"):
-        ColumnOpticalProperties(
-            shortwave_absorption=[0] * 4,
-            shortwave_scattering=[0] * 4,
-            longwave_absorption=[0] * 4,
-            reference_id="",
+def test_optical_zero_boundary_has_finite_correct_native_derivative() -> None:
+    plan = ColumnRadiationPlan(
+        optics(sw=(1, 0, 0, 0), lw=(1, 0, 0, 0)), surface_albedo=0.0
+    )
+
+    def observable(scale: Any) -> Any:
+        calibrated = eqx.tree_at(
+            lambda p: (p.shortwave_absorption_scale, p.longwave_absorption_scale),
+            plan,
+            (jnp.full(4, scale), jnp.full(4, scale)),
         )
-    with pytest.raises(ValueError, match="common positive length"):
-        ColumnRadiationPlan(optics()).evaluate(
-            # ty: ignore[invalid-argument-type]
-            [250.0, 270.0],
-            # ty: ignore[invalid-argument-type]
-            [1.0],
-            # ty: ignore[invalid-argument-type]
-            [0.0],
-            # ty: ignore[invalid-argument-type]
-            [0.0],
-            # ty: ignore[invalid-argument-type]
-            [0.0],
-            300.0,
-            400.0,
+        result = calibrated.evaluate([250.0], [2.0], [0.0], [0.0], [0.0], 300.0, 400.0)
+        return jnp.stack(
+            (result.shortwave_downward_flux[-1], result.longwave_upward_flux[0])
         )
+
+    derivative = jax.jacfwd(observable)(0.0)
+    np.testing.assert_allclose(
+        derivative, [-1600.0, -4 * SIGMA * (300.0**4 - 250.0**4)], rtol=2e-12
+    )
+    parameters, model_state, fixed = partition_parameters(plan)
+    restored = combine_parameters(parameters, model_state, fixed)
+    differentiated = eqx.filter_grad(
+        lambda p: (
+            p.evaluate([250.0], [2.0], [0.0], [0.0], [0.0], 300.0, 400.0).space_heating
+        )
+    )(restored)
+    assert jnp.isfinite(differentiated.longwave_absorption_scale).all()
+    assert differentiated.longwave_absorption_scale[0] < 0.0

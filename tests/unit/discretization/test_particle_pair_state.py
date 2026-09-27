@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_pair_key_space_is_stable_under_arbitrary_particle_ids() -> None:
+def test_pair_contracts() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([30, 2, 10]),
         jnp.ones((3,)),
@@ -25,9 +25,6 @@ def test_pair_key_space_is_stable_under_arbitrary_particle_ids() -> None:
     expected = jnp.asarray([[0, 2, 10, 0, 0], [0, 2, 30, 0, 0], [0, 10, 30, 0, 0]])
     order = jnp.lexsort((keys.keys[:, 2], keys.keys[:, 1]))
     assert jnp.array_equal(keys.keys[order], expected)
-
-
-def test_pair_history_remap_preserves_continued_values_and_zeros_births() -> None:
     old_keys = jnp.asarray([[0, 1, 2, 0, 0], [0, 1, 3, 0, 0], [0, 2, 3, 0, 0]])
     new_keys = jnp.asarray([[0, 2, 3, 0, 0], [0, 1, 2, 0, 0], [0, 3, 4, 0, 0]])
     remap = phx.discretization.match_particle_pair_keys(
@@ -60,9 +57,6 @@ def test_pair_history_remap_preserves_continued_values_and_zeros_births() -> Non
         ({"scalar": jnp.ones((3,)), "vector": jnp.zeros((3, 2))},),
     )[1]
     assert jnp.array_equal(tangent, jnp.asarray([1.0, 1.0, 0.0]))
-
-
-def test_pair_remap_reports_duplicates_and_accepts_empty_relations() -> None:
     duplicate = phx.discretization.match_particle_pair_keys(
         jnp.asarray([[0, 1, 2, 0, 0], [0, 1, 2, 0, 0]]),
         jnp.asarray([True, True]),

@@ -46,7 +46,7 @@ def _intended_use() -> Any:
     )
 
 
-def test_support_matrix_is_exact_and_fail_closed() -> None:
+def test_mpm_commercial_claims_scenario_1() -> None:
     claim = _claim()
     supported = phx.discretization.MPMSupportDecision(
         claim,
@@ -84,9 +84,6 @@ def test_support_matrix_is_exact_and_fail_closed() -> None:
         matrix.decision(rejected_claim.claim_id).require_supported()
     with pytest.raises(KeyError):
         matrix.decision("missing")
-
-
-def test_release_bundle_requires_g0_g7_and_independent_review() -> None:
     claim = _claim()
     intended = _intended_use()
     gates = tuple(
@@ -177,11 +174,6 @@ def test_release_bundle_requires_g0_g7_and_independent_review() -> None:
         review,
     )
     assert code_assessment.releasable
-
-
-def test_derivative_results_distinguish_branch_event_surrogate_and_nondifferentiable() -> (
-    None
-):
     objective = lambda value: jnp.sum(value**2)
     primal = jnp.asarray((1.0, -2.0))
     direction = jnp.asarray((0.2, 0.3))

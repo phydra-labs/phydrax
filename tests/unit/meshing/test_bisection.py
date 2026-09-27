@@ -165,23 +165,39 @@ def _corner_cells(mesh: CellMesh) -> np.ndarray:
     return np.sort(_cell_ids(mesh)[np.any(_cells(mesh) == corner, axis=1)])
 
 
-@pytest.mark.parametrize(
-    ("mesh", "cycles", "stride"),
-    [(_triangle_grid(4, 4), 6, 7), (_kuhn_grid(2), 4, 11)],
-    ids=["triangles", "tetrahedra"],
-)
-def test_adversarial_local_refinement_stays_conforming(
-    mesh: Any, cycles: Any, stride: Any
-) -> None:
-    result = _adapt(_certified(mesh), (0, 5, 17, 30))
-    for _ in range(cycles):
-        target = result.target.mesh
-        marks = np.union1d(_corner_cells(target), np.sort(_cell_ids(target))[::stride])
-        result = _adapt(result.target, marks, hierarchy=result.hierarchy)
-        _assert_conforming(result.target.mesh, 1.0)
-        _assert_boundary_on_unit_box(result.target.mesh)
-    assert result.status is MeshAdaptationStatus.COMPLETE
-    assert result.evidence.maximum_generation >= cycles
+def test_bisection_scenario_1() -> None:
+    for mesh, cycles, stride in [(_triangle_grid(4, 4), 6, 7), (_kuhn_grid(2), 4, 11)]:
+        result = _adapt(_certified(mesh), (0, 5, 17, 30))
+        for _ in range(cycles):
+            target = result.target.mesh
+            marks = np.union1d(
+                _corner_cells(target), np.sort(_cell_ids(target))[::stride]
+            )
+            result = _adapt(result.target, marks, hierarchy=result.hierarchy)
+            _assert_conforming(result.target.mesh, 1.0)
+            _assert_boundary_on_unit_box(result.target.mesh)
+        assert result.status is MeshAdaptationStatus.COMPLETE
+        assert result.evidence.maximum_generation >= cycles
+    source = _certified(_triangle_grid(2, 2, height=0.6))
+    bound = _uniform_class_bound(source, _minimum_angles, 4)
+    result = _adapt(source, _corner_cells(source.mesh))
+    for _ in range(20):
+        assert np.min(_minimum_angles(result.target.mesh)) >= bound - 1.0e-12
+        result = _adapt(
+            result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
+        )
+    assert np.min(_minimum_angles(result.target.mesh)) >= bound - 1.0e-12
+    assert result.evidence.maximum_generation >= 20
+    source = _certified(_kuhn_grid(1))
+    bound = _uniform_class_bound(source, _mean_ratios, 3)
+    result = _adapt(source, _corner_cells(source.mesh))
+    for _ in range(9):
+        assert np.min(_mean_ratios(result.target.mesh)) >= 0.999 * bound
+        result = _adapt(
+            result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
+        )
+    assert np.min(_mean_ratios(result.target.mesh)) >= 0.999 * bound
+    assert result.evidence.maximum_generation >= 9
 
 
 def _uniform_class_bound(source: Any, quality: Any, rounds: int) -> float:
@@ -196,77 +212,43 @@ def _uniform_class_bound(source: Any, quality: Any, rounds: int) -> float:
     return bound
 
 
-def test_newest_vertex_bisection_keeps_the_initial_angle_bound() -> None:
-    source = _certified(_triangle_grid(2, 2, height=0.6))
-    bound = _uniform_class_bound(source, _minimum_angles, 4)
-    result = _adapt(source, _corner_cells(source.mesh))
-    for _ in range(20):
-        assert np.min(_minimum_angles(result.target.mesh)) >= bound - 1.0e-12
+def test_bisection_scenario_2() -> None:
+    for mesh in [_triangle_grid(3, 3), _kuhn_grid(2)]:
+        source = _certified(mesh)
+        refined = _adapt(source, np.sort(_cell_ids(mesh))[::3])
+        refined = _adapt(
+            refined.target,
+            _corner_cells(refined.target.mesh),
+            hierarchy=refined.hierarchy,
+        )
+        assert refined.target.mesh.topology_id != source.mesh.topology_id
+        restored = _adapt(
+            refined.target,
+            (),
+            np.sort(_cell_ids(refined.target.mesh)),
+            hierarchy=refined.hierarchy,
+        )
+        target = restored.target.mesh
+        # Marked cells that were never refined have no family to merge into.
+        assert np.all(np.isin(restored.evidence.rejected_coarsening_ids, _cell_ids(mesh)))
+        assert restored.evidence.coarsened_vertices == (
+            refined.target.mesh.coordinates.shape[0] - mesh.coordinates.shape[0]
+        )
+        assert target.topology_id == source.mesh.topology_id
+        np.testing.assert_array_equal(target.vertex_global_ids, mesh.vertex_global_ids)
+        np.testing.assert_array_equal(_cell_ids(target), _cell_ids(mesh))
+        np.testing.assert_array_equal(target.coordinates, mesh.coordinates)
+    for mesh in [_triangle_grid(3, 3), _kuhn_grid(2)]:
+        result = _adapt(_certified(mesh), np.sort(_cell_ids(mesh))[::2])
         result = _adapt(
             result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
         )
-    assert np.min(_minimum_angles(result.target.mesh)) >= bound - 1.0e-12
-    assert result.evidence.maximum_generation >= 20
-
-
-def test_tetrahedral_bisection_keeps_bounded_similarity_classes() -> None:
-    source = _certified(_kuhn_grid(1))
-    bound = _uniform_class_bound(source, _mean_ratios, 3)
-    result = _adapt(source, _corner_cells(source.mesh))
-    for _ in range(9):
-        assert np.min(_mean_ratios(result.target.mesh)) >= 0.999 * bound
-        result = _adapt(
-            result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
+        slope = np.linspace(0.5, 1.5, mesh.ambient_dimension)
+        before = np.asarray(result.source.mesh.coordinates) @ slope + 0.25
+        expected = np.asarray(result.target.mesh.coordinates) @ slope + 0.25
+        np.testing.assert_allclose(
+            np.asarray(result.transfer.apply(before)), expected, rtol=0.0, atol=1.0e-13
         )
-    assert np.min(_mean_ratios(result.target.mesh)) >= 0.999 * bound
-    assert result.evidence.maximum_generation >= 9
-
-
-@pytest.mark.parametrize(
-    "mesh", [_triangle_grid(3, 3), _kuhn_grid(2)], ids=["triangles", "tetrahedra"]
-)
-def test_refine_then_coarsen_restores_the_source_exactly(mesh: Any) -> None:
-    source = _certified(mesh)
-    refined = _adapt(source, np.sort(_cell_ids(mesh))[::3])
-    refined = _adapt(
-        refined.target, _corner_cells(refined.target.mesh), hierarchy=refined.hierarchy
-    )
-    assert refined.target.mesh.topology_id != source.mesh.topology_id
-    restored = _adapt(
-        refined.target,
-        (),
-        np.sort(_cell_ids(refined.target.mesh)),
-        hierarchy=refined.hierarchy,
-    )
-    target = restored.target.mesh
-    # Marked cells that were never refined have no family to merge into.
-    assert np.all(np.isin(restored.evidence.rejected_coarsening_ids, _cell_ids(mesh)))
-    assert restored.evidence.coarsened_vertices == (
-        refined.target.mesh.coordinates.shape[0] - mesh.coordinates.shape[0]
-    )
-    assert target.topology_id == source.mesh.topology_id
-    np.testing.assert_array_equal(target.vertex_global_ids, mesh.vertex_global_ids)
-    np.testing.assert_array_equal(_cell_ids(target), _cell_ids(mesh))
-    np.testing.assert_array_equal(target.coordinates, mesh.coordinates)
-
-
-@pytest.mark.parametrize(
-    "mesh", [_triangle_grid(3, 3), _kuhn_grid(2)], ids=["triangles", "tetrahedra"]
-)
-def test_linear_fields_transfer_exactly(mesh: Any) -> None:
-    result = _adapt(_certified(mesh), np.sort(_cell_ids(mesh))[::2])
-    result = _adapt(
-        result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
-    )
-    slope = np.linspace(0.5, 1.5, mesh.ambient_dimension)
-    before = np.asarray(result.source.mesh.coordinates) @ slope + 0.25
-    expected = np.asarray(result.target.mesh.coordinates) @ slope + 0.25
-    np.testing.assert_allclose(
-        np.asarray(result.transfer.apply(before)), expected, rtol=0.0, atol=1.0e-13
-    )
-
-
-def test_marks_whose_closure_splits_a_protected_edge_are_rejected() -> None:
     source = _certified(_triangle_grid(4, 4))
     mesh = source.mesh
     edges = mesh.entity_set(1)
@@ -299,7 +281,7 @@ def test_marks_whose_closure_splits_a_protected_edge_are_rejected() -> None:
     assert not np.any(np.isin(_cell_ids(target), elsewhere))
 
 
-def test_protected_vertices_are_never_coarsened_away() -> None:
+def test_bisection_scenario_3() -> None:
     source = _certified(_triangle_grid(2, 2))
     refined = _adapt(source, np.sort(_cell_ids(source.mesh)))
     refined = _adapt(
@@ -331,11 +313,6 @@ def test_protected_vertices_are_never_coarsened_away() -> None:
     np.testing.assert_array_equal(surviving, kept)
     assert result.evidence.coarsened_vertices == created.size - 1
     _assert_conforming(result.target.mesh, 1.0)
-
-
-def test_incompatible_labelling_is_rejected_unless_uniform_refinement_is_requested() -> (
-    None
-):
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     mesh = CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
     source = _certified(mesh)
@@ -349,9 +326,6 @@ def test_incompatible_labelling_is_rejected_unless_uniform_refinement_is_request
         result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
     )
     _assert_conforming(follow.target.mesh, 3.5)
-
-
-def test_bisection_is_deterministic() -> None:
     first = _adapt(_certified(_kuhn_grid(2)), (0, 7, 13))
     second = _adapt(_certified(_kuhn_grid(2)), (0, 7, 13))
     assert first.result_id == second.result_id

@@ -19,7 +19,7 @@ from phydrax.integration import from_samples, over
 from phydrax.operators.integral import integral
 
 
-def test_coord_separable_fourier_axis_spec_interval_discretization_attached() -> None:
+def test_grid_coord_separable_and_quadrature_scenario_1() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
@@ -43,24 +43,6 @@ def test_coord_separable_fourier_axis_spec_interval_discretization_attached() ->
     assert jnp.sum(disc.quad_weights) == pytest.approx(1.0, abs=1e-12)
     assert disc.nodes.shape == x_field.data.shape
     assert jnp.allclose(disc.nodes, jnp.asarray(x_field.data, dtype="float64"))
-
-
-def test_coord_separable_legendre_axis_spec_integral_matches_closed_form() -> None:
-    geom = Interval1d(-1.0, 2.0)
-    component = geom.component()
-
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return x[0] ** 2
-
-    batch = component.sample(phx.domain.GridSampling({"x": LegendreAxisSpec(6)}))
-    realization = from_samples(over(component), batch)
-    out = integral(u, realization)
-    expected = (2.0**3 - (-1.0) ** 3) / 3.0
-    assert jnp.allclose(jnp.asarray(out.data), expected, rtol=1e-7, atol=1e-7)
-
-
-def test_legendre_axis_endpoint_rules_and_validation() -> None:
     lower = jnp.asarray(-2.0)
     upper = jnp.asarray(3.0)
     radau = LegendreAxisSpec(5, kind="radau").materialize(lower, upper)
@@ -78,9 +60,6 @@ def test_legendre_axis_endpoint_rules_and_validation() -> None:
         LegendreAxisSpec(4, kind="typo")
     with pytest.raises(ValueError, match="at least two"):
         LegendreAxisSpec(1, kind="lobatto")
-
-
-def test_sdf_domain_function_preserves_interval_sign_and_boundary_distance() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     epsilon = 1e-4
@@ -95,6 +74,21 @@ def test_sdf_domain_function_preserves_interval_sign_and_boundary_distance() -> 
     )
     near_boundary = jnp.asarray([1, 3, 5, 7])
     assert jnp.allclose(jnp.abs(values[near_boundary]), epsilon, rtol=1e-3)
+
+
+def test_coord_separable_legendre_axis_spec_integral_matches_closed_form() -> None:
+    geom = Interval1d(-1.0, 2.0)
+    component = geom.component()
+
+    @geom.Function("x")
+    def u(x: Any) -> Any:
+        return x[0] ** 2
+
+    batch = component.sample(phx.domain.GridSampling({"x": LegendreAxisSpec(6)}))
+    realization = from_samples(over(component), batch)
+    out = integral(u, realization)
+    expected = (2.0**3 - (-1.0) ** 3) / 3.0
+    assert jnp.allclose(jnp.asarray(out.data), expected, rtol=1e-7, atol=1e-7)
 
 
 def test_coord_separable_scalar_time_axis_integral_constant() -> None:

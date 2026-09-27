@@ -93,9 +93,7 @@ def _equality_kkt_solution(
     return states, controls
 
 
-def test_continuous_are_matches_textbook_and_scipy_for_stable_and_unstable_systems() -> (
-    None
-):
+def test_lqr_riccati_scenario_1() -> None:
     b = jnp.ones((1, 1))
     q = jnp.ones((1, 1))
     r = jnp.ones((1, 1))
@@ -117,9 +115,6 @@ def test_continuous_are_matches_textbook_and_scipy_for_stable_and_unstable_syste
     np.testing.assert_allclose(result.matrix, reference, rtol=2e-9, atol=2e-9)
     assert result.diagnostics.equation.system_type == "continuous"
     assert result.diagnostics.relative_residual < 1e-9
-
-
-def test_discrete_are_matches_scipy_and_stabilizes_unstable_system() -> None:
     a = np.array([[1.15, 0.2], [0.0, 0.8]])
     b = np.array([[1.0], [0.4]])
     q = np.diag([1.5, 0.5])
@@ -133,9 +128,6 @@ def test_discrete_are_matches_scipy_and_stabilizes_unstable_system() -> None:
     assert np.max(np.abs(np.linalg.eigvals(closed_loop))) < 1.0
     assert bool(result.valid)
     assert result.diagnostics.equation.system_type == "discrete"
-
-
-def test_unstabilizable_and_undetectable_modes_have_explicit_status() -> None:
     continuous_unstabilizable = solve_continuous_are(
         jnp.diag(jnp.array([1.0, -1.0])),
         jnp.array([[0.0], [1.0]]),
@@ -158,7 +150,7 @@ def test_unstabilizable_and_undetectable_modes_have_explicit_status() -> None:
     assert not bool(discrete_undetectable.valid)
 
 
-def test_invalid_infinite_lqr_results_retain_only_raw_policy_evidence() -> None:
+def test_lqr_riccati_scenario_2() -> None:
     one = jnp.ones((1, 1))
     zero = jnp.zeros((1, 1))
 
@@ -178,9 +170,6 @@ def test_invalid_infinite_lqr_results_retain_only_raw_policy_evidence() -> None:
         assert result.feedback_gain.shape == (1, 1)
     assert int(continuous.status) == RiccatiStatus.UNSTABILIZABLE
     assert int(discrete.status) == RiccatiStatus.UNSTABILIZABLE
-
-
-def test_batched_infinite_lqr_retains_independent_valid_case_policy() -> None:
     result = continuous_lqr(
         jnp.array([[[-1.0]], [[0.0]]]),
         jnp.array([[[1.0]], [[0.0]]]),
@@ -193,9 +182,6 @@ def test_batched_infinite_lqr_retains_independent_valid_case_policy() -> None:
     assert result.feedback_gain is not None
     assert bool(jnp.isfinite(result.feedback_gain[0, 0, 0]))
     assert int(result.status[1]) == RiccatiStatus.UNSTABILIZABLE
-
-
-def test_riccati_equation_convergence_excludes_outer_structural_diagnosis() -> None:
     result = solve_continuous_are(
         jnp.ones((1, 1)),
         jnp.ones((1, 1)),
@@ -211,9 +197,7 @@ def test_riccati_equation_convergence_excludes_outer_structural_diagnosis() -> N
     assert int(result.status) == RiccatiStatus.UNDETECTABLE
 
 
-def test_finite_lqr_nonfinite_value_constants_and_residuals_have_nonfinite_status() -> (
-    None
-):
+def test_lqr_riccati_scenario_3() -> None:
     horizon = 2
     stage = jnp.ones((horizon, 1, 1))
     huge = jnp.asarray(0.75 * np.finfo(np.float64).max)
@@ -231,9 +215,6 @@ def test_finite_lqr_nonfinite_value_constants_and_residuals_have_nonfinite_statu
     assert not bool(result.diagnostics.finite)
     assert not bool(result.valid)
     assert int(result.status) == RiccatiStatus.NONFINITE
-
-
-def test_finite_lqr_rejects_complex_data_nan_tolerances_and_nan_query_times() -> None:
     stage = jnp.ones((1, 1, 1))
     with pytest.raises(TypeError, match="real-valued"):
         finite_horizon_lqr(
@@ -263,9 +244,30 @@ def test_finite_lqr_rejects_complex_data_nan_tolerances_and_nan_query_times() ->
         )
     with pytest.raises(eqx.EquinoxRuntimeError, match="physical grid"):
         result.value.evaluate(jnp.asarray(jnp.nan), jnp.ones((1,)))
+    horizon = 3
+    case_shape = (2,)
+    a = jnp.array([1.0, 0.8])[:, None, None, None] * jnp.ones(
+        case_shape + (horizon, 1, 1)
+    )
+    b = jnp.ones(case_shape + (horizon, 1, 1))
+    q = jnp.ones(case_shape + (horizon, 1, 1))
+    r = jnp.ones(case_shape + (horizon, 1, 1))
+    qf = jnp.ones(case_shape + (1, 1))
+    result = finite_horizon_lqr(a, b, q, r, qf)
 
-
-def test_singular_or_indefinite_costs_are_rejected_without_regularization() -> None:
+    assert result.feedback_gain.shape == case_shape + (horizon, 1, 1)
+    assert result.feedforward.shape == case_shape + (horizon, 1)
+    assert result.value.matrices.shape == case_shape + (horizon + 1, 1, 1)
+    assert result.diagnostics.kkt_residuals.shape == case_shape + (horizon,)
+    assert result.status.shape == case_shape
+    assert bool(jnp.all(result.valid))
+    controls = result.policy.evaluate(
+        jnp.zeros(case_shape),
+        jnp.asarray(0.0),
+        case_shape=case_shape,
+        state=jnp.array([[1.0], [2.0]]),
+    )
+    assert controls.shape == case_shape + (1,)
     stage = jnp.ones((2, 1, 1))
     with pytest.raises(eqx.EquinoxRuntimeError, match="singular control costs"):
         finite_horizon_lqr(stage, stage, stage, jnp.zeros_like(stage), jnp.ones((1, 1)))
@@ -276,9 +278,6 @@ def test_singular_or_indefinite_costs_are_rejected_without_regularization() -> N
             jnp.array([[-1.0]]),
             jnp.ones((1, 1)),
         )
-
-
-def test_affine_time_varying_riccati_matches_full_kkt_block_solve() -> None:
     a = jnp.array(
         [
             [[1.0, 0.2], [0.0, 1.0]],
@@ -322,9 +321,6 @@ def test_affine_time_varying_riccati_matches_full_kkt_block_solve() -> None:
     assert result.diagnostics.method == "sequential-riccati"
     assert result.diagnostics.maximum_kkt_residual < 1e-10
     assert bool(result.valid)
-
-
-def test_affine_tracking_feedback_rolls_out_through_control_foundation() -> None:
     horizon = 8
     time_grid = phx.dynamics.TimeGrid(
         jnp.linspace(0.0, 1.0, horizon + 1), time_id="lqr-rollout-grid"
@@ -378,33 +374,6 @@ def test_long_finite_horizon_converges_to_discrete_infinite_horizon_gain() -> No
     np.testing.assert_allclose(
         finite.feedback_gain[0], infinite.feedback_gain, rtol=2e-9, atol=2e-9
     )
-
-
-def test_finite_lqr_preserves_explicit_case_and_time_axes() -> None:
-    horizon = 3
-    case_shape = (2,)
-    a = jnp.array([1.0, 0.8])[:, None, None, None] * jnp.ones(
-        case_shape + (horizon, 1, 1)
-    )
-    b = jnp.ones(case_shape + (horizon, 1, 1))
-    q = jnp.ones(case_shape + (horizon, 1, 1))
-    r = jnp.ones(case_shape + (horizon, 1, 1))
-    qf = jnp.ones(case_shape + (1, 1))
-    result = finite_horizon_lqr(a, b, q, r, qf)
-
-    assert result.feedback_gain.shape == case_shape + (horizon, 1, 1)
-    assert result.feedforward.shape == case_shape + (horizon, 1)
-    assert result.value.matrices.shape == case_shape + (horizon + 1, 1, 1)
-    assert result.diagnostics.kkt_residuals.shape == case_shape + (horizon,)
-    assert result.status.shape == case_shape
-    assert bool(jnp.all(result.valid))
-    controls = result.policy.evaluate(
-        jnp.zeros(case_shape),
-        jnp.asarray(0.0),
-        case_shape=case_shape,
-        state=jnp.array([[1.0], [2.0]]),
-    )
-    assert controls.shape == case_shape + (1,)
 
 
 def test_are_implicit_gradients_match_centered_direct_differences() -> None:

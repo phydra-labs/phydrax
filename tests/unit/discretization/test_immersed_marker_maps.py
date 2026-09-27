@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_rigid_marker_velocity_and_load_are_adjoint() -> None:
+def test_immersed_marker_maps_scenario_1() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.asarray([2.0]), ambient_dimension=2
     ).prepare()
@@ -41,9 +41,6 @@ def test_rigid_marker_velocity_and_load_are_adjoint() -> None:
     evaluated = rigid_map.evaluate(kinematics)
     assert evaluated.position.shape == (2, 2)
     assert evaluated.velocity.shape == (2, 2)
-
-
-def test_finite_element_marker_map_uses_paired_H_and_H_adjoint() -> None:
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.asarray([0, 1]),
         jnp.zeros((2, 2)),

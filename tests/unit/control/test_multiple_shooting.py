@@ -18,7 +18,7 @@ from tests._control_systems import (
 )
 
 
-def test_multiple_shooting_layout_uses_local_pose_coordinates() -> None:
+def test_multiple_shooting_scenario_1() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -49,9 +49,6 @@ def test_multiple_shooting_layout_uses_local_pose_coordinates() -> None:
         jax.vmap(geometry.inverse_retract)(equivalent, states),
         0.0,
     )
-
-
-def test_multiple_shooting_pose_continuity_defect_is_local_and_sign_invariant() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -96,36 +93,24 @@ def test_multiple_shooting_pose_continuity_defect_is_local_and_sign_invariant() 
     np.testing.assert_allclose(linearization.equality_jacobian[6:, 6:12], identity)
     np.testing.assert_allclose(linearization.equality_jacobian[6:, 12:], 0.0)
     assert jnp.all(jnp.isfinite(linearization.equality_jacobian))
-
-
-def _linear_problem(
-    *, num_steps: Any = 2, path_constraints: Any = (), terminal_constraints: Any = ()
-) -> Any:
-    grid = phx.dynamics.TimeGrid(
-        jnp.arange(num_steps + 1, dtype="float64"),
-        time_id=f"multiple-shooting-linear-{num_steps}",
+    problem = _linear_problem()
+    compilation = phx.control.compile_structured_multiple_shooting(
+        problem,
+        jnp.zeros((3, 1)),
+        jnp.zeros((2, 1)),
     )
-    dynamics = make_discrete_control_dynamics(
-        lambda time, state, control, args: state + control,
-        state_shape=(1,),
-        control_shape=(1,),
-        dynamics_id="multiple-shooting-linear-integrator",
-    )
-    return phx.control.ControlProblem(
-        dynamics,
-        grid,
-        jnp.asarray([0.0]),
-        running_cost=lambda time, state, control, args: (
-            0.5 * (state[0] ** 2 + control[0] ** 2)
+    result = phx.control.solve_structured_multiple_shooting(
+        compilation,
+        method=phx.optim.PrimalDualInteriorPoint(mode="sparse-augmented"),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=1e-6,
+            relative_optimality=0.0,
+            maximum_steps=80,
         ),
-        terminal_cost=lambda time, state, args: 0.5 * (state[0] - 1.0) ** 2,
-        path_constraints=path_constraints,
-        terminal_constraints=terminal_constraints,
-        problem_id=f"multiple-shooting-linear-problem-{num_steps}",
     )
-
-
-def test_linear_subproblem_matches_kkt_oracle_and_exact_derivatives() -> None:
+    assert bool(result.successful)
+    assert result.maximum_defect <= 1e-6
+    assert result.maximum_constraint_violation <= 1e-6
     problem = _linear_problem()
     states = jnp.zeros((3, 1))
     controls = jnp.zeros((2, 1))
@@ -180,6 +165,68 @@ def test_linear_subproblem_matches_kkt_oracle_and_exact_derivatives() -> None:
     np.testing.assert_allclose(result.layout.pack(states, controls), jnp.zeros((5,)))
     np.testing.assert_allclose(result.last_qp_result.primal, oracle, atol=1e-6)
     np.testing.assert_allclose(result.trajectory.states, result.state_nodes, atol=1e-6)
+    grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 1.0, 2.0]), time_id="multiple-shooting-nonlinear"
+    )
+    dynamics = make_discrete_control_dynamics(
+        lambda time, state, control, args: state + control + 0.1 * control**2,
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="multiple-shooting-nonlinear-dynamics",
+    )
+    problem = phx.control.ControlProblem(
+        dynamics,
+        grid,
+        jnp.asarray([0.0]),
+        running_cost=lambda time, state, control, args: 0.5 * control[0] ** 2,
+        path_constraints=(lambda time, state, control, args: control[0] ** 2 - 1.0,),
+        terminal_constraints=(lambda time, state, args: 0.8 - state[0],),
+        problem_id="multiple-shooting-nonlinear-constrained",
+    )
+
+    result = phx.control.solve_multiple_shooting(
+        problem,
+        jnp.zeros((3, 1)),
+        jnp.zeros((2, 1)),
+        hessian_regularization=1e-9,
+        max_iterations=10,
+    )
+
+    assert result.successful
+    assert result.maximum_defect <= 1e-6
+    assert result.maximum_constraint_violation <= 1e-6
+    assert jnp.all(result.path_residuals <= 0.0)
+    assert jnp.all(result.terminal_residuals <= 1e-6)
+    assert result.rollout_state_error <= 1e-5
+    assert jnp.all(result.history.accepted)
+    assert np.all(np.diff(np.asarray(result.history.merit)) <= 1e-10)
+
+
+def _linear_problem(
+    *, num_steps: Any = 2, path_constraints: Any = (), terminal_constraints: Any = ()
+) -> Any:
+    grid = phx.dynamics.TimeGrid(
+        jnp.arange(num_steps + 1, dtype="float64"),
+        time_id=f"multiple-shooting-linear-{num_steps}",
+    )
+    dynamics = make_discrete_control_dynamics(
+        lambda time, state, control, args: state + control,
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="multiple-shooting-linear-integrator",
+    )
+    return phx.control.ControlProblem(
+        dynamics,
+        grid,
+        jnp.asarray([0.0]),
+        running_cost=lambda time, state, control, args: (
+            0.5 * (state[0] ** 2 + control[0] ** 2)
+        ),
+        terminal_cost=lambda time, state, args: 0.5 * (state[0] - 1.0) ** 2,
+        path_constraints=path_constraints,
+        terminal_constraints=terminal_constraints,
+        problem_id=f"multiple-shooting-linear-problem-{num_steps}",
+    )
 
 
 def test_exact_boundary_continuity_path_and_terminal_defect_accounting() -> None:
@@ -280,45 +327,7 @@ def test_multiple_shooting_rejects_explicit_finite_rollback_segments() -> None:
     )
 
 
-def test_nonlinear_constrained_problem_converges_without_projection_or_repair() -> None:
-    grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 1.0, 2.0]), time_id="multiple-shooting-nonlinear"
-    )
-    dynamics = make_discrete_control_dynamics(
-        lambda time, state, control, args: state + control + 0.1 * control**2,
-        state_shape=(1,),
-        control_shape=(1,),
-        dynamics_id="multiple-shooting-nonlinear-dynamics",
-    )
-    problem = phx.control.ControlProblem(
-        dynamics,
-        grid,
-        jnp.asarray([0.0]),
-        running_cost=lambda time, state, control, args: 0.5 * control[0] ** 2,
-        path_constraints=(lambda time, state, control, args: control[0] ** 2 - 1.0,),
-        terminal_constraints=(lambda time, state, args: 0.8 - state[0],),
-        problem_id="multiple-shooting-nonlinear-constrained",
-    )
-
-    result = phx.control.solve_multiple_shooting(
-        problem,
-        jnp.zeros((3, 1)),
-        jnp.zeros((2, 1)),
-        hessian_regularization=1e-9,
-        max_iterations=10,
-    )
-
-    assert result.successful
-    assert result.maximum_defect <= 1e-6
-    assert result.maximum_constraint_violation <= 1e-6
-    assert jnp.all(result.path_residuals <= 0.0)
-    assert jnp.all(result.terminal_residuals <= 1e-6)
-    assert result.rollout_state_error <= 1e-5
-    assert jnp.all(result.history.accepted)
-    assert np.all(np.diff(np.asarray(result.history.merit)) <= 1e-10)
-
-
-def test_rejected_merit_line_search_is_explicit() -> None:
+def test_multiple_shooting_scenario_2() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]), time_id="multiple-shooting-rejected-line"
     )
@@ -350,29 +359,6 @@ def test_rejected_merit_line_search_is_explicit() -> None:
     np.testing.assert_array_equal(result.history.accepted, jnp.asarray([False]))
     np.testing.assert_allclose(result.history.step_size, jnp.asarray([0.0]))
     np.testing.assert_allclose(result.control_nodes, jnp.asarray([[3.0]]))
-
-
-def test_infeasible_dense_qp_status_is_propagated() -> None:
-    def impossible(time: Any, state: Any, control: Any, args: Any) -> Any:
-        return jnp.asarray(1.0)
-
-    problem = _linear_problem(num_steps=1, path_constraints=(impossible,))
-
-    result = phx.control.solve_multiple_shooting(
-        problem, jnp.zeros((2, 1)), jnp.zeros((1, 1)), max_iterations=2
-    )
-    assert result.last_qp_result is not None
-
-    assert result.status == phx.control.MULTIPLE_SHOOTING_QP_FAILED
-    assert result.last_qp_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
-    np.testing.assert_array_equal(
-        result.history.qp_status,
-        jnp.asarray([phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE]),
-    )
-    assert not result.valid
-
-
-def test_concave_qp_model_at_stationary_maximum_is_rejected() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]), time_id="multiple-shooting-concave"
     )
@@ -402,11 +388,6 @@ def test_concave_qp_model_at_stationary_maximum_is_rejected() -> None:
     assert not result.successful
     assert result.last_qp_result is None
     assert result.history.num_iterations == 0
-
-
-def test_differential_segments_use_canonical_solver_and_report_failed_integration() -> (
-    None
-):
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.5, 1.0]), time_id="multiple-shooting-ode"
     )
@@ -447,9 +428,6 @@ def test_differential_segments_use_canonical_solver_and_report_failed_integratio
     assert failed.status == phx.control.MULTIPLE_SHOOTING_INTEGRATION_FAILED
     assert failed.history.num_iterations == 0
     assert not failed.trajectory.successful
-
-
-def test_differential_rollout_audit_matches_segments_at_control_jumps() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.5]), time_id="multiple-shooting-control-jump"
     )
@@ -483,7 +461,27 @@ def test_differential_rollout_audit_matches_segments_at_control_jumps() -> None:
     np.testing.assert_allclose(result.rollout_state_error, 0.0)
 
 
-def test_solver_is_deterministic_and_rejects_batched_optimization() -> None:
+def test_infeasible_dense_qp_status_is_propagated() -> None:
+    def impossible(time: Any, state: Any, control: Any, args: Any) -> Any:
+        return jnp.asarray(1.0)
+
+    problem = _linear_problem(num_steps=1, path_constraints=(impossible,))
+
+    result = phx.control.solve_multiple_shooting(
+        problem, jnp.zeros((2, 1)), jnp.zeros((1, 1)), max_iterations=2
+    )
+    assert result.last_qp_result is not None
+
+    assert result.status == phx.control.MULTIPLE_SHOOTING_QP_FAILED
+    assert result.last_qp_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+    np.testing.assert_array_equal(
+        result.history.qp_status,
+        jnp.asarray([phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE]),
+    )
+    assert not result.valid
+
+
+def test_multiple_shooting_scenario_3() -> None:
     problem = _linear_problem()
     kwargs: dict[str, Any] = dict(
         initial_states=jnp.zeros((3, 1)),
@@ -509,9 +507,6 @@ def test_solver_is_deterministic_and_rejects_batched_optimization() -> None:
     )
     with pytest.raises(ValueError, match="one optimization case"):
         phx.control.solve_multiple_shooting(batched)
-
-
-def test_global_control_search_trajectory_is_a_native_seed() -> None:
     problem = _linear_problem()
     parameterization = phx.control.PiecewiseConstantControlParameterization(
         problem.time_grid,
@@ -545,24 +540,3 @@ def test_global_control_search_trajectory_is_a_native_seed() -> None:
     np.testing.assert_allclose(positional.state_nodes, keyword.state_nodes)
     np.testing.assert_allclose(positional.control_nodes, keyword.control_nodes)
     assert positional.trajectory.problem_id == global_result.trajectory.problem_id
-
-
-def test_multiple_shooting_lowers_to_structured_nlp_and_solves_natively() -> None:
-    problem = _linear_problem()
-    compilation = phx.control.compile_structured_multiple_shooting(
-        problem,
-        jnp.zeros((3, 1)),
-        jnp.zeros((2, 1)),
-    )
-    result = phx.control.solve_structured_multiple_shooting(
-        compilation,
-        method=phx.optim.PrimalDualInteriorPoint(mode="sparse-augmented"),
-        termination=phx.optim.OptimizationTermination(
-            absolute_optimality=1e-6,
-            relative_optimality=0.0,
-            maximum_steps=80,
-        ),
-    )
-    assert bool(result.successful)
-    assert result.maximum_defect <= 1e-6
-    assert result.maximum_constraint_violation <= 1e-6

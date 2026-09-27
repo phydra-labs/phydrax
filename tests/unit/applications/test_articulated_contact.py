@@ -164,7 +164,7 @@ def test_function_participant_uses_explicit_equal_spaces_and_true_efforts() -> N
         )
 
 
-def test_distinct_configuration_and_tangent_spaces_validate_velocity_and_effort() -> None:
+def test_articulated_contact_scenario_1() -> None:
     participant, configuration, velocity, _, _, _ = _articulated_case()
     world_velocity = participant.velocities(configuration, velocity)
     surface_effort = jnp.asarray(((0.0, 2.0),), dtype=jnp.float64)
@@ -177,9 +177,6 @@ def test_distinct_configuration_and_tangent_spaces_validate_velocity_and_effort(
     assert bool(evidence.valid)
     with pytest.raises(ValueError, match="Vector must have shape"):
         participant.velocities(configuration, jnp.zeros((1,), dtype=jnp.float64))
-
-
-def test_delassus_composition_matches_dense_g_minv_g_dual_transpose() -> None:
     participant, configuration, _, kinematics, _, inverse_mass = _articulated_case()
     velocity_operator = build_contact_velocity_operator(
         participant, configuration, kinematics
@@ -202,11 +199,6 @@ def test_delassus_composition_matches_dense_g_minv_g_dual_transpose() -> None:
     )
     with pytest.raises(ValueError, match="contact tangent dual to its tangent"):
         build_delassus_operator(velocity_operator, wrong_inverse_mass)
-
-
-def test_frictionless_articulated_impact_applies_constrained_generalized_impulse() -> (
-    None
-):
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -237,7 +229,7 @@ def test_frictionless_articulated_impact_applies_constrained_generalized_impulse
     )
 
 
-def test_unsuccessful_articulated_cone_solve_fails_closed() -> None:
+def test_articulated_contact_scenario_2() -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -260,38 +252,53 @@ def test_unsuccessful_articulated_cone_solve_fails_closed() -> None:
     np.testing.assert_allclose(result.impulse, 0.0, atol=0.0)
     np.testing.assert_allclose(result.velocity_update, 0.0, atol=0.0)
     np.testing.assert_allclose(result.post_velocity, free, atol=0.0)
+    for material_id in (-1, 1):
+        participant, configuration, free, kinematics, materials, inverse_mass = (
+            _articulated_case()
+        )
+        changed = eqx.tree_at(
+            lambda epoch: epoch.batches[0].left_material_ids,
+            kinematics,
+            jnp.full_like(kinematics.batches[0].left_material_ids, material_id),
+        )
+        prepared = prepare_articulated_contact(
+            participant,
+            configuration,
+            free,
+            changed,
+            materials,
+            inverse_mass,
+        )
+        result = solve_articulated_contact(prepared)
 
-
-@pytest.mark.parametrize("material_id", (-1, 1))
-def test_active_route_without_in_range_mechanical_material_fails_closed(
-    material_id: Any,
-) -> None:
+        assert not bool(prepared.evidence.material_law_complete)
+        assert not bool(result.evidence.successful)
+        assert bool(result.evidence.fail_closed)
+        np.testing.assert_array_equal(result.impulse, jnp.zeros_like(result.impulse))
+        np.testing.assert_array_equal(result.post_velocity, free)
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
-    changed = eqx.tree_at(
-        lambda epoch: epoch.batches[0].left_material_ids,
-        kinematics,
-        jnp.full_like(kinematics.batches[0].left_material_ids, material_id),
+    unavailable = eqx.tree_at(
+        lambda table: table.mechanical_available,
+        materials,
+        jnp.zeros_like(materials.mechanical_available),
     )
     prepared = prepare_articulated_contact(
         participant,
         configuration,
         free,
-        changed,
-        materials,
+        kinematics,
+        unavailable,
         inverse_mass,
     )
     result = solve_articulated_contact(prepared)
 
-    assert not bool(prepared.evidence.material_law_complete)
+    assert not bool(result.evidence.preparation.material_law_complete)
+    assert not bool(result.evidence.cone.material_law_complete)
     assert not bool(result.evidence.successful)
-    assert bool(result.evidence.fail_closed)
     np.testing.assert_array_equal(result.impulse, jnp.zeros_like(result.impulse))
     np.testing.assert_array_equal(result.post_velocity, free)
-
-
-def test_out_of_range_material_is_allowed_only_on_padding() -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -322,33 +329,7 @@ def test_out_of_range_material_is_allowed_only_on_padding() -> None:
     np.testing.assert_array_equal(result.post_velocity, free)
 
 
-def test_active_route_with_unavailable_mechanical_law_fails_closed() -> None:
-    participant, configuration, free, kinematics, materials, inverse_mass = (
-        _articulated_case()
-    )
-    unavailable = eqx.tree_at(
-        lambda table: table.mechanical_available,
-        materials,
-        jnp.zeros_like(materials.mechanical_available),
-    )
-    prepared = prepare_articulated_contact(
-        participant,
-        configuration,
-        free,
-        kinematics,
-        unavailable,
-        inverse_mass,
-    )
-    result = solve_articulated_contact(prepared)
-
-    assert not bool(result.evidence.preparation.material_law_complete)
-    assert not bool(result.evidence.cone.material_law_complete)
-    assert not bool(result.evidence.successful)
-    np.testing.assert_array_equal(result.impulse, jnp.zeros_like(result.impulse))
-    np.testing.assert_array_equal(result.post_velocity, free)
-
-
-def test_indefinite_delassus_is_spectrally_rejected_and_rolls_back() -> None:
+def test_articulated_contact_scenario_3() -> None:
     participant, configuration, free, kinematics, materials, _ = _articulated_case()
     inverse_mass = phx.linalg.DenseLinearOperator(
         jnp.asarray(((-0.5, 0.0), (0.0, 0.0)), dtype=jnp.float64),
@@ -371,9 +352,6 @@ def test_indefinite_delassus_is_spectrally_rejected_and_rolls_back() -> None:
     assert bool(result.evidence.fail_closed)
     np.testing.assert_array_equal(result.impulse, jnp.zeros_like(result.impulse))
     np.testing.assert_array_equal(result.post_velocity, free)
-
-
-def test_stale_cone_numeric_revision_cannot_apply() -> None:
     participant, configuration, free, kinematics, materials, inverse_mass = (
         _articulated_case()
     )
@@ -399,6 +377,25 @@ def test_stale_cone_numeric_revision_cannot_apply() -> None:
     assert bool(result.evidence.fail_closed)
     np.testing.assert_array_equal(result.impulse, jnp.zeros_like(result.impulse))
     np.testing.assert_array_equal(result.post_velocity, free)
+    sticking = phx.applications.contact.solve_contact_cone(
+        _single_contact_program(0.2, static_friction=0.5, dynamic_friction=0.3)
+    )
+    sliding = phx.applications.contact.solve_contact_cone(
+        _single_contact_program(1.0, static_friction=0.5, dynamic_friction=0.3)
+    )
+
+    assert bool(sticking.evidence.successful)
+    assert bool(sliding.evidence.successful)
+    np.testing.assert_allclose(sticking.impulse, ((1.0, -0.2),), atol=1.0e-8)
+    np.testing.assert_allclose(sticking.contact_law_velocity, 0.0, atol=1.0e-8)
+    np.testing.assert_allclose(sliding.impulse, ((1.0, -0.3),), atol=1.0e-8)
+    np.testing.assert_allclose(sliding.contact_law_velocity, ((0.0, 0.7),), atol=1.0e-8)
+    assert sticking.evidence.complementarity_defect <= 1.0e-8
+    assert sliding.evidence.complementarity_defect <= 1.0e-8
+    assert sticking.evidence.maximum_dissipation_defect <= 1.0e-8
+    assert sliding.evidence.maximum_dissipation_defect <= 1.0e-8
+    assert bool(sticking.evidence.dissipative)
+    assert bool(sliding.evidence.dissipative)
 
 
 def _single_contact_program(
@@ -421,28 +418,6 @@ def _single_contact_program(
         static_friction=jnp.asarray((static_friction,), dtype=jnp.float64),
         restitution=jnp.asarray((restitution,), dtype=jnp.float64),
     )
-
-
-def test_signorini_and_coulomb_evidence_use_one_static_and_sliding_law() -> None:
-    sticking = phx.applications.contact.solve_contact_cone(
-        _single_contact_program(0.2, static_friction=0.5, dynamic_friction=0.3)
-    )
-    sliding = phx.applications.contact.solve_contact_cone(
-        _single_contact_program(1.0, static_friction=0.5, dynamic_friction=0.3)
-    )
-
-    assert bool(sticking.evidence.successful)
-    assert bool(sliding.evidence.successful)
-    np.testing.assert_allclose(sticking.impulse, ((1.0, -0.2),), atol=1.0e-8)
-    np.testing.assert_allclose(sticking.contact_law_velocity, 0.0, atol=1.0e-8)
-    np.testing.assert_allclose(sliding.impulse, ((1.0, -0.3),), atol=1.0e-8)
-    np.testing.assert_allclose(sliding.contact_law_velocity, ((0.0, 0.7),), atol=1.0e-8)
-    assert sticking.evidence.complementarity_defect <= 1.0e-8
-    assert sliding.evidence.complementarity_defect <= 1.0e-8
-    assert sticking.evidence.maximum_dissipation_defect <= 1.0e-8
-    assert sliding.evidence.maximum_dissipation_defect <= 1.0e-8
-    assert bool(sticking.evidence.dissipative)
-    assert bool(sliding.evidence.dissipative)
 
 
 def test_unequal_mass_frictionless_impact_and_singular_psd_route_are_supported() -> None:

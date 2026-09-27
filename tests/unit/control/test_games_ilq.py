@@ -136,7 +136,7 @@ def _separable_affine_lq_game(*, case_shape: Any = ()) -> Any:
     return problem, policy, scaling, target
 
 
-def test_exact_affine_lq_converges_to_the_exact_feedback_law() -> None:
+def test_games_ilq_scenario_1() -> None:
     problem, policy, scaling, target = _separable_affine_lq_game()
     result = solve_ilq_feedback_game(
         problem,
@@ -185,9 +185,6 @@ def test_exact_affine_lq_converges_to_the_exact_feedback_law() -> None:
         atol=2e-6,
     )
     assert result.diagnostics.accepted_iterations >= 1
-
-
-def test_compatible_local_affine_initial_profile_is_preserved_by_preparation() -> None:
     problem, _, scaling, _ = _separable_affine_lq_game()
     states = jnp.broadcast_to(
         problem.initial_state, (problem.time_grid.num_times, problem.state_size)
@@ -217,6 +214,29 @@ def test_compatible_local_affine_initial_profile_is_preserved_by_preparation() -
 
     assert prepared.initial_policy_id == "local-affine-initial-profile"
     assert bool(result.successful)
+    case_shape = (2, 2)
+    problem, policy, scaling, _ = _separable_affine_lq_game(case_shape=case_shape)
+    plan = plan_ilq_feedback_game(
+        problem,
+        scaling,
+        maximum_iterations=3,
+        maximum_line_search_steps=4,
+        residual_tolerance=2e-6,
+        step_tolerance=2e-6,
+    )
+    prepared = prepare_ilq_feedback_game(plan, problem, policy)
+    result = eqx.filter_jit(solve_prepared_ilq_feedback_game)(prepared)
+    diagnostics = result.diagnostics
+
+    assert result.status.shape == case_shape
+    assert result.trajectory.states.shape == case_shape + (3, 2)
+    assert diagnostics.residual_merit_history.shape == case_shape + (3,)
+    assert diagnostics.player_cost_history.shape == case_shape + (3, 2)
+    assert diagnostics.trial_reason_history.shape == case_shape + (3, 4)
+    assert diagnostics.trial_player_cost_history.shape == case_shape + (3, 4, 2)
+    assert np.all(np.asarray(result.successful))
+    padding = ~np.asarray(diagnostics.history_valid)
+    assert np.all(np.isnan(np.asarray(diagnostics.residual_merit_history)[padding]))
 
 
 def test_cubic_cross_terms_keep_independent_whole_control_owned_gradients() -> None:
@@ -470,33 +490,7 @@ def test_physical_scaling_transforms_leave_dimensionless_result_equivalent() -> 
     )
 
 
-def test_case_axes_filter_jit_and_fixed_histories_are_preserved() -> None:
-    case_shape = (2, 2)
-    problem, policy, scaling, _ = _separable_affine_lq_game(case_shape=case_shape)
-    plan = plan_ilq_feedback_game(
-        problem,
-        scaling,
-        maximum_iterations=3,
-        maximum_line_search_steps=4,
-        residual_tolerance=2e-6,
-        step_tolerance=2e-6,
-    )
-    prepared = prepare_ilq_feedback_game(plan, problem, policy)
-    result = eqx.filter_jit(solve_prepared_ilq_feedback_game)(prepared)
-    diagnostics = result.diagnostics
-
-    assert result.status.shape == case_shape
-    assert result.trajectory.states.shape == case_shape + (3, 2)
-    assert diagnostics.residual_merit_history.shape == case_shape + (3,)
-    assert diagnostics.player_cost_history.shape == case_shape + (3, 2)
-    assert diagnostics.trial_reason_history.shape == case_shape + (3, 4)
-    assert diagnostics.trial_player_cost_history.shape == case_shape + (3, 4, 2)
-    assert np.all(np.asarray(result.successful))
-    padding = ~np.asarray(diagnostics.history_valid)
-    assert np.all(np.isnan(np.asarray(diagnostics.residual_merit_history)[padding]))
-
-
-def test_refresh_updates_materialization_ids_but_preserves_plan_topology() -> None:
+def test_games_ilq_scenario_2() -> None:
     problem, first_policy, scaling = _static_game(
         (lambda context, state, control, args: 0.5 * (control[0] - 1.0) ** 2,),
         problem_id="refresh-ilq",
@@ -526,9 +520,6 @@ def test_refresh_updates_materialization_ids_but_preserves_plan_topology() -> No
     )
     with pytest.raises(ValueError, match="time-grid identity"):
         refresh_ilq_feedback_game(prepared, initial_policy=incompatible)
-
-
-def test_certificate_wording_and_claim_boundaries_are_exact() -> None:
     problem, policy, scaling = _static_game(
         (lambda context, state, control, args: 0.5 * control[0] ** 2,),
         problem_id="certificate-wording",

@@ -42,7 +42,7 @@ def _complex() -> Any:
     )
 
 
-def test_cochain_metric_plan_separates_static_topology_from_runtime_metrics() -> None:
+def test_cochain_metric_contracts() -> None:
     complex_ = _complex()
     topology = phx.discretization.PreparedCochainTopology(complex_)
     plan = phx.discretization.CochainMetricPlan(
@@ -74,11 +74,6 @@ def test_cochain_metric_plan_separates_static_topology_from_runtime_metrics() ->
     assert bool(first.valid)
     assert first.metric_layout_id == second.metric_layout_id
     assert first.host_snapshot().topology.topology_id == complex_.topology_id
-
-
-def test_cochain_metric_runtime_validity_is_traceable_without_content_fingerprints() -> (
-    None
-):
     complex_ = _complex()
     topology = phx.discretization.PreparedCochainTopology(complex_)
     plan = phx.discretization.CochainMetricPlan(
@@ -100,11 +95,6 @@ def test_cochain_metric_runtime_validity_is_traceable_without_content_fingerprin
 
     assert bool(valid(jnp.asarray(1.0)))
     assert not bool(valid(jnp.asarray(-1.0)))
-
-
-def test_cochain_metric_runtime_ignores_inactive_nan_padding_but_requires_coordinates() -> (
-    None
-):
     complex_ = _complex()
     topology = phx.discretization.PreparedCochainTopology(complex_)
     plan = phx.discretization.CochainMetricPlan(

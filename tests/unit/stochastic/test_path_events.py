@@ -40,7 +40,7 @@ def _trajectory() -> Any:
     )
 
 
-def test_threshold_crossing_localizes_and_distinguishes_censoring_from_failure() -> None:
+def test_path_events_scenario_1() -> None:
     trajectory = _trajectory()
     event = phx.stochastic.ThresholdCrossingEvent(
         lambda time, state: state[0],
@@ -56,9 +56,6 @@ def test_threshold_crossing_localizes_and_distinguishes_censoring_from_failure()
     assert jnp.allclose(result.event_times[jnp.asarray([0, 2])], 0.5)
     assert jnp.array_equal(result.event_indices, jnp.asarray([1, -1, 1, -1]))
     assert result.event_ids == ("upper-half",)
-
-
-def test_terminal_and_accumulated_events_use_complete_path_semantics() -> None:
     trajectory = _trajectory()
     terminal = phx.stochastic.TerminalSetEvent(
         lambda time, state: state[0] >= 0.3,
@@ -96,9 +93,6 @@ def test_terminal_and_accumulated_events_use_complete_path_semantics() -> None:
     )
     no_hit_scores = phx.stochastic.path_event_scores(trajectory, no_hit)
     assert jnp.all(no_hit_scores[trajectory.valid] < 0.0)
-
-
-def test_competing_events_report_earliest_event_code_with_stable_ties() -> None:
     times = jnp.broadcast_to(jnp.asarray([0.0, 1.0, 2.0]), (2, 3))
     states = jnp.asarray(
         [

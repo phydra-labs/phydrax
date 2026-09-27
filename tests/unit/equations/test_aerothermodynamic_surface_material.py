@@ -34,7 +34,7 @@ def _surface_mechanism() -> Any:
     return phx.equations.PreparedGasSurfaceMechanism(gas, surface, (reaction,))
 
 
-def test_surface_chemistry_preserves_sites_elements_and_charge() -> None:
+def test_aerothermodynamic_surface_material_scenario_1() -> None:
     mechanism = _surface_mechanism()
     state = phx.equations.SurfaceChemicalState(
         jnp.asarray((0.8, 0.2)),
@@ -50,27 +50,6 @@ def test_surface_chemistry_preserves_sites_elements_and_charge() -> None:
     np.testing.assert_allclose(result.charge_defect, 0.0, atol=1.0e-12)
     assert result.gas_amount_flux[0] < 0.0
     assert result.surface_amount_rate[1] > 0.0
-
-
-def _material() -> Any:
-    return phx.equations.PorousAblatingMaterialPlan(
-        jnp.asarray((1000.0, 800.0)),
-        jnp.asarray((0.2, 0.1)),
-        jnp.asarray((0.0, 0.0)),
-        jnp.asarray((1.0e-3,)),
-        jnp.asarray((0.0,)),
-        jnp.asarray((0.0,)),
-        jnp.asarray(((0.0, 0.5),)),
-        jnp.asarray(((50.0,),)),
-        jnp.asarray((0.01,)),
-        jnp.asarray((0.0,)),
-        virgin_porosity=0.1,
-        char_porosity=0.5,
-        reference_permeability=1.0e-12,
-    )
-
-
-def test_porous_material_decomposition_conserves_closed_mass() -> None:
     material = _material()
     state = phx.equations.AblatingMaterialState(
         jnp.asarray((1.0, 0.0)),
@@ -92,31 +71,23 @@ def test_porous_material_decomposition_conserves_closed_mass() -> None:
     assert result.accepted.solid_component_densities[1] > 0.0
     assert result.accepted.pore_gas_molar_densities[0] > 0.0
     np.testing.assert_allclose(mass_after, mass_before, rtol=2.0e-7)
-
-
-@pytest.mark.parametrize("reaction_count", (0, 3))
-def test_porous_material_reaction_slots_must_map_to_solid_components(
-    reaction_count: Any,
-) -> None:
-    with pytest.raises(ValueError, match="arrays are invalid"):
-        phx.equations.PorousAblatingMaterialPlan(
-            jnp.asarray((1000.0, 800.0)),
-            jnp.asarray((0.2, 0.1)),
-            jnp.asarray((0.0, 0.0)),
-            jnp.ones((reaction_count,)),
-            jnp.zeros((reaction_count,)),
-            jnp.zeros((reaction_count,)),
-            jnp.zeros((reaction_count, 2)),
-            jnp.zeros((reaction_count, 1)),
-            jnp.asarray((0.01,)),
-            jnp.zeros((reaction_count,)),
-            virgin_porosity=0.1,
-            char_porosity=0.5,
-            reference_permeability=1.0e-12,
-        )
-
-
-def test_conjugate_exchange_and_recession_remap_are_conservative() -> None:
+    for reaction_count in (0, 3):
+        with pytest.raises(ValueError, match="arrays are invalid"):
+            phx.equations.PorousAblatingMaterialPlan(
+                jnp.asarray((1000.0, 800.0)),
+                jnp.asarray((0.2, 0.1)),
+                jnp.asarray((0.0, 0.0)),
+                jnp.ones((reaction_count,)),
+                jnp.zeros((reaction_count,)),
+                jnp.zeros((reaction_count,)),
+                jnp.zeros((reaction_count, 2)),
+                jnp.zeros((reaction_count, 1)),
+                jnp.asarray((0.01,)),
+                jnp.zeros((reaction_count,)),
+                virgin_porosity=0.1,
+                char_porosity=0.5,
+                reference_permeability=1.0e-12,
+            )
     interface = phx.solver.ConjugateAerothermalInterfacePlan(
         jnp.eye(2),
         jnp.eye(2),
@@ -143,3 +114,21 @@ def test_conjugate_exchange_and_recession_remap_are_conservative() -> None:
     assert bool(result.successful)
     np.testing.assert_allclose(result.gas_conservation_defect, 0.0, atol=1.0e-12)
     np.testing.assert_allclose(result.material_conservation_defect, 0.0, atol=1.0e-12)
+
+
+def _material() -> Any:
+    return phx.equations.PorousAblatingMaterialPlan(
+        jnp.asarray((1000.0, 800.0)),
+        jnp.asarray((0.2, 0.1)),
+        jnp.asarray((0.0, 0.0)),
+        jnp.asarray((1.0e-3,)),
+        jnp.asarray((0.0,)),
+        jnp.asarray((0.0,)),
+        jnp.asarray(((0.0, 0.5),)),
+        jnp.asarray(((50.0,),)),
+        jnp.asarray((0.01,)),
+        jnp.asarray((0.0,)),
+        virgin_porosity=0.1,
+        char_porosity=0.5,
+        reference_permeability=1.0e-12,
+    )

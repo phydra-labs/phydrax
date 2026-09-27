@@ -251,9 +251,7 @@ def _split(batch: Any, pairs: Any, *, sample_indices: Any = None) -> Any:
     )
 
 
-def test_cross_validation_refits_on_training_only_and_aggregates_structured_scores() -> (
-    None
-):
+def test_model_selection_scenario_1() -> None:
     batch = _batch(jnp.arange(9.0))
     splits = KFoldPlan(3, shuffle=False).split(batch, key=jr.key(1))
     result = cross_validate(
@@ -293,9 +291,153 @@ def test_cross_validation_refits_on_training_only_and_aggregates_structured_scor
             == evaluation.fold.fold_id
         )
     assert bool(result.valid)
+    batch = MLBatch(
+        jnp.asarray([[-2.0], [-1.0], [1.0], [2.0]]),
+        jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
+    )
+    splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(30))
+    accuracy = cross_validate(
+        _ResponseClassifierRecipe(),
+        batch,
+        splits,
+        FunctionScorer(
+            accuracy_score,
+            greater_is_better=True,
+            response_method="predict",
+        ),
+        key=jr.key(31),
+    )
+    probability = cross_validate(
+        _ResponseClassifierRecipe(),
+        batch,
+        splits,
+        FunctionScorer(
+            log_loss,
+            greater_is_better=False,
+            response_method="predict_proba",
+        ),
+        key=jr.key(32),
+    )
+    decision = cross_validate(
+        _ResponseClassifierRecipe(),
+        batch,
+        splits,
+        FunctionScorer(
+            mean_squared_error,
+            greater_is_better=False,
+            response_method="decision_function",
+        ),
+        key=jr.key(33),
+    )
+
+    assert jnp.allclose(accuracy.aggregate_score.value, 1.0)
+    assert all(fold.predictions.ndim == 2 for fold in probability.folds)
+    assert all(fold.predictions.ndim == 1 for fold in decision.folds)
+    batch = _batch(jnp.linspace(-1.0, 1.0, 6))
+    splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(34))
+    with pytest.raises(TypeError, match="FunctionScorer"):
+        cross_validate(
+            _MeanRecipe(),
+            batch,
+            splits,
+            _structured_metric,
+            key=jr.key(35),
+        )
+    with pytest.raises(TypeError, match="does not provide the requested predict"):
+        cross_validate(
+            _MeanRecipe(),
+            batch,
+            splits,
+            FunctionScorer(
+                accuracy_score,
+                greater_is_better=True,
+                response_method="predict",
+            ),
+            key=jr.key(36),
+        )
+
+    previous = IncrementalPCA(1).fit_batch(batch).as_trainable()
+    with pytest.raises(ValueError, match="fresh-fit"):
+        cross_validate(
+            # ty: ignore[invalid-argument-type]
+            IncrementalPCA(1, previous=previous),
+            batch,
+            splits,
+            _structured_scorer,
+            key=jr.key(37),
+        )
+    batch = _batch(jnp.zeros(12))
+    splits = KFoldPlan(4, shuffle=True).split(batch, key=jr.key(3))
+    parameters = {"offset": (-2.0, 0.0, 2.0)}
+
+    grid = GridSearch(parameters, primary_metric="neg_mse").run(
+        _MeanRecipe, batch, splits, _structured_scorer, key=jr.key(4)
+    )
+    random_plan = RandomSearch(parameters, 2, primary_metric="neg_mse")
+    random_first = random_plan.run(
+        _MeanRecipe, batch, splits, _structured_scorer, key=jr.key(5)
+    )
+    random_repeated = random_plan.run(
+        _MeanRecipe, batch, splits, _structured_scorer, key=jr.key(5)
+    )
+    halving = SuccessiveHalvingSearch(
+        parameters, factor=2, min_folds=1, primary_metric="neg_mse"
+    ).run(_MeanRecipe, batch, splits, _structured_scorer, key=jr.key(6))
+
+    assert grid.best_candidate.as_kwargs()["offset"] == 0.0
+    # ty: ignore[unresolved-attribute]
+    assert jnp.allclose(grid.best_fit.as_trainable().center, 0.0)
+    assert tuple(
+        item.candidate.candidate_id for item in random_first.evaluations
+    ) == tuple(item.candidate.candidate_id for item in random_repeated.evaluations)
+    assert random_first.best_candidate.candidate_id == (
+        random_repeated.best_candidate.candidate_id
+    )
+    assert halving.best_candidate.as_kwargs()["offset"] == 0.0
+    assert halving.rungs[-1].num_folds == len(splits.folds)
+    assert (
+        grid.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.NONE
+    )
+    assert (
+        halving.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.NONE
+    )
+    batch = _batch(jnp.zeros(12))
+    nested_plan = NestedSplitPlan(KFoldPlan(3, shuffle=True), KFoldPlan(2, shuffle=True))
+    result = nested_cross_validate(
+        GridSearch({"offset": (-1.0, 0.0, 1.0)}, primary_metric="neg_mse"),
+        _MeanRecipe,
+        batch,
+        nested_plan,
+        _structured_scorer,
+        key=jr.key(8),
+    )
+
+    assert len(result.folds) == 3
+    for evaluation in result.folds:
+        outer = evaluation.split.outer_fold
+        searched = evaluation.search_result.split_result
+        assert jnp.array_equal(
+            jnp.sort(searched.sample_indices), jnp.sort(outer.train_indices)
+        )
+        assert not bool(
+            jnp.any(jnp.isin(searched.sample_indices, outer.validation_indices))
+        )
+        for candidate in evaluation.search_result.evaluations:
+            for inner_fold in candidate.cross_validation.folds:
+                assert not bool(
+                    jnp.any(
+                        jnp.isin(
+                            inner_fold.fold.train_indices,
+                            outer.validation_indices,
+                        )
+                    )
+                )
+    assert bool(result.valid)
 
 
-def test_out_of_fold_assembly_preserves_partial_universe_and_vector_outputs() -> None:
+def test_out_of_fold_assembly_contracts() -> None:
     batch = _batch(jnp.arange(12.0).reshape(2, 6))
     splits = _split(
         batch,
@@ -339,9 +481,6 @@ def test_out_of_fold_assembly_preserves_partial_universe_and_vector_outputs() ->
         assert jnp.allclose(
             assembled.predictions[:, fold.fold.validation_indices, :], expected
         )
-
-
-def test_out_of_fold_assembly_rejects_non_exact_validation_covers() -> None:
     batch = _batch(jnp.arange(6.0))
     duplicate = _split(
         batch,
@@ -367,9 +506,6 @@ def test_out_of_fold_assembly_rejects_non_exact_validation_covers() -> None:
         )
         with pytest.raises(ValueError, match="cover every selected sample exactly once"):
             assemble_out_of_fold_predictions(result, batch)
-
-
-def test_out_of_fold_assembly_rejects_group_leakage_and_cut_groups() -> None:
     groups = jnp.asarray([0, 0, 1, 1, 2, 2])
     batch = MLBatch(
         jnp.arange(6.0).reshape(6, 1),
@@ -419,9 +555,6 @@ def test_out_of_fold_assembly_rejects_group_leakage_and_cut_groups() -> None:
     )
     with pytest.raises(ValueError, match="Case-dependent groups"):
         assemble_out_of_fold_predictions(case_result, case_batch)
-
-
-def test_out_of_fold_assembly_rejects_incompatible_fold_prediction_arrays() -> None:
     batch = _batch(jnp.arange(12.0).reshape(2, 6))
     splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(19))
     result = cross_validate(
@@ -454,81 +587,6 @@ def test_out_of_fold_assembly_rejects_incompatible_fold_prediction_arrays() -> N
         )
         with pytest.raises(error, match=message):
             assemble_out_of_fold_predictions(changed_result, batch)
-
-
-def test_grid_random_and_successive_halving_are_deterministic_and_exact() -> None:
-    batch = _batch(jnp.zeros(12))
-    splits = KFoldPlan(4, shuffle=True).split(batch, key=jr.key(3))
-    parameters = {"offset": (-2.0, 0.0, 2.0)}
-
-    grid = GridSearch(parameters, primary_metric="neg_mse").run(
-        _MeanRecipe, batch, splits, _structured_scorer, key=jr.key(4)
-    )
-    random_plan = RandomSearch(parameters, 2, primary_metric="neg_mse")
-    random_first = random_plan.run(
-        _MeanRecipe, batch, splits, _structured_scorer, key=jr.key(5)
-    )
-    random_repeated = random_plan.run(
-        _MeanRecipe, batch, splits, _structured_scorer, key=jr.key(5)
-    )
-    halving = SuccessiveHalvingSearch(
-        parameters, factor=2, min_folds=1, primary_metric="neg_mse"
-    ).run(_MeanRecipe, batch, splits, _structured_scorer, key=jr.key(6))
-
-    assert grid.best_candidate.as_kwargs()["offset"] == 0.0
-    # ty: ignore[unresolved-attribute]
-    assert jnp.allclose(grid.best_fit.as_trainable().center, 0.0)
-    assert tuple(
-        item.candidate.candidate_id for item in random_first.evaluations
-    ) == tuple(item.candidate.candidate_id for item in random_repeated.evaluations)
-    assert random_first.best_candidate.candidate_id == (
-        random_repeated.best_candidate.candidate_id
-    )
-    assert halving.best_candidate.as_kwargs()["offset"] == 0.0
-    assert halving.rungs[-1].num_folds == len(splits.folds)
-    assert (
-        grid.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
-        is GradientLevel.NONE
-    )
-    assert (
-        halving.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
-        is GradientLevel.NONE
-    )
-
-
-def test_nested_search_never_exposes_outer_holdouts_to_inner_fits() -> None:
-    batch = _batch(jnp.zeros(12))
-    nested_plan = NestedSplitPlan(KFoldPlan(3, shuffle=True), KFoldPlan(2, shuffle=True))
-    result = nested_cross_validate(
-        GridSearch({"offset": (-1.0, 0.0, 1.0)}, primary_metric="neg_mse"),
-        _MeanRecipe,
-        batch,
-        nested_plan,
-        _structured_scorer,
-        key=jr.key(8),
-    )
-
-    assert len(result.folds) == 3
-    for evaluation in result.folds:
-        outer = evaluation.split.outer_fold
-        searched = evaluation.search_result.split_result
-        assert jnp.array_equal(
-            jnp.sort(searched.sample_indices), jnp.sort(outer.train_indices)
-        )
-        assert not bool(
-            jnp.any(jnp.isin(searched.sample_indices, outer.validation_indices))
-        )
-        for candidate in evaluation.search_result.evaluations:
-            for inner_fold in candidate.cross_validation.folds:
-                assert not bool(
-                    jnp.any(
-                        jnp.isin(
-                            inner_fold.fold.train_indices,
-                            outer.validation_indices,
-                        )
-                    )
-                )
-    assert bool(result.valid)
 
 
 def test_fixed_fold_objective_is_differentiable_but_choices_are_stopped() -> None:
@@ -567,85 +625,4 @@ def test_fixed_fold_objective_is_differentiable_but_choices_are_stopped() -> Non
             splits,
             _structured_scorer,
             key=jr.key(11),
-        )
-
-
-def test_cross_validation_dispatches_explicit_classifier_responses() -> None:
-    batch = MLBatch(
-        jnp.asarray([[-2.0], [-1.0], [1.0], [2.0]]),
-        jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
-    )
-    splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(30))
-    accuracy = cross_validate(
-        _ResponseClassifierRecipe(),
-        batch,
-        splits,
-        FunctionScorer(
-            accuracy_score,
-            greater_is_better=True,
-            response_method="predict",
-        ),
-        key=jr.key(31),
-    )
-    probability = cross_validate(
-        _ResponseClassifierRecipe(),
-        batch,
-        splits,
-        FunctionScorer(
-            log_loss,
-            greater_is_better=False,
-            response_method="predict_proba",
-        ),
-        key=jr.key(32),
-    )
-    decision = cross_validate(
-        _ResponseClassifierRecipe(),
-        batch,
-        splits,
-        FunctionScorer(
-            mean_squared_error,
-            greater_is_better=False,
-            response_method="decision_function",
-        ),
-        key=jr.key(33),
-    )
-
-    assert jnp.allclose(accuracy.aggregate_score.value, 1.0)
-    assert all(fold.predictions.ndim == 2 for fold in probability.folds)
-    assert all(fold.predictions.ndim == 1 for fold in decision.folds)
-
-
-def test_cross_validation_rejects_implicit_scorers_and_learned_recipe_state() -> None:
-    batch = _batch(jnp.linspace(-1.0, 1.0, 6))
-    splits = KFoldPlan(2, shuffle=False).split(batch, key=jr.key(34))
-    with pytest.raises(TypeError, match="FunctionScorer"):
-        cross_validate(
-            _MeanRecipe(),
-            batch,
-            splits,
-            _structured_metric,
-            key=jr.key(35),
-        )
-    with pytest.raises(TypeError, match="does not provide the requested predict"):
-        cross_validate(
-            _MeanRecipe(),
-            batch,
-            splits,
-            FunctionScorer(
-                accuracy_score,
-                greater_is_better=True,
-                response_method="predict",
-            ),
-            key=jr.key(36),
-        )
-
-    previous = IncrementalPCA(1).fit_batch(batch).as_trainable()
-    with pytest.raises(ValueError, match="fresh-fit"):
-        cross_validate(
-            # ty: ignore[invalid-argument-type]
-            IncrementalPCA(1, previous=previous),
-            batch,
-            splits,
-            _structured_scorer,
-            key=jr.key(37),
         )

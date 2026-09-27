@@ -5,7 +5,7 @@ import pytest
 from phydrax.signal import WelchSpectrumPlan
 
 
-def test_welch_recovers_sinusoid_frequency_and_variance() -> None:
+def test_welch_contracts() -> None:
     sample_interval = 0.01
     time = jnp.arange(1000) * sample_interval
     signal = jnp.sin(2.0 * jnp.pi * 10.0 * time)
@@ -17,9 +17,6 @@ def test_welch_recovers_sinusoid_frequency_and_variance() -> None:
     np.testing.assert_allclose(peak, 10.0, atol=0.5)
     np.testing.assert_allclose(variance, 0.5, rtol=2.0e-3)
     assert result.segment_count == 9
-
-
-def test_welch_preserves_leading_signal_axes() -> None:
     sample_interval = 0.02
     time = jnp.arange(256) * sample_interval
     signals = jnp.stack(
@@ -33,9 +30,6 @@ def test_welch_preserves_leading_signal_axes() -> None:
 
     np.testing.assert_allclose(peaks, (5.078125, 10.15625), atol=0.4)
     assert result.power_spectral_density.shape == (2, 65)
-
-
-def test_welch_rejects_invalid_axes_and_fractional_topology() -> None:
     plan = WelchSpectrumPlan(0.1, 4)
     values = jnp.ones((2, 8))
 
@@ -50,9 +44,6 @@ def test_welch_rejects_invalid_axes_and_fractional_topology() -> None:
     with pytest.raises(TypeError, match="integer"):
         # ty: ignore[invalid-argument-type]
         WelchSpectrumPlan(0.1, 4, overlap=1.5)
-
-
-def test_welch_tukey_median_policy_retains_one_sided_power() -> None:
     sample_interval = 0.01
     time = jnp.arange(1200) * sample_interval
     signal = jnp.sin(2.0 * jnp.pi * 8.0 * time)

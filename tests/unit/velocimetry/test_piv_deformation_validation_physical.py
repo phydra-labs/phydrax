@@ -19,7 +19,7 @@ from phydrax.velocimetry.piv import (
 )
 
 
-def test_second_and_symmetric_deformation_align_known_translation() -> None:
+def test_piv_deformation_validation_physical_scenario_1() -> None:
     geometry = ImagePlaneSupport((8, 8))
     first = jnp.arange(64.0).reshape((8, 8))
     second = jnp.zeros_like(first).at[:, 1:].set(first[:, :-1])
@@ -42,9 +42,6 @@ def test_second_and_symmetric_deformation_align_known_translation() -> None:
         symmetric.first[symmetric.first_mask & symmetric.second_mask],
         symmetric.second[symmetric.first_mask & symmetric.second_mask],
     )
-
-
-def test_validation_evidence_and_replacement_do_not_mutate_raw_vectors() -> None:
     row, column = jnp.meshgrid(jnp.arange(3.0), jnp.arange(3.0), indexing="ij")
     positions = jnp.stack((row, column), axis=-1)
     vectors = jnp.broadcast_to(jnp.asarray([1.0, -1.0]), (3, 3, 2))
@@ -86,9 +83,6 @@ def test_validation_evidence_and_replacement_do_not_mutate_raw_vectors() -> None
     assert replacement.replaced[1, 1]
     assert jnp.array_equal(replaced.displacement_rc[1, 1], jnp.asarray([1.0, -1.0]))
     assert jnp.array_equal(raw.displacement_rc[1, 1], jnp.asarray([9.0, 9.0]))
-
-
-def test_affine_and_homography_use_right_handed_xy_endpoints_and_units() -> None:
     positions = jnp.asarray([[[2.0, 3.0]]])
     displacement = jnp.asarray([[[1.0, 2.0]]])
     field = DenseDisplacementField2D(

@@ -7,7 +7,7 @@ import phydrax as phx
 from phydrax._polynomial._total_degree import TotalDegreePolynomialFeatures
 
 
-def test_total_degree_features_standardize_and_evaluate_the_complete_span() -> None:
+def test_polynomial_recombination_features_scenario_1() -> None:
     basis = TotalDegreePolynomialFeatures(2, 2)
     points = jnp.asarray([[0.0, 0.0], [2.0, 0.0], [0.0, 4.0]])
     weights = jnp.asarray([0.25, 0.5, 0.25])
@@ -30,17 +30,11 @@ def test_total_degree_features_standardize_and_evaluate_the_complete_span() -> N
     assert jnp.allclose(center, jnp.asarray([1.0, 1.0]))
     assert jnp.allclose(scale, jnp.asarray([1.0, jnp.sqrt(3.0)]))
     assert jnp.allclose(values, expected)
-
-
-def test_total_degree_enumeration_scales_with_feature_count_not_tensor_width() -> None:
     basis = TotalDegreePolynomialFeatures(512, 1)
 
     assert basis.feature_count == 512
     assert basis.exponents.shape == (512, 512)
     assert jnp.array_equal(jnp.sum(basis.exponents, axis=1), jnp.ones((512,)))
-
-
-def test_total_degree_capacity_and_content_identity_are_explicit() -> None:
     first = TotalDegreePolynomialFeatures(3, 3)
     replay = TotalDegreePolynomialFeatures(3, 3)
     alternative = TotalDegreePolynomialFeatures(3, 2)
@@ -53,9 +47,6 @@ def test_total_degree_capacity_and_content_identity_are_explicit() -> None:
         TotalDegreePolynomialFeatures(30, 4, maximum_features=100)
     with pytest.raises(ValueError, match="maximum_feature_bytes"):
         TotalDegreePolynomialFeatures(16, 2, maximum_feature_bytes=100)
-
-
-def test_polynomial_recombination_prepares_one_static_feature_contract() -> None:
     config = phx.solver.PolynomialRecombination(
         3,
         maximum_features=128,

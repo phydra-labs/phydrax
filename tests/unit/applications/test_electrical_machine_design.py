@@ -54,7 +54,7 @@ def _rebuild(machine: Any, mesh: Any, **overrides: Any) -> Any:
     return PlanarMachine(mesh, machine.cell_regions, machine.regions, **arguments)
 
 
-def test_field_residual_gauge_and_constitutive_energy() -> None:
+def test_electrical_machine_design_scenario_1() -> None:
     machine = _small_machine()
     currents = jnp.asarray((-5.0, 2.0))
     result = solve_planar_machine(machine, currents)
@@ -84,9 +84,6 @@ def test_field_residual_gauge_and_constitutive_energy() -> None:
         atol=1e-11,
     )
     assert float(result.energy) > 0.0
-
-
-def test_virtual_work_matches_resolved_energy_and_air_maxwell_stress() -> None:
     machine = _small_machine(salient=True)
     currents = jnp.asarray((-6.0, 1.0))
     step = 2e-6
@@ -98,9 +95,6 @@ def test_virtual_work_matches_resolved_energy_and_air_maxwell_stress() -> None:
     np.testing.assert_allclose(result.torque, finite_difference, rtol=2e-5, atol=1e-7)
     np.testing.assert_allclose(result.stress_torque, result.torque, rtol=1e-7, atol=1e-9)
     assert bool(result.accepted)
-
-
-def test_reluctance_torque_is_even_in_current_not_forced_odd() -> None:
     machine = _small_machine(salient=True, remanence=0.0)
     # ty: ignore[invalid-argument-type]
     positive = solve_planar_machine(machine, (-8.0, 0.0))
@@ -120,7 +114,7 @@ def test_reluctance_torque_is_even_in_current_not_forced_odd() -> None:
     assert float(zero.energy) == 0.0 and float(zero.torque) == 0.0
 
 
-def test_pm_current_odd_torque_matches_circular_magnet_reference() -> None:
+def test_electrical_machine_design_scenario_2() -> None:
     # For mu=mu0 everywhere, a uniformly magnetized disk sees a uniform coil
     # field. This independently predicts the PM-current interaction torque;
     # taking its current-odd part cancels finite-mesh magnet self torque.
@@ -161,9 +155,6 @@ def test_pm_current_odd_torque_matches_circular_magnet_reference() -> None:
     assert float(odd_torque) > 0.0
     np.testing.assert_allclose(odd_torque, expected, rtol=0.035)
     np.testing.assert_allclose(odd_contour, expected, rtol=0.07)
-
-
-def test_angle_topology_survives_full_revolutions_and_radius_bounds() -> None:
     angle = 0.19
     first = _small_machine(angle)
     revolved = _small_machine(angle + 4 * np.pi)
@@ -221,27 +212,6 @@ def test_angle_topology_survives_full_revolutions_and_radius_bounds() -> None:
         atol=1e-12,
     )
     assert bool(scan.accepted)
-
-
-def test_implicit_torque_design_derivative_includes_field_response() -> None:
-    machine = _small_machine()
-    design = jnp.asarray((0.029, 0.9, 1.1))
-    direction = jnp.asarray((0.001, 0.1, -0.07))
-
-    def torque(parameters: Any) -> Any:
-        # ty: ignore[invalid-argument-type]
-        return solve_planar_machine(machine, (-7.0, 1.0), design=parameters).torque
-
-    _, tangent = jax.jvp(torque, (design,), (direction,))
-    step = 2e-4
-    finite_difference = (
-        torque(design + step * direction) - torque(design - step * direction)
-    ) / (2 * step)
-    assert abs(float(tangent)) > 1e-5
-    np.testing.assert_allclose(tangent, finite_difference, rtol=2e-4, atol=1e-7)
-
-
-def test_native_design_improves_physical_torque_with_fresh_final_fields() -> None:
     study = polar_machine_study(
         # ty: ignore[invalid-argument-type]
         (0.2,),
@@ -273,6 +243,24 @@ def test_native_design_improves_physical_torque_with_fresh_final_fields() -> Non
         baseline.average_torque
     )
     assert float(result.final_evaluation.fields[0].relative_residual) < 1e-8
+
+
+def test_implicit_torque_design_derivative_includes_field_response() -> None:
+    machine = _small_machine()
+    design = jnp.asarray((0.029, 0.9, 1.1))
+    direction = jnp.asarray((0.001, 0.1, -0.07))
+
+    def torque(parameters: Any) -> Any:
+        # ty: ignore[invalid-argument-type]
+        return solve_planar_machine(machine, (-7.0, 1.0), design=parameters).torque
+
+    _, tangent = jax.jvp(torque, (design,), (direction,))
+    step = 2e-4
+    finite_difference = (
+        torque(design + step * direction) - torque(design - step * direction)
+    ) / (2 * step)
+    assert abs(float(tangent)) > 1e-5
+    np.testing.assert_allclose(tangent, finite_difference, rtol=2e-4, atol=1e-7)
 
 
 def test_rejects_inverted_airgap_source_and_out_of_domain_geometry() -> None:

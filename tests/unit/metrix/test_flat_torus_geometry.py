@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_flat_torus_wrap_retraction_and_inverse_cross_the_seam() -> None:
+def test_flat_torus_contracts() -> None:
     geometry = phx.metrix.FlatTorusStateGeometry(2.0 * jnp.pi)
     state = jnp.asarray([jnp.pi - 0.1, -jnp.pi + 0.2])
     local = jnp.asarray([0.3, -0.4])
@@ -21,9 +21,6 @@ def test_flat_torus_wrap_retraction_and_inverse_cross_the_seam() -> None:
     assert jnp.allclose(recovered, local)
     assert jnp.all(point >= -jnp.pi)
     assert jnp.all(point < jnp.pi)
-
-
-def test_flat_torus_differential_and_transport_are_identity() -> None:
     geometry = phx.metrix.FlatTorusStateGeometry(4.0)
     state = jnp.asarray([0.2, -0.6])
     local = jnp.asarray([0.1, 0.3])
@@ -40,9 +37,6 @@ def test_flat_torus_differential_and_transport_are_identity() -> None:
         geometry.transport_cotangent_pullback(state, point, velocity), velocity
     )
     assert geometry.cut_locus_margin(state, point) > 0.0
-
-
-def test_flat_torus_is_jittable_and_fail_closed() -> None:
     geometry = phx.metrix.FlatTorusStateGeometry(2.0)
     point = jax.jit(geometry.retract)(jnp.asarray([0.9]), jnp.asarray([0.3]))
 

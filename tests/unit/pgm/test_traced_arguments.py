@@ -58,7 +58,7 @@ def _triangle_graph() -> Any:
     return phx.pgm.DiscreteFactorGraph((variables,), (factor,))
 
 
-def test_evidence_elimination_and_junction_tree_accept_dynamic_arguments() -> None:
+def test_traced_arguments_scenario_1() -> None:
     graph = _binary_pair()
     evidence = jnp.asarray([0.1, -0.2, 0.3, -0.4])
     elimination = phx.pgm.plan_variable_elimination(graph)
@@ -87,9 +87,6 @@ def test_evidence_elimination_and_junction_tree_accept_dynamic_arguments() -> No
 
     assert jnp.allclose(eliminated, expected)
     assert jnp.allclose(calibrated, expected)
-
-
-def test_normalized_law_samples_when_the_law_is_a_dynamic_argument() -> None:
     law = phx.pgm.NormalizedFactorGraphLaw(
         phx.pgm.plan_variable_elimination(_binary_pair())
     )
@@ -100,9 +97,6 @@ def test_normalized_law_samples_when_the_law_is_a_dynamic_argument() -> None:
     )
 
     assert jnp.array_equal(compiled, law.sample(key, (5,)))
-
-
-def test_empty_and_mixed_cardinality_elimination_trace() -> None:
     empty_plan = phx.pgm.plan_variable_elimination(phx.pgm.DiscreteFactorGraph(()))
     empty = eqx.filter_jit(phx.pgm.variable_elimination)(empty_plan)
     assert empty.log_normalizer == 0.0
@@ -129,7 +123,7 @@ def test_empty_and_mixed_cardinality_elimination_trace() -> None:
     assert jnp.array_equal(compiled.map_assignment, eager.map_assignment)
 
 
-def test_forest_belief_propagation_accepts_dynamic_prepared_plan_and_state() -> None:
+def test_traced_arguments_scenario_2() -> None:
     graph = _chain_graph()
     prepared = phx.pgm.prepare_belief_propagation(
         graph, phx.pgm.SumProductBeliefPropagation()
@@ -147,9 +141,6 @@ def test_forest_belief_propagation_accepts_dynamic_prepared_plan_and_state() -> 
         # ty: ignore[unresolved-attribute]
         eager.variable_log_probabilities.values,
     )
-
-
-def test_max_product_and_loopy_belief_propagation_accept_dynamic_plans() -> None:
     tree = _chain_graph()
     max_prepared = phx.pgm.prepare_belief_propagation(
         tree, phx.pgm.MaxProductBeliefPropagation()
@@ -177,9 +168,6 @@ def test_max_product_and_loopy_belief_propagation_accept_dynamic_plans() -> None
         # ty: ignore[unresolved-attribute]
         eager_loopy.variable_log_probabilities.values,
     )
-
-
-def test_gibbs_and_joint_block_accept_dynamic_prepared_plan_and_state() -> None:
     graph = _triangle_graph()
     prepared = phx.pgm.prepare_chromatic_gibbs(graph)
     state = phx.pgm.initialize_gibbs(prepared, jnp.asarray([[0, 0, 0], [1, 1, 1]]))
@@ -201,7 +189,7 @@ def test_gibbs_and_joint_block_accept_dynamic_prepared_plan_and_state() -> None:
     assert jnp.array_equal(compiled_block_info.valid, eager_block_info.valid)
 
 
-def test_pseudolikelihood_accepts_dynamic_graph_and_assignments() -> None:
+def test_traced_arguments_scenario_3() -> None:
     graph = _triangle_graph()
     assignments = jnp.asarray([[0, 0, 0], [1, 1, 1], [0, 1, 0]])
 
@@ -209,9 +197,6 @@ def test_pseudolikelihood_accepts_dynamic_graph_and_assignments() -> None:
     compiled = eqx.filter_jit(phx.pgm.pseudolikelihood_loss)(graph, assignments)
 
     assert jnp.allclose(compiled, eager)
-
-
-def test_map_execution_accepts_dynamic_prepared_plans() -> None:
     graph = _triangle_graph()
     bp = phx.pgm.prepare_belief_propagation(graph, phx.pgm.MaxProductBeliefPropagation())
     method = phx.pgm.SmoothDualLP(num_steps=3)
@@ -232,6 +217,24 @@ def test_map_execution_accepts_dynamic_prepared_plans() -> None:
     assert jnp.allclose(compiled_dual.upper_bound, eager_dual.upper_bound)
     assert jnp.array_equal(compiled_dual.assignment, eager_dual.assignment)
     assert jnp.allclose(compiled_perturb.estimates, eager_perturb.estimates)
+    graph = _binary_pair()
+    valid_score = eqx.filter_jit(phx.pgm.factor_graph_log_score)(
+        graph, jnp.asarray([2**40, 0], dtype=jnp.int64)
+    )
+    assert jnp.isneginf(valid_score)
+
+    invalid_evidence = jnp.asarray([jnp.nan, 0.0, 0.0, 0.0])
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        phx.pgm.pack_evidence(graph, invalid_evidence)
+
+    check_evidence = eqx.filter_jit(
+        lambda value, raw: phx.pgm.pack_evidence(value, raw).values
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        check_evidence(
+            graph,
+            jnp.asarray([jnp.nan, 0.0, 0.0, 0.0]),
+        ).block_until_ready()
 
 
 def test_dynamic_graph_gradients_and_same_structure_cache_reuse() -> None:
@@ -266,27 +269,6 @@ def test_dynamic_graph_gradients_and_same_structure_cache_reuse() -> None:
     other = _chain_graph(4)
     compiled_score(other, jnp.zeros((1, 4), dtype=jnp.int32)).block_until_ready()
     assert len(traces) > first_count
-
-
-def test_runtime_data_checks_are_trace_safe_and_fail_closed() -> None:
-    graph = _binary_pair()
-    valid_score = eqx.filter_jit(phx.pgm.factor_graph_log_score)(
-        graph, jnp.asarray([2**40, 0], dtype=jnp.int64)
-    )
-    assert jnp.isneginf(valid_score)
-
-    invalid_evidence = jnp.asarray([jnp.nan, 0.0, 0.0, 0.0])
-    with pytest.raises(eqx.EquinoxRuntimeError):
-        phx.pgm.pack_evidence(graph, invalid_evidence)
-
-    check_evidence = eqx.filter_jit(
-        lambda value, raw: phx.pgm.pack_evidence(value, raw).values
-    )
-    with pytest.raises(eqx.EquinoxRuntimeError):
-        check_evidence(
-            graph,
-            jnp.asarray([jnp.nan, 0.0, 0.0, 0.0]),
-        ).block_until_ready()
 
 
 def test_reverse_kernel_accepts_dynamic_kernel_state_and_observation() -> None:

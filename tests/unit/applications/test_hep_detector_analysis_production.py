@@ -49,7 +49,7 @@ def _geometry_and_conditions() -> Any:
     return conditions, geometry
 
 
-def test_calorimeter_energy_ledger_keeps_dead_and_unknown_leakage_distinct() -> None:
+def test_hep_detector_analysis_production_scenario_1() -> None:
     detector = phx.applications.detector
     conditions, geometry = _geometry_and_conditions()
     hits = detector.SensitiveHitBank(
@@ -77,9 +77,6 @@ def test_calorimeter_energy_ledger_keeps_dead_and_unknown_leakage_distinct() -> 
     assert jnp.isclose(truth.unmapped_energy[0], 4.0)
     assert not bool(truth.leakage_known[0])
     assert jnp.isnan(truth.leakage_energy[0])
-
-
-def test_calorimeter_response_and_observables_are_conditioned_on_live_cells() -> None:
     detector = phx.applications.detector
     conditions, geometry = _geometry_and_conditions()
     hits = detector.SensitiveHitBank(
@@ -144,9 +141,6 @@ def test_calorimeter_response_and_observables_are_conditioned_on_live_cells() ->
     )
     with pytest.raises(ValueError, match="geometry"):
         detector.calorimetry.reconstruct_calorimeter_clusters(clustering, response)
-
-
-def test_corpus_split_and_sparse_velocity_preserve_geometry_support() -> None:
     detector = phx.applications.detector
     _, geometry = _geometry_and_conditions()
     payload = b"calorimeter-corpus"
@@ -195,9 +189,6 @@ def test_corpus_split_and_sparse_velocity_preserve_geometry_support() -> None:
     velocity = model(jnp.asarray([0.2, 0.0]), jnp.asarray(0.5), jnp.asarray([2.0]))
     assert velocity.shape == (2,)
     assert velocity[1] == 0.0
-
-
-def test_fixed_association_track_fit_recovers_observable_trajectory() -> None:
     detector = phx.applications.detector
     times = jnp.asarray([0.0, 1.0, 2.0])
     intercept = jnp.asarray([1.0, -2.0, 0.5])
@@ -242,7 +233,7 @@ def test_fixed_association_track_fit_recovers_observable_trajectory() -> None:
     np.testing.assert_allclose(particles.energies[0, 0], 4.0 * gamma, rtol=1e-12)
 
 
-def test_detector_conditions_identity_and_energy_loss_are_enforced() -> None:
+def test_hep_detector_analysis_production_scenario_2() -> None:
     detector = phx.applications.detector
     conditions, _ = _geometry_and_conditions()
     digits = detector.DigitBank(
@@ -298,9 +289,6 @@ def test_detector_conditions_identity_and_energy_loss_are_enforced() -> None:
     final_momentum = jnp.linalg.norm(propagated.tracks.momenta[0, 0])
     final_energy = jnp.sqrt(final_momentum**2 + 4.0**2)
     np.testing.assert_allclose(final_energy, 5.0 - distance, rtol=1e-6)
-
-
-def test_weighted_analysis_retains_negative_bins_and_nested_cutflow() -> None:
     analysis = phx.applications.collider_analysis
     weights = phx.particle_physics.EventWeightSet(
         jnp.asarray([[1.0], [-2.0], [0.5]]),
@@ -323,9 +311,6 @@ def test_weighted_analysis_retains_negative_bins_and_nested_cutflow() -> None:
     )
     assert bool(cutflow.nested)
     assert jnp.allclose(cutflow.sum_weights, jnp.asarray([-1.0, 1.0]))
-
-
-def test_calochallenge_profile_admits_pinned_resident_hdf5_arrays() -> None:
     _, geometry = _geometry_and_conditions()
     stream = BytesIO()
     with h5py.File(stream, "w") as handle:

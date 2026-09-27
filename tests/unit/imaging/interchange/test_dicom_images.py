@@ -78,7 +78,7 @@ def _deidentification() -> Any:
     )
 
 
-def test_legacy_ct_applies_scaling_once_and_constructs_lps_voxel_centers() -> None:
+def test_dicom_images_scenario_1() -> None:
     payloads = (
         legacy_ct(
             sop_instance_uid="1.2.826.0.1.3680043.10.999.12",
@@ -118,9 +118,6 @@ def test_legacy_ct_applies_scaling_once_and_constructs_lps_voxel_centers() -> No
     assert not result.asset.values.flags.writeable
     assert len(result.asset.references) == 2
     assert result.report.graph.unresolved_references == ()
-
-
-def test_legacy_ct_refuses_irregular_grid_and_phi() -> None:
     payloads = tuple(
         legacy_ct(
             sop_instance_uid=f"1.2.826.0.1.3680043.10.999.{20 + index}",
@@ -140,9 +137,6 @@ def test_legacy_ct_refuses_irregular_grid_and_phi() -> None:
     resources, references = _inputs(stream.getvalue())
     with pytest.raises(PermissionError, match="PHI refusal"):
         read_dicom_legacy_ct_image_series(resources, references, _deidentification())
-
-
-def test_enhanced_ct_uses_per_frame_scaling_before_frame_reordering() -> None:
     payload = enhanced_ct(sop_instance_uid="1.2.826.0.1.3680043.10.999.30")
     resources, references = _inputs(payload)
     result = read_dicom_enhanced_ct_image(
@@ -157,9 +151,6 @@ def test_enhanced_ct_uses_per_frame_scaling_before_frame_reordering() -> None:
         result.asset.values[:, :, 1],
         np.asarray([[-998.0, -996.0], [-994.0, -992.0]]),
     )
-
-
-def test_nm_counts_and_pet_activity_concentration_remain_distinct() -> None:
     nm_payload = nm_counts(sop_instance_uid="1.2.826.0.1.3680043.10.999.40")
     nm_resources, nm_references = _inputs(nm_payload)
     nm = read_dicom_nuclear_medicine_counts_image(

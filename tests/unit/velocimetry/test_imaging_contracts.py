@@ -14,7 +14,7 @@ from phydrax.imaging import (
 from phydrax.velocimetry.imaging import DenseDisplacementField2D, ImagePair2D
 
 
-def test_image_contracts_preserve_row_column_components_and_masks() -> None:
+def test_imaging_contracts_scenario_1() -> None:
     geometry = ImagePlaneSupport(
         (3, 4), pixel_origin_rc=(2.0, 5.0), pixel_spacing_rc=(0.5, 0.25)
     )
@@ -31,18 +31,12 @@ def test_image_contracts_preserve_row_column_components_and_masks() -> None:
     assert geometry.coordinate_convention == "row-down-column-right"
     assert pair.first_mask[1, 1] == jnp.asarray(False)
     assert jnp.array_equal(field.displacement_rc[0, 0], jnp.asarray([1.0, -2.0]))
-
-
-def test_native_bilinear_sample_is_strict_and_nonperiodic_at_borders() -> None:
     image = jnp.arange(9.0).reshape((3, 3))
     coordinates = jnp.asarray([[0.5, 0.5], [2.0, 2.0], [-0.1, 1.0], [1.0, 3.0]])
     sampled = jax.jit(bilinear_sample)(image, coordinates, fill_value=-7.0)
 
     assert jnp.allclose(sampled.values, jnp.asarray([2.0, 8.0, -7.0, -7.0]))
     assert jnp.array_equal(sampled.valid, jnp.asarray([True, True, False, False]))
-
-
-def test_backward_warp_has_declared_row_down_column_right_sign() -> None:
     image = jnp.arange(25.0).reshape((5, 5))
     displacement = jnp.zeros((5, 5, 2)).at[..., 1].set(1.0)
     warped = backward_warp(image, displacement, fill_value=-1.0)

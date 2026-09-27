@@ -46,7 +46,7 @@ def _two_mode_device(*, edge_mask: Any = None) -> Any:
     return spec, parameters
 
 
-def test_device_compiler_reuses_shared_parameters_and_matches_dense_algebra() -> None:
+def test_device_compiler_contracts() -> None:
     spec, parameters = _two_mode_device()
     prepared = s.prepare_circuit_qed_device(spec, parameters)
     dense = s.materialize_local_hamiltonian(prepared.drift)
@@ -64,6 +64,51 @@ def test_device_compiler_reuses_shared_parameters_and_matches_dense_algebra() ->
     assert len(prepared.drift.terms) == 3
     assert len(prepared.drive_terms) == 1
     assert jnp.allclose(dense, expected)
+    spec, parameters = _two_mode_device(edge_mask=jnp.asarray([False]))
+    plan = s.plan_circuit_qed_device(
+        spec,
+        s.CircuitQEDDevicePolicy(maximum_dense_entries=1),
+    )
+    prepared = s.prepare_circuit_qed_device(spec, parameters, plan)
+
+    assert not plan.cost.dense_admissible
+    assert len(prepared.drift.terms) == 2
+    assert bool(prepared.diagnostics.valid)
+    with pytest.raises(ValueError, match="maximum_hilbert_dimension"):
+        s.plan_circuit_qed_device(
+            spec,
+            s.CircuitQEDDevicePolicy(maximum_hilbert_dimension=2),
+        )
+    spec, _ = _two_mode_device()
+    plan = s.plan_circuit_qed_device(spec)
+    with pytest.raises(ValueError, match="mode_parameters count"):
+        s.prepare_circuit_qed_device(
+            spec,
+            s.CircuitQEDDeviceParameters(
+                (q.HarmonicModeParameters(3.0), q.HarmonicModeParameters(4.0)),
+                interaction_strengths=jnp.asarray([0.2]),
+                drive_scales=jnp.asarray([0.7]),
+            ),
+            plan,
+        )
+
+    bad_placement = s.CircuitModePlacement(
+        "q",
+        "transmon",
+        q.ChargeBasis(3),
+        0,
+        q.ModeReductionPolicy(2),
+    )
+    bad_spec = s.CircuitQEDDeviceSpec(
+        phx.graph.GraphIR(n_node=jnp.asarray([1]), n_edge=jnp.asarray([0])),
+        (bad_placement,),
+        (),
+    )
+    with pytest.raises(TypeError, match="do not match"):
+        s.prepare_circuit_qed_device(
+            bad_spec,
+            s.CircuitQEDDeviceParameters((q.HarmonicModeParameters(3.0),)),
+        )
 
 
 def test_device_refresh_preserves_plan_and_differentiates_shared_mode_block() -> None:
@@ -99,54 +144,3 @@ def test_device_refresh_preserves_plan_and_differentiates_shared_mode_block() ->
     assert jnp.allclose(
         refreshed.reductions[0].energies, refreshed.reductions[1].energies
     )
-
-
-def test_device_compiler_respects_inactive_edges_and_dense_resource_limits() -> None:
-    spec, parameters = _two_mode_device(edge_mask=jnp.asarray([False]))
-    plan = s.plan_circuit_qed_device(
-        spec,
-        s.CircuitQEDDevicePolicy(maximum_dense_entries=1),
-    )
-    prepared = s.prepare_circuit_qed_device(spec, parameters, plan)
-
-    assert not plan.cost.dense_admissible
-    assert len(prepared.drift.terms) == 2
-    assert bool(prepared.diagnostics.valid)
-    with pytest.raises(ValueError, match="maximum_hilbert_dimension"):
-        s.plan_circuit_qed_device(
-            spec,
-            s.CircuitQEDDevicePolicy(maximum_hilbert_dimension=2),
-        )
-
-
-def test_device_compiler_rejects_topology_parameter_and_operator_mismatches() -> None:
-    spec, _ = _two_mode_device()
-    plan = s.plan_circuit_qed_device(spec)
-    with pytest.raises(ValueError, match="mode_parameters count"):
-        s.prepare_circuit_qed_device(
-            spec,
-            s.CircuitQEDDeviceParameters(
-                (q.HarmonicModeParameters(3.0), q.HarmonicModeParameters(4.0)),
-                interaction_strengths=jnp.asarray([0.2]),
-                drive_scales=jnp.asarray([0.7]),
-            ),
-            plan,
-        )
-
-    bad_placement = s.CircuitModePlacement(
-        "q",
-        "transmon",
-        q.ChargeBasis(3),
-        0,
-        q.ModeReductionPolicy(2),
-    )
-    bad_spec = s.CircuitQEDDeviceSpec(
-        phx.graph.GraphIR(n_node=jnp.asarray([1]), n_edge=jnp.asarray([0])),
-        (bad_placement,),
-        (),
-    )
-    with pytest.raises(TypeError, match="do not match"):
-        s.prepare_circuit_qed_device(
-            bad_spec,
-            s.CircuitQEDDeviceParameters((q.HarmonicModeParameters(3.0),)),
-        )

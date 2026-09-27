@@ -17,7 +17,7 @@ def _mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_darcy_compiles_as_one_product_space_problem() -> None:
+def test_fem_mixed_executor_scenario_1() -> None:
     mesh = _mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,
@@ -40,9 +40,6 @@ def test_darcy_compiles_as_one_product_space_problem() -> None:
     assert compiled.state_space.names == ("q", "p")
     assert tuple(value.shape for value in residual) == ((8,), (4,))
     assert not hasattr(compiled, "subproblems")
-
-
-def test_stokes_has_nonzero_off_diagonal_jvp_and_adjoint_identity() -> None:
     mesh = _mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,
@@ -71,9 +68,6 @@ def test_stokes_has_nonzero_off_diagonal_jvp_and_adjoint_identity() -> None:
     assert compiled.block_dependency_graph() == ((True, True), (True, False))
     assert jnp.allclose(block_image[0], image[0])
     assert jnp.allclose(block_image[1], image[1])
-
-
-def test_upwind_constant_state_is_preserved_with_matching_inflow() -> None:
     mesh = _mesh()
     discretization = phx.discretization.FiniteElementPlan(
         mesh,

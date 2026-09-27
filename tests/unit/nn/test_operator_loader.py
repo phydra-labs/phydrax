@@ -111,7 +111,7 @@ def _wait_until(predicate: Any, *, timeout: Any = 2.0) -> None:
         time.sleep(0.005)
 
 
-def test_array_fingerprint_golden_vector_is_stable() -> None:
+def test_operator_loader_scenario_1() -> None:
     fingerprint = array_tree_fingerprint(
         {
             "x": jnp.arange(6, dtype=jnp.float32).reshape(2, 3),
@@ -124,6 +124,59 @@ def test_array_fingerprint_golden_vector_is_stable() -> None:
     )
     with pytest.raises(TypeError, match="object dtype"):
         array_tree_fingerprint(np.asarray([object()], dtype=object))
+    dataset = _dataset(cases=5)
+    log_weights = jnp.asarray([-2.0, 0.5, 1.25, -0.75, 3.0])
+    case_mask = jnp.asarray([True, False, True, True, False])
+    weighted = phx.nn.operator.training.OperatorDataset(
+        dataset.batch,
+        dataset.targets,
+        dataset.provenance,
+        case_log_weights=log_weights,
+        case_mask=case_mask,
+    )
+    loader = phx.nn.operator.training.OperatorBatchLoader(
+        weighted,
+        batch_size=3,
+        shuffle=False,
+        prefetch=0,
+    )
+
+    selected = loader.prepare_indices((3, 1, 4), epoch=2, batch_index=0)
+
+    assert jnp.array_equal(
+        selected.case_log_weights,
+        log_weights[jnp.asarray((3, 1, 4))],
+    )
+    assert jnp.array_equal(
+        selected.case_mask,
+        case_mask[jnp.asarray((3, 1, 4))],
+    )
+    loader = phx.nn.operator.training.OperatorBatchLoader(
+        _dataset(cases=6, resolution=4),
+        batch_size=4,
+        shuffle=True,
+        seed=23,
+        drop_last=False,
+        prefetch=2,
+        split="train",
+    )
+    positional = phx.nn.operator.training.OperatorEpochPlan(7, 3, True, 5, 2, False)
+    keyword = phx.nn.operator.training.OperatorEpochPlan(
+        source_size=7,
+        batch_size=3,
+        shuffle=True,
+        seed=5,
+        epoch=2,
+        drop_last=False,
+    )
+
+    assert (
+        loader.fingerprint
+        == "7a81e9736fb2800590b2a217d517755d313046680b13f2f27b08ce6d7ae2d367"
+    )
+    assert type(positional) is phx.nn.operator.training.OperatorEpochPlan
+    assert positional == keyword
+    assert tuple(positional) == tuple(keyword)
 
 
 def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch() -> None:
@@ -270,36 +323,6 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch() -> Non
     )
 
 
-def test_in_memory_loader_preserves_indexed_case_weights_and_masks() -> None:
-    dataset = _dataset(cases=5)
-    log_weights = jnp.asarray([-2.0, 0.5, 1.25, -0.75, 3.0])
-    case_mask = jnp.asarray([True, False, True, True, False])
-    weighted = phx.nn.operator.training.OperatorDataset(
-        dataset.batch,
-        dataset.targets,
-        dataset.provenance,
-        case_log_weights=log_weights,
-        case_mask=case_mask,
-    )
-    loader = phx.nn.operator.training.OperatorBatchLoader(
-        weighted,
-        batch_size=3,
-        shuffle=False,
-        prefetch=0,
-    )
-
-    selected = loader.prepare_indices((3, 1, 4), epoch=2, batch_index=0)
-
-    assert jnp.array_equal(
-        selected.case_log_weights,
-        log_weights[jnp.asarray((3, 1, 4))],
-    )
-    assert jnp.array_equal(
-        selected.case_mask,
-        case_mask[jnp.asarray((3, 1, 4))],
-    )
-
-
 def test_exact_resume_rejects_changed_case_weight_or_mask(tmp_path: Any) -> None:
     dataset = _dataset(cases=5, resolution=8)
     assert dataset.case_log_weights is not None
@@ -341,36 +364,7 @@ def test_exact_resume_rejects_changed_case_weight_or_mask(tmp_path: Any) -> None
             )
 
 
-def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable() -> None:
-    loader = phx.nn.operator.training.OperatorBatchLoader(
-        _dataset(cases=6, resolution=4),
-        batch_size=4,
-        shuffle=True,
-        seed=23,
-        drop_last=False,
-        prefetch=2,
-        split="train",
-    )
-    positional = phx.nn.operator.training.OperatorEpochPlan(7, 3, True, 5, 2, False)
-    keyword = phx.nn.operator.training.OperatorEpochPlan(
-        source_size=7,
-        batch_size=3,
-        shuffle=True,
-        seed=5,
-        epoch=2,
-        drop_last=False,
-    )
-
-    assert (
-        loader.fingerprint
-        == "7a81e9736fb2800590b2a217d517755d313046680b13f2f27b08ce6d7ae2d367"
-    )
-    assert type(positional) is phx.nn.operator.training.OperatorEpochPlan
-    assert positional == keyword
-    assert tuple(positional) == tuple(keyword)
-
-
-def test_callback_fingerprint_lookup_performs_no_hidden_reads() -> None:
+def test_operator_loader_scenario_2() -> None:
     source, metadata_reads, case_reads, _ = _callback_source(size=100)
     loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
@@ -386,9 +380,6 @@ def test_callback_fingerprint_lookup_performs_no_hidden_reads() -> None:
     assert first == second
     assert metadata_reads == []
     assert case_reads == []
-
-
-def test_prefetch_preserves_order_and_has_bounded_read_ahead() -> None:
     source, _, case_reads, reader_threads = _callback_source(size=7, safe=True)
     loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
@@ -410,27 +401,6 @@ def test_prefetch_preserves_order_and_has_bounded_read_ahead() -> None:
         thread.name.startswith("phydrax-operator-epoch-")
         for thread in threading.enumerate()
     )
-
-
-def test_unsafe_callback_source_stays_synchronous() -> None:
-    source, _, case_reads, reader_threads = _callback_source(size=4, safe=False)
-    loader = phx.nn.operator.training.OperatorBatchLoader(
-        source,
-        batch_size=1,
-        shuffle=False,
-        prefetch=4,
-    )
-    main_thread = threading.current_thread().name
-
-    assert loader.effective_prefetch == 0
-    with loader.epoch(0) as batches:
-        assert next(batches).indices == (0,)
-
-    assert case_reads == [0]
-    assert reader_threads == [main_thread]
-
-
-def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors() -> None:
     dataset = _dataset(cases=11)
     synchronous = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
@@ -484,6 +454,21 @@ def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors() -> 
         thread.name.startswith("phydrax-operator-epoch-")
         for thread in threading.enumerate()
     )
+    source, _, case_reads, reader_threads = _callback_source(size=4, safe=False)
+    loader = phx.nn.operator.training.OperatorBatchLoader(
+        source,
+        batch_size=1,
+        shuffle=False,
+        prefetch=4,
+    )
+    main_thread = threading.current_thread().name
+
+    assert loader.effective_prefetch == 0
+    with loader.epoch(0) as batches:
+        assert next(batches).indices == (0,)
+
+    assert case_reads == [0]
+    assert reader_threads == [main_thread]
 
 
 def _logged_dataset_source(dataset: Any, reads: Any, *, fingerprint: Any = None) -> Any:
@@ -508,7 +493,7 @@ def _logged_dataset_source(dataset: Any, reads: Any, *, fingerprint: Any = None)
     )
 
 
-def test_eager_and_callback_sources_preserve_case_measure_and_exhaustive_mass() -> None:
+def test_operator_loader_scenario_3() -> None:
     base = _dataset(cases=3)
     dataset = phx.nn.operator.training.OperatorDataset(
         base.batch,
@@ -548,9 +533,6 @@ def test_eager_and_callback_sources_preserve_case_measure_and_exhaustive_mass() 
             lazy.sampling_probabilities,
             jnp.ones_like(lazy.case_log_weights),
         )
-
-
-def test_case_payload_padding_duplicates_shapes_but_masks_padding() -> None:
     dataset = _dataset(cases=3)
     batch, targets, log_weights, mask = _pad_case_payload(
         dataset.batch,
@@ -570,6 +552,20 @@ def test_case_payload_padding_duplicates_shapes_but_masks_padding() -> None:
         # ty: ignore[not-subscriptable]
         batch.input("state").values[-2],
     )
+    result = run_data_plane_benchmark(
+        cases=7,
+        batch_size=3,
+        resolution=4,
+        prefetch=2,
+        repetitions=1,
+    )
+
+    assert result.exact_order_match
+    assert result.fingerprint_case_reads == 0
+    assert result.resume_gate_case_reads == 0
+    assert result.current_batch_device_bytes > 0
+    assert result.sync_peak_host_bytes > 0
+    assert result.prefetched_peak_host_bytes > 0
 
 
 @pytest.mark.skipif(
@@ -744,20 +740,3 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
             **common,
         )
     assert old_format_reads == []
-
-
-def test_data_plane_benchmark_reports_correctness_and_identity_gates() -> None:
-    result = run_data_plane_benchmark(
-        cases=7,
-        batch_size=3,
-        resolution=4,
-        prefetch=2,
-        repetitions=1,
-    )
-
-    assert result.exact_order_match
-    assert result.fingerprint_case_reads == 0
-    assert result.resume_gate_case_reads == 0
-    assert result.current_batch_device_bytes > 0
-    assert result.sync_peak_host_bytes > 0
-    assert result.prefetched_peak_host_bytes > 0

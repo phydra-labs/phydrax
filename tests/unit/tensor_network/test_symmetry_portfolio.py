@@ -52,7 +52,7 @@ from phydrax.tensor_network._su2 import (
 )
 
 
-def test_abelian_unreachable_support_and_prepared_block_contraction() -> None:
+def test_symmetry_portfolio_scenario_1() -> None:
     group = AbelianGroup((None,))
     positive = AbelianLeg(group, ((1,),), (2,), orientation=1)
     unreachable = AbelianTensorLayout((positive, positive), total_charge=(0,))
@@ -70,9 +70,6 @@ def test_abelian_unreachable_support_and_prepared_block_contraction() -> None:
     result = contract_abelian_tensors(plan, matrix, vector)
     assert isinstance(result, AbelianTensor)
     assert jnp.allclose(result.blocks[0], jnp.asarray((17.0, 39.0)))
-
-
-def test_abelian_gate_reports_sector_capacity_overflow() -> None:
     group = AbelianGroup((2,))
     physical = AbelianLeg(group, ((0,),), (2,), orientation=1)
     state = abelian_product_mps(
@@ -100,9 +97,6 @@ def test_abelian_gate_reports_sector_capacity_overflow() -> None:
     assert evidence.available_rank == 2
     assert jnp.allclose(evidence.overflow_discarded_weight, 0.5)
     assert jnp.allclose(evidence.discarded_weight, 0.5)
-
-
-def test_charge_covariant_kraus_lpdo_amplitude_damping_oracle() -> None:
     group = AbelianGroup((None,))
     physical = AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=1)
     gamma = 0.25
@@ -135,9 +129,6 @@ def test_charge_covariant_kraus_lpdo_amplitude_damping_oracle() -> None:
     assert jnp.allclose(jnp.asarray(populations), jnp.asarray((gamma, 1.0 - gamma)))
     assert jnp.allclose(evidence.output_trace, 1.0)
     assert evidence.valid
-
-
-def test_grading_is_explicit_homomorphism_and_odd_zn_rejects_parity() -> None:
     odd = AbelianGroup((3,))
     with pytest.raises(ValueError, match="odd-order"):
         FermionGrading(odd, (1,))
@@ -148,7 +139,7 @@ def test_grading_is_explicit_homomorphism_and_odd_zn_rejects_parity() -> None:
     assert grading.parity((3, 1)) == 0
 
 
-def test_fswap_and_jordan_wigner_anticommutation_dense_oracles() -> None:
+def test_symmetry_portfolio_scenario_2() -> None:
     fswap = fermionic_swap_gate().reshape((4, 4))
     assert fswap[3, 3] == -1
     assert jnp.allclose(fswap @ fswap, jnp.eye(4))
@@ -161,9 +152,6 @@ def test_fswap_and_jordan_wigner_anticommutation_dense_oracles() -> None:
         jnp.zeros((4, 4)),
         atol=1e-12,
     )
-
-
-def test_graded_closed_contraction_is_independent_of_input_path_order() -> None:
     group = AbelianGroup((2,))
     grading = FermionGrading(group, (1,))
     outward = AbelianLeg(group, ((0,), (1,)), (1, 1), orientation=1)
@@ -182,9 +170,6 @@ def test_graded_closed_contraction_is_independent_of_input_path_order() -> None:
     second = contract_graded_closed_network((right, left), ("m",))
     assert jnp.allclose(first, second)
     assert jnp.allclose(first, 6.0)
-
-
-def test_representation_category_fusion_multiplicity_and_tree() -> None:
     irreps = (Irrep("1", 1, dual_label="1"), Irrep("x", 1, dual_label="x"))
     rules = (
         ("1", "1", (("1", 1),)),
@@ -200,7 +185,7 @@ def test_representation_category_fusion_multiplicity_and_tree() -> None:
     assert category.multiplicity("x", "x", "1") == 1
 
 
-def test_su2_cg_recoupling_pentagon_and_multiplet_truncation() -> None:
+def test_su2_contracts() -> None:
     singlet = su2_clebsch_gordan(1, 1, 0)[:, :, 0]
     triplet = su2_clebsch_gordan(1, 1, 2)
     assert jnp.allclose(jnp.sum(jnp.abs(singlet) ** 2), 1.0)
@@ -220,9 +205,6 @@ def test_su2_cg_recoupling_pentagon_and_multiplet_truncation() -> None:
     assert tuple(mask.tolist() for mask in masks) == ([False, False], [True])
     assert evidence.retained_multiplet_dimension == 3
     assert evidence.protected_multiplets_satisfied
-
-
-def test_su2_protected_sector_dmrg_singlet_triplet_oracle() -> None:
     operator = SU2InvariantOperator(
         (0, 2),
         (jnp.asarray(((-0.75,),)), jnp.asarray(((0.25,),))),

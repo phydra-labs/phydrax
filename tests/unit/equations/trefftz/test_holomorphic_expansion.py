@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_exact_disk_trace_matches_entire_finite_fourier_boundary() -> None:
+def test_holomorphic_expansion_scenario_1() -> None:
     plan = phx.equations.DiskHolomorphicTracePlan(
         3,
         center=0.2 - 0.1j,
@@ -30,9 +30,6 @@ def test_exact_disk_trace_matches_entire_finite_fourier_boundary() -> None:
     certificate = lift.trace_certificate()
     assert certificate.evidence_kind == "continuous-subspace-exact"
     assert certificate.residual_bound == 0.0
-
-
-def test_contour_period_and_fixed_meromorphic_domain_evidence() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
     angles = jnp.linspace(0.0, 2.0 * jnp.pi, 128, endpoint=False)
     nodes = jnp.exp(1j * angles)
@@ -64,9 +61,6 @@ def test_contour_period_and_fixed_meromorphic_domain_evidence() -> None:
         jnp.linalg.norm(coefficient_map.residual(potential.free_coordinates))
         <= coefficient_map.evidence.tolerance
     )
-
-
-def test_meromorphic_variable_projection_recovers_linear_coefficients() -> None:
     coordinates = jnp.linspace(-0.8, 0.8, 21).astype(jnp.complex128) + 0.1j
     pole = 1.7 + 0.4j
     observations = (
@@ -89,16 +83,13 @@ def test_meromorphic_variable_projection_recovers_linear_coefficients() -> None:
     assert jnp.linalg.norm(stationarity) < 2e-9
 
 
-def test_multi_index_resource_guard_fails_before_expansion() -> None:
+def test_holomorphic_expansion_scenario_2() -> None:
     with pytest.raises(ValueError, match="exceeds"):
         phx.equations.HolomorphicMultiIndexSet.total_degree(
             4,
             5,
             maximum_count=10,
         )
-
-
-def test_holomorphic_mlp_multijets_match_complex_ad() -> None:
     model = phx.nn.models.HolomorphicMLP(
         in_size=2,
         out_size=2,
@@ -117,9 +108,6 @@ def test_holomorphic_mlp_multijets_match_complex_ad() -> None:
     assert jnp.allclose(jet.derivative((1, 0)), jacobian[:, 0], atol=2e-12)
     assert jnp.allclose(jet.derivative((0, 1)), jacobian[:, 1], atol=2e-12)
     assert jnp.allclose(jet.derivative((1, 1)), hessian[:, 0, 1], atol=3e-11)
-
-
-def test_product_multijets_match_complex_ad() -> None:
     first = phx.nn.models.HolomorphicMLP(
         in_size=2,
         out_size=2,

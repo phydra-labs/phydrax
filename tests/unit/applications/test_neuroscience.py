@@ -66,7 +66,7 @@ def _solve(problem: Any, times: Any, **kwargs: Any) -> Any:
     )
 
 
-def test_directed_mixed_delays_use_exact_nongrid_prehistory_and_declared_units() -> None:
+def test_neuroscience_scenario_1() -> None:
     weights = np.asarray([[0.0, 2.0, 0.5], [0.3, 0.0, 0.0], [0.0, 0.0, 0.0]])
     delay_ms = np.asarray([[0.0, 137.0, 0.0], [211.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     connectivity = ns.RegionalConnectivity(
@@ -114,9 +114,6 @@ def test_directed_mixed_delays_use_exact_nongrid_prehistory_and_declared_units()
         # ty: ignore[unresolved-attribute]
         problem.initial_right_derivative,
     )
-
-
-def test_instantaneous_hopf_self_coupling_cancels_and_hertz_sets_rotation() -> None:
     # ty: ignore[invalid-argument-type]
     connectivity = ns.RegionalConnectivity(("oscillator",), [[7.0]], [[0.0]])
     problem = ns.regional_problem(
@@ -130,9 +127,6 @@ def test_instantaneous_hopf_self_coupling_cancels_and_hertz_sets_rotation() -> N
     solved = ns.solve_regional(problem, save_times=times, rtol=1e-9, atol=1e-11)
     expected = jnp.stack((jnp.cos(jnp.pi * times), jnp.sin(jnp.pi * times)), axis=-1)
     np.testing.assert_allclose(solved.neural.values[:, 0], expected, rtol=2e-8, atol=2e-8)
-
-
-def test_balloon_equilibrium_and_pulse_recover_without_losing_positive_ratios() -> None:
     model = ns.BalloonWindkessel()
     resting = ns.balloon_equilibrium(1)
     np.testing.assert_allclose(model(resting, jnp.zeros(1)), 0.0, atol=1e-14)
@@ -157,7 +151,7 @@ def test_balloon_equilibrium_and_pulse_recover_without_losing_positive_ratios() 
     assert bool(jnp.all(solved.valid & jnp.all(jnp.isfinite(solved.states), axis=(1, 2))))
 
 
-def test_segmented_continuation_preserves_neural_history_and_all_balloon_state() -> None:
+def test_neuroscience_scenario_2() -> None:
     initial = jnp.asarray(
         [
             [0.02, jnp.log(1.1), jnp.log(1.02), jnp.log(0.98)],
@@ -188,6 +182,27 @@ def test_segmented_continuation_preserves_neural_history_and_all_balloon_state()
     )
     assert bool(jnp.all(restarted.bold.sample_valid))
     assert bool(jnp.all(restarted.neural.sample_valid))
+    with pytest.raises(ValueError, match="nonnegative"):
+        # ty: ignore[invalid-argument-type]
+        ns.RegionalConnectivity(("a",), [[1.0]], [[-0.001]])
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="positive"):
+        ns.WilsonCowan(tau_e_s=0.0)
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="strictly between"):
+        ns.BalloonWindkessel(extraction=1.0)
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="strictly positive"):
+        _bold_problem(
+            _connectivity(), initial_balloon=jnp.zeros((2, 4)).at[0, 1].set(-1000.0)
+        )
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="active datum"):
+        ns.BOLDObservation.from_samples(
+            ("a",),
+            # ty: ignore[invalid-argument-type]
+            [0.0, 1.0],
+            # ty: ignore[invalid-argument-type]
+            [[jnp.nan], [jnp.nan]],
+            # ty: ignore[invalid-argument-type]
+            valid=[[False], [False]],
+        )
 
 
 def test_delayed_bold_parameter_gradient_and_masked_fit_failure_boundary() -> None:
@@ -257,27 +272,3 @@ def test_delayed_bold_parameter_gradient_and_masked_fit_failure_boundary() -> No
         observed.standard_deviation.at[2, 0].set(1e-4),
         rtol=1e-14,
     )
-
-
-def test_rejects_invalid_delays_parameters_and_nonphysical_initial_hemodynamics() -> None:
-    with pytest.raises(ValueError, match="nonnegative"):
-        # ty: ignore[invalid-argument-type]
-        ns.RegionalConnectivity(("a",), [[1.0]], [[-0.001]])
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="positive"):
-        ns.WilsonCowan(tau_e_s=0.0)
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="strictly between"):
-        ns.BalloonWindkessel(extraction=1.0)
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="strictly positive"):
-        _bold_problem(
-            _connectivity(), initial_balloon=jnp.zeros((2, 4)).at[0, 1].set(-1000.0)
-        )
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="active datum"):
-        ns.BOLDObservation.from_samples(
-            ("a",),
-            # ty: ignore[invalid-argument-type]
-            [0.0, 1.0],
-            # ty: ignore[invalid-argument-type]
-            [[jnp.nan], [jnp.nan]],
-            # ty: ignore[invalid-argument-type]
-            valid=[[False], [False]],
-        )

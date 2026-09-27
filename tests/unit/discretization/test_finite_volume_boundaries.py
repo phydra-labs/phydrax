@@ -28,7 +28,7 @@ def _scalar_system() -> Any:
     )
 
 
-def test_piecewise_constant_reconstruction_uses_explicit_exterior_states() -> None:
+def test_finite_volume_boundaries_scenario_1() -> None:
     state = jnp.arange(4.0)[:, None]
     left, right = phx.discretization.PiecewiseConstantReconstruction().reconstruct_axis(
         state,
@@ -40,9 +40,6 @@ def test_piecewise_constant_reconstruction_uses_explicit_exterior_states() -> No
 
     np.testing.assert_allclose(left[:, 0], [-2.0, 0.0, 1.0, 2.0, 3.0])
     np.testing.assert_allclose(right[:, 0], [0.0, 1.0, 2.0, 3.0, 7.0])
-
-
-def test_muscl_reconstructs_linear_cell_average_at_interior_faces() -> None:
     grid = _bounded_grid(12)
     centers = grid.structured_axes[0].interval_centers
     state = (1.5 + 2.0 * centers)[:, None]
@@ -62,9 +59,6 @@ def test_muscl_reconstructs_linear_cell_average_at_interior_faces() -> None:
 
     np.testing.assert_allclose(left[1:-1, 0], exact[1:-1], rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(right[1:-1, 0], exact[1:-1], rtol=1e-12, atol=1e-12)
-
-
-def test_rusanov_flux_is_consistent_and_orientation_reversing() -> None:
     system = _scalar_system()
     solver = phx.discretization.RusanovFluxPlan()
     state = jnp.asarray([[0.2], [0.7], [-0.3]])
@@ -78,7 +72,7 @@ def test_rusanov_flux_is_consistent_and_orientation_reversing() -> None:
     assert jnp.all(equal.max_speed >= 0.0)
 
 
-def test_hllc_preserves_stationary_euler_contact_flux() -> None:
+def test_finite_volume_boundaries_scenario_2() -> None:
     system = phx.equations.EulerSystem()
     primitive_left = jnp.asarray([[1.0, 0.0, 1.0]])
     primitive_right = jnp.asarray([[0.3, 0.0, 1.0]])
@@ -90,9 +84,6 @@ def test_hllc_preserves_stationary_euler_contact_flux() -> None:
     )
 
     np.testing.assert_allclose(result.normal_flux, [[0.0, 1.0, 0.0]], atol=1e-12)
-
-
-def test_bounded_compilation_requires_complete_boundary_pairs() -> None:
     grid = _bounded_grid()
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = _scalar_system()
@@ -107,9 +98,6 @@ def test_bounded_compilation_requires_complete_boundary_pairs() -> None:
 
     with pytest.raises(ValueError, match="boundary pair"):
         phx.equations.compile_conservation_problem(problem, discretization, method)
-
-
-def test_prescribed_outward_flux_controls_global_balance() -> None:
     grid = _bounded_grid(10)
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = _scalar_system()

@@ -88,7 +88,7 @@ def _closure_case() -> Any:
     return scene, positions, kinematics, closure, transition.candidate
 
 
-def test_composed_closure_assembles_balanced_stateful_multiphysics_response() -> None:
+def test_contact_closure_extended_scenario_1() -> None:
     scene, positions, kinematics, closure, state = _closure_case()
     capacity = state.capacity
     evaluation = phx.applications.contact.evaluate_contact_closure(
@@ -111,11 +111,6 @@ def test_composed_closure_assembles_balanced_stateful_multiphysics_response() ->
     np.testing.assert_allclose(assembly.action_reaction_residual, 0.0, atol=1.0e-10)
     assert jnp.all(evaluation.candidate_state.wear_depth >= state.wear_depth)
     assert jnp.all(evaluation.candidate_state.adhesion_damage >= state.adhesion_damage)
-
-
-def test_cross_discretization_participants_share_one_closure_without_state_aliasing() -> (
-    None
-):
     scene, _, _, closure, _ = _closure_case()
     participants = phx.discretization.ContactParticipantScene(
         tuple(
@@ -160,9 +155,6 @@ def test_cross_discretization_participants_share_one_closure_without_state_alias
     np.testing.assert_allclose(
         result.assembly.action_reaction_residual, 0.0, atol=1.0e-10
     )
-
-
-def test_contact_cone_impact_and_rolling_resistance_are_dissipative() -> None:
     _, _, kinematics, _, _ = _closure_case()
     local_dimension = 2
     route_count = sum(batch.capacity for batch in kinematics.batches)
@@ -250,7 +242,7 @@ def _interface_case(gap: Any = -0.05) -> Any:
     return interface, kinematics
 
 
-def test_mortar_nitsche_and_mesh_tie_share_balanced_interface_assembly() -> None:
+def test_contact_closure_extended_scenario_2() -> None:
     interface, kinematics = _interface_case()
     mortar_plan = phx.applications.contact.MortarContactPlan(penalty=100.0, friction=0.3)
     state = phx.applications.contact.MortarContactState.initialize(interface, mortar_plan)
@@ -284,9 +276,6 @@ def test_mortar_nitsche_and_mesh_tie_share_balanced_interface_assembly() -> None
     np.testing.assert_allclose(mortar.residual.action_reaction_residual, 0.0)
     np.testing.assert_allclose(nitsche.residual.action_reaction_residual, 0.0)
     assert bool(mortar_derivative.evidence.successful)
-
-
-def test_hydroelastic_rough_and_lubricated_patch_closures_are_physical() -> None:
     interface, kinematics = _interface_case()
     velocity = jnp.asarray(((0.2, -0.1),))
     hydro = phx.applications.contact.evaluate_hydroelastic_contact(
@@ -336,11 +325,6 @@ def test_hydroelastic_rough_and_lubricated_patch_closures_are_physical() -> None
     assert bool(rough.evidence.successful)
     assert bool(lubrication.successful)
     assert lubrication.dissipated_power[0] >= 0.0
-
-
-def test_state_transfer_preconditioner_and_fixed_branch_derivatives_are_qualified() -> (
-    None
-):
     _, _, kinematics, closure, state = _closure_case()
     capacity = state.capacity
     evaluation = phx.applications.contact.evaluate_contact_closure(
@@ -376,7 +360,7 @@ def test_state_transfer_preconditioner_and_fixed_branch_derivatives_are_qualifie
     assert jnp.all(transfer.state.wear_depth >= evaluation.candidate_state.wear_depth)
 
 
-def test_advanced_cone_solver_families_recover_interior_contact_solution() -> None:
+def test_contact_closure_extended_scenario_3() -> None:
     program = phx.applications.contact.ContactConeProgram(
         jnp.asarray(((-1.0, 0.0),)),
         jnp.eye(2),
@@ -421,9 +405,6 @@ def test_advanced_cone_solver_families_recover_interior_contact_solution() -> No
     np.testing.assert_allclose(sap.impulse, ((1.0, 0.0),), atol=1.0e-6)
     np.testing.assert_allclose(semismooth.impulse, ((1.0, 0.0),), atol=1.0e-6)
     np.testing.assert_allclose(primal_dual.impulse, ((1.0, 0.0),), atol=1.0e-4)
-
-
-def test_cone_certificates_and_fixed_route_sensitivity_fail_closed_when_stale() -> None:
     program = phx.applications.contact.ContactConeProgram(
         jnp.asarray(((-1.0, 0.0),)),
         jnp.eye(2),
@@ -498,9 +479,6 @@ def test_cone_certificates_and_fixed_route_sensitivity_fail_closed_when_stale() 
     assert jnp.linalg.norm(failed.candidate_impulse) > 0.0
     assert not bool(failed_derivative.evidence.successful)
     np.testing.assert_array_equal(failed_derivative.impulse_tangent, 0.0)
-
-
-def test_rigid_participant_and_geometric_filter_preserve_explicit_kinematics() -> None:
     surface_plan = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0, 1)),
         ambient_dimension=2,

@@ -33,7 +33,7 @@ def _points_batch() -> Any:
     return batch, case_axis, sample_axis
 
 
-def test_points_domain_view_round_trips_named_prediction_fields() -> None:
+def test_operator_domain_views_scenario_1() -> None:
     batch, case_axis, sample_axis = _points_batch()
     view = phx.nn.operator.operator_domain_view_from_points(
         batch,
@@ -63,9 +63,6 @@ def test_points_domain_view_round_trips_named_prediction_fields() -> None:
     assert view.batch.query("state").sample_shape == (4,)
     assert restored["solution"].dims == (case_axis, sample_axis)
     assert jnp.array_equal(jnp.asarray(restored["solution"].data), values)
-
-
-def test_points_domain_model_dispatches_shared_query_geometry_end_to_end() -> None:
     data = phx.domain.DatasetDomain(jnp.ones((2, 4)), label="data")
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
     sampled = domain.component().sample(
@@ -101,9 +98,6 @@ def test_points_domain_model_dispatches_shared_query_geometry_end_to_end() -> No
     assert output.dims == tuple(sampled.structure.axis_names)
     assert output.data.shape == (2, 4)
     assert jnp.all(jnp.isfinite(jnp.asarray(output.data)))
-
-
-def test_coord_separable_domain_view_preserves_axes_and_restores_output() -> None:
     nx = 8
     data = phx.domain.DatasetDomain(jnp.ones((3, nx)), label="data")
     geometry = phx.domain.GeometryDomain(
@@ -146,21 +140,6 @@ def test_coord_separable_domain_view_preserves_axes_and_restores_output() -> Non
     assert view.batch.query("query").axis_names == sampled.coord_axes_by_label["x"]
     assert restored.dims == view.batch.case_axes + sampled.coord_axes_by_label["x"]
     assert restored.data.shape == output.shape
-
-
-def _graph(node_count: Any) -> Any:
-    positions = jnp.arange(float(node_count))[:, None]
-    return phx.graph.GraphIR(
-        nodes={"positions": positions},
-        edges=None,
-        senders=None,
-        receivers=None,
-        n_node=jnp.asarray([node_count]),
-        n_edge=jnp.asarray([0]),
-    )
-
-
-def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis() -> None:
     domain = phx.domain.GraphDatasetDomain((_graph(2), _graph(3)), label="graph")
     sampled = domain.points_from_indices(
         jnp.asarray([0, 1]),
@@ -203,9 +182,58 @@ def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis() ->
     assert jnp.array_equal(
         jnp.asarray(evaluated.data), jnp.asarray([0.0, 1.0, 0.0, 1.0, 2.0])
     )
+    domain = phx.domain.GraphTrajectoryDatasetDomain(
+        (_graph(2), _graph(3)),
+        jnp.asarray([3, 4]),
+        dt=0.5,
+    )
+    component = domain.component(
+        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
+    )
+    sampled = domain.points_from_case_time(
+        [0, 1],
+        [0.5, 1.0],
+        component=component,
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
+    )
+    view = phx.nn.operator.operator_domain_view_from_graph(
+        sampled,
+        inputs={"graph": "graph"},
+        query_labels=("t",),
+    )
+    model = phx.nn.operator.architectures.NativeGraphOperator(
+        lambda graph: graph,
+        in_size="scalar",
+        out_size="scalar",
+        source_name="graph",
+        output_key="features",
+    )
+    evaluated = domain.Model("graph", "t")(model)(sampled)
+
+    coordinates = view.batch.query("query").coordinates
+    assert coordinates is not None
+    assert coordinates.shape == (2, 3, 2)
+    assert jnp.allclose(coordinates[0, :2, 1], 0.5)
+    assert jnp.allclose(coordinates[1, :, 1], 1.0)
+    assert evaluated.data.shape == (5,)
+    assert jnp.array_equal(
+        jnp.asarray(evaluated.data), jnp.asarray([0.0, 1.0, 0.0, 1.0, 2.0])
+    )
 
 
-def test_simplicial_domain_view_retains_cell_site_and_graph_node_entity() -> None:
+def _graph(node_count: Any) -> Any:
+    positions = jnp.arange(float(node_count))[:, None]
+    return phx.graph.GraphIR(
+        nodes={"positions": positions},
+        edges=None,
+        senders=None,
+        receivers=None,
+        n_node=jnp.asarray([node_count]),
+        n_edge=jnp.asarray([0]),
+    )
+
+
+def test_operator_domain_views_scenario_2() -> None:
     complex_graph = phx.graph.triangle_mesh_to_simplicial_graph(
         jnp.asarray([[0, 1, 2], [0, 2, 3]]),
         num_vertices=4,
@@ -228,9 +256,6 @@ def test_simplicial_domain_view_retains_cell_site_and_graph_node_entity() -> Non
     assert topology.site == "face"
     assert topology.entity == "node"
     assert jnp.array_equal(topology.sample_entities, complex_graph.face_cells)
-
-
-def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch() -> None:
     domain = phx.domain.RaggedSeriesDatasetDomain(
         jnp.arange(12.0).reshape((3, 4, 1)),
         jnp.asarray([2, 4, 3]),
@@ -289,9 +314,6 @@ def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch() 
         ]
         == 0.0
     )
-
-
-def test_trajectory_domain_views_group_cases_and_restore_observation_order() -> None:
     regular = phx.domain.TrajectoryDatasetDomain(
         jnp.asarray([[1.0, 2.0], [3.0, 4.0]]),
         jnp.asarray([3, 3]),
@@ -353,46 +375,6 @@ def test_trajectory_domain_views_group_cases_and_restore_observation_order() -> 
         assert evaluated.dims == restored.dims
         assert evaluated.data.shape == (3,)
         assert jnp.all(jnp.isfinite(jnp.asarray(evaluated.data)))
-
-
-def test_graph_trajectory_domain_view_includes_time_in_query_geometry() -> None:
-    domain = phx.domain.GraphTrajectoryDatasetDomain(
-        (_graph(2), _graph(3)),
-        jnp.asarray([3, 4]),
-        dt=0.5,
-    )
-    component = domain.component(
-        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
-    )
-    sampled = domain.points_from_case_time(
-        [0, 1],
-        [0.5, 1.0],
-        component=component,
-        structure=phx.domain.SampleLayout((("graph", "t"),)),
-    )
-    view = phx.nn.operator.operator_domain_view_from_graph(
-        sampled,
-        inputs={"graph": "graph"},
-        query_labels=("t",),
-    )
-    model = phx.nn.operator.architectures.NativeGraphOperator(
-        lambda graph: graph,
-        in_size="scalar",
-        out_size="scalar",
-        source_name="graph",
-        output_key="features",
-    )
-    evaluated = domain.Model("graph", "t")(model)(sampled)
-
-    coordinates = view.batch.query("query").coordinates
-    assert coordinates is not None
-    assert coordinates.shape == (2, 3, 2)
-    assert jnp.allclose(coordinates[0, :2, 1], 0.5)
-    assert jnp.allclose(coordinates[1, :, 1], 1.0)
-    assert evaluated.data.shape == (5,)
-    assert jnp.array_equal(
-        jnp.asarray(evaluated.data), jnp.asarray([0.0, 1.0, 0.0, 1.0, 2.0])
-    )
 
 
 def test_operator_domain_preflight_rejects_unsupported_geometry_before_execution() -> (

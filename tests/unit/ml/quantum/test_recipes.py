@@ -17,7 +17,7 @@ from phydrax.ml.quantum import (
 from phydrax.operators.quantum import HilbertRegisterLayout
 
 
-def test_circuit_feature_recipe_binds_schema_and_preserves_batch_metadata() -> None:
+def test_recipes_scenario_1() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     feature_model = projected_iqp_feature_map(
         layout,
@@ -47,9 +47,6 @@ def test_circuit_feature_recipe_binds_schema_and_preserves_batch_metadata() -> N
     assert model.output_schema.names == ("z_a", "z_b")
     assert transformed.shape == (2, 2)
     assert jnp.all(jnp.isfinite(transformed))
-
-
-def test_variational_circuit_classifier_fit_returns_finite_probabilities() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     feature_model = data_reuploading_feature_map(
         1,
@@ -89,9 +86,6 @@ def test_variational_circuit_classifier_fit_returns_finite_probabilities() -> No
     assert log_probability.shape == (4, 2)
     assert jnp.allclose(jnp.sum(probability_matrix, axis=-1), jnp.ones((4,)))
     assert jnp.allclose(jnp.exp(log_probability), probability_matrix)
-
-
-def test_variational_circuit_classifier_requires_key_and_single_case() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     feature_model = data_reuploading_feature_map(1, layout, 1, jr.key(2))
     recipe = VariationalCircuitClassifierRecipe(feature_model)

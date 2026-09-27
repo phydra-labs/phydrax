@@ -15,7 +15,7 @@ def _operators() -> Any:
     return identity, pauli_x
 
 
-def test_product_mpo_action_composition_and_addition_match_dense_reference() -> None:
+def test_mpo_scenario_1() -> None:
     identity, pauli_x = _operators()
     operator = tn.product_mpo(jnp.stack((pauli_x, identity)))
     state = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=jnp.complex128))
@@ -31,9 +31,6 @@ def test_product_mpo_action_composition_and_addition_match_dense_reference() -> 
     assert jnp.allclose(summed.to_dense(), 2.0 * operator.to_dense())
     assert jnp.allclose(action_evidence.accumulated_discarded_weight, 0.0)
     assert jnp.allclose(composition_evidence.accumulated_discarded_weight, 0.0)
-
-
-def test_mpo_adjoint_and_compression_preserve_exact_bond_one_operator() -> None:
     identity, _ = _operators()
     phase = jnp.asarray([[1.0, 0.0], [0.0, 1.0j]], dtype=jnp.complex128)
     operator = tn.product_mpo(jnp.stack((phase, identity)))
@@ -43,9 +40,6 @@ def test_mpo_adjoint_and_compression_preserve_exact_bond_one_operator() -> None:
     assert jnp.allclose(adjoint.to_dense(), jnp.conj(operator.to_dense().T))
     assert jnp.allclose(compressed.to_dense(), operator.to_dense())
     assert jnp.allclose(evidence.accumulated_discarded_weight, 0.0)
-
-
-def test_chain_structure_ids_track_shapes_not_values() -> None:
     identity, pauli_x = _operators()
     first = tn.product_mpo(jnp.stack((identity, identity)))
     second = tn.product_mpo(jnp.stack((pauli_x, identity)))

@@ -172,7 +172,7 @@ def _observable(adapter: Any, output: Any, name: Any) -> Any:
     return output.values[..., adapter.observable_names.index(name)]
 
 
-def test_capacity_balancing_and_declared_limiting_electrode_are_validated() -> None:
+def test_spm_scenario_1() -> None:
     balanced = _parameters()
     adapter, prepared = _adapter()
     observed = adapter.observe(
@@ -213,11 +213,6 @@ def test_capacity_balancing_and_declared_limiting_electrode_are_validated() -> N
         _parameters(positive_thickness=1.25e-4, limiting_electrode="balanced")
     with pytest.raises(Exception, match="declared limiting"):
         _parameters(positive_thickness=1.25e-4, limiting_electrode="positive")
-
-
-def test_passive_positive_current_moves_lithium_negativeward_and_preserves_total() -> (
-    None
-):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -233,11 +228,6 @@ def test_passive_positive_current_moves_lithium_negativeward_and_preserves_total
         0.0,
         atol=1.0e-16,
     )
-
-
-def test_current_to_outward_flux_uses_exact_representative_particle_area_factors() -> (
-    None
-):
     parameters = _parameters()
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -359,7 +349,7 @@ def test_shell_diffusivity_laws_use_runtime_stoichiometry_or_concentration() -> 
     np.testing.assert_allclose(mapped, jnp.stack((expected, expected)))
 
 
-def test_shell_diffusivity_support_failure_invalidates_the_runtime_state() -> None:
+def test_spm_scenario_2() -> None:
     bounded_law = _diffusivity_table(
         "stoichiometry",
         (0.1, 0.9),
@@ -389,9 +379,6 @@ def test_shell_diffusivity_support_failure_invalidates_the_runtime_state() -> No
     assert not bool(transport.domain_valid)
     assert not bool(output.domain_valid)
     assert bool(jnp.all(jnp.isfinite(output.values)))
-
-
-def test_soc_coordinates_agree_for_consistent_inventory_and_report_mismatch() -> None:
     parameters = _parameters()
     adapter, prepared = _adapter()
     consistent = _state(
@@ -441,6 +428,12 @@ def test_soc_coordinates_agree_for_consistent_inventory_and_report_mismatch() ->
     np.testing.assert_allclose(
         _observable(adapter, inconsistent_output, "soc_mismatch"), 0.25
     )
+    numerator = jnp.asarray(1.0e30)
+    denominator = jnp.asarray(1.0e-30)
+    value = _stable_asinh_ratio(numerator, denominator)
+    expected = jnp.log(jnp.asarray(2.0)) + jnp.log(numerator) - jnp.log(denominator)
+    assert bool(jnp.isfinite(value))
+    np.testing.assert_allclose(value, expected, rtol=2.0e-6)
 
 
 def test_symmetric_butler_volmer_voltage_has_passive_charge_and_discharge_signs() -> None:
@@ -470,18 +463,7 @@ def test_symmetric_butler_volmer_voltage_has_passive_charge_and_discharge_signs(
     assert float(_observable(adapter, charge_output, "positive_overpotential_v")) > 0.0
 
 
-def test_inverse_asinh_ratio_remains_finite_when_direct_division_overflows() -> None:
-    numerator = jnp.asarray(1.0e30)
-    denominator = jnp.asarray(1.0e-30)
-    value = _stable_asinh_ratio(numerator, denominator)
-    expected = jnp.log(jnp.asarray(2.0)) + jnp.log(numerator) - jnp.log(denominator)
-    assert bool(jnp.isfinite(value))
-    np.testing.assert_allclose(value, expected, rtol=2.0e-6)
-
-
-def test_concentration_property_and_current_support_fail_closed_with_finite_outputs() -> (
-    None
-):
+def test_spm_scenario_3() -> None:
     parameters = _parameters(maximum_current=10.0)
     adapter, prepared = _adapter()
     state = _state(adapter, prepared, parameters)
@@ -535,9 +517,6 @@ def test_concentration_property_and_current_support_fail_closed_with_finite_outp
     )
     assert not bool(invalid_property.domain_valid)
     assert bool(jnp.all(jnp.isfinite(invalid_property.values)))
-
-
-def test_tabulated_ocp_support_failure_is_a_domain_failure() -> None:
     parameters = _parameters()
     narrow_ocp = TabulatedPropertyLaw(
         jnp.asarray((0.2, 0.8)),
@@ -562,9 +541,6 @@ def test_tabulated_ocp_support_failure_is_a_domain_failure() -> None:
         _runtime(unsupported, 0.0),
     )
     assert not bool(output.domain_valid)
-
-
-def test_radial_refinement_reduces_boundary_reconstruction_distance() -> None:
     parameters = _parameters(
         positive_diffusivity=_diffusivity_table(
             "stoichiometry",

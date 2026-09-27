@@ -125,32 +125,22 @@ def test_commit_rolls_back_the_whole_preparation_and_rejects_stale_state(
         eqx.filter_jit(lambda c, p: c.commit(p))(candidate, advanced)
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
+def test_commit_rejects_changed_numeric_origin(
+    model: Any,
+    candidate: Any,
+) -> None:
+    for field in [
         lambda p: p.parameters.density_kg_per_m3,
         lambda p: p.parameters.aponeurosis.maximum_fiber_stress_Pa,
         lambda p: p.geometry.gradients,
         lambda p: p.geometry.weights_m3,
         lambda p: p.geometry.traces.weights_m2,
         lambda p: p.geometry.free_dofs,
-    ],
-    ids=[
-        "density",
-        "law",
-        "volume-gradients",
-        "volume-quadrature",
-        "face-quadrature",
-        "dof-topology",
-    ],
-)
-def test_commit_rejects_changed_numeric_origin(
-    model: Any, candidate: Any, field: Any
-) -> None:
-    previous = field(model)
-    changed = eqx.tree_at(field, model, previous.at[...].add(jnp.ones_like(previous)))
-    with pytest.raises(eqx.EquinoxRuntimeError):
-        eqx.filter_jit(lambda c, p: c.commit(p))(candidate, changed)
+    ]:
+        previous = field(model)
+        changed = eqx.tree_at(field, model, previous.at[...].add(jnp.ones_like(previous)))
+        with pytest.raises(eqx.EquinoxRuntimeError):
+            eqx.filter_jit(lambda c, p: c.commit(p))(candidate, changed)
 
 
 def test_candidate_rejects_changed_nested_solver_policy(
@@ -224,24 +214,23 @@ def test_content_bound_foreign_history_is_rejected_before_solving(model: Any) ->
         model.propose(foreign.sample(0.01))
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
+def test_accepted_trajectory_rejects_parameter_changes(
+    model: Any,
+    candidate: Any,
+) -> None:
+    for field in [
         lambda p: p.parameters.density_kg_per_m3,
         lambda p: p.parameters.muscle.maximum_fiber_stress_Pa,
-    ],
-    ids=["density", "material-law"],
-)
-def test_accepted_trajectory_rejects_parameter_changes(
-    model: Any, candidate: Any, field: Any
-) -> None:
-    advanced = candidate.commit(model)
-    changed = eqx.tree_at(field, advanced, field(advanced) * 1.01)
-    control = Almonacid2024Control(0.02, 0.0, 0.0, source_id=model.plan.control_source_id)
-    with pytest.raises(eqx.EquinoxRuntimeError):
-        eqx.filter_jit(lambda p, c: p.propose(c))(changed, control)
-    with pytest.raises(eqx.EquinoxRuntimeError):
-        eqx.filter_jit(lambda p: p.quadrature_fields(0.01))(changed)
+    ]:
+        advanced = candidate.commit(model)
+        changed = eqx.tree_at(field, advanced, field(advanced) * 1.01)
+        control = Almonacid2024Control(
+            0.02, 0.0, 0.0, source_id=model.plan.control_source_id
+        )
+        with pytest.raises(eqx.EquinoxRuntimeError):
+            eqx.filter_jit(lambda p, c: p.propose(c))(changed, control)
+        with pytest.raises(eqx.EquinoxRuntimeError):
+            eqx.filter_jit(lambda p: p.quadrature_fields(0.01))(changed)
 
 
 def test_first_step_energy_uses_the_trainable_law_not_an_old_cache(model: Any) -> None:
@@ -291,67 +280,71 @@ def test_first_step_energy_uses_the_trainable_law_not_an_old_cache(model: Any) -
     np.testing.assert_allclose(diagnostics.work_energy_residual_J, 0.0, atol=1e-14)
 
 
-@pytest.mark.parametrize(
-    "history_values", [False, True], ids=["control", "interpolated-history"]
-)
 def test_optimizer_changes_control_response_but_not_the_clock(
-    model: Any, history_values: Any
+    model: Any,
 ) -> None:
-    if history_values:
-        inputs = Almonacid2024InputHistory(
-            ((0.1, 0.0), (0.3, 0.0)), ((0.1, 0.0), (0.3, 0.0)), source_id="optimization"
-        )
-        sample = lambda x: x.sample(0.2)
-        learning_rate = 1.0
-    else:
-        inputs = Almonacid2024Control(
-            0.2, 0.0, 0.0, source_id=model.plan.control_source_id
-        )
-        sample = lambda x: x
-        learning_rate = 0.5
-    trainable, model_state, fixed = partition_parameters(inputs)
+    for history_values in [False, True]:
+        if history_values:
+            inputs = Almonacid2024InputHistory(
+                ((0.1, 0.0), (0.3, 0.0)),
+                ((0.1, 0.0), (0.3, 0.0)),
+                source_id="optimization",
+            )
+            sample = lambda x: x.sample(0.2)
+            learning_rate = 1.0
+        else:
+            inputs = Almonacid2024Control(
+                0.2, 0.0, 0.0, source_id=model.plan.control_source_id
+            )
+            sample = lambda x: x
+            learning_rate = 0.5
+        trainable, model_state, fixed = partition_parameters(inputs)
 
-    def objective(values: Any) -> Any:
-        control = sample(combine_parameters(values, model_state, fixed))
-        return (control.activation - 0.2) ** 2 + (
-            control.engineering_strain - 0.0002
-        ) ** 2
+        def objective(values: Any) -> Any:
+            control = sample(combine_parameters(values, model_state, fixed))
+            return (control.activation - 0.2) ** 2 + (
+                control.engineering_strain - 0.0002
+            ) ** 2
 
-    gradient = jax.grad(objective)(trainable)
-    updated = jax.tree_util.tree_map(
-        lambda x, g: x - learning_rate * g, trainable, gradient
-    )
-    optimized = sample(combine_parameters(updated, model_state, fixed))
-    assert float(objective(updated)) < float(objective(trainable)) * 1e-12
-    np.testing.assert_array_equal(optimized.time_s, sample(inputs).time_s)
-    if history_values:
-        updated_history = combine_parameters(updated, model_state, fixed)
-        np.testing.assert_array_equal(
-            updated_history.activation_time_s,
+        gradient = jax.grad(objective)(trainable)
+        updated = jax.tree_util.tree_map(
+            lambda x, g: x - learning_rate * g, trainable, gradient
+        )
+        optimized = sample(combine_parameters(updated, model_state, fixed))
+        assert float(objective(updated)) < float(objective(trainable)) * 1e-12
+        np.testing.assert_array_equal(optimized.time_s, sample(inputs).time_s)
+        if history_values:
+            updated_history = combine_parameters(updated, model_state, fixed)
+            np.testing.assert_array_equal(
+                updated_history.activation_time_s,
+                # ty: ignore[unresolved-attribute]
+                inputs.activation_time_s,
+            )
             # ty: ignore[unresolved-attribute]
-            inputs.activation_time_s,
-        )
-        # ty: ignore[unresolved-attribute]
-        np.testing.assert_array_equal(updated_history.strain_time_s, inputs.strain_time_s)
+            np.testing.assert_array_equal(
+                updated_history.strain_time_s, inputs.strain_time_s
+            )
 
-    def stress(control: Any) -> Any:
-        s = model.state
-        u = model._displacement(
-            jnp.zeros_like(s.displacement_m[model.geometry.free_dofs]),
-            control.engineering_strain,
-        )
-        return model.material_response(
-            u,
-            s.pressure_coefficients_Pa,
-            s.dilation_coefficients,
-            control.activation,
-            control.time_s,
-        ).first_piola_Pa
+        def stress(control: Any) -> Any:
+            s = model.state
+            u = model._displacement(
+                jnp.zeros_like(s.displacement_m[model.geometry.free_dofs]),
+                control.engineering_strain,
+            )
+            return model.material_response(
+                u,
+                s.pressure_coefficients_Pa,
+                s.dilation_coefficients,
+                control.activation,
+                control.time_s,
+            ).first_piola_Pa
 
-    target = Almonacid2024Control(
-        0.2, 0.2, 0.0002, source_id=model.plan.control_source_id
-    )
-    np.testing.assert_allclose(stress(optimized), stress(target), rtol=1e-12, atol=1e-9)
+        target = Almonacid2024Control(
+            0.2, 0.2, 0.0002, source_id=model.plan.control_source_id
+        )
+        np.testing.assert_allclose(
+            stress(optimized), stress(target), rtol=1e-12, atol=1e-9
+        )
 
 
 def test_fixed_parameter_rollout_retains_implicit_sensitivity(model: Any) -> None:

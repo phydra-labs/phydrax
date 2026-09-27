@@ -64,23 +64,16 @@ def _numpy_source_equation(deformation: Any, pressure: Any, gamma: Any) -> Any:
     return deformation @ second
 
 
-@pytest.mark.parametrize("stretch", (0.79, 1.0, 1.26))
-def test_source_stress_matches_independent_equation_including_compression(
-    stretch: Any,
-) -> None:
-    material = _material(1.35)
-    deformation = np.asarray(
-        ((stretch, 0.03, 0.0), (0.0, stretch**-0.5, 0.02), (0.0, 0.0, stretch**-0.5))
-    )
-    actual = material.evaluate(jnp.asarray(deformation), 8600.0)
-    expected = _numpy_source_equation(deformation, 8600.0, 1.35)
-    np.testing.assert_allclose(actual.first_piola, expected, rtol=3e-5, atol=0.2)
-    assert bool(actual.evidence.valid)
-
-
-def test_passive_energy_gradient_and_source_pressure_are_unprojected_off_constraint() -> (
-    None
-):
+def test_heidlauf_roehrle_2014_continuum_scenario_1() -> None:
+    for stretch in (0.79, 1.0, 1.26):
+        material = _material(1.35)
+        deformation = np.asarray(
+            ((stretch, 0.03, 0.0), (0.0, stretch**-0.5, 0.02), (0.0, 0.0, stretch**-0.5))
+        )
+        actual = material.evaluate(jnp.asarray(deformation), 8600.0)
+        expected = _numpy_source_equation(deformation, 8600.0, 1.35)
+        np.testing.assert_allclose(actual.first_piola, expected, rtol=3e-5, atol=0.2)
+        assert bool(actual.evidence.valid)
     material = _material()
     deformation = jnp.diag(jnp.asarray((0.82, 1.1, 1.04)))
     pressure = 8500.0
@@ -107,18 +100,12 @@ def test_passive_energy_gradient_and_source_pressure_are_unprojected_off_constra
         * (deformation[1, 1] ** 2 + deformation[2, 2] ** 2)
     )
     assert float(anisotropic_axial) < 0.0
-
-
-def test_passive_rest_requires_the_source_hydrostatic_pressure_not_zero() -> None:
     material = _material()
     rest_pressure = 2 * material.parameters.c10_pa + 4 * material.parameters.c01_pa
     np.testing.assert_allclose(
         material.evaluate(jnp.eye(3), rest_pressure).first_piola, 0.0, atol=0.003
     )
     assert float(material.evaluate(jnp.eye(3), 0.0).first_piola[1, 1]) > 14000.0
-
-
-def test_active_input_is_not_an_activation_bound_or_second_length_multiplier() -> None:
     material = _material(1.7)
     compressed = material.evaluate(jnp.diag(jnp.asarray((0.8, 1.0, 1.0))), 0.0)
     stretched = material.evaluate(jnp.diag(jnp.asarray((1.2, 1.0, 1.0))), 0.0)
@@ -138,7 +125,7 @@ def test_active_input_is_not_an_activation_bound_or_second_length_multiplier() -
     )
 
 
-def test_objectivity_passive_gradient_active_power_and_full_tangent_difference() -> None:
+def test_heidlauf_roehrle_2014_continuum_scenario_2() -> None:
     material = _material(0.6)
     deformation = jnp.asarray(((0.94, 0.04, 0.01), (0.0, 1.03, 0.02), (0.01, 0.0, 1.01)))
     rate = jnp.asarray(((0.04, -0.02, 0.01), (0.01, -0.03, 0.02), (0.0, 0.01, 0.01)))
@@ -154,38 +141,28 @@ def test_objectivity_passive_gradient_active_power_and_full_tangent_difference()
     np.testing.assert_allclose(
         tangent.deformation_active_stress, expected, rtol=3e-6, atol=0.01
     )
-
-
-@pytest.mark.parametrize(
-    "cause", ("nonfinite", "source-failure", "foreign-source", "outer-failure")
-)
-def test_every_constitutive_input_failure_rolls_back_all_state_leaves_under_jit(
-    cause: Any,
-) -> None:
-    material = _material(0.3)
-    source = "other-source" if cause == "foreign-source" else "prescribed-test-stress"
-    incoming = _input(
-        float("nan") if cause == "nonfinite" else 0.7,
-        9,
-        source=source,
-        successful=cause != "source-failure",
-    )
-    commit = eqx.filter_jit(
-        lambda value: material.propose_active_stress(value).commit(
-            successful=cause != "outer-failure"
+    for cause in ("nonfinite", "source-failure", "foreign-source", "outer-failure"):
+        material = _material(0.3)
+        source = "other-source" if cause == "foreign-source" else "prescribed-test-stress"
+        incoming = _input(
+            float("nan") if cause == "nonfinite" else 0.7,
+            9,
+            source=source,
+            successful=cause != "source-failure",
         )
-    )(incoming)
-    selected = material.with_commit(commit)
-    assert bool(commit.rollback_applied)
-    for before, after in zip(
-        jax.tree_util.tree_leaves(material.state),
-        jax.tree_util.tree_leaves(selected.state),
-        strict=True,
-    ):
-        np.testing.assert_array_equal(before, after)
-
-
-def test_stale_foreign_and_changed_numeric_revision_cannot_apply_commit() -> None:
+        commit = eqx.filter_jit(
+            lambda value: material.propose_active_stress(value).commit(
+                successful=cause != "outer-failure"
+            )
+        )(incoming)
+        selected = material.with_commit(commit)
+        assert bool(commit.rollback_applied)
+        for before, after in zip(
+            jax.tree_util.tree_leaves(material.state),
+            jax.tree_util.tree_leaves(selected.state),
+            strict=True,
+        ):
+            np.testing.assert_array_equal(before, after)
     material = _material(0.3)
     first = material.propose_active_stress(_input(0.6, 1)).commit()
     advanced = material.with_commit(first)

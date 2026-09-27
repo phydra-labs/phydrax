@@ -5,7 +5,7 @@ import pytest
 import phydrax as phx
 
 
-def test_support_release_requires_all_independent_gates() -> None:
+def test_aerothermodynamic_production_scenario_1() -> None:
     support = phx.applications.aerothermodynamics.AerothermodynamicSupportTuple(
         gas_system_id="gas",
         transport_id="transport",
@@ -57,9 +57,6 @@ def test_support_release_requires_all_independent_gates() -> None:
             maximum_topology_events=0,
             maximum_radiation_groups=0,
         )
-
-
-def test_validation_campaign_uses_reference_uncertainty_and_exact_order() -> None:
     manifest = phx.qualification.ReferenceArtifactManifest(
         "ram-c-reference",
         checksum_algorithm="sha256",
@@ -107,9 +104,6 @@ def test_validation_campaign_uses_reference_uncertainty_and_exact_order() -> Non
     )
     assert bool(evidence.successful)
     np.testing.assert_allclose(evidence.maximum_normalized_error, 1.0)
-
-
-def test_sst_and_delayed_detached_eddy_limits_are_finite() -> None:
     sst = phx.equations.SSTTurbulencePlan("sst-2003-m")
     evaluation = sst.evaluate(
         1.0,
@@ -137,7 +131,7 @@ def test_sst_and_delayed_detached_eddy_limits_are_finite() -> None:
     assert 0.0 <= result.rans_fraction <= 1.0
 
 
-def test_multicomponent_filter_preserves_mean_and_recovers_admissibility() -> None:
+def test_aerothermodynamic_production_scenario_2() -> None:
     system = phx.equations.EulerSystem(1)
     mean_primitive = jnp.asarray((1.0, 0.0, 1.0))
     mean = system.primitive_to_conserved(mean_primitive)
@@ -151,9 +145,6 @@ def test_multicomponent_filter_preserves_mean_and_recovers_admissibility() -> No
     assert bool(result.successful[0])
     assert bool(result.admissible[0])
     np.testing.assert_allclose(jnp.mean(result.state[0], axis=0), mean, atol=2.0e-7)
-
-
-def test_high_enthalpy_amr_retains_named_indicator_evidence() -> None:
     plan = phx.solver.HighEnthalpyAMRIndicatorPlan(
         ("shock", "chemistry", "rarefaction"),
         jnp.asarray((0.5, 0.4, 0.05)),

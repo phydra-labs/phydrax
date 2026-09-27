@@ -33,7 +33,7 @@ def _assert_rank_roundtrip(basis: Any) -> None:
         assert int(basis.rank(coordinate)) == index
 
 
-def test_direct_fixed_charge_bases_rank_without_ambient_enumeration() -> None:
+def test_sector_basis_scenario_1() -> None:
     fermions = FixedCardinalityFermionBasis(
         FermionModeOrder(("a", "b", "c", "d")), 2, resources=_resources()
     )
@@ -50,9 +50,6 @@ def test_direct_fixed_charge_bases_rank_without_ambient_enumeration() -> None:
     with pytest.raises(TypeError, match="integer dtype"):
         # ty: ignore[invalid-argument-type]
         fermions.rank((0.0, 0.0, 1.0, 1.0))
-
-
-def test_sector_construction_refuses_dimension_before_coordinate_storage() -> None:
     with pytest.raises(ValueError, match="maximum_dimension"):
         FixedCardinalityFermionBasis(
             FermionModeOrder(tuple(f"m{index}" for index in range(12))),

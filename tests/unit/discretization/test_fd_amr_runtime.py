@@ -42,7 +42,7 @@ def _refined_topology(prepared: Any, tagged_cell: Any) -> Any:
     return result.topology
 
 
-def test_entity_transfer_seam_preserves_declared_cell_and_noncell_invariants() -> None:
+def test_fd_amr_runtime_scenario_1() -> None:
     cell = phx.discretization.AMREntityTransferPlan.cells(2)
     node = phx.discretization.AMREntityTransferPlan.nodes(1)
     coarse_cell = jnp.arange(16.0).reshape((4, 4))
@@ -56,9 +56,6 @@ def test_entity_transfer_seam_preserves_declared_cell_and_noncell_invariants() -
         fine_node, 2.0 * jnp.linspace(0.0, 1.0, 9) - 0.4, atol=2e-14
     )
     assert cell.report.passed and node.report.passed
-
-
-def test_fill_patch_classifies_same_level_and_periodic_before_other_sources() -> None:
     prepared = _prepared(periodic=True, levels=1)
     topology = prepared.initial_topology()
     state = _state(
@@ -76,9 +73,6 @@ def test_fill_patch_classifies_same_level_and_periodic_before_other_sources() ->
     assert int(workspace.source_class[0, -1]) == int(
         phx.discretization.FillPatchSource.SAME_LEVEL
     )
-
-
-def test_fill_patch_uses_multiple_coarse_blocks_and_old_new_time_interpolation() -> None:
     prepared = _prepared(halo=2)
     topology = _refined_topology(prepared, 3)
     fine_fill_plan = prepared.prepare_fill_patch(topology)[1]
@@ -131,9 +125,6 @@ def test_fill_patch_uses_multiple_coarse_blocks_and_old_new_time_interpolation()
         fine_workspace.source_class[0, jnp.asarray([0, 1, 4, 5])]
         == int(phx.discretization.FillPatchSource.COARSE_TIME_INTERPOLATED)
     )
-
-
-def test_fill_patch_same_level_data_precedes_available_coarse_data() -> None:
     prepared = _prepared(halo=2)
     initial = prepared.initial_topology()
     tags = jnp.zeros((2, 4), dtype="bool").at[0, 2].set(True).at[0, 3].set(True)
@@ -158,11 +149,27 @@ def test_fill_patch_same_level_data_precedes_available_coarse_data() -> None:
         workspace.source_class[1, :2]
         == int(phx.discretization.FillPatchSource.SAME_LEVEL)
     )
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    hierarchy = phx.discretization.BlockHierarchyPlan(
+        grid,
+        (
+            phx.discretization.BlockLevelPlan(0, (4,), 2, halo_width=2),
+            phx.discretization.BlockLevelPlan(1, (2,), 8, halo_width=2),
+            phx.discretization.BlockLevelPlan(2, (2,), 16, halo_width=2),
+        ),
+    )
+    prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
+    initial = prepared.initial_topology()
+    coarse_tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
+    level_one_empty = jnp.zeros((8, 2), dtype="bool")
+    middle = prepared.compile_topology(initial, (coarse_tags, level_one_empty)).topology
+    level_one_tags = jnp.zeros((8, 2), dtype="bool").at[0, 0].set(True)
+    target = prepared.compile_topology(middle, (coarse_tags, level_one_tags)).topology
 
-
-def test_physical_boundary_values_remain_caller_owned_and_incomplete_is_rejected() -> (
-    None
-):
+    with pytest.raises(ValueError, match="unresolved"):
+        prepared.prepare_fill_patch(target)
     prepared = _prepared(levels=1)
     topology = prepared.initial_topology()
     state = _state(
@@ -185,9 +192,7 @@ def test_physical_boundary_values_remain_caller_owned_and_incomplete_is_rejected
     assert workspace.values[1, -1] == 5.0
 
 
-def test_componentwise_topology_transition_is_conservative_and_zeroes_inactive_slots() -> (
-    None
-):
+def test_fd_amr_runtime_scenario_2() -> None:
     prepared = _prepared()
     prepared.initial_topology()
     source = _refined_topology(prepared, 1)
@@ -216,33 +221,6 @@ def test_componentwise_topology_transition_is_conservative_and_zeroes_inactive_s
     np.testing.assert_allclose(result.conservation_residual, 0.0, atol=1e-12)
     assert result.state.topology.epoch.epoch_id == target.epoch.epoch_id
     assert jnp.all(result.state.levels[1].values[1:] == 0.0)
-
-
-def test_fill_patch_preparation_rejects_unresolved_coarse_routes() -> None:
-    grid = phx.discretization.TensorGridPlan(
-        (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
-    hierarchy = phx.discretization.BlockHierarchyPlan(
-        grid,
-        (
-            phx.discretization.BlockLevelPlan(0, (4,), 2, halo_width=2),
-            phx.discretization.BlockLevelPlan(1, (2,), 8, halo_width=2),
-            phx.discretization.BlockLevelPlan(2, (2,), 16, halo_width=2),
-        ),
-    )
-    prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
-    initial = prepared.initial_topology()
-    coarse_tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
-    level_one_empty = jnp.zeros((8, 2), dtype="bool")
-    middle = prepared.compile_topology(initial, (coarse_tags, level_one_empty)).topology
-    level_one_tags = jnp.zeros((8, 2), dtype="bool").at[0, 0].set(True)
-    target = prepared.compile_topology(middle, (coarse_tags, level_one_tags)).topology
-
-    with pytest.raises(ValueError, match="unresolved"):
-        prepared.prepare_fill_patch(target)
-
-
-def test_prepared_fill_patch_explicitly_refuses_noncell_entity_routes() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -258,9 +236,6 @@ def test_prepared_fill_patch_explicitly_refuses_noncell_entity_routes() -> None:
         phx.discretization.FDAMRHierarchyPlan(
             hierarchy, (phx.discretization.AMREntityTransferPlan.nodes(1),)
         )
-
-
-def test_block_stencil_execution_accepts_only_complete_fill_patch_workspace() -> None:
     prepared = _prepared(periodic=True, levels=1)
     topology = prepared.initial_topology()
     values = jnp.arange(8.0, dtype=jnp.float64).reshape((2, 4))

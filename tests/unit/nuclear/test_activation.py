@@ -67,7 +67,7 @@ def _decay_network() -> Any:
     )
 
 
-def test_activation_matches_two_member_bateman_decay_chain() -> None:
+def test_activation_scenario_1() -> None:
     network, decay_rate = _decay_network()
     initial = network.inventory(np.asarray([1.0, 0.0]))
     result = network.step(initial, np.asarray([0.0]), 5.0)
@@ -86,9 +86,6 @@ def test_activation_matches_two_member_bateman_decay_chain() -> None:
         rtol=1.0e-11,
     )
     assert result.decay_heat_w > 0.0
-
-
-def test_flux_driven_capture_uses_group_integrated_scalar_flux() -> None:
     hydrogen = phx.nuclear.NuclideKey(1, 1)
     deuterium = phx.nuclear.NuclideKey(1, 2)
     groups = phx.nuclear.EnergyGroupStructure(
@@ -117,6 +114,14 @@ def test_flux_driven_capture_uses_group_integrated_scalar_flux() -> None:
     flux = jnp.asarray([3.0e18, 4.0e18])
     rate = network.transition_rates(flux)
     np.testing.assert_allclose(rate, [1.1e-9])
+    network, _ = _decay_network()
+    schedule = phx.nuclear.IrradiationSchedulePlan(
+        np.asarray([1.0, 2.0]), np.zeros((2, 1))
+    )
+    result = schedule.run(network, network.inventory([1.0, 0.0]))
+    assert result.amounts_mol.shape == (3, 2)
+    assert result.times_s[-1] == 3.0
+    assert bool(np.all(result.valid_prefix))
 
 
 def test_activation_is_differentiable_with_respect_to_flux() -> None:
@@ -154,14 +159,3 @@ def test_activation_is_differentiable_with_respect_to_flux() -> None:
     derivative = jax.grad(product)(jnp.asarray(1.0e28))
     assert jnp.isfinite(derivative)
     assert derivative > 0.0
-
-
-def test_irradiation_schedule_tracks_valid_prefix() -> None:
-    network, _ = _decay_network()
-    schedule = phx.nuclear.IrradiationSchedulePlan(
-        np.asarray([1.0, 2.0]), np.zeros((2, 1))
-    )
-    result = schedule.run(network, network.inventory([1.0, 0.0]))
-    assert result.amounts_mol.shape == (3, 2)
-    assert result.times_s[-1] == 3.0
-    assert bool(np.all(result.valid_prefix))

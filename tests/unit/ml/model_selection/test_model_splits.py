@@ -35,7 +35,7 @@ def _assert_disjoint(folds: Any) -> None:
         assert not bool(jnp.any(jnp.isin(fold.train_indices, fold.validation_indices)))
 
 
-def test_kfold_is_keyed_deterministic_and_partitions_the_sample_axis() -> None:
+def test_model_splits_scenario_1() -> None:
     batch = _batch(12)
     plan = KFoldPlan(4, shuffle=True)
 
@@ -56,9 +56,6 @@ def test_kfold_is_keyed_deterministic_and_partitions_the_sample_axis() -> None:
     )
     with pytest.raises(ValueError, match="explicit JAX key"):
         plan.split(batch, key=None)
-
-
-def test_stratified_folds_balance_classes_without_overlap() -> None:
     labels = jnp.asarray([0, 1] * 6, dtype=jnp.int32)
     split = StratifiedKFoldPlan(3, shuffle=True).split(
         _batch(12, targets=labels), key=jr.key(11)
@@ -69,9 +66,6 @@ def test_stratified_folds_balance_classes_without_overlap() -> None:
         held_labels = labels[fold.validation_indices]
         assert int(jnp.sum(held_labels == 0)) == 2
         assert int(jnp.sum(held_labels == 1)) == 2
-
-
-def test_group_folds_never_split_one_group_between_train_and_validation() -> None:
     groups = jnp.repeat(jnp.arange(6, dtype=jnp.int32), 2)
     split = GroupKFoldPlan(3, shuffle=True).split(
         _batch(12, groups=groups), key=jr.key(12)
@@ -87,7 +81,7 @@ def test_group_folds_never_split_one_group_between_train_and_validation() -> Non
     assert jnp.array_equal(jnp.sort(jnp.concatenate(tuple(held_groups))), jnp.arange(6))
 
 
-def test_time_block_and_rolling_windows_respect_order_and_purged_gaps() -> None:
+def test_model_splits_scenario_2() -> None:
     batch = _batch(15)
     time_split = TimeSeriesSplitPlan(3, validation_size=2, min_train_size=6, gap=1).split(
         batch, key=jr.key(1)
@@ -125,9 +119,6 @@ def test_time_block_and_rolling_windows_respect_order_and_purged_gaps() -> None:
         rolling_split.folds[1].train_indices,
         jnp.arange(3, 8, dtype=jnp.int32),
     )
-
-
-def test_nested_inner_folds_are_confined_to_each_outer_training_partition() -> None:
     batch = _batch(12)
     nested = NestedSplitPlan(
         KFoldPlan(3, shuffle=True), KFoldPlan(2, shuffle=True)

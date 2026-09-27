@@ -73,7 +73,7 @@ def _deidentification() -> Any:
     )
 
 
-def test_rtstruct_plan_and_dose_enforce_exact_reference_closure() -> None:
+def test_dicom_radiotherapy_scenario_1() -> None:
     image_uid = "1.2.826.0.1.3680043.10.999.101"
     structure_uid = "1.2.826.0.1.3680043.10.999.102"
     plan_uid = "1.2.826.0.1.3680043.10.999.103"
@@ -141,9 +141,6 @@ def test_rtstruct_plan_and_dose_enforce_exact_reference_closure() -> None:
             dose_reference,
             _deidentification(),
         )
-
-
-def test_rt_profiles_refuse_unresolved_links_and_unknown_dose_units() -> None:
     image_uid = "1.2.826.0.1.3680043.10.999.111"
     structure_uid = "1.2.826.0.1.3680043.10.999.112"
     resource, reference = _input(
@@ -187,9 +184,6 @@ def test_rt_profiles_refuse_unresolved_links_and_unknown_dose_units() -> None:
             dose_reference,
             _deidentification(),
         )
-
-
-def test_unlinked_rt_dose_is_explicitly_distinct_from_plan_linked_dose() -> None:
     dose_resource, dose_reference = _input(
         rtdose(
             sop_instance_uid="1.2.826.0.1.3680043.10.999.120",

@@ -42,7 +42,7 @@ def _context(
     return background, provenance, descriptor
 
 
-def test_auto_estimate_content_identity_and_table_stacking() -> None:
+def test_cosmology_spectral_statistics_scenario_1() -> None:
     shape = (8, 8)
     x, _ = jnp.meshgrid(
         (jnp.arange(8) + 0.5) / 8.0,
@@ -80,9 +80,6 @@ def test_auto_estimate_content_identity_and_table_stacking() -> None:
     np.testing.assert_allclose(
         table.power_values[0], 0.25 * table.power_values[1], rtol=1e-12
     )
-
-
-def test_density_content_and_cross_power_contracts() -> None:
     shape = (8,)
     x = (jnp.arange(8) + 0.5) / 8.0
     contrast = 0.1 * jnp.cos(2.0 * jnp.pi * x)
@@ -142,9 +139,6 @@ def test_density_content_and_cross_power_contracts() -> None:
         2.0 * direct.power_values[direct.valid_shells],
         rtol=1e-12,
     )
-
-
-def test_spectral_discrepancy_is_phase_sensitive_and_parseval_consistent() -> None:
     shape = (8, 8)
     x, _ = jnp.meshgrid(
         (jnp.arange(8) + 0.5) / 8.0,

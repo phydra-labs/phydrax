@@ -263,7 +263,7 @@ def test_real_initial_imex_state_promotes_for_complex_evolution() -> None:
         np.testing.assert_allclose(jax.grad(imaginary_response)(0.0), -1.0)
 
 
-def test_element_block_preconditioner_uses_local_implicit_jacobians() -> None:
+def test_conservation_temporal_scenario_1() -> None:
     state = jnp.asarray(((1.0,), (2.0,)))
     preconditioner = prepare_element_block_preconditioner(
         state,
@@ -274,9 +274,6 @@ def test_element_block_preconditioner_uses_local_implicit_jacobians() -> None:
     )
     residual = jnp.asarray(((1.2,), (2.4,)))
     np.testing.assert_allclose(preconditioner.apply(residual), ((1.0,), (2.0,)))
-
-
-def test_local_time_slab_accumulates_one_equal_opposite_flux() -> None:
     trace_plan = DGMultirateTracePlan(jnp.asarray(((0, 1),)), history_depth=2)
     plan = ConservativeLocalTimeStepPlan(
         jnp.asarray((0, 1), dtype=jnp.int32), 0.2, trace_plan

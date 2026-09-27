@@ -81,7 +81,7 @@ def _transport(plan_type: Any) -> Any:
     return plan_type(model, properties)
 
 
-def test_catalog_gas_phase_standard_pressure_and_homogeneous_energy_inversion() -> None:
+def test_reacting_thermodynamics_transport_scenario_1() -> None:
     model = _gas_model()
     schema = model.schema
     species_density = jnp.asarray((0.24, 0.36, 0.60))
@@ -103,9 +103,6 @@ def test_catalog_gas_phase_standard_pressure_and_homogeneous_energy_inversion() 
         state.pressure,
         rtol=1.0e-10,
     )
-
-
-def test_homogeneous_euler_state_uses_every_species_density_slot() -> None:
     model = _gas_model()
     system = HomogeneousMixtureEulerSystem(model, 2)
     species_density = jnp.asarray((0.24, 0.36, 0.60))
@@ -120,9 +117,6 @@ def test_homogeneous_euler_state_uses_every_species_density_slot() -> None:
 
     invalid = conserved.at[1].set(-0.1)
     assert not system.admissible(invalid)
-
-
-def test_mixture_averaged_transport_conserves_mass_and_carries_full_enthalpy() -> None:
     plan = _transport(MixtureAveragedTransportPlan)
     temperature = jnp.asarray(1000.0)
     pressure = jnp.asarray(101325.0)

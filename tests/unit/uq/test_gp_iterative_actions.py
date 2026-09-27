@@ -17,7 +17,7 @@ def _state() -> Any:
     )
 
 
-def test_lanczos_cg_and_gauss_seidel_fixed_capacity_evidence() -> None:
+def test_gp_iterative_actions_scenario_1() -> None:
     points = jnp.linspace(0.0, 1.0, 6)[:, None]
     residual = jnp.asarray([1.0, -0.2, 0.3, 0.1, -0.4, 0.2])
     policies = (
@@ -34,6 +34,20 @@ def test_lanczos_cg_and_gauss_seidel_fixed_capacity_evidence() -> None:
         assert resolved.active_mask.shape == (4,)
         assert resolved.residual_history.shape == (5,)
         assert resolved.operator.source.size == 4
+    points = jnp.linspace(0.0, 1.0, 5)[:, None]
+    discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+        points, jnp.sin(points[:, 0])
+    )
+    policy = phx.uq.ConjugateGradientGaussianProcessActionPolicy(3)
+    with pytest.raises(ValueError, match="residual-dependent"):
+        discrepancy.factor(state=_state(), actions=policy)
+    condition = discrepancy.condition(
+        jnp.zeros((5,)),
+        points,
+        state=_state(),
+        actions=policy,
+    )
+    assert condition.mean.shape == (5,)
 
 
 def test_fixed_gauss_seidel_order_resolves_under_filtered_jit() -> None:
@@ -56,20 +70,3 @@ def test_fixed_gauss_seidel_order_resolves_under_filtered_jit() -> None:
         return resolved.selected_indices
 
     assert jnp.array_equal(selected(policy), jnp.asarray([2, 0, 4]))
-
-
-def test_residual_dependent_factor_fails_but_condition_path_resolves_actions() -> None:
-    points = jnp.linspace(0.0, 1.0, 5)[:, None]
-    discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
-        points, jnp.sin(points[:, 0])
-    )
-    policy = phx.uq.ConjugateGradientGaussianProcessActionPolicy(3)
-    with pytest.raises(ValueError, match="residual-dependent"):
-        discrepancy.factor(state=_state(), actions=policy)
-    condition = discrepancy.condition(
-        jnp.zeros((5,)),
-        points,
-        state=_state(),
-        actions=policy,
-    )
-    assert condition.mean.shape == (5,)

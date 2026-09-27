@@ -63,7 +63,7 @@ def _compiled(field_plan: Any = None, *, compact: Any = False) -> Any:
     return compiled, arguments, position, volume
 
 
-def test_explicit_single_field_plan_is_exact_default_migration() -> None:
+def test_mpm_multifield_scenario_1() -> None:
     default, arguments, position, volume = _compiled()
     explicit, _, _, _ = _compiled(
         phx.discretization.MPMNodalFieldPlan(
@@ -83,9 +83,6 @@ def test_explicit_single_field_plan_is_exact_default_migration() -> None:
     ):
         np.testing.assert_array_equal(left, right)
     assert first_result.grid.mass.shape[0] == 1
-
-
-def test_two_field_contact_preserves_action_reaction_and_separate_grid_fields() -> None:
     slots = jnp.asarray((0, 0, 1, 1), dtype=jnp.int32)
     fields = phx.discretization.MPMNodalFieldPlan(
         ("left", "right"),
@@ -115,9 +112,6 @@ def test_two_field_contact_preserves_action_reaction_and_separate_grid_fields() 
     assert detail.diagnostics.transfer.field_action_reaction_defect < 1e-12
     assert detail.diagnostics.energy.contact_dissipation >= 0.0
     np.testing.assert_array_equal(detail.accepted_state.velocity_field_slots, slots)
-
-
-def test_compact_two_field_mpm_preserves_contact_and_storage_capacity() -> None:
     slots = jnp.asarray((0, 0, 1, 1), dtype=jnp.int32)
     fields = phx.discretization.MPMNodalFieldPlan(
         ("left", "right"),
@@ -149,7 +143,7 @@ def test_compact_two_field_mpm_preserves_contact_and_storage_capacity() -> None:
     assert result.diagnostics.transfer.field_action_reaction_defect < 1.0e-12
 
 
-def test_direct_two_field_projection_stops_approach_and_obeys_friction_cone() -> None:
+def test_mpm_multifield_scenario_2() -> None:
     mass = jnp.asarray([[1.0], [2.0]])
     velocity = jnp.asarray([[[1.0, 0.4]], [[-0.5, 0.0]]])
     gradients = jnp.asarray([[[1.0, 0.0]], [[-1.0, 0.0]]])
@@ -174,9 +168,6 @@ def test_direct_two_field_projection_stops_approach_and_obeys_friction_cone() ->
     normal_impulse = abs(result.normal_impulses[0, 0])
     tangential_impulse = abs(result.tangential_impulses[0, 0, 1])
     assert tangential_impulse <= 0.3 * normal_impulse + 1e-12
-
-
-def test_material_bank_accepts_disjoint_heterogeneous_histories() -> None:
     neo = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     plastic = phx.applications.solid_mechanics.FiniteStrainJ2MPMConstitutivePlan()
     bank = phx.discretization.MPMMaterialBank(

@@ -20,7 +20,7 @@ def _nonnormal_matrix() -> jax.Array:
     return jnp.asarray([[-1.0, 8.0, -2.0], [0.0, -2.0, 3.0], [0.0, 0.0, -4.0]])
 
 
-def test_taylor_exponential_matches_dense_reference_and_reuses_preparation() -> None:
+def test_linalg_exponential_taylor_scenario_1() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="taylor-nonnormal")
     policy = la.TaylorExponentialPolicy(error_tolerance=1e-10)
@@ -48,34 +48,6 @@ def test_taylor_exponential_matches_dense_reference_and_reuses_preparation() -> 
         rtol=2e-9,
         atol=2e-10,
     )
-
-
-def test_taylor_zero_rhs_jvp_is_full_exponential_action() -> None:
-    matrix = _nonnormal_matrix()
-    operator = la.DenseLinearOperator(matrix, operator_id="taylor-zero-jvp")
-    policy = la.TaylorExponentialPolicy(error_tolerance=1e-11)
-    tangent = jnp.asarray([0.5, -1.0, 2.0])
-    scale = jnp.asarray(0.3)
-
-    def action(vector: Any) -> Any:
-        return la.matrix_exponential_action(
-            operator,
-            vector,
-            scale,
-            policy=policy,
-        ).value
-
-    primal, derivative = jax.jvp(action, (jnp.zeros_like(tangent),), (tangent,))
-    assert jnp.array_equal(primal, jnp.zeros_like(primal))
-    assert jnp.allclose(
-        derivative,
-        jsp.linalg.expm(scale * matrix) @ tangent,
-        rtol=2e-9,
-        atol=2e-10,
-    )
-
-
-def test_taylor_estimated_planning_requires_key_and_is_replayable() -> None:
     matrix = _nonnormal_matrix()
     space = la.ArraySpace((3,), dtype=matrix.dtype)
     operator = la.FunctionLinearOperator(
@@ -105,9 +77,6 @@ def test_taylor_estimated_planning_requires_key_and_is_replayable() -> None:
         rtol=2e-6,
         atol=2e-7,
     )
-
-
-def test_taylor_resource_refusal_is_explicit() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="taylor-resource-refusal")
     policy = la.TaylorExponentialPolicy(
@@ -126,9 +95,29 @@ def test_taylor_resource_refusal_is_explicit() -> None:
     assert result.status == int(la.MatrixFunctionStatus.RESOURCE_EXHAUSTED)
     assert not bool(result.successful)
     assert jnp.all(jnp.isnan(result.value))
+    matrix = _nonnormal_matrix()
+    operator = la.DenseLinearOperator(matrix, operator_id="taylor-refresh")
+    policy = la.TaylorExponentialPolicy(error_tolerance=1e-10)
+    prepared = la.prepare_taylor_exponential_action(operator, policy)
+    changed = la.DenseLinearOperator(0.5 * matrix, operator_id="taylor-refresh")
+    refreshed = la.refresh_taylor_exponential_action(prepared, changed)
+    vector = jnp.asarray([1.0, -0.25, 0.5])
 
+    result = la.matrix_exponential_action(refreshed, vector, 0.2j)
+    expected = jsp.linalg.expm(0.1j * matrix) @ vector
+    assert refreshed.numeric_version == 1
+    assert bool(result.successful)
+    assert result.provenance.trace_source == "exact-diagonal"
+    assert jnp.allclose(result.value, expected, rtol=2e-9, atol=2e-10)
 
-def test_augmented_exponential_phi_combination_matches_dense_block_reference() -> None:
+    with pytest.raises(ValueError, match="Frechet"):
+        la.TaylorExponentialPolicy(
+            differentiation=la.DifferentiationPolicy("mathematical")
+        )
+    with pytest.raises(TypeError, match="float32"):
+        la.plan_taylor_exponential_action(
+            la.DenseLinearOperator(jnp.eye(2, dtype=jnp.float16)),
+        )
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="augmented-phi")
     state = jnp.asarray([1.0, -0.5, 0.25])
@@ -154,9 +143,6 @@ def test_augmented_exponential_phi_combination_matches_dense_block_reference() -
     assert bool(result.successful)
     assert result.provenance.kind == "exp-phi-combination"
     assert jnp.allclose(result.value, expected, rtol=2e-9, atol=2e-10)
-
-
-def test_augmented_combination_zero_scale_and_taylor_route() -> None:
     matrix = _nonnormal_matrix()
     operator = la.DenseLinearOperator(matrix, operator_id="augmented-phi-taylor")
     state = jnp.asarray([1.0, -0.5, 0.25])
@@ -188,32 +174,41 @@ def test_augmented_combination_zero_scale_and_taylor_route() -> None:
     assert bool(zero.successful)
     assert bool(positive.successful)
     assert jnp.allclose(positive.value, expected, rtol=2e-7, atol=2e-8)
+    from phydrax.linalg._generated_exponential_taylor_thresholds import (
+        TAYLOR_THRESHOLDS,
+    )
+
+    assert TAYLOR_THRESHOLDS.shape == (53, 55)
+    assert TAYLOR_THRESHOLDS.dtype == np.dtype(np.float64)
+    assert np.all(np.isfinite(TAYLOR_THRESHOLDS))
+    assert np.all(TAYLOR_THRESHOLDS > 0.0)
+    assert np.all(np.diff(TAYLOR_THRESHOLDS, axis=1) >= 0.0)
+    assert np.all(np.diff(TAYLOR_THRESHOLDS, axis=0) <= 0.0)
 
 
-def test_taylor_refresh_complex_scale_and_policy_boundaries() -> None:
+def test_taylor_zero_rhs_jvp_is_full_exponential_action() -> None:
     matrix = _nonnormal_matrix()
-    operator = la.DenseLinearOperator(matrix, operator_id="taylor-refresh")
-    policy = la.TaylorExponentialPolicy(error_tolerance=1e-10)
-    prepared = la.prepare_taylor_exponential_action(operator, policy)
-    changed = la.DenseLinearOperator(0.5 * matrix, operator_id="taylor-refresh")
-    refreshed = la.refresh_taylor_exponential_action(prepared, changed)
-    vector = jnp.asarray([1.0, -0.25, 0.5])
+    operator = la.DenseLinearOperator(matrix, operator_id="taylor-zero-jvp")
+    policy = la.TaylorExponentialPolicy(error_tolerance=1e-11)
+    tangent = jnp.asarray([0.5, -1.0, 2.0])
+    scale = jnp.asarray(0.3)
 
-    result = la.matrix_exponential_action(refreshed, vector, 0.2j)
-    expected = jsp.linalg.expm(0.1j * matrix) @ vector
-    assert refreshed.numeric_version == 1
-    assert bool(result.successful)
-    assert result.provenance.trace_source == "exact-diagonal"
-    assert jnp.allclose(result.value, expected, rtol=2e-9, atol=2e-10)
+    def action(vector: Any) -> Any:
+        return la.matrix_exponential_action(
+            operator,
+            vector,
+            scale,
+            policy=policy,
+        ).value
 
-    with pytest.raises(ValueError, match="Frechet"):
-        la.TaylorExponentialPolicy(
-            differentiation=la.DifferentiationPolicy("mathematical")
-        )
-    with pytest.raises(TypeError, match="float32"):
-        la.plan_taylor_exponential_action(
-            la.DenseLinearOperator(jnp.eye(2, dtype=jnp.float16)),
-        )
+    primal, derivative = jax.jvp(action, (jnp.zeros_like(tangent),), (tangent,))
+    assert jnp.array_equal(primal, jnp.zeros_like(primal))
+    assert jnp.allclose(
+        derivative,
+        jsp.linalg.expm(scale * matrix) @ tangent,
+        rtol=2e-9,
+        atol=2e-10,
+    )
 
 
 def test_taylor_rhs_only_differentiates_only_the_right_hand_side() -> None:
@@ -252,16 +247,3 @@ def test_taylor_rhs_only_differentiates_only_the_right_hand_side() -> None:
         rtol=2e-9,
         atol=2e-10,
     )
-
-
-def test_generated_taylor_thresholds_are_conservative_and_monotone() -> None:
-    from phydrax.linalg._generated_exponential_taylor_thresholds import (
-        TAYLOR_THRESHOLDS,
-    )
-
-    assert TAYLOR_THRESHOLDS.shape == (53, 55)
-    assert TAYLOR_THRESHOLDS.dtype == np.dtype(np.float64)
-    assert np.all(np.isfinite(TAYLOR_THRESHOLDS))
-    assert np.all(TAYLOR_THRESHOLDS > 0.0)
-    assert np.all(np.diff(TAYLOR_THRESHOLDS, axis=1) >= 0.0)
-    assert np.all(np.diff(TAYLOR_THRESHOLDS, axis=0) <= 0.0)

@@ -22,7 +22,7 @@ def _problem(scale: Any = 1.0) -> Any:
     )
 
 
-def test_plan_prepare_refresh_and_solve_match_one_shot() -> None:
+def test_convex_program_lifecycle_scenario_1() -> None:
     initial = _problem()
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.DensePrimalDualQP(),
@@ -47,9 +47,6 @@ def test_plan_prepare_refresh_and_solve_match_one_shot() -> None:
     assert second.result.provenance.numeric_version == 1
     assert second.result.provenance.structure_id == refreshed_problem.structure_id
     assert second.result.provenance.policy_id == policy.policy_id
-
-
-def test_refresh_rejects_topology_and_identity_changes() -> None:
     prepared = phx.optim.prepare_convex_program(_problem())
     changed_dimension = phx.optim.QuadraticProgram(
         jnp.eye(3),
@@ -68,9 +65,6 @@ def test_refresh_rejects_topology_and_identity_changes() -> None:
     )
     with pytest.raises(ValueError, match="preserve the convex-program structure"):
         phx.optim.refresh_convex_program(prepared, changed_identity)
-
-
-def test_prepared_solve_rejects_policy_override() -> None:
     prepared = phx.optim.prepare_convex_program(_problem())
     with pytest.raises(ValueError, match="policy must be omitted"):
         phx.optim.solve_convex_program(
@@ -79,7 +73,7 @@ def test_prepared_solve_rejects_policy_override() -> None:
         )
 
 
-def test_dense_planning_and_direct_solve_enforce_resource_contracts() -> None:
+def test_dense_contracts() -> None:
     problem = _problem()
     materialization_limited = phx.optim.ConvexSolvePolicy(
         materialization=phx.linalg.MaterializationPolicy(
@@ -96,9 +90,6 @@ def test_dense_planning_and_direct_solve_enforce_resource_contracts() -> None:
     with pytest.raises(ValueError, match="factorization estimate"):
         phx.optim.solve_quadratic_program(problem, policy=factorization_limited)
     assert materialization_limited.policy_id != factorization_limited.policy_id
-
-
-def test_dense_warm_start_is_explicit_and_reuses_audited_state() -> None:
     problem = _problem()
     cold = phx.optim.solve_quadratic_program(problem)
     warm = phx.optim.ConvexWarmStart.from_result(cold, interior_margin=1e-7)

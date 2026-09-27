@@ -49,7 +49,7 @@ def _source_problem() -> Any:
     return harmonics, problem, policy
 
 
-def test_internal_current_emits_to_both_ports_and_many_rhs_match() -> None:
+def test_fourier_modal_sources_refresh_scenario_1() -> None:
     harmonics, problem, policy = _source_problem()
     prepared = fm.prepare_fourier_modal_maxwell(problem, policy)
     coefficient = fm.point_source_coefficients(
@@ -79,6 +79,83 @@ def test_internal_current_emits_to_both_ports_and_many_rhs_match() -> None:
     loss = fm.evaluate_fourier_modal_loss(prepared, result, fm.FourierModalLossPolicy())
     assert not bool(loss.eligible)
     assert int(loss.status) == int(fm.FourierModalLossStatus.INELIGIBLE)
+    _, problem, policy = _source_problem()
+    prepared = fm.prepare_fourier_modal_maxwell(problem, policy)
+    left, source, right = problem.elements
+    assert isinstance(left, fm.FourierModalLayer)
+    assert isinstance(right, fm.FourierModalLayer)
+    updated_left = fm.FourierModalLayer(
+        left.material,
+        0.11,
+        left.factorization,
+        layer_id=left.layer_id,
+    )
+    updated = fm.FourierModalMaxwellProblem(
+        problem.harmonics,
+        problem.angular_frequency,
+        problem.bloch_wavevector,
+        problem.superstrate,
+        (updated_left, source, right),
+        problem.substrate,
+        numeric_version="thickness",
+    )
+    refreshed = fm.refresh_fourier_modal_maxwell(
+        prepared,
+        updated,
+        fm.FourierModalRefreshSpec(("thickness", "unchanged")),
+    )
+    old_layers = tuple(
+        value
+        for value in prepared.elements
+        if isinstance(value, fm.PreparedFourierModalLayer)
+    )
+    new_layers = tuple(
+        value
+        for value in refreshed.elements
+        if isinstance(value, fm.PreparedFourierModalLayer)
+    )
+    np.testing.assert_allclose(
+        np.asarray(new_layers[0].operator.matrix),
+        np.asarray(old_layers[0].operator.matrix),
+    )
+    assert refreshed.refresh_count == 1
+    harmonics, _, _ = _source_problem()
+    rule = BrillouinZonePlan((3,)).prepare(harmonics)
+    values = jnp.asarray(((1.0,), (2.0,), (4.0,)))
+    expected = jnp.mean(values, axis=0)
+    np.testing.assert_allclose(
+        np.asarray(fm.integrate_brillouin_fields(values, rule)),
+        np.asarray(expected),
+    )
+    np.testing.assert_allclose(
+        np.asarray(fm.integrate_brillouin_power(values, rule)),
+        np.asarray(expected),
+    )
+    harmonics, _, _ = _source_problem()
+    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="batch-vacuum")
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.asarray((0.0, 0.0)),
+        fm.HomogeneousMaxwellPort(vacuum, port_id="left"),
+        (),
+        fm.HomogeneousMaxwellPort(vacuum, port_id="right"),
+    )
+    rule = BrillouinZonePlan((2,)).prepare(harmonics)
+    prepared = fm.prepare_brillouin_zone_maxwell(problem, rule)
+    excitations = tuple(
+        fm.plane_wave_excitation(
+            case.scattering,
+            harmonics.plan.layout.mode_ids[0],
+            "te",
+        )
+        for case in prepared.cases
+    )
+    result = fm.solve_fourier_modal_case_batch(prepared, excitations)
+    assert result.right_outgoing.shape == (2, 2, 1)
+    assert result.power_audit_residual.shape == (2, 1)
+    assert result.status.shape == (2,)
+    assert bool(jnp.all(result.status == int(fm.FourierModalSolveStatus.SUCCESS)))
 
 
 def test_periodic_directional_bases_emit_consistent_surface_jump() -> None:
@@ -139,65 +216,7 @@ def test_periodic_directional_bases_emit_consistent_surface_jump() -> None:
     )
 
 
-def test_thickness_refresh_reuses_material_and_operator() -> None:
-    _, problem, policy = _source_problem()
-    prepared = fm.prepare_fourier_modal_maxwell(problem, policy)
-    left, source, right = problem.elements
-    assert isinstance(left, fm.FourierModalLayer)
-    assert isinstance(right, fm.FourierModalLayer)
-    updated_left = fm.FourierModalLayer(
-        left.material,
-        0.11,
-        left.factorization,
-        layer_id=left.layer_id,
-    )
-    updated = fm.FourierModalMaxwellProblem(
-        problem.harmonics,
-        problem.angular_frequency,
-        problem.bloch_wavevector,
-        problem.superstrate,
-        (updated_left, source, right),
-        problem.substrate,
-        numeric_version="thickness",
-    )
-    refreshed = fm.refresh_fourier_modal_maxwell(
-        prepared,
-        updated,
-        fm.FourierModalRefreshSpec(("thickness", "unchanged")),
-    )
-    old_layers = tuple(
-        value
-        for value in prepared.elements
-        if isinstance(value, fm.PreparedFourierModalLayer)
-    )
-    new_layers = tuple(
-        value
-        for value in refreshed.elements
-        if isinstance(value, fm.PreparedFourierModalLayer)
-    )
-    np.testing.assert_allclose(
-        np.asarray(new_layers[0].operator.matrix),
-        np.asarray(old_layers[0].operator.matrix),
-    )
-    assert refreshed.refresh_count == 1
-
-
-def test_brillouin_field_and_power_reductions_are_explicit() -> None:
-    harmonics, _, _ = _source_problem()
-    rule = BrillouinZonePlan((3,)).prepare(harmonics)
-    values = jnp.asarray(((1.0,), (2.0,), (4.0,)))
-    expected = jnp.mean(values, axis=0)
-    np.testing.assert_allclose(
-        np.asarray(fm.integrate_brillouin_fields(values, rule)),
-        np.asarray(expected),
-    )
-    np.testing.assert_allclose(
-        np.asarray(fm.integrate_brillouin_power(values, rule)),
-        np.asarray(expected),
-    )
-
-
-def test_translation_refresh_reuses_shared_base_convolution() -> None:
+def test_fourier_modal_sources_refresh_scenario_2() -> None:
     _, problem, policy = _source_problem()
     prepared = fm.prepare_fourier_modal_maxwell(problem, policy)
     old_layers = tuple(
@@ -244,9 +263,6 @@ def test_translation_refresh_reuses_shared_base_convolution() -> None:
         np.asarray(translated_layers[0].material.permittivity),
         np.asarray(expected.permittivity),
     )
-
-
-def test_same_material_slot_requires_equal_canonical_samples() -> None:
     harmonics, problem, policy = _source_problem()
     left, source, right = problem.elements
     assert isinstance(left, fm.FourierModalLayer)
@@ -267,9 +283,6 @@ def test_same_material_slot_requires_equal_canonical_samples() -> None:
     )
     with pytest.raises(ValueError, match="equal canonical samples"):
         fm.prepare_fourier_modal_maxwell(invalid, policy)
-
-
-def test_dishonest_refresh_hint_recomputes_material_and_primitive_values() -> None:
     harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
         jnp.asarray(((1.0, 0.0),))
     )
@@ -446,31 +459,3 @@ def test_unequal_traced_values_cannot_reuse_one_material_slot() -> None:
         match="equal canonical samples",
     ):
         jax.block_until_ready(prepare_entry(jnp.asarray(2.0), jnp.asarray(3.0)))
-
-
-def test_brillouin_case_batch_preserves_case_and_rhs_axes() -> None:
-    harmonics, _, _ = _source_problem()
-    vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="batch-vacuum")
-    problem = fm.FourierModalMaxwellProblem(
-        harmonics,
-        2.0 * jnp.pi,
-        jnp.asarray((0.0, 0.0)),
-        fm.HomogeneousMaxwellPort(vacuum, port_id="left"),
-        (),
-        fm.HomogeneousMaxwellPort(vacuum, port_id="right"),
-    )
-    rule = BrillouinZonePlan((2,)).prepare(harmonics)
-    prepared = fm.prepare_brillouin_zone_maxwell(problem, rule)
-    excitations = tuple(
-        fm.plane_wave_excitation(
-            case.scattering,
-            harmonics.plan.layout.mode_ids[0],
-            "te",
-        )
-        for case in prepared.cases
-    )
-    result = fm.solve_fourier_modal_case_batch(prepared, excitations)
-    assert result.right_outgoing.shape == (2, 2, 1)
-    assert result.power_audit_residual.shape == (2, 1)
-    assert result.status.shape == (2,)
-    assert bool(jnp.all(result.status == int(fm.FourierModalSolveStatus.SUCCESS)))

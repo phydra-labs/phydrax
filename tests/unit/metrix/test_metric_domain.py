@@ -44,7 +44,7 @@ def test_signed_margin_classifies_each_domain_lane_without_clipping() -> None:
     )
 
 
-def test_provider_status_remains_distinct_from_numeric_membership() -> None:
+def test_metric_domain_scenario_1() -> None:
     chart = CoordinateChart("ingoing", ("v", "r", "theta", "phi"))
     evidence = MetricDomainEvidence(
         jnp.asarray([True, False]),
@@ -59,9 +59,6 @@ def test_provider_status_remains_distinct_from_numeric_membership() -> None:
     assert jnp.array_equal(evidence.inside, jnp.asarray([True, True]))
     assert jnp.array_equal(evidence.physically_valid, jnp.asarray([True, False]))
     assert not jnp.any(evidence.qualified)
-
-
-def test_domain_evidence_validates_static_identity_and_aligned_shapes() -> None:
     chart = CoordinateChart("radial", ("t", "r"))
     with pytest.raises(ValueError, match="domain_id"):
         MetricDomainEvidence.from_margin(jnp.ones(2), chart=chart, domain_id="")
@@ -83,9 +80,6 @@ def test_domain_evidence_validates_static_identity_and_aligned_shapes() -> None:
             chart=chart,
             domain_id="radial",
         )
-
-
-def test_invalid_tolerance_is_reported_per_lane_instead_of_repairing_margin() -> None:
     chart = CoordinateChart("radial", ("t", "r"))
     evidence = MetricDomainEvidence.from_margin(
         jnp.asarray([0.25, 0.5]),

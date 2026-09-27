@@ -32,7 +32,7 @@ def _certified_properties(*, positive_definite: Any = False) -> Any:
     )
 
 
-def test_mechanics_wrapper_keeps_one_authoritative_nonlinear_root() -> None:
+def test_mechanics_foundations_scenario_1() -> None:
     space = phx.linalg.ArraySpace((2,), space_id="mechanics-physical-root")
     root = phx.nonlinear.NonlinearSystemProblem(
         lambda state, args: state - args,
@@ -56,9 +56,6 @@ def test_mechanics_wrapper_keeps_one_authoritative_nonlinear_root() -> None:
     assert mechanics.residual_space is root.residual_space
     assert mechanics.valid(state, residual, auxiliary, jnp.zeros(2))
     assert not mechanics.admissible(jnp.asarray((-2.0, 0.0)), jnp.zeros(2))
-
-
-def test_physical_stability_refuses_field_parameter_hessian_semantics() -> None:
     parameter_space = phx.linalg.ArraySpace(
         (2,),
         space_id="selected-field-parameters",

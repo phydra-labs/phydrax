@@ -113,7 +113,7 @@ def _experiment() -> Any:
     return experiment, prepared
 
 
-def test_dense_branch_oracle_feed_forward_shots_and_replay() -> None:
+def test_quantum_workflow_portfolio_scenario_1() -> None:
     experiment, prepared = _experiment()
     exact = execute_quantum_experiment_exact(prepared, jnp.asarray([1, 0], dtype=_C64))
     assert bool(exact.valid)
@@ -145,9 +145,6 @@ def test_dense_branch_oracle_feed_forward_shots_and_replay() -> None:
 
     payload = QuantumProgramInterchange(experiment.prefix)
     assert payload.materialize().program_id == experiment.prefix.program_id
-
-
-def test_zero_probability_evidence_and_mps_mixed_outcome_refusal() -> None:
     _, prepared = _experiment()
     identity_prefix = QuantumProgram(
         prepared.program.prefix.layout,
@@ -181,9 +178,6 @@ def test_zero_probability_evidence_and_mps_mixed_outcome_refusal() -> None:
     mps = MatrixProductState((jnp.asarray([[[1], [0]]], dtype=_C64),))
     with pytest.raises(ValueError, match="multi-Kraus mixed outcomes"):
         apply_mps_quantum_instrument(mixed, mps, 0)
-
-
-def test_explicit_route_ledger_and_local_hamiltonian_schedule() -> None:
     layout = HilbertRegisterLayout(("q0", "q1", "q2"), (2, 2, 2))
     cnot = jnp.asarray(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
@@ -236,7 +230,7 @@ def test_explicit_route_ledger_and_local_hamiltonian_schedule() -> None:
     assert jnp.all(evolved.local_unitarity_residuals < 1e-5)
 
 
-def test_lpdo_channel_reports_cp_tp_psd_trace_and_truncation_separately() -> None:
+def test_quantum_workflow_portfolio_scenario_2() -> None:
     lpdo = LocallyPurifiedDensity((jnp.asarray([[[[1]], [[0]]]], dtype=_C64),))
     kraus = jnp.stack((jnp.sqrt(0.7) * _I, jnp.sqrt(0.3) * _X))
     channel = LocalKrausChannel(0, kraus, channel_id="bit-flip")
@@ -269,9 +263,6 @@ def test_lpdo_channel_reports_cp_tp_psd_trace_and_truncation_separately() -> Non
     assert bool(hamiltonian.valid)
     assert bool(lindbladian.trace_preserving_generator)
     assert bool(lindbladian.valid)
-
-
-def test_lpdo_steady_state_applies_trace_tolerance_cumulatively() -> None:
     lpdo = LocallyPurifiedDensity((jnp.asarray([[[[1]], [[0]]]], dtype=_C64),))
     kraus = jnp.stack((jnp.sqrt(0.99) * _I, jnp.sqrt(0.01) * _X))
     channel = LocalKrausChannel(0, kraus, channel_id="weak-bit-flip")
@@ -287,9 +278,6 @@ def test_lpdo_steady_state_applies_trace_tolerance_cumulatively() -> None:
     )
     assert result.trace_residual > tolerance
     assert not bool(result.valid)
-
-
-def test_measurement_and_process_identities_include_numerical_content() -> None:
     projectors = jnp.stack((_P0, _P1))
     swapped = jnp.stack((_P1, _P0))
     assert QuantumPOVM(projectors).povm_id != QuantumPOVM(swapped).povm_id
@@ -317,9 +305,6 @@ def test_measurement_and_process_identities_include_numerical_content() -> None:
         environment_dimension=1,
     )
     assert identity.model_id != phased_model.model_id
-
-
-def test_process_fit_holdout_checkpoint_and_service_refusal() -> None:
     identity_model = StinespringProcessModel(
         _I, dimension=2, environment_dimension=1, tolerance=1e-5
     )

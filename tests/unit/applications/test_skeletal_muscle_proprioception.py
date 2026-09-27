@@ -27,7 +27,7 @@ def _input(
     return MileusnicSpindleInput(length, velocity, acceleration, dynamic, static)
 
 
-def test_published_feline_parameters_and_equilibrium_initialization() -> None:
+def test_skeletal_muscle_proprioception_scenario_1() -> None:
     runtime = MileusnicSpindle2006Plan().prepare()
     state = runtime.initialize(_input())
     rates = runtime.rates(state, _input())
@@ -43,9 +43,6 @@ def test_published_feline_parameters_and_equilibrium_initialization() -> None:
     )
     assert output.primary_afferent_pps >= 0.0
     assert output.secondary_afferent_pps >= 0.0
-
-
-def test_dynamic_and_static_gamma_drive_distinct_branches() -> None:
     runtime = MileusnicSpindle2006Plan().prepare()
     runtime.initialize(_input())
     dynamic = runtime._fusimotor_targets(_input(dynamic=70.0))
@@ -63,6 +60,19 @@ def test_dynamic_and_static_gamma_drive_distinct_branches() -> None:
     )
     assert driven.primary_afferent_pps > 0.0
     assert driven.secondary_afferent_pps > 0.0
+    runtime = MileusnicSpindle2006Plan().prepare()
+    state = runtime.initialize(_input())
+    invalid_input = runtime.candidate(state, _input(length=-1.0), 1.0e-4)
+    invalid_step = runtime.candidate(state, _input(), 1.0e-3)
+
+    assert not bool(invalid_input.evidence.successful)
+    assert int(invalid_input.evidence.status) & int(MileusnicSpindleStatus.INVALID_INPUT)
+    assert not bool(invalid_step.evidence.successful)
+    assert int(invalid_step.evidence.status) & int(MileusnicSpindleStatus.INVALID_STEP)
+    np.testing.assert_array_equal(
+        invalid_input.commit().branch_tension_force_unit,
+        state.branch_tension_force_unit,
+    )
 
 
 def test_ramp_stretch_increases_primary_afferent_and_is_jittable() -> None:
@@ -90,19 +100,3 @@ def test_ramp_stretch_increases_primary_afferent_and_is_jittable() -> None:
         )
     )(jnp.asarray(1.02))
     assert jnp.isfinite(derivative)
-
-
-def test_invalid_input_and_step_roll_back_whole_state() -> None:
-    runtime = MileusnicSpindle2006Plan().prepare()
-    state = runtime.initialize(_input())
-    invalid_input = runtime.candidate(state, _input(length=-1.0), 1.0e-4)
-    invalid_step = runtime.candidate(state, _input(), 1.0e-3)
-
-    assert not bool(invalid_input.evidence.successful)
-    assert int(invalid_input.evidence.status) & int(MileusnicSpindleStatus.INVALID_INPUT)
-    assert not bool(invalid_step.evidence.successful)
-    assert int(invalid_step.evidence.status) & int(MileusnicSpindleStatus.INVALID_STEP)
-    np.testing.assert_array_equal(
-        invalid_input.commit().branch_tension_force_unit,
-        state.branch_tension_force_unit,
-    )

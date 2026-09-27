@@ -43,9 +43,7 @@ def _state() -> Any:
     )
 
 
-def test_internal_physics_is_identity_for_rejected_collision_and_conservative_when_accepted() -> (
-    None
-):
+def test_dsmc_chemistry_scenario_1() -> None:
     species = _reactive_species()
     channel = phx.discretization.dsmc.DSMCReactionChannelPlan(
         (0, 1), (2, 3), threshold_energy=0.0, probability=1.0
@@ -78,9 +76,6 @@ def test_internal_physics_is_identity_for_rejected_collision_and_conservative_wh
         axis=0,
     )
     np.testing.assert_allclose(after_momentum, before_momentum, atol=1.0e-12)
-
-
-def test_reaction_can_draw_threshold_energy_from_rotational_reservoir() -> None:
     species = _reactive_species()
     channel = phx.discretization.dsmc.DSMCReactionChannelPlan(
         (0, 1), (2, 3), threshold_energy=1.5, probability=1.0
@@ -113,9 +108,6 @@ def test_reaction_can_draw_threshold_energy_from_rotational_reservoir() -> None:
     assert bool(result.successful)
     assert bool(result.reacted[0])
     np.testing.assert_allclose(result.energy_defect, 0.0, atol=1.0e-12)
-
-
-def test_reactive_plan_requires_element_and_mass_conservation() -> None:
     species = _reactive_species()
     invalid = phx.discretization.dsmc.DSMCReactionChannelPlan(
         (0, 1), (0, 0), threshold_energy=0.0, probability=1.0

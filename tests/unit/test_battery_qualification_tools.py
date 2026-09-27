@@ -586,7 +586,7 @@ def test_expired_criterion_is_historical_inconclusive_not_dropped(tmp_path: Any)
     assert sum(item["outcome"] == "passed" for item in result["evidence_records"]) == 2
 
 
-def test_native_observations_encode_absent_samples_without_nonfinite_json() -> None:
+def test_battery_qualification_tools_scenario_1() -> None:
     outputs = BatterySelectedOutputs(
         # ty: ignore[invalid-argument-type]
         (0.0, 1.0, float("inf")),
@@ -605,6 +605,16 @@ def test_native_observations_encode_absent_samples_without_nonfinite_json() -> N
     assert decoded["outputs"] == [[0.0], [3.8], [None]]
     assert decoded["times_s"] == [0.0, 1.0, None]
     assert decoded["valid"] == [True, True, False]
+    import jax
+    import jax.numpy as jnp
+
+    matrix = jnp.eye(65)
+    closed = jax.make_jaxpr(lambda vector: jax.jit(lambda item: matrix @ item)(vector))(
+        jnp.ones(65)
+    )
+    assert battery_performance._dense_array_count(closed) > 0
+    oracle = jax.make_jaxpr(lambda matrix: matrix @ matrix)(jnp.eye(64))
+    assert battery_performance._dense_array_count(oracle) == 0
 
 
 def test_registry_rejects_raw_unavailable_without_reason_and_relabeled_units(
@@ -723,19 +733,6 @@ def test_absolute_resource_plan_refuses_missing_or_unbounded_targets(
     record["criteria"][0]["target"] = float("inf")
     with pytest.raises(ValueError):
         BatteryResourcePlan.from_record(record)
-
-
-def test_no_dense_audit_checks_closed_constants_and_nested_computations() -> None:
-    import jax
-    import jax.numpy as jnp
-
-    matrix = jnp.eye(65)
-    closed = jax.make_jaxpr(lambda vector: jax.jit(lambda item: matrix @ item)(vector))(
-        jnp.ones(65)
-    )
-    assert battery_performance._dense_array_count(closed) > 0
-    oracle = jax.make_jaxpr(lambda matrix: matrix @ matrix)(jnp.eye(64))
-    assert battery_performance._dense_array_count(oracle) == 0
 
 
 def test_live_execution_closure_covers_unlisted_sources_and_lockfile(

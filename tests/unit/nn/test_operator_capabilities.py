@@ -93,7 +93,7 @@ def _graph_batch(*, quadrature: Any = True) -> Any:
     return phx.nn.operator.OperatorBatch(inputs={"u": source}, queries={"query": query})
 
 
-def test_every_registered_architecture_has_one_runtime_and_training_contract() -> None:
+def test_operator_capabilities_scenario_1() -> None:
     for name, status in phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES.items():
         assert status.name == name
         assert isinstance(status.capabilities, phx.nn.operator.OperatorCapabilitySpec)
@@ -102,9 +102,6 @@ def test_every_registered_architecture_has_one_runtime_and_training_contract() -
             decision.promoted and decision.current
             for decision in status.scenario_promotions
         )
-
-
-def test_operator_recommendation_requires_current_scenario_promotion() -> None:
     promoted = phx.nn.operator.OperatorScenarioPromotion(
         "periodic-diffusion",
         "artifact:periodic-diffusion",
@@ -128,11 +125,6 @@ def test_operator_recommendation_requires_current_scenario_promotion() -> None:
     assert current.tier == historical.tier == "stable"
     assert current.recommendation_eligible
     assert not historical.recommendation_eligible
-
-
-def test_configured_contract_preserves_registered_configuration_and_rejects_conflicts() -> (
-    None
-):
     tfno = phx.nn.operator.operator_architecture_contract(
         "TFNO", configuration={"rank": 4}
     )
@@ -145,7 +137,7 @@ def test_configured_contract_preserves_registered_configuration_and_rejects_conf
         )
 
 
-def test_model_instance_contract_tracks_capability_affecting_constructor_state() -> None:
+def test_operator_capabilities_scenario_2() -> None:
     fno = phx.nn.operator.architectures.FNO(
         n_modes=(3,),
         width=4,
@@ -161,36 +153,25 @@ def test_model_instance_contract_tracks_capability_affecting_constructor_state()
     assert fno_configuration["factorization"] == "tucker"
     assert fno_configuration["rank"] == 2
     assert fno_configuration["source_key"] == "u"
-
-
-def test_capability_report_accepts_supported_fno_inputs() -> None:
     masked = jnp.ones((2, 5, 5), dtype="bool").at[0, 0, 0].set(False)
     batch = _grid_batch(periodic=False, mask=masked)
     report = phx.nn.operator.validate_operator_architecture("FNO", batch)
 
     assert report.accepted
+    for architecture in ("FNO", "CNO", "UNO", "Flower", "IFNO", "UPT"):
+        report = phx.nn.operator.validate_operator_architecture(
+            architecture,
+            _grid_batch(),
+            problem=phx.nn.operator.OperatorProblemSpec(
+                requires_resolution_transfer=True,
+                rollout_steps=4,
+            ),
+        )
+
+        assert report.accepted
 
 
-@pytest.mark.parametrize(
-    "architecture",
-    ("FNO", "CNO", "UNO", "Flower", "IFNO", "UPT"),
-)
-def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(
-    architecture: Any,
-) -> None:
-    report = phx.nn.operator.validate_operator_architecture(
-        architecture,
-        _grid_batch(),
-        problem=phx.nn.operator.OperatorProblemSpec(
-            requires_resolution_transfer=True,
-            rollout_steps=4,
-        ),
-    )
-
-    assert report.accepted
-
-
-def test_cno_and_uno_declare_their_actual_measure_and_mask_support() -> None:
+def test_operator_capabilities_scenario_3() -> None:
     masked = jnp.ones((2, 5, 5), dtype="bool").at[0, 2, 3].set(False)
     cno_masked = phx.nn.operator.validate_operator_architecture(
         "CNO", _grid_batch(mask=masked)
@@ -205,9 +186,6 @@ def test_cno_and_uno_declare_their_actual_measure_and_mask_support() -> None:
     assert cno_masked.accepted
     assert "MISSING_PHYSICAL_QUADRATURE" in cno_missing_measure.codes
     assert uno_masked.accepted
-
-
-def test_cno_family_catalog_requires_exact_periodic_uniform_fourier_axes() -> None:
     for architecture in ("CNO", "UNO"):
         capabilities = phx.nn.operator.operator_architecture_contract(
             architecture
@@ -251,9 +229,6 @@ def test_cno_family_catalog_requires_exact_periodic_uniform_fourier_axes() -> No
                 ),
             ).codes
         )
-
-
-def test_spectral_operator_contracts_match_runtime_invariants() -> None:
     wavelet = phx.nn.operator.operator_architecture_contract(
         "WaveletNeuralOperator"
     ).capabilities
@@ -273,9 +248,6 @@ def test_spectral_operator_contracts_match_runtime_invariants() -> None:
     assert sfno.quadrature == "physical_required"
     assert sfno.masks == "all_valid_only"
     assert not sfno.resolution_transfer
-
-
-def test_fixed_query_is_separate_from_source_query_structure() -> None:
     variable_query_problem = phx.nn.operator.OperatorProblemSpec(
         source_query_relation="coincident",
         query_is_fixed=False,
@@ -296,7 +268,7 @@ def test_fixed_query_is_separate_from_source_query_structure() -> None:
     assert "FIXED_QUERY_REQUIRED" in pod.codes
 
 
-def test_function_frame_contract_is_research_scoped_and_query_independent() -> None:
+def test_operator_capabilities_scenario_4() -> None:
     status = phx.nn.operator.operator_architecture_status("function_encoder")
     capabilities = status.capabilities
     report = phx.nn.operator.validate_operator_architecture(
@@ -321,9 +293,6 @@ def test_function_frame_contract_is_research_scoped_and_query_independent() -> N
     assert capabilities.resolution_transfer
     assert report.accepted
     assert "UNSUPPORTED_GEOMETRY" in unsupported_graph.codes
-
-
-def test_graph_contract_requires_native_topology_and_physical_measure() -> None:
     valid = phx.nn.operator.validate_operator_architecture(
         "GraphNeuralOperator", _graph_batch()
     )
@@ -338,9 +307,6 @@ def test_graph_contract_requires_native_topology_and_physical_measure() -> None:
     assert "MISSING_PHYSICAL_QUADRATURE" in missing_measure.codes
     assert "TOPOLOGY_REQUIRED" in coordinate_only.codes
     assert "UNSUPPORTED_GEOMETRY" in coordinate_only.codes
-
-
-def test_training_requirements_separate_task_specific_from_foundation_claims() -> None:
     batch = _grid_batch()
     poseidon = phx.nn.operator.validate_operator_architecture("Poseidon", batch)
     assert "MISSING_PRETRAINED_WEIGHTS" in poseidon.codes

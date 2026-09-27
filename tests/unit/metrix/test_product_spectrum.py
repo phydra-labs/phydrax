@@ -22,7 +22,7 @@ def _two_point_basis(decomposition_id: Any = "two-point") -> Any:
     )
 
 
-def test_product_laplacian_materializes_kronecker_basis_and_summed_values() -> None:
+def test_product_spectrum_scenario_1() -> None:
     first = _two_point_basis("first")
     second = _two_point_basis("second")
     product = phx.metrix.product_laplacian_eigenbasis(
@@ -40,9 +40,6 @@ def test_product_laplacian_materializes_kronecker_basis_and_summed_values() -> N
         @ (product.probability_measure[:, None] * product.eigenfunctions),
         jnp.eye(4),
     )
-
-
-def test_product_mode_selection_preserves_complete_degenerate_clusters() -> None:
     factors = (_two_point_basis("first"), _two_point_basis("second"))
 
     with pytest.raises(ValueError, match="degenerate product eigenspace"):
@@ -54,32 +51,6 @@ def test_product_mode_selection_preserves_complete_degenerate_clusters() -> None
     assert product.report.next_eigenvalue == pytest.approx(4.0)
     # ty: ignore[unresolved-attribute]
     assert not product.report.exact
-
-
-def test_isotropic_product_matern_is_distinct_from_separable_kernel_product() -> None:
-    first = _two_point_basis("first")
-    second = _two_point_basis("second")
-    product_basis = phx.metrix.product_laplacian_eigenbasis(
-        (first, second), num_modes=None
-    )
-    multiplier = phx.kernels.MaternSpectralMultiplier(0.8, 1.4)
-    isotropic = phx.kernels.SpectralFeatureKernel(product_basis, multiplier)
-    entities = jnp.arange(4)
-    isotropic_matrix = isotropic.matrix(entities, entities)
-
-    first_kernel = phx.kernels.SpectralFeatureKernel(first, multiplier)
-    second_kernel = phx.kernels.SpectralFeatureKernel(second, multiplier)
-    factor_entities = jnp.arange(2)
-    separable = jnp.kron(
-        first_kernel.matrix(factor_entities, factor_entities),
-        second_kernel.matrix(factor_entities, factor_entities),
-    )
-
-    assert not jnp.allclose(isotropic_matrix, separable)
-    assert np.min(np.linalg.eigvalsh(np.asarray(isotropic_matrix))) >= -1e-10
-
-
-def test_product_spectrum_uses_certified_factor_tail() -> None:
     report = phx.discretization.LaplacianEigenbasisReport(
         method_id="test-truncation",
         source_id="truncated-factor",
@@ -111,9 +82,6 @@ def test_product_spectrum_uses_certified_factor_tail() -> None:
     assert product.report.next_eigenvalue == pytest.approx(5.0)
     # ty: ignore[unresolved-attribute]
     assert not product.report.exact
-
-
-def test_product_spectral_kernel_reuses_exact_weight_space_gp() -> None:
     product = phx.metrix.product_laplacian_eigenbasis(
         (_two_point_basis("first"), _two_point_basis("second")),
         num_modes=3,
@@ -132,3 +100,23 @@ def test_product_spectral_kernel_reuses_exact_weight_space_gp() -> None:
     assert isinstance(
         model.factor(state=state), phx.uq.FiniteFeatureGaussianProcessFactor
     )
+    first = _two_point_basis("first")
+    second = _two_point_basis("second")
+    product_basis = phx.metrix.product_laplacian_eigenbasis(
+        (first, second), num_modes=None
+    )
+    multiplier = phx.kernels.MaternSpectralMultiplier(0.8, 1.4)
+    isotropic = phx.kernels.SpectralFeatureKernel(product_basis, multiplier)
+    entities = jnp.arange(4)
+    isotropic_matrix = isotropic.matrix(entities, entities)
+
+    first_kernel = phx.kernels.SpectralFeatureKernel(first, multiplier)
+    second_kernel = phx.kernels.SpectralFeatureKernel(second, multiplier)
+    factor_entities = jnp.arange(2)
+    separable = jnp.kron(
+        first_kernel.matrix(factor_entities, factor_entities),
+        second_kernel.matrix(factor_entities, factor_entities),
+    )
+
+    assert not jnp.allclose(isotropic_matrix, separable)
+    assert np.min(np.linalg.eigvalsh(np.asarray(isotropic_matrix))) >= -1e-10

@@ -81,7 +81,7 @@ class OnePlusTimeLatent(_AbstractBaseModel):
         return jnp.stack([jnp.array(1.0), t], axis=-1)
 
 
-def test_axis_contraction_plan_supports_multi_term_and_gather() -> None:
+def test_axis_aware_latent_contraction_scenario_1() -> None:
     case = AxisFactor(
         "case",
         jnp.asarray([[[1.0], [2.0]], [[3.0], [4.0]]]),
@@ -113,48 +113,6 @@ def test_axis_contraction_plan_supports_multi_term_and_gather() -> None:
 
     assert out.axes == ("obs",)
     assert jnp.allclose(out.data[:, 0], expected)
-
-
-def test_latent_contraction_axis_batch_matches_product_grid_and_grad() -> None:
-    domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
-    model = LatentContractionModel(
-        latent_size=2,
-        out_size="scalar",
-        factors={"x": AffineScalarLatent(), "t": AffineScalarLatent()},
-        factor_inputs={"x": ("x",), "t": ("t",)},
-    )
-    u = domain.Model("x", "t")(model)
-    batch = domain.component().sample(
-        phx.domain.PointSampling((4, 5), layout=SampleLayout((("x",), ("t",)))),
-        key=jr.key(1),
-    )
-
-    out = u(batch)
-    x = jnp.asarray(batch["x"].data)[:, 0]
-    t = jnp.asarray(batch["t"].data)
-    expected = x[:, None] * t[None, :] + 1.0
-
-    assert out.dims[:2] == (
-        batch.structure.axis_for("x"),
-        batch.structure.axis_for("t"),
-    )
-    assert jnp.allclose(jnp.asarray(out.data), expected)
-
-    def total(scale: Any) -> Any:
-        scaled = LatentContractionModel(
-            latent_size=2,
-            out_size="scalar",
-            factors={"x": AffineScalarLatent(scale), "t": AffineScalarLatent()},
-            factor_inputs={"x": ("x",), "t": ("t",)},
-        )
-        fn = domain.Model("x", "t")(scaled)
-        return jnp.sum(fn(batch).data)
-
-    grad = jax.grad(total)(jnp.asarray(0.25))
-    assert jnp.isfinite(grad)
-
-
-def test_irregular_ragged_constraint_uses_case_major_axis_batch() -> None:
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     times = jnp.asarray(
         [
@@ -195,3 +153,42 @@ def test_irregular_ragged_constraint_uses_case_major_axis_batch() -> None:
     )
     assert pred.data.shape == batch.target.shape
     assert jnp.allclose(loss, 0.0, atol=1e-12)
+
+
+def test_latent_contraction_axis_batch_matches_product_grid_and_grad() -> None:
+    domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+    model = LatentContractionModel(
+        latent_size=2,
+        out_size="scalar",
+        factors={"x": AffineScalarLatent(), "t": AffineScalarLatent()},
+        factor_inputs={"x": ("x",), "t": ("t",)},
+    )
+    u = domain.Model("x", "t")(model)
+    batch = domain.component().sample(
+        phx.domain.PointSampling((4, 5), layout=SampleLayout((("x",), ("t",)))),
+        key=jr.key(1),
+    )
+
+    out = u(batch)
+    x = jnp.asarray(batch["x"].data)[:, 0]
+    t = jnp.asarray(batch["t"].data)
+    expected = x[:, None] * t[None, :] + 1.0
+
+    assert out.dims[:2] == (
+        batch.structure.axis_for("x"),
+        batch.structure.axis_for("t"),
+    )
+    assert jnp.allclose(jnp.asarray(out.data), expected)
+
+    def total(scale: Any) -> Any:
+        scaled = LatentContractionModel(
+            latent_size=2,
+            out_size="scalar",
+            factors={"x": AffineScalarLatent(scale), "t": AffineScalarLatent()},
+            factor_inputs={"x": ("x",), "t": ("t",)},
+        )
+        fn = domain.Model("x", "t")(scaled)
+        return jnp.sum(fn(batch).data)
+
+    grad = jax.grad(total)(jnp.asarray(0.25))
+    assert jnp.isfinite(grad)

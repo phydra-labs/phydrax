@@ -14,6 +14,7 @@ from typing import Any, cast, TYPE_CHECKING
 from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_context import inside_jax_transformation
 from ...qualification._evidence import SupportDependency
 from ...qualification._registry import (
     CapabilityProfile,
@@ -257,9 +258,7 @@ class BatteryExecutionAdmission:
 
 
 def _verify_admission(admission: BatteryExecutionAdmission, at_time: int) -> int:
-    from jax import core as jax_core
-
-    if not jax_core.trace_ctx.is_top_level():
+    if inside_jax_transformation():
         raise ValueError(
             "Production admission requires a fresh host dispatch; "
             "transformed/cached whole-run execution is not authorized."

@@ -36,7 +36,7 @@ def _two_bus(*, p: Any = 0.5, q: Any = 0.0, q_max: Any = float("inf")) -> Any:
     return network, PowerStudy((BusControl("source", "reference"), BusControl("load")))
 
 
-def test_total_three_phase_bases_and_machine_impedance_rebasing() -> None:
+def test_power_flow_scenario_1() -> None:
     base = PowerBase(100)
     assert base.impedance_ohm(110) == pytest.approx(121)
     assert 3 * base.phase_voltage_volt(110) * base.current_ampere(110) == pytest.approx(
@@ -45,9 +45,6 @@ def test_total_three_phase_bases_and_machine_impedance_rebasing() -> None:
     np.testing.assert_allclose(
         base.rebase_impedance(0.2, old_mva=50, old_kv=11, new_kv=110), 0.004
     )
-
-
-def test_two_bus_analytic_rectangular_sign_loss_and_balance() -> None:
     compiled = compile_network(*_two_bus())
     result = solve_power_flow(compiled)
     expected = 0.5 * (1 + np.sqrt(1 - 4 * 0.05**2)) - 0.05j
@@ -59,9 +56,6 @@ def test_two_bus_analytic_rectangular_sign_loss_and_balance() -> None:
     np.testing.assert_allclose(result.branch_loss.real, 0, atol=2e-7)
     np.testing.assert_allclose(result.total_balance, 0, atol=2e-7)
     np.testing.assert_allclose(result.bus_balance, 0, atol=2e-7)
-
-
-def test_complex_tap_orientation_and_shunt_inward_power() -> None:
     network = PowerNetwork(
         (Bus("h", 110), Bus("l", 11)),
         (Branch("t", "h", "l", 0.01, 0.1, tap=1.1, phase=0.2),),
@@ -78,7 +72,7 @@ def test_complex_tap_orientation_and_shunt_inward_power() -> None:
     np.testing.assert_allclose(result.external_reference_power, [0.1 - 0.2j], atol=2e-7)
 
 
-def test_each_electrical_island_requires_exactly_one_reference() -> None:
+def test_power_flow_scenario_2() -> None:
     disconnected = PowerNetwork((Bus("a"), Bus("b")), ())
     one_reference = PowerStudy((BusControl("a", "reference"), BusControl("b")))
     two_references = PowerStudy(
@@ -92,9 +86,6 @@ def test_each_electrical_island_requires_exactly_one_reference() -> None:
     result = solve_power_flow(disconnected, study=two_references)
     assert bool(result.converged)
     np.testing.assert_allclose(result.voltage, [1, 1], atol=2e-7)
-
-
-def test_three_bus_pv_saturates_and_preserves_original_balance() -> None:
     network = PowerNetwork(
         (Bus("r"), Bus("v"), Bus("d")),
         (Branch("rv", "r", "v", 0, 0.1), Branch("vd", "v", "d", 0, 0.1)),
@@ -117,9 +108,6 @@ def test_three_bus_pv_saturates_and_preserves_original_balance() -> None:
     failed = solve_power_flow(network, study=study, maximum_mode_steps=1)
     assert not bool(failed.converged)
     assert failed.status == "mode_budget_exhausted"
-
-
-def test_reference_limit_failure_is_not_hidden_as_success_or_pq_conversion() -> None:
     network, study = _two_bus(q=0.3, q_max=0.001)
     result = solve_power_flow(network, study=study)
     assert not bool(result.converged)

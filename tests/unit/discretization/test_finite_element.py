@@ -38,7 +38,7 @@ def _square_discretization(*, degree: Any = 1) -> Any:
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
 
-def test_reference_elements_partition_unity_and_reproduce_coordinates() -> None:
+def test_finite_element_scenario_1() -> None:
     cases = (
         ("triangle", 1, jnp.asarray([[0.2, 0.3]])),
         ("triangle", 2, jnp.asarray([[0.2, 0.3]])),
@@ -53,9 +53,6 @@ def test_reference_elements_partition_unity_and_reproduce_coordinates() -> None:
         assert jnp.allclose(jnp.sum(values, axis=-1), 1.0)
         assert jnp.allclose(jnp.sum(gradients, axis=1), 0.0)
         assert jnp.allclose(reconstructed, points)
-
-
-def test_generic_preparation_assembles_mass_stiffness_and_p2_dofs() -> None:
     p1 = _square_discretization()
     p2 = _square_discretization(degree=2)
     ones = jnp.ones((p1.dof_maps[0].global_dof_count,))
@@ -67,9 +64,6 @@ def test_generic_preparation_assembles_mass_stiffness_and_p2_dofs() -> None:
     assert p1.mass.sparse_storage().nnz > 0
     assert p2.dof_maps[0].global_dof_count == 13
     assert jnp.count_nonzero(p2.boundary_dof_mask) == 8
-
-
-def test_variational_compiler_reproduces_affine_dirichlet_solution() -> None:
     discretization = _square_discretization()
     constraint = phx.discretization.dirichlet_constraint(discretization, "u")
     form = phx.equations.FiniteElementForm(
@@ -131,7 +125,7 @@ def test_auxiliary_evaluator_receives_constraint_expanded_full_state() -> None:
     assert jnp.allclose(evaluation.trial_state, expected)
 
 
-def test_boundary_loading_reconstruction_and_functional_preserve_integrals() -> None:
+def test_finite_element_scenario_2() -> None:
     discretization = _square_discretization()
     form = phx.equations.FiniteElementForm(
         "boundary-load",
@@ -173,9 +167,6 @@ def test_boundary_loading_reconstruction_and_functional_preserve_integrals() -> 
         centroids[:, 0] - 2.0 * centroids[:, 1],
     )
     assert jnp.allclose(compiled_functional.potential(jnp.ones((5,))), 1.0)
-
-
-def test_fixed_topology_geometry_is_differentiable() -> None:
     discretization = _square_discretization()
     direction = jnp.zeros_like(discretization.vertices).at[2, 0].set(1.0)
 
@@ -190,9 +181,6 @@ def test_fixed_topology_geometry_is_differentiable() -> None:
     assert jnp.allclose(area, 1.0)
     assert jnp.isfinite(tangent)
     assert tangent != 0.0
-
-
-def test_native_dae_adapter_preserves_constant_heat_state() -> None:
     discretization = _square_discretization()
     form = phx.equations.FiniteElementForm(
         "heat",

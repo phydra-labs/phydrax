@@ -44,7 +44,7 @@ def _configurations() -> Any:
     return jnp.asarray([[-1, -1], [-1, 1], [1, -1], [1, 1]], dtype=jnp.int32)
 
 
-def test_connected_local_estimator_matches_dense_complex_hamiltonian() -> None:
+def test_quantum_discrete_scenario_1() -> None:
     configurations = _configurations()
     amplitudes = jnp.asarray([1.0 + 0.0j, 0.7 + 0.2j, -0.3 + 0.9j, 1.2 - 0.4j])
     model = _TableAmplitude(
@@ -73,6 +73,18 @@ def test_connected_local_estimator_matches_dense_complex_hamiltonian() -> None:
     assert jnp.all(local.valid)
     assert jnp.array_equal(local.work_count, jnp.full((4,), 2))
     assert jnp.allclose(local.value, expected)
+    configurations = _configurations()
+    model = _TableAmplitude(
+        jnp.asarray([-jnp.inf, 0.0, 0.0, 0.0]),
+        jnp.ones((4,), dtype="complex128"),
+    )
+    local = phx.operators.evaluate_local_operator(
+        model, _ising_operator(), configurations
+    )
+
+    assert not local.valid[0]
+    assert jnp.isnan(local.value[0])
+    assert jnp.all(local.valid[1:])
 
 
 def test_padded_connections_do_not_change_local_estimate() -> None:
@@ -116,18 +128,3 @@ def test_padded_connections_do_not_change_local_estimate() -> None:
     )(model)
     assert jnp.all(jnp.isfinite(gradient.log_abs))
     assert jnp.all(jnp.isfinite(gradient.phase))
-
-
-def test_zero_current_amplitude_invalidates_local_estimator() -> None:
-    configurations = _configurations()
-    model = _TableAmplitude(
-        jnp.asarray([-jnp.inf, 0.0, 0.0, 0.0]),
-        jnp.ones((4,), dtype="complex128"),
-    )
-    local = phx.operators.evaluate_local_operator(
-        model, _ising_operator(), configurations
-    )
-
-    assert not local.valid[0]
-    assert jnp.isnan(local.value[0])
-    assert jnp.all(local.valid[1:])

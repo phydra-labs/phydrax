@@ -46,9 +46,7 @@ def _deeponet(branch: Any, basis: Any) -> Any:
     )
 
 
-def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_centered_data() -> (
-    None
-):
+def test_operator_pod_scenario_1() -> None:
     dataset, _source_axis, query_axis, targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_operator_pod(
         dataset,
@@ -83,9 +81,6 @@ def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_cen
     assert fitted.diagnostics.basis_gradient_supported == (
         fitted.valid & ~fitted.diagnostics.repeated_spectrum
     )
-
-
-def test_centered_pod_deeponet_adds_fixed_spatial_mean_not_channel_bias() -> None:
     dataset, _source_axis, _query_axis, _targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_pod_basis(dataset, "state", 2, centered=True)
     branch = phx.nn.models.MLP(
@@ -113,11 +108,6 @@ def test_centered_pod_deeponet_adds_fixed_spatial_mean_not_channel_bias() -> Non
     assert jnp.allclose(legacy.bias, 0.0)
     assert jnp.allclose(centered_output - legacy_output, expected_mean, atol=1e-6)
     assert eqx.filter_jit(centered)(dataset.batch).shape == centered_output.shape
-
-
-def test_legacy_uncentered_pod_basis_remains_shape_compatible_and_has_no_affine_offset() -> (
-    None
-):
     dataset, _source_axis, _query_axis, _targets = _operator_pod_dataset()
     fitted = phx.nn.operator.training.fit_operator_pod(
         dataset, "state", 2, centered=False

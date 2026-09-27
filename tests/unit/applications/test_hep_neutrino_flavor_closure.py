@@ -28,7 +28,7 @@ def _pot_exposure() -> Any:
     )
 
 
-def test_neutrino_oscillation_unitarity_and_rate_chain() -> None:
+def test_hep_neutrino_flavor_closure_scenario_1() -> None:
     neutrino = phx.applications.neutrino
     parameters = neutrino.NeutrinoOscillationParameters(
         theta12=0.59,
@@ -85,9 +85,6 @@ def test_neutrino_oscillation_unitarity_and_rate_chain() -> None:
         jnp.asarray([10.0, 20.0]), jnp.eye(2) * 0.5, transfer_id="near-far"
     )
     assert jnp.allclose(transfer.far_prediction, jnp.asarray([5.0, 10.0]))
-
-
-def test_coherent_amplitude_interference_and_time_dependent_mixing() -> None:
     flavor = phx.applications.flavor_physics
     amplitude_plan = flavor.CoherentAmplitudePlan(
         ("resonance-a", "resonance-b"),

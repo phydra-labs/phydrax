@@ -97,7 +97,7 @@ def test_result_archive_and_born_oppenheimer_adapter_roundtrip(tmp_path: Any) ->
     assert int(step.state.step_index) == 1
 
 
-def test_real_ase_calculator_executes_through_typed_provider() -> None:
+def test_real_contracts() -> None:
     ase = pytest.importorskip("ase")
     # ty: ignore[unresolved-import]
     from ase.calculators.emt import EMT
@@ -140,9 +140,6 @@ def test_real_ase_calculator_executes_through_typed_provider() -> None:
     assert np.isfinite(float(result.energy))
     # ty: ignore[unresolved-attribute]
     assert np.all(np.isfinite(np.asarray(result.forces)))
-
-
-def test_real_pyscf_rhf_preserves_native_force_order() -> None:
     pytest.importorskip("pyscf")
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(

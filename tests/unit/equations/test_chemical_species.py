@@ -28,7 +28,7 @@ def _schema() -> Any:
     )
 
 
-def test_chemical_species_schema_tracks_elements_charge_and_phases() -> None:
+def test_chemical_species_scenario_1() -> None:
     schema = _schema()
     amount = jnp.asarray((2.0, 2.0, 1.0))
 
@@ -40,9 +40,6 @@ def test_chemical_species_schema_tracks_elements_charge_and_phases() -> None:
     )
     assert schema.phase_species_indices(phx.equations.ChemicalPhaseKind.SOLID) == (2,)
     assert schema.phase_count == 2
-
-
-def test_chemical_species_schema_rejects_invalid_charge_and_surface_phase() -> None:
     with pytest.raises(ValueError, match="integer"):
         phx.equations.ChemicalSpeciesSchema.from_unique_species(
             ("A",),
@@ -63,9 +60,6 @@ def test_chemical_species_schema_rejects_invalid_charge_and_surface_phase() -> N
             jnp.asarray((0,), dtype=jnp.int32),
             gas_standard_pressure=101325.0,
         )
-
-
-def test_surface_phase_requires_positive_site_density() -> None:
     with pytest.raises(ValueError, match="site_density"):
         phx.equations.ChemicalPhaseSpec(
             "electrode",

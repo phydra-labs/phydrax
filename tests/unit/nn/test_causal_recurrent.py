@@ -28,76 +28,70 @@ def _config(*, steps: Any = 24, failure_policy: Any = "raise") -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "cell",
-    (
+def test_causal_recurrent_scenario_1() -> None:
+    for cell in (
         layers.RNNCell(3, 4, dtype=jnp.float64, key=jax.random.key(1)),
         layers.GRUCell(3, 4, dtype=jnp.float64, key=jax.random.key(2)),
         layers.LSTMCell(3, 4, dtype=jnp.float64, key=jax.random.key(3)),
-    ),
-)
-def test_causal_recurrent_matches_serial_masks_resets_and_gradients(cell: Any) -> None:
-    inputs = jax.random.normal(jax.random.key(4), (2, 10, 3), dtype=jnp.float64)
-    valid = jnp.asarray([[True] * 8 + [False] * 2, [True] * 10])
-    reset = jnp.zeros_like(valid).at[0, 4].set(True).at[1, 6].set(True)
-    batch = layers.RecurrentBatch(inputs, valid, reset=reset)
+    ):
+        inputs = jax.random.normal(jax.random.key(4), (2, 10, 3), dtype=jnp.float64)
+        valid = jnp.asarray([[True] * 8 + [False] * 2, [True] * 10])
+        reset = jnp.zeros_like(valid).at[0, 4].set(True).at[1, 6].set(True)
+        batch = layers.RecurrentBatch(inputs, valid, reset=reset)
 
-    serial = layers.run_recurrent(cell, batch)
-    causal = jax.jit(
-        lambda current: layers.run_causal_recurrent(
-            current,
-            batch,
-            config=_config(),
-        )
-    )(cell)
+        serial = layers.run_recurrent(cell, batch)
+        causal = jax.jit(
+            lambda current: layers.run_causal_recurrent(
+                current,
+                batch,
+                config=_config(),
+            )
+        )(cell)
 
-    assert jnp.all(causal.successful)
-    assert jax.tree.all(
-        jax.tree.map(
-            lambda left, right: jnp.allclose(left, right, atol=1e-9, rtol=1e-9),
-            causal.states,
-            serial.states,
-        )
-    )
-    assert jax.tree.all(
-        jax.tree.map(
-            lambda left, right: jnp.allclose(left, right, atol=1e-9, rtol=1e-9),
-            causal.outputs,
-            serial.outputs,
-        )
-    )
-    assert jax.tree.all(
-        jax.tree.map(
-            lambda left, right: jnp.allclose(left, right, atol=1e-9, rtol=1e-9),
-            causal.final_state,
-            serial.final_state,
-        )
-    )
-
-    serial_gradient = jax.grad(
-        lambda current: sum(
-            jnp.sum(leaf)
-            for leaf in jax.tree.leaves(layers.run_recurrent(current, batch).outputs)
-        )
-    )(cell)
-    causal_gradient = jax.grad(
-        lambda current: sum(
-            jnp.sum(leaf)
-            for leaf in jax.tree.leaves(
-                layers.run_causal_recurrent(current, batch, config=_config()).outputs
+        assert jnp.all(causal.successful)
+        assert jax.tree.all(
+            jax.tree.map(
+                lambda left, right: jnp.allclose(left, right, atol=1e-9, rtol=1e-9),
+                causal.states,
+                serial.states,
             )
         )
-    )(cell)
-    assert jax.tree.all(
-        jax.tree.map(
-            lambda left, right: jnp.allclose(left, right, atol=2e-8, rtol=2e-8),
-            causal_gradient,
-            serial_gradient,
+        assert jax.tree.all(
+            jax.tree.map(
+                lambda left, right: jnp.allclose(left, right, atol=1e-9, rtol=1e-9),
+                causal.outputs,
+                serial.outputs,
+            )
         )
-    )
+        assert jax.tree.all(
+            jax.tree.map(
+                lambda left, right: jnp.allclose(left, right, atol=1e-9, rtol=1e-9),
+                causal.final_state,
+                serial.final_state,
+            )
+        )
 
-
-def test_causal_recurrent_supports_multidimensional_cases_and_explicit_states() -> None:
+        serial_gradient = jax.grad(
+            lambda current: sum(
+                jnp.sum(leaf)
+                for leaf in jax.tree.leaves(layers.run_recurrent(current, batch).outputs)
+            )
+        )(cell)
+        causal_gradient = jax.grad(
+            lambda current: sum(
+                jnp.sum(leaf)
+                for leaf in jax.tree.leaves(
+                    layers.run_causal_recurrent(current, batch, config=_config()).outputs
+                )
+            )
+        )(cell)
+        assert jax.tree.all(
+            jax.tree.map(
+                lambda left, right: jnp.allclose(left, right, atol=2e-8, rtol=2e-8),
+                causal_gradient,
+                serial_gradient,
+            )
+        )
     cell = layers.RNNCell(2, 3, dtype=jnp.float64, key=jax.random.key(5))
     inputs = jax.random.normal(jax.random.key(6), (2, 3, 7, 2), dtype=jnp.float64)
     valid = jnp.ones((2, 3, 7), dtype="bool")
@@ -123,9 +117,6 @@ def test_causal_recurrent_supports_multidimensional_cases_and_explicit_states() 
     assert causal.states.shape == (2, 3, 7, 3)
     assert jnp.allclose(causal.states, serial.states, atol=1e-9)
     assert jnp.allclose(causal.final_output, serial.final_output, atol=1e-9)
-
-
-def test_causal_recurrent_explicit_serial_fallback_is_recorded() -> None:
     cell = layers.RNNCell(1, 1, key=jax.random.key(7))
     batch = layers.RecurrentBatch(jnp.ones((6, 1)), jnp.ones((6,), dtype="bool"))
     serial = layers.run_recurrent(cell, batch)
@@ -146,9 +137,6 @@ def test_causal_recurrent_explicit_serial_fallback_is_recorded() -> None:
     assert bool(causal.diagnostics.fallback_used)
     assert jnp.array_equal(causal.states, serial.states)
     assert jnp.array_equal(causal.outputs, serial.outputs)
-
-
-def test_hutchinson_recurrent_requires_explicit_probe_key() -> None:
     cell = layers.RNNCell(1, 1, key=jax.random.key(8))
     batch = layers.RecurrentBatch(jnp.ones((4, 1)), jnp.ones((4,), dtype="bool"))
     config = layers.CausalRecurrentConfig(
@@ -159,9 +147,6 @@ def test_hutchinson_recurrent_requires_explicit_probe_key() -> None:
 
     with pytest.raises(ValueError, match="probe_key"):
         layers.run_causal_recurrent(cell, batch, config=config)
-
-
-def test_timed_causal_recurrent_rejects_time_aware_cells_and_nested_stacks() -> None:
     cell = layers.CfCCell(1, 2, dtype=jnp.float64, key=jax.random.key(9))
     valid = jnp.ones((3,), dtype="bool")
     timed = layers.RecurrentBatch(

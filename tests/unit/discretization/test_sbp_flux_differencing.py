@@ -22,21 +22,18 @@ def _grid(count: Any = 24, dimension: Any = 1) -> Any:
     return grid.prepare(bounds)
 
 
-@pytest.mark.parametrize("order", (2, 4, 6, 8))
-def test_periodic_sbp_derivative_has_skew_norm_identity(order: Any) -> None:
-    grid = _grid(max(12, order + 3))
-    prepared = phx.discretization.SBPDerivativePlan(
-        grid, "x", interior_order=order
-    ).prepare()
-    x = grid.axes[0].nodes
-    result = prepared.operator.mv(jnp.sin(2.0 * jnp.pi * x))
+def test_sbp_flux_differencing_scenario_1() -> None:
+    for order in (2, 4, 6, 8):
+        grid = _grid(max(12, order + 3))
+        prepared = phx.discretization.SBPDerivativePlan(
+            grid, "x", interior_order=order
+        ).prepare()
+        x = grid.axes[0].nodes
+        result = prepared.operator.mv(jnp.sin(2.0 * jnp.pi * x))
 
-    assert prepared.operator.stencil_set.kind == "periodic"
-    assert jnp.max(jnp.abs(prepared.identity_residual())) < 1e-12
-    assert jnp.max(jnp.abs(result - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * x))) < 0.3
-
-
-def test_entropy_conservative_two_point_flux_is_symmetric_and_consistent() -> None:
+        assert prepared.operator.stencil_set.kind == "periodic"
+        assert jnp.max(jnp.abs(prepared.identity_residual())) < 1e-12
+        assert jnp.max(jnp.abs(result - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * x))) < 0.3
     system = phx.equations.EulerSystem(2)
     flux = phx.discretization.EntropyConservativeEulerFluxPlan()
     left = system.primitive_to_conserved(jnp.asarray((1.1, 0.3, -0.2, 1.2)))
@@ -57,7 +54,7 @@ def test_entropy_conservative_two_point_flux_is_symmetric_and_consistent() -> No
     assert flux.consistent
 
 
-def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals() -> None:
+def test_sbp_contracts() -> None:
     grid = _grid(24)
     system = phx.equations.EulerSystem(1)
     discretization = phx.discretization.TensorSBPPlan(
@@ -104,9 +101,30 @@ def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals() -
         < compiled.dynamics.report.dense_pair_count
     )
     assert jnp.isfinite(compiled.stable_step(smooth))
-
-
-def test_sbp_entropy_diagnostics_and_linearization_are_finite() -> None:
+    bounded = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformAxisSpec(16),), axis_names=("x",)
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    with pytest.raises(ValueError, match="periodic"):
+        phx.discretization.TensorSBPPlan(
+            bounded,
+            component_names=("u",),
+        )
+    grid = _grid(16)
+    scalar = phx.equations.ScalarConservationSystem(
+        1,
+        lambda state, axis, args: state,
+        lambda left, right, axis, args: jnp.ones(left.shape[:-1]),
+        system_id="scalar-sbp-rejection",
+    )
+    discretization = phx.discretization.TensorSBPPlan(
+        grid, component_names=scalar.component_names
+    ).prepare()
+    problem = phx.equations.ConservationProblemIR("scalar", "state", scalar, None)
+    method = phx.discretization.SBPFluxDifferencingMethodPlan(
+        phx.discretization.EntropyConservativeEulerFluxPlan()
+    )
+    with pytest.raises(TypeError, match="EulerSystem"):
+        phx.equations.compile_conservation_problem(problem, discretization, method)
     grid = _grid(16)
     system = phx.equations.EulerSystem(1)
     discretization = phx.discretization.TensorSBPPlan(
@@ -158,30 +176,3 @@ def test_sbp_entropy_diagnostics_and_linearization_are_finite() -> None:
     assert jnp.all(jnp.isfinite(pushforward(tangent)))
     assert jnp.all(jnp.isfinite(pullback(tangent)[0]))
     assert jnp.all(jnp.isfinite(residual))
-
-
-def test_sbp_flux_differencing_rejects_unsupported_boundaries_and_systems() -> None:
-    bounded = phx.discretization.TensorGridPlan(
-        (phx.discretization.UniformAxisSpec(16),), axis_names=("x",)
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
-    with pytest.raises(ValueError, match="periodic"):
-        phx.discretization.TensorSBPPlan(
-            bounded,
-            component_names=("u",),
-        )
-    grid = _grid(16)
-    scalar = phx.equations.ScalarConservationSystem(
-        1,
-        lambda state, axis, args: state,
-        lambda left, right, axis, args: jnp.ones(left.shape[:-1]),
-        system_id="scalar-sbp-rejection",
-    )
-    discretization = phx.discretization.TensorSBPPlan(
-        grid, component_names=scalar.component_names
-    ).prepare()
-    problem = phx.equations.ConservationProblemIR("scalar", "state", scalar, None)
-    method = phx.discretization.SBPFluxDifferencingMethodPlan(
-        phx.discretization.EntropyConservativeEulerFluxPlan()
-    )
-    with pytest.raises(TypeError, match="EulerSystem"):
-        phx.equations.compile_conservation_problem(problem, discretization, method)

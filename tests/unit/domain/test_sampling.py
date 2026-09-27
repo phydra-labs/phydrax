@@ -15,7 +15,7 @@ from phydrax._sampling import (
 )
 
 
-def test_hammersley_sampler_is_deterministic_and_bounded() -> None:
+def test_sampling_scenario_1() -> None:
     sample = host_design_factory("hammersley", dimension=3, seed=0)(16)
     repeat = host_design_factory("hammersley", dimension=3, seed=123)(16)
     assert sample.shape == (16, 3)
@@ -23,24 +23,15 @@ def test_hammersley_sampler_is_deterministic_and_bounded() -> None:
     assert np.all(sample <= 1.0)
     assert np.allclose(sample, repeat)
     assert np.unique(sample, axis=0).shape[0] == 16
-
-
-def test_hammersley_factory_rejects_incremental_extension() -> None:
     factory = host_design_factory("hammersley", dimension=3, seed=0)
     first = factory(4)
 
     assert first.shape == (4, 3)
     with pytest.raises(ValueError, match="count-dependent"):
         factory(4)
-
-
-def test_hammersley_first_axis_is_stratified() -> None:
     sample = host_design_factory("hammersley", dimension=2, seed=0)(8)
     expected = (np.arange(1, 9) - 0.5) / 8.0
     assert np.allclose(sample[:, 0], expected)
-
-
-def test_halton_and_sobol_plain_and_scrambled_sequences_are_distinct() -> None:
     references = {
         "halton": np.asarray(
             [
@@ -84,9 +75,6 @@ def test_halton_and_sobol_plain_and_scrambled_sequences_are_distinct() -> None:
         assert np.array_equal(scrambled, scrambled_repeat)
         assert not np.array_equal(scrambled, scrambled_other_seed)
         assert not np.array_equal(plain, scrambled)
-
-
-def test_qmc_materializer_preserves_scrambling_semantics() -> None:
     for name in ("halton", "sobol"):
         plain_first = np.asarray(
             materialize_design(name, count=8, dimension=3, key=jr.key(1))
@@ -126,7 +114,7 @@ def test_qmc_materializer_preserves_scrambling_semantics() -> None:
         assert not np.array_equal(plain_first, scrambled_first)
 
 
-def test_typed_design_capabilities_and_random_access() -> None:
+def test_sampling_scenario_2() -> None:
     design = phx.sampling.SobolDesign()
     capabilities = phx.sampling.design_capabilities(design)
 
@@ -169,9 +157,6 @@ def test_typed_design_capabilities_and_random_access() -> None:
             key=jr.key(0),
             start=1,
         )
-
-
-def test_randomized_qmc_signature_binds_replay_configuration() -> None:
     base = phx.sampling.RandomizedQMCDesign(num_replicates=4)
     different_replicates = phx.sampling.RandomizedQMCDesign(num_replicates=8)
     arbitrary_count = phx.sampling.RandomizedQMCDesign(
@@ -185,9 +170,6 @@ def test_randomized_qmc_signature_binds_replay_configuration() -> None:
     assert phx.sampling.design_signature(base) != phx.sampling.design_signature(
         arbitrary_count
     )
-
-
-def test_semantic_sample_addresses_are_stable_and_distinct() -> None:
     root = jr.key(11)
     address = SampleAddress(
         "domain",

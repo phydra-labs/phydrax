@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_bernoulli_state_space_laplace_is_explicitly_approximate() -> None:
+def test_state_space_gp_nongaussian_scenario_1() -> None:
     design = phx.uq.StateSpaceGaussianProcessDesign(
         jnp.asarray([0.0, 0.3, 0.9]),
         jnp.asarray([0.2, 0.7]),
@@ -28,9 +28,6 @@ def test_bernoulli_state_space_laplace_is_explicitly_approximate() -> None:
     assert result.approximation_kind == "fixed-iteration-log-concave-laplace"
     assert result.posterior_mean.shape == (2,)
     assert jnp.all(result.site_curvature > 0.0)
-
-
-def test_nongaussian_state_space_gp_statuses_have_public_names() -> None:
     expected = {
         phx.uq.STATE_SPACE_GP_LAPLACE_CURVATURE_FAILURE: "laplace_curvature_failure",
         phx.uq.STATE_SPACE_GP_LAPLACE_SITE_FAILURE: "laplace_site_failure",

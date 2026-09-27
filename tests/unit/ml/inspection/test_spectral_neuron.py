@@ -39,7 +39,7 @@ def _free_neuron(
     return eqx.tree_at(lambda item: item.free_coordinates, model, coordinates)
 
 
-def test_inspection_matches_simple_projector_gradient_and_global_bounds() -> None:
+def test_inspection_contracts() -> None:
     base = jnp.diag(jnp.asarray([-1.0, 0.3, 2.0]))
     features = jnp.asarray(
         [
@@ -73,9 +73,6 @@ def test_inspection_matches_simple_projector_gradient_and_global_bounds() -> Non
     assert float(report.enclosure_upper) >= float(report.selected_eigenvalue) - 2e-14
     assert report.eigen_index == 1
     assert not report.convex and not report.concave
-
-
-def test_inspection_reports_full_repeated_cluster_without_basis_leakage() -> None:
     base = jnp.diag(jnp.asarray([0.0, 0.0, 2.0]))
     features = jnp.asarray([jnp.diag(jnp.asarray([1.0, -1.0, 0.2]))])
     model = _free_neuron(base, features, eigen_index=0, in_size="scalar")
@@ -97,9 +94,6 @@ def test_inspection_reports_full_repeated_cluster_without_basis_leakage() -> Non
     )
     np.testing.assert_allclose(report.lower_gap, jnp.inf)
     np.testing.assert_allclose(report.upper_gap, 2.0)
-
-
-def test_inspection_near_repetition_follows_declared_tolerance() -> None:
     separation = 5e-9
     base = jnp.diag(jnp.asarray([0.0, separation, 2.0]))
     features = jnp.zeros((1, 3, 3), dtype=jnp.float64)
@@ -121,9 +115,6 @@ def test_inspection_near_repetition_follows_declared_tolerance() -> None:
     assert not bool(merged.selected_is_numerically_simple)
     assert int(separated.cluster_size) == 1
     assert bool(separated.selected_is_numerically_simple)
-
-
-def test_inspection_jit_preserves_fixed_shapes_across_variable_clusters() -> None:
     base = jnp.diag(jnp.asarray([0.0, 0.0, 2.0]))
     features = jnp.asarray([jnp.diag(jnp.asarray([-1.0, 1.0, 0.0]))])
     model = _free_neuron(base, features, eigen_index=0, in_size="scalar")

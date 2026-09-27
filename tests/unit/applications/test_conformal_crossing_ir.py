@@ -62,7 +62,7 @@ def _data(dimension: Any, *, category: Any = None) -> Any:
     )
 
 
-def test_conformal_data_validates_category_fusion_and_crossing_gauge() -> None:
+def test_conformal_crossing_ir_scenario_1() -> None:
     data = _data(3.0, category=_z2_category())
     plan = CrossingSectorPlan(
         data,
@@ -79,9 +79,6 @@ def test_conformal_data_validates_category_fusion_and_crossing_gauge() -> None:
     )
     assert bool(prepared.evidence.accepted)
     np.testing.assert_allclose(prepared.evidence.involution_residuals, 0.0)
-
-
-def test_crossing_compiler_rejects_false_involution() -> None:
     data = _data(3.0)
     plan = CrossingSectorPlan(
         data,
@@ -92,9 +89,6 @@ def test_crossing_compiler_rejects_false_involution() -> None:
     )
     with pytest.raises(ValueError, match="involution"):
         prepare_crossing_sectors(plan)
-
-
-def test_two_dimensional_global_block_matches_factorized_closed_reference() -> None:
     data = _data(2.0)
     prepared = prepare_global_scalar_blocks(
         GlobalScalarBlockPlan(
@@ -117,7 +111,7 @@ def test_two_dimensional_global_block_matches_factorized_closed_reference() -> N
     assert "finite" in evidence.claim
 
 
-def test_three_dimensional_radial_recursion_is_symmetric_and_finite() -> None:
+def test_conformal_crossing_ir_scenario_2() -> None:
     data = _data(3.0)
     prepared = prepare_global_scalar_blocks(
         GlobalScalarBlockPlan(
@@ -135,9 +129,6 @@ def test_three_dimensional_radial_recursion_is_symmetric_and_finite() -> None:
     np.testing.assert_allclose(evidence.values[0], evidence.values[1], rtol=1e-11)
     assert float(jnp.max(evidence.truncation_proxy)) < 1.0
     assert np.all(np.isfinite(np.asarray(evidence.casimir_residuals)))
-
-
-def test_four_dimensional_diagonal_limit_and_derivative_are_finite() -> None:
     prepared = prepare_global_scalar_blocks(
         GlobalScalarBlockPlan(
             _data(4.0),

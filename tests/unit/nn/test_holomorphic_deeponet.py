@@ -82,7 +82,7 @@ def test_fixed_target_holomorphic_deeponet_preserves_query_constraints_and_jets(
     assert jnp.allclose(jacobian[0] + 1j * jacobian[1], 0.0, atol=2e-11)
 
 
-def test_variable_target_encoder_preserves_supplied_boundary_values() -> None:
+def test_holomorphic_deeponet_scenario_1() -> None:
     frame, operator = _constraint_operator()
     trunk = phx.nn.operator.architectures.HolomorphicBasisTrunk(
         frame,
@@ -118,9 +118,6 @@ def test_variable_target_encoder_preserves_supplied_boundary_values() -> None:
     certificate = model.conditional_holomorphic_certificate()
     assert certificate.trunk_mode == "variable-target"
     assert certificate.coefficient_layout == "target-plus-nullspace"
-
-
-def test_constrained_holomorphic_deeponet_rejects_free_decoder_bias() -> None:
     frame, operator = _constraint_operator()
     coefficient_map = operator.affine_map(jnp.zeros((2,)))
     trunk = phx.nn.operator.architectures.HolomorphicBasisTrunk(

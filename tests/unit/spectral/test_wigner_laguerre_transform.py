@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -32,7 +30,7 @@ def _wigner_valid(plan: WignerTransformPlan) -> jax.Array:
     )
 
 
-def test_wigner_plan_locks_raw_haar_and_spherical_normalization() -> None:
+def test_wigner_laguerre_transform_scenario_1() -> None:
     plan = WignerTransformPlan(4, 2)
     coefficients = plan.analysis(jnp.ones(plan.sample_shape))
     center_n = plan.directional_bandlimit - 1
@@ -71,9 +69,6 @@ def test_wigner_plan_locks_raw_haar_and_spherical_normalization() -> None:
     assert jnp.allclose(actual[center_n], expected_n_zero, rtol=1e-11, atol=1e-11)
     assert jnp.allclose(actual[:center_n], 0.0, rtol=0.0, atol=1e-11)
     assert jnp.allclose(actual[center_n + 1 :], 0.0, rtol=0.0, atol=1e-11)
-
-
-def test_wigner_plan_roundtrips_masks_inactive_capacity_and_real_conjugacy() -> None:
     plan = WignerTransformPlan(5, 3)
     valid = _wigner_valid(plan)
     coefficients = (
@@ -99,52 +94,22 @@ def test_wigner_plan_roundtrips_masks_inactive_capacity_and_real_conjugacy() -> 
     assert jnp.allclose(
         real_coefficients[:center], expected_negative, rtol=1e-10, atol=1e-10
     )
+    for sampling in ("mw", "mwss", "dh", "gl"):
+        radial = RadialLaguerrePlan(3, tau=0.7)
+        wigner = WignerTransformPlan(3, 2, sampling=sampling)
+        plan = WignerLaguerrePlan(radial, wigner)
+        valid = _wigner_valid(wigner)
+        coefficients = (
+            jr.normal(jr.key(6), plan.coefficient_shape)
+            + 1j * jr.normal(jr.key(7), plan.coefficient_shape)
+        ) * valid[None, ...]
 
+        values = plan.synthesis(coefficients)
+        actual = plan.analysis(values)
 
-def test_recursive_and_precomputed_wigner_plans_share_semantics() -> None:
-    recursive = WignerTransformPlan(3, 2, execution="recursive")
-    precomputed = WignerTransformPlan(3, 2, execution="precomputed")
-    valid = _wigner_valid(recursive)
-    coefficients = (
-        jr.normal(jr.key(4), recursive.coefficient_shape)
-        + 1j * jr.normal(jr.key(5), recursive.coefficient_shape)
-    ) * valid
-    values = recursive.synthesis(coefficients)
-
-    recursive_coefficients = recursive.analysis(values)
-    precomputed_coefficients = precomputed.analysis(values)
-
-    assert recursive.transform_id == precomputed.transform_id
-    assert recursive.layout_id == precomputed.layout_id
-    assert recursive.execution_id != precomputed.execution_id
-    assert jnp.allclose(
-        precomputed_coefficients, recursive_coefficients, rtol=1e-10, atol=1e-10
-    )
-    assert jnp.allclose(
-        precomputed.synthesis(precomputed_coefficients), values, rtol=1e-10, atol=1e-10
-    )
-
-
-@pytest.mark.parametrize("sampling", ("mw", "mwss", "dh", "gl"))
-def test_wigner_laguerre_roundtrips_all_exact_samplings(sampling: Any) -> None:
-    radial = RadialLaguerrePlan(3, tau=0.7)
-    wigner = WignerTransformPlan(3, 2, sampling=sampling)
-    plan = WignerLaguerrePlan(radial, wigner)
-    valid = _wigner_valid(wigner)
-    coefficients = (
-        jr.normal(jr.key(6), plan.coefficient_shape)
-        + 1j * jr.normal(jr.key(7), plan.coefficient_shape)
-    ) * valid[None, ...]
-
-    values = plan.synthesis(coefficients)
-    actual = plan.analysis(values)
-
-    assert values.shape == plan.sample_shape
-    assert actual.shape == plan.coefficient_shape
-    assert jnp.allclose(actual, coefficients, rtol=1e-10, atol=1e-10)
-
-
-def test_wigner_laguerre_handles_batch_channels_jit_and_gradients() -> None:
+        assert values.shape == plan.sample_shape
+        assert actual.shape == plan.coefficient_shape
+        assert jnp.allclose(actual, coefficients, rtol=1e-10, atol=1e-10)
     radial = RadialLaguerrePlan(3)
     wigner = WignerTransformPlan(3, 2)
     plan = WignerLaguerrePlan(radial, wigner)
@@ -167,9 +132,6 @@ def test_wigner_laguerre_handles_batch_channels_jit_and_gradients() -> None:
     assert actual.shape == coefficients.shape
     assert jnp.allclose(actual, coefficients, rtol=1e-10, atol=1e-10)
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_wigner_plans_reject_invalid_configuration_shapes_and_resources() -> None:
     with pytest.raises(ValueError, match="1 <= N <= L"):
         WignerTransformPlan(4, 5)
     with pytest.raises(ValueError, match="lower_bandlimit"):
@@ -184,3 +146,24 @@ def test_wigner_plans_reject_invalid_configuration_shapes_and_resources() -> Non
         plan.analysis(jnp.ones((3, 4, 8)))
     with pytest.raises(ValueError, match="Wigner synthesis expects"):
         plan.synthesis(jnp.ones((3, 4, 8)))
+    recursive = WignerTransformPlan(3, 2, execution="recursive")
+    precomputed = WignerTransformPlan(3, 2, execution="precomputed")
+    valid = _wigner_valid(recursive)
+    coefficients = (
+        jr.normal(jr.key(4), recursive.coefficient_shape)
+        + 1j * jr.normal(jr.key(5), recursive.coefficient_shape)
+    ) * valid
+    values = recursive.synthesis(coefficients)
+
+    recursive_coefficients = recursive.analysis(values)
+    precomputed_coefficients = precomputed.analysis(values)
+
+    assert recursive.transform_id == precomputed.transform_id
+    assert recursive.layout_id == precomputed.layout_id
+    assert recursive.execution_id != precomputed.execution_id
+    assert jnp.allclose(
+        precomputed_coefficients, recursive_coefficients, rtol=1e-10, atol=1e-10
+    )
+    assert jnp.allclose(
+        precomputed.synthesis(precomputed_coefficients), values, rtol=1e-10, atol=1e-10
+    )

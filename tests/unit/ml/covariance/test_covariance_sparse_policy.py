@@ -21,10 +21,10 @@ def _sparse_batch() -> Any:
     return MLBatch(features)
 
 
-@pytest.mark.parametrize(
-    "recipe",
-    [EmpiricalCovariance(), RobustCovariance(max_iterations=2, tolerance=1.0)],
-)
-def test_covariance_families_reject_implicit_sparse_materialization(recipe: Any) -> None:
-    with pytest.raises(TypeError, match="requires dense features"):
-        recipe.fit_batch(_sparse_batch())
+def test_covariance_families_reject_implicit_sparse_materialization() -> None:
+    for recipe in [
+        EmpiricalCovariance(),
+        RobustCovariance(max_iterations=2, tolerance=1.0),
+    ]:
+        with pytest.raises(TypeError, match="requires dense features"):
+            recipe.fit_batch(_sparse_batch())

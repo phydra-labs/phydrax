@@ -96,7 +96,7 @@ def _coefficients(grid: Any) -> Any:
     )
 
 
-def test_material_basis_projection_preserves_declared_order() -> None:
+def test_diagnostic_scenario_1() -> None:
     support = _support()
     transform = phx.imaging.tomography.VoxelXRayTransformPlan(
         support,
@@ -117,9 +117,6 @@ def test_material_basis_projection_preserves_declared_order() -> None:
         plan.project(density, fractions.at[0, 0, 0, 0].set(-1.0))
     with pytest.raises(ValueError, match="sum to one"):
         plan.project(density, 0.5 * fractions)
-
-
-def test_two_material_two_energy_signal_and_detector_semantics() -> None:
     grid = _energy_grid()
     plan = phx.imaging.tomography.PolychromaticDetectorPlan(
         _support(), _protocol(grid), _coefficients(grid)
@@ -138,9 +135,6 @@ def test_two_material_two_energy_signal_and_detector_semantics() -> None:
     np.testing.assert_allclose(result.scatter_signal, (scatter,))
     np.testing.assert_allclose(result.expected_signal, (expected,), rtol=2.0e-6)
     assert bool(result.successful)
-
-
-def test_energy_and_exposure_bases_fail_closed() -> None:
     grid = _energy_grid()
     other_grid = phx.equations.PhotonEnergyGrid(
         np.asarray((41.0, 81.0)) * 1.602176634e-16

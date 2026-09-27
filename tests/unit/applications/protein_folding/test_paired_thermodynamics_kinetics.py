@@ -93,7 +93,7 @@ def _reference() -> Any:
     )
 
 
-def test_matched_state_enthalpy_cp_and_experimental_closure_uncertainty() -> None:
+def test_paired_thermodynamics_kinetics_scenario_1() -> None:
     folded, unfolded = _replicas()
     estimate = paired_state_enthalpy(
         folded, unfolded, convention=ThermodynamicConvention()
@@ -122,9 +122,6 @@ def test_matched_state_enthalpy_cp_and_experimental_closure_uncertainty() -> Non
     )
     assert not bool(closed.valid[-1]) and bool(jnp.isnan(closed.delta_free_energy[-1]))
     assert closed.experimental_dependencies == (_reference().manifest_id,)
-
-
-def test_composition_duplicate_replica_and_underblocked_data_are_not_accepted() -> None:
     folded, unfolded = _replicas()
     wrong = replace(
         unfolded[0].composition,
@@ -147,9 +144,6 @@ def test_composition_duplicate_replica_and_underblocked_data_are_not_accepted() 
         )
     with pytest.raises(ValueError, match="correlation-time"):
         replace(folded[0], correlation_time_bound=1.0)
-
-
-def test_free_energy_adapters_agree_with_exact_constant_energy_shift() -> None:
     convention = ThermodynamicConvention()
     workflow = ProteinFreeEnergyWorkflow(
         ("state-A", "state-B"),

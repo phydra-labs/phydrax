@@ -86,7 +86,7 @@ def _state_and_gradient(system: Any) -> Any:
     return state[None, :], gradient[None, :, :]
 
 
-def test_slip_jump_and_thermal_creep_have_independent_accommodation() -> None:
+def test_rarefied_continuum_wall_scenario_1() -> None:
     system = _system()
     state, gradient = _state_and_gradient(system)
     normal = jnp.asarray((0.0, -1.0))
@@ -109,11 +109,6 @@ def test_slip_jump_and_thermal_creep_have_independent_accommodation() -> None:
     )
     assert lower_thermal.temperature_jump_length[0] > baseline.temperature_jump_length[0]
     np.testing.assert_allclose(lower_thermal.slip_length, baseline.slip_length)
-
-
-def test_prescribed_outward_heat_flux_sets_physical_normal_flux_and_wall_refuses_ale() -> (
-    None
-):
     system = _system()
     state, gradient = _state_and_gradient(system)
     wall = _wall(heat_flux=2.0)
@@ -129,9 +124,6 @@ def test_prescribed_outward_heat_flux_sets_physical_normal_flux_and_wall_refuses
     np.testing.assert_allclose(evaluation.outward_thermal_flux, 2.0, rtol=1.0e-12)
     with pytest.raises(ValueError, match="ALE"):
         wall.ale_exterior_state(system, state, None, 1)
-
-
-def test_rarefied_wall_rejects_unsupported_gas_system() -> None:
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.1, 0.2), 2
     )

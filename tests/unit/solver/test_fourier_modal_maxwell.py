@@ -27,7 +27,7 @@ def _boundary_policy() -> fm.BoundaryCascadePolicy:
     )
 
 
-def test_fresnel_interface_complex_amplitudes_and_power() -> None:
+def test_fourier_modal_maxwell_scenario_1() -> None:
     harmonics = _harmonics()
     vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="vacuum")
     dielectric = fm.FrequencyMaxwellMaterial(4.0, material_id="dielectric")
@@ -53,9 +53,6 @@ def test_fresnel_interface_complex_amplitudes_and_power() -> None:
     assert float(result.right_outgoing_power[0]) == pytest.approx(
         8.0 / 9.0, rel=2e-6, abs=2e-7
     )
-
-
-def test_reference_distances_are_applied_on_both_sides_of_interface_scattering() -> None:
     harmonics = _harmonics()
     vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="reference-vacuum")
     left_distance = 0.125
@@ -92,9 +89,6 @@ def test_reference_distances_are_applied_on_both_sides_of_interface_scattering()
         atol=2.0e-7,
     )
     assert float(result.power_audit_residual[0]) < 1.0e-7
-
-
-def test_periodic_port_reference_phase_cache_is_directional() -> None:
     harmonics = _harmonics()
     material = fm.FrequencyMaxwellMaterial(1.0, material_id="periodic-port-medium")
     factorization = fm.DirectFourierFactorizationPlan()
@@ -141,7 +135,7 @@ def test_periodic_port_reference_phase_cache_is_directional() -> None:
     )
 
 
-def test_cell_integrated_unit_flux_and_independent_power_audit() -> None:
+def test_fourier_modal_maxwell_scenario_2() -> None:
     harmonics = LatticeHarmonicPlan.parallelogramic((1,), (3,)).prepare(
         jnp.asarray(((3.0, 0.0),))
     )
@@ -199,9 +193,6 @@ def test_cell_integrated_unit_flux_and_independent_power_audit() -> None:
     assert int(audited.status) == int(
         fm.FourierModalSolveStatus.POWER_AUDIT_TOLERANCE_NOT_MET
     )
-
-
-def test_lossless_film_conserves_power_and_reconstructs_fields() -> None:
     harmonics = _harmonics()
     vacuum = fm.FrequencyMaxwellMaterial(1.0, material_id="vacuum")
     film_material = fm.FrequencyMaxwellMaterial(2.25, material_id="film")
@@ -256,9 +247,6 @@ def test_lossless_film_conserves_power_and_reconstructs_fields() -> None:
         aperture_field.power_density[1],
         jnp.zeros_like(aperture_field.power_density[1]),
     )
-
-
-def test_full_tensor_layer_operator_matches_finite_contract() -> None:
     harmonics = _harmonics()
     epsilon = jnp.asarray(
         (
@@ -284,7 +272,7 @@ def test_full_tensor_layer_operator_matches_finite_contract() -> None:
     assert float(operator.diagnostics.constitutive_residual) < 1e-10
 
 
-def test_bianisotropic_zero_coupling_parity_and_chiral_operator_are_finite() -> None:
+def test_fourier_modal_maxwell_scenario_3() -> None:
     harmonics = _harmonics()
     factorization = fm.DirectFourierFactorizationPlan()
     baseline = fm.prepare_layer_operator(
@@ -332,6 +320,39 @@ def test_bianisotropic_zero_coupling_parity_and_chiral_operator_are_finite() -> 
     )
     assert bool(chiral.diagnostics.finite)
     assert float(chiral.diagnostics.reciprocity_residual) < 1e-10
+    harmonics = _harmonics()
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="complex-shear-medium")
+    jacobian = jnp.broadcast_to(
+        jnp.eye(3, dtype=jnp.complex128),
+        harmonics.sample_shape + (3, 3),
+    )
+    jacobian = jacobian.at[..., 0, 1].set(0.1j)
+    plan = fm.LateralTransformationOpticsPMLPlan(
+        jacobian,
+        jnp.ones(harmonics.sample_shape, dtype="bool"),
+        pml_id="complex-shear",
+    )
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="complex off-diagonal"):
+        fm.transform_fourier_modal_material(material, harmonics, plan)
+    harmonics = _harmonics()
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="uniform")
+    prepared_material = fm.prepare_fourier_material(
+        material,
+        harmonics,
+        fm.DirectFourierFactorizationPlan(),
+    )
+    operator = fm.prepare_layer_operator(
+        prepared_material,
+        harmonics,
+        jnp.asarray(2.0 * jnp.pi),
+        jnp.asarray((0.0, 0.0)),
+    )
+    relation = fm.prepare_layer_boundary(operator, 0.0, _boundary_policy())
+    np.testing.assert_allclose(np.asarray(relation.a), np.eye(2), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(relation.d), np.eye(2), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(relation.b), 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(relation.c), 0.0, atol=1e-12)
 
 
 def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() -> None:
@@ -481,24 +502,6 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
     assert transformed.material.origin_evidence_id == zero_pml.pml_id
 
 
-def test_pml_rejects_complex_off_diagonal_shear() -> None:
-    harmonics = _harmonics()
-    material = fm.FrequencyMaxwellMaterial(2.0, material_id="complex-shear-medium")
-    jacobian = jnp.broadcast_to(
-        jnp.eye(3, dtype=jnp.complex128),
-        harmonics.sample_shape + (3, 3),
-    )
-    jacobian = jacobian.at[..., 0, 1].set(0.1j)
-    plan = fm.LateralTransformationOpticsPMLPlan(
-        jacobian,
-        jnp.ones(harmonics.sample_shape, dtype="bool"),
-        pml_id="complex-shear",
-    )
-
-    with pytest.raises(eqx.EquinoxRuntimeError, match="complex off-diagonal"):
-        fm.transform_fourier_modal_material(material, harmonics, plan)
-
-
 def test_continuous_profile_samples_are_never_aliased_by_material_id() -> None:
     harmonics = _harmonics()
     port_material = fm.FrequencyMaxwellMaterial(
@@ -534,28 +537,7 @@ def test_continuous_profile_samples_are_never_aliased_by_material_id() -> None:
     assert len(set(evaluated_coordinates)) >= 3
 
 
-def test_zero_thickness_boundary_is_identity() -> None:
-    harmonics = _harmonics()
-    material = fm.FrequencyMaxwellMaterial(2.0, material_id="uniform")
-    prepared_material = fm.prepare_fourier_material(
-        material,
-        harmonics,
-        fm.DirectFourierFactorizationPlan(),
-    )
-    operator = fm.prepare_layer_operator(
-        prepared_material,
-        harmonics,
-        jnp.asarray(2.0 * jnp.pi),
-        jnp.asarray((0.0, 0.0)),
-    )
-    relation = fm.prepare_layer_boundary(operator, 0.0, _boundary_policy())
-    np.testing.assert_allclose(np.asarray(relation.a), np.eye(2), atol=1e-12)
-    np.testing.assert_allclose(np.asarray(relation.d), np.eye(2), atol=1e-12)
-    np.testing.assert_allclose(np.asarray(relation.b), 0.0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(relation.c), 0.0, atol=1e-12)
-
-
-def test_resource_plan_accounts_for_retained_layer_and_global_operators() -> None:
+def test_fourier_modal_maxwell_scenario_4() -> None:
     harmonics = _harmonics()
     material = fm.FrequencyMaxwellMaterial(2.0, material_id="resource-material")
     layer = fm.FourierModalLayer(
@@ -582,6 +564,24 @@ def test_resource_plan_accounts_for_retained_layer_and_global_operators() -> Non
     )
     with pytest.raises(ValueError, match="preparation byte budget"):
         fm.plan_fourier_modal_maxwell(problem, constrained)
+    identity = jnp.eye(1, dtype=jnp.complex128)
+    zero = jnp.zeros_like(identity)
+    relation = fm.BoundaryRelation(
+        identity,
+        zero,
+        zero,
+        identity,
+        fm.BoundaryRelationDiagnostics(
+            jnp.asarray(0.0),
+            jnp.asarray(0.25),
+            jnp.asarray(0.125),
+            jnp.asarray(True),
+            jnp.asarray(True),
+        ),
+    )
+    doubled = fm.compose_boundary_relations(relation, relation)
+    assert float(doubled.diagnostics.initializer_remainder) == pytest.approx(0.5)
+    assert float(doubled.diagnostics.paired_error) == pytest.approx(0.25)
 
 
 def test_continuous_resource_plan_accounts_for_dense_output_capacity() -> None:
@@ -609,24 +609,3 @@ def test_continuous_resource_plan_accounts_for_dense_output_capacity() -> None:
         return fm.plan_fourier_modal_maxwell(problem).cost.preparation_bytes
 
     assert cost(8) > cost(1)
-
-
-def test_boundary_composition_accumulates_initializer_and_paired_errors() -> None:
-    identity = jnp.eye(1, dtype=jnp.complex128)
-    zero = jnp.zeros_like(identity)
-    relation = fm.BoundaryRelation(
-        identity,
-        zero,
-        zero,
-        identity,
-        fm.BoundaryRelationDiagnostics(
-            jnp.asarray(0.0),
-            jnp.asarray(0.25),
-            jnp.asarray(0.125),
-            jnp.asarray(True),
-            jnp.asarray(True),
-        ),
-    )
-    doubled = fm.compose_boundary_relations(relation, relation)
-    assert float(doubled.diagnostics.initializer_remainder) == pytest.approx(0.5)
-    assert float(doubled.diagnostics.paired_error) == pytest.approx(0.25)

@@ -24,7 +24,7 @@ LEGACY_TERMS = {
 }
 
 
-def test_constraint_packages_are_the_only_root_constraint_surfaces() -> None:
+def test_constraint_public_api_scenario_1() -> None:
     assert {"conditions", "terms", "enforcement"} <= set(phx.__all__)
     assert phx.conditions is not None
     assert phx.terms is not None
@@ -33,9 +33,6 @@ def test_constraint_packages_are_the_only_root_constraint_surfaces() -> None:
     assert not hasattr(phx, "constraints")
     assert "objectives" not in phx.__all__
     assert not hasattr(phx, "objectives")
-
-
-def test_conditions_expose_canonical_names_and_grouped_catalogs() -> None:
     required = {
         "Dirichlet",
         "Initial",
@@ -57,15 +54,9 @@ def test_conditions_expose_canonical_names_and_grouped_catalogs() -> None:
     assert all(getattr(phx.conditions, name) is not None for name in required)
     assert legacy.isdisjoint(phx.conditions.__all__)
     assert all(not hasattr(phx.conditions, name) for name in legacy)
-
-
-def test_terms_public_exports_resolve_without_duplicates() -> None:
     exported = tuple(phx.terms.__all__)
     assert len(exported) == len(set(exported))
     assert all(getattr(phx.terms, name) is not None for name in exported)
-
-
-def test_terms_do_not_expose_legacy_or_duplicate_physics_catalogs() -> None:
     assert LEGACY_TERMS.isdisjoint(phx.terms.__all__)
     assert all(not hasattr(phx.terms, name) for name in LEGACY_TERMS)
     assert not any(

@@ -99,7 +99,7 @@ class _BoundRhsMap(phx.StrictModule):
         return self.binding.model(data)
 
 
-def test_projection_history_exactly_recovers_the_rhs_span() -> None:
+def test_initial_guess_providers_scenario_1() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(operator, "shifted-family", capacity=3)
     history = history.update(operator, jnp.asarray([1.0, 0.0]), time=0.0)
@@ -118,9 +118,6 @@ def test_projection_history_exactly_recovers_the_rhs_span() -> None:
     # ty: ignore[unresolved-attribute]
     assert result.initial_guess.provider_id == history.provider_id
     assert jnp.allclose(result.value, jnp.asarray([2.0, 6.0]))
-
-
-def test_rolling_qr_history_recovers_span_after_eviction() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(
         operator, "family", strategy="rolling-qr", capacity=2
@@ -134,9 +131,6 @@ def test_rolling_qr_history_recovers_span_after_eviction() -> None:
     assert jnp.allclose(guess, jnp.asarray([3.0, 4.0]), atol=1.0e-10)
     assert history.effective_dimension == 2
     assert history.update_count == 3
-
-
-def test_rejected_history_update_is_bitwise_inert() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(
         operator, "family", strategy="last-solution", capacity=2
@@ -149,7 +143,7 @@ def test_rejected_history_update_is_bitwise_inert() -> None:
     assert jnp.array_equal(rejected.solution_basis, history.solution_basis)
 
 
-def test_stabilized_extrapolation_requires_and_reproduces_a_target_time() -> None:
+def test_initial_guess_providers_scenario_2() -> None:
     operator = _diagonal_operator()
     history = la.HistoryInitialGuess(
         operator,
@@ -167,9 +161,6 @@ def test_stabilized_extrapolation_requires_and_reproduces_a_target_time() -> Non
     assert jnp.allclose(guess, jnp.asarray([2.0, 5.0]), atol=1.0e-12)
     with pytest.raises(ValueError, match="target time"):
         history.propose(rhs, jnp.zeros(2))
-
-
-def test_worse_or_nonfinite_proposals_visibly_keep_the_native_zero_guess() -> None:
     problem = la.LinearSystem(_operator())
     rhs = jnp.asarray([1.0, 2.0, 3.0])
     native = la.solve(problem, rhs, policy=_policy())
@@ -198,9 +189,6 @@ def test_worse_or_nonfinite_proposals_visibly_keep_the_native_zero_guess() -> No
     for result in (worse, nonfinite):
         assert jnp.array_equal(result.value, native.value)
         assert int(result.diagnostics.iterations) == int(native.diagnostics.iterations)
-
-
-def test_accepted_proposals_are_selected_per_rhs_under_jit() -> None:
     problem = la.LinearSystem(_operator())
     solution = jnp.asarray([1.0, -1.0, 2.0])
     rhs = jnp.stack([MATRIX @ solution, -(MATRIX @ solution)], axis=-1)
@@ -250,7 +238,7 @@ def test_production_selection_carries_no_derivative_but_raw_proposals_train() ->
     assert float(jnp.max(jnp.abs(jax.grad(training)(weight)))) > 0.0
 
 
-def test_learned_provider_binds_its_model_as_an_accelerator() -> None:
+def test_initial_guess_providers_scenario_3() -> None:
     model = _Linear(jnp.eye(3))
     provider = la.LearnedInitialGuess(_RhsMap(model))
 
@@ -266,9 +254,6 @@ def test_learned_provider_binds_its_model_as_an_accelerator() -> None:
         la.LearnedInitialGuess(model)
     with pytest.raises(ValueError, match="model component"):
         la.LearnedInitialGuess(lambda data, baseline: data)
-
-
-def test_learned_provider_binds_port_declaring_models_through_its_callable() -> None:
     owner = phx.ModelPorts(
         inputs=(full_port("system.rhs", (3,)),),
         outputs=(full_port("system.solution", (3,)),),
@@ -292,9 +277,6 @@ def test_learned_provider_binds_port_declaring_models_through_its_callable() -> 
     assert contract.port_binding.unverified == ()
     rhs = jnp.asarray([1.0, 2.0, 3.0])
     assert jnp.array_equal(provider.propose(rhs, jnp.zeros(3)), rhs)
-
-
-def test_nonlinear_initial_state_keeps_the_baseline_for_out_of_domain_proposals() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         trial_validity=lambda state, target: jnp.all(state > 0.0),
@@ -319,9 +301,6 @@ def test_nonlinear_initial_state_keeps_the_baseline_for_out_of_domain_proposals(
     assert not bool(outside_evidence.proposal_valid)
     assert jnp.array_equal(outside, baseline)
     assert bool(result.successful)
-
-
-def test_nonlinear_selection_is_one_decision_across_every_state_leaf() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: {
             "a": state["a"] - target,
@@ -340,9 +319,6 @@ def test_nonlinear_selection_is_one_decision_across_every_state_leaf() -> None:
     assert bool(evidence.accepted)
     assert jnp.array_equal(selected["a"], close["a"])
     assert jnp.array_equal(selected["b"], close["b"])
-
-
-def test_selection_evidence_indexes_trailing_rhs_axes_and_rejects_other_layouts() -> None:
     from phydrax.linalg._initial_guess import _select_proposal
 
     proposal = jnp.asarray([[1.0, 5.0], [2.0, 6.0], [3.0, 7.0]])

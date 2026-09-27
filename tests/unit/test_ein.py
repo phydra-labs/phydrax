@@ -14,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_contract_boundary_is_exact_and_jittable() -> None:
+def test_ein_scenario_1() -> None:
     assert phx.ein.__all__ == ["contract", "rearrange", "reduce", "repeat"]
     assert phx.ein.contract is oe.contract
 
@@ -34,9 +34,6 @@ def test_contract_boundary_is_exact_and_jittable() -> None:
     assert result.shape == expected.shape
     assert result.dtype == expected.dtype
     assert jnp.array_equal(result, expected)
-
-
-def test_rearrange_regroups_reorders_singletons_and_ellipsis() -> None:
     values = jnp.arange(2 * 12 * 5, dtype=jnp.int32).reshape(2, 12, 5)
     result = phx.ein.rearrange(
         values,
@@ -76,11 +73,7 @@ def test_rearrange_regroups_reorders_singletons_and_ellipsis() -> None:
         row=2,
     )
     assert factored_empty.shape == (2, 0)
-
-
-@pytest.mark.parametrize(
-    ("name", "function", "values"),
-    [
+    cases = (
         ("sum", jnp.sum, jnp.arange(24).reshape(2, 3, 4)),
         ("mean", jnp.mean, jnp.arange(24.0).reshape(2, 3, 4)),
         ("prod", jnp.prod, jnp.arange(1, 25).reshape(2, 3, 4)),
@@ -88,25 +81,17 @@ def test_rearrange_regroups_reorders_singletons_and_ellipsis() -> None:
         ("max", jnp.max, jnp.arange(24).reshape(2, 3, 4)),
         ("all", jnp.all, jnp.asarray([True, False] * 12).reshape(2, 3, 4)),
         ("any", jnp.any, jnp.asarray([True, False] * 12).reshape(2, 3, 4)),
-    ],
-)
-def test_reduce_matches_jax_primitives(
-    name: str,
-    function: Callable,
-    values: jax.Array,
-) -> None:
-    result = phx.ein.reduce(
-        values,
-        "batch time channel -> batch channel",
-        name,
     )
-    expected = function(values, axis=1)
-    assert result.shape == expected.shape
-    assert result.dtype == expected.dtype
-    assert jnp.array_equal(result, expected)
-
-
-def test_reduce_preserves_jax_zero_axis_semantics() -> None:
+    for name, function, values in cases:
+        result = phx.ein.reduce(
+            values,
+            "batch time channel -> batch channel",
+            name,
+        )
+        expected = function(values, axis=1)
+        assert result.shape == expected.shape, name
+        assert result.dtype == expected.dtype, name
+        assert jnp.array_equal(result, expected), name
     numeric = jnp.empty((2, 0, 3), dtype=jnp.int32)
     boolean = jnp.empty((2, 0, 3), dtype=jnp.bool_)
 
@@ -144,7 +129,7 @@ def test_reduce_preserves_jax_zero_axis_semantics() -> None:
             )
 
 
-def test_repeat_broadcasts_new_axes_without_tiling_semantics() -> None:
+def test_ein_scenario_2() -> None:
     values = jnp.arange(6).reshape(2, 3)
     repeated = phx.ein.repeat(
         values,
@@ -170,6 +155,102 @@ def test_repeat_broadcasts_new_axes_without_tiling_semantics() -> None:
         replica=2,
     )
     assert empty.shape == (0, 2, 3)
+    cases: tuple[tuple[Callable[[], object], str], ...] = (
+        (lambda: phx.ein.rearrange(jnp.ones((2,)), "axis"), "exactly one"),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((2,)), "((axis)) -> axis"),
+            "nested groups",
+        ),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((2,)), "2 -> 1"),
+            "only anonymous literal",
+        ),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((2, 2)), "axis axis -> axis"),
+            "appears more than once",
+        ),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((2, 2)), "axis -> axis"),
+            "input rank",
+        ),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((2,)), "axis -> axis", other=2),
+            "unused axis",
+        ),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((6,)), "(row column) -> row column"),
+            "multiple unresolved factors",
+        ),
+        (
+            lambda: phx.ein.rearrange(
+                jnp.ones((5,)),
+                "(row column) -> row column",
+                row=2,
+            ),
+            "not divisible",
+        ),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((2,)), "axis -> ... axis"),
+            "requires an input ellipsis",
+        ),
+        (
+            lambda: phx.ein.rearrange(jnp.ones((2, 3)), "row column -> row"),
+            "cannot remove",
+        ),
+        (
+            lambda: phx.ein.reduce(jnp.ones((2,)), "axis -> axis other", "sum"),
+            "cannot add",
+        ),
+        (
+            lambda: phx.ein.repeat(jnp.ones((2, 3)), "row column -> row"),
+            "cannot remove",
+        ),
+        (
+            lambda: phx.ein.repeat(jnp.ones((2,)), "axis -> copy axis"),
+            "requires a size",
+        ),
+        (
+            lambda: phx.ein.reduce(jnp.asarray(1.0), "... ->", "sum"),
+            "must remove at least one axis",
+        ),
+        (
+            lambda: phx.ein.repeat(jnp.ones((2,)), "axis -> axis"),
+            "must add at least one named axis",
+        ),
+        (
+            lambda: phx.ein.reduce(jnp.ones((2,)), "axis ->", "median"),
+            "unsupported reduction",
+        ),
+        (
+            lambda: phx.ein.repeat(
+                jnp.ones((2,)),
+                "axis -> copy axis",
+                copy=True,
+            ),
+            "static integer",
+        ),
+        (
+            lambda: phx.ein.repeat(
+                jnp.ones((2,)),
+                "axis -> copy axis",
+                copy=0,
+            ),
+            "must be positive",
+        ),
+    )
+    for call, message in cases:
+        with pytest.raises((TypeError, ValueError), match=message) as error:
+            call()
+        assert "^" in str(error.value), message
+    transform = jax.jit(
+        lambda values, copies: phx.ein.repeat(
+            values,
+            "axis -> copy axis",
+            copy=copies,
+        )
+    )
+    with pytest.raises(ValueError, match="static integer"):
+        transform(jnp.ones((2,)), jnp.asarray(2))
 
 
 def test_transforms_compose_under_jit_grad_jvp_and_vmap() -> None:
@@ -234,116 +315,3 @@ def test_transforms_compose_under_jit_grad_jvp_and_vmap() -> None:
     transformed_batch = jax.vmap(lambda x: objective(x, weight))(ensemble)
     reference_batch = jax.vmap(lambda x: reference(x, weight))(ensemble)
     assert jnp.allclose(transformed_batch, reference_batch)
-
-
-@pytest.mark.parametrize(
-    ("call", "message"),
-    [
-        (lambda: phx.ein.rearrange(jnp.ones((2,)), "axis"), "exactly one"),
-        (
-            lambda: phx.ein.rearrange(jnp.ones((2,)), "((axis)) -> axis"),
-            "nested groups",
-        ),
-        (
-            lambda: phx.ein.rearrange(jnp.ones((2,)), "2 -> 1"),
-            "only anonymous literal",
-        ),
-        (
-            lambda: phx.ein.rearrange(jnp.ones((2, 2)), "axis axis -> axis"),
-            "appears more than once",
-        ),
-        (
-            lambda: phx.ein.rearrange(jnp.ones((2, 2)), "axis -> axis"),
-            "input rank",
-        ),
-        (
-            lambda: phx.ein.rearrange(jnp.ones((2,)), "axis -> axis", other=2),
-            "unused axis",
-        ),
-        (
-            lambda: phx.ein.rearrange(
-                jnp.ones((6,)),
-                "(row column) -> row column",
-            ),
-            "multiple unresolved factors",
-        ),
-        (
-            lambda: phx.ein.rearrange(
-                jnp.ones((5,)),
-                "(row column) -> row column",
-                row=2,
-            ),
-            "not divisible",
-        ),
-        (
-            lambda: phx.ein.rearrange(jnp.ones((2,)), "axis -> ... axis"),
-            "requires an input ellipsis",
-        ),
-        (
-            lambda: phx.ein.rearrange(jnp.ones((2, 3)), "row column -> row"),
-            "cannot remove",
-        ),
-        (
-            lambda: phx.ein.reduce(
-                jnp.ones((2,)),
-                "axis -> axis other",
-                "sum",
-            ),
-            "cannot add",
-        ),
-        (
-            lambda: phx.ein.repeat(jnp.ones((2, 3)), "row column -> row"),
-            "cannot remove",
-        ),
-        (
-            lambda: phx.ein.repeat(jnp.ones((2,)), "axis -> copy axis"),
-            "requires a size",
-        ),
-        (
-            lambda: phx.ein.reduce(jnp.asarray(1.0), "... ->", "sum"),
-            "must remove at least one axis",
-        ),
-        (
-            lambda: phx.ein.repeat(jnp.ones((2,)), "axis -> axis"),
-            "must add at least one named axis",
-        ),
-        (
-            lambda: phx.ein.reduce(jnp.ones((2,)), "axis ->", "median"),
-            "unsupported reduction",
-        ),
-        (
-            lambda: phx.ein.repeat(
-                jnp.ones((2,)),
-                "axis -> copy axis",
-                copy=True,
-            ),
-            "static integer",
-        ),
-        (
-            lambda: phx.ein.repeat(
-                jnp.ones((2,)),
-                "axis -> copy axis",
-                copy=0,
-            ),
-            "must be positive",
-        ),
-    ],
-)
-def test_invalid_patterns_and_shapes_fail_with_context(
-    call: Callable, message: str
-) -> None:
-    with pytest.raises((TypeError, ValueError), match=message) as error:
-        call()
-    assert "^" in str(error.value)
-
-
-def test_dynamic_axis_sizes_are_rejected_during_tracing() -> None:
-    transform = jax.jit(
-        lambda values, copies: phx.ein.repeat(
-            values,
-            "axis -> copy axis",
-            copy=copies,
-        )
-    )
-    with pytest.raises(ValueError, match="static integer"):
-        transform(jnp.ones((2,)), jnp.asarray(2))

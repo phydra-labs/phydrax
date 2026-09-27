@@ -30,23 +30,17 @@ def _materials() -> Any:
     return ideal, stiff
 
 
-@pytest.mark.parametrize(
-    ("density", "pressure"),
-    (
+def test_two_material_eos_scenario_1() -> None:
+    for density, pressure in (
         (jnp.inf, 1.0),
         (1.0, jnp.inf),
         (jnp.nan, 1.0),
         (1.0, jnp.nan),
-    ),
-)
-def test_thermodynamic_materials_reject_nonfinite_states(
-    density: Any, pressure: Any
-) -> None:
-    for material in _materials():
-        assert not bool(material.admissible(jnp.asarray(density), jnp.asarray(pressure)))
-
-
-def test_ideal_ideal_round_trip_and_report_coefficients() -> None:
+    ):
+        for material in _materials():
+            assert not bool(
+                material.admissible(jnp.asarray(density), jnp.asarray(pressure))
+            )
     ideal, _ = _materials()
     closure = TwoMaterialEOSClosure(
         ideal,
@@ -67,9 +61,6 @@ def test_ideal_ideal_round_trip_and_report_coefficients() -> None:
     )
     with pytest.raises(Exception):
         report.pressure = jnp.zeros_like(report.pressure)
-
-
-def test_ideal_stiffened_common_pressure_and_primitive_state() -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(ideal, stiff)
     state = TwoMaterialPrimitiveState(
@@ -86,9 +77,6 @@ def test_ideal_stiffened_common_pressure_and_primitive_state() -> None:
     np.testing.assert_allclose(closure.pressure(conserved), state.pressure, rtol=2.0e-12)
     assert jnp.all(closure.temperature(conserved) > 0.0)
     assert jnp.all(closure.sound_speed(conserved) > 0.0)
-
-
-def test_pure_phase_limits_are_exact_and_finite() -> None:
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(ideal, stiff)
     for alpha in (0.0, 1.0):
@@ -102,53 +90,27 @@ def test_pure_phase_limits_are_exact_and_finite() -> None:
         assert jnp.all(closure.admissible(conserved))
 
 
-@pytest.mark.parametrize(
-    ("alpha", "floor_mass_index"),
-    ((1.0e-4, 0), (1.0 - 1.0e-4, 1)),
-)
-def test_alpha_floor_boundaries_round_trip_and_are_active(
-    alpha: Any, floor_mass_index: Any
-) -> None:
-    ideal, stiff = _materials()
-    closure = TwoMaterialEOSClosure(
-        ideal,
-        stiff,
-        alpha_floor=1.0e-4,
-        mass_floor=1.0e-8,
-    )
-    primitive = jnp.asarray([[2.0, 950.0, 0.25, 1.0e5, alpha]], dtype=jnp.float64)
+def test_two_material_eos_scenario_2() -> None:
+    for alpha, floor_mass_index in ((1.0e-4, 0), (1.0 - 1.0e-4, 1)):
+        ideal, stiff = _materials()
+        closure = TwoMaterialEOSClosure(
+            ideal,
+            stiff,
+            alpha_floor=1.0e-4,
+            mass_floor=1.0e-8,
+        )
+        primitive = jnp.asarray([[2.0, 950.0, 0.25, 1.0e5, alpha]], dtype=jnp.float64)
 
-    conserved = closure.primitive_to_conserved(primitive)
-    compiled_conserved = jax.jit(closure.primitive_to_conserved)(primitive)
-    recovered = closure.conserved_to_primitive(conserved)
-    compiled_recovered = jax.jit(closure.conserved_to_primitive)(compiled_conserved)
+        conserved = closure.primitive_to_conserved(primitive)
+        compiled_conserved = jax.jit(closure.primitive_to_conserved)(primitive)
+        recovered = closure.conserved_to_primitive(conserved)
+        compiled_recovered = jax.jit(closure.conserved_to_primitive)(compiled_conserved)
 
-    assert conserved[..., floor_mass_index].item() > 0.0
-    assert bool(closure.report(conserved).admissible)
-    assert bool(jax.jit(closure.admissible)(compiled_conserved))
-    np.testing.assert_allclose(recovered, primitive, rtol=2.0e-12)
-    np.testing.assert_allclose(compiled_recovered, primitive, rtol=2.0e-12)
-
-
-@pytest.mark.parametrize(
-    ("alpha", "inactive_mass_index"),
-    ((0.0, 0), (1.0, 1)),
-)
-def test_exact_zero_phase_rejects_nonzero_partial_mass(
-    alpha: Any, inactive_mass_index: Any
-) -> None:
-    ideal, stiff = _materials()
-    closure = TwoMaterialEOSClosure(ideal, stiff, alpha_floor=1.0e-4)
-    primitive = jnp.asarray([[2.0, 950.0, 0.25, 1.0e5, alpha]], dtype=jnp.float64)
-    pure = closure.primitive_to_conserved(primitive)
-    invalid = pure.at[..., inactive_mass_index].set(closure.mass_floor)
-
-    assert not bool(closure.admissible(invalid))
-    assert not bool(closure.report(invalid).admissible)
-    assert not bool(jax.jit(closure.admissible)(invalid))
-
-
-def test_alpha_mass_energy_and_finite_admissibility_checks_fail_closed() -> None:
+        assert conserved[..., floor_mass_index].item() > 0.0
+        assert bool(closure.report(conserved).admissible)
+        assert bool(jax.jit(closure.admissible)(compiled_conserved))
+        np.testing.assert_allclose(recovered, primitive, rtol=2.0e-12)
+        np.testing.assert_allclose(compiled_recovered, primitive, rtol=2.0e-12)
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(
         ideal, stiff, alpha_floor=1.0e-4, mass_floor=1.0e-3, energy_floor=1.0e-3
@@ -165,9 +127,16 @@ def test_alpha_mass_energy_and_finite_admissibility_checks_fail_closed() -> None
     assert not bool(jnp.any(closure.admissible(low_energy)))
     nonfinite = conserved.at[..., -2].set(jnp.inf)
     assert not bool(jnp.any(closure.admissible(nonfinite)))
+    for alpha, inactive_mass_index in ((0.0, 0), (1.0, 1)):
+        ideal, stiff = _materials()
+        closure = TwoMaterialEOSClosure(ideal, stiff, alpha_floor=1.0e-4)
+        primitive = jnp.asarray([[2.0, 950.0, 0.25, 1.0e5, alpha]], dtype=jnp.float64)
+        pure = closure.primitive_to_conserved(primitive)
+        invalid = pure.at[..., inactive_mass_index].set(closure.mass_floor)
 
-
-def test_jit_grad_and_dtype_are_preserved() -> None:
+        assert not bool(closure.admissible(invalid))
+        assert not bool(closure.report(invalid).admissible)
+        assert not bool(jax.jit(closure.admissible)(invalid))
     ideal, stiff = _materials()
     closure = TwoMaterialEOSClosure(ideal, stiff)
     primitive = jnp.asarray([[1.2, 950.0, 0.2, 1.0e5, 0.4]], dtype=jnp.float32)

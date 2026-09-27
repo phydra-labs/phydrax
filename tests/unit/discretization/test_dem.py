@@ -92,7 +92,7 @@ def _dem_tree_pair(reference: Any, covector: Any, vector: Any) -> Any:
     return sum(products, start=jnp.asarray(0.0))
 
 
-def test_dem_state_geometry_certifies_four_spaces_and_frozen_routes() -> None:
+def test_dem_scenario_1() -> None:
     compiled = _compiled_dem()
     state = compiled.initialize_state(
         0.0,
@@ -147,9 +147,22 @@ def test_dem_state_geometry_certifies_four_spaces_and_frozen_routes() -> None:
     )
     with pytest.raises(Exception, match="incompatible frozen route"):
         geometry.inverse_retract(state, incompatible)
+    compiled = _compiled_dem()
+    state = compiled.initialize_state(
+        0.0,
+        jnp.asarray([[0.0, 0.0], [0.9, 0.0]]),
+        jnp.zeros((2, 2)),
+    )
+    evaluation = compiled.dynamics.evaluate(
+        jnp.asarray(0.0), state, jnp.asarray(0.0), None
+    )
+    residuals = phx.discretization.dem_constraint_residuals(evaluation.diagnostics)
+    profile = phx.discretization.DEMQualificationProfile(maximum_overlap_fraction=0.25)
+    margins = phx.discretization.dem_differentiability_margins(evaluation.diagnostics)
 
-
-def test_linear_sphere_contact_has_action_reaction_and_torque_balance() -> None:
+    assert profile.constraints_satisfied(residuals)
+    assert margins.contact_activation > 0.0
+    assert margins.route_capacity_successful
     compiled = _compiled_dem()
     state = compiled.initialize_state(
         0.0,
@@ -165,9 +178,6 @@ def test_linear_sphere_contact_has_action_reaction_and_torque_balance() -> None:
     assert jnp.allclose(diagnostics.net_internal_torque, 0.0, atol=1.0e-12)
     assert diagnostics.active_contacts == 1
     assert jnp.isclose(diagnostics.maximum_overlap_fraction, 0.2)
-
-
-def test_cundall_strack_history_advances_and_respects_coulomb_limit() -> None:
     compiled = _compiled_dem(friction=0.2)
     state = compiled.initialize_state(
         0.0,
@@ -196,7 +206,7 @@ def test_cundall_strack_history_advances_and_respects_coulomb_limit() -> None:
     assert response.friction_defect[0] <= 1.0e-10
 
 
-def test_exact_sdf_container_returns_equal_opposite_wall_reaction() -> None:
+def test_dem_scenario_2() -> None:
     barrier = phx.discretization.ImplicitDEMBarrier(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(),
         phx.discretization.DEMBarrierSide.INTERIOR,
@@ -221,28 +231,6 @@ def test_exact_sdf_container_returns_equal_opposite_wall_reaction() -> None:
         -jnp.sum(boundary.particle_force, axis=0),
         atol=1.0e-12,
     )
-
-
-def test_dem_qualification_uses_contact_specific_residuals_and_margins() -> None:
-    compiled = _compiled_dem()
-    state = compiled.initialize_state(
-        0.0,
-        jnp.asarray([[0.0, 0.0], [0.9, 0.0]]),
-        jnp.zeros((2, 2)),
-    )
-    evaluation = compiled.dynamics.evaluate(
-        jnp.asarray(0.0), state, jnp.asarray(0.0), None
-    )
-    residuals = phx.discretization.dem_constraint_residuals(evaluation.diagnostics)
-    profile = phx.discretization.DEMQualificationProfile(maximum_overlap_fraction=0.25)
-    margins = phx.discretization.dem_differentiability_margins(evaluation.diagnostics)
-
-    assert profile.constraints_satisfied(residuals)
-    assert margins.contact_activation > 0.0
-    assert margins.route_capacity_successful
-
-
-def test_periodic_dense_and_cell_contacts_have_identical_force_and_history() -> None:
     box = phx.discretization.ParticleBox(
         jnp.asarray([0.0, -1.0]),
         jnp.asarray([2.0, 1.0]),
@@ -291,9 +279,6 @@ def test_periodic_dense_and_cell_contacts_have_identical_force_and_history() -> 
         rtol=1.0e-12,
         atol=1.0e-12,
     )
-
-
-def test_cell_occupancy_overflow_rejects_initial_dem_state() -> None:
     box = phx.discretization.ParticleBox(
         jnp.asarray([-1.0, -1.0]),
         jnp.asarray([1.0, 1.0]),

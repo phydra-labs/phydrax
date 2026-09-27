@@ -55,7 +55,7 @@ def _result() -> Any:
     ).solve(problem)
 
 
-def test_exact_path_enumeration_recovers_normalization_endpoints_and_kl() -> None:
+def test_schrodinger_bridge_scientific_scenario_1() -> None:
     result = _result()
     paths = jnp.asarray(list(itertools.product((0.0, 1.0), repeat=3)))
     controlled = jnp.exp(result.path_log_prob(paths))
@@ -78,9 +78,6 @@ def test_exact_path_enumeration_recovers_normalization_endpoints_and_kl() -> Non
         jnp.where(controlled > 0.0, controlled * jnp.log(controlled / reference), 0.0)
     )
     assert jnp.allclose(enumerated_kl, result.diagnostics.path_kl, atol=1e-11)
-
-
-def test_inference_control_and_path_law_adapters_compose_native_contracts() -> None:
     result = _result()
     inference = phx.transport.dynamic.BridgeInferenceAdapter(result)
     control = phx.transport.dynamic.TerminalDistributionControlAdapter(result)

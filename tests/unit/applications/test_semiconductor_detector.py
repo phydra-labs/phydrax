@@ -84,7 +84,7 @@ def _parallel_detector(
     )
 
 
-def test_parallel_plate_bias_and_weighting_are_distinct_and_capacitance_closes() -> None:
+def test_semiconductor_detector_scenario_1() -> None:
     length, area = 2.0, 3.0
     detector = _parallel_detector(length=length, area=area)
     x = detector.bridge.cochain.coordinates[0][:, 0]
@@ -117,9 +117,6 @@ def test_parallel_plate_bias_and_weighting_are_distinct_and_capacitance_closes()
     with pytest.raises(TypeError, match="bias results cannot substitute"):
         # ty: ignore[invalid-argument-type]
         PrescribedShockleyRamoPlan(weighting_plan, bias, route)
-
-
-def test_coaxial_logarithmic_weighting_and_capacitance_are_recovered() -> None:
     inner, outer, length = 0.4, 2.5, 1.7
     radii = np.geomspace(inner, outer, 17)
     normalized = (radii - inner) / (outer - inner)
@@ -148,44 +145,6 @@ def test_coaxial_logarithmic_weighting_and_capacitance_are_recovered() -> None:
         weighting.capacitance[0, 0], expected_capacitance, rtol=2e-8
     )
     assert weighting.evidence.certified
-
-
-def _segmented_detector(*, complete: Any = True) -> Any:
-    grid = TensorGridPlan(
-        (
-            UniformCellAxisSpec(4, periodic=False),
-            UniformCellAxisSpec(4, periodic=False),
-        ),
-        axis_names=("x", "y"),
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
-    bridge = StructuredCochainBridge(grid)
-    points = np.asarray(bridge.cochain.coordinates[0])
-    x, y = points[:, 0], points[:, 1]
-    bottom_left = np.isclose(y, 0.0) & (x <= 0.5)
-    bottom_right = np.isclose(y, 0.0) & (x > 0.5)
-    top = np.isclose(y, 1.0)
-    sides = (
-        (np.isclose(x, 0.0) | np.isclose(x, 1.0)) & ~bottom_left & ~bottom_right & ~top
-    )
-    electrodes = [
-        DetectorElectrode("bottom-left", bottom_left),
-        DetectorElectrode("bottom-right", bottom_right),
-        DetectorElectrode("top", top),
-    ]
-    if complete:
-        electrodes.append(DetectorElectrode("side-guard", sides))
-    return SemiconductorDetectorPlan(
-        bridge,
-        tuple(electrodes),
-        _resources(),
-        permittivity=EPSILON,
-        node_transverse_measure=0.2,
-        edge_transverse_measure=0.2,
-        transverse_unit=METER,
-    )
-
-
-def test_segmented_complete_basis_and_prescribed_response_close_without_motion() -> None:
     detector = _segmented_detector()
     weighting_plan = DetectorWeightingFieldPlan(detector)
     weighting = weighting_plan.solve()
@@ -224,7 +183,42 @@ def test_segmented_complete_basis_and_prescribed_response_close_without_motion()
     )
 
 
-def test_partition_certificate_requires_complete_dirichlet_electrodes() -> None:
+def _segmented_detector(*, complete: Any = True) -> Any:
+    grid = TensorGridPlan(
+        (
+            UniformCellAxisSpec(4, periodic=False),
+            UniformCellAxisSpec(4, periodic=False),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    bridge = StructuredCochainBridge(grid)
+    points = np.asarray(bridge.cochain.coordinates[0])
+    x, y = points[:, 0], points[:, 1]
+    bottom_left = np.isclose(y, 0.0) & (x <= 0.5)
+    bottom_right = np.isclose(y, 0.0) & (x > 0.5)
+    top = np.isclose(y, 1.0)
+    sides = (
+        (np.isclose(x, 0.0) | np.isclose(x, 1.0)) & ~bottom_left & ~bottom_right & ~top
+    )
+    electrodes = [
+        DetectorElectrode("bottom-left", bottom_left),
+        DetectorElectrode("bottom-right", bottom_right),
+        DetectorElectrode("top", top),
+    ]
+    if complete:
+        electrodes.append(DetectorElectrode("side-guard", sides))
+    return SemiconductorDetectorPlan(
+        bridge,
+        tuple(electrodes),
+        _resources(),
+        permittivity=EPSILON,
+        node_transverse_measure=0.2,
+        edge_transverse_measure=0.2,
+        transverse_unit=METER,
+    )
+
+
+def test_semiconductor_detector_scenario_2() -> None:
     detector = _segmented_detector(complete=False)
     weighting_plan = DetectorWeightingFieldPlan(detector)
     weighting = weighting_plan.solve()
@@ -241,9 +235,6 @@ def test_partition_certificate_requires_complete_dirichlet_electrodes() -> None:
             weighting,
             DetectorTrajectoryRoute(layout, (0, 1)),
         )
-
-
-def test_route_and_resource_failures_are_explicit_and_preallocation_bounded() -> None:
     bridge = _interval_bridge(edges=8)
     with pytest.raises(ValueError, match="node count"):
         SemiconductorDetectorPlan(
@@ -295,9 +286,6 @@ def test_route_and_resource_failures_are_explicit_and_preallocation_bounded() ->
     invalid = admitted_response_plan.evaluate(outside, 1.0)
     assert not invalid.route_valid
     assert not invalid.successful
-
-
-def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims() -> None:
     names_and_symbols = {
         "semiconductor.quantum.chain-landauer.canonical": (
             semiconductor_quantum.integrate_coherent,

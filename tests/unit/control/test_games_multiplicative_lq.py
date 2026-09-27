@@ -22,7 +22,7 @@ from phydrax.control.stochastic._multiplicative_lq import (
 from phydrax.dynamics import TimeGrid
 
 
-def test_correlated_noise_rows_match_direct_two_player_stationarity_system() -> None:
+def test_games_multiplicative_lq_scenario_1() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     a = 1.1
     b = np.asarray([0.8, -0.4])
@@ -90,9 +90,6 @@ def test_correlated_noise_rows_match_direct_two_player_stationarity_system() -> 
         )
     assert result.diagnostics.maximum_stationarity_residual < 1e-12
     assert result.diagnostics.maximum_bellman_residual < 1e-12
-
-
-def test_control_noise_dtpd_term_changes_coupled_nash_answer() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     a = jnp.ones((1, 1, 1))
     b = jnp.asarray([[[1.0, 0.5]]])
@@ -135,9 +132,6 @@ def test_control_noise_dtpd_term_changes_coupled_nash_answer() -> None:
         with_control_noise.diagnostics.own_control_minimum_eigenvalues,
         no_control_noise.diagnostics.own_control_minimum_eigenvalues,
     )
-
-
-def test_zero_noise_reduces_to_exact_deterministic_feedback_nash() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     horizon = 2
     a = jnp.asarray([[[1.0]], [[0.9]]])
@@ -206,7 +200,7 @@ def test_zero_noise_reduces_to_exact_deterministic_feedback_nash() -> None:
     np.testing.assert_array_equal(stochastic.trace_increments, jnp.zeros((2, horizon)))
 
 
-def test_one_player_game_matches_multiplicative_lq_control() -> None:
+def test_games_multiplicative_lq_scenario_2() -> None:
     partition = PlayerControlPartition(("controller",), (1,))
     horizon = 2
     a = jnp.asarray([[[1.0]], [[0.9]]])
@@ -269,9 +263,6 @@ def test_one_player_game_matches_multiplicative_lq_control() -> None:
     np.testing.assert_allclose(game.values[0].linear, control.value.linear)
     np.testing.assert_allclose(game.values[0].constants, control.value.constants)
     np.testing.assert_allclose(game.trace_increments[0], control.trace_increments)
-
-
-def test_additive_noise_trace_evidence_keeps_player_and_time_axes() -> None:
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     noise_bias = jnp.asarray([[[0.2], [-0.1]]])
     gamma = jnp.asarray([[[1.0, 0.4], [0.4, 0.5]]])
@@ -295,57 +286,6 @@ def test_additive_noise_trace_evidence_keeps_player_and_time_axes() -> None:
     np.testing.assert_allclose(result.trace_increments[:, 0], expected)
     np.testing.assert_allclose(result.values[0].constants, [expected[0], 0.0])
     np.testing.assert_allclose(result.values[1].constants, [expected[1], 0.0])
-
-
-def test_case_axes_jit_and_autodiff_preserve_coupled_noise_dependence() -> None:
-    partition = PlayerControlPartition(("left", "right"), (1, 1))
-    cases = 2
-    a = jnp.ones((cases, 1, 1, 1))
-    b = jnp.broadcast_to(jnp.asarray([[[1.0, 0.5]]]), (cases, 1, 1, 2))
-    q = jnp.zeros((cases, 2, 1, 1, 1))
-    r = jnp.broadcast_to(jnp.eye(2), (cases, 2, 1, 2, 2))
-    qf = jnp.broadcast_to(jnp.asarray([[[1.0]], [[1.5]]]), (cases, 2, 1, 1))
-    state_noise = jnp.asarray([0.2, 0.4])[:, None, None, None, None]
-    gamma = jnp.ones((cases, 1, 1, 1))
-    time_grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="multiplicative-game-cases")
-
-    def solve(control_scale: Any) -> Any:
-        channel = jnp.asarray([[0.3, -0.1], [0.5, 0.2]])
-        control_noise = control_scale * channel[:, None, None, None, :]
-        return finite_horizon_multiplicative_lq_feedback_nash(
-            a,
-            b,
-            q,
-            r,
-            qf,
-            partition,
-            state_noise_matrices=state_noise,
-            control_noise_matrices=control_noise,
-            noise_covariances=gamma,
-            time_grid=time_grid,
-        )
-
-    result = eqx.filter_jit(solve)(jnp.asarray(1.0))
-    gradient = jax.jit(jax.grad(lambda scale: solve(scale).feedback_gain[0, 0, 0, 0]))(
-        jnp.asarray(1.0)
-    )
-
-    assert result.feedback_gain.shape == (cases, 1, 2, 1)
-    assert result.trace_increments.shape == (cases, 2, 1)
-    assert result.diagnostics.own_control_minimum_eigenvalues.shape == (
-        cases,
-        2,
-        1,
-    )
-    assert result.values[0].matrices.shape == (cases, 2, 1, 1)
-    np.testing.assert_array_equal(result.valid, jnp.ones(cases, dtype="bool"))
-    assert np.isfinite(gradient)
-    assert not np.isclose(gradient, 0.0)
-
-
-def test_jitted_cases_report_covariance_curvature_rank_condition_and_nonfinite_failures() -> (
-    None
-):
     partition = PlayerControlPartition(("left", "right"), (1, 1))
     cases = 7
     a = jnp.ones((cases, 1, 1, 1)).at[3, 0, 0, 0].set(jnp.nan)
@@ -397,3 +337,49 @@ def test_jitted_cases_report_covariance_curvature_rank_condition_and_nonfinite_f
     assert bool(result.diagnostics.diagnostic_available[5, 0])
     assert result.diagnostics.coupled_ranks[5, 0] == 1
     assert result.diagnostics.coupled_condition_numbers[6, 0] > 1e4
+
+
+def test_case_axes_jit_and_autodiff_preserve_coupled_noise_dependence() -> None:
+    partition = PlayerControlPartition(("left", "right"), (1, 1))
+    cases = 2
+    a = jnp.ones((cases, 1, 1, 1))
+    b = jnp.broadcast_to(jnp.asarray([[[1.0, 0.5]]]), (cases, 1, 1, 2))
+    q = jnp.zeros((cases, 2, 1, 1, 1))
+    r = jnp.broadcast_to(jnp.eye(2), (cases, 2, 1, 2, 2))
+    qf = jnp.broadcast_to(jnp.asarray([[[1.0]], [[1.5]]]), (cases, 2, 1, 1))
+    state_noise = jnp.asarray([0.2, 0.4])[:, None, None, None, None]
+    gamma = jnp.ones((cases, 1, 1, 1))
+    time_grid = TimeGrid(jnp.asarray([0.0, 1.0]), time_id="multiplicative-game-cases")
+
+    def solve(control_scale: Any) -> Any:
+        channel = jnp.asarray([[0.3, -0.1], [0.5, 0.2]])
+        control_noise = control_scale * channel[:, None, None, None, :]
+        return finite_horizon_multiplicative_lq_feedback_nash(
+            a,
+            b,
+            q,
+            r,
+            qf,
+            partition,
+            state_noise_matrices=state_noise,
+            control_noise_matrices=control_noise,
+            noise_covariances=gamma,
+            time_grid=time_grid,
+        )
+
+    result = eqx.filter_jit(solve)(jnp.asarray(1.0))
+    gradient = jax.jit(jax.grad(lambda scale: solve(scale).feedback_gain[0, 0, 0, 0]))(
+        jnp.asarray(1.0)
+    )
+
+    assert result.feedback_gain.shape == (cases, 1, 2, 1)
+    assert result.trace_increments.shape == (cases, 2, 1)
+    assert result.diagnostics.own_control_minimum_eigenvalues.shape == (
+        cases,
+        2,
+        1,
+    )
+    assert result.values[0].matrices.shape == (cases, 2, 1, 1)
+    np.testing.assert_array_equal(result.valid, jnp.ones(cases, dtype="bool"))
+    assert np.isfinite(gradient)
+    assert not np.isclose(gradient, 0.0)

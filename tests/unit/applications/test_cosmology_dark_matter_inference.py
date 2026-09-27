@@ -130,7 +130,7 @@ def _smooth_evaluator(parameters: Any) -> Any:
     )
 
 
-def test_smooth_fixed_grid_wave_jvp_matches_known_derivative() -> None:
+def test_cosmology_dark_matter_inference_scenario_1() -> None:
     plan = SmoothFixedGridDarkMatterInferencePlan(
         _smooth_evaluator,
         jnp.asarray((3, 7)),
@@ -155,9 +155,6 @@ def test_smooth_fixed_grid_wave_jvp_matches_known_derivative() -> None:
     np.testing.assert_allclose(result.jvp, jnp.asarray((2.0, -0.5)))
     np.testing.assert_allclose(result.finite_difference, result.jvp, atol=1e-8)
     assert bool(result.successful)
-
-
-def test_soliton_and_vortex_topology_products_refuse_gradients() -> None:
     plan = SmoothFixedGridDarkMatterInferencePlan(
         _smooth_evaluator,
         jnp.asarray((3, 7)),
@@ -172,6 +169,39 @@ def test_soliton_and_vortex_topology_products_refuse_gradients() -> None:
 
     with pytest.raises(ValueError, match="Topology-sensitive"):
         plan.sensitivity(jnp.asarray((2.0, 3.0)), jnp.asarray((1.0, 0.0)))
+    result = _stochastic_plan(1.0).sensitivity(
+        jnp.asarray((2.0,)), jnp.asarray((1.0,)), epsilon=1e-4
+    )
+
+    np.testing.assert_allclose(result.value, jnp.asarray((2.0,)), atol=1e-12)
+    np.testing.assert_allclose(result.score_estimate, jnp.asarray((1.0,)), atol=1e-12)
+    np.testing.assert_allclose(
+        result.common_random_finite_difference, jnp.asarray((1.0,)), atol=1e-10
+    )
+    np.testing.assert_allclose(result.estimator_bias, 0.0, atol=1e-10)
+    np.testing.assert_allclose(
+        result.score_standard_error, jnp.asarray((2.0 / jnp.sqrt(3.0),))
+    )
+    np.testing.assert_allclose(
+        result.paired_bias_standard_error,
+        jnp.asarray((2.0 / jnp.sqrt(3.0),)),
+    )
+    np.testing.assert_allclose(
+        result.combined_standard_error,
+        result.paired_bias_standard_error,
+    )
+    changed_tape = _stochastic_plan(1.0, tape=(-2.0, 2.0, -2.0, 2.0))
+    assert changed_tape.tape_id == _stochastic_plan(1.0).tape_id
+    assert changed_tape.tape_content_id != _stochastic_plan(1.0).tape_content_id
+    assert changed_tape.plan_id != _stochastic_plan(1.0).plan_id
+    np.testing.assert_allclose(result.finite_difference_standard_error, 0.0, atol=1e-10)
+    np.testing.assert_allclose(result.effective_sample_size, 4.0)
+    assert not bool(jnp.any(result.bias_flag))
+    assert bool(result.fixed_tape)
+    assert bool(result.event_free)
+    assert bool(result.reaction_free)
+    assert bool(result.topology_fixed)
+    assert bool(result.successful)
 
 
 def _stochastic_evaluator(score_multiplier: Any) -> Any:
@@ -213,43 +243,7 @@ def _stochastic_plan(score_multiplier: Any, tape: Any = None) -> Any:
     )
 
 
-def test_fixed_tape_score_and_common_random_difference_report_uncertainty() -> None:
-    result = _stochastic_plan(1.0).sensitivity(
-        jnp.asarray((2.0,)), jnp.asarray((1.0,)), epsilon=1e-4
-    )
-
-    np.testing.assert_allclose(result.value, jnp.asarray((2.0,)), atol=1e-12)
-    np.testing.assert_allclose(result.score_estimate, jnp.asarray((1.0,)), atol=1e-12)
-    np.testing.assert_allclose(
-        result.common_random_finite_difference, jnp.asarray((1.0,)), atol=1e-10
-    )
-    np.testing.assert_allclose(result.estimator_bias, 0.0, atol=1e-10)
-    np.testing.assert_allclose(
-        result.score_standard_error, jnp.asarray((2.0 / jnp.sqrt(3.0),))
-    )
-    np.testing.assert_allclose(
-        result.paired_bias_standard_error,
-        jnp.asarray((2.0 / jnp.sqrt(3.0),)),
-    )
-    np.testing.assert_allclose(
-        result.combined_standard_error,
-        result.paired_bias_standard_error,
-    )
-    changed_tape = _stochastic_plan(1.0, tape=(-2.0, 2.0, -2.0, 2.0))
-    assert changed_tape.tape_id == _stochastic_plan(1.0).tape_id
-    assert changed_tape.tape_content_id != _stochastic_plan(1.0).tape_content_id
-    assert changed_tape.plan_id != _stochastic_plan(1.0).plan_id
-    np.testing.assert_allclose(result.finite_difference_standard_error, 0.0, atol=1e-10)
-    np.testing.assert_allclose(result.effective_sample_size, 4.0)
-    assert not bool(jnp.any(result.bias_flag))
-    assert bool(result.fixed_tape)
-    assert bool(result.event_free)
-    assert bool(result.reaction_free)
-    assert bool(result.topology_fixed)
-    assert bool(result.successful)
-
-
-def test_stochastic_sensitivity_flags_biased_score_estimator() -> None:
+def test_cosmology_dark_matter_inference_scenario_2() -> None:
     result = _stochastic_plan(0.0).sensitivity(
         jnp.asarray((2.0,)), jnp.asarray((1.0,)), epsilon=1e-4
     )
@@ -258,9 +252,6 @@ def test_stochastic_sensitivity_flags_biased_score_estimator() -> None:
     np.testing.assert_allclose(result.common_random_finite_difference, 1.0, atol=1e-10)
     assert bool(jnp.all(result.bias_flag))
     assert not bool(result.successful)
-
-
-def test_discrepancy_budget_preserves_decomposition_and_exact_standardization() -> None:
     layout = CoordinateLayout(("density", "dispersion"))
     coordinates = DarkMatterCoordinateContract(
         layout,
@@ -318,7 +309,7 @@ def test_discrepancy_budget_preserves_decomposition_and_exact_standardization() 
     assert bool(product.successful)
 
 
-def test_external_reference_is_constant_and_emulator_calibration_keeps_lineage() -> None:
+def test_external_contracts() -> None:
     reference = _external_product(jnp.asarray((-1.0, 1.0, -1.0, 1.0)))
     assert reference.as_theory_vector().layout.layout_id == reference.layout.layout_id
     tangent = jax.jvp(
@@ -423,9 +414,6 @@ def test_external_reference_is_constant_and_emulator_calibration_keeps_lineage()
             split_id="underweighted-split",
             weights=jnp.asarray((1.0, 0.0, 0.0, 0.0)),
         )
-
-
-def test_external_emulator_calibration_denies_unlicensed_use_and_raw_bypass() -> None:
     payload = np.concatenate(
         (np.zeros((4,), dtype=np.float64), np.ones((4,), dtype=np.float64))
     ).tobytes()

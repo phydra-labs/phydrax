@@ -532,14 +532,16 @@ class DenseLinearOperator(AbstractLinearOperator):
             source_pairing = self.source.pairing
             if isinstance(target_pairing, DiagonalPairing):
                 weights = jnp.asarray(target_pairing.weights).reshape((self.target.size,))
-                matrix = matrix * weights
+                target_shape = (1,) * len(self.batch_shape) + (1, self.target.size)
+                matrix = matrix * weights.reshape(target_shape)
             elif not isinstance(target_pairing, EuclideanPairing):
                 if self.batch_shape:
                     raise ValueError("Custom pairings do not support batched adjoints.")
                 return _generic_adjoint(self, vector)
             if isinstance(source_pairing, DiagonalPairing):
                 weights = jnp.asarray(source_pairing.weights).reshape((self.source.size,))
-                matrix = matrix / weights[..., None]
+                source_shape = (1,) * len(self.batch_shape) + (self.source.size, 1)
+                matrix = matrix / weights.reshape(source_shape)
             elif not isinstance(source_pairing, EuclideanPairing):
                 if self.batch_shape:
                     raise ValueError("Custom pairings do not support batched adjoints.")

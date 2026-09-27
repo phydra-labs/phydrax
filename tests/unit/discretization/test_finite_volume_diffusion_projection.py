@@ -19,7 +19,7 @@ def _grid(count: Any = 24, *, periodic: Any = True) -> Any:
     ).prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def test_harmonic_face_interpolation_resolves_discontinuous_material_interface() -> None:
+def test_finite_volume_diffusion_projection_scenario_1() -> None:
     grid = _grid(4, periodic=False)
     values = jnp.asarray([1.0, 1.0, 9.0, 9.0])
     interpolation = phx.discretization.FaceCoefficientPlan(grid, kind="harmonic")
@@ -27,9 +27,6 @@ def test_harmonic_face_interpolation_resolves_discontinuous_material_interface()
 
     np.testing.assert_allclose(faces[2], 1.8, rtol=1e-12)
     np.testing.assert_allclose(faces[jnp.asarray([0, -1])], [1.0, 9.0])
-
-
-def test_compressible_viscous_flux_vanishes_for_constant_primitive_state() -> None:
     grid = _grid(12, periodic=True)
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(0.1, 0.2)
@@ -53,9 +50,6 @@ def test_compressible_viscous_flux_vanishes_for_constant_primitive_state() -> No
 
     np.testing.assert_allclose(fluxes[0], 0.0, atol=1e-13)
     np.testing.assert_allclose(residual, 0.0, atol=1e-13)
-
-
-def test_compiled_finite_volume_linearization_matches_direct_jvp() -> None:
     grid = _grid(20, periodic=True)
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = phx.equations.ScalarConservationSystem(

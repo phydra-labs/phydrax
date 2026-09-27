@@ -29,7 +29,7 @@ def _tree_paths(*, num_steps: Any = 3, repeats: Any = 32) -> Any:
     )
 
 
-def test_empirical_mean_field_interpolates_weighted_lagrangian_law() -> None:
+def test_mean_field_bsde_scenario_1() -> None:
     mean_field = phx.stochastic.EmpiricalMeanField(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[[0.0], [2.0]], [[2.0], [4.0]]]),
@@ -49,9 +49,6 @@ def test_empirical_mean_field_interpolates_weighted_lagrangian_law() -> None:
     assert jnp.allclose(snapshot.effective_sample_size, 1.6)
     assert jnp.allclose(snapshot.expectation(lambda state: state**2), jnp.asarray([7.0]))
     assert not mean_field.snapshot(-0.1).valid
-
-
-def test_mean_field_control_adapter_builds_hamiltonian_bsde_and_recovers_policy() -> None:
     paths = _tree_paths()
     mean_field = phx.stochastic.EmpiricalMeanField.from_paths(paths)
     adapter = phx.stochastic.MeanFieldBSDEControlAdapter(
@@ -106,9 +103,6 @@ def test_mean_field_control_adapter_builds_hamiltonian_bsde_and_recovers_policy(
     assert result.successful
     assert jnp.all(jnp.isfinite(result.values))
     assert jnp.all(jnp.isfinite(result.controls))
-
-
-def test_mean_field_adapter_rejects_forward_support_mismatch() -> None:
     paths = _tree_paths()
     shifted_paths = phx.stochastic.BSDEPathBatch(
         paths.times + 1.0,

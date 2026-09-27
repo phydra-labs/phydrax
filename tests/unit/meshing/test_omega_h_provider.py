@@ -166,7 +166,7 @@ def test_real_omega_h_refines_and_preserves_domain_measure() -> None:
     assert np.all(np.linalg.eigvalsh(np.asarray(result.metric.values)) > 0.0)
 
 
-def test_omega_h_options_refuse_inconsistent_targets() -> None:
+def test_omega_h_contracts() -> None:
     with pytest.raises(ValueError):
         M.OmegaHOptions(min_length_desired=2.0, max_length_desired=1.0)
     with pytest.raises(ValueError):
@@ -174,9 +174,6 @@ def test_omega_h_options_refuse_inconsistent_targets() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         M.OmegaHOptions(should_swap=1)
-
-
-def test_omega_h_refuses_entity_budget_before_native_launch() -> None:
     mesh = _grid(1)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -188,9 +185,6 @@ def test_omega_h_refuses_entity_budget_before_native_launch() -> None:
         )
 
     assert failure.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
-
-
-def test_omega_h_refuses_metric_of_another_revision_before_native_launch() -> None:
     mesh = _grid(2)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     moved = mesh.with_coordinates(
@@ -201,9 +195,6 @@ def test_omega_h_refuses_metric_of_another_revision_before_native_launch() -> No
         M.OmegaHProvider("nonexistent-omega-h").execute(
             source, _metric(moved, _uniform(0.5))
         )
-
-
-def test_omega_h_distributed_run_without_launcher_is_refused_before_launch() -> None:
     mesh = _grid(1)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
@@ -216,22 +207,22 @@ def test_omega_h_distributed_run_without_launcher_is_refused_before_launch() -> 
 
 
 @requires_worker
-@pytest.mark.parametrize("ranks", [1, 2])
-def test_omega_h_rank_outputs_share_one_aggregate_byte_budget(ranks: Any) -> None:
-    launcher = _launcher_or_skip() if ranks > 1 else ("mpiexec",)
-    mesh = _grid(2)
-    source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+def test_omega_h_rank_outputs_share_one_aggregate_byte_budget() -> None:
+    for ranks in [1, 2]:
+        launcher = _launcher_or_skip() if ranks > 1 else ("mpiexec",)
+        mesh = _grid(2)
+        source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
-    with M.OmegaHProvider(_worker(), mpi_launcher=launcher) as provider:
-        with pytest.raises(M.MeshingFailure) as failure:
-            provider.execute(
-                source,
-                _metric(mesh, _uniform(0.04)),
-                ranks=ranks,
-                limits=M.MeshingLimits(maximum_data_bytes=20_000),
-            )
+        with M.OmegaHProvider(_worker(), mpi_launcher=launcher) as provider:
+            with pytest.raises(M.MeshingFailure) as failure:
+                provider.execute(
+                    source,
+                    _metric(mesh, _uniform(0.04)),
+                    ranks=ranks,
+                    limits=M.MeshingLimits(maximum_data_bytes=20_000),
+                )
 
-    assert failure.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+        assert failure.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
 
 
 @requires_worker

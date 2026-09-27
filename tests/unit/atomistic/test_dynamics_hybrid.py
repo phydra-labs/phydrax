@@ -38,7 +38,7 @@ def _program() -> Any:
     return system, neighborhood, lj, program
 
 
-def test_region_masked_composition_is_energy_derived() -> None:
+def test_dynamics_hybrid_scenario_1() -> None:
     system, neighborhood, lj, program = _program()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]])
     relation = neighborhood.build(positions)
@@ -48,9 +48,6 @@ def test_region_masked_composition_is_energy_derived() -> None:
     masked_value = masked.evaluate(positions, relation, species=system.plan.atom_type_ids)
     assert bool(masked_value.successful)
     assert bool(jnp.isfinite(masked_value.energy))
-
-
-def test_force_group_and_semigrand_transition_are_typed() -> None:
     system, neighborhood, _, program = _program()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.3, 0.0, 0.0]])
     relation = neighborhood.build(positions)
@@ -74,9 +71,6 @@ def test_force_group_and_semigrand_transition_are_typed() -> None:
     )
     assert bool(transition.successful)
     assert transition.species.shape == (2,)
-
-
-def test_one_bead_ring_polymer_has_zero_spring_and_finite_step() -> None:
     system, neighborhood, _, program = _program()
     ring = phx.atomistic.PreparedRingPolymerDynamics(
         phx.atomistic.RingPolymerPlan(1, 1.0, 1.0e-4),

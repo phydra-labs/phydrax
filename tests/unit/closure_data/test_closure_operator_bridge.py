@@ -203,7 +203,7 @@ def _datasets() -> Any:
     return task, template, cases, normalizer, datasets
 
 
-def test_closure_partitions_and_provenance_remain_authoritative() -> None:
+def test_closure_operator_bridge_scenario_1() -> None:
     task, template, cases, _, datasets = _datasets()
 
     assert datasets.train.size == 1
@@ -220,9 +220,6 @@ def test_closure_partitions_and_provenance_remain_authoritative() -> None:
         datasets.train.batch.input("features").axes[0].nodes,
         template.input("features").axes[0].nodes,
     )
-
-
-def test_closure_preparation_rejects_schema_and_partition_mismatches() -> None:
     task, template = _task_and_template()
     cases, dag, manifest, partition, normalizer = _closure_inputs()
     wrong = phx.closure_data.ClosureSample(
@@ -257,9 +254,6 @@ def test_closure_preparation_rejects_schema_and_partition_mismatches() -> None:
             partition,
             normalizers={"features": bad_normalizer},
         )
-
-
-def test_trained_operator_binds_through_the_existing_stress_policy() -> None:
     task, template, _, normalizer, datasets = _datasets()
     resolved_filter = phx.equations.ResolvedLESFilter(
         "cell filter",

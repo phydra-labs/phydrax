@@ -43,7 +43,7 @@ def _compilation(target: Any = None) -> Any:
     )
 
 
-def test_structured_template_refresh_preserves_topology_and_changes_binding() -> None:
+def test_structured_contracts() -> None:
     compilation = _compilation()
     prepared = compilation.prepared
     refreshed = opt.refresh_structured_nonlinear(
@@ -59,9 +59,6 @@ def test_structured_template_refresh_preserves_topology_and_changes_binding() ->
             prepared,
             constraint_lower=jnp.asarray([-jnp.inf]),
         )
-
-
-def test_structured_dense_method_returns_portable_warm_start() -> None:
     compilation = _compilation()
     method = opt.PrimalDualInteriorPoint(
         mode="dense-filter",
@@ -80,27 +77,6 @@ def test_structured_dense_method_returns_portable_warm_start() -> None:
         atol=3e-4,
     )
     assert result.optimization.certificate is not None
-
-
-def test_sparse_augmented_method_uses_exact_structured_derivatives() -> None:
-    compilation = _compilation()
-    method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
-    result = opt.solve_structured_minimization(
-        compilation,
-        method=method,
-        termination=_termination(),
-    )
-    assert bool(result.successful)
-    assert method.structured_capabilities.exact_sparse_jacobian
-    assert method.structured_capabilities.exact_sparse_hessian
-    assert jnp.allclose(
-        result.optimization.parameters,
-        jnp.asarray([0.25, 0.75]),
-        atol=2e-3,
-    )
-
-
-def test_structured_pool_is_input_ordered_and_exactly_once() -> None:
     compilation = _compilation()
     method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
     initial = jnp.asarray(
@@ -121,55 +97,6 @@ def test_structured_pool_is_input_ordered_and_exactly_once() -> None:
     assert sorted(pooled.evidence.completion_order.tolist()) == [0, 1, 2]
     assert int(pooled.evidence.refills) == 1
     assert all(bool(result.successful) for result in pooled.results)
-
-
-def test_kkt_plan_reports_executed_dense_form_and_reuses_factorization() -> None:
-    plan = opt.plan_kkt(2, 1)
-    assert plan.form == "dense-augmented"
-    factor = opt.factor_kkt(
-        jnp.diag(jnp.asarray([2.0, 4.0])),
-        jnp.asarray([[1.0, 1.0]]),
-        plan,
-    )
-    first = opt.solve_factored_kkt(
-        factor,
-        jnp.asarray([-2.0, -4.0]),
-        jnp.asarray([0.0]),
-    )
-    second = opt.solve_factored_kkt(
-        factor,
-        jnp.asarray([1.0, -1.0]),
-        jnp.asarray([0.5]),
-    )
-    assert bool(first.finite & first.inertia_matches)
-    assert float(second.residual_norm) <= 1e-10
-
-
-def test_spineax_provider_is_explicit_and_reports_unreliable_zero_inertia() -> None:
-    capabilities = phx.linalg.sparse_provider_capabilities("spineax-cudss")
-    assert capabilities.factorization == "ldlt"
-    assert capabilities.numeric_refactorization
-    assert capabilities.inertia
-    assert not capabilities.reliable_zero_inertia
-    method = phx.linalg.SparseLDLT()
-    assert method.provider == "spineax-cudss"
-    availability = phx.backends.spineax_availability()
-    assert availability.capabilities.backend == "spineax-cudss"
-    if not availability.available:
-        assert "spineax.cudss" not in sys.modules
-    unsafe = opt.PrimalDualInteriorPoint(
-        mode="sparse-augmented",
-        linear_policy=phx.linalg.LinearSolvePolicy(method),
-    )
-    with pytest.raises(ValueError, match="zero-inertia"):
-        opt.solve_structured_minimization(
-            _compilation(),
-            method=unsafe,
-            termination=_termination(),
-        )
-
-
-def test_structured_sensitivity_and_continuation_use_certified_kkt_state() -> None:
     compilation = _compilation()
     result = opt.solve_structured_minimization(
         compilation,
@@ -195,9 +122,32 @@ def test_structured_sensitivity_and_continuation_use_certified_kkt_state() -> No
         parameter_upper=0.2,
     )
     assert jnp.linalg.norm(seed.problem.residual(seed.state, 0.0, None)) < 1e-5
+    compilation = _compilation()
+    solved = opt.solve_structured_minimization(
+        compilation,
+        method=opt.PrimalDualInteriorPoint(
+            mode="dense-filter",
+            max_dense_dimension=32,
+        ),
+        termination=_termination(),
+    )
+    refreshed = opt.refresh_structured_nonlinear(
+        compilation.prepared,
+        jnp.asarray([0.4, 0.6]),
+    )
 
-
-def test_structured_state_design_recovers_all_at_once_kkt_solution() -> None:
+    with pytest.raises(ValueError, match="numeric binding"):
+        opt.structured_solution_jvp(
+            refreshed,
+            solved.structured,
+            jnp.asarray([1.0, 0.0]),
+        )
+    with pytest.raises(ValueError, match="numeric binding"):
+        opt.structured_parameter_continuation(
+            refreshed,
+            solved.structured,
+            lambda coordinate: jnp.asarray([coordinate, 1.0 - coordinate]),
+        )
     problem = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum((state - 1.0) ** 2 + design**2),
@@ -220,9 +170,6 @@ def test_structured_state_design_recovers_all_at_once_kkt_solution() -> None:
     assert bool(solved.successful)
     assert jnp.allclose(solved.state, jnp.asarray([0.5]), atol=2e-3)
     assert jnp.allclose(solved.design, jnp.asarray([0.5]), atol=2e-3)
-
-
-def test_structured_state_design_lowers_declared_vector_constraints() -> None:
     constraint = opt.StateDesignConstraint(
         lambda state, design, scale: jnp.stack((state[0] + design[0], scale * design[0])),
         lower=jnp.asarray((1.0, -jnp.inf)),
@@ -262,111 +209,22 @@ def test_structured_state_design_lowers_declared_vector_constraints() -> None:
     assert program.upper_indices.tolist() == [2]
 
 
-@pytest.mark.parametrize(
-    "lower,upper,point,multiplier,valid",
-    [
-        (0.5, 1.5, 0.5, -1.0, True),
-        (0.5, 1.5, 1.5, 1.0, True),
-        (0.5, float("inf"), 0.5, 1.0, False),
-        (-float("inf"), 1.5, 1.5, -1.0, False),
-    ],
-)
-def test_bound_form_certificate_splits_two_sided_net_duals_but_rejects_one_sided_wrong_signs(
-    lower: Any, upper: Any, point: Any, multiplier: Any, valid: Any
-) -> None:
-    coordinates = jnp.asarray([point])
-    constraints = lambda value, _: value
-    space = phx.linalg.ArraySpace((1,), dtype=coordinates.dtype)
-    pattern = phx.sparse.SparsePattern.from_coo([0], [0], (1, 1))
-    jacobian = phx.sparse.compile_sparse_jacobian(
-        constraints,
-        coordinates,
-        source=space,
-        target=space,
-        structure=pattern,
-        compiler="native",
-    )
-    program = opt.StructuredNonlinearProgram(
-        lambda value, _: -multiplier * value[0],
-        constraints,
-        jacobian,
-        # ty: ignore[invalid-argument-type]
-        variable_lower=[-jnp.inf],
-        # ty: ignore[invalid-argument-type]
-        variable_upper=[jnp.inf],
-        # ty: ignore[invalid-argument-type]
-        constraint_lower=[lower],
-        # ty: ignore[invalid-argument-type]
-        constraint_upper=[upper],
-        constraint_sources=("physical-range",),
-        program_id="bound-form-dual-certificate",
-        structure_id="scalar-range",
-    )
-    certificate = program.certificate(
-        coordinates,
-        jnp.asarray([multiplier]),
-        jnp.zeros(1),
-        jnp.zeros(1),
-        active_tolerance=1e-8,
-    )
-    assert jnp.allclose(certificate.stationarity_residual, 0.0)
-    assert certificate.primal_feasibility == 0.0
-    if valid:
-        assert certificate.dual_feasibility == 0.0
-        assert certificate.complementarity == 0.0
-    else:
-        assert certificate.dual_feasibility > 0.0
-
-
-def test_dense_structured_route_rejects_unconsumed_dual_warm_start() -> None:
+def test_structured_optimization_spine_scenario_1() -> None:
     compilation = _compilation()
-    dense = opt.PrimalDualInteriorPoint(mode="dense-filter", max_dense_dimension=32)
-    solved = opt.solve_structured_minimization(
+    method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
+    result = opt.solve_structured_minimization(
         compilation,
-        method=dense,
+        method=method,
         termination=_termination(),
     )
-
-    assert not dense.structured_capabilities.portable_warm_start
-    with pytest.raises(ValueError, match="does not support structured dual warm starts"):
-        dense.solve_structured(
-            compilation.prepared,
-            solved.optimization.parameters,
-            termination=_termination(),
-            warm_start=solved.structured.warm_start,
-        )
-
-
-def test_structured_sensitivity_rejects_same_template_different_numeric_binding() -> None:
-    compilation = _compilation()
-    solved = opt.solve_structured_minimization(
-        compilation,
-        method=opt.PrimalDualInteriorPoint(
-            mode="dense-filter",
-            max_dense_dimension=32,
-        ),
-        termination=_termination(),
+    assert bool(result.successful)
+    assert method.structured_capabilities.exact_sparse_jacobian
+    assert method.structured_capabilities.exact_sparse_hessian
+    assert jnp.allclose(
+        result.optimization.parameters,
+        jnp.asarray([0.25, 0.75]),
+        atol=2e-3,
     )
-    refreshed = opt.refresh_structured_nonlinear(
-        compilation.prepared,
-        jnp.asarray([0.4, 0.6]),
-    )
-
-    with pytest.raises(ValueError, match="numeric binding"):
-        opt.structured_solution_jvp(
-            refreshed,
-            solved.structured,
-            jnp.asarray([1.0, 0.0]),
-        )
-    with pytest.raises(ValueError, match="numeric binding"):
-        opt.structured_parameter_continuation(
-            refreshed,
-            solved.structured,
-            lambda coordinate: jnp.asarray([coordinate, 1.0 - coordinate]),
-        )
-
-
-def test_sparse_structured_ipm_honors_relative_tolerance_and_evaluation_limit() -> None:
     compilation = _compilation()
     method = opt.PrimalDualInteriorPoint(mode="sparse-augmented")
     relative = opt.solve_structured_minimization(
@@ -394,9 +252,6 @@ def test_sparse_structured_ipm_honors_relative_tolerance_and_evaluation_limit() 
         opt.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
     )
     assert int(exhausted.structured.work.backtracking_evaluations) == 0
-
-
-def test_sparse_structured_ipm_counts_each_attempted_line_search_trial() -> None:
     compilation = _compilation()
     result = opt.solve_structured_minimization(
         compilation,
@@ -416,3 +271,110 @@ def test_sparse_structured_ipm_counts_each_attempted_line_search_trial() -> None
         int(result.structured.work.backtracking_evaluations)
         == int(result.optimization.diagnostics.objective_evaluations) - 2
     )
+    plan = opt.plan_kkt(2, 1)
+    assert plan.form == "dense-augmented"
+    factor = opt.factor_kkt(
+        jnp.diag(jnp.asarray([2.0, 4.0])),
+        jnp.asarray([[1.0, 1.0]]),
+        plan,
+    )
+    first = opt.solve_factored_kkt(
+        factor,
+        jnp.asarray([-2.0, -4.0]),
+        jnp.asarray([0.0]),
+    )
+    second = opt.solve_factored_kkt(
+        factor,
+        jnp.asarray([1.0, -1.0]),
+        jnp.asarray([0.5]),
+    )
+    assert bool(first.finite & first.inertia_matches)
+    assert float(second.residual_norm) <= 1e-10
+    capabilities = phx.linalg.sparse_provider_capabilities("spineax-cudss")
+    assert capabilities.factorization == "ldlt"
+    assert capabilities.numeric_refactorization
+    assert capabilities.inertia
+    assert not capabilities.reliable_zero_inertia
+    method = phx.linalg.SparseLDLT()
+    assert method.provider == "spineax-cudss"
+    availability = phx.backends.spineax_availability()
+    assert availability.capabilities.backend == "spineax-cudss"
+    if not availability.available:
+        assert "spineax.cudss" not in sys.modules
+    unsafe = opt.PrimalDualInteriorPoint(
+        mode="sparse-augmented",
+        linear_policy=phx.linalg.LinearSolvePolicy(method),
+    )
+    with pytest.raises(ValueError, match="zero-inertia"):
+        opt.solve_structured_minimization(
+            _compilation(),
+            method=unsafe,
+            termination=_termination(),
+        )
+
+
+def test_structured_optimization_spine_scenario_2() -> None:
+    for lower, upper, point, multiplier, valid in [
+        (0.5, 1.5, 0.5, -1.0, True),
+        (0.5, 1.5, 1.5, 1.0, True),
+        (0.5, float("inf"), 0.5, 1.0, False),
+        (-float("inf"), 1.5, 1.5, -1.0, False),
+    ]:
+        coordinates = jnp.asarray([point])
+        constraints = lambda value, _: value
+        space = phx.linalg.ArraySpace((1,), dtype=coordinates.dtype)
+        pattern = phx.sparse.SparsePattern.from_coo([0], [0], (1, 1))
+        jacobian = phx.sparse.compile_sparse_jacobian(
+            constraints,
+            coordinates,
+            source=space,
+            target=space,
+            structure=pattern,
+            compiler="native",
+        )
+        program = opt.StructuredNonlinearProgram(
+            lambda value, _: -multiplier * value[0],
+            constraints,
+            jacobian,
+            # ty: ignore[invalid-argument-type]
+            variable_lower=[-jnp.inf],
+            # ty: ignore[invalid-argument-type]
+            variable_upper=[jnp.inf],
+            # ty: ignore[invalid-argument-type]
+            constraint_lower=[lower],
+            # ty: ignore[invalid-argument-type]
+            constraint_upper=[upper],
+            constraint_sources=("physical-range",),
+            program_id="bound-form-dual-certificate",
+            structure_id="scalar-range",
+        )
+        certificate = program.certificate(
+            coordinates,
+            jnp.asarray([multiplier]),
+            jnp.zeros(1),
+            jnp.zeros(1),
+            active_tolerance=1e-8,
+        )
+        assert jnp.allclose(certificate.stationarity_residual, 0.0)
+        assert certificate.primal_feasibility == 0.0
+        if valid:
+            assert certificate.dual_feasibility == 0.0
+            assert certificate.complementarity == 0.0
+        else:
+            assert certificate.dual_feasibility > 0.0
+    compilation = _compilation()
+    dense = opt.PrimalDualInteriorPoint(mode="dense-filter", max_dense_dimension=32)
+    solved = opt.solve_structured_minimization(
+        compilation,
+        method=dense,
+        termination=_termination(),
+    )
+
+    assert not dense.structured_capabilities.portable_warm_start
+    with pytest.raises(ValueError, match="does not support structured dual warm starts"):
+        dense.solve_structured(
+            compilation.prepared,
+            solved.optimization.parameters,
+            termination=_termination(),
+            warm_start=solved.structured.warm_start,
+        )

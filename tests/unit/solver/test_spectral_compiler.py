@@ -38,16 +38,13 @@ def _space(count: Any = 24) -> Any:
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def test_spectral_compiler_requires_dealiasing_for_nonlinearity() -> None:
+def test_spectral_compiler_scenario_1() -> None:
     with pytest.raises(ValueError, match="requires an explicit dealiasing"):
         phx.equations.compile_semidiscrete_pde(
             _reaction_diffusion_problem(),
             _space(),
             phx.discretization.PseudospectralMethodPlan(),
         )
-
-
-def test_spectral_compiler_matches_physical_reference_jit_and_gradient() -> None:
     space = _space()
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2),
@@ -77,9 +74,6 @@ def test_spectral_compiler_matches_physical_reference_jit_and_gradient() -> None
     assert jnp.allclose(physical_rate, expected, rtol=1e-10, atol=1e-10)
     assert jnp.allclose(jitted, modal_rate, rtol=1e-11, atol=1e-11)
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_spherical_heat_compiles_to_coefficient_resident_diagonal_dynamics() -> None:
     sphere_coordinate = phx.equations.PDECoordinate("sphere", "space", size=2)
     time = phx.equations.PDECoordinate("t", "time")
     field = phx.equations.PDEField("u", coordinates=("sphere", "t"))

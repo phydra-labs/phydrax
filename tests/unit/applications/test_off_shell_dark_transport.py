@@ -112,7 +112,7 @@ def _plan() -> Any:
     )
 
 
-def test_breit_wigner_moments_sum_rule_dyson_and_kms_evidence() -> None:
+def test_off_shell_dark_transport_scenario_1() -> None:
     plan = _plan()
     state = breit_wigner_off_shell_state(
         plan,
@@ -143,9 +143,6 @@ def test_breit_wigner_moments_sum_rule_dyson_and_kms_evidence() -> None:
     np.testing.assert_array_equal(state.frame_time, plan.frame.time)
     np.testing.assert_array_equal(state.frame_scale_factor, plan.frame.scale_factor)
     assert state.frame_realization_id == plan.frame.realization_id()
-
-
-def test_narrow_width_limit_converges_to_on_shell_fermi_occupation() -> None:
     plan = _plan()
     pole = jnp.asarray([[2.0]])
     beta = 0.4
@@ -171,9 +168,6 @@ def test_narrow_width_limit_converges_to_on_shell_fermi_occupation() -> None:
 
     assert abs(float(narrow_number) - on_shell) < abs(float(broad_number) - on_shell)
     np.testing.assert_allclose(narrow_number, on_shell, atol=2.0e-3)
-
-
-def test_negative_width_is_refused_instead_of_clipped() -> None:
     plan = _plan()
     shape = plan.spectral_shape
     zeros = jnp.zeros(shape)

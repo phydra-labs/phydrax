@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_coordinate_metric_clifford_relation_associativity_and_inverse() -> None:
+def test_clifford_nonassociative_capabilities_scenario_1() -> None:
     metric = jnp.asarray([[1.0, 0.2], [0.2, -1.0]])
     field = phx.metrix.clifford.CliffordMetricField(
         lambda coordinates: metric + 0.0 * coordinates[0],
@@ -38,9 +38,6 @@ def test_coordinate_metric_clifford_relation_associativity_and_inverse() -> None
     assert bool(inverse.valid)
     assert inverse.left_residual < 1e-6
     assert inverse.right_residual < 1e-6
-
-
-def test_pin_and_spin_require_unit_versors_with_audited_adjoint_action() -> None:
     field = phx.metrix.clifford.CliffordMetricField(
         lambda coordinates: jnp.eye(2) + 0.0 * coordinates[0],
         dimension=2,
@@ -115,9 +112,6 @@ def test_pin_and_spin_require_unit_versors_with_audited_adjoint_action() -> None
         phx.metrix.clifford.PinElement(product, coordinates, basis[1], parity=0).valid
     )
     assert not bool(phx.metrix.clifford.SpinElement(product, coordinates, basis[1]).valid)
-
-
-def test_conformal_null_embedding_and_projective_radical_rejection() -> None:
     model = phx.metrix.clifford.ConformalCliffordModel(3)
     embedded = model.embed(jnp.asarray([0.2, -0.3, 0.4]))
     assert model.null_residual(embedded) < 1e-6
@@ -131,7 +125,7 @@ def test_conformal_null_embedding_and_projective_radical_rejection() -> None:
         raise AssertionError("Projective radical inversion must fail closed.")
 
 
-def test_unit_octonion_geometry_moufang_brackets_and_algebra_matrix_semantics() -> None:
+def test_clifford_nonassociative_capabilities_scenario_2() -> None:
     octonion = phx.metrix.algebra.OctonionAlgebraSpec()
     product = octonion.prepare_product(backend="sparse")
     geometry = phx.metrix.algebra.UnitOctonionStateGeometry(product)
@@ -188,9 +182,6 @@ def test_unit_octonion_geometry_moufang_brackets_and_algebra_matrix_semantics() 
     spectrum = phx.metrix.algebra.AlgebraRegularSpectrum(quaternion, jnp.eye(4)[1])
     assert spectrum.side == "left"
     assert bool(spectrum.valid)
-
-
-def test_clifford_metric_signature_and_cochain_plan_fail_closed() -> None:
     with pytest.raises(ValueError, match="signature"):
         phx.metrix.clifford.CliffordMetricField(
             lambda coordinates: jnp.eye(2) + 0.0 * coordinates[0],

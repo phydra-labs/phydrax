@@ -88,7 +88,7 @@ def _plan(
     )
 
 
-def test_plummer_sphere_has_discretely_small_spherical_equilibrium_residual() -> None:
+def test_cosmology_sidm_gravothermal_scenario_1() -> None:
     plan = _plan(shells=256)
     radius = plan.radial_centers
     total_mass = 1.0
@@ -110,9 +110,6 @@ def test_plummer_sphere_has_discretely_small_spherical_equilibrium_residual() ->
 
     assert bool(result.successful)
     assert float(jnp.max(relative[4:-4])) < 0.03
-
-
-def test_underflow_zero_conductive_increment_preserves_dispersion_bit_exactly() -> None:
     plan = _plan()
     radius = plan.radial_centers
     density = 3.0 / (4.0 * jnp.pi) * (1.0 + radius**2) ** (-2.5)
@@ -132,9 +129,6 @@ def test_underflow_zero_conductive_increment_preserves_dispersion_bit_exactly() 
         result.accepted_state.velocity_dispersion_squared,
         state.velocity_dispersion_squared,
     )
-
-
-def test_conduction_moves_energy_outward_and_closes_global_energy_ledger() -> None:
     plan = _plan(shells=24)
     density = jnp.exp(-plan.radial_centers / 3.0) + 0.1
     dispersion = 1.0 + 2.0 * jnp.exp(-((plan.radial_centers / 1.5) ** 2))
@@ -163,7 +157,7 @@ def test_conduction_moves_energy_outward_and_closes_global_energy_ledger() -> No
     )
 
 
-def test_fixed_calibration_scales_conductivity_and_preserves_boundary_contract() -> None:
+def test_cosmology_sidm_gravothermal_scenario_2() -> None:
     first = _plan(calibration=0.5)
     second = _plan(calibration=1.0)
     density = jnp.exp(-first.radial_centers / 2.0) + 0.2
@@ -179,9 +173,6 @@ def test_fixed_calibration_scales_conductivity_and_preserves_boundary_contract()
     assert float(first_result.diagnostics.heat_flux_faces[0]) == 0.0
     assert float(first_result.diagnostics.heat_flux_faces[-1]) == 0.0
     assert float(first_result.diagnostics.boundary_energy_transfer) == 0.0
-
-
-def test_large_conduction_step_rolls_back_atomically() -> None:
     plan = _plan(maximum_change=0.01)
     density = jnp.ones((plan.shell_count,))
     dispersion = jnp.linspace(3.0, 1.0, plan.shell_count)
@@ -196,11 +187,6 @@ def test_large_conduction_step_rolls_back_atomically() -> None:
         strict=True,
     ):
         np.testing.assert_array_equal(actual, expected)
-
-
-def test_nonuniform_radial_geometry_uses_resistance_weighting_and_exact_quadratic_gradient() -> (
-    None
-):
     faces = jnp.asarray((0.0, 0.1, 0.4, 1.0, 2.0))
     manifest, artifact = _calibration_records(
         faces, 0.75, calibration_id="nonuniform-calibration"
@@ -254,7 +240,7 @@ def test_nonuniform_radial_geometry_uses_resistance_weighting_and_exact_quadrati
     )
 
 
-def test_nonhydrostatic_input_is_rejected_and_rolled_back() -> None:
+def test_cosmology_sidm_gravothermal_scenario_3() -> None:
     plan = _plan()
     radius = plan.radial_centers
     density = 3.0 / (4.0 * jnp.pi) * (1.0 + radius**2) ** (-2.5)
@@ -276,9 +262,6 @@ def test_nonhydrostatic_input_is_rejected_and_rolled_back() -> None:
         strict=True,
     ):
         np.testing.assert_array_equal(actual, expected)
-
-
-def test_structural_nonconvergence_rolls_back_conductive_update() -> None:
     plan = _plan()
     radius = plan.radial_centers
     density = 3.0 / (4.0 * jnp.pi) * (1.0 + radius**2) ** (-2.5)
@@ -298,9 +281,6 @@ def test_structural_nonconvergence_rolls_back_conductive_update() -> None:
         strict=True,
     ):
         np.testing.assert_array_equal(actual, expected)
-
-
-def test_reflecting_center_contract_rejects_nonzero_inner_radius() -> None:
     with pytest.raises(ValueError, match="payload inputs are invalid"):
         gravothermal_calibration_payload(
             jnp.asarray((0.1, 0.2, 0.4, 0.8)),
@@ -311,23 +291,15 @@ def test_reflecting_center_contract_rejects_nonzero_inner_radius() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("keyword", "value", "message"),
-    (
+def test_cosmology_sidm_gravothermal_scenario_4() -> None:
+    for keyword, value, message in (
         ("geometry", "periodic-cartesian", "isolated-spherical"),
         ("velocity_model", "anisotropic", "isotropic"),
         ("collision_model", "inelastic-multispecies", "elastic-single-species"),
         ("boundary_condition", "open", "reflecting-center-zero-flux-outer"),
-    ),
-)
-def test_gravothermal_profile_refuses_out_of_regime_claims(
-    keyword: Any, value: Any, message: Any
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        _plan(**{keyword: value})
-
-
-def test_calibration_requested_use_denial_is_fail_closed() -> None:
+    ):
+        with pytest.raises(ValueError, match=message):
+            _plan(**{keyword: value})
     faces = jnp.linspace(0.0, 8.0, 33)
     manifest, artifact = _calibration_records(faces, 0.75, commercial_use_permitted=False)
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
@@ -336,9 +308,6 @@ def test_calibration_requested_use_denial_is_fail_closed() -> None:
             calibration_artifact=artifact,
             commercial_use=True,
         )
-
-
-def test_calibration_value_substitution_fails_exact_digest_and_size_contract() -> None:
     faces = jnp.linspace(0.0, 8.0, 33)
     manifest, artifact = _calibration_records(faces, 0.75)
     with pytest.raises(ValueError, match="mismatch"):
@@ -347,9 +316,6 @@ def test_calibration_value_substitution_fails_exact_digest_and_size_contract() -
             calibration_manifest=manifest,
             calibration_artifact=artifact,
         )
-
-
-def test_calibration_envelope_license_and_lineage_must_match_manifest() -> None:
     faces = jnp.linspace(0.0, 8.0, 33)
     manifest, artifact = _calibration_records(faces, 0.75)
     substituted = ScientificArtifactEnvelope(

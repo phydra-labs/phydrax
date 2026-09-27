@@ -6,7 +6,7 @@ import pytest
 import phydrax as phx
 
 
-def test_linear_endpoint_interpolant_preserves_endpoints_and_jvp_velocity() -> None:
+def test_linear_endpoint_interpolant_contracts() -> None:
     interpolant = phx.transport.LinearEndpointInterpolant((2,))
     source = jnp.asarray([[0.0, 1.0], [2.0, -1.0]])
     target = jnp.asarray([[4.0, 3.0], [0.0, 5.0]])
@@ -29,9 +29,6 @@ def test_linear_endpoint_interpolant_preserves_endpoints_and_jvp_velocity() -> N
     end = interpolant.evaluate(1.0, source, target)
     assert jnp.allclose(start.state, source)
     assert jnp.allclose(end.state, target)
-
-
-def test_linear_endpoint_interpolant_handles_event_rank_and_nonfinite_validity() -> None:
     interpolant = phx.transport.LinearEndpointInterpolant((2, 2))
     source = jnp.zeros((3, 2, 2)).at[1, 0, 0].set(jnp.nan)
     target = jnp.ones((3, 2, 2))
@@ -39,9 +36,6 @@ def test_linear_endpoint_interpolant_handles_event_rank_and_nonfinite_validity()
 
     assert evaluation.state.shape == (3, 2, 2)
     assert jnp.array_equal(evaluation.valid, jnp.asarray([True, False, True]))
-
-
-def test_linear_endpoint_interpolant_rejects_shape_and_time_contract_violations() -> None:
     interpolant = phx.transport.LinearEndpointInterpolant(
         (2,), source_coordinate=2.0, target_coordinate=4.0
     )

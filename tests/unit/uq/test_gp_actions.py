@@ -27,7 +27,7 @@ def _dense(operator: Any) -> Any:
     )
 
 
-def test_fixed_actions_preserve_orientation_and_native_sparse_values() -> None:
+def test_gp_actions_scenario_1() -> None:
     points = jnp.linspace(0.0, 1.0, 6)[:, None]
     matrix = jnp.arange(18.0).reshape(6, 3) + 1.0
     dense = phx.uq.FixedGaussianProcessActionPolicy(matrix).resolve(
@@ -58,9 +58,6 @@ def test_fixed_actions_preserve_orientation_and_native_sparse_values() -> None:
     assert sparse.structurally_sparse
     assert sparse.storage_elements == 4
     assert jnp.array_equal(_dense(sparse.operator), sparse_operator.as_dense())
-
-
-def test_fixed_actions_reject_reversed_complex_and_misaligned_inputs() -> None:
     with pytest.raises(ValueError, match="shape"):
         phx.uq.FixedGaussianProcessActionPolicy(jnp.ones(5))
     with pytest.raises(TypeError, match="real"):
@@ -69,9 +66,6 @@ def test_fixed_actions_reject_reversed_complex_and_misaligned_inputs() -> None:
     policy = phx.uq.FixedGaussianProcessActionPolicy(jnp.ones((5, 2)))
     with pytest.raises(ValueError, match="align"):
         policy.resolve(jnp.ones((4, 1)), state=_state())
-
-
-def test_block_sparse_actions_balance_normalize_and_replay() -> None:
     points = jnp.linspace(0.0, 1.0, 10)[:, None]
     first = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(jr.key(7), 10, 3)
     second = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(jr.key(7), 10, 3)
@@ -84,6 +78,21 @@ def test_block_sparse_actions_balance_normalize_and_replay() -> None:
     assert jnp.array_equal(jnp.count_nonzero(matrix, axis=1), jnp.ones(10))
     assert jnp.allclose(jnp.linalg.vector_norm(matrix, axis=0), jnp.ones(3))
     assert tuple(jnp.count_nonzero(matrix, axis=0).tolist()) == (4, 3, 3)
+    points = jnp.linspace(0.0, 1.0, 5)[:, None]
+    state = _state()
+    with pytest.raises(ValueError, match="cannot exceed"):
+        phx.uq.PseudoInputGaussianProcessActionPolicy(jnp.ones((6, 1))).resolve(
+            points,
+            state=state,
+        )
+    with pytest.raises(ValueError, match="trailing"):
+        phx.uq.PseudoInputGaussianProcessActionPolicy(jnp.ones((2, 2))).resolve(
+            points,
+            state=state,
+        )
+    duplicate = phx.uq.PseudoInputGaussianProcessActionPolicy(jnp.asarray([[0.3], [0.3]]))
+    with pytest.raises(Exception, match="linearly independent"):
+        duplicate.resolve(points, state=state)
 
 
 def test_block_sparse_actions_reject_invalid_blocks_and_preserve_gradients() -> None:
@@ -141,21 +150,3 @@ def test_pseudo_input_actions_match_kernel_sections_and_are_differentiable() -> 
     gradient = jax.grad(objective)(pseudo_inputs)
     assert gradient.shape == pseudo_inputs.shape
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_pseudo_input_actions_reject_shape_count_and_rank_failures() -> None:
-    points = jnp.linspace(0.0, 1.0, 5)[:, None]
-    state = _state()
-    with pytest.raises(ValueError, match="cannot exceed"):
-        phx.uq.PseudoInputGaussianProcessActionPolicy(jnp.ones((6, 1))).resolve(
-            points,
-            state=state,
-        )
-    with pytest.raises(ValueError, match="trailing"):
-        phx.uq.PseudoInputGaussianProcessActionPolicy(jnp.ones((2, 2))).resolve(
-            points,
-            state=state,
-        )
-    duplicate = phx.uq.PseudoInputGaussianProcessActionPolicy(jnp.asarray([[0.3], [0.3]]))
-    with pytest.raises(Exception, match="linearly independent"):
-        duplicate.resolve(points, state=state)

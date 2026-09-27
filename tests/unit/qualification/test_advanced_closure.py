@@ -2,7 +2,7 @@ import phydrax as phx
 from phydrax.qualification import CapabilityDepth, ClosureState
 
 
-def test_exact_candidates_close_implementation_without_claiming_release() -> None:
+def test_advanced_closure_scenario_1() -> None:
     catalog = phx.qualification.builtin_capability_catalog()
     matrices = phx.qualification.builtin_omniphysics_closure_matrices(catalog)
     assert len(matrices) == 21
@@ -31,9 +31,6 @@ def test_exact_candidates_close_implementation_without_claiming_release() -> Non
         for matrix in matrices
         for resolution in matrix.resolutions
     )
-
-
-def test_promoted_candidate_tuples_are_exact_and_single_host_only() -> None:
     catalog = phx.qualification.builtin_capability_catalog()
     declarations = tuple(
         value
@@ -55,9 +52,6 @@ def test_promoted_candidate_tuples_are_exact_and_single_host_only() -> None:
         }
         assert attributes["execution"] == "single-host-cpu-float64"
         assert "no-distributed-hardware-evidence" in declaration.nonclaims
-
-
-def test_source_ledger_pins_and_reviews_every_reference() -> None:
     ledger = phx.qualification.builtin_source_absorption_ledger()
     assert phx.qualification.validate_source_coverage(ledger) == ()
     assert all(

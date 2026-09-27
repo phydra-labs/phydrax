@@ -71,7 +71,7 @@ def _prepared_affine_rom() -> Any:
     return phx.rom.prepare_affine_linear_rom(problem, coefficients)
 
 
-def test_affine_rom_evaluator_propagates_reduced_state_and_validity() -> None:
+def test_affine_rom_contracts() -> None:
     model = _prepared_affine_rom()
     level = phx.fidelity.FidelityLevelSpec(
         "rom",
@@ -106,11 +106,6 @@ def test_affine_rom_evaluator_propagates_reduced_state_and_validity() -> None:
     )
     assert not bool(unsupported.valid)
     assert unsupported.result.solve_result is None
-
-
-def test_affine_rom_evaluator_exposes_prepared_observation_without_reconstruction() -> (
-    None
-):
     model = _prepared_affine_rom()
     level = phx.fidelity.FidelityLevelSpec(
         "rom-qoi",
@@ -134,9 +129,6 @@ def test_affine_rom_evaluator_exposes_prepared_observation_without_reconstructio
 
     np.testing.assert_allclose(evaluation.observable, np.asarray([1.25]))
     assert evaluation.result.reconstructed_state is None
-
-
-def test_affine_rom_evaluator_rejects_observable_and_contract_mismatches() -> None:
     model = _prepared_affine_rom()
     wrong_observable = phx.fidelity.FidelityLevelSpec(
         "wrong-observable",

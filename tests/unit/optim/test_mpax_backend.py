@@ -16,7 +16,7 @@ import phydrax as phx
 pytest.importorskip("mpax")
 
 
-def test_mpax_rapdhg_solves_bounded_lp_and_qp_with_independent_audit() -> None:
+def test_mpax_rapdhg_contracts() -> None:
     policy = phx.optim.ConvexSolvePolicy(
         phx.optim.MPAXraPDHG(iteration_limit=2_000),
         termination=phx.optim.ConvexTermination(
@@ -44,9 +44,6 @@ def test_mpax_rapdhg_solves_bounded_lp_and_qp_with_independent_audit() -> None:
     np.testing.assert_allclose(qp_result.primal, [1.0, 2.0], atol=2e-4)
     assert qp_result.status == phx.optim.ConvexProgramStatus.OPTIMAL
     assert qp_result.provenance.backend == "mpax"
-
-
-def test_mpax_rapdhg_preserves_batch_axes() -> None:
     problem = phx.optim.QuadraticProgram(
         jnp.broadcast_to(jnp.eye(1), (2, 1, 1)),
         jnp.asarray([[-1.0], [-2.0]]),

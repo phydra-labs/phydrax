@@ -127,7 +127,7 @@ def test_market_curve_valuation_archive_workflow(tmp_path: Any) -> None:
     np.testing.assert_allclose(reopened.arrays["present_value"], result.value)
 
 
-def test_physical_forecast_to_portfolio_decision_workflow() -> None:
+def test_finance_workflows_scenario_1() -> None:
     series = jnp.asarray([0.010, 0.015, 0.012, 0.020, 0.018, 0.024, 0.021, 0.027])
     fit = phx.uq.fit_arima(series, p=1)
     assert bool(fit.successful)
@@ -169,9 +169,6 @@ def test_physical_forecast_to_portfolio_decision_workflow() -> None:
     np.testing.assert_allclose(
         result.decision.weights, jnp.asarray([0.8, 0.2]), atol=2e-4
     )
-
-
-def test_credit_exposure_xva_workflow() -> None:
     finance = phx.finance
     profile = finance.exposure.ExposureProfile(
         jnp.asarray([0.0, 1.0, 2.0]),
@@ -247,9 +244,6 @@ def test_credit_exposure_xva_workflow() -> None:
     np.testing.assert_allclose(result.decomposition_residual, 0.0, atol=1e-15)
     assert float(result.cva.adjustment) < 0.0
     assert float(result.dva.adjustment) > 0.0
-
-
-def test_event_model_to_execution_control_workflow() -> None:
     model = phx.finance.execution.AlmgrenChrissModel(
         volatility=0.2,
         risk_aversion=0.1,

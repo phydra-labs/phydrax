@@ -24,7 +24,7 @@ def _assert_finite_condition(kernel: Any, points: Any, observations: Any) -> Any
     return factor
 
 
-def test_compact_and_combinatorial_kernel_gp_workflows() -> None:
+def test_geometric_kernel_spaces_scenario_1() -> None:
     sphere_points = jnp.asarray(
         [
             [1.0, 0.0, 0.0],
@@ -71,9 +71,6 @@ def test_compact_and_combinatorial_kernel_gp_workflows() -> None:
 
     assert isinstance(sphere_factor, phx.uq.ExactGaussianProcessFactor)
     assert isinstance(categorical_factor, phx.uq.ExactGaussianProcessFactor)
-
-
-def test_noncompact_kernel_gp_workflows_select_exact_feature_space() -> None:
     radii = jnp.linspace(0.0, 0.8, 24)
     hyperbolic_points = jnp.stack(
         (jnp.cosh(radii), jnp.sinh(radii), jnp.zeros_like(radii)),

@@ -11,7 +11,7 @@ import pytest
 import phydrax as phx
 
 
-def test_categorical_duality_normalization_kl_and_fisher() -> None:
+def test_categorical_contracts() -> None:
     family = phx.uq.CategoricalFamily(4)
     natural_values = jnp.asarray([0.7, -0.4, 0.2])
     natural = family.natural(natural_values)
@@ -46,9 +46,6 @@ def test_categorical_duality_normalization_kl_and_fisher() -> None:
     assert bool(conversion.valid)
     assert int(conversion.iterations) == 0
     assert conversion.method_id == "categorical-analytic"
-
-
-def test_categorical_full_logits_are_identified_and_support_is_explicit() -> None:
     family = phx.uq.CategoricalFamily(3)
     logits = jnp.asarray([1.2, -0.3, 0.7])
     shifted = logits + 8.0
@@ -64,9 +61,6 @@ def test_categorical_full_logits_are_identified_and_support_is_explicit() -> Non
         phx.uq.CategoricalFamily(1)
     with pytest.raises(ValueError, match="full logits"):
         family.natural_from_logits(jnp.ones((2,)))
-
-
-def test_categorical_gathered_log_prob_preserves_family_invalid_contract() -> None:
     family = phx.uq.CategoricalFamily(3)
     logits = jnp.asarray(
         [
@@ -89,9 +83,6 @@ def test_categorical_gathered_log_prob_preserves_family_invalid_contract() -> No
         gathered,
         atol=2e-12,
     )
-
-
-def test_categorical_mean_domain_and_projection_report_missing_categories() -> None:
     family = phx.uq.CategoricalFamily(3)
     interior = family.mean_domain(family.mean(jnp.asarray([0.2, 0.3])))
     boundary = family.mean_domain(family.mean(jnp.asarray([0.5, 0.5])))
@@ -105,9 +96,6 @@ def test_categorical_mean_domain_and_projection_report_missing_categories() -> N
     assert int(exterior.status) == phx.uq.EXPONENTIAL_FAMILY_OUTSIDE_MEAN_DOMAIN
     assert not bool(projected.valid)
     assert int(projected.status) == phx.uq.EXPONENTIAL_FAMILY_MEAN_BOUNDARY
-
-
-def test_categorical_projection_is_weighted_mergeable_and_sampled() -> None:
     family = phx.uq.CategoricalFamily(3)
     labels = jnp.asarray([0, 1, 2, 1, 0, 2, 1, 2])
     log_weights = jnp.asarray([-0.5, 0.3, 0.7, -0.1, 0.2, 0.9, -0.4, 0.1])
@@ -131,9 +119,6 @@ def test_categorical_projection_is_weighted_mergeable_and_sampled() -> None:
     )
     assert samples.shape == (20_000,)
     assert bool(one_shot.valid)
-
-
-def test_categorical_likelihood_declares_coordinate_and_target_axes() -> None:
     family = phx.uq.CategoricalFamily(3)
     full = phx.uq.CategoricalExponentialFamilyLikelihood(
         family, prediction_coordinates="full_logits"
@@ -165,9 +150,6 @@ def test_categorical_likelihood_declares_coordinate_and_target_axes() -> None:
         full.align_observations(logits, jnp.ones((2, 2)))
     with pytest.raises(TypeError, match="unknown parameters"):
         full.log_prob(logits, labels, scale=1.0)
-
-
-def test_categorical_likelihood_integrates_with_fixed_posterior_terms() -> None:
     family = phx.uq.CategoricalFamily(3)
     likelihood = phx.uq.CategoricalExponentialFamilyLikelihood(
         family, prediction_coordinates="full_logits"
@@ -184,9 +166,6 @@ def test_categorical_likelihood_integrates_with_fixed_posterior_terms() -> None:
     expected = jax.nn.log_softmax(logits, axis=-1)[jnp.arange(3), labels]
     np.testing.assert_allclose(per_case, expected, atol=2e-15)
     np.testing.assert_allclose(term.log_prob(logits), jnp.sum(expected), atol=2e-15)
-
-
-def test_categorical_likelihood_matches_multinomial_glm_score_equations() -> None:
     family = phx.uq.CategoricalFamily(4)
     likelihood = phx.uq.CategoricalExponentialFamilyLikelihood(
         family, prediction_coordinates="full_logits"

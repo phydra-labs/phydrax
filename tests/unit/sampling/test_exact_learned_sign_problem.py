@@ -37,7 +37,7 @@ def _support() -> Any:
     )
 
 
-def test_exact_delayed_acceptance_invariance_survives_bad_surrogate() -> None:
+def test_exact_learned_sign_problem_scenario_1() -> None:
     support = _support()
     metric = freeze_learned_metric(jnp.eye(1, dtype=jnp.float32), support)
     plan = DelayedAcceptanceHMCPlan(support, step_size=0.35, leapfrog_steps=4)
@@ -64,9 +64,6 @@ def test_exact_delayed_acceptance_invariance_survives_bad_surrogate() -> None:
     assert jnp.any(result.surrogate_accepted)
     assert jnp.any(result.surrogate_accepted & ~result.accepted)
     assert result.claim == "exact-target-delayed-acceptance-with-frozen-surrogate"
-
-
-def test_learned_artifacts_are_frozen_and_out_of_domain_is_refused() -> None:
     support = _support()
     metric = freeze_learned_metric(jnp.eye(1, dtype=jnp.float32), support)
     coarse = freeze_learned_coarse_space(jnp.ones((1, 1), dtype=jnp.float32), support)
@@ -89,9 +86,6 @@ def test_learned_artifacts_are_frozen_and_out_of_domain_is_refused() -> None:
             geometry_id="euclidean-r1",
             parameter_values=jnp.asarray([1.5]),
         )
-
-
-def test_nontrivial_gauge_flow_reports_jacobian_and_uses_exact_mh_ratio() -> None:
     support = _support()
     scale = 1.7
     flow = ScalarGaugeEquivariantFlow(support, scale=scale)

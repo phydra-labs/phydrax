@@ -73,7 +73,7 @@ def _assert_projection_evidence(result: Any, operators: Any, tolerance: Any) -> 
     assert jnp.sqrt(jnp.sum(volumes * result.pressure_residual**2)) < tolerance
 
 
-def test_pressure_hybrid_stretched_periodic_channel_and_global_mode_evidence() -> None:
+def test_mac_hybrid_projection_scenario_1() -> None:
     _, operators = _operators()
     plan = phx.solver.MACPressureProjectionPlan(
         operators,
@@ -101,9 +101,50 @@ def test_pressure_hybrid_stretched_periodic_channel_and_global_mode_evidence() -
     assert global_mode.compatibility_defect < 1e-12
     assert global_mode.gauge_defect < 1e-12
     assert global_mode.resources.total_bytes <= 2_000_000
+    _, operators = _operators()
+    with pytest.raises(ValueError, match="explicit hybrid_line_axis"):
+        phx.solver.MACPressureProjectionPlan(operators, solve_method="hybrid")
 
+    _, two_dimensional = _operators(dimension=2)
+    with pytest.raises(ValueError, match="three-dimensional"):
+        phx.solver.MACPressureProjectionPlan(
+            two_dimensional, solve_method="hybrid", hybrid_line_axis=1
+        )
 
-def test_uniform_pressure_hybrid_matches_full_transform_and_auto_prefers_full() -> None:
+    _, periodic_line = _operators(uniform_line=True, periodic_line=True)
+    with pytest.raises(ValueError, match="nonperiodic line"):
+        phx.solver.MACPressureProjectionPlan(
+            periodic_line, solve_method="hybrid", hybrid_line_axis=1
+        )
+
+    _, bad_transverse = _operators(nonuniform_transverse=True)
+    with pytest.raises(ValueError, match="transform-compatible transverse"):
+        phx.solver.MACPressureProjectionPlan(
+            bad_transverse, solve_method="hybrid", hybrid_line_axis=1
+        )
+
+    boundaries = phx.discretization.MACBoundaryPlan(
+        operators,
+        (
+            phx.discretization.MACBoundarySide("y", "lower", "no-slip"),
+            phx.discretization.MACBoundarySide("y", "upper", "pressure-outlet"),
+        ),
+    ).prepare()
+    with pytest.raises(ValueError, match="all-Neumann"):
+        phx.solver.MACPressureProjectionPlan(
+            operators,
+            boundaries=boundaries,
+            solve_method="hybrid",
+            hybrid_line_axis=1,
+        )
+
+    with pytest.raises(ValueError, match="resources"):
+        phx.solver.MACPressureProjectionPlan(
+            operators,
+            solve_method="hybrid",
+            hybrid_line_axis=1,
+            maximum_resource_bytes=1,
+        )
     _, operators = _operators(uniform_line=True)
     pressure = _pressure_probe(operators)
     velocity = operators.gradient(pressure)
@@ -133,9 +174,6 @@ def test_uniform_pressure_hybrid_matches_full_transform_and_auto_prefers_full() 
         np.testing.assert_allclose(
             hybrid_component, transform_component, rtol=2e-8, atol=2e-8
         )
-
-
-def test_stretched_pressure_hybrid_matches_iterative_projection_and_rate() -> None:
     _, operators = _operators()
     pressure = _pressure_probe(operators)
     velocity = operators.gradient(pressure)
@@ -213,7 +251,7 @@ def test_pressure_hybrid_rhs_jvp_and_vjp_obey_the_adjoint_identity() -> None:
     )
 
 
-def test_execution_supplied_line_coefficient_retains_certified_hybrid_route() -> None:
+def test_mac_hybrid_projection_scenario_2() -> None:
     _, operators = _operators()
     plan = phx.solver.MACPressureProjectionPlan(
         operators,
@@ -245,56 +283,6 @@ def test_execution_supplied_line_coefficient_retains_certified_hybrid_route() ->
     assert result.hybrid is not None and result.transform is None
     assert result.hybrid_action_defect < 2e-8
     assert result.converged
-
-
-def test_pressure_hybrid_rejects_every_uncertified_preparation_predicate() -> None:
-    _, operators = _operators()
-    with pytest.raises(ValueError, match="explicit hybrid_line_axis"):
-        phx.solver.MACPressureProjectionPlan(operators, solve_method="hybrid")
-
-    _, two_dimensional = _operators(dimension=2)
-    with pytest.raises(ValueError, match="three-dimensional"):
-        phx.solver.MACPressureProjectionPlan(
-            two_dimensional, solve_method="hybrid", hybrid_line_axis=1
-        )
-
-    _, periodic_line = _operators(uniform_line=True, periodic_line=True)
-    with pytest.raises(ValueError, match="nonperiodic line"):
-        phx.solver.MACPressureProjectionPlan(
-            periodic_line, solve_method="hybrid", hybrid_line_axis=1
-        )
-
-    _, bad_transverse = _operators(nonuniform_transverse=True)
-    with pytest.raises(ValueError, match="transform-compatible transverse"):
-        phx.solver.MACPressureProjectionPlan(
-            bad_transverse, solve_method="hybrid", hybrid_line_axis=1
-        )
-
-    boundaries = phx.discretization.MACBoundaryPlan(
-        operators,
-        (
-            phx.discretization.MACBoundarySide("y", "lower", "no-slip"),
-            phx.discretization.MACBoundarySide("y", "upper", "pressure-outlet"),
-        ),
-    ).prepare()
-    with pytest.raises(ValueError, match="all-Neumann"):
-        phx.solver.MACPressureProjectionPlan(
-            operators,
-            boundaries=boundaries,
-            solve_method="hybrid",
-            hybrid_line_axis=1,
-        )
-
-    with pytest.raises(ValueError, match="resources"):
-        phx.solver.MACPressureProjectionPlan(
-            operators,
-            solve_method="hybrid",
-            hybrid_line_axis=1,
-            maximum_resource_bytes=1,
-        )
-
-
-def test_transform_line_nullspace_preparation_rejects_ambiguous_or_false_data() -> None:
     line_lower = -jnp.ones(2)
     line_diagonal = jnp.asarray([1.0, 2.0, 1.0])
     line_upper = -jnp.ones(2)

@@ -72,15 +72,12 @@ def test_requested_profiles_are_independent_and_fail_closed(monkeypatch: Any) ->
     assert json.loads(qualification.serialize_report(report)) == report
 
 
-def test_profile_selection_rejects_unknown_and_duplicate_names() -> None:
+def test_black_hole_qualification_scenario_1() -> None:
     with pytest.raises(ValueError, match="Unknown"):
         qualification.run_qualification(("not-a-profile",), valid_at=10)
     with pytest.raises(ValueError, match="unique"):
         qualification.run_qualification(("geometry", "geometry"), valid_at=10)
     with pytest.raises(ValueError, match="nonnegative Unix timestamp"):
         qualification.run_qualification(("geometry",), valid_at=-1)
-
-
-def test_report_serialization_rejects_nonfinite_json_numbers() -> None:
     with pytest.raises(ValueError, match="Out of range float values"):
         qualification.serialize_report({"residual": float("nan")})

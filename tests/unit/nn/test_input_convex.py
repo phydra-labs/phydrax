@@ -13,7 +13,7 @@ from phydrax.nn.models import (
 )
 
 
-def test_input_convex_network_has_positive_semidefinite_hessians() -> None:
+def test_input_convex_scenario_1() -> None:
     model = InputConvexNetwork(
         in_size=3,
         width_size=12,
@@ -27,9 +27,6 @@ def test_input_convex_network_has_positive_semidefinite_hessians() -> None:
 
     assert jnp.min(eigenvalues) >= -1e-9
     assert jnp.all(jnp.isfinite(hessians))
-
-
-def test_input_convex_gradient_is_monotone() -> None:
     model = InputConvexNetwork(in_size=2, width_size=10, depth=2, key=jr.key(2))
     first = jnp.asarray([-0.5, 0.8])
     second = jnp.asarray([0.7, -0.2])
@@ -38,9 +35,31 @@ def test_input_convex_gradient_is_monotone() -> None:
     ).real
 
     assert monotonicity >= -1e-9
+    first = InputConvexNetwork(in_size=3, width_size=6, depth=2, key=jr.key(8))
+    retrained = InputConvexNetwork(in_size=3, width_size=6, depth=2, key=jr.key(9))
+    relu = InputConvexNetwork(
+        in_size=3, width_size=6, depth=2, activation="relu", key=jr.key(8)
+    )
+    certificate = first.input_convex_certificate()
 
+    assert isinstance(certificate, AbstractConstructionCertificate)
+    assert certificate.capability_id == "input-convex"
+    assert certificate.context_size is None
+    assert certificate.convex_input_size == 3
+    assert certificate.certificate_id == (
+        retrained.input_convex_certificate().certificate_id
+    )
+    assert certificate.certificate_id != relu.input_convex_certificate().certificate_id
+    model = InputConvexNetwork(in_size=2, width_size=4, depth=2, key=jr.key(11))
+    tampered = eqx.tree_at(
+        lambda value: value.state_layers[0].weight_transform,
+        model,
+        None,
+        is_leaf=lambda value: value is None,
+    )
 
-def test_positive_hidden_weights_survive_optimizer_style_raw_updates() -> None:
+    with pytest.raises(ValueError, match="positive hidden-state couplings"):
+        tampered.input_convex_certificate()
     model = InputConvexNetwork(in_size=2, width_size=8, depth=3, key=jr.key(3))
     updates = jax.tree.map(
         lambda leaf: -0.2 * jnp.ones_like(leaf) if eqx.is_array(leaf) else None,
@@ -54,9 +73,6 @@ def test_positive_hidden_weights_survive_optimizer_style_raw_updates() -> None:
     assert (
         jnp.min(jnp.linalg.eigvalsh(updated.hessian(jnp.asarray([0.2, -0.4])))) >= -1e-9
     )
-
-
-def test_partially_input_convex_network_is_convex_only_in_designated_input() -> None:
     model = PartiallyInputConvexNetwork(
         context_size=2,
         convex_size=3,
@@ -75,25 +91,7 @@ def test_partially_input_convex_network_is_convex_only_in_designated_input() -> 
     assert jnp.all(jnp.isfinite(hessians))
 
 
-def test_input_convex_certificate_is_structural_construction_evidence() -> None:
-    first = InputConvexNetwork(in_size=3, width_size=6, depth=2, key=jr.key(8))
-    retrained = InputConvexNetwork(in_size=3, width_size=6, depth=2, key=jr.key(9))
-    relu = InputConvexNetwork(
-        in_size=3, width_size=6, depth=2, activation="relu", key=jr.key(8)
-    )
-    certificate = first.input_convex_certificate()
-
-    assert isinstance(certificate, AbstractConstructionCertificate)
-    assert certificate.capability_id == "input-convex"
-    assert certificate.context_size is None
-    assert certificate.convex_input_size == 3
-    assert certificate.certificate_id == (
-        retrained.input_convex_certificate().certificate_id
-    )
-    assert certificate.certificate_id != relu.input_convex_certificate().certificate_id
-
-
-def test_partial_input_convex_certificate_names_the_convex_argument() -> None:
+def test_input_convex_scenario_2() -> None:
     model = PartiallyInputConvexNetwork(
         context_size=2, convex_size=3, width_size=5, depth=2, key=jr.key(10)
     )
@@ -103,22 +101,6 @@ def test_partial_input_convex_certificate_names_the_convex_argument() -> None:
     assert certificate.construction == "partially-input-convex-network"
     assert (certificate.context_size, certificate.convex_input_size) == (2, 3)
     assert certificate.certificate_id != joint.input_convex_certificate().certificate_id
-
-
-def test_input_convex_certificate_refuses_unconstrained_hidden_couplings() -> None:
-    model = InputConvexNetwork(in_size=2, width_size=4, depth=2, key=jr.key(11))
-    tampered = eqx.tree_at(
-        lambda value: value.state_layers[0].weight_transform,
-        model,
-        None,
-        is_leaf=lambda value: value is None,
-    )
-
-    with pytest.raises(ValueError, match="positive hidden-state couplings"):
-        tampered.input_convex_certificate()
-
-
-def test_bound_input_convex_field_carries_certificate_until_transformed() -> None:
     # ty: ignore[invalid-argument-type]
     domain = phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0))
     model = InputConvexNetwork(in_size=2, width_size=4, depth=2, key=jr.key(12))

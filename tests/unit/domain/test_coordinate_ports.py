@@ -20,7 +20,7 @@ def _square(label: str) -> GeometryDomain:
     )
 
 
-def test_domain_ports_follow_label_order_with_label_scoped_components() -> None:
+def test_coordinate_ports_scenario_1() -> None:
     x_port, t_port = (_square("x") @ TimeInterval(0.0, 1.0)).value_ports()
 
     assert x_port.semantic_id == "x"
@@ -40,9 +40,6 @@ def test_domain_ports_follow_label_order_with_label_scoped_components() -> None:
     assert t_port.event_shape == ()
     assert t_port.component_ids == ("t",)
     assert t_port.axis_keys == ()
-
-
-def test_equal_coordinate_schemas_under_different_labels_have_distinct_ports() -> None:
     (x_port,) = _square("x").value_ports()
     (y_port,) = _square("y").value_ports()
     (relabeled,) = _square("x").relabel("y").value_ports()
@@ -51,9 +48,6 @@ def test_equal_coordinate_schemas_under_different_labels_have_distinct_ports() -
     assert y_port.axis_keys == (AxisKey("domain-label:y", "0"),)
     assert x_port.port_id != y_port.port_id
     assert relabeled.port_id == y_port.port_id
-
-
-def test_coordinate_ports_depend_on_declaration_not_support_values() -> None:
     (first,) = ScalarInterval(0.0, 1.0, label="s").value_ports()
     (second,) = ScalarInterval(-3.0, 5.0, label="s").value_ports()
 
@@ -61,29 +55,11 @@ def test_coordinate_ports_depend_on_declaration_not_support_values() -> None:
     assert first.port_id == second.port_id
 
 
-def test_structured_coordinates_have_no_dense_port() -> None:
+def test_coordinate_ports_scenario_2() -> None:
     domain = DatasetDomain({"u": jnp.zeros((4, 2))}, label="data")
 
     with pytest.raises(ValueError, match="'data'"):
         domain.value_ports()
-
-
-def _fitted_on(*ports: Any) -> Any:
-    width = sum(len(port.component_ids) for port in ports)
-    features = jnp.linspace(0.0, 1.0, 8 * width).reshape(8, width)
-    return phx.ml.fit(
-        phx.ml.linear.RidgeRecipe(alpha=1e-8),
-        features,
-        jnp.sum(features, axis=-1),
-        feature_schema=phx.ml.FeatureSchema.from_ports(ports),
-    )
-
-
-def _identity(*ports: Any) -> Any:
-    return phx.PortMapping(inputs=[(port.port_id, port.port_id) for port in ports])
-
-
-def test_model_with_ports_binds_only_through_an_explicit_mapping_in_deps_order() -> None:
     domain = _square("x") @ TimeInterval(0.0, 1.0)
     x_port, t_port = domain.value_ports()
     fitted = _fitted_on(x_port, t_port)
@@ -133,9 +109,6 @@ def test_model_with_ports_binds_only_through_an_explicit_mapping_in_deps_order()
     assert jnp.allclose(jnp.asarray(field(batch).data), expected)
     # A derived field no longer carries the bound model's value or its evidence.
     assert (field + 1.0).port_binding is None
-
-
-def test_model_ports_must_match_the_mapped_domain_port() -> None:
     domain = _square("x") @ _square("y")
     x_port, y_port = domain.value_ports()
     fitted = _fitted_on(x_port)
@@ -143,9 +116,6 @@ def test_model_ports_must_match_the_mapped_domain_port() -> None:
 
     with pytest.raises(ValueError, match="semantic_id mismatch"):
         domain.Model("y", port_mapping=crossed)(fitted.model)
-
-
-def test_models_without_ports_take_no_mapping() -> None:
     domain = _square("x")
     (x_port,) = domain.value_ports()
     network = phx.nn.models.MLP(
@@ -155,3 +125,18 @@ def test_models_without_ports_take_no_mapping() -> None:
     with pytest.raises(ValueError, match="declares no model ports"):
         domain.Model("x", port_mapping=_identity(x_port))(network)
     assert domain.Model("x")(network).port_binding is None
+
+
+def _fitted_on(*ports: Any) -> Any:
+    width = sum(len(port.component_ids) for port in ports)
+    features = jnp.linspace(0.0, 1.0, 8 * width).reshape(8, width)
+    return phx.ml.fit(
+        phx.ml.linear.RidgeRecipe(alpha=1e-8),
+        features,
+        jnp.sum(features, axis=-1),
+        feature_schema=phx.ml.FeatureSchema.from_ports(ports),
+    )
+
+
+def _identity(*ports: Any) -> Any:
+    return phx.PortMapping(inputs=[(port.port_id, port.port_id) for port in ports])

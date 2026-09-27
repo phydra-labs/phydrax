@@ -44,7 +44,7 @@ def _compiled_1d(bathymetry: Any, reconstruction: Any, *, source: Any = None) ->
     return compiled, bed
 
 
-def test_shallow_water_system_defines_exact_dry_state() -> None:
+def test_shallow_water_scenario_1() -> None:
     system = phx.equations.ShallowWaterSystem(2)
     dry = jnp.asarray((0.0, 0.0, 0.0))
     invalid_dry = jnp.asarray((0.0, 1.0, 0.0))
@@ -54,9 +54,6 @@ def test_shallow_water_system_defines_exact_dry_state() -> None:
     assert bool(system.admissible(dry))
     assert not bool(system.admissible(invalid_dry))
     assert not bool(system.admissible(jnp.asarray((1.0, jnp.nan, 0.0))))
-
-
-def test_shallow_water_normal_bounds_are_rotation_covariant() -> None:
     system = phx.equations.ShallowWaterSystem(2)
     left = jnp.asarray(((1.0, 0.3, -0.4),))
     right = jnp.asarray(((0.8, -0.1, 0.2),))
@@ -76,9 +73,18 @@ def test_shallow_water_normal_bounds_are_rotation_covariant() -> None:
 
     np.testing.assert_allclose(lower, expected_lower)
     np.testing.assert_allclose(upper, expected_upper)
+    compiled, bed = _compiled_1d(
+        jnp.asarray((0.1, 0.3)),
+        phx.discretization.PiecewiseConstantReconstruction(),
+    )
+    state = jnp.asarray(((0.9, 0.0), (0.7, 0.0)))
 
+    observables = compiled.dynamics.shallow_water_observables(state)
 
-def test_hydrostatic_face_balances_lake_at_rest_step() -> None:
+    np.testing.assert_allclose(observables.surface, 1.0)
+    np.testing.assert_allclose(observables.bathymetry, bed)
+    np.testing.assert_allclose(observables.velocity, 0.0)
+    assert observables.bed_id == compiled.dynamics.bathymetry.bed_id
     system = phx.equations.ShallowWaterSystem()
     result = phx.discretization.ShallowWaterHydrostaticHLLPlan().face_contribution(
         system,
@@ -94,28 +100,22 @@ def test_hydrostatic_face_balances_lake_at_rest_step() -> None:
     np.testing.assert_allclose(result.right_flux[..., 1], 0.5 * 9.81 * 0.7**2)
     np.testing.assert_array_equal(result.left_correction[..., 0], 0.0)
     np.testing.assert_array_equal(result.right_correction[..., 0], 0.0)
-
-
-@pytest.mark.parametrize(
-    "reconstruction",
-    [
+    for reconstruction in [
         phx.discretization.PiecewiseConstantReconstruction(),
         phx.discretization.MUSCLReconstruction(),
-    ],
-)
-def test_compiled_wet_dry_lake_has_zero_residual(reconstruction: Any) -> None:
-    bathymetry = jnp.asarray((0.1, 0.2, 0.4, 1.2, 1.3, 0.4, 0.2, 0.1))
-    compiled, bed = _compiled_1d(bathymetry, reconstruction)
-    state = jnp.stack((jnp.maximum(1.0 - bed, 0.0), jnp.zeros_like(bed)), axis=-1)
+    ]:
+        bathymetry = jnp.asarray((0.1, 0.2, 0.4, 1.2, 1.3, 0.4, 0.2, 0.1))
+        compiled, bed = _compiled_1d(bathymetry, reconstruction)
+        state = jnp.stack((jnp.maximum(1.0 - bed, 0.0), jnp.zeros_like(bed)), axis=-1)
 
-    residual, diagnostics = compiled.residual_with_diagnostics(0.0, state)
+        residual, diagnostics = compiled.residual_with_diagnostics(0.0, state)
 
-    np.testing.assert_allclose(residual, 0.0, atol=2e-13)
-    np.testing.assert_allclose(diagnostics.conservation_defect, 0.0, atol=2e-13)
-    assert jnp.all(jnp.isfinite(diagnostics.bed_source_integral))
+        np.testing.assert_allclose(residual, 0.0, atol=2e-13)
+        np.testing.assert_allclose(diagnostics.conservation_defect, 0.0, atol=2e-13)
+        assert jnp.all(jnp.isfinite(diagnostics.bed_source_integral))
 
 
-def test_runtime_preserves_wet_dry_lake_and_records_sided_integrals() -> None:
+def test_shallow_water_scenario_2() -> None:
     bathymetry = jnp.asarray((0.1, 0.2, 0.4, 1.2, 1.3, 0.4, 0.2, 0.1))
     compiled, bed = _compiled_1d(bathymetry, phx.discretization.MUSCLReconstruction())
     state = jnp.stack((jnp.maximum(1.0 - bed, 0.0), jnp.zeros_like(bed)), axis=-1)
@@ -135,9 +135,6 @@ def test_runtime_preserves_wet_dry_lake_and_records_sided_integrals() -> None:
         jnp.all(integral[..., 0] == 0.0)
         for integral in result.shallow_water_integrals.left_correction_integrals
     )
-
-
-def test_runtime_preserves_mass_and_positivity_for_dry_dam_break() -> None:
     bathymetry = jnp.zeros((64,))
     compiled, _ = _compiled_1d(bathymetry, phx.discretization.MUSCLReconstruction())
     depth = jnp.where(jnp.arange(64) < 32, 1.0, 0.0)
@@ -158,9 +155,6 @@ def test_runtime_preserves_mass_and_positivity_for_dry_dam_break() -> None:
     np.testing.assert_allclose(
         jnp.sum(updated[..., 0]), jnp.sum(state[..., 0]), atol=2e-12
     )
-
-
-def test_bathymetry_requires_balanced_method_and_balanced_method_requires_bed() -> None:
     bed = jnp.zeros((8,))
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=True),),
@@ -189,9 +183,6 @@ def test_bathymetry_requires_balanced_method_and_balanced_method_requires_bed() 
         )
     with pytest.raises(ValueError, match="requires bathymetry"):
         phx.equations.compile_conservation_problem(problem, discretization, balanced)
-
-
-def test_coriolis_source_has_zero_mass_and_known_rotation() -> None:
     source = phx.equations.ShallowWaterCoriolisSource(2.0, beta=0.5, meridional_axis=1)
     state = jnp.asarray(((1.0, 3.0, 4.0),))
     coordinates = jnp.asarray(((0.0, 2.0),))
@@ -200,21 +191,6 @@ def test_coriolis_source_has_zero_mass_and_known_rotation() -> None:
 
     np.testing.assert_allclose(rate, jnp.asarray(((0.0, 12.0, -9.0),)))
     np.testing.assert_allclose(source.stable_step(coordinates), jnp.sqrt(3.0) / 3.0)
-
-
-def test_shallow_water_observables_include_bed_surface_and_energy() -> None:
-    compiled, bed = _compiled_1d(
-        jnp.asarray((0.1, 0.3)),
-        phx.discretization.PiecewiseConstantReconstruction(),
-    )
-    state = jnp.asarray(((0.9, 0.0), (0.7, 0.0)))
-
-    observables = compiled.dynamics.shallow_water_observables(state)
-
-    np.testing.assert_allclose(observables.surface, 1.0)
-    np.testing.assert_allclose(observables.bathymetry, bed)
-    np.testing.assert_allclose(observables.velocity, 0.0)
-    assert observables.bed_id == compiled.dynamics.bathymetry.bed_id
 
 
 def test_output_snapshot_stores_shallow_water_observables(tmp_path: Any) -> None:

@@ -39,7 +39,7 @@ def _physical() -> Any:
     return PhysicalLaw("physical", "historical", "factors", "daily")
 
 
-def test_cvar_fractional_atom_and_spectral_mixture_are_exact() -> None:
+def test_risk_scenarios_backtests_scenario_1() -> None:
     losses = jnp.asarray((0.0, 1.0, 2.0))
     probabilities = jnp.asarray((0.5, 0.25, 0.25))
     atoms = cvar_atoms(losses, probabilities, 0.5)
@@ -50,9 +50,6 @@ def test_cvar_fractional_atom_and_spectral_mixture_are_exact() -> None:
         losses, probabilities, jnp.asarray((0.5, 0.75)), jnp.asarray((0.4, 0.6))
     )
     assert float(risk) == pytest.approx(0.4 * 1.5 + 0.6 * 2.0)
-
-
-def test_factor_risk_components_reconcile_total_volatility() -> None:
     factor = RiskFactorKey("market", QuoteKey("index:market", "level"))
     layout = RiskFactorLayout((factor,))
     law = PhysicalLaw("factor-law", "estimated", layout.layout_id, "daily")
@@ -70,9 +67,6 @@ def test_factor_risk_components_reconcile_total_volatility() -> None:
     assert float(jnp.sum(report.component_volatility)) == pytest.approx(
         float(report.volatility)
     )
-
-
-def test_kelly_bankruptcy_is_reported_instead_of_clipped() -> None:
     result = kelly_risk(
         jnp.asarray((-1.0, 0.1)),
         jnp.asarray((0.5, 0.5)),
@@ -83,7 +77,7 @@ def test_kelly_bankruptcy_is_reported_instead_of_clipped() -> None:
     assert bool(jnp.isneginf(result.expected_log_growth))
 
 
-def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning() -> None:
+def test_risk_scenarios_backtests_scenario_2() -> None:
     scenarios = FinancialScenarioSet(
         jnp.asarray(
             (
@@ -120,9 +114,6 @@ def test_scenario_evaluation_reduction_and_reweighting_preserve_meaning() -> Non
     )
     np.testing.assert_allclose(zeroed.scenarios.weights, jnp.asarray((2 / 3, 1 / 3, 0.0)))
     assert zeroed.scenarios.scenario_active.tolist() == [True, True, False]
-
-
-def test_stress_law_is_distinct_and_pnl_explanation_reconciles() -> None:
     law = StressLaw("shock", "committee", "assets", "instant")
     stressed = stress_test(
         jnp.asarray((100.0, 50.0)),
@@ -154,9 +145,6 @@ def test_stress_law_is_distinct_and_pnl_explanation_reconciles() -> None:
     )
     assert float(explanation.residual) == pytest.approx(0.0, abs=1e-12)
     assert float(explanation.explained_pnl) == pytest.approx(float(explanation.total_pnl))
-
-
-def test_attribution_reconciles_active_return() -> None:
     result = brinson_attribution(
         jnp.asarray((0.4, 0.2, 0.4)),
         jnp.asarray((0.3, 0.3, 0.4)),
@@ -170,9 +158,7 @@ def test_attribution_reconciles_active_return() -> None:
     )
 
 
-def test_walk_forward_rejects_information_leakage_and_nested_splits_are_contained() -> (
-    None
-):
+def test_risk_scenarios_backtests_scenario_3() -> None:
     returns = jnp.asarray(tuple((0.01 * index, -0.005 * index) for index in range(12)))
     plan = WalkForwardPlan(4, 2, step=2, embargo=1)
     decisions = BacktestDecisions(
@@ -199,9 +185,6 @@ def test_walk_forward_rejects_information_leakage_and_nested_splits_are_containe
     for outer, inner_group in zip(nested.outer, nested.inner, strict=True):
         assert all(inner.test_stop <= outer.train_stop for inner in inner_group)
         assert all(inner.train_start >= outer.train_start for inner in inner_group)
-
-
-def test_nested_backtest_selects_only_from_inner_holdouts() -> None:
     returns = jnp.tile(jnp.asarray((0.02, -0.01)), (30, 1))
     plan = NestedBacktestPlan(
         WalkForwardPlan(12, 3, step=3),

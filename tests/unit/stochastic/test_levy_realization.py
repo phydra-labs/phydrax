@@ -15,7 +15,7 @@ def _stable_process() -> Any:
     )
 
 
-def test_levy_series_extension_and_batch_growth_preserve_path_prefixes() -> None:
+def test_levy_realization_scenario_1() -> None:
     process = _stable_process()
     base = phx.stochastic.LevyProcessRealization.from_process(
         process,
@@ -51,9 +51,6 @@ def test_levy_series_extension_and_batch_growth_preserve_path_prefixes() -> None
         extended_series.jumps[..., : base.max_terms, :],
     )
     assert jnp.array_equal(base_series.jumps, wider_series.jumps[:3])
-
-
-def test_levy_series_interval_queries_are_additive_and_cutoff_complete() -> None:
     process = _stable_process()
     realization = phx.stochastic.LevyProcessRealization.from_process(
         process,
@@ -84,24 +81,6 @@ def test_levy_series_interval_queries_are_additive_and_cutoff_complete() -> None
     assert jnp.all(series.complete_above(cutoff))
     assert jnp.allclose(jnp.sum(halves, axis=1), whole, rtol=0.0, atol=1e-12)
     assert jnp.allclose(with_drift - whole, process.drift, rtol=0.0, atol=1e-12)
-
-
-def test_symmetric_stable_contract_matches_declared_characteristic_exponent() -> None:
-    process = _stable_process()
-    frequency = jnp.asarray([[0.7, -0.3], [1.2, 0.4]])
-    expected = 1j * (frequency @ process.drift) - jnp.sum(
-        process.scale**process.alpha * jnp.abs(frequency) ** process.alpha,
-        axis=-1,
-    )
-    covariance = process.small_jump_covariance(0.1)
-
-    assert jnp.allclose(process.characteristic_exponent(frequency), expected)
-    assert covariance.shape == (2, 2)
-    assert jnp.all(jnp.diag(covariance) > 0.0)
-    assert jnp.array_equal(covariance, jnp.diag(jnp.diag(covariance)))
-
-
-def test_levy_realization_composes_with_other_global_drivers() -> None:
     process = _stable_process()
     levy = phx.stochastic.LevyProcessRealization.from_process(
         process,
@@ -120,3 +99,15 @@ def test_levy_realization_composes_with_other_global_drivers() -> None:
     assert composite.support == (0.0, 1.0)
     assert len(composite.path_labels) == 4
     assert composite.component("levy") is levy
+    process = _stable_process()
+    frequency = jnp.asarray([[0.7, -0.3], [1.2, 0.4]])
+    expected = 1j * (frequency @ process.drift) - jnp.sum(
+        process.scale**process.alpha * jnp.abs(frequency) ** process.alpha,
+        axis=-1,
+    )
+    covariance = process.small_jump_covariance(0.1)
+
+    assert jnp.allclose(process.characteristic_exponent(frequency), expected)
+    assert covariance.shape == (2, 2)
+    assert jnp.all(jnp.diag(covariance) > 0.0)
+    assert jnp.array_equal(covariance, jnp.diag(jnp.diag(covariance)))

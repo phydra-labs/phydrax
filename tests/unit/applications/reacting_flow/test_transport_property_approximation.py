@@ -26,7 +26,7 @@ def _reference() -> Any:
     )
 
 
-def test_log_polynomial_properties_enforce_support_and_error_certificate() -> None:
+def test_transport_property_approximation_scenario_1() -> None:
     viscosity = np.log(np.asarray((1.0e-5, 2.0e-5)))[:, None]
     conductivity = np.log(np.asarray((0.02, 0.03)))[:, None]
     diffusion = np.zeros((2, 2, 1))
@@ -48,9 +48,6 @@ def test_log_polynomial_properties_enforce_support_and_error_certificate() -> No
     assert bool(evaluated.successful)
     assert float(evaluated.diffusion_relative_error_bound) == 0.03
     assert not bool(plan.evaluate(250.0, 101325.0).supported)
-
-
-def test_kinetic_theory_route_returns_positive_symmetric_properties() -> None:
     plan = KineticTheoryGasTransportPlan(
         # ty: ignore[invalid-argument-type]
         (2.016, 31.998),
@@ -71,9 +68,6 @@ def test_kinetic_theory_route_returns_positive_symmetric_properties() -> None:
         evaluated.binary_diffusion_coefficients[0, 1],
         evaluated.binary_diffusion_coefficients[1, 0],
     )
-
-
-def test_reuse_state_commits_atomically_and_refreshes_after_bound() -> None:
     plan = TransportPropertyReusePlan(
         _reference(),
         temperature_bounds=(200.0, 3000.0),

@@ -69,7 +69,7 @@ def _case(count: Any = 8) -> Any:
     return background, particles, gravity, kdk, rollout, state
 
 
-def test_uniform_lattice_has_zero_force_and_completed_rollout() -> None:
+def test_cosmology_particle_mesh_scenario_1() -> None:
     background, _, gravity, _, rollout, state = _case()
     force = gravity.acceleration(state.positions)
     assert isinstance(force, phx.solver.ParticleMeshGravityForceResult)
@@ -82,6 +82,37 @@ def test_uniform_lattice_has_zero_force_and_completed_rollout() -> None:
     np.testing.assert_allclose(result.state.canonical_momenta, 0.0, atol=1e-12)
     assert result.diagnostics.maximum_mass_balance_defect < 1e-12
     assert result.diagnostics.maximum_net_force_norm < 1e-12
+    background, particles, _, kdk, _, _ = _case(count=2)
+    positions = jnp.asarray([[0.99], [0.25]])
+    momentum = particles.safe_masses[:, None] * jnp.asarray([[1.0], [0.0]])
+    state = kdk.initialize(positions, momentum, 0.5)
+    advanced, diagnostics = kdk.advance(
+        background,
+        state,
+        0.6,
+        jnp.zeros_like(positions),
+        jnp.zeros_like(positions),
+    )
+    assert bool(diagnostics.successful)
+    assert jnp.all((advanced.positions >= 0.0) & (advanced.positions < 1.0))
+    _, particles, gravity, _, _, _ = _case()
+    other = phx.discretization.ParticleSetPlan(
+        jnp.arange(particles.capacity),
+        jnp.full((particles.capacity,), 1.0 / particles.capacity),
+        ambient_dimension=1,
+        plan_id="different-particles",
+    ).prepare()
+    other_kdk = cosmology.CosmologicalKDKPlan(other, (1.0,))
+    with pytest.raises(ValueError, match="share one particle support"):
+        # ty: ignore[invalid-argument-type]
+        cosmology.CosmologicalParticleMeshPlan(other_kdk, gravity, [0.5, 0.6])
+    with pytest.raises(ValueError, match="increasing"):
+        cosmology.CosmologicalParticleMeshPlan(
+            cosmology.CosmologicalKDKPlan(particles, (1.0,)),
+            gravity,
+            # ty: ignore[invalid-argument-type]
+            [0.5, 0.5],
+        )
 
 
 def test_rollout_is_piecewise_differentiable_away_from_cell_boundaries() -> None:
@@ -102,43 +133,6 @@ def test_rollout_is_piecewise_differentiable_away_from_cell_boundaries() -> None
     ) / (2.0 * epsilon)
     assert jnp.isfinite(value)
     np.testing.assert_allclose(tangent, finite_difference, rtol=5e-3, atol=1e-6)
-
-
-def test_kdk_wraps_periodically_and_uses_particle_mass_authority() -> None:
-    background, particles, _, kdk, _, _ = _case(count=2)
-    positions = jnp.asarray([[0.99], [0.25]])
-    momentum = particles.safe_masses[:, None] * jnp.asarray([[1.0], [0.0]])
-    state = kdk.initialize(positions, momentum, 0.5)
-    advanced, diagnostics = kdk.advance(
-        background,
-        state,
-        0.6,
-        jnp.zeros_like(positions),
-        jnp.zeros_like(positions),
-    )
-    assert bool(diagnostics.successful)
-    assert jnp.all((advanced.positions >= 0.0) & (advanced.positions < 1.0))
-
-
-def test_cosmological_pm_rejects_dual_particle_or_geometry_authority() -> None:
-    _, particles, gravity, _, _, _ = _case()
-    other = phx.discretization.ParticleSetPlan(
-        jnp.arange(particles.capacity),
-        jnp.full((particles.capacity,), 1.0 / particles.capacity),
-        ambient_dimension=1,
-        plan_id="different-particles",
-    ).prepare()
-    other_kdk = cosmology.CosmologicalKDKPlan(other, (1.0,))
-    with pytest.raises(ValueError, match="share one particle support"):
-        # ty: ignore[invalid-argument-type]
-        cosmology.CosmologicalParticleMeshPlan(other_kdk, gravity, [0.5, 0.6])
-    with pytest.raises(ValueError, match="increasing"):
-        cosmology.CosmologicalParticleMeshPlan(
-            cosmology.CosmologicalKDKPlan(particles, (1.0,)),
-            gravity,
-            # ty: ignore[invalid-argument-type]
-            [0.5, 0.5],
-        )
 
 
 def test_periodic_pm_rejects_spatial_curvature() -> None:

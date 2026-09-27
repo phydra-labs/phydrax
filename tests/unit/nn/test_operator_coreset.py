@@ -30,7 +30,7 @@ def _dataset() -> Any:
     return phx.nn.operator.training.OperatorDataset(batch, targets)
 
 
-def test_atomic_operator_case_coreset_carries_weights_and_provenance() -> None:
+def test_operator_coreset_scenario_1() -> None:
     dataset = _dataset()
     result = phx.nn.operator.training.compress_operator_cases(
         dataset,
@@ -51,9 +51,6 @@ def test_atomic_operator_case_coreset_carries_weights_and_provenance() -> None:
         tuple(record.case_id for record in result.dataset.provenance)
         == result.source_case_ids
     )
-
-
-def test_named_query_coreset_aligns_geometry_targets_and_mass() -> None:
     dataset = _dataset()
     result = phx.nn.operator.training.compress_operator_queries(
         dataset,
@@ -66,9 +63,6 @@ def test_named_query_coreset_aligns_geometry_targets_and_mass() -> None:
     assert target.values.shape[1] == query.sample_shape[0]
     # ty: ignore[invalid-argument-type]
     assert jnp.allclose(jnp.sum(query.quadrature_weights), result.source_physical_mass[0])
-
-
-def test_custom_weighted_losses_require_explicit_per_case_protocol() -> None:
     term = phx.nn.operator.training.OperatorLossTerm(
         "per-case",
         lambda *args, **kwargs: jnp.ones((3,)),

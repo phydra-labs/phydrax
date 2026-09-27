@@ -28,79 +28,68 @@ def _mp_voigt(x: mp.mpf, sigma: mp.mpf, gamma: mp.mpf) -> mp.mpf:
     return mp.re(mp.exp(-(z**2)) * mp.erfc(-1j * z)) / (sigma * mp.sqrt(2 * mp.pi))
 
 
-@pytest.mark.parametrize(
-    ("dtype", "rtol", "atol"),
-    [
+def test_faddeeva_scenario_1() -> None:
+    for dtype, rtol, atol in [
         (jnp.complex64, 8e-7, 2e-7),
         (jnp.complex128, 5e-13, 5e-14),
-    ],
-)
-def test_wofz_matches_scipy_across_complex_plane(
-    dtype: Any, rtol: Any, atol: Any
-) -> None:
-    real = np.asarray([-40.0, -12.0, -6.0, -2.0, 0.0, 2.0, 6.0, 12.0, 40.0])
-    imaginary = np.asarray([-6.0, -2.0, -0.1, 0.0, 0.1, 2.0, 6.0])
-    arguments = (real[:, None] + 1j * imaginary[None, :]).astype(dtype)
-    actual = np.asarray(phx.special.wofz(jnp.asarray(arguments)))
-    expected = scipy.special.wofz(arguments)
-    np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
-
-
-def test_wofz_matches_high_precision_hard_points() -> None:
+    ]:
+        real = np.asarray([-40.0, -12.0, -6.0, -2.0, 0.0, 2.0, 6.0, 12.0, 40.0])
+        imaginary = np.asarray([-6.0, -2.0, -0.1, 0.0, 0.1, 2.0, 6.0])
+        arguments = (real[:, None] + 1j * imaginary[None, :]).astype(dtype)
+        actual = np.asarray(phx.special.wofz(jnp.asarray(arguments)))
+        expected = scipy.special.wofz(arguments)
+        np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
     arguments = np.asarray(
         [0.0j, 1.0 + 2.0j, -2.0 + 0.01j, 3.0 - 0.5j, -3.5 - 2.0j, -5.0j, 12.0 + 0.001j]
     )
     expected = np.asarray([_mp_wofz(value) for value in arguments])
     actual = np.asarray(phx.special.wofz(jnp.asarray(arguments)))
     np.testing.assert_allclose(actual, expected, rtol=3e-13, atol=4e-14)
-
-
-@pytest.mark.parametrize(
-    ("dtype", "maximum", "rtol", "atol"),
-    [
+    for dtype, maximum, rtol, atol in [
         (jnp.float32, 1e30, 4e-7, 2e-8),
         (jnp.float64, 1e300, 5e-15, 5e-16),
-    ],
-)
-def test_dawsn_matches_scipy_across_real_domain(
-    dtype: Any, maximum: Any, rtol: Any, atol: Any
-) -> None:
-    positive = np.geomspace(1.0 / maximum, maximum, 241)
-    values = np.concatenate(
-        [
-            -positive[::-1],
-            np.linspace(-10.0, 10.0, 257),
-            positive,
-        ]
-    ).astype(dtype)
-    actual = np.asarray(phx.special.dawsn(jnp.asarray(values)))
-    expected = scipy.special.dawsn(values)
-    np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
+    ]:
+        positive = np.geomspace(1.0 / maximum, maximum, 241)
+        values = np.concatenate(
+            [
+                -positive[::-1],
+                np.linspace(-10.0, 10.0, 257),
+                positive,
+            ]
+        ).astype(dtype)
+        actual = np.asarray(phx.special.dawsn(jnp.asarray(values)))
+        expected = scipy.special.dawsn(values)
+        np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
+    for threshold in [3.25, 6.25]:
+        values = jnp.asarray(
+            [
+                np.nextafter(threshold, -np.inf),
+                threshold,
+                np.nextafter(threshold, np.inf),
+            ]
+        )
+        actual = np.asarray(phx.special.dawsn(values))
+        expected = scipy.special.dawsn(np.asarray(values))
+        np.testing.assert_allclose(actual, expected, rtol=4e-15, atol=5e-16)
 
-
-@pytest.mark.parametrize("threshold", [3.25, 6.25])
-def test_dawsn_regime_switches_are_value_and_derivative_continuous(
-    threshold: Any,
-) -> None:
-    values = jnp.asarray(
-        [
-            np.nextafter(threshold, -np.inf),
-            threshold,
-            np.nextafter(threshold, np.inf),
-        ]
-    )
-    actual = np.asarray(phx.special.dawsn(values))
-    expected = scipy.special.dawsn(np.asarray(values))
-    np.testing.assert_allclose(actual, expected, rtol=4e-15, atol=5e-16)
-
-    actual_derivative = np.asarray(jax.vmap(jax.grad(phx.special.dawsn))(values))
-    expected_derivative = 1.0 - 2.0 * np.asarray(values) * expected
-    np.testing.assert_allclose(
-        actual_derivative, expected_derivative, rtol=2e-14, atol=2e-15
-    )
-
-
-def test_faddeeva_reflection_conjugation_and_real_axis_identities() -> None:
+        actual_derivative = np.asarray(jax.vmap(jax.grad(phx.special.dawsn))(values))
+        expected_derivative = 1.0 - 2.0 * np.asarray(values) * expected
+        np.testing.assert_allclose(
+            actual_derivative, expected_derivative, rtol=2e-14, atol=2e-15
+        )
+    for value in [-8.0, -3.25, -0.2, 0.0, 0.2, 6.25]:
+        x = jnp.asarray(value)
+        first = jax.grad(phx.special.dawsn)(x)
+        second = jax.grad(jax.grad(phx.special.dawsn))(x)
+        with mp.workdps(80):
+            expected_first = float(mp.diff(_mp_dawsn, mp.mpf(value), 1))
+            expected_second = float(mp.diff(_mp_dawsn, mp.mpf(value), 2))
+        np.testing.assert_allclose(
+            np.asarray(first), expected_first, rtol=3e-13, atol=5e-14
+        )
+        np.testing.assert_allclose(
+            np.asarray(second), expected_second, rtol=8e-13, atol=8e-14
+        )
     z = jnp.asarray([0.2 + 0.4j, 2.0 + 1.0j, -1.5 + 0.2j])
     reflected = phx.special.wofz(-z)
     expected_reflected = 2.0 * jnp.exp(-(z**2)) - phx.special.wofz(z)
@@ -159,40 +148,34 @@ def test_wofz_forward_reverse_and_higher_order_derivatives_agree() -> None:
     )
 
 
-@pytest.mark.parametrize("value", [-8.0, -3.25, -0.2, 0.0, 0.2, 6.25])
-def test_dawsn_first_and_second_derivatives_match_high_precision(value: Any) -> None:
-    x = jnp.asarray(value)
-    first = jax.grad(phx.special.dawsn)(x)
-    second = jax.grad(jax.grad(phx.special.dawsn))(x)
-    with mp.workdps(80):
-        expected_first = float(mp.diff(_mp_dawsn, mp.mpf(value), 1))
-        expected_second = float(mp.diff(_mp_dawsn, mp.mpf(value), 2))
-    np.testing.assert_allclose(np.asarray(first), expected_first, rtol=3e-13, atol=5e-14)
-    np.testing.assert_allclose(
-        np.asarray(second), expected_second, rtol=8e-13, atol=8e-14
-    )
-
-
-@pytest.mark.parametrize(
-    ("dtype", "rtol", "atol"),
-    [
+def test_voigt_contracts() -> None:
+    for dtype, rtol, atol in [
         (jnp.float32, 8e-7, 2e-7),
         (jnp.float64, 7e-13, 8e-14),
-    ],
-)
-def test_voigt_profile_matches_scipy(dtype: Any, rtol: Any, atol: Any) -> None:
-    x = np.linspace(-30.0, 30.0, 241, dtype=np.dtype(dtype))[:, None]
-    sigma = np.asarray([0.2, 0.8, 3.0], dtype=np.dtype(dtype))[None, :]
-    gamma = np.asarray([0.0, 0.3, 2.0], dtype=np.dtype(dtype))[None, :]
-    actual = np.asarray(
-        phx.special.voigt_profile(jnp.asarray(x), jnp.asarray(sigma), jnp.asarray(gamma))
+    ]:
+        x = np.linspace(-30.0, 30.0, 241, dtype=np.dtype(dtype))[:, None]
+        sigma = np.asarray([0.2, 0.8, 3.0], dtype=np.dtype(dtype))[None, :]
+        gamma = np.asarray([0.0, 0.3, 2.0], dtype=np.dtype(dtype))[None, :]
+        actual = np.asarray(
+            phx.special.voigt_profile(
+                jnp.asarray(x), jnp.asarray(sigma), jnp.asarray(gamma)
+            )
+        )
+        expected = scipy.special.voigt_profile(x, sigma, gamma)
+        np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
+        assert np.all(actual >= 0.0)
+    profile = jax.jit(lambda value: phx.special.voigt_profile(value, 0.8, 0.3))
+    profile(jnp.asarray(0.0)).block_until_ready()
+    area, error = scipy.integrate.quad(
+        lambda value: float(profile(value)),
+        -np.inf,
+        np.inf,
+        epsabs=2e-10,
+        epsrel=2e-10,
+        limit=200,
     )
-    expected = scipy.special.voigt_profile(x, sigma, gamma)
-    np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol)
-    assert np.all(actual >= 0.0)
-
-
-def test_voigt_profile_gradient_matches_high_precision_reference() -> None:
+    assert error < 2e-9
+    assert area == pytest.approx(1.0, rel=2e-10, abs=2e-10)
     parameters = jnp.asarray([0.7, 1.2, 0.4])
     actual = jax.grad(lambda args: phx.special.voigt_profile(*args))(parameters)
     with mp.workdps(80):
@@ -205,9 +188,6 @@ def test_voigt_profile_gradient_matches_high_precision_reference() -> None:
             ]
         )
     np.testing.assert_allclose(np.asarray(actual), expected, rtol=8e-13, atol=8e-14)
-
-
-def test_voigt_boundary_derivative_contract() -> None:
     x = jnp.asarray(0.5)
     gamma = jnp.asarray(1.0)
     sigma_tangent = jax.jvp(
@@ -235,18 +215,3 @@ def test_voigt_boundary_derivative_contract() -> None:
     )
     assert jnp.isnan(point_tangent)
     assert jnp.isnan(invalid_tangent)
-
-
-def test_voigt_profile_is_normalized() -> None:
-    profile = jax.jit(lambda value: phx.special.voigt_profile(value, 0.8, 0.3))
-    profile(jnp.asarray(0.0)).block_until_ready()
-    area, error = scipy.integrate.quad(
-        lambda value: float(profile(value)),
-        -np.inf,
-        np.inf,
-        epsabs=2e-10,
-        epsrel=2e-10,
-        limit=200,
-    )
-    assert error < 2e-9
-    assert area == pytest.approx(1.0, rel=2e-10, abs=2e-10)

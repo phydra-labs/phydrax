@@ -163,9 +163,7 @@ def _plans() -> Any:
     )
 
 
-def test_fixed_depth_memory_is_solvable_reports_initial_tail_and_restarts_exactly() -> (
-    None
-):
+def test_kadanoff_baym_scenario_1() -> None:
     off_shell, plan = _plans()
     runtime = empty_dark_sector_epoch_state(plan.epoch, epoch_sequence=0)
     state = breit_wigner_off_shell_state(
@@ -235,9 +233,6 @@ def test_fixed_depth_memory_is_solvable_reports_initial_tail_and_restarts_exactl
     np.testing.assert_array_equal(continued_state.occupation, state.occupation)
     np.testing.assert_array_equal(continued_memory.source_history, memory.source_history)
     assert int(continued_memory.epoch_sequence) == 1
-
-
-def test_invalid_kb_candidate_rolls_back_state_and_memory_transactionally() -> None:
     off_shell, plan = _plans()
     runtime = empty_dark_sector_epoch_state(plan.epoch, epoch_sequence=0)
     state = breit_wigner_off_shell_state(

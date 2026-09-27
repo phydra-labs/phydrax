@@ -22,7 +22,7 @@ from phydrax.operators.differential import partial_t
 from phydrax.operators.integral import integral
 
 
-def test_trajectory_dataset_domain_samples_coupled_data_time_points() -> None:
+def test_trajectory_dataset_domain_scenario_1() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component()
@@ -39,9 +39,6 @@ def test_trajectory_dataset_domain_samples_coupled_data_time_points() -> None:
     assert jnp.allclose(batch["data"].data[:, 0], inputs[case_indices, 0])
     assert jnp.all(batch["t"].data >= domain.start)
     assert jnp.all(batch["t"].data <= domain.end_times[case_indices])
-
-
-def test_trajectory_dataset_probability_integral_of_constant_is_one() -> None:
     inputs = jnp.zeros((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component()
@@ -53,9 +50,6 @@ def test_trajectory_dataset_probability_integral_of_constant_is_one() -> None:
     realization = from_samples(over(component), batch)
     out = integral(1.0, realization)
     assert jnp.allclose(jnp.asarray(out.data), 1.0)
-
-
-def test_trajectory_dataset_measure_modes() -> None:
     inputs = jnp.zeros((3, 1))
     avg = TrajectoryDatasetDomain(
         inputs,
@@ -74,44 +68,6 @@ def test_trajectory_dataset_measure_modes() -> None:
     assert jnp.allclose(avg.component().mass.value, jnp.mean(avg.durations))
     # ty: ignore[unresolved-attribute]
     assert jnp.allclose(summed.component().mass.value, jnp.sum(summed.durations))
-
-
-@pytest.mark.parametrize(
-    ("measure", "expected"),
-    (
-        ("time_integral_average", 0.5),
-        ("time_integral_sum", 1.5),
-    ),
-)
-def test_observation_uniform_quadrature_uses_inverse_proposal_weights(
-    measure: Any,
-    expected: Any,
-) -> None:
-    domain = TrajectoryDatasetDomain(
-        jnp.zeros((3, 1)),
-        jnp.asarray([2, 4, 3]),
-        dt=0.25,
-        measure=measure,
-        sampling="observation_uniform",
-    )
-    component = domain.component()
-    batch = domain.points_from_case_time(
-        domain.flat_case_indices,
-        domain.observation_times(
-            domain.flat_case_indices,
-            domain.flat_time_indices,
-        ),
-        structure=SampleLayout((("data", "t"),)),
-        time_indices=domain.flat_time_indices,
-    )
-    realization = from_samples(over(component), batch)
-
-    out = integral(1.0, realization)
-
-    assert jnp.allclose(jnp.asarray(out.data), expected)
-
-
-def test_trajectory_dataset_fixed_end_is_row_specific() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component({"t": FixedEnd()})
@@ -120,17 +76,11 @@ def test_trajectory_dataset_fixed_end_is_row_specific() -> None:
     batch = component.sample(phx.domain.PointSampling(8, layout=structure), key=jr.key(2))
     case_indices = jnp.asarray(batch[TRAJECTORY_CASE_INDEX_KEY].data, dtype=jnp.int32)
     assert jnp.allclose(jnp.asarray(batch["t"].data), domain.end_times[case_indices])
-
-
-def test_trajectory_dataset_rejects_coord_separable_sampling() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
 
     with pytest.raises(ValueError, match="paired data-time"):
         domain.component().sample(phx.domain.GridSampling({"t": UniformAxisSpec(8)}))
-
-
-def test_trajectory_dataset_equivalence_includes_ragged_lengths() -> None:
     inputs = jnp.arange(3.0).reshape((3, 1))
     first = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     same = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
@@ -138,6 +88,32 @@ def test_trajectory_dataset_equivalence_includes_ragged_lengths() -> None:
 
     assert first.same_support(same)
     assert not first.same_support(different)
+    for measure, expected in (
+        ("time_integral_average", 0.5),
+        ("time_integral_sum", 1.5),
+    ):
+        domain = TrajectoryDatasetDomain(
+            jnp.zeros((3, 1)),
+            jnp.asarray([2, 4, 3]),
+            dt=0.25,
+            measure=measure,
+            sampling="observation_uniform",
+        )
+        component = domain.component()
+        batch = domain.points_from_case_time(
+            domain.flat_case_indices,
+            domain.observation_times(
+                domain.flat_case_indices,
+                domain.flat_time_indices,
+            ),
+            structure=SampleLayout((("data", "t"),)),
+            time_indices=domain.flat_time_indices,
+        )
+        realization = from_samples(over(component), batch)
+
+        out = integral(1.0, realization)
+
+        assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
 def test_trajectory_dataset_participates_in_time_residual_terms() -> None:

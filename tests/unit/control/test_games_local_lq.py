@@ -237,7 +237,7 @@ def _suggest(
     )
 
 
-def test_exact_affine_lq_identity_from_a_nonzero_nominal() -> None:
+def test_games_local_lq_scenario_1() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
     data = problem.args
@@ -278,9 +278,6 @@ def test_exact_affine_lq_identity_from_a_nonzero_nominal() -> None:
     np.testing.assert_allclose(suggestion.model.Q, data["Q"], rtol=2e-6)
     np.testing.assert_allclose(suggestion.model.R, data["R"], rtol=2e-6)
     np.testing.assert_allclose(suggestion.model.terminal_Q, data["terminal_Q"], rtol=2e-6)
-
-
-def test_state_control_cross_derivative_keeps_n_by_m_orientation() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
 
@@ -311,9 +308,6 @@ def test_state_control_cross_derivative_keeps_n_by_m_orientation() -> None:
         rtol=2e-6,
         atol=2e-7,
     )
-
-
-def test_dynamics_defect_uses_nominal_next_minus_nonlinear_transition() -> None:
     problem, evaluation = _affine_problem()
     displacement = jnp.asarray([0.3, -0.4])
     altered_states = evaluation.trajectory.states.at[1].add(displacement)
@@ -337,7 +331,7 @@ def test_dynamics_defect_uses_nominal_next_minus_nonlinear_transition() -> None:
     )
 
 
-def test_model_and_policy_preserve_explicit_T_and_T_plus_one_axes() -> None:
+def test_games_local_lq_scenario_2() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
     model = suggestion.model
@@ -359,9 +353,6 @@ def test_model_and_policy_preserve_explicit_T_and_T_plus_one_axes() -> None:
     assert model.terminal_Q.shape == (2, 2, 2)
     assert suggestion.policy.feedback_gain.shape == (horizon, 2, 2)
     assert suggestion.policy.feedforward.shape == (horizon, 2)
-
-
-def test_deviation_policy_converts_to_absolute_control_and_rolls_out_physically() -> None:
     problem, evaluation = _affine_problem()
     suggestion = _suggest(problem, evaluation, _scaling(problem))
     policy = suggestion.policy.with_feedforward_scale(
@@ -394,9 +385,6 @@ def test_deviation_policy_converts_to_absolute_control_and_rolls_out_physically(
     assert rollout.trajectory.states.shape == (problem.time_grid.num_steps + 1, 2)
     assert rollout.trajectory.controls.shape == (problem.time_grid.num_steps, 2)
     assert rollout.trajectory.control_id == "quarter-step-local-policy"
-
-
-def test_player_and_control_permutation_is_equivariant() -> None:
     problem, evaluation = _affine_problem()
     permuted_problem, permuted_evaluation = _affine_problem(permuted=True)
     suggestion = _suggest(problem, evaluation, _scaling(problem), suggestion_id="base")
@@ -509,7 +497,7 @@ def _one_player_problem() -> Any:
     return problem, evaluate_game_policy(problem, policy)
 
 
-def test_one_player_local_game_reduces_to_finite_horizon_lqr() -> None:
+def test_games_local_lq_scenario_3() -> None:
     problem, evaluation = _one_player_problem()
     suggestion = _suggest(
         problem,
@@ -543,6 +531,36 @@ def test_one_player_local_game_reduces_to_finite_horizon_lqr() -> None:
         lqr.value.matrices,
         rtol=2e-5,
     )
+    costs = (
+        jnp.asarray([[-1.0, 0.0], [0.0, 1.0]]),
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0]]),
+    )
+    problem, evaluation, scaling = _failure_problem(costs)
+    suggestion = _suggest(problem, evaluation, scaling, suggestion_id="curvature")
+
+    expected = int(LQFeedbackNashStatus.OWN_CURVATURE_NOT_POSITIVE_DEFINITE)
+    assert int(suggestion.status) == expected
+    assert int(suggestion.lq_result.status) == expected
+    assert int(suggestion.status) == int(
+        LocalAffineGameSuggestionStatus.OWN_CURVATURE_NOT_POSITIVE_DEFINITE
+    )
+    assert suggestion.lq_diagnostics is suggestion.lq_result.diagnostics
+    assert not bool(suggestion.valid)
+    singular = jnp.ones((2, 2))
+    problem, evaluation, scaling = _failure_problem((singular, singular))
+    suggestion = _suggest(problem, evaluation, scaling, suggestion_id="rank")
+
+    expected = int(LQFeedbackNashStatus.COUPLED_SYSTEM_RANK_DEFICIENT)
+    assert int(suggestion.status) == expected
+    assert int(suggestion.lq_result.status) == expected
+    assert int(suggestion.status) == int(
+        LocalAffineGameSuggestionStatus.COUPLED_SYSTEM_RANK_DEFICIENT
+    )
+    np.testing.assert_array_equal(
+        suggestion.lq_diagnostics.coupled_ranks,
+        suggestion.lq_result.diagnostics.coupled_ranks,
+    )
+    assert not bool(suggestion.valid)
 
 
 def test_exact_derivative_blocks_are_jittable_and_differentiable() -> None:
@@ -616,39 +634,3 @@ def _failure_problem(control_costs: Any) -> Any:
     evaluation = evaluate_game_policy(problem, policy)
     scaling = ILQGameScaling(jnp.ones(1), jnp.ones(2), jnp.ones(2))
     return problem, evaluation, scaling
-
-
-def test_lq_curvature_failure_status_and_evidence_propagate_exactly() -> None:
-    costs = (
-        jnp.asarray([[-1.0, 0.0], [0.0, 1.0]]),
-        jnp.asarray([[1.0, 0.0], [0.0, 1.0]]),
-    )
-    problem, evaluation, scaling = _failure_problem(costs)
-    suggestion = _suggest(problem, evaluation, scaling, suggestion_id="curvature")
-
-    expected = int(LQFeedbackNashStatus.OWN_CURVATURE_NOT_POSITIVE_DEFINITE)
-    assert int(suggestion.status) == expected
-    assert int(suggestion.lq_result.status) == expected
-    assert int(suggestion.status) == int(
-        LocalAffineGameSuggestionStatus.OWN_CURVATURE_NOT_POSITIVE_DEFINITE
-    )
-    assert suggestion.lq_diagnostics is suggestion.lq_result.diagnostics
-    assert not bool(suggestion.valid)
-
-
-def test_lq_rank_failure_status_and_evidence_propagate_exactly() -> None:
-    singular = jnp.ones((2, 2))
-    problem, evaluation, scaling = _failure_problem((singular, singular))
-    suggestion = _suggest(problem, evaluation, scaling, suggestion_id="rank")
-
-    expected = int(LQFeedbackNashStatus.COUPLED_SYSTEM_RANK_DEFICIENT)
-    assert int(suggestion.status) == expected
-    assert int(suggestion.lq_result.status) == expected
-    assert int(suggestion.status) == int(
-        LocalAffineGameSuggestionStatus.COUPLED_SYSTEM_RANK_DEFICIENT
-    )
-    np.testing.assert_array_equal(
-        suggestion.lq_diagnostics.coupled_ranks,
-        suggestion.lq_result.diagnostics.coupled_ranks,
-    )
-    assert not bool(suggestion.valid)

@@ -11,7 +11,7 @@ import pytest
 import phydrax as phx
 
 
-def test_find_map_recovers_correlated_gaussian_mode() -> None:
+def test_find_map_contracts() -> None:
     precision = jnp.asarray([[5.0, 1.0], [1.0, 3.0]])
     target = jnp.asarray([0.4, -0.7])
     initial = jnp.asarray([2.0, 1.0])
@@ -57,24 +57,6 @@ def test_find_map_recovers_correlated_gaussian_mode() -> None:
     assert result.mean_step_seconds == pytest.approx(
         result.optimization_seconds / result.num_steps
     )
-
-
-def test_find_map_optimizes_unconstrained_coordinates_with_jacobian() -> None:
-    log_location = jnp.log(jnp.asarray(2.5))
-    space = phx.uq.ParameterSpace(
-        jnp.asarray(-1.0),
-        priors=phx.uq.LogNormal(log_location, 0.4),
-        bijectors=phx.uq.ExpBijector(),
-    )
-    problem = phx.uq.PosteriorProblem(space, lambda _: jnp.zeros(()))
-
-    result = phx.uq.find_map(problem, gradient_tolerance=1e-9)
-
-    assert jnp.allclose(result.position, log_location, atol=1e-8)
-    assert jnp.allclose(result.parameters, 2.5, atol=1e-8)
-
-
-def test_find_map_returns_or_raises_with_complete_failure_evidence() -> None:
     space = phx.uq.ParameterSpace(
         jnp.asarray([-1.2, 1.0]),
         priors=phx.uq.Normal(0.0, 100.0),
@@ -103,6 +85,28 @@ def test_find_map_returns_or_raises_with_complete_failure_evidence() -> None:
             objective_tolerance=None,
         )
     assert error.value.result.termination_reason == "max_steps"
+    space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
+    problem = phx.uq.PosteriorProblem(space, lambda _: jnp.asarray(jnp.nan))
+
+    with pytest.raises(FloatingPointError, match="finite scalar"):
+        phx.uq.find_map(problem)
+    space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
+    problem = phx.uq.PosteriorProblem(space, lambda value: -jnp.sqrt(value))
+
+    with pytest.raises(FloatingPointError, match="gradient must be finite"):
+        phx.uq.find_map(problem)
+    log_location = jnp.log(jnp.asarray(2.5))
+    space = phx.uq.ParameterSpace(
+        jnp.asarray(-1.0),
+        priors=phx.uq.LogNormal(log_location, 0.4),
+        bijectors=phx.uq.ExpBijector(),
+    )
+    problem = phx.uq.PosteriorProblem(space, lambda _: jnp.zeros(()))
+
+    result = phx.uq.find_map(problem, gradient_tolerance=1e-9)
+
+    assert jnp.allclose(result.position, log_location, atol=1e-8)
+    assert jnp.allclose(result.parameters, 2.5, atol=1e-8)
 
 
 def test_structured_gp_problems_reuse_compiled_map_executable() -> None:
@@ -166,19 +170,3 @@ def test_structured_gp_problems_reuse_compiled_map_executable() -> None:
     assert warm.step_compilation_seconds < cold.step_compilation_seconds
     assert cold.execution_seconds > 0.0
     assert warm.execution_seconds > 0.0
-
-
-def test_find_map_rejects_nonfinite_initial_density() -> None:
-    space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
-    problem = phx.uq.PosteriorProblem(space, lambda _: jnp.asarray(jnp.nan))
-
-    with pytest.raises(FloatingPointError, match="finite scalar"):
-        phx.uq.find_map(problem)
-
-
-def test_find_map_rejects_nonfinite_initial_gradient() -> None:
-    space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
-    problem = phx.uq.PosteriorProblem(space, lambda value: -jnp.sqrt(value))
-
-    with pytest.raises(FloatingPointError, match="gradient must be finite"):
-        phx.uq.find_map(problem)

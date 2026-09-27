@@ -66,7 +66,7 @@ def _request(*surfaces: Any, order: Any = 1, authority: Any = None) -> Any:
     return DifferentiationRequest(surfaces, order=order, authority=authority)
 
 
-def test_conditions_resolve_before_levels_are_compared() -> None:
+def test_differentiation_scenario_1() -> None:
     assert weakest_level((Level.SMOOTH, Level.ALMOST_EVERYWHERE)) is (
         Level.ALMOST_EVERYWHERE
     )
@@ -95,9 +95,6 @@ def test_conditions_resolve_before_levels_are_compared() -> None:
         weakest_level(("smooth",))
     with pytest.raises(ValueError):
         weakest_level(())
-
-
-def test_regularity_worked_cases() -> None:
     relu_linear = RELU.compose(AFFINE)
     assert relu_linear.admits_order(1) == (Level.ALMOST_EVERYWHERE, ())
     assert relu_linear.admits_order(2) == (Level.NONE, ())
@@ -125,25 +122,6 @@ def test_regularity_worked_cases() -> None:
     hard_tree = Regularity.piecewise_polynomial(continuity=-1, degree_bound=0)
     assert hard_tree.admits_order(1) == (Level.NONE, ())
     assert Regularity.discontinuous().admits_order(1) == (Level.NONE, ())
-
-
-def test_differentiated_regularity_carries_the_admitted_conditions() -> None:
-    elu = Regularity.piecewise_smooth(continuity=0, conditions=("interior",))
-    assert elu.admits_order(2) == (
-        Level.ALMOST_EVERYWHERE,
-        ("interior", "singular-part-ignored"),
-    )
-
-    second = elu.differentiate(2)
-    assert second.conditions == ("interior", "singular-part-ignored")
-    assert elu.differentiate(1).conditions == ("interior",)
-    assert elu.differentiate(1).differentiate(1).conditions == second.conditions
-    assert TANH.differentiate(3).conditions == ()
-    with pytest.raises(ValueError, match="degenerate"):
-        RELU.differentiate(2)
-
-
-def test_regularity_algebra_bounds_degree_and_continuity() -> None:
     cubic_c0 = Regularity.piecewise_polynomial(continuity=0, degree_bound=3)
     added = SQUARED_RELU.add(cubic_c0)
     assert (added.continuity, added.pieces, added.degree_bound) == (0, "polynomial", 3)
@@ -173,9 +151,22 @@ def test_regularity_algebra_bounds_degree_and_continuity() -> None:
         Regularity.piecewise_polynomial(continuity=True, degree_bound=1)
     with pytest.raises(ValueError):
         RELU.admits_order(0)
+    elu = Regularity.piecewise_smooth(continuity=0, conditions=("interior",))
+    assert elu.admits_order(2) == (
+        Level.ALMOST_EVERYWHERE,
+        ("interior", "singular-part-ignored"),
+    )
+
+    second = elu.differentiate(2)
+    assert second.conditions == ("interior", "singular-part-ignored")
+    assert elu.differentiate(1).conditions == ("interior",)
+    assert elu.differentiate(1).differentiate(1).conditions == second.conditions
+    assert TANH.differentiate(3).conditions == ()
+    with pytest.raises(ValueError, match="degenerate"):
+        RELU.differentiate(2)
 
 
-def test_contract_declaration_is_canonical() -> None:
+def test_differentiation_scenario_2() -> None:
     first = _contract(
         (Surface.MODEL_PARAMETER, Level.SMOOTH),
         (Surface.INPUT, Level.SMOOTH),
@@ -211,9 +202,38 @@ def test_contract_declaration_is_canonical() -> None:
         _contract((Surface.INPUT, Level.SMOOTH), (Surface.INPUT, Level.NONE))
     with pytest.raises(TypeError):
         _contract((Surface.INPUT, "smooth"))
+    contract = _contract(
+        (Surface.INPUT, Level.SMOOTH),
+        (Surface.MODEL_PARAMETER, Level.ALMOST_EVERYWHERE),
+        (Surface.FIT_FEATURES, Level.CONDITIONAL),
+        route=Route.DIRECT,
+        regularity=RELU,
+        conditions=("fixed-active-set",),
+        outputs=("argmax",),
+    )
+    fit = contract.admit(_request(Surface.FIT_FEATURES))
+    assert fit.supported
+    assert fit.levels == (Level.CONDITIONAL,)
+    assert fit.conditions == ("fixed-active-set",)
+    assert fit.nondifferentiable_outputs == ("argmax",)
 
+    permissive = contract.admit(
+        _request(Surface.INPUT, Surface.MODEL_PARAMETER), policy=PERMISSIVE
+    )
+    assert permissive.levels == (Level.ALMOST_EVERYWHERE, Level.ALMOST_EVERYWHERE)
+    assert permissive.status == "derivative-supported"
 
-def test_meet_reproduces_artifact_owned_surface_union() -> None:
+    with pytest.raises(ValueError, match=DERIVATIVE_UNSUPPORTED) as error:
+        contract.require(_request(Surface.INPUT, Surface.FIT_TARGETS), policy=PERMISSIVE)
+    assert "fit-targets" in str(error.value)
+    unsupported = contract.admit(_request(Surface.INPUT, Surface.FIT_TARGETS))
+    assert unsupported.status == DERIVATIVE_UNSUPPORTED
+    assert unsupported.reasons == (
+        "almost-everywhere-not-allowed",
+        "surface-unsupported:fit-targets",
+    )
+    with pytest.raises(ValueError, match="regularity-degenerate"):
+        contract.require(_request(Surface.INPUT, order=2), policy=PERMISSIVE)
     native = _contract(
         (Surface.PHYSICAL_PARAMETER, Level.SMOOTH),
         (Surface.STORED_VALUES, Level.SMOOTH),
@@ -230,9 +250,6 @@ def test_meet_reproduces_artifact_owned_surface_union() -> None:
     assert combined.level(Surface.MODEL_PARAMETER) is Level.SMOOTH
     assert combined.regularity is None
     assert constant.meet(constant).surfaces == ()
-
-
-def test_meet_takes_weakest_capability_and_owner_levels() -> None:
     first = _contract(
         (Surface.INPUT, Level.SMOOTH),
         (Surface.MODEL_PARAMETER, Level.SMOOTH),
@@ -254,9 +271,6 @@ def test_meet_takes_weakest_capability_and_owner_levels() -> None:
     assert combined.regularity == TANH.add(RELU)
     assert combined.nondifferentiable_outputs == ("index", "label")
     assert combined.route is Route.DIRECT
-
-
-def test_route_mismatch_stops_unless_composition_route_is_declared() -> None:
     direct = _contract((Surface.MODEL_PARAMETER, Level.SMOOTH))
     implicit = _contract((Surface.MODEL_PARAMETER, Level.SMOOTH), route=Route.IMPLICIT)
 
@@ -283,7 +297,7 @@ def test_route_mismatch_stops_unless_composition_route_is_declared() -> None:
     assert declared.require(request).supported
 
 
-def test_stopped_route_admits_no_request_whatever_its_declared_levels() -> None:
+def test_differentiation_scenario_3() -> None:
     stopped = DerivativeContract.smooth(
         (Surface.INPUT, Surface.MODEL_PARAMETER, Surface.FIT_TARGETS),
         route=Route.STOPPED,
@@ -300,9 +314,6 @@ def test_stopped_route_admits_no_request_whatever_its_declared_levels() -> None:
     )
     assert bound.levels == (Level.NONE,)
     assert bound.reasons == ("route-stopped",)
-
-
-def test_compose_passes_upstream_derivatives_through_downstream_input() -> None:
     upstream = _contract(
         (Surface.INPUT, Level.SMOOTH),
         (Surface.MODEL_PARAMETER, Level.SMOOTH),
@@ -334,9 +345,6 @@ def test_compose_passes_upstream_derivatives_through_downstream_input() -> None:
 
     # Parallel combination has no passage, so the upstream parameters survive.
     assert upstream.meet(blocking).level(Surface.MODEL_PARAMETER) is Level.SMOOTH
-
-
-def test_authority_admission_table() -> None:
     expected = {
         ComponentAuthority.ACCELERATOR: {
             (Route.UNROLLED, ObjectiveKind.ALGORITHMIC_WORK),
@@ -385,7 +393,7 @@ def test_authority_admission_table() -> None:
         authority_admits("model", Route.DIRECT, ObjectiveKind.DATA_FIT)
 
 
-def test_proven_degeneracy_is_always_rejected() -> None:
+def test_differentiation_scenario_4() -> None:
     request = _request(Surface.INPUT, order=2)
     admission = admit_regularity(
         RELU.compose(AFFINE), request, route=Route.DIRECT, policy=PERMISSIVE
@@ -393,9 +401,6 @@ def test_proven_degeneracy_is_always_rejected() -> None:
     assert not admission.supported
     assert admission.reasons == ("regularity-degenerate",)
     assert admission.levels == (Level.NONE,)
-
-
-def test_almost_everywhere_regularity_needs_owner_permission() -> None:
     request = _request(Surface.INPUT, Surface.MODEL_PARAMETER, order=2)
     regularity = RELU.compose(TANH)
 
@@ -415,6 +420,22 @@ def test_almost_everywhere_regularity_needs_owner_permission() -> None:
     assert allowed.supported
     assert allowed.level(Surface.INPUT) is Level.ALMOST_EVERYWHERE
     assert allowed.conditions == ("singular-part-ignored",)
+    request = _request(Surface.MODEL_PARAMETER, authority=ComponentAuthority.MODEL)
+    policy = RegularityPolicy(allow_almost_everywhere=True)
+
+    kinked = admit_regularity(RELU, request, route=Route.IMPLICIT, policy=policy)
+    assert kinked.reasons == ("implicit-requires-c1",)
+    assert kinked.levels == (Level.NONE,)
+
+    margin = Regularity.piecewise_polynomial(
+        continuity=0, degree_bound=1, conditions=("branch-margin",)
+    )
+    assert admit_regularity(
+        margin, request, route=Route.IMPLICIT, policy=policy
+    ).supported
+    assert admit_regularity(
+        SQUARED_RELU, request, route=Route.IMPLICIT, policy=RegularityPolicy()
+    ).supported
 
 
 def test_undeclared_regularity_depends_on_authority_and_route() -> None:
@@ -457,61 +478,7 @@ def test_undeclared_regularity_depends_on_authority_and_route() -> None:
     assert parameters_only.conditions == ()
 
 
-def test_implicit_routes_need_classical_c1_or_branch_margin() -> None:
-    request = _request(Surface.MODEL_PARAMETER, authority=ComponentAuthority.MODEL)
-    policy = RegularityPolicy(allow_almost_everywhere=True)
-
-    kinked = admit_regularity(RELU, request, route=Route.IMPLICIT, policy=policy)
-    assert kinked.reasons == ("implicit-requires-c1",)
-    assert kinked.levels == (Level.NONE,)
-
-    margin = Regularity.piecewise_polynomial(
-        continuity=0, degree_bound=1, conditions=("branch-margin",)
-    )
-    assert admit_regularity(
-        margin, request, route=Route.IMPLICIT, policy=policy
-    ).supported
-    assert admit_regularity(
-        SQUARED_RELU, request, route=Route.IMPLICIT, policy=RegularityPolicy()
-    ).supported
-
-
-def test_contract_admission_combines_levels_and_regularity() -> None:
-    contract = _contract(
-        (Surface.INPUT, Level.SMOOTH),
-        (Surface.MODEL_PARAMETER, Level.ALMOST_EVERYWHERE),
-        (Surface.FIT_FEATURES, Level.CONDITIONAL),
-        route=Route.DIRECT,
-        regularity=RELU,
-        conditions=("fixed-active-set",),
-        outputs=("argmax",),
-    )
-    fit = contract.admit(_request(Surface.FIT_FEATURES))
-    assert fit.supported
-    assert fit.levels == (Level.CONDITIONAL,)
-    assert fit.conditions == ("fixed-active-set",)
-    assert fit.nondifferentiable_outputs == ("argmax",)
-
-    permissive = contract.admit(
-        _request(Surface.INPUT, Surface.MODEL_PARAMETER), policy=PERMISSIVE
-    )
-    assert permissive.levels == (Level.ALMOST_EVERYWHERE, Level.ALMOST_EVERYWHERE)
-    assert permissive.status == "derivative-supported"
-
-    with pytest.raises(ValueError, match=DERIVATIVE_UNSUPPORTED) as error:
-        contract.require(_request(Surface.INPUT, Surface.FIT_TARGETS), policy=PERMISSIVE)
-    assert "fit-targets" in str(error.value)
-    unsupported = contract.admit(_request(Surface.INPUT, Surface.FIT_TARGETS))
-    assert unsupported.status == DERIVATIVE_UNSUPPORTED
-    assert unsupported.reasons == (
-        "almost-everywhere-not-allowed",
-        "surface-unsupported:fit-targets",
-    )
-    with pytest.raises(ValueError, match="regularity-degenerate"):
-        contract.require(_request(Surface.INPUT, order=2), policy=PERMISSIVE)
-
-
-def test_branch_policies_map_to_distinct_canonical_contracts() -> None:
+def test_differentiation_scenario_5() -> None:
     surfaces = (Surface.PRIMAL_STATE, Surface.PHYSICAL_PARAMETER)
     contracts = {
         policy: branch_policy_contract(policy, surfaces=surfaces)
@@ -545,9 +512,6 @@ def test_branch_policies_map_to_distinct_canonical_contracts() -> None:
     unsupported = contracts[BranchDifferentiationPolicy.UNSUPPORTED]
     assert unsupported.route is Route.STOPPED
     assert not unsupported.admit(request).supported
-
-
-def test_capability_requirement_alternatives_and_safety() -> None:
     Kind = CapabilityEvidenceKind
     requirement = CapabilityRequirement(
         "holomorphic-map",
@@ -571,6 +535,19 @@ def test_capability_requirement_alternatives_and_safety() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         requirement.is_satisfied_by({"constructed"})
+    request = _request(Surface.MODEL_PARAMETER, Surface.INPUT)
+    assert request.surfaces == (Surface.INPUT, Surface.MODEL_PARAMETER)
+    assert request == _request(Surface.INPUT, Surface.MODEL_PARAMETER)
+    with pytest.raises(ValueError):
+        _request()
+    with pytest.raises(ValueError):
+        _request(Surface.INPUT, Surface.INPUT)
+    with pytest.raises(TypeError):
+        _request("input")
+    with pytest.raises(TypeError):
+        _request(Surface.INPUT, order=1.0)
+    with pytest.raises(TypeError):
+        _request(Surface.INPUT, authority="model")
 
 
 def test_construction_certificates_declare_capability_and_identity() -> None:
@@ -592,19 +569,3 @@ def test_construction_certificates_declare_capability_and_identity() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[missing-argument]
         AbstractConstructionCertificate()
-
-
-def test_requests_are_validated_surface_sets() -> None:
-    request = _request(Surface.MODEL_PARAMETER, Surface.INPUT)
-    assert request.surfaces == (Surface.INPUT, Surface.MODEL_PARAMETER)
-    assert request == _request(Surface.INPUT, Surface.MODEL_PARAMETER)
-    with pytest.raises(ValueError):
-        _request()
-    with pytest.raises(ValueError):
-        _request(Surface.INPUT, Surface.INPUT)
-    with pytest.raises(TypeError):
-        _request("input")
-    with pytest.raises(TypeError):
-        _request(Surface.INPUT, order=1.0)
-    with pytest.raises(TypeError):
-        _request(Surface.INPUT, authority="model")

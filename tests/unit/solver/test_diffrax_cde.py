@@ -49,7 +49,7 @@ def _declared_path(
     )
 
 
-def test_smooth_cde_matches_analytic_solution_and_preserves_provenance() -> None:
+def test_diffrax_cde_scenario_1() -> None:
     rate = 0.7
     path = _declared_path(
         lambda time, side: jnp.asarray([time**2]),
@@ -91,9 +91,37 @@ def test_smooth_cde_matches_analytic_solution_and_preserves_provenance() -> None
         1.3 * jnp.exp(rate * 0.35**2),
         rtol=2e-7,
     )
+    rate = 0.45
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: rate * state[..., None],
+        jnp.asarray([1.2]),
+        driver_dimension=1,
+    )
+    path = _declared_path(
+        lambda time, side: jnp.asarray([time]),
+        lambda time, side: jnp.asarray([1.0]),
+        dimension=1,
+        path_id="identity-smooth-control",
+    )
+    cde = phx.solver.solve_diffrax_cde(
+        problem,
+        path,
+        save_times=jnp.asarray([1.0]),
+        rtol=1e-9,
+        atol=1e-11,
+    )
+    partition = jnp.linspace(0.0, 1.0, 257)
+    rough_path = phx.stochastic.GeometricRoughPath.from_values(
+        partition, partition[:, None]
+    )
+    rde = phx.solver.solve_rough_differential(
+        problem,
+        rough_path,
+        save_times=jnp.asarray([1.0]),
+        solver=phx.solver.Davie(),
+    )
 
-
-def test_drift_and_multidimensional_control_contract_along_driver_axis() -> None:
+    assert jnp.allclose(cde.states[0], rde.states[0], rtol=2e-6, atol=2e-6)
     matrix = jnp.asarray([[1.0, -2.0], [0.5, 3.0]])
     drift = jnp.asarray([0.3, -0.2])
     initial = jnp.asarray([0.4, -1.0])
@@ -120,9 +148,6 @@ def test_drift_and_multidimensional_control_contract_along_driver_axis() -> None
 
     expected = initial + drift + matrix @ jnp.asarray([1.0, -1.0])
     assert jnp.allclose(solution.states[0], expected, rtol=2e-8, atol=2e-9)
-
-
-def test_piecewise_linear_derivative_knot_is_declared_and_landed() -> None:
     path = phx.solver.PiecewiseLinearDrivingPath(
         jnp.asarray([0.0, 0.3, 1.0]),
         jnp.asarray([[0.0], [0.3], [3.1]]),
@@ -152,34 +177,33 @@ def test_piecewise_linear_derivative_knot_is_declared_and_landed() -> None:
     assert jnp.allclose(solution.states[:, 0], jnp.asarray([0.3, 3.1]), atol=2e-6)
 
 
-@pytest.mark.parametrize("right_offset", [1.0, jnp.nan])
-def test_callable_value_jumps_and_nonfinite_breakpoint_limits_are_rejected(
-    right_offset: Any,
-) -> None:
-    def value(time: Any, side: Any) -> Any:
-        offset = jnp.where(time == 0.5, right_offset, 0.0) if side == "right" else 0.0
-        return jnp.asarray([time + offset])
+def test_callable_value_jumps_and_nonfinite_breakpoint_limits_are_rejected() -> None:
+    for right_offset in [1.0, jnp.nan]:
 
-    path = _declared_path(
-        value,
-        lambda time, side: jnp.asarray([1.0]),
-        dimension=1,
-        path_id="invalid-callable-value-break",
-        breakpoints=(0.5,),
-    )
-    problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: jnp.ones(state.shape + (1,)),
-        jnp.asarray([0.0]),
-        driver_dimension=1,
-    )
+        def value(time: Any, side: Any) -> Any:
+            offset = jnp.where(time == 0.5, right_offset, 0.0) if side == "right" else 0.0
+            return jnp.asarray([time + offset])
 
-    with pytest.raises(Exception, match="finite matching left/right"):
-        solution = phx.solver.solve_diffrax_cde(
-            problem,
-            path,
-            save_times=jnp.asarray([1.0]),
+        path = _declared_path(
+            value,
+            lambda time, side: jnp.asarray([1.0]),
+            dimension=1,
+            path_id="invalid-callable-value-break",
+            breakpoints=(0.5,),
         )
-        jax.block_until_ready(solution.states)
+        problem = phx.solver.RoughDifferentialProblem(
+            lambda time, state, args: jnp.ones(state.shape + (1,)),
+            jnp.asarray([0.0]),
+            driver_dimension=1,
+        )
+
+        with pytest.raises(Exception, match="finite matching left/right"):
+            solution = phx.solver.solve_diffrax_cde(
+                problem,
+                path,
+                save_times=jnp.asarray([1.0]),
+            )
+            jax.block_until_ready(solution.states)
 
 
 def test_callable_derivative_jump_works_and_inactive_capacity_is_not_terminal_jump(
@@ -265,41 +289,7 @@ def test_gradients_flow_through_vector_field_and_path_coefficients() -> None:
     assert jnp.allclose(path_gradient, rate * expected, rtol=2e-5, atol=2e-6)
 
 
-def test_smooth_cde_agrees_with_refined_geometric_rough_solve() -> None:
-    rate = 0.45
-    problem = phx.solver.RoughDifferentialProblem(
-        lambda time, state, args: rate * state[..., None],
-        jnp.asarray([1.2]),
-        driver_dimension=1,
-    )
-    path = _declared_path(
-        lambda time, side: jnp.asarray([time]),
-        lambda time, side: jnp.asarray([1.0]),
-        dimension=1,
-        path_id="identity-smooth-control",
-    )
-    cde = phx.solver.solve_diffrax_cde(
-        problem,
-        path,
-        save_times=jnp.asarray([1.0]),
-        rtol=1e-9,
-        atol=1e-11,
-    )
-    partition = jnp.linspace(0.0, 1.0, 257)
-    rough_path = phx.stochastic.GeometricRoughPath.from_values(
-        partition, partition[:, None]
-    )
-    rde = phx.solver.solve_rough_differential(
-        problem,
-        rough_path,
-        save_times=jnp.asarray([1.0]),
-        solver=phx.solver.Davie(),
-    )
-
-    assert jnp.allclose(cde.states[0], rde.states[0], rtol=2e-6, atol=2e-6)
-
-
-def test_rough_second_level_control_is_rejected_with_rde_direction() -> None:
+def test_diffrax_cde_scenario_2() -> None:
     rough_path = phx.stochastic.GeometricRoughPath.from_values(
         jnp.asarray([0.0, 1.0]),
         jnp.asarray([[0.0], [1.0]]),
@@ -316,9 +306,6 @@ def test_rough_second_level_control_is_rejected_with_rde_direction() -> None:
             rough_path,
             save_times=jnp.asarray([1.0]),
         )
-
-
-def test_complex_cde_uses_declared_real_coordinates() -> None:
     path = _declared_path(
         lambda time, side: jnp.asarray([time]),
         lambda time, side: jnp.asarray([1.0]),

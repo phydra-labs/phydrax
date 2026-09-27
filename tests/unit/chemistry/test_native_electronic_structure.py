@@ -65,7 +65,7 @@ def test_contracted_gaussian_integrals_obey_normalization_and_permutation_symmet
     )
 
 
-def test_native_rhf_closes_energy_force_and_excited_spectrum_chain() -> None:
+def test_native_contracts() -> None:
     units, structure, system, basis = _hydrogen_dimer()
     rhf = phx.chemistry.NativeRHFPlan(
         system,
@@ -114,9 +114,6 @@ def test_native_rhf_closes_energy_force_and_excited_spectrum_chain() -> None:
         rtol=1.0e-3,
         atol=1.0e-12,
     )
-
-
-def test_native_rhf_tda_rejects_unsupported_spin_and_symmetry_sectors() -> None:
     units, structure, system, basis = _hydrogen_dimer()
     rhf = phx.chemistry.NativeRHFPlan(
         system,
@@ -147,36 +144,6 @@ def test_native_rhf_tda_rejects_unsupported_spin_and_symmetry_sectors() -> None:
                 symmetry_sector="A1",
             ),
         )
-
-
-def test_native_lda_produces_symmetric_static_polarizability() -> None:
-    _, structure, system, basis = _hydrogen_dimer()
-    grid = phx.chemistry.MolecularIntegrationGridPlan.cartesian_box(
-        system,
-        # ty: ignore[invalid-argument-type]
-        [0.0, 0.0, 0.0],
-        half_width=4.0,
-        points_per_axis=9,
-    )
-    lda = phx.chemistry.NativeLDAPlan(
-        system,
-        basis,
-        grid,
-        2,
-        convergence_tolerance=1.0e-7,
-        maximum_iterations=128,
-        damping=0.3,
-        field_displacement=2.0e-3,
-    )
-    result = lda.static_polarizability(structure.positions)
-
-    assert bool(result.successful)
-    assert float(result.symmetry_residual) <= 1.0e-10
-    np.testing.assert_allclose(result.tensor, result.tensor.T, atol=1.0e-10)
-    assert np.all(np.isfinite(np.asarray(result.tensor)))
-
-
-def test_native_rhf_embedding_returns_conservative_point_charge_forces() -> None:
     units, structure, system, basis = _hydrogen_dimer()
     plan = phx.chemistry.NativeRHFPlan(
         system,
@@ -203,3 +170,27 @@ def test_native_rhf_embedding_returns_conservative_point_charge_forces() -> None
         np.asarray(result.point_charge_forces), axis=0
     )
     np.testing.assert_allclose(total_force, 0.0, atol=2.0e-4)
+    _, structure, system, basis = _hydrogen_dimer()
+    grid = phx.chemistry.MolecularIntegrationGridPlan.cartesian_box(
+        system,
+        # ty: ignore[invalid-argument-type]
+        [0.0, 0.0, 0.0],
+        half_width=4.0,
+        points_per_axis=9,
+    )
+    lda = phx.chemistry.NativeLDAPlan(
+        system,
+        basis,
+        grid,
+        2,
+        convergence_tolerance=1.0e-7,
+        maximum_iterations=128,
+        damping=0.3,
+        field_displacement=2.0e-3,
+    )
+    result = lda.static_polarizability(structure.positions)
+
+    assert bool(result.successful)
+    assert float(result.symmetry_residual) <= 1.0e-10
+    np.testing.assert_allclose(result.tensor, result.tensor.T, atol=1.0e-10)
+    assert np.all(np.isfinite(np.asarray(result.tensor)))

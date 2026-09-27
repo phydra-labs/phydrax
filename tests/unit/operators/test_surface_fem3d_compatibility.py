@@ -33,7 +33,7 @@ def _fast_policy() -> Any:
     )
 
 
-def test_triangle_topology_retains_face_components_and_region_mesh_order() -> None:
+def test_surface_fem3d_compatibility_scenario_1() -> None:
     region = _two_component_region()
     mesh = region.triangle_mesh
 
@@ -43,9 +43,6 @@ def test_triangle_topology_retains_face_components_and_region_mesh_order() -> No
         jnp.asarray([0, 0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32),
     )
     assert jnp.array_equal(mesh.faces, region.faces)
-
-
-def test_surface_binding_uses_one_dp0_dof_per_face_and_invalidates_by_binding() -> None:
     region = _two_component_region()
     prepared = phx.operators.prepare_laplace_single_layer_dp0_3d(
         region,
@@ -71,9 +68,6 @@ def test_surface_binding_uses_one_dp0_dof_per_face_and_invalidates_by_binding() 
         prepared.strong_operator.mv(coefficients),
         rebound.strong_operator.mv(coefficients),
     )
-
-
-def test_surface_binding_rejects_inward_or_unseparated_components() -> None:
     inward = _TETRA_FACES[:, [0, 2, 1]]
     inward_region = _two_component_region(
         second_faces=inward,

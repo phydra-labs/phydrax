@@ -22,7 +22,7 @@ def _periodic_grid(shape: Any) -> Any:
     ).prepare(jnp.stack((jnp.zeros(len(shape)), jnp.ones(len(shape)))))
 
 
-def test_roe_wave_fluctuations_sum_to_roe_flux_jump() -> None:
+def test_finite_volume_wave_scenario_1() -> None:
     system = phx.equations.EulerSystem()
     left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 1.0]]))
     right = system.primitive_to_conserved(jnp.asarray([[0.8, -0.1, 0.7]]))
@@ -43,9 +43,6 @@ def test_roe_wave_fluctuations_sum_to_roe_flux_jump() -> None:
         rtol=2e-11,
         atol=2e-11,
     )
-
-
-def test_wave_family_limiter_preserves_wave_and_fluctuation_shapes() -> None:
     system = phx.equations.EulerSystem()
     primitive = jnp.asarray(
         [[1.0, 0.2, 1.0], [0.9, 0.1, 0.9], [0.8, -0.1, 0.8], [1.1, 0.0, 1.2]]
@@ -59,9 +56,6 @@ def test_wave_family_limiter_preserves_wave_and_fluctuation_shapes() -> None:
     assert limited.waves.shape == decomposition.waves.shape
     assert limited.left_fluctuation.shape == state.shape
     assert jnp.all(jnp.isfinite(limited.waves))
-
-
-def test_capacity_scales_hyperbolic_stable_step() -> None:
     grid = _periodic_grid((24,))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
     system = phx.equations.ScalarConservationSystem(
@@ -90,7 +84,7 @@ def test_capacity_scales_hyperbolic_stable_step() -> None:
     )
 
 
-def test_split_and_unsplit_steppers_preserve_constant_multidimensional_state() -> None:
+def test_finite_volume_wave_scenario_2() -> None:
     grid = _periodic_grid((8, 6))
     system = phx.equations.ScalarConservationSystem(
         2,
@@ -125,9 +119,6 @@ def test_split_and_unsplit_steppers_preserve_constant_multidimensional_state() -
 
     np.testing.assert_allclose(unsplit.state, state, atol=1e-13)
     np.testing.assert_allclose(split.state, state, atol=1e-13)
-
-
-def test_transverse_solver_returns_finite_opposite_direction_splits() -> None:
     system = phx.equations.EulerSystem(2)
     left = system.primitive_to_conserved(jnp.asarray([[1.0, 0.2, 0.1, 1.0]]))
     right = system.primitive_to_conserved(jnp.asarray([[0.9, -0.1, 0.0, 0.9]]))

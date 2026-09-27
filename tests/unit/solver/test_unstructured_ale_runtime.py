@@ -155,9 +155,8 @@ def _with_prepared_coupling_marker(dynamics: Any, component: Any) -> Any:
     return eqx.tree_at(lambda value: value.coupling, dynamics, coupling)
 
 
-@pytest.mark.parametrize(
-    "component",
-    (
+def test_direct_ssprk_rejects_every_prepared_unstructured_coupling_category() -> None:
+    for component in (
         "motion",
         "embedded_boundary",
         "vof",
@@ -167,18 +166,14 @@ def _with_prepared_coupling_marker(dynamics: Any, component: Any) -> Any:
         "amr",
         "overset",
         "sliding",
-    ),
-)
-def test_direct_ssprk_rejects_every_prepared_unstructured_coupling_category(
-    component: Any,
-) -> None:
-    _, _, _, runtime = _prepared_runtime(mapping_id=f"direct-reject:{component}")
-    coupled = _with_prepared_coupling_marker(runtime.dynamics, component)
+    ):
+        _, _, _, runtime = _prepared_runtime(mapping_id=f"direct-reject:{component}")
+        coupled = _with_prepared_coupling_marker(runtime.dynamics, component)
 
-    with pytest.raises(ValueError) as error:
-        phx.solver.UnsplitFiniteVolumeSSPRK3Plan(coupled)
+        with pytest.raises(ValueError) as error:
+            phx.solver.UnsplitFiniteVolumeSSPRK3Plan(coupled)
 
-    assert str(error.value) == _DIRECT_COUPLED_SSPRK_ERROR
+        assert str(error.value) == _DIRECT_COUPLED_SSPRK_ERROR
 
 
 def test_direct_ssprk_rejects_prepared_topology_events() -> None:

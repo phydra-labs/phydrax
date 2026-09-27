@@ -14,6 +14,7 @@ from blackjax.sgmcmc.sgnht import init as init_sgnht
 import phydrax as phx
 import phydrax.axes as cx
 import phydrax.uq._sgmcmc as sgmcmc_module
+from tests._support.assertions import assert_tree_equal
 
 
 def _regression_problem(*, batch_size: Any = 3, seed: Any = 7) -> Any:
@@ -44,16 +45,11 @@ def _regression_problem(*, batch_size: Any = 3, seed: Any = 7) -> Any:
     return problem, source
 
 
-def _assert_tree_equal(left: Any, right: Any) -> None:
-    comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
-    assert all(jax.tree_util.tree_leaves(comparisons))
-
-
 def _transition_keys(chain_keys: Any, update: Any) -> Any:
     return jax.vmap(lambda key: jr.fold_in(jr.fold_in(key, 1), update))(chain_keys)
 
 
-def test_sgld_first_update_matches_blackjax_diffusion_convention() -> None:
+def test_sgmcmc_scenario_1() -> None:
     problem, source = _regression_problem()
     initial = jnp.asarray([[-0.3, 0.2], [0.4, -0.1]])
     step_size = 2.0e-4
@@ -88,9 +84,6 @@ def test_sgld_first_update_matches_blackjax_diffusion_convention() -> None:
         rtol=0.0,
         atol=jnp.finfo(expected.dtype).eps,
     )
-
-
-def test_sgnht_first_update_matches_blackjax_diffusion_convention() -> None:
     problem, source = _regression_problem()
     initial = jnp.asarray([[-0.2, 0.3], [0.25, -0.15]])
     step_size = 1.0e-4
@@ -133,27 +126,84 @@ def test_sgnht_first_update_matches_blackjax_diffusion_convention() -> None:
     assert jnp.array_equal(result.burnin_states.position, position)
     assert jnp.array_equal(result.burnin_states.momentum, momentum)
     assert jnp.array_equal(result.burnin_states.xi, xi)
+    for sample in [phx.uq.sample_sgld, phx.uq.sample_sgnht]:
+        problem, source = _regression_problem(batch_size=4)
+        common: dict[str, Any] = {
+            "key": jr.key(22),
+            "step_size": 1.0e-4,
+            "num_chains": 2,
+            "num_burnin": 3,
+            "num_samples": 6,
+            "steps_per_sample": 2,
+            "initial_positions": jnp.asarray([[-0.4, 0.1], [0.5, -0.2]]),
+        }
+        vectorized = sample(problem, source, **common, chain_method="vectorized")
+        sequential = sample(problem, source, **common, chain_method="sequential")
 
+        assert_tree_equal(vectorized.samples, sequential.samples)
+        assert_tree_equal(vectorized.final_states, sequential.final_states)
+        assert jnp.array_equal(vectorized.gradient_norm, sequential.gradient_norm)
+        assert not jnp.array_equal(vectorized.samples[0], vectorized.samples[1])
+    problem, source = _regression_problem(batch_size=3)
+    result = phx.uq.sample_sgld(
+        problem,
+        source,
+        key=jr.key(25),
+        step_size=1.0e-4,
+        num_chains=2,
+        num_burnin=3,
+        num_samples=8,
+    )
+    report = result.mixing_report(
+        max_rhat=2.0,
+        min_bulk_ess=1.0e9,
+        min_tail_ess=1.0e9,
+    )
 
-@pytest.mark.parametrize("sample", [phx.uq.sample_sgld, phx.uq.sample_sgnht])
-def test_sgmcmc_sequential_and_vectorized_chains_replay_exactly(sample: Any) -> None:
-    problem, source = _regression_problem(batch_size=4)
+    assert result.log_density is not None
+    assert result.approximation == "unadjusted_fixed_step"
+    assert result.log_density.shape == (2, 8)
+    assert result.thermostat is None
+    assert result.momentum_norm is None
+    assert result.diagnostics.min_active_factors == 2
+    assert result.diagnostics.max_active_factors == 3
+    assert "bulk_ess" in report.failures
+    assert report.as_dict()["approximation"] == "unadjusted_fixed_step"
+    with pytest.raises(phx.uq.SGMCMCMixingError):
+        report.raise_for_failure()
+    problem, source = _regression_problem()
     common: dict[str, Any] = {
-        "key": jr.key(22),
+        "key": jr.key(26),
         "step_size": 1.0e-4,
         "num_chains": 2,
-        "num_burnin": 3,
-        "num_samples": 6,
-        "steps_per_sample": 2,
-        "initial_positions": jnp.asarray([[-0.4, 0.1], [0.5, -0.2]]),
+        "num_burnin": 1,
+        "num_samples": 4,
     }
-    vectorized = sample(problem, source, **common, chain_method="vectorized")
-    sequential = sample(problem, source, **common, chain_method="sequential")
-
-    _assert_tree_equal(vectorized.samples, sequential.samples)
-    _assert_tree_equal(vectorized.final_states, sequential.final_states)
-    assert jnp.array_equal(vectorized.gradient_norm, sequential.gradient_norm)
-    assert not jnp.array_equal(vectorized.samples[0], vectorized.samples[1])
+    with pytest.raises(ValueError, match="step_size"):
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            **cast(dict[str, Any], common | {"step_size": 0.0}),
+        )
+    with pytest.raises(ValueError, match="num_chains"):
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            **cast(dict[str, Any], common | {"num_chains": 1}),
+        )
+    with pytest.raises(ValueError, match="num_samples"):
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            **cast(dict[str, Any], common | {"num_samples": 3}),
+        )
+    with pytest.raises(FloatingPointError, match=r"chain\[1\]"):
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            **common,
+            initial_positions=jnp.asarray([[0.0, 0.0], [jnp.nan, 0.0]]),
+        )
 
 
 def test_control_variate_is_exact_at_center_and_rejects_other_sources() -> None:
@@ -231,69 +281,3 @@ def test_sgmcmc_preserves_nested_constrained_parameter_samples() -> None:
     prediction = result.predict(jnp.asarray([1.0, 2.0]))
     assert isinstance(prediction, phx.uq.PredictiveField)
     assert prediction.samples.shape == (2, 4, 2)
-
-
-def test_sgmcmc_result_exposes_honest_diagnostics_and_mixing_gates() -> None:
-    problem, source = _regression_problem(batch_size=3)
-    result = phx.uq.sample_sgld(
-        problem,
-        source,
-        key=jr.key(25),
-        step_size=1.0e-4,
-        num_chains=2,
-        num_burnin=3,
-        num_samples=8,
-    )
-    report = result.mixing_report(
-        max_rhat=2.0,
-        min_bulk_ess=1.0e9,
-        min_tail_ess=1.0e9,
-    )
-
-    assert result.log_density is not None
-    assert result.approximation == "unadjusted_fixed_step"
-    assert result.log_density.shape == (2, 8)
-    assert result.thermostat is None
-    assert result.momentum_norm is None
-    assert result.diagnostics.min_active_factors == 2
-    assert result.diagnostics.max_active_factors == 3
-    assert "bulk_ess" in report.failures
-    assert report.as_dict()["approximation"] == "unadjusted_fixed_step"
-    with pytest.raises(phx.uq.SGMCMCMixingError):
-        report.raise_for_failure()
-
-
-def test_sgmcmc_rejects_invalid_controls_and_reports_nonfinite_locations() -> None:
-    problem, source = _regression_problem()
-    common: dict[str, Any] = {
-        "key": jr.key(26),
-        "step_size": 1.0e-4,
-        "num_chains": 2,
-        "num_burnin": 1,
-        "num_samples": 4,
-    }
-    with pytest.raises(ValueError, match="step_size"):
-        phx.uq.sample_sgld(
-            problem,
-            source,
-            **cast(dict[str, Any], common | {"step_size": 0.0}),
-        )
-    with pytest.raises(ValueError, match="num_chains"):
-        phx.uq.sample_sgld(
-            problem,
-            source,
-            **cast(dict[str, Any], common | {"num_chains": 1}),
-        )
-    with pytest.raises(ValueError, match="num_samples"):
-        phx.uq.sample_sgld(
-            problem,
-            source,
-            **cast(dict[str, Any], common | {"num_samples": 3}),
-        )
-    with pytest.raises(FloatingPointError, match=r"chain\[1\]"):
-        phx.uq.sample_sgld(
-            problem,
-            source,
-            **common,
-            initial_positions=jnp.asarray([[0.0, 0.0], [jnp.nan, 0.0]]),
-        )

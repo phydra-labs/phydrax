@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_planar_crack_surface_exposes_oriented_front_and_exact_discrete_ledgers() -> None:
+def test_fracture_3d_scenario_1() -> None:
     geometry = phx.applications.fracture.CrackSurfaceGeometry3D(
         jnp.asarray(
             (
@@ -29,9 +29,6 @@ def test_planar_crack_surface_exposes_oriented_front_and_exact_discrete_ledgers(
     assert jnp.allclose(quadrature.represented_front_length, 4.0)
     assert jnp.allclose(jnp.linalg.norm(geometry.front_tangents, axis=-1), 1.0)
     assert mesh.vertices.shape[1] == 3
-
-
-def test_crack_surface_rejects_same_direction_shared_edge() -> None:
     vertices = jnp.asarray(
         (
             (0.0, 0.0, 0.0),

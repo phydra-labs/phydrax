@@ -18,7 +18,7 @@ def _periodic_grid(size: Any = 8) -> Any:
     return phx.discretization.periodic_finite_difference(grid)
 
 
-def test_spectral_noise_modes_are_weighted_orthonormal_and_scaled() -> None:
+def test_spatial_noise_basis_scenario_1() -> None:
     discretization = _periodic_grid()
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -38,9 +38,6 @@ def test_spectral_noise_modes_are_weighted_orthonormal_and_scaled() -> None:
         basis.diffusion,
         basis.modes * jnp.sqrt(basis.eigenvalues)[None, :],
     )
-
-
-def test_spherical_spectral_noise_uses_complete_real_degree_blocks() -> None:
     discretization = phx.discretization.SphericalSpectralPlan(4).prepare(radius=1.5)
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -66,9 +63,6 @@ def test_spherical_spectral_noise_uses_complete_real_degree_blocks() -> None:
             0.1,
             rank=2,
         )
-
-
-def test_mode_and_discrete_covariance_constructors_reconstruct_covariance() -> None:
     discretization = _periodic_grid(6)
     _, modes = discretization.eigenpairs(rank=3)
     from_modes = phx.stochastic.SpatialNoiseBasis.from_modes(
@@ -177,7 +171,7 @@ def test_randomized_covariance_operator_retains_weighted_kl_modes_and_seed() -> 
     )
 
 
-def test_basis_provenance_is_stable_and_changes_with_meaningful_inputs() -> None:
+def test_spatial_noise_basis_scenario_2() -> None:
     grid = _periodic_grid(8)
     same_a = phx.stochastic.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=3)
     same_b = phx.stochastic.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=3)
@@ -193,9 +187,6 @@ def test_basis_provenance_is_stable_and_changes_with_meaningful_inputs() -> None
     assert same_a.basis_id != changed_spectrum.basis_id
     assert same_a.basis_id != changed_rank.basis_id
     assert same_a.basis_id != changed_grid.basis_id
-
-
-def test_noise_basis_provenance_reaches_wiener_realization() -> None:
     discretization = _periodic_grid(6)
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -224,9 +215,6 @@ def test_noise_basis_provenance_reaches_wiener_realization() -> None:
         jr.key_data(realization.root_key),
         jr.key_data(jr.key(4)),
     )
-
-
-def test_noise_basis_rejects_invalid_rank_modes_and_covariances() -> None:
     discretization = _periodic_grid(4)
     with pytest.raises(ValueError, match="rank must lie"):
         phx.stochastic.SpatialNoiseBasis.from_spectrum(
@@ -267,9 +255,6 @@ def test_noise_basis_rejects_invalid_rank_modes_and_covariances() -> None:
             quadrature_weights=discretization.quadrature_weights,
             rank=2,
         )
-
-
-def test_semidiscrete_spde_preserves_declared_solution_concept_and_cutoff() -> None:
     discretization = _periodic_grid(6)
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,

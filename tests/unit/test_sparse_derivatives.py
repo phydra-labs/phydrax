@@ -58,7 +58,7 @@ def _band_scalar_function(value: Any, arguments: Any) -> Any:
     )
 
 
-def test_sparse_pattern_canonicalization_identity_and_roundtrip() -> None:
+def test_sparse_contracts() -> None:
     first = phx.sparse.SparsePattern.from_coo(
         jnp.asarray([2, 0, 1, 0, 2, 0]),
         jnp.asarray([1, 0, 1, 2, 1, 2]),
@@ -98,9 +98,6 @@ def test_sparse_pattern_canonicalization_identity_and_roundtrip() -> None:
     invalid_shape["shape"] = [3.0, 3]
     with pytest.raises(ValueError, match="integer dimensions"):
         phx.sparse.SparsePattern.from_dict(invalid_shape)
-
-
-def test_sparse_pattern_rejects_invalid_coordinates_and_symmetry() -> None:
     with pytest.raises(ValueError, match="equal shape"):
         phx.sparse.SparsePattern.from_coo([0], [0, 1], (2, 2))
     with pytest.raises(TypeError, match="integer dtype"):
@@ -119,9 +116,126 @@ def test_sparse_pattern_rejects_invalid_coordinates_and_symmetry() -> None:
         phx.sparse.SparsePattern.from_coo([], [], (2, 3), symmetric=True)
     with pytest.raises(ValueError, match="transpose entry"):
         phx.sparse.SparsePattern.from_coo([0, 1], [0, 0], (2, 2), symmetric=True)
+    space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
+    point = jnp.asarray([1.0, 2.0])
+    pattern = phx.sparse.SparsePattern.from_coo([0, 1], [0, 1], (2, 2))
+    plan = phx.sparse.compile_sparse_jacobian(
+        lambda value, arguments: arguments["scale"][0] * value,
+        point,
+        source=space,
+        target=space,
+        sample_args={"scale": jnp.asarray([2.0])},
+        structure=pattern,
+        compiler="native",
+    )
+    with pytest.raises(ValueError, match="PyTree structure"):
+        plan.coefficients(point, {"other": jnp.asarray([2.0])})
+    with pytest.raises(ValueError, match="shape and dtype"):
+        plan.coefficients(point, {"scale": jnp.asarray([2.0, 3.0])})
+    with pytest.raises(ValueError, match="declared pattern"):
+        phx.sparse.compile_sparse_jacobian(
+            lambda value, _: value,
+            point,
+            source=space,
+            target=space,
+            compiler="native",
+        )
+    with pytest.raises(ValueError):
+        phx.sparse.compile_sparse_hessian(
+            lambda value, _: value,
+            point,
+            space=space,
+            structure=phx.sparse.SparsePattern.from_coo(
+                [0, 1], [0, 1], (2, 2), symmetric=True
+            ),
+            compiler="native",
+        )
+    complex_space = phx.linalg.ArraySpace((2,), dtype=jnp.complex128)
+    with pytest.raises(ValueError):
+        phx.sparse.compile_sparse_jacobian(
+            lambda value, _: value,
+            point.astype(jnp.complex128),
+            source=complex_space,
+            target=complex_space,
+            structure=pattern,
+            compiler="native",
+        )
+    source = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    point = jnp.asarray([0.2, -0.5])
+    matrix = jnp.asarray([[2.0, 0.0], [1.0, -1.0], [0.0, 3.0]])
+    jacobian_pattern = phx.sparse.SparsePattern.from_coo(
+        [0, 1, 1, 2], [0, 0, 1, 1], (3, 2)
+    )
+    jacobian = phx.sparse.compile_sparse_jacobian(
+        lambda value, _: matrix @ value,
+        point,
+        source=source,
+        target=target,
+        structure=jacobian_pattern,
+        compiler="native",
+    ).operator(point)
+    observations = jnp.asarray([1.0, -2.0, 0.5])
+    least_squares = phx.linalg.solve(
+        phx.linalg.LeastSquaresProblem(jacobian),
+        observations,
+    )
+    assert bool(least_squares.successful)
+    assert jnp.allclose(
+        least_squares.value,
+        jnp.linalg.lstsq(matrix, observations, rcond=None)[0],
+    )
+
+    hessian_pattern = phx.sparse.SparsePattern.from_coo(
+        [0, 0, 1, 1], [0, 1, 0, 1], (2, 2), symmetric=True
+    )
+    hessian_plan = phx.sparse.compile_sparse_hessian(
+        lambda value, _: (
+            2.0 * value[0] ** 2
+            + value[0] * value[1]
+            + value[1] ** 2
+            + 0.25 * value[0] ** 4
+        ),
+        point,
+        space=source,
+        structure=hessian_pattern,
+        compiler="native",
+        contract=phx.sparse.SparseHessianContract("riesz"),
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "asserted",
+                "positive_definite": "asserted",
+                "positive_semidefinite": "asserted",
+            },
+        ),
+    )
+    hessian = hessian_plan.operator(point)
+    right_hand_side = jnp.asarray([1.0, -3.0])
+    solved = phx.linalg.solve(phx.linalg.LinearSystem(hessian), right_hand_side)
+    assert bool(solved.successful)
+    assert jnp.allclose(
+        solved.value,
+        jnp.linalg.solve(hessian.as_dense(), right_hand_side),
+    )
+    prepared = phx.linalg.prepare(phx.linalg.LinearSystem(hessian))
+    updated_point = jnp.asarray([0.8, -0.1])
+    updated_hessian = hessian_plan.operator(updated_point)
+    refreshed = phx.linalg.refresh(
+        prepared,
+        phx.linalg.LinearSystem(updated_hessian),
+    )
+    refreshed_result = phx.linalg.solve(refreshed, right_hand_side)
+    assert refreshed.numeric_version == prepared.numeric_version + 1
+    assert refreshed.plan.plan_id == prepared.plan.plan_id
+    assert jnp.allclose(
+        refreshed_result.value,
+        jnp.linalg.solve(updated_hessian.as_dense(), right_hand_side),
+    )
 
 
-def test_native_coloring_is_deterministic_valid_and_portable() -> None:
+def test_sparse_derivatives_scenario_1() -> None:
     pattern = _band_pattern(5)
     first = phx.sparse.compile_sparse_jacobian(
         lambda value, _: value,
@@ -163,9 +277,6 @@ def test_native_coloring_is_deterministic_valid_and_portable() -> None:
     invalid_color["colors"][0] = 2**31
     with pytest.raises(ValueError, match="fit in int32"):
         phx.sparse.SparseColoring.from_dict(invalid_color)
-
-
-def test_native_jacobian_modes_chunking_jit_vmap_and_gradients() -> None:
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -217,9 +328,33 @@ def test_native_jacobian_modes_chunking_jit_vmap_and_gradients() -> None:
         )(runtime_arguments)
         assert jnp.all(jnp.isfinite(point_gradient))
         assert jnp.all(jnp.isfinite(argument_gradient))
+    space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+    point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
+    arguments = jnp.asarray([1.3, -0.8])
+    runtime_arguments = jnp.asarray([-0.2, 2.1])
+    pattern = _band_pattern(4, symmetric=True)
+    expected = jax.hessian(_band_scalar_function)(point, runtime_arguments)
 
-
-def test_python_and_numpy_scalar_arguments_remain_dynamic() -> None:
+    for mode in ("fwd_over_rev", "rev_over_fwd", "rev_over_rev"):
+        plan = phx.sparse.compile_sparse_hessian(
+            _band_scalar_function,
+            point,
+            space=space,
+            sample_args=arguments,
+            structure=pattern,
+            compiler="native",
+            mode=mode,
+            chunk_size=2,
+        )
+        coefficients = jax.jit(lambda value, dynamic: plan.coefficients(value, dynamic))(
+            point, runtime_arguments
+        )
+        assert coefficients.shape == (pattern.nnz,)
+        assert jnp.allclose(plan.operator(point, runtime_arguments).as_dense(), expected)
+        third_order = jax.grad(
+            lambda value: jnp.sum(plan.coefficients(value, runtime_arguments))
+        )(point)
+        assert jnp.all(jnp.isfinite(third_order))
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
     point = jnp.asarray([1.5, -0.5])
     pattern = phx.sparse.SparsePattern.from_coo([0, 1], [0, 1], (2, 2))
@@ -243,6 +378,25 @@ def test_python_and_numpy_scalar_arguments_remain_dynamic() -> None:
     assert jnp.allclose(eager, jnp.diag(6.0 * point))
     assert jnp.allclose(jitted, jnp.diag(8.0 * point))
     assert jnp.isfinite(argument_gradient)
+    space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+    point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
+    arguments = jnp.asarray([1.3, -0.8])
+    plan = phx.sparse.compile_sparse_jacobian(
+        _band_vector_function,
+        point,
+        source=space,
+        target=space,
+        sample_args=arguments,
+        compiler="auto",
+    )
+    expected = jax.jacfwd(_band_vector_function)(point, arguments)
+
+    assert plan.pattern.origin == "structural"
+    assert plan.coloring.compiler == "native"
+    assert jnp.allclose(
+        jax.jit(lambda value: plan.operator(value, arguments).as_dense())(point),
+        expected,
+    )
 
 
 def test_rectangular_pytree_jacobian_preserves_coordinate_semantics() -> None:
@@ -339,59 +493,7 @@ def test_empty_and_dense_patterns_remain_valid() -> None:
     )
 
 
-def test_native_hessian_modes_match_dense_and_remain_differentiable() -> None:
-    space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
-    point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
-    arguments = jnp.asarray([1.3, -0.8])
-    runtime_arguments = jnp.asarray([-0.2, 2.1])
-    pattern = _band_pattern(4, symmetric=True)
-    expected = jax.hessian(_band_scalar_function)(point, runtime_arguments)
-
-    for mode in ("fwd_over_rev", "rev_over_fwd", "rev_over_rev"):
-        plan = phx.sparse.compile_sparse_hessian(
-            _band_scalar_function,
-            point,
-            space=space,
-            sample_args=arguments,
-            structure=pattern,
-            compiler="native",
-            mode=mode,
-            chunk_size=2,
-        )
-        coefficients = jax.jit(lambda value, dynamic: plan.coefficients(value, dynamic))(
-            point, runtime_arguments
-        )
-        assert coefficients.shape == (pattern.nnz,)
-        assert jnp.allclose(plan.operator(point, runtime_arguments).as_dense(), expected)
-        third_order = jax.grad(
-            lambda value: jnp.sum(plan.coefficients(value, runtime_arguments))
-        )(point)
-        assert jnp.all(jnp.isfinite(third_order))
-
-
-def test_structural_compilation_normalizes_then_evaluates_natively() -> None:
-    space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
-    point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
-    arguments = jnp.asarray([1.3, -0.8])
-    plan = phx.sparse.compile_sparse_jacobian(
-        _band_vector_function,
-        point,
-        source=space,
-        target=space,
-        sample_args=arguments,
-        compiler="auto",
-    )
-    expected = jax.jacfwd(_band_vector_function)(point, arguments)
-
-    assert plan.pattern.origin == "structural"
-    assert plan.coloring.compiler == "native"
-    assert jnp.allclose(
-        jax.jit(lambda value: plan.operator(value, arguments).as_dense())(point),
-        expected,
-    )
-
-
-def test_auto_and_native_known_pattern_plans_agree() -> None:
+def test_sparse_derivatives_scenario_2() -> None:
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -419,6 +521,24 @@ def test_auto_and_native_known_pattern_plans_agree() -> None:
     assert jnp.allclose(native.operator(point).as_dense(), expected)
     assert jnp.allclose(compiled.operator(point).as_dense(), expected)
     assert compiled.num_colors <= native.num_colors
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import phydrax",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    public = set(phx.sparse.__all__)
+    assert "compile_sparse_jacobian" in public
+    assert "compile_sparse_hessian" in public
+    assert "SparseDerivativePlan" in public
+    assert not any(name.startswith("Asdex") for name in public)
+    assert "compile_asdex_jacobian" not in public
+    assert "compile_asdex_hessian" not in public
 
 
 def test_structural_scalar_dot_respects_contracted_axis_permutations() -> None:
@@ -473,53 +593,6 @@ def test_structural_dynamic_slice_clamps_resolved_starts() -> None:
     assert jnp.array_equal(plan.operator(point).as_dense(), expected)
 
 
-def test_sparse_derivative_contract_rejections_are_explicit() -> None:
-    space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
-    point = jnp.asarray([1.0, 2.0])
-    pattern = phx.sparse.SparsePattern.from_coo([0, 1], [0, 1], (2, 2))
-    plan = phx.sparse.compile_sparse_jacobian(
-        lambda value, arguments: arguments["scale"][0] * value,
-        point,
-        source=space,
-        target=space,
-        sample_args={"scale": jnp.asarray([2.0])},
-        structure=pattern,
-        compiler="native",
-    )
-    with pytest.raises(ValueError, match="PyTree structure"):
-        plan.coefficients(point, {"other": jnp.asarray([2.0])})
-    with pytest.raises(ValueError, match="shape and dtype"):
-        plan.coefficients(point, {"scale": jnp.asarray([2.0, 3.0])})
-    with pytest.raises(ValueError, match="declared pattern"):
-        phx.sparse.compile_sparse_jacobian(
-            lambda value, _: value,
-            point,
-            source=space,
-            target=space,
-            compiler="native",
-        )
-    with pytest.raises(ValueError):
-        phx.sparse.compile_sparse_hessian(
-            lambda value, _: value,
-            point,
-            space=space,
-            structure=phx.sparse.SparsePattern.from_coo(
-                [0, 1], [0, 1], (2, 2), symmetric=True
-            ),
-            compiler="native",
-        )
-    complex_space = phx.linalg.ArraySpace((2,), dtype=jnp.complex128)
-    with pytest.raises(ValueError):
-        phx.sparse.compile_sparse_jacobian(
-            lambda value, _: value,
-            point.astype(jnp.complex128),
-            source=complex_space,
-            target=complex_space,
-            structure=pattern,
-            compiler="native",
-        )
-
-
 def test_matrix_free_verification_detects_missing_structure() -> None:
     space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4])
@@ -562,100 +635,3 @@ def test_matrix_free_verification_detects_missing_structure() -> None:
     assert accepted.scope == "sample-point"
     assert not bool(rejected.passed)
     assert float(rejected.maximum_absolute_error) > 0.0
-
-
-def test_sparse_derivatives_participate_in_shared_linear_solves() -> None:
-    source = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
-    target = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
-    point = jnp.asarray([0.2, -0.5])
-    matrix = jnp.asarray([[2.0, 0.0], [1.0, -1.0], [0.0, 3.0]])
-    jacobian_pattern = phx.sparse.SparsePattern.from_coo(
-        [0, 1, 1, 2], [0, 0, 1, 1], (3, 2)
-    )
-    jacobian = phx.sparse.compile_sparse_jacobian(
-        lambda value, _: matrix @ value,
-        point,
-        source=source,
-        target=target,
-        structure=jacobian_pattern,
-        compiler="native",
-    ).operator(point)
-    observations = jnp.asarray([1.0, -2.0, 0.5])
-    least_squares = phx.linalg.solve(
-        phx.linalg.LeastSquaresProblem(jacobian),
-        observations,
-    )
-    assert bool(least_squares.successful)
-    assert jnp.allclose(
-        least_squares.value,
-        jnp.linalg.lstsq(matrix, observations, rcond=None)[0],
-    )
-
-    hessian_pattern = phx.sparse.SparsePattern.from_coo(
-        [0, 0, 1, 1], [0, 1, 0, 1], (2, 2), symmetric=True
-    )
-    hessian_plan = phx.sparse.compile_sparse_hessian(
-        lambda value, _: (
-            2.0 * value[0] ** 2
-            + value[0] * value[1]
-            + value[1] ** 2
-            + 0.25 * value[0] ** 4
-        ),
-        point,
-        space=source,
-        structure=hessian_pattern,
-        compiler="native",
-        contract=phx.sparse.SparseHessianContract("riesz"),
-        properties=phx.linalg.OperatorProperties(
-            self_adjoint=True,
-            positive_definite=True,
-            evidence={
-                "self_adjoint": "asserted",
-                "positive_definite": "asserted",
-                "positive_semidefinite": "asserted",
-            },
-        ),
-    )
-    hessian = hessian_plan.operator(point)
-    right_hand_side = jnp.asarray([1.0, -3.0])
-    solved = phx.linalg.solve(phx.linalg.LinearSystem(hessian), right_hand_side)
-    assert bool(solved.successful)
-    assert jnp.allclose(
-        solved.value,
-        jnp.linalg.solve(hessian.as_dense(), right_hand_side),
-    )
-    prepared = phx.linalg.prepare(phx.linalg.LinearSystem(hessian))
-    updated_point = jnp.asarray([0.8, -0.1])
-    updated_hessian = hessian_plan.operator(updated_point)
-    refreshed = phx.linalg.refresh(
-        prepared,
-        phx.linalg.LinearSystem(updated_hessian),
-    )
-    refreshed_result = phx.linalg.solve(refreshed, right_hand_side)
-    assert refreshed.numeric_version == prepared.numeric_version + 1
-    assert refreshed.plan.plan_id == prepared.plan.plan_id
-    assert jnp.allclose(
-        refreshed_result.value,
-        jnp.linalg.solve(updated_hessian.as_dense(), right_hand_side),
-    )
-
-
-def test_import_boundary_and_provider_neutral_public_api() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import phydrax",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    public = set(phx.sparse.__all__)
-    assert "compile_sparse_jacobian" in public
-    assert "compile_sparse_hessian" in public
-    assert "SparseDerivativePlan" in public
-    assert not any(name.startswith("Asdex") for name in public)
-    assert "compile_asdex_jacobian" not in public
-    assert "compile_asdex_hessian" not in public

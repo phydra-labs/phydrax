@@ -17,7 +17,7 @@ from phydrax.uq._linear_time_series import (
 )
 
 
-def test_arima_recovers_stable_ar_coefficient_with_irregular_mask() -> None:
+def test_financial_time_series_scenario_1() -> None:
     generator = np.random.default_rng(13)
     values = np.zeros(320)
     noise = generator.normal(scale=0.03, size=values.size)
@@ -34,9 +34,6 @@ def test_arima_recovers_stable_ar_coefficient_with_irregular_mask() -> None:
     assert not fit.residual_mask[101]
     assert not fit.residual_mask[102]
     assert jnp.isfinite(fit.log_likelihood)
-
-
-def test_arima_forecast_requires_declared_lag_history() -> None:
     model = ARIMAModel(
         0.0,
         jnp.asarray([0.5, 0.25]),
@@ -46,9 +43,6 @@ def test_arima_forecast_requires_declared_lag_history() -> None:
     )
     with pytest.raises(ValueError, match=r"max\(p, q\)"):
         model.forecast(jnp.asarray([0.0, 1.0]), 1)
-
-
-def test_var_recovers_cross_lag_and_stability() -> None:
     generator = np.random.default_rng(4)
     transition = np.asarray([[0.55, 0.18], [-0.08, 0.42]])
     values = np.zeros((500, 2))
@@ -63,9 +57,6 @@ def test_var_recovers_cross_lag_and_stability() -> None:
     assert fit.model.stable
     assert fit.rank == 3
     assert jnp.isfinite(fit.log_likelihood)
-
-
-def test_augmented_dickey_fuller_distinguishes_unit_root_from_stationary_series() -> None:
     generator = np.random.default_rng(31)
     noise = generator.normal(scale=0.1, size=900)
     random_walk = np.cumsum(noise)
@@ -83,7 +74,7 @@ def test_augmented_dickey_fuller_distinguishes_unit_root_from_stationary_series(
     assert mean_reverting.statistic < unit_root.statistic
 
 
-def test_johansen_evidence_separates_common_unit_root_from_spread() -> None:
+def test_financial_time_series_scenario_2() -> None:
     generator = np.random.default_rng(9)
     common = np.cumsum(generator.normal(scale=0.2, size=700))
     spread = np.zeros(common.size)
@@ -99,9 +90,6 @@ def test_johansen_evidence_separates_common_unit_root_from_spread() -> None:
     assert result.selected_rank == 1
     assert jnp.isfinite(result.trace_statistics).all()
     assert result.cointegration_vectors.shape == (2, 2)
-
-
-def test_garch_and_gjr_variance_recursions_match_hand_oracle() -> None:
     residuals = jnp.asarray([1.0, -2.0, 0.5])
     garch = GARCHModel(0.1, 0.2, 0.5)
     gjr = GARCHModel(0.1, 0.2, 0.5, gamma=0.3, kind="gjr-garch")
@@ -113,17 +101,11 @@ def test_garch_and_gjr_variance_recursions_match_hand_oracle() -> None:
     assert jnp.allclose(asymmetric_variance, jnp.asarray([1.0, 0.8, 2.5]))
     assert garch.stable
     assert gjr.stable
-
-
-def test_garch_fit_requires_optimizer_convergence() -> None:
     values = jnp.sin(jnp.linspace(0.0, 20.0, 128))
     fit = fit_garch(values, maximum_steps=1)
 
     assert not bool(fit.successful)
     assert int(fit.status) == CONDITIONAL_VOLATILITY_OPTIMIZER_FAILURE
-
-
-def test_har_requires_complete_trailing_windows() -> None:
     values = jnp.arange(1.0, 50.0)
     mask = jnp.ones(values.shape, dtype="bool").at[20].set(False)
 

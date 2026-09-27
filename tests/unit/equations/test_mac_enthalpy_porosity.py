@@ -65,7 +65,7 @@ def _taylor_green(discretization: Any) -> Any:
     )
 
 
-def test_mac_enthalpy_uniform_liquid_closes_energy_and_projection_ledgers() -> None:
+def test_mac_contracts() -> None:
     finite_volume, dynamics = _compiled()
     velocity = _taylor_green(finite_volume)
     enthalpy = dynamics.problem.material.enthalpy_from_temperature(
@@ -84,9 +84,6 @@ def test_mac_enthalpy_uniform_liquid_closes_energy_and_projection_ledgers() -> N
     assert jnp.max(jnp.abs(stage.enthalpy_rate)) < 1.0e-6
     assert restriction.successful
     assert restriction.selected > 0.0
-
-
-def test_mac_enthalpy_imex_resistance_damps_solid_and_rolls_state_atomically() -> None:
     finite_volume, dynamics = _compiled(resistance=1.0e3)
     velocity = _taylor_green(finite_volume)
     enthalpy = dynamics.problem.material.enthalpy_from_temperature(
@@ -115,9 +112,6 @@ def test_mac_enthalpy_imex_resistance_damps_solid_and_rolls_state_atomically() -
     assert second.accepted
     assert second.state.time > startup.state.time
     assert jnp.all(jnp.isfinite(second.state.state))
-
-
-def test_mac_binary_alloy_uniform_solute_closes_conservative_transport() -> None:
     finite_volume, base = _compiled()
     scalar_problem = phx.discretization.MACScalarProblem(
         (

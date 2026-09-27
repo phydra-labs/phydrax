@@ -111,9 +111,7 @@ def _cn_oracle(voltage: Any, positions: Any, diffusivity: Any, dt: Any) -> Any:
     return result, mass
 
 
-def test_nonuniform_no_flux_response_conserves_weighted_voltage_and_matches_oracle() -> (
-    None
-):
+def test_skeletal_muscle_structured_fibers_scenario_1() -> None:
     runtime = _runtime()
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, state.node_positions_mm)
@@ -128,9 +126,6 @@ def test_nonuniform_no_flux_response_conserves_weighted_voltage_and_matches_orac
         mass @ accepted.values[0, :, 0], mass @ state.values[0, :, 0], atol=2e-12
     )
     assert int(accepted.accepted_steps) == 1
-
-
-def test_moving_metric_changes_diffusion_and_integrates_signed_local_kinematics() -> None:
     runtime = _runtime()
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, 2.0 * state.node_positions_mm)
@@ -154,9 +149,6 @@ def test_moving_metric_changes_diffusion_and_integrates_signed_local_kinematics(
         rotated.segment_conductance_mm_per_ms,
         candidate.geometry.segment_conductance_mm_per_ms,
     )
-
-
-def test_event_aligned_substeps_integrate_pulse_without_endpoint_contamination() -> None:
     stimulus = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.02]),
         jnp.asarray([0.02]),
@@ -177,9 +169,7 @@ def test_event_aligned_substeps_integrate_pulse_without_endpoint_contamination()
     np.testing.assert_array_equal(rejected.evidence.reaction_solver_steps, 0)
 
 
-def test_interior_segment_collapse_rejects_entire_geometry_cell_and_counter_transaction() -> (
-    None
-):
+def test_skeletal_muscle_structured_fibers_scenario_2() -> None:
     runtime = _runtime()
     state = _state(runtime)
     # Both endpoints have nonzero lengths, but every segment collapses at theta=1/2.
@@ -190,11 +180,6 @@ def test_interior_segment_collapse_rejects_entire_geometry_cell_and_counter_tran
         StructuredFiberResponseStatus.INVALID_GEOMETRY
     )
     _assert_same_state(candidate.commit(state), state)
-
-
-def test_stale_candidate_keeps_current_state_and_foreign_numeric_binding_is_rejected() -> (
-    None
-):
     runtime = _runtime()
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, state.node_positions_mm)
@@ -212,9 +197,6 @@ def test_stale_candidate_keeps_current_state_and_foreign_numeric_binding_is_reje
     assert foreign.numeric_revision_id != runtime.numeric_revision_id
     with pytest.raises(ValueError, match="different prepared"):
         foreign.candidate(state, 0.04, path)
-
-
-def test_reaction_parameter_changes_affect_prepared_numeric_not_source_identity() -> None:
     runtime = _runtime()
     model = ShortenFastTwitchModel()
     changed = ShortenFastTwitchModel(model.parameters.at[0].multiply(1.1))
@@ -249,7 +231,7 @@ def test_geometry_response_jvp_vjp_agree_with_branch_local_finite_difference() -
     np.testing.assert_allclose(adjoint, difference, rtol=2e-7, atol=2e-7)
 
 
-def test_invalid_precision_geometry_and_unrepresentable_time_never_advance() -> None:
+def test_skeletal_muscle_structured_fibers_scenario_3() -> None:
     runtime = _runtime()
     state = runtime.initialize()
     with pytest.raises(TypeError, match="real"):
@@ -269,9 +251,6 @@ def test_invalid_precision_geometry_and_unrepresentable_time_never_advance() -> 
         StructuredFiberResponseStatus.INVALID_STEP
     )
     _assert_same_state(candidate.commit(far_future), far_future)
-
-
-def test_exhausted_local_reaction_and_invalid_dynamic_diffusivity_roll_back() -> None:
     runtime = _runtime(maximum_reaction_steps=1)
     state = _state(runtime)
     path = runtime.linear_geometry_path(state, 1.1 * state.node_positions_mm)
@@ -289,9 +268,6 @@ def test_exhausted_local_reaction_and_invalid_dynamic_diffusivity_roll_back() ->
     assert int(rejected.evidence.status) & int(StructuredFiberResponseStatus.INADMISSIBLE)
     np.testing.assert_array_equal(rejected.evidence.reaction_solver_steps, 0)
     _assert_same_state(rejected.commit(state), state)
-
-
-def test_unrepresentable_reaction_half_step_rejects_before_local_solver() -> None:
     runtime = _runtime()
     state = runtime.initialize(float(2**48))
     path = runtime.linear_geometry_path(state, state.node_positions_mm)

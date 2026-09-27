@@ -45,7 +45,7 @@ def _compiled() -> Any:
     return compiled, position, velocity
 
 
-def test_wcsph_stabilizations_report_every_balance_term() -> None:
+def test_wcsph_advanced_scenario_1() -> None:
     compiled, position, velocity = _compiled()
     state = compiled.initialize_state(position, velocity)
     rate = compiled.dynamics(0.0, state, None)
@@ -56,9 +56,6 @@ def test_wcsph_stabilizations_report_every_balance_term() -> None:
     assert diagnostics.artificial_viscosity_dissipation >= 0.0
     assert jnp.isfinite(diagnostics.density_variance_rate)
     assert diagnostics.free_surface_count >= 0
-
-
-def test_shepard_renormalization_runs_on_explicit_schedule() -> None:
     compiled, position, velocity = _compiled()
     density = 1.0 + 0.05 * jnp.sin(2.0 * jnp.pi * position[:, 0])
     state = compiled.initialize_state(position, velocity, density)

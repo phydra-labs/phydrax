@@ -43,7 +43,7 @@ def _infinite_memory_problem(*, stochastic: Any = False) -> Any:
     )
 
 
-def test_full_history_supports_infinite_memory_functionals() -> None:
+def test_diffrax_delay_infinite_memory_scenario_1() -> None:
     problem = _infinite_memory_problem()
     solution = phx.solver.solve_diffrax_delay(
         problem,
@@ -61,9 +61,6 @@ def test_full_history_supports_infinite_memory_functionals() -> None:
     assert jnp.isinf(
         solution.metadata["functional_delay_contracts"][0]["lag_interval"][1]
     )
-
-
-def test_stochastic_full_history_accepts_infinite_memory_functionals() -> None:
     problem = _infinite_memory_problem(stochastic=True)
     realization = phx.stochastic.WienerRealization(
         jr.key(31),
@@ -83,27 +80,24 @@ def test_stochastic_full_history_accepts_infinite_memory_functionals() -> None:
 
     assert jnp.allclose(solution.states[..., 0], jnp.asarray([1.0, 1.05, 1.1]))
     assert solution.metadata["infinite_memory"]
+    for execution in ["rolling", "segmented"]:
+        problem = _infinite_memory_problem()
 
-
-@pytest.mark.parametrize("execution", ["rolling", "segmented"])
-def test_infinite_memory_rejects_bounded_history_execution(execution: Any) -> None:
-    problem = _infinite_memory_problem()
-
-    with pytest.raises(ValueError, match="finite maximum"):
-        if execution == "rolling":
-            phx.solver.solve_diffrax_delay(
-                problem,
-                save_times=jnp.asarray([0.1]),
-                solver=dfx.Euler(),
-                dt0=0.01,
-                history_mode="rolling",
-                history_capacity=16,
-            )
-        else:
-            phx.solver.solve_diffrax_delay_segmented(
-                problem,
-                save_times=jnp.asarray([0.1]),
-                solver=dfx.Euler(),
-                dt0=0.01,
-                max_steps_per_segment=8,
-            )
+        with pytest.raises(ValueError, match="finite maximum"):
+            if execution == "rolling":
+                phx.solver.solve_diffrax_delay(
+                    problem,
+                    save_times=jnp.asarray([0.1]),
+                    solver=dfx.Euler(),
+                    dt0=0.01,
+                    history_mode="rolling",
+                    history_capacity=16,
+                )
+            else:
+                phx.solver.solve_diffrax_delay_segmented(
+                    problem,
+                    save_times=jnp.asarray([0.1]),
+                    solver=dfx.Euler(),
+                    dt0=0.01,
+                    max_steps_per_segment=8,
+                )

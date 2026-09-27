@@ -36,7 +36,7 @@ def _profile() -> Any:
     )
 
 
-def test_native_thermodynamics_and_scalar_transfer_are_finite() -> None:
+def test_cosmology_native_boltzmann_scenario_1() -> None:
     scale = jnp.linspace(0.1, 1.0, 16)
     rates = cosmology.ThermodynamicsRateTable(
         scale,
@@ -80,9 +80,6 @@ def test_native_thermodynamics_and_scalar_transfer_are_finite() -> None:
     assert bool(result.successful)
     assert result.states.shape == (scale.size, k.size, layout.state_size)
     assert set(np.asarray(result.transition_phases).tolist()) == {0, 1, 2}
-
-
-def test_flat_radial_and_line_of_sight_projection() -> None:
     radial = cosmology.FlatRadialKernelPlan(6)
     values = radial.evaluate(jnp.asarray([0.0, 1.0]))
     np.testing.assert_allclose(values[0, 0], 1.0)
@@ -96,9 +93,6 @@ def test_flat_radial_and_line_of_sight_projection() -> None:
     )
     assert bool(result.successful)
     assert jnp.all(result.spectra >= 0.0)
-
-
-def test_parity_evidence_enforces_metric_limits() -> None:
     profile = _profile()
     evidence = cosmology.ParityEvidence(
         profile,

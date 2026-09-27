@@ -64,7 +64,7 @@ def _surface_plan(dynamics: Any) -> Any:
     return CompressibleSurfaceObservationPlan(dynamics, patches, reference)
 
 
-def test_uniform_closed_surface_has_zero_net_force_and_moment() -> None:
+def test_compressible_surface_scenario_1() -> None:
     system = phx.equations.EulerSystem(2)
     dynamics = _bounded_dynamics(system)
     primitive = jnp.broadcast_to(
@@ -79,9 +79,6 @@ def test_uniform_closed_surface_has_zero_net_force_and_moment() -> None:
     np.testing.assert_allclose(result.force_balance_defect, 0.0, atol=1.0e-12)
     for patch in result.patches:
         np.testing.assert_allclose(patch.pressure_coefficient, 0.0, atol=1.0e-12)
-
-
-def test_surface_viscous_traction_matches_linear_couette_shear() -> None:
     viscosity = 0.2
     system = phx.equations.CompressibleNavierStokesSystem(
         phx.equations.ConstantTransport(viscosity, 0.0), 2

@@ -42,7 +42,7 @@ def _channel_space(wall_count: Any = 8) -> Any:
     )
 
 
-def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients() -> None:
+def test_incompressible_spectral_scenario_1() -> None:
     space = _periodic_space()
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2)
@@ -84,11 +84,6 @@ def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients() 
     assert diagnostics.pressure_gauge_residual < 1e-12
     assert jnp.isfinite(derivative)
     np.testing.assert_allclose(np.asarray(derivative), 1.0, atol=1e-10)
-
-
-def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensions() -> (
-    None
-):
     space = phx.discretization.TensorSpectralPlan(
         (
             phx.discretization.FourierBasisPlan(6),
@@ -125,9 +120,6 @@ def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensio
         jnp.max(jnp.abs(jnp.where(projector.wavenumber_squared == 0.0, pressure, 0.0)))
         < 1e-12
     )
-
-
-def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm() -> None:
     space = _periodic_space()
     x, y = jnp.meshgrid(
         space.axes[0].nodes,
@@ -186,7 +178,7 @@ def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm() 
     assert coordinates.reality_defect(first.apply(state)) < 1e-12
 
 
-def test_channel_stokes_enforces_couette_walls_and_bulk_flux() -> None:
+def test_channel_contracts() -> None:
     space = _channel_space()
     y = space.axes[1].nodes
     couette = jnp.zeros(space.physical_shape + (3,)).at[..., 0].set(y[None, :, None])
@@ -245,6 +237,87 @@ def test_channel_stokes_enforces_couette_walls_and_bulk_flux() -> None:
     assert jnp.abs(flux_result.pressure_gradient[0]) > 0.0
     assert flux_result.diagnostics.divergence_norm < 1e-11
     assert flux_result.diagnostics.wall_residual < 1e-11
+    space = _channel_space()
+    lower = (-0.4, 0.15, 0.2)
+    upper = (0.6, 0.15, -0.3)
+    imposed_gradient = (0.12, -0.08)
+    constraint = phx.discretization.ChannelMeanConstraint(
+        "pressure_gradient", imposed_gradient
+    )
+    banded = phx.discretization.ChannelStokesPlan(
+        space,
+        0.1,
+        lower_wall_velocity=lower,
+        upper_wall_velocity=upper,
+        mean_constraint=constraint,
+    ).prepare(1.0)
+    dense = phx.discretization.ChannelStokesPlan(
+        space,
+        0.1,
+        lower_wall_velocity=lower,
+        upper_wall_velocity=upper,
+        mean_constraint=constraint,
+        route="dense_reference",
+    ).prepare(1.0)
+    analysis = space.axes[1].modal_transform.analysis
+    derivative = space.axes[1].derivative_matrix
+    y = space.axes[1].nodes
+    scale = banded.horizontal_constant_scale
+    physical_velocity = jnp.stack(
+        (
+            lower[0] + 0.5 * (upper[0] - lower[0]) * (y + 1.0),
+            jnp.full_like(y, lower[1]),
+            lower[2] + 0.5 * (upper[2] - lower[2]) * (y + 1.0),
+        ),
+        axis=-1,
+    )
+    zero_velocity = scale * (analysis @ physical_velocity)
+    zero_pressure = scale * (analysis @ (0.35 * y))
+    second_derivative = derivative @ derivative
+    zero_rhs = zero_velocity - 0.1 * (second_derivative @ zero_velocity)
+    zero_rhs = zero_rhs.at[0, 0].add(-scale * imposed_gradient[0])
+    zero_rhs = zero_rhs.at[0, 2].add(-scale * imposed_gradient[1])
+    zero_rhs = zero_rhs.at[:, 1].add(derivative @ zero_pressure)
+    rhs = jnp.zeros(space.modal_shape + (3,), dtype="complex128")
+    rhs = rhs.at[0, :, 0].set(zero_rhs)
+    expected_velocity = jnp.zeros_like(rhs).at[0, :, 0].set(zero_velocity)
+    expected_pressure = (
+        jnp.zeros(space.modal_shape, dtype="complex128").at[0, :, 0].set(zero_pressure)
+    )
+    banded_result = banded.solve(rhs)
+    dense_result = dense.solve(rhs)
+    assert bool(banded_result.successful)
+    assert bool(dense_result.successful)
+    np.testing.assert_allclose(
+        banded_result.velocity, expected_velocity, atol=3e-10, rtol=3e-10
+    )
+    np.testing.assert_allclose(
+        banded_result.pressure, expected_pressure, atol=3e-10, rtol=3e-10
+    )
+    np.testing.assert_allclose(
+        banded_result.velocity, dense_result.velocity, atol=3e-10, rtol=3e-10
+    )
+    np.testing.assert_allclose(
+        banded_result.pressure, dense_result.pressure, atol=3e-10, rtol=3e-10
+    )
+    np.testing.assert_allclose(
+        banded_result.pressure_gradient, imposed_gradient, atol=1e-12
+    )
+    assert banded_result.diagnostics.momentum_constraint_residual < 1e-10
+    assert banded_result.diagnostics.divergence_norm < 1e-10
+    assert banded_result.diagnostics.wall_residual < 1e-10
+    assert banded_result.diagnostics.pressure_gauge_residual < 1e-10
+    small = phx.discretization.ChannelStokesPlan(_channel_space(6), 0.1).prepare(1.0)
+    large = phx.discretization.ChannelStokesPlan(_channel_space(10), 0.1).prepare(1.0)
+    assert small.report.correction_rank == large.report.correction_rank == 4
+    # ty: ignore[unresolved-attribute]
+    assert small.ultraspherical.helmholtz.rank == 2
+    # ty: ignore[unresolved-attribute]
+    assert small.ultraspherical.biharmonic.rank == 4
+    # ty: ignore[unresolved-attribute]
+    assert small.ultraspherical.pressure_recovery.rank == 1
+    assert large.report.factor_bytes > small.report.factor_bytes
+    assert large.report.factor_bytes / small.report.factor_bytes < 2.0
 
 
 def _manufactured_nonzero_channel_mode(
@@ -342,90 +415,3 @@ def test_channel_pressure_elimination_matches_manufactured_primitive_oracle_and_
     )
     assert jnp.all(jnp.isfinite(tangent))
     assert jnp.all(jnp.isfinite(input_cotangent))
-
-
-def test_channel_zero_mode_recovers_pressure_and_preserves_all_wall_traces() -> None:
-    space = _channel_space()
-    lower = (-0.4, 0.15, 0.2)
-    upper = (0.6, 0.15, -0.3)
-    imposed_gradient = (0.12, -0.08)
-    constraint = phx.discretization.ChannelMeanConstraint(
-        "pressure_gradient", imposed_gradient
-    )
-    banded = phx.discretization.ChannelStokesPlan(
-        space,
-        0.1,
-        lower_wall_velocity=lower,
-        upper_wall_velocity=upper,
-        mean_constraint=constraint,
-    ).prepare(1.0)
-    dense = phx.discretization.ChannelStokesPlan(
-        space,
-        0.1,
-        lower_wall_velocity=lower,
-        upper_wall_velocity=upper,
-        mean_constraint=constraint,
-        route="dense_reference",
-    ).prepare(1.0)
-    analysis = space.axes[1].modal_transform.analysis
-    derivative = space.axes[1].derivative_matrix
-    y = space.axes[1].nodes
-    scale = banded.horizontal_constant_scale
-    physical_velocity = jnp.stack(
-        (
-            lower[0] + 0.5 * (upper[0] - lower[0]) * (y + 1.0),
-            jnp.full_like(y, lower[1]),
-            lower[2] + 0.5 * (upper[2] - lower[2]) * (y + 1.0),
-        ),
-        axis=-1,
-    )
-    zero_velocity = scale * (analysis @ physical_velocity)
-    zero_pressure = scale * (analysis @ (0.35 * y))
-    second_derivative = derivative @ derivative
-    zero_rhs = zero_velocity - 0.1 * (second_derivative @ zero_velocity)
-    zero_rhs = zero_rhs.at[0, 0].add(-scale * imposed_gradient[0])
-    zero_rhs = zero_rhs.at[0, 2].add(-scale * imposed_gradient[1])
-    zero_rhs = zero_rhs.at[:, 1].add(derivative @ zero_pressure)
-    rhs = jnp.zeros(space.modal_shape + (3,), dtype="complex128")
-    rhs = rhs.at[0, :, 0].set(zero_rhs)
-    expected_velocity = jnp.zeros_like(rhs).at[0, :, 0].set(zero_velocity)
-    expected_pressure = (
-        jnp.zeros(space.modal_shape, dtype="complex128").at[0, :, 0].set(zero_pressure)
-    )
-    banded_result = banded.solve(rhs)
-    dense_result = dense.solve(rhs)
-    assert bool(banded_result.successful)
-    assert bool(dense_result.successful)
-    np.testing.assert_allclose(
-        banded_result.velocity, expected_velocity, atol=3e-10, rtol=3e-10
-    )
-    np.testing.assert_allclose(
-        banded_result.pressure, expected_pressure, atol=3e-10, rtol=3e-10
-    )
-    np.testing.assert_allclose(
-        banded_result.velocity, dense_result.velocity, atol=3e-10, rtol=3e-10
-    )
-    np.testing.assert_allclose(
-        banded_result.pressure, dense_result.pressure, atol=3e-10, rtol=3e-10
-    )
-    np.testing.assert_allclose(
-        banded_result.pressure_gradient, imposed_gradient, atol=1e-12
-    )
-    assert banded_result.diagnostics.momentum_constraint_residual < 1e-10
-    assert banded_result.diagnostics.divergence_norm < 1e-10
-    assert banded_result.diagnostics.wall_residual < 1e-10
-    assert banded_result.diagnostics.pressure_gauge_residual < 1e-10
-
-
-def test_channel_tau_rank_is_fixed_and_factor_storage_is_linear_in_wall_count() -> None:
-    small = phx.discretization.ChannelStokesPlan(_channel_space(6), 0.1).prepare(1.0)
-    large = phx.discretization.ChannelStokesPlan(_channel_space(10), 0.1).prepare(1.0)
-    assert small.report.correction_rank == large.report.correction_rank == 4
-    # ty: ignore[unresolved-attribute]
-    assert small.ultraspherical.helmholtz.rank == 2
-    # ty: ignore[unresolved-attribute]
-    assert small.ultraspherical.biharmonic.rank == 4
-    # ty: ignore[unresolved-attribute]
-    assert small.ultraspherical.pressure_recovery.rank == 1
-    assert large.report.factor_bytes > small.report.factor_bytes
-    assert large.report.factor_bytes / small.report.factor_bytes < 2.0

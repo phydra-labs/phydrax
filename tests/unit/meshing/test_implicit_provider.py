@@ -128,7 +128,7 @@ def _plan_case(geometry: Any, specification: Any) -> Any:
     )
 
 
-def test_native_implicit_provider_rejects_unsupported_periodic_controls() -> None:
+def test_native_implicit_provider_contracts() -> None:
     geometry, scope, _ = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT
     )
@@ -143,9 +143,6 @@ def test_native_implicit_provider_rejects_unsupported_periodic_controls() -> Non
     assert (
         error.value.category is phx.meshing.MeshingFailureCategory.UNSUPPORTED_CAPABILITY
     )
-
-
-def test_native_implicit_provider_enforces_limits_and_hard_size_compliance() -> None:
     limits = phx.meshing.MeshingLimits(maximum_vertices=3)
     geometry, _, limited = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT,
@@ -166,9 +163,6 @@ def test_native_implicit_provider_enforces_limits_and_hard_size_compliance() -> 
         compliance_error.value.category
         is phx.meshing.MeshingFailureCategory.COMPLIANCE_FAILED
     )
-
-
-def test_native_implicit_provider_enforces_wall_deadline() -> None:
     limits = phx.meshing.MeshingLimits(maximum_wall_seconds=1.0e-6)
     geometry, _, specification = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT,

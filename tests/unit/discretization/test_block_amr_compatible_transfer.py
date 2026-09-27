@@ -40,9 +40,7 @@ def _complexes() -> Any:
     return complexes
 
 
-def test_compatible_entity_transfer_uses_bounded_routes_and_distinct_reverse_maps() -> (
-    None
-):
+def test_compatible_entity_contracts() -> None:
     coarse, fine = _complexes()
     family = phx.discretization.CompatibleEntityTransferFamily(
         coarse,
@@ -59,9 +57,6 @@ def test_compatible_entity_transfer_uses_bounded_routes_and_distinct_reverse_map
     assert node.dual_pullback.operator_id != node.hilbert_adjoint.operator_id
     assert node.prolongation.target.size == fine.capacity[0]
     assert edge.restriction.target.size == coarse.capacity[1]
-
-
-def test_compatible_entity_transfer_primal_and_algebraic_transpose_pair_exactly() -> None:
     coarse, fine = _complexes()
     transfer = phx.discretization.CompatibleEntityTransferFamily(
         coarse,

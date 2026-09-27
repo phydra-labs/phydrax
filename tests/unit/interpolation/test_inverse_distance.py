@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from phydrax._interpolation import apply_gather_stencil, inverse_distance_stencil
 
 
-def test_inverse_distance_reproduces_constants_at_arbitrary_distance() -> None:
+def test_inverse_distance_scenario_1() -> None:
     indices = jnp.asarray([[0, 1, 2]])
     distance_squared = jnp.asarray([[100.0, 400.0, 900.0]])
     stencil = inverse_distance_stencil(
@@ -27,9 +27,6 @@ def test_inverse_distance_reproduces_constants_at_arbitrary_distance() -> None:
     assert jnp.allclose(jnp.sum(stencil.weights, axis=-1), 1.0)
     assert jnp.allclose(result.values, 7.0)
     assert jnp.array_equal(result.support, jnp.asarray([True]))
-
-
-def test_duplicate_anchor_snap_policy_is_explicit() -> None:
     indices = jnp.asarray([[0, 1, 2]])
     distance_squared = jnp.asarray([[0.0, 0.0, 1.0]])
     values = jnp.asarray([2.0, 4.0, 100.0])
@@ -50,9 +47,6 @@ def test_duplicate_anchor_snap_policy_is_explicit() -> None:
 
     assert jnp.allclose(apply_gather_stencil(values, first).values, 2.0)
     assert jnp.allclose(apply_gather_stencil(values, average).values, 3.0)
-
-
-def test_invalid_candidates_are_inert_and_no_candidate_has_no_support() -> None:
     indices = jnp.asarray([[0, 999], [999, -5]])
     distance_squared = jnp.asarray([[1.0, 0.0], [0.0, 0.0]])
     valid = jnp.asarray([[True, False], [False, False]])

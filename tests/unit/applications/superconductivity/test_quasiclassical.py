@@ -43,7 +43,7 @@ def _plans() -> Any:
     return trajectories, matsubara, equilibrium, gap
 
 
-def test_uniform_riccati_solution_normalizes_and_closes_gap_equation() -> None:
+def test_quasiclassical_scenario_1() -> None:
     trajectories, matsubara, equilibrium, gap = _plans()
     gap_field = gap * jnp.ones((4, 3), dtype=jnp.complex128)
     propagator = trajectories.evaluate(matsubara, gap_field)
@@ -54,9 +54,6 @@ def test_uniform_riccati_solution_normalizes_and_closes_gap_equation() -> None:
     assert bool(result.evidence.successful)
     np.testing.assert_allclose(result.channel_amplitudes, (gap,), rtol=1.0e-10)
     np.testing.assert_allclose(result.current_density, 0.0, atol=1.0e-12)
-
-
-def test_retarded_spectroscopy_is_separate_causal_real_axis_profile() -> None:
     _, _, equilibrium_plan, gap = _plans()
     equilibrium = equilibrium_plan.solve(jnp.asarray((gap + 0.0j,)))
     spectroscopy = phx.applications.superconductivity.RetardedSpectroscopyPlan(

@@ -27,7 +27,7 @@ def _bunch() -> Any:
     )
 
 
-def test_drift_updates_coordinates_and_preserves_particles() -> None:
+def test_accelerator_production_scenario_1() -> None:
     accelerator = phx.applications.accelerator
     bunch = _bunch()
     plan = accelerator.BeamlinePlan(
@@ -45,9 +45,6 @@ def test_drift_updates_coordinates_and_preserves_particles() -> None:
         result.bunch.coordinates[:, 0],
         bunch.coordinates[:, 0] + 2.0 * bunch.coordinates[:, 1],
     )
-
-
-def test_aperture_records_first_loss_without_dropping_identity() -> None:
     accelerator = phx.applications.accelerator
     bunch = _bunch()
     plan = accelerator.BeamlinePlan(
@@ -62,9 +59,6 @@ def test_aperture_records_first_loss_without_dropping_identity() -> None:
     assert not jnp.any(result.bunch.active)
     assert jnp.array_equal(result.loss_element_indices, jnp.asarray([0, 0]))
     assert jnp.array_equal(result.bunch.particle_ids, bunch.particle_ids)
-
-
-def test_space_charge_residual_failure_rolls_back_bunch() -> None:
     accelerator = phx.applications.accelerator
     bunch = _bunch()
     plan = accelerator.SpaceChargeKickPlan(

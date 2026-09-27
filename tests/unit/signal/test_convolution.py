@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,30 +11,25 @@ import pytest
 from phydrax.signal import convolve
 
 
-@pytest.mark.parametrize("mode", ("full", "same", "valid"))
-@pytest.mark.parametrize("tap_count", (3, 4))
-def test_direct_and_fft_convolution_match_declared_numpy_crops(
-    mode: Any, tap_count: Any
-) -> None:
-    values = np.linspace(-1.0, 1.0, 9)
-    taps = np.linspace(0.2, 0.8, tap_count)
-    full = np.convolve(values, taps, mode="full")
-    if mode == "full":
-        expected = full
-    elif mode == "same":
-        start = (tap_count - 1) // 2
-        expected = full[start : start + values.size]
-    else:
-        expected = full[tap_count - 1 : values.size]
+def test_convolution_scenario_1() -> None:
+    for mode in ("full", "same", "valid"):
+        for tap_count in (3, 4):
+            values = np.linspace(-1.0, 1.0, 9)
+            taps = np.linspace(0.2, 0.8, tap_count)
+            full = np.convolve(values, taps, mode="full")
+            if mode == "full":
+                expected = full
+            elif mode == "same":
+                start = (tap_count - 1) // 2
+                expected = full[start : start + values.size]
+            else:
+                expected = full[tap_count - 1 : values.size]
 
-    direct = convolve(values, taps, mode=mode, method="direct")
-    transformed = convolve(values, taps, mode=mode, method="fft")
+            direct = convolve(values, taps, mode=mode, method="direct")
+            transformed = convolve(values, taps, mode=mode, method="fft")
 
-    assert np.allclose(direct, expected, rtol=1e-12, atol=1e-12)
-    assert np.allclose(transformed, expected, rtol=1e-12, atol=1e-12)
-
-
-def test_convolution_preserves_stream_axes_and_complex_dtype() -> None:
+            assert np.allclose(direct, expected, rtol=1e-12, atol=1e-12)
+            assert np.allclose(transformed, expected, rtol=1e-12, atol=1e-12)
     values = jnp.arange(2 * 7 * 3, dtype="float64").reshape((2, 7, 3))
     taps = jnp.asarray((1.0 + 0.5j, -0.25j))
 
@@ -48,9 +41,6 @@ def test_convolution_preserves_stream_axes_and_complex_dtype() -> None:
         output[1, :, 2],
         convolve(values[1, :, 2], taps, mode="same", method="direct"),
     )
-
-
-def test_convolution_is_jittable_vmappable_and_differentiable_in_both_operands() -> None:
     values = jnp.arange(8.0)
     taps = jnp.asarray((0.2, 0.5, -0.1))
     compiled = jax.jit(lambda x, h: convolve(x, h, mode="same", method="fft"))
@@ -65,9 +55,6 @@ def test_convolution_is_jittable_vmappable_and_differentiable_in_both_operands()
     assert batched.shape == (2, values.size)
     assert jnp.all(jnp.isfinite(value_gradient))
     assert jnp.all(jnp.isfinite(tap_gradient))
-
-
-def test_convolution_validation_rejects_invalid_valid_mode_and_methods() -> None:
     with pytest.raises(ValueError, match="signal length"):
         convolve(jnp.ones((2,)), jnp.ones((3,)), mode="valid")
     with pytest.raises(ValueError, match="method"):

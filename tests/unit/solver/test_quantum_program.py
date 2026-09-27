@@ -27,7 +27,7 @@ def _phase_program(theta: Any, *, state_kind: Any = "state-vector") -> Any:
     )
 
 
-def test_empty_program_is_a_prepared_identity_program() -> None:
+def test_quantum_program_scenario_1() -> None:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     program = Q.QuantumProgram(layout, (), state_kind="state-vector")
     prepared = phx.solver.prepare_dense_quantum_program(program)
@@ -39,9 +39,6 @@ def test_empty_program_is_a_prepared_identity_program() -> None:
     assert result.diagnostics.successful
     assert prepared.plan.cost.operation_count == 0
     assert prepared.plan.cost.operation_bytes == 0
-
-
-def test_density_program_executes_ordered_unitary_and_local_channel() -> None:
     layout = Q.HilbertRegisterLayout(("a", "b"), (2, 2))
     gamma = jnp.asarray(0.25)
     kraus = jnp.stack(
@@ -77,6 +74,19 @@ def test_density_program_executes_ordered_unitary_and_local_channel() -> None:
     assert jnp.allclose(result.diagnostics.final_trace_residual, 0.0)
     assert all(item.valid for item in prepared.operation_evidence)
     assert prepared.operation_evidence[1].cp_by_construction
+    prepared = phx.solver.prepare_dense_quantum_program(_phase_program(0.0))
+    changed_layout = Q.HilbertRegisterLayout(("other",), (2,))
+    changed = Q.QuantumProgram(
+        changed_layout,
+        (Q.LocalUnitaryOperation(jnp.eye(2, dtype="complex128"), ("other",)),),
+        state_kind="state-vector",
+    )
+    with pytest.raises(ValueError, match="structure changed"):
+        phx.solver.refresh_dense_quantum_program(prepared, changed)
+
+    density_program = _phase_program(0.0, state_kind="density-matrix")
+    with pytest.raises(ValueError, match="structure changed"):
+        phx.solver.refresh_dense_quantum_program(prepared, density_program)
 
 
 def test_refresh_preserves_prepared_identity_and_supports_real_gradients() -> None:
@@ -103,23 +113,7 @@ def test_refresh_preserves_prepared_identity_and_supports_real_gradients() -> No
     )
 
 
-def test_refresh_rejects_every_structural_program_change() -> None:
-    prepared = phx.solver.prepare_dense_quantum_program(_phase_program(0.0))
-    changed_layout = Q.HilbertRegisterLayout(("other",), (2,))
-    changed = Q.QuantumProgram(
-        changed_layout,
-        (Q.LocalUnitaryOperation(jnp.eye(2, dtype="complex128"), ("other",)),),
-        state_kind="state-vector",
-    )
-    with pytest.raises(ValueError, match="structure changed"):
-        phx.solver.refresh_dense_quantum_program(prepared, changed)
-
-    density_program = _phase_program(0.0, state_kind="density-matrix")
-    with pytest.raises(ValueError, match="structure changed"):
-        phx.solver.refresh_dense_quantum_program(prepared, density_program)
-
-
-def test_invalid_operations_and_initial_states_fail_closed_with_status() -> None:
+def test_quantum_program_scenario_2() -> None:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     invalid_program = Q.QuantumProgram(
         layout,
@@ -143,9 +137,6 @@ def test_invalid_operations_and_initial_states_fail_closed_with_status() -> None
     assert invalid_state.diagnostics.status == int(
         phx.solver.DenseQuantumProgramStatus.INVALID_INITIAL_STATE
     )
-
-
-def test_dense_resource_envelope_rejects_before_execution() -> None:
     program = _phase_program(0.0)
     with pytest.raises(MemoryError, match="maximum_state_bytes"):
         phx.solver.plan_dense_quantum_program(
@@ -162,9 +153,6 @@ def test_dense_resource_envelope_rejects_before_execution() -> None:
             program,
             phx.solver.DenseQuantumProgramPolicy(maximum_workspace_bytes=16),
         )
-
-
-def test_construction_audit_carries_cp_tp_closure_without_final_eigensolve() -> None:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     kraus = jnp.eye(2, dtype=jnp.complex128)[None]
     program = Q.QuantumProgram(

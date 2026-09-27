@@ -107,7 +107,7 @@ def test_trace_derivative_requests_retains_nested_laplacians() -> None:
     assert plan_derivative_execution(requests).strategy == "jvp"
 
 
-def test_degree_bound_algebra_decides_degeneracy_through_planning() -> None:
+def test_derivative_requests_scenario_1() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _mlp_field(domain, jax.nn.relu)
 
@@ -123,9 +123,6 @@ def test_degree_bound_algebra_decides_degeneracy_through_planning() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert request.admission.conditions == ("singular-part-ignored",)
-
-
-def test_accumulated_order_bounds_nested_derivatives() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _mlp_field(domain, squared_relu, depth=1)
 
@@ -138,9 +135,6 @@ def test_accumulated_order_bounds_nested_derivatives() -> None:
             lambda fields: laplacian(_laplacian_residual(fields), var="x"),
             {"u": u},
         )
-
-
-def test_owner_authority_governs_undeclared_and_almost_everywhere_regularity() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     weight = domain.Function("x")(lambda x: x * (1.0 - x))
     trial = weight * _mlp_field(domain, jax.numpy.tanh)
@@ -174,7 +168,7 @@ def test_owner_authority_governs_undeclared_and_almost_everywhere_regularity() -
         )
 
 
-def test_derivatives_along_independent_variables_need_no_regularity() -> None:
+def test_derivative_requests_scenario_2() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
     u = _mlp_field(domain, jax.nn.relu)
 
@@ -185,9 +179,6 @@ def test_derivatives_along_independent_variables_need_no_regularity() -> None:
     )
     assert requests
     assert all(request.admission is None for request in requests)
-
-
-def test_direct_partial_n_rejects_only_proven_degeneracy() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = _mlp_field(domain, jax.nn.relu)
 

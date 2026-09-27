@@ -56,7 +56,7 @@ def _problem(initial: Any, terminal: Any, matrix: Any, *, times: Any = (0.0, 1.0
     )
 
 
-def test_reference_equal_endpoints_preserve_stationary_reference() -> None:
+def test_dynamic_bridge_scenario_1() -> None:
     matrix = jnp.asarray([[0.75, 0.25], [0.25, 0.75]])
     problem = _problem([0.5, 0.5], [0.5, 0.5], matrix)
     result = phx.transport.dynamic.solve_schrodinger_bridge(problem)
@@ -66,9 +66,6 @@ def test_reference_equal_endpoints_preserve_stationary_reference() -> None:
     assert result.provenance.reference_process == "finite-reference"
     assert jnp.allclose(result.controlled_transition_probabilities[0], matrix)
     assert jnp.allclose(result.marginal_probabilities, 0.5)
-
-
-def test_analytic_two_state_bridge_matches_cross_ratio_solution() -> None:
     matrix = jnp.asarray([[0.75, 0.25], [0.25, 0.75]])
     problem = _problem([0.5, 0.5], [0.75, 0.25], matrix)
     solver = phx.transport.dynamic.SchrodingerBridgeSolver(
@@ -96,9 +93,6 @@ def test_analytic_two_state_bridge_matches_cross_ratio_solution() -> None:
         )
     )
     assert jnp.allclose(result.diagnostics.path_kl, explicit_kl, atol=1e-10)
-
-
-def test_deterministic_feasible_and_infeasible_support_are_explicit() -> None:
     identity = jnp.eye(2)
     feasible = phx.transport.dynamic.solve_schrodinger_bridge(
         _problem([1.0, 0.0], [1.0, 0.0], identity)
@@ -118,7 +112,7 @@ def test_deterministic_feasible_and_infeasible_support_are_explicit() -> None:
         phx.transport.dynamic.BridgeInferenceAdapter(infeasible)
 
 
-def test_zero_probability_support_is_retained_and_reachable() -> None:
+def test_dynamic_bridge_scenario_2() -> None:
     flip = jnp.asarray([[0.0, 1.0], [1.0, 0.0]])
     problem = _problem([1.0, 0.0], [0.0, 1.0], flip)
     result = phx.transport.dynamic.solve_schrodinger_bridge(problem)
@@ -129,23 +123,14 @@ def test_zero_probability_support_is_retained_and_reachable() -> None:
     assert jnp.allclose(result.initial_marginal(), jnp.asarray([1.0, 0.0]))
     assert jnp.allclose(result.terminal_marginal(), jnp.asarray([0.0, 1.0]))
     assert jnp.allclose(jnp.sum(result.controlled_transition_probabilities, axis=-1), 1.0)
-
-
-@pytest.mark.parametrize(
-    "times",
-    [
+    for times in [
         jnp.asarray([0.0]),
         jnp.asarray([0.0, 0.0]),
         jnp.asarray([0.0, -1.0]),
         jnp.asarray([0.0, jnp.nan]),
-    ],
-)
-def test_invalid_time_grids_are_rejected(times: Any) -> None:
-    with pytest.raises(ValueError, match="times"):
-        _problem([0.5, 0.5], [0.5, 0.5], jnp.eye(2), times=times)
-
-
-def test_sampler_only_and_unnormalized_reference_transitions_are_rejected() -> None:
+    ]:
+        with pytest.raises(ValueError, match="times"):
+            _problem([0.5, 0.5], [0.5, 0.5], jnp.eye(2), times=times)
     sampler_only = phx.stochastic.CallableTransitionKernel(
         lambda key, state, _t0, _t1, _context: state,
         state_shape=(),
@@ -166,7 +151,7 @@ def test_sampler_only_and_unnormalized_reference_transitions_are_rejected() -> N
         phx.transport.dynamic.solve_schrodinger_bridge(problem)
 
 
-def test_endpoint_recovery_normalization_and_controlled_kernel_density() -> None:
+def test_dynamic_bridge_scenario_3() -> None:
     matrix = jnp.asarray([[0.8, 0.2], [0.3, 0.7]])
     problem = _problem([0.2, 0.8], [0.65, 0.35], matrix, times=(0.0, 0.5, 1.0))
     result = phx.transport.dynamic.solve_schrodinger_bridge(problem)
@@ -188,9 +173,6 @@ def test_endpoint_recovery_normalization_and_controlled_kernel_density() -> None
         )
     )
     assert jnp.allclose(jnp.sum(density), 1.0)
-
-
-def test_sampling_replay_prefix_stability_and_empirical_marginals() -> None:
     problem = _problem(
         [0.7, 0.3],
         [0.25, 0.75],
@@ -209,29 +191,6 @@ def test_sampling_replay_prefix_stability_and_empirical_marginals() -> None:
     paths = result.sample_paths(jr.key(8), sample_shape=(64,))
     assert paths.shape == (64, 3)
     assert jnp.all(jnp.isfinite(result.path_log_prob(paths)))
-
-
-def test_solver_is_jittable_and_path_kl_is_differentiable() -> None:
-    matrix = jnp.asarray([[0.7, 0.3], [0.2, 0.8]])
-    solver = phx.transport.dynamic.SchrodingerBridgeSolver(
-        max_iterations=200, tolerance=1e-10
-    )
-    problem = _problem([0.4, 0.6], [0.6, 0.4], matrix)
-    compiled = eqx.filter_jit(solver.solve)(problem)
-    assert bool(compiled.converged)
-
-    def objective(logits: Any) -> Any:
-        terminal = jax.nn.softmax(logits)
-        dynamic_problem = _problem([0.4, 0.6], terminal, matrix)
-        return solver.solve(dynamic_problem).diagnostics.path_kl
-
-    gradient = jax.grad(objective)(jnp.asarray([0.2, -0.2]))
-    assert gradient.shape == (2,)
-    assert jnp.all(jnp.isfinite(gradient))
-    assert not jnp.allclose(gradient, 0.0)
-
-
-def test_named_cases_are_solved_independently_without_cross_case_mass() -> None:
     states = jnp.asarray([0.0, 1.0])
     initial = phx.integration.discrete(
         states,
@@ -273,6 +232,26 @@ def test_named_cases_are_solved_independently_without_cross_case_mass() -> None:
         _problem([0.8, 0.2], [0.6, 0.4], [[0.75, 0.25], [0.25, 0.75]])
     )
     assert jnp.allclose(result.endpoint_coupling[0], first_alone.endpoint_coupling)
+
+
+def test_solver_is_jittable_and_path_kl_is_differentiable() -> None:
+    matrix = jnp.asarray([[0.7, 0.3], [0.2, 0.8]])
+    solver = phx.transport.dynamic.SchrodingerBridgeSolver(
+        max_iterations=200, tolerance=1e-10
+    )
+    problem = _problem([0.4, 0.6], [0.6, 0.4], matrix)
+    compiled = eqx.filter_jit(solver.solve)(problem)
+    assert bool(compiled.converged)
+
+    def objective(logits: Any) -> Any:
+        terminal = jax.nn.softmax(logits)
+        dynamic_problem = _problem([0.4, 0.6], terminal, matrix)
+        return solver.solve(dynamic_problem).diagnostics.path_kl
+
+    gradient = jax.grad(objective)(jnp.asarray([0.2, -0.2]))
+    assert gradient.shape == (2,)
+    assert jnp.all(jnp.isfinite(gradient))
+    assert not jnp.allclose(gradient, 0.0)
 
 
 def test_physical_mass_mask_and_vector_event_shape_are_preserved() -> None:
@@ -332,7 +311,7 @@ def test_physical_mass_mask_and_vector_event_shape_are_preserved() -> None:
     assert result.provenance.time_grid == "physical-bridge-grid"
 
 
-def test_normalized_density_endpoint_has_unit_physical_mass() -> None:
+def test_dynamic_bridge_scenario_4() -> None:
     states = jnp.asarray([0.0, 1.0])
     base = phx.integration.discrete(
         states,
@@ -353,9 +332,6 @@ def test_normalized_density_endpoint_has_unit_physical_mass() -> None:
     assert jnp.allclose(problem.initial.mass, 1.0)
     assert jnp.allclose(problem.terminal.mass, 1.0)
     assert jnp.allclose(problem.mass, 1.0)
-
-
-def test_dynamic_transport_public_catalog_is_intentional_and_complete() -> None:
     expected = {
         "BridgeInferenceAdapter",
         "BridgePathLawDiagnostics",

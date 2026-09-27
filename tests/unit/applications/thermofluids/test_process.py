@@ -113,7 +113,7 @@ def _initialize_process(process: Any, initial_values: Any = None) -> Any:
     )
 
 
-def test_chained_material_valves_solve_pressure_and_conserve_directed_flow() -> None:
+def test_process_scenario_1() -> None:
     model = _model()
     tf = phx.applications.thermofluids
     identity = dict(
@@ -151,9 +151,6 @@ def test_chained_material_valves_solve_pressure_and_conserve_directed_flow() -> 
     np.testing.assert_allclose(jet.value("second.inlet_mass_flow"), 1.0)
     np.testing.assert_allclose(jet.value("second.outlet_mass_flow"), -1.0)
     np.testing.assert_allclose(jet.value("sink.mass_flow"), -1.0)
-
-
-def test_material_connection_rejects_mismatched_thermodynamics() -> None:
     model = _model()
     tf = phx.applications.thermofluids
     source = tf.fixed_material_boundary_component(
@@ -179,9 +176,6 @@ def test_material_connection_rejects_mismatched_thermodynamics() -> None:
             (source, sink),
             (tf.ThermofluidConnection("source", "material", "sink", "material"),),
         )
-
-
-def test_compressor_map_design_and_ideal_station_balance() -> None:
     model = _model()
     tf = phx.applications.thermofluids
     performance_map = tf.CompressorMapPlan(
@@ -218,7 +212,7 @@ def test_compressor_map_design_and_ideal_station_balance() -> None:
     assert result.shaft_power > 0.0
 
 
-def test_two_body_heat_exchange_conserves_energy_with_explicit_orientation() -> None:
+def test_process_scenario_2() -> None:
     tf = phx.applications.thermofluids
     hot = tf.thermal_capacitance_component("hot", heat_capacity=2.0)
     cold = tf.thermal_capacitance_component(
@@ -291,9 +285,6 @@ def test_two_body_heat_exchange_conserves_energy_with_explicit_orientation() -> 
         assert hot_heat < 0
         assert cold_heat > 0
         np.testing.assert_allclose(hot_heat + cold_heat, 0.0, atol=1e-8)
-
-
-def test_mixer_solves_distinct_advected_enthalpies_and_species() -> None:
     tf = phx.applications.thermofluids
     identity = dict(
         catalog_id="two-species", thermodynamics_id="shared-caloric-reference"
@@ -364,9 +355,6 @@ def test_mixer_solves_distinct_advected_enthalpies_and_species() -> None:
                 tf.ThermofluidConnection("second", "material", "mixer", "inlet_0"),
             ),
         )
-
-
-def test_heat_conversion_accounts_for_environment_and_resistive_losses() -> None:
     tf = phx.applications.thermofluids
     for law, delivered, extracted in (
         (tf.ConstantCOPHeatPumpLaw(3.0), 300.0, 200.0),

@@ -39,7 +39,7 @@ def _ray_evaluator(parameters: Any) -> Any:
     )
 
 
-def test_fixed_branch_ray_likelihood_and_sensitivity_are_evidenced() -> None:
+def test_gr_inference_scenario_1() -> None:
     adapter = fixed_branch_ray_inverse_adapter(
         _ray_evaluator,
         jnp.asarray([0, 0, 1, 1]),
@@ -72,9 +72,6 @@ def test_fixed_branch_ray_likelihood_and_sensitivity_are_evidenced() -> None:
     assert bool(sensitivity.derivative_valid)
     assert float(sensitivity.jvp_finite_difference_residual) < 2.0e-3
     assert float(sensitivity.vjp_pairing_residual) < 1.0e-6
-
-
-def test_ray_events_are_forward_evidence_but_not_gradient_evidence() -> None:
     status = SimpleNamespace(
         finite=jnp.asarray(True),
         converged=jnp.asarray(True),
@@ -101,9 +98,6 @@ def test_ray_events_are_forward_evidence_but_not_gradient_evidence() -> None:
     assert bool(evaluation.qualified)
     assert not bool(evaluation.event_free)
     assert not bool(evaluation.sensitivity_eligible)
-
-
-def test_posterior_binding_preserves_chain_draw_axes_and_realization_identity() -> None:
     binding = GRPosteriorRealizationBinding(
         "posterior:nuts-42",
         "inference:ray-1",

@@ -60,7 +60,7 @@ def _affine_problem(*, mask: Any = None, times: Any = None, values: Any = None) 
     )
 
 
-def test_gaussian_moment_conditioning_matches_scalar_closed_form() -> None:
+def test_continuous_discrete_scenario_1() -> None:
     conditioned = phx.uq.condition_gaussian_moments(
         jnp.asarray((0.0,)),
         jnp.asarray(((2.0,),)),
@@ -76,50 +76,62 @@ def test_gaussian_moment_conditioning_matches_scalar_closed_form() -> None:
     assert jnp.allclose(conditioned.covariance, jnp.asarray(((2.0 / 3.0,),)))
     assert jnp.allclose(conditioned.normalized_innovation_squared, 1.0 / 3.0)
     assert conditioned.observed_count == 1
+    for method in ["extended", "cubature", "unscented"]:
+        problem = _affine_problem()
+        expected_filter = phx.uq.kalman_filter(problem)
+        expected_smoother = phx.uq.rts_smoother(expected_filter)
 
+        result = phx.uq.continuous_discrete_gaussian_filter(problem, method=method)
+        smoother = phx.uq.continuous_discrete_gaussian_smoother(result)
 
-@pytest.mark.parametrize("method", ["extended", "cubature", "unscented"])
-def test_affine_continuous_discrete_oracle_and_smoother(method: Any) -> None:
-    problem = _affine_problem()
-    expected_filter = phx.uq.kalman_filter(problem)
-    expected_smoother = phx.uq.rts_smoother(expected_filter)
+        assert jnp.allclose(
+            result.predicted_means, expected_filter.predicted_means, atol=2e-10
+        )
+        assert jnp.allclose(
+            result.predicted_covariances,
+            expected_filter.predicted_covariances,
+            atol=2e-10,
+        )
+        assert jnp.allclose(
+            result.filtered_means, expected_filter.filtered_means, atol=2e-10
+        )
+        assert jnp.allclose(
+            result.filtered_covariances,
+            expected_filter.filtered_covariances,
+            atol=2e-10,
+        )
+        assert jnp.allclose(
+            result.incremental_log_likelihood,
+            expected_filter.incremental_log_likelihood,
+            atol=2e-10,
+        )
+        assert jnp.allclose(smoother.smoothed_means, expected_smoother.means, atol=3e-10)
+        assert jnp.allclose(
+            smoother.smoothed_covariances,
+            expected_smoother.covariances,
+            atol=3e-10,
+        )
+        assert result.method == method
+        assert result.method_id == f"continuous-discrete-gaussian-filter:{method}"
+        assert result.solver_id == "analytic-linear-gaussian"
+        assert "van-loan" in result.transition_method
+        assert result.discretization_id == "exact-lti-discretization"
+        assert jnp.all(result.status == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_SUCCESS)
+        assert jnp.all(result.solver_status == 0)
+        assert jnp.all(result.successful)
+    mask = jnp.asarray([[True], [False], [True]])
+    result = phx.uq.continuous_discrete_gaussian_filter(
+        _affine_problem(mask=mask), method="extended"
+    )
 
-    result = phx.uq.continuous_discrete_gaussian_filter(problem, method=method)
-    smoother = phx.uq.continuous_discrete_gaussian_smoother(result)
-
+    assert jnp.allclose(result.filtered_means[1], result.predicted_means[1])
+    assert jnp.allclose(result.filtered_covariances[1], result.predicted_covariances[1])
+    assert result.observed_counts[1] == 0
+    assert result.incremental_log_likelihood[1] == 0.0
     assert jnp.allclose(
-        result.predicted_means, expected_filter.predicted_means, atol=2e-10
+        result.cumulative_log_likelihood,
+        jnp.cumsum(result.incremental_log_likelihood),
     )
-    assert jnp.allclose(
-        result.predicted_covariances,
-        expected_filter.predicted_covariances,
-        atol=2e-10,
-    )
-    assert jnp.allclose(result.filtered_means, expected_filter.filtered_means, atol=2e-10)
-    assert jnp.allclose(
-        result.filtered_covariances,
-        expected_filter.filtered_covariances,
-        atol=2e-10,
-    )
-    assert jnp.allclose(
-        result.incremental_log_likelihood,
-        expected_filter.incremental_log_likelihood,
-        atol=2e-10,
-    )
-    assert jnp.allclose(smoother.smoothed_means, expected_smoother.means, atol=3e-10)
-    assert jnp.allclose(
-        smoother.smoothed_covariances,
-        expected_smoother.covariances,
-        atol=3e-10,
-    )
-    assert result.method == method
-    assert result.method_id == f"continuous-discrete-gaussian-filter:{method}"
-    assert result.solver_id == "analytic-linear-gaussian"
-    assert "van-loan" in result.transition_method
-    assert result.discretization_id == "exact-lti-discretization"
-    assert jnp.all(result.status == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_SUCCESS)
-    assert jnp.all(result.solver_status == 0)
-    assert jnp.all(result.successful)
 
 
 def test_irregular_typed_inputs_preserve_case_axes_and_physical_times() -> None:
@@ -196,25 +208,7 @@ def test_irregular_typed_inputs_preserve_case_axes_and_physical_times() -> None:
     assert jnp.all(result.successful)
 
 
-def test_missing_observations_are_forecast_only_and_likelihood_increments_accumulate() -> (
-    None
-):
-    mask = jnp.asarray([[True], [False], [True]])
-    result = phx.uq.continuous_discrete_gaussian_filter(
-        _affine_problem(mask=mask), method="extended"
-    )
-
-    assert jnp.allclose(result.filtered_means[1], result.predicted_means[1])
-    assert jnp.allclose(result.filtered_covariances[1], result.predicted_covariances[1])
-    assert result.observed_counts[1] == 0
-    assert result.incremental_log_likelihood[1] == 0.0
-    assert jnp.allclose(
-        result.cumulative_log_likelihood,
-        jnp.cumsum(result.incremental_log_likelihood),
-    )
-
-
-def test_nonlinear_observation_uses_declared_gaussian_transform() -> None:
+def test_continuous_discrete_scenario_2() -> None:
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5]),
         jnp.asarray([[1.2]]),
@@ -256,6 +250,37 @@ def test_nonlinear_observation_uses_declared_gaussian_transform() -> None:
     assert extended.observation_transform_method == "first-order-jvp-vjp"
     assert cubature.observation_transform_method == "spherical-radial-cubature"
     assert unscented.observation_transform_method == "scaled-unscented"
+    problem = _differential_problem(max_steps=1)
+    problem = eqx.tree_at(
+        lambda node: node.args,
+        problem,
+        jnp.asarray(100.0),
+    )
+    problem = eqx.tree_at(
+        lambda node: node.observations.times,
+        problem,
+        jnp.asarray([10.0]),
+    )
+    result = phx.uq.continuous_discrete_gaussian_filter(problem, method="extended")
+
+    assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_NONFINITE
+    assert result.solver_status[0] == 1
+    assert not result.valid[0]
+    assert result.incremental_log_likelihood[0] == -jnp.inf
+    assert not result.successful
+    problem = _provided_transition_problem(
+        lambda start, end, context: jnp.full((2, 2), jnp.nan)
+    )
+
+    result = phx.uq.continuous_discrete_gaussian_filter(problem)
+
+    assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_NONFINITE
+    assert result.solver_status[0] == 0
+    assert not result.valid[0]
+    problem = _differential_problem(solver=dfx.ItoMilstein())
+
+    with pytest.raises(ValueError, match="deterministic ODE-compatible"):
+        phx.uq.continuous_discrete_gaussian_filter(problem)
 
 
 def _differential_problem(
@@ -311,27 +336,6 @@ def _differential_problem(
         args=jnp.asarray(0.4),
         input_signal=input_signal,
     )
-
-
-def test_nonfinite_solver_output_has_precedence_without_fallback() -> None:
-    problem = _differential_problem(max_steps=1)
-    problem = eqx.tree_at(
-        lambda node: node.args,
-        problem,
-        jnp.asarray(100.0),
-    )
-    problem = eqx.tree_at(
-        lambda node: node.observations.times,
-        problem,
-        jnp.asarray([10.0]),
-    )
-    result = phx.uq.continuous_discrete_gaussian_filter(problem, method="extended")
-
-    assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_NONFINITE
-    assert result.solver_status[0] == 1
-    assert not result.valid[0]
-    assert result.incremental_log_likelihood[0] == -jnp.inf
-    assert not result.successful
 
 
 def test_jit_parameter_and_typed_input_gradients_are_supported() -> None:
@@ -407,14 +411,7 @@ def _provided_transition_problem(covariance: Any) -> Any:
     )
 
 
-def test_incompatible_pathwise_sde_solver_is_rejected_before_dispatch() -> None:
-    problem = _differential_problem(solver=dfx.ItoMilstein())
-
-    with pytest.raises(ValueError, match="deterministic ODE-compatible"):
-        phx.uq.continuous_discrete_gaussian_filter(problem)
-
-
-def test_diffrax_backend_result_code_is_retained() -> None:
+def test_continuous_discrete_scenario_3() -> None:
     signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray([0.0, 5.0, 10.0]),
         jnp.zeros((3, 1)),
@@ -439,45 +436,22 @@ def test_diffrax_backend_result_code_is_retained() -> None:
 
     assert result.solver_status[0] == dfx.RESULTS.max_steps_reached._value
     assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_NONFINITE
-
-
-def test_nonfinite_analytic_covariance_has_precedence_and_no_solver_code() -> None:
-    problem = _provided_transition_problem(
-        lambda start, end, context: jnp.full((2, 2), jnp.nan)
-    )
-
-    result = phx.uq.continuous_discrete_gaussian_filter(problem)
-
-    assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_NONFINITE
-    assert result.solver_status[0] == 0
-    assert not result.valid[0]
-
-
-@pytest.mark.parametrize(
-    "covariance",
-    (
+    for covariance in (
         jnp.asarray([[0.1, 0.2], [0.0, 0.1]]),
         jnp.asarray([[-1.0, 0.0], [0.0, 0.0]]),
-    ),
-)
-def test_invalid_analytic_transition_covariance_is_a_transform_failure(
-    covariance: Any,
-) -> None:
-    result = phx.uq.continuous_discrete_gaussian_filter(
-        _provided_transition_problem(covariance)
-    )
-
-    assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_TRANSFORM_FAILURE
-    assert result.solver_status[0] == 0
-    assert not result.valid[0]
-    if covariance[0, 1] != covariance[1, 0]:
-        assert not jnp.array_equal(
-            result.predicted_covariances[0],
-            result.predicted_covariances[0].T,
+    ):
+        result = phx.uq.continuous_discrete_gaussian_filter(
+            _provided_transition_problem(covariance)
         )
 
-
-def test_nonsymmetric_nonlinear_observation_covariance_is_not_repaired() -> None:
+        assert result.status[0] == phx.uq.CONTINUOUS_DISCRETE_GAUSSIAN_TRANSFORM_FAILURE
+        assert result.solver_status[0] == 0
+        assert not result.valid[0]
+        if covariance[0, 1] != covariance[1, 0]:
+            assert not jnp.array_equal(
+                result.predicted_covariances[0],
+                result.predicted_covariances[0].T,
+            )
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5]),
         jnp.zeros((1, 2)),
@@ -520,7 +494,7 @@ def test_nonsymmetric_nonlinear_observation_covariance_is_not_repaired() -> None
     )
 
 
-def test_skipped_active_step_preserves_original_backend_provenance() -> None:
+def test_continuous_discrete_scenario_4() -> None:
     problem = _differential_problem(
         max_steps=1,
         times=jnp.asarray([10.0, 20.0]),
@@ -544,9 +518,6 @@ def test_skipped_active_step_preserves_original_backend_provenance() -> None:
             ]
         ),
     )
-
-
-def test_backward_smoothing_failure_invalidates_every_dependent_step() -> None:
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([0.2, 0.5, 0.9]),
         jnp.zeros((3, 1)),

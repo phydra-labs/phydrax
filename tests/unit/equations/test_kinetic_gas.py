@@ -29,7 +29,7 @@ def _equilibrium(quadrature: Any) -> Any:
     return population, quadrature.moments(population)
 
 
-def test_positive_discrete_maxwellian_recovers_all_five_moments() -> None:
+def test_kinetic_gas_scenario_1() -> None:
     quadrature = _quadrature()
     expected, target = _equilibrium(quadrature)
     solved = phx.equations.PositiveDiscreteMaxwellianPlan(quadrature).solve(target)
@@ -38,9 +38,6 @@ def test_positive_discrete_maxwellian_recovers_all_five_moments() -> None:
     assert bool(jnp.all(solved.population > 0.0))
     np.testing.assert_allclose(solved.target_moments, target, rtol=1.0e-10)
     np.testing.assert_allclose(solved.population, expected, rtol=1.0e-8)
-
-
-def test_bgk_upwind_wall_and_breakdown_preserve_physical_semantics() -> None:
     quadrature = _quadrature()
     equilibrium, _ = _equilibrium(quadrature)
     population = equilibrium * (
@@ -73,9 +70,6 @@ def test_bgk_upwind_wall_and_breakdown_preserve_physical_semantics() -> None:
     assert bool(jnp.all(exterior > 0.0))
     assert bool(breakdown.kinetic_required)
     assert bool(breakdown.header.globally_eligible)
-
-
-def test_shakhov_and_synthetic_correction_have_explicit_evidence() -> None:
     quadrature = _quadrature()
     equilibrium, moments = _equilibrium(quadrature)
     shakhov = phx.equations.ShakhovCollisionPlan(

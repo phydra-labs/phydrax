@@ -18,7 +18,7 @@ from phydrax.optim import (
 )
 
 
-def test_orthogonal_gradients_receive_positive_equal_projections() -> None:
+def test_gradient_composition_scenario_1() -> None:
     result = conflict_free_gradient((jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0))))
 
     np.testing.assert_allclose(result.direction, (1.0, 1.0), atol=1e-6)
@@ -26,9 +26,6 @@ def test_orthogonal_gradients_receive_positive_equal_projections() -> None:
     np.testing.assert_allclose(result.cosine_matrix, jnp.eye(2), atol=1e-6)
     assert bool(result.successful)
     assert int(result.status) == int(ConflictFreeGradientStatus.SUCCESS)
-
-
-def test_conflicting_feasible_gradients_still_share_a_descent_direction() -> None:
     gradients = (
         {"weight": jnp.asarray((1.0, 0.0))},
         {"weight": jnp.asarray((-0.5, 1.0))},
@@ -38,9 +35,6 @@ def test_conflicting_feasible_gradients_still_share_a_descent_direction() -> Non
     assert bool(result.successful)
     assert bool(jnp.all(result.projections > 0.0))
     assert not bool(jnp.any(result.conflicts))
-
-
-def test_opposite_gradients_fail_without_a_false_conflict_free_claim() -> None:
     result = conflict_free_gradient((jnp.asarray((1.0, 0.0)), jnp.asarray((-1.0, 0.0))))
 
     assert not bool(result.successful)
@@ -54,15 +48,12 @@ def test_opposite_gradients_fail_without_a_false_conflict_free_claim() -> None:
         np.asarray(checked.direction)
 
 
-def test_rank_deficient_identical_gradients_remain_usable() -> None:
+def test_gradient_composition_scenario_2() -> None:
     result = conflict_free_gradient((jnp.asarray((2.0, -1.0)), jnp.asarray((2.0, -1.0))))
 
     assert int(result.rank) == 1
     assert bool(result.successful)
     assert bool(jnp.all(result.projections > 0.0))
-
-
-def test_stationary_inactive_and_complex_objectives_are_distinct() -> None:
     result = conflict_free_gradient(
         (
             {"z": jnp.asarray((1.0 + 1.0j,))},
@@ -81,9 +72,6 @@ def test_stationary_inactive_and_complex_objectives_are_distinct() -> None:
     assert bool(stationary.successful)
     assert bool(stationary.stationary[0])
     assert int(stationary.status) == int(ConflictFreeGradientStatus.STATIONARY)
-
-
-def test_structure_shape_nonfinite_and_active_contracts_are_checked() -> None:
     with pytest.raises(ValueError, match="structures"):
         conflict_free_gradient(({"a": jnp.ones(1)}, {"b": jnp.ones(1)}))
     with pytest.raises(ValueError, match="shapes"):
@@ -164,7 +152,7 @@ def _two_term_functional_solver() -> Any:
     )
 
 
-def test_functional_solver_composes_one_prepared_objective_vector() -> None:
+def test_gradient_composition_scenario_3() -> None:
     optimizer = optax.sgd(0.1)
     baseline = _two_term_functional_solver().solve(
         num_iter=1,
@@ -201,9 +189,6 @@ def test_functional_solver_composes_one_prepared_objective_vector() -> None:
                 gradient_composition=ConflictFreeGradientPolicy()
             ),
         )
-
-
-def test_functional_solver_aligns_the_applied_optimizer_proposal() -> None:
     trained = _two_term_functional_solver().solve(
         num_iter=1,
         optim=_fixed_additive_update(0.1),
@@ -242,9 +227,6 @@ def test_functional_solver_aligns_the_applied_optimizer_proposal() -> None:
                 update_alignment=ConflictFreeUpdatePolicy()
             ),
         )
-
-
-def test_operator_fit_composes_explicit_loss_terms() -> None:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 4))
     values = jnp.stack((axis.nodes, axis.nodes + 1.0), axis=0)
     dataset = phx.nn.operator.training.operator_dataset_from_arrays(
@@ -287,9 +269,6 @@ def test_operator_fit_composes_explicit_loss_terms() -> None:
             shuffle=False,
             jit=False,
         )
-
-
-def test_operator_fit_aligns_an_ordinary_aggregate_optimizer_proposal() -> None:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 4))
     values = jnp.stack((axis.nodes, axis.nodes + 1.0), axis=0)
     dataset = phx.nn.operator.training.operator_dataset_from_arrays(

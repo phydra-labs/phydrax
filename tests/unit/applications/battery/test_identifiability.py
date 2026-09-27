@@ -304,7 +304,7 @@ def _calibration(currents: Any) -> Any:
     )
 
 
-def test_rank_deficiency_weak_direction_and_deterministic_provenance() -> None:
+def test_identifiability_scenario_1() -> None:
     calibration = _calibration((1.0,))
     rank_policy = RankPolicy(relative_cutoff=1.0e-5)
     plan = BatteryIdentifiabilityPlan(calibration, rank_policy=rank_policy)
@@ -342,9 +342,6 @@ def test_rank_deficiency_weak_direction_and_deterministic_provenance() -> None:
     assert len(report.position_fingerprint) == 64
     assert len(report.evidence_fingerprint) == 64
     assert len(report.parameter_ids) == 3
-
-
-def test_distinct_current_experiments_restore_rank_and_report_compiles() -> None:
     calibration = _calibration((1.0, 2.0))
     plan = BatteryIdentifiabilityPlan(
         calibration,
@@ -368,9 +365,6 @@ def test_distinct_current_experiments_restore_rank_and_report_compiles() -> None
     )
     np.testing.assert_allclose(compiled.singular_values, report.singular_values)
     assert compiled.whitened_jacobian.shape == report.whitened_jacobian.shape
-
-
-def test_full_rank_policy_marks_confounding_unsuccessful_without_hiding_report() -> None:
     calibration = _calibration((1.0,))
     plan = BatteryIdentifiabilityPlan(
         calibration,

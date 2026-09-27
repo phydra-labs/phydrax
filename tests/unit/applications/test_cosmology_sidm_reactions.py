@@ -147,7 +147,7 @@ def _state(
     )
 
 
-def test_endothermic_threshold_is_closed_and_transaction_rolls_back() -> None:
+def test_cosmology_sidm_reactions_scenario_1() -> None:
     plan = _plan()
     state = _state(plan, 0.25, -0.25)
 
@@ -158,9 +158,6 @@ def test_endothermic_threshold_is_closed_and_transaction_rolls_back() -> None:
     assert not bool(result.evidence.threshold_open)
     assert bool(result.evidence.rolled_back)
     assert bool(eqx.tree_equal(result.accepted_state, state))
-
-
-def test_forward_then_reverse_has_recoil_detailed_balance_and_full_closure() -> None:
     plan = _plan()
     initial = _state(plan, 1.0, -1.0)
 
@@ -202,9 +199,6 @@ def test_forward_then_reverse_has_recoil_detailed_balance_and_full_closure() -> 
     )
     np.testing.assert_allclose(reverse.evidence.total_energy_defect, 0.0, atol=1.0e-12)
     np.testing.assert_array_equal(reverse.accepted_state.species_indices[:2], (0, 1))
-
-
-def test_partial_rates_select_only_matching_open_channel_with_rate_weights() -> None:
     base = _plan()
     first = base.channels[0]
     common = dict(charge_names=("dark",), charges=(0.0,))
@@ -245,7 +239,7 @@ def test_partial_rates_select_only_matching_open_channel_with_rate_weights() -> 
     )
 
 
-def test_thermal_equilibrium_ratio_includes_mass_degeneracy_and_energy_gap() -> None:
+def test_cosmology_sidm_reactions_scenario_2() -> None:
     plan = _plan()
     channel = plan.channels[0]
     thermal_energy = 2.0
@@ -254,9 +248,6 @@ def test_thermal_equilibrium_ratio_includes_mass_degeneracy_and_energy_gap() -> 
     np.testing.assert_allclose(
         channel.thermal_equilibrium_ratio(thermal_energy), expected, rtol=2.0e-14
     )
-
-
-def test_weight_split_preserves_ids_and_records_child_lineage() -> None:
     plan = _plan()
     state = _state(plan, 1.0, -1.0, weights=(2.0, 1.0), capacity=3)
 
@@ -276,9 +267,6 @@ def test_weight_split_preserves_ids_and_records_child_lineage() -> None:
     assert int(result.accepted_state.species_indices[2]) == 0
     assert float(result.accepted_state.packets.weights[2]) == 1.0
     np.testing.assert_allclose(result.evidence.total_energy_defect, 0.0, atol=2.0e-12)
-
-
-def test_full_capacity_split_and_relativistic_input_refuse_without_mutation() -> None:
     plan = _plan()
     full = _state(plan, 1.0, -1.0, weights=(2.0, 1.0), capacity=2)
     exhausted = plan.react(full, 0, 1, jr.key(15))
@@ -292,9 +280,6 @@ def test_full_capacity_split_and_relativistic_input_refuse_without_mutation() ->
     assert int(refused.evidence.status) == int(DarkReactionStatus.RELATIVISTIC_REFUSED)
     assert bool(refused.evidence.relativistic_refusal)
     assert bool(eqx.tree_equal(refused.accepted_state, relativistic))
-
-
-def test_full_angular_law_not_one_random_angle_controls_microreversibility() -> None:
     base = _plan()
     first = base.channels[0]
     speeds = np.asarray((0.0, np.sqrt(1.0 / 0.45), 2.0, 5.0))
@@ -391,7 +376,7 @@ def test_large_capacity_lineage_is_depth_ordered_and_cycle_safe(tmp_path: Any) -
     assert not bool(plan.state_valid(inactive_parent))
 
 
-def test_tiny_unit_mass_redistribution_requires_dynamic_pm_refresh() -> None:
+def test_cosmology_sidm_reactions_scenario_3() -> None:
     common = dict(charge_names=("dark",), charges=(0.0,))
     # ty: ignore[invalid-argument-type]
     a = DarkSectorSpeciesPlan("tiny-a", 1.0e-30, **common)
@@ -447,9 +432,6 @@ def test_tiny_unit_mass_redistribution_requires_dynamic_pm_refresh() -> None:
         atol=0.0,
     )
     assert bool(result.evidence.dynamic_pm_mass_required)
-
-
-def test_units_and_identical_final_state_normalization_are_explicit() -> None:
     plan = _plan()
     channel = plan.channels[0]
     with pytest.raises(ValueError, match="energy/momentum/position units"):

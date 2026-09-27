@@ -152,47 +152,44 @@ def _typed_exchange(
     )
 
 
-@pytest.mark.parametrize("requested", [True, False])
-def test_epoch_transition_cannot_relabel_foreign_physical_state_or_budgets(
-    requested: Any,
-) -> None:
-    original = _typed_exchange()
-    accepted = advance_coupling_window(
-        original, original.reference_state, 1.0
-    ).accepted_state
-    incompatible = _typed_exchange(
-        source_kind="temperature-inventory", target_kind="temperature-inventory"
-    )
-    epoch = PreparedCouplingEpoch(
-        incompatible,
-        ("a-epoch", "b-epoch"),
-        (),
-        participant_epoch_codes=(0, 0),
-        waveform_required_samples=(0, 0),
-        topology_code=0,
-    )
-    identity = IdentityCouplingEpochTransfer()
-    transition = CouplingEpochTransitionPlan(
-        (identity, identity),
-        (identity,),
-        (),
-        (),
-        source_subsystem_ids=accepted.subsystem_ids,
-        target_subsystem_ids=accepted.subsystem_ids,
-        source_exchange_ids=accepted.exchange_ids,
-        target_exchange_ids=accepted.exchange_ids,
-        transition_id="same-local-ids",
-    )
-    # ty: ignore[invalid-argument-type]
-    request = CouplingTopologyRequest(requested, (0, 0), (0, 0), 0)
-    with pytest.raises(ValueError):
-        transition_coupling_epoch(
-            epoch, accepted, epoch, transition, request, accepted_window=True
+def test_climate_coupling_scenario_1() -> None:
+    for requested in [True, False]:
+        original = _typed_exchange()
+        accepted = advance_coupling_window(
+            original, original.reference_state, 1.0
+        ).accepted_state
+        incompatible = _typed_exchange(
+            source_kind="temperature-inventory", target_kind="temperature-inventory"
         )
-    np.testing.assert_array_equal(accepted.cumulative_exchange_budget, [[-11.0, 11.0]])
-
-
-def test_nonmatching_integrals_convert_units_and_close_measured_budget() -> None:
+        epoch = PreparedCouplingEpoch(
+            incompatible,
+            ("a-epoch", "b-epoch"),
+            (),
+            participant_epoch_codes=(0, 0),
+            waveform_required_samples=(0, 0),
+            topology_code=0,
+        )
+        identity = IdentityCouplingEpochTransfer()
+        transition = CouplingEpochTransitionPlan(
+            (identity, identity),
+            (identity,),
+            (),
+            (),
+            source_subsystem_ids=accepted.subsystem_ids,
+            target_subsystem_ids=accepted.subsystem_ids,
+            source_exchange_ids=accepted.exchange_ids,
+            target_exchange_ids=accepted.exchange_ids,
+            transition_id="same-local-ids",
+        )
+        # ty: ignore[invalid-argument-type]
+        request = CouplingTopologyRequest(requested, (0, 0), (0, 0), 0)
+        with pytest.raises(ValueError):
+            transition_coupling_epoch(
+                epoch, accepted, epoch, transition, request, accepted_window=True
+            )
+        np.testing.assert_array_equal(
+            accepted.cumulative_exchange_budget, [[-11.0, 11.0]]
+        )
     prepared = _typed_exchange(target_unit=_KILOHEAT)
     result = eqx.filter_jit(advance_coupling_window)(
         prepared, prepared.reference_state, 2.0
@@ -203,28 +200,22 @@ def test_nonmatching_integrals_convert_units_and_close_measured_budget() -> None
         result.accepted_state.participant_states[1], [0.004, 0.006, 0.006]
     )
     np.testing.assert_allclose(result.accepted_exchange_budget, [[-22.0, 22.0]])
-
-
-def test_physical_type_and_measure_claims_are_checked_not_inferred_from_storage() -> None:
     with pytest.raises(ValueError):
         _typed_exchange(target_kind="temperature-inventory")
     with pytest.raises(ValueError):
         _typed_exchange(bad_measure=True)
 
 
-@pytest.mark.parametrize("failure", ["participant", "stale-proposal"])
-def test_rejected_windows_preserve_every_state_and_accepted_budget(failure: Any) -> None:
-    prepared = _typed_exchange(
-        fail=failure == "participant", jacobi=failure == "stale-proposal"
-    )
-    result = advance_coupling_window(prepared, prepared.reference_state, 1.0)
-    assert not bool(result.successful)
-    assert bool(eqx.tree_equal(result.accepted_state, prepared.reference_state))
-    np.testing.assert_array_equal(result.accepted_exchange_budget, 0.0)
-    assert float(result.candidate_state.time) == 1.0
-
-
-def test_replay_and_window_refinement_do_not_double_spend_integrals() -> None:
+def test_climate_coupling_scenario_2() -> None:
+    for failure in ["participant", "stale-proposal"]:
+        prepared = _typed_exchange(
+            fail=failure == "participant", jacobi=failure == "stale-proposal"
+        )
+        result = advance_coupling_window(prepared, prepared.reference_state, 1.0)
+        assert not bool(result.successful)
+        assert bool(eqx.tree_equal(result.accepted_state, prepared.reference_state))
+        np.testing.assert_array_equal(result.accepted_exchange_budget, 0.0)
+        assert float(result.candidate_state.time) == 1.0
     prepared = _typed_exchange()
     step = eqx.filter_jit(advance_coupling_window)
     full = step(prepared, prepared.reference_state, 2.0)
@@ -242,6 +233,30 @@ def test_replay_and_window_refinement_do_not_double_spend_integrals() -> None:
         strict=True,
     ):
         np.testing.assert_allclose(actual, expected)
+    prepared, _, receiver = slab_ocean_scenario()
+    initial = prepared.reference_state
+    state = initial.participant_states[initial.subsystem_ids.index(receiver.subsystem_id)]
+    heat = jnp.full((4,), -250.0)
+    water = jnp.full((4,), -1.0e-4)
+    result = receiver.advance_window(
+        CouplingWindow(0, 0.0, 1.0), state, (heat, water), None
+    )
+    assert bool(result.successful)
+    candidate = result.candidate_state
+    coefficient = receiver.method.ocean.plan.reference_density * receiver.heat_capacity
+    np.testing.assert_allclose(
+        candidate.state.eta, -1.0e-4 / receiver.freshwater_density, atol=1e-14
+    )
+    np.testing.assert_allclose(
+        candidate.state.tracer_inventory["absolute_salinity"],
+        state.state.tracer_inventory["absolute_salinity"],
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        coefficient * candidate.ledger.tracer_change["conservative_temperature"],
+        receiver.measure.integrate(heat),
+        atol=1e-5,
+    )
 
 
 def test_slab_ocean_real_freshwater_enthalpy_and_native_restart(tmp_path: Any) -> None:
@@ -289,42 +304,12 @@ def test_slab_ocean_real_freshwater_enthalpy_and_native_restart(tmp_path: Any) -
         read_geophysical_coupling_checkpoint(path, other)
 
 
-def test_ocean_evaporation_removes_water_and_enthalpy_without_removing_salt() -> None:
-    prepared, _, receiver = slab_ocean_scenario()
-    initial = prepared.reference_state
-    state = initial.participant_states[initial.subsystem_ids.index(receiver.subsystem_id)]
-    heat = jnp.full((4,), -250.0)
-    water = jnp.full((4,), -1.0e-4)
-    result = receiver.advance_window(
-        CouplingWindow(0, 0.0, 1.0), state, (heat, water), None
-    )
-    assert bool(result.successful)
-    candidate = result.candidate_state
-    coefficient = receiver.method.ocean.plan.reference_density * receiver.heat_capacity
-    np.testing.assert_allclose(
-        candidate.state.eta, -1.0e-4 / receiver.freshwater_density, atol=1e-14
-    )
-    np.testing.assert_allclose(
-        candidate.state.tracer_inventory["absolute_salinity"],
-        state.state.tracer_inventory["absolute_salinity"],
-        atol=1e-12,
-    )
-    np.testing.assert_allclose(
-        coefficient * candidate.ledger.tracer_change["conservative_temperature"],
-        receiver.measure.integrate(heat),
-        atol=1e-5,
-    )
-
-
-def test_slab_depletion_rejects_native_ocean_ledger_atomically() -> None:
+def test_climate_coupling_scenario_3() -> None:
     prepared, _, _ = slab_ocean_scenario(water_rate=1.0, water_mass=0.1)
     result = advance_coupling_window(prepared, prepared.reference_state, 1.0)
     assert not bool(result.successful)
     assert bool(eqx.tree_equal(result.accepted_state, prepared.reference_state))
     np.testing.assert_array_equal(result.accepted_exchange_budget, 0)
-
-
-def test_slab_ocean_time_refinement_converges_to_two_reservoir_solution() -> None:
     prepared, slab, receiver = slab_ocean_scenario(water_rate=0, conductance=1000.0)
     step = eqx.filter_jit(advance_coupling_window)
     index = prepared.reference_state.subsystem_ids.index(slab.subsystem_id)
@@ -354,11 +339,6 @@ def test_slab_ocean_time_refinement_converges_to_two_reservoir_solution() -> Non
             state.cumulative_exchange_budget.sum(axis=1), 0, atol=1e-10
         )
     assert 1.8 < errors[0] / errors[1] < 2.2
-
-
-def test_rigid_lid_adapter_uses_native_heat_and_stress_quadrature_without_water_port() -> (
-    None
-):
     grid = phx.discretization.TensorGridPlan(
         tuple(
             phx.discretization.UniformCellAxisSpec(

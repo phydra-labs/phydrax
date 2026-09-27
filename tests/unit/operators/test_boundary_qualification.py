@@ -70,7 +70,7 @@ def _provenance(**overrides: object) -> BoundaryProductProvenance:
     return BoundaryProductProvenance(**arguments)
 
 
-def test_continuum_certification_requires_prerequisite_evidence() -> None:
+def test_boundary_qualification_scenario_1() -> None:
     support = _support()
     provenance = _provenance()
     operational = _operational()
@@ -104,9 +104,6 @@ def test_continuum_certification_requires_prerequisite_evidence() -> None:
     )
     assert evidence.level == "continuum-certified"
     assert evidence.maturity == "Q1"
-
-
-def test_missing_provenance_and_unknown_claims_are_rejected() -> None:
     with pytest.raises(ValueError, match="license_id must be non-empty"):
         _provenance(license_id="   ")
 
@@ -134,9 +131,6 @@ def test_missing_provenance_and_unknown_claims_are_rejected() -> None:
             operational_evidence_id="operation:fixture",
             evidence_artifact_ids=("artifact:fixture",),
         )
-
-
-def test_unsupported_is_explicit_and_not_zero_error() -> None:
     support = _support(
         unsupported_claims={
             "continuum-error": "No continuum discretization estimator is implemented."
@@ -174,7 +168,7 @@ def test_unsupported_is_explicit_and_not_zero_error() -> None:
         )
 
 
-def test_fingerprints_are_deterministic_under_set_like_input_order() -> None:
+def test_boundary_qualification_scenario_2() -> None:
     first = BoundarySupportEnvelope(
         geometry_id="geometry",
         trace_id="trace",
@@ -243,9 +237,6 @@ def test_fingerprints_are_deterministic_under_set_like_input_order() -> None:
         prerequisite_evidence_ids=("evidence:a", "evidence:b"),
     )
     assert evidence_first.evidence_id == evidence_second.evidence_id
-
-
-def test_resource_observation_requires_a_result_and_valid_byte_counts() -> None:
     with pytest.raises(ValueError, match="observed_bytes requires a result_id"):
         _operational(result_id=None, observed_bytes=1)
 

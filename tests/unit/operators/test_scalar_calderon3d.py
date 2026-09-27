@@ -49,7 +49,7 @@ def _prepared(kernel: Any = None) -> Any:
     )
 
 
-def test_outward_trace_convention_and_constant_harmonic_jump() -> None:
+def test_scalar_calderon3d_scenario_1() -> None:
     convention = SCALAR_TRACE_CONVENTION_3D
     assert convention.ambient_dimension == 3
     assert convention.boundary_dimension == 2
@@ -67,9 +67,6 @@ def test_outward_trace_convention_and_constant_harmonic_jump() -> None:
 
     assert jnp.allclose(exterior_trace, 0.0, rtol=1.5e-1, atol=1.5e-1)
     assert jnp.allclose(interior_trace, -1.0, rtol=1.5e-1, atol=1.5e-1)
-
-
-def test_weak_kprime_is_exact_transpose_and_every_strong_action_transposes() -> None:
     prepared = _prepared()
     x = jnp.asarray([0.2, -0.4, 0.7, 0.1], dtype=prepared.space.dtype)
     y = jnp.asarray([-0.3, 0.5, 0.9, -0.2], dtype=prepared.space.dtype)
@@ -91,9 +88,6 @@ def test_weak_kprime_is_exact_transpose_and_every_strong_action_transposes() -> 
             rtol=1.0e-11,
             atol=1.0e-11,
         )
-
-
-def test_kernel_metadata_precision_resources_and_complex_helmholtz_actions() -> None:
     laplace = _prepared()
     report = laplace.assembly_report
     assert report.pde == "-Delta(u)=0"
@@ -145,7 +139,7 @@ def test_kernel_metadata_precision_resources_and_complex_helmholtz_actions() -> 
     assert jnp.all(jnp.isfinite(screened.single_layer.mv(jnp.ones((4,)))))
 
 
-def test_hypersingular_open_surface_and_frequency_envelope_fail_closed() -> None:
+def test_scalar_calderon3d_scenario_2() -> None:
     with pytest.raises(UnsupportedScalarBoundarySpaceError, match=r"H\^1/2"):
         # ty: ignore[invalid-argument-type]
         prepare_scalar_hypersingular_dp0_3d(None)
@@ -158,9 +152,6 @@ def test_hypersingular_open_surface_and_frequency_envelope_fail_closed() -> None
 
     with pytest.raises(ValueError, match="panel-frequency envelope"):
         _prepared(ScalarKernelFamily3D.outgoing_helmholtz(10.0))
-
-
-def test_scalar_fast_provider_operator_matches_exact_dp0_action_and_duality() -> None:
     exact = prepare_laplace_single_layer_dp0_3d(
         MeshRegion(_VERTICES, _FACES), policy=_policy()
     )

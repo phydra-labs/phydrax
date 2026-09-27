@@ -35,7 +35,7 @@ def _trajectory() -> Any:
     )
 
 
-def test_progressive_policy_refines_on_plateau_then_stops_without_improvement() -> None:
+def test_progressive_linear_refinement_scenario_1() -> None:
     policy = phx.dynamics.identification.ProgressiveLinearRefinementPolicy(
         initial_steps=1,
         step_increment=2,
@@ -66,9 +66,6 @@ def test_progressive_policy_refines_on_plateau_then_stops_without_improvement() 
     assert state.current_steps == 3
     assert not record.refined
     assert record.stopped
-
-
-def test_progressive_policy_records_python_plateau_flag_at_zero_metric() -> None:
     policy = phx.dynamics.identification.ProgressiveLinearRefinementPolicy(
         initial_steps=1,
         step_increment=1,
@@ -82,9 +79,6 @@ def test_progressive_policy_records_python_plateau_flag_at_zero_metric() -> None
 
     assert record.plateau is True
     assert json.loads(json.dumps(dataclasses.asdict(record)))["plateau"] is True
-
-
-def test_progressive_policy_rejects_invalid_metrics_and_unsupported_transitions() -> None:
     policy = phx.dynamics.identification.ProgressiveLinearRefinementPolicy(
         initial_steps=1,
         step_increment=1,
@@ -114,6 +108,37 @@ def test_progressive_policy_rejects_invalid_metrics_and_unsupported_transitions(
             linear_refinement=policy,
             steps=0,
         )
+    dynamics, layout, unmapped = _mac_refinement_case()
+    ports = phx.ModelPorts(
+        inputs=(layout.value_port(role="point"),),
+        outputs=(layout.value_port(role="tangent"),),
+    )
+    model = PortedAffine(ports, out_size=layout.size)
+    with pytest.raises(ValueError, match="explicit PortMapping"):
+        unmapped.validate_model(model)
+
+    transition = phx.applications.incompressible_flow.MACLearnedRateRolloutTransition(
+        dynamics, state_layout=layout, step_size=0.1, port_mapping=in_order(ports, ports)
+    )
+    transition.validate_model(model)
+    evidence = transition.component_binding(model).contract().port_binding
+    # ty: ignore[unresolved-attribute]
+    assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
+    # ty: ignore[unresolved-attribute]
+    assert evidence.outputs == ((ports.outputs[0].port_id,) * 2,)
+    state = jnp.zeros(
+        layout.shape, dtype=dynamics.momentum.operators.pressure_space.dtype
+    )
+    result = transition.evaluate(
+        model,
+        phx.dynamics.DiscreteStepContext(0.0, 0.1, 0),
+        state,
+        None,
+        key=None,
+        iteration=jnp.asarray(0),
+        control=phx.linalg.LinearSolveControl(maximum_steps=1),
+    )
+    assert bool(result.training_usable)
 
 
 class _ZeroMACRateModel(AbstractArrayModel):
@@ -251,37 +276,3 @@ def test_mac_transition_consumes_dynamic_krylov_control_and_full_fidelity_evalua
     )
     assert resumed.linear_refinement_state == fitted.linear_refinement_state
     assert resumed.linear_refinement_records == fitted.linear_refinement_records
-
-
-def test_mac_transition_binds_port_declaring_rates_through_layout_ports() -> None:
-    dynamics, layout, unmapped = _mac_refinement_case()
-    ports = phx.ModelPorts(
-        inputs=(layout.value_port(role="point"),),
-        outputs=(layout.value_port(role="tangent"),),
-    )
-    model = PortedAffine(ports, out_size=layout.size)
-    with pytest.raises(ValueError, match="explicit PortMapping"):
-        unmapped.validate_model(model)
-
-    transition = phx.applications.incompressible_flow.MACLearnedRateRolloutTransition(
-        dynamics, state_layout=layout, step_size=0.1, port_mapping=in_order(ports, ports)
-    )
-    transition.validate_model(model)
-    evidence = transition.component_binding(model).contract().port_binding
-    # ty: ignore[unresolved-attribute]
-    assert evidence.inputs == ((ports.inputs[0].port_id,) * 2,)
-    # ty: ignore[unresolved-attribute]
-    assert evidence.outputs == ((ports.outputs[0].port_id,) * 2,)
-    state = jnp.zeros(
-        layout.shape, dtype=dynamics.momentum.operators.pressure_space.dtype
-    )
-    result = transition.evaluate(
-        model,
-        phx.dynamics.DiscreteStepContext(0.0, 0.1, 0),
-        state,
-        None,
-        key=None,
-        iteration=jnp.asarray(0),
-        control=phx.linalg.LinearSolveControl(maximum_steps=1),
-    )
-    assert bool(result.training_usable)

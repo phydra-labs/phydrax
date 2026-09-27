@@ -29,7 +29,7 @@ def _resources() -> Any:
     )
 
 
-def test_three_spin_half_total_half_sector_has_two_exact_multiplets() -> None:
+def test_fuzzy_space_scenario_1() -> None:
     basis = prepare_su2_sector_basis(
         SU2CouplingTreePlan(
             ("a", "b", "c"),
@@ -51,9 +51,6 @@ def test_three_spin_half_total_half_sector_has_two_exact_multiplets() -> None:
     np.testing.assert_allclose(
         basis.from_product(basis.to_product(vector)), vector, atol=1e-12
     )
-
-
-def test_su2_projected_swap_preserves_total_spin_sector() -> None:
     basis = prepare_su2_sector_basis(
         SU2CouplingTreePlan(("a", "b"), (1, 1), 0, _resources())
     )
@@ -70,9 +67,6 @@ def test_su2_projected_swap_preserves_total_spin_sector() -> None:
     )
     np.testing.assert_allclose(projected.matrix, ((-1.0,),), atol=1e-12)
     assert bool(projected.evidence.accepted)
-
-
-def test_fuzzy_sphere_statistics_select_exact_pair_spin_sectors() -> None:
     fermion = prepare_fuzzy_sphere_two_particle(
         FuzzySphereTwoParticlePlan(
             1,

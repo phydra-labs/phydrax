@@ -45,7 +45,7 @@ def _power(background: Any) -> Any:
     )
 
 
-def test_spherical_overdensity_mass_radius_inverse_and_eds_constants() -> None:
+def test_cosmology_halos_scenario_1() -> None:
     background = cosmology.FLRWBackground(1.0, 1.0)
     definition = cosmology.SphericalOverdensityMassDefinition(200.0, "critical")
     mass = jnp.asarray([1.0, 10.0, 100.0])
@@ -55,9 +55,6 @@ def test_spherical_overdensity_mass_radius_inverse_and_eds_constants() -> None:
     collapse = cosmology.SphericalCollapseEdS()
     np.testing.assert_allclose(collapse.linear_threshold, 1.68647019984, rtol=1e-11)
     np.testing.assert_allclose(collapse.virial_overdensity, 18.0 * np.pi**2)
-
-
-def test_linear_variance_and_nfw_normalization_are_finite() -> None:
     background = cosmology.FLRWBackground(1.0, 1.0)
     power = _power(background)
     variance = cosmology.LinearVariancePlan(1.0).sigma(

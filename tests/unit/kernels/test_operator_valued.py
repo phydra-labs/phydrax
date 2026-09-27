@@ -26,7 +26,7 @@ def _scalar_kernel(length_scale: Any = 0.7) -> Any:
     )
 
 
-def test_projected_tangent_covariance_is_intrinsic_symmetric_and_psd() -> None:
+def test_operator_valued_scenario_1() -> None:
     points = _points()
     kernel = phx.kernels.sphere_tangent_kernel(_scalar_kernel())
     covariance = kernel.matrix(points, points)
@@ -41,9 +41,6 @@ def test_projected_tangent_covariance_is_intrinsic_symmetric_and_psd() -> None:
             block = kernel.block(left, right)
             assert jnp.allclose(left @ block, 0.0, atol=1e-9)
             assert jnp.allclose(block @ right, 0.0, atol=1e-9)
-
-
-def test_sphere_tangent_covariance_is_rotation_equivariant() -> None:
     points = _points()
     rotation = jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     kernel = phx.kernels.sphere_tangent_kernel(_scalar_kernel())
@@ -53,9 +50,6 @@ def test_sphere_tangent_covariance_is_rotation_equivariant() -> None:
             expected = rotation @ kernel.block(left, right) @ rotation.T
             actual = kernel.block(rotation @ left, rotation @ right)
             assert jnp.allclose(actual, expected, atol=1e-9)
-
-
-def test_sphere_lifts_share_scalar_membership_tolerance_and_canonicalization() -> None:
     point = jnp.sqrt(1.0005) * jnp.asarray([1.0, 0.0, 0.0])
     scalar = phx.kernels.SphereSpectralKernel(
         2,
@@ -68,9 +62,6 @@ def test_sphere_lifts_share_scalar_membership_tolerance_and_canonicalization() -
 
     assert jnp.all(jnp.isfinite(tangent.block(point, point)))
     assert jnp.all(jnp.isfinite(one_form.block(point, point)))
-
-
-def test_degree_one_form_kernel_matches_tangent_covariance() -> None:
     points = _points()
     scalar = _scalar_kernel()
     tangent = phx.kernels.sphere_tangent_kernel(scalar)

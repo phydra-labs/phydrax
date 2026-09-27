@@ -71,7 +71,7 @@ def _result(
     )
 
 
-def test_convergence_report_passes_and_serializes_complete_summary() -> None:
+def test_convergence_report_contracts() -> None:
     result = _result()
     report = result.convergence_report()
 
@@ -84,9 +84,6 @@ def test_convergence_report_passes_and_serializes_complete_summary() -> None:
     assert report.mean_acceptance_rate == pytest.approx(0.82)
     assert json.loads(json.dumps(report.as_dict()))["passed"] is True
     report.raise_for_failure()
-
-
-def test_convergence_report_identifies_nested_rhat_and_ess_failures() -> None:
     result = _result(
         rhat=(1.0, 1.08),
         bulk_ess=(800.0, 30.0),
@@ -106,9 +103,6 @@ def test_convergence_report_identifies_nested_rhat_and_ess_failures() -> None:
     with pytest.raises(phx.uq.MCMCConvergenceError) as caught:
         report.raise_for_failure()
     assert caught.value.report is report
-
-
-def test_convergence_report_gates_divergences_and_tree_saturation_independently() -> None:
     divergent = jnp.zeros((2, 12), dtype="bool").at[1, 3].set(True)
     expansions = jnp.zeros((2, 12), dtype=jnp.int32).at[0, 5].set(4)
     result = _result(divergent=divergent, trajectory_expansions=expansions)
@@ -123,9 +117,6 @@ def test_convergence_report_gates_divergences_and_tree_saturation_independently(
     assert strict.trajectory_saturation_count == 1
     assert permissive.passed
     assert permissive.divergence_count == 1
-
-
-def test_convergence_report_rejects_invalid_thresholds_and_nonfinite_metrics() -> None:
     with pytest.raises(ValueError, match="max_rhat"):
         phx.uq.MCMCConvergenceThresholds(max_rhat=0.99)
     with pytest.raises(ValueError, match="min_bulk_ess"):

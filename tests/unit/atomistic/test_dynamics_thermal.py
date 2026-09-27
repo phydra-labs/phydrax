@@ -49,7 +49,7 @@ def _constrained_baoab() -> Any:
     return dynamics, thermodynamic
 
 
-def test_stable_particle_noise_permutes_with_stable_ids() -> None:
+def test_dynamics_thermal_scenario_1() -> None:
     key = jax.random.key_data(jax.random.key(7))
     ids = jnp.asarray([30, 10, 20])
     permutation = jnp.asarray([1, 2, 0])
@@ -70,9 +70,6 @@ def test_stable_particle_noise_permutes_with_stable_ids() -> None:
         dtype=jnp.float64,
     )
     np.testing.assert_array_equal(second, first[permutation])
-
-
-def test_baoab_and_rattle_preserve_distance_and_velocity_tangent() -> None:
     dynamics, thermodynamic = _constrained_baoab()
     assert thermodynamic.constraint_manifold_id == dynamics.constraints.prepared_id
     assert (
@@ -95,9 +92,6 @@ def test_baoab_and_rattle_preserve_distance_and_velocity_tangent() -> None:
     np.testing.assert_allclose(distance, 1.0, atol=1.0e-8)
     assert float(step.accepted_state.constraint_velocity_residual) <= 1.0e-9
     assert bool(jnp.all(jnp.isfinite(step.accepted_state.thermostat_state)))
-
-
-def test_thermodynamic_observer_and_trajectory_adapter_are_typed() -> None:
     dynamics, thermodynamic = _constrained_baoab()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     state = dynamics.initialize_state(

@@ -58,7 +58,7 @@ def _dynamics() -> Any:
     return dynamics, thermodynamic, initial
 
 
-def test_rollout_observers_update_only_accepted_steps_with_final_retention() -> None:
+def test_nanoflow_observables_scenario_1() -> None:
     dynamics, thermodynamic, initial = _dynamics()
     frame = phx.geometry.PlanarWallFramePlan(
         jnp.zeros((3,)),
@@ -105,9 +105,6 @@ def test_rollout_observers_update_only_accepted_steps_with_final_retention() -> 
     unchanged = profile.update(state, dynamics, initial, jnp.asarray(False))
     np.testing.assert_array_equal(unchanged.count_sum, state.count_sum)
     assert int(unchanged.samples) == 0
-
-
-def test_exact_linear_msd_recovers_diffusion_tensor_and_immutable_artifact() -> None:
     time = jnp.arange(1.0, 7.0)
     diffusion = jnp.diag(jnp.asarray((0.2, 0.1, 0.05)))
     msd = 2.0 * time[:, None, None] * diffusion
@@ -162,9 +159,25 @@ def test_exact_linear_msd_recovers_diffusion_tensor_and_immutable_artifact() -> 
     np.testing.assert_allclose(artifact.value, diffusion)
     assert artifact.support.support_id == support.support_id
     assert artifact.artifact_id
+    force = jnp.sin(jnp.linspace(0.0, 2.0 * jnp.pi, 100))[:, None]
+    result = phx.atomistic.WallForceCorrelationPlan(
+        area=2.0,
+        temperature=1.0,
+        boltzmann_constant=1.0,
+        time_step=0.01,
+        lag_count=4,
+        minimum_pairs=90,
+        force_source_id="exact-wall-force-group",
+        support_id="friction-support",
+        system_id="system",
+        force_field_id="force-field",
+        rollout_id="rollout",
+    ).evaluate(force)
 
-
-def test_driven_profile_fit_recovers_two_wall_slip_lengths() -> None:
+    assert bool(result.header.globally_eligible)
+    assert result.friction_coefficient > 0.0
+    assert result.covariance.shape == (1, 1)
+    assert result.force_source_id == "exact-wall-force-group"
     centers = jnp.asarray((0.5, 1.5, 2.5, 3.5))
     velocity = jnp.stack(
         (
@@ -205,25 +218,3 @@ def test_driven_profile_fit_recovers_two_wall_slip_lengths() -> None:
     assert bool(fit.header.globally_eligible)
     np.testing.assert_allclose(fit.velocity_gradient, 2.0)
     np.testing.assert_allclose(fit.slip_lengths, (0.5, 0.5))
-
-
-def test_exact_wall_force_contract_produces_friction_with_uncertainty() -> None:
-    force = jnp.sin(jnp.linspace(0.0, 2.0 * jnp.pi, 100))[:, None]
-    result = phx.atomistic.WallForceCorrelationPlan(
-        area=2.0,
-        temperature=1.0,
-        boltzmann_constant=1.0,
-        time_step=0.01,
-        lag_count=4,
-        minimum_pairs=90,
-        force_source_id="exact-wall-force-group",
-        support_id="friction-support",
-        system_id="system",
-        force_field_id="force-field",
-        rollout_id="rollout",
-    ).evaluate(force)
-
-    assert bool(result.header.globally_eligible)
-    assert result.friction_coefficient > 0.0
-    assert result.covariance.shape == (1, 1)
-    assert result.force_source_id == "exact-wall-force-group"

@@ -31,7 +31,7 @@ def _trajectory() -> Any:
     )
 
 
-def test_state_time_samples_preserve_axes_masks_and_path_clusters() -> None:
+def test_state_time_samples_scenario_1() -> None:
     trajectory = _trajectory()
     batch = trajectory_state_time_samples(trajectory)
 
@@ -52,9 +52,6 @@ def test_state_time_samples_preserve_axes_masks_and_path_clusters() -> None:
         "independence_index",
         "time_index",
     }
-
-
-def test_state_time_measure_retains_time_for_per_time_reductions() -> None:
     trajectory = _trajectory()
     batch = trajectory_state_time_samples(
         trajectory,
@@ -77,23 +74,6 @@ def test_state_time_measure_retains_time_for_per_time_reductions() -> None:
         "time_index",
     }
     assert not target.independent
-
-
-def test_adapter_adds_a_synthetic_realization_axis_for_one_path_per_case() -> None:
-    trajectory = StochasticTrajectory(
-        jnp.asarray([0.0, 0.5, 1.0]),
-        jnp.zeros((3, 2)),
-        state_axes=("state",),
-    )
-    batch = trajectory_state_time_samples(trajectory)
-
-    assert batch.leading_axes == ("trajectory_sample",)
-    assert batch.states.shape == (1, 3, 2)
-    assert batch.times.shape == (1, 3)
-    assert batch.sample_axes == ("trajectory_sample", "time")
-
-
-def test_state_time_measure_carries_user_log_weights_without_flattening() -> None:
     trajectory = _trajectory()
     log_weights = jnp.linspace(-1.0, 1.0, 12).reshape((3, 4))
     target = trajectory_state_time_measure(
@@ -105,11 +85,19 @@ def test_state_time_measure_carries_user_log_weights_without_flattening() -> Non
     assert target.log_weights.dims == ("path", "saved_time")
     assert jnp.array_equal(jnp.asarray(target.log_weights.data), log_weights)
     assert target.provenance == "stochastic-trajectory:state-time:global"
-
-
-def test_state_time_adapter_rejects_misaligned_weights_and_labels() -> None:
     trajectory = _trajectory()
     with pytest.raises(ValueError, match="match"):
         trajectory_state_time_samples(trajectory, log_weights=jnp.ones((3, 3)))
     with pytest.raises(ValueError, match="distinct"):
         trajectory_state_time_samples(trajectory, state_label="x", time_label="x")
+    trajectory = StochasticTrajectory(
+        jnp.asarray([0.0, 0.5, 1.0]),
+        jnp.zeros((3, 2)),
+        state_axes=("state",),
+    )
+    batch = trajectory_state_time_samples(trajectory)
+
+    assert batch.leading_axes == ("trajectory_sample",)
+    assert batch.states.shape == (1, 3, 2)
+    assert batch.times.shape == (1, 3)
+    assert batch.sample_axes == ("trajectory_sample", "time")

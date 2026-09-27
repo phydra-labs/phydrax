@@ -31,7 +31,7 @@ def _system() -> Any:
     )
 
 
-def test_held_input_policy_has_explicit_node_convention_and_derivatives() -> None:
+def test_controlled_dae_replay_scenario_1() -> None:
     times = jnp.asarray((0.0, 1.0, 2.0))
     values = jnp.asarray(((3.0,), (5.0,)))
     left = phx.dynamics.HeldInputPolicy(
@@ -62,9 +62,6 @@ def test_held_input_policy_has_explicit_node_convention_and_derivatives() -> Non
     assert jnp.allclose(derivative[0, :, 0], jnp.asarray((1.0, 0.0)))
     with pytest.raises(eqx.EquinoxRuntimeError, match="outside its time grid"):
         left(2.1, jnp.zeros(2))
-
-
-def test_dae_problem_requires_exact_input_policy_layout() -> None:
     system = _system()
     with pytest.raises(ValueError, match="requires input_policy"):
         phx.solver.DifferentialAlgebraicProblem(
@@ -104,9 +101,6 @@ def test_dae_problem_requires_exact_input_policy_layout() -> None:
             input_policy=policy,
             problem_id="extra-input-policy",
         )
-
-
-def test_controlled_dae_initialization_and_stages_use_held_policy() -> None:
     grid = phx.dynamics.TimeGrid(
         jnp.asarray((0.0, 0.5, 1.0)),
         time_id="controlled-dae-grid",

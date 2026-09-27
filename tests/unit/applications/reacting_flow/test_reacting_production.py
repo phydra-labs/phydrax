@@ -45,7 +45,7 @@ def _mechanism() -> Any:
     return species, mechanism
 
 
-def test_energy_deposition_has_exact_spatial_power_and_cumulative_work() -> None:
+def test_reacting_production_scenario_1() -> None:
     plan = phx.applications.reacting_flow.EnergyDepositionSourcePlan(
         jnp.asarray((1.0, 2.0)),
         jnp.asarray((2.0, 1.0)),
@@ -64,9 +64,6 @@ def test_energy_deposition_has_exact_spatial_power_and_cumulative_work() -> None
     np.testing.assert_allclose(midpoint.cumulative_work, 6.0)
     np.testing.assert_allclose(end.cumulative_work, 12.0)
     assert bool(midpoint.successful)
-
-
-def test_fixed_connectivity_ale_remap_preserves_species_and_enthalpy_extensives() -> None:
     plan = phx.applications.reacting_flow.FixedConnectivityReactingALERemapPlan(
         jnp.asarray((1.0, 2.0)), jnp.asarray((2.0, 1.0))
     )
@@ -78,9 +75,6 @@ def test_fixed_connectivity_ale_remap_preserves_species_and_enthalpy_extensives(
     assert bool(result.evidence.successful)
     np.testing.assert_allclose(result.evidence.species_extensive_defect, 0.0)
     np.testing.assert_allclose(result.evidence.enthalpy_extensive_defect, 0.0)
-
-
-def test_measured_chemistry_work_schedule_is_atomic_and_deterministic() -> None:
     plan = phx.applications.reacting_flow.ChemistryWorkSchedulePlan(4, 2)
     accepted = plan.initialize()
     candidate = plan.propose(accepted, jnp.asarray((10.0, 1.0, 8.0, 1.0)))

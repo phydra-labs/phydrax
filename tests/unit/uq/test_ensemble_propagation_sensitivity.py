@@ -24,7 +24,7 @@ def _small_mlp(key: Any, *, width: Any = 6) -> Any:
     )
 
 
-def test_homogeneous_and_heterogeneous_ensembles_share_predictive_contract() -> None:
+def test_ensemble_propagation_sensitivity_scenario_1() -> None:
     homogeneous = phx.uq.HomogeneousFunctionEnsemble.from_factory(
         _small_mlp,
         num_members=4,
@@ -43,9 +43,6 @@ def test_homogeneous_and_heterogeneous_ensembles_share_predictive_contract() -> 
     assert homogeneous_prediction.samples.dims == ("member", None)
     assert homogeneous_prediction.samples.data.shape == (4, 1)
     assert heterogeneous_prediction.samples.data.shape == (2, 1)
-
-
-def test_ensemble_predictions_record_or_raise_for_invalid_members() -> None:
     ensemble = phx.uq.HeterogeneousFunctionEnsemble(
         (
             lambda value, *, key: jnp.asarray(value) + 1.0,
@@ -64,11 +61,6 @@ def test_ensemble_predictions_record_or_raise_for_invalid_members() -> None:
             key=jr.key(4),
             valid_policy="raise",
         )
-
-
-def test_randomized_prior_is_structurally_nontrainable_and_members_are_independent() -> (
-    None
-):
     model = phx.uq.RandomizedPriorModel(
         _small_mlp(jr.key(5)),
         _small_mlp(jr.key(6)),
@@ -92,7 +84,7 @@ def test_randomized_prior_is_structurally_nontrainable_and_members_are_independe
     assert jnp.var(jnp.asarray(prediction.samples.data), axis=0).item() > 0.0
 
 
-def test_distribution_moments_probability_domain_and_joint_qmc_design() -> None:
+def test_ensemble_propagation_sensitivity_scenario_2() -> None:
     normal = phx.uq.Normal(1.0, 2.0)
     lognormal = phx.uq.LogNormal(0.2, 0.4)
     empirical = phx.uq.EmpiricalDistribution(
@@ -116,14 +108,8 @@ def test_distribution_moments_probability_domain_and_joint_qmc_design() -> None:
     )
     assert batch.values["a"].shape == (256,)
     assert not jnp.array_equal(batch.values["a"], batch.values["b"])
-
-
-def test_lognormal_log_prob_is_safe_outside_support() -> None:
     distribution = phx.uq.LogNormal(0.0, 1.0)
     assert distribution.log_prob(-1.0) == -jnp.inf
-
-
-def test_propagation_chunking_is_deterministic_and_records_invalid_draws() -> None:
     samples = phx.uq.sample_joint(
         {"x": phx.uq.Uniform(-1.0, 1.0), "y": phx.uq.Normal(0.0, 1.0)},
         num_samples=64,

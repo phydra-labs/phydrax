@@ -7,7 +7,7 @@ import phydrax as phx
 tn = phx.tensor_network
 
 
-def test_two_site_truncation_uses_factorization_precision_and_reports_loss() -> None:
+def test_factorization_scenario_1() -> None:
     precision = tn.TensorNetworkPrecisionPolicy(
         storage_dtype="complex64",
         contraction_dtype="complex64",
@@ -46,22 +46,13 @@ def test_two_site_truncation_uses_factorization_precision_and_reports_loss() -> 
     assert jnp.allclose(evidence.discarded_weight, 0.5, atol=1e-6)
     assert all(tensor.dtype == jnp.dtype("complex64") for tensor in result.tensors)
     assert jnp.allclose(result.norm() ** 2, 0.5, atol=1e-6)
-
-
-def test_two_site_gate_rejects_nonpositive_capacity() -> None:
     state = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]]))
     gate = jnp.eye(4).reshape((2, 2, 2, 2))
     with pytest.raises(ValueError, match="positive"):
         tn.apply_two_site_gate(state, 0, gate, maximum_bond_dimension=0)
-
-
-def test_two_site_gate_rejects_scalar_gate_with_shape_error() -> None:
     state = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]]))
     with pytest.raises(ValueError, match="Gate shape"):
         tn.apply_two_site_gate(state, 0, 1.0, maximum_bond_dimension=1)
-
-
-def test_canonicalization_preserves_state_and_precision() -> None:
     tensors = (
         jnp.asarray([[[1.0, 0.0], [0.0, 1.0]]], dtype=jnp.complex128),
         jnp.asarray([[[1.0], [0.0]], [[0.0], [1.0]]], dtype=jnp.complex128),
@@ -71,9 +62,6 @@ def test_canonicalization_preserves_state_and_precision() -> None:
     assert evidence.valid
     assert jnp.allclose(canonical.to_dense(), state.to_dense() / state.norm())
     assert canonical.precision.policy_id == state.precision.policy_id
-
-
-def test_chain_tensors_reject_zero_physical_and_auxiliary_dimensions() -> None:
     with pytest.raises(ValueError, match="positive"):
         tn.MatrixProductState((jnp.empty((1, 0, 1)),))
     with pytest.raises(ValueError, match="positive"):

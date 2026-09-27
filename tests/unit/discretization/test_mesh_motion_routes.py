@@ -80,7 +80,7 @@ def _certified(points: Any, triangles: Any, displacement: Any) -> Any:
     return D.certify_cell_geometry_validity(mesh).all_certified
 
 
-def test_harmonic_route_keeps_a_convex_planar_image_valid() -> None:
+def test_mesh_motion_routes_scenario_1() -> None:
     points, triangles, boundary = _square(6)
     edge = points[boundary]
     # Straight edges of the square map to a convex quadrilateral.
@@ -96,9 +96,6 @@ def test_harmonic_route_keeps_a_convex_planar_image_valid() -> None:
     evidence = _orientation_preserved(points, triangles, result.displacement)
     assert bool(evidence.valid)
     assert _certified(points, triangles, result.displacement)
-
-
-def test_stiffened_elasticity_carries_a_rotating_inclusion_without_inversion() -> None:
     points, triangles, inner, outer = _annulus(0.25, 1.0, 6, 24)
     boundary = np.sort(np.concatenate((inner, outer)))
     angle = np.deg2rad(40.0)
@@ -128,9 +125,6 @@ def test_stiffened_elasticity_carries_a_rotating_inclusion_without_inversion() -
 
     # Stiff small cells near the inclusion rotate nearly rigidly.
     assert minima[1.0] > minima[0.0]
-
-
-def test_winslow_keeps_a_distorted_convex_image_valid() -> None:
     points, triangles, boundary = _square(8)
     edge = points[boundary]
     # Convex trapezoid image with boundary vertices crowded toward one corner.
@@ -205,7 +199,7 @@ def test_winslow_boundary_derivative_matches_finite_differences() -> None:
     np.testing.assert_allclose(gradient, finite_difference, rtol=1.0e-5)
 
 
-def test_route_selection_is_explicit_and_complete() -> None:
+def test_mesh_motion_routes_scenario_2() -> None:
     points, triangles, boundary = _square(2)
     with pytest.raises(ValueError, match="PRESCRIBED"):
         _extension(points, triangles, boundary, Route.PRESCRIBED)
@@ -221,9 +215,6 @@ def test_route_selection_is_explicit_and_complete() -> None:
     )
     shift = np.full(points.shape, 0.1)
     np.testing.assert_array_equal(prescribed.extend(shift).displacement, shift)
-
-
-def test_motion_validity_rejects_inversion_and_small_relative_jacobians() -> None:
     points, triangles, _ = _square(2)
     validity = D.MotionValidityPlan(points, (("triangle", triangles),))
     center = 4

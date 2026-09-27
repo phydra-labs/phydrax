@@ -109,7 +109,7 @@ def _evaluation(atom_energy: Any, forces: Any, virial: Any, name: Any) -> Any:
     )
 
 
-def test_stable_ownership_permutation_block_bounds_and_compiled_shape() -> None:
+def test_distributed_atomistic_completion_scenario_1() -> None:
     runtime = _plan().prepare_runtime()
     positions = _positions()
     state = runtime.initialize(positions)
@@ -124,9 +124,6 @@ def test_stable_ownership_permutation_block_bounds_and_compiled_shape() -> None:
         lambda coordinate: runtime.initialize(coordinate).decomposition.local_indices
     )(positions)
     assert compiled.shape == (2, 6)
-
-
-def test_halo_routes_are_padded_and_capacity_overflow_fails_closed() -> None:
     state = _plan(halo_capacity=2).prepare_runtime().initialize(_positions())
     decomposition = state.decomposition
     assert decomposition.halo_send_indices.shape == (2, 2, 2)
@@ -140,9 +137,6 @@ def test_halo_routes_are_padded_and_capacity_overflow_fails_closed() -> None:
     assert bool(overflow.decomposition.halo_overflow)
     assert not bool(overflow.status.halo_capacity_ok)
     assert not bool(overflow.successful)
-
-
-def test_migration_candidate_commits_or_rolls_back_atomically() -> None:
     rollback_plan = _plan(migration_capacity=0, partition_capacity=3)
     rollback_state = rollback_plan.prepare_runtime().initialize(_positions())
     proposed = _positions().at[1, 0].set(2.75)
@@ -177,7 +171,7 @@ def test_migration_candidate_commits_or_rolls_back_atomically() -> None:
     assert not bool(rejected.successful)
 
 
-def test_reverse_halo_force_return_is_conservative() -> None:
+def test_distributed_atomistic_completion_scenario_2() -> None:
     state = _plan().prepare_runtime().initialize(_positions())
     receive = jnp.zeros(state.decomposition.halo_receive_indices.shape + (3,))
     receive = receive.at[0, 1, 0].set(jnp.asarray([1.0, 2.0, 3.0]))
@@ -188,9 +182,6 @@ def test_reverse_halo_force_return_is_conservative() -> None:
     np.testing.assert_allclose(
         jnp.sum(returned, axis=0), jnp.sum(receive, axis=(0, 1, 2))
     )
-
-
-def test_reverse_force_policy_orders_repeated_owner_contributions() -> None:
     box = phx.discretization.ParticleBox(
         # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 0.0],
@@ -225,9 +216,6 @@ def test_reverse_force_policy_orders_repeated_owner_contributions() -> None:
         policy=plan.reduction,
     )
     np.testing.assert_allclose(returned[0], [0.0, 3.0, 0.0])
-
-
-def test_local_shard_direct_sparse_reciprocal_energy_force_virial_parity() -> None:
     plan = _plan(
         pme=DistributedPMEPlan((8, 6, 4)),
         output_mask=DistributedOutputMask(atom_energy=True),
@@ -294,9 +282,6 @@ def test_local_shard_direct_sparse_reciprocal_energy_force_virial_parity() -> No
     np.testing.assert_allclose(jnp.sum(result.partition_energy), result.energy)
     np.testing.assert_allclose(result.phases.phase_energy, [10.0, 1.0, -2.0, 9.0])
     assert bool(result.successful)
-
-
-def test_deterministic_reduction_and_load_evidence_are_reproducible() -> None:
     energy = jnp.asarray([1.0e10, 1.0, -1.0e10, 3.0], dtype=jnp.float32)
     momentum = jnp.arange(12, dtype=jnp.float32).reshape((4, 3))
     policy = DistributedReductionPolicy("deterministic")
@@ -320,7 +305,7 @@ def test_deterministic_reduction_and_load_evidence_are_reproducible() -> None:
     assert bool(evidence.successful)
 
 
-def test_checkpoint_identity_covers_all_continuation_state() -> None:
+def test_distributed_atomistic_completion_scenario_3() -> None:
     plan = _plan(
         thermostat_capacity=2,
         barostat_capacity=2,
@@ -434,9 +419,6 @@ def test_checkpoint_identity_covers_all_continuation_state() -> None:
     forged = DistributedAtomisticCheckpoint(changed_halo, first.units, first.identity)
     with pytest.raises(ValueError, match="content identity"):
         restore_distributed_atomistic_checkpoint(runtime, forged)
-
-
-def test_static_output_mask_preserves_shapes_and_zeros_unrequested_outputs() -> None:
     mask = DistributedOutputMask(
         energy=False,
         forces=True,
@@ -460,6 +442,19 @@ def test_static_output_mask_preserves_shapes_and_zeros_unrequested_outputs() -> 
     np.testing.assert_array_equal(result.atom_energy, jnp.zeros((4,)))
     np.testing.assert_array_equal(result.partition_energy, jnp.zeros((2,)))
     np.testing.assert_array_equal(result.available, [False, True, False, False, False])
+    with pytest.raises(TypeError, match="booleans"):
+        # ty: ignore[invalid-argument-type]
+        DistributedOutputMask(energy=1)
+    with pytest.raises(ValueError, match="partition_capacity"):
+        _plan(partition_capacity=0)
+    with pytest.raises(ValueError, match="grid_shape"):
+        DistributedPMEPlan((8, 0, 8))
+    with pytest.raises(ValueError, match="interpolation_order"):
+        DistributedPMEPlan((8, 8, 8), interpolation_order=1)
+    with pytest.raises(ValueError, match="cover every partition"):
+        _plan(pme=DistributedPMEPlan((1, 8, 8))).prepare_runtime()
+    with pytest.raises(TypeError, match="tolerance"):
+        DistributedPolarizationPlan(tolerance=True)
 
 
 def test_collective_execution_requires_and_reduces_rank_local_contributions_once() -> (
@@ -550,22 +545,6 @@ def test_collective_execution_requires_and_reduces_rank_local_contributions_once
     failed_state = failed_runtime.initialize(_positions())
     failed_result = evaluate_distributed_atomistic(failed_runtime, failed_state, direct)
     assert not bool(failed_result.successful)
-
-
-def test_plans_reject_ambiguous_or_impossible_static_contracts() -> None:
-    with pytest.raises(TypeError, match="booleans"):
-        # ty: ignore[invalid-argument-type]
-        DistributedOutputMask(energy=1)
-    with pytest.raises(ValueError, match="partition_capacity"):
-        _plan(partition_capacity=0)
-    with pytest.raises(ValueError, match="grid_shape"):
-        DistributedPMEPlan((8, 0, 8))
-    with pytest.raises(ValueError, match="interpolation_order"):
-        DistributedPMEPlan((8, 8, 8), interpolation_order=1)
-    with pytest.raises(ValueError, match="cover every partition"):
-        _plan(pme=DistributedPMEPlan((1, 8, 8))).prepare_runtime()
-    with pytest.raises(TypeError, match="tolerance"):
-        DistributedPolarizationPlan(tolerance=True)
 
 
 def test_documented_distributed_surface_is_public() -> None:

@@ -1,15 +1,11 @@
-#
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
+from __future__ import annotations
 
-
-from typing import Any
+from typing import Protocol
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import jax.tree_util as jtu
 
 from phydrax.nn.models import (
     FeynmaNN,
@@ -20,90 +16,92 @@ from phydrax.nn.models import (
 from phydrax.nn.operator.architectures import FNO
 
 
-def _num_params(model: Any) -> int:
+class _ArrayModel(Protocol):
+    def __call__(self, value: jax.Array, /) -> jax.Array: ...
+
+
+def _num_params(model: object) -> int:
     dynamic, _ = eqx.partition(model, eqx.is_array)
-    leaves = jtu.tree_leaves(dynamic)
-    return sum(x.size for x in leaves)
+    return sum(leaf.size for leaf in jax.tree.leaves(dynamic))
 
 
-def test_mlp_scan_parameter_count_matches_loop() -> None:
-    key = jr.key(100)
-    m_loop = MLP(in_size=3, out_size=2, width_size=8, depth=4, scan=False, key=key)
-    m_scan = MLP(in_size=3, out_size=2, width_size=8, depth=4, scan=True, key=key)
-    assert _num_params(m_scan) == _num_params(m_loop)
-
-
-def test_mlp_scan_parity_deep() -> None:
-    key = jr.key(0)
-    m_loop = MLP(in_size=3, out_size=2, width_size=8, depth=4, scan=False, key=key)
-    m_scan = MLP(in_size=3, out_size=2, width_size=8, depth=4, scan=True, key=key)
-    x = jr.normal(jr.key(1), (3,))
-    assert jnp.allclose(m_loop(x), m_scan(x))
-
-
-def test_mlp_scan_depth_edge_cases() -> None:
-    key0 = jr.key(2)
-    m0_loop = MLP(in_size=2, out_size=2, width_size=8, depth=0, scan=False, key=key0)
-    m0_scan = MLP(in_size=2, out_size=2, width_size=8, depth=0, scan=True, key=key0)
-    x0 = jr.normal(jr.key(3), (2,))
-    assert jnp.allclose(m0_loop(x0), m0_scan(x0))
-
-    key1 = jr.key(4)
-    m1_loop = MLP(in_size=2, out_size=2, width_size=8, depth=1, scan=False, key=key1)
-    m1_scan = MLP(in_size=2, out_size=2, width_size=8, depth=1, scan=True, key=key1)
-    x1 = jr.normal(jr.key(5), (2,))
-    assert jnp.allclose(m1_loop(x1), m1_scan(x1))
-
-
-def test_mlp_scan_gradient_smoke() -> None:
-    model = MLP(in_size=2, out_size=2, width_size=8, depth=3, scan=True, key=jr.key(6))
-    x = jr.normal(jr.key(7), (2,))
-
+def _assert_finite_nonzero_gradients(model: _ArrayModel, value: jax.Array) -> None:
     @eqx.filter_grad
-    def loss_fn(m: Any, x_: Any) -> Any:
-        y = m(x_)
-        return jnp.sum(y**2)
+    def loss(subject: _ArrayModel, inputs: jax.Array) -> jax.Array:
+        return jnp.sum(subject(inputs) ** 2)
 
-    grads = loss_fn(model, x)
-    leaves = [leaf for leaf in jax.tree.leaves(grads) if eqx.is_array(leaf)]
+    leaves = [leaf for leaf in jax.tree.leaves(loss(model, value)) if eqx.is_array(leaf)]
     assert leaves
     assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
     assert any(bool(jnp.any(leaf != 0.0)) for leaf in leaves)
 
 
-def test_mlp_scan_fallback_heterogeneous_hidden_sizes() -> None:
-    model = MLP(in_size=3, out_size=2, hidden_sizes=(5, 7, 5), scan=True, key=jr.key(8))
-    x = jr.normal(jr.key(9), (3,))
-    y = model(x)
-    assert y.shape == (2,)
-    assert model.scan
+def test_scan_behavior_scenario_1() -> None:
+    for depth, input_size, key_value in ((0, 2, 2), (1, 2, 4), (4, 3, 0)):
+        key = jr.key(key_value)
+        loop = MLP(
+            in_size=input_size,
+            out_size=2,
+            width_size=8,
+            depth=depth,
+            scan=False,
+            key=key,
+        )
+        scanned = MLP(
+            in_size=input_size,
+            out_size=2,
+            width_size=8,
+            depth=depth,
+            scan=True,
+            key=key,
+        )
+        value = jr.normal(jr.key(key_value + 1), (input_size,))
+        assert _num_params(scanned) == _num_params(loop), depth
+        assert jnp.allclose(loop(value), scanned(value)), depth
 
+    differentiable = MLP(
+        in_size=2,
+        out_size=2,
+        width_size=8,
+        depth=3,
+        scan=True,
+        key=jr.key(6),
+    )
+    _assert_finite_nonzero_gradients(differentiable, jr.normal(jr.key(7), (2,)))
 
-def test_feynmann_scan_parity() -> None:
+    heterogeneous = MLP(
+        in_size=3,
+        out_size=2,
+        hidden_sizes=(5, 7, 5),
+        scan=True,
+        key=jr.key(8),
+    )
+    assert heterogeneous(jr.normal(jr.key(9), (3,))).shape == (2,)
+    assert heterogeneous.scan
     key = jr.key(10)
-    m_loop = FeynmaNN(
-        in_size=3, out_size=2, width_size=12, depth=3, num_paths=2, scan=False, key=key
+    loop = FeynmaNN(
+        in_size=3,
+        out_size=2,
+        width_size=12,
+        depth=3,
+        num_paths=2,
+        scan=False,
+        key=key,
     )
-    m_scan = FeynmaNN(
-        in_size=3, out_size=2, width_size=12, depth=3, num_paths=2, scan=True, key=key
+    scanned = FeynmaNN(
+        in_size=3,
+        out_size=2,
+        width_size=12,
+        depth=3,
+        num_paths=2,
+        scan=True,
+        key=key,
     )
-    x = jr.normal(jr.key(11), (3,))
-    assert jnp.allclose(m_loop(x), m_scan(x))
+    value = jr.normal(jr.key(11), (3,))
+    assert _num_params(scanned) == _num_params(loop)
+    assert jnp.allclose(loop(value), scanned(value))
 
-
-def test_feynmann_scan_parameter_count_matches_loop() -> None:
-    key = jr.key(23)
-    m_loop = FeynmaNN(
-        in_size=3, out_size=2, width_size=12, depth=3, num_paths=2, scan=False, key=key
-    )
-    m_scan = FeynmaNN(
-        in_size=3, out_size=2, width_size=12, depth=3, num_paths=2, scan=True, key=key
-    )
-    assert _num_params(m_scan) == _num_params(m_loop)
-
-
-def test_feynmann_scan_gradient_smoke() -> None:
-    model = FeynmaNN(
+    differentiable = FeynmaNN(
         in_size=2,
         out_size=2,
         width_size=10,
@@ -112,123 +110,49 @@ def test_feynmann_scan_gradient_smoke() -> None:
         scan=True,
         key=jr.key(12),
     )
-    x = jr.normal(jr.key(13), (2,))
-
-    @eqx.filter_grad
-    def loss_fn(m: Any, x_: Any) -> Any:
-        y = m(x_)
-        return jnp.sum(y**2)
-
-    grads = loss_fn(model, x)
-    leaves = [leaf for leaf in jax.tree.leaves(grads) if eqx.is_array(leaf)]
-    assert leaves
-    assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
-    assert any(bool(jnp.any(leaf != 0.0)) for leaf in leaves)
-
-
-def test_fno_one_dimensional_scan_parity() -> None:
-    key = jr.key(14)
-    f_loop = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6,),
-        scan=False,
-        key=key,
+    _assert_finite_nonzero_gradients(differentiable, jr.normal(jr.key(13), (2,)))
+    cases = (
+        (
+            (6,),
+            (jr.normal(jr.key(15), (16,)), jnp.linspace(0.0, 1.0, 16)),
+        ),
+        (
+            (6, 6),
+            (
+                jr.normal(jr.key(17), (10, 8)),
+                jnp.linspace(0.0, 1.0, 10),
+                jnp.linspace(-1.0, 1.0, 8),
+            ),
+        ),
     )
-    f_scan = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6,),
-        scan=True,
-        key=key,
-    )
-    n = 16
-    data = jr.normal(jr.key(15), (n,))
-    x_axis = jnp.linspace(0.0, 1.0, n)
-    assert jnp.allclose(f_loop((data, x_axis)), f_scan((data, x_axis)))
+    for modes, inputs in cases:
+        key = jr.key(14 + len(modes))
+        loop = FNO(
+            in_channels="scalar",
+            out_channels="scalar",
+            width=8,
+            depth=3,
+            n_modes=modes,
+            scan=False,
+            key=key,
+        )
+        scanned = FNO(
+            in_channels="scalar",
+            out_channels="scalar",
+            width=8,
+            depth=3,
+            n_modes=modes,
+            scan=True,
+            key=key,
+        )
+        assert _num_params(scanned) == _num_params(loop), modes
+        assert jnp.allclose(loop(inputs), scanned(inputs)), modes
 
 
-def test_fno_one_dimensional_scan_parameter_count_matches_loop() -> None:
-    key = jr.key(24)
-    f_loop = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6,),
-        scan=False,
-        key=key,
-    )
-    f_scan = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6,),
-        scan=True,
-        key=key,
-    )
-    assert _num_params(f_scan) == _num_params(f_loop)
-
-
-def test_fno_two_dimensional_scan_parity() -> None:
-    key = jr.key(16)
-    f_loop = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6, 6),
-        scan=False,
-        key=key,
-    )
-    f_scan = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6, 6),
-        scan=True,
-        key=key,
-    )
-    nx, ny = 10, 8
-    data = jr.normal(jr.key(17), (nx, ny))
-    x_axis = jnp.linspace(0.0, 1.0, nx)
-    y_axis = jnp.linspace(-1.0, 1.0, ny)
-    assert jnp.allclose(f_loop((data, x_axis, y_axis)), f_scan((data, x_axis, y_axis)))
-
-
-def test_fno_two_dimensional_scan_parameter_count_matches_loop() -> None:
-    key = jr.key(25)
-    f_loop = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6, 6),
-        scan=False,
-        key=key,
-    )
-    f_scan = FNO(
-        in_channels="scalar",
-        out_channels="scalar",
-        width=8,
-        depth=3,
-        n_modes=(6, 6),
-        scan=True,
-        key=key,
-    )
-    assert _num_params(f_scan) == _num_params(f_loop)
-
-
-def test_kan_scan_parity_uniform() -> None:
+def test_kan_scan_matches_loop_parameters_values_and_heterogeneous_fallback() -> None:
     key = jr.key(18)
     basis = OrthogonalPolynomialEdgeBasis(degree=3)
-    k_loop = KAN(
+    loop = KAN(
         in_size=3,
         out_size=2,
         width_size=6,
@@ -237,7 +161,7 @@ def test_kan_scan_parity_uniform() -> None:
         scan=False,
         key=key,
     )
-    k_scan = KAN(
+    scanned = KAN(
         in_size=3,
         out_size=2,
         width_size=6,
@@ -246,36 +170,11 @@ def test_kan_scan_parity_uniform() -> None:
         scan=True,
         key=key,
     )
-    x = jr.normal(jr.key(19), (3,))
-    assert jnp.allclose(k_loop(x), k_scan(x))
+    value = jr.normal(jr.key(19), (3,))
+    assert _num_params(scanned) == _num_params(loop)
+    assert jnp.allclose(loop(value), scanned(value))
 
-
-def test_kan_scan_parameter_count_matches_loop() -> None:
-    key = jr.key(22)
-    basis = OrthogonalPolynomialEdgeBasis(degree=3)
-    k_loop = KAN(
-        in_size=3,
-        out_size=2,
-        width_size=6,
-        depth=4,
-        edge_basis=basis,
-        scan=False,
-        key=key,
-    )
-    k_scan = KAN(
-        in_size=3,
-        out_size=2,
-        width_size=6,
-        depth=4,
-        edge_basis=basis,
-        scan=True,
-        key=key,
-    )
-    assert _num_params(k_scan) == _num_params(k_loop)
-
-
-def test_kan_scan_fallback_heterogeneous() -> None:
-    model = KAN(
+    heterogeneous = KAN(
         in_size=3,
         out_size=2,
         hidden_sizes=(5, 7, 5),
@@ -285,7 +184,5 @@ def test_kan_scan_fallback_heterogeneous() -> None:
         scan=True,
         key=jr.key(20),
     )
-    x = jr.normal(jr.key(21), (3,))
-    y = model(x)
-    assert y.shape == (2,)
-    assert model.scan
+    assert heterogeneous(jr.normal(jr.key(21), (3,))).shape == (2,)
+    assert heterogeneous.scan

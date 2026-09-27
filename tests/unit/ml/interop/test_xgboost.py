@@ -351,9 +351,7 @@ def test_scalar_regression_converts_all_json_containers_and_canonical_ubjson(
     assert len(array_checksums) == 1
 
 
-def test_binary_sigmoid_preserves_base_score_link_strict_tie_and_missing_direction() -> (
-    None
-):
+def test_xgboost_scenario_1() -> None:
     document = _saved_model(
         [
             _scalar_tree(
@@ -376,9 +374,6 @@ def test_binary_sigmoid_preserves_base_score_link_strict_tie_and_missing_directi
     assert jnp.allclose(result.model(points), jax.nn.sigmoid(jnp.array([-2.0, 2.0, 2.0])))
     assert native.target_schema.kind == "binary"
     assert _configuration(result)["base_score_margin"] == (0.0,)
-
-
-def test_multiclass_tree_info_groups_margins_before_softprob() -> None:
     document = _saved_model(
         [
             _scalar_tree(0, leaf_value=1.0),
@@ -401,11 +396,6 @@ def test_multiclass_tree_info_groups_margins_before_softprob() -> None:
     assert jnp.allclose(result.model(points), jax.nn.softmax(raw, axis=-1))
     assert native.target_schema.kind == "multiclass"
     assert _configuration(result)["tree_info"] == (0, 1, 2)
-
-
-def test_categorical_selected_set_routes_right_and_missing_uses_persisted_default() -> (
-    None
-):
     document = _saved_model(
         [
             _scalar_tree(
@@ -433,7 +423,7 @@ def test_categorical_selected_set_routes_right_and_missing_uses_persisted_defaul
     assert _configuration(result)["categorical_features"] == (0,)
 
 
-def test_vector_leaf_layout_maps_leaf_indices_to_complete_output_vectors() -> None:
+def test_xgboost_scenario_2() -> None:
     document = _saved_model(
         [_vector_tree()],
         num_target=2,
@@ -447,9 +437,6 @@ def test_vector_leaf_layout_maps_leaf_indices_to_complete_output_vectors() -> No
     )
     assert result.model.model.out_size == 2
     assert _configuration(result)["vector_leaf"] is True
-
-
-def test_dart_weight_drop_scales_each_tree_before_sum() -> None:
     document = _saved_model(
         [_scalar_tree(0, leaf_value=2.0), _scalar_tree(1, leaf_value=4.0)],
         weight_drop=[0.25, 0.5],
@@ -461,11 +448,7 @@ def test_dart_weight_drop_scales_each_tree_before_sum() -> None:
     configuration = _configuration(result)
     assert configuration["dart_weighted"] is True
     assert configuration["tree_weights"] == (0.25, 0.5)
-
-
-@pytest.mark.parametrize(
-    ("mutation", "error"),
-    [
+    for mutation, error in [
         ("missing-version", ConversionError),
         ("unknown-top-field", UnsupportedConversionError),
         ("unsupported-booster", UnsupportedConversionError),
@@ -474,58 +457,51 @@ def test_dart_weight_drop_scales_each_tree_before_sum() -> None:
         ("categorical-segment-mismatch", UnsupportedConversionError),
         ("vector-width-mismatch", UnsupportedConversionError),
         ("malformed-parent-links", ConversionError),
-    ],
-)
-def test_malformed_and_unsupported_saved_models_fail_closed(
-    mutation: Any, error: Any
-) -> None:
-    document = _saved_model(
-        [
-            _scalar_tree(
-                0,
-                threshold=0.0,
-                left_value=-1.0,
-                right_value=1.0,
-            )
-        ]
-    )
-    if mutation == "missing-version":
-        del document["version"]
-    elif mutation == "unknown-top-field":
-        document["configuration"] = {}
-    elif mutation == "unsupported-booster":
-        document["learner"]["gradient_booster"]["name"] = "dart"
-    elif mutation == "unsupported-objective":
-        document["learner"]["objective"] = {"name": "binary:hinge"}
-    elif mutation == "noncanonical-parallel-layout":
-        document["learner"]["gradient_booster"]["model"]["gbtree_model_param"][
-            "num_parallel_tree"
-        ] = "2"
-    elif mutation == "categorical-segment-mismatch":
-        tree = document["learner"]["gradient_booster"]["model"]["trees"][0]
-        tree["split_type"][0] = 1
-        tree["categories_nodes"] = [0]
-        tree["categories_segments"] = [1]
-        tree["categories_sizes"] = [1]
-        tree["categories"] = [2]
-    elif mutation == "vector-width-mismatch":
-        document = _saved_model([_vector_tree()], num_target=3)
-    elif mutation == "malformed-parent-links":
-        document["learner"]["gradient_booster"]["model"]["trees"][0]["parents"][2] = 1
+    ]:
+        document = _saved_model(
+            [
+                _scalar_tree(
+                    0,
+                    threshold=0.0,
+                    left_value=-1.0,
+                    right_value=1.0,
+                )
+            ]
+        )
+        if mutation == "missing-version":
+            del document["version"]
+        elif mutation == "unknown-top-field":
+            document["configuration"] = {}
+        elif mutation == "unsupported-booster":
+            document["learner"]["gradient_booster"]["name"] = "dart"
+        elif mutation == "unsupported-objective":
+            document["learner"]["objective"] = {"name": "binary:hinge"}
+        elif mutation == "noncanonical-parallel-layout":
+            document["learner"]["gradient_booster"]["model"]["gbtree_model_param"][
+                "num_parallel_tree"
+            ] = "2"
+        elif mutation == "categorical-segment-mismatch":
+            tree = document["learner"]["gradient_booster"]["model"]["trees"][0]
+            tree["split_type"][0] = 1
+            tree["categories_nodes"] = [0]
+            tree["categories_segments"] = [1]
+            tree["categories_sizes"] = [1]
+            tree["categories"] = [2]
+        elif mutation == "vector-width-mismatch":
+            document = _saved_model([_vector_tree()], num_target=3)
+        elif mutation == "malformed-parent-links":
+            document["learner"]["gradient_booster"]["model"]["trees"][0]["parents"][2] = 1
 
-    with pytest.raises(error):
-        from_xgboost_artifact(document)
+        with pytest.raises(error):
+            from_xgboost_artifact(document)
 
 
-def test_bad_ubjson_and_duplicate_json_keys_fail_as_conversion_errors() -> None:
+def test_xgboost_scenario_3() -> None:
     document = _saved_model([_scalar_tree(0, leaf_value=1.0)])
     with pytest.raises(ConversionError, match="trailing bytes"):
         from_xgboost_artifact(_ubjson(document) + b"x")
     with pytest.raises(ConversionError, match="Duplicate JSON object key"):
         from_xgboost_artifact('{"learner":{},"learner":{},"version":[3,0,0]}')
-
-
-def test_source_mapping_is_copied_and_not_mutated() -> None:
     document = _saved_model([_scalar_tree(0, leaf_value=1.0)])
     original = copy.deepcopy(document)
 

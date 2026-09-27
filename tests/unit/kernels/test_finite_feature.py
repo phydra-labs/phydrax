@@ -27,7 +27,7 @@ def _kernel(factor: Any = None) -> Any:
     )
 
 
-def test_finite_feature_capability_reports_rank_and_direct_features() -> None:
+def test_finite_feature_scenario_1() -> None:
     points = jnp.asarray([-1.0, 0.5, 2.0])
     kernel = _kernel(jnp.asarray([[1.0, 0.0], [0.25, 0.5]]))
 
@@ -37,9 +37,6 @@ def test_finite_feature_capability_reports_rank_and_direct_features() -> None:
     assert kernel.feature_rank == 2
     assert phx.kernels.kernel_feature_rank(kernel) == 2
     assert jnp.allclose(phx.kernels.kernel_features(kernel, points), expected)
-
-
-def test_amplitude_sum_and_input_transform_compose_exact_features() -> None:
     points = jnp.asarray([-0.5, 0.25, 1.5])
     first = phx.kernels.AmplitudeKernel(_kernel(), 0.4)
     transformed = phx.kernels.InputTransformedKernel(
@@ -59,9 +56,6 @@ def test_amplitude_sum_and_input_transform_compose_exact_features() -> None:
     assert jnp.allclose(kernel.matrix(points, points), expected @ expected.T)
     compiled = jax.jit(lambda values: phx.kernels.kernel_features(kernel, values))
     assert jnp.allclose(compiled(points), expected)
-
-
-def test_unsupported_kernel_algebra_has_no_feature_representation() -> None:
     finite = _kernel()
     stationary = phx.kernels.Matern32Kernel(length_scale=0.5)
 

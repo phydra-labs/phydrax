@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_immersion_pullback_map_geometry_and_density_calculus() -> None:
+def test_geometry_expansion_scenario_1() -> None:
     source = phx.metrix.CoordinateChart("plane", ("u", "v"))
     target = phx.metrix.CoordinateChart("space", ("x", "y", "z"))
     immersion = phx.metrix.Immersion(
@@ -50,9 +50,6 @@ def test_immersion_pullback_map_geometry_and_density_calculus() -> None:
         jnp.zeros((2,)),
     )
     assert jnp.allclose(derivative, 0.0)
-
-
-def test_weighted_measure_boundary_and_numerical_geodesic() -> None:
     chart = phx.metrix.CoordinateChart("plane", ("x", "y"))
     metric = phx.metrix.diagonal_metric(
         lambda q: jnp.asarray([4.0, 1.0]),
@@ -83,9 +80,6 @@ def test_weighted_measure_boundary_and_numerical_geodesic() -> None:
     )
     assert jnp.allclose(result.endpoint, point + jnp.asarray([0.4, -0.1]))
     assert jnp.allclose(result.final_velocity, jnp.asarray([0.4, -0.1]))
-
-
-def test_exact_geodesic_manifolds_and_intrinsic_statistics() -> None:
     sphere = phx.metrix.SphereManifold(3)
     point = jnp.asarray([1.0, 0.0, 0.0])
     tangent = jnp.asarray([0.0, 0.3, 0.0])
@@ -112,7 +106,7 @@ def test_exact_geodesic_manifolds_and_intrinsic_statistics() -> None:
         phx.metrix.frechet_mean(sphere, empty)
 
 
-def test_complex_projective_unitary_and_hpd_geometry() -> None:
+def test_geometry_expansion_scenario_2() -> None:
     projective = phx.metrix.ComplexProjectiveManifold(2)
     point = jnp.asarray([1.0 + 0.0j, 0.0j])
     tangent = jnp.asarray([0.0j, 0.25 + 0.1j])
@@ -151,9 +145,6 @@ def test_complex_projective_unitary_and_hpd_geometry() -> None:
     destination = hpd.exp(matrix, step)
     assert bool(hpd.contains(destination))
     assert jnp.allclose(hpd.log(matrix, destination), step, atol=2e-5)
-
-
-def test_flat_kahler_local_su_and_wirtinger_calculus() -> None:
     chart = phx.metrix.CoordinateChart("complex-line", ("x", "y"))
     convention = phx.metrix.ComplexCoordinateConvention(chart)
     complex_structure = phx.metrix.standard_complex_structure(convention)
@@ -180,9 +171,6 @@ def test_flat_kahler_local_su_and_wirtinger_calculus() -> None:
     report = phx.metrix.validate_local_su_structure(structure, points)
     assert bool(report.valid)
     assert report.maximum_ricci_residual < 1e-8
-
-
-def test_hessian_bundle_and_atlas_geometry() -> None:
     chart = phx.metrix.CoordinateChart("source", ("x", "y"))
     hessian = phx.metrix.HessianGeometry(
         lambda q: 0.5 * jnp.dot(q, q),

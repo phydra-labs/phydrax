@@ -372,9 +372,7 @@ def _tangential_nitsche_entries(
         for local_face, reference_face in enumerate(_REFERENCE_FACES):
             first, second, third = np.take(vertices, reference_face)
             first, second, third = sorted((int(first), int(second), int(third)))
-            incidents[face_by_vertices[(first, second, third)]].append(
-                (cell, local_face)
-            )
+            incidents[face_by_vertices[(first, second, third)]].append((cell, local_face))
     dof_map = discretization.dof_maps[0]
     element = discretization.elements[0][0]
     source_indices = []

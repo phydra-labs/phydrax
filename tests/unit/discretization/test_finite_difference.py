@@ -35,7 +35,7 @@ def _periodic_grid(points: Any = 32) -> Any:
     return plan.prepare(jnp.asarray([[0.0], [1.0]]))
 
 
-def test_fornberg_coefficients_recover_classical_centered_stencils() -> None:
+def test_finite_difference_scenario_1() -> None:
     first = phx.discretization.StencilCoefficientPlan(
         # ty: ignore[invalid-argument-type]
         [-1.0, 0.0, 1.0],
@@ -55,18 +55,12 @@ def test_fornberg_coefficients_recover_classical_centered_stencils() -> None:
     assert jnp.allclose(second.weights, jnp.asarray([1.0, -2.0, 1.0]))
     assert jnp.max(jnp.abs(first.moment_residuals[:3])) < 1e-12
     assert jnp.max(jnp.abs(second.moment_residuals[:4])) < 1e-12
-
-
-def test_tensor_grid_plan_prepares_support_without_calculus() -> None:
     grid = _bounded_grid()
 
     assert isinstance(grid, phx.discretization.PreparedTensorGrid)
     assert grid.shape == (17,)
     assert grid.centered_location.offsets == (Fraction(0, 1),)
     assert not hasattr(grid, "partial_derivative")
-
-
-def test_bounded_finite_difference_uses_explicit_one_sided_closures() -> None:
     grid = _bounded_grid()
     request = phx.discretization.DerivativeRequest(
         "dx",
@@ -90,7 +84,7 @@ def test_bounded_finite_difference_uses_explicit_one_sided_closures() -> None:
     assert prepared.halo_plan.physical_boundaries[0].realization == "closure"
 
 
-def test_direct_second_derivative_is_polynomially_exact() -> None:
+def test_finite_difference_scenario_2() -> None:
     grid = _bounded_grid()
     request = phx.discretization.DerivativeRequest(
         "dxx",
@@ -118,9 +112,6 @@ def test_direct_second_derivative_is_polynomially_exact() -> None:
     assert stencil.row_reports[0].kind == "lower_closure"
     assert stencil.row_reports[-1].kind == "upper_closure"
     assert jnp.all(jnp.isfinite(derivative))
-
-
-def test_periodic_stencil_and_coordinate_transpose_satisfy_dot_product_identity() -> None:
     grid = _periodic_grid()
     request = phx.discretization.DerivativeRequest(
         "dx",
@@ -144,9 +135,6 @@ def test_periodic_stencil_and_coordinate_transpose_satisfy_dot_product_identity(
         jnp.max(jnp.abs(operator.mv(left) - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * nodes)))
         < 2e-3
     )
-
-
-def test_periodic_fd_laplacian_exposes_transform_diagonal_direct_solve() -> None:
     grid = _periodic_grid()
     request = phx.discretization.DerivativeRequest(
         "dxx",
@@ -171,9 +159,6 @@ def test_periodic_fd_laplacian_exposes_transform_diagonal_direct_solve() -> None
     assert result.converged
     assert jnp.allclose(jnp.real(result.value), expected, rtol=5e-3, atol=5e-4)
     assert jnp.max(jnp.abs(jnp.imag(result.value))) < 1e-6
-
-
-def test_center_to_face_request_has_distinct_source_and_target_spaces() -> None:
     grid = _bounded_grid()
     face_location = grid.location(((1, 2),))
     request = phx.discretization.DerivativeRequest(
@@ -196,7 +181,7 @@ def test_center_to_face_request_has_distinct_source_and_target_spaces() -> None:
     assert jnp.allclose(derivative, 2.0 * targets, atol=2e-5)
 
 
-def test_patch_kernels_support_vectorized_regions_without_view_index_matrices() -> None:
+def test_finite_difference_scenario_3() -> None:
     plan = phx.discretization.PatchKernelPlan(
         (3,),
         (
@@ -210,9 +195,6 @@ def test_patch_kernels_support_vectorized_regions_without_view_index_matrices() 
     result = prepared(jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0]), kernel_indices=indices)
 
     assert jnp.allclose(result, jnp.asarray([6.0, 4.0, 12.0]))
-
-
-def test_patch_kernel_dispatch_rejects_noninteger_and_out_of_range_indices() -> None:
     prepared = phx.discretization.PatchKernelPlan(
         (3,),
         (
@@ -234,9 +216,6 @@ def test_patch_kernel_dispatch_rejects_noninteger_and_out_of_range_indices() -> 
                 indices
             )
             jax.block_until_ready(result)
-
-
-def test_finite_difference_rejects_conflicting_boundaries_on_one_axis() -> None:
     grid = _periodic_grid()
     periodic = phx.discretization.DerivativeRequest(
         "periodic-dx",
@@ -254,9 +233,6 @@ def test_finite_difference_rejects_conflicting_boundaries_on_one_axis() -> None:
 
     with pytest.raises(ValueError, match="share boundary semantics"):
         phx.discretization.FiniteDifferencePlan(grid, (periodic, one_sided))
-
-
-def test_ordered_patch_kernel_exposes_causal_scan_semantics() -> None:
     sweep = phx.discretization.OrderedPatchKernelPlan(
         3,
         lambda patch, args: jnp.sum(patch),

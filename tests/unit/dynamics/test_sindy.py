@@ -43,7 +43,7 @@ def _lorenz_problem() -> Any:
     )
 
 
-def test_stlsq_recovers_lorenz_and_executes_through_continuous_system() -> None:
+def test_sindy_scenario_1() -> None:
     result = phx.dynamics.identification.fit_sindy(
         _lorenz_problem(),
         phx.dynamics.identification.SequentialThresholdedLeastSquares(
@@ -75,9 +75,6 @@ def test_stlsq_recovers_lorenz_and_executes_through_continuous_system() -> None:
     direct = result.evaluate(state)
     np.testing.assert_allclose(np.asarray(predicted), np.asarray(direct), atol=1e-12)
     assert result.render_equations()[0].startswith("dx/dtime =")
-
-
-def test_physical_coefficients_are_unscaled_after_feature_normalization() -> None:
     state = jnp.linspace(-0.002, 0.002, 101)[:, None]
     derivative = 3.5 + 1200.0 * state
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
@@ -108,9 +105,6 @@ def test_physical_coefficients_are_unscaled_after_feature_normalization() -> Non
         np.asarray(result.regression.normalized_coefficients[0]),
         np.asarray(result.coefficients[0]),
     )
-
-
-def test_empty_sparse_model_requires_explicit_zero_tolerance() -> None:
     time = jnp.linspace(0.0, 1.0, 20)
     layout = phx.dynamics.StateLayout((1,))
     data = phx.dynamics.TrajectoryData(

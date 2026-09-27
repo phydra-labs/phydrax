@@ -106,7 +106,7 @@ def _mutation_profile_arguments() -> Any:
     }
 
 
-def test_mutation_profile_rejects_wrapping_binary_and_row_indices() -> None:
+def test_structure_observations_scenario_1() -> None:
     arguments = _mutation_profile_arguments()
     with pytest.raises(ValueError, match="must be binary"):
         MutationProfileBatch(
@@ -133,9 +133,6 @@ def test_mutation_profile_rejects_wrapping_binary_and_row_indices() -> None:
             (arguments["sources"][0].manifest_id,),
             **arguments,
         )
-
-
-def test_construct_connectivity_chemistry_and_full_graph_refusal() -> None:
     construct = NucleicAcidConstruct(
         ("dna", "rna"), ("ACGT", "ACGU"), ("DNA", "RNA"), (True, False)
     )
@@ -170,9 +167,6 @@ def test_construct_connectivity_chemistry_and_full_graph_refusal() -> None:
     with pytest.raises(ValueError):
         multi.to_dot_bracket()
     assert len(multi.interactions) == 2
-
-
-def test_published_frame_order_and_proper_rigid_invariance() -> None:
     mapping, positions = fixture()
     binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
     descriptor = NucleotideGDescriptor(
@@ -206,7 +200,7 @@ def test_published_frame_order_and_proper_rigid_invariance() -> None:
     assert bool(jnp.any(reference.values[0, :3] != reference.values[2, :3]))
 
 
-def test_sparse_dense_equivalence_and_native_cv_series_support() -> None:
+def test_structure_observations_scenario_2() -> None:
     mapping, positions = fixture()
     binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
     k = mapping.construct.nucleotide_keys
@@ -258,9 +252,6 @@ def test_sparse_dense_equivalence_and_native_cv_series_support() -> None:
     )
     # ty: ignore[not-subscriptable]
     assert not bool(jnp.any(incomplete.value_valid[1]))
-
-
-def test_ermsd_drives_native_harmonic_bias_energy_and_forces() -> None:
     from phydrax.atomistic import (
         AtomisticDynamicsPlan,
         AtomisticPotentialProgram,
@@ -341,6 +332,25 @@ def test_ermsd_drives_native_harmonic_bias_energy_and_forces() -> None:
     assert not bool(evaluate(collapsed, state, jnp.asarray(0.0)).successful)
     with pytest.raises(ValueError):
         program.evaluate(positions, cell_vectors=jnp.eye(3))
+    mapping, positions = fixture()
+    mask = np.ones(9, bool)
+    mask[1] = False
+    missing = prepare_nucleotide_binding(mapping, mapping.atom_ids, coordinate_mask=mask)
+    frame = base_frames(positions, missing, image_policy="nonperiodic")
+    np.testing.assert_array_equal(frame.valid, [False, True, True])
+    assert frame.centers.shape == (3, 3)
+    full = prepare_nucleotide_binding(mapping, mapping.atom_ids)
+    collapsed = positions.at[:3].set(jnp.array([1.0, 1.0, 1.0]))
+    frame = base_frames(collapsed, full, image_policy="nonperiodic")
+    assert not bool(frame.valid[0]) and bool(frame.covered[0])
+    comparison = NucleotideGDescriptor(
+        missing, length_unit=ANGSTROM, image_policy="nonperiodic"
+    ).compare(positions, positions)
+    assert not bool(comparison.successful)
+    with pytest.raises(ValueError):
+        prepare_nucleotide_binding(mapping, mapping.atom_ids[:-1])
+    with pytest.raises(ValueError):
+        base_frames(positions, full, image_policy="minimum-image")
 
 
 def test_cutoff_sides_and_distinct_c2_descriptor() -> None:
@@ -380,29 +390,7 @@ def test_cutoff_sides_and_distinct_c2_descriptor() -> None:
     assert smooth.descriptor_id != hard.descriptor_id
 
 
-def test_missing_and_degenerate_ring_never_shorten_construct() -> None:
-    mapping, positions = fixture()
-    mask = np.ones(9, bool)
-    mask[1] = False
-    missing = prepare_nucleotide_binding(mapping, mapping.atom_ids, coordinate_mask=mask)
-    frame = base_frames(positions, missing, image_policy="nonperiodic")
-    np.testing.assert_array_equal(frame.valid, [False, True, True])
-    assert frame.centers.shape == (3, 3)
-    full = prepare_nucleotide_binding(mapping, mapping.atom_ids)
-    collapsed = positions.at[:3].set(jnp.array([1.0, 1.0, 1.0]))
-    frame = base_frames(collapsed, full, image_policy="nonperiodic")
-    assert not bool(frame.valid[0]) and bool(frame.covered[0])
-    comparison = NucleotideGDescriptor(
-        missing, length_unit=ANGSTROM, image_policy="nonperiodic"
-    ).compare(positions, positions)
-    assert not bool(comparison.successful)
-    with pytest.raises(ValueError):
-        prepare_nucleotide_binding(mapping, mapping.atom_ids[:-1])
-    with pytest.raises(ValueError):
-        base_frames(positions, full, image_policy="minimum-image")
-
-
-def test_source_normalization_keeps_raw_and_restrictions() -> None:
+def test_structure_observations_scenario_3() -> None:
     mapping, positions = fixture()
     manifest = rights()
     source = ScientificArtifactEnvelope(
@@ -437,9 +425,39 @@ def test_source_normalization_keeps_raw_and_restrictions() -> None:
         normalize_nucleic_hypothesis(
             raw, length_unit=ANGSTROM, requested_use={"training_use": True}
         )
+    mapping, positions = fixture()
+    binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
+    descriptor = NucleotideGDescriptor(
+        binding, length_unit=ANGSTROM, image_policy="nonperiodic"
+    )
+    criteria = GeometricContactCriteria(
+        "declared-test-geometry", 6.0, 0.9, 0.8, (2.0, 4.0), 2.0
+    )
+    coplanar = geometric_contacts(positions, descriptor, criteria)
+    assert bool(coplanar.coplanar[0]) and not bool(coplanar.stacked[0])
+    stacked_positions = positions.at[3:6].set(positions[:3] + jnp.array([0.0, 0.0, 3.0]))
+    stacked = geometric_contacts(stacked_positions, descriptor, criteria)
+    assert bool(stacked.stacked[0]) and not bool(stacked.coplanar[0])
+    from phydrax.applications.nucleic_acid_biophysics.structure import (
+        NucleotideStructureQualifier,
+    )
+
+    mapping, positions = fixture()
+    binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
+    qualifier = NucleotideStructureQualifier(
+        binding,
+        maximum_ring_deviation=0.05,
+        backbone_interval=(1.3, 1.9),
+        image_policy="nonperiodic",
+    )
+    evidence = qualifier.evaluate(positions)
+    assert bool(jnp.all(evidence.frame_valid))
+    assert not bool(jnp.any(evidence.ring_covered))
+    assert not bool(jnp.any(evidence.backbone_covered))
+    assert not bool(evidence.successful)
 
 
-def test_native_torsions_keep_termini_and_pucker_phase_degeneracy() -> None:
+def test_native_contracts() -> None:
     construct = NucleicAcidConstruct(("r",), ("A",), ("RNA",), (False,))
     names = ("P", "O5'", "C5'", "C4'", "C3'", "O3'", "O4'", "C1'", "C2'", "N9", "C4")
     ids = tuple(10 + 7 * i for i in range(len(names)))
@@ -495,25 +513,6 @@ def test_native_torsions_keep_termini_and_pucker_phase_degeneracy() -> None:
         )
     )
     assert not bool(flat.valid[0])
-
-
-def test_named_contacts_are_geometry_not_inferred_canonical_pairs() -> None:
-    mapping, positions = fixture()
-    binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
-    descriptor = NucleotideGDescriptor(
-        binding, length_unit=ANGSTROM, image_policy="nonperiodic"
-    )
-    criteria = GeometricContactCriteria(
-        "declared-test-geometry", 6.0, 0.9, 0.8, (2.0, 4.0), 2.0
-    )
-    coplanar = geometric_contacts(positions, descriptor, criteria)
-    assert bool(coplanar.coplanar[0]) and not bool(coplanar.stacked[0])
-    stacked_positions = positions.at[3:6].set(positions[:3] + jnp.array([0.0, 0.0, 3.0]))
-    stacked = geometric_contacts(stacked_positions, descriptor, criteria)
-    assert bool(stacked.stacked[0]) and not bool(stacked.coplanar[0])
-
-
-def test_native_source_records_to_descriptor_retains_author_identity() -> None:
     from phydrax.applications.nucleic_acid_biophysics import (
         nucleic_hypothesis_from_pdb_records,
     )
@@ -585,23 +584,3 @@ def test_native_source_records_to_descriptor_retains_author_identity() -> None:
     )
     assert imported.source_records[0].author_residue_number == "100"
     assert imported.source_records[0].insertion_code == "A"
-
-
-def test_complete_frame_is_not_complete_chemical_geometry() -> None:
-    from phydrax.applications.nucleic_acid_biophysics.structure import (
-        NucleotideStructureQualifier,
-    )
-
-    mapping, positions = fixture()
-    binding = prepare_nucleotide_binding(mapping, mapping.atom_ids)
-    qualifier = NucleotideStructureQualifier(
-        binding,
-        maximum_ring_deviation=0.05,
-        backbone_interval=(1.3, 1.9),
-        image_policy="nonperiodic",
-    )
-    evidence = qualifier.evaluate(positions)
-    assert bool(jnp.all(evidence.frame_valid))
-    assert not bool(jnp.any(evidence.ring_covered))
-    assert not bool(jnp.any(evidence.backbone_covered))
-    assert not bool(evidence.successful)

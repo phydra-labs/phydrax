@@ -8,7 +8,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import pytest
 
 import phydrax as phx
 from phydrax.solver._neural_galerkin import _NeuralGalerkinVectorField
@@ -37,32 +36,28 @@ def _growth_problem() -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "tangent",
-    [
+def test_certified_backsolve_gradient_matches_recursive_checkpoint() -> None:
+    for tangent in [
         phx.solver.NeuralTangentSolvePolicy("gram", damping=1e-6),
         phx.solver.NeuralTangentSolvePolicy("rectangular", damping=1e-6),
         phx.solver.NeuralTangentSolvePolicy("rectangular", damping=0.0),
-    ],
-    ids=["gram", "rectangular", "rectangular-undamped"],
-)
-def test_certified_backsolve_gradient_matches_recursive_checkpoint(tangent: Any) -> None:
-    problem = _growth_problem()
-    time = jnp.asarray(0.0)
-    initial = problem.parameter_subspace.pack()
+    ]:
+        problem = _growth_problem()
+        time = jnp.asarray(0.0)
+        initial = problem.parameter_subspace.pack()
 
-    def rate_gradient(mode: Any) -> Any:
-        field = _NeuralGalerkinVectorField(
-            problem,
-            tangent,
-            phx.solver.NeuralGalerkinAdjointPolicy(mode),
-        )
-        return jax.grad(lambda parameters: jnp.sum(field(time, parameters, None)))(
-            initial
-        )
+        def rate_gradient(mode: Any) -> Any:
+            field = _NeuralGalerkinVectorField(
+                problem,
+                tangent,
+                phx.solver.NeuralGalerkinAdjointPolicy(mode),
+            )
+            return jax.grad(lambda parameters: jnp.sum(field(time, parameters, None)))(
+                initial
+            )
 
-    implicit = rate_gradient("certified_backsolve")
-    unrolled = rate_gradient("recursive_checkpoint")
+        implicit = rate_gradient("certified_backsolve")
+        unrolled = rate_gradient("recursive_checkpoint")
 
-    assert jnp.all(jnp.isfinite(implicit))
-    assert jnp.allclose(implicit, unrolled, rtol=1e-6, atol=1e-9)
+        assert jnp.all(jnp.isfinite(implicit))
+        assert jnp.allclose(implicit, unrolled, rtol=1e-6, atol=1e-9)

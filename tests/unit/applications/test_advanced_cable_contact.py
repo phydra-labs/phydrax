@@ -9,7 +9,7 @@ import phydrax as phx
 mn = phx.applications.solid_mechanics.member_network
 
 
-def test_generalized_channels_and_orientation_transport() -> None:
+def test_advanced_cable_contact_scenario_1() -> None:
     layout = mn.GeneralizedDOFLayout(
         (
             mn.GeneralizedDOFChannel(
@@ -34,9 +34,6 @@ def test_generalized_channels_and_orientation_transport() -> None:
     assert evidence is None
     assert field.frames.shape == (2, 3, 3)
     assert jnp.all(field.director_margin > 0.0)
-
-
-def test_elastic_catenary_slack_straight_and_loaded_regimes() -> None:
     slack_reference = mn.ElasticCatenaryReference(1.0, 100.0, jnp.zeros((3,)))
     slack = mn.solve_elastic_catenary(
         jnp.asarray((0.0, 0.0, 0.0)),
@@ -74,9 +71,6 @@ def test_elastic_catenary_slack_straight_and_loaded_regimes() -> None:
         )
         <= 1.0e-6
     )
-
-
-def test_contact_friction_saddle_and_connection_energy() -> None:
     contact = mn.NodePlaneContact(
         # ty: ignore[invalid-argument-type]
         (0,),

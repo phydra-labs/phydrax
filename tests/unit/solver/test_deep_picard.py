@@ -86,9 +86,7 @@ def _coefficient(function: Any) -> Any:
     return float(function.func.function.coefficient)
 
 
-def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_state() -> (
-    None
-):
+def test_deep_picard_scenario_1() -> None:
     problem = _problem(
         generator=lambda time, state, value, control, args: jnp.asarray([1.0]),
         terminal=lambda state, args: jnp.asarray([0.0]),
@@ -128,6 +126,53 @@ def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_s
     assert result.diagnostics.passed
     assert result.solver.terms == solver.terms == ()
     assert _coefficient(solver["value"]) == 0.0
+    problem = _problem(
+        generator=lambda time, state, value, control, args: jnp.zeros_like(value),
+        terminal=lambda state, args: jnp.asarray([state[0]]),
+        problem_id="control-picard",
+    )
+    plan = FeynmanKacSamplingPlan(
+        terminal_time=1.0,
+        sampling_mode="queries",
+        num_paths_per_query=4096,
+        num_time_steps=4,
+        control_target_mode="martingale",
+        antithetic=True,
+        refresh_mode="fixed",
+    )
+    exact_value = _domain().Function("t", "x")(
+        lambda time, state: jnp.asarray([state[0]])
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={
+            "value": exact_value,
+            "control": _function(_ConstantControl(jnp.asarray(0.0))),
+        },
+        terms=(),
+    )
+    times = jnp.asarray([0.0, 0.25, 0.5, 0.75])
+    states = jnp.asarray([[-0.4], [0.0], [0.2], [0.7]])
+
+    result = solve_deep_picard(
+        solver,
+        problem,
+        value_name="value",
+        control_name="control",
+        sampling_plan=plan,
+        num_picard_steps=1,
+        inner_num_iter=100,
+        optim=optax.adam(0.05),
+        query_times=times,
+        query_states=states,
+        value_weight=0.0,
+        control_weight=1.0,
+        seed=4,
+        jit=True,
+        keep_best=False,
+    )
+
+    assert abs(_coefficient(result.solver["control"]) - 1.0) < 0.08
+    assert result.diagnostics.control_target_rmse[-1] < 0.08
 
 
 def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case() -> None:
@@ -188,53 +233,3 @@ def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case() 
 
     assert abs(_coefficient(result.solver["value"]) - 2.0) < 0.12
     assert result.diagnostics.finite[-1]
-
-
-def test_deep_picard_martingale_targets_train_explicit_control() -> None:
-    problem = _problem(
-        generator=lambda time, state, value, control, args: jnp.zeros_like(value),
-        terminal=lambda state, args: jnp.asarray([state[0]]),
-        problem_id="control-picard",
-    )
-    plan = FeynmanKacSamplingPlan(
-        terminal_time=1.0,
-        sampling_mode="queries",
-        num_paths_per_query=4096,
-        num_time_steps=4,
-        control_target_mode="martingale",
-        antithetic=True,
-        refresh_mode="fixed",
-    )
-    exact_value = _domain().Function("t", "x")(
-        lambda time, state: jnp.asarray([state[0]])
-    )
-    solver = phx.solver.FunctionalSolver(
-        functions={
-            "value": exact_value,
-            "control": _function(_ConstantControl(jnp.asarray(0.0))),
-        },
-        terms=(),
-    )
-    times = jnp.asarray([0.0, 0.25, 0.5, 0.75])
-    states = jnp.asarray([[-0.4], [0.0], [0.2], [0.7]])
-
-    result = solve_deep_picard(
-        solver,
-        problem,
-        value_name="value",
-        control_name="control",
-        sampling_plan=plan,
-        num_picard_steps=1,
-        inner_num_iter=100,
-        optim=optax.adam(0.05),
-        query_times=times,
-        query_states=states,
-        value_weight=0.0,
-        control_weight=1.0,
-        seed=4,
-        jit=True,
-        keep_best=False,
-    )
-
-    assert abs(_coefficient(result.solver["control"]) - 1.0) < 0.08
-    assert result.diagnostics.control_target_rmse[-1] < 0.08

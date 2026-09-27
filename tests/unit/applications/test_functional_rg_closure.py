@@ -6,7 +6,7 @@ import pytest
 from phydrax.applications import functional_rg as frg
 
 
-def test_regulator_threshold_and_truncation_identities() -> None:
+def test_functional_rg_closure_scenario_1() -> None:
     regulator = frg.Regulator.optimized()
     quadrature = frg.ThresholdQuadraturePlan(3.0, quadrature_order=16, momentum_upper=8.0)
     masses = jnp.asarray([0.0, 0.5, 2.0])
@@ -49,9 +49,6 @@ def test_regulator_threshold_and_truncation_identities() -> None:
     np.testing.assert_allclose(gross_flow.beta[:3], 0.0, atol=0.0)
     assert gross_flow.beta[3] != 0.0
     assert bool(gross_neveu.truncation_identity(gross_state, 0.2).satisfied)
-
-
-def test_wilson_fisher_like_fixed_point_and_critical_exponents() -> None:
     regulator = frg.Regulator.optimized()
     quadrature = frg.ThresholdQuadraturePlan(3.0, quadrature_order=16, momentum_upper=8.0)
     flow = frg.PolynomialONFlowPlan(1, 3.0, regulator, quadrature, coupling_count=2)
@@ -68,9 +65,6 @@ def test_wilson_fisher_like_fixed_point_and_critical_exponents() -> None:
     assert fixed_point.couplings[1] > 1.0
     assert fixed_point.critical_exponents[0] > 0.0
     assert fixed_point.critical_exponents[1] < 0.0
-
-
-def test_scheme_refinement_and_vertex_grid_evidence() -> None:
     regulator = frg.Regulator.exponential()
     coarse_rule = frg.ThresholdQuadraturePlan(
         3.0, quadrature_order=8, momentum_upper=12.0

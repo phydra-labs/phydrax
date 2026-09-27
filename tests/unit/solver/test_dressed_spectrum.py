@@ -47,7 +47,7 @@ def _labels() -> Any:
     )
 
 
-def test_dressed_spectrum_maps_product_labels_one_to_one_and_static_zz_is_zero() -> None:
+def test_dressed_spectrum_contracts() -> None:
     device, _ = _device(coupling=0.0)
     dressed = s.prepare_dressed_spectrum(device, labels=_labels())
     zeta = (
@@ -64,9 +64,27 @@ def test_dressed_spectrum_maps_product_labels_one_to_one_and_static_zz_is_zero()
     assert len(set(map(int, dressed.plan.tracking_plan.clusters[0]))) == len(
         dressed.plan.tracking_plan.clusters[0]
     )
+    device, _ = _device(shared=True, coupling=0.0)
+    dressed = s.prepare_dressed_spectrum(device, labels=_labels())
+    split_device = s.refresh_circuit_qed_device(
+        device,
+        s.CircuitQEDDeviceParameters(
+            (q.HarmonicModeParameters(3.0),),
+            interaction_strengths=jnp.asarray([0.2]),
+        ),
+    )
+    split = s.refresh_dressed_spectrum(dressed, split_device)
 
-
-def test_dressed_spectrum_refresh_preserves_labels_and_builds_selected_subspace() -> None:
+    assert not bool(split.diagnostics.valid)
+    device, _ = _device()
+    with pytest.raises(ValueError, match="dense resource"):
+        s.plan_dressed_spectrum(
+            device,
+            _labels(),
+            s.DressedSpectrumPolicy(maximum_dense_entries=1),
+        )
+    with pytest.raises(ValueError, match="out-of-range"):
+        s.plan_dressed_spectrum(device, ((0, 2),))
     device, spec = _device(coupling=0.0)
     dressed = s.prepare_dressed_spectrum(device, labels=_labels())
     refreshed_device = s.refresh_circuit_qed_device(
@@ -87,30 +105,3 @@ def test_dressed_spectrum_refresh_preserves_labels_and_builds_selected_subspace(
     assert int(refreshed.numeric_version) == 1
     assert refreshed.plan.plan_id == dressed.plan.plan_id
     assert logical.logical_dimension == 4
-
-
-def test_dressed_spectrum_reports_a_split_reference_degeneracy() -> None:
-    device, _ = _device(shared=True, coupling=0.0)
-    dressed = s.prepare_dressed_spectrum(device, labels=_labels())
-    split_device = s.refresh_circuit_qed_device(
-        device,
-        s.CircuitQEDDeviceParameters(
-            (q.HarmonicModeParameters(3.0),),
-            interaction_strengths=jnp.asarray([0.2]),
-        ),
-    )
-    split = s.refresh_dressed_spectrum(dressed, split_device)
-
-    assert not bool(split.diagnostics.valid)
-
-
-def test_dressed_spectrum_enforces_dense_resources_and_label_bounds() -> None:
-    device, _ = _device()
-    with pytest.raises(ValueError, match="dense resource"):
-        s.plan_dressed_spectrum(
-            device,
-            _labels(),
-            s.DressedSpectrumPolicy(maximum_dense_entries=1),
-        )
-    with pytest.raises(ValueError, match="out-of-range"):
-        s.plan_dressed_spectrum(device, ((0, 2),))

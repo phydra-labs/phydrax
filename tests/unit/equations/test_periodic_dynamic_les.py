@@ -180,28 +180,23 @@ def test_periodic_dynamic_stage_stress_rate_transfer_and_energy_identity() -> No
     )
 
 
-@pytest.mark.parametrize(
-    ("averaging", "expected_shape"),
-    (
+def test_periodic_global_plane_and_local_routes() -> None:
+    for averaging, expected_shape in (
         (GlobalDynamicLESAveraging(), ()),
         (HomogeneousPlaneDynamicLESAveraging(("x", "y")), (1, 1, 16)),
         (
             LocalKernelDynamicLESAveraging(jnp.ones((3, 3, 3), dtype=jnp.float32)),
             (16, 16, 16),
         ),
-    ),
-)
-def test_periodic_global_plane_and_local_routes(
-    averaging: Any, expected_shape: Any
-) -> None:
-    resolved = _space(8)
-    prepared = _prepared(resolved, _space(4), averaging=averaging)
+    ):
+        resolved = _space(8)
+        prepared = _prepared(resolved, _space(4), averaging=averaging)
 
-    stage = prepared.evaluate(_state(resolved))
+        stage = prepared.evaluate(_state(resolved))
 
-    assert stage.dynamic_result.coefficient.shape == expected_shape
-    assert stage.continuation_state is None
-    assert stage.accepted_update_mask.shape == ()
+        assert stage.dynamic_result.coefficient.shape == expected_shape
+        assert stage.continuation_state is None
+        assert stage.accepted_update_mask.shape == ()
 
 
 def test_periodic_history_mask_restart_and_no_hidden_commit() -> None:

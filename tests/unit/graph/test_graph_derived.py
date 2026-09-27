@@ -34,7 +34,7 @@ def _square_mesh() -> Any:
     return vertices, faces
 
 
-def test_line_graph_builds_edge_as_node_path_graph() -> None:
+def test_graph_derived_scenario_1() -> None:
     bundle = phx.graph.line_graph(_path_graph())
     graph = bundle.graph
     assert graph.senders is not None
@@ -52,9 +52,6 @@ def test_line_graph_builds_edge_as_node_path_graph() -> None:
         graph.nodes["original_receiver"], jnp.array([1, 2], dtype=jnp.int32)
     )
     assert jnp.allclose(graph.edges["shared_node"], jnp.array([1], dtype=jnp.int32))
-
-
-def test_line_graph_shared_node_connectivity_adds_undirected_edge_adjacency() -> None:
     graph = phx.graph.GraphIR(
         senders=jnp.array([0, 2], dtype=jnp.int32),
         receivers=jnp.array([1, 1], dtype=jnp.int32),
@@ -69,6 +66,34 @@ def test_line_graph_shared_node_connectivity_adds_undirected_edge_adjacency() ->
     assert line.num_edges == 2
     assert jnp.allclose(line.senders, jnp.array([0, 1], dtype=jnp.int32))
     assert jnp.allclose(line.receivers, jnp.array([1, 0], dtype=jnp.int32))
+    vertices, faces = _square_mesh()
+    bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
+    graph = bundle.graph
+    assert graph.senders is not None
+    assert graph.receivers is not None
+
+    assert graph.num_nodes == 2
+    assert graph.num_edges == 2
+    assert jnp.allclose(graph.senders, jnp.array([0, 1], dtype=jnp.int32))
+    assert jnp.allclose(graph.receivers, jnp.array([1, 0], dtype=jnp.int32))
+    assert jnp.allclose(graph.edges["shared_edge_vertices"], jnp.array([[0, 2], [0, 2]]))
+    assert graph.nodes["centroid"].shape == (2, 3)
+    assert jnp.allclose(graph.nodes["area"][:, 0], jnp.array([0.5, 0.5]))
+    assert jnp.allclose(bundle.boundary_faces, jnp.array([0, 1], dtype=jnp.int32))
+    assert bundle.interior_faces.shape == (0,)
+    vertices, faces = _square_mesh()
+    bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
+    domain = phx.domain.GraphDomain(bundle.graph, measure="count")
+    boundary = domain.component({"graph": bundle.boundary_faces_component()})
+    batch = boundary.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
+
+    assert jnp.allclose(
+        jnp.asarray(batch["graph"]["face_index"].data), jnp.array([0, 1], dtype=jnp.int32)
+    )
+    # ty: ignore[unresolved-attribute]
+    assert boundary.mass.value == 2.0
 
 
 def test_line_graph_integrates_with_graph_domain_model() -> None:
@@ -86,37 +111,3 @@ def test_line_graph_integrates_with_graph_domain_model() -> None:
     model = domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=u)
 
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([-2.0, 2.0]))
-
-
-def test_mesh_to_dual_graph_builds_face_centered_graph() -> None:
-    vertices, faces = _square_mesh()
-    bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
-    graph = bundle.graph
-    assert graph.senders is not None
-    assert graph.receivers is not None
-
-    assert graph.num_nodes == 2
-    assert graph.num_edges == 2
-    assert jnp.allclose(graph.senders, jnp.array([0, 1], dtype=jnp.int32))
-    assert jnp.allclose(graph.receivers, jnp.array([1, 0], dtype=jnp.int32))
-    assert jnp.allclose(graph.edges["shared_edge_vertices"], jnp.array([[0, 2], [0, 2]]))
-    assert graph.nodes["centroid"].shape == (2, 3)
-    assert jnp.allclose(graph.nodes["area"][:, 0], jnp.array([0.5, 0.5]))
-    assert jnp.allclose(bundle.boundary_faces, jnp.array([0, 1], dtype=jnp.int32))
-    assert bundle.interior_faces.shape == (0,)
-
-
-def test_mesh_dual_graph_boundary_component_samples_faces() -> None:
-    vertices, faces = _square_mesh()
-    bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
-    domain = phx.domain.GraphDomain(bundle.graph, measure="count")
-    boundary = domain.component({"graph": bundle.boundary_faces_component()})
-    batch = boundary.sample(
-        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
-    )
-
-    assert jnp.allclose(
-        jnp.asarray(batch["graph"]["face_index"].data), jnp.array([0, 1], dtype=jnp.int32)
-    )
-    # ty: ignore[unresolved-attribute]
-    assert boundary.mass.value == 2.0

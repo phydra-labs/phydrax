@@ -18,7 +18,7 @@ def _ellipse_section() -> Any:
     return AirfoilSectionPlan(coordinates)
 
 
-def test_airfoil_section_distance_and_o_grid_are_finite() -> None:
+def test_compressible_airfoil_scenario_1() -> None:
     section = _ellipse_section()
     distance = section.closest_distance(jnp.asarray(((0.0, 0.0), (1.0, 0.0))))
     np.testing.assert_allclose(distance, (0.1, 0.5), atol=2.0e-3)
@@ -30,9 +30,6 @@ def test_airfoil_section_distance_and_o_grid_are_finite() -> None:
     assert prepared.discretization.cell_shape == (32, 8)
     assert jnp.all(prepared.wall_distance > 0.0)
     assert prepared.minimum_cell_volume > 0.0
-
-
-def test_fixed_lift_uses_declared_bracket_and_residual() -> None:
     plan = TransonicFixedLiftPlan(0.5, (0.0, 0.5), tolerance=1.0e-10)
     result = plan.solve(lambda angle, args: 0.1 + 2.0 * angle)
 
@@ -40,9 +37,6 @@ def test_fixed_lift_uses_declared_bracket_and_residual() -> None:
     np.testing.assert_allclose(result.angle_of_attack, 0.2, atol=1.0e-9)
     np.testing.assert_allclose(result.lift_coefficient, 0.5, atol=1.0e-9)
     assert abs(float(result.residual)) <= 1.0e-10
-
-
-def test_rae_case_binds_reference_rights_and_exact_conditions() -> None:
     manifest = ReferenceArtifactManifest(
         "rae2822-reference",
         checksum_algorithm="sha256",

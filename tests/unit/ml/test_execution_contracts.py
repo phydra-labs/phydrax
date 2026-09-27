@@ -6,7 +6,6 @@
 from typing import Any
 
 import jax.numpy as jnp
-import pytest
 
 from phydrax import (
     ComponentAuthority,
@@ -43,7 +42,7 @@ def _regression_batch() -> Any:
     )
 
 
-def test_hard_tree_is_discontinuous_piecewise_constant() -> None:
+def test_execution_contracts_scenario_1() -> None:
     result = DecisionTreeRegressor(max_depth=2).fit_batch(_regression_batch())
     contract = result.model.model_execution_contract()
     assert contract.regularity == DerivativeRegularity(
@@ -60,18 +59,6 @@ def test_hard_tree_is_discontinuous_piecewise_constant() -> None:
     gradient = contract.derivative.admit(DifferentiationRequest((INPUT,)))
     assert not gradient.supported
     assert "regularity-degenerate" in gradient.reasons
-
-
-def _agrees_with_fit(result: Any) -> Any:
-    contract = result.model.model_execution_contract()
-    fit = result.derivative_contract
-    assert contract.regularity == fit.regularity
-    for surface in (INPUT, PARAMETER):
-        assert contract.derivative.level(surface) is fit.level(surface)
-    return contract
-
-
-def test_kernel_expansion_regularity_follows_the_kernel() -> None:
     batch = _regression_batch()
     smooth = _agrees_with_fit(
         KernelRidgeRecipe(SquaredExponentialKernel(), alpha=0.1).fit_batch(batch)
@@ -87,18 +74,6 @@ def test_kernel_expansion_regularity_follows_the_kernel() -> None:
     assert matern.regularity.continuity == 1
     assert matern.derivative.level(INPUT) is GradientLevel.SMOOTH
     assert not matern.derivative.admit(physical).supported
-
-
-@pytest.mark.parametrize("metric", ["squared-euclidean", "euclidean", "manhattan"])
-def test_exact_neighbors_are_piecewise_constant(metric: Any) -> None:
-    contract = _agrees_with_fit(
-        KNeighborsRegressorRecipe(3, metric=metric).fit_batch(_regression_batch())
-    )
-    assert contract.regularity == _PIECEWISE_CONSTANT
-    assert contract.derivative.level(INPUT) is GradientLevel.NONE
-
-
-def test_kernel_neighbors_are_smooth_only_for_a_smooth_metric() -> None:
     smooth = _agrees_with_fit(
         KernelNeighborsRegressorRecipe(
             temperature=0.4, metric="squared-euclidean"
@@ -112,3 +87,18 @@ def test_kernel_neighbors_are_smooth_only_for_a_smooth_metric() -> None:
     )
     assert kinked.regularity == DerivativeRegularity.piecewise_smooth(continuity=0)
     assert kinked.derivative.level(INPUT) is GradientLevel.ALMOST_EVERYWHERE
+    for metric in ["squared-euclidean", "euclidean", "manhattan"]:
+        contract = _agrees_with_fit(
+            KNeighborsRegressorRecipe(3, metric=metric).fit_batch(_regression_batch())
+        )
+        assert contract.regularity == _PIECEWISE_CONSTANT
+        assert contract.derivative.level(INPUT) is GradientLevel.NONE
+
+
+def _agrees_with_fit(result: Any) -> Any:
+    contract = result.model.model_execution_contract()
+    fit = result.derivative_contract
+    assert contract.regularity == fit.regularity
+    for surface in (INPUT, PARAMETER):
+        assert contract.derivative.level(surface) is fit.level(surface)
+    return contract

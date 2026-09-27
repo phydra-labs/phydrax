@@ -67,7 +67,7 @@ def _scalar_problem(
     return problem, parameterization
 
 
-def test_zero_noise_is_nominal_and_complete_fixed_work_is_jittable() -> None:
+def test_sampling_mpc_scenario_1() -> None:
     problem, parameterization = _scalar_problem(
         terminal_cost=lambda time, state, args: state[0] ** 2,
     )
@@ -100,9 +100,45 @@ def test_zero_noise_is_nominal_and_complete_fixed_work_is_jittable() -> None:
     assert int(result.status) == SamplingMPCStatus.SUCCESS
     assert result.plan_id == plan.plan_id
     assert result.evidence.plan_id == plan.plan_id
+    problem, parameterization = _explicit_realization_problem(failing_unsupported=True)
+    realizations = SamplingMPCRealizations(
+        {"gain": jnp.asarray([1.0, -1.0])},
+        ("supported", "failed-padding"),
+        weights=jnp.asarray([1.0, 0.0]),
+        support_mask=jnp.asarray([True, False]),
+        posterior_id="posterior:support-mask",
+        campaign_id="campaign:support-mask",
+    )
+    risks = (
+        "expectation",
+        "worst_case",
+        MeanVarianceRisk(0.5),
+        CVaRRisk(0.5),
+        EntropicRisk(1.0),
+    )
 
+    for risk in risks:
+        plan = plan_sampling_mpc(
+            problem,
+            parameterization,
+            candidate_count=1,
+            iteration_count=1,
+            update="predictive",
+            risk=risk,
+            realizations=realizations,
+            realization_binding=_bind_gain,
+            realization_binding_id="bind:gain+target",
+        )
+        result = plan.solve(
+            plan.initialize(jnp.asarray([[1.0]]), 0.0),
+            jax.random.key(5),
+        )
 
-def test_cem_updates_toward_a_better_deterministic_scalar_control() -> None:
+        assert bool(result.successful)
+        assert np.isfinite(float(result.objective))
+        assert not bool(result.evidence.model_rollout_valid[0, 0, 1])
+        assert bool(result.evidence.model_valid[0, 0, 1])
+        assert bool(result.replay.accepted)
     problem, parameterization = _scalar_problem(
         horizon=1,
         terminal_cost=lambda time, state, args: (state[0] - 1.0) ** 2,
@@ -129,42 +165,6 @@ def test_cem_updates_toward_a_better_deterministic_scalar_control() -> None:
     assert np.min(np.asarray(result.evidence.candidate_objectives[-1])) < np.min(
         np.asarray(result.evidence.candidate_objectives[0])
     )
-
-
-def test_failed_rollout_mask_is_separate_and_failed_candidate_cannot_win() -> None:
-    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
-        return jnp.where(control[0] < 0.0, jnp.full_like(state, jnp.nan), state)
-
-    problem, parameterization = _scalar_problem(
-        horizon=1,
-        dynamics=transition,
-        running_cost=lambda time, state, control, args: control[0],
-        problem_id="sampling-mpc-failed-candidate",
-    )
-    plan = plan_sampling_mpc(
-        problem,
-        parameterization,
-        candidate_count=256,
-        iteration_count=1,
-        elite_count=32,
-        update="predictive",
-    )
-    state = plan.initialize(jnp.zeros((1, 1)), 1.0)
-
-    result = solve_sampling_mpc(plan, state, jax.random.key(3))
-    objectives = np.asarray(result.evidence.candidate_objectives[0])
-    valid = np.asarray(result.evidence.candidate_valid[0])
-    rollout_valid = np.asarray(result.evidence.model_rollout_valid[0, :, 0])
-
-    assert valid.any() and (~valid).any()
-    np.testing.assert_array_equal(valid, rollout_valid)
-    assert np.all(np.isfinite(objectives[~rollout_valid]))
-    assert np.min(objectives[~valid]) < float(result.objective)
-    assert bool(result.evidence.candidate_valid[0, result.selected_candidate])
-    assert float(result.action[0]) >= 0.0
-
-
-def test_warm_start_horizon_shift_is_exact_for_hold_and_zero_tail_policies() -> None:
     problem, parameterization = _scalar_problem(
         horizon=3,
         problem_id="sampling-mpc-warm-shift",
@@ -206,7 +206,40 @@ def test_warm_start_horizon_shift_is_exact_for_hold_and_zero_tail_policies() -> 
     )
 
 
-def test_expectation_worst_case_and_existing_risk_measure_aggregate_model_axis() -> None:
+def test_failed_rollout_mask_is_separate_and_failed_candidate_cannot_win() -> None:
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
+        return jnp.where(control[0] < 0.0, jnp.full_like(state, jnp.nan), state)
+
+    problem, parameterization = _scalar_problem(
+        horizon=1,
+        dynamics=transition,
+        running_cost=lambda time, state, control, args: control[0],
+        problem_id="sampling-mpc-failed-candidate",
+    )
+    plan = plan_sampling_mpc(
+        problem,
+        parameterization,
+        candidate_count=256,
+        iteration_count=1,
+        elite_count=32,
+        update="predictive",
+    )
+    state = plan.initialize(jnp.zeros((1, 1)), 1.0)
+
+    result = solve_sampling_mpc(plan, state, jax.random.key(3))
+    objectives = np.asarray(result.evidence.candidate_objectives[0])
+    valid = np.asarray(result.evidence.candidate_valid[0])
+    rollout_valid = np.asarray(result.evidence.model_rollout_valid[0, :, 0])
+
+    assert valid.any() and (~valid).any()
+    np.testing.assert_array_equal(valid, rollout_valid)
+    assert np.all(np.isfinite(objectives[~rollout_valid]))
+    assert np.min(objectives[~valid]) < float(result.objective)
+    assert bool(result.evidence.candidate_valid[0, result.selected_candidate])
+    assert float(result.action[0]) >= 0.0
+
+
+def test_sampling_mpc_scenario_2() -> None:
     problem, parameterization = _scalar_problem(
         initial_state=jnp.asarray([[0.0], [4.0]]),
         horizon=1,
@@ -265,9 +298,6 @@ def test_expectation_worst_case_and_existing_risk_measure_aggregate_model_axis()
     assert abs(float(worst.action[0]) + 2.0) < 0.2
     assert bool(mean_variance.successful)
     assert mean_variance_plan.aggregation == "risk_measure"
-
-
-def test_declared_clip_and_reject_bound_policies_are_auditable() -> None:
     problem, parameterization = _scalar_problem(
         horizon=1,
         terminal_cost=lambda time, state, args: (state[0] - 2.0) ** 2,
@@ -308,36 +338,6 @@ def test_declared_clip_and_reject_bound_policies_are_auditable() -> None:
     assert np.any(np.abs(raw_reject) > 0.25)
     assert np.all(rejected[np.abs(raw_reject) > 0.25])
     assert -0.25 <= float(reject.action[0]) <= 0.25
-
-
-def _explicit_realization_problem(*, failing_unsupported: bool = False) -> Any:
-    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
-        candidate = state + args["gain"] * control
-        if failing_unsupported:
-            candidate = jnp.where(
-                args["gain"] > 0.0,
-                candidate,
-                jnp.full_like(candidate, jnp.nan),
-            )
-        return candidate
-
-    return _scalar_problem(
-        horizon=1,
-        dynamics=transition,
-        terminal_cost=lambda time, state, args: (state[0] - args["target"]) ** 2,
-        args={"target": jnp.asarray(0.0)},
-        problem_id="sampling-mpc-explicit-realizations",
-    )
-
-
-def _bind_gain(base_args: Any, realization_parameters: Any) -> Any:
-    return {
-        "target": base_args["target"],
-        "gain": realization_parameters["gain"],
-    }
-
-
-def test_explicit_parameter_pytrees_change_rollouts_and_replay_both_states() -> None:
     problem, parameterization = _explicit_realization_problem()
     realizations = SamplingMPCRealizations(
         {"gain": jnp.asarray([1.0, 3.0, 9.0])},
@@ -384,49 +384,34 @@ def test_explicit_parameter_pytrees_change_rollouts_and_replay_both_states() -> 
     assert bool(result.replay.accepted)
 
 
-def test_zero_weight_failed_padding_cannot_contaminate_any_risk_or_acceptance() -> None:
-    problem, parameterization = _explicit_realization_problem(failing_unsupported=True)
-    realizations = SamplingMPCRealizations(
-        {"gain": jnp.asarray([1.0, -1.0])},
-        ("supported", "failed-padding"),
-        weights=jnp.asarray([1.0, 0.0]),
-        support_mask=jnp.asarray([True, False]),
-        posterior_id="posterior:support-mask",
-        campaign_id="campaign:support-mask",
+def _explicit_realization_problem(*, failing_unsupported: bool = False) -> Any:
+    def transition(context: Any, state: Any, control: Any, args: Any) -> Any:
+        candidate = state + args["gain"] * control
+        if failing_unsupported:
+            candidate = jnp.where(
+                args["gain"] > 0.0,
+                candidate,
+                jnp.full_like(candidate, jnp.nan),
+            )
+        return candidate
+
+    return _scalar_problem(
+        horizon=1,
+        dynamics=transition,
+        terminal_cost=lambda time, state, args: (state[0] - args["target"]) ** 2,
+        args={"target": jnp.asarray(0.0)},
+        problem_id="sampling-mpc-explicit-realizations",
     )
-    risks = (
-        "expectation",
-        "worst_case",
-        MeanVarianceRisk(0.5),
-        CVaRRisk(0.5),
-        EntropicRisk(1.0),
-    )
-
-    for risk in risks:
-        plan = plan_sampling_mpc(
-            problem,
-            parameterization,
-            candidate_count=1,
-            iteration_count=1,
-            update="predictive",
-            risk=risk,
-            realizations=realizations,
-            realization_binding=_bind_gain,
-            realization_binding_id="bind:gain+target",
-        )
-        result = plan.solve(
-            plan.initialize(jnp.asarray([[1.0]]), 0.0),
-            jax.random.key(5),
-        )
-
-        assert bool(result.successful)
-        assert np.isfinite(float(result.objective))
-        assert not bool(result.evidence.model_rollout_valid[0, 0, 1])
-        assert bool(result.evidence.model_valid[0, 0, 1])
-        assert bool(result.replay.accepted)
 
 
-def test_positive_weight_rollout_failure_rejects_the_candidate() -> None:
+def _bind_gain(base_args: Any, realization_parameters: Any) -> Any:
+    return {
+        "target": base_args["target"],
+        "gain": realization_parameters["gain"],
+    }
+
+
+def test_sampling_mpc_scenario_3() -> None:
     problem, parameterization = _explicit_realization_problem(failing_unsupported=True)
     realizations = SamplingMPCRealizations(
         {"gain": jnp.asarray([1.0, -1.0])},
@@ -455,9 +440,6 @@ def test_positive_weight_rollout_failure_rejects_the_candidate() -> None:
     assert not bool(result.successful)
     assert int(result.status) == SamplingMPCStatus.NO_VALID_CANDIDATE
     assert not bool(result.replay.accepted)
-
-
-def test_mass_stiffness_and_friction_realizations_are_not_shared() -> None:
     problem, parameterization = _scalar_problem(
         initial_state=jnp.asarray([1.0]),
         horizon=1,
@@ -498,6 +480,20 @@ def test_mass_stiffness_and_friction_realizations_are_not_shared() -> None:
         [1.9, 1.4, 2.7],
     )
     assert np.unique(np.asarray(result.replay.model_objectives)).size == 3
+    realizations = SamplingMPCRealizations(
+        {"gain": jnp.asarray([1.0, 3.0])},
+        ("soft:low", "soft:high"),
+        weights=jnp.asarray([0.25, 0.75]),
+        posterior_id="posterior:calibrated-rod",
+        campaign_id="campaign:held-out-a",
+    )
+    widened = eqx.tree_at(
+        lambda value: value.weights, realizations, jnp.asarray([0.25, 0.5, 0.25])
+    )
+
+    phx.typing.validate(realizations)
+    with pytest.raises(ValueError, match="weights"):
+        phx.typing.validate(widened)
 
 
 def test_resample_policy_is_key_and_solve_count_reproducible_and_auditable() -> None:
@@ -560,20 +556,3 @@ def test_resample_policy_is_key_and_solve_count_reproducible_and_auditable() -> 
         next_solve.evidence.realization_indices[0],
         expected_indices(1),
     )
-
-
-def test_restored_realizations_refuse_a_weight_axis_disagreeing_with_the_ids() -> None:
-    realizations = SamplingMPCRealizations(
-        {"gain": jnp.asarray([1.0, 3.0])},
-        ("soft:low", "soft:high"),
-        weights=jnp.asarray([0.25, 0.75]),
-        posterior_id="posterior:calibrated-rod",
-        campaign_id="campaign:held-out-a",
-    )
-    widened = eqx.tree_at(
-        lambda value: value.weights, realizations, jnp.asarray([0.25, 0.5, 0.25])
-    )
-
-    phx.typing.validate(realizations)
-    with pytest.raises(ValueError, match="weights"):
-        phx.typing.validate(widened)

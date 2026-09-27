@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,9 +11,8 @@ import pytest
 import phydrax as phx
 
 
-@pytest.mark.parametrize(
-    "cone",
-    [
+def test_cones_scenario_1() -> None:
+    for cone in [
         phx.optim.ZeroCone(3),
         phx.optim.NonnegativeCone(3),
         phx.optim.SecondOrderCone(3),
@@ -23,29 +20,21 @@ import phydrax as phx
         phx.optim.PositiveSemidefiniteCone(2),
         phx.optim.ExponentialCone(),
         phx.optim.PowerCone(0.4),
-    ],
-)
-def test_cone_projection_is_idempotent_batched_and_jittable(cone: Any) -> None:
-    values = jnp.asarray([[-2.0, 1.0, 3.0, -1.0], [4.0, -3.0, 0.5, 2.0]])[
-        ..., : cone.dimension
-    ]
-    projected = jax.jit(cone.project)(values)
+    ]:
+        values = jnp.asarray([[-2.0, 1.0, 3.0, -1.0], [4.0, -3.0, 0.5, 2.0]])[
+            ..., : cone.dimension
+        ]
+        projected = jax.jit(cone.project)(values)
 
-    np.testing.assert_allclose(cone.project(projected), projected, atol=1e-7)
-    assert projected.shape == values.shape
-    assert jnp.all(cone.contains(projected, tolerance=1e-7))
-
-
-def test_cone_residuals_preserve_nonfinite_norm_semantics() -> None:
+        np.testing.assert_allclose(cone.project(projected), projected, atol=1e-7)
+        assert projected.shape == values.shape
+        assert jnp.all(cone.contains(projected, tolerance=1e-7))
     cone = phx.optim.ZeroCone(1)
     values = jnp.asarray([[jnp.inf], [-jnp.inf], [jnp.nan]])
     residuals = jax.jit(cone.residual)(values)
 
     assert jnp.all(jnp.isinf(residuals[:2]))
     assert jnp.isnan(residuals[2])
-
-
-def test_self_dual_cones_satisfy_moreau_decomposition() -> None:
     cones = (
         phx.optim.NonnegativeCone(3),
         phx.optim.SecondOrderCone(3),
@@ -64,9 +53,6 @@ def test_self_dual_cones_satisfy_moreau_decomposition() -> None:
             value,
             atol=1e-7,
         )
-
-
-def test_soc_and_rotated_soc_boundary_and_apex_are_finite() -> None:
     soc = phx.optim.SecondOrderCone(3)
     rotated = phx.optim.RotatedSecondOrderCone(4)
 
@@ -81,7 +67,7 @@ def test_soc_and_rotated_soc_boundary_and_apex_are_finite() -> None:
     assert jnp.all(rotated.contains(rotated.project(rotated_values), tolerance=1e-7))
 
 
-def test_product_cone_preserves_block_layout_and_complementarity() -> None:
+def test_cones_scenario_2() -> None:
     cone = phx.optim.ProductCone(
         (
             phx.optim.ZeroCone(1),
@@ -97,9 +83,6 @@ def test_product_cone_preserves_block_layout_and_complementarity() -> None:
     assert cone.split(projected)[1].shape == (2,)
     assert cone.split(projected)[2].shape == (3,)
     assert cone.block_complementarity(projected, jnp.zeros_like(projected)).shape == (3,)
-
-
-def test_cones_reject_wrong_shape_and_complex_values() -> None:
     cone = phx.optim.SecondOrderCone(3)
     with pytest.raises(ValueError, match="must end in shape"):
         cone.project(jnp.zeros(2))

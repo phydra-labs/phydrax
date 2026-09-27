@@ -44,16 +44,22 @@ def _program() -> Any:
     )
 
 
-def test_pmp_serialization_preserves_exact_decimal_strings() -> None:
+def test_conformal_pmp_scenario_1() -> None:
     program = _program()
     record = json.loads(program.to_json_bytes())
     assert record["objective"] == ["0", "-1"]
     polynomial = record["PositiveMatrixWithPrefactorArray"][0]["polynomials"][0][0][1]
     assert polynomial[-1] == "0.0833333333333333333333"
     assert program.pmp_id
-
-
-def test_finite_pmp_audit_reports_sampled_psd_only() -> None:
+    prefactor = DampedRationalPrefactor("0.5", "1")
+    with pytest.raises(ValueError, match="symmetric"):
+        PolynomialMatrixBlock(
+            prefactor,
+            (
+                ((("1",),), (("2",),)),
+                ((("3",),), (("1",),)),
+            ),
+        )
     program = _program()
     # ty: ignore[invalid-argument-type]
     accepted = audit_pmp_samples(program, (1.0, 0.0), (0.0, 0.5, 1.0))
@@ -64,9 +70,6 @@ def test_finite_pmp_audit_reports_sampled_psd_only() -> None:
     rejected = audit_pmp_samples(program, (1.0, -24.0), (1.0,))
     assert not bool(rejected.positive_semidefinite)
     assert not bool(rejected.accepted)
-
-
-def test_sdpb_documented_output_and_dual_vector_reconstruct_functional() -> None:
     output = (
         b'terminateReason = "found primal-dual optimal solution";\n'
         b"primalObjective = 1.840265763132049246688;\n"
@@ -81,21 +84,6 @@ def test_sdpb_documented_output_and_dual_vector_reconstruct_functional() -> None
     free = parse_sdpb_vector(b"1 1\n-1.840265763132049246688\n")
     functional = reconstruct_pmp_functional(_program(), free)
     assert functional == ("1", "-1.840265763132049246688")
-
-
-def test_pmp_rejects_nonsymmetric_polynomial_matrix() -> None:
-    prefactor = DampedRationalPrefactor("0.5", "1")
-    with pytest.raises(ValueError, match="symmetric"):
-        PolynomialMatrixBlock(
-            prefactor,
-            (
-                ((("1",),), (("2",),)),
-                ((("3",),), (("1",),)),
-            ),
-        )
-
-
-def test_sdpb_parser_rejects_incomplete_summary() -> None:
     with pytest.raises(ValueError, match="exactly one"):
         parse_sdpb_output(b'terminateReason = "maxIterations exceeded";\n')
     with pytest.raises(ValueError, match="payload size"):

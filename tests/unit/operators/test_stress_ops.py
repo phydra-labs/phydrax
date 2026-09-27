@@ -288,28 +288,23 @@ def test_neo_hookean_field_supports_heterogeneous_scalar_materials() -> None:
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
 
 
-@pytest.mark.parametrize(
-    "mu, lambda_",
-    [
+def test_neo_hookean_field_marks_invalid_materials_nonfinite() -> None:
+    for mu, lambda_ in [
         (-1.0, 3.0),
         (2.0, -2.0),
         (jnp.nan, 3.0),
-    ],
-)
-def test_neo_hookean_field_marks_invalid_materials_nonfinite(
-    mu: Any, lambda_: Any
-) -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
+    ]:
+        geom = phx.domain.GeometryDomain(
+            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        )
 
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.asarray((0.0, 0.0))
+        @geom.Function("x")
+        def u(x: Any) -> Any:
+            return jnp.asarray((0.0, 0.0))
 
-    point = frozendict({"x": cx.AxisArray(jnp.zeros(2), dims=(None,))})
-    value = neo_hookean_reference_energy(u, mu=mu, lambda_=lambda_)(point).data
-    assert not bool(jnp.isfinite(value))
+        point = frozendict({"x": cx.AxisArray(jnp.zeros(2), dims=(None,))})
+        value = neo_hookean_reference_energy(u, mu=mu, lambda_=lambda_)(point).data
+        assert not bool(jnp.isfinite(value))
 
 
 def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite() -> None:
@@ -330,22 +325,20 @@ def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite() -> None:
     assert not bool(jnp.all(jnp.isfinite(cauchy)))
 
 
-@pytest.mark.parametrize("components", [1, 3])
-def test_deformation_gradient_rejects_displacement_dimension_mismatch(
-    components: Any,
-) -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
+def test_deformation_gradient_rejects_displacement_dimension_mismatch() -> None:
+    for components in [1, 3]:
+        geom = phx.domain.GeometryDomain(
+            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        )
 
-    @geom.Function("x")
-    def displacement(x: Any) -> Any:
-        return jnp.zeros((components,))
+        @geom.Function("x")
+        def displacement(x: Any) -> Any:
+            return jnp.zeros((components,))
 
-    gradient = deformation_gradient(displacement)
-    point = frozendict({"x": cx.AxisArray(jnp.zeros(2), dims=(None,))})
-    with pytest.raises(ValueError, match="displacement gradient"):
-        gradient(point)
+        gradient = deformation_gradient(displacement)
+        point = frozendict({"x": cx.AxisArray(jnp.zeros(2), dims=(None,))})
+        with pytest.raises(ValueError, match="displacement gradient"):
+            gradient(point)
 
 
 def test_neo_hookean_field_rejects_retired_kappa_keyword() -> None:

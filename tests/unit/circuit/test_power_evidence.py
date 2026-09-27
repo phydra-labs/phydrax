@@ -61,7 +61,7 @@ def _drive_policy(prepared: Any, drive: Any, policy_id: Any) -> Any:
     )
 
 
-def test_mna_rlc_phasor_ledger_and_corrupted_contribution() -> None:
+def test_power_evidence_scenario_1() -> None:
     circuit = NodalCircuit(
         (
             CircuitInstance("resistor", Resistor(2.0), ("n", "0")),
@@ -94,9 +94,6 @@ def test_mna_rlc_phasor_ledger_and_corrupted_contribution() -> None:
     reassessed = assess_mna_power_ledger(corrupted)
     assert not bool(jnp.all(reassessed.real_power_closed))
     assert jnp.abs(reassessed.real_power_residual[0]) > 0.2
-
-
-def test_mna_black_box_power_evidence_is_explicitly_unavailable() -> None:
     black_box = AdmittanceComponent(
         jnp.asarray([[1.0, -1.0], [-1.0, 1.0]]),
         component_id="black-box",
@@ -117,9 +114,6 @@ def test_mna_black_box_power_evidence_is_explicitly_unavailable() -> None:
     assert "no supported element power law" in ledger.unavailable_reasons[0]
     assert not bool(jnp.any(ledger.real_power_closed))
     assert jnp.all(jnp.isnan(ledger.real_power_residual))
-
-
-def test_transient_rlc_energy_ledger_closes_with_separate_source_power() -> None:
     prepared = prepare_circuit_dae(_parallel_rlc_with_current_source())
     times = jnp.linspace(0.0, 1.0, 257)
     voltage = jnp.sin(times)
@@ -157,9 +151,30 @@ def test_transient_rlc_energy_ledger_closes_with_separate_source_power() -> None
         ledger.element_dissipated_power.at[100, 0].add(0.1),
     )
     assert not bool(assess_circuit_energy_ledger(corrupted).closed)
+    diode = CircuitElement(
+        ExponentialDiodeLaw(1e-12, 0.025),
+        element_id="diode",
+    )
+    circuit = NodalCircuit(
+        (CircuitInstance("diode", diode, ("n", "0")),),
+        (NodalPort("terminal", "n", "0", _reference()),),
+        ground="0",
+        circuit_id="unsupported-transient-energy",
+    )
+    prepared = prepare_circuit_dae(circuit)
+    ledger = evaluate_circuit_energy_ledger(
+        prepared,
+        jnp.asarray([0.0, 1.0]),
+        jnp.zeros((2, 1)),
+        jnp.zeros((2, 1)),
+        port_currents=jnp.zeros((2, 1)),
+    )
 
-
-def test_source_power_sign_reverses_without_becoming_dissipation() -> None:
+    assert not bool(ledger.available)
+    assert bool(ledger.finite)
+    assert not bool(ledger.closed)
+    assert ledger.unsupported_element_ids == ("diode",)
+    assert "no passive energy law" in ledger.unavailable_reasons[0]
     source = CircuitElement(
         IndependentCurrentSourceLaw(1.0, input_key="drive"),
         element_id="source",
@@ -237,30 +252,3 @@ def test_driven_periodic_rlc_energy_ledger_integrates_one_period() -> None:
         -ledger.source_energy[0],
         atol=1e-10,
     )
-
-
-def test_transient_element_without_energy_law_is_unavailable() -> None:
-    diode = CircuitElement(
-        ExponentialDiodeLaw(1e-12, 0.025),
-        element_id="diode",
-    )
-    circuit = NodalCircuit(
-        (CircuitInstance("diode", diode, ("n", "0")),),
-        (NodalPort("terminal", "n", "0", _reference()),),
-        ground="0",
-        circuit_id="unsupported-transient-energy",
-    )
-    prepared = prepare_circuit_dae(circuit)
-    ledger = evaluate_circuit_energy_ledger(
-        prepared,
-        jnp.asarray([0.0, 1.0]),
-        jnp.zeros((2, 1)),
-        jnp.zeros((2, 1)),
-        port_currents=jnp.zeros((2, 1)),
-    )
-
-    assert not bool(ledger.available)
-    assert bool(ledger.finite)
-    assert not bool(ledger.closed)
-    assert ledger.unsupported_element_ids == ("diode",)
-    assert "no passive energy law" in ledger.unavailable_reasons[0]

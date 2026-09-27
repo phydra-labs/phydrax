@@ -25,7 +25,7 @@ def test_relative_equilibrium_residual_is_continuation_ready() -> None:
     np.testing.assert_allclose(np.asarray(residual), 0.0, atol=1e-12)
 
 
-def test_edge_tracking_bisects_opposite_outcomes() -> None:
+def test_relative_edge_scenario_1() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: state,
@@ -50,9 +50,6 @@ def test_edge_tracking_bisects_opposite_outcomes() -> None:
     assert int(result.status) == phx.dynamics.analysis.EDGE_SUCCESS
     assert jnp.abs(result.edge_state[0]) < 1e-8
     assert result.upper_parameter - result.lower_parameter < 1e-8
-
-
-def test_recurrence_seed_candidates_select_temporally_separated_minima() -> None:
     layout = phx.dynamics.StateLayout((1,))
     trajectory = phx.dynamics.TrajectoryData(
         jnp.arange(6.0),
@@ -71,9 +68,6 @@ def test_recurrence_seed_candidates_select_temporally_separated_minima() -> None
     np.testing.assert_array_equal(np.asarray(candidates.target_indices), [4, 4])
     np.testing.assert_allclose(np.asarray(candidates.periods), [4.0, 2.0])
     np.testing.assert_allclose(np.asarray(candidates.distances), [0.05, 0.05])
-
-
-def test_recurrence_seed_candidates_do_not_cross_resets() -> None:
     trajectory = phx.dynamics.TrajectoryData(
         jnp.asarray([0.0, 1.0, 2.0, 3.0]),
         jnp.asarray([[0.0], [10.0], [0.01], [20.0]]),

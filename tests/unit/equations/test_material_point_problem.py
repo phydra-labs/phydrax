@@ -51,7 +51,7 @@ def _parts(
     return problem, particles, splat, domain
 
 
-def test_material_point_compiler_records_complete_dependency_bundle() -> None:
+def test_material_point_problem_scenario_1() -> None:
     problem, particles, splat, domain = _parts()
     compiled = phx.equations.compile_material_point_problem(
         problem,
@@ -66,32 +66,22 @@ def test_material_point_compiler_records_complete_dependency_bundle() -> None:
     assert compiled.dynamics.particles.prepared_id == particles.prepared_id
     assert compiled.dynamics.resource_evidence.step_workspace_bytes > 0
     assert compiled.compilation_id
-
-
-@pytest.mark.parametrize(
-    "assignment",
-    [
+    for assignment in [
         phx.discretization.MultilinearSplatAssignment(),
         phx.discretization.TensorBSplineSplatAssignment(3),
-    ],
-)
-def test_material_point_compiler_accepts_capability_qualified_assignments(
-    assignment: Any,
-) -> None:
-    problem, particles, splat, domain = _parts(assignment=assignment)
-    compiled = phx.equations.compile_material_point_problem(
-        problem,
-        particles,
-        splat,
-        phx.discretization.ExplicitMPMMethodPlan(),
-        domain,
-    )
-    assert (
-        compiled.dynamics.splat.plan.assignment.assignment_id == assignment.assignment_id
-    )
-
-
-def test_material_point_compiler_rejects_cell_targets_and_drop_boundaries() -> None:
+    ]:
+        problem, particles, splat, domain = _parts(assignment=assignment)
+        compiled = phx.equations.compile_material_point_problem(
+            problem,
+            particles,
+            splat,
+            phx.discretization.ExplicitMPMMethodPlan(),
+            domain,
+        )
+        assert (
+            compiled.dynamics.splat.plan.assignment.assignment_id
+            == assignment.assignment_id
+        )
     problem, particles, splat, domain = _parts(cell_primary=True)
     with pytest.raises(ValueError, match="nodal"):
         phx.equations.compile_material_point_problem(
@@ -111,9 +101,6 @@ def test_material_point_compiler_rejects_cell_targets_and_drop_boundaries() -> N
             phx.discretization.ExplicitMPMMethodPlan(),
             domain,
         )
-
-
-def test_nonperiodic_compilation_requires_declared_complete_halo() -> None:
     axes = tuple(phx.discretization.UniformAxisSpec(13) for _ in range(2))
     grid = phx.discretization.TensorGridPlan(axes, axis_names=("x", "y")).prepare(
         jnp.asarray([[-0.1, -0.1], [1.1, 1.1]])

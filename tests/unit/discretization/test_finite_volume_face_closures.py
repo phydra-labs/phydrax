@@ -94,9 +94,7 @@ def _learned_closure(key: Any = 0, **options: Any) -> Any:
     )
 
 
-def test_symmetrized_learned_closure_is_consistent_and_orientation_antisymmetric() -> (
-    None
-):
+def test_finite_volume_face_closures_scenario_1() -> None:
     system, left = _euler_states(6)
     _, right = _euler_states(6, seed=3)
     normal = _unit_normals(6)
@@ -118,9 +116,6 @@ def test_symmetrized_learned_closure_is_consistent_and_orientation_antisymmetric
     assert tuple(certificate.capability_id for certificate in closure.certificates) == (
         "face-closure-consistency-antisymmetry",
     )
-
-
-def test_declared_closure_contract_rejects_inconsistent_nonfinite_and_mistyped() -> None:
     system, left = _euler_states(3)
     normal = _unit_normals(3)
     baseline = jnp.zeros_like(left)
@@ -151,11 +146,6 @@ def test_declared_closure_contract_rejects_inconsistent_nonfinite_and_mistyped()
     )
     with pytest.raises(TypeError, match="dtype"):
         single.apply(system, left, left + 1.0, baseline, _context(normal))
-
-
-def test_face_flux_context_requires_unit_normal_positive_measure_and_axis_identity() -> (
-    None
-):
     normal = _unit_normals(4)
     with pytest.raises(Exception, match="finite unit normals"):
         _context(2.0 * normal)
@@ -174,6 +164,9 @@ def test_face_flux_context_requires_unit_normal_positive_measure_and_axis_identi
         active=jnp.zeros(2, dtype=bool),
     )
     assert not bool(jnp.any(inactive.active))
+    closure = _learned_closure()
+    with pytest.raises(ValueError, match="constrained MHD"):
+        closure.admit_system(phx.equations.IdealMHDSystem(2))
 
 
 def test_normal_frame_closure_is_rotation_covariant_and_requires_capability() -> None:
@@ -238,12 +231,6 @@ def test_normal_frame_transforms_are_inverse_and_scalar_preserving() -> None:
         state,
         atol=1e-15,
     )
-
-
-def test_face_closure_refuses_magnetic_systems() -> None:
-    closure = _learned_closure()
-    with pytest.raises(ValueError, match="constrained MHD"):
-        closure.admit_system(phx.equations.IdealMHDSystem(2))
 
 
 def _grid(shape: Any) -> Any:

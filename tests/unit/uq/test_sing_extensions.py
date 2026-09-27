@@ -15,7 +15,7 @@ from phydrax.uq._sing_transition import (
 )
 
 
-def test_affine_sing_support_is_hausdorff_and_constant_rank() -> None:
+def test_sing_extensions_scenario_1() -> None:
     support = SINGSupportPlan(
         jnp.asarray([[0.0, 1.0]]),
         jnp.asarray([[1.0], [0.0]]),
@@ -30,9 +30,6 @@ def test_affine_sing_support_is_hausdorff_and_constant_rank() -> None:
     plan = SINGTransitionPlan(support=support)
     # ty: ignore[unresolved-attribute]
     assert plan.support.support_id == "horizontal-line"
-
-
-def test_affine_sing_support_rejects_misaligned_or_rank_changing_basis() -> None:
     with pytest.raises(ValueError, match="tangent_basis"):
         SINGSupportPlan(
             jnp.asarray([[0.0, 1.0]]),
@@ -40,9 +37,92 @@ def test_affine_sing_support_rejects_misaligned_or_rank_changing_basis() -> None
             rank=1,
             support_id="invalid",
         )
+    problem = _affine_singular_problem()
+    support = SINGSupportPlan(
+        jnp.asarray([[0.0, 1.0]]),
+        jnp.asarray([[1.0], [0.0]]),
+        offset=jnp.asarray([2.0]),
+        rank=1,
+        support_id="horizontal-affine-support",
+    )
+    plan = SINGTransitionPlan(support=support)
+    result = sing_constrained_smoother(
+        problem,
+        transition_plan=plan,
+        key=jr.key(41),
+        max_iterations=8,
+    )
+    objective = sing_objective(
+        problem,
+        result.state,
+        transition_plan=plan,
+    )
 
+    assert result.reference_measure == "hausdorff"
+    assert result.approximation_kind == "exact-affine-hausdorff-euler"
+    assert jnp.all(jnp.abs(result.support_residuals) < 1.0e-8)
+    assert len(result.solve_evidence) >= 3
+    assert objective.objective_kind == "elbo"
+    assert objective.transition_semantics == "affine-hausdorff"
+    transition_evidence = evaluate_sing_transition(
+        problem.model.transition,
+        jnp.asarray([0.0, 2.0]),
+        jnp.asarray([0.1, 2.0]),
+        jnp.asarray(0.0),
+        jnp.asarray(0.25),
+        problem.step_context(0, 0),
+        plan,
+    )
 
-def test_sparse_gp_drift_has_fixed_inducing_topology_and_exact_whitened_kl() -> None:
+    assert jnp.isfinite(objective.objective)
+    assert transition_evidence.reference_measure == "hausdorff"
+    assert transition_evidence.rank == 1
+    assert transition_evidence.valid
+    assert jnp.isfinite(transition_evidence.log_density)
+    problem = _affine_singular_problem()
+    bad_support = SINGSupportPlan(
+        jnp.asarray([[1.0, 0.0]]),
+        jnp.asarray([[0.0], [1.0]]),
+        offset=jnp.asarray([0.0]),
+        rank=1,
+        support_id="vertical-incompatible-support",
+    )
+    with pytest.raises(ValueError, match="affine/tangent"):
+        sing_constrained_smoother(
+            problem,
+            transition_plan=SINGTransitionPlan(support=bad_support),
+            key=jr.key(42),
+            max_iterations=2,
+        )
+    base = _affine_singular_problem()
+    model = phx.stochastic.StateSpaceModel(
+        phx.stochastic.CategoricalStatePrior(
+            jnp.asarray([[0.0, 2.0], [1.0, 2.0]]), jnp.asarray([0.5, 0.5])
+        ),
+        base.model.transition,
+        base.model.observation,
+        model_id="affine-categorical-model",
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        model,
+        base.observations,
+        initial_time=0.0,
+        problem_id="affine-categorical-problem",
+    )
+    support = SINGSupportPlan(
+        jnp.asarray([[0.0, 1.0]]),
+        jnp.asarray([[1.0], [0.0]]),
+        offset=jnp.asarray([2.0]),
+        rank=1,
+        support_id="horizontal-affine-support",
+    )
+    with pytest.raises(TypeError, match="GaussianStatePrior"):
+        sing_constrained_smoother(
+            problem,
+            transition_plan=SINGTransitionPlan(support=support),
+            key=jr.key(43),
+            max_iterations=2,
+        )
     points = jnp.asarray([[-1.0], [0.0], [1.0]])
     kernel = phx.kernels.SquaredExponentialKernel(length_scale=0.7)
     drift = SINGSparseGPDrift(
@@ -58,9 +138,6 @@ def test_sparse_gp_drift_has_fixed_inducing_topology_and_exact_whitened_kl() -> 
     assert jnp.allclose(drift(jnp.asarray([0.2])), jnp.asarray([0.0]))
     assert jnp.allclose(drift.kl_divergence(), 0.0)
     assert jnp.all(drift.fitc_variance(jnp.asarray([0.2])) >= 0.0)
-
-
-def test_solver_backed_sing_requires_explicit_surrogate_provider() -> None:
     with pytest.raises(TypeError, match="surrogate_provider"):
         SINGTransitionPlan("local-linearization")
 
@@ -114,98 +191,3 @@ def _affine_singular_problem() -> Any:
         initial_time=0.0,
         problem_id="affine-singular-problem",
     )
-
-
-def test_affine_hausdorff_smoother_has_normalized_objective_and_solve_evidence() -> None:
-    problem = _affine_singular_problem()
-    support = SINGSupportPlan(
-        jnp.asarray([[0.0, 1.0]]),
-        jnp.asarray([[1.0], [0.0]]),
-        offset=jnp.asarray([2.0]),
-        rank=1,
-        support_id="horizontal-affine-support",
-    )
-    plan = SINGTransitionPlan(support=support)
-    result = sing_constrained_smoother(
-        problem,
-        transition_plan=plan,
-        key=jr.key(41),
-        max_iterations=8,
-    )
-    objective = sing_objective(
-        problem,
-        result.state,
-        transition_plan=plan,
-    )
-
-    assert result.reference_measure == "hausdorff"
-    assert result.approximation_kind == "exact-affine-hausdorff-euler"
-    assert jnp.all(jnp.abs(result.support_residuals) < 1.0e-8)
-    assert len(result.solve_evidence) >= 3
-    assert objective.objective_kind == "elbo"
-    assert objective.transition_semantics == "affine-hausdorff"
-    transition_evidence = evaluate_sing_transition(
-        problem.model.transition,
-        jnp.asarray([0.0, 2.0]),
-        jnp.asarray([0.1, 2.0]),
-        jnp.asarray(0.0),
-        jnp.asarray(0.25),
-        problem.step_context(0, 0),
-        plan,
-    )
-
-    assert jnp.isfinite(objective.objective)
-    assert transition_evidence.reference_measure == "hausdorff"
-    assert transition_evidence.rank == 1
-    assert transition_evidence.valid
-    assert jnp.isfinite(transition_evidence.log_density)
-
-
-def test_affine_hausdorff_smoother_rejects_nontangent_diffusion() -> None:
-    problem = _affine_singular_problem()
-    bad_support = SINGSupportPlan(
-        jnp.asarray([[1.0, 0.0]]),
-        jnp.asarray([[0.0], [1.0]]),
-        offset=jnp.asarray([0.0]),
-        rank=1,
-        support_id="vertical-incompatible-support",
-    )
-    with pytest.raises(ValueError, match="affine/tangent"):
-        sing_constrained_smoother(
-            problem,
-            transition_plan=SINGTransitionPlan(support=bad_support),
-            key=jr.key(42),
-            max_iterations=2,
-        )
-
-
-def test_affine_hausdorff_smoother_rejects_non_gaussian_prior() -> None:
-    base = _affine_singular_problem()
-    model = phx.stochastic.StateSpaceModel(
-        phx.stochastic.CategoricalStatePrior(
-            jnp.asarray([[0.0, 2.0], [1.0, 2.0]]), jnp.asarray([0.5, 0.5])
-        ),
-        base.model.transition,
-        base.model.observation,
-        model_id="affine-categorical-model",
-    )
-    problem = phx.stochastic.StateSpaceProblem(
-        model,
-        base.observations,
-        initial_time=0.0,
-        problem_id="affine-categorical-problem",
-    )
-    support = SINGSupportPlan(
-        jnp.asarray([[0.0, 1.0]]),
-        jnp.asarray([[1.0], [0.0]]),
-        offset=jnp.asarray([2.0]),
-        rank=1,
-        support_id="horizontal-affine-support",
-    )
-    with pytest.raises(TypeError, match="GaussianStatePrior"):
-        sing_constrained_smoother(
-            problem,
-            transition_plan=SINGTransitionPlan(support=support),
-            key=jr.key(43),
-            max_iterations=2,
-        )

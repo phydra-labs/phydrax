@@ -13,7 +13,7 @@ from phydrax.algebraic import (
 )
 
 
-def test_bilinear_forecast_is_two_instead_of_total_degree_four() -> None:
+def test_grading_scenario_1() -> None:
     support = SparsePolynomialSupport(
         ("x", "y"),
         ("f", "g"),
@@ -32,9 +32,6 @@ def test_bilinear_forecast_is_two_instead_of_total_degree_four() -> None:
     grouped = multihomogeneous_bezout_forecast(support)
     assert grouped.path_count == 2
     assert grouped.status == "applicable"
-
-
-def test_ten_equation_bilinear_forecast_uses_arbitrary_precision_host_integers() -> None:
     exponents = tuple((1, 0, 0, 0, 0, 1, 0, 0, 0, 0) for _ in range(10))
     support = SparsePolynomialSupport(
         tuple(f"x{index}" for index in range(10)),
@@ -51,9 +48,6 @@ def test_ten_equation_bilinear_forecast_uses_arbitrary_precision_host_integers()
     grouped = multihomogeneous_bezout_forecast(support)
     assert grouped.path_count == 252
     assert isinstance(grouped.path_count, int)
-
-
-def test_projective_group_rejects_nonhomogeneous_equation_support() -> None:
     projective = PolynomialVariableGroup(
         "projective-line",
         (0, 1),

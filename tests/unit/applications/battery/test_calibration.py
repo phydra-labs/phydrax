@@ -305,9 +305,7 @@ def _two_experiment_plan(*, domain_limit: Any = 1.0e6) -> Any:
     )
 
 
-def test_multi_experiment_native_problems_share_physics_and_apply_masks_whitening() -> (
-    None
-):
+def test_calibration_scenario_1() -> None:
     plan = _two_experiment_plan()
     prepared = plan.prepare()
     position = plan.parameter_space.initial
@@ -341,9 +339,6 @@ def test_multi_experiment_native_problems_share_physics_and_apply_masks_whitenin
     assert physical.shared_physical["rate_v_s"] == pytest.approx(2.0)
     assert np.isfinite(np.asarray(posterior.log_likelihood(physical)))
     assert np.isfinite(np.asarray(composite.objective(position)))
-
-
-def test_precision_whitening_jvp_jacobian_and_jit_agree() -> None:
     record = _record("one", 1.0, 2.0, 0.0)
     layout = battery_calibration_coordinate_layout(record, ("voltage_v",))
     precision = 4.0 * jnp.eye(3)
@@ -398,14 +393,6 @@ def test_precision_whitening_jvp_jacobian_and_jit_agree() -> None:
     raw = prediction - record.voltage_v
     expected = np.asarray(2.0 * raw)
     np.testing.assert_allclose(prepared.residual(position), expected, rtol=2.0e-5)
-
-
-def _broken_nuisance(prediction: Any, nuisance: Any) -> None:
-    del prediction, nuisance
-    raise RuntimeError("programming defect")
-
-
-def test_declared_domain_failure_is_invalid_but_programming_error_propagates() -> None:
     invalid_plan = _two_experiment_plan(domain_limit=2.0)
     invalid_residual = invalid_plan.prepare().residual(
         invalid_plan.parameter_space.initial
@@ -449,6 +436,11 @@ def test_declared_domain_failure_is_invalid_but_programming_error_propagates() -
     )
     with pytest.raises(RuntimeError, match="programming defect"):
         plan.prepare().residual(position)
+
+
+def _broken_nuisance(prediction: Any, nuisance: Any) -> None:
+    del prediction, nuisance
+    raise RuntimeError("programming defect")
 
 
 def test_preparation_rejects_unknown_ledgers_test_data_and_covariance_mismatch() -> None:

@@ -39,7 +39,7 @@ def _tetrahedral_mesh() -> Any:
     )
 
 
-def test_qft_cavity_modes_have_declared_single_quantum_energy() -> None:
+def test_qft_contracts() -> None:
     plan = MaxwellEigenmodeNormalizationPlan(
         jnp.eye(2),
         jnp.eye(2),
@@ -56,9 +56,6 @@ def test_qft_cavity_modes_have_declared_single_quantum_energy() -> None:
     np.testing.assert_allclose(result.evidence.normalization_residuals, 0.0, atol=1e-12)
     assert bool(jnp.all(result.evidence.successful))
     assert len(set(result.mode_ids)) == 2
-
-
-def test_qft_mode_resource_limits_are_exact_and_identity_defining() -> None:
     with pytest.raises(TypeError, match="maximum_modes"):
         MaxwellEigenmodeNormalizationPlan(
             jnp.eye(1),
@@ -82,9 +79,6 @@ def test_qft_mode_resource_limits_are_exact_and_identity_defining() -> None:
         maximum_modes=2,
     )
     assert first.plan_id != second.plan_id
-
-
-def test_qft_participation_and_dipole_coupling_retain_si_units() -> None:
     modes = (
         # ty: ignore[invalid-argument-type]
         MaxwellEigenmodeNormalizationPlan(jnp.eye(1), jnp.eye(1), [3.0], hbar=2.0)
@@ -107,9 +101,6 @@ def test_qft_participation_and_dipole_coupling_retain_si_units() -> None:
     assert coupling.angular_coupling_unit == "rad s^-1"
     assert coupling.interaction_energy_unit == "J"
     assert bool(jnp.all(coupling.successful))
-
-
-def test_qft_purcell_lowering_matches_resonant_bad_cavity_limit() -> None:
     plan = PurcellLoweringPlan(10.0, 10.0, 2.0, 0.25)
     result = plan.lower(0.5)
 
@@ -119,9 +110,6 @@ def test_qft_purcell_lowering_matches_resonant_bad_cavity_limit() -> None:
     np.testing.assert_allclose(result.lamb_shift_angular_frequency, 0.0)
     assert result.rate_unit == "rad s^-1"
     assert bool(result.successful)
-
-
-def test_qft_maxwell_bloch_and_lindblad_rhs_preserve_quantum_constraints() -> None:
     bloch_plan = MaxwellBlochPlan(
         cavity_detuning=0.1,
         emitter_detuning=-0.2,
@@ -173,9 +161,6 @@ def test_qft_maxwell_bloch_and_lindblad_rhs_preserve_quantum_constraints() -> No
         ).state_coordinates.evidence.domain_kind
         == "full"
     )
-
-
-def test_qft_adaptive_hcurl_fails_closed_for_unsupported_claims() -> None:
     mesh = _tetrahedral_mesh()
     high_order = AdaptiveHcurlCapabilityPlan(mesh, requested_polynomial_order=2)
     missing_adaptation = AdaptiveHcurlCapabilityPlan(

@@ -93,7 +93,7 @@ def test_ragged_time_series_data_constraint_vector_targets() -> None:
     assert jnp.allclose(metrics["data_accuracy"], 1.0)
 
 
-def test_ragged_time_series_data_constraint_samples_only_case_subset() -> None:
+def test_ragged_time_contracts() -> None:
     domain, values = _make_domain_and_values()
     allowed = jnp.asarray([1, 2], dtype=jnp.int32)
     constraint = RaggedTimeSeriesDataTerm(
@@ -107,9 +107,6 @@ def test_ragged_time_series_data_constraint_samples_only_case_subset() -> None:
 
     batch = constraint.sample(key=jr.key(9))
     assert jnp.all(jnp.isin(batch.case_indices, allowed))
-
-
-def test_ragged_time_series_case_uniform_samples_only_case_subset() -> None:
     domain, values = _make_domain_and_values()
     allowed = jnp.asarray([2], dtype=jnp.int32)
     constraint = RaggedTimeSeriesDataTerm(

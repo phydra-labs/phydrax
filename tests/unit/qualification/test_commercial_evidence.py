@@ -85,7 +85,7 @@ def _trust() -> tuple[HMACSHA256ReleaseSigner, HMACSHA256TrustPolicy]:
     return signer, policy
 
 
-def test_exact_support_dependency_mismatch_is_not_admitted() -> None:
+def test_commercial_evidence_scenario_1() -> None:
     dependency_support = SupportTuple("dependency.core", {"backend": "cpu"})
     wrong_support = SupportTuple("dependency.core", {"backend": "gpu"})
     dependency_profile = CapabilityProfile(
@@ -154,17 +154,11 @@ def test_exact_support_dependency_mismatch_is_not_admitted() -> None:
         ).profile_id
         == admitted_profile.profile_id
     )
-
-
-def test_performance_evidence_cannot_satisfy_scientific_predicate() -> None:
     report = _matrix().evaluate((_evidence("performance"),), at_time=2)
 
     assert report.outcome == "inconclusive"
     assert report.inconclusive_predicate_ids == ("scientific-gate",)
     assert report.gaps == (("scientific-gate", "inconclusive", ("missing-evidence",)),)
-
-
-def test_all_evidence_kinds_have_isolated_identities() -> None:
     kinds = (
         "unit",
         "smoke",
@@ -180,7 +174,7 @@ def test_all_evidence_kinds_have_isolated_identities() -> None:
     assert len({item.evidence_id for item in evidence}) == len(kinds)
 
 
-def test_expiry_and_supersession_do_not_resurrect_passing_evidence() -> None:
+def test_commercial_evidence_scenario_2() -> None:
     matrix = _matrix()
     expired = _evidence("scientific", expires_at=2)
     expired_report = matrix.evaluate((expired,), at_time=3)
@@ -199,9 +193,6 @@ def test_expiry_and_supersession_do_not_resurrect_passing_evidence() -> None:
     assert replaced_report.gaps[0][2] == (
         f"failed:{replacement.evidence_id}:reference-disagreement",
     )
-
-
-def test_evidence_matrix_and_dependency_identities_are_order_independent() -> None:
     first = QualificationEvidence(
         "scientific",
         "passed",
@@ -267,9 +258,6 @@ def test_evidence_matrix_and_dependency_identities_are_order_independent() -> No
         matrix_a.evaluate((first,), at_time=2).report_id
         == matrix_b.evaluate((second,), at_time=2).report_id
     )
-
-
-def test_resource_observations_and_forecasts_are_exact_and_content_addressed() -> None:
     observed_a = ObservedResourceRecord(
         "subject",
         "build",
@@ -314,7 +302,7 @@ def test_resource_observations_and_forecasts_are_exact_and_content_addressed() -
     )
 
 
-def test_reference_manifest_refuses_unlicensed_requested_rights() -> None:
+def test_commercial_evidence_scenario_3() -> None:
     manifest = ReferenceArtifactManifest(
         "reference-case",
         checksum_algorithm="sha256",
@@ -339,9 +327,6 @@ def test_reference_manifest_refuses_unlicensed_requested_rights() -> None:
         match="commercial-use-not-permitted; redistribution-not-permitted",
     ):
         manifest.require_rights(commercial_use=True, redistribution=True)
-
-
-def test_unquantified_reference_can_be_admitted_but_not_claimed_exact() -> None:
     manifest = ReferenceArtifactManifest(
         "raw-coordinate-source",
         checksum_algorithm="sha256",
@@ -369,9 +354,6 @@ def test_unquantified_reference_can_be_admitted_but_not_claimed_exact() -> None:
     exact = ReferenceArtifactManifest.from_record(exact_record)
     assert exact.require_uncertainty() == (("position", 0.0),)
     assert exact.manifest_id != manifest.manifest_id
-
-
-def test_matrix_preserves_failed_and_inconclusive_gaps_deterministically() -> None:
     matrix = QualificationMatrix(
         {
             "reference-gate": {

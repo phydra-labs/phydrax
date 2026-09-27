@@ -14,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_constraint_operator_reuses_factorization_across_affine_targets() -> None:
+def test_holomorphic_constraints_scenario_1() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
     functionals = (
         phx.equations.HolomorphicPointFunctional.value(-1.0),
@@ -56,9 +56,31 @@ def test_constraint_operator_reuses_factorization_across_affine_targets() -> Non
     certificate = potential.holomorphic_certificate()
     assert certificate.parameter_coverage == "finite-subspace"
     assert certificate.linear_in_parameters
+    frame = phx.equations.HolomorphicPolynomialFrame.one_variable(1)
+    duplicate = phx.equations.HolomorphicPointFunctional.value(0.0)
+    operator = phx.equations.HolomorphicConstraintOperatorPlan(
+        frame,
+        (duplicate, duplicate),
+    ).prepare()
+    assert operator.evidence.rank == 1
+    assert operator.evidence.nullity == 3
+    operator.affine_map(jnp.asarray([1.0, 1.0]))
+    with pytest.raises(ValueError, match="inconsistent"):
+        operator.affine_map(jnp.asarray([1.0, 2.0]))
+    with pytest.raises(ValueError, match="full row rank"):
+        phx.equations.HolomorphicConstraintProjector(operator)
 
-
-def test_vector_frame_supports_coupled_outputs_and_several_variables() -> None:
+    constant_frame = phx.equations.HolomorphicPolynomialFrame.one_variable(0)
+    inactive = phx.equations.HolomorphicPointFunctional.normal_derivative(
+        0.0,
+        # ty: ignore[invalid-argument-type]
+        (1.0, 0.0),
+    )
+    with pytest.raises(ValueError, match="derivative order"):
+        phx.equations.HolomorphicConstraintOperatorPlan(
+            constant_frame,
+            (inactive,),
+        ).prepare()
     indices = phx.equations.HolomorphicMultiIndexSet.total_degree(2, 2)
     normalization = phx.equations.ComplexAffineNormalization(
         jnp.asarray([0.1 + 0.2j, -0.3 + 0.1j]),
@@ -103,9 +125,6 @@ def test_vector_frame_supports_coupled_outputs_and_several_variables() -> None:
         2,
         frame.real_coefficient_count,
     )
-
-
-def test_nonlinear_cardinal_projection_enforces_targets_after_parameter_change() -> None:
     frame = phx.equations.HolomorphicPolynomialFrame.one_variable(1)
     functionals = (
         phx.equations.HolomorphicPointFunctional.value(-1.0),
@@ -213,31 +232,3 @@ def test_biharmonic_and_plane_elasticity_functionals_match_physical_wrappers() -
         normal[0] * state[0] + normal[1] * state[2],
     )
     assert material.material_id in displacement_y.construction_dependencies
-
-
-def test_constraint_rank_compatibility_and_validation_fail_closed() -> None:
-    frame = phx.equations.HolomorphicPolynomialFrame.one_variable(1)
-    duplicate = phx.equations.HolomorphicPointFunctional.value(0.0)
-    operator = phx.equations.HolomorphicConstraintOperatorPlan(
-        frame,
-        (duplicate, duplicate),
-    ).prepare()
-    assert operator.evidence.rank == 1
-    assert operator.evidence.nullity == 3
-    operator.affine_map(jnp.asarray([1.0, 1.0]))
-    with pytest.raises(ValueError, match="inconsistent"):
-        operator.affine_map(jnp.asarray([1.0, 2.0]))
-    with pytest.raises(ValueError, match="full row rank"):
-        phx.equations.HolomorphicConstraintProjector(operator)
-
-    constant_frame = phx.equations.HolomorphicPolynomialFrame.one_variable(0)
-    inactive = phx.equations.HolomorphicPointFunctional.normal_derivative(
-        0.0,
-        # ty: ignore[invalid-argument-type]
-        (1.0, 0.0),
-    )
-    with pytest.raises(ValueError, match="derivative order"):
-        phx.equations.HolomorphicConstraintOperatorPlan(
-            constant_frame,
-            (inactive,),
-        ).prepare()

@@ -76,7 +76,7 @@ def _local_face_trace_dofs(element: Any, local_face: Any) -> Any:
     )
 
 
-def test_q1_hex_routing_remains_vertex_compatible() -> None:
+def test_fem_high_order_hexahedral_topology_scenario_1() -> None:
     mesh = _two_hex_mesh()
     dof_map = phx.discretization.FiniteElementDofMap(
         mesh,
@@ -87,40 +87,56 @@ def test_q1_hex_routing_remains_vertex_compatible() -> None:
     assert dof_map.global_dof_count == 12
     assert np.array_equal(dof_map.cell_dofs[0], mesh.blocks[0].vertices)
     assert np.array_equal(dof_map.dof_coordinates, mesh.coordinates)
-
-
-@pytest.mark.parametrize(
-    ("degree", "global_count", "entity_counts", "boundary_count"),
-    (
+    for degree, global_count, entity_counts, boundary_count in (
         (2, 45, (12, 20, 11, 2), 42),
         (3, 112, (12, 40, 44, 16), 92),
-    ),
-)
-def test_high_order_hex_global_counts_layout_and_boundary_mask(
-    degree: Any,
-    global_count: Any,
-    entity_counts: Any,
-    boundary_count: Any,
-) -> None:
-    mesh = _two_hex_mesh()
-    element = _element(degree)
-    dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
-    field = phx.discretization.FiniteElementFieldSpec("u", element)
-    prepared = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+    ):
+        mesh = _two_hex_mesh()
+        element = _element(degree)
+        dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
+        field = phx.discretization.FiniteElementFieldSpec("u", element)
+        prepared = phx.discretization.FiniteElementPlan(mesh, field).prepare()
 
-    assert dof_map.association == "entity"
-    assert dof_map.global_dof_count == global_count
-    assert dof_map.entity_dof_counts == entity_counts
-    assert np.count_nonzero(dof_map.boundary_dof_mask) == boundary_count
-    assert prepared.field_spaces[0].layout.names == (
-        "vertices",
-        "edges",
-        "faces",
-        "cells",
+        assert dof_map.association == "entity"
+        assert dof_map.global_dof_count == global_count
+        assert dof_map.entity_dof_counts == entity_counts
+        assert np.count_nonzero(dof_map.boundary_dof_mask) == boundary_count
+        assert prepared.field_spaces[0].layout.names == (
+            "vertices",
+            "edges",
+            "faces",
+            "cells",
+        )
+    mesh = _two_hex_mesh()
+    cells = np.asarray(mesh.blocks[0].vertices)
+    reordered = _two_hex_mesh(cells=cells[::-1], global_ids=(41, 17))
+    element = _element(3)
+    original_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
+    reordered_map = phx.discretization.FiniteElementDofMap(reordered, (element,))
+
+    assert mesh.topology_id == reordered.topology_id
+    assert original_map.dof_map_id == reordered_map.dof_map_id
+    assert np.array_equal(original_map.cell_dofs[0], reordered_map.cell_dofs[0][::-1])
+    assert np.array_equal(
+        original_map.boundary_dof_mask,
+        reordered_map.boundary_dof_mask,
+    )
+    mesh = _two_hex_mesh()
+    element = _element(3)
+    dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
+    gathered = np.asarray(dof_map.dof_coordinates)[np.asarray(dof_map.cell_dofs[0])]
+    expected = np.stack(
+        (
+            np.asarray(element.reference_nodes),
+            np.asarray(element.reference_nodes) + np.asarray((1.0, 0.0, 0.0)),
+        )
     )
 
-
-def test_shared_hex_face_trace_is_single_valued_at_p3() -> None:
+    assert np.allclose(gathered, expected, rtol=1.0e-12, atol=1.0e-12)
+    assert np.allclose(
+        dof_map.evaluate_coordinates(mesh, mesh.coordinates),
+        dof_map.dof_coordinates,
+    )
     mesh = _two_hex_mesh()
     element = _element(3)
     dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
@@ -142,7 +158,7 @@ def test_shared_hex_face_trace_is_single_valued_at_p3() -> None:
     assert set(trace_routes[0].tolist()) == set(trace_routes[1].tolist())
 
 
-def test_all_quadrilateral_face_orientations_have_explicit_tensor_permutations() -> None:
+def test_fem_high_order_hexahedral_topology_scenario_2() -> None:
     expected = {
         (0, 1, 2, 3): (0, 1, 2, 3, 4, 5),
         (1, 2, 3, 0): (4, 2, 0, 5, 3, 1),
@@ -165,54 +181,12 @@ def test_all_quadrilateral_face_orientations_have_explicit_tensor_permutations()
             tensor_permutation
         )
         assert tuple(_quadrilateral_tensor_permutation(cycle, 2, 3)) == tensor_permutation
-
-
-def test_high_order_hex_routing_and_content_identity_ignore_cell_row_order() -> None:
-    mesh = _two_hex_mesh()
-    cells = np.asarray(mesh.blocks[0].vertices)
-    reordered = _two_hex_mesh(cells=cells[::-1], global_ids=(41, 17))
-    element = _element(3)
-    original_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
-    reordered_map = phx.discretization.FiniteElementDofMap(reordered, (element,))
-
-    assert mesh.topology_id == reordered.topology_id
-    assert original_map.dof_map_id == reordered_map.dof_map_id
-    assert np.array_equal(original_map.cell_dofs[0], reordered_map.cell_dofs[0][::-1])
-    assert np.array_equal(
-        original_map.boundary_dof_mask,
-        reordered_map.boundary_dof_mask,
-    )
-
-
-def test_high_order_hex_dof_coordinates_reproduce_each_affine_cell() -> None:
-    mesh = _two_hex_mesh()
-    element = _element(3)
-    dof_map = phx.discretization.FiniteElementDofMap(mesh, (element,))
-    gathered = np.asarray(dof_map.dof_coordinates)[np.asarray(dof_map.cell_dofs[0])]
-    expected = np.stack(
-        (
-            np.asarray(element.reference_nodes),
-            np.asarray(element.reference_nodes) + np.asarray((1.0, 0.0, 0.0)),
-        )
-    )
-
-    assert np.allclose(gathered, expected, rtol=1.0e-12, atol=1.0e-12)
-    assert np.allclose(
-        dof_map.evaluate_coordinates(mesh, mesh.coordinates),
-        dof_map.dof_coordinates,
-    )
-
-
-def test_compatible_anisotropic_hex_traces_route_globally() -> None:
     mesh = _two_hex_mesh()
     dof_map = _dof_map(mesh, (2, 3, 4))
 
     assert dof_map.global_dof_count == 100
     assert dof_map.entity_dof_counts == (12, 38, 38, 12)
     assert np.count_nonzero(dof_map.boundary_dof_mask) == 82
-
-
-def test_incompatible_anisotropic_hex_trace_requires_a_mortar() -> None:
     mesh = _two_hex_mesh(
         cells=(
             (0, 1, 2, 3, 4, 5, 6, 7),

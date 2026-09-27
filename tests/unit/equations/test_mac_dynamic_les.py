@@ -234,28 +234,25 @@ def test_mac_dynamic_stage_realizes_stress_rate_transfer_and_energy_evidence() -
     assert stage.boundary_support == "periodic-wrap-only"
 
 
-@pytest.mark.parametrize(
-    ("averaging", "expected_shape"),
-    (
+def test_mac_global_plane_and_local_routes() -> None:
+    for averaging, expected_shape in (
         (GlobalDynamicLESAveraging(), ()),
         (HomogeneousPlaneDynamicLESAveraging(("x", "y")), (1, 1, 5)),
         (
             LocalKernelDynamicLESAveraging(jnp.ones((3, 3, 3), dtype=jnp.float32)),
             (5, 5, 5),
         ),
-    ),
-)
-def test_mac_global_plane_and_local_routes(averaging: Any, expected_shape: Any) -> None:
-    discretization, _, momentum = _grid()
-    prepared = _prepared(discretization, momentum, averaging=averaging)
+    ):
+        discretization, _, momentum = _grid()
+        prepared = _prepared(discretization, momentum, averaging=averaging)
 
-    stage = prepared.evaluate(
-        _velocity(discretization), momentum.boundaries.homogeneous_stage()
-    )
+        stage = prepared.evaluate(
+            _velocity(discretization), momentum.boundaries.homogeneous_stage()
+        )
 
-    assert stage.dynamic_result.coefficient.shape == expected_shape
-    assert stage.continuation_state is None
-    assert stage.accepted_update_mask.shape == ()
+        assert stage.dynamic_result.coefficient.shape == expected_shape
+        assert stage.continuation_state is None
+        assert stage.accepted_update_mask.shape == ()
 
 
 def test_mac_history_mask_restart_and_no_hidden_commit() -> None:

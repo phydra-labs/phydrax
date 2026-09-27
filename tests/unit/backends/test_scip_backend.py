@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 
 
-def test_scip_backend_declares_optional_host_milp_boundary() -> None:
+def test_scip_contracts() -> None:
     capabilities = phx.backends.SCIP_CAPABILITIES
     availability = phx.backends.scip_availability()
 
@@ -16,6 +16,10 @@ def test_scip_backend_declares_optional_host_milp_boundary() -> None:
     assert capabilities.supports("optimization.mixed-integer-linear-program")
     assert not capabilities.supports_plan_prepare_solve_refresh
     assert availability.requirement == "install phydrax[scip] (pyscipopt==6.2.1)"
+    with pytest.raises(ValueError, match="positive"):
+        phx.backends.SCIPPlan(maximum_nodes=0)
+    with pytest.raises(ValueError, match="positive"):
+        phx.backends.SCIPPlan(time_limit=0.0)
 
 
 def test_unavailable_scip_fails_at_explicit_prepare_boundary() -> None:
@@ -25,10 +29,3 @@ def test_unavailable_scip_fails_at_explicit_prepare_boundary() -> None:
 
     with pytest.raises(phx.backends.BackendUnavailableError):
         phx.backends.prepare_scip()
-
-
-def test_scip_plan_rejects_invalid_resource_settings() -> None:
-    with pytest.raises(ValueError, match="positive"):
-        phx.backends.SCIPPlan(maximum_nodes=0)
-    with pytest.raises(ValueError, match="positive"):
-        phx.backends.SCIPPlan(time_limit=0.0)

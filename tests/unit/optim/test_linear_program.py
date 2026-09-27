@@ -13,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_bounded_linear_program_uses_native_bounds_without_stored_hessian() -> None:
+def test_linear_program_scenario_1() -> None:
     problem = phx.optim.LinearProgram(
         jnp.asarray([-1.0, -0.5]),
         inequality_matrix=jnp.asarray([[1.0, 1.0]]),
@@ -28,9 +28,6 @@ def test_bounded_linear_program_uses_native_bounds_without_stored_hessian() -> N
     assert result.successful
     assert result.kkt_residual_norm < 1e-7
     assert not result.certificate.primal_ray_valid
-
-
-def test_linear_program_result_produces_reusable_warm_start() -> None:
     problem = phx.optim.LinearProgram(
         jnp.asarray([-1.0, -0.5]),
         inequality_matrix=jnp.asarray([[1.0, 1.0]]),
@@ -44,9 +41,6 @@ def test_linear_program_result_produces_reusable_warm_start() -> None:
     np.testing.assert_allclose(warm.primal, cold.primal, atol=2e-6)
     assert warm.status == phx.optim.ConvexProgramStatus.OPTIMAL
     assert warm.iterations <= cold.iterations
-
-
-def test_linear_program_reports_independently_audited_terminal_certificates() -> None:
     infeasible = phx.optim.LinearProgram(
         jnp.zeros(1),
         inequality_matrix=jnp.asarray([[1.0], [-1.0]]),
@@ -62,9 +56,6 @@ def test_linear_program_reports_independently_audited_terminal_certificates() ->
     assert unbounded_result.status == phx.optim.ConvexProgramStatus.DUAL_INFEASIBLE
     assert unbounded_result.certificate.primal_ray_valid
     assert unbounded_result.certificate.primal_ray_objective < 0.0
-
-
-def test_fixed_and_one_sided_bounds_preserve_kkt_dual_signs() -> None:
     problem = phx.optim.LinearProgram(
         jnp.asarray([1.0, 1.0, -2.0]),
         bounds=phx.optim.Bounds(

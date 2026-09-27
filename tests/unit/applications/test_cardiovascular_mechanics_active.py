@@ -96,7 +96,7 @@ def _reaction(calcium: Any, model_id: Any = "ord-2011") -> Any:
     )
 
 
-def test_all_contraction_fidelities_are_named_and_transactional() -> None:
+def test_cardiovascular_mechanics_active_scenario_1() -> None:
     state = ContractionState.resting((2,), dtype=jnp.float64)
     prescribed = prepare_contraction(PrescribedTensionContractionPlan(), state)
     prescribed_candidate = prescribed.candidate(
@@ -125,9 +125,6 @@ def test_all_contraction_fidelities_are_named_and_transactional() -> None:
     assert calcium.fidelity_id == "calcium-driven-first-order"
     land = LandLengthVelocityContractionPlan(100.0, 5.0e-4, ionic_model_id="ord-2011")
     assert land.fidelity_id == "land-length-velocity-calcium"
-
-
-def test_land_consumes_live_compatible_reaction_calcium_and_length_velocity() -> None:
     state = ContractionState.resting((2,), dtype=jnp.float64)
     prepared = prepare_contraction(
         LandLengthVelocityContractionPlan(
@@ -154,9 +151,6 @@ def test_land_consumes_live_compatible_reaction_calcium_and_length_velocity() ->
     incompatible = _reaction([1.0e-3, 1.0e-3], model_id="tp06")
     rejected = prepared.candidate_from_reaction(state, incompatible, jnp.ones(2), 5.0)
     assert not bool(rejected.successful)
-
-
-def test_active_stress_and_active_strain_are_separate_active_mechanics_routes() -> None:
     state = ContractionState.resting((1,), dtype=jnp.float64)
     contraction = prepare_contraction(
         ActivationDrivenContractionPlan(50.0, activation_time=1.0), state

@@ -150,7 +150,7 @@ def fixture(
     return imported, geometry, mapping, policy, candidates, lesions
 
 
-def test_event_order_dedup_history_identity_and_cause_union() -> None:
+def test_radiation_ledgers_scenario_1() -> None:
     imported, geometry, mapping, policy, candidates, lesions = fixture(
         extra_reaction=True
     )
@@ -185,9 +185,6 @@ def test_event_order_dedup_history_identity_and_cause_union() -> None:
         for candidate in candidates.candidates
         if candidate.cause == "direct"
     )
-
-
-def test_inclusive_deposition_threshold_and_exact_probability_edges() -> None:
     _, _, _, _, candidates, _ = fixture(direct_probability=0.5)
     uniforms = tuple((item.candidate_id, 0.5) for item in candidates.candidates)
     realized = rad.realize_radiation_lesions(
@@ -213,9 +210,6 @@ def test_inclusive_deposition_threshold_and_exact_probability_edges() -> None:
             random_lineage="invalid",
             uniforms=tuple((item.candidate_id, 1.0) for item in candidates.candidates),
         )
-
-
-def test_circular_dsb_and_linear_ssb_are_different_topologies() -> None:
     _, circle, _, _, _, circular_lesions = fixture(circular=True)
     circular = rad.cluster_radiation_lesions(
         circular_lesions, circle, maximum_contour_gap=1
@@ -228,7 +222,7 @@ def test_circular_dsb_and_linear_ssb_are_different_topologies() -> None:
         rad.cluster_radiation_lesions(circular_lesions, line, maximum_contour_gap=1)
 
 
-def test_transitive_clusters_require_an_actual_opposite_strand_break_pair() -> None:
+def test_radiation_ledgers_scenario_2() -> None:
     _, geometry, _, _, candidates, lesions = fixture()
     original = lesions.lesions[0]
     history = original.history
@@ -262,9 +256,6 @@ def test_transitive_clusters_require_an_actual_opposite_strand_break_pair() -> N
     assert (
         clusters.clusters[0].classification == "SSB-cluster"
     )  # The base bridge is not a DSB.
-
-
-def test_many_to_many_routes_conserve_deposition_and_units() -> None:
     imported, geometry, _, policy, _, _ = fixture()
     geometry = replace(
         geometry,
@@ -312,9 +303,6 @@ def test_many_to_many_routes_conserve_deposition_and_units() -> None:
     )
     with pytest.raises(ValueError, match="material"):
         replace(geometry, losses=(loss,))
-
-
-def test_untimed_chemistry_cannot_be_recut_and_rights_are_admitted() -> None:
     imported, geometry, mapping, policy, _, _ = fixture()
     with pytest.raises(ValueError, match="Untimed"):
         rad.candidate_radiation_lesions(

@@ -22,7 +22,7 @@ def _tri_mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_sum_factorized_gradient_contracts_every_nodal_axis() -> None:
+def test_fem_ir_foundation_repairs_scenario_1() -> None:
     family = phx.discretization.fem.ReferenceNodalFamily("quadrilateral", 2)
     tabulation = phx.discretization.fem.TensorProductTabulation(
         family,
@@ -45,9 +45,6 @@ def test_sum_factorized_gradient_contracts_every_nodal_axis() -> None:
     assert gradient.shape == (2, 2, 2)
     assert jnp.linalg.norm(gradient) > 0.0
     assert jnp.allclose(gradient.reshape((-1, 2)), expected)
-
-
-def test_smoothed_elasticity_defaults_to_budgeted_matrix_free_operator() -> None:
     mesh = _tri_mesh()
     smoothing = phx.discretization.fem.smoothing
     plan = smoothing.SmoothedElasticityPlan(
@@ -61,6 +58,21 @@ def test_smoothed_elasticity_defaults_to_budgeted_matrix_free_operator() -> None
     with pytest.raises(ValueError, match="entry budget"):
         operator.materialize(max_entries=10)
     assert operator.materialize(max_entries=100).shape == (10, 10)
+    material = phx.equations.fem.LocalImplicitMaterial(
+        lambda state, target: state**2 - target,
+        lambda state, target: phx.equations.ConstitutiveResponse(state, state),
+        state_shape=(1,),
+        model_id="implicit-square-root",
+    )
+    initial = jnp.asarray([1.0])
+    response, tangent = jax.jvp(
+        lambda target: material.evaluate(initial, target).response,
+        (jnp.asarray([4.0]),),
+        (jnp.asarray([1.0]),),
+    )
+
+    assert jnp.allclose(response, 2.0)
+    assert jnp.allclose(tangent, 0.25, atol=1.0e-8)
 
 
 def test_rejected_schedule_stage_restores_committed_state() -> None:
@@ -80,24 +92,6 @@ def test_rejected_schedule_stage_restores_committed_state() -> None:
     assert jnp.allclose(final, 2.0)
     # ty: ignore[invalid-argument-type]
     assert jnp.allclose(results[0].state, 2.0)
-
-
-def test_material_evaluate_uses_implicit_root_derivative() -> None:
-    material = phx.equations.fem.LocalImplicitMaterial(
-        lambda state, target: state**2 - target,
-        lambda state, target: phx.equations.ConstitutiveResponse(state, state),
-        state_shape=(1,),
-        model_id="implicit-square-root",
-    )
-    initial = jnp.asarray([1.0])
-    response, tangent = jax.jvp(
-        lambda target: material.evaluate(initial, target).response,
-        (jnp.asarray([4.0]),),
-        (jnp.asarray([1.0]),),
-    )
-
-    assert jnp.allclose(response, 2.0)
-    assert jnp.allclose(tangent, 0.25, atol=1.0e-8)
 
 
 def test_local_implicit_material_preserves_response_metadata_and_failed_status() -> None:
@@ -141,7 +135,7 @@ def test_local_implicit_material_preserves_response_metadata_and_failed_status()
     assert jnp.allclose(result.dissipation, 0.75)
 
 
-def test_local_implicit_material_preserves_callback_invalidity() -> None:
+def test_fem_ir_foundation_repairs_scenario_2() -> None:
     material = phx.equations.fem.LocalImplicitMaterial(
         lambda state, target: state - target,
         lambda state, target: phx.equations.ConstitutiveResponse(
@@ -158,9 +152,6 @@ def test_local_implicit_material_preserves_callback_invalidity() -> None:
 
     assert bool(result.diagnostics["converged"])
     assert not bool(result.valid)
-
-
-def test_smoothing_certificate_checks_full_affine_identity() -> None:
     mesh = _tri_mesh()
     smoothing = phx.discretization.fem.smoothing
     plan = smoothing.SmoothedElasticityPlan(
@@ -183,9 +174,6 @@ def test_smoothing_certificate_checks_full_affine_identity() -> None:
 
     assert jnp.max(evidence.affine_reproduction_defect) < 1.0e-12
     assert jnp.max(evidence.closure_defect) < 1.0e-12
-
-
-def test_ir_workset_program_preserves_lowered_ir_identity() -> None:
     mesh = _tri_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)

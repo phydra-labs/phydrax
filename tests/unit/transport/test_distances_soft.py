@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -229,34 +227,28 @@ def test_soft_order_transport_exposes_solver_diagnostics_and_rejects_bad_weights
         jax.block_until_ready(invalid.source_potential)
 
 
-@pytest.mark.parametrize(
-    "operator",
-    (
+def test_soft_order_operators_compose_with_forward_reverse_and_batch_transforms() -> None:
+    for operator in (
         lambda values: phx.transport.soft_sort(values, epsilon=0.15),
         lambda values: phx.transport.soft_rank(values, epsilon=0.15),
         lambda values: phx.transport.soft_quantile(values, 0.35, epsilon=0.15),
         lambda values: phx.transport.soft_topk_mask(values, 2, epsilon=0.15),
-    ),
-    ids=("sort", "rank", "quantile", "topk"),
-)
-def test_soft_order_operators_compose_with_forward_reverse_and_batch_transforms(
-    operator: Any,
-) -> None:
-    values = jnp.asarray([-1.3, 0.2, 2.1, 0.8])
-    direction = jnp.asarray([0.3, -0.5, 0.2, 0.7])
-    eager = operator(values)
-    compiled = jax.jit(operator)(values)
-    _, tangent = jax.jvp(operator, (values,), (direction,))
-    jacobian = jax.jacfwd(operator)(values)
-    expected_tangent = jnp.tensordot(jacobian, direction, axes=([-1], [0]))
-    gradient = jax.grad(lambda candidate: jnp.sum(operator(candidate) ** 2))(values)
-    batched = jax.vmap(operator)(jnp.stack((values, values + 1.0)))
+    ):
+        values = jnp.asarray([-1.3, 0.2, 2.1, 0.8])
+        direction = jnp.asarray([0.3, -0.5, 0.2, 0.7])
+        eager = operator(values)
+        compiled = jax.jit(operator)(values)
+        _, tangent = jax.jvp(operator, (values,), (direction,))
+        jacobian = jax.jacfwd(operator)(values)
+        expected_tangent = jnp.tensordot(jacobian, direction, axes=([-1], [0]))
+        gradient = jax.grad(lambda candidate: jnp.sum(operator(candidate) ** 2))(values)
+        batched = jax.vmap(operator)(jnp.stack((values, values + 1.0)))
 
-    assert jnp.allclose(compiled, eager, rtol=1e-8, atol=1e-9)
-    assert jnp.allclose(tangent, expected_tangent, rtol=1e-7, atol=1e-8)
-    assert jnp.all(jnp.isfinite(jacobian))
-    assert jnp.all(jnp.isfinite(gradient))
-    assert batched.shape == (2,) + jnp.shape(eager)
+        assert jnp.allclose(compiled, eager, rtol=1e-8, atol=1e-9)
+        assert jnp.allclose(tangent, expected_tangent, rtol=1e-7, atol=1e-8)
+        assert jnp.all(jnp.isfinite(jacobian))
+        assert jnp.all(jnp.isfinite(gradient))
+        assert batched.shape == (2,) + jnp.shape(eager)
 
 
 def test_soft_order_has_finite_symmetric_second_derivatives_and_tie_sensitivities() -> (

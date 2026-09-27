@@ -80,7 +80,7 @@ def _evaluate(
     )
 
 
-def test_unruh_statistics_superradiance_and_large_exponents_are_finite() -> None:
+def test_hawking_evaporation_scenario_1() -> None:
     scale = _scale()
     scalar = QuantumFieldSpecies("massless-scalar", 0, "boson")
     spinor = QuantumFieldSpecies("massless-spinor", 0.5, "fermion")
@@ -130,11 +130,6 @@ def test_unruh_statistics_superradiance_and_large_exponents_are_finite() -> None
     assert bool(result.successful)
     assert bool(jnp.all(jnp.isfinite(result.mode_number_flux_density)))
     assert result.species_ids == (scalar.species_id, spinor.species_id)
-
-
-def test_schwarzschild_mode_pair_cancels_angular_flux_and_tail_gates_convergence() -> (
-    None
-):
     scale = _scale()
     photon = QuantumFieldSpecies("photon", 1, "boson", multiplicity=2)
     plan = HawkingSpectrumPlan(

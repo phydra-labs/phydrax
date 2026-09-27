@@ -299,7 +299,7 @@ def _array_leaves(tree: Any) -> Any:
     )
 
 
-def test_training_objective_has_no_holdout_split_dependence() -> None:
+def test_kinetic_rollout_training_scenario_1() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     clean = _dataset(runtime, binding)
@@ -328,6 +328,42 @@ def test_training_objective_has_no_holdout_split_dependence() -> None:
         clean.statistics.U_mean, changed_holdout.statistics.U_mean
     )
     np.testing.assert_array_equal(clean_value, changed_value)
+    runtime = _runtime()
+    binding = _binding(runtime)
+    dataset = _dataset(runtime, binding)
+    plan = _plan(runtime, binding, dataset)
+    good = dataset.train_windows[0]
+    bad = eqx.tree_at(
+        lambda value: value.f_history,
+        good,
+        good.f_history.at[-1, 0, 0, 0].set(-1.0),
+    )
+
+    _, evidence = kinetic_rollout_objective(
+        _model(), plan, dataset.statistics, (good, bad), 4
+    )
+
+    np.testing.assert_array_equal(evidence.successful, np.asarray((True, False)))
+    assert evidence.total_loss.shape == (2,)
+    assert evidence.maximum_conservation_residual.shape == (2,)
+    runtime = _runtime()
+    binding = _binding(runtime)
+    dataset = _dataset(runtime, binding)
+    plan = _plan(runtime, binding, dataset)
+    state = initialize_kinetic_rollout_training(
+        _model(offset=0.2), plan, dataset, key=jr.key(7)
+    )
+    before_model = array_tree_fingerprint(state.model)
+    before_optimizer = array_tree_fingerprint(state.optimizer_state)
+
+    update = attempt_kinetic_rollout_update(state, plan, dataset)
+
+    assert not update.accepted
+    assert update.state.attempt_count == 1
+    assert update.state.rejection_count == 1
+    assert update.state.accepted_update_count == 0
+    assert array_tree_fingerprint(update.state.model) == before_model
+    assert array_tree_fingerprint(update.state.optimizer_state) == before_optimizer
 
 
 def test_short_window_objective_and_gradient_are_exact_across_replay_modes() -> None:
@@ -355,48 +391,6 @@ def test_short_window_objective_and_gradient_are_exact_across_replay_modes() -> 
             np.testing.assert_array_equal(observed, expected)
 
 
-def test_vmap_isolates_one_failed_trajectory_without_shortening_other_scans() -> None:
-    runtime = _runtime()
-    binding = _binding(runtime)
-    dataset = _dataset(runtime, binding)
-    plan = _plan(runtime, binding, dataset)
-    good = dataset.train_windows[0]
-    bad = eqx.tree_at(
-        lambda value: value.f_history,
-        good,
-        good.f_history.at[-1, 0, 0, 0].set(-1.0),
-    )
-
-    _, evidence = kinetic_rollout_objective(
-        _model(), plan, dataset.statistics, (good, bad), 4
-    )
-
-    np.testing.assert_array_equal(evidence.successful, np.asarray((True, False)))
-    assert evidence.total_loss.shape == (2,)
-    assert evidence.maximum_conservation_residual.shape == (2,)
-
-
-def test_rejected_proposal_rolls_back_model_and_optimizer_together() -> None:
-    runtime = _runtime()
-    binding = _binding(runtime)
-    dataset = _dataset(runtime, binding)
-    plan = _plan(runtime, binding, dataset)
-    state = initialize_kinetic_rollout_training(
-        _model(offset=0.2), plan, dataset, key=jr.key(7)
-    )
-    before_model = array_tree_fingerprint(state.model)
-    before_optimizer = array_tree_fingerprint(state.optimizer_state)
-
-    update = attempt_kinetic_rollout_update(state, plan, dataset)
-
-    assert not update.accepted
-    assert update.state.attempt_count == 1
-    assert update.state.rejection_count == 1
-    assert update.state.accepted_update_count == 0
-    assert array_tree_fingerprint(update.state.model) == before_model
-    assert array_tree_fingerprint(update.state.optimizer_state) == before_optimizer
-
-
 def test_checkpoint_resume_matches_uninterrupted_next_update(tmp_path: Any) -> None:
     runtime = _runtime()
     binding = _binding(runtime)
@@ -421,7 +415,7 @@ def test_checkpoint_resume_matches_uninterrupted_next_update(tmp_path: Any) -> N
     )
 
 
-def test_best_model_snapshot_is_immutable_across_rejection() -> None:
+def test_kinetic_rollout_training_scenario_2() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)
@@ -437,9 +431,6 @@ def test_best_model_snapshot_is_immutable_across_rejection() -> None:
     assert array_tree_fingerprint(state.best_model) == best_before
     assert array_tree_fingerprint(rejected.state.best_model) == best_before
     np.testing.assert_array_equal(rejected.state.best_loss, state.best_loss)
-
-
-def test_curriculum_advances_only_after_each_accepted_guard() -> None:
     runtime = _runtime()
     binding = _binding(runtime)
     dataset = _dataset(runtime, binding)

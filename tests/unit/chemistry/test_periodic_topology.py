@@ -53,7 +53,7 @@ def _ssh(intercell: Any = 1.0, intracell: Any = 0.4, points: Any = 8) -> Any:
     return pencil, mesh, spectrum, connectivity, connection
 
 
-def test_ssh_wilson_loop_returns_raw_links_and_quantized_zak_phase() -> None:
+def test_periodic_topology_scenario_1() -> None:
     _, mesh, spectrum, connectivity, connection = _ssh()
     manifold = PeriodicBandManifold(spectrum, [0])
     bundle = PeriodicOverlapBundle(manifold, connection)
@@ -64,9 +64,6 @@ def test_ssh_wilson_loop_returns_raw_links_and_quantized_zak_phase() -> None:
     assert wilson.raw_link_determinant_phases.shape == forward_edges.shape
     assert np.min(np.asarray(wilson.link_singular_values)) > 0.0
     assert bool(wilson.successful)
-
-
-def test_topology_rejects_gap_and_link_rank_ambiguity() -> None:
     pencil, mesh, _, connectivity, _ = _ssh(intercell=1.0, intracell=1.0)
     points = np.arange(8, dtype="float64")[:, None] / 8.0
     explicit_mesh = ReciprocalMeshPlan(
@@ -90,11 +87,6 @@ def test_topology_rejects_gap_and_link_rank_ambiguity() -> None:
     )
     with pytest.raises(ValueError, match="rank deficient"):
         PeriodicOverlapBundle(manifold, zero_connection)
-
-
-def test_trivial_two_dimensional_chern_retains_plaquette_and_refinement_evidence() -> (
-    None
-):
     cell = PeriodicCell(np.eye(2))
     basis = PeriodicOrbitalBasisPlan(
         cell,

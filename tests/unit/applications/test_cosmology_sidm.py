@@ -129,7 +129,7 @@ def _case(
     return sidm, pm, state, neighborhood
 
 
-def test_zero_cross_section_is_exactly_equivalent_to_particle_mesh() -> None:
+def test_cosmology_sidm_scenario_1() -> None:
     sidm, pm, state, _ = _case(cross_section=0.0)
     expected = pm.rollout(cosmology.FLRWBackground(1.0, 0.3), state)
     actual = sidm.rollout(cosmology.FLRWBackground(1.0, 0.3), state, jr.key(17))
@@ -142,9 +142,6 @@ def test_zero_cross_section_is_exactly_equivalent_to_particle_mesh() -> None:
     )
     assert not jnp.any(actual.diagnostics.first_half_collisions.accepted_pairs)
     assert not jnp.any(actual.diagnostics.second_half_collisions.accepted_pairs)
-
-
-def test_probability_evidence_has_explicit_a_time_and_kernel_scaling() -> None:
     sidm, _, state, _ = _case(cross_section=1.0e-4)
     short = sidm.collide(state, jr.key(2), 4, 0.01)
     long = sidm.collide(state, jr.key(2), 4, 0.02)
@@ -179,9 +176,79 @@ def test_probability_evidence_has_explicit_a_time_and_kernel_scaling() -> None:
         rtol=0.0,
         atol=0.0,
     )
+    high_probability, _, state, _ = _case(cross_section=1.0)
+    probability_failure = high_probability.collide(state, jr.key(8), 0, 100.0)
+    assert not bool(probability_failure.diagnostics.probability_valid)
+    assert not bool(probability_failure.successful)
+    np.testing.assert_array_equal(
+        probability_failure.accepted_state.canonical_momenta,
+        state.canonical_momenta,
+    )
+    aggregate_policy = cosmology.SIDMCollisionPolicy(
+        maximum_pair_probability=0.9,
+        maximum_particle_probability=1.0e-10,
+        minimum_knudsen_number=1.0e-3,
+        maximum_events_per_half_step=4,
+    )
+    aggregate_plan, _, aggregate_state, _ = _case(
+        cross_section=1.0e-4, policy=aggregate_policy
+    )
+    aggregate_failure = aggregate_plan.collide(aggregate_state, jr.key(8), 0, 0.01)
+    assert bool(aggregate_failure.diagnostics.probability_valid)
+    assert not bool(aggregate_failure.diagnostics.aggregate_probability_valid)
+    assert not bool(aggregate_failure.successful)
+    np.testing.assert_array_equal(
+        aggregate_failure.accepted_state.canonical_momenta,
+        aggregate_state.canonical_momenta,
+    )
 
+    knudsen, _, state, _ = _case(cross_section=1.0e4)
+    knudsen_failure = knudsen.collide(state, jr.key(8), 0, 0.0)
+    assert not bool(knudsen_failure.diagnostics.knudsen_valid)
+    assert not bool(knudsen_failure.successful)
+    rolled_back = knudsen.rollout(cosmology.FLRWBackground(1.0, 0.3), state, jr.key(8))
+    assert not bool(rolled_back.successful)
+    np.testing.assert_array_equal(rolled_back.state.positions, state.positions)
+    np.testing.assert_array_equal(
+        rolled_back.state.canonical_momenta, state.canonical_momenta
+    )
 
-def test_pair_events_are_reorder_stable_endpoint_disjoint_and_conservative() -> None:
+    unequal = jnp.asarray((0.12, 0.13, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125))
+    unequal_plan, _, unequal_state, _ = _case(masses=unequal, cross_section=0.0)
+    mass_failure = unequal_plan.collide(unequal_state, jr.key(8), 0, 0.0)
+    assert not bool(mass_failure.diagnostics.equal_active_mass)
+    assert not bool(mass_failure.successful)
+
+    capacity_policy = cosmology.SIDMCollisionPolicy(
+        maximum_pair_probability=0.9,
+        maximum_particle_probability=0.9,
+        minimum_knudsen_number=1.0e-3,
+        maximum_events_per_half_step=0,
+    )
+    capacity_plan, _, capacity_state, _ = _case(
+        cross_section=0.01, policy=capacity_policy
+    )
+    capacity_failure = capacity_plan.collide(capacity_state, jr.key(31), 9, 3.0)
+    assert int(capacity_failure.diagnostics.event_count) > 0
+    assert not bool(capacity_failure.diagnostics.capacity_valid)
+    assert not bool(capacity_failure.successful)
+    np.testing.assert_array_equal(
+        capacity_failure.accepted_state.canonical_momenta,
+        capacity_state.canonical_momenta,
+    )
+
+    nonfinite_state = cosmology.CosmologicalParticleState(
+        capacity_state.positions,
+        capacity_state.canonical_momenta.at[0, 0].set(jnp.nan),
+        capacity_state.scale_factor,
+    )
+    finite_failure = capacity_plan.collide(nonfinite_state, jr.key(1), 0, 0.0)
+    assert not bool(finite_failure.diagnostics.finite)
+    assert not bool(finite_failure.successful)
+    np.testing.assert_array_equal(
+        finite_failure.accepted_state.canonical_momenta,
+        nonfinite_state.canonical_momenta,
+    )
     sidm, pm, state, neighborhood = _case(cross_section=0.01)
     base = neighborhood.pair_relation
     permutation = jnp.arange(base.capacity - 1, -1, -1)
@@ -273,80 +340,4 @@ def test_inactive_particles_are_untouched_and_ignored_by_equal_mass_check() -> N
     assert not jnp.any(
         result.diagnostics.accepted_pairs
         & ((result.pairs.left_indices == 7) | (result.pairs.right_indices == 7))
-    )
-
-
-def test_probability_knudsen_mass_and_capacity_violations_roll_back_atomically() -> None:
-    high_probability, _, state, _ = _case(cross_section=1.0)
-    probability_failure = high_probability.collide(state, jr.key(8), 0, 100.0)
-    assert not bool(probability_failure.diagnostics.probability_valid)
-    assert not bool(probability_failure.successful)
-    np.testing.assert_array_equal(
-        probability_failure.accepted_state.canonical_momenta,
-        state.canonical_momenta,
-    )
-    aggregate_policy = cosmology.SIDMCollisionPolicy(
-        maximum_pair_probability=0.9,
-        maximum_particle_probability=1.0e-10,
-        minimum_knudsen_number=1.0e-3,
-        maximum_events_per_half_step=4,
-    )
-    aggregate_plan, _, aggregate_state, _ = _case(
-        cross_section=1.0e-4, policy=aggregate_policy
-    )
-    aggregate_failure = aggregate_plan.collide(aggregate_state, jr.key(8), 0, 0.01)
-    assert bool(aggregate_failure.diagnostics.probability_valid)
-    assert not bool(aggregate_failure.diagnostics.aggregate_probability_valid)
-    assert not bool(aggregate_failure.successful)
-    np.testing.assert_array_equal(
-        aggregate_failure.accepted_state.canonical_momenta,
-        aggregate_state.canonical_momenta,
-    )
-
-    knudsen, _, state, _ = _case(cross_section=1.0e4)
-    knudsen_failure = knudsen.collide(state, jr.key(8), 0, 0.0)
-    assert not bool(knudsen_failure.diagnostics.knudsen_valid)
-    assert not bool(knudsen_failure.successful)
-    rolled_back = knudsen.rollout(cosmology.FLRWBackground(1.0, 0.3), state, jr.key(8))
-    assert not bool(rolled_back.successful)
-    np.testing.assert_array_equal(rolled_back.state.positions, state.positions)
-    np.testing.assert_array_equal(
-        rolled_back.state.canonical_momenta, state.canonical_momenta
-    )
-
-    unequal = jnp.asarray((0.12, 0.13, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125))
-    unequal_plan, _, unequal_state, _ = _case(masses=unequal, cross_section=0.0)
-    mass_failure = unequal_plan.collide(unequal_state, jr.key(8), 0, 0.0)
-    assert not bool(mass_failure.diagnostics.equal_active_mass)
-    assert not bool(mass_failure.successful)
-
-    capacity_policy = cosmology.SIDMCollisionPolicy(
-        maximum_pair_probability=0.9,
-        maximum_particle_probability=0.9,
-        minimum_knudsen_number=1.0e-3,
-        maximum_events_per_half_step=0,
-    )
-    capacity_plan, _, capacity_state, _ = _case(
-        cross_section=0.01, policy=capacity_policy
-    )
-    capacity_failure = capacity_plan.collide(capacity_state, jr.key(31), 9, 3.0)
-    assert int(capacity_failure.diagnostics.event_count) > 0
-    assert not bool(capacity_failure.diagnostics.capacity_valid)
-    assert not bool(capacity_failure.successful)
-    np.testing.assert_array_equal(
-        capacity_failure.accepted_state.canonical_momenta,
-        capacity_state.canonical_momenta,
-    )
-
-    nonfinite_state = cosmology.CosmologicalParticleState(
-        capacity_state.positions,
-        capacity_state.canonical_momenta.at[0, 0].set(jnp.nan),
-        capacity_state.scale_factor,
-    )
-    finite_failure = capacity_plan.collide(nonfinite_state, jr.key(1), 0, 0.0)
-    assert not bool(finite_failure.diagnostics.finite)
-    assert not bool(finite_failure.successful)
-    np.testing.assert_array_equal(
-        finite_failure.accepted_state.canonical_momenta,
-        nonfinite_state.canonical_momenta,
     )

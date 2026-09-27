@@ -22,23 +22,20 @@ def _problem() -> Any:
     )
 
 
-@pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
-def test_invalid_initial_root_never_evaluates_residual_or_jacobian(method: Any) -> None:
-    result = jax.jit(
-        lambda state: method.solve(
-            _problem(),
-            state,
-            termination=nl.NonlinearTermination(),
-        )
-    )(jnp.asarray([-1.0]))
-    assert result.status == int(nl.NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE)
-    assert result.diagnostics.domain_failures == 1
-    assert result.diagnostics.residual_evaluations == 0
-    assert result.diagnostics.jacobian_preparations == 0
-    assert jnp.array_equal(result.state, jnp.asarray([-1.0]))
-
-
-def test_newton_shortens_out_of_domain_trials_without_evaluating_them() -> None:
+def test_trial_validity_scenario_1() -> None:
+    for method in (nl.NewtonKrylov(), nl.NewtonTrustRegion()):
+        result = jax.jit(
+            lambda state: method.solve(
+                _problem(),
+                state,
+                termination=nl.NonlinearTermination(),
+            )
+        )(jnp.asarray([-1.0]))
+        assert result.status == int(nl.NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE)
+        assert result.diagnostics.domain_failures == 1
+        assert result.diagnostics.residual_evaluations == 0
+        assert result.diagnostics.jacobian_preparations == 0
+        assert jnp.array_equal(result.state, jnp.asarray([-1.0]))
     result = jax.jit(
         lambda initial: nl.NewtonKrylov().solve(
             _problem(),
@@ -54,6 +51,16 @@ def test_newton_shortens_out_of_domain_trials_without_evaluating_them() -> None:
     assert result.diagnostics.domain_failures > 0
     assert result.diagnostics.nonfinite_trials == 0
     assert jnp.allclose(result.state, jnp.ones(1), atol=1e-9)
+    problem = _problem()
+    prepared = nl.prepare_nonlinear(problem, jnp.asarray([1.0]))
+    changed = nl.NonlinearSystemProblem(
+        _positive_log,
+        problem_id=problem.problem_id,
+        trial_validity=lambda state, _: jnp.all(state > 0.5),
+        trial_validity_id="strict-log-above-half",
+    )
+    with pytest.raises(ValueError, match="trial_validity_id"):
+        nl.refresh_nonlinear(prepared, changed, jnp.asarray([1.0]))
 
 
 def test_explicit_jacobian_is_not_called_on_rejected_initial_state() -> None:
@@ -84,77 +91,62 @@ def test_explicit_jacobian_is_not_called_on_rejected_initial_state() -> None:
     assert result.diagnostics.domain_failures == 1
 
 
-def test_prepared_refresh_refuses_a_changed_domain_contract() -> None:
-    problem = _problem()
-    prepared = nl.prepare_nonlinear(problem, jnp.asarray([1.0]))
-    changed = nl.NonlinearSystemProblem(
-        _positive_log,
-        problem_id=problem.problem_id,
-        trial_validity=lambda state, _: jnp.all(state > 0.5),
-        trial_validity_id="strict-log-above-half",
-    )
-    with pytest.raises(ValueError, match="trial_validity_id"):
-        nl.refresh_nonlinear(prepared, changed, jnp.asarray([1.0]))
+def test_mapped_newton_never_evaluates_invalid_residual_or_jacobian_lane() -> None:
+    for explicit in (False, True):
+        space = la.ArraySpace((1,), dtype=jnp.float64)
 
-
-@pytest.mark.parametrize("explicit", (False, True))
-def test_mapped_newton_never_evaluates_invalid_residual_or_jacobian_lane(
-    explicit: Any,
-) -> None:
-    space = la.ArraySpace((1,), dtype=jnp.float64)
-
-    def jacobian(state: Any, _: Any) -> Any:
-        state = eqx.error_if(
-            state, jnp.any(state <= 0.0), "invalid mapped Jacobian evaluated"
-        )
-        return la.DenseLinearOperator(jnp.diag(1.0 / state), source=space, target=space)
-
-    problem = nl.NonlinearSystemProblem(
-        _positive_log,
-        state_space=space,
-        residual_space=space,
-        trial_validity=lambda state, _: jnp.all(state > 0.0),
-        trial_validity_id="mapped-strict-positive-log",
-    )
-    method = nl.NewtonKrylov(
-        jacobian_policy=(
-            nl.JacobianPolicy("explicit", operator=jacobian)
-            if explicit
-            else nl.JacobianPolicy()
-        ),
-    )
-    result = jax.jit(
-        jax.vmap(
-            lambda state: method.solve(
-                problem,
-                state,
-                termination=nl.NonlinearTermination(
-                    absolute_residual=1e-10,
-                    relative_residual=0.0,
-                    maximum_steps=30,
-                ),
+        def jacobian(state: Any, _: Any) -> Any:
+            state = eqx.error_if(
+                state, jnp.any(state <= 0.0), "invalid mapped Jacobian evaluated"
             )
+            return la.DenseLinearOperator(
+                jnp.diag(1.0 / state), source=space, target=space
+            )
+
+        problem = nl.NonlinearSystemProblem(
+            _positive_log,
+            state_space=space,
+            residual_space=space,
+            trial_validity=lambda state, _: jnp.all(state > 0.0),
+            trial_validity_id="mapped-strict-positive-log",
         )
-    )(jnp.asarray([[-1.0], [10.0]]))
-    assert jnp.array_equal(
-        result.status,
-        jnp.asarray(
-            [
-                int(nl.NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE),
-                int(nl.NonlinearStatus.SUCCESS),
-            ]
-        ),
-    )
-    assert result.diagnostics.domain_failures[0] == 1
-    assert result.diagnostics.residual_evaluations[0] == 0
-    assert result.diagnostics.jacobian_preparations[0] == 0
-    assert result.diagnostics.domain_failures[1] > 0
-    assert jnp.allclose(result.state[:, 0], jnp.asarray([-1.0, 1.0]), atol=1e-9)
+        method = nl.NewtonKrylov(
+            jacobian_policy=(
+                nl.JacobianPolicy("explicit", operator=jacobian)
+                if explicit
+                else nl.JacobianPolicy()
+            ),
+        )
+        result = jax.jit(
+            jax.vmap(
+                lambda state: method.solve(
+                    problem,
+                    state,
+                    termination=nl.NonlinearTermination(
+                        absolute_residual=1e-10,
+                        relative_residual=0.0,
+                        maximum_steps=30,
+                    ),
+                )
+            )
+        )(jnp.asarray([[-1.0], [10.0]]))
+        assert jnp.array_equal(
+            result.status,
+            jnp.asarray(
+                [
+                    int(nl.NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE),
+                    int(nl.NonlinearStatus.SUCCESS),
+                ]
+            ),
+        )
+        assert result.diagnostics.domain_failures[0] == 1
+        assert result.diagnostics.residual_evaluations[0] == 0
+        assert result.diagnostics.jacobian_preparations[0] == 0
+        assert result.diagnostics.domain_failures[1] > 0
+        assert jnp.allclose(result.state[:, 0], jnp.asarray([-1.0, 1.0]), atol=1e-9)
 
 
-def test_mapped_domain_guard_preserves_jvp_and_transpose_in_both_transform_orders() -> (
-    None
-):
+def test_trial_validity_scenario_2() -> None:
     problem = _problem()
     states = jnp.asarray([[-1.0], [4.0]])
     mapped = jax.vmap(problem.residual)
@@ -174,29 +166,21 @@ def test_mapped_domain_guard_preserves_jvp_and_transpose_in_both_transform_order
     nested = jax.vmap(jax.vmap(problem.residual))
     nested_gradient = jax.jit(jax.grad(lambda x: jnp.sum(nested(x))))(nested_states)
     assert jnp.allclose(nested_gradient, jnp.asarray([[[0.0], [1.0]], [[0.25], [0.0]]]))
-
-
-# The first Newton step from 10 lands at 10 - 10 log(10) < 0; the trust radius
-# must admit it for the guarded out-of-domain trials to occur at all.
-@pytest.mark.parametrize(
-    "method",
-    (
+    for method in (
         nl.NewtonKrylov(),
         nl.NewtonTrustRegion(trust_region=nl.RootTrustRegion(initial_radius=100.0)),
-    ),
-)
-def test_guarded_trials_consume_only_actual_residual_budget(method: Any) -> None:
-    result = method.solve(
-        _problem(),
-        jnp.asarray([10.0]),
-        termination=nl.NonlinearTermination(
-            absolute_residual=0.0,
-            relative_residual=0.0,
-            maximum_steps=4,
-            maximum_evaluations=2,
-        ),
-    )
+    ):
+        result = method.solve(
+            _problem(),
+            jnp.asarray([10.0]),
+            termination=nl.NonlinearTermination(
+                absolute_residual=0.0,
+                relative_residual=0.0,
+                maximum_steps=4,
+                maximum_evaluations=2,
+            ),
+        )
 
-    assert int(result.diagnostics.residual_evaluations) == 2
-    assert int(result.diagnostics.domain_failures) > 0
-    assert not jnp.array_equal(result.state, jnp.asarray([10.0]))
+        assert int(result.diagnostics.residual_evaluations) == 2
+        assert int(result.diagnostics.domain_failures) > 0
+        assert not jnp.array_equal(result.state, jnp.asarray([10.0]))

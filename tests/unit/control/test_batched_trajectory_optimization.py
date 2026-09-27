@@ -28,7 +28,7 @@ class _ScaledTransition(eqx.Module):
         )
 
 
-def test_prepared_ilqr_preserves_two_dimensional_case_axes_and_statuses() -> None:
+def test_prepared_ilqr_contracts() -> None:
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
@@ -51,9 +51,6 @@ def test_prepared_ilqr_preserves_two_dimensional_case_axes_and_statuses() -> Non
     assert result.policy.feedback.shape == problem.case_shape + (2, 1, 1)
     assert result.diagnostics.status.shape == problem.case_shape
     assert result.diagnostics.objective_history.shape == problem.case_shape + (9,)
-
-
-def test_prepared_ilqr_uses_six_pose_feedback_coordinates_across_signs() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -105,9 +102,43 @@ def test_prepared_ilqr_uses_six_pose_feedback_coordinates_across_signs() -> None
         ),
         0.0,
     )
+    dynamics = make_discrete_control_dynamics(
+        _ScaledTransition(jnp.asarray(1.0)),
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="batched-parameterized-integrator",
+    )
+    problem = phx.control.ControlProblem(
+        dynamics,
+        phx.dynamics.TimeGrid(
+            jnp.asarray([0.0, 1.0, 2.0]),
+            time_id="batched-parameterized-grid",
+        ),
+        jnp.asarray([[0.0]]),
+        terminal_cost=lambda time, state, args: 0.5 * jnp.sum(state**2),
+        problem_id="batched-parameterized-ilqr",
+    )
+    prepared = prepare_ilqr(
+        plan_ilqr(
+            problem,
+            max_iterations=1,
+            gradient_tolerance=1.0e6,
+        ),
+        problem,
+        jnp.ones((1, 2, 1)),
+    )
+    refreshed = eqx.tree_at(
+        lambda value: value.problem.dynamics.system.transition.scale,
+        prepared,
+        jnp.asarray(2.0),
+    )
 
+    solve = eqx.filter_jit(solve_prepared_ilqr)
+    first = solve(prepared)
+    second = solve(refreshed)
 
-def test_prepared_ilqr_retains_rejected_line_search_attempt_metrics() -> None:
+    np.testing.assert_allclose(first.trajectory.final_state, jnp.asarray([[2.0]]))
+    np.testing.assert_allclose(second.trajectory.final_state, jnp.asarray([[4.0]]))
     dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state,
         state_shape=(1,),
@@ -219,43 +250,3 @@ def test_prepared_ilqr_retains_selected_transition_evidence_per_case() -> None:
         result.trajectory.backend_status,
         jnp.asarray([0, failure_status], dtype=jnp.int32),
     )
-
-
-def test_prepared_ilqr_keeps_transition_parameters_dynamic() -> None:
-    dynamics = make_discrete_control_dynamics(
-        _ScaledTransition(jnp.asarray(1.0)),
-        state_shape=(1,),
-        control_shape=(1,),
-        dynamics_id="batched-parameterized-integrator",
-    )
-    problem = phx.control.ControlProblem(
-        dynamics,
-        phx.dynamics.TimeGrid(
-            jnp.asarray([0.0, 1.0, 2.0]),
-            time_id="batched-parameterized-grid",
-        ),
-        jnp.asarray([[0.0]]),
-        terminal_cost=lambda time, state, args: 0.5 * jnp.sum(state**2),
-        problem_id="batched-parameterized-ilqr",
-    )
-    prepared = prepare_ilqr(
-        plan_ilqr(
-            problem,
-            max_iterations=1,
-            gradient_tolerance=1.0e6,
-        ),
-        problem,
-        jnp.ones((1, 2, 1)),
-    )
-    refreshed = eqx.tree_at(
-        lambda value: value.problem.dynamics.system.transition.scale,
-        prepared,
-        jnp.asarray(2.0),
-    )
-
-    solve = eqx.filter_jit(solve_prepared_ilqr)
-    first = solve(prepared)
-    second = solve(refreshed)
-
-    np.testing.assert_allclose(first.trajectory.final_state, jnp.asarray([[2.0]]))
-    np.testing.assert_allclose(second.trajectory.final_state, jnp.asarray([[4.0]]))

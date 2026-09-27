@@ -38,7 +38,7 @@ def _planar_rod() -> Any:
     )
 
 
-def test_prepared_rod_owns_content_derived_native_sites_measures_and_inertia() -> None:
+def test_rod_materials_scenario_1() -> None:
     first = _planar_rod()
     second = _planar_rod()
 
@@ -63,9 +63,6 @@ def test_prepared_rod_owns_content_derived_native_sites_measures_and_inertia() -
         first.stretch_shear_workset.workset_id == second.stretch_shear_workset.workset_id
     )
     assert first.bend_twist_workset.workset_id == second.bend_twist_workset.workset_id
-
-
-def test_lowered_linear_material_reproduces_current_resultants_and_energy() -> None:
     rod = _planar_rod()
     rest = rod.initialize_state()
     state = RodState(
@@ -125,9 +122,6 @@ def test_lowered_linear_material_reproduces_current_resultants_and_energy() -> N
         rel=2.0e-6,
         abs=2.0e-6,
     )
-
-
-def test_kelvin_voigt_trial_is_zero_history_nonmutating_and_dissipative() -> None:
     rod = _planar_rod()
     stiffness = rod.plan.stretch_shear_stiffness
     viscosity = jnp.asarray(

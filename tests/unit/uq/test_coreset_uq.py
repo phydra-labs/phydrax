@@ -64,7 +64,7 @@ def _gaussian_mcmc_result() -> Any:
     return result
 
 
-def test_pivoted_cholesky_selection_builds_a_sparse_gp_factor() -> None:
+def test_coreset_uq_scenario_1() -> None:
     coordinates = jnp.linspace(-1.0, 1.0, 64)
     points = jnp.stack((coordinates, coordinates**2), axis=1)
     selection = phx.uq.select_inducing_points(points, 12, key=jr.key(3))
@@ -84,14 +84,8 @@ def test_pivoted_cholesky_selection_builds_a_sparse_gp_factor() -> None:
     assert jnp.unique(selection.indices).shape == selection.indices.shape
     assert selection.diagnostics.residual_trace < selection.diagnostics.initial_trace
     assert jnp.isfinite(factor.log_probability(jnp.sin(points[:, 0])))
-
-
-def test_inducing_selection_reports_numerical_rank_exhaustion() -> None:
     with pytest.raises(ValueError, match="kernel rank"):
         phx.uq.select_inducing_points(jnp.zeros((8, 2)), 2, key=jr.key(4))
-
-
-def test_inducing_selection_preserves_structured_path_inputs() -> None:
     paths = jnp.cumsum(jr.normal(jr.key(44), (7, 5, 2)) * 0.2, axis=1)
     kernel = phx.kernels.SignaturePDEKernel(
         phx.kernels.LinearKernel(),
@@ -108,9 +102,6 @@ def test_inducing_selection_preserves_structured_path_inputs() -> None:
     assert selection.points.shape == (3, 5, 2)
     assert jnp.allclose(selection.points, paths[selection.indices])
     assert jnp.unique(selection.indices).shape == (3,)
-
-
-def test_stein_thinning_preserves_chains_source_indices_and_diagnostics() -> None:
     result = _gaussian_mcmc_result()
     method = phx.uq.SteinThinning(10)
 
@@ -141,9 +132,6 @@ def test_stein_thinning_preserves_chains_source_indices_and_diagnostics() -> Non
     assert isinstance(prediction, phx.uq.PredictiveField)
     assert prediction.samples.dims == ("__phydra_uq_chain", "__phydra_uq_draw", "x")
     assert prediction.samples.shape == (2, 10, 3)
-
-
-def test_stein_thinning_rejects_more_points_than_each_chain_contains() -> None:
     result = _gaussian_mcmc_result()
 
     with pytest.raises(ValueError, match="more posterior draws"):

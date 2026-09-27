@@ -19,7 +19,7 @@ from phydrax.applications.battery._protocol import (
 )
 
 
-def test_passive_terminal_convention_is_one_immutable_sign_source() -> None:
+def test_protocol_scenario_1() -> None:
     convention = PASSIVE_TERMINAL_CONVENTION
     np.testing.assert_allclose(convention.terminal_voltage(4.2, 0.1), 4.1)
     np.testing.assert_allclose(convention.absorbed_power(4.0, 2.0), 8.0)
@@ -27,9 +27,6 @@ def test_passive_terminal_convention_is_one_immutable_sign_source() -> None:
     np.testing.assert_allclose(convention.discharge_areal_current(-2.0, 0.5), 4.0)
     with pytest.raises(AttributeError):
         convention.current_definition = "discharge positive"
-
-
-def test_protocol_topology_maps_dynamic_values_onto_intervals() -> None:
     plan = BatteryProtocolPlan(
         (
             CurrentStepPlan(
@@ -55,23 +52,6 @@ def test_protocol_topology_maps_dynamic_values_onto_intervals() -> None:
     )
     np.testing.assert_allclose(plan.transition_times_s, np.asarray((0.0, 2.0, 3.0, 6.0)))
 
-
-def test_held_current_endpoint_side_is_declared_and_jittable() -> None:
-    steps = (CurrentStepPlan(1.0), CurrentStepPlan(1.0), RestStepPlan(1.0))
-    left = BatteryProtocolPlan(steps, node_side="left")
-    right = BatteryProtocolPlan(steps, node_side="right")
-    left_values = BatteryProtocolValues(left, jnp.asarray((1.0, -2.0)))
-    right_values = BatteryProtocolValues(right, jnp.asarray((1.0, -2.0)))
-
-    evaluate_left = jax.jit(lambda time: left.current(time, left_values))
-    evaluate_right = jax.jit(lambda time: right.current(time, right_values))
-    np.testing.assert_allclose(evaluate_left(jnp.asarray(1.0)), 1.0)
-    np.testing.assert_allclose(evaluate_right(jnp.asarray(1.0)), -2.0)
-    np.testing.assert_allclose(evaluate_left(jnp.asarray(2.0)), -2.0)
-    np.testing.assert_allclose(evaluate_right(jnp.asarray(2.0)), 0.0)
-
-
-def test_protocol_refuses_unavailable_controls_and_untyped_guards() -> None:
     class VoltageControl:
         duration_s = 1.0
 
@@ -84,3 +64,15 @@ def test_protocol_refuses_unavailable_controls_and_untyped_guards() -> None:
     with pytest.raises(ValueError, match="direction"):
         # ty: ignore[invalid-argument-type]
         VoltageStopGuard("inside")
+    steps = (CurrentStepPlan(1.0), CurrentStepPlan(1.0), RestStepPlan(1.0))
+    left = BatteryProtocolPlan(steps, node_side="left")
+    right = BatteryProtocolPlan(steps, node_side="right")
+    left_values = BatteryProtocolValues(left, jnp.asarray((1.0, -2.0)))
+    right_values = BatteryProtocolValues(right, jnp.asarray((1.0, -2.0)))
+
+    evaluate_left = jax.jit(lambda time: left.current(time, left_values))
+    evaluate_right = jax.jit(lambda time: right.current(time, right_values))
+    np.testing.assert_allclose(evaluate_left(jnp.asarray(1.0)), 1.0)
+    np.testing.assert_allclose(evaluate_right(jnp.asarray(1.0)), -2.0)
+    np.testing.assert_allclose(evaluate_left(jnp.asarray(2.0)), -2.0)
+    np.testing.assert_allclose(evaluate_right(jnp.asarray(2.0)), 0.0)

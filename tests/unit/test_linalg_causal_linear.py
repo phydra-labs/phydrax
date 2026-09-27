@@ -53,29 +53,43 @@ def _problem(dtype: Any = jnp.float64) -> Any:
     return transitions, residuals
 
 
-@pytest.mark.parametrize("damping", (0.0, 0.3))
-def test_causal_least_squares_matches_dense_normal_equations(damping: Any) -> None:
-    transitions, residuals = _problem()
+def test_linalg_causal_linear_scenario_1() -> None:
+    for damping in (0.0, 0.3):
+        transitions, residuals = _problem()
+        operator = _dense_operator(transitions)
+        expected = jnp.linalg.solve(
+            operator.T @ operator + damping * jnp.eye(operator.shape[1]),
+            -operator.T @ residuals.reshape((-1,)),
+        ).reshape(residuals.shape)
+
+        actual = jax.jit(solve_causal_least_squares)(
+            transitions,
+            residuals,
+            jnp.asarray(damping),
+        )
+
+        assert jnp.allclose(actual, expected, atol=1e-11, rtol=1e-11)
+        assert jnp.allclose(
+            causal_linearized_residual(transitions, residuals, actual).reshape((-1,)),
+            residuals.reshape((-1,)) + operator @ actual.reshape((-1,)),
+        )
+    transitions, right = _problem()
     operator = _dense_operator(transitions)
-    expected = jnp.linalg.solve(
-        operator.T @ operator + damping * jnp.eye(operator.shape[1]),
-        -operator.T @ residuals.reshape((-1,)),
-    ).reshape(residuals.shape)
+    weights = jnp.arange(right.size, dtype=right.dtype).reshape(right.shape)
 
-    actual = jax.jit(solve_causal_least_squares)(
-        transitions,
-        residuals,
-        jnp.asarray(damping),
-    )
+    gradient = jax.grad(
+        lambda rhs: jnp.sum(associative_affine_solve(transitions, rhs) * weights)
+    )(right)
+    expected = jnp.linalg.solve(operator.T, weights.reshape((-1,))).reshape(right.shape)
 
-    assert jnp.allclose(actual, expected, atol=1e-11, rtol=1e-11)
-    assert jnp.allclose(
-        causal_linearized_residual(transitions, residuals, actual).reshape((-1,)),
-        residuals.reshape((-1,)) + operator @ actual.reshape((-1,)),
-    )
-
-
-def test_affine_and_transpose_scans_match_dense_triangular_solves() -> None:
+    assert jnp.allclose(gradient, expected)
+    transitions, residuals = _problem()
+    with pytest.raises(ValueError, match="transitions"):
+        associative_affine_solve(transitions[:, 0], residuals)
+    with pytest.raises(ValueError, match="offsets"):
+        associative_affine_solve(transitions, residuals[:, :1])
+    with pytest.raises(Exception, match="nonnegative"):
+        solve_causal_least_squares(transitions, residuals, jnp.asarray(-1.0))
     transitions, right = _problem()
     operator = _dense_operator(transitions)
 
@@ -90,32 +104,6 @@ def test_affine_and_transpose_scans_match_dense_triangular_solves() -> None:
         transpose.reshape((-1,)),
         jnp.linalg.solve(operator.T, right.reshape((-1,))),
     )
-
-
-def test_causal_linear_solves_have_correct_reverse_derivatives() -> None:
-    transitions, right = _problem()
-    operator = _dense_operator(transitions)
-    weights = jnp.arange(right.size, dtype=right.dtype).reshape(right.shape)
-
-    gradient = jax.grad(
-        lambda rhs: jnp.sum(associative_affine_solve(transitions, rhs) * weights)
-    )(right)
-    expected = jnp.linalg.solve(operator.T, weights.reshape((-1,))).reshape(right.shape)
-
-    assert jnp.allclose(gradient, expected)
-
-
-def test_causal_linear_contract_rejects_invalid_shapes_and_damping() -> None:
-    transitions, residuals = _problem()
-    with pytest.raises(ValueError, match="transitions"):
-        associative_affine_solve(transitions[:, 0], residuals)
-    with pytest.raises(ValueError, match="offsets"):
-        associative_affine_solve(transitions, residuals[:, :1])
-    with pytest.raises(Exception, match="nonnegative"):
-        solve_causal_least_squares(transitions, residuals, jnp.asarray(-1.0))
-
-
-def test_gaussian_scan_combination_fails_closed_on_singular_system() -> None:
     left = GaussianFilterElement(
         jnp.asarray([[1.0]]),
         jnp.asarray([0.0]),

@@ -39,7 +39,7 @@ def _plan() -> Any:
     )
 
 
-def test_local_gauge_transform_preserves_covariant_energy_and_uniform_branch() -> None:
+def test_ginzburg_landau_scenario_1() -> None:
     plan = _plan()
     state = plan.initialize(jnp.ones((5,), dtype=jnp.complex128))
     parameter = jnp.asarray((0.1, -0.2, 0.3, -0.1, 0.0))
@@ -56,9 +56,6 @@ def test_local_gauge_transform_preserves_covariant_energy_and_uniform_branch() -
     )
     assert bool(solved.evidence.successful)
     np.testing.assert_allclose(solved.state.gauge.scalar, 1.0 + 0.0j, atol=1e-10)
-
-
-def test_tdgl_decreases_energy_and_rejects_invalid_step_atomically() -> None:
     plan = _plan()
     state = plan.initialize(0.5 * jnp.ones((5,), dtype=jnp.complex128))
     advanced = plan.tdgl_step(state, 0.01)

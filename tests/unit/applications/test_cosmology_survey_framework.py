@@ -41,7 +41,7 @@ def _coordinate(component: Any, value: Any) -> Any:
     )
 
 
-def test_generic_survey_slice_composes_theory_response_and_likelihood() -> None:
+def test_cosmology_survey_framework_scenario_1() -> None:
     coordinates = (_coordinate("P0", 0.1), _coordinate("P2", 0.1))
     theory = cosmology.SurveyTheoryProduct(
         jnp.asarray([2.0, 1.0]), coordinates, "theory-fixture"
@@ -72,9 +72,6 @@ def test_generic_survey_slice_composes_theory_response_and_likelihood() -> None:
         )
     )(jnp.asarray(1.0))
     np.testing.assert_allclose(derivative, 0.0, atol=1e-12)
-
-
-def test_three_vertical_slice_manifests_have_distinct_capabilities() -> None:
     artifact = _artifact()
     manifests = (
         cosmology.desi_full_shape_slice(artifact),

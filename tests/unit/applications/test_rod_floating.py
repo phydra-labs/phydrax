@@ -20,6 +20,7 @@ from phydrax.applications.solid_mechanics._rod_reduced_basis import (
 )
 from phydrax.applications.solid_mechanics._rod_reduction import ReducedRodPlan
 from phydrax.dynamics import PlantStepContext
+from tests._support.assertions import assert_tree_equal
 
 
 def _rod() -> Any:
@@ -95,17 +96,7 @@ def _state(
     )
 
 
-def _assert_tree_equal(left: Any, right: Any) -> None:
-    left_leaves = jax.tree_util.tree_leaves(left)
-    right_leaves = jax.tree_util.tree_leaves(right)
-    assert len(left_leaves) == len(right_leaves)
-    assert all(
-        jnp.array_equal(left_leaf, right_leaf)
-        for left_leaf, right_leaf in zip(left_leaves, right_leaves, strict=True)
-    )
-
-
-def test_floating_layout_separates_quaternion_point_from_physical_tangent() -> None:
+def test_rod_floating_scenario_1() -> None:
     prepared = _prepared()
     state = prepared.initialize_state()
     count = prepared.coordinate_count
@@ -124,9 +115,6 @@ def test_floating_layout_separates_quaternion_point_from_physical_tangent() -> N
     assert jnp.array_equal(state.base_pose[:4], jnp.asarray((1.0, 0.0, 0.0, 0.0)))
     assert prepared.plan.convention == "body"
     assert prepared.supports_contact is False
-
-
-def test_plan_identity_is_content_addressed_and_twist_convention_is_explicit() -> None:
     first = FloatingReducedRodPlan(_reduction_plan(label="first"), label="first")
     renamed = FloatingReducedRodPlan(_reduction_plan(label="renamed"), label="renamed")
     spatial = FloatingReducedRodPlan(_reduction_plan(label="first"), convention="spatial")
@@ -140,9 +128,6 @@ def test_plan_identity_is_content_addressed_and_twist_convention_is_explicit() -
             component_scales=jnp.ones((3,), dtype=jnp.float32),
         )
         FloatingReducedRodPlan(ReducedRodPlan(planar_basis))
-
-
-def test_free_se3_action_preserves_native_strains_and_sets_the_root_pose() -> None:
     prepared = _prepared()
     coefficients = jnp.asarray((0.12, -0.08), dtype=jnp.float32)
     reference = _state(prepared, coefficients=coefficients)
@@ -171,7 +156,7 @@ def test_free_se3_action_preserves_native_strains_and_sets_the_root_pose() -> No
     )
 
 
-def test_velocity_lift_and_effort_pullback_obey_exact_virtual_power_duality() -> None:
+def test_rod_floating_scenario_2() -> None:
     prepared = _prepared()
     state = _state(
         prepared,
@@ -200,9 +185,6 @@ def test_velocity_lift_and_effort_pullback_obey_exact_virtual_power_duality() ->
     ).real
     floating_power = prepared.effort_space.pair(effort, tangent).real
     assert jnp.allclose(native_power, floating_power, rtol=2.0e-5, atol=2.0e-6)
-
-
-def test_block_mass_has_base_strain_coupling_and_fixed_base_limit_is_exact() -> None:
     prepared = _prepared()
     coefficients = jnp.asarray((0.11, -0.07), dtype=jnp.float32)
     rates = jnp.asarray((0.08, -0.03), dtype=jnp.float32)
@@ -236,9 +218,6 @@ def test_block_mass_has_base_strain_coupling_and_fixed_base_limit_is_exact() -> 
         rtol=2.0e-6,
         atol=2.0e-7,
     )
-
-
-def test_body_and_spatial_root_twists_use_their_declared_frames() -> None:
     body = _prepared(convention="body")
     spatial = _prepared(convention="spatial")
     half = jnp.sqrt(jnp.asarray(0.5, dtype=jnp.float32))
@@ -271,9 +250,6 @@ def test_body_and_spatial_root_twists_use_their_declared_frames() -> None:
         jnp.asarray((0.0, -1.0, 0.0)),
         atol=2.0e-6,
     )
-
-
-def test_body_convention_block_dynamics_are_se3_objective() -> None:
     prepared = _prepared()
     coefficients = jnp.asarray((0.13, -0.09), dtype=jnp.float32)
     twist = jnp.asarray((0.3, -0.1, 0.2, 0.15, -0.2, 0.1), dtype=jnp.float32)
@@ -308,7 +284,7 @@ def test_body_convention_block_dynamics_are_se3_objective() -> None:
     assert jnp.allclose(second.forces.elastic_effort[:6], 0.0, atol=1.0e-7)
 
 
-def test_uniform_gravity_is_pure_free_fall_without_strain_acceleration() -> None:
+def test_rod_floating_scenario_3() -> None:
     gravity = jnp.asarray((0.0, 0.0, -9.81), dtype=jnp.float32)
     prepared = _prepared(gravity=gravity)
     state = prepared.initialize_state()
@@ -325,9 +301,6 @@ def test_uniform_gravity_is_pure_free_fall_without_strain_acceleration() -> None
     assert jnp.allclose(result.acceleration[:3], gravity, rtol=2.0e-4, atol=2.0e-4)
     assert jnp.allclose(result.acceleration[3:6], 0.0, atol=3.0e-4)
     assert jnp.allclose(result.acceleration[6:], 0.0, atol=3.0e-4)
-
-
-def test_force_torque_free_dynamics_preserve_spatial_momentum_instantaneously() -> None:
     prepared = _prepared()
     state = _state(
         prepared,
@@ -345,9 +318,6 @@ def test_force_torque_free_dynamics_preserve_spatial_momentum_instantaneously() 
     assert jnp.allclose(momentum_rate.angular_about_origin, 0.0, atol=1.5e-3)
     assert jnp.allclose(inverse.required_effort, 0.0, atol=8.0e-4)
     assert jnp.allclose(inverse.residual, 0.0, atol=2.0e-6)
-
-
-def test_full_direct_effort_enters_the_declared_floating_dual() -> None:
     prepared = _prepared()
     state = prepared.initialize_state()
     effort = jnp.linspace(-0.2, 0.3, prepared.tangent_size, dtype=jnp.float32)
@@ -396,6 +366,6 @@ def test_plant_commits_a_complete_step_and_rolls_back_every_atom_on_bad_control(
     assert failed.accepted_state.time == source.time
     assert failed.accepted_state.step_index == source.step_index
     assert jnp.array_equal(failed.accepted_state.key, source.key)
-    _assert_tree_equal(failed.accepted_state.payload, source.payload)
+    assert_tree_equal(failed.accepted_state.payload, source.payload)
     assert plant.state_digest(failed.accepted_state) == plant.state_digest(source)
     assert plant.state_digest(failed.candidate_state) != plant.state_digest(source)

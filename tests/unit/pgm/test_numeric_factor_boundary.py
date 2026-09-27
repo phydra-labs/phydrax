@@ -52,7 +52,7 @@ def test_dynamic_tables_have_exact_log_normalizer_derivatives_under_jit() -> Non
     np.testing.assert_allclose(tangent, jnp.sum(direction * expected), atol=2e-10)
 
 
-def test_numeric_nonfinite_inputs_fail_explicitly_and_support_cannot_change() -> None:
+def test_numeric_factor_boundary_scenario_1() -> None:
     graph, bp, initial = _prepared()
     exact = pgm.prepare_exact_factor_graph(graph)
     bad_table = bp.factor_tables[0].at[0, 0, 1].set(jnp.nan)
@@ -77,6 +77,17 @@ def test_numeric_nonfinite_inputs_fail_explicitly_and_support_cannot_change() ->
     result = pgm.run_exact_factor_graph(exact, (forbidden,))
     assert int(result.status) == int(pgm.ExactFactorGraphStatus.INFEASIBLE)
     np.testing.assert_array_equal(result.variable_probabilities.values, 0.0)
+    variable = pgm.DiscreteVariableGroup("spin", shape=(2,), num_states=2)
+    factor = pgm.IsingFactorGroup(
+        (pgm.VariableSelection(variable, [0]), pgm.VariableSelection(variable, [1])),
+        # ty: ignore[invalid-argument-type]
+        [0.2],
+    )
+    prepared = pgm.prepare_belief_propagation(
+        pgm.DiscreteFactorGraph((variable,), (factor,))
+    )
+    with pytest.raises(TypeError, match="dense/Potts"):
+        pgm.replace_belief_propagation_tables(prepared, prepared.factor_tables)
 
 
 def test_exact_preparation_preserves_existing_parameter_gradient_contract() -> None:
@@ -96,20 +107,6 @@ def test_exact_preparation_preserves_existing_parameter_gradient_contract() -> N
     np.testing.assert_allclose(
         value, jax.scipy.special.logsumexp(bp.factor_tables[0]), atol=1e-12
     )
-
-
-def test_table_replacement_rejects_structured_parameter_shortcuts() -> None:
-    variable = pgm.DiscreteVariableGroup("spin", shape=(2,), num_states=2)
-    factor = pgm.IsingFactorGroup(
-        (pgm.VariableSelection(variable, [0]), pgm.VariableSelection(variable, [1])),
-        # ty: ignore[invalid-argument-type]
-        [0.2],
-    )
-    prepared = pgm.prepare_belief_propagation(
-        pgm.DiscreteFactorGraph((variable,), (factor,))
-    )
-    with pytest.raises(TypeError, match="dense/Potts"):
-        pgm.replace_belief_propagation_tables(prepared, prepared.factor_tables)
 
 
 def test_underflowed_finite_factor_beliefs_keep_log_normalizer_gradient() -> None:

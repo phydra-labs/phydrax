@@ -92,7 +92,7 @@ def _prepared(*, grazing: Any = False, exterior_permittivity: Any = 1.0) -> Any:
     )
 
 
-def test_fourier_modal_adapter_reorders_asymmetric_blocks_canonically() -> None:
+def test_fourier_modal_contracts() -> None:
     component = fourier_modal_scattering_component(
         _prepared(), left_modes=("h0:te",), right_modes=("h0:te",)
     )
@@ -109,16 +109,10 @@ def test_fourier_modal_adapter_reorders_asymmetric_blocks_canonically() -> None:
     assert float(component.ports[0].references[0].reference_plane) == -1.0
     # ty: ignore[unresolved-attribute]
     assert float(component.ports[1].references[0].reference_plane) == 3.0
-
-
-def test_fourier_modal_adapter_rejects_grazing_modes() -> None:
     with pytest.raises(ValueError, match="nongrazing"):
         fourier_modal_scattering_component(
             _prepared(grazing=True), left_modes=("h0:te",), right_modes=("h0:te",)
         )
-
-
-def test_fourier_modal_adapter_basis_identity_includes_exterior_media() -> None:
     first = fourier_modal_scattering_component(
         _prepared(exterior_permittivity=1.0),
         left_modes=("h0:te",),

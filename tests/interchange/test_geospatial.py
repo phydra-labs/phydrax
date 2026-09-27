@@ -49,7 +49,7 @@ def _geographic(
     )
 
 
-def test_geospatial_metadata_cannot_change_native_spatial_serialization() -> None:
+def test_geospatial_scenario_1() -> None:
     spatial = SpatialCoordinateContract(METER, reference_frame="survey-site")
     original = spatial.to_dict()
     extension = {"unrecognized_vendor_reference": {"offsets": [1, 2], "authority": None}}
@@ -66,11 +66,6 @@ def test_geospatial_metadata_cannot_change_native_spatial_serialization() -> Non
     assert contract.metadata["unrecognized_vendor_reference"]["offsets"] == [1, 2]
     with pytest.raises(ValueError):
         contract.require_cartesian()
-
-
-def test_cartesian_qualification_rejects_angular_swapped_and_mismatched_coordinates() -> (
-    None
-):
     local = _local()
     assert local.require_cartesian().spatial_id == local.spatial.spatial_id
     with pytest.raises(ValueError):
@@ -96,9 +91,6 @@ def test_cartesian_qualification_rejects_angular_swapped_and_mismatched_coordina
         local.require_cartesian(
             SpatialCoordinateContract(kilometer, reference_frame="survey-site")
         )
-
-
-def test_dynamic_epoch_and_vertical_datum_are_required_for_composition() -> None:
     spatial = SpatialCoordinateContract(METER, reference_frame="survey-site")
     common = dict(
         horizontal_crs="qualified-projection",
@@ -142,7 +134,7 @@ def test_dynamic_epoch_and_vertical_datum_are_required_for_composition() -> None
         depth.require_cartesian()
 
 
-def test_pixel_and_gridline_bounds_do_not_silently_shift_samples() -> None:
+def test_geospatial_scenario_2() -> None:
     x, y = np.array([10.0, 12.0, 14.0]), np.array([8.0, 5.0])
     values = np.array([[11.0, 12.0, 19.0], [31.0, 38.0, 45.0]])
     pixel = QualifiedGeospatialGrid(x, y, values, _local(), value_unit=METER)
@@ -163,9 +155,15 @@ def test_pixel_and_gridline_bounds_do_not_silently_shift_samples() -> None:
         QualifiedGeospatialGrid([10, 12, 14.2], y, values, _local(), value_unit=METER)
     with pytest.raises(ValueError):
         QualifiedGeospatialGrid(x, [5, 5], values, _local(), value_unit=METER)
-
-
-def test_unknown_registration_and_missing_data_are_not_inferred() -> None:
+    contract = _geographic(registration="pixel", seam="periodic", units=RADIAN)
+    x = np.deg2rad([-135, -45, 45, 135])
+    y = np.deg2rad([-45, 45])
+    values = np.array([[1, 2, 3, 4], [8, 7, 6, 5]], dtype="float64")
+    grid = QualifiedGeospatialGrid(x, y, values, contract, value_unit=METER)
+    np.testing.assert_array_equal(grid.x, x)
+    np.testing.assert_allclose(grid.region, [-np.pi, np.pi, -np.pi / 2, np.pi / 2])
+    with pytest.raises(ValueError):
+        QualifiedGeospatialGrid(x[1:], y, values[:, 1:], contract, value_unit=METER)
     with pytest.raises(ValueError):
         QualifiedGeospatialGrid(
             [0, 1],
@@ -191,9 +189,6 @@ def test_unknown_registration_and_missing_data_are_not_inferred() -> None:
             value_unit=METER,
             valid=valid,
         )
-
-
-def test_periodic_seams_require_matching_endpoint_values_and_masks() -> None:
     contract = _geographic(seam="periodic")
     values = np.array([[1, 2, 3, 4, 1], [5, 6, 7, 8, 5]], dtype="float64")
     grid = QualifiedGeospatialGrid(
@@ -222,21 +217,7 @@ def test_periodic_seams_require_matching_endpoint_values_and_masks() -> None:
         )
 
 
-def test_pixel_periodic_seam_and_radian_support_are_qualified_without_resampling() -> (
-    None
-):
-    contract = _geographic(registration="pixel", seam="periodic", units=RADIAN)
-    x = np.deg2rad([-135, -45, 45, 135])
-    y = np.deg2rad([-45, 45])
-    values = np.array([[1, 2, 3, 4], [8, 7, 6, 5]], dtype="float64")
-    grid = QualifiedGeospatialGrid(x, y, values, contract, value_unit=METER)
-    np.testing.assert_array_equal(grid.x, x)
-    np.testing.assert_allclose(grid.region, [-np.pi, np.pi, -np.pi / 2, np.pi / 2])
-    with pytest.raises(ValueError):
-        QualifiedGeospatialGrid(x[1:], y, values[:, 1:], contract, value_unit=METER)
-
-
-def test_vertical_grid_preserves_depth_and_does_not_relabel_it_as_height() -> None:
+def test_geospatial_scenario_3() -> None:
     local = _local()
     args = dict(
         horizontal_crs=local.horizontal_crs,
@@ -269,11 +250,6 @@ def test_vertical_grid_preserves_depth_and_does_not_relabel_it_as_height() -> No
         QualifiedGeospatialGrid(
             [0, 1], [0, 1], values, unknown, value_unit=METER, value_role="vertical"
         )
-
-
-def test_transformation_provenance_must_end_at_the_qualified_coordinate_identity() -> (
-    None
-):
     source, target = _geographic(), _local()
     operation = GeospatialTransform(
         "caller-qualified-local-projection",

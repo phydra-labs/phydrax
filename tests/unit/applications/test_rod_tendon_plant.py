@@ -159,39 +159,36 @@ def _context(state: Any, duration: float = 1.0e-4) -> Any:
     return PlantStepContext(state.time, state.time + step, state.step_index)
 
 
-@pytest.mark.parametrize("count", (1, 3))
-def test_one_and_three_tendon_commands_drive_exact_ledgers(count: Any) -> None:
-    plant = _plant(count)
-    parameters, source = _reset(plant)
-    rates = tuple(0.01 * (index + 1) for index in range(count))
-    command = plant.command(rates, external_effort=(0.02,))
-    result = plant.step(_context(source), source, command, parameters)
+def test_rod_tendon_plant_scenario_1() -> None:
+    for count in (1, 3):
+        plant = _plant(count)
+        parameters, source = _reset(plant)
+        rates = tuple(0.01 * (index + 1) for index in range(count))
+        command = plant.command(rates, external_effort=(0.02,))
+        result = plant.step(_context(source), source, command, parameters)
 
-    assert bool(result.successful)
-    assert int(result.status) == int(TendonDrivenRodPlantStatus.SUCCESS)
-    assert isinstance(result.accepted_state.payload, TendonDrivenRodPlantState)
-    assert len(command.tendon_commands) == count
-    assert len(result.evidence.tendon_ledger.payout_evaluations) == count
-    assert result.evidence.tendon_ledger.tendon_ids == plant.tendon_ids
-    assert bool(result.evidence.tendon_ledger.valid)
-    assert bool(result.evidence.tendon_ledger.balanced)
-    assert result.evidence.tendon_ledger.source_tension.shape == (count,)
-    assert result.evidence.tendon_ledger.candidate_tension.shape == (count,)
-    assert result.evidence.integration_result.evidence.ledger.source_ids[-1] == (
-        "external-reduced-command"
-    )
-    for before, after, rate in zip(
-        source.payload.actuator_state.states,
-        result.accepted_state.payload.actuator_state.states,
-        rates,
-        strict=True,
-    ):
-        assert after.free_length == pytest.approx(
-            float(before.free_length) + 1.0e-4 * rate
+        assert bool(result.successful)
+        assert int(result.status) == int(TendonDrivenRodPlantStatus.SUCCESS)
+        assert isinstance(result.accepted_state.payload, TendonDrivenRodPlantState)
+        assert len(command.tendon_commands) == count
+        assert len(result.evidence.tendon_ledger.payout_evaluations) == count
+        assert result.evidence.tendon_ledger.tendon_ids == plant.tendon_ids
+        assert bool(result.evidence.tendon_ledger.valid)
+        assert bool(result.evidence.tendon_ledger.balanced)
+        assert result.evidence.tendon_ledger.source_tension.shape == (count,)
+        assert result.evidence.tendon_ledger.candidate_tension.shape == (count,)
+        assert result.evidence.integration_result.evidence.ledger.source_ids[-1] == (
+            "external-reduced-command"
         )
-
-
-def test_bounds_failure_retains_candidate_but_rolls_back_every_committed_atom() -> None:
+        for before, after, rate in zip(
+            source.payload.actuator_state.states,
+            result.accepted_state.payload.actuator_state.states,
+            rates,
+            strict=True,
+        ):
+            assert after.free_length == pytest.approx(
+                float(before.free_length) + 1.0e-4 * rate
+            )
     plant = _plant()
     parameters, source = _reset(plant)
     result = plant.step(_context(source), source, plant.command((0.25,)), parameters)
@@ -210,35 +207,27 @@ def test_bounds_failure_retains_candidate_but_rolls_back_every_committed_atom() 
         jax.random.key_data(result.accepted_state.key),
         jax.random.key_data(source.key),
     )
-
-
-@pytest.mark.parametrize(
-    ("route", "expected"),
-    (
+    for route, expected in (
         ("semi-implicit", "semi-implicit-velocity-euler"),
         ("implicit", "implicit-midpoint"),
-    ),
-)
-def test_prepared_integrator_route_is_executed_without_passive_fallback(
-    route: Any, expected: Any
-) -> None:
-    plant = _plant(route=route)
-    parameters, source = _reset(plant)
-    result = plant.step(_context(source), source, plant.zero_command(), parameters)
+    ):
+        plant = _plant(route=route)
+        parameters, source = _reset(plant)
+        result = plant.step(_context(source), source, plant.zero_command(), parameters)
 
-    assert bool(result.successful)
-    integration = result.evidence.integration_result
-    assert integration.evidence.route == expected
-    assert integration.policy_id == plant.base_plant.policy.policy_id
-    if route == "implicit":
-        assert integration.evidence.nonlinear_solve_evidence is not None
-        assert bool(integration.evidence.nonlinear_solve_successful)
-    else:
-        assert integration.evidence.nonlinear_solve_evidence is None
-        assert bool(integration.evidence.linear_solve_successful)
+        assert bool(result.successful)
+        integration = result.evidence.integration_result
+        assert integration.evidence.route == expected
+        assert integration.policy_id == plant.base_plant.policy.policy_id
+        if route == "implicit":
+            assert integration.evidence.nonlinear_solve_evidence is not None
+            assert bool(integration.evidence.nonlinear_solve_successful)
+        else:
+            assert integration.evidence.nonlinear_solve_evidence is None
+            assert bool(integration.evidence.linear_solve_successful)
 
 
-def test_sensor_sampling_is_part_of_reset_and_step_atomic_commit() -> None:
+def test_rod_tendon_plant_scenario_2() -> None:
     plant = _plant(sensor=True)
     parameters, source = _reset(plant)
 
@@ -265,11 +254,6 @@ def test_sensor_sampling_is_part_of_reset_and_step_atomic_commit() -> None:
     assert bool(decoded_sensor.initialized)
     assert any("sample_epoch" in path for path in encoded.mode_paths)
     assert any("initialized" in path for path in encoded.mode_paths)
-
-
-def test_late_sensor_invalidity_rolls_back_mechanics_actuator_sensor_clock_and_key() -> (
-    None
-):
     plant = _plant(sensor=True)
     parameters, source = _reset(plant)
     broken = eqx.tree_at(
@@ -291,9 +275,6 @@ def test_late_sensor_invalidity_rolls_back_mechanics_actuator_sensor_clock_and_k
         jax.random.key_data(result.accepted_state.key),
         jax.random.key_data(source.key),
     )
-
-
-def test_exact_state_and_control_codecs_are_bound_to_plant_identities() -> None:
     plant = _plant(count=3)
     state_encoded = plant.state_codec.encode_point(plant.initial_state)
     state_decoded = plant.state_codec.decode_point(state_encoded)

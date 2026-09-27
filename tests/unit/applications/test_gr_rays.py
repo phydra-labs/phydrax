@@ -97,7 +97,7 @@ def _spherical_screen(metric: Any, radius: Any = 10.0) -> Any:
     ).initialize()
 
 
-def test_observer_screen_initialization_is_metric_orthonormal_and_generic() -> None:
+def test_gr_rays_scenario_1() -> None:
     flat = _cartesian_metric()
     flat_screen = GRObserverScreenPlan(
         flat,
@@ -124,9 +124,6 @@ def test_observer_screen_initialization_is_metric_orthonormal_and_generic() -> N
         assert np.all(screen.valid)
         assert float(screen.tetrad_residual) < 1.0e-12
         assert float(np.max(screen.null_residual)) < 1.0e-12
-
-
-def test_observer_screen_promotes_integer_inputs_to_floating_geometry() -> None:
     screen = GRObserverScreenPlan(
         _cartesian_metric(),
         # ty: ignore[invalid-argument-type]
@@ -144,9 +141,6 @@ def test_observer_screen_promotes_integer_inputs_to_floating_geometry() -> None:
 
     assert jnp.issubdtype(screen.ray_coordinates.dtype, jnp.floating)
     assert np.all(screen.valid)
-
-
-def test_mixed_batch_resolves_ordered_events_and_retains_work_exhaustion() -> None:
     metric = _cartesian_metric()
     coordinates = jnp.zeros((5, 4))
     tangents = jnp.asarray(
@@ -203,9 +197,6 @@ def test_mixed_batch_resolves_ordered_events_and_retains_work_exhaustion() -> No
     np.testing.assert_array_equal(
         result.event_ledger.recorded, [True, True, True, True, False]
     )
-
-
-def test_event_ledger_retains_backend_root_state_between_history_nodes() -> None:
     metric = _cartesian_metric()
     plan = GRRayPlan(
         metric,
@@ -234,7 +225,7 @@ def test_event_ledger_retains_backend_root_state_between_history_nodes() -> None
     assert int(result.event_ledger.history_index[0]) == 2
 
 
-def test_affine_dependent_domain_evidence_uses_each_history_time() -> None:
+def test_gr_rays_scenario_2() -> None:
     metric = _cartesian_metric()
     affine = jnp.asarray([0.0, 0.25, 0.75, 1.0])
     plan = GRRayPlan(
@@ -252,9 +243,6 @@ def test_affine_dependent_domain_evidence_uses_each_history_time() -> None:
 
     np.testing.assert_allclose(result.domain_evidence.margin[0], 2.0 - affine)
     assert np.all(result.domain_evidence.qualified)
-
-
-def test_ray_plan_rejects_each_nonfinite_tolerance() -> None:
     metric = _cartesian_metric()
     state = GRRayState(
         jnp.zeros((1, 4)),
@@ -275,15 +263,12 @@ def test_ray_plan_rejects_each_nonfinite_tolerance() -> None:
                 **{name: float("inf")},
                 **_ray_context(),
             )
-
-
-def test_stateful_event_margin_identity_includes_numeric_callable_content() -> None:
     first = GRRayEventSurfaces(capture_margin=_StatefulMargin(1.0))
     second = GRRayEventSurfaces(capture_margin=_StatefulMargin(2.0))
     assert first.event_id != second.event_id
 
 
-def test_opaque_event_margins_require_declared_identity() -> None:
+def test_gr_rays_scenario_3() -> None:
     near = lambda affine, point, tangent: 1.0 - point[1]
     far = lambda affine, point, tangent: 2.0 - point[1]
     for margin in (near, far):
@@ -317,49 +302,6 @@ def test_opaque_event_margins_require_declared_identity() -> None:
         GRRayEventSurfaces(escape_margin=_escape_above_half).event_id
         != GRRayEventSurfaces(escape_margin=_escape_above_053).event_id
     )
-
-
-def test_callable_constant_revisions_change_constant_and_plan_identity() -> None:
-    def make(offset: Any) -> Any:
-        return lambda metric, coordinates, tangent: tangent[0] + offset
-
-    first = GRCallableConstantOfMotion(
-        make(1.0),
-        name="closure-constant",
-        evaluator_semantic_id="test:closure-constant",
-        evaluator_numeric_id="test:closure-constant:offset-1",
-    )
-    second = GRCallableConstantOfMotion(
-        make(2.0),
-        name="closure-constant",
-        evaluator_semantic_id="test:closure-constant",
-        evaluator_numeric_id="test:closure-constant:offset-2",
-    )
-    assert first.constant_id != second.constant_id
-
-    metric = _cartesian_metric()
-    state = GRRayState(
-        jnp.zeros((1, 4)),
-        jnp.asarray([[1.0, 1.0, 0.0, 0.0]]),
-    )
-    first_plan = GRRayPlan(
-        metric,
-        state,
-        jnp.asarray([0.0, 1.0]),
-        constants_of_motion=(first,),
-        **_ray_context(),
-    )
-    second_plan = GRRayPlan(
-        metric,
-        state,
-        jnp.asarray([0.0, 1.0]),
-        constants_of_motion=(second,),
-        **_ray_context(),
-    )
-    assert first_plan.plan_id != second_plan.plan_id
-
-
-def test_parallel_transport_constants_and_jacobi_map_have_fixed_evidence() -> None:
     metric = _cartesian_metric()
     screen = GRObserverScreenPlan(
         metric,
@@ -403,6 +345,46 @@ def test_parallel_transport_constants_and_jacobi_map_have_fixed_evidence() -> No
     assert float(np.max(result.transport_residual)) < 1.0e-10
     assert float(np.max(result.bundle_evidence.constant_relative_drift)) < 1.0e-10
     assert np.all(result.derivative_valid)
+
+
+def test_callable_constant_revisions_change_constant_and_plan_identity() -> None:
+    def make(offset: Any) -> Any:
+        return lambda metric, coordinates, tangent: tangent[0] + offset
+
+    first = GRCallableConstantOfMotion(
+        make(1.0),
+        name="closure-constant",
+        evaluator_semantic_id="test:closure-constant",
+        evaluator_numeric_id="test:closure-constant:offset-1",
+    )
+    second = GRCallableConstantOfMotion(
+        make(2.0),
+        name="closure-constant",
+        evaluator_semantic_id="test:closure-constant",
+        evaluator_numeric_id="test:closure-constant:offset-2",
+    )
+    assert first.constant_id != second.constant_id
+
+    metric = _cartesian_metric()
+    state = GRRayState(
+        jnp.zeros((1, 4)),
+        jnp.asarray([[1.0, 1.0, 0.0, 0.0]]),
+    )
+    first_plan = GRRayPlan(
+        metric,
+        state,
+        jnp.asarray([0.0, 1.0]),
+        constants_of_motion=(first,),
+        **_ray_context(),
+    )
+    second_plan = GRRayPlan(
+        metric,
+        state,
+        jnp.asarray([0.0, 1.0]),
+        constants_of_motion=(second,),
+        **_ray_context(),
+    )
+    assert first_plan.plan_id != second_plan.plan_id
 
 
 def test_timelike_trace_is_filter_jittable_and_has_branch_local_gradient() -> None:

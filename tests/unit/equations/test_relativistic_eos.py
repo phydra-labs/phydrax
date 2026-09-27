@@ -61,9 +61,7 @@ def _tabulated_eos(*, pressure_scale: Any = 1.0) -> Any:
     )
 
 
-def test_gamma_law_state_is_thermodynamically_consistent_and_vector_differentiable() -> (
-    None
-):
+def test_relativistic_eos_scenario_1() -> None:
     scale = _geometric_scale()
     eos = GammaLawEOS(
         scale,
@@ -104,9 +102,6 @@ def test_gamma_law_state_is_thermodynamically_consistent_and_vector_differentiab
 
     pressure_state = eos.evaluate_pressure(density, state.pressure)
     np.testing.assert_allclose(pressure_state.specific_internal_energy, energy)
-
-
-def test_gamma_law_reports_exact_domain_failures_without_repairing_inputs() -> None:
     eos = GammaLawEOS(
         _geometric_scale(),
         4.0 / 3.0,
@@ -123,9 +118,6 @@ def test_gamma_law_reports_exact_domain_failures_without_repairing_inputs() -> N
     assert int(state.status[2]) == RELATIVISTIC_EOS_SUCCESS
     assert state.rest_mass_density[0] == pytest.approx(0.09)
     assert state.specific_internal_energy[1] == pytest.approx(1.1)
-
-
-def test_piecewise_polytrope_is_continuous_and_obeys_cold_first_law() -> None:
     eos = _cold_eos()
     break_density = jnp.asarray(1.0)
     left = eos.evaluate(break_density - 1.0e-6)
@@ -156,9 +148,6 @@ def test_piecewise_polytrope_is_continuous_and_obeys_cold_first_law() -> None:
     inconsistent = eos.evaluate(jnp.asarray(2.0), jnp.asarray(0.0))
     assert int(inconsistent.status) == RELATIVISTIC_EOS_COLD_CONSTRAINT_MISMATCH
     assert not bool(inconsistent.physically_valid)
-
-
-def test_hybrid_eos_uses_cold_energy_as_an_explicit_thermal_boundary() -> None:
     cold = _cold_eos()
     eos = HybridColdThermalEOS(cold, 1.5)
     density = jnp.asarray((0.6, 2.0, 3.0))
@@ -193,9 +182,7 @@ def test_hybrid_eos_uses_cold_energy_as_an_explicit_thermal_boundary() -> None:
     assert below.pressure != cold.evaluate(jnp.asarray(2.0)).pressure
 
 
-def test_tabulated_eos_has_bounded_fixed_interpolation_and_smooth_branch_gradients() -> (
-    None
-):
+def test_tabulated_contracts() -> None:
     eos = _tabulated_eos()
     density = jnp.asarray((1.25, 1.5, 3.0))
     temperature = jnp.asarray((1.25, 1.5, 3.0))
@@ -240,23 +227,6 @@ def test_tabulated_eos_has_bounded_fixed_interpolation_and_smooth_branch_gradien
     np.testing.assert_allclose(
         pressure_inverse.specific_internal_energy, expected_energy, rtol=2.0e-6
     )
-
-
-def test_tabulated_eos_support_endpoints_are_not_derivative_valid() -> None:
-    eos = _tabulated_eos()
-    states = eos.evaluate_temperature(
-        jnp.asarray((1.0, 4.0, 1.5, 1.5, 1.5, 1.5)),
-        jnp.asarray((1.5, 1.5, 1.0, 4.0, 1.5, 1.5)),
-        jnp.asarray((0.2, 0.2, 0.2, 0.2, 0.1, 0.8)),
-    )
-
-    assert bool(jnp.all(states.qualified))
-    assert not bool(jnp.any(states.derivative_valid))
-
-
-def test_tabulated_eos_reports_each_support_failure_and_never_returns_boundary_values() -> (
-    None
-):
     eos = _tabulated_eos()
     state = eos.evaluate_temperature(
         jnp.asarray((0.5, 2.0, 2.0, 2.0)),
@@ -275,21 +245,6 @@ def test_tabulated_eos_reports_each_support_failure_and_never_returns_boundary_v
     assert int(below_energy.status) == RELATIVISTIC_EOS_THERMAL_BELOW_DOMAIN
     assert bool(jnp.isnan(below_energy.pressure))
     assert bool(jnp.isnan(below_energy.temperature))
-
-
-def test_tabulated_identity_binds_all_numeric_content_and_host_evidence() -> None:
-    base = _tabulated_eos()
-    changed = _tabulated_eos(pressure_scale=1.01)
-
-    assert base.table_id != changed.table_id
-    assert base.eos_id != changed.eos_id
-    assert base.table_evidence.qualified
-    assert base.table_evidence.minimum_heat_capacity > 0.0
-    assert base.table_evidence.minimum_adiabatic_pressure_derivative > 0.0
-    assert base.table_evidence.minimum_causality_margin >= 0.0
-
-
-def test_tabulated_eos_rejects_nonmonotone_or_acausal_content_on_host() -> None:
     density = np.asarray((1.0, 2.0, 4.0))
     temperature = np.asarray((1.0, 2.0, 4.0))
     composition = np.asarray((0.1, 0.4, 0.8))
@@ -313,3 +268,21 @@ def test_tabulated_eos_rejects_nonmonotone_or_acausal_content_on_host() -> None:
 
     with pytest.raises(ValueError, match="stable and causal"):
         _tabulated_eos(pressure_scale=4.0)
+    eos = _tabulated_eos()
+    states = eos.evaluate_temperature(
+        jnp.asarray((1.0, 4.0, 1.5, 1.5, 1.5, 1.5)),
+        jnp.asarray((1.5, 1.5, 1.0, 4.0, 1.5, 1.5)),
+        jnp.asarray((0.2, 0.2, 0.2, 0.2, 0.1, 0.8)),
+    )
+
+    assert bool(jnp.all(states.qualified))
+    assert not bool(jnp.any(states.derivative_valid))
+    base = _tabulated_eos()
+    changed = _tabulated_eos(pressure_scale=1.01)
+
+    assert base.table_id != changed.table_id
+    assert base.eos_id != changed.eos_id
+    assert base.table_evidence.qualified
+    assert base.table_evidence.minimum_heat_capacity > 0.0
+    assert base.table_evidence.minimum_adiabatic_pressure_derivative > 0.0
+    assert base.table_evidence.minimum_causality_margin >= 0.0

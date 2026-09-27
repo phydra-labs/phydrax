@@ -49,7 +49,7 @@ def _two_case_problem(input_signal: Any, *, args: Any = None) -> Any:
     )
 
 
-def test_sampled_input_hand_checked_interpolation_and_right_continuity() -> None:
+def test_state_space_input_scenario_1() -> None:
     times = jnp.asarray([0.0, 1.0, 3.0])
     values = jnp.asarray([[0.0], [10.0], [30.0]])
     hold = phx.stochastic.SampledStateSpaceInput(
@@ -79,9 +79,6 @@ def test_sampled_input_hand_checked_interpolation_and_right_continuity() -> None
     assert jnp.allclose(hold.evaluate(jnp.nextafter(1.0, 0.0), 0).value, 0.0)
     assert jnp.allclose(hold.evaluate(1.0, 0).value, 10.0)
     assert not hold.evaluate(-0.1, 0).valid
-
-
-def test_sampled_input_handles_per_case_irregular_knots_and_padding_masks() -> None:
     signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray(
             [
@@ -113,9 +110,6 @@ def test_sampled_input_handles_per_case_irregular_knots_and_padding_masks() -> N
     assert jnp.array_equal(first_mask, jnp.asarray([False, True, False, False]))
     assert jnp.array_equal(second_times, jnp.asarray([-1.0, 0.5, 2.0, 123.0]))
     assert jnp.array_equal(second_mask, jnp.asarray([False, True, True, False]))
-
-
-def test_state_space_problem_rejects_input_without_schedule_support() -> None:
     unsupported = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray([[0.0, 2.0], [0.0, 1.5]]),
         jnp.asarray([[[0.0], [2.0]], [[0.0], [1.5]]]),
@@ -125,36 +119,50 @@ def test_state_space_problem_rejects_input_without_schedule_support() -> None:
 
     with pytest.raises(ValueError, match="support every active"):
         _two_case_problem(unsupported)
+    for input_kind in ("sampled", "bspline"):
+        for invalid_case_index in (-1, 2):
+            for use_jit in (False, True):
+                if input_kind == "sampled":
+                    signal = phx.stochastic.SampledStateSpaceInput(
+                        jnp.asarray([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]]),
+                        jnp.asarray(
+                            [
+                                [[0.0], [1.0], [2.0]],
+                                [[10.0], [11.0], [12.0]],
+                            ]
+                        ),
+                        interpolation="linear",
+                        input_id="bounded-sampled",
+                    )
+                else:
+                    signal = phx.stochastic.BSplineStateSpaceInput(
+                        phx.nn.models.BSplineGrid(
+                            jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1
+                        ),
+                        jnp.asarray(
+                            [
+                                [[0.0], [1.0], [2.0]],
+                                [[10.0], [11.0], [12.0]],
+                            ]
+                        ),
+                        case_shape=(2,),
+                        input_id="bounded-bspline",
+                    )
+                problem = _two_case_problem(signal)
+                accessors = (
+                    lambda index: signal.evaluate(0.75, index).value,
+                    lambda index: signal.breakpoints(0.0, 1.5, index)[0],
+                    lambda index: problem.step_context(index, 0).observation_input,
+                )
 
-
-def test_bspline_input_values_and_coefficient_gradients_are_hand_checked() -> None:
-    grid = phx.nn.models.BSplineGrid(jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1)
-    signal = phx.stochastic.BSplineStateSpaceInput(
-        grid,
-        jnp.asarray([[0.0], [10.0], [20.0]]),
-        input_id="piecewise-linear-spline",
-    )
-    queries = jnp.asarray([0.0, 0.5, 1.0, 1.5, 2.0])
-    evaluations = jax.jit(jax.vmap(signal.evaluate, in_axes=(0, None)))(queries, 0)
-
-    def value_at_half(coefficients: Any) -> Any:
-        candidate = eqx.tree_at(
-            lambda current: current.coefficients, signal, coefficients
-        )
-        return candidate.evaluate(0.5, 0).value[0]
-
-    gradient = jax.grad(value_at_half)(signal.coefficients)
-
-    assert isinstance(signal, phx.stochastic.AbstractStateSpaceInput)
-    assert jnp.all(evaluations.valid)
-    assert jnp.allclose(
-        evaluations.value[:, 0], jnp.asarray([0.0, 5.0, 10.0, 15.0, 20.0])
-    )
-    assert jnp.allclose(gradient[:, 0], jnp.asarray([0.5, 0.5, 0.0]))
-    assert not signal.evaluate(2.1, 0).valid
-
-
-def test_problem_step_context_exposes_schedule_inputs_and_arbitrary_evaluation() -> None:
+                for accessor in accessors:
+                    checked_accessor = eqx.filter_jit(accessor) if use_jit else accessor
+                    with pytest.raises(
+                        (ValueError, eqx.EquinoxRuntimeError),
+                        match="physical case index is out of bounds",
+                    ):
+                        value = checked_accessor(jnp.asarray(invalid_case_index))
+                        jax.block_until_ready(value)
     signal = phx.stochastic.SampledStateSpaceInput(
         jnp.asarray(
             [
@@ -195,48 +203,28 @@ def test_problem_step_context_exposes_schedule_inputs_and_arbitrary_evaluation()
     )
 
 
-@pytest.mark.parametrize("input_kind", ("sampled", "bspline"))
-@pytest.mark.parametrize("invalid_case_index", (-1, 2))
-@pytest.mark.parametrize("use_jit", (False, True), ids=("eager", "jit"))
-def test_state_space_input_case_indices_are_bounds_checked(
-    input_kind: Any, invalid_case_index: Any, use_jit: Any
-) -> None:
-    if input_kind == "sampled":
-        signal = phx.stochastic.SampledStateSpaceInput(
-            jnp.asarray([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]]),
-            jnp.asarray(
-                [
-                    [[0.0], [1.0], [2.0]],
-                    [[10.0], [11.0], [12.0]],
-                ]
-            ),
-            interpolation="linear",
-            input_id="bounded-sampled",
-        )
-    else:
-        signal = phx.stochastic.BSplineStateSpaceInput(
-            phx.nn.models.BSplineGrid(jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1),
-            jnp.asarray(
-                [
-                    [[0.0], [1.0], [2.0]],
-                    [[10.0], [11.0], [12.0]],
-                ]
-            ),
-            case_shape=(2,),
-            input_id="bounded-bspline",
-        )
-    problem = _two_case_problem(signal)
-    accessors = (
-        lambda index: signal.evaluate(0.75, index).value,
-        lambda index: signal.breakpoints(0.0, 1.5, index)[0],
-        lambda index: problem.step_context(index, 0).observation_input,
+def test_bspline_input_values_and_coefficient_gradients_are_hand_checked() -> None:
+    grid = phx.nn.models.BSplineGrid(jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1)
+    signal = phx.stochastic.BSplineStateSpaceInput(
+        grid,
+        jnp.asarray([[0.0], [10.0], [20.0]]),
+        input_id="piecewise-linear-spline",
     )
+    queries = jnp.asarray([0.0, 0.5, 1.0, 1.5, 2.0])
+    evaluations = jax.jit(jax.vmap(signal.evaluate, in_axes=(0, None)))(queries, 0)
 
-    for accessor in accessors:
-        checked_accessor = eqx.filter_jit(accessor) if use_jit else accessor
-        with pytest.raises(
-            (ValueError, eqx.EquinoxRuntimeError),
-            match="physical case index is out of bounds",
-        ):
-            value = checked_accessor(jnp.asarray(invalid_case_index))
-            jax.block_until_ready(value)
+    def value_at_half(coefficients: Any) -> Any:
+        candidate = eqx.tree_at(
+            lambda current: current.coefficients, signal, coefficients
+        )
+        return candidate.evaluate(0.5, 0).value[0]
+
+    gradient = jax.grad(value_at_half)(signal.coefficients)
+
+    assert isinstance(signal, phx.stochastic.AbstractStateSpaceInput)
+    assert jnp.all(evaluations.valid)
+    assert jnp.allclose(
+        evaluations.value[:, 0], jnp.asarray([0.0, 5.0, 10.0, 15.0, 20.0])
+    )
+    assert jnp.allclose(gradient[:, 0], jnp.asarray([0.5, 0.5, 0.0]))
+    assert not signal.evaluate(2.1, 0).valid

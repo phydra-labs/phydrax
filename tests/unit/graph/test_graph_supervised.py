@@ -42,7 +42,7 @@ def _linear_node_targets() -> Any:
     return tuple(10.0 + 2.0 * graph.nodes[:, 0] for graph in _graphs())
 
 
-def test_graph_target_aligns_repeated_cases_and_node_sets() -> None:
+def test_graph_contracts() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     batch = domain.points_from_indices(
         # ty: ignore[invalid-argument-type]
@@ -62,31 +62,6 @@ def test_graph_target_aligns_repeated_cases_and_node_sets() -> None:
         jnp.array([0, 3, 5], dtype=jnp.int32),
     )
     assert jnp.allclose(jnp.asarray(target(batch).data), jnp.array([24.0, 11.0, 24.0]))
-
-
-def test_graph_supervised_constraint_zero_for_matching_node_function() -> None:
-    domain = phx.domain.GraphDatasetDomain(_graphs())
-    component = domain.component({"graph": phx.domain.Nodes()})
-
-    @domain.Function("graph")
-    def u(node: Any) -> Any:
-        return 10.0 + 2.0 * node[0]
-
-    constraint = phx.terms.GraphSupervisedTerm(
-        "u",
-        component,
-        _linear_node_targets(),
-        sampling=phx.domain.PointSampling(8, design="uniform"),
-    )
-
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
-    assert jnp.allclose(
-        constraint.data_metrics({"u": u}, key=jr.key(0))["data_accuracy"],
-        1.0,
-    )
-
-
-def test_graph_trajectory_signal_matches_nearest_observations() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -111,9 +86,6 @@ def test_graph_trajectory_signal_matches_nearest_observations() -> None:
     assert jnp.allclose(
         jnp.asarray(signal(batch).data), jnp.array([1.0, 2.0, 4.0, 6.0, 10.0])
     )
-
-
-def test_graph_trajectory_signal_linearly_interpolates_time() -> None:
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -140,6 +112,28 @@ def test_graph_trajectory_signal_linearly_interpolates_time() -> None:
     )
 
     assert jnp.allclose(jnp.asarray(signal(batch).data), jnp.array([1.5, 5.5]))
+
+
+def test_graph_supervised_constraint_zero_for_matching_node_function() -> None:
+    domain = phx.domain.GraphDatasetDomain(_graphs())
+    component = domain.component({"graph": phx.domain.Nodes()})
+
+    @domain.Function("graph")
+    def u(node: Any) -> Any:
+        return 10.0 + 2.0 * node[0]
+
+    constraint = phx.terms.GraphSupervisedTerm(
+        "u",
+        component,
+        _linear_node_targets(),
+        sampling=phx.domain.PointSampling(8, design="uniform"),
+    )
+
+    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert jnp.allclose(
+        constraint.data_metrics({"u": u}, key=jr.key(0))["data_accuracy"],
+        1.0,
+    )
 
 
 def test_graph_trajectory_supervised_constraint_zero_for_matching_function() -> None:

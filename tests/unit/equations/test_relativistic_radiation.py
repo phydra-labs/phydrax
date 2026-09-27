@@ -57,7 +57,7 @@ def _geometry(
     )
 
 
-def test_gr_m1_closure_recovers_diffusion_and_streaming_limits_under_jit() -> None:
+def test_relativistic_radiation_scenario_1() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -84,9 +84,6 @@ def test_gr_m1_closure_recovers_diffusion_and_streaming_limits_under_jit() -> No
     np.testing.assert_allclose(streaming.pressure_tensor[1:, 1:], 0.0, atol=1.0e-6)
     assert bool(streaming.physically_valid)
     assert not bool(streaming.derivative_valid)
-
-
-def test_gr_m1_characteristics_follow_lapse_shift_light_cone() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention, alpha=0.5, shift=(0.1, 0.0, 0.0))
@@ -98,9 +95,6 @@ def test_gr_m1_characteristics_follow_lapse_shift_light_cone() -> None:
 
     np.testing.assert_allclose(lower, -0.6, rtol=1.0e-6)
     np.testing.assert_allclose(upper, 0.4, rtol=1.0e-6)
-
-
-def test_gr_radiation_matter_exchange_is_balanced_and_exposes_optical_limits() -> None:
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
@@ -143,9 +137,6 @@ def test_gr_radiation_matter_exchange_is_balanced_and_exposes_optical_limits() -
     assert float(exchange.radiation_flux_source[0]) < 0.0
     assert bool(exchange.converged)
     assert bool(exchange.qualified)
-
-
-def test_reduced_transport_speed_does_not_change_physical_frame_or_adm_momentum() -> None:
     scale = _nonunit_scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)

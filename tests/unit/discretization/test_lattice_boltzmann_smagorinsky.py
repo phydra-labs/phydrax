@@ -59,9 +59,7 @@ def _collide(
     )
 
 
-def test_nonzero_smagorinsky_uses_local_nonequilibrium_stress_and_reports_evidence() -> (
-    None
-):
+def test_lattice_boltzmann_smagorinsky_scenario_1() -> None:
     lattice, precision, density, velocity, equilibrium, populations = (
         _nonequilibrium_state()
     )
@@ -115,9 +113,6 @@ def test_nonzero_smagorinsky_uses_local_nonequilibrium_stress_and_reports_eviden
     np.testing.assert_allclose(new_mass, old_mass, rtol=0.0, atol=5.0e-16)
     np.testing.assert_allclose(new_momentum, old_momentum, rtol=0.0, atol=5.0e-16)
     assert float(evidence.conserved_moment_defect) <= 5.0e-16
-
-
-def test_zero_coefficient_parity_equilibrium_limit_and_monotonic_response() -> None:
     lattice, precision, density, velocity, equilibrium, populations = (
         _nonequilibrium_state()
     )
@@ -170,9 +165,6 @@ def test_zero_coefficient_parity_equilibrium_limit_and_monotonic_response() -> N
     assert float(higher.effective_kinematic_viscosity) > float(
         lower.effective_kinematic_viscosity
     )
-
-
-def test_smagorinsky_rejects_invalid_coefficient_and_relaxation_rate() -> None:
     for coefficient in (-0.1, np.nan, np.inf):
         with pytest.raises(ValueError, match="finite and nonnegative"):
             SmagorinskyCollisionPlan(coefficient)
@@ -187,6 +179,22 @@ def test_smagorinsky_rejects_invalid_coefficient_and_relaxation_rate() -> None:
                 0.16, populations, density, velocity, lattice, precision, rate
             )
             jax.block_until_ready(result.populations)
+    record = qualification(
+        resolution=12,
+        steps=8,
+        amplitude=0.06,
+        base_relaxation_rate=1.25,
+        coefficient=0.25,
+    )
+
+    assert record["case"] == "periodic-decaying-shear-d2q9"
+    assert record["passed"]
+    assert record["smagorinsky"]["coefficient_active"]
+    assert record["smagorinsky"]["successful"]
+    assert record["molecular"]["successful"]
+    assert record["additional_amplitude_decay"] > 0.0
+    assert record["reference"]["relative_error"] < 0.05
+    assert record["smagorinsky"]["support"] == record["molecular"]["support"]
 
 
 def test_smagorinsky_eager_jit_and_jvp_are_consistent_and_finite() -> None:
@@ -226,22 +234,3 @@ def test_smagorinsky_eager_jit_and_jvp_are_consistent_and_finite() -> None:
     assert bool(jnp.all(jnp.isfinite(tangent)))
     assert bool(jnp.any(jnp.abs(tangent) > 0.0))
     np.testing.assert_allclose(tangent, finite_difference, rtol=2.0e-7, atol=2.0e-9)
-
-
-def test_smagorinsky_decaying_shear_qualification_is_observable_and_scoped() -> None:
-    record = qualification(
-        resolution=12,
-        steps=8,
-        amplitude=0.06,
-        base_relaxation_rate=1.25,
-        coefficient=0.25,
-    )
-
-    assert record["case"] == "periodic-decaying-shear-d2q9"
-    assert record["passed"]
-    assert record["smagorinsky"]["coefficient_active"]
-    assert record["smagorinsky"]["successful"]
-    assert record["molecular"]["successful"]
-    assert record["additional_amplitude_decay"] > 0.0
-    assert record["reference"]["relative_error"] < 0.05
-    assert record["smagorinsky"]["support"] == record["molecular"]["support"]

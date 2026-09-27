@@ -40,7 +40,7 @@ def _eft_basis() -> Any:
     return df.EFTOperatorBasis((df.EFTOperator("phi2", (phi, phi), 2.0),))
 
 
-def test_diagram_monte_carlo_satisfies_birth_death_and_worm_detailed_balance() -> None:
+def test_diagrammatic_field_stochastic_parquet_eft_scenario_1() -> None:
     diagrams = (_catalog_diagram(1), _catalog_diagram(2))
     prepared = df.DiagramMonteCarloPlan(
         steps=2_000,
@@ -60,9 +60,6 @@ def test_diagram_monte_carlo_satisfies_birth_death_and_worm_detailed_balance() -
     np.testing.assert_allclose(jnp.sum(result.order_probabilities), 1.0)
     assert 0.0 <= result.evidence.average_sign <= 1.0
     assert result.evidence.phase_standard_error >= 0.0
-
-
-def test_finite_parquet_iteration_reaches_the_analytic_scalar_fixed_point() -> None:
     bare = jnp.asarray([[1.0]])
     bubbles = jnp.full((3, 1, 1), 0.1)
     result = (
@@ -80,9 +77,6 @@ def test_finite_parquet_iteration_reaches_the_analytic_scalar_fixed_point() -> N
     assert result.evidence.successful
     assert result.evidence.fixed_point_residual <= 1e-12
     np.testing.assert_allclose(result.full_vertex, [[expected]], rtol=1e-10)
-
-
-def test_native_matching_and_rg_running_recover_known_one_operator_flow() -> None:
     basis = _eft_basis()
     matched = (
         df.EFTMatchingPlan(basis, jnp.asarray([[1.0]]))

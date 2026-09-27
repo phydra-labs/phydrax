@@ -147,7 +147,7 @@ def _invariants(system: Any, state: Any) -> Any:
     )
 
 
-def test_balance_law_thermochemistry_advances_and_preserves_invariants() -> None:
+def test_reacting_advance_scenario_1() -> None:
     system, mechanism, runtime, conserved = _problem()
     balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=16)
     result = _advance(balance, runtime, conserved, 0.05)
@@ -159,9 +159,6 @@ def test_balance_law_thermochemistry_advances_and_preserves_invariants() -> None
         _invariants(system, conserved), _invariants(system, after), strict=True
     ):
         np.testing.assert_allclose(advanced, before, rtol=2.0e-6, atol=2.0e-6)
-
-
-def test_fixed_iterative_trapezoidal_chemistry_accepts_stiff_positive_update() -> None:
     system, mechanism, runtime, conserved = _problem(rate=20.0)
     balance = _balance(
         runtime,
@@ -182,9 +179,6 @@ def test_fixed_iterative_trapezoidal_chemistry_accepts_stiff_positive_update() -
         rtol=0.0,
         atol=0.0,
     )
-
-
-def test_failed_explicit_chemistry_rolls_back_complete_balance_state() -> None:
     _, mechanism, runtime, conserved = _problem(rate=1.0e6)
     balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=1)
     result = _advance(balance, runtime, conserved, 0.01)

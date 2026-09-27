@@ -4,7 +4,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_antithetic_paths_share_independence_clusters() -> None:
+def test_stage10_substrate_scenario_1() -> None:
     realization = phx.stochastic.WienerRealization.antithetic(
         jr.key(0), (1,), support=(0.0, 1.0), num_pairs=3
     )
@@ -17,14 +17,8 @@ def test_antithetic_paths_share_independence_clusters() -> None:
     assert labels[0] == labels[1]
     assert labels[2] == labels[3]
     assert labels[4] == labels[5]
-
-
-def test_missing_realization_has_unknown_independence() -> None:
     labels = phx.stochastic.realization_independence_labels(None, (3,))
     assert labels == (None, None, None)
-
-
-def test_jump_generator_is_owned_by_stochastic_namespace() -> None:
     process = phx.stochastic.JumpProcess(
         lambda t, state, args: jnp.asarray([2.0]),
         lambda state, channel, mark, args: state + jnp.asarray([1.0]),

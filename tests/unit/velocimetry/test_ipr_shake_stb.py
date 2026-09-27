@@ -104,7 +104,7 @@ def _render_truth(
     ).images
 
 
-def test_noiseless_ipr_recovers_missing_particle_and_reduces_residual() -> None:
+def test_ipr_shake_stb_scenario_1() -> None:
     rig, geometry = _rig_and_geometry()
     formation = _formation()
     truth_position = jnp.asarray([[-0.45, 0.05, 6.0], [0.55, -0.1, 6.4], [0.0, 0.0, 0.0]])
@@ -135,9 +135,6 @@ def test_noiseless_ipr_recovers_missing_particle_and_reduces_residual() -> None:
     assert jnp.min(jnp.where(result.active, recovered_distance, jnp.inf)) < 0.2
     assert result.final_loss < result.initial_loss
     assert jnp.sum(result.residual * result.residual) < jnp.sum(observed * observed)
-
-
-def test_ipr_rejects_duplicates_and_reports_subset_and_capacity() -> None:
     rig, geometry = _rig_and_geometry()
     formation = _formation()
     one_position = jnp.asarray([[0.0, 0.0, 6.0], [0.0, 0.0, 0.0]])
@@ -186,65 +183,6 @@ def test_ipr_rejects_duplicates_and_reports_subset_and_capacity() -> None:
     )
     assert capacity.capacity_rejected_count >= 1
     assert capacity.status == IPR_CAPACITY_EXHAUSTED
-
-
-def test_shake_reduces_robust_residual_and_frozen_topology_is_differentiable() -> None:
-    rig, geometry = _rig_and_geometry()
-    formation = _formation()
-    truth = jnp.asarray([[0.2, -0.1, 6.0]])
-    observed = _render_truth(
-        formation,
-        rig,
-        geometry,
-        truth,
-        jnp.asarray([18.0]),
-        jnp.asarray([True]),
-    )
-    plan = ShakePlan(
-        iterations=6,
-        position_step=0.2,
-        amplitude_step=0.5,
-        maximum_displacement=0.5,
-    )
-    initial = truth + jnp.asarray([[0.08, 0.03, 0.0]])
-    result = shake_particles(
-        plan,
-        formation,
-        rig,
-        geometry,
-        observed,
-        initial,
-        jnp.asarray([16.0]),
-        jnp.asarray([1.0]),
-        jnp.asarray([True]),
-    )
-
-    assert result.accepted_steps >= 1
-    assert result.loss_history[-1] < result.loss_history[0]
-    assert jnp.sum(result.residual * result.residual) < jnp.sum(
-        result.initial_residual * result.initial_residual
-    )
-
-    def refined_loss(x_coordinate: Any) -> Any:
-        shifted = initial.at[0, 0].set(x_coordinate)
-        refined = shake_particles(
-            plan,
-            formation,
-            rig,
-            geometry,
-            observed,
-            shifted,
-            jnp.asarray([16.0]),
-            jnp.asarray([1.0]),
-            jnp.asarray([True]),
-        )
-        return refined.loss_history[-1]
-
-    derivative = jax.grad(refined_loss)(initial[0, 0])
-    assert jnp.isfinite(derivative)
-
-
-def test_stb_promotes_distinct_identity_and_terminates_through_tracking_core() -> None:
     rig, geometry = _rig_and_geometry()
     formation = _formation()
     capacity = 2
@@ -310,3 +248,59 @@ def test_stb_promotes_distinct_identity_and_terminates_through_tracking_core() -
     assert ended.evidence.terminated_count == 1
     assert not jnp.any(ended.state.active)
     assert jnp.all(ended.state.track_ids == -1)
+
+
+def test_shake_reduces_robust_residual_and_frozen_topology_is_differentiable() -> None:
+    rig, geometry = _rig_and_geometry()
+    formation = _formation()
+    truth = jnp.asarray([[0.2, -0.1, 6.0]])
+    observed = _render_truth(
+        formation,
+        rig,
+        geometry,
+        truth,
+        jnp.asarray([18.0]),
+        jnp.asarray([True]),
+    )
+    plan = ShakePlan(
+        iterations=6,
+        position_step=0.2,
+        amplitude_step=0.5,
+        maximum_displacement=0.5,
+    )
+    initial = truth + jnp.asarray([[0.08, 0.03, 0.0]])
+    result = shake_particles(
+        plan,
+        formation,
+        rig,
+        geometry,
+        observed,
+        initial,
+        jnp.asarray([16.0]),
+        jnp.asarray([1.0]),
+        jnp.asarray([True]),
+    )
+
+    assert result.accepted_steps >= 1
+    assert result.loss_history[-1] < result.loss_history[0]
+    assert jnp.sum(result.residual * result.residual) < jnp.sum(
+        result.initial_residual * result.initial_residual
+    )
+
+    def refined_loss(x_coordinate: Any) -> Any:
+        shifted = initial.at[0, 0].set(x_coordinate)
+        refined = shake_particles(
+            plan,
+            formation,
+            rig,
+            geometry,
+            observed,
+            shifted,
+            jnp.asarray([16.0]),
+            jnp.asarray([1.0]),
+            jnp.asarray([True]),
+        )
+        return refined.loss_history[-1]
+
+    derivative = jax.grad(refined_loss)(initial[0, 0])
+    assert jnp.isfinite(derivative)

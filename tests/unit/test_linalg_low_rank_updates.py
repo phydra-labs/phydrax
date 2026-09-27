@@ -241,113 +241,109 @@ def test_low_rank_status_exposes_an_ill_conditioned_correction() -> None:
     assert jnp.all(jnp.isfinite(result.value))
 
 
-@pytest.mark.parametrize(
-    ("complex_data", "rank"),
-    ((False, 1), (False, 2), (True, 1), (True, 2)),
-)
-def test_low_rank_determinant_ratio_and_sequence_solve_match_dense_recomputation(
-    complex_data: Any,
-    rank: Any,
-) -> None:
-    base = jnp.asarray(
-        [[3.0, 0.2, -0.1], [0.1, 2.5, 0.3], [0.0, -0.2, 4.0]],
-        dtype=jnp.complex128 if complex_data else jnp.float64,
-    )
-    left = jnp.asarray(
-        [[0.3, -0.2], [0.1, 0.4], [-0.5, 0.2]],
-        dtype=base.dtype,
-    )
-    right = jnp.asarray(
-        [[0.2, 0.1], [-0.3, 0.2], [0.4, -0.1]],
-        dtype=base.dtype,
-    )
-    if complex_data:
-        base = base + 1j * jnp.asarray(
-            [[0.1, -0.2, 0.0], [0.3, 0.0, 0.1], [-0.1, 0.2, -0.1]]
+def test_low_rank_determinant_ratio_and_sequence_solve_match_dense_recomputation() -> (
+    None
+):
+    for complex_data, rank in ((False, 1), (False, 2), (True, 1), (True, 2)):
+        base = jnp.asarray(
+            [[3.0, 0.2, -0.1], [0.1, 2.5, 0.3], [0.0, -0.2, 4.0]],
+            dtype=jnp.complex128 if complex_data else jnp.float64,
         )
-        left = left + 1j * jnp.asarray([[0.1, 0.0], [-0.2, 0.3], [0.1, -0.1]])
-        right = right + 1j * jnp.asarray([[-0.1, 0.2], [0.1, 0.0], [0.2, -0.3]])
-    left, right = left[:, :rank], right[:, :rank]
-    base_factorization = la.factorize(
-        la.DenseLinearOperator(base, operator_id="determinant-sequence-base"),
-        la.FactorizationPolicy("lu"),
-    )
-    sequence = la.prepare_factorized_low_rank_sequence(
-        base_factorization,
-        4,
-        _status_policy(),
-    )
-    proposal = propose_low_rank_update(
-        sequence,
-        dense_low_rank_update(left, right),
-    )
-    updated = base + left @ right.T
-    expected_ratio = jnp.linalg.det(updated) / jnp.linalg.det(base)
+        left = jnp.asarray(
+            [[0.3, -0.2], [0.1, 0.4], [-0.5, 0.2]],
+            dtype=base.dtype,
+        )
+        right = jnp.asarray(
+            [[0.2, 0.1], [-0.3, 0.2], [0.4, -0.1]],
+            dtype=base.dtype,
+        )
+        if complex_data:
+            base = base + 1j * jnp.asarray(
+                [[0.1, -0.2, 0.0], [0.3, 0.0, 0.1], [-0.1, 0.2, -0.1]]
+            )
+            left = left + 1j * jnp.asarray([[0.1, 0.0], [-0.2, 0.3], [0.1, -0.1]])
+            right = right + 1j * jnp.asarray([[-0.1, 0.2], [0.1, 0.0], [0.2, -0.3]])
+        left, right = left[:, :rank], right[:, :rank]
+        base_factorization = la.factorize(
+            la.DenseLinearOperator(base, operator_id="determinant-sequence-base"),
+            la.FactorizationPolicy("lu"),
+        )
+        sequence = la.prepare_factorized_low_rank_sequence(
+            base_factorization,
+            4,
+            _status_policy(),
+        )
+        proposal = propose_low_rank_update(
+            sequence,
+            dense_low_rank_update(left, right),
+        )
+        updated = base + left @ right.T
+        expected_ratio = jnp.linalg.det(updated) / jnp.linalg.det(base)
 
-    assert proposal.successful
-    assert jnp.allclose(proposal.value, expected_ratio, rtol=1e-11, atol=1e-12)
-    assert jnp.allclose(
-        proposal.sign * jnp.exp(proposal.log_abs),
-        expected_ratio,
-        rtol=1e-11,
-        atol=1e-12,
-    )
-    assert proposal.provenance.route == "dense"
+        assert proposal.successful
+        assert jnp.allclose(proposal.value, expected_ratio, rtol=1e-11, atol=1e-12)
+        assert jnp.allclose(
+            proposal.sign * jnp.exp(proposal.log_abs),
+            expected_ratio,
+            rtol=1e-11,
+            atol=1e-12,
+        )
+        assert proposal.provenance.route == "dense"
 
-    accepted = accept_low_rank_update(sequence, proposal)
-    expected_sign, expected_log_abs = jnp.linalg.slogdet(updated)
-    assert sequence.base_determinant_available
-    assert jnp.allclose(accepted.absolute_determinant_sign, expected_sign)
-    assert jnp.allclose(accepted.absolute_log_abs_determinant, expected_log_abs)
-    rhs = jnp.asarray([0.5, -1.0, 2.0], dtype=base.dtype)
-    solved = solve_low_rank_sequence(accepted, rhs)
-    method_solved = accepted.solve(rhs)
-    expected_solution = jnp.linalg.solve(updated, rhs)
-    assert jnp.allclose(solved.value, expected_solution, rtol=1e-11, atol=1e-12)
-    assert jnp.allclose(method_solved.value, expected_solution, rtol=1e-11, atol=1e-12)
-    assert accepted.prepared.base_prepared.numeric_version == (
-        sequence.prepared.base_prepared.numeric_version
-    )
+        accepted = accept_low_rank_update(sequence, proposal)
+        expected_sign, expected_log_abs = jnp.linalg.slogdet(updated)
+        assert sequence.base_determinant_available
+        assert jnp.allclose(accepted.absolute_determinant_sign, expected_sign)
+        assert jnp.allclose(accepted.absolute_log_abs_determinant, expected_log_abs)
+        rhs = jnp.asarray([0.5, -1.0, 2.0], dtype=base.dtype)
+        solved = solve_low_rank_sequence(accepted, rhs)
+        method_solved = accepted.solve(rhs)
+        expected_solution = jnp.linalg.solve(updated, rhs)
+        assert jnp.allclose(solved.value, expected_solution, rtol=1e-11, atol=1e-12)
+        assert jnp.allclose(
+            method_solved.value, expected_solution, rtol=1e-11, atol=1e-12
+        )
+        assert accepted.prepared.base_prepared.numeric_version == (
+            sequence.prepared.base_prepared.numeric_version
+        )
 
 
-@pytest.mark.parametrize("route", ("row", "column"))
-def test_indexed_low_rank_updates_match_dense_without_retained_one_hot(
-    route: Any,
-) -> None:
-    base = jnp.diag(jnp.asarray([2.0, 3.0, 4.0, 5.0]))
-    indices = jnp.asarray([1, 3])
-    sequence = prepare_low_rank_sequence(
-        la.DenseLinearOperator(base),
-        2,
-        _status_policy(),
-    )
-    if route == "row":
-        values = jnp.asarray([[0.2, -0.1, 0.3, 0.0], [0.1, 0.2, 0.0, -0.2]])
-        update = row_low_rank_update(indices, values)
-        expected = base.at[indices, :].add(values)
-    else:
-        values = jnp.asarray([[0.2, 0.1], [-0.1, 0.2], [0.3, 0.0], [0.0, -0.2]])
-        update = column_low_rank_update(indices, values)
-        expected = base.at[:, indices].add(values)
+def test_indexed_low_rank_updates_match_dense_without_retained_one_hot() -> None:
+    for route in ("row", "column"):
+        base = jnp.diag(jnp.asarray([2.0, 3.0, 4.0, 5.0]))
+        indices = jnp.asarray([1, 3])
+        sequence = prepare_low_rank_sequence(
+            la.DenseLinearOperator(base),
+            2,
+            _status_policy(),
+        )
+        if route == "row":
+            values = jnp.asarray([[0.2, -0.1, 0.3, 0.0], [0.1, 0.2, 0.0, -0.2]])
+            update = row_low_rank_update(indices, values)
+            expected = base.at[indices, :].add(values)
+        else:
+            values = jnp.asarray([[0.2, 0.1], [-0.1, 0.2], [0.3, 0.0], [0.0, -0.2]])
+            update = column_low_rank_update(indices, values)
+            expected = base.at[:, indices].add(values)
 
-    proposal = propose_low_rank_update(sequence, update)
-    accepted = accept_low_rank_update(sequence, proposal)
-    rhs = jnp.asarray([1.0, -0.5, 0.2, 2.0])
+        proposal = propose_low_rank_update(sequence, update)
+        accepted = accept_low_rank_update(sequence, proposal)
+        rhs = jnp.asarray([1.0, -0.5, 0.2, 2.0])
 
-    assert proposal.successful
-    assert proposal.provenance.route == f"{route}-indexed"
-    assert jnp.allclose(
-        proposal.value,
-        jnp.linalg.det(expected) / jnp.linalg.det(base),
-        rtol=1e-11,
-        atol=1e-12,
-    )
-    assert jnp.allclose(
-        solve_low_rank_sequence(accepted, rhs).value,
-        jnp.linalg.solve(expected, rhs),
-        rtol=1e-11,
-        atol=1e-12,
-    )
+        assert proposal.successful
+        assert proposal.provenance.route == f"{route}-indexed"
+        assert jnp.allclose(
+            proposal.value,
+            jnp.linalg.det(expected) / jnp.linalg.det(base),
+            rtol=1e-11,
+            atol=1e-12,
+        )
+        assert jnp.allclose(
+            solve_low_rank_sequence(accepted, rhs).value,
+            jnp.linalg.solve(expected, rhs),
+            rtol=1e-11,
+            atol=1e-12,
+        )
 
 
 def test_skew_row_column_update_is_one_joint_rank_two_ratio() -> None:

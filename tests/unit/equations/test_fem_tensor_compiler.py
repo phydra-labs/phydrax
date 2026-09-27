@@ -88,7 +88,7 @@ def _affine_metric(cell: Any, reference: Any) -> Any:
     )
 
 
-def test_quad_and_hex_dense_factorized_mass_diffusion_jvp_vjp_agree() -> None:
+def test_fem_tensor_compiler_scenario_1() -> None:
     for cell, order in (("quadrilateral", 3), ("hexahedron", 2)):
         family, reference = _prepared(cell, order)
         metric = _affine_metric(cell, reference)
@@ -130,9 +130,6 @@ def test_quad_and_hex_dense_factorized_mass_diffusion_jvp_vjp_agree() -> None:
             assert jnp.allclose(
                 pullback(cotangent)[0], matrix.T @ cotangent, atol=2.0e-11
             )
-
-
-def test_prepared_quad_and_hex_trace_lift_are_exact_adjoints_for_permutations() -> None:
     for cell, order in (("quadrilateral", 4), ("hexahedron", 2)):
         _, reference = _prepared(cell, order)
         for facet in reference.facets:
@@ -146,9 +143,6 @@ def test_prepared_quad_and_hex_trace_lift_are_exact_adjoints_for_permutations() 
                 jnp.vdot(coefficients, trace.lift(facet_values)),
                 atol=2.0e-12,
             )
-
-
-def test_curved_facet_metric_uses_pointwise_normals_and_weights() -> None:
     _, reference = _prepared("quadrilateral", 3)
     facet = reference.facets[1]
     coordinate_family = ReferenceNodalFamily("quadrilateral", 2)
@@ -204,7 +198,7 @@ def _single_quad_discretization() -> Any:
     return _single_tensor_discretization("quadrilateral", 2)
 
 
-def test_high_order_quadrilateral_dirichlet_constraint_routes_boundary_dofs() -> None:
+def test_fem_tensor_compiler_scenario_2() -> None:
     discretization = _single_tensor_discretization("quadrilateral", 3)
     constraint = phx.discretization.dirichlet_constraint(discretization, "u")
     points = np.asarray(discretization.dof_maps[0].dof_coordinates)
@@ -217,9 +211,6 @@ def test_high_order_quadrilateral_dirichlet_constraint_routes_boundary_dofs() ->
 
     assert np.array_equal(np.asarray(constraint.constrained_dofs), expected)
     assert constraint.free_dofs.shape == (4,)
-
-
-def test_high_order_quad_and_hex_boundary_loads_use_tensor_trace_lifts() -> None:
     for cell, order, expected_measure in (
         ("quadrilateral", 3, 4.0),
         ("hexahedron", 2, 6.0),
@@ -241,9 +232,6 @@ def test_high_order_quad_and_hex_boundary_loads_use_tensor_trace_lifts() -> None
         load = -compiled.full_residual(state, None)
 
         assert jnp.allclose(jnp.sum(load), expected_measure, atol=2.0e-12)
-
-
-def test_exact_and_lumped_mass_integrate_high_order_tensor_polynomials() -> None:
     discretization = _single_tensor_discretization("quadrilateral", 4)
     form = FiniteElementForm(
         "mass-carrier",
@@ -270,11 +258,6 @@ def test_exact_and_lumped_mass_integrate_high_order_tensor_polynomials() -> None
             0.2,
             atol=2.0e-12,
         )
-
-
-def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_values() -> (
-    None
-):
     discretization = _single_quad_discretization()
     field_space_id = discretization.field_spaces[0].field_space_id
     rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(3))
@@ -331,7 +314,7 @@ def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_value
     assert tables[0].bindings[0].ir_semantics_id == programs[0].ir.actions[0].action_id
 
 
-def test_mass_policy_identities_distinguish_exact_collocated_and_lumped() -> None:
+def test_fem_tensor_compiler_scenario_3() -> None:
     policies = tuple(
         FiniteElementMassPolicy(kind)
         for kind in ("exact", "collocated_diagonal", "lumped")
@@ -342,6 +325,27 @@ def test_mass_policy_identities_distinguish_exact_collocated_and_lumped() -> Non
         "lumped",
     )
     assert len({policy.policy_id for policy in policies}) == 3
+    discretization = _single_tensor_discretization("quadrilateral", 3)
+    tensor = jnp.asarray(((2.0, 0.3), (0.3, 1.0)))
+    rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(5))
+    state = jnp.linspace(-0.4, 1.1, discretization.dof_maps[0].global_dof_count)
+    residuals = tuple(
+        _matrix_free_residual(
+            discretization,
+            phx.equations.TensorDiffusionAction(
+                "u",
+                tensor,
+                action_id=f"tensor-diffusion-{local_kernel}",
+                rules={"quads": rule},
+            ),
+            local_kernel,
+            state,
+        )
+        for local_kernel in ("dense", "sum_factorized")
+    )
+
+    assert jnp.linalg.norm(residuals[0]) > 0.0
+    assert jnp.allclose(residuals[1], residuals[0], atol=2.0e-11)
 
 
 def test_pairwise_volume_flux_lowers_to_collocated_authoritative_action() -> None:
@@ -610,27 +614,3 @@ def test_collocated_pairwise_central_flux_executes_strong_divergence() -> None:
 
     # Central two-point flux of F(u) = (u, u) collocates div F = 3 on the unit square.
     assert jnp.allclose(jnp.sum(residual), 3.0, atol=2.0e-12)
-
-
-def test_sum_factorized_tensor_diffusion_matches_dense_kernel() -> None:
-    discretization = _single_tensor_discretization("quadrilateral", 3)
-    tensor = jnp.asarray(((2.0, 0.3), (0.3, 1.0)))
-    rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(5))
-    state = jnp.linspace(-0.4, 1.1, discretization.dof_maps[0].global_dof_count)
-    residuals = tuple(
-        _matrix_free_residual(
-            discretization,
-            phx.equations.TensorDiffusionAction(
-                "u",
-                tensor,
-                action_id=f"tensor-diffusion-{local_kernel}",
-                rules={"quads": rule},
-            ),
-            local_kernel,
-            state,
-        )
-        for local_kernel in ("dense", "sum_factorized")
-    )
-
-    assert jnp.linalg.norm(residuals[0]) > 0.0
-    assert jnp.allclose(residuals[1], residuals[0], atol=2.0e-11)

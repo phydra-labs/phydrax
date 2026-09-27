@@ -1,10 +1,6 @@
-#
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
-
-
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -15,137 +11,100 @@ from phydrax.domain import TimeInterval
 from phydrax.operators.differential import laplacian
 
 
-def test_laplacian_scalar_function_point() -> None:
-    geom = phx.domain.GeometryDomain(
+def _square() -> phx.domain.GeometryDomain:
+    return phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
-    @geom.Function("x")
-    def f(x: Any) -> Any:
+
+def test_laplacian_point_values_shapes_dtypes_and_metadata() -> None:
+    geometry = _square()
+    points = frozendict({"x": cx.AxisArray(jnp.asarray([2.0, 3.0]), dims=(None,))})
+
+    @geometry.Function("x")
+    def scalar(x: jax.Array) -> jax.Array:
         return x[0] ** 2 + x[1] ** 2
 
-    L = laplacian(f)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
-    out = jnp.asarray(L(pts).data)
-    assert jnp.allclose(out, 4.0)
+    @geometry.Function("x")
+    def vector(x: jax.Array) -> jax.Array:
+        return jnp.asarray([x[0] ** 2, x[1] ** 2])
 
-
-def test_laplacian_vector_function_point() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-
-    @geom.Function("x")
-    def f(x: Any) -> Any:
-        return jnp.array([x[0] ** 2, x[1] ** 2])
-
-    L = laplacian(f)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
-    out = jnp.asarray(L(pts).data)
-    assert out.shape == (2,)
-    assert jnp.allclose(out, jnp.array([2.0, 2.0]))
-
-
-def test_laplacian_spacetime_var_x_ignores_t(sample_batch: Any) -> None:
-    dom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    ) @ TimeInterval(0.0, 1.0)
-
-    @dom.Function("x", "t")
-    def f(x: Any, t: Any) -> Any:
-        return x[0] ** 2 + x[1] ** 2 + t
-
-    L = laplacian(f, var="x")
-    component = dom.component()
-    batch = sample_batch(component, blocks=(("x",), ("t",)), num_points=(3, 4), key=0)
-    out = jnp.asarray(L(batch).data)
-    assert out.shape == (3, 4)
-    assert jnp.allclose(out, 4.0)
-
-
-def test_laplacian_coord_separable_constant(sample_grid: Any) -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-    component = geom.component()
-    batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
-
-    @geom.Function("x")
-    def f(x: Any) -> Any:
-        x, y = x
-        return x**2 + y**2
-
-    L = laplacian(f)
-    out = jnp.asarray(L(batch).data)
-    assert jnp.allclose(out, 4.0, atol=1e-6)
-
-
-def test_laplacian_complex_output_point() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-
-    @geom.Function("x")
-    def f(x: Any) -> Any:
+    @geometry.Function("x")
+    def complex_value(x: jax.Array) -> jax.Array:
         return x[0] ** 2 + 1j * x[1] ** 2
 
-    L = laplacian(f)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
-    out = jnp.asarray(L(pts).data)
-    assert jnp.allclose(out, 2.0 + 2.0j)
-
-
-def test_laplacian_preserves_metadata() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    cases = (
+        ("scalar", scalar, jnp.asarray(4.0), ()),
+        ("vector", vector, jnp.asarray([2.0, 2.0]), (2,)),
+        ("complex", complex_value, jnp.asarray(2.0 + 2.0j), ()),
     )
-    u = geom.Function("x")(lambda x: x[0] ** 2).with_metadata(**{"tag": 1})
-    out = laplacian(u)
-    assert out.metadata == u.metadata
+    for case_id, function, expected, expected_shape in cases:
+        result = jnp.asarray(laplacian(function)(points).data)
+        assert result.shape == expected_shape, case_id
+        assert jnp.allclose(result, expected), case_id
+
+    annotated = geometry.Function("x")(lambda x: x[0] ** 2).with_metadata(tag=1)
+    assert laplacian(annotated).metadata == annotated.metadata
 
 
-def test_laplacian_ad_engine_jvp_matches_default_point() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-
-    @geom.Function("x")
-    def f(x: Any) -> Any:
-        return x[0] ** 2 + x[1] ** 2 + x[0] * x[1]
-
-    pts = frozendict({"x": cx.AxisArray(jnp.array([0.7, -0.2]), dims=(None,))})
-    out_ref = jnp.asarray(laplacian(f, backend="ad")(pts).data)
-    out_jvp = jnp.asarray(laplacian(f, backend="ad", ad_engine="jvp")(pts).data)
-    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
-
-
-def test_laplacian_ad_engine_jvp_matches_default_coord_separable(
+def test_laplacian_respects_spacetime_and_coordinate_separable_layouts(
+    sample_batch: Any,
     sample_grid: Any,
 ) -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-    component = geom.component()
-    batch = sample_grid(component, {"x": (7, 6)}, dense_blocks=(), key=3)
+    geometry = _square()
+    spacetime = geometry @ TimeInterval(0.0, 1.0)
 
-    @geom.Function("x")
-    def f(x: Any) -> Any:
+    @spacetime.Function("x", "t")
+    def time_dependent(x: jax.Array, time: jax.Array) -> jax.Array:
+        return x[0] ** 2 + x[1] ** 2 + time
+
+    point_batch = sample_batch(
+        spacetime.component(),
+        blocks=(("x",), ("t",)),
+        num_points=(3, 4),
+        key=0,
+    )
+    point_result = jnp.asarray(laplacian(time_dependent, var="x")(point_batch).data)
+    assert point_result.shape == (3, 4)
+    assert jnp.allclose(point_result, 4.0)
+
+    grid_batch = sample_grid(geometry.component(), {"x": (6, 5)}, dense_blocks=(), key=0)
+
+    @geometry.Function("x")
+    def separable(x: jax.Array) -> jax.Array:
         x0, x1 = x
-        return x0**2 + 3.0 * x1**2
+        return x0**2 + x1**2
 
-    out_ref = jnp.asarray(laplacian(f, backend="ad")(batch).data)
-    out_jvp = jnp.asarray(laplacian(f, backend="ad", ad_engine="jvp")(batch).data)
-    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
-
-
-def test_laplacian_ad_engine_requires_ad_backend() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    assert jnp.allclose(
+        jnp.asarray(laplacian(separable)(grid_batch).data),
+        4.0,
+        atol=1e-6,
     )
 
-    @geom.Function("x")
-    def f(x: Any) -> Any:
+
+def test_laplacian_jvp_engine_matches_default_for_point_and_grid_layouts(
+    sample_grid: Any,
+) -> None:
+    geometry = _square()
+
+    @geometry.Function("x")
+    def function(x: jax.Array) -> jax.Array:
+        return x[0] ** 2 + 3.0 * x[1] ** 2 + x[0] * x[1]
+
+    points = frozendict({"x": cx.AxisArray(jnp.asarray([0.7, -0.2]), dims=(None,))})
+    grid = sample_grid(geometry.component(), {"x": (7, 6)}, dense_blocks=(), key=3)
+    for case_id, batch in (("point", points), ("grid", grid)):
+        reference = jnp.asarray(laplacian(function, backend="ad")(batch).data)
+        jvp = jnp.asarray(laplacian(function, backend="ad", ad_engine="jvp")(batch).data)
+        assert jnp.allclose(jvp, reference, atol=1e-6), case_id
+
+
+def test_laplacian_jvp_engine_requires_the_ad_backend() -> None:
+    geometry = _square()
+
+    @geometry.Function("x")
+    def function(x: jax.Array) -> jax.Array:
         return x[0] ** 2 + x[1] ** 2
 
     with pytest.raises(ValueError, match="backend='ad'"):
-        laplacian(f, backend="jet", ad_engine="jvp")
+        laplacian(function, backend="jet", ad_engine="jvp")

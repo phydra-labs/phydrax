@@ -52,7 +52,7 @@ def _state(
     )
 
 
-def test_checked_tridiagonal_line_solve() -> None:
+def test_hydrostatic_ocean_scenario_1() -> None:
     lower = jnp.asarray(((0.0, -1.0, -1.0), (0.0, -2.0, -2.0)))
     diagonal = jnp.asarray(((2.0, 2.0, 2.0), (4.0, 4.0, 4.0)))
     upper = jnp.asarray(((-1.0, -1.0, 0.0), (-2.0, -2.0, 0.0)))
@@ -72,9 +72,6 @@ def test_checked_tridiagonal_line_solve() -> None:
     assert bool(result.successful)
     np.testing.assert_allclose(result.value, expected, atol=1e-12)
     assert result.residual_norm <= 1e-12
-
-
-def test_zstar_geometry_volume_and_continuity_identities() -> None:
     geometry = _grid()
     eta = jnp.full(geometry.horizontal_shape, 0.5)
     epoch = geometry.metric_epoch(eta)
@@ -91,9 +88,6 @@ def test_zstar_geometry_volume_and_continuity_identities() -> None:
     np.testing.assert_allclose(jnp.sum(layer_net, axis=-1), barotropic_net)
     np.testing.assert_allclose(vertical[..., 0], 0.0)
     np.testing.assert_allclose(vertical[..., -1], -barotropic_net)
-
-
-def test_partial_cell_geometry_preserves_column_depth() -> None:
     geometry = _grid(vertical_coordinate="partial-z")
     eta = jnp.zeros(geometry.horizontal_shape)
     epoch = geometry.metric_epoch(eta)
@@ -106,7 +100,7 @@ def test_partial_cell_geometry_preserves_column_depth() -> None:
     )
 
 
-def test_linear_and_nonlinear_eos_have_consistent_derivatives() -> None:
+def test_hydrostatic_ocean_scenario_2() -> None:
     salinity = jnp.asarray((34.0, 35.0, 36.0))
     temperature = jnp.asarray((5.0, 10.0, 15.0))
     pressure = jnp.asarray((0.0, 1000.0, 5000.0))
@@ -123,9 +117,6 @@ def test_linear_and_nonlinear_eos_have_consistent_derivatives() -> None:
     assert jnp.all(linear.beta > 0.0)
     assert jnp.any(jnp.abs(nonlinear.density - linear.density) > 0.0)
     assert jnp.all(jnp.isfinite(nonlinear.density_pressure_derivative))
-
-
-def test_implicit_free_surface_preserves_rest() -> None:
     ocean = _ocean()
     state = _state(ocean)
     epoch = ocean.geometry.metric_epoch(state.eta)
@@ -139,9 +130,6 @@ def test_implicit_free_surface_preserves_rest() -> None:
     np.testing.assert_allclose(result.transports[0], 0.0, atol=1e-12)
     np.testing.assert_allclose(result.transports[1], 0.0, atol=1e-12)
     assert result.residual_norm <= 1e-10
-
-
-def test_freshwater_changes_volume_and_conserves_salt_inventory() -> None:
     freshwater = phx.applications.ocean.FreshwaterVolumeFluxPlan(
         1.0e-4,
         absolute_salinity=0.0,
@@ -180,7 +168,7 @@ def test_freshwater_changes_volume_and_conserves_salt_inventory() -> None:
     )
 
 
-def test_beta_plane_and_latitude_longitude_metrics() -> None:
+def test_hydrostatic_ocean_scenario_3() -> None:
     lon = jnp.linspace(0.0, 0.2, 5)
     lat = jnp.linspace(-0.3, 0.3, 5)
     z = jnp.linspace(-10.0, 0.0, 4)
@@ -199,9 +187,6 @@ def test_beta_plane_and_latitude_longitude_metrics() -> None:
         jnp.sum(epoch.cell_volume, axis=-1),
         geometry.cell_area * geometry.rest_depth,
     )
-
-
-def test_vertical_closure_modes_return_finite_coefficients() -> None:
     for kind in ("prescribed", "ri", "kpp", "tke", "redi-gm"):
         ocean = _ocean(mixing=phx.applications.ocean.HydrostaticMixingPlan(kind))
         state = _state(ocean)

@@ -78,7 +78,7 @@ def _chain(
     )
 
 
-def test_square_well_energies_normalization_and_mesh_convergence() -> None:
+def test_semiconductor_quantum_static_scenario_1() -> None:
     errors = []
     for n in (39, 79):
         length = 10e-9
@@ -109,6 +109,31 @@ def test_square_well_energies_normalization_and_mesh_convergence() -> None:
         )
     assert errors[1] < 0.27 * errors[0]
     assert errors[1] < 0.0013
+    field, mass = 1e7, 0.19 * ME
+    x = np.arange(1, 160) * 0.25e-9
+    basis = EffectiveMass1D(
+        x, Q * field * x, mass, area=1e-16, energy_reference=REFERENCE
+    )
+    result = solve_schrodinger(basis.base_hamiltonian, 0.0, 50.0, count=2)
+    expected = (
+        2.338107410459767 * (HBAR**2 / (2 * mass)) ** (1 / 3) * (Q * field) ** (2 / 3)
+    )
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.energies[0], expected, rtol=1e-3)
+    basis = EffectiveMass1D(
+        np.arange(1, 20) * 0.5e-9, 0.0, 0.19 * ME, area=2e-16, energy_reference=REFERENCE
+    )
+    h = basis.base_hamiltonian
+    incomplete = solve_schrodinger(h, 0.5 * Q, 300.0, count=1)
+    assert not bool(incomplete.successful)
+    assert float(incomplete.omitted_particle_bound) > 1
+    complete = solve_schrodinger(h, 0.02 * Q, 50.0, count=4)
+    shifted = solve_schrodinger(h.shifted(0.73 * Q), 0.75 * Q, 50.0, count=4)
+    assert bool(complete.successful & shifted.successful)
+    np.testing.assert_allclose(
+        shifted.electron_density, complete.electron_density, rtol=2e-7
+    )
+    np.testing.assert_allclose(shifted.energies - complete.energies, 0.73 * Q, rtol=1e-8)
 
 
 def test_mass_step_matches_continuous_wavefunction_and_inverse_mass_flux() -> None:
@@ -135,38 +160,7 @@ def test_mass_step_matches_continuous_wavefunction_and_inverse_mass_flux() -> No
     np.testing.assert_allclose(result.energies[0] / Q, expected, rtol=1e-3)
 
 
-def test_triangular_well_matches_airy_ground_state() -> None:
-    field, mass = 1e7, 0.19 * ME
-    x = np.arange(1, 160) * 0.25e-9
-    basis = EffectiveMass1D(
-        x, Q * field * x, mass, area=1e-16, energy_reference=REFERENCE
-    )
-    result = solve_schrodinger(basis.base_hamiltonian, 0.0, 50.0, count=2)
-    expected = (
-        2.338107410459767 * (HBAR**2 / (2 * mass)) ** (1 / 3) * (Q * field) ** (2 / 3)
-    )
-    assert bool(result.successful)
-    np.testing.assert_allclose(result.energies[0], expected, rtol=1e-3)
-
-
-def test_occupation_guard_rejects_insufficient_subbands_and_gauge_is_invariant() -> None:
-    basis = EffectiveMass1D(
-        np.arange(1, 20) * 0.5e-9, 0.0, 0.19 * ME, area=2e-16, energy_reference=REFERENCE
-    )
-    h = basis.base_hamiltonian
-    incomplete = solve_schrodinger(h, 0.5 * Q, 300.0, count=1)
-    assert not bool(incomplete.successful)
-    assert float(incomplete.omitted_particle_bound) > 1
-    complete = solve_schrodinger(h, 0.02 * Q, 50.0, count=4)
-    shifted = solve_schrodinger(h.shifted(0.73 * Q), 0.75 * Q, 50.0, count=4)
-    assert bool(complete.successful & shifted.successful)
-    np.testing.assert_allclose(
-        shifted.electron_density, complete.electron_density, rtol=2e-7
-    )
-    np.testing.assert_allclose(shifted.energies - complete.energies, 0.73 * Q, rtol=1e-8)
-
-
-def test_transverse_degeneracy_counts_particles_once() -> None:
+def test_semiconductor_quantum_static_scenario_2() -> None:
     basis = EffectiveMass1D(
         np.arange(1, 12) * 1e-9, 0.0, 0.19 * ME, area=1e-14, energy_reference=REFERENCE
     )
@@ -179,9 +173,6 @@ def test_transverse_degeneracy_counts_particles_once() -> None:
     )
     np.testing.assert_allclose(two.electron_density, 2 * one.electron_density, rtol=1e-13)
     np.testing.assert_allclose(two.energy_density, 2 * one.energy_density, rtol=1e-13)
-
-
-def test_density_gradient_matches_the_same_discrete_square_well_ground_mode() -> None:
     count, length, mass, area = 63, 10e-9, 0.19 * ME, 4e-16
     spacing = length / (count + 1)
     positions = spacing * np.arange(1, count + 1)
@@ -205,11 +196,6 @@ def test_density_gradient_matches_the_same_discrete_square_well_ground_mode() ->
     basis = EffectiveMass1D(positions, 0.0, mass, area=area, energy_reference=REFERENCE)
     confined = solve_schrodinger(basis.base_hamiltonian, -0.1 * Q, 50.0, count=1)
     np.testing.assert_allclose(confined.energies[0], expected, rtol=2e-9)
-
-
-def test_semi_infinite_surface_satisfies_retarded_recursion_and_overlap_embedding() -> (
-    None
-):
     lead = _lead(onsite=0.0, hopping=-0.7, coupling=-0.2)
     energies = jnp.asarray([-2.0, -0.3, 0.0, 0.8, 2.0]) * Q
     eta = 1e-5 * Q
@@ -227,9 +213,7 @@ def test_semi_infinite_surface_satisfies_retarded_recursion_and_overlap_embeddin
     np.testing.assert_allclose(sigma, expected, rtol=1e-14)
 
 
-def test_transparent_channel_is_unit_transmission_with_local_current_conservation() -> (
-    None
-):
+def test_semiconductor_quantum_static_scenario_3() -> None:
     device = _chain(9, left=_lead(mu=2.1), right=_lead(mu=1.9))
     for energy in (0.3 * Q, 2.0 * Q, 3.4 * Q):
         point = device.spectral(energy)
@@ -245,11 +229,6 @@ def test_transparent_channel_is_unit_transmission_with_local_current_conservatio
         )
     equilibrium = _chain(5).spectral(1.5 * Q)
     np.testing.assert_allclose(equilibrium.particle_current_kernel, 0.0, atol=2e-12)
-
-
-def test_single_site_barrier_matches_discrete_scattering_and_thickness_suppresses_tunneling() -> (
-    None
-):
     energy, barrier = 0.7, 1.2
     point = _chain(1, barrier=barrier).spectral(energy * Q)
     cosine = (2 - energy) / 2
@@ -259,6 +238,29 @@ def test_single_site_barrier_matches_discrete_scattering_and_thickness_suppresse
     thick = _chain(8, barrier=barrier).spectral(energy * Q)
     assert bool(thin.successful & thick.successful)
     assert 0 < float(thick.transmission) < 0.05 * float(thin.transmission)
+    left = _lead(onsite=0.0, coupling=-0.4, mu=4.0)
+    h = ChainHamiltonian(
+        jnp.asarray([3.0 * Q]),
+        jnp.zeros(0),
+        jnp.asarray([1e-27]),
+        energy_reference=REFERENCE,
+    )
+    device = CoherentDevice(h, left, left)
+    with pytest.raises(ValueError, match="occupation undetermined"):
+        bound_states(device)
+    preparation = BoundStateOccupation.equilibrium(left, left)
+    states = bound_states(device, preparation)
+    a, level = 0.16, 3.0
+    expected = (
+        level * (1 - a)
+        - np.sqrt(level**2 * (1 - a) ** 2 - (1 - 2 * a) * (level**2 + 4 * a * a))
+    ) / (1 - 2 * a)
+    expected_weight = 1 / (1 - a * (1 - expected / np.sqrt(expected * expected - 4)))
+    assert bool(states.successful)
+    np.testing.assert_allclose(states.energies / Q, [expected], rtol=1e-8)
+    np.testing.assert_allclose(states.device_weights, [expected_weight], rtol=1e-8)
+    np.testing.assert_allclose(states.electron_counts, [2 * expected_weight], rtol=1e-8)
+    assert float(states.device_weights[0]) < 1
 
 
 def test_resonant_level_matches_exact_energy_dependent_lead_formula_and_derivative() -> (
@@ -288,33 +290,7 @@ def test_resonant_level_matches_exact_energy_dependent_lead_formula_and_derivati
     np.testing.assert_allclose(derivative, finite_difference, rtol=3e-6)
 
 
-def test_actual_bound_pole_requires_preparation_and_includes_lead_tail_norm() -> None:
-    left = _lead(onsite=0.0, coupling=-0.4, mu=4.0)
-    h = ChainHamiltonian(
-        jnp.asarray([3.0 * Q]),
-        jnp.zeros(0),
-        jnp.asarray([1e-27]),
-        energy_reference=REFERENCE,
-    )
-    device = CoherentDevice(h, left, left)
-    with pytest.raises(ValueError, match="occupation undetermined"):
-        bound_states(device)
-    preparation = BoundStateOccupation.equilibrium(left, left)
-    states = bound_states(device, preparation)
-    a, level = 0.16, 3.0
-    expected = (
-        level * (1 - a)
-        - np.sqrt(level**2 * (1 - a) ** 2 - (1 - 2 * a) * (level**2 + 4 * a * a))
-    ) / (1 - 2 * a)
-    expected_weight = 1 / (1 - a * (1 - expected / np.sqrt(expected * expected - 4)))
-    assert bool(states.successful)
-    np.testing.assert_allclose(states.energies / Q, [expected], rtol=1e-8)
-    np.testing.assert_allclose(states.device_weights, [expected_weight], rtol=1e-8)
-    np.testing.assert_allclose(states.electron_counts, [2 * expected_weight], rtol=1e-8)
-    assert float(states.device_weights[0]) < 1
-
-
-def test_adaptive_open_channel_conductance_and_spectral_sum_rule() -> None:
+def test_semiconductor_quantum_static_scenario_4() -> None:
     bias = 1e-3
     device = _chain(
         3,
@@ -342,9 +318,6 @@ def test_adaptive_open_channel_conductance_and_spectral_sum_rule() -> None:
     np.testing.assert_allclose(
         shifted.heat_currents, result.heat_currents, rtol=3e-4, atol=1e-15
     )
-
-
-def test_bound_plus_continuum_closes_spectral_weight_and_equilibrium_charge() -> None:
     left = _lead(onsite=0.0, coupling=-0.4, mu=4.0)
     device = CoherentDevice(
         ChainHamiltonian([3.0 * Q], [], [1e-27], energy_reference=REFERENCE), left, left
@@ -360,9 +333,6 @@ def test_bound_plus_continuum_closes_spectral_weight_and_equilibrium_charge() ->
         result.electron_density * device.hamiltonian.cell_volumes, [2.0], rtol=1e-4
     )
     np.testing.assert_allclose(result.terminal_currents, 0.0, atol=1e-15)
-
-
-def test_schrodinger_poisson_closes_charge_with_nonzero_quantum_feedback() -> None:
     basis = EffectiveMass1D(
         np.arange(1, 12) * 1e-9, 0.0, 0.19 * ME, area=1e-14, energy_reference=REFERENCE
     )
@@ -386,7 +356,7 @@ def test_schrodinger_poisson_closes_charge_with_nonzero_quantum_feedback() -> No
     np.testing.assert_allclose(jnp.sum(result.terminal_charges), -bulk, atol=2e-22)
 
 
-def test_coherent_poisson_half_filled_uniform_channel_is_neutral() -> None:
+def test_semiconductor_quantum_static_scenario_5() -> None:
     basis = EffectiveMass1D(
         np.arange(1, 6) * 1e-9, 0.0, 0.19 * ME, area=1e-14, energy_reference=REFERENCE
     )
@@ -414,9 +384,6 @@ def test_coherent_poisson_half_filled_uniform_channel_is_neutral() -> None:
     np.testing.assert_allclose(result.potential, 0.0, atol=2e-7)
     # ty: ignore[unresolved-attribute]
     np.testing.assert_allclose(result.quantum.terminal_currents, 0.0, atol=1e-15)
-
-
-def test_structural_admission_rejects_disconnected_or_nonuniform_models() -> None:
     with pytest.raises(ValueError, match="Disconnected"):
         ChainHamiltonian([0.0, 0.0], [0.0], [1e-27, 1e-27], energy_reference=REFERENCE)
     with pytest.raises(ValueError, match="uniform"):
@@ -431,9 +398,6 @@ def test_structural_admission_rejects_disconnected_or_nonuniform_models() -> Non
             energy_reference=REFERENCE,
             resources=QuantumResources(max_nodes=1),
         )
-
-
-def test_two_dimensional_confinement_and_poisson_share_one_bounded_cell_basis() -> None:
     axes = (
         jnp.asarray((1.0e-9, 2.0e-9)),
         jnp.asarray((1.0e-9, 2.0e-9)),

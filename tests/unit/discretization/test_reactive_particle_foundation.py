@@ -59,7 +59,7 @@ def _dem(
     return compiled, particles
 
 
-def test_compositional_contact_history_cohesion_and_rotational_energy_are_valid() -> None:
+def test_reactive_particle_foundation_scenario_1() -> None:
     cohesion = phx.discretization.CompositeDEMCohesionPlan(
         (
             phx.discretization.DMTContactCohesionPlan(0.05, 0.1),
@@ -100,9 +100,6 @@ def test_compositional_contact_history_cohesion_and_rotational_energy_are_valid(
         evaluation.particle_contact.rotational_torque_left,
         -evaluation.particle_contact.rotational_torque_right,
     )
-
-
-def test_superquadric_geometry_contact_and_rigid_step_recover_sphere_limit() -> None:
     geometry = phx.geometry.Superquadric((0.0, 0.0, 0.0), (0.5, 0.5, 0.5)).compile()
     points = jnp.asarray([[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]])
     curvature = geometry.contact_curvature(points)
@@ -148,9 +145,6 @@ def test_superquadric_geometry_contact_and_rigid_step_recover_sphere_limit() -> 
     assert jnp.allclose(evaluation.geometry.effective_radius, 0.25, rtol=2.0e-3)
     assert jnp.allclose(evaluation.load.force[0], -evaluation.load.force[1])
     assert step.successful
-
-
-def test_multicontact_correction_is_nonlocal_convergent_and_optional() -> None:
     contact = phx.discretization.DEMContactModelPlan(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
     )
@@ -196,7 +190,7 @@ def test_multicontact_correction_is_nonlocal_convergent_and_optional() -> None:
     assert evaluation.multicontact.residual < 1.0e-4
 
 
-def test_radial_mesh_morphology_and_fixed_pool_insertion_preserve_inventory() -> None:
+def test_reactive_particle_foundation_scenario_2() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
@@ -300,9 +294,6 @@ def test_radial_mesh_morphology_and_fixed_pool_insertion_preserve_inventory() ->
     assert insertion.owner_slots[0] == 1
     assert insertion.accepted_dem_state.body_properties.active[1]
     assert insertion.accepted_internal_state.internal_energy[1, 0] < 0.0
-
-
-def test_density_porosity_morphology_rejects_unstructured_internal_meshes() -> None:
     mesh = phx.discretization.UnstructuredParticleInternalMeshPlan(
         jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
         tetrahedra=jnp.asarray([[0, 1, 2, 3]]),
@@ -328,9 +319,6 @@ def test_density_porosity_morphology_rejects_unstructured_internal_meshes() -> N
 
     with pytest.raises(TypeError, match="radial shell meshes"):
         morphology.evaluate((batch,), conversion, (jnp.asarray([1.0]),))
-
-
-def test_wall_observables_and_wear_close_force_and_volume_channels() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.asarray([1.0]), ambient_dimension=3
     ).prepare()

@@ -45,7 +45,7 @@ def _problem(*, mask: Any = None) -> Any:
     )
 
 
-def test_etkf_matches_linear_gaussian_mean_and_variance() -> None:
+def test_state_space_ensemble_filter_scenario_1() -> None:
     problem = _problem()
     exact = phx.uq.kalman_filter(problem)
     ensemble = phx.uq.ensemble_transform_kalman_filter(
@@ -59,9 +59,6 @@ def test_etkf_matches_linear_gaussian_mean_and_variance() -> None:
         variances[..., 0], exact.filtered_covariances[..., 0, 0], atol=0.04
     )
     assert jnp.all(ensemble.status == phx.uq.ENSEMBLE_FILTER_SUCCESS)
-
-
-def test_streaming_and_batch_etkf_are_identical() -> None:
     problem = _problem()
     batch = phx.uq.ensemble_transform_kalman_filter(jr.key(21), problem, ensemble_size=32)
     state = phx.uq.initialize_ensemble_filter(jr.key(21), problem, ensemble_size=32)
@@ -75,9 +72,6 @@ def test_streaming_and_batch_etkf_are_identical() -> None:
         jnp.stack([record.analysis_ensemble for record in records]),
         batch.analysis_ensembles,
     )
-
-
-def test_missing_observation_is_forecast_only_and_smoother_is_terminally_exact() -> None:
     problem = _problem(mask=jnp.asarray([[True], [False]]))
     filtered = phx.uq.ensemble_transform_kalman_filter(
         jr.key(22), problem, ensemble_size=64
@@ -91,7 +85,7 @@ def test_missing_observation_is_forecast_only_and_smoother_is_terminally_exact()
     assert predictive.samples.data.shape == (2, 64, 1)
 
 
-def test_nonlinear_gaussian_observation_and_diagnostics() -> None:
+def test_state_space_ensemble_filter_scenario_2() -> None:
     base = _problem()
     observation = phx.stochastic.GaussianObservationModel(
         lambda state, time, context: state**2,
@@ -119,6 +113,59 @@ def test_nonlinear_gaussian_observation_and_diagnostics() -> None:
     assert diagnostics.passed
     assert jnp.all(diagnostics.effective_rank <= 1)
     assert jnp.all(diagnostics.ensemble_spread >= 0.0)
+    network = MLP(in_size=2, out_size=1, width_size=4, depth=1, key=jr.key(4))
+    location = phx.stochastic.ModelObservationLocation(
+        network, state_shape=(1,), observation_shape=(1,), time_input=True
+    )
+    states = jnp.asarray([[0.1], [0.4], [-0.2]])
+
+    # ty: ignore[invalid-argument-type]
+    batched = location(states, 0.5, None)
+    # ty: ignore[invalid-argument-type]
+    single = jnp.stack([location(state, 0.5, None) for state in states])
+    assert batched.shape == (3, 1)
+    assert jnp.allclose(batched, single, rtol=1e-12, atol=1e-14)
+    with pytest.raises(ValueError, match="in_size must be 1"):
+        phx.stochastic.ModelObservationLocation(
+            network, state_shape=(1,), observation_shape=(1,)
+        )
+    owner = phx.ModelPorts(
+        inputs=(full_port("latent.state", (1,)), full_port("latent.time", ())),
+        outputs=(full_port("sensor.reading", (1,)),),
+    )
+    model = PortedAffine(owner, out_size=1, weight=jnp.asarray([[2.0, 1.0]]))
+    arguments = dict(state_shape=(1,), observation_shape=(1,), time_input=True)
+    with pytest.raises(ValueError, match="observation-model'.*owner_ports"):
+        # ty: ignore[invalid-argument-type]
+        phx.stochastic.ModelObservationLocation(model, **arguments)
+    with pytest.raises(ValueError, match="output ports must declare the event shapes"):
+        phx.stochastic.ModelObservationLocation(
+            model,
+            # ty: ignore[invalid-argument-type]
+            **arguments,
+            ports=phx.ModelPorts(
+                inputs=owner.inputs, outputs=(full_port("sensor.reading", (2,)),)
+            ),
+            port_mapping=in_order(owner, owner),
+        )
+
+    location = phx.stochastic.ModelObservationLocation(
+        model,
+        # ty: ignore[invalid-argument-type]
+        **arguments,
+        ports=owner,
+        port_mapping=in_order(owner, owner),
+    )
+    evidence = location.component_contract().port_binding
+    # ty: ignore[unresolved-attribute]
+    assert evidence.inputs == tuple((port.port_id,) * 2 for port in owner.inputs)
+    # ty: ignore[unresolved-attribute]
+    assert evidence.unverified == ()
+    assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
+        location(jnp.asarray([[0.5], [1.0]]), 0.25, None),
+        jnp.asarray([[1.25], [2.25]]),
+    )
 
 
 def _with_observation(base: Any, location: Any, /) -> Any:
@@ -171,65 +218,6 @@ def test_learned_observation_location_runs_unchanged_etkf_numerics() -> None:
     gradient = jax.grad(log_likelihood)(parameters)
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(gradient))
     assert any(jnp.any(leaf != 0.0) for leaf in jax.tree.leaves(gradient))
-
-
-def test_model_observation_location_requires_exact_pointwise_sizes() -> None:
-    network = MLP(in_size=2, out_size=1, width_size=4, depth=1, key=jr.key(4))
-    location = phx.stochastic.ModelObservationLocation(
-        network, state_shape=(1,), observation_shape=(1,), time_input=True
-    )
-    states = jnp.asarray([[0.1], [0.4], [-0.2]])
-
-    # ty: ignore[invalid-argument-type]
-    batched = location(states, 0.5, None)
-    # ty: ignore[invalid-argument-type]
-    single = jnp.stack([location(state, 0.5, None) for state in states])
-    assert batched.shape == (3, 1)
-    assert jnp.allclose(batched, single, rtol=1e-12, atol=1e-14)
-    with pytest.raises(ValueError, match="in_size must be 1"):
-        phx.stochastic.ModelObservationLocation(
-            network, state_shape=(1,), observation_shape=(1,)
-        )
-
-
-def test_port_declaring_observation_location_binds_declared_owner_ports() -> None:
-    owner = phx.ModelPorts(
-        inputs=(full_port("latent.state", (1,)), full_port("latent.time", ())),
-        outputs=(full_port("sensor.reading", (1,)),),
-    )
-    model = PortedAffine(owner, out_size=1, weight=jnp.asarray([[2.0, 1.0]]))
-    arguments = dict(state_shape=(1,), observation_shape=(1,), time_input=True)
-    with pytest.raises(ValueError, match="observation-model'.*owner_ports"):
-        # ty: ignore[invalid-argument-type]
-        phx.stochastic.ModelObservationLocation(model, **arguments)
-    with pytest.raises(ValueError, match="output ports must declare the event shapes"):
-        phx.stochastic.ModelObservationLocation(
-            model,
-            # ty: ignore[invalid-argument-type]
-            **arguments,
-            ports=phx.ModelPorts(
-                inputs=owner.inputs, outputs=(full_port("sensor.reading", (2,)),)
-            ),
-            port_mapping=in_order(owner, owner),
-        )
-
-    location = phx.stochastic.ModelObservationLocation(
-        model,
-        # ty: ignore[invalid-argument-type]
-        **arguments,
-        ports=owner,
-        port_mapping=in_order(owner, owner),
-    )
-    evidence = location.component_contract().port_binding
-    # ty: ignore[unresolved-attribute]
-    assert evidence.inputs == tuple((port.port_id,) * 2 for port in owner.inputs)
-    # ty: ignore[unresolved-attribute]
-    assert evidence.unverified == ()
-    assert jnp.allclose(
-        # ty: ignore[invalid-argument-type]
-        location(jnp.asarray([[0.5], [1.0]]), 0.25, None),
-        jnp.asarray([[1.25], [2.25]]),
-    )
 
 
 def test_high_dimensional_path_uses_ensemble_rank_not_state_covariance() -> None:

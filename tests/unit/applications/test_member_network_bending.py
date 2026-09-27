@@ -18,7 +18,7 @@ def _beam_properties(count: Any) -> Any:
     return mn.MemberPropertyMap((material,), (section,), (0,) * count, (0,) * count)
 
 
-def test_corotational_beam_is_objective_under_large_rigid_rotation() -> None:
+def test_member_network_bending_scenario_1() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -44,9 +44,6 @@ def test_corotational_beam_is_objective_under_large_rigid_rotation() -> None:
     assert evaluated.energy == pytest.approx(0.0, abs=1.0e-9)
     assert evaluated.axial_force[0] == pytest.approx(0.0, abs=1.0e-9)
     assert evaluated.bending_moment[0, 0] == pytest.approx(0.0, abs=1.0e-9)
-
-
-def test_corotational_cantilever_matches_small_deflection_limit() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1),), dtype=jnp.int32),
         2,
@@ -81,9 +78,6 @@ def test_corotational_cantilever_matches_small_deflection_limit() -> None:
         rel=0.12,
     )
     assert result.state.assembly.bending_moment[0, 0] != 0.0
-
-
-def test_discrete_rod_bending_and_twist_energy_detect_deformation() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2)), dtype=jnp.int32),
         3,
@@ -108,9 +102,6 @@ def test_discrete_rod_bending_and_twist_energy_detect_deformation() -> None:
     assert bent.valid
     assert bent.energy > 0.0
     assert jnp.any(jnp.abs(bent.bending_moment) > 0.0)
-
-
-def test_hinge_bending_energy_is_zero_at_rest_and_positive_when_folded() -> None:
     structure = sm.ForceDensityStructure.from_edges(
         jnp.asarray(((0, 1), (1, 2), (2, 0), (1, 3), (3, 0)), dtype=jnp.int32),
         4,

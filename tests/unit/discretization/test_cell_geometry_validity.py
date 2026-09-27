@@ -49,9 +49,8 @@ CONVEX = ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 2.0), (0.0, 1.0))
 CONCAVE = ((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0))
 
 
-@pytest.mark.parametrize(
-    ("points", "expected"),
-    (
+def test_cell_geometry_validity_scenario_1() -> None:
+    for points, expected in (
         (CONVEX, Status.CERTIFIED_VALID),
         (CONCAVE, Status.CERTIFIED_VALID),
         (CONVEX[::-1], Status.INVALID),
@@ -64,36 +63,22 @@ CONCAVE = ((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0))
         (((0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (2.0, 0.0), (0.0, 4.0)), Status.INVALID),
         # Adjacent edges doubling back along one line.
         (((0.0, 0.0), (4.0, 0.0), (2.0, 0.0), (2.0, 3.0), (0.0, 3.0)), Status.INVALID),
-    ),
-    ids=(
-        "convex",
-        "concave",
-        "clockwise",
-        "bow-tie",
-        "pentagram",
-        "repeated-vertex",
-        "endpoint-touch",
-        "collinear-overlap",
-    ),
-)
-def test_planar_polygon_validity_is_simplicity_orientation_and_area(
-    points: Any, expected: Any
-) -> None:
-    assert _polygon_status(points) == expected
-
-
-def test_polygon_edge_must_clear_the_scale_aware_floor() -> None:
+    ):
+        assert _polygon_status(points) == expected
     points = np.asarray(((0.0, 0.0), (1.0e-10, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     policy = D.CellValidityPolicy(relative_determinant_floor=1.0e-8)
 
     assert _polygon_status(points, policy) == Status.INVALID
+    result = G.polygon_simplicity_2d(
+        np.asarray(CONVEX),
+        mode=G.PredicateMode.EXACT,
+        maximum_candidate_pairs=1,
+    )
 
-
-def test_embedded_planar_concave_polygon_is_valid() -> None:
+    assert int(result.status) == G.PolygonSimplicityStatus.UNCERTAIN
+    assert result.candidate_pair_count == 1
+    assert result.candidate_capacity_exceeded
     assert _polygon_status(_embedded(CONCAVE)) == Status.CERTIFIED_VALID
-
-
-def test_embedded_polygon_must_be_planar_within_policy_tolerance() -> None:
     bent = _embedded(CONCAVE, bend=0.1)
     loose = D.CellValidityPolicy(relative_planarity_tolerance=0.5)
 
@@ -108,29 +93,24 @@ def _spike(offset: Any) -> Any:
 
 
 @pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
-@pytest.mark.parametrize(
-    ("offset", "exact"),
-    (
+def test_filtered_simplicity_is_uncertain_where_exact_decides() -> None:
+    for offset, exact in (
         (0, G.PolygonSimplicityStatus.SELF_INTERSECTING),
         (1, G.PolygonSimplicityStatus.SIMPLE),
-    ),
-)
-def test_filtered_simplicity_is_uncertain_where_exact_decides(
-    offset: Any, exact: Any
-) -> None:
-    points = _spike(offset)
-    filtered = G.polygon_simplicity_2d(points, mode=G.PredicateMode.FILTERED)
-    resolved = G.polygon_simplicity_2d(points, mode=G.PredicateMode.EXACT)
+    ):
+        points = _spike(offset)
+        filtered = G.polygon_simplicity_2d(points, mode=G.PredicateMode.FILTERED)
+        resolved = G.polygon_simplicity_2d(points, mode=G.PredicateMode.EXACT)
 
-    assert int(filtered.status) == G.PolygonSimplicityStatus.UNCERTAIN
-    assert int(filtered.uncertain_pairs) > 0
-    assert int(resolved.status) == exact
-    assert int(resolved.uncertain_pairs) == 0
-    expected = Status.INVALID if offset == 0 else Status.CERTIFIED_VALID
-    assert _polygon_status(points) == expected
+        assert int(filtered.status) == G.PolygonSimplicityStatus.UNCERTAIN
+        assert int(filtered.uncertain_pairs) > 0
+        assert int(resolved.status) == exact
+        assert int(resolved.uncertain_pairs) == 0
+        expected = Status.INVALID if offset == 0 else Status.CERTIFIED_VALID
+        assert _polygon_status(points) == expected
 
 
-def test_segment_intersection_classes() -> None:
+def test_cell_geometry_validity_scenario_2() -> None:
     a = np.asarray(((0.0, 0.0),) * 5)
     b = np.asarray(((2.0, 2.0), (1.0, 0.0), (2.0, 0.0), (1.0, 1.0), (1.0, 0.0)))
     c = np.asarray(((0.0, 2.0), (1.0, 0.0), (1.0, 0.0), (2.0, 2.0), (2.0, 0.0)))
@@ -148,21 +128,6 @@ def test_segment_intersection_classes() -> None:
     )
     with pytest.raises(ValueError):
         G.segment_intersections_2d(a, b, c, d, mode=G.PredicateMode.FILTERED_DEVICE)
-
-
-def test_polygon_simplicity_candidate_capacity_fails_closed() -> None:
-    result = G.polygon_simplicity_2d(
-        np.asarray(CONVEX),
-        mode=G.PredicateMode.EXACT,
-        maximum_candidate_pairs=1,
-    )
-
-    assert int(result.status) == G.PolygonSimplicityStatus.UNCERTAIN
-    assert result.candidate_pair_count == 1
-    assert result.candidate_capacity_exceeded
-
-
-def test_certify_cell_mesh_rejects_self_intersecting_polygon() -> None:
     points = np.asarray(((0.0, 0.0), (2.0, 2.0), (2.0, 0.0), (1.0, -1.0), (0.0, 2.0)))
     mesh = D.CellMesh(
         points, (D.CellBlock("cells", "polygon", np.arange(5, dtype=np.int32)[None]),)

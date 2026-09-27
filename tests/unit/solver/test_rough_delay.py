@@ -18,7 +18,7 @@ def _smooth_control(times: Any) -> Any:
     return phx.stochastic.GeometricRoughPath.from_values(times, times[:, None])
 
 
-def test_rough_delay_euler_reduces_to_fixed_step_dde_on_smooth_driver() -> None:
+def test_rough_delay_scenario_1() -> None:
     times = jnp.linspace(0.0, 1.0, 21)
     delay = phx.solver.ConstantDelay("past", 0.2)
     rate = 0.7
@@ -55,9 +55,41 @@ def test_rough_delay_euler_reduces_to_fixed_step_dde_on_smooth_driver() -> None:
     assert rough.metadata["equation_kind"] == "rough-retarded"
     assert rough.metadata["history_interpolation"] == "retraction-linear"
     assert rough.metadata["delayed_second_level"] == "not-required-young"
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
+    angular_velocity = jnp.asarray([0.15, -0.2, 0.1])
+    times = jnp.asarray([0.0, 0.1, 0.2])
+    problem = phx.solver.RoughDelayDifferentialProblem(
+        lambda time, state, memory, args: angular_velocity[:, None],
+        lambda time, args: base,
+        (phx.solver.ConstantDelay("past", 0.1),),
+        t0=0.0,
+        driver_dimension=1,
+        geometry=geometry,
+    )
 
+    solution = phx.solver.solve_rough_delay(
+        problem,
+        _smooth_control(times),
+        solver=phx.solver.RoughEuler(),
+    )
 
-def test_delayed_davie_cross_level_improves_constant_delay_accuracy() -> None:
+    expected = geometry.retract(base, 0.2 * angular_velocity)
+    assert problem.state_shape == (4,)
+    assert problem.local_shape == (3,)
+    assert problem.tangent_shape == (3,)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
+    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
+    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
+    with pytest.raises(ValueError, match="physical tangent shape"):
+        phx.solver.RoughDelayDifferentialProblem(
+            lambda time, state, memory, args: jnp.zeros((4, 1)),
+            lambda time, args: jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            (phx.solver.ConstantDelay("past", 0.1),),
+            t0=0.0,
+            driver_dimension=1,
+            geometry=geometry,
+        )
     times = jnp.linspace(0.0, 1.0, 21)
     delay_value = 0.2
     rate = 0.8
@@ -93,9 +125,6 @@ def test_delayed_davie_cross_level_improves_constant_delay_accuracy() -> None:
     assert davie.metadata["delayed_second_level"] == (
         "grid-aligned-piecewise-linear-cross-integrals"
     )
-
-
-def test_young_rough_delay_supports_bounded_history_functionals() -> None:
     times = jnp.linspace(0.0, 0.8, 17)
     lags = jnp.asarray([0.2, 0.3, 0.4])
     functional = phx.solver.FunctionalDelay(
@@ -124,45 +153,4 @@ def test_young_rough_delay_supports_bounded_history_functionals() -> None:
             problem,
             _smooth_control(times),
             solver=phx.solver.Davie(),
-        )
-
-
-def test_rough_delay_euler_preserves_quaternion_point_tangent_roles() -> None:
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
-    base = jnp.asarray([1.0, 0.0, 0.0, 0.0])
-    angular_velocity = jnp.asarray([0.15, -0.2, 0.1])
-    times = jnp.asarray([0.0, 0.1, 0.2])
-    problem = phx.solver.RoughDelayDifferentialProblem(
-        lambda time, state, memory, args: angular_velocity[:, None],
-        lambda time, args: base,
-        (phx.solver.ConstantDelay("past", 0.1),),
-        t0=0.0,
-        driver_dimension=1,
-        geometry=geometry,
-    )
-
-    solution = phx.solver.solve_rough_delay(
-        problem,
-        _smooth_control(times),
-        solver=phx.solver.RoughEuler(),
-    )
-
-    expected = geometry.retract(base, 0.2 * angular_velocity)
-    assert problem.state_shape == (4,)
-    assert problem.local_shape == (3,)
-    assert problem.tangent_shape == (3,)
-    assert jnp.allclose(solution.states[-1], expected, atol=2e-7)
-    assert jnp.all(jax.vmap(geometry.contains)(solution.states))
-
-
-def test_rough_delay_rejects_point_shaped_quaternion_tangent() -> None:
-    geometry = phx.metrix.ScalarFirstQuaternionStateGeometry()
-    with pytest.raises(ValueError, match="physical tangent shape"):
-        phx.solver.RoughDelayDifferentialProblem(
-            lambda time, state, memory, args: jnp.zeros((4, 1)),
-            lambda time, args: jnp.asarray([1.0, 0.0, 0.0, 0.0]),
-            (phx.solver.ConstantDelay("past", 0.1),),
-            t0=0.0,
-            driver_dimension=1,
-            geometry=geometry,
         )

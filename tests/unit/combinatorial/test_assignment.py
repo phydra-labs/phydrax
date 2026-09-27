@@ -31,7 +31,7 @@ def _brute_assignment(costs: Any, valid: Any) -> Any:
     )
 
 
-def test_hungarian_matches_enumeration_for_signed_rectangular_problem() -> None:
+def test_hungarian_contracts() -> None:
     costs = np.asarray(
         [
             [4.0, -1.0, 3.0, 8.0],
@@ -63,9 +63,6 @@ def test_hungarian_matches_enumeration_for_signed_rectangular_problem() -> None:
     np.testing.assert_allclose(result.certificate.dual_residual, 0.0, atol=1e-12)
     assert result.certificate.optimality_proven
     assert result.status == int(phx.combinatorial.CombinatorialStatus.OPTIMAL)
-
-
-def test_hungarian_is_batched_jittable_and_breaks_ties_canonically() -> None:
     space = phx.combinatorial.BipartiteAssignmentSpace(2, 3)
     costs = jnp.asarray(
         [
@@ -85,9 +82,6 @@ def test_hungarian_is_batched_jittable_and_breaks_ties_canonically() -> None:
     np.testing.assert_allclose(result.objective_value, jnp.asarray([0.0, 2.0]))
     np.testing.assert_array_equal(jnp.sum(result.features, axis=-1), jnp.ones((2, 2)))
     assert bool(result.all_success)
-
-
-def test_hungarian_reports_structural_and_mask_infeasibility() -> None:
     method = phx.combinatorial.HungarianAssignment()
     too_many_rows = phx.combinatorial.BipartiteAssignmentSpace(3, 2)
     structural = phx.combinatorial.solve_combinatorial(
@@ -131,25 +125,6 @@ def test_hungarian_reports_structural_and_mask_infeasibility() -> None:
         -jnp.ones((2,), dtype=jnp.int32),
     )
     np.testing.assert_array_equal(nonfinite.features, jnp.zeros((2, 2)))
-
-
-def test_assignment_space_audits_duplicate_and_forbidden_columns() -> None:
-    space = phx.combinatorial.BipartiteAssignmentSpace(
-        2,
-        3,
-        valid=jnp.asarray([[True, True, True], [True, False, True]]),
-    )
-
-    duplicate = space.audit(phx.combinatorial.AssignmentDecision(jnp.asarray([0, 0])))
-    forbidden = space.audit(phx.combinatorial.AssignmentDecision(jnp.asarray([0, 1])))
-    feasible = space.audit(phx.combinatorial.AssignmentDecision(jnp.asarray([1, 2])))
-
-    assert not duplicate.feasible
-    assert not forbidden.feasible
-    assert feasible.feasible
-
-
-def test_hungarian_oracle_honors_required_edge() -> None:
     space = phx.combinatorial.BipartiteAssignmentSpace(2, 2)
     problem = phx.combinatorial.LinearCombinatorialProblem(
         space,
@@ -169,9 +144,6 @@ def test_hungarian_oracle_honors_required_edge() -> None:
     assert execution.valid
     np.testing.assert_array_equal(execution.result.decision.columns, [1, 0])
     assert execution.restriction_violation == 0.0
-
-
-def test_hungarian_oracle_rejects_conflicting_required_edges() -> None:
     space = phx.combinatorial.BipartiteAssignmentSpace(2, 2)
     restriction = phx.combinatorial.CombinatorialFeatureRestriction(
         space,
@@ -189,3 +161,19 @@ def test_hungarian_oracle_rejects_conflicting_required_edges() -> None:
 
     assert execution.result.status == phx.combinatorial.CombinatorialStatus.INFEASIBLE
     assert not execution.valid
+
+
+def test_assignment_space_audits_duplicate_and_forbidden_columns() -> None:
+    space = phx.combinatorial.BipartiteAssignmentSpace(
+        2,
+        3,
+        valid=jnp.asarray([[True, True, True], [True, False, True]]),
+    )
+
+    duplicate = space.audit(phx.combinatorial.AssignmentDecision(jnp.asarray([0, 0])))
+    forbidden = space.audit(phx.combinatorial.AssignmentDecision(jnp.asarray([0, 1])))
+    feasible = space.audit(phx.combinatorial.AssignmentDecision(jnp.asarray([1, 2])))
+
+    assert not duplicate.feasible
+    assert not forbidden.feasible
+    assert feasible.feasible

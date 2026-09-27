@@ -142,7 +142,7 @@ def _repository(tmp_path: Any) -> Any:
     )
 
 
-def test_amr_stress_transfer_preserves_all_adm_source_integrals() -> None:
+def test_einstein_vlasov_amr_scenario_1() -> None:
     coarse_geometry = _geometry((2, 2, 2), 1, "coarse")
     fine_geometry = _geometry((4, 4, 4), 2, "fine")
     coarse = _projection(coarse_geometry)
@@ -178,9 +178,6 @@ def test_amr_stress_transfer_preserves_all_adm_source_integrals() -> None:
         rtol=0.0,
         atol=1.0e-6,
     )
-
-
-def test_owner_computes_routes_are_stable_and_capacity_fail_closed() -> None:
     distribution = _distribution()
     particles = _particles()
     migration = EinsteinVlasovParticleMigrationPlan(distribution, 4)

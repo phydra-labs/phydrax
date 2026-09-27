@@ -12,7 +12,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_moment_compression_is_reusable_and_preserves_named_ancestry() -> None:
+def test_compression_scenario_1() -> None:
     axis = "sample"
     coordinates = jnp.linspace(-1.0, 1.0, 33)
     samples = cx.AxisArray(coordinates, dims=(axis,))
@@ -61,9 +61,6 @@ def test_moment_compression_is_reusable_and_preserves_named_ancestry() -> None:
         compressed_estimate.diagnostics.transformations[0].diagnostics,
         phx.integration.MeasureCompressionDiagnostics,
     )
-
-
-def test_compression_preserves_nonnormalized_target_mass() -> None:
     samples = jnp.linspace(0.0, 2.0, 25)
     target = phx.integration.weighted(
         samples,
@@ -87,6 +84,37 @@ def test_compression_preserves_nonnormalized_target_mass() -> None:
         source_estimate.value.data,
         atol=1e-11,
     )
+    samples = jnp.linspace(0.0, 1.0, 9)
+    target = phx.integration.weighted(
+        samples,
+        jnp.zeros((9,)),
+        support_valid=jnp.asarray(False),
+    )
+    compressed = phx.integration.compress(
+        phx.integration.materialize(target),
+        phx.coresets.MomentRecombination(),
+    )
+    estimate = phx.integration.reduce(lambda value: value, compressed)
+
+    assert not bool(compressed.batch.support_valid)
+    assert int(estimate.status) == int(
+        phx.integration.IntegrationStatus.PROPOSAL_SUPPORT_FAILURE
+    )
+    for identifier in ["stratum_ids", "pair_ids", "replicate_ids"]:
+        samples = jnp.linspace(0.0, 1.0, 12)
+        identifiers = jnp.arange(12, dtype=jnp.int32) // 2
+        grouping: dict[str, Any] = {identifier: identifiers}
+        target = phx.integration.weighted(
+            samples,
+            jnp.zeros((12,)),
+            **grouping,
+        )
+
+        with pytest.raises(ValueError, match="transformed"):
+            phx.integration.compress(
+                phx.integration.materialize(target),
+                phx.coresets.MomentRecombination(),
+            )
 
 
 def test_compression_lowers_a_named_discrete_point_measure() -> None:
@@ -129,40 +157,3 @@ def test_compression_lowers_a_named_discrete_point_measure() -> None:
         source_estimate.value.data,
         atol=1e-11,
     )
-
-
-def test_compression_preserves_proposal_support_failure() -> None:
-    samples = jnp.linspace(0.0, 1.0, 9)
-    target = phx.integration.weighted(
-        samples,
-        jnp.zeros((9,)),
-        support_valid=jnp.asarray(False),
-    )
-    compressed = phx.integration.compress(
-        phx.integration.materialize(target),
-        phx.coresets.MomentRecombination(),
-    )
-    estimate = phx.integration.reduce(lambda value: value, compressed)
-
-    assert not bool(compressed.batch.support_valid)
-    assert int(estimate.status) == int(
-        phx.integration.IntegrationStatus.PROPOSAL_SUPPORT_FAILURE
-    )
-
-
-@pytest.mark.parametrize("identifier", ["stratum_ids", "pair_ids", "replicate_ids"])
-def test_compression_rejects_unpreserved_sample_grouping(identifier: Any) -> None:
-    samples = jnp.linspace(0.0, 1.0, 12)
-    identifiers = jnp.arange(12, dtype=jnp.int32) // 2
-    grouping: dict[str, Any] = {identifier: identifiers}
-    target = phx.integration.weighted(
-        samples,
-        jnp.zeros((12,)),
-        **grouping,
-    )
-
-    with pytest.raises(ValueError, match="transformed"):
-        phx.integration.compress(
-            phx.integration.materialize(target),
-            phx.coresets.MomentRecombination(),
-        )

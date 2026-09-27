@@ -47,7 +47,7 @@ def _rollout_runtime(cells: Any = 12) -> Any:
     return runtime, initial
 
 
-def test_direct_ssprk_wrapper_matches_uncoupled_structured_runtime() -> None:
+def test_finite_volume_rollout_scenario_1() -> None:
     runtime, initial = _rollout_runtime()
 
     direct = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(runtime.dynamics).advance(
@@ -66,9 +66,6 @@ def test_direct_ssprk_wrapper_matches_uncoupled_structured_runtime() -> None:
     )
     np.testing.assert_allclose(direct.time, prepared.runtime_state.content_state.time)
     np.testing.assert_allclose(direct.step_size, initial.step_size)
-
-
-def test_rollout_retention_policies_preserve_constant_state() -> None:
     runtime, initial = _rollout_runtime()
     mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.006, 6, role="internal")
     trajectory = phx.solver.ScheduledFiniteVolumeRolloutPlan(
@@ -100,9 +97,24 @@ def test_rollout_retention_policies_preserve_constant_state() -> None:
     assert jnp.all(trajectory.accepted)
     # ty: ignore[unsupported-operator]
     assert jnp.all(trajectory.stability_margins > 0.0)
+    runtime, initial = _rollout_runtime(8)
+    mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.003, 3, role="internal")
+    plan = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime,
+        mesh,
+        replay=phx.solver.FiniteVolumeReplayPolicy("step"),
+    )
+    initial_content = initial.content_state.conservative_content
+    tangent = jnp.linspace(-0.2, 0.2, initial_content.size).reshape(initial_content.shape)
+    report = plan.gradient_report(
+        lambda final, args: jnp.sum(final.content_state.conservative_content[..., -1]),
+        initial,
+        tangent,
+        epsilon=1e-5,
+    )
 
-
-def test_step_and_block_replay_match_full_rollout() -> None:
+    assert report.jvp_vjp_residual < 1e-9
+    assert report.finite_difference_residual < 1e-7
     runtime, initial = _rollout_runtime()
     mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.004, 4, role="internal")
     full = phx.solver.ScheduledFiniteVolumeRolloutPlan(
@@ -148,24 +160,3 @@ def test_prescribed_step_rejects_stability_clamp_and_retains_state() -> None:
         result.runtime_state.content_state.conservative_content,
         initial.content_state.conservative_content,
     )
-
-
-def test_rollout_gradient_report_matches_content_coordinate_jvp_and_vjp() -> None:
-    runtime, initial = _rollout_runtime(8)
-    mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.003, 3, role="internal")
-    plan = phx.solver.ScheduledFiniteVolumeRolloutPlan(
-        runtime,
-        mesh,
-        replay=phx.solver.FiniteVolumeReplayPolicy("step"),
-    )
-    initial_content = initial.content_state.conservative_content
-    tangent = jnp.linspace(-0.2, 0.2, initial_content.size).reshape(initial_content.shape)
-    report = plan.gradient_report(
-        lambda final, args: jnp.sum(final.content_state.conservative_content[..., -1]),
-        initial,
-        tangent,
-        epsilon=1e-5,
-    )
-
-    assert report.jvp_vjp_residual < 1e-9
-    assert report.finite_difference_residual < 1e-7

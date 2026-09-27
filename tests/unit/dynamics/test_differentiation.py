@@ -26,7 +26,7 @@ def _polynomial_data(coordinates: Any, *, reset_mask: Any = None) -> Any:
     )
 
 
-def test_finite_difference_is_exact_for_quadratic_on_irregular_interior() -> None:
+def test_differentiation_scenario_1() -> None:
     time = jnp.asarray([0.0, 0.15, 0.6, 1.4, 2.0])
     data = _polynomial_data(time)
 
@@ -48,9 +48,6 @@ def test_finite_difference_is_exact_for_quadratic_on_irregular_interior() -> Non
     attached = estimate.attach(data)
     assert attached.derivatives is not None
     assert attached.source_id.endswith("finite-difference:invalid")
-
-
-def test_local_polynomial_is_exact_and_never_crosses_a_reset() -> None:
     time = jnp.arange(7.0)
     data = _polynomial_data(
         time,
@@ -69,9 +66,6 @@ def test_local_polynomial_is_exact_and_never_crosses_a_reset() -> None:
     np.testing.assert_allclose(
         np.asarray(estimate.values), np.asarray(expected), rtol=2e-5, atol=2e-5
     )
-
-
-def test_local_polynomial_reports_underdetermined_segment_as_invalid() -> None:
     time = jnp.arange(6.0)
     data = _polynomial_data(
         time,
@@ -86,9 +80,6 @@ def test_local_polynomial_reports_underdetermined_segment_as_invalid() -> None:
     assert not bool(estimate.valid[1])
     assert bool(jnp.all(estimate.valid[2:]))
     assert bool(jnp.all(jnp.isnan(estimate.values[:2])))
-
-
-def test_bspline_derivative_fits_each_segment_independently() -> None:
     time = jnp.linspace(0.0, 2.0, 8)
     values = jnp.stack((time**3, 2.0 * time**3 - time), axis=-1)
     data = phx.dynamics.TrajectoryData(
@@ -106,9 +97,6 @@ def test_bspline_derivative_fits_each_segment_independently() -> None:
     np.testing.assert_allclose(
         np.asarray(estimate.values), np.asarray(expected), rtol=3e-4, atol=3e-4
     )
-
-
-def test_bspline_derivative_preserves_complex_state_components() -> None:
     time = jnp.linspace(0.0, 1.0, 8)
     values = (time**3 + 1j * 2.0 * time**3)[:, None]
     data = phx.dynamics.TrajectoryData(

@@ -39,7 +39,7 @@ def _constant_growth_problem(*, initial: Any = 1.0) -> Any:
     return domain, batch, problem
 
 
-def test_diffrax_neural_galerkin_evolves_and_reconstructs_constant_field() -> None:
+def test_neural_galerkin_scenario_1() -> None:
     _domain, batch, problem = _constant_growth_problem()
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.1, 0.2]),
@@ -63,9 +63,6 @@ def test_diffrax_neural_galerkin_evolves_and_reconstructs_constant_field() -> No
     assert jnp.all(jnp.isfinite(dense.data))
     assert jnp.all(result.audit.accepted)
     assert jnp.max(result.audit.relative_projection_defect) < 1e-10
-
-
-def test_default_tsit5_neural_galerkin_matches_exponential_growth() -> None:
     _domain, _batch, problem = _constant_growth_problem()
     grid = phx.dynamics.TimeGrid(
         jnp.linspace(0.0, 0.4, 5),
@@ -87,9 +84,6 @@ def test_default_tsit5_neural_galerkin_matches_exponential_growth() -> None:
         atol=2e-6,
     )
     assert result.parameter_solution.solver_name == "Tsit5"
-
-
-def test_gram_neural_galerkin_accepts_randomized_nystrom_preconditioning() -> None:
     _domain, _batch, problem = _constant_growth_problem()
     damping = 1e-3
     tangent = phx.solver.NeuralTangentSolvePolicy(
@@ -118,7 +112,7 @@ def test_gram_neural_galerkin_accepts_randomized_nystrom_preconditioning() -> No
     assert jnp.all(result.audit.matvec_count > 0)
 
 
-def test_neural_galerkin_rejects_dynamic_and_malformed_metrics() -> None:
+def test_neural_contracts() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray(1.0))
     component = domain.component()
@@ -140,9 +134,6 @@ def test_neural_galerkin_rejects_dynamic_and_malformed_metrics() -> None:
             lambda _time, functions, _args: {"u": functions["u"]},
             (phx.solver.FieldProjectionMetric("v", realization),),
         )
-
-
-def test_neural_galerkin_rate_mismatch_and_certified_backsolve_policy() -> None:
     domain, _batch, problem = _constant_growth_problem()
     bad = phx.solver.NeuralGalerkinProblem(
         problem.functions,
@@ -176,9 +167,6 @@ def test_neural_galerkin_rate_mismatch_and_certified_backsolve_policy() -> None:
         adjoint_policy=phx.solver.NeuralGalerkinAdjointPolicy("certified_backsolve"),
     )
     assert bool(result.successful)
-
-
-def test_neural_galerkin_replay_rejects_changed_frozen_boundaries() -> None:
     _domain, _batch, first_problem = _constant_growth_problem(initial=1.0)
     _domain, _batch, second_problem = _constant_growth_problem(initial=1.0)
     first_grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.05]), time_id="epoch-first")
@@ -220,9 +208,6 @@ def test_neural_galerkin_replay_rejects_changed_frozen_boundaries() -> None:
             solver=dfx.Euler(),
             dt0=0.01,
         )
-
-
-def test_neural_field_result_rejects_invalid_indices_and_missing_dense_output() -> None:
     _domain, _batch, problem = _constant_growth_problem()
     grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.05]),

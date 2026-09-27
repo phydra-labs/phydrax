@@ -34,7 +34,7 @@ def _double_precision() -> Any:
         yield
 
 
-def test_heterogeneous_insulated_storage_and_rejected_stale_commit() -> None:
+def test_skeletal_muscle_thermal_scenario_1() -> None:
     prepared = manufactured_case(heterogeneous=True)
     initial = prepared.initial_state()
     source = manufactured_source(prepared, initial)
@@ -91,11 +91,6 @@ def test_heterogeneous_insulated_storage_and_rejected_stale_commit() -> None:
         ),
         initial,
     )
-
-
-def test_no_source_preserves_nonuniform_insulated_energy_and_perfusion_removes_heat() -> (
-    None
-):
     initial = np.asarray([301.0, 302.0, 303.0, 304.0, 305.0, 306.0, 307.0, 308.0])
     insulated = manufactured_case(initial=initial)
     state = insulated.initial_state()
@@ -117,29 +112,24 @@ def test_no_source_preserves_nonuniform_insulated_energy_and_perfusion_removes_h
     np.testing.assert_allclose(
         candidate.ledger.storage_change_J + candidate.ledger.perfusion_out_J, 0, atol=1e-9
     )
+    for boundary in ["linear-flux", "linear-convection"]:
+        prepared = manufactured_case(boundary=boundary)
+        initial = prepared.initial_state()
+        candidate = prepared.propose(
+            initial, manufactured_source(prepared, initial, power=0.0)
+        )
+        assert bool(candidate.evidence.successful)
+        np.testing.assert_allclose(
+            candidate.proposed_state.temperature_K, initial.temperature_K, atol=1e-9
+        )
+        np.testing.assert_allclose(candidate.ledger.dirichlet_out_J, 0.2, atol=1e-9)
+        outgoing = (
+            candidate.ledger.prescribed_flux_out_J + candidate.ledger.convection_out_J
+        )
+        np.testing.assert_allclose(outgoing, -0.2, atol=1e-9)
 
 
-@pytest.mark.parametrize("boundary", ["linear-flux", "linear-convection"])
-def test_mixed_boundary_linear_solution_and_equal_opposite_boundary_work(
-    boundary: Any,
-) -> None:
-    prepared = manufactured_case(boundary=boundary)
-    initial = prepared.initial_state()
-    candidate = prepared.propose(
-        initial, manufactured_source(prepared, initial, power=0.0)
-    )
-    assert bool(candidate.evidence.successful)
-    np.testing.assert_allclose(
-        candidate.proposed_state.temperature_K, initial.temperature_K, atol=1e-9
-    )
-    np.testing.assert_allclose(candidate.ledger.dirichlet_out_J, 0.2, atol=1e-9)
-    outgoing = candidate.ledger.prescribed_flux_out_J + candidate.ledger.convection_out_J
-    np.testing.assert_allclose(outgoing, -0.2, atol=1e-9)
-
-
-def test_sparse_source_projection_and_uchida_heat_corrections_are_not_double_counted() -> (
-    None
-):
+def test_skeletal_muscle_thermal_scenario_2() -> None:
     model = UchidaUmberger2010Plan(
         UchidaUmberger2010Parameters(
             # ty: ignore[invalid-argument-type]
@@ -228,9 +218,6 @@ def test_sparse_source_projection_and_uchida_heat_corrections_are_not_double_cou
     )
     np.testing.assert_allclose(floor.category_power_W[3], [0.5, 1.0])
     np.testing.assert_allclose(floor.retained_power_W, [0.5, 1.0])
-
-
-def test_scalar_field_rejects_invalid_parameters_and_boundary_partition() -> None:
     prepared = manufactured_case()
     # ty: ignore[invalid-argument-type]
     invalid = Pennes1948Parameters([0.0], [8.0], [0.0], [4.0], [300.0])

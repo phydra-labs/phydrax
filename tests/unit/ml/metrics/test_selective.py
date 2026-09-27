@@ -15,7 +15,7 @@ def _points(result: Any, value: Any) -> Any:
     return value[result.point_mask]
 
 
-def test_weighted_selective_curve_uses_attainable_tie_endpoints_and_mass_aurc() -> None:
+def test_selective_scenario_1() -> None:
     loss = jnp.array([1.0, 4.0, 2.0, jnp.nan])
     score = jnp.array([3.0, 1.0, 2.0, jnp.nan])
     weight = jnp.array([1.0, 2.0, 1.0, 20.0])
@@ -41,9 +41,18 @@ def test_weighted_selective_curve_uses_attainable_tie_endpoints_and_mass_aurc() 
     assert jnp.allclose(result.effective_weight, 4.0)
     assert jnp.allclose(oracle.aurc, 2.0)
     assert float(oracle.aurc) < float(result.aurc)
+    first = jnp.array([0.0, 1.0, 2.0])
+    second = jnp.array([2.0, 0.0, 1.0])
+    frequency = jnp.array([1.0, 2.0, 3.0])
+    replicated_first = jnp.array([0.0, 1.0, 1.0, 2.0, 2.0, 2.0])
+    replicated_second = jnp.array([2.0, 0.0, 0.0, 1.0, 1.0, 1.0])
 
+    weighted = metrics.spearman_rank_correlation(first, second, sample_weight=frequency)
+    replicated = metrics.spearman_rank_correlation(replicated_first, replicated_second)
 
-def test_complete_score_ties_are_indivisible_and_permutation_invariant() -> None:
+    assert bool(weighted.valid)
+    assert jnp.allclose(weighted.value, replicated.value)
+    assert jnp.allclose(weighted.effective_weight, 6.0)
     loss = jnp.array([1.0, 4.0, 2.0, 7.0])
     score = jnp.array([1.0, 1.0, 2.0, 2.0])
     weight = jnp.array([1.0, 2.0, 1.0, 3.0])
@@ -72,9 +81,6 @@ def test_complete_score_ties_are_indivisible_and_permutation_invariant() -> None
     assert int(jnp.sum(complete_tie.point_mask)) == 1
     assert jnp.allclose(_points(complete_tie, complete_tie.coverage), 1.0)
     assert jnp.allclose(complete_tie.aurc, jnp.mean(loss))
-
-
-def test_selective_and_spearman_masks_follow_metric_status_semantics() -> None:
     loss = jnp.array([1.0, 2.0, jnp.nan])
     score = jnp.array([1.0, 2.0, jnp.nan])
     mask = jnp.array([True, True, False])
@@ -111,24 +117,6 @@ def test_selective_and_spearman_masks_follow_metric_status_semantics() -> None:
         masked.retained_weight,
     ):
         assert jnp.all(jnp.isnan(values[~masked.point_mask]))
-
-
-def test_weighted_spearman_midranks_match_literal_integer_replication() -> None:
-    first = jnp.array([0.0, 1.0, 2.0])
-    second = jnp.array([2.0, 0.0, 1.0])
-    frequency = jnp.array([1.0, 2.0, 3.0])
-    replicated_first = jnp.array([0.0, 1.0, 1.0, 2.0, 2.0, 2.0])
-    replicated_second = jnp.array([2.0, 0.0, 0.0, 1.0, 1.0, 1.0])
-
-    weighted = metrics.spearman_rank_correlation(first, second, sample_weight=frequency)
-    replicated = metrics.spearman_rank_correlation(replicated_first, replicated_second)
-
-    assert bool(weighted.valid)
-    assert jnp.allclose(weighted.value, replicated.value)
-    assert jnp.allclose(weighted.effective_weight, 6.0)
-
-
-def test_selective_metrics_are_jittable_case_batched_and_hard_ranked() -> None:
     loss = jnp.array([[1.0, 4.0, 2.0], [3.0, 1.0, 5.0]])
     score = jnp.array([[3.0, 1.0, 2.0], [2.0, 3.0, 1.0]])
 
@@ -158,7 +146,7 @@ def test_selective_metrics_are_jittable_case_batched_and_hard_ranked() -> None:
     assert jnp.any(jnp.abs(loss_gradient) > 0.0)
 
 
-def test_identical_paired_losses_have_exact_zero_effect_and_bounds() -> None:
+def test_selective_scenario_2() -> None:
     plan = metrics.PairedLossComparisonPlan(
         confidence=0.8, resamples=32, noninferiority_margin=0.0
     )
@@ -175,9 +163,6 @@ def test_identical_paired_losses_have_exact_zero_effect_and_bounds() -> None:
     assert jnp.allclose(result.interval_upper, 0.0)
     assert jnp.allclose(result.noninferiority_upper_bound, 0.0)
     assert bool(result.noninferior)
-
-
-def test_grouped_paired_bootstrap_resamples_whole_groups_and_replays() -> None:
     reference = jnp.array([1_000.0, 2_000.0, 3_000.0, 4_000.0])
     candidate = reference + jnp.array([0.0, 2.0, 3.0, 5.0])
     weight = jnp.array([1.0, 3.0, 2.0, 2.0])
@@ -214,9 +199,6 @@ def test_grouped_paired_bootstrap_resamples_whole_groups_and_replays() -> None:
     assert jnp.all(matches_group_draw)
     assert jnp.array_equal(first.bootstrap_effects, replay.bootstrap_effects)
     assert jnp.allclose(first.effect, 2.75)
-
-
-def test_paired_central_and_one_sided_quantiles_are_distinct_contracts() -> None:
     reference = jnp.zeros(8)
     candidate = jnp.arange(8.0)
     plan = metrics.PairedLossComparisonPlan(
@@ -240,9 +222,6 @@ def test_paired_central_and_one_sided_quantiles_are_distinct_contracts() -> None
     assert bool(result.noninferior) == bool(
         result.noninferiority_upper_bound <= plan.noninferiority_margin
     )
-
-
-def test_paired_comparison_reports_independent_unit_insufficiency() -> None:
     plan = metrics.PairedLossComparisonPlan(resamples=8)
     one_case = metrics.compare_paired_losses(
         jnp.array([1.0]),

@@ -106,7 +106,7 @@ def _identity_transport(thermal: Any, species: Any, args: Any) -> Any:
     return thermal, species, jnp.asarray(True)
 
 
-def test_reactive_strang_schedule_preserves_noop_state() -> None:
+def test_reactive_contracts() -> None:
     state = _state()
     result = ReactiveSpeciesCouplingSchedulePlan(reaction_substeps=2).advance(
         state,
@@ -125,9 +125,6 @@ def test_reactive_strang_schedule_preserves_noop_state() -> None:
         result.accepted_state.species.populations,
         state.species.populations,
     )
-
-
-def test_reactive_failure_rolls_back_all_coupled_fields_atomically() -> None:
     state = _state()
     result = ReactiveSpeciesCouplingSchedulePlan().advance(
         state,

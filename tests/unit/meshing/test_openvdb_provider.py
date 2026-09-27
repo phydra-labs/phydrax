@@ -46,7 +46,7 @@ def _ellipsoid_field(*, background_mode: Any = "constant") -> Any:
     return field, center, half_width
 
 
-def test_openvdb_extracts_sparse_anisotropic_cell_centered_isosurface() -> None:
+def test_openvdb_contracts() -> None:
     pytest.importorskip("openvdb")
     field, center, half_width = _ellipsoid_field()
     contract = SpatialCoordinateContract.si()
@@ -69,9 +69,6 @@ def test_openvdb_extracts_sparse_anisotropic_cell_centered_isosurface() -> None:
     assert result.boundary.metadata.source_id != "sampled-ellipsoid"
     assert result.associations == ()
     assert result.labels == ()
-
-
-def test_openvdb_rejects_unknown_background_instead_of_inventing_exterior() -> None:
     field, _, _ = _ellipsoid_field(background_mode="unsupported")
     with pytest.raises(MeshingFailure) as caught:
         OpenVDBProvider().execute(
@@ -82,9 +79,6 @@ def test_openvdb_rejects_unknown_background_instead_of_inventing_exterior() -> N
             source_revision="r1",
         )
     assert caught.value.category is MeshingFailureCategory.UNSUPPORTED_CAPABILITY
-
-
-def test_openvdb_rejects_empty_isosurface_without_substituting_geometry() -> None:
     pytest.importorskip("openvdb")
     field, _, _ = _ellipsoid_field()
     with pytest.raises(MeshingFailure) as caught:

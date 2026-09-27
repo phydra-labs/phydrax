@@ -45,7 +45,7 @@ def _transport(field: Any, *, dimension: Any = 2) -> Any:
     return phx.transport.ContinuousTransport(_normal(dimension), evolution)
 
 
-def test_continuous_transport_preserves_sample_shape_and_solver_evidence() -> None:
+def test_continuous_transport_contracts() -> None:
     offset = jnp.asarray([1.25, -0.75])
     transport = _transport(_TranslationField(offset))
     result = eqx.filter_jit(transport.sample_with_diagnostics)(jr.key(2), (2, 3))
@@ -57,9 +57,6 @@ def test_continuous_transport_preserves_sample_shape_and_solver_evidence() -> No
     assert result.successful
     assert result.num_samples == 6
     assert result.evolution_id == transport.evolution.evolution_id
-
-
-def test_continuous_transport_rejects_source_event_mismatch() -> None:
     layout = phx.dynamics.StateLayout((2,))
     system = phx.dynamics.ContinuousSystem(
         _TranslationField(jnp.zeros((2,))),
@@ -70,9 +67,6 @@ def test_continuous_transport_rejects_source_event_mismatch() -> None:
 
     with pytest.raises(ValueError, match="event shape"):
         phx.transport.ContinuousTransport(phx.uq.Normal(0.0, 1.0), evolution)
-
-
-def test_continuous_transport_exposes_failure_and_strict_sample_rejects_it() -> None:
     transport = _transport(_NonfiniteField())
     result = transport.sample_with_diagnostics(jr.key(5), (2,))
 

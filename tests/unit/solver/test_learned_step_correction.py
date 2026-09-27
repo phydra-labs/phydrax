@@ -68,7 +68,7 @@ def _trajectory(problem: Any) -> Any:
     return phx.solver.FixedStepRolloutPlan(retention="trajectory").rollout(problem)
 
 
-def test_admitted_correction_changes_the_rollout() -> None:
+def test_learned_step_correction_scenario_1() -> None:
     bias = jnp.asarray([0.01, -0.01])
     corrected = _trajectory(
         _problem(_correction(bias, conserved=[[1.0, 1.0]], lower_bounds=0.0))
@@ -97,11 +97,7 @@ def test_admitted_correction_changes_the_rollout() -> None:
         rtol=1e-12,
     )
     assert not jnp.allclose(corrected.final_state, native.final_state)
-
-
-@pytest.mark.parametrize(
-    ("bias", "checks", "reasons"),
-    (
+    for bias, checks, reasons in (
         (
             (jnp.nan, 0.0),
             {},
@@ -110,23 +106,16 @@ def test_admitted_correction_changes_the_rollout() -> None:
         ((0.01, 0.01), {"conserved": [[1.0, 1.0]]}, Reason.CONSERVATION),
         ((-0.01, 0.01), {"lower_bounds": (0.9, -jnp.inf)}, Reason.LOWER_BOUND),
         ((0.5, -0.5), {}, Reason.STABILITY_BOUND),
-    ),
-)
-def test_rejected_correction_keeps_the_native_rollout_with_reason_bits(
-    bias: Any, checks: Any, reasons: Any
-) -> None:
-    corrected = _trajectory(_problem(_correction(jnp.asarray(bias), **checks)))
-    native = _trajectory(_problem())
+    ):
+        corrected = _trajectory(_problem(_correction(jnp.asarray(bias), **checks)))
+        native = _trajectory(_problem())
 
-    assert corrected.successful
-    assert jnp.array_equal(corrected.states, native.states)
-    assert not jnp.any(corrected.transform_applied)
-    assert jnp.all(corrected.transform_correction_norm == 0.0)
-    assert not jnp.any(corrected.transform_admissibility.eligible)
-    assert jnp.all(corrected.transform_admissibility.reason_bits == int(reasons))
-
-
-def test_rejected_transaction_commits_the_unchanged_native_candidate() -> None:
+        assert corrected.successful
+        assert jnp.array_equal(corrected.states, native.states)
+        assert not jnp.any(corrected.transform_applied)
+        assert jnp.all(corrected.transform_correction_norm == 0.0)
+        assert not jnp.any(corrected.transform_admissibility.eligible)
+        assert jnp.all(corrected.transform_admissibility.reason_bits == int(reasons))
     correction = _correction(jnp.asarray([0.5, -0.5]))
     native = 0.9 * INITIAL
 
@@ -138,9 +127,6 @@ def test_rejected_transaction_commits_the_unchanged_native_candidate() -> None:
     assert jnp.array_equal(transaction.proposed, native + jnp.asarray([0.5, -0.5]))
     assert jnp.array_equal(committed.state, native)
     assert int(committed.evidence.reason_bits) == int(Reason.STABILITY_BOUND)
-
-
-def test_composite_transforms_keep_every_correction_reason() -> None:
     admitted = _correction(jnp.asarray([0.01, -0.01]))
     rejected = _correction(jnp.asarray([0.01, 0.01]), conserved=[[1.0, 1.0]])
     composite = phx.solver.CompositeAcceptedStepTransform((admitted, rejected))
@@ -157,63 +143,62 @@ def test_composite_transforms_keep_every_correction_reason() -> None:
     assert not result.admissibility.eligible
 
 
-@pytest.mark.parametrize(
-    "replay",
-    (
+def test_checkpointed_rollout_gradients_match_finite_differences() -> None:
+    for replay in (
         phx.solver.FixedStepReplayPolicy("step"),
         phx.solver.FixedStepReplayPolicy("block", block_size=2),
-    ),
-)
-def test_checkpointed_rollout_gradients_match_finite_differences(replay: Any) -> None:
-    weight_key, bias_key, direction_key = jax.random.split(jax.random.key(0), 3)
-    correction = _correction(
-        2e-3 * jax.random.normal(bias_key, (2,)),
-        2e-3 * jax.random.normal(weight_key, (2, 4)),
-        conserved=[[1.0, 1.0]],
-        conservation_tolerance=1.0,
-    )
-    problem = _problem(correction, steps=4)
-    plan = phx.solver.FixedStepRolloutPlan(replay=replay)
-    parameters, model_state, fixed = phx.partition_parameters(problem)
+    ):
+        weight_key, bias_key, direction_key = jax.random.split(jax.random.key(0), 3)
+        correction = _correction(
+            2e-3 * jax.random.normal(bias_key, (2,)),
+            2e-3 * jax.random.normal(weight_key, (2, 4)),
+            conserved=[[1.0, 1.0]],
+            conservation_tolerance=1.0,
+        )
+        problem = _problem(correction, steps=4)
+        plan = phx.solver.FixedStepRolloutPlan(replay=replay)
+        parameters, model_state, fixed = phx.partition_parameters(problem)
 
-    def objective(values: Any) -> Any:
-        rollout = plan.rollout(phx.combine_parameters(values, model_state, fixed))
-        return jnp.sum(rollout.final_state**2)
+        def objective(values: Any) -> Any:
+            rollout = plan.rollout(phx.combine_parameters(values, model_state, fixed))
+            return jnp.sum(rollout.final_state**2)
 
-    gradient = jax.grad(objective)(parameters)
-    leaves, treedef = jax.tree_util.tree_flatten(parameters)
-    keys = jax.random.split(direction_key, len(leaves))
-    direction = jax.tree_util.tree_unflatten(
-        treedef,
-        [jax.random.normal(key, leaf.shape) for key, leaf in zip(keys, leaves)],
-    )
-    epsilon = 1e-6
+        gradient = jax.grad(objective)(parameters)
+        leaves, treedef = jax.tree_util.tree_flatten(parameters)
+        keys = jax.random.split(direction_key, len(leaves))
+        direction = jax.tree_util.tree_unflatten(
+            treedef,
+            [jax.random.normal(key, leaf.shape) for key, leaf in zip(keys, leaves)],
+        )
+        epsilon = 1e-6
 
-    def shifted(scale: Any) -> Any:
-        return objective(
-            jax.tree.map(lambda leaf, step: leaf + scale * step, parameters, direction)
+        def shifted(scale: Any) -> Any:
+            return objective(
+                jax.tree.map(
+                    lambda leaf, step: leaf + scale * step, parameters, direction
+                )
+            )
+
+        finite_difference = (shifted(epsilon) - shifted(-epsilon)) / (2.0 * epsilon)
+        directional = sum(
+            jnp.vdot(value, step)
+            for value, step in zip(
+                jax.tree_util.tree_leaves(gradient), jax.tree_util.tree_leaves(direction)
+            )
         )
 
-    finite_difference = (shifted(epsilon) - shifted(-epsilon)) / (2.0 * epsilon)
-    directional = sum(
-        jnp.vdot(value, step)
-        for value, step in zip(
-            jax.tree_util.tree_leaves(gradient), jax.tree_util.tree_leaves(direction)
+        assert jax.tree_util.tree_leaves(parameters) == [
+            correction.model.weight,
+            correction.model.bias,
+        ]
+        assert jnp.all(plan.rollout(problem).transform_applied)
+        assert all(
+            jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree_util.tree_leaves(gradient)
         )
-    )
-
-    assert jax.tree_util.tree_leaves(parameters) == [
-        correction.model.weight,
-        correction.model.bias,
-    ]
-    assert jnp.all(plan.rollout(problem).transform_applied)
-    assert all(
-        jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree_util.tree_leaves(gradient)
-    )
-    np.testing.assert_allclose(directional, finite_difference, rtol=1e-6)
+        np.testing.assert_allclose(directional, finite_difference, rtol=1e-6)
 
 
-def test_correction_slot_confers_discretization_authority() -> None:
+def test_learned_step_correction_scenario_2() -> None:
     contract = _correction(jnp.zeros(2)).component_contract()
 
     assert contract.authority is phx.ComponentAuthority.DISCRETIZATION
@@ -222,9 +207,20 @@ def test_correction_slot_confers_discretization_authority() -> None:
         phx.dynamics.AbstractDiscreteModelRolloutTransition.slot_contract().authority
         is phx.ComponentAuthority.MODEL
     )
-
-
-def test_port_declaring_correction_binds_in_owner_order() -> None:
+    for keywords, message in (
+        ({"state_shape": (3,)}, "2 \\* state size features"),
+        ({"conservation_tolerance": 1e-8}, "requires conserved invariants"),
+        ({"conserved": [[1.0, 1.0, 1.0]]}, "invariant_count, state_size"),
+        ({"maximum_relative_correction": 0.0}, "finite and positive"),
+        ({"lower_bounds": (jnp.nan, 0.0)}, "finite or -inf"),
+    ):
+        arguments = {"state_shape": (2,), "maximum_relative_correction": 0.5, **keywords}
+        with pytest.raises(ValueError, match=message):
+            phx.solver.LearnedStepCorrection(
+                _AffineIncrement(jnp.zeros((2, 4)), jnp.zeros(2)),
+                # ty: ignore[invalid-argument-type]
+                **arguments,
+            )
     accepted, candidate = full_port("y:accepted", (2,)), full_port("y:candidate", (2,))
     owner = phx.ModelPorts(
         inputs=(accepted, candidate), outputs=(full_port("y:increment", (2,)),)
@@ -261,28 +257,19 @@ def test_port_declaring_correction_binds_in_owner_order() -> None:
         jnp.asarray(0), jnp.asarray([1.0, 2.0]), jnp.asarray([0.9, 1.8])
     )
     np.testing.assert_allclose(transaction.proposed, [0.99, 1.98])
+    method = phx.solver.SSPRK33FixedStepMethod(
+        _decay, transform=_ProposingTransform(5.0, False)
+    )
+    native = phx.solver.SSPRK33FixedStepMethod(_decay)
+    arguments = (jnp.asarray(0), jnp.asarray(0.0), INITIAL, jnp.asarray(STEP), None)
 
+    result = method.step(*arguments)
 
-@pytest.mark.parametrize(
-    ("keywords", "message"),
-    (
-        ({"state_shape": (3,)}, "2 \\* state size features"),
-        ({"conservation_tolerance": 1e-8}, "requires conserved invariants"),
-        ({"conserved": [[1.0, 1.0, 1.0]]}, "invariant_count, state_size"),
-        ({"maximum_relative_correction": 0.0}, "finite and positive"),
-        ({"lower_bounds": (jnp.nan, 0.0)}, "finite or -inf"),
-    ),
-)
-def test_correction_refuses_inconsistent_declarations(
-    keywords: Any, message: Any
-) -> None:
-    arguments = {"state_shape": (2,), "maximum_relative_correction": 0.5, **keywords}
-    with pytest.raises(ValueError, match=message):
-        phx.solver.LearnedStepCorrection(
-            _AffineIncrement(jnp.zeros((2, 4)), jnp.zeros(2)),
-            # ty: ignore[invalid-argument-type]
-            **arguments,
-        )
+    assert not result.successful
+    assert jnp.array_equal(result.accepted_state, INITIAL)
+    assert jnp.array_equal(
+        result.candidate_state, native.step(*arguments).candidate_state
+    )
 
 
 class _ProposingTransform(phx.solver.AbstractAcceptedStepTransform):
@@ -314,22 +301,6 @@ class _ProposingTransform(phx.solver.AbstractAcceptedStepTransform):
             jnp.asarray(self.successful),
             jnp.asarray(abs(self.offset)),
         )
-
-
-def test_failed_direct_transform_cannot_change_the_source_state() -> None:
-    method = phx.solver.SSPRK33FixedStepMethod(
-        _decay, transform=_ProposingTransform(5.0, False)
-    )
-    native = phx.solver.SSPRK33FixedStepMethod(_decay)
-    arguments = (jnp.asarray(0), jnp.asarray(0.0), INITIAL, jnp.asarray(STEP), None)
-
-    result = method.step(*arguments)
-
-    assert not result.successful
-    assert jnp.array_equal(result.accepted_state, INITIAL)
-    assert jnp.array_equal(
-        result.candidate_state, native.step(*arguments).candidate_state
-    )
 
 
 def test_direct_transform_results_are_validated_centrally() -> None:

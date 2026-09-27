@@ -207,7 +207,7 @@ def _runtime(
     return plan.prepare(topology)
 
 
-def test_one_level_schedule_degenerates_to_one_exact_ssprk_interval() -> None:
+def test_block_amr_runtime_scenario_1() -> None:
     prepared = _prepared(1)
     topology = _topology(prepared)
     schedule = AMRTimeSchedulePlan(prepared)
@@ -226,9 +226,6 @@ def test_one_level_schedule_degenerates_to_one_exact_ssprk_interval() -> None:
     np.testing.assert_allclose(result.stage_times[0], (1.25, 1.45, 1.35))
     np.testing.assert_allclose(result.runtime_state.time, 1.45)
     np.testing.assert_allclose(result.accepted_step_size, 0.2)
-
-
-def test_three_level_subcycling_uses_exact_stage_times_and_deepest_first_sync() -> None:
     prepared = _prepared(3)
     topology = _topology(prepared)
     runtime = _runtime(prepared, topology)
@@ -277,9 +274,6 @@ def test_three_level_subcycling_uses_exact_stage_times_and_deepest_first_sync() 
         outside_source = np.asarray(ledger.source_integral).copy()
         outside_source[begin:end] = 0.0
         np.testing.assert_array_equal(outside_source, 0.0)
-
-
-def test_no_subcycling_retains_fillpatch_and_deepest_first_synchronization() -> None:
     prepared = _prepared(3)
     topology = _topology(prepared)
     schedule = AMRTimeSchedulePlan(prepared, subcycling=False)
@@ -340,7 +334,7 @@ def test_coarse_old_new_endpoints_drive_fine_stage_temporal_interpolation() -> N
         )
 
 
-def test_accepted_ledgers_are_contiguous_and_consumed_without_an_extra_dt() -> None:
+def test_block_amr_runtime_scenario_2() -> None:
     prepared = _prepared(3)
     topology = _topology(prepared)
     runtime = _runtime(
@@ -371,6 +365,26 @@ def test_accepted_ledgers_are_contiguous_and_consumed_without_an_extra_dt() -> N
     ):
         assert ledger.end_time - ledger.start_time == register.accumulated_time
         assert register.owner_id == runtime.conservation.plan_id
+    prepared = _prepared(2)
+    topology = _topology(prepared)
+    runtime = _runtime(prepared, topology)
+    state = runtime.initial_state(_hierarchy_state(topology))
+    stale_topology = prepared.initial_topology()
+
+    with pytest.raises(ValueError, match="stale topology epoch"):
+        runtime.initial_state(_hierarchy_state(stale_topology))
+
+    other_runtime = _runtime(
+        prepared,
+        topology,
+        source=lambda time, value, coordinates, args: jnp.zeros_like(value),
+        source_id="source:different-route-artifacts",
+    )
+    with pytest.raises(ValueError, match="prepared routes"):
+        other_runtime.initial_state(
+            state.hierarchy_state,
+            journal=state.topology_journal,
+        )
 
 
 def test_deepest_first_restriction_updates_only_covered_cells_and_conserves_composite() -> (
@@ -578,26 +592,3 @@ def test_fixed_epoch_runtime_is_jittable_differentiable_and_checkpoint_replayabl
     np.testing.assert_allclose(replayed, eager, rtol=2e-13, atol=2e-13)
     np.testing.assert_allclose(derivative, expected, rtol=2e-12, atol=2e-12)
     assert jnp.isfinite(derivative)
-
-
-def test_prepared_runtime_refuses_stale_epoch_and_route_artifacts() -> None:
-    prepared = _prepared(2)
-    topology = _topology(prepared)
-    runtime = _runtime(prepared, topology)
-    state = runtime.initial_state(_hierarchy_state(topology))
-    stale_topology = prepared.initial_topology()
-
-    with pytest.raises(ValueError, match="stale topology epoch"):
-        runtime.initial_state(_hierarchy_state(stale_topology))
-
-    other_runtime = _runtime(
-        prepared,
-        topology,
-        source=lambda time, value, coordinates, args: jnp.zeros_like(value),
-        source_id="source:different-route-artifacts",
-    )
-    with pytest.raises(ValueError, match="prepared routes"):
-        other_runtime.initial_state(
-            state.hierarchy_state,
-            journal=state.topology_journal,
-        )

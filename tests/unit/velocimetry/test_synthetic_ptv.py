@@ -7,7 +7,6 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from phydrax.velocimetry.synthetic import (
     generate_ptv_case,
@@ -33,7 +32,7 @@ def _small_plan(kind: PTVScenarioKind, **overrides: Any) -> PTVScenarioPlan:
     return PTVScenarioPlan(kind, **options)
 
 
-def test_baseline_generation_is_deterministic_and_uses_world_xyz_truth() -> None:
+def test_synthetic_ptv_scenario_1() -> None:
     plan = _small_plan(PTVScenarioKind.BASELINE, read_noise_std=0.02)
 
     first = generate_ptv_case(plan)
@@ -51,9 +50,6 @@ def test_baseline_generation_is_deterministic_and_uses_world_xyz_truth() -> None
     assert bool(jnp.all(jnp.isfinite(first.images)))
     assert bool(jnp.all(first.trajectory_ids[: plan.particle_count] >= 0))
     assert bool(jnp.all(first.trajectory_ids[plan.particle_count :] == -1))
-
-
-def test_calibration_and_refraction_keep_true_and_nominal_rigs_explicit() -> None:
     calibration = generate_ptv_case(
         _small_plan(PTVScenarioKind.CALIBRATION, calibration_perturbation=0.02)
     )
@@ -68,9 +64,6 @@ def test_calibration_and_refraction_keep_true_and_nominal_rigs_explicit() -> Non
     assert refraction.true_rig.cameras[0].refractive_stack is not None
     assert refraction.nominal_rig.cameras[0].refractive_stack is None
     assert bool(jnp.any(refraction.projection_valid))
-
-
-def test_degenerate_rays_use_coincident_camera_centers() -> None:
     case = generate_ptv_case(_small_plan(PTVScenarioKind.DEGENERATE_RAYS))
 
     np.testing.assert_allclose(
@@ -83,7 +76,7 @@ def test_degenerate_rays_use_coincident_camera_centers() -> None:
     )
 
 
-def test_crossings_occlusions_births_deaths_and_dense_truth_are_materialized() -> None:
+def test_synthetic_ptv_scenario_2() -> None:
     crossings = generate_ptv_case(_small_plan(PTVScenarioKind.CROSSINGS))
     occlusion = generate_ptv_case(
         _small_plan(PTVScenarioKind.OCCLUSION, occlusion_radius=2.0)
@@ -106,11 +99,7 @@ def test_crossings_occlusions_births_deaths_and_dense_truth_are_materialized() -
     assert bool(jnp.any(lifecycle.particle_active[0] != lifecycle.particle_active[-1]))
     assert dense_plan.particle_count == dense_plan.particle_capacity
     assert int(jnp.sum(dense.particle_active[0])) == dense_plan.particle_capacity
-
-
-@pytest.mark.parametrize(
-    "kind",
-    [
+    for kind in [
         PTVScenarioKind.BASELINE,
         PTVScenarioKind.CALIBRATION,
         PTVScenarioKind.REFRACTION,
@@ -119,12 +108,10 @@ def test_crossings_occlusions_births_deaths_and_dense_truth_are_materialized() -
         PTVScenarioKind.OCCLUSION,
         PTVScenarioKind.BIRTHS_DEATHS,
         PTVScenarioKind.DENSE,
-    ],
-)
-def test_all_ptv_families_remain_finite(kind: PTVScenarioKind) -> None:
-    particle_count = None if kind is PTVScenarioKind.DENSE else 4
-    case = generate_ptv_case(_small_plan(kind, particle_count=particle_count))
+    ]:
+        particle_count = None if kind is PTVScenarioKind.DENSE else 4
+        case = generate_ptv_case(_small_plan(kind, particle_count=particle_count))
 
-    assert case.evidence.finite
-    assert bool(jnp.all(jnp.isfinite(case.world_positions_xyz)))
-    assert bool(jnp.all(jnp.isfinite(case.images)))
+        assert case.evidence.finite
+        assert bool(jnp.all(jnp.isfinite(case.world_positions_xyz)))
+        assert bool(jnp.all(jnp.isfinite(case.images)))

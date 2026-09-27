@@ -31,16 +31,13 @@ def _basis() -> Any:
     return TensorSplineBasisSpec((grid,), axis_names=("xi",))
 
 
-def test_positive_span_topology_is_not_control_topology() -> None:
+def test_iga_structural_topology_scenario_1() -> None:
     basis = _basis()
     topology = SplineSpanTopology(basis, patch_id="p")
 
     assert topology.axis_sizes == basis.span_shape
     assert topology.axis_sizes != basis.control_shape
     assert topology.span_id(0) == BaseSpanId("p", (0,))
-
-
-def test_direct_and_bernstein_realization_use_exact_transposes() -> None:
     basis = _basis()
     direct = DirectTensorRealization(basis, SplineSpanTopology(basis))
     coefficients = jnp.arange(
@@ -89,9 +86,6 @@ def test_direct_and_bernstein_realization_use_exact_transposes() -> None:
         jnp.vdot(realized, dual),
         jnp.vdot(coefficients, transpose),
     )
-
-
-def test_overlay_fails_closed_when_a_patch_is_not_covered() -> None:
     basis = _basis()
     topology = SplineSpanTopology(basis, patch_id="p")
     with pytest.raises(ValueError, match="does not cover"):

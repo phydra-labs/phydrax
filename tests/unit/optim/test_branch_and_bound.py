@@ -47,15 +47,12 @@ class _BoundedLeaves(phx.optim.AbstractBranchAndBoundProblem):
         return ("candidate", "sibling")
 
 
-def test_dominated_frontier_proves_optimality_without_positive_gap_claim() -> None:
+def test_branch_and_bound_scenario_1() -> None:
     result = phx.optim.branch_and_bound(_BoundedLeaves(2.0))
     assert result.successful
     assert result.objective == 2.0
     assert result.global_lower_bound == 2.0
     assert result.absolute_gap == 0.0
-
-
-def test_positive_gap_retains_unresolved_competitor_and_is_not_exact() -> None:
     result = phx.optim.branch_and_bound(
         _BoundedLeaves(1.5),
         policy=phx.optim.BranchAndBoundPolicy(absolute_gap=0.5),
@@ -66,6 +63,13 @@ def test_positive_gap_retains_unresolved_competitor_and_is_not_exact() -> None:
     assert result.global_lower_bound == 1.5
     assert result.absolute_gap == 0.5
     assert int(result.frontier_size) == 1
+    result = phx.optim.branch_and_bound(_FailedSibling())
+
+    assert result.status == phx.optim.BranchAndBoundStatus.EVALUATION_FAILURE
+    assert result.incumbent == "candidate"
+    assert result.objective == 2.0
+    assert not result.search_complete
+    assert not result.successful
 
 
 class _FailedSibling(phx.optim.AbstractBranchAndBoundProblem):
@@ -173,31 +177,27 @@ class _InfeasibleRoot(phx.optim.AbstractBranchAndBoundProblem):
         raise AssertionError((node, evaluation))
 
 
-def test_failed_node_prevents_global_success_without_discarding_incumbent() -> None:
-    result = phx.optim.branch_and_bound(_FailedSibling())
-
-    assert result.status == phx.optim.BranchAndBoundStatus.EVALUATION_FAILURE
-    assert result.incumbent == "candidate"
-    assert result.objective == 2.0
-    assert not result.search_complete
-    assert not result.successful
-
-
-def test_negative_infinite_bound_is_not_infeasibility() -> None:
+def test_branch_and_bound_scenario_2() -> None:
     result = phx.optim.branch_and_bound(_NegativeInfiniteRoot())
 
     assert result.status == phx.optim.BranchAndBoundStatus.OPTIMAL
     assert result.objective == 1.0
     assert result.successful
-
-
-def test_only_certified_infeasible_root_reports_infeasible() -> None:
     result = phx.optim.branch_and_bound(_InfeasibleRoot())
 
     assert result.status == phx.optim.BranchAndBoundStatus.INFEASIBLE
     assert result.incumbent is None
     assert result.search_complete
     assert not result.successful
+    problem = _CountedBinaryTree()
+    result = phx.optim.branch_and_bound(
+        problem,
+        policy=phx.optim.BranchAndBoundPolicy(maximum_nodes=1),
+    )
+
+    assert problem.evaluated == ["root"]
+    assert int(result.explored_nodes) == 1
+    assert result.status == phx.optim.BranchAndBoundStatus.WORK_LIMIT
 
 
 class _CountedBinaryTree(phx.optim.AbstractBranchAndBoundProblem):
@@ -227,15 +227,3 @@ class _CountedBinaryTree(phx.optim.AbstractBranchAndBoundProblem):
     def branch(self, node: Any, evaluation: Any) -> Any:
         del node, evaluation
         return ("left", "right")
-
-
-def test_node_budget_prevents_eager_child_evaluations() -> None:
-    problem = _CountedBinaryTree()
-    result = phx.optim.branch_and_bound(
-        problem,
-        policy=phx.optim.BranchAndBoundPolicy(maximum_nodes=1),
-    )
-
-    assert problem.evaluated == ["root"]
-    assert int(result.explored_nodes) == 1
-    assert result.status == phx.optim.BranchAndBoundStatus.WORK_LIMIT

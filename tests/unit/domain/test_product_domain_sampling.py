@@ -23,7 +23,7 @@ from phydrax.domain import (
 from phydrax.sampling import SobolDesign
 
 
-def test_product_domain_sampling_produces_labeled_points_batch() -> None:
+def test_product_domain_sampling_scenario_1() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -47,9 +47,14 @@ def test_product_domain_sampling_produces_labeled_points_batch() -> None:
     assert t.dims == (axis_t,)
     assert x.data.shape == (3, 1)
     assert t.data.shape == (4,)
+    domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+    # ty: ignore[unresolved-attribute]
+    boundary = domain.boundary()
 
-
-def test_same_block_sobol_uses_one_joint_reference_design() -> None:
+    assert isinstance(boundary, ComponentSum)
+    assert len(boundary.terms) == 3
+    assert all(term.domain.same_support(domain) for term in boundary.terms)
+    assert float(boundary.mass.value) == pytest.approx(4.0)
     domain = TimeInterval(0.0, 1.0).relabel("x") @ TimeInterval(0.0, 1.0)
     structure = SampleLayout((("x", "t"),))
 
@@ -62,9 +67,6 @@ def test_same_block_sobol_uses_one_joint_reference_design() -> None:
 
     assert np.array_equal(actual, expected)
     assert np.mean((actual[:, 0] - actual[:, 1]) ** 2) > 0.0
-
-
-def test_joint_design_slices_multidimensional_reference_transports() -> None:
     # ty: ignore[invalid-argument-type]
     box = HyperRectangle([1.0, 10.0], [3.0, 14.0], label="x")
     domain = box @ TimeInterval(-1.0, 1.0)
@@ -85,9 +87,6 @@ def test_joint_design_slices_multidimensional_reference_transports() -> None:
 
     assert np.array_equal(batch["x"].data, expected_x)
     assert np.array_equal(batch["t"].data, expected_t)
-
-
-def test_joint_design_preserves_finite_dataset_rows() -> None:
     dataset = DatasetDomain(
         {"value": np.asarray([10.0, 20.0, 30.0, 40.0])},
         label="data",
@@ -109,7 +108,7 @@ def test_joint_design_preserves_finite_dataset_rows() -> None:
     assert np.array_equal(batch["t"].data, unit[:, 1])
 
 
-def test_fixed_start_excludes_time_axis_from_structure() -> None:
+def test_product_domain_sampling_scenario_2() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -122,9 +121,6 @@ def test_fixed_start_excludes_time_axis_from_structure() -> None:
     assert axis_x is not None
     assert batch.structure.axis_for("t") is None
     assert batch["t"].dims == ()
-
-
-def test_coord_separable_sampling_for_geometry_label() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -145,9 +141,6 @@ def test_coord_separable_sampling_for_geometry_label() -> None:
     assert batch["x"][0].dims == batch.coord_axes_by_label["x"]
     assert batch.coord_mask_by_label["x"].dims == batch.coord_axes_by_label["x"]
     assert batch["t"].dims[0].startswith("__phydra_blk__t")
-
-
-def test_coord_separable_sampling_rejects_boundary_component() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 2.0)
     dom = geom @ time
@@ -161,20 +154,6 @@ def test_coord_separable_sampling_rejects_boundary_component() -> None:
             ),
             key=jr.key(0),
         )
-
-
-def test_product_boundary_is_additive_component_collection() -> None:
-    domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
-    # ty: ignore[unresolved-attribute]
-    boundary = domain.boundary()
-
-    assert isinstance(boundary, ComponentSum)
-    assert len(boundary.terms) == 3
-    assert all(term.domain.same_support(domain) for term in boundary.terms)
-    assert float(boundary.mass.value) == pytest.approx(4.0)
-
-
-def test_component_collection_rejects_invalid_terms() -> None:
     domain = Interval1d(0.0, 1.0)
     term = domain.component({"x": Interior()})
     incompatible = Interval1d(0.0, 2.0).component({"x": Interior()})

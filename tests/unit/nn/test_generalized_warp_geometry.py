@@ -22,46 +22,51 @@ def _lattice(nodes: Any) -> Any:
     return jnp.stack(jnp.meshgrid(*nodes, indexing="ij"), axis=-1)
 
 
-@pytest.mark.parametrize("spatial_shape", ((7,), (5, 6), (4, 5, 6)))
-def test_rectilinear_sampling_identity_and_periodic_cell_translation(
-    spatial_shape: Any,
-) -> None:
-    dimensions = len(spatial_shape)
-    nodes = tuple(_periodic_nodes(size) for size in spatial_shape)
-    coordinates = _lattice(nodes)
-    values = jnp.arange(2 * int(jnp.prod(jnp.array(spatial_shape))), dtype="float64")
-    values = values.reshape(spatial_shape + (2,))
-    boundary = ("periodic",) * dimensions
+def test_generalized_warp_geometry_scenario_1() -> None:
+    for spatial_shape in ((7,), (5, 6), (4, 5, 6)):
+        dimensions = len(spatial_shape)
+        nodes = tuple(_periodic_nodes(size) for size in spatial_shape)
+        coordinates = _lattice(nodes)
+        values = jnp.arange(2 * int(jnp.prod(jnp.array(spatial_shape))), dtype="float64")
+        values = values.reshape(spatial_shape + (2,))
+        boundary = ("periodic",) * dimensions
 
-    identity = phx.nn.layers.sample_rectilinear_grid(
-        values,
-        coordinates,
-        spatial_ndim=dimensions,
-        boundary=boundary,
-        axis_nodes=nodes,
-    )
-    translated = phx.nn.layers.sample_rectilinear_grid(
-        values,
-        coordinates + jnp.array([2.0 / size for size in spatial_shape]),
-        spatial_ndim=dimensions,
-        boundary=boundary,
-        axis_nodes=nodes,
+        identity = phx.nn.layers.sample_rectilinear_grid(
+            values,
+            coordinates,
+            spatial_ndim=dimensions,
+            boundary=boundary,
+            axis_nodes=nodes,
+        )
+        translated = phx.nn.layers.sample_rectilinear_grid(
+            values,
+            coordinates + jnp.array([2.0 / size for size in spatial_shape]),
+            spatial_ndim=dimensions,
+            boundary=boundary,
+            axis_nodes=nodes,
+        )
+        # ty: ignore[redundant-cast]
+        identity = cast(jax.Array, identity)
+        # ty: ignore[redundant-cast]
+        translated = cast(jax.Array, translated)
+        expected = values
+        for axis in range(dimensions):
+            expected = jnp.roll(expected, -1, axis=axis)
+
+        assert jnp.allclose(identity, values)
+        assert jnp.allclose(translated, expected, rtol=1e-6, atol=1e-6)
+    result = phx.nn.layers.sample_rectilinear_grid(
+        jnp.array([0, 2])[:, None],
+        jnp.array([[0.0]]),
+        spatial_ndim=1,
+        boundary=("clamp",),
     )
     # ty: ignore[redundant-cast]
-    identity = cast(jax.Array, identity)
-    # ty: ignore[redundant-cast]
-    translated = cast(jax.Array, translated)
-    expected = values
-    for axis in range(dimensions):
-        expected = jnp.roll(expected, -1, axis=axis)
+    result = cast(jax.Array, result)
 
-    assert jnp.allclose(identity, values)
-    assert jnp.allclose(translated, expected, rtol=1e-6, atol=1e-6)
-
-
-@pytest.mark.parametrize(
-    ("boundary", "coordinates", "fill_value", "expected", "support"),
-    (
+    assert jnp.issubdtype(result.dtype, jnp.inexact)
+    assert jnp.allclose(result, jnp.array([[1.0]]))
+    for boundary, coordinates, fill_value, expected, support in (
         (
             "periodic",
             [-1.5, -1.0, -0.5, 1.0, 1.5],
@@ -90,22 +95,49 @@ def test_rectilinear_sampling_identity_and_periodic_cell_translation(
             [-9.0, 0.0, 1.5, 3.0, -9.0],
             [False, True, True, True, False],
         ),
-    ),
-)
-def test_rectilinear_boundary_modes(
-    boundary: Any, coordinates: Any, fill_value: Any, expected: Any, support: Any
-) -> None:
-    sampled, actual_support = phx.nn.layers.sample_rectilinear_grid(
-        jnp.arange(4.0)[:, None],
-        jnp.asarray(coordinates)[:, None],
-        spatial_ndim=1,
-        boundary=(boundary,),
-        fill_value=fill_value,
-        return_support=True,
-    )
+    ):
+        sampled, actual_support = phx.nn.layers.sample_rectilinear_grid(
+            jnp.arange(4.0)[:, None],
+            jnp.asarray(coordinates)[:, None],
+            spatial_ndim=1,
+            boundary=(boundary,),
+            fill_value=fill_value,
+            return_support=True,
+        )
 
-    assert jnp.allclose(sampled[:, 0], jnp.asarray(expected))
-    assert jnp.array_equal(actual_support, jnp.asarray(support))
+        assert jnp.allclose(sampled[:, 0], jnp.asarray(expected))
+        assert jnp.array_equal(actual_support, jnp.asarray(support))
+    for mask_mode, fill_value, expected, expected_support in (
+        ("renormalize", -7.0, 1.0, True),
+        ("strict", -7.0, -7.0, False),
+    ):
+        sampled, support = phx.nn.layers.sample_rectilinear_grid(
+            jnp.array([1.0, jnp.nan, 5.0])[:, None],
+            jnp.array([[-0.5]]),
+            spatial_ndim=1,
+            boundary=("clamp",),
+            source_mask=jnp.array([True, False, True]),
+            mask_mode=mask_mode,
+            fill_value=fill_value,
+            return_support=True,
+        )
+
+        assert jnp.isfinite(sampled[0, 0])
+        assert sampled[0, 0] == expected
+        assert support[0] == expected_support
+    with pytest.raises(
+        eqx.EquinoxRuntimeError,
+        match="reject mode does not permit source holes",
+    ):
+        result = phx.nn.layers.sample_rectilinear_grid(
+            jnp.array([1.0, jnp.nan, 5.0])[:, None],
+            jnp.array([[-0.5]]),
+            spatial_ndim=1,
+            boundary=("clamp",),
+            source_mask=jnp.array([True, False, True]),
+            mask_mode="reject",
+        )
+        jax.block_until_ready(result)
 
 
 def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit() -> None:
@@ -140,66 +172,7 @@ def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit() -> None:
     assert jnp.allclose(compiled, eager, rtol=1e-6, atol=1e-6)
 
 
-def test_rectilinear_sampling_promotes_integral_inputs_before_interpolation() -> None:
-    result = phx.nn.layers.sample_rectilinear_grid(
-        jnp.array([0, 2])[:, None],
-        jnp.array([[0.0]]),
-        spatial_ndim=1,
-        boundary=("clamp",),
-    )
-    # ty: ignore[redundant-cast]
-    result = cast(jax.Array, result)
-
-    assert jnp.issubdtype(result.dtype, jnp.inexact)
-    assert jnp.allclose(result, jnp.array([[1.0]]))
-
-
-@pytest.mark.parametrize(
-    ("mask_mode", "fill_value", "expected", "expected_support"),
-    (
-        ("renormalize", -7.0, 1.0, True),
-        ("strict", -7.0, -7.0, False),
-    ),
-)
-def test_masked_nan_corners_follow_nonreject_mask_semantics(
-    mask_mode: Any,
-    fill_value: Any,
-    expected: Any,
-    expected_support: Any,
-) -> None:
-    sampled, support = phx.nn.layers.sample_rectilinear_grid(
-        jnp.array([1.0, jnp.nan, 5.0])[:, None],
-        jnp.array([[-0.5]]),
-        spatial_ndim=1,
-        boundary=("clamp",),
-        source_mask=jnp.array([True, False, True]),
-        mask_mode=mask_mode,
-        fill_value=fill_value,
-        return_support=True,
-    )
-
-    assert jnp.isfinite(sampled[0, 0])
-    assert sampled[0, 0] == expected
-    assert support[0] == expected_support
-
-
-def test_reject_mask_mode_rejects_holes_even_when_payload_is_nan() -> None:
-    with pytest.raises(
-        eqx.EquinoxRuntimeError,
-        match="reject mode does not permit source holes",
-    ):
-        result = phx.nn.layers.sample_rectilinear_grid(
-            jnp.array([1.0, jnp.nan, 5.0])[:, None],
-            jnp.array([[-0.5]]),
-            spatial_ndim=1,
-            boundary=("clamp",),
-            source_mask=jnp.array([True, False, True]),
-            mask_mode="reject",
-        )
-        jax.block_until_ready(result)
-
-
-def test_affine_warp_jacobian_and_determinant_are_exact_on_nonuniform_nodes() -> None:
+def test_generalized_warp_geometry_scenario_2() -> None:
     x = jnp.array([-1.0, -0.45, 0.2, 1.0])
     y = jnp.array([-1.0, -0.7, 0.15, 0.6, 1.0])
     coordinates = _lattice((x, y))
@@ -215,48 +188,37 @@ def test_affine_warp_jacobian_and_determinant_are_exact_on_nonuniform_nodes() ->
 
     assert jnp.allclose(jacobian, expected, rtol=1e-5, atol=1e-6)
     assert jnp.allclose(jnp.linalg.det(jacobian), jnp.linalg.det(expected))
-
-
-@pytest.mark.parametrize(
-    ("variance", "components"),
-    (
+    for variance, components in (
         (("contravariant",), jnp.array([2.0, -3.0])),
         (("covariant",), jnp.array([2.0, -3.0])),
         (
             ("contravariant", "covariant"),
             jnp.array([[2.0, -3.0], [4.0, 5.0]]),
         ),
-    ),
-)
-def test_vector_covector_and_rank_two_tensor_transformation_laws(
-    variance: Any, components: Any
-) -> None:
-    x = jnp.linspace(-1.0, 1.0, 4)
-    y = jnp.linspace(-1.0, 1.0, 5)
-    coordinates = _lattice((x, y))
-    scales = jnp.array([1.25, 0.8])
-    displacement = coordinates * (scales - 1.0)
-    values = jnp.broadcast_to(components, (4, 5) + components.shape)
+    ):
+        x = jnp.linspace(-1.0, 1.0, 4)
+        y = jnp.linspace(-1.0, 1.0, 5)
+        coordinates = _lattice((x, y))
+        scales = jnp.array([1.25, 0.8])
+        displacement = coordinates * (scales - 1.0)
+        values = jnp.broadcast_to(components, (4, 5) + components.shape)
 
-    transformed = phx.nn.layers.warp_field(
-        values,
-        displacement,
-        boundary=("clamp", "clamp"),
-        axis_nodes=(x, y),
-        field_spec=phx.metrix.TensorType(variance),
-    )
-    transformed = cast(jax.Array, transformed)
-    if variance == ("contravariant",):
-        expected = components / scales
-    elif variance == ("covariant",):
-        expected = components * scales
-    else:
-        expected = components / scales[:, None] * scales[None, :]
+        transformed = phx.nn.layers.warp_field(
+            values,
+            displacement,
+            boundary=("clamp", "clamp"),
+            axis_nodes=(x, y),
+            field_spec=phx.metrix.TensorType(variance),
+        )
+        transformed = cast(jax.Array, transformed)
+        if variance == ("contravariant",):
+            expected = components / scales
+        elif variance == ("covariant",):
+            expected = components * scales
+        else:
+            expected = components / scales[:, None] * scales[None, :]
 
-    assert jnp.allclose(transformed, expected, rtol=1e-5, atol=1e-6)
-
-
-def test_periodic_density_remap_preserves_discrete_total_mass() -> None:
+        assert jnp.allclose(transformed, expected, rtol=1e-5, atol=1e-6)
     size = 24
     x = _periodic_nodes(size)
     density = jnp.ones((size,))
@@ -275,7 +237,7 @@ def test_periodic_density_remap_preserves_discrete_total_mass() -> None:
     assert jnp.allclose(jnp.sum(remapped), jnp.sum(density), rtol=1e-6, atol=1e-6)
 
 
-def test_manifold_projection_retraction_and_masked_nan_payloads() -> None:
+def test_generalized_warp_geometry_scenario_3() -> None:
     points = jnp.array(
         [
             [1.0, 0.0, 0.0],
@@ -329,11 +291,6 @@ def test_manifold_projection_retraction_and_masked_nan_payloads() -> None:
         atol=1e-6,
     )
     assert jnp.allclose(jnp.sum(diagnostics.interpolation_weights, axis=1), 1.0)
-
-
-def test_probabilistic_warp_mean_and_sample_routes_are_coherent_and_differentiable() -> (
-    None
-):
     layer = phx.nn.layers.ProbabilisticMultiheadWarp(
         spatial_ndim=1,
         in_channels=2,

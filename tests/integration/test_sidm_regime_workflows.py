@@ -133,9 +133,7 @@ def _workflow() -> Any:
     return rare, frequent, split, state
 
 
-def test_rare_and_frequent_angular_profiles_overlap_only_through_explicit_split_evidence() -> (
-    None
-):
+def test_sidm_regime_workflows_scenario_1() -> None:
     rare, frequent, split, state = _workflow()
     physical_step = 1.0e-3
     rare_result = rare.collide(state, jr.key(1), 0, physical_step)
@@ -172,11 +170,6 @@ def test_rare_and_frequent_angular_profiles_overlap_only_through_explicit_split_
         rtol=2.0e-13,
     )
     assert rare.plan_id != frequent.plan_id
-
-
-def test_weighted_frequent_and_spherical_closures_remain_separate_successful_workflows() -> (
-    None
-):
     rare, frequent, _, state = _workflow()
     collision = rare.collide(state, jr.key(11), 5, 1.0e-3)
     diffused = frequent.apply(collision.accepted_state, jr.key(12), 6, 1.0e-3)

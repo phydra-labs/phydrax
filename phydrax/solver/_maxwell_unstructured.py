@@ -232,10 +232,8 @@ def tetrahedral_maxwell_hodge(
                     0.5
                     * np.linalg.norm(
                         np.cross(
-                            points[int(faces[index, 1])]
-                            - points[int(faces[index, 0])],
-                            points[int(faces[index, 2])]
-                            - points[int(faces[index, 0])],
+                            points[int(faces[index, 1])] - points[int(faces[index, 0])],
+                            points[int(faces[index, 2])] - points[int(faces[index, 0])],
                         )
                     )
                     for index in range(faces.shape[0])

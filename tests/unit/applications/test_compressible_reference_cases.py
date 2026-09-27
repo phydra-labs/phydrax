@@ -9,16 +9,13 @@ from phydrax.applications.compressible_flow import (
 )
 
 
-def test_normal_shock_matches_calorically_perfect_reference() -> None:
+def test_compressible_reference_cases_scenario_1() -> None:
     result = NormalShockReferencePlan(1.4).evaluate(2.0)
     assert bool(result.successful)
     np.testing.assert_allclose(result.density_ratio, 8.0 / 3.0, rtol=2.0e-7)
     np.testing.assert_allclose(result.pressure_ratio, 4.5, rtol=2.0e-7)
     np.testing.assert_allclose(result.temperature_ratio, 1.6875, rtol=2.0e-7)
     np.testing.assert_allclose(result.downstream_mach, jnp.sqrt(1.0 / 3.0), rtol=2.0e-7)
-
-
-def test_oblique_shock_selects_weak_and_strong_branches() -> None:
     theta = np.deg2rad(10.0)
     weak = ObliqueShockReferencePlan(1.4, "weak").evaluate(2.0, theta)
     strong = ObliqueShockReferencePlan(1.4, "strong").evaluate(2.0, theta)
@@ -30,14 +27,8 @@ def test_oblique_shock_selects_weak_and_strong_branches() -> None:
     assert weak.downstream_mach > 1.0
     assert strong.downstream_mach < 1.0
     assert abs(float(weak.residual)) < 1.0e-10
-
-
-def test_oblique_shock_rejects_detached_configuration() -> None:
     with pytest.raises(ValueError, match="detached"):
         ObliqueShockReferencePlan(1.4).evaluate(2.0, np.deg2rad(30.0))
-
-
-def test_prandtl_meyer_inversion_recovers_turning_angle() -> None:
     turning = np.deg2rad(10.0)
     result = PrandtlMeyerReferencePlan(1.4).evaluate(2.0, turning)
 

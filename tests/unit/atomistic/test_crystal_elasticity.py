@@ -15,7 +15,7 @@ from phydrax.discretization import DenseParticleNeighborhoodPlan, PeriodicCell
 from phydrax.units import derived_unit
 
 
-def test_eam_crystal_elasticity_has_minor_major_symmetry_and_explicit_units() -> None:
+def test_crystal_elasticity_scenario_1() -> None:
     units = AtomisticUnitSystem.reduced()
     cell = PeriodicCell(4.0 * np.eye(3))
     system = AtomisticSystemPlan(
@@ -52,9 +52,6 @@ def test_eam_crystal_elasticity_has_minor_major_symmetry_and_explicit_units() ->
     )
     assert result.stress_unit.unit_id == units.pressure_unit.unit_id
     assert result.potential_kind_ids == ("eam",)
-
-
-def test_crystal_nve_evidence_retains_raw_chain_and_detects_drift() -> None:
     units = AtomisticUnitSystem.reduced()
     momentum_unit = derived_unit(
         "reduced_mass*reduced_length/reduced_time",

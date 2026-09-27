@@ -57,7 +57,7 @@ def _result(
     )
 
 
-def test_noncaustic_one_to_one_pupil_transport_preserves_power_density() -> None:
+def test_pupil_adapter_scenario_1() -> None:
     pupil = _space(1.0)
     output = _space(2.0)
     result = _result(output.world_points)
@@ -75,9 +75,6 @@ def test_noncaustic_one_to_one_pupil_transport_preserves_power_density() -> None
     assert int(converted.evidence.status) == int(PupilFieldAdapterStatus.SUCCESS)
     np.testing.assert_allclose(converted.evidence.minimum_signed_jacobian_ratio, 4.0)
     np.testing.assert_allclose(converted.field.values, 0.5)
-
-
-def test_periodic_pupil_topology_is_typed_rejection() -> None:
     pupil = _space(1.0, periodic=True)
     output = _space(1.0, periodic=True)
     converted = sequential_pupil_to_scalar_field(
@@ -96,9 +93,6 @@ def test_periodic_pupil_topology_is_typed_rejection() -> None:
         PupilFieldAdapterStatus.UNSUPPORTED_TOPOLOGY
     )
     assert np.isnan(np.asarray(converted.field.values)).all()
-
-
-def test_folded_ray_map_is_typed_caustic_rejection() -> None:
     pupil = _space(1.0)
     output = _space(1.0)
     folded = output.world_points.at[1, :, :].set(output.world_points[1, ::-1, :])

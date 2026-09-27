@@ -15,7 +15,7 @@ from phydrax.equations.fem._ir import (
 from phydrax.solver._production_resources import PreparedCompilationService
 
 
-def test_operator_program_lowering_fuses_and_linearizes_static_kernel_chain() -> None:
+def test_fem_production_performance_scenario_1() -> None:
     value = OperatorValue("state", "state", value_shape=(2,), layout_id="state-layout")
     node = OperatorNode("kernel", ("state",), ("output",), "double", ad_policy="analytic")
     program = OperatorProgram((value,), (node,), ("output",), bucket_id="one-bucket")
@@ -27,9 +27,6 @@ def test_operator_program_lowering_fuses_and_linearizes_static_kernel_chain() ->
     np.testing.assert_allclose(pushforward(jnp.ones((2,))), (2.0, 2.0))
     np.testing.assert_allclose(pullback(jnp.ones((2,)))[0], (2.0, 2.0))
     assert lowered.fusion.groups == ((0,),)
-
-
-def test_compilation_service_and_precision_policy_are_operational() -> None:
     value = OperatorValue("state", "state", value_shape=(2,), layout_id="state-layout")
     node = OperatorNode("kernel", ("state",), ("output",), "shift")
     lowered = lower_operator_program(

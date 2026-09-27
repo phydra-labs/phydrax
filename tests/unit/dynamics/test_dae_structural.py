@@ -54,7 +54,7 @@ def _pendulum_like_source() -> Any:
     return AcausalDAESource((DAEComponent("body", variables, equations),))
 
 
-def test_index_three_original_constraint_audit_detects_inconsistent_state() -> None:
+def test_dae_structural_scenario_1() -> None:
     source = _pendulum_like_source()
     policy = DAEStructuralPolicy(2, 1)
     compilation = compile_acausal_dae(source, policy)
@@ -69,9 +69,6 @@ def test_index_three_original_constraint_audit_detects_inconsistent_state() -> N
     # ty: ignore[invalid-argument-type, missing-argument]
     assert jnp.allclose(compilation.system.residual(0.0, inconsistent, rate, None), 0)
     assert jnp.max(jnp.abs(compilation.residual_audit(0.0, inconsistent, rate))) > 0.2
-
-
-def test_index_one_lowering_preserves_physical_flow_and_state_derivative() -> None:
     component = DAEComponent(
         "decay",
         (DAEVariableBlock("a_flow", (), 0), DAEVariableBlock("z_state", (), 1)),
@@ -95,9 +92,6 @@ def test_index_one_lowering_preserves_physical_flow_and_state_derivative() -> No
     state, rate = jnp.asarray([-1.0, 1.0]), jnp.asarray([0.0, -1.0])
     assert jnp.allclose(jax.jit(compilation.system.residual)(0.0, state, rate, None), 0)
     assert jnp.allclose(compilation.residual_audit(0.0, state, rate), 0)
-
-
-def test_structural_failure_names_unmatched_variables_and_capacity() -> None:
     component = DAEComponent(
         "singular",
         (DAEVariableBlock("x"), DAEVariableBlock("y")),
@@ -118,9 +112,73 @@ def test_structural_failure_names_unmatched_variables_and_capacity() -> None:
 
     with pytest.raises(ValueError, match="differentiation-capacity"):
         compile_acausal_dae(_pendulum_like_source(), DAEStructuralPolicy(1, 1))
+    layout = InputLayout(
+        (2,),
+        component_names=("bias", "gain"),
+        roles="forcing",
+    )
+    component = DAEComponent(
+        "vector",
+        (
+            DAEVariableBlock(
+                "x",
+                (2,),
+                0,
+                state_scale=jnp.ones((2,)),
+                rate_scale=jnp.ones((2,)),
+            ),
+        ),
+        (
+            _equation(
+                "balance",
+                lambda time, jet, inputs, args: jet.value("x"),
+                (DAEDerivativeIncidence("x", 0),),
+                residual_scale=jnp.ones((1,)),
+            ),
+        ),
+    )
+    source = AcausalDAESource((component,), input_layout=layout)
+    with pytest.raises(ValueError, match="inputs must have shape"):
+        compile_acausal_dae(
+            source,
+            DAEStructuralPolicy(0, 0),
+            inputs=jnp.ones((1,)),
+        )
+    with pytest.raises(ValueError, match="residual_scale"):
+        compile_acausal_dae(source, DAEStructuralPolicy(0, 0))
 
-
-def test_missing_declared_jvp_incidence_fails_compilation() -> None:
+    reversed_layout = InputLayout(
+        (2,),
+        component_names=("gain", "bias"),
+        roles="forcing",
+    )
+    mismatched = CallableInputPolicy(
+        lambda time, state, args: jnp.ones((2,)),
+        input_layout=reversed_layout,
+        policy_id="structural-mismatched",
+    )
+    valid_component = DAEComponent(
+        "scalar",
+        (DAEVariableBlock("x"),),
+        (
+            _equation(
+                "balance",
+                lambda time, jet, inputs, args: jet.value("x", 1),
+                (DAEDerivativeIncidence("x", 1),),
+            ),
+        ),
+    )
+    valid = compile_acausal_dae(
+        AcausalDAESource((valid_component,), input_layout=layout),
+        DAEStructuralPolicy(0, 0),
+    )
+    with pytest.raises(ValueError, match="layout must exactly match"):
+        DifferentialAlgebraicProblem(
+            valid.system,
+            jnp.zeros((1,)),
+            input_policy=mismatched,
+            problem_id="structural-layout-mismatch",
+        )
     component = DAEComponent(
         "bad",
         (DAEVariableBlock("x", (), 1),),
@@ -139,7 +197,7 @@ def test_missing_declared_jvp_incidence_fails_compilation() -> None:
         )
 
 
-def test_input_aware_structural_dae_propagates_independent_scales_and_jits() -> None:
+def test_dae_structural_scenario_2() -> None:
     layout = InputLayout(
         (2,),
         axes=("input",),
@@ -224,79 +282,6 @@ def test_input_aware_structural_dae_propagates_independent_scales_and_jits() -> 
         problem_id="structural-held-problem",
     )
     assert held_problem.input_policy is held_policy
-
-
-def test_structural_input_and_residual_scale_shape_mismatches_fail_preparation() -> None:
-    layout = InputLayout(
-        (2,),
-        component_names=("bias", "gain"),
-        roles="forcing",
-    )
-    component = DAEComponent(
-        "vector",
-        (
-            DAEVariableBlock(
-                "x",
-                (2,),
-                0,
-                state_scale=jnp.ones((2,)),
-                rate_scale=jnp.ones((2,)),
-            ),
-        ),
-        (
-            _equation(
-                "balance",
-                lambda time, jet, inputs, args: jet.value("x"),
-                (DAEDerivativeIncidence("x", 0),),
-                residual_scale=jnp.ones((1,)),
-            ),
-        ),
-    )
-    source = AcausalDAESource((component,), input_layout=layout)
-    with pytest.raises(ValueError, match="inputs must have shape"):
-        compile_acausal_dae(
-            source,
-            DAEStructuralPolicy(0, 0),
-            inputs=jnp.ones((1,)),
-        )
-    with pytest.raises(ValueError, match="residual_scale"):
-        compile_acausal_dae(source, DAEStructuralPolicy(0, 0))
-
-    reversed_layout = InputLayout(
-        (2,),
-        component_names=("gain", "bias"),
-        roles="forcing",
-    )
-    mismatched = CallableInputPolicy(
-        lambda time, state, args: jnp.ones((2,)),
-        input_layout=reversed_layout,
-        policy_id="structural-mismatched",
-    )
-    valid_component = DAEComponent(
-        "scalar",
-        (DAEVariableBlock("x"),),
-        (
-            _equation(
-                "balance",
-                lambda time, jet, inputs, args: jet.value("x", 1),
-                (DAEDerivativeIncidence("x", 1),),
-            ),
-        ),
-    )
-    valid = compile_acausal_dae(
-        AcausalDAESource((valid_component,), input_layout=layout),
-        DAEStructuralPolicy(0, 0),
-    )
-    with pytest.raises(ValueError, match="layout must exactly match"):
-        DifferentialAlgebraicProblem(
-            valid.system,
-            jnp.zeros((1,)),
-            input_policy=mismatched,
-            problem_id="structural-layout-mismatch",
-        )
-
-
-def test_component_rejects_incidence_above_variable_derivative_order() -> None:
     with pytest.raises(ValueError, match="exceeds the declared variable maximum"):
         DAEComponent(
             "bad-order",
@@ -309,11 +294,6 @@ def test_component_rejects_incidence_above_variable_derivative_order() -> None:
                 ),
             ),
         )
-
-
-def test_source_identity_includes_connection_orientation_and_tearing_fails_closed() -> (
-    None
-):
     left = DAEComponent(
         "left",
         (DAEVariableBlock("potential", (), 0),),

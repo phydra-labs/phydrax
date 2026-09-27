@@ -61,7 +61,7 @@ def _rest_state(ocean: Any) -> Any:
     return ocean.initial_state(velocity, temperature, salinity)
 
 
-def test_linear_seawater_reference_density_compensation() -> None:
+def test_ocean_scenario_1() -> None:
     reference = phx.applications.ocean.LinearSeawaterReference()
     temperature = jnp.asarray((11.0, 9.0))
     salinity = reference.reference_salinity + (
@@ -79,9 +79,6 @@ def test_linear_seawater_reference_density_compensation() -> None:
         ),
         1.0,
     )
-
-
-def test_scalar_cfl_uses_oriented_face_flux_not_canceling_average() -> None:
     ocean = _prepared_ocean()
     discretization = ocean.operators.discretization
     x_layout = discretization.face_layouts[0]
@@ -98,9 +95,6 @@ def test_scalar_cfl_uses_oriented_face_flux_not_canceling_average() -> None:
 
     assert jnp.isfinite(restriction.advective["temperature"])
     assert restriction.advective["temperature"] > 0.0
-
-
-def test_directional_scalar_diffusion_and_surface_flux_are_conservative() -> None:
     flux = phx.discretization.MACScalarBoundaryCondition("flux", 2.0e-6)
     ocean = _prepared_ocean(
         temperature_diffusivity=jnp.asarray((1.0e-4, 1.0e-4, 1.0e-5)),
@@ -154,7 +148,7 @@ def test_directional_scalar_diffusion_and_surface_flux_are_conservative() -> Non
     )
 
 
-def test_mac_coriolis_is_weighted_power_neutral() -> None:
+def test_ocean_scenario_2() -> None:
     ocean = _prepared_ocean(coriolis=0.5)
     discretization = ocean.operators.discretization
     x = jnp.arange(np.prod(discretization.face_layouts[0].shape)).reshape(
@@ -177,9 +171,6 @@ def test_mac_coriolis_is_weighted_power_neutral() -> None:
         <= evidence.coriolis_work_scale * 0 + 1e-12
     )
     np.testing.assert_allclose(evidence.surface_stress_power, 0.0)
-
-
-def test_ocean_stage_and_wave_restrictions_are_finite() -> None:
     ocean = _prepared_ocean(coriolis=0.25)
     state = _rest_state(ocean)
 
@@ -191,6 +182,26 @@ def test_ocean_stage_and_wave_restrictions_are_finite() -> None:
     assert restriction.ocean_forcing > 0.0
     assert jnp.isinf(restriction.stratification)
     np.testing.assert_allclose(stage.buoyancy.normalized_exchange_defect, 0.0)
+    condition = phx.discretization.MACScalarBoundaryCondition(
+        "flux",
+        lambda time, coordinates, args: args * time * jnp.ones(coordinates.shape[:-1]),
+        function_id="time-scaled-temperature-flux",
+    )
+    ocean = _prepared_ocean(temperature_flux=condition)
+    state = _rest_state(ocean)
+    velocity, scalars = ocean.dynamics.unpack_state(state)
+    result = ocean.transport.evaluate(2.0, scalars, velocity, 3.0)
+    diagnostics = ocean.transport.diagnostics_from_fluxes(scalars, result)
+    top_area = jnp.sum(
+        jnp.take(ocean.operators.discretization.face_measures[2], -1, axis=2)
+    )
+
+    np.testing.assert_allclose(
+        diagnostics.fields["temperature"].diffusive_content_rate,
+        -6.0 * top_area,
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def test_ocean_checkpoint_round_trip(tmp_path: Any) -> None:
@@ -230,30 +241,7 @@ def jax_tree_leaves(value: Any) -> Any:
     return jax.tree.leaves(value)
 
 
-def test_dynamic_surface_scalar_flux_uses_stage_time_and_args() -> None:
-    condition = phx.discretization.MACScalarBoundaryCondition(
-        "flux",
-        lambda time, coordinates, args: args * time * jnp.ones(coordinates.shape[:-1]),
-        function_id="time-scaled-temperature-flux",
-    )
-    ocean = _prepared_ocean(temperature_flux=condition)
-    state = _rest_state(ocean)
-    velocity, scalars = ocean.dynamics.unpack_state(state)
-    result = ocean.transport.evaluate(2.0, scalars, velocity, 3.0)
-    diagnostics = ocean.transport.diagnostics_from_fluxes(scalars, result)
-    top_area = jnp.sum(
-        jnp.take(ocean.operators.discretization.face_measures[2], -1, axis=2)
-    )
-
-    np.testing.assert_allclose(
-        diagnostics.fields["temperature"].diffusive_content_rate,
-        -6.0 * top_area,
-        rtol=1e-12,
-        atol=1e-12,
-    )
-
-
-def test_surface_stress_is_tangential_and_top_layer_owned() -> None:
+def test_ocean_scenario_3() -> None:
     ocean = _prepared_ocean(surface_stress=(2.0, 0.0, 0.0))
     discretization = ocean.operators.discretization
     velocity = (
@@ -271,44 +259,6 @@ def test_surface_stress_is_tangential_and_top_layer_owned() -> None:
     np.testing.assert_allclose(below, 0.0)
     np.testing.assert_allclose(evidence.surface_stress_force[2], 0.0)
     assert evidence.surface_stress_power > 0.0
-
-
-def test_ocean_diagnostic_output_contains_named_fields(tmp_path: Any) -> None:
-    from phydrax._array_archive import read_array_archive
-
-    ocean = _prepared_ocean(coriolis=0.25)
-    continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
-        _rest_state(ocean)
-    )
-    target = tmp_path / "ocean-output.zip"
-
-    phx.applications.ocean.write_ocean_output(
-        target,
-        ocean,
-        jnp.asarray(0.0),
-        continuation,
-    )
-    manifest, arrays = read_array_archive(target)
-
-    assert manifest["kind"] == "ocean-boussinesq-output"
-    assert manifest["ocean_id"] == ocean.prepared_id
-    assert {
-        "temperature",
-        "salinity",
-        "density_anomaly",
-        "buoyancy",
-        "pressure",
-        "sgs_dissipation",
-        "molecular_potential_energy_mixing",
-        "sgs_potential_energy_mixing",
-        "potential_energy_mixing_available",
-        "velocity/0",
-        "velocity/1",
-        "velocity/2",
-    }.issubset(arrays)
-
-
-def test_coupled_stage_propagates_dynamic_boundary_data() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(3, periodic=True),
@@ -362,3 +312,38 @@ def test_coupled_stage_propagates_dynamic_boundary_data() -> None:
 
     assert bool(stage.success)
     assert jnp.max(jnp.abs(stage.unconstrained_velocity_rate[0])) > 0.0
+
+
+def test_ocean_diagnostic_output_contains_named_fields(tmp_path: Any) -> None:
+    from phydrax._array_archive import read_array_archive
+
+    ocean = _prepared_ocean(coriolis=0.25)
+    continuation = phx.applications.ocean.OceanBoussinesqContinuationState.initialize(
+        _rest_state(ocean)
+    )
+    target = tmp_path / "ocean-output.zip"
+
+    phx.applications.ocean.write_ocean_output(
+        target,
+        ocean,
+        jnp.asarray(0.0),
+        continuation,
+    )
+    manifest, arrays = read_array_archive(target)
+
+    assert manifest["kind"] == "ocean-boussinesq-output"
+    assert manifest["ocean_id"] == ocean.prepared_id
+    assert {
+        "temperature",
+        "salinity",
+        "density_anomaly",
+        "buoyancy",
+        "pressure",
+        "sgs_dissipation",
+        "molecular_potential_energy_mixing",
+        "sgs_potential_energy_mixing",
+        "potential_energy_mixing_available",
+        "velocity/0",
+        "velocity/1",
+        "velocity/2",
+    }.issubset(arrays)

@@ -43,7 +43,7 @@ def _sphere_problem(*, constraint: Any = None) -> Any:
     return geometry, system, parameter_ids, bounds
 
 
-def test_search_bounds_are_complete_finite_and_physically_admissible() -> None:
+def test_design_global_search_scenario_1() -> None:
     geometry, system, parameter_ids, bounds = _sphere_problem()
     search = phx.optim.DifferentialEvolutionSearch(4, 0)
 
@@ -95,9 +95,6 @@ def test_search_bounds_are_complete_finite_and_physically_admissible() -> None:
             bounds=bounds,
             initial_state=outside,
         )
-
-
-def test_search_is_reproducible_bounded_and_exactly_accounted() -> None:
     geometry, system, _parameter_ids, bounds = _sphere_problem()
     search = phx.optim.DifferentialEvolutionSearch(
         8,
@@ -149,9 +146,6 @@ def test_search_is_reproducible_bounded_and_exactly_accounted() -> None:
     optimized = geometry.with_state(local.state)
     domain = phx.domain.GeometryDomain(optimized)
     assert domain.geometry.equivalent(optimized)
-
-
-def test_initial_population_convergence_and_invalid_objectives_are_explicit() -> None:
     _geometry, constant_system, _parameter_ids, bounds = _sphere_problem(
         constraint=_ConstantConstraint()
     )

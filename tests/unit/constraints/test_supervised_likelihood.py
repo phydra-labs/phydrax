@@ -20,7 +20,7 @@ def _zero_field(domain: Any) -> Any:
     return field
 
 
-def test_supervised_likelihood_preserves_targets_filters_cases_and_weights_risk() -> None:
+def test_supervised_likelihood_contracts() -> None:
     rows = jnp.arange(4.0)[:, None]
     domain = phx.domain.DatasetDomain(rows)
     targets = jnp.asarray([0, 1, -99, 3], dtype=jnp.int32)
@@ -74,9 +74,6 @@ def test_supervised_likelihood_preserves_targets_filters_cases_and_weights_risk(
         jnp.sum(jnp.asarray([4.0, 2.0]) * per_case),
         atol=2e-15,
     )
-
-
-def test_supervised_likelihood_rejects_invalid_case_masks_and_weights() -> None:
     domain = phx.domain.DatasetDomain(jnp.arange(3.0)[:, None])
     common = {
         "sampling": phx.domain.PointSampling(2, design="uniform"),

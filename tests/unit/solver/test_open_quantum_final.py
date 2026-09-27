@@ -17,7 +17,7 @@ from tools.open_system_campaigns import (
 )
 
 
-def test_approximation_evidence_requires_quantified_axes() -> None:
+def test_open_quantum_final_scenario_1() -> None:
     with pytest.raises(ValueError):
         phx.operators.quantum.OpenSystemApproximationEvidence(
             "empty", (), (), execution_valid=True
@@ -37,9 +37,6 @@ def test_approximation_evidence_requires_quantified_axes() -> None:
         execution_valid=True,
     )
     assert bool(evidence.valid)
-
-
-def test_promotion_policy_is_fail_closed_for_unknown_physicality() -> None:
     quantity = phx.operators.quantum.ApproximationQuantity(
         "error",
         0.01,
@@ -69,9 +66,6 @@ def test_promotion_policy_is_fail_closed_for_unknown_physicality() -> None:
         archive_verified=True,
     )
     assert not bool(decision.promoted)
-
-
-def test_pseudomode_preserves_pure_initial_state_exactly() -> None:
     _, mode, _ = phx.operators.quantum.lorentzian_pseudomode(1.0, 0.5, 0.2, cutoff=3)
     initial = jnp.asarray([[1.0 + 0j, 0j], [0j, 0j]])
     problem = phx.solver.jaynes_cummings_pseudomode_problem(mode, initial)
@@ -79,7 +73,7 @@ def test_pseudomode_preserves_pure_initial_state_exactly() -> None:
     assert jnp.allclose(reduced, initial)
 
 
-def test_memory_execution_and_physicality_are_distinct() -> None:
+def test_open_quantum_final_scenario_2() -> None:
     initial = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     result = phx.solver.solve_memory_kernel(
         phx.solver.exponential_memory_qubit_problem(0.01, 1.0, initial),
@@ -90,17 +84,11 @@ def test_memory_execution_and_physicality_are_distinct() -> None:
     assert bool(result.pointwise_density_valid)
     assert not bool(result.production_valid)
     assert result.physicality.status == "unknown"
-
-
-def test_process_physicality_rejects_negative_initial_state() -> None:
     initial = jnp.asarray([[2.0 + 0j, 0j], [0j, -1.0 + 0j]])
     process = phx.tensor_network.markov_process_tensor(
         (jnp.eye(4, dtype="complex128"),), initial
     )
     assert not bool(process.physicality().valid)
-
-
-def test_fixed_step_jump_probability_guard() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         100.0, jnp.asarray([0j, 1.0 + 0j])
     )
@@ -114,7 +102,7 @@ def test_fixed_step_jump_probability_guard() -> None:
         )
 
 
-def test_gaussian_hbar_and_generator_conventions() -> None:
+def test_open_quantum_final_scenario_3() -> None:
     state = phx.metrix.BosonicGaussianState(jnp.zeros(2), jnp.eye(2), hbar=2.0)
     channel = phx.metrix.BosonicGaussianChannel(
         jnp.eye(2),
@@ -133,32 +121,6 @@ def test_gaussian_hbar_and_generator_conventions() -> None:
         state,
     )
     assert problem.generator_cp_margin >= -1e-9
-
-
-def test_open_system_artifact_roundtrip_and_identity(tmp_path: Any) -> None:
-    path = tmp_path / "artifact.zip"
-    record = gaussian_campaign()
-    write_open_system_artifact(
-        path,
-        record,
-        problem_id=record.campaign_id,
-        plan_id="artifact-test-plan",
-        backend="cpu",
-        runner_id="artifact-test-runner",
-        code_fingerprint="artifact-test-code",
-    )
-    stored, manifest = read_open_system_artifact(
-        path,
-        expected_campaign_id=record.campaign_id,
-        expected_representation_id=record.representation_id,
-    )
-    assert manifest["record"]["campaign_id"] == record.campaign_id
-    assert stored.artifact_names == record.artifact_names
-    with pytest.raises(ValueError):
-        read_open_system_artifact(path, expected_campaign_id="wrong")
-
-
-def test_generic_quantum_jump_adapter() -> None:
     problem = phx.solver.amplitude_damping_trajectory_problem(
         1.0, jnp.asarray([0j, 1.0 + 0j])
     )
@@ -173,9 +135,6 @@ def test_generic_quantum_jump_adapter() -> None:
         dt0=0.01,
     )
     assert jnp.all(solution.valid)
-
-
-def test_local_lindblad_channel_and_purified_certificate() -> None:
     lowering = jnp.asarray([[0, 1], [0, 0]], dtype="complex128")
     prepared = phx.tensor_network.prepare_local_lindblad_channel(
         jnp.zeros((2, 2), dtype="complex128"),
@@ -201,7 +160,30 @@ def test_local_lindblad_channel_and_purified_certificate() -> None:
     assert bool(certificate.valid)
 
 
-def test_heom_bdf_grid_and_process_identifiability() -> None:
+def test_open_system_artifact_roundtrip_and_identity(tmp_path: Any) -> None:
+    path = tmp_path / "artifact.zip"
+    record = gaussian_campaign()
+    write_open_system_artifact(
+        path,
+        record,
+        problem_id=record.campaign_id,
+        plan_id="artifact-test-plan",
+        backend="cpu",
+        runner_id="artifact-test-runner",
+        code_fingerprint="artifact-test-code",
+    )
+    stored, manifest = read_open_system_artifact(
+        path,
+        expected_campaign_id=record.campaign_id,
+        expected_representation_id=record.representation_id,
+    )
+    assert manifest["record"]["campaign_id"] == record.campaign_id
+    assert stored.artifact_names == record.artifact_names
+    with pytest.raises(ValueError):
+        read_open_system_artifact(path, expected_campaign_id="wrong")
+
+
+def test_open_quantum_final_scenario_4() -> None:
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.01, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
@@ -221,9 +203,6 @@ def test_heom_bdf_grid_and_process_identifiability() -> None:
         steps=1,
     )
     assert bool(grid.valid)
-
-
-def test_neural_rate_evidence_blocks_uncertain_rates() -> None:
     evidence = phx.solver.NeuralRateEvidence(
         jnp.asarray([1.0]),
         jnp.asarray([1.0]),
@@ -231,9 +210,6 @@ def test_neural_rate_evidence_blocks_uncertain_rates() -> None:
         relative_error_tolerance=0.1,
     )
     assert not bool(evidence.valid)
-
-
-def test_complex_stiefel_and_sequential_process_tomography() -> None:
     manifold = phx.metrix.ComplexStiefelManifold(2, 2)
     isometry = jnp.eye(2, dtype="complex128")
     assert bool(manifold.contains(isometry))

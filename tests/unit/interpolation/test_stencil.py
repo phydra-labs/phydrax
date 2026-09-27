@@ -19,7 +19,7 @@ def _linear_stencil() -> GatherStencil:
     )
 
 
-def test_gather_stencil_preserves_payload_shape_constants_and_complex_values() -> None:
+def test_gather_stencil_contracts() -> None:
     values = jnp.asarray(
         [[1.0 + 2.0j, 3.0 - 1.0j], [1.0 + 2.0j, 3.0 - 1.0j], [1.0 + 2.0j, 3.0 - 1.0j]]
     )
@@ -29,9 +29,6 @@ def test_gather_stencil_preserves_payload_shape_constants_and_complex_values() -
     assert result.shape == (2, 2)
     assert jnp.allclose(result, values[:2])
     assert jnp.issubdtype(result.dtype, jnp.complexfloating)
-
-
-def test_gather_stencil_renormalizes_valid_sources_and_reports_support() -> None:
     stencil = _linear_stencil()
     values = jnp.asarray([2.0, 6.0, 10.0])
     source_mask = jnp.asarray([True, False, False])

@@ -231,7 +231,7 @@ def _runtime(parameters: Any, current: Any) -> Any:
     )
 
 
-def test_ecm_run_identity_and_native_transition_states_bind_concrete_execution() -> None:
+def test_battery_workflows_scenario_1() -> None:
     parameters = _ecm_parameters()
     model = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(1))
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(1.0)))
@@ -286,9 +286,6 @@ def test_ecm_run_identity_and_native_transition_states_bind_concrete_execution()
     assert first.require_evidence_identity() == first.run_id
     np.testing.assert_allclose(first.native_solution.times, np.asarray((0.0, 1.0, 2.0)))
     np.testing.assert_allclose(first.outputs.times_s, np.asarray((0.0, 2.0)))
-
-
-def test_private_model_candidates_execute_their_native_physics_boundaries() -> None:
     ecm_parameters = _ecm_parameters()
     ecm = ThermalEquivalentCircuitAdapter(ThermalEquivalentCircuitPlan(1))
     prepared_ecm = ecm.prepare()
@@ -344,9 +341,6 @@ def test_private_model_candidates_execute_their_native_physics_boundaries() -> N
         atol=1.0e-15,
     )
     assert bool(evaluation.domain_valid)
-
-
-def test_private_workflow_contracts_retain_real_content_boundaries() -> None:
     aging_support = EmpiricalAgingSupport(
         # ty: ignore[invalid-argument-type]
         (273.15, 333.15),
@@ -407,9 +401,6 @@ def test_private_workflow_contracts_retain_real_content_boundaries() -> None:
     assert BrosaPlanellaTspmeAdapter.__module__.endswith("._tspme_brosa_planella")
     assert BrosaPlanellaSpmeSeiPlan.__module__.endswith("._spme_side_reactions")
     assert BrosaPlanellaSpmeSeiAdapter.__module__.endswith("._spme_side_reactions")
-
-
-def test_unsigned_expansion_requests_cannot_authorize_implementation() -> None:
     dfn = evaluate_dfn_entry_gate(
         release_index=None,
         trust_policy=None,

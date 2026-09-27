@@ -48,7 +48,7 @@ def _sector_resources() -> Any:
     return SectorBasisResourcePolicy(maximum_dimension=64, maximum_table_bytes=20_000)
 
 
-def test_periodic_bridge_requires_explicit_order_and_interaction_contract() -> None:
+def test_lattice_compiler_scenario_1() -> None:
     realization = PeriodicFiniteRealization(
         (0, 0, 1, 1),
         (0, 1, 0, 1),
@@ -94,9 +94,6 @@ def test_periodic_bridge_requires_explicit_order_and_interaction_contract() -> N
     np.testing.assert_allclose(filled_operator.mv(jnp.asarray((1.0 + 0.0j,))), (6.0,))
     with pytest.raises(ValueError, match="exactly equal"):
         periodic_finite_to_fermion_lattice(realization, order, ("b", "a"), interactions)
-
-
-def test_compiler_refuses_branch_work_before_preparation() -> None:
     space = LocalSpacePlan.spin("s", 2)
     raising = LocalOperatorPlan(
         space,
@@ -111,9 +108,6 @@ def test_compiler_refuses_branch_work_before_preparation() -> None:
             specification,
             _compiler_resources(maximum_branches_per_input=2),
         )
-
-
-def test_numeric_refresh_preserves_structure_and_updates_sector_action() -> None:
     space = LocalSpacePlan.spin("s", 1)
     sz = LocalOperatorPlan(space, "sz", ((-1.0, 0.0), (0.0, 1.0)), (0,))
     initial_specification = QuantumLatticeSpecification(

@@ -67,7 +67,7 @@ def _particles(*, weight: Any = 1.0e18) -> Any:
     )
 
 
-def test_ntc_schedule_is_cell_local_distinct_and_remainder_preserving() -> None:
+def test_dsmc_ntc_scenario_1() -> None:
     _, _, _, _, _, ntc, _ = _plans()
     state = ntc.initialize(jnp.asarray((1.0e-16, 1.0e-16)))
     schedule = ntc.schedule(_particles(), state, jnp.asarray(0.01), jax.random.key(1))
@@ -83,9 +83,6 @@ def test_ntc_schedule_is_cell_local_distinct_and_remainder_preserving() -> None:
     np.testing.assert_array_equal(particle_cells[first], cells)
     np.testing.assert_array_equal(particle_cells[second], cells)
     np.testing.assert_allclose(schedule.candidate_state.fractional_remainder, 0.0)
-
-
-def test_ntc_refuses_occupancy_event_capacity_and_unequal_weights() -> None:
     _, _, _, _, _, ntc, _ = _plans(maximum_events_per_cell=1)
     particles = _particles(weight=1.0e19)
     unequal = phx.discretization.dsmc.DSMCParticleState(
@@ -108,9 +105,6 @@ def test_ntc_refuses_occupancy_event_capacity_and_unequal_weights() -> None:
 
     assert not bool(schedule.header.globally_eligible)
     assert not bool(schedule.occupancy.header.globally_eligible)
-
-
-def test_dsmc_production_interleaves_cell_local_events_and_rolls_back_majorant() -> None:
     _, _, streaming, collisions, internal, ntc, moments = _plans()
     plan = phx.solver.DSMCProductionPlan(streaming, collisions, internal, ntc, moments)
     particles = _particles(weight=1.0e20)
@@ -154,9 +148,6 @@ def test_dsmc_production_interleaves_cell_local_events_and_rolls_back_majorant()
             updated.ntc.majorant_sigma_speed >= rejected.required_majorant_sigma_speed
         )
     )
-
-
-def test_dsmc_initialization_requires_inert_inactive_slots() -> None:
     _, _, streaming, collisions, internal, ntc, moments = _plans()
     plan = phx.solver.DSMCProductionPlan(streaming, collisions, internal, ntc, moments)
     particles = _particles()

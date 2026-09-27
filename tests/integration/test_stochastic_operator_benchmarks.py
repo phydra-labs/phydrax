@@ -10,9 +10,7 @@ from tools.operator_benchmarks import (
 )
 
 
-def test_stochastic_heat_transition_generator_replays_and_matches_linear_moments() -> (
-    None
-):
+def test_stochastic_operator_benchmarks_scenario_1() -> None:
     first = stochastic_heat_transition_data(
         jr.key(0),
         grid_size=6,
@@ -50,9 +48,6 @@ def test_stochastic_heat_transition_generator_replays_and_matches_linear_moments
         for index, record in enumerate(dataset.provenance)
     )
     assert jnp.sqrt(jnp.mean((empirical_mean - analytic_mean) ** 2)) < 0.03
-
-
-def test_stochastic_heat_low_rank_gaussian_retention_gate() -> None:
     data = stochastic_heat_transition_data(
         jr.key(1),
         grid_size=6,
@@ -73,9 +68,6 @@ def test_stochastic_heat_low_rank_gaussian_retention_gate() -> None:
     assert result.low_rank_covariance_error < 1e-8
     assert result.location_rmse < 0.04
     assert result.fine_grid_finite
-
-
-def test_stochastic_heat_reference_transition_is_one_coherent_process() -> None:
     data = stochastic_heat_transition_data(
         jr.key(10),
         grid_size=6,
@@ -99,11 +91,6 @@ def test_stochastic_heat_reference_transition_is_one_coherent_process() -> None:
     assert result.semigroup_error < 0.01
     assert result.replay_exact
     assert result.predictive_process_axis
-
-
-def test_allen_cahn_native_flow_benchmark_retains_distributional_gain_in_two_of_three_seeds() -> (
-    None
-):
     data = allen_cahn_transition_data(
         jr.key(3),
         grid_size=6,

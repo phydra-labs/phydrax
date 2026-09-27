@@ -222,7 +222,7 @@ def test_native_restart_is_bitwise_and_rejects_changed_numeric_physics(
             read_global_atmosphere_checkpoint(path, changed, initial)
 
 
-def test_interactive_boundary_cannot_double_own_prescribed_fluxes() -> None:
+def test_global_surface_scenario_1() -> None:
     surface = boundary()
     for overlap in (
         {"evaporation_flux": 1e-5},
@@ -237,6 +237,44 @@ def test_interactive_boundary_cannot_double_own_prescribed_fluxes() -> None:
                 # ty: ignore[invalid-argument-type]
                 **overlap,
             )
+    baseline_model, baseline, baseline_evidence = make_model(
+        scenario="baseline",
+        bandlimit=3,
+        levels=2,
+        dt=20.0,
+        initialization="flux-preconditioned",
+    )
+    forced_model, forced, forced_evidence = make_model(
+        scenario="greenhouse",
+        bandlimit=3,
+        levels=2,
+        dt=20.0,
+        initialization="flux-preconditioned",
+    )
+    assert baseline_evidence["successful"]
+    assert forced_evidence["successful"]
+    assert forced_evidence["method"] == "common-baseline-flux-preconditioned-state"
+    baseline_view = baseline_model.view(baseline.state)
+    forced_view = forced_model.view(forced.state)
+    for baseline_value, forced_value in (
+        (baseline_view.temperature, forced_view.temperature),
+        (baseline_view.surface_pressure, forced_view.surface_pressure),
+        (baseline_view.east, forced_view.east),
+        (baseline_view.north, forced_view.north),
+        *zip(baseline_view.water, forced_view.water, strict=True),
+    ):
+        np.testing.assert_allclose(forced_value, baseline_value, rtol=2e-13)
+    baseline_sst = baseline_model.plan.processes.surface_physics.temperature(
+        baseline.state.surface_water,
+        baseline.state.surface_energy,
+        baseline_model.plan.processes.thermodynamics,
+    )
+    forced_sst = forced_model.plan.processes.surface_physics.temperature(
+        forced.state.surface_water,
+        forced.state.surface_energy,
+        forced_model.plan.processes.thermodynamics,
+    )
+    np.testing.assert_allclose(forced_sst, baseline_sst, rtol=2e-13)
 
 
 def test_global_flux_preconditioning_reduces_actual_boundary_residuals(
@@ -287,44 +325,3 @@ def test_failed_global_flux_preconditioning_is_atomic(space: Any) -> None:
         result.final_flux_residual_w_per_m2,
         result.initial_flux_residual_w_per_m2,
     )
-
-
-def test_interventions_share_baseline_preconditioned_physical_initial_state() -> None:
-    baseline_model, baseline, baseline_evidence = make_model(
-        scenario="baseline",
-        bandlimit=3,
-        levels=2,
-        dt=20.0,
-        initialization="flux-preconditioned",
-    )
-    forced_model, forced, forced_evidence = make_model(
-        scenario="greenhouse",
-        bandlimit=3,
-        levels=2,
-        dt=20.0,
-        initialization="flux-preconditioned",
-    )
-    assert baseline_evidence["successful"]
-    assert forced_evidence["successful"]
-    assert forced_evidence["method"] == "common-baseline-flux-preconditioned-state"
-    baseline_view = baseline_model.view(baseline.state)
-    forced_view = forced_model.view(forced.state)
-    for baseline_value, forced_value in (
-        (baseline_view.temperature, forced_view.temperature),
-        (baseline_view.surface_pressure, forced_view.surface_pressure),
-        (baseline_view.east, forced_view.east),
-        (baseline_view.north, forced_view.north),
-        *zip(baseline_view.water, forced_view.water, strict=True),
-    ):
-        np.testing.assert_allclose(forced_value, baseline_value, rtol=2e-13)
-    baseline_sst = baseline_model.plan.processes.surface_physics.temperature(
-        baseline.state.surface_water,
-        baseline.state.surface_energy,
-        baseline_model.plan.processes.thermodynamics,
-    )
-    forced_sst = forced_model.plan.processes.surface_physics.temperature(
-        forced.state.surface_water,
-        forced.state.surface_energy,
-        forced_model.plan.processes.thermodynamics,
-    )
-    np.testing.assert_allclose(forced_sst, baseline_sst, rtol=2e-13)

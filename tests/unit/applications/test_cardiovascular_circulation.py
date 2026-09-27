@@ -56,7 +56,7 @@ from phydrax.applications.cardiovascular.circulation._valves import (
 from phydrax.dynamics import analyze_dae_structure, DAEStructuralPolicy
 
 
-def test_rc_analytic_transient_and_passive_component_parameters() -> None:
+def test_cardiovascular_circulation_scenario_1() -> None:
     time = jnp.asarray([0.0, 2.0, 4.0])
     pressure = rc_pressure_transient(time, 0.0, 12.0, 2.0, 1.0)
     expected = 12.0 * (1.0 - jnp.exp(-time / 2.0))
@@ -73,9 +73,6 @@ def test_rc_analytic_transient_and_passive_component_parameters() -> None:
     assert jnp.isclose(compliance.stored_energy(16.0), 6.0)
     assert jnp.isclose(inertance.stored_energy(2.0), 8.0)
     assert jnp.isclose(rcr.stored_energy(16.0), 6.0)
-
-
-def test_generic_dae_source_is_structurally_consistent_and_initializes() -> None:
     source = PressureSource("pump", 10.0)
     resistance = Resistance("load", 2.0)
     network = CirculationNetwork(
@@ -101,9 +98,6 @@ def test_generic_dae_source_is_structurally_consistent_and_initializes() -> None
         10.0,
         atol=1.0e-8,
     )
-
-
-def test_reference_closed_loops_are_closed_and_structurally_square() -> None:
     systemic = systemic_closed_loop()
     for model in (systemic, biventricular_closed_loop()):
         assert model.network.closed
@@ -127,7 +121,7 @@ def test_reference_closed_loops_are_closed_and_structurally_square() -> None:
     ).successful
 
 
-def test_valve_routes_are_distinct_and_event_transitions_are_deterministic() -> None:
+def test_cardiovascular_circulation_scenario_2() -> None:
     smooth = SmoothValve("smooth", 0.01, 100.0, pressure_width=0.1)
     complementarity = ComplementarityValve("ideal", 0.01, smoothing=0.0)
     event = EventValve(
@@ -159,9 +153,6 @@ def test_valve_routes_are_distinct_and_event_transitions_are_deterministic() -> 
     ledger = record_valve_event(ledger, closing)
     evidence = audit_valve_events(ledger, minimum_dwell_time=2.0)
     assert evidence.deterministic
-
-
-def test_volume_passivity_and_pressure_volume_work_ledgers() -> None:
     time = jnp.linspace(0.0, 1.0, 101)
     volume = jnp.full_like(time, 5_000.0)
     volume_ledger = audit_total_volume(time, volume, tolerance=1.0e-12)
@@ -184,9 +175,6 @@ def test_volume_passivity_and_pressure_volume_work_ledgers() -> None:
     work = audit_pressure_volume_cycle(pressure, chamber_volume)
     assert work.closed
     assert jnp.isclose(work.chamber_work, 360.0)
-
-
-def test_periodic_shooting_closes_affine_cycle_map_and_commits() -> None:
     plan = PeriodicShootingPlan(800.0, (2,))
     prepared = prepare_periodic_shooting(
         plan,

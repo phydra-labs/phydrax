@@ -57,7 +57,7 @@ def _record(
     )
 
 
-def test_trace_is_bounded_without_losing_terminal_evidence() -> None:
+def test_iteration_execution_scenario_1() -> None:
     observer = IterationTraceObserver(2, cadence=2)
     plan = IterationPlan(observers=(observer,))
     capabilities = IterationCapabilities(("terminal", "step"), device_stop=True)
@@ -79,6 +79,65 @@ def test_trace_is_bounded_without_losing_terminal_evidence() -> None:
     assert jnp.array_equal(trace.records.metrics["value"], jnp.asarray([2.0, 4.0]))
     assert float(trace.initial.metrics["value"]) == -1.0
     assert float(trace.terminal.metrics["value"]) == 99.0
+    terminal_only = IterationCapabilities.terminal_only()
+    with pytest.raises(ValueError, match="granularity"):
+        bind_iteration_scope(IterationPlan(), terminal_only, "direct")
+
+    stop_plan = IterationPlan(
+        granularity="terminal",
+        stop_rule=CallableIterationStopRule(
+            lambda initial: jnp.asarray(0),
+            lambda state, record: (state, False),
+            "never",
+        ),
+    )
+    with pytest.raises(ValueError, match="device-side stopping"):
+        bind_iteration_scope(stop_plan, terminal_only, "direct")
+
+    child = IterationChildPlan("linear", IterationPlan(granularity="terminal"))
+    with pytest.raises(ValueError, match="child roles"):
+        bind_iteration_scope(
+            IterationPlan(granularity="terminal", children=(child,)),
+            terminal_only,
+            "direct",
+        )
+    received = []
+    sink = CallableIterationSink(
+        lambda event: received.append((event.sequence, event.event_id)), "collector"
+    )
+    control = CallableIterationHostControl(
+        lambda event: event.sequence == 1, "stop-after-two"
+    )
+    # ty: ignore[invalid-argument-type]
+    session = IterationSession("unit-session", sinks=(sink,), control=control)
+    capabilities = IterationCapabilities(("terminal", "step"), host_stop=True)
+    scope = bind_iteration_scope(IterationPlan(), capabilities, "host-driver")
+    assert not session.emit(scope, _record(0, 0.0, phase=IterationPhase.START))
+    assert session.emit(scope, _record(1, 1.0))
+    state = session.snapshot()
+    resumed = IterationSession(
+        "unit-session",
+        # ty: ignore[invalid-argument-type]
+        sinks=(sink,),
+        # ty: ignore[invalid-argument-type]
+        control=control,
+        state=state,
+    )
+    resumed.emit(scope, _record(2, 2.0))
+    assert [sequence for sequence, _ in received] == [0, 1, 2]
+    assert len({event_id for _, event_id in received}) == 3
+    assert resumed.stop_requested
+    # ty: ignore[invalid-argument-type]
+    sink = CallableIterationSink(lambda event: True, "invalid-sink")
+    # ty: ignore[invalid-argument-type]
+    session = IterationSession("unit-session", sinks=(sink,))
+    scope = bind_iteration_scope(
+        IterationPlan(),
+        IterationCapabilities(("terminal", "step")),
+        "host-driver",
+    )
+    with pytest.raises(TypeError, match="must not return"):
+        session.emit(scope, _record(1, 1.0))
 
 
 def test_stop_rule_only_changes_execution_at_active_safe_boundaries() -> None:
@@ -145,71 +204,3 @@ def test_observation_is_batched_and_does_not_change_gradients() -> None:
     assert jnp.array_equal(gradient, 2.0 * values)
     assert jnp.array_equal(moments.mean, 2.0 * values)
     assert evidence.terminal.metrics["value"].shape == (3,)
-
-
-def test_capabilities_reject_unsupported_granularity_control_and_children() -> None:
-    terminal_only = IterationCapabilities.terminal_only()
-    with pytest.raises(ValueError, match="granularity"):
-        bind_iteration_scope(IterationPlan(), terminal_only, "direct")
-
-    stop_plan = IterationPlan(
-        granularity="terminal",
-        stop_rule=CallableIterationStopRule(
-            lambda initial: jnp.asarray(0),
-            lambda state, record: (state, False),
-            "never",
-        ),
-    )
-    with pytest.raises(ValueError, match="device-side stopping"):
-        bind_iteration_scope(stop_plan, terminal_only, "direct")
-
-    child = IterationChildPlan("linear", IterationPlan(granularity="terminal"))
-    with pytest.raises(ValueError, match="child roles"):
-        bind_iteration_scope(
-            IterationPlan(granularity="terminal", children=(child,)),
-            terminal_only,
-            "direct",
-        )
-
-
-def test_host_sinks_and_control_have_separate_ordered_semantics() -> None:
-    received = []
-    sink = CallableIterationSink(
-        lambda event: received.append((event.sequence, event.event_id)), "collector"
-    )
-    control = CallableIterationHostControl(
-        lambda event: event.sequence == 1, "stop-after-two"
-    )
-    # ty: ignore[invalid-argument-type]
-    session = IterationSession("unit-session", sinks=(sink,), control=control)
-    capabilities = IterationCapabilities(("terminal", "step"), host_stop=True)
-    scope = bind_iteration_scope(IterationPlan(), capabilities, "host-driver")
-    assert not session.emit(scope, _record(0, 0.0, phase=IterationPhase.START))
-    assert session.emit(scope, _record(1, 1.0))
-    state = session.snapshot()
-    resumed = IterationSession(
-        "unit-session",
-        # ty: ignore[invalid-argument-type]
-        sinks=(sink,),
-        # ty: ignore[invalid-argument-type]
-        control=control,
-        state=state,
-    )
-    resumed.emit(scope, _record(2, 2.0))
-    assert [sequence for sequence, _ in received] == [0, 1, 2]
-    assert len({event_id for _, event_id in received}) == 3
-    assert resumed.stop_requested
-
-
-def test_host_sink_return_value_cannot_control_execution() -> None:
-    # ty: ignore[invalid-argument-type]
-    sink = CallableIterationSink(lambda event: True, "invalid-sink")
-    # ty: ignore[invalid-argument-type]
-    session = IterationSession("unit-session", sinks=(sink,))
-    scope = bind_iteration_scope(
-        IterationPlan(),
-        IterationCapabilities(("terminal", "step")),
-        "host-driver",
-    )
-    with pytest.raises(TypeError, match="must not return"):
-        session.emit(scope, _record(1, 1.0))

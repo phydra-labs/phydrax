@@ -4,13 +4,13 @@
 
 from typing import Any, cast
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
 import phydrax.uq._mcmc as mcmc_module
+from tests._support.assertions import assert_tree_equal
 
 
 def _problem(center: Any = (0.4, -0.7)) -> Any:
@@ -22,11 +22,6 @@ def _problem(center: Any = (0.4, -0.7)) -> Any:
         ),
         lambda value: -0.5 * jnp.sum((value - center_array) ** 2),
     )
-
-
-def _assert_tree_equal(left: Any, right: Any) -> None:
-    comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
-    assert all(jax.tree_util.tree_leaves(comparisons))
 
 
 @pytest.mark.parametrize(
@@ -92,9 +87,9 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
         checkpoint_every=checkpoint_every,
     )
 
-    _assert_tree_equal(resumed.samples, direct.samples)
-    _assert_tree_equal(resumed.unconstrained_samples, direct.unconstrained_samples)
-    _assert_tree_equal(resumed.final_states, direct.final_states)
+    assert_tree_equal(resumed.samples, direct.samples)
+    assert_tree_equal(resumed.unconstrained_samples, direct.unconstrained_samples)
+    assert_tree_equal(resumed.final_states, direct.final_states)
     assert jnp.array_equal(resumed.log_density, direct.log_density)
     assert jnp.array_equal(resumed.acceptance_rate, direct.acceptance_rate)
     assert jnp.array_equal(resumed.divergent, direct.divergent)
@@ -191,8 +186,8 @@ def test_interleaved_checkpoint_can_extend_without_repeating_draws(tmp_path: Any
         checkpoint_every=5,
     )
 
-    _assert_tree_equal(extended.samples, direct.samples)
-    _assert_tree_equal(extended.final_states, direct.final_states)
+    assert_tree_equal(extended.samples, direct.samples)
+    assert_tree_equal(extended.final_states, direct.final_states)
     assert jnp.array_equal(extended.log_density, direct.log_density)
     assert jnp.array_equal(extended.acceptance_rate, direct.acceptance_rate)
     assert jnp.array_equal(extended.divergent, direct.divergent)
@@ -206,7 +201,7 @@ def test_interleaved_checkpoint_can_extend_without_repeating_draws(tmp_path: Any
     )
 
 
-def test_mcmc_accepts_distinct_initial_positions_for_each_chain() -> None:
+def test_mcmc_contracts() -> None:
     problem = _problem()
     initial_positions = jnp.asarray([[-1.5, -1.0], [1.5, 1.0]])
 
@@ -223,9 +218,6 @@ def test_mcmc_accepts_distinct_initial_positions_for_each_chain() -> None:
     )
 
     assert result.samples.shape == (2, 4, 2)
-
-
-def test_mcmc_rejects_ambiguous_or_misshaped_initial_positions() -> None:
     problem = _problem()
 
     with pytest.raises(ValueError, match="cannot both"):

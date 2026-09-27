@@ -72,7 +72,7 @@ def dataset(
     )
 
 
-def test_union_probability_is_not_sum_and_masked_support_is_jit_differentiable() -> None:
+def test_radiation_calibration_scenario_1() -> None:
     direct = jnp.asarray([[1, 0, 99]])
     indirect = jnp.asarray([[2, 1, 99]])
     mask = jnp.asarray([[True, True, False]])
@@ -85,9 +85,6 @@ def test_union_probability_is_not_sum_and_masked_support_is_jit_differentiable()
     np.testing.assert_allclose(
         gradient, [0.3 * 0.7 * 0.4**2, 2 * 0.7 * 0.4 * 0.6 * 0.4 + 0.6 * 0.4], rtol=1e-6
     )
-
-
-def test_native_probability_fit_predicts_independent_heldout_conditions() -> None:
     training = dataset("fit", [((1,), (0,)), ((0,), (1,)), ((1, 1), (0, 1))])
     heldout = dataset("validation", [((1,), (2,)), ((0, 1), (3, 2))], oxygen_start=10.0)
     result = rad.calibrate_radiation_lesions(
@@ -113,9 +110,6 @@ def test_native_probability_fit_predicts_independent_heldout_conditions() -> Non
             prior_mean=jnp.zeros(2),
             prior_standard_deviation=jnp.ones(2),
         )
-
-
-def test_prior_does_not_manufacture_likelihood_identifiability() -> None:
     training = dataset("fit", [((1,), (1,)), ((1,), (1,))])
     heldout = dataset("validation", [((1,), (1,))], oxygen_start=10.0)
     result = rad.calibrate_radiation_lesions(
@@ -142,7 +136,7 @@ def test_prior_does_not_manufacture_likelihood_identifiability() -> None:
     assert np.all(np.isfinite(np.asarray(result.heldout_standardized_residuals)))
 
 
-def test_unknown_uncertainty_and_training_rights_are_separate_gates() -> None:
+def test_radiation_calibration_scenario_2() -> None:
     training = dataset("fit", [((1,), (0,)), ((0,), (1,))])
     heldout = dataset("validation", [((1,), (2,))], oxygen_start=10.0)
     with pytest.raises(ValueError, match="uncertainty"):
@@ -156,9 +150,6 @@ def test_unknown_uncertainty_and_training_rights_are_separate_gates() -> None:
             prior_mean=jnp.zeros(2),
             prior_standard_deviation=jnp.ones(2),
         )
-
-
-def test_stage_evidence_compares_observables_against_declared_uncertainty() -> None:
     evidence = rad.RadiationStageEvidence(
         "chemical-G",
         ("1ps", "1ns"),
@@ -174,9 +165,6 @@ def test_stage_evidence_compares_observables_against_declared_uncertainty() -> N
     assert evidence.standardized_rms == pytest.approx(2.5**0.5)
     assert evidence.accepted
     assert not replace(evidence, predicted=(10.0, 10.0)).accepted
-
-
-def test_expected_lesion_yield_respects_measured_unit_scale() -> None:
     data = dataset("units", [((1,), (2,))])
     unit = UnitDefinition(
         "mGy^-1", data.yield_unit.dimension, data.yield_unit.reference_system_id, "1000"

@@ -36,7 +36,7 @@ def _diblock_model() -> Any:
     )
 
 
-def test_linear_scft_homogeneous_control_fixes_pressure_gauge() -> None:
+def test_polymer_field_theory_scenario_1() -> None:
     prepared = pft.SCFTPlan(_diblock_model()).prepare(_spectral())
     fields = jnp.zeros(prepared.field_shape)
 
@@ -50,9 +50,6 @@ def test_linear_scft_homogeneous_control_fixes_pressure_gauge() -> None:
     np.testing.assert_allclose(evaluation.densities[..., 1], 0.5, atol=1.0e-12)
     np.testing.assert_allclose(evaluation.residual, 0.0, atol=1.0e-12)
     np.testing.assert_allclose(evaluation.gauge_residual, 0.0, atol=0.0)
-
-
-def test_richardson_strang_propagator_is_exact_for_constant_field() -> None:
     prepared = pft.SCFTPlan(
         _diblock_model(),
         contour_integrator=pft.ContourIntegratorPlan("richardson-strang-4"),
@@ -65,9 +62,6 @@ def test_richardson_strang_propagator_is_exact_for_constant_field() -> None:
     np.testing.assert_allclose(
         evaluation.partition_functions, [np.exp(-0.3)], rtol=1.0e-11, atol=1.0e-12
     )
-
-
-def test_acyclic_branched_scft_messages_preserve_homogeneous_mass() -> None:
     architecture = pft.PolymerContourArchitecturePlan(
         "three-arm",
         (

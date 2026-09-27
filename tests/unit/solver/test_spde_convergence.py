@@ -21,7 +21,7 @@ def _strong_level(resolution: Any, error: Any, coupling_id: Any = "shared-driver
     )
 
 
-def test_spde_convergence_study_reports_rates_and_requires_shared_coupling() -> None:
+def test_spde_convergence_scenario_1() -> None:
     levels = (
         _strong_level(0.05, 0.0025),
         _strong_level(0.2, 0.04),
@@ -48,9 +48,6 @@ def test_spde_convergence_study_reports_rates_and_requires_shared_coupling() -> 
             ),
             reference_id="invalid-strong-comparison",
         )
-
-
-def test_weak_observable_and_noise_truncation_keep_sampling_and_cutoff_distinct() -> None:
     samples = jnp.asarray([[1.0, -1.0], [2.0, 0.0], [3.0, 1.0], [4.0, 2.0]])
     weak = phx.solver.weak_observable_estimate(
         samples,

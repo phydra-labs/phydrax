@@ -71,7 +71,7 @@ def stokes_prepared() -> Any:
     )
 
 
-def test_kelvin_kernel_matches_point_source_and_reciprocity() -> None:
+def test_vector_boundary_kernels3d_scenario_1() -> None:
     mu = 2.0
     nu = 0.25
     kernel = ElasticityLayerKernel3D(mu, nu)
@@ -95,9 +95,6 @@ def test_kelvin_kernel_matches_point_source_and_reciprocity() -> None:
     assert jnp.all(jnp.isfinite(traction))
     assert kernel.contract.ambient_dimension == 3
     assert "dynamic" in " ".join(kernel.contract.non_goals)
-
-
-def test_stokeslet_matches_point_source_pressure_and_reciprocity() -> None:
     viscosity = 2.0
     kernel = StokesLayerKernel3D(viscosity)
     source = jnp.asarray([0.0, 0.0, 0.0])

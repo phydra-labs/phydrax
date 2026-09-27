@@ -8,7 +8,7 @@ import pytest
 import phydrax as phx
 
 
-def test_single_cosine_has_analytic_power_and_full_mode_count() -> None:
+def test_fourier_shell_statistics_scenario_1() -> None:
     count = 8
     x = (jnp.arange(count) + 0.5) / count
     field = jnp.cos(2.0 * jnp.pi * x)
@@ -29,9 +29,6 @@ def test_single_cosine_has_analytic_power_and_full_mode_count() -> None:
         rtol=1e-12,
         atol=1e-12,
     )
-
-
-def test_rfft_parseval_cross_power_and_phase_discrepancy() -> None:
     shape = (8, 6)
     x, y = jnp.meshgrid(
         (jnp.arange(shape[0]) + 0.5) / shape[0],
@@ -64,9 +61,6 @@ def test_rfft_parseval_cross_power_and_phase_discrepancy() -> None:
         rtol=1e-12,
         atol=1e-12,
     )
-
-
-def test_dc_nyquist_final_edge_and_empty_shell_policies() -> None:
     plan = phx.discretization.PeriodicFourierShellPlan(
         (4,),
         (1.0,),

@@ -56,7 +56,7 @@ def _schedule(
     )
 
 
-def test_two_state_transition_and_exact_occupation_match_analytic_solution() -> None:
+def test_circulating_blood_scenario_1() -> None:
     forward = 2.0
     backward = 3.0
     duration = 0.7
@@ -102,9 +102,6 @@ def test_two_state_transition_and_exact_occupation_match_analytic_solution() -> 
         rtol=1e-6,
         atol=1e-7,
     )
-
-
-def test_interval_splitting_boundaries_and_gaps_preserve_exact_reward() -> None:
     prepared = _two_state()
     initial = np.asarray((0.25, 0.75))
     whole = cb.integrate_circulating_blood_dose(
@@ -134,9 +131,6 @@ def test_interval_splitting_boundaries_and_gaps_preserve_exact_reward() -> None:
     )
     assert float(gaps.total_dose_gy) == pytest.approx(2.0, rel=1e-6)
     assert float(jnp.sum(gaps.occupation_seconds)) == pytest.approx(2.0, rel=1e-6)
-
-
-def test_absorbing_state_is_exact_and_stationary_claim_is_refused() -> None:
     prepared = cb.prepare_circulating_blood_model(
         cb.CirculatingBloodModel(
             (
@@ -153,7 +147,7 @@ def test_absorbing_state_is_exact_and_stationary_claim_is_refused() -> None:
         prepared.stationary_distribution()
 
 
-def test_same_realization_replays_and_constant_dose_is_path_invariant() -> None:
+def test_circulating_blood_scenario_2() -> None:
     prepared = _two_state(forward=0.5, backward=0.25)
     schedule = _schedule(((0.0, 3.0),), rates=(0.4, 0.4))
     realization = phx.stochastic.PoissonClockRealization(
@@ -194,9 +188,6 @@ def test_same_realization_replays_and_constant_dose_is_path_invariant() -> None:
         np.full((64,), 3.0),
         atol=1e-6,
     )
-
-
-def test_preparation_and_history_capacity_fail_closed_with_evidence() -> None:
     with pytest.raises(ValueError, match="compartment capacity exceeded"):
         cb.prepare_circulating_blood_model(
             _two_state().model,
@@ -223,9 +214,6 @@ def test_preparation_and_history_capacity_fail_closed_with_evidence() -> None:
     assert bool(jnp.all(result.capacity.capacity_exceeded))
     assert not bool(jnp.any(result.successful))
     assert bool(jnp.all(jnp.isnan(result.total_dose_gy)))
-
-
-def test_dose_rate_meanings_and_unknown_uncertainty_are_not_collapsed() -> None:
     prepared = _two_state()
     known = cb.integrate_circulating_blood_dose(
         prepared,
@@ -370,9 +358,7 @@ def _spatial_inputs(*, dose_affine: Any = None, uncertainty: Any = True) -> Any:
     return dose, labels, weights
 
 
-def test_spatial_compartment_mixture_requires_exact_affine_and_normalized_weights() -> (
-    None
-):
+def test_spatial_contracts() -> None:
     dose, labels, weights = _spatial_inputs()
     prepared = cb.prepare_spatial_compartment_mixture(
         dose, labels, ("central", "peripheral"), weights
@@ -410,9 +396,6 @@ def test_spatial_compartment_mixture_requires_exact_affine_and_normalized_weight
             # ty: ignore[invalid-argument-type]
             negative,
         )
-
-
-def test_spatial_mixture_preserves_unknown_uncertainty() -> None:
     dose, labels, weights = _spatial_inputs(uncertainty=False)
     prepared = cb.prepare_spatial_compartment_mixture(
         dose, labels, ("central", "peripheral"), weights

@@ -169,7 +169,7 @@ def _assert_filter_equivalent(
     assert jnp.array_equal(square_root.status, covariance.status)
 
 
-def test_regular_filter_and_rts_match_covariance_form_with_provenance() -> None:
+def test_square_root_kalman_scenario_1() -> None:
     problem = _problem()
     covariance = phx.uq.kalman_filter(
         problem,
@@ -206,9 +206,6 @@ def test_regular_filter_and_rts_match_covariance_form_with_provenance() -> None:
     assert square_root.covariance_regularization == 0.03
     assert square_root_smoother.covariance_form == "square_root"
     assert square_root_smoother.execution_method == "sequential"
-
-
-def test_square_root_smoother_starts_each_case_at_its_last_active_step() -> None:
     step_valid = jnp.asarray(
         [[True, True, True, True], [True, True, True, False]],
         dtype=jnp.bool_,
@@ -233,9 +230,6 @@ def test_square_root_smoother_starts_each_case_at_its_last_active_step() -> None
         expected.means[step_valid],
         atol=3e-5,
     )
-
-
-def test_square_root_smoother_propagates_factor_diagnostics_backward() -> None:
     result = phx.uq.kalman_filter(
         _problem(),
         method="sequential",
@@ -298,9 +292,6 @@ def test_square_root_smoother_propagates_factor_diagnostics_backward() -> None:
         jnp.asarray([False, False, True, True]),
     )
     assert jnp.all(jnp.isfinite(proposal_smoother.covariances))
-
-
-def test_square_root_smoother_rejects_nonfinite_proposed_moments() -> None:
     result = phx.uq.kalman_filter(
         _problem(),
         method="sequential",
@@ -326,9 +317,6 @@ def test_square_root_smoother_rejects_nonfinite_proposed_moments() -> None:
     )
     assert jnp.all(jnp.isfinite(smoother.means))
     assert jnp.all(jnp.isfinite(smoother.covariances))
-
-
-def test_singular_psd_state_covariance_is_preserved_through_filter_and_smoother() -> None:
     problem = _problem(
         prior_covariance=jnp.asarray([[1.0, 0.0], [0.0, 0.0]]),
         process_covariance=jnp.asarray([[0.1, 0.0], [0.0, 0.0]]),
@@ -355,7 +343,7 @@ def test_singular_psd_state_covariance_is_preserved_through_filter_and_smoother(
     assert jnp.all(jnp.linalg.eigvalsh(square_root.filtered_covariances) >= -1e-6)
 
 
-def test_zero_observation_noise_matches_exact_covariance_update() -> None:
+def test_square_root_kalman_scenario_2() -> None:
     problem = _scalar_problem(observation_variance=0.0)
     covariance = phx.uq.kalman_filter(
         problem, method="sequential", covariance_form="covariance"
@@ -366,9 +354,6 @@ def test_zero_observation_noise_matches_exact_covariance_update() -> None:
     _assert_filter_equivalent(covariance, square_root, atol=2e-6)
     assert jnp.allclose(square_root.filtered_covariances, 0.0, atol=2e-6)
     assert jnp.all(square_root.status == phx.uq.KALMAN_SUCCESS)
-
-
-def test_missing_batched_and_padded_cases_match_without_hidden_updates() -> None:
     mask = jnp.asarray(
         [
             [[True, True], [True, False], [False, False], [True, True]],
@@ -400,6 +385,54 @@ def test_missing_batched_and_padded_cases_match_without_hidden_updates() -> None
     assert jnp.allclose(
         square_root.filtered_means[1, 3], square_root.filtered_means[1, 2]
     )
+    filtered = phx.uq.GaussianFactor(
+        jnp.asarray([[1.0 + 0.0j, 0.0j], [0.1j, 0.7 + 0.0j]])
+    )
+    process = phx.uq.GaussianFactor(
+        jnp.asarray([[0.3 + 0.0j, 0.0j], [0.05j, 0.2 + 0.0j]])
+    )
+    transition = jnp.asarray([[1.0 + 0.0j, 0.2j], [0.1 - 0.1j, 0.9 + 0.0j]])
+    predicted = _forecast_factor(transition, filtered, process)
+    expected_prediction = (
+        transition @ filtered.covariance @ jnp.conj(transition.T) + process.covariance
+    )
+    assert jnp.allclose(predicted.covariance, expected_prediction, atol=2e-6)
+
+    observation_matrix = jnp.asarray([[1.0 + 0.0j, 0.3j], [0.2 - 0.1j, 1.0 + 0.0j]])
+    observation_noise = phx.uq.GaussianFactor(
+        jnp.asarray([[0.5 + 0.0j, 0.0j], [0.1j, 0.4 + 0.0j]])
+    )
+    innovation, updated, gain = _update_factors(
+        predicted, observation_matrix, observation_noise
+    )
+    expected_innovation = (
+        observation_matrix @ predicted.covariance @ jnp.conj(observation_matrix.T)
+        + observation_noise.covariance
+    )
+    expected_gain = (
+        predicted.covariance
+        @ jnp.conj(observation_matrix.T)
+        @ jnp.linalg.inv(expected_innovation)
+    )
+    expected_updated = (
+        predicted.covariance
+        - expected_gain @ expected_innovation @ jnp.conj(expected_gain.T)
+    )
+    assert jnp.allclose(innovation.covariance, expected_innovation, atol=3e-6)
+    assert jnp.allclose(gain, expected_gain, atol=3e-6)
+    assert jnp.allclose(updated.covariance, expected_updated, atol=3e-6)
+
+    smoothed, smoothing_gain = _smoothing_factor(filtered, predicted, transition, updated)
+    expected_smoothing_gain = (
+        filtered.covariance
+        @ jnp.conj(transition.T)
+        @ jnp.linalg.inv(predicted.covariance)
+    )
+    expected_smoothed = filtered.covariance + expected_smoothing_gain @ (
+        updated.covariance - predicted.covariance
+    ) @ jnp.conj(expected_smoothing_gain.T)
+    assert jnp.allclose(smoothing_gain, expected_smoothing_gain, atol=4e-6)
+    assert jnp.allclose(smoothed.covariance, expected_smoothed, atol=4e-6)
 
 
 def test_square_root_filter_gradient_matches_covariance_filter_gradient() -> None:
@@ -462,57 +495,6 @@ def test_square_root_filter_gradient_matches_covariance_filter_gradient() -> Non
     )
     assert jnp.isfinite(square_root_gradient)
     assert jnp.allclose(square_root_gradient, covariance_gradient, atol=3e-5)
-
-
-def test_qr_factor_algebra_uses_conjugate_transposes_for_complex_values() -> None:
-    filtered = phx.uq.GaussianFactor(
-        jnp.asarray([[1.0 + 0.0j, 0.0j], [0.1j, 0.7 + 0.0j]])
-    )
-    process = phx.uq.GaussianFactor(
-        jnp.asarray([[0.3 + 0.0j, 0.0j], [0.05j, 0.2 + 0.0j]])
-    )
-    transition = jnp.asarray([[1.0 + 0.0j, 0.2j], [0.1 - 0.1j, 0.9 + 0.0j]])
-    predicted = _forecast_factor(transition, filtered, process)
-    expected_prediction = (
-        transition @ filtered.covariance @ jnp.conj(transition.T) + process.covariance
-    )
-    assert jnp.allclose(predicted.covariance, expected_prediction, atol=2e-6)
-
-    observation_matrix = jnp.asarray([[1.0 + 0.0j, 0.3j], [0.2 - 0.1j, 1.0 + 0.0j]])
-    observation_noise = phx.uq.GaussianFactor(
-        jnp.asarray([[0.5 + 0.0j, 0.0j], [0.1j, 0.4 + 0.0j]])
-    )
-    innovation, updated, gain = _update_factors(
-        predicted, observation_matrix, observation_noise
-    )
-    expected_innovation = (
-        observation_matrix @ predicted.covariance @ jnp.conj(observation_matrix.T)
-        + observation_noise.covariance
-    )
-    expected_gain = (
-        predicted.covariance
-        @ jnp.conj(observation_matrix.T)
-        @ jnp.linalg.inv(expected_innovation)
-    )
-    expected_updated = (
-        predicted.covariance
-        - expected_gain @ expected_innovation @ jnp.conj(expected_gain.T)
-    )
-    assert jnp.allclose(innovation.covariance, expected_innovation, atol=3e-6)
-    assert jnp.allclose(gain, expected_gain, atol=3e-6)
-    assert jnp.allclose(updated.covariance, expected_updated, atol=3e-6)
-
-    smoothed, smoothing_gain = _smoothing_factor(filtered, predicted, transition, updated)
-    expected_smoothing_gain = (
-        filtered.covariance
-        @ jnp.conj(transition.T)
-        @ jnp.linalg.inv(predicted.covariance)
-    )
-    expected_smoothed = filtered.covariance + expected_smoothing_gain @ (
-        updated.covariance - predicted.covariance
-    ) @ jnp.conj(expected_smoothing_gain.T)
-    assert jnp.allclose(smoothing_gain, expected_smoothing_gain, atol=4e-6)
-    assert jnp.allclose(smoothed.covariance, expected_smoothed, atol=4e-6)
 
 
 def test_invalid_covariance_form_and_square_root_parallel_dispatch_are_explicit() -> None:

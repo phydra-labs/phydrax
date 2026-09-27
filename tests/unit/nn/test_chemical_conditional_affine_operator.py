@@ -128,7 +128,7 @@ def _scaling() -> Any:
     )
 
 
-def test_operator_uses_auxiliary_driver_and_returns_authoritative_state() -> None:
+def test_chemical_conditional_affine_operator_scenario_1() -> None:
     model = phx.nn.operator.architectures.ChemicalConditionalAffineOperator(
         _chemistry(),
         _InitialADriver(),
@@ -145,9 +145,6 @@ def test_operator_uses_auxiliary_driver_and_returns_authoritative_state() -> Non
     np.testing.assert_allclose(values, result.candidate_state)
     np.testing.assert_array_equal(result.successful, (True, True))
     np.testing.assert_allclose(result.element_residual, 0.0, atol=1e-13)
-
-
-def test_operator_queries_driver_at_scaled_midpoint_and_honors_masks() -> None:
     model = phx.nn.operator.architectures.ChemicalConditionalAffineOperator(
         _chemistry(),
         _QueryDriver(),
@@ -160,9 +157,13 @@ def test_operator_queries_driver_at_scaled_midpoint_and_honors_masks() -> None:
 
     np.testing.assert_allclose(drivers[:, 0], jnp.log1p(jnp.asarray((0.1, 0.0))))
     np.testing.assert_array_equal(values[1], jnp.zeros((3,)))
+    status = phx.nn.operator.catalog.operator_architecture_status(
+        "ChemicalConditionalAffineOperator"
+    )
 
-
-def test_stoichiometric_rate_correction_is_positive_and_identity_initialized() -> None:
+    assert status.tier == "research"
+    assert status.capabilities.autoregressive_rollout
+    assert status.capabilities.source_geometries == ("abstract", "point_cloud")
     context = phx.nn.models.MLP(
         in_size=4,
         out_size=2,
@@ -198,19 +199,6 @@ def test_stoichiometric_rate_correction_is_positive_and_identity_initialized() -
     np.testing.assert_array_equal(identity, jnp.ones((1,)))
     assert jnp.all(jnp.isfinite(multiplier) & (multiplier > 0.0))
     assert multiplier.shape == (1,)
-
-
-def test_operator_catalog_declares_research_local_transition() -> None:
-    status = phx.nn.operator.catalog.operator_architecture_status(
-        "ChemicalConditionalAffineOperator"
-    )
-
-    assert status.tier == "research"
-    assert status.capabilities.autoregressive_rollout
-    assert status.capabilities.source_geometries == ("abstract", "point_cloud")
-
-
-def test_staged_losses_use_driver_and_teacher_forced_paths() -> None:
     model = phx.nn.operator.architectures.ChemicalConditionalAffineOperator(
         _chemistry(),
         _InitialADriver(),

@@ -45,7 +45,7 @@ def _coordinate_term(global_space: Any, local_space: Any, row: Any) -> Any:
     )
 
 
-def test_hcurl_auxiliary_correction_uses_complex_hilbert_adjoint() -> None:
+def test_linalg_preconditioning_scenario_1() -> None:
     edge_space = la.ArraySpace((1,), dtype=jnp.complex128)
     scalar_space = la.ArraySpace((1,), dtype=jnp.complex128)
     edge_inverse = la.OperatorPreconditioner(
@@ -69,11 +69,6 @@ def test_hcurl_auxiliary_correction_uses_complex_hilbert_adjoint() -> None:
     residual = jnp.asarray([2.0 - 3.0j])
 
     assert jnp.allclose(preconditioner.apply(residual), 2.0 * residual)
-
-
-def test_additive_and_multiplicative_subspace_corrections_match_dense_references() -> (
-    None
-):
     space = la.ArraySpace((2,), dtype=jnp.float64)
     local = la.ArraySpace((1,), dtype=jnp.float64)
     matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]])
@@ -154,9 +149,6 @@ def test_additive_and_multiplicative_subspace_corrections_match_dense_references
         )
     with pytest.raises(ValueError, match="at least one"):
         la.AdditiveSubspaceCorrectionBuilder(())
-
-
-def test_chebyshev_preconditioner_is_fixed_degree_matrix_free_and_jittable() -> None:
     diagonal = jnp.asarray([2.0, 3.0, 5.0])
     operator = la.DiagonalLinearOperator(
         diagonal,

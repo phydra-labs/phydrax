@@ -43,7 +43,7 @@ def _scalar_plan(*, minimum_heat_rate: Any = 1.0) -> Any:
     )
 
 
-def test_zero_activity_uses_declared_heat_floor_and_mass_scaling() -> None:
+def test_skeletal_muscle_energetics_scenario_1() -> None:
     plan = _plan()
     zeros = jnp.zeros(2)
     result = plan.evaluate(
@@ -59,34 +59,6 @@ def test_zero_activity_uses_declared_heat_floor_and_mass_scaling() -> None:
     np.testing.assert_allclose(result.heat_rate_W_per_kg, 1.0)
     np.testing.assert_allclose(result.muscle_metabolic_power_W, (0.5, 1.0))
     assert bool(jnp.all(result.evidence.heat_floor_active))
-
-
-def test_zero_excitation_has_a_finite_gradient_with_nonzero_activation() -> None:
-    plan = _scalar_plan()
-
-    def power(excitation: Any) -> Any:
-        return plan.evaluate(
-            jnp.asarray((excitation,)),
-            jnp.asarray((0.4,)),
-            jnp.zeros(1),
-            jnp.asarray((0.9,)),
-            jnp.asarray((0.095,)),
-            jnp.asarray((-0.01,)),
-        ).total_muscle_metabolic_power_W
-
-    assert jnp.isfinite(jax.grad(power)(jnp.asarray(0.0)))
-    result = plan.evaluate(
-        jnp.zeros(1),
-        jnp.asarray((0.4,)),
-        jnp.zeros(1),
-        jnp.asarray((0.9,)),
-        jnp.asarray((0.095,)),
-        jnp.asarray((-0.01,)),
-    )
-    assert not bool(result.evidence.branch_smooth)
-
-
-def test_shortening_work_and_derived_lengthening_correction_are_explicit() -> None:
     plan = _plan()
     excitation = jnp.asarray((0.8, 0.8))
     activation = jnp.asarray((0.7, 0.7))
@@ -130,9 +102,6 @@ def test_shortening_work_and_derived_lengthening_correction_are_explicit() -> No
         jnp.stack((result.muscle_metabolic_power_W, result.muscle_metabolic_power_W)),
     )
     assert corrected_energy[1] == 0.0
-
-
-def test_energy_integral_jit_and_local_parameter_derivative() -> None:
     plan = _plan()
     excitation = jnp.asarray((0.75, 0.65))
     activation = jnp.asarray((0.6, 0.55))
@@ -172,24 +141,41 @@ def test_energy_integral_jit_and_local_parameter_derivative() -> None:
         )
     )(plan.parameters.aerobic_factor)
     assert jnp.isfinite(derivative)
-
-
-@pytest.mark.parametrize(
-    ("time", "power", "message"),
-    (
+    for time, power, message in (
         ((0.0, np.nan), ((1.0,), (1.0,)), "finite and strictly increasing"),
         ((0.0, 0.0), ((1.0,), (1.0,)), "finite and strictly increasing"),
         ((0.0, 1.0), ((1.0,), (np.inf,)), "finite and non-negative"),
         ((0.0, 1.0), ((1.0,), (-1.0,)), "finite and non-negative"),
-    ),
-)
-def test_energy_integral_rejects_invalid_physical_inputs(
-    time: Any, power: Any, message: Any
-) -> None:
-    compiled_integral = eqx.filter_jit(integrate_metabolic_energy_joule)
-    with pytest.raises((ValueError, RuntimeError), match=message):
-        invalid = compiled_integral(jnp.asarray(time), jnp.asarray(power))
-        jax.block_until_ready(invalid)
+    ):
+        compiled_integral = eqx.filter_jit(integrate_metabolic_energy_joule)
+        with pytest.raises((ValueError, RuntimeError), match=message):
+            invalid = compiled_integral(jnp.asarray(time), jnp.asarray(power))
+            jax.block_until_ready(invalid)
+
+
+def test_zero_excitation_has_a_finite_gradient_with_nonzero_activation() -> None:
+    plan = _scalar_plan()
+
+    def power(excitation: Any) -> Any:
+        return plan.evaluate(
+            jnp.asarray((excitation,)),
+            jnp.asarray((0.4,)),
+            jnp.zeros(1),
+            jnp.asarray((0.9,)),
+            jnp.asarray((0.095,)),
+            jnp.asarray((-0.01,)),
+        ).total_muscle_metabolic_power_W
+
+    assert jnp.isfinite(jax.grad(power)(jnp.asarray(0.0)))
+    result = plan.evaluate(
+        jnp.zeros(1),
+        jnp.asarray((0.4,)),
+        jnp.zeros(1),
+        jnp.asarray((0.9,)),
+        jnp.asarray((0.095,)),
+        jnp.asarray((-0.01,)),
+    )
+    assert not bool(result.evidence.branch_smooth)
 
 
 def test_branch_smooth_rejects_every_piecewise_surface() -> None:

@@ -11,7 +11,7 @@ from phydrax._numerics import (
 )
 
 
-def test_log_normalize_reduces_multiple_axes_per_retained_slice() -> None:
+def test_external_measures_scenario_1() -> None:
     log_weights = jnp.log(
         jnp.asarray(
             [
@@ -38,9 +38,6 @@ def test_log_normalize_reduces_multiple_axes_per_retained_slice() -> None:
     assert jnp.allclose(log_sum[0], jnp.log(6.0))
     assert jnp.isneginf(log_sum[1])
     assert jnp.array_equal(valid, jnp.asarray([True, False]))
-
-
-def test_log_normalize_ignores_masked_nan_but_rejects_included_infinity() -> None:
     masked_nan = jnp.asarray([[0.0, jnp.nan], [0.0, 0.0]])
     mask = jnp.asarray([[True, False], [True, True]])
     _, _, masked_valid = log_normalize(masked_nan, axes=1, mask=mask)
@@ -51,9 +48,6 @@ def test_log_normalize_ignores_masked_nan_but_rejects_included_infinity() -> Non
 
     assert jnp.array_equal(masked_valid, jnp.asarray([True, True]))
     assert jnp.array_equal(infinite_valid, jnp.asarray([False, True]))
-
-
-def test_weighted_accumulator_preserves_batches_and_ignores_zero_weight_nan() -> None:
     values = jnp.asarray(
         [
             [[1.0, 2.0], [3.0, 4.0]],
@@ -78,9 +72,6 @@ def test_weighted_accumulator_preserves_batches_and_ignores_zero_weight_nan() ->
     )
     assert jnp.array_equal(diagnostics.finite_count, jnp.asarray([3, 2]))
     assert jnp.all(jnp.isfinite(accumulator.normalized_mean))
-
-
-def test_weighted_accumulator_merge_handles_an_empty_chunk() -> None:
     values = jnp.asarray([[1.0, 2.0], [3.0, 4.0]])
     log_weights = jnp.asarray([[0.0, -1000.0], [0.0, -1001.0]])
     empty = LogWeightedAccumulator.from_values(
@@ -94,9 +85,61 @@ def test_weighted_accumulator_merge_handles_an_empty_chunk() -> None:
 
     assert jnp.allclose(merged.normalized_mean, full.normalized_mean)
     assert jnp.allclose(merged.raw_mean, full.raw_mean)
+    samples = cx.AxisArray(
+        jnp.arange(6.0).reshape((2, 3)),
+        dims=("case", "particle"),
+    )
+    log_weights = cx.AxisArray(jnp.zeros((2, 3)), dims=("case", "particle"))
+    mask = cx.AxisArray(
+        jnp.asarray([[False, False, False], [True, False, True]]),
+        dims=("case", "particle"),
+    )
+    target = phx.integration.weighted(
+        samples,
+        log_weights,
+        mask=mask,
+        sample_axes="particle",
+    )
 
+    estimate = phx.integration.integrate(lambda values: values, target)
 
-def test_named_weighted_measure_reduces_multiple_sample_axes() -> None:
+    assert estimate.status[0] == int(phx.integration.IntegrationStatus.NO_VALID_SAMPLES)
+    assert estimate.status[1] == int(phx.integration.IntegrationStatus.CONVERGED)
+    assert jnp.isnan(estimate.value.data[0])
+    assert jnp.allclose(estimate.value.data[1], 4.0)
+    samples = cx.AxisArray(
+        jnp.arange(6.0).reshape((2, 3)),
+        dims=("case", "particle"),
+    )
+    log_weights = cx.AxisArray(jnp.zeros((2, 3)), dims=("case", "particle"))
+    ancestry = cx.AxisArray(
+        jnp.asarray([[0, 0, 1], [2, 1, 0]]),
+        dims=("case", "particle"),
+    )
+    target = phx.integration.weighted(
+        samples,
+        log_weights,
+        sample_axes="particle",
+        support_valid=jnp.asarray([True, False]),
+        stratum_ids=jnp.asarray([0, 0, 1]),
+        pair_ids=jnp.asarray([0, 0, 1]),
+        replicate_ids=jnp.asarray([0, 1, 2]),
+        ancestry=ancestry,
+    )
+
+    estimate = phx.integration.integrate(lambda values: values, target)
+
+    assert estimate.status[0] == int(phx.integration.IntegrationStatus.CONVERGED)
+    assert estimate.status[1] == int(
+        phx.integration.IntegrationStatus.PROPOSAL_SUPPORT_FAILURE
+    )
+    assert jnp.array_equal(estimate.diagnostics.stratum_ids, jnp.asarray([0, 0, 1]))
+    assert jnp.array_equal(estimate.diagnostics.pair_ids, jnp.asarray([0, 0, 1]))
+    assert jnp.array_equal(
+        estimate.diagnostics.replicate_ids,
+        jnp.asarray([0, 1, 2]),
+    )
+    assert jnp.array_equal(estimate.diagnostics.ancestry_ids, jnp.asarray(ancestry.data))
     samples = cx.AxisArray(
         jnp.arange(2 * 2 * 3 * 2, dtype="float64").reshape((2, 2, 3, 2)),
         dims=("case", "chain", "draw", "state"),
@@ -122,32 +165,7 @@ def test_named_weighted_measure_reduces_multiple_sample_axes() -> None:
     assert jnp.array_equal(estimate.num_evaluations, jnp.asarray([6, 6]))
 
 
-def test_weighted_measure_reports_empty_mask_per_retained_slice() -> None:
-    samples = cx.AxisArray(
-        jnp.arange(6.0).reshape((2, 3)),
-        dims=("case", "particle"),
-    )
-    log_weights = cx.AxisArray(jnp.zeros((2, 3)), dims=("case", "particle"))
-    mask = cx.AxisArray(
-        jnp.asarray([[False, False, False], [True, False, True]]),
-        dims=("case", "particle"),
-    )
-    target = phx.integration.weighted(
-        samples,
-        log_weights,
-        mask=mask,
-        sample_axes="particle",
-    )
-
-    estimate = phx.integration.integrate(lambda values: values, target)
-
-    assert estimate.status[0] == int(phx.integration.IntegrationStatus.NO_VALID_SAMPLES)
-    assert estimate.status[1] == int(phx.integration.IntegrationStatus.CONVERGED)
-    assert jnp.isnan(estimate.value.data[0])
-    assert jnp.allclose(estimate.value.data[1], 4.0)
-
-
-def test_one_independent_weighted_sample_does_not_claim_uncertainty() -> None:
+def test_external_measures_scenario_2() -> None:
     target = phx.integration.weighted(
         jnp.asarray([2.0]),
         jnp.asarray([0.0]),
@@ -160,9 +178,6 @@ def test_one_independent_weighted_sample_does_not_claim_uncertainty() -> None:
     assert estimate.error_estimate is None
     assert estimate.diagnostics.standard_error is None
     assert estimate.diagnostics.normalizer_standard_error is None
-
-
-def test_external_measures_reject_plans_and_random_keys() -> None:
     target = phx.integration.weighted(jnp.ones((2,)), jnp.zeros((2,)))
 
     with pytest.raises(TypeError, match="do not take an integration plan"):
@@ -170,9 +185,6 @@ def test_external_measures_reject_plans_and_random_keys() -> None:
         phx.integration.integrate(1.0, target, phx.integration.FixedQuadraturePlan(3))
     with pytest.raises(ValueError, match="do not consume a random key"):
         phx.integration.integrate(1.0, target, key=jr.key(0))
-
-
-def test_discrete_measure_preserves_retained_axes_and_fixed_diagnostics() -> None:
     points = cx.AxisArray(
         jnp.asarray([[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]]),
         dims=("case", "node"),
@@ -213,39 +225,3 @@ def test_separable_discrete_measure_avoids_a_second_weight_convention() -> None:
     assert estimate.successful
     assert estimate.value.dims == ()
     assert jnp.allclose(jnp.asarray(estimate.value.data), 10.0)
-
-
-def test_weighted_measure_preserves_design_metadata_and_support_status() -> None:
-    samples = cx.AxisArray(
-        jnp.arange(6.0).reshape((2, 3)),
-        dims=("case", "particle"),
-    )
-    log_weights = cx.AxisArray(jnp.zeros((2, 3)), dims=("case", "particle"))
-    ancestry = cx.AxisArray(
-        jnp.asarray([[0, 0, 1], [2, 1, 0]]),
-        dims=("case", "particle"),
-    )
-    target = phx.integration.weighted(
-        samples,
-        log_weights,
-        sample_axes="particle",
-        support_valid=jnp.asarray([True, False]),
-        stratum_ids=jnp.asarray([0, 0, 1]),
-        pair_ids=jnp.asarray([0, 0, 1]),
-        replicate_ids=jnp.asarray([0, 1, 2]),
-        ancestry=ancestry,
-    )
-
-    estimate = phx.integration.integrate(lambda values: values, target)
-
-    assert estimate.status[0] == int(phx.integration.IntegrationStatus.CONVERGED)
-    assert estimate.status[1] == int(
-        phx.integration.IntegrationStatus.PROPOSAL_SUPPORT_FAILURE
-    )
-    assert jnp.array_equal(estimate.diagnostics.stratum_ids, jnp.asarray([0, 0, 1]))
-    assert jnp.array_equal(estimate.diagnostics.pair_ids, jnp.asarray([0, 0, 1]))
-    assert jnp.array_equal(
-        estimate.diagnostics.replicate_ids,
-        jnp.asarray([0, 1, 2]),
-    )
-    assert jnp.array_equal(estimate.diagnostics.ancestry_ids, jnp.asarray(ancestry.data))

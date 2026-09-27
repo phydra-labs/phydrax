@@ -45,7 +45,7 @@ def _state(factors: tuple[RiskFactorKey, ...], values: tuple[float, ...]) -> Mar
     )
 
 
-def test_fx_graph_rejects_two_equally_short_routes() -> None:
+def test_fx_scenario_1() -> None:
     factors = (
         _factor("usd-eur", USD, EUR),
         _factor("eur-jpy", EUR, JPY),
@@ -59,36 +59,6 @@ def test_fx_graph_rejects_two_equally_short_routes() -> None:
     assert resolution.path is None
     assert resolution.shortest_path_count == 2
     assert int(resolution.status) == int(MarketStatus.FX_AMBIGUOUS)
-
-
-def test_explicit_fx_path_applies_orientation_and_endpoint_contract() -> None:
-    usd_eur = _factor("usd-eur", USD, EUR)
-    eur_jpy = _factor("eur-jpy", EUR, JPY)
-    market = _state((usd_eur, eur_jpy), (0.9, 160.0))
-    path = FXConversionPath(USD, JPY, (usd_eur, eur_jpy), (1, 1))
-
-    converted = path.convert(10.0, market, source_currency=USD, target_currency=JPY)
-    mismatch = path.convert(10.0, market, source_currency=USD, target_currency=GBP)
-
-    assert bool(converted.valid)
-    assert jnp.isclose(converted.values, 1440.0)
-    assert not bool(mismatch.valid)
-    assert int(mismatch.status) & int(MarketStatus.CURRENCY_MISMATCH)
-    assert float(mismatch.values) == 0.0
-
-
-def test_inverse_fx_leg_divides_by_the_quote() -> None:
-    usd_eur = _factor("usd-eur", USD, EUR)
-    market = _state((usd_eur,), (0.8,))
-    path = FXConversionPath(EUR, USD, (usd_eur,), (-1,))
-
-    result = path.convert(8.0, market, source_currency=EUR, target_currency=USD)
-
-    assert bool(result.valid)
-    assert jnp.isclose(result.values, 10.0)
-
-
-def test_fx_triangle_reports_observable_inconsistency() -> None:
     usd_eur = _factor("usd-eur", USD, EUR)
     eur_jpy = _factor("eur-jpy", EUR, JPY)
     usd_jpy = _factor("usd-jpy", USD, JPY)
@@ -106,3 +76,24 @@ def test_fx_triangle_reports_observable_inconsistency() -> None:
     assert not bool(result.consistent)
     assert jnp.isclose(result.implied_cross, 144.0)
     assert jnp.isclose(result.quoted_cross, 145.0)
+    usd_eur = _factor("usd-eur", USD, EUR)
+    eur_jpy = _factor("eur-jpy", EUR, JPY)
+    market = _state((usd_eur, eur_jpy), (0.9, 160.0))
+    path = FXConversionPath(USD, JPY, (usd_eur, eur_jpy), (1, 1))
+
+    converted = path.convert(10.0, market, source_currency=USD, target_currency=JPY)
+    mismatch = path.convert(10.0, market, source_currency=USD, target_currency=GBP)
+
+    assert bool(converted.valid)
+    assert jnp.isclose(converted.values, 1440.0)
+    assert not bool(mismatch.valid)
+    assert int(mismatch.status) & int(MarketStatus.CURRENCY_MISMATCH)
+    assert float(mismatch.values) == 0.0
+    usd_eur = _factor("usd-eur", USD, EUR)
+    market = _state((usd_eur,), (0.8,))
+    path = FXConversionPath(EUR, USD, (usd_eur,), (-1,))
+
+    result = path.convert(8.0, market, source_currency=EUR, target_currency=USD)
+
+    assert bool(result.valid)
+    assert jnp.isclose(result.values, 10.0)

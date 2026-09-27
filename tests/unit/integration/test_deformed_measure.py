@@ -12,7 +12,7 @@ import pytest
 from phydrax.integration._deformed_measure import DeformedMeasurePlan
 
 
-def test_volume_measure_tracks_the_dynamic_jacobian() -> None:
+def test_deformed_measure_scenario_1() -> None:
     plan = DeformedMeasurePlan("volume", jnp.asarray((0.25, 0.75)))
     deformation = jnp.asarray(
         (
@@ -32,9 +32,6 @@ def test_volume_measure_tracks_the_dynamic_jacobian() -> None:
         )
     )(jnp.asarray(2.0))
     np.testing.assert_allclose(derivative, 4.0)
-
-
-def test_surface_measure_uses_nanson_and_preserves_oriented_normals() -> None:
     normals = jnp.asarray(((1.0, 0.0, 0.0), (0.0, -1.0, 0.0)))
     plan = DeformedMeasurePlan(
         "surface",
@@ -54,9 +51,6 @@ def test_surface_measure_uses_nanson_and_preserves_oriented_normals() -> None:
     np.testing.assert_allclose(state.current_normal, normals)
     np.testing.assert_allclose(state.normal("reference"), normals)
     assert bool(state.valid)
-
-
-def test_deformed_measure_refuses_invalid_reference_data_and_inversion() -> None:
     with pytest.raises(ValueError, match="strictly positive"):
         DeformedMeasurePlan("volume", jnp.asarray((1.0, 0.0)))
     with pytest.raises(ValueError, match="oriented reference normal"):

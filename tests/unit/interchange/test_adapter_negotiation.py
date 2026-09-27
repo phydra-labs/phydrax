@@ -67,7 +67,7 @@ def _stage(
     )
 
 
-def test_satisfied_requirements_negotiate_with_stable_order_and_identity() -> None:
+def test_adapter_negotiation_scenario_1() -> None:
     required = AdapterRequirement("coordinates", rationale="needed by the target")
     optional = AdapterRequirement("labels", required=False)
     coordinates = AdapterCapability("coordinates", detail="preserved exactly")
@@ -84,9 +84,6 @@ def test_satisfied_requirements_negotiate_with_stable_order_and_identity() -> No
     second_semantics = tuple(item.semantic_id for item in second.requirements)
     assert first_semantics == second_semantics
     assert first.negotiation_id == second.negotiation_id
-
-
-def test_missing_required_capability_fails_negotiation() -> None:
     required = AdapterRequirement("topology")
 
     result = negotiate_adapter((required,), ())
@@ -94,9 +91,6 @@ def test_missing_required_capability_fails_negotiation() -> None:
     assert not result.valid
     assert result.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
     assert result.missing_required == (required,)
-
-
-def test_missing_optional_capability_remains_explicit_without_failing() -> None:
     optional = AdapterRequirement(
         "annotations", required=False, rationale="useful but not required"
     )
@@ -107,9 +101,6 @@ def test_missing_optional_capability_remains_explicit_without_failing() -> None:
     assert result.status == AdapterStatus.DECLARED_LOSS
     assert result.missing_optional == (optional,)
     assert result.missing_required == ()
-
-
-def test_interpretation_change_requires_a_waiver_for_the_exact_loss() -> None:
     loss = _interpretation_loss()
     other_loss = AdapterLoss(
         "metadata.note",
@@ -135,7 +126,7 @@ def test_interpretation_change_requires_a_waiver_for_the_exact_loss() -> None:
     assert waived.unwaived_losses == ()
 
 
-def test_report_composition_rejects_broken_identity_continuity() -> None:
+def test_adapter_negotiation_scenario_2() -> None:
     source = AdapterFormatProfile("source", qualifiers={"encoding": "text"})
     parsed = AdapterFormatProfile("parsed", qualifiers={"shape": "tree"})
     normalized = AdapterFormatProfile("normalized", qualifiers={"shape": "tree"})
@@ -146,9 +137,6 @@ def test_report_composition_rejects_broken_identity_continuity() -> None:
 
     with pytest.raises(ValueError, match="identity continuity"):
         compose_adapter_reports((parse, normalize))
-
-
-def test_report_composition_requires_exact_format_profile_continuity() -> None:
     source = AdapterFormatProfile("source")
     parsed_text = AdapterFormatProfile("parsed", qualifiers={"encoding": "text"})
     parsed_binary = AdapterFormatProfile("parsed", qualifiers={"encoding": "binary"})
@@ -160,9 +148,6 @@ def test_report_composition_requires_exact_format_profile_continuity() -> None:
 
     with pytest.raises(ValueError, match="format-profile continuity"):
         compose_adapter_reports((parse, normalize))
-
-
-def test_valid_report_chain_produces_one_deterministic_cumulative_report() -> None:
     source = AdapterFormatProfile("source", qualifiers={"encoding": "text"})
     parsed = AdapterFormatProfile("parsed", qualifiers={"shape": "tree"})
     normalized = AdapterFormatProfile("normalized", qualifiers={"units": "declared"})
@@ -235,9 +220,6 @@ def test_valid_report_chain_produces_one_deterministic_cumulative_report() -> No
         prepare_backend.report_id,
     )
     assert first.report_id == second.report_id
-
-
-def test_required_executable_capability_loss_cannot_be_waived() -> None:
     requirement = AdapterRequirement("execution")
     capability = AdapterCapability("execution", detail="native executable state")
     loss = AdapterLoss(
@@ -261,7 +243,7 @@ def test_required_executable_capability_loss_cannot_be_waived() -> None:
     assert loss.affected_capability_ids == (capability.capability_id,)
 
 
-def test_unassociated_loss_cannot_bypass_required_capability_protection() -> None:
+def test_adapter_negotiation_scenario_3() -> None:
     requirement = AdapterRequirement("execution")
     capability = AdapterCapability("execution")
     loss = _interpretation_loss()
@@ -274,9 +256,6 @@ def test_unassociated_loss_cannot_bypass_required_capability_protection() -> Non
     assert not result.valid
     assert result.waived_losses == ()
     assert result.unwaived_losses == (loss,)
-
-
-def test_stale_and_semantically_unused_waivers_reject() -> None:
     stale_loss = _interpretation_loss()
     stale_waiver = AdapterWaiver(stale_loss, "no matching declared loss")
     informational_loss = AdapterLoss(
@@ -299,9 +278,6 @@ def test_stale_and_semantically_unused_waivers_reject() -> None:
     assert stale.unused_waivers == (stale_waiver,)
     assert not unnecessary.valid
     assert unnecessary.unused_waivers == (unnecessary_waiver,)
-
-
-def test_composition_derives_optional_and_required_negotiation_status() -> None:
     source = AdapterFormatProfile("source")
     target = AdapterFormatProfile("target")
     optional = AdapterRequirement("annotations", required=False)

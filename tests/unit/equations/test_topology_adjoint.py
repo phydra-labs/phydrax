@@ -8,7 +8,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_reverse_time_tape_applies_step_and_remap_transposes_in_order() -> None:
+def test_reverse_contracts() -> None:
     cross = jnp.asarray(((0.8, 0.2), (0.3, 0.7)))
     remap = phx.equations.fem.ConservativeRemapPlan(jnp.eye(2), jnp.eye(2), cross)
     event = phx.equations.fem.conservative_remap_adjoint_event(
@@ -32,9 +32,6 @@ def test_reverse_time_tape_applies_step_and_remap_transposes_in_order() -> None:
     np.testing.assert_allclose(result.initial_cotangent, expected, atol=3.0e-12)
     assert result.valid
     assert len(result.traversed_record_ids) == 3
-
-
-def test_reverse_checkpoint_schedule_and_unsupported_event_are_explicit() -> None:
     schedule = phx.equations.fem.ReverseCheckpointSchedule(10, 3)
     assert schedule.should_checkpoint(0)
     assert schedule.should_checkpoint(10)

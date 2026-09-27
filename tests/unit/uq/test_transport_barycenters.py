@@ -31,7 +31,7 @@ def _problem() -> Any:
     return first, second, support
 
 
-def test_uq_fixed_support_aggregation_retains_native_solution() -> None:
+def test_transport_barycenters_scenario_1() -> None:
     first, second, support = _problem()
     aggregation = phx.uq.aggregate_transport_barycenter(
         (first, second),
@@ -54,9 +54,6 @@ def test_uq_fixed_support_aggregation_retains_native_solution() -> None:
         "forecast-a",
         "forecast-b",
     )
-
-
-def test_uq_free_support_aggregation_keeps_local_search_provenance() -> None:
     first = _measure([[0.0]], [1.0])
     second = _measure([[2.0]], [1.0])
     initialization = _measure([[0.4]], [1.0], provenance="uq-explicit-initial")
@@ -87,9 +84,6 @@ def test_uq_free_support_aggregation_keeps_local_search_provenance() -> None:
     assert aggregation.transport.provenance.initialization == "uq-explicit-initial"
     assert len(aggregation.transport.inner_results) == 4
     assert aggregation.measure.provenance == "uq-free-support-transport-barycenter"
-
-
-def test_barycenter_objective_term_is_composable_and_returns_native_diagnostics() -> None:
     first, second, support = _problem()
     problem = phx.transport.fixed_support_barycenter_problem(
         (first, second),
@@ -119,9 +113,6 @@ def test_barycenter_objective_term_is_composable_and_returns_native_diagnostics(
     )
     assert term.objective_vars == ("field",)
     assert term.label == "ensemble-law-barycenter"
-
-
-def test_barycenter_training_objective_rejects_nonconvergence() -> None:
     first, second, support = _problem()
     problem = phx.transport.fixed_support_barycenter_problem(
         (first, second),
@@ -142,9 +133,6 @@ def test_barycenter_training_objective_rejects_nonconvergence() -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
         evaluation = term.term_evaluation({})
         jax.block_until_ready(evaluation.value)
-
-
-def test_scientific_barycenter_symbols_are_public() -> None:
     uq_symbols = {
         "FreeSupportTransportBarycenterAggregationResult",
         "TransportBarycenterAggregationResult",

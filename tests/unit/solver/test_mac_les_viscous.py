@@ -137,7 +137,7 @@ def _method(dynamics: Any, step: Any = 1.0e-3) -> Any:
     )
 
 
-def test_zero_coefficient_imex_and_sbdf2_select_exact_constant_profiles() -> None:
+def test_mac_les_viscous_scenario_1() -> None:
     discretization, _, base = _compiled(coefficient=None)
     _, _, zero = _compiled(coefficient=0.0)
     state = base.pack_velocity(_taylor_green(discretization))
@@ -164,9 +164,6 @@ def test_zero_coefficient_imex_and_sbdf2_select_exact_constant_profiles() -> Non
     np.testing.assert_array_equal(
         zero_startup.history.explicit_rate, base_startup.history.explicit_rate
     )
-
-
-def test_frozen_imex_uses_one_inverse_for_predictor_and_composite_projection() -> None:
     discretization, operators, dynamics = _compiled(coefficient=0.12)
     state = dynamics.pack_velocity(_taylor_green(discretization))
 
@@ -181,9 +178,6 @@ def test_frozen_imex_uses_one_inverse_for_predictor_and_composite_projection() -
     assert result.les_stage.prepared_id == dynamics.algebraic_les.prepared_id
     assert result.coefficient_refresh == "accepted-state-once-per-attempt"
     assert jnp.max(jnp.abs(operators.divergence(result.velocity))) < 2.0e-7
-
-
-def test_frozen_sbdf2_restart_extrapolation_and_g_stability_identity() -> None:
     discretization, _, dynamics = _compiled(coefficient=0.12)
     state = dynamics.pack_velocity(_taylor_green(discretization))
     method = phx.solver.MACSBDF2Method(
@@ -213,6 +207,25 @@ def test_frozen_sbdf2_restart_extrapolation_and_g_stability_identity() -> None:
     assert method.capabilities.order == 2
     assert not method.capabilities.adaptive
     assert not method.allows_adaptive_step
+    discretization, _, dynamics = _compiled(coefficient=0.12)
+    other_discretization, _, other = _compiled(coefficient=0.12, count=3)
+    assert discretization.prepared_id != other_discretization.prepared_id
+    viscosity = jnp.zeros(discretization.cell_shape)
+    density = tuple(jnp.ones_like(value) for value in _taylor_green(discretization))
+
+    with pytest.raises(ValueError, match="action and momentum IDs differ"):
+        MACVariableViscosityStagePlan(
+            dynamics.momentum,
+            density,
+            viscosity,
+            1.0e-3,
+            viscosity_action=other.algebraic_les.viscosity_action,
+            stage_id="mismatched-action",
+        )
+    with pytest.raises(ValueError, match="only the iterative"):
+        phx.solver.MACIMEXEulerMethod(
+            dynamics, fixed_step_size=1.0e-3, solve_method="transform"
+        )
 
 
 def test_manufactured_variable_viscosity_refresh_has_declared_temporal_orders() -> None:
@@ -338,28 +351,6 @@ def test_failed_sbdf2_attempt_retains_complete_restart_history_atomically() -> N
     ):
         np.testing.assert_array_equal(failed_rate, startup_rate)
     np.testing.assert_array_equal(failed.history.pressure, startup.history.pressure)
-
-
-def test_mismatched_variational_action_and_unsupported_routes_are_rejected() -> None:
-    discretization, _, dynamics = _compiled(coefficient=0.12)
-    other_discretization, _, other = _compiled(coefficient=0.12, count=3)
-    assert discretization.prepared_id != other_discretization.prepared_id
-    viscosity = jnp.zeros(discretization.cell_shape)
-    density = tuple(jnp.ones_like(value) for value in _taylor_green(discretization))
-
-    with pytest.raises(ValueError, match="action and momentum IDs differ"):
-        MACVariableViscosityStagePlan(
-            dynamics.momentum,
-            density,
-            viscosity,
-            1.0e-3,
-            viscosity_action=other.algebraic_les.viscosity_action,
-            stage_id="mismatched-action",
-        )
-    with pytest.raises(ValueError, match="only the iterative"):
-        phx.solver.MACIMEXEulerMethod(
-            dynamics, fixed_step_size=1.0e-3, solve_method="transform"
-        )
 
 
 def test_sbdf2_is_explicitly_rejected_by_adaptive_rollout() -> None:

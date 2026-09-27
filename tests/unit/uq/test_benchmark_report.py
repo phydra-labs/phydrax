@@ -32,7 +32,7 @@ def _scenario(name: Any, value: Any = 0.5) -> Any:
     return run
 
 
-def test_metric_uses_inclusive_finite_release_gates() -> None:
+def test_benchmark_report_scenario_1() -> None:
     lower = Metric(0.0, "accuracy", minimum=0.0, maximum=1.0)
     upper = Metric(1.0, "accuracy", minimum=0.0, maximum=1.0)
     failed = Metric(1.1, "accuracy", minimum=0.0, maximum=1.0)
@@ -47,6 +47,44 @@ def test_metric_uses_inclusive_finite_release_gates() -> None:
         Metric(0.5, "accuracy", minimum=1.0, maximum=0.0)
     with pytest.raises(ValueError, match="at least one metric"):
         ScenarioResult("empty", "no evidence", 0)
+    smoke = runner.get_configuration("smoke")
+    standard = runner.get_configuration("standard")
+
+    assert {
+        "stochastic_gradient_regression",
+        "linearized_uncertainty_propagation",
+        "dynamic_factor_stochastic_volatility",
+        "exponential_family_geometry",
+    } <= set(runner.SCENARIOS)
+    assert smoke.sgmcmc_burnin > 0
+    assert smoke.sgmcmc_draws > 0
+    assert smoke.sgmcmc_batch_size > 0
+    assert smoke.sgmcmc_steps_per_sample > 0
+    assert standard.sgmcmc_burnin >= smoke.sgmcmc_burnin
+    assert standard.sgmcmc_draws >= smoke.sgmcmc_draws
+    assert smoke.linearized_input_dimension > 0
+    assert smoke.linearized_output_dimension > smoke.linearized_input_dimension
+    assert 0 < smoke.linearized_factor_rank <= smoke.linearized_input_dimension
+    assert smoke.linearized_hutchinson_probes > 1
+    assert smoke.linearized_qmc_samples > 0
+    assert standard.linearized_input_dimension >= smoke.linearized_input_dimension
+    assert standard.linearized_output_dimension >= smoke.linearized_output_dimension
+    assert standard.linearized_factor_rank >= smoke.linearized_factor_rank
+    assert standard.linearized_hutchinson_probes >= smoke.linearized_hutchinson_probes
+    assert standard.linearized_qmc_samples >= smoke.linearized_qmc_samples
+    assert smoke.exponential_family_samples > 0
+    assert smoke.exponential_family_repetitions > 0
+    assert standard.exponential_family_samples >= smoke.exponential_family_samples
+    assert standard.exponential_family_repetitions >= smoke.exponential_family_repetitions
+    assert smoke.dfsv_assets > smoke.dfsv_factors > 0
+    assert smoke.dfsv_steps > 0
+    assert smoke.dfsv_particles > 0
+    assert smoke.dfsv_smoother_paths > 0
+    assert standard.dfsv_assets >= smoke.dfsv_assets
+    assert standard.dfsv_steps >= smoke.dfsv_steps
+    assert standard.dfsv_factors >= smoke.dfsv_factors
+    assert standard.dfsv_particles >= smoke.dfsv_particles
+    assert standard.dfsv_smoother_paths >= smoke.dfsv_smoother_paths
 
 
 def test_report_serialization_is_strict_atomic_and_category_aggregated(
@@ -132,44 +170,3 @@ def test_runner_records_scenario_exceptions_without_losing_the_report(
     assert report.scenarios[0].failures == ("scenario_error",)
     assert report.scenarios[0].error_message is not None
     assert "failure for smoke" in report.scenarios[0].error_message
-
-
-def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered() -> None:
-    smoke = runner.get_configuration("smoke")
-    standard = runner.get_configuration("standard")
-
-    assert {
-        "stochastic_gradient_regression",
-        "linearized_uncertainty_propagation",
-        "dynamic_factor_stochastic_volatility",
-        "exponential_family_geometry",
-    } <= set(runner.SCENARIOS)
-    assert smoke.sgmcmc_burnin > 0
-    assert smoke.sgmcmc_draws > 0
-    assert smoke.sgmcmc_batch_size > 0
-    assert smoke.sgmcmc_steps_per_sample > 0
-    assert standard.sgmcmc_burnin >= smoke.sgmcmc_burnin
-    assert standard.sgmcmc_draws >= smoke.sgmcmc_draws
-    assert smoke.linearized_input_dimension > 0
-    assert smoke.linearized_output_dimension > smoke.linearized_input_dimension
-    assert 0 < smoke.linearized_factor_rank <= smoke.linearized_input_dimension
-    assert smoke.linearized_hutchinson_probes > 1
-    assert smoke.linearized_qmc_samples > 0
-    assert standard.linearized_input_dimension >= smoke.linearized_input_dimension
-    assert standard.linearized_output_dimension >= smoke.linearized_output_dimension
-    assert standard.linearized_factor_rank >= smoke.linearized_factor_rank
-    assert standard.linearized_hutchinson_probes >= smoke.linearized_hutchinson_probes
-    assert standard.linearized_qmc_samples >= smoke.linearized_qmc_samples
-    assert smoke.exponential_family_samples > 0
-    assert smoke.exponential_family_repetitions > 0
-    assert standard.exponential_family_samples >= smoke.exponential_family_samples
-    assert standard.exponential_family_repetitions >= smoke.exponential_family_repetitions
-    assert smoke.dfsv_assets > smoke.dfsv_factors > 0
-    assert smoke.dfsv_steps > 0
-    assert smoke.dfsv_particles > 0
-    assert smoke.dfsv_smoother_paths > 0
-    assert standard.dfsv_assets >= smoke.dfsv_assets
-    assert standard.dfsv_steps >= smoke.dfsv_steps
-    assert standard.dfsv_factors >= smoke.dfsv_factors
-    assert standard.dfsv_particles >= smoke.dfsv_particles
-    assert standard.dfsv_smoother_paths >= smoke.dfsv_smoother_paths

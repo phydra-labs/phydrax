@@ -3,42 +3,32 @@
 #
 
 
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 import scipy.fft as scipy_fft
 
 import phydrax as phx
 
 
-@pytest.mark.parametrize("kind", ["dct", "dst"])
-@pytest.mark.parametrize("transform_type", [1, 2, 3, 4])
-def test_fast_trigonometric_transforms_match_scipy_and_invert(
-    kind: Any, transform_type: Any
-) -> None:
-    transform = phx.linalg.RealTrigonometricTransform(kind, transform_type, 17)
-    values = jnp.linspace(-1.0, 2.0, 17)
-    reference = scipy_fft.dct if kind == "dct" else scipy_fft.dst
+def test_linalg_fast_transforms_scenario_1() -> None:
+    for kind in ["dct", "dst"]:
+        for transform_type in [1, 2, 3, 4]:
+            transform = phx.linalg.RealTrigonometricTransform(kind, transform_type, 17)
+            values = jnp.linspace(-1.0, 2.0, 17)
+            reference = scipy_fft.dct if kind == "dct" else scipy_fft.dst
 
-    coefficients = eqx.filter_jit(transform.analyze)(values)
-    reconstructed = eqx.filter_jit(transform.synthesize)(coefficients)
+            coefficients = eqx.filter_jit(transform.analyze)(values)
+            reconstructed = eqx.filter_jit(transform.synthesize)(coefficients)
 
-    np.testing.assert_allclose(
-        coefficients,
-        reference(np.asarray(values), type=transform_type, norm="ortho"),
-        rtol=2e-12,
-        atol=2e-12,
-    )
-    np.testing.assert_allclose(reconstructed, values, rtol=2e-12, atol=2e-12)
-
-
-def test_tensor_fast_transform_handles_complex_intermediate_values_and_gradients() -> (
-    None
-):
+            np.testing.assert_allclose(
+                coefficients,
+                reference(np.asarray(values), type=transform_type, norm="ortho"),
+                rtol=2e-12,
+                atol=2e-12,
+            )
+            np.testing.assert_allclose(reconstructed, values, rtol=2e-12, atol=2e-12)
     transform = phx.linalg.TensorLinearTransform(
         (
             phx.linalg.FFTLinearTransform(8),

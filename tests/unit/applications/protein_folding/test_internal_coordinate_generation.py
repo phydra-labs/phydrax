@@ -238,7 +238,7 @@ def _cis_proline_fixture(
     return binding, qualifier, rights
 
 
-def test_periodic_decoder_preserves_chirality_rigid_proline_and_declared_cis() -> None:
+def test_internal_coordinate_generation_scenario_1() -> None:
     binding, qualification, _ = _cis_proline_fixture()
     with pytest.raises(ValueError, match="Cis peptide geometry"):
         prepare_bound_protein_coordinate_generation(binding, qualification)
@@ -269,11 +269,6 @@ def test_periodic_decoder_preserves_chirality_rigid_proline_and_declared_cis() -
     )
     assert jnp.all(jnp.isfinite(gradient))
     assert support.support_id == decoder.support_id
-
-
-def test_invalid_periodic_case_and_unsupported_standard_residue_ring_are_retained_or_refused() -> (
-    None
-):
     binding, qualification, _ = _cis_proline_fixture()
     _, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -288,9 +283,6 @@ def test_invalid_periodic_case_and_unsupported_standard_residue_ring_are_retaine
         prepare_bound_protein_coordinate_generation(
             ring_binding, ring_qualification, cis_peptide_indices=(0,)
         )
-
-
-def test_glycine_is_achiral_without_suppressing_other_residue_evidence() -> None:
     binding, qualification, _ = _cis_proline_fixture(glycine=True)
     _, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -305,7 +297,7 @@ def test_glycine_is_achiral_without_suppressing_other_residue_evidence() -> None
     assert jnp.all(full.chirality_valid)
 
 
-def test_standard_aromatic_ring_is_a_rigid_evaluated_closure_group() -> None:
+def test_internal_coordinate_generation_scenario_2() -> None:
     binding, qualification, _ = _cis_proline_fixture(aromatic=True)
     _, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)
@@ -317,9 +309,6 @@ def test_standard_aromatic_ring_is_a_rigid_evaluated_closure_group() -> None:
     assert decoded.valid
     assert jnp.all(decoded.closure.valid)
     assert qualification.evaluate(decoded.positions).successful
-
-
-def test_internal_flow_retains_every_raw_decoded_and_failed_proposal() -> None:
     binding, qualification, rights = _cis_proline_fixture()
     support, decoder = prepare_bound_protein_coordinate_generation(
         binding, qualification, cis_peptide_indices=(0,)

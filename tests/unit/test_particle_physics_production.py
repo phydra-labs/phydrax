@@ -32,7 +32,7 @@ def _event_plan(event_capacity: Any = 2, particle_capacity: Any = 4) -> Any:
     )
 
 
-def test_event_weight_accounting_preserves_signed_statistics_and_overflow() -> None:
+def test_particle_physics_production_scenario_1() -> None:
     weights = phx.particle_physics.EventWeightSet(
         jnp.asarray([[1.0], [-0.5], [0.0]]),
         names=("nominal",),
@@ -59,9 +59,6 @@ def test_event_weight_accounting_preserves_signed_statistics_and_overflow() -> N
     )
     assert not bool(overflow.successful)
     assert int(overflow.overflow_count) == 1
-
-
-def test_lhef_roundtrip_preserves_supported_event_semantics() -> None:
     text = """<LesHouchesEvents version=\"3.0\">
 <init>0 0 0 0 0 0 0 0 3 1\n0 0 0 0</init>
 <event>
@@ -89,9 +86,6 @@ def test_lhef_roundtrip_preserves_supported_event_semantics() -> None:
     assert jnp.isclose(reimported.events.weights.nominal[0], 2.5)
     hepmc = phx.interchange.hep.write_hepmc3_ascii(imported.events)
     assert "\nU GEV MM\n" in hepmc.payload
-
-
-def test_duplicate_event_identity_invalidates_every_duplicate() -> None:
     plan = _event_plan().prepare()
     weights = phx.particle_physics.EventWeightSet(
         jnp.ones((2, 1)),

@@ -1208,74 +1208,69 @@ def test_embedded_boundary_metric_policy_and_body_identities_reach_compilation()
     assert prepared[0].cut_boundary_id != prepared[3].cut_boundary_id
 
 
-@pytest.mark.parametrize(
-    "component",
-    ("vof", "amr", "overset", "sliding", "motion", "topology_events"),
-)
-def test_embedded_boundary_compilation_rejects_coupled_subsystems_with_ids(
-    component: Any,
-) -> None:
-    base_plan = _coupling_mesh_plan()
-    discretization = base_plan.prepare()
-    (
-        motion,
-        _,
-        _,
-        vof,
-        amr,
-        overset,
-        sliding,
-    ) = _current_coupling_artifacts(base_plan, discretization)
-    _, embedded_boundary, embedded_boundaries = _stationary_embedded_coupling(
-        discretization
-    )
-    options = {
-        "embedded_boundary": embedded_boundary,
-        "embedded_boundaries": embedded_boundaries,
-    }
-    conflicting_components = {
-        "motion": motion,
-        "vof": vof,
-        "amr": amr,
-        "overset": overset,
-    }
-    if component == "sliding":
-        options.update(
-            motion=motion,
-            sliding=sliding,
-            topology_event_capacity=1,
-            topology_event_policy="accepted_step",
+def test_embedded_boundary_compilation_rejects_coupled_subsystems_with_ids() -> None:
+    for component in ("vof", "amr", "overset", "sliding", "motion", "topology_events"):
+        base_plan = _coupling_mesh_plan()
+        discretization = base_plan.prepare()
+        (
+            motion,
+            _,
+            _,
+            vof,
+            amr,
+            overset,
+            sliding,
+        ) = _current_coupling_artifacts(base_plan, discretization)
+        _, embedded_boundary, embedded_boundaries = _stationary_embedded_coupling(
+            discretization
         )
-    elif component == "topology_events":
-        options.update(
-            topology_event_capacity=1,
-            topology_event_policy="accepted_step",
+        options = {
+            "embedded_boundary": embedded_boundary,
+            "embedded_boundaries": embedded_boundaries,
+        }
+        conflicting_components = {
+            "motion": motion,
+            "vof": vof,
+            "amr": amr,
+            "overset": overset,
+        }
+        if component == "sliding":
+            options.update(
+                motion=motion,
+                sliding=sliding,
+                topology_event_capacity=1,
+                topology_event_policy="accepted_step",
+            )
+        elif component == "topology_events":
+            options.update(
+                topology_event_capacity=1,
+                topology_event_policy="accepted_step",
+            )
+        else:
+            options[component] = conflicting_components[component]
+        # ty: ignore[invalid-argument-type]
+        coupling = UnstructuredFiniteVolumeCouplingPlan(**options)
+        conflicting_id = (
+            coupling.topology_event_id
+            if component == "topology_events"
+            else getattr(coupling, component).plan_id
         )
-    else:
-        options[component] = conflicting_components[component]
-    # ty: ignore[invalid-argument-type]
-    coupling = UnstructuredFiniteVolumeCouplingPlan(**options)
-    conflicting_id = (
-        coupling.topology_event_id
-        if component == "topology_events"
-        else getattr(coupling, component).plan_id
-    )
 
-    assert conflicting_id is not None
+        assert conflicting_id is not None
 
-    with pytest.raises(ValueError) as compile_error:
-        _compile_scalar_coupling(discretization, coupling)
+        with pytest.raises(ValueError) as compile_error:
+            _compile_scalar_coupling(discretization, coupling)
 
-    message = str(compile_error.value)
-    if component == "amr":
-        assert conflicting_id in message
-        assert "PreparedUnstructuredAMRRuntime" in message
-    elif component == "sliding":
-        assert "Sliding coupling requires" in message
-    else:
-        assert embedded_boundary.plan_id in message
-        assert conflicting_id in message
-        assert f"{component}=" in message
+        message = str(compile_error.value)
+        if component == "amr":
+            assert conflicting_id in message
+            assert "PreparedUnstructuredAMRRuntime" in message
+        elif component == "sliding":
+            assert "Sliding coupling requires" in message
+        else:
+            assert embedded_boundary.plan_id in message
+            assert conflicting_id in message
+            assert f"{component}=" in message
 
 
 def test_embedded_boundary_compilation_rejects_high_order_reconstruction() -> None:

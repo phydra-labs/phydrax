@@ -16,7 +16,7 @@ from phydrax.solver._functional_run import (
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
-def test_functional_sharding_places_named_sample_axes_and_replicates_events() -> None:
+def test_functional_sharding_windows_scenario_1() -> None:
     policy = phx.solver.FunctionalShardingPolicy({"sample": "data"})
     field = cx.AxisArray(
         jnp.arange(8.0).reshape((4, 2)),
@@ -30,33 +30,12 @@ def test_functional_sharding_places_named_sample_axes_and_replicates_events() ->
     assert placed.data.sharding.mesh == policy.mesh
     assert policy.field_sharding(field).spec == jax.sharding.PartitionSpec("data", None)
     assert jnp.allclose(jnp.sum(placed.data), 28.0)
-
-
-def _scalar_solver(value: Any = 1.0) -> Any:
-    domain = phx.domain.Interval1d(0.0, 1.0)
-    field = domain.Parameter(jnp.asarray(value))
-    component = domain.component()
-    condition = phx.conditions.Residual("u", component, lambda current: current)
-    batch = component.points({"x": jnp.asarray([[0.1], [0.3], [0.7], [0.9]])})
-    term = phx.terms.ResidualPenalty(
-        condition,
-        phx.integration.fixed(
-            phx.integration.from_samples(phx.integration.mean_over(component), batch)
-        ),
-    )
-    return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
-
-
-def test_functional_sharding_rejects_coordinator_outside_mesh() -> None:
     outside_mesh = max(device.process_index for device in jax.devices()) + 1
     with pytest.raises(ValueError, match="represented by the sharding mesh"):
         phx.solver.FunctionalShardingPolicy(
             {"sample": "data"},
             coordinator_process=outside_mesh,
         )
-
-
-def test_functional_session_rejects_sharding_execution_group_mismatch() -> None:
     training = phx.solver.FunctionalTrainingPlan(
         sharding=phx.solver.FunctionalShardingPolicy(
             {"sample": "data"},
@@ -77,9 +56,72 @@ def test_functional_session_rejects_sharding_execution_group_mismatch() -> None:
             training=training,
             session=session,
         )
+    schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
+    plan = phx.solver.FunctionalTimeWindowPlan(
+        schedule,
+        _WindowAdapter(),
+        lambda index: optax.sgd(0.05),
+        steps=1,
+    )
+    result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
 
+    assert len(result.solvers) == 2
+    assert len(result.terminal_fields) == 2
+    assert len(result.seam_metrics) == 1
+    assert result.solver_at(jnp.asarray(0.25)) is result.solvers[0]
+    assert result.solver_at(jnp.asarray(0.75)) is result.solvers[1]
+    assert bool(result.successful)
+    schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
+    plan = phx.solver.FunctionalTimeWindowPlan(
+        schedule,
+        _WindowAdapter(),
+        lambda index: optax.adam(0.01),
+        steps=1,
+        training=phx.solver.FunctionalTrainingPlan(
+            update_alignment=phx.optim.ConflictFreeUpdatePolicy()
+        ),
+        transfer_optimizer_state=True,
+    )
+    result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
+    final_state = result.solvers[-1].training_state
+    assert final_state is not None
+    for trained in result.solvers:
+        assert trained.training_state is not None
+        statistics = trained.training_state.kernel_state.rule_state.statistics
+        assert statistics is not None
+        assert int(statistics.steps) == 1
+    # The second window resumes the first window's Adam state: its step count is 2.
+    integer_scalars = tuple(
+        int(value)
+        for value in jax.tree.leaves(final_state.kernel_state.rule_state.optimizer_state)
+        if hasattr(value, "dtype")
+        and jnp.issubdtype(value.dtype, jnp.integer)
+        and value.shape == ()
+    )
+    assert 2 in integer_scalars
+    schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
+    plan = phx.solver.FunctionalTimeWindowPlan(
+        schedule,
+        _WidthChangingWindowAdapter(),
+        lambda index: optax.adam(0.01),
+        steps=1,
+        training=phx.solver.FunctionalTrainingPlan(),
+        transfer_optimizer_state=True,
+    )
 
-def test_sharded_functional_ntk_matches_unsharded_global_kernel() -> None:
+    result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
+    final_state = result.solvers[-1].training_state
+
+    assert final_state is not None
+    assert final_state.current_functions["u"].func().shape == (2,)
+    integer_scalars = tuple(
+        int(value)
+        for value in jax.tree.leaves(final_state.kernel_state.rule_state)
+        if hasattr(value, "dtype")
+        and jnp.issubdtype(value.dtype, jnp.integer)
+        and value.shape == ()
+    )
+    assert 1 in integer_scalars
     solver = _scalar_solver()
     params, non_trainable = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
@@ -120,6 +162,21 @@ def test_sharded_functional_ntk_matches_unsharded_global_kernel() -> None:
         materialize(sharded_ntk.kernel, materialization),
         materialize(unsharded_ntk.kernel, materialization),
     )
+
+
+def _scalar_solver(value: Any = 1.0) -> Any:
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    field = domain.Parameter(jnp.asarray(value))
+    component = domain.component()
+    condition = phx.conditions.Residual("u", component, lambda current: current)
+    batch = component.points({"x": jnp.asarray([[0.1], [0.3], [0.7], [0.9]])})
+    term = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(
+            phx.integration.from_samples(phx.integration.mean_over(component), batch)
+        ),
+    )
+    return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
 class _WindowAdapter(phx.solver.FunctionalWindowAdapter):
@@ -194,78 +251,3 @@ class _WidthChangingWindowAdapter(phx.solver.FunctionalWindowAdapter):
     ) -> Any:
         del previous_terminal, current_solver, window_index, bounds
         return {"u": jnp.asarray(0.0)}
-
-
-def test_functional_time_windows_train_and_route_physical_query() -> None:
-    schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
-    plan = phx.solver.FunctionalTimeWindowPlan(
-        schedule,
-        _WindowAdapter(),
-        lambda index: optax.sgd(0.05),
-        steps=1,
-    )
-    result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
-
-    assert len(result.solvers) == 2
-    assert len(result.terminal_fields) == 2
-    assert len(result.seam_metrics) == 1
-    assert result.solver_at(jnp.asarray(0.25)) is result.solvers[0]
-    assert result.solver_at(jnp.asarray(0.75)) is result.solvers[1]
-    assert bool(result.successful)
-
-
-def test_functional_time_windows_transfer_optimizer_state_independently() -> None:
-    schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
-    plan = phx.solver.FunctionalTimeWindowPlan(
-        schedule,
-        _WindowAdapter(),
-        lambda index: optax.adam(0.01),
-        steps=1,
-        training=phx.solver.FunctionalTrainingPlan(
-            update_alignment=phx.optim.ConflictFreeUpdatePolicy()
-        ),
-        transfer_optimizer_state=True,
-    )
-    result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
-    final_state = result.solvers[-1].training_state
-    assert final_state is not None
-    for trained in result.solvers:
-        assert trained.training_state is not None
-        statistics = trained.training_state.kernel_state.rule_state.statistics
-        assert statistics is not None
-        assert int(statistics.steps) == 1
-    # The second window resumes the first window's Adam state: its step count is 2.
-    integer_scalars = tuple(
-        int(value)
-        for value in jax.tree.leaves(final_state.kernel_state.rule_state.optimizer_state)
-        if hasattr(value, "dtype")
-        and jnp.issubdtype(value.dtype, jnp.integer)
-        and value.shape == ()
-    )
-    assert 2 in integer_scalars
-
-
-def test_functional_time_windows_reinitialize_incompatible_optimizer_state() -> None:
-    schedule = phx.sampling.collocation.CausalTimeSlabSchedule((0.0, 0.5, 1.0))
-    plan = phx.solver.FunctionalTimeWindowPlan(
-        schedule,
-        _WidthChangingWindowAdapter(),
-        lambda index: optax.adam(0.01),
-        steps=1,
-        training=phx.solver.FunctionalTrainingPlan(),
-        transfer_optimizer_state=True,
-    )
-
-    result = phx.solver.train_functional_time_windows(_scalar_solver(), plan)
-    final_state = result.solvers[-1].training_state
-
-    assert final_state is not None
-    assert final_state.current_functions["u"].func().shape == (2,)
-    integer_scalars = tuple(
-        int(value)
-        for value in jax.tree.leaves(final_state.kernel_state.rule_state)
-        if hasattr(value, "dtype")
-        and jnp.issubdtype(value.dtype, jnp.integer)
-        and value.shape == ()
-    )
-    assert 1 in integer_scalars

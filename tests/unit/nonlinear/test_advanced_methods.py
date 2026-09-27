@@ -139,105 +139,105 @@ def test_advanced_nonlinear_public_exports_are_available() -> None:
     assert all(hasattr(nl, name) for name in names)
 
 
-@pytest.mark.parametrize("linear_solver", ("matrix-free", "dense-lu"))
-def test_implicit_root_matches_analytic_primal_forward_and_reverse_sensitivities(
-    linear_solver: Any,
-) -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, target: state * state - target,
-        problem_id="implicit-positive-square-root",
-    )
-    initial = jnp.ones((3,), dtype=jnp.float64)
-    target = jnp.asarray([0.5, 1.0, 2.0], dtype=jnp.float64)
-    direction = jnp.asarray([0.2, -0.3, 0.4], dtype=jnp.float64)
-    termination = nl.NonlinearTermination(
-        absolute_residual=1e-11,
-        relative_residual=1e-11,
-        maximum_steps=20,
-        maximum_evaluations=40,
-    )
-    method = (
-        nl.NewtonKrylov()
-        if linear_solver == "matrix-free"
-        else nl.NewtonKrylov(linear_policy=la.LinearSolvePolicy(la.DenseLU()))
-    )
-
-    def solution(expected: Any) -> Any:
-        return nl.implicit_root(
-            problem,
-            initial,
-            method=method,
-            termination=termination,
-            args=expected,
+def test_implicit_root_matches_analytic_primal_forward_and_reverse_sensitivities() -> (
+    None
+):
+    for linear_solver in ("matrix-free", "dense-lu"):
+        problem = nl.NonlinearSystemProblem(
+            lambda state, target: state * state - target,
+            problem_id="implicit-positive-square-root",
+        )
+        initial = jnp.ones((3,), dtype=jnp.float64)
+        target = jnp.asarray([0.5, 1.0, 2.0], dtype=jnp.float64)
+        direction = jnp.asarray([0.2, -0.3, 0.4], dtype=jnp.float64)
+        termination = nl.NonlinearTermination(
+            absolute_residual=1e-11,
+            relative_residual=1e-11,
+            maximum_steps=20,
+            maximum_evaluations=40,
+        )
+        method = (
+            nl.NewtonKrylov()
+            if linear_solver == "matrix-free"
+            else nl.NewtonKrylov(linear_policy=la.LinearSolvePolicy(la.DenseLU()))
         )
 
-    root, tangent = jax.jvp(solution, (target,), (direction,))
-    gradient = jax.grad(lambda expected: jnp.sum(solution(expected)))(target)
-    expected_root = jnp.sqrt(target)
-    expected_diagonal = 0.5 / expected_root
-
-    assert jnp.allclose(root, expected_root, rtol=1e-9, atol=1e-10)
-    assert jnp.allclose(
-        tangent,
-        expected_diagonal * direction,
-        rtol=1e-8,
-        atol=1e-10,
-    )
-    assert jnp.allclose(gradient, expected_diagonal, rtol=1e-8, atol=1e-10)
-
-
-@pytest.mark.parametrize("globalization", ("line-search", "trust-region"))
-def test_newton_rebases_distinct_pytree_spaces_without_dense_fallback(
-    globalization: Any,
-) -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, args: _CoordinateResidual(2.0 * state.value - 4.0),
-        problem_id=f"distinct-space-{globalization}",
-    )
-
-    def jacobian(state: Any, args: Any) -> Any:
-        del args
-        source = la.PyTreeSpace(state)
-        target = la.PyTreeSpace(_CoordinateResidual(jnp.zeros_like(state.value)))
-        return _NoDenseDistinctJacobian(source, target)
-
-    jacobian_policy = nl.JacobianPolicy("explicit", operator=jacobian)
-    if globalization == "line-search":
-        method = nl.NewtonKrylov(jacobian_policy=jacobian_policy)
-    else:
-        method = nl.NewtonTrustRegion(jacobian_policy=jacobian_policy)
-    termination = nl.NonlinearTermination(
-        absolute_residual=1e-10,
-        relative_residual=1e-10,
-        maximum_steps=8,
-    )
-    initial = jnp.asarray([0.0])
-
-    result = method.solve(
-        problem,
-        _CoordinateState(initial),
-        termination=termination,
-    )
-    jitted_state = jax.jit(
-        lambda value: (
-            method.solve(
+        def solution(expected: Any) -> Any:
+            return nl.implicit_root(
                 problem,
-                _CoordinateState(value),
+                initial,
+                method=method,
                 termination=termination,
-            ).state.value
-        )
-    )(initial)
+                args=expected,
+            )
 
-    assert bool(result.successful)
-    assert result.transformation_evidence is None
-    assert isinstance(result.state, _CoordinateState)
-    assert isinstance(result.residual, _CoordinateResidual)
-    assert jnp.allclose(result.state.value, jnp.asarray([2.0]))
-    assert jnp.allclose(jitted_state, jnp.asarray([2.0]))
-    assert method.linear_policy.method.name == "gmres"
-    assert result.provenance.derivative_id == "explicit"
-    assert result.provenance.linear_plan_id
-    assert result.provenance.notes == ("linear-method=gmres;linear-backend=native-krylov")
+        root, tangent = jax.jvp(solution, (target,), (direction,))
+        gradient = jax.grad(lambda expected: jnp.sum(solution(expected)))(target)
+        expected_root = jnp.sqrt(target)
+        expected_diagonal = 0.5 / expected_root
+
+        assert jnp.allclose(root, expected_root, rtol=1e-9, atol=1e-10)
+        assert jnp.allclose(
+            tangent,
+            expected_diagonal * direction,
+            rtol=1e-8,
+            atol=1e-10,
+        )
+        assert jnp.allclose(gradient, expected_diagonal, rtol=1e-8, atol=1e-10)
+
+
+def test_newton_rebases_distinct_pytree_spaces_without_dense_fallback() -> None:
+    for globalization in ("line-search", "trust-region"):
+        problem = nl.NonlinearSystemProblem(
+            lambda state, args: _CoordinateResidual(2.0 * state.value - 4.0),
+            problem_id=f"distinct-space-{globalization}",
+        )
+
+        def jacobian(state: Any, args: Any) -> Any:
+            del args
+            source = la.PyTreeSpace(state)
+            target = la.PyTreeSpace(_CoordinateResidual(jnp.zeros_like(state.value)))
+            return _NoDenseDistinctJacobian(source, target)
+
+        jacobian_policy = nl.JacobianPolicy("explicit", operator=jacobian)
+        if globalization == "line-search":
+            method = nl.NewtonKrylov(jacobian_policy=jacobian_policy)
+        else:
+            method = nl.NewtonTrustRegion(jacobian_policy=jacobian_policy)
+        termination = nl.NonlinearTermination(
+            absolute_residual=1e-10,
+            relative_residual=1e-10,
+            maximum_steps=8,
+        )
+        initial = jnp.asarray([0.0])
+
+        result = method.solve(
+            problem,
+            _CoordinateState(initial),
+            termination=termination,
+        )
+        jitted_state = jax.jit(
+            lambda value: (
+                method.solve(
+                    problem,
+                    _CoordinateState(value),
+                    termination=termination,
+                ).state.value
+            )
+        )(initial)
+
+        assert bool(result.successful)
+        assert result.transformation_evidence is None
+        assert isinstance(result.state, _CoordinateState)
+        assert isinstance(result.residual, _CoordinateResidual)
+        assert jnp.allclose(result.state.value, jnp.asarray([2.0]))
+        assert jnp.allclose(jitted_state, jnp.asarray([2.0]))
+        assert method.linear_policy.method.name == "gmres"
+        assert result.provenance.derivative_id == "explicit"
+        assert result.provenance.linear_plan_id
+        assert result.provenance.notes == (
+            "linear-method=gmres;linear-backend=native-krylov"
+        )
 
 
 def test_newton_still_rejects_unequal_coordinate_dimensions() -> None:
@@ -821,34 +821,29 @@ def _nonlinear_fas_hierarchy() -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    ("kind", "coarse_solves", "level_visits"),
-    (
+def test_fas_cycles_reduce_a_nonlinear_residual_across_levels() -> None:
+    for kind, coarse_solves, level_visits in (
         ("v", 1, (1, 1, 1)),
         ("w", 4, (1, 2, 4)),
         ("f", 3, (1, 2, 3)),
-    ),
-)
-def test_fas_cycles_reduce_a_nonlinear_residual_across_levels(
-    kind: Any, coarse_solves: Any, level_visits: Any
-) -> None:
-    hierarchy = _nonlinear_fas_hierarchy()
-    result = nl.fas_cycle(
-        hierarchy,
-        jnp.full((4,), 0.5),
-        right_hand_side=jnp.ones((4,)),
-        policy=nl.FASCyclePolicy(kind),
-    )
+    ):
+        hierarchy = _nonlinear_fas_hierarchy()
+        result = nl.fas_cycle(
+            hierarchy,
+            jnp.full((4,), 0.5),
+            right_hand_side=jnp.ones((4,)),
+            policy=nl.FASCyclePolicy(kind),
+        )
 
-    assert bool(result.successful)
-    assert float(result.diagnostics.final_residual_norm) < float(
-        result.diagnostics.initial_residual_norm
-    )
-    assert jnp.allclose(result.state, jnp.ones((4,)))
-    assert int(result.diagnostics.coarse_solves) == coarse_solves
-    assert jnp.array_equal(result.diagnostics.level_visits, jnp.asarray(level_visits))
-    assert result.provenance.problem_id == "square-fas"
-    assert int(hierarchy.numeric_refreshes) == 3
+        assert bool(result.successful)
+        assert float(result.diagnostics.final_residual_norm) < float(
+            result.diagnostics.initial_residual_norm
+        )
+        assert jnp.allclose(result.state, jnp.ones((4,)))
+        assert int(result.diagnostics.coarse_solves) == coarse_solves
+        assert jnp.array_equal(result.diagnostics.level_visits, jnp.asarray(level_visits))
+        assert result.provenance.problem_id == "square-fas"
+        assert int(hierarchy.numeric_refreshes) == 3
 
 
 def test_vi_certificate_separates_feasibility_from_complementarity() -> None:
@@ -936,32 +931,32 @@ def test_generalized_derivative_policy_requires_a_clarke_unit_vector() -> None:
         nl.GeneralizedDerivativePolicy(origin_coefficient=0.8)
 
 
-@pytest.mark.parametrize("globalization", ("line-search", "trust-region"))
-def test_newton_globalization_reports_finite_domain_rejections(
-    globalization: Any,
-) -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, args: state - 2.0,
-        validity=lambda state, residual, auxiliary, args: jnp.all(state <= 0.0),
-        problem_id=f"{globalization}-domain",
-    )
-    if globalization == "line-search":
-        method = nl.NewtonKrylov(line_search=nl.RootLineSearch(maximum_steps=3))
-    else:
-        method = nl.NewtonTrustRegion(trust_region=nl.RootTrustRegion(maximum_attempts=3))
+def test_newton_globalization_reports_finite_domain_rejections() -> None:
+    for globalization in ("line-search", "trust-region"):
+        problem = nl.NonlinearSystemProblem(
+            lambda state, args: state - 2.0,
+            validity=lambda state, residual, auxiliary, args: jnp.all(state <= 0.0),
+            problem_id=f"{globalization}-domain",
+        )
+        if globalization == "line-search":
+            method = nl.NewtonKrylov(line_search=nl.RootLineSearch(maximum_steps=3))
+        else:
+            method = nl.NewtonTrustRegion(
+                trust_region=nl.RootTrustRegion(maximum_attempts=3)
+            )
 
-    result = method.solve(
-        problem,
-        jnp.asarray([0.0]),
-        termination=nl.NonlinearTermination(maximum_steps=2),
-    )
+        result = method.solve(
+            problem,
+            jnp.asarray([0.0]),
+            termination=nl.NonlinearTermination(maximum_steps=2),
+        )
 
-    assert int(result.status) == int(nl.NonlinearStatus.RECOVERABLE_DOMAIN_FAILURE)
-    assert int(result.diagnostics.domain_failures) == 3
-    assert int(result.diagnostics.nonfinite_trials) == 0
-    assert int(result.diagnostics.rejected_steps) == 1
-    assert jnp.allclose(result.state, jnp.asarray([0.0]))
-    assert jnp.all(jnp.isfinite(result.residual))
+        assert int(result.status) == int(nl.NonlinearStatus.RECOVERABLE_DOMAIN_FAILURE)
+        assert int(result.diagnostics.domain_failures) == 3
+        assert int(result.diagnostics.nonfinite_trials) == 0
+        assert int(result.diagnostics.rejected_steps) == 1
+        assert jnp.allclose(result.state, jnp.asarray([0.0]))
+        assert jnp.all(jnp.isfinite(result.residual))
 
 
 def test_newton_rejects_a_finite_but_invalid_initial_state_using_auxiliary_data() -> None:

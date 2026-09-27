@@ -186,7 +186,7 @@ def _prepared(
     return mixed, state, preparation.executable
 
 
-def test_single_part_density_poisson_force_and_mass_match_local_authority() -> None:
+def test_cosmology_distributed_mixed_scenario_1() -> None:
     mixed, state, distributed = _prepared()
     local_density = mixed.density.assemble(state)
     local_gravity = mixed.gravity.solve(local_density)
@@ -211,9 +211,6 @@ def test_single_part_density_poisson_force_and_mass_match_local_authority() -> N
     )
     np.testing.assert_allclose(gravity.total_force, local_gravity.total_force, atol=2e-11)
     assert bool(gravity.successful)
-
-
-def test_phase_gate_matches_local_authority_and_rolls_back_atomically() -> None:
     mixed, state, distributed = _prepared(maximum_phase_radians=1.0e-20)
     local = mixed.rollout(state)
     sharded = distributed.initialize(state)
@@ -227,35 +224,24 @@ def test_phase_gate_matches_local_authority_and_rolls_back_atomically() -> None:
     np.testing.assert_array_equal(
         step.state.particles.positions, sharded.particles.positions
     )
-
-
-@pytest.mark.parametrize(
-    ("wave_scale", "particle_scale"),
-    (
+    for wave_scale, particle_scale in (
         (np.nan, 1.0),
         (1.0, 1.000001),
         (1.000001, 1.000001),
-    ),
-)
-def test_initialize_rejects_nonfinite_misaligned_or_noninitial_scales(
-    wave_scale: Any, particle_scale: Any
-) -> None:
-    _, state, distributed = _prepared()
-    invalid = WaveParticleCosmologyState(
-        type(state.wave)(state.wave.psi, jnp.asarray(wave_scale)),
-        type(state.particles)(
-            state.particles.positions,
-            state.particles.canonical_momenta,
-            jnp.asarray(particle_scale),
-        ),
-    )
+    ):
+        _, state, distributed = _prepared()
+        invalid = WaveParticleCosmologyState(
+            type(state.wave)(state.wave.psi, jnp.asarray(wave_scale)),
+            type(state.particles)(
+                state.particles.positions,
+                state.particles.canonical_momenta,
+                jnp.asarray(particle_scale),
+            ),
+        )
 
-    with pytest.raises(Exception, match="finite, positive, aligned|first scheduled"):
-        initialized = distributed.initialize(invalid)
-        jax.block_until_ready(initialized.wave.scale_factor)
-
-
-def test_initialize_rejects_runtime_component_precision_substitution() -> None:
+        with pytest.raises(Exception, match="finite, positive, aligned|first scheduled"):
+            initialized = distributed.initialize(invalid)
+            jax.block_until_ready(initialized.wave.scale_factor)
     _, state, distributed = _prepared()
     particles = type(state.particles)(
         state.particles.positions.astype(jnp.float32),
@@ -268,7 +254,7 @@ def test_initialize_rejects_runtime_component_precision_substitution() -> None:
         distributed.initialize(substituted)
 
 
-def test_spectral_state_and_precision_abi_mismatch_refuses_preparation() -> None:
+def test_cosmology_distributed_mixed_scenario_2() -> None:
     _, _, distributed = _prepared()
     admitted = distributed.plan
     wave = admitted.mixed.plan.wave
@@ -306,9 +292,6 @@ def test_spectral_state_and_precision_abi_mismatch_refuses_preparation() -> None
         assert not bool(result.successful)
         assert result.executable is None
         assert "spectral-abi" in result.evidence.collective.missing_primitives
-
-
-def test_particle_migration_preserves_stable_ids_and_rng_at_periodic_boundary() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state, rng_counters=jnp.arange(16, dtype=jnp.uint64))
     logical = distributed.particle_runtime.logical_arrays(sharded.particles)
@@ -331,9 +314,6 @@ def test_particle_migration_preserves_stable_ids_and_rng_at_periodic_boundary() 
     np.testing.assert_array_equal(restored["stable_ids"], jnp.arange(16))
     np.testing.assert_array_equal(restored["rng_counters"], jnp.arange(16) + 1)
     np.testing.assert_allclose(restored["positions"], proposed)
-
-
-def test_particle_migration_detects_duplicate_stable_ids_across_owners() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state)
     particles = sharded.particles
@@ -355,9 +335,6 @@ def test_particle_migration_detects_duplicate_stable_ids_across_owners() -> None
 
     assert not bool(attempted.evidence.successful)
     assert not bool(attempted.evidence.ids_unique)
-
-
-def test_periodic_particle_ghost_exchange_is_bounded_and_owner_identified() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state)
     ghosts = distributed.particle_runtime.exchange_ghosts(sharded.particles)
@@ -375,7 +352,7 @@ def test_periodic_particle_ghost_exchange_is_bounded_and_owner_identified() -> N
     np.testing.assert_array_equal(ghosts.right_count, jnp.sum(valid[:, 1], axis=1))
 
 
-def test_receive_capacity_failure_rolls_back_every_particle_field() -> None:
+def test_cosmology_distributed_mixed_scenario_3() -> None:
     _, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state, rng_counters=jnp.arange(16, dtype=jnp.uint64))
     proposed = jnp.full_like(sharded.particles.positions, 0.25)
@@ -394,9 +371,6 @@ def test_receive_capacity_failure_rolls_back_every_particle_field() -> None:
     ):
         if isinstance(incoming, jax.Array):
             np.testing.assert_array_equal(incoming, retained)
-
-
-def test_multi_part_deposit_has_unique_ownership_and_additive_mass() -> None:
     mixed, state, distributed = _prepared(parts=2)
     sharded = distributed.initialize(state)
     density = distributed.assemble_density(sharded)
@@ -425,11 +399,6 @@ def test_multi_part_deposit_has_unique_ownership_and_additive_mass() -> None:
     )
     logical = distributed.particle_runtime.logical_arrays(sharded.particles)
     np.testing.assert_array_equal(jnp.sort(logical["stable_ids"]), jnp.arange(16))
-
-
-def test_checkpoint_evidence_binds_complete_coverage_and_changed_sharding_restore() -> (
-    None
-):
     _, _, distributed = _prepared()
     checkpoint = distributed.evidence.checkpoint
 
@@ -454,9 +423,6 @@ def test_checkpoint_evidence_binds_complete_coverage_and_changed_sharding_restor
     assert collective.particle_ghost_capacity == 16
     assert collective.particle_exchange_bytes_per_device > 0
     assert not collective.host_gather_fallback
-
-
-def test_checkpoint_resource_preflight_refuses_before_execution() -> None:
     _, _, distributed = _prepared()
     admitted = distributed.plan
     refused = DistributedMixedExecutionPlan(
@@ -476,24 +442,6 @@ def test_checkpoint_resource_preflight_refuses_before_execution() -> None:
     assert refused.executable is None
     assert refused.evidence.status == "checkpoint-incomplete"
     assert not refused.evidence.checkpoint.capacity_sufficient
-
-
-def test_ghost_capacity_cannot_exceed_local_particle_capacity() -> None:
-    _, _, distributed = _prepared()
-    admitted = distributed.plan
-    with pytest.raises(ValueError, match="exchange capacities"):
-        DistributedMixedExecutionPlan(
-            admitted.mixed,
-            admitted.spectral,
-            admitted.execution,
-            admitted.particles,
-            admitted.feasibility,
-            maximum_checkpoint_bytes=2**28,
-            particle_ghost_capacity=admitted.particles.capacity_per_device + 1,
-        )
-
-
-def test_checkpoint_payload_padding_is_mesh_divisible_and_schema_unpadded() -> None:
     _, state, distributed = _prepared(parts=3, count=6)
     payload = distributed.checkpoint_tree(distributed.initialize(state))["payload"]
     expected_padding = (
@@ -511,65 +459,81 @@ def test_checkpoint_payload_padding_is_mesh_divisible_and_schema_unpadded() -> N
     )
 
 
-@pytest.mark.parametrize(
-    ("source_parts", "destination_parts", "count"),
-    ((2, 1, 4), (2, 3, 6), (3, 2, 6)),
-)
-def test_checkpoint_restore_changes_particle_and_field_sharding(
-    tmp_path: Path, source_parts: int, destination_parts: int, count: int
-) -> None:
-    _, state, source = _prepared(parts=source_parts, count=count)
-    _, _, destination = _prepared(parts=destination_parts, count=count)
-    source_state = source.initialize(
-        state, rng_counters=jnp.arange(count**2, dtype=jnp.uint64)
-    )
-    profile = HPCFilesystemProfile(
-        "posix.distributed-mixed-reshard",
-        "local-posix",
-        atomic_rename_same_filesystem=True,
-        file_fsync=True,
-        directory_fsync=True,
-        advisory_locking=True,
-        attempt_private_staging=True,
-    )
-    repository = POSIXArtifactRepository(
-        tmp_path / "reshard",
-        POSIXRepositoryPolicy(
-            profile,
-            maximum_chunk_bytes=2**20,
-            maximum_metadata_bytes=2**20,
-        ),
-    )
-    publish_process_checkpoint(
-        repository,
-        "distributed-mixed-reshard",
-        source.checkpoint_execution_id,
-        source.checkpoint_tree(source_state),
-        analysis_plan_id=source.checkpoint_schema_id,
-        numeric_revision_id=source.checkpoint_numeric_id,
-        writer_id="distributed-mixed-reshard-writer",
-    )
-    manifest = assemble_distributed_checkpoint_from_repository(
-        repository,
-        "distributed-mixed-reshard",
-        source.checkpoint_schema_id,
-        source.checkpoint_numeric_id,
-        source.checkpoint_execution_id,
-        expected_process_count=jax.process_count(),
-        diagnostic_ids=(source.checkpoint_physics_id,),
-    )
-    destination_prototype = destination.initialize(state)
-    restored = destination.restore_checkpoint(repository, manifest, destination_prototype)
+def test_ghost_capacity_cannot_exceed_local_particle_capacity() -> None:
+    _, _, distributed = _prepared()
+    admitted = distributed.plan
+    with pytest.raises(ValueError, match="exchange capacities"):
+        DistributedMixedExecutionPlan(
+            admitted.mixed,
+            admitted.spectral,
+            admitted.execution,
+            admitted.particles,
+            admitted.feasibility,
+            maximum_checkpoint_bytes=2**28,
+            particle_ghost_capacity=admitted.particles.capacity_per_device + 1,
+        )
 
-    np.testing.assert_allclose(restored.wave.psi, source_state.wave.psi)
-    source_logical = source.particle_runtime.logical_arrays(source_state.particles)
-    restored_logical = destination.particle_runtime.logical_arrays(restored.particles)
-    np.testing.assert_allclose(restored_logical["positions"], source_logical["positions"])
-    np.testing.assert_array_equal(
-        restored_logical["rng_counters"], source_logical["rng_counters"]
-    )
-    assert restored.wave.psi.sharding == destination.field_sharding
-    assert (
-        restored.particles.positions.sharding
-        == destination.particle_runtime.vector_sharding
-    )
+
+def test_checkpoint_restore_changes_particle_and_field_sharding(
+    tmp_path: Path,
+) -> None:
+    for source_parts, destination_parts, count in ((2, 1, 4), (2, 3, 6), (3, 2, 6)):
+        _, state, source = _prepared(parts=source_parts, count=count)
+        _, _, destination = _prepared(parts=destination_parts, count=count)
+        source_state = source.initialize(
+            state, rng_counters=jnp.arange(count**2, dtype=jnp.uint64)
+        )
+        profile = HPCFilesystemProfile(
+            "posix.distributed-mixed-reshard",
+            "local-posix",
+            atomic_rename_same_filesystem=True,
+            file_fsync=True,
+            directory_fsync=True,
+            advisory_locking=True,
+            attempt_private_staging=True,
+        )
+        repository = POSIXArtifactRepository(
+            tmp_path / "reshard",
+            POSIXRepositoryPolicy(
+                profile,
+                maximum_chunk_bytes=2**20,
+                maximum_metadata_bytes=2**20,
+            ),
+        )
+        publish_process_checkpoint(
+            repository,
+            "distributed-mixed-reshard",
+            source.checkpoint_execution_id,
+            source.checkpoint_tree(source_state),
+            analysis_plan_id=source.checkpoint_schema_id,
+            numeric_revision_id=source.checkpoint_numeric_id,
+            writer_id="distributed-mixed-reshard-writer",
+        )
+        manifest = assemble_distributed_checkpoint_from_repository(
+            repository,
+            "distributed-mixed-reshard",
+            source.checkpoint_schema_id,
+            source.checkpoint_numeric_id,
+            source.checkpoint_execution_id,
+            expected_process_count=jax.process_count(),
+            diagnostic_ids=(source.checkpoint_physics_id,),
+        )
+        destination_prototype = destination.initialize(state)
+        restored = destination.restore_checkpoint(
+            repository, manifest, destination_prototype
+        )
+
+        np.testing.assert_allclose(restored.wave.psi, source_state.wave.psi)
+        source_logical = source.particle_runtime.logical_arrays(source_state.particles)
+        restored_logical = destination.particle_runtime.logical_arrays(restored.particles)
+        np.testing.assert_allclose(
+            restored_logical["positions"], source_logical["positions"]
+        )
+        np.testing.assert_array_equal(
+            restored_logical["rng_counters"], source_logical["rng_counters"]
+        )
+        assert restored.wave.psi.sharding == destination.field_sharding
+        assert (
+            restored.particles.positions.sharding
+            == destination.particle_runtime.vector_sharding
+        )

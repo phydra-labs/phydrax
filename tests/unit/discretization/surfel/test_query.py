@@ -41,7 +41,7 @@ def _indexed_geometry() -> Any:
     return geometry, hierarchy, bounds
 
 
-def test_surfel_ray_query_rejects_permuted_bvh_slot_identity() -> None:
+def test_query_scenario_1() -> None:
     geometry, _, _ = _indexed_geometry()
     permutation = jnp.asarray((1, 0, 2))
     positions = geometry.position[permutation]
@@ -67,27 +67,20 @@ def test_surfel_ray_query_rejects_permuted_bvh_slot_identity() -> None:
             geometry,
             maximum_hits_per_ray=3,
         )
-
-
-def test_morton_primitive_bounds_contain_items_and_children() -> None:
-    geometry, hierarchy, bounds = _indexed_geometry()
-    assert bool(bounds.evidence.successful)
-    active_items = geometry.active_mask
-    assert bool(
-        jnp.all(bounds.item_lower[active_items] <= geometry.position[active_items])
+    geometry, _, bounds = _indexed_geometry()
+    plan = phx.discretization.SurfelRayQueryPlan(bounds, geometry, maximum_hits_per_ray=3)
+    backface = plan.query(
+        jnp.asarray(((0.0, 0.0, -2.0),)),
+        jnp.asarray(((0.0, 0.0, 1.0),)),
     )
-    assert bool(
-        jnp.all(bounds.item_upper[active_items] >= geometry.position[active_items])
+    assert bool(backface.evidence.successful[0])
+    assert int(backface.evidence.hit_count[0]) == 0
+    parallel = plan.query(
+        jnp.asarray(((0.0, 0.0, 0.25),)),
+        jnp.asarray(((1.0, 0.0, 0.0),)),
     )
-    children = hierarchy.node_children
-    valid_child = children >= 0
-    safe_child = jnp.maximum(children, 0)
-    contains_lower = bounds.node_lower[:, None, :] <= bounds.node_lower[safe_child]
-    contains_upper = bounds.node_upper[:, None, :] >= bounds.node_upper[safe_child]
-    assert bool(jnp.all(~valid_child[..., None] | (contains_lower & contains_upper)))
-
-
-def test_surfel_ray_query_orders_hits_and_reports_overflow() -> None:
+    assert bool(parallel.evidence.successful[0])
+    assert int(parallel.evidence.hit_count[0]) == 0
     geometry, _, bounds = _indexed_geometry()
     origin = jnp.asarray(((0.0, 0.0, 2.0),))
     direction = jnp.asarray(((0.0, 0.0, -1.0),))
@@ -104,23 +97,21 @@ def test_surfel_ray_query_orders_hits_and_reports_overflow() -> None:
     assert bool(overflow.evidence.hit_overflow[0])
     assert not bool(overflow.evidence.successful[0])
     assert int(overflow.surfel_ids[0, 0]) == 10
-
-
-def test_surfel_ray_query_respects_one_sided_and_parallel_geometry() -> None:
-    geometry, _, bounds = _indexed_geometry()
-    plan = phx.discretization.SurfelRayQueryPlan(bounds, geometry, maximum_hits_per_ray=3)
-    backface = plan.query(
-        jnp.asarray(((0.0, 0.0, -2.0),)),
-        jnp.asarray(((0.0, 0.0, 1.0),)),
+    geometry, hierarchy, bounds = _indexed_geometry()
+    assert bool(bounds.evidence.successful)
+    active_items = geometry.active_mask
+    assert bool(
+        jnp.all(bounds.item_lower[active_items] <= geometry.position[active_items])
     )
-    assert bool(backface.evidence.successful[0])
-    assert int(backface.evidence.hit_count[0]) == 0
-    parallel = plan.query(
-        jnp.asarray(((0.0, 0.0, 0.25),)),
-        jnp.asarray(((1.0, 0.0, 0.0),)),
+    assert bool(
+        jnp.all(bounds.item_upper[active_items] >= geometry.position[active_items])
     )
-    assert bool(parallel.evidence.successful[0])
-    assert int(parallel.evidence.hit_count[0]) == 0
+    children = hierarchy.node_children
+    valid_child = children >= 0
+    safe_child = jnp.maximum(children, 0)
+    contains_lower = bounds.node_lower[:, None, :] <= bounds.node_lower[safe_child]
+    contains_upper = bounds.node_upper[:, None, :] >= bounds.node_upper[safe_child]
+    assert bool(jnp.all(~valid_child[..., None] | (contains_lower & contains_upper)))
 
 
 def test_surfel_ray_query_jits_and_has_fixed_route_gradient() -> None:

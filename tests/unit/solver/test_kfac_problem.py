@@ -74,7 +74,7 @@ def _prepare_residual(solver: Any, params: Any, non_trainable: Any, *, key: Any)
     )
 
 
-def test_type_two_residual_curvature_is_nonzero_at_zero_residual() -> None:
+def test_kfac_problem_scenario_1() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = _zero_model(
         phx.nn.models.MLP(
@@ -102,6 +102,106 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual() -> None:
     assert flat.size > 0
     assert jnp.allclose(residual, 0.0, atol=1e-12)
     assert jnp.sum(jnp.square(jacobians[0])) > 0.0
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    model = phx.nn.models.MLP(
+        in_size=1,
+        out_size="scalar",
+        hidden_sizes=(3,),
+        rwf=False,
+        key=jr.key(6),
+    )
+    raw = domain.Model("x")(model)
+    boundary = domain.component({"x": Boundary()})
+    spec = phx.enforcement.EnforcementSpec(
+        phx.conditions.Dirichlet("u", boundary, target=0.0)
+    )
+    term = _residual_term(domain, "u", lambda field: field, samples=6)
+    enforcement = phx.enforcement.compile(
+        {"u": raw},
+        (spec,),
+        options=phx.enforcement.EnforcementOptions(num_reference=64),
+        key=jr.key(6),
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": raw},
+        terms=term,
+        enforcement=enforcement,
+    )
+    params, non_trainable = partition_functional_parameters(solver.functions)
+    validate_derivative_coverage(
+        solver.terms,
+        # ty: ignore[unresolved-attribute]
+        solver.enforcement.apply(solver.functions),
+    )
+    residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(7))
+    _, jacobians, _ = prepared_residual_jacobians(residual_map, params)
+
+    assert jnp.all(jnp.isfinite(jacobians[0]))
+    assert jnp.linalg.norm(jacobians[0]) > 0.0
+    for approximation in ("expand", "reduce"):
+        domain = phx.domain.Interval1d(0.0, 1.0)
+        model = phx.nn.models.MLP(
+            in_size=1,
+            out_size="scalar",
+            hidden_sizes=(3,),
+            rwf=False,
+            key=jr.key(8),
+        )
+        functions = {
+            "u": domain.Model("x")(model),
+            "coefficient": domain.Parameter(0.7),
+        }
+        term = _residual_term(
+            domain,
+            ("u", "coefficient"),
+            lambda field, coefficient: coefficient * field,
+            samples=5,
+        )
+        solver = phx.solver.FunctionalSolver(functions=functions, terms=term)
+        params, non_trainable = partition_functional_parameters(solver.functions)
+        layout = discover_parameter_layout(
+            functions,
+            params,
+            exact_block_max_size=64,
+            uncovered="error",
+        )
+        residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(9))
+        flat, jacobians, _ = prepared_residual_jacobians(residual_map, params)
+        streamed_flat, observations = term_block_curvature_observations(
+            params,
+            non_trainable,
+            solver.enforcement,
+            residual_map.terms,
+            layout,
+            approximation=approximation,
+            chunk_size=2,
+            iter_=1,
+        )
+        initial = initialize_block_state(
+            layout,
+            num_terms=1,
+            dtype=flat.dtype,
+        )
+        dense_state = update_block_state(
+            initial,
+            layout,
+            jacobians,
+            approximation=approximation,
+            factor_decay=0.0,
+        )
+        streamed_state = update_block_state_from_observations(
+            initial,
+            observations,
+            factor_decay=0.0,
+        )
+
+        assert jnp.array_equal(streamed_flat, flat)
+        for streamed, dense in zip(
+            jax.tree_util.tree_leaves(streamed_state),
+            jax.tree_util.tree_leaves(dense_state),
+            strict=True,
+        ):
+            assert jnp.allclose(streamed, dense, rtol=1e-9, atol=1e-10)
 
 
 def test_frozen_loss_uses_nonnegative_quadratic_coefficients() -> None:
@@ -149,114 +249,6 @@ def test_frozen_loss_uses_nonnegative_quadratic_coefficients() -> None:
     assert jnp.allclose(loss, 0.0)
     assert jnp.allclose(gradient, 0.0)
     assert jnp.allclose(residual, 0.0)
-
-
-def test_hard_enforced_ansatz_has_finite_residual_curvature() -> None:
-    domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.models.MLP(
-        in_size=1,
-        out_size="scalar",
-        hidden_sizes=(3,),
-        rwf=False,
-        key=jr.key(6),
-    )
-    raw = domain.Model("x")(model)
-    boundary = domain.component({"x": Boundary()})
-    spec = phx.enforcement.EnforcementSpec(
-        phx.conditions.Dirichlet("u", boundary, target=0.0)
-    )
-    term = _residual_term(domain, "u", lambda field: field, samples=6)
-    enforcement = phx.enforcement.compile(
-        {"u": raw},
-        (spec,),
-        options=phx.enforcement.EnforcementOptions(num_reference=64),
-        key=jr.key(6),
-    )
-    solver = phx.solver.FunctionalSolver(
-        functions={"u": raw},
-        terms=term,
-        enforcement=enforcement,
-    )
-    params, non_trainable = partition_functional_parameters(solver.functions)
-    validate_derivative_coverage(
-        solver.terms,
-        # ty: ignore[unresolved-attribute]
-        solver.enforcement.apply(solver.functions),
-    )
-    residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(7))
-    _, jacobians, _ = prepared_residual_jacobians(residual_map, params)
-
-    assert jnp.all(jnp.isfinite(jacobians[0]))
-    assert jnp.linalg.norm(jacobians[0]) > 0.0
-
-
-@pytest.mark.parametrize("approximation", ("expand", "reduce"))
-def test_streamed_block_observations_match_dense_jacobian_oracle(
-    approximation: Any,
-) -> None:
-    domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.models.MLP(
-        in_size=1,
-        out_size="scalar",
-        hidden_sizes=(3,),
-        rwf=False,
-        key=jr.key(8),
-    )
-    functions = {
-        "u": domain.Model("x")(model),
-        "coefficient": domain.Parameter(0.7),
-    }
-    term = _residual_term(
-        domain,
-        ("u", "coefficient"),
-        lambda field, coefficient: coefficient * field,
-        samples=5,
-    )
-    solver = phx.solver.FunctionalSolver(functions=functions, terms=term)
-    params, non_trainable = partition_functional_parameters(solver.functions)
-    layout = discover_parameter_layout(
-        functions,
-        params,
-        exact_block_max_size=64,
-        uncovered="error",
-    )
-    residual_map = _prepare_residual(solver, params, non_trainable, key=jr.key(9))
-    flat, jacobians, _ = prepared_residual_jacobians(residual_map, params)
-    streamed_flat, observations = term_block_curvature_observations(
-        params,
-        non_trainable,
-        solver.enforcement,
-        residual_map.terms,
-        layout,
-        approximation=approximation,
-        chunk_size=2,
-        iter_=1,
-    )
-    initial = initialize_block_state(
-        layout,
-        num_terms=1,
-        dtype=flat.dtype,
-    )
-    dense_state = update_block_state(
-        initial,
-        layout,
-        jacobians,
-        approximation=approximation,
-        factor_decay=0.0,
-    )
-    streamed_state = update_block_state_from_observations(
-        initial,
-        observations,
-        factor_decay=0.0,
-    )
-
-    assert jnp.array_equal(streamed_flat, flat)
-    for streamed, dense in zip(
-        jax.tree_util.tree_leaves(streamed_state),
-        jax.tree_util.tree_leaves(dense_state),
-        strict=True,
-    ):
-        assert jnp.allclose(streamed, dense, rtol=1e-9, atol=1e-10)
 
 
 def test_kfac_derivative_coverage_rejects_orders_above_two() -> None:

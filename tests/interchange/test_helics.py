@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_real_two_federate_typed_delivery_and_time_grants() -> None:
+def test_real_contracts() -> None:
     key = "phydrax-" + uuid.uuid4().hex
     with HelicsValueSession(
         key + "-source",
@@ -61,9 +61,6 @@ def test_real_two_federate_typed_delivery_and_time_grants() -> None:
             assert sink.artifact.status == "complete"
         assert sink.closed
     assert source.closed
-
-
-def test_real_helics_does_not_coerce_types_or_advance_backwards() -> None:
     key = "phydrax-" + uuid.uuid4().hex
     with HelicsValueSession(
         key,

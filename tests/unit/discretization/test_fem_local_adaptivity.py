@@ -41,7 +41,7 @@ def _bisect(
     )
 
 
-def test_dorfler_local_bisection_transfer_and_sibling_coarsen() -> None:
+def test_fem_local_adaptivity_scenario_1() -> None:
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     marked = phx.discretization.dorfler_mark(
@@ -69,9 +69,6 @@ def test_dorfler_local_bisection_transfer_and_sibling_coarsen() -> None:
     assert transfer.source_topology_id == mesh.topology_id
     assert transfer.target_topology_id == refined.target.mesh.topology_id
     assert restored.target.mesh.topology_id == mesh.topology_id
-
-
-def test_transfer_dual_pairing_and_local_dwr_indicators() -> None:
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     refined = _bisect(source, (10,))
@@ -92,9 +89,6 @@ def test_transfer_dual_pairing_and_local_dwr_indicators() -> None:
     assert jnp.allclose(left, right)
     assert jnp.allclose(dwr.signed, jnp.asarray([-1.5, 2.0]))
     assert jnp.allclose(dwr.absolute, jnp.asarray([1.5, 2.0]))
-
-
-def test_rejected_topology_candidate_preserves_accepted_state_bitwise() -> None:
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     accepted = phx.solver.FiniteElementAcceptedState(

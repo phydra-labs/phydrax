@@ -12,7 +12,7 @@ from phydrax.qualification import (
 )
 
 
-def test_candidate_profile_binding_rejects_unrecognized_releases() -> None:
+def test_qualification_scenario_1() -> None:
     support = battery_qualification.THERMAL_ECM_SUPPORT
     candidate = CapabilityProfile(
         "battery.test-candidate",
@@ -39,9 +39,6 @@ def test_candidate_profile_binding_rejects_unrecognized_releases() -> None:
     )
     with pytest.raises(ValueError):
         battery_qualification.validate_battery_candidate_profile(released, support)
-
-
-def test_reference_artifact_rights_and_identity_stay_generic() -> None:
     manifest = ReferenceArtifactManifest(
         "test-reference",
         checksum_algorithm="sha256",

@@ -60,7 +60,7 @@ def _deterministic_neuron(eigen_index: Any = 1) -> Any:
     return model, base, jnp.stack((free, increasing, -decreasing_magnitude))
 
 
-def test_spectral_neuron_matches_dense_reference_and_leading_axes() -> None:
+def test_spectral_neuron_contracts() -> None:
     model, base, features = _deterministic_neuron()
     point = jnp.asarray([0.4, -0.2, 0.7])
     expected_matrix = base + jnp.sum(point[:, None, None] * features, axis=0)
@@ -82,9 +82,38 @@ def test_spectral_neuron_matches_dense_reference_and_leading_axes() -> None:
     )
     np.testing.assert_allclose(model(points), expected, atol=3e-14)
     np.testing.assert_allclose(jax.vmap(model)(points), expected, atol=3e-14)
+    kwargs = dict(in_size=2, matrix_size=3, eigen_index=1, key=jr.key(0))
+    with pytest.raises(TypeError, match="matrix_size"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"matrix_size": 2.5}))
+    with pytest.raises(TypeError, match="eigen_index"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"eigen_index": True}))
+    with pytest.raises(ValueError, match="matrix_size"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"matrix_size": 0}))
+    with pytest.raises(ValueError, match="eigen_index"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"eigen_index": -1}))
+    with pytest.raises(ValueError, match="eigen_index"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"eigen_index": 3}))
+    with pytest.raises(ValueError, match="one entry"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"monotonicity": ("free",)}))
+    with pytest.raises(ValueError, match="monotonicity"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"monotonicity": ("free", "sideways")}))
+    with pytest.raises(ValueError, match="initialization_radius"):
+        # ty: ignore[invalid-argument-type]
+        phx.nn.layers.SpectralNeuron(**(kwargs | {"initialization_radius": 0.0}))
 
-
-def test_spectral_neuron_constraints_and_extremal_shape_guarantees() -> None:
+    # ty: ignore[invalid-argument-type]
+    model = phx.nn.layers.SpectralNeuron(**kwargs)
+    with pytest.raises(TypeError, match="real-valued"):
+        model(jnp.asarray([1.0 + 0.0j, 2.0 + 0.0j]))
+    assert bool(jnp.isfinite(model(jnp.asarray([1, 0], dtype=jnp.int32))))
+    assert bool(jnp.isfinite(model(jnp.asarray([True, False]))))
     model, _, features = _deterministic_neuron()
     for coefficient in features:
         np.testing.assert_allclose(coefficient, coefficient.T, atol=0.0)
@@ -109,9 +138,6 @@ def test_spectral_neuron_constraints_and_extremal_shape_guarantees() -> None:
     assert float(concave(mixture)) >= float(concave_chord) - 3e-14
     assert convex.is_convex and not convex.is_concave
     assert concave.is_concave and not concave.is_convex
-
-
-def test_spectral_neuron_initializer_is_keyed_and_certifies_declared_box() -> None:
     arguments = dict(
         in_size=2,
         matrix_size=3,
@@ -150,9 +176,6 @@ def test_spectral_neuron_initializer_is_keyed_and_certifies_declared_box() -> No
     _, features = first.materialize_coefficients()
     assert float(jnp.min(jnp.linalg.eigvalsh(features[0]))) >= -2e-14
     assert float(jnp.max(jnp.linalg.eigvalsh(features[1]))) <= 2e-14
-
-
-def test_spectral_neuron_jit_vmap_and_grad_are_finite_away_from_crossings() -> None:
     model, _, _ = _deterministic_neuron()
     point = jnp.asarray([0.3, -0.25, 0.15])
     points = jnp.stack((point, point + 0.1))
@@ -186,38 +209,3 @@ def test_one_dimensional_spectral_neuron_reduces_to_affine_model() -> None:
     np.testing.assert_allclose(jax.grad(model)(point), features[:, 0, 0], atol=2e-14)
     assert model.is_convex and model.is_concave
     assert np.isinf(model.initialization.certified_minimum_gap)
-
-
-def test_spectral_neuron_rejects_invalid_contracts_and_complex_inputs() -> None:
-    kwargs = dict(in_size=2, matrix_size=3, eigen_index=1, key=jr.key(0))
-    with pytest.raises(TypeError, match="matrix_size"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"matrix_size": 2.5}))
-    with pytest.raises(TypeError, match="eigen_index"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"eigen_index": True}))
-    with pytest.raises(ValueError, match="matrix_size"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"matrix_size": 0}))
-    with pytest.raises(ValueError, match="eigen_index"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"eigen_index": -1}))
-    with pytest.raises(ValueError, match="eigen_index"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"eigen_index": 3}))
-    with pytest.raises(ValueError, match="one entry"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"monotonicity": ("free",)}))
-    with pytest.raises(ValueError, match="monotonicity"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"monotonicity": ("free", "sideways")}))
-    with pytest.raises(ValueError, match="initialization_radius"):
-        # ty: ignore[invalid-argument-type]
-        phx.nn.layers.SpectralNeuron(**(kwargs | {"initialization_radius": 0.0}))
-
-    # ty: ignore[invalid-argument-type]
-    model = phx.nn.layers.SpectralNeuron(**kwargs)
-    with pytest.raises(TypeError, match="real-valued"):
-        model(jnp.asarray([1.0 + 0.0j, 2.0 + 0.0j]))
-    assert bool(jnp.isfinite(model(jnp.asarray([1, 0], dtype=jnp.int32))))
-    assert bool(jnp.isfinite(model(jnp.asarray([True, False]))))

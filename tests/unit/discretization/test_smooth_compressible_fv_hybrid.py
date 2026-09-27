@@ -291,7 +291,7 @@ def _assert_same_tree(left: Any, right: Any) -> None:
         np.testing.assert_array_equal(left_value, right_value)
 
 
-def test_fixed_runtime_uses_stage_weighted_equal_opposite_population_flux_once() -> None:
+def test_smooth_compressible_fv_hybrid_scenario_1() -> None:
     runtime = _fixed_runtime()
     state = _fixed_state(runtime)
 
@@ -338,9 +338,6 @@ def test_fixed_runtime_uses_stage_weighted_equal_opposite_population_flux_once()
         result.candidate.finite_volume.cell_average(),
         result.finite_volume.attempted.runtime_state.cell_average(),
     )
-
-
-def test_fixed_runtime_refuses_wrong_dt_and_any_fv_retry_policy() -> None:
     with pytest.raises(ValueError, match="forbids finite-volume retries"):
         _fixed_runtime(retries=1)
     runtime = _fixed_runtime()
@@ -357,11 +354,6 @@ def test_fixed_runtime_refuses_wrong_dt_and_any_fv_retry_policy() -> None:
         runtime.advance(
             FixedPartitionHybridState(wrong_fv, state.kinetic), jnp.asarray(0.01)
         )
-
-
-def test_failed_learned_support_rolls_back_both_sides_and_checkpoints_only_commit() -> (
-    None
-):
     runtime = _fixed_runtime(velocity_bound=0.001)
     state = _fixed_state(runtime)
 
@@ -378,9 +370,6 @@ def test_failed_learned_support_rolls_back_both_sides_and_checkpoints_only_commi
     foreign = _fixed_runtime(velocity_bound=0.002)
     with pytest.raises(ValueError, match="artifact is incompatible"):
         foreign.restore(checkpoint)
-
-
-def test_finite_volume_runtime_without_provider_retains_existing_ssprk_result() -> None:
     method = _kinetic_method()
     runtime = _finite_volume_runtime(method)
     average = jnp.broadcast_to(_conserved(), (5, 5, 4))
@@ -414,9 +403,7 @@ def _dynamic_state(
     return DynamicHybridCompositeState(fv, kinetic_state, ownership)
 
 
-def test_dynamic_ownership_hysteresis_dwell_shock_and_dilation_are_deterministic() -> (
-    None
-):
+def test_dynamic_contracts() -> None:
     method = _kinetic_method()
     learned = _learned_binding(method)
     plan = DynamicHybridOwnershipPlan(
@@ -472,9 +459,6 @@ def test_dynamic_ownership_hysteresis_dwell_shock_and_dilation_are_deterministic
         jnp.zeros((5, 5), dtype="bool"),
     )
     assert bool(blocked_decision.finite_volume_owned[2, 2])
-
-
-def test_dynamic_bidirectional_migration_is_exact_and_history_checkpoints() -> None:
     method = _kinetic_method()
     learned = _learned_binding(method)
     plan = DynamicHybridOwnershipPlan(
@@ -526,9 +510,6 @@ def test_dynamic_bidirectional_migration_is_exact_and_history_checkpoints() -> N
     checkpoint = plan.checkpoint(result.runtime_state, "dynamic-accepted")
     restored = plan.restore(checkpoint)
     _assert_same_tree(restored, result.runtime_state)
-
-
-def test_dynamic_failed_fv_to_kinetic_lift_rolls_back_all_fields_and_history() -> None:
     method = _kinetic_method()
     learned = _learned_binding(method, velocity_bound=0.1)
     plan = DynamicHybridOwnershipPlan(

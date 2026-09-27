@@ -184,7 +184,7 @@ def _problem_with_state_layout(
     )
 
 
-def test_prepare_rejects_nontrivial_quaternion_geometry_before_game_solve() -> None:
+def test_games_open_loop_kkt_scenario_1() -> None:
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
         (7,),
@@ -209,9 +209,6 @@ def test_prepare_rejects_nontrivial_quaternion_geometry_before_game_solve() -> N
     message = str(error.value)
     assert "trivial=False" in message
     assert "point_size=7, local_size=6, tangent_size=6" in message
-
-
-def test_prepare_rejects_unequal_euclidean_state_spaces_before_game_solve() -> None:
     state_layout = phx.dynamics.StateLayout(
         (2,),
         local_space=phx.linalg.ArraySpace((1,), dtype=jnp.float32),
@@ -234,6 +231,54 @@ def test_prepare_rejects_unequal_euclidean_state_spaces_before_game_solve() -> N
     message = str(error.value)
     assert "trivial=True" in message
     assert "point_size=2, local_size=1, tangent_size=2" in message
+    partition = PlayerControlPartition(("left", "right"), (1, 1))
+    shared = _trajectory_block(
+        lambda trajectory, args: trajectory.final_state[0],
+        "shared-terminal",
+        site=GameConstraintSite.TERMINAL,
+        owner=None,
+        participants=("left", "right"),
+        scope=GameConstraintScope.SHARED,
+        equality=True,
+    )
+    constraints = OpenLoopGameConstraints(partition, (shared,))
+    with pytest.raises(ValueError, match="only private"):
+        _problem(
+            partition,
+            constraints,
+            (lambda c, x, u, a: u[0] ** 2, lambda c, x, u, a: u[1] ** 2),
+            (_zero_terminal, _zero_terminal),
+            problem_id="reject-shared",
+        )
+    partition = PlayerControlPartition(("one",), (1,))
+    constraints = OpenLoopGameConstraints(
+        partition,
+        (
+            _path_block(
+                lambda time, state, control, args: control[0],
+                "u-at-most-zero",
+            ),
+            _path_block(
+                lambda time, state, control, args: 1.0 - control[0],
+                "u-at-least-one",
+            ),
+        ),
+    )
+    problem = _problem(
+        partition,
+        constraints,
+        (lambda context, state, control, args: 0.5 * control[0] ** 2,),
+        (_zero_terminal,),
+        problem_id="infeasible-private",
+    )
+    result = solve_open_loop_game_kkt(problem, jnp.zeros((1, 1)))
+
+    assert result.status == int(OpenLoopGameKKTStatus.PRIMAL_INFEASIBLE)
+    assert not result.valid
+    assert not result.feasible
+    assert result.feasibility.maximum_violation > 0.0
+    assert result.feasibility.status == int(GameFeasibilityStatus.INFEASIBLE)
+    assert np.isfinite(np.asarray(result.feasibility.maximum_violation))
 
 
 def test_one_player_active_inequality_has_original_private_kkt_evidence() -> None:
@@ -340,119 +385,92 @@ def test_opponent_dependent_player_owned_constraint_is_private_gne() -> None:
     assert result.private_multipliers[1].shape == (0,)
 
 
-def test_shared_blocks_are_structurally_rejected_without_common_multiplier() -> None:
-    partition = PlayerControlPartition(("left", "right"), (1, 1))
-    shared = _trajectory_block(
-        lambda trajectory, args: trajectory.final_state[0],
-        "shared-terminal",
-        site=GameConstraintSite.TERMINAL,
-        owner=None,
-        participants=("left", "right"),
-        scope=GameConstraintScope.SHARED,
-        equality=True,
-    )
-    constraints = OpenLoopGameConstraints(partition, (shared,))
-    with pytest.raises(ValueError, match="only private"):
-        _problem(
+def test_path_terminal_and_whole_trajectory_constraints() -> None:
+    for kind in ("path-equality", "terminal-equality", "trajectory-inequality"):
+        partition = PlayerControlPartition(("one",), (1,))
+        if kind == "path-equality":
+            block = _path_block(
+                lambda time, state, control, args: control[0] - 0.25,
+                "path-equality",
+                equality=True,
+            )
+        elif kind == "terminal-equality":
+            block = _trajectory_block(
+                lambda trajectory, args: trajectory.final_state[0] - 1.0,
+                "terminal-equality",
+                site=GameConstraintSite.TERMINAL,
+                equality=True,
+            )
+        else:
+            block = _trajectory_block(
+                lambda trajectory, args: jnp.sum(trajectory.controls[..., 0]) - 0.5,
+                "whole-trajectory-cap",
+                site=GameConstraintSite.TRAJECTORY,
+                state_dependent=False,
+                control_dependencies=("one",),
+            )
+        constraints = OpenLoopGameConstraints(partition, (block,))
+
+        def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
+            del context, state, args
+            return 0.5 * (control[0] - 1.0) ** 2
+
+        problem = _problem(
             partition,
             constraints,
-            (lambda c, x, u, a: u[0] ** 2, lambda c, x, u, a: u[1] ** 2),
-            (_zero_terminal, _zero_terminal),
-            problem_id="reject-shared",
+            (stage,),
+            (_zero_terminal,),
+            horizon=2,
+            problem_id=f"site-{kind}",
         )
+        result = solve_open_loop_game_kkt(problem, jnp.zeros((2, 1)))
+
+        assert result.status == int(OpenLoopGameKKTStatus.SUCCESS)
+        assert result.feasibility.feasible
+        assert result.original_equality_residual < 2.0e-6
+        assert result.original_inequality_violation < 2.0e-6
+        if kind == "path-equality":
+            np.testing.assert_allclose(result.controls[:, 0], [0.25, 0.25], atol=2.0e-5)
+            assert result.equality_multipliers.shape == (2,)
+        elif kind == "terminal-equality":
+            np.testing.assert_allclose(result.states[-1, 0], 1.0, atol=2.0e-5)
+            assert result.equality_multipliers.shape == (1,)
+        else:
+            np.testing.assert_allclose(jnp.sum(result.controls), 0.5, atol=2.0e-5)
+            assert result.inequality_multipliers[0] > 0.0
 
 
-@pytest.mark.parametrize(
-    "kind",
-    ("path-equality", "terminal-equality", "trajectory-inequality"),
-)
-def test_path_terminal_and_whole_trajectory_constraints(kind: Any) -> None:
-    partition = PlayerControlPartition(("one",), (1,))
-    if kind == "path-equality":
+def test_inactive_and_active_inequality_multipliers() -> None:
+    for constraint, target, expected_control, active in (
+        ("inactive", 0.0, 0.0, False),
+        ("active", 2.0, 1.0, True),
+    ):
+        partition = PlayerControlPartition(("one",), (1,))
         block = _path_block(
-            lambda time, state, control, args: control[0] - 0.25,
-            "path-equality",
-            equality=True,
+            lambda time, state, control, args: control[0] - 1.0,
+            f"{constraint}-upper",
         )
-    elif kind == "terminal-equality":
-        block = _trajectory_block(
-            lambda trajectory, args: trajectory.final_state[0] - 1.0,
-            "terminal-equality",
-            site=GameConstraintSite.TERMINAL,
-            equality=True,
+
+        def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
+            del context, state
+            return 0.5 * (control[0] - args) ** 2
+
+        problem = _problem(
+            partition,
+            OpenLoopGameConstraints(partition, (block,)),
+            (stage,),
+            (_zero_terminal,),
+            args=jnp.asarray(target),
+            problem_id=f"multiplier-{constraint}",
         )
-    else:
-        block = _trajectory_block(
-            lambda trajectory, args: jnp.sum(trajectory.controls[..., 0]) - 0.5,
-            "whole-trajectory-cap",
-            site=GameConstraintSite.TRAJECTORY,
-            state_dependent=False,
-            control_dependencies=("one",),
-        )
-    constraints = OpenLoopGameConstraints(partition, (block,))
+        result = solve_open_loop_game_kkt(problem, jnp.zeros((1, 1)))
 
-    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
-        del context, state, args
-        return 0.5 * (control[0] - 1.0) ** 2
-
-    problem = _problem(
-        partition,
-        constraints,
-        (stage,),
-        (_zero_terminal,),
-        horizon=2,
-        problem_id=f"site-{kind}",
-    )
-    result = solve_open_loop_game_kkt(problem, jnp.zeros((2, 1)))
-
-    assert result.status == int(OpenLoopGameKKTStatus.SUCCESS)
-    assert result.feasibility.feasible
-    assert result.original_equality_residual < 2.0e-6
-    assert result.original_inequality_violation < 2.0e-6
-    if kind == "path-equality":
-        np.testing.assert_allclose(result.controls[:, 0], [0.25, 0.25], atol=2.0e-5)
-        assert result.equality_multipliers.shape == (2,)
-    elif kind == "terminal-equality":
-        np.testing.assert_allclose(result.states[-1, 0], 1.0, atol=2.0e-5)
-        assert result.equality_multipliers.shape == (1,)
-    else:
-        np.testing.assert_allclose(jnp.sum(result.controls), 0.5, atol=2.0e-5)
-        assert result.inequality_multipliers[0] > 0.0
-
-
-@pytest.mark.parametrize(
-    ("constraint", "target", "expected_control", "active"),
-    (("inactive", 0.0, 0.0, False), ("active", 2.0, 1.0, True)),
-)
-def test_inactive_and_active_inequality_multipliers(
-    constraint: Any, target: Any, expected_control: Any, active: Any
-) -> None:
-    partition = PlayerControlPartition(("one",), (1,))
-    block = _path_block(
-        lambda time, state, control, args: control[0] - 1.0,
-        f"{constraint}-upper",
-    )
-
-    def stage(context: Any, state: Any, control: Any, args: Any) -> Any:
-        del context, state
-        return 0.5 * (control[0] - args) ** 2
-
-    problem = _problem(
-        partition,
-        OpenLoopGameConstraints(partition, (block,)),
-        (stage,),
-        (_zero_terminal,),
-        args=jnp.asarray(target),
-        problem_id=f"multiplier-{constraint}",
-    )
-    result = solve_open_loop_game_kkt(problem, jnp.zeros((1, 1)))
-
-    assert result.status == int(OpenLoopGameKKTStatus.SUCCESS)
-    np.testing.assert_allclose(result.controls[0, 0], expected_control, atol=2.0e-5)
-    if active:
-        assert result.inequality_multipliers[0] > 0.9
-    else:
-        np.testing.assert_allclose(result.inequality_multipliers, [0.0], atol=2.0e-6)
+        assert result.status == int(OpenLoopGameKKTStatus.SUCCESS)
+        np.testing.assert_allclose(result.controls[0, 0], expected_control, atol=2.0e-5)
+        if active:
+            assert result.inequality_multipliers[0] > 0.9
+        else:
+            np.testing.assert_allclose(result.inequality_multipliers, [0.0], atol=2.0e-6)
 
 
 def test_degenerate_active_constraint_reports_failed_constraint_qualification() -> None:
@@ -483,39 +501,7 @@ def test_degenerate_active_constraint_reports_failed_constraint_qualification() 
     np.testing.assert_allclose(result.inequality_multipliers, [0.0], atol=1.0e-8)
 
 
-def test_infeasible_private_constraints_return_stable_primal_evidence() -> None:
-    partition = PlayerControlPartition(("one",), (1,))
-    constraints = OpenLoopGameConstraints(
-        partition,
-        (
-            _path_block(
-                lambda time, state, control, args: control[0],
-                "u-at-most-zero",
-            ),
-            _path_block(
-                lambda time, state, control, args: 1.0 - control[0],
-                "u-at-least-one",
-            ),
-        ),
-    )
-    problem = _problem(
-        partition,
-        constraints,
-        (lambda context, state, control, args: 0.5 * control[0] ** 2,),
-        (_zero_terminal,),
-        problem_id="infeasible-private",
-    )
-    result = solve_open_loop_game_kkt(problem, jnp.zeros((1, 1)))
-
-    assert result.status == int(OpenLoopGameKKTStatus.PRIMAL_INFEASIBLE)
-    assert not result.valid
-    assert not result.feasible
-    assert result.feasibility.maximum_violation > 0.0
-    assert result.feasibility.status == int(GameFeasibilityStatus.INFEASIBLE)
-    assert np.isfinite(np.asarray(result.feasibility.maximum_violation))
-
-
-def test_nonfinite_constraint_returns_stable_nonfinite_evidence() -> None:
+def test_games_open_loop_kkt_scenario_2() -> None:
     partition = PlayerControlPartition(("one",), (1,))
     nonfinite = _path_block(
         lambda time, state, control, args: jnp.asarray(jnp.nan),
@@ -535,6 +521,24 @@ def test_nonfinite_constraint_returns_stable_nonfinite_evidence() -> None:
     assert not result.valid
     assert result.feasibility.status == int(GameFeasibilityStatus.NONFINITE_RESIDUAL)
     assert np.isinf(np.asarray(result.feasibility.maximum_violation))
+    partition = PlayerControlPartition(("one",), (1,))
+    problem = _problem(
+        partition,
+        OpenLoopGameConstraints(partition),
+        (lambda context, state, control, args: 0.5 * control[0] ** 2,),
+        (_zero_terminal,),
+        problem_id="claim-scope",
+    )
+    result = solve_open_loop_game_kkt(problem, jnp.zeros((1, 1)))
+
+    assert result.status == int(OpenLoopGameKKTStatus.SUCCESS)
+    assert result.certification_claim == (
+        "local nominal open-loop first-order KKT stationarity"
+    )
+    assert not result.feedback_claim
+    assert not result.global_equilibrium_claim
+    assert "feedback" not in result.certification_claim
+    assert "global" not in result.certification_claim
 
 
 def test_nested_root_failure_is_not_promoted_to_stationarity() -> None:
@@ -630,24 +634,3 @@ def test_refresh_and_filtered_jit_preserve_topology_and_change_numeric_solution(
     assert refreshed.prepared_id == prepared.prepared_id
     assert refreshed.plan.plan_id == prepared.plan.plan_id
     assert refreshed.numeric_version == prepared.numeric_version + 1
-
-
-def test_result_makes_no_feedback_or_global_equilibrium_claim() -> None:
-    partition = PlayerControlPartition(("one",), (1,))
-    problem = _problem(
-        partition,
-        OpenLoopGameConstraints(partition),
-        (lambda context, state, control, args: 0.5 * control[0] ** 2,),
-        (_zero_terminal,),
-        problem_id="claim-scope",
-    )
-    result = solve_open_loop_game_kkt(problem, jnp.zeros((1, 1)))
-
-    assert result.status == int(OpenLoopGameKKTStatus.SUCCESS)
-    assert result.certification_claim == (
-        "local nominal open-loop first-order KKT stationarity"
-    )
-    assert not result.feedback_claim
-    assert not result.global_equilibrium_claim
-    assert "feedback" not in result.certification_claim
-    assert "global" not in result.certification_claim

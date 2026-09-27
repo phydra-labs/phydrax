@@ -68,7 +68,7 @@ def observation(
     )
 
 
-def test_observation_masks_negative_values_and_correlated_noise() -> None:
+def test_chemical_mapping_reconstruction_scenario_1() -> None:
     lower = np.array([[0.1, 0.0], [0.06, 0.08]])
     obs = observation([-0.4, np.nan, 0.8], observed=[True, False, True], lower=lower)
     predicted = jnp.array([-0.3, 99.0, 0.7])
@@ -82,9 +82,6 @@ def test_observation_masks_negative_values_and_correlated_noise() -> None:
         observation([1.0, 2.0, 3.0], sd=[0.1, 0.0, 0.1])
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError)):
         observation([1.0, 2.0, 3.0], lower=np.eye(3) * 0.2)
-
-
-def test_shared_population_feature_fit_and_withheld_condition_prediction() -> None:
     signal = np.array([0.1, 0.5, 0.9])
     temperatures = np.array([0.0, 0.0, 1.0, 1.0])
     groups = ("r1", "r2", "r1", "r2")
@@ -134,6 +131,53 @@ def test_shared_population_feature_fit_and_withheld_condition_prediction() -> No
         condition_features=np.zeros((1, 0)),
     )
     assert not bool(constant.fit().identifiable)
+    ids = [901, 77, 360, 29]
+    units = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    system = AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
+        ids,
+        # ty: ignore[invalid-argument-type]
+        [6] * 4,
+        # ty: ignore[invalid-argument-type]
+        [12.0] * 4,
+        units,
+        # ty: ignore[invalid-argument-type]
+        atom_type_ids=[0] * 4,
+    ).prepare()
+    target = jnp.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    )
+    distance = np.array([1.0, np.sqrt(2), np.sqrt(2)])
+    plan = IntervalDistanceReconstruction(
+        system,
+        [(901, 29), (77, 29), (360, 29)],
+        distance - 0.01,
+        distance + 0.01,
+        np.full(3, 0.05),
+        weights=np.ones(3),
+        length_unit=ANGSTROM,
+        sources=(manifest(),),
+        requested_use={},
+        chirality_atom_ids=[ids],
+        chirality_sign=[1],
+        minimum_volume=[0.05],
+        chirality_standard_deviation=[0.01],
+    )
+    mirrored = target.at[:, 2].multiply(-1)
+    np.testing.assert_allclose(
+        plan.distances(mirrored), plan.distances(target), atol=1e-12
+    )
+    assert bool(plan.chirality(target).correct[0])
+    assert not bool(plan.chirality(mirrored).correct[0])
+    initial = target.at[3].set(jnp.array([0.15, -0.12, 0.65]))
+    fixed = np.ones((4, 3), bool)
+    fixed[3] = False
+    result = plan.reconstruct(initial, fixed_mask=fixed, interval_tolerance=1e-5)
+    assert bool(result.restraints_satisfied) and bool(result.chirality_qualified)
+    np.testing.assert_allclose(result.positions[:3], target[:3], atol=0.0)
+    np.testing.assert_allclose(result.initial_positions, initial, atol=0.0)
+    with pytest.raises(ValueError):
+        plan.reconstruct(initial, fixed_mask=np.ones((4, 3), bool))
 
 
 def test_real_rdat_retains_mutant_constructs_negative_reactivity_and_scores() -> None:
@@ -223,53 +267,3 @@ def test_real_rdat_retains_mutant_constructs_negative_reactivity_and_scores() ->
             requested_use={"training_use": True},
             error_semantics="standard-deviation",
         )
-
-
-def test_native_interval_reconstruction_distinguishes_reflection() -> None:
-    ids = [901, 77, 360, 29]
-    units = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
-    system = AtomisticSystemPlan(
-        # ty: ignore[invalid-argument-type]
-        ids,
-        # ty: ignore[invalid-argument-type]
-        [6] * 4,
-        # ty: ignore[invalid-argument-type]
-        [12.0] * 4,
-        units,
-        # ty: ignore[invalid-argument-type]
-        atom_type_ids=[0] * 4,
-    ).prepare()
-    target = jnp.array(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-    )
-    distance = np.array([1.0, np.sqrt(2), np.sqrt(2)])
-    plan = IntervalDistanceReconstruction(
-        system,
-        [(901, 29), (77, 29), (360, 29)],
-        distance - 0.01,
-        distance + 0.01,
-        np.full(3, 0.05),
-        weights=np.ones(3),
-        length_unit=ANGSTROM,
-        sources=(manifest(),),
-        requested_use={},
-        chirality_atom_ids=[ids],
-        chirality_sign=[1],
-        minimum_volume=[0.05],
-        chirality_standard_deviation=[0.01],
-    )
-    mirrored = target.at[:, 2].multiply(-1)
-    np.testing.assert_allclose(
-        plan.distances(mirrored), plan.distances(target), atol=1e-12
-    )
-    assert bool(plan.chirality(target).correct[0])
-    assert not bool(plan.chirality(mirrored).correct[0])
-    initial = target.at[3].set(jnp.array([0.15, -0.12, 0.65]))
-    fixed = np.ones((4, 3), bool)
-    fixed[3] = False
-    result = plan.reconstruct(initial, fixed_mask=fixed, interval_tolerance=1e-5)
-    assert bool(result.restraints_satisfied) and bool(result.chirality_qualified)
-    np.testing.assert_allclose(result.positions[:3], target[:3], atol=0.0)
-    np.testing.assert_allclose(result.initial_positions, initial, atol=0.0)
-    with pytest.raises(ValueError):
-        plan.reconstruct(initial, fixed_mask=np.ones((4, 3), bool))

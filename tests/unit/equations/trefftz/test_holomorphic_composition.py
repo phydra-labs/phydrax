@@ -27,9 +27,7 @@ def _polynomial(coefficients: Any) -> Any:
     )
 
 
-def test_certificate_binds_canonical_complex_algebra_and_construction_dependencies() -> (
-    None
-):
+def test_holomorphic_composition_scenario_1() -> None:
     potential = _polynomial([[1.0, 2.0]])
     certificate = potential.holomorphic_certificate()
     assert certificate.complex_algebra_id == (
@@ -48,9 +46,6 @@ def test_certificate_binds_canonical_complex_algebra_and_construction_dependenci
             linear_in_parameters=True,
             complex_algebra_id="not-the-complex-algebra",
         )
-
-
-def test_branch_bundle_concatenates_values_jets_and_linearity() -> None:
     first = _polynomial([[1.0, 2.0, -0.5]])
     second = _polynomial([[0.3, -1.0], [2.0, 0.25]])
     bundle = phx.equations.HolomorphicBranchBundle((first, second))
@@ -67,6 +62,63 @@ def test_branch_bundle_concatenates_values_jets_and_linearity() -> None:
     assert certificate.parameter_coverage == "finite-subspace"
     assert certificate.linear_in_parameters
     assert bundle.factorization.gauge_kind == "none"
+    first = _polynomial([[1.0, 0.5], [0.2, -0.1]])
+    second = _polynomial([[0.3, 0.8], [1.2, 0.4]])
+    product = phx.equations.HolomorphicProductPotential(
+        (first, second),
+        latent_rank=2,
+        branches=1,
+    )
+    harmonic = phx.equations.HarmonicPotential2D(product)
+    point = jnp.asarray([0.15, -0.25])
+
+    assert jnp.abs(jnp.trace(jax.hessian(harmonic)(point))) < 1e-10
+    gauge = product.gauge_report(point[0] + 1j * point[1])
+    assert bool(gauge.finite)
+    assert float(gauge.imbalance_ratio) >= 1.0
+
+    scaled_first = eqx.tree_at(
+        lambda item: (item.coefficient_real, item.coefficient_imag),
+        first,
+        (2.0 * first.coefficient_real, 2.0 * first.coefficient_imag),
+    )
+    scaled_second = eqx.tree_at(
+        lambda item: (item.coefficient_real, item.coefficient_imag),
+        second,
+        (0.5 * second.coefficient_real, 0.5 * second.coefficient_imag),
+    )
+    scaled = phx.equations.HolomorphicProductPotential(
+        (scaled_first, scaled_second),
+        latent_rank=2,
+        branches=1,
+    )
+    z = point[0] + 1j * point[1]
+    assert jnp.allclose(product(z), scaled(z))
+    factor = _polynomial([[1.0, 1.0]])
+    with pytest.raises(ValueError, match=r"latent_rank \* branches"):
+        phx.equations.HolomorphicProductPotential(
+            (factor,),
+            latent_rank=2,
+            branches=1,
+        )
+
+    generic = phx.nn.models.Separable(
+        in_size="scalar",
+        out_size=1,
+        latent_size=1,
+        models=(
+            phx.nn.models.HolomorphicMLP(
+                in_size=1,
+                out_size=1,
+                hidden_sizes=(2,),
+                key=jr.key(0),
+            ),
+        ),
+        keep_outputs_complex=True,
+    )
+    with pytest.raises(TypeError, match="HolomorphicPotentialProvider"):
+        # ty: ignore[invalid-argument-type]
+        phx.equations.HarmonicPotential2D(generic)
 
 
 def test_branch_bundle_composes_with_biharmonic_physical_wrapper() -> None:
@@ -111,66 +163,3 @@ def test_product_potential_analytic_jets_match_direct_holomorphic_ad() -> None:
     assert certificate.parameter_coverage == "finite-parametric-family"
     assert not certificate.linear_in_parameters
     assert product.factorization.gauge_kind == "multiplicative-factor-scale"
-
-
-def test_product_potential_is_harmonic_and_reports_factor_gauge() -> None:
-    first = _polynomial([[1.0, 0.5], [0.2, -0.1]])
-    second = _polynomial([[0.3, 0.8], [1.2, 0.4]])
-    product = phx.equations.HolomorphicProductPotential(
-        (first, second),
-        latent_rank=2,
-        branches=1,
-    )
-    harmonic = phx.equations.HarmonicPotential2D(product)
-    point = jnp.asarray([0.15, -0.25])
-
-    assert jnp.abs(jnp.trace(jax.hessian(harmonic)(point))) < 1e-10
-    gauge = product.gauge_report(point[0] + 1j * point[1])
-    assert bool(gauge.finite)
-    assert float(gauge.imbalance_ratio) >= 1.0
-
-    scaled_first = eqx.tree_at(
-        lambda item: (item.coefficient_real, item.coefficient_imag),
-        first,
-        (2.0 * first.coefficient_real, 2.0 * first.coefficient_imag),
-    )
-    scaled_second = eqx.tree_at(
-        lambda item: (item.coefficient_real, item.coefficient_imag),
-        second,
-        (0.5 * second.coefficient_real, 0.5 * second.coefficient_imag),
-    )
-    scaled = phx.equations.HolomorphicProductPotential(
-        (scaled_first, scaled_second),
-        latent_rank=2,
-        branches=1,
-    )
-    z = point[0] + 1j * point[1]
-    assert jnp.allclose(product(z), scaled(z))
-
-
-def test_product_and_bundle_validate_child_contracts() -> None:
-    factor = _polynomial([[1.0, 1.0]])
-    with pytest.raises(ValueError, match=r"latent_rank \* branches"):
-        phx.equations.HolomorphicProductPotential(
-            (factor,),
-            latent_rank=2,
-            branches=1,
-        )
-
-    generic = phx.nn.models.Separable(
-        in_size="scalar",
-        out_size=1,
-        latent_size=1,
-        models=(
-            phx.nn.models.HolomorphicMLP(
-                in_size=1,
-                out_size=1,
-                hidden_sizes=(2,),
-                key=jr.key(0),
-            ),
-        ),
-        keep_outputs_complex=True,
-    )
-    with pytest.raises(TypeError, match="HolomorphicPotentialProvider"):
-        # ty: ignore[invalid-argument-type]
-        phx.equations.HarmonicPotential2D(generic)

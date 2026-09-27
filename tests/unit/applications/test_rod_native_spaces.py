@@ -35,51 +35,48 @@ def _rod(dimension: int) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    ("dimension", "orientation_shape", "angular_shape", "configuration_sizes"),
-    (
+def test_rod_native_spaces_scenario_1() -> None:
+    for dimension, orientation_shape, angular_shape, configuration_sizes in (
         (2, (2,), (2,), ((3, 2), (2,))),
         (3, (2, 4), (2, 3), ((3, 3), (2, 4))),
-    ),
-)
-def test_native_configuration_velocity_and_effort_contracts_are_exact(
-    dimension: Any, orientation_shape: Any, angular_shape: Any, configuration_sizes: Any
-) -> None:
-    rod = _rod(dimension)
-    state = rod.initialize_state()
-    configuration = rod.configuration_from_state(state)
-    velocity = rod.velocity_from_state(state)
+    ):
+        rod = _rod(dimension)
+        state = rod.initialize_state()
+        configuration = rod.configuration_from_state(state)
+        velocity = rod.velocity_from_state(state)
 
-    assert (
-        tuple(leaf.shape for leaf in rod.configuration_schema.leaves)
-        == configuration_sizes
-    )
-    assert configuration[0].shape == (3, dimension)
-    assert configuration[1].shape == orientation_shape
-    assert velocity[0].shape == (3, dimension)
-    assert velocity[1].shape == angular_shape
-    assert tuple(
-        spec.shape for spec in jax.tree.leaves(rod.velocity_space.structure())
-    ) == (
-        (3, dimension),
-        angular_shape,
-    )
-    assert tuple(
-        spec.shape for spec in jax.tree.leaves(rod.effort_space.structure())
-    ) == (
-        (3, dimension),
-        angular_shape,
-    )
+        assert (
+            tuple(leaf.shape for leaf in rod.configuration_schema.leaves)
+            == configuration_sizes
+        )
+        assert configuration[0].shape == (3, dimension)
+        assert configuration[1].shape == orientation_shape
+        assert velocity[0].shape == (3, dimension)
+        assert velocity[1].shape == angular_shape
+        assert tuple(
+            spec.shape for spec in jax.tree.leaves(rod.velocity_space.structure())
+        ) == (
+            (3, dimension),
+            angular_shape,
+        )
+        assert tuple(
+            spec.shape for spec in jax.tree.leaves(rod.effort_space.structure())
+        ) == (
+            (3, dimension),
+            angular_shape,
+        )
 
-    rebuilt = rod.state_from_configuration(configuration)
-    replaced = rod.state_with_velocity(rebuilt, velocity)
-    assert jnp.array_equal(replaced.positions, state.positions)
-    assert jnp.array_equal(replaced.orientations, state.orientations)
-    assert jnp.array_equal(replaced.velocities, state.velocities)
-    assert jnp.array_equal(replaced.angular_velocities, state.angular_velocities)
-
-
-def test_spatial_point_uses_scalar_first_quaternions_and_body_angular_velocity() -> None:
+        rebuilt = rod.state_from_configuration(configuration)
+        replaced = rod.state_with_velocity(rebuilt, velocity)
+        assert jnp.array_equal(replaced.positions, state.positions)
+        assert jnp.array_equal(replaced.orientations, state.orientations)
+        assert jnp.array_equal(replaced.velocities, state.velocities)
+        assert jnp.array_equal(replaced.angular_velocities, state.angular_velocities)
+    rod = _rod(3)
+    with pytest.raises(ValueError, match="shape"):
+        rod.effort_from_load(jnp.zeros((3, 3)), jnp.zeros((2, 4)))
+    with pytest.raises(ValueError, match="intrinsic shape"):
+        rod.state_from_configuration((jnp.zeros((3, 3)), jnp.zeros((2, 3))))
     rod = _rod(3)
     state = rod.initialize_state()
     assert jnp.array_equal(
@@ -90,9 +87,6 @@ def test_spatial_point_uses_scalar_first_quaternions_and_body_angular_velocity()
         "world_node_linear_velocity",
         "material_segment_angular_velocity",
     )
-
-
-def test_effort_pairing_is_direct_force_velocity_plus_material_moment_power() -> None:
     rod = _rod(3)
     linear_velocity = jnp.asarray(((0.2, -0.1, 0.4), (-0.3, 0.5, 0.7), (0.6, -0.2, -0.8)))
     body_angular_velocity = jnp.asarray(((0.3, -0.4, 0.1), (-0.5, 0.2, 0.6)))
@@ -110,11 +104,3 @@ def test_effort_pairing_is_direct_force_velocity_plus_material_moment_power() ->
     recovered_forces, recovered_moments = rod.load_from_effort(effort)
     assert jnp.array_equal(recovered_forces, forces)
     assert jnp.array_equal(recovered_moments, material_moments)
-
-
-def test_native_spaces_reject_quaternion_storage_as_a_spatial_moment() -> None:
-    rod = _rod(3)
-    with pytest.raises(ValueError, match="shape"):
-        rod.effort_from_load(jnp.zeros((3, 3)), jnp.zeros((2, 4)))
-    with pytest.raises(ValueError, match="intrinsic shape"):
-        rod.state_from_configuration((jnp.zeros((3, 3)), jnp.zeros((2, 3))))

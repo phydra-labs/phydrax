@@ -27,7 +27,7 @@ from phydrax.applications.semiclassical_qed import (
 )
 
 
-def test_qft_spinor_vacuum_modes_are_normalized_and_subtracted_at_finite_cutoff() -> None:
+def test_qft_contracts() -> None:
     momenta = jnp.asarray((-2.0, -0.25, 0.0, 0.7, 3.0))
     modes = negative_energy_spinor_modes(
         momenta, mass=0.4, charge=0.8, vector_potential=0.3
@@ -44,9 +44,6 @@ def test_qft_spinor_vacuum_modes_are_normalized_and_subtracted_at_finite_cutoff(
         plan.raw_current(modes), plan.adiabatic_current(0.3), atol=1e-12
     )
     np.testing.assert_allclose(plan.renormalized_current(0.3, modes), 0.0, atol=1e-12)
-
-
-def test_qft_massless_spinor_modes_remain_finite_at_zero_kinetic_momentum() -> None:
     momenta = jnp.asarray((-1.0, 0.0, 1.0))
     modes = negative_energy_spinor_modes(momenta, mass=0.0)
     plan = HomogeneousSpinorQEDPlan(momenta, jnp.ones((3,)), charge=1.0, mass=0.0)
@@ -54,9 +51,6 @@ def test_qft_massless_spinor_modes_remain_finite_at_zero_kinetic_momentum() -> N
     assert bool(jnp.all(jnp.isfinite(modes)))
     np.testing.assert_allclose(jnp.sum(jnp.abs(modes) ** 2, axis=-1), 1.0)
     assert bool(jnp.isfinite(plan.adiabatic_current(0.0)))
-
-
-def test_qft_homogeneous_backreaction_reports_energy_and_ward_evidence() -> None:
     plan = HomogeneousSpinorQEDPlan(
         # ty: ignore[invalid-argument-type]
         [-1.0, -0.2, 0.4, 1.3],
@@ -85,9 +79,6 @@ def test_qft_homogeneous_backreaction_reports_energy_and_ward_evidence() -> None
     assert float(result.evidence.maximum_energy_balance_residual) < 2e-6
     assert float(result.evidence.maximum_ward_residual) < 2e-7
     assert bool(result.evidence.successful)
-
-
-def test_qft_tangent_rhs_matches_central_finite_difference() -> None:
     plan = HomogeneousSpinorQEDPlan(
         # ty: ignore[invalid-argument-type]
         [-0.8, 0.3, 1.1],
@@ -146,9 +137,6 @@ def test_qft_tangent_rhs_matches_central_finite_difference() -> None:
             relative_tolerance=3e-3,
         )
         assert bool(evidence.successful)
-
-
-def test_qft_retarded_volterra_response_has_no_future_support() -> None:
     times = jnp.asarray((0.0, 0.2, 0.5, 1.0))
     kernel = jnp.tril(jnp.ones((4, 4)))
     plan = RetardedVolterraResponsePlan(times, kernel)
@@ -158,9 +146,6 @@ def test_qft_retarded_volterra_response_has_no_future_support() -> None:
     np.testing.assert_allclose(result.response[:3], 0.0)
     assert bool(result.evidence.causal)
     assert bool(result.evidence.successful)
-
-
-def test_qft_three_dimensional_negative_energy_modes_span_two_normalized_states() -> None:
     momenta = jnp.asarray(((0.0, 0.0, 0.0), (0.2, -0.4, 0.7)))
     modes = negative_energy_spinor_modes_3d(momenta, mass=0.0)
     gram = jnp.einsum("ksi,kti->kst", jnp.conj(modes), modes)
@@ -171,9 +156,6 @@ def test_qft_three_dimensional_negative_energy_modes_span_two_normalized_states(
     np.testing.assert_allclose(
         plan.raw_current(modes), plan.adiabatic_current(jnp.zeros((3,))), atol=1e-10
     )
-
-
-def test_qft_finite_spatial_modes_use_weighted_normalization_and_gauss_evidence() -> None:
     derivative = jnp.asarray(((0.0, 0.5, -0.5), (-0.5, 0.0, 0.5), (0.5, -0.5, 0.0)))
     plan = FiniteSpatialSpinorQEDPlan(
         derivative,

@@ -131,9 +131,7 @@ def _batch(case: Any = False) -> Any:
     )
 
 
-def test_variance_and_score_filters_preserve_case_axes_masks_weights_and_gradients() -> (
-    None
-):
+def test_selection_scenario_1() -> None:
     batch = _batch(case=True)
     variance = VarianceFilterRecipe(1e-6, max_features=2).fit_batch(batch)
     score = ScoreFilterRecipe(threshold=0.2, max_features=1).fit_batch(batch)
@@ -155,9 +153,6 @@ def test_variance_and_score_filters_preserve_case_axes_masks_weights_and_gradien
         "selected_indices",
         "selected_mask",
     }
-
-
-def test_mutual_information_is_deterministic_fixed_capacity_and_fail_closed() -> None:
     batch = _batch()
     recipe = MutualInformationFilterRecipe(num_bins=3, threshold=0.0, max_features=2)
     first = recipe.fit_batch(batch, key=jax.random.key(1))
@@ -171,9 +166,6 @@ def test_mutual_information_is_deterministic_fixed_capacity_and_fail_closed() ->
     )
     with pytest.raises(TypeError, match="undefined for complex"):
         recipe.fit_batch(complex_batch)
-
-
-def test_recursive_sequential_and_model_based_selection_find_signal() -> None:
     batch = _batch()
     estimator = _ImportanceRecipe()
     recursive = RecursiveFeatureEliminationRecipe(
@@ -202,7 +194,7 @@ def test_recursive_sequential_and_model_based_selection_find_signal() -> None:
         SequentialFeatureSelectionRecipe(estimator, num_features=1).fit_batch(batch)
 
 
-def test_continuous_sparse_gate_is_distinct_smooth_jittable_and_vmap_safe() -> None:
+def test_selection_scenario_2() -> None:
     batch = _batch(case=True)
     result = ContinuousSparseGateRecipe(temperature=0.2, sparsity=0.4).fit_batch(batch)
     model = result.as_trainable()
@@ -215,9 +207,39 @@ def test_continuous_sparse_gate_is_distinct_smooth_jittable_and_vmap_safe() -> N
     assert jnp.allclose(jax.grad(lambda x: jnp.sum(model(x)))(point), model.gates)
     assert jax.vmap(model)(batch.dense_features()[0]).shape == (6, 3)
     assert result.derivative_contract.route is DerivativeRoute.RELAXED
+    scores = jnp.asarray([0.2, 0.5, 0.9])
+    result = ContinuousSparseGateRecipe(
+        temperature=0.25,
+        sparsity=0.4,
+        scorer=lambda _: scores,
+    ).fit_batch(_batch())
+    normalized = (scores - jnp.min(scores)) / (jnp.max(scores) - jnp.min(scores))
+    expected = jax.nn.sigmoid((normalized - 0.4) / 0.25)
+    # ty: ignore[unresolved-attribute]
+    assert jnp.allclose(result.as_trainable().gates, expected)
 
-
-def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves() -> None:
+    equal = ContinuousSparseGateRecipe(
+        temperature=0.25,
+        sparsity=0.4,
+        scorer=lambda _: jnp.ones((3,)),
+    ).fit_batch(_batch())
+    constant_batch = MLBatch(
+        jnp.ones((5, 3)),
+        jnp.ones((5,)),
+    )
+    zero_variance = ContinuousSparseGateRecipe().fit_batch(constant_batch)
+    # ty: ignore[unresolved-attribute]
+    assert jnp.all(jnp.isfinite(equal.as_trainable().gates))
+    # ty: ignore[unresolved-attribute]
+    assert jnp.all(jnp.isfinite(zero_variance.as_trainable().gates))
+    assert (
+        equal.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        zero_variance.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.CONDITIONAL
+    )
     recipe = ContinuousSparseGateRecipe(
         temperature=jnp.asarray(0.2),
         sparsity=jnp.asarray(0.4),
@@ -271,6 +293,24 @@ def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves() -> 
             )
         )(jnp.asarray(1.1))
         jax.block_until_ready(invalid_gates)
+    batch = _batch()
+    with pytest.raises(ValueError, match="positive"):
+        VarianceFilterRecipe(max_features=0)
+    with pytest.raises(ValueError, match="one score per feature"):
+        ScoreFilterRecipe(lambda _: jnp.ones((2,))).fit_batch(batch)
+    with pytest.raises(TypeError, match="real-valued scores"):
+        ScoreFilterRecipe(lambda _: jnp.ones((3,), dtype=jnp.complex64)).fit_batch(batch)
+    bad_weight = MLBatch(
+        batch.dense_features(),
+        batch.require_targets(),
+        sample_weight=jnp.array([1.0, 1.0, -1.0, 1.0, 1.0, 1.0]),
+    )
+    with pytest.raises(Exception, match="nonnegative"):
+        VarianceFilterRecipe().fit_batch(bad_weight)
+
+    with pytest.raises(TypeError, match="importance_getter"):
+        # ty: ignore[missing-argument]
+        ModelBasedSelectionRecipe(_ImportanceRecipe())
 
 
 def test_continuous_sparse_gate_gradients_match_its_conditional_contract() -> None:
@@ -328,60 +368,3 @@ def test_continuous_sparse_gate_gradients_match_its_conditional_contract() -> No
         assert contract.level(surface) is GradientLevel.CONDITIONAL
     assert contract.route is DerivativeRoute.RELAXED
     assert len(contract.conditions) == 4
-
-
-def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy() -> None:
-    scores = jnp.asarray([0.2, 0.5, 0.9])
-    result = ContinuousSparseGateRecipe(
-        temperature=0.25,
-        sparsity=0.4,
-        scorer=lambda _: scores,
-    ).fit_batch(_batch())
-    normalized = (scores - jnp.min(scores)) / (jnp.max(scores) - jnp.min(scores))
-    expected = jax.nn.sigmoid((normalized - 0.4) / 0.25)
-    # ty: ignore[unresolved-attribute]
-    assert jnp.allclose(result.as_trainable().gates, expected)
-
-    equal = ContinuousSparseGateRecipe(
-        temperature=0.25,
-        sparsity=0.4,
-        scorer=lambda _: jnp.ones((3,)),
-    ).fit_batch(_batch())
-    constant_batch = MLBatch(
-        jnp.ones((5, 3)),
-        jnp.ones((5,)),
-    )
-    zero_variance = ContinuousSparseGateRecipe().fit_batch(constant_batch)
-    # ty: ignore[unresolved-attribute]
-    assert jnp.all(jnp.isfinite(equal.as_trainable().gates))
-    # ty: ignore[unresolved-attribute]
-    assert jnp.all(jnp.isfinite(zero_variance.as_trainable().gates))
-    assert (
-        equal.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
-        is GradientLevel.CONDITIONAL
-    )
-    assert (
-        zero_variance.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
-        is GradientLevel.CONDITIONAL
-    )
-
-
-def test_selector_capacity_scores_weights_and_importance_fail_closed() -> None:
-    batch = _batch()
-    with pytest.raises(ValueError, match="positive"):
-        VarianceFilterRecipe(max_features=0)
-    with pytest.raises(ValueError, match="one score per feature"):
-        ScoreFilterRecipe(lambda _: jnp.ones((2,))).fit_batch(batch)
-    with pytest.raises(TypeError, match="real-valued scores"):
-        ScoreFilterRecipe(lambda _: jnp.ones((3,), dtype=jnp.complex64)).fit_batch(batch)
-    bad_weight = MLBatch(
-        batch.dense_features(),
-        batch.require_targets(),
-        sample_weight=jnp.array([1.0, 1.0, -1.0, 1.0, 1.0, 1.0]),
-    )
-    with pytest.raises(Exception, match="nonnegative"):
-        VarianceFilterRecipe().fit_batch(bad_weight)
-
-    with pytest.raises(TypeError, match="importance_getter"):
-        # ty: ignore[missing-argument]
-        ModelBasedSelectionRecipe(_ImportanceRecipe())

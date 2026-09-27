@@ -67,7 +67,7 @@ def _drivers(a: Any = 2.0) -> Any:
     )
 
 
-def test_compiler_certifies_directional_pivots_and_assembles_operator() -> None:
+def test_chemical_conditional_affine_scenario_1() -> None:
     mechanism = _association_mechanism()
     plan = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",))
     certificate = plan.analyze(mechanism)
@@ -84,36 +84,6 @@ def test_compiler_certifies_directional_pivots_and_assembles_operator() -> None:
     )
     np.testing.assert_allclose(assembly.forcing, 0.0)
     assert assembly.successful
-
-
-def test_reaction_multiplier_is_shared_by_forward_and_reverse_channels() -> None:
-    prepared = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
-        _association_mechanism()
-    )
-
-    assembly = prepared.assemble(_drivers(), reaction_multiplier=jnp.asarray((3.0,)))
-
-    np.testing.assert_allclose(assembly.directional_coefficients, (24.0, 1.5))
-
-
-def test_extent_reconstruction_preserves_complete_stoichiometric_state() -> None:
-    prepared = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
-        _association_mechanism()
-    )
-    state = jnp.asarray((2.0, 1.0, 0.0), dtype=jnp.float64)
-
-    result = prepared.advance(state, _drivers(), jnp.asarray(0.01))
-    increment = result.candidate_state - state
-
-    assert result.successful
-    np.testing.assert_allclose(result.element_residual, 0.0, atol=1e-13)
-    np.testing.assert_allclose(result.charge_residual, 0.0, atol=1e-13)
-    np.testing.assert_allclose(result.affine_consistency_residual, 0.0, atol=1e-13)
-    np.testing.assert_allclose(increment[0], 2.0 * increment[1], atol=1e-13)
-    np.testing.assert_allclose(increment[2], -increment[1], atol=1e-13)
-
-
-def test_compiler_requires_every_nonpivot_and_rate_dependency_as_driver() -> None:
     mechanism = _association_mechanism()
     invalid = phx.equations.ChemicalConditionalAffinePlan(("C",), ("A",))
     certificate = invalid.analyze(mechanism)
@@ -136,6 +106,27 @@ def test_compiler_requires_every_nonpivot_and_rate_dependency_as_driver() -> Non
         "rate-plan concentration dependencies"
         in (dependency_certificate.rejection_reasons[0])
     )
+    prepared = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
+        _association_mechanism()
+    )
+
+    assembly = prepared.assemble(_drivers(), reaction_multiplier=jnp.asarray((3.0,)))
+
+    np.testing.assert_allclose(assembly.directional_coefficients, (24.0, 1.5))
+    prepared = phx.equations.ChemicalConditionalAffinePlan(("B", "C"), ("A",)).prepare(
+        _association_mechanism()
+    )
+    state = jnp.asarray((2.0, 1.0, 0.0), dtype=jnp.float64)
+
+    result = prepared.advance(state, _drivers(), jnp.asarray(0.01))
+    increment = result.candidate_state - state
+
+    assert result.successful
+    np.testing.assert_allclose(result.element_residual, 0.0, atol=1e-13)
+    np.testing.assert_allclose(result.charge_residual, 0.0, atol=1e-13)
+    np.testing.assert_allclose(result.affine_consistency_residual, 0.0, atol=1e-13)
+    np.testing.assert_allclose(increment[0], 2.0 * increment[1], atol=1e-13)
+    np.testing.assert_allclose(increment[2], -increment[1], atol=1e-13)
 
 
 def test_driver_only_channel_is_forcing_and_negative_state_fails_closed() -> None:

@@ -51,7 +51,7 @@ def _geometry() -> Any:
     ).prepare(_equilibrium())
 
 
-def test_flux_surface_geometry_recovers_circular_torus_measures() -> None:
+def test_core_transport_scenario_1() -> None:
     geometry = _geometry()
     rho = geometry.rho_faces
     expected_volume = 2.0 * math.pi**2 * 2.0 * (0.8 * rho) ** 2
@@ -61,9 +61,6 @@ def test_flux_surface_geometry_recovers_circular_torus_measures() -> None:
         geometry.surface_area_m2[1:], expected_area[1:], rtol=0.015
     )
     assert bool(geometry.prepare().evidence.successful)
-
-
-def test_core_transport_conserves_particles_and_energy_without_boundary_flux() -> None:
     geometry = _geometry()
     prepared = phx.applications.tokamak.TokamakCoreTransportPlan(geometry, 1.0).prepare()
     cell_count = prepared.cell_count

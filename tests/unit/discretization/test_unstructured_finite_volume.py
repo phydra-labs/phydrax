@@ -24,7 +24,7 @@ def _polygon_centroid(vertices: Any) -> Any:
     return area, center
 
 
-def test_mixed_triangle_quadrilateral_geometry_has_one_exact_cell_complex() -> None:
+def test_unstructured_finite_volume_scenario_1() -> None:
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -65,9 +65,6 @@ def test_mixed_triangle_quadrilateral_geometry_has_one_exact_cell_complex() -> N
     assert jnp.all(jnp.sum(owner_vector * discretization.area_vectors, axis=-1) > 0.0)
     shared = discretization.neighbor_cells >= 0
     assert jnp.sum(shared) == 2
-
-
-def test_skewed_quadrilateral_uses_mapped_area_and_physical_centroid() -> None:
     vertices = np.asarray(((0.0, 0.0), (2.0, 0.0), (1.5, 1.0), (0.0, 1.0)))
     expected_area, expected_center = _polygon_centroid(vertices)
     discretization = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -88,24 +85,18 @@ def test_skewed_quadrilateral_uses_mapped_area_and_physical_centroid() -> None:
         reversed_discretization.cell_centers, discretization.cell_centers
     )
     assert discretization.quality.maximum_closure_residual < 1e-12
-
-
-@pytest.mark.parametrize(
-    "vertices",
-    (
+    for vertices in (
         np.asarray(((0.0, 0.0), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0))),
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.2, 0.2), (0.0, 1.0))),
-    ),
-)
-def test_invalid_bilinear_quadrilaterals_are_rejected(vertices: Any) -> None:
-    with pytest.raises(ValueError, match="Quadrilateral"):
-        phx.discretization.UnstructuredFiniteVolumePlan(
-            vertices,
-            quadrilaterals=np.asarray(((0, 1, 2, 3),)),
-        )
+    ):
+        with pytest.raises(ValueError, match="Quadrilateral"):
+            phx.discretization.UnstructuredFiniteVolumePlan(
+                vertices,
+                quadrilaterals=np.asarray(((0, 1, 2, 3),)),
+            )
 
 
-def test_tetrahedral_geometry_has_exact_chain_orientation_and_face_closure() -> None:
+def test_tetrahedral_contracts() -> None:
     vertices = np.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -145,9 +136,6 @@ def test_tetrahedral_geometry_has_exact_chain_orientation_and_face_closure() -> 
     assert jnp.all(jnp.sum(owner_vector * discretization.area_vectors, axis=-1) > 0.0)
     shared = discretization.neighbor_cells >= 0
     assert jnp.sum(shared) == 1
-
-
-def test_tetrahedral_orientation_is_normalized_but_degeneracy_is_rejected() -> None:
     vertices = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
@@ -165,6 +153,81 @@ def test_tetrahedral_orientation_is_normalized_but_degeneracy_is_rejected() -> N
         phx.discretization.UnstructuredFiniteVolumePlan(
             flat_vertices, tetrahedra=np.asarray(((0, 1, 2, 3),))
         )
+    vertices = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    discretization = phx.discretization.UnstructuredFiniteVolumePlan(
+        vertices, tetrahedra=np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+    ).prepare()
+    assert discretization.face_quadrature_points.shape == (4, 6, 3)
+    assert discretization.face_quadrature_weights.shape == (4, 6)
+    assert jnp.all(discretization.face_quadrature_weights > 0.0)
+    static_metrics = phx.discretization.lower_static_unstructured_stage_metrics(
+        discretization
+    )
+    assert static_metrics.face_blocks[0].layout.quadrature_count == 6
+
+    faces = np.asarray(discretization.connectivity.faces)
+    face = int(np.flatnonzero(np.all(faces == (0, 1, 2), axis=1))[0])
+    points = np.asarray(discretization.face_quadrature_points[face])
+    weights = np.asarray(discretization.face_quadrature_weights[face])
+    for x_degree in range(5):
+        for y_degree in range(5 - x_degree):
+            observed = np.sum(
+                weights * points[:, 0] ** x_degree * points[:, 1] ** y_degree
+            )
+            expected = (
+                math.factorial(x_degree)
+                * math.factorial(y_degree)
+                / math.factorial(x_degree + y_degree + 2)
+            )
+            np.testing.assert_allclose(observed, expected, rtol=2e-13, atol=2e-14)
+    vertices = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    )
+    tetrahedra = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
+    reference = phx.discretization.UnstructuredFiniteVolumePlan(
+        vertices, tetrahedra=tetrahedra
+    ).prepare()
+    theta = 0.61
+    phi = -0.37
+    rotation_z = np.asarray(
+        (
+            (np.cos(theta), -np.sin(theta), 0.0),
+            (np.sin(theta), np.cos(theta), 0.0),
+            (0.0, 0.0, 1.0),
+        )
+    )
+    rotation_x = np.asarray(
+        (
+            (1.0, 0.0, 0.0),
+            (0.0, np.cos(phi), -np.sin(phi)),
+            (0.0, np.sin(phi), np.cos(phi)),
+        )
+    )
+    rotation = rotation_z @ rotation_x
+    scale = 2.75
+    translation = np.asarray((0.8, -1.1, 0.35))
+    transformed_vertices = translation + scale * (vertices @ rotation.T)
+    transformed = phx.discretization.UnstructuredFiniteVolumePlan(
+        transformed_vertices, tetrahedra=tetrahedra
+    ).prepare()
+
+    expected_points = translation + scale * (
+        np.asarray(reference.face_quadrature_points) @ rotation.T
+    )
+    np.testing.assert_allclose(
+        transformed.face_quadrature_points,
+        expected_points,
+        rtol=2e-13,
+        atol=2e-13,
+    )
+    np.testing.assert_allclose(
+        transformed.face_quadrature_weights,
+        scale**2 * reference.face_quadrature_weights,
+        rtol=2e-13,
+        atol=2e-13,
+    )
 
 
 def test_global_ids_are_lossless_or_rejected_for_the_active_jax_width(
@@ -268,87 +331,6 @@ else:
         check=True,
         capture_output=True,
         text=True,
-    )
-
-
-def test_tetrahedral_face_quadrature_is_degree_four_exact() -> None:
-    vertices = np.asarray(
-        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-    )
-    discretization = phx.discretization.UnstructuredFiniteVolumePlan(
-        vertices, tetrahedra=np.asarray(((0, 1, 2, 3),), dtype=np.int32)
-    ).prepare()
-    assert discretization.face_quadrature_points.shape == (4, 6, 3)
-    assert discretization.face_quadrature_weights.shape == (4, 6)
-    assert jnp.all(discretization.face_quadrature_weights > 0.0)
-    static_metrics = phx.discretization.lower_static_unstructured_stage_metrics(
-        discretization
-    )
-    assert static_metrics.face_blocks[0].layout.quadrature_count == 6
-
-    faces = np.asarray(discretization.connectivity.faces)
-    face = int(np.flatnonzero(np.all(faces == (0, 1, 2), axis=1))[0])
-    points = np.asarray(discretization.face_quadrature_points[face])
-    weights = np.asarray(discretization.face_quadrature_weights[face])
-    for x_degree in range(5):
-        for y_degree in range(5 - x_degree):
-            observed = np.sum(
-                weights * points[:, 0] ** x_degree * points[:, 1] ** y_degree
-            )
-            expected = (
-                math.factorial(x_degree)
-                * math.factorial(y_degree)
-                / math.factorial(x_degree + y_degree + 2)
-            )
-            np.testing.assert_allclose(observed, expected, rtol=2e-13, atol=2e-14)
-
-
-def test_tetrahedral_face_quadrature_commutes_with_rotation_and_scale() -> None:
-    vertices = np.asarray(
-        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-    )
-    tetrahedra = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
-    reference = phx.discretization.UnstructuredFiniteVolumePlan(
-        vertices, tetrahedra=tetrahedra
-    ).prepare()
-    theta = 0.61
-    phi = -0.37
-    rotation_z = np.asarray(
-        (
-            (np.cos(theta), -np.sin(theta), 0.0),
-            (np.sin(theta), np.cos(theta), 0.0),
-            (0.0, 0.0, 1.0),
-        )
-    )
-    rotation_x = np.asarray(
-        (
-            (1.0, 0.0, 0.0),
-            (0.0, np.cos(phi), -np.sin(phi)),
-            (0.0, np.sin(phi), np.cos(phi)),
-        )
-    )
-    rotation = rotation_z @ rotation_x
-    scale = 2.75
-    translation = np.asarray((0.8, -1.1, 0.35))
-    transformed_vertices = translation + scale * (vertices @ rotation.T)
-    transformed = phx.discretization.UnstructuredFiniteVolumePlan(
-        transformed_vertices, tetrahedra=tetrahedra
-    ).prepare()
-
-    expected_points = translation + scale * (
-        np.asarray(reference.face_quadrature_points) @ rotation.T
-    )
-    np.testing.assert_allclose(
-        transformed.face_quadrature_points,
-        expected_points,
-        rtol=2e-13,
-        atol=2e-13,
-    )
-    np.testing.assert_allclose(
-        transformed.face_quadrature_weights,
-        scale**2 * reference.face_quadrature_weights,
-        rtol=2e-13,
-        atol=2e-13,
     )
 
 

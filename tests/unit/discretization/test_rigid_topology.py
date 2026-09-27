@@ -92,7 +92,7 @@ def _no_transactions(prepared: Any, state: Any) -> Any:
     )
 
 
-def test_break_is_one_time_irreversible_and_dissipation_is_monotone() -> None:
+def test_rigid_topology_scenario_1() -> None:
     law = BreakableRigidJointLawPlan(
         jnp.asarray([7]),
         jnp.asarray([1.0]),
@@ -131,9 +131,6 @@ def test_break_is_one_time_irreversible_and_dissipation_is_monotone() -> None:
     assert repeated.accepted_state.break_step.tolist() == [4]
     assert repeated.accepted_state.break_event_id.tolist() == [0]
     assert repeated.accepted_state.next_event_id == 1
-
-
-def test_unload_arms_high_initial_load_and_reload_crossing_breaks() -> None:
     law = BreakableRigidJointLawPlan(
         jnp.asarray([8]),
         1.0,
@@ -165,9 +162,6 @@ def test_unload_arms_high_initial_load_and_reload_crossing_breaks() -> None:
     assert reloaded.successful
     assert reloaded.newly_broken_mask.tolist() == [True]
     assert reloaded.accepted_state.damage.tolist() == [1.0]
-
-
-def test_simultaneous_breaks_are_journaled_in_stable_id_order() -> None:
     prepared = _two_joint_topology()
     state = prepared.initialize_state()
     result = apply_rigid_topology_transactions(
@@ -194,7 +188,7 @@ def test_simultaneous_breaks_are_journaled_in_stable_id_order() -> None:
     assert result.accepted_state.replay_digest != state.replay_digest
 
 
-def test_event_capacity_overflow_rolls_back_entire_composite() -> None:
+def test_rigid_topology_scenario_2() -> None:
     prepared = _two_joint_topology(event_capacity=1)
     state = prepared.initialize_state()
     result = apply_rigid_topology_transactions(
@@ -216,9 +210,6 @@ def test_event_capacity_overflow_rolls_back_entire_composite() -> None:
     assert jnp.array_equal(result.accepted_state.journal.valid, state.journal.valid)
     assert result.accepted_state.replay_digest == state.replay_digest
     assert not jnp.any(result.multiplier_reset_joint_mask)
-
-
-def test_inactive_dual_gauge_and_multiplier_reset_follow_foundation_layout() -> None:
     prepared = _two_joint_topology()
     state = prepared.initialize_state()
     result = apply_rigid_topology_transactions(
@@ -240,9 +231,6 @@ def test_inactive_dual_gauge_and_multiplier_reset_follow_foundation_layout() -> 
     )
     assert jnp.all(result.dual_gauge.gauge_rhs == 0.0)
     assert result.dual_gauge.finite_evidence
-
-
-def test_predeclared_joint_activation_and_body_successor_transaction() -> None:
     prepared = _two_joint_topology(initial_active=(False, True))
     activation_plan = RigidTopologyPlan(
         prepared.plan.breakable_joints,
@@ -302,7 +290,7 @@ def test_predeclared_joint_activation_and_body_successor_transaction() -> None:
     assert body_result.accepted_state.contact_cache_epoch == 1
 
 
-def test_prepared_identity_and_replay_digest_are_enforced() -> None:
+def test_rigid_topology_scenario_3() -> None:
     prepared = _two_joint_topology()
     alternate = _two_joint_topology(plan_id="different-topology")
     state = prepared.initialize_state()
@@ -337,6 +325,30 @@ def test_prepared_identity_and_replay_digest_are_enforced() -> None:
     assert jnp.array_equal(
         rejected.accepted_state.joint_state.damage, state.joint_state.damage
     )
+    with pytest.raises(ValueError, match="derivative margins"):
+        BreakableRigidJointLawPlan(
+            jnp.asarray([1]), 1.0, 2.0, 1.0, minimum_loading_rate=0.0
+        )
+    with pytest.raises(ValueError, match="derivative margins"):
+        BreakableRigidJointLawPlan(
+            jnp.asarray([1]), 1.0, 2.0, 1.0, minimum_loading_rate=jnp.nan
+        )
+    law = BreakableRigidJointLawPlan(
+        jnp.asarray([1]), 1.0, 2.0, 1.0, minimum_loading_rate=0.1
+    )
+    state = law.initialize_state()
+    rejected = update_breakable_rigid_joints(
+        law,
+        state,
+        jnp.asarray([2.5]),
+        jnp.asarray([jnp.nan]),
+        jnp.asarray(1),
+    )
+    assert not rejected.successful
+    assert not rejected.finite_evidence
+    assert rejected.failure_reasons & int(RigidTopologyFailure.INVALID_DERIVATIVE)
+    assert jnp.array_equal(rejected.accepted_state.damage, state.damage)
+    assert jnp.array_equal(rejected.accepted_state.active_mask, state.active_mask)
 
 
 def test_jit_scan_preserves_all_fixed_capacities() -> None:
@@ -376,30 +388,3 @@ def test_jit_scan_preserves_all_fixed_capacities() -> None:
         prepared.constraint_row_capacity,
     )
     assert jnp.sum(final.journal.valid) == 1
-
-
-def test_invalid_derivative_margins_and_runtime_derivatives_are_rejected() -> None:
-    with pytest.raises(ValueError, match="derivative margins"):
-        BreakableRigidJointLawPlan(
-            jnp.asarray([1]), 1.0, 2.0, 1.0, minimum_loading_rate=0.0
-        )
-    with pytest.raises(ValueError, match="derivative margins"):
-        BreakableRigidJointLawPlan(
-            jnp.asarray([1]), 1.0, 2.0, 1.0, minimum_loading_rate=jnp.nan
-        )
-    law = BreakableRigidJointLawPlan(
-        jnp.asarray([1]), 1.0, 2.0, 1.0, minimum_loading_rate=0.1
-    )
-    state = law.initialize_state()
-    rejected = update_breakable_rigid_joints(
-        law,
-        state,
-        jnp.asarray([2.5]),
-        jnp.asarray([jnp.nan]),
-        jnp.asarray(1),
-    )
-    assert not rejected.successful
-    assert not rejected.finite_evidence
-    assert rejected.failure_reasons & int(RigidTopologyFailure.INVALID_DERIVATIVE)
-    assert jnp.array_equal(rejected.accepted_state.damage, state.damage)
-    assert jnp.array_equal(rejected.accepted_state.active_mask, state.active_mask)

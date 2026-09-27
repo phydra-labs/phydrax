@@ -57,7 +57,7 @@ def _circle_motion() -> Any:
     return geometry, motion
 
 
-def test_runtime_rejects_changed_coordinate_count() -> None:
+def test_finite_element_mesh_motion_scenario_1() -> None:
     discretization = _discretization()
 
     with pytest.raises(ValueError, match="preserve coordinate shape"):
@@ -65,9 +65,6 @@ def test_runtime_rejects_changed_coordinate_count() -> None:
             discretization.mesh.coordinates[:-1],
             numeric_version="invalid",
         )
-
-
-def test_three_dimensional_cell_mesh_coordinate_refresh_preserves_topology() -> None:
     prism_coordinates = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -169,6 +166,19 @@ def test_three_dimensional_cell_mesh_coordinate_refresh_preserves_topology() -> 
         assert refreshed.geometry_layout_id == mesh.geometry_layout_id
         assert refreshed.geometry_id != mesh.geometry_id
         assert not jnp.array_equal(refreshed.coordinates, mesh.coordinates)
+    geometry, motion = _circle_motion()
+    radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
+    expired = geometry.state.replace_at(radius_index, jnp.asarray(1.8))
+
+    result = eqx.filter_jit(motion.realize)(
+        expired,
+        numeric_version="rejected-radius-1.8",
+    )
+
+    assert not bool(result.accepted)
+    assert bool(result.refresh_required)
+    assert jnp.array_equal(result.coordinates, motion.reference_coordinates)
+    assert jnp.array_equal(result.runtime.coordinates, motion.reference_coordinates)
 
 
 def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative() -> None:
@@ -207,22 +217,6 @@ def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative() -> N
     assert derivative > 0.0
 
 
-def test_invalid_boundary_motion_returns_base_runtime_and_rejected_evidence() -> None:
-    geometry, motion = _circle_motion()
-    radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
-    expired = geometry.state.replace_at(radius_index, jnp.asarray(1.8))
-
-    result = eqx.filter_jit(motion.realize)(
-        expired,
-        numeric_version="rejected-radius-1.8",
-    )
-
-    assert not bool(result.accepted)
-    assert bool(result.refresh_required)
-    assert jnp.array_equal(result.coordinates, motion.reference_coordinates)
-    assert jnp.array_equal(result.runtime.coordinates, motion.reference_coordinates)
-
-
 class _InvertingProvider(eqx.Module):
     reference_points: jax.Array
     mapping_id: str = eqx.field(static=True)
@@ -244,7 +238,7 @@ class _InvertingProvider(eqx.Module):
         )
 
 
-def test_signed_jacobian_rejects_orientation_reversal() -> None:
+def test_finite_element_mesh_motion_scenario_2() -> None:
     discretization = _discretization()
     provider = _InvertingProvider(discretization.mesh.coordinates[:4])
     motion = phx.discretization.FiniteElementMeshMotionPlan(
@@ -262,9 +256,6 @@ def test_signed_jacobian_rejects_orientation_reversal() -> None:
     assert not bool(result.accepted)
     assert not bool(result.evidence.geometry.orientation_preserved)
     assert jnp.array_equal(result.coordinates, motion.reference_coordinates)
-
-
-def test_winslow_mesh_motion_realizes_under_jit_and_certifies_the_epoch() -> None:
     geometry, harmonic = _circle_motion()
     motion = phx.discretization.FiniteElementMeshMotionPlan(
         harmonic.discretization,

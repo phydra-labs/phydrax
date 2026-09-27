@@ -56,7 +56,7 @@ def _system(*, constraint_damping: Any = 0.02, tolerance: Any = 1.0e-5) -> Any:
     )
 
 
-def test_z4c_requires_geometric_units_and_rejects_complex_fields() -> None:
+def test_core_scenario_1() -> None:
     with pytest.raises(ValueError, match="G=c=1"):
         Z4cSystem(
             RelativityScaleContract.si(),
@@ -78,9 +78,6 @@ def test_z4c_requires_geometric_units_and_rejects_complex_fields() -> None:
             flat.shift_driver,
             grid_id=flat.grid_id,
         )
-
-
-def test_fourth_order_polynomial_identities_include_nonperiodic_edges() -> None:
     shape = (9, 8, 7)
     spacing = (0.2, 0.3, 0.4)
     operators = FourthOrderDerivatives(shape, spacing, boundary="one_sided")
@@ -115,9 +112,6 @@ def test_fourth_order_polynomial_identities_include_nonperiodic_edges() -> None:
     )
     damping = dissipative.dissipation(checkerboard)
     assert float(jnp.sum(damping * checkerboard)) < 0.0
-
-
-def test_flat_vacuum_rhs_constraints_and_jit_shape() -> None:
     grid = FixedGridGeometry(
         (5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True
     )
@@ -149,7 +143,7 @@ def test_flat_vacuum_rhs_constraints_and_jit_shape() -> None:
     np.testing.assert_allclose(compiled, 0.0, atol=2e-6)
 
 
-def test_harmonic_and_linearized_tensor_wave_rates() -> None:
+def test_core_scenario_2() -> None:
     shape = (9, 5, 5)
     spacing = (0.25, 1.0, 1.0)
     grid = FixedGridGeometry(shape, (0.0, 0.0, 0.0), spacing, periodic=True)
@@ -215,9 +209,6 @@ def test_harmonic_and_linearized_tensor_wave_rates() -> None:
     np.testing.assert_allclose(puncture_rates.lapse, -2.0 * k_hat)
     np.testing.assert_allclose(puncture_rates.shift, 0.75 * driver)
     np.testing.assert_allclose(puncture_rates.shift_driver, -1.5 * driver)
-
-
-def test_stress_energy_and_constraint_damping_are_explicit() -> None:
     grid = FixedGridGeometry(
         (5, 5, 5), (-2.0, -2.0, -2.0), (1.0, 1.0, 1.0), periodic=True
     )

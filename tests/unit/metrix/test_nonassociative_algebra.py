@@ -12,7 +12,7 @@ def _exact_basis(dimension: Any, position: Any) -> Any:
     return tuple(Fraction(int(index == position)) for index in range(dimension))
 
 
-def test_exact_derived_products_distinguish_quaternion_and_octonion_bracketing() -> None:
+def test_nonassociative_algebra_scenario_1() -> None:
     quaternion = phx.metrix.algebra.QuaternionAlgebraSpec()
     octonion = phx.metrix.algebra.OctonionAlgebraSpec()
     quaternion_basis = tuple(_exact_basis(4, index) for index in range(4))
@@ -33,9 +33,6 @@ def test_exact_derived_products_distinguish_quaternion_and_octonion_bracketing()
         octonion.associator_exact(*(octonion_basis[position] for position in positions))
         != (Fraction(0),) * 8
     )
-
-
-def test_octonion_associator_is_alternating_for_exact_linear_combinations() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     left = tuple(Fraction(value) for value in (1, 2, -1, 3, 0, 1, -2, 4))
     right = tuple(Fraction(value) for value in (0, -1, 2, 1, 3, -2, 1, 0))
@@ -47,9 +44,6 @@ def test_octonion_associator_is_alternating_for_exact_linear_combinations() -> N
     forward = algebra.associator_exact(left, right, third)
     reverse = algebra.associator_exact(right, left, third)
     assert forward == tuple(-value for value in reverse)
-
-
-def test_numeric_derived_products_preserve_bracketing_jit_and_jvp() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     left = jnp.asarray([0.3, -0.2, 0.7, 0.1, -0.4, 0.8, 0.5, -0.6])
@@ -71,7 +65,7 @@ def test_numeric_derived_products_preserve_bracketing_jit_and_jvp() -> None:
     assert jnp.linalg.norm(compiled) > 0.0
 
 
-def test_jordan_product_promotes_integer_coordinates_without_truncation() -> None:
+def test_nonassociative_algebra_scenario_2() -> None:
     algebra = phx.metrix.algebra.FiniteRealAlgebraSpec(
         "rational-product",
         ("1", "u"),
@@ -91,9 +85,6 @@ def test_jordan_product_promotes_integer_coordinates_without_truncation() -> Non
 
     assert jnp.issubdtype(value.dtype, jnp.floating)
     assert jnp.array_equal(value, jnp.asarray([0.5, 0.5]))
-
-
-def test_higher_cayley_dickson_does_not_inherit_octonion_alternation() -> None:
     algebra = phx.metrix.algebra.CayleyDicksonAlgebraSpec(4)
     witness = algebra.properties.claim("left_alternative").witness
     basis = jnp.eye(algebra.coordinate_dimension)

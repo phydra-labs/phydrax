@@ -122,14 +122,33 @@ def _evaluate(
     )
 
 
-def test_metric_pass_cannot_replace_missing_measurement_calibration() -> None:
+def test_scientific_claim_scenario_1() -> None:
     evidence = _evaluate(_profile(), (_stage("locked-prediction"),))
 
     assert evidence.inconclusive
     assert "measurement-calibration" in evidence.reason
+    profile = _profile()
+    stages = (
+        _stage("measurement-calibration"),
+        _stage("locked-prediction"),
+    )
 
+    assert _evaluate(profile, stages, value=1.0).passed
+    assert _evaluate(profile, stages, value=1.01).failed
+    assert _evaluate(profile, stages, unit="kJ/mol").inconclusive
+    criterion = _criterion()
+    reconstructed = ScientificMetricCriterion.from_record(criterion.to_record())
+    changed_threshold = _criterion(0.9)
 
-def test_failed_required_stage_fails_but_absent_stage_is_inconclusive() -> None:
+    assert reconstructed == criterion
+    assert changed_threshold.criterion_id != criterion.criterion_id
+
+    corrupted = criterion.to_record()
+    corrupted["criterion_id"] = "not-the-content-address"
+    with pytest.raises(ValueError, match="invalid content address"):
+        ScientificMetricCriterion.from_record(corrupted)
+    with pytest.raises(ValueError, match="requires only an upper"):
+        ScientificMetricCriterion("mae", "at_most", 0.0, 1.0, "kcal/mol", "pooled")
     profile = _profile()
     failed = _evaluate(
         profile,
@@ -144,21 +163,6 @@ def test_failed_required_stage_fails_but_absent_stage_is_inconclusive() -> None:
     assert "measurement-calibration" in failed.reason
     assert absent.inconclusive
     assert "locked-prediction" in absent.reason
-
-
-def test_metric_threshold_uses_declared_unit_and_aggregation() -> None:
-    profile = _profile()
-    stages = (
-        _stage("measurement-calibration"),
-        _stage("locked-prediction"),
-    )
-
-    assert _evaluate(profile, stages, value=1.0).passed
-    assert _evaluate(profile, stages, value=1.01).failed
-    assert _evaluate(profile, stages, unit="kJ/mol").inconclusive
-
-
-def test_family_macro_criterion_rejects_pooled_value_with_same_metric_id() -> None:
     evidence = _evaluate(
         _profile(),
         (
@@ -172,7 +176,7 @@ def test_family_macro_criterion_rejects_pooled_value_with_same_metric_id() -> No
     assert "family-macro-mae" in evidence.reason
 
 
-def test_claim_evidence_preserves_all_requalification_triggers() -> None:
+def test_claim_contracts() -> None:
     profile = _profile()
     evidence = _evaluate(
         profile,
@@ -186,9 +190,6 @@ def test_claim_evidence_preserves_all_requalification_triggers() -> None:
     assert evidence.requalification_triggers == tuple(sorted(_TRIGGERS))
     assert profile.claim_id in evidence.subject_ids
     assert profile.support.support_tuple_id in evidence.subject_ids
-
-
-def test_claim_evidence_identity_changes_when_prerequisite_is_replaced() -> None:
     profile = _profile()
     baseline_calibration = _stage(
         "measurement-calibration",
@@ -206,9 +207,6 @@ def test_claim_evidence_identity_changes_when_prerequisite_is_replaced() -> None
     assert baseline_calibration.evidence_id in first.subject_ids
     assert replacement_calibration.evidence_id in replaced.subject_ids
     assert first.evidence_id != replaced.evidence_id
-
-
-def test_claim_evidence_identity_changes_with_passing_metric_value() -> None:
     profile = _profile()
     stages = (
         _stage("measurement-calibration"),
@@ -221,9 +219,6 @@ def test_claim_evidence_identity_changes_with_passing_metric_value() -> None:
     assert first.passed
     assert substituted.passed
     assert first.evidence_id != substituted.evidence_id
-
-
-def test_claim_expiry_is_capped_by_earliest_matched_prerequisite() -> None:
     evidence = _evaluate(
         _profile(),
         (
@@ -235,9 +230,6 @@ def test_claim_expiry_is_capped_by_earliest_matched_prerequisite() -> None:
 
     assert evidence.passed
     assert evidence.expires_at == 30
-
-
-def test_claim_refuses_prerequisite_expiring_at_derived_issuance() -> None:
     with pytest.raises(ValueError, match="remain current after derived issuance"):
         _evaluate(
             _profile(),
@@ -247,9 +239,8 @@ def test_claim_refuses_prerequisite_expiring_at_derived_issuance() -> None:
             ),
             issued_at=2,
         )
-
-
-def test_claim_identity_is_order_independent_and_content_verified() -> None:
+    with pytest.raises(ValueError, match="frozen in campaign criteria_ids"):
+        _profile(frozen_criteria_ids=("different-criterion",))
     profile = _profile()
     reconstructed = ScientificClaimProfile.from_record(profile.to_record())
 
@@ -260,27 +251,3 @@ def test_claim_identity_is_order_independent_and_content_verified() -> None:
     corrupted["claim_id"] = "not-the-content-address"
     with pytest.raises(ValueError, match="invalid content address"):
         ScientificClaimProfile.from_record(corrupted)
-
-
-def test_metric_criterion_identity_binds_exact_threshold_and_is_verified() -> None:
-    criterion = _criterion()
-    reconstructed = ScientificMetricCriterion.from_record(criterion.to_record())
-    changed_threshold = _criterion(0.9)
-
-    assert reconstructed == criterion
-    assert changed_threshold.criterion_id != criterion.criterion_id
-
-    corrupted = criterion.to_record()
-    corrupted["criterion_id"] = "not-the-content-address"
-    with pytest.raises(ValueError, match="invalid content address"):
-        ScientificMetricCriterion.from_record(corrupted)
-
-
-def test_claim_rejects_criterion_not_frozen_by_campaign() -> None:
-    with pytest.raises(ValueError, match="frozen in campaign criteria_ids"):
-        _profile(frozen_criteria_ids=("different-criterion",))
-
-
-def test_metric_criterion_rejects_ambiguous_bounds() -> None:
-    with pytest.raises(ValueError, match="requires only an upper"):
-        ScientificMetricCriterion("mae", "at_most", 0.0, 1.0, "kcal/mol", "pooled")

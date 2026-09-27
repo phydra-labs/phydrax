@@ -63,7 +63,7 @@ def _snapshot(
     )
 
 
-def test_fast_light_fixed_stencil_reports_support_and_is_jittable() -> None:
+def test_gr_transfer_scenario_1() -> None:
     snapshot = _snapshot(0.0)
     coordinates = jnp.asarray([[0.2, 0.3, 0.4], [1.2, 0.3, 0.4]])
     plan = snapshot.prepare_sampling(coordinates)
@@ -91,9 +91,6 @@ def test_fast_light_fixed_stencil_reports_support_and_is_jittable() -> None:
         )
     )(jnp.asarray(0.2))
     np.testing.assert_allclose(spatial_derivative, 1.0, rtol=1.0e-6)
-
-
-def test_monotone_slow_light_stationary_limit_matches_fast_light() -> None:
     first = _snapshot(0.0)
     second = _snapshot(1.0)
     worldtube = MonotoneSlowLightWorldtube(
@@ -112,9 +109,6 @@ def test_monotone_slow_light_stationary_limit_matches_fast_light() -> None:
 
     with pytest.raises(ValueError, match="strictly increasing"):
         MonotoneSlowLightWorldtube((first, _snapshot(0.0)), worldtube_id="nonmonotone")
-
-
-def test_invariant_scalar_transfer_vacuum_slab_thin_and_thick_limits() -> None:
     units = InvariantTransferUnitContract.si_affine_length()
     plan = InvariantScalarTransferPlan(jnp.asarray([2.0]), units, path_id="slab")
 
@@ -239,7 +233,7 @@ def _pure_faraday_matrix(rotation: Any) -> Any:
     )
 
 
-def test_polarized_transfer_binds_ray_basis_and_preserves_faraday_cone() -> None:
+def test_polarized_contracts() -> None:
     metric, ray = _flat_polarized_ray(jnp.asarray([0.0, 0.5]))
     path = PolarizedRayPath(ray, metric, ray_index=0, basis_tolerance=1.0e-7)
     plan = PolarizedInvariantTransferPlan(
@@ -325,9 +319,30 @@ def test_polarized_transfer_binds_ray_basis_and_preserves_faraday_cone() -> None
     assert not bool(spoofed_path.evidence.basis_transported)
     assert not bool(rejected.evidence.basis_transported)
     assert not bool(rejected.evidence.qualified)
-
-
-def test_polarized_ray_path_retains_exact_terminal_partial_segment() -> None:
+    metric, ray = _flat_polarized_ray(jnp.asarray([0.0, 0.25]))
+    plan = PolarizedInvariantTransferPlan(
+        PolarizedRayPath(ray, metric, ray_index=0),
+        InvariantTransferUnitContract.si_affine_length(),
+    )
+    emission = (
+        jnp.zeros((plan.capacity, 4))
+        .at[0]
+        .set(jnp.asarray([1.0e-41, -5.0e-42, 0.0, 0.0]))
+    )
+    result = eqx.filter_jit(plan.evaluate)(
+        emission,
+        jnp.zeros((plan.capacity, 4, 4)),
+        jnp.zeros((4,)),
+        jnp.zeros((plan.capacity,)),
+    )
+    np.testing.assert_allclose(
+        result.invariant_stokes,
+        emission[0] * 0.25,
+        rtol=2.0e-12,
+        atol=0.0,
+    )
+    assert bool(result.invariant_stokes[0] > 0.0)
+    assert bool(result.evidence.qualified)
     metric, ray = _flat_polarized_ray(
         jnp.asarray([0.0, 0.5, 1.0]),
         capture_margin=_capture_after_affine_03,
@@ -347,7 +362,7 @@ def test_polarized_ray_path_retains_exact_terminal_partial_segment() -> None:
     np.testing.assert_allclose(path.tangents[1], ray.event_ledger.tangent[0], atol=2.0e-7)
 
 
-def test_ray_metric_and_medium_chart_identities_are_exactly_bound() -> None:
+def test_gr_transfer_scenario_2() -> None:
     metric, ray = _flat_polarized_ray(jnp.asarray([0.0, 0.5]))
     path = PolarizedRayPath(ray, metric, ray_index=0)
     wrong_metric = minkowski_metric(
@@ -403,9 +418,6 @@ def test_ray_metric_and_medium_chart_identities_are_exactly_bound() -> None:
     slow = worldtube.sample(worldtube.prepare_path_sampling(path))
     assert bool(slow.evidence.qualified[0])
     assert not bool(slow.evidence.in_support[-1])
-
-
-def test_opaque_metric_identity_flows_through_polarized_transfer() -> None:
     metric = LorentzianMetric(
         _OpaqueMinkowskiMetric(),
         chart=CoordinateChart("opaque-transfer-cartesian", ("t", "x", "y", "z")),
@@ -449,36 +461,6 @@ def test_opaque_metric_identity_flows_through_polarized_transfer() -> None:
             metric_semantic_id=semantic_id,
             metric_numeric_id=canonical_fingerprint({"wrong": "metric-numeric-id"}),
         )
-
-
-def test_polarized_transfer_preserves_tiny_physical_emission_scale() -> None:
-    metric, ray = _flat_polarized_ray(jnp.asarray([0.0, 0.25]))
-    plan = PolarizedInvariantTransferPlan(
-        PolarizedRayPath(ray, metric, ray_index=0),
-        InvariantTransferUnitContract.si_affine_length(),
-    )
-    emission = (
-        jnp.zeros((plan.capacity, 4))
-        .at[0]
-        .set(jnp.asarray([1.0e-41, -5.0e-42, 0.0, 0.0]))
-    )
-    result = eqx.filter_jit(plan.evaluate)(
-        emission,
-        jnp.zeros((plan.capacity, 4, 4)),
-        jnp.zeros((4,)),
-        jnp.zeros((plan.capacity,)),
-    )
-    np.testing.assert_allclose(
-        result.invariant_stokes,
-        emission[0] * 0.25,
-        rtol=2.0e-12,
-        atol=0.0,
-    )
-    assert bool(result.invariant_stokes[0] > 0.0)
-    assert bool(result.evidence.qualified)
-
-
-def test_validated_log_bessel_k2_matches_high_precision_reference_values() -> None:
     arguments = jnp.asarray([1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 100.0, 1000.0])
     trusted_log_values = jnp.asarray(
         [

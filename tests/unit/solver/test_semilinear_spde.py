@@ -80,7 +80,7 @@ def test_matrix_function_actions_match_dense_values_and_derivatives() -> None:
     )
 
 
-def test_semilinear_solver_propagates_linear_heat_mode_exactly() -> None:
+def test_semilinear_spde_scenario_1() -> None:
     discretization = _periodic_discretization(8)
     duration = 0.3
     diffusivity = 0.04
@@ -108,9 +108,6 @@ def test_semilinear_solver_propagates_linear_heat_mode_exactly() -> None:
     assert solution.stats["exact_stochastic_convolution"] is False
     assert jnp.array_equal(solution.states[0], initial)
     assert jnp.allclose(solution.states[-1], expected, rtol=1e-10, atol=1e-10)
-
-
-def test_semilinear_solver_accepts_taylor_augmented_action_policy() -> None:
     discretization = _periodic_discretization(4)
     duration = 0.05
     diffusivity = 0.02
@@ -145,6 +142,69 @@ def test_semilinear_solver_accepts_taylor_augmented_action_policy() -> None:
     assert solution.stats["matrix_function_method"] == "taylor"
     assert jnp.all(solution.valid)
     assert jnp.allclose(solution.states[-1], expected, rtol=2e-6, atol=2e-7)
+    discretization = _periodic_discretization(4)
+    initial = jnp.asarray([1.0, -0.5, 0.25, 0.0])
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.2,
+        kappa=0.1,
+    )
+    solution = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([0.1]),
+        dt=0.05,
+    )
+    assert solution.times[-1] == 0.1
+    assert solution.terminal_time == 0.2
+    assert not jnp.array_equal(solution.terminal_state, solution.states[-1])
+    operator = phx.linalg.DenseLinearOperator(
+        jnp.eye(2),
+        operator_id="foreign-operator",
+    )
+    spectral = phx.linalg.TransformDiagonalRepresentation(
+        operator,
+        jnp.ones((2,)),
+        jnp.eye(2),
+        jnp.eye(2),
+        representation_id="foreign-spectral",
+    )
+    with pytest.raises(ValueError, match="bind the linear operator"):
+        phx.solver.SemilinearDrift(
+            lambda value: value,
+            None,
+            state_shape=(2,),
+            operator_id="declared-callable",
+            nonlinear_id="zero",
+            spectral_representation=spectral,
+        )
+    discretization = _periodic_discretization(4)
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        0.03,
+        rank=2,
+    )
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        jnp.zeros(discretization.state_shape),
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=0.1,
+        noise_basis=basis,
+        noise_amplitude=lambda time, state, args: jnp.asarray(2.0),
+        noise_structure="additive",
+    )
+    solution = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([0.1]),
+        realization=spde.wiener_realization(jr.key(13)),
+        dt=0.1,
+        fallback="error",
+    )
+
+    assert solution.stats["scheme"] == "exponential_euler"
+    assert solution.stats["exact_stochastic_convolution"] is False
 
 
 def test_spde_callable_drift_identities_are_explicit_and_transitive() -> None:
@@ -241,29 +301,6 @@ def test_spde_callable_drift_identities_are_explicit_and_transitive() -> None:
     assert zero_semilinear.semilinear_drift is not None
     assert zero_semilinear.semilinear_drift.nonlinear_id
     assert semilinear.problem.problem_id != zero_semilinear.problem.problem_id
-
-
-def test_callable_semilinear_operator_rejects_foreign_spectral_representation() -> None:
-    operator = phx.linalg.DenseLinearOperator(
-        jnp.eye(2),
-        operator_id="foreign-operator",
-    )
-    spectral = phx.linalg.TransformDiagonalRepresentation(
-        operator,
-        jnp.ones((2,)),
-        jnp.eye(2),
-        jnp.eye(2),
-        representation_id="foreign-spectral",
-    )
-    with pytest.raises(ValueError, match="bind the linear operator"):
-        phx.solver.SemilinearDrift(
-            lambda value: value,
-            None,
-            state_shape=(2,),
-            operator_id="declared-callable",
-            nonlinear_id="zero",
-            spectral_representation=spectral,
-        )
 
 
 def test_exact_modal_stochastic_convolution_replays_and_matches_covariance() -> None:
@@ -363,56 +400,7 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance() -> 
     assert trajectory.basis_id == basis.basis_id
 
 
-def test_auto_semilinear_route_uses_euler_for_declared_noise_amplitudes() -> None:
-    discretization = _periodic_discretization(4)
-    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
-        discretization,
-        0.03,
-        rank=2,
-    )
-    spde = phx.solver.semidiscretize_reaction_diffusion(
-        jnp.zeros(discretization.state_shape),
-        discretization,
-        t0=0.0,
-        t1=0.1,
-        kappa=0.1,
-        noise_basis=basis,
-        noise_amplitude=lambda time, state, args: jnp.asarray(2.0),
-        noise_structure="additive",
-    )
-    solution = phx.solver.solve_semilinear_spde(
-        spde,
-        save_times=jnp.asarray([0.1]),
-        realization=spde.wiener_realization(jr.key(13)),
-        dt=0.1,
-        fallback="error",
-    )
-
-    assert solution.stats["scheme"] == "exponential_euler"
-    assert solution.stats["exact_stochastic_convolution"] is False
-
-
-def test_semilinear_terminal_state_advances_beyond_last_save_time() -> None:
-    discretization = _periodic_discretization(4)
-    initial = jnp.asarray([1.0, -0.5, 0.25, 0.0])
-    spde = phx.solver.semidiscretize_reaction_diffusion(
-        initial,
-        discretization,
-        t0=0.0,
-        t1=0.2,
-        kappa=0.1,
-    )
-    solution = phx.solver.solve_semilinear_spde(
-        spde,
-        save_times=jnp.asarray([0.1]),
-        dt=0.05,
-    )
-    assert solution.times[-1] == 0.1
-    assert solution.terminal_time == 0.2
-    assert not jnp.array_equal(solution.terminal_state, solution.states[-1])
-
-
-def test_spectral_reaction_diffusion_requires_real_diffusivity() -> None:
+def test_semilinear_spde_scenario_2() -> None:
     # ty: ignore[invalid-argument-type]
     axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
@@ -435,6 +423,47 @@ def test_spectral_reaction_diffusion_requires_real_diffusivity() -> None:
             t0=0.0,
             t1=0.1,
             kappa=jnp.asarray(0.1j),
+        )
+    duration, rate, noise = 0.2, -0.2, 0.7
+    spde, initial = _geometric_spde(
+        duration=duration,
+        rate=rate,
+        noise=noise,
+    )
+    realization = spde.wiener_realization(
+        jr.key(31),
+        sample_shape=(32,),
+        tolerance=1e-5,
+    )
+    solution = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([duration]),
+        realization=realization,
+        dt=duration,
+        scheme="exponential_euler",
+        fallback="error",
+    )
+    increments = realization.increments(
+        jnp.asarray([0.0]),
+        jnp.asarray([duration]),
+    )[:, 0]
+    expected = jnp.exp(rate * duration) * (initial + noise * initial * increments)
+
+    assert solution.solver_name == "SemilinearExponentialEuler"
+    assert solution.stats["scheme"] == "exponential_euler"
+    assert solution.stats["uses_realization_increments"]
+    assert jnp.allclose(solution.states[:, 0], expected, rtol=1e-11, atol=1e-11)
+    spde, _ = _geometric_spde(duration=0.1, structure="general")
+    realization = spde.wiener_realization(jr.key(33), tolerance=1e-5)
+
+    with pytest.raises(ValueError, match="declared commutative noise"):
+        phx.solver.solve_semilinear_spde(
+            spde,
+            save_times=jnp.asarray([0.1]),
+            realization=realization,
+            dt=0.1,
+            scheme="exponential_milstein",
+            fallback="error",
         )
 
 
@@ -471,38 +500,6 @@ def _geometric_spde(
         spectral_representation=spectral,
     )
     return spde, initial
-
-
-def test_multiplicative_exponential_euler_uses_global_wiener_increments() -> None:
-    duration, rate, noise = 0.2, -0.2, 0.7
-    spde, initial = _geometric_spde(
-        duration=duration,
-        rate=rate,
-        noise=noise,
-    )
-    realization = spde.wiener_realization(
-        jr.key(31),
-        sample_shape=(32,),
-        tolerance=1e-5,
-    )
-    solution = phx.solver.solve_semilinear_spde(
-        spde,
-        save_times=jnp.asarray([duration]),
-        realization=realization,
-        dt=duration,
-        scheme="exponential_euler",
-        fallback="error",
-    )
-    increments = realization.increments(
-        jnp.asarray([0.0]),
-        jnp.asarray([duration]),
-    )[:, 0]
-    expected = jnp.exp(rate * duration) * (initial + noise * initial * increments)
-
-    assert solution.solver_name == "SemilinearExponentialEuler"
-    assert solution.stats["scheme"] == "exponential_euler"
-    assert solution.stats["uses_realization_increments"]
-    assert jnp.allclose(solution.states[:, 0], expected, rtol=1e-11, atol=1e-11)
 
 
 def test_exponential_milstein_matches_one_step_factor_jvp_and_is_higher_order() -> None:
@@ -568,18 +565,3 @@ def test_exponential_milstein_matches_one_step_factor_jvp_and_is_higher_order() 
     )
     assert milstein_fine_error < 0.7 * milstein_coarse_error
     assert milstein_fine_error < 0.4 * euler_error
-
-
-def test_exponential_milstein_rejects_undeclared_commutativity() -> None:
-    spde, _ = _geometric_spde(duration=0.1, structure="general")
-    realization = spde.wiener_realization(jr.key(33), tolerance=1e-5)
-
-    with pytest.raises(ValueError, match="declared commutative noise"):
-        phx.solver.solve_semilinear_spde(
-            spde,
-            save_times=jnp.asarray([0.1]),
-            realization=realization,
-            dt=0.1,
-            scheme="exponential_milstein",
-            fallback="error",
-        )

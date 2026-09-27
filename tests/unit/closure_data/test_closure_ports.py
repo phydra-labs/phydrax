@@ -54,7 +54,7 @@ def _output_contract(
     )
 
 
-def test_flow_state_port_uses_declared_components_units_and_scales() -> None:
+def test_closure_ports_scenario_1() -> None:
     schema = _flow_schema()
     port = schema.value_port(representation="nondimensional")
     assert port.semantic_id == f"flow-state-schema:{schema.schema_id}"
@@ -71,9 +71,15 @@ def test_flow_state_port_uses_declared_components_units_and_scales() -> None:
     assert port.normalization_id is not None
     assert port.variance == "neutral"
     assert (port.space_id, port.frame_id, port.axis_keys) == (None, None, None)
-
-
-def test_flow_state_port_distinguishes_representation_and_scales() -> None:
+    first = _flow_schema().value_port(representation="nondimensional")
+    second = _flow_schema().value_port(representation="nondimensional")
+    assert first == second
+    assert first.port_id == second.port_id
+    schema = _flow_schema(units=("kg/m^3", "m/s", "m/s", "1", "BTU/lb"))
+    with pytest.raises(ValueError, match="BTU/lb") as error:
+        schema.value_port(representation="dimensional")
+    assert schema.schema_id in str(error.value)
+    assert "'enthalpy'" in str(error.value)
     schema = _flow_schema()
     nondimensional = schema.value_port(representation="nondimensional")
     dimensional = schema.value_port(representation="dimensional")
@@ -87,24 +93,6 @@ def test_flow_state_port_distinguishes_representation_and_scales() -> None:
     assert rescaled.port_id != nondimensional.port_id
     with pytest.raises(ValueError, match="representation"):
         schema.value_port(representation="normalized")
-
-
-def test_flow_state_port_is_deterministic_for_equal_declarations() -> None:
-    first = _flow_schema().value_port(representation="nondimensional")
-    second = _flow_schema().value_port(representation="nondimensional")
-    assert first == second
-    assert first.port_id == second.port_id
-
-
-def test_flow_state_port_rejects_unresolvable_unit_naming_unit_and_schema() -> None:
-    schema = _flow_schema(units=("kg/m^3", "m/s", "m/s", "1", "BTU/lb"))
-    with pytest.raises(ValueError, match="BTU/lb") as error:
-        schema.value_port(representation="dimensional")
-    assert schema.schema_id in str(error.value)
-    assert "'enthalpy'" in str(error.value)
-
-
-def test_feature_port_uses_trailing_component_axis_as_event() -> None:
     port = _feature_schema().value_port()
     assert port.semantic_id == "resolved-gradient"
     assert port.event_shape == (2,)
@@ -113,24 +101,15 @@ def test_feature_port_uses_trailing_component_axis_as_event() -> None:
     assert port.representation == "learned-stress-features"
     assert port.variance == "neutral"
     assert port.normalization_id is None
-
-
-def test_feature_port_identity_follows_declarations_not_sample_shape() -> None:
+    schema = _feature_schema(units=("1/s", "per-second"))
+    with pytest.raises(ValueError, match="per-second") as error:
+        schema.value_port()
+    assert "resolved-gradient" in str(error.value)
     port = _feature_schema().value_port()
     assert _feature_schema().value_port().port_id == port.port_id
     assert _feature_schema(shape=(8, 8, 2)).value_port().port_id == port.port_id
     assert _feature_schema(name="other-gradient").value_port().port_id != port.port_id
     assert _feature_schema(units=("1/s", "1")).value_port().port_id != port.port_id
-
-
-def test_feature_port_rejects_unresolvable_unit_naming_unit_and_schema() -> None:
-    schema = _feature_schema(units=("1/s", "per-second"))
-    with pytest.raises(ValueError, match="per-second") as error:
-        schema.value_port()
-    assert "resolved-gradient" in str(error.value)
-
-
-def test_output_port_is_the_row_major_stress_tensor_event() -> None:
     port = _output_contract().value_port()
     target = "deviatoric-specific-stress-target"
     assert port.semantic_id == target
@@ -140,19 +119,13 @@ def test_output_port_is_the_row_major_stress_tensor_event() -> None:
     assert port.representation == "deviatoric-constant-density-specific"
     assert port.space_id == "mesh-32"
     assert port.variance == "neutral"
-
-
-def test_output_port_identity_follows_declarations() -> None:
+    contract = _output_contract(units="(ft/min)^2")
+    with pytest.raises(ValueError, match="ft/min") as error:
+        contract.value_port()
+    assert "deviatoric-specific-stress-target" in str(error.value)
     port = _output_contract().value_port()
     assert _output_contract().value_port() == port
     assert _output_contract(shape=(4, 4, 3, 3)).value_port().port_id == port.port_id
     assert _output_contract(units="m^2/s^2").value_port().port_id == port.port_id
     assert _output_contract(units="m/s").value_port().port_id != port.port_id
     assert _output_contract(discretization="mesh-64").value_port().port_id != port.port_id
-
-
-def test_output_port_rejects_unresolvable_unit_naming_unit_and_target() -> None:
-    contract = _output_contract(units="(ft/min)^2")
-    with pytest.raises(ValueError, match="ft/min") as error:
-        contract.value_port()
-    assert "deviatoric-specific-stress-target" in str(error.value)

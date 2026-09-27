@@ -100,7 +100,7 @@ def _kernel(
     )
 
 
-def test_species_and_isotropic_analytic_moments_are_explicit() -> None:
+def test_cosmology_sidm_kernels_scenario_1() -> None:
     species = _species()
     kernel = TwoBodyDifferentialKernelPlan.constant_isotropic(species, 6.0)
     moments = kernel.moments(jnp.asarray((0.0, 2.0, 100.0)))
@@ -118,9 +118,6 @@ def test_species_and_isotropic_analytic_moments_are_explicit() -> None:
 
     with pytest.raises(ValueError, match="one value per charge"):
         DarkSectorSpeciesPlan("bad", 1.0, charge_names=("q",), charges=())
-
-
-def test_full_sphere_and_exchange_quotient_have_one_physical_normalization() -> None:
     species = _species()
     speeds = jnp.asarray((0.0, 2.0))
     full = _kernel(
@@ -149,9 +146,6 @@ def test_full_sphere_and_exchange_quotient_have_one_physical_normalization() -> 
     np.testing.assert_allclose(
         quotient_moments.viscosity, full_moments.viscosity, rtol=2e-15
     )
-
-
-def test_screening_azimuth_and_speed_table_support_fail_closed() -> None:
     species = _species()
     cutoff = 0.2
     cosines = jnp.asarray((-1.0, 0.0, np.cos(cutoff)))
@@ -181,7 +175,7 @@ def test_screening_azimuth_and_speed_table_support_fail_closed() -> None:
     assert not bool(kernel.evaluate(2.0, 0.0, -0.1).supported)
 
 
-def test_inverse_cdf_sampling_reproduces_angular_moments() -> None:
+def test_cosmology_sidm_kernels_scenario_2() -> None:
     species = _species()
     cosines = jnp.linspace(-1.0, 1.0, 65)
     # p(mu) is proportional to 1 + mu on the full sphere.
@@ -200,9 +194,47 @@ def test_inverse_cdf_sampling_reproduces_angular_moments() -> None:
     np.testing.assert_allclose(jnp.mean(samples.cosine), 1.0 / 3.0, atol=0.015)
     np.testing.assert_allclose(jnp.mean(samples.cosine**2), 1.0 / 3.0, atol=0.015)
     assert float(jnp.max(samples.normalization_residual)) < 1.0e-14
+    species = _species()
+    speeds = jnp.asarray((0.0, 2.0))
+    cosines = jnp.linspace(-1.0, 1.0, 33)
+    shape = 1.0 + cosines
+    ordinary = _kernel(
+        species,
+        speeds,
+        cosines,
+        jnp.broadcast_to(shape[None, :], (2, cosines.size)),
+        identical_particle_convention="labeled-full-sphere",
+    )
+    tiny = _kernel(
+        species,
+        speeds,
+        cosines,
+        jnp.broadcast_to((1.0e-280 * shape)[None, :], (2, cosines.size)),
+        identical_particle_convention="labeled-full-sphere",
+    )
+    keys = jr.split(jr.key(23), 256)
+    ordinary_samples = jax.vmap(lambda key: ordinary.sample_angles(key, 1.0))(keys)
+    tiny_samples = jax.vmap(lambda key: tiny.sample_angles(key, 1.0))(keys)
+    np.testing.assert_allclose(
+        tiny_samples.cosine, ordinary_samples.cosine, rtol=0.0, atol=2e-15
+    )
+    assert np.all(tiny_samples.supported)
+    assert not bool(
+        ordinary.sample_angles(
+            jr.key(0), 1.0, cosine_minimum=-1.1, cosine_maximum=0.5
+        ).supported
+    )
 
-
-def test_small_angle_split_has_no_gap_or_overlap_and_reconstructs_every_moment() -> None:
+    varying = jnp.stack((1.0e-280 * shape, 2.0e-280 * shape))
+    with pytest.raises(ValueError, match="speed independent"):
+        _kernel(
+            species,
+            speeds,
+            cosines,
+            varying,
+            identical_particle_convention="labeled-full-sphere",
+            unbounded_speed=True,
+        )
     species = _species()
     cosines = jnp.linspace(-1.0, 1.0, 33)
     differential = jnp.stack(
@@ -247,9 +279,6 @@ def test_small_angle_split_has_no_gap_or_overlap_and_reconstructs_every_moment()
     interpolated_split = jnp.interp(1.5, kernel.relative_speeds, split.split_cosines)
     assert bool(rare_sample.supported)
     assert float(rare_sample.cosine) <= float(interpolated_split)
-
-
-def test_reference_rights_denial_and_table_substitution_fail_closed() -> None:
     species = _species()
     speeds = jnp.asarray((0.0, 2.0))
     cosines = jnp.asarray((-1.0, 0.0, 1.0))
@@ -316,50 +345,6 @@ def test_reference_rights_denial_and_table_substitution_fail_closed() -> None:
             differential.at[1, 1].set(2.0),
             **admitted,
             identical_particle_convention="labeled-full-sphere",
-        )
-
-
-def test_inverse_cdf_is_scale_invariant_and_rejects_bounds_outside_support() -> None:
-    species = _species()
-    speeds = jnp.asarray((0.0, 2.0))
-    cosines = jnp.linspace(-1.0, 1.0, 33)
-    shape = 1.0 + cosines
-    ordinary = _kernel(
-        species,
-        speeds,
-        cosines,
-        jnp.broadcast_to(shape[None, :], (2, cosines.size)),
-        identical_particle_convention="labeled-full-sphere",
-    )
-    tiny = _kernel(
-        species,
-        speeds,
-        cosines,
-        jnp.broadcast_to((1.0e-280 * shape)[None, :], (2, cosines.size)),
-        identical_particle_convention="labeled-full-sphere",
-    )
-    keys = jr.split(jr.key(23), 256)
-    ordinary_samples = jax.vmap(lambda key: ordinary.sample_angles(key, 1.0))(keys)
-    tiny_samples = jax.vmap(lambda key: tiny.sample_angles(key, 1.0))(keys)
-    np.testing.assert_allclose(
-        tiny_samples.cosine, ordinary_samples.cosine, rtol=0.0, atol=2e-15
-    )
-    assert np.all(tiny_samples.supported)
-    assert not bool(
-        ordinary.sample_angles(
-            jr.key(0), 1.0, cosine_minimum=-1.1, cosine_maximum=0.5
-        ).supported
-    )
-
-    varying = jnp.stack((1.0e-280 * shape, 2.0e-280 * shape))
-    with pytest.raises(ValueError, match="speed independent"):
-        _kernel(
-            species,
-            speeds,
-            cosines,
-            varying,
-            identical_particle_convention="labeled-full-sphere",
-            unbounded_speed=True,
         )
 
 

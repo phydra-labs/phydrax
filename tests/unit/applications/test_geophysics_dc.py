@@ -61,9 +61,7 @@ def _survey(mesh: Any, current_scale: Any = 1.0) -> Any:
     return ElectricalSurvey(patches, currents, receivers, jnp.asarray([0, 0, 1, 2]))
 
 
-def test_patch_integrated_current_conservation_reciprocity_and_minimum_norm_gauge() -> (
-    None
-):
+def test_geophysics_dc_scenario_1() -> None:
     mesh = _tetrahedron()
     prepared = FinitePatchDCPlan(mesh, _survey(mesh), batch_size=2).prepare()
     bound = prepared.bind_conductivity(1.0)
@@ -94,9 +92,6 @@ def test_patch_integrated_current_conservation_reciprocity_and_minimum_norm_gaug
     shifted = jax.vmap(prepared.electrode_potentials)(result.potentials + 17.0)
     assert jnp.allclose(prepared.voltages(shifted), result.voltages, atol=1e-10)
     assert jnp.allclose(bound.predict(), result.voltages, atol=1e-10)
-
-
-def test_conductivity_current_and_three_dimensional_length_scaling() -> None:
     mesh = _tetrahedron()
     prepared = FinitePatchDCPlan(mesh, _survey(mesh), batch_size=1).prepare()
     base = prepared.predict(1.0)
@@ -117,9 +112,6 @@ def test_conductivity_current_and_three_dimensional_length_scaling() -> None:
         base,
         atol=1e-9,
     )
-
-
-def test_spd_tensor_current_field_and_reciprocity() -> None:
     mesh = _tetrahedron()
     prepared = FinitePatchDCPlan(mesh, _survey(mesh)).prepare()
     tensor = jnp.asarray([[2.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 3.0]])
@@ -137,7 +129,7 @@ def test_spd_tensor_current_field_and_reciprocity() -> None:
         prepared.predict(0.0)
 
 
-def test_heterogeneous_log_conductivity_implicit_jvp_vjp_and_signed_posterior() -> None:
+def test_geophysics_dc_scenario_2() -> None:
     mesh = CellMesh.from_tetrahedra(
         jnp.asarray(
             [
@@ -210,9 +202,6 @@ def test_heterogeneous_log_conductivity_implicit_jvp_vjp_and_signed_posterior() 
         observation.log_likelihood(parameters),
         atol=1e-9,
     )
-
-
-def test_invalid_physical_surveys_and_disconnected_bodies_are_rejected() -> None:
     mesh = _tetrahedron()
     survey = _survey(mesh)
     with pytest.raises(ValueError, match="balanced"):

@@ -33,7 +33,7 @@ class _DensePairing(la.AbstractPairing):
         return jnp.linalg.solve(self.matrix, covector)
 
 
-def test_dense_linear_svd_planning_requires_every_materialized_metric() -> None:
+def test_linalg_svd_scenario_1() -> None:
     source = la.ArraySpace(
         (2,),
         dtype=jnp.float64,
@@ -62,9 +62,6 @@ def test_dense_linear_svd_planning_requires_every_materialized_metric() -> None:
         la.plan(least_squares, policy)
     with pytest.raises(ValueError, match="metric pairings"):
         la.plan(minimum_norm, policy)
-
-
-def test_dense_svd_is_jittable_refreshable_and_reports_rank() -> None:
     matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0], [1.0, 0.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="refreshable-svd")
     problem = svd.SVDProblem(operator, problem_id="svd-problem")
@@ -98,33 +95,25 @@ def test_dense_svd_is_jittable_refreshable_and_reports_rank() -> None:
         refreshed_result.singular_values,
         2.0 * result.singular_values,
     )
+    for entry, expected_rank in [(1.0, 1), (0.0, 0)]:
+        for which in ["largest", "smallest"]:
+            matrix = jnp.full((2, 2), entry)
+            result = svd.svd(
+                svd.SVDProblem(la.DenseLinearOperator(matrix)),
+                policy=svd.SVDSolvePolicy(count=2, which=which),
+            )
+            expected_values = jnp.asarray([2 * entry, 0.0])
+            if which == "smallest":
+                expected_values = expected_values[::-1]
 
-
-@pytest.mark.parametrize("entry, expected_rank", [(1.0, 1), (0.0, 0)])
-@pytest.mark.parametrize("which", ["largest", "smallest"])
-def test_svd_certifies_rank_deficient_and_zero_operators(
-    entry: Any, expected_rank: Any, which: Any
-) -> None:
-    matrix = jnp.full((2, 2), entry)
-    result = svd.svd(
-        svd.SVDProblem(la.DenseLinearOperator(matrix)),
-        policy=svd.SVDSolvePolicy(count=2, which=which),
-    )
-    expected_values = jnp.asarray([2 * entry, 0.0])
-    if which == "smallest":
-        expected_values = expected_values[::-1]
-
-    assert bool(result.successful)
-    assert int(result.numerical_rank) == expected_rank
-    assert jnp.allclose(result.singular_values, expected_values, atol=1e-12)
-    assert jnp.allclose(
-        (result.left_vectors * result.singular_values) @ result.right_vectors.T,
-        matrix,
-        atol=1e-12,
-    )
-
-
-def test_svd_refuses_stale_decomposition_state() -> None:
+            assert bool(result.successful)
+            assert int(result.numerical_rank) == expected_rank
+            assert jnp.allclose(result.singular_values, expected_values, atol=1e-12)
+            assert jnp.allclose(
+                (result.left_vectors * result.singular_values) @ result.right_vectors.T,
+                matrix,
+                atol=1e-12,
+            )
     matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="stale-svd")
     problem = svd.SVDProblem(operator, problem_id="stale-svd-problem")
@@ -141,9 +130,6 @@ def test_svd_refuses_stale_decomposition_state() -> None:
 
     assert not bool(result.successful)
     assert result.status == int(svd.SVDSolveStatus.RESIDUAL_TOLERANCE_NOT_MET)
-
-
-def test_svd_honors_source_and_target_pairings_and_smallest_target() -> None:
     source_weights = jnp.asarray([2.0, 5.0])
     target_weights = jnp.asarray([3.0, 4.0, 6.0])
     source = la.ArraySpace(

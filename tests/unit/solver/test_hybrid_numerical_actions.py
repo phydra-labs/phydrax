@@ -121,7 +121,7 @@ def _parameter_event() -> Any:
     )
 
 
-def test_physical_matrix_free_actions_include_time_and_reset_parameters() -> None:
+def test_hybrid_numerical_actions_scenario_1() -> None:
     plan = _parameter_event()
     time = jnp.asarray(0.25)
     state = jnp.asarray([0.5, 1.0, 2.0])
@@ -175,11 +175,6 @@ def test_physical_matrix_free_actions_include_time_and_reset_parameters() -> Non
     assert dense.successful & dense.log_jacobian_valid
     state_only = hybrid_event_jvp(plan, time, state, tangent, args=args)
     np.testing.assert_allclose(state_only.action, dense.saltation_matrix @ tangent)
-
-
-def test_singular_reset_retains_action_but_not_density_and_invalid_actions_are_nan() -> (
-    None
-):
     guard = HybridGuardPlan(
         lambda time, state, args: state[0], guard_id="absorbing-reset"
     )

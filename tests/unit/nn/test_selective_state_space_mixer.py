@@ -1,5 +1,3 @@
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,50 +7,45 @@ import pytest
 import phydrax as phx
 
 
-@pytest.mark.parametrize("input_integration", ("zoh", "linear"))
-def test_selective_mixer_serial_and_associative_execution_are_equivalent(
-    input_integration: Any,
-) -> None:
-    model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
-        in_channels=3,
-        out_channels=2,
-        state_size=7,
-        input_integration=input_integration,
-        key=jr.key(0),
-    )
-    values = jr.normal(jr.key(1), (3, 17, 3))
-    times = jnp.array(
-        [
-            0.0,
-            0.01,
-            0.08,
-            0.2,
-            0.21,
-            0.5,
-            0.9,
-            0.91,
-            1.4,
-            2.0,
-            2.01,
-            2.8,
-            3.0,
-            4.2,
-            4.21,
-            5.0,
-            7.0,
-        ]
-    )
-    initial = jr.normal(jr.key(2), (3, 7))
+def test_selective_mixer_contracts() -> None:
+    for input_integration in ("zoh", "linear"):
+        model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
+            in_channels=3,
+            out_channels=2,
+            state_size=7,
+            input_integration=input_integration,
+            key=jr.key(0),
+        )
+        values = jr.normal(jr.key(1), (3, 17, 3))
+        times = jnp.array(
+            [
+                0.0,
+                0.01,
+                0.08,
+                0.2,
+                0.21,
+                0.5,
+                0.9,
+                0.91,
+                1.4,
+                2.0,
+                2.01,
+                2.8,
+                3.0,
+                4.2,
+                4.21,
+                5.0,
+                7.0,
+            ]
+        )
+        initial = jr.normal(jr.key(2), (3, 7))
 
-    recurrent = model.recurrent(values, times, initial_state=initial)
-    associative = model.associative(values, times, initial_state=initial)
+        recurrent = model.recurrent(values, times, initial_state=initial)
+        associative = model.associative(values, times, initial_state=initial)
 
-    assert recurrent.shape == (3, 17, 2)
-    assert jnp.allclose(associative, recurrent, rtol=2e-5, atol=2e-6)
-    assert jnp.all(model.decay_rates() > 0.0)
-
-
-def test_selective_mixer_packed_resets_and_diagnostics_are_explicit() -> None:
+        assert recurrent.shape == (3, 17, 2)
+        assert jnp.allclose(associative, recurrent, rtol=2e-5, atol=2e-6)
+        assert jnp.all(model.decay_rates() > 0.0)
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
         in_channels=2,
         out_channels=2,
@@ -90,9 +83,6 @@ def test_selective_mixer_packed_resets_and_diagnostics_are_explicit() -> None:
     assert diagnostics.extrapolated_fraction == pytest.approx(0.5)
     assert diagnostics.minimum_effective_step > 0.0
     assert diagnostics.maximum_effective_step >= diagnostics.minimum_effective_step
-
-
-def test_selective_mixer_requires_resets_after_padding() -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(key=jr.key(5))
     values = jnp.ones((4,))
     times = jnp.array([0.0, jnp.nan, 0.0, 0.2])
@@ -108,9 +98,6 @@ def test_selective_mixer_requires_resets_after_padding() -> None:
             mask=mask,
             reset=jnp.array([False, True, False, False]),
         )
-
-
-def test_selective_mixer_jit_and_parameter_input_gradients_are_finite() -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
         in_channels=2,
         out_channels=2,
@@ -143,9 +130,6 @@ def test_selective_mixer_jit_and_parameter_input_gradients_are_finite() -> None:
     assert jnp.linalg.norm(parameter_gradient.delta_weight) > 0.0
     assert jnp.linalg.norm(parameter_gradient.input_gate_weight) > 0.0
     assert jnp.linalg.norm(parameter_gradient.output_gate_weight) > 0.0
-
-
-def test_selective_mixer_operator_batch_contract_preserves_masks() -> None:
     model = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
         in_channels=2,
         out_channels=3,

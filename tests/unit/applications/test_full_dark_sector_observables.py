@@ -149,7 +149,7 @@ def _bundle() -> FullDarkSectorObservableBundle:
     )
 
 
-def test_full_dark_sector_observation_delegates_identity_maps() -> None:
+def test_full_dark_contracts() -> None:
     bundle = _bundle()
     sources = bundle.theory_vectors()
     owners = tuple(
@@ -176,9 +176,6 @@ def test_full_dark_sector_observation_delegates_identity_maps() -> None:
     for source, output in zip(sources, outputs):
         assert output.layout.layout_id == source.layout.layout_id
         assert jnp.array_equal(output.values, source.values)
-
-
-def test_full_dark_sector_observable_identity_binds_stage_and_sources() -> None:
     first = _bundle()
     second = FullDarkSectorObservableBundle(
         first.metric_stress,

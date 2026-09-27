@@ -82,7 +82,7 @@ def _quadratic(points: Any) -> Any:
     return 1.0 + 2.0 * x - y + 0.5 * x * y + y**2
 
 
-def test_cell_average_view_returns_the_containing_cell_average() -> None:
+def test_discrete_field_views_scenario_1() -> None:
     discretization = _structured_fv()
     reconstruction = prepare_finite_volume_field_reconstruction(
         discretization, phx.discretization.PiecewiseConstantReconstruction()
@@ -108,9 +108,6 @@ def test_cell_average_view_returns_the_containing_cell_average() -> None:
     np.testing.assert_allclose(
         located.evaluate(state, unstructured.cell_centers).values, state, atol=1e-14
     )
-
-
-def test_cell_average_views_refuse_coordinate_derivatives() -> None:
     discretization = _structured_fv()
     reconstruction = prepare_finite_volume_field_reconstruction(
         discretization, phx.discretization.PiecewiseConstantReconstruction()
@@ -128,60 +125,6 @@ def test_cell_average_views_refuse_coordinate_derivatives() -> None:
         prepare_finite_volume_field_reconstruction(
             discretization, phx.discretization.MUSCLReconstruction()
         )
-
-
-def test_structured_face_traces_follow_positive_axis_orientation() -> None:
-    discretization = _structured_fv()
-    reconstruction = prepare_finite_volume_field_reconstruction(
-        discretization, phx.discretization.PiecewiseConstantReconstruction()
-    )
-    averages = jnp.arange(16.0).reshape((4, 2, 2))
-    view = _view(reconstruction, averages)
-    face = jnp.asarray(((0.25, 0.3),))
-
-    # The face x = 1/4 separates cell (0, 0) (owner, lower) and (1, 0).
-    for side, expected in (
-        ("owner", averages[0, 0]),
-        ("neighbor", averages[1, 0]),
-        ("average", 0.5 * (averages[0, 0] + averages[1, 0])),
-    ):
-        np.testing.assert_allclose(view.trace(face, side=side).func(face[0]), expected)
-    explicit = view.trace(face, side="neighbor", cell_ids=jnp.asarray((0,)))
-    np.testing.assert_allclose(explicit.func(face[0]), averages[0, 0])
-    with pytest.raises(ValueError, match="require explicit cell_ids"):
-        view.trace(jnp.asarray(((0.1, 0.0),)), side="neighbor")
-    with pytest.raises(ValueError, match="containing each trace site"):
-        view.trace(face, side="owner", cell_ids=jnp.asarray((5,)))
-    with pytest.raises(ValueError, match="lie in the finite-volume grid"):
-        view.trace(jnp.asarray(((1.5, 0.5),)), side="average")
-
-
-def test_unstructured_face_traces_use_the_mesh_face_orientation() -> None:
-    discretization = _triangulated_square(2)
-    reconstruction = prepare_finite_volume_field_reconstruction(
-        discretization, phx.discretization.PiecewiseConstantReconstruction()
-    )
-    state = jnp.arange(float(discretization.cell_count))[:, None]
-    view = _view(reconstruction, state)
-    owner = np.asarray(discretization.owner_cells)
-    neighbor = np.asarray(discretization.neighbor_cells)
-    face = int(np.flatnonzero(neighbor >= 0)[0])
-    site = discretization.face_centers[face][None, :]
-
-    assert reconstruction.validity(site).status.tolist() == [_SIDE_REQUIRED]
-    np.testing.assert_allclose(
-        view.trace(site, side="owner").func(site[0]), state[owner[face]]
-    )
-    np.testing.assert_allclose(
-        view.trace(site, side="neighbor").func(site[0]), state[neighbor[face]]
-    )
-    np.testing.assert_allclose(
-        view.trace(site, side="average").func(site[0]),
-        0.5 * (state[owner[face]] + state[neighbor[face]]),
-    )
-
-
-def test_cell_polynomial_view_is_k_exact_with_exact_derivatives_and_transpose() -> None:
     discretization = _triangulated_square()
     polynomial = phx.discretization.CellPolynomialReconstructionPlan(2).prepare(
         discretization
@@ -222,9 +165,78 @@ def test_cell_polynomial_view_is_k_exact_with_exact_derivatives_and_transpose() 
     np.testing.assert_allclose(
         pullback(cotangent)[0], reconstruction.transpose(points, cotangent), atol=1e-12
     )
+    discretization = _structured_fv()
+    reconstruction = prepare_finite_volume_field_reconstruction(
+        discretization, phx.discretization.PiecewiseConstantReconstruction()
+    )
+    averages = jnp.arange(16.0).reshape((4, 2, 2))
+    view = _view(reconstruction, averages)
+    face = jnp.asarray(((0.25, 0.3),))
+
+    # The face x = 1/4 separates cell (0, 0) (owner, lower) and (1, 0).
+    for side, expected in (
+        ("owner", averages[0, 0]),
+        ("neighbor", averages[1, 0]),
+        ("average", 0.5 * (averages[0, 0] + averages[1, 0])),
+    ):
+        np.testing.assert_allclose(view.trace(face, side=side).func(face[0]), expected)
+    explicit = view.trace(face, side="neighbor", cell_ids=jnp.asarray((0,)))
+    np.testing.assert_allclose(explicit.func(face[0]), averages[0, 0])
+    with pytest.raises(ValueError, match="require explicit cell_ids"):
+        view.trace(jnp.asarray(((0.1, 0.0),)), side="neighbor")
+    with pytest.raises(ValueError, match="containing each trace site"):
+        view.trace(face, side="owner", cell_ids=jnp.asarray((5,)))
+    with pytest.raises(ValueError, match="lie in the finite-volume grid"):
+        view.trace(jnp.asarray(((1.5, 0.5),)), side="average")
+    discretization = _structured_fv()
+    square = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
+    reconstruction = prepare_finite_volume_field_reconstruction(
+        discretization,
+        phx.discretization.PiecewiseConstantReconstruction(),
+        support_geometry=square,
+    )
+    averages = jnp.arange(16.0).reshape((4, 2, 2))
+    view = DiscreteFieldFunctionView(
+        reconstruction,
+        averages,
+        phx.domain.GeometryDomain(square, label="x"),
+        variable="x",
+    )
+
+    np.testing.assert_allclose(
+        view.as_domain_function().func(jnp.asarray((0.9, 0.9))), averages[3, 1]
+    )
+    with pytest.raises(ValueError, match="bounds differ"):
+        prepare_finite_volume_field_reconstruction(
+            discretization,
+            phx.discretization.PiecewiseConstantReconstruction(),
+            support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 2.0)).compile(),
+        )
+    discretization = _triangulated_square(2)
+    reconstruction = prepare_finite_volume_field_reconstruction(
+        discretization, phx.discretization.PiecewiseConstantReconstruction()
+    )
+    state = jnp.arange(float(discretization.cell_count))[:, None]
+    view = _view(reconstruction, state)
+    owner = np.asarray(discretization.owner_cells)
+    neighbor = np.asarray(discretization.neighbor_cells)
+    face = int(np.flatnonzero(neighbor >= 0)[0])
+    site = discretization.face_centers[face][None, :]
+
+    assert reconstruction.validity(site).status.tolist() == [_SIDE_REQUIRED]
+    np.testing.assert_allclose(
+        view.trace(site, side="owner").func(site[0]), state[owner[face]]
+    )
+    np.testing.assert_allclose(
+        view.trace(site, side="neighbor").func(site[0]), state[neighbor[face]]
+    )
+    np.testing.assert_allclose(
+        view.trace(site, side="average").func(site[0]),
+        0.5 * (state[owner[face]] + state[neighbor[face]]),
+    )
 
 
-def test_weno_view_is_nonlinear_and_refuses_an_algebraic_transpose() -> None:
+def test_discrete_field_views_scenario_2() -> None:
     discretization = _triangulated_square()
     weno = phx.discretization.UnstructuredWENOZReconstructionPlan(
         2, limiter="none"
@@ -254,65 +266,6 @@ def test_weno_view_is_nonlinear_and_refuses_an_algebraic_transpose() -> None:
     )
     with pytest.raises(ValueError, match="limiter='none'"):
         prepare_finite_volume_field_reconstruction(discretization, limited)
-
-
-def test_structured_views_bind_only_to_an_equivalent_box() -> None:
-    discretization = _structured_fv()
-    square = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
-    reconstruction = prepare_finite_volume_field_reconstruction(
-        discretization,
-        phx.discretization.PiecewiseConstantReconstruction(),
-        support_geometry=square,
-    )
-    averages = jnp.arange(16.0).reshape((4, 2, 2))
-    view = DiscreteFieldFunctionView(
-        reconstruction,
-        averages,
-        phx.domain.GeometryDomain(square, label="x"),
-        variable="x",
-    )
-
-    np.testing.assert_allclose(
-        view.as_domain_function().func(jnp.asarray((0.9, 0.9))), averages[3, 1]
-    )
-    with pytest.raises(ValueError, match="bounds differ"):
-        prepare_finite_volume_field_reconstruction(
-            discretization,
-            phx.discretization.PiecewiseConstantReconstruction(),
-            support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 2.0)).compile(),
-        )
-
-
-def _finite_difference(shape: Any = (9, 7), periodic: Any = (False, False)) -> Any:
-    grid = phx.discretization.TensorGridPlan(
-        tuple(
-            phx.discretization.UniformAxisSpec(count, periodic=flag, endpoint=not flag)
-            for count, flag in zip(shape, periodic, strict=True)
-        ),
-        axis_names=("x", "y"),
-    ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 2.0))))
-    request = phx.discretization.DerivativeRequest(
-        "dx",
-        grid,
-        "x",
-        derivative_order=1,
-        accuracy_order=2,
-        boundary="periodic" if periodic[0] else "one_sided",
-    )
-    return phx.discretization.FiniteDifferencePlan(
-        grid, (request,), field_name="u"
-    ).prepare()
-
-
-def _nodal(discretization: Any, function: Any) -> Any:
-    x, y = discretization.grid.primary_entity_layout.coordinates_by_axis
-    return function(x[:, None], y[None, :])
-
-
-_FD_POINTS = jnp.asarray(((0.13, 0.37), (0.5, 1.9), (0.99, 0.01)))
-
-
-def test_multilinear_grid_view_matches_the_native_rectilinear_interpolant() -> None:
     discretization = _finite_difference()
     reconstruction = prepare_finite_difference_field_reconstruction(
         discretization, interpolation=MultilinearGridInterpolation()
@@ -343,6 +296,49 @@ def test_multilinear_grid_view_matches_the_native_rectilinear_interpolant() -> N
     assert bool(
         reconstruction.duality_evidence(values, _FD_POINTS, jnp.arange(3.0)).valid
     )
+    discretization = _finite_difference((8, 5), periodic=(True, False))
+    reconstruction = prepare_finite_difference_field_reconstruction(
+        discretization, interpolation=MultilinearGridInterpolation()
+    )
+    values = _nodal(discretization, lambda x, y: jnp.cos(2.0 * jnp.pi * x) + 0.0 * y)
+
+    np.testing.assert_allclose(
+        np.asarray(reconstruction.support_geometry.bounds), ((0.0, 0.0), (1.0, 2.0))
+    )
+    # Between the last node x = 7/8 and the periodic image of x = 0.
+    expected = np.cos(2.0 * np.pi * 7.0 / 8.0) * 0.4 + 1.0 * 0.6
+    result = reconstruction.evaluate(values, jnp.asarray(((0.95, 1.0), (1.01, 1.0))))
+    np.testing.assert_allclose(result.values[0], expected, atol=1e-14)
+    assert result.evidence.status.tolist() == [_VALID, _OUTSIDE]
+
+
+def _finite_difference(shape: Any = (9, 7), periodic: Any = (False, False)) -> Any:
+    grid = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformAxisSpec(count, periodic=flag, endpoint=not flag)
+            for count, flag in zip(shape, periodic, strict=True)
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 2.0))))
+    request = phx.discretization.DerivativeRequest(
+        "dx",
+        grid,
+        "x",
+        derivative_order=1,
+        accuracy_order=2,
+        boundary="periodic" if periodic[0] else "one_sided",
+    )
+    return phx.discretization.FiniteDifferencePlan(
+        grid, (request,), field_name="u"
+    ).prepare()
+
+
+def _nodal(discretization: Any, function: Any) -> Any:
+    x, y = discretization.grid.primary_entity_layout.coordinates_by_axis
+    return function(x[:, None], y[None, :])
+
+
+_FD_POINTS = jnp.asarray(((0.13, 0.37), (0.5, 1.9), (0.99, 0.01)))
 
 
 def test_bspline_grid_view_interpolates_and_reproduces_tensor_polynomials() -> None:
@@ -406,23 +402,6 @@ def test_bspline_grid_view_interpolates_and_reproduces_tensor_polynomials() -> N
         )
 
 
-def test_periodic_multilinear_view_wraps_inside_the_periodic_cell_only() -> None:
-    discretization = _finite_difference((8, 5), periodic=(True, False))
-    reconstruction = prepare_finite_difference_field_reconstruction(
-        discretization, interpolation=MultilinearGridInterpolation()
-    )
-    values = _nodal(discretization, lambda x, y: jnp.cos(2.0 * jnp.pi * x) + 0.0 * y)
-
-    np.testing.assert_allclose(
-        np.asarray(reconstruction.support_geometry.bounds), ((0.0, 0.0), (1.0, 2.0))
-    )
-    # Between the last node x = 7/8 and the periodic image of x = 0.
-    expected = np.cos(2.0 * np.pi * 7.0 / 8.0) * 0.4 + 1.0 * 0.6
-    result = reconstruction.evaluate(values, jnp.asarray(((0.95, 1.0), (1.01, 1.0))))
-    np.testing.assert_allclose(result.values[0], expected, atol=1e-14)
-    assert result.evidence.status.tolist() == [_VALID, _OUTSIDE]
-
-
 def _point_cloud(points: Any) -> Any:
     weights = np.full(points.shape[0], 1.0 / points.shape[0])
     return phx.discretization.PointCloudPlan(points, weights, degree=2).prepare()
@@ -431,7 +410,7 @@ def _point_cloud(points: Any) -> Any:
 _UNIT_SQUARE = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0))
 
 
-def test_point_cloud_view_reports_conditioning_and_support_evidence() -> None:
+def test_point_cloud_contracts() -> None:
     random = np.random.default_rng(0)
     scattered = random.uniform(0.0, 1.0, (200, 2))
     # Only collinear points lie within the radius of (0.17, 0.1); the cloud's own
@@ -481,9 +460,6 @@ def test_point_cloud_view_reports_conditioning_and_support_evidence() -> None:
     assert bounded.validity(queries[:1]).status.tolist() == [
         int(FieldQueryStatus.LOCATION_FAILED)
     ]
-
-
-def test_point_cloud_views_refuse_domain_functions_without_coverage() -> None:
     points = np.random.default_rng(1).uniform(0.0, 1.0, (40, 2))
     discretization = _point_cloud(points)
     square = _UNIT_SQUARE.compile()

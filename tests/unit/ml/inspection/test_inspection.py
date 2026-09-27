@@ -139,9 +139,7 @@ def _batch(case: Any = False) -> Any:
     )
 
 
-def test_partial_dependence_and_ice_are_structured_weighted_case_aware_and_differentiable() -> (
-    None
-):
+def test_inspection_scenario_1() -> None:
     model = _QuadraticModel(jnp.array([2.0, -1.0]), jnp.array([0.5, 0.0]))
     batch = _batch(case=True)
     grid = jnp.array([-1.0, 0.0, 1.0])
@@ -159,9 +157,6 @@ def test_partial_dependence_and_ice_are_structured_weighted_case_aware_and_diffe
         jnp.array([1.5, 2.0, 2.5]) * 2,
         atol=1e-5,
     )
-
-
-def test_permutation_importance_is_keyed_deterministic_masked_and_structured() -> None:
     batch = _batch(case=True)
     model = _LinearModel(jnp.array([3.0, 0.2]), 1.0)
     first = permutation_importance(model, batch, key=jax.random.key(1), repeats=4)
@@ -175,9 +170,6 @@ def test_permutation_importance_is_keyed_deterministic_masked_and_structured() -
         permutation_importance(model, batch, key=None)
     with pytest.raises(ValueError, match="greater than one"):
         permutation_importance(model, batch, key=jax.random.key(0), repeats=1)
-
-
-def test_gradient_jacobian_hessian_jit_vmap_and_grad_contracts() -> None:
     model = _QuadraticModel(jnp.array([2.0, -1.0]), jnp.array([0.5, 3.0]))
     points = jnp.array([[1.0, 2.0], [2.0, -1.0]])
     gradient = gradient_sensitivity(model, points)
@@ -199,9 +191,7 @@ def test_gradient_jacobian_hessian_jit_vmap_and_grad_contracts() -> None:
     assert jax.grad(lambda x: jnp.sum(model(x)))(points).shape == points.shape
 
 
-def test_complex_sensitivity_requires_explicit_holomorphic_semantics_and_blockwise_fails() -> (
-    None
-):
+def test_inspection_scenario_2() -> None:
     points = jnp.array([[1.0 + 1.0j, 2.0 - 1.0j]])
     with pytest.raises(TypeError, match="holomorphic=True"):
         jacobian_sensitivity(_HolomorphicSquare(), points)
@@ -213,9 +203,6 @@ def test_complex_sensitivity_requires_explicit_holomorphic_semantics_and_blockwi
         jacobian_sensitivity(
             _LinearModel(jnp.ones((2,))), jnp.ones((2, 2), dtype=jnp.int32)
         )
-
-
-def test_leverage_and_cooks_diagnostics_preserve_cases_masks_and_complex_values() -> None:
     batch = _batch(case=True)
     model = _LinearModel(jnp.array([3.0, 0.2]), 1.0)
     diagnostics = leverage_and_cooks_distance(model, batch)
@@ -232,9 +219,6 @@ def test_leverage_and_cooks_diagnostics_preserve_cases_masks_and_complex_values(
     complex_batch = MLBatch(complex_x, complex_model(complex_x))
     complex_diagnostics = leverage_and_cooks_distance(complex_model, complex_batch)
     assert jnp.all(jnp.isfinite(complex_diagnostics.leverage))
-
-
-def test_influence_functions_obey_derivative_contract_and_return_jax_arrays() -> None:
     model = _QuadraticModel(jnp.array([1.0, -0.5]), jnp.array([0.1, 0.2]))
     x = jnp.array([[-1.0, 0.0], [0.0, 1.0], [1.0, 2.0], [2.0, -1.0]])
     targets = model(x) + jnp.array([0.1, -0.1, 0.2, -0.2])
@@ -263,28 +247,6 @@ def test_influence_functions_obey_derivative_contract_and_return_jax_arrays() ->
     )
     with pytest.raises(TypeError, match="real parameterization"):
         influence_functions(complex_result, batch)
-
-
-class _CenteredLinearModel(AbstractArrayModel):
-    coefficients: jax.Array
-    feature_mean: jax.Array = fixed_field()
-    in_size: int = eqx.field(static=True)
-    out_size: str = eqx.field(static=True)
-
-    def __init__(self, coefficients: Any, feature_mean: Any) -> None:
-        self.coefficients = jnp.asarray(coefficients)
-        self.feature_mean = jnp.asarray(feature_mean)
-        self.in_size = self.coefficients.shape[0]
-        self.out_size = "scalar"
-
-    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
-        del key
-        return oe.contract(
-            "...f,f->...", jnp.asarray(x) - self.feature_mean, self.coefficients
-        )
-
-
-def test_influence_functions_perturb_only_parameters_and_carry_solve_evidence() -> None:
     x = jnp.array([[-1.0, 0.5], [0.0, 1.0], [1.0, 2.0], [2.0, -1.0], [0.5, 0.0]])
     targets = jnp.array([0.3, -0.2, 1.1, 0.4, -0.5])
     weights = jnp.array([1.0, 2.0, 1.0, 0.5, 1.5])
@@ -327,3 +289,22 @@ def test_influence_functions_perturb_only_parameters_and_carry_solve_evidence() 
     assert not deficient.valid
     assert int(deficient.hessian_rank) == 1
     assert set(deficient.solve_status.tolist()) == {int(LinearSolveStatus.RANK_DEFICIENT)}
+
+
+class _CenteredLinearModel(AbstractArrayModel):
+    coefficients: jax.Array
+    feature_mean: jax.Array = fixed_field()
+    in_size: int = eqx.field(static=True)
+    out_size: str = eqx.field(static=True)
+
+    def __init__(self, coefficients: Any, feature_mean: Any) -> None:
+        self.coefficients = jnp.asarray(coefficients)
+        self.feature_mean = jnp.asarray(feature_mean)
+        self.in_size = self.coefficients.shape[0]
+        self.out_size = "scalar"
+
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
+        del key
+        return oe.contract(
+            "...f,f->...", jnp.asarray(x) - self.feature_mean, self.coefficients
+        )

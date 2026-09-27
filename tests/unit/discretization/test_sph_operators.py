@@ -51,7 +51,7 @@ def _context(count: Any = 6) -> Any:
     )
 
 
-def test_shared_summation_density_matches_direct_all_particle_sum() -> None:
+def test_sph_operators_scenario_1() -> None:
     (
         particles,
         position,
@@ -83,60 +83,6 @@ def test_shared_summation_density_matches_direct_all_particle_sum() -> None:
     )
 
     assert jnp.allclose(density, direct, atol=2e-14)
-
-
-def test_pair_once_continuity_rate_matches_direct_directed_sum() -> None:
-    (
-        particles,
-        position,
-        pairs,
-        geometry,
-        physical,
-        kernel,
-        smoothing_length,
-        execution,
-        precision,
-    ) = _context()
-    velocity = 0.03 * jnp.cos(2.0 * jnp.pi * position)
-    rate = sph_continuity_density_rate(
-        particles.safe_masses,
-        velocity,
-        pairs,
-        geometry,
-        physical,
-        kernel,
-        smoothing_length,
-        particle_count=particles.capacity,
-        execution=execution,
-        precision=precision,
-    )
-    displacement = position[:, None, :] - position[None, :, :]
-    displacement = displacement - jnp.round(displacement)
-    distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
-    gradient = kernel.gradient(displacement, distance, smoothing_length)
-    direct = jnp.sum(
-        particles.masses[None, :]
-        * jnp.sum((velocity[:, None, :] - velocity[None, :, :]) * gradient, axis=-1),
-        axis=1,
-    )
-
-    assert jnp.allclose(rate, direct, rtol=2e-12, atol=2e-14)
-    translated = sph_continuity_density_rate(
-        particles.safe_masses,
-        jnp.ones_like(velocity),
-        pairs,
-        geometry,
-        physical,
-        kernel,
-        smoothing_length,
-        particle_count=particles.capacity,
-        execution=execution,
-        precision=precision,
-    )
-    assert jnp.array_equal(translated, jnp.zeros_like(translated))
-
-
-def test_shared_pressure_gradient_matches_conservative_barotropic_dynamics() -> None:
     (
         particles,
         position,
@@ -192,3 +138,51 @@ def test_shared_pressure_gradient_matches_conservative_barotropic_dynamics() -> 
         rtol=2e-12,
         atol=2e-14,
     )
+    (
+        particles,
+        position,
+        pairs,
+        geometry,
+        physical,
+        kernel,
+        smoothing_length,
+        execution,
+        precision,
+    ) = _context()
+    velocity = 0.03 * jnp.cos(2.0 * jnp.pi * position)
+    rate = sph_continuity_density_rate(
+        particles.safe_masses,
+        velocity,
+        pairs,
+        geometry,
+        physical,
+        kernel,
+        smoothing_length,
+        particle_count=particles.capacity,
+        execution=execution,
+        precision=precision,
+    )
+    displacement = position[:, None, :] - position[None, :, :]
+    displacement = displacement - jnp.round(displacement)
+    distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
+    gradient = kernel.gradient(displacement, distance, smoothing_length)
+    direct = jnp.sum(
+        particles.masses[None, :]
+        * jnp.sum((velocity[:, None, :] - velocity[None, :, :]) * gradient, axis=-1),
+        axis=1,
+    )
+
+    assert jnp.allclose(rate, direct, rtol=2e-12, atol=2e-14)
+    translated = sph_continuity_density_rate(
+        particles.safe_masses,
+        jnp.ones_like(velocity),
+        pairs,
+        geometry,
+        physical,
+        kernel,
+        smoothing_length,
+        particle_count=particles.capacity,
+        execution=execution,
+        precision=precision,
+    )
+    assert jnp.array_equal(translated, jnp.zeros_like(translated))

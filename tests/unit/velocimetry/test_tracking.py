@@ -112,7 +112,7 @@ def _gaussian_image(position_rc: Any, *, amplitude: Any = 10.0) -> Any:
     return amplitude * jnp.exp(-0.5 * jnp.sum(delta * delta, axis=-1) / 0.7**2)
 
 
-def test_detector_reports_border_crowding_and_capacity_overflow() -> None:
+def test_tracking_scenario_1() -> None:
     row, column = jnp.meshgrid(jnp.arange(17.0), jnp.arange(17.0), indexing="ij")
     image = jnp.zeros((17, 17))
     for center, amplitude in (
@@ -149,9 +149,6 @@ def test_detector_reports_border_crowding_and_capacity_overflow() -> None:
             ParticleDetectionPlan(maximum_detections=2),
         )
     assert jnp.any(result.status[result.valid] == 2)
-
-
-def test_two_view_hungarian_uses_unique_resources_and_explicit_dummies() -> None:
     world_a = jnp.asarray([[-0.4, 0.0, 4.0], [0.5, 0.2, 5.0], [0.0, 0.0, 1.0]])
     world_b = jnp.asarray([[0.5, 0.2, 5.0], [-0.4, 0.0, 4.0], [1.5, 0.0, 3.0]])
     origin_a = jnp.broadcast_to(jnp.asarray((-0.5, 0.0, 0.0)), world_a.shape)
@@ -175,9 +172,6 @@ def test_two_view_hungarian_uses_unique_resources_and_explicit_dummies() -> None
     assert len(np.unique(np.asarray(result.matches_a_to_b[result.matched_a]))) == 2
     assert jnp.array_equal(result.unmatched_b, jnp.asarray((False, False, True)))
     assert result.evidence.optimality_proven
-
-
-def test_public_detection_association_reconstruction_workflow_is_physical() -> None:
     rig = _stereo_rig()
     point = jnp.asarray([[0.1, -0.1, 5.0]])
     projected = tuple(project_points(camera, point).pixels[0] for camera in rig.cameras)
@@ -222,7 +216,7 @@ def test_public_detection_association_reconstruction_workflow_is_physical() -> N
     assert reconstruction.status[1] == int(ReconstructionStatus.NOT_SELECTED)
 
 
-def test_streaming_tracks_keep_ids_through_crossing_and_one_miss() -> None:
+def test_tracking_scenario_2() -> None:
     reconstructions = (
         _reconstruction(((-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)), (1, 1), "r0"),
         _reconstruction(((-0.3, 0.0, 0.0), (0.3, 0.0, 0.0)), (1, 1), "r1"),
@@ -240,9 +234,6 @@ def test_streaming_tracks_keep_ids_through_crossing_and_one_miss() -> None:
     missed_slot = int(jnp.argmax((~result.observed[:, 2]) & result.active[:, 2]))
     assert result.track_ids[missed_slot, 2] == result.track_ids[missed_slot, 3]
     assert jnp.all(result.overflow_count == 0)
-
-
-def test_birth_death_capacity_monotone_time_and_trajectory_reset_semantics() -> None:
     plan = TrackLinkPlan(1, maximum_missed=0, mahalanobis_gate=4.0)
     state = initialize_tracks(plan)
     covariance = jnp.broadcast_to(0.01 * jnp.eye(3), (2, 3, 3))
@@ -281,9 +272,6 @@ def test_birth_death_capacity_monotone_time_and_trajectory_reset_semantics() -> 
     assert trajectory.reset_mask[0, 0]
     assert not trajectory.transition_valid[0, 0]
     assert trajectory.source_id == result.result_id
-
-
-def test_frozen_association_smoothing_preserves_capacity_and_gaps() -> None:
     observations = (
         _reconstruction(((0.1, 0.0, 0.0),), (1,), "s0"),
         _reconstruction(((0.9, 0.0, 0.0),), (1,), "s1"),

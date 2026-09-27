@@ -57,7 +57,7 @@ def _model(
     return cell, pencil, mean_field
 
 
-def test_orbital_contract_rejects_unit_and_fourier_mismatches() -> None:
+def test_periodic_electronic_structure_scenario_1() -> None:
     cell = _cell()
     with pytest.raises(ValueError, match="length dimension"):
         PeriodicOrbitalBasisPlan(
@@ -117,9 +117,6 @@ def test_orbital_contract_rejects_unit_and_fourier_mismatches() -> None:
             0.0,
             phx.units.ANGSTROM,
         )
-
-
-def test_gamma_point_native_periodic_scf_closes_population_and_energy() -> None:
     cell, pencil, mean_field = _model([[0, 0, 0]], [[[-1.0]]], [[[1.0]]], [0.0], [2.0])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (1, 1, 1))
     result = NativePeriodicSCFPlan(
@@ -131,9 +128,6 @@ def test_gamma_point_native_periodic_scf_closes_population_and_energy() -> None:
     np.testing.assert_allclose(result.occupations, [[2.0]])
     np.testing.assert_allclose(result.populations, [2.0], atol=1.0e-12)
     np.testing.assert_allclose(result.free_energy, result.energy)
-
-
-def test_k_point_smearing_preserves_fractional_electron_count() -> None:
     cell, pencil, mean_field = _model(
         [[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
         [[[-0.2]], [[-1.0]], [[-0.2]]],

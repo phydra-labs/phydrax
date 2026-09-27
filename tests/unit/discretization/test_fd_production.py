@@ -117,7 +117,7 @@ def test_fd_checkpoint_refuses_nonfinite_or_nonscalar_runtime_state(
         phx.discretization.read_fd_checkpoint(corrupt_path, plan)
 
 
-def test_boundary_halo_and_transfer_actions_have_exact_discrete_vjps() -> None:
+def test_fd_production_scenario_1() -> None:
     boundary = phx.discretization.CellGhostBoundary(
         0,
         "dirichlet",
@@ -164,9 +164,6 @@ def test_boundary_halo_and_transfer_actions_have_exact_discrete_vjps() -> None:
     )
 
     assert transfer_report.passed
-
-
-def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient() -> None:
     steps = 20
     dt = 0.01
     parameter = jnp.asarray(0.7)
@@ -202,25 +199,17 @@ def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient() -> No
         rtol=2e-12,
         atol=2e-12,
     )
+    for dimension in [1, 2, 3, 4]:
+        bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3,) * dimension))
+        values = jnp.arange(bridge.cochain.cell_counts[0], dtype="float64")
 
+        first = bridge.exterior_derivative(0, values)
 
-@pytest.mark.parametrize("dimension", [1, 2, 3, 4])
-def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(
-    dimension: Any,
-) -> None:
-    bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3,) * dimension))
-    values = jnp.arange(bridge.cochain.cell_counts[0], dtype="float64")
-
-    first = bridge.exterior_derivative(0, values)
-
-    if dimension > 1:
-        second = bridge.exterior_derivative(1, first)
-        np.testing.assert_allclose(second, 0.0, rtol=0.0, atol=0.0)
-    components = bridge.unpack(0, values)
-    np.testing.assert_allclose(bridge.pack(0, components), values)
-
-
-def test_structured_cochain_refuses_combinatorial_allocation_before_building() -> None:
+        if dimension > 1:
+            second = bridge.exterior_derivative(1, first)
+            np.testing.assert_allclose(second, 0.0, rtol=0.0, atol=0.0)
+        components = bridge.unpack(0, values)
+        np.testing.assert_allclose(bridge.pack(0, components), values)
     with pytest.raises(ValueError, match="maximum_entities"):
         phx.discretization.StructuredCochainBridge(
             _cell_grid((3, 3, 3, 3)),

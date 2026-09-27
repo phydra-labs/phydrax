@@ -84,7 +84,7 @@ def _potential_dataset(
     )
 
 
-def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding() -> None:
+def test_free_energy_scenario_1() -> None:
     values = jnp.asarray([[0.0, 1.0, jnp.nan], [1.0, 2.0, jnp.nan]])
     dataset = _potential_dataset(
         values,
@@ -130,9 +130,6 @@ def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding() ->
             run_id="run",
             unit_id="kJ/mol",
         )
-
-
-def test_fep_and_bar_use_directed_work_and_report_block_covariance() -> None:
     delta = 1.7
     dataset = _work_dataset(
         [delta] * 8 + [-delta] * 8,
@@ -181,9 +178,6 @@ def test_fep_and_bar_use_directed_work_and_report_block_covariance() -> None:
         phx.uq.FreeEnergySelectionPlan(block_length=4),
     )
     assert blocked.standard_errors[0, 1] > singleton.standard_errors[0, 1]
-
-
-def test_block_bootstrap_is_explicitly_keyed_and_replayable() -> None:
     dataset = _work_dataset(
         [0.0, 0.1, -0.1, 0.2, 0.0, -0.2, 0.1, -0.1],
         [0] * 8,
@@ -200,7 +194,7 @@ def test_block_bootstrap_is_explicitly_keyed_and_replayable() -> None:
     np.testing.assert_array_equal(first.covariance, replay.covariance)
 
 
-def test_ti_consumes_raw_complete_path_derivatives_and_joint_blocks() -> None:
+def test_free_energy_scenario_2() -> None:
     state_count, capacity = 3, 8
     active = jnp.ones((state_count, capacity), dtype="bool")
     draw = jnp.broadcast_to(jnp.arange(capacity), active.shape)
@@ -230,9 +224,6 @@ def test_ti_consumes_raw_complete_path_derivatives_and_joint_blocks() -> None:
     np.testing.assert_allclose(result.free_energies, [0.0, 1.0, 2.0], atol=1.0e-12)
     np.testing.assert_allclose(dataset.quadrature_weights, [0.25, 0.5, 0.25])
     assert bool(result.successful)
-
-
-def test_mbar_has_fixed_gauge_rank_aware_covariance_and_connectivity_evidence() -> None:
     delta = 0.8
     values = jnp.stack((jnp.zeros(12), jnp.full(12, delta)))
     dataset = _potential_dataset(values, [0] * 6 + [1] * 6)
@@ -257,9 +248,6 @@ def test_mbar_has_fixed_gauge_rank_aware_covariance_and_connectivity_evidence() 
         phx.uq.FreeEnergyStatus.DISCONNECTED
     )
     assert not bool(disconnected.successful)
-
-
-def test_mbar_admits_a_dense_cross_evaluated_unsampled_connected_state() -> None:
     values = jnp.zeros((3, 12))
     dataset = _potential_dataset(values, [0] * 6 + [1] * 6)
     result = phx.uq.multistate_bennett_acceptance_ratio(dataset)
@@ -267,11 +255,6 @@ def test_mbar_admits_a_dense_cross_evaluated_unsampled_connected_state() -> None
     assert int(dataset.state_counts[2]) == 0
     assert bool(jnp.all(result.connectivity))
     assert bool(result.successful)
-
-
-def test_selection_evidence_is_content_bound_and_blocks_dependence_groups_synchronously() -> (
-    None
-):
     values = jnp.zeros((2, 8))
     dataset = _potential_dataset(values, [0, 1] * 4)
     evidence = phx.uq.FreeEnergySelectionPlan(block_length=2).select(dataset)

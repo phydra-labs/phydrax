@@ -19,7 +19,7 @@ from phydrax.finance.models._jump import (
 from phydrax.finance.models._rough import RoughBergomiModel
 
 
-def test_local_volatility_interpolation_and_invalid_variance_fail_closed() -> None:
+def test_finance_models_scenario_1() -> None:
     model = LocalVolatilityModel(
         jnp.array([0.5, 1.0]),
         jnp.array([-0.2, 0.2]),
@@ -32,9 +32,6 @@ def test_local_volatility_interpolation_and_invalid_variance_fail_closed() -> No
             jnp.array([-0.2, 0.2]),
             jnp.array([[0.02, 0.04], [0.04, -0.01]]),
         )
-
-
-def test_diffusion_and_rough_model_admissibility() -> None:
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="Heston"):
         HestonModel(1.0, 0.01, 1.0, -0.5, 0.01)
     sabr = SABRModel(0.2, 0.5, 0.4, -0.2)
@@ -49,9 +46,6 @@ def test_diffusion_and_rough_model_admissibility() -> None:
     weights = rough.kernel_weights(0.01, 8)
     assert jnp.all(weights > 0.0)
     assert jnp.all(jnp.diff(weights) < 0.0)
-
-
-def test_jump_characteristic_exponents_normalize_and_moment_checks_fail_closed() -> None:
     models = (
         MertonJumpDiffusionModel(0.2, 0.5, -0.1, 0.2),
         KouJumpDiffusionModel(0.2, 0.5, 0.4, 3.0, 4.0),
@@ -71,7 +65,7 @@ def test_jump_characteristic_exponents_normalize_and_moment_checks_fail_closed()
         CGMYModel(0.2, 5.0, 0.9, 0.5)
 
 
-def test_multiasset_and_commodity_covariances_are_financially_admissible() -> None:
+def test_multiasset_contracts() -> None:
     dependence = CorrelationMatrix(jnp.array([[1.0, 0.25], [0.25, 1.0]]))
     model = MultiAssetLognormalModel(jnp.array([0.2, 0.3]), dependence)
     expected = jnp.array([[0.04, 0.015], [0.015, 0.09]])
@@ -80,9 +74,6 @@ def test_multiasset_and_commodity_covariances_are_financially_admissible() -> No
     assert commodity.log_spot_variance(2.0) > 0.0
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="correlation"):
         CorrelationMatrix(jnp.array([[1.0, 1.1], [1.1, 1.0]]))
-
-
-def test_multiasset_diffusion_factor_reproduces_covariance() -> None:
     dependence = CorrelationMatrix(jnp.array([[1.0, 0.25], [0.25, 1.0]]))
     model = MultiAssetLognormalModel(jnp.array([0.2, 0.3]), dependence)
     factor = model.diffusion_factor()

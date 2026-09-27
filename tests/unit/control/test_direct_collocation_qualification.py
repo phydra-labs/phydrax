@@ -47,7 +47,7 @@ def _record(case_id: Any, backend: Any = "native", **overrides: Any) -> Any:
     return DirectCollocationQualificationRecord.create(**values)
 
 
-def test_qualification_case_corpus_is_complete_and_unique() -> None:
+def test_direct_collocation_qualification_scenario_1() -> None:
     setups = qualification_setups()
     identifiers = tuple(setup.case.case_id for setup in setups)
     assert len(setups) == 8
@@ -62,9 +62,6 @@ def test_qualification_case_corpus_is_complete_and_unique() -> None:
         "unstable",
         "nonholonomic",
     }
-
-
-def test_qualification_artifact_fingerprint_and_coverage_are_independent() -> None:
     setups = qualification_setups()
     cases = tuple(setup.case for setup in setups)
     records = tuple(_record(case.case_id) for case in cases)
@@ -121,18 +118,12 @@ def test_qualification_artifact_fingerprint_and_coverage_are_independent() -> No
     )
     with pytest.raises(ValueError, match="does not match record evidence"):
         forged_graduation.verify(required_case_ids=required)
-
-
-def test_qualification_record_rejects_nonfinite_and_tampered_metrics() -> None:
     record = _record("case")
     record.verify()
     with pytest.raises(ValueError, match="fingerprint mismatch"):
         replace(record, objective=2.0).verify()
     with pytest.raises(ValueError, match="nonfinite"):
         _record("nonfinite", objective=float("nan"))
-
-
-def test_graduation_requires_sparse_refresh_evidence_for_production() -> None:
     cases = tuple(setup.case.case_id for setup in qualification_setups())
     native = tuple(_record(case_id) for case_id in cases)
     validated = evaluate_direct_collocation_graduation(
@@ -152,9 +143,6 @@ def test_graduation_requires_sparse_refresh_evidence_for_production() -> None:
     )
     assert production["level"] == 2
     assert production["production_ready"]
-
-
-def test_regression_detects_new_false_success_and_dense_sparse_path() -> None:
     baseline = (_record("case", "ipopt"),)
     current = (
         _record(

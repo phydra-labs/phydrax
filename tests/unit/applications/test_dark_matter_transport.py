@@ -100,7 +100,7 @@ def _scattering() -> Any:
     )
 
 
-def test_requested_use_rights_are_enforced_and_bound_into_identity() -> None:
+def test_dark_matter_transport_scenario_1() -> None:
     manifest = _manifest("synthetic-rights-profile", commercial=True)
     arguments = (
         jnp.asarray((2.0,)),
@@ -172,9 +172,6 @@ def test_requested_use_rights_are_enforced_and_bound_into_identity() -> None:
             rate_coefficients_m3_s=coefficients,
             mark_sampler=sampler,
         )
-
-
-def test_transparent_path_and_layer_transitions_are_geometrically_explicit() -> None:
     state = jnp.asarray((-3.0, 0.0, 0.0, 2.0, 0.0, 0.0))
     propagated = transparent_state(state, 1.25)
     evaluated = _profile().evaluate(
@@ -188,9 +185,6 @@ def test_transparent_path_and_layer_transitions_are_geometrically_explicit() -> 
         _profile().boundaries[0].signed_distance(jnp.asarray(((1.0, 0.0, 0.0),))),
         0.0,
     )
-
-
-def test_layered_analytic_hazard_recovers_homogeneous_exponential_optical_depth() -> None:
     result = layered_analytic_optical_depth(
         _homogeneous_profile(),
         _scattering(),
@@ -209,7 +203,7 @@ def test_layered_analytic_hazard_recovers_homogeneous_exponential_optical_depth(
     assert jnp.abs(empirical - result.interaction_cdf) < 0.01
 
 
-def test_generic_hazard_quadrature_converges_to_layered_realization() -> None:
+def test_dark_matter_transport_scenario_2() -> None:
     profile = _profile()
     scattering = _scattering()
     exact = layered_analytic_optical_depth(
@@ -236,9 +230,6 @@ def test_generic_hazard_quadrature_converges_to_layered_realization() -> None:
         exact.partial_optical_depths,
         rtol=1.0e-10,
     )
-
-
-def test_vacuum_layers_mask_out_of_support_rate_coefficients() -> None:
     vacuum = LayeredTerrestrialProfile(
         jnp.asarray((2.0,)),
         jnp.zeros((1,)),
@@ -263,9 +254,6 @@ def test_vacuum_layers_mask_out_of_support_rate_coefficients() -> None:
     assert quadrature.successful
     assert analytic.total_optical_depth == 0.0
     assert quadrature.total_optical_depth == 0.0
-
-
-def test_partial_hazards_select_only_supported_targets() -> None:
     rates = jnp.asarray((0.0, 4.0, 0.0))
     selected = jnp.stack(
         tuple(
@@ -277,7 +265,7 @@ def test_partial_hazards_select_only_supported_targets() -> None:
     assert sample_target_from_partial_rates(jr.key(1), jnp.zeros((3,))) == -1
 
 
-def test_profiled_marked_jump_process_exposes_partial_target_rates_and_marks() -> None:
+def test_dark_matter_transport_scenario_3() -> None:
     process = ProfiledElasticJumpProcess(_profile(), _scattering(), 2.0)
     state = jnp.asarray((0.5, 0.0, 0.0, 4.0, 0.0, 0.0))
     rates = process.intensities(0.0, state)
@@ -290,9 +278,6 @@ def test_profiled_marked_jump_process_exposes_partial_target_rates_and_marks() -
     assert collision.successful
     assert jnp.array_equal(after[:3], state[:3])
     assert jnp.array_equal(after[3:], collision.projectile_velocity_m_s)
-
-
-def test_rate_table_interpolation_and_elastic_invariants_are_exact() -> None:
     scattering = _scattering()
     coefficient = scattering.rate_coefficients(5.5, 200.0)
     collision = elastic_scatter_velocity(
@@ -346,9 +331,6 @@ def test_rate_table_interpolation_and_elastic_invariants_are_exact() -> None:
     assert jnp.array_equal(
         invalid_mark.projectile_velocity_m_s, jnp.asarray((3.0, -2.0, 1.0))
     )
-
-
-def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian() -> None:
     source = WeightedSampleBatch(
         jnp.asarray(((0.0, 0.0, 0.0, 1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0, 0.0, 0.0))),
         jnp.log(jnp.asarray((2.0, 3.0))),

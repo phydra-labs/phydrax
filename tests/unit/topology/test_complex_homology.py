@@ -14,7 +14,7 @@ from tests.unit.topology._fixtures import (
 )
 
 
-def test_full_compaction_excludes_inactive_capacity() -> None:
+def test_complex_homology_scenario_1() -> None:
     vertices = phx.discretization.EntitySet(
         "vertices",
         0,
@@ -51,9 +51,6 @@ def test_full_compaction_excludes_inactive_capacity() -> None:
         coefficients=phx.topology.PrimeField(2),
     )
     assert result.dimensions == (1, 0)
-
-
-def test_nonclosed_active_masks_fail_before_algebra() -> None:
     vertices = phx.discretization.EntitySet(
         "vertices",
         0,
@@ -78,9 +75,6 @@ def test_nonclosed_active_masks_fail_before_algebra() -> None:
 
     with pytest.raises(ValueError, match="do not form a subcomplex"):
         phx.topology.CellSubcomplex.full(topology)
-
-
-def test_boundary_subcomplex_and_relative_disk_homology() -> None:
     topology = filled_triangle_topology()
     disk = phx.topology.CellSubcomplex.full(topology)
     boundary = phx.topology.CellSubcomplex.from_subsets(topology, "boundary")
@@ -103,7 +97,7 @@ def test_boundary_subcomplex_and_relative_disk_homology() -> None:
     assert representative.nonzero_count == 1
 
 
-def test_relative_subcomplex_must_be_contained_in_ambient() -> None:
+def test_complex_homology_scenario_2() -> None:
     topology = filled_triangle_topology()
     full = phx.topology.CellSubcomplex.full(topology)
     empty = phx.topology.CellSubcomplex(
@@ -112,9 +106,6 @@ def test_relative_subcomplex_must_be_contained_in_ambient() -> None:
     )
     with pytest.raises(ValueError, match="contained"):
         phx.topology.CellComplexPair(empty, full)
-
-
-def test_reduced_homology_uses_explicit_augmentation() -> None:
     vertex = phx.discretization.EntitySet("vertices", 0, np.asarray([0]))
     point = phx.discretization.CellComplexTopology((vertex,), ())
     result = phx.topology.compute_homology(
@@ -125,9 +116,17 @@ def test_reduced_homology_uses_explicit_augmentation() -> None:
 
     assert tuple(value.degree for value in result.degrees) == (-1, 0)
     assert result.dimensions == (0, 0)
-
-
-def test_empty_reduced_complex_has_degree_minus_one_class() -> None:
+    topology = filled_triangle_topology()
+    pair = phx.topology.CellComplexPair(
+        phx.topology.CellSubcomplex.full(topology),
+        phx.topology.CellSubcomplex.from_subsets(topology, "boundary"),
+    )
+    with pytest.raises(ValueError, match="Reduced relative"):
+        phx.topology.compute_homology(
+            pair,
+            coefficients=phx.topology.PrimeField(2),
+            reduced=True,
+        )
     vertex = phx.discretization.EntitySet(
         "vertices",
         0,
@@ -145,21 +144,7 @@ def test_empty_reduced_complex_has_degree_minus_one_class() -> None:
     assert result.degree(0).dimension == 0
 
 
-def test_reduced_relative_homology_is_rejected() -> None:
-    topology = filled_triangle_topology()
-    pair = phx.topology.CellComplexPair(
-        phx.topology.CellSubcomplex.full(topology),
-        phx.topology.CellSubcomplex.from_subsets(topology, "boundary"),
-    )
-    with pytest.raises(ValueError, match="Reduced relative"):
-        phx.topology.compute_homology(
-            pair,
-            coefficients=phx.topology.PrimeField(2),
-            reduced=True,
-        )
-
-
-def test_prime_field_is_explicit_and_exact() -> None:
+def test_complex_homology_scenario_3() -> None:
     field = phx.topology.PrimeField(2_147_483_647)
     assert field.multiply(field.modulus - 1, field.modulus - 1) == 1
     assert field.divide(7, 7) == 1
@@ -167,9 +152,6 @@ def test_prime_field_is_explicit_and_exact() -> None:
         phx.topology.PrimeField(15)
     with pytest.raises(ZeroDivisionError):
         field.inverse(0)
-
-
-def test_projective_plane_homology_depends_on_coefficient_field() -> None:
     topology = projective_plane_topology()
     mod_two = phx.topology.compute_homology(
         topology,
@@ -187,9 +169,6 @@ def test_projective_plane_homology_depends_on_coefficient_field() -> None:
     assert mod_two.dimensions == (1, 1, 1)
     assert mod_three.dimensions == (1, 0, 0)
     assert rational.dimensions == (1, 0, 0)
-
-
-def test_cycle_and_cocycle_representatives_match_betti_dimensions() -> None:
     topology = projective_plane_topology()
     result = phx.topology.compute_homology(
         topology,
@@ -204,7 +183,7 @@ def test_cycle_and_cocycle_representatives_match_betti_dimensions() -> None:
         assert degree.cocycles.generator_count == degree.dimension
 
 
-def test_reorientation_preserves_dimensions() -> None:
+def test_complex_homology_scenario_4() -> None:
     topology = filled_triangle_topology()
     entity_sets = topology.entity_sets
     incidences = tuple(
@@ -227,18 +206,12 @@ def test_reorientation_preserves_dimensions() -> None:
         coefficients=phx.topology.PrimeField(3),
     )
     assert transformed.dimensions == original.dimensions
-
-
-def test_resource_limit_fails_without_partial_result() -> None:
     with pytest.raises(phx.topology.TopologyResourceError, match="max_cells"):
         phx.topology.compute_homology(
             filled_triangle_topology(),
             coefficients=phx.topology.PrimeField(2),
             resources=phx.topology.TopologyResourcePolicy(max_cells=2),
         )
-
-
-def test_canonical_ownership_is_explicit() -> None:
     registry = CoreAbstractionRegistry()
     assert registry.owner("cell_complex") == "phydrax.discretization.CellComplexTopology"
     assert registry.owner("homology") == "phydrax.topology.compute_homology"

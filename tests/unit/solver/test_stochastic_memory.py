@@ -5,7 +5,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_volterra_left_convolution_recovers_deterministic_integral_equation() -> None:
+def test_stochastic_memory_scenario_1() -> None:
     rate = 0.4
     times = jnp.linspace(0.0, 1.0, 101)
     problem = phx.solver.StochasticVolterraProblem(
@@ -22,9 +22,6 @@ def test_volterra_left_convolution_recovers_deterministic_integral_equation() ->
     assert solution.solver_id == "solver:volterra:left-convolution-euler"
     assert solution.resolved_method == "explicit-left-convolution"
     assert solution.stats["num_accepted_steps"] == 100
-
-
-def test_volterra_stochastic_convolution_replays_global_wiener_path() -> None:
     times = jnp.linspace(0.0, 1.0, 17)
     realization = phx.stochastic.WienerRealization(
         jr.key(80),
@@ -59,9 +56,6 @@ def test_volterra_stochastic_convolution_replays_global_wiener_path() -> None:
     assert jnp.allclose(solution.states[:, -1, 0], expected, rtol=0.0, atol=1e-12)
     assert trajectory.realizations == (realization,)
     assert trajectory.states.shape == (8, 17, 1)
-
-
-def test_delay_solver_interpolates_causal_history_and_resolved_states() -> None:
     delay = 0.4
     times = jnp.linspace(0.0, 0.8, 81)
     problem = phx.solver.DelayDifferentialProblem(
@@ -87,9 +81,6 @@ def test_delay_solver_interpolates_causal_history_and_resolved_states() -> None:
     assert solution.solver_id == "solver:diffrax-delay:Euler:retarded"
     assert solution.resolved_method == "Euler:causal-retarded-method-of-steps"
     assert solution.stats["num_rejected_steps"] == 0
-
-
-def test_multi_delay_sde_uses_one_global_wiener_increment() -> None:
     times = jnp.asarray([0.0, 0.1])
     history = lambda time, args: jnp.asarray([1.0 + time])
     problem = phx.solver.DelayDifferentialProblem(

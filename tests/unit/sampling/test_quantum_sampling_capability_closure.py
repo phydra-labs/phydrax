@@ -31,7 +31,7 @@ from phydrax.sampling import (
 )
 
 
-def test_hamiltonian_chain_has_semantic_replay_and_frozen_production() -> None:
+def test_quantum_sampling_capability_closure_scenario_1() -> None:
     kernel = prepare_hamiltonian_kernel(
         lambda value: -0.5 * jnp.sum(value**2),
         jnp.array([[2.0, 0.2], [0.2, 1.0]]),
@@ -60,6 +60,116 @@ def test_hamiltonian_chain_has_semantic_replay_and_frozen_production() -> None:
     trace = first.iteration_evidence.observer_outputs[0]
     assert int(trace.stored_count) == 8
     assert trace.records.metrics.accepted.shape[1:] == (2,)
+    kernel = prepare_hamiltonian_kernel(
+        lambda _value: jnp.asarray(0.0),
+        jnp.eye(1),
+        step_size=0.2,
+        method="nuts",
+        maximum_tree_depth=3,
+        target_id="constant",
+    )
+    state = initialize_hamiltonian_state(kernel, jnp.asarray([[jnp.nan]]))
+    result = sample_hamiltonian(kernel, state, key=jr.key(30), num_draws=2)
+
+    assert not state.valid[0]
+    assert jnp.all(jnp.isnan(result.samples[0]))
+    assert jnp.all(result.divergent[0])
+    assert jnp.all(result.leapfrog_steps[0] == 0)
+    assert not result.final_state.valid[0]
+    log_target = lambda value: -0.5 * jnp.sum(value**2)
+    first = prepare_hamiltonian_kernel(
+        log_target,
+        jnp.eye(1),
+        step_size=0.1,
+        target_id="owner-a",
+    )
+    changed_step = prepare_hamiltonian_kernel(
+        log_target,
+        jnp.eye(1),
+        step_size=0.2,
+        target_id="owner-a",
+    )
+    changed_target = prepare_hamiltonian_kernel(
+        log_target,
+        jnp.eye(1),
+        step_size=0.1,
+        target_id="owner-b",
+    )
+    state = initialize_hamiltonian_state(first, jnp.zeros((1, 1)))
+    for kernel in (changed_step, changed_target):
+        with pytest.raises(ValueError, match="another prepared kernel"):
+            sample_hamiltonian(
+                kernel,
+                state,
+                key=jr.key(61),
+                num_draws=1,
+            )
+
+    adapted = adapt_hamiltonian_kernel(
+        first,
+        state,
+        HamiltonianAdaptationPlan(warmup_steps=2),
+        key=jr.key(62),
+    )
+    assert adapted.final_state.target_id == adapted.kernel.target_id
+    assert adapted.final_state.kernel_id == adapted.kernel.kernel_id
+    maximum_tree_depth = 4
+    kernel = prepare_hamiltonian_kernel(
+        lambda value: -0.5 * jnp.sum(value**2),
+        jnp.eye(1),
+        step_size=0.3,
+        method="nuts",
+        maximum_tree_depth=maximum_tree_depth,
+        target_id="standard-normal",
+    )
+    state = initialize_hamiltonian_state(kernel, jnp.linspace(-2.0, 2.0, 8)[:, None])
+    result = sample_hamiltonian(kernel, state, key=jr.key(29), num_draws=512)
+    stationary_draws = result.samples[:, 64:, 0]
+    capacity = 2**maximum_tree_depth - 1
+
+    assert jnp.abs(jnp.mean(stationary_draws)) < 0.1
+    assert jnp.abs(jnp.var(stationary_draws) - 1.0) < 0.15
+    assert not jnp.any(result.divergent)
+    assert jnp.all(result.leapfrog_steps <= capacity)
+    assert jnp.array_equal(
+        result.maximum_depth_reached,
+        result.leapfrog_steps == capacity,
+    )
+    assert jnp.all(jnp.isfinite(result.acceptance_probability))
+    kernel = prepare_hamiltonian_kernel(
+        lambda value: -0.5 * jnp.sum(value**2),
+        jnp.eye(1),
+        step_size=5.0,
+        method="nuts",
+        maximum_tree_depth=4,
+        divergence_threshold=1.0,
+        target_id="divergent-standard-normal",
+    )
+    initial_positions = jnp.full((4, 1), 10.0)
+    state = initialize_hamiltonian_state(kernel, initial_positions)
+    result = sample_hamiltonian(kernel, state, key=jr.key(31), num_draws=1)
+
+    assert jnp.all(result.divergent)
+    assert jnp.all(result.leapfrog_steps == 1)
+    assert not jnp.any(result.maximum_depth_reached)
+    assert jnp.array_equal(result.samples[:, 0], initial_positions)
+    kernel = MetropolisHastings(GaussianRandomWalkProposal(0.2))
+    initial = jnp.zeros((3, 1))
+    target = FullMarkovTarget(
+        lambda value: -0.5 * jnp.sum(value**2),
+        target_id="chunked-standard-normal",
+    )
+    state = kernel.initialize(target, initial)
+    result = sample_markov_chunked(
+        target,
+        kernel,
+        state,
+        key=jr.key(9),
+        plan=MarkovChunkPlan(5, 3),
+    )
+    assert result.samples.shape == (3, 6, 1)
+    assert jnp.array_equal(result.active, jnp.array([1, 1, 1, 1, 1, 0], dtype="bool"))
+    assert bool(result.replay_exact)
 
 
 def _nonfinite_hmc_result(monkeypatch: Any, cutoff: Any) -> Any:
@@ -110,141 +220,13 @@ def test_hmc_rejects_an_entire_trajectory_after_a_later_nonfinite_step(
     assert result.acceptance_probability[0, 0] == 0.0
 
 
-def test_bounded_nuts_preserves_a_gaussian_and_reports_consumed_capacity() -> None:
-    maximum_tree_depth = 4
-    kernel = prepare_hamiltonian_kernel(
-        lambda value: -0.5 * jnp.sum(value**2),
-        jnp.eye(1),
-        step_size=0.3,
-        method="nuts",
-        maximum_tree_depth=maximum_tree_depth,
-        target_id="standard-normal",
-    )
-    state = initialize_hamiltonian_state(kernel, jnp.linspace(-2.0, 2.0, 8)[:, None])
-    result = sample_hamiltonian(kernel, state, key=jr.key(29), num_draws=512)
-    stationary_draws = result.samples[:, 64:, 0]
-    capacity = 2**maximum_tree_depth - 1
-
-    assert jnp.abs(jnp.mean(stationary_draws)) < 0.1
-    assert jnp.abs(jnp.var(stationary_draws) - 1.0) < 0.15
-    assert not jnp.any(result.divergent)
-    assert jnp.all(result.leapfrog_steps <= capacity)
-    assert jnp.array_equal(
-        result.maximum_depth_reached,
-        result.leapfrog_steps == capacity,
-    )
-    assert jnp.all(jnp.isfinite(result.acceptance_probability))
-
-
-def test_bounded_nuts_reports_divergence_without_claiming_tree_capacity() -> None:
-    kernel = prepare_hamiltonian_kernel(
-        lambda value: -0.5 * jnp.sum(value**2),
-        jnp.eye(1),
-        step_size=5.0,
-        method="nuts",
-        maximum_tree_depth=4,
-        divergence_threshold=1.0,
-        target_id="divergent-standard-normal",
-    )
-    initial_positions = jnp.full((4, 1), 10.0)
-    state = initialize_hamiltonian_state(kernel, initial_positions)
-    result = sample_hamiltonian(kernel, state, key=jr.key(31), num_draws=1)
-
-    assert jnp.all(result.divergent)
-    assert jnp.all(result.leapfrog_steps == 1)
-    assert not jnp.any(result.maximum_depth_reached)
-    assert jnp.array_equal(result.samples[:, 0], initial_positions)
-
-
-def test_hamiltonian_initial_positions_fail_closed_even_for_constant_target() -> None:
-    kernel = prepare_hamiltonian_kernel(
-        lambda _value: jnp.asarray(0.0),
-        jnp.eye(1),
-        step_size=0.2,
-        method="nuts",
-        maximum_tree_depth=3,
-        target_id="constant",
-    )
-    state = initialize_hamiltonian_state(kernel, jnp.asarray([[jnp.nan]]))
-    result = sample_hamiltonian(kernel, state, key=jr.key(30), num_draws=2)
-
-    assert not state.valid[0]
-    assert jnp.all(jnp.isnan(result.samples[0]))
-    assert jnp.all(result.divergent[0])
-    assert jnp.all(result.leapfrog_steps[0] == 0)
-    assert not result.final_state.valid[0]
-
-
-def test_chunked_markov_prefix_and_partial_mask_are_explicit() -> None:
-    kernel = MetropolisHastings(GaussianRandomWalkProposal(0.2))
-    initial = jnp.zeros((3, 1))
-    target = FullMarkovTarget(
-        lambda value: -0.5 * jnp.sum(value**2),
-        target_id="chunked-standard-normal",
-    )
-    state = kernel.initialize(target, initial)
-    result = sample_markov_chunked(
-        target,
-        kernel,
-        state,
-        key=jr.key(9),
-        plan=MarkovChunkPlan(5, 3),
-    )
-    assert result.samples.shape == (3, 6, 1)
-    assert jnp.array_equal(result.active, jnp.array([1, 1, 1, 1, 1, 0], dtype="bool"))
-    assert bool(result.replay_exact)
-
-
-def test_hamiltonian_state_is_bound_to_exact_prepared_kernel() -> None:
-    log_target = lambda value: -0.5 * jnp.sum(value**2)
-    first = prepare_hamiltonian_kernel(
-        log_target,
-        jnp.eye(1),
-        step_size=0.1,
-        target_id="owner-a",
-    )
-    changed_step = prepare_hamiltonian_kernel(
-        log_target,
-        jnp.eye(1),
-        step_size=0.2,
-        target_id="owner-a",
-    )
-    changed_target = prepare_hamiltonian_kernel(
-        log_target,
-        jnp.eye(1),
-        step_size=0.1,
-        target_id="owner-b",
-    )
-    state = initialize_hamiltonian_state(first, jnp.zeros((1, 1)))
-    for kernel in (changed_step, changed_target):
-        with pytest.raises(ValueError, match="another prepared kernel"):
-            sample_hamiltonian(
-                kernel,
-                state,
-                key=jr.key(61),
-                num_draws=1,
-            )
-
-    adapted = adapt_hamiltonian_kernel(
-        first,
-        state,
-        HamiltonianAdaptationPlan(warmup_steps=2),
-        key=jr.key(62),
-    )
-    assert adapted.final_state.target_id == adapted.kernel.target_id
-    assert adapted.final_state.kernel_id == adapted.kernel.kernel_id
-
-
-def test_robbins_monro_scale_adapts_only_before_frozen_boundary() -> None:
+def test_quantum_sampling_capability_closure_scenario_2() -> None:
     policy = RobbinsMonroScalePolicy(warmup_chunks=1)
     state = initialize_proposal_adaptation(policy, 1.0)
     adapted = adapt_proposal_scale(policy, state, 0.9)
     frozen = adapt_proposal_scale(policy, adapted, 0.1)
     assert bool(adapted.frozen)
     assert jnp.allclose(frozen.scale, adapted.scale)
-
-
-def test_jastrow_rbm_caches_and_autoregressive_normalization() -> None:
     spins = jnp.array([1.0, -1.0, 1.0])
     jastrow = JastrowSpinAmplitude(
         jnp.array([0.2, -0.1, 0.3]),

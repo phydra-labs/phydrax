@@ -148,9 +148,7 @@ def _prepared_wave(count: Any = 8) -> Any:
     return space, prepared
 
 
-def test_correlated_component_modes_preserve_exact_auto_cross_spectra_and_identity() -> (
-    None
-):
+def test_cosmology_mixed_initial_conditions_scenario_1() -> None:
     space = _space(6, dimension=3)
     _, product, matrix = _transfer(space)
     primordial = _primordial(space)
@@ -178,9 +176,6 @@ def test_correlated_component_modes_preserve_exact_auto_cross_spectra_and_identi
     assert realized.manifest_id == product.manifest.manifest_id
     assert realized.requested_use_id == product.requested_use_id
     assert realized.gauge == product.gauge
-
-
-def test_transfer_rights_denial_manifest_substitution_and_native_generation() -> None:
     space = _space(4, dimension=2)
     background, product, matrix = _transfer(space)
     values = jnp.broadcast_to(matrix[:, :, None, None], (2, 2, 2, 2))
@@ -290,9 +285,6 @@ def test_transfer_rights_denial_manifest_substitution_and_native_generation() ->
     assert native.artifact is None
     assert native.manifest is None
     assert native.requested_use_id == "native-generated"
-
-
-def test_primordial_mode_ids_couple_resolutions_deterministically() -> None:
     fine_space = _space(8, dimension=2)
     coarse_space = _space(4, dimension=2)
     fine = _primordial(fine_space, key=17)
@@ -307,7 +299,7 @@ def test_primordial_mode_ids_couple_resolutions_deterministically() -> None:
     assert bool(coarse.successful)
 
 
-def test_mixed_plan_rejects_gauge_and_unit_mismatch() -> None:
+def test_cosmology_mixed_initial_conditions_scenario_2() -> None:
     space = _space(4, dimension=3)
     _, product, _ = _transfer(space)
     capacity = int(np.prod(space.physical_shape))
@@ -331,9 +323,6 @@ def test_mixed_plan_rejects_gauge_and_unit_mismatch() -> None:
 
     with pytest.raises(ValueError, match="units and cosmology scale disagree"):
         _transfer(space, component_units=(ONE, ONE))
-
-
-def test_particle_projection_uses_lpt_and_closes_modes_and_mass() -> None:
     space = _space(4, dimension=3)
     background, product, _ = _transfer(space)
     primordial = _primordial(space, key=5)
@@ -370,9 +359,6 @@ def test_particle_projection_uses_lpt_and_closes_modes_and_mass() -> None:
         rtol=1e-10,
         atol=1e-12,
     )
-
-
-def test_compatible_current_reconstructs_mean_zero_phase_and_wave_mass() -> None:
     space, prepared = _prepared_wave()
     x = space.axes[0].nodes[:, None]
     phase = 0.02 * jnp.sin(2.0 * jnp.pi * x)
@@ -410,7 +396,7 @@ def test_compatible_current_reconstructs_mean_zero_phase_and_wave_mass() -> None
     )
 
 
-def test_phase_seed_rejects_curl_circulation_nodes_and_unit_mismatch() -> None:
+def test_cosmology_mixed_initial_conditions_scenario_3() -> None:
     space, prepared = _prepared_wave()
     plan = WavePhaseSeedPlan(prepared)
     y = space.axes[1].nodes[None, :]
@@ -468,9 +454,6 @@ def test_phase_seed_rejects_curl_circulation_nodes_and_unit_mismatch() -> None:
             current_unit=plan.current_unit,
             current_convention=plan.current_convention,
         )
-
-
-def test_soliton_normalization_and_integer_vortex_winding_are_distinct() -> None:
     _, prepared = _prepared_wave()
     soliton = SolitonSeedPlan(prepared, (0.5, 0.5), 0.12, 3.0).realize(0.1)
     vortex_plan = VortexSeedPlan(prepared, (0.5, 0.5), 0.08, 2.0, 1)
@@ -493,11 +476,6 @@ def test_soliton_normalization_and_integer_vortex_winding_are_distinct() -> None
     with pytest.raises(TypeError, match="must be an integer"):
         # ty: ignore[invalid-argument-type]
         VortexSeedPlan(prepared, (0.5, 0.5), 0.08, 2.0, 1.5)
-
-
-def test_imported_complex_field_validation_binds_rights_payload_and_result_identity() -> (
-    None
-):
     space, prepared = _prepared_wave()
     psi = jnp.ones(space.physical_shape, dtype=jnp.complex128) * jnp.sqrt(2.0)
     payload = imported_complex_field_payload_bytes(psi, 0.1, 2.0)

@@ -70,7 +70,7 @@ def _compiled_dynamics(
     ).dynamics
 
 
-def test_backward_euler_solves_affine_advection_and_refreshes_symbolic_plan() -> None:
+def test_backward_euler_contracts() -> None:
     system = _scalar_system((0.4, -0.3))
     dynamics = _compiled_dynamics(
         system,
@@ -117,38 +117,6 @@ def test_backward_euler_solves_affine_advection_and_refreshes_symbolic_plan() ->
         rtol=2e-9,
         atol=2e-9,
     )
-
-
-def test_backward_euler_residual_jvp_and_vjp_are_adjoint() -> None:
-    system = _scalar_system((0.4, -0.3))
-    dynamics = _compiled_dynamics(
-        system,
-        lambda discretization: phx.discretization.CellPolynomialReconstructionPlan(
-            1
-        ).prepare(discretization),
-    )
-    centers = dynamics.discretization.cell_centers
-    previous = (0.9 + 0.2 * centers[:, 0] - 0.1 * centers[:, 1])[:, None]
-    plan = phx.solver.FiniteVolumeBackwardEulerPlan(dynamics)
-    prepared = plan.prepare(previous, jnp.asarray(0.0), jnp.asarray(0.03))
-    direction = jnp.sin(jnp.arange(previous.size)).reshape(previous.shape)
-    cotangent = jnp.cos(jnp.arange(previous.size)).reshape(previous.shape)
-
-    def residual(state: Any) -> Any:
-        return plan.residual_operator(state, prepared.stage)
-
-    _, tangent = jax.jvp(residual, (previous,), (direction,))
-    _, pullback = jax.vjp(residual, previous)
-    adjoint = pullback(cotangent)[0]
-    np.testing.assert_allclose(
-        jnp.vdot(tangent, cotangent),
-        jnp.vdot(direction, adjoint),
-        rtol=2e-10,
-        atol=2e-10,
-    )
-
-
-def test_backward_euler_compressible_state_is_admissible_and_float32_explicit() -> None:
     system = phx.equations.EulerSystem(2)
     precision = phx.discretization.FiniteVolumePrecisionPolicy("float32")
     dynamics = _compiled_dynamics(
@@ -175,9 +143,6 @@ def test_backward_euler_compressible_state_is_admissible_and_float32_explicit() 
     assert result.nonlinear.residual.dtype == jnp.float32
     np.testing.assert_allclose(result.state, previous, rtol=2e-6, atol=2e-6)
     assert jnp.all(system.admissible(result.state))
-
-
-def test_backward_euler_advances_nonuniform_compressible_flow() -> None:
     system = phx.equations.EulerSystem(2)
     dynamics = _compiled_dynamics(
         system,
@@ -208,9 +173,6 @@ def test_backward_euler_advances_nonuniform_compressible_flow() -> None:
     assert result.nonlinear.diagnostics.final_residual_norm < 1e-8
     assert jnp.max(jnp.abs(result.state - previous)) > 0.0
     assert jnp.all(system.admissible(result.state))
-
-
-def test_backward_euler_plan_identity_includes_nonlinear_termination() -> None:
     system = _scalar_system((0.4, -0.3))
     dynamics = _compiled_dynamics(
         system,
@@ -272,9 +234,6 @@ def test_backward_euler_plan_identity_includes_nonlinear_termination() -> None:
     assert identical.plan_id == baseline.plan_id
     assert changed_steps.plan_id != baseline.plan_id
     assert changed_tolerance.plan_id != baseline.plan_id
-
-
-def test_backward_euler_refresh_rejects_broadcastable_previous_state_shape() -> None:
     system = _scalar_system((0.4, -0.3))
     dynamics = _compiled_dynamics(
         system,
@@ -292,3 +251,32 @@ def test_backward_euler_refresh_rejects_broadcastable_previous_state_shape() -> 
             jnp.asarray(0.01),
             initial_guess=previous,
         )
+
+
+def test_backward_euler_residual_jvp_and_vjp_are_adjoint() -> None:
+    system = _scalar_system((0.4, -0.3))
+    dynamics = _compiled_dynamics(
+        system,
+        lambda discretization: phx.discretization.CellPolynomialReconstructionPlan(
+            1
+        ).prepare(discretization),
+    )
+    centers = dynamics.discretization.cell_centers
+    previous = (0.9 + 0.2 * centers[:, 0] - 0.1 * centers[:, 1])[:, None]
+    plan = phx.solver.FiniteVolumeBackwardEulerPlan(dynamics)
+    prepared = plan.prepare(previous, jnp.asarray(0.0), jnp.asarray(0.03))
+    direction = jnp.sin(jnp.arange(previous.size)).reshape(previous.shape)
+    cotangent = jnp.cos(jnp.arange(previous.size)).reshape(previous.shape)
+
+    def residual(state: Any) -> Any:
+        return plan.residual_operator(state, prepared.stage)
+
+    _, tangent = jax.jvp(residual, (previous,), (direction,))
+    _, pullback = jax.vjp(residual, previous)
+    adjoint = pullback(cotangent)[0]
+    np.testing.assert_allclose(
+        jnp.vdot(tangent, cotangent),
+        jnp.vdot(direction, adjoint),
+        rtol=2e-10,
+        atol=2e-10,
+    )

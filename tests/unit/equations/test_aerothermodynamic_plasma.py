@@ -63,7 +63,7 @@ def _neutral_primitive(system: Any) -> Any:
     )
 
 
-def test_ionized_state_recovers_electron_pressure_and_charge() -> None:
+def test_aerothermodynamic_plasma_scenario_1() -> None:
     system = _ionized_system()
     conserved = system.primitive_to_conserved(_neutral_primitive(system))
     recovered = system.recover_thermodynamics(conserved)
@@ -77,9 +77,6 @@ def test_ionized_state_recovers_electron_pressure_and_charge() -> None:
     )
     assert recovered.neutrality.relative_defect < 1.0e-7
     assert bool(system.admissible(conserved))
-
-
-def test_ambipolar_transport_enforces_mass_and_current_constraints() -> None:
     system = _ionized_system()
     schema = system.thermodynamics.schema
     transport = phx.equations.AmbipolarPlasmaTransportPlan(
@@ -106,9 +103,6 @@ def test_ambipolar_transport_enforces_mass_and_current_constraints() -> None:
     np.testing.assert_allclose(result.mass_flux_defect, 0.0, atol=2.0e-8)
     np.testing.assert_allclose(result.current_density, 0.0, atol=1.0e-6)
     assert result.entropy_production >= 0.0
-
-
-def test_nonlte_levels_conserve_species_population_and_emit_groups() -> None:
     population = phx.equations.NonLTELevelPopulationPlan(
         2,
         jnp.asarray((0, 0, 1, 1)),
@@ -137,7 +131,7 @@ def test_nonlte_levels_conserve_species_population_and_emit_groups() -> None:
     assert jnp.all(result.emission_power_density >= 0.0)
 
 
-def test_fixed_work_plasma_source_preserves_zero_rate_state_and_ledgers() -> None:
+def test_aerothermodynamic_plasma_scenario_2() -> None:
     system = _ionized_system()
     heavy = system.thermodynamics.base.heavy_thermodynamics
     reaction = phx.equations.ChemicalReactionSpec(
@@ -168,9 +162,6 @@ def test_fixed_work_plasma_source_preserves_zero_rate_state_and_ledgers() -> Non
     np.testing.assert_allclose(result.evidence.element_defect, 0.0, atol=0.0)
     np.testing.assert_allclose(result.evidence.charge_defect, 0.0, atol=0.0)
     np.testing.assert_allclose(result.evidence.energy_defect, 0.0, atol=0.0)
-
-
-def test_thermochemical_source_certifies_each_backward_euler_substep() -> None:
     system = _ionized_system()
     reaction = phx.equations.ChemicalReactionSpec(
         "finite-ionization",

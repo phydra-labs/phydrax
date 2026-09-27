@@ -53,7 +53,7 @@ def _prediction(values: Any, batch: Any) -> Any:
     )
 
 
-def test_operator_functional_conformal_calibrates_complete_physical_cases() -> None:
+def test_operator_conformal_scenario_1() -> None:
     calibration_batch = _batch(
         cases=5,
         coordinates=[0.0, 0.5, 1.0],
@@ -102,9 +102,6 @@ def test_operator_functional_conformal_calibrates_complete_physical_cases() -> N
         interval.upper.field("output").values,
         evaluation_center.field("output").values + 0.5,
     )
-
-
-def test_normalized_operator_conformal_uses_scale_field() -> None:
     batch = _batch(
         cases=5,
         coordinates=[0.0, 1.0],
@@ -130,9 +127,6 @@ def test_normalized_operator_conformal_uses_scale_field() -> None:
     )
     with pytest.raises(ValueError, match="requires a scale field"):
         calibrator.interval(center)
-
-
-def test_l2_operator_conformal_is_quadrature_split_invariant_and_not_pointwise() -> None:
     base_batch = _batch(
         cases=5,
         coordinates=[0.0, 1.0],

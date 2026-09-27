@@ -8,7 +8,7 @@ import phydrax as phx
 cosmology = phx.applications.cosmology
 
 
-def test_local_curvature_validity_is_flat_exact_and_quadratic() -> None:
+def test_cosmology_force_closure_scenario_1() -> None:
     plan = cosmology.LocalCurvatureValidityPlan(
         light_speed=1.0,
         geometry_error_budget=1.0e-3,
@@ -23,9 +23,6 @@ def test_local_curvature_validity_is_flat_exact_and_quadratic() -> None:
     np.testing.assert_allclose(curved.support_ratio, 0.01)
     np.testing.assert_allclose(curved.volume_indicator, 0.01**2 / 5.0)
     assert bool(curved.successful)
-
-
-def test_periodic_ewald_is_symmetric_and_near_field_gate_is_fail_closed() -> None:
     ewald = cosmology.PeriodicEwaldForcePlan(
         (1.0, 1.0, 1.0),
         1.0,
@@ -52,9 +49,6 @@ def test_periodic_ewald_is_symmetric_and_near_field_gate_is_fail_closed() -> Non
         positions, result.acceleration, jnp.zeros_like(result.acceleration)
     )
     assert not bool(rejected["approved"])
-
-
-def test_screened_ewald_radius_route_matches_zero_shell_and_fails_closed() -> None:
     positions = jnp.asarray([[0.20, 0.30, 0.40], [0.70, 0.60, 0.50], [0.40, 0.80, 0.20]])
     masses = jnp.asarray([1.0, 0.8, 1.2])
     common = {
@@ -93,9 +87,6 @@ def test_screened_ewald_radius_route_matches_zero_shell_and_fails_closed() -> No
     assert not bool(exhausted.successful)
     assert bool(exhausted.evidence.real_pair_overflow)
     np.testing.assert_array_equal(exhausted.acceleration, 0.0)
-
-
-def test_screened_ewald_radius_route_is_filter_jittable() -> None:
     plan = cosmology.PeriodicEwaldForcePlan(
         (1.0, 1.0, 1.0),
         1.0,
@@ -111,9 +102,6 @@ def test_screened_ewald_radius_route_is_filter_jittable() -> None:
     result = eqx.filter_jit(plan.evaluate)(positions, jnp.asarray([1.0, 0.8, 1.2]))
     assert bool(result.successful)
     assert int(result.evidence.required_real_pairs) == 6
-
-
-def test_screened_ewald_radius_route_resolves_periodic_image_seam() -> None:
     positions = jnp.asarray([[0.05, 0.5, 0.5], [0.95, 0.5, 0.5]])
     masses = jnp.asarray([1.0, 0.8])
     plan = cosmology.PeriodicEwaldForcePlan(

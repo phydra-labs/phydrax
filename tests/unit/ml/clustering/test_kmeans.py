@@ -32,7 +32,7 @@ from phydrax.ml.clustering import (
 )
 
 
-def test_kmeans_preserves_case_sample_feature_and_ignored_target_axes() -> None:
+def test_kmeans_scenario_1() -> None:
     features = jnp.array(
         [
             [[-3.0], [3.0], [-2.0], [2.0]],
@@ -58,9 +58,40 @@ def test_kmeans_preserves_case_sample_feature_and_ignored_target_axes() -> None:
     assert jnp.array_equal(result.model(features), expected)
     assert jnp.array_equal(model(features), expected)
     assert recipe.cluster_count == 2
+    features = jnp.array([[-2.0 + 1.0j], [2.0 - 1.0j], [-1.0 + 1.0j], [1.0 - 1.0j]])
+    result = KMeans(2, initialization="first").fit_batch(MLBatch(features))
+    model = result.as_trainable()
 
+    assert result.status == ML_SUCCESS
+    # ty: ignore[unresolved-attribute]
+    assert jnp.issubdtype(model.centers.dtype, jnp.complexfloating)
+    # ty: ignore[unresolved-attribute]
+    assert jnp.allclose(model.centers, jnp.array([[-1.5 + 1.0j], [1.5 - 1.0j]]))
+    assert jnp.array_equal(model(features), jnp.array([0, 1, 0, 1]))
+    constant = KMeans(
+        2, initialization="first", empty_policy="error", max_iterations=3
+    ).fit_batch(MLBatch(jnp.ones((3, 1))))
+    empty = KMeans(1, initialization="first").fit_batch(
+        MLBatch(jnp.arange(3.0)[:, None], sample_mask=jnp.zeros(3, dtype=jnp.bool_))
+    )
+    singleton = KMeans(1, initialization="first").fit_batch(MLBatch(jnp.array([[4.0]])))
+    nonfinite = KMeans(1, initialization="first").fit_batch(
+        MLBatch(jnp.array([[0.0], [jnp.nan], [1.0]]))
+    )
+    nonconverged = KMeans(
+        2, initialization="first", max_iterations=1, tolerance=0.0
+    ).fit_batch(MLBatch(jnp.array([[0.0], [10.0], [1.0], [9.0]])))
 
-def test_kmeans_product_weights_sample_and_feature_masks_route_to_the_fit() -> None:
+    assert constant.status == ML_INSUFFICIENT_DATA
+    assert constant.diagnostics.empty_clusters_seen
+    assert empty.status == ML_INSUFFICIENT_DATA
+    assert singleton.status == ML_SUCCESS
+    assert nonfinite.status == ML_NONFINITE
+    assert nonconverged.status == ML_NONCONVERGED
+    assert not nonconverged.diagnostics.converged
+
+    with pytest.raises(ValueError, match="sample capacity"):
+        KMeans(4, initialization="first").fit_batch(MLBatch(jnp.ones((3, 1))))
     features = jnp.array([[0.0], [10.0], [100.0], [999.0]])
     batch = MLBatch(
         features,
@@ -82,9 +113,6 @@ def test_kmeans_product_weights_sample_and_feature_masks_route_to_the_fit() -> N
     assert jnp.allclose(statistical.as_trainable().centers[0, 0], 7.5, atol=1e-6)
     assert jnp.allclose(product.diagnostics.cluster_mass, jnp.array([5.0]))
     assert jnp.allclose(product.diagnostics.effective_samples, 25.0 / 13.0)
-
-
-def test_hard_and_soft_cluster_models_have_exact_ties_and_distinct_gradients() -> None:
     centers = jnp.array([[-1.0], [1.0]])
     active = jnp.array([True, True])
     hard = HardClusterModel(centers, active, method="test-hard")
@@ -104,9 +132,6 @@ def test_hard_and_soft_cluster_models_have_exact_ties_and_distinct_gradients() -
     assert jnp.any(soft_gradient != 0.0)
     assert jnp.allclose(jax.jit(soft)(midpoint), soft(midpoint))
     assert jax.vmap(soft)(jnp.array([[-0.5], [0.5]])).shape == (2, 2)
-
-
-def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients() -> None:
     features = jnp.array([[-2.0], [2.0], [-1.5], [1.5]])
     weights = jnp.array([1.0, 1.2, 0.9, 1.1])
     point = jnp.array([0.25])
@@ -172,7 +197,7 @@ def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients() -> None:
     assert jnp.isfinite(temperature_gradient)
 
 
-def test_derivative_admission_distinguishes_hard_and_soft_fits() -> None:
+def test_kmeans_scenario_2() -> None:
     features = jnp.asarray([[-2.0], [2.0], [-1.5], [1.5]])
     request = DifferentiationRequest((DerivativeSurface.FIT_FEATURES,))
     hard = KMeans(2, initialization="first").fit_batch(MLBatch(features))
@@ -203,9 +228,6 @@ def test_derivative_admission_distinguishes_hard_and_soft_fits() -> None:
             features,
             derivative_request=request,
         )
-
-
-def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties() -> None:
     features = jnp.array([[0.0], [9.0], [2.0], [10.0]])
     result = KMedoids(
         2, metric="manhattan", initialization="first", max_iterations=16
@@ -224,9 +246,6 @@ def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties() -
     assert result.derivative_contract.level(DerivativeSurface.INPUT) is (
         GradientLevel.NONE
     )
-
-
-def test_minibatch_kmeans_requires_a_key_and_replays_it_exactly() -> None:
     features = jnp.array([[-3.0], [3.0], [-2.0], [2.0], [-1.0], [1.0]])
     recipe = MiniBatchKMeans(
         2,
@@ -251,7 +270,7 @@ def test_minibatch_kmeans_requires_a_key_and_replays_it_exactly() -> None:
     assert "explicit random key" in first.derivative_contract.conditions
 
 
-def test_streaming_kmeans_updates_immutably_with_hard_and_soft_models() -> None:
+def test_kmeans_scenario_3() -> None:
     state = StreamingKMeans(jnp.array([[0.0], [10.0]]))
     updated = state.update(
         jnp.array([[2.0], [8.0], [100.0]]),
@@ -268,49 +287,6 @@ def test_streaming_kmeans_updates_immutably_with_hard_and_soft_models() -> None:
     probability = updated.model(temperature=0.5)(jnp.array([[1.0], [9.0]]))
     assert probability.shape == (2, 2)
     assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0)
-
-
-def test_kmeans_supports_complex_features_with_real_distances_and_centers() -> None:
-    features = jnp.array([[-2.0 + 1.0j], [2.0 - 1.0j], [-1.0 + 1.0j], [1.0 - 1.0j]])
-    result = KMeans(2, initialization="first").fit_batch(MLBatch(features))
-    model = result.as_trainable()
-
-    assert result.status == ML_SUCCESS
-    # ty: ignore[unresolved-attribute]
-    assert jnp.issubdtype(model.centers.dtype, jnp.complexfloating)
-    # ty: ignore[unresolved-attribute]
-    assert jnp.allclose(model.centers, jnp.array([[-1.5 + 1.0j], [1.5 - 1.0j]]))
-    assert jnp.array_equal(model(features), jnp.array([0, 1, 0, 1]))
-
-
-def test_kmeans_reports_empty_underfull_nonfinite_and_nonconverged_cases() -> None:
-    constant = KMeans(
-        2, initialization="first", empty_policy="error", max_iterations=3
-    ).fit_batch(MLBatch(jnp.ones((3, 1))))
-    empty = KMeans(1, initialization="first").fit_batch(
-        MLBatch(jnp.arange(3.0)[:, None], sample_mask=jnp.zeros(3, dtype=jnp.bool_))
-    )
-    singleton = KMeans(1, initialization="first").fit_batch(MLBatch(jnp.array([[4.0]])))
-    nonfinite = KMeans(1, initialization="first").fit_batch(
-        MLBatch(jnp.array([[0.0], [jnp.nan], [1.0]]))
-    )
-    nonconverged = KMeans(
-        2, initialization="first", max_iterations=1, tolerance=0.0
-    ).fit_batch(MLBatch(jnp.array([[0.0], [10.0], [1.0], [9.0]])))
-
-    assert constant.status == ML_INSUFFICIENT_DATA
-    assert constant.diagnostics.empty_clusters_seen
-    assert empty.status == ML_INSUFFICIENT_DATA
-    assert singleton.status == ML_SUCCESS
-    assert nonfinite.status == ML_NONFINITE
-    assert nonconverged.status == ML_NONCONVERGED
-    assert not nonconverged.diagnostics.converged
-
-    with pytest.raises(ValueError, match="sample capacity"):
-        KMeans(4, initialization="first").fit_batch(MLBatch(jnp.ones((3, 1))))
-
-
-def test_case_bound_models_reject_missing_or_wrong_case_axes() -> None:
     cases = jnp.array(
         [
             [[-2.0], [2.0], [-1.0], [1.0]],

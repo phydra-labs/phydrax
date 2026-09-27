@@ -61,31 +61,39 @@ def _cube(offset: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "operation, volume",
-    [
+def test_manifold_provider_scenario_1() -> None:
+    for operation, volume in [
         (SurfaceBooleanOperation.UNION, 1.5),
         (SurfaceBooleanOperation.DIFFERENCE, 0.5),
         (SurfaceBooleanOperation.INTERSECTION, 0.5),
-    ],
-)
-def test_boolean_preserves_expected_solid_volume(operation: Any, volume: Any) -> None:
-    result = ManifoldProvider().execute((_cube((0, 0, 0)), _cube((0.5, 0, 0))), operation)
-    faces = np.asarray(result.mesh.blocks[0].vertices)
-    points = np.asarray(result.mesh.coordinates)[faces]
-    signed_volume = (
-        np.sum(np.sum(points[:, 0] * np.cross(points[:, 1], points[:, 2]), axis=1)) / 6
-    )
-    assert signed_volume == pytest.approx(volume)
-    assert result.audit.passed
-    assert result.boundary is not None
-
-
-def test_empty_intersection_is_not_a_successful_mesh() -> None:
+    ]:
+        result = ManifoldProvider().execute(
+            (_cube((0, 0, 0)), _cube((0.5, 0, 0))), operation
+        )
+        faces = np.asarray(result.mesh.blocks[0].vertices)
+        points = np.asarray(result.mesh.coordinates)[faces]
+        signed_volume = (
+            np.sum(np.sum(points[:, 0] * np.cross(points[:, 1], points[:, 2]), axis=1))
+            / 6
+        )
+        assert signed_volume == pytest.approx(volume)
+        assert result.audit.passed
+        assert result.boundary is not None
     with pytest.raises(MeshingFailure, match="empty"):
         ManifoldProvider().execute(
             (_cube((0, 0, 0)), _cube((2, 0, 0))), SurfaceBooleanOperation.INTERSECTION
         )
+    for operation, volume in [
+        (SurfaceBooleanOperation.UNION, 1.75),
+        (SurfaceBooleanOperation.DIFFERENCE, 0.5),
+        (SurfaceBooleanOperation.INTERSECTION, 0.25),
+    ]:
+        operands = (_cube((0, 0, 0)), _cube((0.5, 0, 0)), _cube((0.75, 0, 0)))
+
+        result = ManifoldProvider().execute(operands, operation)
+
+        assert _signed_volume(result) == pytest.approx(volume)
+        assert result.audit.passed
 
 
 def _signed_volume(result: Any) -> Any:
@@ -94,24 +102,7 @@ def _signed_volume(result: Any) -> Any:
     return np.sum(np.sum(points[:, 0] * np.cross(points[:, 1], points[:, 2]), axis=1)) / 6
 
 
-@pytest.mark.parametrize(
-    "operation, volume",
-    [
-        (SurfaceBooleanOperation.UNION, 1.75),
-        (SurfaceBooleanOperation.DIFFERENCE, 0.5),
-        (SurfaceBooleanOperation.INTERSECTION, 0.25),
-    ],
-)
-def test_nary_boolean_combines_every_operand(operation: Any, volume: Any) -> None:
-    operands = (_cube((0, 0, 0)), _cube((0.5, 0, 0)), _cube((0.75, 0, 0)))
-
-    result = ManifoldProvider().execute(operands, operation)
-
-    assert _signed_volume(result) == pytest.approx(volume)
-    assert result.audit.passed
-
-
-def test_vertex_properties_transfer_linearly_on_their_source_faces() -> None:
+def test_vertex_properties_contracts() -> None:
     left, right = _cube((0, 0, 0)), _cube((0.5, 0.25, 0.25))
     # Affine fields are reproduced exactly by barycentric transfer, and differ
     # between operands so cut-curve corners must keep their own face's value.
@@ -160,9 +151,6 @@ def test_vertex_properties_transfer_linearly_on_their_source_faces() -> None:
     achieved = dict(result.compliance.achieved)
     residual = "vertex_property:temperature:maximum_relative_interpolation_residual"
     assert achieved[residual] <= 1e-8
-
-
-def test_vertex_properties_require_one_array_per_operand() -> None:
     left, right = _cube((0, 0, 0)), _cube((0.5, 0, 0))
     with pytest.raises(ValueError, match="one array per operand"):
         ManifoldProvider().execute(

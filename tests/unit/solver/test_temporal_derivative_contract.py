@@ -2,7 +2,6 @@ from typing import Any
 
 import diffrax as dfx
 import jax.numpy as jnp
-import pytest
 
 import phydrax as phx
 from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
@@ -31,9 +30,8 @@ def _levels(contract: Any) -> Any:
     return tuple(contract.level(surface) for surface in SURFACES)
 
 
-@pytest.mark.parametrize(
-    ("form", "route", "conditions"),
-    (
+def test_temporal_derivative_contract_scenario_1() -> None:
+    for form, route, conditions in (
         ("discretize-then-optimize", DerivativeRoute.UNROLLED, ()),
         (
             "implicit-solution-map",
@@ -45,21 +43,13 @@ def _levels(contract: Any) -> Any:
             DerivativeRoute.EXTERNAL_ADJOINT,
             ("continuous-adjoint-approximation",),
         ),
-    ),
-)
-def test_temporal_form_selects_the_derivative_route(
-    form: Any, route: Any, conditions: Any
-) -> None:
-    contract = _evidence(form=form, orientations=("reverse",)).derivative_contract
+    ):
+        contract = _evidence(form=form, orientations=("reverse",)).derivative_contract
 
-    assert contract.route is route
-    assert _levels(contract) == (GradientLevel.SMOOTH, GradientLevel.SMOOTH)
-    assert contract.conditions == conditions
-
-
-@pytest.mark.parametrize(
-    ("overrides", "levels", "conditions"),
-    (
+        assert contract.route is route
+        assert _levels(contract) == (GradientLevel.SMOOTH, GradientLevel.SMOOTH)
+        assert contract.conditions == conditions
+    for overrides, levels, conditions in (
         (
             {"decision_semantics": "frozen-adaptive-schedule"},
             GradientLevel.SMOOTH,
@@ -85,37 +75,24 @@ def test_temporal_form_selects_the_derivative_route(
             GradientLevel.CONDITIONAL,
             ("derivative-classification-unverified",),
         ),
-    ),
-)
-def test_temporal_semantics_weaken_levels_and_add_conditions(
-    overrides: Any, levels: Any, conditions: Any
-) -> None:
-    contract = _evidence(**overrides).derivative_contract
+    ):
+        contract = _evidence(**overrides).derivative_contract
 
-    assert contract.route is DerivativeRoute.UNROLLED
-    assert _levels(contract) == (levels, levels)
-    assert contract.conditions == conditions
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    (
+        assert contract.route is DerivativeRoute.UNROLLED
+        assert _levels(contract) == (levels, levels)
+        assert contract.conditions == conditions
+    for overrides in (
         {"form": "unknown"},
         {"orientations": ()},
         {"event_semantics": "unsupported"},
         {"event_semantics": "unknown"},
         {"decision_semantics": "backend-defined"},
         {"stochastic_semantics": "unknown"},
-    ),
-)
-def test_unknown_or_unsupported_temporal_derivatives_are_stopped(overrides: Any) -> None:
-    contract = _evidence(**overrides).derivative_contract
+    ):
+        contract = _evidence(**overrides).derivative_contract
 
-    assert contract.route is DerivativeRoute.STOPPED
-    assert contract.supported_surfaces == ()
-
-
-def test_adaptive_diffrax_solve_exposes_its_frozen_schedule_contract() -> None:
+        assert contract.route is DerivativeRoute.STOPPED
+        assert contract.supported_surfaces == ()
     problem = phx.solver.DifferentialProblem(
         lambda time, state, rate: -rate * state,
         jnp.asarray([1.0]),

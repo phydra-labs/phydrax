@@ -117,7 +117,7 @@ def _shifted_policy() -> Any:
     )
 
 
-def test_zero_temperature_shifted_response_has_exact_moments_and_positive_line() -> None:
+def test_quantum_response_scenario_1() -> None:
     source, target, probe = _response_case()
     frequencies = jnp.asarray((-1.0, 0.0, 1.0, 2.0, 3.0))
     eta = 0.2
@@ -143,28 +143,6 @@ def test_zero_temperature_shifted_response_has_exact_moments_and_positive_line()
     np.testing.assert_allclose(result.evidence.moments, (1.0, 1.0, 1.0))
     assert bool(result.evidence.nonnegative)
     assert bool(result.evidence.valid)
-
-
-def _tpq(hamiltonian: Any, beta: Any) -> Any:
-    plan = ThermalPureQuantumPlan(
-        beta,
-        probe_count=2,
-        observable_count=0,
-        matrix_function=MatrixFunctionPolicy(
-            "lanczos",
-            max_dimension=2,
-            error_tolerance=1e-10,
-            differentiation=DifferentiationPolicy("none"),
-        ),
-        maximum_retained_bytes=100_000,
-        maximum_workspace_bytes=100_000,
-    )
-    return thermal_pure_quantum(
-        prepare_thermal_pure_quantum(plan, hamiltonian), (), key=jr.key(4)
-    )
-
-
-def test_finite_temperature_response_records_source_target_kms_and_positivity() -> None:
     source, target, probe = _response_case()
     plan = FiniteTemperatureResponsePlan(
         # ty: ignore[invalid-argument-type]
@@ -195,11 +173,6 @@ def test_finite_temperature_response_records_source_target_kms_and_positivity() 
     assert bool(result.evidence.positivity_satisfied)
     assert bool(result.evidence.kms_satisfied)
     assert bool(result.evidence.valid)
-
-
-def test_response_plans_refuse_missing_resources_uncovered_or_asymmetric_windows() -> (
-    None
-):
     with pytest.raises(ValueError, match="explicit shifted-solve"):
         ZeroTemperatureResponsePlan(
             # ty: ignore[invalid-argument-type]
@@ -240,3 +213,22 @@ def test_response_plans_refuse_missing_resources_uncovered_or_asymmetric_windows
             maximum_result_bytes=10_000,
             maximum_workspace_bytes=10_000,
         )
+
+
+def _tpq(hamiltonian: Any, beta: Any) -> Any:
+    plan = ThermalPureQuantumPlan(
+        beta,
+        probe_count=2,
+        observable_count=0,
+        matrix_function=MatrixFunctionPolicy(
+            "lanczos",
+            max_dimension=2,
+            error_tolerance=1e-10,
+            differentiation=DifferentiationPolicy("none"),
+        ),
+        maximum_retained_bytes=100_000,
+        maximum_workspace_bytes=100_000,
+    )
+    return thermal_pure_quantum(
+        prepare_thermal_pure_quantum(plan, hamiltonian), (), key=jr.key(4)
+    )

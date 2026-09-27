@@ -60,7 +60,7 @@ def _provenance(
     )
 
 
-def test_les_filter_scale_and_provenance_validate_physical_semantics() -> None:
+def test_les_closures_scenario_1() -> None:
     widths = jnp.asarray(((1.0, 2.0, 4.0), (3.0, 6.0, 12.0)))
     scale = phx.equations.LESFilterScale(widths)
     np.testing.assert_allclose(scale.directional_widths, widths)
@@ -140,9 +140,6 @@ def test_les_filter_scale_and_provenance_validate_physical_semantics() -> None:
             source_kind="user",
             evidence_ids=(),
         )
-
-
-def test_model_and_prepared_identities_separate_formula_from_binding() -> None:
     model = phx.equations.SmagorinskyLESPlan(jnp.asarray(0.17))
     changed = phx.equations.SmagorinskyLESPlan(jnp.asarray(0.23))
     assert model.model_id == changed.model_id
@@ -174,9 +171,6 @@ def test_model_and_prepared_identities_separate_formula_from_binding() -> None:
             model_type(-0.1)
         with pytest.raises(ValueError):
             model_type(jnp.asarray((0.1, 0.2)))
-
-
-def test_smagorinsky_formula_uses_full_strain_and_volume_equivalent_width() -> None:
     gradient = np.diag((1.0, -0.5, 0.25))
     widths = np.asarray((2.0, 3.0, 4.0))
     coefficient = 0.2
@@ -198,7 +192,7 @@ def test_smagorinsky_formula_uses_full_strain_and_volume_equivalent_width() -> N
     )
 
 
-def test_wale_formula_value_uses_full_strain_denominator() -> None:
+def test_les_closures_scenario_2() -> None:
     gradient = np.asarray(((0.4, -0.2, 0.1), (0.3, -0.1, 0.2), (-0.2, 0.5, -0.3)))
     coefficient = 0.31
     width = 0.12
@@ -218,9 +212,6 @@ def test_wale_formula_value_uses_full_strain_denominator() -> None:
         / (strain_invariant**2.5 + squared_invariant**1.25)
     )
     np.testing.assert_allclose(result.kinematic_viscosity, expected, rtol=3e-6)
-
-
-def test_vreman_directional_metric_and_amd_positive_branch_values() -> None:
     gradient = np.diag((1.0, 2.0, 0.0))
     widths = np.asarray((1.5, 0.75, 4.0))
     coefficient = 0.08
@@ -238,6 +229,23 @@ def test_vreman_directional_metric_and_amd_positive_branch_values() -> None:
     amd = phx.equations.AMDLESPlan(0.3).evaluate(_inputs(compression, (0.4, 0.8, 1.2)))
     expected_amd = 0.3 * (0.4**2 * 2.0**2 * (4.0 / 3.0)) / 2.0**2
     np.testing.assert_allclose(amd.kinematic_viscosity, expected_amd, rtol=2e-6)
+    gradient = jnp.asarray(((-1.0, 0.2, 0.0), (0.1, -0.5, 0.3), (0.0, -0.1, 0.2)))
+    inputs = _inputs(gradient, (0.2, 0.35, 0.5))
+    for model in (
+        phx.equations.SmagorinskyLESPlan(0.16),
+        phx.equations.WALELESPlan(0.32),
+        phx.equations.VremanLESPlan(0.07),
+        phx.equations.AMDLESPlan(0.3),
+    ):
+        result = model.evaluate(inputs)
+        stress = result.specific_deviatoric_stress
+        np.testing.assert_allclose(stress, stress.T, atol=2e-7)
+        np.testing.assert_allclose(jnp.trace(stress), 0.0, atol=2e-7)
+        strain = 0.5 * (gradient + gradient.T)
+        np.testing.assert_allclose(
+            result.energy_transfer, -jnp.sum(stress * strain), rtol=2e-6, atol=2e-7
+        )
+        assert result.energy_transfer >= -2e-7
 
 
 def test_exact_zero_branches_have_finite_zero_jvps() -> None:
@@ -305,27 +313,7 @@ def test_exact_zero_branches_have_finite_zero_jvps() -> None:
     )
 
 
-def test_stress_is_symmetric_trace_free_and_has_the_declared_sign() -> None:
-    gradient = jnp.asarray(((-1.0, 0.2, 0.0), (0.1, -0.5, 0.3), (0.0, -0.1, 0.2)))
-    inputs = _inputs(gradient, (0.2, 0.35, 0.5))
-    for model in (
-        phx.equations.SmagorinskyLESPlan(0.16),
-        phx.equations.WALELESPlan(0.32),
-        phx.equations.VremanLESPlan(0.07),
-        phx.equations.AMDLESPlan(0.3),
-    ):
-        result = model.evaluate(inputs)
-        stress = result.specific_deviatoric_stress
-        np.testing.assert_allclose(stress, stress.T, atol=2e-7)
-        np.testing.assert_allclose(jnp.trace(stress), 0.0, atol=2e-7)
-        strain = 0.5 * (gradient + gradient.T)
-        np.testing.assert_allclose(
-            result.energy_transfer, -jnp.sum(stress * strain), rtol=2e-6, atol=2e-7
-        )
-        assert result.energy_transfer >= -2e-7
-
-
-def test_coordinate_permutation_preserves_scalar_results_and_permutes_stress() -> None:
+def test_les_closures_scenario_3() -> None:
     gradient = jnp.asarray(((-0.7, 0.4, 0.1), (-0.2, -0.3, 0.5), (0.2, -0.1, -0.6)))
     widths = jnp.asarray((0.12, 0.25, 0.4))
     permutation = np.asarray((2, 0, 1))
@@ -359,9 +347,6 @@ def test_coordinate_permutation_preserves_scalar_results_and_permutes_stress() -
             rtol=4e-6,
             atol=2e-8,
         )
-
-
-def test_coefficient_and_width_scaling_match_each_formula() -> None:
     gradient = jnp.asarray(((-0.6, 0.3, 0.2), (0.1, -0.4, 0.5), (-0.2, 0.1, 0.3)))
     widths = jnp.asarray((0.13, 0.21, 0.34))
     coefficient = 0.17

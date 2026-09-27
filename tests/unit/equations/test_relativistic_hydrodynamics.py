@@ -52,7 +52,7 @@ def _geometry(
     )
 
 
-def test_srhd_primitive_round_trip_and_causal_characteristic_bounds() -> None:
+def test_relativistic_hydrodynamics_scenario_1() -> None:
     system = SRHDSystem(_eos(), 3)
     primitive = jnp.asarray(
         (
@@ -72,9 +72,38 @@ def test_srhd_primitive_round_trip_and_causal_characteristic_bounds() -> None:
     assert bool(jnp.all(lower >= -1.0))
     assert bool(jnp.all(upper <= 1.0))
     assert bool(jnp.all(lower <= upper))
+    system = SRHDSystem(_eos(), 1)
+    grid = TensorGridPlan(
+        (UniformCellAxisSpec(16, periodic=True),), axis_names=("x",)
+    ).prepare(jnp.asarray(((0.0,), (1.0,))))
+    discretization = FiniteVolumePlan(
+        grid, component_names=system.component_names
+    ).prepare()
+    dynamics = PreparedFiniteVolumeDynamics(
+        system,
+        discretization,
+        FiniteVolumeMethodPlan(PiecewiseConstantReconstruction(), RusanovFluxPlan()),
+        FiniteVolumeBoundarySet.periodic(("x",)),
+    )
+    smooth_primitive = jnp.broadcast_to(jnp.asarray((1.0, 0.2, 0.15)), (16, 3))
+    smooth = system.primitive_to_conserved(smooth_primitive)
+    shock_primitive = jnp.where(
+        (jnp.arange(16) < 8)[:, None],
+        jnp.asarray((1.0, 1.0, 0.0)),
+        jnp.asarray((0.125, 0.8, 0.0)),
+    )
+    shock = system.primitive_to_conserved(shock_primitive)
+    smooth_rate = dynamics(jnp.asarray(0.0), smooth)
+    shock_rate = dynamics(jnp.asarray(0.0), shock)
 
-
-def test_minkowski_valencia_is_exactly_the_densitized_srhd_specialization() -> None:
+    assert jnp.allclose(smooth_rate, 0.0, atol=1.0e-12)
+    assert bool(jnp.all(jnp.isfinite(shock_rate)))
+    assert float(jnp.max(jnp.abs(shock_rate))) > 0.0
+    assert jnp.allclose(
+        jnp.sum(shock_rate * discretization.cell_volumes[:, None], axis=0),
+        0.0,
+        atol=1.0e-11,
+    )
     eos = _eos()
     srhd = SRHDSystem(eos, 3)
     grhd = ValenciaGRHDSystem(eos)
@@ -100,9 +129,6 @@ def test_minkowski_valencia_is_exactly_the_densitized_srhd_specialization() -> N
     srhd_bounds = srhd.signal_bounds(srhd_conserved, srhd_conserved, 0)
     assert jnp.allclose(grhd_bounds[0], srhd_bounds[0])
     assert jnp.allclose(grhd_bounds[1], srhd_bounds[1])
-
-
-def test_valencia_local_lapse_gradient_and_extrinsic_curvature_sources() -> None:
     eos = _eos()
     system = ValenciaGRHDSystem(eos)
     primitive = jnp.asarray(((1.0, 0.3, 0.0, 0.0, 0.0),), dtype=jnp.float64)
@@ -137,38 +163,3 @@ def test_valencia_local_lapse_gradient_and_extrinsic_curvature_sources() -> None
     assert projection.geometry_lineage_id == geometry.geometry_lineage_id
     assert bool(projection.all_active_valid)
     assert jnp.allclose(projection.stress_covariant[0], jnp.eye(3) * evaluation.pressure)
-
-
-def test_srhd_runs_on_native_finite_volume_smooth_and_shock_paths() -> None:
-    system = SRHDSystem(_eos(), 1)
-    grid = TensorGridPlan(
-        (UniformCellAxisSpec(16, periodic=True),), axis_names=("x",)
-    ).prepare(jnp.asarray(((0.0,), (1.0,))))
-    discretization = FiniteVolumePlan(
-        grid, component_names=system.component_names
-    ).prepare()
-    dynamics = PreparedFiniteVolumeDynamics(
-        system,
-        discretization,
-        FiniteVolumeMethodPlan(PiecewiseConstantReconstruction(), RusanovFluxPlan()),
-        FiniteVolumeBoundarySet.periodic(("x",)),
-    )
-    smooth_primitive = jnp.broadcast_to(jnp.asarray((1.0, 0.2, 0.15)), (16, 3))
-    smooth = system.primitive_to_conserved(smooth_primitive)
-    shock_primitive = jnp.where(
-        (jnp.arange(16) < 8)[:, None],
-        jnp.asarray((1.0, 1.0, 0.0)),
-        jnp.asarray((0.125, 0.8, 0.0)),
-    )
-    shock = system.primitive_to_conserved(shock_primitive)
-    smooth_rate = dynamics(jnp.asarray(0.0), smooth)
-    shock_rate = dynamics(jnp.asarray(0.0), shock)
-
-    assert jnp.allclose(smooth_rate, 0.0, atol=1.0e-12)
-    assert bool(jnp.all(jnp.isfinite(shock_rate)))
-    assert float(jnp.max(jnp.abs(shock_rate))) > 0.0
-    assert jnp.allclose(
-        jnp.sum(shock_rate * discretization.cell_volumes[:, None], axis=0),
-        0.0,
-        atol=1.0e-11,
-    )

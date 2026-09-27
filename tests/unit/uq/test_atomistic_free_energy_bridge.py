@@ -8,7 +8,7 @@ import phydrax as phx
 from phydrax.atomistic.sampling import AtomisticMultistateSegmentResult
 
 
-def test_alchemical_cross_evaluation_bridge_preserves_exact_evidence() -> None:
+def test_atomistic_free_energy_bridge_scenario_1() -> None:
     evaluation = phx.atomistic.AlchemicalReducedPotentialEvaluation(
         values=jnp.asarray([[0.0, 0.1, 0.2, 0.3], [0.4, 0.5, 0.6, 0.7]]),
         energies=jnp.asarray([[0.0, 0.1, 0.2, 0.3], [0.4, 0.5, 0.6, 0.7]]),
@@ -81,6 +81,83 @@ def test_alchemical_cross_evaluation_bridge_preserves_exact_evidence() -> None:
             run_id="cross-evaluation-run",
             unit_id="1",
         )
+    forward = _switching_dataset("forward")
+    paired = _switching_dataset("both")
+    reverse = _switching_dataset("reverse")
+    np.testing.assert_array_equal(forward.direction_counts, [4, 0])
+    np.testing.assert_array_equal(paired.direction_counts, [4, 4])
+    assert reverse.state_ids == ("destination-state", "source-state")
+    np.testing.assert_allclose(
+        phx.uq.free_energy_perturbation(forward).free_energies,
+        [0.0, 1.25],
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(
+        phx.uq.bennett_acceptance_ratio(paired).free_energies,
+        [0.0, 1.25],
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(
+        phx.uq.free_energy_perturbation(reverse).free_energies,
+        [0.0, -1.25],
+        atol=1.0e-12,
+    )
+    units = phx.atomistic.AtomisticUnitSystem.reduced()
+    reduced = jnp.arange(8.0).reshape((2, 2, 2))
+    sample_shape = (2, 2)
+    result = AtomisticMultistateSegmentResult(
+        # ty: ignore[invalid-argument-type]
+        successor_state=None,
+        reduced_potentials=reduced,
+        coverage=jnp.ones_like(reduced, dtype="bool"),
+        sample_active=jnp.ones(sample_shape, dtype="bool"),
+        origin_state=jnp.asarray([[0, 1], [1, 0]]),
+        state_at_replica=jnp.asarray([[0, 1], [1, 0]]),
+        chain_index=jnp.asarray([[0, 1], [0, 1]]),
+        draw_index=jnp.asarray([[0, 0], [1, 1]]),
+        repeat_index=jnp.zeros(sample_shape, dtype=jnp.int32),
+        dependence_group_index=jnp.zeros(sample_shape, dtype=jnp.int32),
+        pair_indices=jnp.zeros((2, 1, 2), dtype=jnp.int32),
+        exchange_attempted=jnp.zeros((2, 1), dtype="bool"),
+        exchange_accepted=jnp.zeros((2, 1), dtype="bool"),
+        exchange_log_acceptance=jnp.zeros((2, 1)),
+        sams_attempted=jnp.zeros(sample_shape, dtype="bool"),
+        sams_adapting=jnp.zeros(sample_shape, dtype="bool"),
+        sams_changed=jnp.zeros(sample_shape, dtype="bool"),
+        dynamics_accepted=jnp.ones(sample_shape, dtype="bool"),
+        barostat_attempted=jnp.zeros(sample_shape, dtype="bool"),
+        barostat_accepted=jnp.zeros(sample_shape, dtype="bool"),
+        iteration_valid=jnp.ones((2,), dtype="bool"),
+        count=jnp.asarray(2),
+        start_watermark=jnp.asarray(0),
+        stop_watermark=jnp.asarray(2),
+        successful=jnp.asarray(True),
+        units=units,
+        run_id="multistate-run",
+        measure_id="phase-space-measure",
+        state_ids=("state-zero", "state-one"),
+        potential_ids=("potential-zero", "potential-one"),
+        bias_ids=(None, None),
+        inverse_temperatures=jnp.ones((2,)),
+        reduced_convention_id="beta-times-potential-energy",
+        qualification_id="exact-multistate-sampling",
+        sampling_exact=True,
+        sampling_bias_bound=0.0,
+        producer_id="prepared-multistate-runtime",
+        unit_id="1",
+        segment_id="segment",
+        predecessor_id="predecessor",
+        runtime_id="prepared-multistate-runtime",
+    )
+    dataset = phx.uq.reduced_potential_dataset_from_multistate(result)
+    np.testing.assert_array_equal(
+        dataset.values,
+        reduced.transpose((1, 0, 2)).reshape((2, 4)),
+    )
+    np.testing.assert_array_equal(dataset.origin_state, [0, 1, 1, 0])
+    assert dataset.producer_id == result.producer_id
+    assert dataset.bias_ids == result.bias_ids
+    assert dataset.unit_system_id == units.unit_system_id
 
 
 def _switching_record() -> Any:
@@ -152,86 +229,3 @@ def _switching_dataset(direction: Any) -> Any:
         thermodynamic_table_id=record.thermodynamic_table_id,
         bias_ids=(None, None),
     )
-
-
-def test_switching_bridge_builds_forward_and_bidirectional_estimator_inputs() -> None:
-    forward = _switching_dataset("forward")
-    paired = _switching_dataset("both")
-    reverse = _switching_dataset("reverse")
-    np.testing.assert_array_equal(forward.direction_counts, [4, 0])
-    np.testing.assert_array_equal(paired.direction_counts, [4, 4])
-    assert reverse.state_ids == ("destination-state", "source-state")
-    np.testing.assert_allclose(
-        phx.uq.free_energy_perturbation(forward).free_energies,
-        [0.0, 1.25],
-        atol=1.0e-12,
-    )
-    np.testing.assert_allclose(
-        phx.uq.bennett_acceptance_ratio(paired).free_energies,
-        [0.0, 1.25],
-        atol=1.0e-12,
-    )
-    np.testing.assert_allclose(
-        phx.uq.free_energy_perturbation(reverse).free_energies,
-        [0.0, -1.25],
-        atol=1.0e-12,
-    )
-
-
-def test_multistate_segment_bridge_flattens_capacity_then_replica_order() -> None:
-    units = phx.atomistic.AtomisticUnitSystem.reduced()
-    reduced = jnp.arange(8.0).reshape((2, 2, 2))
-    sample_shape = (2, 2)
-    result = AtomisticMultistateSegmentResult(
-        # ty: ignore[invalid-argument-type]
-        successor_state=None,
-        reduced_potentials=reduced,
-        coverage=jnp.ones_like(reduced, dtype="bool"),
-        sample_active=jnp.ones(sample_shape, dtype="bool"),
-        origin_state=jnp.asarray([[0, 1], [1, 0]]),
-        state_at_replica=jnp.asarray([[0, 1], [1, 0]]),
-        chain_index=jnp.asarray([[0, 1], [0, 1]]),
-        draw_index=jnp.asarray([[0, 0], [1, 1]]),
-        repeat_index=jnp.zeros(sample_shape, dtype=jnp.int32),
-        dependence_group_index=jnp.zeros(sample_shape, dtype=jnp.int32),
-        pair_indices=jnp.zeros((2, 1, 2), dtype=jnp.int32),
-        exchange_attempted=jnp.zeros((2, 1), dtype="bool"),
-        exchange_accepted=jnp.zeros((2, 1), dtype="bool"),
-        exchange_log_acceptance=jnp.zeros((2, 1)),
-        sams_attempted=jnp.zeros(sample_shape, dtype="bool"),
-        sams_adapting=jnp.zeros(sample_shape, dtype="bool"),
-        sams_changed=jnp.zeros(sample_shape, dtype="bool"),
-        dynamics_accepted=jnp.ones(sample_shape, dtype="bool"),
-        barostat_attempted=jnp.zeros(sample_shape, dtype="bool"),
-        barostat_accepted=jnp.zeros(sample_shape, dtype="bool"),
-        iteration_valid=jnp.ones((2,), dtype="bool"),
-        count=jnp.asarray(2),
-        start_watermark=jnp.asarray(0),
-        stop_watermark=jnp.asarray(2),
-        successful=jnp.asarray(True),
-        units=units,
-        run_id="multistate-run",
-        measure_id="phase-space-measure",
-        state_ids=("state-zero", "state-one"),
-        potential_ids=("potential-zero", "potential-one"),
-        bias_ids=(None, None),
-        inverse_temperatures=jnp.ones((2,)),
-        reduced_convention_id="beta-times-potential-energy",
-        qualification_id="exact-multistate-sampling",
-        sampling_exact=True,
-        sampling_bias_bound=0.0,
-        producer_id="prepared-multistate-runtime",
-        unit_id="1",
-        segment_id="segment",
-        predecessor_id="predecessor",
-        runtime_id="prepared-multistate-runtime",
-    )
-    dataset = phx.uq.reduced_potential_dataset_from_multistate(result)
-    np.testing.assert_array_equal(
-        dataset.values,
-        reduced.transpose((1, 0, 2)).reshape((2, 4)),
-    )
-    np.testing.assert_array_equal(dataset.origin_state, [0, 1, 1, 0])
-    assert dataset.producer_id == result.producer_id
-    assert dataset.bias_ids == result.bias_ids
-    assert dataset.unit_system_id == units.unit_system_id

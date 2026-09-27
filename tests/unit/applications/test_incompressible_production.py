@@ -425,7 +425,7 @@ def test_periodic_dynamic_production_commits_only_accepted_state_and_restarts(
     )
 
 
-def test_periodic_plan_identity_and_checkpoint_binding_change_with_runtime() -> None:
+def test_incompressible_production_scenario_1() -> None:
     first, base_method, forcing, _ = _periodic_plan(end_time=0.1)
     second, _, _, _ = _periodic_plan(end_time=0.15)
 
@@ -439,6 +439,71 @@ def test_periodic_plan_identity_and_checkpoint_binding_change_with_runtime() -> 
     ) == (0,)
     assert first.checkpoint_encoding.bindings[0].coordinates.coordinate_id == (
         first.method.coordinates.coordinate_id
+    )
+    method, velocity_coordinates, pressure_coordinates, statistics = (
+        _channel_production_inputs()
+    )
+    with pytest.raises(ValueError, match="step lattice"):
+        flow.SpectralChannelProductionPlan(
+            method,
+            velocity_coordinates,
+            pressure_coordinates,
+            statistics,
+            problem_id="channel-production-case",
+            start_time=0.0,
+            end_time=0.025,
+            checkpoint_interval=1,
+        )
+
+    plan = flow.SpectralChannelProductionPlan(
+        method,
+        velocity_coordinates,
+        pressure_coordinates,
+        statistics,
+        problem_id="channel-production-case",
+        start_time=0.0,
+        end_time=0.02,
+        checkpoint_interval=1,
+        output_times=jnp.asarray((0.01, 0.02)),
+    )
+    bindings = plan.checkpoint_encoding.bindings
+    assert tuple(binding.leaf_index for binding in bindings) == (0, 1, 2, 3, 4)
+    assert all(
+        binding.coordinates.coordinate_id == velocity_coordinates.coordinate_id
+        for binding in bindings[:4]
+    )
+    assert bindings[4].coordinates.coordinate_id == pressure_coordinates.coordinate_id
+    assert plan.runtime_plan.method is method
+    assert plan.runtime_plan.retry_policy.maximum_retries == 0
+    discretization, operators, _, _, _, _ = _mac_production_inputs()
+    statistics = flow.MACPlaneWallStatisticsPlan(
+        operators,
+        density=1.0,
+        kinematic_viscosity=0.01,
+        wall_normal_axis=1,
+        streamwise_axis=0,
+        upper_wall_velocity=jnp.asarray((1.0, 0.0, 0.0)),
+    )
+    x_faces, y_faces, z_faces = discretization.face_centers
+    velocity = (
+        0.5 * (x_faces[..., 1] + 1.0),
+        jnp.zeros(y_faces.shape[:-1], dtype=y_faces.dtype),
+        jnp.zeros(z_faces.shape[:-1], dtype=z_faces.dtype),
+    )
+
+    snapshot = statistics.evaluate(velocity)
+
+    np.testing.assert_allclose(snapshot.lower_wall_shear[0], 0.005)
+    np.testing.assert_allclose(snapshot.upper_wall_shear[0], 0.005)
+    assert (
+        statistics.plan_id
+        != flow.MACPlaneWallStatisticsPlan(
+            operators,
+            density=1.0,
+            kinematic_viscosity=0.01,
+            wall_normal_axis=1,
+            streamwise_axis=0,
+        ).plan_id
     )
 
 
@@ -669,44 +734,6 @@ def test_rejected_periodic_attempt_does_not_update_statistics(tmp_path: Any) -> 
     )
 
 
-def test_channel_binds_complete_continuation_leaves_and_rejects_off_lattice() -> None:
-    method, velocity_coordinates, pressure_coordinates, statistics = (
-        _channel_production_inputs()
-    )
-    with pytest.raises(ValueError, match="step lattice"):
-        flow.SpectralChannelProductionPlan(
-            method,
-            velocity_coordinates,
-            pressure_coordinates,
-            statistics,
-            problem_id="channel-production-case",
-            start_time=0.0,
-            end_time=0.025,
-            checkpoint_interval=1,
-        )
-
-    plan = flow.SpectralChannelProductionPlan(
-        method,
-        velocity_coordinates,
-        pressure_coordinates,
-        statistics,
-        problem_id="channel-production-case",
-        start_time=0.0,
-        end_time=0.02,
-        checkpoint_interval=1,
-        output_times=jnp.asarray((0.01, 0.02)),
-    )
-    bindings = plan.checkpoint_encoding.bindings
-    assert tuple(binding.leaf_index for binding in bindings) == (0, 1, 2, 3, 4)
-    assert all(
-        binding.coordinates.coordinate_id == velocity_coordinates.coordinate_id
-        for binding in bindings[:4]
-    )
-    assert bindings[4].coordinates.coordinate_id == pressure_coordinates.coordinate_id
-    assert plan.runtime_plan.method is method
-    assert plan.runtime_plan.retry_policy.maximum_retries == 0
-
-
 def test_mac_pressure_gradient_and_native_statistics_are_bound(tmp_path: Any) -> None:
     discretization, operators, pressure_gradient, dynamics, method, statistics = (
         _mac_production_inputs()
@@ -739,39 +766,6 @@ def test_mac_pressure_gradient_and_native_statistics_are_bound(tmp_path: Any) ->
     assert snapshot.forcing_power > 0.0
     assert snapshot.mean_velocity.shape == (4, 3)
     assert snapshot.raw_second_moment.shape == (4, 3, 3)
-
-
-def test_mac_statistics_use_declared_moving_wall_velocity() -> None:
-    discretization, operators, _, _, _, _ = _mac_production_inputs()
-    statistics = flow.MACPlaneWallStatisticsPlan(
-        operators,
-        density=1.0,
-        kinematic_viscosity=0.01,
-        wall_normal_axis=1,
-        streamwise_axis=0,
-        upper_wall_velocity=jnp.asarray((1.0, 0.0, 0.0)),
-    )
-    x_faces, y_faces, z_faces = discretization.face_centers
-    velocity = (
-        0.5 * (x_faces[..., 1] + 1.0),
-        jnp.zeros(y_faces.shape[:-1], dtype=y_faces.dtype),
-        jnp.zeros(z_faces.shape[:-1], dtype=z_faces.dtype),
-    )
-
-    snapshot = statistics.evaluate(velocity)
-
-    np.testing.assert_allclose(snapshot.lower_wall_shear[0], 0.005)
-    np.testing.assert_allclose(snapshot.upper_wall_shear[0], 0.005)
-    assert (
-        statistics.plan_id
-        != flow.MACPlaneWallStatisticsPlan(
-            operators,
-            density=1.0,
-            kinematic_viscosity=0.01,
-            wall_normal_axis=1,
-            streamwise_axis=0,
-        ).plan_id
-    )
 
 
 def test_ou_forced_periodic_production_couples_and_restarts(tmp_path: Any) -> None:

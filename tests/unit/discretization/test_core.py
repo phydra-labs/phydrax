@@ -96,7 +96,7 @@ def _field_space(name: Any = "u") -> Any:
     )
 
 
-def test_discretization_keys_are_semantic_and_stable() -> None:
+def test_core_scenario_1() -> None:
     left = phx.discretization.DiscretizationKey(
         "space", "physical", domain_labels=("x", "y")
     )
@@ -113,9 +113,6 @@ def test_discretization_keys_are_semantic_and_stable() -> None:
         phx.discretization.DiscretizationKey(
             "space", "physical", domain_labels=("x", "x")
         )
-
-
-def test_cell_complex_validates_boundary_of_boundary_without_dense_state() -> None:
     topology = _triangle_topology()
 
     assert topology.dimension == 2
@@ -141,9 +138,6 @@ def test_cell_complex_validates_boundary_of_boundary_without_dense_state() -> No
             topology.entity_sets,
             (topology.incidences[0], bad),
         )
-
-
-def test_entity_subsets_cannot_activate_padding() -> None:
     # ty: ignore[invalid-argument-type]
     subset = phx.discretization.EntitySubset("boundary", [True, False, True])
     with pytest.raises(ValueError, match="inactive"):
@@ -158,7 +152,7 @@ def test_entity_subsets_cannot_activate_padding() -> None:
         )
 
 
-def test_discrete_measure_masks_nonfinite_padding_before_multiplication() -> None:
+def test_core_scenario_2() -> None:
     topology = phx.discretization.PointTopology(
         phx.discretization.EntitySet(
             "points",
@@ -185,9 +179,6 @@ def test_discrete_measure_masks_nonfinite_padding_before_multiplication() -> Non
 
     assert jnp.isfinite(value)
     assert jnp.allclose(value, 3.5)
-
-
-def test_field_space_requires_exact_vector_coordinates() -> None:
     topology = phx.discretization.TensorTopology(("x",), (3,))
     support = phx.discretization.DiscreteSupport(topology, 1, "line")
     layout = phx.discretization.TensorDofLayout(("x",), (3,))
@@ -200,9 +191,6 @@ def test_field_space_requires_exact_vector_coordinates() -> None:
             phx.linalg.ArraySpace((4,)),
             representation="point_value",
         )
-
-
-def test_field_space_accepts_basis_coefficient_representation() -> None:
     topology = phx.discretization.TensorTopology(("x",), (3,))
     support = phx.discretization.DiscreteSupport(topology, 1, "line")
     layout = phx.discretization.TensorDofLayout(("x",), (3,))
@@ -217,9 +205,6 @@ def test_field_space_accepts_basis_coefficient_representation() -> None:
     )
 
     assert space.representation == "basis_coefficient"
-
-
-def test_field_transfer_validates_spaces_and_bundle_dependencies() -> None:
     source = _field_space("source")
     target = _field_space("target")
     operator = phx.linalg.DenseLinearOperator(
@@ -268,9 +253,6 @@ def test_field_transfer_validates_spaces_and_bundle_dependencies() -> None:
     )
     with pytest.raises(ValueError, match="acyclic"):
         phx.discretization.DiscretizationBundle((cyclic_space, bundle.record(time_key)))
-
-
-def test_temporal_mesh_distinguishes_plan_from_realization() -> None:
     plan = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 4, role="driver")
     realized = phx.discretization.TemporalMesh(
         # ty: ignore[invalid-argument-type]

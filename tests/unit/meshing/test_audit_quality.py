@@ -24,9 +24,8 @@ def _mesh(cell_kind: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "cell_kind",
-    (
+def test_audit_quality_scenario_1() -> None:
+    for cell_kind in (
         "interval",
         "triangle",
         "quadrilateral",
@@ -34,32 +33,45 @@ def _mesh(cell_kind: Any) -> Any:
         "prism",
         "pyramid",
         "hexahedron",
-    ),
-)
-def test_reference_cells_have_positive_native_quality(cell_kind: Any) -> None:
-    mesh = _mesh(cell_kind)
-    result = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    ):
+        mesh = _mesh(cell_kind)
+        result = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
-    assert result.audit.passed
-    assert result.quality.minimum_measure > 0.0
-    assert result.quality.minimum_mean_ratio > 0.0
-    assert result.quality.maximum_aspect_ratio >= 1.0
+        assert result.audit.passed
+        assert result.quality.minimum_measure > 0.0
+        assert result.quality.minimum_mean_ratio > 0.0
+        assert result.quality.maximum_aspect_ratio >= 1.0
+    for cell_kind in ("prism", "pyramid", "hexahedron"):
+        # The first evaluation of a kind may happen under a trace; the cached host
+        # quadrature rule must not capture tracers.
+        _measure_rule.cache_clear()
+        mesh = _mesh(cell_kind)
 
+        compiled = jax.jit(
+            lambda coordinates: phx.meshing.evaluate_cell_quality(mesh, coordinates)
+        )(mesh.coordinates)
 
-@pytest.mark.parametrize("cell_kind", ("prism", "pyramid", "hexahedron"))
-def test_solid_quality_compiles_on_a_cold_measure_rule_cache(cell_kind: Any) -> None:
-    # The first evaluation of a kind may happen under a trace; the cached host
-    # quadrature rule must not capture tracers.
-    _measure_rule.cache_clear()
-    mesh = _mesh(cell_kind)
+        eager = phx.meshing.evaluate_cell_quality(mesh)
+        np.testing.assert_allclose(compiled.measures, eager.measures, rtol=1e-14)
+        assert float(compiled.measures[0]) > 0.0
+    for cell_kind in ("triangle", "tetrahedron", "hexahedron", "prism"):
+        mesh = _two_cells(cell_kind)
+        canonical = phx.meshing.canonicalize_cell_mesh(mesh)
 
-    compiled = jax.jit(
-        lambda coordinates: phx.meshing.evaluate_cell_quality(mesh, coordinates)
-    )(mesh.coordinates)
-
-    eager = phx.meshing.evaluate_cell_quality(mesh)
-    np.testing.assert_allclose(compiled.measures, eager.measures, rtol=1e-14)
-    assert float(compiled.measures[0]) > 0.0
+        assert np.array_equal(canonical.blocks[0].global_ids, [10, 20])
+        for dimension in range(mesh.topological_dimension + 1):
+            assert _entity_ids_by_vertices(
+                canonical, dimension
+            ) == _entity_ids_by_vertices(mesh, dimension)
+        assert phx.meshing.canonicalize_cell_mesh(canonical) is canonical
+    mesh = _two_cells()
+    label = _label(mesh, [20])
+    with pytest.raises(phx.meshing.MeshingFailure, match="organization_"):
+        phx.meshing.certify_cell_mesh(
+            mesh,
+            phx.SpatialCoordinateContract.si(),
+            labels=(label,),
+        )
 
 
 def test_triangle_quality_is_fixed_topology_differentiable_and_rejects_inversion() -> (
@@ -138,21 +150,6 @@ def _entity_ids_by_vertices(mesh: Any, dimension: Any) -> Any:
     }
 
 
-@pytest.mark.parametrize("cell_kind", ("triangle", "tetrahedron", "hexahedron", "prism"))
-def test_canonicalization_preserves_persistent_ids_at_every_degree(
-    cell_kind: Any,
-) -> None:
-    mesh = _two_cells(cell_kind)
-    canonical = phx.meshing.canonicalize_cell_mesh(mesh)
-
-    assert np.array_equal(canonical.blocks[0].global_ids, [10, 20])
-    for dimension in range(mesh.topological_dimension + 1):
-        assert _entity_ids_by_vertices(canonical, dimension) == _entity_ids_by_vertices(
-            mesh, dimension
-        )
-    assert phx.meshing.canonicalize_cell_mesh(canonical) is canonical
-
-
 def _quadratic_geometry(mesh: Any) -> Any:
     element = phx.discretization.fem.lagrange_element("triangle", 2)
     nodes = np.asarray(element.reference_nodes)
@@ -178,7 +175,7 @@ def _quadratic_geometry(mesh: Any) -> Any:
     )
 
 
-def test_certification_rejects_reordering_supplied_curved_geometry() -> None:
+def test_audit_quality_scenario_2() -> None:
     mesh = _two_cells()
     geometry = _quadratic_geometry(mesh)
 
@@ -188,9 +185,19 @@ def test_certification_rejects_reordering_supplied_curved_geometry() -> None:
             phx.SpatialCoordinateContract.si(),
             geometry=geometry,
         )
-
-
-def test_curved_geometry_is_certified_beyond_corner_quality() -> None:
+    for stale_source in (False, True):
+        mesh = _mesh("triangle")
+        label = _label(
+            mesh,
+            [0] if stale_source else [999],
+            source_id="old-mesh" if stale_source else None,
+        )
+        with pytest.raises(phx.meshing.MeshingFailure, match="organization_"):
+            phx.meshing.certify_cell_mesh(
+                mesh,
+                phx.SpatialCoordinateContract.si(),
+                labels=(label,),
+            )
     mesh = phx.meshing.canonicalize_cell_mesh(_two_cells())
     geometry = _quadratic_geometry(mesh)
     audit = phx.meshing.audit_cell_mesh(mesh, geometry)
@@ -202,25 +209,6 @@ def test_curved_geometry_is_certified_beyond_corner_quality() -> None:
         mesh, phx.SpatialCoordinateContract.si(), geometry=geometry
     )
     assert result.audit.validity.certificate_id == audit.validity.certificate_id
-
-
-def _single_triangle() -> Any:
-    return phx.discretization.CellMesh(
-        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
-        (phx.discretization.CellBlock("cells", "triangle", np.asarray(((0, 1, 2),))),),
-    )
-
-
-def _p2_triangle(edge_nodes: Any) -> Any:
-    element = phx.discretization.fem.lagrange_element("triangle", 2)
-    nodes = np.asarray(element.reference_nodes, dtype=np.float64).copy()
-    nodes[3:] = edge_nodes
-    return phx.discretization.CellGeometrySpec(
-        {"cells": element}, {"cells": np.arange(6)[None, :]}, nodes
-    )
-
-
-def test_curved_p2_triangle_inverted_between_nodes_is_invalid() -> None:
     mesh = _single_triangle()
     # The Jacobian determinant is positive at all six Lagrange nodes and at the
     # corners, but negative inside the cell.
@@ -235,9 +223,6 @@ def test_curved_p2_triangle_inverted_between_nodes_is_invalid() -> None:
         phx.meshing.certify_cell_mesh(
             mesh, phx.SpatialCoordinateContract.si(), geometry=geometry
         )
-
-
-def test_subdivision_budget_leaves_valid_curved_cell_unresolved() -> None:
     mesh = _single_triangle()
     # Valid everywhere, but one Bernstein edge coefficient is negative.
     geometry = _p2_triangle(((0.86, -0.17), (0.54, 0.29), (-0.06, 0.51)))
@@ -271,7 +256,23 @@ def test_subdivision_budget_leaves_valid_curved_cell_unresolved() -> None:
     assert "unresolved_geometry_validity" in recorded.evaluated_checks
 
 
-def test_twisted_trilinear_hexahedron_is_invalid_despite_positive_corners() -> None:
+def _single_triangle() -> Any:
+    return phx.discretization.CellMesh(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        (phx.discretization.CellBlock("cells", "triangle", np.asarray(((0, 1, 2),))),),
+    )
+
+
+def _p2_triangle(edge_nodes: Any) -> Any:
+    element = phx.discretization.fem.lagrange_element("triangle", 2)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64).copy()
+    nodes[3:] = edge_nodes
+    return phx.discretization.CellGeometrySpec(
+        {"cells": element}, {"cells": np.arange(6)[None, :]}, nodes
+    )
+
+
+def test_audit_quality_scenario_3() -> None:
     points = np.asarray(
         (
             (-0.62, 0.9, 0.43),
@@ -296,31 +297,27 @@ def test_twisted_trilinear_hexahedron_is_invalid_despite_positive_corners() -> N
     assert int(certificate.status[0]) == phx.discretization.CellValidityStatus.INVALID
     assert float(certificate.determinant_lower[0]) < 0.0
     assert int(certificate.depth[0]) > 0
+    for reflex in range(4):
+        points = np.asarray(
+            phx.discretization.reference_cell_topology("quadrilateral").vertices
+        )
+        points[reflex] = 0.75 * points[(reflex + 2) % 4] + 0.25 * points[reflex]
+        mesh = phx.discretization.CellMesh(
+            points,
+            (
+                phx.discretization.CellBlock(
+                    "cells", "quadrilateral", np.arange(4)[None, :]
+                ),
+            ),
+        )
+        quality = phx.meshing.evaluate_cell_quality(mesh)
+        certificate = phx.discretization.certify_cell_geometry_validity(mesh)
 
-
-@pytest.mark.parametrize("reflex", range(4))
-def test_dart_quadrilateral_reflex_corner_is_detected_at_every_vertex(
-    reflex: Any,
-) -> None:
-    points = np.asarray(
-        phx.discretization.reference_cell_topology("quadrilateral").vertices
-    )
-    points[reflex] = 0.75 * points[(reflex + 2) % 4] + 0.25 * points[reflex]
-    mesh = phx.discretization.CellMesh(
-        points,
-        (phx.discretization.CellBlock("cells", "quadrilateral", np.arange(4)[None, :]),),
-    )
-    quality = phx.meshing.evaluate_cell_quality(mesh)
-    certificate = phx.discretization.certify_cell_geometry_validity(mesh)
-
-    assert float(quality.measures[0]) > 0.0
-    assert not bool(quality.sampled_valid[0])
-    assert float(quality.scaled_jacobian[0]) < 0.0
-    assert float(quality.maximum_angle[0]) > np.pi
-    assert int(certificate.status[0]) == phx.discretization.CellValidityStatus.INVALID
-
-
-def test_sliver_tetrahedron_has_degenerate_dihedral_angles() -> None:
+        assert float(quality.measures[0]) > 0.0
+        assert not bool(quality.sampled_valid[0])
+        assert float(quality.scaled_jacobian[0]) < 0.0
+        assert float(quality.maximum_angle[0]) > np.pi
+        assert int(certificate.status[0]) == phx.discretization.CellValidityStatus.INVALID
     height = 1.0e-3
     points = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, height), (1.0, 0.0, height))
@@ -385,7 +382,7 @@ def test_warped_quadrilateral_reports_warpage_but_planar_does_not() -> None:
     assert bool(quality.sampled_valid[0])
 
 
-def test_coincident_vertices_are_welded_and_disposed_by_policy() -> None:
+def test_audit_quality_scenario_4() -> None:
     points = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
     )
@@ -414,9 +411,6 @@ def test_coincident_vertices_are_welded_and_disposed_by_policy() -> None:
     # The welded edge is shared consistently, so no other topology finding.
     assert dict(recorded.check_counts)["inconsistent_orientation"] == 0
     assert dict(recorded.check_counts)["nonmanifold_vertices"] == 0
-
-
-def test_pinched_vertex_is_non_manifold() -> None:
     points = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 0.0), (-1.0, -1.0)))
     mesh = phx.discretization.CellMesh(
         points,
@@ -433,9 +427,6 @@ def test_pinched_vertex_is_non_manifold() -> None:
     assert not audit.passed
     assert audit.issues == ("nonmanifold_vertices",)
     assert dict(audit.check_counts)["nonmanifold_vertices"] == 1
-
-
-def test_default_audit_rejects_overlapping_cells_and_reports_skipped_checks() -> None:
     points = np.asarray(
         ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (0.5, 0.5), (2.5, 0.5), (0.5, 2.5))
     )
@@ -466,7 +457,7 @@ def test_default_audit_rejects_overlapping_cells_and_reports_skipped_checks() ->
     assert "self_intersection" not in dict(skipped.check_counts)
 
 
-def test_concave_polygon_cell_passes_the_self_intersection_audit() -> None:
+def test_audit_quality_scenario_5() -> None:
     # Notched square: the vertex-zero fan folds over itself, the cell does not.
     points = np.asarray(((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0)))
     mesh = phx.discretization.CellMesh(
@@ -491,6 +482,59 @@ def test_concave_polygon_cell_passes_the_self_intersection_audit() -> None:
     assert not bounded.passed
     assert "self_intersection_capacity" in bounded.unresolved
     assert "unresolved_self_intersection_capacity" in bounded.issues
+    for bad_set in (False, True):
+        mesh = _mesh("triangle")
+        association = _association(
+            mesh,
+            [0] if bad_set else [999],
+            entity_set_id="stale-entity-set" if bad_set else None,
+        )
+        assert association.complete
+        with pytest.raises(phx.meshing.MeshingFailure, match="association_"):
+            phx.meshing.certify_cell_mesh(
+                mesh,
+                phx.SpatialCoordinateContract.si(),
+                associations=(association,),
+            )
+    mesh = phx.meshing.canonicalize_cell_mesh(_two_cells())
+    first = _association(mesh, [10], residual=100.0)
+    second = _association(mesh, [20], residual=100.0)
+    contract = phx.SpatialCoordinateContract.si()
+    phx.meshing.certify_cell_mesh(mesh, contract, associations=(first,))
+    policy = phx.meshing.CellMeshAuditPolicy(require_complete_association=True)
+    with pytest.raises(
+        phx.meshing.MeshingFailure, match="incomplete_geometry_association"
+    ):
+        phx.meshing.certify_cell_mesh(
+            mesh, contract, associations=(first,), audit_policy=policy
+        )
+    result = phx.meshing.certify_cell_mesh(
+        mesh,
+        contract,
+        associations=(first, second),
+        audit_policy=policy,
+    )
+    assert result.audit.passed
+    mesh = _mesh("triangle")
+    first = _association(mesh, [0])
+    second = phx.meshing.GeometryAssociation(
+        first.association_kind,
+        first.source_id,
+        first.source_revision,
+        first.target_entity_set_id,
+        first.target_global_ids,
+        ("different-face",),
+        # ty: ignore[invalid-argument-type]
+        [0.0],
+    )
+    with pytest.raises(
+        phx.meshing.MeshingFailure, match="conflicting_geometry_association"
+    ):
+        phx.meshing.certify_cell_mesh(
+            mesh,
+            phx.SpatialCoordinateContract.si(),
+            associations=(first, second),
+        )
 
 
 def test_metric_quality_measures_shape_in_metric_space() -> None:
@@ -581,45 +625,6 @@ def _association(
     )
 
 
-@pytest.mark.parametrize("bad_set", (False, True))
-def test_resolved_association_cannot_hide_stale_target_binding(bad_set: Any) -> None:
-    mesh = _mesh("triangle")
-    association = _association(
-        mesh,
-        [0] if bad_set else [999],
-        entity_set_id="stale-entity-set" if bad_set else None,
-    )
-    assert association.complete
-    with pytest.raises(phx.meshing.MeshingFailure, match="association_"):
-        phx.meshing.certify_cell_mesh(
-            mesh,
-            phx.SpatialCoordinateContract.si(),
-            associations=(association,),
-        )
-
-
-def test_association_coverage_is_checked_only_when_requested() -> None:
-    mesh = phx.meshing.canonicalize_cell_mesh(_two_cells())
-    first = _association(mesh, [10], residual=100.0)
-    second = _association(mesh, [20], residual=100.0)
-    contract = phx.SpatialCoordinateContract.si()
-    phx.meshing.certify_cell_mesh(mesh, contract, associations=(first,))
-    policy = phx.meshing.CellMeshAuditPolicy(require_complete_association=True)
-    with pytest.raises(
-        phx.meshing.MeshingFailure, match="incomplete_geometry_association"
-    ):
-        phx.meshing.certify_cell_mesh(
-            mesh, contract, associations=(first,), audit_policy=policy
-        )
-    result = phx.meshing.certify_cell_mesh(
-        mesh,
-        contract,
-        associations=(first, second),
-        audit_policy=policy,
-    )
-    assert result.audit.passed
-
-
 def test_adjacent_zone_patch_is_audited_against_exact_face_incidence() -> None:
     mesh = phx.meshing.canonicalize_cell_mesh(
         phx.discretization.CellMesh(
@@ -700,29 +705,6 @@ def test_adjacent_zone_patch_is_audited_against_exact_face_incidence() -> None:
         )
 
 
-def test_association_rows_cannot_claim_two_unique_sources_for_one_target() -> None:
-    mesh = _mesh("triangle")
-    first = _association(mesh, [0])
-    second = phx.meshing.GeometryAssociation(
-        first.association_kind,
-        first.source_id,
-        first.source_revision,
-        first.target_entity_set_id,
-        first.target_global_ids,
-        ("different-face",),
-        # ty: ignore[invalid-argument-type]
-        [0.0],
-    )
-    with pytest.raises(
-        phx.meshing.MeshingFailure, match="conflicting_geometry_association"
-    ):
-        phx.meshing.certify_cell_mesh(
-            mesh,
-            phx.SpatialCoordinateContract.si(),
-            associations=(first, second),
-        )
-
-
 def _label(mesh: Any, ids: Any, *, source_id: Any = None) -> Any:
     entities = mesh.entity_set(mesh.topological_dimension)
     return phx.meshing.MeshLabel(
@@ -738,34 +720,7 @@ def _label(mesh: Any, ids: Any, *, source_id: Any = None) -> Any:
     )
 
 
-@pytest.mark.parametrize("stale_source", (False, True))
-def test_certification_rejects_stale_organization(stale_source: Any) -> None:
-    mesh = _mesh("triangle")
-    label = _label(
-        mesh,
-        [0] if stale_source else [999],
-        source_id="old-mesh" if stale_source else None,
-    )
-    with pytest.raises(phx.meshing.MeshingFailure, match="organization_"):
-        phx.meshing.certify_cell_mesh(
-            mesh,
-            phx.SpatialCoordinateContract.si(),
-            labels=(label,),
-        )
-
-
-def test_canonicalization_never_silently_rebinds_old_organization() -> None:
-    mesh = _two_cells()
-    label = _label(mesh, [20])
-    with pytest.raises(phx.meshing.MeshingFailure, match="organization_"):
-        phx.meshing.certify_cell_mesh(
-            mesh,
-            phx.SpatialCoordinateContract.si(),
-            labels=(label,),
-        )
-
-
-def test_audit_rejects_quality_from_other_coordinates() -> None:
+def test_audit_quality_scenario_6() -> None:
     mesh = _mesh("triangle")
     quality = phx.meshing.evaluate_cell_quality(mesh, 2.0 * mesh.coordinates)
     audit = phx.meshing.audit_cell_mesh(
@@ -775,9 +730,6 @@ def test_audit_rejects_quality_from_other_coordinates() -> None:
     )
     assert not audit.passed
     assert "quality_binding" in audit.issues
-
-
-def test_audit_detects_geometry_rows_bound_to_the_wrong_cells() -> None:
     mesh = phx.meshing.canonicalize_cell_mesh(_two_cells())
     geometry = phx.discretization.CellGeometrySpec(
         {"cells": phx.discretization.fem.lagrange_element("triangle", 1)},
@@ -789,6 +741,24 @@ def test_audit_detects_geometry_rows_bound_to_the_wrong_cells() -> None:
     )
     assert not audit.passed
     assert "geometry_corner_binding" in audit.issues
+    result = phx.meshing.certify_cell_mesh(
+        _mesh("triangle"), phx.SpatialCoordinateContract.si()
+    )
+    geometry = phx.discretization.CellGeometrySpec(
+        dict(zip(result.geometry.block_names, result.geometry.elements, strict=True)),
+        dict(
+            zip(result.geometry.block_names, result.geometry.geometry_dofs, strict=True)
+        ),
+        result.geometry.coordinates + 1.0,
+    )
+    assert geometry.geometry_layout_id == result.geometry.geometry_layout_id
+    with pytest.raises(ValueError, match="geometry values"):
+        _rebuild_result(result, geometry=geometry)
+    result = phx.meshing.certify_cell_mesh(
+        _mesh("triangle"), phx.SpatialCoordinateContract.si()
+    )
+    with pytest.raises(ValueError, match="audited evidence"):
+        _rebuild_result(result, labels=(_label(result.mesh, [0]),))
 
 
 def _rebuild_result(result: Any, **changes: Any) -> Any:
@@ -806,30 +776,6 @@ def _rebuild_result(result: Any, **changes: Any) -> Any:
         result.provenance,
         **changes,
     )
-
-
-def test_result_rejects_changed_geometry_with_the_same_layout() -> None:
-    result = phx.meshing.certify_cell_mesh(
-        _mesh("triangle"), phx.SpatialCoordinateContract.si()
-    )
-    geometry = phx.discretization.CellGeometrySpec(
-        dict(zip(result.geometry.block_names, result.geometry.elements, strict=True)),
-        dict(
-            zip(result.geometry.block_names, result.geometry.geometry_dofs, strict=True)
-        ),
-        result.geometry.coordinates + 1.0,
-    )
-    assert geometry.geometry_layout_id == result.geometry.geometry_layout_id
-    with pytest.raises(ValueError, match="geometry values"):
-        _rebuild_result(result, geometry=geometry)
-
-
-def test_result_rejects_valid_but_unaudited_semantic_evidence() -> None:
-    result = phx.meshing.certify_cell_mesh(
-        _mesh("triangle"), phx.SpatialCoordinateContract.si()
-    )
-    with pytest.raises(ValueError, match="audited evidence"):
-        _rebuild_result(result, labels=(_label(result.mesh, [0]),))
 
 
 def test_result_boundary_must_cover_the_actual_mesh_faces_and_coordinates() -> None:

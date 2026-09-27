@@ -62,7 +62,7 @@ def _dimer() -> Any:
     )
 
 
-def test_once_per_bond_exchange_dmi_and_effective_field_signs() -> None:
+def test_spin_magnetism_scenario_1() -> None:
     _, plan = _dimer()
     prepared = prepare_classical_spin_hamiltonian(
         plan,
@@ -103,9 +103,6 @@ def test_once_per_bond_exchange_dmi_and_effective_field_signs() -> None:
         -prepared.moments[1] * result.effective_field[1, 1],
         atol=1.0e-5,
     )
-
-
-def test_anisotropy_zeeman_sign_and_rkmk_norm_preservation() -> None:
     _, hamiltonian_plan = _dimer()
     hamiltonian = prepare_classical_spin_hamiltonian(
         hamiltonian_plan,
@@ -150,9 +147,6 @@ def test_anisotropy_zeeman_sign_and_rkmk_norm_preservation() -> None:
         jnp.max(jnp.abs(jnp.linalg.norm(trajectory.directions, axis=-1) - 1.0)) < 1.0e-8
     )
     assert trajectory.directions[-1, 0, 2] > trajectory.directions[0, 0, 2]
-
-
-def test_thermal_llg_uses_stratonovich_srkmk_and_fdt_amplitude() -> None:
     _, hamiltonian_plan = _dimer()
     hamiltonian = prepare_classical_spin_hamiltonian(
         hamiltonian_plan,

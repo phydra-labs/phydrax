@@ -37,7 +37,7 @@ def _chain() -> Any:
     ).prepare()
 
 
-def test_open_periodic_and_twisted_realizations_have_exact_boundary_entries() -> None:
+def test_periodic_finite_scenario_1() -> None:
     _, pencil = _chain()
     open_result = PeriodicFiniteOrbitalPlan(
         pencil, PeriodicFiniteBoundaryPlan.open((3,))
@@ -60,9 +60,6 @@ def test_open_periodic_and_twisted_realizations_have_exact_boundary_entries() ->
     twisted = np.asarray(twisted_result.hamiltonian.to_dense())
     np.testing.assert_allclose(twisted, twisted.conj().T, atol=1.0e-14)
     np.testing.assert_allclose(abs(twisted[0, 2]), 1.0, atol=1.0e-14)
-
-
-def test_prescribed_disorder_is_applied_in_documented_cell_orbital_order() -> None:
     basis, pencil = _chain()
     disorder = PrescribedPeriodicDisorder(
         # ty: ignore[invalid-argument-type]
@@ -80,9 +77,6 @@ def test_prescribed_disorder_is_applied_in_documented_cell_orbital_order() -> No
         np.diag(np.asarray(realization.hamiltonian.to_dense())), [0.1, 0.2, 0.3]
     )
     assert realization.order == "cell-c-order_then-orbital-order"
-
-
-def test_layer_populations_partition_generalized_metric_population() -> None:
     _, pencil = _chain()
     realization = PeriodicFiniteOrbitalPlan(
         pencil, PeriodicFiniteBoundaryPlan.open((3,))

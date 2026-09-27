@@ -8,7 +8,7 @@ import pytest
 from phydrax.nn.operator import FunctionSamples
 
 
-def test_operator_samples_separate_support_and_measure_identities() -> None:
+def test_operator_contracts() -> None:
     coordinates = jnp.asarray([[0.0], [0.5], [1.0]])
     weights = jnp.asarray([0.25, 0.5, 0.25])
 
@@ -37,9 +37,6 @@ def test_operator_samples_separate_support_and_measure_identities() -> None:
     assert first.measure_id == same.measure_id
     assert changed_measure.measure_id != first.measure_id
     assert changed_support.support_id != first.support_id
-
-
-def test_operator_measure_identity_requires_weights() -> None:
     with pytest.raises(ValueError, match="requires quadrature_weights"):
         FunctionSamples(
             values=None,

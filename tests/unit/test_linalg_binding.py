@@ -80,7 +80,7 @@ def test_template_binds_changing_coefficients_inside_compiled_scan() -> None:
     assert jnp.array_equal(versions, jnp.arange(3, dtype=jnp.int32))
 
 
-def test_template_rejects_symbolic_structure_changes() -> None:
+def test_linalg_binding_scenario_1() -> None:
     template = la.prepare_template(_problem(jnp.eye(2)))
     changed = la.LinearSystem(
         la.DenseLinearOperator(jnp.eye(3), operator_id="binding-test-operator"),
@@ -88,9 +88,6 @@ def test_template_rejects_symbolic_structure_changes() -> None:
     )
     with pytest.raises(ValueError, match="symbolic problem structure"):
         la.bind_numeric(template, changed)
-
-
-def test_refresh_preserves_template_identity_and_increments_dynamic_version() -> None:
     first = _problem(jnp.asarray([[4.0, 1.0], [1.0, 3.0]]))
     second = _problem(jnp.asarray([[6.0, -1.0], [-1.0, 4.0]]))
     prepared = la.prepare(first, la.LinearSolvePolicy(la.DenseCholesky()))
@@ -102,9 +99,6 @@ def test_refresh_preserves_template_identity_and_increments_dynamic_version() ->
         la.solve(refreshed, jnp.asarray([1.0, 2.0])).value,
         jnp.linalg.solve(second.operator.matrix, jnp.asarray([1.0, 2.0])),
     )
-
-
-def test_solve_supports_transformation_generated_empty_operator_batches() -> None:
     matrices = jnp.empty((0, 2, 2))
     right_hand_sides = jnp.empty((0, 2))
     result = la.solve(_problem(matrices), right_hand_sides)

@@ -12,7 +12,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_antoine_pressure_temperature_inverse_and_domain_evidence() -> None:
+def test_phase_change_scenario_1() -> None:
     plan = phx.equations.AntoineSaturationPressurePlan(
         8.07131,
         1730.63,
@@ -27,25 +27,6 @@ def test_antoine_pressure_temperature_inverse_and_domain_evidence() -> None:
     assert jnp.all(recovered.successful)
     np.testing.assert_allclose(recovered.value, temperature, rtol=2e-6)
     assert not bool(plan.evaluate_pressure(jnp.asarray(400.0)).successful)
-
-
-def _solid_liquid_material(*, width: Any = 0.0) -> Any:
-    return phx.equations.SolidLiquidEnthalpyPlan(
-        1000.0,
-        273.15,
-        300.0,
-        300.0 + width,
-        2000.0,
-        2500.0,
-        2.0e5,
-        2.0,
-        0.5,
-        1.0e-6,
-        thermal_expansion=2.0e-4,
-    )
-
-
-def test_solid_liquid_enthalpy_roundtrip_and_isothermal_latent_plateau() -> None:
     material = _solid_liquid_material()
     latent_fraction = jnp.asarray([0.0, 0.25, 0.75, 1.0])
     enthalpy = material.enthalpy_from_temperature(
@@ -70,9 +51,6 @@ def test_solid_liquid_enthalpy_roundtrip_and_isothermal_latent_plateau() -> None
         enthalpy
     )
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_binary_alloy_closure_conserves_declared_enthalpy_and_partitions_solute() -> None:
     plan = phx.equations.BinaryAlloyPhaseDiagramPlan(
         1000.0,
         273.15,
@@ -118,9 +96,23 @@ def test_binary_alloy_closure_conserves_declared_enthalpy_and_partitions_solute(
     assert jnp.all(state.successful)
 
 
-def test_homogeneous_equilibrium_cavitation_barotrope_is_hyperbolic_and_energetic() -> (
-    None
-):
+def _solid_liquid_material(*, width: Any = 0.0) -> Any:
+    return phx.equations.SolidLiquidEnthalpyPlan(
+        1000.0,
+        273.15,
+        300.0,
+        300.0 + width,
+        2000.0,
+        2500.0,
+        2.0e5,
+        2.0,
+        0.5,
+        1.0e-6,
+        thermal_expansion=2.0e-4,
+    )
+
+
+def test_phase_change_scenario_2() -> None:
     material = phx.equations.HomogeneousEquilibriumCavitationMaterial(
         1.0e5,
         1.0,
@@ -156,17 +148,6 @@ def test_homogeneous_equilibrium_cavitation_barotrope_is_hyperbolic_and_energeti
     np.testing.assert_allclose(system.conserved_to_primitive(conserved), primitive)
     assert system.admissible(conserved)
     assert jnp.all(jnp.isfinite(system.physical_flux(conserved, 0)))
-
-
-def _two_material_system() -> Any:
-    eos = phx.equations.TwoMaterialEOSClosure(
-        phx.equations.StiffenedGasMaterial(4.4, 2.0e5, 1800.0),
-        phx.equations.StiffenedGasMaterial(1.33, 0.0, 1400.0, reference_energy=2.0e6),
-    )
-    return phx.equations.TwoMaterialVOFSystem(1, eos=eos)
-
-
-def test_vof_phase_transfer_has_one_mass_owner_and_preserves_total_energy() -> None:
     system = _two_material_system()
     primitive = jnp.asarray([[900.0, 2.0, 0.0, 8.0e4, 0.8]])
     state = system.primitive_to_conserved(primitive)
@@ -195,9 +176,6 @@ def test_vof_phase_transfer_has_one_mass_owner_and_preserves_total_energy() -> N
     expected_sign = jnp.sign(system.eos.temperature(state) - 350.0)
     assert jnp.all(jnp.sign(source.transfer.raw_mass_rate) == expected_sign)
     assert jnp.all(jnp.isfinite(source.state_rate))
-
-
-def test_unstructured_thermal_boundaries_close_heat_content_balance() -> None:
     eos = phx.equations.TwoMaterialEOSClosure(
         phx.equations.IdealGasMaterial(1.4),
         phx.equations.StiffenedGasMaterial(4.4, 2.0, 1.0),
@@ -241,3 +219,11 @@ def test_unstructured_thermal_boundaries_close_heat_content_balance() -> None:
     assert cooled.cell_energy_rate[0] < 0.0
     assert cooled.boundary_energy_rate < 0.0
     assert jnp.abs(cooled.conservation_defect) < 1.0e-12
+
+
+def _two_material_system() -> Any:
+    eos = phx.equations.TwoMaterialEOSClosure(
+        phx.equations.StiffenedGasMaterial(4.4, 2.0e5, 1800.0),
+        phx.equations.StiffenedGasMaterial(1.33, 0.0, 1400.0, reference_energy=2.0e6),
+    )
+    return phx.equations.TwoMaterialVOFSystem(1, eos=eos)

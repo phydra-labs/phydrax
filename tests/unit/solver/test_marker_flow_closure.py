@@ -10,7 +10,6 @@ import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 import phydrax as phx
 from phydrax._fingerprint import canonical_fingerprint
@@ -44,53 +43,51 @@ def _markers(position: Any) -> Any:
     ).prepare()
 
 
-@pytest.mark.parametrize(
-    "kernel_name",
-    ("cubic-bspline", "peskin-four-point", "roma-three-point"),
-)
-def test_kernel_families_are_adjoint_deterministic_and_fixed_route_differentiable(
-    kernel_name: Any,
-) -> None:
-    finite_volume, operators, _ = _periodic_mac()
-    position = jnp.asarray([[0.31, 0.37], [0.97, 0.58]])
-    markers = _markers(position)
-    transfer = phx.discretization.MACMarkerTransferPlan(
-        operators,
-        markers,
-        kernel=phx.discretization.MACMarkerKernelPlan(kernel_name),
-        accumulation="compensated",
-    ).prepare()
-    relation = transfer.relation(position)
-    routes = transfer.route_state(relation)
-    velocity = tuple(
-        jnp.sin(jnp.arange(prod(layout.shape)).reshape(layout.shape))
-        for layout in finite_volume.face_layouts
-    )
-    force = jnp.asarray([[0.2, -0.3], [-0.1, 0.4]])
-    first = transfer.spread(relation, force)
-    second = transfer.spread(relation, force)
-    diagnostics = transfer.diagnostics(relation, velocity, force)
+def test_kernel_families_are_adjoint_deterministic_and_fixed_route_differentiable() -> (
+    None
+):
+    for kernel_name in ("cubic-bspline", "peskin-four-point", "roma-three-point"):
+        finite_volume, operators, _ = _periodic_mac()
+        position = jnp.asarray([[0.31, 0.37], [0.97, 0.58]])
+        markers = _markers(position)
+        transfer = phx.discretization.MACMarkerTransferPlan(
+            operators,
+            markers,
+            kernel=phx.discretization.MACMarkerKernelPlan(kernel_name),
+            accumulation="compensated",
+        ).prepare()
+        relation = transfer.relation(position)
+        routes = transfer.route_state(relation)
+        velocity = tuple(
+            jnp.sin(jnp.arange(prod(layout.shape)).reshape(layout.shape))
+            for layout in finite_volume.face_layouts
+        )
+        force = jnp.asarray([[0.2, -0.3], [-0.1, 0.4]])
+        first = transfer.spread(relation, force)
+        second = transfer.spread(relation, force)
+        diagnostics = transfer.diagnostics(relation, velocity, force)
 
-    def observable(value: Any) -> Any:
-        fixed = transfer.relation_on_routes(value, routes)
-        return jnp.sum(transfer.gather(fixed, velocity) ** 2)
+        def observable(value: Any) -> Any:
+            fixed = transfer.relation_on_routes(value, routes)
+            return jnp.sum(transfer.gather(fixed, velocity) ** 2)
 
-    _, tangent = jax.jvp(
-        observable,
-        (position,),
-        (jnp.full_like(position, 1.0e-3),),
-    )
+        _, tangent = jax.jvp(
+            observable,
+            (position,),
+            (jnp.full_like(position, 1.0e-3),),
+        )
 
-    assert relation.successful
-    assert diagnostics.successful
-    assert jnp.any(relation.periodic_image_used)
-    assert all(
-        jnp.array_equal(left, right) for left, right in zip(first, second, strict=True)
-    )
-    assert jnp.isfinite(tangent)
+        assert relation.successful
+        assert diagnostics.successful
+        assert jnp.any(relation.periodic_image_used)
+        assert all(
+            jnp.array_equal(left, right)
+            for left, right in zip(first, second, strict=True)
+        )
+        assert jnp.isfinite(tangent)
 
 
-def test_nonuniform_cartesian_transfer_reproduces_affine_velocity() -> None:
+def test_marker_flow_closure_scenario_1() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.NonuniformCellAxisSpec(
@@ -123,9 +120,6 @@ def test_nonuniform_cartesian_transfer_reproduces_affine_velocity() -> None:
 
     assert relation.successful
     assert jnp.allclose(gathered, expected, atol=1.0e-10)
-
-
-def test_bounded_truncated_support_fails_closed() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(6) for _ in range(2)),
         axis_names=("x", "y"),
@@ -142,9 +136,6 @@ def test_bounded_truncated_support_fails_closed() -> None:
 
     assert not relation.successful
     assert jnp.any(relation.support_truncated)
-
-
-def test_exact_coupling_honors_inflow_outflow_boundary_descriptor() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(5) for _ in range(2)),
         axis_names=("x", "y"),
@@ -215,47 +206,44 @@ def test_exact_coupling_honors_inflow_outflow_boundary_descriptor() -> None:
     assert dfib_diagnostics.successful
 
 
-@pytest.mark.parametrize("dimension", (2, 3))
-def test_nonzero_exact_core_qualifies_in_two_and_three_dimensions(dimension: Any) -> None:
-    names = tuple("xyz"[:dimension])
-    grid = phx.discretization.TensorGridPlan(
-        tuple(
-            phx.discretization.UniformCellAxisSpec(5, periodic=True)
-            for _ in range(dimension)
-        ),
-        axis_names=names,
-    ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
-    finite_volume = phx.discretization.FiniteVolumePlan(grid).prepare()
-    operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
-    boundaries = phx.discretization.MACBoundaryPlan(operators).prepare()
-    position = jnp.asarray([[0.31] * dimension, [0.67] * dimension])
-    markers = phx.discretization.LagrangianMarkerSetPlan(
-        jnp.arange(2), position, jnp.full((2,), 0.5)
-    ).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
-    projection = phx.solver.MACImmersedBoundaryProjectionPlan(
-        operators,
-        transfer,
-        boundaries=boundaries,
-        tolerance=1.0e-8,
-    )
-    target = jnp.arange(1, dimension + 1, dtype=position.dtype) * 0.03
-    velocity = tuple(
-        jnp.full(layout.shape, target[axis])
-        for axis, layout in enumerate(finite_volume.face_layouts)
-    )
-    result = projection.project(
-        velocity,
-        1.0,
-        markers.kinematics(position, jnp.broadcast_to(target, position.shape)),
-    )
-    assert result.converged
-    assert result.marker_rank_certified
-    assert jnp.linalg.norm(result.divergence_after) < 1.0e-8
-    assert jnp.linalg.norm(result.marker_slip) < 1.0e-8
-
-
-def test_composite_projection_enforces_compatible_constraint() -> None:
+def test_marker_flow_closure_scenario_2() -> None:
+    for dimension in (2, 3):
+        names = tuple("xyz"[:dimension])
+        grid = phx.discretization.TensorGridPlan(
+            tuple(
+                phx.discretization.UniformCellAxisSpec(5, periodic=True)
+                for _ in range(dimension)
+            ),
+            axis_names=names,
+        ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
+        finite_volume = phx.discretization.FiniteVolumePlan(grid).prepare()
+        operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
+        boundaries = phx.discretization.MACBoundaryPlan(operators).prepare()
+        position = jnp.asarray([[0.31] * dimension, [0.67] * dimension])
+        markers = phx.discretization.LagrangianMarkerSetPlan(
+            jnp.arange(2), position, jnp.full((2,), 0.5)
+        ).prepare()
+        transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
+        projection = phx.solver.MACImmersedBoundaryProjectionPlan(
+            operators,
+            transfer,
+            boundaries=boundaries,
+            tolerance=1.0e-8,
+        )
+        target = jnp.arange(1, dimension + 1, dtype=position.dtype) * 0.03
+        velocity = tuple(
+            jnp.full(layout.shape, target[axis])
+            for axis, layout in enumerate(finite_volume.face_layouts)
+        )
+        result = projection.project(
+            velocity,
+            1.0,
+            markers.kinematics(position, jnp.broadcast_to(target, position.shape)),
+        )
+        assert result.converged
+        assert result.marker_rank_certified
+        assert jnp.linalg.norm(result.divergence_after) < 1.0e-8
+        assert jnp.linalg.norm(result.marker_slip) < 1.0e-8
     space = phx.linalg.ArraySpace((2,))
     identity = phx.linalg.FunctionLinearOperator(
         lambda value: value,
@@ -294,9 +282,6 @@ def test_composite_projection_enforces_compatible_constraint() -> None:
     assert result.accepted
     assert jnp.allclose(result.velocity, 0.0, atol=1.0e-9)
     assert result.divergence_norm < 1.0e-9
-
-
-def test_mapped_composite_and_distributed_transfers_preserve_virtual_work() -> None:
     finite_volume, operators, _ = _periodic_mac()
     position = jnp.asarray([[0.31, 0.37], [0.63, 0.58]])
     markers = _markers(position)
@@ -389,7 +374,7 @@ def test_mapped_composite_and_distributed_transfers_preserve_virtual_work() -> N
     assert jnp.all(multi_rank.owner_mask(0) | multi_rank.owner_mask(1))
 
 
-def test_geometry_epochs_lubrication_and_qualification_contracts() -> None:
+def test_marker_flow_closure_scenario_3() -> None:
     atlas = phx.geometry.circle_boundary_atlas(
         jnp.asarray([0.5, 0.5]),
         jnp.asarray(0.2),
@@ -476,9 +461,6 @@ def test_geometry_epochs_lubrication_and_qualification_contracts() -> None:
     assert jnp.all(lubrication.dissipation_rate >= 0.0)
     assert jnp.isclose(order, 2.0)
     assert qualified.successful
-
-
-def test_periodic_dfib_preserves_divergence_free_no_slip_state() -> None:
     finite_volume, operators, boundaries = _periodic_mac(count=6)
     position = jnp.asarray([[0.31, 0.37], [0.63, 0.58]])
     markers = _markers(position)
@@ -507,9 +489,6 @@ def test_periodic_dfib_preserves_divergence_free_no_slip_state() -> None:
     assert result.accepted
     assert result.divergence_norm < 1.0e-9
     assert result.slip_norm < 1.0e-9
-
-
-def test_deformable_contact_residual_uses_canonical_participant_transpose() -> None:
     contact = phx.applications.contact
     collision = phx.discretization.contact
     query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
@@ -585,9 +564,7 @@ def test_deformable_contact_residual_uses_canonical_participant_transpose() -> N
     assert residual.residual[0, 1] < 0.0
 
 
-def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state() -> (
-    None
-):
+def test_marker_flow_closure_scenario_4() -> None:
     finite_volume, operators, boundaries = _periodic_mac(count=4)
     zero = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
     one = tuple(jnp.ones(layout.shape) for layout in finite_volume.face_layouts)
@@ -697,9 +674,6 @@ def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state
     assert selector.plan is interface
     assert operators.velocity_space.inner(one, viscous_action) > 0.0
     assert jnp.allclose(traction.force, jnp.asarray([-0.1, 0.0]))
-
-
-def test_overdamped_fib_matches_free_diffusion_covariance() -> None:
     space = phx.linalg.ArraySpace((2048,))
     identity = phx.linalg.FunctionLinearOperator(
         lambda value: value,
@@ -736,9 +710,6 @@ def test_overdamped_fib_matches_free_diffusion_covariance() -> None:
 
     assert result.accepted
     assert jnp.abs(variance - 2.0 * step) / (2.0 * step) < 0.15
-
-
-def test_marker_trajectory_rejects_nonfinite_accepted_state() -> None:
     trajectory = phx.solver.MarkerFlowTrajectoryAdapter(
         lambda state, step, _event, _counter, _route: (
             jnp.asarray(jnp.nan),

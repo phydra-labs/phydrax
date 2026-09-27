@@ -174,7 +174,7 @@ def _trainable_arrays(model: Any) -> Any:
     return jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
 
 
-def test_cochain_field_semantics_roundtrip_through_operator_task() -> None:
+def test_cochain_contracts() -> None:
     task = _task()
     restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
     assert restored.fields[0].cochain is not None
@@ -199,9 +199,6 @@ def test_cochain_field_semantics_roundtrip_through_operator_task() -> None:
                 sampling="cell_integral",
             ),
         )
-
-
-def test_cochain_topology_survives_materialization_padding_stacking_and_slicing() -> None:
     batch = _batch(cases=2)
     first = phx.nn.operator.slice_operator_batch(batch, 0)
     second = phx.nn.operator.slice_operator_batch(batch, 1)
@@ -236,9 +233,6 @@ def test_cochain_topology_survives_materialization_padding_stacking_and_slicing(
         restacked_values,
         batch_values,
     )
-
-
-def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch() -> None:
     batch = _batch(cases=2)
     accepted = phx.nn.operator.validate_operator_architecture(
         "CochainNeuralOperator",
@@ -272,6 +266,105 @@ def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch()
     assert accepted.accepted
     assert not rejected.accepted
     assert "COCHAIN_TOPOLOGY_MISMATCH" in rejected.codes
+    complex_ir = _square_complex()
+    batch = _batch(complex_ir, cases=2)
+    signs = (
+        jnp.ones((complex_ir.cell_counts[0],)),
+        jnp.asarray([-1.0, 1.0, -1.0, 1.0, -1.0]),
+        jnp.asarray([1.0, -1.0]),
+    )
+    reoriented = phx.graph.reorient_cochain_complex(complex_ir, signs)
+    transformed_edges = phx.graph.reorient_cochain(
+        batch.input("edge_source").values,
+        signs[1],
+    )
+    transformed_batch = _batch(
+        reoriented,
+        cases=2,
+        edge_values=transformed_edges,
+    )
+    model = _model(key=jr.key(4))
+
+    original = model.evaluate(batch)
+    transformed = model.evaluate(transformed_batch)
+
+    assert jnp.allclose(
+        transformed.field("vertex").values,
+        original.field("vertex").values,
+        atol=1e-10,
+    )
+    assert jnp.allclose(
+        transformed.field("edge").values,
+        phx.graph.reorient_cochain(original.field("edge").values, signs[1]),
+        atol=1e-10,
+    )
+    batch = _batch(cases=3)
+    dataset = _dataset(batch)
+    policy = phx.nn.operator.training.fit_operator_normalization(
+        batch,
+        dataset.targets,
+        fields=_fields(),
+        weighting="quadrature",
+    )
+    signs = jnp.asarray([-1.0, 1.0, -1.0, 1.0, -1.0])
+    reoriented_edges = phx.graph.reorient_cochain(
+        batch.input("edge_source").values,
+        signs,
+    )
+    reoriented_batch = eqx.tree_at(
+        lambda item: item.inputs["edge_source"].values,
+        batch,
+        reoriented_edges,
+    )
+    reoriented_targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
+        {
+            "vertex": dataset.targets.field("vertex").values,
+            "edge": phx.graph.reorient_cochain(
+                dataset.targets.field("edge").values,
+                signs,
+            ),
+        },
+        reoriented_batch,
+        query_names={"vertex": "vertex_query", "edge": "edge_query"},
+    )
+    transformed_policy = phx.nn.operator.training.fit_operator_normalization(
+        reoriented_batch,
+        reoriented_targets,
+        fields=_fields(),
+        weighting="quadrature",
+    )
+
+    assert jnp.allclose(policy.input_values["edge_source"].mean, 0.0)
+    assert jnp.allclose(policy.targets["edge"].mean, 0.0)
+    assert not jnp.allclose(policy.input_values["vertex_source"].mean, 0.0)
+    assert jnp.allclose(
+        policy.input_values["edge_source"].scale,
+        transformed_policy.input_values["edge_source"].scale,
+    )
+    assert jnp.allclose(
+        policy.targets["edge"].scale,
+        transformed_policy.targets["edge"].scale,
+    )
+    dataset = _targetless_dataset(cases=2)
+    model = _small_cochain_model(key=jr.key(30))
+    term = _source_matching_loss()
+    value = _physics_loss_value(term, model, dataset)
+    topology = dataset.batch.input("vertex_source").topology
+
+    assert topology is not None
+    assert jnp.isfinite(value)
+    assert value > 0.0
+    assert term.fingerprint == _source_matching_loss().fingerprint
+    assert (
+        term.fingerprint
+        != _source_matching_loss(
+            identity="tests.cochain.changed_source_matching"
+        ).fingerprint
+    )
+
+    locked = _source_matching_loss(topology_fingerprint="not-this-topology")
+    with pytest.raises(ValueError, match="does not match its declared fingerprint"):
+        _physics_loss_value(locked, model, dataset)
 
 
 def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable() -> None:
@@ -307,41 +400,6 @@ def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable() 
     )
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.linalg.norm(gradient) > 0.0
-
-
-def test_cochain_operator_is_equivariant_to_independent_cell_reorientation() -> None:
-    complex_ir = _square_complex()
-    batch = _batch(complex_ir, cases=2)
-    signs = (
-        jnp.ones((complex_ir.cell_counts[0],)),
-        jnp.asarray([-1.0, 1.0, -1.0, 1.0, -1.0]),
-        jnp.asarray([1.0, -1.0]),
-    )
-    reoriented = phx.graph.reorient_cochain_complex(complex_ir, signs)
-    transformed_edges = phx.graph.reorient_cochain(
-        batch.input("edge_source").values,
-        signs[1],
-    )
-    transformed_batch = _batch(
-        reoriented,
-        cases=2,
-        edge_values=transformed_edges,
-    )
-    model = _model(key=jr.key(4))
-
-    original = model.evaluate(batch)
-    transformed = model.evaluate(transformed_batch)
-
-    assert jnp.allclose(
-        transformed.field("vertex").values,
-        original.field("vertex").values,
-        atol=1e-10,
-    )
-    assert jnp.allclose(
-        transformed.field("edge").values,
-        phx.graph.reorient_cochain(original.field("edge").values, signs[1]),
-        atol=1e-10,
-    )
 
 
 def test_harmonic_route_requires_and_uses_precomputed_topological_basis() -> None:
@@ -401,7 +459,7 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis() -> Non
         model(edge_batch(_annulus_complex(harmonics=False)))
 
 
-def test_zero_update_topological_block_has_exact_semigroup_identity() -> None:
+def test_operator_cochain_scenario_1() -> None:
     complex_ir = _square_complex()
     block = phx.nn.operator.architectures.TopologicalCochainBlock(
         2,
@@ -431,56 +489,30 @@ def test_zero_update_topological_block_has_exact_semigroup_identity() -> None:
 
     assert jnp.array_equal(one_step, hidden)
     assert jnp.array_equal(three_steps, hidden)
+    dataset = _targetless_dataset(cases=2)
+    model = _small_cochain_model(key=jr.key(32))
+    common: dict[str, Any] = {
+        "task": _task(),
+        "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
+            regime="task_specific"
+        ),
+        **_field_binding(),
+        "batch_size": 2,
+        "steps": 1,
+        "shuffle": False,
+        "seed": 20,
+    }
 
-
-def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields() -> None:
-    batch = _batch(cases=3)
-    dataset = _dataset(batch)
-    policy = phx.nn.operator.training.fit_operator_normalization(
-        batch,
-        dataset.targets,
-        fields=_fields(),
-        weighting="quadrature",
-    )
-    signs = jnp.asarray([-1.0, 1.0, -1.0, 1.0, -1.0])
-    reoriented_edges = phx.graph.reorient_cochain(
-        batch.input("edge_source").values,
-        signs,
-    )
-    reoriented_batch = eqx.tree_at(
-        lambda item: item.inputs["edge_source"].values,
-        batch,
-        reoriented_edges,
-    )
-    reoriented_targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
-        {
-            "vertex": dataset.targets.field("vertex").values,
-            "edge": phx.graph.reorient_cochain(
-                dataset.targets.field("edge").values,
-                signs,
-            ),
-        },
-        reoriented_batch,
-        query_names={"vertex": "vertex_query", "edge": "edge_query"},
-    )
-    transformed_policy = phx.nn.operator.training.fit_operator_normalization(
-        reoriented_batch,
-        reoriented_targets,
-        fields=_fields(),
-        weighting="quadrature",
-    )
-
-    assert jnp.allclose(policy.input_values["edge_source"].mean, 0.0)
-    assert jnp.allclose(policy.targets["edge"].mean, 0.0)
-    assert not jnp.allclose(policy.input_values["vertex_source"].mean, 0.0)
-    assert jnp.allclose(
-        policy.input_values["edge_source"].scale,
-        transformed_policy.input_values["edge_source"].scale,
-    )
-    assert jnp.allclose(
-        policy.targets["edge"].scale,
-        transformed_policy.targets["edge"].scale,
-    )
+    with pytest.raises(ValueError, match="explicit physics loss_terms"):
+        phx.nn.operator.training.fit_operator(model, dataset, **common)
+    with pytest.raises(ValueError, match="supervised targets"):
+        phx.nn.operator.training.fit_operator(
+            model,
+            dataset,
+            loss_terms=(_source_matching_loss(),),
+            normalization="fit",
+            **common,
+        )
 
 
 def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path: Any) -> None:
@@ -667,29 +699,6 @@ def _physics_loss_value(term: Any, model: Any, dataset: Any) -> Any:
     )
 
 
-def test_cochain_residual_loss_scatters_sparse_fields_and_locks_topology() -> None:
-    dataset = _targetless_dataset(cases=2)
-    model = _small_cochain_model(key=jr.key(30))
-    term = _source_matching_loss()
-    value = _physics_loss_value(term, model, dataset)
-    topology = dataset.batch.input("vertex_source").topology
-
-    assert topology is not None
-    assert jnp.isfinite(value)
-    assert value > 0.0
-    assert term.fingerprint == _source_matching_loss().fingerprint
-    assert (
-        term.fingerprint
-        != _source_matching_loss(
-            identity="tests.cochain.changed_source_matching"
-        ).fingerprint
-    )
-
-    locked = _source_matching_loss(topology_fingerprint="not-this-topology")
-    with pytest.raises(ValueError, match="does not match its declared fingerprint"):
-        _physics_loss_value(locked, model, dataset)
-
-
 def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(
     tmp_path: Any,
 ) -> None:
@@ -760,31 +769,4 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(
             checkpoint_path=checkpoint,
             resume=True,
             **changed_common,
-        )
-
-
-def test_targetless_operator_fit_requires_explicit_physics_and_scaling() -> None:
-    dataset = _targetless_dataset(cases=2)
-    model = _small_cochain_model(key=jr.key(32))
-    common: dict[str, Any] = {
-        "task": _task(),
-        "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
-            regime="task_specific"
-        ),
-        **_field_binding(),
-        "batch_size": 2,
-        "steps": 1,
-        "shuffle": False,
-        "seed": 20,
-    }
-
-    with pytest.raises(ValueError, match="explicit physics loss_terms"):
-        phx.nn.operator.training.fit_operator(model, dataset, **common)
-    with pytest.raises(ValueError, match="supervised targets"):
-        phx.nn.operator.training.fit_operator(
-            model,
-            dataset,
-            loss_terms=(_source_matching_loss(),),
-            normalization="fit",
-            **common,
         )

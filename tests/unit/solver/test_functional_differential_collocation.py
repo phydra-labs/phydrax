@@ -21,7 +21,7 @@ def _linear_guess(time: Any, args: Any) -> Any:
     return time
 
 
-def test_manufactured_retarded_equation_uses_global_collocation() -> None:
+def test_functional_differential_collocation_scenario_1() -> None:
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: 2.0 * values[0] + 1.0 - time,
         argument_times=lambda time, state, args: jnp.asarray([0.5 * time]),
@@ -40,11 +40,7 @@ def test_manufactured_retarded_equation_uses_global_collocation() -> None:
     assert jnp.allclose(solution.evaluate(query), query, atol=2e-9)
     assert jnp.allclose(solution.derivative(query), jnp.ones_like(query), atol=2e-9)
     assert float(solution.max_differential_residual) < 2e-9
-
-
-@pytest.mark.parametrize(
-    ("argument_times", "num_arguments", "vector_field"),
-    [
+    for argument_times, num_arguments, vector_field in [
         (
             lambda time, state, args: jnp.asarray([0.5 * (time + 1.0)]),
             1,
@@ -55,30 +51,23 @@ def test_manufactured_retarded_equation_uses_global_collocation() -> None:
             2,
             lambda time, state, values, args: values[0] + values[1] + 0.5 - time,
         ),
-    ],
-)
-def test_manufactured_advanced_and_mixed_equations(
-    argument_times: Any, num_arguments: Any, vector_field: Any
-) -> None:
-    problem = phx.solver.FunctionalDifferentialBoundaryProblem(
-        vector_field,
-        argument_times=argument_times,
-        num_arguments=num_arguments,
-        boundary=_left_boundary(),
-    )
-    plan = phx.solver.FunctionalCollocationPlan(
-        jnp.asarray([0.0, 0.25, 0.7, 1.0]), degree=2
-    )
+    ]:
+        problem = phx.solver.FunctionalDifferentialBoundaryProblem(
+            vector_field,
+            argument_times=argument_times,
+            num_arguments=num_arguments,
+            boundary=_left_boundary(),
+        )
+        plan = phx.solver.FunctionalCollocationPlan(
+            jnp.asarray([0.0, 0.25, 0.7, 1.0]), degree=2
+        )
 
-    solution = phx.solver.solve_functional_differential(problem, plan, _linear_guess)
-    query = jnp.linspace(0.0, 1.0, 21)
+        solution = phx.solver.solve_functional_differential(problem, plan, _linear_guess)
+        query = jnp.linspace(0.0, 1.0, 21)
 
-    assert bool(solution.successful)
-    assert jnp.allclose(solution.evaluate(query), query, atol=3e-9)
-    assert not isinstance(problem, phx.solver.DelayDifferentialProblem)
-
-
-def test_state_dependent_functional_argument_is_evaluated_from_global_iterate() -> None:
+        assert bool(solution.successful)
+        assert jnp.allclose(solution.evaluate(query), query, atol=3e-9)
+        assert not isinstance(problem, phx.solver.DelayDifferentialProblem)
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: 2.0 * values[0] + 1.0 - time,
         argument_times=lambda time, state, args: jnp.asarray([0.5 * state]),
@@ -91,6 +80,20 @@ def test_state_dependent_functional_argument_is_evaluated_from_global_iterate() 
 
     assert bool(solution.successful)
     assert jnp.allclose(solution.states, plan.mesh, atol=3e-9)
+    problem = phx.solver.FunctionalDifferentialBoundaryProblem(
+        lambda time, state, values, args: jnp.ones_like(state),
+        boundary=_left_boundary(),
+    )
+    plan = phx.solver.FunctionalCollocationPlan(
+        jnp.asarray([0.0, 0.15, 0.6, 1.0]), degree=3
+    )
+    solution = phx.solver.solve_functional_differential(problem, plan, jnp.asarray(0.0))
+
+    jumps = solution.collocation_values[:-1, -1] - solution.collocation_values[1:, 0]
+    assert solution.continuity_residual.shape == (2,)
+    assert jnp.allclose(jumps, solution.continuity_residual)
+    assert float(solution.max_continuity_residual) < 2e-9
+    assert jnp.allclose(solution.evaluate(plan.mesh), plan.mesh, atol=2e-9)
 
 
 def test_periodic_orbit_phase_condition_uses_overdetermined_least_squares() -> None:
@@ -160,24 +163,7 @@ def test_mesh_and_degree_refinement_reduce_advanced_solution_error() -> None:
     assert refined_error < 0.05 * coarse_error
 
 
-def test_independent_element_polynomials_are_joined_by_continuity_residuals() -> None:
-    problem = phx.solver.FunctionalDifferentialBoundaryProblem(
-        lambda time, state, values, args: jnp.ones_like(state),
-        boundary=_left_boundary(),
-    )
-    plan = phx.solver.FunctionalCollocationPlan(
-        jnp.asarray([0.0, 0.15, 0.6, 1.0]), degree=3
-    )
-    solution = phx.solver.solve_functional_differential(problem, plan, jnp.asarray(0.0))
-
-    jumps = solution.collocation_values[:-1, -1] - solution.collocation_values[1:, 0]
-    assert solution.continuity_residual.shape == (2,)
-    assert jnp.allclose(jumps, solution.continuity_residual)
-    assert float(solution.max_continuity_residual) < 2e-9
-    assert jnp.allclose(solution.evaluate(plan.mesh), plan.mesh, atol=2e-9)
-
-
-def test_collocation_preserves_arbitrary_array_state_shape() -> None:
+def test_functional_differential_collocation_scenario_2() -> None:
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: jnp.ones_like(state),
         state_shape=(2, 2),
@@ -194,9 +180,6 @@ def test_collocation_preserves_arbitrary_array_state_shape() -> None:
         jnp.broadcast_to(query[:, None, None], (3, 2, 2)),
         atol=2e-9,
     )
-
-
-def test_observations_select_least_squares_and_preserve_observable_residual() -> None:
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: jnp.ones_like(state),
         boundary=_left_boundary(),
@@ -212,9 +195,6 @@ def test_observations_select_least_squares_and_preserve_observable_residual() ->
     assert solution.resolved_method == "least-squares"
     assert solution.residual_size == solution.unknown_size + 2
     assert float(jnp.max(jnp.abs(solution.observation_residual))) < 2e-8
-
-
-def test_explicit_root_rejects_overdetermined_residual_shape() -> None:
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: jnp.ones_like(state),
         boundary=_left_boundary(),
@@ -229,7 +209,7 @@ def test_explicit_root_rejects_overdetermined_residual_shape() -> None:
         phx.solver.solve_functional_differential(problem, plan, jnp.asarray(0.0))
 
 
-def test_missing_boundary_constraint_is_reported_as_underdetermined() -> None:
+def test_functional_differential_collocation_scenario_3() -> None:
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: jnp.ones_like(state)
     )
@@ -237,9 +217,6 @@ def test_missing_boundary_constraint_is_reported_as_underdetermined() -> None:
 
     with pytest.raises(ValueError, match="underdetermined"):
         phx.solver.solve_functional_differential(problem, plan, jnp.asarray(0.0))
-
-
-def test_functional_argument_outside_global_interval_fails_explicitly() -> None:
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: values[0],
         argument_times=lambda time, state, args: jnp.asarray([time + 2.0]),
@@ -253,9 +230,19 @@ def test_functional_argument_outside_global_interval_fails_explicitly() -> None:
         match="outside the declared mesh interval",
     ):
         phx.solver.solve_functional_differential(problem, plan, jnp.asarray(0.0))
+    problem = phx.solver.FunctionalDifferentialBoundaryProblem(
+        lambda time, state, values, rate: rate,
+        boundary=lambda left, right, trajectory, rate: left,
+    )
+    plan = phx.solver.FunctionalCollocationPlan(jnp.asarray([0.0, 0.4, 1.0]), degree=2)
 
+    solve_endpoint = jax.jit(
+        lambda rate: phx.solver.solve_functional_differential(
+            problem, plan, jnp.asarray(0.0), args=rate
+        ).evaluate(1.0)
+    )
 
-def test_nonlinear_nonconvergence_is_returned_when_throw_is_disabled() -> None:
+    assert jnp.allclose(solve_endpoint(jnp.asarray(2.5)), 2.5, atol=2e-9)
     problem = phx.solver.FunctionalDifferentialBoundaryProblem(
         lambda time, state, values, args: state**2 + 1.0,
         boundary=_left_boundary(),
@@ -270,22 +257,6 @@ def test_nonlinear_nonconvergence_is_returned_when_throw_is_disabled() -> None:
     assert not bool(solution.successful)
     assert solution.status_message
     assert "num_steps" in solution.stats
-
-
-def test_functional_collocation_solve_is_jittable() -> None:
-    problem = phx.solver.FunctionalDifferentialBoundaryProblem(
-        lambda time, state, values, rate: rate,
-        boundary=lambda left, right, trajectory, rate: left,
-    )
-    plan = phx.solver.FunctionalCollocationPlan(jnp.asarray([0.0, 0.4, 1.0]), degree=2)
-
-    solve_endpoint = jax.jit(
-        lambda rate: phx.solver.solve_functional_differential(
-            problem, plan, jnp.asarray(0.0), args=rate
-        ).evaluate(1.0)
-    )
-
-    assert jnp.allclose(solve_endpoint(jnp.asarray(2.5)), 2.5, atol=2e-9)
 
 
 def test_parameter_gradient_uses_optimistix_implicit_solve() -> None:

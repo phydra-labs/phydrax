@@ -15,7 +15,7 @@ from phydrax.stochastic._point_process import (
 )
 
 
-def test_univariate_hawkes_likelihood_matches_compensator_oracle() -> None:
+def test_hawkes_random_matrix_scenario_1() -> None:
     process = ExponentialHawkesProcess(
         jnp.asarray([0.5]), jnp.asarray([[0.2]]), jnp.asarray([[1.0]])
     )
@@ -37,9 +37,6 @@ def test_univariate_hawkes_likelihood_matches_compensator_oracle() -> None:
     assert jnp.allclose(result.event_intensity[:2], expected_intensity)
     assert jnp.isclose(result.compensator, expected_compensator)
     assert jnp.isclose(result.log_likelihood, expected)
-
-
-def test_simultaneous_tie_policy_does_not_create_artificial_excitation() -> None:
     process = ExponentialHawkesProcess(
         jnp.asarray([0.4]), jnp.asarray([[0.3]]), jnp.asarray([[1.2]])
     )
@@ -64,9 +61,6 @@ def test_simultaneous_tie_policy_does_not_create_artificial_excitation() -> None
     assert jnp.allclose(simultaneous_result.event_intensity, jnp.asarray([0.4, 0.4]))
     assert jnp.allclose(ordered_result.event_intensity, jnp.asarray([0.4, 0.7]))
     assert simultaneous_result.tied_event_count == 1
-
-
-def test_hawkes_stability_evidence_and_seeded_prefix_are_explicit() -> None:
     unstable = ExponentialHawkesProcess(
         jnp.asarray([0.2]), jnp.asarray([[2.0]]), jnp.asarray([[1.0]])
     )

@@ -60,7 +60,7 @@ def _discretization(mesh: Any, *, degree: Any = 1) -> Any:
     ).prepare()
 
 
-def test_resolve_mesh_scope_returns_exact_persistent_id_selection() -> None:
+def test_fem_semantic_scopes_scenario_1() -> None:
     mesh = _mesh()
     scope = _scope(mesh, 2, (1,))
 
@@ -68,11 +68,7 @@ def test_resolve_mesh_scope_returns_exact_persistent_id_selection() -> None:
 
     np.testing.assert_array_equal(selection.mask, (False, True))
     assert selection.entity_set_id == mesh.entity_set(2).entity_set_id
-
-
-@pytest.mark.parametrize(
-    ("overrides", "message"),
-    (
+    for overrides, message in (
         ({"source_id": "another-mesh"}, "another mesh source"),
         ({"source_revision": "stale-revision"}, "another mesh revision"),
         (
@@ -81,18 +77,11 @@ def test_resolve_mesh_scope_returns_exact_persistent_id_selection() -> None:
         ),
         ({"entity_dimension": 1}, "entity set"),
         ({"entity_set_id": "another-entity-set"}, "entity set"),
-    ),
-)
-def test_resolve_mesh_scope_rejects_foreign_or_stale_bindings(
-    overrides: Any, message: Any
-) -> None:
-    mesh = _mesh()
+    ):
+        mesh = _mesh()
 
-    with pytest.raises(ValueError, match=message):
-        phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 2, (0,), **overrides))
-
-
-def test_resolve_mesh_scope_rejects_undeclared_global_ids() -> None:
+        with pytest.raises(ValueError, match=message):
+            phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 2, (0,), **overrides))
     mesh = _mesh()
     cells = mesh.entity_set(2)
     scope = phx.meshing.MeshingScope(
@@ -106,9 +95,6 @@ def test_resolve_mesh_scope_rejects_undeclared_global_ids() -> None:
 
     with pytest.raises(ValueError, match="undeclared"):
         phx.meshing.resolve_mesh_scope(mesh, scope)
-
-
-def test_p1_cell_and_boundary_facet_selections_resolve_exact_dofs() -> None:
     mesh = _mesh()
     discretization = _discretization(mesh)
     cell_selection = phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 2, (1,)))
@@ -139,9 +125,6 @@ def test_p1_cell_and_boundary_facet_selections_resolve_exact_dofs() -> None:
     )
     np.testing.assert_array_equal(constraint.constrained_dofs, (2, 3))
     np.testing.assert_array_equal(constraint.free_dofs, (0, 1))
-
-
-def test_dirichlet_selection_rejects_interior_facets() -> None:
     mesh = _mesh()
     discretization = _discretization(mesh)
     interior_facet = int(

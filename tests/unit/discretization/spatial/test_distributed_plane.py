@@ -21,7 +21,7 @@ def _address() -> MortonAddressPlan:
     )
 
 
-def test_distributed_morton_query_matches_single_device_authority() -> None:
+def test_distributed_morton_contracts() -> None:
     source = jnp.asarray(
         [[0.98, 0.5], [0.05, 0.5], [0.25, 0.2], [0.45, 0.4], [0.7, 0.8], [0.9, 0.1]]
     )
@@ -53,9 +53,6 @@ def test_distributed_morton_query_matches_single_device_authority() -> None:
         distributed.source_stable_ids,
         stable_ids[authority.source_indices],
     )
-
-
-def test_distributed_morton_query_rejects_duplicate_global_ids() -> None:
     source = jnp.asarray([[0.1, 0.1], [0.2, 0.2], [0.8, 0.8], [0.9, 0.9]])
     target = jnp.asarray([[0.15, 0.15], [0.85, 0.85]])
     result = DistributedMortonNeighborQueryPlan(
@@ -73,9 +70,6 @@ def test_distributed_morton_query_rejects_duplicate_global_ids() -> None:
     assert not bool(result.evidence.stable_ids_unique)
     assert not bool(result.evidence.successful)
     np.testing.assert_array_equal(result.valid, False)
-
-
-def test_distributed_morton_query_merges_source_shards_when_available() -> None:
     devices = tuple(jax.devices()[:2])
     if len(devices) < 2:
         pytest.skip("requires two real or explicitly configured JAX devices")

@@ -18,7 +18,7 @@ from phydrax.domain import (
 )
 
 
-def test_grid_sampling_rejects_component_sum() -> None:
+def test_constraint_negative_cases_scenario_1() -> None:
     geom = Interval1d(0.0, 1.0)
     c1 = geom.component({"x": Interior()})
     c2 = geom.component({"x": Boundary()})
@@ -30,9 +30,6 @@ def test_grid_sampling_rejects_component_sum() -> None:
             phx.domain.GridSampling({"x": 4}),
             key=jr.key(0),
         )
-
-
-def test_grid_sampling_requires_dense_plan_for_other_labels() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -40,9 +37,6 @@ def test_grid_sampling_requires_dense_plan_for_other_labels() -> None:
 
     with pytest.raises(ValueError, match="GridSampling.dense is required"):
         component.sample(phx.domain.GridSampling({"x": 4}), key=jr.key(0))
-
-
-def test_grid_sampling_accepts_scalar_labels() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -59,9 +53,6 @@ def test_grid_sampling_accepts_scalar_labels() -> None:
     assert isinstance(batch, GridBatch)
     assert "t" in batch.coord_axes_by_label
     assert len(batch.points["t"]) == 1
-
-
-def test_continuous_initial_requires_fixed_start() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -69,9 +60,6 @@ def test_continuous_initial_requires_fixed_start() -> None:
 
     with pytest.raises(ValueError, match="FixedStart"):
         Initial("u", component, target=0.0)
-
-
-def test_domain_join_rejects_label_collision() -> None:
     left = Interval1d(0.0, 1.0)
     right = Interval1d(-1.0, 2.0)
     with pytest.raises(ValueError, match="Label collision"):

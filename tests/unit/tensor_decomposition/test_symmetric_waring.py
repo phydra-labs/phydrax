@@ -15,7 +15,7 @@ def _real_rank_two_tensor(order: Any = 3) -> Any:
     return weights, factors, td.reconstruct_symmetric_tensor(weights, factors, order)
 
 
-def test_real_cubic_recovers_normalized_components_and_reconstruction() -> None:
+def test_symmetric_waring_scenario_1() -> None:
     _, _, tensor = _real_rank_two_tensor()
     result = td.solve_symmetric_waring(td.SymmetricWaringProblem(tensor, 2))
 
@@ -28,9 +28,6 @@ def test_real_cubic_recovers_normalized_components_and_reconstruction() -> None:
     assert jnp.allclose(jnp.linalg.norm(result.factors, axis=1), 1.0, atol=2e-5)
     assert jnp.allclose(result.reconstruction, tensor, rtol=2e-5, atol=2e-5)
     assert result.relative_residual < 2e-5
-
-
-def test_complex_cubic_uses_algebraic_power_and_recovers_tensor() -> None:
     order = 3
     weights, factors = td.normalize_waring_components(
         jnp.asarray([1.2 + 0.3j, -0.4 + 0.8j], dtype=jnp.complex64),
@@ -55,9 +52,6 @@ def test_complex_cubic_uses_algebraic_power_and_recovers_tensor() -> None:
     pivot_values = result.factors[jnp.arange(result.rank), pivots]
     assert jnp.allclose(jnp.imag(pivot_values), 0.0, atol=3e-5)
     assert jnp.all(jnp.real(pivot_values) >= 0.0)
-
-
-def test_component_normalization_is_permutation_scale_and_phase_invariant() -> None:
     order = 4
     weights = jnp.asarray([1.1 - 0.2j, -0.7 + 0.5j], dtype=jnp.complex64)
     factors = jnp.asarray(
@@ -87,7 +81,7 @@ def test_component_normalization_is_permutation_scale_and_phase_invariant() -> N
     )
 
 
-def test_over_requested_rank_reports_hankel_rank_without_padding_components() -> None:
+def test_symmetric_waring_scenario_2() -> None:
     _, _, tensor = _real_rank_two_tensor(order=5)
     result = td.solve_symmetric_waring(
         td.SymmetricWaringProblem(tensor, 3),
@@ -100,9 +94,6 @@ def test_over_requested_rank_reports_hankel_rank_without_padding_components() ->
     )
     assert result.evidence.observed_hankel_rank == 2
     assert result.rank == 0
-
-
-def test_repeated_factor_ambiguity_fails_as_rank_collapse() -> None:
     factor = jnp.asarray([1.0, 0.45], dtype=jnp.float32)
     tensor = td.reconstruct_symmetric_tensor(
         jnp.asarray([0.8, -0.3], dtype=jnp.float32),
@@ -120,9 +111,6 @@ def test_repeated_factor_ambiguity_fails_as_rank_collapse() -> None:
     )
     assert result.evidence.observed_hankel_rank == 1
     assert "coalesce" in result.evidence.detail
-
-
-def test_positive_dimensional_request_fails_as_multiple_decomposition() -> None:
     _, _, tensor = _real_rank_two_tensor()
     result = td.solve_symmetric_waring(
         td.SymmetricWaringProblem(tensor, 3),
@@ -136,7 +124,7 @@ def test_positive_dimensional_request_fails_as_multiple_decomposition() -> None:
     assert "positive-dimensional" in result.evidence.detail
 
 
-def test_resource_policy_rejects_before_hankel_or_provider_work() -> None:
+def test_symmetric_waring_scenario_3() -> None:
     _, _, tensor = _real_rank_two_tensor()
     plan = td.prepare_symmetric_waring(
         td.SymmetricWaringProblem(tensor, 2),
@@ -150,9 +138,6 @@ def test_resource_policy_rejects_before_hankel_or_provider_work() -> None:
     assert not result.successful
     assert result.status == int(td.SymmetricWaringStatus.RESOURCE_REJECTED)
     assert not result.evidence.path_accepted
-
-
-def test_all_chart_resource_cost_multiplies_per_chart_work() -> None:
     _, _, tensor = _real_rank_two_tensor()
     problem = td.SymmetricWaringProblem(tensor, 2)
     single = td.prepare_symmetric_waring(
@@ -171,9 +156,6 @@ def test_all_chart_resource_cost_multiplies_per_chart_work() -> None:
         == chart_count * single.cost.vandermonde_entries
     )
     assert all_charts.cost.basis_subsets == chart_count * single.cost.basis_subsets
-
-
-def test_invalid_nonsymmetric_tensor_and_zero_factor_are_rejected() -> None:
     nonsymmetric = jnp.zeros((2, 2, 2), dtype=jnp.float32).at[0, 1, 1].set(1.0)
     with pytest.raises(ValueError, match="not symmetric"):
         td.SymmetricWaringProblem(nonsymmetric, 1)

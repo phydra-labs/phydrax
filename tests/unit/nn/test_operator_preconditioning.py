@@ -154,7 +154,7 @@ def _binding(
     return binding
 
 
-def test_prepared_correction_preserves_physical_normalization_and_is_jittable() -> None:
+def test_operator_preconditioning_scenario_1() -> None:
     normalizer = phx.nn.operator.training.AffineNormalizer(
         mean=jnp.asarray(0.0),
         scale=jnp.asarray(2.0),
@@ -179,11 +179,6 @@ def test_prepared_correction_preserves_physical_normalization_and_is_jittable() 
         prepared.prepared_input.physical_batch.input("residual").values,
         jnp.zeros_like(residual),
     )
-
-
-def test_direct_correction_is_fgmres_only_and_original_residual_is_authoritative() -> (
-    None
-):
     binding = _binding(gain=0.4)
     builder = phx.nn.operator.TrainedOperatorPreconditionerBuilder(
         binding,
@@ -223,9 +218,6 @@ def test_direct_correction_is_fgmres_only_and_original_residual_is_authoritative
                 differentiation=phx.linalg.DifferentiationPolicy("none"),
             ),
         )
-
-
-def test_binding_identity_tracks_artifact_and_rejects_wrong_transfer_direction() -> None:
     first = _binding(artifact_id="artifact-a")
     second = _binding(artifact_id="artifact-b")
     assert first.binding_id != second.binding_id

@@ -38,45 +38,42 @@ def _contraction(state: Any, theta: Any) -> Any:
     return 0.5 * jnp.tanh(_COUPLING @ state) + jnp.asarray([theta, theta**2])
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
+def test_fixed_point_derivatives_match_central_differences() -> None:
+    for method in [
         nl.FixedPointIteration(),
         nl.FixedPointIteration(acceleration=nl.AndersonAcceleration(history=2)),
-    ],
-)
-def test_fixed_point_derivatives_match_central_differences(method: Any) -> None:
-    problem = nl.FixedPointProblem(_contraction, problem_id="tanh-contraction")
+    ]:
+        problem = nl.FixedPointProblem(_contraction, problem_id="tanh-contraction")
 
-    def fixed_point(theta: Any) -> Any:
-        return nl.implicit_fixed_point_result(
-            problem,
-            jnp.zeros(2),
-            method=method,
-            termination=_termination(),
-            derivative_policy=_policy(),
-            args=theta,
+        def fixed_point(theta: Any) -> Any:
+            return nl.implicit_fixed_point_result(
+                problem,
+                jnp.zeros(2),
+                method=method,
+                termination=_termination(),
+                derivative_policy=_policy(),
+                args=theta,
+            )
+
+        theta = jnp.asarray(0.3)
+        weights = jnp.asarray([1.0, -2.0])
+        result = fixed_point(theta)
+        _, tangent = jax.jvp(lambda value: fixed_point(value).state, (theta,), (1.0,))
+        gradient = jax.grad(lambda value: weights @ fixed_point(value).state)(theta)
+        step = 1e-5
+        difference = (
+            fixed_point(theta + step).state - fixed_point(theta - step).state
+        ) / (2 * step)
+
+        assert bool(result.successful)
+        assert jnp.allclose(result.state, _contraction(result.state, theta), atol=1e-12)
+        assert result.provenance.problem_id == "tanh-contraction"
+        assert result.component_evidence == (
+            "mapping:determinism-undeclared",
+            "mapping:regularity-undeclared",
         )
-
-    theta = jnp.asarray(0.3)
-    weights = jnp.asarray([1.0, -2.0])
-    result = fixed_point(theta)
-    _, tangent = jax.jvp(lambda value: fixed_point(value).state, (theta,), (1.0,))
-    gradient = jax.grad(lambda value: weights @ fixed_point(value).state)(theta)
-    step = 1e-5
-    difference = (fixed_point(theta + step).state - fixed_point(theta - step).state) / (
-        2 * step
-    )
-
-    assert bool(result.successful)
-    assert jnp.allclose(result.state, _contraction(result.state, theta), atol=1e-12)
-    assert result.provenance.problem_id == "tanh-contraction"
-    assert result.component_evidence == (
-        "mapping:determinism-undeclared",
-        "mapping:regularity-undeclared",
-    )
-    assert jnp.allclose(tangent, difference, rtol=1e-7, atol=1e-9)
-    assert jnp.allclose(gradient, weights @ difference, rtol=1e-7, atol=1e-9)
+        assert jnp.allclose(tangent, difference, rtol=1e-7, atol=1e-9)
+        assert jnp.allclose(gradient, weights @ difference, rtol=1e-7, atol=1e-9)
 
 
 def test_fixed_point_derivative_refuses_unit_mapping_slope() -> None:
@@ -150,16 +147,13 @@ def _network_fixed_point(mapping: Any) -> Any:
     )
 
 
-def test_fixed_point_refuses_mapping_components_without_classical_c1_regularity() -> None:
+def test_fixed_point_contracts() -> None:
     with pytest.raises(ValueError, match="implicit-requires-c1"):
         _network_fixed_point(_NetworkMapping(_network(jax.nn.relu)))
 
     result = _network_fixed_point(_NetworkMapping(_network(jnp.tanh)))
     assert bool(result.successful)
     assert result.component_evidence == ("mapping.network:deterministic",)
-
-
-def test_fixed_point_requires_fixed_point_iteration_and_tangent_policy() -> None:
     problem = nl.FixedPointProblem(_contraction)
     with pytest.raises(TypeError, match="FixedPointIteration"):
         nl.implicit_fixed_point_result(

@@ -77,7 +77,7 @@ def _onsite_pencil(basis: Any, matrix: Any) -> Any:
     ).prepare()
 
 
-def test_supplied_p_orbital_l_dot_s_splitting_and_spin_projection() -> None:
+def test_periodic_magnetism_superconductivity_scenario_1() -> None:
     basis = _orbital_basis(("px", "py", "pz"))
     convention = SpinorBasisConvention(basis)
     angular = np.asarray(
@@ -114,9 +114,6 @@ def test_supplied_p_orbital_l_dot_s_splitting_and_spin_projection() -> None:
         jnp.asarray([[0.5, -0.5] * 3]),
     )
     assert observable.spin_bound_residual < 1.0e-12
-
-
-def test_finite_channel_gap_closure_and_trivial_class_d_chern_composition() -> None:
     basis = _orbital_basis(("up", "down"))
     pencil = _onsite_pencil(basis, np.zeros((2, 2)))
     mesh = ReciprocalMeshPlan.monkhorst_pack(basis.cell, (2, 2))

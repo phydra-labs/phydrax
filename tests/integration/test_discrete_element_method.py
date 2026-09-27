@@ -59,7 +59,7 @@ def _solve(compiled: Any, initial: Any, t0: Any, t1: Any) -> Any:
     return phx.solver.solve_fixed_step(problem)
 
 
-def test_dem_fixed_step_rollout_is_finite_conservative_and_restart_equivalent() -> None:
+def test_discrete_element_method_scenario_1() -> None:
     compiled = _compiled_collision()
     initial = compiled.initialize_state(
         0.0,
@@ -92,9 +92,6 @@ def test_dem_fixed_step_rollout_is_finite_conservative_and_restart_equivalent() 
     initial_momentum = jnp.sum(initial.kinematics.velocity, axis=0)
     final_momentum = jnp.sum(direct_final.kinematics.velocity, axis=0)
     assert jnp.allclose(final_momentum, initial_momentum, atol=1.0e-10)
-
-
-def test_damped_head_on_collision_recovers_requested_restitution() -> None:
     target_restitution = 0.8
     compiled = _compiled_collision(restitution=target_restitution)
     initial = compiled.initialize_state(

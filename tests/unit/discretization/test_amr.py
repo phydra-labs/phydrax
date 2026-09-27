@@ -33,7 +33,7 @@ def _hierarchy(
     )
 
 
-def test_hierarchy_geometry_is_derived_from_uniform_interval_grid() -> None:
+def test_amr_scenario_1() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(8),
@@ -53,9 +53,6 @@ def test_hierarchy_geometry_is_derived_from_uniform_interval_grid() -> None:
     assert plan.block_lattice_shapes == ((2, 2), (8, 4))
     assert plan.children_per_parent == ((4, 2),)
     assert plan.level_spacings == ((0.25, 0.5), (0.125, 0.25))
-
-
-def test_hierarchy_rejects_non_cell_geometry_and_misaligned_fixed_blocks() -> None:
     point_grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformAxisSpec(9),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -72,9 +69,6 @@ def test_hierarchy_rejects_non_cell_geometry_and_misaligned_fixed_blocks() -> No
                 phx.discretization.BlockLevelPlan(1, (8,), 2),
             ),
         )
-
-
-def test_initial_topology_has_canonical_int32_ids_slots_and_base_coverage() -> None:
     hierarchy = _hierarchy()
     topology = phx.discretization.BlockTopologyCompiler(hierarchy).initial_topology()
     base = topology.levels[0]
@@ -88,9 +82,6 @@ def test_initial_topology_has_canonical_int32_ids_slots_and_base_coverage() -> N
     assert not bool(jnp.any(topology.covered_cells[1]))
     assert topology.epoch.index == 0
     assert topology.epoch.geometry_id == hierarchy.geometry_id
-
-
-def test_compiler_selects_partial_children_and_is_path_independent() -> None:
     hierarchy = _hierarchy()
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = compiler.initial_topology()
@@ -118,9 +109,6 @@ def test_compiler_selects_partial_children_and_is_path_independent() -> None:
         same_by_other_path.topology.levels[1].logical_indices,
         first.topology.levels[1].logical_indices,
     )
-
-
-def test_compiler_requires_exact_boolean_tag_dtype() -> None:
     hierarchy = _hierarchy()
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     source = compiler.initial_topology()
@@ -129,7 +117,7 @@ def test_compiler_requires_exact_boolean_tag_dtype() -> None:
         compiler.compile(source, (jnp.zeros((2, 4), dtype=jnp.int32),))
 
 
-def test_proper_nesting_rejection_is_atomic() -> None:
+def test_amr_scenario_2() -> None:
     hierarchy = phx.discretization.BlockHierarchyPlan(
         _grid(),
         (
@@ -158,9 +146,6 @@ def test_proper_nesting_rejection_is_atomic() -> None:
         result.routes.old_to_new_slots[1],
         jnp.arange(8, dtype=jnp.int32).at[1:].set(-1),
     )
-
-
-def test_balance_closure_supports_requests_that_strict_nesting_rejects() -> None:
     hierarchy = phx.discretization.BlockHierarchyPlan(
         _grid(),
         (
@@ -192,9 +177,6 @@ def test_balance_closure_supports_requests_that_strict_nesting_rejects() -> None
             finest[box.lower[0] * scale : box.upper[0] * scale] = level
     assert finest.max() == 2
     assert np.all(np.abs(np.diff(finest)) <= 1)
-
-
-def test_capacity_failure_is_atomic_and_preserves_source_epoch() -> None:
     hierarchy = _hierarchy(fine_capacity=1)
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     source = compiler.initial_topology()

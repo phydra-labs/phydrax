@@ -29,7 +29,7 @@ def _single(
     )
 
 
-def test_unrelated_energy_basis_cannot_authorize_converter_energy_creation() -> None:
+def test_energy_planning_scenario_1() -> None:
     from phydrax.units import KILOGRAM
 
     with pytest.raises(ValueError):
@@ -57,16 +57,6 @@ def test_unrelated_energy_basis_cannot_authorize_converter_energy_creation() -> 
                 ),
             ),
         )
-
-
-def _solve(spec: Any, **kwargs: Any) -> Any:
-    compiled = ep.compile_energy_system(spec, **kwargs)
-    solution = ep.solve_energy_system(compiled)
-    assert solution.successful, (solution.native_result.status, solution.replay.failures)
-    return compiled, solution
-
-
-def test_energy_charge_and_discharge_capacities_are_independent() -> None:
     results = []
     # Each case activates a different physical limit, without imposing E = P * dt.
     for energy, charge, discharge in ((0.5, 3.0, 3.0), (3.0, 0.2, 3.0), (3.0, 3.0, 0.3)):
@@ -85,9 +75,6 @@ def test_energy_charge_and_discharge_capacities_are_independent() -> None:
             np.diff(inventory), (charging - discharging) * (2.0, 1.0), atol=2e-5
         )
     np.testing.assert_allclose(results, (0.5, 0.4, 0.3), atol=2e-5)
-
-
-def test_exact_storage_does_not_create_negative_price_loss_cycles() -> None:
     store = ep.Inventory(
         "battery",
         "bus",
@@ -109,7 +96,14 @@ def test_exact_storage_does_not_create_negative_price_loss_cycles() -> None:
         ep.compile_energy_system(compiled.spec)
 
 
-def test_physical_retention_and_irregular_duration_ignore_accounting_weights() -> None:
+def _solve(spec: Any, **kwargs: Any) -> Any:
+    compiled = ep.compile_energy_system(spec, **kwargs)
+    solution = ep.solve_energy_system(compiled)
+    assert solution.successful, (solution.native_result.status, solution.replay.failures)
+    return compiled, solution
+
+
+def test_energy_planning_scenario_2() -> None:
     chronology = ep.Chronology(
         (ep.Horizon("day", (0.5, 2.0), multiplicity=200, probability=0.25, year=3),),
         discount_rate=0.1,
@@ -132,9 +126,6 @@ def test_physical_retention_and_irregular_duration_ignore_accounting_weights() -
     np.testing.assert_allclose(
         chronology.objective_weight, np.asarray((0.5, 2.0)) * 50 / 1.1**3
     )
-
-
-def test_fixed_free_periodic_and_linked_terminal_inventory() -> None:
     fixed = ep.Inventory(
         "battery", "bus", 2.0, 2.0, 2.0, (ep.InventoryBoundary("day", target=1.0),)
     )
@@ -184,9 +175,33 @@ def test_fixed_free_periodic_and_linked_terminal_inventory() -> None:
     np.testing.assert_allclose(
         linked_solution.plan.values("inventory/battery/state/use"), (1, 0), atol=2e-5
     )
+    chronology = ep.Chronology(
+        (
+            ep.Horizon("build-year", (1,), year=0),
+            ep.Horizon("after-retirement", (1,), year=2),
+        ),
+        financial_years=(0, 1, 2),
+    )
+    spec = ep.EnergySystem(
+        chronology,
+        (ep.Carrier("electricity"),),
+        (ep.BalancePoint("bus", "electricity"),),
+        sources=(
+            ep.Source("plant", "bus", 0),
+            ep.Source("backup", "bus", 5, marginal_cost=100),
+        ),
+        demands=(ep.Demand("load", "bus", (1, 1)),),
+        investments=(
+            ep.Investment("new", "plant", "power", 0, 1, 3, maximum=1, capital_cost=90),
+        ),
+    )
+    _, solution = _solve(spec)
+    np.testing.assert_allclose(solution.plan.values("investment/new"), (1,), atol=2e-5)
+    np.testing.assert_allclose(solution.plan.values("source/plant"), (1, 0), atol=2e-5)
+    np.testing.assert_allclose(solution.replay.cost, 190, atol=2e-4)
 
 
-def test_scenario_tree_blocks_anticipation_but_allows_recourse() -> None:
+def test_scenario_contracts() -> None:
     tree = ep.ScenarioTree(
         (
             ep.ScenarioNode("root", None, 0),
@@ -241,197 +256,6 @@ def test_scenario_tree_blocks_anticipation_but_allows_recourse() -> None:
         "nonanticipativity" in failure
         for failure in ep.replay_energy_system(compiled.spec, corrupted).failures
     )
-
-
-def test_vintage_retirement_is_distinct_from_financial_lifetime() -> None:
-    chronology = ep.Chronology(
-        (
-            ep.Horizon("build-year", (1,), year=0),
-            ep.Horizon("after-retirement", (1,), year=2),
-        ),
-        financial_years=(0, 1, 2),
-    )
-    spec = ep.EnergySystem(
-        chronology,
-        (ep.Carrier("electricity"),),
-        (ep.BalancePoint("bus", "electricity"),),
-        sources=(
-            ep.Source("plant", "bus", 0),
-            ep.Source("backup", "bus", 5, marginal_cost=100),
-        ),
-        demands=(ep.Demand("load", "bus", (1, 1)),),
-        investments=(
-            ep.Investment("new", "plant", "power", 0, 1, 3, maximum=1, capital_cost=90),
-        ),
-    )
-    _, solution = _solve(spec)
-    np.testing.assert_allclose(solution.plan.values("investment/new"), (1,), atol=2e-5)
-    np.testing.assert_allclose(solution.plan.values("source/plant"), (1, 0), atol=2e-5)
-    np.testing.assert_allclose(solution.replay.cost, 190, atol=2e-4)
-
-
-def test_build_and_commitment_use_exact_native_integer_decisions() -> None:
-    spec = ep.EnergySystem(
-        ep.Chronology((ep.Horizon("day", (1, 1)),)),
-        (ep.Carrier("electricity"),),
-        (ep.BalancePoint("bus", "electricity"),),
-        sources=(
-            ep.Source(
-                "plant",
-                "bus",
-                0,
-                marginal_cost=1,
-                minimum_fraction=0.5,
-                commitment=True,
-                startup_cost=2,
-            ),
-            ep.Source("backup", "bus", 5, marginal_cost=20),
-        ),
-        demands=(ep.Demand("load", "bus", (0, 1)),),
-        investments=(
-            ep.Investment(
-                "build",
-                "plant",
-                "power",
-                0,
-                10,
-                10,
-                maximum=2,
-                minimum_build=1,
-                fixed_build_cost=3,
-            ),
-        ),
-    )
-    _, solution = _solve(spec, exact=True)
-    np.testing.assert_allclose(solution.plan.values("on/plant"), (0, 1), atol=2e-5)
-    np.testing.assert_allclose(solution.plan.values("startup/plant"), (0, 1), atol=2e-5)
-    np.testing.assert_allclose(solution.plan.values("build/build"), (1,), atol=2e-5)
-    np.testing.assert_allclose(solution.replay.cost, 6, atol=2e-4)
-
-
-def test_replay_detects_corrupted_inventory_balance_and_reported_cost() -> None:
-    compiled, solution = _solve(ep.electricity_heat_storage_example())
-    damaged = tuple(
-        ep.EnergyDispatch(entry.name, entry.values + 0.2)
-        if entry.name == "inventory/heat-store/state/day"
-        else entry
-        for entry in solution.plan.dispatch
-    )
-    report = ep.replay_energy_system(
-        compiled.spec, ep.EnergyPlan(damaged, solution.plan.objective + 10)
-    )
-    assert not report.successful
-    assert "objective" in report.failures
-    assert any("inventory-dynamics" in failure for failure in report.failures)
-    damaged = tuple(
-        ep.EnergyDispatch(entry.name, entry.values + 0.5)
-        if entry.name == "source/grid-import"
-        else entry
-        for entry in solution.plan.dispatch
-    )
-    assert (
-        "balance/grid"
-        in ep.replay_energy_system(
-            compiled.spec, ep.EnergyPlan(damaged, solution.plan.objective)
-        ).failures
-    )
-
-
-def test_marginal_prices_remove_duration_weights_discount_and_solver_scaling() -> None:
-    chronology = ep.Chronology(
-        (ep.Horizon("day", (0.5, 2), multiplicity=7, probability=0.2, year=2),),
-        discount_rate=0.1,
-    )
-    compiled, solution = _solve(
-        _single(load=(1, 2), prices=(3, 5), chronology=chronology),
-        scaling=ep.EnergyScaling(flow=2, balance=4, objective=11),
-    )
-    np.testing.assert_allclose(solution.prices.marginal_cost[0].values, (3, 5), atol=2e-5)
-    changed = eqx.tree_at(lambda s: s.demands[0].rate, compiled.spec, (1.001, 2))
-    refreshed = ep.refresh_energy_system(compiled, changed)
-    perturbed = ep.solve_energy_system(refreshed)
-    assert perturbed.successful
-    expected = 0.001 * chronology.objective_weight[0] * 3
-    np.testing.assert_allclose(
-        perturbed.replay.cost - solution.replay.cost, expected, atol=2e-6
-    )
-    assert not solution.prices.unique
-
-
-def test_multioutput_hydrogen_and_explicit_heat_pump_energy_closure() -> None:
-    _, solution = _solve(ep.electricity_hydrogen_example())
-    np.testing.assert_allclose(
-        solution.plan.values("converter/fuel-cell")[1], 1, atol=2e-5
-    )
-    np.testing.assert_allclose(solution.plan.values("source/import")[1], 0, atol=2e-5)
-    spec = ep.electricity_heat_storage_example()
-    bad = ep.Converter(
-        "unphysical",
-        "grid",
-        "input",
-        (ep.ConverterPort("grid", -1), ep.ConverterPort("building", 3)),
-        4,
-    )
-    with pytest.raises(ValueError, match="environmental"):
-        ep.EnergySystem(spec.chronology, spec.carriers, spec.points, converters=(bad,))
-
-
-def test_strict_balance_requires_explicit_unserved_or_spill() -> None:
-    spec = ep.EnergySystem(
-        ep.Chronology((ep.Horizon("day", (1,)),)),
-        (ep.Carrier("electricity"),),
-        (ep.BalancePoint("bus", "electricity"),),
-        sources=(ep.Source("grid", "bus", 1, marginal_cost=2),),
-        demands=(ep.Demand("load", "bus", (2,), unserved_cost=100, allow_unserved=True),),
-    )
-    _, solution = _solve(spec)
-    np.testing.assert_allclose(solution.plan.values("unserved/load"), (1,), atol=2e-5)
-    np.testing.assert_allclose(solution.replay.cost, 102, atol=2e-4)
-
-
-def test_quadratic_dispatch_has_physical_cost_and_continuous_prices() -> None:
-    spec = ep.EnergySystem(
-        ep.Chronology((ep.Horizon("day", (1,)),)),
-        (ep.Carrier("electricity"),),
-        (ep.BalancePoint("bus", "electricity"),),
-        sources=(
-            ep.Source("quadratic", "bus", 5, quadratic_cost=2),
-            ep.Source("linear", "bus", 5, marginal_cost=3),
-        ),
-        demands=(ep.Demand("load", "bus", (3,)),),
-    )
-    _, solution = _solve(spec)
-    np.testing.assert_allclose(
-        solution.plan.values("source/quadratic"), (1.5,), atol=2e-5
-    )
-    np.testing.assert_allclose(solution.replay.cost, 6.75, atol=2e-5)
-    np.testing.assert_allclose(solution.prices.marginal_cost[0].values, (3,), atol=2e-5)
-
-
-def test_shared_scenario_balance_price_uses_combined_probability() -> None:
-    tree = ep.ScenarioTree(
-        (
-            ep.ScenarioNode("root", None, 0),
-            ep.ScenarioNode("low", "root", 1, 0.25),
-            ep.ScenarioNode("high", "root", 1, 0.75),
-        )
-    )
-    chronology = ep.Chronology(
-        (
-            ep.Horizon("low", (2, 0.5), probability=0.25, scenario="low"),
-            ep.Horizon("high", (2, 0.5), probability=0.75, scenario="high"),
-        ),
-        scenario_tree=tree,
-    )
-    _, solution = _solve(
-        _single(load=(1, 1, 1, 1), prices=(3, 5, 3, 7), chronology=chronology)
-    )
-    np.testing.assert_allclose(
-        solution.prices.marginal_cost[0].values, (3, 5, 3, 7), atol=2e-5
-    )
-
-
-def test_scenario_investments_cannot_operate_before_revelation() -> None:
     tree = ep.ScenarioTree(
         (
             ep.ScenarioNode("root", None, 0),
@@ -471,9 +295,6 @@ def test_scenario_investments_cannot_operate_before_revelation() -> None:
     np.testing.assert_allclose(
         solution.plan.values("source/backup"), (1, 0, 1, 0), atol=2e-5
     )
-
-
-def test_scenario_information_and_vintages_persist_across_years() -> None:
     tree = ep.ScenarioTree(
         (
             ep.ScenarioNode("root", None, 0),
@@ -520,4 +341,153 @@ def test_scenario_information_and_vintages_persist_across_years() -> None:
     )
     np.testing.assert_allclose(
         solution.plan.values("source/backup"), (1, 1, 1, 0), atol=2e-5
+    )
+
+
+def test_energy_planning_scenario_3() -> None:
+    spec = ep.EnergySystem(
+        ep.Chronology((ep.Horizon("day", (1, 1)),)),
+        (ep.Carrier("electricity"),),
+        (ep.BalancePoint("bus", "electricity"),),
+        sources=(
+            ep.Source(
+                "plant",
+                "bus",
+                0,
+                marginal_cost=1,
+                minimum_fraction=0.5,
+                commitment=True,
+                startup_cost=2,
+            ),
+            ep.Source("backup", "bus", 5, marginal_cost=20),
+        ),
+        demands=(ep.Demand("load", "bus", (0, 1)),),
+        investments=(
+            ep.Investment(
+                "build",
+                "plant",
+                "power",
+                0,
+                10,
+                10,
+                maximum=2,
+                minimum_build=1,
+                fixed_build_cost=3,
+            ),
+        ),
+    )
+    _, solution = _solve(spec, exact=True)
+    np.testing.assert_allclose(solution.plan.values("on/plant"), (0, 1), atol=2e-5)
+    np.testing.assert_allclose(solution.plan.values("startup/plant"), (0, 1), atol=2e-5)
+    np.testing.assert_allclose(solution.plan.values("build/build"), (1,), atol=2e-5)
+    np.testing.assert_allclose(solution.replay.cost, 6, atol=2e-4)
+    compiled, solution = _solve(ep.electricity_heat_storage_example())
+    damaged = tuple(
+        ep.EnergyDispatch(entry.name, entry.values + 0.2)
+        if entry.name == "inventory/heat-store/state/day"
+        else entry
+        for entry in solution.plan.dispatch
+    )
+    report = ep.replay_energy_system(
+        compiled.spec, ep.EnergyPlan(damaged, solution.plan.objective + 10)
+    )
+    assert not report.successful
+    assert "objective" in report.failures
+    assert any("inventory-dynamics" in failure for failure in report.failures)
+    damaged = tuple(
+        ep.EnergyDispatch(entry.name, entry.values + 0.5)
+        if entry.name == "source/grid-import"
+        else entry
+        for entry in solution.plan.dispatch
+    )
+    assert (
+        "balance/grid"
+        in ep.replay_energy_system(
+            compiled.spec, ep.EnergyPlan(damaged, solution.plan.objective)
+        ).failures
+    )
+    chronology = ep.Chronology(
+        (ep.Horizon("day", (0.5, 2), multiplicity=7, probability=0.2, year=2),),
+        discount_rate=0.1,
+    )
+    compiled, solution = _solve(
+        _single(load=(1, 2), prices=(3, 5), chronology=chronology),
+        scaling=ep.EnergyScaling(flow=2, balance=4, objective=11),
+    )
+    np.testing.assert_allclose(solution.prices.marginal_cost[0].values, (3, 5), atol=2e-5)
+    changed = eqx.tree_at(lambda s: s.demands[0].rate, compiled.spec, (1.001, 2))
+    refreshed = ep.refresh_energy_system(compiled, changed)
+    perturbed = ep.solve_energy_system(refreshed)
+    assert perturbed.successful
+    expected = 0.001 * chronology.objective_weight[0] * 3
+    np.testing.assert_allclose(
+        perturbed.replay.cost - solution.replay.cost, expected, atol=2e-6
+    )
+    assert not solution.prices.unique
+
+
+def test_energy_planning_scenario_4() -> None:
+    _, solution = _solve(ep.electricity_hydrogen_example())
+    np.testing.assert_allclose(
+        solution.plan.values("converter/fuel-cell")[1], 1, atol=2e-5
+    )
+    np.testing.assert_allclose(solution.plan.values("source/import")[1], 0, atol=2e-5)
+    spec = ep.electricity_heat_storage_example()
+    bad = ep.Converter(
+        "unphysical",
+        "grid",
+        "input",
+        (ep.ConverterPort("grid", -1), ep.ConverterPort("building", 3)),
+        4,
+    )
+    with pytest.raises(ValueError, match="environmental"):
+        ep.EnergySystem(spec.chronology, spec.carriers, spec.points, converters=(bad,))
+    spec = ep.EnergySystem(
+        ep.Chronology((ep.Horizon("day", (1,)),)),
+        (ep.Carrier("electricity"),),
+        (ep.BalancePoint("bus", "electricity"),),
+        sources=(ep.Source("grid", "bus", 1, marginal_cost=2),),
+        demands=(ep.Demand("load", "bus", (2,), unserved_cost=100, allow_unserved=True),),
+    )
+    _, solution = _solve(spec)
+    np.testing.assert_allclose(solution.plan.values("unserved/load"), (1,), atol=2e-5)
+    np.testing.assert_allclose(solution.replay.cost, 102, atol=2e-4)
+    spec = ep.EnergySystem(
+        ep.Chronology((ep.Horizon("day", (1,)),)),
+        (ep.Carrier("electricity"),),
+        (ep.BalancePoint("bus", "electricity"),),
+        sources=(
+            ep.Source("quadratic", "bus", 5, quadratic_cost=2),
+            ep.Source("linear", "bus", 5, marginal_cost=3),
+        ),
+        demands=(ep.Demand("load", "bus", (3,)),),
+    )
+    _, solution = _solve(spec)
+    np.testing.assert_allclose(
+        solution.plan.values("source/quadratic"), (1.5,), atol=2e-5
+    )
+    np.testing.assert_allclose(solution.replay.cost, 6.75, atol=2e-5)
+    np.testing.assert_allclose(solution.prices.marginal_cost[0].values, (3,), atol=2e-5)
+
+
+def test_shared_scenario_balance_price_uses_combined_probability() -> None:
+    tree = ep.ScenarioTree(
+        (
+            ep.ScenarioNode("root", None, 0),
+            ep.ScenarioNode("low", "root", 1, 0.25),
+            ep.ScenarioNode("high", "root", 1, 0.75),
+        )
+    )
+    chronology = ep.Chronology(
+        (
+            ep.Horizon("low", (2, 0.5), probability=0.25, scenario="low"),
+            ep.Horizon("high", (2, 0.5), probability=0.75, scenario="high"),
+        ),
+        scenario_tree=tree,
+    )
+    _, solution = _solve(
+        _single(load=(1, 1, 1, 1), prices=(3, 5, 3, 7), chronology=chronology)
+    )
+    np.testing.assert_allclose(
+        solution.prices.marginal_cost[0].values, (3, 5, 3, 7), atol=2e-5
     )

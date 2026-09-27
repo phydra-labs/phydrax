@@ -16,7 +16,7 @@ def _patterned_lattice() -> Any:
     )
 
 
-def test_inverse_factorization_is_uniformly_exact() -> None:
+def test_fourier_modal_factorization_scenario_1() -> None:
     lattice = _patterned_lattice()
     material = fm.FrequencyMaxwellMaterial(
         jnp.full(lattice.sample_shape, 2.5),
@@ -38,9 +38,6 @@ def test_inverse_factorization_is_uniformly_exact() -> None:
         rtol=1e-11,
         atol=1e-11,
     )
-
-
-def test_analytic_vector_factorization_returns_normalized_frame() -> None:
     lattice = _patterned_lattice()
     coordinate = lattice.fractional_coordinates[..., 0]
     material = fm.FrequencyMaxwellMaterial(
@@ -62,9 +59,6 @@ def test_analytic_vector_factorization_returns_normalized_frame() -> None:
         atol=1e-12,
     )
     assert not bool(prepared.diagnostics.frame_gradient_omitted)
-
-
-def test_frozen_jones_frame_reports_omitted_gradient() -> None:
     lattice = _patterned_lattice()
     coordinate = lattice.fractional_coordinates[..., 0]
     material = fm.FrequencyMaxwellMaterial(

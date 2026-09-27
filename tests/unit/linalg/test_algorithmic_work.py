@@ -8,7 +8,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 import phydrax as phx
 
@@ -88,48 +87,43 @@ def _solve(
     )
 
 
-@pytest.mark.parametrize(
-    ("matrix", "rhs", "method", "spd"),
-    (
+def test_fixed_trip_and_early_exit_agree_on_every_iterate() -> None:
+    for matrix, rhs, method, spd in (
         (GENERAL, RHS, la.FGMRES(restart=4), False),
         (GENERAL, RHS, la.GMRES(restart=5), False),
         (SPD, RHS, la.PCG(), True),
         (COMPLEX, COMPLEX_RHS, la.FGMRES(restart=3), False),
-    ),
-)
-def test_fixed_trip_and_early_exit_agree_on_every_iterate(
-    matrix: Any, rhs: Any, method: Any, spd: Any
-) -> None:
-    max_steps = 3 * SIZE
+    ):
+        max_steps = 3 * SIZE
 
-    def run(mode: Any) -> Any:
-        return jax.jit(
-            lambda steps: _solve(
-                matrix,
-                rhs,
-                method,
-                mode,
-                max_steps=max_steps,
-                steps=steps,
-                spd=spd,
-                relative=1.0e-10,
+        def run(mode: Any) -> Any:
+            return jax.jit(
+                lambda steps: _solve(
+                    matrix,
+                    rhs,
+                    method,
+                    mode,
+                    max_steps=max_steps,
+                    steps=steps,
+                    spd=spd,
+                    relative=1.0e-10,
+                )
             )
-        )
 
-    early, fixed = run("none"), run("algorithmic")
-    for steps in range(1, max_steps + 1):
-        early_result = early(jnp.asarray(steps, dtype=jnp.int32))
-        fixed_result = fixed(jnp.asarray(steps, dtype=jnp.int32))
-        assert int(fixed_result.diagnostics.iterations) == int(
-            early_result.diagnostics.iterations
-        )
-        assert int(fixed_result.status) == int(early_result.status)
-        np.testing.assert_allclose(
-            fixed_result.value, early_result.value, rtol=1e-12, atol=1e-14
-        )
-        if bool(early_result.successful):
-            break
-    assert bool(early_result.successful)
+        early, fixed = run("none"), run("algorithmic")
+        for steps in range(1, max_steps + 1):
+            early_result = early(jnp.asarray(steps, dtype=jnp.int32))
+            fixed_result = fixed(jnp.asarray(steps, dtype=jnp.int32))
+            assert int(fixed_result.diagnostics.iterations) == int(
+                early_result.diagnostics.iterations
+            )
+            assert int(fixed_result.status) == int(early_result.status)
+            np.testing.assert_allclose(
+                fixed_result.value, early_result.value, rtol=1e-12, atol=1e-14
+            )
+            if bool(early_result.successful):
+                break
+        assert bool(early_result.successful)
 
 
 def test_fixed_trip_status_reports_the_capacity_limit() -> None:
@@ -146,38 +140,35 @@ def _central_difference(function: Any, value: Any, step: Any = 1.0e-6) -> Any:
     return (function(value + step) - function(value - step)) / (2.0 * step)
 
 
-@pytest.mark.parametrize(
-    ("matrix", "method", "spd", "max_steps"),
-    (
+def test_reverse_mode_differentiates_the_executed_iteration_across_restarts() -> None:
+    for matrix, method, spd, max_steps in (
         (GENERAL, la.FGMRES(restart=3), False, 8),
         (GENERAL, la.GMRES(restart=2), False, 7),
         (SPD, la.PCG(), True, 7),
-    ),
-)
-def test_reverse_mode_differentiates_the_executed_iteration_across_restarts(
-    matrix: Any, method: Any, spd: Any, max_steps: Any
-) -> None:
-    direction = jnp.linspace(-1.0, 1.0, SIZE)
+    ):
+        direction = jnp.linspace(-1.0, 1.0, SIZE)
 
-    @jax.jit
-    def loss(scale: Any) -> Any:
-        result = _solve(
-            matrix + scale * jnp.diag(direction),
-            RHS * (1.0 + scale),
-            method,
-            "algorithmic",
-            max_steps=max_steps,
-            spd=spd,
+        @jax.jit
+        def loss(scale: Any) -> Any:
+            result = _solve(
+                matrix + scale * jnp.diag(direction),
+                RHS * (1.0 + scale),
+                method,
+                "algorithmic",
+                max_steps=max_steps,
+                spd=spd,
+            )
+            return jnp.sum(result.value**2)
+
+        executed = _solve(
+            matrix, RHS, method, "algorithmic", max_steps=max_steps, spd=spd
         )
-        return jnp.sum(result.value**2)
+        gradient = jax.jit(jax.grad(loss))(0.1)
+        tangent = jax.jit(lambda scale: jax.jvp(loss, (scale,), (1.0,))[1])(0.1)
 
-    executed = _solve(matrix, RHS, method, "algorithmic", max_steps=max_steps, spd=spd)
-    gradient = jax.jit(jax.grad(loss))(0.1)
-    tangent = jax.jit(lambda scale: jax.jvp(loss, (scale,), (1.0,))[1])(0.1)
-
-    assert int(executed.diagnostics.iterations) == max_steps
-    np.testing.assert_allclose(gradient, _central_difference(loss, 0.1), rtol=1e-6)
-    np.testing.assert_allclose(gradient, tangent, rtol=1e-10)
+        assert int(executed.diagnostics.iterations) == max_steps
+        np.testing.assert_allclose(gradient, _central_difference(loss, 0.1), rtol=1e-6)
+        np.testing.assert_allclose(gradient, tangent, rtol=1e-10)
 
 
 def test_complex_pairing_reverse_mode_matches_finite_differences() -> None:

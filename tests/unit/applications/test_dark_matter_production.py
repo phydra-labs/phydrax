@@ -124,40 +124,75 @@ _CLAIM_FACTORIES = (
 )
 
 
-@pytest.mark.parametrize(("name", "factory"), _CLAIM_FACTORIES)
-def test_dark_matter_claim_profiles_are_independent_and_complete(
-    name: Any, factory: Any
-) -> None:
-    metric_ids = qualification.dark_matter_claim_metric_ids(name)
-    criteria = qualification.dark_matter_claim_criteria(
-        name,
-        {metric_id: 1.0 for metric_id in metric_ids},
-    )
-    campaign = _campaign(criteria)
-    claim = factory(
-        campaign,
-        criteria,
-        (f"{name}-locked-domain",),
-        {
-            "backend": "cpu",
-            "dtype": "float64",
-            "maximum_steps": 16,
-            "maximum_state_values": 4096,
-        },
-        reference_artifacts=(_reference(),),
-        requested_use=qualification.DarkMatterReferenceUse(),
-    )
+def test_dark_matter_production_scenario_1() -> None:
+    for name, factory in _CLAIM_FACTORIES:
+        metric_ids = qualification.dark_matter_claim_metric_ids(name)
+        criteria = qualification.dark_matter_claim_criteria(
+            name,
+            {metric_id: 1.0 for metric_id in metric_ids},
+        )
+        campaign = _campaign(criteria)
+        claim = factory(
+            campaign,
+            criteria,
+            (f"{name}-locked-domain",),
+            {
+                "backend": "cpu",
+                "dtype": "float64",
+                "maximum_steps": 16,
+                "maximum_state_values": 4096,
+            },
+            reference_artifacts=(_reference(),),
+            requested_use=qualification.DarkMatterReferenceUse(),
+        )
 
-    support = dict(claim.support.attributes)
-    assert support["profile"] == name
-    assert support["production_inheritance"] is False
-    assert support["automatic_regime_switching"] is False
-    assert support["external_products"] == "stop-gradient"
-    assert support["checkpoint_contract"] == "runtime-checkpoint-envelope"
-    assert support["analysis_output_contract"] == "typed-snapshot-not-restart"
-    assert set(value.metric_id for value in claim.criteria) == set(metric_ids)
-    assert "changed-physics-or-support-identity" in claim.invalidation_triggers
-    assert "missing-or-inadmissible-source-rights" in claim.invalidation_triggers
+        support = dict(claim.support.attributes)
+        assert support["profile"] == name
+        assert support["production_inheritance"] is False
+        assert support["automatic_regime_switching"] is False
+        assert support["external_products"] == "stop-gradient"
+        assert support["checkpoint_contract"] == "runtime-checkpoint-envelope"
+        assert support["analysis_output_contract"] == "typed-snapshot-not-restart"
+        assert set(value.metric_id for value in claim.criteria) == set(metric_ids)
+        assert "changed-physics-or-support-identity" in claim.invalidation_triggers
+        assert "missing-or-inadmissible-source-rights" in claim.invalidation_triggers
+    prepared, state = _wave_case()
+    method = PeriodicWaveProductionMethod(prepared)
+    # ty: ignore[invalid-argument-type]
+    first = method.step(0, 1.0, state, 0.001, None)
+    # ty: ignore[invalid-argument-type]
+    second = method.step(1, 1.001, first.accepted_state, 0.001, None)
+
+    assert bool(first.successful)
+    assert bool(second.successful)
+    np.testing.assert_allclose(second.accepted_state.scale_factor, 1.002)
+    run_plan = method.production_run_plan(segment_steps=1)
+    assert run_plan.method.method_id == method.method_id
+    assert run_plan.maximum_steps == 2
+    assert not method.allows_step_reduction
+
+    # ty: ignore[invalid-argument-type]
+    rejected = method.step(0, 0.9, state, 0.001, None)
+    assert not bool(rejected.successful)
+    np.testing.assert_array_equal(rejected.accepted_state.psi, state.psi)
+    np.testing.assert_array_equal(
+        rejected.accepted_state.scale_factor, state.scale_factor
+    )
+    sidm, particles, support = _sidm_case()
+    method = RareSIDMProductionMethod(sidm, cosmology.FLRWBackground(1.0, 0.3))
+    initial = method.initialize(particles, jr.key(17), event_epoch=8)
+    # ty: ignore[invalid-argument-type]
+    first = method.step(0, 0.5, initial, 0.01, None)
+    # ty: ignore[invalid-argument-type]
+    second = method.step(1, 0.51, first.accepted_state, 0.01, None)
+
+    assert bool(first.successful)
+    assert bool(second.successful)
+    assert int(first.accepted_state.event_epoch) == 10
+    assert int(second.accepted_state.event_epoch) == 12
+    np.testing.assert_array_equal(first.accepted_state.prng_root, initial.prng_root)
+    np.testing.assert_array_equal(method.particle_ids, support.particle_ids)
+    assert method.production_run_plan(segment_steps=1).maximum_steps == 2
 
 
 def _wave_case(schedule: Any = (1.0, 1.001, 1.002), *, dtype: Any = jnp.float64) -> Any:
@@ -184,31 +219,6 @@ def _wave_case(schedule: Any = (1.0, 1.001, 1.002), *, dtype: Any = jnp.float64)
     ).prepare(space, background)
     complex_dtype = jnp.complex64 if dtype == jnp.float32 else jnp.complex128
     return prepared, prepared.initialize(jnp.ones((6,), dtype=complex_dtype))
-
-
-def test_periodic_wave_adapter_executes_one_bounded_transaction_and_rolls_back() -> None:
-    prepared, state = _wave_case()
-    method = PeriodicWaveProductionMethod(prepared)
-    # ty: ignore[invalid-argument-type]
-    first = method.step(0, 1.0, state, 0.001, None)
-    # ty: ignore[invalid-argument-type]
-    second = method.step(1, 1.001, first.accepted_state, 0.001, None)
-
-    assert bool(first.successful)
-    assert bool(second.successful)
-    np.testing.assert_allclose(second.accepted_state.scale_factor, 1.002)
-    run_plan = method.production_run_plan(segment_steps=1)
-    assert run_plan.method.method_id == method.method_id
-    assert run_plan.maximum_steps == 2
-    assert not method.allows_step_reduction
-
-    # ty: ignore[invalid-argument-type]
-    rejected = method.step(0, 0.9, state, 0.001, None)
-    assert not bool(rejected.successful)
-    np.testing.assert_array_equal(rejected.accepted_state.psi, state.psi)
-    np.testing.assert_array_equal(
-        rejected.accepted_state.scale_factor, state.scale_factor
-    )
 
 
 def test_periodic_wave_decimal_knots_run_through_production_runtime(
@@ -356,24 +366,6 @@ def _sidm_case() -> Any:
     )
     state = kdk.initialize(positions, jnp.zeros_like(positions), 0.5)
     return sidm, state, particles
-
-
-def test_rare_sidm_adapter_preserves_stable_ids_root_key_and_event_epoch() -> None:
-    sidm, particles, support = _sidm_case()
-    method = RareSIDMProductionMethod(sidm, cosmology.FLRWBackground(1.0, 0.3))
-    initial = method.initialize(particles, jr.key(17), event_epoch=8)
-    # ty: ignore[invalid-argument-type]
-    first = method.step(0, 0.5, initial, 0.01, None)
-    # ty: ignore[invalid-argument-type]
-    second = method.step(1, 0.51, first.accepted_state, 0.01, None)
-
-    assert bool(first.successful)
-    assert bool(second.successful)
-    assert int(first.accepted_state.event_epoch) == 10
-    assert int(second.accepted_state.event_epoch) == 12
-    np.testing.assert_array_equal(first.accepted_state.prng_root, initial.prng_root)
-    np.testing.assert_array_equal(method.particle_ids, support.particle_ids)
-    assert method.production_run_plan(segment_steps=1).maximum_steps == 2
 
 
 def _checkpoint_contract(

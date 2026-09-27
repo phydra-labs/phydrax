@@ -59,7 +59,7 @@ def _coordinates(population: Any) -> Any:
     return jnp.asarray(population.batch.points["x"].data).reshape((-1,))
 
 
-def test_residual_attention_preserves_points_and_global_weight_mass() -> None:
+def test_residual_attention_collocation_scenario_1() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         refresh_every=1,
         decay=0.0,
@@ -78,9 +78,10 @@ def test_residual_attention_preserves_points_and_global_weight_mass() -> None:
     assert int(refreshed.refresh_count) == 1
     assert int(refreshed.last_refresh) == 1
     assert refreshed.effective_sample_size <= coordinates.size
-
-
-def test_zero_residual_attention_remains_uniform_and_finite() -> None:
+    with pytest.raises(ValueError, match="decay"):
+        phx.sampling.collocation.ResidualAttentionCollocation(decay=1.0)
+    with pytest.raises(ValueError, match="minimum_ess_fraction"):
+        phx.sampling.collocation.ResidualAttentionCollocation(minimum_ess_fraction=0.0)
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         decay=0.0,
         minimum_ess_fraction=0.5,
@@ -92,9 +93,6 @@ def test_zero_residual_attention_remains_uniform_and_finite() -> None:
     assert jnp.allclose(refreshed.weight.data, 1.0)
     assert jnp.all(jnp.isfinite(refreshed.probability.data))
     assert jnp.isclose(refreshed.effective_sample_size, 16.0)
-
-
-def test_attention_work_charges_candidates_only_when_replacement_runs() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         candidate_count=7,
         replacement_count=0,
@@ -103,9 +101,6 @@ def test_attention_work_charges_candidates_only_when_replacement_runs() -> None:
     population = policy.initialize(term, key=jr.key(41))
 
     assert policy.refresh_residual_evaluations(population) == 16
-
-
-def test_attention_is_invariant_to_residual_units_and_enforces_ess_guard() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation(
         decay=0.0,
         uniform_fraction=0.0,
@@ -127,9 +122,6 @@ def test_attention_is_invariant_to_residual_units_and_enforces_ess_guard() -> No
     assert jnp.allclose(base.weight.data, scaled.weight.data, rtol=1e-6, atol=1e-7)
     assert base.effective_sample_size / 16.0 >= 0.75 - 1e-12
     assert bool(base.ess_guard_triggered)
-
-
-def test_attention_support_is_conditional_and_anchors_mark_reference_rows() -> None:
     policy = phx.sampling.collocation.ResidualAttentionCollocation()
     support = phx.sampling.collocation.collocation_policy_support(policy)
 
@@ -183,10 +175,3 @@ def test_functional_solver_persists_attention_population_and_diagnostics() -> No
     assert jnp.isfinite(trained.loss(key=jr.key(9), step=3))
     assert jnp.isclose(metrics["attention_weight_mean"], 1.0)
     assert metrics["attention_effective_sample_size"] > 0.0
-
-
-def test_residual_attention_validates_configuration() -> None:
-    with pytest.raises(ValueError, match="decay"):
-        phx.sampling.collocation.ResidualAttentionCollocation(decay=1.0)
-    with pytest.raises(ValueError, match="minimum_ess_fraction"):
-        phx.sampling.collocation.ResidualAttentionCollocation(minimum_ess_fraction=0.0)

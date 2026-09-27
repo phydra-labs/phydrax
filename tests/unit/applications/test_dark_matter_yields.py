@@ -74,7 +74,7 @@ def _spectrum(
     )
 
 
-def test_continuum_and_exact_lines_preserve_multiplicity_energy_and_uncertainty() -> None:
+def test_dark_matter_yields_scenario_1() -> None:
     evidence = _spectrum().integrate()
 
     np.testing.assert_allclose(evidence.continuum_multiplicity, 2.0)
@@ -92,9 +92,6 @@ def test_continuum_and_exact_lines_preserve_multiplicity_energy_and_uncertainty(
         np.sqrt((0.05 * 1.0) ** 2 + (0.1 * 2.0) ** 2 + (0.05 * 3.0) ** 2 + 0.4**2),
     )
     assert bool(evidence.valid)
-
-
-def test_branching_mixture_is_weighted_and_rejects_incomplete_branching() -> None:
     first = _spectrum(
         value=1.0, continuum_sigma=0.1, line_multiplicity=1.0, line_sigma=0.2
     )
@@ -115,11 +112,6 @@ def test_branching_mixture_is_weighted_and_rejects_incomplete_branching() -> Non
     np.testing.assert_allclose(mixed.lines.energy_gev, [2.0, 2.0])
     with pytest.raises(ValueError, match="sum to one"):
         mix_particle_yields(((0.2, first), (0.7, second)), mixture_id="invalid")
-
-
-def test_annihilation_and_decay_use_distinct_normalizations_and_propagate_uncertainty() -> (
-    None
-):
     spectrum = _spectrum(value=2.0, continuum_sigma=0.25)
     annihilation = annihilation_flux(
         AnnihilationProcessDescriptor(2.0, 1.0),
@@ -143,7 +135,7 @@ def test_annihilation_and_decay_use_distinct_normalizations_and_propagate_uncert
     )
 
 
-def test_exact_lines_and_continuum_compose_with_identity_binned_response() -> None:
+def test_dark_matter_yields_scenario_2() -> None:
     spectrum = _spectrum(
         value=1.0, continuum_sigma=0.0, line_multiplicity=0.5, line_sigma=0.0
     )
@@ -160,11 +152,6 @@ def test_exact_lines_and_continuum_compose_with_identity_binned_response() -> No
     np.testing.assert_allclose(result.response.predicted, [2.0, 3.0])
     np.testing.assert_allclose(result.predicted_standard_deviation, 0.0)
     assert bool(result.valid)
-
-
-def test_external_yield_provider_requires_manifest_identity_rights_and_constant_data() -> (
-    None
-):
     manifest = _manifest()
     provenance = ObservationDataProvenance(
         producer="external-yield-code",

@@ -6,7 +6,7 @@ from phydrax.nn.layers import RandomFourierFeatureEmbeddings
 from phydrax.nn.models import PirateNet
 
 
-def test_piratenet_zero_gates_make_the_deep_body_exactly_identity() -> None:
+def test_piratenet_contracts() -> None:
     model = PirateNet(
         in_size=2,
         out_size="scalar",
@@ -20,9 +20,6 @@ def test_piratenet_zero_gates_make_the_deep_body_exactly_identity() -> None:
     expected = model.projection(model.lift(x))
     assert jnp.array_equal(eqx.filter_jit(model)(x), expected)
     assert all(block.alpha == 0.0 for block in model.blocks)
-
-
-def test_piratenet_zero_gate_blocks_have_alpha_but_not_branch_gradients() -> None:
     model = PirateNet(
         in_size=2,
         out_size="scalar",
@@ -37,9 +34,6 @@ def test_piratenet_zero_gate_blocks_have_alpha_but_not_branch_gradients() -> Non
     assert gradient.blocks[0].alpha != 0.0
     branch_gradient = gradient.blocks[0].branch.func.layers[0].weight
     assert jnp.array_equal(branch_gradient, jnp.zeros_like(branch_gradient))
-
-
-def test_piratenet_reuses_existing_phydrax_embeddings() -> None:
     embedding = RandomFourierFeatureEmbeddings(
         in_size=2,
         out_size=8,
@@ -60,9 +54,6 @@ def test_piratenet_reuses_existing_phydrax_embeddings() -> None:
     output = eqx.filter_jit(model)(x)
     assert output.shape == (3,)
     assert jnp.all(jnp.isfinite(output))
-
-
-def test_piratenet_unit_gates_select_each_nonlinear_branch_exactly() -> None:
     model = PirateNet(
         in_size=2,
         out_size=2,

@@ -41,7 +41,7 @@ def _plane_geometry(normals: Any = None) -> Any:
     )
 
 
-def test_surfel_voxel_projection_recovers_local_plane_and_attributes() -> None:
+def test_surfel_voxel_contracts() -> None:
     grid = _dense_grid()
     geometry = _plane_geometry()
     plan = phx.discretization.SurfelVoxelProjectionPlan(
@@ -81,24 +81,6 @@ def test_surfel_voxel_projection_recovers_local_plane_and_attributes() -> None:
         rtol=1.0e-12,
         atol=1.0e-12,
     )
-
-
-def test_surfel_voxel_routes_fail_closed_on_candidate_capacity() -> None:
-    grid = _dense_grid()
-    geometry = _plane_geometry()
-    prepared = phx.discretization.SurfelVoxelProjectionPlan(
-        grid,
-        geometry,
-        maximum_voxels_per_surfel=1,
-        route_capacity=1,
-        normal_distance_support=0.3,
-    ).prepare(geometry)
-    assert not bool(prepared.evidence.successful)
-    assert bool(prepared.evidence.candidate_overflow)
-    assert int(prepared.evidence.maximum_candidates_per_surfel) > 1
-
-
-def test_surfel_voxel_projection_rejects_invalid_confidence() -> None:
     grid = _dense_grid()
     geometry = _plane_geometry()
     routes = phx.discretization.SurfelVoxelProjectionPlan(
@@ -111,9 +93,6 @@ def test_surfel_voxel_projection_rejects_invalid_confidence() -> None:
     result = routes.project(geometry, confidence=jnp.asarray((jnp.nan,)))
     assert not bool(result.successful)
     assert int(result.evidence.invalid_confidence_surfels) == 1
-
-
-def test_surfel_voxel_projection_rejects_opposing_surface_layers() -> None:
     grid = _dense_grid()
     positions = jnp.zeros((2, 3))
     prepared = phx.discretization.SurfelSetPlan(
@@ -143,6 +122,18 @@ def test_surfel_voxel_projection_rejects_opposing_surface_layers() -> None:
     result = routes.project(geometry)
     assert int(result.evidence.conflicting_voxels) > 0
     assert not bool(jnp.any(result.supported & result.conflicting))
+    grid = _dense_grid()
+    geometry = _plane_geometry()
+    prepared = phx.discretization.SurfelVoxelProjectionPlan(
+        grid,
+        geometry,
+        maximum_voxels_per_surfel=1,
+        route_capacity=1,
+        normal_distance_support=0.3,
+    ).prepare(geometry)
+    assert not bool(prepared.evidence.successful)
+    assert bool(prepared.evidence.candidate_overflow)
+    assert int(prepared.evidence.maximum_candidates_per_surfel) > 1
 
 
 def test_surfel_voxel_projection_jits_and_has_fixed_route_gradient() -> None:

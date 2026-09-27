@@ -117,13 +117,9 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
         ):
             raise ValueError("Kremer-Grest resource bounds are exceeded.")
         layout_shape = chain_layout.particle_indices.shape
-        layout_indices = np.empty(
-            (layout_shape[0], layout_shape[1]), dtype=np.int32
-        )
+        layout_indices = np.empty((layout_shape[0], layout_shape[1]), dtype=np.int32)
         layout_indices[...] = np.asarray(chain_layout.particle_indices)
-        layout_mask = np.empty(
-            (layout_shape[0], layout_shape[1]), dtype=np.bool_
-        )
+        layout_mask = np.empty((layout_shape[0], layout_shape[1]), dtype=np.bool_)
         layout_mask[...] = np.asarray(chain_layout.chain_mask)
         selected = layout_indices[layout_mask]
         if (
@@ -196,8 +192,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
         )
         topology_bonds[...] = np.asarray(system.topology.bond_indices)
         actual_bonds = {
-            tuple(sorted((int(left), int(right))))
-            for left, right in topology_bonds
+            tuple(sorted((int(left), int(right)))) for left, right in topology_bonds
         }
         if actual_bonds != set(expected_bonds):
             raise ValueError(
@@ -221,9 +216,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
         exception_pairs = np.empty((exception_count, 2), dtype=np.int64)
         exception_pairs[...] = np.asarray(system.plan.topology.pair_exceptions)
         exception_scales = np.empty((exception_count,), dtype=np.float64)
-        exception_scales[...] = np.asarray(
-            system.plan.topology.lennard_jones_scales
-        )
+        exception_scales[...] = np.asarray(system.plan.topology.lennard_jones_scales)
         exception_scale = {
             tuple(sorted((int(left), int(right)))): float(scale)
             for (left, right), scale in zip(

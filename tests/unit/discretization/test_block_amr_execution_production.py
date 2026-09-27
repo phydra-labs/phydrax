@@ -32,7 +32,7 @@ def _hierarchy() -> Any:
     return phx.discretization.canonicalize_patch_hierarchy(topology)
 
 
-def test_signature_policy_generates_aligned_finite_envelopes() -> None:
+def test_block_amr_execution_production_scenario_1() -> None:
     policy = phx.discretization.PatchSignaturePolicy(
         (2, 2),
         (16, 16),
@@ -44,6 +44,60 @@ def test_signature_policy_generates_aligned_finite_envelopes() -> None:
     assert signature.envelope_shape == (8, 4)
     assert signature.halo_width == (2, 2)
     assert signature.admits((6, 4))
+    complex_ = _cut_complex()
+    group = phx.execution.ExecutionRuntime.current().root_group
+    partition = phx.discretization.DistributedCutCellPartitionPlan(
+        group,
+        2,
+    ).prepare(complex_)
+    canonical = jnp.zeros((complex_.component_capacity, 2))
+    canonical = canonical.at[0].set(jnp.asarray((2.0, 3.0)))
+
+    state = partition.pack(canonical)
+    restored = partition.unpack(state)
+    left, right, active = partition.face_states(state)
+    local_indices = partition.local_component_indices()
+    local_state = partition.pack_process_local(
+        local_indices,
+        canonical[jnp.asarray(local_indices, dtype=jnp.int32)],
+    )
+    local_restored = partition.unpack_process_local(local_state)
+
+    np.testing.assert_allclose(restored, canonical)
+    assert state.values.sharding == group.named_sharding(
+        PartitionSpec(partition.mesh_axis, None, None)
+    )
+    assert left.shape == right.shape == (complex_.face_capacity, 2)
+    assert int(jnp.count_nonzero(active)) == complex_.face_count
+    assert partition.local_component_indices() == (0,)
+    np.testing.assert_allclose(
+        local_restored,
+        canonical[jnp.asarray(local_indices, dtype=jnp.int32)],
+    )
+    np.testing.assert_allclose(partition.unpack(local_state), canonical)
+    assert partition.collective_accept(jnp.asarray(True))
+    complex_ = _cut_complex()
+    transition = phx.discretization.MultivaluedCutCellTransition(
+        complex_,
+        complex_,
+    )
+    derivative = phx.discretization.FrozenCutCellTransitionDerivativePlan(
+        transition,
+        topology_margin=0.1,
+    )
+    source = jnp.zeros((complex_.component_capacity, 2))
+    source = source.at[0].set(jnp.asarray((1.0, 2.0)))
+    tangent = jnp.zeros_like(source).at[0].set(jnp.asarray((0.3, -0.2)))
+    result = derivative.jvp_content(source, tangent)
+    cotangent = jnp.zeros_like(source).at[0].set(jnp.asarray((0.7, 0.4)))
+    pullback, evidence = derivative.vjp_content(cotangent)
+
+    assert bool(result.evidence.valid)
+    assert bool(evidence.valid)
+    np.testing.assert_allclose(
+        jnp.vdot(result.tangent, cotangent),
+        jnp.vdot(tangent, pullback),
+    )
 
 
 def test_executable_cache_compiles_then_reuses_exact_signature() -> None:
@@ -119,66 +173,6 @@ def _cut_complex() -> Any:
         phx.discretization.EmbeddedLevelSetBodySet((body,)),
         resources,
     ).prepare()
-
-
-def test_cut_cell_partition_uses_live_execution_group_sharding() -> None:
-    complex_ = _cut_complex()
-    group = phx.execution.ExecutionRuntime.current().root_group
-    partition = phx.discretization.DistributedCutCellPartitionPlan(
-        group,
-        2,
-    ).prepare(complex_)
-    canonical = jnp.zeros((complex_.component_capacity, 2))
-    canonical = canonical.at[0].set(jnp.asarray((2.0, 3.0)))
-
-    state = partition.pack(canonical)
-    restored = partition.unpack(state)
-    left, right, active = partition.face_states(state)
-    local_indices = partition.local_component_indices()
-    local_state = partition.pack_process_local(
-        local_indices,
-        canonical[jnp.asarray(local_indices, dtype=jnp.int32)],
-    )
-    local_restored = partition.unpack_process_local(local_state)
-
-    np.testing.assert_allclose(restored, canonical)
-    assert state.values.sharding == group.named_sharding(
-        PartitionSpec(partition.mesh_axis, None, None)
-    )
-    assert left.shape == right.shape == (complex_.face_capacity, 2)
-    assert int(jnp.count_nonzero(active)) == complex_.face_count
-    assert partition.local_component_indices() == (0,)
-    np.testing.assert_allclose(
-        local_restored,
-        canonical[jnp.asarray(local_indices, dtype=jnp.int32)],
-    )
-    np.testing.assert_allclose(partition.unpack(local_state), canonical)
-    assert partition.collective_accept(jnp.asarray(True))
-
-
-def test_frozen_cut_transition_jvp_and_vjp_are_exact_pair() -> None:
-    complex_ = _cut_complex()
-    transition = phx.discretization.MultivaluedCutCellTransition(
-        complex_,
-        complex_,
-    )
-    derivative = phx.discretization.FrozenCutCellTransitionDerivativePlan(
-        transition,
-        topology_margin=0.1,
-    )
-    source = jnp.zeros((complex_.component_capacity, 2))
-    source = source.at[0].set(jnp.asarray((1.0, 2.0)))
-    tangent = jnp.zeros_like(source).at[0].set(jnp.asarray((0.3, -0.2)))
-    result = derivative.jvp_content(source, tangent)
-    cotangent = jnp.zeros_like(source).at[0].set(jnp.asarray((0.7, 0.4)))
-    pullback, evidence = derivative.vjp_content(cotangent)
-
-    assert bool(result.evidence.valid)
-    assert bool(evidence.valid)
-    np.testing.assert_allclose(
-        jnp.vdot(result.tangent, cotangent),
-        jnp.vdot(tangent, pullback),
-    )
 
 
 def test_relaxed_hierarchy_derivative_is_explicit_smooth_surrogate() -> None:

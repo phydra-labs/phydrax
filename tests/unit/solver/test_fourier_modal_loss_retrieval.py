@@ -75,7 +75,7 @@ def _solve(prepared: Any, polarization: str = "te", side: str = "left") -> Any:
     return fm.solve_fourier_modal_maxwell(prepared, excitation)
 
 
-def test_directional_power_supports_right_only_and_coherent_two_sided_incidence() -> None:
+def test_fourier_modal_loss_retrieval_scenario_1() -> None:
     _, prepared = _slab_case(2.25, numeric_version="directional")
     right_result = _solve(prepared, side="right")
     np.testing.assert_allclose(
@@ -112,9 +112,6 @@ def test_directional_power_supports_right_only_and_coherent_two_sided_incidence(
         np.asarray(result.right_incoming_power), 1.0, rtol=2.0e-6, atol=2.0e-7
     )
     assert np.all(np.isfinite(np.asarray(result.net_port_power_into_stack)))
-
-
-def test_volume_loss_is_independent_and_passive_claims_fail_closed() -> None:
     _, prepared = _slab_case(2.25 + 0.08j, numeric_version="lossy")
     result = _solve(prepared)
     revision = fm.fourier_modal_numeric_revision(prepared)
@@ -158,6 +155,30 @@ def test_volume_loss_is_independent_and_passive_claims_fail_closed() -> None:
     assert int(contradicted.status) == int(
         fm.FourierModalLossStatus.PASSIVE_CLAIM_VIOLATED
     )
+    evidence = []
+    for bandwidth, sample_count in ((1, 3), (3, 7)):
+        _, prepared = _slab_case(
+            2.25 + 0.05j,
+            bandwidth=bandwidth,
+            sample_count=sample_count,
+            numeric_version=f"convergence-{bandwidth}",
+        )
+        evidence.append(
+            fm.evaluate_fourier_modal_loss(
+                prepared,
+                _solve(prepared),
+                fm.FourierModalLossPolicy(
+                    relative_tolerance=1.0e-5, absolute_tolerance=1.0e-8
+                ),
+                numeric_revision=fm.fourier_modal_numeric_revision(prepared),
+            )
+        )
+    convergence = fm.assess_fourier_modal_loss_convergence(
+        tuple(evidence), relative_tolerance=1.0e-5
+    )
+    assert bool(convergence.nested_refinement)
+    assert bool(convergence.port_converged)
+    assert bool(convergence.material_converged)
 
 
 def test_loss_rejects_artificial_pml_and_has_differentiable_observable() -> None:
@@ -189,33 +210,6 @@ def test_loss_rejects_artificial_pml_and_has_differentiable_observable() -> None
     derivative = jax.grad(objective)(jnp.asarray(0.05))
     assert jnp.isfinite(derivative)
     assert derivative > 0.0
-
-
-def test_loss_convergence_requires_distinct_nested_discretizations() -> None:
-    evidence = []
-    for bandwidth, sample_count in ((1, 3), (3, 7)):
-        _, prepared = _slab_case(
-            2.25 + 0.05j,
-            bandwidth=bandwidth,
-            sample_count=sample_count,
-            numeric_version=f"convergence-{bandwidth}",
-        )
-        evidence.append(
-            fm.evaluate_fourier_modal_loss(
-                prepared,
-                _solve(prepared),
-                fm.FourierModalLossPolicy(
-                    relative_tolerance=1.0e-5, absolute_tolerance=1.0e-8
-                ),
-                numeric_revision=fm.fourier_modal_numeric_revision(prepared),
-            )
-        )
-    convergence = fm.assess_fourier_modal_loss_convergence(
-        tuple(evidence), relative_tolerance=1.0e-5
-    )
-    assert bool(convergence.nested_refinement)
-    assert bool(convergence.port_converged)
-    assert bool(convergence.material_converged)
 
 
 def _retrieval(
@@ -263,7 +257,7 @@ def _retrieval(
     return retrieval
 
 
-def test_numeric_revision_is_content_addressed_and_fails_closed() -> None:
+def test_fourier_modal_loss_retrieval_scenario_2() -> None:
     _, prepared = _slab_case(2.25, numeric_version="revision-target")
     _, rebuilt = _slab_case(2.25, numeric_version="revision-target")
     _, perturbed = _slab_case(2.5, numeric_version="revision-target")
@@ -276,9 +270,6 @@ def test_numeric_revision_is_content_addressed_and_fails_closed() -> None:
     fm.require_fourier_modal_numeric_revision(rebuilt, revision)
     with pytest.raises(ValueError, match="numeric_revision"):
         fm.require_fourier_modal_numeric_revision(perturbed, revision)
-
-
-def test_retrieval_boundary_rejects_unbound_numeric_revision() -> None:
     harmonics, prepared = _slab_case(2.25, numeric_version="revision-target")
     _, other = _slab_case(3.0, numeric_version="revision-other")
     with pytest.raises(ValueError, match="numeric_revision"):
@@ -289,9 +280,6 @@ def test_retrieval_boundary_rejects_unbound_numeric_revision() -> None:
             harmonic_mode_id=harmonics.plan.layout.mode_ids[0],
             polarization="te",
         )
-
-
-def test_retrieval_uses_absolute_impedance_for_nonvacuum_equal_terminations() -> None:
     cases = []
     revisions = []
     harmonic_mode_id = ""
@@ -331,9 +319,6 @@ def test_retrieval_uses_absolute_impedance_for_nonvacuum_equal_terminations() ->
     )
     np.testing.assert_allclose(np.asarray(retrieval.permittivity), 9.0, rtol=2.0e-5)
     np.testing.assert_allclose(np.asarray(retrieval.permeability), 4.0, rtol=2.0e-5)
-
-
-def test_modal_sweep_accepts_one_provenance_bound_dispersive_response() -> None:
     cases = []
     revisions = []
     harmonic_mode_id = ""
@@ -357,7 +342,7 @@ def test_modal_sweep_accepts_one_provenance_bound_dispersive_response() -> None:
     assert sweep.physical_stack_digest
 
 
-def test_equivalent_slab_retrieval_valid_branch_zero_and_multimode_cases() -> None:
+def test_fourier_modal_loss_retrieval_scenario_3() -> None:
     retrieval = _retrieval(0.2, "te")
     assert isinstance(retrieval, fm.EquivalentSlabRetrieval)
     assert int(retrieval.status) == int(fm.EquivalentSlabRetrievalStatus.VALID)
@@ -440,9 +425,6 @@ def test_equivalent_slab_retrieval_valid_branch_zero_and_multimode_cases() -> No
     )
     assert bool(jnp.any(multimode.additional_propagating_orders))
     assert int(rejected.status) == int(fm.EquivalentSlabRetrievalStatus.INELIGIBLE)
-
-
-def test_local_isotropic_qualification_accepts_slab_and_rejects_disagreement() -> None:
     retrievals = tuple(
         _retrieval(thickness, polarization)
         for thickness in (0.1, 0.2)

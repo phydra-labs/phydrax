@@ -45,7 +45,7 @@ def _directions(count: Any, direction: Any = (0.0, 0.0, 1.0)) -> Any:
     return jnp.broadcast_to(jnp.asarray(direction), (count, 3))
 
 
-def test_beer_lambert_escape_probability_and_standard_error_scaling() -> None:
+def test_tissue_scenario_1() -> None:
     mu_a = jnp.log(2.0)
     coefficients = TissueTransportCoefficients(
         jnp.asarray([mu_a, 0.0]),
@@ -86,9 +86,6 @@ def test_beer_lambert_escape_probability_and_standard_error_scaling() -> None:
     ratio = float(large.standard_errors.escape / small.standard_errors.escape)
     assert 0.4 < ratio < 0.6
     assert float(large.maximum_absolute_ledger_residual) < 2e-6
-
-
-def test_henyey_greenstein_first_moment_matches_g() -> None:
     count = 16_384
     g = 0.72
     surfaces = _plane(-10.0, 0, 0, (1.0,))
@@ -122,9 +119,6 @@ def test_henyey_greenstein_first_moment_matches_g() -> None:
             result.status == int(TissueTransportStatus.INTERACTION_CAPACITY_EXHAUSTED)
         )
     )
-
-
-def test_stochastic_fresnel_frequency_expected_split_and_tir() -> None:
     count = 20_000
     indices = (1.0, 1.5)
     coefficients = TissueTransportCoefficients(
@@ -189,7 +183,7 @@ def test_stochastic_fresnel_frequency_expected_split_and_tir() -> None:
     assert bool(jnp.all(tir.terminal_directions[:, 0, 2] > 0.0))
 
 
-def test_remaining_optical_depth_crosses_media_without_distance_rescaling() -> None:
+def test_tissue_scenario_2() -> None:
     key = jr.PRNGKey(62)
     photon_ids = jnp.asarray([3, 11, 29], dtype=jnp.uint32)
     coefficients = TissueTransportCoefficients(
@@ -225,9 +219,6 @@ def test_remaining_optical_depth_crosses_media_without_distance_rescaling() -> N
         result.terminal_optical_depths[:, 0], expected_remaining, atol=2e-6
     )
     np.testing.assert_array_equal(result.terminal_medium_indices[:, 0], 1)
-
-
-def test_roulette_is_unbiased_and_weight_ledger_is_pathwise_complete() -> None:
     count = 16_384
     coefficients = TissueTransportCoefficients(
         jnp.asarray([0.9]),
@@ -257,9 +248,6 @@ def test_roulette_is_unbiased_and_weight_ledger_is_pathwise_complete() -> None:
     )
     np.testing.assert_allclose(result.per_photon_tallies.ledger_residual, 0.0, atol=2e-6)
     np.testing.assert_allclose(result.tallies.absorption, [0.9], atol=2e-6)
-
-
-def test_same_key_is_reproducible_and_photon_ids_are_batching_invariant() -> None:
     coefficients = TissueTransportCoefficients(
         jnp.asarray([0.3]),
         jnp.asarray([0.7]),
@@ -318,7 +306,7 @@ def test_same_key_is_reproducible_and_photon_ids_are_batching_invariant() -> Non
     )
 
 
-def test_expected_split_capacity_exhaustion_reports_truncated_weight() -> None:
+def test_tissue_scenario_3() -> None:
     indices = (1.0, 1.5)
     coefficients = TissueTransportCoefficients(
         jnp.zeros((2,)), jnp.zeros((2,)), jnp.zeros((2,)), jnp.asarray(indices)
@@ -343,9 +331,6 @@ def test_expected_split_capacity_exhaustion_reports_truncated_weight() -> None:
     np.testing.assert_allclose(result.per_photon_tallies.truncated, [0.96], atol=2e-6)
     np.testing.assert_allclose(result.per_photon_tallies.live, [0.04], atol=2e-6)
     np.testing.assert_allclose(result.per_photon_tallies.ledger_residual, 0.0, atol=2e-6)
-
-
-def test_detector_and_signed_surface_flux_use_fixed_tallies() -> None:
     vertices = jnp.asarray(
         [[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]]
     )

@@ -136,7 +136,7 @@ def test_fused_block_forward_transpose_and_per_column_status_match_serial(
     )
 
 
-def test_exact_near_local_blocks_and_diagonal_match_prepared_operator() -> None:
+def test_layer_fast_adaptive_scenario_1() -> None:
     prepared = _prepared()
     provider = LaplaceDP0ExactNearProvider3D(prepared, max_block_entries=32)
     dense = prepared.dense_oracle.matrix
@@ -154,9 +154,6 @@ def test_exact_near_local_blocks_and_diagonal_match_prepared_operator() -> None:
     assert jnp.all(block.accuracy_supported)
     assert jnp.all(diagonal.accuracy_supported)
     assert not diagonal.envelope.continuum_certified
-
-
-def test_unsupported_3d_fast_capabilities_fail_closed() -> None:
     with pytest.raises(BEMFastCapabilityError, match="No catalogued 3D fast provider"):
         boundary_fast_provider_capabilities("fmm-3d", ambient_dimension=3)
     with pytest.raises(BEMFastCapabilityError, match="not an accelerator"):
@@ -171,11 +168,6 @@ def test_unsupported_3d_fast_capabilities_fail_closed() -> None:
     assert capabilities.accelerated
     assert capabilities.exact_prepared_near
     assert not capabilities.exact_transpose
-
-
-def test_deterministic_refinement_transfer_conserves_charge_and_invalidates_epoch() -> (
-    None
-):
     epoch = _epoch()
     policy = BoundaryRefinementPolicy(
         strategy="dorfler",

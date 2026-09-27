@@ -23,7 +23,7 @@ def _geometry() -> Any:
     )
 
 
-def test_surfel_quadrature_integrates_scalar_and_vector_fields() -> None:
+def test_surfel_quadrature_contracts() -> None:
     geometry = _geometry()
     scalar = phx.discretization.SurfelQuadraturePlan(
         geometry.discretization, deterministic=True
@@ -37,9 +37,6 @@ def test_surfel_quadrature_integrates_scalar_and_vector_fields() -> None:
         jnp.asarray(((1.0, 0.0), (0.0, 1.0), (1.0, 1.0))),
     )
     np.testing.assert_allclose(vector.integral, [4.0, 5.0])
-
-
-def test_surfel_quadrature_gradient_uses_physical_measure() -> None:
     geometry = _geometry()
     plan = phx.discretization.SurfelQuadraturePlan(geometry.discretization)
     gradient = jax.grad(lambda value: plan.evaluate(geometry, value).integral)(

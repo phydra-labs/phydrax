@@ -19,7 +19,7 @@ def _edge(source: Any, destination: Any, value: Any, variance: Any, index: Any) 
     )
 
 
-def test_network_gls_consumes_full_joint_covariance_and_reports_cycle_closure() -> None:
+def test_free_energy_network_scenario_1() -> None:
     observations = (
         _edge("a", "b", 1.0, 0.04, 0),
         _edge("b", "c", 2.0, 0.09, 1),
@@ -39,9 +39,6 @@ def test_network_gls_consumes_full_joint_covariance_and_reports_cycle_closure() 
     assert result.cycle_matrix.shape == (1, 3)
     np.testing.assert_allclose(result.cycle_residuals, 0.0, atol=1.0e-12)
     assert bool(result.successful)
-
-
-def test_network_cycle_residual_retains_inconsistent_edge_evidence() -> None:
     observations = (
         _edge("a", "b", 1.0, 0.04, 0),
         _edge("b", "c", 2.0, 0.04, 1),
@@ -63,11 +60,15 @@ def test_network_cycle_residual_retains_inconsistent_edge_evidence() -> None:
     assert int(result.statistical_status) & int(
         phx.uq.FreeEnergyStatus.CYCLE_INCONSISTENT
     )
-
-
-def test_shared_result_influences_supply_joint_edge_covariance_without_independence_assumption() -> (
-    None
-):
+    observations = (
+        _edge("a", "b", 1.0, 0.04, 0),
+        _edge("b", "c", 2.0, 0.09, 1),
+    )
+    plan = phx.uq.FreeEnergyNetworkPlan(("a", "b", "c"), reference_state_id="a")
+    with pytest.raises(ValueError, match="joint_covariance is required"):
+        plan.analyze(observations)
+    with pytest.raises(ValueError, match="diagonal"):
+        plan.analyze(observations, joint_covariance=jnp.eye(2))
     covariance = jnp.asarray(
         [
             [0.0, 0.0, 0.0],
@@ -112,15 +113,3 @@ def test_shared_result_influences_supply_joint_edge_covariance_without_independe
     result = plan.analyze(observations)
     np.testing.assert_allclose(result.joint_edge_covariance, covariance[1:, 1:])
     np.testing.assert_allclose(result.free_energies, [0.0, 1.0, 3.0])
-
-
-def test_network_refuses_marginal_variances_when_joint_covariance_is_unknown() -> None:
-    observations = (
-        _edge("a", "b", 1.0, 0.04, 0),
-        _edge("b", "c", 2.0, 0.09, 1),
-    )
-    plan = phx.uq.FreeEnergyNetworkPlan(("a", "b", "c"), reference_state_id="a")
-    with pytest.raises(ValueError, match="joint_covariance is required"):
-        plan.analyze(observations)
-    with pytest.raises(ValueError, match="diagonal"):
-        plan.analyze(observations, joint_covariance=jnp.eye(2))

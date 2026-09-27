@@ -82,7 +82,7 @@ def _broken_problem() -> Any:
     return problem
 
 
-def test_pou_colored_block_schedule_respects_fixed_patch_state() -> None:
+def test_functional_decomposition_advanced_scenario_1() -> None:
     problem = _pou_problem()
     first, second = problem.cover.patch_ids
     prepared = phx.solver.prepare_functional_decomposition(
@@ -108,9 +108,6 @@ def test_pou_colored_block_schedule_respects_fixed_patch_state() -> None:
     assert float(result.family.field(second).func.value) == -1.0
     assert result.state.local_steps == (2, 0)
     assert result.state.kernel_states[1] is None
-
-
-def test_relaxed_schwarz_owns_fixed_trace_state_and_reduces_defect() -> None:
     problem = _broken_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -141,9 +138,6 @@ def test_relaxed_schwarz_owns_fixed_trace_state_and_reduces_defect() -> None:
     assert result.state.trace_state.sweep == 3
     assert result.state.trace_state.maximum_defect < initial.maximum_defect
     assert result.state.local_steps == (3, 3)
-
-
-def test_mortar_nitsche_and_augmented_interface_terms_are_physical() -> None:
     problem = _broken_problem()
     family = problem.family
     pairing = family.cover.pairings[0]
@@ -193,7 +187,7 @@ def test_mortar_nitsche_and_augmented_interface_terms_are_physical() -> None:
     np.testing.assert_allclose(nitsche.loss(smooth.solver_functions()), 0.0)
 
 
-def test_dense_local_curvature_uses_phydrax_linear_solve() -> None:
+def test_functional_decomposition_advanced_scenario_2() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(
         functions={"u": domain.Parameter(1.0)},
@@ -218,9 +212,6 @@ def test_dense_local_curvature_uses_phydrax_linear_solve() -> None:
     assert result.accepted
     assert abs(float(result.functions["u"].func.value)) < 1.0e-4
     assert result.approximation == "exact-local-dense-hessian"
-
-
-def test_local_test_space_applies_discrete_riesz_geometry() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinates = jnp.linspace(0.0, 1.0, 9)
     points = domain.component().points({"x": coordinates[:, None]})
@@ -239,9 +230,75 @@ def test_local_test_space_applies_discrete_riesz_geometry() -> None:
     np.testing.assert_allclose(term.loss({"u": domain.Parameter(1.0)}), 1.0)
     assert test_space.evidence.verified
     assert not test_space.evidence.orthonormal
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
+    local = {}
+    terms = []
+    for index, patch in enumerate(cover.patches):
+        model = phx.nn.models.MLP(
+            in_size=1,
+            out_size="scalar",
+            hidden_sizes=(),
+            rwf=False,
+            key=jr.key(index),
+        )
+        local[patch.patch_id] = patch.domain.Model("x")(model)
+    family = phx.domain.LocalFieldFamily("u", cover, local)
+    for patch in cover.patches:
+        condition = phx.conditions.Residual(
+            family.ref(patch.patch_id).solver_name,
+            patch.interior,
+            lambda field: field - 1.0,
+        )
+        terms.append(
+            phx.solver.ScopedFunctionalTerm(
+                _fixed_penalty(condition),
+                phx.solver.PatchScope(patch.patch_id),
+            )
+        )
+    prepared = phx.solver.prepare_functional_decomposition(
+        phx.solver.FunctionalDecompositionProblem.broken(family, terms),
+        phx.solver.FunctionalDecompositionPlan(phx.solver.JointDecompositionTraining(0)),
+    )
+    local_result = phx.solver.solve_local_kfac(
+        prepared,
+        cover.patch_ids[0],
+        num_iter=1,
+        jit=False,
+    )
 
+    scalar_solver = phx.solver.FunctionalSolver(
+        functions={"u": domain.Parameter(1.0)},
+        terms=(
+            _fixed_penalty(
+                phx.conditions.Residual(
+                    "u",
+                    domain.component(),
+                    lambda field: field,
+                )
+            ),
+        ),
+    )
+    paths = tuple(
+        path
+        for path in phx.nn.parameters.ParameterSubspace.array_leaf_paths(
+            scalar_solver.functions
+        )
+        if ".func.value" in path
+    )
+    subspace = phx.nn.parameters.ParameterSubspace.from_leaf_paths(
+        scalar_solver.functions,
+        paths,
+    )
+    matrix_free = phx.solver.matrix_free_gauss_newton_step(
+        scalar_solver,
+        subspace,
+    )
 
-def test_arbitrary_hierarchy_trains_ordered_nonlinear_corrections() -> None:
+    assert local_result.approximation == "local-block-kfac"
+    assert matrix_free.matrix_free
+    assert matrix_free.accepted
+    assert matrix_free.final_loss < matrix_free.initial_loss
     domain = phx.domain.Interval1d(0.0, 1.0)
     base_term = _fixed_penalty(
         phx.conditions.Residual("u", domain.component(), lambda value: value)
@@ -347,7 +404,7 @@ def test_sharding_hybrid_and_deployment_roundtrip(
         phx.solver.load_decomposition_artifact(checkpoint_directory, artifact)
 
 
-def test_generalized_trace_aitken_and_bounded_asynchronous_schedule() -> None:
+def test_functional_decomposition_advanced_scenario_3() -> None:
     problem = _broken_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -391,81 +448,6 @@ def test_generalized_trace_aitken_and_bounded_asynchronous_schedule() -> None:
     assert float(aitken.relaxation) == 1.0
     assert asynchronous.state.patch_revisions == (2, 2)
     assert asynchronous.state.maximum_observed_staleness == 1
-
-
-def test_local_kfac_and_matrix_free_gauss_newton_curvature_routes() -> None:
-    domain = phx.domain.Interval1d(0.0, 1.0)
-    cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
-    local = {}
-    terms = []
-    for index, patch in enumerate(cover.patches):
-        model = phx.nn.models.MLP(
-            in_size=1,
-            out_size="scalar",
-            hidden_sizes=(),
-            rwf=False,
-            key=jr.key(index),
-        )
-        local[patch.patch_id] = patch.domain.Model("x")(model)
-    family = phx.domain.LocalFieldFamily("u", cover, local)
-    for patch in cover.patches:
-        condition = phx.conditions.Residual(
-            family.ref(patch.patch_id).solver_name,
-            patch.interior,
-            lambda field: field - 1.0,
-        )
-        terms.append(
-            phx.solver.ScopedFunctionalTerm(
-                _fixed_penalty(condition),
-                phx.solver.PatchScope(patch.patch_id),
-            )
-        )
-    prepared = phx.solver.prepare_functional_decomposition(
-        phx.solver.FunctionalDecompositionProblem.broken(family, terms),
-        phx.solver.FunctionalDecompositionPlan(phx.solver.JointDecompositionTraining(0)),
-    )
-    local_result = phx.solver.solve_local_kfac(
-        prepared,
-        cover.patch_ids[0],
-        num_iter=1,
-        jit=False,
-    )
-
-    scalar_solver = phx.solver.FunctionalSolver(
-        functions={"u": domain.Parameter(1.0)},
-        terms=(
-            _fixed_penalty(
-                phx.conditions.Residual(
-                    "u",
-                    domain.component(),
-                    lambda field: field,
-                )
-            ),
-        ),
-    )
-    paths = tuple(
-        path
-        for path in phx.nn.parameters.ParameterSubspace.array_leaf_paths(
-            scalar_solver.functions
-        )
-        if ".func.value" in path
-    )
-    subspace = phx.nn.parameters.ParameterSubspace.from_leaf_paths(
-        scalar_solver.functions,
-        paths,
-    )
-    matrix_free = phx.solver.matrix_free_gauss_newton_step(
-        scalar_solver,
-        subspace,
-    )
-
-    assert local_result.approximation == "local-block-kfac"
-    assert matrix_free.matrix_free
-    assert matrix_free.accepted
-    assert matrix_free.final_loss < matrix_free.initial_loss
-
-
-def test_cycle_orders_and_real_device_collectives() -> None:
     assert phx.solver.FunctionalCyclePlan(1, (1, 1), kind="v").order(2) == (
         (0, True),
         (1, True),

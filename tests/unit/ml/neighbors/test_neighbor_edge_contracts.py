@@ -80,9 +80,7 @@ _FIT_SURFACES = (
 )
 
 
-def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freeze() -> (
-    None
-):
+def test_neighbor_edge_contracts_scenario_1() -> None:
     features = jnp.array([[0.0], [2.0], [5.0]])
     targets = jnp.array([[0.0, 10.0], [20.0, 30.0], [50.0, 60.0]])
     recipe = KNeighborsRegressorRecipe(1, metric="euclidean")
@@ -113,9 +111,6 @@ def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freez
     assert model.model_execution_contract().regularity == regularity
     _assert_finite(jax.grad(lambda point: jnp.sum(model(point)))(jnp.array([1.7])))
     _assert_prediction_parameter_gradient(model, jnp.array([[1.7], [4.6]]))
-
-
-def test_exact_classifier_weights_labels_and_weight_policy_are_observable() -> None:
     features = jnp.array([[0.0], [2.0], [5.0]])
     labels = jnp.array([0, 1, 3], dtype=jnp.int32)
     sample_weight = jnp.array([1.0, 3.0, 7.0])
@@ -150,6 +145,53 @@ def test_exact_classifier_weights_labels_and_weight_policy_are_observable() -> N
         )
     with pytest.raises(Exception, match="class capacity"):
         NearestCentroidRecipe(class_count=2).fit_batch(MLBatch(features, labels))
+    dense = jnp.array([[-1.0, -0.5], [-0.7, -1.1], [0.8, 0.6], [1.2, 1.0]])
+    sparse = SparseFeatures(
+        dense,
+        jnp.broadcast_to(jnp.array([0, 1]), dense.shape),
+        feature_count=2,
+    )
+    labels = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+    targets = jnp.array([-0.8, -0.2, 0.5, 1.1])
+    recipes_and_targets = (
+        (KNeighborsRegressorRecipe(1), targets),
+        (KNeighborsClassifierRecipe(1, class_count=2), labels),
+        (KernelNeighborsRegressorRecipe(), targets),
+        (KernelNeighborsClassifierRecipe(class_count=2), labels),
+        (RadiusNeighborsRegressorRecipe(1.0), targets),
+        (RadiusNeighborsClassifierRecipe(1.0, class_count=2), labels),
+        (NearestCentroidRecipe(class_count=2), labels),
+        (NeighborhoodComponentsAnalysisRecipe(iterations=2), labels),
+        (MahalanobisMetricRecipe(), labels),
+    )
+    for recipe, target in recipes_and_targets:
+        with pytest.raises(TypeError, match="SparseFeatures|sparse|dense"):
+            recipe.fit_batch(MLBatch(sparse, target))
+    for recipe in (KernelDensityRecipe(0.7), LocalOutlierFactorRecipe(1)):
+        with pytest.raises(TypeError, match="SparseFeatures|sparse|dense"):
+            recipe.fit_batch(MLBatch(sparse))
+    dense = jnp.array([[-1.0, -0.5], [-0.7, -1.1], [0.8, 0.6], [1.2, 1.0]])
+    labels = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+
+    complex_features = dense.astype(jnp.complex64) * (1.0 + 0.4j)
+    complex_targets = jnp.array([1.0 + 0.2j, 0.5j, -0.7 + 0.1j, 1.2 - 0.3j])
+    complex_neighbor = (
+        KNeighborsRegressorRecipe(1)
+        .fit_batch(MLBatch(complex_features, complex_targets))
+        .as_trainable()
+    )
+    assert jnp.iscomplexobj(complex_neighbor(complex_features[:2]))
+    complex_density = (
+        KernelDensityRecipe(0.7).fit_batch(MLBatch(complex_features)).as_trainable()
+    )
+    assert jnp.all(jnp.isfinite(complex_density(complex_features[:2])))
+
+    with pytest.raises(TypeError, match="real feature"):
+        NeighborhoodComponentsAnalysisRecipe(iterations=2).fit_batch(
+            MLBatch(complex_features, labels)
+        )
+    with pytest.raises(TypeError, match="real features"):
+        MahalanobisMetricRecipe().fit_batch(MLBatch(complex_features, labels))
 
 
 def test_kernel_density_normalization_capacity_and_weight_gradients() -> None:
@@ -326,59 +368,6 @@ def test_metric_learning_exercises_declared_fit_and_parameter_gradients() -> Non
         == (GradientLevel.CONDITIONAL,) * 3
     )
     _assert_prediction_parameter_gradient(metric_result.as_trainable(), query)
-
-
-def test_sparse_inputs_fail_closed_without_implicit_densification() -> None:
-    dense = jnp.array([[-1.0, -0.5], [-0.7, -1.1], [0.8, 0.6], [1.2, 1.0]])
-    sparse = SparseFeatures(
-        dense,
-        jnp.broadcast_to(jnp.array([0, 1]), dense.shape),
-        feature_count=2,
-    )
-    labels = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
-    targets = jnp.array([-0.8, -0.2, 0.5, 1.1])
-    recipes_and_targets = (
-        (KNeighborsRegressorRecipe(1), targets),
-        (KNeighborsClassifierRecipe(1, class_count=2), labels),
-        (KernelNeighborsRegressorRecipe(), targets),
-        (KernelNeighborsClassifierRecipe(class_count=2), labels),
-        (RadiusNeighborsRegressorRecipe(1.0), targets),
-        (RadiusNeighborsClassifierRecipe(1.0, class_count=2), labels),
-        (NearestCentroidRecipe(class_count=2), labels),
-        (NeighborhoodComponentsAnalysisRecipe(iterations=2), labels),
-        (MahalanobisMetricRecipe(), labels),
-    )
-    for recipe, target in recipes_and_targets:
-        with pytest.raises(TypeError, match="SparseFeatures|sparse|dense"):
-            recipe.fit_batch(MLBatch(sparse, target))
-    for recipe in (KernelDensityRecipe(0.7), LocalOutlierFactorRecipe(1)):
-        with pytest.raises(TypeError, match="SparseFeatures|sparse|dense"):
-            recipe.fit_batch(MLBatch(sparse))
-
-
-def test_complex_geometry_follows_each_family_contract() -> None:
-    dense = jnp.array([[-1.0, -0.5], [-0.7, -1.1], [0.8, 0.6], [1.2, 1.0]])
-    labels = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
-
-    complex_features = dense.astype(jnp.complex64) * (1.0 + 0.4j)
-    complex_targets = jnp.array([1.0 + 0.2j, 0.5j, -0.7 + 0.1j, 1.2 - 0.3j])
-    complex_neighbor = (
-        KNeighborsRegressorRecipe(1)
-        .fit_batch(MLBatch(complex_features, complex_targets))
-        .as_trainable()
-    )
-    assert jnp.iscomplexobj(complex_neighbor(complex_features[:2]))
-    complex_density = (
-        KernelDensityRecipe(0.7).fit_batch(MLBatch(complex_features)).as_trainable()
-    )
-    assert jnp.all(jnp.isfinite(complex_density(complex_features[:2])))
-
-    with pytest.raises(TypeError, match="real feature"):
-        NeighborhoodComponentsAnalysisRecipe(iterations=2).fit_batch(
-            MLBatch(complex_features, labels)
-        )
-    with pytest.raises(TypeError, match="real features"):
-        MahalanobisMetricRecipe().fit_batch(MLBatch(complex_features, labels))
 
 
 def test_hard_neighbor_failures_and_case_query_geometry_are_explicit() -> None:

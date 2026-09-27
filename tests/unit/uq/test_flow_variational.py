@@ -41,7 +41,7 @@ def _config() -> Any:
     )
 
 
-def test_flow_variational_family_preserves_pytree_sample_density_contract() -> None:
+def test_flow_variational_contracts() -> None:
     problem = _problem()
     result = phx.uq.fit_flow_variational(
         problem,
@@ -61,9 +61,6 @@ def test_flow_variational_family_preserves_pytree_sample_density_contract() -> N
     assert result.samples.shape == (32,)
     assert jnp.all(jnp.isfinite(result.log_target))
     assert jnp.all(jnp.isfinite(result.log_variational))
-
-
-def test_flow_variational_reuses_explicit_mean_field_initialization() -> None:
     problem = _problem()
     config = _config()
     initialization = phx.uq.fit_variational(

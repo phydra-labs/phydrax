@@ -34,7 +34,7 @@ def _points() -> jnp.ndarray:
     )
 
 
-def test_plane_schedule_partitions_points_and_children() -> None:
+def test_plane_schedule_contracts() -> None:
     points = _points()
     schedule = _plan().build(points, stable_ids=jnp.asarray([7, 1, 6, 2, 5, 3, 4, 0]))
     assert bool(schedule.evidence.successful)
@@ -65,9 +65,6 @@ def test_plane_schedule_partitions_points_and_children() -> None:
             children = np.arange(child_start, child_start + child_count)
             np.testing.assert_array_equal(schedule.node_parents[children], node)
             assert int(jnp.sum(schedule.node_item_counts[children])) == count
-
-
-def test_plane_schedule_is_permutation_invariant_by_stable_id() -> None:
     points = _points()
     stable_ids = jnp.asarray([12, 17, 11, 16, 10, 15, 13, 14])
     permutation = jnp.asarray([6, 2, 7, 0, 5, 1, 4, 3])
@@ -80,9 +77,6 @@ def test_plane_schedule_is_permutation_invariant_by_stable_id() -> None:
     np.testing.assert_array_equal(first.node_prefixes, second.node_prefixes)
     np.testing.assert_array_equal(first.node_bit_levels, second.node_bit_levels)
     np.testing.assert_array_equal(first.node_item_counts, second.node_item_counts)
-
-
-def test_plane_schedule_exposes_terminal_buckets_and_failures() -> None:
     coincident = jnp.full((8, 2), 0.25)
     terminal = _plan().build(coincident)
     assert bool(terminal.evidence.successful)
@@ -103,9 +97,6 @@ def test_plane_schedule_exposes_terminal_buckets_and_failures() -> None:
     exhausted = _plan(nodes=2).build(_points())
     assert not bool(exhausted.evidence.successful)
     assert int(exhausted.evidence.required_nodes) == 7
-
-
-def test_plane_schedule_empty_build_and_atomic_refresh_jit() -> None:
     plan = _plan()
     points = _points()
     build = eqx.filter_jit(plan.build)

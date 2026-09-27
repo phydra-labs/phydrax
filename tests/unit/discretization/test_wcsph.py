@@ -68,7 +68,7 @@ def _initial(compiled: Any) -> Any:
     return compiled.initialize_state(position, velocity)
 
 
-def test_wcsph_density_formulations_have_explicit_state_and_drift_layouts() -> None:
+def test_wcsph_scenario_1() -> None:
     summation = _compiled(continuity=False)
     continuity = _compiled(continuity=True)
     summation_state = _initial(summation)
@@ -86,78 +86,6 @@ def test_wcsph_density_formulations_have_explicit_state_and_drift_layouts() -> N
         summation.initialize_state(
             summation_state[:, :1], summation_state[:, 1:2], jnp.ones((8,))
         )
-
-
-def test_continuity_density_pressure_work_is_semidiscretely_energy_balanced() -> None:
-    compiled = _compiled(continuity=True)
-    state = _initial(compiled)
-    diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
-
-    def total_energy(value: Any) -> Any:
-        position, velocity, density = compiled.dynamics.state_layout.unpack(value)
-        masses = compiled.dynamics.particles.safe_masses
-        return jnp.sum(
-            0.5 * masses * jnp.sum(velocity * velocity, axis=-1)
-            + masses * compiled.problem.material.specific_internal_energy(density)
-        )
-
-    directional_rate = jnp.vdot(
-        jax.grad(total_energy)(state), compiled.dynamics(0.0, state, None)
-    )
-
-    assert jnp.allclose(diagnostics.pressure_energy_balance_defect, 0.0, atol=2e-13)
-    assert jnp.allclose(directional_rate, 0.0, atol=2e-13)
-    assert jnp.allclose(diagnostics.total_energy_rate, 0.0, atol=2e-13)
-
-
-def test_summation_wcsph_pressure_acceleration_matches_barotropic_reference() -> None:
-    compiled = _compiled(continuity=False)
-    state = _initial(compiled)
-    position, velocity, _ = compiled.dynamics.state_layout.unpack(state)
-    barotropic = phx.equations.compile_barotropic_sph_problem(
-        phx.equations.BarotropicFluidProblemIR("reference", compiled.problem.material),
-        compiled.dynamics.particles,
-        phx.discretization.BarotropicSPHMethodPlan(
-            compiled.dynamics.method.kernel,
-            compiled.dynamics.method.smoothing_length,
-        ),
-        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(
-            28, box=compiled.dynamics.neighborhood.box
-        ),
-    )
-    rate = compiled.dynamics(0.0, state, None)
-
-    assert jnp.allclose(rate[:, :1], velocity)
-    assert jnp.allclose(
-        rate[:, 1:2],
-        barotropic.dynamics.acceleration(0.0, position, None),
-        rtol=2e-12,
-        atol=2e-13,
-    )
-
-
-def test_wcsph_external_acceleration_and_power_are_explicit() -> None:
-    def gravity(time: Any, position: Any, velocity: Any, density: Any, scale: Any) -> Any:
-        del time, velocity, density
-        return jnp.ones_like(position) * scale
-
-    compiled = _compiled(continuity=True, acceleration=gravity)
-    state = _initial(compiled)
-    scale = jnp.asarray(0.2)
-    diagnostics = compiled.dynamics.diagnostics(0.0, state, scale)
-    rate = compiled.dynamics(0.0, state, scale)
-
-    assert jnp.allclose(diagnostics.external_force, jnp.asarray([0.2]))
-    assert jnp.allclose(
-        rate[:, 1],
-        _compiled(continuity=True).dynamics(0.0, state, None)[:, 1] + scale,
-        rtol=2e-12,
-        atol=2e-13,
-    )
-    assert jnp.isfinite(diagnostics.external_power)
-
-
-def test_wcsph_step_graph_and_linearization_contracts() -> None:
     compiled = _compiled(
         continuity=True,
         backend="cell",
@@ -183,3 +111,69 @@ def test_wcsph_step_graph_and_linearization_contracts() -> None:
         rtol=2e-9,
         atol=2e-10,
     )
+    compiled = _compiled(continuity=False)
+    state = _initial(compiled)
+    position, velocity, _ = compiled.dynamics.state_layout.unpack(state)
+    barotropic = phx.equations.compile_barotropic_sph_problem(
+        phx.equations.BarotropicFluidProblemIR("reference", compiled.problem.material),
+        compiled.dynamics.particles,
+        phx.discretization.BarotropicSPHMethodPlan(
+            compiled.dynamics.method.kernel,
+            compiled.dynamics.method.smoothing_length,
+        ),
+        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(
+            28, box=compiled.dynamics.neighborhood.box
+        ),
+    )
+    rate = compiled.dynamics(0.0, state, None)
+
+    assert jnp.allclose(rate[:, :1], velocity)
+    assert jnp.allclose(
+        rate[:, 1:2],
+        barotropic.dynamics.acceleration(0.0, position, None),
+        rtol=2e-12,
+        atol=2e-13,
+    )
+
+
+def test_continuity_density_pressure_work_is_semidiscretely_energy_balanced() -> None:
+    compiled = _compiled(continuity=True)
+    state = _initial(compiled)
+    diagnostics = compiled.dynamics.diagnostics(0.0, state, None)
+
+    def total_energy(value: Any) -> Any:
+        position, velocity, density = compiled.dynamics.state_layout.unpack(value)
+        masses = compiled.dynamics.particles.safe_masses
+        return jnp.sum(
+            0.5 * masses * jnp.sum(velocity * velocity, axis=-1)
+            + masses * compiled.problem.material.specific_internal_energy(density)
+        )
+
+    directional_rate = jnp.vdot(
+        jax.grad(total_energy)(state), compiled.dynamics(0.0, state, None)
+    )
+
+    assert jnp.allclose(diagnostics.pressure_energy_balance_defect, 0.0, atol=2e-13)
+    assert jnp.allclose(directional_rate, 0.0, atol=2e-13)
+    assert jnp.allclose(diagnostics.total_energy_rate, 0.0, atol=2e-13)
+
+
+def test_wcsph_external_acceleration_and_power_are_explicit() -> None:
+    def gravity(time: Any, position: Any, velocity: Any, density: Any, scale: Any) -> Any:
+        del time, velocity, density
+        return jnp.ones_like(position) * scale
+
+    compiled = _compiled(continuity=True, acceleration=gravity)
+    state = _initial(compiled)
+    scale = jnp.asarray(0.2)
+    diagnostics = compiled.dynamics.diagnostics(0.0, state, scale)
+    rate = compiled.dynamics(0.0, state, scale)
+
+    assert jnp.allclose(diagnostics.external_force, jnp.asarray([0.2]))
+    assert jnp.allclose(
+        rate[:, 1],
+        _compiled(continuity=True).dynamics(0.0, state, None)[:, 1] + scale,
+        rtol=2e-12,
+        atol=2e-13,
+    )
+    assert jnp.isfinite(diagnostics.external_power)

@@ -99,7 +99,7 @@ def _mhd_problem(dimension: int, count: int = 6) -> Any:
     return grid, bridge, system, dynamics, full, magnetic
 
 
-def test_dimension_generic_mhd_and_accepted_integrals() -> None:
+def test_advanced_multiphysics_scenario_1() -> None:
     for dimension in (1, 2, 3):
         _, bridge, _, dynamics, full, magnetic = _mhd_problem(dimension)
         spatial = phx.discretization.UpwindConstrainedTransportPlan(dynamics, bridge)
@@ -114,9 +114,6 @@ def test_dimension_generic_mhd_and_accepted_integrals() -> None:
             atol=1e-12,
         )
         np.testing.assert_allclose(result.state.cell_state, state.cell_state, atol=1e-10)
-
-
-def test_mhd_reconstruction_and_hll_uct_constant_state() -> None:
     _, bridge, _, dynamics, full, magnetic = _mhd_problem(3)
     for method in ("plm", "weno_z", "teno", "mp5"):
         reconstruction = MHDPrimitiveReconstructionPlan(method)
@@ -131,51 +128,6 @@ def test_mhd_reconstruction_and_hll_uct_constant_state() -> None:
         assert jnp.all(jnp.isfinite(rate.cell_rate))
         np.testing.assert_allclose(rate.cell_rate, 0.0, atol=1e-10)
         np.testing.assert_allclose(rate.magnetic_rate, 0.0, atol=1e-10)
-
-
-def test_prepared_thermochemistry_conserves_species_invariant() -> None:
-    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
-        ("A", "B"),
-        (
-            phx.equations.ChemicalPhaseKind.GAS,
-            phx.equations.ChemicalPhaseKind.GAS,
-        ),
-        jnp.asarray((1.0, 1.0)),
-        ("X",),
-        jnp.asarray(((1, 1),), dtype=jnp.int32),
-        jnp.asarray((0, 0), dtype=jnp.int32),
-        gas_standard_pressure=101325.0,
-    )
-    thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
-        schema,
-        jnp.asarray((10.0, 10.0)),
-        jnp.asarray((0.0, 0.0)),
-        reference_temperature=300.0,
-        minimum_temperature=200.0,
-        maximum_temperature=2000.0,
-    )
-    mechanism = phx.equations.ChemicalMechanismIR(
-        "conversion",
-        schema,
-        thermodynamics,
-        (
-            phx.equations.ChemicalReactionSpec(
-                "A->B",
-                {"A": 1.0},
-                {"B": 1.0},
-                phx.equations.ArrheniusRatePlan(0.5),
-            ),
-        ),
-    ).prepare()
-    fields = mechanism.evaluate(
-        jnp.asarray((1.0, 0.0)),
-        jnp.asarray(500.0),
-        jnp.asarray(101325.0),
-    )
-    np.testing.assert_allclose(fields.element_residual, 0.0, atol=1e-12)
-
-
-def test_mhd_boundaries_advanced_integrators_and_nonideal_update() -> None:
     _, _, system, dynamics, full, magnetic = _mhd_problem(3)
     interior = full[0]
     normal = jnp.full(interior.shape[:-1], 0.2)
@@ -236,18 +188,54 @@ def test_mhd_boundaries_advanced_integrators_and_nonideal_update() -> None:
     advanced, report = nonideal.advance(state, 1e-4)
     assert bool(report.successful)
     np.testing.assert_allclose(advanced.magnetic_flux, state.magnetic_flux, atol=1e-10)
+    schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
+        ("A", "B"),
+        (
+            phx.equations.ChemicalPhaseKind.GAS,
+            phx.equations.ChemicalPhaseKind.GAS,
+        ),
+        jnp.asarray((1.0, 1.0)),
+        ("X",),
+        jnp.asarray(((1, 1),), dtype=jnp.int32),
+        jnp.asarray((0, 0), dtype=jnp.int32),
+        gas_standard_pressure=101325.0,
+    )
+    thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
+        schema,
+        jnp.asarray((10.0, 10.0)),
+        jnp.asarray((0.0, 0.0)),
+        reference_temperature=300.0,
+        minimum_temperature=200.0,
+        maximum_temperature=2000.0,
+    )
+    mechanism = phx.equations.ChemicalMechanismIR(
+        "conversion",
+        schema,
+        thermodynamics,
+        (
+            phx.equations.ChemicalReactionSpec(
+                "A->B",
+                {"A": 1.0},
+                {"B": 1.0},
+                phx.equations.ArrheniusRatePlan(0.5),
+            ),
+        ),
+    ).prepare()
+    fields = mechanism.evaluate(
+        jnp.asarray((1.0, 0.0)),
+        jnp.asarray(500.0),
+        jnp.asarray(101325.0),
+    )
+    np.testing.assert_allclose(fields.element_residual, 0.0, atol=1e-12)
 
 
-def test_modal_basis_contract() -> None:
+def test_advanced_multiphysics_scenario_2() -> None:
     basis = ModalForcingBasis(
         jnp.asarray([[[1.0]], [[-1.0]]]),
         weights=jnp.asarray([1.0, 0.5]),
     )
     evaluated = basis.evaluate(jnp.asarray([1.0, 2.0]))
     np.testing.assert_allclose(evaluated, 0.0)
-
-
-def test_bounded_one_dimensional_mhd_runtime() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(6, periodic=False),),
         axis_names=("x",),
@@ -300,52 +288,6 @@ def test_bounded_one_dimensional_mhd_runtime() -> None:
     np.testing.assert_allclose(
         result.state.magnetic_flux, state.magnetic_flux, atol=1e-10
     )
-
-
-def test_isolated_gravity_anisotropic_transport_and_imex() -> None:
-    grid = phx.discretization.TensorGridPlan(
-        (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
-        axis_names=("x",),
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
-    gravity = IsolatedCartesianGravityPlan(grid, softening=0.05)
-    density = jnp.exp(-100.0 * (grid.structured_axes[0].interval_centers - 0.5) ** 2)
-    potential, acceleration, evidence = gravity.solve(density)
-    assert bool(evidence.finite)
-    assert jnp.all(jnp.isfinite(potential))
-    assert jnp.all(jnp.isfinite(acceleration))
-
-    conduction = AnisotropicThermalTransportPlan(0.1)
-    temperature = 1.0 + 0.01 * jnp.sin(
-        2.0 * jnp.pi * grid.structured_axes[0].interval_centers
-    )
-    material = jnp.ones_like(temperature)
-    magnetic = jnp.ones(temperature.shape + (1,))
-    advanced, report = conduction.advance(
-        temperature, material, magnetic, jnp.asarray(1e-4), (1.0 / 8.0,)
-    )
-    assert bool(report.successful)
-    assert jnp.all(advanced > 0.0)
-
-    tableau = AdditiveIMEXTableau(
-        jnp.asarray([[0.0]]),
-        jnp.asarray([[1.0]]),
-        jnp.asarray([1.0]),
-        jnp.asarray([1.0]),
-    )
-    stepped = tableau.step(
-        jnp.asarray([1.0]),
-        jnp.asarray(0.0),
-        jnp.asarray(0.1),
-        lambda state, time, args: jnp.zeros_like(state),
-        lambda provisional, time, diagonal_step, args: (
-            provisional / (1.0 + diagonal_step)
-        ),
-        implicit_rhs=lambda state, time, args: -state,
-    )
-    np.testing.assert_allclose(stepped, 1.0 / 1.1, rtol=1e-6)
-
-
-def test_bounded_gravity_and_conservative_energy_coupling() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
@@ -404,9 +346,49 @@ def test_bounded_gravity_and_conservative_energy_coupling() -> None:
     corrected = coupling.apply(context)
     assert bool(corrected.successful)
     np.testing.assert_allclose(corrected.cell_average, average, atol=1e-10)
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    gravity = IsolatedCartesianGravityPlan(grid, softening=0.05)
+    density = jnp.exp(-100.0 * (grid.structured_axes[0].interval_centers - 0.5) ** 2)
+    potential, acceleration, evidence = gravity.solve(density)
+    assert bool(evidence.finite)
+    assert jnp.all(jnp.isfinite(potential))
+    assert jnp.all(jnp.isfinite(acceleration))
+
+    conduction = AnisotropicThermalTransportPlan(0.1)
+    temperature = 1.0 + 0.01 * jnp.sin(
+        2.0 * jnp.pi * grid.structured_axes[0].interval_centers
+    )
+    material = jnp.ones_like(temperature)
+    magnetic = jnp.ones(temperature.shape + (1,))
+    advanced, report = conduction.advance(
+        temperature, material, magnetic, jnp.asarray(1e-4), (1.0 / 8.0,)
+    )
+    assert bool(report.successful)
+    assert jnp.all(advanced > 0.0)
+
+    tableau = AdditiveIMEXTableau(
+        jnp.asarray([[0.0]]),
+        jnp.asarray([[1.0]]),
+        jnp.asarray([1.0]),
+        jnp.asarray([1.0]),
+    )
+    stepped = tableau.step(
+        jnp.asarray([1.0]),
+        jnp.asarray(0.0),
+        jnp.asarray(0.1),
+        lambda state, time, args: jnp.zeros_like(state),
+        lambda provisional, time, diagonal_step, args: (
+            provisional / (1.0 + diagonal_step)
+        ),
+        implicit_rhs=lambda state, time, args: -state,
+    )
+    np.testing.assert_allclose(stepped, 1.0 / 1.1, rtol=1e-6)
 
 
-def test_exact_cooling_coordinate_round_trip() -> None:
+def test_advanced_multiphysics_scenario_3() -> None:
     curve = phx.equations.TabulatedCoolingCurve(
         jnp.asarray([0.0, 1.0, 2.0]),
         jnp.asarray([-2.0, -1.0, 1.0]),
@@ -416,9 +398,6 @@ def test_exact_cooling_coordinate_round_trip() -> None:
     coordinate = curve.cooling_coordinate(temperature)
     recovered = curve.temperature_from_cooling_coordinate(coordinate)
     np.testing.assert_allclose(recovered, temperature, rtol=1e-6)
-
-
-def test_radiation_moments_and_gray_exchange() -> None:
     system = MultigroupM1RadiationSystem(2, 2)
     state = jnp.zeros((4, system.group_count * system.group_width))
     state = state.at[:, 0].set(1.0)
@@ -440,9 +419,6 @@ def test_radiation_moments_and_gray_exchange() -> None:
     assert bool(diagnostics.successful)
     assert jnp.all(advanced.radiation_energy > 0.0)
     np.testing.assert_allclose(diagnostics.combined_energy_defect, 0.0, atol=1e-12)
-
-
-def test_glm_unstructured_mapped_and_distributed_cochains() -> None:
     glm = GLMIdealMHDSystem(2)
     primitive = jnp.asarray([1.0, 0.0, 0.0, 0.0, 1.0, 0.2, 0.0, 0.0, 0.0])
     state = glm.primitive_to_conserved(primitive)
@@ -477,7 +453,7 @@ def test_glm_unstructured_mapped_and_distributed_cochains() -> None:
     assert ownership.owned_mask(2, 0).shape == magnetic.shape
 
 
-def test_composite_block_amr_poisson_uses_ordinary_linalg_evidence() -> None:
+def test_advanced_multiphysics_scenario_4() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=False),),
         axis_names=("x",),
@@ -549,9 +525,6 @@ def test_composite_block_amr_poisson_uses_ordinary_linalg_evidence() -> None:
     interface_left, interface_right = operator.interface_flux_contributions(solved.value)
     assert np.any(np.asarray(operator.plan.routes.edge_level_jump))
     np.testing.assert_allclose(interface_left + interface_right, 0.0, rtol=0.0, atol=0.0)
-
-
-def test_reflux_curl_preserves_constraint() -> None:
     _, bridge, _, _, _, magnetic = _mhd_problem(3, count=2)
     edge_count = bridge.cochain.cell_counts[1]
     register = ElectromotiveForceRegister(
@@ -563,9 +536,6 @@ def test_reflux_curl_preserves_constraint() -> None:
     updated, diagnostics = plan.reflux_curl(magnetic, register)
     assert diagnostics.divergence_change < 1e-12
     assert jnp.all(jnp.isfinite(updated))
-
-
-def test_cosmology_inference_and_closure_contracts() -> None:
     background = FLRWBackground(1.0, 0.3)
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(1), jnp.ones((1,)), ambient_dimension=1

@@ -23,7 +23,7 @@ def _loss(condition: Any, source: Any, functions: Any) -> Any:
     return penalty.loss(functions, key=jr.key(0))
 
 
-def test_boundary_and_initial_conditions_are_treatment_independent() -> None:
+def test_condition_catalog_scenario_1() -> None:
     geometry = phx.domain.Interval1d(0.0, 1.0)
     boundary = geometry.component({"x": phx.domain.Boundary()})
     zero = geometry.Function()(0.0)
@@ -56,9 +56,6 @@ def test_boundary_and_initial_conditions_are_treatment_independent() -> None:
         _loss(initial_condition, initial_source, {"u": time.Function()(0.0)}),
         0.0,
     )
-
-
-def test_cfd_thermal_solid_and_electromagnetic_catalogs_preserve_formulas() -> None:
     geometry = phx.domain.Interval1d(0.0, 1.0)
     boundary = geometry.component({"x": phx.domain.Boundary()})
     source = _source(boundary)
@@ -98,9 +95,6 @@ def test_cfd_thermal_solid_and_electromagnetic_catalogs_preserve_formulas() -> N
 
     for condition in conditions:
         assert jnp.allclose(_loss(condition, source, functions), 0.0)
-
-
-def test_stochastic_and_conservation_catalogs_use_generic_penalties() -> None:
     geometry = phx.domain.Interval1d(0.0, 1.0)
     interior = geometry.component()
     boundary = geometry.component({"x": phx.domain.Boundary()})

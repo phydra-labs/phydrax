@@ -9,7 +9,6 @@ import zipfile
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -17,6 +16,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.uq._flow_mcmc as flow_module
+from tests._support.assertions import assert_tree_equal
 
 
 def _problem() -> Any:
@@ -47,15 +47,10 @@ def _config(**overrides: Any) -> Any:
     return phx.uq.FlowNUTSConfig(**settings)
 
 
-def _assert_tree_equal(left: Any, right: Any) -> None:
-    comparisons = jax.tree_util.tree_map(jnp.array_equal, left, right)
-    assert all(jax.tree_util.tree_leaves(comparisons))
-
-
 def _assert_flow_arrays_equal(left: Any, right: Any) -> None:
     left_arrays, _ = eqx.partition(left, eqx.is_array)
     right_arrays, _ = eqx.partition(right, eqx.is_array)
-    _assert_tree_equal(left_arrays, right_arrays)
+    assert_tree_equal(left_arrays, right_arrays)
 
 
 def _rewrite_checkpoint(path: Any, mutate: Any) -> None:
@@ -157,8 +152,8 @@ def test_interrupted_flow_nuts_resume_is_exact_at_every_phase_boundary(
         **common,
     )
 
-    _assert_tree_equal(resumed.samples, direct.samples)
-    _assert_tree_equal(resumed.unconstrained_samples, direct.unconstrained_samples)
+    assert_tree_equal(resumed.samples, direct.samples)
+    assert_tree_equal(resumed.unconstrained_samples, direct.unconstrained_samples)
     _assert_flow_arrays_equal(resumed.flow, direct.flow)
     assert jnp.array_equal(resumed.log_density, direct.log_density)
     assert jnp.array_equal(resumed.acceptance_rate, direct.acceptance_rate)
@@ -223,7 +218,7 @@ def test_flow_nuts_checkpoint_rejects_changed_configuration(tmp_path: Any) -> No
         **extended_settings,
     )
 
-    _assert_tree_equal(resumed.samples, direct.samples)
+    assert_tree_equal(resumed.samples, direct.samples)
     assert jnp.array_equal(
         resumed.global_acceptance_rate,
         direct.global_acceptance_rate,
@@ -336,6 +331,7 @@ def test_flow_nuts_portable_export_and_arviz_include_global_statistics(
     tmp_path: Any,
     portable_flow_result: Any,
 ) -> None:
+    pytest.importorskip("arviz", reason="requires the optional ArviZ adapter")
     destination = tmp_path / "flow-result.phxuq"
     phx.uq.export_result(portable_flow_result, destination)
     archive = phx.uq.read_result_archive(destination)

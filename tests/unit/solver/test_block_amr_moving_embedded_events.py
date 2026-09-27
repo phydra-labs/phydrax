@@ -39,7 +39,7 @@ def _journal(epoch: Any) -> Any:
     return phx.solver.FiniteVolumeTopologyEventJournal(epoch, artifacts, capacity=4)
 
 
-def test_moving_embedded_boundary_commits_one_conservative_successor_epoch() -> None:
+def test_moving_embedded_contracts() -> None:
     geometry = _geometry_plan()
     source = geometry.state(0.0)
     target = geometry.state(1.0, revision=1)
@@ -61,11 +61,6 @@ def test_moving_embedded_boundary_commits_one_conservative_successor_epoch() -> 
     assert result.epoch.index == source.plan.topology.epoch.index + 1
     assert result.journal.current_epoch_id == result.epoch.epoch_id
     assert result.evidence.budget_defect == 0.0
-
-
-def test_moving_embedded_boundary_rejects_unclosed_swept_volume_budget_atomically() -> (
-    None
-):
     geometry = _geometry_plan()
     source = geometry.state(0.0)
     target = geometry.state(1.0, revision=1)

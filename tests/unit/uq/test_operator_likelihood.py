@@ -69,7 +69,7 @@ def _target_and_mask() -> Any:
     return target, observation_mask
 
 
-def test_operator_likelihood_matches_manual_sum_and_is_jittable() -> None:
+def test_operator_contracts() -> None:
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec(2, component_names=("u", "v"))
     target, observation_mask = _target_and_mask()
@@ -104,9 +104,42 @@ def test_operator_likelihood_matches_manual_sum_and_is_jittable() -> None:
         lambda likelihood_term, value: likelihood_term.log_prob(value)
     )
     assert jnp.allclose(compiled(term, parameters), jnp.sum(expected))
+    batch = _batch()
+    spec = phx.nn.operator.OperatorOutputSpec(2)
+    target, _ = _target_and_mask()
+    empty_case_mask = jnp.ones_like(target, dtype="bool").at[1].set(False)
 
+    with pytest.raises(ValueError, match="at least one observation"):
+        phx.uq.FixedOperatorObservationLikelihood(
+            lambda parameters: _prediction(parameters, batch, spec),
+            batch,
+            target,
+            phx.uq.GaussianLikelihood(1.0),
+            output_spec=spec,
+            field_name="output",
+            query_name="query",
+            observation_mask=empty_case_mask,
+        )
 
-def test_operator_likelihood_gradient_and_standardized_residual() -> None:
+    term = phx.uq.FixedOperatorObservationLikelihood(
+        lambda parameters: phx.nn.operator.OperatorPrediction.from_field(
+            "output",
+            jnp.ones((2, 3)),
+            "query",
+            batch.require_single_query(),
+            spec=phx.nn.operator.OperatorOutputSpec("scalar"),
+            case_axes=batch.case_axes,
+            case_shape=batch.case_shape,
+        ),
+        batch,
+        jnp.ones((2, 3, 2)),
+        phx.uq.GaussianLikelihood(1.0),
+        output_spec=spec,
+        field_name="output",
+        query_name="query",
+    )
+    with pytest.raises(ValueError, match="fixed batch contract"):
+        term.log_prob({"level": jnp.asarray(0.0)})
     batch = _batch()
     spec = phx.nn.operator.OperatorOutputSpec(2)
     target, observation_mask = _target_and_mask()
@@ -137,6 +170,80 @@ def test_operator_likelihood_gradient_and_standardized_residual() -> None:
         residual[combined],
         ((safe_target - level) / scale)[combined],
     )
+    dataset = _operator_dataset()
+    loader = phx.nn.operator.training.OperatorBatchLoader(
+        dataset,
+        batch_size=2,
+        shuffle=True,
+        seed=6,
+        drop_last=False,
+        prefetch=1,
+    )
+    source = phx.uq.OperatorMinibatchSource(loader, field_name="solution")
+    batches = tuple(source.epoch(0))
+    case_ids = jnp.concatenate(
+        [
+            batch.data.batch.input("state").values[:, 0][batch.factor_mask]
+            for batch in batches
+        ]
+    )
+
+    assert source.num_factors == 5
+    assert source.batch_capacity == 2
+    assert source.batches_per_epoch == 3
+    assert [int(batch.factor_count) for batch in batches] == [2, 2, 1]
+    assert jnp.array_equal(jnp.sort(case_ids), jnp.arange(5.0))
+    assert batches[-1].data.target.shape == (2, 4)
+    assert not bool(batches[-1].factor_mask[-1])
+    assert source.configuration()["loader_fingerprint"] == loader.fingerprint
+
+    changed_seed = phx.uq.OperatorMinibatchSource(
+        phx.nn.operator.training.OperatorBatchLoader(
+            dataset,
+            batch_size=2,
+            shuffle=True,
+            seed=7,
+            drop_last=False,
+            prefetch=1,
+        ),
+        field_name="solution",
+    )
+    changed_data = phx.uq.OperatorMinibatchSource(
+        phx.nn.operator.training.OperatorBatchLoader(
+            _operator_dataset(cases=6),
+            batch_size=2,
+            shuffle=True,
+            seed=6,
+            drop_last=False,
+            prefetch=1,
+        ),
+        field_name="solution",
+    )
+    assert source.fingerprint != changed_seed.fingerprint
+    assert source.fingerprint != changed_data.fingerprint
+    dataset = _operator_dataset()
+    with pytest.raises(ValueError, match="drop_last=True"):
+        phx.uq.OperatorMinibatchSource(
+            phx.nn.operator.training.OperatorBatchLoader(
+                dataset,
+                batch_size=2,
+                shuffle=True,
+                seed=1,
+                drop_last=True,
+            ),
+            field_name="solution",
+        )
+    with pytest.raises(ValueError, match="shuffle=True"):
+        phx.uq.OperatorMinibatchSource(
+            phx.nn.operator.training.OperatorBatchLoader(
+                dataset,
+                batch_size=2,
+                shuffle=False,
+                seed=1,
+                drop_last=False,
+            ),
+            field_name="solution",
+        )
 
 
 def test_operator_likelihood_is_independent_of_quadrature_weights() -> None:
@@ -209,45 +316,6 @@ def test_operator_likelihood_handles_nonfinite_values_by_observation_status() ->
     assert invalid_term.log_prob(parameters) == -jnp.inf
 
 
-def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches() -> None:
-    batch = _batch()
-    spec = phx.nn.operator.OperatorOutputSpec(2)
-    target, _ = _target_and_mask()
-    empty_case_mask = jnp.ones_like(target, dtype="bool").at[1].set(False)
-
-    with pytest.raises(ValueError, match="at least one observation"):
-        phx.uq.FixedOperatorObservationLikelihood(
-            lambda parameters: _prediction(parameters, batch, spec),
-            batch,
-            target,
-            phx.uq.GaussianLikelihood(1.0),
-            output_spec=spec,
-            field_name="output",
-            query_name="query",
-            observation_mask=empty_case_mask,
-        )
-
-    term = phx.uq.FixedOperatorObservationLikelihood(
-        lambda parameters: phx.nn.operator.OperatorPrediction.from_field(
-            "output",
-            jnp.ones((2, 3)),
-            "query",
-            batch.require_single_query(),
-            spec=phx.nn.operator.OperatorOutputSpec("scalar"),
-            case_axes=batch.case_axes,
-            case_shape=batch.case_shape,
-        ),
-        batch,
-        jnp.ones((2, 3, 2)),
-        phx.uq.GaussianLikelihood(1.0),
-        output_spec=spec,
-        field_name="output",
-        query_name="query",
-    )
-    with pytest.raises(ValueError, match="fixed batch contract"):
-        term.log_prob({"level": jnp.asarray(0.0)})
-
-
 def _operator_dataset(cases: Any = 5, resolution: Any = 4) -> Any:
     axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, resolution))
     values = jnp.arange(cases, dtype="float64")[:, None] + axis.nodes[None, :]
@@ -312,86 +380,6 @@ def test_dynamic_operator_likelihood_matches_fixed_full_batch_and_is_jittable() 
     )
     assert compiled.shape == (5,)
     assert compiled[-1] == 0.0
-
-
-def test_operator_minibatch_source_is_complete_padded_and_content_addressed() -> None:
-    dataset = _operator_dataset()
-    loader = phx.nn.operator.training.OperatorBatchLoader(
-        dataset,
-        batch_size=2,
-        shuffle=True,
-        seed=6,
-        drop_last=False,
-        prefetch=1,
-    )
-    source = phx.uq.OperatorMinibatchSource(loader, field_name="solution")
-    batches = tuple(source.epoch(0))
-    case_ids = jnp.concatenate(
-        [
-            batch.data.batch.input("state").values[:, 0][batch.factor_mask]
-            for batch in batches
-        ]
-    )
-
-    assert source.num_factors == 5
-    assert source.batch_capacity == 2
-    assert source.batches_per_epoch == 3
-    assert [int(batch.factor_count) for batch in batches] == [2, 2, 1]
-    assert jnp.array_equal(jnp.sort(case_ids), jnp.arange(5.0))
-    assert batches[-1].data.target.shape == (2, 4)
-    assert not bool(batches[-1].factor_mask[-1])
-    assert source.configuration()["loader_fingerprint"] == loader.fingerprint
-
-    changed_seed = phx.uq.OperatorMinibatchSource(
-        phx.nn.operator.training.OperatorBatchLoader(
-            dataset,
-            batch_size=2,
-            shuffle=True,
-            seed=7,
-            drop_last=False,
-            prefetch=1,
-        ),
-        field_name="solution",
-    )
-    changed_data = phx.uq.OperatorMinibatchSource(
-        phx.nn.operator.training.OperatorBatchLoader(
-            _operator_dataset(cases=6),
-            batch_size=2,
-            shuffle=True,
-            seed=6,
-            drop_last=False,
-            prefetch=1,
-        ),
-        field_name="solution",
-    )
-    assert source.fingerprint != changed_seed.fingerprint
-    assert source.fingerprint != changed_data.fingerprint
-
-
-def test_operator_minibatch_source_rejects_lossy_loader_policies() -> None:
-    dataset = _operator_dataset()
-    with pytest.raises(ValueError, match="drop_last=True"):
-        phx.uq.OperatorMinibatchSource(
-            phx.nn.operator.training.OperatorBatchLoader(
-                dataset,
-                batch_size=2,
-                shuffle=True,
-                seed=1,
-                drop_last=True,
-            ),
-            field_name="solution",
-        )
-    with pytest.raises(ValueError, match="shuffle=True"):
-        phx.uq.OperatorMinibatchSource(
-            phx.nn.operator.training.OperatorBatchLoader(
-                dataset,
-                batch_size=2,
-                shuffle=False,
-                seed=1,
-                drop_last=False,
-            ),
-            field_name="solution",
-        )
 
 
 def test_operator_sgmcmc_supports_selected_parameter_subspaces_and_predictions() -> None:

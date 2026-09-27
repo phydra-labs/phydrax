@@ -54,7 +54,7 @@ def _mode(
     )
 
 
-def test_separated_mode_and_convention_are_content_addressed() -> None:
+def test_black_hole_perturbations_scenario_1() -> None:
     convention = PerturbationConvention()
     first = _mode()
     repeated = _mode()
@@ -67,9 +67,6 @@ def test_separated_mode_and_convention_are_content_addressed() -> None:
     assert first.mode_id != scattering.mode_id
     assert boundary.horizon == "ingoing"
     assert boundary.infinity == "outgoing"
-
-
-def test_spheroidal_spherical_limit_and_projected_cosine_square() -> None:
     mode = _mode(spin_weight=-2, ell=2, m=2)
     plan = SpheroidalAngularPlan(mode, 5)
     matrix = spheroidal_angular_matrix(plan, 0.0)
@@ -90,9 +87,6 @@ def test_spheroidal_spherical_limit_and_projected_cosine_square() -> None:
     assert bool(result.qualified)
     assert bool(compiled.finite)
     assert compiled.coefficients.shape == result.coefficients.shape
-
-
-def test_schwarzschild_axial_and_polar_potentials_have_correct_structure() -> None:
     radius = jnp.asarray((2.0 + 1.0e-5, 10.0, 1.0e5))
     axial = schwarzschild_regge_wheeler_potential(
         radius,
@@ -110,7 +104,7 @@ def test_schwarzschild_axial_and_polar_potentials_have_correct_structure() -> No
     np.testing.assert_allclose(radius[-1] ** 2 * polar[-1], 6.0, rtol=5.0e-5)
 
 
-def test_kerr_teukolsky_scalar_and_spin_coefficients() -> None:
+def test_black_hole_perturbations_scenario_2() -> None:
     scalar_mode = _mode(spin_weight=0, ell=2, m=1, sector="teukolsky")
     scalar_plan = KerrTeukolskyRadialPlan(
         scalar_mode,
@@ -157,9 +151,6 @@ def test_kerr_teukolsky_scalar_and_spin_coefficients() -> None:
     np.testing.assert_allclose(spin.first_derivative, -4.0)
     assert not np.isclose(float(jnp.imag(spin.zeroth_derivative)), 0.0)
     assert bool(spin.finite & spin.domain_valid)
-
-
-def test_radial_results_have_fixed_shape_and_independent_evidence() -> None:
     schwarzschild_mode = _mode(
         spin_weight=-2,
         ell=2,

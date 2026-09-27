@@ -60,7 +60,7 @@ def _compile(problem: Any, domain: Any, plan: Any, *, num_points: Any = 32) -> A
     )
 
 
-def test_analysis_reports_stable_randomized_paths_and_methods() -> None:
+def test_randomized_pde_compiler_scenario_1() -> None:
     field = phx.equations.PDEExpression.field("u")
     problem = _problem(7, field.laplacian("x") + field.derivative("x", axis=0))
     plan = RandomizedDifferentialPlan(
@@ -76,9 +76,6 @@ def test_analysis_reports_stable_randomized_paths_and_methods() -> None:
     assert first.randomized_node_paths == ("root.args[0].args[0]",)
     assert first.node_methods == (("root.args[0].args[0]", "hutchinson"),)
     assert first.plan_id == plan.plan_id
-
-
-def test_analysis_rejects_biased_nonlinear_and_product_lowerings() -> None:
     field = phx.equations.PDEExpression.field("u")
     expressions = (
         field.laplacian("x").exp(),
@@ -94,9 +91,6 @@ def test_analysis_rejects_biased_nonlinear_and_product_lowerings() -> None:
         )
         assert not report.supported
         assert report.rejection_reasons
-
-
-def test_hutchinson_compilation_evaluates_laplacian_without_dense_hessian() -> None:
     dimension = 20
     field = phx.equations.PDEExpression.field("u")
     problem = _problem(dimension, field.laplacian("x"), rhs=2.0 * dimension)
@@ -116,6 +110,29 @@ def test_hutchinson_compilation_evaluates_laplacian_without_dense_hessian() -> N
     assert compiled.report.supported
     assert jnp.allclose(loss, 0.0)
     assert jnp.allclose(jitted, 0.0)
+    dimension = 1000
+    field = phx.equations.PDEExpression.field("u")
+    problem = _problem(dimension, field.laplacian("x"), rhs=2.0 * dimension)
+    domain = _domain(dimension)
+    plan = RandomizedDifferentialPlan(
+        "dimension",
+        dimension_policy=DimensionSamplingPolicy(dimension, 8),
+        loss_mode="independent_product",
+    )
+    compiled = _compile(problem, domain, plan, num_points=2)
+    function = domain.Function("x")(lambda x: jnp.dot(x, x))
+
+    diagnostics = compiled.term.diagnostics({"u": function}, key=jr.key(7))
+
+    assert diagnostics.num_realizations == 8
+    assert diagnostics.finite
+    assert jnp.allclose(diagnostics.objective, 0.0)
+    with pytest.raises(ValueError, match="independent coordinate draws"):
+        RandomizedDifferentialPlan(
+            "dimension",
+            dimension_policy=DimensionSamplingPolicy(10, 4),
+            loss_mode="u_statistic",
+        )
 
 
 def test_randomized_compiler_preserves_parameter_gradients() -> None:
@@ -146,27 +163,7 @@ def test_randomized_compiler_preserves_parameter_gradients() -> None:
     )
 
 
-def test_dimension_compilation_runs_in_dimension_1000_with_independent_products() -> None:
-    dimension = 1000
-    field = phx.equations.PDEExpression.field("u")
-    problem = _problem(dimension, field.laplacian("x"), rhs=2.0 * dimension)
-    domain = _domain(dimension)
-    plan = RandomizedDifferentialPlan(
-        "dimension",
-        dimension_policy=DimensionSamplingPolicy(dimension, 8),
-        loss_mode="independent_product",
-    )
-    compiled = _compile(problem, domain, plan, num_points=2)
-    function = domain.Function("x")(lambda x: jnp.dot(x, x))
-
-    diagnostics = compiled.term.diagnostics({"u": function}, key=jr.key(7))
-
-    assert diagnostics.num_realizations == 8
-    assert diagnostics.finite
-    assert jnp.allclose(diagnostics.objective, 0.0)
-
-
-def test_exact_first_report_rejects_objectives_with_no_randomized_node() -> None:
+def test_randomized_pde_compiler_scenario_2() -> None:
     coordinate = phx.equations.PDEExpression.coordinate_value("x")
     expression = coordinate.dot(coordinate).laplacian("x")
     problem = _problem(3, expression, rhs=6.0)
@@ -179,18 +176,6 @@ def test_exact_first_report_rejects_objectives_with_no_randomized_node() -> None
     assert not report.supported
     assert report.exact_node_paths
     assert "deterministic PDE compiler" in report.rejection_reasons[-1]
-
-
-def test_dimension_u_statistic_rejects_dependent_without_replacement_draws() -> None:
-    with pytest.raises(ValueError, match="independent coordinate draws"):
-        RandomizedDifferentialPlan(
-            "dimension",
-            dimension_policy=DimensionSamplingPolicy(10, 4),
-            loss_mode="u_statistic",
-        )
-
-
-def test_randomized_product_keeps_realizations_before_deterministic_event_axes() -> None:
     dimension = 3
     field = phx.equations.PDEExpression.field("u")
     coordinate = phx.equations.PDEExpression.coordinate_value("x")

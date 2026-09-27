@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_polynomial_library_has_stable_order_and_jit_evaluation() -> None:
+def test_feature_libraries_scenario_1() -> None:
     layout = phx.dynamics.StateLayout((2,), component_names=("x", "y"))
     library = phx.dynamics.identification.PolynomialFeatureLibrary(layout, degree=2)
 
@@ -26,18 +26,12 @@ def test_polynomial_library_has_stable_order_and_jit_evaluation() -> None:
     np.testing.assert_allclose(
         np.asarray(values), np.asarray([[1.0, 2.0, 3.0, 4.0, 6.0, 9.0]])
     )
-
-
-def test_polynomial_guard_runs_before_large_feature_allocation() -> None:
     with pytest.raises(ValueError, match="max_features"):
         phx.dynamics.identification.PolynomialFeatureLibrary(
             phx.dynamics.StateLayout((12,)),
             degree=8,
             max_features=100,
         )
-
-
-def test_composed_fourier_libraries_preserve_names_and_values() -> None:
     layout = phx.dynamics.StateLayout((1,), component_names=("angle",))
     sine = phx.dynamics.identification.FourierFeatureLibrary(
         layout,

@@ -208,7 +208,7 @@ def _assert_tree_exact(actual: Any, expected: Any) -> None:
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def test_contact_free_step_has_free_integrator_parity() -> None:
+def test_rod_contact_plant_scenario_1() -> None:
     plant = _prepared_plant(plane_offset=-10.0)
     source = _reset(plant)
     integration_source = ReducedRodIntegrationState(
@@ -238,9 +238,6 @@ def test_contact_free_step_has_free_integrator_parity() -> None:
         result.accepted_state.payload.material_state.stretch_shear_history,
         free.accepted_state.material_state.stretch_shear_history,
     )
-
-
-def test_plane_impact_is_resolved_over_the_requested_interval() -> None:
     velocity = jnp.asarray((0.0, 0.0, -12.0, 0.0, 0.0, 0.0), dtype=jnp.float32)
     plant = _prepared_plant(plane_offset=0.0, velocity=velocity)
     source = _reset(plant)
@@ -254,9 +251,6 @@ def test_plane_impact_is_resolved_over_the_requested_interval() -> None:
     assert result.evidence.final_minimum_gap >= -plant.gap_tolerance
     assert result.accepted_state.time == pytest.approx(source.time + 0.05)
     assert result.accepted_state.step_index == source.step_index + 1
-
-
-def test_sustained_plane_contact_retains_manifold_and_nonpenetration() -> None:
     velocity = jnp.asarray((0.0, 0.0, -12.0, 0.0, 0.0, 0.0), dtype=jnp.float32)
     plant = _prepared_plant(plane_offset=0.0, velocity=velocity)
     first = _step(plant, _reset(plant), 0.05)
@@ -276,7 +270,7 @@ def test_sustained_plane_contact_retains_manifold_and_nonpenetration() -> None:
     )
 
 
-def test_nonadjacent_self_contact_uses_canonical_manifold_routes() -> None:
+def test_rod_contact_plant_scenario_2() -> None:
     plant = _prepared_plant(
         positions=_self_contact_positions(),
         plane_offset=-10.0,
@@ -295,9 +289,6 @@ def test_nonadjacent_self_contact_uses_canonical_manifold_routes() -> None:
     assert jnp.unique(
         search.witnesses.route_keys[search.witnesses.valid]
     ).size == jnp.sum(search.witnesses.valid)
-
-
-def test_isotropic_coulomb_response_is_dissipative() -> None:
     velocity = jnp.asarray((0.0, 5.0, -12.0, 0.0, 0.0, 0.0), dtype=jnp.float32)
     plant = _prepared_plant(
         plane_offset=0.0,
@@ -353,6 +344,28 @@ def test_isotropic_coulomb_response_is_dissipative() -> None:
             rtol=2.0e-5,
             atol=2.0e-6,
         )
+    plant = _prepared_plant()
+    source = _reset(plant)
+    checkpoint = plant.checkpoint(source)
+    context = PlantStepContext(
+        source.time,
+        source.time + jnp.asarray(0.01, dtype=source.time.dtype),
+        source.step_index,
+    )
+    direct = plant.step(context, source, None, plant.bind_parameters())
+    digest = plant.state_digest(direct.accepted_state)
+
+    replay = plant.replay(
+        checkpoint,
+        (context,),
+        (None,),
+        plant.bind_parameters(),
+        expected_digests=(digest,),
+    )
+
+    assert replay.matched
+    assert replay.first_mismatch_step == -1
+    _assert_tree_exact(replay.final_state, direct.accepted_state)
 
 
 def _failed_search(original: Any, failure: Any) -> Any:
@@ -475,31 +488,6 @@ def test_cone_failure_retains_candidate_iterate_and_rolls_back(monkeypatch: Any)
         3,
     )
     _assert_tree_exact(result.accepted_state, source)
-
-
-def test_checkpoint_replay_reproduces_contact_history_clock_and_key() -> None:
-    plant = _prepared_plant()
-    source = _reset(plant)
-    checkpoint = plant.checkpoint(source)
-    context = PlantStepContext(
-        source.time,
-        source.time + jnp.asarray(0.01, dtype=source.time.dtype),
-        source.step_index,
-    )
-    direct = plant.step(context, source, None, plant.bind_parameters())
-    digest = plant.state_digest(direct.accepted_state)
-
-    replay = plant.replay(
-        checkpoint,
-        (context,),
-        (None,),
-        plant.bind_parameters(),
-        expected_digests=(digest,),
-    )
-
-    assert replay.matched
-    assert replay.first_mismatch_step == -1
-    _assert_tree_exact(replay.final_state, direct.accepted_state)
 
 
 def test_frictionless_capability_id_is_explicit_and_not_a_fallback() -> None:

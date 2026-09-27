@@ -98,7 +98,7 @@ def _residual_solver(func: Any) -> Any:
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_trajectory_signal_construction_does_not_make_static_jax_arrays() -> None:
+def test_trainable_partition_scenario_1() -> None:
     domain, _inputs, values = _make_trajectory_problem()
 
     with warnings.catch_warnings(record=True) as caught:
@@ -107,9 +107,6 @@ def test_trajectory_signal_construction_does_not_make_static_jax_arrays() -> Non
 
     messages = tuple(str(w.message) for w in caught)
     assert not any("JAX array is being set as static" in message for message in messages)
-
-
-def test_trajectory_signal_values_are_not_trainable_solver_leaves() -> None:
     domain, _inputs, values = _make_trajectory_problem()
     signal = TrajectorySignal(domain, values, interpolation="linear")
 
@@ -117,22 +114,6 @@ def test_trajectory_signal_values_are_not_trainable_solver_leaves() -> None:
     assert _inexact_leaves(params) == ()
     fixed_shapes = tuple(leaf.shape for leaf in _array_leaves(fixed))
     assert values.shape in fixed_shapes
-
-
-def test_domain_parameter_stays_trainable_but_plain_constant_is_fixed() -> None:
-    domain = Interval1d(0.0, 1.0)
-    param = domain.Parameter(1.0)
-    const = DomainFunction(domain=domain, deps=(), func=jnp.asarray(2.0))
-
-    param_params, _, _param_fixed = phx.partition_parameters({"lambda": param})
-    const_params, _, const_fixed = phx.partition_parameters({"c": const})
-
-    assert len(_inexact_leaves(param_params)) == 1
-    assert _inexact_leaves(const_params) == ()
-    assert any(bool(jnp.allclose(leaf, 2.0)) for leaf in _inexact_leaves(const_fixed))
-
-
-def test_trajectory_domain_arrays_are_not_trainable_model_leaves() -> None:
     domain, inputs, _values = _make_trajectory_problem()
     model = MLP(
         in_size=3,
@@ -151,9 +132,16 @@ def test_trajectory_domain_arrays_are_not_trainable_model_leaves() -> None:
     assert inputs.shape not in param_shapes
     assert inputs.shape in fixed_shapes
     assert domain.lengths.shape in fixed_shapes
+    domain = Interval1d(0.0, 1.0)
+    param = domain.Parameter(1.0)
+    const = DomainFunction(domain=domain, deps=(), func=jnp.asarray(2.0))
 
+    param_params, _, _param_fixed = phx.partition_parameters({"lambda": param})
+    const_params, _, const_fixed = phx.partition_parameters({"c": const})
 
-def test_hard_ragged_table_is_fixed_but_free_model_stays_trainable() -> None:
+    assert len(_inexact_leaves(param_params)) == 1
+    assert _inexact_leaves(const_params) == ()
+    assert any(bool(jnp.allclose(leaf, 2.0)) for leaf in _inexact_leaves(const_fixed))
     domain, _inputs, values = _make_trajectory_problem()
     model = MLP(
         in_size=3,
@@ -174,7 +162,7 @@ def test_hard_ragged_table_is_fixed_but_free_model_stays_trainable() -> None:
     assert values.shape in fixed_shapes
 
 
-def test_embedded_query_graph_state_is_fixed_but_graph_model_params_trainable() -> None:
+def test_trainable_partition_scenario_2() -> None:
     source = phx.graph.GraphIR(
         nodes={
             "positions": jnp.array([[0.0], [1.0]]),
@@ -206,9 +194,6 @@ def test_embedded_query_graph_state_is_fixed_but_graph_model_params_trainable() 
     assert jnp.allclose(trainable_leaves[0], 2.0)
     assert source.nodes["features"].shape in fixed_shapes
     assert query.graph.edges["kernel_weight"].shape in fixed_shapes
-
-
-def test_graph_rollout_stepper_dt_is_fixed_but_vector_field_params_trainable() -> None:
     graph = phx.graph.GraphIR(
         nodes=jnp.array([[0.0], [1.0]]),
         n_node=jnp.array([2], dtype=jnp.int32),
@@ -226,9 +211,6 @@ def test_graph_rollout_stepper_dt_is_fixed_but_vector_field_params_trainable() -
     assert jnp.allclose(trainable_leaves[0], 2.0)
     assert not any(bool(jnp.allclose(leaf, 0.25)) for leaf in trainable_leaves)
     assert graph.nodes.shape in tuple(leaf.shape for leaf in fixed_leaves)
-
-
-def test_partition_functions_returns_recombinable_role_lanes() -> None:
     domain = Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(
         functions={
@@ -249,7 +231,7 @@ def test_partition_functions_returns_recombinable_role_lanes() -> None:
     )
 
 
-def test_functional_solve_rejects_undeclared_arrays_unless_explicitly_selected() -> None:
+def test_trainable_partition_scenario_3() -> None:
     solver = _residual_solver(_RawScale(jnp.asarray(2.0)))
 
     with pytest.raises(ValueError, match=r"(?s)FunctionalSolver\.solve.*\.func\.scale"):
@@ -267,11 +249,6 @@ def test_functional_solve_rejects_undeclared_arrays_unless_explicitly_selected()
     )
 
     assert float(trained.functions["u"].func.scale) < 2.0
-
-
-def test_gradient_training_carries_model_state_but_linear_trial_space_rejects_it() -> (
-    None
-):
     solver = _residual_solver(_StatefulScale(jnp.asarray(2.0), jnp.asarray(7)))
 
     trained = solver.solve(num_iter=1, optim=optax.sgd(0.1), keep_best=False, jit=False)

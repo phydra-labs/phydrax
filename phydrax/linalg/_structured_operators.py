@@ -134,7 +134,7 @@ def _derived_rank_evidence(
 
 
 def _validated_permutation(permutation: Array, size: int, /) -> Array:
-    invalid = jnp.any(jnp.sort(permutation) != jnp.arange(size))
+    invalid = jnp.any(jnp.sort(permutation) != jnp.arange(size, dtype=permutation.dtype))
     if isinstance(invalid, jax_core.Tracer):
         return eqx.error_if(
             permutation,
@@ -205,7 +205,8 @@ class PermutationLinearOperator(AbstractLinearOperator):
     def _assemble_diagonal(self, /) -> Array:
         dtype = self.source.structure()
         coordinate_dtype = jax.tree.leaves(dtype)[0].dtype
-        return (self.permutation == jnp.arange(self.source.size)).astype(coordinate_dtype)
+        identity = jnp.arange(self.source.size, dtype=self.permutation.dtype)
+        return (self.permutation == identity).astype(coordinate_dtype)
 
 
 class TriangularLinearOperator(AbstractLinearOperator):
@@ -944,11 +945,11 @@ class SymmetricLowRankLinearOperator(AbstractLinearOperator):
         return _generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        return (self.factor * self.weights) @ jnp.conj(self.factor.T)
+        return (self.factor * self.weights[None, :]) @ jnp.conj(self.factor.T)
 
     def _assemble_diagonal(self, /) -> Array:
         return jnp.sum(
-            self.factor * jnp.conj(self.factor) * self.weights,
+            self.factor * jnp.conj(self.factor) * self.weights[None, :],
             axis=1,
         )
 

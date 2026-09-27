@@ -33,7 +33,7 @@ def _fractions(state: Any) -> Any:
     )
 
 
-def test_exact_steps_conserve_all_motor_unit_compartments() -> None:
+def test_skeletal_muscle_fatigue_scenario_1() -> None:
     prepared = _prepared()
     state = prepared.initialize()
     for _ in range(240):
@@ -46,9 +46,6 @@ def test_exact_steps_conserve_all_motor_unit_compartments() -> None:
     capacity = prepared.capacity(state)
     assert 0.0 < float(capacity.active_relative_force) < 1.0
     assert 0.0 < float(capacity.fatigued_fraction) < 1.0
-
-
-def test_zero_effort_recovery_transfers_fatigued_units_to_active_units() -> None:
     prepared = _prepared()
     state = prepared.initialize(
         uncommitted_fraction=0.0,
@@ -64,9 +61,6 @@ def test_zero_effort_recovery_transfers_fatigued_units_to_active_units() -> None
     assert after[1] > before[1]
     np.testing.assert_allclose(after[1] + after[2], before[1] + before[2], atol=2e-7)
     np.testing.assert_allclose(after.sum(), before.sum(), atol=2e-7)
-
-
-def test_invalid_brain_effort_rolls_back_every_compartment() -> None:
     prepared = _prepared()
     state = prepared.initialize(
         uncommitted_fraction=0.5,

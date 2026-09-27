@@ -1,5 +1,3 @@
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +17,7 @@ from phydrax.applications.skeletal_muscle.motor_units import (
 from phydrax.dynamics import DiscreteStepContext
 
 
-def test_default_population_reproduces_published_endpoints() -> None:
+def test_skeletal_muscle_potvin_fuglevand_2017_scenario_1() -> None:
     parameters = potvin_fuglevand_2017_default_parameters()
     runtime = PotvinFuglevand2017Plan().prepare(parameters)
 
@@ -45,9 +43,6 @@ def test_default_population_reproduces_published_endpoints() -> None:
     )
     np.testing.assert_allclose(runtime.maximum_excitation(), 67.0)
     np.testing.assert_allclose(runtime.rested_maximum_force(), 2215.9811474699964)
-
-
-def test_float32_population_preserves_requested_runtime_dtype() -> None:
     runtime = PotvinFuglevand2017Plan(dtype=np.float32).prepare()
     candidate = runtime.candidate(runtime.initialize(), 20.125, 0.1)
 
@@ -55,9 +50,6 @@ def test_float32_population_preserves_requested_runtime_dtype() -> None:
     assert candidate.candidate_state.current_twitch_force.dtype == jnp.float32
     assert candidate.output.motor_unit_force.dtype == jnp.float32
     assert candidate.output.total_force.dtype == jnp.float32
-
-
-def test_recruitment_threshold_and_saturation_boundaries_are_exact() -> None:
     runtime = PotvinFuglevand2017Plan(
         central_adaptation=False, peripheral_fatigue=False
     ).prepare()
@@ -77,7 +69,7 @@ def test_recruitment_threshold_and_saturation_boundaries_are_exact() -> None:
     np.testing.assert_allclose(np.asarray(maximum.firing_rate_hz)[[0, -1]], [35.0, 25.0])
 
 
-def test_force_frequency_branches_are_continuous_at_point_four() -> None:
+def test_skeletal_muscle_potvin_fuglevand_2017_scenario_2() -> None:
     parameters = PotvinFuglevand2017Parameters(
         jnp.asarray([1.0, 100.0]),
         jnp.asarray([1.0, 2.0]),
@@ -102,30 +94,6 @@ def test_force_frequency_branches_are_continuous_at_point_four() -> None:
     np.testing.assert_allclose(exact.normalized_firing_rate[0], 0.4)
     np.testing.assert_allclose(exact.normalized_force[0], expected)
     np.testing.assert_allclose(above.normalized_force[0], expected, atol=1.0e-8)
-
-
-def test_adaptation_uses_source_duration_and_tracks_time_since_first_recruitment() -> (
-    None
-):
-    runtime = PotvinFuglevand2017Plan(peripheral_fatigue=False).prepare()
-    source = runtime.initialize()
-    first = runtime.candidate(source, 20.0, 0.1)
-
-    assert bool(first.evidence.successful)
-    assert bool(jnp.all(first.output.firing_rate_adaptation_hz == 0.0))
-    recruited = first.output.recruited
-    committed = first.commit()
-    np.testing.assert_allclose(committed.recruitment_duration_s[recruited], 0.1)
-    np.testing.assert_allclose(committed.recruitment_duration_s[~recruited], 0.0)
-
-    second = runtime.candidate(committed, 20.0, 0.1)
-    assert bool(jnp.any(second.output.firing_rate_adaptation_hz > 0.0))
-    inactive = runtime.candidate(second.commit(), 0.0, 0.1).commit()
-    np.testing.assert_allclose(inactive.recruitment_duration_s[recruited], 0.3)
-    np.testing.assert_allclose(inactive.recruitment_duration_s[~recruited], 0.0)
-
-
-def test_force_is_evaluated_before_peripheral_capacity_update() -> None:
     no_fatigue = PotvinFuglevand2017Plan(
         central_adaptation=False, peripheral_fatigue=False
     ).prepare()
@@ -147,9 +115,22 @@ def test_force_is_evaluated_before_peripheral_capacity_update() -> None:
     np.testing.assert_allclose(
         next_output.total_force_capacity_fraction, expected_capacity
     )
+    runtime = PotvinFuglevand2017Plan(peripheral_fatigue=False).prepare()
+    source = runtime.initialize()
+    first = runtime.candidate(source, 20.0, 0.1)
 
+    assert bool(first.evidence.successful)
+    assert bool(jnp.all(first.output.firing_rate_adaptation_hz == 0.0))
+    recruited = first.output.recruited
+    committed = first.commit()
+    np.testing.assert_allclose(committed.recruitment_duration_s[recruited], 0.1)
+    np.testing.assert_allclose(committed.recruitment_duration_s[~recruited], 0.0)
 
-def test_fatigue_mechanism_selections_are_static_and_independent() -> None:
+    second = runtime.candidate(committed, 20.0, 0.1)
+    assert bool(jnp.any(second.output.firing_rate_adaptation_hz > 0.0))
+    inactive = runtime.candidate(second.commit(), 0.0, 0.1).commit()
+    np.testing.assert_allclose(inactive.recruitment_duration_s[recruited], 0.3)
+    np.testing.assert_allclose(inactive.recruitment_duration_s[~recruited], 0.0)
     source = PotvinFuglevand2017Plan().prepare().initialize()
     neither = PotvinFuglevand2017Plan(
         central_adaptation=False, peripheral_fatigue=False
@@ -175,43 +156,26 @@ def test_fatigue_mechanism_selections_are_static_and_independent() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("excitation", "step_s", "status"),
-    [
+def test_skeletal_muscle_potvin_fuglevand_2017_scenario_3() -> None:
+    for excitation, step_s, status in [
         (-1.0, 0.1, PotvinFuglevand2017Status.INVALID_EXCITATION),
         (68.0, 0.1, PotvinFuglevand2017Status.INVALID_EXCITATION),
         (20.0, 0.0, PotvinFuglevand2017Status.INVALID_STEP),
         (20.0, 0.11, PotvinFuglevand2017Status.INVALID_STEP),
-    ],
-)
-def test_invalid_interval_inputs_roll_back(
-    excitation: Any, step_s: Any, status: Any
-) -> None:
-    runtime = PotvinFuglevand2017Plan().prepare()
-    source = runtime.initialize()
-    candidate = runtime.candidate(source, excitation, step_s)
+    ]:
+        runtime = PotvinFuglevand2017Plan().prepare()
+        source = runtime.initialize()
+        candidate = runtime.candidate(source, excitation, step_s)
 
-    assert not bool(candidate.evidence.successful)
-    assert int(candidate.evidence.status) & int(status)
-    committed = candidate.commit()
-    np.testing.assert_array_equal(
-        committed.recruitment_duration_s, source.recruitment_duration_s
-    )
-    np.testing.assert_array_equal(
-        committed.current_twitch_force, source.current_twitch_force
-    )
-
-
-def test_direct_evaluation_refuses_inputs_outside_the_model_domain() -> None:
-    runtime = PotvinFuglevand2017Plan().prepare()
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="outside the model domain",
-    ):
-        jax.block_until_ready(runtime.evaluate(runtime.initialize(), -1.0).total_force)
-
-
-def test_invalid_state_and_trained_parameters_roll_back() -> None:
+        assert not bool(candidate.evidence.successful)
+        assert int(candidate.evidence.status) & int(status)
+        committed = candidate.commit()
+        np.testing.assert_array_equal(
+            committed.recruitment_duration_s, source.recruitment_duration_s
+        )
+        np.testing.assert_array_equal(
+            committed.current_twitch_force, source.current_twitch_force
+        )
     runtime = PotvinFuglevand2017Plan().prepare()
     source = runtime.initialize()
     invalid_state = PotvinFuglevand2017State(
@@ -237,9 +201,12 @@ def test_invalid_state_and_trained_parameters_roll_back() -> None:
         parameter_candidate.commit().current_twitch_force,
         source.current_twitch_force,
     )
-
-
-def test_array_dynamics_view_matches_typed_candidate() -> None:
+    runtime = PotvinFuglevand2017Plan().prepare()
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="outside the model domain",
+    ):
+        jax.block_until_ready(runtime.evaluate(runtime.initialize(), -1.0).total_force)
     runtime = PotvinFuglevand2017Plan().prepare()
     source = runtime.initialize()
     packed = runtime.pack_state(source)

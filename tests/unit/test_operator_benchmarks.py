@@ -39,7 +39,7 @@ def _array_target(
     return jnp.asarray(target)
 
 
-def test_standard_operator_benchmarks_cover_required_regimes() -> None:
+def test_operator_benchmarks_scenario_1() -> None:
     scenarios = standard_operator_benchmarks(quick=True)
     names = {scenario.name for scenario in scenarios}
     assert names == {
@@ -56,9 +56,17 @@ def test_standard_operator_benchmarks_cover_required_regimes() -> None:
         jnp.all(jnp.isfinite(_array_target(scenario.train_target)))
         for scenario in scenarios
     )
-
-
-def test_benchmark_runner_trains_and_reports_cross_resolution_metrics() -> None:
+    scenarios = standard_operator_benchmarks(quick=True)
+    shifts = {
+        evaluation.shift for scenario in scenarios for evaluation in scenario.evaluations
+    }
+    assert {
+        "resolution",
+        "geometry",
+        "input_noise",
+        "sensor_dropout",
+        "rollout",
+    } <= shifts
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -109,9 +117,6 @@ def test_benchmark_runner_trains_and_reports_cross_resolution_metrics() -> None:
     }
     assert result.final_loss_scale is None
     assert result.nonfinite_microsteps == 0
-
-
-def test_benchmark_runner_records_explicit_bfloat16_precision() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -144,9 +149,6 @@ def test_benchmark_runner_records_explicit_bfloat16_precision() -> None:
         for leaf in jax.tree_util.tree_leaves(trained)
         if isinstance(leaf, jax.Array) and jnp.issubdtype(leaf.dtype, jnp.inexact)
     )
-
-
-def test_benchmark_runner_records_validation_plateau_early_stopping() -> None:
     scenario = split_operator_scenario(
         periodic_burgers_scenario(
             train_resolution=8,
@@ -176,6 +178,39 @@ def test_benchmark_runner_records_validation_plateau_early_stopping() -> None:
     assert result.stopped_early
     assert result.converged
     assert result.resumed_from_step == 0
+    scenario = periodic_burgers_scenario(
+        train_resolution=8,
+        test_resolution=12,
+        num_cases=4,
+    )
+    architectures = compatible_architectures(scenario, quick=True)
+    names = {architecture.name for architecture in architectures}
+    assert {
+        "weighted_mean",
+        "nearest_neighbor",
+        "identity",
+        "pointwise_affine",
+        "deeponet",
+        "local_integral",
+        "fno",
+        "tfno",
+        "cno",
+        "uno",
+        "ifno",
+        "transolver",
+        "gnot",
+        "upt",
+    } <= names
+    assert "pod_deeponet" not in names
+    assert all(
+        architecture.build(scenario, 0) is not None for architecture in architectures
+    )
+    for scenario in standard_operator_benchmarks(quick=True):
+        for architecture in compatible_architectures(scenario, quick=True):
+            model = architecture.build(scenario, 0)
+            assert jnp.all(jnp.isfinite(model(scenario.train_batch)))
+            for evaluation in scenario.evaluations:
+                assert jnp.all(jnp.isfinite(model(evaluation.batch)))
 
 
 def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(
@@ -267,46 +302,7 @@ def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(
         )
 
 
-def test_architecture_matrix_contains_baselines_and_operator_families() -> None:
-    scenario = periodic_burgers_scenario(
-        train_resolution=8,
-        test_resolution=12,
-        num_cases=4,
-    )
-    architectures = compatible_architectures(scenario, quick=True)
-    names = {architecture.name for architecture in architectures}
-    assert {
-        "weighted_mean",
-        "nearest_neighbor",
-        "identity",
-        "pointwise_affine",
-        "deeponet",
-        "local_integral",
-        "fno",
-        "tfno",
-        "cno",
-        "uno",
-        "ifno",
-        "transolver",
-        "gnot",
-        "upt",
-    } <= names
-    assert "pod_deeponet" not in names
-    assert all(
-        architecture.build(scenario, 0) is not None for architecture in architectures
-    )
-
-
-def test_architecture_registry_models_run_every_declared_evaluation() -> None:
-    for scenario in standard_operator_benchmarks(quick=True):
-        for architecture in compatible_architectures(scenario, quick=True):
-            model = architecture.build(scenario, 0)
-            assert jnp.all(jnp.isfinite(model(scenario.train_batch)))
-            for evaluation in scenario.evaluations:
-                assert jnp.all(jnp.isfinite(model(evaluation.batch)))
-
-
-def test_function_frame_benchmark_respects_projection_capability_boundary() -> None:
+def test_operator_benchmarks_scenario_2() -> None:
     scenarios = {
         scenario.name: scenario for scenario in standard_operator_benchmarks(quick=True)
     }
@@ -360,9 +356,6 @@ def test_function_frame_benchmark_respects_projection_capability_boundary() -> N
             )
         }
         assert "function_frame_deeponet" not in names
-
-
-def test_case_splits_are_disjoint_sized_and_seed_deterministic() -> None:
     scenario = periodic_burgers_scenario(
         train_resolution=8,
         test_resolution=12,
@@ -380,20 +373,25 @@ def test_case_splits_are_disjoint_sized_and_seed_deterministic() -> None:
     )
     assert scenario_checksum(first) == scenario_checksum(repeated)
     assert scenario_checksum(first) != scenario_checksum(changed)
-
-
-def test_standard_benchmarks_include_controlled_distribution_shifts() -> None:
-    scenarios = standard_operator_benchmarks(quick=True)
-    shifts = {
-        evaluation.shift for scenario in scenarios for evaluation in scenario.evaluations
-    }
-    assert {
-        "resolution",
-        "geometry",
-        "input_noise",
-        "sensor_dropout",
-        "rollout",
-    } <= shifts
+    candidate = ExternalOperatorCandidate(
+        name="unlicensed",
+        source_uri="https://example.test/source",
+        checkpoint_uri="https://example.test/checkpoint",
+        revision="abc123",
+        code_license=None,
+        weights_license=None,
+        input_schema_declared=True,
+        output_schema_declared=True,
+        preprocessing_declared=False,
+        normalization_declared=False,
+        dataset_provenance_declared=True,
+        checkpoint_sha256=None,
+    )
+    audit = audit_external_candidate(candidate)
+    assert not audit.eligible
+    assert "code license is absent or not approved" in audit.reasons
+    assert "weights license is absent or not approved" in audit.reasons
+    assert "missing valid checkpoint SHA-256" in audit.reasons
 
 
 def test_matrix_aggregates_seeds_persists_artifacts_and_checks_thresholds(
@@ -530,25 +528,3 @@ def test_external_candidate_requires_audit_and_uniform_benchmark_superiority(
     )
     assert not rejected.integrated
     assert "does not improve relative L2" in rejected.reasons[0]
-
-
-def test_external_candidate_rejects_missing_weight_provenance() -> None:
-    candidate = ExternalOperatorCandidate(
-        name="unlicensed",
-        source_uri="https://example.test/source",
-        checkpoint_uri="https://example.test/checkpoint",
-        revision="abc123",
-        code_license=None,
-        weights_license=None,
-        input_schema_declared=True,
-        output_schema_declared=True,
-        preprocessing_declared=False,
-        normalization_declared=False,
-        dataset_provenance_declared=True,
-        checkpoint_sha256=None,
-    )
-    audit = audit_external_candidate(candidate)
-    assert not audit.eligible
-    assert "code license is absent or not approved" in audit.reasons
-    assert "weights license is absent or not approved" in audit.reasons
-    assert "missing valid checkpoint SHA-256" in audit.reasons

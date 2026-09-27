@@ -32,7 +32,7 @@ def _support() -> Any:
     )
 
 
-def test_exact_coefficient_normalization_is_canonical_and_float_free() -> None:
+def test_exact_scenario_1() -> None:
     support = _support()
     left = ExactSparsePolynomialSystem(
         support,
@@ -51,9 +51,6 @@ def test_exact_coefficient_normalization_is_canonical_and_float_free() -> None:
         ExactSparsePolynomialSystem(support, (1, "1/2", 3), ZZ)
     with pytest.raises(TypeError, match="floating-point"):
         ExactSparsePolynomialSystem(support, (1, 0.5, 3), QQ)
-
-
-def test_finite_field_admission_normalizes_residues_and_invertible_rationals() -> None:
     field = GF(5)
 
     assert field.label == "GF(5)"
@@ -65,11 +62,6 @@ def test_finite_field_admission_normalizes_residues_and_invertible_rationals() -
         field.normalize("1/5")
     with pytest.raises(ValueError, match="must be prime"):
         GF(15)
-
-
-def test_joint_coo_construction_keeps_coefficients_aligned_after_canonicalization() -> (
-    None
-):
     exact = ExactSparsePolynomialSystem.from_coo(
         ("x",),
         ("f",),

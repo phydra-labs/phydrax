@@ -76,13 +76,10 @@ def _poisson_error(count: Any) -> Any:
     return jnp.sqrt(sum(errors))
 
 
-def test_virtual_element_poisson_error_decreases_under_refinement() -> None:
+def test_virtual_element_contracts() -> None:
     coarse = _poisson_error(2)
     fine = _poisson_error(4)
     assert fine < 0.75 * coarse
-
-
-def test_virtual_element_heat_dae_and_eigen_operators_are_executable() -> None:
     space = _structured_space(2)
     constraint = phx.discretization.virtual_element_dirichlet_constraint(space, "u")
     form = phx.equations.VirtualElementForm(

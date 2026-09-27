@@ -44,7 +44,7 @@ def _interval_problem() -> Any:
     return domain, component, field, target, source
 
 
-def test_scalar_term_evaluation_validates_all_loss_terms() -> None:
+def test_constraint_substrate_scenario_1() -> None:
     evaluation = evaluate(_SignedTerm("signed"), {}, key=jr.key(0))
 
     assert isinstance(evaluation, TermEvaluation)
@@ -55,9 +55,6 @@ def test_scalar_term_evaluation_validates_all_loss_terms() -> None:
         TermEvaluation(jnp.ones((2,)))
     with pytest.raises(TypeError, match="real value"):
         TermEvaluation(jnp.asarray(1.0 + 1.0j))
-
-
-def test_residual_and_moment_penalties_have_distinct_ordering_semantics() -> None:
     _, component, field, _, source = _interval_problem()
 
     residual = phx.conditions.Residual("u", component, lambda u: u)
@@ -73,57 +70,6 @@ def test_residual_and_moment_penalties_have_distinct_ordering_semantics() -> Non
     assert jnp.allclose(
         nonzero_penalty.loss({"u": field}, key=jr.key(3)), 0.25**2, atol=1e-12
     )
-
-
-def test_moment_penalty_rejects_solver_managed_adaptive_integration() -> None:
-    _, component, _, target, _ = _interval_problem()
-    condition = phx.conditions.Moment("u", component, lambda u: u, target=0.5)
-    source = phx.integration.adaptive(
-        target,
-        phx.domain.PointSampling(
-            16,
-            layout=phx.domain.SampleLayout((("x",),)),
-        ),
-        R3(refresh_every=1, sampler="uniform"),
-    )
-
-    with pytest.raises(TypeError, match="requires ResidualPenalty"):
-        phx.terms.MomentPenalty(condition, source)
-
-
-def test_observation_penalty_uses_the_same_explicit_integration_source_contract() -> None:
-    domain, component, field, _, source = _interval_problem()
-    target = domain.Function("x")(lambda x: x)
-    condition = phx.conditions.Observation("u", component, target)
-    penalty = phx.terms.ObservationPenalty(condition, source)
-
-    assert jnp.allclose(
-        penalty.loss({"u": field}, key=jr.key(30)),
-        0.0,
-        atol=1e-12,
-    )
-
-
-def test_observation_penalty_realizes_finite_points_without_a_parallel_term_type() -> (
-    None
-):
-    domain, component, field, _, _ = _interval_problem()
-    batch = component.points({"x": jnp.array([0.25, 0.75])})
-    target = domain.Function()(0.0)
-    condition = phx.conditions.Observation("u", component, target)
-    source = phx.integration.fixed(
-        phx.integration.from_samples(
-            phx.integration.mean_over(component),
-            batch,
-        )
-    )
-
-    penalty = phx.terms.ObservationPenalty(condition, source)
-
-    assert jnp.allclose(penalty.loss({"u": field}), 0.3125, atol=1e-12)
-
-
-def test_residual_density_multiplies_pointwise_score_without_renormalization() -> None:
     domain = phx.domain.ScalarInterval(0.0, 2.0, label="x")
     component = domain.component()
     field = domain.Function("x")(lambda x: x)
@@ -140,9 +86,46 @@ def test_residual_density_multiplies_pointwise_score_without_renormalization() -
     )
 
     assert jnp.allclose(penalty.loss({"u": field}, key=jr.key(4)), 8.0 / 3.0, atol=1e-12)
+    _, component, _, target, _ = _interval_problem()
+    condition = phx.conditions.Moment("u", component, lambda u: u, target=0.5)
+    source = phx.integration.adaptive(
+        target,
+        phx.domain.PointSampling(
+            16,
+            layout=phx.domain.SampleLayout((("x",),)),
+        ),
+        R3(refresh_every=1, sampler="uniform"),
+    )
+
+    with pytest.raises(TypeError, match="requires ResidualPenalty"):
+        phx.terms.MomentPenalty(condition, source)
 
 
-def test_condition_and_integration_components_must_match_exactly() -> None:
+def test_constraint_substrate_scenario_2() -> None:
+    domain, component, field, _, source = _interval_problem()
+    target = domain.Function("x")(lambda x: x)
+    condition = phx.conditions.Observation("u", component, target)
+    penalty = phx.terms.ObservationPenalty(condition, source)
+
+    assert jnp.allclose(
+        penalty.loss({"u": field}, key=jr.key(30)),
+        0.0,
+        atol=1e-12,
+    )
+    domain, component, field, _, _ = _interval_problem()
+    batch = component.points({"x": jnp.array([0.25, 0.75])})
+    target = domain.Function()(0.0)
+    condition = phx.conditions.Observation("u", component, target)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(
+            phx.integration.mean_over(component),
+            batch,
+        )
+    )
+
+    penalty = phx.terms.ObservationPenalty(condition, source)
+
+    assert jnp.allclose(penalty.loss({"u": field}), 0.3125, atol=1e-12)
     domain, component, _, _, _ = _interval_problem()
     boundary = domain.component({"x": phx.domain.FixedStart()})
     source = phx.integration.per_step(
@@ -155,9 +138,6 @@ def test_condition_and_integration_components_must_match_exactly() -> None:
             phx.conditions.Dirichlet("u", boundary),
             source,
         )
-
-
-def test_fixed_and_caller_sources_preserve_explicit_realization_ownership() -> None:
     _, component, field, target, _ = _interval_problem()
     plan = phx.integration.MonteCarloPlan(64)
     realization = phx.integration.materialize(target, plan, key=jr.key(10))

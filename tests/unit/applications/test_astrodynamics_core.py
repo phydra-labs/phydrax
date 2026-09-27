@@ -26,7 +26,7 @@ def _circular_state() -> Any:
     )
 
 
-def test_universal_kepler_closes_circular_orbit_and_jvp() -> None:
+def test_astrodynamics_core_scenario_1() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     result = jax.jit(lambda dt: astro.propagate_universal_kepler(state, dt, 1.0))(
@@ -44,9 +44,6 @@ def test_universal_kepler_closes_circular_orbit_and_jvp() -> None:
     )[1]
     expected = jnp.asarray([-jnp.sin(0.3), jnp.cos(0.3), 0.0])
     np.testing.assert_allclose(tangent, expected, atol=2.0e-10)
-
-
-def test_modified_equinoctial_round_trip_covers_circular_equatorial_state() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     converted = astro.cartesian_to_modified_equinoctial(state, 1.0)
@@ -63,9 +60,6 @@ def test_modified_equinoctial_round_trip_covers_circular_equatorial_state() -> N
     assert not bool(classical.valid)
     assert bool(classical.circular)
     assert bool(classical.equatorial)
-
-
-def test_analytic_adaptive_and_symplectic_propagation_agree() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     times = jnp.linspace(0.0, 1.0, 17)
@@ -92,7 +86,7 @@ def test_analytic_adaptive_and_symplectic_propagation_agree() -> None:
     assert float(jnp.max(jnp.abs(symplectic.diagnostics.energy_drift))) < 2.0e-3
 
 
-def test_invalid_two_body_inputs_return_status_without_shape_change() -> None:
+def test_astrodynamics_core_scenario_2() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     result = jax.jit(lambda mu: astro.propagate_universal_kepler(state, 1.0, mu))(
@@ -119,9 +113,6 @@ def test_invalid_two_body_inputs_return_status_without_shape_change() -> None:
     )(jnp.asarray(-1.0))
     assert jnp.all(jnp.isnan(tangent))
     assert jnp.isnan(reverse)
-
-
-def test_astrodynamics_static_controls_and_numeric_identities_fail_closed() -> None:
     astro = phx.applications.astrodynamics
     state = _circular_state()
     with pytest.raises(TypeError, match="max_iterations"):

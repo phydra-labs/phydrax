@@ -56,7 +56,7 @@ def _complex_field(plan: DirectionalBallWaveletPlan) -> jax.Array:
     return plan.fourier_laguerre.synthesis(modes)
 
 
-def test_wavelet_filters_are_directional_admissible_and_hybrid() -> None:
+def test_wavelet_contracts() -> None:
     plan = _plan()
     angular_energy = jnp.sum(plan.angular_windows**2, axis=0)
     radial_energy = jnp.sum(plan.radial_windows**2, axis=0)
@@ -75,85 +75,6 @@ def test_wavelet_filters_are_directional_admissible_and_hybrid() -> None:
     assert jnp.allclose(plan.scaling_window[0, -1], 1.0)
     assert jnp.allclose(plan.scaling_window[-1, 0], 1.0)
     assert plan.admissibility_defect <= 1e-12
-
-
-def test_multiresolution_detail_modes_match_full_coefficient_filtering() -> None:
-    plan = _plan()
-    values = _complex_field(plan)
-    full_modes = plan.fourier_laguerre.analysis(values)
-    coefficients = plan.analysis(values)
-
-    for detail, scale in zip(coefficients.details, plan._scales, strict=True):
-        actual = plan._detail_plan(scale).analysis(detail)
-        m_stop = scale.full_m_start + 2 * scale.angular_bandlimit - 1
-        n_stop = scale.full_n_start + 2 * scale.directional_bandlimit - 1
-        subset = full_modes[
-            : scale.radial_bandlimit,
-            : scale.angular_bandlimit,
-            scale.full_m_start : m_stop,
-        ]
-        radial_window = plan.radial_windows[scale.radial_window, : scale.radial_bandlimit]
-        angular_window = plan.angular_windows[
-            scale.angular_window, : scale.angular_bandlimit
-        ]
-        zeta = plan.directionality[
-            : scale.angular_bandlimit,
-            scale.full_n_start : n_stop,
-        ]
-        factor = jnp.sqrt(
-            8.0 * jnp.pi**2 / (2.0 * jnp.arange(scale.angular_bandlimit) + 1.0)
-        )
-        expected = contract(
-            "plm,p,l,ln->pnlm",
-            subset,
-            radial_window,
-            angular_window,
-            jnp.conj(zeta) * factor[:, None],
-        )
-
-        assert actual.shape == expected.shape
-        assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-10)
-
-
-def test_directional_ball_wavelet_roundtrips_complex_real_and_non_dyadic_fields() -> None:
-    complex_plan = _plan()
-    complex_values = _complex_field(complex_plan)
-    complex_coefficients = complex_plan.analysis(complex_values)
-    complex_reconstructed = complex_plan.synthesis(complex_coefficients)
-
-    real_plan = _plan(reality=True)
-    real_modes = (
-        jnp.zeros(real_plan.fourier_laguerre.coefficient_shape, dtype=jnp.complex128)
-        .at[:, 0, real_plan.fourier_laguerre.angular.bandlimit - 1]
-        .set(jnp.arange(1, 5))
-    )
-    real_values = real_plan.fourier_laguerre.synthesis(real_modes)
-    real_reconstructed = real_plan.synthesis(real_plan.analysis(real_values))
-
-    non_dyadic = _plan(
-        bandlimit=5,
-        radial_bandlimit=5,
-        angular_dilation=1.7,
-        radial_dilation=2.3,
-        angular_minimum_scale=1,
-        radial_minimum_scale=1,
-    )
-    non_dyadic_values = _complex_field(non_dyadic)
-    non_dyadic_reconstructed = non_dyadic.synthesis(
-        non_dyadic.analysis(non_dyadic_values)
-    )
-
-    assert jnp.allclose(complex_reconstructed, complex_values, rtol=1e-10, atol=1e-10)
-    assert jnp.allclose(real_reconstructed, real_values, rtol=1e-10, atol=1e-10)
-    assert jnp.allclose(
-        non_dyadic_reconstructed,
-        non_dyadic_values,
-        rtol=1e-10,
-        atol=1e-10,
-    )
-
-
-def test_wavelet_coefficients_validate_every_ragged_leaf_and_transform_identity() -> None:
     plan = _plan()
     values = _complex_field(plan)
     coefficients = plan.analysis(values)
@@ -222,9 +143,6 @@ def test_wavelet_coefficients_validate_every_ragged_leaf_and_transform_identity(
     foreign_plan = _plan(angular_dilation=2.5)
     with pytest.raises(ValueError, match="another transform"):
         foreign_plan.synthesis(coefficients)
-
-
-def test_wavelet_handles_batch_channels_jit_gradients_and_resource_admission() -> None:
     plan = _plan(bandlimit=3, radial_bandlimit=3)
     first = _complex_field(plan)
     values = jnp.stack(
@@ -269,3 +187,76 @@ def test_wavelet_handles_batch_channels_jit_gradients_and_resource_admission() -
         _plan(max_scale_pairs=1)
     with pytest.raises(ValueError, match="max_precompute_bytes"):
         _plan(max_precompute_bytes=1)
+
+
+def test_directional_ball_wavelet_scenario_1() -> None:
+    plan = _plan()
+    values = _complex_field(plan)
+    full_modes = plan.fourier_laguerre.analysis(values)
+    coefficients = plan.analysis(values)
+
+    for detail, scale in zip(coefficients.details, plan._scales, strict=True):
+        actual = plan._detail_plan(scale).analysis(detail)
+        m_stop = scale.full_m_start + 2 * scale.angular_bandlimit - 1
+        n_stop = scale.full_n_start + 2 * scale.directional_bandlimit - 1
+        subset = full_modes[
+            : scale.radial_bandlimit,
+            : scale.angular_bandlimit,
+            scale.full_m_start : m_stop,
+        ]
+        radial_window = plan.radial_windows[scale.radial_window, : scale.radial_bandlimit]
+        angular_window = plan.angular_windows[
+            scale.angular_window, : scale.angular_bandlimit
+        ]
+        zeta = plan.directionality[
+            : scale.angular_bandlimit,
+            scale.full_n_start : n_stop,
+        ]
+        factor = jnp.sqrt(
+            8.0 * jnp.pi**2 / (2.0 * jnp.arange(scale.angular_bandlimit) + 1.0)
+        )
+        expected = contract(
+            "plm,p,l,ln->pnlm",
+            subset,
+            radial_window,
+            angular_window,
+            jnp.conj(zeta) * factor[:, None],
+        )
+
+        assert actual.shape == expected.shape
+        assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-10)
+    complex_plan = _plan()
+    complex_values = _complex_field(complex_plan)
+    complex_coefficients = complex_plan.analysis(complex_values)
+    complex_reconstructed = complex_plan.synthesis(complex_coefficients)
+
+    real_plan = _plan(reality=True)
+    real_modes = (
+        jnp.zeros(real_plan.fourier_laguerre.coefficient_shape, dtype=jnp.complex128)
+        .at[:, 0, real_plan.fourier_laguerre.angular.bandlimit - 1]
+        .set(jnp.arange(1, 5))
+    )
+    real_values = real_plan.fourier_laguerre.synthesis(real_modes)
+    real_reconstructed = real_plan.synthesis(real_plan.analysis(real_values))
+
+    non_dyadic = _plan(
+        bandlimit=5,
+        radial_bandlimit=5,
+        angular_dilation=1.7,
+        radial_dilation=2.3,
+        angular_minimum_scale=1,
+        radial_minimum_scale=1,
+    )
+    non_dyadic_values = _complex_field(non_dyadic)
+    non_dyadic_reconstructed = non_dyadic.synthesis(
+        non_dyadic.analysis(non_dyadic_values)
+    )
+
+    assert jnp.allclose(complex_reconstructed, complex_values, rtol=1e-10, atol=1e-10)
+    assert jnp.allclose(real_reconstructed, real_values, rtol=1e-10, atol=1e-10)
+    assert jnp.allclose(
+        non_dyadic_reconstructed,
+        non_dyadic_values,
+        rtol=1e-10,
+        atol=1e-10,
+    )

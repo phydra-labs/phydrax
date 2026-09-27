@@ -12,7 +12,7 @@ from phydrax.domain import FixedStart, Interval1d, TimeInterval
 from phydrax.terms import ResidualPenalty
 
 
-def test_continuous_initial_constraint_zero_when_satisfied() -> None:
+def test_initial_constraints_scenario_1() -> None:
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     dom = geom @ time
@@ -28,9 +28,15 @@ def test_continuous_initial_constraint_zero_when_satisfied() -> None:
     term = ResidualPenalty(condition, source)
     loss = term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss, 0.0)
+    geom = Interval1d(0.0, 1.0)
+    time = TimeInterval(0.0, 1.0)
+    dom = geom @ time
 
+    component = dom.component()
+    dom.Function()(0.0)
 
-def test_callable_initial_target_ignores_unbound_iteration_context() -> None:
+    with pytest.raises(ValueError):
+        Initial("u", component, target=0.0)
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -46,15 +52,3 @@ def test_callable_initial_target_ignores_unbound_iteration_context() -> None:
     loss = term.loss({"u": u}, key=jr.key(0), iter_=jnp.asarray(1))
 
     assert jnp.allclose(loss, 0.0)
-
-
-def test_continuous_initial_constraint_requires_fixed_start() -> None:
-    geom = Interval1d(0.0, 1.0)
-    time = TimeInterval(0.0, 1.0)
-    dom = geom @ time
-
-    component = dom.component()
-    dom.Function()(0.0)
-
-    with pytest.raises(ValueError):
-        Initial("u", component, target=0.0)

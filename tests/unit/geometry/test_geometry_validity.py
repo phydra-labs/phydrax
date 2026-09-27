@@ -12,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_parameter_bounds_and_superquadric_conditions_are_executable() -> None:
+def test_geometry_validity_scenario_1() -> None:
     sphere = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         1.0,
@@ -47,31 +47,6 @@ def test_parameter_bounds_and_superquadric_conditions_are_executable() -> None:
 
     assert bool(superquadric.validity().accepted)
     assert not bool(superquadric.validity(invalid_orientation).accepted)
-
-
-def test_geometry_validity_is_jittable_and_keeps_fixed_evidence_shape() -> None:
-    compiled = phx.geometry.Sphere(
-        (0.0, 0.0, 0.0),
-        1.0,
-        feature_id="body",
-    ).compile()
-    radius = compiled.schema.index(phx.geometry.ParameterId("body", "radius"))
-
-    def evaluate(value: Any) -> Any:
-        state = compiled.state.replace_at(radius, value)
-        evidence = compiled.validity(state)
-        return evidence.accepted, evidence.margins
-
-    accepted, margins = jax.jit(evaluate)(jnp.asarray(2.0))
-    rejected, rejected_margins = jax.jit(evaluate)(jnp.asarray(-0.5))
-
-    assert bool(accepted)
-    assert not bool(rejected)
-    assert margins.shape == rejected_margins.shape
-    assert jnp.all(jnp.isfinite(margins))
-
-
-def test_live_topology_classifications_reject_invalid_design_states() -> None:
     polygon = phx.geometry.Polygon(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
         feature_id="polygon",
@@ -147,9 +122,6 @@ def test_live_topology_classifications_reject_invalid_design_states() -> None:
     assert not bool(
         wedge.validity(wedge.state.replace_at(top_index, jnp.asarray(0.0))).accepted
     )
-
-
-def test_geometry_wrappers_implement_every_advertised_capability() -> None:
     sphere = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0, feature_id="capability-sphere")
     translated_sphere = sphere.translated((1.0, 0.0, 0.0)).compile()
     curvature = translated_sphere.contact_curvature(jnp.asarray(((2.0, 0.0, 0.0),)))
@@ -199,3 +171,25 @@ def test_geometry_wrappers_implement_every_advertised_capability() -> None:
     assert bool(closest.unique[0])
     assert bool(reconstructed_curvature.valid[0])
     assert reconstructed.cubature_atlas("boundary").num_charts > 0
+
+
+def test_geometry_validity_is_jittable_and_keeps_fixed_evidence_shape() -> None:
+    compiled = phx.geometry.Sphere(
+        (0.0, 0.0, 0.0),
+        1.0,
+        feature_id="body",
+    ).compile()
+    radius = compiled.schema.index(phx.geometry.ParameterId("body", "radius"))
+
+    def evaluate(value: Any) -> Any:
+        state = compiled.state.replace_at(radius, value)
+        evidence = compiled.validity(state)
+        return evidence.accepted, evidence.margins
+
+    accepted, margins = jax.jit(evaluate)(jnp.asarray(2.0))
+    rejected, rejected_margins = jax.jit(evaluate)(jnp.asarray(-0.5))
+
+    assert bool(accepted)
+    assert not bool(rejected)
+    assert margins.shape == rejected_margins.shape
+    assert jnp.all(jnp.isfinite(margins))

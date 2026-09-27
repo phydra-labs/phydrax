@@ -38,7 +38,7 @@ def _hydrodynamics(*, eta: Any = 0.0) -> Any:
     return hydrodynamics, state
 
 
-def test_graph_geometry_has_exact_static_gcl_and_positive_support() -> None:
+def test_free_surface_hydrodynamics_scenario_1() -> None:
     hydrodynamics, state = _hydrodynamics()
     zero = jnp.zeros_like(state.eta)
 
@@ -49,9 +49,6 @@ def test_graph_geometry_has_exact_static_gcl_and_positive_support() -> None:
     assert bool(geometry.passed)
     np.testing.assert_allclose(geometry.gcl_residual, 0.0, atol=1e-12)
     assert evidence.minimum_height > 0.0
-
-
-def test_surface_volume_jacobian_reproduces_uniform_rise() -> None:
     hydrodynamics, state = _hydrodynamics()
     target = jnp.ones_like(state.eta) * hydrodynamics.surface.horizontal_area
 
@@ -60,9 +57,6 @@ def test_surface_volume_jacobian_reproduces_uniform_rise() -> None:
     assert bool(result.converged)
     np.testing.assert_allclose(result.eta_rate, 1.0, atol=1e-10)
     np.testing.assert_allclose(result.reproduced_volume_rate, target, atol=1e-10)
-
-
-def test_mapped_hodge_round_trip_and_positive_energy() -> None:
     hydrodynamics, state = _hydrodynamics()
     geometry = hydrodynamics.surface.geometry(0.0, state.eta, jnp.zeros_like(state.eta))
     velocity = tuple(0.01 * jnp.ones_like(value) for value in geometry.face_measures)

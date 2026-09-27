@@ -17,7 +17,7 @@ from phydrax.operators.quantum._electronic_transport import (
 )
 
 
-def test_nonorthogonal_retarded_embedding_is_causal_and_energy_shift_invariant() -> None:
+def test_electronic_transport_scenario_1() -> None:
     energy = 0.4 + 0.2j
     lead_onsite = -0.3
     coupling_h = jnp.asarray([[0.7 + 0.1j]])
@@ -37,9 +37,6 @@ def test_nonorthogonal_retarded_embedding_is_causal_and_energy_shift_invariant()
     assert float(original.evidence.broadening_minimum_eigenvalue) >= -1.0e-12
     assert jnp.allclose(shifted.self_energy, original.self_energy)
     assert jnp.allclose(shifted.broadening, original.broadening)
-
-
-def test_contact_currents_use_positive_into_region_and_signed_electron_charge() -> None:
     energy = jnp.asarray(0.0 + 0.0j)
     surface = jnp.asarray([[-1.0j]])
     coupling = jnp.asarray([[1.0]])
@@ -70,9 +67,6 @@ def test_contact_currents_use_positive_into_region_and_signed_electron_charge() 
     assert currents.heat_current_into_region[1] > 0.0
     assert ELECTRONIC_TRANSPORT_CONVENTION.bloch_phase_sign == 1
     assert ELECTRONIC_TRANSPORT_CONVENTION.retarded_time_sign == -1
-
-
-def test_elastic_disorder_ensemble_retains_failed_realizations() -> None:
     plan = ElasticDisorderEnsemblePlan(
         ("clean", "positive", "negative"), jnp.asarray([0.5, 0.25, 0.25])
     )

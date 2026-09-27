@@ -47,7 +47,7 @@ def _periodic_compiled(
     )
 
 
-def test_two_dimensional_dry_lake_is_stationary() -> None:
+def test_shallow_water_workflow_scenario_1() -> None:
     x = (jnp.arange(10) + 0.5) / 10
     y = (jnp.arange(8) + 0.5) / 8
     xx, yy = jnp.meshgrid(x, y, indexing="ij")
@@ -63,37 +63,6 @@ def test_two_dimensional_dry_lake_is_stationary() -> None:
     residual = compiled(0.0, state)
 
     np.testing.assert_allclose(residual, 0.0, atol=5e-12)
-
-
-def test_equilibrium_muscl_has_second_order_smooth_residual() -> None:
-    def error(count: Any) -> Any:
-        bed = jnp.zeros((count,))
-        compiled = _periodic_compiled(
-            (count,),
-            bed,
-            phx.discretization.MUSCLReconstruction(phx.discretization.UnlimitedLimiter()),
-        )
-        x = (jnp.arange(count) + 0.5) / count
-        depth = 1.0 + 0.1 * jnp.sin(2.0 * jnp.pi * x)
-        velocity = 0.2
-        state = jnp.stack((depth, velocity * depth), axis=-1)
-        derivative = 0.2 * jnp.pi * jnp.cos(2.0 * jnp.pi * x)
-        expected = jnp.stack(
-            (
-                -velocity * derivative,
-                -(velocity**2 + 9.81 * depth) * derivative,
-            ),
-            axis=-1,
-        )
-        return jnp.sqrt(jnp.mean((compiled(0.0, state) - expected) ** 2))
-
-    coarse = error(32)
-    fine = error(64)
-
-    assert fine < coarse / 3.0
-
-
-def test_linearization_jvp_vjp_duality_away_from_dry_switches() -> None:
     count = 16
     bed = jnp.zeros((count,))
     compiled = _periodic_compiled((count,), bed, phx.discretization.MUSCLReconstruction())
@@ -130,9 +99,6 @@ def test_linearization_jvp_vjp_duality_away_from_dry_switches() -> None:
         rtol=2e-10,
         atol=2e-10,
     )
-
-
-def test_coriolis_runtime_preserves_mass_and_converges_inertial_rotation() -> None:
     shape = (6, 6)
     bed = jnp.zeros(shape)
     source = phx.equations.ShallowWaterCoriolisSource(0.5)
@@ -163,3 +129,31 @@ def test_coriolis_runtime_preserves_mass_and_converges_inertial_rotation() -> No
     np.testing.assert_allclose(updated[..., 0], 1.0, atol=2e-13)
     np.testing.assert_allclose(updated[..., 1], expected_u, atol=2e-7)
     np.testing.assert_allclose(updated[..., 2], expected_v, atol=2e-7)
+
+
+def test_equilibrium_muscl_has_second_order_smooth_residual() -> None:
+    def error(count: Any) -> Any:
+        bed = jnp.zeros((count,))
+        compiled = _periodic_compiled(
+            (count,),
+            bed,
+            phx.discretization.MUSCLReconstruction(phx.discretization.UnlimitedLimiter()),
+        )
+        x = (jnp.arange(count) + 0.5) / count
+        depth = 1.0 + 0.1 * jnp.sin(2.0 * jnp.pi * x)
+        velocity = 0.2
+        state = jnp.stack((depth, velocity * depth), axis=-1)
+        derivative = 0.2 * jnp.pi * jnp.cos(2.0 * jnp.pi * x)
+        expected = jnp.stack(
+            (
+                -velocity * derivative,
+                -(velocity**2 + 9.81 * depth) * derivative,
+            ),
+            axis=-1,
+        )
+        return jnp.sqrt(jnp.mean((compiled(0.0, state) - expected) ** 2))
+
+    coarse = error(32)
+    fine = error(64)
+
+    assert fine < coarse / 3.0

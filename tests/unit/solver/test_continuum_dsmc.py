@@ -10,7 +10,7 @@ import pytest
 import phydrax as phx
 
 
-def test_continuum_conversion_matches_extensive_moments_exactly() -> None:
+def test_continuum_dsmc_scenario_1() -> None:
     plan = phx.solver.ContinuumToDSMCConversionPlan(8, 3)
     result = plan.convert(
         jax.random.key(1),
@@ -26,11 +26,6 @@ def test_continuum_conversion_matches_extensive_moments_exactly() -> None:
         result.represented_momentum, (20.0, -10.0, 5.0), atol=1.0e-12
     )
     np.testing.assert_allclose(result.represented_thermal_energy, 5.0, atol=1.0e-12)
-
-
-def test_particle_reduction_preserves_species_mass_momentum_energy_and_covariance() -> (
-    None
-):
     species = phx.discretization.dsmc.DSMCSpeciesPlan(
         ("A", "B"),
         jnp.asarray((1.0, 2.0)),
@@ -60,9 +55,6 @@ def test_particle_reduction_preserves_species_mass_momentum_energy_and_covarianc
     np.testing.assert_allclose(result.momentum, (2.0, 6.0))
     np.testing.assert_allclose(result.total_energy, 4.0)
     assert result.covariance.shape == (5, 5)
-
-
-def test_hybrid_epoch_refuses_failed_required_conversion() -> None:
     plan = phx.solver.HybridOwnershipEpochPlan(
         enter_threshold=0.05,
         leave_threshold=0.02,

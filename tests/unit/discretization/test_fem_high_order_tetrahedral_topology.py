@@ -26,7 +26,7 @@ def _two_tetrahedra() -> Any:
     return phx.discretization.CellMesh.from_tetrahedra(coordinates, cells)
 
 
-def test_p2_tetrahedral_entity_routes_share_vertices_and_edges() -> None:
+def test_fem_high_order_tetrahedral_topology_scenario_1() -> None:
     mesh = _two_tetrahedra()
     element = phx.discretization.lagrange_element("tetrahedron", 2)
     discretization = phx.discretization.FiniteElementPlan(
@@ -50,9 +50,6 @@ def test_p2_tetrahedral_entity_routes_share_vertices_and_edges() -> None:
         np.asarray(dof_map.dof_coordinates)[mesh.coordinates.shape[0] :],
         expected_midpoints,
     )
-
-
-def test_curved_p2_tetrahedral_coordinates_drive_tensor_diffusion() -> None:
     mesh = phx.discretization.CellMesh.from_tetrahedra(
         jnp.asarray(
             (

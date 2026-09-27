@@ -68,7 +68,7 @@ def test_ragged_series_supervised_constraint_matches_exact_vector_targets() -> N
     assert jnp.allclose(metrics["data_relative_l2_error"], 0.0)
 
 
-def test_ragged_series_supervised_constraint_samples_index_subset() -> None:
+def test_ragged_series_contracts() -> None:
     domain, targets = _domain_and_targets()
     allowed = jnp.asarray([0, 2], dtype=jnp.int32)
     term = RaggedSeriesSupervisedTerm(
@@ -82,9 +82,6 @@ def test_ragged_series_supervised_constraint_samples_index_subset() -> None:
     batch = term.sample(key=jr.key(1))
     assert jnp.all(jnp.isin(batch.indices, allowed))
     assert jnp.allclose(batch.target, targets[batch.indices])
-
-
-def test_ragged_series_supervised_constraint_samples_fixed_width_series_points() -> None:
     domain, targets = _domain_and_targets()
     term = RaggedSeriesSupervisedTerm(
         "u",
@@ -100,32 +97,6 @@ def test_ragged_series_supervised_constraint_samples_fixed_width_series_points()
     assert batch.points["data"]["mask"].data.shape == (6, 2)
     assert batch.points["data"]["sample_index"].data.shape == (6, 2)
     assert batch.target.shape == (6, 2)
-
-
-def test_ragged_series_supervised_constraint_loss_uses_sampled_series_payload() -> None:
-    domain, targets = _domain_and_targets()
-
-    def sampled_model(payload: Any, *, key: Any = None) -> Any:
-        del key
-        series0 = payload.series[..., 0]
-        valid_sum = jnp.sum(series0 * payload.mask.astype(series0.dtype), axis=1)
-        return jnp.stack((valid_sum, -valid_sum), axis=-1)
-
-    u = domain.Function("data")(phx.nn.models.RaggedSeriesModel(sampled_model))
-    term = RaggedSeriesSupervisedTerm(
-        "u",
-        domain.component(),
-        targets,
-        sampling=phx.domain.PointSampling(8, design="uniform"),
-        series_sampling="prefix",
-        num_series_points=2,
-    )
-
-    loss = term.loss({"u": u}, key=jr.key(6))
-    assert jnp.isfinite(loss)
-
-
-def test_ragged_series_supervised_constraint_bucketed_covers_cases_once() -> None:
     domain, targets = _domain_and_targets()
     terms = RaggedSeriesSupervisedTerm.bucketed(
         "u",
@@ -171,9 +142,6 @@ def test_ragged_series_supervised_constraint_bucketed_covers_cases_once() -> Non
         assert term.indices is not None
         assert jnp.all(jnp.isin(batch.indices, term.indices))
         assert jnp.all(domain.lengths[batch.indices] <= width)
-
-
-def test_ragged_series_supervised_constraint_bucketed_accepts_length_edges() -> None:
     domain, targets = _domain_and_targets()
     terms = RaggedSeriesSupervisedTerm.bucketed(
         "u",
@@ -193,9 +161,16 @@ def test_ragged_series_supervised_constraint_bucketed_accepts_length_edges() -> 
     assert second_indices is not None
     assert jnp.array_equal(first_indices, jnp.asarray([2], dtype=jnp.int32))
     assert jnp.array_equal(second_indices, jnp.asarray([0], dtype=jnp.int32))
+    domain, targets = _domain_and_targets()
 
-
-def test_ragged_series_supervised_constraint_bucketed_scales_sum_reduction() -> None:
+    with pytest.raises(ValueError, match="number of non-empty length buckets"):
+        RaggedSeriesSupervisedTerm.bucketed(
+            "u",
+            domain.component(),
+            targets,
+            sampling=phx.domain.PointSampling(1, design="uniform"),
+            length_bucket_edges=jnp.asarray([1, 2, 3]),
+        )
     domain, targets = _domain_and_targets()
     terms = RaggedSeriesSupervisedTerm.bucketed(
         "u",
@@ -211,24 +186,6 @@ def test_ragged_series_supervised_constraint_bucketed_scales_sum_reduction() -> 
         jnp.stack([c.weight for c in terms]),
         jnp.asarray([8.0 / 9.0, 4.0 / 3.0]),
     )
-
-
-def test_ragged_series_supervised_constraint_bucketed_requires_case_per_bucket() -> None:
-    domain, targets = _domain_and_targets()
-
-    with pytest.raises(ValueError, match="number of non-empty length buckets"):
-        RaggedSeriesSupervisedTerm.bucketed(
-            "u",
-            domain.component(),
-            targets,
-            sampling=phx.domain.PointSampling(1, design="uniform"),
-            length_bucket_edges=jnp.asarray([1, 2, 3]),
-        )
-
-
-def test_ragged_series_supervised_constraint_bucketed_avoids_global_padding_width() -> (
-    None
-):
     static = jnp.zeros((4, 1))
     series = jnp.zeros((4, 10_000, 1))
     lengths = jnp.asarray([2, 10_000, 5, 9_999], dtype=jnp.int32)
@@ -249,9 +206,6 @@ def test_ragged_series_supervised_constraint_bucketed_avoids_global_padding_widt
     assert short_constraint.num_series_points == 5
     assert batch.points["data"]["series"].data.shape == (1, 5, 1)
     assert batch.points["data"]["mask"].data.shape == (1, 5)
-
-
-def test_ragged_series_supervised_constraint_requires_points_for_sampled_modes() -> None:
     domain, targets = _domain_and_targets()
 
     with pytest.raises(ValueError, match="num_series_points"):
@@ -262,9 +216,6 @@ def test_ragged_series_supervised_constraint_requires_points_for_sampled_modes()
             sampling=phx.domain.PointSampling(4, design="uniform"),
             series_sampling="points_uniform",
         )
-
-
-def test_ragged_series_supervised_constraint_validates_domain_and_targets() -> None:
     data_domain = phx.domain.DatasetDomain(jnp.zeros((3, 2)))
     domain, targets = _domain_and_targets()
 
@@ -283,3 +234,26 @@ def test_ragged_series_supervised_constraint_validates_domain_and_targets() -> N
             jnp.zeros((4, 2)),
             sampling=phx.domain.PointSampling(4, design="uniform"),
         )
+
+
+def test_ragged_series_supervised_constraint_loss_uses_sampled_series_payload() -> None:
+    domain, targets = _domain_and_targets()
+
+    def sampled_model(payload: Any, *, key: Any = None) -> Any:
+        del key
+        series0 = payload.series[..., 0]
+        valid_sum = jnp.sum(series0 * payload.mask.astype(series0.dtype), axis=1)
+        return jnp.stack((valid_sum, -valid_sum), axis=-1)
+
+    u = domain.Function("data")(phx.nn.models.RaggedSeriesModel(sampled_model))
+    term = RaggedSeriesSupervisedTerm(
+        "u",
+        domain.component(),
+        targets,
+        sampling=phx.domain.PointSampling(8, design="uniform"),
+        series_sampling="prefix",
+        num_series_points=2,
+    )
+
+    loss = term.loss({"u": u}, key=jr.key(6))
+    assert jnp.isfinite(loss)

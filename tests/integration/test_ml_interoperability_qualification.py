@@ -102,66 +102,64 @@ def _array_leaves(tree: Any) -> Any:
     return [leaf for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf)]
 
 
-@pytest.mark.parametrize(
-    "recipe",
-    (
+def test_g1_fitted_closure_keeps_ports_and_binds_frozen_into_a_pde() -> None:
+    for recipe in (
         RidgeRecipe(alpha=1e-10),
         KernelRidgeRecipe(SquaredExponentialKernel(length_scale=0.5), alpha=1e-6),
-    ),
-    ids=("ridge", "kernel-ridge"),
-)
-def test_g1_fitted_closure_keeps_ports_and_binds_frozen_into_a_pde(recipe: Any) -> None:
-    space = phx.domain.Interval1d(0.0, 1.0)
-    x_port = space.value_port("x")
-    result = _fit_closure(recipe, space, 0.5)
-
-    ports = result.model_ports()
-    assert ports.inputs == (x_port,)
-    assert ports.outputs == (_conductivity_port(),)
-
-    kappa = space.Model("x", port_mapping=_input_mapping(x_port, x_port))(result.model)
-    evidence = kappa.port_binding
-    # ty: ignore[unresolved-attribute]
-    assert evidence.inputs == ((x_port.port_id, x_port.port_id),)
-    # The coordinate's semantic axis is declared on both sides and verified; the
-    # domain declares no coordinate units, so dimensions stay unverified.
-    # ty: ignore[unresolved-attribute]
-    assert ("input", x_port.port_id, "axes") not in evidence.unverified
-    # ty: ignore[unresolved-attribute]
-    assert ("input", x_port.port_id, "dimensions") in evidence.unverified
-    # ty: ignore[unresolved-attribute]
-    assert not evidence.dimensions_verified
-
-    network = phx.nn.models.MLP(
-        in_size="scalar", out_size="scalar", width_size=8, depth=1, key=jr.key(0)
-    )
-    u = space.Model("x")(network)
-    solver = phx.solver.FunctionalSolver(
-        functions={"kappa": kappa, "u": u},
-        terms=(_penalty(space, ("kappa", "u"), _heat_residual),),
-        evaluation_terms=(),
-        enforcement=None,
-    )
-    parameters, _, fixed = solver.partition_functions()
-    assert _array_leaves(parameters["kappa"]) == []
-    assert _array_leaves(parameters["u"])
-
-    trained = solver.solve(num_iter=5, optim=optax.adam(1e-2), seed=0)
-
-    for before, after in zip(
-        _array_leaves(fixed["kappa"]),
-        _array_leaves(trained.partition_functions()[2]["kappa"]),
-        strict=True,
     ):
-        assert jnp.array_equal(before, after)
-    assert not all(
-        jnp.array_equal(before, after)
-        for before, after in zip(
-            _array_leaves(parameters["u"]),
-            _array_leaves(trained.partition_functions()[0]["u"]),
-            strict=True,
+        space = phx.domain.Interval1d(0.0, 1.0)
+        x_port = space.value_port("x")
+        result = _fit_closure(recipe, space, 0.5)
+
+        ports = result.model_ports()
+        assert ports.inputs == (x_port,)
+        assert ports.outputs == (_conductivity_port(),)
+
+        kappa = space.Model("x", port_mapping=_input_mapping(x_port, x_port))(
+            result.model
         )
-    )
+        evidence = kappa.port_binding
+        # ty: ignore[unresolved-attribute]
+        assert evidence.inputs == ((x_port.port_id, x_port.port_id),)
+        # The coordinate's semantic axis is declared on both sides and verified; the
+        # domain declares no coordinate units, so dimensions stay unverified.
+        # ty: ignore[unresolved-attribute]
+        assert ("input", x_port.port_id, "axes") not in evidence.unverified
+        # ty: ignore[unresolved-attribute]
+        assert ("input", x_port.port_id, "dimensions") in evidence.unverified
+        # ty: ignore[unresolved-attribute]
+        assert not evidence.dimensions_verified
+
+        network = phx.nn.models.MLP(
+            in_size="scalar", out_size="scalar", width_size=8, depth=1, key=jr.key(0)
+        )
+        u = space.Model("x")(network)
+        solver = phx.solver.FunctionalSolver(
+            functions={"kappa": kappa, "u": u},
+            terms=(_penalty(space, ("kappa", "u"), _heat_residual),),
+            evaluation_terms=(),
+            enforcement=None,
+        )
+        parameters, _, fixed = solver.partition_functions()
+        assert _array_leaves(parameters["kappa"]) == []
+        assert _array_leaves(parameters["u"])
+
+        trained = solver.solve(num_iter=5, optim=optax.adam(1e-2), seed=0)
+
+        for before, after in zip(
+            _array_leaves(fixed["kappa"]),
+            _array_leaves(trained.partition_functions()[2]["kappa"]),
+            strict=True,
+        ):
+            assert jnp.array_equal(before, after)
+        assert not all(
+            jnp.array_equal(before, after)
+            for before, after in zip(
+                _array_leaves(parameters["u"]),
+                _array_leaves(trained.partition_functions()[0]["u"]),
+                strict=True,
+            )
+        )
 
 
 def test_g1_explicit_parameter_subspace_trains_a_coefficient_subset() -> None:
@@ -713,15 +711,12 @@ def _newton(response: Any, components: Any, tolerance: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "authority",
-    (phx.ComponentAuthority.SURROGATE, phx.ComponentAuthority.MODEL),
-)
-def test_g15_undeclared_float32_residual_component_rejects_newton(authority: Any) -> None:
-    response = _CubicResponse(_precision("float32"))
+def test_g15_undeclared_float32_residual_component_rejects_newton() -> None:
+    for authority in (phx.ComponentAuthority.SURROGATE, phx.ComponentAuthority.MODEL):
+        response = _CubicResponse(_precision("float32"))
 
-    with pytest.raises(ValueError, match="float32.*declares no error floor"):
-        _newton(response, ((response, authority),), 1e-12)
+        with pytest.raises(ValueError, match="float32.*declares no error floor"):
+            _newton(response, ((response, authority),), 1e-12)
 
 
 def test_g15_declared_floor_derives_the_achievable_tolerance() -> None:
@@ -1543,41 +1538,39 @@ def _assert_bitwise(actual: Any, expected: Any) -> None:
         assert jnp.array_equal(data(left), data(right))
 
 
-@pytest.mark.parametrize("policy", list(phx.lifecycle.CoupledTrainingPolicy))
-def test_g12_physical_rejection_restores_every_training_quantity_exactly(
-    policy: Any,
-) -> None:
-    setup = _drift_setup(
-        OptaxUpdateRule(optax.adam(0.1), rule_id="adam"),
-        target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
-    )
-    _, _, plant_state, _, kernel_state = setup
-    # One committed joint step makes optimizer moments, targets, model state,
-    # and cursors nontrivial before the rejected step.
-    warm = _coupled(setup, plant_state, kernel_state, [1.0, 1.0], policy)
-    assert int(warm.kernel_state.accepted_cursor) == 1
+def test_g12_physical_rejection_restores_every_training_quantity_exactly() -> None:
+    for policy in list(phx.lifecycle.CoupledTrainingPolicy):
+        setup = _drift_setup(
+            OptaxUpdateRule(optax.adam(0.1), rule_id="adam"),
+            target_policy=ExponentialMovingAverageTargetPolicy(decay=0.5),
+        )
+        _, _, plant_state, _, kernel_state = setup
+        # One committed joint step makes optimizer moments, targets, model state,
+        # and cursors nontrivial before the rejected step.
+        warm = _coupled(setup, plant_state, kernel_state, [1.0, 1.0], policy)
+        assert int(warm.kernel_state.accepted_cursor) == 1
 
-    hooks = []
-    rejected = _coupled(
-        setup,
-        warm.plant_state,
-        warm.kernel_state,
-        [1.0, -1.0],
-        policy,
-        hooks=(lambda *args: hooks.append(args),),
-    )
-    # The derived update was acceptable on its own, yet it was discarded with
-    # the rejected physical step: nothing of the attempt survives.
-    assert int(rejected.evidence.training.outcome) == 0
-    assert not bool(rejected.evidence.training_committed)
-    _assert_bitwise(rejected.kernel_state, warm.kernel_state)
-    assert hooks == []
-    x = rejected.plant_state.payload["x"]
-    assert float(x[1]) == float(warm.plant_state.payload["x"][1])
-    if policy is phx.lifecycle.CoupledTrainingPolicy.JOINTLY_REQUIRED:
-        _assert_bitwise(rejected.plant_state, warm.plant_state)
-    else:
-        assert float(x[0]) == float(warm.plant_state.payload["x"][0]) + 2.0
+        hooks = []
+        rejected = _coupled(
+            setup,
+            warm.plant_state,
+            warm.kernel_state,
+            [1.0, -1.0],
+            policy,
+            hooks=(lambda *args: hooks.append(args),),
+        )
+        # The derived update was acceptable on its own, yet it was discarded with
+        # the rejected physical step: nothing of the attempt survives.
+        assert int(rejected.evidence.training.outcome) == 0
+        assert not bool(rejected.evidence.training_committed)
+        _assert_bitwise(rejected.kernel_state, warm.kernel_state)
+        assert hooks == []
+        x = rejected.plant_state.payload["x"]
+        assert float(x[1]) == float(warm.plant_state.payload["x"][1])
+        if policy is phx.lifecycle.CoupledTrainingPolicy.JOINTLY_REQUIRED:
+            _assert_bitwise(rejected.plant_state, warm.plant_state)
+        else:
+            assert float(x[0]) == float(warm.plant_state.payload["x"][0]) + 2.0
 
 
 def test_g24_policy_decides_whether_a_valid_step_survives_a_training_rejection() -> None:

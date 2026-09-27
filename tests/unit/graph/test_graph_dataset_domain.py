@@ -41,7 +41,7 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_graph_dataset_domain_materializes_batched_node_entities() -> None:
+def test_graph_dataset_contracts() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs(), measure="count")
     batch = domain.points_from_indices(
         jnp.array([0, 1], dtype=jnp.int32),
@@ -66,9 +66,6 @@ def test_graph_dataset_domain_materializes_batched_node_entities() -> None:
         domain.component({"graph": phx.domain.Nodes()}).mass.value,
         5.0,
     )
-
-
-def test_graph_dataset_domain_applies_local_node_sets_per_graph() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs(), measure="count")
     batch = domain.points_from_indices(
         # ty: ignore[invalid-argument-type]
@@ -88,6 +85,59 @@ def test_graph_dataset_domain_applies_local_node_sets_per_graph() -> None:
         domain.component({"graph": phx.domain.BoundaryNodes([1])}).mass.value,
         2.0,
     )
+    domain = phx.domain.GraphDatasetDomain(_graphs())
+    batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        # ty: ignore[invalid-argument-type]
+        component=phx.domain.BoundaryNodes([1]),
+        structure=phx.domain.SampleLayout((("graph",),)),
+    )
+    model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 1.0)
+    u = domain.GraphModel(model)
+
+    assert jnp.allclose(u(batch).data[:, 0], jnp.array([2.0, 5.0]))
+    base = phx.domain.GraphDatasetDomain(_graphs())
+    layout = base.layout_for_batch_size(2, multiple=2)
+    domain = base.with_layout(layout)
+    batch = domain.points_from_indices(
+        # ty: ignore[invalid-argument-type]
+        [0, 1],
+        component=phx.domain.Nodes(),
+        structure=phx.domain.SampleLayout((("graph",),)),
+    )
+
+    assert domain.layout is not None
+    assert batch.graph.nodes.shape == (6, 1)
+    # ty: ignore[unresolved-attribute]
+    assert batch.graph.senders.shape == (4,)
+    assert batch.graph.n_node.shape == (2,)
+    assert jnp.allclose(
+        # ty: ignore[invalid-argument-type]
+        batch.graph.node_mask,
+        jnp.array([True, True, True, True, True, False]),
+    )
+    # ty: ignore[invalid-argument-type]
+    assert jnp.allclose(batch.graph.edge_mask, jnp.array([True, True, True, False]))
+    assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([0.0, 1.0, 2.0, 4.0, 8.0]))
+    assert jnp.allclose(
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
+        jnp.arange(5, dtype=jnp.int32),
+    )
+    layout = phx.graph.LayoutPlan(max_nodes=4, max_edges=4, max_graphs=2)
+    domain = phx.domain.GraphDatasetDomain(_graphs(), layout=layout)
+
+    try:
+        domain.points_from_indices(
+            # ty: ignore[invalid-argument-type]
+            [0, 1],
+            component=phx.domain.Nodes(),
+            structure=phx.domain.SampleLayout((("graph",),)),
+        )
+    except ValueError as exc:
+        assert "max_nodes" in str(exc)
+    else:
+        raise AssertionError("Expected layout packing to reject oversized graph batch.")
 
 
 def test_graph_dataset_domain_graph_gradient_on_local_edge_set() -> None:
@@ -129,21 +179,6 @@ def test_graph_dataset_domain_samples_through_residual_penalty() -> None:
     assert term.loss({"u": u}, key=jr.key(0)) < 1e-12
 
 
-def test_graph_dataset_domain_graph_model_restricts_to_node_set() -> None:
-    domain = phx.domain.GraphDatasetDomain(_graphs())
-    batch = domain.points_from_indices(
-        # ty: ignore[invalid-argument-type]
-        [0, 1],
-        # ty: ignore[invalid-argument-type]
-        component=phx.domain.BoundaryNodes([1]),
-        structure=phx.domain.SampleLayout((("graph",),)),
-    )
-    model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 1.0)
-    u = domain.GraphModel(model)
-
-    assert jnp.allclose(u(batch).data[:, 0], jnp.array([2.0, 5.0]))
-
-
 def test_graph_dataset_domain_graph_model_accepts_edge_input_fn() -> None:
     domain = phx.domain.GraphDatasetDomain(_graphs())
     batch = domain.points_from_indices(
@@ -169,36 +204,6 @@ def test_graph_dataset_domain_graph_model_accepts_edge_input_fn() -> None:
     )
 
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([0.0, 4.0]))
-
-
-def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities() -> None:
-    base = phx.domain.GraphDatasetDomain(_graphs())
-    layout = base.layout_for_batch_size(2, multiple=2)
-    domain = base.with_layout(layout)
-    batch = domain.points_from_indices(
-        # ty: ignore[invalid-argument-type]
-        [0, 1],
-        component=phx.domain.Nodes(),
-        structure=phx.domain.SampleLayout((("graph",),)),
-    )
-
-    assert domain.layout is not None
-    assert batch.graph.nodes.shape == (6, 1)
-    # ty: ignore[unresolved-attribute]
-    assert batch.graph.senders.shape == (4,)
-    assert batch.graph.n_node.shape == (2,)
-    assert jnp.allclose(
-        # ty: ignore[invalid-argument-type]
-        batch.graph.node_mask,
-        jnp.array([True, True, True, True, True, False]),
-    )
-    # ty: ignore[invalid-argument-type]
-    assert jnp.allclose(batch.graph.edge_mask, jnp.array([True, True, True, False]))
-    assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([0.0, 1.0, 2.0, 4.0, 8.0]))
-    assert jnp.allclose(
-        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
-        jnp.arange(5, dtype=jnp.int32),
-    )
 
 
 def test_graph_dataset_domain_layout_preserves_graph_operator_results() -> None:
@@ -243,20 +248,3 @@ def test_graph_dataset_domain_layout_preserves_graph_model_results() -> None:
 
     u = domain.GraphModel(AddValidNodeMask())
     assert jnp.allclose(u(batch).data[:, 0], jnp.array([2.0, 5.0]))
-
-
-def test_graph_dataset_domain_layout_rejects_oversized_sample() -> None:
-    layout = phx.graph.LayoutPlan(max_nodes=4, max_edges=4, max_graphs=2)
-    domain = phx.domain.GraphDatasetDomain(_graphs(), layout=layout)
-
-    try:
-        domain.points_from_indices(
-            # ty: ignore[invalid-argument-type]
-            [0, 1],
-            component=phx.domain.Nodes(),
-            structure=phx.domain.SampleLayout((("graph",),)),
-        )
-    except ValueError as exc:
-        assert "max_nodes" in str(exc)
-    else:
-        raise AssertionError("Expected layout packing to reject oversized graph batch.")

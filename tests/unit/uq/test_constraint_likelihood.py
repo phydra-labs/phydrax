@@ -20,7 +20,7 @@ def _normal_log_density(residual: Any, covariance: Any) -> Any:
     )
 
 
-def test_diagonal_constraint_likelihood_is_normalized() -> None:
+def test_constraint_likelihood_scenario_1() -> None:
     observed = jnp.asarray([1.5, -0.25])
     prediction = jnp.asarray([0.9, 0.5])
     scales = jnp.asarray([0.4, 0.7])
@@ -31,9 +31,6 @@ def test_diagonal_constraint_likelihood_is_normalized() -> None:
     assert jnp.allclose(likelihood.log_likelihood(prediction), expected)
     assert jnp.array_equal(likelihood.physical_noise.covariance, jnp.diag(scales**2))
     assert int(likelihood.physical_noise_rank) == 2
-
-
-def test_correlated_constraint_likelihood_matches_dense_normal_density() -> None:
     observed = jnp.asarray([0.5, -1.0])
     prediction = jnp.asarray([-0.1, -0.4])
     covariance = jnp.asarray([[0.8, 0.3], [0.3, 0.5]])
@@ -48,9 +45,6 @@ def test_correlated_constraint_likelihood_matches_dense_normal_density() -> None
         _normal_log_density(observed - prediction, covariance),
     )
     assert jnp.allclose(likelihood.physical_noise.covariance, covariance)
-
-
-def test_singular_constraint_likelihood_uses_its_intrinsic_support_density() -> None:
     covariance = jnp.asarray([[1.0, 1.0], [1.0, 1.0]])
     likelihood = ConstraintLikelihoodTerm(
         jnp.asarray([1.0, 1.0]),

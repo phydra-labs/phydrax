@@ -38,7 +38,7 @@ def _nonnormal_matrix() -> Any:
     )
 
 
-def test_spectral_selection_masks_half_planes_and_disks() -> None:
+def test_linalg_spectral_subspaces_scenario_1() -> None:
     eigenvalues = jnp.asarray([-2.0 + 0.5j, -0.25, 1.0 + 1.0j, 3.0])
 
     assert jnp.array_equal(
@@ -57,9 +57,21 @@ def test_spectral_selection_masks_half_planes_and_disks() -> None:
         eig.SpectralSelection.exterior_disk(0.0, 1.5).mask(eigenvalues),
         jnp.asarray([True, False, False, True]),
     )
+    matrix = _nonnormal_matrix()
+    selection = eig.SpectralSelection.real_below(0.0)
+    prepared = eig.prepare_spectral_subspace(_problem(matrix), selection)
+    updated_matrix = matrix.at[0, 0].set(-2.5).at[2, 2].set(3.5)
+    refreshed = eig.refresh_spectral_subspace(prepared, _problem(updated_matrix))
 
+    assert refreshed.selected_dimension == prepared.selected_dimension
+    assert refreshed.plan.plan_id == prepared.plan.plan_id
+    assert refreshed.prepared_id == prepared.prepared_id
+    assert refreshed.numeric_version == 1
+    assert refreshed.refresh_count == 1
 
-def test_nonnormal_riesz_projector_commutes_and_is_not_orthogonal_projector() -> None:
+    crossed_matrix = matrix.at[1, 1].set(0.5)
+    with pytest.raises(ValueError, match="changed the selected dimension"):
+        eig.refresh_spectral_subspace(prepared, _problem(crossed_matrix))
     matrix = _nonnormal_matrix()
     selection = eig.SpectralSelection.real_below(0.0, expected_dimension=2)
     prepared = eig.prepare_spectral_subspace(_problem(matrix), selection)
@@ -82,9 +94,6 @@ def test_nonnormal_riesz_projector_commutes_and_is_not_orthogonal_projector() ->
     assert prepared.diagnostics.separation_exact
     vector = jnp.asarray([1.0, -2.0, 0.5])
     assert jnp.allclose(subspace.project_coordinates(vector), subspace.projector @ vector)
-
-
-def test_normal_spectral_projector_equals_orthogonal_projector() -> None:
     matrix = jnp.asarray([[1.0, 2.0, 0.0], [2.0, -2.0, 0.0], [0.0, 0.0, 4.0]])
     selection = eig.SpectralSelection.real_below(0.0, expected_dimension=1)
     subspace = eig.spectral_subspace(_problem(matrix), selection)
@@ -99,7 +108,7 @@ def test_normal_spectral_projector_equals_orthogonal_projector() -> None:
     assert subspace.diagnostics.projector_norm == pytest.approx(1.0)
 
 
-def test_projector_derivative_matches_centered_finite_difference_and_jit() -> None:
+def test_linalg_spectral_subspaces_scenario_2() -> None:
     matrix = _nonnormal_matrix()
     perturbation = jnp.asarray([[0.2, -0.1, 0.3], [0.4, 0.1, -0.2], [0.05, 0.2, -0.3]])
     selection = eig.SpectralSelection.real_below(0.0, expected_dimension=2)
@@ -121,9 +130,6 @@ def test_projector_derivative_matches_centered_finite_difference_and_jit() -> No
     assert jnp.allclose(derivative.value, finite_difference, rtol=1e-7, atol=1e-8)
     assert derivative.diagnostics.commutator_residual_norm < 1e-12
     assert derivative.diagnostics.tangent_residual_norm < 1e-12
-
-
-def test_projector_derivative_is_linear_and_satisfies_differentiated_identities() -> None:
     matrix = _nonnormal_matrix()
     selection = eig.SpectralSelection.real_below(0.0, expected_dimension=2)
     prepared = eig.prepare_spectral_subspace(_problem(matrix), selection)
@@ -150,9 +156,6 @@ def test_projector_derivative_is_linear_and_satisfies_differentiated_identities(
         rtol=1e-11,
         atol=1e-12,
     )
-
-
-def test_projector_derivative_accepts_a_matching_operator_perturbation() -> None:
     matrix = _nonnormal_matrix()
     selection = eig.SpectralSelection.real_below(0.0, expected_dimension=2)
     prepared = eig.prepare_spectral_subspace(_problem(matrix), selection)
@@ -164,27 +167,6 @@ def test_projector_derivative_accepts_a_matching_operator_perturbation() -> None
     )
 
     assert jnp.allclose(array_result.value, operator_result.value)
-
-
-def test_spectral_refresh_preserves_dimension_and_rejects_crossings() -> None:
-    matrix = _nonnormal_matrix()
-    selection = eig.SpectralSelection.real_below(0.0)
-    prepared = eig.prepare_spectral_subspace(_problem(matrix), selection)
-    updated_matrix = matrix.at[0, 0].set(-2.5).at[2, 2].set(3.5)
-    refreshed = eig.refresh_spectral_subspace(prepared, _problem(updated_matrix))
-
-    assert refreshed.selected_dimension == prepared.selected_dimension
-    assert refreshed.plan.plan_id == prepared.plan.plan_id
-    assert refreshed.prepared_id == prepared.prepared_id
-    assert refreshed.numeric_version == 1
-    assert refreshed.refresh_count == 1
-
-    crossed_matrix = matrix.at[1, 1].set(0.5)
-    with pytest.raises(ValueError, match="changed the selected dimension"):
-        eig.refresh_spectral_subspace(prepared, _problem(crossed_matrix))
-
-
-def test_selection_boundary_expected_dimension_and_resource_limits_are_explicit() -> None:
     matrix = jnp.diag(jnp.asarray([-1.0, 0.0, 2.0]))
     problem = _problem(matrix)
     boundary = eig.SpectralSelection.real_below(0.0, boundary_tolerance=1e-6)
@@ -203,9 +185,6 @@ def test_selection_boundary_expected_dimension_and_resource_limits_are_explicit(
     )
     with pytest.raises(ValueError, match="exceeds limit"):
         eig.plan_spectral_subspace(problem, eig.SpectralSelection.real_below(1.0), policy)
-
-
-def test_exact_sylvester_separation_budget_and_condition_status_are_visible() -> None:
     matrix = _nonnormal_matrix()
     problem = _problem(matrix)
     selection = eig.SpectralSelection.real_below(0.0, expected_dimension=2)

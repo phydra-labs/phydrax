@@ -33,7 +33,7 @@ def _basis(
     )
 
 
-def test_discrete_laplacian_eigenbasis_validates_probability_orthonormality() -> None:
+def test_spectrum_scenario_1() -> None:
     basis = _basis()
 
     assert basis.mode_count == 2
@@ -45,9 +45,6 @@ def test_discrete_laplacian_eigenbasis_validates_probability_orthonormality() ->
         @ (basis.probability_measure[:, None] * basis.eigenfunctions),
         jnp.eye(2),
     )
-
-
-def test_discrete_laplacian_eigenbasis_rejects_invalid_geometry() -> None:
     with pytest.raises(ValueError, match="sorted"):
         _basis(eigenvalues=jnp.asarray([2.0, 0.0]))
     with pytest.raises(ValueError, match="materially negative"):
@@ -61,9 +58,18 @@ def test_discrete_laplacian_eigenbasis_rejects_invalid_geometry() -> None:
             active_mask=jnp.asarray([True, False]),
             probability_measure=jnp.asarray([1.0, 0.0]),
         )
+    basis = _basis()
+    kernel = phx.kernels.SpectralFeatureKernel(
+        basis,
+        phx.kernels.MaternSpectralMultiplier(0.7, 1.5),
+    )
 
+    trainable, _, fixed = phx.partition_parameters(kernel)
 
-def test_probability_measure_tolerance_is_absolute() -> None:
+    assert trainable.eigenbasis is None
+    assert fixed.eigenbasis is basis
+    assert trainable.multiplier.length_scale is not None
+    assert trainable.multiplier.smoothness is not None
     measure = jnp.asarray([0.5, 0.499995])
     functions = jnp.ones((2, 1)) / jnp.sqrt(jnp.sum(measure))
     with pytest.raises(ValueError, match="sum to one"):
@@ -74,9 +80,6 @@ def test_probability_measure_tolerance_is_absolute() -> None:
             spectral_dimension=1.0,
             decomposition_id="unnormalized-measure",
         )
-
-
-def test_spectrum_reports_reject_invalid_or_inconsistent_provenance() -> None:
     with pytest.raises(ValueError, match="next_eigenvalue"):
         phx.discretization.LaplacianEigenbasisReport(
             method_id="test",
@@ -116,18 +119,3 @@ def test_spectrum_reports_reject_invalid_or_inconsistent_provenance() -> None:
             decomposition_id="inconsistent-report",
             report=inconsistent,
         )
-
-
-def test_discrete_spectrum_is_fixed_while_multiplier_parameters_are_trainable() -> None:
-    basis = _basis()
-    kernel = phx.kernels.SpectralFeatureKernel(
-        basis,
-        phx.kernels.MaternSpectralMultiplier(0.7, 1.5),
-    )
-
-    trainable, _, fixed = phx.partition_parameters(kernel)
-
-    assert trainable.eigenbasis is None
-    assert fixed.eigenbasis is basis
-    assert trainable.multiplier.length_scale is not None
-    assert trainable.multiplier.smoothness is not None

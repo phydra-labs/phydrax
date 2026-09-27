@@ -83,7 +83,7 @@ def _asset(
     )
 
 
-def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags() -> None:
+def test_imaging_platform_scenario_1() -> None:
     values = np.arange(8.0).reshape((2, 2, 2))
     layout = phx.imaging.ImageFieldSpec.named(
         "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
@@ -116,38 +116,6 @@ def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags(
         _asset(values, layout, references=())
     with pytest.raises(ValueError, match="references must be unique"):
         _asset(values, layout, references=(references[0], references[0]))
-
-
-def test_nifti_export_requires_rights_from_every_reference(tmp_path: Any) -> None:
-    values = np.zeros((2, 2, 2), dtype="float64")
-    layout = phx.imaging.ImageFieldSpec.named(
-        "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
-    )
-    asset = _asset(
-        values,
-        layout,
-        references=(
-            _manifest("exportable"),
-            _manifest("controlled", export_permitted=False),
-        ),
-    )
-
-    with pytest.raises(PermissionError, match="export-not-permitted"):
-        phx.imaging.NibabelImageProvider().write(asset, tmp_path / "blocked.nii")
-
-
-def test_nifti_export_requires_explicit_semantic_loss_admission(tmp_path: Any) -> None:
-    asset = _asset(
-        np.zeros((2, 2, 2), dtype=np.float64),
-        phx.imaging.ImageFieldSpec.named(
-            "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
-        ),
-    )
-    with pytest.raises(ValueError, match="governed image semantics"):
-        phx.imaging.NibabelImageProvider().write(asset, tmp_path / "lossy.nii")
-
-
-def test_image_affine_units_frames_and_qform_conflict() -> None:
     matrix = np.asarray(
         (
             (0.0, -2.0, 0.0, 10.0),
@@ -172,9 +140,6 @@ def test_image_affine_units_frames_and_qform_conflict() -> None:
             coordinate_contract=affine.coordinate_contract,
             axis_convention=phx.imaging.ImageAxisConvention.LPS,
         )
-
-
-def test_scalar_projection_and_voxel_sampling_reproduce_affine_field() -> None:
     with pytest.raises(ValueError, match="coordinate system disagree"):
         phx.imaging.ImageIndexAffine(
             np.eye(4),
@@ -208,7 +173,36 @@ def test_scalar_projection_and_voxel_sampling_reproduce_affine_field() -> None:
     assert bool(projected.evidence.successful)
 
 
-def test_tensor_transfer_reorients_spd_field() -> None:
+def test_nifti_export_requires_rights_from_every_reference(tmp_path: Any) -> None:
+    values = np.zeros((2, 2, 2), dtype="float64")
+    layout = phx.imaging.ImageFieldSpec.named(
+        "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
+    )
+    asset = _asset(
+        values,
+        layout,
+        references=(
+            _manifest("exportable"),
+            _manifest("controlled", export_permitted=False),
+        ),
+    )
+
+    with pytest.raises(PermissionError, match="export-not-permitted"):
+        phx.imaging.NibabelImageProvider().write(asset, tmp_path / "blocked.nii")
+
+
+def test_nifti_export_requires_explicit_semantic_loss_admission(tmp_path: Any) -> None:
+    asset = _asset(
+        np.zeros((2, 2, 2), dtype=np.float64),
+        phx.imaging.ImageFieldSpec.named(
+            "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
+        ),
+    )
+    with pytest.raises(ValueError, match="governed image semantics"):
+        phx.imaging.NibabelImageProvider().write(asset, tmp_path / "lossy.nii")
+
+
+def test_imaging_platform_scenario_2() -> None:
     tensor = np.broadcast_to(np.diag((3.0, 2.0, 1.0)), (2, 2, 2, 3, 3)).copy()
     layout = phx.imaging.ImageFieldSpec.named(
         "diffusion",
@@ -231,9 +225,6 @@ def test_tensor_transfer_reorients_spd_field() -> None:
             "mesh-basis",
             2.0 * np.eye(3),
         )
-
-
-def test_registration_refuses_empty_support_and_non_millimeter_policy() -> None:
     with pytest.raises(ValueError, match="at least one point"):
         phx.imaging.RegistrationEvaluationPlan(
             np.zeros((0, 3)),
@@ -247,9 +238,6 @@ def test_registration_refuses_empty_support_and_non_millimeter_policy() -> None:
             "target",
             length_unit=phx.units.METER,
         )
-
-
-def test_conservative_overlap_has_exact_mass_and_dual_pairing() -> None:
     transfer = phx.imaging.ConservativeVoxelCellTransfer(
         np.asarray((0, 0, 1, 1)),
         np.asarray((0, 1, 0, 1)),
@@ -264,7 +252,7 @@ def test_conservative_overlap_has_exact_mass_and_dual_pairing() -> None:
     assert bool(result.evidence.successful)
 
 
-def test_label_compartments_and_single_oriented_interface() -> None:
+def test_imaging_platform_scenario_3() -> None:
     values = np.ones((2, 2, 2), dtype=np.int16)
     values[1] = 2
     layout = phx.imaging.ImageFieldSpec.named(
@@ -327,9 +315,6 @@ def test_label_compartments_and_single_oriented_interface() -> None:
         reflected_points[:, 2] - reflected_points[:, 0],
     )
     assert np.all(reflected_normals[:, 0] < 0.0)
-
-
-def test_probability_transfer_preserves_simplex_and_segmentation_transition() -> None:
     probabilities = np.zeros((2, 2, 2, 2), dtype="float64")
     probabilities[..., 0] = np.fromfunction(lambda i, j, k: (i + j + k) / 3.0, (2, 2, 2))
     probabilities[..., 1] = 1.0 - probabilities[..., 0]

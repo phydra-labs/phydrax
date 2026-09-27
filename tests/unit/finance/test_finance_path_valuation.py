@@ -38,7 +38,7 @@ def _paths() -> Any:
     )
 
 
-def test_path_payoffs_cover_barrier_asian_basket_and_variance_swap_semantics() -> None:
+def test_finance_path_valuation_scenario_1() -> None:
     paths = _paths()
     asian, valid = evaluate_path_payoff(
         paths,
@@ -74,9 +74,6 @@ def test_path_payoffs_cover_barrier_asian_basket_and_variance_swap_semantics() -
     )
     variance, _ = evaluate_path_payoff(single, VarianceSwapPayoff(0.0, 1.0))
     assert jnp.all(variance >= 0.0)
-
-
-def test_monte_carlo_route_reports_exact_deterministic_sample_moments() -> None:
     paths = _paths()
     payoff = AsianPayoff(100.0, OptionType.CALL)
     prepared = prepare_monte_carlo(

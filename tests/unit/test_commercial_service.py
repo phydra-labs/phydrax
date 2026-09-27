@@ -170,7 +170,7 @@ class _Executor:
         return self.results.pop(0)
 
 
-def test_transaction_rollback_outbox_idempotency_audit_and_quota_recovery() -> None:
+def test_commercial_service_scenario_1() -> None:
     store = SQLiteServiceStore()
     quota = TenantQuota(2, 2, 4096, 0, 1024)
     resources = ResourceRequest(1, 1024)
@@ -224,6 +224,93 @@ def test_transaction_rollback_outbox_idempotency_audit_and_quota_recovery() -> N
     assert store.quota_usage("tenant").active_jobs == 1
     store.verify_audit_chain()
     assert store.reconcile_quota("tenant", ()).active_jobs == 0
+    store = SQLiteServiceStore()
+    with store.transaction() as transaction:
+        transaction.enqueue(
+            OutboxMessage(
+                "message",
+                "tenant",
+                "dispatch",
+                "job:1",
+                {"job_id": "job"},
+                1,
+                1,
+            )
+        )
+    attempts = 0
+
+    def handler(message: OutboxMessage, transaction: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        transaction.enqueue(
+            OutboxMessage(
+                "effect",
+                message.tenant_id,
+                "effect",
+                message.idempotency_key,
+                {"source_message_id": message.message_id},
+                10,
+                10,
+            )
+        )
+        if attempts == 1:
+            raise RuntimeError("transient")
+
+    dispatcher = OutboxDispatcher(store, {"dispatch": handler})
+    assert dispatcher.dispatch_once("worker", 10).failed_message_ids == ("message",)
+    assert dispatcher.dispatch_once("worker", 39).delivered_message_ids == ()
+    assert dispatcher.dispatch_once("worker", 40).delivered_message_ids == ("message",)
+    effects = store.claim_outbox("effect-worker", 41)
+    assert tuple(message.message_id for message in effects) == ("effect",)
+    store = SQLiteServiceStore()
+    first = DurableJobRecord(
+        "one", "tenant", "request", "0" * 64, JobState.QUEUED, 1, {}, 1, 1
+    )
+    conflict = DurableJobRecord(
+        "two", "tenant", "request", "1" * 64, JobState.QUEUED, 1, {}, 1, 1
+    )
+    with pytest.raises(ValueError, match="credential"):
+        DurableJobRecord(
+            "secret-job",
+            "tenant",
+            "",
+            "2" * 64,
+            JobState.QUEUED,
+            1,
+            {"access_token": "must-not-persist"},
+            1,
+            1,
+        )
+    for field_name in ("token", "api_key", "session", "cookie", "secret_value"):
+        with pytest.raises(ValueError, match="credential"):
+            DurableJobRecord(
+                f"secret-{field_name}",
+                "tenant",
+                "",
+                "2" * 64,
+                JobState.QUEUED,
+                1,
+                {field_name: "must-not-persist"},
+                1,
+                1,
+            )
+    with pytest.raises(ValueError, match="credential"):
+        DurableJobRecord(
+            "opaque-secret",
+            "tenant",
+            "",
+            "2" * 64,
+            JobState.QUEUED,
+            1,
+            {"value": "Q" * 44},
+            1,
+            1,
+        )
+    with store.transaction() as transaction:
+        transaction.insert_job(first)
+    with pytest.raises(IntegrityError, match="idempotency"):
+        with store.transaction() as transaction:
+            transaction.insert_job(conflict)
 
 
 def test_sqlite_store_rejects_symlink_database_path(tmp_path: Any) -> None:
@@ -304,99 +391,6 @@ def test_sqlite_connection_remains_bound_through_swap_and_restore(
     assert target.stat().st_size == 0
 
 
-def test_outbox_dispatcher_releases_failures_for_durable_retry() -> None:
-    store = SQLiteServiceStore()
-    with store.transaction() as transaction:
-        transaction.enqueue(
-            OutboxMessage(
-                "message",
-                "tenant",
-                "dispatch",
-                "job:1",
-                {"job_id": "job"},
-                1,
-                1,
-            )
-        )
-    attempts = 0
-
-    def handler(message: OutboxMessage, transaction: Any) -> None:
-        nonlocal attempts
-        attempts += 1
-        transaction.enqueue(
-            OutboxMessage(
-                "effect",
-                message.tenant_id,
-                "effect",
-                message.idempotency_key,
-                {"source_message_id": message.message_id},
-                10,
-                10,
-            )
-        )
-        if attempts == 1:
-            raise RuntimeError("transient")
-
-    dispatcher = OutboxDispatcher(store, {"dispatch": handler})
-    assert dispatcher.dispatch_once("worker", 10).failed_message_ids == ("message",)
-    assert dispatcher.dispatch_once("worker", 39).delivered_message_ids == ()
-    assert dispatcher.dispatch_once("worker", 40).delivered_message_ids == ("message",)
-    effects = store.claim_outbox("effect-worker", 41)
-    assert tuple(message.message_id for message in effects) == ("effect",)
-
-
-def test_durable_request_id_rejects_conflicting_payload() -> None:
-    store = SQLiteServiceStore()
-    first = DurableJobRecord(
-        "one", "tenant", "request", "0" * 64, JobState.QUEUED, 1, {}, 1, 1
-    )
-    conflict = DurableJobRecord(
-        "two", "tenant", "request", "1" * 64, JobState.QUEUED, 1, {}, 1, 1
-    )
-    with pytest.raises(ValueError, match="credential"):
-        DurableJobRecord(
-            "secret-job",
-            "tenant",
-            "",
-            "2" * 64,
-            JobState.QUEUED,
-            1,
-            {"access_token": "must-not-persist"},
-            1,
-            1,
-        )
-    for field_name in ("token", "api_key", "session", "cookie", "secret_value"):
-        with pytest.raises(ValueError, match="credential"):
-            DurableJobRecord(
-                f"secret-{field_name}",
-                "tenant",
-                "",
-                "2" * 64,
-                JobState.QUEUED,
-                1,
-                {field_name: "must-not-persist"},
-                1,
-                1,
-            )
-    with pytest.raises(ValueError, match="credential"):
-        DurableJobRecord(
-            "opaque-secret",
-            "tenant",
-            "",
-            "2" * 64,
-            JobState.QUEUED,
-            1,
-            {"value": "Q" * 44},
-            1,
-            1,
-        )
-    with store.transaction() as transaction:
-        transaction.insert_job(first)
-    with pytest.raises(IntegrityError, match="idempotency"):
-        with store.transaction() as transaction:
-            transaction.insert_job(conflict)
-
-
 def test_scheduler_timeout_kills_descendants_that_ignore_sigterm(tmp_path: Any) -> None:
     child_pid_path = tmp_path / "child.pid"
     child_code = (
@@ -425,7 +419,7 @@ def test_scheduler_timeout_kills_descendants_that_ignore_sigterm(tmp_path: Any) 
         pytest.fail("Scheduler timeout left a descendant process running.")
 
 
-def test_scheduler_command_executor_bounds_response_before_decode() -> None:
+def test_commercial_service_scenario_2() -> None:
     executor = SubprocessCommandExecutor(
         timeout_seconds=5.0,
         maximum_response_bytes=16,
@@ -438,9 +432,6 @@ def test_scheduler_command_executor_bounds_response_before_decode() -> None:
                 "import sys; sys.stdout.buffer.write(b'x' * 17)",
             )
         )
-
-
-def test_slurm_uses_argv_and_maps_machine_state() -> None:
     executor = _Executor(
         [
             CommandResult(0, "42;cluster\n", ""),
@@ -481,9 +472,6 @@ def test_slurm_uses_argv_and_maps_machine_state() -> None:
     )
     assert scheduler.status("42").state is SchedulerState.RUNNING
     assert len(executor.argv) == 2
-
-
-def test_slurm_ranked_job_uses_one_safe_srun_step() -> None:
     executor = _Executor([CommandResult(0, "43\n", "")])
     scheduler = SlurmScheduler(executor)
     spec = SlurmJobSpec(
@@ -509,9 +497,6 @@ def test_slurm_ranked_job_uses_one_safe_srun_step() -> None:
     assert decoded.startswith("#!/bin/sh\nset -eu\nexec srun ")
     assert "--ntasks=2" in decoded
     assert "'; rm -rf /'" in decoded
-
-
-def test_slurm_idempotency_binds_the_complete_submission() -> None:
     executor = _Executor([CommandResult(0, "42\n", "")])
     ledger = SQLiteServiceStore()
     # ty: ignore[invalid-argument-type]
@@ -527,19 +512,6 @@ def test_slurm_idempotency_binds_the_complete_submission() -> None:
     with pytest.raises(IntegrityError, match="different request"):
         scheduler.submit(replace(original, job_name="different-name"))
     assert len(executor.argv) == 1
-
-
-class _KubernetesTransport:
-    def __init__(self) -> None:
-        self.requests: list[tuple[str, str, dict[str, str], bytes | None]] = []
-        self.responses: list[HTTPResponse] = []
-
-    def request(self, method: Any, url: Any, /, *, headers: Any, body: Any = None) -> Any:
-        self.requests.append((method, url, dict(headers), body))
-        return self.responses.pop(0)
-
-
-def test_kubernetes_rejects_oversized_transport_responses_before_json_decode() -> None:
     transport = _KubernetesTransport()
     transport.responses.append(HTTPResponse(200, {}, b"x" * 9))
     scheduler = KubernetesScheduler(
@@ -550,6 +522,16 @@ def test_kubernetes_rejects_oversized_transport_responses_before_json_decode() -
     )
     with pytest.raises(IntegrityError, match="byte limit"):
         scheduler.status("tenant", "job")
+
+
+class _KubernetesTransport:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, dict[str, str], bytes | None]] = []
+        self.responses: list[HTTPResponse] = []
+
+    def request(self, method: Any, url: Any, /, *, headers: Any, body: Any = None) -> Any:
+        self.requests.append((method, url, dict(headers), body))
+        return self.responses.pop(0)
 
 
 def test_kubernetes_idempotency_authentication_and_resource_version() -> None:
@@ -709,7 +691,7 @@ def test_jwks_ed25519_claims_and_key_rotation() -> None:
         validator.validate(issue(new, "new", aud="other"))
 
 
-def test_mtls_san_expiry_and_issuer_policy() -> None:
+def test_commercial_service_scenario_3() -> None:
     policy = MTLSCertificatePolicy("cluster.example", frozenset({"1" * 64}), 100, 0)
     certificate = WorkloadCertificate(
         ("spiffe://cluster.example/ns/tenant/sa/worker",), 10, 50, "0" * 64, "1" * 64
@@ -720,13 +702,32 @@ def test_mtls_san_expiry_and_issuer_policy() -> None:
     wrong_san = replace(certificate, san_uris=("spiffe://other.example/worker",))
     with pytest.raises(AuthenticationError, match="SPIFFE"):
         policy.validate(wrong_san, 20)
-
-
-def test_hmac_signing_key_repr_does_not_disclose_secret() -> None:
     secret = b"not-for-logs-" + b"x" * 32
     rendered = repr(HMACSigningKey("key", secret))
     assert secret.hex() not in rendered
     assert repr(secret) not in rendered
+    clock = _Clock(10)
+    broker = LocalSecretHandleBroker(clock=clock, maximum_lifetime_seconds=60)
+    handle = broker.issue(
+        "tenant",
+        b"do-not-log",
+        frozenset({"provider:read"}),
+        lifetime_seconds=10,
+        key_version="one",
+    )
+    assert "do-not-log" not in repr(handle)
+    assert broker.resolve(handle, "tenant", "provider:read") == b"do-not-log"
+    with pytest.raises(AuthorizationError):
+        broker.resolve(handle, "other", "provider:read")
+    clock.value = 20
+    with pytest.raises(AuthorizationError, match="expired"):
+        broker.resolve(handle, "tenant", "provider:read")
+    assert SecretRedactor().redact(
+        {"authorization": "Bearer secret", "safe": "value"}
+    ) == {
+        "authorization": "<redacted>",
+        "safe": "value",
+    }
 
 
 def test_ed25519_sign_verify_rotate_and_revoke() -> None:
@@ -770,32 +771,7 @@ def test_injected_kms_sign_and_verify() -> None:
         )
 
 
-def test_short_lived_scoped_secrets_and_redaction() -> None:
-    clock = _Clock(10)
-    broker = LocalSecretHandleBroker(clock=clock, maximum_lifetime_seconds=60)
-    handle = broker.issue(
-        "tenant",
-        b"do-not-log",
-        frozenset({"provider:read"}),
-        lifetime_seconds=10,
-        key_version="one",
-    )
-    assert "do-not-log" not in repr(handle)
-    assert broker.resolve(handle, "tenant", "provider:read") == b"do-not-log"
-    with pytest.raises(AuthorizationError):
-        broker.resolve(handle, "other", "provider:read")
-    clock.value = 20
-    with pytest.raises(AuthorizationError, match="expired"):
-        broker.resolve(handle, "tenant", "provider:read")
-    assert SecretRedactor().redact(
-        {"authorization": "Bearer secret", "safe": "value"}
-    ) == {
-        "authorization": "<redacted>",
-        "safe": "value",
-    }
-
-
-def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded() -> None:
+def test_commercial_service_scenario_4() -> None:
     telemetry = HostTelemetrySnapshot.create(
         (
             TelemetryDatum("safe", 1, "count", PrivacyClassification.INTERNAL, 10),
@@ -824,6 +800,110 @@ def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded() -> None:
     assert (
         "unknown" not in bundle.sections and "unlisted" not in bundle.sections["runtime"]
     )
+    transport = _KubernetesTransport()
+    KubernetesScheduler("https://cluster.example", "credential", transport)
+    HTTPSJWKSProvider(
+        "https://issuer.example",
+        "https://issuer.example/jwks",
+        transport,
+        clock=_Clock(10),
+    )
+    assert transport.requests == []
+    service = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+        clock=_Clock(10),
+    )
+
+    def provider(submission: Any, context: Any) -> None:
+        del submission, context
+        raise ProfileUnavailable("provider refused exact problem identity")
+
+    # ty: ignore[invalid-argument-type]
+    service.register_provider("profile", provider, support_tuple_id="provider-tuple")
+    failed = service.execute(
+        "tenant",
+        service.submit("tenant", _service_submission("failed-request")).job_id,
+    )
+
+    assert failed.state is JobState.FAILED
+    assert failed.failure is not None
+    assert failed.failure.code == "ProfileUnavailable"
+    assert (
+        failed.failure.exception_type == "phydrax.service._contracts.ProfileUnavailable"
+    )
+    assert failed.failure.message == "provider refused exact problem identity"
+
+    class IngressValidator:
+        called = False
+
+        def validate(self, token: str, /) -> ValidatedPrincipal:
+            self.called = True
+            raise AssertionError("oversize token reached the validator")
+
+    ingress_validator = IngressValidator()
+    ingress_service = InProcessReferenceService(
+        ingress_validator,
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+    )
+    with pytest.raises(AuthenticationError, match="compact-token byte limit"):
+        ingress_service.usage("a" * 16_385)
+    assert ingress_validator.called is False
+
+    class UnreachedJWKSProvider:
+        def get(self, issuer: str, /, *, force_refresh: bool = False) -> None:
+            raise AssertionError("rejected token reached JWKS lookup")
+
+    configuration = OIDCConfiguration("https://issuer.example", "phydrax", 0, 100)
+    validators = (
+        HMACOIDCTokenValidator(
+            configuration, (HMACSigningKey("key", b"k" * 32),), clock=_Clock(10)
+        ),
+        OIDCJWKSTokenValidator(
+            configuration,
+            # ty: ignore[invalid-argument-type]
+            UnreachedJWKSProvider(),
+            clock=_Clock(10),
+            accepted_algorithms=frozenset({"RS256"}),
+        ),
+    )
+    header = _b64(
+        json.dumps(
+            {"alg": "RS256", "kid": "key", "typ": "at+jwt"},
+            separators=(",", ":"),
+        ).encode()
+    )
+    payloads = (
+        (b'{"x":' + b"[" * 8 + b"0" + b"]" * 8 + b"}", "nesting"),
+        (
+            json.dumps(
+                {f"k{index}": index for index in range(65)}, separators=(",", ":")
+            ).encode(),
+            "key-count",
+        ),
+        (
+            json.dumps({"x": list(range(65))}, separators=(",", ":")).encode(),
+            "array-item",
+        ),
+        (
+            json.dumps({"x" * 129: 0}, separators=(",", ":")).encode(),
+            "key-byte",
+        ),
+        (
+            json.dumps({"x": "v" * 2_049}, separators=(",", ":")).encode(),
+            "string-byte",
+        ),
+    )
+    for validator in validators:
+        with pytest.raises(AuthenticationError, match="decoded-byte"):
+            validator.validate(f"{'A' * 1_368}.e30.c2ln")
+        with pytest.raises(AuthenticationError, match="encoded-byte"):
+            validator.validate(f"{header}.{'A' * 12_289}.c2ln")
+        for payload, expected in payloads:
+            with pytest.raises(AuthenticationError, match=expected):
+                validator.validate(f"{header}.{_b64(payload)}.c2ln")
 
 
 def test_provenance_hash_holds_ancestor_descriptors_during_replacement(
@@ -924,18 +1004,6 @@ def test_source_build_and_spdx_provenance_are_deterministic(tmp_path: Path) -> N
     assert isinstance(comment, str)
     assert first.source_digest in comment
     assert first.lock_digest in comment
-
-
-def test_provider_construction_has_no_network_or_telemetry_effects() -> None:
-    transport = _KubernetesTransport()
-    KubernetesScheduler("https://cluster.example", "credential", transport)
-    HTTPSJWKSProvider(
-        "https://issuer.example",
-        "https://issuer.example/jwks",
-        transport,
-        clock=_Clock(10),
-    )
-    assert transport.requests == []
 
 
 def test_runtime_admits_exact_support_before_allocation_and_bootstrap(
@@ -1248,34 +1316,6 @@ def test_durable_restart_refuses_tampered_payload_types(
         )
 
 
-def test_provider_failure_preserves_exact_exception_status_and_message() -> None:
-    service = InProcessReferenceService(
-        _ServiceValidator(),
-        ScopeTenantAuthorizer(),
-        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
-        clock=_Clock(10),
-    )
-
-    def provider(submission: Any, context: Any) -> None:
-        del submission, context
-        raise ProfileUnavailable("provider refused exact problem identity")
-
-    # ty: ignore[invalid-argument-type]
-    service.register_provider("profile", provider, support_tuple_id="provider-tuple")
-    failed = service.execute(
-        "tenant",
-        service.submit("tenant", _service_submission("failed-request")).job_id,
-    )
-
-    assert failed.state is JobState.FAILED
-    assert failed.failure is not None
-    assert failed.failure.code == "ProfileUnavailable"
-    assert (
-        failed.failure.exception_type == "phydrax.service._contracts.ProfileUnavailable"
-    )
-    assert failed.failure.message == "provider refused exact problem identity"
-
-
 def test_checkpoint_callback_requires_repository_commit_and_survives_restart(
     tmp_path: Any,
 ) -> None:
@@ -1458,78 +1498,6 @@ def test_failed_durable_transition_leaves_memory_and_store_unchanged(
     with store.transaction() as transaction:
         after = transaction.get_job("tenant", queued.job_id)
     assert after == before
-
-
-def test_bearer_token_resource_limits_precede_validators_and_crypto() -> None:
-    class IngressValidator:
-        called = False
-
-        def validate(self, token: str, /) -> ValidatedPrincipal:
-            self.called = True
-            raise AssertionError("oversize token reached the validator")
-
-    ingress_validator = IngressValidator()
-    ingress_service = InProcessReferenceService(
-        ingress_validator,
-        ScopeTenantAuthorizer(),
-        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
-    )
-    with pytest.raises(AuthenticationError, match="compact-token byte limit"):
-        ingress_service.usage("a" * 16_385)
-    assert ingress_validator.called is False
-
-    class UnreachedJWKSProvider:
-        def get(self, issuer: str, /, *, force_refresh: bool = False) -> None:
-            raise AssertionError("rejected token reached JWKS lookup")
-
-    configuration = OIDCConfiguration("https://issuer.example", "phydrax", 0, 100)
-    validators = (
-        HMACOIDCTokenValidator(
-            configuration, (HMACSigningKey("key", b"k" * 32),), clock=_Clock(10)
-        ),
-        OIDCJWKSTokenValidator(
-            configuration,
-            # ty: ignore[invalid-argument-type]
-            UnreachedJWKSProvider(),
-            clock=_Clock(10),
-            accepted_algorithms=frozenset({"RS256"}),
-        ),
-    )
-    header = _b64(
-        json.dumps(
-            {"alg": "RS256", "kid": "key", "typ": "at+jwt"},
-            separators=(",", ":"),
-        ).encode()
-    )
-    payloads = (
-        (b'{"x":' + b"[" * 8 + b"0" + b"]" * 8 + b"}", "nesting"),
-        (
-            json.dumps(
-                {f"k{index}": index for index in range(65)}, separators=(",", ":")
-            ).encode(),
-            "key-count",
-        ),
-        (
-            json.dumps({"x": list(range(65))}, separators=(",", ":")).encode(),
-            "array-item",
-        ),
-        (
-            json.dumps({"x" * 129: 0}, separators=(",", ":")).encode(),
-            "key-byte",
-        ),
-        (
-            json.dumps({"x": "v" * 2_049}, separators=(",", ":")).encode(),
-            "string-byte",
-        ),
-    )
-    for validator in validators:
-        with pytest.raises(AuthenticationError, match="decoded-byte"):
-            validator.validate(f"{'A' * 1_368}.e30.c2ln")
-        with pytest.raises(AuthenticationError, match="encoded-byte"):
-            validator.validate(f"{header}.{'A' * 12_289}.c2ln")
-        for payload, expected in payloads:
-            with pytest.raises(AuthenticationError, match=expected):
-                validator.validate(f"{header}.{_b64(payload)}.c2ln")
 
 
 def test_artifact_rights_remain_bound_and_gate_grant_and_fetch() -> None:

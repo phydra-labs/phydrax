@@ -18,32 +18,72 @@ def _chart(name: Any = "adm_spacetime") -> Any:
     return phx.metrix.CoordinateChart(name, ("t", "x", "y", "z"))
 
 
-@pytest.mark.parametrize(
-    ("convention", "timelike_sign"),
-    (("mostly_plus", -1.0), ("mostly_minus", 1.0)),
-)
-def test_adm_normal_and_projector_obey_signed_hypersurface_identities(
-    convention: Any,
-    timelike_sign: Any,
-) -> None:
-    metric = phx.metrix.adm_metric(
-        lambda q: 1.3 + 0.1 * q[0],
-        lambda q: jnp.array([0.2, -0.1 * q[1], 0.05]),
-        lambda q: jnp.array([[1.4, 0.1, 0.0], [0.1, 1.8, -0.05], [0.0, -0.05, 2.1]]),
-        chart=_chart(),
-        convention=convention,
-    )
-    point = jnp.array([0.2, -0.3, 0.1, 0.4])
-    normal = phx.metrix.adm_normal_vector(metric, point)
-    conormal = phx.metrix.adm_normal_covector(metric, point)
-    projector = phx.metrix.adm_spacetime_projector(metric, point)
+def test_adm_contracts() -> None:
+    for convention, timelike_sign in (("mostly_plus", -1.0), ("mostly_minus", 1.0)):
+        metric = phx.metrix.adm_metric(
+            lambda q: 1.3 + 0.1 * q[0],
+            lambda q: jnp.array([0.2, -0.1 * q[1], 0.05]),
+            lambda q: jnp.array([[1.4, 0.1, 0.0], [0.1, 1.8, -0.05], [0.0, -0.05, 2.1]]),
+            chart=_chart(),
+            convention=convention,
+        )
+        point = jnp.array([0.2, -0.3, 0.1, 0.4])
+        normal = phx.metrix.adm_normal_vector(metric, point)
+        conormal = phx.metrix.adm_normal_covector(metric, point)
+        projector = phx.metrix.adm_spacetime_projector(metric, point)
 
-    assert normal[0] > 0.0
-    assert jnp.allclose(metric(point) @ normal, conormal)
-    assert jnp.allclose(normal @ conormal, timelike_sign)
-    assert jnp.allclose(projector @ normal, 0.0)
-    assert jnp.allclose(projector @ projector, projector)
-    assert jnp.allclose(jnp.trace(projector), 3.0)
+        assert normal[0] > 0.0
+        assert jnp.allclose(metric(point) @ normal, conormal)
+        assert jnp.allclose(normal @ conormal, timelike_sign)
+        assert jnp.allclose(projector @ normal, 0.0)
+        assert jnp.allclose(projector @ projector, projector)
+        assert jnp.allclose(jnp.trace(projector), 3.0)
+    for convention in ("mostly_plus", "mostly_minus"):
+        metric = _inhomogeneous_metric(convention)
+        point = jnp.array([0.3, 0.2, 0.1, -0.1])
+        decomposition = phx.metrix.decompose_adm_metric(metric, point)
+        normal = phx.metrix.adm_normal_vector(metric, point)
+        einstein = phx.metrix.einstein_tensor(metric, point)
+
+        hamiltonian = phx.metrix.adm_hamiltonian_constraint(
+            metric,
+            point,
+            einstein_coupling=0.0,
+        )
+        momentum = phx.metrix.adm_momentum_constraint(
+            metric,
+            point,
+            einstein_coupling=0.0,
+        )
+        expected_hamiltonian = 2.0 * oe.contract(
+            "i,ij,j->",
+            normal,
+            einstein,
+            normal,
+        )
+        expected_momentum = -decomposition.spatial_inverse @ oe.contract(
+            "m,mj->j",
+            normal,
+            einstein[:, 1:],
+        )
+
+        assert jnp.allclose(hamiltonian, expected_hamiltonian, atol=1e-10)
+        assert jnp.allclose(momentum, expected_momentum, atol=1e-10)
+    metric = phx.metrix.minkowski_metric(_chart())
+    points = jnp.zeros((2, 4))
+
+    with pytest.raises(ValueError, match="energy_density"):
+        phx.metrix.adm_hamiltonian_constraint(
+            metric,
+            points,
+            energy_density=jnp.zeros((2, 1)),
+        )
+    with pytest.raises(ValueError, match="momentum_density"):
+        phx.metrix.adm_momentum_constraint(
+            metric,
+            points,
+            momentum_density=jnp.zeros((2, 2)),
+        )
 
 
 def _inhomogeneous_metric(convention: Any = "mostly_plus") -> Any:
@@ -73,42 +113,6 @@ def _inhomogeneous_metric(convention: Any = "mostly_plus") -> Any:
         chart=_chart("inhomogeneous"),
         convention=convention,
     )
-
-
-@pytest.mark.parametrize("convention", ("mostly_plus", "mostly_minus"))
-def test_adm_gauss_codazzi_constraints_match_spacetime_einstein_projections(
-    convention: Any,
-) -> None:
-    metric = _inhomogeneous_metric(convention)
-    point = jnp.array([0.3, 0.2, 0.1, -0.1])
-    decomposition = phx.metrix.decompose_adm_metric(metric, point)
-    normal = phx.metrix.adm_normal_vector(metric, point)
-    einstein = phx.metrix.einstein_tensor(metric, point)
-
-    hamiltonian = phx.metrix.adm_hamiltonian_constraint(
-        metric,
-        point,
-        einstein_coupling=0.0,
-    )
-    momentum = phx.metrix.adm_momentum_constraint(
-        metric,
-        point,
-        einstein_coupling=0.0,
-    )
-    expected_hamiltonian = 2.0 * oe.contract(
-        "i,ij,j->",
-        normal,
-        einstein,
-        normal,
-    )
-    expected_momentum = -decomposition.spatial_inverse @ oe.contract(
-        "m,mj->j",
-        normal,
-        einstein[:, 1:],
-    )
-
-    assert jnp.allclose(hamiltonian, expected_hamiltonian, atol=1e-10)
-    assert jnp.allclose(momentum, expected_momentum, atol=1e-10)
 
 
 def test_adm_extrinsic_curvature_and_sourced_constraints_match_flat_flrw() -> None:
@@ -161,21 +165,3 @@ def test_adm_extrinsic_curvature_and_sourced_constraints_match_flat_flrw() -> No
     assert jnp.allclose(constraints.momentum, 0.0, atol=1e-10)
     assert constraints.maximum_absolute < 1e-10
     assert jnp.allclose(derivative, 12.0 * expansion_rate)
-
-
-def test_adm_constraint_sources_reject_incompatible_shapes() -> None:
-    metric = phx.metrix.minkowski_metric(_chart())
-    points = jnp.zeros((2, 4))
-
-    with pytest.raises(ValueError, match="energy_density"):
-        phx.metrix.adm_hamiltonian_constraint(
-            metric,
-            points,
-            energy_density=jnp.zeros((2, 1)),
-        )
-    with pytest.raises(ValueError, match="momentum_density"):
-        phx.metrix.adm_momentum_constraint(
-            metric,
-            points,
-            momentum_density=jnp.zeros((2, 2)),
-        )

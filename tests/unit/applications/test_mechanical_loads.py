@@ -118,7 +118,7 @@ def _tetrahedron_action(load: Any) -> Any:
     )
 
 
-def test_mechanical_semantics_refuse_uncertified_or_open_potential_routing() -> None:
+def test_mechanical_loads_scenario_1() -> None:
     with pytest.raises(ValueError, match="certified"):
         MechanicalLoadSemantics(
             "body",
@@ -137,9 +137,6 @@ def test_mechanical_semantics_refuse_uncertified_or_open_potential_routing() -> 
             "potential",
             potential_certified=True,
         )
-
-
-def test_dead_load_potential_gradient_is_the_assembled_load_residual() -> None:
     action = _triangle_action(ReferenceDeadBodyForce(jnp.asarray((2.0, -3.0))))
     state = MechanicalLoadState(1.5)
     current = action.reference_coordinates + jnp.asarray(
@@ -157,9 +154,6 @@ def test_dead_load_potential_gradient_is_the_assembled_load_residual() -> None:
         jnp.broadcast_to(jnp.asarray((0.5, -0.75)), (3, 2)),
     )
     assert bool(evaluation.valid)
-
-
-def test_closed_and_pneumatic_pressure_follow_current_volume() -> None:
     reference, current, measure = _tetrahedron_surface(scale=2.0)
     state = MechanicalLoadState()
     closed = ClosedSurfacePressure(
@@ -198,9 +192,6 @@ def test_closed_and_pneumatic_pressure_follow_current_volume() -> None:
         atol=1e-6,
     )
     assert bool(gas.valid)
-
-
-def test_closed_pressure_FE_potential_gradient_matches_external_residual() -> None:
     pressure = ClosedSurfacePressure(
         2.5,
         closure_id="tetrahedron-closed",

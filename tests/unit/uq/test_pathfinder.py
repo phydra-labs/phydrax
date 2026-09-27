@@ -27,7 +27,7 @@ def _gaussian_problem() -> Any:
     return problem, mean, covariance
 
 
-def test_pathfinder_recovers_correlated_gaussian_and_reports_density_ratios() -> None:
+def test_pathfinder_contracts() -> None:
     problem, mean, covariance = _gaussian_problem()
     result = phx.uq.fit_pathfinder(
         problem,
@@ -50,9 +50,6 @@ def test_pathfinder_recovers_correlated_gaussian_and_reports_density_ratios() ->
         covariance,
         atol=0.055,
     )
-
-
-def test_pathfinder_is_key_deterministic_and_supports_fresh_constrained_draws() -> None:
     problem, _, _ = _gaussian_problem()
     settings: dict[str, Any] = dict(
         key=jr.key(8),
@@ -68,9 +65,6 @@ def test_pathfinder_is_key_deterministic_and_supports_fresh_constrained_draws() 
     assert jnp.array_equal(first.log_density, second.log_density)
     assert fresh.shape == (7, 2)
     assert jnp.all(jnp.isfinite(fresh))
-
-
-def test_pathfinder_rejects_invalid_configuration_and_nonfinite_initial_density() -> None:
     problem, _, _ = _gaussian_problem()
     with pytest.raises(ValueError, match="num_samples"):
         phx.uq.fit_pathfinder(problem, key=jr.key(0), num_samples=0)
@@ -83,9 +77,6 @@ def test_pathfinder_rejects_invalid_configuration_and_nonfinite_initial_density(
     )
     with pytest.raises(FloatingPointError, match="Initial Pathfinder"):
         phx.uq.fit_pathfinder(invalid, key=jr.key(1))
-
-
-def test_pathfinder_observation_prediction_preserves_draw_and_observation_axes() -> None:
     space = phx.uq.ParameterSpace(
         jnp.asarray(0.0),
         priors=phx.uq.Normal(0.0, 1.0),

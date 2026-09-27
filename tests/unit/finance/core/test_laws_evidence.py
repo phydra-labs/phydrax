@@ -35,7 +35,7 @@ def _pricing(measure_id: str = "usd-risk-neutral") -> PricingLaw:
     )
 
 
-def test_physical_pricing_and_stress_laws_are_not_substitutable() -> None:
+def test_laws_evidence_scenario_1() -> None:
     physical = PhysicalLaw(
         "shared-law", "shared provenance", "usd-factors", "market-close"
     )
@@ -55,9 +55,6 @@ def test_physical_pricing_and_stress_laws_are_not_substitutable() -> None:
     with pytest.raises(TypeError, match="not substitutable"):
         require_law_compatible(pricing, physical)
     assert not laws_compatible(_pricing(), _pricing("usd-forward-measure"))
-
-
-def test_scenario_masks_weights_and_padding_are_observable_contracts() -> None:
     scenarios = FinancialScenarioSet(
         jnp.asarray(
             (
@@ -89,9 +86,6 @@ def test_scenario_masks_weights_and_padding_are_observable_contracts() -> None:
             "history-2026q3-r18",
         )
         jax.block_until_ready(invalid.values)
-
-
-def test_scenario_semantic_and_numeric_identities_are_independent() -> None:
     values = jnp.asarray((((1.0,),),))
     weights = jnp.asarray((1.0,))
     times = jnp.asarray((0.0,))
@@ -119,9 +113,6 @@ def test_scenario_semantic_and_numeric_identities_are_independent() -> None:
     assert first.numeric_id != second.numeric_id
     assert scenario_set_compatible(first, _physical())
     assert scenario_set_compatible(second, _physical())
-
-
-def test_finance_evidence_groups_are_disjoint() -> None:
     binding = FinanceEvidenceBinding(
         ("data-evidence",),
         ("model-evidence",),

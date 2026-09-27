@@ -28,7 +28,7 @@ def _simple_batch(values: Any) -> Any:
     return phx.nn.operator.OperatorBatch(inputs={"state": samples}, queries={"q": query})
 
 
-def test_reference_map_jacobian_gcl_and_gradient_pullback() -> None:
+def test_free_boundary_operator_scenario_1() -> None:
     reference = _reference_samples()
     nodes = reference.coordinates_array()
     current = nodes
@@ -52,9 +52,6 @@ def test_reference_map_jacobian_gcl_and_gradient_pullback() -> None:
     np.testing.assert_allclose(constraint.total, 0.0, atol=1.0e-12)
     assert bool(constraint.successful)
     np.testing.assert_allclose(pulled, 1.0, atol=1.0e-14)
-
-
-def test_free_boundary_operator_spec_rejects_topology_changing_reference_map() -> None:
     with np.testing.assert_raises(ValueError):
         phx.nn.operator.FreeBoundaryOperatorSpec(
             "reference_map",
@@ -63,6 +60,29 @@ def test_free_boundary_operator_spec_rejects_topology_changing_reference_map() -
             "q",
             topology_changes=True,
         )
+    geometry = phx.discretization.FreeSurfaceGeometryState(
+        surface_point=jnp.asarray(((0.0, 0.0), (1.0, 0.0))),
+        normal=jnp.asarray(((0.0, 1.0), (0.0, 1.0))),
+        curvature=jnp.asarray((0.0, 0.1)),
+        signed_distance=jnp.asarray((0.0, 0.0)),
+        kernel_volume_fraction=jnp.asarray((0.5, 0.25)),
+        fit_residual=jnp.asarray((0.0, 0.2)),
+        confidence=jnp.asarray((1.0, 0.5)),
+        successful=jnp.asarray((True, False)),
+    )
+    batch = phx.nn.operator.operator_batch_from_sph_free_surface(
+        geometry,
+        jnp.asarray(((0.0, -0.1), (1.0, -0.1))),
+        jnp.asarray((2.0, 4.0)),
+        {"density": jnp.asarray((1.0, 1.2))},
+    )
+
+    surface = batch.input("free_surface")
+    np.testing.assert_array_equal(surface.mask, jnp.asarray((True, False)))
+    # ty: ignore[no-matching-overload]
+    np.testing.assert_allclose(surface.quadrature_weights, jnp.asarray((1.0, 1.0)))
+    # ty: ignore[unresolved-attribute]
+    assert surface.values.shape == (2, 5)
 
 
 def test_solver_corrected_rollout_uses_only_accepted_improving_states() -> None:
@@ -98,32 +118,6 @@ def test_solver_corrected_rollout_uses_only_accepted_improving_states() -> None:
     np.testing.assert_allclose(result.corrected[-1], jnp.asarray((1.5, 2.5, 3.5)))
     np.testing.assert_allclose(result.residual_after, 0.25)
     assert bool(jnp.all(result.accepted))
-
-
-def test_sph_free_surface_adapter_preserves_surface_measure_and_mask() -> None:
-    geometry = phx.discretization.FreeSurfaceGeometryState(
-        surface_point=jnp.asarray(((0.0, 0.0), (1.0, 0.0))),
-        normal=jnp.asarray(((0.0, 1.0), (0.0, 1.0))),
-        curvature=jnp.asarray((0.0, 0.1)),
-        signed_distance=jnp.asarray((0.0, 0.0)),
-        kernel_volume_fraction=jnp.asarray((0.5, 0.25)),
-        fit_residual=jnp.asarray((0.0, 0.2)),
-        confidence=jnp.asarray((1.0, 0.5)),
-        successful=jnp.asarray((True, False)),
-    )
-    batch = phx.nn.operator.operator_batch_from_sph_free_surface(
-        geometry,
-        jnp.asarray(((0.0, -0.1), (1.0, -0.1))),
-        jnp.asarray((2.0, 4.0)),
-        {"density": jnp.asarray((1.0, 1.2))},
-    )
-
-    surface = batch.input("free_surface")
-    np.testing.assert_array_equal(surface.mask, jnp.asarray((True, False)))
-    # ty: ignore[no-matching-overload]
-    np.testing.assert_allclose(surface.quadrature_weights, jnp.asarray((1.0, 1.0)))
-    # ty: ignore[unresolved-attribute]
-    assert surface.values.shape == (2, 5)
 
 
 def test_vof_adapter_preserves_plic_interface_branch() -> None:

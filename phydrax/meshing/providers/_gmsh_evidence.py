@@ -207,9 +207,7 @@ def _planar_surface_evidence(
         entity_tags = row.entity_tags[row_orders[block.name]]
         owner_chunks.append(
             np.asarray(
-                tuple(
-                    surface_to_face.get(int(tag), -1) for tag in entity_tags.tolist()
-                ),
+                tuple(surface_to_face.get(int(tag), -1) for tag in entity_tags.tolist()),
                 dtype=np.int32,
             )
         )

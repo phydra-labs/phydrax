@@ -29,7 +29,7 @@ def _sphere(radius: Any = 1.0) -> Any:
     )
 
 
-def test_plane_embedding_has_identity_metric_and_zero_extrinsic_curvature() -> None:
+def test_embedded_scenario_1() -> None:
     chart = phx.metrix.CoordinateChart("plane", ("u", "v"))
     embedded = phx.metrix.EmbeddedChart(
         chart,
@@ -50,9 +50,6 @@ def test_plane_embedding_has_identity_metric_and_zero_extrinsic_curvature() -> N
     assert jnp.allclose(embedded.second_fundamental_form(points), 0.0)
     assert jnp.allclose(embedded.mean_curvature_vector(points), 0.0)
     assert jnp.allclose(phx.metrix.scalar_curvature(metric, points), 0.0)
-
-
-def test_sphere_induced_and_extrinsic_geometry_agree() -> None:
     radius = 2.0
     embedded = _sphere(radius)
     point = jnp.array([1.1, 0.4])
@@ -80,6 +77,20 @@ def test_sphere_induced_and_extrinsic_geometry_agree() -> None:
     retracted = embedded.retract(moved)
     assert jnp.allclose(jnp.linalg.norm(retracted), radius)
     assert jnp.allclose(jax.jit(embedded.tangent_projector)(point), tangent)
+    normals = jnp.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    projector = phx.metrix.tangent_projector_from_normal(normals)
+
+    assert projector.shape == (2, 3, 3)
+    assert jnp.allclose(projector @ normals[..., None], 0.0)
+    assert jnp.allclose(projector @ projector, projector)
+    assert jnp.allclose(
+        jax.jit(phx.metrix.tangent_projector_from_normal)(normals),
+        projector,
+    )
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="nonzero"):
+        result = phx.metrix.tangent_projector_from_normal(jnp.zeros(3))
+        jax.block_until_ready(result)
 
 
 def test_cylinder_intrinsic_flatness_and_principal_curvatures() -> None:
@@ -105,20 +116,3 @@ def test_cylinder_intrinsic_flatness_and_principal_curvatures() -> None:
         atol=1e-9,
     )
     assert jnp.allclose(jnp.linalg.eigvals(shape), jnp.array([-1.0 / radius, 0.0]))
-
-
-def test_normal_projector_helper_is_batched_and_rejects_zero_normals() -> None:
-    normals = jnp.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
-    projector = phx.metrix.tangent_projector_from_normal(normals)
-
-    assert projector.shape == (2, 3, 3)
-    assert jnp.allclose(projector @ normals[..., None], 0.0)
-    assert jnp.allclose(projector @ projector, projector)
-    assert jnp.allclose(
-        jax.jit(phx.metrix.tangent_projector_from_normal)(normals),
-        projector,
-    )
-
-    with pytest.raises(eqx.EquinoxRuntimeError, match="nonzero"):
-        result = phx.metrix.tangent_projector_from_normal(jnp.zeros(3))
-        jax.block_until_ready(result)

@@ -75,7 +75,7 @@ def test_implicit_root_result_recomputes_differentiable_auxiliary_at_root() -> N
     assert jnp.allclose(gradient, 3.0, rtol=1e-8, atol=1e-10)
 
 
-def test_prepared_implicit_root_refresh_preserves_symbolic_linear_identity() -> None:
+def test_implicit_result_scenario_1() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
         problem_id="prepared-implicit-square",
@@ -100,9 +100,6 @@ def test_prepared_implicit_root_refresh_preserves_symbolic_linear_identity() -> 
     assert refreshed.linear_plan_id == prepared.linear_plan_id
     assert refreshed.numeric_version == prepared.numeric_version + 1
     assert result.provenance.linear_plan_id == prepared.linear_plan_id
-
-
-def test_failed_implicit_root_remains_inspectable_and_checked_root_raises() -> None:
     problem = nl.NonlinearSystemProblem(
         lambda state, _: state**2 - 2.0,
         problem_id="failed-implicit-root",
@@ -121,6 +118,121 @@ def test_failed_implicit_root_remains_inspectable_and_checked_root_raises() -> N
         eqx.EquinoxRuntimeError, match="Implicit nonlinear root solve failed"
     ):
         nl.implicit_root(problem, jnp.asarray(10.0), termination=termination)
+    target = jnp.asarray([1.0, 4.0, 9.0])
+    history = jnp.asarray(0.25)
+    problem, initial, space = _structured_setup_root(target)
+    method = nl.NewtonKrylov(
+        linear_policy=_one_step_preconditioned_policy(
+            la.DenseInversePreconditionerBuilder()
+        )
+    )
+    termination = _termination(maximum_steps=1)
+    result = nl.implicit_root_result(
+        problem, initial, method=method, termination=termination, args=history
+    )
+    initial_coordinates = space.flatten(initial)
+    expected = 0.5 * (initial_coordinates + (target + history) / initial_coordinates)
+    assert result.status == int(nl.NonlinearStatus.MAXIMUM_STEPS_REACHED)
+    assert result.diagnostics.iterations == 1
+    assert jnp.allclose(space.flatten(result.state), expected, rtol=1e-10, atol=1e-11)
+    with pytest.raises(
+        eqx.EquinoxRuntimeError, match="Implicit nonlinear root solve failed"
+    ):
+        nl.implicit_root(
+            problem, initial, method=method, termination=termination, args=history
+        )
+    matrix, problem, method = _nonnormal_root()
+    policy = nl.ImplicitRootDerivativePolicy(
+        tangent_linear_policy=la.LinearSolvePolicy(la.DenseLU())
+    )
+    target = jnp.asarray([1.0, -0.5, 0.25, 2.0])
+
+    gradient = jax.grad(
+        lambda argument: jnp.sum(
+            nl.implicit_root(
+                problem,
+                jnp.zeros_like(argument),
+                method=method,
+                termination=_termination(),
+                derivative_policy=policy,
+                args=argument,
+            )
+        )
+    )(target)
+
+    assert jnp.allclose(
+        gradient,
+        jnp.linalg.solve(matrix.T, jnp.ones_like(target)),
+        rtol=1e-10,
+        atol=1e-11,
+    )
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: state**2 - target,
+        problem_id="implicit-quasi-newton-policy",
+    )
+
+    with pytest.raises(ValueError, match="tangent linear policy is required"):
+        nl.implicit_root_result(
+            problem,
+            jnp.asarray(1.0),
+            method=nl.Broyden(),
+            termination=_termination(),
+            args=jnp.asarray(2.0),
+        )
+    for method in (
+        nl.NonlinearRichardson(
+            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        ),
+        nl.NonlinearGMRES(
+            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        ),
+    ):
+        problem = nl.NonlinearSystemProblem(
+            lambda state, target: state**2 - target,
+            problem_id="implicit-unsupported-method",
+        )
+        dense = la.LinearSolvePolicy(la.DenseLU())
+        policy = nl.ImplicitRootDerivativePolicy(
+            tangent_linear_policy=dense,
+            adjoint_linear_policy=dense,
+        )
+
+        assert not method.capabilities.implicit_differentiation
+        with pytest.raises(ValueError, match="does not support implicit root"):
+            nl.implicit_root_result(
+                problem,
+                jnp.asarray(1.0),
+                method=method,
+                termination=_termination(),
+                derivative_policy=policy,
+                args=jnp.asarray(2.0),
+            )
+        with pytest.raises(ValueError, match="does not support implicit root"):
+            nl.implicit_root_result(
+                problem,
+                jnp.asarray(1.0),
+                method=method,
+                termination=_termination(),
+                args=jnp.asarray(2.0),
+            )
+    with pytest.raises(ValueError, match="implicit-requires-c1"):
+        _implicit(_NetworkResidual(_network(jax.nn.relu)))
+
+    result = _implicit(_NetworkResidual(_network(jnp.tanh)))
+    assert bool(result.successful)
+    assert result.component_evidence == ("residual.network:deterministic",)
+    residual = _NetworkResidual(_network(jnp.tanh, dropout=0.25))
+    with pytest.raises(ValueError, match="inference-state-unbound"):
+        _implicit(residual)
+
+    result = _implicit(phx.nn.layers.inference_mode(residual))
+    assert bool(result.successful)
+    with pytest.raises(TypeError, match="tangent_linear_policy"):
+        # ty: ignore[invalid-argument-type]
+        nl.ImplicitRootDerivativePolicy(tangent_linear_policy=object())
+    with pytest.raises(TypeError, match="adjoint_linear_policy"):
+        # ty: ignore[invalid-argument-type]
+        nl.ImplicitRootDerivativePolicy(adjoint_linear_policy=object())
 
 
 def _nonnormal_root() -> Any:
@@ -201,101 +313,6 @@ def test_implicit_root_uses_distinct_tangent_and_adjoint_policies() -> None:
     )
     with pytest.raises(eqx.EquinoxRuntimeError, match="root derivative solve failed"):
         failed_tangent(target)
-
-
-def test_implicit_root_derivative_policy_defaults_adjoint_to_tangent() -> None:
-    matrix, problem, method = _nonnormal_root()
-    policy = nl.ImplicitRootDerivativePolicy(
-        tangent_linear_policy=la.LinearSolvePolicy(la.DenseLU())
-    )
-    target = jnp.asarray([1.0, -0.5, 0.25, 2.0])
-
-    gradient = jax.grad(
-        lambda argument: jnp.sum(
-            nl.implicit_root(
-                problem,
-                jnp.zeros_like(argument),
-                method=method,
-                termination=_termination(),
-                derivative_policy=policy,
-                args=argument,
-            )
-        )
-    )(target)
-
-    assert jnp.allclose(
-        gradient,
-        jnp.linalg.solve(matrix.T, jnp.ones_like(target)),
-        rtol=1e-10,
-        atol=1e-11,
-    )
-
-
-def test_implicit_root_requires_tangent_policy_for_non_newton_method() -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, target: state**2 - target,
-        problem_id="implicit-quasi-newton-policy",
-    )
-
-    with pytest.raises(ValueError, match="tangent linear policy is required"):
-        nl.implicit_root_result(
-            problem,
-            jnp.asarray(1.0),
-            method=nl.Broyden(),
-            termination=_termination(),
-            args=jnp.asarray(2.0),
-        )
-
-
-@pytest.mark.parametrize(
-    "method",
-    (
-        nl.NonlinearRichardson(
-            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
-        ),
-        nl.NonlinearGMRES(
-            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
-        ),
-    ),
-)
-def test_implicit_root_refuses_method_without_implicit_capability(method: Any) -> None:
-    problem = nl.NonlinearSystemProblem(
-        lambda state, target: state**2 - target,
-        problem_id="implicit-unsupported-method",
-    )
-    dense = la.LinearSolvePolicy(la.DenseLU())
-    policy = nl.ImplicitRootDerivativePolicy(
-        tangent_linear_policy=dense,
-        adjoint_linear_policy=dense,
-    )
-
-    assert not method.capabilities.implicit_differentiation
-    with pytest.raises(ValueError, match="does not support implicit root"):
-        nl.implicit_root_result(
-            problem,
-            jnp.asarray(1.0),
-            method=method,
-            termination=_termination(),
-            derivative_policy=policy,
-            args=jnp.asarray(2.0),
-        )
-    with pytest.raises(ValueError, match="does not support implicit root"):
-        nl.implicit_root_result(
-            problem,
-            jnp.asarray(1.0),
-            method=method,
-            termination=_termination(),
-            args=jnp.asarray(2.0),
-        )
-
-
-def test_implicit_root_derivative_policy_validates_linear_policies() -> None:
-    with pytest.raises(TypeError, match="tangent_linear_policy"):
-        # ty: ignore[invalid-argument-type]
-        nl.ImplicitRootDerivativePolicy(tangent_linear_policy=object())
-    with pytest.raises(TypeError, match="adjoint_linear_policy"):
-        # ty: ignore[invalid-argument-type]
-        nl.ImplicitRootDerivativePolicy(adjoint_linear_policy=object())
 
 
 def test_state_dependent_derivative_setups_use_converged_native_coordinates() -> None:
@@ -508,32 +525,6 @@ def test_implicit_setup_binds_independent_forward_and_transpose_builders() -> No
         failed_reverse(target)
 
 
-def test_failed_implicit_setup_root_preserves_accepted_state_and_status() -> None:
-    target = jnp.asarray([1.0, 4.0, 9.0])
-    history = jnp.asarray(0.25)
-    problem, initial, space = _structured_setup_root(target)
-    method = nl.NewtonKrylov(
-        linear_policy=_one_step_preconditioned_policy(
-            la.DenseInversePreconditionerBuilder()
-        )
-    )
-    termination = _termination(maximum_steps=1)
-    result = nl.implicit_root_result(
-        problem, initial, method=method, termination=termination, args=history
-    )
-    initial_coordinates = space.flatten(initial)
-    expected = 0.5 * (initial_coordinates + (target + history) / initial_coordinates)
-    assert result.status == int(nl.NonlinearStatus.MAXIMUM_STEPS_REACHED)
-    assert result.diagnostics.iterations == 1
-    assert jnp.allclose(space.flatten(result.state), expected, rtol=1e-10, atol=1e-11)
-    with pytest.raises(
-        eqx.EquinoxRuntimeError, match="Implicit nonlinear root solve failed"
-    ):
-        nl.implicit_root(
-            problem, initial, method=method, termination=termination, args=history
-        )
-
-
 class _NetworkResidual(eqx.Module):
     network: eqx.Module
 
@@ -561,24 +552,6 @@ def _implicit(residual: Any) -> Any:
         termination=_termination(),
         args=jnp.asarray([0.5, -0.25]),
     )
-
-
-def test_implicit_root_refuses_components_without_classical_c1_regularity() -> None:
-    with pytest.raises(ValueError, match="implicit-requires-c1"):
-        _implicit(_NetworkResidual(_network(jax.nn.relu)))
-
-    result = _implicit(_NetworkResidual(_network(jnp.tanh)))
-    assert bool(result.successful)
-    assert result.component_evidence == ("residual.network:deterministic",)
-
-
-def test_implicit_root_requires_the_inference_state_of_dropout_components() -> None:
-    residual = _NetworkResidual(_network(jnp.tanh, dropout=0.25))
-    with pytest.raises(ValueError, match="inference-state-unbound"):
-        _implicit(residual)
-
-    result = _implicit(phx.nn.layers.inference_mode(residual))
-    assert bool(result.successful)
 
 
 def test_opaque_residual_closures_record_undeclared_determinism() -> None:

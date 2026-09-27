@@ -11,7 +11,7 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
-def test_complex_likelihoods_are_normalized_real_and_dtype_preserving() -> None:
+def test_uqi_capabilities_scenario_1() -> None:
     circular = phx.uq.CircularComplexGaussianLikelihood(jnp.asarray(2.0))
     location = jnp.asarray([1.0 + 2.0j])
     target = jnp.asarray([2.0 + 4.0j])
@@ -37,9 +37,6 @@ def test_complex_likelihoods_are_normalized_real_and_dtype_preserving() -> None:
     )
     assert value.shape == ()
     assert jnp.isfinite(value)
-
-
-def test_likelihood_batch_uses_explicit_nonuniform_estimator_weights() -> None:
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
     problem = phx.uq.MinibatchPosteriorProblem(
         space,
@@ -58,9 +55,6 @@ def test_likelihood_batch_uses_explicit_nonuniform_estimator_weights() -> None:
         problem.log_likelihood_estimate(jnp.asarray(0.0), batch),
         jnp.sum(batch.estimator_weights * factors),
     )
-
-
-def test_residual_penalty_noise_mapping_matches_real_and_complex_quadratics() -> None:
     real = phx.uq.ResidualPenaltyNoiseModel(
         coefficients=jnp.asarray([0.25, 0.0, 2.0]),
         penalty_scale=3.0,
@@ -76,9 +70,6 @@ def test_residual_penalty_noise_mapping_matches_real_and_complex_quadratics() ->
     assert jnp.allclose(real.variance, 1.0 / (6.0 * jnp.asarray([0.25, 2.0])))
     assert jnp.allclose(complex_model.variance, 1.0 / (3.0 * jnp.asarray([0.25, 2.0])))
     assert jnp.array_equal(real.active_indices, jnp.asarray([0, 2]))
-
-
-def test_residual_penalty_noise_from_penalty_freezes_fixed_quadrature_weights() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     component = domain.component()
     condition = phx.conditions.Residual("u", component, lambda field: field)
@@ -99,7 +90,7 @@ def test_residual_penalty_noise_from_penalty_freezes_fixed_quadrature_weights() 
     assert jnp.allclose(model.variance, 1.0 / (4.0 * model.coefficients))
 
 
-def test_mc_dropout_calibration_matches_closed_form_scale_and_conformal_rank() -> None:
+def test_uqi_capabilities_scenario_2() -> None:
     samples = cx.AxisArray(
         jnp.asarray(
             [
@@ -135,9 +126,6 @@ def test_mc_dropout_calibration_matches_closed_form_scale_and_conformal_rank() -
     )
     assert conformal.evidence.calibration_count == 3
     assert conformal.interval(predictive).calibrated
-
-
-def test_mc_dropout_functional_coverage_requires_every_active_point_per_case() -> None:
     samples = cx.AxisArray(
         jnp.stack((-jnp.ones((4, 2)), jnp.ones((4, 2)))),
         dims=("draw", "case", "x"),
@@ -167,9 +155,6 @@ def test_mc_dropout_functional_coverage_requires_every_active_point_per_case() -
     )
     assert jnp.allclose(calibration.coefficient, 2.0)
     assert jnp.allclose(calibration.evidence.empirical_heldout_coverage, 0.75)
-
-
-def test_swag_welford_ring_and_sampling_are_fixed_capacity() -> None:
     state = phx.uq.SWAGState.initialize(
         jnp.zeros((2,)),
         snapshot_capacity=2,
@@ -185,9 +170,6 @@ def test_swag_welford_ring_and_sampling_are_fixed_capacity() -> None:
     draw = phx.uq.sample_swag_vector(state, jax.random.key(1))
     assert draw.shape == (2,)
     assert jnp.all(jnp.isfinite(draw))
-
-
-def test_svgp_kl_and_step_schedules_have_direct_references() -> None:
     state = phx.uq.SparseVariationalGaussianState(
         jnp.asarray([[0.0], [1.0]]),
         jnp.asarray([0.5, -0.25]),
@@ -206,7 +188,7 @@ def test_svgp_kl_and_step_schedules_have_direct_references() -> None:
         phx.uq.GradientNoiseCovarianceConfig("diagonal_low_rank", rank=1)
 
 
-def test_structured_kinetic_actions_and_momentum_are_finite() -> None:
+def test_uqi_capabilities_scenario_3() -> None:
     reference = {"a": jnp.zeros((2,)), "b": jnp.zeros((1,))}
     diagonal = phx.uq.prepare_mcmc_kinetic(
         reference,
@@ -227,49 +209,6 @@ def test_structured_kinetic_actions_and_momentum_are_finite() -> None:
     momentum = low_rank.sample_momentum_vector(jax.random.key(2))
     assert momentum.shape == (3,)
     assert jnp.isfinite(low_rank.kinetic_energy_vector(momentum))
-
-
-def test_nested_periodic_and_phantom_state_preserve_bounded_semantics() -> None:
-    periodic = phx.uq.PeriodicNestedCoordinate("angle", -jnp.pi, 2.0 * jnp.pi)
-    assert jnp.allclose(periodic.wrap(3.0 * jnp.pi), -jnp.pi)
-    assert jnp.allclose(periodic.displacement(0.9 * jnp.pi, -0.9 * jnp.pi), 0.2 * jnp.pi)
-    phantom = phx.uq.PhantomNestedState.initialize(2, 1, dtype=jnp.float64)
-    phantom = phantom.add(
-        jnp.asarray([0.5]),
-        log_likelihood=2.0,
-        birth_log_likelihood=0.0,
-        proposal_epoch=1,
-        ancestry=3,
-    )
-    assert jnp.array_equal(phantom.eligible(1.0), jnp.asarray([True, False]))
-    capacity = phx.uq.NestedSamplingCapacity(
-        max_live=20,
-        max_dead_points=100,
-        max_likelihood_evaluations=1000,
-        max_dynamic_batches=4,
-        max_clusters=3,
-        max_phantoms=10,
-    )
-    prior = phx.uq.NestedPriorPlan(
-        continuous_paths=("angle",),
-        periodic=(periodic,),
-    )
-    proposal = phx.uq.NestedProposalPlan(periodic_slice=True)
-    plan = phx.uq.NestedSamplingPlan(
-        capacity,
-        prior,
-        proposal,
-        initial_live=10,
-        dynamic=phx.uq.DynamicNestedPolicy(
-            pilot_dead_points=10,
-            additional_live_per_batch=2,
-            allocation_cadence=5,
-        ),
-    )
-    assert plan.initial_live == 10
-
-
-def test_structured_hmc_and_causal_nuts_execute_production_routes() -> None:
     space = phx.uq.ParameterSpace(
         jnp.zeros((2,)), priors=phx.uq.Normal(jnp.zeros((2,)), jnp.ones((2,)))
     )
@@ -310,9 +249,43 @@ def test_structured_hmc_and_causal_nuts_execute_production_routes() -> None:
     assert causal.trajectory_method == "causal"
     # ty: ignore[unresolved-attribute]
     assert jnp.all(causal.causal_diagnostics.converged)
-
-
-def test_prepared_nested_production_dynamic_phantom_and_proposal_lifecycle() -> None:
+    periodic = phx.uq.PeriodicNestedCoordinate("angle", -jnp.pi, 2.0 * jnp.pi)
+    assert jnp.allclose(periodic.wrap(3.0 * jnp.pi), -jnp.pi)
+    assert jnp.allclose(periodic.displacement(0.9 * jnp.pi, -0.9 * jnp.pi), 0.2 * jnp.pi)
+    phantom = phx.uq.PhantomNestedState.initialize(2, 1, dtype=jnp.float64)
+    phantom = phantom.add(
+        jnp.asarray([0.5]),
+        log_likelihood=2.0,
+        birth_log_likelihood=0.0,
+        proposal_epoch=1,
+        ancestry=3,
+    )
+    assert jnp.array_equal(phantom.eligible(1.0), jnp.asarray([True, False]))
+    capacity = phx.uq.NestedSamplingCapacity(
+        max_live=20,
+        max_dead_points=100,
+        max_likelihood_evaluations=1000,
+        max_dynamic_batches=4,
+        max_clusters=3,
+        max_phantoms=10,
+    )
+    prior = phx.uq.NestedPriorPlan(
+        continuous_paths=("angle",),
+        periodic=(periodic,),
+    )
+    proposal = phx.uq.NestedProposalPlan(periodic_slice=True)
+    plan = phx.uq.NestedSamplingPlan(
+        capacity,
+        prior,
+        proposal,
+        initial_live=10,
+        dynamic=phx.uq.DynamicNestedPolicy(
+            pilot_dead_points=10,
+            additional_live_per_batch=2,
+            allocation_cadence=5,
+        ),
+    )
+    assert plan.initial_live == 10
     space = phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0))
     problem = phx.uq.PosteriorProblem(space, lambda value: -0.5 * (value - 1.0) ** 2)
     capacity = phx.uq.NestedSamplingCapacity(

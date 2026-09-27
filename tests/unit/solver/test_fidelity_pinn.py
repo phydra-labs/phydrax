@@ -69,7 +69,7 @@ def _fixed_observation(geometry: Any, target: Any) -> Any:
     )
 
 
-def test_fidelity_pinn_stage_freezes_parent_and_binds_stage_identity() -> None:
+def test_fidelity_pinn_scenario_1() -> None:
     geometry = phx.domain.Interval1d(-1.0, 1.0)
     parent_solver = phx.solver.FunctionalSolver(
         functions={"u": geometry.Parameter(1.0)},
@@ -104,9 +104,6 @@ def test_fidelity_pinn_stage_freezes_parent_and_binds_stage_identity() -> None:
 
     with pytest.raises(ValueError, match="does not match"):
         stage.finalize(parent_solver)
-
-
-def test_parent_conditioned_correction_propagates_coordinate_derivatives() -> None:
     geometry = phx.domain.Interval1d(-3.0, 3.0)
     parent = geometry.Function("x")(lambda x: x)
     correction = phx.solver.condition_fidelity_correction(

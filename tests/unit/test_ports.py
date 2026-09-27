@@ -78,7 +78,7 @@ def _bind(
     return resolve_port_mapping(model, owner, PortMapping(**mapping))
 
 
-def test_explicit_mapping_binds_fully_declared_ports() -> None:
+def test_ports_scenario_1() -> None:
     position, time, velocity = _position(), _time(), _velocity()
     evidence = _bind((position, time), (position, time), (velocity,), (velocity,))
 
@@ -99,9 +99,6 @@ def test_explicit_mapping_binds_fully_declared_ports() -> None:
     assert velocity_only.frames_verified
     assert velocity_only.normalizations_verified
     assert velocity_only.spaces_verified
-
-
-def test_owner_may_offer_unused_ports_but_model_ports_must_all_bind() -> None:
     position, time, velocity = _position(), _time(), _velocity()
     evidence = _bind(
         (time,),
@@ -148,9 +145,6 @@ def test_owner_may_offer_unused_ports_but_model_ports_must_all_bind() -> None:
             inputs=[(time.port_id, time.port_id)],
             outputs=[(velocity.port_id, time.port_id)],
         )
-
-
-def test_mappings_reject_duplicate_bindings() -> None:
     position, time = _position(), _time()
     with pytest.raises(ValueError, match="model port more than once"):
         PortMapping(
@@ -170,9 +164,8 @@ def test_mappings_reject_duplicate_bindings() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("aspect", "owner"),
-    [
+def test_ports_scenario_2() -> None:
+    mismatches: tuple[tuple[str, ValuePort], ...] = (
         (
             "semantic_id",
             ValuePort(
@@ -192,15 +185,14 @@ def test_mappings_reject_duplicate_bindings() -> None:
         ("frame", _velocity(frame_id="body")),
         ("normalization", _velocity(normalization_id="z-score")),
         ("space", _velocity(space_id="inlet")),
-    ],
-)
-def test_declared_mismatches_name_the_port_pair(aspect: Any, owner: Any) -> None:
+    )
     time, velocity = _time(), _velocity()
-    with pytest.raises(ValueError, match=rf"output port pair 'fluid.velocity'.*{aspect}"):
-        _bind((time,), (time,), (velocity,), (owner,))
-
-
-def test_dimensions_are_strict_only_when_both_sides_declare_them() -> None:
+    for aspect, owner in mismatches:
+        with pytest.raises(
+            ValueError,
+            match=rf"output port pair 'fluid.velocity'.*{aspect}",
+        ):
+            _bind((time,), (time,), (velocity,), (owner,))
     time, velocity = _time(), _velocity()
     undeclared_owner = _velocity(dimensions=None)
     evidence = _bind((time,), (time,), (velocity,), (undeclared_owner,))
@@ -211,9 +203,6 @@ def test_dimensions_are_strict_only_when_both_sides_declare_them() -> None:
 
     with pytest.raises(ValueError, match="dimensions mismatch"):
         _bind((time,), (time,), (velocity,), (_velocity(dimensions=(LENGTH, LENGTH)),))
-
-
-def test_port_and_binding_identities_are_deterministic() -> None:
     assert _velocity().port_id == _velocity().port_id
     assert _velocity().port_id != _velocity(frame_id="body").port_id
     assert _velocity().port_id != _velocity(dimensions=None).port_id
@@ -227,9 +216,6 @@ def test_port_and_binding_identities_are_deterministic() -> None:
     ports = ModelPorts(inputs=(_position(), _time()), outputs=(_velocity(),))
     swapped = ModelPorts(inputs=(_time(), _position()), outputs=(_velocity(),))
     assert ports.ports_id != swapped.ports_id
-
-
-def test_port_records_round_trip_and_fail_closed() -> None:
     for port in (_velocity(), _time()):
         record = json.loads(json.dumps(port.to_dict()))
         restored = ValuePort.from_dict(record)
@@ -244,9 +230,6 @@ def test_port_records_round_trip_and_fail_closed() -> None:
         ValuePort.from_dict(record | {"frame_id": "body"})
     with pytest.raises(ValueError, match="canonical fields"):
         ValuePort.from_dict(record | {"schema_version": 1})
-
-
-def test_port_declarations_are_validated() -> None:
     with pytest.raises(ValueError, match="component IDs"):
         _velocity(component_ids=("u",))
     with pytest.raises(ValueError, match="one value per component"):

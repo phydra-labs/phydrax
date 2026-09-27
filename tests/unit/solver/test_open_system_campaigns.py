@@ -44,7 +44,7 @@ def test_artifact_is_exactly_reconstructed_and_verified(tmp_path: Any) -> None:
     assert bool(verified.valid)
 
 
-def test_evidence_contracts_reject_malformed_values() -> None:
+def test_open_system_campaigns_scenario_1() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         phx.operators.quantum.ApproximationQuantity(
             "negative-error",
@@ -90,6 +90,34 @@ def test_evidence_contracts_reject_malformed_values() -> None:
     with pytest.raises(TypeError, match="must be integers"):
         # ty: ignore[invalid-argument-type]
         campaigns.CampaignCapacityEvidence("work", 1.5, 2)
+    record = campaigns.neural_campaign()
+    arrays = dict(zip(record.artifact_names, record.artifact_arrays, strict=True))
+    assert bool(record.execution_success)
+    assert record.representation_id == "connected-vmc-neural-trajectory"
+    assert bool(jnp.any(arrays["jump-decisions"]))
+    assert bool(arrays["projected-jump-observed"])
+    assert jnp.isfinite(arrays["audit-projection-residual"])
+    assert "forced-first-projected-jump" not in arrays
+    spec = phx.tensor_network.CombLegSpec(2, 1, 1)
+    model = phx.tensor_network.SequentialStinespringProcess(
+        spec,
+        jnp.eye(2, dtype="complex128"),
+        (jnp.eye(2, dtype="complex128"),),
+        (1,),
+        process_id="test-intervention-complete",
+    )
+    experiments = phx.solver.informationally_complete_process_experiments(
+        model.materialize(), shots=100.0
+    )
+    result = phx.solver.fit_stinespring_process(
+        phx.solver.StinespringTomographyProblem(model, experiments),
+        iterations=1,
+        learning_rate=1e-4,
+    )
+    assert len(experiments) == 64
+    assert bool(result.quotient_identified)
+    assert bool(result.valid)
+    assert result.singular_values.ndim == 1
 
 
 def test_promotion_requires_named_physicality_and_verified_archive(tmp_path: Any) -> None:
@@ -126,41 +154,7 @@ def test_promotion_requires_named_physicality_and_verified_archive(tmp_path: Any
     assert not verified.missing_physicality
 
 
-def test_connected_vmc_campaign_separates_projection_audit_from_stochastic_jump() -> None:
-    record = campaigns.neural_campaign()
-    arrays = dict(zip(record.artifact_names, record.artifact_arrays, strict=True))
-    assert bool(record.execution_success)
-    assert record.representation_id == "connected-vmc-neural-trajectory"
-    assert bool(jnp.any(arrays["jump-decisions"]))
-    assert bool(arrays["projected-jump-observed"])
-    assert jnp.isfinite(arrays["audit-projection-residual"])
-    assert "forced-first-projected-jump" not in arrays
-
-
-def test_intervention_complete_process_design_identifies_physical_quotient() -> None:
-    spec = phx.tensor_network.CombLegSpec(2, 1, 1)
-    model = phx.tensor_network.SequentialStinespringProcess(
-        spec,
-        jnp.eye(2, dtype="complex128"),
-        (jnp.eye(2, dtype="complex128"),),
-        (1,),
-        process_id="test-intervention-complete",
-    )
-    experiments = phx.solver.informationally_complete_process_experiments(
-        model.materialize(), shots=100.0
-    )
-    result = phx.solver.fit_stinespring_process(
-        phx.solver.StinespringTomographyProblem(model, experiments),
-        iterations=1,
-        learning_rate=1e-4,
-    )
-    assert len(experiments) == 64
-    assert bool(result.quotient_identified)
-    assert bool(result.valid)
-    assert result.singular_values.ndim == 1
-
-
-def test_mps_campaign_exercises_event_root_and_capacity_evidence() -> None:
+def test_open_system_campaigns_scenario_2() -> None:
     record = campaigns.mps_campaign()
     arrays = dict(zip(record.artifact_names, record.artifact_arrays, strict=True))
     assert bool(record.execution_success)
@@ -169,9 +163,12 @@ def test_mps_campaign_exercises_event_root_and_capacity_evidence() -> None:
         jnp.max(jnp.where(arrays["active-events"], arrays["root-residuals"], 0.0)) <= 1e-8
     )
     assert not bool(record.capacity_exhausted)
-
-
-def test_adaptive_heom_accepts_steps_and_reaches_final_time() -> None:
+    state = phx.tensor_network.product_mps(
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
+    )
+    with pytest.raises(ValueError, match="capacity"):
+        state.to_dense(maximum_elements=2)
+    assert state.to_dense(maximum_elements=4).shape == (4,)
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     expansion = phx.operators.quantum.drude_lorentz_matsubara(0.01, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
@@ -192,9 +189,6 @@ def test_adaptive_heom_accepts_steps_and_reaches_final_time() -> None:
     assert bool(result.valid)
     assert result.accepted_step_count > 0
     assert jnp.isclose(result.solution.times[-1], 0.002)
-
-
-def test_tomography_setting_fingerprint_canonicalizes_kraus_gauge() -> None:
     identity = jnp.eye(2, dtype="complex128")
     phase = jnp.exp(0.37j) * identity
     first = phx.tensor_network.QuantumInstrument(
@@ -231,7 +225,7 @@ def test_tomography_setting_fingerprint_canonicalizes_kraus_gauge() -> None:
     )
 
 
-def test_inactive_instrument_outcome_is_rejected_everywhere() -> None:
+def test_open_system_campaigns_scenario_3() -> None:
     identity = jnp.eye(2, dtype="complex128")
     instrument = phx.tensor_network.QuantumInstrument(
         jnp.stack((identity, identity))[:, None, ...],
@@ -256,18 +250,12 @@ def test_inactive_instrument_outcome_is_rejected_everywhere() -> None:
     )
     with pytest.raises(ValueError, match="inactive"):
         process.contract((instrument,), (1,))
-
-
-def test_analytic_pade_poles_are_stable_and_improve_with_order() -> None:
     first = phx.operators.quantum.drude_lorentz_pade(0.01, 1.0, 2.0, 1)
     second = phx.operators.quantum.drude_lorentz_pade(0.01, 1.0, 2.0, 2)
     assert bool(first.valid)
     assert bool(second.valid)
     assert jnp.all(jnp.real(second.exponents) > 0.0)
     assert second.fit_residual <= first.fit_residual
-
-
-def test_direct_memory_map_certification_checks_cp_and_tp() -> None:
     initial = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
     problem = phx.solver.exponential_memory_qubit_problem(0.01, 1.0, initial)
     result = phx.solver.certify_memory_kernel_map(
@@ -277,12 +265,3 @@ def test_direct_memory_map_certification_checks_cp_and_tp() -> None:
     )
     assert result.superoperators.shape == (3, 4, 4)
     assert bool(result.valid)
-
-
-def test_mps_dense_materialization_is_capacity_bounded() -> None:
-    state = phx.tensor_network.product_mps(
-        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
-    )
-    with pytest.raises(ValueError, match="capacity"):
-        state.to_dense(maximum_elements=2)
-    assert state.to_dense(maximum_elements=4).shape == (4,)

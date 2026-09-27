@@ -96,7 +96,7 @@ def _prepared_workflow(*, limits: Any = None, lumen_mask: Any = None) -> Any:
     return plan.prepare()
 
 
-def test_static_lumen_mask_compiles_stationary_halfway_wall_links() -> None:
+def test_cardiovascular_hemodynamics_scenario_1() -> None:
     mask = np.ones((6, 4, 4), dtype="bool")
     mask[:, 0, :] = False
     prepared = _prepared_workflow(lumen_mask=mask)
@@ -105,9 +105,6 @@ def test_static_lumen_mask_compiles_stationary_halfway_wall_links() -> None:
     assert np.any(owner == int(LatticeBoltzmannLinkOwner.HALFWAY))
     assert prepared.boundary.geometry.fluid_count == int(np.sum(mask))
     assert prepared.scope.wall_motion_supported is False
-
-
-def test_hemodynamics_scaling_roundtrips_every_coupled_quantity() -> None:
     scaling = HemodynamicsScaling(
         0.25,
         0.01,
@@ -155,9 +152,6 @@ def test_hemodynamics_scaling_roundtrips_every_coupled_quantity() -> None:
         scaling.physical_power(scaling.lattice_power(power)), power
     )
     assert len(scaling.quantity_spec_ids) == 10
-
-
-def test_scaling_and_rheology_refuse_outside_validity_envelopes() -> None:
     with pytest.raises(ValueError, match="Mach limit"):
         HemodynamicsScaling(
             1.0,
@@ -202,7 +196,7 @@ def test_scaling_and_rheology_refuse_outside_validity_envelopes() -> None:
         )
 
 
-def test_carreau_yasuda_newtonian_limit_and_shear_thinning() -> None:
+def test_cardiovascular_hemodynamics_scenario_2() -> None:
     constant = CarreauYasudaRheology(0.004, 0.004, 100.0, 0.4, 2.0)
     newtonian = NewtonianRheology(0.004)
     shear = jnp.asarray((0.0, 1.0e-3, 0.1, 1.0))
@@ -218,9 +212,6 @@ def test_carreau_yasuda_newtonian_limit_and_shear_thinning() -> None:
     assert np.all(np.diff(values) <= 0.0)
     assert values[-1] >= thinning.minimum_dynamic_viscosity_kpa_ms
     assert values[0] == pytest.approx(thinning.maximum_dynamic_viscosity_kpa_ms)
-
-
-def test_terminal_measurements_close_outlet_volume_and_power_balances() -> None:
     prepared = _prepared_workflow()
     shape = prepared.discretization.grid.shape
     velocity = jnp.zeros(shape + (3,)).at[..., 0].set(0.01)
@@ -264,9 +255,6 @@ def test_terminal_measurements_close_outlet_volume_and_power_balances() -> None:
     assert not bool(mismatched.passed)
     np.testing.assert_allclose(mismatched.pressure_residual_kpa, (0.5, 0.0))
     np.testing.assert_array_equal(mismatched.pressure_balanced, (False, True))
-
-
-def test_poiseuille_and_womersley_references_recover_expected_limits() -> None:
     pipe = PoiseuillePipeReference(1.5, 20.0, 0.8, 0.004)
     radius = np.linspace(0.0, 1.5, 4001)
     velocity = np.asarray(pipe.axial_velocity(radius))
@@ -288,7 +276,7 @@ def test_poiseuille_and_womersley_references_recover_expected_limits() -> None:
     assert womersley.womersley_number < 0.02
 
 
-def test_lbm_mac_comparison_keeps_routes_distinct_and_auditable() -> None:
+def test_cardiovascular_hemodynamics_scenario_3() -> None:
     coordinate = jnp.linspace(0.0, 1.0, 128)
     profile = 1.0 - coordinate**2
     mac_velocity = jnp.stack(
@@ -311,9 +299,6 @@ def test_lbm_mac_comparison_keeps_routes_distinct_and_auditable() -> None:
     assert evidence.lbm_route_id != evidence.mac_route_id
     assert float(evidence.velocity_relative_l2) == pytest.approx(0.005, rel=1.0e-5)
     assert float(evidence.pressure_relative_l2) == pytest.approx(0.002, rel=1.0e-5)
-
-
-def test_fixed_wall_d3q19_candidate_commit_checkpoint_and_fail_closed_state() -> None:
     prepared = _prepared_workflow(
         limits=HemodynamicsValidityLimits(
             maximum_relative_mass_balance_defect=1.0e-5,
@@ -344,30 +329,45 @@ def test_fixed_wall_d3q19_candidate_commit_checkpoint_and_fail_closed_state() ->
     assert not bool(excessive.evidence.successful)
     np.testing.assert_array_equal(rejected.populations, committed.populations)
     assert int(rejected.step_index) == int(committed.step_index)
-
-
-@pytest.mark.parametrize(
-    ("pressure", "flow"),
-    (
+    discretization = _discretization((6, 4))
+    scaling = HemodynamicsScaling(
+        1.0,
+        1.0,
+        1.06,
+        reference_velocity_mm_per_ms=0.01,
+    )
+    component = Resistance("wrong_lattice_terminal", 1.0)
+    terminals = (
+        FlowTerminalPort(
+            "inlet",
+            TerminalFace("x", "lower", TerminalDirection.INTO_LUMEN),
+            CirculationPortBinding(component, "inlet"),
+        ),
+    )
+    with pytest.raises(ValueError, match="D3Q19"):
+        FixedWallLBMPlan(
+            discretization,
+            scaling,
+            FixedWallLumenRegion(np.ones((6, 4, 2), dtype="bool")),
+            terminals,
+            NewtonianRheology(0.004),
+        )
+    for pressure, flow in (
         (jnp.asarray((jnp.nan, 0.0)), jnp.zeros((2,))),
         (jnp.zeros((2,)), jnp.asarray((jnp.inf, 0.0))),
         (jnp.zeros((2,)), jnp.asarray((32.0, 0.0))),
-    ),
-)
-def test_invalid_port_iterates_return_rejected_candidate_before_native_boundary(
-    pressure: Any, flow: Any
-) -> None:
-    prepared = _prepared_workflow()
-    state = prepared.initialize_state()
+    ):
+        prepared = _prepared_workflow()
+        state = prepared.initialize_state()
 
-    candidate = prepared.candidate(state, TerminalPortValues(pressure, flow))
-    committed = prepared.commit(state, candidate)
+        candidate = prepared.candidate(state, TerminalPortValues(pressure, flow))
+        committed = prepared.commit(state, candidate)
 
-    assert not bool(candidate.evidence.port_iterate_admissible)
-    assert not bool(candidate.evidence.successful)
-    assert np.all(np.isfinite(np.asarray(candidate.state.populations)))
-    np.testing.assert_array_equal(committed.populations, state.populations)
-    assert int(committed.step_index) == int(state.step_index)
+        assert not bool(candidate.evidence.port_iterate_admissible)
+        assert not bool(candidate.evidence.successful)
+        assert np.all(np.isfinite(np.asarray(candidate.state.populations)))
+        np.testing.assert_array_equal(committed.populations, state.populations)
+        assert int(committed.step_index) == int(state.step_index)
 
 
 def test_pressure_controlled_inflow_is_rejected_during_planning() -> None:
@@ -391,31 +391,5 @@ def test_pressure_controlled_inflow_is_rejected_during_planning() -> None:
             scaling,
             FixedWallLumenRegion(np.ones((6, 4, 4), dtype="bool")),
             (terminal,),
-            NewtonianRheology(0.004),
-        )
-
-
-def test_fixed_wall_plan_refuses_non_d3q19_lattice() -> None:
-    discretization = _discretization((6, 4))
-    scaling = HemodynamicsScaling(
-        1.0,
-        1.0,
-        1.06,
-        reference_velocity_mm_per_ms=0.01,
-    )
-    component = Resistance("wrong_lattice_terminal", 1.0)
-    terminals = (
-        FlowTerminalPort(
-            "inlet",
-            TerminalFace("x", "lower", TerminalDirection.INTO_LUMEN),
-            CirculationPortBinding(component, "inlet"),
-        ),
-    )
-    with pytest.raises(ValueError, match="D3Q19"):
-        FixedWallLBMPlan(
-            discretization,
-            scaling,
-            FixedWallLumenRegion(np.ones((6, 4, 2), dtype="bool")),
-            terminals,
             NewtonianRheology(0.004),
         )

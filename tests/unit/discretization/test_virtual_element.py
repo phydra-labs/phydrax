@@ -92,7 +92,7 @@ def _global_state_from_local(space: Any, local: Any) -> Any:
     return jnp.asarray(state)
 
 
-def test_polygon_mesh_canonicalizes_orientation_and_arbitrary_arity() -> None:
+def test_virtual_element_scenario_1() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (0.0, 1.0), (0.5, 1.4), (1.0, 1.0), (1.0, 0.0))
     )
@@ -114,9 +114,6 @@ def test_polygon_mesh_canonicalizes_orientation_and_arbitrary_arity() -> None:
     assert int(mesh.topology.entity_sets[2].entity_ids[0]) == 17
     # ty: ignore[unresolved-attribute]
     assert jnp.all(connectivity.boundary_edges)
-
-
-def test_polygon_mesh_rejects_self_intersection_during_vem_preparation() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)))
     mesh = phx.discretization.CellMesh(
         coordinates,
@@ -131,9 +128,6 @@ def test_polygon_mesh_rejects_self_intersection_during_vem_preparation() -> None
     )
     with np.testing.assert_raises(ValueError):
         phx.discretization.VirtualElementPlan(mesh, field).prepare()
-
-
-def test_virtual_element_projector_budget_is_checked_during_planning() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, ((0, 1, 2, 3),))
@@ -143,9 +137,6 @@ def test_virtual_element_projector_budget_is_checked_during_planning() -> None:
     budget = phx.discretization.VirtualElementResourceBudget(maximum_projector_bytes=1)
     with pytest.raises(ValueError, match="projector storage budget"):
         phx.discretization.VirtualElementPlan(mesh, field, resource_budget=budget)
-
-
-def test_virtual_element_dof_layout_and_edge_orientation() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
@@ -168,60 +159,6 @@ def test_virtual_element_dof_layout_and_edge_orientation() -> None:
     assert not jnp.any(dof_map.point_dof_valid[-6:])
     assert space.field_space.representation == "functional"
     assert space.field_space.conformity == "H1"
-
-
-def test_h1_and_enhanced_l2_projectors_reproduce_polynomials() -> None:
-    points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
-    for degree in (1, 2, 3):
-        space = _single_polygon(points, degree)
-        projection = space.default_runtime.projections[0]
-        evidence = projection.evidence
-
-        assert jnp.max(evidence.h1_reproduction_error) < 5.0e-10
-        assert jnp.max(evidence.l2_reproduction_error) < 5.0e-10
-        assert jnp.max(evidence.h1_idempotence_error) < 5.0e-10
-        assert jnp.max(evidence.l2_idempotence_error) < 5.0e-10
-        assert jnp.all(evidence.factorization_valid)
-
-
-def test_stabilization_annihilates_polynomial_image() -> None:
-    space = _single_polygon(
-        ((0.0, 0.0), (1.0, 0.0), (1.1, 0.8), (0.4, 1.2), (-0.1, 0.7)),
-        2,
-    )
-    projection = space.default_runtime.projections[0]
-    coefficients = projection.h1_coefficients
-    consistent = oe.contract(
-        "cai,cab,cbj->cij", coefficients, projection.gradient_gram, coefficients
-    )
-    stabilized = phx.discretization.stabilize_virtual_element_tensor(
-        projection,
-        consistent,
-        phx.discretization.VirtualElementStabilizationPolicy("dofi_dofi"),
-        projector="h1",
-    )
-
-    assert jnp.max(stabilized.evidence.polynomial_leakage) < 1.0e-9
-    assert jnp.max(stabilized.evidence.symmetry_error) < 1.0e-12
-    assert jnp.min(stabilized.evidence.minimum_kernel_eigenvalue) > -1.0e-10
-
-
-def test_polygon_geometry_refresh_has_finite_coordinate_gradient() -> None:
-    space = _single_polygon(
-        ((0.0, 0.0), (1.0, 0.0), (1.2, 0.7), (0.5, 1.2), (-0.1, 0.7)),
-        1,
-    )
-
-    def total_area(coordinates: Any) -> Any:
-        runtime = space.prepare_runtime(coordinates, numeric_version="gradient")
-        return jnp.sum(runtime.geometries[0].areas)
-
-    gradient = jax.grad(total_area)(space.mesh.coordinates)
-    assert gradient.shape == space.mesh.coordinates.shape
-    assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_virtual_element_families_have_distinct_entity_topologies() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
@@ -279,9 +216,39 @@ def test_virtual_element_families_have_distinct_entity_topologies() -> None:
             np.asarray(orientation[1, 6:8]),
             np.asarray((-1.0, 1.0)),
         )
+    points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
+    for degree in (1, 2, 3):
+        space = _single_polygon(points, degree)
+        projection = space.default_runtime.projections[0]
+        evidence = projection.evidence
+
+        assert jnp.max(evidence.h1_reproduction_error) < 5.0e-10
+        assert jnp.max(evidence.l2_reproduction_error) < 5.0e-10
+        assert jnp.max(evidence.h1_idempotence_error) < 5.0e-10
+        assert jnp.max(evidence.l2_idempotence_error) < 5.0e-10
+        assert jnp.all(evidence.factorization_valid)
 
 
-def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials() -> None:
+def test_virtual_element_scenario_2() -> None:
+    space = _single_polygon(
+        ((0.0, 0.0), (1.0, 0.0), (1.1, 0.8), (0.4, 1.2), (-0.1, 0.7)),
+        2,
+    )
+    projection = space.default_runtime.projections[0]
+    coefficients = projection.h1_coefficients
+    consistent = oe.contract(
+        "cai,cab,cbj->cij", coefficients, projection.gradient_gram, coefficients
+    )
+    stabilized = phx.discretization.stabilize_virtual_element_tensor(
+        projection,
+        consistent,
+        phx.discretization.VirtualElementStabilizationPolicy("dofi_dofi"),
+        projector="h1",
+    )
+
+    assert jnp.max(stabilized.evidence.polynomial_leakage) < 1.0e-9
+    assert jnp.max(stabilized.evidence.symmetry_error) < 1.0e-12
+    assert jnp.min(stabilized.evidence.minimum_kernel_eigenvalue) > -1.0e-10
     points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
     coordinates = jnp.asarray(points, dtype="float64")
     mesh = phx.discretization.CellMesh.from_polygons(
@@ -334,99 +301,106 @@ def test_moment_virtual_element_projectors_reproduce_exact_sequence_polynomials(
     np.testing.assert_allclose(
         np.asarray(recovered), np.asarray(polynomial), atol=5.0e-10
     )
-
-
-@pytest.mark.parametrize(
-    ("factory", "differential_kind", "expected_differential"),
-    (
+    for factory, differential_kind, expected_differential in (
         (phx.discretization.conforming_hdiv_virtual_element, "divergence", 5.0),
         (phx.discretization.conforming_hcurl_virtual_element, "curl", 2.0),
-    ),
-)
-def test_vector_reconstruction_orients_shared_edges_and_exposes_exact_trace(
-    factory: Any, differential_kind: Any, expected_differential: Any
-) -> None:
-    space = _two_cell_space(factory)
-    projection = space.default_runtime.projections[0]
-    coefficients = _affine_vector_coefficients(
-        space,
-        ((1.0, 2.0, -1.0), (-0.5, 1.0, 3.0)),
-    )
-    local = oe.contract("cia,ca->ci", projection.dof_matrix, coefficients)
-    state = _global_state_from_local(space, local)
-    reconstruction = phx.equations.project_virtual_element_field(space, state)
-
-    shared_points = jnp.asarray(
-        (
-            ((1.0, 0.1), (1.0, 0.5), (1.0, 0.9)),
-            ((1.0, 0.1), (1.0, 0.5), (1.0, 0.9)),
+    ):
+        space = _two_cell_space(factory)
+        projection = space.default_runtime.projections[0]
+        coefficients = _affine_vector_coefficients(
+            space,
+            ((1.0, 2.0, -1.0), (-0.5, 1.0, 3.0)),
         )
-    )
-    value, differential = phx.equations.evaluate_virtual_element_reconstruction(
-        reconstruction, space, 0, shared_points
-    )
-    expected_value = jnp.stack(
-        (
-            1.0 + 2.0 * shared_points[..., 0] - shared_points[..., 1],
-            -0.5 + shared_points[..., 0] + 3.0 * shared_points[..., 1],
-        ),
-        axis=-1,
-    )
-    np.testing.assert_allclose(value, expected_value, atol=2.0e-9)
-    # ty: ignore[no-matching-overload]
-    np.testing.assert_allclose(differential, expected_differential, atol=2.0e-9)
-    assert projection.differential_kind == differential_kind
+        local = oe.contract("cia,ca->ci", projection.dof_matrix, coefficients)
+        state = _global_state_from_local(space, local)
+        reconstruction = phx.equations.project_virtual_element_field(space, state)
 
-    topology_edges = np.asarray(space.mesh.connectivity.edges)
-    shared_edge = next(
-        index
-        for index, edge in enumerate(topology_edges)
-        if set(int(value) for value in edge) == {1, 4}
-    )
-    parameters = jnp.asarray((-0.75, 0.0, 0.75))
-    endpoints = topology_edges[shared_edge]
-    start = space.mesh.coordinates[endpoints[0]]
-    stop = space.mesh.coordinates[endpoints[1]]
-    edge_points = (
-        0.5 * (1.0 - parameters[:, None]) * start
-        + 0.5 * (1.0 + parameters[:, None]) * stop
-    )
-    vector = jnp.stack(
-        (
-            1.0 + 2.0 * edge_points[:, 0] - edge_points[:, 1],
-            -0.5 + edge_points[:, 0] + 3.0 * edge_points[:, 1],
-        ),
-        axis=-1,
-    )
-    tangent = (stop - start) / jnp.linalg.norm(stop - start)
-    direction = (
-        jnp.asarray((tangent[1], -tangent[0]))
-        if differential_kind == "divergence"
-        else tangent
-    )
-    expected_trace = vector @ direction
-    trace = phx.equations.evaluate_virtual_element_trace(
-        reconstruction,
-        space,
-        jnp.asarray((shared_edge,)),
-        parameters,
-    )
-    np.testing.assert_allclose(trace[0], expected_trace, atol=2.0e-9)
+        shared_points = jnp.asarray(
+            (
+                ((1.0, 0.1), (1.0, 0.5), (1.0, 0.9)),
+                ((1.0, 0.1), (1.0, 0.5), (1.0, 0.9)),
+            )
+        )
+        value, differential = phx.equations.evaluate_virtual_element_reconstruction(
+            reconstruction, space, 0, shared_points
+        )
+        expected_value = jnp.stack(
+            (
+                1.0 + 2.0 * shared_points[..., 0] - shared_points[..., 1],
+                -0.5 + shared_points[..., 0] + 3.0 * shared_points[..., 1],
+            ),
+            axis=-1,
+        )
+        np.testing.assert_allclose(value, expected_value, atol=2.0e-9)
+        # ty: ignore[no-matching-overload]
+        np.testing.assert_allclose(differential, expected_differential, atol=2.0e-9)
+        assert projection.differential_kind == differential_kind
 
-    constraint = phx.discretization.virtual_element_dirichlet_constraint(space, "v")
-    prescribed = jnp.linspace(0.1, 0.9, constraint.constrained_dofs.size)
-    lift = constraint.lift(prescribed)
-    np.testing.assert_allclose(lift[constraint.constrained_dofs], prescribed)
-    constant_lift = constraint.lift(2.0)
-    np.testing.assert_allclose(
-        constant_lift[constraint.constrained_dofs],
-        jnp.where(constraint.trace_modes == 0, 2.0, 0.0),
+        topology_edges = np.asarray(space.mesh.connectivity.edges)
+        shared_edge = next(
+            index
+            for index, edge in enumerate(topology_edges)
+            if set(int(value) for value in edge) == {1, 4}
+        )
+        parameters = jnp.asarray((-0.75, 0.0, 0.75))
+        endpoints = topology_edges[shared_edge]
+        start = space.mesh.coordinates[endpoints[0]]
+        stop = space.mesh.coordinates[endpoints[1]]
+        edge_points = (
+            0.5 * (1.0 - parameters[:, None]) * start
+            + 0.5 * (1.0 + parameters[:, None]) * stop
+        )
+        vector = jnp.stack(
+            (
+                1.0 + 2.0 * edge_points[:, 0] - edge_points[:, 1],
+                -0.5 + edge_points[:, 0] + 3.0 * edge_points[:, 1],
+            ),
+            axis=-1,
+        )
+        tangent = (stop - start) / jnp.linalg.norm(stop - start)
+        direction = (
+            jnp.asarray((tangent[1], -tangent[0]))
+            if differential_kind == "divergence"
+            else tangent
+        )
+        expected_trace = vector @ direction
+        trace = phx.equations.evaluate_virtual_element_trace(
+            reconstruction,
+            space,
+            jnp.asarray((shared_edge,)),
+            parameters,
+        )
+        np.testing.assert_allclose(trace[0], expected_trace, atol=2.0e-9)
+
+        constraint = phx.discretization.virtual_element_dirichlet_constraint(space, "v")
+        prescribed = jnp.linspace(0.1, 0.9, constraint.constrained_dofs.size)
+        lift = constraint.lift(prescribed)
+        np.testing.assert_allclose(lift[constraint.constrained_dofs], prescribed)
+        constant_lift = constraint.lift(2.0)
+        np.testing.assert_allclose(
+            constant_lift[constraint.constrained_dofs],
+            jnp.where(constraint.trace_modes == 0, 2.0, 0.0),
+        )
+        with pytest.raises(ValueError, match="prescribed DOF moments"):
+            constraint.lift(lambda points: points[:, 0])
+
+
+def test_polygon_geometry_refresh_has_finite_coordinate_gradient() -> None:
+    space = _single_polygon(
+        ((0.0, 0.0), (1.0, 0.0), (1.2, 0.7), (0.5, 1.2), (-0.1, 0.7)),
+        1,
     )
-    with pytest.raises(ValueError, match="prescribed DOF moments"):
-        constraint.lift(lambda points: points[:, 0])
+
+    def total_area(coordinates: Any) -> Any:
+        runtime = space.prepare_runtime(coordinates, numeric_version="gradient")
+        return jnp.sum(runtime.geometries[0].areas)
+
+    gradient = jax.grad(total_area)(space.mesh.coordinates)
+    assert gradient.shape == space.mesh.coordinates.shape
+    assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_discontinuous_l2_reconstructs_cell_polynomials_without_a_trace() -> None:
+def test_virtual_element_scenario_3() -> None:
     space = _two_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
@@ -475,18 +449,12 @@ def test_discontinuous_l2_reconstructs_cell_polynomials_without_a_trace() -> Non
             phx.discretization.VirtualElementStabilizationPolicy(),
             projector="h1",
         )
-
-
-def test_component_replicated_virtual_element_fields_are_refused() -> None:
     with pytest.raises(NotImplementedError, match="Component-replicated"):
         phx.discretization.VirtualElementFieldSpec(
             "u",
             phx.discretization.conforming_h1_virtual_element(1),
             component_shape=(2,),
         )
-
-
-def test_vem_product_and_transfer_qualification_fail_closed() -> None:
     fields = (
         phx.discretization.VirtualElementFieldSpec(
             "u",

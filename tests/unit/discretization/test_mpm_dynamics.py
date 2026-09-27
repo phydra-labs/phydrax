@@ -100,7 +100,7 @@ def _positions(dimension: Any) -> Any:
     return base[:, :dimension]
 
 
-def test_constant_translation_crosses_grid_without_force_or_state_loss() -> None:
+def test_mpm_dynamics_scenario_1() -> None:
     compiled, arguments = _compiled()
     position = _positions(2).at[0, 0].set(0.999)
     velocity = jnp.broadcast_to(jnp.asarray((0.2, -0.05)), position.shape)
@@ -137,9 +137,6 @@ def test_constant_translation_crosses_grid_without_force_or_state_loss() -> None
     assert not bool(detail.diagnostics.transfer.angular_momentum_valid)
     assert detail.diagnostics.transfer.relative_angular_momentum_defect == 0.0
     assert int(detail.accepted_state.accepted_step) == 1
-
-
-def test_nonperiodic_apic_transfer_certifies_angular_momentum() -> None:
     compiled, arguments = _compiled(periodic=False)
     position = _positions(2)
     velocity = jnp.broadcast_to(jnp.asarray((0.08, -0.03)), position.shape)
@@ -154,9 +151,6 @@ def test_nonperiodic_apic_transfer_certifies_angular_momentum() -> None:
     assert bool(detail.successful)
     assert bool(detail.diagnostics.transfer.angular_momentum_valid)
     assert detail.diagnostics.transfer.relative_angular_momentum_defect < 1e-10
-
-
-def test_prescribed_grid_velocity_reports_impulse_and_work() -> None:
     compiled, arguments = _compiled(clamp_x=True)
     position = _positions(2)
     velocity = jnp.broadcast_to(jnp.asarray((0.1, 0.0)), position.shape)
@@ -204,7 +198,7 @@ def test_external_acceleration_updates_momentum_and_work() -> None:
     assert detail.diagnostics.energy.external_work > 0.0
 
 
-def test_apic_affine_field_reproduces_velocity_gradient_and_deformation() -> None:
+def test_mpm_dynamics_scenario_2() -> None:
     compiled, arguments = _compiled()
     position = _positions(2)
     affine = jnp.asarray([[0.04, -0.02], [0.03, -0.01]])
@@ -236,9 +230,6 @@ def test_apic_affine_field_reproduces_velocity_gradient_and_deformation() -> Non
         atol=2e-10,
     )
     assert detail.diagnostics.transfer.maximum_apic_condition <= 1.0 + 1e-10
-
-
-def test_oversized_step_rejects_without_mutating_accepted_particle_state() -> None:
     compiled, arguments = _compiled()
     state = compiled.initialize_state(
         _positions(2),
@@ -263,9 +254,6 @@ def test_oversized_step_rejects_without_mutating_accepted_particle_state() -> No
         strict=True,
     ):
         np.testing.assert_array_equal(accepted, initial)
-
-
-def test_particle_support_domain_rejection_is_transactional() -> None:
     compiled, arguments = _compiled(periodic=False)
     state = compiled.initialize_state(
         _positions(2),

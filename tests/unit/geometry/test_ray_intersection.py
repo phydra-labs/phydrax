@@ -15,9 +15,7 @@ from phydrax.geometry import (
 )
 
 
-def test_batched_scaled_rays_return_physical_distance_and_normal_sign_independence() -> (
-    None
-):
+def test_ray_intersection_scenario_1() -> None:
     result = intersect_ray_plane(
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, -2.0, 1.0))),
         jnp.asarray(((0.0, 0.0, 4.0), (0.0, 0.0, 2.0))),
@@ -29,9 +27,6 @@ def test_batched_scaled_rays_return_physical_distance_and_normal_sign_independen
     np.testing.assert_allclose(result.points, ((0.0, 0.0, 3.0), (1.0, -2.0, 3.0)))
     assert bool(jnp.all(result.valid))
     assert bool(jnp.all(result.status == int(RayIntersectionStatus.SUCCESS)))
-
-
-def test_degenerate_coplanar_parallel_behind_and_nonfinite_status_precedence() -> None:
     origins = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -87,9 +82,6 @@ def test_degenerate_coplanar_parallel_behind_and_nonfinite_status_precedence() -
         jnp.asarray((0.0, 0.0, 1.0)),
     )
     assert int(coplanar.status) == int(RayIntersectionStatus.COPLANAR)
-
-
-def test_forward_tolerance_accepts_a_small_negative_signed_distance() -> None:
     result = intersect_ray_plane(
         jnp.asarray((0.0, 0.0, 5e-10)),
         jnp.asarray((0.0, 0.0, 3.0)),

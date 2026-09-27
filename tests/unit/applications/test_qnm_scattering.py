@@ -110,7 +110,7 @@ def _schwarzschild_gravitational_plan(
     )
 
 
-def test_coupled_qnm_root_retains_reference_depth_condition_and_branch_evidence() -> None:
+def test_qnm_scattering_scenario_1() -> None:
     plan = _schwarzschild_gravitational_plan()
     reference = schwarzschild_qnm_reference(plan.mode, 2.0e-8, 2.0e-8)
     result = solve_qnm(
@@ -164,9 +164,6 @@ def test_coupled_qnm_root_retains_reference_depth_condition_and_branch_evidence(
     initial_state = result.nonlinear_result.state
     assert continuation.residual(initial_state, jnp.asarray(0.0)).shape == (4,)
     assert continuation.problem_id.endswith(":spin-continuation")
-
-
-def test_qnm_reference_is_not_implicit_qualification() -> None:
     plan = _schwarzschild_gravitational_plan()
     reference = schwarzschild_qnm_reference(plan.mode, 1.0e-7, 1.0e-7)
     result = solve_qnm(
@@ -179,9 +176,6 @@ def test_qnm_reference_is_not_implicit_qualification() -> None:
     assert not bool(result.qualified)
     assert result.qualification_source_id == ""
     assert result.reference_id == ""
-
-
-def test_qnm_rejects_reference_matching_cf_root_when_radial_check_fails() -> None:
     plan = _schwarzschild_gravitational_plan(radial_qualification=False)
     reference = schwarzschild_qnm_reference(plan.mode, 1.0e-7, 1.0e-7)
     result = solve_qnm(
@@ -208,6 +202,70 @@ def test_qnm_rejects_reference_matching_cf_root_when_radial_check_fails() -> Non
     assert int(result.status) == int(QnmStatus.RADIAL_RESOLUTION_UNRESOLVED)
     assert int(result.derivative_status) == int(
         QnmDerivativeStatus.RADIAL_RESOLUTION_UNRESOLVED
+    )
+    plan = _computed_scalar_scattering_plan()
+    result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
+
+    assert bool(result.qualified)
+    assert bool(result.derivative_valid)
+    assert int(result.status) == int(SchwarzschildScatteringStatus.SUCCESS)
+    assert bool(result.asymptotic.qualified)
+    assert bool(result.evidence.source_converged)
+    assert bool(result.evidence.absolute_wronskian_valid)
+    assert bool(result.evidence.absolute_flux_valid)
+    assert bool(result.evidence.slope_refinement_valid)
+    assert bool(jnp.all(result.evidence.neighboring_ledger_valid))
+    assert float(result.evidence.dimensionless_slope_refinement_error) <= float(
+        result.evidence.dimensionless_slope_refinement_threshold
+    )
+    assert bool(jnp.all(result.evidence.neighboring_resolved))
+    assert float(result.evidence.decomposition_residual) < 1.0e-10
+    assert float(result.evidence.graybody_refinement_error) < plan.refinement_tolerance
+    np.testing.assert_allclose(
+        np.asarray(result.graybody_factor),
+        np.asarray(16.0 * (plan.radial_plan.mass * result.angular_frequency) ** 2),
+        rtol=plan.low_frequency_relative_tolerance,
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.flux_residual),
+        0.0,
+        atol=plan.absolute_flux_tolerance,
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.wronskian_residual),
+        0.0,
+        atol=plan.absolute_flux_tolerance,
+    )
+    assert np.isfinite(float(result.corotation_slope))
+    plan = _computed_scalar_scattering_plan(asymptotically_resolved=False)
+    result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
+
+    assert not bool(result.asymptotic.qualified)
+    assert not bool(result.evidence.source_converged)
+    assert not bool(result.converged)
+    assert not bool(result.qualified)
+    assert not bool(result.derivative_valid)
+    assert int(result.status) == int(SchwarzschildScatteringStatus.ASYMPTOTIC_UNRESOLVED)
+    plan = _computed_scalar_scattering_plan(asymptotically_resolved=False)
+    result = solve_schwarzschild_scattering(plan, jnp.asarray(plan.frequency_step))
+
+    assert bool(result.finite)
+    assert not bool(result.converged)
+    assert not bool(result.physically_valid)
+    assert not bool(result.qualified)
+    assert int(result.status) == int(SchwarzschildScatteringStatus.INVALID_FREQUENCY)
+    with pytest.raises(ValueError, match="ingoing horizon"):
+        _computed_scalar_scattering_plan(
+            boundary=RadialBoundaryCondition("outgoing", "outgoing")
+        )
+    plan = _computed_scalar_scattering_plan(flux_tolerance=1.0e-14)
+    result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
+
+    assert not bool(result.evidence.scattering_ledger_valid)
+    assert not bool(result.converged)
+    assert not bool(result.qualified)
+    assert int(result.status) == int(
+        SchwarzschildScatteringStatus.SCATTERING_LEDGER_UNRESOLVED
     )
 
 
@@ -256,90 +314,7 @@ def _computed_scalar_scattering_plan(
     )
 
 
-def test_computed_scalar_schwarzschild_scattering_closes_flux_and_low_frequency_control() -> (
-    None
-):
-    plan = _computed_scalar_scattering_plan()
-    result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
-
-    assert bool(result.qualified)
-    assert bool(result.derivative_valid)
-    assert int(result.status) == int(SchwarzschildScatteringStatus.SUCCESS)
-    assert bool(result.asymptotic.qualified)
-    assert bool(result.evidence.source_converged)
-    assert bool(result.evidence.absolute_wronskian_valid)
-    assert bool(result.evidence.absolute_flux_valid)
-    assert bool(result.evidence.slope_refinement_valid)
-    assert bool(jnp.all(result.evidence.neighboring_ledger_valid))
-    assert float(result.evidence.dimensionless_slope_refinement_error) <= float(
-        result.evidence.dimensionless_slope_refinement_threshold
-    )
-    assert bool(jnp.all(result.evidence.neighboring_resolved))
-    assert float(result.evidence.decomposition_residual) < 1.0e-10
-    assert float(result.evidence.graybody_refinement_error) < plan.refinement_tolerance
-    np.testing.assert_allclose(
-        np.asarray(result.graybody_factor),
-        np.asarray(16.0 * (plan.radial_plan.mass * result.angular_frequency) ** 2),
-        rtol=plan.low_frequency_relative_tolerance,
-    )
-    np.testing.assert_allclose(
-        np.asarray(result.flux_residual),
-        0.0,
-        atol=plan.absolute_flux_tolerance,
-    )
-    np.testing.assert_allclose(
-        np.asarray(result.wronskian_residual),
-        0.0,
-        atol=plan.absolute_flux_tolerance,
-    )
-    assert np.isfinite(float(result.corotation_slope))
-
-
-def test_computed_scattering_rejects_underresolved_asymptotic_source() -> None:
-    plan = _computed_scalar_scattering_plan(asymptotically_resolved=False)
-    result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
-
-    assert not bool(result.asymptotic.qualified)
-    assert not bool(result.evidence.source_converged)
-    assert not bool(result.converged)
-    assert not bool(result.qualified)
-    assert not bool(result.derivative_valid)
-    assert int(result.status) == int(SchwarzschildScatteringStatus.ASYMPTOTIC_UNRESOLVED)
-
-
-def test_computed_scattering_returns_invalid_frequency_status() -> None:
-    plan = _computed_scalar_scattering_plan(asymptotically_resolved=False)
-    result = solve_schwarzschild_scattering(plan, jnp.asarray(plan.frequency_step))
-
-    assert bool(result.finite)
-    assert not bool(result.converged)
-    assert not bool(result.physically_valid)
-    assert not bool(result.qualified)
-    assert int(result.status) == int(SchwarzschildScatteringStatus.INVALID_FREQUENCY)
-
-
-def test_computed_scattering_propagates_strict_flux_ledger_failure() -> None:
-    plan = _computed_scalar_scattering_plan(flux_tolerance=1.0e-14)
-    result = solve_schwarzschild_scattering(plan, jnp.asarray(2.0e-2))
-
-    assert not bool(result.evidence.scattering_ledger_valid)
-    assert not bool(result.converged)
-    assert not bool(result.qualified)
-    assert int(result.status) == int(
-        SchwarzschildScatteringStatus.SCATTERING_LEDGER_UNRESOLVED
-    )
-
-
-def test_computed_scattering_requires_ingoing_horizon_boundary() -> None:
-    with pytest.raises(ValueError, match="ingoing horizon"):
-        _computed_scalar_scattering_plan(
-            boundary=RadialBoundaryCondition("outgoing", "outgoing")
-        )
-
-
-def test_real_frequency_scattering_closes_flux_and_requires_explicit_qualification() -> (
-    None
-):
+def test_qnm_scattering_scenario_2() -> None:
     mode = SeparatedMode(
         0,
         1,
@@ -394,9 +369,6 @@ def test_real_frequency_scattering_closes_flux_and_requires_explicit_qualificati
     assert int(unresolved.status) == int(
         BlackHoleScatteringStatus.WRONSKIAN_NOT_CONVERGED
     )
-
-
-def test_kerr_superradiance_preserves_negative_signed_absorption() -> None:
     mode = SeparatedMode(
         0,
         1,

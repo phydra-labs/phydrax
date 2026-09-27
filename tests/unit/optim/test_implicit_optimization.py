@@ -226,7 +226,7 @@ def test_derivative_is_stable_when_iteration_budget_changes() -> None:
     np.testing.assert_allclose(short, long, atol=1e-8)
 
 
-def test_implicit_minimize_rejects_unsuccessful_primal_solve() -> None:
+def test_implicit_contracts() -> None:
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_minimize(
             lambda state, value: jnp.sum((state - value) ** 4),
@@ -238,9 +238,6 @@ def test_implicit_minimize_rejects_unsuccessful_primal_solve() -> None:
 
     with pytest.raises(Exception, match="successful regular stationary point"):
         solve(jnp.array([3.0]))
-
-
-def test_implicit_minimize_rejects_singular_hessian() -> None:
     solve = eqx.filter_jit(
         lambda parameter: phx.optim.implicit_minimize(
             lambda state, value: state[0] ** 4 + value * state[0],
@@ -252,23 +249,6 @@ def test_implicit_minimize_rejects_singular_hessian() -> None:
 
     with pytest.raises(Exception, match="singular or did not converge"):
         solve(jnp.array(0.0))
-
-
-def test_implicit_least_squares_rejects_rank_deficient_stationarity() -> None:
-    solve = eqx.filter_jit(
-        lambda target: phx.optim.implicit_least_squares(
-            lambda state, value: jnp.array([state[0] + state[1] - value]),
-            jnp.array([0.0, 0.0]),
-            args=target,
-            termination=_termination(),
-        )
-    )
-
-    with pytest.raises(Exception, match="singular or did not converge"):
-        solve(jnp.array(1.0))
-
-
-def test_implicit_minimize_rejects_nonfinite_solution_data() -> None:
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_minimize(
             lambda state, value: jnp.sum((state - value) ** 2),
@@ -280,3 +260,14 @@ def test_implicit_minimize_rejects_nonfinite_solution_data() -> None:
 
     with pytest.raises(Exception, match="successful regular stationary point"):
         solve(jnp.array([jnp.nan]))
+    solve = eqx.filter_jit(
+        lambda target: phx.optim.implicit_least_squares(
+            lambda state, value: jnp.array([state[0] + state[1] - value]),
+            jnp.array([0.0, 0.0]),
+            args=target,
+            termination=_termination(),
+        )
+    )
+
+    with pytest.raises(Exception, match="singular or did not converge"):
+        solve(jnp.array(1.0))

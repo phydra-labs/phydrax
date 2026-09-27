@@ -40,7 +40,7 @@ def test_design_state_updates_preserve_schema_and_tree_structure() -> None:
     assert evaluate(jnp.array([2.0, 0.0, 0.0])) == pytest.approx(0.0)
 
 
-def test_field_certificates_propagate_through_translation_and_sharp_union() -> None:
+def test_geometry_substrate_scenario_1() -> None:
     left = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         1.0,
@@ -68,9 +68,6 @@ def test_field_certificates_propagate_through_translation_and_sharp_union() -> N
     assert union.contains(jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])).all()
     with pytest.raises(NotImplementedError, match="signed_distance"):
         union.signed_distance(jnp.array([0.0, 0.0, 0.0]))
-
-
-def test_analytic_domains_have_exact_measures_queries_and_fixed_shape_samples() -> None:
     circle = phx.domain.GeometryDomain(phx.geometry.Circle((1.0, -1.0), 2.0).compile())
     sphere = phx.domain.GeometryDomain(
         phx.geometry.Sphere((0.0, 0.0, 0.0), 2.0).compile()
@@ -92,37 +89,6 @@ def test_analytic_domains_have_exact_measures_queries_and_fixed_shape_samples() 
     box_boundary = box.sample_boundary(128, key=key)
     assert box_boundary.shape == (128, 3)
     assert jnp.all(box._on_boundary(box_boundary))
-
-
-def test_bounded_rejection_reports_failure_without_hanging_or_underfilling_silently() -> (
-    None
-):
-    plan = phx.geometry.RejectionSamplingPlan(
-        proposals_per_round=4,
-        maximum_rounds=3,
-    )
-
-    def run(key: Any) -> Any:
-        return phx.geometry.bounded_rejection_sample(
-            lambda _key, count: jnp.zeros((count, 2)),
-            lambda points: jnp.zeros((points.shape[0],), dtype="bool"),
-            num_points=5,
-            point_dimension=2,
-            key=key,
-            plan=plan,
-        )
-
-    result = jax.jit(run)(jax.random.key(0))
-
-    assert result.points.shape == (5, 2)
-    assert not result.valid.any()
-    assert not result.report.complete
-    assert result.report.accepted == 0
-    assert result.report.proposed == plan.maximum_proposals
-    assert result.report.rounds == plan.maximum_rounds
-
-
-def test_triangle_mesh_query_index_returns_closest_features_and_surface_atlas() -> None:
     mesh = phx.geometry.TriangleMesh(
         vertices=jnp.array(
             [
@@ -152,6 +118,34 @@ def test_triangle_mesh_query_index_returns_closest_features_and_surface_atlas() 
     jacobian = mesh.boundary_atlas.jacobian(jnp.array([[0]]), reference)
     assert jnp.allclose(physical, jnp.array([[[0.5, 0.25, 0.0]]]))
     assert jnp.allclose(jacobian, jnp.array([[0.5]]))
+
+
+def test_bounded_rejection_reports_failure_without_hanging_or_underfilling_silently() -> (
+    None
+):
+    plan = phx.geometry.RejectionSamplingPlan(
+        proposals_per_round=4,
+        maximum_rounds=3,
+    )
+
+    def run(key: Any) -> Any:
+        return phx.geometry.bounded_rejection_sample(
+            lambda _key, count: jnp.zeros((count, 2)),
+            lambda points: jnp.zeros((points.shape[0],), dtype="bool"),
+            num_points=5,
+            point_dimension=2,
+            key=key,
+            plan=plan,
+        )
+
+    result = jax.jit(run)(jax.random.key(0))
+
+    assert result.points.shape == (5, 2)
+    assert not result.valid.any()
+    assert not result.report.complete
+    assert result.report.accepted == 0
+    assert result.report.proposed == plan.maximum_proposals
+    assert result.report.rounds == plan.maximum_rounds
 
 
 def test_boundary_atlas_integration_and_hard_constraint_work_end_to_end() -> None:

@@ -36,7 +36,7 @@ def _theory_point(size: Any, spacing: Any) -> Any:
     )
 
 
-def test_ensemble_admission_retains_finite_statistics_and_qualification_ids() -> None:
+def test_qft_lattice_production_contracts_scenario_1() -> None:
     point = _theory_point(4, 0.25)
     plan = LatticeEnsemblePlan(
         point,
@@ -54,9 +54,6 @@ def test_ensemble_admission_retains_finite_statistics_and_qualification_ids() ->
     assert evidence.valid_sample_count == 4
     assert jnp.allclose(evidence.means, jnp.mean(values, axis=0))
     assert jnp.allclose(evidence.covariance, jnp.cov(values, rowvar=False))
-
-
-def test_continuum_fit_is_fixed_volume_and_uses_native_weighted_solve() -> None:
     points = (
         _theory_point(4, 0.25),
         _theory_point(8, 0.125),

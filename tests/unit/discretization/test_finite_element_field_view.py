@@ -62,9 +62,7 @@ def _view(reconstruction: Any, coefficients: Any) -> Any:
 _INTERIOR = jnp.asarray(((0.2, 0.1), (0.7, 0.3), (0.3, 0.8), (0.1, 0.6)))
 
 
-def test_view_evaluation_matches_native_point_interpolation_values_and_gradients() -> (
-    None
-):
+def test_finite_element_field_view_scenario_1() -> None:
     discretization = _discretization(2)
     coefficients = _nodal(discretization, lambda x, y: np.sin(3.0 * x) + x * y**2)
     reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
@@ -92,11 +90,6 @@ def test_view_evaluation_matches_native_point_interpolation_values_and_gradients
     np.testing.assert_allclose(
         jax.vmap(field.func)(points), native.interpolate(coefficients), atol=1e-12
     )
-
-
-def test_quadratic_elements_reproduce_quadratics_and_exact_gradients_at_arbitrary_points() -> (
-    None
-):
     discretization = _discretization(2)
     reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
     coefficients = _nodal(discretization, lambda x, y: 1.0 + 2.0 * x - y + x * y + y**2)
@@ -118,17 +111,6 @@ def test_quadratic_elements_reproduce_quadratics_and_exact_gradients_at_arbitrar
     # Native tabulation provides first derivatives only; second orders refuse.
     with pytest.raises(ValueError, match="maximum_derivative_order=1"):
         phx.operators.partial_n(field, var="x", axis=0, order=2)
-
-
-def _kinked() -> Any:
-    # u = max(x - y, 0): gradient (1, -1) in cell 0 and (0, 0) in cell 1.
-    discretization = _discretization(1)
-    coefficients = _nodal(discretization, lambda x, y: np.maximum(x - y, 0.0))
-    reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
-    return reconstruction, coefficients, _view(reconstruction, coefficients)
-
-
-def test_c0_facet_gradient_needs_an_explicit_trace_side() -> None:
     reconstruction, coefficients, view = _kinked()
     gradient = phx.operators.grad(view.as_domain_function(), var="x")
     facet = jnp.asarray(((0.5, 0.5), (0.25, 0.25)))
@@ -156,7 +138,15 @@ def test_c0_facet_gradient_needs_an_explicit_trace_side() -> None:
         )
 
 
-def test_trace_sides_are_validated_against_the_cells_containing_each_site() -> None:
+def _kinked() -> Any:
+    # u = max(x - y, 0): gradient (1, -1) in cell 0 and (0, 0) in cell 1.
+    discretization = _discretization(1)
+    coefficients = _nodal(discretization, lambda x, y: np.maximum(x - y, 0.0))
+    reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
+    return reconstruction, coefficients, _view(reconstruction, coefficients)
+
+
+def test_finite_element_field_view_scenario_2() -> None:
     _, _, view = _kinked()
     facet = jnp.asarray(((0.5, 0.5),))
 
@@ -169,9 +159,6 @@ def test_trace_sides_are_validated_against_the_cells_containing_each_site() -> N
     # A boundary site lies in one cell: its owner side is derived.
     boundary = view.trace(jnp.asarray(((0.5, 0.0),)), side="owner")
     np.testing.assert_allclose(boundary.func(jnp.asarray((0.5, 0.0))), 0.5)
-
-
-def test_outside_support_queries_fail_closed_with_evidence() -> None:
     reconstruction, coefficients, view = _kinked()
     outside = jnp.asarray(((1.2, 0.5), (0.5, 0.5)))
 
@@ -181,9 +168,6 @@ def test_outside_support_queries_fail_closed_with_evidence() -> None:
         view.as_domain_function().func(outside)
     with pytest.raises(Exception, match="invalid"):
         eqx.filter_jit(view.as_domain_function().func)(outside).block_until_ready()
-
-
-def test_coefficient_adjoint_is_the_exact_transpose_scatter() -> None:
     discretization = _discretization(2)
     reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
     coefficients = _nodal(discretization, lambda x, y: np.cos(x) * y)
@@ -203,7 +187,7 @@ def test_coefficient_adjoint_is_the_exact_transpose_scatter() -> None:
         eqx.filter_grad(lambda tree: jnp.sum(tree.func(_INTERIOR[0])))(field)
 
 
-def test_views_require_an_equivalent_explicit_geometry_domain() -> None:
+def test_finite_element_field_view_scenario_3() -> None:
     reconstruction, coefficients, _ = _kinked()
     square = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
 
@@ -238,9 +222,6 @@ def test_views_require_an_equivalent_explicit_geometry_domain() -> None:
             "u",
             support_geometry=phx.geometry.Rectangle((1.0, 0.5), (2.0, 1.0)).compile(),
         )
-
-
-def test_non_simplicial_cells_need_an_explicit_inverse_provider() -> None:
     quadrilateral = _discretization(1, cell_kind="quadrilateral", cells=((0, 1, 2, 3),))
 
     with pytest.raises(ValueError, match="explicit AbstractCellLocator"):
@@ -251,9 +232,6 @@ def test_non_simplicial_cells_need_an_explicit_inverse_provider() -> None:
     )
     coefficients = _nodal(quadrilateral, lambda x, y: x + 2.0 * y)
     np.testing.assert_allclose(native.interpolate(coefficients), (1.25,), atol=1e-12)
-
-
-def test_discontinuous_fields_need_a_side_for_facet_values() -> None:
     discretization = _discretization(
         0, element=phx.discretization.discontinuous_element("triangle", 0)
     )

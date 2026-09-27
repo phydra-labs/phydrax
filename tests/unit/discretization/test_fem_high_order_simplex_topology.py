@@ -8,7 +8,6 @@ import itertools
 from typing import Any
 
 import numpy as np
-import pytest
 
 import phydrax as phx
 
@@ -105,62 +104,61 @@ def _cubic(points: Any) -> Any:
     return value
 
 
-@pytest.mark.parametrize("cell_kind", ("triangle", "tetrahedron"))
-@pytest.mark.parametrize("order", (3, 4))
-@pytest.mark.parametrize("seed", (0, 1))
-def test_randomly_oriented_simplex_dofs_route_to_one_physical_point(
-    cell_kind: Any, order: Any, seed: Any
-) -> None:
-    mesh = _randomly_oriented_mesh(cell_kind, seed)
-    element = phx.discretization.lagrange_element(cell_kind, order)
+def test_fem_high_order_simplex_topology_scenario_1() -> None:
+    for cell_kind in ("triangle", "tetrahedron"):
+        for order in (3, 4):
+            for seed in (0, 1):
+                mesh = _randomly_oriented_mesh(cell_kind, seed)
+                element = phx.discretization.lagrange_element(cell_kind, order)
 
-    routes, local_points, global_points, counts = _routed_dof_points(mesh, element)
+                routes, local_points, global_points, counts = _routed_dof_points(
+                    mesh, element
+                )
 
-    assert np.all(counts > 0)
-    np.testing.assert_allclose(local_points, global_points[routes], atol=1.0e-12)
-    # Distinct global DOFs are distinct physical nodes (no collapsed routes).
-    rounded = np.round(global_points, decimals=9)
-    assert np.unique(rounded, axis=0).shape[0] == global_points.shape[0]
+                assert np.all(counts > 0)
+                np.testing.assert_allclose(
+                    local_points, global_points[routes], atol=1.0e-12
+                )
+                # Distinct global DOFs are distinct physical nodes (no collapsed routes).
+                rounded = np.round(global_points, decimals=9)
+                assert np.unique(rounded, axis=0).shape[0] == global_points.shape[0]
+    for cell_kind in ("triangle", "tetrahedron"):
+        mesh = _randomly_oriented_mesh(cell_kind, 3)
+        element = phx.discretization.lagrange_element(cell_kind, 3)
+        routes, _local_points, global_points, _counts = _routed_dof_points(mesh, element)
+        coefficients = _cubic(global_points)
+        dimension = element.topological_dimension
 
-
-@pytest.mark.parametrize("cell_kind", ("triangle", "tetrahedron"))
-def test_p3_interpolation_of_cubic_is_exact_and_continuous(cell_kind: Any) -> None:
-    mesh = _randomly_oriented_mesh(cell_kind, 3)
-    element = phx.discretization.lagrange_element(cell_kind, 3)
-    routes, _local_points, global_points, _counts = _routed_dof_points(mesh, element)
-    coefficients = _cubic(global_points)
-    dimension = element.topological_dimension
-
-    rng = np.random.default_rng(7)
-    interior = rng.dirichlet(np.ones((dimension + 1,)), size=16)[:, 1:]
-    topology = phx.discretization.reference_cell_topology(cell_kind)
-    corners = np.asarray(topology.vertices)
-    parameters = np.asarray((0.17, 0.5, 0.71))
-    edge_points = np.concatenate(
-        tuple(
-            (1.0 - parameters)[:, None] * corners[start]
-            + parameters[:, None] * corners[stop]
-            for start, stop in topology.entities[1]
+        rng = np.random.default_rng(7)
+        interior = rng.dirichlet(np.ones((dimension + 1,)), size=16)[:, 1:]
+        topology = phx.discretization.reference_cell_topology(cell_kind)
+        corners = np.asarray(topology.vertices)
+        parameters = np.asarray((0.17, 0.5, 0.71))
+        edge_points = np.concatenate(
+            tuple(
+                (1.0 - parameters)[:, None] * corners[start]
+                + parameters[:, None] * corners[stop]
+                for start, stop in topology.entities[1]
+            )
         )
-    )
-    reference = np.concatenate((interior, edge_points))
-    basis, _gradients = element.tabulate(reference)
-    values = np.asarray(basis) @ coefficients[routes].T
-    physical = _affine_points(mesh, reference)
+        reference = np.concatenate((interior, edge_points))
+        basis, _gradients = element.tabulate(reference)
+        values = np.asarray(basis) @ coefficients[routes].T
+        physical = _affine_points(mesh, reference)
 
-    np.testing.assert_allclose(values.T, _cubic(physical), atol=1.0e-11)
+        np.testing.assert_allclose(values.T, _cubic(physical), atol=1.0e-11)
 
-    # Continuity: every physical edge sample receives one value from all cells.
-    edge_values = values.T[:, interior.shape[0] :].reshape((-1,))
-    edge_locations = np.round(
-        physical[:, interior.shape[0] :].reshape((-1, dimension)), decimals=9
-    )
-    _unique, inverse = np.unique(edge_locations, axis=0, return_inverse=True)
-    inverse = inverse.reshape((-1,))
-    shared = np.bincount(inverse) > 1
-    assert np.any(shared)
-    lower = np.full(shared.shape, np.inf)
-    upper = np.full(shared.shape, -np.inf)
-    np.minimum.at(lower, inverse, edge_values)
-    np.maximum.at(upper, inverse, edge_values)
-    assert np.max(upper[shared] - lower[shared]) <= 1.0e-11
+        # Continuity: every physical edge sample receives one value from all cells.
+        edge_values = values.T[:, interior.shape[0] :].reshape((-1,))
+        edge_locations = np.round(
+            physical[:, interior.shape[0] :].reshape((-1, dimension)), decimals=9
+        )
+        _unique, inverse = np.unique(edge_locations, axis=0, return_inverse=True)
+        inverse = inverse.reshape((-1,))
+        shared = np.bincount(inverse) > 1
+        assert np.any(shared)
+        lower = np.full(shared.shape, np.inf)
+        upper = np.full(shared.shape, -np.inf)
+        np.minimum.at(lower, inverse, edge_values)
+        np.maximum.at(upper, inverse, edge_values)
+        assert np.max(upper[shared] - lower[shared]) <= 1.0e-11

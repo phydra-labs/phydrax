@@ -144,7 +144,7 @@ def test_energy_gradient_wrench_virtual_work_and_reaction_balance() -> None:
     assert np.linalg.norm(result.kinematics.angular_velocity[0]) > 0
 
 
-def test_quaternion_sign_and_proper_rotation_covariance() -> None:
+def test_nucleotide_rigid_mechanics_scenario_1() -> None:
     model, state = _model()
     reference = model.evaluate(state)
     negative = RigidBodyKinematics(
@@ -172,9 +172,6 @@ def test_quaternion_sign_and_proper_rotation_covariance() -> None:
     np.testing.assert_allclose(
         transformed.loads.load.torque, reference.loads.load.torque @ matrix.T, atol=2e-11
     )
-
-
-def test_point_force_binding_is_order_invariant_not_quadrature_weighted() -> None:
     model, state = _model(fixed=True)
     marker = model.marker_map.markers
     weighted = LagrangianMarkerSetPlan(
@@ -198,9 +195,6 @@ def test_point_force_binding_is_order_invariant_not_quadrature_weighted() -> Non
         mapping.bind_site_forces(ids, owners + 1)
     with pytest.raises(ValueError):
         mapping.bind_site_forces(ids[:-1], owners[:-1])
-
-
-def test_all_fixed_marker_map_retains_full_reactions() -> None:
     model, state = _model()
     fixed = RigidBodySetPlan(
         np.zeros(2, dtype="int64"),
@@ -237,7 +231,7 @@ def test_energy_drift_decreases_with_kdk_timestep() -> None:
     assert fine_error < 1e-3
 
 
-def test_periodic_com_face_crossing_preserves_sites_and_pair_energy() -> None:
+def test_nucleotide_rigid_mechanics_scenario_2() -> None:
     model, state = _model(periodic=True)
     baseline = model.evaluate(state)
     shifted = RigidBodyKinematics(
@@ -268,9 +262,6 @@ def test_periodic_com_face_crossing_preserves_sites_and_pair_energy() -> None:
     np.testing.assert_allclose(
         wrapped[:, 1] - wrapped[:, 0], before[:, 1] - before[:, 0], atol=1e-12
     )
-
-
-def test_fene_domain_and_published_geometry_are_not_silently_repaired() -> None:
     model, state = _model(backbone=True)
     assert model.evaluate(state).successful
     invalid = RigidBodyKinematics(
@@ -294,9 +285,6 @@ def test_fene_domain_and_published_geometry_are_not_silently_repaired() -> None:
             np.broadcast_to(np.eye(3), (2, 3, 3)),
             artifact,
         ).prepare()
-
-
-def test_anisotropic_heat_bath_has_fluctuation_dissipation_covariance() -> None:
     particles = ParticleSetPlan(
         np.array([10, 20]), np.array([2.0, 3.0]), ambient_dimension=3
     ).prepare()
@@ -336,7 +324,7 @@ def test_anisotropic_heat_bath_has_fluctuation_dissipation_covariance() -> None:
     )
 
 
-def test_piecewise_published_windows_match_value_and_force_at_joins() -> None:
+def test_nucleotide_rigid_mechanics_scenario_3() -> None:
     for kind, p in (
         ("morse", [1.0, 1.0, 2.0, 0.7, 1.7, 2.0]),
         ("harmonic", [1.0, 1.0, 1.8, 0.25, 1.6, 1.0]),
@@ -373,11 +361,6 @@ def test_piecewise_published_windows_match_value_and_force_at_joins() -> None:
         jax.grad(dh)(0.6 - 1e-8), jax.grad(dh)(0.6 + 1e-8), atol=2e-7
     )
     assert float(dh(0.91)) == 0.0
-
-
-def test_model_variants_execute_distinct_geometry_conditions_and_hybrid_strengths() -> (
-    None
-):
     dna, state = _model()
     dna2, q2 = _model(family="groove-salt-dna")
     rna, qr = _model(family="rna")
@@ -397,9 +380,6 @@ def test_model_variants_execute_distinct_geometry_conditions_and_hybrid_strength
     data["profiles"].pop("HYBRID")
     with pytest.raises(ValueError):
         _artifact_data(data)
-
-
-def test_parameter_payload_tampering_and_false_family_geometry_are_refused() -> None:
     artifact = parameter_artifact()
     with pytest.raises(ValueError, match="source manifest"):
         NucleotideParameterArtifact(
@@ -417,7 +397,7 @@ def test_parameter_payload_tampering_and_false_family_geometry_are_refused() -> 
         _artifact_data(data)
 
 
-def test_directed_sequence_stacking_keeps_five_to_three_table_order() -> None:
+def test_nucleotide_rigid_mechanics_scenario_4() -> None:
     artifact = parameter_artifact("sequence-dna")
     energies = []
     for sequence in ("AT", "TA"):
@@ -446,9 +426,6 @@ def test_directed_sequence_stacking_keeps_five_to_three_table_order() -> None:
         )
     )
     np.testing.assert_allclose(energies[0] - energies[1], expected, atol=1e-12)
-
-
-def test_inactive_marker_force_nan_is_not_material_and_never_enters_loads() -> None:
     particles = ParticleSetPlan(
         np.array([41, 13, 7]),
         np.ones(3),

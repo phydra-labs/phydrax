@@ -27,7 +27,7 @@ from phydrax.solver._runtime_lifecycle import (
 )
 
 
-def test_trigger_graph_debounces_persistent_conditions_and_staggered_crossings() -> None:
+def test_runtime_lifecycle_scenario_1() -> None:
     graph = AcceptedStepTriggerGraph(
         (
             AcceptedStepTrigger(1.0),
@@ -47,6 +47,64 @@ def test_trigger_graph_debounces_persistent_conditions_and_staggered_crossings()
         fires.append(bool(fire))
     assert fires == [False, False, True]
     assert state.fire_count == 1
+    schedule = ExactTimeSchedule(jnp.asarray((0.25, 0.5, 1.0)))
+    np.testing.assert_allclose(schedule.clamp_step(0.2, 0.2, 0), 0.05)
+    assert schedule.advance_cursor(0.5, 0) == 2
+
+    observable = StreamingObservablePlan(
+        "mass",
+        lambda time, state, args: jnp.sum(state),
+        "mean",
+    )
+    state = observable.initial_state(())
+    state = observable.update(0.1, state, jnp.asarray((1.0, 2.0)))
+    state = observable.update(0.2, state, jnp.asarray((3.0, 4.0)))
+    np.testing.assert_allclose(observable.value(state), 5.0)
+    merged = observable.merge(state, observable.initial_state(()))
+    np.testing.assert_allclose(observable.value(merged), 5.0)
+
+    trigger = AcceptedStepTrigger(4.0, hysteresis=0.5)
+    trigger_state = trigger.initial_state()
+    fire, trigger_state = trigger.evaluate(4.2, trigger_state, accepted=True)
+    assert fire
+    fire, trigger_state = trigger.evaluate(4.3, trigger_state, accepted=True)
+    assert not fire
+    _fire, trigger_state = trigger.evaluate(3.4, trigger_state, accepted=True)
+    fire, trigger_state = trigger.evaluate(4.1, trigger_state, accepted=True)
+    assert fire
+    assert trigger_state.fire_count == 2
+    first = RuntimeCheckpointEnvelope(
+        {"state": jnp.asarray((1.0, 2.0))},
+        time=0.0,
+        step_index=0,
+        schedule_cursor=0,
+        mesh_id="mesh",
+        method_id="method",
+        precision_id="precision",
+        topology_epoch_id="epoch",
+    )
+    repeated = RuntimeCheckpointEnvelope(
+        {"state": jnp.asarray((1.0, 2.0))},
+        time=0.0,
+        step_index=0,
+        schedule_cursor=0,
+        mesh_id="mesh",
+        method_id="method",
+        precision_id="precision",
+        topology_epoch_id="epoch",
+    )
+    changed = RuntimeCheckpointEnvelope(
+        {"state": jnp.asarray((1.0, 3.0))},
+        time=0.0,
+        step_index=0,
+        schedule_cursor=0,
+        mesh_id="mesh",
+        method_id="method",
+        precision_id="precision",
+        topology_epoch_id="epoch",
+    )
+    assert first.checkpoint_id == repeated.checkpoint_id
+    assert first.checkpoint_id != changed.checkpoint_id
 
 
 def test_runtime_checkpoint_roundtrip_binds_all_compatibility_ids(tmp_path: Any) -> None:
@@ -87,35 +145,6 @@ def test_runtime_checkpoint_roundtrip_binds_all_compatibility_ids(tmp_path: Any)
     assert restored.checkpoint_id == envelope.checkpoint_id
 
 
-def test_exact_schedule_observable_and_trigger_are_restartable() -> None:
-    schedule = ExactTimeSchedule(jnp.asarray((0.25, 0.5, 1.0)))
-    np.testing.assert_allclose(schedule.clamp_step(0.2, 0.2, 0), 0.05)
-    assert schedule.advance_cursor(0.5, 0) == 2
-
-    observable = StreamingObservablePlan(
-        "mass",
-        lambda time, state, args: jnp.sum(state),
-        "mean",
-    )
-    state = observable.initial_state(())
-    state = observable.update(0.1, state, jnp.asarray((1.0, 2.0)))
-    state = observable.update(0.2, state, jnp.asarray((3.0, 4.0)))
-    np.testing.assert_allclose(observable.value(state), 5.0)
-    merged = observable.merge(state, observable.initial_state(()))
-    np.testing.assert_allclose(observable.value(merged), 5.0)
-
-    trigger = AcceptedStepTrigger(4.0, hysteresis=0.5)
-    trigger_state = trigger.initial_state()
-    fire, trigger_state = trigger.evaluate(4.2, trigger_state, accepted=True)
-    assert fire
-    fire, trigger_state = trigger.evaluate(4.3, trigger_state, accepted=True)
-    assert not fire
-    _fire, trigger_state = trigger.evaluate(3.4, trigger_state, accepted=True)
-    fire, trigger_state = trigger.evaluate(4.1, trigger_state, accepted=True)
-    assert fire
-    assert trigger_state.fire_count == 2
-
-
 def test_bounded_async_publisher_snapshots_drains_and_propagates_context(
     phydrax_events: Any,
 ) -> None:
@@ -140,41 +169,6 @@ def test_bounded_async_publisher_snapshots_drains_and_propagates_context(
     writer_event = phydrax_events.records("output.writer.completed")[-1]
     assert writer_event["context"]["run_id"] == "publisher-run"
     assert phydrax_events.records("output.publication.completed")
-
-
-def test_runtime_checkpoint_identity_is_content_derived() -> None:
-    first = RuntimeCheckpointEnvelope(
-        {"state": jnp.asarray((1.0, 2.0))},
-        time=0.0,
-        step_index=0,
-        schedule_cursor=0,
-        mesh_id="mesh",
-        method_id="method",
-        precision_id="precision",
-        topology_epoch_id="epoch",
-    )
-    repeated = RuntimeCheckpointEnvelope(
-        {"state": jnp.asarray((1.0, 2.0))},
-        time=0.0,
-        step_index=0,
-        schedule_cursor=0,
-        mesh_id="mesh",
-        method_id="method",
-        precision_id="precision",
-        topology_epoch_id="epoch",
-    )
-    changed = RuntimeCheckpointEnvelope(
-        {"state": jnp.asarray((1.0, 3.0))},
-        time=0.0,
-        step_index=0,
-        schedule_cursor=0,
-        mesh_id="mesh",
-        method_id="method",
-        precision_id="precision",
-        topology_epoch_id="epoch",
-    )
-    assert first.checkpoint_id == repeated.checkpoint_id
-    assert first.checkpoint_id != changed.checkpoint_id
 
 
 def test_windowed_time_moments_and_batch_means_restart_exactly(tmp_path: Any) -> None:

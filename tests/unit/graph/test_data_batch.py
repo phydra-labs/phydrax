@@ -12,15 +12,12 @@ def _make_data(offset: float) -> vx.Data:
     )
 
 
-def test_data_to_graph_ir() -> None:
+def test_data_batch_scenario_1() -> None:
     data = _make_data(0.0)
     graph = data.to_graph_ir()
     assert graph.num_nodes == 2
     assert graph.num_edges == 2
     assert graph.nodes.shape == (2, 1)
-
-
-def test_batch_from_data_list_and_back() -> None:
     d1 = _make_data(0.0)
     d2 = _make_data(10.0)
 
@@ -37,9 +34,6 @@ def test_batch_from_data_list_and_back() -> None:
     assert len(recovered) == 2
     assert recovered[0].x.shape == (2, 1)
     assert recovered[1].edge_index.shape == (2, 2)
-
-
-def test_batch_preserves_complete_graph_labels() -> None:
     first = _make_data(0.0)
     second = _make_data(10.0)
     first = vx.Data(

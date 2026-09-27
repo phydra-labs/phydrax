@@ -1,10 +1,6 @@
-#
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
-
-
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -15,101 +11,84 @@ from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import div, div_tensor
 
 
-def test_div_vector_field_point() -> None:
-    geom = phx.domain.GeometryDomain(
+pytestmark = [pytest.mark.strict_jax, pytest.mark.filterwarnings("error")]
+
+
+def _square() -> phx.domain.GeometryDomain:
+    return phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([x[0], x[1]])
 
-    d = div(u)
-    pts = frozendict({"x": cx.AxisArray(jnp.array([2.0, 3.0]), dims=(None,))})
-    out = jnp.asarray(d(pts).data)
-    assert jnp.allclose(out, jnp.array(2.0))
+def test_divergence_point_metadata_and_nested_composition_contracts() -> None:
+    geometry = _square()
 
+    @geometry.Function("x")
+    def vector(x: jax.Array) -> jax.Array:
+        return jnp.asarray([x[0], x[1]])
 
-def test_div_spacetime_var_x_ignores_t(sample_batch: Any) -> None:
-    dom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    ) @ TimeInterval(0.0, 1.0)
+    points = frozendict({"x": cx.AxisArray(jnp.asarray([2.0, 3.0]), dims=(None,))})
+    assert jnp.allclose(jnp.asarray(div(vector)(points).data), 2.0)
+    annotated = vector.with_metadata(tag=1)
+    assert div(annotated).metadata == annotated.metadata
 
-    @dom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([x[0], x[1]])
-
-    d = div(u, var="x")
-    component = dom.component()
-    batch = sample_batch(component, blocks=(("x",), ("t",)), num_points=(4, 3), key=0)
-    out = jnp.asarray(d(batch).data)
-    assert out.shape == (4, 3)
-    assert jnp.allclose(out, 2.0)
-
-
-def test_div_coord_separable_constant(sample_grid: Any) -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-    component = geom.component()
-    batch = sample_grid(component, {"x": (7, 6)}, dense_blocks=(), key=1)
-
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        x, y = x
-        return jnp.stack([2.0 * x, 3.0 * y], axis=-1)
-
-    d = div(u)
-    out = jnp.asarray(d(batch).data)
-    assert jnp.allclose(out, 5.0, atol=1e-6)
-
-
-def test_div_preserves_metadata() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-    u = geom.Function("x")(lambda x: jnp.array([x[0], x[1]])).with_metadata(**{"tag": 1})
-    out = div(u)
-    assert out.metadata == u.metadata
-
-
-def test_nested_divergence_drops_stale_optimized_derivative_hooks() -> None:
-    geom = Interval1d(-2.0, 2.0)
-    density = geom.Function("x")(lambda x: x[0] ** 2)
-    drift = geom.Function("x")(lambda x: jnp.asarray([2.0 * x[0]]))
-    covariance = geom.Function("x")(lambda x: jnp.asarray([[3.0 * x[0] ** 2]]))
+    interval = Interval1d(-2.0, 2.0)
+    density = interval.Function("x")(lambda x: x[0] ** 2)
+    drift = interval.Function("x")(lambda x: jnp.asarray([2.0 * x[0]]))
+    covariance = interval.Function("x")(lambda x: jnp.asarray([[3.0 * x[0] ** 2]]))
     adjoint = -div(drift * density, var="x") + 0.5 * div(
         div_tensor(covariance * density, var="x"),
         var="x",
     )
     point = frozendict({"x": cx.AxisArray(jnp.asarray([0.4]), dims=(None,))})
-
     assert jnp.allclose(jnp.asarray(adjoint(point).data), 12.0 * 0.4**2)
 
 
-def test_div_ad_engine_jvp_matches_default() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+def test_divergence_respects_spacetime_and_coordinate_separable_layouts(
+    sample_batch: Any,
+    sample_grid: Any,
+) -> None:
+    geometry = _square()
+    spacetime = geometry @ TimeInterval(0.0, 1.0)
+
+    @spacetime.Function("x")
+    def time_independent(x: jax.Array) -> jax.Array:
+        return jnp.asarray([x[0], x[1]])
+
+    point_batch = sample_batch(
+        spacetime.component(),
+        blocks=(("x",), ("t",)),
+        num_points=(4, 3),
+        key=0,
+    )
+    point_result = jnp.asarray(div(time_independent, var="x")(point_batch).data)
+    assert point_result.shape == (4, 3)
+    assert jnp.allclose(point_result, 2.0)
+
+    grid_batch = sample_grid(geometry.component(), {"x": (7, 6)}, dense_blocks=(), key=1)
+
+    @geometry.Function("x")
+    def separable(x: jax.Array) -> jax.Array:
+        x0, x1 = x
+        return jnp.stack([2.0 * x0, 3.0 * x1], axis=-1)
+
+    assert jnp.allclose(
+        jnp.asarray(div(separable)(grid_batch).data),
+        5.0,
+        atol=1e-6,
     )
 
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([x[0] ** 2 + x[1], x[1] ** 2 + x[0]])
 
-    pts = frozendict({"x": cx.AxisArray(jnp.array([0.3, -0.7]), dims=(None,))})
-    out_ref = jnp.asarray(div(u, backend="ad")(pts).data)
-    out_jvp = jnp.asarray(div(u, backend="ad", ad_engine="jvp")(pts).data)
-    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+def test_divergence_jvp_engine_matches_default_and_requires_ad_backend() -> None:
+    geometry = _square()
 
+    @geometry.Function("x")
+    def vector(x: jax.Array) -> jax.Array:
+        return jnp.asarray([x[0] ** 2 + x[1], x[1] ** 2 + x[0]])
 
-def test_div_ad_engine_requires_ad_backend() -> None:
-    geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-    )
-
-    @geom.Function("x")
-    def u(x: Any) -> Any:
-        return jnp.array([x[0], x[1]])
-
+    points = frozendict({"x": cx.AxisArray(jnp.asarray([0.3, -0.7]), dims=(None,))})
+    reference = jnp.asarray(div(vector, backend="ad")(points).data)
+    jvp = jnp.asarray(div(vector, backend="ad", ad_engine="jvp")(points).data)
+    assert jnp.allclose(jvp, reference, atol=1e-6)
     with pytest.raises(ValueError, match="backend='ad'"):
-        div(u, backend="fd", ad_engine="jvp")
+        div(vector, backend="fd", ad_engine="jvp")

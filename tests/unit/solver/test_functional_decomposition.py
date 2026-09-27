@@ -58,7 +58,7 @@ def _values(result: Any) -> Any:
     return tuple(float(field.func.value) for field in result.family.fields)
 
 
-def test_joint_partition_of_unity_trains_canonical_local_parameters() -> None:
+def test_functional_decomposition_scenario_1() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 1)
     patch = cover.patches[0]
@@ -96,26 +96,6 @@ def test_joint_partition_of_unity_trains_canonical_local_parameters() -> None:
         0.64**2,
         atol=1.0e-12,
     )
-
-
-class _PoleTerm(phx.terms.AbstractScalarTerm):
-    """`(u - 1)^-2` of one constant field, unchecked, so a pole is a nonfinite value."""
-
-    fields: tuple[str, ...] = eqx.field(static=True)
-    label: str | None = eqx.field(static=True)
-
-    def __init__(self, field_name: Any) -> None:
-        self.fields = (field_name,)
-        self.label = None
-
-    def loss(
-        self, functions: Any, /, *, key: Any = None, iter_: Any = None, **kwargs: Any
-    ) -> Any:
-        del key, iter_, kwargs
-        return (functions[self.fields[0]].func.value - 1.0) ** -2
-
-
-def test_block_local_update_rejects_nonfinite_candidate_and_optimizer_state() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     cover = phx.domain.cartesian_subdomain_cover(domain, "x", 1)
     patch = cover.patches[0]
@@ -156,9 +136,6 @@ def test_block_local_update_rejects_nonfinite_candidate_and_optimizer_state() ->
         phx.solver.solve_functional_decomposition(
             prepared, nonfinite_state_optimizer, jit=True
         )
-
-
-def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch() -> None:
     problem = _broken_pair_problem()
     jacobi = phx.solver.prepare_functional_decomposition(
         problem,
@@ -192,6 +169,23 @@ def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch() -> None
     )
     assert jacobi_result.state.local_steps == (1, 1)
     assert gauss_seidel_result.state.local_steps == (1, 1)
+
+
+class _PoleTerm(phx.terms.AbstractScalarTerm):
+    """`(u - 1)^-2` of one constant field, unchecked, so a pole is a nonfinite value."""
+
+    fields: tuple[str, ...] = eqx.field(static=True)
+    label: str | None = eqx.field(static=True)
+
+    def __init__(self, field_name: Any) -> None:
+        self.fields = (field_name,)
+        self.label = None
+
+    def loss(
+        self, functions: Any, /, *, key: Any = None, iter_: Any = None, **kwargs: Any
+    ) -> Any:
+        del key, iter_, kwargs
+        return (functions[self.fields[0]].func.value - 1.0) ** -2
 
 
 def test_block_decomposition_host_control_stops_after_committed_sweep() -> None:
@@ -315,7 +309,7 @@ def test_checkpoint_resume_matches_uninterrupted_block_training(
     )
 
 
-def test_schwarz_strategy_requires_pair_terms_and_reports_interface_defect() -> None:
+def test_functional_decomposition_scenario_2() -> None:
     problem = _broken_pair_problem()
     prepared = phx.solver.prepare_functional_decomposition(
         problem,
@@ -337,9 +331,6 @@ def test_schwarz_strategy_requires_pair_terms_and_reports_interface_defect() -> 
     assert result.state.completed_sweeps == 2
     assert result.broken is not None
     assert result.evidence.maximum_pair_loss < 4.0
-
-
-def test_coarse_correction_freezes_base_and_trains_assembled_fine_field() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     base = domain.Parameter(1.0)
     base_term = _fixed_penalty(

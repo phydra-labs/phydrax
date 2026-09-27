@@ -304,7 +304,7 @@ def _components() -> tuple[tuple[type, ...], frozenset[type]]:
     return (*slots, ParameterOwner), supertypes
 
 
-def test_non_trainable_state_never_types_a_field_that_may_hold_a_component() -> None:
+def test_role_declarations_scenario_1() -> None:
     classes, _ = _repository()
     components, supertypes = _components()
     violations = sorted(
@@ -320,9 +320,6 @@ def test_non_trainable_state_never_types_a_field_that_may_hold_a_component() -> 
         "its own arrays with fixed_field, or hold the component in an ExplicitFreeze "
         "holder on purpose:\n" + "\n".join(violations)
     )
-
-
-def test_plan_embedded_training_path_is_neutral() -> None:
     _repository()
     terminal = sorted(
         f"{module}.{name}"
@@ -334,9 +331,6 @@ def test_plan_embedded_training_path_is_neutral() -> None:
         "path; they must stay neutral and declare their own arrays with "
         "fixed_field:\n" + "\n".join(terminal)
     )
-
-
-def test_slot_bases_are_neutral() -> None:
     _, slots = _repository()
     terminal = sorted(
         _name(slot) for slot in slots if issubclass(slot, NonTrainableState)
@@ -360,7 +354,7 @@ def _neutral_slot_implementations() -> list[type]:
     ]
 
 
-def test_neutral_slot_implementations_declare_their_inexact_fields() -> None:
+def test_role_declarations_scenario_2() -> None:
     violations = sorted(
         f"{_name(cls)}.{field.name}: {annotation!r}"
         for cls in _neutral_slot_implementations()
@@ -372,9 +366,6 @@ def test_neutral_slot_implementations_declare_their_inexact_fields() -> None:
         "with fixed_field or parameter_field, or mark a fixed built-in "
         "NonTrainableState:\n" + "\n".join(violations)
     )
-
-
-def test_default_constructible_slot_implementations_classify_every_array() -> None:
     violations: list[str] = []
     for cls in _neutral_slot_implementations():
         try:
@@ -387,6 +378,14 @@ def test_default_constructible_slot_implementations_classify_every_array() -> No
             f"{_name(cls)}{path} [{kind}]" for path, kind, _ in resolution.violations
         )
     assert not violations, "\n".join(violations)
+    for function in [
+        _module_function,
+        lambda x: 2.0 * x,
+        _captures(3.0),
+        _captures(jnp.arange(3)),
+        _Holder(jnp.ones(3), _module_function),
+    ]:
+        phx.require_parameter_roles(_Holder(jnp.ones(3), function), context="probe")
 
 
 def _module_function(x: Any) -> Any:
@@ -406,33 +405,14 @@ def _captures(value: Any) -> Any:
     return lambda x: x * value
 
 
-@pytest.mark.parametrize(
-    "function",
-    [
-        _module_function,
-        lambda x: 2.0 * x,
-        _captures(3.0),
-        _captures(jnp.arange(3)),
-        _Holder(jnp.ones(3), _module_function),
-    ],
-    ids=["module-function", "lambda", "python-float", "integer-array", "component"],
-)
-def test_declared_callable_categories_are_admitted(function: Any) -> None:
-    phx.require_parameter_roles(_Holder(jnp.ones(3), function), context="probe")
-
-
 class _FrozenProvider(phx.StrictModule, phx.ExplicitFreeze):
     provider: typing.Any
 
 
-def test_visible_terminal_providers_are_not_searched() -> None:
+def test_role_declarations_scenario_3() -> None:
     frozen = _FrozenProvider(_captures(jnp.ones(3)))
     phx.require_parameter_roles(_Holder(jnp.ones(3), frozen), context="probe")
-
-
-@pytest.mark.parametrize(
-    ("holder", "route"),
-    [
+    for holder, route in [
         (
             _Holder(jnp.ones(3), _captures(jnp.ones(3))),
             ".function: closure variable 'value'",
@@ -453,24 +433,11 @@ def test_visible_terminal_providers_are_not_searched() -> None:
             _Holder(jnp.ones(3), _module_function, _captures(jnp.ones(3))),
             ".static_function: static field -> closure variable 'value'",
         ),
-    ],
-    ids=["closure", "default", "partial", "captured-model", "static-field"],
-)
-def test_training_preflight_rejects_hidden_inexact_state_with_its_path(
-    holder: Any, route: Any
-) -> None:
-    with pytest.raises(ValueError, match="training entry") as error:
-        phx.require_parameter_roles(holder, context="training entry")
-    assert route in str(error.value)
-
-
-class _NodeDim(phx.typing.Dim):
-    pass
-
-
-@pytest.mark.parametrize(
-    ("annotation", "admits"),
-    [
+    ]:
+        with pytest.raises(ValueError, match="training entry") as error:
+            phx.require_parameter_roles(holder, context="training entry")
+        assert route in str(error.value)
+    for annotation, admits in [
         (phx.typing.Float64[_NodeDim], True),
         (phx.typing.Inexact[_NodeDim], True),
         (phx.typing.Shaped[_NodeDim], True),
@@ -481,12 +448,12 @@ class _NodeDim(phx.typing.Dim):
         (phx.typing.HostFloat64[_NodeDim], True),
         (phx.typing.HostInteger[_NodeDim], False),
         (phx.typing.Size[_NodeDim], False),
-    ],
-)
-def test_contract_forms_are_classified_by_their_dtype_rule(
-    annotation: Any, admits: Any
-) -> None:
-    assert _admits_inexact_array(annotation) is admits
+    ]:
+        assert _admits_inexact_array(annotation) is admits
+
+
+class _NodeDim(phx.typing.Dim):
+    pass
 
 
 def test_unsupported_contract_placements_are_refused() -> None:

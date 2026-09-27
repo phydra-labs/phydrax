@@ -33,7 +33,7 @@ def _particles() -> Any:
     )
 
 
-def test_dsmc_streaming_collision_and_internal_energy_are_conservative() -> None:
+def test_dsmc_aerothermodynamics_scenario_1() -> None:
     species = _species()
     cells = phx.discretization.dsmc.DSMCStructuredCellPlan(
         jnp.asarray((0.0,)), jnp.asarray((1.0,)), (1,)
@@ -87,9 +87,6 @@ def test_dsmc_streaming_collision_and_internal_energy_are_conservative() -> None
     )
     assert bool(internal.successful)
     np.testing.assert_allclose(internal.energy_defect, 0.0, atol=1.0e-30)
-
-
-def test_dsmc_surface_and_hybrid_exchange_are_action_reaction_pairs() -> None:
     interaction = phx.discretization.dsmc.DSMCSurfaceInteractionPlan(
         _species(), "specular", jnp.asarray((0.0,)), wall_temperature=300.0
     )
@@ -118,9 +115,6 @@ def test_dsmc_surface_and_hybrid_exchange_are_action_reaction_pairs() -> None:
     assert bool(exchange.header.globally_eligible)
     np.testing.assert_allclose(exchange.conservation_defect, 0.0, atol=0.0)
     assert bool(jnp.any(exchange.extensive_exchange != 0.0))
-
-
-def test_dynamic_hybrid_ownership_requires_host_epoch_and_conversion_evidence() -> None:
     plan = phx.solver.HybridOwnershipEpochPlan(
         enter_threshold=0.05,
         leave_threshold=0.02,
@@ -169,9 +163,6 @@ def test_dynamic_hybrid_ownership_requires_host_epoch_and_conversion_evidence() 
     )
     assert not bool(rejected.header.globally_eligible)
     assert state.kinetic_mask.tolist() == [False, False, False]
-
-
-def test_vss_uses_its_angular_parameter_and_preserves_pair_invariants() -> None:
     species = _species()
     parameters = phx.discretization.dsmc.DSMCPairCollisionParameters(
         jnp.asarray(((3.7e-10,),)),

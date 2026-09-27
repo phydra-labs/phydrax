@@ -65,7 +65,7 @@ def _cahn_hilliard() -> Any:
     )
 
 
-def test_allen_cahn_nonuniform_step_closes_energy_dissipation_ledger() -> None:
+def test_phase_field_workflows_scenario_1() -> None:
     method = _allen_cahn()
     initial = method.initialize(_INITIAL)
 
@@ -81,11 +81,6 @@ def test_allen_cahn_nonuniform_step_closes_energy_dissipation_ledger() -> None:
     assert result.evidence.energy_after < result.evidence.energy_before
     assert result.evidence.dissipation > 0.0
     assert result.evidence.energy_balance_defect <= result.evidence.energy_tolerance
-
-
-def test_cahn_hilliard_nonuniform_steps_preserve_reference_mass_and_energy_ledger() -> (
-    None
-):
     method = _cahn_hilliard()
     initial = method.initialize(_INITIAL)
     state = initial
@@ -112,9 +107,6 @@ def test_cahn_hilliard_nonuniform_steps_preserve_reference_mass_and_energy_ledge
             method.domain_measure,
         )
     )
-
-
-def test_phase_field_preparation_rejects_underresolved_interface() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _mesh(),

@@ -48,7 +48,7 @@ def _prepared(
     return space, background, prepared
 
 
-def test_uniform_density_has_zero_mean_zero_potential_and_conserved_mass() -> None:
+def test_cosmology_wave_dark_matter_scenario_1() -> None:
     space, _, prepared = _prepared(schedule=(1.0, 1.001, 1.002))
     state = prepared.initialize(jnp.ones(space.physical_shape, dtype=jnp.complex128))
 
@@ -64,9 +64,6 @@ def test_uniform_density_has_zero_mean_zero_potential_and_conserved_mass() -> No
     assert bool(jnp.all(result.diagnostics.accepted))
     assert result.diagnostics.dealiasing.kind == "oversampling"
     assert not result.diagnostics.dealiasing.exact
-
-
-def test_free_plane_wave_has_analytic_cosmological_phase_and_norm() -> None:
     space, background, prepared = _prepared(schedule=(1.0, 1.0005, 1.001))
     x = space.axes[0].nodes[:, None, None]
     initial_psi = jnp.broadcast_to(
@@ -101,9 +98,6 @@ def test_free_plane_wave_has_analytic_cosmological_phase_and_norm() -> None:
     )
     assert bool(jnp.all(result.diagnostics.phase_resolved))
     assert bool(jnp.all(result.diagnostics.zero_mode_removed))
-
-
-def test_manufactured_poisson_residual_closes_on_retained_modes() -> None:
     space, _, prepared = _prepared()
     x = space.axes[0].nodes[:, None, None]
     density = 1.0 + 0.1 * jnp.cos(2.0 * jnp.pi * x)
@@ -121,7 +115,7 @@ def test_manufactured_poisson_residual_closes_on_retained_modes() -> None:
     assert bool(poisson.successful)
 
 
-def test_fixed_grid_jvp_matches_free_wave_tangent_and_can_be_disabled() -> None:
+def test_cosmology_wave_dark_matter_scenario_2() -> None:
     space, background, prepared = _prepared()
     x = space.axes[0].nodes[:, None, None]
     psi = jnp.broadcast_to(jnp.exp(2j * jnp.pi * x), space.physical_shape)
@@ -151,9 +145,6 @@ def test_fixed_grid_jvp_matches_free_wave_tangent_and_can_be_disabled() -> None:
     _, _, disabled = _prepared(policy=disabled_policy)
     with pytest.raises(ValueError, match="disabled"):
         disabled.jvp(disabled.initialize(psi), tangent)
-
-
-def test_phase_resolution_rejection_rolls_back_and_masks_later_steps() -> None:
     policy = WaveDarkMatterStepPolicy(
         maximum_phase_radians=1.0e-6,
         minimum_de_broglie_cells=2.0,
@@ -175,9 +166,6 @@ def test_phase_resolution_rejection_rolls_back_and_masks_later_steps() -> None:
     np.testing.assert_array_equal(result.diagnostics.accepted, (False, False))
     np.testing.assert_array_equal(result.diagnostics.step_status, (3, 1))
     assert int(result.diagnostics.first_failed_step) == 0
-
-
-def test_unsupported_geometry_curvature_state_and_schedule_fail_closed() -> None:
     background = phx.applications.cosmology.FLRWBackground(1.0, 1.0)
     # ty: ignore[invalid-argument-type]
     plan = WaveDarkMatterPlan(1.0, (1.0, 1.001))

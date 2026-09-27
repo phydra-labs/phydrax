@@ -41,7 +41,7 @@ def _warped_map_3d(reference: Any) -> Any:
     return jnp.asarray((xi + 0.02 * warp, eta - 0.015 * warp, zeta + 0.01 * warp))
 
 
-def test_affine_mapped_gradient_integral_and_face_geometry_are_exact() -> None:
+def test_mapped_tensor_fd_scenario_1() -> None:
     grid = _grid_2d()
     mapped = phx.discretization.MappedTensorGridPlan(
         grid,
@@ -68,11 +68,6 @@ def test_affine_mapped_gradient_integral_and_face_geometry_are_exact() -> None:
     assert mapped.dual_face_layouts[1].shape == (17, 16)
     assert mapped.face_normals[0].shape == (16, 17, 2)
     assert mapped.face_measures[1].shape == (17, 16)
-
-
-def test_warped_two_dimensional_metrics_preserve_free_stream_and_metric_identity() -> (
-    None
-):
     mapped = phx.discretization.MappedTensorGridPlan(
         _grid_2d(21),
         _warped_map,
@@ -87,9 +82,6 @@ def test_warped_two_dimensional_metrics_preserve_free_stream_and_metric_identity
     assert mapped.metric_report.free_stream_residual < 5e-10
     np.testing.assert_allclose(gradient, 0.0, rtol=0.0, atol=5e-11)
     np.testing.assert_allclose(divergence, 0.0, rtol=0.0, atol=5e-10)
-
-
-def test_three_dimensional_curl_metrics_satisfy_discrete_identity() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(13),
@@ -109,7 +101,7 @@ def test_three_dimensional_curl_metrics_satisfy_discrete_identity() -> None:
     assert mapped.metric_report.minimum_jacobian > 0.8
 
 
-def test_identity_map_diffusion_matches_physical_polynomial_laplacian() -> None:
+def test_mapped_tensor_fd_scenario_2() -> None:
     grid = _grid_2d(17)
     mapped = phx.discretization.MappedTensorGridPlan(
         grid,
@@ -125,9 +117,6 @@ def test_identity_map_diffusion_matches_physical_polynomial_laplacian() -> None:
 
     np.testing.assert_allclose(action, 10.0, rtol=2e-9, atol=2e-9)
     assert operator.conservation_report.constant_state_residual < 1e-10
-
-
-def test_mapped_state_actions_remain_differentiable_at_fixed_geometry() -> None:
     mapped = phx.discretization.MappedTensorGridPlan(
         _grid_2d(13),
         _warped_map,
@@ -141,9 +130,6 @@ def test_mapped_state_actions_remain_differentiable_at_fixed_geometry() -> None:
 
     assert gradient.shape == mapped.shape
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_orientation_reversing_map_is_rejected_before_operator_use() -> None:
     with pytest.raises(eqx.EquinoxRuntimeError, match="Jacobian"):
         phx.discretization.MappedTensorGridPlan(
             _grid_2d(),

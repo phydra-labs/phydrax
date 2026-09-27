@@ -50,7 +50,7 @@ def one_zone(capacity: Any = 10000.0, conductance: Any = 10.0) -> Any:
     )
 
 
-def test_one_zone_exact_affine_and_physical_parameter_derivative() -> None:
+def test_building_energy_scenario_1() -> None:
     model = compile_building(one_zone())
     assert isinstance(model.system, ContinuousSystem)
     result = model.step(jnp.array([300.0]), 280.0, jnp.array([50.0]), 500.0)
@@ -67,9 +67,6 @@ def test_one_zone_exact_affine_and_physical_parameter_derivative() -> None:
     np.testing.assert_allclose(derivative, 15 * np.exp(-0.5) * 5000 / 10000**2, rtol=1e-5)
     identity = model.step(jnp.array([300.0]), 280.0, jnp.array([50.0]), 0.0)
     np.testing.assert_array_equal(identity.temperature, [300.0])
-
-
-def test_two_zone_internal_energy_conservation_and_balance_detection() -> None:
     source = BuildingSource(
         (Zone("a", 1000.0), Zone("b", 1000.0)),
         adjacencies=(Adjacency("wall", "a", "b", 10.0),),
@@ -90,9 +87,6 @@ def test_two_zone_internal_energy_conservation_and_balance_detection() -> None:
     )
     np.testing.assert_allclose(observation.edge_heat_flow, [200.0])
     np.testing.assert_allclose(observation.balance_residual, [100.0, -100.0])
-
-
-def test_massless_dae_and_series_resistance_equivalence() -> None:
     source = BuildingSource(
         (Zone("air", 10000.0), Zone("junction", 0, massless=True)),
         adjacencies=(
@@ -121,7 +115,7 @@ def test_massless_dae_and_series_resistance_equivalence() -> None:
         )
 
 
-def test_geometry_area_aperture_retrofit_and_stale_revision() -> None:
+def test_building_energy_scenario_2() -> None:
     metadata = SurfaceMetadata(
         source_id="wall",
         source_revision="measured",
@@ -181,9 +175,6 @@ def test_geometry_area_aperture_retrofit_and_stale_revision() -> None:
             (SurfaceRole(label, "room", construction),),
             source_id="stale",
         )
-
-
-def test_ground_ambient_supply_and_adiabatic_boundaries_remain_distinct() -> None:
     source = BuildingSource(
         (Zone("room", 1000),),
         boundaries=(
@@ -233,9 +224,6 @@ def test_ground_ambient_supply_and_adiabatic_boundaries_remain_distinct() -> Non
     )
     with pytest.raises(ValueError, match="boundary_ids"):
         model.step(jnp.array([300.0]), 290.0, jnp.zeros(1), 10.0)
-
-
-def test_epw_standard_time_interval_energy_and_missing_flags() -> None:
     text = energyplus_reference_weather().decode()
     rows = text.splitlines()
     record = rows[8].split(",")
@@ -258,7 +246,7 @@ def test_epw_standard_time_interval_energy_and_missing_flags() -> None:
         parse_epw("\n".join(rows[:9] + rows[10:]))
 
 
-def test_radiative_factorized_import_and_basis_rejection() -> None:
+def test_building_energy_scenario_3() -> None:
     sky = RadiativeBasis(("sky",), basis_id="sky", measure="coefficient", weights=(1,))
     window = RadiativeBasis(
         ("window",), basis_id="window", measure="coefficient", weights=(1,)
@@ -292,9 +280,6 @@ def test_radiative_factorized_import_and_basis_rejection() -> None:
             input_unit=ONE,
             output_unit=ONE,
         )
-
-
-def test_explicit_radiative_response_conserves_nodal_heat() -> None:
     basis = RadiativeBasis(
         ("window",),
         basis_id="bands",
@@ -318,9 +303,6 @@ def test_explicit_radiative_response_conserves_nodal_heat() -> None:
     )
     step = model.step(jnp.array([290.0, 290.0]), 280.0, heat, 100.0)
     np.testing.assert_allclose(step.temperature, [295.0, 297.5], atol=1e-7)
-
-
-def test_native_hvac_optimization_replays_bounded_controls() -> None:
     model = compile_building(one_zone(capacity=10000, conductance=10))
     times = jnp.array([0.0, 300.0, 900.0, 1200.0, 2400.0])
     result = optimize_hvac(

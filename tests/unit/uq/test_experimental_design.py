@@ -17,7 +17,7 @@ def _binary_channel(error_probability: float) -> jnp.ndarray:
     return jnp.asarray([[[1.0 - error, error], [error, 1.0 - error]]])
 
 
-def test_exact_finite_information_distinguishes_target_semantics_and_error() -> None:
+def test_experimental_design_scenario_1() -> None:
     error = 0.1
     conditional = _binary_channel(error)
     prior = jnp.asarray([0.5, 0.5])
@@ -53,9 +53,6 @@ def test_exact_finite_information_distinguishes_target_semantics_and_error() -> 
     assert jnp.array_equal(parameter.estimator_standard_error, jnp.zeros((1,)))
     assert jnp.array_equal(parameter.estimator_bias_bound, jnp.zeros((1,)))
     assert parameter.approximation == "exact_finite_enumeration"
-
-
-def test_nested_monte_carlo_reports_outer_error_and_unknown_finite_inner_bias() -> None:
     outer_count = 1024
     inner_count = 256
     theta_key, noise_key, inner_key = jr.split(jr.key(14), 3)
@@ -90,9 +87,6 @@ def test_nested_monte_carlo_reports_outer_error_and_unknown_finite_inner_bias() 
     assert result.outer_sample_count == outer_count
     assert result.inner_sample_count == inner_count
     assert "finite-inner" in result.error_basis
-
-
-def test_parameter_estimator_samples_observations_through_posterior_problem() -> None:
     parameter_space = phx.uq.ParameterSpace(
         jnp.asarray(0.0),
         log_prior=lambda value: -0.5 * value * value,
@@ -200,7 +194,7 @@ def _constraint_utility(candidates: Any) -> Any:
     )
 
 
-def test_batch_selection_is_deterministic_and_respects_all_constraints() -> None:
+def test_experimental_design_scenario_2() -> None:
     candidates = _constraint_candidates()
     utility = _constraint_utility(candidates)
     constraints = phx.uq.ExperimentalBatchConstraints(
@@ -238,9 +232,6 @@ def test_batch_selection_is_deterministic_and_respects_all_constraints() -> None
     assert first.plan_id == second.plan_id
     restored = phx.uq.ExperimentalBatchPlan.from_record(first.to_record())
     assert restored.plan_id == first.plan_id
-
-
-def test_mandatory_control_is_costed_with_explicit_zero_information_utility() -> None:
     candidates = _constraint_candidates()
     utility = phx.uq.ExpectedUtilityResult(
         expected_utility=jnp.asarray([jnp.nan, 3.0, 2.0, 2.0]),
@@ -273,67 +264,6 @@ def test_mandatory_control_is_costed_with_explicit_zero_information_utility() ->
     assert "control" in plan.selected_candidate_ids
     assert plan.planned_total_cost == 8.0
     assert plan.objective_value == pytest.approx(5.0)
-
-
-def test_prospective_plan_identity_freezes_registered_inputs() -> None:
-    candidates = _constraint_candidates()
-    utility = _constraint_utility(candidates)
-    constraints = phx.uq.ExperimentalBatchConstraints(
-        8.0,
-        3,
-        mutually_exclusive_candidate_groups=(("perturb-a", "perturb-b"),),
-        minimum_diversity_groups=3,
-        maximum_per_diversity_group=1,
-    )
-
-    def select(
-        values: Any,
-        *,
-        objective: Any = "model-information",
-        models: Any = ("additive", "interaction"),
-        analysis: Any = "analysis-a",
-    ) -> Any:
-        return phx.uq.select_experimental_batch(
-            values,
-            utility,
-            constraints,
-            objective_id=objective,
-            model_ids=models,
-            analysis_id=analysis,
-        )
-
-    reference = select(candidates)
-    changed_analysis = select(candidates, analysis="analysis-b")
-    changed_objective = select(candidates, objective="prediction-information")
-    with pytest.raises(ValueError, match="model IDs must exactly match"):
-        select(candidates, models=("additive", "other-model"))
-    changed_candidates = list(candidates)
-    changed_candidates[3] = phx.uq.ExperimentalDesignCandidate(
-        "orthogonal-c",
-        "temperature-c",
-        2.5,
-        "orthogonal",
-        "substituted-prediction-source",
-        diversity_group="mechanism-b",
-    )
-    with pytest.raises(
-        ValueError, match="content and prediction sources must exactly match"
-    ):
-        select(tuple(changed_candidates))
-
-    assert (
-        len(
-            {
-                reference.plan_id,
-                changed_analysis.plan_id,
-                changed_objective.plan_id,
-            }
-        )
-        == 3
-    )
-
-
-def test_retrospective_replay_reports_and_normalizes_unmatched_realized_budgets() -> None:
     candidates = tuple(
         phx.uq.ExperimentalDesignCandidate(
             f"candidate-{index}",
@@ -398,3 +328,61 @@ def test_retrospective_replay_reports_and_normalizes_unmatched_realized_budgets(
         replay.realized_utility / replay.planned_total_costs,
     )
     assert tuple(replay.selected_batch_sizes.tolist())[-1] == 1
+
+
+def test_prospective_plan_identity_freezes_registered_inputs() -> None:
+    candidates = _constraint_candidates()
+    utility = _constraint_utility(candidates)
+    constraints = phx.uq.ExperimentalBatchConstraints(
+        8.0,
+        3,
+        mutually_exclusive_candidate_groups=(("perturb-a", "perturb-b"),),
+        minimum_diversity_groups=3,
+        maximum_per_diversity_group=1,
+    )
+
+    def select(
+        values: Any,
+        *,
+        objective: Any = "model-information",
+        models: Any = ("additive", "interaction"),
+        analysis: Any = "analysis-a",
+    ) -> Any:
+        return phx.uq.select_experimental_batch(
+            values,
+            utility,
+            constraints,
+            objective_id=objective,
+            model_ids=models,
+            analysis_id=analysis,
+        )
+
+    reference = select(candidates)
+    changed_analysis = select(candidates, analysis="analysis-b")
+    changed_objective = select(candidates, objective="prediction-information")
+    with pytest.raises(ValueError, match="model IDs must exactly match"):
+        select(candidates, models=("additive", "other-model"))
+    changed_candidates = list(candidates)
+    changed_candidates[3] = phx.uq.ExperimentalDesignCandidate(
+        "orthogonal-c",
+        "temperature-c",
+        2.5,
+        "orthogonal",
+        "substituted-prediction-source",
+        diversity_group="mechanism-b",
+    )
+    with pytest.raises(
+        ValueError, match="content and prediction sources must exactly match"
+    ):
+        select(tuple(changed_candidates))
+
+    assert (
+        len(
+            {
+                reference.plan_id,
+                changed_analysis.plan_id,
+                changed_objective.plan_id,
+            }
+        )
+        == 3
+    )

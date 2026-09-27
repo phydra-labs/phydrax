@@ -23,7 +23,7 @@ def _bridge(shape: Any) -> Any:
     return phx.discretization.StructuredCochainBridge(grid)
 
 
-def test_resource_policy_fails_before_projection_and_streaming_matches_steps() -> None:
+def test_maxwell_platform_scenario_1() -> None:
     bridge = _bridge((2, 2, 2))
     with pytest.raises(ValueError, match="resource budget"):
         phx.solver.CompatibleMaxwellPlan(
@@ -42,9 +42,6 @@ def test_resource_policy_fails_before_projection_and_streaming_matches_steps() -
     )
     assert solved.resource_estimate.logical_primary_bytes > 0
     assert solved.step_count == 2
-
-
-def test_projection_is_sparse_and_elision_is_capability_gated() -> None:
     bridge = _bridge((2, 2, 2))
     runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,
@@ -67,9 +64,6 @@ def test_projection_is_sparse_and_elision_is_capability_gated() -> None:
                 "elide"
             ),
         ).prepare()
-
-
-def test_genuine_tez_tmz_layouts_and_chain_invariants() -> None:
     bridge = _bridge((3, 4))
     tez = phx.solver.CompatibleMaxwellPlan(bridge, polarization="tez").prepare()
     tmz = phx.solver.CompatibleMaxwellPlan(bridge, polarization="tmz").prepare()
@@ -82,7 +76,7 @@ def test_genuine_tez_tmz_layouts_and_chain_invariants() -> None:
     np.testing.assert_allclose(bridge.exterior_derivative(1, exact_b), 0.0, atol=1e-14)
 
 
-def test_packed_cpml_terms_and_fixed_coefficients_share_exact_support() -> None:
+def test_maxwell_platform_scenario_2() -> None:
     bridge = _bridge((4, 4, 4))
     runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,
@@ -98,9 +92,6 @@ def test_packed_cpml_terms_and_fixed_coefficients_share_exact_support() -> None:
     assert tuple(value.term_id for value in coefficients.electric) == tuple(
         value.term_id for value in runtime.pml.electric_terms
     )
-
-
-def test_prepared_paired_source_substep_phases_and_charge_continuity() -> None:
     bridge = _bridge((2, 2, 2))
     layout = phx.solver.maxwell.MaxwellCochainLayout(bridge)
     source = phx.solver.maxwell.MaxwellPairedCurrentSourcePlan(
@@ -138,9 +129,6 @@ def test_prepared_paired_source_substep_phases_and_charge_continuity() -> None:
         stepped.primary.charge, 1.0e-3 * expected_charge_rate, atol=1e-13
     )
     np.testing.assert_allclose(unstructured.constraints(stepped)[0], 0.0, atol=1e-13)
-
-
-def test_cochain_rate_partition_closes_repeated_incidence_routes() -> None:
     cochain = _bridge((2, 2)).cochain
     categories = [np.zeros((count,), dtype=np.int32) for count in cochain.cell_counts]
     incidence = cochain.topology.incidences[0].relation
@@ -167,7 +155,7 @@ def test_cochain_rate_partition_closes_repeated_incidence_routes() -> None:
         )
 
 
-def test_unstructured_maxwell_rejects_noninstantaneous_material() -> None:
+def test_maxwell_platform_scenario_3() -> None:
     bridge = _bridge((2, 2, 2))
     plan = phx.solver.maxwell.UnstructuredMaxwellPlan(
         bridge.cochain,
@@ -180,44 +168,6 @@ def test_unstructured_maxwell_rejects_noninstantaneous_material() -> None:
 
     with pytest.raises(ValueError, match="instantaneous lossless"):
         plan.prepare()
-
-
-def test_frequency_adjoint_retains_failed_primal_and_adjoint_evidence(
-    monkeypatch: Any,
-) -> None:
-    bridge = _bridge((2, 2))
-    runtime = phx.solver.CompatibleMaxwellPlan(bridge, polarization="tez").prepare()
-    operator = phx.solver.maxwell.FrequencyMaxwellOperator(
-        bridge.cochain,
-        runtime.layout,
-        runtime.constitutive,
-        0.4,
-    )
-    failed = FrequencyMaxwellSolveResult(
-        jnp.zeros((operator.size,), dtype=jnp.complex128),
-        jnp.asarray(1.0),
-        jnp.asarray(False),
-        jnp.asarray(1, dtype=jnp.int32),
-        jnp.asarray(3, dtype=jnp.int32),
-        None,
-    )
-    monkeypatch.setattr(type(operator), "solve", lambda self, source: failed)
-    monkeypatch.setattr(type(operator), "adjoint_solve", lambda self, source: failed)
-
-    result = phx.solver.maxwell.frequency_maxwell_adjoint(
-        operator,
-        jnp.ones((operator.size,)),
-        lambda electric: jnp.sum(jnp.real(electric)),
-    )
-
-    assert not bool(result.valid)
-    assert result.primal_result is failed
-    assert result.adjoint_result is failed
-    assert int(result.primal_result.status) == 3
-    assert int(result.adjoint_result.status) == 3
-
-
-def test_harmonic_defects_and_independent_batch_match_serial() -> None:
     bridge = _bridge((2, 2))
     runtime = phx.solver.CompatibleMaxwellPlan(bridge, polarization="tez").prepare()
     frequency = phx.solver.maxwell.FrequencyMaxwellOperator(
@@ -269,9 +219,6 @@ def test_harmonic_defects_and_independent_batch_match_serial() -> None:
     baseline = solved.final_states.primary.electric_displacement[:, 0]
     jacobian = jax.jacfwd(lambda values: values + baseline)(jnp.ones((2,)))
     np.testing.assert_allclose(jacobian, jnp.eye(2))
-
-
-def test_scalar_geometry_material_assembly_is_degree_aligned_and_positive() -> None:
     bridge = _bridge((3, 3))
     layout = phx.solver.maxwell.MaxwellCochainLayout(bridge, "tez")
     geometry = phx.geometry.Square(center=(0.5, 0.5), side=4.0).compile()
@@ -290,13 +237,45 @@ def test_scalar_geometry_material_assembly_is_degree_aligned_and_positive() -> N
     np.testing.assert_allclose(assembled.constitutive.permeability, 2.0)
 
 
-def test_maxwell_resource_estimate_reserves_complex_primary_storage() -> None:
+def test_frequency_adjoint_retains_failed_primal_and_adjoint_evidence(
+    monkeypatch: Any,
+) -> None:
+    bridge = _bridge((2, 2))
+    runtime = phx.solver.CompatibleMaxwellPlan(bridge, polarization="tez").prepare()
+    operator = phx.solver.maxwell.FrequencyMaxwellOperator(
+        bridge.cochain,
+        runtime.layout,
+        runtime.constitutive,
+        0.4,
+    )
+    failed = FrequencyMaxwellSolveResult(
+        jnp.zeros((operator.size,), dtype=jnp.complex128),
+        jnp.asarray(1.0),
+        jnp.asarray(False),
+        jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(3, dtype=jnp.int32),
+        None,
+    )
+    monkeypatch.setattr(type(operator), "solve", lambda self, source: failed)
+    monkeypatch.setattr(type(operator), "adjoint_solve", lambda self, source: failed)
+
+    result = phx.solver.maxwell.frequency_maxwell_adjoint(
+        operator,
+        jnp.ones((operator.size,)),
+        lambda electric: jnp.sum(jnp.real(electric)),
+    )
+
+    assert not bool(result.valid)
+    assert result.primal_result is failed
+    assert result.adjoint_result is failed
+    assert int(result.primal_result.status) == 3
+    assert int(result.adjoint_result.status) == 3
+
+
+def test_maxwell_platform_scenario_4() -> None:
     runtime = phx.solver.CompatibleMaxwellPlan(_bridge((2, 2, 2))).prepare()
     expected = np.dtype(np.complex128).itemsize * sum(runtime.primary_counts)
     assert runtime.resource_estimate.logical_primary_bytes == expected
-
-
-def test_tmz_reversible_step_uses_the_retained_electric_degree() -> None:
     bridge = _bridge((3, 3))
     runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,
@@ -323,9 +302,6 @@ def test_tmz_reversible_step_uses_the_retained_electric_degree() -> None:
         rtol=1e-11,
         atol=1e-11,
     )
-
-
-def test_mode_observer_demodulates_exp_minus_iwt_fields() -> None:
     runtime = phx.solver.CompatibleMaxwellPlan(
         _bridge((2, 2)),
         polarization="tez",
@@ -351,7 +327,7 @@ def test_mode_observer_demodulates_exp_minus_iwt_fields() -> None:
     np.testing.assert_allclose(observer.value(observation), 1.0, atol=1e-12)
 
 
-def test_refresh_rejects_changed_constitutive_state_shape() -> None:
+def test_refresh_contracts() -> None:
     bridge = _bridge((2, 2))
     one_pole = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
         jnp.asarray([1.0]),
@@ -380,9 +356,6 @@ def test_refresh_rejects_changed_constitutive_state_shape() -> None:
     )
     with pytest.raises(ValueError, match="executable step signature"):
         phx.solver.maxwell.refresh_compatible_maxwell(runtime, spec)
-
-
-def test_refresh_rejects_changed_prepared_source_shape() -> None:
     bridge = _bridge((2, 2))
     one_entry = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
         jnp.asarray([0]),
@@ -409,9 +382,6 @@ def test_refresh_rejects_changed_prepared_source_shape() -> None:
     )
     with pytest.raises(ValueError, match="executable step signature"):
         phx.solver.maxwell.refresh_compatible_maxwell(runtime, spec)
-
-
-def test_refresh_rejects_changed_static_boundary_and_source_semantics() -> None:
     bridge = _bridge((2, 2))
     pec_runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,

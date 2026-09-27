@@ -8,7 +8,6 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import pytest
 
 import phydrax as phx
 
@@ -52,39 +51,26 @@ def _problem() -> Any:
     )
 
 
-@pytest.mark.parametrize("resampling_policy", ("never", "always", "ess"))
-def test_genealogical_score_covers_complete_model_and_resampling(
-    resampling_policy: Any,
-) -> None:
-    filtered = phx.uq.bootstrap_particle_filter(
-        jax.random.key(1),
-        _problem(),
-        num_particles=32,
-        resampling_policy=resampling_policy,
-        resampling_threshold=0.8,
-    )
-    score = phx.uq.particle_genealogical_score(filtered)
+def test_genealogical_score_contracts() -> None:
+    for resampling_policy in ("never", "always", "ess"):
+        filtered = phx.uq.bootstrap_particle_filter(
+            jax.random.key(1),
+            _problem(),
+            num_particles=32,
+            resampling_policy=resampling_policy,
+            resampling_threshold=0.8,
+        )
+        score = phx.uq.particle_genealogical_score(filtered)
 
-    assert bool(score.valid)
-    assert score.flat_score.shape == (score.parameter_size,)
-    assert score.case_scores.shape == (score.parameter_size,)
-    assert jnp.all(jnp.isfinite(score.flat_score))
-    assert any(path.startswith(".prior") for path in score.parameter_paths)
-    assert any(path.startswith(".transition") for path in score.parameter_paths)
-    assert any(path.startswith(".observation") for path in score.parameter_paths)
-    assert score.method_id == "particle-complete-model-genealogical-score"
-    assert score.ancestry_gradient == "stopped-realized-ancestry"
-
-
-class _ScaledLocation(eqx.Module):
-    gain: jax.Array = phx.parameter_field()
-
-    def __call__(self, state: Any, time: Any, context: Any) -> Any:
-        del time, context
-        return self.gain * state
-
-
-def test_genealogical_score_excludes_fixed_observation_covariance() -> None:
+        assert bool(score.valid)
+        assert score.flat_score.shape == (score.parameter_size,)
+        assert score.case_scores.shape == (score.parameter_size,)
+        assert jnp.all(jnp.isfinite(score.flat_score))
+        assert any(path.startswith(".prior") for path in score.parameter_paths)
+        assert any(path.startswith(".transition") for path in score.parameter_paths)
+        assert any(path.startswith(".observation") for path in score.parameter_paths)
+        assert score.method_id == "particle-complete-model-genealogical-score"
+        assert score.ancestry_gradient == "stopped-realized-ancestry"
     problem = _problem()
     observation = phx.stochastic.GaussianObservationModel(
         _ScaledLocation(jnp.asarray(1.0)),
@@ -120,9 +106,6 @@ def test_genealogical_score_excludes_fixed_observation_covariance() -> None:
     assert score.score.observation.covariance is None
     assert score.flat_score.shape == (6,)
     assert jnp.all(jnp.isfinite(score.flat_score))
-
-
-def test_genealogical_score_replays_exactly_with_semantic_particle_keys() -> None:
     problem = _problem()
     first_filter = phx.uq.bootstrap_particle_filter(
         jax.random.key(2),
@@ -144,9 +127,6 @@ def test_genealogical_score_replays_exactly_with_semantic_particle_keys() -> Non
     )
     assert jnp.array_equal(first_filter.ancestor_indices, second_filter.ancestor_indices)
     assert jnp.array_equal(first.flat_score, second.flat_score)
-
-
-def test_genealogical_score_cost_state_has_linear_particle_shape() -> None:
     problem = _problem()
     small = phx.uq.particle_genealogical_score(
         phx.uq.bootstrap_particle_filter(
@@ -169,3 +149,11 @@ def test_genealogical_score_cost_state_has_linear_particle_shape() -> None:
     assert small.parameter_size == large.parameter_size
     assert small.filter_result.initial_particles.shape[-2] == 8
     assert large.filter_result.initial_particles.shape[-2] == 16
+
+
+class _ScaledLocation(eqx.Module):
+    gain: jax.Array = phx.parameter_field()
+
+    def __call__(self, state: Any, time: Any, context: Any) -> Any:
+        del time, context
+        return self.gain * state

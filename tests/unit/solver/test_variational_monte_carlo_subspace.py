@@ -66,7 +66,7 @@ def _initial_configurations() -> Any:
     return jnp.asarray([[1], [-1]], dtype=jnp.int32)
 
 
-def test_subspace_vmc_recovers_exact_complex_phased_basis() -> None:
+def test_subspace_vmc_contracts() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (_BasisState(0, 1.0 + 0.0j), _BasisState(1, 0.0 + 1.0j)),
         _operator(),
@@ -92,9 +92,6 @@ def test_subspace_vmc_recovers_exact_complex_phased_basis() -> None:
     assert estimate.overlap_hermiticity_residual == 0.0
     assert estimate.hamiltonian_hermiticity_residual == 0.0
     assert samples.final_state.step_index > state.markov_state.step_index
-
-
-def test_subspace_vmc_reports_collapsed_state_span() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (_BasisState(0, 1.0 + 0.0j), _BasisState(0, 0.0 + 1.0j)),
         _operator(),
@@ -114,9 +111,6 @@ def test_subspace_vmc_reports_collapsed_state_span() -> None:
     assert not bool(estimate.successful)
     assert estimate.status == phx.solver.VMC_SUBSPACE_SINGULAR_SPAN
     assert estimate.gram_numerical_rank == 1
-
-
-def test_subspace_vmc_zero_iterations_returns_certified_ritz_modes() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (_BasisState(0, 1.0 + 0.0j), _BasisState(1, 1.0 + 0.0j)),
         _operator(),
@@ -144,9 +138,6 @@ def test_subspace_vmc_zero_iterations_returns_certified_ritz_modes() -> None:
         jnp.asarray([0.0, 2.0]),
         atol=2e-12,
     )
-
-
-def test_subspace_vmc_score_corrected_sr_step_is_finite() -> None:
     problem = phx.solver.VariationalMonteCarloSubspaceProblem(
         (
             _TableState(jnp.asarray([0.0, -0.7])),

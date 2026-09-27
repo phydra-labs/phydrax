@@ -6,7 +6,7 @@ import phydrax as phx
 import phydrax.discretization as spectral
 
 
-def test_periodic_finite_difference_laplacian_matches_discrete_mode() -> None:
+def test_spatial_discretization_scenario_1() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -27,9 +27,6 @@ def test_periodic_finite_difference_laplacian_matches_discrete_mode() -> None:
     assert discretization.state_shape == (8,)
     assert discretization.stencil("d_x_2").kind == "periodic"
     assert jnp.allclose(actual, eigenvalue * state, atol=1e-12)
-
-
-def test_fourier_sine_and_cosine_laplacians_respect_boundary_semantics() -> None:
     # ty: ignore[invalid-argument-type]
     fourier_axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     # ty: ignore[invalid-argument-type]
@@ -61,9 +58,6 @@ def test_fourier_sine_and_cosine_laplacians_respect_boundary_semantics() -> None
         -(jnp.pi**2) * cosine_state,
         atol=2e-11,
     )
-
-
-def test_tensor_grid_laplacian_preserves_channels_and_compiles() -> None:
     # ty: ignore[invalid-argument-type]
     x_axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     # ty: ignore[invalid-argument-type]
@@ -86,9 +80,6 @@ def test_tensor_grid_laplacian_preserves_channels_and_compiles() -> None:
     assert discretization.flatten(state).shape == (80, 2)
     assert jnp.array_equal(discretization.unflatten(discretization.flatten(state)), state)
     assert jnp.allclose(actual, expected, atol=5e-11)
-
-
-def test_tensor_eigenpairs_use_exact_separable_modes_and_stable_ordering() -> None:
     # ty: ignore[invalid-argument-type]
     x_axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
     # ty: ignore[invalid-argument-type]
@@ -113,9 +104,6 @@ def test_tensor_eigenpairs_use_exact_separable_modes_and_stable_ordering() -> No
         -modes * eigenvalues,
         atol=2e-9,
     )
-
-
-def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank() -> None:
     axes = tuple(
         # ty: ignore[invalid-argument-type]
         phx.discretization.FourierAxisSpec(64).materialize(0.0, 1.0)
@@ -137,7 +125,7 @@ def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank() -> None:
     assert long_modes.shape == (10_000, 4)
 
 
-def test_explicit_laplacian_agrees_with_matrix_free_application() -> None:
+def test_spatial_discretization_scenario_2() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformAxisSpec(
@@ -154,9 +142,6 @@ def test_explicit_laplacian_agrees_with_matrix_free_application() -> None:
 
     assert matrix.shape == (7, 7)
     assert jnp.allclose(matrix @ state, discretization.laplacian(state))
-
-
-def test_existing_spectral_plan_is_reused_without_a_second_basis_convention() -> None:
     eigenvalues = jnp.asarray([0.0, 1.0, 4.0])
     eigenvectors = jnp.eye(3)
     plan = spectral.SpectralDecomposition.from_eigenpairs(
@@ -181,9 +166,6 @@ def test_existing_spectral_plan_is_reused_without_a_second_basis_convention() ->
     retained_values, retained_modes = discretization.eigenpairs(rank=2)
     assert jnp.array_equal(retained_values, eigenvalues[:2])
     assert retained_modes.shape == (3, 2)
-
-
-def test_spatial_discretization_rejects_unsupported_grids_and_state_shapes() -> None:
     nonperiodic_uniform = phx.discretization.UniformAxisSpec(
         6,
         endpoint=True,

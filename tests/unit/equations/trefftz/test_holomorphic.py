@@ -24,7 +24,7 @@ def _set_polynomial(potential: Any, real: Any, imaginary: Any = None) -> Any:
     )
 
 
-def test_complex_linear_uses_real_leaves_and_matches_dense_complex_oracle() -> None:
+def test_holomorphic_scenario_1() -> None:
     layer = phx.nn.layers.ComplexLinear(in_size=2, out_size=2, key=jr.key(0))
     layer = eqx.tree_at(
         lambda value: (
@@ -46,9 +46,6 @@ def test_complex_linear_uses_real_leaves_and_matches_dense_complex_oracle() -> N
     assert jnp.allclose(layer(point), expected)
     parameters = jax.tree_util.tree_leaves(phx.partition_parameters(layer)[0])
     assert parameters and all(not jnp.iscomplexobj(leaf) for leaf in parameters)
-
-
-def test_complex_normalization_preserves_nonreal_data_for_real_coordinates() -> None:
     normalization = phx.equations.ComplexAffineNormalization.scalar(
         center=1.0 + 2.0j,
         scale=2.0j,
@@ -57,9 +54,6 @@ def test_complex_normalization_preserves_nonreal_data_for_real_coordinates() -> 
     expected = (3.0 - (1.0 + 2.0j)) / (2.0j)
     assert jnp.iscomplexobj(value)
     assert jnp.allclose(value, expected)
-
-
-def test_holomorphic_polynomial_horner_jets_match_closed_form() -> None:
     potential = phx.equations.HolomorphicPolynomialPotential(1, 3)
     potential = _set_polynomial(
         potential,
@@ -77,6 +71,41 @@ def test_holomorphic_polynomial_horner_jets_match_closed_form() -> None:
     assert jnp.allclose(jet.derivative(2)[0], second)
     assert potential.holomorphic_certificate().linear_in_parameters
     assert potential.holomorphic_certificate().parameter_coverage == "finite-subspace"
+    potential = _set_polynomial(
+        phx.equations.HolomorphicPolynomialPotential(2, 3),
+        [
+            [0.1, 0.5, -0.2, 0.05],
+            [-0.3, 0.25, 0.1, -0.04],
+        ],
+        [
+            [0.0, -0.1, 0.08, 0.02],
+            [0.2, 0.05, -0.06, 0.01],
+        ],
+    )
+    point = jnp.asarray([0.2, -0.15])
+    for hypothesis in ("plane_strain", "plane_stress"):
+        material = phx.equations.PlaneIsotropicMaterial(
+            2.0,
+            1.5,
+            hypothesis=hypothesis,
+        )
+        state = phx.equations.PlaneElasticityPotential2D(potential, material)
+        jacobian = jax.jacfwd(state)(point)
+        equilibrium = jnp.asarray(
+            [
+                jacobian[0, 0] + jacobian[2, 1],
+                jacobian[2, 0] + jacobian[1, 1],
+            ]
+        )
+        assert state(point).shape == (5,)
+        assert jnp.allclose(equilibrium, 0.0, atol=2e-10)
+
+        stress_only = phx.equations.PlaneElasticityPotential2D(
+            potential,
+            material,
+            output="stress",
+        )
+        assert stress_only(point).shape == (3,)
 
 
 def test_holomorphic_mlp_satisfies_cauchy_riemann_with_real_parameters() -> None:
@@ -151,41 +180,3 @@ def test_harmonic_and_biharmonic_potential_representations_are_exact() -> None:
         return jnp.trace(jax.hessian(biharmonic)(value))
 
     assert jnp.allclose(jnp.trace(jax.hessian(laplacian)(point)), 0.0, atol=2e-10)
-
-
-def test_plane_elasticity_potential_satisfies_equilibrium_for_both_hypotheses() -> None:
-    potential = _set_polynomial(
-        phx.equations.HolomorphicPolynomialPotential(2, 3),
-        [
-            [0.1, 0.5, -0.2, 0.05],
-            [-0.3, 0.25, 0.1, -0.04],
-        ],
-        [
-            [0.0, -0.1, 0.08, 0.02],
-            [0.2, 0.05, -0.06, 0.01],
-        ],
-    )
-    point = jnp.asarray([0.2, -0.15])
-    for hypothesis in ("plane_strain", "plane_stress"):
-        material = phx.equations.PlaneIsotropicMaterial(
-            2.0,
-            1.5,
-            hypothesis=hypothesis,
-        )
-        state = phx.equations.PlaneElasticityPotential2D(potential, material)
-        jacobian = jax.jacfwd(state)(point)
-        equilibrium = jnp.asarray(
-            [
-                jacobian[0, 0] + jacobian[2, 1],
-                jacobian[2, 0] + jacobian[1, 1],
-            ]
-        )
-        assert state(point).shape == (5,)
-        assert jnp.allclose(equilibrium, 0.0, atol=2e-10)
-
-        stress_only = phx.equations.PlaneElasticityPotential2D(
-            potential,
-            material,
-            output="stress",
-        )
-        assert stress_only(point).shape == (3,)

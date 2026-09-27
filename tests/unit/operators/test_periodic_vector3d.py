@@ -95,7 +95,7 @@ def _action(targets: Any = _TARGETS, **overrides: Any) -> Any:
     )
 
 
-def test_periodic_maxwell_off_surface_action_has_bloch_character_and_evidence() -> None:
+def test_periodic_contracts() -> None:
     action = _action()
     coefficients = (
         jnp.linspace(-0.3, 0.5, action.current_space.size)
@@ -127,9 +127,6 @@ def test_periodic_maxwell_off_surface_action_has_bloch_character_and_evidence() 
         rtol=2.0e-5,
         atol=2.0e-6,
     )
-
-
-def test_periodic_maxwell_complex_transpose_and_adjoint_are_exact() -> None:
     action = _action()
     coefficients = (
         jnp.linspace(0.1, 0.7, action.current_space.size)
@@ -159,9 +156,6 @@ def test_periodic_maxwell_complex_transpose_and_adjoint_are_exact() -> None:
     assert not jnp.allclose(action.transpose_mv(probe), action.adjoint_mv(probe))
     assert action.support.exact_transpose
     assert action.support.exact_adjoint
-
-
-def test_periodic_maxwell_rejects_wood_neutrality_and_resource_violations() -> None:
     with pytest.raises(PeriodicHelmholtzWoodAnomalyError):
         prepare_periodic_maxwell_electric_field_action_3d(
             _space(),
@@ -197,9 +191,6 @@ def test_periodic_maxwell_rejects_wood_neutrality_and_resource_violations() -> N
         PeriodicVectorResourceError, match="max_preparation_workspace_bytes"
     ):
         _action(max_preparation_workspace_bytes=1024)
-
-
-def test_periodic_vector_field_action_never_implies_boundary_solve_support() -> None:
     action = _action()
     support = periodic_vector_boundary_support_3d(action)
 

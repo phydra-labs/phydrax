@@ -23,7 +23,7 @@ def _basis(space: Any, matrix: Any, name: Any) -> Any:
     )
 
 
-def test_physical_pod_resources_and_capability_governance() -> None:
+def test_production_closure_scenario_1() -> None:
     space = phx.linalg.ArraySpace((3,), dtype=jnp.float64, space_id="pod-space")
     result = phx.ml.decomposition.PhysicalPODPlan(
         2, retained_energy=1.0, centered=False
@@ -47,9 +47,6 @@ def test_physical_pod_resources_and_capability_governance() -> None:
     )
     profile = declaration.profile(provider="phydrax", version="current")
     assert not profile.released
-
-
-def test_rectangular_projection_affine_evolution_and_trace_lift() -> None:
     full = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="system-full")
     trial = _basis(full, [[1.0], [0.0]], "trial")
     test = _basis(full, [[1.0, 0.0], [0.0, 1.0]], "test")
@@ -109,73 +106,6 @@ def test_rectangular_projection_affine_evolution_and_trace_lift() -> None:
         None,
     )
     np.testing.assert_allclose(residual, 0.0, atol=1e-12)
-
-
-def test_scm_primal_dual_bundle_and_immutable_generation(tmp_path: Any) -> None:
-    scm = phx.rom.SuccessiveConstraintArtifact(
-        jnp.asarray([0.5, 0.25]),
-        jnp.asarray([2.0, 2.0]),
-        jnp.asarray([[1.0, 0.0], [0.0, 1.0]]),
-        jnp.asarray([0.5, 0.25]),
-        family_id="scm-family",
-        support_id="scm-support",
-    )
-    assert float(scm.lower_bound(jnp.asarray([1.0, 1.0]))) >= 0.75 - 1e-5
-    output = phx.rom.PrimalDualOutputBound(
-        1.0,
-        0.1,
-        0.2,
-        0.3,
-        0.5,
-        output_id="heat-flux",
-        evidence_ids=("primal", "dual", "stability"),
-    )
-    np.testing.assert_allclose(output.corrected_output, 1.1)
-    np.testing.assert_allclose(output.absolute_error_bound, 0.12)
-
-    reference = phx.rom.ROMArtifactReference(
-        "model", "artifact", "recipe", "artifact.phx"
-    )
-    bundle = phx.rom.ROMDeploymentBundle(
-        "model",
-        (reference,),
-        capability_profile_ids=("capability",),
-        build_provenance_id="build",
-        execution_requirements_id="execution",
-        resource_policy_id="resources",
-        qualification_ids=("qualification",),
-    )
-    path = phx.rom.write_rom_deployment_bundle(tmp_path / "bundle.phx", bundle)
-    assert phx.rom.read_rom_deployment_bundle(path).bundle_id == bundle.bundle_id
-
-    parent = phx.rom.ROMGeneration(
-        0,
-        parent_generation_id=None,
-        representation_id="representation-0",
-        dynamics_id="dynamics-0",
-        partition_id="partition-0",
-        support_id="support-0",
-        qualification_ids=("qualification-0",),
-    )
-    child = phx.rom.ROMGeneration(
-        1,
-        parent_generation_id=parent.generation_id,
-        representation_id="representation-1",
-        dynamics_id="dynamics-1",
-        partition_id="partition-1",
-        support_id="support-1",
-        qualification_ids=("qualification-1",),
-    )
-    transaction = phx.rom.EnrichmentTransaction(
-        parent,
-        child,
-        truth_artifact_ids=("truth-1",),
-        replay_artifact_id="replay-1",
-    )
-    assert transaction.child.generation == 1
-
-
-def test_quadratic_neural_atlas_sensor_and_assimilation_contracts() -> None:
     latent = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="latent")
     full = phx.linalg.ArraySpace((3,), dtype=jnp.float64, space_id="chart-full")
     quadratic = phx.rom.QuadraticStateChart(
@@ -245,7 +175,71 @@ def test_quadratic_neural_atlas_sensor_and_assimilation_contracts() -> None:
     assert float(nis) > 0.0
 
 
-def test_ssm_balancing_interpolatory_and_structure_preserving_reductions() -> None:
+def test_scm_primal_dual_bundle_and_immutable_generation(tmp_path: Any) -> None:
+    scm = phx.rom.SuccessiveConstraintArtifact(
+        jnp.asarray([0.5, 0.25]),
+        jnp.asarray([2.0, 2.0]),
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0]]),
+        jnp.asarray([0.5, 0.25]),
+        family_id="scm-family",
+        support_id="scm-support",
+    )
+    assert float(scm.lower_bound(jnp.asarray([1.0, 1.0]))) >= 0.75 - 1e-5
+    output = phx.rom.PrimalDualOutputBound(
+        1.0,
+        0.1,
+        0.2,
+        0.3,
+        0.5,
+        output_id="heat-flux",
+        evidence_ids=("primal", "dual", "stability"),
+    )
+    np.testing.assert_allclose(output.corrected_output, 1.1)
+    np.testing.assert_allclose(output.absolute_error_bound, 0.12)
+
+    reference = phx.rom.ROMArtifactReference(
+        "model", "artifact", "recipe", "artifact.phx"
+    )
+    bundle = phx.rom.ROMDeploymentBundle(
+        "model",
+        (reference,),
+        capability_profile_ids=("capability",),
+        build_provenance_id="build",
+        execution_requirements_id="execution",
+        resource_policy_id="resources",
+        qualification_ids=("qualification",),
+    )
+    path = phx.rom.write_rom_deployment_bundle(tmp_path / "bundle.phx", bundle)
+    assert phx.rom.read_rom_deployment_bundle(path).bundle_id == bundle.bundle_id
+
+    parent = phx.rom.ROMGeneration(
+        0,
+        parent_generation_id=None,
+        representation_id="representation-0",
+        dynamics_id="dynamics-0",
+        partition_id="partition-0",
+        support_id="support-0",
+        qualification_ids=("qualification-0",),
+    )
+    child = phx.rom.ROMGeneration(
+        1,
+        parent_generation_id=parent.generation_id,
+        representation_id="representation-1",
+        dynamics_id="dynamics-1",
+        partition_id="partition-1",
+        support_id="support-1",
+        qualification_ids=("qualification-1",),
+    )
+    transaction = phx.rom.EnrichmentTransaction(
+        parent,
+        child,
+        truth_artifact_ids=("truth-1",),
+        replay_artifact_id="replay-1",
+    )
+    assert transaction.child.generation == 1
+
+
+def test_production_closure_scenario_2() -> None:
     evidence = phx.dynamics.identification.SpectralSubmanifoldEvidence(
         jnp.asarray([-1.0, -2.0]),
         jnp.asarray(1.0),
@@ -292,9 +286,6 @@ def test_ssm_balancing_interpolatory_and_structure_preserving_reductions() -> No
         jnp.eye(2),
     )
     assert port.system_matrix().shape == (2, 2)
-
-
-def test_rom_execution_requirements_declare_batch_and_reduced_axes() -> None:
     requirements = phx.rom.rom_execution_requirements(
         "rom-owner",
         batch_axis=4,

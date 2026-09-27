@@ -39,7 +39,7 @@ class _HyperplaneMap(phx.geometry.BoundaryMap):
         return jnp.ones(jnp.asarray(chart_indices).shape, dtype=jnp.float64)
 
 
-def test_ball_and_orthotope_are_dimension_generic_with_exact_mass() -> None:
+def test_geometry_nd_closure_scenario_1() -> None:
     ball = phx.geometry.Ball(jnp.zeros((4,)), 2.0, feature_id="ball4").compile()
     box = phx.geometry.Orthotope(
         jnp.zeros((5,)), jnp.asarray((1.0, 2.0, 3.0, 4.0, 5.0)), feature_id="box5"
@@ -56,9 +56,6 @@ def test_ball_and_orthotope_are_dimension_generic_with_exact_mass() -> None:
     samples = box.sample_boundary(128, key=jr.key(3)).points
     half_size = 0.5 * jnp.asarray((1.0, 2.0, 3.0, 4.0, 5.0))
     assert jnp.all(jnp.isclose(jnp.max(jnp.abs(samples / half_size), axis=-1), 1.0))
-
-
-def test_axis_aligned_ellipsoid_has_truthful_nd_capabilities() -> None:
     geometry = phx.geometry.AxisAlignedEllipsoid(
         jnp.zeros((4,)),
         jnp.asarray((1.0, 2.0, 3.0, 4.0)),
@@ -71,9 +68,6 @@ def test_axis_aligned_ellipsoid_has_truthful_nd_capabilities() -> None:
     assert jnp.all(
         jnp.sum((samples / jnp.asarray((1.0, 2.0, 3.0, 4.0))) ** 2, axis=-1) <= 1.0
     )
-
-
-def test_estimated_boundary_mass_and_scalar_point_contract_are_explicit() -> None:
     ellipse = phx.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile()
     domain = phx.domain.GeometryDomain(ellipse)
 
@@ -83,7 +77,7 @@ def test_estimated_boundary_mass_and_scalar_point_contract_are_explicit() -> Non
         domain.adf(jnp.asarray(0.5))
 
 
-def test_extrusion_and_embedded_simplex_support_arbitrary_ambient_dimension() -> None:
+def test_geometry_nd_closure_scenario_2() -> None:
     extrusion = phx.geometry.Extrusion(
         phx.geometry.Ball(jnp.zeros((4,)), 1.0),
         2.0,
@@ -103,9 +97,6 @@ def test_extrusion_and_embedded_simplex_support_arbitrary_ambient_dimension() ->
     assert triangle.ambient_dimension == 5
     assert jnp.allclose(triangle.evidence.measure, 0.5)
     assert jnp.allclose(triangle.evidence.jacobian_measure, 1.0)
-
-
-def test_codimension_one_atlas_frame_and_partition_work_in_four_dimensions() -> None:
     atlas = phx.geometry.BoundaryAtlas(
         _HyperplaneMap(),
         source_entity_ids=jnp.asarray((0,), dtype=jnp.int32),
@@ -129,9 +120,6 @@ def test_codimension_one_atlas_frame_and_partition_work_in_four_dimensions() -> 
             quadrature_order=4,
             maximum_quadrature_points=63,
         )
-
-
-def test_planar_wall_and_implicit_curve_cover_higher_and_lower_dimensions() -> None:
     wall = phx.geometry.PlanarWallFramePlan(
         jnp.zeros((4,)),
         jnp.asarray((1.0, 0.0, 0.0, 0.0)),

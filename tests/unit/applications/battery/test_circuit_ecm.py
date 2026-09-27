@@ -131,7 +131,7 @@ def _solve(
     return adapter, prepared, parameters, runtime, solution
 
 
-def test_sampled_ledger_quadrature_is_quadratic_exact_on_terminal_prefix() -> None:
+def test_circuit_ecm_scenario_1() -> None:
     times = jnp.asarray((0.0, 0.1, 0.4, 1.0, jnp.nan, jnp.nan))
     valid = jnp.asarray((True, True, True, True, False, False))
     values = jnp.where(valid, times**2, jnp.nan)
@@ -148,9 +148,6 @@ def test_sampled_ledger_quadrature_is_quadratic_exact_on_terminal_prefix() -> No
         0.0,
         atol=0.0,
     )
-
-
-def test_charging_initialization_and_one_node_thermal_parity() -> None:
     adapter, prepared, p, runtime, solution = _solve()
     assert bool(jnp.all(solution.successful))
     view = prepared.state_view(solution.states)
@@ -190,9 +187,6 @@ def test_charging_initialization_and_one_node_thermal_parity() -> None:
         * jnp.max(solution.residual_threshold)
     )
     assert bool(ledger.maximum_thermal_defect_w <= thermal_tolerance)
-
-
-def test_voltage_clamp_conservation_and_load_current_are_circuit_owned() -> None:
     voltage_boundary = CircuitElement(
         IndependentVoltageSourceLaw(4.0), element_id="test-voltage"
     )
@@ -228,7 +222,7 @@ def test_voltage_clamp_conservation_and_load_current_are_circuit_owned() -> None
     assert bool(adapter.ledger(prepared, solution, runtime).successful)
 
 
-def test_finite_thermal_rate_defect_fails_model_ledger() -> None:
+def test_circuit_ecm_scenario_2() -> None:
     adapter, prepared, _, runtime, solution = _solve()
     assert bool(adapter.ledger(prepared, solution, runtime).successful)
     rates = solution.state_rates.at[-1, prepared.cell_stop - 2].add(0.1)
@@ -236,9 +230,6 @@ def test_finite_thermal_rate_defect_fails_model_ledger() -> None:
     ledger = adapter.ledger(prepared, corrupted, runtime)
     assert not bool(ledger.successful)
     np.testing.assert_allclose(ledger.maximum_thermal_defect_w, 10.0, atol=1e-7)
-
-
-def test_physical_initial_state_outside_support_is_refused() -> None:
     adapter = CircuitConnectedEcmAdapter(CircuitConnectedEcmPlan(1))
     with pytest.raises(Exception, match="outside property support"):
         adapter.initial_state(
@@ -246,9 +237,6 @@ def test_physical_initial_state_outside_support_is_refused() -> None:
             _parameters(),
             CircuitConnectedEcmInitialCondition(1100.0, 300.0, relaxed=True),
         )
-
-
-def test_masked_property_hole_has_interior_guard_and_refuses_initialization() -> None:
     p = _parameters()
     ocv = TabulatedPropertyLaw(
         # ty: ignore[invalid-argument-type]
@@ -278,7 +266,7 @@ def test_masked_property_hole_has_interior_guard_and_refuses_initialization() ->
         )
 
 
-def test_current_rest_restart_preserves_physics_and_one_sided_heat_integrals() -> None:
+def test_circuit_ecm_scenario_3() -> None:
     adapter = CircuitConnectedEcmAdapter(CircuitConnectedEcmPlan(1))
     guard_ids = tuple(
         guard.guard_id for guard in adapter.native_guards(adapter.prepare())
@@ -326,9 +314,6 @@ def test_current_rest_restart_preserves_physics_and_one_sided_heat_integrals() -
         restart.initialization.state_correction[restart.initialization.fixed_state_mask],
         0.0,
     )
-
-
-def test_terminal_guard_leaves_inactive_segment_physics_unevaluated() -> None:
     adapter = CircuitConnectedEcmAdapter(CircuitConnectedEcmPlan(1))
     guards = tuple(guard.guard_id for guard in adapter.native_guards(adapter.prepare()))
     protocol = BatteryProtocolPlan(

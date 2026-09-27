@@ -10,7 +10,7 @@ def _transform(count: Any = 32) -> Any:
     return pl.IsotropicRadialTransformPlan(count, 8.0).prepare()
 
 
-def test_isotropic_radial_transform_has_exact_declared_discrete_inverse() -> None:
+def test_polymer_liquids_scenario_1() -> None:
     transform = _transform()
     values = jnp.exp(-(transform.radii**2))
     evidence = pl.radial_transform_evidence(transform, values, tolerance=1.0e-11)
@@ -20,9 +20,6 @@ def test_isotropic_radial_transform_has_exact_declared_discrete_inverse() -> Non
     )
     assert float(transform.radii[0]) > 0.0
     assert float(transform.wave_numbers[0]) > 0.0
-
-
-def test_one_site_ideal_hnc_prism_is_exact_fixed_point() -> None:
     transform = _transform(16)
     # ty: ignore[invalid-argument-type]
     mixture = pl.SiteMixturePlan(("A",), [0.2])
@@ -46,9 +43,6 @@ def test_one_site_ideal_hnc_prism_is_exact_fixed_point() -> None:
     )
     np.testing.assert_allclose(result.evaluation.oz.structure_factor, 1.0, atol=1.0e-13)
     assert np.all(np.asarray(result.evaluation.oz.linear_status) == 0)
-
-
-def test_multisite_sequence_form_factors_retain_symmetry_and_psd() -> None:
     wave = _transform(12).wave_numbers
     for kind in ("gaussian-chain", "freely-jointed-chain", "gaussian-ring"):
         # ty: ignore[invalid-argument-type]
@@ -59,7 +53,7 @@ def test_multisite_sequence_form_factors_retain_symmetry_and_psd() -> None:
         assert np.min(np.linalg.eigvalsh(np.asarray(omega))) >= -1.0e-12
 
 
-def test_prism_closures_enforce_domains_without_clipping() -> None:
+def test_prism_contracts() -> None:
     radii = jnp.asarray([0.25, 0.75, 1.25])
     gamma = jnp.full((1, 1, 3), 0.2)
     beta_potential = jnp.full((1, 1, 3), 0.4)
@@ -103,9 +97,6 @@ def test_prism_closures_enforce_domains_without_clipping() -> None:
     )
     assert not invalid.successful
     assert float(invalid.domain_margin) < 0.0
-
-
-def test_prism_implicit_root_and_density_continuation_retain_certification() -> None:
     transform = _transform(8)
     # ty: ignore[invalid-argument-type]
     mixture = pl.SiteMixturePlan(("A",), [0.1])

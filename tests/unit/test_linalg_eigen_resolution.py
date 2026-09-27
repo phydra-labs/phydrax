@@ -27,7 +27,7 @@ def _assert_successful(result: Any) -> None:
     assert jnp.max(result.diagnostics.left_relative_residuals) < 1e-8
 
 
-def test_homogeneous_resolution_matching_is_one_to_one_and_permutation_safe() -> None:
+def test_linalg_eigen_resolution_scenario_1() -> None:
     coarse = _general(jnp.diag(jnp.asarray([1.0, 2.0, 4.0])))
     fine = _general(jnp.diag(jnp.asarray([4.0, 1.0, 2.0 + 1e-9])))
     _assert_successful(coarse)
@@ -38,9 +38,6 @@ def test_homogeneous_resolution_matching_is_one_to_one_and_permutation_safe() ->
     assert report.trusted_count == 3
     assert len(set(np.asarray(report.fine_indices).tolist())) == 3
     assert jnp.max(report.chordal_distances) < 1e-8
-
-
-def test_homogeneous_resolution_matching_preserves_infinite_classification() -> None:
     matrix = jnp.diag(jnp.asarray([2.0, 3.0]))
     mass = jnp.diag(jnp.asarray([1.0, 0.0]))
     coarse = _general(matrix, mass)
@@ -52,9 +49,6 @@ def test_homogeneous_resolution_matching_preserves_infinite_classification() -> 
     assert report.matched_count == 2
     assert jnp.count_nonzero(report.homogeneous_classes == 1) == 1
     assert jnp.all(report.matched_mask)
-
-
-def test_repeated_cluster_is_not_certified_as_individual_modes() -> None:
     coarse = _general(jnp.diag(jnp.asarray([1.0, 1.0, 3.0])))
     fine = _general(jnp.diag(jnp.asarray([1.0, 1.0, 3.0])))
     _assert_successful(coarse)
@@ -64,9 +58,6 @@ def test_repeated_cluster_is_not_certified_as_individual_modes() -> None:
     ambiguous = int(phx.linalg.eigen.GeneralEigenMatchStatus.AMBIGUOUS_CLUSTER)
     assert jnp.count_nonzero(report.statuses == ambiguous) == 2
     assert report.trusted_count == 1
-
-
-def test_spectral_eigenspace_evidence_compares_transferred_modes() -> None:
     domain = phx.discretization.AxisDomain.periodic(0.0, 1.0)
     coarse = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(5),)
@@ -98,9 +89,6 @@ def test_spectral_eigenspace_evidence_compares_transferred_modes() -> None:
 
     assert report.trusted_count == coarse.num_modes
     assert jnp.max(report.subspace_errors) < 1e-10
-
-
-def test_spectral_eigenspace_evidence_rejects_non_tensor_transfer() -> None:
     domain = phx.discretization.AxisDomain.periodic(0.0, 1.0)
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(5),)

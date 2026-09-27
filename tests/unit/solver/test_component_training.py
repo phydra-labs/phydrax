@@ -96,7 +96,7 @@ def _work_objective(**options: Any) -> Any:
     )
 
 
-def test_mixed_closure_and_preconditioner_train_through_separate_objectives() -> None:
+def test_component_training_scenario_1() -> None:
     tree = {"closure": _Closure(0.2), "relaxation": _Relaxation(0.1)}
     rollout = _rollout_objective(component=lambda value: value["closure"])
     work = _work_objective(component=lambda value: value["relaxation"])
@@ -120,6 +120,14 @@ def test_mixed_closure_and_preconditioner_train_through_separate_objectives() ->
     with pytest.raises(ValueError, match="no admissible training signal for accelerator"):
         phx.solver.train_components(
             tree, (rollout,), optimizer=optax.adam(5e-2), steps=1, key=jr.key(1)
+        )
+    with pytest.raises(ValueError, match="KFAC forms its curvature"):
+        phx.solver.train_components(
+            _Relaxation(0.1),
+            (_work_objective(),),
+            optimizer=phx.optim.kfac(),
+            steps=1,
+            key=jr.key(0),
         )
 
 
@@ -269,14 +277,3 @@ def test_non_differentiable_component_trains_only_through_an_explicit_derivative
     assert result.accepted_updates == 30
     assert float(result.values[-1]) < 0.1 * float(result.values[0])
     assert bool(jnp.all(result.gradient_norms == 0.0))
-
-
-def test_kfac_is_refused_with_its_reason() -> None:
-    with pytest.raises(ValueError, match="KFAC forms its curvature"):
-        phx.solver.train_components(
-            _Relaxation(0.1),
-            (_work_objective(),),
-            optimizer=phx.optim.kfac(),
-            steps=1,
-            key=jr.key(0),
-        )

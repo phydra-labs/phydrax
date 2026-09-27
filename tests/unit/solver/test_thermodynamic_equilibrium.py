@@ -58,7 +58,7 @@ def _pr_model() -> Any:
     )
 
 
-def test_chemical_equilibrium_conserves_elements_and_decreases_gibbs() -> None:
+def test_thermodynamic_equilibrium_scenario_1() -> None:
     plan = phx.solver.ChemicalEquilibriumPlan(
         _ideal_model(), phx.solver.ChemicalEquilibriumEnsemble.TP
     )
@@ -70,9 +70,6 @@ def test_chemical_equilibrium_conserves_elements_and_decreases_gibbs() -> None:
     np.testing.assert_allclose(jnp.sum(result.species_amount), 1.0, atol=1.0e-8)
     assert result.species_amount[1] > initial[1]
     assert result.evidence.objective_change <= 1.0e-8
-
-
-def test_all_chemical_equilibrium_ensembles_retain_their_declared_constraint() -> None:
     model = _ideal_model(reference_energy=(0.0, 0.0))
     initial = jnp.asarray((0.5, 0.5))
     for ensemble in phx.solver.ChemicalEquilibriumEnsemble:
@@ -85,9 +82,6 @@ def test_all_chemical_equilibrium_ensembles_retain_their_declared_constraint() -
         np.testing.assert_allclose(
             result.evidence.conserved_property_residual, 0.0, atol=1e-5
         )
-
-
-def test_tpd_and_flash_return_fixed_shape_evidence() -> None:
     model = _pr_model()
     feed = jnp.asarray((0.5, 0.5))
     stability = phx.solver.TPDSearchPlan(model, maximum_steps=40, tolerance=1.0e-6).solve(

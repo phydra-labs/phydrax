@@ -27,7 +27,7 @@ def _dirichlet_boundaries() -> Any:
     return {"x": ("dirichlet", "dirichlet")}
 
 
-def test_harmonic_face_interpolation_preserves_discontinuous_material_flux() -> None:
+def test_conservative_fd_scenario_1() -> None:
     grid = _cell_grid(64)
     x = grid.axes[0].nodes
     coefficient = jnp.where(x < 0.5, 1.0, 10.0)
@@ -52,9 +52,6 @@ def test_harmonic_face_interpolation_preserves_discontinuous_material_flux() -> 
 
     np.testing.assert_allclose(action, 0.0, rtol=0.0, atol=3e-11)
     np.testing.assert_allclose(face_flux, flux, rtol=2e-12, atol=2e-12)
-
-
-def test_neumann_diffusion_is_globally_conservative_and_has_weighted_adjoint() -> None:
     grid = _cell_grid(47)
     x = grid.axes[0].nodes
     coefficient = 1.0 + x**2
@@ -75,9 +72,6 @@ def test_neumann_diffusion_is_globally_conservative_and_has_weighted_adjoint() -
         atol=2e-11,
     )
     np.testing.assert_allclose(left, right, rtol=2e-10, atol=2e-10)
-
-
-def test_full_anisotropic_tensor_diffusion_preserves_conservative_flux_balance() -> None:
     grid = phx.discretization.TensorGridPlan(
         (
             phx.discretization.UniformCellAxisSpec(24),
@@ -105,7 +99,7 @@ def test_full_anisotropic_tensor_diffusion_preserves_conservative_flux_balance()
     assert operator.stability_report.passed is None
 
 
-def test_periodic_conservative_and_skew_advection_preserve_mass_and_energy() -> None:
+def test_conservative_fd_scenario_2() -> None:
     grid = _cell_grid(96, periodic=True)
     velocity = (jnp.ones(grid.faces("x").shape),)
     x = grid.axes[0].nodes
@@ -137,6 +131,67 @@ def test_periodic_conservative_and_skew_advection_preserve_mass_and_energy() -> 
         atol=2e-12,
     )
     assert conservative.plan.plan_id != skew.plan.plan_id
+    grid = _cell_grid(32)
+    u = phx.equations.PDEExpression.field("u")
+    coefficient_expression = phx.equations.PDEExpression.parameter("a")
+    rhs = (coefficient_expression * u.gradient("x")).divergence("x")
+    problem = _conservative_problem(
+        rhs,
+        parameters=(phx.equations.PDEParameter("a", functional=True),),
+    )
+    compiled = phx.equations.compile_finite_difference_pde(problem, grid)
+    x = grid.axes[0].nodes
+    coefficient = 1.0 + x
+    state = x**2
+    explicit = phx.discretization.ConservativeDiffusionPlan(
+        grid,
+        boundaries=_dirichlet_boundaries(),
+    ).prepare(coefficient)
+
+    # ty: ignore[invalid-argument-type]
+    compiled_action = compiled(0.0, state, {"a": coefficient})
+    explicit_action = explicit.apply(
+        state,
+        boundary_values={"x": (0.0, 1.0)},
+    )
+
+    np.testing.assert_allclose(
+        compiled_action,
+        explicit_action,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    grid = _cell_grid(48)
+    u = phx.equations.PDEExpression.field("u")
+    velocity_expression = phx.equations.PDEExpression.parameter("velocity")
+    rhs = (velocity_expression * u).divergence("x")
+    problem = _conservative_problem(
+        rhs,
+        parameters=(phx.equations.PDEParameter("velocity", functional=True),),
+    )
+    compiled = phx.equations.compile_finite_difference_pde(problem, grid)
+    x = grid.axes[0].nodes
+    state = x * (1.0 - x)
+    velocity = jnp.ones(grid.shape + (1,))
+    explicit = phx.discretization.ConservativeAdvectionPlan(
+        grid,
+        form="conservative",
+        boundaries=_dirichlet_boundaries(),
+    ).prepare(velocity)
+
+    # ty: ignore[invalid-argument-type]
+    compiled_action = compiled(0.0, state, {"velocity": velocity})
+    explicit_action = explicit.apply(
+        state,
+        boundary_values={"x": (0.0, 1.0)},
+    )
+
+    np.testing.assert_allclose(
+        compiled_action,
+        explicit_action,
+        rtol=2e-12,
+        atol=2e-12,
+    )
 
 
 def _conservative_problem(rhs: Any, *, parameters: Any) -> Any:
@@ -181,71 +236,4 @@ def _conservative_problem(rhs: Any, *, parameters: Any) -> Any:
                 component="upper",
             ),
         ),
-    )
-
-
-def test_native_compiler_preserves_conservative_diffusion_expression_form() -> None:
-    grid = _cell_grid(32)
-    u = phx.equations.PDEExpression.field("u")
-    coefficient_expression = phx.equations.PDEExpression.parameter("a")
-    rhs = (coefficient_expression * u.gradient("x")).divergence("x")
-    problem = _conservative_problem(
-        rhs,
-        parameters=(phx.equations.PDEParameter("a", functional=True),),
-    )
-    compiled = phx.equations.compile_finite_difference_pde(problem, grid)
-    x = grid.axes[0].nodes
-    coefficient = 1.0 + x
-    state = x**2
-    explicit = phx.discretization.ConservativeDiffusionPlan(
-        grid,
-        boundaries=_dirichlet_boundaries(),
-    ).prepare(coefficient)
-
-    # ty: ignore[invalid-argument-type]
-    compiled_action = compiled(0.0, state, {"a": coefficient})
-    explicit_action = explicit.apply(
-        state,
-        boundary_values={"x": (0.0, 1.0)},
-    )
-
-    np.testing.assert_allclose(
-        compiled_action,
-        explicit_action,
-        rtol=2e-12,
-        atol=2e-12,
-    )
-
-
-def test_native_compiler_preserves_conservative_advection_expression_form() -> None:
-    grid = _cell_grid(48)
-    u = phx.equations.PDEExpression.field("u")
-    velocity_expression = phx.equations.PDEExpression.parameter("velocity")
-    rhs = (velocity_expression * u).divergence("x")
-    problem = _conservative_problem(
-        rhs,
-        parameters=(phx.equations.PDEParameter("velocity", functional=True),),
-    )
-    compiled = phx.equations.compile_finite_difference_pde(problem, grid)
-    x = grid.axes[0].nodes
-    state = x * (1.0 - x)
-    velocity = jnp.ones(grid.shape + (1,))
-    explicit = phx.discretization.ConservativeAdvectionPlan(
-        grid,
-        form="conservative",
-        boundaries=_dirichlet_boundaries(),
-    ).prepare(velocity)
-
-    # ty: ignore[invalid-argument-type]
-    compiled_action = compiled(0.0, state, {"velocity": velocity})
-    explicit_action = explicit.apply(
-        state,
-        boundary_values={"x": (0.0, 1.0)},
-    )
-
-    np.testing.assert_allclose(
-        compiled_action,
-        explicit_action,
-        rtol=2e-12,
-        atol=2e-12,
     )

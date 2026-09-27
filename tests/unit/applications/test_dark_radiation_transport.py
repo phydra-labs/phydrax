@@ -134,9 +134,7 @@ def _ledger() -> Any:
     return plan, result.accepted_ledger
 
 
-def test_ledger_adapter_creates_distinct_packet_state_with_explicit_frame_and_support() -> (
-    None
-):
+def test_dark_radiation_transport_scenario_1() -> None:
     _, frame, packet_plan = _setup()
     ledger_plan, ledger = _ledger()
     target = packet_plan.empty(frame, epoch_manifest_id="a" * 64)
@@ -158,9 +156,6 @@ def test_ledger_adapter_creates_distinct_packet_state_with_explicit_frame_and_su
     assert result.admission.accepted_state.frame_id == frame.frame_id
     assert result.admission.accepted_state.unit_contract_id == frame.units.contract_id
     np.testing.assert_allclose(result.evidence.four_momentum_defect, 0.0, atol=1e-7)
-
-
-def test_packet_moment_receipt_and_stress_energy_are_conservative() -> None:
     units, frame, packet_plan = _setup()
     ledger_plan, ledger = _ledger()
     state = (
@@ -211,9 +206,6 @@ def test_packet_moment_receipt_and_stress_energy_are_conservative() -> None:
     assert gravity.source_state_id == state.epoch_manifest_id
     np.testing.assert_allclose(gravity.projection.energy_density, 0.5)
     np.testing.assert_allclose(gravity.projection.stress_covariant[0, 0], 0.5)
-
-
-def test_hierarchy_gravity_requires_explicit_linearization_receipt() -> None:
     units, frame, _ = _setup()
     plan = DarkRadiationBoltzmannHierarchyPlan(
         jnp.asarray((0.2,)),

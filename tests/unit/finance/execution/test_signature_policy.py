@@ -51,7 +51,7 @@ def _policy() -> Any:
     )
 
 
-def test_signature_action_is_invariant_to_future_padding_but_uses_past_marks() -> None:
+def test_signature_policy_scenario_1() -> None:
     policy = _policy()
     times = jnp.asarray([0.0, 1.0, 2.0])
     reference = jnp.asarray([[0.0], [1.0], [100.0]])
@@ -63,9 +63,6 @@ def test_signature_action_is_invariant_to_future_padding_but_uses_past_marks() -
     changed_past = jnp.asarray([[0.0], [2.0], [-500.0]])
     assert policy.action(times, changed_past, jnp.asarray(2))[0] == 2.0
     assert policy.action(times, reference, jnp.asarray(2))[0] == 1.0
-
-
-def test_holdout_paths_and_independence_labels_must_be_disjoint_from_training() -> None:
     policy = _policy()
     holdout = SignaturePolicySampleSet(
         jnp.asarray([0.0, 1.0, 2.0]),

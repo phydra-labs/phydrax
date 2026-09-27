@@ -200,7 +200,7 @@ def _policy(**kwargs: Any) -> Any:
     )
 
 
-def test_future_aliases_share_one_canonical_target_normalizer() -> None:
+def test_operator_rollout_training_scenario_1() -> None:
     dataset = _dataset(cases=2)
     aliases = {"state_t1": "state", "state_t2": "state"}
     policy = phx.nn.operator.training.fit_operator_normalization(
@@ -224,9 +224,6 @@ def test_future_aliases_share_one_canonical_target_normalizer() -> None:
         restored.field("state_t2").values,
         dataset.targets.field("state_t2").values,
     )
-
-
-def test_feedback_reprepares_with_source_not_target_normalization() -> None:
     values = jnp.full((1, 4), 14.0)
     batch = _batch(values)
     normalizer = phx.nn.operator.training.AffineNormalizer
@@ -260,22 +257,6 @@ def test_feedback_reprepares_with_source_not_target_normalization() -> None:
 
     assert jnp.allclose(rollout.predictions[0].field("state").values, 110.0)
     assert jnp.allclose(rollout.predictions[1].field("state").values, 350.0)
-
-
-def _zero_envelope(coordinates: Any, batch: Any, *, key: Any) -> float:
-    del coordinates, batch, key
-    return 0.0
-
-
-def _state_plus_control(coordinates: Any, batch: Any, *, key: Any) -> Any:
-    del coordinates, key
-    state = batch.input("state").values
-    control = batch.input("control").values
-    assert state is not None and control is not None
-    return state + control
-
-
-def test_constrained_feedback_and_static_conditioning_recur_on_step_two() -> None:
     state = jnp.zeros((2, 4))
     control = jnp.stack((jnp.ones((4,)), jnp.full((4,), 2.0)))
     batch = _batch(state, control=control)
@@ -307,7 +288,20 @@ def test_constrained_feedback_and_static_conditioning_recur_on_step_two() -> Non
     assert jnp.array_equal(rollout.final_batch.input("control").values, control)
 
 
-def test_route_rejects_independent_or_mismatched_support_and_multiple_routes() -> None:
+def _zero_envelope(coordinates: Any, batch: Any, *, key: Any) -> float:
+    del coordinates, batch, key
+    return 0.0
+
+
+def _state_plus_control(coordinates: Any, batch: Any, *, key: Any) -> Any:
+    del coordinates, key
+    state = batch.input("state").values
+    control = batch.input("control").values
+    assert state is not None and control is not None
+    return state + control
+
+
+def test_operator_rollout_training_scenario_2() -> None:
     values = jnp.ones((1, 4))
     route = _route()
     independent = _trained(_StateOperator(), _task(independent=True))
@@ -347,9 +341,6 @@ def test_route_rejects_independent_or_mismatched_support_and_multiple_routes() -
             # ty: ignore[invalid-argument-type]
             (route, route),
         )
-
-
-def test_masked_future_nans_are_sanitized_before_rollout_residuals() -> None:
     mask = jnp.asarray([True, True, True, False])
     result = phx.nn.operator.training.fit_operator(
         _StateOperator(1.5),
@@ -370,14 +361,6 @@ def test_masked_future_nans_are_sanitized_before_rollout_residuals() -> None:
 
     assert jnp.isfinite(result.initial_loss)
     assert result.initial_loss == 0.0
-
-
-def _prediction_energy(prediction: Any, batch: Any, targets: Any, **kwargs: Any) -> Any:
-    del batch, targets, kwargs
-    return jnp.mean(prediction.field("state").values ** 2)
-
-
-def test_residual_recurrence_has_gradients_and_honors_bptt_rematerialization() -> None:
     empty = phx.nn.operator.OperatorTargetBatch(
         {},
         case_axes=("case",),
@@ -421,7 +404,12 @@ def test_residual_recurrence_has_gradients_and_honors_bptt_rematerialization() -
     assert jax.jit(schedule.active_horizon)(jnp.asarray(6)) == 4
 
 
-def test_rollout_updates_are_batch_and_accumulation_invariant() -> None:
+def _prediction_energy(prediction: Any, batch: Any, targets: Any, **kwargs: Any) -> Any:
+    del batch, targets, kwargs
+    return jnp.mean(prediction.field("state").values ** 2)
+
+
+def test_operator_rollout_training_scenario_3() -> None:
     dataset = _dataset(cases=4)
     common = {
         "task": _task(),
@@ -462,9 +450,6 @@ def test_rollout_updates_are_batch_and_accumulation_invariant() -> None:
         full.history.train_metrics[0]["loss"],
         accumulated.history.train_metrics[0]["loss"],
     )
-
-
-def test_full_prefix_and_chunk_rollouts_share_semantic_step_keys() -> None:
     batch = _batch(jnp.zeros((1, 4)))
     trained = _trained(_StateOperator(keyed=True), _task())
     key = jr.key(19)
@@ -499,9 +484,6 @@ def test_full_prefix_and_chunk_rollouts_share_semantic_step_keys() -> None:
         )
     assert prefix.next_step == 2
     assert suffix.next_step == full.next_step == 4
-
-
-def test_fit_and_deployment_use_the_same_recurrent_physical_pipeline() -> None:
     dataset = _dataset(cases=2)
     result = phx.nn.operator.training.fit_operator(
         _StateOperator(1.5),

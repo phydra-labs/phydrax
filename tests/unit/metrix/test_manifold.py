@@ -54,7 +54,7 @@ def _manifold_cases() -> Any:
     )
 
 
-def test_manifold_contract_is_public_and_abstract() -> None:
+def test_manifold_scenario_1() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[call-non-callable, missing-argument]
         phx.metrix.AbstractRiemannianManifold()
@@ -70,66 +70,63 @@ def test_manifold_contract_is_public_and_abstract() -> None:
     ):
         assert symbol in phx.metrix.__all__
         assert getattr(phx.metrix, symbol) is not None
+    for manifold, point, ambient in _manifold_cases():
+        tangent = manifold.project_tangent(point, ambient)
+        cotangent = 0.7 - 0.3 * ambient
+        rgradient = manifold.egrad_to_rgrad(point, cotangent)
 
+        metric_pairing = manifold.inner(point, rgradient, tangent)
+        ambient_pairing = jnp.real(jnp.vdot(cotangent, tangent))
+        assert jnp.allclose(metric_pairing, ambient_pairing, rtol=2e-9, atol=2e-9)
 
-@pytest.mark.parametrize("manifold,point,ambient", _manifold_cases())
-def test_manifold_metric_retraction_and_transport_laws(
-    manifold: Any, point: Any, ambient: Any
-) -> None:
-    tangent = manifold.project_tangent(point, ambient)
-    cotangent = 0.7 - 0.3 * ambient
-    rgradient = manifold.egrad_to_rgrad(point, cotangent)
+        projected_twice = manifold.project_tangent(point, tangent)
+        assert jnp.allclose(projected_twice, tangent, rtol=2e-9, atol=2e-9)
 
-    metric_pairing = manifold.inner(point, rgradient, tangent)
-    ambient_pairing = jnp.real(jnp.vdot(cotangent, tangent))
-    assert jnp.allclose(metric_pairing, ambient_pairing, rtol=2e-9, atol=2e-9)
+        step = 0.03 * tangent
+        destination = jax.jit(manifold.retract)(point, step)
+        assert bool(manifold.contains(destination))
+        assert jnp.asarray(manifold.constraint_residual(destination)).shape == ()
+        assert jnp.asarray(manifold.norm(point, tangent)).shape == ()
 
-    projected_twice = manifold.project_tangent(point, tangent)
-    assert jnp.allclose(projected_twice, tangent, rtol=2e-9, atol=2e-9)
+        _, derivative = jax.jvp(
+            lambda value: manifold.retract(point, value),
+            (jnp.zeros_like(tangent),),
+            (tangent,),
+        )
+        assert jnp.allclose(derivative, tangent, rtol=2e-8, atol=2e-8)
 
-    step = 0.03 * tangent
-    destination = jax.jit(manifold.retract)(point, step)
-    assert bool(manifold.contains(destination))
-    assert jnp.asarray(manifold.constraint_residual(destination)).shape == ()
-    assert jnp.asarray(manifold.norm(point, tangent)).shape == ()
+        transported = jax.jit(manifold.transport)(point, step, destination, tangent)
+        target_projection = manifold.project_tangent(destination, transported)
+        assert jnp.allclose(target_projection, transported, rtol=2e-8, atol=2e-8)
+        zero_transport = manifold.transport(
+            point,
+            jnp.zeros_like(tangent),
+            point,
+            tangent,
+        )
+        assert jnp.allclose(zero_transport, tangent, rtol=2e-9, atol=2e-9)
+    with pytest.raises(ValueError, match="at least two"):
+        phx.metrix.SphereManifold(1)
+    with pytest.raises(ValueError, match="must not exceed"):
+        phx.metrix.StiefelManifold(2, 3)
+    with pytest.raises(ValueError, match="strictly less"):
+        phx.metrix.GrassmannManifold(2, 2)
+    with pytest.raises(ValueError, match="trailing shape"):
+        phx.metrix.SphereManifold(3).contains(jnp.ones((2,)))
+    for method in ["exponential", "cayley"]:
+        manifold = phx.metrix.SpecialOrthogonalManifold(3, retraction=method)
+        state_geometry = phx.metrix.SpecialOrthogonalStateGeometry(3, retraction=method)
+        point = jnp.eye(3)
+        ambient = jnp.array([[0.0, -0.3, 0.2], [0.3, 0.0, -0.1], [-0.2, 0.1, 0.0]])
+        tangent = manifold.project_tangent(point, ambient)
+        local = state_geometry.to_local(point, tangent)
 
-    _, derivative = jax.jvp(
-        lambda value: manifold.retract(point, value),
-        (jnp.zeros_like(tangent),),
-        (tangent,),
-    )
-    assert jnp.allclose(derivative, tangent, rtol=2e-8, atol=2e-8)
-
-    transported = jax.jit(manifold.transport)(point, step, destination, tangent)
-    target_projection = manifold.project_tangent(destination, transported)
-    assert jnp.allclose(target_projection, transported, rtol=2e-8, atol=2e-8)
-    zero_transport = manifold.transport(
-        point,
-        jnp.zeros_like(tangent),
-        point,
-        tangent,
-    )
-    assert jnp.allclose(zero_transport, tangent, rtol=2e-9, atol=2e-9)
-
-
-@pytest.mark.parametrize("method", ["exponential", "cayley"])
-def test_so_manifold_delegates_existing_state_retraction(method: Any) -> None:
-    manifold = phx.metrix.SpecialOrthogonalManifold(3, retraction=method)
-    state_geometry = phx.metrix.SpecialOrthogonalStateGeometry(3, retraction=method)
-    point = jnp.eye(3)
-    ambient = jnp.array([[0.0, -0.3, 0.2], [0.3, 0.0, -0.1], [-0.2, 0.1, 0.0]])
-    tangent = manifold.project_tangent(point, ambient)
-    local = state_geometry.to_local(point, tangent)
-
-    assert jnp.allclose(
-        manifold.retract(point, tangent),
-        state_geometry.retract(point, local),
-    )
-    assert manifold.transport_method == "tangent-projection"
-    assert not manifold.transport_is_parallel
-
-
-def test_spd_metric_gradient_and_transport_are_affine_invariant() -> None:
+        assert jnp.allclose(
+            manifold.retract(point, tangent),
+            state_geometry.retract(point, local),
+        )
+        assert manifold.transport_method == "tangent-projection"
+        assert not manifold.transport_is_parallel
     manifold = phx.metrix.AffineInvariantSPDManifold(3)
     point = jnp.array([[2.0, 0.2, -0.1], [0.2, 1.4, 0.15], [-0.1, 0.15, 1.1]])
     left = manifold.project_tangent(
@@ -156,7 +153,7 @@ def test_spd_metric_gradient_and_transport_are_affine_invariant() -> None:
     assert jnp.all(jnp.linalg.eigvalsh(destination) > 0.0)
 
 
-def test_grassmann_operations_are_invariant_under_basis_change() -> None:
+def test_manifold_scenario_2() -> None:
     manifold = phx.metrix.GrassmannManifold(5, 2)
     point = _orthonormal(5, 2)
     rotation = jnp.array([[0.0, -1.0], [1.0, 0.0]])
@@ -175,9 +172,6 @@ def test_grassmann_operations_are_invariant_under_basis_change() -> None:
         transformed_destination @ transformed_destination.T,
         atol=2e-9,
     )
-
-
-def test_manifolds_support_leading_product_axes() -> None:
     sphere = phx.metrix.SphereManifold(3)
     points = jnp.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     ambient = jnp.array([[0.0, 0.2, -0.1], [0.3, 0.0, 0.4]])
@@ -194,14 +188,3 @@ def test_manifolds_support_leading_product_axes() -> None:
     updated = stiefel.retract(matrices, 0.01 * projected)
     assert bool(stiefel.contains(updated))
     assert updated.shape == matrices.shape
-
-
-def test_manifold_constructor_and_shape_failures_are_explicit() -> None:
-    with pytest.raises(ValueError, match="at least two"):
-        phx.metrix.SphereManifold(1)
-    with pytest.raises(ValueError, match="must not exceed"):
-        phx.metrix.StiefelManifold(2, 3)
-    with pytest.raises(ValueError, match="strictly less"):
-        phx.metrix.GrassmannManifold(2, 2)
-    with pytest.raises(ValueError, match="trailing shape"):
-        phx.metrix.SphereManifold(3).contains(jnp.ones((2,)))

@@ -55,7 +55,7 @@ def _resolve(
     )
 
 
-def test_accelerator_admission_uses_accelerator_count_and_attested_device_facts() -> None:
+def test_execution_resource_admission_scenario_1() -> None:
     inventory = ResourceInventory(
         1,
         0,
@@ -84,9 +84,6 @@ def test_accelerator_admission_uses_accelerator_count_and_attested_device_facts(
 
     assert plan.group is not None
     assert plan.group.device_count == 1
-
-
-def test_unknown_required_component_budget_fails_closed() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
     request = ResourceRequest(1, 4_096, maximum_device_bytes=2_048)
 
@@ -94,9 +91,6 @@ def test_unknown_required_component_budget_fails_closed() -> None:
         ExecutionAdmissionError, match="lacks required per-device memory evidence"
     ):
         _resolve(inventory, _candidate(inventory), request)
-
-
-def test_complete_component_and_capability_evidence_is_admitted() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
     evidence = ExecutionResourceEvidence(
         per_device_peak_bytes=1_000,
@@ -130,7 +124,7 @@ def test_complete_component_and_capability_evidence_is_admitted() -> None:
     assert plan.resource_evidence == evidence
 
 
-def test_resource_evidence_changes_candidate_and_plan_serialization_identity() -> None:
+def test_execution_resource_admission_scenario_2() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
     first_evidence = ExecutionResourceEvidence(output_backlog_bytes=64)
     second_evidence = ExecutionResourceEvidence(output_backlog_bytes=65)
@@ -151,9 +145,6 @@ def test_resource_evidence_changes_candidate_and_plan_serialization_identity() -
     assert restored.resource_evidence == first_evidence
     assert restored_request.resource_id == request.resource_id
     assert different_request.resource_id != request.resource_id
-
-
-def test_legacy_cpu_request_without_extra_evidence_remains_valid() -> None:
     inventory = ResourceInventory(1, 0, (DeviceResource(0, 0, 0, "cpu", "cpu"),))
 
     plan = _resolve(
@@ -163,6 +154,19 @@ def test_legacy_cpu_request_without_extra_evidence_remains_valid() -> None:
     )
 
     assert plan.resource_evidence is None
+    hosts = tuple((process, "node-a") for process in range(4))
+    inventory = ResourceInventory(
+        4,
+        0,
+        tuple(DeviceResource(process, process, 0, "cpu", "cpu") for process in range(4)),
+        process_host_ids=hosts,
+    )
+
+    with pytest.raises(ExecutionAdmissionError, match="fewer distinct hosts"):
+        _resolve_distributed_hosts(
+            inventory,
+            _distributed_host_candidate(inventory, hosts),
+        )
 
 
 def _distributed_host_candidate(
@@ -203,23 +207,7 @@ def _resolve_distributed_hosts(
     )
 
 
-def test_multiprocess_single_host_does_not_satisfy_multihost_request() -> None:
-    hosts = tuple((process, "node-a") for process in range(4))
-    inventory = ResourceInventory(
-        4,
-        0,
-        tuple(DeviceResource(process, process, 0, "cpu", "cpu") for process in range(4)),
-        process_host_ids=hosts,
-    )
-
-    with pytest.raises(ExecutionAdmissionError, match="fewer distinct hosts"):
-        _resolve_distributed_hosts(
-            inventory,
-            _distributed_host_candidate(inventory, hosts),
-        )
-
-
-def test_true_multihost_mapping_is_bound_and_admitted() -> None:
+def test_execution_resource_admission_scenario_3() -> None:
     hosts = (
         (0, "node-a"),
         (1, "node-a"),
@@ -242,9 +230,6 @@ def test_true_multihost_mapping_is_bound_and_admitted() -> None:
     assert plan.group is not None
     assert plan.group.process_host_ids == hosts
     assert restored.group == plan.group
-
-
-def test_unattested_multiprocess_host_placement_fails_closed() -> None:
     inventory = ResourceInventory(
         4,
         0,

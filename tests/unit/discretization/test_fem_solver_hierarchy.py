@@ -66,7 +66,7 @@ def _dense_endomorphism(matrix: Any, space: Any) -> Any:
     )
 
 
-def test_p_transfer_keeps_dual_pairing_and_physical_mass_roles_distinct() -> None:
+def test_fem_solver_hierarchy_scenario_1() -> None:
     coarse = ReferenceNodalFamily("quadrilateral", 1).finite_element()
     fine = ReferenceNodalFamily("quadrilateral", 2).finite_element()
     coarse_pairing = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
@@ -101,22 +101,6 @@ def test_p_transfer_keeps_dual_pairing_and_physical_mass_roles_distinct() -> Non
     )
     # ty: ignore[invalid-argument-type]
     assert not jnp.allclose(transfer.pairing_adjoint, transfer.mass_projection)
-
-
-def test_anisotropic_p_transfer_accepts_nested_axes_and_rejects_axis_coarsening() -> None:
-    coarse = ReferenceNodalFamily("quadrilateral", (2, 3))
-    fine = ReferenceNodalFamily("quadrilateral", (2, 5))
-    transfer = quadrilateral_p_transfer(coarse, fine)
-
-    assert transfer.primal_prolongation.shape == (18, 12)
-    with pytest.raises(ValueError, match="nested axis orders"):
-        quadrilateral_p_transfer(
-            coarse,
-            ReferenceNodalFamily("quadrilateral", (1, 5)),
-        )
-
-
-def test_p_multigrid_selects_direct_or_galerkin_coarse_operators() -> None:
     fine_space = ArraySpace((4,))
     coarse_space = ArraySpace((2,))
     fine_matrix = jnp.diag(jnp.asarray([2.0, 3.0, 4.0, 5.0]))
@@ -177,9 +161,27 @@ def test_p_multigrid_selects_direct_or_galerkin_coarse_operators() -> None:
         coarse,
         prolongation_matrix.T @ fine_matrix @ prolongation_matrix,
     )
+    coarse = ReferenceNodalFamily("quadrilateral", (2, 3))
+    fine = ReferenceNodalFamily("quadrilateral", (2, 5))
+    transfer = quadrilateral_p_transfer(coarse, fine)
 
+    assert transfer.primal_prolongation.shape == (18, 12)
+    with pytest.raises(ValueError, match="nested axis orders"):
+        quadrilateral_p_transfer(
+            coarse,
+            ReferenceNodalFamily("quadrilateral", (1, 5)),
+        )
+    fine_order = (15, 5, 3)
+    sequence = FiniteElementPMultigridPolicy("half-dofs").degree_sequence(
+        "hexahedron",
+        fine_order,
+    )
+    counts = tuple(_local_dof_count("hexahedron", order) for order in sequence)
 
-def test_tensor_fast_diagonalization_matches_dense_separable_solve() -> None:
+    assert sequence[0] == fine_order
+    assert sequence[-1] == (1, 1, 1)
+    assert all(left > right for left, right in zip(counts, counts[1:]))
+    assert len(sequence) <= 1 + sum(value - 1 for value in fine_order)
     axis = ArraySpace((2,))
     mass_x_values = jnp.asarray([2.0, 3.0])
     mass_y_values = jnp.asarray([5.0, 7.0])
@@ -226,7 +228,7 @@ def test_tensor_fast_diagonalization_matches_dense_separable_solve() -> None:
     assert jnp.allclose(preconditioner.apply(right_hand_side), dense.value)
 
 
-def test_one_ring_schwarz_weights_form_partition_of_unity() -> None:
+def test_fem_solver_hierarchy_scenario_2() -> None:
     plan = FiniteElementPatchPlan(
         jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32),
         jnp.ones((2, 2), dtype="bool"),
@@ -244,9 +246,6 @@ def test_one_ring_schwarz_weights_form_partition_of_unity() -> None:
 
     assert plan.partition_residual == 0.0
     assert jnp.allclose(preconditioner.apply(value), value)
-
-
-def test_low_order_auxiliary_builder_uses_generic_subspace_correction() -> None:
     high = ArraySpace((3,))
     low = ArraySpace((3,))
     high_to_low = DenseLinearOperator(
@@ -275,17 +274,3 @@ def test_low_order_auxiliary_builder_uses_generic_subspace_correction() -> None:
     value = jnp.asarray([1.0, -2.0, 3.0])
 
     assert jnp.allclose(preconditioner.apply(value), value)
-
-
-def test_anisotropic_half_dof_hierarchy_is_strict_and_bounded() -> None:
-    fine_order = (15, 5, 3)
-    sequence = FiniteElementPMultigridPolicy("half-dofs").degree_sequence(
-        "hexahedron",
-        fine_order,
-    )
-    counts = tuple(_local_dof_count("hexahedron", order) for order in sequence)
-
-    assert sequence[0] == fine_order
-    assert sequence[-1] == (1, 1, 1)
-    assert all(left > right for left, right in zip(counts, counts[1:]))
-    assert len(sequence) <= 1 + sum(value - 1 for value in fine_order)

@@ -32,7 +32,7 @@ def _compiled(count: Any = 4) -> Any:
     return compiled, compiled.project_state(velocity)
 
 
-def test_adaptive_rollout_replay_and_terminal_derivatives_are_certified() -> None:
+def test_mac_adaptive_sensitivity_scenario_1() -> None:
     compiled, state = _compiled()
     method = phx.solver.SSPRK33FixedStepMethod(compiled)
     controller = phx.solver.MACCompositeStepController(compiled, safety_factor=0.8)
@@ -66,9 +66,6 @@ def test_adaptive_rollout_replay_and_terminal_derivatives_are_certified() -> Non
     assert vjp.successful
     assert jnp.all(jnp.isfinite(jvp.terminal_tangent))
     assert jnp.all(jnp.isfinite(vjp.initial_state_cotangent))
-
-
-def test_adaptive_continuation_stops_at_remaining_grid_capacity() -> None:
     compiled, state = _compiled()
     plan = phx.solver.MACAdaptiveRolloutPlan(
         compiled,
@@ -89,9 +86,6 @@ def test_adaptive_continuation_stops_at_remaining_grid_capacity() -> None:
         continued.time,
         continued.grid_times[continued.accepted_step_count],
     )
-
-
-def test_segmented_shadowing_returns_explicit_certification_status() -> None:
     compiled, state = _compiled()
     method = phx.solver.SSPRK33FixedStepMethod(compiled)
     controller = phx.solver.MACCompositeStepController(compiled)

@@ -20,7 +20,7 @@ def _grid(count: Any = 9) -> Any:
     ).prepare(jnp.asarray([[-1.4, -1.4, -1.4], [1.4, 1.4, 1.4]]))
 
 
-def test_dual_surface_has_static_watertight_topology_and_dynamic_coordinates() -> None:
+def test_implicit_surface_scenario_1() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0),
         0.75,
@@ -49,6 +49,18 @@ def test_dual_surface_has_static_watertight_topology_and_dynamic_coordinates() -
     mesh = moved.to_triangle_mesh()
     assert mesh.topology.watertight
     assert mesh.topology.num_face_components == 1
+    geometry = phx.geometry.Sphere(
+        (0.0, 0.0, 0.0),
+        0.7,
+        feature_id="sphere",
+    ).compile()
+
+    with pytest.raises(ValueError, match="ambiguous zero"):
+        phx.geometry.discover_implicit_surface(
+            geometry,
+            _grid(),
+            source_id="ambiguous",
+        )
 
 
 def test_dual_surface_derivative_and_refresh_status_are_explicit() -> None:
@@ -80,18 +92,3 @@ def test_dual_surface_derivative_and_refresh_status_are_explicit() -> None:
     assert not bool(expired.accepted)
     assert bool(expired.refresh_required)
     assert jnp.array_equal(expired.vertices, plan.base_vertices)
-
-
-def test_ambiguous_lattice_zero_fails_closed() -> None:
-    geometry = phx.geometry.Sphere(
-        (0.0, 0.0, 0.0),
-        0.7,
-        feature_id="sphere",
-    ).compile()
-
-    with pytest.raises(ValueError, match="ambiguous zero"):
-        phx.geometry.discover_implicit_surface(
-            geometry,
-            _grid(),
-            source_id="ambiguous",
-        )

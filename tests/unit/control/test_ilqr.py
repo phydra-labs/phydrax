@@ -23,7 +23,7 @@ from tests._control_systems import (
 )
 
 
-def test_ilqr_policy_feedback_uses_quaternion_pose_local_error() -> None:
+def test_ilqr_scenario_1() -> None:
     geometry = phx.metrix.QuaternionPoseStateGeometry()
     local_space = phx.linalg.ArraySpace((6,), dtype=jnp.float32)
     state_layout = phx.dynamics.StateLayout(
@@ -57,6 +57,114 @@ def test_ilqr_policy_feedback_uses_quaternion_pose_local_error() -> None:
     np.testing.assert_allclose(nominal, jnp.asarray([0.3]))
     np.testing.assert_allclose(equivalent, nominal)
     assert policy.feedback.shape == (1, 1, 6)
+    for kind in ["pendulum", "cartpole"]:
+        problem = _nonlinear_problem(kind)
+        result = solve_ilqr(
+            problem,
+            jnp.zeros((problem.time_grid.num_steps, 1)),
+            max_iterations=12,
+            regularization=1e-4,
+            gradient_tolerance=1e-5,
+        )
+
+        history = np.asarray(result.diagnostics.objective_history)
+        assert int(result.diagnostics.accepted_iterations) > 0
+        assert history[-1] < history[0]
+        assert np.all(np.diff(history) < 0.0)
+        assert np.all(np.isfinite(result.trajectory.states))
+        assert np.all(np.isfinite(result.trajectory.controls))
+    problem = _problem(
+        lambda time, state, control, args: state,
+        jnp.array([0.0, 1.0, 2.0]),
+        jnp.array([0.0]),
+        lambda time, state, control, args: -0.5 * control[0] ** 2,
+        None,
+        state_shape=(1,),
+        control_shape=(1,),
+        problem_id="ilqr-indefinite",
+    )
+    result = solve_ilqr(problem, jnp.zeros((2, 1)), regularization=0.0)
+
+    assert int(result.status) == ILQRStatus.BACKWARD_PASS_NOT_POSITIVE_DEFINITE
+    assert int(result.diagnostics.failed_step) == 1
+    assert result.diagnostics.regularized_minimum_curvature_history[0] < 0.0
+    assert not bool(result.successful)
+    problem = _problem(
+        lambda time, state, control, args: state,
+        jnp.array([0.0, 1.0, 2.0]),
+        jnp.array([0.0]),
+        lambda time, state, control, args: (control[0] - 1.0) ** 4,
+        None,
+        state_shape=(1,),
+        control_shape=(1,),
+        problem_id="ilqr-line-search-rejection",
+    )
+    initial = jnp.zeros((2, 1))
+    result = solve_ilqr(
+        problem,
+        initial,
+        regularization=0.0,
+        initial_step_size=10.0,
+        line_search_steps=1,
+    )
+
+    assert int(result.status) == ILQRStatus.LINE_SEARCH_FAILED
+    assert int(result.diagnostics.line_search_evaluations_history[-1]) == 1
+    np.testing.assert_array_equal(result.trajectory.controls, initial)
+    assert not bool(result.successful)
+    problem = _nonlinear_problem("pendulum")
+    initial = jnp.zeros((problem.time_grid.num_steps, 1))
+    first = solve_ilqr(problem, initial, max_iterations=8, regularization=1e-4)
+    second = solve_ilqr(problem, initial, max_iterations=8, regularization=1e-4)
+
+    np.testing.assert_array_equal(first.trajectory.states, second.trajectory.states)
+    np.testing.assert_array_equal(first.trajectory.controls, second.trajectory.controls)
+    np.testing.assert_array_equal(
+        first.diagnostics.objective_history, second.diagnostics.objective_history
+    )
+    replay = problem.rollout(first.policy, jnp.empty((0,)))
+    assert bool(replay.successful)
+    np.testing.assert_allclose(
+        replay.states, first.trajectory.states, rtol=2e-6, atol=2e-6
+    )
+    np.testing.assert_allclose(
+        replay.controls, first.trajectory.controls, rtol=2e-6, atol=2e-6
+    )
+    grid = phx.dynamics.TimeGrid(
+        jnp.array([0.0, 0.5, 1.0, 1.5]), time_id="failed-flow-time"
+    )
+    dynamics = make_differential_control_dynamics(
+        lambda time, state, control, args: -state + control,
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="failed-flow-dynamics",
+    )
+    problem = phx.control.ControlProblem(
+        dynamics,
+        grid,
+        jnp.array([1.0]),
+        running_cost=lambda time, state, control, args: state[0] ** 2 + control[0] ** 2,
+        problem_id="failed-flow-problem",
+    )
+    controls = jnp.zeros((3, 1))
+    with pytest.raises(ValueError, match="explicit DifferentialControlFlow"):
+        solve_ilqr(problem, controls)
+
+    flow = DifferentialControlFlow(
+        lambda t0, t1, state, control, args: jnp.where(
+            t0 >= 0.5,
+            jnp.full_like(state, jnp.nan),
+            state + (t1 - t0) * (-state + control),
+        ),
+        flow_id="selected-euler-that-reports-failure",
+    )
+    result = solve_ilqr(problem, controls, differential_flow=flow)
+
+    assert int(result.status) == ILQRStatus.INITIAL_ROLLOUT_FAILED
+    assert int(result.diagnostics.failed_step) == 1
+    assert not bool(result.trajectory.successful)
+    assert result.trajectory.discretization_id == flow.flow_id
+    assert not bool(result.control_result.sampled_loss.valid)
 
 
 def _problem(
@@ -271,25 +379,6 @@ def _nonlinear_problem(kind: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize("kind", ["pendulum", "cartpole"])
-def test_ilqr_improves_nonlinear_pendulum_and_cartpole(kind: Any) -> None:
-    problem = _nonlinear_problem(kind)
-    result = solve_ilqr(
-        problem,
-        jnp.zeros((problem.time_grid.num_steps, 1)),
-        max_iterations=12,
-        regularization=1e-4,
-        gradient_tolerance=1e-5,
-    )
-
-    history = np.asarray(result.diagnostics.objective_history)
-    assert int(result.diagnostics.accepted_iterations) > 0
-    assert history[-1] < history[0]
-    assert np.all(np.diff(history) < 0.0)
-    assert np.all(np.isfinite(result.trajectory.states))
-    assert np.all(np.isfinite(result.trajectory.controls))
-
-
 def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient() -> None:
     dt = 0.2
     horizon = 6
@@ -339,65 +428,6 @@ def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient() -> None:
     )
 
 
-def test_ilqr_rejects_non_positive_definite_backward_pass_without_fallback() -> None:
-    problem = _problem(
-        lambda time, state, control, args: state,
-        jnp.array([0.0, 1.0, 2.0]),
-        jnp.array([0.0]),
-        lambda time, state, control, args: -0.5 * control[0] ** 2,
-        None,
-        state_shape=(1,),
-        control_shape=(1,),
-        problem_id="ilqr-indefinite",
-    )
-    result = solve_ilqr(problem, jnp.zeros((2, 1)), regularization=0.0)
-
-    assert int(result.status) == ILQRStatus.BACKWARD_PASS_NOT_POSITIVE_DEFINITE
-    assert int(result.diagnostics.failed_step) == 1
-    assert result.diagnostics.regularized_minimum_curvature_history[0] < 0.0
-    assert not bool(result.successful)
-
-
-def test_differential_ilqr_requires_selected_flow_and_propagates_failed_integration() -> (
-    None
-):
-    grid = phx.dynamics.TimeGrid(
-        jnp.array([0.0, 0.5, 1.0, 1.5]), time_id="failed-flow-time"
-    )
-    dynamics = make_differential_control_dynamics(
-        lambda time, state, control, args: -state + control,
-        state_shape=(1,),
-        control_shape=(1,),
-        dynamics_id="failed-flow-dynamics",
-    )
-    problem = phx.control.ControlProblem(
-        dynamics,
-        grid,
-        jnp.array([1.0]),
-        running_cost=lambda time, state, control, args: state[0] ** 2 + control[0] ** 2,
-        problem_id="failed-flow-problem",
-    )
-    controls = jnp.zeros((3, 1))
-    with pytest.raises(ValueError, match="explicit DifferentialControlFlow"):
-        solve_ilqr(problem, controls)
-
-    flow = DifferentialControlFlow(
-        lambda t0, t1, state, control, args: jnp.where(
-            t0 >= 0.5,
-            jnp.full_like(state, jnp.nan),
-            state + (t1 - t0) * (-state + control),
-        ),
-        flow_id="selected-euler-that-reports-failure",
-    )
-    result = solve_ilqr(problem, controls, differential_flow=flow)
-
-    assert int(result.status) == ILQRStatus.INITIAL_ROLLOUT_FAILED
-    assert int(result.diagnostics.failed_step) == 1
-    assert not bool(result.trajectory.successful)
-    assert result.trajectory.discretization_id == flow.flow_id
-    assert not bool(result.control_result.sampled_loss.valid)
-
-
 def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence() -> None:
     failure_status = 59
 
@@ -435,52 +465,3 @@ def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence()
     np.testing.assert_array_equal(evidence.attempted, jnp.asarray([True, False]))
     assert int(evidence.first_failure_step) == 0
     assert int(evidence.first_failure_status) == failure_status
-
-
-def test_ilqr_reports_line_search_rejection_without_changing_nominal_controls() -> None:
-    problem = _problem(
-        lambda time, state, control, args: state,
-        jnp.array([0.0, 1.0, 2.0]),
-        jnp.array([0.0]),
-        lambda time, state, control, args: (control[0] - 1.0) ** 4,
-        None,
-        state_shape=(1,),
-        control_shape=(1,),
-        problem_id="ilqr-line-search-rejection",
-    )
-    initial = jnp.zeros((2, 1))
-    result = solve_ilqr(
-        problem,
-        initial,
-        regularization=0.0,
-        initial_step_size=10.0,
-        line_search_steps=1,
-    )
-
-    assert int(result.status) == ILQRStatus.LINE_SEARCH_FAILED
-    assert int(result.diagnostics.line_search_evaluations_history[-1]) == 1
-    np.testing.assert_array_equal(result.trajectory.controls, initial)
-    assert not bool(result.successful)
-
-
-def test_ilqr_is_deterministic_and_policy_rolls_out_through_public_control_problem() -> (
-    None
-):
-    problem = _nonlinear_problem("pendulum")
-    initial = jnp.zeros((problem.time_grid.num_steps, 1))
-    first = solve_ilqr(problem, initial, max_iterations=8, regularization=1e-4)
-    second = solve_ilqr(problem, initial, max_iterations=8, regularization=1e-4)
-
-    np.testing.assert_array_equal(first.trajectory.states, second.trajectory.states)
-    np.testing.assert_array_equal(first.trajectory.controls, second.trajectory.controls)
-    np.testing.assert_array_equal(
-        first.diagnostics.objective_history, second.diagnostics.objective_history
-    )
-    replay = problem.rollout(first.policy, jnp.empty((0,)))
-    assert bool(replay.successful)
-    np.testing.assert_allclose(
-        replay.states, first.trajectory.states, rtol=2e-6, atol=2e-6
-    )
-    np.testing.assert_allclose(
-        replay.controls, first.trajectory.controls, rtol=2e-6, atol=2e-6
-    )

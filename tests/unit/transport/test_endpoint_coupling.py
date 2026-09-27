@@ -52,7 +52,7 @@ class _FixedPlan(AbstractBalancedTransportPlan):
         return self.matrix
 
 
-def test_independent_endpoint_coupling_replays_indices_and_gathers_context() -> None:
+def test_endpoint_coupling_scenario_1() -> None:
     source = jnp.arange(12.0).reshape((6, 2))
     target = 100.0 + jnp.arange(8.0).reshape((4, 2))
     context = {"condition": jnp.arange(4.0)[:, None]}
@@ -82,9 +82,6 @@ def test_independent_endpoint_coupling_replays_indices_and_gathers_context() -> 
         first.context["condition"], context["condition"][first.target_indices]
     )
     assert jnp.allclose(jnp.sum(first.probabilities), 1.0)
-
-
-def test_transport_plan_endpoint_coupling_samples_joint_not_barycentric_pairs() -> None:
     source = jnp.asarray([[0.0], [1.0]])
     target = jnp.asarray([[10.0], [20.0]])
     plan = _FixedPlan(jnp.asarray([[0.0, 0.5], [0.5, 0.0]]))
@@ -101,9 +98,6 @@ def test_transport_plan_endpoint_coupling_samples_joint_not_barycentric_pairs() 
     assert jnp.array_equal(pairs.source, source[pairs.source_indices])
     assert jnp.array_equal(pairs.target, target[pairs.target_indices])
     assert jnp.all(jnp.isin(pairs.target[:, 0], jnp.asarray([10.0, 20.0])))
-
-
-def test_transport_plan_endpoint_coupling_rejects_failure_and_shape_mismatch() -> None:
     failed = _FixedPlan(jnp.eye(2), converged=False)
     with pytest.raises(eqx.EquinoxRuntimeError, match="did not converge"):
         phx.transport.transport_plan_endpoint_coupling(

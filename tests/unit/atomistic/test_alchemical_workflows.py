@@ -25,7 +25,7 @@ def _elastic_system() -> Any:
     ).prepare()
 
 
-def test_elastic_network_rigid_invariance_and_force_energy_parity() -> None:
+def test_alchemical_workflows_scenario_1() -> None:
     system = _elastic_system()
     reference = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
     network = ElasticNetworkPlan(1.5, 3.0, 3).prepare(system, reference)
@@ -46,25 +46,28 @@ def test_elastic_network_rigid_invariance_and_force_energy_parity() -> None:
     gradient = jax.grad(lambda value: network.evaluate(value).energy)(displaced)
     np.testing.assert_allclose(evaluation.forces, -gradient, rtol=1.0e-12, atol=1.0e-12)
     assert network.preparation.edge_count == 3
-
-
-def _linear_field(policy: Any) -> Any:
-    grid = jnp.indices((3, 4, 5), dtype="float64")
-    scalar = grid[0] + 2.0 * grid[1] - 0.5 * grid[2]
-    return GriddedExternalFieldPlan(
-        # ty: ignore[invalid-argument-type]
-        [1.0, -1.0, 2.0],
-        # ty: ignore[invalid-argument-type]
-        [0.5, 2.0, 0.25],
-        scalar,
-        boundary_policy=policy,
-        coordinate_frame="laboratory",
-        coordinate_unit="length",
-        value_unit="energy",
-    ).prepare()
-
-
-def test_scalar_field_interpolation_gradient_and_conservative_force() -> None:
+    system, reference = _padded_elastic_inputs()
+    plan = ElasticNetworkPlan(1.1, 2.0, 3)
+    from_nan = plan.prepare(system, reference)
+    from_infinity = plan.prepare(
+        system,
+        reference.at[2].set(jnp.asarray([jnp.inf, -jnp.inf, jnp.nan])),
+    )
+    assert from_nan.prepared_id == from_infinity.prepared_id
+    assert from_nan.preparation.edge_count == 1
+    system, reference = _padded_elastic_inputs()
+    network = ElasticNetworkPlan(1.1, 2.0, 3).prepare(system, reference)
+    evaluation = network.evaluate(reference)
+    assert bool(evaluation.successful)
+    assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
+    np.testing.assert_allclose(evaluation.forces[2], 0.0, atol=0.0)
+    system, reference = _padded_elastic_inputs()
+    network = ElasticNetworkPlan(1.1, 2.0, 1).prepare(system, reference)
+    collapsed = reference.at[1].set(reference[0])
+    evaluation = network.evaluate(collapsed)
+    assert bool(evaluation.finite)
+    assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
+    assert not bool(evaluation.successful)
     field = _linear_field(ExternalFieldBoundaryPolicy.FAIL)
     point = jnp.asarray([[1.35, 1.4, 2.6]])
     evaluation = field.evaluate(point)
@@ -75,9 +78,6 @@ def test_scalar_field_interpolation_gradient_and_conservative_force() -> None:
     np.testing.assert_allclose(force.forces, [[-6.0, -3.0, 6.0]], atol=1.0e-12)
     gradient = jax.grad(lambda value: field.energy_and_forces(value).energy)(point)
     np.testing.assert_allclose(force.forces / 3.0, -gradient, atol=1.0e-12)
-
-
-def test_vector_field_and_boundary_policies_report_domain_evidence() -> None:
     grid = jnp.indices((2, 2, 2), dtype="float64")
     vector = jnp.stack((grid[0], 2.0 * grid[1], 3.0 * grid[2]), axis=-1)
     periodic = GriddedExternalFieldPlan(
@@ -111,6 +111,22 @@ def test_vector_field_and_boundary_policies_report_domain_evidence() -> None:
     assert bool(jnp.isnan(failed.values[0]))
 
 
+def _linear_field(policy: Any) -> Any:
+    grid = jnp.indices((3, 4, 5), dtype="float64")
+    scalar = grid[0] + 2.0 * grid[1] - 0.5 * grid[2]
+    return GriddedExternalFieldPlan(
+        # ty: ignore[invalid-argument-type]
+        [1.0, -1.0, 2.0],
+        # ty: ignore[invalid-argument-type]
+        [0.5, 2.0, 0.25],
+        scalar,
+        boundary_policy=policy,
+        coordinate_frame="laboratory",
+        coordinate_unit="length",
+        value_unit="energy",
+    ).prepare()
+
+
 def _padded_elastic_inputs() -> Any:
     system = AtomisticSystemPlan(
         # ty: ignore[invalid-argument-type]
@@ -127,34 +143,3 @@ def _padded_elastic_inputs() -> Any:
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [jnp.nan, jnp.nan, jnp.nan]]
     )
     return system, reference
-
-
-def test_elastic_reference_ignores_and_canonicalizes_inactive_padding() -> None:
-    system, reference = _padded_elastic_inputs()
-    plan = ElasticNetworkPlan(1.1, 2.0, 3)
-    from_nan = plan.prepare(system, reference)
-    from_infinity = plan.prepare(
-        system,
-        reference.at[2].set(jnp.asarray([jnp.inf, -jnp.inf, jnp.nan])),
-    )
-    assert from_nan.prepared_id == from_infinity.prepared_id
-    assert from_nan.preparation.edge_count == 1
-
-
-def test_elastic_padded_routes_do_not_scatter_nan_forces() -> None:
-    system, reference = _padded_elastic_inputs()
-    network = ElasticNetworkPlan(1.1, 2.0, 3).prepare(system, reference)
-    evaluation = network.evaluate(reference)
-    assert bool(evaluation.successful)
-    assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
-    np.testing.assert_allclose(evaluation.forces[2], 0.0, atol=0.0)
-
-
-def test_elastic_collapsed_valid_edge_fails_closed_with_finite_output() -> None:
-    system, reference = _padded_elastic_inputs()
-    network = ElasticNetworkPlan(1.1, 2.0, 1).prepare(system, reference)
-    collapsed = reference.at[1].set(reference[0])
-    evaluation = network.evaluate(collapsed)
-    assert bool(evaluation.finite)
-    assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
-    assert not bool(evaluation.successful)

@@ -47,7 +47,7 @@ def _mechanism(reference_energy: Any = (0.0, 0.0)) -> Any:
     ).prepare()
 
 
-def test_isothermal_constant_volume_reactor_matches_analytic_decay() -> None:
+def test_chemical_reactor_scenario_1() -> None:
     plan = phx.solver.ChemicalReactorPlan(
         _mechanism(),
         phx.solver.ChemicalReactorKind.ISOTHERMAL_CONSTANT_VOLUME,
@@ -79,9 +79,6 @@ def test_isothermal_constant_volume_reactor_matches_analytic_decay() -> None:
     )
     assert bdf.successful
     np.testing.assert_allclose(bdf.states[-1, 0], np.exp(-1.0), rtol=5e-3)
-
-
-def test_adiabatic_constant_volume_reactor_conserves_extensive_energy() -> None:
     plan = phx.solver.ChemicalReactorPlan(
         _mechanism((0.0, -100.0)),
         phx.solver.ChemicalReactorKind.ADIABATIC_CONSTANT_VOLUME,

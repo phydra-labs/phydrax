@@ -263,7 +263,7 @@ def test_linear_gaussian_one_step_matches_exact_smoother_elbo_and_gradients(
     assert jnp.linalg.norm(offset_gradient) > 0.0
 
 
-def test_sing_samples_are_coherent_and_recover_posterior_moments() -> None:
+def test_sing_scenario_1() -> None:
     problem, _ = _linear_problems()
     result = phx.uq.sing_smoother(problem, max_iterations=1, max_backtracks=0)
     samples = phx.uq.sample_sing_paths(jr.key(902), result, sample_shape=(8192,))
@@ -280,9 +280,6 @@ def test_sing_samples_are_coherent_and_recover_posterior_moments() -> None:
     assert jnp.allclose(sample_mean, result.observation_means, atol=3.5e-2)
     assert jnp.allclose(sample_covariance, result.observation_covariances, atol=4.5e-2)
     assert jnp.allclose(sample_cross, reference_cross, atol=4.5e-2)
-
-
-def test_nonlinear_sing_is_monotone_and_monte_carlo_is_reproducible() -> None:
     problem = _nonlinear_problem()
     result = phx.uq.sing_smoother(
         problem,
@@ -324,9 +321,6 @@ def test_nonlinear_sing_is_monotone_and_monte_carlo_is_reproducible() -> None:
         first.information.information_vector,
         changed.information.information_vector,
     )
-
-
-def test_case_masks_padding_statuses_and_model_guards_are_explicit() -> None:
     problem = _masked_case_problem()
     state = phx.uq.initialize_sing(problem)
     result = phx.uq.sing_smoother(

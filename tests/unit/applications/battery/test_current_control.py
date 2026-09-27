@@ -263,7 +263,7 @@ def _prepared_control(
     ).prepare()
 
 
-def test_piecewise_current_lowering_exposes_fixed_knots_and_dynamic_amplitudes() -> None:
+def test_current_control_scenario_1() -> None:
     prepared = _prepared_control()
     amplitudes = jnp.asarray((1.0, 0.0))
     lowered = prepared.lower(amplitudes)
@@ -280,6 +280,37 @@ def test_piecewise_current_lowering_exposes_fixed_knots_and_dynamic_amplitudes()
     assert float(prepared.horizon_s) == 2.0
     leaves = jax.tree.leaves(lowered)
     assert any(leaf is lowered.amplitudes_a for leaf in leaves)
+    prepared = _prepared_control(voltage_upper=3.5)
+    amplitudes = jnp.asarray((1.0, 0.0))
+    sampled = prepared.evaluate(amplitudes)
+    replay = prepared.replay(amplitudes)
+
+    assert bool(sampled.feasibility.feasible)
+    assert replay.path_residuals.shape[0] == 5
+    voltage_upper = replay.path_constraint_names.index("voltage_v:upper")
+    assert float(replay.path_residuals[1, voltage_upper]) > 0.49
+    assert not bool(replay.feasible)
+    assert int(replay.status) == int(
+        BatteryCurrentControlReplayStatus.PATH_CONSTRAINT_VIOLATED
+    )
+    assert not replay.experiment_result.termination.terminated
+    assert replay.replay_plan_id == prepared.replay_plan_id
+    runtime_failure = _prepared_control(runtime_limit=0.75)
+    runtime_evidence = runtime_failure.replay(jnp.asarray((1.0, 0.0)))
+    assert not bool(runtime_evidence.feasible)
+    assert float(runtime_evidence.execution_residuals[0]) > 0.0
+    assert int(runtime_evidence.status) == int(
+        BatteryCurrentControlReplayStatus.RUNTIME_FAILED
+    )
+
+    ledger_failure = _prepared_control(ledger_limit=0.75)
+    ledger_evidence = ledger_failure.replay(jnp.asarray((1.0, 0.0)))
+    assert not bool(ledger_evidence.experiment_result.successful)
+    assert not bool(ledger_evidence.feasible)
+    assert float(ledger_evidence.execution_residuals[1]) > 0.0
+    assert int(ledger_evidence.status) == int(
+        BatteryCurrentControlReplayStatus.LEDGER_FAILED
+    )
 
 
 def test_native_control_terminal_equality_objective_gradient_and_constraint_signs() -> (
@@ -317,44 +348,7 @@ def test_native_control_terminal_equality_objective_gradient_and_constraint_sign
     assert float(violating.feasibility.path_residuals[0, current_upper]) == 0.5
 
 
-def test_replay_is_independent_finer_and_catches_between_knot_voltage_violation() -> None:
-    prepared = _prepared_control(voltage_upper=3.5)
-    amplitudes = jnp.asarray((1.0, 0.0))
-    sampled = prepared.evaluate(amplitudes)
-    replay = prepared.replay(amplitudes)
-
-    assert bool(sampled.feasibility.feasible)
-    assert replay.path_residuals.shape[0] == 5
-    voltage_upper = replay.path_constraint_names.index("voltage_v:upper")
-    assert float(replay.path_residuals[1, voltage_upper]) > 0.49
-    assert not bool(replay.feasible)
-    assert int(replay.status) == int(
-        BatteryCurrentControlReplayStatus.PATH_CONSTRAINT_VIOLATED
-    )
-    assert not replay.experiment_result.termination.terminated
-    assert replay.replay_plan_id == prepared.replay_plan_id
-
-
-def test_failed_runtime_and_ledger_are_explicit_infeasible_constraints() -> None:
-    runtime_failure = _prepared_control(runtime_limit=0.75)
-    runtime_evidence = runtime_failure.replay(jnp.asarray((1.0, 0.0)))
-    assert not bool(runtime_evidence.feasible)
-    assert float(runtime_evidence.execution_residuals[0]) > 0.0
-    assert int(runtime_evidence.status) == int(
-        BatteryCurrentControlReplayStatus.RUNTIME_FAILED
-    )
-
-    ledger_failure = _prepared_control(ledger_limit=0.75)
-    ledger_evidence = ledger_failure.replay(jnp.asarray((1.0, 0.0)))
-    assert not bool(ledger_evidence.experiment_result.successful)
-    assert not bool(ledger_evidence.feasible)
-    assert float(ledger_evidence.execution_residuals[1]) > 0.0
-    assert int(ledger_evidence.status) == int(
-        BatteryCurrentControlReplayStatus.LEDGER_FAILED
-    )
-
-
-def test_fixed_topology_deterministic_identities_and_native_nlp_compilation() -> None:
+def test_current_control_scenario_2() -> None:
     first = _prepared_control()
     second = _prepared_control()
     assert first.plan.control_plan_id == second.plan.control_plan_id
@@ -388,9 +382,6 @@ def test_fixed_topology_deterministic_identities_and_native_nlp_compilation() ->
         compilation.initial_decision.controls,
         first.lower(jnp.asarray((1.0, 0.0))).coefficients,
     )
-
-
-def test_control_construction_rejects_moving_or_underresolved_phase_topology() -> None:
     rest_protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(1.0)))
     with pytest.raises(ValueError, match="Every fixed current-control phase"):
         _prepared_control(protocol=rest_protocol)

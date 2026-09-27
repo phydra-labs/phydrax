@@ -25,7 +25,7 @@ def _cochain(shape: Any = (3, 4), *, periodic: Any = True) -> Any:
     return phx.discretization.StructuredCochainBridge(grid).cochain
 
 
-def test_phi4_action_matches_explicit_cochain_energy_and_gradient() -> None:
+def test_phi4_contracts() -> None:
     cochain = _cochain()
     action = phx.operators.path_integral.Phi4LatticeAction(
         cochain,
@@ -49,9 +49,15 @@ def test_phi4_action_matches_explicit_cochain_energy_and_gradient() -> None:
     assert action.evidence.normalizable
     assert jnp.allclose(action.action(field), expected)
     assert jnp.allclose(jnp.vdot(gradient, direction), finite_difference, rtol=2e-4)
+    action = phx.operators.path_integral.Phi4LatticeAction(_cochain((4, 4)))
+    field = jnp.zeros(action.configuration_shape)
+    compiled_action = eqx.filter_jit(action.action)(field)
+    proposal = phx.sampling.SingleCoordinateGaussianProposal(0.2)
+    move = jax.jit(proposal.propose)(jax.random.key(4), field)
 
-
-def test_phi4_incremental_cache_matches_full_action_and_rejection() -> None:
+    assert compiled_action == 0.0
+    assert move.valid
+    assert jnp.sum(move.position != field) <= 1
     action = phx.operators.path_integral.Phi4LatticeAction(
         _cochain((4, 3)),
         kinetic_scale=0.8,
@@ -79,9 +85,6 @@ def test_phi4_incremental_cache_matches_full_action_and_rejection() -> None:
     assert jnp.array_equal(rejected_cache.edge_differences, cache.edge_differences)
     assert jnp.array_equal(rejected_cache.site_contributions, cache.site_contributions)
     assert jnp.array_equal(rejected_cache.action, cache.action)
-
-
-def test_phi4_target_and_observable_contracts_are_composable() -> None:
     action = phx.operators.path_integral.Phi4LatticeAction(
         _cochain((3, 3)),
         mass_squared=1.0,
@@ -115,9 +118,6 @@ def test_phi4_target_and_observable_contracts_are_composable() -> None:
         phx.operators.path_integral.evaluate_lattice_observable(pair, field).value,
         expected,
     )
-
-
-def test_phi4_normalizability_and_locality_are_fail_closed() -> None:
     massless = phx.operators.path_integral.Phi4LatticeAction(
         _cochain((4,)),
         mass_squared=0.0,
@@ -146,15 +146,3 @@ def test_phi4_normalizability_and_locality_are_fail_closed() -> None:
     dense_action = phx.operators.path_integral.Phi4LatticeAction(dense_hodge)
     with pytest.raises(ValueError, match="diagonal"):
         phx.operators.path_integral.prepare_local_phi4_action(dense_action)
-
-
-def test_phi4_action_and_local_proposal_are_jittable() -> None:
-    action = phx.operators.path_integral.Phi4LatticeAction(_cochain((4, 4)))
-    field = jnp.zeros(action.configuration_shape)
-    compiled_action = eqx.filter_jit(action.action)(field)
-    proposal = phx.sampling.SingleCoordinateGaussianProposal(0.2)
-    move = jax.jit(proposal.propose)(jax.random.key(4), field)
-
-    assert compiled_action == 0.0
-    assert move.valid
-    assert jnp.sum(move.position != field) <= 1

@@ -70,7 +70,7 @@ def _small_spde() -> Any:
     )
 
 
-def test_path_ensemble_has_fixed_output_grid_replay_and_backend_evidence() -> None:
+def test_fokker_planck_approximation_scenario_1() -> None:
     problem = _brownian_problem()
     plan = _ensemble_plan()
     first = solve_stochastic_path_ensemble(
@@ -86,9 +86,50 @@ def test_path_ensemble_has_fixed_output_grid_replay_and_backend_evidence() -> No
     assert first.temporal_evidence is not None
     assert first.realization_id == replay.realization_id
     assert jnp.array_equal(first.states, replay.states)
+    grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 0.05, 0.1]), time_id="opaque-event-grid"
+    )
+    event = dfx.Event(_path_ensemble_stop_condition)
+    with pytest.raises(ValueError, match="event_id"):
+        StochasticPathEnsemblePlan(grid, path_count=2, dt0=0.01, event=event)
 
-
-def test_path_ensemble_identity_includes_initial_state_content_and_absence() -> None:
+    first = StochasticPathEnsemblePlan(
+        grid,
+        path_count=2,
+        dt0=0.01,
+        event=event,
+        event_id="path-ensemble-event",
+    )
+    replay = StochasticPathEnsemblePlan(
+        grid,
+        path_count=2,
+        dt0=jnp.asarray(0.01),
+        event=dfx.Event(_path_ensemble_stop_condition),
+        event_id="path-ensemble-event",
+    )
+    changed = StochasticPathEnsemblePlan(
+        grid,
+        path_count=2,
+        dt0=0.01,
+        event=event,
+        event_id="path-ensemble-terminal-event",
+    )
+    assert first.plan_id == replay.plan_id
+    assert first.plan_id != changed.plan_id
+    problem = _brownian_problem()
+    wrong = phx.stochastic.WienerRealization.independent(
+        jr.key(2),
+        problem.noise_shape,
+        support=(0.0, 0.1),
+        sample_shape=(3,),
+        noise_id=problem.noise_id,
+    )
+    with pytest.raises(ValueError, match="path_count"):
+        prepare_stochastic_path_ensemble(
+            problem,
+            _ensemble_plan(path_count=4),
+            realization=wrong,
+        )
     problem = _brownian_problem()
     plan = _ensemble_plan(path_count=2)
     absent = prepare_stochastic_path_ensemble(problem, plan, key=jr.key(11))
@@ -141,6 +182,71 @@ def test_path_ensemble_identity_includes_initial_state_content_and_absence() -> 
     changed_result = solve_stochastic_path_ensemble(changed)
     assert first_result.result_id == replay_result.result_id
     assert first_result.result_id != changed_result.result_id
+    plan = ParticleFokkerPlanckPlan(
+        _ensemble_plan(path_count=16),
+        (
+            WeakObservable(lambda state: state[0], observable_id="mean"),
+            WeakObservable(lambda state: state[0] ** 2, observable_id="second"),
+        ),
+        0.95,
+        jnp.asarray([0.0, 0.05, 0.1]),
+    )
+    result = solve_particle_fokker_planck(_brownian_problem(), plan, key=jr.key(9))
+
+    assert result.approximation_kind == "particle-weak-law"
+    assert len(result.laws) == 3
+    assert result.observable_means.shape == (2, 3)
+    assert result.weak_residuals.shape == (2, 2)
+    assert jnp.all(jnp.isfinite(result.sampling_errors))
+    spde = _small_spde()
+    coarse_grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 0.1]), time_id="coarse-time-grid"
+    )
+    fine_grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 0.05, 0.1]), time_id="fine-time-grid"
+    )
+    levels = (
+        SPDEApproximationLevel(
+            spde,
+            coarse_grid,
+            lambda values: values[:, -1],
+            (4, 1),
+            4.0,
+            level_id="coarse",
+        ),
+        SPDEApproximationLevel(
+            spde,
+            fine_grid,
+            lambda values: values[:, -1],
+            (4, 1),
+            8.0,
+            level_id="replay-fine",
+        ),
+    )
+    family = SPDEApproximationFamily(
+        levels,
+        "time",
+        1,
+        "shared-spde-noise",
+        tail_envelope=jnp.asarray([0.2, 0.1]),
+    )
+    prepared = prepare_spde_approximation(
+        family,
+        ensemble_plan=_ensemble_plan(path_count=4),
+        key=jr.key(11),
+    )
+    result = solve_spde_approximation(prepared)
+
+    assert tuple(item.plan.time_grid.time_id for item in prepared.ensembles) == (
+        "coarse-time-grid",
+        "fine-time-grid",
+    )
+    assert prepared.ensembles[0].plan.plan_id != prepared.ensembles[1].plan.plan_id
+    assert result.approximation_kind == "finite-time-refinement"
+    assert result.cauchy_differences.shape == (1,)
+    assert jnp.allclose(result.cauchy_differences, 0.0)
+    # ty: ignore[invalid-argument-type]
+    assert jnp.array_equal(result.tail_bounds, jnp.asarray([0.2, 0.1]))
 
 
 def test_path_ensemble_default_identity_binds_all_solve_settings() -> None:
@@ -287,39 +393,6 @@ def test_path_ensemble_default_identity_binds_all_solve_settings() -> None:
     assert len(identifiers) == len(changed) + 1
 
 
-def test_path_ensemble_requires_identity_for_opaque_execution_objects() -> None:
-    grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.05, 0.1]), time_id="opaque-event-grid"
-    )
-    event = dfx.Event(_path_ensemble_stop_condition)
-    with pytest.raises(ValueError, match="event_id"):
-        StochasticPathEnsemblePlan(grid, path_count=2, dt0=0.01, event=event)
-
-    first = StochasticPathEnsemblePlan(
-        grid,
-        path_count=2,
-        dt0=0.01,
-        event=event,
-        event_id="path-ensemble-event",
-    )
-    replay = StochasticPathEnsemblePlan(
-        grid,
-        path_count=2,
-        dt0=jnp.asarray(0.01),
-        event=dfx.Event(_path_ensemble_stop_condition),
-        event_id="path-ensemble-event",
-    )
-    changed = StochasticPathEnsemblePlan(
-        grid,
-        path_count=2,
-        dt0=0.01,
-        event=event,
-        event_id="path-ensemble-terminal-event",
-    )
-    assert first.plan_id == replay.plan_id
-    assert first.plan_id != changed.plan_id
-
-
 def test_path_ensemble_execution_identity_propagates_to_prepared_and_result() -> None:
     problem = _brownian_problem()
     grid = phx.dynamics.TimeGrid(
@@ -371,91 +444,3 @@ def test_path_ensemble_execution_identity_propagates_to_prepared_and_result() ->
     assert first_result.result_id == replay_result.result_id
     assert first_result.result_id != changed_result.result_id
     assert first_result.temporal_evidence.configuration_id == first_plan.configuration_id
-
-
-def test_path_ensemble_rejects_realization_capacity_mismatch() -> None:
-    problem = _brownian_problem()
-    wrong = phx.stochastic.WienerRealization.independent(
-        jr.key(2),
-        problem.noise_shape,
-        support=(0.0, 0.1),
-        sample_shape=(3,),
-        noise_id=problem.noise_id,
-    )
-    with pytest.raises(ValueError, match="path_count"):
-        prepare_stochastic_path_ensemble(
-            problem,
-            _ensemble_plan(path_count=4),
-            realization=wrong,
-        )
-
-
-def test_particle_fokker_planck_returns_normalized_empirical_weak_laws() -> None:
-    plan = ParticleFokkerPlanckPlan(
-        _ensemble_plan(path_count=16),
-        (
-            WeakObservable(lambda state: state[0], observable_id="mean"),
-            WeakObservable(lambda state: state[0] ** 2, observable_id="second"),
-        ),
-        0.95,
-        jnp.asarray([0.0, 0.05, 0.1]),
-    )
-    result = solve_particle_fokker_planck(_brownian_problem(), plan, key=jr.key(9))
-
-    assert result.approximation_kind == "particle-weak-law"
-    assert len(result.laws) == 3
-    assert result.observable_means.shape == (2, 3)
-    assert result.weak_residuals.shape == (2, 2)
-    assert jnp.all(jnp.isfinite(result.sampling_errors))
-
-
-def test_finite_spde_family_reports_coupled_cauchy_and_tail_evidence() -> None:
-    spde = _small_spde()
-    coarse_grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.1]), time_id="coarse-time-grid"
-    )
-    fine_grid = phx.dynamics.TimeGrid(
-        jnp.asarray([0.0, 0.05, 0.1]), time_id="fine-time-grid"
-    )
-    levels = (
-        SPDEApproximationLevel(
-            spde,
-            coarse_grid,
-            lambda values: values[:, -1],
-            (4, 1),
-            4.0,
-            level_id="coarse",
-        ),
-        SPDEApproximationLevel(
-            spde,
-            fine_grid,
-            lambda values: values[:, -1],
-            (4, 1),
-            8.0,
-            level_id="replay-fine",
-        ),
-    )
-    family = SPDEApproximationFamily(
-        levels,
-        "time",
-        1,
-        "shared-spde-noise",
-        tail_envelope=jnp.asarray([0.2, 0.1]),
-    )
-    prepared = prepare_spde_approximation(
-        family,
-        ensemble_plan=_ensemble_plan(path_count=4),
-        key=jr.key(11),
-    )
-    result = solve_spde_approximation(prepared)
-
-    assert tuple(item.plan.time_grid.time_id for item in prepared.ensembles) == (
-        "coarse-time-grid",
-        "fine-time-grid",
-    )
-    assert prepared.ensembles[0].plan.plan_id != prepared.ensembles[1].plan.plan_id
-    assert result.approximation_kind == "finite-time-refinement"
-    assert result.cauchy_differences.shape == (1,)
-    assert jnp.allclose(result.cauchy_differences, 0.0)
-    # ty: ignore[invalid-argument-type]
-    assert jnp.array_equal(result.tail_bounds, jnp.asarray([0.2, 0.1]))

@@ -56,7 +56,7 @@ def _state(tensions: Any = (10.0, 30.0), slip: Any = 0.0) -> Any:
     )
 
 
-def test_zero_friction_recovers_the_ideal_series_tendon_tension() -> None:
+def test_rod_tendon_friction_scenario_1() -> None:
     rod, route_plan, _ = _rod_and_route()
     ideal = FrictionlessElasticTendonPlan(
         route_plan,
@@ -100,9 +100,6 @@ def test_zero_friction_recovers_the_ideal_series_tendon_tension() -> None:
     assert capstan_evaluation.candidate_state.stress_free_lengths == pytest.approx(
         jnp.asarray((11.0 / 12.0, 13.0 / 12.0)), rel=2.0e-5, abs=2.0e-5
     )
-
-
-def test_taut_tendon_sticks_strictly_inside_both_capstan_inequalities() -> None:
     _, _, route = _rod_and_route()
     state = _state((10.0, 15.0), slip=0.125)
     prepared = CapstanTendonFrictionPlan(
@@ -128,9 +125,6 @@ def test_taut_tendon_sticks_strictly_inside_both_capstan_inequalities() -> None:
     assert jnp.all(evaluation.reverse_capstan_margin > 0.0)
     assert evaluation.evidence.dissipation_power == pytest.approx(0.0, abs=1.0e-7)
     assert evaluation.evidence.power_residual == pytest.approx(0.0, abs=1.0e-6)
-
-
-def test_taut_sliding_state_matches_capstan_boundary_and_dissipates() -> None:
     rod, _, route = _rod_and_route()
     state = _state()
     prepared = CapstanTendonFrictionPlan(
@@ -191,9 +185,6 @@ def test_taut_sliding_state_matches_capstan_boundary_and_dissipates() -> None:
     assert jnp.array_equal(
         evaluation.accepted_state.slip, evaluation.candidate_state.slip
     )
-
-
-def test_fully_slack_spans_remain_finite_without_logarithmic_tensions() -> None:
     _, _, route = _rod_and_route()
     state = _state((0.0, 0.0), slip=-0.25)
     prepared = CapstanTendonFrictionPlan(
@@ -220,7 +211,7 @@ def test_fully_slack_spans_remain_finite_without_logarithmic_tensions() -> None:
     assert jnp.all(jnp.isfinite(evaluation.candidate_state.slip))
 
 
-def test_prepared_capstan_update_retains_dynamic_bounds_under_filter_jit() -> None:
+def test_rod_tendon_friction_scenario_2() -> None:
     _, _, route = _rod_and_route()
     state = _state()
     prepared = CapstanTendonFrictionPlan(
@@ -240,9 +231,6 @@ def test_prepared_capstan_update_retains_dynamic_bounds_under_filter_jit() -> No
     assert evaluation.prepared_id == prepared.prepared_id
     assert evaluation.successful
     assert evaluation.forward_capstan_margin[0] == pytest.approx(0.0, abs=2.0e-4)
-
-
-def test_failed_vi_keeps_candidate_evidence_and_rolls_back_all_history() -> None:
     _, _, route = _rod_and_route()
     state = _state((7.0, 11.0), slip=0.04)
     termination = NonlinearTermination(

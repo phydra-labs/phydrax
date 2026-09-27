@@ -39,7 +39,7 @@ def _resolved_run(
     )
 
 
-def test_resolved_run_has_exact_order_independent_identity() -> None:
+def test_resolved_run_contracts() -> None:
     scientific = (
         SupportDependency("profile-equations", "tuple-equations"),
         SupportDependency("profile-closure", "tuple-closure"),
@@ -60,22 +60,6 @@ def test_resolved_run_has_exact_order_independent_identity() -> None:
     assert tuple(
         dependency.dependency_id for dependency in first.scientific_dependencies
     ) == tuple(sorted(dependency.dependency_id for dependency in scientific))
-
-
-def test_resolved_run_strictly_reconstructs_canonical_json() -> None:
-    value = _resolved_run(
-        (SupportDependency("profile-science", "tuple-science"),),
-        (SupportDependency("profile-deploy", "tuple-deploy"),),
-    )
-
-    restored = load_resolved_run_spec(value.to_json())
-
-    assert restored.spec_id == value.spec_id
-    assert restored.to_record() == value.to_record()
-    assert restored.to_json() == value.to_json()
-
-
-def test_resolved_run_rejects_unknown_missing_and_nonfinite_json() -> None:
     value = _resolved_run(
         (SupportDependency("profile-science", "tuple-science"),),
         (SupportDependency("profile-deploy", "tuple-deploy"),),
@@ -93,9 +77,6 @@ def test_resolved_run_rejects_unknown_missing_and_nonfinite_json() -> None:
         ResolvedRunSpec.from_record(missing)
     with pytest.raises(ValueError, match="Non-finite"):
         load_resolved_run_spec(json.dumps(nonfinite))
-
-
-def test_resolved_run_rejects_conflicting_tuple_dependencies() -> None:
     scientific = (SupportDependency("profile-shared", "tuple-a"),)
     conflicting = (SupportDependency("profile-shared", "tuple-b"),)
     duplicated = (SupportDependency("profile-shared", "tuple-a"),)
@@ -104,9 +85,6 @@ def test_resolved_run_rejects_conflicting_tuple_dependencies() -> None:
         _resolved_run(scientific, conflicting)
     with pytest.raises(ValueError, match="both scientific and deployment"):
         _resolved_run(scientific, duplicated)
-
-
-def test_resolved_run_requires_exact_profiles_and_validity_window() -> None:
     dependency = SupportDependency("profile-science", "tuple-science")
     arguments = dict(
         release_index_id="release",
@@ -135,3 +113,13 @@ def test_resolved_run_requires_exact_profiles_and_validity_window() -> None:
             # ty: ignore[invalid-argument-type]
             **{**arguments, "valid_at": 31},
         )
+    value = _resolved_run(
+        (SupportDependency("profile-science", "tuple-science"),),
+        (SupportDependency("profile-deploy", "tuple-deploy"),),
+    )
+
+    restored = load_resolved_run_spec(value.to_json())
+
+    assert restored.spec_id == value.spec_id
+    assert restored.to_record() == value.to_record()
+    assert restored.to_json() == value.to_json()

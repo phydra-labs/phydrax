@@ -41,7 +41,7 @@ def _split_cases() -> Any:
     )
 
 
-def test_family_split_is_deterministic_disjoint_and_complete() -> None:
+def test_synthetic_qualification_scenario_1() -> None:
     cases = _split_cases()
     policy = ScenarioSplitPolicy(
         train_fraction=0.5,
@@ -71,9 +71,6 @@ def test_family_split_is_deterministic_disjoint_and_complete() -> None:
         )
     )
     np.testing.assert_array_equal(np.sort(combined), np.arange(len(cases)))
-
-
-def test_split_rejects_insufficient_families_duplicate_ids_and_overlap() -> None:
     cases = _split_cases()
     policy = ScenarioSplitPolicy()
 
@@ -92,9 +89,6 @@ def test_split_rejects_insufficient_families_duplicate_ids_and_overlap() -> None
             scenario_ids=("0", "1", "2"),
             policy_id=policy.policy_id,
         )
-
-
-def test_piv_qualification_exposes_bias_epe_and_coverage() -> None:
     case = generate_piv_case(
         PIVScenarioPlan(
             PIVScenarioKind.TRANSLATION,
@@ -126,7 +120,7 @@ def test_piv_qualification_exposes_bias_epe_and_coverage() -> None:
     }
 
 
-def test_ptv_qualification_exposes_detection_triangulation_and_track_evidence() -> None:
+def test_synthetic_qualification_scenario_2() -> None:
     truth_xyz = jnp.asarray(
         (
             ((0.0, 0.0, 4.0), (0.2, 0.0, 4.0), (0.0, 0.0, 0.0)),
@@ -165,9 +159,6 @@ def test_ptv_qualification_exposes_detection_triangulation_and_track_evidence() 
         "track-identity",
         "triangulation",
     }
-
-
-def test_ptv_qualification_rejects_double_counted_truth_matches() -> None:
     truth = jnp.zeros((1, 2, 3))
     with pytest.raises(ValueError, match="unique"):
         qualify_ptv(
@@ -177,9 +168,6 @@ def test_ptv_qualification_rejects_double_counted_truth_matches() -> None:
             truth,
             jnp.asarray(((True, True),)),
         )
-
-
-def test_stb_qualification_exposes_masked_image_residual_evidence() -> None:
     observed = jnp.asarray(((1.0, 2.0), (3.0, 4.0)))
     reconstructed = observed + 1.0
     reconstructed = reconstructed.at[0, 0].set(jnp.nan)

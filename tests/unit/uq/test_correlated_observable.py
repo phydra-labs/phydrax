@@ -14,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_correlated_observable_fft_matches_direct_autocovariance() -> None:
+def test_correlated_observable_contracts() -> None:
     samples = jnp.asarray([[[1.0, 3.0], [2.0, 1.0], [4.0, 0.0], [7.0, 2.0], [9.0, 5.0]]])
     result = phx.uq.correlated_observable_diagnostics(
         samples,
@@ -32,6 +32,41 @@ def test_correlated_observable_fft_matches_direct_autocovariance() -> None:
 
     assert jnp.all(result.valid)
     assert jnp.allclose(result.autocorrelation, expected_correlation, atol=1e-6)
+    short = phx.uq.correlated_observable_diagnostics(
+        jnp.arange(6.0)[None, :],
+        policy=phx.uq.CorrelatedObservablePolicy(minimum_draws=8),
+    )
+    constant = phx.uq.correlated_observable_diagnostics(jnp.ones((2, 16)))
+    nonfinite = phx.uq.correlated_observable_diagnostics(
+        jnp.asarray([[0.0, 1.0, jnp.nan, 2.0], [0.0, 1.0, 2.0, 3.0]])
+    )
+
+    assert int(short.status) == phx.uq.CORRELATED_OBSERVABLE_INSUFFICIENT_DRAWS
+    assert int(constant.status) == phx.uq.CORRELATED_OBSERVABLE_ZERO_VARIANCE
+    assert int(nonfinite.status) == phx.uq.CORRELATED_OBSERVABLE_NONFINITE
+    assert not short.valid
+    assert not constant.valid
+    assert not nonfinite.valid
+    samples = jr.normal(jr.key(2), (3, 64, 2, 3))
+    policy = phx.uq.CorrelatedObservablePolicy(max_lag=16)
+    eager = phx.uq.correlated_observable_diagnostics(samples, policy=policy)
+    compiled = jax.jit(
+        lambda value: phx.uq.correlated_observable_diagnostics(value, policy=policy)
+    )(samples)
+
+    assert eager.mean.shape == (2, 3)
+    assert eager.autocorrelation.shape == (17, 2, 3)
+    assert jnp.allclose(compiled.mean, eager.mean)
+    assert jnp.allclose(
+        compiled.integrated_autocorrelation_time,
+        eager.integrated_autocorrelation_time,
+    )
+    with pytest.raises(ValueError, match="chain and draw"):
+        phx.uq.correlated_observable_diagnostics(jnp.ones((8,)))
+    with pytest.raises(TypeError, match="real samples"):
+        phx.uq.correlated_observable_diagnostics(jnp.ones((2, 8), dtype="complex128"))
+    with pytest.raises(ValueError, match="max_lag"):
+        phx.uq.CorrelatedObservablePolicy(max_lag=0)
 
 
 def test_correlated_observable_ar1_recovers_integrated_time() -> None:
@@ -59,47 +94,3 @@ def test_correlated_observable_ar1_recovers_integrated_time() -> None:
         result.effective_sample_size,
         samples[:, 512:].size / result.integrated_autocorrelation_time,
     )
-
-
-def test_correlated_observable_statuses_are_explicit() -> None:
-    short = phx.uq.correlated_observable_diagnostics(
-        jnp.arange(6.0)[None, :],
-        policy=phx.uq.CorrelatedObservablePolicy(minimum_draws=8),
-    )
-    constant = phx.uq.correlated_observable_diagnostics(jnp.ones((2, 16)))
-    nonfinite = phx.uq.correlated_observable_diagnostics(
-        jnp.asarray([[0.0, 1.0, jnp.nan, 2.0], [0.0, 1.0, 2.0, 3.0]])
-    )
-
-    assert int(short.status) == phx.uq.CORRELATED_OBSERVABLE_INSUFFICIENT_DRAWS
-    assert int(constant.status) == phx.uq.CORRELATED_OBSERVABLE_ZERO_VARIANCE
-    assert int(nonfinite.status) == phx.uq.CORRELATED_OBSERVABLE_NONFINITE
-    assert not short.valid
-    assert not constant.valid
-    assert not nonfinite.valid
-
-
-def test_correlated_observable_preserves_outputs_and_jit() -> None:
-    samples = jr.normal(jr.key(2), (3, 64, 2, 3))
-    policy = phx.uq.CorrelatedObservablePolicy(max_lag=16)
-    eager = phx.uq.correlated_observable_diagnostics(samples, policy=policy)
-    compiled = jax.jit(
-        lambda value: phx.uq.correlated_observable_diagnostics(value, policy=policy)
-    )(samples)
-
-    assert eager.mean.shape == (2, 3)
-    assert eager.autocorrelation.shape == (17, 2, 3)
-    assert jnp.allclose(compiled.mean, eager.mean)
-    assert jnp.allclose(
-        compiled.integrated_autocorrelation_time,
-        eager.integrated_autocorrelation_time,
-    )
-
-
-def test_correlated_observable_rejects_invalid_contracts() -> None:
-    with pytest.raises(ValueError, match="chain and draw"):
-        phx.uq.correlated_observable_diagnostics(jnp.ones((8,)))
-    with pytest.raises(TypeError, match="real samples"):
-        phx.uq.correlated_observable_diagnostics(jnp.ones((2, 8), dtype="complex128"))
-    with pytest.raises(ValueError, match="max_lag"):
-        phx.uq.CorrelatedObservablePolicy(max_lag=0)

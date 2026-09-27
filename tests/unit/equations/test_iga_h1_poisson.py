@@ -14,7 +14,7 @@ import phydrax as phx
 from phydrax.discretization import iga
 
 
-def test_isogeometric_poisson_exact_quadratic_solution() -> None:
+def test_isogeometric_contracts() -> None:
     degree = 2
     grid = iga.BSplineGrid.open_uniform(
         degree,
@@ -72,9 +72,6 @@ def test_isogeometric_poisson_exact_quadratic_solution() -> None:
     assert bool(jnp.all(result.successful))
     np.testing.assert_allclose(solution, expected, rtol=1e-11, atol=1e-12)
     np.testing.assert_allclose(residual, 0.0, rtol=1e-11, atol=1e-12)
-
-
-def test_isogeometric_tensor_diffusion_uses_prepared_capability() -> None:
     grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
     coordinates = grid.greville_abscissae
     xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
@@ -119,6 +116,61 @@ def test_isogeometric_tensor_diffusion_uses_prepared_capability() -> None:
         tensor.full_residual(state, None),
         scalar.full_residual(state, None),
         rtol=1e-11,
+        atol=1e-12,
+    )
+    grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
+    coordinates = grid.greville_abscissae
+    xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
+    prepared = iga.IsogeometricPlan.isoparametric(
+        (grid, grid),
+        iga.NURBSGeometryState(
+            jnp.stack((xx, yy), axis=-1),
+            jnp.ones((grid.coefficient_count, grid.coefficient_count)),
+        ),
+        field_name="u",
+        axis_names=("xi", "eta"),
+        quadrature_policy=iga.IsogeometricQuadraturePolicy(3),
+    ).prepare(numeric_version="functional-test")
+    functional = phx.equations.FiniteElementFunctional(
+        "iga-l2-x",
+        "u",
+        lambda values, gradients, points, context: values**2,
+    )
+
+    value = functional.evaluate(prepared, xx)
+
+    np.testing.assert_allclose(value, 1.0 / 3.0, rtol=1e-12, atol=1e-12)
+
+    portable = phx.variational.Functional(
+        "iga-portable-l2",
+        (
+            phx.variational.LocalIntegralTerm(
+                "body",
+                region="body",
+                fields=(phx.variational.FieldJetSpec("u", value=True),),
+                density=lambda fields, geometry, context: fields["u"].value ** 2,
+                density_id="iga-portable-square",
+            ),
+        ),
+        variable_fields=("u",),
+    )
+    compiled = phx.equations.compile_finite_element_functional(
+        portable,
+        prepared,
+        fields={"u": "u"},
+        regions={"body": None},
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free",
+            local_kernel="sum_factorized",
+        ),
+    )
+    portable_value, portable_residual = compiled.value_and_residual(xx)
+
+    np.testing.assert_allclose(portable_value, value, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        portable_residual,
+        jax.grad(compiled.potential)(xx),
+        rtol=1e-12,
         atol=1e-12,
     )
 
@@ -194,64 +246,6 @@ def test_isogeometric_natural_load_uses_physical_boundary_measure() -> None:
     np.testing.assert_allclose(
         jnp.sum(portable_residual),
         -4.0,
-        rtol=1e-12,
-        atol=1e-12,
-    )
-
-
-def test_isogeometric_functional_flattens_basis_coefficients() -> None:
-    grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
-    coordinates = grid.greville_abscissae
-    xx, yy = jnp.meshgrid(coordinates, coordinates, indexing="ij")
-    prepared = iga.IsogeometricPlan.isoparametric(
-        (grid, grid),
-        iga.NURBSGeometryState(
-            jnp.stack((xx, yy), axis=-1),
-            jnp.ones((grid.coefficient_count, grid.coefficient_count)),
-        ),
-        field_name="u",
-        axis_names=("xi", "eta"),
-        quadrature_policy=iga.IsogeometricQuadraturePolicy(3),
-    ).prepare(numeric_version="functional-test")
-    functional = phx.equations.FiniteElementFunctional(
-        "iga-l2-x",
-        "u",
-        lambda values, gradients, points, context: values**2,
-    )
-
-    value = functional.evaluate(prepared, xx)
-
-    np.testing.assert_allclose(value, 1.0 / 3.0, rtol=1e-12, atol=1e-12)
-
-    portable = phx.variational.Functional(
-        "iga-portable-l2",
-        (
-            phx.variational.LocalIntegralTerm(
-                "body",
-                region="body",
-                fields=(phx.variational.FieldJetSpec("u", value=True),),
-                density=lambda fields, geometry, context: fields["u"].value ** 2,
-                density_id="iga-portable-square",
-            ),
-        ),
-        variable_fields=("u",),
-    )
-    compiled = phx.equations.compile_finite_element_functional(
-        portable,
-        prepared,
-        fields={"u": "u"},
-        regions={"body": None},
-        execution_policy=phx.equations.FiniteElementExecutionPolicy(
-            realization="matrix_free",
-            local_kernel="sum_factorized",
-        ),
-    )
-    portable_value, portable_residual = compiled.value_and_residual(xx)
-
-    np.testing.assert_allclose(portable_value, value, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(
-        portable_residual,
-        jax.grad(compiled.potential)(xx),
         rtol=1e-12,
         atol=1e-12,
     )

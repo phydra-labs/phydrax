@@ -111,7 +111,7 @@ def _taylor_green(discretization: Any) -> Any:
     )
 
 
-def test_mac_les_preparation_retains_only_factored_filter_width_metadata() -> None:
+def test_mac_contracts() -> None:
     edges = jnp.asarray((0.0, 0.1, 0.35, 0.7, 1.0))
     specs = tuple(
         phx.discretization.NonuniformCellAxisSpec(edges, periodic=True) for _ in range(3)
@@ -135,25 +135,14 @@ def test_mac_les_preparation_retains_only_factored_filter_width_metadata() -> No
             discretization.cell_shape,
         )
         np.testing.assert_allclose(scale.directional_widths[..., axis], expected)
-
-
-@pytest.mark.parametrize(
-    ("plan_change", "message"),
-    (
+    for plan_change, message in (
         ({"discretization_id": "wrong-grid"}, "discretization"),
         ({"regime": "variable-density"}, "incompressible-unit-density"),
         ({"family": "explicit-filter"}, "filter semantics"),
-    ),
-)
-def test_mac_les_refuses_mismatched_prepared_provenance(
-    plan_change: Any, message: Any
-) -> None:
-    discretization, _, momentum = _grid()
-    with pytest.raises(ValueError, match=message):
-        _les_plan(discretization, **plan_change).prepare(momentum)
-
-
-def test_mac_les_refuses_non_3d_and_unsupported_physical_boundaries() -> None:
+    ):
+        discretization, _, momentum = _grid()
+        with pytest.raises(ValueError, match=message):
+            _les_plan(discretization, **plan_change).prepare(momentum)
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(4, periodic=True) for _ in range(2)),
         axis_names=("x", "y"),
@@ -194,55 +183,49 @@ def test_mac_les_refuses_non_3d_and_unsupported_physical_boundaries() -> None:
         result = prepared.evaluate(zero, wall_momentum.boundaries.homogeneous_stage())
         assert isinstance(prepared, PreparedMACAlgebraicLES)
         assert result.successful
-
-
-@pytest.mark.parametrize("coefficient", (0.0, 0.17))
-def test_mac_les_typed_preprojection_rate_and_work_identity(coefficient: Any) -> None:
-    discretization, operators, dynamics = _compiled(
-        coefficient=coefficient, count=4 if coefficient == 0.0 else 5
-    )
-    velocity = _taylor_green(discretization)
-    state = dynamics.pack_velocity(velocity)
-
-    components = dynamics.rate_components(0.0, state)
-    projected = dynamics.rate_projection(0.0, state)
-
-    assert isinstance(components, MACIncompressibleRateComponents)
-    assert isinstance(components.les_stage, MACLESStageResult)
-    assert components.les_stage.successful
-    assert jnp.max(jnp.abs(projected.divergence_after)) < 2.0e-10
-    expected = tuple(
-        -advective + molecular + sgs + forcing
-        for advective, molecular, sgs, forcing in zip(
-            components.convection,
-            components.molecular,
-            components.sgs,
-            components.forcing,
-            strict=True,
+    for coefficient in (0.0, 0.17):
+        discretization, operators, dynamics = _compiled(
+            coefficient=coefficient, count=4 if coefficient == 0.0 else 5
         )
-    )
-    for actual, value in zip(components.unconstrained, expected, strict=True):
-        np.testing.assert_allclose(actual, value, rtol=2.0e-12, atol=2.0e-12)
-    work = jnp.real(operators.velocity_space.inner(velocity, components.sgs))
-    np.testing.assert_allclose(
-        work, components.les_stage.integrated_work, rtol=2.0e-11, atol=2.0e-11
-    )
-    np.testing.assert_allclose(
-        components.les_stage.integrated_work,
-        -components.les_stage.viscosity_result.integrated_dissipation,
-        rtol=2.0e-11,
-        atol=2.0e-11,
-    )
-    maximum_sgs = max(float(jnp.max(jnp.abs(value))) for value in components.sgs)
-    if coefficient == 0.0:
-        assert maximum_sgs == 0.0
-        assert jnp.all(components.les_stage.model_result.kinematic_viscosity == 0.0)
-    else:
-        assert maximum_sgs > 0.0
-        assert jnp.std(components.les_stage.model_result.kinematic_viscosity) > 0.0
+        velocity = _taylor_green(discretization)
+        state = dynamics.pack_velocity(velocity)
 
+        components = dynamics.rate_components(0.0, state)
+        projected = dynamics.rate_projection(0.0, state)
 
-def test_mac_les_restriction_and_diagnostics_are_current_state_dependent() -> None:
+        assert isinstance(components, MACIncompressibleRateComponents)
+        assert isinstance(components.les_stage, MACLESStageResult)
+        assert components.les_stage.successful
+        assert jnp.max(jnp.abs(projected.divergence_after)) < 2.0e-10
+        expected = tuple(
+            -advective + molecular + sgs + forcing
+            for advective, molecular, sgs, forcing in zip(
+                components.convection,
+                components.molecular,
+                components.sgs,
+                components.forcing,
+                strict=True,
+            )
+        )
+        for actual, value in zip(components.unconstrained, expected, strict=True):
+            np.testing.assert_allclose(actual, value, rtol=2.0e-12, atol=2.0e-12)
+        work = jnp.real(operators.velocity_space.inner(velocity, components.sgs))
+        np.testing.assert_allclose(
+            work, components.les_stage.integrated_work, rtol=2.0e-11, atol=2.0e-11
+        )
+        np.testing.assert_allclose(
+            components.les_stage.integrated_work,
+            -components.les_stage.viscosity_result.integrated_dissipation,
+            rtol=2.0e-11,
+            atol=2.0e-11,
+        )
+        maximum_sgs = max(float(jnp.max(jnp.abs(value))) for value in components.sgs)
+        if coefficient == 0.0:
+            assert maximum_sgs == 0.0
+            assert jnp.all(components.les_stage.model_result.kinematic_viscosity == 0.0)
+        else:
+            assert maximum_sgs > 0.0
+            assert jnp.std(components.les_stage.model_result.kinematic_viscosity) > 0.0
     discretization, _, dynamics = _compiled(coefficient=0.17, count=5)
     state = dynamics.pack_velocity(_taylor_green(discretization))
     zero = jnp.zeros_like(state)
@@ -267,9 +250,6 @@ def test_mac_les_restriction_and_diagnostics_are_current_state_dependent() -> No
         atol=2.0e-11,
     )
     assert diagnostics.successful
-
-
-def test_mac_no_les_rate_preserves_the_original_momentum_formula_exactly() -> None:
     discretization, operators, momentum = _grid()
     projection = phx.solver.MACPressureProjectionPlan(operators, solve_method="transform")
     viscosity = jnp.asarray(0.03)

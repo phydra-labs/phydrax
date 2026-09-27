@@ -29,9 +29,8 @@ def _bound_problem() -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    ("method", "uses_nonlinear_constraint"),
-    [
+def test_compatible_constrained_methods_supply_implicit_kkt_derivatives() -> None:
+    for method, uses_nonlinear_constraint in [
         (phx.optim.ProjectedGradient(), False),
         (phx.optim.ProjectedLBFGS(), False),
         (phx.optim.ActiveSetNewton(), False),
@@ -43,45 +42,40 @@ def _bound_problem() -> Any:
             ),
             False,
         ),
-    ],
-)
-def test_compatible_constrained_methods_supply_implicit_kkt_derivatives(
-    method: Any,
-    uses_nonlinear_constraint: Any,
-) -> None:
-    if uses_nonlinear_constraint:
-        constraint = phx.optim.NonlinearConstraint(lambda state, _: state, upper=1.0)
-        problem = phx.optim.MinimizationProblem(
-            lambda state, target: 0.5 * jnp.sum((state - target) ** 2),
-            constraints=(constraint,),
-        )
-    else:
-        problem = _bound_problem()
+    ]:
+        if uses_nonlinear_constraint:
+            constraint = phx.optim.NonlinearConstraint(lambda state, _: state, upper=1.0)
+            problem = phx.optim.MinimizationProblem(
+                lambda state, target: 0.5 * jnp.sum((state - target) ** 2),
+                constraints=(constraint,),
+            )
+        else:
+            problem = _bound_problem()
 
-    result = phx.optim.minimize(
-        problem,
-        jnp.array([0.0]),
-        method=method,
-        args=jnp.array(2.0),
-        termination=_termination(),
-    )
-
-    assert result.successful
-    assert result.certificate is not None
-    assert method.capabilities.implicit_differentiation
-    assert result.provenance.implicit_differentiation
-
-    def solution(target: Any) -> Any:
-        return phx.optim.implicit_constrained_minimize(
+        result = phx.optim.minimize(
             problem,
             jnp.array([0.0]),
             method=method,
-            args=target,
+            args=jnp.array(2.0),
             termination=_termination(),
-        )[0]
+        )
 
-    np.testing.assert_allclose(solution(jnp.array(2.0)), 1.0, atol=2e-5)
-    np.testing.assert_allclose(jax.grad(solution)(jnp.array(2.0)), 0.0, atol=2e-6)
+        assert result.successful
+        assert result.certificate is not None
+        assert method.capabilities.implicit_differentiation
+        assert result.provenance.implicit_differentiation
+
+        def solution(target: Any) -> Any:
+            return phx.optim.implicit_constrained_minimize(
+                problem,
+                jnp.array([0.0]),
+                method=method,
+                args=target,
+                termination=_termination(),
+            )[0]
+
+        np.testing.assert_allclose(solution(jnp.array(2.0)), 1.0, atol=2e-5)
+        np.testing.assert_allclose(jax.grad(solution)(jnp.array(2.0)), 0.0, atol=2e-6)
 
 
 def test_active_and_inactive_bounds_compose_with_jit_jvp_and_vmap() -> None:
@@ -193,7 +187,7 @@ def test_constrained_initial_guess_has_zero_implicit_sensitivity() -> None:
     )
 
 
-def test_ambiguous_active_set_fails_instead_of_selecting_a_subgradient() -> None:
+def test_implicit_constrained_optimization_scenario_1() -> None:
     problem = _bound_problem()
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_constrained_minimize(
@@ -206,9 +200,6 @@ def test_ambiguous_active_set_fails_instead_of_selecting_a_subgradient() -> None
 
     with pytest.raises(Exception, match="strictly complementary active set"):
         solve(jnp.array(1.0))
-
-
-def test_rank_deficient_active_kkt_system_fails_explicitly() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda state, target: jnp.repeat(state - target, 2),
         lower=0.0,
@@ -229,9 +220,6 @@ def test_rank_deficient_active_kkt_system_fails_explicitly() -> None:
 
     with pytest.raises(Exception, match="singular or did not converge"):
         solve(jnp.array([1.0]))
-
-
-def test_unsuccessful_constrained_primal_solve_fails_explicitly() -> None:
     problem = _bound_problem()
     solve = eqx.filter_jit(
         lambda target: phx.optim.implicit_constrained_minimize(

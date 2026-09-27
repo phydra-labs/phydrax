@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,7 +22,7 @@ from phydrax.observation import (
 )
 
 
-def test_msd_acf_and_fcs_match_analytic_lag_estimators_with_explicit_units() -> None:
+def test_biophysical_observation_scenario_1() -> None:
     positions_m = jnp.stack((jnp.arange(6.0), jnp.zeros(6)), axis=-1)
     msd_plan = MeanSquareDisplacementPlan(6, 2, 3, 0.25, distance_unit="m", time_unit="s")
     msd = msd_plan.prepare().forward(positions_m)
@@ -68,9 +66,6 @@ def test_msd_acf_and_fcs_match_analytic_lag_estimators_with_explicit_units() -> 
     ]
     np.testing.assert_allclose(sample_centered.variance, expected[0])
     np.testing.assert_allclose(sample_centered.values, np.asarray(expected) / expected[0])
-
-
-def test_normalized_correlations_are_invariant_to_signal_unit_scale() -> None:
     alternating = jnp.asarray([1.0, -1.0, 1.0, -1.0, 1.0, -1.0])
     acf_runtime = AutocorrelationPlan(6, 2, 1.0).prepare()
     base_acf = acf_runtime.forward(alternating)
@@ -93,9 +88,6 @@ def test_normalized_correlations_are_invariant_to_signal_unit_scale() -> None:
     np.testing.assert_allclose(scaled_pair.correlation, base_pair.correlation)
     np.testing.assert_allclose(scaled_pair.peak_lag, base_pair.peak_lag)
     assert bool(scaled_pair.successful)
-
-
-def test_correlation_evidence_fails_closed_for_nonfinite_or_constant_data() -> None:
     acf_runtime = AutocorrelationPlan(4, 2, 1.0).prepare()
     constant = acf_runtime.forward(jnp.ones(4))
     assert not bool(constant.finite)
@@ -111,7 +103,7 @@ def test_correlation_evidence_fails_closed_for_nonfinite_or_constant_data() -> N
     assert not bool(dark.successful)
 
 
-def test_pair_correlation_peak_lag_sign_and_directionality_follow_leader() -> None:
+def test_biophysical_observation_scenario_2() -> None:
     leading = jnp.asarray([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     trailing = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
     runtime = PairCorrelationPlan(8, 3, 0.2, time_unit="s").prepare()
@@ -132,9 +124,6 @@ def test_pair_correlation_peak_lag_sign_and_directionality_follow_leader() -> No
     assert not bool(tied.successful)
     assert np.isnan(float(tied.peak_lag))
     assert np.isnan(float(tied.directionality))
-
-
-def test_anomalous_and_confined_diffusion_forward_and_evaluation_are_analytic() -> None:
     lag_s = jnp.asarray([0.0, 1.0, 4.0])
     anomalous = DiffusionModelPlan(
         lag_s, 2, "anomalous", distance_unit="m", time_unit="s"
@@ -184,11 +173,6 @@ def test_anomalous_and_confined_diffusion_forward_and_evaluation_are_analytic() 
     assert bool(unresolved_confined.finite)
     assert not bool(unresolved_confined.identifiable)
     assert not bool(unresolved_confined.successful)
-
-
-def test_brightness_conditioned_transport_recovers_each_bin_and_capacity_evidence() -> (
-    None
-):
     runtime = BrightnessConditionedTransportPlan(
         # ty: ignore[invalid-argument-type]
         [0.0, 5.0, 10.0],
@@ -216,30 +200,25 @@ def test_brightness_conditioned_transport_recovers_each_bin_and_capacity_evidenc
     np.testing.assert_array_equal(underfilled.identifiable_bins, [True, False])
     assert not bool(underfilled.identifiable)
     assert not bool(underfilled.successful)
+    for outside_brightness in [0.5, 11.0]:
+        runtime = BrightnessConditionedTransportPlan(
+            # ty: ignore[invalid-argument-type]
+            [1.0, 5.0, 10.0],
+            5,
+            2,
+            0.5,
+            minimum_count=2,
+        ).prepare()
+        result = runtime.evaluate(
+            jnp.asarray([2.0, 3.0, 7.0, 8.0, outside_brightness]),
+            jnp.ones((5, 2)),
+        )
+        np.testing.assert_array_equal(result.counts, [2, 2])
+        assert not bool(result.finite)
+        assert not bool(result.successful)
 
 
-@pytest.mark.parametrize("outside_brightness", [0.5, 11.0])
-def test_brightness_conditioning_fails_closed_outside_recorded_bins(
-    outside_brightness: Any,
-) -> None:
-    runtime = BrightnessConditionedTransportPlan(
-        # ty: ignore[invalid-argument-type]
-        [1.0, 5.0, 10.0],
-        5,
-        2,
-        0.5,
-        minimum_count=2,
-    ).prepare()
-    result = runtime.evaluate(
-        jnp.asarray([2.0, 3.0, 7.0, 8.0, outside_brightness]),
-        jnp.ones((5, 2)),
-    )
-    np.testing.assert_array_equal(result.counts, [2, 2])
-    assert not bool(result.finite)
-    assert not bool(result.successful)
-
-
-def test_lifetime_fret_irf_limits_and_poisson_draws_are_reproducible() -> None:
+def test_biophysical_observation_scenario_3() -> None:
     plan = FluorescencePhotonPlan(
         jnp.arange(5.0),
         jnp.asarray([0.0, 1.0, 0.0, 0.0]),
@@ -274,9 +253,6 @@ def test_lifetime_fret_irf_limits_and_poisson_draws_are_reproducible() -> None:
     np.testing.assert_allclose(jnp.sum(long_lifetime.expected_counts), 100.0)
     assert bool(long_lifetime.finite)
     assert bool(long_lifetime.successful)
-
-
-def test_censored_dwell_likelihood_counts_only_observed_exits() -> None:
     runtime = DwellTimeLikelihoodPlan(3, time_unit="s").prepare()
     result = eqx.filter_jit(runtime.evaluate)(
         jnp.asarray([1.0, 2.0, 3.0]),
@@ -295,9 +271,6 @@ def test_censored_dwell_likelihood_counts_only_observed_exits() -> None:
     assert bool(all_censored.finite)
     assert not bool(all_censored.identifiable)
     assert np.isnan(float(all_censored.maximum_likelihood_rate))
-
-
-def test_iv_reversal_inference_recovers_conductance_and_reports_flat_curve() -> None:
     voltages_v = jnp.asarray([-0.1, 0.0, 0.1, 0.2, 0.3])
     runtime = IVReversalPlan(
         voltages_v,

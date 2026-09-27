@@ -17,7 +17,7 @@ def _mesh() -> Any:
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_exact_diagonal_matches_sparse_diffusion() -> None:
+def test_fem_libparanumal_absorption_scenario_1() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _mesh(), phx.discretization.FiniteElementFieldSpec("u", element)
@@ -32,9 +32,6 @@ def test_exact_diagonal_matches_sparse_diffusion() -> None:
     assert diagonal.method == "workset"
     # ty: ignore[invalid-argument-type]
     assert jnp.allclose(diagonal.diagonal, jnp.diag(jnp.asarray(matrix)))
-
-
-def test_generic_p_transfer_preserves_pairing() -> None:
     coarse = phx.discretization.lagrange_element("triangle", 1)
     fine = phx.discretization.lagrange_element("triangle", 3)
     transfer = phx.discretization.fem.finite_element_p_transfer(coarse, fine)
@@ -45,9 +42,6 @@ def test_generic_p_transfer_preserves_pairing() -> None:
     pulled = transfer.apply("dual-pullback", fine_dual)
 
     assert jnp.allclose(jnp.vdot(prolonged, fine_dual), jnp.vdot(coarse_value, pulled))
-
-
-def test_p_degree_coarsening_policies_are_deterministic() -> None:
     assert phx.discretization.fem.FiniteElementPMultigridPolicy(
         "all-degrees"
     ).degree_sequence("hexahedron", 5) == (
@@ -76,7 +70,7 @@ def test_p_degree_coarsening_policies_are_deterministic() -> None:
     )
 
 
-def test_collocated_tensor_mass_path_is_identity_for_unit_data() -> None:
+def test_fem_libparanumal_absorption_scenario_2() -> None:
     derivative = jnp.zeros((2, 2))
     metric = jnp.ones((1, 2, 2, 3))
     mass = jnp.ones((1, 2, 2))
@@ -88,34 +82,23 @@ def test_collocated_tensor_mass_path_is_identity_for_unit_data() -> None:
 
     assert jnp.allclose(operator.mv(value), value)
     assert jnp.allclose(operator.transpose_mv(value), value)
-
-
-@pytest.mark.parametrize(
-    ("gathers", "global_size"),
-    (
+    for gathers, global_size in (
         ((0, 1, 2, 3), 0),
         ((-1, 1, 2, 3), 4),
         ((0, 1, 2, 4), 4),
-    ),
-)
-def test_collocated_tensor_rejects_invalid_global_gathers(
-    gathers: Any, global_size: Any
-) -> None:
-    derivative = jnp.zeros((2, 2))
-    metric = jnp.ones((1, 2, 2, 3))
-    mass = jnp.ones((1, 2, 2))
+    ):
+        derivative = jnp.zeros((2, 2))
+        metric = jnp.ones((1, 2, 2, 3))
+        mass = jnp.ones((1, 2, 2))
 
-    with pytest.raises(ValueError, match="gathers or global size"):
-        phx.equations.fem.CollocatedTensorProductOperator(
-            derivative,
-            metric,
-            mass,
-            jnp.asarray((gathers,), dtype=jnp.int32),
-            global_size,
-        )
-
-
-def test_dg_trace_staging_builds_conservative_jet() -> None:
+        with pytest.raises(ValueError, match="gathers or global size"):
+            phx.equations.fem.CollocatedTensorProductOperator(
+                derivative,
+                metric,
+                mass,
+                jnp.asarray((gathers,), dtype=jnp.int32),
+                global_size,
+            )
     plus = jnp.asarray([[1.0, 2.0]])
     minus = jnp.asarray([[3.0, 4.0]])
     basis = jnp.asarray([[[1.0, 0.0], [0.0, 1.0]]])
@@ -129,9 +112,6 @@ def test_dg_trace_staging_builds_conservative_jet() -> None:
 
     assert jnp.allclose(staged.jet.jump, jnp.asarray([[-2.0, -2.0]]))
     assert jnp.allclose(staged.jet.average, jnp.asarray([[2.0, 3.0]]))
-
-
-def test_quadrature_policy_requires_nonpolynomial_evidence() -> None:
     policy = phx.equations.fem.QuadratureAccuracyPolicy("exact-polynomial")
     assert (
         policy.resolve_degree(2, 2, coefficient_order=1, kernel_polynomial_degree=2) == 7
@@ -141,7 +121,7 @@ def test_quadrature_policy_requires_nonpolynomial_evidence() -> None:
         policy.resolve_degree(2, 2, coefficient_order=None)
 
 
-def test_one_ring_patch_weights_form_partition_of_unity() -> None:
+def test_fem_libparanumal_absorption_scenario_3() -> None:
     element = phx.discretization.lagrange_element("triangle", 1)
     discretization = phx.discretization.FiniteElementPlan(
         _mesh(), phx.discretization.FiniteElementFieldSpec("u", element)
@@ -157,9 +137,6 @@ def test_one_ring_patch_weights_form_partition_of_unity() -> None:
     value = jnp.arange(1.0, 5.0)
 
     assert jnp.allclose(preconditioner.apply(value), value)
-
-
-def test_low_order_auxiliary_identity_path() -> None:
     high = phx.linalg.ArraySpace((3,))
     low = phx.linalg.ArraySpace((3,))
     identity = phx.linalg.IdentityLinearOperator(high)

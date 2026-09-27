@@ -54,7 +54,7 @@ def _conditional_exponential_branch(population: Any, request: Any) -> Any:
     )
 
 
-def test_adaptive_splitting_estimates_exponential_tail_and_tracks_genealogy() -> None:
+def test_adaptive_splitting_contracts() -> None:
     event = phx.stochastic.ThresholdCrossingEvent(
         lambda time, state: state[0],
         _TARGET,
@@ -91,9 +91,6 @@ def test_adaptive_splitting_estimates_exponential_tail_and_tracks_genealogy() ->
     branches = result.diagnostics.branch_indices
     assert jnp.all(branches[killed] == 1)
     assert jnp.all(branches[~killed] == -1)
-
-
-def test_adaptive_splitting_replicates_report_empirical_standard_error() -> None:
     event = phx.stochastic.ThresholdCrossingEvent(
         lambda time, state: state[0],
         _TARGET,

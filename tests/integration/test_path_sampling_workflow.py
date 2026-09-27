@@ -188,7 +188,7 @@ def test_tis_and_retis_prepared_workflows_preserve_interface_assignments(
     assert int(restored.state.accepted_exchange_count) == 1
 
 
-def test_tis_and_retis_reject_top_level_state_owner_mismatches() -> None:
+def test_path_sampling_workflow_scenario_1() -> None:
     kernel = _kernel()
     action = DeterministicPathAction(kernel)
     first_plan = TISPlan(
@@ -223,9 +223,6 @@ def test_tis_and_retis_reject_top_level_state_owner_mismatches() -> None:
     retis_state = initialize_retis(first_retis)
     with pytest.raises(ValueError, match="different prepared runtime"):
         retis_step(second_retis, retis_state, jax.random.key(24))
-
-
-def test_tps_step_has_a_fixed_shape_compiled_runtime() -> None:
     kernel = _kernel()
     prepared = prepare_tps(
         TPSPlan(

@@ -13,7 +13,7 @@ import pytest
 import phydrax as phx
 
 
-def test_circle_extrusion_is_an_exact_centered_cylinder() -> None:
+def test_analytic_sweeps_scenario_1() -> None:
     compiled = (
         phx.geometry.Circle(
             (0.0, 0.0),
@@ -43,36 +43,6 @@ def test_circle_extrusion_is_an_exact_centered_cylinder() -> None:
     assert compiled.measure == pytest.approx(24.0 * jnp.pi)
     assert compiled.boundary_measure == pytest.approx(32.0 * jnp.pi)
     assert bool(compiled.validity().accepted)
-
-
-def test_rectangle_extrusion_matches_box_distance_and_has_finite_gradients() -> None:
-    compiled = (
-        phx.geometry.Rectangle(
-            center=(0.0, 0.0),
-            size=(2.0, 4.0),
-            feature_id="profile",
-        )
-        .extruded(6.0, feature_id="sweep")
-        .compile()
-    )
-    height_index = compiled.schema.index(phx.geometry.ParameterId("sweep", "height"))
-    points = jnp.asarray([[1.5, 0.0, 0.0], [0.0, 0.0, 3.5]])
-
-    assert jnp.allclose(compiled.signed_distance(points), jnp.asarray([0.5, 0.5]))
-
-    def volume(height: Any) -> Any:
-        state = compiled.state.replace_at(height_index, height)
-        return compiled.kernel.measure(state)
-
-    assert jax.grad(volume)(jnp.asarray(6.0)) == pytest.approx(8.0)
-    normals = eqx.filter_jit(compiled.boundary_normal)(
-        jnp.asarray([[1.0, 0.0, 0.0], [0.0, 0.0, 3.0]])
-    )
-    assert jnp.all(jnp.isfinite(normals))
-    assert jnp.allclose(jnp.linalg.norm(normals, axis=-1), 1.0)
-
-
-def test_offset_circle_revolution_is_an_exact_torus_field() -> None:
     compiled = (
         phx.geometry.Circle(
             center=(2.0, 0.0),
@@ -101,9 +71,6 @@ def test_offset_circle_revolution_is_an_exact_torus_field() -> None:
     assert jnp.all(jnp.isfinite(eqx.filter_jit(compiled.boundary_normal)(points)))
     with pytest.raises(NotImplementedError, match="does not provide interior_measure"):
         _ = compiled.measure
-
-
-def test_revolution_rejects_a_profile_crossing_the_axis() -> None:
     compiled = (
         phx.geometry.Circle(
             center=(0.25, 0.0),
@@ -118,3 +85,30 @@ def test_revolution_rejects_a_profile_crossing_the_axis() -> None:
 
     assert not bool(evidence.accepted)
     assert "minimum_profile_radius" in evidence.margin_names
+
+
+def test_rectangle_extrusion_matches_box_distance_and_has_finite_gradients() -> None:
+    compiled = (
+        phx.geometry.Rectangle(
+            center=(0.0, 0.0),
+            size=(2.0, 4.0),
+            feature_id="profile",
+        )
+        .extruded(6.0, feature_id="sweep")
+        .compile()
+    )
+    height_index = compiled.schema.index(phx.geometry.ParameterId("sweep", "height"))
+    points = jnp.asarray([[1.5, 0.0, 0.0], [0.0, 0.0, 3.5]])
+
+    assert jnp.allclose(compiled.signed_distance(points), jnp.asarray([0.5, 0.5]))
+
+    def volume(height: Any) -> Any:
+        state = compiled.state.replace_at(height_index, height)
+        return compiled.kernel.measure(state)
+
+    assert jax.grad(volume)(jnp.asarray(6.0)) == pytest.approx(8.0)
+    normals = eqx.filter_jit(compiled.boundary_normal)(
+        jnp.asarray([[1.0, 0.0, 0.0], [0.0, 0.0, 3.0]])
+    )
+    assert jnp.all(jnp.isfinite(normals))
+    assert jnp.allclose(jnp.linalg.norm(normals, axis=-1), 1.0)

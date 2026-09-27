@@ -251,6 +251,16 @@ def test_each_declared_covariance_fit_gradient_is_finite(recipe: Any) -> None:
             max_iterations=3, tolerance=1.0, regularization=value
         ),
     ],
+    ids=(
+        "empirical",
+        "weighted",
+        "diagonal",
+        "factor",
+        "ledoit-wolf",
+        "oas",
+        "robust",
+        "graphical-lasso",
+    ),
 )
 def test_each_declared_covariance_fit_hyperparameter_gradient_is_finite(
     factory: Any,

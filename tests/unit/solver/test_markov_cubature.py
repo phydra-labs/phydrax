@@ -48,7 +48,7 @@ def _moments(solution: Any, index: Any = -1) -> Any:
     return jnp.sum(weights * values), jnp.sum(weights * values**2)
 
 
-def test_weak_euler_recombination_preserves_linear_gaussian_moments() -> None:
+def test_markov_cubature_scenario_1() -> None:
     intervals = 4
     rate = 0.2
     initial = 1.0
@@ -85,28 +85,6 @@ def test_weak_euler_recombination_preserves_linear_gaussian_moments() -> None:
     assert estimate.successful
     assert estimate.error_estimate is None
     assert jnp.allclose(jnp.asarray(estimate.value.data), second, atol=1e-12)
-
-
-def test_weak_solver_is_jittable_and_uses_frozen_support_weight_derivatives() -> None:
-    plan = _plan(4)
-
-    def terminal_mean(rate: Any) -> Any:
-        solution = phx.solver.solve_markov_cubature(
-            _additive_problem(rate=rate, initial=1.0),
-            plan,
-        )
-        return _moments(solution)[0]
-
-    rate = jnp.asarray(0.2)
-    compiled = jax.jit(terminal_mean)(rate)
-    gradient = jax.grad(terminal_mean)(rate)
-
-    assert jnp.allclose(compiled, 1.05**4, atol=1e-12)
-    assert jnp.isfinite(gradient)
-    assert jnp.allclose(gradient, 1.05**3, atol=1e-11)
-
-
-def test_markov_solver_preserves_float32_state_dtype_under_jit() -> None:
     problem = phx.solver.DifferentialProblem(
         lambda time, state, args: -jnp.asarray(0.2, dtype=state.dtype) * state,
         jnp.asarray([1.0], dtype=jnp.float32),
@@ -126,9 +104,38 @@ def test_markov_solver_preserves_float32_state_dtype_under_jit() -> None:
 
     assert solution.points.dtype == jnp.float32
     assert solution.successful
+    deterministic = phx.solver.DifferentialProblem(
+        lambda time, state, args: state,
+        jnp.asarray([1.0]),
+        t0=0.0,
+        t1=1.0,
+    )
+    with pytest.raises(ValueError, match="requires a stochastic"):
+        phx.solver.solve_markov_cubature(deterministic, _plan())
 
+    multiplicative_stratonovich = phx.solver.DifferentialProblem(
+        lambda time, state, args: jnp.zeros_like(state),
+        jnp.asarray([1.0]),
+        t0=0.0,
+        t1=1.0,
+        wiener_terms=(
+            phx.solver.WienerTerm(
+                "noise",
+                lambda time, state, args: state[..., None],
+                (1,),
+                structure="commutative",
+            ),
+        ),
+        interpretation="stratonovich",
+    )
+    with pytest.raises(NotImplementedError, match="only for additive noise"):
+        phx.solver.solve_markov_cubature(multiplicative_stratonovich, _plan())
 
-def test_temporal_masks_hold_the_law_without_recording_fake_expansions() -> None:
+    with pytest.raises(ValueError, match="exceeding maximum_expanded_particles"):
+        phx.solver.solve_markov_cubature(
+            _additive_problem(),
+            _plan(maximum_expanded_particles=5),
+        )
     mesh = phx.discretization.TemporalMesh(
         jnp.asarray([0.0, 0.25, 0.5, 1.0]),
         role="driver",
@@ -164,6 +171,25 @@ def test_temporal_masks_hold_the_law_without_recording_fake_expansions() -> None
     assert jnp.all(solution.valid)
 
 
+def test_weak_solver_is_jittable_and_uses_frozen_support_weight_derivatives() -> None:
+    plan = _plan(4)
+
+    def terminal_mean(rate: Any) -> Any:
+        solution = phx.solver.solve_markov_cubature(
+            _additive_problem(rate=rate, initial=1.0),
+            plan,
+        )
+        return _moments(solution)[0]
+
+    rate = jnp.asarray(0.2)
+    compiled = jax.jit(terminal_mean)(rate)
+    gradient = jax.grad(terminal_mean)(rate)
+
+    assert jnp.allclose(compiled, 1.05**4, atol=1e-12)
+    assert jnp.isfinite(gradient)
+    assert jnp.allclose(gradient, 1.05**3, atol=1e-11)
+
+
 def test_dynamic_nonfinite_failure_returns_a_status_when_throw_is_disabled() -> None:
     problem = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.full_like(state, jnp.nan),
@@ -185,38 +211,3 @@ def test_dynamic_nonfinite_failure_returns_a_status_when_throw_is_disabled() -> 
     assert solution.status == int(phx.solver.MarkovCubatureStatus.NONFINITE_DYNAMICS)
     assert not solution.successful
     assert not solution.valid[-1]
-
-
-def test_markov_cubature_rejects_unsupported_static_problem_contracts() -> None:
-    deterministic = phx.solver.DifferentialProblem(
-        lambda time, state, args: state,
-        jnp.asarray([1.0]),
-        t0=0.0,
-        t1=1.0,
-    )
-    with pytest.raises(ValueError, match="requires a stochastic"):
-        phx.solver.solve_markov_cubature(deterministic, _plan())
-
-    multiplicative_stratonovich = phx.solver.DifferentialProblem(
-        lambda time, state, args: jnp.zeros_like(state),
-        jnp.asarray([1.0]),
-        t0=0.0,
-        t1=1.0,
-        wiener_terms=(
-            phx.solver.WienerTerm(
-                "noise",
-                lambda time, state, args: state[..., None],
-                (1,),
-                structure="commutative",
-            ),
-        ),
-        interpretation="stratonovich",
-    )
-    with pytest.raises(NotImplementedError, match="only for additive noise"):
-        phx.solver.solve_markov_cubature(multiplicative_stratonovich, _plan())
-
-    with pytest.raises(ValueError, match="exceeding maximum_expanded_particles"):
-        phx.solver.solve_markov_cubature(
-            _additive_problem(),
-            _plan(maximum_expanded_particles=5),
-        )

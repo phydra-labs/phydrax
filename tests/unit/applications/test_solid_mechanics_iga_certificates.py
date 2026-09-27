@@ -38,7 +38,7 @@ def _embedding(disposition: CertificateDisposition) -> SurfaceEmbeddingCertifica
     )
 
 
-def test_iga_solid_reference_certificate_gate_uses_certificate_acceptance() -> None:
+def test_iga_contracts() -> None:
     accepted = _local(CertificateDisposition.PASS)
     assert _local_certificate(accepted) is accepted
     for disposition in (
@@ -47,9 +47,6 @@ def test_iga_solid_reference_certificate_gate_uses_certificate_acceptance() -> N
     ):
         with pytest.raises(ValueError, match="did not pass"):
             _local_certificate(_local(disposition))
-
-
-def test_iga_shell_surface_certificate_gate_uses_certificate_acceptance() -> None:
     accepted = _embedding(CertificateDisposition.PASS)
     assert _surface(accepted) is accepted
     for disposition in (

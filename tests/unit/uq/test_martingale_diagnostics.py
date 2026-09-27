@@ -38,7 +38,7 @@ def _brownian_residuals(*, generator_offset: Any = 0.0) -> Any:
     return phx.stochastic.martingale_increments(trajectory, problem)
 
 
-def test_brownian_martingale_and_quadratic_variation_pass() -> None:
+def test_martingale_diagnostics_scenario_1() -> None:
     residuals = _brownian_residuals()
     moments = phx.uq.martingale_diagnostics(
         residuals,
@@ -56,17 +56,11 @@ def test_brownian_martingale_and_quadratic_variation_pass() -> None:
     assert moments.passed
     assert variation.passed
     assert report.passed
-
-
-def test_wrong_brownian_generator_is_rejected() -> None:
     residuals = _brownian_residuals(generator_offset=2.0)
     diagnostics = phx.uq.martingale_diagnostics(residuals)
 
     assert not diagnostics.passed
     assert jnp.max(jnp.abs(diagnostics.standardized)) > 10.0
-
-
-def test_poisson_compensator_uses_complete_event_paths() -> None:
     process = phx.stochastic.JumpProcess(
         lambda time, state, args: jnp.asarray([2.0]),
         lambda state, channel, mark, args: state + jnp.asarray([1.0]),

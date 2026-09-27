@@ -31,7 +31,7 @@ def _manufactured_current_boundary(plan: Any) -> Any:
     return current, boundary
 
 
-def test_free_boundary_step_couples_circuit_boundary_and_equilibrium() -> None:
+def test_native_coupling_scenario_1() -> None:
     equilibrium = _manufactured_equilibrium_plan()
     current, boundary = _manufactured_current_boundary(equilibrium)
     circuit = phx.circuit.CoupledInductancePlan(
@@ -55,9 +55,6 @@ def test_free_boundary_step_couples_circuit_boundary_and_equilibrium() -> None:
     assert bool(result.successful)
     np.testing.assert_allclose(result.accepted_state.winding_current_a, [0.0])
     assert result.equilibrium.pde_residual_norm < 1.0e-6
-
-
-def test_filament_green_response_is_finite_reciprocal_boundary_data() -> None:
     equilibrium = _manufactured_equilibrium_plan()
     response = phx.applications.tokamak.AxisymmetricCoilResponsePlan.from_filament_coils(
         equilibrium.r_m,
@@ -73,9 +70,6 @@ def test_filament_green_response_is_finite_reciprocal_boundary_data() -> None:
     np.testing.assert_allclose(values[0], values[-1], rtol=1.0e-12, atol=1.0e-15)
     np.testing.assert_array_equal(values[1:-1, 1:-1], 0.0)
     assert response.winding_ids == ("pf",)
-
-
-def test_current_diffusion_preserves_flux_without_source_or_boundary_rate() -> None:
     theta = 2.0 * np.pi * np.arange(16) / 16
     contours = np.zeros((3, 16, 2))
     contours[0, :, 0] = 2.0

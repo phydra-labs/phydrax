@@ -121,7 +121,7 @@ def _four_recipient_plan() -> Any:
     return plan
 
 
-def test_one_sliver_retains_threshold_scaled_rate_and_conserves_constant_source() -> None:
+def test_finite_volume_small_cell_scenario_1() -> None:
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
     metrics = _metrics(
@@ -151,11 +151,6 @@ def test_one_sliver_retains_threshold_scaled_rate_and_conserves_constant_source(
     assert result.plan_id == plan.plan_id
     assert result.evidence.metrics_id == metrics.metrics_id
     assert result.evidence.policy_id == policy.policy_id
-
-
-def test_redistribution_flux_block_scatter_matches_delta_and_keeps_source_separate() -> (
-    None
-):
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
     metrics = _metrics(
@@ -188,9 +183,6 @@ def test_redistribution_flux_block_scatter_matches_delta_and_keeps_source_separa
     assert same_routes.block_id == block.block_id
     assert same_routes.route_id == block.route_id
     assert same_routes.rate_block_id == block.rate_block_id
-
-
-def test_adjacent_slivers_route_only_to_stable_non_small_recipients() -> None:
     discretization = _quadrilateral_grid(3, 2)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=2)
     metrics = _metrics(
@@ -234,7 +226,7 @@ def test_adjacent_slivers_route_only_to_stable_non_small_recipients() -> None:
     )
 
 
-def test_all_sliver_chain_fails_instead_of_routing_excess_between_small_cells() -> None:
+def test_finite_volume_small_cell_scenario_2() -> None:
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=2)
     metrics = _metrics(
@@ -248,9 +240,6 @@ def test_all_sliver_chain_fails_instead_of_routing_excess_between_small_cells() 
 
     with pytest.raises(ValueError, match="no non-small open-face recipient"):
         ConservativeSmallCellRedistributionPlan(discretization, metrics, policy)
-
-
-def test_equal_measure_ties_are_broken_by_stable_cell_id() -> None:
     stable_ids = np.asarray((40, 30, 10, 20), dtype=np.int64)
     discretization = _quadrilateral_grid(2, 2, cell_global_ids=stable_ids)
     policy = _policy(minimum_volume_fraction=0.1, maximum_recipients=1)
@@ -278,9 +267,6 @@ def test_equal_measure_ties_are_broken_by_stable_cell_id() -> None:
         reversed_geometry, reversed_metrics, policy
     )
     np.testing.assert_array_equal(reversed_plan.recipient_cells, ((1,),))
-
-
-def test_vector_rates_are_componentwise_conservative_under_jit_and_grad() -> None:
     discretization = _quadrilateral_grid(3, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
     metrics = _metrics(
@@ -306,27 +292,27 @@ def test_vector_rates_are_componentwise_conservative_under_jit_and_grad() -> Non
     np.testing.assert_allclose(gradient, jnp.ones_like(rate), atol=2.0e-15)
 
 
-@pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
-def test_scale_separated_defect_matches_accurate_signed_sum(dtype: Any) -> None:
-    plan = _four_recipient_plan()
-    rates = np.random.default_rng(20260826).normal(size=(9, 3))
-    rates *= np.asarray((1.0, 1.0e8, 1.0e16))
-    rate = jnp.asarray(rates, dtype=dtype)
+def test_finite_volume_small_cell_scenario_3() -> None:
+    for dtype in (jnp.float32, jnp.float64):
+        plan = _four_recipient_plan()
+        rates = np.random.default_rng(20260826).normal(size=(9, 3))
+        rates *= np.asarray((1.0, 1.0e8, 1.0e16))
+        rate = jnp.asarray(rates, dtype=dtype)
 
-    result = eqx.filter_jit(plan.redistribute_rate)(rate)
-    combined = np.concatenate(
-        (np.asarray(result.redistributed_rate), -np.asarray(rate)),
-        axis=0,
-    )
-    expected = np.asarray(
-        [math.fsum(combined[:, index].tolist()) for index in range(combined.shape[1])],
-        dtype=np.dtype(dtype),
-    )
+        result = eqx.filter_jit(plan.redistribute_rate)(rate)
+        combined = np.concatenate(
+            (np.asarray(result.redistributed_rate), -np.asarray(rate)),
+            axis=0,
+        )
+        expected = np.asarray(
+            [
+                math.fsum(combined[:, index].tolist())
+                for index in range(combined.shape[1])
+            ],
+            dtype=np.dtype(dtype),
+        )
 
-    np.testing.assert_array_equal(result.conservation_defect, expected)
-
-
-def test_float32_extreme_weights_renormalize_under_jit_and_conserve_gradient() -> None:
+        np.testing.assert_array_equal(result.conservation_defect, expected)
     plan = _four_recipient_plan()
     prepared_weights = np.asarray(
         ((0.31141971, 0.48647018, 0.20211012, 1.0e-30),),
@@ -367,6 +353,62 @@ def test_float32_extreme_weights_renormalize_under_jit_and_conserve_gradient() -
         rtol=0.0,
         atol=float(8.0 * jnp.finfo(jnp.float32).eps),
     )
+    plan = _four_recipient_plan()
+    prepared_weights = jnp.asarray(
+        ((1.0e-50, 0.25, 0.25, 0.5 - 1.0e-50),),
+        dtype=jnp.float64,
+    )
+    plan = eqx.tree_at(
+        lambda candidate: candidate.weights,
+        plan,
+        prepared_weights,
+    )
+    redistribute = eqx.filter_jit(plan.redistribute_rate)
+
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="recipient weights underflow",
+    ):
+        result = redistribute(jnp.ones((9,), dtype=jnp.float32))
+        jax.block_until_ready(result.redistributed_rate)
+    plan = _four_recipient_plan()
+    source = int(plan.source_cells[0])
+    recipient = int(plan.recipient_cells[0, 0])
+    balancer = next(
+        cell for cell in range(plan.active_cells.size) if cell not in (source, recipient)
+    )
+    maximum = jnp.finfo(jnp.float32).max
+    rate = jnp.zeros((plan.active_cells.size,), dtype=jnp.float32)
+    rate = rate.at[source].set(maximum)
+    rate = rate.at[recipient].set(maximum)
+    rate = rate.at[balancer].set(-maximum)
+
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="content-rate dtype conservation tolerance",
+    ):
+        result = eqx.filter_jit(plan.redistribute_rate)(rate)
+        jax.block_until_ready(result.redistributed_rate)
+    discretization = _quadrilateral_grid(3, 1)
+    policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
+    metrics = _metrics(
+        discretization,
+        lambda points, args: points[:, 0] - 1.1,
+        "one-solid-and-no-small-cells",
+        policy,
+    )
+    plan = ConservativeSmallCellRedistributionPlan(discretization, metrics, policy)
+
+    unchanged = plan.redistribute_rate(jnp.asarray((0.0, 2.0, 3.0)))
+    np.testing.assert_array_equal(unchanged.redistributed_rate, (0.0, 2.0, 3.0))
+    assert not unchanged.activated
+    assert plan.redistribution_flux_rate_block(jnp.asarray((0.0, 2.0, 3.0))) is None
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="Inactive-cell content rates must be exactly zero",
+    ):
+        result = plan.redistribute_rate(jnp.asarray((1.0, 2.0, 3.0)))
+        jax.block_until_ready(result.redistributed_rate)
 
 
 def test_float32_flux_block_uses_normalized_route_weights_under_jit_and_grad() -> None:
@@ -435,72 +477,7 @@ def test_float32_flux_block_uses_normalized_route_weights_under_jit_and_grad() -
     )
 
 
-def test_float32_recipient_weight_underflow_fails_explicitly_under_jit() -> None:
-    plan = _four_recipient_plan()
-    prepared_weights = jnp.asarray(
-        ((1.0e-50, 0.25, 0.25, 0.5 - 1.0e-50),),
-        dtype=jnp.float64,
-    )
-    plan = eqx.tree_at(
-        lambda candidate: candidate.weights,
-        plan,
-        prepared_weights,
-    )
-    redistribute = eqx.filter_jit(plan.redistribute_rate)
-
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="recipient weights underflow",
-    ):
-        result = redistribute(jnp.ones((9,), dtype=jnp.float32))
-        jax.block_until_ready(result.redistributed_rate)
-
-
-def test_float32_nonfinite_conservation_defect_fails_explicitly() -> None:
-    plan = _four_recipient_plan()
-    source = int(plan.source_cells[0])
-    recipient = int(plan.recipient_cells[0, 0])
-    balancer = next(
-        cell for cell in range(plan.active_cells.size) if cell not in (source, recipient)
-    )
-    maximum = jnp.finfo(jnp.float32).max
-    rate = jnp.zeros((plan.active_cells.size,), dtype=jnp.float32)
-    rate = rate.at[source].set(maximum)
-    rate = rate.at[recipient].set(maximum)
-    rate = rate.at[balancer].set(-maximum)
-
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="content-rate dtype conservation tolerance",
-    ):
-        result = eqx.filter_jit(plan.redistribute_rate)(rate)
-        jax.block_until_ready(result.redistributed_rate)
-
-
-def test_inactive_rates_are_zero_and_nonzero_inactive_content_fails() -> None:
-    discretization = _quadrilateral_grid(3, 1)
-    policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=1)
-    metrics = _metrics(
-        discretization,
-        lambda points, args: points[:, 0] - 1.1,
-        "one-solid-and-no-small-cells",
-        policy,
-    )
-    plan = ConservativeSmallCellRedistributionPlan(discretization, metrics, policy)
-
-    unchanged = plan.redistribute_rate(jnp.asarray((0.0, 2.0, 3.0)))
-    np.testing.assert_array_equal(unchanged.redistributed_rate, (0.0, 2.0, 3.0))
-    assert not unchanged.activated
-    assert plan.redistribution_flux_rate_block(jnp.asarray((0.0, 2.0, 3.0))) is None
-    with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError),
-        match="Inactive-cell content rates must be exactly zero",
-    ):
-        result = plan.redistribute_rate(jnp.asarray((1.0, 2.0, 3.0)))
-        jax.block_until_ready(result.redistributed_rate)
-
-
-def test_sliver_with_only_inactive_or_closed_neighbors_fails_preparation() -> None:
+def test_finite_volume_small_cell_scenario_4() -> None:
     discretization = _quadrilateral_grid(2, 1)
     policy = _policy(minimum_volume_fraction=0.5, maximum_recipients=2)
     metrics = _metrics(
@@ -513,9 +490,6 @@ def test_sliver_with_only_inactive_or_closed_neighbors_fails_preparation() -> No
 
     with pytest.raises(ValueError, match="no non-small open-face recipient"):
         ConservativeSmallCellRedistributionPlan(discretization, metrics, policy)
-
-
-def test_policy_identity_binds_every_stabilization_choice() -> None:
     discretization = _quadrilateral_grid(3, 1)
     baseline = _policy(
         minimum_volume_fraction=0.5,

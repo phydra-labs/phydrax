@@ -123,7 +123,7 @@ def test_slepc_prepare_reports_missing_optional_dependencies(monkeypatch: Any) -
         )
 
 
-def test_slepc_transform_rejects_shell_instead_of_materializing() -> None:
+def test_slepc_contracts() -> None:
     problem = _problem()
     selection = GeneralEigenSelection.closest(6.25, 1)
 
@@ -156,11 +156,6 @@ def test_slepc_transform_rejects_shell_instead_of_materializing() -> None:
                 ),
             ),
         )
-
-
-def test_slepc_csr_mode_requires_sparse_operators_and_declared_transform_options() -> (
-    None
-):
     problem = _problem(generalized=True)
     closest = GeneralEigenSelection.closest(3.0, 1)
 
@@ -204,9 +199,6 @@ def test_slepc_csr_mode_requires_sparse_operators_and_declared_transform_options
                 ),
             ),
         )
-
-
-def test_slepc_plan_rejects_unsupported_selection_without_provider_imports() -> None:
     problem = _problem()
 
     with pytest.raises(ValueError, match="largest-real"):
@@ -214,9 +206,6 @@ def test_slepc_plan_rejects_unsupported_selection_without_provider_imports() -> 
             problem,
             SLEPcEigenPolicy(GeneralEigenSelection("smallest-magnitude", count=1)),
         )
-
-
-def test_slepc_original_generalized_pencil_verification_pairs_and_normalizes() -> None:
     problem = _problem(generalized=True)
     values = np.asarray([3.0 + 0.0j, 5.0 + 0.0j])
     right = np.asarray(
@@ -270,9 +259,6 @@ def test_slepc_original_generalized_pencil_verification_pairs_and_normalizes() -
     assert np.allclose(np.linalg.norm(normalized_right, axis=0), 1.0)
     assert np.all(np.isfinite(normalized_left))
     assert action_count > 0
-
-
-def test_slepc_complex_original_pencil_residuals_use_adjoint_actions() -> None:
     matrix = jnp.asarray(
         [
             [1.0 + 2.0j, 0.0],

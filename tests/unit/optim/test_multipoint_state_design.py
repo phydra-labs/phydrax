@@ -34,7 +34,7 @@ def _bind(shared: Any, local: Any, args: Any) -> Any:
     return shared + local
 
 
-def test_failed_heterogeneous_block_retains_separate_final_evidence() -> None:
+def test_multipoint_state_design_scenario_1() -> None:
     healthy = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2 + design**2,
@@ -68,9 +68,6 @@ def test_failed_heterogeneous_block_retains_separate_final_evidence() -> None:
     assert float(good.residual_norm) < 1e-7
     assert float(bad.residual_norm) == pytest.approx(2.0**0.5)
     assert float(result.state[0]) == pytest.approx(2.0, abs=1e-7)
-
-
-def test_raw_child_status_failure_survives_residual_recertification() -> None:
     healthy = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2,
@@ -117,9 +114,6 @@ def test_raw_child_status_failure_survives_residual_recertification() -> None:
     assert bool(fresh.blocks[0].accepted)
     assert not bool(fresh.blocks[1].status_accepted)
     assert not bool(fresh.accepted)
-
-
-def test_large_case_cannot_hide_small_state_or_transpose_defect() -> None:
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2 + design**2,
@@ -164,9 +158,7 @@ def test_large_case_cannot_hide_small_state_or_transpose_defect() -> None:
     )
 
 
-def test_child_vector_equalities_bound_bindings_and_cross_case_constraints_survive() -> (
-    None
-):
+def test_multipoint_state_design_scenario_2() -> None:
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2,
@@ -241,9 +233,6 @@ def test_child_vector_equalities_bound_bindings_and_cross_case_constraints_survi
         (0.0, 0.0, 0.0, 1.0, 1.5, 2.0, 1.0, 2.0, 0.0),
     )
     assert program.equality_indices.tolist() == [0, 1, 2, 3, 8]
-
-
-def test_case_identity_collision_cannot_alias_constraint_or_acceptance_evidence() -> None:
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: state**2,
@@ -264,9 +253,6 @@ def test_case_identity_collision_cannot_alias_constraint_or_acceptance_evidence(
     )
     with pytest.raises(ValueError, match="unique"):
         multipoint.to_state_design_problem()
-
-
-def test_rejected_case_rolls_back_entire_shared_local_state_design_pair() -> None:
     child = opt.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, target: (state - target) ** 2 + 0.1 * design**2,

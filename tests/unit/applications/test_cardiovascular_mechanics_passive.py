@@ -8,7 +8,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 from phydrax.applications.cardiovascular.anatomy._microstructure import (
     CardiacMaterialFrame,
@@ -118,7 +117,7 @@ def _tetra_surface() -> Any:
     return ChamberSurfacePlan("left-ventricle", coordinates, triangles).prepare()
 
 
-def test_guccione_1991_exact_component_convention_and_anatomy_frame() -> None:
+def test_cardiovascular_mechanics_passive_scenario_1() -> None:
     frame = _anatomy_frame()
     parameters = Guccione1991Parameters(2.0, 3.0, 5.0, 7.0)
     energy = Guccione1991Energy(parameters, frame, cell_index=0)
@@ -141,9 +140,6 @@ def test_guccione_1991_exact_component_convention_and_anatomy_frame() -> None:
             frame.matrix[0],
         ),
     )
-
-
-def test_holzapfel_ogden_2009_tension_only_convention() -> None:
     frame = _anatomy_frame()
     full = HolzapfelOgden2009TensionOnlyEnergy(
         HolzapfelOgden2009Parameters(0.2, 3.0, 2.0, 7.0, 1.0, 6.0, 0.4, 5.0),
@@ -161,40 +157,50 @@ def test_holzapfel_ogden_2009_tension_only_convention() -> None:
     assert jnp.allclose(full(identity), 0.0)
     assert jnp.allclose(full(fiber_compression), without_fiber(fiber_compression))
     assert full(fiber_extension) > without_fiber(fiber_extension)
-
-
-@pytest.mark.parametrize("energy_index", (0, 1))
-def test_finite_bulk_objectivity_energy_stress_and_tangent(energy_index: int) -> None:
-    energy = _energies()[energy_index]
-    material = energy.finite_bulk(80.0)
-    deformation = jnp.asarray(((1.08, 0.06, 0.01), (0.02, 0.96, 0.04), (0.0, 0.01, 1.01)))
-    rotation = jnp.asarray(((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
-    response = material.evaluate(deformation)
-    rotated = material.evaluate(rotation @ deformation)
-    energy_gradient = jax.grad(material.reference_energy_density)(deformation)
-    stress_tangent = jax.jacfwd(
-        lambda value: jax.grad(material.reference_energy_density)(value)
-    )(deformation)
-    assert isinstance(material, FiniteBulkCardiacMaterial)
-    assert bool(response.admissible)
-    assert jnp.allclose(
-        rotated.reference_energy_density, response.reference_energy_density
+    for energy_index in (0, 1):
+        energy = _energies()[energy_index]
+        material = energy.finite_bulk(80.0)
+        deformation = jnp.asarray(
+            ((1.08, 0.06, 0.01), (0.02, 0.96, 0.04), (0.0, 0.01, 1.01))
+        )
+        rotation = jnp.asarray(((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
+        response = material.evaluate(deformation)
+        rotated = material.evaluate(rotation @ deformation)
+        energy_gradient = jax.grad(material.reference_energy_density)(deformation)
+        stress_tangent = jax.jacfwd(
+            lambda value: jax.grad(material.reference_energy_density)(value)
+        )(deformation)
+        assert isinstance(material, FiniteBulkCardiacMaterial)
+        assert bool(response.admissible)
+        assert jnp.allclose(
+            rotated.reference_energy_density, response.reference_energy_density
+        )
+        assert jnp.allclose(
+            rotated.first_piola, rotation @ response.first_piola, atol=2.0e-5
+        )
+        assert jnp.allclose(response.first_piola, energy_gradient, atol=2.0e-5)
+        assert jnp.allclose(response.tangent, stress_tangent, atol=2.0e-5)
+    material = _energies()[0].finite_bulk(75.0, material_id="passive-material")
+    functional = cardiac_passive_functional(
+        "u",
+        material,
+        region="myocardium",
+        functional_id="passive-functional",
     )
-    assert jnp.allclose(rotated.first_piola, rotation @ response.first_piola, atol=2.0e-5)
-    assert jnp.allclose(response.first_piola, energy_gradient, atol=2.0e-5)
-    assert jnp.allclose(response.tangent, stress_tangent, atol=2.0e-5)
+    assert functional.identifier == "passive-functional"
+    assert functional.variable_fields == ("u",)
+    assert functional.terms[0].region == "myocardium"
 
 
-@pytest.mark.parametrize("energy_index", (0, 1))
-def test_exact_mixed_static_adapter_preserves_energy(energy_index: int) -> None:
-    energy = _energies()[energy_index]
-    exact = energy.exact_incompressible()
-    deformation = jnp.asarray(((1.1, 0.04, 0.0), (0.0, 1.0 / 1.1, 0.02), (0.0, 0.0, 1.0)))
-    assert jnp.allclose(exact.law.isochoric_value(deformation), energy(deformation))
-    assert bool(exact.evaluate(deformation, 0.7).evidence.valid)
-
-
-def test_exact_mixed_route_block_derivatives_and_lbb_evidence() -> None:
+def test_cardiovascular_mechanics_passive_scenario_2() -> None:
+    for energy_index in (0, 1):
+        energy = _energies()[energy_index]
+        exact = energy.exact_incompressible()
+        deformation = jnp.asarray(
+            ((1.1, 0.04, 0.0), (0.0, 1.0 / 1.1, 0.02), (0.0, 0.0, 1.0))
+        )
+        assert jnp.allclose(exact.law.isochoric_value(deformation), energy(deformation))
+        assert bool(exact.evaluate(deformation, 0.7).evidence.valid)
     energy, _ = _energies()
     exact = energy.exact_incompressible()
     deformation = jnp.asarray(((1.1, 0.03, 0.0), (0.0, 1.0 / 1.1, 0.02), (0.0, 0.0, 1.0)))
@@ -243,24 +249,7 @@ def test_exact_mixed_route_block_derivatives_and_lbb_evidence() -> None:
     assert prepared.inf_sup.adjoint_defect < 1.0e-12
     assert prepared.inf_sup.inf_sup_constant > 0.0
     assert bool(evaluated.valid)
-
-
-def test_finite_bulk_variational_functional_retains_material_identity() -> None:
-    material = _energies()[0].finite_bulk(75.0, material_id="passive-material")
-    functional = cardiac_passive_functional(
-        "u",
-        material,
-        region="myocardium",
-        functional_id="passive-functional",
-    )
-    assert functional.identifier == "passive-functional"
-    assert functional.variable_fields == ("u",)
-    assert functional.terms[0].region == "myocardium"
-
-
-@pytest.mark.parametrize(
-    "support",
-    (
+    for support in (
         # ty: ignore[invalid-argument-type]
         BasalSupport((0.0, 0.0, 1.0), 3.0, 2.0, support_id="base"),
         # ty: ignore[invalid-argument-type]
@@ -269,22 +258,17 @@ def test_finite_bulk_variational_functional_retains_material_identity() -> None:
         EpicardialSupport((0.0, 1.0, 0.0), 3.0, 2.0, support_id="epi"),
         # ty: ignore[invalid-argument-type]
         PericardialSupport((0.0, 1.0, 0.0), 3.0, 2.0, support_id="peri"),
-    ),
-)
-def test_named_support_energy_traction_and_tangent(support: Any) -> None:
-    displacement = jnp.asarray((0.12, -0.07, 0.03))
-    response = support.evaluate(displacement)
-    gradient = jax.grad(support.energy_density)(displacement)
-    tangent = jax.jacfwd(lambda value: support.evaluate(value).restoring_traction)(
-        displacement
-    )
-    assert bool(response.valid)
-    assert jnp.allclose(response.energy_gradient, gradient)
-    assert jnp.allclose(response.restoring_traction, -gradient)
-    assert jnp.allclose(response.traction_tangent, tangent)
-
-
-def test_support_zero_stiffness_is_exact_traction_free_limit() -> None:
+    ):
+        displacement = jnp.asarray((0.12, -0.07, 0.03))
+        response = support.evaluate(displacement)
+        gradient = jax.grad(support.energy_density)(displacement)
+        tangent = jax.jacfwd(lambda value: support.evaluate(value).restoring_traction)(
+            displacement
+        )
+        assert bool(response.valid)
+        assert jnp.allclose(response.energy_gradient, gradient)
+        assert jnp.allclose(response.restoring_traction, -gradient)
+        assert jnp.allclose(response.traction_tangent, tangent)
     displacement = jnp.asarray((1.0, -2.0, 3.0))
     # ty: ignore[invalid-argument-type]
     support = PericardialSupport((0.0, 0.0, 1.0), 0.0, 0.0)
@@ -292,9 +276,6 @@ def test_support_zero_stiffness_is_exact_traction_free_limit() -> None:
     assert jnp.allclose(response.energy_density, 0.0)
     assert jnp.allclose(response.restoring_traction, jnp.zeros((3,)))
     assert jnp.allclose(response.traction_tangent, jnp.zeros((3, 3)))
-
-
-def test_support_functional_requests_and_integrates_displacement_value() -> None:
     # ty: ignore[invalid-argument-type]
     support = BasalSupport((0.0, 0.0, 1.0), 3.0, 2.0, support_id="base")
     functional = cardiac_support_functional("u", support, region="base-surface")

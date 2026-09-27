@@ -35,38 +35,74 @@ def _termination(steps: Any = 24) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "method",
-    (
+def test_causal_contracts() -> None:
+    for method in (
         nl.CausalNewton(),
         nl.CausalNewton(linearization=nl.CausalLinearizationPolicy("diagonal-exact")),
         nl.CausalLevenbergMarquardt(),
-    ),
-)
-def test_causal_solver_matches_serial_recurrence_and_jit(method: Any) -> None:
-    drivers = jnp.linspace(-0.2, 0.3, 16, dtype=jnp.float64)
-    parameter = jnp.asarray(0.7, dtype=jnp.float64)
-    initial = jnp.asarray(0.1, dtype=jnp.float64)
+    ):
+        drivers = jnp.linspace(-0.2, 0.3, 16, dtype=jnp.float64)
+        parameter = jnp.asarray(0.7, dtype=jnp.float64)
+        initial = jnp.asarray(0.1, dtype=jnp.float64)
+        problem = nl.CausalRecurrenceProblem(
+            _transition,
+            initial,
+            drivers,
+            parameters=parameter,
+            problem_id="tanh-recurrence",
+        )
+
+        result = jax.jit(
+            lambda current: nl.solve_causal_recurrence(
+                current,
+                method=method,
+                termination=_termination(),
+            )
+        )(problem)
+
+        assert bool(result.successful)
+        assert jnp.allclose(
+            result.states, _serial(parameter, initial, drivers), atol=1e-10
+        )
+        assert float(jnp.max(jnp.abs(result.flat_residuals))) < 1e-10
+        assert int(result.diagnostics.iteration_count) <= problem.num_steps
+    for method in (nl.CausalNewton(), nl.CausalLevenbergMarquardt()):
+        drivers = jnp.linspace(-0.2, 0.3, 8)
+        problem = nl.CausalRecurrenceProblem(
+            _transition,
+            jnp.asarray(0.1),
+            drivers,
+            parameters=jnp.asarray(0.7),
+        )
+        result = nl.solve_causal_recurrence(
+            problem,
+            method=method,
+            termination=nl.NonlinearTermination(
+                absolute_residual=0.0,
+                relative_residual=0.0,
+                maximum_steps=10,
+                maximum_evaluations=problem.num_steps,
+            ),
+        )
+
+        assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+        assert int(result.diagnostics.transition_evaluations) == problem.num_steps
+        assert int(result.diagnostics.iteration_count) == 0
+    drivers = jnp.linspace(-0.2, 0.3, 4)
     problem = nl.CausalRecurrenceProblem(
         _transition,
-        initial,
+        jnp.asarray(0.1),
         drivers,
-        parameters=parameter,
-        problem_id="tanh-recurrence",
+        parameters=jnp.asarray(0.7),
     )
 
-    result = jax.jit(
-        lambda current: nl.solve_causal_recurrence(
-            current,
-            method=method,
-            termination=_termination(),
+    with pytest.raises(ValueError, match="initial full recurrence"):
+        nl.solve_causal_recurrence(
+            problem,
+            termination=nl.NonlinearTermination(
+                maximum_evaluations=problem.num_steps - 1
+            ),
         )
-    )(problem)
-
-    assert bool(result.successful)
-    assert jnp.allclose(result.states, _serial(parameter, initial, drivers), atol=1e-10)
-    assert float(jnp.max(jnp.abs(result.flat_residuals))) < 1e-10
-    assert int(result.diagnostics.iteration_count) <= problem.num_steps
 
 
 def test_hutchinson_quasi_solver_replays_fixed_probes() -> None:
@@ -234,46 +270,3 @@ def test_nonconverged_causal_result_is_observable_and_not_differentiable() -> No
     assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_STEPS_REACHED)
     with pytest.raises(Exception, match="successfully converged"):
         jax.grad(objective)(jnp.asarray(0.7))
-
-
-@pytest.mark.parametrize("method", (nl.CausalNewton(), nl.CausalLevenbergMarquardt()))
-def test_causal_recurrence_honors_transition_evaluation_limit(method: Any) -> None:
-    drivers = jnp.linspace(-0.2, 0.3, 8)
-    problem = nl.CausalRecurrenceProblem(
-        _transition,
-        jnp.asarray(0.1),
-        drivers,
-        parameters=jnp.asarray(0.7),
-    )
-    result = nl.solve_causal_recurrence(
-        problem,
-        method=method,
-        termination=nl.NonlinearTermination(
-            absolute_residual=0.0,
-            relative_residual=0.0,
-            maximum_steps=10,
-            maximum_evaluations=problem.num_steps,
-        ),
-    )
-
-    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
-    assert int(result.diagnostics.transition_evaluations) == problem.num_steps
-    assert int(result.diagnostics.iteration_count) == 0
-
-
-def test_causal_recurrence_rejects_budget_smaller_than_initial_full_evaluation() -> None:
-    drivers = jnp.linspace(-0.2, 0.3, 4)
-    problem = nl.CausalRecurrenceProblem(
-        _transition,
-        jnp.asarray(0.1),
-        drivers,
-        parameters=jnp.asarray(0.7),
-    )
-
-    with pytest.raises(ValueError, match="initial full recurrence"):
-        nl.solve_causal_recurrence(
-            problem,
-            termination=nl.NonlinearTermination(
-                maximum_evaluations=problem.num_steps - 1
-            ),
-        )

@@ -88,31 +88,28 @@ def _trained_values(solver: Any) -> Any:
     return positive, offset
 
 
-@pytest.mark.parametrize("jit", [False, True])
-def test_functional_solver_trains_mixed_mirror_and_euclidean_parameters(jit: Any) -> None:
-    solver, optimizer = _solver_and_optimizer()
-    initial_loss = solver.loss()
-    trained = solver.solve(
-        num_iter=1,
-        optim=optimizer,
-        keep_best=False,
-        jit=jit,
-        log_every=0,
-    )
-    positive, offset = _trained_values(trained)
-    diagnostics = trained.training_diagnostics
+def test_functional_solver_contracts() -> None:
+    for jit in [False, True]:
+        solver, optimizer = _solver_and_optimizer()
+        initial_loss = solver.loss()
+        trained = solver.solve(
+            num_iter=1,
+            optim=optimizer,
+            keep_best=False,
+            jit=jit,
+            log_every=0,
+        )
+        positive, offset = _trained_values(trained)
+        diagnostics = trained.training_diagnostics
 
-    assert trained.loss() < initial_loss
-    assert jnp.allclose(positive, jnp.asarray([0.8, 0.5, 1.7]), atol=1e-6)
-    assert jnp.allclose(offset, 0.5, atol=1e-6)
-    assert diagnostics["optimizer/mirror/num_legendre_leaves"] == 1
-    assert diagnostics["optimizer/mirror/learning_rate"] == 1.0
-    assert diagnostics["optimizer/mirror/bregman_step"] > 0.0
-    assert diagnostics["optimizer/mirror/constraint_residual_max"] == 0.0
-    assert not any(key.startswith("optimizer/riemannian/") for key in diagnostics)
-
-
-def test_functional_solver_rejects_ambient_mirror_evaluation_transform() -> None:
+        assert trained.loss() < initial_loss
+        assert jnp.allclose(positive, jnp.asarray([0.8, 0.5, 1.7]), atol=1e-6)
+        assert jnp.allclose(offset, 0.5, atol=1e-6)
+        assert diagnostics["optimizer/mirror/num_legendre_leaves"] == 1
+        assert diagnostics["optimizer/mirror/learning_rate"] == 1.0
+        assert diagnostics["optimizer/mirror/bregman_step"] > 0.0
+        assert diagnostics["optimizer/mirror/constraint_residual_max"] == 0.0
+        assert not any(key.startswith("optimizer/riemannian/") for key in diagnostics)
     solver, optimizer = _solver_and_optimizer()
     with pytest.raises(ValueError, match="unsupported for mirror optimizers"):
         solver.solve(

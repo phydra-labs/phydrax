@@ -12,9 +12,8 @@ import pytest
 import phydrax as phx
 
 
-@pytest.mark.parametrize(
-    ("kernel", "expected"),
-    [
+def test_stationary_scenario_1() -> None:
+    for kernel, expected in [
         (
             phx.kernels.SquaredExponentialKernel(length_scale=0.5),
             jnp.exp(-0.5 * 0.8**2),
@@ -32,15 +31,10 @@ import phydrax as phx
             phx.kernels.InverseMultiquadricKernel(length_scale=0.5),
             1.0 / jnp.sqrt(1.0 + 0.8**2),
         ),
-    ],
-)
-def test_stationary_pairwise_values_match_closed_forms(
-    kernel: Any, expected: Any
-) -> None:
-    assert jnp.allclose(kernel.pairwise(jnp.asarray([0.1]), jnp.asarray([0.5])), expected)
-
-
-def test_stationary_ard_matrices_are_symmetric_positive_semidefinite() -> None:
+    ]:
+        assert jnp.allclose(
+            kernel.pairwise(jnp.asarray([0.1]), jnp.asarray([0.5])), expected
+        )
     coordinate = jnp.linspace(-1.0, 1.0, 13)
     points = jnp.stack((coordinate, coordinate**2), axis=1)
 
@@ -63,6 +57,12 @@ def test_stationary_ard_matrices_are_symmetric_positive_semidefinite() -> None:
         )
     )(jnp.array([0.3, 0.8]))
     assert jnp.all(jnp.isfinite(gradient))
+    kernel = phx.kernels.SquaredExponentialKernel()
+    with pytest.raises(TypeError, match="real coordinates"):
+        kernel.pairwise(
+            jnp.asarray([1.0 + 0.5j]),
+            jnp.asarray([1.0 + 0.0j]),
+        )
 
 
 def test_matern_origin_derivatives_match_process_regularity_moments() -> None:
@@ -100,12 +100,3 @@ def test_matern_origin_derivatives_match_process_regularity_moments() -> None:
     assert jnp.allclose(matern32_cross, 3.0 / length_scale**2)
     assert jnp.allclose(matern52_cross, 5.0 / (3.0 * length_scale**2))
     assert jnp.allclose(matern52_fourth, 25.0 / length_scale**4)
-
-
-def test_real_coordinate_kernel_rejects_complex_inputs_before_casting() -> None:
-    kernel = phx.kernels.SquaredExponentialKernel()
-    with pytest.raises(TypeError, match="real coordinates"):
-        kernel.pairwise(
-            jnp.asarray([1.0 + 0.5j]),
-            jnp.asarray([1.0 + 0.0j]),
-        )

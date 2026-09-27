@@ -45,7 +45,7 @@ def _parameterization(
     )
 
 
-def test_physical_response_vjp_composes_decoder_and_preserves_constraints() -> None:
+def test_state_design_parameterization_scenario_1() -> None:
     physical = phx.optim.StateDesignProblem(
         lambda state, design, args: state - args * design["gain"],
         lambda state, design, args: 0.5 * state**2 + 0.3 * design["gain"],
@@ -82,9 +82,6 @@ def test_physical_response_vjp_composes_decoder_and_preserves_constraints() -> N
     lower, upper = lowered.problem.constraints[1].bounds(values[1])
     np.testing.assert_allclose(lower, 0.2)
     np.testing.assert_allclose(upper, 2.0)
-
-
-def test_latent_mma_cannot_escape_original_physical_bound() -> None:
     physical = phx.optim.StateDesignProblem(
         lambda state, design, args: state - design,
         lambda state, design, args: jnp.sum((state - 1.5) ** 2),
@@ -105,6 +102,48 @@ def test_latent_mma_cannot_escape_original_physical_bound() -> None:
     assert result.successful
     np.testing.assert_allclose(lowered.decode(result.design), 0.6, atol=5e-5)
     assert float(jnp.max(lowered.decode(result.design))) <= 0.60005
+    problem = phx.optim.StateDesignProblem(
+        lambda state, design, args: state - design,
+        lambda state, design, args: jnp.sum(state**2),
+    )
+    with pytest.raises(ValueError):
+        _parameterization(problem, lambda latent: latent[:, None])
+    with pytest.raises(TypeError):
+        _parameterization(problem, lambda latent: latent.astype(jnp.int32))
+    lowered = _parameterization(
+        problem, design_admissibility=lambda design: jnp.all(design > 0.0)
+    )
+    with pytest.raises(ValueError):
+        lowered.decode(jnp.asarray([[0.5]]))
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError)):
+        lowered.problem.solve_state(jnp.asarray([-1.0]), jnp.zeros((1,)))
+    geometry = phx.geometry.design
+    first_schema = geometry.ParameterSchema(
+        (
+            geometry.ParameterSpec(
+                geometry.ParameterId("a", "height"),
+                (1,),
+                str(jnp.asarray([0.5]).dtype),
+                "geometry",
+            ),
+        )
+    )
+    other_schema = geometry.ParameterSchema(
+        (
+            geometry.ParameterSpec(
+                geometry.ParameterId("b", "height"),
+                (1,),
+                str(jnp.asarray([0.5]).dtype),
+                "geometry",
+            ),
+        )
+    )
+    with pytest.raises(ValueError):
+        _parameterization(
+            problem,
+            lambda latent: geometry.DesignState(other_schema, (latent,)),
+            template=geometry.DesignState(first_schema, (jnp.asarray([0.5]),)),
+        )
 
 
 def test_lowering_preserves_physical_block_certification() -> None:
@@ -151,84 +190,36 @@ def test_lowering_preserves_physical_block_certification() -> None:
     assert not rejected.acceptance.blocks[0].admissible
 
 
-def test_decoder_rejects_schema_shape_dtype_and_invalid_geometry() -> None:
-    problem = phx.optim.StateDesignProblem(
-        lambda state, design, args: state - design,
-        lambda state, design, args: jnp.sum(state**2),
-    )
-    with pytest.raises(ValueError):
-        _parameterization(problem, lambda latent: latent[:, None])
-    with pytest.raises(TypeError):
-        _parameterization(problem, lambda latent: latent.astype(jnp.int32))
-    lowered = _parameterization(
-        problem, design_admissibility=lambda design: jnp.all(design > 0.0)
-    )
-    with pytest.raises(ValueError):
-        lowered.decode(jnp.asarray([[0.5]]))
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError)):
-        lowered.problem.solve_state(jnp.asarray([-1.0]), jnp.zeros((1,)))
-    geometry = phx.geometry.design
-    first_schema = geometry.ParameterSchema(
-        (
-            geometry.ParameterSpec(
-                geometry.ParameterId("a", "height"),
-                (1,),
-                str(jnp.asarray([0.5]).dtype),
-                "geometry",
-            ),
+def test_native_contracts() -> None:
+    for failure in ("state", "transpose"):
+        physical = phx.optim.StateDesignProblem(
+            (lambda state, design, args: state - design)
+            if failure == "state"
+            else (lambda state, design, args: jnp.zeros_like(state)),
+            lambda state, design, args: jnp.sum(state),
+            state_admissibility=(lambda state, design, args: jnp.asarray(False))
+            if failure == "state"
+            else None,
         )
-    )
-    other_schema = geometry.ParameterSchema(
-        (
-            geometry.ParameterSpec(
-                geometry.ParameterId("b", "height"),
-                (1,),
-                str(jnp.asarray([0.5]).dtype),
-                "geometry",
-            ),
+        lowered = _parameterization(physical)
+        guidance = MechanicsPotentialGuidance(
+            lowered, jnp.zeros((1,)), linear_policy=_linear_policy()
         )
-    )
-    with pytest.raises(ValueError):
-        _parameterization(
-            problem,
-            lambda latent: geometry.DesignState(other_schema, (latent,)),
-            template=geometry.DesignState(first_schema, (jnp.asarray([0.5]),)),
+        domain = phx.domain.HyperRectangle(
+            jnp.asarray([-3.0]), jnp.asarray([3.0]), label="x"
+        ) @ phx.domain.TimeInterval(0.0, 1.0)
+        base = StateTimeScoreField(
+            domain.Function("x", "t")(lambda state, time: -state),
+            state_label="x",
+            time_label="t",
         )
-
-
-@pytest.mark.parametrize("failure", ("state", "transpose"))
-def test_native_guided_score_rejects_failed_physical_certification(failure: Any) -> None:
-    physical = phx.optim.StateDesignProblem(
-        (lambda state, design, args: state - design)
-        if failure == "state"
-        else (lambda state, design, args: jnp.zeros_like(state)),
-        lambda state, design, args: jnp.sum(state),
-        state_admissibility=(lambda state, design, args: jnp.asarray(False))
-        if failure == "state"
-        else None,
-    )
-    lowered = _parameterization(physical)
-    guidance = MechanicsPotentialGuidance(
-        lowered, jnp.zeros((1,)), linear_policy=_linear_policy()
-    )
-    domain = phx.domain.HyperRectangle(
-        jnp.asarray([-3.0]), jnp.asarray([3.0]), label="x"
-    ) @ phx.domain.TimeInterval(0.0, 1.0)
-    base = StateTimeScoreField(
-        domain.Function("x", "t")(lambda state, time: -state),
-        state_label="x",
-        time_label="t",
-    )
-    guided = phx.transport.GuidedScoreField(base, (guidance,))
-    score, evaluations, valid = guided.evaluate(
-        jnp.asarray([0.5]), 0.2, phx.transport.ScoreContext({})
-    )
-    assert not valid
-    assert not evaluations[0].valid
-    assert not jnp.all(jnp.isfinite(score))
-
-
-def test_native_fem_density_fixed_cells_and_guidance_pullback() -> None:
+        guided = phx.transport.GuidedScoreField(base, (guidance,))
+        score, evaluations, valid = guided.evaluate(
+            jnp.asarray([0.5]), 0.2, phx.transport.ScoreContext({})
+        )
+        assert not valid
+        assert not evaluations[0].valid
+        assert not jnp.all(jnp.isfinite(score))
     learned, initial, _, mask, fixed = build_density_case(2)
     parameterization = learned.parameterization
     latent = jnp.asarray([-0.2, 0.1])
@@ -275,9 +266,6 @@ def test_native_fem_density_fixed_cells_and_guidance_pullback() -> None:
         rtol=2e-4,
         atol=1e-8,
     )
-
-
-def test_native_fem_shape_schema_and_geometry_gradient() -> None:
     parameterization, initial = build_shape_case(2)
     latent = jnp.asarray([0.1, -0.2])
     response = parameterization.response_vjp(
@@ -299,9 +287,6 @@ def test_native_fem_shape_schema_and_geometry_gradient() -> None:
         rtol=2e-4,
         atol=1e-8,
     )
-
-
-def test_native_fem_latent_solve_requires_reference_volume_feasibility() -> None:
     learned, initial, plan, mask, fixed = build_density_case(2)
     source = learned.topology_problem
     sm = phx.applications.solid_mechanics

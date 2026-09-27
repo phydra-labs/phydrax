@@ -32,7 +32,7 @@ def _space(count: Any = 4) -> Any:
     ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
-def test_exponential_spectral_envelope_preserves_zero_and_declares_aggregation() -> None:
+def test_implicit_modal_field_scenario_1() -> None:
     modes = jnp.asarray([[0.0, 0.0], [1.0, 2.0]])
     summed = phx.nn.models.ExponentialSpectralEnvelope(
         jnp.asarray([0.5, 1.0]),
@@ -48,9 +48,6 @@ def test_exponential_spectral_envelope_preserves_zero_and_declares_aggregation()
     assert jnp.allclose(summed(modes), jnp.asarray([1.0, jnp.exp(-2.5)]))
     assert jnp.allclose(averaged(modes), jnp.asarray([1.0, jnp.exp(-1.25)]))
     assert jnp.allclose(summed.rates, jnp.asarray([0.5, 1.0]))
-
-
-def test_implicit_modal_field_composes_basis_modulation_decay_and_reality() -> None:
     space = _space()
     modulation = phx.nn.models.SpectralBasisModulation(
         _ConstantModulation(2.0),
@@ -86,9 +83,6 @@ def test_implicit_modal_field_composes_basis_modulation_decay_and_reality() -> N
     assert field.hermitian_coordinates.reality_defect(coefficients) == 0.0
     assert field.query(0.3, jnp.asarray([0, 2])).shape == (2,)
     assert field.physical_values(0.3).shape == space.physical_shape
-
-
-def test_implicit_modal_field_binds_one_time_domain_and_guards_resources() -> None:
     space = _space()
     field = phx.nn.models.ImplicitModalField(_UnitCoefficient(), space)
     time = phx.domain.ScalarInterval(0.0, 1.0, label="time")

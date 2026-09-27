@@ -34,7 +34,7 @@ def _interface_batch(pairing: Any) -> Any:
     )
 
 
-def test_value_and_flux_jumps_use_one_paired_realization_and_orientation() -> None:
+def test_subdomain_interfaces_scenario_1() -> None:
     cover, family = _family()
     pairing = cover.pairings[0]
     left_name = family.field_name(pairing.left_patch_id)
@@ -60,9 +60,6 @@ def test_value_and_flux_jumps_use_one_paired_realization_and_orientation() -> No
     np.testing.assert_allclose(flux(batch).data, 0.0, atol=1.0e-12)
     assert pairing.normal is not None
     np.testing.assert_allclose(pairing.normal(batch).data, 1.0)
-
-
-def test_general_transmission_receives_local_fields_and_returns_pair_support() -> None:
     cover, family = _family()
     pairing = cover.pairings[0]
     left_name = family.field_name(pairing.left_patch_id)
@@ -80,9 +77,6 @@ def test_general_transmission_receives_local_fields_and_returns_pair_support() -
 
     assert residual.domain.same_support(pairing.component.domain)
     np.testing.assert_allclose(residual(_interface_batch(pairing)).data, 0.0)
-
-
-def test_overlap_consistency_requires_volume_pairing() -> None:
     cover, family = _family()
     pairing = cover.pairings[0]
 

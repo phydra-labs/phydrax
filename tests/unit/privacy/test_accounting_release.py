@@ -43,7 +43,7 @@ def _prepared(*, epsilon: float = 3.0, iterations: int = 3) -> Any:
     )
 
 
-def test_accounting_event_certificate_and_release_ledger_are_content_verified() -> None:
+def test_accounting_release_scenario_1() -> None:
     prepared = _prepared()
     trace = prepared.trace(3)
     event = phx.privacy.dp_event_from_record(trace.event_record)
@@ -119,9 +119,6 @@ def test_accounting_event_certificate_and_release_ledger_are_content_verified() 
     )
     with pytest.raises(ValueError, match="exact native accounting"):
         replace(certificate, guarantee=forged_guarantee)
-
-
-def test_privacy_records_reject_coerced_counts_and_flags() -> None:
     prepared = _prepared()
     definition_record = prepared.training_plan.scope.definition.to_record()
     definition_record.pop("definition_id")
@@ -134,9 +131,6 @@ def test_privacy_records_reject_coerced_counts_and_flags() -> None:
         phx.privacy.MechanismTrace(prepared.per_step_trace.event_json, 1.5)
     with pytest.raises(TypeError, match="iterations must be an integer"):
         replace(prepared.training_plan.mechanism, iterations=1.5)
-
-
-def test_private_plan_rejects_mismatched_definition_and_unsafe_policies() -> None:
     definition = phx.privacy.PrivacyDefinition(
         phx.privacy.PrivacyUnit("subject"),
         phx.privacy.NeighboringRelation.REPLACE_ONE,

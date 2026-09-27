@@ -33,7 +33,7 @@ def _bell_fields() -> Any:
     return time, bell_state, density
 
 
-def test_bell_state_reduces_to_maximally_mixed_subsystems() -> None:
+def test_bell_state_contracts() -> None:
     _time, _state, density = _bell_fields()
     reduced_a = phx.operators.partial_trace(
         density,
@@ -55,9 +55,6 @@ def test_bell_state_reduces_to_maximally_mixed_subsystems() -> None:
     assert jnp.allclose(value_a, jnp.conj(value_a.T), atol=1e-12)
     assert jnp.all(jnp.linalg.eigvalsh(value_a) >= -1e-12)
     assert jnp.all(jnp.linalg.eigvalsh(value_b) >= -1e-12)
-
-
-def test_bell_state_local_expectations_vanish_and_correlations_are_unit() -> None:
     time, _state, density = _bell_fields()
     sigma_x = time.Function()(SIGMA_X)
     sigma_y = time.Function()(SIGMA_Y)

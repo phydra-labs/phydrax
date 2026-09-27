@@ -37,7 +37,7 @@ def _compiled_channel() -> Any:
     return space, phx.equations.compile_channel_flow(problem, plan, method)
 
 
-def test_channel_sbdf2_preserves_steady_couette_profile() -> None:
+def test_channel_contracts() -> None:
     space, dynamics = _compiled_channel()
     y = space.axes[1].nodes
     couette = jnp.zeros(space.physical_shape + (3,)).at[..., 0].set(y[None, :, None])
@@ -54,24 +54,6 @@ def test_channel_sbdf2_preserves_steady_couette_profile() -> None:
     assert jnp.nanmax(solution.diagnostics.divergence_norm) < 1e-10
     assert jnp.nanmax(solution.diagnostics.wall_residual) < 1e-10
     assert jnp.nanmax(solution.diagnostics.pressure_gauge_residual) < 1e-10
-
-
-def test_channel_compiler_rejects_mismatched_problem_viscosity() -> None:
-    space, dynamics = _compiled_channel()
-    with pytest.raises(ValueError, match="viscosities"):
-        phx.equations.compile_channel_flow(
-            phx.equations.IncompressibleFlowProblem(3, 0.2),
-            dynamics.stokes_plan,
-            phx.discretization.PseudospectralMethodPlan(
-                dealiasing=phx.discretization.PaddingDealiasingPlan(2)
-            ),
-        )
-    assert space.prepared_id == dynamics.discretization.prepared_id
-
-
-def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancing() -> (
-    None
-):
     _, dynamics = _compiled_channel()
     initial = jnp.zeros(dynamics.state_shape, dtype="complex128")
     solution = phx.solver.solve_channel_sbdf2(
@@ -86,23 +68,16 @@ def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancin
     )
     assert jnp.all(~solution.diagnostics.valid)
     np.testing.assert_allclose(solution.velocity, 0.0, atol=0.0)
-
-
-def _perturbed_channel_state(space: Any, dynamics: Any) -> Any:
-    y = space.axes[1].nodes
-    z = space.axes[2].nodes
-    streamwise = y[None, :, None] + 0.05 * (1.0 - y[None, :, None] ** 2) * jnp.cos(
-        z[None, None, :]
-    )
-    physical = (
-        jnp.zeros(space.physical_shape + (3,))
-        .at[..., 0]
-        .set(jnp.broadcast_to(streamwise, space.physical_shape))
-    )
-    return dynamics.project_state(physical)
-
-
-def test_channel_prepared_restart_matches_uninterrupted_history() -> None:
+    space, dynamics = _compiled_channel()
+    with pytest.raises(ValueError, match="viscosities"):
+        phx.equations.compile_channel_flow(
+            phx.equations.IncompressibleFlowProblem(3, 0.2),
+            dynamics.stokes_plan,
+            phx.discretization.PseudospectralMethodPlan(
+                dealiasing=phx.discretization.PaddingDealiasingPlan(2)
+            ),
+        )
+    assert space.prepared_id == dynamics.discretization.prepared_id
     space, dynamics = _compiled_channel()
     initial = _perturbed_channel_state(space, dynamics)
     step = 0.01
@@ -177,9 +152,6 @@ def test_channel_prepared_restart_matches_uninterrupted_history() -> None:
         np.asarray(solution.pressure_gradient[-1]),
         np.asarray(third.pressure_gradient),
     )
-
-
-def test_channel_prepared_failure_preserves_history_and_rejects_changed_step() -> None:
     space, dynamics = _compiled_channel()
     step = 0.01
     prepared = phx.solver.ChannelSBDF2Method().prepare(dynamics, step)
@@ -217,7 +189,21 @@ def test_channel_prepared_failure_preserves_history_and_rejects_changed_step() -
         prepared.step(1, step, state, 0.5 * step, None)
 
 
-def test_bounded_observer_reports_overflow_without_growing_state() -> None:
+def _perturbed_channel_state(space: Any, dynamics: Any) -> Any:
+    y = space.axes[1].nodes
+    z = space.axes[2].nodes
+    streamwise = y[None, :, None] + 0.05 * (1.0 - y[None, :, None] ** 2) * jnp.cos(
+        z[None, None, :]
+    )
+    physical = (
+        jnp.zeros(space.physical_shape + (3,))
+        .at[..., 0]
+        .set(jnp.broadcast_to(streamwise, space.physical_shape))
+    )
+    return dynamics.project_state(physical)
+
+
+def test_bounded_observer_contracts() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: 0.5 * state,
@@ -242,9 +228,6 @@ def test_bounded_observer_reports_overflow_without_growing_state() -> None:
     assert bool(result.overflow)
     np.testing.assert_allclose(np.asarray(result.values[:, 0]), [1.0, 0.5, 0.25])
     np.testing.assert_allclose(np.asarray(result.final_state), [0.03125])
-
-
-def test_bounded_observer_latches_nonfinite_observable_status() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: state,

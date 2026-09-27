@@ -6,7 +6,6 @@
 from typing import Any
 
 import jax.numpy as jnp
-import pytest
 
 from phydrax.optim._kfac._blocks import (
     estimate_kron_factors,
@@ -38,37 +37,32 @@ def _affine_block() -> Any:
     )
 
 
-@pytest.mark.parametrize("approximation", ["expand", "reduce"])
-def test_kron_factor_strategies_are_psd_and_preserve_curvature_trace(
-    approximation: Any,
-) -> None:
-    block = _affine_block()
-    jacobian = jnp.asarray(
-        [
-            [1.0, -0.3, 0.2, 0.5, 0.1, -0.4],
-            [-0.2, 0.7, 0.4, 0.3, -0.8, 0.6],
-            [0.9, 0.2, -0.5, -0.1, 0.4, 0.8],
-        ]
-    )
-    activation, sensitivity = estimate_kron_factors(
-        jacobian,
-        block,
-        approximation=approximation,
-    )
+def test_kfac_blocks_scenario_1() -> None:
+    for approximation in ["expand", "reduce"]:
+        block = _affine_block()
+        jacobian = jnp.asarray(
+            [
+                [1.0, -0.3, 0.2, 0.5, 0.1, -0.4],
+                [-0.2, 0.7, 0.4, 0.3, -0.8, 0.6],
+                [0.9, 0.2, -0.5, -0.1, 0.4, 0.8],
+            ]
+        )
+        activation, sensitivity = estimate_kron_factors(
+            jacobian,
+            block,
+            approximation=approximation,
+        )
 
-    assert activation.shape == (3, 3)
-    assert sensitivity.shape == (2, 2)
-    assert jnp.min(jnp.linalg.eigvalsh(activation)) >= -1e-12
-    assert jnp.min(jnp.linalg.eigvalsh(sensitivity)) >= -1e-12
-    assert jnp.allclose(
-        jnp.trace(activation) * jnp.trace(sensitivity),
-        jnp.sum(jnp.square(jacobian)),
-        rtol=1e-10,
-        atol=1e-10,
-    )
-
-
-def test_single_rank_one_event_kron_block_matches_exact_ggn() -> None:
+        assert activation.shape == (3, 3)
+        assert sensitivity.shape == (2, 2)
+        assert jnp.min(jnp.linalg.eigvalsh(activation)) >= -1e-12
+        assert jnp.min(jnp.linalg.eigvalsh(sensitivity)) >= -1e-12
+        assert jnp.allclose(
+            jnp.trace(activation) * jnp.trace(sensitivity),
+            jnp.sum(jnp.square(jacobian)),
+            rtol=1e-10,
+            atol=1e-10,
+        )
     block = _affine_block()
     activation_vector = jnp.asarray([0.4, -0.2, 1.0])
     sensitivity_vector = jnp.asarray([0.7, -0.3])
@@ -86,9 +80,6 @@ def test_single_rank_one_event_kron_block_matches_exact_ggn() -> None:
         rtol=1e-10,
         atol=1e-10,
     )
-
-
-def test_kronecker_sum_matvec_and_diagonal_match_dense_oracle() -> None:
     block = _affine_block()
     factors = (
         KronFactorState(
@@ -120,7 +111,7 @@ def test_kronecker_sum_matvec_and_diagonal_match_dense_oracle() -> None:
     )
 
 
-def test_preconditioned_conjugate_gradient_matches_dense_solve_and_zero_rhs() -> None:
+def test_kfac_blocks_scenario_2() -> None:
     matrix = jnp.asarray([[4.0, 0.5, 0.2], [0.5, 3.0, -0.1], [0.2, -0.1, 2.0]])
     rhs = jnp.asarray([1.0, -0.5, 0.25])
     solution, iterations, relative_residual = preconditioned_conjugate_gradient(
@@ -159,9 +150,6 @@ def test_preconditioned_conjugate_gradient_matches_dense_solve_and_zero_rhs() ->
     assert zero_iterations == 0
     assert zero_residual == 0.0
     assert jnp.allclose(zero, 0.0)
-
-
-def test_per_term_factor_ema_initializes_from_first_observation() -> None:
     block = _affine_block()
     layout = ParameterLayout((block,), None, 6)
     state = initialize_block_state(layout, num_terms=2, dtype=jnp.float64)
@@ -187,9 +175,6 @@ def test_per_term_factor_ema_initializes_from_first_observation() -> None:
         assert factor.initialized
         assert jnp.allclose(factor.activation, expected_a)
         assert jnp.allclose(factor.sensitivity, expected_g)
-
-
-def test_exact_and_diagonal_uncovered_blocks_match_dense_oracles() -> None:
     gradient = jnp.asarray([1.0, -2.0, 0.5])
     curvature = jnp.asarray([[3.0, 0.2, -0.1], [0.2, 2.0, 0.3], [-0.1, 0.3, 1.5]])
     damping = 0.1

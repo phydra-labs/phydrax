@@ -102,7 +102,7 @@ def _mode_field(
     )
 
 
-def test_linear_hankel_modes_gain_the_analytic_longitudinal_phase() -> None:
+def test_cylindrical_unidirectional_scenario_1() -> None:
     hankel, time_space = _spaces()
     temporal_mode = 8
     radial_mode = 2
@@ -133,9 +133,6 @@ def test_linear_hankel_modes_gain_the_analytic_longitudinal_phase() -> None:
     assert result.evidence.output_radial_measure > 0.0
     assert result.evidence.radial_measure_relative_change < 1.0e-5
     assert result.response_evaluation.successful
-
-
-def test_temporal_edge_violation_has_explicit_cylindrical_status() -> None:
     hankel, time_space = _spaces()
     field = _mode_field(hankel, time_space, 31, 0)
     plan = _plan(
@@ -156,9 +153,6 @@ def test_temporal_edge_violation_has_explicit_cylindrical_status() -> None:
     assert result.status == int(
         CylindricalUnidirectionalPropagationStatus.SPECTRAL_EDGE_LIMIT
     )
-
-
-def test_nonzero_azimuthal_order_is_rejected_for_optical_propagation() -> None:
     hankel = CylindricalHankelPlan(10.0, 8, order=1).prepare()
     temporal_grid = TensorGridPlan((FourierAxisSpec(32),), axis_names=("time",)).prepare(
         jnp.asarray([[0.0], [2.0 * jnp.pi]])
@@ -169,7 +163,7 @@ def test_nonzero_azimuthal_order_is_rejected_for_optical_propagation() -> None:
         CylindricalUnidirectionalPropagationPlan(hankel, time_space, 5.0, step_count=2)
 
 
-def test_radial_boundary_and_high_mode_evidence_have_distinct_statuses() -> None:
+def test_cylindrical_unidirectional_scenario_2() -> None:
     hankel, time_space = _spaces(radius=8.0)
     carrier = jnp.exp(-10j * time_space.coordinates)
     boundary_values = jnp.zeros(
@@ -215,9 +209,6 @@ def test_radial_boundary_and_high_mode_evidence_have_distinct_statuses() -> None
     assert high.status == int(
         CylindricalUnidirectionalPropagationStatus.RADIAL_HIGH_MODE_LIMIT
     )
-
-
-def test_cutoff_and_resource_limits_fail_closed_without_changing_the_field() -> None:
     hankel, time_space = _spaces(radius=4.0)
     cutoff_field = _mode_field(hankel, time_space, 1, hankel.plan.radial_count - 1)
     cutoff_plan = _plan(

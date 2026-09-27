@@ -23,7 +23,7 @@ def _deterministic_trajectory() -> Any:
     )
 
 
-def test_martingale_increments_match_exact_compensator_and_stop() -> None:
+def test_stochastic_martingale_scenario_1() -> None:
     trajectory = _deterministic_trajectory()
     problem = phx.stochastic.MartingaleProblem(
         lambda state: state,
@@ -44,9 +44,24 @@ def test_martingale_increments_match_exact_compensator_and_stop() -> None:
     assert jnp.array_equal(stopped.interval_valid[:, :2], jnp.ones((3, 2), bool))
     assert not jnp.any(stopped.interval_valid[:, 2:])
     assert jnp.allclose(phx.stochastic.predictable_bracket_increments(residuals), 0.0)
+    trajectory = _deterministic_trajectory()
+    trajectory = phx.stochastic.StochasticTrajectory(
+        trajectory.times,
+        trajectory.states,
+        realization_axes=trajectory.realization_axes,
+        realization_shape=trajectory.realization_shape,
+        state_axes=trajectory.state_axes,
+        realizations=trajectory.realizations,
+        metadata={"spde_solution_spec": phx.stochastic.SPDESolutionSpec("mild")},
+    )
+    problem = phx.stochastic.MartingaleProblem(
+        lambda state: state,
+        lambda state, time: state,
+        observable_shape=(1,),
+    )
 
-
-def test_quadratic_covariation_and_moment_loss_preserve_event_shape() -> None:
+    with pytest.raises(ValueError, match="do not support"):
+        phx.stochastic.martingale_increments(trajectory, problem)
     trajectory = _deterministic_trajectory()
     problem = phx.stochastic.MartingaleProblem(
         lambda state: jnp.concatenate((state, state**2)),
@@ -89,24 +104,3 @@ def jax_hessian_scalar(function: Any, state: Any) -> Any:
     import jax
 
     return jax.hessian(lambda value: function(value))(state)[0, 0]
-
-
-def test_martingale_formulation_checks_spde_solution_concept() -> None:
-    trajectory = _deterministic_trajectory()
-    trajectory = phx.stochastic.StochasticTrajectory(
-        trajectory.times,
-        trajectory.states,
-        realization_axes=trajectory.realization_axes,
-        realization_shape=trajectory.realization_shape,
-        state_axes=trajectory.state_axes,
-        realizations=trajectory.realizations,
-        metadata={"spde_solution_spec": phx.stochastic.SPDESolutionSpec("mild")},
-    )
-    problem = phx.stochastic.MartingaleProblem(
-        lambda state: state,
-        lambda state, time: state,
-        observable_shape=(1,),
-    )
-
-    with pytest.raises(ValueError, match="do not support"):
-        phx.stochastic.martingale_increments(trajectory, problem)

@@ -5,8 +5,6 @@
 
 from typing import Any
 
-import pytest
-
 import phydrax as phx
 from phydrax.discretization import CochainFieldSpec
 from phydrax.nn.operator import (
@@ -37,7 +35,7 @@ def _velocity(**overrides: Any) -> Any:
     return OperatorFieldSpec("velocity", **declaration)
 
 
-def test_vector_field_port_carries_declared_semantics() -> None:
+def test_operator_field_ports_scenario_1() -> None:
     port = _velocity().value_port()
 
     assert port.semantic_id == "velocity"
@@ -50,17 +48,11 @@ def test_vector_field_port_carries_declared_semantics() -> None:
     assert port.frame_id is None
     assert port.axis_keys is None
     assert port.normalization_id is not None
-
-
-def test_field_port_is_deterministic_across_equal_and_serialized_declarations() -> None:
     field = _velocity()
     restored = OperatorFieldSpec.from_dict(field.to_dict())
 
     assert field.value_port().port_id == _velocity().value_port().port_id
     assert restored.value_port().port_id == field.value_port().port_id
-
-
-def test_unnamed_components_follow_scalar_and_indexed_rules() -> None:
     scalar = OperatorFieldSpec("pressure", dimension=phx.units.PRESSURE).value_port()
     named_scalar = OperatorFieldSpec("pressure", component_names=("p",)).value_port()
     channels = OperatorFieldSpec("q", channels=2).value_port()
@@ -75,15 +67,11 @@ def test_unnamed_components_follow_scalar_and_indexed_rules() -> None:
     assert (single.event_shape, single.component_ids) == ((1,), ("q[0]",))
 
 
-def test_covector_field_port_is_covariant() -> None:
+def test_operator_field_ports_scenario_2() -> None:
     port = _velocity(representation="covector").value_port()
 
     assert port.variance == "covariant"
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
+    for overrides in [
         {"scale": 3.0},
         {"offset": 1.0},
         {"scale": (2.0, 2.0, 4.0)},
@@ -95,35 +83,11 @@ def test_covector_field_port_is_covariant() -> None:
                 1, cell_orientation="signed", sampling="cell_integral"
             )
         },
-    ],
-)
-def test_differing_field_declarations_change_port_id(overrides: Any) -> None:
-    assert _velocity(**overrides).value_port().port_id != _velocity().value_port().port_id
-
-
-def test_cochain_declaration_identifies_the_field_space() -> None:
-    def flux(degree: int, side: str = "primal") -> OperatorFieldSpec:
-        return OperatorFieldSpec(
-            "flux",
-            cochain=CochainFieldSpec(
-                degree,
-                # ty: ignore[invalid-argument-type]
-                complex_side=side,
-                cell_orientation="signed",
-                sampling="cell_integral",
-            ),
+    ]:
+        assert (
+            _velocity(**overrides).value_port().port_id
+            != _velocity().value_port().port_id
         )
-
-    edge = flux(1).value_port()
-
-    assert edge.space_id is not None
-    assert edge.space_id == flux(1).value_port().space_id
-    assert edge.space_id != flux(2).value_port().space_id
-    assert edge.space_id != flux(1, "dual").value_port().space_id
-    assert edge.variance == "neutral"
-
-
-def test_tensor_and_clifford_fields_use_the_packed_channel_event() -> None:
     vector = TensorType(("contravariant",), dimension=2)
     stress = TensorType(("covariant", "covariant"), dimension=2)
     layout = TensorFieldLayout(
@@ -152,7 +116,29 @@ def test_tensor_and_clifford_fields_use_the_packed_channel_event() -> None:
     assert clifford.space_id is not None
 
 
-def test_classification_field_port_is_dimensionless_scalar() -> None:
+def test_cochain_declaration_identifies_the_field_space() -> None:
+    def flux(degree: int, side: str = "primal") -> OperatorFieldSpec:
+        return OperatorFieldSpec(
+            "flux",
+            cochain=CochainFieldSpec(
+                degree,
+                # ty: ignore[invalid-argument-type]
+                complex_side=side,
+                cell_orientation="signed",
+                sampling="cell_integral",
+            ),
+        )
+
+    edge = flux(1).value_port()
+
+    assert edge.space_id is not None
+    assert edge.space_id == flux(1).value_port().space_id
+    assert edge.space_id != flux(2).value_port().space_id
+    assert edge.space_id != flux(1, "dual").value_port().space_id
+    assert edge.variance == "neutral"
+
+
+def test_operator_field_ports_scenario_3() -> None:
     classification = OperatorClassificationSpec("binary", ("off", "on"))
     field = OperatorFieldSpec(
         "phase",
@@ -164,20 +150,6 @@ def test_classification_field_port_is_dimensionless_scalar() -> None:
     assert port.event_shape == ()
     assert port.component_ids == ("phase",)
     assert port.dimensions == (phx.units.DIMENSIONLESS,)
-
-
-def _query(**overrides: Any) -> Any:
-    declaration = {
-        "geometry_kind": "point_cloud",
-        "coordinate_components": ("x", "t"),
-        "coordinate_dimensions": (phx.units.LENGTH, phx.units.TIME),
-    }
-    declaration.update(overrides)
-    # ty: ignore[invalid-argument-type]
-    return OperatorQuerySpec("points", **declaration)
-
-
-def test_query_port_carries_coordinate_components_and_dimensions() -> None:
     port = _query().value_port()
     undeclared = _query(coordinate_dimensions=()).value_port()
 
@@ -191,9 +163,6 @@ def test_query_port_carries_coordinate_components_and_dimensions() -> None:
     assert port.axis_keys is None
     assert undeclared.dimensions is None
     assert undeclared.port_id != port.port_id
-
-
-def test_query_port_identity_follows_coordinate_declarations() -> None:
     port = _query().value_port()
     restored = OperatorQuerySpec.from_dict(_query().to_dict()).value_port()
 
@@ -217,3 +186,14 @@ def test_query_port_identity_follows_coordinate_declarations() -> None:
         .port_id
         != port.port_id
     )
+
+
+def _query(**overrides: Any) -> Any:
+    declaration = {
+        "geometry_kind": "point_cloud",
+        "coordinate_components": ("x", "t"),
+        "coordinate_dimensions": (phx.units.LENGTH, phx.units.TIME),
+    }
+    declaration.update(overrides)
+    # ty: ignore[invalid-argument-type]
+    return OperatorQuerySpec("points", **declaration)

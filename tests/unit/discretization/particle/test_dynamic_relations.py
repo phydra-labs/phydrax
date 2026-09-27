@@ -53,7 +53,7 @@ def _bind(
     return runtime.apply(state, events)
 
 
-def test_relation_ids_are_stable_and_old_incarnations_are_stale() -> None:
+def test_dynamic_relations_scenario_1() -> None:
     runtime = _runtime(relation_capacity=1)
     empty = runtime.initialize()
     first = _bind(runtime, empty, 0, 1, event_id=10)
@@ -91,9 +91,9 @@ def test_relation_ids_are_stable_and_old_incarnations_are_stale() -> None:
     np.testing.assert_array_equal(
         stale.accepted_state.occupied, second.accepted_state.occupied
     )
-
-
-def test_capacity_and_duplicate_fail_closed_atomically() -> None:
+    runtime = _runtime(relation_capacity=1)
+    with pytest.raises(ValueError, match="dt must be scalar"):
+        runtime.advance_age(runtime.initialize(), jnp.ones((1,)))
     runtime = _runtime(relation_capacity=1)
     first = _bind(runtime, runtime.initialize(), 0, 1, event_id=1)
     overflow = _bind(runtime, first.accepted_state, 2, 3, event_id=2)
@@ -119,9 +119,6 @@ def test_capacity_and_duplicate_fail_closed_atomically() -> None:
     assert int(duplicate.evidence.duplicate_count) == 1
     assert not bool(jnp.any(duplicate.accepted_state.occupied))
     assert bool(duplicate.candidate_state.occupied[0])
-
-
-def test_endpoint_compatibility_and_exclusion_have_distinct_evidence() -> None:
     compatibility = np.zeros((1, 2, 2), dtype="bool")
     compatibility[0, 0, 1] = True
     runtime = DynamicPairRelationPlan(
@@ -142,7 +139,7 @@ def test_endpoint_compatibility_and_exclusion_have_distinct_evidence() -> None:
     assert int(excluded.evidence.exclusion_count) == 1
 
 
-def test_deactivate_move_and_reactivate_preserve_identity() -> None:
+def test_dynamic_relations_scenario_2() -> None:
     runtime = _runtime(relation_capacity=1)
     bound = _bind(runtime, runtime.initialize(), 0, 1, event_id=1)
     relation_id = bound.accepted_state.relation_ids[0]
@@ -186,9 +183,6 @@ def test_deactivate_move_and_reactivate_preserve_identity() -> None:
     assert int(active.accepted_state.left[0]) == 2
     assert int(active.accepted_state.right[0]) == 3
     assert int(active.accepted_state.incarnations[0]) == int(incarnation)
-
-
-def test_structural_failure_is_not_misreported_as_nonfinite() -> None:
     runtime = _runtime(relation_capacity=1)
     bound = _bind(runtime, runtime.initialize(), 0, 1, event_id=1)
     empty = make_pair_relation_events(1, 2)
@@ -201,15 +195,6 @@ def test_structural_failure_is_not_misreported_as_nonfinite() -> None:
     assert bool(evaluation.evidence.finite)
     assert int(evaluation.evidence.nonfinite_count) == 0
     assert int(evaluation.evidence.invalid_state_count) == 1
-
-
-def test_relation_age_requires_a_scalar_time_step() -> None:
-    runtime = _runtime(relation_capacity=1)
-    with pytest.raises(ValueError, match="dt must be scalar"):
-        runtime.advance_age(runtime.initialize(), jnp.ones((1,)))
-
-
-def test_pair_spring_force_is_negative_energy_gradient() -> None:
     runtime = _runtime(relation_capacity=1)
     bound = _bind(runtime, runtime.initialize(), 0, 1, event_id=1, parameters=(3.0, 1.0))
     spring = PairSpringPlan().prepare(runtime, ambient_dimension=2)

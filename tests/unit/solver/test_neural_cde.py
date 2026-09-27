@@ -60,7 +60,7 @@ def _training_data() -> Any:
     )
 
 
-def test_vector_field_adapter_composes_callable_mlp_and_kan_models() -> None:
+def test_neural_cde_scenario_1() -> None:
     callable_field = phx.solver.NeuralCDEVectorField(
         lambda state: jnp.asarray([state[0], -state[0]]),
         state_shape=(1,),
@@ -94,9 +94,6 @@ def test_vector_field_adapter_composes_callable_mlp_and_kan_models() -> None:
         value = field(jnp.asarray(0.3), state, None)
         assert value.shape == (1, 2)
         assert jnp.all(jnp.isfinite(value))
-
-
-def test_irregular_observation_loss_uses_mask_and_explicit_time_channel() -> None:
     data = _training_data()
     vector_field = phx.solver.NeuralCDEVectorField(
         _ScalarRateModel(jnp.asarray(0.4)),
@@ -116,9 +113,6 @@ def test_irregular_observation_loss_uses_mask_and_explicit_time_channel() -> Non
     assert data.data_id
     assert jnp.isfinite(loss)
     assert loss < 1e-13
-
-
-def test_complex_residual_uses_hermitian_squared_norm() -> None:
     data = phx.solver.NeuralCDETrainingData(
         (_time_path("complex-residual"),),
         jnp.asarray([[1.0j]]),

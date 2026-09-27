@@ -177,7 +177,7 @@ def _reference_sampler(problem: Any, *, position: Any) -> Any:
     return problem.log_density(position)
 
 
-def test_multi_experiment_likelihood_and_gradient_equal_separate_exact_terms() -> None:
+def test_state_space_estimation_scenario_1() -> None:
     experiments = _experiments()
     likelihood = phx.uq.MultiExperimentStateSpaceLikelihood(experiments)
     parameters = {"offset": jnp.asarray(0.2)}
@@ -202,9 +202,6 @@ def test_multi_experiment_likelihood_and_gradient_equal_separate_exact_terms() -
     )
     assert gradient["offset"] == pytest.approx(separate_gradient)
     assert jnp.isfinite(gradient["offset"])
-
-
-def test_experiment_diagnostics_preserve_cases_masks_status_and_backend() -> None:
     result = _estimation().evaluate_likelihood({"offset": jnp.asarray(0.0)})
     replicated = result.experiment("replicated")
     independent = result.experiment("independent")
@@ -241,11 +238,17 @@ def test_experiment_diagnostics_preserve_cases_masks_status_and_backend() -> Non
     assert jnp.all(result.successful)
     with pytest.raises(KeyError, match="missing"):
         result.experiment("missing")
+    template, _ = _templates()
+    experiment = phx.uq.StateSpaceExperiment(
+        lambda parameters: template,
+        experiment_id="wrong-contract",
+        case_axes=("replicate",),
+        case_shape=(2,),
+        case_ids=("other-a", "other-b"),
+    )
 
-
-def test_approximate_experiment_composes_without_discarding_particle_diagnostics() -> (
-    None
-):
+    with pytest.raises(ValueError, match="different case IDs"):
+        experiment.evaluate({"offset": jnp.asarray(0.0)})
     experiment = _particle_experiment()
     result = phx.uq.MultiExperimentStateSpaceLikelihood((experiment,)).evaluate(
         {"offset": jnp.asarray(0.0)}
@@ -364,43 +367,114 @@ def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics() 
         exact_only.evaluate(parameters)
 
 
-@pytest.mark.parametrize(
-    "workflow",
-    ("local_map", "global_then_local_map", "laplace"),
-)
-def test_gradient_workflows_reject_custom_approximate_backend_before_tracing(
-    workflow: Any,
-) -> None:
-    parameter_space = phx.uq.ParameterSpace(
-        {"offset": jnp.asarray(0.0)},
-        log_prior=lambda parameters: -0.5 * parameters["offset"] ** 2,
+def test_state_space_estimation_scenario_2() -> None:
+    for workflow in ("local_map", "global_then_local_map", "laplace"):
+        parameter_space = phx.uq.ParameterSpace(
+            {"offset": jnp.asarray(0.0)},
+            log_prior=lambda parameters: -0.5 * parameters["offset"] ** 2,
+        )
+        estimation = phx.uq.StateSpaceEstimation(
+            parameter_space,
+            (_particle_experiment(),),
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                rf"{workflow} requires explicitly transform-safe likelihood backends.*"
+                "particle-replicated.*bootstrap-32"
+            ),
+        ):
+            if workflow == "local_map":
+                estimation.local_map(max_steps=1)
+            elif workflow == "global_then_local_map":
+                estimation.global_then_local_map(
+                    phx.optim.DifferentialEvolutionSearch(4, 1),
+                    key=jr.key(21),
+                    position_bounds=(
+                        {"offset": jnp.asarray(-1.0)},
+                        {"offset": jnp.asarray(1.0)},
+                    ),
+                    max_steps=1,
+                )
+            else:
+                estimation.laplace(stationarity_tolerance=None)
+    estimation = _estimation(initial=-0.75)
+    local = estimation.local_map(max_steps=50, raise_on_failure=False)
+    search = phx.optim.DifferentialEvolutionSearch(
+        8,
+        4,
+        relative_tolerance=0.0,
+        absolute_tolerance=0.0,
     )
-    estimation = phx.uq.StateSpaceEstimation(
-        parameter_space,
-        (_particle_experiment(),),
+    combined = estimation.global_then_local_map(
+        search,
+        key=jr.key(8),
+        position_bounds=(
+            {"offset": jnp.asarray(-2.0)},
+            {"offset": jnp.asarray(2.0)},
+        ),
+        max_steps=50,
+        raise_on_failure=False,
+    )
+    laplace = estimation.laplace(
+        combined,
+        stationarity_tolerance=None,
+        damping=0.0,
+    )
+    samples = laplace.approximation.sample(jr.key(9), num_samples=4)
+    sampled = estimation.sample(
+        _reference_sampler,
+        sampler_id="reference-log-density",
+        reference_position=combined.position,
+        position=combined.position,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=(
-            rf"{workflow} requires explicitly transform-safe likelihood backends.*"
-            "particle-replicated.*bootstrap-32"
+    assert local.workflow == "local"
+    assert local.local_map is not None
+    assert local.global_search is None
+    assert local.likelihood.experiment_ids == ("replicated", "independent")
+    assert combined.workflow == "global-local"
+    assert combined.global_search is not None
+    assert combined.local_map is not None
+    assert combined.log_density >= combined.global_search.log_density - 1e-5
+    assert combined.likelihood.experiment_ids == ("replicated", "independent")
+    assert laplace.source_map is combined
+    assert laplace.likelihood.experiment_ids == combined.likelihood.experiment_ids
+    assert samples["offset"].shape == (4,)
+    assert sampled.sampler_id == "reference-log-density"
+    assert sampled.result == pytest.approx(combined.log_density)
+    assert sampled.reference_likelihood.experiment_ids == (
+        "replicated",
+        "independent",
+    )
+    estimation = _estimation(initial=-0.75)
+    search = phx.uq.GaussianProcessBayesianOptimization(
+        8,
+        objective_surrogate=phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.Matern52Kernel(length_scale=0.25),
+            noise_scale=0.0,
         ),
-    ):
-        if workflow == "local_map":
-            estimation.local_map(max_steps=1)
-        elif workflow == "global_then_local_map":
-            estimation.global_then_local_map(
-                phx.optim.DifferentialEvolutionSearch(4, 1),
-                key=jr.key(21),
-                position_bounds=(
-                    {"offset": jnp.asarray(-1.0)},
-                    {"offset": jnp.asarray(1.0)},
-                ),
-                max_steps=1,
-            )
-        else:
-            estimation.laplace(stationarity_tolerance=None)
+        initial_evaluations=4,
+        candidate_tuple_count=32,
+        fantasy_count=8,
+    )
+
+    result = estimation.global_then_local_map(
+        search,
+        key=jr.key(25),
+        position_bounds=(
+            {"offset": jnp.asarray(-2.0)},
+            {"offset": jnp.asarray(2.0)},
+        ),
+        max_steps=20,
+        raise_on_failure=False,
+    )
+
+    assert isinstance(result.global_search, phx.uq.BayesianOptimizationMAPResult)
+    assert result.global_search.valid
+    assert result.local_map is not None
+    assert result.local_map.objective <= result.global_search.objective + 1e-8
 
 
 def test_declared_transform_safe_custom_likelihood_supports_local_map() -> None:
@@ -465,99 +539,3 @@ def test_custom_likelihood_rejects_cached_backend_with_matching_user_ids() -> No
         match="exact evaluated StateSpaceProblem.*cached or relabeled",
     ):
         experiment.evaluate({"offset": jnp.asarray(0.5)})
-
-
-def test_local_global_map_laplace_and_sampler_composition_preserve_diagnostics() -> None:
-    estimation = _estimation(initial=-0.75)
-    local = estimation.local_map(max_steps=50, raise_on_failure=False)
-    search = phx.optim.DifferentialEvolutionSearch(
-        8,
-        4,
-        relative_tolerance=0.0,
-        absolute_tolerance=0.0,
-    )
-    combined = estimation.global_then_local_map(
-        search,
-        key=jr.key(8),
-        position_bounds=(
-            {"offset": jnp.asarray(-2.0)},
-            {"offset": jnp.asarray(2.0)},
-        ),
-        max_steps=50,
-        raise_on_failure=False,
-    )
-    laplace = estimation.laplace(
-        combined,
-        stationarity_tolerance=None,
-        damping=0.0,
-    )
-    samples = laplace.approximation.sample(jr.key(9), num_samples=4)
-    sampled = estimation.sample(
-        _reference_sampler,
-        sampler_id="reference-log-density",
-        reference_position=combined.position,
-        position=combined.position,
-    )
-
-    assert local.workflow == "local"
-    assert local.local_map is not None
-    assert local.global_search is None
-    assert local.likelihood.experiment_ids == ("replicated", "independent")
-    assert combined.workflow == "global-local"
-    assert combined.global_search is not None
-    assert combined.local_map is not None
-    assert combined.log_density >= combined.global_search.log_density - 1e-5
-    assert combined.likelihood.experiment_ids == ("replicated", "independent")
-    assert laplace.source_map is combined
-    assert laplace.likelihood.experiment_ids == combined.likelihood.experiment_ids
-    assert samples["offset"].shape == (4,)
-    assert sampled.sampler_id == "reference-log-density"
-    assert sampled.result == pytest.approx(combined.log_density)
-    assert sampled.reference_likelihood.experiment_ids == (
-        "replicated",
-        "independent",
-    )
-
-
-def test_state_space_global_then_local_map_accepts_gp_initializer() -> None:
-    estimation = _estimation(initial=-0.75)
-    search = phx.uq.GaussianProcessBayesianOptimization(
-        8,
-        objective_surrogate=phx.uq.GaussianProcessLikelihoodState(
-            kernel=phx.kernels.Matern52Kernel(length_scale=0.25),
-            noise_scale=0.0,
-        ),
-        initial_evaluations=4,
-        candidate_tuple_count=32,
-        fantasy_count=8,
-    )
-
-    result = estimation.global_then_local_map(
-        search,
-        key=jr.key(25),
-        position_bounds=(
-            {"offset": jnp.asarray(-2.0)},
-            {"offset": jnp.asarray(2.0)},
-        ),
-        max_steps=20,
-        raise_on_failure=False,
-    )
-
-    assert isinstance(result.global_search, phx.uq.BayesianOptimizationMAPResult)
-    assert result.global_search.valid
-    assert result.local_map is not None
-    assert result.local_map.objective <= result.global_search.objective + 1e-8
-
-
-def test_experiment_rejects_changed_case_semantics() -> None:
-    template, _ = _templates()
-    experiment = phx.uq.StateSpaceExperiment(
-        lambda parameters: template,
-        experiment_id="wrong-contract",
-        case_axes=("replicate",),
-        case_shape=(2,),
-        case_ids=("other-a", "other-b"),
-    )
-
-    with pytest.raises(ValueError, match="different case IDs"):
-        experiment.evaluate({"offset": jnp.asarray(0.0)})

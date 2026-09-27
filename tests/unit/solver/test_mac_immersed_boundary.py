@@ -38,7 +38,7 @@ def _immersed_system(count: Any = 8) -> Any:
     return finite_volume, operators, boundaries, markers, transfer, projection
 
 
-def test_exact_immersed_projection_preserves_zero_state() -> None:
+def test_mac_immersed_boundary_scenario_1() -> None:
     finite_volume, operators, _, markers, _, projection = _immersed_system()
     zero_velocity = tuple(
         jnp.zeros(layout.shape) for layout in finite_volume.face_layouts
@@ -53,9 +53,6 @@ def test_exact_immersed_projection_preserves_zero_state() -> None:
     assert jnp.linalg.norm(result.marker_slip) < 1.0e-8
     assert result.gauge_defect < 1.0e-8
     assert result.kkt_residual_norm < 1.0e-8
-
-
-def test_marker_interpolation_adjoint_matches_spread_and_jit() -> None:
     finite_volume, operators, _, markers, transfer, _ = _immersed_system()
     relation = transfer.relation(markers.reference_position)
     operator = transfer.interpolation_operator(relation)

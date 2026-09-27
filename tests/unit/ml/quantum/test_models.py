@@ -14,7 +14,7 @@ from phydrax.ml.quantum import (
 from phydrax.operators.quantum import HilbertRegisterLayout
 
 
-def test_projected_iqp_feature_map_returns_ordered_real_features() -> None:
+def test_models_scenario_1() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     model = projected_iqp_feature_map(
         layout,
@@ -27,9 +27,6 @@ def test_projected_iqp_feature_map_returns_ordered_real_features() -> None:
     assert values.shape == (6,)
     assert jnp.issubdtype(values.dtype, jnp.floating)
     assert jnp.all(jnp.isfinite(values))
-
-
-def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     key = jr.key(7)
     kwargs = {
@@ -62,9 +59,6 @@ def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian() -> N
         jax.jacrev(shift_model)(point),
         atol=1e-8,
     )
-
-
-def test_prepared_circuit_execution_is_not_trainable() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     model = data_reuploading_feature_map(1, layout, 1, jr.key(3))
     trainable, _model_state, _fixed = phx.partition_parameters(model)

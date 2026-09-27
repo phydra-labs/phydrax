@@ -176,7 +176,7 @@ def test_coordinate_conditioned_operator_film_decode_is_masked_jittable_and_fini
     )
 
 
-def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields() -> None:
+def test_wavelet_contracts() -> None:
     scalar_values = jnp.sin(2.0 * jnp.pi * jnp.arange(8) / 8.0)
     channel_values = jnp.stack((scalar_values, jnp.cos(scalar_values)), axis=-1)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
@@ -239,36 +239,6 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields() -
     assert mwt_eager[-1] == 0.0
     _assert_finite_model_gradient(wno, lambda item: jnp.sum(item(channel_batch) ** 2))
     _assert_finite_model_gradient(mwt, lambda item: jnp.sum(item(scalar_batch) ** 2))
-
-
-def test_wavelet_operator_admits_bounded_four_dimensional_subbands() -> None:
-    model = phx.nn.operator.architectures.WaveletNeuralOperator(
-        4,
-        in_channels="scalar",
-        out_channels="scalar",
-        levels=1,
-        width=2,
-        depth=1,
-        key=jr.key(33),
-    )
-    assert model.transform.detail_count == 15
-
-    with pytest.raises(ValueError, match="maximum_detail_bands"):
-        phx.nn.operator.architectures.WaveletNeuralOperator(
-            4,
-            in_channels="scalar",
-            out_channels="scalar",
-            levels=1,
-            width=2,
-            depth=1,
-            resources=phx.nn.operator.architectures.WaveletResourcePolicy(
-                maximum_detail_bands=14
-            ),
-            key=jr.key(34),
-        )
-
-
-def test_wavelet_operators_reuse_one_model_across_resolutions() -> None:
     sizes = (17, 29)
     batches = tuple(
         _grid_batch(jnp.sin(2.0 * jnp.pi * jnp.arange(size, dtype="float64") / size))
@@ -304,9 +274,33 @@ def test_wavelet_operators_reuse_one_model_across_resolutions() -> None:
     assert tuple(output.shape for output in mwt_outputs) == ((17,), (29,))
     assert all(jnp.all(jnp.isfinite(output)) for output in wno_outputs)
     assert all(jnp.all(jnp.isfinite(output)) for output in mwt_outputs)
+    model = phx.nn.operator.architectures.WaveletNeuralOperator(
+        4,
+        in_channels="scalar",
+        out_channels="scalar",
+        levels=1,
+        width=2,
+        depth=1,
+        key=jr.key(33),
+    )
+    assert model.transform.detail_count == 15
+
+    with pytest.raises(ValueError, match="maximum_detail_bands"):
+        phx.nn.operator.architectures.WaveletNeuralOperator(
+            4,
+            in_channels="scalar",
+            out_channels="scalar",
+            levels=1,
+            width=2,
+            depth=1,
+            resources=phx.nn.operator.architectures.WaveletResourcePolicy(
+                maximum_detail_bands=14
+            ),
+            key=jr.key(34),
+        )
 
 
-def test_manifold_spectral_operator_runs_valid_small_laplacian_plan() -> None:
+def test_operator_foundation_architectures_scenario_1() -> None:
     laplacian = np.array(
         [
             [2.0, -1.0, 0.0, -1.0],
@@ -353,9 +347,6 @@ def test_manifold_spectral_operator_runs_valid_small_laplacian_plan() -> None:
     assert jnp.allclose(compiled, eager)
     assert jnp.array_equal(eager[2:], jnp.zeros((2,)))
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(batch) ** 2))
-
-
-def test_stiffness_plan_rejects_negative_semidefinite_operator() -> None:
     differential_laplacian = np.array(
         [
             [-2.0, 1.0, 0.0, 1.0],
@@ -371,9 +362,6 @@ def test_stiffness_plan_rejects_negative_semidefinite_operator() -> None:
             np.ones((4,)),
             n_modes=4,
         )
-
-
-def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities() -> None:
     mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
     triangle_mesh = phx.geometry.simplicial.TriangleMesh(
         np.asarray(mesh.vertices),
@@ -398,7 +386,7 @@ def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities() 
     assert np.ptp(np.asarray(plan.synthesis)[:, 0]) < 1e-8
 
 
-def test_upt_and_abupt_preserve_case_and_source_query_masks() -> None:
+def test_operator_foundation_architectures_scenario_2() -> None:
     values = jnp.array([[0.0, 0.5, 1.0, 1000.0], [1.0, 0.5, -1000.0, 2000.0]])
     changed_padding = values.at[0, 3].set(-9000.0).at[1, 2:].set(7000.0)
     batch = _case_point_batch(values)
@@ -471,9 +459,6 @@ def test_upt_and_abupt_preserve_case_and_source_query_masks() -> None:
     assert jnp.allclose(abupt_compiled, abupt_output)
     _assert_finite_model_gradient(upt, lambda item: jnp.sum(item(batch) ** 2))
     _assert_finite_model_gradient(abupt, lambda item: jnp.sum(item(batch) ** 2))
-
-
-def test_abupt_predicts_named_fields_on_distinct_queries() -> None:
     source_coordinates = jnp.linspace(0.0, 1.0, 4)[:, None]
     batch = phx.nn.operator.OperatorBatch(
         inputs={
@@ -534,9 +519,6 @@ def test_abupt_predicts_named_fields_on_distinct_queries() -> None:
     assert prediction.field("state").values.shape == (3,)
     assert prediction.field("flux").values.shape == (2, 2)
     assert prediction.field("flux").spec.component_names == ("x", "y")
-
-
-def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask() -> None:
     coordinates = jnp.array([[0.0], [0.3], [0.7], [1.0]])
     query_mask = jnp.array([True, True, True, False])
     batch = phx.nn.operator.OperatorBatch(
@@ -669,7 +651,7 @@ def test_eqgino_is_rotation_and_reflection_equivariant() -> None:
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(batch) ** 2))
 
 
-def test_in_context_operator_prompt_mask_and_permutation_are_semantic() -> None:
+def test_operator_foundation_architectures_scenario_3() -> None:
     query_batch = _point_batch(
         jnp.array([0.0, 0.2, 0.6, 1000.0]),
         source_mask=jnp.array([True, True, True, False]),
@@ -732,9 +714,6 @@ def test_in_context_operator_prompt_mask_and_permutation_are_semantic() -> None:
         ),
     )
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(prompted) ** 2))
-
-
-def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll() -> None:
     values = jnp.sin(2.0 * jnp.pi * jnp.arange(8) / 8.0)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
     batch = _grid_batch(values, query_mask=query_mask)
@@ -787,6 +766,27 @@ def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll()
             item, batch, distribution.mean, reduction="mean"
         ),
     )
+    first = _semantic_problem(metadata=(("provenance", "experiment-a"),))
+    second = _semantic_problem(metadata=(("provenance", "experiment-b"),))
+    first_tokens = phx.equations.tokenize_pde_ir(first, dimension_basis=())
+    second_tokens = phx.equations.tokenize_pde_ir(second, dimension_basis=())
+    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
+        width=8,
+        depth=1,
+        dimension_basis=(),
+        key=jr.key(122),
+    )
+
+    assert first.canonical_hash != second.canonical_hash
+    assert all(
+        jnp.array_equal(left, right)
+        for left, right in zip(
+            _semantic_token_arrays(first_tokens),
+            _semantic_token_arrays(second_tokens),
+            strict=True,
+        )
+    )
+    assert jnp.allclose(encoder(first_tokens), encoder(second_tokens))
 
 
 def _pde_problem(lhs: Any) -> Any:
@@ -797,9 +797,7 @@ def _pde_problem(lhs: Any) -> Any:
     )
 
 
-def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_condition() -> (
-    None
-):
+def test_pde_contracts() -> None:
     field = phx.equations.PDEExpression.field("u")
     equivalent_a = _pde_problem(field + 1.0)
     equivalent_b = _pde_problem(1.0 + field)
@@ -840,63 +838,41 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     assert jnp.allclose(condition.values[:, 0], jnp.broadcast_to(encoded_a, (2, 4)))
     assert jnp.array_equal(condition.mask_array(case_shape=(2,)), jnp.ones((2, 1)))
     _assert_finite_model_gradient(encoder, lambda item: jnp.sum(item(tokens_a) ** 2))
-
-
-def _semantic_token_arrays(tokens: Any) -> Any:
-    return tuple(
-        getattr(tokens, name)
-        for name in (
-            "kind",
-            "operator",
-            "attribute",
-            "symbol",
-            "scalar",
-            "dimension",
-            "slot",
-            "parent",
-            "depth",
-            "mask",
-        )
+    expression = phx.equations.PDEExpression
+    original = _semantic_problem(
+        coordinates=(phx.equations.PDECoordinate("x", "space"),),
+        fields=(
+            phx.equations.PDEField("u", coordinates=("x",)),
+            phx.equations.PDEField("v", coordinates=("x",)),
+        ),
+        expression=expression.field("u") + expression.field("v"),
+        nondimensionalization=(("x", 2.0),),
+    )
+    renamed = _semantic_problem(
+        coordinates=(phx.equations.PDECoordinate("position", "space"),),
+        fields=(
+            phx.equations.PDEField("temperature", coordinates=("position",)),
+            phx.equations.PDEField("pressure", coordinates=("position",)),
+        ),
+        expression=(expression.field("temperature") + expression.field("pressure")),
+        nondimensionalization=(("position", 2.0),),
+    )
+    original_tokens = phx.equations.tokenize_pde_ir(original, dimension_basis=())
+    renamed_tokens = phx.equations.tokenize_pde_ir(renamed, dimension_basis=())
+    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
+        width=16,
+        depth=2,
+        dimension_basis=(),
+        key=jr.key(121),
     )
 
-
-def _semantic_problem(
-    *,
-    coordinates: Any = None,
-    fields: Any = None,
-    parameters: Any = (),
-    expression: Any = None,
-    regions: Any = (),
-    conditions: Any = (),
-    nondimensionalization: Any = (),
-    metadata: Any = (),
-) -> Any:
-    coordinates = (
-        (phx.equations.PDECoordinate("x", "space"),)
-        if coordinates is None
-        else coordinates
+    assert original.canonical_hash != renamed.canonical_hash
+    assert jnp.allclose(
+        encoder(original_tokens),
+        encoder(renamed_tokens),
+        rtol=1e-8,
+        atol=1e-8,
     )
-    fields = (
-        (phx.equations.PDEField("u", coordinates=("x",)),) if fields is None else fields
-    )
-    equations = (
-        ()
-        if expression is None
-        else (phx.equations.PDEEquation("governing", expression),)
-    )
-    return phx.equations.PDEProblemIR(
-        coordinates=coordinates,
-        fields=fields,
-        parameters=parameters,
-        equations=equations,
-        regions=regions,
-        conditions=conditions,
-        nondimensionalization=nondimensionalization,
-        metadata=metadata,
-    )
-
-
-def test_pde_condition_encoder_distinguishes_execution_semantics() -> None:
     expression = phx.equations.PDEExpression
     u = expression.field("u")
     vector_fields = (
@@ -1114,47 +1090,6 @@ def test_pde_condition_encoder_distinguishes_execution_semantics() -> None:
             rtol=1e-8,
             atol=1e-9,
         )
-
-
-def test_pde_condition_encoder_is_alpha_renaming_invariant() -> None:
-    expression = phx.equations.PDEExpression
-    original = _semantic_problem(
-        coordinates=(phx.equations.PDECoordinate("x", "space"),),
-        fields=(
-            phx.equations.PDEField("u", coordinates=("x",)),
-            phx.equations.PDEField("v", coordinates=("x",)),
-        ),
-        expression=expression.field("u") + expression.field("v"),
-        nondimensionalization=(("x", 2.0),),
-    )
-    renamed = _semantic_problem(
-        coordinates=(phx.equations.PDECoordinate("position", "space"),),
-        fields=(
-            phx.equations.PDEField("temperature", coordinates=("position",)),
-            phx.equations.PDEField("pressure", coordinates=("position",)),
-        ),
-        expression=(expression.field("temperature") + expression.field("pressure")),
-        nondimensionalization=(("position", 2.0),),
-    )
-    original_tokens = phx.equations.tokenize_pde_ir(original, dimension_basis=())
-    renamed_tokens = phx.equations.tokenize_pde_ir(renamed, dimension_basis=())
-    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
-        width=16,
-        depth=2,
-        dimension_basis=(),
-        key=jr.key(121),
-    )
-
-    assert original.canonical_hash != renamed.canonical_hash
-    assert jnp.allclose(
-        encoder(original_tokens),
-        encoder(renamed_tokens),
-        rtol=1e-8,
-        atol=1e-8,
-    )
-
-
-def test_pde_token_padding_and_stacking_preserve_semantic_channels() -> None:
     first = phx.equations.tokenize_pde_ir(
         _semantic_problem(
             expression=phx.equations.PDEExpression.field("u").derivative(
@@ -1179,25 +1114,55 @@ def test_pde_token_padding_and_stacking_preserve_semantic_channels() -> None:
     assert stacked.slot.shape == stacked.mask.shape
 
 
-def test_arbitrary_pde_metadata_stays_outside_neural_semantics() -> None:
-    first = _semantic_problem(metadata=(("provenance", "experiment-a"),))
-    second = _semantic_problem(metadata=(("provenance", "experiment-b"),))
-    first_tokens = phx.equations.tokenize_pde_ir(first, dimension_basis=())
-    second_tokens = phx.equations.tokenize_pde_ir(second, dimension_basis=())
-    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
-        width=8,
-        depth=1,
-        dimension_basis=(),
-        key=jr.key(122),
-    )
-
-    assert first.canonical_hash != second.canonical_hash
-    assert all(
-        jnp.array_equal(left, right)
-        for left, right in zip(
-            _semantic_token_arrays(first_tokens),
-            _semantic_token_arrays(second_tokens),
-            strict=True,
+def _semantic_token_arrays(tokens: Any) -> Any:
+    return tuple(
+        getattr(tokens, name)
+        for name in (
+            "kind",
+            "operator",
+            "attribute",
+            "symbol",
+            "scalar",
+            "dimension",
+            "slot",
+            "parent",
+            "depth",
+            "mask",
         )
     )
-    assert jnp.allclose(encoder(first_tokens), encoder(second_tokens))
+
+
+def _semantic_problem(
+    *,
+    coordinates: Any = None,
+    fields: Any = None,
+    parameters: Any = (),
+    expression: Any = None,
+    regions: Any = (),
+    conditions: Any = (),
+    nondimensionalization: Any = (),
+    metadata: Any = (),
+) -> Any:
+    coordinates = (
+        (phx.equations.PDECoordinate("x", "space"),)
+        if coordinates is None
+        else coordinates
+    )
+    fields = (
+        (phx.equations.PDEField("u", coordinates=("x",)),) if fields is None else fields
+    )
+    equations = (
+        ()
+        if expression is None
+        else (phx.equations.PDEEquation("governing", expression),)
+    )
+    return phx.equations.PDEProblemIR(
+        coordinates=coordinates,
+        fields=fields,
+        parameters=parameters,
+        equations=equations,
+        regions=regions,
+        conditions=conditions,
+        nondimensionalization=nondimensionalization,
+        metadata=metadata,
+    )

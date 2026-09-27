@@ -27,7 +27,7 @@ def _layout(
     )
 
 
-def test_parameter_layout_discovers_ordinary_affine_bias_blocks() -> None:
+def test_parameter_layout_contracts() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -45,9 +45,6 @@ def test_parameter_layout_discovers_ordinary_affine_bias_blocks() -> None:
     assert sum(block.parameter_count for block in layout.affine_blocks) == (
         layout.parameter_count
     )
-
-
-def test_parameter_layout_discovers_learned_skip_projection() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -65,9 +62,6 @@ def test_parameter_layout_discovers_learned_skip_projection() -> None:
     assert len(layout.affine_blocks) == 3
     assert layout.affine_blocks[-1].name.endswith("residual_projection")
     assert layout.uncovered_block is None
-
-
-def test_parameter_layout_excludes_geometry_and_uses_exact_uncovered_block() -> None:
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -88,9 +82,6 @@ def test_parameter_layout_excludes_geometry_and_uses_exact_uncovered_block() -> 
     assert layout.uncovered_block is not None
     assert layout.uncovered_block.parameter_count == 1
     assert layout.uncovered_block.approximation == "exact"
-
-
-def test_parameter_layout_uses_explicit_diagonal_fallback_above_threshold() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -108,9 +99,6 @@ def test_parameter_layout_uses_explicit_diagonal_fallback_above_threshold() -> N
 
     assert layout.uncovered_block is not None
     assert layout.uncovered_block.approximation == "diagonal"
-
-
-def test_parameter_layout_rejects_shared_affine_parameters() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=2,
@@ -127,9 +115,6 @@ def test_parameter_layout_rejects_shared_affine_parameters() -> None:
 
     with pytest.raises(ValueError, match="require one explicit sharing_group"):
         _layout({"u": domain.Model("x")(model)})
-
-
-def test_parameter_layout_rejects_complex_uncovered_parameters() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -145,9 +130,6 @@ def test_parameter_layout_rejects_complex_uncovered_parameters() -> None:
 
     with pytest.raises(ValueError, match="real trainable parameters"):
         _layout(functions, exact_block_max_size=4)
-
-
-def test_parameter_layout_rejects_random_weight_factorization() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.models.MLP(
         in_size=1,
@@ -159,17 +141,6 @@ def test_parameter_layout_rejects_random_weight_factorization() -> None:
 
     with pytest.raises(ValueError, match="requires an exact coordinate_pullback"):
         _layout({"u": domain.Model("x")(model)})
-
-
-class _StatefulScale(phx.ParameterOwner, eqx.Module):
-    scale: jax.Array
-    calls: jax.Array = phx.model_state_field()
-
-    def __call__(self, x: Any, **_kwargs: Any) -> Any:
-        return self.scale * x[0]
-
-
-def test_parameter_layout_rejects_model_state() -> None:
     domain = phx.domain.Interval1d(0.0, 1.0)
     stateful = phx.domain.DomainFunction(
         domain=domain,
@@ -179,3 +150,11 @@ def test_parameter_layout_rejects_model_state() -> None:
 
     with pytest.raises(ValueError, match=r"KFAC field 'u'.*MODEL_STATE.*calls"):
         _layout({"u": stateful})
+
+
+class _StatefulScale(phx.ParameterOwner, eqx.Module):
+    scale: jax.Array
+    calls: jax.Array = phx.model_state_field()
+
+    def __call__(self, x: Any, **_kwargs: Any) -> Any:
+        return self.scale * x[0]

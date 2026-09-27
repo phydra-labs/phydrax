@@ -174,17 +174,21 @@ def _blanking(result: Any) -> Any:
     }
 
 
-@pytest.mark.parametrize("ranks", (1, 2))
-def test_tioga_real_hole_cut_and_affine_transfer(overset_case: Any, ranks: Any) -> None:
-    executable, assembly, walls, overset = overset_case
-    with TiogaProvider(_options(executable, ranks)) as provider:
-        result = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
-    assert {part.part_id for part in result.assembly.parts} == {
-        part.part_id for part in assembly.parts
-    }
-    assert result.provider.version
-    assert result.registration.part_names == tuple(part.name for part in assembly.parts)
-    _assert_overset_assembly(result, CENTERS)
+def test_tioga_real_hole_cut_and_affine_transfer(
+    overset_case: Any,
+) -> None:
+    for ranks in (1, 2):
+        executable, assembly, walls, overset = overset_case
+        with TiogaProvider(_options(executable, ranks)) as provider:
+            result = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
+        assert {part.part_id for part in result.assembly.parts} == {
+            part.part_id for part in assembly.parts
+        }
+        assert result.provider.version
+        assert result.registration.part_names == tuple(
+            part.name for part in assembly.parts
+        )
+        _assert_overset_assembly(result, CENTERS)
 
 
 def test_tioga_reuses_one_worker_session_across_registrations(overset_case: Any) -> None:
@@ -198,70 +202,70 @@ def test_tioga_reuses_one_worker_session_across_registrations(overset_case: Any)
     assert second.assembly.assembly_id == first.assembly.assembly_id
 
 
-@pytest.mark.parametrize("ranks", (1, 2))
 def test_tioga_moves_parts_without_restarting_the_worker(
-    overset_case: Any, ranks: Any
+    overset_case: Any,
 ) -> None:
-    executable, assembly, walls, overset = overset_case
-    with TiogaProvider(_options(executable, ranks)) as provider:
-        first = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
-        # ty: ignore[unresolved-attribute]
-        right = np.asarray(first.assembly.part("body-right").carrier.mesh.coordinates)
+    for ranks in (1, 2):
+        executable, assembly, walls, overset = overset_case
+        with TiogaProvider(_options(executable, ranks)) as provider:
+            first = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
+            # ty: ignore[unresolved-attribute]
+            right = np.asarray(first.assembly.part("body-right").carrier.mesh.coordinates)
 
-        unchanged = provider.move(first, {"body-right": right})
-        moved = provider.move(unchanged, {"body-right": right + TRANSLATION})
-        with pytest.raises(MeshingFailure) as stale:
-            provider.move(unchanged, {"body-right": right})
-        # The moved assembly is exactly what a fresh registration of the
-        # translated geometry produces.
-        parts = {part.name: part for part in moved.assembly.parts}
-        fresh = provider.execute(
-            MeshAssembly(moved.assembly.parts),
-            wall_scopes=tuple(
-                parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
-                for scope in walls
-            ),
-            overset_scopes=tuple(
-                parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
-                for scope in overset
-            ),
+            unchanged = provider.move(first, {"body-right": right})
+            moved = provider.move(unchanged, {"body-right": right + TRANSLATION})
+            with pytest.raises(MeshingFailure) as stale:
+                provider.move(unchanged, {"body-right": right})
+            # The moved assembly is exactly what a fresh registration of the
+            # translated geometry produces.
+            parts = {part.name: part for part in moved.assembly.parts}
+            fresh = provider.execute(
+                MeshAssembly(moved.assembly.parts),
+                wall_scopes=tuple(
+                    parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
+                    for scope in walls
+                ),
+                overset_scopes=tuple(
+                    parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
+                    for scope in overset
+                ),
+            )
+            assert provider.worker.launches == 1
+
+        sessions = {
+            result.registration.session_id for result in (first, unchanged, moved, fresh)
+        }
+        assert len(sessions) == 1
+        assert (
+            first.registration.registration
+            == unchanged.registration.registration
+            == moved.registration.registration
         )
-        assert provider.worker.launches == 1
+        assert unchanged.assembly.assembly_id == first.assembly.assembly_id
+        for name, (nodes, cells) in _blanking(first).items():
+            np.testing.assert_array_equal(_blanking(unchanged)[name][0], nodes)
+            np.testing.assert_array_equal(_blanking(unchanged)[name][1], cells)
+        assert stale.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
 
-    sessions = {
-        result.registration.session_id for result in (first, unchanged, moved, fresh)
-    }
-    assert len(sessions) == 1
-    assert (
-        first.registration.registration
-        == unchanged.registration.registration
-        == moved.registration.registration
-    )
-    assert unchanged.assembly.assembly_id == first.assembly.assembly_id
-    for name, (nodes, cells) in _blanking(first).items():
-        np.testing.assert_array_equal(_blanking(unchanged)[name][0], nodes)
-        np.testing.assert_array_equal(_blanking(unchanged)[name][1], cells)
-    assert stale.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
-
-    np.testing.assert_array_equal(
-        # ty: ignore[unresolved-attribute]
-        moved.assembly.part("body-right").carrier.mesh.coordinates,
-        right + TRANSLATION,
-    )
-    assert (
-        moved.assembly.part("body-left").part_id
-        == first.assembly.part("body-left").part_id
-    )
-    assert not np.array_equal(
-        _blanking(moved)["background"][0], _blanking(first)["background"][0]
-    )
-    _assert_overset_assembly(
-        moved, {**CENTERS, "body-right": CENTERS["body-right"] + TRANSLATION}
-    )
-    assert fresh.assembly.assembly_id == moved.assembly.assembly_id
-    assert [item.evidence_id for item in fresh.donors] == [
-        item.evidence_id for item in moved.donors
-    ]
+        np.testing.assert_array_equal(
+            # ty: ignore[unresolved-attribute]
+            moved.assembly.part("body-right").carrier.mesh.coordinates,
+            right + TRANSLATION,
+        )
+        assert (
+            moved.assembly.part("body-left").part_id
+            == first.assembly.part("body-left").part_id
+        )
+        assert not np.array_equal(
+            _blanking(moved)["background"][0], _blanking(first)["background"][0]
+        )
+        _assert_overset_assembly(
+            moved, {**CENTERS, "body-right": CENTERS["body-right"] + TRANSLATION}
+        )
+        assert fresh.assembly.assembly_id == moved.assembly.assembly_id
+        assert [item.evidence_id for item in fresh.donors] == [
+            item.evidence_id for item in moved.donors
+        ]
 
 
 def test_tioga_move_after_session_loss_fails_explicitly(overset_case: Any) -> None:
@@ -279,7 +283,7 @@ def test_tioga_move_after_session_loss_fails_explicitly(overset_case: Any) -> No
     assert failure.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
 
 
-def test_tioga_rejects_surface_cells_before_loading_native_dependency() -> None:
+def test_tioga_contracts() -> None:
     mesh = CellMesh(
         np.array(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
         (CellBlock("surface", "triangle", np.array(((0, 1, 2),))),),
@@ -291,9 +295,6 @@ def test_tioga_rejects_surface_cells_before_loading_native_dependency() -> None:
             TiogaOptions(executable="nonexistent-tioga-for-unsupported-surface")
         ).execute(assembly)
     assert failure.value.category is MeshingFailureCategory.UNSUPPORTED_CAPABILITY
-
-
-def test_tioga_refuses_entity_budget_before_native_launch() -> None:
     first = _grid("first", 0.0, 1.0, 2)
     second = _grid("second", 2.0, 3.0, 2)
     assembly = MeshAssembly((first, second))

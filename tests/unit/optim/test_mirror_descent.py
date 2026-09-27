@@ -75,7 +75,7 @@ def test_unit_mirror_step_solves_negative_entropy_divergence_exactly() -> None:
     assert state.metrics.constraint_residual == 0.0
 
 
-def test_mirror_descent_updates_mixed_weighted_and_product_leaves() -> None:
+def test_mirror_descent_scenario_1() -> None:
     parameters = {
         "positive": jnp.asarray([[0.4, 0.9], [1.3, 0.6]]),
         "euclidean": jnp.asarray(1.5),
@@ -107,9 +107,6 @@ def test_mirror_descent_updates_mixed_weighted_and_product_leaves() -> None:
     assert geometry.geometry_ids == ("negative-entropy-2",)
     assert state.metrics.coordinate_gradient_norm > 0.0
     assert state.metrics.dual_displacement_norm > 0.0
-
-
-def test_mirror_descent_schedule_is_jittable_and_zero_rate_is_noop() -> None:
     parameters = {"positive": jnp.asarray([0.6, 1.2])}
     gradients = {"positive": jnp.asarray([0.4, -0.3])}
     path = _path_containing(parameters, "positive")
@@ -131,9 +128,6 @@ def test_mirror_descent_schedule_is_jittable_and_zero_rate_is_noop() -> None:
         parameters["positive"] * jnp.exp(-0.1 * gradients["positive"]),
     )
     assert int(state.step) == 2
-
-
-def test_parameter_mirror_geometry_rejects_invalid_bindings_and_updates() -> None:
     parameters = {"positive": jnp.asarray([0.5, 1.0])}
     geometry = _negative_entropy_geometry(2)
     with pytest.raises(ValueError, match="Unknown ParameterMirrorGeometry leaf paths"):
@@ -171,9 +165,6 @@ def test_parameter_mirror_geometry_rejects_invalid_bindings_and_updates() -> Non
             state,
             parameters,
         )
-
-
-def test_parameter_mirror_geometry_reports_infinite_invalid_residual() -> None:
     parameters = {"positive": jnp.asarray([0.5, 1.0])}
     path = _path_containing(parameters, "positive")
     binding = phx.optim.ParameterMirrorGeometry(

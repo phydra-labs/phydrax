@@ -161,10 +161,10 @@ def _execution_contract(**overrides: Any) -> Any:
     return ModelExecutionContract(**fields)
 
 
-def test_host_only_disables_jit_and_vmap() -> None:
+def test_component_contracts_scenario_1() -> None:
     host = ExecutionCapabilities("host-inference", host_only=True)
-    assert (host.jit, host.vmap) == (False, False)
     native = ExecutionCapabilities("native-jax")
+    assert (host.jit, host.vmap) == (False, False)
     assert (native.jit, native.vmap) == (True, True)
     with pytest.raises(ValueError, match="neither jit nor vmap"):
         ExecutionCapabilities("compiled-inference", host_only=True, jit=True)
@@ -176,40 +176,34 @@ def test_host_only_disables_jit_and_vmap() -> None:
         # ty: ignore[invalid-argument-type]
         ExecutionCapabilities("onnx")
 
-
-def test_host_only_model_cannot_claim_jax_derivatives() -> None:
-    host = ExecutionCapabilities("host-inference", host_only=True)
     with pytest.raises(ValueError, match="host-only model"):
         _execution_contract(execution=host)
     stopped = DerivativeContract.smooth((INPUT,), route=DerivativeRoute.STOPPED)
     assert _execution_contract(derivative=stopped, execution=host).execution.host_only
-    adjoint = DerivativeContract.smooth((INPUT,), route=DerivativeRoute.EXTERNAL_ADJOINT)
+    external = DerivativeContract.smooth(
+        (INPUT,),
+        route=DerivativeRoute.EXTERNAL_ADJOINT,
+    )
     with pytest.raises(ValueError, match="'external-adjoint' tier"):
-        _execution_contract(derivative=adjoint)
+        _execution_contract(derivative=external)
 
-
-@pytest.mark.parametrize(
-    ("route", "forward", "reverse"),
-    [
+    request = DifferentiationRequest((PARAMETER,))
+    route_cases = (
         (DerivativeRoute.DIRECT, True, True),
         (DerivativeRoute.IMPLICIT, True, True),
         (DerivativeRoute.EXTERNAL_ADJOINT, False, True),
         (DerivativeRoute.STOPPED, False, False),
-    ],
-)
-def test_supports_derivative_follows_contract_route(
-    route: Any, forward: Any, reverse: Any
-) -> None:
-    contract = DerivativeContract.smooth((INPUT, PARAMETER), route=route)
-    request = DifferentiationRequest((PARAMETER,))
-    assert supports_derivative(contract, request, mode="forward") is forward
-    assert supports_derivative(contract, request, mode="reverse") is reverse
+    )
+    for route, forward, reverse in route_cases:
+        contract = DerivativeContract.smooth((INPUT, PARAMETER), route=route)
+        assert supports_derivative(contract, request, mode="forward") is forward, route
+        assert supports_derivative(contract, request, mode="reverse") is reverse, route
 
-
-def test_supports_derivative_follows_admission() -> None:
-    contract = DerivativeContract.smooth((PARAMETER,))
+    parameter_only = DerivativeContract.smooth((PARAMETER,))
     assert not supports_derivative(
-        contract, DifferentiationRequest((INPUT,)), mode="reverse"
+        parameter_only,
+        DifferentiationRequest((INPUT,)),
+        mode="reverse",
     )
     undeclared = _undeclared_mlp().model_execution_contract().derivative
     eager = DifferentiationRequest((INPUT,))
@@ -218,20 +212,8 @@ def test_supports_derivative_follows_admission() -> None:
     assert not supports_derivative(undeclared, physical, mode="forward")
     with pytest.raises(ValueError, match="Unknown derivative mode"):
         # ty: ignore[invalid-argument-type]
-        supports_derivative(contract, eager, mode="jvp")
-
-
-_ADMIT = dict(
-    implicit=False,
-    authoritative=False,
-    realization_bound=False,
-    inference_state_bound=False,
-)
-
-
-@pytest.mark.parametrize(
-    ("contract", "flags", "expected"),
-    [
+        supports_derivative(parameter_only, eager, mode="jvp")
+    cases = (
         (None, {}, (True, "randomness-undeclared")),
         (None, {"authoritative": True}, (False, "randomness-undeclared")),
         (None, {"implicit": True}, (False, "randomness-undeclared")),
@@ -276,18 +258,15 @@ _ADMIT = dict(
             {"implicit": True, "inference_state_bound": True},
             (True, "deterministic"),
         ),
-    ],
-)
-def test_randomness_admission(contract: Any, flags: Any, expected: Any) -> None:
-    assert admit_randomness(contract, **{**_ADMIT, **flags}) == expected
+    )
+    for contract, flags, expected in cases:
+        assert admit_randomness(contract, **{**_ADMIT, **flags}) == expected, (
+            contract,
+            flags,
+        )
 
-
-def test_randomness_realization_only_for_fixed_realization() -> None:
     with pytest.raises(ValueError, match="fixed-realization"):
         RandomnessContract("resampled", realization_id="mask-0")
-
-
-def test_precision_floors_declared_and_undeclared() -> None:
     native = ComponentPrecisionContract.native(jnp.float32)
     assert native.compute_dtype == "float32"
     assert native.residual_floor(10.0) is None
@@ -321,6 +300,14 @@ def test_precision_floors_declared_and_undeclared() -> None:
         native.residual_floor(-1.0)
 
 
+_ADMIT = dict(
+    implicit=False,
+    authoritative=False,
+    realization_bound=False,
+    inference_state_bound=False,
+)
+
+
 def test_model_execution_contract_fingerprint_is_deterministic() -> None:
     certificate = InputConvexNetwork(
         in_size=2, width_size=4, depth=2, key=jax.random.key(1)
@@ -352,7 +339,7 @@ def test_model_execution_contract_fingerprint_is_deterministic() -> None:
         _execution_contract(declared_capabilities="monotone")
 
 
-def test_declared_capabilities_satisfy_declaration_requirements_only() -> None:
+def test_component_contracts_scenario_2() -> None:
     model = _DeclaredMonotoneModel()
     contract = model.model_execution_contract()
     assert contract.certificates == ()
@@ -381,9 +368,6 @@ def test_declared_capabilities_satisfy_declaration_requirements_only() -> None:
             model_contract=_execution_contract(declared_capabilities=("monotone",)),
             requirements=critical,
         )
-
-
-def test_default_model_execution_contract_is_conservative() -> None:
     contract = _undeclared_mlp().model_execution_contract()
     assert contract.regularity is None
     assert contract.precision is None
@@ -398,17 +382,11 @@ def test_default_model_execution_contract_is_conservative() -> None:
     }
     execution = contract.execution
     assert (execution.tier, execution.jit, execution.vmap) == ("native-jax", True, True)
-
-
-def test_default_contract_reads_ports_and_certificates() -> None:
     assert _PortedModel().model_execution_contract().ports == ModelPorts(
         inputs=(_position(),), outputs=(_temperature(),)
     )
     convex = InputConvexNetwork(in_size=2, width_size=4, depth=2, key=jax.random.key(1))
     assert convex.model_execution_contract().evidence == (("input-convex", CONSTRUCTED),)
-
-
-def test_component_binding_keeps_model_parameters_and_static_authority() -> None:
     model = _undeclared_mlp()
     binding = bind_component(model, ComponentAuthority.SURROGATE)
     parameters, model_state, fixed = partition_parameters(binding)
@@ -424,9 +402,6 @@ def test_component_binding_keeps_model_parameters_and_static_authority() -> None
     assert contract.authority is ComponentAuthority.SURROGATE
     assert contract.slot_semantic_id is None
     assert contract.port_binding is None
-
-
-def test_component_binding_resolves_port_mapping() -> None:
     model = _PortedModel()
     owner = ModelPorts(
         inputs=(_position(space_id="plate"),), outputs=(_temperature(space_id="plate"),)
@@ -469,7 +444,7 @@ def test_component_binding_resolves_port_mapping() -> None:
         )
 
 
-def test_port_declaring_model_never_binds_without_owner_ports() -> None:
+def test_component_contracts_scenario_3() -> None:
     model = _PortedModel()
     with pytest.raises(ValueError, match="'test.ported-closure'.*owner_ports"):
         bind_component(model, _PortedSlot)
@@ -501,16 +476,11 @@ def test_port_declaring_model_never_binds_without_owner_ports() -> None:
             model_contract=_undeclared_mlp().model_execution_contract(),
             port_binding=evidence,
         )
-
-
-def test_concrete_slot_must_declare_authority_and_identity() -> None:
     with pytest.raises(TypeError, match="Abstract"):
 
         class _Undeclared(AbstractComponentSlot):
             component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
 
-
-def test_slot_requirements_need_constructed_evidence() -> None:
     with pytest.raises(ValueError, match="input-convex"):
         bind_component(_undeclared_mlp(), _ConvexClosureSlot)
     convex = InputConvexNetwork(in_size=2, width_size=4, depth=2, key=jax.random.key(1))
@@ -520,7 +490,7 @@ def test_slot_requirements_need_constructed_evidence() -> None:
     assert contract.evidence == (("input-convex", CONSTRUCTED),)
 
 
-def test_binding_admits_requests_with_the_bound_authority() -> None:
+def test_component_contracts_scenario_4() -> None:
     binding = bind_component(_undeclared_mlp(), ComponentAuthority.MODEL)
     admission = binding.contract(
         request=DifferentiationRequest((INPUT,), authority=ComponentAuthority.MODEL)
@@ -535,16 +505,7 @@ def test_binding_admits_requests_with_the_bound_authority() -> None:
                 (INPUT,), authority=ComponentAuthority.SURROGATE
             )
         )
-
-
-_C0_LINEAR = DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
-_C0_SMOOTH = DerivativeRegularity.piecewise_smooth(continuity=0)
-_C1_SMOOTH = DerivativeRegularity.piecewise_smooth(continuity=1)
-
-
-@pytest.mark.parametrize(
-    ("fn", "expected"),
-    [
+    cases = (
         (jax.nn.identity, DerivativeRegularity.smooth(degree_bound=1)),
         (jax.nn.tanh, DerivativeRegularity.smooth()),
         (jax.nn.swish, DerivativeRegularity.smooth()),
@@ -564,15 +525,23 @@ _C1_SMOOTH = DerivativeRegularity.piecewise_smooth(continuity=1)
         (functools.partial(jax.nn.leaky_relu, negative_slope=0.2), _C0_LINEAR),
         (lambda x: jnp.tanh(x), None),
         (jnp.abs, None),
-    ],
-)
-def test_activation_regularity(fn: Any, expected: Any) -> None:
-    assert activation_regularity(fn) == expected
+    )
+    for function, expected in cases:
+        assert activation_regularity(function) == expected, function
 
-
-def test_activation_regularity_of_modrelu_is_branchwise() -> None:
     from phydrax.nn.models import FeynmaNN
 
-    model = FeynmaNN(in_size=2, out_size=1, width_size=4, depth=1, key=jax.random.key(0))
+    model = FeynmaNN(
+        in_size=2,
+        out_size=1,
+        width_size=4,
+        depth=1,
+        key=jax.random.key(0),
+    )
     # ty: ignore[not-subscriptable]
     assert activation_regularity(model.activs[0]) == _C0_SMOOTH
+
+
+_C0_LINEAR = DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
+_C0_SMOOTH = DerivativeRegularity.piecewise_smooth(continuity=0)
+_C1_SMOOTH = DerivativeRegularity.piecewise_smooth(continuity=1)

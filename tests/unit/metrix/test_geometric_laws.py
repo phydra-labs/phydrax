@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_manifold_and_state_geometry_law_reports() -> None:
+def test_geometric_laws_scenario_1() -> None:
     manifold = phx.metrix.SphereManifold(3)
     point = jnp.array([1.0, 0.0, 0.0])
     ambient = jnp.array([0.2, 0.7, -0.1])
@@ -25,9 +25,6 @@ def test_manifold_and_state_geometry_law_reports() -> None:
     assert bool(geometry_report.valid)
     assert manifold_report.metric_duality_residual < 1e-10
     assert geometry_report.retraction_differential_residual < 1e-8
-
-
-def test_builtin_manifolds_satisfy_shared_retraction_and_metric_laws() -> None:
     matrix_point = jnp.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
     matrix_ambient = jnp.array([[0.2, -0.3], [0.4, 0.1], [-0.2, 0.5]])
     cases = (
@@ -69,9 +66,6 @@ def test_builtin_manifolds_satisfy_shared_retraction_and_metric_laws() -> None:
             tolerance=2e-4,
         )
         assert bool(report.valid), manifold.manifold_id
-
-
-def test_matrix_manifolds_obey_constraints_and_quotient_invariance() -> None:
     key = jax.random.key(4)
     stiefel = phx.metrix.StiefelManifold(5, 2)
     point = jnp.linalg.qr(jax.random.normal(key, (5, 2)))[0]
@@ -91,7 +85,7 @@ def test_matrix_manifolds_obey_constraints_and_quotient_invariance() -> None:
     )
 
 
-def test_oblique_and_fixed_rank_manifolds_preserve_their_constraints() -> None:
+def test_geometric_laws_scenario_2() -> None:
     key = jax.random.key(9)
     oblique = phx.metrix.ObliqueManifold(4, 3)
     raw = jax.random.normal(key, (4, 3))
@@ -118,11 +112,6 @@ def test_oblique_and_fixed_rank_manifolds_preserve_their_constraints() -> None:
 
     assert bool(fixed_rank.contains(destination))
     assert jnp.linalg.matrix_rank(destination, tol=1e-8) == 2
-
-
-def test_differentiable_maps_compose_pull_back_metrics_and_transform_connections() -> (
-    None
-):
     polar = phx.metrix.CoordinateChart("polar", ("r", "theta"))
     cartesian = phx.metrix.CoordinateChart("cartesian", ("x", "y"))
     polar_to_cartesian = phx.metrix.DifferentiableMap(

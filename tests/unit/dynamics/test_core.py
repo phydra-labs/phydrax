@@ -14,7 +14,7 @@ import pytest
 import phydrax as phx
 
 
-def test_layouts_distinguish_absent_and_scalar_inputs() -> None:
+def test_core_scenario_1() -> None:
     state = phx.dynamics.StateLayout((), component_names=("temperature",))
     scalar_input = phx.dynamics.InputLayout(
         (), component_names=("forcing",), roles="forcing"
@@ -47,9 +47,6 @@ def test_layouts_distinguish_absent_and_scalar_inputs() -> None:
         driven(0.0, jnp.asarray(2.0))
     with pytest.raises(ValueError, match="does not accept inputs"):
         autonomous(0.0, jnp.asarray(2.0), inputs=jnp.asarray(0.5))
-
-
-def test_state_layout_distinguishes_point_local_tangent_and_dual_spaces() -> None:
     local_space = phx.linalg.ArraySpace(
         (2,),
         dtype=np.float64,
@@ -97,9 +94,6 @@ def test_state_layout_distinguishes_point_local_tangent_and_dual_spaces() -> Non
         tangent_component_names=("vx", "vy", "vz"),
     )
     assert changed_local.layout_id != layout.layout_id
-
-
-def test_state_layout_equal_space_defaults_preserve_point_metadata() -> None:
     layout = phx.dynamics.StateLayout(
         (2,),
         component_names=("position", "velocity"),
@@ -111,9 +105,6 @@ def test_state_layout_equal_space_defaults_preserve_point_metadata() -> None:
     assert layout.tangent_size == layout.size
     assert layout.local_component_names == layout.component_names
     assert layout.tangent_component_names == layout.component_names
-
-
-def test_discrete_evolution_rollout_and_jacobians_share_one_transition() -> None:
     state_layout = phx.dynamics.StateLayout((2,), component_names=("x", "y"))
     matrix = jnp.asarray([[1.1, 0.2], [0.0, 0.9]])
     parameter_matrix = jnp.asarray([[1.0, -0.5], [0.2, 0.3]])
@@ -170,9 +161,26 @@ def test_discrete_evolution_rollout_and_jacobians_share_one_transition() -> None
         parameter_matrix.T @ cotangent,
         atol=1e-13,
     )
+    layout = phx.dynamics.StateLayout((1,))
+    transition = lambda coordinate, state, args: state
+
+    with pytest.raises(ValueError, match="step_size"):
+        phx.dynamics.DiscreteSystem(
+            transition,
+            state_layout=layout,
+            system_id="bad-step",
+            step_size=jnp.inf,
+        )
+    with pytest.raises(ValueError, match="step_rtol"):
+        phx.dynamics.DiscreteSystem(
+            transition,
+            state_layout=layout,
+            system_id="bad-tolerance",
+            step_rtol=-1.0,
+        )
 
 
-def test_input_policy_is_bound_and_differentiated_with_the_map() -> None:
+def test_core_scenario_2() -> None:
     state_layout = phx.dynamics.StateLayout((1,))
     input_layout = phx.dynamics.InputLayout((1,), roles="control")
     system = phx.dynamics.DiscreteSystem(
@@ -198,9 +206,6 @@ def test_input_policy_is_bound_and_differentiated_with_the_map() -> None:
     )
     tangent = evolution.tangent_action(jnp.asarray([2.0]), jnp.asarray([1.0]), 0, 1)
     np.testing.assert_allclose(tangent.tangent, jnp.asarray([0.75]))
-
-
-def test_nonfinite_map_result_is_invalid_without_repair() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.DiscreteSystem(
         lambda step, state, args: jnp.asarray([jnp.nan]),
@@ -212,9 +217,6 @@ def test_nonfinite_map_result_is_invalid_without_repair() -> None:
     assert not bool(result.valid)
     assert int(result.status) == phx.dynamics.EVOLUTION_NONFINITE
     assert bool(jnp.isnan(result.final_state[0]))
-
-
-def test_transition_evidence_ignores_unattempted_slots_and_enforces_success() -> None:
     evidence = phx.dynamics.DiscreteTransitionEvidence(
         jnp.zeros((3, 1)),
         jnp.zeros((3, 1)),
@@ -333,7 +335,7 @@ def test_evolve_skips_backend_after_first_failed_segment() -> None:
     assert int(result.transition_evidence.first_failure_status) == 77
 
 
-def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system() -> None:
+def test_diffrax_evolution_contracts() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: -args * state,
@@ -419,9 +421,6 @@ def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system() -> None
         rtol=2.0e-6,
         atol=2.0e-7,
     )
-
-
-def test_diffrax_evolution_rejects_misoriented_derivative_routes() -> None:
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: -state,
         state_layout=phx.dynamics.StateLayout((1,)),
@@ -438,9 +437,6 @@ def test_diffrax_evolution_rejects_misoriented_derivative_routes() -> None:
             system,
             forward_adjoint=dfx.RecursiveCheckpointAdjoint(),
         )
-
-
-def test_diffrax_evolution_reports_backend_failure_without_method_fallback() -> None:
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: state,
@@ -484,23 +480,3 @@ def test_declared_discrete_step_rejects_mismatched_and_nonfinite_intervals() -> 
         evolution.advance(jnp.asarray([1.0]), 2.0, 2.5)
     with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="finite"):
         evolution.advance(jnp.asarray([1.0]), jnp.nan, jnp.nan)
-
-
-def test_discrete_step_metadata_validates_tolerances() -> None:
-    layout = phx.dynamics.StateLayout((1,))
-    transition = lambda coordinate, state, args: state
-
-    with pytest.raises(ValueError, match="step_size"):
-        phx.dynamics.DiscreteSystem(
-            transition,
-            state_layout=layout,
-            system_id="bad-step",
-            step_size=jnp.inf,
-        )
-    with pytest.raises(ValueError, match="step_rtol"):
-        phx.dynamics.DiscreteSystem(
-            transition,
-            state_layout=layout,
-            system_id="bad-tolerance",
-            step_rtol=-1.0,
-        )

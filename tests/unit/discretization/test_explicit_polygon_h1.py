@@ -21,7 +21,7 @@ def _space(points: Any, cells: Any, *, component_shape: Any = ()) -> Any:
     return phx.discretization.ExplicitPolygonH1Plan(mesh, field).prepare()
 
 
-def test_condensed_basis_certifies_partition_affine_reproduction_and_rank() -> None:
+def test_explicit_polygon_h1_scenario_1() -> None:
     space = _space(
         ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 0.4), (0.0, 1.0)),
         ((0, 1, 2, 3, 4),),
@@ -43,9 +43,6 @@ def test_condensed_basis_certifies_partition_affine_reproduction_and_rank() -> N
     )
     assert jnp.all(evidence.stiffness_rank == block.arity - 1)
     assert jnp.all(evidence.mass_minimum_eigenvalue > 0.0)
-
-
-def test_triangle_reconstruction_is_affine_and_trace_is_orientation_independent() -> None:
     space = _space(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), ((0, 1, 2),))
     state = space.mesh.coordinates[:, 0] + 2.0 * space.mesh.coordinates[:, 1]
     reconstruction = phx.discretization.prepare_explicit_polygon_h1_reconstruction(
@@ -62,9 +59,6 @@ def test_triangle_reconstruction_is_affine_and_trace_is_orientation_independent(
     assert jnp.allclose(values, points[..., 0] + 2.0 * points[..., 1], atol=1e-11)
     assert jnp.allclose(gradients, jnp.asarray((1.0, 2.0)), atol=1e-11)
     assert jnp.allclose(trace, jnp.asarray([[0.0, 0.25, 1.0]]), atol=1e-11)
-
-
-def test_mixed_arity_padding_and_component_axes_are_inert() -> None:
     points = (
         (0.0, 0.0),
         (1.0, 0.0),
@@ -92,7 +86,7 @@ def test_mixed_arity_padding_and_component_axes_are_inert() -> None:
     assert jnp.allclose(values, 1.0, atol=1e-11)
 
 
-def test_unmatched_hanging_interface_is_rejected_but_matched_collinear_is_valid() -> None:
+def test_explicit_polygon_h1_scenario_2() -> None:
     points = jnp.asarray(
         (
             (0.0, 0.0),
@@ -120,30 +114,6 @@ def test_unmatched_hanging_interface_is_rejected_but_matched_collinear_is_valid(
     )
     space = phx.discretization.ExplicitPolygonH1Plan(matched, field).prepare()
     assert all(jnp.all(block.evidence.passed) for block in space.default_runtime.bases)
-
-
-def test_runtime_refresh_is_differentiable_and_preserves_layout_identity() -> None:
-    space = _space(
-        ((0.0, 0.0), (1.0, 0.0), (1.1, 1.0), (0.0, 1.0)),
-        ((0, 1, 2, 3),),
-    )
-    coordinates = space.default_runtime.coordinates
-
-    def response(value: Any) -> Any:
-        runtime = space.prepare_runtime(value, numeric_version="shape-gradient")
-        return jnp.sum(runtime.bases[0].prolongation ** 2)
-
-    gradient = jax.grad(response)(coordinates)
-    moved = coordinates.at[2, 0].add(0.05)
-    runtime = space.prepare_runtime(moved, numeric_version="moved")
-
-    assert jnp.all(jnp.isfinite(gradient))
-    assert runtime.topology_id == space.default_runtime.topology_id
-    assert runtime.runtime_id != space.default_runtime.runtime_id
-    assert jnp.all(runtime.bases[0].evidence.passed)
-
-
-def test_resource_and_outside_reconstruction_fail_closed() -> None:
     points = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
     # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(jnp.asarray(points), ((0, 1, 2, 3),))
@@ -164,9 +134,6 @@ def test_resource_and_outside_reconstruction_fail_closed() -> None:
         phx.discretization.evaluate_explicit_polygon_h1_reconstruction(
             reconstruction, space, 0, jnp.asarray([[[2.0, 2.0]]])
         )
-
-
-def test_runtime_is_bound_to_the_exact_polygon_plan() -> None:
     points = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(points, ((0, 1, 2, 3),))
@@ -190,3 +157,24 @@ def test_runtime_is_bound_to_the_exact_polygon_plan() -> None:
 
     with pytest.raises(ValueError, match="does not match prepared layout"):
         target.validate_local_runtime(source.default_runtime)
+
+
+def test_runtime_refresh_is_differentiable_and_preserves_layout_identity() -> None:
+    space = _space(
+        ((0.0, 0.0), (1.0, 0.0), (1.1, 1.0), (0.0, 1.0)),
+        ((0, 1, 2, 3),),
+    )
+    coordinates = space.default_runtime.coordinates
+
+    def response(value: Any) -> Any:
+        runtime = space.prepare_runtime(value, numeric_version="shape-gradient")
+        return jnp.sum(runtime.bases[0].prolongation ** 2)
+
+    gradient = jax.grad(response)(coordinates)
+    moved = coordinates.at[2, 0].add(0.05)
+    runtime = space.prepare_runtime(moved, numeric_version="moved")
+
+    assert jnp.all(jnp.isfinite(gradient))
+    assert runtime.topology_id == space.default_runtime.topology_id
+    assert runtime.runtime_id != space.default_runtime.runtime_id
+    assert jnp.all(runtime.bases[0].evidence.passed)

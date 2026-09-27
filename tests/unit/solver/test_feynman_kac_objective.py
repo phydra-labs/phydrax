@@ -72,7 +72,7 @@ def _labels(problem: Any, plan: Any, *, valid: Any = None, control: Any = False)
     )
 
 
-def test_fixed_regression_objective_trains_a_global_value_parameter() -> None:
+def test_feynman_kac_objective_scenario_1() -> None:
     problem = _problem()
     plan = _plan()
     labels = _labels(problem, plan)
@@ -101,6 +101,47 @@ def test_fixed_regression_objective_trains_a_global_value_parameter() -> None:
     assert initial > 3.9
     assert final < 1e-6
     assert objective.diagnostics(trained.functions, batch=labels).passed
+    problem = _problem()
+    plan = _plan(control=True)
+    labels = _labels(problem, plan, control=True)
+    objective = FeynmanKacRegressionTerm(
+        problem,
+        plan,
+        value_name="value",
+        labels=labels,
+        value_weight=0.0,
+        control_weight=1.0,
+    )
+    domain = phx.domain.Interval1d(-2.0, 2.0) @ phx.domain.TimeInterval(0.0, 1.0)
+    value = domain.Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
+
+    assert jnp.allclose(objective.loss({"value": value}, batch=labels), 0.0)
+    problem = _problem()
+    plan = _plan()
+    invalid = _labels(problem, plan, valid=jnp.zeros((3,), dtype="bool"))
+    objective = FeynmanKacRegressionTerm(
+        problem,
+        plan,
+        value_name="value",
+        labels=invalid,
+    )
+    domain = phx.domain.Interval1d(0.0, 1.0)
+
+    with pytest.raises(Exception, match="zero valid"):
+        objective.loss({"value": domain.Parameter(jnp.asarray([0.0]))}, batch=invalid)
+
+    other_plan = FeynmanKacSamplingPlan(
+        terminal_time=2.0,
+        sampling_mode="queries",
+        refresh_mode="fixed",
+    )
+    with pytest.raises(ValueError, match="provenance"):
+        FeynmanKacRegressionTerm(
+            problem,
+            other_plan,
+            value_name="value",
+            labels=_labels(problem, plan),
+        )
 
 
 def test_resampled_provider_is_called_once_per_optimizer_update() -> None:
@@ -132,50 +173,3 @@ def test_resampled_provider_is_called_once_per_optimizer_update() -> None:
     )
 
     assert len(calls) == 5
-
-
-def test_control_targets_can_train_against_value_autodiff() -> None:
-    problem = _problem()
-    plan = _plan(control=True)
-    labels = _labels(problem, plan, control=True)
-    objective = FeynmanKacRegressionTerm(
-        problem,
-        plan,
-        value_name="value",
-        labels=labels,
-        value_weight=0.0,
-        control_weight=1.0,
-    )
-    domain = phx.domain.Interval1d(-2.0, 2.0) @ phx.domain.TimeInterval(0.0, 1.0)
-    value = domain.Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
-
-    assert jnp.allclose(objective.loss({"value": value}, batch=labels), 0.0)
-
-
-def test_zero_valid_mass_and_provenance_mismatch_fail_early() -> None:
-    problem = _problem()
-    plan = _plan()
-    invalid = _labels(problem, plan, valid=jnp.zeros((3,), dtype="bool"))
-    objective = FeynmanKacRegressionTerm(
-        problem,
-        plan,
-        value_name="value",
-        labels=invalid,
-    )
-    domain = phx.domain.Interval1d(0.0, 1.0)
-
-    with pytest.raises(Exception, match="zero valid"):
-        objective.loss({"value": domain.Parameter(jnp.asarray([0.0]))}, batch=invalid)
-
-    other_plan = FeynmanKacSamplingPlan(
-        terminal_time=2.0,
-        sampling_mode="queries",
-        refresh_mode="fixed",
-    )
-    with pytest.raises(ValueError, match="provenance"):
-        FeynmanKacRegressionTerm(
-            problem,
-            other_plan,
-            value_name="value",
-            labels=_labels(problem, plan),
-        )

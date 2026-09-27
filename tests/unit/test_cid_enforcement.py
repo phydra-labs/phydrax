@@ -4,7 +4,7 @@ import phydrax as phx
 from phydrax.domain import Interval1d
 
 
-def test_cid01_builtin_condition_lowers_to_typed_affine_equation() -> None:
+def test_cid01_contracts() -> None:
     domain = Interval1d(0.0, 1.0)
     boundary = domain.component({"x": phx.domain.Boundary()})
     spec = phx.enforcement.EnforcementSpec(
@@ -21,9 +21,6 @@ def test_cid01_builtin_condition_lowers_to_typed_affine_equation() -> None:
     )
     # ty: ignore[unresolved-attribute]
     assert spec.transform.proof.provider_certified
-
-
-def test_cid01_untyped_callable_escape_hatch_is_rejected() -> None:
     domain = Interval1d(0.0, 1.0)
     boundary = domain.component({"x": phx.domain.Boundary()})
     with pytest.raises(TypeError, match="AffineEnforcementTransform"):

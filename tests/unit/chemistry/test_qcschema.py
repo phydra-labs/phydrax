@@ -34,7 +34,7 @@ def _calculation() -> Any:
     )
 
 
-def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign() -> None:
+def test_qcschema_contracts() -> None:
     calculation = _calculation()
     positions = np.asarray([[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]])
     payload, exported = phx.chemistry.interchange.electronic_calculation_to_qcschema(
@@ -76,9 +76,6 @@ def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign() -> None
     assert result.header.geometry_id == phx.chemistry.electronic_geometry_id(
         calculation.system, positions
     )
-
-
-def test_qcschema_missing_native_identity_fails_closed() -> None:
     calculation = _calculation()
     positions = np.asarray([[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]])
     record = {

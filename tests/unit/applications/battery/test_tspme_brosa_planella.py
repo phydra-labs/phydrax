@@ -323,9 +323,7 @@ def _nonuniform_electrolyte_state(prepared: Any, state: Any) -> Any:
     )
 
 
-def test_exact_section_three_identity_zero_current_and_isothermal_spme_reduction() -> (
-    None
-):
+def test_tspme_brosa_planella_scenario_1() -> None:
     adapter, prepared, parameters = _adapter()
     state = _state(adapter, prepared, parameters)
     evaluation = prepared.evaluate(state, parameters, 0.0)
@@ -356,9 +354,6 @@ def test_exact_section_three_identity_zero_current_and_isothermal_spme_reduction
         != parameters.thermal_property_support_id
     )
     assert adapter.plan.applicability_support_id != adapter.plan.spme_plan.plan_id
-
-
-def test_temperature_is_two_way_coupled_to_every_property_family_and_ocp() -> None:
     adapter, prepared, parameters = _adapter()
     initial = _state(adapter, prepared, parameters)
     cold = prepared.evaluate(
@@ -398,9 +393,6 @@ def test_temperature_is_two_way_coupled_to_every_property_family_and_ocp() -> No
     assert float(hot.boundary_cooling_w_m3) > 0.0
     assert float(cold.boundary_cooling_w_m3) < 0.0
     assert float(prepared.evaluate(initial, parameters, 0.2).temperature_rate_k_s) != 0.0
-
-
-def test_every_section_three_heat_term_sign_and_power_identity_is_explicit() -> None:
     adapter, prepared, parameters = _adapter()
     state = _nonuniform_electrolyte_state(prepared, _state(adapter, prepared, parameters))
     state = BrosaPlanellaTspmeState(state.spme_state, 305.0)
@@ -514,7 +506,7 @@ def test_every_section_three_heat_term_sign_and_power_identity_is_explicit() -> 
     )
 
 
-def test_section_three_applicability_is_independent_and_refuses_bad_regimes() -> None:
+def test_tspme_brosa_planella_scenario_2() -> None:
     adapter, prepared, parameters = _adapter()
     state = _state(adapter, prepared, parameters)
     accepted = prepared.evaluate(state, parameters, 0.1)
@@ -542,53 +534,6 @@ def test_section_three_applicability_is_independent_and_refuses_bad_regimes() ->
     assert not bool(refused_thermal.thermal_applicability_satisfied)
     assert not bool(refused_thermal.applicability_conditions_satisfied)
     assert bool(refused_thermal.domain_valid)
-
-
-def test_problem_observation_jit_vmap_and_gradients_cover_both_coupling_directions() -> (
-    None
-):
-    adapter, prepared, parameters = _adapter()
-    state = _state(adapter, prepared, parameters)
-    runtime = _runtime(parameters, 0.2)
-    problem = adapter.problem(prepared, state, runtime)
-    eager = problem.drift(jnp.asarray(0.0), state, runtime)
-    compiled = jax.jit(lambda time, candidate: problem.drift(time, candidate, runtime))(
-        jnp.asarray(0.0), state
-    )
-    np.testing.assert_allclose(
-        compiled.spme_state.negative_amount_mol,
-        eager.spme_state.negative_amount_mol,
-        atol=2.0e-19,
-    )
-    np.testing.assert_allclose(compiled.temperature_k, eager.temperature_k)
-    compiled_output = jax.jit(
-        lambda candidate: adapter.observe(prepared, jnp.asarray(0.0), candidate, runtime)
-    )(state)
-    assert bool(compiled_output.domain_valid)
-    states = jax.tree.map(lambda value: jnp.stack((value, value)), state)
-    mapped = adapter.observe(prepared, jnp.asarray((0.0, 0.0)), states, runtime)
-    assert mapped.values.shape == (2, len(adapter.observable_names))
-    assert bool(jnp.all(mapped.domain_valid))
-
-    def voltage_for_temperature(temperature: Any) -> Any:
-        return prepared.evaluate(
-            BrosaPlanellaTspmeState(state.spme_state, temperature), parameters, 0.2
-        ).voltage_v
-
-    def temperature_rate_for_current(current: Any) -> Any:
-        return prepared.evaluate(state, parameters, current).temperature_rate_k_s
-
-    temperature_gradient = jax.grad(voltage_for_temperature)(jnp.asarray(300.0))
-    current_gradient = jax.grad(temperature_rate_for_current)(jnp.asarray(0.2))
-    assert bool(jnp.isfinite(temperature_gradient))
-    assert bool(jnp.isfinite(current_gradient))
-    assert float(temperature_gradient) != 0.0
-    assert float(current_gradient) != 0.0
-
-
-def test_protocol_orchestration_returns_separate_thermal_and_electrochemical_ledgers() -> (
-    None
-):
     parameters = _parameters()
     adapter = BrosaPlanellaTspmeAdapter(
         BrosaPlanellaTspmePlan(
@@ -689,3 +634,45 @@ def test_protocol_orchestration_returns_separate_thermal_and_electrochemical_led
     np.testing.assert_allclose(
         result.ledger.maximum_power_identity_residual_w_m3, 0.0, atol=1.0e-8
     )
+
+
+def test_problem_observation_jit_vmap_and_gradients_cover_both_coupling_directions() -> (
+    None
+):
+    adapter, prepared, parameters = _adapter()
+    state = _state(adapter, prepared, parameters)
+    runtime = _runtime(parameters, 0.2)
+    problem = adapter.problem(prepared, state, runtime)
+    eager = problem.drift(jnp.asarray(0.0), state, runtime)
+    compiled = jax.jit(lambda time, candidate: problem.drift(time, candidate, runtime))(
+        jnp.asarray(0.0), state
+    )
+    np.testing.assert_allclose(
+        compiled.spme_state.negative_amount_mol,
+        eager.spme_state.negative_amount_mol,
+        atol=2.0e-19,
+    )
+    np.testing.assert_allclose(compiled.temperature_k, eager.temperature_k)
+    compiled_output = jax.jit(
+        lambda candidate: adapter.observe(prepared, jnp.asarray(0.0), candidate, runtime)
+    )(state)
+    assert bool(compiled_output.domain_valid)
+    states = jax.tree.map(lambda value: jnp.stack((value, value)), state)
+    mapped = adapter.observe(prepared, jnp.asarray((0.0, 0.0)), states, runtime)
+    assert mapped.values.shape == (2, len(adapter.observable_names))
+    assert bool(jnp.all(mapped.domain_valid))
+
+    def voltage_for_temperature(temperature: Any) -> Any:
+        return prepared.evaluate(
+            BrosaPlanellaTspmeState(state.spme_state, temperature), parameters, 0.2
+        ).voltage_v
+
+    def temperature_rate_for_current(current: Any) -> Any:
+        return prepared.evaluate(state, parameters, current).temperature_rate_k_s
+
+    temperature_gradient = jax.grad(voltage_for_temperature)(jnp.asarray(300.0))
+    current_gradient = jax.grad(temperature_rate_for_current)(jnp.asarray(0.2))
+    assert bool(jnp.isfinite(temperature_gradient))
+    assert bool(jnp.isfinite(current_gradient))
+    assert float(temperature_gradient) != 0.0
+    assert float(current_gradient) != 0.0

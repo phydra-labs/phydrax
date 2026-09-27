@@ -23,7 +23,7 @@ class _TrainableFront(eqx.Module):
         return time[0] + self.offset
 
 
-def test_exact_stefan_all_representations_satisfy_shared_problem() -> None:
+def test_free_boundary_workflows_scenario_1() -> None:
     result = phx.applications.free_boundary.ExactStefanBenchmark().run(
         points_per_block=32,
         key=jr.key(0),
@@ -32,9 +32,6 @@ def test_exact_stefan_all_representations_satisfy_shared_problem() -> None:
     assert result.explicit.total < 1.0e-20
     assert result.reference.total < 1.0e-20
     assert result.implicit.total < 1.0e-3
-
-
-def test_stefan_fit_optimizes_a_trainable_representation_end_to_end() -> None:
     benchmark = phx.applications.free_boundary.ExactStefanBenchmark()
     batch = phx.applications.free_boundary.stefan_collocation_batch(
         benchmark.parameters,
@@ -67,6 +64,20 @@ def test_stefan_fit_optimizes_a_trainable_representation_end_to_end() -> None:
     assert fitted.loss_history.shape == (8,)
     assert fitted.final_loss.total < initial
     assert abs(float(fitted.model.front.offset) - 0.5) < 0.1
+    distance = jnp.asarray(((1.0, 0.1, -0.1, -1.0),))
+    result = phx.applications.free_boundary.relaxed_first_passage_weights(
+        distance,
+        width=0.2,
+        particle_phase="outside",
+    )
+
+    assert jnp.all(result.stopping_weights >= 0.0)
+    assert jnp.all(result.cumulative_stopping_probability <= 1.0 + 1.0e-14)
+    np.testing.assert_allclose(
+        result.cumulative_stopping_probability + result.survival_probability,
+        1.0,
+        atol=1.0e-14,
+    )
 
 
 def test_stefan_fit_refuses_a_nonfinite_update_instead_of_committing_it() -> None:
@@ -91,24 +102,7 @@ def test_stefan_fit_refuses_a_nonfinite_update_instead_of_committing_it() -> Non
         )
 
 
-def test_relaxed_first_passage_weights_form_one_stopping_law() -> None:
-    distance = jnp.asarray(((1.0, 0.1, -0.1, -1.0),))
-    result = phx.applications.free_boundary.relaxed_first_passage_weights(
-        distance,
-        width=0.2,
-        particle_phase="outside",
-    )
-
-    assert jnp.all(result.stopping_weights >= 0.0)
-    assert jnp.all(result.cumulative_stopping_probability <= 1.0 + 1.0e-14)
-    np.testing.assert_allclose(
-        result.cumulative_stopping_probability + result.survival_probability,
-        1.0,
-        atol=1.0e-14,
-    )
-
-
-def test_stationary_probabilistic_stefan_moments_have_zero_loss() -> None:
+def test_free_boundary_workflows_scenario_2() -> None:
     times = jnp.asarray((0.0, 0.5, 1.0))
     domain_points = jnp.asarray(((-1.0,), (1.0,)))
     paths_outside = jnp.ones((4, 3, 1))
@@ -139,9 +133,6 @@ def test_stationary_probabilistic_stefan_moments_have_zero_loss() -> None:
 
     np.testing.assert_allclose(result.total, 0.0, atol=1.0e-14)
     np.testing.assert_allclose(result.moment_residual, 0.0, atol=1.0e-14)
-
-
-def test_benchmark_ladder_observables_are_exact_on_reference_data() -> None:
     times = jnp.asarray((0.0, 0.5, 1.0))
     modes = jnp.asarray((2, 3))
     rates = jnp.asarray((0.2, -0.1))
@@ -171,9 +162,6 @@ def test_benchmark_ladder_observables_are_exact_on_reference_data() -> None:
     assert obstacle.gap_violation == 0.0
     assert obstacle.dual_violation == 0.0
     assert obstacle.complementarity_residual == 0.0
-
-
-def test_hysing_fsi_and_fracture_benchmark_contracts() -> None:
     angle = jnp.linspace(0.0, 2.0 * jnp.pi, 65)[:-1]
     contour = jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
     bubble = phx.applications.free_boundary.hysing_bubble_benchmark(

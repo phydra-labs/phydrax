@@ -8,7 +8,7 @@ Q = phx.operators.quantum
 tn = phx.tensor_network
 
 
-def test_mps_program_executes_adjacent_ordered_target_window() -> None:
+def test_mps_program_contracts() -> None:
     layout = Q.HilbertRegisterLayout(("q0", "q1"), (2, 2))
     swap = jnp.asarray(
         [
@@ -42,9 +42,6 @@ def test_mps_program_executes_adjacent_ordered_target_window() -> None:
     assert plan.routes[0].target_positions == (1, 0)
     assert plan.routes[0].window_start == 0
     assert plan.routes[0].window_stop == 1
-
-
-def test_mps_program_refresh_preserves_prepared_identity() -> None:
     layout = Q.HilbertRegisterLayout(("q",), (2,))
     identity = jnp.eye(2, dtype=jnp.complex128)
     template_program = Q.QuantumProgram(

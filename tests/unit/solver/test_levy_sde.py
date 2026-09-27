@@ -18,7 +18,7 @@ def _driver(*, dimension: Any = 2, scale: Any = 0.2, drift: Any = 0.0) -> Any:
     )
 
 
-def test_levy_euler_reproduces_additive_truncated_driver_path() -> None:
+def test_levy_sde_scenario_1() -> None:
     driver = _driver(drift=jnp.asarray([0.1, -0.2]))
     initial = jnp.asarray([0.4, -0.7])
     deterministic_drift = jnp.asarray([0.3, 0.15])
@@ -62,9 +62,41 @@ def test_levy_euler_reproduces_additive_truncated_driver_path() -> None:
     assert jnp.allclose(solution.states[:, -1], expected, rtol=0.0, atol=1e-11)
     assert trajectory.states.shape == (16, 3, 2)
     assert trajectory.realizations == (realization,)
+    driver = _driver(dimension=1, scale=0.5)
+    problem = phx.solver.LevySDEProblem(
+        lambda time, state, args: jnp.zeros_like(state),
+        jnp.zeros((1,)),
+        driver,
+        t0=0.0,
+        t1=1.0,
+    )
+    realization = phx.stochastic.LevyProcessRealization.from_process(
+        driver,
+        jr.key(52),
+        support=(0.0, 1.0),
+        max_terms=1,
+        sample_shape=(4,),
+    )
 
+    with pytest.raises(RuntimeError, match="extend the realization"):
+        phx.solver.solve_levy_sde(
+            problem,
+            realization,
+            save_times=jnp.asarray([1.0]),
+            dt=0.1,
+            cutoff=1e-3,
+        )
 
-def test_truncated_levy_increment_rejects_incomplete_series() -> None:
+    result = phx.solver.solve_levy_sde(
+        problem,
+        realization,
+        save_times=jnp.asarray([1.0]),
+        dt=0.1,
+        cutoff=1e-3,
+        throw=False,
+    )
+    assert not jnp.any(result.successful)
+    assert not jnp.any(result.diagnostics.capacity_sufficient)
     driver = _driver()
     realization = phx.stochastic.LevyProcessRealization.from_process(
         driver,
@@ -83,9 +115,6 @@ def test_truncated_levy_increment_rejects_incomplete_series() -> None:
             jnp.asarray([1.0]),
             cutoff=cutoff,
         )
-
-
-def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path() -> None:
     driver = _driver()
     problem = phx.solver.LevySDEProblem(
         lambda time, state, args: jnp.zeros_like(state),
@@ -142,44 +171,6 @@ def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path() -> None:
         atol=1e-11,
     )
     assert gaussian.diagnostics.small_jump_approximation == "gaussian"
-
-
-def test_levy_solver_reports_insufficient_series_capacity_without_fabrication() -> None:
-    driver = _driver(dimension=1, scale=0.5)
-    problem = phx.solver.LevySDEProblem(
-        lambda time, state, args: jnp.zeros_like(state),
-        jnp.zeros((1,)),
-        driver,
-        t0=0.0,
-        t1=1.0,
-    )
-    realization = phx.stochastic.LevyProcessRealization.from_process(
-        driver,
-        jr.key(52),
-        support=(0.0, 1.0),
-        max_terms=1,
-        sample_shape=(4,),
-    )
-
-    with pytest.raises(RuntimeError, match="extend the realization"):
-        phx.solver.solve_levy_sde(
-            problem,
-            realization,
-            save_times=jnp.asarray([1.0]),
-            dt=0.1,
-            cutoff=1e-3,
-        )
-
-    result = phx.solver.solve_levy_sde(
-        problem,
-        realization,
-        save_times=jnp.asarray([1.0]),
-        dt=0.1,
-        cutoff=1e-3,
-        throw=False,
-    )
-    assert not jnp.any(result.successful)
-    assert not jnp.any(result.diagnostics.capacity_sufficient)
 
 
 def test_tamed_levy_euler_bounds_only_the_deterministic_drift_update() -> None:

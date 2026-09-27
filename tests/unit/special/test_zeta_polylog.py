@@ -12,7 +12,7 @@ import phydrax as phx
 mpmath.mp.dps = 60
 
 
-def test_riemann_zeta_values_and_trivial_zero_derivative() -> None:
+def test_zeta_polylog_scenario_1() -> None:
     arguments = jnp.asarray([-7.0, -4.0, -3.0, -2.0, 0.0, 0.5, 2.0, 10.0])
     actual = phx.special.zeta(arguments)
     expected = scipy.special.zeta(np.asarray(arguments))
@@ -22,9 +22,6 @@ def test_riemann_zeta_values_and_trivial_zero_derivative() -> None:
     assert derivative != 0.0
     np.testing.assert_allclose(derivative, expected_derivative, rtol=2e-10, atol=2e-13)
     assert jnp.isposinf(phx.special.zeta(1.0))
-
-
-def test_hurwitz_zeta_values_shift_and_parameter_derivative() -> None:
     orders = jnp.asarray([2.0, 3.5, -1.0])
     parameters = jnp.asarray([1.25, 2.5, 0.75])
     actual = phx.special.hurwitz_zeta(orders, parameters)
@@ -49,13 +46,6 @@ def test_hurwitz_zeta_values_shift_and_parameter_derivative() -> None:
         rtol=2e-11,
         atol=2e-12,
     )
-
-
-def _mp_polylog(order: Any, argument: Any) -> Any:
-    return complex(mpmath.polylog(complex(order), complex(argument)))
-
-
-def test_principal_dilog_spence_and_cut_lips() -> None:
     arguments = np.asarray([0.0, 0.2 + 0.3j, -1.0, 0.7 - 0.4j])
     actual = np.asarray(phx.special.dilog(jnp.asarray(arguments)))
     expected = np.asarray([_mp_polylog(2.0, value) for value in arguments])
@@ -73,7 +63,11 @@ def test_principal_dilog_spence_and_cut_lips() -> None:
     np.testing.assert_allclose(jax.grad(lambda x: phx.special.dilog(x).real)(0.0), 1.0)
 
 
-def test_polylog_special_values_noninteger_order_and_order_derivative() -> None:
+def _mp_polylog(order: Any, argument: Any) -> Any:
+    return complex(mpmath.polylog(complex(order), complex(argument)))
+
+
+def test_polylog_contracts() -> None:
     cases = (
         (0.0, 0.3 + 0.2j),
         (1.0, -0.4 + 0.1j),
@@ -97,9 +91,6 @@ def test_polylog_special_values_noninteger_order_and_order_derivative() -> None:
     )
     assert compiled.shape == (2,)
     assert jnp.all(jnp.isfinite(compiled))
-
-
-def test_polylog_at_one_is_explicitly_outside_the_differentiated_envelope() -> None:
     order = jnp.asarray(4.0)
     value = phx.special.polylog(order, 1.0)
     order_derivative = jax.grad(lambda current: phx.special.polylog(current, 1.0).real)(
@@ -117,9 +108,6 @@ def test_polylog_at_one_is_explicitly_outside_the_differentiated_envelope() -> N
     assert jnp.isnan(argument_derivative)
     assert jnp.isnan(second_argument_derivative)
     np.testing.assert_allclose(phx.special.zeta(order), np.pi**4 / 90.0, rtol=2e-13)
-
-
-def test_polylog_broadcast_and_scalar_routes_agree_with_their_jvps() -> None:
     orders = jnp.asarray([0.5, 1.25, 2.5, 4.0])
     arguments = jnp.asarray([0.1 + 0.2j, -0.3 + 0.1j, 0.5, -0.7])
     direct = phx.special.polylog(orders, arguments)
@@ -141,8 +129,5 @@ def test_polylog_broadcast_and_scalar_routes_agree_with_their_jvps() -> None:
         )[1]
     )(orders, arguments)
     np.testing.assert_allclose(direct_jvp, mapped_jvp, rtol=3e-13, atol=3e-14)
-
-
-def test_polylog_unsupported_envelope_is_explicit_nan() -> None:
     unsupported = phx.special.polylog(25.0, 0.9)
     assert jnp.isnan(unsupported.real) and jnp.isnan(unsupported.imag)

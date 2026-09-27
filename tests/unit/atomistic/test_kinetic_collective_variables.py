@@ -67,7 +67,7 @@ def _runtime() -> Any:
     return system, dynamics, state
 
 
-def test_model_collective_variable_is_vector_contract_and_bias_differentiable() -> None:
+def test_kinetic_collective_variables_scenario_1() -> None:
     system, dynamics, state = _runtime()
     distance = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]
@@ -101,9 +101,6 @@ def test_model_collective_variable_is_vector_contract_and_bias_differentiable() 
         lambda value: bias.energy(value, plan.initialize(), state.time)[0]
     )(state.kinematics.positions)
     assert jnp.allclose(evaluation.forces, -numerical)
-
-
-def test_atomistic_cv_feature_library_matches_canonical_trajectory_layout() -> None:
     system, dynamics, state = _runtime()
     distance = phx.atomistic.sampling.CollectiveVariablePlan(
         phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1]

@@ -56,7 +56,7 @@ def _problem(expression: Any, target: Any, *, component: Any = None) -> Any:
     )
 
 
-def test_dirichlet_condition_lowers_to_executable_cell_ghost_pair() -> None:
+def test_fd_boundary_lowering_scenario_1() -> None:
     u = phx.equations.PDEExpression.field("u")
     problem = _problem(u, phx.equations.PDEExpression.constant(2.0))
 
@@ -69,9 +69,6 @@ def test_dirichlet_condition_lowers_to_executable_cell_ghost_pair() -> None:
     assert len(bindings) == 2
     assert all(binding.kind == "dirichlet" for binding in bindings)
     assert jnp.allclose(result, jnp.asarray([3.0, 1.0, 2.0, 3.0, 4.0, 0.0]))
-
-
-def test_neumann_and_robin_forms_preserve_coefficients_and_runtime_parameters() -> None:
     u = phx.equations.PDEExpression.field("u")
     neumann = _problem(
         u.derivative("x"),
@@ -97,9 +94,6 @@ def test_neumann_and_robin_forms_preserve_coefficients_and_runtime_parameters() 
     assert all(binding.kind == "robin" for binding in robin_bindings)
     assert all(binding.alpha == 2.0 and binding.beta == 3.0 for binding in robin_bindings)
     assert jnp.all(jnp.isfinite(result))
-
-
-def test_one_sided_region_cannot_silently_invent_missing_boundary_condition() -> None:
     u = phx.equations.PDEExpression.field("u")
     problem = _problem(
         u,

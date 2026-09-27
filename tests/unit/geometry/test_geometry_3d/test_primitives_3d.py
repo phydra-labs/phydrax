@@ -2,140 +2,145 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 
 
-def test_sphere() -> None:
-    radius = 1.0
-    sphere = phx.domain.GeometryDomain(
-        phx.geometry.Sphere(center=(0.0, 0.0, 0.0), radius=radius).compile()
+def test_spatial_primitives_preserve_analytic_volume() -> None:
+    sphere_radius = 1.0
+    ellipsoid_radii = (1.0, 2.0, 3.0)
+    box_dimensions = (1.0, 2.0, 3.0)
+    cube_side = 2.0
+    cylinder_radius, cylinder_height = 1.0, 2.0
+    cone_radius, cone_height = 1.0, 3.0
+    frustum_radius0, frustum_radius1, frustum_height = 2.0, 1.0, 3.0
+    inner_radius, outer_radius = 1.0, 2.0
+    major_radius = (inner_radius + outer_radius) / 2
+    minor_radius = (outer_radius - inner_radius) / 2
+    wedge_extents = (2.0, 2.0, 2.0)
+    wedge_top = 1.0
+
+    cases = (
+        (
+            "sphere",
+            phx.domain.GeometryDomain(
+                phx.geometry.Sphere(
+                    center=(0.0, 0.0, 0.0),
+                    radius=sphere_radius,
+                ).compile()
+            ),
+            (4 / 3) * np.pi * sphere_radius**3,
+            0.05,
+        ),
+        (
+            "ellipsoid",
+            phx.domain.GeometryDomain(
+                phx.geometry.Ellipsoid(
+                    center=(0.0, 0.0, 0.0),
+                    radii=ellipsoid_radii,
+                ).compile()
+            ),
+            (4 / 3) * np.pi * np.prod(ellipsoid_radii),
+            0.05,
+        ),
+        (
+            "box",
+            phx.domain.GeometryDomain(
+                phx.geometry.Box((0.0, 0.0, 0.0), box_dimensions).compile()
+            ),
+            np.prod(box_dimensions),
+            0.05,
+        ),
+        (
+            "cube",
+            phx.domain.GeometryDomain(
+                phx.geometry.Cube(
+                    center=(0.0, 0.0, 0.0),
+                    side=cube_side,
+                ).compile()
+            ),
+            cube_side**3,
+            0.05,
+        ),
+        (
+            "cylinder",
+            phx.domain.GeometryDomain(
+                phx.geometry.Cylinder(
+                    (0.0, 0.0, 0.0),
+                    (0.0, 0.0, cylinder_height),
+                    cylinder_radius,
+                ).compile()
+            ),
+            np.pi * cylinder_radius**2 * cylinder_height,
+            0.05,
+        ),
+        (
+            "cone",
+            phx.domain.GeometryDomain(
+                phx.geometry.Cone(
+                    base_center=(0.0, 0.0, 0.0),
+                    axis=(0.0, 0.0, cone_height),
+                    radius0=cone_radius,
+                ).compile()
+            ),
+            (1 / 3) * np.pi * cone_radius**2 * cone_height,
+            0.05,
+        ),
+        (
+            "frustum",
+            phx.domain.GeometryDomain(
+                phx.geometry.Cone(
+                    base_center=(0.0, 0.0, 0.0),
+                    axis=(0.0, 0.0, frustum_height),
+                    radius0=frustum_radius0,
+                    radius1=frustum_radius1,
+                ).compile()
+            ),
+            (1 / 3)
+            * np.pi
+            * frustum_height
+            * (
+                frustum_radius0**2
+                + frustum_radius0 * frustum_radius1
+                + frustum_radius1**2
+            ),
+            0.05,
+        ),
+        (
+            "torus",
+            phx.domain.GeometryDomain(
+                phx.geometry.Torus(
+                    center=(0.0, 0.0, 0.0),
+                    inner_radius=inner_radius,
+                    outer_radius=outer_radius,
+                ).compile()
+            ),
+            2 * np.pi**2 * major_radius * minor_radius**2,
+            0.1,
+        ),
+        (
+            "wedge",
+            phx.domain.GeometryDomain(
+                phx.geometry.Wedge(
+                    (0.0, 0.0, 0.0),
+                    wedge_extents,
+                    wedge_top,
+                ).compile()
+            ),
+            0.5 * wedge_extents[1] * wedge_extents[2] * (wedge_extents[0] + wedge_top),
+            0.05,
+        ),
     )
-    expected_volume = (4 / 3) * np.pi * radius**3
-    computed_volume = float(sphere.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
-
-
-def test_ellipsoid() -> None:
-    radii = (1.0, 2.0, 3.0)
-    ellipsoid = phx.domain.GeometryDomain(
-        phx.geometry.Ellipsoid(center=(0.0, 0.0, 0.0), radii=radii).compile()
-    )
-    expected_volume = (4 / 3) * np.pi * np.prod(radii)
-    computed_volume = float(ellipsoid.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
-
-
-def test_cuboid() -> None:
-    dimensions = (1.0, 2.0, 3.0)
-    cuboid = phx.domain.GeometryDomain(
-        phx.geometry.Box((0.0, 0.0, 0.0), dimensions).compile()
-    )
-    expected_volume = np.prod(dimensions)
-    computed_volume = float(cuboid.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
-
-
-def test_cube() -> None:
-    side = 2.0
-    cube = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=side).compile()
-    )
-    expected_volume = side**3
-    computed_volume = float(cube.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
-
-
-def test_cylinder() -> None:
-    radius = 1.0
-    height = 2.0
-    cylinder = phx.domain.GeometryDomain(
-        phx.geometry.Cylinder((0.0, 0.0, 0.0), (0.0, 0.0, height), radius).compile()
-    )
-    expected_volume = np.pi * radius**2 * height
-    computed_volume = float(cylinder.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
-
-
-def test_cone() -> None:
-    radius0 = 1.0
-    height = 3.0
-    cone = phx.domain.GeometryDomain(
-        phx.geometry.Cone(
-            base_center=(0.0, 0.0, 0.0),
-            axis=(0.0, 0.0, height),
-            radius0=radius0,
-        ).compile()
-    )
-    expected_volume = (1 / 3) * np.pi * radius0**2 * height
-    computed_volume = float(cone.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
-
-
-def test_truncated_cone() -> None:
-    radius0 = 2.0
-    radius1 = 1.0
-    height = 3.0
-    cone = phx.domain.GeometryDomain(
-        phx.geometry.Cone(
-            base_center=(0.0, 0.0, 0.0),
-            axis=(0.0, 0.0, height),
-            radius0=radius0,
-            radius1=radius1,
-        ).compile()
-    )
-    expected_volume = (
-        (1 / 3) * np.pi * height * (radius0**2 + radius0 * radius1 + radius1**2)
-    )
-    computed_volume = float(cone.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
-
-
-def test_torus() -> None:
-    inner_radius = 1.0
-    outer_radius = 2.0
-    torus = phx.domain.GeometryDomain(
-        phx.geometry.Torus(
-            center=(0.0, 0.0, 0.0),
-            inner_radius=inner_radius,
-            outer_radius=outer_radius,
-        ).compile()
-    )
-
-    # Calculate the major and minor radii correctly
-    major_radius = (
-        inner_radius + outer_radius
-    ) / 2  # Distance from center to center of tube
-    minor_radius = (outer_radius - inner_radius) / 2  # Radius of the tube
-
-    # Calculate expected volume using the correct formula
-    expected_volume = 2 * np.pi**2 * major_radius * minor_radius**2
-
-    # Get computed volume
-    computed_volume = float(torus.volume)
-
-    # Use a slightly larger tolerance due to mesh approximation
-    assert np.isclose(computed_volume, expected_volume, rtol=0.1)
-
-
-def test_wedge() -> None:
-    x0 = (0.0, 0.0, 0.0)
-    extends = (2.0, 2.0, 2.0)
-    top_extent = 1.0
-    wedge = phx.domain.GeometryDomain(
-        phx.geometry.Wedge(x0, extends, top_extent).compile()
-    )
-    expected_volume = 0.5 * extends[1] * extends[2] * (extends[0] + top_extent)
-    computed_volume = float(wedge.volume)
-    assert np.isclose(computed_volume, expected_volume, rtol=0.05)
+    for case_id, domain, expected_volume, rtol in cases:
+        assert np.isclose(float(domain.volume), expected_volume, rtol=rtol), case_id
 
 
 def test_boundary_normals_sphere() -> None:
     s = phx.domain.GeometryDomain(
         phx.geometry.Sphere(center=(0.0, 0.0, 0.0), radius=1.0).compile()
     )
-    from jax import numpy as jnp
 
     pts = jnp.array(
         [
@@ -159,6 +164,5 @@ def test_boundary_normals_sphere() -> None:
             [0.0, 0.0, -1.0],
         ]
     )
-    import numpy as np
 
     assert np.allclose(normals, expected, atol=1e-3)

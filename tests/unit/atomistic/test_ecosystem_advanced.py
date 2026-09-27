@@ -68,7 +68,7 @@ def _runtime(
     )
 
 
-def test_force_field_mapping_roundtrip_preserves_energy() -> None:
+def test_force_field_contracts() -> None:
     units = phx.atomistic.AtomisticUnitSystem.reduced()
     topology = phx.atomistic.MolecularTopologyPlan(
         bonds=[[10, 20]],
@@ -136,9 +136,6 @@ def test_force_field_mapping_roundtrip_preserves_energy() -> None:
     np.testing.assert_allclose(
         second_evaluation.forces, first_evaluation.forces, rtol=1.0e-12, atol=1.0e-12
     )
-
-
-def test_force_field_term_families_and_settle() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
     topology = phx.atomistic.MolecularTopologyPlan(
         torsions=[[0, 1, 2, 3]],
@@ -234,7 +231,7 @@ def test_force_field_term_families_and_settle() -> None:
     assert float(projection.velocity_residual) <= 1.0e-10
 
 
-def test_interaction_site_pair_terms_honor_topology_scales() -> None:
+def test_ecosystem_advanced_scenario_1() -> None:
     topology = phx.atomistic.MolecularTopologyPlan(
         pair_exceptions=[[0, 1]],
         lennard_jones_scales=[0.0],
@@ -269,9 +266,6 @@ def test_interaction_site_pair_terms_honor_topology_scales() -> None:
     assert bool(result.successful)
     np.testing.assert_allclose(result.energy, 0.0, atol=1.0e-12)
     np.testing.assert_allclose(result.forces, 0.0, atol=1.0e-12)
-
-
-def test_torsion_series_mapping_preserves_particle_and_parameter_identity() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     mapping = {
         "unit_system": units.to_dict(),
@@ -317,6 +311,113 @@ def test_torsion_series_mapping_preserves_particle_and_parameter_identity() -> N
         evaluations.append(result)
     np.testing.assert_allclose(evaluations[0].energy, evaluations[1].energy, atol=1e-12)
     np.testing.assert_allclose(evaluations[0].forces, evaluations[1].forces, atol=1e-12)
+    cell = phx.discretization.PeriodicCell(jnp.eye(3) * 8.0)
+    system = phx.atomistic.AtomisticSystemPlan(
+        # ty: ignore[invalid-argument-type]
+        [0, 1, 2, 3],
+        # ty: ignore[invalid-argument-type]
+        [1, 1, 1, 1],
+        # ty: ignore[invalid-argument-type]
+        [1.0, 2.0, 1.0, 2.0],
+        phx.atomistic.AtomisticUnitSystem.reduced(),
+        cell=cell,
+    ).prepare()
+    positions = jnp.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+        ]
+    )
+    kinds = (
+        (phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1], {}, None),
+        (phx.atomistic.sampling.CollectiveVariableKind.ANGLE, [0, 1, 2], {}, None),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.TORSION,
+            [0, 1, 2, 3],
+            {},
+            None,
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.CENTER_OF_MASS_DISTANCE,
+            [0, 1, 2, 3],
+            {"parameters": [2]},
+            None,
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.RADIUS_OF_GYRATION,
+            [0, 1, 2, 3],
+            {},
+            None,
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.COORDINATION,
+            [[0, 1], [2, 3]],
+            {"parameters": [1.5, 6.0]},
+            None,
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.CONTACT_SIMILARITY,
+            [[0, 1], [2, 3]],
+            {"parameters": [0.5], "reference": [1.0, 1.0]},
+            None,
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.ALIGNED_RMSD,
+            [0, 1, 2, 3],
+            {"reference": np.asarray(positions)},
+            None,
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.CELL_VOLUME,
+            np.asarray([], dtype=np.int32),
+            {},
+            {"cell_vectors": cell.vectors},
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.DENSITY,
+            np.asarray([], dtype=np.int32),
+            {},
+            {"cell_vectors": cell.vectors},
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.PATH_PROGRESS,
+            [0, 1, 2, 3],
+            {
+                "parameters": [1.0],
+                "reference": np.stack(
+                    (np.asarray(positions), np.asarray(positions) + 1.0)
+                ),
+            },
+            None,
+        ),
+        (
+            phx.atomistic.sampling.CollectiveVariableKind.PATH_DISTANCE,
+            [0, 1, 2, 3],
+            {
+                "parameters": [1.0],
+                "reference": np.stack(
+                    (np.asarray(positions), np.asarray(positions) + 1.0)
+                ),
+            },
+            None,
+        ),
+    )
+    for kind, indices, arguments, evaluation_arguments in kinds:
+        prepared = phx.atomistic.sampling.CollectiveVariablePlan(
+            kind,
+            indices,
+            # ty: ignore[invalid-argument-type]
+            **arguments,
+        ).prepare(system)
+        evaluation = prepared.evaluate(
+            positions,
+            cell=cell,
+            **({} if evaluation_arguments is None else evaluation_arguments),
+        )
+        assert bool(evaluation.successful), kind
+        assert bool(jnp.isfinite(evaluation.value)), kind
 
 
 def test_openmm_fourier_components_preserve_energy_and_force_through_roundtrip() -> None:
@@ -678,117 +779,7 @@ def test_bias_checkpoint_replay_and_abf_update(tmp_path: Path) -> None:
         )
 
 
-def test_collective_variable_families() -> None:
-    cell = phx.discretization.PeriodicCell(jnp.eye(3) * 8.0)
-    system = phx.atomistic.AtomisticSystemPlan(
-        # ty: ignore[invalid-argument-type]
-        [0, 1, 2, 3],
-        # ty: ignore[invalid-argument-type]
-        [1, 1, 1, 1],
-        # ty: ignore[invalid-argument-type]
-        [1.0, 2.0, 1.0, 2.0],
-        phx.atomistic.AtomisticUnitSystem.reduced(),
-        cell=cell,
-    ).prepare()
-    positions = jnp.asarray(
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 1.0],
-        ]
-    )
-    kinds = (
-        (phx.atomistic.sampling.CollectiveVariableKind.DISTANCE, [0, 1], {}, None),
-        (phx.atomistic.sampling.CollectiveVariableKind.ANGLE, [0, 1, 2], {}, None),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.TORSION,
-            [0, 1, 2, 3],
-            {},
-            None,
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.CENTER_OF_MASS_DISTANCE,
-            [0, 1, 2, 3],
-            {"parameters": [2]},
-            None,
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.RADIUS_OF_GYRATION,
-            [0, 1, 2, 3],
-            {},
-            None,
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.COORDINATION,
-            [[0, 1], [2, 3]],
-            {"parameters": [1.5, 6.0]},
-            None,
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.CONTACT_SIMILARITY,
-            [[0, 1], [2, 3]],
-            {"parameters": [0.5], "reference": [1.0, 1.0]},
-            None,
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.ALIGNED_RMSD,
-            [0, 1, 2, 3],
-            {"reference": np.asarray(positions)},
-            None,
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.CELL_VOLUME,
-            np.asarray([], dtype=np.int32),
-            {},
-            {"cell_vectors": cell.vectors},
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.DENSITY,
-            np.asarray([], dtype=np.int32),
-            {},
-            {"cell_vectors": cell.vectors},
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.PATH_PROGRESS,
-            [0, 1, 2, 3],
-            {
-                "parameters": [1.0],
-                "reference": np.stack(
-                    (np.asarray(positions), np.asarray(positions) + 1.0)
-                ),
-            },
-            None,
-        ),
-        (
-            phx.atomistic.sampling.CollectiveVariableKind.PATH_DISTANCE,
-            [0, 1, 2, 3],
-            {
-                "parameters": [1.0],
-                "reference": np.stack(
-                    (np.asarray(positions), np.asarray(positions) + 1.0)
-                ),
-            },
-            None,
-        ),
-    )
-    for kind, indices, arguments, evaluation_arguments in kinds:
-        prepared = phx.atomistic.sampling.CollectiveVariablePlan(
-            kind,
-            indices,
-            # ty: ignore[invalid-argument-type]
-            **arguments,
-        ).prepare(system)
-        evaluation = prepared.evaluate(
-            positions,
-            cell=cell,
-            **({} if evaluation_arguments is None else evaluation_arguments),
-        )
-        assert bool(evaluation.successful), kind
-        assert bool(jnp.isfinite(evaluation.value)), kind
-
-
-def test_mdanalysis_frame_values_are_converted_before_unit_attachment() -> None:
+def test_mdanalysis_frame_contracts() -> None:
     atoms = SimpleNamespace(
         positions=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
         velocities=np.asarray([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
@@ -837,9 +828,6 @@ def test_mdanalysis_frame_values_are_converted_before_unit_attachment() -> None:
             units=phx.atomistic.AtomisticUnitSystem.reduced(),
             source_id="mda-frame",
         )
-
-
-def test_mdanalysis_frame_metadata_and_selection_adapters() -> None:
     mda = pytest.importorskip("MDAnalysis")
     universe = mda.Universe.empty(
         2,
@@ -1167,7 +1155,7 @@ def test_committee_diversity_and_advanced_methods() -> None:
         assert bool(jnp.all(jnp.isfinite(evaluation.forces)))
 
 
-def test_rigid_coordinate_map_and_rotational_step() -> None:
+def test_ecosystem_advanced_scenario_2() -> None:
     particles = phx.discretization.ParticleSetPlan(
         # ty: ignore[invalid-argument-type]
         [0, 1],
@@ -1217,9 +1205,6 @@ def test_rigid_coordinate_map_and_rotational_step() -> None:
         1.0,
         atol=1.0e-12,
     )
-
-
-def test_implicit_polarization_and_multipole_pme() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
     _, system, neighborhood, _, _, _, state = _runtime(
         cell=cell, charges=[0.4, -0.2, -0.2]
@@ -1279,9 +1264,6 @@ def test_implicit_polarization_and_multipole_pme() -> None:
     )
     assert bool(jnp.isfinite(gb) & jnp.isfinite(gk))
     assert not bool(jnp.isclose(gb, gk))
-
-
-def test_lennard_jones_pme_term_without_cutoff_is_rejected_at_preparation() -> None:
     cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
     _, system, _, _, _, _, _ = _runtime(cell=cell)
     # ty: ignore[invalid-argument-type]

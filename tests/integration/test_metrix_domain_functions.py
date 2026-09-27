@@ -32,7 +32,7 @@ def _points(values: Any) -> Any:
     )
 
 
-def test_domain_function_riemannian_operators_match_polar_identities() -> None:
+def test_metrix_domain_functions_scenario_1() -> None:
     domain, metric = _polar_problem()
     scalar = domain.Function("x")(lambda x: x[0] ** 2)
     vector = domain.Function("x")(lambda x: jnp.array([x[0], 0.0]))
@@ -67,9 +67,6 @@ def test_domain_function_riemannian_operators_match_polar_identities() -> None:
     assert jnp.allclose(jnp.asarray(hessian(points).data)[..., 1, 1], 2.0 * radii**2)
     assert jnp.allclose(jnp.asarray(metric_derivative(points).data), 0.0, atol=1e-9)
     assert jnp.allclose(jnp.asarray(inverse_divergence(points).data), 0.0, atol=1e-9)
-
-
-def test_laplace_beltrami_matches_unit_sphere_eigenfunction() -> None:
     chart = phx.metrix.CoordinateChart("sphere", ("theta", "phi"))
     embedded = phx.metrix.EmbeddedChart(
         chart,
@@ -101,9 +98,6 @@ def test_laplace_beltrami_matches_unit_sphere_eigenfunction() -> None:
     with pytest.raises(TypeError, match="RiemannianMetric"):
         # ty: ignore[invalid-argument-type]
         phx.operators.laplace_beltrami(scalar, domain.component(), var="x")
-
-
-def test_riemannian_measure_multiplies_existing_component_weights() -> None:
     domain, metric = _polar_problem()
     component = phx.domain.with_riemannian_measure(
         domain.component(),
@@ -116,9 +110,32 @@ def test_riemannian_measure_multiplies_existing_component_weights() -> None:
     assert weight is not None
     weights = jnp.asarray(weight(points).data)
     assert jnp.allclose(weights, jnp.array([1.5, 2.0, 2.5]))
+    domain, metric = _polar_problem()
+    field = domain.Function("x")(lambda x: x[0] ** 2)
+    condition = phx.conditions.Residual(
+        "u",
+        domain.component(),
+        lambda u: phx.operators.laplace_beltrami(u, metric, var="x") - 4.0,
+    )
+    target = phx.integration.mean_over(condition.on)
+    realization = phx.integration.materialize(
+        target,
+        phx.integration.MonteCarloPlan(24),
+        key=jr.key(3),
+    )
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(realization),
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": field},
+        terms=(constraint,),
+    )
+
+    assert solver.loss(key=jr.key(4)) < 1e-20
 
 
-def test_metric_aware_domain_stochastic_operators_use_riemannian_volume() -> None:
+def test_metric_aware_contracts() -> None:
     domain, metric = _polar_problem()
     density = domain.Function("x")(lambda x: x[0] ** 2)
     coordinate_drift = domain.Function("x")(lambda x: jnp.array([0.5 / x[0], 0.0]))
@@ -142,9 +159,6 @@ def test_metric_aware_domain_stochastic_operators_use_riemannian_volume() -> Non
 
     assert jnp.allclose(jnp.asarray(backward(points).data), 2.0, atol=1e-9)
     assert jnp.allclose(jnp.asarray(forward(points).data), 2.0, atol=1e-9)
-
-
-def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual() -> None:
     domain, metric = _polar_problem()
     density = domain.Function("x")(1.0)
     coordinate_drift = domain.Function("x")(lambda x: jnp.array([0.5 / x[0], 0.0]))
@@ -173,29 +187,3 @@ def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual() -> N
     )
 
     assert solver.loss(key=jr.key(6)) < 1e-20
-
-
-def test_riemannian_residual_runs_through_functional_solver() -> None:
-    domain, metric = _polar_problem()
-    field = domain.Function("x")(lambda x: x[0] ** 2)
-    condition = phx.conditions.Residual(
-        "u",
-        domain.component(),
-        lambda u: phx.operators.laplace_beltrami(u, metric, var="x") - 4.0,
-    )
-    target = phx.integration.mean_over(condition.on)
-    realization = phx.integration.materialize(
-        target,
-        phx.integration.MonteCarloPlan(24),
-        key=jr.key(3),
-    )
-    constraint = phx.terms.ResidualPenalty(
-        condition,
-        phx.integration.fixed(realization),
-    )
-    solver = phx.solver.FunctionalSolver(
-        functions={"u": field},
-        terms=(constraint,),
-    )
-
-    assert solver.loss(key=jr.key(4)) < 1e-20

@@ -65,26 +65,23 @@ def _queries(seed: int, count: int = 60) -> Any:
     return np.random.default_rng(seed).uniform(-1.4, 1.4, (count, 3))
 
 
-@pytest.mark.parametrize("kind", tuple(BVHBuildKind))
-def test_exact_winding_matches_brute_force_on_closed_and_open_meshes(kind: Any) -> None:
-    vertices, faces = _sphere()
-    points = _queries(1)
-    policy = BVHBuildPolicy(kind, leaf_size=4)
+def test_triangle_bvh_scenario_1() -> None:
+    for kind in tuple(BVHBuildKind):
+        vertices, faces = _sphere()
+        points = _queries(1)
+        policy = BVHBuildPolicy(kind, leaf_size=4)
 
-    for surface in (faces, faces[: faces.shape[0] // 2 + 3]):
-        index = TriangleBVH(TriangleMesh(vertices, surface), policy=policy)
-        result = index.winding_number(points)
+        for surface in (faces, faces[: faces.shape[0] // 2 + 3]):
+            index = TriangleBVH(TriangleMesh(vertices, surface), policy=policy)
+            result = index.winding_number(points)
 
-        assert result.route is WindingNumberRoute.EXACT
-        assert not result.approximate and result.opening_angle is None
-        np.testing.assert_allclose(
-            np.asarray(result.values),
-            _solid_angle_winding(vertices, surface, points),
-            atol=1.0e-10,
-        )
-
-
-def test_fast_winding_reports_its_approximation_and_classifies_far_points() -> None:
+            assert result.route is WindingNumberRoute.EXACT
+            assert not result.approximate and result.opening_angle is None
+            np.testing.assert_allclose(
+                np.asarray(result.values),
+                _solid_angle_winding(vertices, surface, points),
+                atol=1.0e-10,
+            )
     vertices, faces = _sphere()
     index = TriangleBVH(TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=4))
     radius = np.linalg.norm(_queries(2), axis=-1, keepdims=True)
@@ -103,9 +100,6 @@ def test_fast_winding_reports_its_approximation_and_classifies_far_points() -> N
     )
     with pytest.raises(ValueError, match="opening_angle"):
         index.fast_winding_number(points, opening_angle=0.0)
-
-
-def test_refit_matches_rebuilt_hierarchy_queries() -> None:
     vertices, faces = _sphere()
     rng = np.random.default_rng(3)
     moved = vertices * np.asarray((1.4, 0.7, 1.1)) + 0.03 * rng.standard_normal(

@@ -43,7 +43,7 @@ def _method_and_state() -> Any:
     return method, state
 
 
-def test_zero_source_is_exact_and_has_zero_finite_evidence() -> None:
+def test_smooth_compressible_d2v_forcing_scenario_1() -> None:
     method, state = _method_and_state()
     result = ZeroSmoothCompressibleD2VForcingPlan(method).apply(state, jnp.asarray(0.125))
 
@@ -85,9 +85,6 @@ def test_zero_source_is_exact_and_has_zero_finite_evidence() -> None:
     assert bool(result.successful)
     assert not bool(result.rollback_applied)
     assert int(result.evidence.status) == int(SmoothCompressibleD2VForcingStatus.SUCCESS)
-
-
-def test_body_force_has_zero_mass_exact_impulse_and_midpoint_work() -> None:
     method, state = _method_and_state()
     acceleration = jnp.asarray((0.02, -0.03))
     heating = 0.04
@@ -189,9 +186,6 @@ def test_body_force_has_zero_mass_exact_impulse_and_midpoint_work() -> None:
     )
     assert all(bool(jnp.all(jnp.isfinite(value))) for value in evidence_arrays)
     assert bool(result.evidence.finite)
-
-
-def test_pure_heating_changes_only_the_energy_zeroth_source_moment() -> None:
     method, state = _method_and_state()
     time_step = jnp.asarray(0.2)
     heating = 0.3

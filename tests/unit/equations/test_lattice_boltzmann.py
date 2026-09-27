@@ -50,7 +50,7 @@ def _compiled_flow(
     )
 
 
-def test_compiler_initializes_and_reconstructs_forced_macroscopic_state() -> None:
+def test_lattice_boltzmann_scenario_1() -> None:
     compiled = _compiled_flow(
         acceleration=lambda time, coordinates, parameters: parameters
     )
@@ -65,9 +65,6 @@ def test_compiler_initializes_and_reconstructs_forced_macroscopic_state() -> Non
     np.testing.assert_allclose(macros.density, 1.0, atol=1e-13)
     np.testing.assert_allclose(macros.velocity, 0.0, atol=1e-13)
     assert compiled.discretization_bundle.record(compiled.discretization.key)
-
-
-def test_uniform_guo_acceleration_preserves_mass_and_updates_momentum() -> None:
     acceleration = jnp.asarray((0.005, 0.0))
     compiled = _compiled_flow(
         collision=phx.discretization.TRTCollisionPlan(),
@@ -98,9 +95,6 @@ def test_uniform_guo_acceleration_preserves_mass_and_updates_momentum() -> None:
         rtol=2e-10,
         atol=2e-12,
     )
-
-
-def test_compiled_dynamics_keeps_frozen_solid_populations_inert() -> None:
     fluid = np.ones((12, 12), dtype="bool")
     fluid[4, 5] = False
     compiled = _compiled_flow(fluid_mask=fluid)

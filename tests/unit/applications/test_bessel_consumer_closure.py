@@ -11,7 +11,7 @@ cosmology = phx.applications.cosmology
 geophysics = phx.applications.geophysics
 
 
-def test_flat_radial_kernel_table_matches_scipy_including_tiny_higher_modes() -> None:
+def test_bessel_consumer_closure_scenario_1() -> None:
     plan = cosmology.FlatRadialKernelPlan(12)
     argument = np.asarray([0.0, 1.0e-8, 0.3, 2.0, 15.0])
     actual = np.asarray(plan.evaluate(jnp.asarray(argument)))
@@ -26,9 +26,6 @@ def test_flat_radial_kernel_table_matches_scipy_including_tiny_higher_modes() ->
 
     compiled = jax.jit(plan.evaluate)(jnp.asarray(argument))
     np.testing.assert_allclose(compiled, expected, rtol=3.0e-11, atol=2.0e-14)
-
-
-def test_digital_hankel_transform_matches_independent_cylindrical_bessel_sum() -> None:
     wave = np.asarray([0.1, 0.35, 0.8, 1.6, 3.0, 5.0])
     weights = np.asarray([0.07, 0.11, 0.19, 0.23, 0.17, 0.09])
     kernel = np.asarray(

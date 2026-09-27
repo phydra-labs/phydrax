@@ -167,7 +167,7 @@ def _fixture() -> Any:
     return binding, neighborhood, qualifier, mapping
 
 
-def test_ordered_construct_and_source_permutation_do_not_redefine_atoms() -> None:
+def test_binding_physics_scenario_1() -> None:
     assert ProteinConstruct(("A", "B"), ("AG", "V")).residue_keys == (
         ResidueKey("A", 0),
         ResidueKey("A", 1),
@@ -202,9 +202,6 @@ def test_ordered_construct_and_source_permutation_do_not_redefine_atoms() -> Non
     np.testing.assert_allclose(a.forces, b.forces, atol=1e-12)
     assert rebound.artifact.artifact_id != h.source.artifact_id
     assert rebound.hypothesis.hypothesis_id != h.hypothesis_id
-
-
-def test_missing_atoms_and_mixed_parameter_scales_refuse_handoff() -> None:
     binding, _, _, mapping = _fixture()
     h = binding.hypothesis
     incomplete = ProteinStructureHypothesis(
@@ -235,9 +232,6 @@ def test_missing_atoms_and_mixed_parameter_scales_refuse_handoff() -> None:
         )
     with pytest.raises(ValueError, match="Hydrogen inventory"):
         replace(binding.chemistry, hydrogen_counts=(6,))
-
-
-def test_geometry_detects_reflection_and_native_force_is_conservative() -> None:
     binding, neighborhood, qualifier, _ = _fixture()
     x = binding.realized_positions
     assert bool(qualifier.evaluate(x).successful)

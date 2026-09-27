@@ -141,7 +141,7 @@ def test_port_backed_schemas_declare_owner_ports_through_artifacts(tmp_path: Any
     assert artifact.model.as_trainable().model_ports() == ports
 
 
-def test_port_backed_schemas_reject_contradicting_declarations() -> None:
+def test_artifacts_scenario_1() -> None:
     position, time, speed = _owner_ports()
 
     with pytest.raises(ValueError, match="component IDs in port order"):
@@ -172,6 +172,34 @@ def test_port_backed_schemas_reject_contradicting_declarations() -> None:
     )
     with pytest.raises(ValueError, match="event shape"):
         scalar_target.model_ports()
+    result, _, _ = _schema_bound_fit()
+    executable = result.as_trainable()
+    shifted = eqx.tree_at(
+        lambda model: model.intercept, executable, executable.intercept + 1.0
+    )
+
+    semantic, numeric, signature = executable_identity(executable)
+    shifted_semantic, shifted_numeric, shifted_signature = executable_identity(shifted)
+
+    assert shifted_semantic.semantic_id == semantic.semantic_id
+    assert shifted_signature.signature_id == signature.signature_id
+    assert shifted_numeric.revision_id != numeric.revision_id
+    register_artifact_value("test.recipe:z-key", _first_recipe_key)
+    register_artifact_value("test.recipe:a-key", _second_recipe_key)
+
+    mapping = model_structure_recipe(
+        {_first_recipe_key: "first", _second_recipe_key: "second"}
+    )
+    members = model_structure_recipe({_first_recipe_key, _second_recipe_key})
+
+    assert [pair[0]["value"] for pair in mapping["items"]] == [
+        "test.recipe:a-key",
+        "test.recipe:z-key",
+    ]
+    assert [item["value"] for item in members["items"]] == [
+        "test.recipe:a-key",
+        "test.recipe:z-key",
+    ]
 
 
 def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path: Any) -> None:
@@ -206,21 +234,6 @@ def test_ml_artifact_round_trip_preserves_contract_and_identity(tmp_path: Any) -
     assert manifest.fit["method"] == result.method
     assert manifest.provenance == {"revision": 3, "source": "native"}
     assert manifest.licenses == ("PNPL-2.2",)
-
-
-def test_ml_artifact_identity_distinguishes_numeric_revisions() -> None:
-    result, _, _ = _schema_bound_fit()
-    executable = result.as_trainable()
-    shifted = eqx.tree_at(
-        lambda model: model.intercept, executable, executable.intercept + 1.0
-    )
-
-    semantic, numeric, signature = executable_identity(executable)
-    shifted_semantic, shifted_numeric, shifted_signature = executable_identity(shifted)
-
-    assert shifted_semantic.semantic_id == semantic.semantic_id
-    assert shifted_signature.signature_id == signature.signature_id
-    assert shifted_numeric.revision_id != numeric.revision_id
 
 
 @pytest.mark.parametrize(
@@ -420,25 +433,6 @@ def test_native_ml_artifact_refuses_registered_nonmodel_recipes(tmp_path: Any) -
             tmp_path / "recipe.phxml",
             phx.ml.preprocessing.StandardScaler(),
         )
-
-
-def test_model_recipe_orders_set_and_mapping_keys_by_canonical_encoding() -> None:
-    register_artifact_value("test.recipe:z-key", _first_recipe_key)
-    register_artifact_value("test.recipe:a-key", _second_recipe_key)
-
-    mapping = model_structure_recipe(
-        {_first_recipe_key: "first", _second_recipe_key: "second"}
-    )
-    members = model_structure_recipe({_first_recipe_key, _second_recipe_key})
-
-    assert [pair[0]["value"] for pair in mapping["items"]] == [
-        "test.recipe:a-key",
-        "test.recipe:z-key",
-    ]
-    assert [item["value"] for item in members["items"]] == [
-        "test.recipe:a-key",
-        "test.recipe:z-key",
-    ]
 
 
 def test_model_recipe_rejects_malformed_prng_key_before_allocation(

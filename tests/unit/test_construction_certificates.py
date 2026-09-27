@@ -1,7 +1,5 @@
 from typing import Any
 
-import pytest
-
 import phydrax as phx
 from phydrax import AbstractConstructionCertificate
 from phydrax.nn.operator.architectures import ConditionalHolomorphicMapCertificate
@@ -109,17 +107,14 @@ _CASES = {
 }
 
 
-@pytest.mark.parametrize("capability", sorted(_CASES))
-def test_construction_certificates_keep_their_identities(capability: Any) -> None:
-    build, identity = _CASES[capability]
-    certificate = build()
+def test_construction_certificates_scenario_1() -> None:
+    for capability in sorted(_CASES):
+        build, identity = _CASES[capability]
+        certificate = build()
 
-    assert isinstance(certificate, AbstractConstructionCertificate)
-    assert certificate.capability_id == capability
-    assert certificate.certificate_id == identity
-
-
-def test_meromorphic_map_references_its_frame_certificate() -> None:
+        assert isinstance(certificate, AbstractConstructionCertificate)
+        assert certificate.capability_id == capability
+        assert certificate.certificate_id == identity
     frame = _meromorphic_frame()
     certificate = phx.equations.MeromorphicMapCertificate(
         frame, parameter_mode="m", construction_dependency="d"

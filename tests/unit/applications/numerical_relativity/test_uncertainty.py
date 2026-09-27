@@ -68,7 +68,7 @@ def _error(realization: Any, scale: Any) -> Any:
     )
 
 
-def test_multifidelity_composition_keeps_levels_and_uncertainties_separate() -> None:
+def test_uncertainty_scenario_1() -> None:
     exact = _component("exact-baseline", "exact:r1", lambda p: p)
     perturbative = _component("perturbative-correction", "pert:r2", lambda p: 0.1 * p**2)
     rom = _component("rom-correction", "rom:r3", lambda p: 0.2 * jnp.sin(p))
@@ -124,9 +124,6 @@ def test_multifidelity_composition_keeps_levels_and_uncertainties_separate() -> 
     assert bool(sensitivity.derivative_valid)
     assert float(sensitivity.jvp_finite_difference_residual) < 2.0e-3
     assert float(sensitivity.vjp_pairing_residual) < 1.0e-6
-
-
-def test_unknown_numerical_or_model_error_is_not_silently_zero() -> None:
     components = (
         _component("exact-baseline", "exact:r1", lambda p: p),
         _component("perturbative-correction", "pert:r2", lambda p: p * 0.0),
@@ -142,6 +139,61 @@ def test_unknown_numerical_or_model_error_is_not_silently_zero() -> None:
     assert not bool(result.uncertainty_qualified)
     assert jnp.all(jnp.isinf(result.numerical_error_bound))
     assert jnp.all(jnp.isnan(result.discrepancy_covariance))
+    candidate = LearnedClosureCandidate(
+        lambda value: 0.1 * value,
+        native_model_id="z4c:native",
+        model_id="closure:weights",
+        training_realization_id="training:split-7",
+        derivative_supported=True,
+        differentiation_evidence_id="derivatives:jvp-vjp-fd",
+    )
+    missing_rights = LearnedClosureAdmissionEvidence(
+        jnp.asarray([1.0e-9, -2.0e-9]),
+        jnp.asarray([0.2, 0.4]),
+        conservation_tolerance=1.0e-8,
+        converged=True,
+        physically_valid=True,
+        qualified=True,
+        rights_authorized=False,
+        candidate_id=candidate.candidate_id,
+        conservation_evidence_id="conservation:campaign",
+        admissibility_evidence_id="admissibility:campaign",
+        rights_evidence_id="rights:denied",
+    )
+    refused = admit_learned_closure(candidate, missing_rights)
+    assert not refused.admitted
+    assert "requested-use-rights-missing" in refused.refusal_reasons
+    with pytest.raises(ValueError, match="unadmitted"):
+        apply_admitted_learned_closure(
+            candidate, refused, jnp.asarray([2.0, 3.0]), jnp.asarray([1.0, 1.0])
+        )
+
+    admitted_evidence = LearnedClosureAdmissionEvidence(
+        jnp.asarray([1.0e-9, -2.0e-9]),
+        jnp.asarray([0.2, 0.4]),
+        conservation_tolerance=1.0e-8,
+        converged=True,
+        physically_valid=True,
+        qualified=True,
+        rights_authorized=True,
+        candidate_id=candidate.candidate_id,
+        conservation_evidence_id="conservation:campaign",
+        admissibility_evidence_id="admissibility:campaign",
+        rights_evidence_id="rights:requested-use-granted",
+    )
+    admitted = admit_learned_closure(candidate, admitted_evidence)
+    native = jnp.asarray([2.0, 3.0])
+    correction_inputs = jnp.asarray([1.0, -2.0])
+    result = apply_admitted_learned_closure(
+        candidate, admitted, native, correction_inputs
+    )
+
+    assert admitted.admitted
+    assert jnp.allclose(result.native_value, native)
+    assert jnp.allclose(result.learned_correction, jnp.asarray([0.1, -0.2]))
+    assert jnp.allclose(result.combined_value, jnp.asarray([2.1, 2.8]))
+    assert bool(result.qualified)
+    assert bool(result.derivative_valid)
 
 
 def test_smooth_grhd_and_nr_adapters_fail_closed_at_shocks_or_topology_changes() -> None:
@@ -207,61 +259,3 @@ def test_smooth_grhd_and_nr_adapters_fail_closed_at_shocks_or_topology_changes()
     )
     assert not bool(topology_change.derivative_valid)
     assert jnp.all(jnp.isnan(topology_change.finite_difference))
-
-
-def test_learned_closure_requires_all_evidence_and_only_adds_to_native_physics() -> None:
-    candidate = LearnedClosureCandidate(
-        lambda value: 0.1 * value,
-        native_model_id="z4c:native",
-        model_id="closure:weights",
-        training_realization_id="training:split-7",
-        derivative_supported=True,
-        differentiation_evidence_id="derivatives:jvp-vjp-fd",
-    )
-    missing_rights = LearnedClosureAdmissionEvidence(
-        jnp.asarray([1.0e-9, -2.0e-9]),
-        jnp.asarray([0.2, 0.4]),
-        conservation_tolerance=1.0e-8,
-        converged=True,
-        physically_valid=True,
-        qualified=True,
-        rights_authorized=False,
-        candidate_id=candidate.candidate_id,
-        conservation_evidence_id="conservation:campaign",
-        admissibility_evidence_id="admissibility:campaign",
-        rights_evidence_id="rights:denied",
-    )
-    refused = admit_learned_closure(candidate, missing_rights)
-    assert not refused.admitted
-    assert "requested-use-rights-missing" in refused.refusal_reasons
-    with pytest.raises(ValueError, match="unadmitted"):
-        apply_admitted_learned_closure(
-            candidate, refused, jnp.asarray([2.0, 3.0]), jnp.asarray([1.0, 1.0])
-        )
-
-    admitted_evidence = LearnedClosureAdmissionEvidence(
-        jnp.asarray([1.0e-9, -2.0e-9]),
-        jnp.asarray([0.2, 0.4]),
-        conservation_tolerance=1.0e-8,
-        converged=True,
-        physically_valid=True,
-        qualified=True,
-        rights_authorized=True,
-        candidate_id=candidate.candidate_id,
-        conservation_evidence_id="conservation:campaign",
-        admissibility_evidence_id="admissibility:campaign",
-        rights_evidence_id="rights:requested-use-granted",
-    )
-    admitted = admit_learned_closure(candidate, admitted_evidence)
-    native = jnp.asarray([2.0, 3.0])
-    correction_inputs = jnp.asarray([1.0, -2.0])
-    result = apply_admitted_learned_closure(
-        candidate, admitted, native, correction_inputs
-    )
-
-    assert admitted.admitted
-    assert jnp.allclose(result.native_value, native)
-    assert jnp.allclose(result.learned_correction, jnp.asarray([0.1, -0.2]))
-    assert jnp.allclose(result.combined_value, jnp.asarray([2.1, 2.8]))
-    assert bool(result.qualified)
-    assert bool(result.derivative_valid)

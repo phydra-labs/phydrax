@@ -84,9 +84,7 @@ def _stationary_source_oracle(points: Any, sign: Any) -> Any:
     return np.sum(segment_lengths), segment_lengths[1], tangents, sign * arc
 
 
-def test_unequal_axial_lateral_path_matches_source_stationarity_and_shortest_cost() -> (
-    None
-):
+def test_robot_opensim_cylinder_wrap_scenario_1() -> None:
     prepared = _prepared()
     candidate = prepared.propose(prepared.initial_state(), _POINTS)
     result = candidate.evaluation
@@ -110,11 +108,6 @@ def test_unequal_axial_lateral_path_matches_source_stationarity_and_shortest_cos
     # Display capacity never becomes the mechanical discretization.
     coarse = _prepared(samples=2).propose(_prepared(samples=2).initial_state(), _POINTS)
     np.testing.assert_allclose(coarse.evaluation.total_length_m, result.total_length_m)
-
-
-def test_side_prescription_selects_complete_tangent_paths_not_reversed_surface_only() -> (
-    None
-):
     positive = _prepared(side="positive")
     negative = _prepared(side="negative")
     for prepared, sign in ((positive, 1), (negative, -1)):
@@ -125,9 +118,6 @@ def test_side_prescription_selects_complete_tangent_paths_not_reversed_surface_o
         np.testing.assert_allclose(result.total_length_m, expected[0], rtol=2e-6)
         assert float(result.evidence.tangent_direction_residual) < 2e-6
         assert np.sign(float(result.signed_surface_angle_rad)) == sign
-
-
-def test_planar_source_fidelity_remains_separate_and_nonplanar_fails_there() -> None:
     planar = PlanarCylinderRouteWrapPlan().prepare(
         jnp.zeros(3), jnp.asarray((0.0, 0.0, 1.0)), 1.0, 8.0
     )
@@ -139,7 +129,7 @@ def test_planar_source_fidelity_remains_separate_and_nonplanar_fails_there() -> 
     assert bool(_prepared().propose(_prepared().initial_state(), _POINTS).successful)
 
 
-def test_fixed_branch_jit_vmap_jvp_vjp_and_virtual_power() -> None:
+def test_robot_opensim_cylinder_wrap_scenario_2() -> None:
     prepared = _prepared()
     state = _accepted(prepared)
     result = eqx.filter_jit(prepared.evaluate_fixed_branch)(state, _POINTS)
@@ -166,9 +156,6 @@ def test_fixed_branch_jit_vmap_jvp_vjp_and_virtual_power() -> None:
         jnp.stack((_POINTS, _POINTS + 0.02 * _VELOCITY))
     )
     assert bool(jnp.all(batch.successful))
-
-
-def test_rigid_frame_covariance_and_endpoint_action_reaction() -> None:
     prepared = _prepared()
     state = _accepted(prepared)
     angle = 0.71
@@ -207,9 +194,6 @@ def test_rigid_frame_covariance_and_endpoint_action_reaction() -> None:
     # Axial force has no cylinder reaction; transverse reaction belongs to the
     # obstacle support, not to an additional muscle/contact force law.
     np.testing.assert_allclose(jnp.sum(original_loads[:, 2]), 0.0, atol=2e-5)
-
-
-def test_candidate_commit_branch_transition_and_stale_or_foreign_rollback() -> None:
     prepared = _prepared()
     initial = prepared.initial_state()
     candidate = prepared.propose(initial, _POINTS)
@@ -247,9 +231,8 @@ def test_candidate_commit_branch_transition_and_stale_or_foreign_rollback() -> N
     assert not bool(modified.propose(state, _POINTS).successful)
 
 
-@pytest.mark.parametrize(
-    "points,flag",
-    (
+def test_robot_opensim_cylinder_wrap_scenario_3() -> None:
+    for points, flag in (
         (((-2.0, 0.0, -0.8), (2.0, 0.0, 1.2)), OpenSimCylinderWrapStatus.TOPOLOGY_TIE),
         (((-2.0, 1.0, -0.8), (2.0, 1.0, 1.2)), OpenSimCylinderWrapStatus.CONTACT_EVENT),
         (
@@ -260,26 +243,19 @@ def test_candidate_commit_branch_transition_and_stale_or_foreign_rollback() -> N
             ((float("nan"), 0.35, -0.8), (2.1, 0.65, 1.2)),
             OpenSimCylinderWrapStatus.NONFINITE,
         ),
-    ),
-)
-def test_event_and_invalid_input_roll_back_all_state_and_load_zero(
-    points: Any, flag: Any
-) -> None:
-    prepared = _prepared()
-    state = _accepted(prepared)
-    points = jnp.asarray(points)
-    candidate = prepared.propose(state, points)
-    assert not bool(candidate.successful)
-    assert int(candidate.evaluation.evidence.status) & int(flag)
-    assert eqx.tree_equal(prepared.commit(candidate, state), state)
-    loads, evidence = prepared.tensile_force_pullback(
-        state, points, _VELOCITY, 100.0, force_owner="native-tension"
-    )
-    assert not bool(evidence.successful)
-    np.testing.assert_array_equal(loads, jnp.zeros((2, 3)))
-
-
-def test_cap_rim_gate_does_not_substitute_a_direct_chord_or_longer_branch() -> None:
+    ):
+        prepared = _prepared()
+        state = _accepted(prepared)
+        points = jnp.asarray(points)
+        candidate = prepared.propose(state, points)
+        assert not bool(candidate.successful)
+        assert int(candidate.evaluation.evidence.status) & int(flag)
+        assert eqx.tree_equal(prepared.commit(candidate, state), state)
+        loads, evidence = prepared.tensile_force_pullback(
+            state, points, _VELOCITY, 100.0, force_owner="native-tension"
+        )
+        assert not bool(evidence.successful)
+        np.testing.assert_array_equal(loads, jnp.zeros((2, 3)))
     prepared = _prepared(length=0.1)
     source = prepared.initial_state()
     candidate = prepared.propose(source, _POINTS)
@@ -296,9 +272,6 @@ def test_cap_rim_gate_does_not_substitute_a_direct_chord_or_longer_branch() -> N
     np.testing.assert_allclose(
         direct.evaluation.total_length_m, jnp.linalg.norm(above[1] - above[0])
     )
-
-
-def test_clear_direct_branch_and_exclusive_force_owner() -> None:
     prepared = _prepared()
     points = _POINTS.at[:, 1].add(3.0)
     state = _accepted(prepared, points)

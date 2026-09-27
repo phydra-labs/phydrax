@@ -119,9 +119,7 @@ def _pipelines(preprocessing_id: str) -> BatteryPipelineIDs:
     )
 
 
-def test_preprocessing_stably_orders_collapses_and_normalizes_to_si_passive_sign() -> (
-    None
-):
+def test_data_scenario_1() -> None:
     raw = _raw(
         "trace",
         "cell-a",
@@ -150,9 +148,6 @@ def test_preprocessing_stably_orders_collapses_and_normalizes_to_si_passive_sign
     assert len(record.segments) == 2
     assert record.segments[1].preceding_gap_s == 480.0
     np.testing.assert_array_equal(record.segment_indices, (0, 0, 0, 1))
-
-
-def test_duplicate_collapse_requires_every_retained_channel_to_agree() -> None:
     equal = _raw(
         "equal",
         "cell-a",
@@ -183,11 +178,6 @@ def test_duplicate_collapse_requires_every_retained_channel_to_agree() -> None:
     )
     collapsed = preprocess_battery_time_series(conflict, tolerant)
     np.testing.assert_allclose(collapsed.voltage_v, (3.0, 3.1))
-
-
-def test_masks_use_canonical_fills_and_interpolation_never_crosses_gaps_or_bounds() -> (
-    None
-):
     raw = _raw(
         "masked",
         "cell-a",
@@ -217,7 +207,7 @@ def test_masks_use_canonical_fills_and_interpolation_never_crosses_gaps_or_bound
     np.testing.assert_allclose(sampled.current_a, (0.0, 0.0, 0.0, 3.0, 0.0))
 
 
-def test_rpt_and_eis_are_separate_diagnostic_records_with_local_rights_lineage() -> None:
+def test_data_scenario_2() -> None:
     manifest = _manifest("b")
     common = dict(
         experiment_id="diagnostic-experiment",
@@ -278,11 +268,6 @@ def test_rpt_and_eis_are_separate_diagnostic_records_with_local_rights_lineage()
     assert rpt.license_id == manifest.license_id
     assert rpt.rights_id == "rights-diagnostic-research"
     assert rpt.artifact_manifest.source_uri.startswith("file:")
-
-
-def test_normalized_content_fingerprint_is_deterministic_under_source_row_permutation() -> (
-    None
-):
     first = _raw(
         "stable",
         "cell-a",
@@ -308,11 +293,6 @@ def test_normalized_content_fingerprint_is_deterministic_under_source_row_permut
     assert normalized_first.content_fingerprint == normalized_second.content_fingerprint
     assert normalized_first.row_id_groups == normalized_second.row_id_groups
     assert policy.preprocessing_id == _policy().preprocessing_id
-
-
-def test_whole_cell_split_is_disjoint_complete_and_binds_every_pipeline_identity() -> (
-    None
-):
     records = (
         _series("train-1", "cell-train"),
         _series("calibration-1", "cell-calibration"),
@@ -384,7 +364,7 @@ def test_whole_cell_split_is_disjoint_complete_and_binds_every_pipeline_identity
         )
 
 
-def test_transformation_binds_corpus_then_fits_only_train_content() -> None:
+def test_data_scenario_3() -> None:
     original = (
         _series("train-1", "cell-train", offset=0.0),
         _series("calibration-1", "cell-calibration", offset=1.0),
@@ -434,9 +414,6 @@ def test_transformation_binds_corpus_then_fits_only_train_content() -> None:
     transformed = fitted.apply(original[1])
     assert transformed.values.shape == (3, 3)
     np.testing.assert_array_equal(transformed.valid_mask, np.ones((3, 3), dtype="bool"))
-
-
-def test_canonical_arrays_and_sampling_are_jit_ready_and_records_are_immutable() -> None:
     record = _series("jit", "cell-train")
     sampled = jax.jit(lambda query: interpolate_battery_time_series(record, query))(
         jnp.asarray((0.25, 1.5))
@@ -463,9 +440,6 @@ def test_canonical_arrays_and_sampling_are_jit_ready_and_records_are_immutable()
         record.rights_id = "changed"
     with pytest.raises(ValueError):
         _raw("immutable", "cell-a").time[0] = 10.0
-
-
-def test_remote_manifests_are_refused_without_fetching_or_parsing_payloads() -> None:
     remote = ArtifactManifest(
         artifact_id="remote-battery",
         producer="unit-test",

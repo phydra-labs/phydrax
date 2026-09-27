@@ -62,7 +62,7 @@ def _score_function(model: Any, dimension: Any) -> Any:
     return domain.Function("x", "t")(model)
 
 
-def test_exact_and_implicit_score_matching_agree_for_diagonal_linear_score() -> None:
+def test_score_matching_objective_scenario_1() -> None:
     dimension = 4
     trajectory = _trajectory(dimension=dimension, paths=128, times=3)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -86,9 +86,6 @@ def test_exact_and_implicit_score_matching_agree_for_diagonal_linear_score() -> 
 
     assert jnp.allclose(exact_value, expected)
     assert jnp.allclose(implicit_value, expected)
-
-
-def test_sliced_score_matching_matches_implicit_objective_in_expectation() -> None:
     dimension = 5
     trajectory = _trajectory(dimension=dimension, paths=512, times=2, seed=2)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -108,9 +105,6 @@ def test_sliced_score_matching_matches_implicit_objective_in_expectation() -> No
     sliced_value = sliced.loss({"score": score}, key=jr.key(8))
 
     assert jnp.allclose(sliced_value, implicit_value, atol=8e-2)
-
-
-def test_masks_exclude_invalid_particle_states_and_time_coverage_is_reported() -> None:
     states = jnp.asarray(
         [
             [[1.0], [2.0], [1000.0]],
@@ -148,7 +142,7 @@ def test_masks_exclude_invalid_particle_states_and_time_coverage_is_reported() -
     assert diagnostics.num_times == 3
 
 
-def test_probe_standard_error_decreases_for_off_diagonal_divergence() -> None:
+def test_score_matching_objective_scenario_2() -> None:
     dimension = 12
     trajectory = _trajectory(dimension=dimension, paths=32, times=1, seed=3)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -175,9 +169,6 @@ def test_probe_standard_error_decreases_for_off_diagonal_divergence() -> None:
     ).divergence_standard_error
 
     assert large_error < small_error
-
-
-def test_implicit_score_matching_trains_gaussian_score_field() -> None:
     dimension = 3
     trajectory = _trajectory(dimension=dimension, paths=1024, times=2, seed=4)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
@@ -204,6 +195,24 @@ def test_implicit_score_matching_trains_gaussian_score_field() -> None:
     )
 
     assert jnp.allclose(coefficient, -1.0, atol=0.12)
+    dimension = 100
+    trajectory = _trajectory(dimension=dimension, paths=4, times=1, seed=6)
+    samples = trajectory_state_time_samples(trajectory, time_label="t")
+    objective = ScoreMatchingTerm(
+        "score",
+        samples,
+        policy=ScoreMatchingPolicy("implicit", num_probes=4),
+    )
+    score = _score_function(_LinearScore(jnp.asarray(-1.0)), dimension)
+    loss = eqx.filter_jit(
+        lambda current: objective.loss({"score": current}, key=jr.key(9))
+    )(score)
+
+    assert jnp.isfinite(loss)
+
+    scalar = _score_function(lambda state, time: jnp.sum(state), dimension)
+    with pytest.raises(ValueError, match="preserve|same shape"):
+        objective.loss({"score": scalar}, key=jr.key(9))
 
 
 def test_resampled_particle_provider_runs_once_per_optimizer_update() -> None:
@@ -234,24 +243,3 @@ def test_resampled_particle_provider_runs_once_per_optimizer_update() -> None:
     )
 
     assert len(calls) == 4
-
-
-def test_dimension_100_implicit_smoke_uses_jvps_and_rejects_scalar_score() -> None:
-    dimension = 100
-    trajectory = _trajectory(dimension=dimension, paths=4, times=1, seed=6)
-    samples = trajectory_state_time_samples(trajectory, time_label="t")
-    objective = ScoreMatchingTerm(
-        "score",
-        samples,
-        policy=ScoreMatchingPolicy("implicit", num_probes=4),
-    )
-    score = _score_function(_LinearScore(jnp.asarray(-1.0)), dimension)
-    loss = eqx.filter_jit(
-        lambda current: objective.loss({"score": current}, key=jr.key(9))
-    )(score)
-
-    assert jnp.isfinite(loss)
-
-    scalar = _score_function(lambda state, time: jnp.sum(state), dimension)
-    with pytest.raises(ValueError, match="preserve|same shape"):
-        objective.loss({"score": scalar}, key=jr.key(9))

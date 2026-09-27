@@ -98,7 +98,7 @@ def _tetrahedral_tissue() -> Any:
     return plan.prepare(positions)
 
 
-def test_regular_polygon_and_polyhedron_have_target_energy() -> None:
+def test_vertex_tissue_scenario_1() -> None:
     square = _square_tissue()
     square_evaluation = square.evaluate(square.initialize_state())
     tetrahedron = _tetrahedral_tissue()
@@ -117,18 +117,12 @@ def test_regular_polygon_and_polyhedron_have_target_energy() -> None:
         0.5 * (3.0 + 3.0**0.5)
     )
     assert tetrahedron_evaluation.potential_energy == pytest.approx(0.0, abs=2.0e-6)
-
-
-def test_line_tension_and_contractility_contribute_declared_scalar_energy() -> None:
     tissue = _square_tissue(interface_tension=0.25, active_contractility=0.125)
     evaluation = tissue.evaluate(tissue.initialize_state())
 
     assert evaluation.interface_energy == pytest.approx(1.0)
     assert evaluation.contractile_energy == pytest.approx(1.0)
     assert evaluation.potential_energy == pytest.approx(2.0)
-
-
-def test_cell_traction_is_distributed_as_a_cell_resultant() -> None:
     tissue = _square_tissue(cell_traction=jnp.asarray(((2.0, -1.0),)))
     evaluation = tissue.evaluate(tissue.initialize_state())
 
@@ -137,9 +131,32 @@ def test_cell_traction_is_distributed_as_a_cell_resultant() -> None:
     assert jnp.allclose(
         jnp.sum(evaluation.active_forces, axis=0), jnp.asarray((2.0, -1.0))
     )
+    tissue = _two_square_tissue()
+    evaluation = tissue.evaluate(tissue.initialize_state())
+
+    assert evaluation.adhesion_routed_tension[-1] == pytest.approx(-0.25)
+    assert jnp.allclose(evaluation.adhesion_routed_tension[:-1], 0.0)
+    assert evaluation.interface_energy == pytest.approx(-0.25)
+    tissue = _square_tissue(field_names=("signal", "mass"))
+    state = tissue.initialize_state(jnp.asarray(((2.0, 3.0),)))
+    coupling = couple_vertex_tissue_particles(
+        tissue,
+        state,
+        jnp.asarray((0, 0, -1)),
+        jnp.asarray(((1.0, 0.0), (0.0, 2.0), (0.0, 0.0))),
+    )
+    vertex_fields = tissue.interpolate_cell_fields(state)
+    spread = tissue.spread_vertex_field_sources(jnp.ones((4, 2)))
+
+    assert coupling.valid
+    assert jnp.allclose(coupling.particle_fields[:2], jnp.asarray(((2.0, 3.0),) * 2))
+    assert jnp.allclose(jnp.sum(coupling.vertex_forces, axis=0), jnp.asarray((1.0, 2.0)))
+    assert coupling.force_conservation_residual == pytest.approx(0.0)
+    assert jnp.allclose(vertex_fields, jnp.asarray(((2.0, 3.0),) * 4))
+    assert jnp.allclose(spread, jnp.asarray(((4.0, 4.0),)))
 
 
-def test_conservative_force_matches_centered_finite_difference() -> None:
+def test_vertex_tissue_scenario_2() -> None:
     tissue = _square_tissue(target_area=0.82, target_perimeter=3.7)
     positions = tissue.reference_positions.at[2].set(jnp.asarray((1.15, 0.92)))
     state = VertexTissueState(positions, jnp.zeros((1, 0)), 0.0, tissue.prepared_id)
@@ -159,9 +176,6 @@ def test_conservative_force_matches_centered_finite_difference() -> None:
     assert jnp.allclose(
         evaluation.conservative_forces, finite_difference, rtol=3.0e-3, atol=3.0e-3
     )
-
-
-def test_energy_is_translation_and_rotation_invariant() -> None:
     tissue = _square_tissue(
         target_area=0.8,
         target_perimeter=3.5,
@@ -189,18 +203,6 @@ def test_energy_is_translation_and_rotation_invariant() -> None:
         rtol=3.0e-6,
         atol=3.0e-6,
     )
-
-
-def test_cell_type_adhesion_routes_only_the_shared_interface() -> None:
-    tissue = _two_square_tissue()
-    evaluation = tissue.evaluate(tissue.initialize_state())
-
-    assert evaluation.adhesion_routed_tension[-1] == pytest.approx(-0.25)
-    assert jnp.allclose(evaluation.adhesion_routed_tension[:-1], 0.0)
-    assert evaluation.interface_energy == pytest.approx(-0.25)
-
-
-def test_overdamped_step_dissipates_passive_energy() -> None:
     tissue = _square_tissue(target_area=0.72, target_perimeter=3.55)
     state = tissue.initialize_state()
     dynamics = VertexTissueDynamicsPlan(1.0e-3, maximum_displacement=0.1).prepare(tissue)
@@ -213,7 +215,7 @@ def test_overdamped_step_dissipates_passive_energy() -> None:
     assert result.after.potential_energy < result.before.potential_energy
 
 
-def test_nonfinite_state_fails_closed_with_zero_loads() -> None:
+def test_vertex_tissue_scenario_3() -> None:
     tissue = _square_tissue()
     positions = tissue.reference_positions.at[0, 0].set(jnp.nan)
     state = VertexTissueState(positions, jnp.zeros((1, 0)), 0.0, tissue.prepared_id)
@@ -222,29 +224,6 @@ def test_nonfinite_state_fails_closed_with_zero_loads() -> None:
     assert not evaluation.finite
     assert not evaluation.valid
     assert jnp.all(evaluation.total_forces == 0.0)
-
-
-def test_cell_field_and_particle_coupling_is_force_conservative() -> None:
-    tissue = _square_tissue(field_names=("signal", "mass"))
-    state = tissue.initialize_state(jnp.asarray(((2.0, 3.0),)))
-    coupling = couple_vertex_tissue_particles(
-        tissue,
-        state,
-        jnp.asarray((0, 0, -1)),
-        jnp.asarray(((1.0, 0.0), (0.0, 2.0), (0.0, 0.0))),
-    )
-    vertex_fields = tissue.interpolate_cell_fields(state)
-    spread = tissue.spread_vertex_field_sources(jnp.ones((4, 2)))
-
-    assert coupling.valid
-    assert jnp.allclose(coupling.particle_fields[:2], jnp.asarray(((2.0, 3.0),) * 2))
-    assert jnp.allclose(jnp.sum(coupling.vertex_forces, axis=0), jnp.asarray((1.0, 2.0)))
-    assert coupling.force_conservation_residual == pytest.approx(0.0)
-    assert jnp.allclose(vertex_fields, jnp.asarray(((2.0, 3.0),) * 4))
-    assert jnp.allclose(spread, jnp.asarray(((4.0, 4.0),)))
-
-
-def test_polygonal_orientation_and_undirected_edge_uniqueness_are_enforced() -> None:
     with pytest.raises(ValueError, match="traverse"):
         polygonal_vertex_tissue_plan(
             jnp.arange(4),
@@ -274,6 +253,13 @@ def test_polygonal_orientation_and_undirected_edge_uniqueness_are_enforced() -> 
             4.0,
             1.0,
         )
+    tissue = _concave_prism_tissue()
+    evaluation = tissue.evaluate(tissue.initialize_state())
+
+    assert evaluation.valid
+    assert evaluation.cell_measure[0] == pytest.approx(3.0)
+    assert evaluation.boundary_measure[0] == pytest.approx(14.0)
+    assert evaluation.potential_energy == pytest.approx(0.0, abs=2.0e-6)
 
 
 def _concave_prism_tissue() -> Any:
@@ -320,16 +306,6 @@ def _concave_prism_tissue() -> Any:
         1.0,
     )
     return plan.prepare(positions)
-
-
-def test_concave_polyhedral_faces_use_oriented_polygon_area() -> None:
-    tissue = _concave_prism_tissue()
-    evaluation = tissue.evaluate(tissue.initialize_state())
-
-    assert evaluation.valid
-    assert evaluation.cell_measure[0] == pytest.approx(3.0)
-    assert evaluation.boundary_measure[0] == pytest.approx(14.0)
-    assert evaluation.potential_energy == pytest.approx(0.0, abs=2.0e-6)
 
 
 def test_duplicate_polyhedral_faces_are_rejected() -> None:

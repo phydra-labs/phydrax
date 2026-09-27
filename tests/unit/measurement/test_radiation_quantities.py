@@ -52,9 +52,7 @@ def _quantity(
     )
 
 
-def test_radiation_catalog_returns_standard_quantity_specs_for_supported_meanings() -> (
-    None
-):
+def test_radiation_quantities_scenario_1() -> None:
     quantities = tuple(_quantity(kind) for kind in phx.measurement.RadiationQuantityKind)
 
     assert all(isinstance(value, phx.measurement.QuantitySpec) for value in quantities)
@@ -62,9 +60,6 @@ def test_radiation_catalog_returns_standard_quantity_specs_for_supported_meaning
         kind.value for kind in phx.measurement.RadiationQuantityKind
     }
     assert all(value.namespace == "radiation" for value in quantities)
-
-
-def test_radiation_meanings_remain_semantically_incompatible() -> None:
     absorbed = _quantity(phx.measurement.RadiationQuantityKind.ABSORBED_DOSE)
     water = _quantity(phx.measurement.RadiationQuantityKind.DOSE_TO_WATER)
     medium = _quantity(phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM)
@@ -85,30 +80,6 @@ def test_radiation_meanings_remain_semantically_incompatible() -> None:
     assert let.unit.dimension == lineal.unit.dimension
     assert not let.compatible_with(lineal)
     assert not activity.compatible_with(integrated_activity)
-
-
-def test_reference_and_support_semantics_participate_in_compatibility() -> None:
-    baseline = _quantity(
-        phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM,
-        reference="water-equivalent-medium",
-    )
-    changed_medium = _quantity(
-        phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM,
-        name="changed-medium-dose",
-        reference="cortical-bone-medium",
-    )
-    changed_support = _quantity(
-        phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM,
-        name="changed-support-dose",
-        reference="water-equivalent-medium",
-        support="point-sample",
-    )
-
-    assert not baseline.compatible_with(changed_medium)
-    assert not baseline.compatible_with(changed_support)
-
-
-def test_radiation_resolution_rejects_wrong_units_and_underspecified_meanings() -> None:
     with pytest.raises(ValueError, match="matching dimensions"):
         phx.measurement.resolve_radiation_quantity(
             "wrong-dose-unit",
@@ -130,9 +101,24 @@ def test_radiation_resolution_rejects_wrong_units_and_underspecified_meanings() 
             phx.units.BECQUEREL_PER_CUBIC_METER,
             reference_configuration="f18-source-at-acquisition-time",
         )
+    baseline = _quantity(
+        phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM,
+        reference="water-equivalent-medium",
+    )
+    changed_medium = _quantity(
+        phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM,
+        name="changed-medium-dose",
+        reference="cortical-bone-medium",
+    )
+    changed_support = _quantity(
+        phx.measurement.RadiationQuantityKind.DOSE_TO_MEDIUM,
+        name="changed-support-dose",
+        reference="water-equivalent-medium",
+        support="point-sample",
+    )
 
-
-def test_nuclear_activity_resolution_uses_the_shared_radiation_identity() -> None:
+    assert not baseline.compatible_with(changed_medium)
+    assert not baseline.compatible_with(changed_support)
     shared = _quantity(
         phx.measurement.RadiationQuantityKind.ACTIVITY,
         name="f18-activity",

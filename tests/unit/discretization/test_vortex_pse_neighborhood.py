@@ -3,7 +3,6 @@
 #
 
 import jax.numpy as jnp
-import pytest
 
 import phydrax as phx
 from phydrax.discretization.vortex._diffusion_complete import (
@@ -29,15 +28,13 @@ def _pairs() -> phx.discretization.particle.ParticlePairRelation:
     )
 
 
-@pytest.mark.parametrize(
-    ("periodic_axes", "domain"),
-    [((True, False), "periodic"), ((False, False), "free-space")],
-)
-def test_pse_neighborhood_domain_follows_box_periodicity(
-    periodic_axes: tuple[bool, bool], domain: str
-) -> None:
-    box = phx.discretization.particle.ParticleBox(
-        jnp.zeros((2,)), jnp.ones((2,)), periodic_axes=periodic_axes
-    )
-    plan = GaussianPSENeighborhoodPlan(_pairs(), 2, 0.1, box=box)
-    assert plan.capabilities.domain == domain
+def test_pse_neighborhood_domain_follows_box_periodicity() -> None:
+    for periodic_axes, domain in [
+        ((True, False), "periodic"),
+        ((False, False), "free-space"),
+    ]:
+        box = phx.discretization.particle.ParticleBox(
+            jnp.zeros((2,)), jnp.ones((2,)), periodic_axes=periodic_axes
+        )
+        plan = GaussianPSENeighborhoodPlan(_pairs(), 2, 0.1, box=box)
+        assert plan.capabilities.domain == domain

@@ -38,34 +38,37 @@ def _periodic_grid(
     ).prepare(jnp.stack((jnp.zeros((dimension,)), jnp.ones((dimension,)))))
 
 
-@pytest.mark.parametrize("degree", [1, 2, 3])
-@pytest.mark.parametrize("dimension", [1, 2, 3])
-def test_periodic_bspline_partition_moments_and_balance(
-    degree: int, dimension: int
-) -> None:
-    grid = _periodic_grid(dimension)
-    particles = _particles(4, dimension)
-    base = jnp.asarray(
-        [[0.13, 0.27, 0.41], [0.62, 0.18, 0.84], [0.35, 0.79, 0.22], [0.91, 0.68, 0.57]]
-    )[:, :dimension]
-    assignment = phx.discretization.TensorBSplineSplatAssignment(degree)
-    prepared = phx.discretization.ParticleGridSplatPlan(
-        grid, assignment=assignment
-    ).prepare(particles)
-    state = prepared.build(base)
-    result = prepared.deposit_content(state, jnp.asarray([1.0, 2.0, 3.0, 4.0]))
+def test_particle_grid_splat_bspline_scenario_1() -> None:
+    for degree in [1, 2, 3]:
+        for dimension in [1, 2, 3]:
+            grid = _periodic_grid(dimension)
+            particles = _particles(4, dimension)
+            base = jnp.asarray(
+                [
+                    [0.13, 0.27, 0.41],
+                    [0.62, 0.18, 0.84],
+                    [0.35, 0.79, 0.22],
+                    [0.91, 0.68, 0.57],
+                ]
+            )[:, :dimension]
+            assignment = phx.discretization.TensorBSplineSplatAssignment(degree)
+            prepared = phx.discretization.ParticleGridSplatPlan(
+                grid, assignment=assignment
+            ).prepare(particles)
+            state = prepared.build(base)
+            result = prepared.deposit_content(state, jnp.asarray([1.0, 2.0, 3.0, 4.0]))
 
-    assert state.stencil.indices.shape == (4, (degree + 1) ** dimension)
-    assert jnp.allclose(state.partition_sums, 1.0, atol=1e-12)
-    assert jnp.min(jnp.where(state.stencil.valid, state.stencil.weights, jnp.inf)) >= 0.0
-    assert jnp.max(jnp.abs(state.first_moments)) < 1e-12
-    assert jnp.max(jnp.abs(state.gradient_sums)) < 1e-11
-    assert jnp.all(jnp.diagonal(state.second_moments, axis1=-2, axis2=-1) > 0.0)
-    assert jnp.allclose(jnp.sum(result.content), 10.0)
-    assert result.balance.closed_domain_conservation_valid
-
-
-def test_degree_one_bspline_matches_multilinear_on_uniform_nodal_grid() -> None:
+            assert state.stencil.indices.shape == (4, (degree + 1) ** dimension)
+            assert jnp.allclose(state.partition_sums, 1.0, atol=1e-12)
+            assert (
+                jnp.min(jnp.where(state.stencil.valid, state.stencil.weights, jnp.inf))
+                >= 0.0
+            )
+            assert jnp.max(jnp.abs(state.first_moments)) < 1e-12
+            assert jnp.max(jnp.abs(state.gradient_sums)) < 1e-11
+            assert jnp.all(jnp.diagonal(state.second_moments, axis1=-2, axis2=-1) > 0.0)
+            assert jnp.allclose(jnp.sum(result.content), 10.0)
+            assert result.balance.closed_domain_conservation_valid
     grid = _periodic_grid(2)
     particles = _particles(3, 2)
     position = jnp.asarray([[0.12, 0.27], [0.61, 0.83], [0.91, 0.06]])
@@ -83,9 +86,6 @@ def test_degree_one_bspline_matches_multilinear_on_uniform_nodal_grid() -> None:
     assert jnp.allclose(result.content, reference.content)
     assert jnp.allclose(result.density, reference.density)
     assert jnp.allclose(result.balance.balance_defect, reference.balance.balance_defect)
-
-
-def test_uniform_cell_face_and_edge_layouts_are_supported() -> None:
     grid = _periodic_grid(2, points=8, cell_primary=True)
     particles = _particles(2, 2)
     position = jnp.asarray([[0.11, 0.23], [0.71, 0.82]])
@@ -105,7 +105,7 @@ def test_uniform_cell_face_and_edge_layouts_are_supported() -> None:
         assert result.balance.closed_domain_conservation_valid
 
 
-def test_bounded_bspline_rejects_or_accounts_for_partial_support() -> None:
+def test_particle_grid_splat_bspline_scenario_2() -> None:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
@@ -136,9 +136,6 @@ def test_bounded_bspline_rejects_or_accounts_for_partial_support() -> None:
     )
     assert result.balance.maximum_absolute_balance_defect < 1e-12
     assert not result.balance.closed_domain_conservation_valid
-
-
-def test_route_weight_gradients_match_jax_jacobian() -> None:
     grid = _periodic_grid(1)
     particles = _particles(1, 1)
     prepared = phx.discretization.ParticleGridSplatPlan(
@@ -151,9 +148,6 @@ def test_route_weight_gradients_match_jax_jacobian() -> None:
 
     assert jnp.allclose(state.weight_gradients[..., 0], jacobian[:, :, 0, 0], atol=1e-12)
     assert jnp.max(jnp.abs(state.gradient_sums)) < 1e-12
-
-
-def test_bspline_rejects_invalid_degree_nonuniform_axes_and_budget() -> None:
     with pytest.raises(ValueError, match="degrees"):
         phx.discretization.TensorBSplineSplatAssignment(4)
     axis = phx.discretization.AxisDiscretization(

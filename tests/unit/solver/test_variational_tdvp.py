@@ -4,7 +4,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import pytest
 
 import phydrax as phx
 
@@ -88,7 +87,7 @@ def _exact_energy(model: Any) -> Any:
     return jnp.real(jnp.vdot(state, _HAMILTONIAN @ state) / jnp.vdot(state, state))
 
 
-def test_imaginary_time_tdvp_decreases_exact_energy() -> None:
+def test_variational_tdvp_scenario_1() -> None:
     problem = _problem(jnp.asarray([0.2, -0.1, 0.1, -0.2]))
     policy = phx.solver.VariationalTDVPPolicy(
         "imaginary-time",
@@ -124,36 +123,33 @@ def test_imaginary_time_tdvp_decreases_exact_energy() -> None:
     )
     assert resumed.completed_steps == 3
     assert jnp.allclose(resumed.times, jnp.asarray([0.06, 0.09]))
+    for mode in ["real-time", "imaginary-time"]:
+        _eigenvalues, eigenvectors = jnp.linalg.eigh(_HAMILTONIAN)
+        ground = eigenvectors[:, 0]
+        phase = jnp.sign(ground)
+        parameters = jnp.log(jnp.abs(ground)) + 1j * jnp.where(phase < 0.0, jnp.pi, 0.0)
+        problem = phx.solver.VariationalMonteCarloProblem(
+            _TableModel(parameters),
+            _operator(),
+            _kernel(),
+            jnp.asarray([[1, 1], [1, -1], [-1, 1], [-1, -1]], dtype=jnp.int32),
+            complex_parameter_mode="holomorphic",
+        )
+        policy = phx.solver.VariationalTDVPPolicy(
+            mode,
+            num_steps=1,
+            step_size=1e-3,
+            draws_per_step=8,
+            final_evaluation_draws=8,
+            damping=0.1,
+            final_chain_diagnostics=False,
+        )
+        result = phx.solver.solve_variational_tdvp(problem, policy, key=jr.key(31))
 
-
-@pytest.mark.parametrize("mode", ["real-time", "imaginary-time"])
-def test_tdvp_stationary_eigenstate_has_zero_velocity(mode: Any) -> None:
-    _eigenvalues, eigenvectors = jnp.linalg.eigh(_HAMILTONIAN)
-    ground = eigenvectors[:, 0]
-    phase = jnp.sign(ground)
-    parameters = jnp.log(jnp.abs(ground)) + 1j * jnp.where(phase < 0.0, jnp.pi, 0.0)
-    problem = phx.solver.VariationalMonteCarloProblem(
-        _TableModel(parameters),
-        _operator(),
-        _kernel(),
-        jnp.asarray([[1, 1], [1, -1], [-1, 1], [-1, -1]], dtype=jnp.int32),
-        complex_parameter_mode="holomorphic",
-    )
-    policy = phx.solver.VariationalTDVPPolicy(
-        mode,
-        num_steps=1,
-        step_size=1e-3,
-        draws_per_step=8,
-        final_evaluation_draws=8,
-        damping=0.1,
-        final_chain_diagnostics=False,
-    )
-    result = phx.solver.solve_variational_tdvp(problem, policy, key=jr.key(31))
-
-    assert result.successful
-    assert jnp.allclose(
-        result.final_state.parameter_coordinates,
-        problem.initial_coordinates,
-        atol=1e-8,
-    )
-    assert result.velocity_norm_history[0] < 1e-8
+        assert result.successful
+        assert jnp.allclose(
+            result.final_state.parameter_coordinates,
+            problem.initial_coordinates,
+            atol=1e-8,
+        )
+        assert result.velocity_norm_history[0] < 1e-8

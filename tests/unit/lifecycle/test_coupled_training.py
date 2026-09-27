@@ -165,34 +165,33 @@ def _assert_trees_equal(actual: Any, expected: Any) -> None:
         np.testing.assert_array_equal(data(left), data(right))
 
 
-@pytest.mark.parametrize("policy", list(CoupledTrainingPolicy))
-def test_accepted_physical_and_training_steps_commit_together(policy: Any) -> None:
-    plant, parameters, plant_state = _plant(2)
-    kernel, kernel_state = _kernel(_DriftEstimator(jnp.asarray(0.0), jnp.asarray(0.0)))
-    hooks = []
-    result = coupled_training_step(
-        plant,
-        plant_state,
-        kernel,
-        kernel_state,
-        _observed_drift,
-        policy,
-        context=_context(plant_state),
-        commands=jnp.asarray([1.0, 0.5]),
-        plant_parameters=parameters,
-        hooks=(lambda *args: hooks.append(args),),
-    )
+def test_coupled_training_scenario_1() -> None:
+    for policy in list(CoupledTrainingPolicy):
+        plant, parameters, plant_state = _plant(2)
+        kernel, kernel_state = _kernel(
+            _DriftEstimator(jnp.asarray(0.0), jnp.asarray(0.0))
+        )
+        hooks = []
+        result = coupled_training_step(
+            plant,
+            plant_state,
+            kernel,
+            kernel_state,
+            _observed_drift,
+            policy,
+            context=_context(plant_state),
+            commands=jnp.asarray([1.0, 0.5]),
+            plant_parameters=parameters,
+            hooks=(lambda *args: hooks.append(args),),
+        )
 
-    np.testing.assert_array_equal(result.plant_state.payload["x"], [2.0, 1.0])
-    # d/drate mean((delta - rate)^2) = -3 at rate 0; one sgd step of 0.25.
-    np.testing.assert_allclose(result.kernel_state.parameters.rate, 0.75)
-    assert float(result.kernel_state.model_state.updates) == 1.0
-    assert int(result.kernel_state.accepted_cursor) == 1
-    assert bool(result.evidence.training_committed)
-    assert len(hooks) == 1
-
-
-def test_nonfinite_training_on_a_valid_step_rolls_back_only_training() -> None:
+        np.testing.assert_array_equal(result.plant_state.payload["x"], [2.0, 1.0])
+        # d/drate mean((delta - rate)^2) = -3 at rate 0; one sgd step of 0.25.
+        np.testing.assert_allclose(result.kernel_state.parameters.rate, 0.75)
+        assert float(result.kernel_state.model_state.updates) == 1.0
+        assert int(result.kernel_state.accepted_cursor) == 1
+        assert bool(result.evidence.training_committed)
+        assert len(hooks) == 1
     plant, parameters, plant_state = _plant(2)
     kernel, kernel_state = _kernel(_DriftEstimator(jnp.asarray(0.0), jnp.asarray(0.0)))
     result = coupled_training_step(
@@ -213,9 +212,6 @@ def test_nonfinite_training_on_a_valid_step_rolls_back_only_training() -> None:
     _assert_trees_equal(result.kernel_state.rule_state, kernel_state.rule_state)
     _assert_trees_equal(result.kernel_state.model_state, kernel_state.model_state)
     assert int(result.kernel_state.nonfinite_rejections) == 1
-
-
-def test_per_lane_parameters_commit_only_physically_accepted_lanes() -> None:
     plant, parameters, plant_state = _plant(2)
     tree = _DriftEstimator(jnp.zeros((2,)), jnp.zeros((2,)))
     kernel, kernel_state = _kernel(

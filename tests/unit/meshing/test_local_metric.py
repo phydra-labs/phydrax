@@ -131,26 +131,19 @@ def _edge_metric_lengths(mesh: Any, tensor: Any, /) -> Any:
     return np.sqrt(np.sum((delta @ tensor) * delta, axis=1))
 
 
-@pytest.mark.parametrize(
-    "tensor",
-    [np.eye(2) / 0.2**2, np.diag((1.0 / 0.5**2, 1.0 / 0.1**2))],
-    ids=["isotropic", "anisotropic"],
-)
-def test_metric_adaptation_reaches_the_unit_mesh(tensor: Any) -> None:
-    source = _source()
-    result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
+def test_local_metric_scenario_1() -> None:
+    for tensor in [np.eye(2) / 0.2**2, np.diag((1.0 / 0.5**2, 1.0 / 0.1**2))]:
+        source = _source()
+        result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
 
-    assert result.status is MeshAdaptationStatus.COMPLETE
-    assert result.evidence.converged
-    assert result.evidence.unit_fraction == 1.0
-    lengths = _edge_metric_lengths(result.target.mesh, tensor)
-    assert np.all((lengths >= _LOWER - 1.0e-12) & (lengths <= _UPPER + 1.0e-12))
-    areas = _signed_areas(result.target.mesh)
-    assert np.all(areas > 0.0)
-    assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
-
-
-def test_metric_adaptation_coarsens_a_fine_mesh() -> None:
+        assert result.status is MeshAdaptationStatus.COMPLETE
+        assert result.evidence.converged
+        assert result.evidence.unit_fraction == 1.0
+        lengths = _edge_metric_lengths(result.target.mesh, tensor)
+        assert np.all((lengths >= _LOWER - 1.0e-12) & (lengths <= _UPPER + 1.0e-12))
+        areas = _signed_areas(result.target.mesh)
+        assert np.all(areas > 0.0)
+        assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
     source = _source(8)
     tensor = np.eye(2) / 0.45**2
     result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
@@ -159,9 +152,6 @@ def test_metric_adaptation_coarsens_a_fine_mesh() -> None:
     assert result.evidence.collapses > 0
     assert result.target.mesh.coordinates.shape[0] < source.mesh.coordinates.shape[0]
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
-
-
-def test_metric_adaptation_preserves_zones_patches_and_interfaces() -> None:
     source = _source(organized=True)
     tensor = np.eye(2) / 0.12**2
     result = _adapt(source, MetricMeshAdaptation(_metric(source, tensor)))
@@ -196,9 +186,6 @@ def test_metric_adaptation_preserves_zones_patches_and_interfaces() -> None:
         np.abs(np.diff(points[edges[on_interface]][:, :, 1], axis=1))
     )
     assert interface_length == pytest.approx(1.0, abs=1.0e-14)
-
-
-def test_metric_adaptation_is_deterministic() -> None:
     source = _source(perturbation=0.3)
     metric = _metric(source, np.diag((1.0 / 0.3**2, 1.0 / 0.12**2)))
 
@@ -207,6 +194,20 @@ def test_metric_adaptation_is_deterministic() -> None:
 
     assert first.result_id == second.result_id
     assert first.target.mesh.mesh_id == second.target.mesh.mesh_id
+    source = _source(6, perturbation=0.35)
+    result = _adapt(
+        source, RelocationMeshAdaptation(_metric(source, np.eye(2) / 0.17**2))
+    )
+
+    assert result.evidence.relocations > 0
+    assert (
+        result.evidence.splits == result.evidence.collapses == result.evidence.flips == 0
+    )
+    assert result.target.mesh.topology_id == source.mesh.topology_id
+    assert not np.array_equal(
+        np.asarray(result.target.mesh.coordinates), np.asarray(source.mesh.coordinates)
+    )
+    assert np.all(_signed_areas(result.target.mesh) > 0.0)
 
 
 def test_metric_adaptation_transfers_linear_fields_exactly() -> None:
@@ -234,20 +235,3 @@ def test_metric_adaptation_transfers_linear_fields_exactly() -> None:
     ]
     expected = field(np.asarray(target_mesh.coordinates)[rows])
     np.testing.assert_allclose(np.asarray(values), expected, rtol=0.0, atol=1.0e-13)
-
-
-def test_relocation_only_adaptation_keeps_topology() -> None:
-    source = _source(6, perturbation=0.35)
-    result = _adapt(
-        source, RelocationMeshAdaptation(_metric(source, np.eye(2) / 0.17**2))
-    )
-
-    assert result.evidence.relocations > 0
-    assert (
-        result.evidence.splits == result.evidence.collapses == result.evidence.flips == 0
-    )
-    assert result.target.mesh.topology_id == source.mesh.topology_id
-    assert not np.array_equal(
-        np.asarray(result.target.mesh.coordinates), np.asarray(source.mesh.coordinates)
-    )
-    assert np.all(_signed_areas(result.target.mesh) > 0.0)

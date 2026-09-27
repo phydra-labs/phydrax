@@ -51,7 +51,7 @@ def _solve(problem: Any, initial: Any, *, steps: Any = 180) -> Any:
     )
 
 
-def test_mma_recovers_analytic_reciprocal_optimum_and_certificate() -> None:
+def test_mma_contracts() -> None:
     coefficients = jnp.asarray((0.5, 1.0, 2.0, 3.0, 4.0, 1.5))
     volume = 3.0
     expected = jnp.sqrt(coefficients)
@@ -66,9 +66,6 @@ def test_mma_recovers_analytic_reciprocal_optimum_and_certificate() -> None:
     assert result.optimality_certificate.certified
     assert result.diagnostics.primal_feasibility <= 2.0e-6
     assert isinstance(result.method_evidence, phx.optim.MMAEvidence)
-
-
-def test_mma_handles_pytree_design_and_two_binding_constraints() -> None:
     coefficients = jnp.asarray((1.0, 1.5, 2.0, 2.5))
     initial = {"density": jnp.asarray((0.3, 0.3, 0.7, 0.7))}
     weights = jnp.asarray((1.0, 1.0, 0.0, 0.0))
@@ -101,18 +98,12 @@ def test_mma_handles_pytree_design_and_two_binding_constraints() -> None:
         "constraint:0:0:upper",
         "constraint:1:0:upper",
     )
-
-
-def test_mma_is_jittable_for_fixed_problem_structure() -> None:
     coefficients = jnp.asarray((1.0, 2.0, 3.0))
     problem = _problem(coefficients, 1.5)
     solve = eqx.filter_jit(lambda initial: _solve(problem, initial, steps=80).parameters)
     result = solve(jnp.full((3,), 0.5))
     assert bool(jnp.all(jnp.isfinite(result)))
     assert float(jnp.sum(result)) <= 1.5 + 5.0e-5
-
-
-def test_mma_rejects_missing_finite_bounds_equalities_and_infeasible_start() -> None:
     constraint = phx.optim.NonlinearConstraint(
         lambda value, _: jnp.sum(value),
         upper=1.0,
@@ -170,9 +161,6 @@ def test_mma_rejects_missing_finite_bounds_equalities_and_infeasible_start() -> 
         args=None,
     )
     assert int(result.status) == int(phx.optim.OptimizationStatus.INFEASIBLE)
-
-
-def test_mma_reports_evaluation_budget_exhaustion_before_first_step() -> None:
     result = phx.optim.minimize(
         _problem(jnp.asarray((1.0, 2.0)), 1.0),
         jnp.asarray((0.5, 0.5)),

@@ -29,7 +29,7 @@ from benchmarks._runtime import (
 from phydrax._fingerprint import canonical_fingerprint
 
 
-def test_duration_distribution_derives_both_unit_views_from_raw_samples() -> None:
+def test_benchmark_runtime_scenario_1() -> None:
     distribution = DurationDistribution((0.001, 0.003, 0.002))
 
     assert distribution.count == 3
@@ -50,9 +50,6 @@ def test_duration_distribution_derives_both_unit_views_from_raw_samples() -> Non
         "std_ms": pytest.approx(float(np.std([1.0, 3.0, 2.0]))),
         "max_ms": 3.0,
     }
-
-
-def test_duration_distribution_empty_and_invalid_contracts() -> None:
     assert DurationDistribution(()).to_seconds_dict() == {
         "count": 0,
         "samples_seconds": [],
@@ -67,6 +64,36 @@ def test_duration_distribution_empty_and_invalid_contracts() -> None:
             DurationDistribution(samples)
     with pytest.raises(ValueError, match="Duration unit"):
         DurationDistribution((1.0,)).to_dict(unit="minutes")  # ty: ignore[invalid-argument-type]
+    value = _NestedArrays(
+        {"array": jnp.ones((2,), dtype=jnp.float32)},
+        (np.ones((3,), dtype=np.float64), "host"),
+    )
+
+    assert synchronize(value) is value
+    assert logical_array_bytes(value) == 2 * 4 + 3 * 8
+    evidence = compiler_evidence(
+        {"flops": 101.2, "bytes accessed": 202.4},
+        # ty: ignore[invalid-argument-type]
+        _MemoryAnalysis(),
+        source="xla-cost-analysis",
+    )
+    assert evidence.flops == 101
+    assert evidence.bytes_accessed == 202
+    assert evidence.estimated_device_memory_bytes == 60
+
+    unavailable = compiler_evidence(
+        None,
+        None,
+        source="xla-cost-analysis",
+        unavailable_reason="unsupported backend",
+    )
+    assert unavailable.estimated_device_memory_bytes is None
+    assert unavailable.unavailable_reason == "unsupported backend"
+
+    not_applicable = CompilerEvidence(0, 0, 0, 0, 0, 0, "not-applicable")
+    assert not_applicable.estimated_device_memory_bytes == 0
+    with pytest.raises(ValueError, match="requires a reason"):
+        CompilerEvidence(None, None, None, None, None, None, "xla-cost-analysis")
 
 
 def test_measure_repeated_synchronizes_warmups_and_retains_every_sample() -> None:
@@ -156,50 +183,12 @@ class _NestedArrays:
     second: object
 
 
-def test_synchronize_and_logical_bytes_cover_nested_pytrees() -> None:
-    value = _NestedArrays(
-        {"array": jnp.ones((2,), dtype=jnp.float32)},
-        (np.ones((3,), dtype=np.float64), "host"),
-    )
-
-    assert synchronize(value) is value
-    assert logical_array_bytes(value) == 2 * 4 + 3 * 8
-
-
 @dataclass(frozen=True)
 class _MemoryAnalysis:
     argument_size_in_bytes: int = 10
     output_size_in_bytes: int = 20
     temp_size_in_bytes: int = 30
     generated_code_size_in_bytes: int = 40
-
-
-def test_compiler_evidence_distinguishes_values_unavailability_and_not_applicable() -> (
-    None
-):
-    evidence = compiler_evidence(
-        {"flops": 101.2, "bytes accessed": 202.4},
-        # ty: ignore[invalid-argument-type]
-        _MemoryAnalysis(),
-        source="xla-cost-analysis",
-    )
-    assert evidence.flops == 101
-    assert evidence.bytes_accessed == 202
-    assert evidence.estimated_device_memory_bytes == 60
-
-    unavailable = compiler_evidence(
-        None,
-        None,
-        source="xla-cost-analysis",
-        unavailable_reason="unsupported backend",
-    )
-    assert unavailable.estimated_device_memory_bytes is None
-    assert unavailable.unavailable_reason == "unsupported backend"
-
-    not_applicable = CompilerEvidence(0, 0, 0, 0, 0, 0, "not-applicable")
-    assert not_applicable.estimated_device_memory_bytes == 0
-    with pytest.raises(ValueError, match="requires a reason"):
-        CompilerEvidence(None, None, None, None, None, None, "xla-cost-analysis")
 
 
 class _Distribution:

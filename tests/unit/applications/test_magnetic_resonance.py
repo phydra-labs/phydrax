@@ -22,7 +22,7 @@ def _test_isotope(name: Any, gamma_hz_t: Any) -> Any:
     return mr.ResonanceIsotope(name, "nucleus", 0.5, 2.0 * math.pi * gamma_hz_t)
 
 
-def test_signed_larmor_frequency_and_fft_receiver_convention() -> None:
+def test_magnetic_resonance_scenario_1() -> None:
     isotope = _test_isotope("L", 100.0)
     profile = mr.ExactSingleCrystalNMRProfile(
         mr.MagneticResonanceSpinSystem(
@@ -55,9 +55,6 @@ def test_signed_larmor_frequency_and_fft_receiver_convention() -> None:
     assert fid.step_unitarity_residual < 1.0e-8
     assert jnp.allclose(instrument.detected_fid, -2.0j * fid.signal)
     assert jnp.array_equal(instrument.bare_fid.signal, fid.signal)
-
-
-def test_exact_finite_pulse_has_rabi_probability() -> None:
     isotope = _test_isotope("R", 100.0)
     prepared = mr.ExactSingleCrystalNMRProfile(
         mr.MagneticResonanceSpinSystem(
@@ -80,9 +77,6 @@ def test_exact_finite_pulse_has_rabi_probability() -> None:
     assert result.evidence.valid
     assert jnp.isclose(jnp.real(result.density_matrices[-1, 1, 1]), 1.0, atol=1.0e-6)
     assert jnp.isclose(jnp.real(result.density_matrices[-1, 0, 0]), 0.0, atol=1.0e-6)
-
-
-def test_ax_hamiltonian_uses_signed_zeeman_and_full_isotropic_j() -> None:
     isotope_a = _test_isotope("A", 10.0)
     isotope_x = _test_isotope("X", 4.0)
     coupling_hz = 2.5
@@ -110,7 +104,7 @@ def test_ax_hamiltonian_uses_signed_zeeman_and_full_isotropic_j() -> None:
     assert jnp.allclose(dense, expected, atol=1.0e-8)
 
 
-def test_hahn_sequence_refocuses_static_offset_with_exact_finite_pulses() -> None:
+def test_magnetic_resonance_scenario_2() -> None:
     isotope = _test_isotope("Hahn", 1.0)
     system = mr.MagneticResonanceSpinSystem(
         (mr.SpinSite("Hahn", isotope),),
@@ -154,9 +148,6 @@ def test_hahn_sequence_refocuses_static_offset_with_exact_finite_pulses() -> Non
     assert result.evidence.valid
     assert reference_result.evidence.valid
     assert jnp.allclose(echo, reference_echo, atol=2.0e-3)
-
-
-def test_spin_quadrupole_and_dense_resource_guards_refuse_invalid_systems() -> None:
     with pytest.raises(ValueError, match="integer or half-integer"):
         mr.ResonanceIsotope("bad", "nucleus", 0.7, 1.0)
 
@@ -208,9 +199,6 @@ def test_spin_quadrupole_and_dense_resource_guards_refuse_invalid_systems() -> N
     )
     with pytest.raises(ValueError, match=r"D\^2=16"):
         mr.prepare_spin_system(guarded)
-
-
-def test_epr_and_static_site_musr_are_distinct_signed_profiles() -> None:
     electron_system = mr.MagneticResonanceSpinSystem(
         (mr.SpinSite("e", mr.ELECTRON),),
         # ty: ignore[invalid-argument-type]
@@ -231,9 +219,6 @@ def test_epr_and_static_site_musr_are_distinct_signed_profiles() -> None:
     assert musr.system.sites[0].isotope.gyromagnetic_ratio_rad_s_t > 0.0
     with pytest.raises(ValueError, match="nuclear spin sites only"):
         mr.ExactSingleCrystalNMRProfile(electron_system)
-
-
-def test_epr_profile_rejects_non_nuclear_companion_sites() -> None:
     mixed = mr.MagneticResonanceSpinSystem(
         (
             mr.SpinSite("e", mr.ELECTRON),

@@ -17,7 +17,7 @@ from phydrax.discretization.finite_volume._contact_angle import (
 )
 
 
-def test_condition_validates_angle_tolerance_and_body_tag() -> None:
+def test_contact_angle_scenario_1() -> None:
     condition = ContactAngleCondition(7, np.pi / 2.0, 1.0e-5, "wall-7")
     assert condition.body_tag == 7
     assert condition.condition_id == "wall-7"
@@ -32,9 +32,6 @@ def test_condition_validates_angle_tolerance_and_body_tag() -> None:
         ContactAngleCondition(-1, np.pi / 2.0, 1.0e-5, "wall-7")
     with pytest.raises(TypeError, match="body_tag"):
         ContactAngleCondition(True, np.pi / 2.0, 1.0e-5, "wall-7")
-
-
-def test_oblique_wall_preserves_norm_and_declared_cosine() -> None:
     wall = np.asarray((1.0, 2.0))
     plic = np.asarray((-2.0, 1.0))
     condition = ContactAngleCondition(3, np.pi / 3.0, 1.0e-5, "oblique")
@@ -50,31 +47,25 @@ def test_oblique_wall_preserves_norm_and_declared_cosine() -> None:
     assert int(np.asarray(result.status)) == int(ContactAngleStatus.SUCCESS)
     assert result.body_tag == condition.body_tag
     assert result.condition_id == condition.condition_id
+    for angle in (1.0e-6, np.pi / 2.0, np.pi - 1.0e-6):
+        condition = ContactAngleCondition(7, angle, 1.0e-5, f"limit-{angle}")
+        result = reconstruct_wall_interface_normal(
+            np.asarray((1.0, 0.2)),
+            np.asarray((-0.3, 1.0)),
+            condition,
+        )
+        wall_unit = np.asarray((-0.3, 1.0)) / np.linalg.norm((-0.3, 1.0))
+        normal = np.asarray(result.normal)
+        np.testing.assert_allclose(np.linalg.norm(normal), 1.0, atol=1.0e-6)
+        np.testing.assert_allclose(
+            normal @ wall_unit,
+            np.cos(angle),
+            atol=condition.tolerance,
+        )
+        assert int(np.asarray(result.status)) == int(ContactAngleStatus.SUCCESS)
 
 
-@pytest.mark.parametrize(
-    "angle",
-    (1.0e-6, np.pi / 2.0, np.pi - 1.0e-6),
-)
-def test_limiting_contact_angles(angle: Any) -> None:
-    condition = ContactAngleCondition(7, angle, 1.0e-5, f"limit-{angle}")
-    result = reconstruct_wall_interface_normal(
-        np.asarray((1.0, 0.2)),
-        np.asarray((-0.3, 1.0)),
-        condition,
-    )
-    wall_unit = np.asarray((-0.3, 1.0)) / np.linalg.norm((-0.3, 1.0))
-    normal = np.asarray(result.normal)
-    np.testing.assert_allclose(np.linalg.norm(normal), 1.0, atol=1.0e-6)
-    np.testing.assert_allclose(
-        normal @ wall_unit,
-        np.cos(angle),
-        atol=condition.tolerance,
-    )
-    assert int(np.asarray(result.status)) == int(ContactAngleStatus.SUCCESS)
-
-
-def test_contact_angle_set_requires_exact_coverage_and_fresh_ids() -> None:
+def test_contact_angle_scenario_2() -> None:
     first = ContactAngleCondition(3, np.pi / 2.0, 1.0e-5, "first")
     second = ContactAngleCondition(8, np.pi / 4.0, 1.0e-5, "second")
     policies = EmbeddedBoundaryContactAngleSet(
@@ -92,9 +83,6 @@ def test_contact_angle_set_requires_exact_coverage_and_fresh_ids() -> None:
     result = policies.reconstruct(np.asarray((1.0, 0.0)), np.asarray((0.0, 1.0)), 3)
     assert result.geometry_id == "geometry-1"
     assert result.plic_id == "plic-1"
-
-
-def test_contact_angle_set_rejects_mismatched_or_duplicate_policies() -> None:
     with pytest.raises(ValueError, match="key"):
         EmbeddedBoundaryContactAngleSet(
             {4: ContactAngleCondition(3, np.pi / 2.0, 1.0e-5, "wrong")},
@@ -106,9 +94,6 @@ def test_contact_angle_set_rejects_mismatched_or_duplicate_policies() -> None:
         EmbeddedBoundaryContactAngleSet(
             (condition, condition), geometry_id="geometry", plic_id="plic"
         )
-
-
-def test_degenerate_tangent_projection_fails() -> None:
     condition = ContactAngleCondition(3, np.pi / 2.0, 1.0e-5, "degenerate")
     with pytest.raises(Exception, match="degenerate projection"):
         # ty: ignore[invalid-argument-type]

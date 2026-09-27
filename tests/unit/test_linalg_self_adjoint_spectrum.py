@@ -99,7 +99,7 @@ def _matrix_free_generalized_problem(
     )
 
 
-def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values() -> None:
+def test_linalg_self_adjoint_spectrum_scenario_1() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 0.4, 0.0, 0.0],
@@ -148,9 +148,6 @@ def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values()
                 )
             ),
         )
-
-
-def test_generalized_spectrum_honors_declared_pairing_and_metric() -> None:
     pairing_weights = jnp.asarray([2.0, 3.0, 5.0, 7.0])
     space = la.ArraySpace(
         (4,),
@@ -199,9 +196,6 @@ def test_generalized_spectrum_honors_declared_pairing_and_metric() -> None:
         jnp.eye(4),
         atol=1e-12,
     )
-
-
-def test_spectrum_planning_rejects_constraints_and_resource_overflow() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     operator = la.DiagonalLinearOperator(
         diagonal,
@@ -226,7 +220,7 @@ def test_spectrum_planning_rejects_constraints_and_resource_overflow() -> None:
         )
 
 
-def test_projector_is_basis_invariant_for_repeated_internal_eigenvalues() -> None:
+def test_linalg_self_adjoint_spectrum_scenario_2() -> None:
     matrix = jnp.diag(jnp.asarray([1.0, 1.0, 4.0, 7.0]))
     spectrum = eigen.prepare_self_adjoint_spectrum(_standard_problem(matrix))
     selection = eigen.SpectralSelection.real_below(
@@ -258,190 +252,6 @@ def test_projector_is_basis_invariant_for_repeated_internal_eigenvalues() -> Non
     assert jnp.allclose(subspace.projector, jnp.diag(jnp.asarray([1.0, 1.0, 0.0, 0.0])))
     assert jnp.allclose(rotated.projector, subspace.projector, atol=1e-12)
     assert subspace.diagnostics.idempotence_error < 1e-12
-
-
-@pytest.mark.parametrize(
-    "problem_factory",
-    (_standard_problem, _matrix_free_standard_problem),
-)
-def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_difference(
-    problem_factory: Any,
-) -> None:
-    matrix = jnp.asarray(
-        [
-            [1.0, 0.0, 0.1, 0.0],
-            [0.0, 1.0, -0.2, 0.0],
-            [0.1, -0.2, 4.0, 0.3],
-            [0.0, 0.0, 0.3, 7.0],
-        ]
-    )
-    perturbation = jnp.asarray(
-        [
-            [0.1, -0.2, 0.3, 0.0],
-            [-0.2, -0.1, 0.2, 0.1],
-            [0.3, 0.2, 0.4, -0.1],
-            [0.0, 0.1, -0.1, -0.2],
-        ]
-    )
-    selection = eigen.SpectralSelection.real_below(2.0, expected_dimension=2)
-    policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
-
-    def projector(current: Any) -> Any:
-        return eigen.self_adjoint_spectral_subspace(
-            problem_factory(current),
-            selection,
-            policy=policy,
-        ).projector
-
-    primal, tangent = jax.jit(jax.jvp, static_argnums=0)(
-        projector,
-        (matrix,),
-        (perturbation,),
-    )
-    prepared = eigen.prepare_self_adjoint_spectrum(problem_factory(matrix))
-    explicit = eigen.self_adjoint_spectral_projector_derivative(
-        prepared,
-        selection,
-        perturbation,
-    )
-    step = 1e-5
-    finite_difference = (
-        projector(matrix + step * perturbation) - projector(matrix - step * perturbation)
-    ) / (2 * step)
-    cotangent = jnp.asarray(
-        [
-            [0.2, -0.1, 0.3, 0.0],
-            [-0.1, 0.4, -0.2, 0.1],
-            [0.3, -0.2, -0.2, 0.2],
-            [0.0, 0.1, 0.2, 0.1],
-        ]
-    )
-    reverse = jax.jit(jax.grad(lambda value: jnp.sum(projector(value) * cotangent)))(
-        matrix
-    )
-
-    assert jnp.all(jnp.isfinite(primal))
-    assert jnp.allclose(tangent, explicit.projector, rtol=1e-8, atol=1e-9)
-    assert jnp.allclose(tangent, finite_difference, rtol=3e-6, atol=3e-7)
-    assert jnp.allclose(
-        jnp.sum(reverse * perturbation),
-        jnp.sum(cotangent * tangent),
-        rtol=1e-9,
-        atol=1e-10,
-    )
-    assert bool(explicit.successful)
-    assert explicit.diagnostics.relative_residual < 1e-12
-
-
-def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_finite_difference() -> (
-    None
-):
-    matrix = jnp.asarray(
-        [
-            [1.0 + 0.0j, 0.0, 0.0 + 0.1j, 0.0],
-            [0.0, 1.0 + 0.0j, 0.2 + 0.0j, 0.0],
-            [0.0 - 0.1j, 0.2 + 0.0j, 4.0 + 0.0j, 0.0 + 0.1j],
-            [0.0, 0.0, 0.0 - 0.1j, 7.0 + 0.0j],
-        ]
-    )
-    perturbation = jnp.asarray(
-        [
-            [0.1 + 0.0j, 0.2 + 0.1j, 0.3 - 0.2j, 0.0],
-            [0.2 - 0.1j, -0.1 + 0.0j, 0.2 + 0.1j, 0.0 + 0.1j],
-            [0.3 + 0.2j, 0.2 - 0.1j, 0.4 + 0.0j, -0.1 + 0.1j],
-            [0.0, 0.0 - 0.1j, -0.1 - 0.1j, -0.2 + 0.0j],
-        ]
-    )
-    selection = eigen.SpectralSelection.real_below(2.0, expected_dimension=2)
-    policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
-
-    def projector(current: Any) -> Any:
-        return eigen.self_adjoint_spectral_subspace(
-            _standard_problem(current),
-            selection,
-            policy=policy,
-        ).projector
-
-    _, tangent = jax.jvp(projector, (matrix,), (perturbation,))
-    step = 1e-5
-    finite_difference = (
-        projector(matrix + step * perturbation) - projector(matrix - step * perturbation)
-    ) / (2 * step)
-
-    assert jnp.all(jnp.isfinite(tangent))
-    assert jnp.allclose(tangent, jnp.conj(tangent.T), atol=1e-12)
-    assert jnp.allclose(tangent, finite_difference, rtol=3e-6, atol=3e-7)
-
-
-@pytest.mark.parametrize(
-    "problem_factory",
-    (_generalized_problem, _matrix_free_generalized_problem),
-)
-def test_generalized_projector_and_density_derivatives_include_metric_perturbations(
-    problem_factory: Any,
-) -> None:
-    operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
-    metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
-    operator_perturbation = jnp.asarray(
-        [
-            [0.1, 0.2, 0.0, 0.0],
-            [0.2, -0.1, 0.3, 0.0],
-            [0.0, 0.3, 0.2, 0.1],
-            [0.0, 0.0, 0.1, -0.2],
-        ]
-    )
-    metric_perturbation = jnp.asarray(
-        [
-            [0.02, -0.01, 0.0, 0.0],
-            [-0.01, 0.03, 0.02, 0.0],
-            [0.0, 0.02, -0.01, 0.01],
-            [0.0, 0.0, 0.01, 0.02],
-        ]
-    )
-    selection = eigen.SpectralSelection.real_below(3.0, expected_dimension=2)
-    policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
-
-    def outputs(current_operator: Any, current_metric: Any) -> Any:
-        result = eigen.self_adjoint_spectral_subspace(
-            problem_factory(current_operator, current_metric),
-            selection,
-            policy=policy,
-        )
-        return result.projector, result.density_kernel
-
-    _, tangent = jax.jvp(
-        outputs,
-        (operator, metric),
-        (operator_perturbation, metric_perturbation),
-    )
-    prepared = eigen.prepare_self_adjoint_spectrum(problem_factory(operator, metric))
-    explicit = eigen.self_adjoint_spectral_projector_derivative(
-        prepared,
-        selection,
-        operator_perturbation,
-        metric_perturbation,
-    )
-    step = 1e-5
-    plus = outputs(
-        operator + step * operator_perturbation,
-        metric + step * metric_perturbation,
-    )
-    minus = outputs(
-        operator - step * operator_perturbation,
-        metric - step * metric_perturbation,
-    )
-    finite_difference = tuple(
-        (upper - lower) / (2 * step) for upper, lower in zip(plus, minus, strict=True)
-    )
-
-    assert jnp.allclose(tangent[0], explicit.projector, rtol=1e-8, atol=1e-9)
-    assert jnp.allclose(tangent[1], explicit.density_kernel, rtol=1e-8, atol=1e-9)
-    assert jnp.allclose(tangent[0], finite_difference[0], rtol=5e-6, atol=5e-7)
-    assert jnp.allclose(tangent[1], finite_difference[1], rtol=5e-6, atol=5e-7)
-    assert explicit.diagnostics.density_identity_residual_norm < 1e-12
-
-
-def test_subspace_reports_dimension_boundary_and_external_gap_failures() -> None:
     spectrum = eigen.prepare_self_adjoint_spectrum(
         _standard_problem(jnp.diag(jnp.asarray([1.0, 1.0, 4.0, 7.0])))
     )
@@ -469,11 +279,6 @@ def test_subspace_reports_dimension_boundary_and_external_gap_failures() -> None
         int(eigen.SelfAdjointSpectralSubspaceStatus.BOUNDARY_UNRESOLVED),
         int(eigen.SelfAdjointSpectralSubspaceStatus.CLUSTER_NOT_ISOLATED),
     )
-
-
-def test_batched_dense_eigen_lifecycle_handles_standard_generalized_and_complex_cases() -> (
-    None
-):
     standard_matrices = jnp.asarray(
         [
             [[1.0, 0.2, 0.0], [0.2, 3.0, 0.1], [0.0, 0.1, 6.0]],
@@ -559,6 +364,182 @@ def test_batched_dense_eigen_lifecycle_handles_standard_generalized_and_complex_
             standard_matrices,
             jnp.broadcast_to(jnp.eye(3), (3, 3, 3)),
         )
+
+
+def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_difference() -> (
+    None
+):
+    for problem_factory in (_standard_problem, _matrix_free_standard_problem):
+        matrix = jnp.asarray(
+            [
+                [1.0, 0.0, 0.1, 0.0],
+                [0.0, 1.0, -0.2, 0.0],
+                [0.1, -0.2, 4.0, 0.3],
+                [0.0, 0.0, 0.3, 7.0],
+            ]
+        )
+        perturbation = jnp.asarray(
+            [
+                [0.1, -0.2, 0.3, 0.0],
+                [-0.2, -0.1, 0.2, 0.1],
+                [0.3, 0.2, 0.4, -0.1],
+                [0.0, 0.1, -0.1, -0.2],
+            ]
+        )
+        selection = eigen.SpectralSelection.real_below(2.0, expected_dimension=2)
+        policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
+
+        def projector(current: Any) -> Any:
+            return eigen.self_adjoint_spectral_subspace(
+                problem_factory(current),
+                selection,
+                policy=policy,
+            ).projector
+
+        primal, tangent = jax.jit(jax.jvp, static_argnums=0)(
+            projector,
+            (matrix,),
+            (perturbation,),
+        )
+        prepared = eigen.prepare_self_adjoint_spectrum(problem_factory(matrix))
+        explicit = eigen.self_adjoint_spectral_projector_derivative(
+            prepared,
+            selection,
+            perturbation,
+        )
+        step = 1e-5
+        finite_difference = (
+            projector(matrix + step * perturbation)
+            - projector(matrix - step * perturbation)
+        ) / (2 * step)
+        cotangent = jnp.asarray(
+            [
+                [0.2, -0.1, 0.3, 0.0],
+                [-0.1, 0.4, -0.2, 0.1],
+                [0.3, -0.2, -0.2, 0.2],
+                [0.0, 0.1, 0.2, 0.1],
+            ]
+        )
+        reverse = jax.jit(jax.grad(lambda value: jnp.sum(projector(value) * cotangent)))(
+            matrix
+        )
+
+        assert jnp.all(jnp.isfinite(primal))
+        assert jnp.allclose(tangent, explicit.projector, rtol=1e-8, atol=1e-9)
+        assert jnp.allclose(tangent, finite_difference, rtol=3e-6, atol=3e-7)
+        assert jnp.allclose(
+            jnp.sum(reverse * perturbation),
+            jnp.sum(cotangent * tangent),
+            rtol=1e-9,
+            atol=1e-10,
+        )
+        assert bool(explicit.successful)
+        assert explicit.diagnostics.relative_residual < 1e-12
+
+
+def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_finite_difference() -> (
+    None
+):
+    matrix = jnp.asarray(
+        [
+            [1.0 + 0.0j, 0.0, 0.0 + 0.1j, 0.0],
+            [0.0, 1.0 + 0.0j, 0.2 + 0.0j, 0.0],
+            [0.0 - 0.1j, 0.2 + 0.0j, 4.0 + 0.0j, 0.0 + 0.1j],
+            [0.0, 0.0, 0.0 - 0.1j, 7.0 + 0.0j],
+        ]
+    )
+    perturbation = jnp.asarray(
+        [
+            [0.1 + 0.0j, 0.2 + 0.1j, 0.3 - 0.2j, 0.0],
+            [0.2 - 0.1j, -0.1 + 0.0j, 0.2 + 0.1j, 0.0 + 0.1j],
+            [0.3 + 0.2j, 0.2 - 0.1j, 0.4 + 0.0j, -0.1 + 0.1j],
+            [0.0, 0.0 - 0.1j, -0.1 - 0.1j, -0.2 + 0.0j],
+        ]
+    )
+    selection = eigen.SpectralSelection.real_below(2.0, expected_dimension=2)
+    policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
+
+    def projector(current: Any) -> Any:
+        return eigen.self_adjoint_spectral_subspace(
+            _standard_problem(current),
+            selection,
+            policy=policy,
+        ).projector
+
+    _, tangent = jax.jvp(projector, (matrix,), (perturbation,))
+    step = 1e-5
+    finite_difference = (
+        projector(matrix + step * perturbation) - projector(matrix - step * perturbation)
+    ) / (2 * step)
+
+    assert jnp.all(jnp.isfinite(tangent))
+    assert jnp.allclose(tangent, jnp.conj(tangent.T), atol=1e-12)
+    assert jnp.allclose(tangent, finite_difference, rtol=3e-6, atol=3e-7)
+
+
+def test_generalized_projector_and_density_derivatives_include_metric_perturbations() -> (
+    None
+):
+    for problem_factory in (_generalized_problem, _matrix_free_generalized_problem):
+        operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
+        metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
+        operator_perturbation = jnp.asarray(
+            [
+                [0.1, 0.2, 0.0, 0.0],
+                [0.2, -0.1, 0.3, 0.0],
+                [0.0, 0.3, 0.2, 0.1],
+                [0.0, 0.0, 0.1, -0.2],
+            ]
+        )
+        metric_perturbation = jnp.asarray(
+            [
+                [0.02, -0.01, 0.0, 0.0],
+                [-0.01, 0.03, 0.02, 0.0],
+                [0.0, 0.02, -0.01, 0.01],
+                [0.0, 0.0, 0.01, 0.02],
+            ]
+        )
+        selection = eigen.SpectralSelection.real_below(3.0, expected_dimension=2)
+        policy = eigen.SelfAdjointSpectralSubspacePolicy(differentiation="projector")
+
+        def outputs(current_operator: Any, current_metric: Any) -> Any:
+            result = eigen.self_adjoint_spectral_subspace(
+                problem_factory(current_operator, current_metric),
+                selection,
+                policy=policy,
+            )
+            return result.projector, result.density_kernel
+
+        _, tangent = jax.jvp(
+            outputs,
+            (operator, metric),
+            (operator_perturbation, metric_perturbation),
+        )
+        prepared = eigen.prepare_self_adjoint_spectrum(problem_factory(operator, metric))
+        explicit = eigen.self_adjoint_spectral_projector_derivative(
+            prepared,
+            selection,
+            operator_perturbation,
+            metric_perturbation,
+        )
+        step = 1e-5
+        plus = outputs(
+            operator + step * operator_perturbation,
+            metric + step * metric_perturbation,
+        )
+        minus = outputs(
+            operator - step * operator_perturbation,
+            metric - step * metric_perturbation,
+        )
+        finite_difference = tuple(
+            (upper - lower) / (2 * step) for upper, lower in zip(plus, minus, strict=True)
+        )
+
+        assert jnp.allclose(tangent[0], explicit.projector, rtol=1e-8, atol=1e-9)
+        assert jnp.allclose(tangent[1], explicit.density_kernel, rtol=1e-8, atol=1e-9)
+        assert jnp.allclose(tangent[0], finite_difference[0], rtol=5e-6, atol=5e-7)
+        assert jnp.allclose(tangent[1], finite_difference[1], rtol=5e-6, atol=5e-7)
+        assert explicit.diagnostics.density_identity_residual_norm < 1e-12
 
 
 def test_batched_spectral_subspaces_have_fixed_shapes_mixed_status_and_exact_derivatives() -> (

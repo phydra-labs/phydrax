@@ -317,28 +317,26 @@ def test_stage_planar_reconstruction_matches_cell_volume_and_exact_half_planes()
     assert jnp.all(stage.interface_status == int(PLICInterfaceStatus.INTERFACE))
 
 
-@pytest.mark.parametrize("factory", (_grid, _triangular_grid))
-def test_stage_reconstruction_supports_fixed_capacity_triangles_and_quads(
-    factory: Any,
-) -> None:
-    discretization = factory()
-    vof = _vof(discretization)
-    alpha = jnp.linspace(0.15, 0.85, discretization.cell_count)
+def test_stage_reconstruction_supports_fixed_capacity_triangles_and_quads() -> None:
+    for factory in (_grid, _triangular_grid):
+        discretization = factory()
+        vof = _vof(discretization)
+        alpha = jnp.linspace(0.15, 0.85, discretization.cell_count)
 
-    stage = eqx.filter_jit(vof.reconstruct_stage)(alpha)
+        stage = eqx.filter_jit(vof.reconstruct_stage)(alpha)
 
-    np.testing.assert_allclose(
-        stage.reconstructed_volume_fraction,
-        alpha,
-        rtol=0.0,
-        atol=3e-5,
-    )
-    assert stage.interface_endpoints.shape == (
-        discretization.cell_count,
-        2,
-        2,
-    )
-    assert jnp.all(stage.interface_evidence)
+        np.testing.assert_allclose(
+            stage.reconstructed_volume_fraction,
+            alpha,
+            rtol=0.0,
+            atol=3e-5,
+        )
+        assert stage.interface_endpoints.shape == (
+            discretization.cell_count,
+            2,
+            2,
+        )
+        assert jnp.all(stage.interface_evidence)
 
 
 def test_stage_reconstruction_is_covariant_under_translation_and_rotation() -> None:

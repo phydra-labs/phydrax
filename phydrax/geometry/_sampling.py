@@ -111,7 +111,12 @@ class SamplingResult(StrictModule):
         count = points_.shape[0]
         if weights is None:
             denominator = jnp.maximum(jnp.sum(valid_, dtype=jnp.int32), 1)
-            weights_ = jnp.where(valid_, 1.0 / denominator, 0.0)
+            denominator_float = denominator.astype(jnp.float64)
+            weights_ = jnp.where(
+                valid_,
+                jnp.reciprocal(denominator_float),
+                jnp.asarray(0.0, dtype=jnp.float64),
+            )
         else:
             weights_ = jnp.asarray(weights, dtype=jnp.float64).reshape((count,))
         strata_ = (

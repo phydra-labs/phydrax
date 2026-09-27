@@ -43,7 +43,7 @@ def _profile() -> Any:
     )
 
 
-def test_spectrum_status_keeps_numerical_physical_and_warning_axes_separate() -> None:
+def test_spectrum_scenario_1() -> None:
     diagnostics = SpectrumDiagnostics(
         SpectrumStatus.SUCCESS,
         provider_available=True,
@@ -76,11 +76,6 @@ def test_spectrum_status_keeps_numerical_physical_and_warning_axes_separate() ->
         result.observables.value("pdg:25", kind="pole-mass"), 125.1
     )
     assert "approximation" in result.claim
-
-
-def test_cross_qualification_rejects_noncanonical_provider_keys_without_lookup_failure() -> (
-    None
-):
     evidence = cross_qualify_spectra(
         ("mass",),
         np.asarray((1.0,)),
@@ -90,9 +85,6 @@ def test_cross_qualification_rejects_noncanonical_provider_keys_without_lookup_f
 
     assert not bool(evidence.accepted)
     assert int(evidence.status) == int(NativeSpectrumStatus.INVALID_INPUT)
-
-
-def test_strict_slha_roundtrip_preserves_unknown_blocks_comments_and_decays() -> None:
     source = (
         b"# spectrum control\n"
         b"BLOCK MASS # pole masses\n"
@@ -116,12 +108,9 @@ def test_strict_slha_roundtrip_preserves_unknown_blocks_comments_and_decays() ->
     assert b"retained extension" in serialized
 
 
-def test_slha_duplicate_entries_are_rejected_without_repinning() -> None:
+def test_spectrum_scenario_2() -> None:
     with pytest.raises(ValueError, match="Duplicate"):
         parse_slha(b"BLOCK MASS\n 25 125.0\n 25 126.0\n")
-
-
-def test_native_scale_bvp_recovers_analytic_exponential_flow() -> None:
     coefficient = 0.2
     lower = 10.0
     upper = 1000.0

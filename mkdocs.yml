@@ -148,6 +148,7 @@ nav:
         - Domains and sampling: "guides_domain.md"
         - Physical dimensions and units: "guides_units.md"
         - Typing and structural contracts: "guides_typing.md"
+        - Testing: "guides_testing.md"
         - Thermal equivalent-circuit batteries: "guides_battery.md"
         - Battery production admission: "guides_battery_production.md"
         - Differentiable signal processing: "guides_signal_processing.md"

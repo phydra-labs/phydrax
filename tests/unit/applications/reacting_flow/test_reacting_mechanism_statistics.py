@@ -104,7 +104,7 @@ def _mechanism() -> Any:
     return thermodynamics, prepared, HomogeneousMixtureEulerSystem(thermodynamics, 1)
 
 
-def test_prepared_mechanism_owns_all_canonical_rate_plans_and_exact_schema() -> None:
+def test_reacting_mechanism_statistics_scenario_1() -> None:
     thermodynamics, mechanism, _ = _mechanism()
     kinds = tuple(reaction.forward_rate.kind.value for reaction in mechanism.reactions)
 
@@ -123,9 +123,6 @@ def test_prepared_mechanism_owns_all_canonical_rate_plans_and_exact_schema() -> 
         mechanism.thermodynamics.thermodynamics_id
         == thermodynamics.thermodynamics.thermodynamics_id
     )
-
-
-def test_canonical_sources_preserve_element_charge_mass_and_total_energy() -> None:
     _, mechanism, system = _mechanism()
     result = mechanism.evaluate(
         jnp.asarray((2.0, 1.0)),
@@ -146,9 +143,6 @@ def test_canonical_sources_preserve_element_charge_mass_and_total_energy() -> No
     np.testing.assert_allclose(jnp.sum(mass_rate), 0.0, atol=1.0e-12)
     np.testing.assert_array_equal(conservative_source[-1], 0.0)
     assert heat_release > 0.0
-
-
-def test_constant_volume_and_pressure_reactors_consume_prepared_mechanism() -> None:
     _, mechanism, _ = _mechanism()
     amounts = jnp.asarray((2.0, 1.0))
     constant_volume = ChemicalReactorPlan(
@@ -173,7 +167,7 @@ def test_constant_volume_and_pressure_reactors_consume_prepared_mechanism() -> N
     np.testing.assert_allclose(pressure_evaluation.temperature, 800.0)
 
 
-def test_low_mach_uses_full_species_and_canonical_thermodynamic_derivatives() -> None:
+def test_reacting_mechanism_statistics_scenario_2() -> None:
     thermodynamics, mechanism, _ = _mechanism()
     formulation = LowMachReactingFormulation(thermodynamics, 2, mechanism=mechanism)
     mass = jnp.asarray((0.3, 0.7))
@@ -211,9 +205,6 @@ def test_low_mach_uses_full_species_and_canonical_thermodynamic_derivatives() ->
         jnp.sum(chemistry.species_mass_production_rate), 0.0, atol=1.0e-12
     )
     assert chemistry.diagnostic_heat_release_rate > 0.0
-
-
-def test_reactive_favre_species_element_energy_and_closure_statistics() -> None:
     _, _, system = _mechanism()
     first = system.primitive_to_conserved(jnp.asarray((0.8, 0.2, 2.0, 700.0)))
     second = system.primitive_to_conserved(jnp.asarray((0.4, 1.6, -1.0, 900.0)))

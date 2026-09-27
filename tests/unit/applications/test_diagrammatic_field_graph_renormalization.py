@@ -54,7 +54,7 @@ def _phi4_diagram(
     )
 
 
-def test_diagram_graph_is_canonical_conserving_and_has_exact_symmetry_factor() -> None:
+def test_diagrammatic_field_graph_renormalization_scenario_1() -> None:
     first = _phi4_diagram()
     relabeled = _phi4_diagram(vertex_label="z", line_label="anything")
 
@@ -67,6 +67,70 @@ def test_diagram_graph_is_canonical_conserving_and_has_exact_symmetry_factor() -
     assert first.symmetry_factor == 0.5
     assert first.order == 1
     assert first.loop_order == 1
+    diagram = _phi4_diagram()
+    prepared = df.DiagramLoweringPlan().prepare(diagram)
+    result = prepared.evaluate()
+
+    assert prepared.ir.num_nodes == 7
+    assert prepared.ir.num_edges == 6
+    np.testing.assert_allclose(result.amplitude, -0.25 + 0.0j)
+    np.testing.assert_allclose(result.evidence.phase, -1.0 + 0.0j)
+    assert result.evidence.real_sign == -1
+    assert result.evidence.successful
+    reference = _phi4_diagram()
+    phi = reference.vertices[0].rule.fields[0]
+    propagator = reference.lines[0].propagator
+    incoming = df.ExternalState(
+        "in",
+        phi,
+        # ty: ignore[invalid-argument-type]
+        df.MomentumRoute([1.0], 0.5),
+        incoming=True,
+    )
+    outgoing = df.ExternalState(
+        "out",
+        phi,
+        # ty: ignore[invalid-argument-type]
+        df.MomentumRoute([1.0], 0.5),
+        incoming=False,
+    )
+    prepared = df.DiagramGeneratorPlan(
+        (propagator,),
+        (reference.vertices[0].rule,),
+        maximum_vertices=1,
+        maximum_candidates=128,
+    ).prepare((incoming, outgoing))
+
+    fixed = prepared.generate_fixed_order(1)
+    skeleton = prepared.generate_skeletons(1)
+
+    assert fixed.evidence.complete
+    assert fixed.evidence.diagrams_generated == 1
+    assert skeleton.evidence.diagrams_generated == 1
+    np.testing.assert_array_equal(fixed.order_histogram(), [0, 1])
+    assert fixed.diagrams[0].graph_id == reference.graph_id
+    fermion = df.FieldSpec("psi", statistics="fermion", mass_dimension=1.5)
+    propagator = df.PropagatorSpec(fermion, mass=1.0)
+    rule = df.VertexRule("fermion-bilinear", (fermion, fermion), 1.0)
+    diagram = df.DiagramGraph(
+        (df.VertexInsertion("insertion", rule),),
+        (
+            df.PropagatorLine(
+                "fermion-loop",
+                propagator,
+                "insertion",
+                "insertion",
+                # ty: ignore[invalid-argument-type]
+                df.MomentumRoute([0.0]),
+            ),
+        ),
+    )
+    result = df.DiagramLoweringPlan().prepare(diagram).evaluate()
+
+    assert diagram.evidence.fermion_loop_count == 1
+    assert diagram.evidence.fermion_sign == -1
+    np.testing.assert_allclose(result.amplitude, -1.0 + 0.0j)
+    np.testing.assert_allclose(result.evidence.phase, -1.0 + 0.0j)
 
 
 def test_canonical_graph_identity_is_invariant_to_boson_orientation_and_labels() -> None:
@@ -111,82 +175,7 @@ def test_canonical_graph_identity_is_invariant_to_boson_orientation_and_labels()
     assert reversed_route.evidence.successful
 
 
-def test_fixed_order_and_skeleton_generation_are_complete_and_duplicate_free() -> None:
-    reference = _phi4_diagram()
-    phi = reference.vertices[0].rule.fields[0]
-    propagator = reference.lines[0].propagator
-    incoming = df.ExternalState(
-        "in",
-        phi,
-        # ty: ignore[invalid-argument-type]
-        df.MomentumRoute([1.0], 0.5),
-        incoming=True,
-    )
-    outgoing = df.ExternalState(
-        "out",
-        phi,
-        # ty: ignore[invalid-argument-type]
-        df.MomentumRoute([1.0], 0.5),
-        incoming=False,
-    )
-    prepared = df.DiagramGeneratorPlan(
-        (propagator,),
-        (reference.vertices[0].rule,),
-        maximum_vertices=1,
-        maximum_candidates=128,
-    ).prepare((incoming, outgoing))
-
-    fixed = prepared.generate_fixed_order(1)
-    skeleton = prepared.generate_skeletons(1)
-
-    assert fixed.evidence.complete
-    assert fixed.evidence.diagrams_generated == 1
-    assert skeleton.evidence.diagrams_generated == 1
-    np.testing.assert_array_equal(fixed.order_histogram(), [0, 1])
-    assert fixed.diagrams[0].graph_id == reference.graph_id
-
-
-def test_diagram_lowering_executes_the_graphir_product_with_complex_sign_evidence() -> (
-    None
-):
-    diagram = _phi4_diagram()
-    prepared = df.DiagramLoweringPlan().prepare(diagram)
-    result = prepared.evaluate()
-
-    assert prepared.ir.num_nodes == 7
-    assert prepared.ir.num_edges == 6
-    np.testing.assert_allclose(result.amplitude, -0.25 + 0.0j)
-    np.testing.assert_allclose(result.evidence.phase, -1.0 + 0.0j)
-    assert result.evidence.real_sign == -1
-    assert result.evidence.successful
-
-
-def test_closed_fermion_loop_contributes_its_explicit_minus_sign() -> None:
-    fermion = df.FieldSpec("psi", statistics="fermion", mass_dimension=1.5)
-    propagator = df.PropagatorSpec(fermion, mass=1.0)
-    rule = df.VertexRule("fermion-bilinear", (fermion, fermion), 1.0)
-    diagram = df.DiagramGraph(
-        (df.VertexInsertion("insertion", rule),),
-        (
-            df.PropagatorLine(
-                "fermion-loop",
-                propagator,
-                "insertion",
-                "insertion",
-                # ty: ignore[invalid-argument-type]
-                df.MomentumRoute([0.0]),
-            ),
-        ),
-    )
-    result = df.DiagramLoweringPlan().prepare(diagram).evaluate()
-
-    assert diagram.evidence.fermion_loop_count == 1
-    assert diagram.evidence.fermion_sign == -1
-    np.testing.assert_allclose(result.amplitude, -1.0 + 0.0j)
-    np.testing.assert_allclose(result.evidence.phase, -1.0 + 0.0j)
-
-
-def test_bphz_polynomial_subtraction_annihilates_declared_taylor_conditions() -> None:
+def test_diagrammatic_field_graph_renormalization_scenario_2() -> None:
     # ty: ignore[invalid-argument-type]
     scheme = df.MomentumSubtractionScheme("MOM", 2.0, [1.0], 1)
     prepared = df.BPHZSubtractionPlan(scheme, (4,)).prepare()
@@ -212,9 +201,6 @@ def test_bphz_polynomial_subtraction_annihilates_declared_taylor_conditions() ->
         jnp.asarray([expected, expected_second]),
         atol=1e-12,
     )
-
-
-def test_native_weighted_quadrature_preserves_mass_and_reports_sampling_error() -> None:
     prepared = df.DiagramQuadraturePlan(
         jnp.asarray([[0.0], [1.0]]),
         jnp.asarray([1.0, 3.0]),
@@ -224,9 +210,6 @@ def test_native_weighted_quadrature_preserves_mass_and_reports_sampling_error() 
     np.testing.assert_allclose(result.value, 10.0)
     assert result.statistical_uncertainty > 0.0
     assert result.successful
-
-
-def test_resource_guards_reject_before_dense_or_dag_allocation() -> None:
     # ty: ignore[invalid-argument-type]
     scheme = df.MomentumSubtractionScheme("guarded-MOM", 1.0, [0.0], 0)
     with pytest.raises(ValueError, match="maximum_matrix_elements"):

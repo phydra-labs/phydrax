@@ -11,7 +11,7 @@ from tools.check_public_api_manifest import public_api_manifest_errors
 from tools.generate_public_api_manifest import public_api_record
 
 
-def test_checked_public_api_manifest_matches_exports() -> None:
+def test_public_api_manifest_scenario_1() -> None:
     root = Path(__file__).parents[2]
 
     errors = public_api_manifest_errors(
@@ -20,9 +20,6 @@ def test_checked_public_api_manifest_matches_exports() -> None:
     )
 
     assert errors == ()
-
-
-def test_public_api_record_does_not_depend_on_import_history() -> None:
     before = public_api_record()
 
     # Resolve every export that loads without optional providers, as unrelated

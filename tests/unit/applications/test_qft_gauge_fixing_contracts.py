@@ -29,7 +29,7 @@ def _pure_gauge_links() -> Any:
     return space, gauge_transform_links(space, space.identity(), vertices)
 
 
-def test_landau_fixing_reduces_residual_and_retains_transformation_evidence() -> None:
+def test_qft_gauge_fixing_contracts_scenario_1() -> None:
     space, links = _pure_gauge_links()
     plan = LandauGaugeFixingPlan(
         space,
@@ -52,11 +52,6 @@ def test_landau_fixing_reduces_residual_and_retains_transformation_evidence() ->
     assert image.shape == direction.shape
     assert jnp.all(jnp.isfinite(image))
     assert jnp.allclose(image[plan.anchor_vertex], 0.0)
-
-
-def test_coulomb_fixing_uses_only_explicit_spatial_edges_and_reports_gribov_copies() -> (
-    None
-):
     space, links = _pure_gauge_links()
     spatial = jnp.asarray([True, True, False])
     plan = CoulombGaugeFixingPlan(

@@ -90,7 +90,7 @@ def _problem_and_plan(capacity: Any = 9) -> Any:
     return problem, plan
 
 
-def test_diffusion_bridge_prepares_solves_and_samples_finite_chain() -> None:
+def test_diffusion_bridge_contracts() -> None:
     problem, plan = _problem_and_plan()
     prepared = prepare_diffusion_bridge(problem, plan, key=jr.key(12))
     result = solve_diffusion_bridge(prepared)
@@ -112,9 +112,6 @@ def test_diffusion_bridge_prepares_solves_and_samples_finite_chain() -> None:
     )
     assert paths.shape == (16, 3, 1)
     assert result.approximation_kind == "exact-prepared-chain-diffusion-approximation"
-
-
-def test_diffusion_bridge_prepared_solve_is_jittable() -> None:
     problem, plan = _problem_and_plan()
     prepared = prepare_diffusion_bridge(problem, plan, key=jr.key(14))
     marginals = jax.jit(lambda value: solve_diffusion_bridge(value).physical_marginals)(
@@ -123,9 +120,6 @@ def test_diffusion_bridge_prepared_solve_is_jittable() -> None:
 
     assert marginals.shape == (3, 9)
     assert jnp.all(jnp.isfinite(marginals))
-
-
-def test_diffusion_bridge_fails_closed_on_support_capacity_mismatch() -> None:
     problem, plan = _problem_and_plan(capacity=8)
     with pytest.raises(ValueError, match="support_capacity"):
         prepare_diffusion_bridge(problem, plan, key=jr.key(15))

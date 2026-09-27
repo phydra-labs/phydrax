@@ -42,7 +42,7 @@ def _dynamics() -> Any:
     ).prepare()
 
 
-def test_free_space_rpy_and_generic_brownian_runtime() -> None:
+def test_hydrodynamic_production_scenario_1() -> None:
     system = _system()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
     mobility = phx.atomistic.FreeSpaceRPYMobilityPlan(
@@ -69,9 +69,6 @@ def test_free_space_rpy_and_generic_brownian_runtime() -> None:
     step = runtime.step(state)
     assert step.successful
     np.testing.assert_allclose(step.accepted_state.positions, positions)
-
-
-def test_direct_and_positive_split_periodic_mobility_are_spd() -> None:
     system = _system(periodic=True)
     positions = jnp.asarray([[1.0, 1.0, 1.0], [4.0, 1.0, 1.0]])
     direct = phx.atomistic.DirectPeriodicRPYMobilityPlan(
@@ -101,9 +98,6 @@ def test_direct_and_positive_split_periodic_mobility_are_spd() -> None:
         split_evidence.wave_matrix + split_evidence.local_matrix,
         atol=1.0e-12,
     )
-
-
-def test_confined_fib_adapter_composes_marker_transfer_and_fluid_inverse() -> None:
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8) for _ in range(3)),
         axis_names=("x", "y", "z"),

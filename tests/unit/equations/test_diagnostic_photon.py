@@ -63,7 +63,7 @@ def _table(
     )
 
 
-def test_photon_energy_grid_requires_positive_strictly_increasing_joules() -> None:
+def test_diagnostic_photon_scenario_1() -> None:
     grid = phx.equations.PhotonEnergyGrid(np.asarray([1.0e-16, 2.0e-16, 4.0e-16]))
 
     np.testing.assert_array_equal(
@@ -74,9 +74,6 @@ def test_photon_energy_grid_requires_positive_strictly_increasing_joules() -> No
         phx.equations.PhotonEnergyGrid(np.asarray([0.0, 1.0e-16]))
     with pytest.raises(ValueError, match="strictly increasing"):
         phx.equations.PhotonEnergyGrid(np.asarray([2.0e-16, 1.0e-16]))
-
-
-def test_diagnostic_coefficient_table_rejects_invalid_values_and_units() -> None:
     grid = phx.equations.PhotonEnergyGrid(np.asarray([1.0e-16, 2.0e-16]))
     provenance = _provenance("invalid-table")
     arguments = (
@@ -117,9 +114,17 @@ def test_diagnostic_coefficient_table_rejects_invalid_values_and_units() -> None
             provenance,
             phx.equations.DiagnosticPhotonInterpolationPolicy.LOG_LOG,
         )
+    table = _table()
+    evaluation = table.evaluate(np.asarray([2.0e-16]), ("water", "bone"))
 
-
-def test_ordered_material_evaluation_interpolates_without_extrapolation() -> None:
+    assert not isinstance(table, phx.equations.RadiationCoefficientTable)
+    with pytest.raises(AttributeError):
+        phx.equations.radiation_means(
+            np.asarray(300.0),
+            evaluation,
+            evaluation,
+            table.energy_grid,
+        )
     table = _table()
     evaluation = table.evaluate(
         np.asarray([1.5e-16, 2.0e-16, 5.0e-16]),
@@ -140,7 +145,7 @@ def test_ordered_material_evaluation_interpolates_without_extrapolation() -> Non
         table.evaluate(np.asarray([2.0e-16]), ("bone", "water"))
 
 
-def test_log_log_interpolation_uses_logarithmic_energy_and_value_coordinates() -> None:
+def test_diagnostic_photon_scenario_2() -> None:
     grid = phx.equations.PhotonEnergyGrid(np.asarray([1.0, 4.0]))
     table = phx.equations.DiagnosticPhotonCoefficientTable(
         phx.equations.DiagnosticPhotonCoefficientRole.MASS_ENERGY_ABSORPTION,
@@ -156,9 +161,6 @@ def test_log_log_interpolation_uses_logarithmic_energy_and_value_coordinates() -
 
     np.testing.assert_allclose(evaluation.coefficient, np.asarray([[4.0]]))
     np.testing.assert_allclose(evaluation.evidence.upper_weights, np.asarray([0.5]))
-
-
-def test_evaluation_refuses_an_explicit_mismatched_provenance_pin() -> None:
     table = _table(provenance=_provenance("authoritative"))
 
     with pytest.raises(ValueError, match="provenance"):
@@ -166,18 +168,4 @@ def test_evaluation_refuses_an_explicit_mismatched_provenance_pin() -> None:
             np.asarray([2.0e-16]),
             ("water", "bone"),
             expected_provenance=_provenance("other"),
-        )
-
-
-def test_diagnostic_coefficients_are_separate_from_thermal_radiation_means() -> None:
-    table = _table()
-    evaluation = table.evaluate(np.asarray([2.0e-16]), ("water", "bone"))
-
-    assert not isinstance(table, phx.equations.RadiationCoefficientTable)
-    with pytest.raises(AttributeError):
-        phx.equations.radiation_means(
-            np.asarray(300.0),
-            evaluation,
-            evaluation,
-            table.energy_grid,
         )

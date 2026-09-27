@@ -49,7 +49,7 @@ def _calderon(kernel: Any = None) -> Any:
     )
 
 
-def test_laplace_interior_dirichlet_constant_harmonic_solve_end_to_end() -> None:
+def test_scalar_boundary3d_scenario_1() -> None:
     calderon = _calderon()
     formulation = scalar_interior_dirichlet_formulation_3d(
         calderon, representation="double-layer"
@@ -67,9 +67,6 @@ def test_laplace_interior_dirichlet_constant_harmonic_solve_end_to_end() -> None
     assert jnp.allclose(result.solution, -1.0, rtol=2.0e-1, atol=2.0e-1)
     assert result.boundary_neumann is None
     assert result.potential is not None
-
-
-def test_pure_laplace_neumann_enforces_compatibility_and_component_gauge() -> None:
     calderon = _calderon()
     formulation = scalar_interior_neumann_formulation_3d(calderon)
     areas = calderon.face_areas
@@ -87,9 +84,6 @@ def test_pure_laplace_neumann_enforces_compatibility_and_component_gauge() -> No
     incompatible = jnp.ones((calderon.face_count,), dtype=calderon.space.dtype)
     with pytest.raises(ValueError, match="zero-flux compatibility"):
         solve_laplace_boundary_3d(formulation, incompatible)
-
-
-def test_outgoing_helmholtz_cfie_and_raw_resonance_metadata_execute() -> None:
     calderon = _calderon(ScalarKernelFamily3D.outgoing_helmholtz(0.4))
     raw = scalar_exterior_dirichlet_formulation_3d(
         calderon, representation="double-layer"

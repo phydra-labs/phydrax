@@ -26,7 +26,7 @@ def _prepared() -> Any:
     ).prepare()
 
 
-def test_weighted_single_and_double_layer_adapters_match_direct_kernels() -> None:
+def test_multipole_layer_adapters_scenario_1() -> None:
     prepared = _prepared()
     strengths = DENSITY * WEIGHTS
     single = phx.operators.evaluate_laplace_layer_multipole_3d(
@@ -53,34 +53,6 @@ def test_weighted_single_and_double_layer_adapters_match_direct_kernels() -> Non
         axis=1,
     )
     np.testing.assert_allclose(double.values, expected_double, rtol=3.5e-2, atol=1e-3)
-
-
-def _clustered_layer() -> Any:
-    rng = np.random.default_rng(29)
-    sources = np.concatenate(
-        (
-            [-0.55, -0.5, -0.45] + 0.04 * rng.standard_normal((14, 3)),
-            [0.5, 0.45, 0.5] + 0.08 * rng.standard_normal((8, 3)),
-            rng.uniform(-0.9, 0.9, (6, 3)),
-        )
-    )
-    targets = np.concatenate(
-        (
-            [-0.45, -0.4, -0.35] + 0.05 * rng.standard_normal((4, 3)),
-            rng.uniform(-0.9, 0.9, (5, 3)),
-        )
-    )
-    density = rng.standard_normal(sources.shape[0])
-    weights = rng.uniform(0.5, 1.5, sources.shape[0])
-    return (
-        jnp.asarray(sources),
-        jnp.asarray(targets),
-        jnp.asarray(density),
-        jnp.asarray(weights),
-    )
-
-
-def test_qbx_adapter_far_locals_reproduce_far_field_at_centers() -> None:
     sources, targets, density, weights = _clustered_layer()
     prepared = phx.operators.LaplaceMultipolePlan3D(
         sources,
@@ -103,9 +75,6 @@ def test_qbx_adapter_far_locals_reproduce_far_field_at_centers() -> None:
     assert int(evaluation.m2p_count) > 0
     assert float(jnp.max(jnp.abs(evaluation.far_values))) > 1e-3
     np.testing.assert_allclose(local_values, evaluation.far_values, rtol=1e-9, atol=1e-11)
-
-
-def test_layer_and_qbx_adapters_accept_plane_far_execution() -> None:
     prepared = phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
         [-1.0, -1.0, -1.0],
@@ -163,3 +132,28 @@ def test_layer_and_qbx_adapters_accept_plane_far_execution() -> None:
     )
     local_values = jax.vmap(prepared.l2p)(far.coefficients, TARGETS, TARGETS)
     np.testing.assert_allclose(local_values, single.far_values, rtol=3e-11, atol=3e-12)
+
+
+def _clustered_layer() -> Any:
+    rng = np.random.default_rng(29)
+    sources = np.concatenate(
+        (
+            [-0.55, -0.5, -0.45] + 0.04 * rng.standard_normal((14, 3)),
+            [0.5, 0.45, 0.5] + 0.08 * rng.standard_normal((8, 3)),
+            rng.uniform(-0.9, 0.9, (6, 3)),
+        )
+    )
+    targets = np.concatenate(
+        (
+            [-0.45, -0.4, -0.35] + 0.05 * rng.standard_normal((4, 3)),
+            rng.uniform(-0.9, 0.9, (5, 3)),
+        )
+    )
+    density = rng.standard_normal(sources.shape[0])
+    weights = rng.uniform(0.5, 1.5, sources.shape[0])
+    return (
+        jnp.asarray(sources),
+        jnp.asarray(targets),
+        jnp.asarray(density),
+        jnp.asarray(weights),
+    )

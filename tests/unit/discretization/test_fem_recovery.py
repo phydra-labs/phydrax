@@ -61,7 +61,7 @@ def _sine_source(points: Any) -> Any:
     )
 
 
-def test_hessian_recovery_is_exact_for_quadratics_on_p2() -> None:
+def test_fem_recovery_scenario_1() -> None:
     discretization = _discretization(_square(4), 2)
     prepared = fem.prepare_gradient_recovery(discretization, "u")
     nodes = np.asarray(discretization.dof_maps[0].dof_coordinates)
@@ -82,65 +82,16 @@ def test_hessian_recovery_is_exact_for_quadratics_on_p2() -> None:
     assert gradient_evidence.passed and hessian_evidence.passed
     assert hessian_evidence.extended_patch_count > 0
     assert hessian_evidence.maximum_asymmetry < 1e-8
-
-
-def test_recovery_rejects_patches_that_cannot_determine_the_fit() -> None:
     mesh = phx.discretization.CellMesh.from_triangles(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         np.asarray(((0, 1, 2),), dtype=np.int32),
     )
     with pytest.raises(ValueError, match="ill conditioned"):
         fem.prepare_gradient_recovery(_discretization(mesh, 2), "u")
-
-
-def _p1_poisson(count: Any) -> Any:
-    discretization = _discretization(_square(count), 1)
-    matrix, load = _assemble(
-        discretization, *_local_poisson(discretization, _sine_source)
-    )
-    free = ~np.asarray(discretization.dof_maps[0].boundary_dof_mask)
-    solution = np.zeros_like(load)
-    solution[free] = np.linalg.solve(matrix[np.ix_(free, free)], load[free])
-    return discretization, solution
-
-
-def _effectivity(count: Any) -> Any:
-    discretization, solution = _p1_poisson(count)
-    prepared = fem.prepare_gradient_recovery(discretization, "u")
-    estimate, evidence = fem.recovery_error_estimate(prepared, solution)
-    points, weights = fem._generic._degree_aware_reference_rule("triangle", 6)
-    geometry = discretization.evaluate_block_geometry(
-        "u", 0, discretization.default_runtime.coordinates, points, weights
-    )
-    x = np.asarray(geometry.physical_points)
-    exact = np.pi * np.stack(
-        (
-            np.cos(np.pi * x[..., 0]) * np.sin(np.pi * x[..., 1]),
-            np.sin(np.pi * x[..., 0]) * np.cos(np.pi * x[..., 1]),
-        ),
-        -1,
-    )
-    dofs = np.asarray(discretization.dof_maps[0].cell_dofs[0])
-    discrete = np.einsum(
-        "cqld,cl->cqd", np.asarray(geometry.physical_gradients), solution[dofs]
-    )
-    error = np.sqrt(
-        np.sum(
-            np.asarray(geometry.physical_weights) * np.sum((exact - discrete) ** 2, -1)
-        )
-    )
-    assert evidence.passed
-    return float(estimate.global_estimate) / error
-
-
-def test_recovery_estimator_is_asymptotically_exact_for_a_smooth_solution() -> None:
     coarse = _effectivity(8)
     fine = _effectivity(16)
     assert 0.9 < fine < 1.3
     assert abs(fine - 1.0) < abs(coarse - 1.0)
-
-
-def test_dual_weighted_indicators_sum_to_the_enriched_goal_error() -> None:
     mesh = _square(6)
     base = _discretization(mesh, 1)
     enriched = _discretization(mesh, 2)
@@ -191,3 +142,43 @@ def test_dual_weighted_indicators_sum_to_the_enriched_goal_error() -> None:
         goal @ (enriched_solution - lifted),
         rtol=1e-9,
     )
+
+
+def _p1_poisson(count: Any) -> Any:
+    discretization = _discretization(_square(count), 1)
+    matrix, load = _assemble(
+        discretization, *_local_poisson(discretization, _sine_source)
+    )
+    free = ~np.asarray(discretization.dof_maps[0].boundary_dof_mask)
+    solution = np.zeros_like(load)
+    solution[free] = np.linalg.solve(matrix[np.ix_(free, free)], load[free])
+    return discretization, solution
+
+
+def _effectivity(count: Any) -> Any:
+    discretization, solution = _p1_poisson(count)
+    prepared = fem.prepare_gradient_recovery(discretization, "u")
+    estimate, evidence = fem.recovery_error_estimate(prepared, solution)
+    points, weights = fem._generic._degree_aware_reference_rule("triangle", 6)
+    geometry = discretization.evaluate_block_geometry(
+        "u", 0, discretization.default_runtime.coordinates, points, weights
+    )
+    x = np.asarray(geometry.physical_points)
+    exact = np.pi * np.stack(
+        (
+            np.cos(np.pi * x[..., 0]) * np.sin(np.pi * x[..., 1]),
+            np.sin(np.pi * x[..., 0]) * np.cos(np.pi * x[..., 1]),
+        ),
+        -1,
+    )
+    dofs = np.asarray(discretization.dof_maps[0].cell_dofs[0])
+    discrete = np.einsum(
+        "cqld,cl->cqd", np.asarray(geometry.physical_gradients), solution[dofs]
+    )
+    error = np.sqrt(
+        np.sum(
+            np.asarray(geometry.physical_weights) * np.sum((exact - discrete) ** 2, -1)
+        )
+    )
+    assert evidence.passed
+    return float(estimate.global_estimate) / error

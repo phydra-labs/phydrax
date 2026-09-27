@@ -40,37 +40,34 @@ def _cell_grid(shape: Any, *, periodic: Any = None, lengths: Any = None) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "velocity_set", [phx.discretization.D2Q9(), phx.discretization.D3Q19()]
-)
-def test_lattice_velocity_sets_satisfy_hydrodynamic_moments(velocity_set: Any) -> None:
-    c = np.asarray(velocity_set.velocities, dtype="float64")
-    w = np.asarray(velocity_set.weights)
-    opposite = np.asarray(velocity_set.opposite)
-    dimension = velocity_set.dimension
-    identity = np.eye(dimension)
-    cs2 = float(velocity_set.sound_speed_squared)
+def test_lattice_boltzmann_scenario_1() -> None:
+    for velocity_set in [phx.discretization.D2Q9(), phx.discretization.D3Q19()]:
+        c = np.asarray(velocity_set.velocities, dtype="float64")
+        w = np.asarray(velocity_set.weights)
+        opposite = np.asarray(velocity_set.opposite)
+        dimension = velocity_set.dimension
+        identity = np.eye(dimension)
+        cs2 = float(velocity_set.sound_speed_squared)
 
-    assert np.array_equal(opposite[opposite], np.arange(velocity_set.population_count))
-    assert np.array_equal(c[opposite], -c)
-    np.testing.assert_allclose(np.sum(w), 1.0, atol=1e-14)
-    np.testing.assert_allclose(oe.contract("q,qa->a", w, c), 0.0, atol=1e-14)
-    np.testing.assert_allclose(
-        oe.contract("q,qa,qb->ab", w, c, c), cs2 * identity, atol=1e-14
-    )
-    expected_fourth = cs2**2 * (
-        oe.contract("ab,cd->abcd", identity, identity)
-        + oe.contract("ac,bd->abcd", identity, identity)
-        + oe.contract("ad,bc->abcd", identity, identity)
-    )
-    np.testing.assert_allclose(
-        oe.contract("q,qa,qb,qc,qd->abcd", w, c, c, c, c),
-        expected_fourth,
-        atol=1e-14,
-    )
-
-
-def test_lattice_discretization_requires_isotropic_cell_centers() -> None:
+        assert np.array_equal(
+            opposite[opposite], np.arange(velocity_set.population_count)
+        )
+        assert np.array_equal(c[opposite], -c)
+        np.testing.assert_allclose(np.sum(w), 1.0, atol=1e-14)
+        np.testing.assert_allclose(oe.contract("q,qa->a", w, c), 0.0, atol=1e-14)
+        np.testing.assert_allclose(
+            oe.contract("q,qa,qb->ab", w, c, c), cs2 * identity, atol=1e-14
+        )
+        expected_fourth = cs2**2 * (
+            oe.contract("ab,cd->abcd", identity, identity)
+            + oe.contract("ac,bd->abcd", identity, identity)
+            + oe.contract("ad,bc->abcd", identity, identity)
+        )
+        np.testing.assert_allclose(
+            oe.contract("q,qa,qb,qc,qd->abcd", w, c, c, c, c),
+            expected_fourth,
+            atol=1e-14,
+        )
     grid = _cell_grid((8, 8))
     discretization = phx.discretization.LatticeBoltzmannPlan(
         grid, phx.discretization.D2Q9()
@@ -106,9 +103,6 @@ def test_lattice_discretization_requires_isotropic_cell_centers() -> None:
         population_dtype=jnp.float32
     )
     assert float32.population_dtype == "float32"
-
-
-def test_lattice_scaling_round_trips_and_derives_relaxation() -> None:
     scaling = phx.discretization.LatticeBoltzmannScaling(0.02, 0.001, 2.0)
     velocity = jnp.asarray((0.4, -0.2))
     viscosity = jnp.asarray(0.015)
@@ -130,9 +124,6 @@ def test_lattice_scaling_round_trips_and_derives_relaxation() -> None:
         lattice_viscosity,
         scaling.sound_speed_squared * (1.0 / rate - 0.5),
     )
-
-
-def test_equilibrium_collision_and_guo_moments_are_consistent() -> None:
     velocity_set = phx.discretization.D2Q9()
     precision = phx.discretization.LatticeBoltzmannPrecisionPolicy()
     density = jnp.asarray([[1.0, 1.2], [0.9, 1.1]])

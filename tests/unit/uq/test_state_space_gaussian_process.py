@@ -22,32 +22,26 @@ def _dense_condition(
     return cross @ alpha, jnp.diag(query - projection.T @ projection)
 
 
-@pytest.mark.parametrize(
-    "kernel",
-    [
+def test_state_space_gaussian_process_scenario_1() -> None:
+    for kernel in [
         phx.kernels.Matern32Kernel(length_scale=0.7),
         phx.kernels.Matern52Kernel(length_scale=0.7),
         phx.kernels.SHOKernel(frequency=1.2, quality_factor=0.8, variance=1.3),
-    ],
-)
-def test_bounded_temporal_components_match_dense_gp(kernel: Any) -> None:
-    train_times = jnp.asarray([0.0, 0.25, 0.8, 1.4])
-    query_times = jnp.asarray([-0.2, 0.5, 1.9])
-    values = jnp.asarray([0.4, -0.1, 0.7, 0.2])
-    noise = jnp.asarray(0.05)
-    plan = phx.uq.compile_state_space_kernel(
-        kernel,
-        phx.uq.StateSpaceGaussianProcessDesign(train_times, query_times),
-    )
-    result = phx.uq.fit_state_space_gaussian_process(plan, values, noise_scale=noise)
-    expected_mean, expected_variance = _dense_condition(
-        kernel, train_times, query_times, values, noise
-    )
-    assert jnp.allclose(result.posterior_mean, expected_mean, atol=2e-4)
-    assert jnp.allclose(result.posterior_variance, expected_variance, atol=2e-4)
-
-
-def test_sums_repeated_rows_vector_noise_and_parallel_covariance() -> None:
+    ]:
+        train_times = jnp.asarray([0.0, 0.25, 0.8, 1.4])
+        query_times = jnp.asarray([-0.2, 0.5, 1.9])
+        values = jnp.asarray([0.4, -0.1, 0.7, 0.2])
+        noise = jnp.asarray(0.05)
+        plan = phx.uq.compile_state_space_kernel(
+            kernel,
+            phx.uq.StateSpaceGaussianProcessDesign(train_times, query_times),
+        )
+        result = phx.uq.fit_state_space_gaussian_process(plan, values, noise_scale=noise)
+        expected_mean, expected_variance = _dense_condition(
+            kernel, train_times, query_times, values, noise
+        )
+        assert jnp.allclose(result.posterior_mean, expected_mean, atol=2e-4)
+        assert jnp.allclose(result.posterior_variance, expected_variance, atol=2e-4)
     kernel = phx.kernels.Matern32Kernel(
         length_scale=0.4
     ) + 0.3 * phx.kernels.Matern52Kernel(length_scale=0.9)
@@ -88,9 +82,6 @@ def test_sums_repeated_rows_vector_noise_and_parallel_covariance() -> None:
             temporal_method="parallel",
             covariance_form="square_root",
         )
-
-
-def test_time_derivative_and_state_capacity_guards() -> None:
     design = phx.uq.StateSpaceGaussianProcessDesign(
         jnp.asarray([0.0, 0.4]),
         jnp.asarray([0.2]),

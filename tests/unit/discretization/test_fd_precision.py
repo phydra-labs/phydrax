@@ -28,7 +28,7 @@ def _precision() -> Any:
     )
 
 
-def test_fd_precision_controls_prepared_and_lowered_execution() -> None:
+def test_fd_precision_scenario_1() -> None:
     precision = _precision()
     fd = phx.discretization.periodic_finite_difference(
         _grid(),
@@ -51,9 +51,6 @@ def test_fd_precision_controls_prepared_and_lowered_execution() -> None:
     assert compact.dtype == jnp.float32
     assert jnp.allclose(compact, direct)
     assert operator.consistency_report.maximum_condition_estimate > 0.0
-
-
-def test_fd_preflight_uses_the_bound_execution_policy() -> None:
     precision = _precision()
     grid = _grid(32)
     fd = phx.discretization.periodic_finite_difference(grid, precision=precision)
@@ -80,37 +77,21 @@ def test_fd_preflight_uses_the_bound_execution_policy() -> None:
             operators=(lowered,),
             precision=phx.discretization.FDExecutionPrecisionPolicy(),
         )
-
-
-def test_fd_checkpoint_preserves_execution_dtype_and_policy(tmp_path: Any) -> None:
     precision = _precision()
-    plan = phx.discretization.FDCheckpointPlan(
-        ("grid", "operator"),
-        "ssprk3",
+    action = phx.discretization.FDActionAdjointPlan(
+        lambda value: 3.0 * value,
         precision=precision,
     )
-    fields = {"state": jnp.arange(8, dtype=jnp.float32)}
-    path = phx.discretization.write_fd_checkpoint(
-        tmp_path / "state.phydrax",
-        plan,
-        jnp.asarray(0.5, dtype=jnp.float64),
-        fields,
+    report = action.identity_report(
+        (jnp.asarray([1.0, 2.0], dtype=jnp.float32),),
+        0,
+        jnp.asarray([0.5, -1.0], dtype=jnp.float32),
+        jnp.asarray([2.0, 4.0], dtype=jnp.float32),
+        tolerance=1e-6,
     )
-    restored = phx.discretization.read_fd_checkpoint(path, plan)
 
-    assert restored.field("state").dtype == jnp.float32
-    np.testing.assert_array_equal(restored.field("state"), fields["state"])
-
-    with pytest.raises(TypeError, match="expected float32"):
-        phx.discretization.write_fd_checkpoint(
-            tmp_path / "bad.phydrax",
-            plan,
-            0.5,
-            {"state": jnp.arange(8, dtype=jnp.float64)},
-        )
-
-
-def test_distributed_fd_payload_requires_field_precision() -> None:
+    assert report.passed
+    assert action.precision.policy_id == precision.policy_id
     precision = _precision()
     fd = phx.discretization.periodic_finite_difference(_grid(), precision=precision)
     partition = phx.discretization.DistributedStencilPartition(
@@ -125,9 +106,6 @@ def test_distributed_fd_payload_requires_field_precision() -> None:
     assert sharded.dtype == jnp.float32
     with pytest.raises(TypeError, match="payload dtype"):
         partition.shard(jnp.arange(16, dtype=jnp.float64))
-
-
-def test_conservative_multigrid_uses_field_and_certification_precision() -> None:
     precision = _precision()
     diffusion_precision = phx.discretization.FiniteVolumePrecisionPolicy(
         "float32",
@@ -166,19 +144,29 @@ def test_conservative_multigrid_uses_field_and_certification_precision() -> None
     assert result.precision_evidence.evidence_id == precision.evidence().evidence_id
 
 
-def test_fd_adjoint_identity_reduces_in_certification_precision() -> None:
+def test_fd_checkpoint_preserves_execution_dtype_and_policy(tmp_path: Any) -> None:
     precision = _precision()
-    action = phx.discretization.FDActionAdjointPlan(
-        lambda value: 3.0 * value,
+    plan = phx.discretization.FDCheckpointPlan(
+        ("grid", "operator"),
+        "ssprk3",
         precision=precision,
     )
-    report = action.identity_report(
-        (jnp.asarray([1.0, 2.0], dtype=jnp.float32),),
-        0,
-        jnp.asarray([0.5, -1.0], dtype=jnp.float32),
-        jnp.asarray([2.0, 4.0], dtype=jnp.float32),
-        tolerance=1e-6,
+    fields = {"state": jnp.arange(8, dtype=jnp.float32)}
+    path = phx.discretization.write_fd_checkpoint(
+        tmp_path / "state.phydrax",
+        plan,
+        jnp.asarray(0.5, dtype=jnp.float64),
+        fields,
     )
+    restored = phx.discretization.read_fd_checkpoint(path, plan)
 
-    assert report.passed
-    assert action.precision.policy_id == precision.policy_id
+    assert restored.field("state").dtype == jnp.float32
+    np.testing.assert_array_equal(restored.field("state"), fields["state"])
+
+    with pytest.raises(TypeError, match="expected float32"):
+        phx.discretization.write_fd_checkpoint(
+            tmp_path / "bad.phydrax",
+            plan,
+            0.5,
+            {"state": jnp.arange(8, dtype=jnp.float64)},
+        )

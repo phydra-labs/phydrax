@@ -20,7 +20,7 @@ def _solve(binding: Any) -> Any:
     return phx.optim.solve_convex_program(binding.prepare(_clarabel_policy())).result
 
 
-def test_cvxpy_sparse_import_parameter_refresh_and_inverse_maps() -> None:
+def test_cvxpy_contracts() -> None:
     cp = pytest.importorskip("cvxpy")
     parameter = cp.Parameter(nonneg=True, value=1.0)
     x = cp.Variable(2)
@@ -36,17 +36,11 @@ def test_cvxpy_sparse_import_parameter_refresh_and_inverse_maps() -> None:
     assert refreshed.numeric_version == binding.numeric_version + 1
     assert refreshed.numeric_fingerprint != binding.numeric_fingerprint
     assert refreshed.numeric_binding_id != binding.numeric_binding_id
-
-
-def test_cvxpy_export_rejects_mismatched_result_binding() -> None:
     cp = pytest.importorskip("cvxpy")
     x = cp.Variable(boolean=True)
     problem = cp.Problem(cp.Minimize(x), [x >= 0])
     with pytest.raises(TypeError, match="Mixed-integer"):
         phx.optim.import_cvxpy_problem(problem)
-
-
-def test_cvxpy_solution_restores_primal_and_constraint_duals() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     x = cp.Variable(2)
@@ -61,9 +55,6 @@ def test_cvxpy_solution_restores_primal_and_constraint_duals() -> None:
     assert x.value is not None
     assert all(constraint.dual_value is not None for constraint in constraints)
     assert jnp.allclose(jnp.asarray(x.value), jnp.asarray([1.0, 0.0]), atol=1e-6)
-
-
-def test_cvxpy_solution_rejects_nonoptimal_result_without_mutation() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     x = cp.Variable(2)
@@ -84,9 +75,6 @@ def test_cvxpy_solution_rejects_nonoptimal_result_without_mutation() -> None:
 
     assert x.value is None
     assert problem.status is None
-
-
-def test_cvxpy_solution_rejects_pre_refresh_result_before_mutation() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     parameter = cp.Parameter(nonneg=True, value=1.0)
@@ -108,9 +96,6 @@ def test_cvxpy_solution_rejects_pre_refresh_result_before_mutation() -> None:
     restored = phx.optim.restore_cvxpy_solution(refreshed, _solve(refreshed))
     assert restored
     assert jnp.allclose(jnp.sum(jnp.asarray(x.value)), 2.0, atol=1e-6)
-
-
-def test_cvxpy_solution_rejects_result_from_different_identical_problem() -> None:
     cp = pytest.importorskip("cvxpy")
     pytest.importorskip("clarabel")
     x = cp.Variable(2)

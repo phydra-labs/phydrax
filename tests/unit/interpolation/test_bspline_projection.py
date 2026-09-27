@@ -43,7 +43,7 @@ def _span_quadrature(*grids: Any, order: Any = 8) -> Any:
     return np.asarray(points), np.asarray(weights)
 
 
-def test_mass_and_cross_gram_match_scipy_basis_matrices() -> None:
+def test_bspline_projection_scenario_1() -> None:
     old_grid = _open_grid(3, [-0.72, -0.1, -0.1, 0.63])
     new_grid = _open_grid(2, [-0.85, -0.25, 0.4, 0.78])
     points, weights = _span_quadrature(old_grid, new_grid)
@@ -65,52 +65,48 @@ def test_mass_and_cross_gram_match_scipy_basis_matrices() -> None:
         expected_cross,
         atol=2e-12,
     )
+    for degree in range(1, 6):
+        old_grid = BSplineGrid.open_uniform(degree, 4)
+        inserted = jnp.asarray([-0.73, -0.25, -0.25, 0.41])
+        new_grid = BSplineGrid(
+            jnp.sort(jnp.concatenate((old_grid.knots, inserted))), degree
+        )
+        transfer = BSplineGridTransfer(old_grid, new_grid)
+        coefficients = (
+            jnp.arange(2 * old_grid.coefficient_count * 3, dtype="float64")
+            .reshape((2, old_grid.coefficient_count, 3))
+            .astype("complex128")
+        )
+        coefficients = coefficients + 0.3j * coefficients[::-1]
+        projected = project_bspline_coefficients(
+            coefficients,
+            transfer,
+            coefficient_axis=1,
+        )
+        query = jnp.linspace(-1.0, 1.0, 201)
 
+        actual = bspline_evaluate(
+            new_grid.knots,
+            jnp.moveaxis(projected, 1, 0),
+            query,
+            degree=degree,
+            case_shape=(),
+        ).values
+        expected = bspline_evaluate(
+            old_grid.knots,
+            jnp.moveaxis(coefficients, 1, 0),
+            query,
+            degree=degree,
+            case_shape=(),
+        ).values
 
-@pytest.mark.parametrize("degree", range(1, 6))
-def test_exact_nested_knot_insertion_preserves_functions(degree: Any) -> None:
-    old_grid = BSplineGrid.open_uniform(degree, 4)
-    inserted = jnp.asarray([-0.73, -0.25, -0.25, 0.41])
-    new_grid = BSplineGrid(jnp.sort(jnp.concatenate((old_grid.knots, inserted))), degree)
-    transfer = BSplineGridTransfer(old_grid, new_grid)
-    coefficients = (
-        jnp.arange(2 * old_grid.coefficient_count * 3, dtype="float64")
-        .reshape((2, old_grid.coefficient_count, 3))
-        .astype("complex128")
-    )
-    coefficients = coefficients + 0.3j * coefficients[::-1]
-    projected = project_bspline_coefficients(
-        coefficients,
-        transfer,
-        coefficient_axis=1,
-    )
-    query = jnp.linspace(-1.0, 1.0, 201)
-
-    actual = bspline_evaluate(
-        new_grid.knots,
-        jnp.moveaxis(projected, 1, 0),
-        query,
-        degree=degree,
-        case_shape=(),
-    ).values
-    expected = bspline_evaluate(
-        old_grid.knots,
-        jnp.moveaxis(coefficients, 1, 0),
-        query,
-        degree=degree,
-        case_shape=(),
-    ).values
-
-    assert transfer.method == "exact"
-    assert transfer.projection_error_bound == 0.0
-    assert np.allclose(np.asarray(actual), np.asarray(expected), atol=3e-11)
-    assert np.allclose(
-        np.asarray(transfer.matrix),
-        np.asarray(bspline_projection_matrix(old_grid, new_grid, method="exact")),
-    )
-
-
-def test_l2_projection_preserves_global_affine_functions() -> None:
+        assert transfer.method == "exact"
+        assert transfer.projection_error_bound == 0.0
+        assert np.allclose(np.asarray(actual), np.asarray(expected), atol=3e-11)
+        assert np.allclose(
+            np.asarray(transfer.matrix),
+            np.asarray(bspline_projection_matrix(old_grid, new_grid, method="exact")),
+        )
     old_grid = _open_grid(3, [-0.75, -0.22, 0.48])
     new_grid = _open_grid(3, [-0.88, -0.41, 0.05, 0.67])
     transfer = BSplineGridTransfer(old_grid, new_grid)
@@ -125,9 +121,6 @@ def test_l2_projection_preserves_global_affine_functions() -> None:
     assert np.allclose(
         np.asarray(identity), np.asarray(new_grid.greville_abscissae), atol=2e-12
     )
-
-
-def test_l2_projection_error_bound_controls_observed_l2_error() -> None:
     old_grid = _open_grid(3, [-0.76, -0.28, 0.46])
     new_grid = _open_grid(3, [-0.9, -0.52, 0.14, 0.72])
     transfer = BSplineGridTransfer(old_grid, new_grid)
@@ -146,7 +139,7 @@ def test_l2_projection_error_bound_controls_observed_l2_error() -> None:
     assert float(observed_error) <= float(certified_error) + 2e-11
 
 
-def test_transfer_is_jittable_and_has_the_expected_linear_gradient() -> None:
+def test_bspline_projection_scenario_2() -> None:
     old_grid = BSplineGrid.open_uniform(3, 5)
     new_grid = _open_grid(3, [-0.81, -0.3, 0.19, 0.58])
     transfer = BSplineGridTransfer(old_grid, new_grid)
@@ -158,9 +151,6 @@ def test_transfer_is_jittable_and_has_the_expected_linear_gradient() -> None:
 
     assert projected.shape == (new_grid.coefficient_count,)
     assert np.allclose(np.asarray(gradient), np.asarray(expected_gradient), atol=2e-12)
-
-
-def test_projection_failures_are_explicit() -> None:
     old_grid = BSplineGrid.open_uniform(3, 4)
     shifted_grid = BSplineGrid.open_uniform(3, 4, interval=(0.0, 2.0))
     nonnested_grid = _open_grid(3, [-0.8, -0.1, 0.55])

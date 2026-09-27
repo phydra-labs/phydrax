@@ -9,7 +9,7 @@ from phydrax.ml.quantum import iqp_state_feature_map
 from phydrax.operators.quantum import HilbertRegisterLayout
 
 
-def test_exact_quantum_fidelity_kernel_is_psd_unit_diagonal_and_phase_invariant() -> None:
+def test_exact_quantum_contracts() -> None:
     layout = HilbertRegisterLayout(("a", "b"), (2, 2))
     feature_map = iqp_state_feature_map(
         layout,
@@ -30,9 +30,6 @@ def test_exact_quantum_fidelity_kernel_is_psd_unit_diagonal_and_phase_invariant(
     assert jnp.allclose(kernel.diagonal(points), jnp.ones((3,)))
     assert jnp.min(jnp.linalg.eigvalsh(gram)) >= -1e-10
     assert jnp.allclose(kernel.pairwise(points[0], points[1]), gram[0, 1])
-
-
-def test_exact_quantum_fidelity_cross_gram_matches_pairwise_evaluation() -> None:
     layout = HilbertRegisterLayout(("q",), (2,))
     feature_map = iqp_state_feature_map(layout)
     kernel = ExactQuantumStateFidelityKernel(feature_map, feature_map.model_id)

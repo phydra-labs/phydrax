@@ -71,7 +71,7 @@ def _fracture_case(*, compact: Any = False) -> Any:
     return compiled, arguments, mechanics
 
 
-def test_phase_field_material_degrades_tension_and_updates_history() -> None:
+def test_mpm_fracture_scenario_1() -> None:
     material = phx.applications.solid_mechanics.PhaseFieldNeoHookeanMPMConstitutivePlan(2)
     parameters = phx.applications.solid_mechanics.MPMPhaseFieldParameters(
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0),
@@ -89,9 +89,6 @@ def test_phase_field_material_degrades_tension_and_updates_history() -> None:
     assert intact.trial_state[0, 1] > 0.0
     assert jnp.linalg.norm(damaged.first_piola) < jnp.linalg.norm(intact.first_piola)
     assert damaged.reference_energy_density[0] < intact.reference_energy_density[0]
-
-
-def test_phase_field_step_is_irreversible_and_transactional() -> None:
     compiled, arguments, mechanics = _fracture_case()
     prepared = phx.solver.PreparedMPMPhaseFieldDynamics(
         compiled.dynamics,
@@ -106,9 +103,6 @@ def test_phase_field_step_is_irreversible_and_transactional() -> None:
     assert bool(detail.evidence.irreversibility_valid)
     assert jnp.all(detail.accepted_state.damage >= state.damage)
     assert detail.evidence.fracture_energy >= 0.0
-
-
-def test_compact_phase_field_step_uses_complete_block_stencil() -> None:
     compiled, arguments, mechanics = _fracture_case(compact=True)
     prepared = phx.solver.PreparedMPMPhaseFieldDynamics(
         compiled.dynamics,
@@ -122,9 +116,6 @@ def test_compact_phase_field_step_uses_complete_block_stencil() -> None:
     assert bool(detail.successful)
     assert bool(detail.evidence.irreversibility_valid)
     assert detail.accepted_state.mechanics.storage_state is not None
-
-
-def test_field_partition_and_cpic_are_distinct_topology_paths() -> None:
     partition = phx.discretization.MPMFieldPartitionFracturePlan(2)
     topology = partition.update(
         jnp.asarray((0.2, 0.99, 0.99)),

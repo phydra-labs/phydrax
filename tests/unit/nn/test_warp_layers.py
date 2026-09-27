@@ -56,33 +56,28 @@ def _configured_warp(
     )
 
 
-@pytest.mark.parametrize("spatial_shape", ((7,), (4, 5), (3, 4, 5)))
-def test_regular_grid_interpolation_zero_displacement_is_identity(
-    spatial_shape: Any,
-) -> None:
-    spatial_ndim = len(spatial_shape)
-    boundary = ("periodic",) * spatial_ndim
-    values = jr.normal(jr.key(spatial_ndim), (2,) + spatial_shape + (3,))
-    coordinates = _normalized_lattice(
-        spatial_shape,
-        boundary,
-        dtype=values.dtype,
-    )
-    coordinates = jnp.broadcast_to(coordinates, (2,) + coordinates.shape)
+def test_regular_grid_contracts() -> None:
+    for spatial_shape in ((7,), (4, 5), (3, 4, 5)):
+        spatial_ndim = len(spatial_shape)
+        boundary = ("periodic",) * spatial_ndim
+        values = jr.normal(jr.key(spatial_ndim), (2,) + spatial_shape + (3,))
+        coordinates = _normalized_lattice(
+            spatial_shape,
+            boundary,
+            dtype=values.dtype,
+        )
+        coordinates = jnp.broadcast_to(coordinates, (2,) + coordinates.shape)
 
-    output = _sample_regular_grid_linear(
-        values,
-        coordinates,
-        spatial_ndim=spatial_ndim,
-        boundary=boundary,
-        fill_value=0.0,
-    )
+        output = _sample_regular_grid_linear(
+            values,
+            coordinates,
+            spatial_ndim=spatial_ndim,
+            boundary=boundary,
+            fill_value=0.0,
+        )
 
-    assert output.shape == values.shape
-    assert jnp.allclose(output, values)
-
-
-def test_regular_grid_interpolation_reproduces_affine_field_and_case_batches() -> None:
+        assert output.shape == values.shape
+        assert jnp.allclose(output, values)
     x = jnp.linspace(-1.0, 1.0, 6)
     y = jnp.linspace(-1.0, 1.0, 5)
     field = 1.3 + 2.1 * x[:, None] - 0.7 * y[None, :]
@@ -110,33 +105,22 @@ def test_regular_grid_interpolation_reproduces_affine_field_and_case_batches() -
     assert jnp.allclose(output, expected, rtol=1e-6, atol=1e-6)
 
 
-@pytest.mark.parametrize(
-    ("boundary", "displacement", "fill_value", "expected"),
-    (
+def test_multihead_warp_contracts() -> None:
+    for boundary, displacement, fill_value, expected in (
         ("periodic", 0.5, 0.0, jnp.array([1.0, 2.0, 3.0, 0.0])),
         ("reflect", 2.0, 0.0, jnp.array([3.0, 2.0, 1.0, 0.0])),
         ("clamp", 2.0, 0.0, jnp.array([3.0, 3.0, 3.0, 3.0])),
         ("constant", 2.0, -9.0, jnp.array([3.0, -9.0, -9.0, -9.0])),
-    ),
-)
-def test_multihead_warp_boundary_modes_have_exact_semantics(
-    boundary: Any,
-    displacement: Any,
-    fill_value: Any,
-    expected: Any,
-) -> None:
-    layer = _configured_warp(
-        boundary=boundary,
-        displacement=jnp.array([displacement]),
-        fill_value=fill_value,
-    )
+    ):
+        layer = _configured_warp(
+            boundary=boundary,
+            displacement=jnp.array([displacement]),
+            fill_value=fill_value,
+        )
 
-    output = layer(jnp.arange(4.0)[:, None])[:, 0]
+        output = layer(jnp.arange(4.0)[:, None])[:, 0]
 
-    assert jnp.allclose(output, expected)
-
-
-def test_multihead_warp_periodic_integer_cell_shift_matches_roll() -> None:
+        assert jnp.allclose(output, expected)
     size = 9
     layer = _configured_warp(
         channels=2,
@@ -149,9 +133,6 @@ def test_multihead_warp_periodic_integer_cell_shift_matches_roll() -> None:
     output = layer(values)
 
     assert jnp.allclose(output, jnp.roll(values, -1, axis=-2), atol=1e-6)
-
-
-def test_multihead_warp_heads_and_mixed_boundaries_remain_independent() -> None:
     layer = _configured_warp(
         spatial_ndim=2,
         channels=2,
@@ -169,43 +150,35 @@ def test_multihead_warp_heads_and_mixed_boundaries_remain_independent() -> None:
     assert jnp.allclose(output[..., 0], jnp.roll(first, -1, axis=0))
     assert jnp.allclose(output[:, 0, 1], second[:, -1])
     assert jnp.all(output[:, 1:, 1] == -7.0)
+    for dtype in (jnp.float32, jnp.float64):
+        layer = phx.nn.layers.MultiheadWarp(
+            spatial_ndim=2,
+            in_channels=3,
+            out_channels=4,
+            num_heads=2,
+            boundary=("reflect", "periodic"),
+            key=jr.key(2),
+        )
+        values = jr.normal(jr.key(3), (2, 4, 5, 3), dtype=dtype)
+        eager = layer(values)
+        compiled = eqx.filter_jit(lambda item, field: item(field))(layer, values)
+        value_gradient = jax.grad(lambda field: jnp.mean(layer(field) ** 2))(values)
+        _, parameter_gradient = eqx.filter_value_and_grad(
+            lambda item: jnp.mean(item(values) ** 2)
+        )(layer)
+        parameter_leaves = [
+            leaf
+            for leaf in jax.tree_util.tree_leaves(parameter_gradient)
+            if eqx.is_inexact_array(leaf)
+        ]
 
-
-@pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
-def test_multihead_warp_eager_jit_and_value_parameter_gradients_are_finite(
-    dtype: Any,
-) -> None:
-    layer = phx.nn.layers.MultiheadWarp(
-        spatial_ndim=2,
-        in_channels=3,
-        out_channels=4,
-        num_heads=2,
-        boundary=("reflect", "periodic"),
-        key=jr.key(2),
-    )
-    values = jr.normal(jr.key(3), (2, 4, 5, 3), dtype=dtype)
-    eager = layer(values)
-    compiled = eqx.filter_jit(lambda item, field: item(field))(layer, values)
-    value_gradient = jax.grad(lambda field: jnp.mean(layer(field) ** 2))(values)
-    _, parameter_gradient = eqx.filter_value_and_grad(
-        lambda item: jnp.mean(item(values) ** 2)
-    )(layer)
-    parameter_leaves = [
-        leaf
-        for leaf in jax.tree_util.tree_leaves(parameter_gradient)
-        if eqx.is_inexact_array(leaf)
-    ]
-
-    assert eager.shape == (2, 4, 5, 4)
-    assert eager.dtype == jnp.result_type(dtype, layer.value_projection.weight.dtype)
-    assert jnp.allclose(compiled, eager, rtol=2e-5, atol=2e-6)
-    assert jnp.all(jnp.isfinite(value_gradient))
-    assert jnp.linalg.norm(value_gradient) > 0.0
-    assert parameter_leaves
-    assert all(jnp.all(jnp.isfinite(leaf)) for leaf in parameter_leaves)
-
-
-def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts() -> None:
+        assert eager.shape == (2, 4, 5, 4)
+        assert eager.dtype == jnp.result_type(dtype, layer.value_projection.weight.dtype)
+        assert jnp.allclose(compiled, eager, rtol=2e-5, atol=2e-6)
+        assert jnp.all(jnp.isfinite(value_gradient))
+        assert jnp.linalg.norm(value_gradient) > 0.0
+        assert parameter_leaves
+        assert all(jnp.all(jnp.isfinite(leaf)) for leaf in parameter_leaves)
     with pytest.raises(ValueError, match="spatial_ndim must be positive"):
         phx.nn.layers.MultiheadWarp(
             spatial_ndim=0,
@@ -247,11 +220,6 @@ def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts() 
         layer(jnp.ones((4, 2)))
     with pytest.raises(TypeError, match="real-valued"):
         layer(jnp.ones((4, 1), dtype=jnp.complex64))
-
-
-def test_multihead_warp_conditioning_preserves_unconditioned_path_and_case_isolation() -> (
-    None
-):
     settings = dict(
         spatial_ndim=1,
         in_channels=2,
@@ -296,9 +264,6 @@ def test_multihead_warp_conditioning_preserves_unconditioned_path_and_case_isola
     assert jnp.allclose(separate, eager)
     assert jnp.all(jnp.isfinite(condition_gradient))
     assert jnp.linalg.norm(condition_gradient) > 0.0
-
-
-def test_multihead_warp_conditioning_contract_is_explicit() -> None:
     with pytest.raises(ValueError, match="conditioning_size must be non-negative"):
         phx.nn.layers.MultiheadWarp(
             spatial_ndim=1,

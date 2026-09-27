@@ -252,7 +252,7 @@ def _direct_player_objectives(problem: Any, joint_controls: Any) -> Any:
     return jnp.sum(stage_costs, axis=0) + terminal
 
 
-def test_affine_lq_callbacks_are_unweighted_and_keep_physical_time_axes() -> None:
+def test_games_nonlinear_foundation_scenario_1() -> None:
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
     trajectory = evaluation.trajectory
@@ -300,9 +300,6 @@ def test_affine_lq_callbacks_are_unweighted_and_keep_physical_time_axes() -> Non
         jnp.sum(expected_stage * problem.time_grid.durations, axis=-1) + expected_terminal
     )
     assert not np.allclose(np.asarray(evaluation.total_costs), duration_weighted)
-
-
-def test_owned_adjoint_rows_equal_whole_horizon_complete_objective_gradients() -> None:
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
     scaling = ILQGameScaling(
@@ -330,9 +327,6 @@ def test_owned_adjoint_rows_equal_whole_horizon_complete_objective_gradients() -
         residual.raw_owned_stationarity, expected_owned, rtol=3e-5, atol=3e-6
     )
     np.testing.assert_allclose(residual.dynamics_defect, 0.0, atol=2e-7)
-
-
-def test_player_and_owned_control_permutation_is_equivariant() -> None:
     initial = jnp.asarray([0.35, -0.25])
     problem, policy = _affine_problem(initial)
     permuted_problem, permuted_policy = _affine_problem(initial, permuted=True)
@@ -376,7 +370,7 @@ def test_player_and_owned_control_permutation_is_equivariant() -> None:
     )
 
 
-def test_explicit_dimensionless_scaling_controls_all_reported_norms() -> None:
+def test_games_nonlinear_foundation_scenario_2() -> None:
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
     scaling = ILQGameScaling(
@@ -419,9 +413,6 @@ def test_explicit_dimensionless_scaling_controls_all_reported_norms() -> None:
         residual.infinity_norm,
         jnp.max(jnp.abs(combined)),
     )
-
-
-def test_mixed_case_failure_is_local_and_preserves_the_first_cause() -> None:
     problem, policy = _affine_problem(
         jnp.asarray([[0.35, -0.25], [-0.2, 0.1]]), failing_policy=True
     )
@@ -447,6 +438,17 @@ def test_mixed_case_failure_is_local_and_preserves_the_first_cause() -> None:
     )
     assert np.all(np.isfinite(np.asarray(evaluation.total_costs[0])))
     assert np.all(np.isnan(np.asarray(evaluation.total_costs[1])))
+    problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
+    evaluation = evaluate_game_policy(problem, policy)
+    residual = nominal_nash_residual(
+        problem,
+        evaluation,
+        ILQGameScaling(jnp.ones(2), jnp.ones(3), jnp.ones(2)),
+    )
+
+    assert residual.certificate == "LOCAL_NOMINAL_NASH_STATIONARY"
+    assert "equilibrium" not in evaluation.evaluation_id.lower()
+    assert "equilibrium" not in evaluation.method_id.lower()
 
 
 def test_explicit_transition_failure_stops_game_callbacks_and_preserves_status() -> None:
@@ -500,17 +502,3 @@ def test_explicit_transition_failure_stops_game_callbacks_and_preserves_status()
         jnp.asarray([True, False]),
     )
     assert int(evaluation.trajectory.backend_status) == 91
-
-
-def test_certificate_is_only_local_nominal_stationarity_evidence() -> None:
-    problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
-    evaluation = evaluate_game_policy(problem, policy)
-    residual = nominal_nash_residual(
-        problem,
-        evaluation,
-        ILQGameScaling(jnp.ones(2), jnp.ones(3), jnp.ones(2)),
-    )
-
-    assert residual.certificate == "LOCAL_NOMINAL_NASH_STATIONARY"
-    assert "equilibrium" not in evaluation.evaluation_id.lower()
-    assert "equilibrium" not in evaluation.method_id.lower()

@@ -45,7 +45,7 @@ def _solve(space: Any, costs: Any, method: Any = None) -> Any:
     )
 
 
-def test_capacitated_min_cost_flow_builds_disjoint_multi_object_paths() -> None:
+def test_min_cost_flow_scenario_1() -> None:
     space = _space(
         [0, 1, 0, 2],
         [1, 3, 2, 3],
@@ -62,9 +62,6 @@ def test_capacitated_min_cost_flow_builds_disjoint_multi_object_paths() -> None:
     assert result.certificate.optimality_proven
     assert result.certificate.dual_available
     np.testing.assert_allclose(result.certificate.dual_residual, 0.0, atol=1e-6)
-
-
-def test_min_cost_flow_uses_deterministic_edge_ties_and_negative_cycles() -> None:
     tied_space = _space([0, 0], [1, 1], 2, [1, -1], [1, 1])
     tied = _solve(tied_space, [0.0, 0.0])
     np.testing.assert_array_equal(tied.decision.flow, [1, 0])
@@ -75,9 +72,6 @@ def test_min_cost_flow_uses_deterministic_edge_ties_and_negative_cycles() -> Non
     np.testing.assert_array_equal(circulation.decision.flow, [1, 1])
     np.testing.assert_allclose(circulation.objective_value, -2.0)
     assert circulation.certificate.optimality_proven
-
-
-def test_min_cost_flow_reports_infeasible_and_budget_exhausted_states() -> None:
     infeasible_space = _space([0], [1], 3, [1, 0, -1], [1])
     infeasible = _solve(infeasible_space, [0.0])
     assert infeasible.status == int(phx.combinatorial.CombinatorialStatus.INFEASIBLE)
@@ -103,9 +97,6 @@ def test_min_cost_flow_reports_infeasible_and_budget_exhausted_states() -> None:
     assert budgeted.certificate.feasible
     assert not budgeted.certificate.optimality_proven
     np.testing.assert_array_equal(budgeted.decision.flow, [1, 0, 0])
-
-
-def test_min_cost_flow_masks_edges_and_stops_ordinary_gradients() -> None:
     space = _space(
         [0, 0],
         [1, 1],

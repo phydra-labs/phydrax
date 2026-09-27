@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_lagrangian_marker_measure_compacts_active_constraint_rows() -> None:
+def test_lagrangian_marker_contracts() -> None:
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.asarray([10, 20, 30]),
         jnp.asarray([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]),
@@ -22,9 +22,6 @@ def test_lagrangian_marker_measure_compacts_active_constraint_rows() -> None:
     assert jnp.isclose(markers.material_measure.total_mass, 1.0)
     expanded = markers.expand_active(jnp.asarray([[1.0, 2.0], [3.0, 4.0]]))
     assert jnp.array_equal(expanded[1], jnp.zeros((2,)))
-
-
-def test_lagrangian_marker_kinematics_masks_inactive_values() -> None:
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.asarray([0, 1]),
         jnp.zeros((2, 2)),

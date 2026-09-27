@@ -36,7 +36,7 @@ def _time(event: int, available: int, vintage: str) -> FinancialTimestamp:
     )
 
 
-def test_split_adjustment_removes_the_mechanical_price_jump() -> None:
+def test_transforms_scenario_1() -> None:
     price_lineage = DataLineage("venue", "raw-prices")
     action_lineage = DataLineage("issuer", "corporate-actions")
     split = CorporateAction(
@@ -67,11 +67,6 @@ def test_split_adjustment_removes_the_mechanical_price_jump() -> None:
     assert bool(jnp.all(adjusted.valid_mask))
     assert jnp.isclose(returns.values[0], 0.0)
     assert action_lineage.lineage_id in adjusted.lineage.upstream_lineage_ids
-
-
-def test_future_corporate_action_correction_does_not_change_historical_adjustment() -> (
-    None
-):
     action_lineage = DataLineage("issuer", "actions")
     original = CorporateAction(
         "split-1",
@@ -96,9 +91,6 @@ def test_future_corporate_action_correction_does_not_change_historical_adjustmen
     assert historical[0].observation_id == original.observation_id
     assert float(corrected[0].value) == 4.0
     assert corrected[0].observation_id == correction.observation_id
-
-
-def test_time_bars_use_exact_half_open_windows() -> None:
     lineage = DataLineage("venue", "ticks")
     bars = build_time_bars(
         jnp.asarray([10, 19, 20, 29, 30]),

@@ -34,7 +34,7 @@ def _self_adjoint_properties(*, positive_definite: Any = False) -> Any:
     )
 
 
-def test_lobpcg_standard_eigenpairs_are_jittable_and_resource_checked() -> None:
+def test_lobpcg_contracts() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     operator = la.DiagonalLinearOperator(
         diagonal,
@@ -78,141 +78,6 @@ def test_lobpcg_standard_eigenpairs_are_jittable_and_resource_checked() -> None:
                 resources=eigen.EigenResourcePolicy(krylov_basis_bytes=1),
             ),
         )
-
-
-def test_generalized_eigenproblem_honors_metric_and_constraint_subspace() -> None:
-    space = la.ArraySpace((3,), dtype=jnp.float64)
-    operator = la.DiagonalLinearOperator(
-        jnp.asarray([2.0, 6.0, 12.0]),
-        space=space,
-        properties=_self_adjoint_properties(),
-    )
-    metric = la.DiagonalLinearOperator(
-        jnp.asarray([1.0, 2.0, 3.0]),
-        space=space,
-        properties=_self_adjoint_properties(positive_definite=True),
-    )
-    constraints = la.LinearSubspace(
-        space,
-        jnp.asarray([[1.0], [0.0], [0.0]]),
-        orthonormal=True,
-    )
-    problem = eigen.GeneralizedEigenproblem(
-        operator,
-        metric,
-        constraints=constraints,
-    )
-    result = eigen.eigensolve(
-        problem,
-        policy=eigen.EigenSolvePolicy(
-            eigen.LOBPCG(block_dimension=2),
-            count=2,
-            initial_basis=jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
-        ),
-    )
-    vectors = jnp.asarray(result.eigenvectors)
-
-    assert bool(result.successful)
-    assert jnp.allclose(result.eigenvalues, jnp.asarray([3.0, 4.0]), atol=1e-9)
-    assert jnp.allclose(vectors[0], 0.0, atol=1e-9)
-    assert jnp.allclose(
-        vectors.T @ (metric.diagonal[:, None] * vectors),
-        jnp.eye(2),
-    )
-
-
-def test_restarted_lanczos_supports_magnitude_targets_and_refresh() -> None:
-    diagonal = jnp.asarray([-5.0, 1.0, 2.0, 4.0])
-    operator = la.DiagonalLinearOperator(
-        diagonal,
-        properties=_self_adjoint_properties(),
-        operator_id="refreshable-eigen-operator",
-    )
-    problem = eigen.Eigenproblem(operator, problem_id="refreshable-eigenproblem")
-    policy = eigen.EigenSolvePolicy(
-        eigen.RestartedLanczos(subspace_dimension=4, restart_dimension=2),
-        count=2,
-        which="largest-magnitude",
-        max_steps=12,
-        key=jax.random.key(7),
-    )
-    prepared = eigen.prepare_eigensolve(problem, policy)
-    result = eigen.eigensolve(prepared)
-
-    assert bool(result.successful)
-    assert jnp.allclose(jnp.sort(result.eigenvalues), jnp.asarray([-5.0, 4.0]))
-
-    updated_diagonal = jnp.asarray([-6.0, 1.0, 2.0, 4.5])
-    updated = eigen.Eigenproblem(
-        la.DiagonalLinearOperator(
-            updated_diagonal,
-            properties=_self_adjoint_properties(),
-            operator_id=operator.operator_id,
-        ),
-        problem_id=problem.problem_id,
-    )
-    refreshed = eigen.refresh_eigensolve(prepared, updated)
-    refreshed_result = eigen.eigensolve(refreshed)
-
-    assert refreshed.numeric_version == prepared.numeric_version + 1
-    assert jnp.allclose(
-        jnp.sort(refreshed_result.eigenvalues),
-        jnp.asarray([-6.0, 4.5]),
-        atol=1e-8,
-    )
-
-
-def test_isolated_eigenvalue_gradient_uses_mathematical_derivative() -> None:
-    properties = _self_adjoint_properties()
-    policy = eigen.EigenSolvePolicy(
-        eigen.LOBPCG(block_dimension=2),
-        count=1,
-        initial_basis=jnp.eye(2),
-        differentiation="eigenvalues",
-    )
-
-    def smallest_eigenvalue(coefficient: Any) -> Any:
-        operator = la.DiagonalLinearOperator(
-            jnp.stack((coefficient, jnp.asarray(3.0))),
-            properties=properties,
-        )
-        return eigen.eigensolve(
-            eigen.Eigenproblem(operator),
-            policy=policy,
-        ).eigenvalues[0]
-
-    assert jnp.allclose(jax.grad(smallest_eigenvalue)(1.25), 1.0, atol=1e-8)
-
-
-def test_matrix_free_eigenvalue_gradient_supports_closure_converted_operator() -> None:
-    properties = _self_adjoint_properties()
-    policy = eigen.EigenSolvePolicy(
-        eigen.LOBPCG(block_dimension=2),
-        count=1,
-        initial_basis=jnp.eye(2),
-        differentiation="eigenvalues",
-    )
-
-    def smallest_eigenvalue(coefficient: Any) -> Any:
-        diagonal = jnp.stack((coefficient, jnp.asarray(3.0)))
-        space = la.ArraySpace((2,), dtype=diagonal.dtype)
-        operator = la.FunctionLinearOperator(
-            lambda vector: diagonal * vector,
-            source=space,
-            target=space,
-            properties=properties,
-        )
-        return eigen.eigensolve(
-            eigen.Eigenproblem(operator),
-            policy=policy,
-        ).eigenvalues[0]
-
-    gradient = jax.jit(jax.grad(smallest_eigenvalue))(jnp.asarray(1.25))
-
-    assert jnp.allclose(gradient, 1.0, atol=1e-8)
-
-
-def test_lobpcg_repairs_rank_deficient_initial_basis_deterministically() -> None:
     operator = la.DiagonalLinearOperator(
         jnp.asarray([1.0, 2.0, 3.0, 4.0]),
         properties=_self_adjoint_properties(),
@@ -241,9 +106,6 @@ def test_lobpcg_repairs_rank_deficient_initial_basis_deterministically() -> None
     assert jnp.allclose(first.eigenvalues, jnp.asarray([1.0, 2.0]), atol=1e-8)
     assert jnp.allclose(first.eigenvalues, second.eigenvalues, atol=0.0)
     assert jnp.allclose(first.eigenvectors, second.eigenvectors, atol=0.0)
-
-
-def test_lobpcg_uses_preconditioner_and_reports_partial_convergence() -> None:
     properties = _self_adjoint_properties()
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     operator = la.DiagonalLinearOperator(diagonal, properties=properties)
@@ -303,7 +165,83 @@ def test_lobpcg_uses_preconditioner_and_reports_partial_convergence() -> None:
     assert partial.iterations == 1
 
 
-def test_dense_eigh_auto_full_spectrum_is_jittable_and_refreshable() -> None:
+def test_linalg_eigen_scenario_1() -> None:
+    space = la.ArraySpace((3,), dtype=jnp.float64)
+    operator = la.DiagonalLinearOperator(
+        jnp.asarray([2.0, 6.0, 12.0]),
+        space=space,
+        properties=_self_adjoint_properties(),
+    )
+    metric = la.DiagonalLinearOperator(
+        jnp.asarray([1.0, 2.0, 3.0]),
+        space=space,
+        properties=_self_adjoint_properties(positive_definite=True),
+    )
+    constraints = la.LinearSubspace(
+        space,
+        jnp.asarray([[1.0], [0.0], [0.0]]),
+        orthonormal=True,
+    )
+    problem = eigen.GeneralizedEigenproblem(
+        operator,
+        metric,
+        constraints=constraints,
+    )
+    result = eigen.eigensolve(
+        problem,
+        policy=eigen.EigenSolvePolicy(
+            eigen.LOBPCG(block_dimension=2),
+            count=2,
+            initial_basis=jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+        ),
+    )
+    vectors = jnp.asarray(result.eigenvectors)
+
+    assert bool(result.successful)
+    assert jnp.allclose(result.eigenvalues, jnp.asarray([3.0, 4.0]), atol=1e-9)
+    assert jnp.allclose(vectors[0], 0.0, atol=1e-9)
+    assert jnp.allclose(
+        vectors.T @ (metric.diagonal[:, None] * vectors),
+        jnp.eye(2),
+    )
+    diagonal = jnp.asarray([-5.0, 1.0, 2.0, 4.0])
+    operator = la.DiagonalLinearOperator(
+        diagonal,
+        properties=_self_adjoint_properties(),
+        operator_id="refreshable-eigen-operator",
+    )
+    problem = eigen.Eigenproblem(operator, problem_id="refreshable-eigenproblem")
+    policy = eigen.EigenSolvePolicy(
+        eigen.RestartedLanczos(subspace_dimension=4, restart_dimension=2),
+        count=2,
+        which="largest-magnitude",
+        max_steps=12,
+        key=jax.random.key(7),
+    )
+    prepared = eigen.prepare_eigensolve(problem, policy)
+    result = eigen.eigensolve(prepared)
+
+    assert bool(result.successful)
+    assert jnp.allclose(jnp.sort(result.eigenvalues), jnp.asarray([-5.0, 4.0]))
+
+    updated_diagonal = jnp.asarray([-6.0, 1.0, 2.0, 4.5])
+    updated = eigen.Eigenproblem(
+        la.DiagonalLinearOperator(
+            updated_diagonal,
+            properties=_self_adjoint_properties(),
+            operator_id=operator.operator_id,
+        ),
+        problem_id=problem.problem_id,
+    )
+    refreshed = eigen.refresh_eigensolve(prepared, updated)
+    refreshed_result = eigen.eigensolve(refreshed)
+
+    assert refreshed.numeric_version == prepared.numeric_version + 1
+    assert jnp.allclose(
+        jnp.sort(refreshed_result.eigenvalues),
+        jnp.asarray([-6.0, 4.5]),
+        atol=1e-8,
+    )
     matrix = jnp.asarray([[2.0, 1.0, 0.0], [1.0, 3.0, 0.5], [0.0, 0.5, 4.0]])
     operator = la.DenseLinearOperator(
         matrix,
@@ -349,9 +287,6 @@ def test_dense_eigh_auto_full_spectrum_is_jittable_and_refreshable() -> None:
                 ),
             ),
         )
-
-
-def test_dense_generalized_eigh_respects_non_euclidean_pairing() -> None:
     pairing_weights = jnp.asarray([2.0, 3.0, 4.0])
     space = la.ArraySpace(
         (3,),
@@ -391,6 +326,56 @@ def test_dense_generalized_eigh_respects_non_euclidean_pairing() -> None:
         atol=1e-12,
     )
     assert jnp.max(result.residual_norms) < 1e-12
+
+
+def test_isolated_eigenvalue_gradient_uses_mathematical_derivative() -> None:
+    properties = _self_adjoint_properties()
+    policy = eigen.EigenSolvePolicy(
+        eigen.LOBPCG(block_dimension=2),
+        count=1,
+        initial_basis=jnp.eye(2),
+        differentiation="eigenvalues",
+    )
+
+    def smallest_eigenvalue(coefficient: Any) -> Any:
+        operator = la.DiagonalLinearOperator(
+            jnp.stack((coefficient, jnp.asarray(3.0))),
+            properties=properties,
+        )
+        return eigen.eigensolve(
+            eigen.Eigenproblem(operator),
+            policy=policy,
+        ).eigenvalues[0]
+
+    assert jnp.allclose(jax.grad(smallest_eigenvalue)(1.25), 1.0, atol=1e-8)
+
+
+def test_matrix_free_eigenvalue_gradient_supports_closure_converted_operator() -> None:
+    properties = _self_adjoint_properties()
+    policy = eigen.EigenSolvePolicy(
+        eigen.LOBPCG(block_dimension=2),
+        count=1,
+        initial_basis=jnp.eye(2),
+        differentiation="eigenvalues",
+    )
+
+    def smallest_eigenvalue(coefficient: Any) -> Any:
+        diagonal = jnp.stack((coefficient, jnp.asarray(3.0)))
+        space = la.ArraySpace((2,), dtype=diagonal.dtype)
+        operator = la.FunctionLinearOperator(
+            lambda vector: diagonal * vector,
+            source=space,
+            target=space,
+            properties=properties,
+        )
+        return eigen.eigensolve(
+            eigen.Eigenproblem(operator),
+            policy=policy,
+        ).eigenvalues[0]
+
+    gradient = jax.jit(jax.grad(smallest_eigenvalue))(jnp.asarray(1.25))
+
+    assert jnp.allclose(gradient, 1.0, atol=1e-8)
 
 
 def test_dense_eigenvalue_derivatives_require_isolated_modes() -> None:

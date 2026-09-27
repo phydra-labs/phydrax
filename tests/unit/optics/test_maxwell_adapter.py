@@ -65,7 +65,7 @@ def _modal_field(shape: tuple[int, int]) -> FourierModalFieldResult:
     )
 
 
-def test_fourier_modal_adapter_preserves_periodic_cell_and_tangential_values() -> None:
+def test_maxwell_adapter_scenario_1() -> None:
     shape = (2, 2)
     lattice = LatticeHarmonicDiscretization(
         LatticeHarmonicPlan.parallelogramic((1, 1), shape), jnp.eye(2)
@@ -86,9 +86,6 @@ def test_fourier_modal_adapter_preserves_periodic_cell_and_tangential_values() -
     np.testing.assert_allclose(adapted.plane.electric.values[..., 1], 3.0 - 1.0j)
     np.testing.assert_allclose(adapted.plane.magnetic.values[..., 0], -1.0j)
     np.testing.assert_allclose(adapted.plane.magnetic.values[..., 1], 4.0)
-
-
-def test_periodic_tiling_and_windowing_records_finite_support_evidence() -> None:
     shape = (2, 2)
     lattice = LatticeHarmonicDiscretization(
         LatticeHarmonicPlan.parallelogramic((1, 1), shape), jnp.eye(2)
@@ -115,9 +112,6 @@ def test_periodic_tiling_and_windowing_records_finite_support_evidence() -> None
         converted.plane.electric.values[..., 0],
         (2.0 + 1.0j) * np.asarray(window),
     )
-
-
-def test_direct_fourier_modal_to_finite_window_requires_explicit_conversion() -> None:
     shape = (2, 2)
     lattice = LatticeHarmonicDiscretization(
         LatticeHarmonicPlan.parallelogramic((1, 1), shape), jnp.eye(2)

@@ -73,14 +73,11 @@ def _poisson_error(count: Any) -> Any:
     return error, result.successful
 
 
-def test_explicit_polygon_poisson_error_decreases_under_refinement() -> None:
+def test_explicit_polygon_contracts() -> None:
     coarse, coarse_success = _poisson_error(2)
     fine, fine_success = _poisson_error(4)
     assert jnp.all(coarse_success) & jnp.all(fine_success)
     assert fine < 0.45 * coarse
-
-
-def test_explicit_polygon_linear_elasticity_has_exact_rigid_rotation_mode() -> None:
     space = _structured_space(2, component_shape=(2,))
     coordinates = space.mesh.coordinates
     state = jnp.stack((-coordinates[:, 1], coordinates[:, 0]), axis=-1)

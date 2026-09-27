@@ -45,7 +45,7 @@ def _uniform(model: Any, shape: Any = (8, 8, 8)) -> Any:
     )
 
 
-def test_production_velocity_rules_have_canonical_population_identity() -> None:
+def test_compressible_kinetic_scenario_1() -> None:
     rules = (d3q39_guided_rule(), d3q343_entropic_rule(), d3q33_filtered_rule())
     assert tuple(rule.population_count for rule in rules) == (39, 343, 33)
     assert tuple(rule.dual_dimension for rule in rules) == (12, 4, 4)
@@ -54,9 +54,6 @@ def test_production_velocity_rules_have_canonical_population_identity() -> None:
             rule.opposite[rule.opposite], np.arange(rule.population_count)
         )
         np.testing.assert_allclose(jnp.sum(rule.base_probabilities), 1.0, atol=2e-14)
-
-
-def test_guided_d3q39_collision_and_full_prandtl_closure_conserve_state() -> None:
     model = guided_d3q39_plan(gamma=1.4)
     state = _uniform(model)
     direct = model.collide(state, 1.0)
@@ -74,9 +71,6 @@ def test_guided_d3q39_collision_and_full_prandtl_closure_conserve_state() -> Non
     assert above_evidence.slow_family == "stress"
     np.testing.assert_allclose(direct.conservation.mass_defect, 0.0, atol=1e-10)
     np.testing.assert_allclose(direct.conservation.energy_defect, 0.0, atol=1e-9)
-
-
-def test_entropic_d3q343_velocity_partition_roundtrips_and_collides() -> None:
     model = entropic_d3q343_plan()
     state = _uniform(model, shape=(1,))
     partition = KineticVelocityPartitionPlan(model.rule, 7)
@@ -89,7 +83,7 @@ def test_entropic_d3q343_velocity_partition_roundtrips_and_collides() -> None:
     np.testing.assert_array_equal(assembled, state.population("particle"))
 
 
-def test_filtered_d3q33_filters_only_nonconserved_moments() -> None:
+def test_compressible_kinetic_scenario_2() -> None:
     plan = FilteredD3Q33Plan()
     state = _uniform(plan.model)
     result, evidence = plan.collide(state, 1.0)
@@ -97,9 +91,6 @@ def test_filtered_d3q33_filters_only_nonconserved_moments() -> None:
     assert jnp.all(result.successful)
     assert jnp.all(evidence.conserved_moment_defect < 1e-9)
     assert plan.filter_indices.size == 15
-
-
-def test_integer_frame_remap_and_adaptive_gauge_retain_supported_state() -> None:
     source = guided_d3q39_plan()
     frame = IntegerKineticFramePlan(source.rule, (1, 0, 0))
     target = type(source)(
@@ -120,11 +111,6 @@ def test_integer_frame_remap_and_adaptive_gauge_retain_supported_state() -> None
     assert jnp.all(remapped.evidence.successful)
     assert jnp.all(supported)
     np.testing.assert_allclose(scale, 1.0)
-
-
-def test_periodic_transport_amr_precision_and_moving_geometry_preserve_contracts() -> (
-    None
-):
     model = guided_d3q39_plan()
     state = _uniform(model)
     transport = IntegerLatticeTransportPlan(
@@ -169,9 +155,7 @@ def test_periodic_transport_amr_precision_and_moving_geometry_preserve_contracts
     )
 
 
-def test_predictive_refinement_species_transport_radiation_and_spectrum_are_audited() -> (
-    None
-):
+def test_compressible_kinetic_scenario_3() -> None:
     model = guided_d3q39_plan()
     state = _uniform(model)
     transport = IntegerLatticeTransportPlan(model.rule, state.spatial_shape)
@@ -210,22 +194,6 @@ def test_predictive_refinement_species_transport_radiation_and_spectrum_are_audi
     assert bool(spectrum.finite)
     np.testing.assert_allclose(jnp.sum(transported, axis=-1), 1.0, atol=2e-12)
     np.testing.assert_array_equal(updated.species_densities, species)
-
-
-def test_population_state_rejects_foreign_model_identity() -> None:
-    source = guided_d3q39_plan(gamma=1.4)
-    foreign = guided_d3q39_plan(gamma=1.5)
-    state = source.initialize(
-        jnp.ones((1,)),
-        jnp.zeros((1, 3)),
-        jnp.ones((1,)),
-    )
-
-    with pytest.raises(ValueError, match="identity"):
-        foreign.moments(state)
-
-
-def test_predictive_refinement_ignores_inactive_source_cells() -> None:
     model = guided_d3q39_plan()
     indicator = jnp.zeros((5, 5, 5))
     indicator = indicator.at[2, 2, 2].set(10.0)
@@ -240,9 +208,16 @@ def test_predictive_refinement_ignores_inactive_source_cells() -> None:
 
     assert not bool(jnp.any(evidence.refine))
     assert bool(evidence.successful)
+    source = guided_d3q39_plan(gamma=1.4)
+    foreign = guided_d3q39_plan(gamma=1.5)
+    state = source.initialize(
+        jnp.ones((1,)),
+        jnp.zeros((1, 3)),
+        jnp.ones((1,)),
+    )
 
-
-def test_moving_geometry_reports_negative_uncovered_candidate_without_commit() -> None:
+    with pytest.raises(ValueError, match="identity"):
+        foreign.moments(state)
     model = guided_d3q39_plan()
     state = _uniform(model, shape=(2, 2, 2))
     negative = CompressibleKineticPopulationState(

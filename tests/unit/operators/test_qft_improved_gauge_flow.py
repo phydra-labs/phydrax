@@ -34,7 +34,7 @@ def _action_and_links() -> Any:
     return action, links
 
 
-def test_local_loop_action_is_the_exact_incident_subset_of_full_action() -> None:
+def test_qft_improved_gauge_flow_scenario_1() -> None:
     action, links = _action_and_links()
     contributions = action.loop_contributions(links)
 
@@ -43,9 +43,6 @@ def test_local_loop_action_is_the_exact_incident_subset_of_full_action() -> None
     for edge in range(action.link_space.num_edges):
         assert jnp.allclose(action.local_action(links, edge), action.action(links))
     assert jnp.allclose(action.canonical_action(action.link_space.identity()), 0.0)
-
-
-def test_group_gradient_flow_preserves_membership_and_descends_action() -> None:
     action, links = _action_and_links()
     flow = GaugeGradientFlowPlan(
         action,

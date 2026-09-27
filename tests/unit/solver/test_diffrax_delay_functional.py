@@ -40,7 +40,7 @@ def _functional_problem() -> Any:
     )
 
 
-def test_functional_delay_replays_full_rolling_and_segmented_history() -> None:
+def test_functional_delay_contracts() -> None:
     problem = _functional_problem()
     common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 1.0, 6),
@@ -75,9 +75,6 @@ def test_functional_delay_replays_full_rolling_and_segmented_history() -> None:
     assert contract["output_kind"] == "ambient"
     assert jnp.array_equal(contract["discontinuity_lags"], jnp.asarray([0.2, 0.5]))
     assert rolling.stats["history_capacity"] > rolling.stats["history_max_occupancy"]
-
-
-def test_functional_delay_enforces_declared_query_window_at_initialization() -> None:
     term = phx.solver.FunctionalDelay(
         "invalid-window",
         lambda time, state, history, args: history(0.1),
@@ -95,11 +92,6 @@ def test_functional_delay_enforces_declared_query_window_at_initialization() -> 
             t0=0.0,
             t1=0.5,
         )
-
-
-def test_functional_delay_routes_through_stochastic_whole_and_segmented_backends() -> (
-    None
-):
     lags = jnp.asarray([0.1, 0.15, 0.2])
     functional = phx.solver.FunctionalDelay(
         "window",

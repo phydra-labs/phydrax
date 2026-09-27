@@ -7,7 +7,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 from phydrax.optics.geometric._paraxial import DifferentialRayMap
 from phydrax.optics.geometric._resonator import (
@@ -70,7 +69,7 @@ def _canonical_rotation(angle: Any) -> Any:
     return jnp.block([[transverse, zero], [zero, transverse]])
 
 
-def test_affine_map_composition_recovers_analytic_closed_orbit() -> None:
+def test_resonator_scenario_1() -> None:
     first_jacobian = _stable_map(phases=(0.19, 0.31), curvatures=(1.2, 0.8))
     second_jacobian = _stable_map(phases=(0.23, 0.17), curvatures=(1.2, 0.8))
     round_trip = second_jacobian @ first_jacobian
@@ -107,9 +106,6 @@ def test_affine_map_composition_recovers_analytic_closed_orbit() -> None:
     )
     assert jnp.allclose(result.closed_orbit, fixed_point, atol=2e-11)
     assert float(result.evidence.closed_orbit_residual) < 1e-11
-
-
-def test_rotated_coupled_astigmatic_mode_is_positive_lagrangian_and_invariant() -> None:
     uncoupled = _stable_map()
     rotation = _canonical_rotation(0.43)
     coupled = rotation @ uncoupled @ rotation.T
@@ -149,9 +145,6 @@ def test_rotated_coupled_astigmatic_mode_is_positive_lagrangian_and_invariant() 
     assert jnp.allclose(invariant, jnp.eye(2), atol=3e-9)
     assert jnp.all(jnp.linalg.eigvalsh(jnp.imag(mode.curvature)) > 0.0)
     assert float(mode.invariance_residual) < 3e-9
-
-
-def test_unstable_and_marginal_round_trips_are_explicit_and_have_no_mode() -> None:
     unstable_jacobian = jnp.diag(jnp.asarray((1.4, 1.2, 1.0 / 1.4, 1.0 / 1.2)))
     unstable = prepare_paraxial_resonator(
         ParaxialResonatorPlan((_map(unstable_jacobian),))
@@ -170,7 +163,7 @@ def test_unstable_and_marginal_round_trips_are_explicit_and_have_no_mode() -> No
     assert not bool(marginal.mode.valid)
 
 
-def test_singular_closed_orbit_and_nonsymplectic_maps_are_rejected() -> None:
+def test_resonator_scenario_2() -> None:
     singular = prepare_paraxial_resonator(
         ParaxialResonatorPlan((_map(jnp.eye(4)),))
     ).execute()
@@ -182,9 +175,6 @@ def test_singular_closed_orbit_and_nonsymplectic_maps_are_rejected() -> None:
     assert int(nonsymplectic.status) == int(ParaxialResonatorStatus.NONSYMPLECTIC)
     assert not bool(singular.successful)
     assert not bool(nonsymplectic.successful)
-
-
-def test_nonfinite_round_trip_has_distinct_terminal_status() -> None:
     jacobian = _stable_map().at[0, 0].set(jnp.nan)
 
     result = prepare_paraxial_resonator(
@@ -194,11 +184,7 @@ def test_nonfinite_round_trip_has_distinct_terminal_status() -> None:
     assert int(result.status) == int(ParaxialResonatorStatus.NONFINITE)
     assert not bool(result.successful)
     assert not bool(result.mode.valid)
-
-
-@pytest.mark.parametrize(
-    "maps",
-    (
+    for maps in (
         (
             _map(jnp.eye(4), input_frame="a", output_frame="b"),
             _map(jnp.eye(4), input_frame="c", output_frame="a"),
@@ -209,11 +195,9 @@ def test_nonfinite_round_trip_has_distinct_terminal_status() -> None:
             _map(jnp.eye(4), input_frame="b", output_frame="a", source="second"),
         ),
         (_map(jnp.eye(4), valid=False),),
-    ),
-)
-def test_frame_coordinate_provenance_and_map_evidence_are_rejected(maps: Any) -> None:
-    result = prepare_paraxial_resonator(ParaxialResonatorPlan(maps)).execute()
+    ):
+        result = prepare_paraxial_resonator(ParaxialResonatorPlan(maps)).execute()
 
-    assert int(result.status) == int(ParaxialResonatorStatus.INCOMPATIBLE_MAPS)
-    assert not bool(result.successful)
-    assert not bool(result.mode.valid)
+        assert int(result.status) == int(ParaxialResonatorStatus.INCOMPATIBLE_MAPS)
+        assert not bool(result.successful)
+        assert not bool(result.mode.valid)

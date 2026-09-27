@@ -59,7 +59,7 @@ def _conditioned_flower(key: Any) -> Any:
     )
 
 
-def test_flower_routes_case_context_to_warp_and_preserves_case_isolation() -> None:
+def test_flower_operator_scenario_1() -> None:
     model = _conditioned_flower(jr.key(0))
     nodes = _axis().nodes
     field = jnp.sin(2.0 * jnp.pi * nodes)
@@ -92,28 +92,6 @@ def test_flower_routes_case_context_to_warp_and_preserves_case_isolation() -> No
     assert jnp.allclose(separate, output)
     assert not jnp.allclose(conditioned_warp, zero_warp)
     assert not jnp.allclose(output[0], output[1])
-
-
-def test_conditioned_flower_applies_query_masks_after_context_routing() -> None:
-    model = _conditioned_flower(jr.key(1))
-    values = jr.normal(jr.key(2), (2, 8))
-    conditions = jnp.array([-0.5, 0.75])
-    query_mask = jnp.ones((2, 8), dtype="bool")
-    query_mask = query_mask.at[0, -1].set(False).at[1, 0].set(False)
-    batch = _conditioned_batch(
-        values,
-        conditions,
-        query_mask=query_mask,
-    )
-
-    output = model(batch)
-
-    assert output.shape == (2, 8)
-    assert jnp.all(jnp.isfinite(output))
-    assert jnp.array_equal(output[~query_mask], jnp.zeros((2,)))
-
-
-def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis() -> None:
     size = 8
     nodes = jnp.arange(size, dtype="float64") / size
     values = jr.normal(jr.key(3), (size, size))
@@ -146,3 +124,19 @@ def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis() -> 
     assert direct.shape == (size, size)
     assert jnp.allclose(direct, separate)
     assert jnp.allclose(structured, direct)
+    model = _conditioned_flower(jr.key(1))
+    values = jr.normal(jr.key(2), (2, 8))
+    conditions = jnp.array([-0.5, 0.75])
+    query_mask = jnp.ones((2, 8), dtype="bool")
+    query_mask = query_mask.at[0, -1].set(False).at[1, 0].set(False)
+    batch = _conditioned_batch(
+        values,
+        conditions,
+        query_mask=query_mask,
+    )
+
+    output = model(batch)
+
+    assert output.shape == (2, 8)
+    assert jnp.all(jnp.isfinite(output))
+    assert jnp.array_equal(output[~query_mask], jnp.zeros((2,)))

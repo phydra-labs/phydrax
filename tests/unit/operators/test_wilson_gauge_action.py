@@ -35,7 +35,7 @@ def _perturbed_links(action: Any) -> Any:
     return action.geometry.retract(action.link_space.identity(), coordinates)
 
 
-def test_wilson_action_uses_normalized_trace_and_explicit_constant() -> None:
+def test_wilson_contracts() -> None:
     for dimension in (2, 3):
         action = _action(dimension)
         identity = action.link_space.identity()
@@ -44,9 +44,6 @@ def test_wilson_action_uses_normalized_trace_and_explicit_constant() -> None:
         assert jnp.allclose(action.canonical_action(identity), 0.0)
         assert action.evidence.reference_measure == "product-haar"
         assert action.link_space.contains(identity)
-
-
-def test_wilson_action_is_gauge_invariant() -> None:
     action = _action(2)
     links = _perturbed_links(action)
     group = action.link_space.group
@@ -61,9 +58,6 @@ def test_wilson_action_is_gauge_invariant() -> None:
     )
 
     assert jnp.allclose(action.action(links), action.action(transformed), atol=1e-10)
-
-
-def test_wilson_incremental_cache_matches_full_recomputation() -> None:
     action = _action(2)
     links = _perturbed_links(action)
     value, cache = action.initialize_incremental(links)
@@ -94,9 +88,6 @@ def test_wilson_incremental_cache_matches_full_recomputation() -> None:
         candidate.plaquette_holonomies,
         refreshed_cache.plaquette_holonomies,
     )
-
-
-def test_wilson_local_coordinate_gradient_matches_directional_difference() -> None:
     action = _action(2)
     links = _perturbed_links(action)
     direction = jnp.asarray(

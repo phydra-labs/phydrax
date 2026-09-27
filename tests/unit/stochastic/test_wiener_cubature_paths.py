@@ -44,7 +44,7 @@ def _stochastic_problem(
     )
 
 
-def test_straight_gaussian_paths_are_degree_three_signature_certified() -> None:
+def test_wiener_cubature_paths_scenario_1() -> None:
     rule = phx.integration.GaussianCubatureRule(3, 3)
     path = phx.stochastic.straight_wiener_cubature_path(rule.prepared)
     replay = phx.stochastic.straight_wiener_cubature_path(rule.prepared)
@@ -58,9 +58,10 @@ def test_straight_gaussian_paths_are_degree_three_signature_certified() -> None:
     assert path.path_id == replay.path_id
     assert jnp.array_equal(path.increments[:, 0], rule.prepared.points)
     assert jnp.array_equal(path.weights, rule.prepared.weights)
+    rule = phx.integration.GaussianCubatureRule(2, 5)
 
-
-def test_expected_brownian_signature_uses_noncommutative_generator() -> None:
+    with pytest.raises(ValueError, match="fourth signature level"):
+        phx.stochastic.straight_wiener_cubature_path(rule.prepared)
     from phydrax.stochastic._cubature_path import _expected_wiener_signature_level
 
     fourth = _expected_wiener_signature_level(2, 4, np.dtype(np.float64))
@@ -73,16 +74,6 @@ def test_expected_brownian_signature_uses_noncommutative_generator() -> None:
     assert fourth[1, 2, 2, 1] == 0.0
     assert sixth[1, 1, 2, 2, 1, 1] == pytest.approx(1.0 / 48.0)
     assert sixth[1, 2, 1, 2, 1, 2] == 0.0
-
-
-def test_straight_gaussian_paths_reject_false_higher_signature_certificate() -> None:
-    rule = phx.integration.GaussianCubatureRule(2, 5)
-
-    with pytest.raises(ValueError, match="fourth signature level"):
-        phx.stochastic.straight_wiener_cubature_path(rule.prepared)
-
-
-def test_positive_path_fitting_recertifies_without_degree_downgrade() -> None:
     rule = phx.integration.GaussianCubatureRule(1, 3)
     initial = phx.stochastic.straight_wiener_cubature_path(rule.prepared)
     fitted = phx.stochastic.fit_wiener_cubature_path(
@@ -99,7 +90,7 @@ def test_positive_path_fitting_recertifies_without_degree_downgrade() -> None:
     assert jnp.max(fitted.signature_residuals) < 1.0e-12
 
 
-def test_path_identity_is_invariant_to_input_path_order() -> None:
+def test_wiener_cubature_paths_scenario_2() -> None:
     rule = phx.integration.GaussianCubatureRule(1, 3)
     canonical = phx.stochastic.straight_wiener_cubature_path(rule.prepared)
     reversed_path = phx.stochastic.WienerCubaturePathData(
@@ -115,9 +106,6 @@ def test_path_identity_is_invariant_to_input_path_order() -> None:
     assert canonical.path_id == reversed_path.path_id
     assert jnp.array_equal(canonical.increments, reversed_path.increments)
     assert jnp.array_equal(canonical.weights, reversed_path.weights)
-
-
-def test_path_data_rejects_false_signature_certificates() -> None:
     with pytest.raises(ValueError, match="second signature level"):
         phx.stochastic.WienerCubaturePathData(
             jnp.asarray([[[-2.0]], [[2.0]]]),
@@ -152,9 +140,6 @@ def test_path_data_rejects_false_signature_certificates() -> None:
             family="invalid-skew",
             source_rule_id="invalid-skew",
         )
-
-
-def test_controlled_flow_consumes_every_path_segment_at_its_physical_time() -> None:
     rule = phx.integration.GaussianCubatureRule(1, 3)
     path = phx.stochastic.WienerCubaturePathData(
         jnp.asarray([[[-1.0], [0.0]], [[1.0], [0.0]]]),
@@ -178,9 +163,6 @@ def test_controlled_flow_consumes_every_path_segment_at_its_physical_time() -> N
     assert solution.successful
     assert jnp.allclose(values, jnp.asarray([-0.25, 0.25]), atol=1e-12)
     assert jnp.allclose(weights, jnp.asarray([0.5, 0.5]), atol=1e-12)
-
-
-def test_controlled_flow_gates_interpretation_structure_and_path_degree() -> None:
     flow_plan = _flow_plan()
     with pytest.raises(ValueError, match="requires a Stratonovich problem"):
         phx.solver.solve_markov_cubature(

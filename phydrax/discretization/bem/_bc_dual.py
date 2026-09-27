@@ -72,9 +72,7 @@ def _barycentric_refinement(
     parent_faces = np.repeat(np.arange(surface.face_count, dtype=np.int32), 6)
     for face_id, face in enumerate(faces.tolist()):
         a, b, c = (int(value) for value in face)
-        ab, bc, ca = (
-            int(value) for value in face_edges[face_id].tolist()
-        )
+        ab, bc, ca = (int(value) for value in face_edges[face_id].tolist())
         centroid = vertex_count + edge_count + face_id
         refined_faces[6 * face_id : 6 * face_id + 6] = (
             (a, ab, centroid),
@@ -197,7 +195,9 @@ def _bc_barycentric_transform(
         # The two refined dual-edge pieces crossing the coarse edge carry
         # equal 1/2 weights and the physical direction first -> second.
         midpoint = vertex_count + coarse_edge_id
-        for face_id, local_id in np.argwhere(coarse_face_edges == coarse_edge_id).tolist():
+        for face_id, local_id in np.argwhere(
+            coarse_face_edges == coarse_edge_id
+        ).tolist():
             centroid = vertex_count + edge_count + int(face_id)
             if coarse_face_signs[face_id, local_id] > 0.0:
                 add_oriented(coarse_edge_id, midpoint, centroid, 0.5)

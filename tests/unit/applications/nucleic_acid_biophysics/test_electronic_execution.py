@@ -119,69 +119,64 @@ def _density(state: Any) -> Any:
     return state[:, None] * jnp.conj(state[None, :])
 
 
-@pytest.mark.parametrize("method", ["lindblad", "cptp"])
-def test_coherent_two_site_solution_and_density_physicality(method: Any) -> None:
-    model = _model(coupling=UNITS.reduced_planck_constant)
-    initial = model.basis_state(model.basis_keys[0])
-    result = evolve_electronics(
-        model,
-        _density(initial),
-        step_size=0.05,
-        time_unit=FEMTOSECOND,
-        steps=30,
-        requested_use=USE,
-        method=method,
-    )
-    times = result.densities.support.coordinates
-    populations = electronic_populations(model, result.densities.values)
-    np.testing.assert_allclose(populations[:, 1], jnp.sin(times) ** 2, atol=2e-10)
-    pair = (model.graphs[0].site_ids,)
-    coherence = electronic_coherences(model, result.densities.values, pair)[:, 0]
-    np.testing.assert_allclose(
-        coherence, 1j * jnp.cos(times) * jnp.sin(times), atol=2e-10
-    )
-    assert bool(result.native_result.valid)
-    assert (
-        np.max(np.abs(np.trace(result.densities.values, axis1=-2, axis2=-1) - 1)) < 2e-10
-    )
-    assert (
-        float(jnp.min(HermitianSpectrum(result.densities.values).minimum_eigenvalue))
-        > -2e-10
-    )
-    assert result.artifact.artifact_id != model.artifact.artifact_id
-    assert model.artifact.artifact_id in result.artifact.parent_artifact_ids
-
-
-@pytest.mark.parametrize("method", ["lindblad", "cptp"])
-def test_local_dephasing_decay_uses_rate_once(method: Any) -> None:
-    graph = _graph()
-    keys = tuple((site,) for site in graph.site_ids)
-    channels = tuple(
-        ElectronicChannel(f"dephase-{index}", "dephasing", key, None, 0.4, PER_FS)
-        for index, key in enumerate(keys)
-    )
-    model = _model(graph, channels=channels)
-    initial = jnp.ones(2, dtype="complex128") / jnp.sqrt(2.0)
-    result = evolve_electronics(
-        model,
-        _density(initial),
-        step_size=0.1,
-        time_unit=FEMTOSECOND,
-        steps=12,
-        requested_use=USE,
-        method=method,
-    )
-    times = result.densities.support.coordinates
-    np.testing.assert_allclose(
-        result.densities.values[:, 0, 1], 0.5 * jnp.exp(-0.4 * times), atol=2e-10
-    )
-    np.testing.assert_allclose(
-        electronic_populations(model, result.densities.values), 0.5, atol=2e-10
-    )
-    assert bool(result.native_result.valid)
-
-
-def test_native_unraveling_agrees_with_density_and_retains_event_evidence() -> None:
+def test_electronic_execution_scenario_1() -> None:
+    for method in ["lindblad", "cptp"]:
+        model = _model(coupling=UNITS.reduced_planck_constant)
+        initial = model.basis_state(model.basis_keys[0])
+        result = evolve_electronics(
+            model,
+            _density(initial),
+            step_size=0.05,
+            time_unit=FEMTOSECOND,
+            steps=30,
+            requested_use=USE,
+            method=method,
+        )
+        times = result.densities.support.coordinates
+        populations = electronic_populations(model, result.densities.values)
+        np.testing.assert_allclose(populations[:, 1], jnp.sin(times) ** 2, atol=2e-10)
+        pair = (model.graphs[0].site_ids,)
+        coherence = electronic_coherences(model, result.densities.values, pair)[:, 0]
+        np.testing.assert_allclose(
+            coherence, 1j * jnp.cos(times) * jnp.sin(times), atol=2e-10
+        )
+        assert bool(result.native_result.valid)
+        assert (
+            np.max(np.abs(np.trace(result.densities.values, axis1=-2, axis2=-1) - 1))
+            < 2e-10
+        )
+        assert (
+            float(jnp.min(HermitianSpectrum(result.densities.values).minimum_eigenvalue))
+            > -2e-10
+        )
+        assert result.artifact.artifact_id != model.artifact.artifact_id
+        assert model.artifact.artifact_id in result.artifact.parent_artifact_ids
+    for method in ["lindblad", "cptp"]:
+        graph = _graph()
+        keys = tuple((site,) for site in graph.site_ids)
+        channels = tuple(
+            ElectronicChannel(f"dephase-{index}", "dephasing", key, None, 0.4, PER_FS)
+            for index, key in enumerate(keys)
+        )
+        model = _model(graph, channels=channels)
+        initial = jnp.ones(2, dtype="complex128") / jnp.sqrt(2.0)
+        result = evolve_electronics(
+            model,
+            _density(initial),
+            step_size=0.1,
+            time_unit=FEMTOSECOND,
+            steps=12,
+            requested_use=USE,
+            method=method,
+        )
+        times = result.densities.support.coordinates
+        np.testing.assert_allclose(
+            result.densities.values[:, 0, 1], 0.5 * jnp.exp(-0.4 * times), atol=2e-10
+        )
+        np.testing.assert_allclose(
+            electronic_populations(model, result.densities.values), 0.5, atol=2e-10
+        )
+        assert bool(result.native_result.valid)
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     bath = ElectronicChannel(
@@ -235,7 +230,7 @@ def test_native_unraveling_agrees_with_density_and_retains_event_evidence() -> N
         )
 
 
-def test_site_and_parameter_permutations_preserve_mapped_observables() -> None:
+def test_electronic_execution_scenario_2() -> None:
     graph = _graph(3)
     keys = tuple((site,) for site in graph.site_ids)
     parameters = _parameters(
@@ -290,9 +285,6 @@ def test_site_and_parameter_permutations_preserve_mapped_observables() -> None:
     )
     for result in results:
         assert bool(result.native_result.valid)
-
-
-def test_energy_time_and_rate_units_give_equivalent_physical_execution() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     channels = (ElectronicChannel("bath", "bath", keys[1], keys[0], 0.3, PER_FS),)
@@ -341,9 +333,6 @@ def test_energy_time_and_rate_units_give_equivalent_physical_execution() -> None
     )
     with pytest.raises(ValueError, match="single-system"):
         replace(source, energy_unit=KILOJOULE_PER_MOLE)
-
-
-def test_electron_hole_tensor_factorization_and_recombination_to_vacuum() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     electron = _model(graph, coupling=UNITS.reduced_planck_constant)
@@ -413,7 +402,7 @@ def test_electron_hole_tensor_factorization_and_recombination_to_vacuum() -> Non
     assert bool(decayed.native_result.valid)
 
 
-def test_tensor_baths_preserve_each_carriers_independent_rates() -> None:
+def test_electronic_execution_scenario_3() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     electron = _model(
@@ -453,9 +442,6 @@ def test_tensor_baths_preserve_each_carriers_independent_rates() -> None:
         atol=1e-10,
     )
     assert bool(result.native_result.valid)
-
-
-def test_host_admission_refuses_missing_support_rights_and_unbounded_models() -> None:
     graph = _graph()
     keys = tuple((site,) for site in graph.site_ids)
     parameters = _parameters(keys)

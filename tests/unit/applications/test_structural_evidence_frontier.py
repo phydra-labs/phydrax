@@ -12,7 +12,7 @@ mn = sm.member_network
 std = sm.standards
 
 
-def test_precedence_branch_and_bound_finds_exact_sequence() -> None:
+def test_structural_evidence_frontier_scenario_1() -> None:
     operations = (
         phx.optim.PrecedenceOperation("foundation"),
         phx.optim.PrecedenceOperation("frame", predecessors=("foundation",)),
@@ -32,9 +32,6 @@ def test_precedence_branch_and_bound_finds_exact_sequence() -> None:
     assert result.successful
     assert result.incumbent.completed == ("foundation", "frame", "cable")
     assert result.objective == pytest.approx(10.0)
-
-
-def test_generic_standard_retains_clause_and_applicability() -> None:
     combination = std.LoadCombination(
         "ultimate",
         {"dead": 1.2, "live": 1.6},
@@ -62,9 +59,6 @@ def test_generic_standard_retains_clause_and_applicability() -> None:
         applicability=std.ApplicabilityStatus.OUTSIDE_APPLICABILITY,
     )
     assert not outside.successful
-
-
-def test_reliability_form_and_monte_carlo_match_normal_limit_state() -> None:
     model = mn.StructuralRandomModel(
         jnp.asarray((0.0,)), jnp.asarray(((1.0,),)), ("load",)
     )

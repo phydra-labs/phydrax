@@ -33,7 +33,7 @@ def test_pooled_small_roots_preserve_task_order_and_lane_invariance() -> None:
     assert 0.0 < float(pooled.evidence.utilization) <= 1.0
 
 
-def test_pooled_small_roots_are_jittable_and_record_nonfinite_failures() -> None:
+def test_pooled_small_contracts() -> None:
     targets = jnp.asarray([[1.0], [jnp.nan], [9.0]])
     initial = jnp.ones_like(targets)
 
@@ -53,9 +53,6 @@ def test_pooled_small_roots_are_jittable_and_record_nonfinite_failures() -> None
         phx.nonlinear.NonlinearStatus.NONFINITE_EVALUATION
     )
     assert sorted(result.evidence.completion_order.tolist()) == [0, 1, 2]
-
-
-def test_pooled_small_roots_honor_configured_damping_floor() -> None:
     result = phx.nonlinear.pooled_small_root(
         lambda state, target: state * state - target,
         jnp.asarray([[0.1], [0.2]]),

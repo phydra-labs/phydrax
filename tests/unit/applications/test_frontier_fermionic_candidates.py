@@ -64,7 +64,7 @@ def _fermion_diagram(order: Any) -> Any:
     )
 
 
-def test_patch_frg_closes_reciprocal_routing_crossing_and_regulated_flow() -> None:
+def test_frontier_fermionic_candidates_scenario_1() -> None:
     pi = np.pi
     prepared = frg.FermiSurfacePatchRGPlan(
         jnp.asarray(((0.0, 0.0), (pi, 0.0), (0.0, pi), (pi, pi))),
@@ -91,9 +91,6 @@ def test_patch_frg_closes_reciprocal_routing_crossing_and_regulated_flow() -> No
     assert jnp.all(jnp.isfinite(result.particle_particle_loop))
     assert jnp.all(jnp.isfinite(result.particle_hole_loop))
     assert jnp.max(jnp.abs(result.beta_vertex)) > 0.0
-
-
-def test_lattice_parquet_channels_and_schwinger_dyson_sign_close() -> None:
     bare = _crossing_vertex()
     parquet = (
         df.LatticeParquetPlan(tolerance=1e-12)
@@ -127,6 +124,29 @@ def test_lattice_parquet_channels_and_schwinger_dyson_sign_close() -> None:
     )
     assert bool(schwinger_dyson.satisfied)
     np.testing.assert_allclose(schwinger_dyson.computed_self_energy, expected_self_energy)
+    result = (
+        df.LowOrderFermionDiagramMonteCarloPlan(
+            steps=512, maximum_order=2, maximum_diagrams=2
+        )
+        .prepare(
+            (_fermion_diagram(1), _fermion_diagram(2)),
+            jnp.asarray((1.0 + 0.0j, -0.5 + 0.0j)),
+            jnp.asarray(((0.5, 0.5), (0.5, 0.5))),
+        )
+        .run(jr.key(17))
+    )
+
+    assert bool(result.evidence.successful)
+    np.testing.assert_allclose(result.evidence.detailed_balance_residual, 0.0, atol=1e-15)
+    np.testing.assert_allclose(
+        result.chain.acceptance_probabilities,
+        jnp.minimum(1.0, result.chain.proposal_ratios * result.chain.weight_ratios),
+    )
+    assert result.order_histogram[1] > 0
+    assert result.order_histogram[2] > 0
+    assert 0.0 < result.evidence.average_sign < 1.0
+    assert result.evidence.order_effective_sample_size > 0.0
+    assert result.evidence.phase_covariance.shape == (2, 2)
 
 
 def test_sign_free_ctint_keeps_exact_birth_death_ratios_and_raw_chain() -> None:
@@ -169,33 +189,7 @@ def test_sign_free_ctint_keeps_exact_birth_death_ratios_and_raw_chain() -> None:
     np.testing.assert_allclose(result.chain.proposal_ratios, expected_ratio)
 
 
-def test_low_order_diagram_mc_retains_order_sign_and_exact_mh_evidence() -> None:
-    result = (
-        df.LowOrderFermionDiagramMonteCarloPlan(
-            steps=512, maximum_order=2, maximum_diagrams=2
-        )
-        .prepare(
-            (_fermion_diagram(1), _fermion_diagram(2)),
-            jnp.asarray((1.0 + 0.0j, -0.5 + 0.0j)),
-            jnp.asarray(((0.5, 0.5), (0.5, 0.5))),
-        )
-        .run(jr.key(17))
-    )
-
-    assert bool(result.evidence.successful)
-    np.testing.assert_allclose(result.evidence.detailed_balance_residual, 0.0, atol=1e-15)
-    np.testing.assert_allclose(
-        result.chain.acceptance_probabilities,
-        jnp.minimum(1.0, result.chain.proposal_ratios * result.chain.weight_ratios),
-    )
-    assert result.order_histogram[1] > 0
-    assert result.order_histogram[2] > 0
-    assert 0.0 < result.evidence.average_sign < 1.0
-    assert result.evidence.order_effective_sample_size > 0.0
-    assert result.evidence.phase_covariance.shape == (2, 2)
-
-
-def test_fermionic_keldysh_car_causality_and_second_born_conservation() -> None:
+def test_frontier_fermionic_candidates_scenario_2() -> None:
     grid = nef.ClosedTimePathPlan(jnp.linspace(0.0, 0.3, 4)).prepare()
     propagators = jnp.broadcast_to(jnp.eye(1, dtype="complex128"), (4, 1, 1))
     free = nef.fermionic_keldysh_from_propagators(
@@ -230,9 +224,6 @@ def test_fermionic_keldysh_car_causality_and_second_born_conservation() -> None:
     assert result.evidence.causality_residual == 0.0
     assert result.evidence.schwinger_dyson_residual < 1e-3
     assert jnp.max(jnp.abs(result.self_energy.lesser)) > 0.0
-
-
-def test_controlled_sign_study_reports_raw_ess_covariance_and_abstains() -> None:
     alternating = jnp.tile(jnp.asarray((1.0 + 0.0j, -1.0 + 0.0j)), (2, 32))
     observables = jnp.ones(alternating.shape + (1,))
     plan = sp.ControlledSignStudyPlan(

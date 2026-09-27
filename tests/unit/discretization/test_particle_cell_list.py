@@ -33,7 +33,7 @@ def _stable_pairs(state: Any) -> Any:
     return set(zip(left.tolist(), right.tolist(), strict=True))
 
 
-def test_cell_list_prepares_sparse_occupied_cell_resources() -> None:
+def test_cell_contracts() -> None:
     particles = _particles(range(6))
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
@@ -65,9 +65,6 @@ def test_cell_list_prepares_sparse_occupied_cell_resources() -> None:
     assert one_cell.cell_shape == (1,)
     assert one_cell.neighbor_cell_capacity == 3
     assert dict(one_cell.preparation.resource_counts)["dense_cell_slots"] == 0
-
-
-def test_cell_list_sorting_preserves_logical_identity_and_matches_brute_pairs() -> None:
     particles = _particles([40, 10, 30, 20])
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
@@ -95,9 +92,6 @@ def test_cell_list_sorting_preserves_logical_identity_and_matches_brute_pairs() 
             np.asarray(state.pair_relation.valid)
         ]
     )
-
-
-def test_cell_list_handles_periodic_seams_and_nonperiodic_domain_status() -> None:
     particles = _particles([0, 1], dimension=2)
     box = phx.discretization.ParticleBox(
         # ty: ignore[invalid-argument-type]
@@ -125,9 +119,6 @@ def test_cell_list_handles_periodic_seams_and_nonperiodic_domain_status() -> Non
     assert upper_boundary.domain_violation
     assert int(upper_boundary.domain_violation_count) == 1
     assert not upper_boundary.successful
-
-
-def test_cell_list_supports_bounded_four_dimensional_neighborhoods() -> None:
     particles = _particles([0, 1, 2], dimension=4)
     box = phx.discretization.ParticleBox(jnp.zeros((4,)), jnp.ones((4,)))
     prepared = phx.discretization.CellListParticleNeighborhoodPlan(
@@ -149,9 +140,42 @@ def test_cell_list_supports_bounded_four_dimensional_neighborhoods() -> None:
     assert state.successful
     assert prepared.neighbor_cell_capacity == 81
     assert _stable_pairs(state) == {(0, 1)}
+    particles = _particles(range(8), dimension=2)
+    # ty: ignore[invalid-argument-type]
+    box = phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
+    plan = phx.discretization.CellListParticleNeighborhoodPlan(
+        0.2,
+        8,
+        64,
+        box,
+        maximum_candidate_slots=100,
+    )
+    with pytest.raises(ValueError, match="candidate slots"):
+        plan.prepare(particles)
+    particles = _particles(range(8))
+    # ty: ignore[invalid-argument-type]
+    box = phx.discretization.ParticleBox([0.0], [1.0])
+    prepared = phx.discretization.CellListParticleNeighborhoodPlan(
+        0.3,
+        4,
+        24,
+        box,
+    ).prepare(particles)
+    position = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
 
+    eager = prepared.build(position)
+    compiled = eqx.filter_jit(prepared.build)(position)
 
-def test_cell_and_pair_overflow_are_independent_and_fail_closed() -> None:
+    assert compiled.successful
+    assert jnp.array_equal(compiled.pair_relation.valid, eager.pair_relation.valid)
+    assert jnp.array_equal(
+        compiled.pair_relation.left_particle_ids,
+        eager.pair_relation.left_particle_ids,
+    )
+    assert jnp.array_equal(
+        compiled.pair_relation.right_particle_ids,
+        eager.pair_relation.right_particle_ids,
+    )
     particles = _particles(range(4))
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
@@ -199,45 +223,3 @@ def test_cell_and_pair_overflow_are_independent_and_fail_closed() -> None:
     )
     with pytest.raises(Exception, match="neighborhood construction failed"):
         compiled.dynamics.density(clustered).block_until_ready()
-
-
-def test_cell_list_enforces_candidate_resource_guard_before_runtime() -> None:
-    particles = _particles(range(8), dimension=2)
-    # ty: ignore[invalid-argument-type]
-    box = phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
-    plan = phx.discretization.CellListParticleNeighborhoodPlan(
-        0.2,
-        8,
-        64,
-        box,
-        maximum_candidate_slots=100,
-    )
-    with pytest.raises(ValueError, match="candidate slots"):
-        plan.prepare(particles)
-
-
-def test_cell_list_runtime_build_is_filter_jittable() -> None:
-    particles = _particles(range(8))
-    # ty: ignore[invalid-argument-type]
-    box = phx.discretization.ParticleBox([0.0], [1.0])
-    prepared = phx.discretization.CellListParticleNeighborhoodPlan(
-        0.3,
-        4,
-        24,
-        box,
-    ).prepare(particles)
-    position = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
-
-    eager = prepared.build(position)
-    compiled = eqx.filter_jit(prepared.build)(position)
-
-    assert compiled.successful
-    assert jnp.array_equal(compiled.pair_relation.valid, eager.pair_relation.valid)
-    assert jnp.array_equal(
-        compiled.pair_relation.left_particle_ids,
-        eager.pair_relation.left_particle_ids,
-    )
-    assert jnp.array_equal(
-        compiled.pair_relation.right_particle_ids,
-        eager.pair_relation.right_particle_ids,
-    )

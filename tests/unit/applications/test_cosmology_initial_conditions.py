@@ -65,7 +65,7 @@ def _case(shape: Any, *, order: Any = 1, dealiasing: Any = "none") -> Any:
     return plan, background, growth, power
 
 
-def test_zero_noise_produces_lattice_and_zero_momentum() -> None:
+def test_cosmology_initial_conditions_scenario_1() -> None:
     plan, background, growth, power = _case((4, 4, 4), order=2)
     result = plan.realize(background, growth, power, jnp.zeros(plan.shape), 0.1)
     axes = tuple((jnp.arange(4) + 0.5) / 4.0 for _ in range(3))
@@ -74,9 +74,6 @@ def test_zero_noise_produces_lattice_and_zero_momentum() -> None:
     np.testing.assert_allclose(result.positions, lattice, atol=1e-14)
     np.testing.assert_allclose(result.canonical_momenta, 0.0, atol=1e-14)
     np.testing.assert_allclose(result.second_order_displacement, 0.0, atol=1e-14)
-
-
-def test_plane_wave_has_zero_second_order_source_and_edS_momentum() -> None:
     plan, background, growth, power = _case((8,), order=2)
     x = (jnp.arange(8) + 0.5) / 8.0
     noise = jnp.cos(2.0 * jnp.pi * x)
@@ -91,9 +88,6 @@ def test_plane_wave_has_zero_second_order_source_and_edS_momentum() -> None:
         * result.first_order_displacement.reshape((-1, 1))
     )
     np.testing.assert_allclose(result.canonical_momenta, expected, rtol=1e-10)
-
-
-def test_nonparallel_modes_generate_finite_second_order_displacement() -> None:
     plan, background, growth, power = _case((4, 4, 4), order=2, dealiasing="three_halves")
     coordinates = tuple((jnp.arange(4) + 0.5) / 4.0 for _ in range(3))
     x, y, _ = jnp.meshgrid(*coordinates, indexing="ij")

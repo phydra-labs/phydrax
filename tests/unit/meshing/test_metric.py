@@ -84,48 +84,48 @@ def test_metric_structural_contract_refuses_transformed_shape_and_dtype() -> Non
         phx.typing.validate(wrong_dtype)
 
 
-@pytest.mark.parametrize("kind", tuple(meshing.MetricGradationKind))
-def test_scalar_gradation_bounds_every_edge_and_ignores_numbering(kind: Any) -> None:
-    points, edges = _grid(7)
-    count = points.shape[0]
-    values = _anisotropic_metrics(count, 0)
-    field = meshing.MeshMetricField(
-        _scope(count), values, minimum_size=0.005, maximum_size=2.0
-    )
-    policy = meshing.MetricGradationPolicy(1.2, kind=kind)
-    graded, evidence = meshing.grade_mesh_metric(
-        field, policy=policy, adjacency=edges, coordinates=points
-    )
+def test_scalar_gradation_bounds_every_edge_and_ignores_numbering() -> None:
+    for kind in tuple(meshing.MetricGradationKind):
+        points, edges = _grid(7)
+        count = points.shape[0]
+        values = _anisotropic_metrics(count, 0)
+        field = meshing.MeshMetricField(
+            _scope(count), values, minimum_size=0.005, maximum_size=2.0
+        )
+        policy = meshing.MetricGradationPolicy(1.2, kind=kind)
+        graded, evidence = meshing.grade_mesh_metric(
+            field, policy=policy, adjacency=edges, coordinates=points
+        )
 
-    sizes = _determinant_sizes(np.asarray(graded.values))
-    lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    for first, second in ((0, 1), (1, 0)):
-        source = sizes[edges[:, first]]
-        if kind is meshing.MetricGradationKind.PHYSICAL:
-            bound = source + 0.2 * lengths
-        else:
-            bound = source * 1.2 ** (lengths / source)
-        assert np.all(sizes[edges[:, second]] <= bound * (1.0 + 1.0e-12))
-    assert evidence.converged and evidence.maximum_violation <= 1.0e-12
-    assert evidence.modified_count > 0
-    original = _determinant_sizes(values)
-    assert np.all(sizes <= original * (1.0 + 1.0e-12))
-    eigenvalues = np.linalg.eigvalsh(np.asarray(graded.values))
-    assert np.all(eigenvalues[:, 1] / eigenvalues[:, 0] <= 9.0 * (1.0 + 1.0e-9))
+        sizes = _determinant_sizes(np.asarray(graded.values))
+        lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+        for first, second in ((0, 1), (1, 0)):
+            source = sizes[edges[:, first]]
+            if kind is meshing.MetricGradationKind.PHYSICAL:
+                bound = source + 0.2 * lengths
+            else:
+                bound = source * 1.2 ** (lengths / source)
+            assert np.all(sizes[edges[:, second]] <= bound * (1.0 + 1.0e-12))
+        assert evidence.converged and evidence.maximum_violation <= 1.0e-12
+        assert evidence.modified_count > 0
+        original = _determinant_sizes(values)
+        assert np.all(sizes <= original * (1.0 + 1.0e-12))
+        eigenvalues = np.linalg.eigvalsh(np.asarray(graded.values))
+        assert np.all(eigenvalues[:, 1] / eigenvalues[:, 0] <= 9.0 * (1.0 + 1.0e-9))
 
-    permutation = np.random.default_rng(3).permutation(count)
-    inverse = np.argsort(permutation)
-    permuted, _ = meshing.grade_mesh_metric(
-        meshing.MeshMetricField(
-            _scope(count), values[permutation], minimum_size=0.005, maximum_size=2.0
-        ),
-        policy=policy,
-        adjacency=inverse[edges][::-1, ::-1],
-        coordinates=points[permutation],
-    )
-    np.testing.assert_array_equal(
-        np.asarray(permuted.values), np.asarray(graded.values)[permutation]
-    )
+        permutation = np.random.default_rng(3).permutation(count)
+        inverse = np.argsort(permutation)
+        permuted, _ = meshing.grade_mesh_metric(
+            meshing.MeshMetricField(
+                _scope(count), values[permutation], minimum_size=0.005, maximum_size=2.0
+            ),
+            policy=policy,
+            adjacency=inverse[edges][::-1, ::-1],
+            coordinates=points[permutation],
+        )
+        np.testing.assert_array_equal(
+            np.asarray(permuted.values), np.asarray(graded.values)[permutation]
+        )
 
 
 def test_anisotropic_gradation_converges_and_certifies_every_edge() -> None:
@@ -208,25 +208,20 @@ def test_anisotropic_gradation_withholds_growth_beyond_hard_bounds() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("eigenvalues", "violated"),
-    (
+def test_metric_field_rejects_tensors_outside_declared_bounds() -> None:
+    for eigenvalues, violated in (
         ((400.0, 400.0), "minimum_size"),
         ((0.1, 0.1), "maximum_size"),
         ((1.0, 25.0), "maximum_anisotropy"),
-    ),
-)
-def test_metric_field_rejects_tensors_outside_declared_bounds(
-    eigenvalues: Any, violated: Any
-) -> None:
-    with pytest.raises(ValueError, match=violated):
-        meshing.MeshMetricField(
-            _scope(2),
-            np.tile(np.diag(eigenvalues), (2, 1, 1)),
-            minimum_size=0.1,
-            maximum_size=2.0,
-            maximum_anisotropy=2.0,
-        )
+    ):
+        with pytest.raises(ValueError, match=violated):
+            meshing.MeshMetricField(
+                _scope(2),
+                np.tile(np.diag(eigenvalues), (2, 1, 1)),
+                minimum_size=0.1,
+                maximum_size=2.0,
+                maximum_anisotropy=2.0,
+            )
 
 
 def test_metric_field_admits_only_eigenvalue_roundoff_at_its_bounds() -> None:

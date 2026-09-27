@@ -12,7 +12,7 @@ import pytest
 import phydrax as phx
 
 
-def test_fixed_observation_likelihood_matches_manual_gaussian_sum() -> None:
+def test_posterior_terms_scenario_1() -> None:
     target = jnp.asarray([[1.0, -0.5], [0.2, 0.7], [-1.0, 0.4]])
     likelihood = phx.uq.GaussianLikelihood(jnp.asarray([0.2, 0.4]))
     term = phx.uq.FixedObservationLikelihood(
@@ -30,9 +30,6 @@ def test_fixed_observation_likelihood_matches_manual_gaussian_sum() -> None:
         jax.grad(term.log_prob)(parameters)["offset"],
         jnp.asarray([-7.5, 3.75]),
     )
-
-
-def test_fixed_heteroscedastic_observation_extracts_explicit_parameters() -> None:
     target = jnp.asarray([0.0, 1.0, 2.0])
     likelihood = phx.uq.GaussianLocationScaleLikelihood(min_scale=1e-4)
     term = phx.uq.FixedObservationLikelihood(
@@ -52,9 +49,6 @@ def test_fixed_heteroscedastic_observation_extracts_explicit_parameters() -> Non
         raw_scale=parameters["raw_scale"],
     )
     assert jnp.allclose(term.per_case_log_prob(parameters), expected)
-
-
-def test_fixed_residual_likelihood_is_deterministic_and_normalized_by_scale() -> None:
     likelihood = phx.uq.GaussianLikelihood(0.25)
     term = phx.uq.FixedResidualLikelihood(
         lambda coefficient: jnp.asarray(
@@ -72,9 +66,23 @@ def test_fixed_residual_likelihood_is_deterministic_and_normalized_by_scale() ->
     ).sum(axis=1)
     assert jnp.array_equal(first, second)
     assert jnp.allclose(first, expected)
+    likelihood = phx.uq.GaussianLikelihood(1.0)
+    malformed = phx.uq.FixedObservationLikelihood(
+        lambda _: jnp.ones((2,)),
+        jnp.ones((3,)),
+        likelihood,
+        label="same",
+    )
+    other = phx.uq.FixedResidualLikelihood(
+        lambda _: jnp.ones((3,)),
+        likelihood,
+        label="same",
+    )
 
-
-def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients() -> None:
+    with pytest.raises(ValueError, match="shapes are incompatible"):
+        malformed.log_prob(None)
+    with pytest.raises(ValueError, match="labels must be unique"):
+        phx.uq.CompositePosteriorLikelihood((malformed, other))
     points = jnp.linspace(0.0, 1.0, 16)
     observations = 0.8 * points + 0.2 * jnp.sin(2.0 * jnp.pi * points)
     discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
@@ -122,9 +130,6 @@ def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients() -
     )
     with pytest.raises(TypeError, match="GaussianProcessLikelihoodState"):
         malformed.log_prob(parameters)
-
-
-def test_computation_aware_gp_elbo_term_matches_direct_bound_and_gradients() -> None:
     points = jnp.linspace(0.0, 1.0, 12)
     observations = 0.75 * points + 0.1 * jnp.sin(2.0 * jnp.pi * points)
     discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
@@ -179,9 +184,6 @@ def test_computation_aware_gp_elbo_term_matches_direct_bound_and_gradients() -> 
         actions=fixed_actions,
     )
     assert jnp.allclose(fixed_term.log_prob(parameters), expected)
-
-
-def test_computation_aware_gp_elbo_term_rejects_malformed_callbacks() -> None:
     points = jnp.linspace(0.0, 1.0, 6)
     discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
         points,
@@ -299,23 +301,3 @@ def test_composite_terms_construct_problem_without_hidden_reweighting() -> None:
     mode = phx.uq.find_map(problem)
     assert mode.converged
     assert jnp.allclose(mode.position, 0.9995, atol=1e-3)
-
-
-def test_fixed_terms_reject_shape_changes_and_duplicate_labels() -> None:
-    likelihood = phx.uq.GaussianLikelihood(1.0)
-    malformed = phx.uq.FixedObservationLikelihood(
-        lambda _: jnp.ones((2,)),
-        jnp.ones((3,)),
-        likelihood,
-        label="same",
-    )
-    other = phx.uq.FixedResidualLikelihood(
-        lambda _: jnp.ones((3,)),
-        likelihood,
-        label="same",
-    )
-
-    with pytest.raises(ValueError, match="shapes are incompatible"):
-        malformed.log_prob(None)
-    with pytest.raises(ValueError, match="labels must be unique"):
-        phx.uq.CompositePosteriorLikelihood((malformed, other))

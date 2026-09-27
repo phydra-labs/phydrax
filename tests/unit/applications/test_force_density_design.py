@@ -39,7 +39,7 @@ def _design_setup() -> Any:
     return equilibrium, plan, sample, decode
 
 
-def test_force_density_reduced_design_hits_target_shape_and_recertifies_state() -> None:
+def test_force_density_contracts() -> None:
     _, plan, _, decode = _design_setup()
     problem = fd.ForceDensityDesignProblem(
         plan,
@@ -63,36 +63,6 @@ def test_force_density_reduced_design_hits_target_shape_and_recertifies_state() 
     assert float(result.state_design.design) == pytest.approx(2.0, abs=2.0e-3)
     assert result.equilibrium.state.positions[1, 1] == pytest.approx(-0.25, abs=3.0e-4)
     assert result.equilibrium.diagnostics.free_residual_norm <= 1.0e-9
-
-
-def test_force_density_design_decoder_can_move_supports_and_loads() -> None:
-    equilibrium, plan, sample, _ = _design_setup()
-
-    def decode(design: Any, _: Any) -> Any:
-        prescribed = sample.prescribed_values.at[1].set(design[1])
-        loads = sample.load_parameters.at[1, 1].set(design[2])
-        return fd.ForceDensityInputs(jnp.repeat(design[0], 2), prescribed, loads)
-
-    problem = fd.ForceDensityDesignProblem(
-        plan,
-        decode,
-        lambda state, design, _: jnp.sum(state.positions**2),
-    )
-    design = jnp.asarray((2.0, 0.1, -0.8))
-    inputs = problem.inputs(design)
-    state_problem = problem.as_state_design_problem()
-    solved = equilibrium.structure.reduce(
-        fd.force_density_equilibrium(equilibrium, inputs).state.positions
-    )
-    state = problem.physical_state(solved, design)
-
-    assert inputs.prescribed_values[1] == pytest.approx(0.1)
-    assert inputs.load_parameters[1, 1] == pytest.approx(-0.8)
-    assert state.positions[0, 1] == pytest.approx(0.1)
-    assert jnp.allclose(state_problem.residual(solved, design), 0.0, atol=1.0e-10)
-
-
-def test_force_density_physical_constraints_lower_to_structured_state_design() -> None:
     _, plan, _, decode = _design_setup()
     length_constraint = fd.ForceDensityDesignConstraint(
         lambda state, design, _: state.member_lengths,
@@ -122,9 +92,6 @@ def test_force_density_physical_constraints_lower_to_structured_state_design() -
     assert program.num_constraints == plan.problem.structure.free_dof_count + 2
     assert jnp.array_equal(program.constraint_lower[-2:], jnp.asarray((1.0, 1.0)))
     assert jnp.array_equal(program.constraint_upper[-2:], jnp.asarray((2.0, 2.0)))
-
-
-def test_force_density_design_constraint_preserves_physical_state_callback() -> None:
     _, plan, _, decode = _design_setup()
     constraint = fd.ForceDensityDesignConstraint(
         lambda state, design, _: state.positions[1, 1],
@@ -143,3 +110,30 @@ def test_force_density_design_constraint_preserves_physical_state_callback() -> 
     reduced = plan.problem.structure.reduce(equilibrium.state.positions)
     lowered = problem.as_state_design_problem().constraints[0]
     assert lowered.value(reduced, jnp.asarray(1.0)) == pytest.approx(-0.5)
+
+
+def test_force_density_design_decoder_can_move_supports_and_loads() -> None:
+    equilibrium, plan, sample, _ = _design_setup()
+
+    def decode(design: Any, _: Any) -> Any:
+        prescribed = sample.prescribed_values.at[1].set(design[1])
+        loads = sample.load_parameters.at[1, 1].set(design[2])
+        return fd.ForceDensityInputs(jnp.repeat(design[0], 2), prescribed, loads)
+
+    problem = fd.ForceDensityDesignProblem(
+        plan,
+        decode,
+        lambda state, design, _: jnp.sum(state.positions**2),
+    )
+    design = jnp.asarray((2.0, 0.1, -0.8))
+    inputs = problem.inputs(design)
+    state_problem = problem.as_state_design_problem()
+    solved = equilibrium.structure.reduce(
+        fd.force_density_equilibrium(equilibrium, inputs).state.positions
+    )
+    state = problem.physical_state(solved, design)
+
+    assert inputs.prescribed_values[1] == pytest.approx(0.1)
+    assert inputs.load_parameters[1, 1] == pytest.approx(-0.8)
+    assert state.positions[0, 1] == pytest.approx(0.1)
+    assert jnp.allclose(state_problem.residual(solved, design), 0.0, atol=1.0e-10)

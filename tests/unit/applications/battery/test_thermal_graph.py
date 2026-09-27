@@ -58,7 +58,7 @@ class _HeatStore(AbstractImplicitCircuitLaw):
         )
 
 
-def test_actual_resistor_heat_allocation_and_internal_edge_cancellation() -> None:
+def test_thermal_graph_scenario_1() -> None:
     store = CircuitElement(_HeatStore(), element_id="heat-store")
     source = CircuitElement(IndependentVoltageSourceLaw(5.0), element_id="voltage-source")
     circuit = NodalCircuit(
@@ -131,9 +131,6 @@ def test_actual_resistor_heat_allocation_and_internal_edge_cancellation() -> Non
     delta = system.evaluate(0.0, state, raised_rate, parameters) - residual
     # Exactly one cell-owned heat capacity, not another graph capacity.
     np.testing.assert_allclose(delta[jnp.asarray((left, right))], (25.0, -50.0))
-
-
-def test_heat_allocation_refuses_energy_creation_and_negative_weights() -> None:
     with pytest.raises(ValueError, match="sum to one"):
         ThermalGraphPlan(
             ("left", "right"),

@@ -116,7 +116,7 @@ def _three_step_problem() -> Any:
     )
 
 
-def test_resampling_utilities_are_fixed_size_bounded_and_weighted() -> None:
+def test_state_space_particle_scenario_1() -> None:
     log_weights = jnp.log(jnp.asarray([0.8, 0.15, 0.05]))
     for method in ("systematic", "stratified", "multinomial", "residual"):
         indices = phx.uq.resample_indices(jr.key(2), log_weights, method=method)
@@ -136,9 +136,6 @@ def test_resampling_utilities_are_fixed_size_bounded_and_weighted() -> None:
     assert jnp.allclose(phx.uq.effective_sample_size(jnp.zeros(8)), 8.0)
     with pytest.raises(ValueError, match="degenerate"):
         phx.uq.resample_indices(jr.key(0), jnp.full((3,), -jnp.inf))
-
-
-def test_bootstrap_filter_matches_linear_gaussian_marginals() -> None:
     problem = _problem()
     kalman = phx.uq.kalman_filter(problem)
     particles = phx.uq.bootstrap_particle_filter(
@@ -157,9 +154,6 @@ def test_bootstrap_filter_matches_linear_gaussian_marginals() -> None:
         atol=0.2,
     )
     assert phx.uq.particle_filter_diagnostics(particles).passed
-
-
-def test_particle_and_ensemble_filters_skip_zero_duration_transition() -> None:
     problem = _zero_duration_problem()
     particle = phx.uq.bootstrap_particle_filter(
         jr.key(11),
@@ -187,6 +181,95 @@ def test_particle_and_ensemble_filters_skip_zero_duration_transition() -> None:
         ensemble.forecast_ensembles[0],
         initial_ensemble.ensemble,
     )
+    base = _problem()
+    invalid_observation = phx.stochastic.CallableObservationModel(
+        lambda state, time, context: jnp.zeros((1,)),
+        lambda value, state, time, mask, context: jnp.asarray(-jnp.inf),
+        lambda key, state, time, sample_shape, context: jnp.zeros(sample_shape + (1,)),
+        state_shape=(1,),
+        observation_shape=(1,),
+        observation_id="invalid",
+    )
+    model = phx.stochastic.StateSpaceModel(
+        base.model.prior,
+        base.model.transition,
+        invalid_observation,
+        model_id="invalid-model",
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        model,
+        base.observations,
+        initial_time=0.0,
+        problem_id="invalid-problem",
+    )
+    result = phx.uq.bootstrap_particle_filter(jr.key(17), problem, num_particles=16)
+
+    assert not result.successful
+    assert result.status[0] == phx.uq.PARTICLE_FILTER_WEIGHT_DEGENERACY
+    with pytest.raises(RuntimeError, match="failed"):
+        phx.uq.bootstrap_particle_filter(
+            jr.key(17), problem, num_particles=16, raise_on_failure=True
+        )
+    result = phx.uq.bootstrap_particle_filter(
+        jr.key(18),
+        _problem(),
+        num_particles=128,
+        resampling_policy="never",
+    )
+    target = phx.uq.particle_posterior_measure(result)
+
+    estimate = phx.integration.integrate(lambda particles: particles, target)
+
+    weights = jnp.exp(result.posterior_log_weights)
+    expected = jnp.sum(weights[..., None] * result.predicted_particles, axis=-2)
+    assert estimate.value.dims == ("time", None)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
+    assert jnp.all(estimate.successful)
+    assert jnp.array_equal(
+        estimate.diagnostics.active_samples,
+        jnp.full((2,), result.num_particles),
+    )
+    assert not estimate.diagnostics.independent
+    assert estimate.error_estimate is None
+    assert jnp.array_equal(
+        estimate.diagnostics.ancestry_ids,
+        result.ancestor_indices,
+    )
+    base = _problem()
+    invalid_observation = phx.stochastic.CallableObservationModel(
+        lambda state, time, context: jnp.zeros((1,)),
+        lambda value, state, time, mask, context: jnp.asarray(-jnp.inf),
+        lambda key, state, time, sample_shape, context: jnp.zeros(sample_shape + (1,)),
+        state_shape=(1,),
+        observation_shape=(1,),
+        observation_id="integration-invalid",
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            base.model.prior,
+            base.model.transition,
+            invalid_observation,
+            model_id="integration-invalid-model",
+        ),
+        base.observations,
+        initial_time=0.0,
+        problem_id="integration-invalid-problem",
+    )
+    result = phx.uq.bootstrap_particle_filter(
+        jr.key(19),
+        problem,
+        num_particles=16,
+    )
+
+    estimate = phx.integration.integrate(
+        lambda particles: particles,
+        phx.uq.particle_posterior_measure(result),
+    )
+
+    assert jnp.all(
+        estimate.status == int(phx.integration.IntegrationStatus.NO_VALID_SAMPLES)
+    )
+    assert jnp.all(jnp.isnan(estimate.value.data))
 
 
 def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_stream() -> (
@@ -236,7 +319,7 @@ def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_strea
     )
 
 
-def test_genealogy_backward_smoothing_and_predictive_conversion() -> None:
+def test_state_space_particle_scenario_2() -> None:
     result = phx.uq.bootstrap_particle_filter(
         jr.key(11),
         _problem(),
@@ -257,9 +340,6 @@ def test_genealogy_backward_smoothing_and_predictive_conversion() -> None:
     assert result.ancestor_indices.shape == (2, 64)
     assert predictive.samples.data.shape == (2, 64, 1)
     assert predictive.sample_axes[0].source == "process"
-
-
-def test_replay_is_exact_and_schedule_extension_preserves_prefix() -> None:
     short = phx.uq.bootstrap_particle_filter(
         jr.key(15), _problem(), num_particles=32, resampling_policy="always"
     )
@@ -319,101 +399,3 @@ def test_particle_checkpoint_restores_state_identical_to_saved_state(
 
     assert eqx.tree_equal(state, restored)
     assert restored.step_index.dtype == state.step_index.dtype
-
-
-def test_particle_filter_reports_all_invalid_likelihoods() -> None:
-    base = _problem()
-    invalid_observation = phx.stochastic.CallableObservationModel(
-        lambda state, time, context: jnp.zeros((1,)),
-        lambda value, state, time, mask, context: jnp.asarray(-jnp.inf),
-        lambda key, state, time, sample_shape, context: jnp.zeros(sample_shape + (1,)),
-        state_shape=(1,),
-        observation_shape=(1,),
-        observation_id="invalid",
-    )
-    model = phx.stochastic.StateSpaceModel(
-        base.model.prior,
-        base.model.transition,
-        invalid_observation,
-        model_id="invalid-model",
-    )
-    problem = phx.stochastic.StateSpaceProblem(
-        model,
-        base.observations,
-        initial_time=0.0,
-        problem_id="invalid-problem",
-    )
-    result = phx.uq.bootstrap_particle_filter(jr.key(17), problem, num_particles=16)
-
-    assert not result.successful
-    assert result.status[0] == phx.uq.PARTICLE_FILTER_WEIGHT_DEGENERACY
-    with pytest.raises(RuntimeError, match="failed"):
-        phx.uq.bootstrap_particle_filter(
-            jr.key(17), problem, num_particles=16, raise_on_failure=True
-        )
-
-
-def test_particle_posterior_measure_matches_weighted_filtering_marginals() -> None:
-    result = phx.uq.bootstrap_particle_filter(
-        jr.key(18),
-        _problem(),
-        num_particles=128,
-        resampling_policy="never",
-    )
-    target = phx.uq.particle_posterior_measure(result)
-
-    estimate = phx.integration.integrate(lambda particles: particles, target)
-
-    weights = jnp.exp(result.posterior_log_weights)
-    expected = jnp.sum(weights[..., None] * result.predicted_particles, axis=-2)
-    assert estimate.value.dims == ("time", None)
-    assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
-    assert jnp.all(estimate.successful)
-    assert jnp.array_equal(
-        estimate.diagnostics.active_samples,
-        jnp.full((2,), result.num_particles),
-    )
-    assert not estimate.diagnostics.independent
-    assert estimate.error_estimate is None
-    assert jnp.array_equal(
-        estimate.diagnostics.ancestry_ids,
-        result.ancestor_indices,
-    )
-
-
-def test_particle_posterior_measure_masks_failed_filtering_steps() -> None:
-    base = _problem()
-    invalid_observation = phx.stochastic.CallableObservationModel(
-        lambda state, time, context: jnp.zeros((1,)),
-        lambda value, state, time, mask, context: jnp.asarray(-jnp.inf),
-        lambda key, state, time, sample_shape, context: jnp.zeros(sample_shape + (1,)),
-        state_shape=(1,),
-        observation_shape=(1,),
-        observation_id="integration-invalid",
-    )
-    problem = phx.stochastic.StateSpaceProblem(
-        phx.stochastic.StateSpaceModel(
-            base.model.prior,
-            base.model.transition,
-            invalid_observation,
-            model_id="integration-invalid-model",
-        ),
-        base.observations,
-        initial_time=0.0,
-        problem_id="integration-invalid-problem",
-    )
-    result = phx.uq.bootstrap_particle_filter(
-        jr.key(19),
-        problem,
-        num_particles=16,
-    )
-
-    estimate = phx.integration.integrate(
-        lambda particles: particles,
-        phx.uq.particle_posterior_measure(result),
-    )
-
-    assert jnp.all(
-        estimate.status == int(phx.integration.IntegrationStatus.NO_VALID_SAMPLES)
-    )
-    assert jnp.all(jnp.isnan(estimate.value.data))

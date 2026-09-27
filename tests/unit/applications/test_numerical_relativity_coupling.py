@@ -7,7 +7,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 from phydrax.applications.numerical_relativity._coupled_runtime import (
     CoupledEvolutionStatus,
@@ -366,7 +365,7 @@ def _runtime(
     )
 
 
-def test_zero_matter_reduces_z4c_macro_step_to_vacuum() -> None:
+def test_numerical_relativity_coupling_scenario_1() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.4), jnp.asarray(0.0))
     result = runtime.advance(start, jnp.asarray(0.1), _controls())
@@ -385,9 +384,6 @@ def test_zero_matter_reduces_z4c_macro_step_to_vacuum() -> None:
         jnp.stack(tuple(value.stage_id for value in result.addresses)),
         jnp.arange(3, dtype=jnp.int32),
     )
-
-
-def test_fixed_flat_geometry_reduces_coupled_matter_step_to_standalone_ssprk33() -> None:
     runtime = _runtime(z4c_proposal=_propose_fixed_flat_z4c)
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
     result = runtime.advance(start, jnp.asarray(0.1), _controls())
@@ -396,59 +392,43 @@ def test_fixed_flat_geometry_reduces_coupled_matter_step_to_standalone_ssprk33()
     assert result.successful
     assert jnp.allclose(result.candidate.matter, stability_polynomial)
     assert jnp.allclose(result.candidate.z4c, 0.0)
+    for z4c_reject_stage, matter_reject_stage in ((1, -1), (-1, 1)):
+        runtime = _runtime()
+        start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
+        result = runtime.advance(
+            start,
+            jnp.asarray(0.1),
+            _controls(
+                z4c_reject_stage=z4c_reject_stage,
+                matter_reject_stage=matter_reject_stage,
+            ),
+        )
+
+        # ty: ignore[invalid-argument-type]
+        assert jnp.array_equal(result.stage_successful, (True, False, True))
+        assert not result.successful
+        assert jnp.array_equal(result.accepted.z4c, start.z4c)
+        assert jnp.array_equal(result.accepted.matter, start.matter)
+        assert jnp.array_equal(result.accepted.time, start.time)
+        assert jnp.array_equal(
+            result.accepted.budget.source_energy, start.budget.source_energy
+        )
+        assert result.accepted.rejected_steps == 1
 
 
-@pytest.mark.parametrize(
-    ("z4c_reject_stage", "matter_reject_stage"),
-    ((1, -1), (-1, 1)),
-)
-def test_either_participant_rejects_the_entire_three_stage_step(
-    z4c_reject_stage: Any, matter_reject_stage: Any
-) -> None:
-    runtime = _runtime()
-    start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
-    result = runtime.advance(
-        start,
-        jnp.asarray(0.1),
-        _controls(
-            z4c_reject_stage=z4c_reject_stage,
-            matter_reject_stage=matter_reject_stage,
-        ),
-    )
-
-    # ty: ignore[invalid-argument-type]
-    assert jnp.array_equal(result.stage_successful, (True, False, True))
-    assert not result.successful
-    assert jnp.array_equal(result.accepted.z4c, start.z4c)
-    assert jnp.array_equal(result.accepted.matter, start.matter)
-    assert jnp.array_equal(result.accepted.time, start.time)
-    assert jnp.array_equal(
-        result.accepted.budget.source_energy, start.budget.source_energy
-    )
-    assert result.accepted.rejected_steps == 1
-
-
-@pytest.mark.parametrize(
-    "controls",
-    (
+def test_numerical_relativity_coupling_scenario_2() -> None:
+    for controls in (
         _controls(stage_offset=1),
         _controls(time_offset=0.01),
-    ),
-)
-def test_stage_and_time_identity_mismatch_rejects_without_partial_commit(
-    controls: Any,
-) -> None:
-    runtime = _runtime()
-    start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
-    result = runtime.advance(start, jnp.asarray(0.1), controls)
+    ):
+        runtime = _runtime()
+        start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
+        result = runtime.advance(start, jnp.asarray(0.1), controls)
 
-    assert not result.successful
-    assert int(result.status) & int(CoupledEvolutionStatus.STAGE_IDENTITY_MISMATCH)
-    assert jnp.array_equal(result.accepted.z4c, start.z4c)
-    assert jnp.array_equal(result.accepted.matter, start.matter)
-
-
-def test_geometry_projection_topology_identity_is_enforced() -> None:
+        assert not result.successful
+        assert int(result.status) & int(CoupledEvolutionStatus.STAGE_IDENTITY_MISMATCH)
+        assert jnp.array_equal(result.accepted.z4c, start.z4c)
+        assert jnp.array_equal(result.accepted.matter, start.matter)
     runtime = _runtime(projection=_wrong_topology_stress_energy)
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = runtime.advance(start, jnp.asarray(0.1), _controls())
@@ -456,9 +436,6 @@ def test_geometry_projection_topology_identity_is_enforced() -> None:
     assert not result.successful
     assert int(result.status) & int(CoupledEvolutionStatus.STAGE_IDENTITY_MISMATCH)
     assert jnp.array_equal(result.accepted.time, start.time)
-
-
-def test_dynamic_snapshot_mismatch_is_folded_into_jit_rejection_status() -> None:
     runtime = _runtime(projection=_wrong_snapshot_stress_energy)
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = jax.jit(lambda state: runtime.advance(state, jnp.asarray(0.1), _controls()))(
@@ -471,7 +448,7 @@ def test_dynamic_snapshot_mismatch_is_folded_into_jit_rejection_status() -> None
     assert jnp.array_equal(result.accepted.matter, start.matter)
 
 
-def test_stale_reused_stage_snapshot_token_rejects_the_macro_step() -> None:
+def test_numerical_relativity_coupling_scenario_3() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.2), jnp.asarray(1.0))
     result = jax.jit(
@@ -488,9 +465,6 @@ def test_stale_reused_stage_snapshot_token_rejects_the_macro_step() -> None:
     assert int(result.status) & int(CoupledEvolutionStatus.STAGE_IDENTITY_MISMATCH)
     assert jnp.array_equal(result.accepted.z4c, start.z4c)
     assert jnp.array_equal(result.accepted.matter, start.matter)
-
-
-def test_only_accepted_stage_ledgers_enter_cumulative_coupled_budgets() -> None:
     runtime = _runtime(maximum_floor=1.0)
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(2.0))
     first = runtime.advance(
@@ -525,9 +499,6 @@ def test_only_accepted_stage_ledgers_enter_cumulative_coupled_budgets() -> None:
         rejected.accepted.budget.horizon_rest_mass,
         first.accepted.budget.horizon_rest_mass,
     )
-
-
-def test_ledger_limit_rejects_candidate_and_preserves_all_accepted_budgets() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
     result = runtime.advance(
@@ -543,7 +514,7 @@ def test_ledger_limit_rejects_candidate_and_preserves_all_accepted_budgets() -> 
     assert jnp.array_equal(result.accepted.matter, start.matter)
 
 
-def test_invalid_step_is_a_bounded_rejection_not_a_partial_update() -> None:
+def test_numerical_relativity_coupling_scenario_4() -> None:
     runtime = _runtime()
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
     result = runtime.advance(start, jnp.asarray(0.0), _controls())
@@ -556,11 +527,6 @@ def test_invalid_step_is_a_bounded_rejection_not_a_partial_update() -> None:
     assert jnp.array_equal(result.accepted.z4c, start.z4c)
     assert jnp.array_equal(result.accepted.matter, start.matter)
     assert jnp.array_equal(result.accepted.time, start.time)
-
-
-def test_consecutive_failure_bound_makes_runtime_terminal_without_unbounded_retries() -> (
-    None
-):
     runtime = _runtime(maximum_failures=2)
     controls = _controls(matter_reject_stage=1)
     start = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
@@ -575,35 +541,30 @@ def test_consecutive_failure_bound_makes_runtime_terminal_without_unbounded_retr
     assert not third.attempted
     assert third.accepted.rejected_steps == second.accepted.rejected_steps
     assert int(third.status) & int(CoupledEvolutionStatus.TERMINAL)
+    for matter_kind in ("grhd", "grmhd", "grrmhd"):
+        runtime = _runtime(matter_kind=matter_kind)
+        state = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
+        controls = _controls(floor_mass=0.1)
+        result = jax.jit(
+            lambda current, step, values: runtime.advance(current, step, values)
+        )(state, jnp.asarray(0.1), controls)
 
-
-@pytest.mark.parametrize("matter_kind", ("grhd", "grmhd", "grrmhd"))
-def test_coupled_relativistic_matter_steps_retain_fixed_stage_shapes_under_jit(
-    matter_kind: Any,
-) -> None:
-    runtime = _runtime(matter_kind=matter_kind)
-    state = runtime.initialize(jnp.asarray(0.0), jnp.asarray(1.0))
-    controls = _controls(floor_mass=0.1)
-    result = jax.jit(
-        lambda current, step, values: runtime.advance(current, step, values)
-    )(state, jnp.asarray(0.1), controls)
-
-    assert len(result.addresses) == 3
-    assert len(result.geometries) == 3
-    assert len(result.stress_energy) == 3
-    assert len(result.z4c_proposals) == 3
-    assert len(result.matter_proposals) == 3
-    assert len(result.stage_ledgers) == 3
-    assert result.stage_status.shape == (3,)
-    assert result.stage_successful.shape == (3,)
-    assert result.successful.shape == ()
-    assert result.status.shape == ()
-    assert result.accepted.budget.source_energy.shape == ()
-    assert result.accepted.budget.source_momentum.shape == (3,)
-    assert result.accepted.budget.maximum_source_defect.shape == ()
-    assert result.accepted.budget.conservation_momentum.shape == (3,)
-    assert result.accepted.budget.maximum_conservation_defect.shape == ()
-    assert result.accepted.budget.floor_momentum.shape == (3,)
-    assert result.accepted.budget.floor_cell_count.shape == ()
-    assert result.accepted.budget.horizon_momentum.shape == (3,)
-    assert result.accepted.budget.horizon_angular_momentum.shape == (3,)
+        assert len(result.addresses) == 3
+        assert len(result.geometries) == 3
+        assert len(result.stress_energy) == 3
+        assert len(result.z4c_proposals) == 3
+        assert len(result.matter_proposals) == 3
+        assert len(result.stage_ledgers) == 3
+        assert result.stage_status.shape == (3,)
+        assert result.stage_successful.shape == (3,)
+        assert result.successful.shape == ()
+        assert result.status.shape == ()
+        assert result.accepted.budget.source_energy.shape == ()
+        assert result.accepted.budget.source_momentum.shape == (3,)
+        assert result.accepted.budget.maximum_source_defect.shape == ()
+        assert result.accepted.budget.conservation_momentum.shape == (3,)
+        assert result.accepted.budget.maximum_conservation_defect.shape == ()
+        assert result.accepted.budget.floor_momentum.shape == (3,)
+        assert result.accepted.budget.floor_cell_count.shape == ()
+        assert result.accepted.budget.horizon_momentum.shape == (3,)
+        assert result.accepted.budget.horizon_angular_momentum.shape == (3,)

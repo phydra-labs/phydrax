@@ -416,7 +416,7 @@ def test_generic_gp_classifier_fit_gradients_status_and_complex_contract() -> No
     assert nonfinite.status == ML_NONFINITE
 
 
-def test_real_svm_families_reject_complex_kernel_expansions() -> None:
+def test_kernel_gradient_contracts_scenario_1() -> None:
     features, targets, labels, _, _ = _data()
     complex_kernel = lambda left, right: jnp.asarray(
         jnp.vdot(left, right) + 1.0, dtype=jnp.complex64
@@ -431,9 +431,6 @@ def test_real_svm_families_reject_complex_kernel_expansions() -> None:
             recipe.fit_batch(MLBatch(features, target))
     with pytest.raises(TypeError, match="real"):
         OneClassSVMRecipe(complex_kernel, iterations=2).fit_batch(MLBatch(features))
-
-
-def test_case_batched_nystrom_rejects_one_global_out_of_sample_kernel() -> None:
     features, _, _, _, _ = _data()
     cases = jnp.stack((features, features + 0.2), axis=0)
     model = (

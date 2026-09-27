@@ -4,7 +4,7 @@ import pytest
 import phydrax as phx
 
 
-def test_left_and_right_quaternion_actions_are_distinct_native_operators() -> None:
+def test_algebra_regular_actions_scenario_1() -> None:
     algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     space = phx.linalg.AlgebraArraySpace((), algebra, dtype=jnp.float64)
@@ -20,9 +20,6 @@ def test_left_and_right_quaternion_actions_are_distinct_native_operators() -> No
     assert jnp.array_equal(left.mv(value), jnp.asarray([0.0, 0.0, 0.0, 1.0]))
     assert jnp.array_equal(right.mv(value), jnp.asarray([0.0, 0.0, 0.0, -1.0]))
     assert left.operator_id != right.operator_id
-
-
-def test_octonion_action_composition_does_not_collapse_to_one_multiplier() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     space = phx.linalg.AlgebraArraySpace((), algebra, dtype=jnp.float64)
@@ -47,9 +44,6 @@ def test_octonion_action_composition_does_not_collapse_to_one_multiplier() -> No
         composed_value - collapsed.mv(value),
         -product.associator(left, middle, value),
     )
-
-
-def test_regular_action_materialization_and_transpose_match_pairing() -> None:
     algebra = phx.metrix.algebra.OctonionAlgebraSpec()
     product = algebra.prepare_product(backend="sparse")
     space = phx.linalg.AlgebraArraySpace((), algebra, dtype=jnp.float64)
@@ -67,23 +61,6 @@ def test_regular_action_materialization_and_transpose_match_pairing() -> None:
         space.inner(value, action.transpose_mv(probe)),
         atol=1e-12,
     )
-
-
-def test_regular_actions_support_nonfinal_axes_and_base_shaped_multipliers() -> None:
-    algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
-    layout = phx.metrix.algebra.AlgebraElementLayout(algebra, algebra_axis=0)
-    product = algebra.prepare_product(layout=layout, backend="sparse")
-    space = phx.linalg.AlgebraArraySpace((2,), algebra, algebra_axis=0, dtype=jnp.float64)
-    multiplier = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
-    value = jnp.asarray([[1.0, 1.0], [0.0, 0.0], [1.0, 1.0], [0.0, 0.0]])
-    action = phx.linalg.algebra_regular_action_operator(
-        product, multiplier, space, side="left"
-    )
-
-    assert jnp.array_equal(action.mv(value), product(multiplier, value))
-
-
-def test_regular_action_rejects_ambiguous_layout_dtype_and_side() -> None:
     quaternion = phx.metrix.algebra.QuaternionAlgebraSpec()
     octonion = phx.metrix.algebra.OctonionAlgebraSpec()
     product = quaternion.prepare_product(backend="sparse")
@@ -109,3 +86,14 @@ def test_regular_action_rejects_ambiguous_layout_dtype_and_side() -> None:
             phx.linalg.AlgebraArraySpace((), octonion, dtype=jnp.float64),
             side="left",
         )
+    algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
+    layout = phx.metrix.algebra.AlgebraElementLayout(algebra, algebra_axis=0)
+    product = algebra.prepare_product(layout=layout, backend="sparse")
+    space = phx.linalg.AlgebraArraySpace((2,), algebra, algebra_axis=0, dtype=jnp.float64)
+    multiplier = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+    value = jnp.asarray([[1.0, 1.0], [0.0, 0.0], [1.0, 1.0], [0.0, 0.0]])
+    action = phx.linalg.algebra_regular_action_operator(
+        product, multiplier, space, side="left"
+    )
+
+    assert jnp.array_equal(action.mv(value), product(multiplier, value))

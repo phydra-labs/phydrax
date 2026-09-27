@@ -166,7 +166,7 @@ def test_detector_result_archive_preserves_masks_residuals_and_sign(
     assert not bool(restored.successful)
 
 
-def test_periodic_profiles_are_exact_unreleased_single_tuple_candidates() -> None:
+def test_condensed_matter_artifacts_scenario_1() -> None:
     profiles = periodic_candidate_profiles()
 
     assert profiles
@@ -176,9 +176,6 @@ def test_periodic_profiles_are_exact_unreleased_single_tuple_candidates() -> Non
         not profile.capability.startswith("chemistry.candidate.") for profile in profiles
     )
     assert len({profile.profile_id for profile in profiles}) == len(profiles)
-
-
-def test_candidate_ledger_covers_every_implemented_baseline_slice() -> None:
     profiles = condensed_matter_candidate_profiles()
     capabilities = {profile.capability for profile in profiles}
     assert {
@@ -205,9 +202,6 @@ def test_candidate_ledger_covers_every_implemented_baseline_slice() -> None:
         for profile in profiles
         for support in profile.support_tuples
     )
-
-
-def test_frontier_inventory_is_separate_and_maturity_neutral() -> None:
     profiles = condensed_matter_frontier_candidate_profiles()
     capabilities = {profile.capability for profile in profiles}
     assert {
@@ -244,7 +238,7 @@ def _candidate(name: Any) -> Any:
     )
 
 
-def test_closure_ledger_refuses_missing_and_unreleased_dependencies() -> None:
+def test_condensed_matter_artifacts_scenario_2() -> None:
     required = _candidate("test.required")
     unrelated = _candidate("test.unrelated")
     ledger = CondensedMatterClosureLedger.from_profiles((required,))
@@ -273,37 +267,6 @@ def test_closure_ledger_refuses_missing_and_unreleased_dependencies() -> None:
     )
     with pytest.raises(ValueError, match="profile-unreleased"):
         require_condensed_matter_closure(unreleased, ledger, policy, at_time=0)
-
-
-def _campaign(prefix: Any, calibration_unit: Any, locked_unit: Any) -> Any:
-    calibration = ScientificCase(
-        f"{prefix}-calibration",
-        calibration_unit,
-        f"{prefix}-construct-calibration",
-        f"{prefix}-condition-calibration",
-        f"{prefix}-preparation-calibration",
-        f"{prefix}-batch-calibration",
-        (f"{prefix}-source-calibration",),
-    )
-    locked = ScientificCase(
-        f"{prefix}-locked",
-        locked_unit,
-        f"{prefix}-construct-locked",
-        f"{prefix}-condition-locked",
-        f"{prefix}-preparation-locked",
-        f"{prefix}-batch-locked",
-        (f"{prefix}-source-locked",),
-    )
-    return ScientificCampaign(
-        (calibration, locked),
-        (
-            CampaignRole("calibration", (calibration.case_id,)),
-            CampaignRole("locked_evaluation", (locked.case_id,)),
-        ),
-    )
-
-
-def test_campaign_aggregation_retains_roles_and_refuses_cross_owner_leakage() -> None:
     aggregation = condensed_matter_candidate_campaigns()
     assert (
         CondensedMatterCampaignAggregation.from_record(
@@ -362,6 +325,34 @@ def test_campaign_aggregation_retains_roles_and_refuses_cross_owner_leakage() ->
                 ),
             )
         )
+
+
+def _campaign(prefix: Any, calibration_unit: Any, locked_unit: Any) -> Any:
+    calibration = ScientificCase(
+        f"{prefix}-calibration",
+        calibration_unit,
+        f"{prefix}-construct-calibration",
+        f"{prefix}-condition-calibration",
+        f"{prefix}-preparation-calibration",
+        f"{prefix}-batch-calibration",
+        (f"{prefix}-source-calibration",),
+    )
+    locked = ScientificCase(
+        f"{prefix}-locked",
+        locked_unit,
+        f"{prefix}-construct-locked",
+        f"{prefix}-condition-locked",
+        f"{prefix}-preparation-locked",
+        f"{prefix}-batch-locked",
+        (f"{prefix}-source-locked",),
+    )
+    return ScientificCampaign(
+        (calibration, locked),
+        (
+            CampaignRole("calibration", (calibration.case_id,)),
+            CampaignRole("locked_evaluation", (locked.case_id,)),
+        ),
+    )
 
 
 def test_orchestrator_retains_every_component_failure(monkeypatch: Any) -> None:

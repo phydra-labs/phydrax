@@ -158,7 +158,7 @@ def _batch(case: Any = False) -> Any:
     )
 
 
-def test_bagging_homogeneous_uq_keys_case_axes_jit_vmap_and_grad() -> None:
+def test_ensemble_scenario_1() -> None:
     batch = _batch(case=True)
     recipe = BaggingRecipe(_CountRecipe(), num_members=3, sample_fraction=0.5)
     with pytest.raises(ValueError, match="explicit JAX key"):
@@ -182,9 +182,6 @@ def test_bagging_homogeneous_uq_keys_case_axes_jit_vmap_and_grad() -> None:
         jax.grad(lambda value: jnp.sum(model(value)))(points), jnp.zeros_like(points)
     )
     assert jax.vmap(lambda point: model(point))(points[0]).shape == (4, 1)
-
-
-def test_random_subspace_is_heterogeneous_deterministic_and_capacity_checked() -> None:
     batch = _batch()
     recipe = RandomSubspaceRecipe(_CountRecipe(), num_members=4, feature_count=1)
     first = recipe.fit_batch(batch, key=jax.random.key(11))
@@ -204,9 +201,6 @@ def test_random_subspace_is_heterogeneous_deterministic_and_capacity_checked() -
         RandomSubspaceRecipe(_CountRecipe(), num_members=2, feature_count=3).fit_batch(
             batch, key=jax.random.key(0)
         )
-
-
-def test_soft_and_hard_voting_are_distinct_and_fail_closed_on_weights() -> None:
     batch = _batch()
     soft = SoftVotingRecipe(
         (_ConstantRecipe(1.0), _ConstantRecipe(3.0)),
@@ -229,7 +223,7 @@ def test_soft_and_hard_voting_are_distinct_and_fail_closed_on_weights() -> None:
         )
 
 
-def test_stacking_meta_features_are_strictly_out_of_fold() -> None:
+def test_ensemble_scenario_2() -> None:
     batch = _batch()
     result = StackingRecipe(
         (_CountRecipe(),), _FeatureMeanRecipe(), num_folds=3
@@ -244,9 +238,6 @@ def test_stacking_meta_features_are_strictly_out_of_fold() -> None:
         StackingRecipe((_CountRecipe(),), _FeatureMeanRecipe(), num_folds=7).fit_batch(
             batch, key=jax.random.key(0)
         )
-
-
-def test_mixture_of_experts_uses_smooth_gate_and_structured_diagnostics() -> None:
     batch = _batch(case=True)
     result = MixtureOfExpertsRecipe(
         (_ConstantRecipe(1.0), _ConstantRecipe(3.0)),
@@ -263,9 +254,6 @@ def test_mixture_of_experts_uses_smooth_gate_and_structured_diagnostics() -> Non
         jax.grad(lambda x: jnp.sum(model(x)))(batch.dense_features()),
         jnp.zeros_like(batch.dense_features()),
     )
-
-
-def test_ensemble_models_reject_misaligned_members() -> None:
     with pytest.raises(ValueError, match="identical input and output sizes"):
         HomogeneousEnsembleModel((_ConstantModel(1.0, 1), _ConstantModel(2.0, 2)))
     with pytest.raises(ValueError, match="identical input and output sizes"):

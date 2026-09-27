@@ -33,7 +33,7 @@ def _reverse_kernel() -> Any:
     return graph, prepared, kernel
 
 
-def test_discrete_forward_and_factor_graph_reverse_process_shapes() -> None:
+def test_discrete_factor_transport_scenario_1() -> None:
     discrete = phx.transport.discrete
     graph, prepared, reverse = _reverse_kernel()
     forward = discrete.DiscreteForwardProcess((discrete.CategoricalNoisingKernel(0.8),))
@@ -64,9 +64,6 @@ def test_discrete_forward_and_factor_graph_reverse_process_shapes() -> None:
             jnp.asarray([[0, 1]]),
             (chains,),
         )
-
-
-def test_recovery_objective_adaptive_control_and_hybrid_embedding() -> None:
     discrete = phx.transport.discrete
     graph, _prepared, reverse = _reverse_kernel()
     positive = jnp.asarray([[0, 0], [1, 1]])

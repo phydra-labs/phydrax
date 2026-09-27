@@ -370,7 +370,7 @@ def _plan(maximum_iterations: Any = 2, *, damping: Any = 1.0) -> Any:
     )
 
 
-def test_constrained_outer_damping_uses_exact_law_mixture_callback() -> None:
+def test_games_mean_field_constraints_scenario_1() -> None:
     initial = _law(-1.0, "damped-initial", "damped-input-paths")
     problem = _problem(
         initial,
@@ -396,9 +396,6 @@ def test_constrained_outer_damping_uses_exact_law_mixture_callback() -> None:
         jnp.sort(result.flow.particles.reshape((-1,))),
         [-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0],
     )
-
-
-def test_unconstrained_reduction_preserves_current_fixed_point_evidence() -> None:
     initial = _law(0.0, "unconstrained-initial", "unconstrained-input-paths")
     problem = _problem(
         initial,
@@ -424,9 +421,6 @@ def test_unconstrained_reduction_preserves_current_fixed_point_evidence() -> Non
     assert result.induced_source_path_ids[0] == (
         "new-forward-paths:unconstrained-initial"
     )
-
-
-def test_individual_constraint_requires_feasibility_and_original_kkt_evidence() -> None:
     initial = _law(0.0, "individual-initial", "individual-input-paths")
     local = _block(
         "alpha-action-limit",
@@ -466,7 +460,7 @@ def test_individual_constraint_requires_feasibility_and_original_kkt_evidence() 
     np.testing.assert_allclose(nonstationary_result.final_stationarity_residual, 0.25)
 
 
-def test_aggregate_capacity_distinguishes_generic_population_multipliers() -> None:
+def test_games_mean_field_constraints_scenario_2() -> None:
     initial = _law(0.0, "generic-initial", "generic-input-paths")
     capacity = _block(
         "population-capacity",
@@ -494,9 +488,6 @@ def test_aggregate_capacity_distinguishes_generic_population_multipliers() -> No
     np.testing.assert_allclose(result.population_multipliers[0], [0.25])
     np.testing.assert_allclose(result.population_multipliers[1], [0.75])
     assert result.common_multipliers.shape == (0,)
-
-
-def test_aggregate_capacity_variational_mode_has_one_declared_common_multiplier() -> None:
     initial = _law(0.0, "variational-initial", "variational-input-paths")
     capacity = _block(
         "population-capacity",
@@ -520,9 +511,64 @@ def test_aggregate_capacity_variational_mode_has_one_declared_common_multiplier(
     np.testing.assert_allclose(result.common_multipliers, [0.5])
     assert result.population_multipliers[0].shape == (0,)
     assert result.population_multipliers[1].shape == (0,)
+    initial = _law(0.0, "wrong-price-initial", "wrong-price-paths")
+    capacity = _block(
+        "population-capacity",
+        scope=GameConstraintScope.SHARED,
+        participants=("alpha", "beta"),
+        owner=None,
+    )
+    problem = _problem(
+        initial,
+        (capacity,),
+        MeanFieldConstraintConcept.AGGREGATE_GENERIC,
+        multipliers=(1.0, 0.0),
+        multiplier_ids=("lambda-alpha-capacity", "lambda-beta-capacity"),
+        stationarity=-1.0,
+        aggregate_jacobian=((1.0,), (0.0,)),
+        derivative_multipliers=(0.5, 0.0),
+    )
 
+    result = solve_constrained_mean_field_game(problem, _plan())
 
-def test_positive_aggregate_prices_require_complete_stationarity() -> None:
+    assert (
+        result.status
+        == ConstrainedMeanFieldGameStatus.INVALID_AGGREGATE_DERIVATIVE_EVIDENCE
+    )
+    assert not result.valid
+    for aggregate_residual, multipliers, expected_status in [
+        (
+            -1.0,
+            (1.0, 0.0),
+            ConstrainedMeanFieldGameStatus.COMPLEMENTARITY_FAILURE,
+        ),
+        (
+            0.0,
+            (-1.0, 0.0),
+            ConstrainedMeanFieldGameStatus.DUAL_INFEASIBLE,
+        ),
+    ]:
+        initial = _law(0.0, "kkt-failure-initial", "kkt-failure-input-paths")
+        capacity = _block(
+            "population-capacity",
+            scope=GameConstraintScope.SHARED,
+            participants=("alpha", "beta"),
+            owner=None,
+        )
+        problem = _problem(
+            initial,
+            (capacity,),
+            MeanFieldConstraintConcept.AGGREGATE_GENERIC,
+            aggregate_residual=aggregate_residual,
+            multipliers=multipliers,
+            multiplier_ids=("lambda-alpha-capacity", "lambda-beta-capacity"),
+        )
+
+        result = solve_constrained_mean_field_game(problem, _plan())
+
+        assert result.population_feasibility_history[0]
+        assert result.status == expected_status
+        assert not result.kkt_validity_history[0]
     initial = _law(0.0, "nonstationary-price-initial", "nonstationary-price-paths")
     capacity = _block(
         "population-capacity",
@@ -544,9 +590,6 @@ def test_positive_aggregate_prices_require_complete_stationarity() -> None:
     assert result.status == ConstrainedMeanFieldGameStatus.INDIVIDUAL_KKT_FAILURE
     np.testing.assert_allclose(result.final_stationarity_residual, 1.0)
     assert not result.kkt_validity_history[0]
-
-
-def test_binding_aggregate_price_is_added_to_original_stationarity() -> None:
     initial = _law(0.0, "binding-price-initial", "binding-price-paths")
     capacity = _block(
         "population-capacity",
@@ -581,35 +624,7 @@ def test_binding_aggregate_price_is_added_to_original_stationarity() -> None:
     )
 
 
-def test_aggregate_derivative_evidence_rejects_wrong_price_vector() -> None:
-    initial = _law(0.0, "wrong-price-initial", "wrong-price-paths")
-    capacity = _block(
-        "population-capacity",
-        scope=GameConstraintScope.SHARED,
-        participants=("alpha", "beta"),
-        owner=None,
-    )
-    problem = _problem(
-        initial,
-        (capacity,),
-        MeanFieldConstraintConcept.AGGREGATE_GENERIC,
-        multipliers=(1.0, 0.0),
-        multiplier_ids=("lambda-alpha-capacity", "lambda-beta-capacity"),
-        stationarity=-1.0,
-        aggregate_jacobian=((1.0,), (0.0,)),
-        derivative_multipliers=(0.5, 0.0),
-    )
-
-    result = solve_constrained_mean_field_game(problem, _plan())
-
-    assert (
-        result.status
-        == ConstrainedMeanFieldGameStatus.INVALID_AGGREGATE_DERIVATIVE_EVIDENCE
-    )
-    assert not result.valid
-
-
-def test_generic_aggregate_problem_rejects_a_common_multiplier_claim() -> None:
+def test_games_mean_field_constraints_scenario_3() -> None:
     initial = _law(0.0, "wrong-common-initial", "wrong-common-input-paths")
     capacity = _block(
         "population-capacity",
@@ -632,9 +647,6 @@ def test_generic_aggregate_problem_rejects_a_common_multiplier_claim() -> None:
             multiplier_ids=("lambda-common-capacity",),
             multiplier_layout=wrong_layout,
         )
-
-
-def test_law_consistent_but_population_infeasible_candidate_is_rejected() -> None:
     initial = _law(0.0, "infeasible-initial", "infeasible-input-paths")
     capacity = _block(
         "population-capacity",
@@ -658,9 +670,6 @@ def test_law_consistent_but_population_infeasible_candidate_is_rejected() -> Non
     assert result.status == ConstrainedMeanFieldGameStatus.POPULATION_INFEASIBLE
     np.testing.assert_allclose(result.final_population_primal_violation, 0.2)
     assert not result.valid
-
-
-def test_population_feasible_but_law_inconsistent_candidate_is_rejected() -> None:
     initial = _law(0.0, "law-mismatch-initial", "law-mismatch-input-paths")
     capacity = _block(
         "population-capacity",
@@ -687,50 +696,7 @@ def test_population_feasible_but_law_inconsistent_candidate_is_rejected() -> Non
     assert not result.valid
 
 
-@pytest.mark.parametrize(
-    ("aggregate_residual", "multipliers", "expected_status"),
-    [
-        (
-            -1.0,
-            (1.0, 0.0),
-            ConstrainedMeanFieldGameStatus.COMPLEMENTARITY_FAILURE,
-        ),
-        (
-            0.0,
-            (-1.0, 0.0),
-            ConstrainedMeanFieldGameStatus.DUAL_INFEASIBLE,
-        ),
-    ],
-)
-def test_aggregate_dual_and_complementarity_failures_are_separate(
-    aggregate_residual: Any,
-    multipliers: Any,
-    expected_status: Any,
-) -> None:
-    initial = _law(0.0, "kkt-failure-initial", "kkt-failure-input-paths")
-    capacity = _block(
-        "population-capacity",
-        scope=GameConstraintScope.SHARED,
-        participants=("alpha", "beta"),
-        owner=None,
-    )
-    problem = _problem(
-        initial,
-        (capacity,),
-        MeanFieldConstraintConcept.AGGREGATE_GENERIC,
-        aggregate_residual=aggregate_residual,
-        multipliers=multipliers,
-        multiplier_ids=("lambda-alpha-capacity", "lambda-beta-capacity"),
-    )
-
-    result = solve_constrained_mean_field_game(problem, _plan())
-
-    assert result.population_feasibility_history[0]
-    assert result.status == expected_status
-    assert not result.kkt_validity_history[0]
-
-
-def test_low_effective_sample_size_fails_before_constraint_acceptance() -> None:
+def test_games_mean_field_constraints_scenario_4() -> None:
     initial = _law(0.0, "low-ess-initial", "low-ess-input-paths")
     capacity = _block(
         "population-capacity",
@@ -753,9 +719,6 @@ def test_low_effective_sample_size_fails_before_constraint_acceptance() -> None:
     np.testing.assert_allclose(result.induced_effective_sample_size_history[0], 1.0)
     assert not result.individual_evidence_validity_history[0]
     assert not result.valid
-
-
-def test_candidate_label_retains_sampling_scope_and_separates_stronger_claims() -> None:
     initial = _law(0.0, "claim-initial", "claim-input-paths")
     capacity = _block(
         "population-capacity",

@@ -44,7 +44,7 @@ def _storage(index_space: Any, capacity: Any) -> Any:
     return phx.discretization.BlockSparseMPMNodalStoragePlan(topology)
 
 
-def test_sparse_blocks_follow_routes_and_transition_by_logical_key() -> None:
+def test_mpm_sparse_storage_scenario_1() -> None:
     first_routes, index_space = _routes(jnp.asarray([[0.15, 0.15], [0.2, 0.2]]))
     second_routes, _ = _routes(jnp.asarray([[0.75, 0.75], [0.8, 0.8]]))
     storage = _storage(index_space, 16)
@@ -57,9 +57,14 @@ def test_sparse_blocks_follow_routes_and_transition_by_logical_key() -> None:
     assert int(second.evidence.required_blocks) > 0
     assert int(second.generation) == 1
     assert not jnp.array_equal(first.groups.group_keys, second.groups.group_keys)
+    routes, index_space = _routes(
+        jnp.asarray([[0.1, 0.1], [0.4, 0.4], [0.7, 0.7], [0.9, 0.9]])
+    )
+    topology = _storage(index_space, 1).build(routes)
 
-
-def test_compact_pack_unpack_and_route_mapping_match_supported_dense_values() -> None:
+    assert bool(topology.evidence.overflow)
+    assert not bool(topology.evidence.successful)
+    assert not jnp.any(topology.node_valid)
     routes, index_space = _routes(jnp.asarray([[0.15, 0.15], [0.2, 0.2]]))
     storage = _storage(index_space, 8)
     topology = storage.build(routes)
@@ -76,20 +81,6 @@ def test_compact_pack_unpack_and_route_mapping_match_supported_dense_values() ->
     assert mapped.indices.shape == routes.stencil.indices.shape
     assert jnp.all(mapped.valid == routes.stencil.valid)
     assert compact.shape == (8 * 16, 2)
-
-
-def test_sparse_block_overflow_rejects_before_storage_use() -> None:
-    routes, index_space = _routes(
-        jnp.asarray([[0.1, 0.1], [0.4, 0.4], [0.7, 0.7], [0.9, 0.9]])
-    )
-    topology = _storage(index_space, 1).build(routes)
-
-    assert bool(topology.evidence.overflow)
-    assert not bool(topology.evidence.successful)
-    assert not jnp.any(topology.node_valid)
-
-
-def test_dense_storage_adapter_is_identity_for_field_payloads() -> None:
     dense = jnp.ones((16, 16, 2, 3))
     storage = phx.discretization.DenseMPMNodalStoragePlan((16, 16))
     np.testing.assert_array_equal(storage.unpack(storage.pack(dense, None), None), dense)

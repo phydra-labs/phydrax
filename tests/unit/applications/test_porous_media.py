@@ -59,7 +59,7 @@ def _exterior(discretization: Any) -> Any:
     return np.flatnonzero(np.asarray(discretization.neighbor_cells) < 0)
 
 
-def test_hybrid_mimetic_rotated_tensor_is_affine_exact_and_conservative() -> None:
+def test_porous_media_scenario_1() -> None:
     discretization = _geometry()
     diffusion = HybridMimeticDiffusion(discretization)
     gradient = jnp.asarray([1.0, -2.0, 0.5])
@@ -76,9 +76,6 @@ def test_hybrid_mimetic_rotated_tensor_is_affine_exact_and_conservative() -> Non
         diffusion.continuity_residual(local)[interior], 0.0, atol=2.0e-14
     )
     np.testing.assert_allclose(jnp.sum(local, axis=1), 0.0, atol=2.0e-14)
-
-
-def test_hybrid_global_solve_recovers_affine_dirichlet_field() -> None:
     discretization = _geometry()
     diffusion = HybridMimeticDiffusion(discretization)
     gradient = jnp.asarray([0.3, -0.5, 0.9])
@@ -98,6 +95,22 @@ def test_hybrid_global_solve_recovers_affine_dirichlet_field() -> None:
     np.testing.assert_allclose(
         result.value[expected_cells.size :], expected_faces, atol=1.0e-12
     )
+    plan, pressure, face_pressure = _hydrostatic_plan()
+    previous = plan.initialize(pressure, face_pressure)
+    flux = plan.fluxes(previous.pressure_Pa, previous.face_pressure_Pa)
+    np.testing.assert_allclose(flux.mass_face_rates, 0.0, atol=1.0e-15)
+    result = plan.step(previous, 10.0)
+    assert result.successful
+    np.testing.assert_allclose(
+        result.state.pressure_Pa, previous.pressure_Pa, atol=1.0e-9
+    )
+    np.testing.assert_allclose(result.residual, 0.0, atol=1.0e-10)
+    plan, pressure, face_pressure = _hydrostatic_plan(anchored=False)
+    previous = plan.initialize(pressure, face_pressure)
+    assert not plan.well_posed(previous.pressure_Pa)
+    result = plan.step(previous, 1.0)
+    assert not result.successful
+    np.testing.assert_allclose(result.state.pressure_Pa, previous.pressure_Pa)
 
 
 def _hydrostatic_plan(*, anchored: Any = True, thermal_feedback: Any = False) -> Any:
@@ -130,30 +143,6 @@ def _hydrostatic_plan(*, anchored: Any = True, thermal_feedback: Any = False) ->
     )
     pressure = 1.0e5 + density * gravity * discretization.cell_centers[:, 2]
     return plan, pressure, jnp.asarray(face_pressure)
-
-
-def test_richards_hydrostatic_state_has_zero_flux_and_is_preserved() -> None:
-    plan, pressure, face_pressure = _hydrostatic_plan()
-    previous = plan.initialize(pressure, face_pressure)
-    flux = plan.fluxes(previous.pressure_Pa, previous.face_pressure_Pa)
-    np.testing.assert_allclose(flux.mass_face_rates, 0.0, atol=1.0e-15)
-    result = plan.step(previous, 10.0)
-    assert result.successful
-    np.testing.assert_allclose(
-        result.state.pressure_Pa, previous.pressure_Pa, atol=1.0e-9
-    )
-    np.testing.assert_allclose(result.residual, 0.0, atol=1.0e-10)
-
-
-def test_saturated_closed_incompressible_richards_problem_fails_without_storage_floor() -> (
-    None
-):
-    plan, pressure, face_pressure = _hydrostatic_plan(anchored=False)
-    previous = plan.initialize(pressure, face_pressure)
-    assert not plan.well_posed(previous.pressure_Pa)
-    result = plan.step(previous, 1.0)
-    assert not result.successful
-    np.testing.assert_allclose(result.state.pressure_Pa, previous.pressure_Pa)
 
 
 def test_unsaturated_richards_step_has_implicit_forward_and_reverse_derivatives() -> None:

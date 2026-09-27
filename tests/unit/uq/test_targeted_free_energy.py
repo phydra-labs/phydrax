@@ -51,7 +51,7 @@ def _potentials() -> Any:
     return source, target
 
 
-def test_exact_affine_map_produces_constant_generalized_work() -> None:
+def test_targeted_free_energy_scenario_1() -> None:
     source, target = _potentials()
     mapping = phx.uq.TargetedMapPlan(
         _AffineBijector(jnp.log(0.5), 2.0),
@@ -95,9 +95,6 @@ def test_exact_affine_map_produces_constant_generalized_work() -> None:
     # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(evaluation.reverse_work, -jnp.log(2.0), atol=1.0e-12)
     assert jnp.max(evaluation.forward_roundtrip_residual) < 1.0e-12
-
-
-def test_native_affine_flow_and_com_chart_roundtrip_exactly() -> None:
     adapter = phx.uq.AffineFlowBijector(
         jnp.zeros((3,)),
         jnp.ones((3,)),
@@ -115,9 +112,6 @@ def test_native_affine_flow_and_com_chart_roundtrip_exactly() -> None:
     mapped_com = jnp.sum(jnp.asarray([1.0, 3.0])[:, None] * mapped, axis=0) / 4.0
     np.testing.assert_allclose(mapped_com, original_com, atol=1.0e-12)
     assert jnp.allclose(chart.forward_log_det_jacobian(positions), 0.0)
-
-
-def test_targeted_map_training_improves_affine_overlap() -> None:
     source, target = _potentials()
     mapping = phx.uq.TargetedMapPlan(
         _AffineBijector(), (1,), architecture_id="trainable-affine"

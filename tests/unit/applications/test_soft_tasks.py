@@ -115,9 +115,7 @@ def _constant_curvature_target(reconstruction: Any) -> Any:
     return jnp.asarray((0.05, -0.03, 0.08, 0.14, -0.09, 0.21), dtype=jnp.float64)
 
 
-def test_all_continuum_task_contracts_match_an_analytic_constant_curvature_target() -> (
-    None
-):
+def test_soft_tasks_scenario_1() -> None:
     reduction, reconstruction = _spatial_reconstruction()
     target_coefficients = _constant_curvature_target(reconstruction)
     target_poses = reconstruction.pose(target_coefficients)
@@ -158,11 +156,6 @@ def test_all_continuum_task_contracts_match_an_analytic_constant_curvature_targe
     assert all(
         task.reconstruction_id == reconstruction.reconstruction_id for task in tasks
     )
-
-
-def test_continuum_pose_ik_solves_local_nls_and_retains_native_accepted_evidence() -> (
-    None
-):
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     target_coefficients = _constant_curvature_target(reconstruction)
     target_pose = reconstruction.pose(target_coefficients)[-1]
@@ -191,9 +184,27 @@ def test_continuum_pose_ik_solves_local_nls_and_retains_native_accepted_evidence
     np.testing.assert_allclose(
         result.accepted_state.coefficients, target_coefficients, atol=3.0e-6
     )
+    _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
+    source = jnp.zeros((6,), dtype=jnp.float64)
+    target = jnp.asarray((0.02, -0.01, 0.0, 0.01, 0.0, -0.02), dtype=source.dtype)
+    task = ContinuumPostureTask(reconstruction, target, tolerance=2.0e-6)
+    plan = ContinuumInverseKinematicsPlan(reconstruction, (task,))
+    problem = plan.sqp_problem(coefficient_bounds=phx.optim.Bounds(-0.1, 0.1))
+    lower, upper = problem.constraints[0].bounds(problem.constraints[0].value(source))
 
-
-def test_quaternion_sign_has_one_content_identity_and_one_pose_residual() -> None:
+    assert len(problem.constraints) == 1
+    assert lower.shape == target.shape
+    assert upper.shape == target.shape
+    result = plan.solve_sqp(
+        source,
+        method=phx.optim.SQP(),
+        termination=_termination(),
+        coefficient_bounds=phx.optim.Bounds(-0.1, 0.1),
+    )
+    # ty: ignore[unresolved-attribute]
+    assert result.optimizer.certificate is not None
+    assert result.successful
+    np.testing.assert_allclose(result.accepted_state.coefficients, target, atol=2.0e-6)
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     coefficients = _constant_curvature_target(reconstruction)
     pose = reconstruction.pose(coefficients)[-1]
@@ -217,7 +228,7 @@ def test_quaternion_sign_has_one_content_identity_and_one_pose_residual() -> Non
     )
 
 
-def test_conflicting_tasks_report_infeasible_candidate_and_roll_back_source() -> None:
+def test_soft_tasks_scenario_2() -> None:
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     source = jnp.zeros((6,), dtype=jnp.float64)
     position = reconstruction.pose(source)[-1, 4:]
@@ -240,9 +251,6 @@ def test_conflicting_tasks_report_infeasible_candidate_and_roll_back_source() ->
     assert not result.feasibility.task_bounds_satisfied
     np.testing.assert_array_equal(result.accepted_state.coefficients, source)
     assert result.candidate_evaluation.maximum_task_violation > 0.1
-
-
-def test_coefficient_bounds_are_separate_from_task_feasibility_and_fail_closed() -> None:
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     source = jnp.zeros((6,), dtype=jnp.float64)
     target = source.at[0].set(0.25)
@@ -263,35 +271,6 @@ def test_coefficient_bounds_are_separate_from_task_feasibility_and_fail_closed()
     assert not result.successful
     np.testing.assert_array_equal(result.accepted_state.coefficients, source)
     assert result.candidate_state.coefficients[0] <= 0.04 + 1.0e-7
-
-
-def test_continuum_sqp_problem_exposes_exact_task_constraints_and_solves_posture() -> (
-    None
-):
-    _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
-    source = jnp.zeros((6,), dtype=jnp.float64)
-    target = jnp.asarray((0.02, -0.01, 0.0, 0.01, 0.0, -0.02), dtype=source.dtype)
-    task = ContinuumPostureTask(reconstruction, target, tolerance=2.0e-6)
-    plan = ContinuumInverseKinematicsPlan(reconstruction, (task,))
-    problem = plan.sqp_problem(coefficient_bounds=phx.optim.Bounds(-0.1, 0.1))
-    lower, upper = problem.constraints[0].bounds(problem.constraints[0].value(source))
-
-    assert len(problem.constraints) == 1
-    assert lower.shape == target.shape
-    assert upper.shape == target.shape
-    result = plan.solve_sqp(
-        source,
-        method=phx.optim.SQP(),
-        termination=_termination(),
-        coefficient_bounds=phx.optim.Bounds(-0.1, 0.1),
-    )
-    # ty: ignore[unresolved-attribute]
-    assert result.optimizer.certificate is not None
-    assert result.successful
-    np.testing.assert_allclose(result.accepted_state.coefficients, target, atol=2.0e-6)
-
-
-def test_differential_ik_compiles_native_qp_with_velocity_and_one_step_bounds() -> None:
     _reduction, reconstruction = _spatial_reconstruction(queries=(0.0, 1.0))
     source = jnp.zeros((6,), dtype=jnp.float64)
     target = source.at[0].set(0.2)

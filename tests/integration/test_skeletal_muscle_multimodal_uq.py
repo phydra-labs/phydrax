@@ -55,7 +55,7 @@ def _predictions() -> Any:
     }
 
 
-def test_multimodal_plan_assembles_core_likelihood_terms_and_posterior() -> None:
+def test_skeletal_muscle_multimodal_uq_scenario_1() -> None:
     plan = _plan()
     predictions = _predictions()
     terms = plan.likelihood_terms(predictions)
@@ -97,9 +97,6 @@ def test_multimodal_plan_assembles_core_likelihood_terms_and_posterior() -> None
     assert jnp.isclose(compiled, value)
     hessian = jax.hessian(posterior.negative_log_density)(posterior.initial_position)
     assert hessian["force_scale"]["force_scale"] > 0.0
-
-
-def test_integer_observations_keep_float_uncertainty_and_gradients() -> None:
     channel = SkeletalObservationChannel(
         "integer-observation",
         skeletal_muscle_quantity("relative_isometric_force"),
@@ -129,9 +126,6 @@ def test_integer_observations_keep_float_uncertainty_and_gradients() -> None:
     assert jnp.all(channel.standard_uncertainty == 0.5)
     assert jnp.isfinite(gradient["location"])
     assert gradient["location"] != 0.0
-
-
-def test_masked_nonfinite_data_scale_and_prediction_are_inactive() -> None:
     channel = SkeletalObservationChannel(
         "masked",
         "observed_force",

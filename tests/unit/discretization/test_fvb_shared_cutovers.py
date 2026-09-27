@@ -18,7 +18,7 @@ from phydrax.discretization.finite_volume import (
 from phydrax.discretization.vem import prepare_polyhedral_h1_virtual_element_3d
 
 
-def test_rank_two_periodic_cell_preserves_orthogonal_component() -> None:
+def test_fvb_shared_cutovers_scenario_1() -> None:
     # ty: ignore[invalid-argument-type]
     cell = PeriodicCell([[2.0, 0.0, 0.0], [0.5, 1.5, 0.0]])
     point = jnp.asarray([2.25, -0.1, 3.0])
@@ -30,9 +30,6 @@ def test_rank_two_periodic_cell_preserves_orthogonal_component() -> None:
     assert jnp.allclose(
         cell.vectors @ cell.reciprocal_vectors.T, 2.0 * jnp.pi * jnp.eye(2)
     )
-
-
-def test_root_polyhedral_connectivity_drives_degree_one_vem() -> None:
     points = np.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
     )
@@ -50,9 +47,6 @@ def test_root_polyhedral_connectivity_drives_degree_one_vem() -> None:
     constant = jnp.ones((4,))
     assert jnp.linalg.norm(prepared.mv(constant)) < 1e-10
     assert prepared.evidence.minimum_volume > 0.0
-
-
-def test_pathological_polyhedral_arity_keeps_actual_storage_linear() -> None:
     arity = 256
     tetrahedron_count = 128
     pyramid = (tuple(reversed(range(arity))),) + tuple(
@@ -74,9 +68,7 @@ def test_pathological_polyhedral_arity_keeps_actual_storage_linear() -> None:
         prepare_polyhedral_worksets(connectivity, maximum_entries=input_entries)
 
 
-def test_mixed_polyhedral_incidence_preserves_ids_orientation_and_workset_budget() -> (
-    None
-):
+def test_mixed_contracts() -> None:
     prism_faces = (
         (0, 2, 1),
         (3, 4, 5),
@@ -135,9 +127,6 @@ def test_mixed_polyhedral_incidence_preserves_ids_orientation_and_workset_budget
         minlength=connectivity.face_count,
     )
     np.testing.assert_array_equal(dense_boundary, boundary)
-
-
-def test_mixed_standard_polyhedral_geometry_preserves_reference_vertex_order() -> None:
     points = np.asarray(
         (
             (0.0, 0.0, 0.0),

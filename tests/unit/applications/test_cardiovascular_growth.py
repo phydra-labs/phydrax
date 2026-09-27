@@ -55,7 +55,7 @@ def _constant_cycle(prepared: Any, value: Any, index: Any = 0) -> Any:
     )
 
 
-def test_homeostatic_cycle_keeps_positive_identity_growth_and_exact_split() -> None:
+def test_cardiovascular_growth_scenario_1() -> None:
     _, prepared = _growth_problem()
     accumulator = growth.initialize_growth_cycle_accumulator(prepared)
     accumulator = growth.accumulate_growth_cycle(
@@ -86,9 +86,6 @@ def test_homeostatic_cycle_keeps_positive_identity_growth_and_exact_split() -> N
     assert np.all(np.asarray(kinematics.growth_positive))
     assert np.all(np.asarray(kinematics.growth_jacobian) > 0.0)
     assert np.allclose(reconstructed, total, rtol=2e-5, atol=2e-6)
-
-
-def test_slow_growth_requires_refinement_before_atomic_commit() -> None:
     _, prepared = _growth_problem(target=0.0, maximum_increment=0.03)
     accumulator = growth.initialize_growth_cycle_accumulator(prepared)
     accumulator = growth.accumulate_growth_cycle(
@@ -120,9 +117,6 @@ def test_slow_growth_requires_refinement_before_atomic_commit() -> None:
         * max(1.0, float(np.max(np.abs(log_tensor))))
     )
     assert np.all(eigenvalues >= -psd_tolerance)
-
-
-def test_reference_epoch_transfer_is_discrete_and_forces_all_rebuilds() -> None:
     source_plan, source = _growth_problem(target=0.0)
     source_state = growth.LogGrowthTensorState(
         np.asarray(
@@ -182,7 +176,7 @@ def test_reference_epoch_transfer_is_discrete_and_forces_all_rebuilds() -> None:
     assert np.allclose(derivative, 0.0)
 
 
-def test_invalid_epoch_transfer_rolls_back_source_epoch_and_cycle_history() -> None:
+def test_cardiovascular_growth_scenario_2() -> None:
     source_plan, source = _growth_problem(target=0.0)
     state = growth.initialize_growth_state(source)
     accumulator = growth.accumulate_growth_cycle(
@@ -211,6 +205,59 @@ def test_invalid_epoch_transfer_rolls_back_source_epoch_and_cycle_history() -> N
     assert result.prepared.prepared_id == source.prepared_id
     assert result.state.state_id == state.state_id
     assert result.accumulator.cycle_count == 1
+    plan = _sarcomere_plan()
+    state = sarcomere.initialize_sarcomere_state(
+        plan,
+        (2,),
+        atp_pmol_per_mm3=100.0,
+        adp_pmol_per_mm3=20.0,
+        phosphate_pmol_per_mm3=20.0,
+    )
+    result = sarcomere.step_mean_field_sarcomere(plan, state, _coupling(-1.0), 0.5)
+
+    assert not bool(result.accepted)
+    assert int(result.evidence.status) == int(
+        sarcomere.SarcomereStatus.INVALID_COUPLING_INPUT
+    )
+    assert np.array_equal(result.state.crossbridge_fractions, state.crossbridge_fractions)
+    assert float(result.state.time_ms) == float(state.time_ms)
+    plan = _sarcomere_plan()
+    fractions = np.asarray(((0.5, 0.5, 0.0, 0.0),) * 2)
+    state = sarcomere.SarcomereState(
+        fractions,
+        np.full(2, 100.0),
+        np.full(2, 40.0),
+        np.full(2, 40.0),
+        0.0,
+        plan.plan_id,
+    )
+    high = sarcomere.step_mean_field_sarcomere(plan, state, _coupling(8.0), 1.0)
+    low = sarcomere.step_mean_field_sarcomere(plan, state, _coupling(0.0), 1.0)
+
+    assert bool(high.accepted)
+    assert bool(low.accepted)
+    assert float(high.evidence.population_sum_error) < 2e-6
+    assert float(high.evidence.adenylate_balance_error) < 2e-5
+    assert float(high.evidence.phosphoryl_balance_error) < 2e-5
+    assert float(high.evidence.maximum_chemical_power_residual) < 2e-5
+    assert float(high.evidence.maximum_total_power_residual) < 2e-5
+    assert np.all(np.asarray(high.ledger.heat_power_kpa_per_ms) >= 0.0)
+    assert np.all(
+        np.asarray(high.outputs.modulation.oxygen_limitation)
+        > np.asarray(low.outputs.modulation.oxygen_limitation)
+    )
+    assert np.all(
+        np.asarray(high.outputs.atp_regeneration_pmol_per_mm3_ms)
+        > np.asarray(low.outputs.atp_regeneration_pmol_per_mm3_ms)
+    )
+    assert np.all(
+        np.asarray(high.extents.powerstroke_fraction)
+        > np.asarray(low.extents.powerstroke_fraction)
+    )
+    stochastic = sarcomere.StochasticMolecularSarcomereFidelity(1000, 8)
+    assert stochastic.molecule_count == 1000
+    with pytest.raises(TypeError, match="distinct route"):
+        _sarcomere_plan(fidelity=stochastic)
 
 
 def _sarcomere_plan(**overrides: Any) -> Any:
@@ -248,65 +295,3 @@ def _coupling(oxygen: Any, *, velocity: Any = 0.0) -> Any:
         np.asarray((oxygen, oxygen)),
         np.asarray((1.0, 1.0)),
     )
-
-
-def test_mean_field_species_and_power_ledgers_close_with_oxygen_modulation() -> None:
-    plan = _sarcomere_plan()
-    fractions = np.asarray(((0.5, 0.5, 0.0, 0.0),) * 2)
-    state = sarcomere.SarcomereState(
-        fractions,
-        np.full(2, 100.0),
-        np.full(2, 40.0),
-        np.full(2, 40.0),
-        0.0,
-        plan.plan_id,
-    )
-    high = sarcomere.step_mean_field_sarcomere(plan, state, _coupling(8.0), 1.0)
-    low = sarcomere.step_mean_field_sarcomere(plan, state, _coupling(0.0), 1.0)
-
-    assert bool(high.accepted)
-    assert bool(low.accepted)
-    assert float(high.evidence.population_sum_error) < 2e-6
-    assert float(high.evidence.adenylate_balance_error) < 2e-5
-    assert float(high.evidence.phosphoryl_balance_error) < 2e-5
-    assert float(high.evidence.maximum_chemical_power_residual) < 2e-5
-    assert float(high.evidence.maximum_total_power_residual) < 2e-5
-    assert np.all(np.asarray(high.ledger.heat_power_kpa_per_ms) >= 0.0)
-    assert np.all(
-        np.asarray(high.outputs.modulation.oxygen_limitation)
-        > np.asarray(low.outputs.modulation.oxygen_limitation)
-    )
-    assert np.all(
-        np.asarray(high.outputs.atp_regeneration_pmol_per_mm3_ms)
-        > np.asarray(low.outputs.atp_regeneration_pmol_per_mm3_ms)
-    )
-    assert np.all(
-        np.asarray(high.extents.powerstroke_fraction)
-        > np.asarray(low.extents.powerstroke_fraction)
-    )
-
-
-def test_invalid_oxygen_input_fails_closed_without_changing_state() -> None:
-    plan = _sarcomere_plan()
-    state = sarcomere.initialize_sarcomere_state(
-        plan,
-        (2,),
-        atp_pmol_per_mm3=100.0,
-        adp_pmol_per_mm3=20.0,
-        phosphate_pmol_per_mm3=20.0,
-    )
-    result = sarcomere.step_mean_field_sarcomere(plan, state, _coupling(-1.0), 0.5)
-
-    assert not bool(result.accepted)
-    assert int(result.evidence.status) == int(
-        sarcomere.SarcomereStatus.INVALID_COUPLING_INPUT
-    )
-    assert np.array_equal(result.state.crossbridge_fractions, state.crossbridge_fractions)
-    assert float(result.state.time_ms) == float(state.time_ms)
-
-
-def test_stochastic_molecular_fidelity_cannot_be_used_as_mean_field_mode() -> None:
-    stochastic = sarcomere.StochasticMolecularSarcomereFidelity(1000, 8)
-    assert stochastic.molecule_count == 1000
-    with pytest.raises(TypeError, match="distinct route"):
-        _sarcomere_plan(fidelity=stochastic)

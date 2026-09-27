@@ -144,7 +144,7 @@ def test_sampling_jit_integral_constraint() -> None:
     assert jnp.allclose(_jit_loss(term, {"u": u}), 0.0)
 
 
-def test_residual_penalty_splits_sampling_and_evaluation_keys() -> None:
+def test_term_sampling_jit_scenario_1() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     structure = SampleLayout((("x",),))
@@ -173,9 +173,6 @@ def test_residual_penalty_splits_sampling_and_evaluation_keys() -> None:
 
     assert jnp.allclose(sampled_loss, jr.uniform(evaluation_key) ** 2, atol=1e-14)
     assert jnp.allclose(supplied_loss, jr.uniform(caller_key) ** 2, atol=1e-14)
-
-
-def test_integral_constraint_splits_sampling_and_evaluation_keys() -> None:
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
     SampleLayout((("x",),))

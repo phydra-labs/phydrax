@@ -16,7 +16,7 @@ def _feature_map(point: Any) -> Any:
     return jnp.array([1.0, coordinate, coordinate**2, jnp.sin(coordinate)])
 
 
-def test_finite_feature_kernel_matches_explicit_whitened_features() -> None:
+def test_gp_finite_feature_scenario_1() -> None:
     points = jnp.linspace(-1.0, 1.0, 11)
     factor = jnp.array(
         [
@@ -39,9 +39,6 @@ def test_finite_feature_kernel_matches_explicit_whitened_features() -> None:
     assert jnp.allclose(kernel.matrix(points, points), features @ features.T)
     assert jnp.allclose(kernel.diagonal(points), jnp.sum(features**2, axis=1))
     assert kernel.max_derivative_order is None
-
-
-def test_exact_discrepancy_uses_weight_space_with_dense_numerical_parity() -> None:
     points = jnp.linspace(-1.0, 1.0, 30)
     observations = jnp.sin(2.0 * points)
     factor = jnp.array(
@@ -106,9 +103,6 @@ def test_exact_discrepancy_uses_weight_space_with_dense_numerical_parity() -> No
         )
     )(factor)
     assert jnp.all(jnp.isfinite(gradient))
-
-
-def test_structured_factor_resolves_wrapped_finite_features() -> None:
     points = jnp.linspace(-1.0, 1.0, 10)
     kernel = phx.kernels.FiniteFeatureKernel(
         _feature_map,

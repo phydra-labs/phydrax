@@ -75,7 +75,7 @@ def _norm(space: Any, value: Any) -> Any:
     return jnp.sqrt(jnp.real(space.inner(value, value)))
 
 
-def test_composite_layout_uses_leaf_volumes_and_positive_dummy_weights() -> None:
+def test_block_amr_composite_scenario_1() -> None:
     layout = CompositeAMRCellLayout(_topology(), dtype=jnp.float64)
     leaf = np.asarray(layout.flat_leaf_mask)
     measures = np.asarray(layout.cell_measures)
@@ -86,9 +86,6 @@ def test_composite_layout_uses_leaf_volumes_and_positive_dummy_weights() -> None
     assert np.all(measures[~leaf] > 0.0)
     assert layout.topology_fingerprint
     assert layout.layout_id
-
-
-def test_composite_operator_is_linear_and_masked_identity_is_decoupled() -> None:
     operator = _operator(dirichlet=True)
     layout = operator.layout
     left = _vector(layout, phase=0.1)
@@ -126,9 +123,15 @@ def test_composite_operator_is_linear_and_masked_identity_is_decoupled() -> None
     bad_rhs = layout.unflatten_cells(masked_coordinates)
     with pytest.raises(ValueError, match="must be zero on inactive and covered"):
         layout.require_zero_masked(bad_rhs)
+    first = _topology(tagged_cell=2)
+    second = _topology(tagged_cell=5)
+    layout = CompositeAMRCellLayout(first, dtype=jnp.float64)
+    plan = CompositeAMRDiffusionPlan(layout)
 
-
-def test_energy_weighted_adjoint_and_euclidean_transpose_are_exact_routes() -> None:
+    with pytest.raises(ValueError, match="exact fixed topology epoch"):
+        layout.require_topology(second)
+    with pytest.raises(ValueError, match="exact fixed topology epoch"):
+        plan.require_topology(second)
     operator = _operator(periodic=True, coefficient=2.5)
     layout = operator.layout
     left = _vector(layout, phase=0.2)
@@ -172,45 +175,40 @@ def test_energy_weighted_adjoint_and_euclidean_transpose_are_exact_routes() -> N
         rtol=2.0e-12,
         atol=2.0e-12,
     )
+    for periodic in [False, True]:
+        operator = _operator(periodic=periodic)
+        layout = operator.layout
+        constant = layout.space.unflatten(layout.constant_mode_coordinates()[:, 0])
+        residual = layout.space.flatten(operator.mv(constant))
+        np.testing.assert_allclose(residual, 0.0, atol=2.0e-13)
+        assert operator.has_constant_nullspace
+        assert operator.constant_nullspace() is not None
 
-
-@pytest.mark.parametrize("periodic", [False, True])
-def test_periodic_and_neumann_constant_kernel_compatibility_and_zero_mean_gauge(
-    periodic: Any,
-) -> None:
-    operator = _operator(periodic=periodic)
-    layout = operator.layout
-    constant = layout.space.unflatten(layout.constant_mode_coordinates()[:, 0])
-    residual = layout.space.flatten(operator.mv(constant))
-    np.testing.assert_allclose(residual, 0.0, atol=2.0e-13)
-    assert operator.has_constant_nullspace
-    assert operator.constant_nullspace() is not None
-
-    incompatible = layout.zero_masked(
-        layout.space.unflatten(jnp.ones(layout.space.size, dtype=layout.dtype))
-    )
-    assert float(jnp.abs(operator.compatibility_defect(incompatible))) > 0.0
-    with pytest.raises(ValueError, match="incompatible with the constant nullspace"):
-        operator.require_compatible_rhs(incompatible)
-    compatible = operator.project_compatible_rhs(incompatible)
-    np.testing.assert_allclose(
-        operator.compatibility_defect(compatible), 0.0, atol=2.0e-14
-    )
-    if not periodic:
-        neumann_lift = operator.boundary_rhs_lift({"x": (1.0, -1.0)})
-        assert float(_norm(layout.space, neumann_lift)) > 0.0
-        np.testing.assert_allclose(
-            operator.compatibility_defect(neumann_lift), 0.0, atol=2.0e-14
+        incompatible = layout.zero_masked(
+            layout.space.unflatten(jnp.ones(layout.space.size, dtype=layout.dtype))
         )
+        assert float(jnp.abs(operator.compatibility_defect(incompatible))) > 0.0
+        with pytest.raises(ValueError, match="incompatible with the constant nullspace"):
+            operator.require_compatible_rhs(incompatible)
+        compatible = operator.project_compatible_rhs(incompatible)
+        np.testing.assert_allclose(
+            operator.compatibility_defect(compatible), 0.0, atol=2.0e-14
+        )
+        if not periodic:
+            neumann_lift = operator.boundary_rhs_lift({"x": (1.0, -1.0)})
+            assert float(_norm(layout.space, neumann_lift)) > 0.0
+            np.testing.assert_allclose(
+                operator.compatibility_defect(neumann_lift), 0.0, atol=2.0e-14
+            )
 
-    gauged = operator.zero_mean_gauge(_vector(layout, phase=0.4))
-    np.testing.assert_allclose(layout.integral(gauged), 0.0, atol=2.0e-14)
-    system = operator.linear_system(compatibility="project", gauge="project")
-    assert system.nullspace_policy is not None
-    assert system.nullspace_policy.right is system.nullspace_policy.left
+        gauged = operator.zero_mean_gauge(_vector(layout, phase=0.4))
+        np.testing.assert_allclose(layout.integral(gauged), 0.0, atol=2.0e-14)
+        system = operator.linear_system(compatibility="project", gauge="project")
+        assert system.nullspace_policy is not None
+        assert system.nullspace_policy.right is system.nullspace_policy.left
 
 
-def test_dirichlet_operator_is_definite_and_boundary_data_is_only_rhs_lift() -> None:
+def test_block_amr_composite_scenario_2() -> None:
     operator = _operator(dirichlet=True, coefficient=3.0)
     layout = operator.layout
     policy = phx.linalg.MaterializationPolicy(max_entries=10_000, max_bytes=1_000_000)
@@ -231,9 +229,30 @@ def test_dirichlet_operator_is_definite_and_boundary_data_is_only_rhs_lift() -> 
     lift = operator.boundary_rhs_lift({"x": (1.25, -0.5)})
     assert float(_norm(layout.space, lift)) > 0.0
     assert operator.operator_id == operator.plan.prepare(3.0).operator_id
+    operator = _operator(dirichlet=True)
+    rhs = operator.prepare_rhs(1.0, boundary_data={"x": (0.0, 1.0)})
+    result = phx.linalg.solve(
+        operator.linear_system(),
+        rhs,
+        policy=phx.linalg.LinearSolvePolicy(
+            phx.linalg.ConjugateGradient(),
+            tolerance=phx.linalg.TolerancePolicy(
+                relative=1.0e-10,
+                absolute=1.0e-12,
+                max_steps=200,
+            ),
+        ),
+    )
+    residual = jax.tree.map(
+        lambda target, image: target - image,
+        rhs,
+        operator.mv(result.value),
+    )
 
-
-def test_harmonic_mortar_weights_and_integrated_interface_flux_cancel() -> None:
+    assert bool(result.successful)
+    assert float(_norm(operator.source, residual)) < 1.0e-8 * float(
+        _norm(operator.source, rhs)
+    )
     topology = _topology()
     layout = CompositeAMRCellLayout(topology, dtype=jnp.float64)
     coefficients = tuple(
@@ -261,48 +280,6 @@ def test_harmonic_mortar_weights_and_integrated_interface_flux_cancel() -> None:
     assert operator.plan.precision_fingerprint == operator.plan.precision.policy_id
     assert operator.coefficient_fingerprint
     assert operator.numeric_fingerprint
-
-
-def test_composite_topology_mismatch_is_refused() -> None:
-    first = _topology(tagged_cell=2)
-    second = _topology(tagged_cell=5)
-    layout = CompositeAMRCellLayout(first, dtype=jnp.float64)
-    plan = CompositeAMRDiffusionPlan(layout)
-
-    with pytest.raises(ValueError, match="exact fixed topology epoch"):
-        layout.require_topology(second)
-    with pytest.raises(ValueError, match="exact fixed topology epoch"):
-        plan.require_topology(second)
-
-
-def test_dirichlet_composite_operator_solves_with_ordinary_krylov() -> None:
-    operator = _operator(dirichlet=True)
-    rhs = operator.prepare_rhs(1.0, boundary_data={"x": (0.0, 1.0)})
-    result = phx.linalg.solve(
-        operator.linear_system(),
-        rhs,
-        policy=phx.linalg.LinearSolvePolicy(
-            phx.linalg.ConjugateGradient(),
-            tolerance=phx.linalg.TolerancePolicy(
-                relative=1.0e-10,
-                absolute=1.0e-12,
-                max_steps=200,
-            ),
-        ),
-    )
-    residual = jax.tree.map(
-        lambda target, image: target - image,
-        rhs,
-        operator.mv(result.value),
-    )
-
-    assert bool(result.successful)
-    assert float(_norm(operator.source, residual)) < 1.0e-8 * float(
-        _norm(operator.source, rhs)
-    )
-
-
-def test_fv_side_native_v_cycle_contracts_composite_residual() -> None:
     operator = _operator(dirichlet=True)
     fine_size = operator.source.size
     coarse_size = (fine_size + 1) // 2

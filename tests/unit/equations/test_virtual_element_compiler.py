@@ -116,7 +116,7 @@ def _compiled(realization: Any = "matrix_free", degree: Any = 1) -> Any:
     )
 
 
-def test_matrix_free_and_sparse_vem_actions_match() -> None:
+def test_virtual_element_compiler_scenario_1() -> None:
     matrix_free = _compiled("matrix_free")
     sparse = _compiled("sparse")
     value = jnp.linspace(-0.5, 0.5, matrix_free.state_space.size)
@@ -131,9 +131,6 @@ def test_matrix_free_and_sparse_vem_actions_match() -> None:
         sparse.affine_operator().transpose_mv(value),
         atol=1.0e-11,
     )
-
-
-def test_vem_linear_patch_and_constraint_lift() -> None:
     compiled = _compiled("matrix_free", degree=2)
     problem, rhs = compiled.linear_system()
     solution = phx.linalg.solve(problem, rhs)
@@ -141,9 +138,6 @@ def test_vem_linear_patch_and_constraint_lift() -> None:
 
     assert jnp.sqrt(jnp.sum(compiled.residual(solution.value) ** 2)) < 1.0e-9
     assert jnp.allclose(full[4], 1.0, atol=1.0e-9)
-
-
-def test_vem_neumann_problem_declares_constant_nullspace() -> None:
     space = _space(1)
     form = phx.equations.VirtualElementForm(
         "neumann",
@@ -159,9 +153,6 @@ def test_vem_neumann_problem_declares_constant_nullspace() -> None:
     assert problem.nullspace_policy is not None
     assert problem.nullspace_policy.right is not None
     assert jnp.allclose(rhs, 0.0)
-
-
-def test_vem_robin_and_mass_are_symmetric() -> None:
     space = _space(1)
     robin = phx.equations.VirtualElementRobinAction(
         "u", 2.0, 0.0, space.exterior_facet_domain
@@ -177,73 +168,82 @@ def test_vem_robin_and_mass_are_symmetric() -> None:
 
     assert jnp.allclose(operator.mv(value), operator.transpose_mv(value), atol=1.0e-11)
     assert jnp.all(jnp.isfinite(operator.mv(value)))
+    linear = _space(1)
+    quadratic = _space(2)
+    state = jnp.zeros((quadratic.dof_map.global_dof_count,))
 
+    with pytest.raises(ValueError, match="runtime is incompatible"):
+        phx.equations.project_virtual_element_field(
+            quadratic,
+            state,
+            runtime=linear.default_runtime,
+        )
 
-@pytest.mark.parametrize(
-    ("factory", "differential_kind", "expected_rhs_pairing"),
-    (
+    compiled = _compiled("matrix_free", degree=2)
+    context = phx.equations.VirtualElementExecutionContext(linear.default_runtime)
+    with pytest.raises(ValueError, match="context is incompatible"):
+        compiled.expand(jnp.zeros((compiled.state_space.size,)), context)
+    for factory, differential_kind, expected_rhs_pairing in (
         (phx.discretization.conforming_hdiv_virtual_element, "divergence", 3.5),
         (phx.discretization.conforming_hcurl_virtual_element, "curl", 2.5),
-    ),
-)
-def test_vector_vem_assembles_differential_mass_source_and_trace_forms(
-    factory: Any, differential_kind: Any, expected_rhs_pairing: Any
-) -> None:
-    space = _single_cell_space(factory)
-    state = _vector_polynomial_state(space, differential_kind)
-    differential_form = phx.equations.VirtualElementForm(
-        f"{differential_kind}-form",
-        "u",
-        (phx.equations.DiffusionAction("u", 1.0),),
-    )
-    matrix_free = phx.equations.compile_virtual_element_problem(differential_form, space)
-    sparse = phx.equations.compile_virtual_element_problem(
-        differential_form,
-        space,
-        execution_policy=phx.equations.VirtualElementExecutionPolicy(
-            realization="sparse"
-        ),
-    )
-    matrix_free_action = matrix_free.affine_operator()
-    sparse_action = sparse.affine_operator()
-
-    np.testing.assert_allclose(
-        matrix_free_action.mv(state), sparse_action.mv(state), atol=2.0e-9
-    )
-    np.testing.assert_allclose(state @ matrix_free_action.mv(state), 4.0, atol=2.0e-9)
-
-    source = jnp.asarray((1.0, 2.0))
-    mass_and_load = phx.equations.VirtualElementForm(
-        f"{differential_kind}-mass-load",
-        "u",
-        (
-            phx.equations.MassAction("u", 1.0),
-            phx.equations.SourceAction("u", source),
-            phx.equations.BoundaryLoadAction("u", 1.0),
-        ),
-    )
-    compiled = phx.equations.compile_virtual_element_problem(mass_and_load, space)
-    mass = compiled.affine_operator()
-    robin_form = phx.equations.VirtualElementForm(
-        f"{differential_kind}-robin",
-        "u",
-        (
-            phx.equations.VirtualElementRobinAction(
-                "u", 1.0, 0.0, space.exterior_facet_domain
+    ):
+        space = _single_cell_space(factory)
+        state = _vector_polynomial_state(space, differential_kind)
+        differential_form = phx.equations.VirtualElementForm(
+            f"{differential_kind}-form",
+            "u",
+            (phx.equations.DiffusionAction("u", 1.0),),
+        )
+        matrix_free = phx.equations.compile_virtual_element_problem(
+            differential_form, space
+        )
+        sparse = phx.equations.compile_virtual_element_problem(
+            differential_form,
+            space,
+            execution_policy=phx.equations.VirtualElementExecutionPolicy(
+                realization="sparse"
             ),
-        ),
-    )
-    robin = phx.equations.compile_virtual_element_problem(
-        robin_form, space
-    ).affine_operator()
-    np.testing.assert_allclose(state @ robin.mv(state), 2.0, atol=2.0e-9)
-    rhs = compiled.full_right_hand_side()
+        )
+        matrix_free_action = matrix_free.affine_operator()
+        sparse_action = sparse.affine_operator()
 
-    np.testing.assert_allclose(state @ mass.mv(state), 2.0 / 3.0, atol=2.0e-9)
-    np.testing.assert_allclose(state @ rhs, expected_rhs_pairing, atol=2.0e-9)
+        np.testing.assert_allclose(
+            matrix_free_action.mv(state), sparse_action.mv(state), atol=2.0e-9
+        )
+        np.testing.assert_allclose(state @ matrix_free_action.mv(state), 4.0, atol=2.0e-9)
+
+        source = jnp.asarray((1.0, 2.0))
+        mass_and_load = phx.equations.VirtualElementForm(
+            f"{differential_kind}-mass-load",
+            "u",
+            (
+                phx.equations.MassAction("u", 1.0),
+                phx.equations.SourceAction("u", source),
+                phx.equations.BoundaryLoadAction("u", 1.0),
+            ),
+        )
+        compiled = phx.equations.compile_virtual_element_problem(mass_and_load, space)
+        mass = compiled.affine_operator()
+        robin_form = phx.equations.VirtualElementForm(
+            f"{differential_kind}-robin",
+            "u",
+            (
+                phx.equations.VirtualElementRobinAction(
+                    "u", 1.0, 0.0, space.exterior_facet_domain
+                ),
+            ),
+        )
+        robin = phx.equations.compile_virtual_element_problem(
+            robin_form, space
+        ).affine_operator()
+        np.testing.assert_allclose(state @ robin.mv(state), 2.0, atol=2.0e-9)
+        rhs = compiled.full_right_hand_side()
+
+        np.testing.assert_allclose(state @ mass.mv(state), 2.0 / 3.0, atol=2.0e-9)
+        np.testing.assert_allclose(state @ rhs, expected_rhs_pairing, atol=2.0e-9)
 
 
-def test_l2_vem_assembles_only_cell_mass_and_source_forms() -> None:
+def test_l2_vem_contracts() -> None:
     space = _single_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     state = _l2_polynomial_state(space)
     form = phx.equations.VirtualElementForm(
@@ -260,9 +260,6 @@ def test_l2_vem_assembles_only_cell_mass_and_source_forms() -> None:
         state @ compiled.affine_operator().mv(state), 7.0 / 3.0, atol=2.0e-9
     )
     np.testing.assert_allclose(state @ compiled.full_right_hand_side(), 3.0, atol=2.0e-9)
-
-
-def test_l2_vem_rejects_undefined_operators_before_evaluation() -> None:
     space = _single_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     diffusion = phx.equations.VirtualElementForm(
         "undefined-l2-diffusion",
@@ -279,21 +276,3 @@ def test_l2_vem_rejects_undefined_operators_before_evaluation() -> None:
     )
     with pytest.raises(ValueError, match="no boundary trace"):
         phx.equations.compile_virtual_element_problem(boundary, space)
-
-
-def test_vem_runtime_rejects_same_mesh_with_different_field_degree() -> None:
-    linear = _space(1)
-    quadratic = _space(2)
-    state = jnp.zeros((quadratic.dof_map.global_dof_count,))
-
-    with pytest.raises(ValueError, match="runtime is incompatible"):
-        phx.equations.project_virtual_element_field(
-            quadratic,
-            state,
-            runtime=linear.default_runtime,
-        )
-
-    compiled = _compiled("matrix_free", degree=2)
-    context = phx.equations.VirtualElementExecutionContext(linear.default_runtime)
-    with pytest.raises(ValueError, match="context is incompatible"):
-        compiled.expand(jnp.zeros((compiled.state_space.size,)), context)

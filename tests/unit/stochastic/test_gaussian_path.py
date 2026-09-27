@@ -18,9 +18,8 @@ def _expected_covariance(times: Any) -> Any:
     return np.minimum(elapsed[:, None], elapsed[None, :])
 
 
-@pytest.mark.parametrize(
-    "times",
-    [
+def test_gaussian_path_scenario_1() -> None:
+    for times in [
         jnp.asarray(1.0),
         jnp.asarray([0.0]),
         jnp.asarray([[0.0, 1.0]]),
@@ -28,14 +27,9 @@ def _expected_covariance(times: Any) -> Any:
         jnp.asarray([0.0, jnp.inf]),
         jnp.asarray([0.0, 0.5, 0.5]),
         jnp.asarray([0.0, 1.0, 0.5]),
-    ],
-)
-def test_gaussian_path_plan_rejects_invalid_grids(times: Any) -> None:
-    with pytest.raises(ValueError):
-        GaussianPathConstructionPlan(times)
-
-
-def test_gaussian_path_plan_rejects_invalid_methods_and_ranks() -> None:
+    ]:
+        with pytest.raises(ValueError):
+            GaussianPathConstructionPlan(times)
     times = jnp.asarray([0.0, 0.2, 0.6, 1.0])
     with pytest.raises(ValueError, match="method"):
         # ty: ignore[invalid-argument-type]
@@ -49,11 +43,23 @@ def test_gaussian_path_plan_rejects_invalid_methods_and_ranks() -> None:
         GaussianPathConstructionPlan(times, "pca", 4)
     with pytest.raises(ValueError, match="Only the PCA"):
         GaussianPathConstructionPlan(times, "bridge", 2)
-
-
-def test_chronological_construction_preserves_leading_axes_and_increment_identity() -> (
-    None
-):
+    prepared = prepare_gaussian_path_construction(
+        GaussianPathConstructionPlan(jnp.asarray([0.0, 0.5, 1.0]), "bridge")
+    )
+    with pytest.raises(ValueError, match="final factor dimension 2"):
+        brownian_increments_from_normals(prepared, jnp.ones((4, 3)))
+    with pytest.raises(ValueError, match="active values must be finite"):
+        brownian_increments_from_normals(prepared, jnp.asarray([0.0, jnp.nan]))
+    with pytest.raises(ValueError, match="final factor dimension 2"):
+        gaussian_path_from_unit_design(prepared, jnp.ones((4, 3)))
+    for invalid in (
+        jnp.asarray([0.0, 0.5]),
+        jnp.asarray([1.0, 0.5]),
+        jnp.asarray([jnp.nan, 0.5]),
+        jnp.asarray([jnp.inf, 0.5]),
+    ):
+        with pytest.raises(ValueError, match="finite and lie in"):
+            gaussian_path_from_unit_design(prepared, invalid)
     times = jnp.asarray([2.0, 2.1, 2.5, 3.4])
     prepared = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(times, "chronological")
@@ -81,9 +87,6 @@ def test_chronological_construction_preserves_leading_axes_and_increment_identit
     )
     assert np.asarray(result.valid).all()
     assert np.asarray(result.evidence.finite).all()
-
-
-def test_bridge_orders_conditional_nodes_and_preserves_endpoint_factor() -> None:
     times = jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0])
     prepared = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(times, "bridge")
@@ -110,32 +113,27 @@ def test_bridge_orders_conditional_nodes_and_preserves_endpoint_factor() -> None
     assert np.asarray(result.valid).all()
 
 
-@pytest.mark.parametrize("method", ["chronological", "bridge", "pca"])
-def test_full_rank_constructions_preserve_finite_grid_brownian_covariance(
-    method: Any,
-) -> None:
-    times = jnp.asarray([1.3, 1.35, 1.7, 2.4, 3.0])
-    prepared = prepare_gaussian_path_construction(
-        GaussianPathConstructionPlan(times, method)
-    )
-    expected = _expected_covariance(times)
+def test_gaussian_path_scenario_2() -> None:
+    for method in ["chronological", "bridge", "pca"]:
+        times = jnp.asarray([1.3, 1.35, 1.7, 2.4, 3.0])
+        prepared = prepare_gaussian_path_construction(
+            GaussianPathConstructionPlan(times, method)
+        )
+        expected = _expected_covariance(times)
 
-    np.testing.assert_allclose(
-        np.asarray(prepared.factor @ prepared.factor.T),
-        expected,
-        rtol=2e-14,
-        atol=2e-14,
-    )
-    np.testing.assert_allclose(
-        np.asarray(prepared.covariance_residual),
-        np.zeros_like(expected),
-        rtol=0.0,
-        atol=2e-14,
-    )
-    assert float(prepared.relative_covariance_residual) < 2e-14
-
-
-def test_rank_truncated_pca_exposes_exact_covariance_residual() -> None:
+        np.testing.assert_allclose(
+            np.asarray(prepared.factor @ prepared.factor.T),
+            expected,
+            rtol=2e-14,
+            atol=2e-14,
+        )
+        np.testing.assert_allclose(
+            np.asarray(prepared.covariance_residual),
+            np.zeros_like(expected),
+            rtol=0.0,
+            atol=2e-14,
+        )
+        assert float(prepared.relative_covariance_residual) < 2e-14
     times = jnp.asarray([0.0, 0.05, 0.2, 0.6, 1.1, 2.0])
     plan = GaussianPathConstructionPlan(times, "pca", 2)
     prepared = prepare_gaussian_path_construction(plan)
@@ -159,29 +157,6 @@ def test_rank_truncated_pca_exposes_exact_covariance_residual() -> None:
         np.asarray(result.covariance_residual), np.asarray(prepared.covariance_residual)
     )
     assert np.asarray(result.valid).all()
-
-
-def test_gaussian_path_validates_factor_shapes_and_active_values() -> None:
-    prepared = prepare_gaussian_path_construction(
-        GaussianPathConstructionPlan(jnp.asarray([0.0, 0.5, 1.0]), "bridge")
-    )
-    with pytest.raises(ValueError, match="final factor dimension 2"):
-        brownian_increments_from_normals(prepared, jnp.ones((4, 3)))
-    with pytest.raises(ValueError, match="active values must be finite"):
-        brownian_increments_from_normals(prepared, jnp.asarray([0.0, jnp.nan]))
-    with pytest.raises(ValueError, match="final factor dimension 2"):
-        gaussian_path_from_unit_design(prepared, jnp.ones((4, 3)))
-    for invalid in (
-        jnp.asarray([0.0, 0.5]),
-        jnp.asarray([1.0, 0.5]),
-        jnp.asarray([jnp.nan, 0.5]),
-        jnp.asarray([jnp.inf, 0.5]),
-    ):
-        with pytest.raises(ValueError, match="finite and lie in"):
-            gaussian_path_from_unit_design(prepared, invalid)
-
-
-def test_construction_and_realization_identities_bind_order_and_unit_design() -> None:
     times = jnp.asarray([0.0, 0.25, 0.8, 1.0])
     first = prepare_gaussian_path_construction(
         GaussianPathConstructionPlan(times, "bridge")

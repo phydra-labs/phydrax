@@ -44,7 +44,7 @@ def _linear_trajectory(*, controlled: bool) -> Any:
     return data, state_matrix, input_matrix
 
 
-def test_exact_dmd_recovers_linear_map_and_executes_as_system() -> None:
+def test_dmd_scenario_1() -> None:
     data, expected, _ = _linear_trajectory(controlled=False)
 
     result = phx.dynamics.identification.fit_dmd(data, mode="exact")
@@ -61,9 +61,6 @@ def test_exact_dmd_recovers_linear_map_and_executes_as_system() -> None:
     np.testing.assert_allclose(
         np.asarray(prediction), expected @ np.asarray([0.4, -0.3]), atol=1e-11
     )
-
-
-def test_controlled_dmd_recovers_state_and_input_matrices() -> None:
     data, expected_state, expected_input = _linear_trajectory(controlled=True)
 
     result = phx.dynamics.identification.fit_dmd(data, rank=3)
@@ -83,9 +80,6 @@ def test_controlled_dmd_recovers_state_and_input_matrices() -> None:
     )
     expected = expected_state @ np.asarray([0.2, 0.7]) + expected_input[:, 0] * -0.4
     np.testing.assert_allclose(np.asarray(predicted), expected, atol=1e-11)
-
-
-def test_continuous_dmd_eigenvalue_conversion_rejects_irregular_spacing() -> None:
     states = jnp.asarray([[1.0], [0.8], [0.6], [0.4]])
     data = phx.dynamics.TrajectoryData(
         jnp.asarray([0.0, 0.2, 0.7, 1.0]),
@@ -98,7 +92,7 @@ def test_continuous_dmd_eigenvalue_conversion_rejects_irregular_spacing() -> Non
         phx.dynamics.identification.fit_dmd(data, continuous_eigenvalues=True)
 
 
-def test_edmd_recovers_quadratic_map_and_decoder() -> None:
+def test_edmd_contracts() -> None:
     generator = np.random.default_rng(18)
     cases = 20
     capacity = 5
@@ -134,9 +128,6 @@ def test_edmd_recovers_quadratic_map_and_decoder() -> None:
         phx.dynamics.IterationGrid.from_steps(4, iteration_id="edmd-rollout"),
     )
     assert bool(rollout.successful)
-
-
-def test_edmd_insufficient_samples_has_failed_status_and_validity() -> None:
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
     data = phx.dynamics.TrajectoryData(
         jnp.asarray([0.0, 1.0]),

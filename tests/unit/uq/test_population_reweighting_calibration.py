@@ -18,7 +18,7 @@ def _measure() -> Any:
     )
 
 
-def test_posterior_reweighting_preserves_raw_weighted_measure_and_overlap() -> None:
+def test_population_reweighting_calibration_scenario_1() -> None:
     plan = phx.uq.PosteriorReweightingPlan(
         lambda sample: jnp.asarray(0.0),
         lambda sample: sample["x"],
@@ -40,6 +40,43 @@ def test_posterior_reweighting_preserves_raw_weighted_measure_and_overlap() -> N
     )
     assert bool(result.valid)
     assert result.target.samples["x"].shape == (3,)
+    posterior_values = jnp.linspace(0.025, 0.975, 20)
+    posterior = phx.integration.WeightedSampleTarget(
+        {"x": posterior_values},
+        jnp.zeros(20),
+        normalized=True,
+        independent=False,
+        sample_axes=0,
+        provenance="uniform-reference",
+    )
+    cases = (
+        *(
+            phx.uq.SimulationCalibrationCase(
+                {"x": value},
+                posterior,
+                case_id=f"case-{index}",
+                analysis_id="rank-campaign",
+            )
+            for index, value in enumerate(posterior_values)
+        ),
+        phx.uq.SimulationCalibrationCase(
+            {"x": jnp.ones(2)},
+            posterior,
+            case_id="shape-failure",
+            analysis_id="rank-campaign",
+        ),
+    )
+    plan = phx.uq.SimulationCalibrationPlan(
+        ("['x']",),
+        num_bins=5,
+        minimum_valid_cases=20,
+    )
+    result = phx.uq.simulation_calibration(cases, plan)
+
+    np.testing.assert_array_equal(result.histogram_counts, np.full((1, 5), 4))
+    assert result.valid_case_count == 20
+    assert bool(result.passed)
+    assert result.failed_case_ids == ("shape-failure",)
 
 
 def test_posterior_reweighting_and_export_accept_named_axis_weights(
@@ -136,46 +173,6 @@ def test_population_recycling_and_selection_match_manual_event_integrals() -> No
         minimum_event_effective_sample_size=1.0,
     )
     assert bool(jnp.all(jnp.isneginf(invalid_rate.per_case_log_prob(hyperparameters))))
-
-
-def test_simulation_calibration_retains_failures_and_uniform_rank_evidence() -> None:
-    posterior_values = jnp.linspace(0.025, 0.975, 20)
-    posterior = phx.integration.WeightedSampleTarget(
-        {"x": posterior_values},
-        jnp.zeros(20),
-        normalized=True,
-        independent=False,
-        sample_axes=0,
-        provenance="uniform-reference",
-    )
-    cases = (
-        *(
-            phx.uq.SimulationCalibrationCase(
-                {"x": value},
-                posterior,
-                case_id=f"case-{index}",
-                analysis_id="rank-campaign",
-            )
-            for index, value in enumerate(posterior_values)
-        ),
-        phx.uq.SimulationCalibrationCase(
-            {"x": jnp.ones(2)},
-            posterior,
-            case_id="shape-failure",
-            analysis_id="rank-campaign",
-        ),
-    )
-    plan = phx.uq.SimulationCalibrationPlan(
-        ("['x']",),
-        num_bins=5,
-        minimum_valid_cases=20,
-    )
-    result = phx.uq.simulation_calibration(cases, plan)
-
-    np.testing.assert_array_equal(result.histogram_counts, np.full((1, 5), 4))
-    assert result.valid_case_count == 20
-    assert bool(result.passed)
-    assert result.failed_case_ids == ("shape-failure",)
 
 
 def test_result_export_binds_explicit_context(tmp_path: Any) -> None:

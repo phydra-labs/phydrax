@@ -52,7 +52,7 @@ def _runtime() -> Any:
     return dynamics, thermodynamic, state, positions
 
 
-def test_chromatin_uses_live_coordinates_and_joint_checkpoint_replays() -> None:
+def test_polymer_dynamics_scenario_1() -> None:
     dynamics, thermodynamic, atomistic, positions = _runtime()
     chromatin = cm.ChromatinDynamicsPlan(
         4,
@@ -84,9 +84,6 @@ def test_chromatin_uses_live_coordinates_and_joint_checkpoint_replays() -> None:
         first.evidence.initial_springs.energy,
         chromatin.springs.energy(chromatin_state.relations, positions),
     )
-
-
-def test_overdamped_runtime_has_stable_addressed_replay() -> None:
     dynamics, _, _, positions = _runtime()
     runtime = phx.atomistic.OverdampedAtomisticPlan(
         1.0e-3, 0.2, 1.0, realization_id=11
@@ -101,9 +98,6 @@ def test_overdamped_runtime_has_stable_addressed_replay() -> None:
         left.accepted_state.positions, right.accepted_state.positions
     )
     assert int(left.accepted_state.step_index) == 1
-
-
-def test_generalized_langevin_runtime_enforces_discrete_fdt_and_replays() -> None:
     dynamics, thermodynamic, atomistic, _ = _runtime()
     decay = 0.9
     transition = np.eye(2) * decay

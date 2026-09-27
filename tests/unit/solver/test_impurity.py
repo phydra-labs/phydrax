@@ -19,7 +19,7 @@ from phydrax.solver._impurity import (
 )
 
 
-def test_environment_is_exclusive_and_causal_bath_fit_keeps_error_visible() -> None:
+def test_impurity_scenario_1() -> None:
     bath = AndersonBath(jnp.asarray([-1.0, 1.0]), jnp.asarray([0.6, 0.4]))
     labels = jnp.arange(-24, 24)
     target = anderson_bath_to_matsubara(bath, 8.0, labels)
@@ -44,9 +44,6 @@ def test_environment_is_exclusive_and_causal_bath_fit_keeps_error_visible() -> N
     assert fit.evidence.causality_residual == pytest.approx(0.0, abs=1e-12)
     assert fit.evidence.relative_fit_residual < 2e-5
     assert fit.evidence.finite_bath_error >= 0.0
-
-
-def test_all_sector_ed_has_noninteracting_and_hubbard_atomic_limits() -> None:
     beta = 8.0
     labels = jnp.arange(-64, 64)
     frequency = matsubara_frequencies(labels, beta=beta, statistics="fermionic")

@@ -58,7 +58,7 @@ def _candidate_rows(batch: Any) -> Any:
     return {tuple(row) for row in indices[np.asarray(batch.valid, dtype="bool")].tolist()}
 
 
-def test_per_vertex_separation_and_certified_ccd_guarantee() -> None:
+def test_contact_closure_substrate_scenario_1() -> None:
     source, scene, search = _two_segment_scene()
     np.testing.assert_allclose(scene.feature_physical_radius[:2], (0.005, 0.01))
     start = scene.positions(source.zeros())
@@ -78,9 +78,6 @@ def test_per_vertex_separation_and_certified_ccd_guarantee() -> None:
         phx.discretization.ContactGuaranteeLevel.ROUNDING_CERTIFIED
     )
     assert 0.0 < safety.step_size < 0.5
-
-
-def test_cached_contact_search_reuses_then_rebuilds_inside_skin() -> None:
     source, scene, search = _two_segment_scene(envelope=0.2)
     cache = phx.discretization.CachedContactSearchPlan(search, skin=0.2)
     initial_positions = scene.positions(source.zeros())
@@ -108,9 +105,6 @@ def test_cached_contact_search_reuses_then_rebuilds_inside_skin() -> None:
     )
     with pytest.raises(ValueError, match="scene"):
         cache.update(foreign_scene, state, initial_positions)
-
-
-def test_contact_guarantees_kinematics_and_compiled_shapes_fail_closed() -> None:
     with pytest.raises(ValueError):
         phx.discretization.ContactGuaranteeEvidence(999, backend_id="invalid")
 
@@ -136,7 +130,7 @@ def test_contact_guarantees_kinematics_and_compiled_shapes_fail_closed() -> None
         compiled.evaluate(positions[:-1])
 
 
-def test_independent_participants_search_and_force_duality() -> None:
+def test_contact_closure_substrate_scenario_2() -> None:
     source_a = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     source_b = phx.linalg.ArraySpace((2, 2), dtype=np.float64)
     plan_a = phx.discretization.CollisionSurfacePlan(
@@ -180,9 +174,6 @@ def test_independent_participants_search_and_force_duality() -> None:
     assert bool(epoch.successful)
     assert epoch.candidate_count > 0
     assert bool(evidence.valid)
-
-
-def test_proxy_implicit_and_trajectory_bounds_are_explicit() -> None:
     source = phx.linalg.ArraySpace((3, 3), dtype=np.float64)
     topology = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((0, 1, 2)),
@@ -228,9 +219,6 @@ def test_proxy_implicit_and_trajectory_bounds_are_explicit() -> None:
     np.testing.assert_allclose(sphere_evaluation.signed_distance, 1.0)
     assert bool(proxy.evidence.successful)
     assert bool(jnp.all(samples >= lower) & jnp.all(samples <= upper))
-
-
-def test_interface_traction_and_distributed_route_ownership_are_balanced() -> None:
     interface = phx.discretization.ContactInterfacePlan(
         jnp.asarray(((0, 1),)),
         jnp.asarray(((0.5, 0.5),)),
@@ -256,7 +244,7 @@ def test_interface_traction_and_distributed_route_ownership_are_balanced() -> No
     assert bool(distributed.complete)
 
 
-def test_compiled_search_matches_host_candidates_for_small_scene() -> None:
+def test_contact_closure_substrate_scenario_3() -> None:
     source, scene, search = _two_segment_scene()
     displacement = jnp.broadcast_to(jnp.asarray((0.0, -0.45)), source.shape)
     positions = scene.positions(displacement)
@@ -291,9 +279,6 @@ def test_compiled_search_matches_host_candidates_for_small_scene() -> None:
     assert int(lbvh.evidence.node_count) == 2 * primitive_count - 1
     assert int(lbvh.evidence.tree_depth) == 4
     assert 0 < int(lbvh.evidence.traversal_visits) <= 64
-
-
-def test_lbvh_matches_compiled_three_dimensional_candidates() -> None:
     positions = jnp.asarray(
         (
             (0.0, 0.0, 0.0),
@@ -344,9 +329,6 @@ def test_lbvh_matches_compiled_three_dimensional_candidates() -> None:
     assert int(lbvh.evidence.node_count) == 27
     assert int(lbvh.evidence.tree_depth) == 5
     assert int(lbvh.evidence.traversal_visits) == 196
-
-
-def test_lbvh_tiny_visit_budget_bounds_work_and_fails_closed() -> None:
     vertex_count = 256
     source = phx.linalg.ArraySpace((vertex_count, 2), dtype=np.float64)
     edge_start = jnp.arange(vertex_count - 1, dtype=jnp.int32)
@@ -395,9 +377,6 @@ def test_lbvh_tiny_visit_budget_bounds_work_and_fails_closed() -> None:
     assert int(result.evidence.output_overflow) == 0
     assert bool(result.evidence.finite_bounds)
     assert not bool(result.evidence.complete)
-
-
-def test_triangle_patch_and_hydroelastic_equal_pressure_extraction() -> None:
     triangle = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     faces = jnp.asarray(((0, 1, 2),), dtype=jnp.int32)
     patch = phx.discretization.build_triangle_mortar_interface(

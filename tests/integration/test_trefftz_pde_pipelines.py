@@ -8,7 +8,7 @@ import jax.random as jr
 import phydrax as phx
 
 
-def test_four_dimensional_harmonic_boundary_fit_and_interior_audit() -> None:
+def test_trefftz_pde_pipelines_scenario_1() -> None:
     dimension = 4
     domain = phx.domain.HyperRectangle(
         # ty: ignore[invalid-argument-type]
@@ -48,9 +48,6 @@ def test_four_dimensional_harmonic_boundary_fit_and_interior_audit() -> None:
     predicted = jnp.asarray(result.solver["u"](batch).data)
     expected = jnp.asarray(target(batch).data)
     assert jnp.allclose(predicted, expected, atol=1e-9, rtol=1e-9)
-
-
-def test_five_dimensional_almansi_and_eight_dimensional_helmholtz_audits() -> None:
     # ty: ignore[invalid-argument-type]
     poly_domain = phx.domain.HyperRectangle((-1.0,) * 5, (1.0,) * 5)
     poly_field = poly_domain.Model("x")(

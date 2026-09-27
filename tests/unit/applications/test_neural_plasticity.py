@@ -82,7 +82,7 @@ def _assert_same_tree(actual: Any, expected: Any) -> None:
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
-def test_physical_delays_reject_clock_quantization_but_allow_event_execution() -> None:
+def test_neural_plasticity_scenario_1() -> None:
     with pytest.raises(ValueError, match="multiple"):
         _runtime(delay=0.15)
     event_runtime = _runtime(delay=0.15, execution="event")
@@ -112,9 +112,6 @@ def test_physical_delays_reject_clock_quantization_but_allow_event_execution() -
         clock_runtime, clock_state.relations, invalid_endpoint
     )
     assert int(rejected.status) == int(ep.SynapseStatus.INVALID_ENDPOINT)
-
-
-def test_clock_arrival_uses_emission_weight_despite_intervening_learning() -> None:
     runtime = _runtime()
     state = ep.initialize_synapse_network(runtime)
     pre = jnp.asarray([1.0, 0.0, 0.0])
@@ -148,9 +145,6 @@ def test_clock_arrival_uses_emission_weight_despite_intervening_learning() -> No
     np.testing.assert_allclose(arrived.evidence.arrival_counts, [1.0, 0.0])
     np.testing.assert_allclose(arrived.evidence.conductance_uS, [0.0, 0.0, 0.08])
     np.testing.assert_allclose(arrived.evidence.current_offset_nA, [0.0, 0.0, 0.8])
-
-
-def test_zero_weight_arrival_counts_still_form_learning_pairs() -> None:
     runtime = _runtime(weight=0.0)
     state = ep.initialize_synapse_network(runtime)
     pre = jnp.asarray([1.0, 0.0, 0.0])
@@ -185,7 +179,7 @@ def test_zero_weight_arrival_counts_still_form_learning_pairs() -> None:
     np.testing.assert_allclose(rewarded.relations.weight[0], 0.1 * np.exp(-2.0 / 20.0))
 
 
-def test_arrival_pairing_reverses_causality_when_delay_crosses_post_spike() -> None:
+def test_neural_plasticity_scenario_2() -> None:
     runtime = _runtime(execution="event")
     original = ep.initialize_synapse_network(runtime).relations
     pre = jnp.asarray([1.0, 0.0, 0.0])
@@ -215,11 +209,6 @@ def test_arrival_pairing_reverses_causality_when_delay_crosses_post_spike() -> N
         weights[pairing] = relations.weight[0]
     np.testing.assert_allclose(weights["emission"], 0.4 + 0.1 * np.exp(-5.0 / 20.0))
     np.testing.assert_allclose(weights["arrival"], 0.4 - 0.05 * np.exp(-5.0 / 25.0))
-
-
-def test_soft_bound_pair_rule_uses_actual_elapsed_time_and_normalized_weight_distance() -> (
-    None
-):
     runtime = _runtime(weight=0.8, execution="event")
     relations = ep.initialize_synapse_network(runtime).relations
     traces = ep.initialize_pair_stdp(runtime)
@@ -247,66 +236,58 @@ def test_soft_bound_pair_rule_uses_actual_elapsed_time_and_normalized_weight_dis
     expected = 0.8 + 0.1 * np.exp(-7.0 / 20.0) * 0.2**2
     np.testing.assert_allclose(candidate.relations.weight[0], expected)
     np.testing.assert_allclose(candidate.plasticity.pre_trace[0], np.exp(-7.0 / 20.0))
-
-
-@pytest.mark.parametrize(
-    ("scope", "modulation", "expected_factors"),
-    [
+    for scope, modulation, expected_factors in [
         ("global", 2.0, [2.0, 2.0]),
         ("post", [0.0, -1.0, 2.0], [2.0, -1.0]),
         ("relation", [-1.0, 2.0], [-1.0, 2.0]),
-    ],
-)
-def test_delayed_reward_routes_signed_credit_by_selected_modulation_scope(
-    scope: Any, modulation: Any, expected_factors: Any
-) -> None:
-    runtime = _runtime(two_relations=True, execution="event")
-    relations = ep.initialize_synapse_network(runtime).relations
-    traces = ep.initialize_eligibility_stdp(runtime)
-    plan = ep.EligibilitySTDPPlan(_pair(), 50.0)
-    zero = jnp.zeros(3)
-    first = ep.evaluate_eligibility_stdp(
-        runtime,
-        plan,
-        relations,
-        traces,
-        jnp.asarray([1.0, 0.0, 0.0]),
-        zero,
-        elapsed_ms=0.0,
-    )
-    relations, traces = ep.commit_eligibility_stdp(first, relations, traces)
-    paired = ep.evaluate_eligibility_stdp(
-        runtime,
-        plan,
-        relations,
-        traces,
-        zero,
-        jnp.asarray([0.0, 1.0, 1.0]),
-        elapsed_ms=5.0,
-    )
-    relations, traces = ep.commit_eligibility_stdp(paired, relations, traces)
-    np.testing.assert_allclose(relations.weight, [0.4, 0.4])
-    np.testing.assert_allclose(traces.eligibility, 0.1 * np.exp(-5.0 / 20.0))
-    reward = ep.evaluate_eligibility_stdp(
-        runtime,
-        plan,
-        relations,
-        traces,
-        zero,
-        zero,
-        elapsed_ms=30.0,
-        modulation=jnp.asarray(modulation),
-        modulation_scope=scope,
-    )
-    committed, _ = ep.commit_eligibility_stdp(reward, relations, traces)
-    credit = 0.1 * np.exp(-5.0 / 20.0) * np.exp(-30.0 / 50.0)
-    np.testing.assert_allclose(
-        committed.weight, 0.4 + credit * np.asarray(expected_factors)
-    )
-    np.testing.assert_array_equal(committed.generation, relations.generation)
+    ]:
+        runtime = _runtime(two_relations=True, execution="event")
+        relations = ep.initialize_synapse_network(runtime).relations
+        traces = ep.initialize_eligibility_stdp(runtime)
+        plan = ep.EligibilitySTDPPlan(_pair(), 50.0)
+        zero = jnp.zeros(3)
+        first = ep.evaluate_eligibility_stdp(
+            runtime,
+            plan,
+            relations,
+            traces,
+            jnp.asarray([1.0, 0.0, 0.0]),
+            zero,
+            elapsed_ms=0.0,
+        )
+        relations, traces = ep.commit_eligibility_stdp(first, relations, traces)
+        paired = ep.evaluate_eligibility_stdp(
+            runtime,
+            plan,
+            relations,
+            traces,
+            zero,
+            jnp.asarray([0.0, 1.0, 1.0]),
+            elapsed_ms=5.0,
+        )
+        relations, traces = ep.commit_eligibility_stdp(paired, relations, traces)
+        np.testing.assert_allclose(relations.weight, [0.4, 0.4])
+        np.testing.assert_allclose(traces.eligibility, 0.1 * np.exp(-5.0 / 20.0))
+        reward = ep.evaluate_eligibility_stdp(
+            runtime,
+            plan,
+            relations,
+            traces,
+            zero,
+            zero,
+            elapsed_ms=30.0,
+            modulation=jnp.asarray(modulation),
+            modulation_scope=scope,
+        )
+        committed, _ = ep.commit_eligibility_stdp(reward, relations, traces)
+        credit = 0.1 * np.exp(-5.0 / 20.0) * np.exp(-30.0 / 50.0)
+        np.testing.assert_allclose(
+            committed.weight, 0.4 + credit * np.asarray(expected_factors)
+        )
+        np.testing.assert_array_equal(committed.generation, relations.generation)
 
 
-def test_rejected_reward_atomically_retains_weights_pair_traces_and_eligibility() -> None:
+def test_neural_plasticity_scenario_3() -> None:
     runtime = _runtime(execution="event")
     relations = ep.initialize_synapse_network(runtime).relations
     traces = ep.initialize_eligibility_stdp(runtime)
@@ -348,9 +329,6 @@ def test_rejected_reward_atomically_retains_weights_pair_traces_and_eligibility(
         ep.commit_pair_stdp(invalid_time, relations, traces.pair_state),
         (relations, traces.pair_state),
     )
-
-
-def test_delete_and_reuse_cancel_pending_deliveries_and_all_learning_credit() -> None:
     runtime = _runtime(two_relations=True)
     state = ep.initialize_synapse_network(runtime)
     traces = ep.initialize_eligibility_stdp(runtime)

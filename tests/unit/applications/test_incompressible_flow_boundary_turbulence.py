@@ -13,7 +13,7 @@ from phydrax.applications.incompressible_flow._boundary_turbulence import (
 )
 
 
-def test_vector_wall_stress_is_orientation_invariant_and_opposes_slip() -> None:
+def test_incompressible_flow_boundary_turbulence_scenario_1() -> None:
     prepared = VectorEquilibriumWallStressPlan().prepare(3)
     velocity = jnp.asarray(((0.0, 3.0, 4.0), (0.0, 3.0, 4.0)))
     normals = jnp.asarray(((2.0, 0.0, 0.0), (-5.0, 0.0, 0.0)))
@@ -31,9 +31,6 @@ def test_vector_wall_stress_is_orientation_invariant_and_opposes_slip() -> None:
     )
     assert bool(rough.successful[0])
     assert float(rough.wall_shear_magnitude[0]) > float(result.wall_shear_magnitude[0])
-
-
-def test_vector_wall_stress_has_exact_zero_and_viscous_limits() -> None:
     prepared = VectorEquilibriumWallStressPlan(root_tolerance=1.0e-10).prepare(2)
     normal = jnp.asarray((1.0, 0.0))
     zero = prepared.evaluate(jnp.zeros((2,)), normal, 0.01, 1.2, 1.8e-5)
@@ -52,9 +49,6 @@ def test_vector_wall_stress_has_exact_zero_and_viscous_limits() -> None:
     np.testing.assert_allclose(laminar.traction[1], -expected_shear, rtol=2.0e-3)
     assert float(laminar.evidence.y_plus) < 1.0e-2
     assert bool(laminar.successful)
-
-
-def test_vector_wall_stress_refuses_nonconvergence_and_invalid_support() -> None:
     underresolved = VectorEquilibriumWallStressPlan(
         root_iterations=1,
         bracket_iterations=1,
@@ -82,9 +76,6 @@ def test_vector_wall_stress_refuses_nonconvergence_and_invalid_support() -> None
     )
     assert not bool(unsupported_roughness.evidence.roughness_valid)
     assert not bool(unsupported_roughness.successful)
-
-
-def test_vector_wall_stress_jit_preserves_result_and_evidence() -> None:
     prepared = VectorEquilibriumWallStressPlan().prepare(3)
     arguments = (
         jnp.asarray(((0.0, 2.0, -1.0), (0.0, -3.0, 0.5))),
@@ -98,6 +89,95 @@ def test_vector_wall_stress_jit_preserves_result_and_evidence() -> None:
     np.testing.assert_allclose(compiled.traction, eager.traction, rtol=1e-12)
     np.testing.assert_allclose(compiled.friction_velocity, eager.friction_velocity)
     np.testing.assert_array_equal(compiled.successful, eager.successful)
+    prepared, _ = _compact_prepared()
+    with pytest.raises(ValueError, match="typed JAX PRNG key"):
+        prepared.initialize(jnp.asarray((0, 1), dtype=jnp.uint32))
+    initial = prepared.initialize(jax.random.key(19))
+    first = prepared.sample(initial)
+    repeated = prepared.sample(initial)
+    np.testing.assert_array_equal(first.velocity, repeated.velocity)
+    np.testing.assert_array_equal(first.scalars, repeated.scalars)
+    np.testing.assert_array_equal(
+        jax.random.key_data(first.state.key), jax.random.key_data(repeated.state.key)
+    )
+    np.testing.assert_array_equal(
+        jax.random.key_data(first.evidence.parent_key),
+        jax.random.key_data(initial.key),
+    )
+    np.testing.assert_array_equal(
+        jax.random.key_data(first.evidence.next_key),
+        jax.random.key_data(first.state.key),
+    )
+
+    restored = StochasticTurbulentInflowState(
+        key=first.state.key,
+        sample_index=first.state.sample_index,
+        prepared_id=first.state.prepared_id,
+    )
+    continued = prepared.sample(first.state)
+    restarted = prepared.sample(restored)
+    np.testing.assert_array_equal(continued.velocity, restarted.velocity)
+    np.testing.assert_array_equal(continued.scalars, restarted.scalars)
+    np.testing.assert_array_equal(
+        jax.random.key_data(continued.state.key),
+        jax.random.key_data(restarted.state.key),
+    )
+    assert int(continued.state.sample_index) == 2
+    assert bool(continued.evidence.mass_compatible)
+    np.testing.assert_allclose(
+        continued.evidence.fluctuation_volume_flux, 0.0, atol=1e-12
+    )
+
+    with pytest.raises(ValueError, match="leave room"):
+        prepared.initialize(
+            jax.random.key(20),
+            sample_index=int(np.iinfo(np.uint32).max),
+        )
+    exhausted = StochasticTurbulentInflowState(
+        jax.random.key(20),
+        jnp.asarray(np.iinfo(np.uint32).max, dtype=jnp.uint32),
+        prepared.prepared_id,
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="sample_index is exhausted"):
+        prepared.sample(exhausted)
+    angles = 0.5 * jnp.pi * jnp.arange(4)
+    coordinates = jnp.stack((jnp.zeros_like(angles), angles), axis=-1)
+    velocity_covariance = jnp.asarray(((0.7, 0.0), (0.0, 0.0)))
+    scalar_covariance = jnp.asarray(((0.2,),))
+    cross_covariance = jnp.asarray(((0.1,), (0.0,)))
+    prepared = StochasticTurbulentInflowPlan("spectral").prepare(
+        coordinates,
+        jnp.asarray((1.0, 0.0)),
+        jnp.ones((4,)),
+        velocity_covariance,
+        scalar_covariance=scalar_covariance,
+        velocity_scalar_covariance=cross_covariance,
+        spectral_wavevectors=jnp.asarray(((0.0, 1.0), (0.0, 1.0))),
+    )
+    assert prepared.covariance_rank == 2
+    assert bool(prepared.preparation.mass_compatible)
+    assert bool(prepared.preparation.divergence_available)
+    assert bool(prepared.preparation.divergence_compatible)
+    assert "surface" in prepared.divergence_kind
+
+    state = prepared.initialize(jax.random.key(7))
+    eager = prepared.sample(
+        state,
+        mean_velocity=jnp.asarray((2.0, 0.0)),
+        mean_scalars=jnp.asarray((10.0,)),
+    )
+    compiled = eqx.filter_jit(prepared.sample)(
+        state,
+        mean_velocity=jnp.asarray((2.0, 0.0)),
+        mean_scalars=jnp.asarray((10.0,)),
+    )
+    np.testing.assert_array_equal(compiled.velocity, eager.velocity)
+    np.testing.assert_array_equal(compiled.scalars, eager.scalars)
+    np.testing.assert_allclose(eager.evidence.fluctuation_volume_flux, 0.0, atol=1e-12)
+    np.testing.assert_allclose(eager.evidence.total_volume_flux, 8.0, atol=1e-12)
+    np.testing.assert_allclose(eager.evidence.divergence_residual, 0.0, atol=1e-12)
+    assert bool(eager.evidence.divergence_compatible)
+    assert bool(eager.evidence.successful)
 
 
 def _compact_prepared() -> Any:
@@ -153,98 +233,3 @@ def test_compact_inflow_matches_joint_covariance_and_rejects_non_psd_inputs() ->
         plan.prepare(*geometry, jnp.asarray(((1.0, 0.0), (0.0, -0.1))))
     with pytest.raises(ValueError, match="exactly symmetric"):
         plan.prepare(*geometry, jnp.asarray(((1.0, 0.2), (0.1, 1.0))))
-
-
-def test_inflow_prng_lineage_reproducibility_and_restart_are_exact() -> None:
-    prepared, _ = _compact_prepared()
-    with pytest.raises(ValueError, match="typed JAX PRNG key"):
-        prepared.initialize(jnp.asarray((0, 1), dtype=jnp.uint32))
-    initial = prepared.initialize(jax.random.key(19))
-    first = prepared.sample(initial)
-    repeated = prepared.sample(initial)
-    np.testing.assert_array_equal(first.velocity, repeated.velocity)
-    np.testing.assert_array_equal(first.scalars, repeated.scalars)
-    np.testing.assert_array_equal(
-        jax.random.key_data(first.state.key), jax.random.key_data(repeated.state.key)
-    )
-    np.testing.assert_array_equal(
-        jax.random.key_data(first.evidence.parent_key),
-        jax.random.key_data(initial.key),
-    )
-    np.testing.assert_array_equal(
-        jax.random.key_data(first.evidence.next_key),
-        jax.random.key_data(first.state.key),
-    )
-
-    restored = StochasticTurbulentInflowState(
-        key=first.state.key,
-        sample_index=first.state.sample_index,
-        prepared_id=first.state.prepared_id,
-    )
-    continued = prepared.sample(first.state)
-    restarted = prepared.sample(restored)
-    np.testing.assert_array_equal(continued.velocity, restarted.velocity)
-    np.testing.assert_array_equal(continued.scalars, restarted.scalars)
-    np.testing.assert_array_equal(
-        jax.random.key_data(continued.state.key),
-        jax.random.key_data(restarted.state.key),
-    )
-    assert int(continued.state.sample_index) == 2
-    assert bool(continued.evidence.mass_compatible)
-    np.testing.assert_allclose(
-        continued.evidence.fluctuation_volume_flux, 0.0, atol=1e-12
-    )
-
-    with pytest.raises(ValueError, match="leave room"):
-        prepared.initialize(
-            jax.random.key(20),
-            sample_index=int(np.iinfo(np.uint32).max),
-        )
-    exhausted = StochasticTurbulentInflowState(
-        jax.random.key(20),
-        jnp.asarray(np.iinfo(np.uint32).max, dtype=jnp.uint32),
-        prepared.prepared_id,
-    )
-    with pytest.raises(eqx.EquinoxRuntimeError, match="sample_index is exhausted"):
-        prepared.sample(exhausted)
-
-
-def test_spectral_inflow_certifies_surface_divergence_mass_and_jit() -> None:
-    angles = 0.5 * jnp.pi * jnp.arange(4)
-    coordinates = jnp.stack((jnp.zeros_like(angles), angles), axis=-1)
-    velocity_covariance = jnp.asarray(((0.7, 0.0), (0.0, 0.0)))
-    scalar_covariance = jnp.asarray(((0.2,),))
-    cross_covariance = jnp.asarray(((0.1,), (0.0,)))
-    prepared = StochasticTurbulentInflowPlan("spectral").prepare(
-        coordinates,
-        jnp.asarray((1.0, 0.0)),
-        jnp.ones((4,)),
-        velocity_covariance,
-        scalar_covariance=scalar_covariance,
-        velocity_scalar_covariance=cross_covariance,
-        spectral_wavevectors=jnp.asarray(((0.0, 1.0), (0.0, 1.0))),
-    )
-    assert prepared.covariance_rank == 2
-    assert bool(prepared.preparation.mass_compatible)
-    assert bool(prepared.preparation.divergence_available)
-    assert bool(prepared.preparation.divergence_compatible)
-    assert "surface" in prepared.divergence_kind
-
-    state = prepared.initialize(jax.random.key(7))
-    eager = prepared.sample(
-        state,
-        mean_velocity=jnp.asarray((2.0, 0.0)),
-        mean_scalars=jnp.asarray((10.0,)),
-    )
-    compiled = eqx.filter_jit(prepared.sample)(
-        state,
-        mean_velocity=jnp.asarray((2.0, 0.0)),
-        mean_scalars=jnp.asarray((10.0,)),
-    )
-    np.testing.assert_array_equal(compiled.velocity, eager.velocity)
-    np.testing.assert_array_equal(compiled.scalars, eager.scalars)
-    np.testing.assert_allclose(eager.evidence.fluctuation_volume_flux, 0.0, atol=1e-12)
-    np.testing.assert_allclose(eager.evidence.total_volume_flux, 8.0, atol=1e-12)
-    np.testing.assert_allclose(eager.evidence.divergence_residual, 0.0, atol=1e-12)
-    assert bool(eager.evidence.divergence_compatible)
-    assert bool(eager.evidence.successful)

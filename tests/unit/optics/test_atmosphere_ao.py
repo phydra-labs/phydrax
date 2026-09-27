@@ -46,7 +46,7 @@ def _prepared_screen(count: Any = 32) -> Any:
     ).prepare()
 
 
-def test_von_karman_preparation_has_nonnegative_decaying_psd_and_no_piston() -> None:
+def test_atmosphere_ao_scenario_1() -> None:
     prepared = _prepared_screen()
     psd = prepared.power_spectral_density
 
@@ -55,9 +55,6 @@ def test_von_karman_preparation_has_nonnegative_decaying_psd_and_no_piston() -> 
     assert float(psd[0, 1]) > float(psd[0, 2]) > 0.0
     assert bool(jnp.all(psd[~prepared.supported_modes] == 0.0))
     assert float(prepared.predicted_variance) > 0.0
-
-
-def test_phase_screen_is_hermitian_reproducible_and_parseval_consistent() -> None:
     prepared = _prepared_screen()
     key = jax.random.key(17)
     first = sample_von_karman_phase_screen(prepared, key)
@@ -72,9 +69,6 @@ def test_phase_screen_is_hermitian_reproducible_and_parseval_consistent() -> Non
     assert float(first.evidence.parseval_relative_error) < 1e-5
     assert abs(float(first.evidence.piston)) < 1e-5
     assert bool(first.valid)
-
-
-def test_phase_screen_ensemble_covariance_matches_prepared_spectrum() -> None:
     prepared = _prepared_screen(count=24)
     keys = jax.random.split(jax.random.key(29), 96)
     samples = jax.vmap(lambda key: sample_von_karman_phase_screen(prepared, key).phase)(
@@ -88,9 +82,6 @@ def test_phase_screen_ensemble_covariance_matches_prepared_spectrum() -> None:
 
     np.testing.assert_allclose(empirical_zero, covariance[0, 0], rtol=0.25)
     np.testing.assert_allclose(empirical_lag, covariance[1, 0], rtol=0.3)
-
-
-def test_exact_spectral_frozen_flow_matches_one_cell_periodic_shift() -> None:
     prepared = _prepared_screen()
     original = sample_von_karman_phase_screen(prepared, jax.random.key(3))
     velocity = jnp.asarray((prepared.spacings[0], 0.0))
@@ -134,7 +125,7 @@ def _layered_atmosphere() -> Any:
     ).prepare()
 
 
-def test_layered_atmosphere_sampling_preserves_records_and_is_reproducible() -> None:
+def test_atmosphere_ao_scenario_2() -> None:
     atmosphere = _layered_atmosphere()
     first = atmosphere.sample(jax.random.key(41))
     repeated = atmosphere.sample(jax.random.key(41))
@@ -156,9 +147,6 @@ def test_layered_atmosphere_sampling_preserves_records_and_is_reproducible() -> 
             expected,
         )
     assert bool(first.valid)
-
-
-def test_statistical_ao_residual_psd_and_error_budget_close_exactly() -> None:
     atmosphere = _layered_atmosphere()
     residual = StatisticalResidualAOPlan(
         0.6,
@@ -188,9 +176,6 @@ def test_statistical_ao_residual_psd_and_error_budget_close_exactly() -> None:
     )
     assert bool(jnp.all(residual.total_residual_psd >= 0.0))
     assert bool(residual.valid)
-
-
-def test_perfect_statistical_correction_has_zero_residual_psd() -> None:
     atmosphere = _layered_atmosphere()
     residual = StatisticalResidualAOPlan(
         100.0,

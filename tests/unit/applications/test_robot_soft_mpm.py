@@ -126,9 +126,7 @@ def _context(state: Any, step_size: Any) -> Any:
     )
 
 
-def test_mpm_soft_plant_routes_body_force_and_reports_motion_conservation_and_work() -> (
-    None
-):
+def test_robot_soft_mpm_scenario_1() -> None:
     plant, _, initial_runtime, _ = _prepared_problem()
     assert isinstance(plant, AbstractDiscretePlant)
     assert plant.control_schema is not None
@@ -182,11 +180,6 @@ def test_mpm_soft_plant_routes_body_force_and_reports_motion_conservation_and_wo
     assert observation.numeric_revision_id == plant.numeric_revision.revision_id
     assert observation.state_schema_id == plant.state_schema.schema_id
     assert observation.execution_signature_id == plant.execution_signature.signature_id
-
-
-def test_casewise_failure_rolls_back_particle_grid_material_history_and_metadata() -> (
-    None
-):
     plant, _, runtime, _ = _prepared_problem(stateful=True, case_ndim=1)
     assert jnp.any(runtime.particles.material_state != 0.0)
     keys = jax.random.split(jax.random.key(3), 2)
@@ -220,9 +213,6 @@ def test_casewise_failure_rolls_back_particle_grid_material_history_and_metadata
         np.testing.assert_array_equal(accepted[1], original[1])
     assert result.accepted_state.time[0] == context.target_time[0]
     assert result.accepted_state.step_index[0] == 1
-
-
-def test_checkpoint_replay_is_deterministic_and_includes_particle_grid_history() -> None:
     plant, _, _, _ = _prepared_problem(stateful=True)
     source = plant.reset(jax.random.key(8), plant.parameters).accepted_state
     checkpoint = plant.checkpoint(source)

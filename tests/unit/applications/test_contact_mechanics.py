@@ -163,7 +163,7 @@ def test_collision_surface_search_is_deterministic_and_fixed_epoch_residual_is_d
     assert jnp.all(jnp.isfinite(action))
 
 
-def test_closure_candidate_history_is_committed_or_rolled_back_explicitly() -> None:
+def test_contact_mechanics_scenario_1() -> None:
     case = _canonical_pair(friction=True)
     rates = (
         jnp.broadcast_to(jnp.asarray([0.2, -0.05]), case[4][0].shape),
@@ -179,9 +179,6 @@ def test_closure_candidate_history_is_committed_or_rolled_back_explicitly() -> N
     np.testing.assert_allclose(
         attempt.assembly.action_reaction_residual, 0.0, atol=1.0e-12
     )
-
-
-def test_mortar_and_nitsche_evidence_are_derived_from_discrete_actions() -> None:
     mortar = contact.ContactMortarSpace(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]]),
         jnp.asarray([[0.75, 0.25], [0.25, 0.75]]),
@@ -212,44 +209,6 @@ def test_mortar_and_nitsche_evidence_are_derived_from_discrete_actions() -> None
     )
     assert bool(nitsche_evidence.adjoint_consistent)
     assert bool(nitsche_evidence.coercive)
-
-
-def test_neural_contact_uses_canonical_fixed_manifold_virtual_work() -> None:
-    case = _canonical_pair()
-    scene, search, closure, state, states, _, rest, epoch = case
-    functions = {"moving": states[0], "static": states[1]}
-
-    def state_trace(root: Any, args: Any) -> Any:
-        del args
-        return root["moving"], root["static"]
-
-    adapter = contact.NeuralContactAdapter(
-        scene,
-        search,
-        closure,
-        state,
-        epoch,
-        rest,
-        state_trace,
-        adapter_id="neural-obstacle-contact",
-        activation_distance=0.2,
-    )
-    direct = adapter.evaluate(functions)
-    for virtual_work, force in zip(
-        direct.virtual_work, direct.contact.generalized_efforts, strict=True
-    ):
-        np.testing.assert_allclose(virtual_work, -force)
-    assert direct.contact.candidate_epoch is epoch
-
-    subspace = ParameterSubspace(functions, eqx.is_inexact_array)
-    prepared = adapter.prepare_equilibrium(functions, subspace)
-    residual = prepared.problem.residual_function(prepared.initial_state, None)
-    assert residual.shape == prepared.initial_state.shape
-    assert jnp.all(jnp.isfinite(residual))
-    assert prepared.formulation == "virtual-work"
-
-
-def test_mpm_participant_uses_canonical_manifold_and_conservative_pullback() -> None:
     query_space = phx.linalg.ArraySpace((1, 2), dtype=np.float64)
     query = contact.prepare_point_contact_participant(
         query_space,
@@ -308,3 +267,38 @@ def test_mpm_participant_uses_canonical_manifold_and_conservative_pullback() -> 
         result.assembly.action_reaction_residual, 0.0, atol=1.0e-12
     )
     assert bool(result.successful)
+
+
+def test_neural_contact_uses_canonical_fixed_manifold_virtual_work() -> None:
+    case = _canonical_pair()
+    scene, search, closure, state, states, _, rest, epoch = case
+    functions = {"moving": states[0], "static": states[1]}
+
+    def state_trace(root: Any, args: Any) -> Any:
+        del args
+        return root["moving"], root["static"]
+
+    adapter = contact.NeuralContactAdapter(
+        scene,
+        search,
+        closure,
+        state,
+        epoch,
+        rest,
+        state_trace,
+        adapter_id="neural-obstacle-contact",
+        activation_distance=0.2,
+    )
+    direct = adapter.evaluate(functions)
+    for virtual_work, force in zip(
+        direct.virtual_work, direct.contact.generalized_efforts, strict=True
+    ):
+        np.testing.assert_allclose(virtual_work, -force)
+    assert direct.contact.candidate_epoch is epoch
+
+    subspace = ParameterSubspace(functions, eqx.is_inexact_array)
+    prepared = adapter.prepare_equilibrium(functions, subspace)
+    residual = prepared.problem.residual_function(prepared.initial_state, None)
+    assert residual.shape == prepared.initial_state.shape
+    assert jnp.all(jnp.isfinite(residual))
+    assert prepared.formulation == "virtual-work"

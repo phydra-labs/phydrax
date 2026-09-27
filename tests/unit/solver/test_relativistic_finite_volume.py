@@ -73,7 +73,7 @@ def _stages(runtime: Any, geometry: Any, step: Any) -> Any:
     )
 
 
-def test_fixed_grid_uniform_state_is_preserved_with_closed_conservation_ledger() -> None:
+def test_relativistic_finite_volume_scenario_1() -> None:
     runtime, geometry = _periodic_runtime()
     stages = _stages(runtime, geometry, 1.0e-3)
     primitive = jnp.broadcast_to(
@@ -106,9 +106,6 @@ def test_fixed_grid_uniform_state_is_preserved_with_closed_conservation_ledger()
         result.stage_evaluations[0].stress_energy.geometry_lineage_id
         == stages[0].cell.geometry_lineage_id
     )
-
-
-def test_fixed_grid_smooth_and_shock_paths_are_finite_and_conservative() -> None:
     runtime, geometry = _periodic_runtime(32)
     step = 2.0e-4
     stages = _stages(runtime, geometry, step)
@@ -150,9 +147,6 @@ def test_fixed_grid_smooth_and_shock_paths_are_finite_and_conservative() -> None
     )
     assert float(jnp.max(jnp.abs(smooth_result.accepted.conserved - smooth))) > 0.0
     assert float(jnp.max(jnp.abs(shock_result.accepted.conserved - shock))) > 0.0
-
-
-def test_invalid_high_order_face_uses_explicit_first_order_fallback_mask() -> None:
     runtime, geometry = _periodic_runtime(
         8, reconstruction=MUSCLReconstruction(UnlimitedLimiter())
     )
@@ -174,11 +168,6 @@ def test_invalid_high_order_face_uses_explicit_first_order_fallback_mask() -> No
     assert bool(evaluation.successful)
     assert bool(jnp.any(evaluation.fallback_masks[0]))
     assert bool(jnp.all(jnp.isfinite(evaluation.face_fluxes[0])))
-
-
-def test_metric_aware_reflection_uses_spatial_unit_normal_and_reports_incoming_modes() -> (
-    None
-):
     system = _system()
     metric = jnp.diag(jnp.asarray((4.0, 1.0, 1.0), dtype=jnp.float64))
     inverse = jnp.diag(jnp.asarray((0.25, 1.0, 1.0), dtype=jnp.float64))

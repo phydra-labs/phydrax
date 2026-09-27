@@ -50,7 +50,7 @@ def _jacobian_constraint(deformation: Any) -> Any:
     return jnp.linalg.det(deformation) - 1.0
 
 
-def test_plane_stress_root_implicit_derivative_and_schur_tangent() -> None:
+def test_plane_stress_scenario_1() -> None:
     plan = BlockDiagonalPlaneStressReductionPlan()
     law = _law()
     deformation = jnp.asarray([[1.12, 0.06], [0.02, 0.93]])
@@ -79,33 +79,6 @@ def test_plane_stress_root_implicit_derivative_and_schur_tangent() -> None:
         rtol=3.0e-7,
         atol=3.0e-8,
     )
-
-
-def test_reference_thickness_scales_areal_response_but_not_closure_root() -> None:
-    plan = BlockDiagonalPlaneStressReductionPlan()
-    law = _law()
-    deformation = jnp.asarray([[1.08, 0.04], [0.01, 0.96]])
-    unit = plan.evaluate(deformation, law, reference_thickness=1.0)
-    thick = plan.evaluate(deformation, law, reference_thickness=2.75)
-
-    np.testing.assert_allclose(
-        thick.kinematics.thickness_stretch,
-        unit.kinematics.thickness_stretch,
-        rtol=0.0,
-        atol=2.0e-12,
-    )
-    np.testing.assert_allclose(
-        thick.reference_energy_density, 2.75 * unit.reference_energy_density
-    )
-    np.testing.assert_allclose(thick.first_piola, 2.75 * unit.first_piola)
-    np.testing.assert_allclose(thick.condensed_tangent, 2.75 * unit.condensed_tangent)
-    np.testing.assert_allclose(
-        thick.kinematics.current_thickness,
-        2.75 * unit.kinematics.current_thickness,
-    )
-
-
-def test_plane_stress_batches_and_reports_bracket_and_input_failures() -> None:
     law = _law()
     plan = BlockDiagonalPlaneStressReductionPlan()
     batch = jnp.asarray(
@@ -134,6 +107,79 @@ def test_plane_stress_batches_and_reports_bracket_and_input_failures() -> None:
     assert not bool(invalid.successful)
     assert invalid.failure == int(PlaneStressFailure.INVALID_INPUT)
     assert not bool(jnp.isfinite(invalid.reference_energy_density))
+    vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+    cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
+    mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u",
+        phx.discretization.lagrange_element("triangle", 1),
+        component_shape=(2,),
+    )
+    discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+    form = plane_stress_hyperelastic_form(
+        "u", _law(), BlockDiagonalPlaneStressReductionPlan()
+    )
+    compiled = phx.equations.compile_finite_element_problem(form, discretization)
+    residual = compiled.residual(compiled.state_space.zeros())
+
+    for leaf in jax.tree.leaves(residual):
+        np.testing.assert_allclose(leaf, 0.0, atol=2.0e-10)
+    plan = BlockDiagonalPlaneStressReductionPlan()
+    law = _law()
+    deformation = jnp.asarray([[1.08, 0.04], [0.01, 0.96]])
+    unit = plan.evaluate(deformation, law, reference_thickness=1.0)
+    thick = plan.evaluate(deformation, law, reference_thickness=2.75)
+
+    np.testing.assert_allclose(
+        thick.kinematics.thickness_stretch,
+        unit.kinematics.thickness_stretch,
+        rtol=0.0,
+        atol=2.0e-12,
+    )
+    np.testing.assert_allclose(
+        thick.reference_energy_density, 2.75 * unit.reference_energy_density
+    )
+    np.testing.assert_allclose(thick.first_piola, 2.75 * unit.first_piola)
+    np.testing.assert_allclose(thick.condensed_tangent, 2.75 * unit.condensed_tangent)
+    np.testing.assert_allclose(
+        thick.kinematics.current_thickness,
+        2.75 * unit.kinematics.current_thickness,
+    )
+    law = _law()
+    plan = BlockDiagonalPlaneStressReductionPlan()
+    deformation = jnp.asarray([[[1.12, 0.06], [0.02, 0.93]]])
+    point = plan.evaluate(deformation, law)
+    material = PlaneStressMPMConstitutivePlan(
+        NeoHookeanMPMConstitutivePlan(3),
+        reduction=plan,
+    )
+    parameters = law.parameters
+    history = material.initialize_state((1,), deformation.dtype)
+    density = jnp.asarray((2.0,))
+    response = material.evaluate(deformation, history, density, parameters, 0.0, 0.01)
+    linearized = material.evaluate_linearized(
+        deformation, history, density, parameters, 0.0, 0.01
+    )
+
+    assert bool(response.successful[0])
+    assert bool(linearized.tangent_successful[0])
+    np.testing.assert_allclose(
+        response.reference_energy_density, point.reference_energy_density
+    )
+    np.testing.assert_allclose(response.first_piola, point.first_piola)
+    np.testing.assert_allclose(
+        response.diagnostics["out_of_plane_stretch"],
+        point.kinematics.thickness_stretch,
+    )
+    np.testing.assert_allclose(
+        response.diagnostics["plane_stress_residual"], point.residual, atol=1.0e-10
+    )
+    np.testing.assert_allclose(
+        linearized.algorithmic_tangent,
+        point.condensed_tangent,
+        rtol=3.0e-7,
+        atol=3.0e-8,
+    )
 
 
 def test_field_and_fe_adapters_match_point_reduction_and_h0() -> None:
@@ -192,120 +238,59 @@ def test_field_and_fe_adapters_match_point_reduction_and_h0() -> None:
     )
 
 
-def test_plane_stress_fe_form_compiles_at_identity() -> None:
-    vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
-    cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
-    mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
-    field = phx.discretization.FiniteElementFieldSpec(
-        "u",
-        phx.discretization.lagrange_element("triangle", 1),
-        component_shape=(2,),
-    )
-    discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
-    form = plane_stress_hyperelastic_form(
-        "u", _law(), BlockDiagonalPlaneStressReductionPlan()
-    )
-    compiled = phx.equations.compile_finite_element_problem(form, discretization)
-    residual = compiled.residual(compiled.state_space.zeros())
-
-    for leaf in jax.tree.leaves(residual):
-        np.testing.assert_allclose(leaf, 0.0, atol=2.0e-10)
-
-
-def test_mpm_reduction_matches_pointwise_energy_stress_root_and_tangent() -> None:
-    law = _law()
-    plan = BlockDiagonalPlaneStressReductionPlan()
-    deformation = jnp.asarray([[[1.12, 0.06], [0.02, 0.93]]])
-    point = plan.evaluate(deformation, law)
-    material = PlaneStressMPMConstitutivePlan(
-        NeoHookeanMPMConstitutivePlan(3),
-        reduction=plan,
-    )
-    parameters = law.parameters
-    history = material.initialize_state((1,), deformation.dtype)
-    density = jnp.asarray((2.0,))
-    response = material.evaluate(deformation, history, density, parameters, 0.0, 0.01)
-    linearized = material.evaluate_linearized(
-        deformation, history, density, parameters, 0.0, 0.01
-    )
-
-    assert bool(response.successful[0])
-    assert bool(linearized.tangent_successful[0])
-    np.testing.assert_allclose(
-        response.reference_energy_density, point.reference_energy_density
-    )
-    np.testing.assert_allclose(response.first_piola, point.first_piola)
-    np.testing.assert_allclose(
-        response.diagnostics["out_of_plane_stretch"],
-        point.kinematics.thickness_stretch,
-    )
-    np.testing.assert_allclose(
-        response.diagnostics["plane_stress_residual"], point.residual, atol=1.0e-10
-    )
-    np.testing.assert_allclose(
-        linearized.algorithmic_tangent,
-        point.condensed_tangent,
-        rtol=3.0e-7,
-        atol=3.0e-8,
-    )
-
-
-@pytest.mark.parametrize("bulk_modulus", [None, 25.0])
-def test_coupled_plane_stress_incompressibility_solves_both_equations_and_tangent(
-    bulk_modulus: Any,
-) -> None:
-    law = MixedHyperelasticLaw(
-        _isochoric_energy,
-        _jacobian_constraint,
-        bulk_modulus=bulk_modulus,
-    )
-    plan = CoupledPlaneStressIncompressiblePlan(
-        None,
-        (-2.0, 2.0),
-        (-100.0, 100.0),
-        _jacobian_constraint,
-        bulk_modulus,
-    )
-    deformation = jnp.asarray([[1.2, 0.04], [0.02, 0.9]])
-    response = plan.evaluate(deformation, law, reference_thickness=1.6)
-
-    assert bool(response.successful)
-    assert response.failure == int(PlaneStressFailure.OK)
-    assert jnp.max(jnp.abs(response.residual)) < 1.0e-9
-    assert response.thickness_stretch > 0.0
-    embedded = (
-        jnp.zeros((3, 3))
-        .at[:2, :2]
-        .set(deformation)
-        .at[2, 2]
-        .set(response.thickness_stretch)
-    )
-    np.testing.assert_allclose(
-        law.constraint(embedded, response.pressure), 0.0, atol=1.0e-9
-    )
-    np.testing.assert_allclose(
-        law.first_piola(embedded, response.pressure)[2, 2], 0.0, atol=1.0e-9
-    )
-
-    step = 2.0e-5
-    directions = jnp.eye(4).reshape((4, 2, 2))
-    columns = []
-    for direction in directions:
-        plus = plan.evaluate(deformation + step * direction, law, reference_thickness=1.6)
-        minus = plan.evaluate(
-            deformation - step * direction, law, reference_thickness=1.6
+def test_coupled_plane_contracts() -> None:
+    for bulk_modulus in [None, 25.0]:
+        law = MixedHyperelasticLaw(
+            _isochoric_energy,
+            _jacobian_constraint,
+            bulk_modulus=bulk_modulus,
         )
-        columns.append((plus.first_piola - minus.first_piola) / (2.0 * step))
-    finite_difference = jnp.stack(columns, axis=-1).reshape((2, 2, 2, 2))
-    np.testing.assert_allclose(
-        response.condensed_tangent,
-        finite_difference,
-        rtol=3.0e-4,
-        atol=3.0e-5,
-    )
+        plan = CoupledPlaneStressIncompressiblePlan(
+            None,
+            (-2.0, 2.0),
+            (-100.0, 100.0),
+            _jacobian_constraint,
+            bulk_modulus,
+        )
+        deformation = jnp.asarray([[1.2, 0.04], [0.02, 0.9]])
+        response = plan.evaluate(deformation, law, reference_thickness=1.6)
 
+        assert bool(response.successful)
+        assert response.failure == int(PlaneStressFailure.OK)
+        assert jnp.max(jnp.abs(response.residual)) < 1.0e-9
+        assert response.thickness_stretch > 0.0
+        embedded = (
+            jnp.zeros((3, 3))
+            .at[:2, :2]
+            .set(deformation)
+            .at[2, 2]
+            .set(response.thickness_stretch)
+        )
+        np.testing.assert_allclose(
+            law.constraint(embedded, response.pressure), 0.0, atol=1.0e-9
+        )
+        np.testing.assert_allclose(
+            law.first_piola(embedded, response.pressure)[2, 2], 0.0, atol=1.0e-9
+        )
 
-def test_coupled_plane_stress_batches_and_scalar_plan_rejects_mixed_law() -> None:
+        step = 2.0e-5
+        directions = jnp.eye(4).reshape((4, 2, 2))
+        columns = []
+        for direction in directions:
+            plus = plan.evaluate(
+                deformation + step * direction, law, reference_thickness=1.6
+            )
+            minus = plan.evaluate(
+                deformation - step * direction, law, reference_thickness=1.6
+            )
+            columns.append((plus.first_piola - minus.first_piola) / (2.0 * step))
+        finite_difference = jnp.stack(columns, axis=-1).reshape((2, 2, 2, 2))
+        np.testing.assert_allclose(
+            response.condensed_tangent,
+            finite_difference,
+            rtol=3.0e-4,
+            atol=3.0e-5,
+        )
     law = MixedHyperelasticLaw(_isochoric_energy, _jacobian_constraint)
     coupled = CoupledPlaneStressIncompressiblePlan(
         None,

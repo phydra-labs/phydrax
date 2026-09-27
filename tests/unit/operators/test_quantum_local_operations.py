@@ -17,7 +17,7 @@ X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
 Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
 
 
-def test_hilbert_register_layout_preserves_explicit_factor_order() -> None:
+def test_quantum_local_operations_scenario_1() -> None:
     layout = Q.HilbertRegisterLayout(("qubit", "qutrit", "mode"), (2, 3, 4))
 
     assert layout.dimension == 24
@@ -29,9 +29,6 @@ def test_hilbert_register_layout_preserves_explicit_factor_order() -> None:
         Q.HilbertRegisterLayout(("a", "a"), (2, 2))
     with pytest.raises(ValueError, match="positive"):
         Q.HilbertRegisterLayout(("a",), (0,))
-
-
-def test_local_unitary_matches_global_embedding_and_target_order() -> None:
     layout = Q.HilbertRegisterLayout(("a", "b", "c"), (2, 3, 2))
     state = jnp.arange(1, 13, dtype="float64").astype(jnp.complex128)
     state = state / jnp.linalg.norm(state)
@@ -48,9 +45,6 @@ def test_local_unitary_matches_global_embedding_and_target_order() -> None:
     )
     expected_ca = jnp.kron(jnp.kron(Z, jnp.eye(3)), X) @ state
     assert jnp.allclose(local_ca, expected_ca)
-
-
-def test_local_unitary_supports_state_batches_and_density_conjugation() -> None:
     layout = Q.HilbertRegisterLayout(("a", "b"), (2, 2))
     states = jnp.stack(
         (
@@ -68,9 +62,6 @@ def test_local_unitary_supports_state_batches_and_density_conjugation() -> None:
     local_density = Q.conjugate_local_density(layout, X, ("b",), density)
     expected_density = global_x @ density @ jnp.conj(global_x.T)
     assert jnp.allclose(local_density, expected_density)
-
-
-def test_local_kraus_channel_is_trace_preserving_without_global_superoperator() -> None:
     layout = Q.HilbertRegisterLayout(("a", "b"), (2, 2))
     gamma = jnp.asarray(0.3)
     kraus = jnp.stack(
@@ -94,27 +85,6 @@ def test_local_kraus_channel_is_trace_preserving_without_global_superoperator() 
     assert Q.kraus_trace_preservation_residual(kraus) < 1e-12
     assert jnp.allclose(result, expected)
     assert jnp.allclose(jnp.trace(result), 1.0)
-
-
-def test_local_unitary_is_jittable_vmappable_and_real_objective_differentiable() -> None:
-    layout = Q.HilbertRegisterLayout(("q",), (2,))
-    state = jnp.asarray([1.0, 0.0], dtype=jnp.complex128)
-
-    def objective(theta: Any) -> Any:
-        unitary = jnp.diag(jnp.asarray([jnp.exp(1j * theta), 1.0], dtype=jnp.complex128))
-        final = Q.apply_local_unitary_to_state(layout, unitary, ("q",), state)
-        return jnp.real(final[0])
-
-    theta = jnp.asarray(0.4)
-    assert jnp.allclose(jax.jit(objective)(theta), jnp.cos(theta))
-    assert jnp.allclose(jax.grad(objective)(theta), -jnp.sin(theta))
-    assert jnp.allclose(
-        jax.vmap(objective)(jnp.asarray([0.0, 0.4])),
-        jnp.cos(jnp.asarray([0.0, 0.4])),
-    )
-
-
-def test_local_operations_reject_ambiguous_shapes_and_dtypes() -> None:
     layout = Q.HilbertRegisterLayout(("a", "b"), (2, 3))
     state = jnp.ones((6,), dtype=jnp.complex128) / jnp.sqrt(6.0)
 
@@ -141,3 +111,21 @@ def test_local_operations_reject_ambiguous_shapes_and_dtypes() -> None:
             (Q.LocalKrausChannelOperation(jnp.eye(2, dtype="complex128")[None], ("a",)),),
             state_kind="state-vector",
         )
+
+
+def test_local_unitary_is_jittable_vmappable_and_real_objective_differentiable() -> None:
+    layout = Q.HilbertRegisterLayout(("q",), (2,))
+    state = jnp.asarray([1.0, 0.0], dtype=jnp.complex128)
+
+    def objective(theta: Any) -> Any:
+        unitary = jnp.diag(jnp.asarray([jnp.exp(1j * theta), 1.0], dtype=jnp.complex128))
+        final = Q.apply_local_unitary_to_state(layout, unitary, ("q",), state)
+        return jnp.real(final[0])
+
+    theta = jnp.asarray(0.4)
+    assert jnp.allclose(jax.jit(objective)(theta), jnp.cos(theta))
+    assert jnp.allclose(jax.grad(objective)(theta), -jnp.sin(theta))
+    assert jnp.allclose(
+        jax.vmap(objective)(jnp.asarray([0.0, 0.4])),
+        jnp.cos(jnp.asarray([0.0, 0.4])),
+    )

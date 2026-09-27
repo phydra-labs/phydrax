@@ -115,7 +115,7 @@ def _thermal_scattering() -> Any:
     )
 
 
-def test_stellar_enclosed_mass_interpolation_is_center_regular() -> None:
+def test_dark_matter_solar_transport_scenario_1() -> None:
     profile = _profile(_context())
     evaluated = profile.evaluate(
         jnp.asarray(
@@ -140,9 +140,6 @@ def test_stellar_enclosed_mass_interpolation_is_center_regular() -> None:
     assert energy.finite
     assert energy.quadrature_error_m2_s2 >= 0.0
     assert energy.sign_qualified
-
-
-def test_solar_transport_rejects_non_si_or_non_inertial_contexts() -> None:
     contexts = (
         _context(length_unit=CENTIMETER),
         _context(pseudo_inertial=False),
@@ -164,9 +161,74 @@ def test_solar_transport_rejects_non_si_or_non_inertial_contexts() -> None:
         )
         with pytest.raises(ValueError, match="continuous, pseudo-inertial physical SI"):
             propagate_exterior_kepler(state, 1.0, 1.0e22, context)
+    context = _context()
+    profile = _profile(context)
+    observation_radius = 2.0e7
+    surface_speed = gravitational_focusing_speed(
+        300.0,
+        observation_radius,
+        profile.radius_m,
+        profile.total_mass_kg,
+    )
+    plan = SolarTransportPlan(
+        profile,
+        _zero_scattering(),
+        1.0,
+        context,
+        observation_radius_m=observation_radius,
+        maximum_jump_events=4,
+        maximum_guard_events=1,
+    )
+    transverse_speed = 50.0
+    radial_speed = jnp.sqrt(surface_speed**2 - transverse_speed**2)
+    states = jnp.broadcast_to(
+        jnp.asarray((profile.radius_m, 0.0, 0.0, -radial_speed, transverse_speed, 0.0)),
+        (2, 6),
+    )
+    states = states.at[1].set(jnp.nan)
+    paths = WeightedSampleBatch(
+        states,
+        jnp.zeros((2,)),
+        support_valid=jnp.asarray(True),
+        mask=jnp.asarray((True, False)),
+        sample_axes=0,
+        provenance="synthetic-solar-surface-injection",
+    )
+    clocks = PoissonClockRealization(
+        jr.key(17),
+        1,
+        support=(0.0, 1.2e5),
+        max_events_per_channel=4,
+        sample_shape=(2,),
+        process_id=plan.process.process_id,
+    )
+    result = plan.simulate(paths, clocks, jnp.asarray((0.0, 1.2e5)))
 
+    assert result.solution.terminal[0]
+    assert result.evidence.successful.tolist() == [True, False]
+    assert result.outcomes.tolist() == [
+        int(TransportOutcome.ESCAPED),
+        int(TransportOutcome.UNRESOLVED),
+    ]
+    assert result.observation_crossings.diagnostics.crossing_count == 1
+    assert jnp.sqrt(jnp.sum(result.final_states[0, :3] ** 2)) >= observation_radius
+    classified = classify_solar_outcomes(
+        jnp.asarray((1.0, -1.0, 1.0, 1.0, -1.0e-15)),
+        jnp.asarray((0, 3, 2, 4, 1)),
+        jnp.asarray((True, False, False, True, False)),
+        jnp.asarray((True, False, True, True, False)),
+        jnp.asarray((True, True, True, False, True)),
+        energy_sign_qualified=jnp.asarray((True, True, True, True, False)),
+    )
 
-def test_exterior_kepler_propagation_preserves_specific_energy() -> None:
+    assert classified.outcomes.tolist() == [
+        int(TransportOutcome.ESCAPED),
+        int(TransportOutcome.CAPTURED),
+        int(TransportOutcome.REFLECTED),
+        int(TransportOutcome.UNRESOLVED),
+        int(TransportOutcome.UNRESOLVED),
+    ]
+    assert jnp.all(jnp.sum(classified.one_hot, axis=-1) == 1)
     context = _context()
     state = BodyFrameTransportState(
         jnp.asarray((2.0e7, 0.0, 0.0)),
@@ -196,7 +258,7 @@ def test_exterior_kepler_propagation_preserves_specific_energy() -> None:
     assert jnp.allclose(compiled_energy, result.specific_energy_after_m2_s2)
 
 
-def test_zero_cross_section_focusing_is_fixed_by_kepler_energy() -> None:
+def test_dark_matter_solar_transport_scenario_2() -> None:
     context = _context()
     profile = _profile(context)
     observation_radius = 2.0e7
@@ -267,63 +329,6 @@ def test_zero_cross_section_focusing_is_fixed_by_kepler_energy() -> None:
     assert bound_valid[0]
     assert jnp.array_equal(bound_final[0], bound_surface[0])
     assert bound_outcome.outcomes[0] == int(TransportOutcome.CAPTURED)
-
-
-def test_solar_simulation_uses_guarded_interior_and_analytic_exterior() -> None:
-    context = _context()
-    profile = _profile(context)
-    observation_radius = 2.0e7
-    surface_speed = gravitational_focusing_speed(
-        300.0,
-        observation_radius,
-        profile.radius_m,
-        profile.total_mass_kg,
-    )
-    plan = SolarTransportPlan(
-        profile,
-        _zero_scattering(),
-        1.0,
-        context,
-        observation_radius_m=observation_radius,
-        maximum_jump_events=4,
-        maximum_guard_events=1,
-    )
-    transverse_speed = 50.0
-    radial_speed = jnp.sqrt(surface_speed**2 - transverse_speed**2)
-    states = jnp.broadcast_to(
-        jnp.asarray((profile.radius_m, 0.0, 0.0, -radial_speed, transverse_speed, 0.0)),
-        (2, 6),
-    )
-    states = states.at[1].set(jnp.nan)
-    paths = WeightedSampleBatch(
-        states,
-        jnp.zeros((2,)),
-        support_valid=jnp.asarray(True),
-        mask=jnp.asarray((True, False)),
-        sample_axes=0,
-        provenance="synthetic-solar-surface-injection",
-    )
-    clocks = PoissonClockRealization(
-        jr.key(17),
-        1,
-        support=(0.0, 1.2e5),
-        max_events_per_channel=4,
-        sample_shape=(2,),
-        process_id=plan.process.process_id,
-    )
-    result = plan.simulate(paths, clocks, jnp.asarray((0.0, 1.2e5)))
-
-    assert result.solution.terminal[0]
-    assert result.evidence.successful.tolist() == [True, False]
-    assert result.outcomes.tolist() == [
-        int(TransportOutcome.ESCAPED),
-        int(TransportOutcome.UNRESOLVED),
-    ]
-    assert result.observation_crossings.diagnostics.crossing_count == 1
-    assert jnp.sqrt(jnp.sum(result.final_states[0, :3] ** 2)) >= observation_radius
-
-
-def test_thermal_target_marks_follow_rate_weighted_bounded_law() -> None:
     table = _thermal_scattering()
     temperature = 1.0e6
     projectile = jnp.asarray((2.0e5, 0.0, 0.0))
@@ -335,9 +340,6 @@ def test_thermal_target_marks_follow_rate_weighted_bounded_law() -> None:
     assert jnp.allclose(jnp.mean(marks[:, 1:3], axis=0), 0.0, atol=5.0e3)
     assert jnp.allclose(jnp.sum(marks[:, 3:] ** 2, axis=-1), 1.0, atol=1.0e-6)
     assert table.mark_sampler.maxwellian_tail_probability_bound < 1.0e-7
-
-
-def test_observation_radius_flux_uses_spherical_area_and_exposure() -> None:
     radius = 2.0e7
     state = jnp.asarray((radius, 0.0, 0.0, 300.0, 0.0, 0.0))
     source = WeightedSampleBatch(
@@ -358,23 +360,3 @@ def test_observation_radius_flux_uses_spherical_area_and_exposure() -> None:
     assert flux.valid
     assert jnp.allclose(flux.total_crossing_weight, 2.0)
     assert jnp.allclose(flux.flux_m2_s, 1.0 / (4.0 * jnp.pi * radius**2))
-
-
-def test_solar_outcomes_are_exclusive_and_numerical_failure_is_unresolved() -> None:
-    classified = classify_solar_outcomes(
-        jnp.asarray((1.0, -1.0, 1.0, 1.0, -1.0e-15)),
-        jnp.asarray((0, 3, 2, 4, 1)),
-        jnp.asarray((True, False, False, True, False)),
-        jnp.asarray((True, False, True, True, False)),
-        jnp.asarray((True, True, True, False, True)),
-        energy_sign_qualified=jnp.asarray((True, True, True, True, False)),
-    )
-
-    assert classified.outcomes.tolist() == [
-        int(TransportOutcome.ESCAPED),
-        int(TransportOutcome.CAPTURED),
-        int(TransportOutcome.REFLECTED),
-        int(TransportOutcome.UNRESOLVED),
-        int(TransportOutcome.UNRESOLVED),
-    ]
-    assert jnp.all(jnp.sum(classified.one_hot, axis=-1) == 1)

@@ -48,7 +48,7 @@ def _laplace(problem: Any) -> Any:
     )
 
 
-def test_laplace_prediction_propagates_conditional_variance_and_total_variance() -> None:
+def test_posterior_observations_scenario_1() -> None:
     problem = _observation_problem()
     result = _laplace(problem)
     query = jnp.linspace(0.5, 1.5, 5)
@@ -67,11 +67,6 @@ def test_laplace_prediction_propagates_conditional_variance_and_total_variance()
         prediction.epistemic_variance().data + prediction.observation_variance().data,
     )
     assert jnp.all(prediction.observation_variance().data > 0.0)
-
-
-def test_laplace_observation_draws_are_reproducible_chunk_invariant_and_separated() -> (
-    None
-):
     problem = _observation_problem()
     result = _laplace(problem)
     query = jnp.linspace(0.5, 1.5, 4)
@@ -98,9 +93,6 @@ def test_laplace_observation_draws_are_reproducible_chunk_invariant_and_separate
         "__phydra_uq_draw",
         "x",
     )
-
-
-def test_observation_draws_recover_declared_gaussian_variance() -> None:
     problem = _observation_problem()
     result = _laplace(problem)
     query = jnp.asarray([0.5, 1.0])
@@ -116,9 +108,6 @@ def test_observation_draws_recover_declared_gaussian_variance() -> None:
     empirical = observations.variance(sources="observation").data
     expected = prediction.conditional_variance.data
     assert jnp.allclose(empirical, expected, rtol=0.12, atol=3e-3)
-
-
-def test_observation_prediction_requires_explicit_sampler_and_valid_draws() -> None:
     query = jnp.ones((2,))
     missing = _laplace(_observation_problem(sample_observation=False))
     with pytest.raises(ValueError, match="no observation-sampling function"):
@@ -148,22 +137,16 @@ def test_observation_prediction_requires_explicit_sampler_and_valid_draws() -> N
             num_observation_samples=3,
             valid_policy="raise",
         )
-
-
-@pytest.mark.parametrize("step_size", (jnp.nan, jnp.inf))
-def test_mcmc_rejects_nonfinite_initial_step_size(step_size: Any) -> None:
-    with pytest.raises(ValueError, match="finite"):
-        phx.uq.sample_nuts(
-            _observation_problem(),
-            key=jr.key(50),
-            num_chains=2,
-            num_warmup=1,
-            num_samples=4,
-            initial_step_size=step_size,
-        )
-
-
-def test_mcmc_observation_prediction_preserves_chain_and_draw_axes() -> None:
+    for step_size in (jnp.nan, jnp.inf):
+        with pytest.raises(ValueError, match="finite"):
+            phx.uq.sample_nuts(
+                _observation_problem(),
+                key=jr.key(50),
+                num_chains=2,
+                num_warmup=1,
+                num_samples=4,
+                initial_step_size=step_size,
+            )
     problem = _observation_problem()
     query = jnp.asarray([0.5, 1.0])
     result = phx.uq.sample_nuts(

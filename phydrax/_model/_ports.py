@@ -20,9 +20,7 @@ from ..typing import parse
 from ..units._dimension import DimensionSignature
 
 
-type PortVariance = Literal[
-    "neutral", "primal", "dual", "covariant", "contravariant"
-]
+type PortVariance = Literal["neutral", "primal", "dual", "covariant", "contravariant"]
 
 _DIRECTIONS = ("input", "output")
 _ASPECTS = ("axes", "dimensions", "frame", "normalization", "space")

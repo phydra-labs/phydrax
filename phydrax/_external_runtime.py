@@ -47,6 +47,7 @@ from ._external_worker import (
 from ._fingerprint import canonical_fingerprint, canonical_json
 from ._host_io import open_regular_file
 from ._identity import ArtifactBindingIdentity
+from ._jax_context import inside_jax_transformation
 from ._model._component import ExecutionCapabilities
 from .artifacts import ScientificArtifactEnvelope
 from .backends._types import BackendUnavailableError
@@ -57,7 +58,7 @@ from .typing import parse
 def _host_only(*values: Any) -> None:
     # A zero-argument host operation inside jit must also be rejected, not just
     # calls whose arguments happen to contain a tracer.
-    if not jax.core.trace_ctx.is_top_level():
+    if inside_jax_transformation():
         raise TypeError(
             "External energy operations cannot execute inside JAX transformations."
         )
@@ -79,7 +80,7 @@ def _require_execution(capabilities: ExecutionCapabilities, /, *values: Any) -> 
         raise TypeError("External execution requires declared ExecutionCapabilities.")
     if not capabilities.host_only:
         return
-    if not jax.core.trace_ctx.is_top_level():
+    if inside_jax_transformation():
         raise TypeError(
             f"Host-only {capabilities.tier!r} execution cannot run inside JAX "
             "transformations (jit, vmap, grad, jvp, vjp); call it eagerly with "

@@ -41,7 +41,7 @@ def _base_system() -> Any:
     )
 
 
-def test_sa_negative_closure_has_positive_and_recovery_branches() -> None:
+def test_sa_contracts() -> None:
     plan = phx.equations.SpalartAllmarasNegativePlan()
     gradient = jnp.asarray(((0.0, 2.0), (0.0, 0.0)))
     working_gradient = jnp.asarray((0.01, -0.02))
@@ -55,6 +55,53 @@ def test_sa_negative_closure_has_positive_and_recovery_branches() -> None:
     assert negative.source > 0.0
     assert positive.diffusion_coefficient > 0.0
     assert negative.diffusion_coefficient > 0.0
+    base = _base_system()
+    system = phx.equations.SpalartAllmarasCompressibleSystem(base)
+    wall = SpalartAllmarasWallBoundary(
+        phx.discretization.NoSlipAdiabaticWallBoundary(jnp.asarray((0.0, 0.0)))
+    )
+    interior = system.primitive_to_conserved(jnp.asarray((1.0, 2.0, 0.0, 500.0, 3.0e-4)))
+    exterior = wall.exterior_state(
+        system,
+        jnp.asarray(0.0),
+        interior,
+        jnp.asarray((0.5, 0.1)),
+        jnp.asarray((0.0, -1.0)),
+        1,
+        None,
+    )
+    np.testing.assert_allclose(
+        0.5 * (system.working_variable(interior) + system.working_variable(exterior)),
+        0.0,
+        atol=1.0e-12,
+    )
+
+    centers = jnp.asarray((((0.25, 0.1), (0.25, 0.3)), ((0.75, 0.1), (0.75, 0.3))))
+    distance = FlatWallDistancePlan(1, 0.0, "lower").prepare(
+        centers, geometry_id="flat-test"
+    )
+    np.testing.assert_allclose(distance.distance, centers[..., 1], atol=0.0)
+    system = phx.equations.SpalartAllmarasCompressibleSystem(_base_system())
+    plan = SpalartAllmarasManufacturedPlan(
+        system,
+        lambda point, args: jnp.asarray(
+            (
+                1.0 + 0.02 * point[0],
+                0.3 + 0.1 * point[1],
+                0.05 * point[0],
+                500.0 + 3.0 * point[1],
+                2.0e-4 + 1.0e-5 * point[0],
+            )
+        ),
+        lambda point, args: point[1] + 0.5,
+        case_id="sa-negative-manufactured",
+    )
+    points = jnp.asarray(((0.2, 0.3), (0.7, 0.6)))
+    evidence = plan.evaluate(points)
+
+    assert bool(jnp.all(evidence.successful))
+    assert evidence.exact_rate.shape == (2, system.component_count)
+    assert jnp.all(jnp.isfinite(evidence.exact_rate))
 
 
 def test_sa_system_roundtrip_diffusion_and_source_ledger() -> None:
@@ -84,56 +131,3 @@ def test_sa_system_roundtrip_diffusion_and_source_ledger() -> None:
     )
     assert bool(system.admissible(state))
     assert system.maximum_diffusivity(state, arguments) > 0.0
-
-
-def test_sa_wall_sets_zero_face_working_variable_and_flat_distance_is_exact() -> None:
-    base = _base_system()
-    system = phx.equations.SpalartAllmarasCompressibleSystem(base)
-    wall = SpalartAllmarasWallBoundary(
-        phx.discretization.NoSlipAdiabaticWallBoundary(jnp.asarray((0.0, 0.0)))
-    )
-    interior = system.primitive_to_conserved(jnp.asarray((1.0, 2.0, 0.0, 500.0, 3.0e-4)))
-    exterior = wall.exterior_state(
-        system,
-        jnp.asarray(0.0),
-        interior,
-        jnp.asarray((0.5, 0.1)),
-        jnp.asarray((0.0, -1.0)),
-        1,
-        None,
-    )
-    np.testing.assert_allclose(
-        0.5 * (system.working_variable(interior) + system.working_variable(exterior)),
-        0.0,
-        atol=1.0e-12,
-    )
-
-    centers = jnp.asarray((((0.25, 0.1), (0.25, 0.3)), ((0.75, 0.1), (0.75, 0.3))))
-    distance = FlatWallDistancePlan(1, 0.0, "lower").prepare(
-        centers, geometry_id="flat-test"
-    )
-    np.testing.assert_allclose(distance.distance, centers[..., 1], atol=0.0)
-
-
-def test_sa_manufactured_plan_returns_complete_finite_rate() -> None:
-    system = phx.equations.SpalartAllmarasCompressibleSystem(_base_system())
-    plan = SpalartAllmarasManufacturedPlan(
-        system,
-        lambda point, args: jnp.asarray(
-            (
-                1.0 + 0.02 * point[0],
-                0.3 + 0.1 * point[1],
-                0.05 * point[0],
-                500.0 + 3.0 * point[1],
-                2.0e-4 + 1.0e-5 * point[0],
-            )
-        ),
-        lambda point, args: point[1] + 0.5,
-        case_id="sa-negative-manufactured",
-    )
-    points = jnp.asarray(((0.2, 0.3), (0.7, 0.6)))
-    evidence = plan.evaluate(points)
-
-    assert bool(jnp.all(evidence.successful))
-    assert evidence.exact_rate.shape == (2, system.component_count)
-    assert jnp.all(jnp.isfinite(evidence.exact_rate))

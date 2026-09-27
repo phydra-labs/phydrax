@@ -105,7 +105,7 @@ def _independent_exact_coordinates(
     )
 
 
-def test_canonical_coordinate_translation_has_analytic_matrix() -> None:
+def test_paraxial_scenario_1() -> None:
     distance = 2.5
     refractive_index = 1.4
     exact = _single_plan(
@@ -127,9 +127,6 @@ def test_canonical_coordinate_translation_has_analytic_matrix() -> None:
     np.testing.assert_allclose(ray_map.input_reference, np.zeros((4,)), atol=1.0e-12)
     np.testing.assert_allclose(ray_map.output_reference, np.zeros((4,)), atol=1.0e-12)
     np.testing.assert_allclose(ray_map.jacobian, expected, rtol=2.0e-9, atol=2.0e-9)
-
-
-def test_spherical_refraction_matches_first_order_power_limit() -> None:
     distance = 1.0
     curvature = 0.2
     incident_index = 1.0
@@ -159,9 +156,6 @@ def test_spherical_refraction_matches_first_order_power_limit() -> None:
 
     assert bool(ray_map.valid)
     np.testing.assert_allclose(ray_map.jacobian, expected, rtol=2.0e-8, atol=2.0e-8)
-
-
-def test_explicit_and_cached_maps_are_identical_and_affine() -> None:
     exact_plan = _single_plan(surface_z=2.0)
     exact = exact_plan.prepare()
     explicit = _explicit_map(exact, output_frame=_frame(2.0))
@@ -188,7 +182,7 @@ def test_explicit_and_cached_maps_are_identical_and_affine() -> None:
     np.testing.assert_allclose(result.coordinates, expected, atol=1.0e-12)
 
 
-def test_centered_finite_difference_matches_fixed_branch_jacobian() -> None:
+def test_paraxial_scenario_2() -> None:
     input_frame = _frame(0.0)
     output_frame = _frame(1.0)
     exact = _single_plan(
@@ -240,9 +234,6 @@ def test_centered_finite_difference_matches_fixed_branch_jacobian() -> None:
     np.testing.assert_allclose(
         ray_map.jacobian, finite_difference, rtol=2.0e-6, atol=2.0e-7
     )
-
-
-def test_reflection_uses_declared_output_frame_and_canonical_signs() -> None:
     distance = 1.5
     input_index = 1.2
     mirror = _single_plan(
@@ -284,11 +275,6 @@ def test_reflection_uses_declared_output_frame_and_canonical_signs() -> None:
     assert int(wrong_orientation.status) == int(
         ParaxialOpticsStatus.BRANCH_MARGIN_VIOLATION
     )
-
-
-def test_aperture_edge_invalidates_differential_map_without_invalidating_chief_hit() -> (
-    None
-):
     exact_plan = _single_plan(aperture=0.5)
     exact = exact_plan.prepare()
     reference = jnp.asarray((0.5, 0.0, 0.0, 0.0))
@@ -311,7 +297,7 @@ def test_aperture_edge_invalidates_differential_map_without_invalidating_chief_h
     assert int(cached_result.status) == int(ParaxialOpticsStatus.INVALID_DIFFERENTIAL_MAP)
 
 
-def test_failed_chief_ray_produces_invalid_differential_evidence() -> None:
+def test_paraxial_scenario_3() -> None:
     incident_index = 1.5
     exact = _single_plan(aperture=10.0, indices=(incident_index, 1.0)).prepare()
     reference = jnp.asarray((0.0, 0.0, incident_index * np.deg2rad(60.0), 0.0))
@@ -324,9 +310,6 @@ def test_failed_chief_ray_produces_invalid_differential_evidence() -> None:
 
     assert not bool(ray_map.valid)
     assert int(ray_map.status) == int(ParaxialOpticsStatus.CHIEF_RAY_FAILURE)
-
-
-def test_cached_paraxial_map_refuses_outside_trust_envelope() -> None:
     exact_plan = _single_plan(surface_z=1.0)
     prepared = ParaxialOpticsPlan(
         exact_plan,
@@ -359,9 +342,6 @@ def test_cached_paraxial_map_refuses_outside_trust_envelope() -> None:
         ),
     )
     np.testing.assert_array_equal(result.within_envelope, (True, False, False, False))
-
-
-def test_cached_execution_is_jittable_and_vmappable() -> None:
     exact_plan = _single_plan(surface_z=1.0)
     prepared = ParaxialOpticsPlan(
         exact_plan,

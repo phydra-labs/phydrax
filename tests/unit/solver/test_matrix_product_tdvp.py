@@ -7,7 +7,7 @@ import phydrax as phx
 tn = phx.tensor_network
 
 
-def test_one_site_real_time_tdvp_matches_exact_evolution() -> None:
+def test_matrix_product_tdvp_scenario_1() -> None:
     pauli_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
     state = tn.product_mps(
         jnp.asarray([[1.0, 1.0]], dtype=jnp.complex128) / jnp.sqrt(2.0)
@@ -29,9 +29,6 @@ def test_one_site_real_time_tdvp_matches_exact_evolution() -> None:
     assert result.successful
     assert jnp.allclose(result.final_state.to_dense(), expected, atol=1e-8)
     assert jnp.allclose(result.diagnostics.norm_history[:2], 1.0, atol=1e-8)
-
-
-def test_zero_hamiltonian_preserves_multisite_state_without_normalization() -> None:
     zero = jnp.zeros((2, 2), dtype=jnp.complex128)
     state = tn.product_mps(jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=jnp.complex128))
     hamiltonian = tn.product_mpo(jnp.stack((zero, jnp.eye(2, dtype=zero.dtype))))

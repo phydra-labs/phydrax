@@ -41,7 +41,7 @@ def _geometry(shape: Any, system: Any, *, valid: Any = True) -> Any:
     )
 
 
-def test_c2p_primary_round_trip_certifies_recomposition_and_evidence() -> None:
+def test_relativistic_primitive_scenario_1() -> None:
     system = _system()
     geometry = _geometry((4,), system)
     primitive = jnp.asarray(
@@ -72,9 +72,6 @@ def test_c2p_primary_round_trip_certifies_recomposition_and_evidence() -> None:
     assert result.candidates.attempted.shape == (4, 3)
     assert result.candidates.nonlinear_status.shape == (4, 3)
     assert result.candidates.iterations.shape == (4, 3)
-
-
-def test_c2p_fixed_bracket_is_a_visible_secondary_candidate() -> None:
     system = _system()
     geometry = _geometry((1,), system)
     primitive = jnp.asarray(((0.4, 5.0, 0.92, 0.0, 0.0),), dtype=jnp.float64)
@@ -93,9 +90,22 @@ def test_c2p_fixed_bracket_is_a_visible_secondary_candidate() -> None:
     assert result.candidates.selected_branch[0] == 1
     assert not bool(result.derivative_valid[0])
     assert jnp.allclose(result.primitive, primitive, rtol=1.0e-8, atol=1.0e-9)
+    system = _system()
+    valid_geometry = _geometry((3,), system)
+    invalid_geometry = _geometry((3,), system, valid=False)
+    primitive = jnp.broadcast_to(jnp.asarray((1.0, 0.2, 0.1, 0.0, 0.0)), (3, 5))
+    conserved = system.primitive_to_conserved(primitive, valid_geometry)
+    policy = GRHDC2PPolicy(system)
+    invalid = policy.recover(conserved, invalid_geometry)
 
+    assert not bool(jnp.any(invalid.successful))
+    assert bool(jnp.all(invalid.status == int(GRHDC2PStatus.INVALID_GEOMETRY)))
 
-def test_near_vacuum_atmosphere_and_hard_budget_failure_are_not_silent() -> None:
+    compiled = jax.jit(lambda state: policy.recover(state, valid_geometry))
+    result = compiled(conserved)
+    assert result.primitive.shape == (3, 5)
+    assert result.candidates.attempted.shape == (3, 3)
+    assert result.candidates.recomposition_defect.shape == (3, 3)
     system = _system()
     geometry = _geometry((2,), system)
     vacuum = jnp.zeros((2, 5), dtype=jnp.float64)
@@ -134,22 +144,3 @@ def test_near_vacuum_atmosphere_and_hard_budget_failure_are_not_silent() -> None
         jnp.all(strict.atmosphere.status == int(AtmosphereFloorStatus.BUDGET_EXCEEDED))
     )
     assert jnp.all(strict.atmosphere.conservative_increment == 0.0)
-
-
-def test_c2p_invalid_geometry_status_and_jit_fixed_shapes() -> None:
-    system = _system()
-    valid_geometry = _geometry((3,), system)
-    invalid_geometry = _geometry((3,), system, valid=False)
-    primitive = jnp.broadcast_to(jnp.asarray((1.0, 0.2, 0.1, 0.0, 0.0)), (3, 5))
-    conserved = system.primitive_to_conserved(primitive, valid_geometry)
-    policy = GRHDC2PPolicy(system)
-    invalid = policy.recover(conserved, invalid_geometry)
-
-    assert not bool(jnp.any(invalid.successful))
-    assert bool(jnp.all(invalid.status == int(GRHDC2PStatus.INVALID_GEOMETRY)))
-
-    compiled = jax.jit(lambda state: policy.recover(state, valid_geometry))
-    result = compiled(conserved)
-    assert result.primitive.shape == (3, 5)
-    assert result.candidates.attempted.shape == (3, 3)
-    assert result.candidates.recomposition_defect.shape == (3, 3)

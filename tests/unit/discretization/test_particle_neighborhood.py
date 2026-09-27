@@ -9,7 +9,7 @@ import pytest
 import phydrax as phx
 
 
-def test_dense_neighborhood_uses_canonical_stable_pair_ids() -> None:
+def test_particle_neighborhood_scenario_1() -> None:
     particles = phx.discretization.ParticleSetPlan(
         # ty: ignore[invalid-argument-type]
         [20, 5, 13],
@@ -39,17 +39,11 @@ def test_dense_neighborhood_uses_canonical_stable_pair_ids() -> None:
     ) == {(5, 13), (5, 20), (13, 20)}
     assert np.all(np.asarray(pairs.left_indices) != np.asarray(pairs.right_indices))
     assert prepared.resource_evidence_id == prepared.preparation.report_id
-
-
-def test_dense_neighborhood_rejects_allocation_over_budget() -> None:
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(5), jnp.ones((5,)), ambient_dimension=2
     ).prepare()
     with pytest.raises(ValueError, match="requires 10 pairs"):
         phx.discretization.DenseParticleNeighborhoodPlan(9).prepare(particles)
-
-
-def test_periodic_pair_geometry_uses_minimum_image_and_zero_safe_direction() -> None:
     particles = phx.discretization.ParticleSetPlan(
         # ty: ignore[invalid-argument-type]
         [0, 1],
@@ -80,9 +74,6 @@ def test_periodic_pair_geometry_uses_minimum_image_and_zero_safe_direction() -> 
     )
     assert jnp.array_equal(coincident.direction, jnp.zeros((1, 1)))
     assert jnp.all(jnp.isfinite(coincident.direction))
-
-
-def test_pair_exchange_is_equal_opposite_for_every_accumulation_policy() -> None:
     particles = phx.discretization.ParticleSetPlan(
         # ty: ignore[invalid-argument-type]
         [0, 1, 2],

@@ -39,7 +39,7 @@ def _clarabel_outer(*, maximum_rounds: Any = 100) -> Any:
     )
 
 
-def test_projection_separator_is_globally_valid_and_excludes_source() -> None:
+def test_conic_outer_approximation_scenario_1() -> None:
     program = _soc_program().relaxation
     source = jnp.asarray([0.0, 0.0])
 
@@ -63,9 +63,6 @@ def test_projection_separator_is_globally_valid_and_excludes_source() -> None:
     )
     for candidate in feasible:
         assert cut.row @ candidate <= cut.rhs + 1e-8
-
-
-def test_conic_outer_approximation_matches_fixed_integer_reference() -> None:
     program = _soc_program()
     policy = phx.optim.MixedIntegerSolvePolicy(_clarabel_outer())
 
@@ -79,9 +76,6 @@ def test_conic_outer_approximation_matches_fixed_integer_reference() -> None:
     assert result.work.master_solves >= 1
     assert result.work.fixed_discrete_solves >= 1
     assert result.work.cuts_accepted >= 1
-
-
-def test_outer_round_limit_never_reports_certified_success() -> None:
     program = _soc_program()
     policy = phx.optim.MixedIntegerSolvePolicy(_clarabel_outer(maximum_rounds=1))
 

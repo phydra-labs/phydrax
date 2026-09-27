@@ -33,16 +33,13 @@ def _resources() -> Any:
     )
 
 
-def test_finite_su2_bf_identity_portfolio_is_exact() -> None:
+def test_spin_foam_frontier_scenario_1() -> None:
     evidence = assess_su2_bf_identities(3)
     assert bool(evidence.accepted)
     assert float(evidence.maximum_clebsch_orthogonality_residual) < 1e-12
     assert float(evidence.maximum_recoupling_unitarity_residual) < 1e-12
     assert float(evidence.maximum_tetrahedral_symmetry_residual) < 1e-12
     assert float(evidence.maximum_pentagon_residual) < 1e-12
-
-
-def test_fixed_theta_spin_network_is_gauss_invariant_with_area_spectrum() -> None:
     edges = tuple(SpinNetworkEdge(f"e{index}", "left", "right", 2) for index in range(3))
     plan = SpinNetworkGraphPlan(
         ("left", "right"),
@@ -62,9 +59,6 @@ def test_fixed_theta_spin_network_is_gauss_invariant_with_area_spectrum() -> Non
     state = spin_network_state(prepared, jnp.asarray((1.0 + 0.0j,)))
     assert bool(state.normalized)
     assert "no-graph-changing" in state.claim
-
-
-def test_eprl_plan_pins_boundary_cutoff_and_all_conventions() -> None:
     plan = EPRLVertexPlan(
         (0,) * 10,
         (0,) * 5,

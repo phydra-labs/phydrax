@@ -17,7 +17,7 @@ def _problem() -> Any:
     return domain, boundary
 
 
-def test_adaptive_triangle_polynomial_converges_on_initial_partition() -> None:
+def test_adaptive_contracts() -> None:
     domain, boundary = _problem()
     function = domain.Function("x")(lambda x: jnp.sum(x * x))
     plan = phx.integration.AdaptiveTrianglePlan(
@@ -39,42 +39,6 @@ def test_adaptive_triangle_polynomial_converges_on_initial_partition() -> None:
     assert estimate.num_evaluations == 4 * (
         plan.low_rule.num_points + plan.high_rule.num_points
     )
-
-
-def test_adaptive_triangle_domain_targets_require_declared_domain_functions() -> None:
-    _, boundary = _problem()
-    plan = phx.integration.AdaptiveTrianglePlan(max_cells=16)
-
-    def undeclared(x: Any = jnp.ones((3,)), *, key: Any = None) -> Any:
-        del key
-        return jnp.sum(x * x)
-
-    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
-        phx.integration.integrate(undeclared, phx.integration.over(boundary), plan)
-
-
-def test_adaptive_callable_triangles_reuse_partition_and_diagnostics() -> None:
-    triangles = jnp.asarray(
-        [[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]],
-    )
-    plan = phx.integration.AdaptiveTrianglePlan(
-        max_cells=16,
-        collect_partition=True,
-    )
-    estimate = phx.integration.adaptive_triangle_callable(
-        lambda points: points[:, 0] ** 2 + points[:, 1],
-        triangles,
-        plan,
-    )
-
-    assert estimate.successful
-    assert estimate.value == pytest.approx(0.25, rel=2e-13)
-    assert estimate.error_kind == "paired-reference-rule"
-    assert estimate.provenance.target == "callable"
-    assert estimate.diagnostics.partition is not None
-
-
-def test_adaptive_triangle_reports_cell_exhaustion_without_throwing() -> None:
     domain, boundary = _problem()
     function = domain.Function("x")(lambda x: jnp.exp(8.0 * x[0]))
     plan = phx.integration.AdaptiveTrianglePlan(
@@ -93,9 +57,6 @@ def test_adaptive_triangle_reports_cell_exhaustion_without_throwing() -> None:
     assert estimate.status == int(phx.integration.IntegrationStatus.MAXIMUM_CELLS_REACHED)
     assert not estimate.successful
     assert estimate.diagnostics.partition.count == 4
-
-
-def test_adaptive_triangle_initial_budget_is_never_exceeded() -> None:
     domain, boundary = _problem()
     plan = phx.integration.AdaptiveTrianglePlan(max_evaluations=1, throw=False)
     estimate = phx.integration.integrate(
@@ -108,9 +69,6 @@ def test_adaptive_triangle_initial_budget_is_never_exceeded() -> None:
         phx.integration.IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED
     )
     assert estimate.num_evaluations == 1
-
-
-def test_adaptive_triangle_nonfinite_integrand_has_distinct_status() -> None:
     domain, boundary = _problem()
     plan = phx.integration.AdaptiveTrianglePlan(max_cells=4, throw=False)
     estimate = phx.integration.integrate(
@@ -119,9 +77,6 @@ def test_adaptive_triangle_nonfinite_integrand_has_distinct_status() -> None:
         plan,
     )
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
-
-
-def test_adaptive_triangle_normalized_target_uses_paired_mass_integral() -> None:
     domain, boundary = _problem()
     plan = phx.integration.AdaptiveTrianglePlan(max_cells=16)
     estimate = phx.integration.integrate(
@@ -132,24 +87,6 @@ def test_adaptive_triangle_normalized_target_uses_paired_mass_integral() -> None
     assert estimate.successful
     assert estimate.value.data == pytest.approx(3.0, rel=2e-13)
     assert estimate.error_kind == "ratio-paired-reference-rule"
-
-
-def test_adaptive_triangle_is_jittable_and_differentiable() -> None:
-    domain, boundary = _problem()
-    target = phx.integration.over(boundary)
-    plan = phx.integration.AdaptiveTrianglePlan(max_cells=7)
-
-    def objective(scale: Any) -> Any:
-        function = domain.Function("x")(lambda x: scale * jnp.sum(x * x))
-        return phx.integration.integrate(function, target, plan).value.data
-
-    value = jax.jit(objective)(2.0)
-    derivative = jax.grad(objective)(2.0)
-    assert value == pytest.approx(2.0 * 0.9330127018922193, rel=2e-13)
-    assert derivative == pytest.approx(0.9330127018922193, rel=2e-13)
-
-
-def test_adaptive_triangle_ratio_must_meet_the_declared_tolerance() -> None:
     domain, boundary = _problem()
     base = phx.integration.over(boundary)
     target = phx.integration.normalized_density(
@@ -172,3 +109,48 @@ def test_adaptive_triangle_ratio_must_meet_the_declared_tolerance() -> None:
     assert estimate.status == int(phx.integration.IntegrationStatus.REFINEMENT_STAGNATION)
     assert estimate.diagnostics.status == estimate.status
     assert estimate.diagnostics.estimated_error == estimate.error_estimate
+    triangles = jnp.asarray(
+        [[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]],
+    )
+    plan = phx.integration.AdaptiveTrianglePlan(
+        max_cells=16,
+        collect_partition=True,
+    )
+    estimate = phx.integration.adaptive_triangle_callable(
+        lambda points: points[:, 0] ** 2 + points[:, 1],
+        triangles,
+        plan,
+    )
+
+    assert estimate.successful
+    assert estimate.value == pytest.approx(0.25, rel=2e-13)
+    assert estimate.error_kind == "paired-reference-rule"
+    assert estimate.provenance.target == "callable"
+    assert estimate.diagnostics.partition is not None
+
+
+def test_adaptive_triangle_domain_targets_require_declared_domain_functions() -> None:
+    _, boundary = _problem()
+    plan = phx.integration.AdaptiveTrianglePlan(max_cells=16)
+
+    def undeclared(x: Any = jnp.ones((3,)), *, key: Any = None) -> Any:
+        del key
+        return jnp.sum(x * x)
+
+    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
+        phx.integration.integrate(undeclared, phx.integration.over(boundary), plan)
+
+
+def test_adaptive_triangle_is_jittable_and_differentiable() -> None:
+    domain, boundary = _problem()
+    target = phx.integration.over(boundary)
+    plan = phx.integration.AdaptiveTrianglePlan(max_cells=7)
+
+    def objective(scale: Any) -> Any:
+        function = domain.Function("x")(lambda x: scale * jnp.sum(x * x))
+        return phx.integration.integrate(function, target, plan).value.data
+
+    value = jax.jit(objective)(2.0)
+    derivative = jax.grad(objective)(2.0)
+    assert value == pytest.approx(2.0 * 0.9330127018922193, rel=2e-13)
+    assert derivative == pytest.approx(0.9330127018922193, rel=2e-13)

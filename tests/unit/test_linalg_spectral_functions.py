@@ -89,9 +89,7 @@ def _matrix_free_generalized_problem(operator_matrix: Any, metric_matrix: Any) -
     )
 
 
-def test_polynomial_spectral_operator_matches_direct_matrix_polynomial_and_reuses_spectrum() -> (
-    None
-):
+def test_linalg_spectral_functions_scenario_1() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 0.4, 0.0, 0.0],
@@ -118,6 +116,58 @@ def test_polynomial_spectral_operator_matches_direct_matrix_polynomial_and_reuse
     assert jnp.allclose(result.trace, jnp.trace(reference), atol=1e-11)
     assert result.diagnostics.reconstruction_residual < 1e-10
     assert result.provenance.spectrum_plan_id == prepared.plan.plan_id
+    matrix = jnp.asarray(
+        [
+            [2.0, 0.3, 0.0],
+            [0.3, 3.0, 0.2],
+            [0.0, 0.2, 5.0],
+        ]
+    )
+    cases = (
+        (eigen.ExponentialSpectralFunction(), spla.expm(matrix)),
+        (eigen.LogarithmSpectralFunction(), spla.logm(matrix)),
+        (eigen.SquareRootSpectralFunction(), spla.fractional_matrix_power(matrix, 0.5)),
+        (
+            eigen.InverseSquareRootSpectralFunction(),
+            spla.fractional_matrix_power(matrix, -0.5),
+        ),
+        (
+            eigen.FractionalPowerSpectralFunction(1.5),
+            spla.fractional_matrix_power(matrix, 1.5),
+        ),
+        (
+            eigen.ResolventSpectralFunction(jnp.asarray(-1.0)),
+            jnp.linalg.inv(matrix + jnp.eye(3)),
+        ),
+    )
+
+    for function, reference in cases:
+        result = eigen.self_adjoint_spectral_operator(
+            _standard_problem(matrix),
+            function,
+        )
+        assert bool(result.successful)
+        assert jnp.allclose(result.operator, reference, rtol=1e-10, atol=1e-10)
+    matrix = jnp.diag(jnp.asarray([-1.0, 1.0, 3.0]))
+    logarithm = eigen.self_adjoint_spectral_operator(
+        _standard_problem(matrix),
+        eigen.LogarithmSpectralFunction(),
+    )
+    square_root = eigen.self_adjoint_spectral_operator(
+        _standard_problem(matrix),
+        eigen.SquareRootSpectralFunction(),
+    )
+    pole = eigen.self_adjoint_spectral_operator(
+        _standard_problem(matrix),
+        eigen.ResolventSpectralFunction(jnp.asarray(1.0)),
+    )
+
+    assert logarithm.status == int(eigen.SelfAdjointSpectralOperatorStatus.DOMAIN_ERROR)
+    assert square_root.status == int(eigen.SelfAdjointSpectralOperatorStatus.DOMAIN_ERROR)
+    assert pole.status == int(eigen.SelfAdjointSpectralOperatorStatus.DOMAIN_ERROR)
+    assert not bool(logarithm.diagnostics.domain_valid)
+    assert not bool(square_root.diagnostics.domain_valid)
+    assert not bool(pole.diagnostics.domain_valid)
 
 
 def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference() -> None:
@@ -178,143 +228,135 @@ def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference() ->
         eigen.FermiDiracSpectralFunction(jnp.asarray(0.0), jnp.asarray(0.0))
 
 
-@pytest.mark.parametrize(
-    "problem_factory",
-    (_standard_problem, _matrix_free_standard_problem),
-)
-def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite_difference(
-    problem_factory: Any,
-) -> None:
-    matrix = jnp.asarray(
-        [
-            [1.0, 0.0, 0.1, 0.0],
-            [0.0, 1.0, -0.2, 0.0],
-            [0.1, -0.2, 4.0, 0.3],
-            [0.0, 0.0, 0.3, 7.0],
-        ]
-    )
-    perturbation = jnp.asarray(
-        [
-            [0.2, 0.3, -0.1, 0.0],
-            [0.3, -0.2, 0.2, 0.1],
-            [-0.1, 0.2, 0.1, -0.3],
-            [0.0, 0.1, -0.3, -0.1],
-        ]
-    )
-    coefficients = jnp.asarray([0.5, -0.3, 0.2, 0.04])
-    coefficient_tangent = jnp.asarray([0.1, -0.05, 0.03, -0.01])
-    policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
+def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite_difference() -> (
+    None
+):
+    for problem_factory in (_standard_problem, _matrix_free_standard_problem):
+        matrix = jnp.asarray(
+            [
+                [1.0, 0.0, 0.1, 0.0],
+                [0.0, 1.0, -0.2, 0.0],
+                [0.1, -0.2, 4.0, 0.3],
+                [0.0, 0.0, 0.3, 7.0],
+            ]
+        )
+        perturbation = jnp.asarray(
+            [
+                [0.2, 0.3, -0.1, 0.0],
+                [0.3, -0.2, 0.2, 0.1],
+                [-0.1, 0.2, 0.1, -0.3],
+                [0.0, 0.1, -0.3, -0.1],
+            ]
+        )
+        coefficients = jnp.asarray([0.5, -0.3, 0.2, 0.04])
+        coefficient_tangent = jnp.asarray([0.1, -0.05, 0.03, -0.01])
+        policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    def operator(current_matrix: Any, current_coefficients: Any) -> Any:
-        return eigen.self_adjoint_spectral_operator(
-            problem_factory(current_matrix),
-            eigen.PolynomialSpectralFunction(current_coefficients),
-            policy=policy,
-        ).operator
+        def operator(current_matrix: Any, current_coefficients: Any) -> Any:
+            return eigen.self_adjoint_spectral_operator(
+                problem_factory(current_matrix),
+                eigen.PolynomialSpectralFunction(current_coefficients),
+                policy=policy,
+            ).operator
 
-    primal, tangent = jax.jit(
-        lambda current_matrix, current_coefficients, matrix_tangent, parameter_tangent: (
-            jax.jvp(
-                operator,
-                (current_matrix, current_coefficients),
-                (matrix_tangent, parameter_tangent),
+        primal, tangent = jax.jit(
+            lambda current_matrix, current_coefficients, matrix_tangent, parameter_tangent: (
+                jax.jvp(
+                    operator,
+                    (current_matrix, current_coefficients),
+                    (matrix_tangent, parameter_tangent),
+                )
             )
+        )(matrix, coefficients, perturbation, coefficient_tangent)
+        step = 1e-5
+        finite_difference = (
+            operator(
+                matrix + step * perturbation,
+                coefficients + step * coefficient_tangent,
+            )
+            - operator(
+                matrix - step * perturbation,
+                coefficients - step * coefficient_tangent,
+            )
+        ) / (2 * step)
+        cotangent = jnp.asarray(
+            [
+                [0.2, 0.1, -0.1, 0.0],
+                [0.1, -0.3, 0.2, 0.1],
+                [-0.1, 0.2, 0.4, -0.2],
+                [0.0, 0.1, -0.2, 0.1],
+            ]
         )
-    )(matrix, coefficients, perturbation, coefficient_tangent)
-    step = 1e-5
-    finite_difference = (
-        operator(
-            matrix + step * perturbation,
-            coefficients + step * coefficient_tangent,
+        reverse_matrix, reverse_coefficients = jax.grad(
+            lambda current_matrix, current_coefficients: jnp.sum(
+                operator(current_matrix, current_coefficients) * cotangent
+            ),
+            argnums=(0, 1),
+        )(matrix, coefficients)
+
+        assert jnp.all(jnp.isfinite(primal))
+        assert jnp.all(jnp.isfinite(tangent))
+        assert jnp.allclose(tangent, finite_difference, rtol=5e-6, atol=5e-7)
+        assert jnp.allclose(
+            jnp.sum(reverse_matrix * perturbation)
+            + jnp.sum(reverse_coefficients * coefficient_tangent),
+            jnp.sum(cotangent * tangent),
+            rtol=1e-9,
+            atol=1e-10,
         )
-        - operator(
-            matrix - step * perturbation,
-            coefficients - step * coefficient_tangent,
+
+
+def test_generalized_loewner_derivative_and_density_include_metric_tangent() -> None:
+    for problem_factory in (_generalized_problem, _matrix_free_generalized_problem):
+        operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
+        metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
+        operator_tangent = jnp.asarray(
+            [
+                [0.1, 0.2, 0.0, 0.0],
+                [0.2, -0.1, 0.3, 0.0],
+                [0.0, 0.3, 0.2, 0.1],
+                [0.0, 0.0, 0.1, -0.2],
+            ]
         )
-    ) / (2 * step)
-    cotangent = jnp.asarray(
-        [
-            [0.2, 0.1, -0.1, 0.0],
-            [0.1, -0.3, 0.2, 0.1],
-            [-0.1, 0.2, 0.4, -0.2],
-            [0.0, 0.1, -0.2, 0.1],
-        ]
-    )
-    reverse_matrix, reverse_coefficients = jax.grad(
-        lambda current_matrix, current_coefficients: jnp.sum(
-            operator(current_matrix, current_coefficients) * cotangent
-        ),
-        argnums=(0, 1),
-    )(matrix, coefficients)
-
-    assert jnp.all(jnp.isfinite(primal))
-    assert jnp.all(jnp.isfinite(tangent))
-    assert jnp.allclose(tangent, finite_difference, rtol=5e-6, atol=5e-7)
-    assert jnp.allclose(
-        jnp.sum(reverse_matrix * perturbation)
-        + jnp.sum(reverse_coefficients * coefficient_tangent),
-        jnp.sum(cotangent * tangent),
-        rtol=1e-9,
-        atol=1e-10,
-    )
-
-
-@pytest.mark.parametrize(
-    "problem_factory",
-    (_generalized_problem, _matrix_free_generalized_problem),
-)
-def test_generalized_loewner_derivative_and_density_include_metric_tangent(
-    problem_factory: Any,
-) -> None:
-    operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
-    metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
-    operator_tangent = jnp.asarray(
-        [
-            [0.1, 0.2, 0.0, 0.0],
-            [0.2, -0.1, 0.3, 0.0],
-            [0.0, 0.3, 0.2, 0.1],
-            [0.0, 0.0, 0.1, -0.2],
-        ]
-    )
-    metric_tangent = jnp.asarray(
-        [
-            [0.02, -0.01, 0.0, 0.0],
-            [-0.01, 0.03, 0.02, 0.0],
-            [0.0, 0.02, -0.01, 0.01],
-            [0.0, 0.0, 0.01, 0.02],
-        ]
-    )
-    function = eigen.FermiDiracSpectralFunction(jnp.asarray(2.0), jnp.asarray(0.8))
-    policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
-
-    def outputs(current_operator: Any, current_metric: Any) -> Any:
-        result = eigen.self_adjoint_spectral_operator(
-            problem_factory(current_operator, current_metric),
-            function,
-            policy=policy,
+        metric_tangent = jnp.asarray(
+            [
+                [0.02, -0.01, 0.0, 0.0],
+                [-0.01, 0.03, 0.02, 0.0],
+                [0.0, 0.02, -0.01, 0.01],
+                [0.0, 0.0, 0.01, 0.02],
+            ]
         )
-        return result.operator, result.density_kernel
+        function = eigen.FermiDiracSpectralFunction(jnp.asarray(2.0), jnp.asarray(0.8))
+        policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
-    _, tangent = jax.jvp(
-        outputs,
-        (operator, metric),
-        (operator_tangent, metric_tangent),
-    )
-    step = 1e-5
-    plus = outputs(
-        operator + step * operator_tangent,
-        metric + step * metric_tangent,
-    )
-    minus = outputs(
-        operator - step * operator_tangent,
-        metric - step * metric_tangent,
-    )
-    finite_difference = tuple(
-        (upper - lower) / (2 * step) for upper, lower in zip(plus, minus, strict=True)
-    )
+        def outputs(current_operator: Any, current_metric: Any) -> Any:
+            result = eigen.self_adjoint_spectral_operator(
+                problem_factory(current_operator, current_metric),
+                function,
+                policy=policy,
+            )
+            return result.operator, result.density_kernel
 
-    assert jnp.allclose(tangent[0], finite_difference[0], rtol=5e-6, atol=5e-7)
-    assert jnp.allclose(tangent[1], finite_difference[1], rtol=5e-6, atol=5e-7)
+        _, tangent = jax.jvp(
+            outputs,
+            (operator, metric),
+            (operator_tangent, metric_tangent),
+        )
+        step = 1e-5
+        plus = outputs(
+            operator + step * operator_tangent,
+            metric + step * metric_tangent,
+        )
+        minus = outputs(
+            operator - step * operator_tangent,
+            metric - step * metric_tangent,
+        )
+        finite_difference = tuple(
+            (upper - lower) / (2 * step) for upper, lower in zip(plus, minus, strict=True)
+        )
+
+        assert jnp.allclose(tangent[0], finite_difference[0], rtol=5e-6, atol=5e-7)
+        assert jnp.allclose(tangent[1], finite_difference[1], rtol=5e-6, atol=5e-7)
 
 
 def test_zeroth_power_has_an_exact_finite_zero_frechet_derivative_at_zero() -> None:
@@ -334,64 +376,6 @@ def test_zeroth_power_has_an_exact_finite_zero_frechet_derivative_at_zero() -> N
     assert jnp.allclose(primal, jnp.eye(3), atol=1e-12)
     assert jnp.all(jnp.isfinite(tangent))
     assert jnp.array_equal(tangent, jnp.zeros_like(tangent))
-
-
-def test_builtin_spectral_functions_match_scipy_references() -> None:
-    matrix = jnp.asarray(
-        [
-            [2.0, 0.3, 0.0],
-            [0.3, 3.0, 0.2],
-            [0.0, 0.2, 5.0],
-        ]
-    )
-    cases = (
-        (eigen.ExponentialSpectralFunction(), spla.expm(matrix)),
-        (eigen.LogarithmSpectralFunction(), spla.logm(matrix)),
-        (eigen.SquareRootSpectralFunction(), spla.fractional_matrix_power(matrix, 0.5)),
-        (
-            eigen.InverseSquareRootSpectralFunction(),
-            spla.fractional_matrix_power(matrix, -0.5),
-        ),
-        (
-            eigen.FractionalPowerSpectralFunction(1.5),
-            spla.fractional_matrix_power(matrix, 1.5),
-        ),
-        (
-            eigen.ResolventSpectralFunction(jnp.asarray(-1.0)),
-            jnp.linalg.inv(matrix + jnp.eye(3)),
-        ),
-    )
-
-    for function, reference in cases:
-        result = eigen.self_adjoint_spectral_operator(
-            _standard_problem(matrix),
-            function,
-        )
-        assert bool(result.successful)
-        assert jnp.allclose(result.operator, reference, rtol=1e-10, atol=1e-10)
-
-
-def test_invalid_spectral_domains_report_status_without_clipping() -> None:
-    matrix = jnp.diag(jnp.asarray([-1.0, 1.0, 3.0]))
-    logarithm = eigen.self_adjoint_spectral_operator(
-        _standard_problem(matrix),
-        eigen.LogarithmSpectralFunction(),
-    )
-    square_root = eigen.self_adjoint_spectral_operator(
-        _standard_problem(matrix),
-        eigen.SquareRootSpectralFunction(),
-    )
-    pole = eigen.self_adjoint_spectral_operator(
-        _standard_problem(matrix),
-        eigen.ResolventSpectralFunction(jnp.asarray(1.0)),
-    )
-
-    assert logarithm.status == int(eigen.SelfAdjointSpectralOperatorStatus.DOMAIN_ERROR)
-    assert square_root.status == int(eigen.SelfAdjointSpectralOperatorStatus.DOMAIN_ERROR)
-    assert pole.status == int(eigen.SelfAdjointSpectralOperatorStatus.DOMAIN_ERROR)
-    assert not bool(logarithm.diagnostics.domain_valid)
-    assert not bool(square_root.diagnostics.domain_valid)
-    assert not bool(pole.diagnostics.domain_valid)
 
 
 def test_batched_spectral_functions_preserve_batch_axes_mixed_status_and_loewner_derivatives() -> (

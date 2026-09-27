@@ -90,7 +90,7 @@ def _sample(
     )
 
 
-def test_state_dimensionalization_series_and_lineage_are_exact() -> None:
+def test_closure_data_scenario_1() -> None:
     schema = _schema()
     values = jnp.ones((4, 5))
     first = ClosureSnapshot(
@@ -125,9 +125,6 @@ def test_state_dimensionalization_series_and_lineage_are_exact() -> None:
     assert series.stack().shape == (2, 4, 5)
     with pytest.raises(ValueError, match="strictly increasing"):
         ClosureSeries((second, first))
-
-
-def test_box_filter_preserves_constants_affines_and_linear_algebra() -> None:
     prepared = FilterSpec.box((5,), boundary="linear").prepare((17,))
     x = jnp.arange(17.0)
     constant = jnp.full((17,), 3.25)
@@ -138,9 +135,6 @@ def test_box_filter_preserves_constants_affines_and_linear_algebra() -> None:
         2.0 * prepared(x) + 3.0 * prepared(constant),
         atol=1e-12,
     )
-
-
-def test_favre_identities_and_nonpositive_density_rejection() -> None:
     prepared = FilterSpec.box((3,), boundary="periodic").prepare((16,))
     favre = FavreFilter(prepared)
     x = jnp.arange(16.0)
@@ -159,7 +153,7 @@ def test_favre_identities_and_nonpositive_density_rejection() -> None:
         jax.block_until_ready(favre(field, density.at[3].set(0.0)))
 
 
-def test_filter_commutes_with_periodic_difference_and_reports_refinement_defect() -> None:
+def test_closure_data_scenario_2() -> None:
     fine = FilterSpec.box((3,), boundary="periodic").prepare((24,))
     x = 2.0 * jnp.pi * jnp.arange(24.0) / 24.0
     field = jnp.sin(x) + 0.25 * jnp.cos(2.0 * x)
@@ -169,9 +163,6 @@ def test_filter_commutes_with_periodic_difference_and_reports_refinement_defect(
     coarse = FilterSpec.box((3,), boundary="periodic").prepare((12,))
     refinement = filter_refinement_commutation(fine, coarse, constant, (2,))
     np.testing.assert_allclose(refinement.defect, 0.0, atol=1e-12)
-
-
-def test_restriction_prolongation_and_prepared_alignment_are_conservative() -> None:
     fine = jnp.arange(24.0).reshape((6, 4, 1))
     restricted = conservative_restrict(fine, (2, 2))
     np.testing.assert_allclose(
@@ -183,9 +174,6 @@ def test_restriction_prolongation_and_prepared_alignment_are_conservative() -> N
     result = prepared.execute(fine)
     np.testing.assert_allclose(result.source_integral, result.target_integral, atol=1e-12)
     np.testing.assert_allclose(result.values, restricted, atol=1e-12)
-
-
-def test_analysis_dag_target_units_and_lineage_are_deterministic() -> None:
     velocity = ClosureField(
         jnp.stack((jnp.arange(8.0), 2.0 * jnp.arange(8.0)), axis=-1),
         name="velocity",
@@ -406,22 +394,19 @@ def test_chunk_manifest_rejects_holes_and_overlaps_and_uses_repository_protocol(
         )
 
 
-@pytest.mark.parametrize("level", ("case", "trajectory", "realization", "time_block"))
-def test_partitioning_never_splits_the_selected_leakage_group(level: Any) -> None:
-    samples = tuple(_sample(index) for index in range(5))
-    plan = LeakageSafePartitionPlan(
-        level,
-        train_fraction=0.6,
-        validation_fraction=0.2,
-        test_fraction=0.2,
-        salt="experiment",
-    )
-    partition = plan.assign(samples)
-    assert len({assignment.split for assignment in partition.assignments}) == 1
-    assert len({assignment.group_key for assignment in partition.assignments}) == 1
-
-
-def test_normalizer_statistics_and_provenance_are_train_only() -> None:
+def test_closure_data_scenario_3() -> None:
+    for level in ("case", "trajectory", "realization", "time_block"):
+        samples = tuple(_sample(index) for index in range(5))
+        plan = LeakageSafePartitionPlan(
+            level,
+            train_fraction=0.6,
+            validation_fraction=0.2,
+            test_fraction=0.2,
+            salt="experiment",
+        )
+        partition = plan.assign(samples)
+        assert len({assignment.split for assignment in partition.assignments}) == 1
+        assert len({assignment.group_key for assignment in partition.assignments}) == 1
     samples = (_sample(0), _sample(2), _sample(100))
     assignments = (
         PartitionAssignment(
@@ -453,6 +438,42 @@ def test_normalizer_statistics_and_provenance_are_train_only() -> None:
     np.testing.assert_allclose(
         normalizer.denormalize(normalizer.normalize(values)), values
     )
+    _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
+    binding = LearnedClosureBindingPlan(
+        lambda value, args: args * value,
+        deployment_kind="spectral_drift",
+        schema_id=schema.schema_id,
+        input_component_names=("u", "v"),
+        output_component_names=("u", "v"),
+        model_artifact_id="spectral-model",
+        normalizer_provenance_id="normalizer",
+    )
+    hook = binding.bind_spectral_drift(schema, projector, coordinates, dealiasing)
+    result = hook.apply(state, 1.0)
+    assert float(result.evidence.constrained_energy_rate) <= 1e-10
+    assert float(result.evidence.divergence_norm) <= 1e-10
+    assert float(result.evidence.hermitian_defect) <= 1e-10
+    assert result.evidence.projector_id == projector.projector_id
+    assert result.evidence.dealiasing_id == dealiasing.prepared_id
+    assert result.evidence.dealiasing_exact
+    assert not bool(result.fallback.used)
+    _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
+    binding = LearnedClosureBindingPlan(
+        lambda value, args: jnp.full_like(value, jnp.nan + 0.0j),
+        deployment_kind="spectral_drift",
+        schema_id=schema.schema_id,
+        input_component_names=("u", "v"),
+        output_component_names=("u", "v"),
+        model_artifact_id="bad-model",
+        normalizer_provenance_id="normalizer",
+    )
+    hook = binding.bind_spectral_drift(schema, projector, coordinates, dealiasing)
+    result = hook.apply(state)
+    np.testing.assert_allclose(result.drift, 0.0)
+    assert bool(result.fallback.used)
+    assert int(result.fallback.reason_code) == 1
+    assert result.fallback.fallback_kind == "zero_spectral_drift"
+    assert not bool(result.evidence.valid)
 
 
 def test_binding_rejects_schema_mismatch_and_inserts_face_correction() -> None:
@@ -583,50 +604,6 @@ def _spectral_contract() -> Any:
         velocity_names=("u", "v"),
     )
     return space, projector, coordinates, dealiasing, state, schema
-
-
-def test_spectral_binding_preserves_energy_hermitian_projection_and_dealiasing_evidence() -> (
-    None
-):
-    _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
-    binding = LearnedClosureBindingPlan(
-        lambda value, args: args * value,
-        deployment_kind="spectral_drift",
-        schema_id=schema.schema_id,
-        input_component_names=("u", "v"),
-        output_component_names=("u", "v"),
-        model_artifact_id="spectral-model",
-        normalizer_provenance_id="normalizer",
-    )
-    hook = binding.bind_spectral_drift(schema, projector, coordinates, dealiasing)
-    result = hook.apply(state, 1.0)
-    assert float(result.evidence.constrained_energy_rate) <= 1e-10
-    assert float(result.evidence.divergence_norm) <= 1e-10
-    assert float(result.evidence.hermitian_defect) <= 1e-10
-    assert result.evidence.projector_id == projector.projector_id
-    assert result.evidence.dealiasing_id == dealiasing.prepared_id
-    assert result.evidence.dealiasing_exact
-    assert not bool(result.fallback.used)
-
-
-def test_spectral_nonfinite_prediction_returns_explicit_typed_fallback_artifact() -> None:
-    _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
-    binding = LearnedClosureBindingPlan(
-        lambda value, args: jnp.full_like(value, jnp.nan + 0.0j),
-        deployment_kind="spectral_drift",
-        schema_id=schema.schema_id,
-        input_component_names=("u", "v"),
-        output_component_names=("u", "v"),
-        model_artifact_id="bad-model",
-        normalizer_provenance_id="normalizer",
-    )
-    hook = binding.bind_spectral_drift(schema, projector, coordinates, dealiasing)
-    result = hook.apply(state)
-    np.testing.assert_allclose(result.drift, 0.0)
-    assert bool(result.fallback.used)
-    assert int(result.fallback.reason_code) == 1
-    assert result.fallback.fallback_kind == "zero_spectral_drift"
-    assert not bool(result.evidence.valid)
 
 
 class _SpectralDamping(StrictModule, ParameterOwner):

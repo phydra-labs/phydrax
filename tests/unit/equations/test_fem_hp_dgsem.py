@@ -52,7 +52,7 @@ def _certified_mortar() -> Any:
     return mortar, metric, certificate
 
 
-def test_entropy_compatible_mortar_accumulates_conservative_ledgers() -> None:
+def test_fem_hp_dgsem_scenario_1() -> None:
     mortar, metric, certificate = _certified_mortar()
     assert certificate.passed
     flux = 1.0 + mortar.quadrature_points[:, 0] ** 2
@@ -80,9 +80,6 @@ def test_entropy_compatible_mortar_accumulates_conservative_ledgers() -> None:
         0.0,
         atol=2.0e-13,
     )
-
-
-def test_uncertified_nonconforming_dgsem_is_rejected() -> None:
     mortar, metric, _ = _certified_mortar()
     failed = certify_dgsem_mortar_compatibility(
         mortar,

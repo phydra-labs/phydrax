@@ -48,7 +48,7 @@ def _dense_resolvent_form(matrix: Any, initial: Any, shifts: Any) -> Any:
     )(shifts)
 
 
-def test_lanczos_resolvent_form_matches_dense_and_transforms() -> None:
+def test_linalg_lanczos_resolvent_scenario_1() -> None:
     matrix = jnp.asarray(
         [
             [2.0, 1.0 + 0.5j, 0.0],
@@ -78,68 +78,6 @@ def test_lanczos_resolvent_form_matches_dense_and_transforms() -> None:
     assert bool(eager.all_successful)
     assert bool(eager.diagnostics.projection_exact)
     assert bool(jnp.all(jnp.imag(eager.value) < 0.0))
-
-
-def test_truncated_lanczos_resolvent_is_finite_without_false_success() -> None:
-    diagonal = jnp.asarray([0.5, 1.0, 1.5, 2.0, 2.5], dtype=jnp.float64)
-    off_diagonal = jnp.asarray([0.4, -0.3, 0.5, 0.2], dtype=jnp.float64)
-    matrix = jnp.diag(diagonal)
-    matrix = matrix + jnp.diag(off_diagonal, 1) + jnp.diag(off_diagonal, -1)
-    initial = jnp.asarray([1.0, -0.3, 0.2, 0.5, -0.1], dtype=jnp.float64)
-    _, projection = _projection(matrix, initial, 3, "resolvent-truncated")
-    shifts = jnp.asarray([-0.5 + 0.4j, 3.0 + 0.4j], dtype=jnp.complex128)
-
-    result = la.lanczos_resolvent_form(projection, shifts)
-    dimension = int(projection.effective_dimension)
-    projected = projection.projected_operator[:dimension, :dimension]
-    norm_squared = jnp.vdot(initial, initial).real
-    expected = norm_squared * jax.vmap(
-        lambda shift: jnp.linalg.solve(
-            shift * jnp.eye(dimension, dtype=shifts.dtype)
-            - projected.astype(shifts.dtype),
-            jnp.eye(dimension, dtype=shifts.dtype)[0],
-        )[0]
-    )(shifts)
-
-    np.testing.assert_allclose(result.value, expected, rtol=2e-11, atol=2e-11)
-    assert bool(jnp.all(result.diagnostics.finite))
-    assert not bool(jnp.any(result.successful))
-    assert bool(jnp.all(result.status == int(la.LanczosResolventStatus.TRUNCATED)))
-    assert not bool(result.diagnostics.projection_exact)
-    assert bool(jnp.all(result.diagnostics.indicator_available))
-    assert bool(jnp.all(jnp.isfinite(result.diagnostics.truncation_indicator)))
-
-
-def test_terminal_resolvent_closes_uniform_chain_without_success_claim() -> None:
-    coupling = jnp.asarray(0.7, dtype=jnp.float64)
-    matrix = jnp.diag(jnp.full((6,), coupling), 1)
-    matrix = matrix + matrix.T
-    initial = jnp.eye(7, dtype=jnp.float64)[0]
-    _, projection = _projection(matrix, initial, 3, "resolvent-terminal")
-    shift = jnp.asarray(0.4 + 0.6j, dtype=jnp.complex128)
-    discriminant = jnp.sqrt(shift**2 - 4.0 * coupling**2)
-    terminal = (shift - discriminant) / (2.0 * coupling**2)
-
-    result = la.lanczos_resolvent_form(
-        projection,
-        shift,
-        terminal_resolvent=terminal,
-    )
-
-    np.testing.assert_allclose(result.value, terminal, rtol=2e-11, atol=2e-11)
-    np.testing.assert_allclose(
-        result.diagnostics.boundary_coupling,
-        coupling,
-        rtol=2e-11,
-        atol=2e-11,
-    )
-    assert int(result.status) == int(la.LanczosResolventStatus.TRUNCATED)
-    assert not bool(result.successful)
-    assert not bool(result.diagnostics.indicator_available)
-    assert result.provenance.termination == "explicit-terminal-resolvent"
-
-
-def test_lanczos_resolvent_reports_lane_failures_and_rejects_wrong_projection() -> None:
     matrix = jnp.asarray([[2.0]], dtype=jnp.float64)
     initial = jnp.asarray([1.0], dtype=jnp.float64)
     operator, projection = _projection(matrix, initial, 1, "resolvent-statuses")
@@ -175,6 +113,59 @@ def test_lanczos_resolvent_reports_lane_failures_and_rejects_wrong_projection() 
             shifts[:2],
             terminal_resolvent=jnp.zeros((3,)),
         )
+    diagonal = jnp.asarray([0.5, 1.0, 1.5, 2.0, 2.5], dtype=jnp.float64)
+    off_diagonal = jnp.asarray([0.4, -0.3, 0.5, 0.2], dtype=jnp.float64)
+    matrix = jnp.diag(diagonal)
+    matrix = matrix + jnp.diag(off_diagonal, 1) + jnp.diag(off_diagonal, -1)
+    initial = jnp.asarray([1.0, -0.3, 0.2, 0.5, -0.1], dtype=jnp.float64)
+    _, projection = _projection(matrix, initial, 3, "resolvent-truncated")
+    shifts = jnp.asarray([-0.5 + 0.4j, 3.0 + 0.4j], dtype=jnp.complex128)
+
+    result = la.lanczos_resolvent_form(projection, shifts)
+    dimension = int(projection.effective_dimension)
+    projected = projection.projected_operator[:dimension, :dimension]
+    norm_squared = jnp.vdot(initial, initial).real
+    expected = norm_squared * jax.vmap(
+        lambda shift: jnp.linalg.solve(
+            shift * jnp.eye(dimension, dtype=shifts.dtype)
+            - projected.astype(shifts.dtype),
+            jnp.eye(dimension, dtype=shifts.dtype)[0],
+        )[0]
+    )(shifts)
+
+    np.testing.assert_allclose(result.value, expected, rtol=2e-11, atol=2e-11)
+    assert bool(jnp.all(result.diagnostics.finite))
+    assert not bool(jnp.any(result.successful))
+    assert bool(jnp.all(result.status == int(la.LanczosResolventStatus.TRUNCATED)))
+    assert not bool(result.diagnostics.projection_exact)
+    assert bool(jnp.all(result.diagnostics.indicator_available))
+    assert bool(jnp.all(jnp.isfinite(result.diagnostics.truncation_indicator)))
+    coupling = jnp.asarray(0.7, dtype=jnp.float64)
+    matrix = jnp.diag(jnp.full((6,), coupling), 1)
+    matrix = matrix + matrix.T
+    initial = jnp.eye(7, dtype=jnp.float64)[0]
+    _, projection = _projection(matrix, initial, 3, "resolvent-terminal")
+    shift = jnp.asarray(0.4 + 0.6j, dtype=jnp.complex128)
+    discriminant = jnp.sqrt(shift**2 - 4.0 * coupling**2)
+    terminal = (shift - discriminant) / (2.0 * coupling**2)
+
+    result = la.lanczos_resolvent_form(
+        projection,
+        shift,
+        terminal_resolvent=terminal,
+    )
+
+    np.testing.assert_allclose(result.value, terminal, rtol=2e-11, atol=2e-11)
+    np.testing.assert_allclose(
+        result.diagnostics.boundary_coupling,
+        coupling,
+        rtol=2e-11,
+        atol=2e-11,
+    )
+    assert int(result.status) == int(la.LanczosResolventStatus.TRUNCATED)
+    assert not bool(result.successful)
+    assert not bool(result.diagnostics.indicator_available)
+    assert result.provenance.termination == "explicit-terminal-resolvent"
 
 
 def test_lanczos_resolvent_shift_jvp_matches_dense_derivative() -> None:

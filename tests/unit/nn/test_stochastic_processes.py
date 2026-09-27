@@ -17,7 +17,7 @@ def _gaussian_process() -> Any:
     )
 
 
-def test_gaussian_coefficient_realization_replays_across_query_schedules() -> None:
+def test_stochastic_processes_scenario_1() -> None:
     process = _gaussian_process()
     initial = jnp.asarray([1.0, -1.0])
     realization = process.realize(
@@ -47,9 +47,6 @@ def test_gaussian_coefficient_realization_replays_across_query_schedules() -> No
     assert consistency.shared_times == 3
     assert consistency.consistent
     assert consistency.max_absolute_error == 0.0
-
-
-def test_gaussian_pathwise_cocycle_and_marginal_semigroup_contracts() -> None:
     process = _gaussian_process()
     state = jnp.asarray([1.0, -1.0])
     first = jnp.asarray([0.2, -0.1])
@@ -81,22 +78,6 @@ def test_gaussian_pathwise_cocycle_and_marginal_semigroup_contracts() -> None:
     assert cocycle_loss < 1e-24
     assert semigroup_loss < 5e-3
     assert jnp.isfinite(marginal.log_prob(marginal.mean))
-
-
-def test_scalar_gaussian_process_distribution_preserves_batch_axes() -> None:
-    distribution = phx.stochastic.GaussianProcessDistribution(
-        jnp.asarray([1.0, -2.0, 0.5]),
-        jnp.asarray([[[2.0]], [[3.0]], [[4.0]]]),
-        event_shape=(),
-    )
-    samples = distribution.sample(jr.key(101), sample_shape=(5,))
-
-    assert distribution.batch_shape == (3,)
-    assert samples.shape == (5, 3)
-    assert distribution.log_prob(distribution.mean).shape == (3,)
-
-
-def test_gaussian_process_diagnostics_match_marginal_moments() -> None:
     process = _gaussian_process()
     realization = process.realize(
         jr.key(2),
@@ -118,9 +99,16 @@ def test_gaussian_process_diagnostics_match_marginal_moments() -> None:
     assert diagnostics.query_max_absolute_error == 0.0
     assert diagnostics.cocycle_max_absolute_error < 1e-12
     assert diagnostics.replay_exact
+    distribution = phx.stochastic.GaussianProcessDistribution(
+        jnp.asarray([1.0, -2.0, 0.5]),
+        jnp.asarray([[[2.0]], [[3.0]], [[4.0]]]),
+        event_shape=(),
+    )
+    samples = distribution.sample(jr.key(101), sample_shape=(5,))
 
-
-def test_process_realization_keeps_input_and_process_uncertainty_separate() -> None:
+    assert distribution.batch_shape == (3,)
+    assert samples.shape == (5, 3)
+    assert distribution.log_prob(distribution.mean).shape == (3,)
     process = _gaussian_process()
     with pytest.raises(ValueError, match="separate input-uncertainty axis"):
         process.realize(
@@ -151,6 +139,20 @@ def test_process_realization_keeps_input_and_process_uncertainty_separate() -> N
     assert first.uncertainty_source == "process"
     assert first.realization_id == replay.realization_id
     assert first.realization_id != changed.realization_id
+    process = _gaussian_process()
+    realization = process.realize(
+        jr.key(10),
+        jnp.zeros((2,)),
+        support=(0.0, 1.0),
+        sample_shape=(2,),
+    )
+    with pytest.raises(ValueError, match="exactly once"):
+        phx.stochastic.process_query_consistency(
+            process,
+            realization,
+            jnp.asarray([0.0, 0.5, 1.0]),
+            jnp.asarray([0.0, 1.0]),
+        )
 
 
 def test_native_flow_coefficient_process_is_a_marginal_law_not_a_path_claim() -> None:
@@ -207,20 +209,3 @@ def test_native_flow_semigroup_objective_is_differentiable_but_not_assumed_satis
 
     assert jnp.isfinite(value)
     assert any(jnp.all(jnp.isfinite(leaf)) for leaf in leaves if leaf is not None)
-
-
-def test_process_query_consistency_rejects_unmatched_schedules() -> None:
-    process = _gaussian_process()
-    realization = process.realize(
-        jr.key(10),
-        jnp.zeros((2,)),
-        support=(0.0, 1.0),
-        sample_shape=(2,),
-    )
-    with pytest.raises(ValueError, match="exactly once"):
-        phx.stochastic.process_query_consistency(
-            process,
-            realization,
-            jnp.asarray([0.0, 0.5, 1.0]),
-            jnp.asarray([0.0, 1.0]),
-        )

@@ -44,7 +44,7 @@ def _identity_library(layout: Any) -> Any:
     )
 
 
-def test_vamp_and_tica_return_diagnosed_slow_coordinates() -> None:
+def test_variational_kinetics_scenario_1() -> None:
     data = _linear_data([[0.97, 0.0], [0.0, 0.55]])
     library = _identity_library(data.state_layout)
 
@@ -64,9 +64,17 @@ def test_vamp_and_tica_return_diagnosed_slow_coordinates() -> None:
     assert bool(valid[0])
     assert jnp.isfinite(times[0])
     assert tica.diagnostics.lag.physical_lag_mean == 0.4
+    training = _linear_data([[0.95, -0.08], [0.08, 0.78]], steps=250)
+    validation = _linear_data([[0.95, -0.08], [0.08, 0.78]], steps=120)
+    fitted = phx.dynamics.identification.fit_vamp(
+        training, _identity_library(training.state_layout), n_modes=2
+    )
 
+    score = phx.dynamics.analysis.score_vamp(fitted, validation)
 
-def test_lagged_fit_excludes_resets_and_rejects_irregular_physical_lag() -> None:
+    assert bool(score.valid)
+    assert jnp.isfinite(score.vamp_e_score)
+    assert score.effective_samples > 0.0
     reset = jnp.zeros((29,), dtype="bool").at[12].set(True)
     data = _linear_data([[0.9, 0.0], [0.0, 0.7]], steps=30, reset=reset)
     library = _identity_library(data.state_layout)
@@ -84,23 +92,6 @@ def test_lagged_fit_excludes_resets_and_rejects_irregular_physical_lag() -> None
     rejected = phx.dynamics.identification.fit_vamp(irregular, library, lag=1, n_modes=1)
     assert not bool(rejected.valid)
     assert not bool(rejected.diagnostics.lag.uniform_physical_lag)
-
-
-def test_vamp_heldout_score_is_finite() -> None:
-    training = _linear_data([[0.95, -0.08], [0.08, 0.78]], steps=250)
-    validation = _linear_data([[0.95, -0.08], [0.08, 0.78]], steps=120)
-    fitted = phx.dynamics.identification.fit_vamp(
-        training, _identity_library(training.state_layout), n_modes=2
-    )
-
-    score = phx.dynamics.analysis.score_vamp(fitted, validation)
-
-    assert bool(score.valid)
-    assert jnp.isfinite(score.vamp_e_score)
-    assert score.effective_samples > 0.0
-
-
-def test_tica_repeated_modes_report_basis_ambiguity() -> None:
     angles = jnp.linspace(0.0, 12.0 * jnp.pi, 600)
     states = jnp.stack((jnp.sin(angles), jnp.cos(angles)), axis=-1)
     data = phx.dynamics.TrajectoryData(

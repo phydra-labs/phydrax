@@ -4,7 +4,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_shared_voigt_profile_preserves_line_area() -> None:
+def test_advanced_spectroscopy_nuclei_scenario_1() -> None:
     profile = phx.chemistry.SpectralProfilePlan(
         phx.chemistry.SpectralLineShape.VOIGT,
         -20.0,
@@ -18,11 +18,6 @@ def test_shared_voigt_profile_preserves_line_area() -> None:
 
     assert bool(profile.successful)
     np.testing.assert_allclose(profile.integrated_intensity, 2.0, rtol=5.0e-3)
-
-
-def test_duschinsky_quadrature_and_herzberg_teller_emission_close_identical_modes() -> (
-    None
-):
     duschinsky = phx.chemistry.DuschinskyResult(
         # ty: ignore[invalid-argument-type]
         [[1.0]],
@@ -58,9 +53,6 @@ def test_duschinsky_quadrature_and_herzberg_teller_emission_close_identical_mode
     assert float(result.emission_rates[0]) > 0.0
     # ty: ignore[not-subscriptable]
     np.testing.assert_allclose(result.emission_rates[1:], 0.0, atol=1.0e-10)
-
-
-def test_dynamic_resonance_raman_returns_finite_complex_response() -> None:
     result = phx.chemistry.ResonanceRamanPlan(
         # ty: ignore[invalid-argument-type]
         [0.4, 0.7],

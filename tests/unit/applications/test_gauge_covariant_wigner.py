@@ -112,7 +112,7 @@ def _paths(topology: Any) -> Any:
     )
 
 
-def test_abelian_wilson_line_wigner_transform_is_gauge_covariant() -> None:
+def test_gauge_covariant_wigner_scenario_1() -> None:
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     group = UnitaryGroup(1)
     link_space = MatrixGaugeLinkSpace(topology, group)
@@ -145,11 +145,6 @@ def test_abelian_wilson_line_wigner_transform_is_gauge_covariant() -> None:
         evidence.transformed.frame_realization_id
         == plan.quantum_support.frame.realization_id()
     )
-
-
-def test_nonabelian_wigner_transport_refuses_complex_fundamental_without_real_owner() -> (
-    None
-):
     topology = polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
     group = SpecialUnitaryGroup(2)
     link_space = MatrixGaugeLinkSpace(topology, group)

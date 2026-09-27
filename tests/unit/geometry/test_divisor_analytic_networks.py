@@ -29,7 +29,7 @@ def _two_chart_atlas() -> Any:
     )
 
 
-def test_cartier_divisor_overlap_units_cocycle_clearance_and_intersection() -> None:
+def test_divisor_analytic_networks_scenario_1() -> None:
     atlas = _two_chart_atlas()
     divisor = phx.geometry.complex.CartierDivisor(
         atlas,
@@ -69,9 +69,6 @@ def test_cartier_divisor_overlap_units_cocycle_clearance_and_intersection() -> N
     intersection = divisor.intersection(other, 0, jnp.zeros((2,), dtype="complex128"))
     assert bool(intersection.transverse)
     assert bool(intersection.valid)
-
-
-def test_algebra_analytic_network_names_operator_side_and_bracketing() -> None:
     product = phx.metrix.algebra.ComplexAlgebraSpec().prepare_product(backend="sparse")
     layer = AlgebraAnalyticLayer(
         jnp.asarray([[[1.0, 0.0]]]),

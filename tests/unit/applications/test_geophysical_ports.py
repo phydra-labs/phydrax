@@ -33,7 +33,7 @@ def _binding(quantity: Any, components: Any) -> Any:
     return GeophysicalFieldBinding(quantity, state_layout=_LAYOUT, components=components)
 
 
-def test_state_binding_port_carries_quantity_identity_and_dimension() -> None:
+def test_geophysical_ports_scenario_1() -> None:
     quantity = GeophysicalQuantity(
         "surface_pressure", "surface_pressure", KILOPASCAL, axes=("time", "cell")
     )
@@ -45,9 +45,6 @@ def test_state_binding_port_carries_quantity_identity_and_dimension() -> None:
     assert port.representation == "geophysical-field"
     assert port.variance == "neutral"
     assert port.axis_keys is None
-
-
-def test_multi_component_binding_keeps_selected_component_order() -> None:
     velocity = GeophysicalQuantity(
         "wind", "velocity", derived_unit("m/s", ((METER, 1), (SECOND, -1)))
     )
@@ -55,9 +52,6 @@ def test_multi_component_binding_keeps_selected_component_order() -> None:
     assert port.event_shape == (2,)
     assert port.component_ids == ("v", "u")
     assert port.dimensions == (VELOCITY, VELOCITY)
-
-
-def test_port_identity_follows_quantity_declaration() -> None:
     temperature = GeophysicalQuantity("temperature", "temperature", KELVIN)
     port = _binding(temperature, ("temperature",)).value_port()
     assert port.dimensions == (TEMPERATURE,)

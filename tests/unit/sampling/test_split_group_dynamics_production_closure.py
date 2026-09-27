@@ -64,7 +64,7 @@ def _prepared(
     return prepare_split_group_dynamics(_torus_target(), plan)
 
 
-def test_leapfrog_and_omelyan_coefficients_are_palindromic() -> None:
+def test_split_group_dynamics_production_closure_scenario_1() -> None:
     leapfrog = _prepared(integrator="leapfrog")
     omelyan = _prepared(integrator="omelyan")
 
@@ -73,38 +73,32 @@ def test_leapfrog_and_omelyan_coefficients_are_palindromic() -> None:
     assert jnp.allclose(omelyan.kick_coefficients, omelyan.kick_coefficients[::-1])
     assert jnp.allclose(omelyan.drift_coefficients, omelyan.drift_coefficients[::-1])
     assert leapfrog.frozen and omelyan.frozen
+    for integrator in ["leapfrog", "omelyan"]:
+        prepared = _prepared(integrator=integrator)
+        state = initialize_split_group_dynamics_state(
+            prepared,
+            jnp.asarray([0.2, -0.3]),
+            momentum=jnp.asarray([0.4, -0.1]),
+        )
+        forward = split_integrator_trajectory(
+            prepared,
+            state.position,
+            state.momentum,
+            state.force_gradients,
+            steps=3,
+        )
+        reverse = split_integrator_trajectory(
+            prepared,
+            forward[0],
+            forward[1],
+            forward[3],
+            steps=3,
+            direction=-1,
+        )
 
-
-@pytest.mark.parametrize("integrator", ["leapfrog", "omelyan"])
-def test_split_integrator_is_reversible_on_flat_torus(integrator: Any) -> None:
-    prepared = _prepared(integrator=integrator)
-    state = initialize_split_group_dynamics_state(
-        prepared,
-        jnp.asarray([0.2, -0.3]),
-        momentum=jnp.asarray([0.4, -0.1]),
-    )
-    forward = split_integrator_trajectory(
-        prepared,
-        state.position,
-        state.momentum,
-        state.force_gradients,
-        steps=3,
-    )
-    reverse = split_integrator_trajectory(
-        prepared,
-        forward[0],
-        forward[1],
-        forward[3],
-        steps=3,
-        direction=-1,
-    )
-
-    assert jnp.allclose(reverse[0], state.position, atol=2e-5)
-    assert jnp.allclose(reverse[1], state.momentum, atol=2e-5)
-    assert forward[4] and reverse[4]
-
-
-def test_generalized_hmc_uses_exact_target_correction_and_partial_refresh() -> None:
+        assert jnp.allclose(reverse[0], state.position, atol=2e-5)
+        assert jnp.allclose(reverse[1], state.momentum, atol=2e-5)
+        assert forward[4] and reverse[4]
     prepared = _prepared(persistence=0.6)
     state = initialize_split_group_dynamics_state(
         prepared,
@@ -122,7 +116,7 @@ def test_generalized_hmc_uses_exact_target_correction_and_partial_refresh() -> N
     assert 0.0 <= result.evidence.acceptance_probability <= 1.0
 
 
-def test_finite_metric_adaptation_returns_rebound_frozen_production_state() -> None:
+def test_split_group_dynamics_production_closure_scenario_2() -> None:
     prepared = _prepared(integrator="leapfrog", persistence=0.0)
     state = initialize_split_group_dynamics_state(prepared, jnp.asarray([0.15, -0.2]))
     result = adapt_split_group_metric(
@@ -143,9 +137,6 @@ def test_finite_metric_adaptation_returns_rebound_frozen_production_state() -> N
     assert jnp.all(result.inverse_mass_history >= 0.02)
     assert jnp.all(result.inverse_mass_history <= 5.0)
     assert result.state.prepared_id == result.prepared.prepared_id
-
-
-def test_transported_u_turn_uses_endpoint_velocities_in_one_tangent_space() -> None:
     prepared = _prepared()
     forward = transported_group_u_turn(
         prepared,
@@ -165,9 +156,6 @@ def test_transported_u_turn_uses_endpoint_velocities_in_one_tangent_space() -> N
     assert forward.finite and not forward.turning
     assert turning.finite and turning.turning
     assert jnp.allclose(forward.displacement, jnp.asarray([0.5, 0.0]))
-
-
-def test_transported_group_nuts_has_finite_tree_and_detects_turning() -> None:
     prepared = _prepared(dynamics="nuts-reference", persistence=0.0)
     state = initialize_split_group_dynamics_state(prepared, jnp.asarray([2.6, -2.4]))
     result = split_group_transition(prepared, state, key=jax.random.key(23))
@@ -176,42 +164,6 @@ def test_transported_group_nuts_has_finite_tree_and_detects_turning() -> None:
     assert prepared.target.geometry.contains(result.state.position)
     assert result.evidence.u_turn_detected | result.evidence.maximum_depth_reached
     assert result.reference_measure == "flat-torus"
-
-
-def test_nuts_nonfinite_u_turn_evidence_is_a_divergence(monkeypatch: Any) -> None:
-    prepared = _prepared(dynamics="nuts-reference", persistence=0.0)
-    state = initialize_split_group_dynamics_state(prepared, jnp.asarray([0.2, -0.1]))
-
-    def nonfinite_turn(
-        _prepared: Any, _left: Any, _right: Any, _left_p: Any, _right_p: Any
-    ) -> Any:
-        tangent = jnp.zeros(prepared.target.local_coordinate_shape)
-        return split_dynamics.TransportedUTurnEvidence(
-            tangent,
-            tangent,
-            tangent,
-            jnp.asarray(jnp.nan),
-            jnp.asarray(jnp.nan),
-            jnp.asarray(False),
-            jnp.asarray(False),
-        )
-
-    monkeypatch.setattr(
-        split_dynamics,
-        "transported_group_u_turn",
-        nonfinite_turn,
-    )
-    result = split_group_transition(prepared, state, key=jax.random.key(123))
-
-    assert result.evidence.divergent
-    assert (
-        result.evidence.status
-        == split_dynamics.SplitGroupDynamicsStatus.NONFINITE_OR_DIVERGENT_TRAJECTORY
-    )
-    assert jnp.array_equal(result.state.position, state.position)
-
-
-def test_su_n_is_supported_and_noncompact_geometry_fails_before_execution() -> None:
     group = SpecialUnitaryGroup(2)
     geometry = PointwiseStateGeometry(
         LieGroupStateGeometry(group),
@@ -246,3 +198,36 @@ def test_su_n_is_supported_and_noncompact_geometry_fails_before_execution() -> N
     )
     with pytest.raises(TypeError, match="supports flat tori"):
         prepare_split_group_dynamics(unsupported, SplitGroupDynamicsPlan(step_size=0.03))
+
+
+def test_nuts_nonfinite_u_turn_evidence_is_a_divergence(monkeypatch: Any) -> None:
+    prepared = _prepared(dynamics="nuts-reference", persistence=0.0)
+    state = initialize_split_group_dynamics_state(prepared, jnp.asarray([0.2, -0.1]))
+
+    def nonfinite_turn(
+        _prepared: Any, _left: Any, _right: Any, _left_p: Any, _right_p: Any
+    ) -> Any:
+        tangent = jnp.zeros(prepared.target.local_coordinate_shape)
+        return split_dynamics.TransportedUTurnEvidence(
+            tangent,
+            tangent,
+            tangent,
+            jnp.asarray(jnp.nan),
+            jnp.asarray(jnp.nan),
+            jnp.asarray(False),
+            jnp.asarray(False),
+        )
+
+    monkeypatch.setattr(
+        split_dynamics,
+        "transported_group_u_turn",
+        nonfinite_turn,
+    )
+    result = split_group_transition(prepared, state, key=jax.random.key(123))
+
+    assert result.evidence.divergent
+    assert (
+        result.evidence.status
+        == split_dynamics.SplitGroupDynamicsStatus.NONFINITE_OR_DIVERGENT_TRAJECTORY
+    )
+    assert jnp.array_equal(result.state.position, state.position)

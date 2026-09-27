@@ -43,9 +43,7 @@ def _projection_plan(basis: Any, order: Any = 5, **kwargs: Any) -> Any:
     )
 
 
-def test_total_degree_multiindices_are_graded_deterministic_and_content_addressed() -> (
-    None
-):
+def test_polynomial_chaos_scenario_1() -> None:
     indices = phx.uq.PolynomialMultiIndexSet(2, 3)
     repeated = phx.uq.PolynomialMultiIndexSet(2, 3)
 
@@ -69,9 +67,6 @@ def test_total_degree_multiindices_are_graded_deterministic_and_content_addresse
     )
     assert indices.content_id == repeated.content_id
     assert indices.storage_bytes == indices.indices.size * indices.indices.dtype.itemsize
-
-
-def test_degree_zero_is_a_valid_constant_basis_and_regression() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-4.0, 8.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 0)
     values = basis.evaluate(jnp.asarray([[-4.0], [2.0], [8.0]]))
@@ -85,9 +80,6 @@ def test_degree_zero_is_a_valid_constant_basis_and_regression() -> None:
     assert jnp.allclose(fit.expansion(jnp.asarray([[-2.0], [7.0]])), 3.25)
     assert jnp.allclose(fit.expansion.variance, 0.0)
     assert jnp.allclose(fit.expansion.total_order_sobol["x"], 0.0)
-
-
-def test_basis_identity_and_modes_preserve_factor_labels_and_order() -> None:
     factors = _factors()
     forward = phx.uq.PolynomialChaosBasis(factors, 1)
     reversed_basis = phx.uq.PolynomialChaosBasis(tuple(reversed(factors)), 1)
@@ -103,9 +95,6 @@ def test_basis_identity_and_modes_preserve_factor_labels_and_order() -> None:
         forward.evaluate(labeled_point)[1:],
         reversed_basis.evaluate(labeled_point)[1:][::-1],
     )
-
-
-def test_basis_is_orthonormal_for_nonstandard_uniform_and_normal_laws() -> None:
     basis = _basis(3)
     legendre = phx.integration.GaussLegendreRule(8).data()
     hermite = phx.integration.GaussHermiteRule(8).data()
@@ -128,16 +117,13 @@ def test_basis_is_orthonormal_for_nonstandard_uniform_and_normal_laws() -> None:
     assert jnp.allclose(point[:3], jnp.asarray([1.0, 0.0, 0.0]))
 
 
-def test_high_degree_normalized_hermite_modes_do_not_form_factorials() -> None:
+def test_polynomial_chaos_scenario_2() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 171)
     values = basis.evaluate({"x": jnp.asarray([0.0, 0.5])})
 
     assert values.shape == (2, 172)
     assert jnp.all(jnp.isfinite(values))
-
-
-def test_sparse_gauss_hermite_product_honors_reference_measure_and_level() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Normal(2.0, 3.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     plan = phx.uq.PolynomialChaosProjectionPlan(
@@ -158,6 +144,26 @@ def test_sparse_gauss_hermite_product_honors_reference_measure_and_level() -> No
     assert result.model_evaluations == 3
     assert jnp.allclose(result.expansion.mean, 1.0)
     assert jnp.allclose(result.expansion.variance, 2.0)
+    basis = _basis(2)
+    uniform = jnp.linspace(2.1, 5.9, 5)
+    normal = jnp.asarray([-4.0, -2.5, -1.0, 0.5, 2.0])
+    first, second = jnp.meshgrid(uniform, normal, indexing="ij")
+    points = jnp.stack((first.reshape((-1,)), second.reshape((-1,))), axis=-1)
+    design = basis.evaluate(points)
+    expected = jnp.asarray([1.25, -0.5, 2.0, 0.75, -1.0, 0.3])
+    exact_values = design @ expected
+
+    exact = phx.uq.PolynomialChaosRegressionPlan(basis).fit(points, exact_values)
+    misspecified = phx.uq.PolynomialChaosRegressionPlan(basis).fit(
+        points,
+        exact_values + 0.2 * ((points[:, 0] - 4.0) / 2.0) ** 3,
+    )
+
+    assert exact.method == "regression-least-squares"
+    assert exact.rank == basis.feature_count
+    assert jnp.allclose(exact.expansion.coefficients, expected, rtol=2e-10, atol=2e-10)
+    assert jnp.allclose(exact.residual_norm, 0.0, atol=2e-10)
+    assert float(misspecified.residual_norm) > 1e-4
 
 
 def test_sparse_gauss_hermite_rejects_uniform_before_rule_materialization(
@@ -194,30 +200,7 @@ def test_sparse_gauss_hermite_rejects_uniform_before_rule_materialization(
     assert not materialized
 
 
-def test_regression_recovers_exact_span_and_reports_out_of_span_residual() -> None:
-    basis = _basis(2)
-    uniform = jnp.linspace(2.1, 5.9, 5)
-    normal = jnp.asarray([-4.0, -2.5, -1.0, 0.5, 2.0])
-    first, second = jnp.meshgrid(uniform, normal, indexing="ij")
-    points = jnp.stack((first.reshape((-1,)), second.reshape((-1,))), axis=-1)
-    design = basis.evaluate(points)
-    expected = jnp.asarray([1.25, -0.5, 2.0, 0.75, -1.0, 0.3])
-    exact_values = design @ expected
-
-    exact = phx.uq.PolynomialChaosRegressionPlan(basis).fit(points, exact_values)
-    misspecified = phx.uq.PolynomialChaosRegressionPlan(basis).fit(
-        points,
-        exact_values + 0.2 * ((points[:, 0] - 4.0) / 2.0) ** 3,
-    )
-
-    assert exact.method == "regression-least-squares"
-    assert exact.rank == basis.feature_count
-    assert jnp.allclose(exact.expansion.coefficients, expected, rtol=2e-10, atol=2e-10)
-    assert jnp.allclose(exact.residual_norm, 0.0, atol=2e-10)
-    assert float(misspecified.residual_norm) > 1e-4
-
-
-def test_weighted_square_regression_uses_least_squares_and_honors_rank() -> None:
+def test_polynomial_chaos_scenario_3() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     points = jnp.asarray([[-1.0], [0.0], [1.0]])
@@ -235,36 +218,6 @@ def test_weighted_square_regression_uses_least_squares_and_honors_rank() -> None
             values,
             weights=jnp.asarray([1.0, 1.0, 0.0]),
         )
-
-
-def test_projection_and_regression_match_for_an_exact_mixed_span() -> None:
-    basis = _basis(3)
-
-    def model(conductivity: Any, forcing: Any) -> Any:
-        x = (conductivity - 4.0) / 2.0
-        z = (forcing + 1.5) / 2.5
-        return 2.0 + x - 0.5 * z + 0.75 * x * z + 0.2 * z**3
-
-    projection = _projection_plan(basis, order=5).fit(model)
-    uniform = jnp.linspace(2.05, 5.95, 8)
-    normal = jnp.linspace(-5.0, 2.0, 8)
-    first, second = jnp.meshgrid(uniform, normal, indexing="ij")
-    points = jnp.stack((first.reshape((-1,)), second.reshape((-1,))), axis=-1)
-    regression = phx.uq.PolynomialChaosRegressionPlan(basis).fit(
-        points, jax.vmap(model)(points[:, 0], points[:, 1])
-    )
-
-    assert projection.method == "projection"
-    assert projection.model_evaluations == 25
-    assert jnp.allclose(
-        projection.expansion.coefficients,
-        regression.expansion.coefficients,
-        rtol=2e-9,
-        atol=2e-9,
-    )
-
-
-def test_pytree_and_field_outputs_preserve_structure_and_physical_axes() -> None:
     basis = _basis(2)
     first, second = jnp.meshgrid(
         jnp.asarray([2.0, 4.0, 6.0]),
@@ -295,32 +248,6 @@ def test_pytree_and_field_outputs_preserve_structure_and_physical_axes() -> None
     assert isinstance(fit.expansion.mean["field"], cx.AxisArray)
     assert fit.expansion.variance["field"].dims == ("channel",)
     assert aligned["field"].dims == ("draw", "channel")
-
-
-def test_projection_supports_pytree_and_field_model_outputs() -> None:
-    basis = _basis(1)
-
-    def model(conductivity: Any, forcing: Any) -> Any:
-        value = conductivity + forcing
-        return {
-            "scalar": value,
-            "field": cx.AxisArray(
-                jnp.stack((value, conductivity - forcing)),
-                dims=("channel",),
-            ),
-        }
-
-    result = _projection_plan(basis, order=3).fit(model)
-    evaluated = result.expansion(
-        {"conductivity": jnp.asarray(4.0), "forcing": jnp.asarray(-1.5)}
-    )
-
-    assert jnp.allclose(evaluated["scalar"], 2.5)
-    assert evaluated["field"].dims == ("channel",)
-    assert jnp.allclose(evaluated["field"].data, jnp.asarray([2.5, 5.5]))
-
-
-def test_coefficient_moments_and_sobol_effects_are_analytic_and_axis_preserving() -> None:
     basis = _basis(2)
     coefficients = jnp.zeros((basis.feature_count, 2))
     coefficients = coefficients.at[0].set(jnp.asarray([3.0, -2.0]))
@@ -356,7 +283,57 @@ def test_coefficient_moments_and_sobol_effects_are_analytic_and_axis_preserving(
     )
 
 
-def test_rank_deficiency_and_nonfinite_inputs_fail_without_repair() -> None:
+def test_projection_and_regression_match_for_an_exact_mixed_span() -> None:
+    basis = _basis(3)
+
+    def model(conductivity: Any, forcing: Any) -> Any:
+        x = (conductivity - 4.0) / 2.0
+        z = (forcing + 1.5) / 2.5
+        return 2.0 + x - 0.5 * z + 0.75 * x * z + 0.2 * z**3
+
+    projection = _projection_plan(basis, order=5).fit(model)
+    uniform = jnp.linspace(2.05, 5.95, 8)
+    normal = jnp.linspace(-5.0, 2.0, 8)
+    first, second = jnp.meshgrid(uniform, normal, indexing="ij")
+    points = jnp.stack((first.reshape((-1,)), second.reshape((-1,))), axis=-1)
+    regression = phx.uq.PolynomialChaosRegressionPlan(basis).fit(
+        points, jax.vmap(model)(points[:, 0], points[:, 1])
+    )
+
+    assert projection.method == "projection"
+    assert projection.model_evaluations == 25
+    assert jnp.allclose(
+        projection.expansion.coefficients,
+        regression.expansion.coefficients,
+        rtol=2e-9,
+        atol=2e-9,
+    )
+
+
+def test_projection_supports_pytree_and_field_model_outputs() -> None:
+    basis = _basis(1)
+
+    def model(conductivity: Any, forcing: Any) -> Any:
+        value = conductivity + forcing
+        return {
+            "scalar": value,
+            "field": cx.AxisArray(
+                jnp.stack((value, conductivity - forcing)),
+                dims=("channel",),
+            ),
+        }
+
+    result = _projection_plan(basis, order=3).fit(model)
+    evaluated = result.expansion(
+        {"conductivity": jnp.asarray(4.0), "forcing": jnp.asarray(-1.5)}
+    )
+
+    assert jnp.allclose(evaluated["scalar"], 2.5)
+    assert evaluated["field"].dims == ("channel",)
+    assert jnp.allclose(evaluated["field"].data, jnp.asarray([2.5, 5.5]))
+
+
+def test_polynomial_chaos_scenario_4() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     plan = phx.uq.PolynomialChaosRegressionPlan(basis)
@@ -373,9 +350,6 @@ def test_rank_deficiency_and_nonfinite_inputs_fail_without_repair() -> None:
             jnp.asarray([[-1.0], [0.0], [1.0]]),
             jnp.asarray([1.0, jnp.inf, 3.0]),
         )
-
-
-def test_explicit_native_svd_policy_can_select_rank_deficient_pseudoinverse() -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 2)
     selected_policy = phx.linalg.LinearSolvePolicy(
@@ -389,11 +363,6 @@ def test_explicit_native_svd_policy_can_select_rank_deficient_pseudoinverse() ->
     assert result.rank == 1
     assert jnp.all(jnp.isfinite(result.expansion.coefficients))
     assert result.provenance["linear_methods"] == ("dense-svd",)
-
-
-def test_unsupported_or_nonindependent_laws_are_rejected_during_basis_construction() -> (
-    None
-):
     lognormal = phx.domain.ProbabilityDomain(phx.uq.LogNormal(0.0, 0.5), label="positive")
     first, second = _factors()
 
@@ -404,7 +373,7 @@ def test_unsupported_or_nonindependent_laws_are_rejected_during_basis_constructi
         phx.uq.PolynomialChaosBasis((first, phx.domain.ProductDomain(first, second)), 2)
 
 
-def test_plan_identities_include_full_quadrature_and_solver_policies() -> None:
+def test_polynomial_chaos_scenario_5() -> None:
     basis = _basis(2)
     low_order = _projection_plan(basis, order=3)
     high_order = _projection_plan(basis, order=5)
@@ -419,6 +388,54 @@ def test_plan_identities_include_full_quadrature_and_solver_policies() -> None:
 
     assert low_order.plan_id != high_order.plan_id
     assert first_regression.plan_id != second_regression.plan_id
+    basis = _basis(0)
+    precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype=jnp.float32,
+        accumulation_dtype=jnp.float64,
+        decision_dtype=jnp.float64,
+        output_dtype=jnp.float64,
+    )
+    source_value = jnp.asarray(1.0 + 2.0**-30, dtype=jnp.float64)
+    result = _projection_plan(basis, order=2, precision=precision).fit(
+        lambda conductivity, forcing: source_value
+    )
+    expected = jnp.asarray(source_value, dtype=jnp.float32).astype(jnp.float64)
+
+    assert result.expansion.coefficients.dtype == jnp.float64
+    assert jnp.allclose(
+        result.expansion.coefficients[0],
+        expected,
+        rtol=0.0,
+        atol=1e-14,
+    )
+    assert jnp.abs(result.expansion.coefficients[0] - source_value) > 1e-12
+    assert result.evidence["precision_policy_id"] == precision.policy_id
+
+    narrow_output = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype=jnp.float64,
+        accumulation_dtype=jnp.float64,
+        decision_dtype=jnp.float64,
+        output_dtype=jnp.float32,
+    )
+    with pytest.raises(ValueError, match="output precision"):
+        _projection_plan(basis, order=2, precision=narrow_output).fit(
+            lambda conductivity, forcing: jnp.asarray(1.0e40, dtype=jnp.float64)
+        )
+    with pytest.raises(ValueError, match="coefficients must be finite"):
+        phx.uq.PolynomialChaosExpansion(basis, jnp.asarray([jnp.inf]))
+    factor = phx.domain.ProbabilityDomain(phx.uq.Normal(1.0, 2.0), label="x")
+    basis = phx.uq.PolynomialChaosBasis(factor, 2)
+    coefficients = jnp.asarray([1.0, -0.5, 0.25], dtype=jnp.float64)
+    expansion = phx.uq.PolynomialChaosExpansion(basis, coefficients)
+    point = jnp.asarray([1.25], dtype=jnp.float64)
+
+    value = jax.jit(lambda coordinates: expansion(coordinates))(point)
+    derivative = jax.jit(jax.grad(lambda scalar: expansion(scalar[None])))(point[0])
+
+    assert value.dtype == jnp.float64
+    assert derivative.dtype == jnp.float64
+    assert jnp.all(jnp.isfinite(derivative))
+    assert jnp.allclose(value, expansion(point))
 
 
 def test_huge_sparse_plan_preflight_saturates_before_lower_set_materialization(
@@ -498,44 +515,6 @@ def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed(
         )
 
 
-def test_projection_honors_evaluation_accumulation_and_output_precision() -> None:
-    basis = _basis(0)
-    precision = phx.integration.IntegrationPrecisionPolicy(
-        evaluation_dtype=jnp.float32,
-        accumulation_dtype=jnp.float64,
-        decision_dtype=jnp.float64,
-        output_dtype=jnp.float64,
-    )
-    source_value = jnp.asarray(1.0 + 2.0**-30, dtype=jnp.float64)
-    result = _projection_plan(basis, order=2, precision=precision).fit(
-        lambda conductivity, forcing: source_value
-    )
-    expected = jnp.asarray(source_value, dtype=jnp.float32).astype(jnp.float64)
-
-    assert result.expansion.coefficients.dtype == jnp.float64
-    assert jnp.allclose(
-        result.expansion.coefficients[0],
-        expected,
-        rtol=0.0,
-        atol=1e-14,
-    )
-    assert jnp.abs(result.expansion.coefficients[0] - source_value) > 1e-12
-    assert result.evidence["precision_policy_id"] == precision.policy_id
-
-    narrow_output = phx.integration.IntegrationPrecisionPolicy(
-        evaluation_dtype=jnp.float64,
-        accumulation_dtype=jnp.float64,
-        decision_dtype=jnp.float64,
-        output_dtype=jnp.float32,
-    )
-    with pytest.raises(ValueError, match="output precision"):
-        _projection_plan(basis, order=2, precision=narrow_output).fit(
-            lambda conductivity, forcing: jnp.asarray(1.0e40, dtype=jnp.float64)
-        )
-    with pytest.raises(ValueError, match="coefficients must be finite"):
-        phx.uq.PolynomialChaosExpansion(basis, jnp.asarray([jnp.inf]))
-
-
 def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch: Any) -> None:
     factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
     basis = phx.uq.PolynomialChaosBasis(factor, 1)
@@ -563,24 +542,6 @@ def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch: Any
     )
     with pytest.raises(ValueError, match="contraction"):
         plan.fit(lambda value: value)
-
-
-def test_expansion_is_jittable_differentiable_and_preserves_coefficient_precision() -> (
-    None
-):
-    factor = phx.domain.ProbabilityDomain(phx.uq.Normal(1.0, 2.0), label="x")
-    basis = phx.uq.PolynomialChaosBasis(factor, 2)
-    coefficients = jnp.asarray([1.0, -0.5, 0.25], dtype=jnp.float64)
-    expansion = phx.uq.PolynomialChaosExpansion(basis, coefficients)
-    point = jnp.asarray([1.25], dtype=jnp.float64)
-
-    value = jax.jit(lambda coordinates: expansion(coordinates))(point)
-    derivative = jax.jit(jax.grad(lambda scalar: expansion(scalar[None])))(point[0])
-
-    assert value.dtype == jnp.float64
-    assert derivative.dtype == jnp.float64
-    assert jnp.all(jnp.isfinite(derivative))
-    assert jnp.allclose(value, expansion(point))
 
 
 def test_benchmark_times_and_blocks_design_materialization_symmetrically(

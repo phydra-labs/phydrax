@@ -13,7 +13,7 @@ def _periodic_discretization(size: Any) -> Any:
     return phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 
 
-def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments() -> None:
+def test_stochastic_contracts() -> None:
     discretization = _periodic_discretization(4)
     kappa, duration = 0.1, 0.05
     initial = discretization.project(jnp.asarray([0.7, -0.2, 0.1, 0.4]))
@@ -81,53 +81,6 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments() -> Non
     )
     assert predictive.sample_axes == (phx.uq.SampleAxis("path", "process"),)
     assert predictive.samples.shape == (2048, 1, 4)
-
-
-def test_semidiscrete_heat_replays_realization_and_changes_with_key() -> None:
-    discretization = _periodic_discretization(5)
-    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
-        discretization,
-        0.02,
-        rank=2,
-    )
-    initial = discretization.project(jnp.sin(2.0 * jnp.pi * discretization.axes[0].nodes))
-    spde = phx.solver.semidiscretize_reaction_diffusion(
-        initial,
-        discretization,
-        t0=0.0,
-        t1=0.03,
-        kappa=0.04,
-        noise_basis=basis,
-    )
-    realization = spde.wiener_realization(
-        jr.key(21),
-        sample_shape=(64,),
-        tolerance=1e-4,
-    )
-
-    def solve(selected_realization: Any) -> Any:
-        return phx.solver.solve_diffrax_ensemble(
-            spde.problem,
-            save_times=jnp.asarray([0.03]),
-            realization=selected_realization,
-            dt0=1e-3,
-        )
-
-    first = solve(realization)
-    replay = solve(realization)
-    changed = solve(
-        spde.wiener_realization(
-            jr.key(22),
-            sample_shape=(64,),
-            tolerance=1e-4,
-        )
-    )
-
-    assert jnp.array_equal(first.states, replay.states)
-    assert not jnp.array_equal(first.states, changed.states)
-
-
-def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible() -> None:
     discretization = _periodic_discretization(6)
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -192,7 +145,51 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible() -
     assert first.temporal_evidence.state_coordinates.domain_kind == "full"
 
 
-def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes() -> None:
+def test_semidiscrete_heat_replays_realization_and_changes_with_key() -> None:
+    discretization = _periodic_discretization(5)
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        0.02,
+        rank=2,
+    )
+    initial = discretization.project(jnp.sin(2.0 * jnp.pi * discretization.axes[0].nodes))
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.03,
+        kappa=0.04,
+        noise_basis=basis,
+    )
+    realization = spde.wiener_realization(
+        jr.key(21),
+        sample_shape=(64,),
+        tolerance=1e-4,
+    )
+
+    def solve(selected_realization: Any) -> Any:
+        return phx.solver.solve_diffrax_ensemble(
+            spde.problem,
+            save_times=jnp.asarray([0.03]),
+            realization=selected_realization,
+            dt0=1e-3,
+        )
+
+    first = solve(realization)
+    replay = solve(realization)
+    changed = solve(
+        spde.wiener_realization(
+            jr.key(22),
+            sample_shape=(64,),
+            tolerance=1e-4,
+        )
+    )
+
+    assert jnp.array_equal(first.states, replay.states)
+    assert not jnp.array_equal(first.states, changed.states)
+
+
+def test_spde_solver_scenario_1() -> None:
     # ty: ignore[invalid-argument-type]
     x_axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
     # ty: ignore[invalid-argument-type]
@@ -246,9 +243,6 @@ def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes() -> Non
     )
     assert solution.states.shape == (4, 1, 4, 5, 2)
     assert jnp.all(jnp.isfinite(solution.states))
-
-
-def test_refined_grid_changes_discretization_and_basis_provenance() -> None:
     coarse = _periodic_discretization(6)
     refined = _periodic_discretization(10)
     coarse_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(coarse, 0.02, rank=2)
@@ -258,9 +252,6 @@ def test_refined_grid_changes_discretization_and_basis_provenance() -> None:
     assert coarse_basis.basis_id != refined_basis.basis_id
     assert coarse_basis.field_space_id == coarse.field_spaces[0].field_space_id
     assert refined_basis.field_space_id == refined.field_spaces[0].field_space_id
-
-
-def test_semidiscrete_stratonovich_geometric_noise_matches_analytic_moments() -> None:
     discretization = _periodic_discretization(2)
     initial = jnp.asarray([1.0, 1.5])
     rate, noise, duration = 0.2, 0.4, 0.2

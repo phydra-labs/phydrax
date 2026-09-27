@@ -386,9 +386,8 @@ def _screened_smooth_at_zero(screening: complex, eta: float) -> complex:
     b = screening / (2.0 * eta)
     erfc_b = complex(special.erfc(np.asarray(b, dtype=np.complex128))[()])
     exponential = complex(np.exp(-(b * b)))
-    return (
-        -screening * erfc_b / (4.0 * math.pi)
-        + eta * exponential / (2.0 * math.pi**1.5)
+    return -screening * erfc_b / (4.0 * math.pi) + eta * exponential / (
+        2.0 * math.pi**1.5
     )
 
 

@@ -15,9 +15,7 @@ import numpy as np
 import phydrax as phx
 
 
-_TETRA_FACES = jnp.asarray(
-    [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32
-)
+_TETRA_FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
 _TETRA_VERTICES = jnp.asarray(
     [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     dtype=jnp.float64,

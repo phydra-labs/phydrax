@@ -47,9 +47,7 @@ from tests._control_systems import (
 DENSE = MaterializationPolicy(max_entries=4096, max_bytes=32_768)
 
 
-def test_quaternion_pose_discrete_linearization_is_six_dimensional_and_sign_invariant() -> (
-    None
-):
+def test_linearization_frequency_scenario_1() -> None:
     geometry = QuaternionPoseStateGeometry()
     local_space = ArraySpace((6,), dtype=jnp.float32)
     state_layout = StateLayout(
@@ -100,6 +98,70 @@ def test_quaternion_pose_discrete_linearization_is_six_dimensional_and_sign_inva
     assert jnp.all(jnp.isfinite(negative.state_matrix))
     assert bool(positive.valid)
     assert bool(negative.valid)
+    dynamics = make_differential_control_dynamics(
+        lambda time, state, control, args: jnp.ones((1,)),
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="time-independent-linearization",
+    )
+
+    result = linearize_differential_dynamics(
+        dynamics,
+        jnp.asarray(jnp.nan),
+        jnp.ones((1,)),
+        jnp.ones((1,)),
+        materialization=DENSE,
+    )
+
+    assert not bool(result.valid)
+    discrete = make_discrete_control_dynamics(
+        lambda context, state, control, args: state**2 + 3.0 * control + context.source,
+        state_shape=(),
+        control_shape=(),
+        dynamics_id="scalar-discrete-map",
+    )
+    times = jnp.array([0.0, 0.5])
+    states = jnp.array([1.0, 2.0])
+    result = linearize_discrete_dynamics(
+        discrete,
+        times,
+        states,
+        jnp.asarray(0.25),
+        materialization=DENSE,
+        target_time=times + 0.5,
+        step_index=jnp.arange(times.size),
+    )
+
+    assert result.operating_state.shape == (2,)
+    assert result.operating_control.shape == (2,)
+    assert result.dynamics_value.shape == (2,)
+    assert result.state_matrix.shape == (2, 1, 1)
+    assert result.control_matrix.shape == (2, 1, 1)
+    np.testing.assert_allclose(result.state_matrix[:, 0, 0], 2.0 * states)
+    np.testing.assert_allclose(result.control_matrix[:, 0, 0], 3.0)
+    assert bool(jnp.all(result.valid))
+
+    differential = make_differential_control_dynamics(
+        lambda time, state, control, args: state * control,
+        state_shape=(),
+        control_shape=(),
+        dynamics_id="scalar-differential-field",
+    )
+    scalar = linearize_differential_dynamics(
+        differential,
+        jnp.asarray(0.0),
+        jnp.asarray(2.0),
+        jnp.asarray(4.0),
+        materialization=DENSE,
+    )
+    assert scalar.operating_state.shape == ()
+    assert scalar.operating_control.shape == ()
+    assert scalar.dynamics_value.shape == ()
+    assert scalar.state_matrix.shape == (1, 1)
+    assert scalar.control_matrix.shape == (1, 1)
+    np.testing.assert_allclose(scalar.state_matrix, [[4.0]])
+    np.testing.assert_allclose(scalar.control_matrix, [[2.0]])
+    assert bool(scalar.valid)
 
 
 def test_nonlinear_input_output_linearization_has_affine_offsets() -> None:
@@ -216,76 +278,6 @@ def test_discrete_linearization_rejects_finite_failed_rollbacks() -> None:
     assert bool(jnp.all(jnp.isnan(result.state_matrix[1])))
     assert bool(jnp.all(jnp.isnan(result.control_matrix[1])))
     assert bool(jnp.all(jnp.isnan(result.affine_offset[1])))
-
-
-def test_linearization_marks_nonfinite_operating_time_invalid() -> None:
-    dynamics = make_differential_control_dynamics(
-        lambda time, state, control, args: jnp.ones((1,)),
-        state_shape=(1,),
-        control_shape=(1,),
-        dynamics_id="time-independent-linearization",
-    )
-
-    result = linearize_differential_dynamics(
-        dynamics,
-        jnp.asarray(jnp.nan),
-        jnp.ones((1,)),
-        jnp.ones((1,)),
-        materialization=DENSE,
-    )
-
-    assert not bool(result.valid)
-
-
-def test_scalar_state_and_control_linearization_preserves_case_axes() -> None:
-    discrete = make_discrete_control_dynamics(
-        lambda context, state, control, args: state**2 + 3.0 * control + context.source,
-        state_shape=(),
-        control_shape=(),
-        dynamics_id="scalar-discrete-map",
-    )
-    times = jnp.array([0.0, 0.5])
-    states = jnp.array([1.0, 2.0])
-    result = linearize_discrete_dynamics(
-        discrete,
-        times,
-        states,
-        jnp.asarray(0.25),
-        materialization=DENSE,
-        target_time=times + 0.5,
-        step_index=jnp.arange(times.size),
-    )
-
-    assert result.operating_state.shape == (2,)
-    assert result.operating_control.shape == (2,)
-    assert result.dynamics_value.shape == (2,)
-    assert result.state_matrix.shape == (2, 1, 1)
-    assert result.control_matrix.shape == (2, 1, 1)
-    np.testing.assert_allclose(result.state_matrix[:, 0, 0], 2.0 * states)
-    np.testing.assert_allclose(result.control_matrix[:, 0, 0], 3.0)
-    assert bool(jnp.all(result.valid))
-
-    differential = make_differential_control_dynamics(
-        lambda time, state, control, args: state * control,
-        state_shape=(),
-        control_shape=(),
-        dynamics_id="scalar-differential-field",
-    )
-    scalar = linearize_differential_dynamics(
-        differential,
-        jnp.asarray(0.0),
-        jnp.asarray(2.0),
-        jnp.asarray(4.0),
-        materialization=DENSE,
-    )
-    assert scalar.operating_state.shape == ()
-    assert scalar.operating_control.shape == ()
-    assert scalar.dynamics_value.shape == ()
-    assert scalar.state_matrix.shape == (1, 1)
-    assert scalar.control_matrix.shape == (1, 1)
-    np.testing.assert_allclose(scalar.state_matrix, [[4.0]])
-    np.testing.assert_allclose(scalar.control_matrix, [[2.0]])
-    assert bool(scalar.valid)
 
 
 def test_prepared_linearization_actions_match_the_dense_model_without_materializing() -> (
@@ -517,7 +509,7 @@ def test_discrete_bridge_refuses_failed_transitions_and_manifold_states() -> Non
         )
 
 
-def test_known_siso_continuous_and_discrete_resolvents() -> None:
+def test_linearization_frequency_scenario_2() -> None:
     a = jnp.array([[-2.0]])
     b = jnp.array([[3.0]])
     c = jnp.array([[4.0]])
@@ -534,6 +526,31 @@ def test_known_siso_continuous_and_discrete_resolvents() -> None:
     discrete = discrete_transfer_function(ad, b, c, d, z)
     np.testing.assert_allclose(discrete.response[:, 0, 0], 12.0 / (z - 0.5) + 0.5)
     assert bool(jnp.all(discrete.valid))
+    system = LinearDescriptorSystem(
+        jnp.asarray([[2.0]]),
+        jnp.asarray([[-3.0]]),
+        jnp.asarray([[4.0]]),
+        jnp.asarray([[5.0]]),
+        jnp.asarray([[0.25]]),
+        system_id="descriptor-reference",
+    )
+    frequency = jnp.asarray(1.5)
+    result = descriptor_frequency_response(system, frequency)
+    expected_state = 4.0 / (1j * frequency * 2.0 + 3.0)
+    np.testing.assert_allclose(result.state_response[0, 0], expected_state)
+    np.testing.assert_allclose(result.response[0, 0], 5.0 * expected_state + 0.25)
+    assert bool(result.successful)
+    one = jnp.ones((1, 1))
+    zero = jnp.zeros((1, 1))
+    unstable = frequency_response(jnp.array([[0.25]]), one, one, zero, jnp.asarray(1.0))
+    assert int(unstable.status) == FREQUENCY_UNSTABLE
+    assert not bool(unstable.valid)
+
+    singular = frequency_response(zero, one, one, zero, jnp.asarray(0.0))
+    assert int(singular.status) == FREQUENCY_SINGULAR
+    assert bool(singular.singular)
+    assert not bool(singular.valid)
+    assert np.isinf(float(singular.condition_number))
 
 
 def test_mimo_frequency_response_and_gradient() -> None:
@@ -560,34 +577,3 @@ def test_mimo_frequency_response_and_gradient() -> None:
         return jnp.real(scalar.response[0, 0])
 
     np.testing.assert_allclose(jax.grad(real_response)(2.0), -0.12)
-
-
-def test_descriptor_frequency_uses_i_omega_e_minus_a_resolvent() -> None:
-    system = LinearDescriptorSystem(
-        jnp.asarray([[2.0]]),
-        jnp.asarray([[-3.0]]),
-        jnp.asarray([[4.0]]),
-        jnp.asarray([[5.0]]),
-        jnp.asarray([[0.25]]),
-        system_id="descriptor-reference",
-    )
-    frequency = jnp.asarray(1.5)
-    result = descriptor_frequency_response(system, frequency)
-    expected_state = 4.0 / (1j * frequency * 2.0 + 3.0)
-    np.testing.assert_allclose(result.state_response[0, 0], expected_state)
-    np.testing.assert_allclose(result.response[0, 0], 5.0 * expected_state + 0.25)
-    assert bool(result.successful)
-
-
-def test_unstable_and_singular_statuses_are_explicit() -> None:
-    one = jnp.ones((1, 1))
-    zero = jnp.zeros((1, 1))
-    unstable = frequency_response(jnp.array([[0.25]]), one, one, zero, jnp.asarray(1.0))
-    assert int(unstable.status) == FREQUENCY_UNSTABLE
-    assert not bool(unstable.valid)
-
-    singular = frequency_response(zero, one, one, zero, jnp.asarray(0.0))
-    assert int(singular.status) == FREQUENCY_SINGULAR
-    assert bool(singular.singular)
-    assert not bool(singular.valid)
-    assert np.isinf(float(singular.condition_number))

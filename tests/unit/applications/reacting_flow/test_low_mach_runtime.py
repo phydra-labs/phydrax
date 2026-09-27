@@ -93,7 +93,7 @@ def _runtime(rate: Any = 0.1) -> Any:
     return plan, state
 
 
-def test_closed_uniform_low_mach_reaction_conserves_mass_enthalpy_and_eos() -> None:
+def test_low_mach_runtime_scenario_1() -> None:
     plan, state = _runtime()
     result = plan.advance(state, 0.01)
 
@@ -111,9 +111,6 @@ def test_closed_uniform_low_mach_reaction_conserves_mass_enthalpy_and_eos() -> N
     )
     assert jnp.max(jnp.abs(result.diagnostics.eos_pressure_defect)) < 0.1
     assert jnp.max(jnp.abs(result.projection.divergence_defect)) < 1.0e-7
-
-
-def test_failed_low_mach_source_rolls_back_every_state_leaf() -> None:
     plan, state = _runtime()
     source = jnp.zeros_like(state.species_density).at[..., 0].set(-1.0e8)
     result = plan.advance(state, 0.1, external_species_rate=source)

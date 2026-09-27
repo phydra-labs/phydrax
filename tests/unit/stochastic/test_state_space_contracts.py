@@ -40,7 +40,7 @@ def _linear_problem(*, values: Any = None, mask: Any = None) -> Any:
     )
 
 
-def test_observation_sequence_requires_prefix_validity_and_explicit_missingness() -> None:
+def test_state_space_contracts_scenario_1() -> None:
     sequence = phx.stochastic.ObservationSequence(
         jnp.asarray([[0.2, 0.5, 1.0], [0.3, 0.7, 0.7]]),
         jnp.ones((2, 3, 2)),
@@ -70,9 +70,6 @@ def test_observation_sequence_requires_prefix_validity_and_explicit_missingness(
         )
     with pytest.raises(ValueError, match="finite"):
         phx.stochastic.ObservationSequence(jnp.asarray([0.0]), jnp.asarray([[jnp.nan]]))
-
-
-def test_gaussian_and_categorical_priors_expose_density_semantics() -> None:
     gaussian = phx.stochastic.GaussianStatePrior(
         jnp.zeros((2, 1)),
         jnp.asarray([[1.0]]),
@@ -94,9 +91,6 @@ def test_gaussian_and_categorical_priors_expose_density_semantics() -> None:
     assert not singular.has_log_density
     with pytest.raises(ValueError, match="singular"):
         singular.log_prob(jnp.asarray([0.0]))
-
-
-def test_linear_gaussian_roles_sample_and_normalize_masked_observations() -> None:
     problem = _linear_problem(mask=jnp.asarray([[True], [False]]))
     transition = problem.model.transition
     observation = problem.model.observation
@@ -124,7 +118,7 @@ def test_linear_gaussian_roles_sample_and_normalize_masked_observations() -> Non
     assert jnp.allclose(missing, 0.0)
 
 
-def test_likelihood_observation_adapter_reduces_only_observed_components() -> None:
+def test_state_space_contracts_scenario_2() -> None:
     model = phx.uq.LikelihoodObservationModel(
         phx.uq.GaussianLikelihood(0.5),
         lambda state, time, context: state + 0.0 * time + 0.0 * context.step_index,
@@ -146,6 +140,31 @@ def test_likelihood_observation_adapter_reduces_only_observed_components() -> No
     assert model.sample(
         jr.key(2), jnp.zeros(2), 0.0, context, sample_shape=(3,)
     ).shape == (3, 2)
+    root = jr.key(4)
+    first = phx.stochastic.state_space_key(
+        root, "transition", "physical-case", 3, member=7
+    )
+    repeated = phx.stochastic.state_space_key(
+        root, "transition", "physical-case", 3, member=7
+    )
+    other_step = phx.stochastic.state_space_key(
+        root, "transition", "physical-case", 4, member=7
+    )
+
+    assert jnp.array_equal(first, repeated)
+    assert not jnp.array_equal(first, other_step)
+    problem = _linear_problem()
+    assert problem.model.state_shape == (1,)
+
+    mismatched = phx.stochastic.ObservationSequence(
+        jnp.asarray([1.0]),
+        jnp.ones((1, 2)),
+        observation_axes=("sensor",),
+    )
+    with pytest.raises(ValueError, match="observation shapes"):
+        phx.stochastic.StateSpaceProblem(
+            problem.model, mismatched, initial_time=0.0, problem_id="bad"
+        )
 
 
 def test_callable_adapters_receive_context_as_the_final_callback_argument() -> None:
@@ -213,34 +232,3 @@ def test_callable_adapters_receive_context_as_the_final_callback_argument() -> N
     assert jnp.allclose(location, jnp.asarray([7.0]))
     assert jnp.allclose(observation_log_prob, 0.0)
     assert jnp.allclose(draws, jnp.asarray([[7.0], [7.0]]))
-
-
-def test_state_space_keys_are_case_identity_and_prefix_stable() -> None:
-    root = jr.key(4)
-    first = phx.stochastic.state_space_key(
-        root, "transition", "physical-case", 3, member=7
-    )
-    repeated = phx.stochastic.state_space_key(
-        root, "transition", "physical-case", 3, member=7
-    )
-    other_step = phx.stochastic.state_space_key(
-        root, "transition", "physical-case", 4, member=7
-    )
-
-    assert jnp.array_equal(first, repeated)
-    assert not jnp.array_equal(first, other_step)
-
-
-def test_state_space_problem_rejects_shape_mismatch() -> None:
-    problem = _linear_problem()
-    assert problem.model.state_shape == (1,)
-
-    mismatched = phx.stochastic.ObservationSequence(
-        jnp.asarray([1.0]),
-        jnp.ones((1, 2)),
-        observation_axes=("sensor",),
-    )
-    with pytest.raises(ValueError, match="observation shapes"):
-        phx.stochastic.StateSpaceProblem(
-            problem.model, mismatched, initial_time=0.0, problem_id="bad"
-        )

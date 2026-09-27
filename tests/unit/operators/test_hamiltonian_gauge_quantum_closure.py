@@ -26,7 +26,7 @@ from phydrax.operators.quantum._gauge_link_hilbert import (
 )
 
 
-def test_canonical_car_and_mode_permutation_signs() -> None:
+def test_hamiltonian_gauge_quantum_closure_scenario_1() -> None:
     order = FermionModeOrder(("a", "b", "c"))
     basis = FermionicFockBasis(order)
     annihilation = tuple(
@@ -49,9 +49,6 @@ def test_canonical_car_and_mode_permutation_signs() -> None:
     assert evidence.valid
     assert permutation[target_double, source_double] == -1.0
     assert jnp.allclose(jnp.conj(permutation.T) @ permutation, identity)
-
-
-def test_car_polynomial_obeys_declared_operator_order() -> None:
     order = FermionModeOrder(("left", "right"))
     basis = FermionicFockBasis(order)
     hopping = CARMonomial(order, (("left", "create"), ("right", "annihilate")))
@@ -61,9 +58,6 @@ def test_car_polynomial_obeys_declared_operator_order() -> None:
         @ fermion_ladder_matrix(basis, "right", "annihilate")
     )
     assert jnp.allclose(polynomial.dense_matrix(), expected)
-
-
-def test_finite_and_truncated_link_algebras_have_explicit_cutoff_defects() -> None:
     z3 = cyclic_group_link_hilbert(3)
     assert z3.evidence.valid
     assert jnp.allclose(

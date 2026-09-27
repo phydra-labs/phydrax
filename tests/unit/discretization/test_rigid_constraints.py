@@ -70,7 +70,7 @@ def _constant_load(force: Any, torque: Any) -> Any:
     return evaluate
 
 
-def test_joint_plan_validation_and_static_scope() -> None:
+def test_rigid_constraints_scenario_1() -> None:
     with pytest.raises(ValueError, match="nonzero"):
         phx.discretization.HingeJointSetPlan(
             jnp.asarray([1]),
@@ -122,9 +122,6 @@ def test_joint_plan_validation_and_static_scope() -> None:
     )
     with pytest.raises(ValueError, match="rows exceed"):
         overconstrained.prepare(one_mobile, one_reference)
-
-
-def test_fixed_and_hinge_residuals_are_objective_and_preserve_hinge_spin() -> None:
     _, bodies = _prepared_bodies(3, fixed_mask=[True, False, False])
     reference = _reference(
         bodies,
@@ -174,9 +171,40 @@ def test_fixed_and_hinge_residuals_are_objective_and_preserve_hinge_spin() -> No
     residuals = graph.residuals(axial_state)
     assert jnp.max(jnp.abs(residuals.hinge_axis)) < 1.0e-12
     assert jnp.min(graph.hinge_alignment(axial_state)) > 0.99
-
-
-def test_empty_graph_matches_unconstrained_rigid_kdk() -> None:
+    _, bodies = _prepared_bodies(2, fixed_mask=[True, False])
+    reference = _reference(bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    graph = phx.discretization.RigidJointGraphPlan(
+        fixed=phx.discretization.FixedJointSetPlan(
+            jnp.asarray([20]), jnp.asarray([100]), jnp.asarray([101])
+        )
+    )
+    dynamics = phx.discretization.RigidConstraintDynamicsPlan(graph).prepare(
+        bodies, reference
+    )
+    perturbed_orientation = reference.orientation.at[1].set(_quaternion_z(0.05))
+    state = dynamics.initialize_state(
+        reference.position.at[1].add(jnp.asarray([0.03, -0.02, 0.01])),
+        jnp.asarray([[0.0, 0.0, 0.0], [0.2, -0.1, 0.05]]),
+        perturbed_orientation,
+        jnp.asarray([[0.0, 0.0, 0.0], [0.0, 0.0, 0.2]]),
+    )
+    result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-3))
+    assert result.successful
+    assert (
+        result.evaluation.diagnostics.maximum_position_residual
+        <= dynamics.solver.position_tolerance
+    )
+    assert (
+        result.evaluation.diagnostics.maximum_velocity_residual
+        <= dynamics.solver.velocity_tolerance
+    )
+    assert jnp.allclose(
+        result.accepted_state.kinematics.position[0], state.kinematics.position[0]
+    )
+    assert jnp.allclose(
+        result.accepted_state.kinematics.orientation[0], state.kinematics.orientation[0]
+    )
+    assert result.evaluation.diagnostics.quaternion_defect <= 1.0e-12
     _, bodies = _prepared_bodies(2, fixed_mask=[False, False])
     reference = _reference(bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     force = jnp.asarray([[1.0, 0.0, 0.0], [0.0, -2.0, 0.0]])
@@ -221,43 +249,6 @@ def test_empty_graph_matches_unconstrained_rigid_kdk() -> None:
         result.accepted_state.kinematics.angular_velocity,
         expected.kinematics.angular_velocity,
     )
-
-
-def test_fixed_joint_projects_pose_and_velocity_globally() -> None:
-    _, bodies = _prepared_bodies(2, fixed_mask=[True, False])
-    reference = _reference(bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
-    graph = phx.discretization.RigidJointGraphPlan(
-        fixed=phx.discretization.FixedJointSetPlan(
-            jnp.asarray([20]), jnp.asarray([100]), jnp.asarray([101])
-        )
-    )
-    dynamics = phx.discretization.RigidConstraintDynamicsPlan(graph).prepare(
-        bodies, reference
-    )
-    perturbed_orientation = reference.orientation.at[1].set(_quaternion_z(0.05))
-    state = dynamics.initialize_state(
-        reference.position.at[1].add(jnp.asarray([0.03, -0.02, 0.01])),
-        jnp.asarray([[0.0, 0.0, 0.0], [0.2, -0.1, 0.05]]),
-        perturbed_orientation,
-        jnp.asarray([[0.0, 0.0, 0.0], [0.0, 0.0, 0.2]]),
-    )
-    result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-3))
-    assert result.successful
-    assert (
-        result.evaluation.diagnostics.maximum_position_residual
-        <= dynamics.solver.position_tolerance
-    )
-    assert (
-        result.evaluation.diagnostics.maximum_velocity_residual
-        <= dynamics.solver.velocity_tolerance
-    )
-    assert jnp.allclose(
-        result.accepted_state.kinematics.position[0], state.kinematics.position[0]
-    )
-    assert jnp.allclose(
-        result.accepted_state.kinematics.orientation[0], state.kinematics.orientation[0]
-    )
-    assert result.evaluation.diagnostics.quaternion_defect <= 1.0e-12
 
 
 def test_ball_and_hinge_steps_are_jittable_and_certified() -> None:

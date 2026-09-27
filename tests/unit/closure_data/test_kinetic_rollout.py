@@ -100,7 +100,7 @@ def _one_group_per_split(
     raise AssertionError("Could not construct deterministic split fixtures.")
 
 
-def test_complete_parents_are_partitioned_before_any_overlapping_windows() -> None:
+def test_kinetic_rollout_scenario_1() -> None:
     partition_plan = LeakageSafePartitionPlan(
         "trajectory",
         train_fraction=0.5,
@@ -162,9 +162,6 @@ def test_complete_parents_are_partitioned_before_any_overlapping_windows() -> No
         "validation",
         "test",
     }
-
-
-def test_windows_are_contiguous_deterministic_and_reject_bad_anchor_or_horizon() -> None:
     parent = _trajectory(count=9)
     plan = SmoothCompressibleRolloutWindowPlan(
         3,
@@ -213,9 +210,6 @@ def test_windows_are_contiguous_deterministic_and_reject_bad_anchor_or_horizon()
         SmoothCompressibleRolloutWindow(parent, plan, 2, split="train")
     with pytest.raises(ValueError, match="too short"):
         plan.anchors(_trajectory(count=4))
-
-
-def test_native_shapes_dtype_and_bound_identities_are_exact() -> None:
     schema = _schema()
     parent = _trajectory(schema=schema)
     assert schema.f_shape == (2, 3, 17)
@@ -299,7 +293,7 @@ def test_native_shapes_dtype_and_bound_identities_are_exact() -> None:
         )
 
 
-def test_failed_oracle_parent_is_rejected_whole_and_never_partially_windowed() -> None:
+def test_kinetic_rollout_scenario_2() -> None:
     failed_validity = np.ones((8,), dtype="bool")
     failed_validity[-1] = False
     good = _trajectory(trajectory_id="good", count=8)
@@ -316,9 +310,6 @@ def test_failed_oracle_parent_is_rejected_whole_and_never_partially_windowed() -
             ),
             SmoothCompressibleRolloutWindowPlan(2, 2, maximum_windows_per_trajectory=1),
         )
-
-
-def test_statistics_count_each_training_parent_state_once_not_each_window() -> None:
     parent = _trajectory(count=6)
     dataset = prepare_smooth_compressible_rollout_dataset(
         (parent,),

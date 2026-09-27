@@ -185,7 +185,7 @@ def _assert_certified(result: Any) -> None:
     assert result.evidence.certified_valid_count == cells
 
 
-def test_flat_wall_layers_realize_the_exact_schedule() -> None:
+def test_boundary_layer_scenario_1() -> None:
     points, triangles = _plate(5)
     wall = _wall(points, triangles)
 
@@ -215,9 +215,6 @@ def test_flat_wall_layers_realize_the_exact_schedule() -> None:
     np.testing.assert_allclose(heights, (0.0, 0.01, 0.022, 0.0364))
     _assert_certified(result)
     assert not result.closed_cap
-
-
-def test_quadrilateral_walls_grow_hexahedra_closed_by_transition_pyramids() -> None:
     values = np.linspace(0.0, 1.0, 4)
     x, y = np.meshgrid(values, values, indexing="ij")
     points = np.stack((x.ravel(), y.ravel(), np.zeros(x.size)), axis=1)
@@ -250,9 +247,6 @@ def test_quadrilateral_walls_grow_hexahedra_closed_by_transition_pyramids() -> N
     pyramids = result.mesh.block("pyramids")
     np.testing.assert_array_equal(layer_index[np.asarray(pyramids.global_ids)], 3)
     _assert_certified(result)
-
-
-def test_local_terminations_close_columns_with_pyramids_and_tetrahedra() -> None:
     lower, lower_triangles = _plate(4)
     upper, upper_triangles = _plate(4, flip=True)
     upper[:, 2] = 0.03 + 0.17 * upper[:, 0]
@@ -276,9 +270,7 @@ def test_local_terminations_close_columns_with_pyramids_and_tetrahedra() -> None
     _assert_certified(result)
 
 
-def test_curved_wall_layers_realize_thickness_and_growth_along_the_wall_distance() -> (
-    None
-):
+def test_boundary_layer_scenario_2() -> None:
     points, triangles = _icosphere(0.4, 2)
     wall = _wall(points, triangles)
 
@@ -298,11 +290,6 @@ def test_curved_wall_layers_realize_thickness_and_growth_along_the_wall_distance
     radii = np.linalg.norm(np.asarray(result.cap.coordinates), axis=1)
     assert np.all(radii > 0.4)
     _assert_certified(result)
-
-
-def test_convex_corners_fan_into_certified_hexahedra_pyramids_and_corner_tetrahedra() -> (
-    None
-):
     points, triangles = _box((-0.3, -0.3, -0.3), (0.3, 0.3, 0.3), 3, outward=True)
     wall = _wall(points, triangles)
 
@@ -323,9 +310,6 @@ def test_convex_corners_fan_into_certified_hexahedra_pyramids_and_corner_tetrahe
     # ty: ignore[unresolved-attribute]
     assert {block.cell_kind for block in result.cap.blocks} == {"triangle"}
     _assert_certified(result)
-
-
-def test_concave_right_angle_corners_are_stretched_and_certified() -> None:
     points, triangles = _box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 3, outward=False)
     wall = _wall(points, triangles)
 
@@ -341,7 +325,7 @@ def test_concave_right_angle_corners_are_stretched_and_certified() -> None:
     _assert_certified(result)
 
 
-def test_acute_concave_wedge_is_rejected_with_its_crease_vertices() -> None:
+def test_boundary_layer_scenario_3() -> None:
     count = 3
     values = np.linspace(0.0, 1.0, count + 1)
     angle = np.deg2rad(30.0)
@@ -384,9 +368,6 @@ def test_acute_concave_wedge_is_rejected_with_its_crease_vertices() -> None:
     crease = np.flatnonzero(np.isclose(points[:, 0], 0.0) & np.isclose(points[:, 2], 0.0))
     assert set(failure.value.entity_ids) == {int(value) for value in crease}
     np.testing.assert_allclose(failure.value.locations, points[crease])
-
-
-def test_rim_columns_slide_along_the_adjacent_side_surfaces() -> None:
     points, triangles = _box((0.0, 0.0, 0.0), (1.0, 1.0, 0.5), 4, outward=False)
     heights = points[triangles][:, :, 2]
     open_box = triangles[~np.all(np.isclose(heights, 0.5), axis=1)]
@@ -418,6 +399,55 @@ def test_rim_columns_slide_along_the_adjacent_side_surfaces() -> None:
     )
     assert not result.closed_cap
     _assert_certified(result)
+    wall = _channel(0.05)
+
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        phx.meshing.prepare_boundary_layers(wall, _control(wall))
+
+    assert failure.value.category is phx.meshing.MeshingFailureCategory.CONTROL_CONFLICT
+    assert len(failure.value.entity_ids) == 50
+    assert len(failure.value.locations) == 50
+    for collision in (
+        phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
+        phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY,
+        phx.meshing.BoundaryLayerCollisionPolicy.MERGE,
+    ):
+        gap = 0.05
+        wall = _channel(gap)
+
+        result = phx.meshing.prepare_boundary_layers(
+            wall, _control(wall, collision=collision, minimum_thickness_fraction=0.2)
+        )
+
+        evidence = result.evidence
+        assert evidence.collision_policy is collision
+        assert evidence.predicted_collision_vertex_count == 50
+        heights = np.asarray(result.mesh.coordinates)[:, 2]
+        match collision:
+            case phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
+                assert 0.2 <= evidence.minimum_scale < 1.0
+                assert evidence.reduced_vertex_count == 50
+                assert np.max(heights[heights < 0.5 * gap]) < 0.5 * gap
+                np.testing.assert_allclose(evidence.achieved_growth_rates, 1.2, rtol=1e-9)
+                assert np.all(np.asarray(evidence.layer_active))
+            case phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
+                assert evidence.terminated_vertex_count == 50
+                assert _cell_counts(result) == {"prism": 2 * 32}
+                achieved = np.asarray(evidence.achieved_thicknesses)
+                active = np.asarray(evidence.layer_active)
+                assert achieved[0] == pytest.approx(0.01)
+                np.testing.assert_array_equal(active, (True, False, False))
+                np.testing.assert_array_equal(np.isnan(achieved), ~active)
+                assert np.all(np.isnan(evidence.achieved_growth_rates))
+            case phx.meshing.BoundaryLayerCollisionPolicy.MERGE:
+                assert evidence.merged_vertex_count == 50
+                assert evidence.minimum_scale == pytest.approx(
+                    0.5 * gap / SCHEDULE.total_thickness
+                )
+                assert np.any(np.isclose(heights, 0.5 * gap))
+                # Merged fronts share their midsurface, so no free front remains.
+                assert result.cap is None
+        _assert_certified(result)
 
 
 def _channel(gap: Any) -> Any:
@@ -427,63 +457,3 @@ def _channel(gap: Any) -> Any:
         np.concatenate((lower, upper)),
         np.concatenate((lower_triangles, upper_triangles + lower.shape[0])),
     )
-
-
-def test_opposing_channel_walls_fail_with_colliding_vertex_evidence() -> None:
-    wall = _channel(0.05)
-
-    with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    assert failure.value.category is phx.meshing.MeshingFailureCategory.CONTROL_CONFLICT
-    assert len(failure.value.entity_ids) == 50
-    assert len(failure.value.locations) == 50
-
-
-@pytest.mark.parametrize(
-    "collision",
-    (
-        phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
-        phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY,
-        phx.meshing.BoundaryLayerCollisionPolicy.MERGE,
-    ),
-)
-def test_opposing_channel_walls_resolve_by_the_explicit_collision_policy(
-    collision: Any,
-) -> None:
-    gap = 0.05
-    wall = _channel(gap)
-
-    result = phx.meshing.prepare_boundary_layers(
-        wall, _control(wall, collision=collision, minimum_thickness_fraction=0.2)
-    )
-
-    evidence = result.evidence
-    assert evidence.collision_policy is collision
-    assert evidence.predicted_collision_vertex_count == 50
-    heights = np.asarray(result.mesh.coordinates)[:, 2]
-    match collision:
-        case phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
-            assert 0.2 <= evidence.minimum_scale < 1.0
-            assert evidence.reduced_vertex_count == 50
-            assert np.max(heights[heights < 0.5 * gap]) < 0.5 * gap
-            np.testing.assert_allclose(evidence.achieved_growth_rates, 1.2, rtol=1e-9)
-            assert np.all(np.asarray(evidence.layer_active))
-        case phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
-            assert evidence.terminated_vertex_count == 50
-            assert _cell_counts(result) == {"prism": 2 * 32}
-            achieved = np.asarray(evidence.achieved_thicknesses)
-            active = np.asarray(evidence.layer_active)
-            assert achieved[0] == pytest.approx(0.01)
-            np.testing.assert_array_equal(active, (True, False, False))
-            np.testing.assert_array_equal(np.isnan(achieved), ~active)
-            assert np.all(np.isnan(evidence.achieved_growth_rates))
-        case phx.meshing.BoundaryLayerCollisionPolicy.MERGE:
-            assert evidence.merged_vertex_count == 50
-            assert evidence.minimum_scale == pytest.approx(
-                0.5 * gap / SCHEDULE.total_thickness
-            )
-            assert np.any(np.isclose(heights, 0.5 * gap))
-            # Merged fronts share their midsurface, so no free front remains.
-            assert result.cap is None
-    _assert_certified(result)

@@ -10,7 +10,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_general_plane_stress_director_closes_all_transverse_tractions() -> None:
+def test_mpm_commercial_materials_scenario_1() -> None:
     rotation = phx.applications.solid_mechanics.MPMMaterialOrientation(
         jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     )
@@ -37,9 +37,6 @@ def test_general_plane_stress_director_closes_all_transverse_tractions() -> None
     assert jnp.linalg.norm(response.diagnostics["plane_stress_residual"][0]) < 1e-9
     assert response.diagnostics["transverse_director"][0, 2] > 0.0
     assert bool(linearized.tangent_successful[0])
-
-
-def test_pressure_dependent_materials_report_branches_and_dissipation() -> None:
     deformation = jnp.asarray([[[1.0, 0.16, 0.0], [0.0, 0.92, 0.0], [0.0, 0.0, 1.08]]])
     density = jnp.asarray((1.0,))
     dp = phx.applications.solid_mechanics.DruckerPragerMPMConstitutivePlan()
@@ -83,9 +80,6 @@ def test_pressure_dependent_materials_report_branches_and_dissipation() -> None:
     assert bool(mc_response.successful[0])
     assert int(mc_response.branch_code[0]) in (0, 1, 2, 3)
     assert mc_response.dissipation_increment[0] >= 0.0
-
-
-def test_modified_cam_clay_and_nonlocal_softening_are_admissible() -> None:
     material = phx.applications.solid_mechanics.ModifiedCamClayMPMConstitutivePlan(
         initial_preconsolidation_pressure=2.0,
         initial_void_ratio=0.8,

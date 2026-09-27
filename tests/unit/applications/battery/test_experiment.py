@@ -332,9 +332,7 @@ def _explicit_segmented_reference() -> Any:
     return jnp.concatenate((first_solution.states[:, 0], second_solution.states[1:, 0]))
 
 
-def test_adaptive_transition_clipping_matches_segments_and_localizes_later_guard() -> (
-    None
-):
+def test_experiment_scenario_1() -> None:
     protocol = _event_protocol(node_side="left")
     solve_plan = BatteryDiffraxSolvePlan(
         solver=dfx.Tsit5(),
@@ -364,9 +362,6 @@ def test_adaptive_transition_clipping_matches_segments_and_localizes_later_guard
     )
     np.testing.assert_allclose(result.outputs.values[5:], 0.0)
     assert np.all(np.isinf(np.asarray(result.outputs.times_s[5:])))
-
-
-def test_fixed_stepto_matches_guard_and_refuses_unaligned_transition() -> None:
     protocol = _event_protocol()
     fixed = BatteryDiffraxSolvePlan(
         solver=dfx.Tsit5(),
@@ -386,9 +381,6 @@ def test_fixed_stepto_matches_guard_and_refuses_unaligned_transition() -> None:
     )
     with pytest.raises(ValueError, match="every protocol transition"):
         prepare_battery_experiment(_experiment(protocol, unaligned))
-
-
-def test_fixed_left_boundary_guards_use_global_observation_side() -> None:
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(
@@ -422,174 +414,153 @@ def test_fixed_left_boundary_guards_use_global_observation_side() -> None:
     assert result.termination.reason == "completed"
     np.testing.assert_allclose(result.outputs.values[1, :2], np.asarray((6.0, 1.0)))
     np.testing.assert_allclose(result.native_solution.times, np.asarray((0.0, 1.0, 2.0)))
-
-
-@pytest.mark.parametrize("fixed", (False, True))
-@pytest.mark.parametrize("threshold", (4.0, 4.5))
-def test_ode_initial_equality_or_violation_stops_without_a_positive_crossing(
-    fixed: Any, threshold: Any
-) -> None:
-    protocol = BatteryProtocolPlan(
-        (CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),)
-    )
-    solve_plan = (
-        BatteryDiffraxSolvePlan(
+    for threshold in (3.0, 3.5):
+        protocol = BatteryProtocolPlan(
+            (
+                CurrentStepPlan(1.0),
+                CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),
+            ),
+            node_side="left",
+        )
+        solve_plan = BatteryDiffraxSolvePlan(
             solver=dfx.Euler(),
-            stepsize_controller=dfx.StepTo(ts=jnp.asarray((0.0, 0.5, 1.0))),
+            stepsize_controller=dfx.StepTo(ts=jnp.asarray((0.0, 0.5, 1.0, 1.5, 2.0))),
         )
-        if fixed
-        else BatteryDiffraxSolvePlan(dt0=0.2)
-    )
-    result = (
-        _experiment(
-            protocol,
-            solve_plan,
-            save_times=(0.0, 0.5, 1.0),
+        result = (
+            _experiment(
+                protocol,
+                solve_plan,
+                model=RampAdapter(voltage_current_gain=2.0),
+                save_times=(0.0, 0.5, 1.0, 1.5, 2.0),
+            )
+            .prepare()
+            .run(
+                (),
+                jnp.asarray((4.0,)),
+                # ty: ignore[invalid-argument-type]
+                BatteryProtocolValues(protocol, (1.0, -1.0), (threshold,)),
+            )
         )
-        .prepare()
-        .run(
-            (),
-            jnp.asarray((4.0,)),
+        assert bool(result.successful)
+        assert result.termination.reason == "voltage-below"
+        np.testing.assert_array_equal(result.termination.time_s, 1.0)
+        np.testing.assert_array_equal(result.termination.protocol_step_index, 1)
+        np.testing.assert_array_equal(
+            result.outputs.valid, (True, True, True, False, False)
+        )
+        np.testing.assert_allclose(result.outputs.values[2], (7.0, 1.0, 300.0))
+        assert not bool(result.termination.derivative_valid)
+        assert int(result.native_solution.stats["num_accepted_steps"]) == 2
+    for fixed in (False, True):
+        for threshold in (4.0, 4.5):
+            protocol = BatteryProtocolPlan(
+                (CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),)
+            )
+            solve_plan = (
+                BatteryDiffraxSolvePlan(
+                    solver=dfx.Euler(),
+                    stepsize_controller=dfx.StepTo(ts=jnp.asarray((0.0, 0.5, 1.0))),
+                )
+                if fixed
+                else BatteryDiffraxSolvePlan(dt0=0.2)
+            )
+            result = (
+                _experiment(
+                    protocol,
+                    solve_plan,
+                    save_times=(0.0, 0.5, 1.0),
+                )
+                .prepare()
+                .run(
+                    (),
+                    jnp.asarray((4.0,)),
+                    # ty: ignore[invalid-argument-type]
+                    BatteryProtocolValues(protocol, (1.0,), (threshold,)),
+                )
+            )
+            assert bool(result.successful)
+            assert result.termination.reason == "voltage-below"
+            np.testing.assert_array_equal(result.termination.time_s, 0.0)
+            np.testing.assert_array_equal(result.outputs.valid, (True, False, False))
+            np.testing.assert_allclose(result.outputs.values[0], (4.0, 1.0, 300.0))
+            assert not bool(result.termination.derivative_valid)
+            assert int(result.native_solution.stats["num_accepted_steps"]) == 0
+
+
+def test_dae_contracts() -> None:
+    for adaptive in (False, True):
+        for node_side, boundary_voltage, boundary_current in (
+            ("left", 7.0, 1.0),
+            ("right", 5.0, 0.0),
+        ):
+            protocol = BatteryProtocolPlan(
+                (CurrentStepPlan(1.0), RestStepPlan(1.0)),
+                node_side=node_side,
+            )
+            prepared = _dae_experiment(
+                protocol, (0.0, 0.5, 1.0, 1.5, 2.0), adaptive=adaptive
+            )
             # ty: ignore[invalid-argument-type]
-            BatteryProtocolValues(protocol, (1.0,), (threshold,)),
+            result = prepared.run(
+                (), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,))
+            )
+            assert bool(result.successful)
+            np.testing.assert_allclose(
+                result.outputs.values,
+                (
+                    (4.0, 6.0, 1.0),
+                    (4.5, 6.5, 1.0),
+                    (5.0, boundary_voltage, boundary_current),
+                    (5.0, 5.0, 0.0),
+                    (5.0, 5.0, 0.0),
+                ),
+                atol=1.0e-6,
+            )
+            restart = result.native_solution.replay.restarts[0]
+            np.testing.assert_array_equal(
+                restart.initialization.state[0], restart.state_before[0]
+            )
+            np.testing.assert_allclose(
+                restart.initialization.state, (5.0, 5.0), atol=1.0e-6
+            )
+            np.testing.assert_allclose(
+                restart.initialization.state_rate[0], 0.0, atol=1.0e-6
+            )
+            np.testing.assert_allclose(restart.state_rate_before[0], 1.0, atol=1.0e-6)
+            np.testing.assert_array_equal(restart.initialization.state_correction[0], 0.0)
+    for node_side in ("left", "right"):
+        protocol = BatteryProtocolPlan(
+            (CurrentStepPlan(0.1), RestStepPlan(0.1)),
+            node_side=node_side,
         )
-    )
-    assert bool(result.successful)
-    assert result.termination.reason == "voltage-below"
-    np.testing.assert_array_equal(result.termination.time_s, 0.0)
-    np.testing.assert_array_equal(result.outputs.valid, (True, False, False))
-    np.testing.assert_allclose(result.outputs.values[0], (4.0, 1.0, 300.0))
-    assert not bool(result.termination.derivative_valid)
-    assert int(result.native_solution.stats["num_accepted_steps"]) == 0
-
-
-@pytest.mark.parametrize("threshold", (3.0, 3.5))
-def test_fixed_ode_restart_guard_uses_new_forcing_and_preserves_left_output(
-    threshold: Any,
-) -> None:
-    protocol = BatteryProtocolPlan(
-        (
-            CurrentStepPlan(1.0),
-            CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),
-        ),
-        node_side="left",
-    )
-    solve_plan = BatteryDiffraxSolvePlan(
-        solver=dfx.Euler(),
-        stepsize_controller=dfx.StepTo(ts=jnp.asarray((0.0, 0.5, 1.0, 1.5, 2.0))),
-    )
-    result = (
-        _experiment(
-            protocol,
-            solve_plan,
-            model=RampAdapter(voltage_current_gain=2.0),
-            save_times=(0.0, 0.5, 1.0, 1.5, 2.0),
+        save_times = jnp.linspace(0.0, 0.2, 21)
+        prepared = _dae_experiment(protocol, save_times)
+        # ty: ignore[invalid-argument-type]
+        result = prepared.run(
+            (), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,))
         )
-        .prepare()
-        .run(
-            (),
-            jnp.asarray((4.0,)),
-            # ty: ignore[invalid-argument-type]
-            BatteryProtocolValues(protocol, (1.0, -1.0), (threshold,)),
+        assert bool(result.successful)
+        np.testing.assert_array_equal(result.outputs.times_s, save_times)
+        expected_charge = 4.0 + np.minimum(np.asarray(save_times), 0.1)
+        expected_current = (np.arange(21) < (11 if node_side == "left" else 10)).astype(
+            "float64"
         )
-    )
-    assert bool(result.successful)
-    assert result.termination.reason == "voltage-below"
-    np.testing.assert_array_equal(result.termination.time_s, 1.0)
-    np.testing.assert_array_equal(result.termination.protocol_step_index, 1)
-    np.testing.assert_array_equal(result.outputs.valid, (True, True, True, False, False))
-    np.testing.assert_allclose(result.outputs.values[2], (7.0, 1.0, 300.0))
-    assert not bool(result.termination.derivative_valid)
-    assert int(result.native_solution.stats["num_accepted_steps"]) == 2
-
-
-@pytest.mark.parametrize("adaptive", (False, True))
-@pytest.mark.parametrize(
-    "node_side,boundary_voltage,boundary_current",
-    (
-        ("left", 7.0, 1.0),
-        ("right", 5.0, 0.0),
-    ),
-)
-def test_dae_transition_preserves_charge_and_reinitializes_voltage_and_rate(
-    node_side: Any, boundary_voltage: Any, boundary_current: Any, adaptive: Any
-) -> None:
-    protocol = BatteryProtocolPlan(
-        (CurrentStepPlan(1.0), RestStepPlan(1.0)),
-        node_side=node_side,
-    )
-    prepared = _dae_experiment(protocol, (0.0, 0.5, 1.0, 1.5, 2.0), adaptive=adaptive)
-    # ty: ignore[invalid-argument-type]
-    result = prepared.run((), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,)))
-    assert bool(result.successful)
-    np.testing.assert_allclose(
-        result.outputs.values,
-        (
-            (4.0, 6.0, 1.0),
-            (4.5, 6.5, 1.0),
-            (5.0, boundary_voltage, boundary_current),
-            (5.0, 5.0, 0.0),
-            (5.0, 5.0, 0.0),
-        ),
-        atol=1.0e-6,
-    )
-    restart = result.native_solution.replay.restarts[0]
-    np.testing.assert_array_equal(
-        restart.initialization.state[0], restart.state_before[0]
-    )
-    np.testing.assert_allclose(restart.initialization.state, (5.0, 5.0), atol=1.0e-6)
-    np.testing.assert_allclose(restart.initialization.state_rate[0], 0.0, atol=1.0e-6)
-    np.testing.assert_allclose(restart.state_rate_before[0], 1.0, atol=1.0e-6)
-    np.testing.assert_array_equal(restart.initialization.state_correction[0], 0.0)
-
-
-@pytest.mark.parametrize("node_side", ("left", "right"))
-def test_dae_linspace_transition_roundoff_preserves_saved_outputs(node_side: Any) -> None:
-    protocol = BatteryProtocolPlan(
-        (CurrentStepPlan(0.1), RestStepPlan(0.1)),
-        node_side=node_side,
-    )
-    save_times = jnp.linspace(0.0, 0.2, 21)
-    prepared = _dae_experiment(protocol, save_times)
-    # ty: ignore[invalid-argument-type]
-    result = prepared.run((), jnp.asarray(4.0), BatteryProtocolValues(protocol, (1.0,)))
-    assert bool(result.successful)
-    np.testing.assert_array_equal(result.outputs.times_s, save_times)
-    expected_charge = 4.0 + np.minimum(np.asarray(save_times), 0.1)
-    expected_current = (np.arange(21) < (11 if node_side == "left" else 10)).astype(
-        "float64"
-    )
-    np.testing.assert_allclose(
-        result.outputs.values,
-        np.stack(
-            (expected_charge, expected_charge + 2.0 * expected_current, expected_current),
-            axis=-1,
-        ),
-        atol=1.0e-6,
-    )
-    np.testing.assert_array_equal(
-        result.native_solution.replay.restarts[0].time_s,
-        protocol.boundary_times_s[1],
-    )
-
-
-def test_transition_normalization_retains_distinct_nearby_save_nodes() -> None:
-    protocol = BatteryProtocolPlan((CurrentStepPlan(0.1), RestStepPlan(0.1)))
-    boundary = protocol.boundary_times_s[1]
-    offset = 64.0 * np.finfo(boundary.dtype).eps * boundary
-    save_times = jnp.asarray((0.0, boundary - offset, boundary + offset, 0.2))
-    prepared = _dae_experiment(protocol, save_times)
-    np.testing.assert_array_equal(
-        prepared.integration_time_grid.times[prepared.save_indices],
-        save_times,
-    )
-    np.testing.assert_array_equal(
-        prepared.integration_time_grid.times,
-        jnp.asarray((0.0, boundary - offset, boundary, boundary + offset, 0.2)),
-    )
-
-
-def test_dae_terminal_crossing_uses_native_success_with_invalid_suffix() -> None:
+        np.testing.assert_allclose(
+            result.outputs.values,
+            np.stack(
+                (
+                    expected_charge,
+                    expected_charge + 2.0 * expected_current,
+                    expected_current,
+                ),
+                axis=-1,
+            ),
+            atol=1.0e-6,
+        )
+        np.testing.assert_array_equal(
+            result.native_solution.replay.restarts[0].time_s,
+            protocol.boundary_times_s[1],
+        )
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(1.0),
@@ -612,39 +583,33 @@ def test_dae_terminal_crossing_uses_native_success_with_invalid_suffix() -> None
     np.testing.assert_allclose(result.termination.time_s, 1.5, atol=1.0e-6)
     np.testing.assert_allclose(result.outputs.values[6], (4.5, 2.5, -1.0), atol=1.0e-6)
     assert not bool(jnp.any(result.outputs.valid[7:]))
-
-
-@pytest.mark.parametrize("adaptive", (False, True))
-def test_dae_initial_equality_terminates_without_crossing_derivative_or_steps(
-    adaptive: Any,
-) -> None:
-    protocol = BatteryProtocolPlan(
-        (
-            CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),
-            RestStepPlan(1.0),
+    for adaptive in (False, True):
+        protocol = BatteryProtocolPlan(
+            (
+                CurrentStepPlan(1.0, stop_guards=(VoltageStopGuard("below"),)),
+                RestStepPlan(1.0),
+            )
         )
-    )
-    result = _dae_experiment(protocol, (0.0, 0.5, 1.0, 1.5, 2.0), adaptive=adaptive).run(
-        (),
-        jnp.asarray(4.0),
-        # ty: ignore[invalid-argument-type]
-        BatteryProtocolValues(protocol, (1.0,), (6.0,)),
-    )
-    assert bool(result.successful)
-    assert bool(result.termination.terminated)
-    np.testing.assert_array_equal(result.termination.time_s, 0.0)
-    np.testing.assert_array_equal(
-        result.outputs.valid, (True, False, False, False, False)
-    )
-    np.testing.assert_allclose(result.outputs.values[0], (4.0, 6.0, 1.0), atol=1.0e-6)
-    assert not bool(result.native_solution.replay.derivative_valid)
-    assert int(result.native_solution.segments[0].step_history.count) == 0
-    np.testing.assert_array_equal(
-        result.native_solution.replay.segment_active, (True, False)
-    )
-
-
-def test_dae_model_guard_factory_localizes_a_native_terminal_event() -> None:
+        result = _dae_experiment(
+            protocol, (0.0, 0.5, 1.0, 1.5, 2.0), adaptive=adaptive
+        ).run(
+            (),
+            jnp.asarray(4.0),
+            # ty: ignore[invalid-argument-type]
+            BatteryProtocolValues(protocol, (1.0,), (6.0,)),
+        )
+        assert bool(result.successful)
+        assert bool(result.termination.terminated)
+        np.testing.assert_array_equal(result.termination.time_s, 0.0)
+        np.testing.assert_array_equal(
+            result.outputs.valid, (True, False, False, False, False)
+        )
+        np.testing.assert_allclose(result.outputs.values[0], (4.0, 6.0, 1.0), atol=1.0e-6)
+        assert not bool(result.native_solution.replay.derivative_valid)
+        assert int(result.native_solution.segments[0].step_history.count) == 0
+        np.testing.assert_array_equal(
+            result.native_solution.replay.segment_active, (True, False)
+        )
     protocol = BatteryProtocolPlan((CurrentStepPlan(2.0),))
     prepared = _dae_experiment(protocol, np.arange(0.0, 2.25, 0.25), native_guard=True)
     # ty: ignore[invalid-argument-type]
@@ -653,9 +618,6 @@ def test_dae_model_guard_factory_localizes_a_native_terminal_event() -> None:
     assert result.termination.reason == prepared.native_guards[0].guard_id
     np.testing.assert_allclose(result.termination.time_s, 1.5, atol=1.0e-6)
     np.testing.assert_allclose(result.outputs.values[6], (5.5, 7.5, 1.0), atol=1.0e-6)
-
-
-def test_dae_current_jump_equality_stops_after_preserving_the_left_output() -> None:
     protocol = BatteryProtocolPlan(
         (
             CurrentStepPlan(1.0),
@@ -678,7 +640,20 @@ def test_dae_current_jump_equality_stops_after_preserving_the_left_output() -> N
     assert not bool(jnp.any(result.outputs.valid[3:]))
 
 
-def test_finite_native_trajectory_fails_when_model_ledger_fails() -> None:
+def test_experiment_scenario_2() -> None:
+    protocol = BatteryProtocolPlan((CurrentStepPlan(0.1), RestStepPlan(0.1)))
+    boundary = protocol.boundary_times_s[1]
+    offset = 64.0 * np.finfo(boundary.dtype).eps * boundary
+    save_times = jnp.asarray((0.0, boundary - offset, boundary + offset, 0.2))
+    prepared = _dae_experiment(protocol, save_times)
+    np.testing.assert_array_equal(
+        prepared.integration_time_grid.times[prepared.save_indices],
+        save_times,
+    )
+    np.testing.assert_array_equal(
+        prepared.integration_time_grid.times,
+        jnp.asarray((0.0, boundary - offset, boundary, boundary + offset, 0.2)),
+    )
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0),))
     result = (
         _experiment(
@@ -695,9 +670,6 @@ def test_finite_native_trajectory_fails_when_model_ledger_fails() -> None:
     assert bool(jnp.all(result.outputs.valid))
     assert int(result.application_status) == int(BatteryRunStatus.MODEL_LEDGER_FAILED)
     assert not bool(result.successful)
-
-
-def test_domain_and_native_failures_are_distinct_fail_closed_statuses() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(2.0)))
     values = BatteryProtocolValues(protocol, jnp.asarray((1.0,)))
     domain_plan = BatteryDiffraxSolvePlan(dt0=0.2)
@@ -722,7 +694,7 @@ def test_domain_and_native_failures_are_distinct_fail_closed_statuses() -> None:
     )
 
 
-def test_result_provenance_is_exactly_bound_to_preparation_and_candidate() -> None:
+def test_experiment_scenario_3() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0), RestStepPlan(2.0)))
     prepared = _experiment(
         protocol,
@@ -774,9 +746,6 @@ def test_result_provenance_is_exactly_bound_to_preparation_and_candidate() -> No
     )
     np.testing.assert_allclose(result.native_solution.times, np.asarray((0.0, 1.0, 3.0)))
     np.testing.assert_allclose(result.outputs.times_s, np.asarray((0.0, 3.0)))
-
-
-def test_unsupported_controller_and_outputs_are_refused_before_execution() -> None:
     with pytest.raises(ValueError, match="adaptive controllers or explicit"):
         BatteryDiffraxSolvePlan(
             solver=dfx.Tsit5(),
@@ -797,9 +766,6 @@ def test_unsupported_controller_and_outputs_are_refused_before_execution() -> No
     )
     with pytest.raises(ValueError, match="power_w"):
         plan.prepare()
-
-
-def test_failed_active_dae_segment_invalidates_replay_derivatives() -> None:
     protocol = BatteryProtocolPlan((CurrentStepPlan(1.0),))
     profile, support = _candidate(dae=True)
     prepared = BatteryExperimentPlan(

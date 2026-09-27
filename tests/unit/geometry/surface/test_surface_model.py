@@ -56,7 +56,7 @@ def _tetrahedron() -> Any:
     return points, outward_faces
 
 
-def test_closed_and_open_surfaces_prepare_with_computed_classification() -> None:
+def test_surface_model_scenario_1() -> None:
     points, faces = _tetrahedron()
     closed = SurfaceModel.from_triangles(
         points,
@@ -97,9 +97,6 @@ def test_closed_and_open_surfaces_prepare_with_computed_classification() -> None
     assert component_surface.audit.component_count == 2
     assert component_surface.audit.component_classification == ("open", "open")
     assert component_surface.audit.boundary_loop_count == 2
-
-
-def test_audit_rejects_degenerate_and_capacity_exhausted_surfaces() -> None:
     points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)))
     model = SurfaceModel.from_triangles(
         points, np.asarray(((0, 1, 2),), dtype=np.int32), _metadata()
@@ -125,9 +122,6 @@ def test_audit_rejects_degenerate_and_capacity_exhausted_surfaces() -> None:
     assert capacity_error.value.status is SurfacePreparationStatus.AUDIT_REJECTED
     # ty: ignore[unresolved-attribute]
     assert not bool(capacity_error.value.report.capacity_valid)
-
-
-def test_malformed_nonfinite_and_unrepaired_orientation_fail_typed() -> None:
     points, faces = _tetrahedron()
     nonfinite = points.copy()
     nonfinite[0, 0] = np.nan

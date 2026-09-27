@@ -31,7 +31,7 @@ def _samples(values: Any, *, mask: Any = None) -> Any:
     )
 
 
-def test_operator_trial_subspace_lowers_modes_and_honors_mask() -> None:
+def test_operator_eigenspace_scenario_1() -> None:
     problem = _problem()
     samples = _samples(
         [[1.0, 0.0], [0.0, 1.0], [5.0, -2.0]],
@@ -49,9 +49,14 @@ def test_operator_trial_subspace_lowers_modes_and_honors_mask() -> None:
     assert jnp.allclose(result.eigenvalues, jnp.asarray([1.0, 3.0]), atol=2e-12)
     assert jnp.allclose(result.relative_residuals, 0.0, atol=2e-12)
     assert bool(result.valid)
+    problem = _problem()
+    samples = phx.nn.operator.FunctionSamples(
+        values=jnp.ones((2, 3, 2)),
+        coordinates=jnp.arange(3.0)[:, None],
+    )
 
-
-def test_warm_started_eigensolve_refines_predicted_trial_space() -> None:
+    with pytest.raises(ValueError, match="exactly one case|space size"):
+        phx.nn.operator.operator_trial_subspace(samples, problem.operator.source)
     problem = _problem()
     samples = _samples([[1.0, 0.0], [0.0, 1.0], [0.2, 0.0]])
     trial = phx.nn.operator.rayleigh_ritz_from_samples(problem, samples)
@@ -73,14 +78,3 @@ def test_warm_started_eigensolve_refines_predicted_trial_space() -> None:
     assert jnp.max(refined.solve.diagnostics.relative_residuals) < jnp.max(
         trial.relative_residuals
     )
-
-
-def test_operator_trial_subspace_rejects_unsliced_case_axes() -> None:
-    problem = _problem()
-    samples = phx.nn.operator.FunctionSamples(
-        values=jnp.ones((2, 3, 2)),
-        coordinates=jnp.arange(3.0)[:, None],
-    )
-
-    with pytest.raises(ValueError, match="exactly one case|space size"):
-        phx.nn.operator.operator_trial_subspace(samples, problem.operator.source)

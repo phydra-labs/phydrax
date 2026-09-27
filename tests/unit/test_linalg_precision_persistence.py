@@ -43,7 +43,7 @@ def _positive_properties() -> Any:
     )
 
 
-def test_batched_factorization_matrix_functions_estimators_and_inertia() -> None:
+def test_linalg_precision_persistence_scenario_1() -> None:
     matrices = jnp.asarray(
         [
             [[4.0, 1.0], [1.0, 3.0]],
@@ -91,9 +91,6 @@ def test_batched_factorization_matrix_functions_estimators_and_inertia() -> None
     assert jnp.array_equal(inertia.positive, jnp.asarray([2, 2]))
     assert jnp.all(inertia.certified)
     assert jnp.all(inertia.zero_count_reliable)
-
-
-def test_shared_pattern_sparse_factorization_batch_is_independent() -> None:
     relation = phx.sparse.EdgeRelation(
         jnp.asarray([0, 1, 0, 1], dtype=jnp.int32),
         jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
@@ -120,6 +117,48 @@ def test_shared_pattern_sparse_factorization_batch_is_independent() -> None:
     assert result.status.shape == (2,)
     assert jnp.all(result.success)
     assert jnp.allclose(result.value, expected)
+    source = la.ArraySpace((2,), dtype=jnp.float32)
+    target = la.ArraySpace((2,), dtype=jnp.float64)
+    diagonal = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        source_size=2,
+        target_size=2,
+    )
+    plan = phx.sparse.compile_sparse_jacobian(
+        lambda value, _: value.astype(jnp.float64) ** 2,
+        jnp.asarray([1.0, 2.0], dtype=jnp.float32),
+        source=source,
+        target=target,
+        structure=diagonal,
+        compiler="native",
+        mode="fwd",
+        precision=phx.sparse.SparseDerivativePrecisionPolicy(
+            coefficient=jnp.float64,
+            accumulation=jnp.float64,
+        ),
+    )
+    image = plan.operator(jnp.asarray([1.0, 2.0], dtype=jnp.float32)).mv(
+        jnp.ones((2,), dtype=jnp.float32)
+    )
+    assert image.dtype == jnp.float64
+    assert jnp.array_equal(image, jnp.asarray([2.0, 4.0], dtype=jnp.float64))
+
+    hessian = phx.sparse.compile_sparse_hessian(
+        lambda value, _: jnp.sum(value**2),
+        jnp.asarray([1.0, 2.0], dtype=jnp.float64),
+        space=target,
+        structure=diagonal,
+        compiler="native",
+        contract=phx.sparse.SparseHessianContract("bilinear"),
+    )
+    assert isinstance(hessian.target, la.DualSpace)
+    assert jnp.array_equal(
+        hessian.operator(jnp.asarray([1.0, 2.0], dtype=jnp.float64)).mv(
+            jnp.ones((2,), dtype=jnp.float64)
+        ),
+        jnp.asarray([2.0, 2.0], dtype=jnp.float64),
+    )
 
 
 def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failures() -> (
@@ -214,51 +253,6 @@ def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates()
         return jnp.sum(run(scaled).value)
 
     assert jnp.allclose(jax.grad(sum_solution)(1.0), -2.0, rtol=1e-10)
-
-
-def test_sparse_derivatives_have_explicit_dtype_complex_and_hessian_semantics() -> None:
-    source = la.ArraySpace((2,), dtype=jnp.float32)
-    target = la.ArraySpace((2,), dtype=jnp.float64)
-    diagonal = phx.sparse.EdgeRelation(
-        jnp.asarray([0, 1], dtype=jnp.int32),
-        jnp.asarray([0, 1], dtype=jnp.int32),
-        source_size=2,
-        target_size=2,
-    )
-    plan = phx.sparse.compile_sparse_jacobian(
-        lambda value, _: value.astype(jnp.float64) ** 2,
-        jnp.asarray([1.0, 2.0], dtype=jnp.float32),
-        source=source,
-        target=target,
-        structure=diagonal,
-        compiler="native",
-        mode="fwd",
-        precision=phx.sparse.SparseDerivativePrecisionPolicy(
-            coefficient=jnp.float64,
-            accumulation=jnp.float64,
-        ),
-    )
-    image = plan.operator(jnp.asarray([1.0, 2.0], dtype=jnp.float32)).mv(
-        jnp.ones((2,), dtype=jnp.float32)
-    )
-    assert image.dtype == jnp.float64
-    assert jnp.array_equal(image, jnp.asarray([2.0, 4.0], dtype=jnp.float64))
-
-    hessian = phx.sparse.compile_sparse_hessian(
-        lambda value, _: jnp.sum(value**2),
-        jnp.asarray([1.0, 2.0], dtype=jnp.float64),
-        space=target,
-        structure=diagonal,
-        compiler="native",
-        contract=phx.sparse.SparseHessianContract("bilinear"),
-    )
-    assert isinstance(hessian.target, la.DualSpace)
-    assert jnp.array_equal(
-        hessian.operator(jnp.asarray([1.0, 2.0], dtype=jnp.float64)).mv(
-            jnp.ones((2,), dtype=jnp.float64)
-        ),
-        jnp.asarray([2.0, 2.0], dtype=jnp.float64),
-    )
 
 
 def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit() -> None:
