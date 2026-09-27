@@ -47,8 +47,9 @@ def triangle_connectivity(
     edge_keys: dict[tuple[int, int], int] = {}
     cell_edges = np.empty(cells.shape, dtype=np.int32)
     cell_signs = np.empty(cells.shape, dtype=np.float64)
-    for cell_index, face in enumerate(cells):
-        oriented = ((face[0], face[1]), (face[1], face[2]), (face[2], face[0]))
+    for cell_index, face in enumerate(cells.tolist()):
+        a, b, c = (int(value) for value in face)
+        oriented = ((a, b), (b, c), (c, a))
         for local_index, (start, stop) in enumerate(oriented):
             key = (min(int(start), int(stop)), max(int(start), int(stop)))
             if key not in edge_keys:

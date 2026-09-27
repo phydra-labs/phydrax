@@ -87,11 +87,17 @@ def test_tetrahedral_incidence_rejects_nonmanifold_faces_and_flipped_cells() -> 
 
 
 def test_tetrahedral_entity_ids_ignore_cell_order_and_even_vertex_permutations() -> None:
-    tetrahedra = np.asarray([[0, 1, 2, 3], [1, 2, 3, 4], [0, 2, 1, 5], [0, 3, 2, 6]])
-    vertex_ids = np.asarray([50, 30, 90, 10, 70, 20, 40])
-    cell_ids = np.asarray([11, 22, 33, 44])
-    order = np.asarray([2, 0, 3, 1])
-    even = np.asarray([[1, 2, 0, 3], [0, 1, 2, 3], [2, 0, 1, 3], [1, 0, 3, 2]])
+    tetrahedra = np.asarray(
+        [[0, 1, 2, 3], [1, 2, 3, 4], [0, 2, 1, 5], [0, 3, 2, 6]],
+        dtype=np.int64,
+    )
+    vertex_ids = np.asarray([50, 30, 90, 10, 70, 20, 40], dtype=np.int64)
+    cell_ids = np.asarray([11, 22, 33, 44], dtype=np.int64)
+    order = np.asarray([2, 0, 3, 1], dtype=np.int64)
+    even = np.asarray(
+        [[1, 2, 0, 3], [0, 1, 2, 3], [2, 0, 1, 3], [1, 0, 3, 2]],
+        dtype=np.int64,
+    )
     shuffled = np.take_along_axis(tetrahedra[order], even, axis=1)
 
     def oriented_entities(cells: Any, identifiers: Any) -> Any:

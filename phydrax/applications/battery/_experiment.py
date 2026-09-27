@@ -1221,7 +1221,7 @@ def _solve_fixed_segments(
             raise ValueError(
                 "Segmented battery problem must retain its local runtime inputs."
             )
-        local_problem = _checked_ode_bounds(local_problem, start, end)
+        local_problem = _checked_ode_bounds(local_problem, float(start), float(end))
         if local_problem.stochastic:
             raise ValueError(
                 "Fixed segmented battery execution does not support stochastic ODEs."

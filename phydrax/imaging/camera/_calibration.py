@@ -197,7 +197,7 @@ class CameraCalibrationPlan(StrictModule, NonTrainableState):
         if not math.isfinite(maximum_condition) or maximum_condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
         flat_mask = mask_host.reshape(-1)
-        indices = tuple(np.flatnonzero(flat_mask))
+        indices = tuple(int(index) for index in np.flatnonzero(flat_mask))
         self.free_parameter_mask = jnp.asarray(mask_host)
         self.robust_loss = loss
         self.camera_capacity = camera_capacity

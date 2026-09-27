@@ -118,7 +118,7 @@ class RobotNameIDMap(StrictModule, NonTrainableState):
             raise ValueError("Robot name maps require unique, non-empty, sorted names.")
         ids_host = np.arange(len(names_), dtype=np.int64)
         self.names = names_
-        self.ids = tuple(ids_host)
+        self.ids = tuple(int(identifier) for identifier in ids_host)
         self.mapping_id = canonical_fingerprint(
             {
                 "kind": "robot-name-id-map",

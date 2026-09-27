@@ -583,7 +583,7 @@ def _regular_geometry(
         VoxelReference.CENTER,
         "dicom-image-plane-patient",
     )
-    return _Geometry(tuple(order_array), affine)
+    return _Geometry(tuple(int(index) for index in order_array), affine)
 
 
 def _report(

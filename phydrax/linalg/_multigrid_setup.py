@@ -1018,7 +1018,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                 if limit_rejection is not None:
                     raise LinearCapabilityError(limit_rejection)
                 transfers.append((restriction, prolongation))
-                assignments.append(tuple(aggregate))
+                assignments.append(tuple(int(value) for value in aggregate))
                 relaxation_factors.append(relaxation_factor)
                 candidate_ranks.append(tuple(ranks))
                 construction_modes.append(construction_mode)
@@ -2200,7 +2200,8 @@ def _strength_graph(matrix: sp.csr_matrix, threshold: float, /) -> sp.csr_matrix
         ),
         shape=canonical.shape,
     ).tocsr()
-    adjacency = ((adjacency + adjacency.transpose()) != 0).astype(np.int8).tocsr()
+    adjacency = (adjacency + adjacency.transpose()).tocsr()
+    adjacency.data.fill(1)
     adjacency.setdiag(0)
     adjacency.eliminate_zeros()
     adjacency.sort_indices()
@@ -2250,6 +2251,18 @@ def _tentative_prolongator(
     for aggregate_index in range(number_aggregates):
         nodes = np.flatnonzero(aggregate == aggregate_index)
         local = candidates[nodes, :]
+        if np.issubdtype(local.dtype, np.complexfloating):
+            local = np.asarray(
+                local,
+                dtype=np.complex64 if local.dtype.itemsize <= 8 else np.complex128,
+            )
+        elif np.issubdtype(local.dtype, np.floating):
+            local = np.asarray(
+                local,
+                dtype=np.float32 if local.dtype.itemsize <= 4 else np.float64,
+            )
+        else:
+            local = np.asarray(local, dtype=np.float64)
         q, r, _ = spla.qr(local, mode="economic", pivoting=True)
         diagonal = np.abs(np.diag(r))
         if diagonal.size:

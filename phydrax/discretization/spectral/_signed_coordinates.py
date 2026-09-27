@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._trainable import NonTrainableState
@@ -59,7 +59,7 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
         *,
         valid_mask: ArrayLike | None = None,
         component_shape: Sequence[int] = (),
-        coefficient_dtype: object = complex,
+        coefficient_dtype: DTypeLike = complex,
         layout_id: str,
         reality_tolerance: float = 1e-10,
         maximum_coordinate_size: int = 10_000_000,

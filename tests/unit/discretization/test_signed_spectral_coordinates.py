@@ -12,7 +12,7 @@ from phydrax.discretization.spectral._signed_coordinates import (
 
 
 def _signed_coordinates(
-    *, coefficient_dtype: object = jnp.complex128
+    *, coefficient_dtype: type[np.complex64] | type[np.complex128] = jnp.complex128
 ) -> SignedHermitianSpectralCoordinates:
     return SignedHermitianSpectralCoordinates(
         (6,),
@@ -67,7 +67,8 @@ def test_signed_projection_round_trip_and_isometry_respect_the_involution() -> N
     ((jnp.complex64, jnp.float32), (jnp.complex128, jnp.float64)),
 )
 def test_signed_coordinates_preserve_real_and_complex_precision(
-    coefficient_dtype: object, coordinate_dtype: object
+    coefficient_dtype: type[np.complex64] | type[np.complex128],
+    coordinate_dtype: type[np.float32] | type[np.float64],
 ) -> None:
     coordinates = SignedHermitianSpectralCoordinates(
         (3,),
@@ -76,7 +77,6 @@ def test_signed_coordinates_preserve_real_and_complex_precision(
         coefficient_dtype=coefficient_dtype,
         layout_id=f"precision-{jnp.dtype(coefficient_dtype).name}",
     )
-    # ty: ignore[invalid-argument-type]
     real = jnp.asarray((1.25, -2.0, 0.75), dtype=coordinate_dtype)
 
     state = coordinates.from_real_coordinates(real)

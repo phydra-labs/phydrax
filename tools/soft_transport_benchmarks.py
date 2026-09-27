@@ -274,7 +274,10 @@ def _steady_ms(compiled: Any, example: jax.Array, warmups: int, repeats: int) ->
         warmup=warmups,
         repeats=repeats,
     )
-    return 1_000.0 * float(distribution.mean_seconds)
+    mean_seconds = distribution.mean_seconds
+    if mean_seconds is None:
+        raise RuntimeError("Repeated timing did not produce any samples.")
+    return 1_000.0 * mean_seconds
 
 
 def _memory(compiled: Any) -> dict[str, int | str]:

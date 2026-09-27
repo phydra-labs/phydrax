@@ -81,7 +81,6 @@ def test_curved_boundary_normals_obey_divergence_theorem() -> None:
     )
     points = np.asarray(realization.batch.points["x"].data)
     weights = np.asarray(realization.batch.weights.data)
-    # ty: ignore[invalid-argument-type]
     normals = np.asarray(geom._boundary_normals(points))
 
     closure = np.sum(weights[:, None] * normals, axis=0)

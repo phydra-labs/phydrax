@@ -528,8 +528,10 @@ class FinitePersistenceModule(StrictModule, NonTrainableState):
             or edges_.shape != (len(maps_), 2)
         ):
             raise ValueError("Finite module dimensions/edges have incompatible shapes.")
-        for edge, matrix in zip(edges_, maps_, strict=True):
-            source, target = map(int, edge)
+        for map_index, matrix in enumerate(maps_):
+            source_value, target_value = np.take(edges_, map_index, axis=0)
+            source = int(source_value)
+            target = int(target_value)
             if not (
                 0 <= source < len(dimensions_) and 0 <= target < len(dimensions_)
             ) or matrix.shape != (

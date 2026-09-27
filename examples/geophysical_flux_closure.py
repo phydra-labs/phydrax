@@ -530,7 +530,6 @@ def run_example(*, steps: Any = 200, artifact_directory: Any = None) -> Any:
                 float(
                     np.max(
                         np.abs(original - reloaded)
-                        # ty: ignore[unsupported-operator]
                         / (record["atol_SI"] + record["rtol"] * np.abs(original))
                     )
                 ),

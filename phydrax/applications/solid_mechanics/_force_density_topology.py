@@ -111,7 +111,7 @@ def _components(
             union(int(sender), int(receiver))
 
     labels = np.full((node_count,), -1, dtype=np.int32)
-    roots = sorted({root(index) for index in np.flatnonzero(node_valid)})
+    roots = sorted({root(int(index)) for index in np.flatnonzero(node_valid)})
     root_to_label = {root_value: label for label, root_value in enumerate(roots)}
     for index in np.flatnonzero(node_valid):
         labels[index] = root_to_label[root(int(index))]

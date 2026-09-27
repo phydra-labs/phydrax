@@ -1,4 +1,3 @@
-from importlib.util import find_spec
 from typing import Any
 
 import build123d as bd
@@ -11,12 +10,8 @@ from OCP.gp import gp_Pnt
 import phydrax as phx
 
 
-pytestmark = [
-    pytest.mark.meshing_gmsh,
-    pytest.mark.skipif(
-        find_spec("gmsh") is None, reason="optional gmsh package is not installed"
-    ),
-]
+gmsh = pytest.importorskip("gmsh")
+pytestmark = pytest.mark.meshing_gmsh
 
 
 def _planar_face(points: Any) -> Any:
@@ -48,8 +43,6 @@ def test_real_gmsh_volume_result_is_audited_associated_and_solver_ready(
     tmp_path: Any,
     geometry_order: Any,
 ) -> None:
-    if find_spec("gmsh") is None:
-        pytest.skip("optional gmsh package is not installed")
     source = _source(tmp_path / "cube.step")
     provider = phx.meshing.GmshProvider()
     scope = provider.whole_scope(source, 3)
@@ -78,7 +71,9 @@ def test_real_gmsh_volume_result_is_audited_associated_and_solver_ready(
     assert result.trace.successful
     assert result.boundary is not None
     assert result.associations[0].complete
-    assert result.geometry.elements[0].degree == geometry_order
+    element = result.geometry.elements[0]
+    assert isinstance(element, phx.discretization.FiniteElementSpec)
+    assert element.degree == geometry_order
     assert result.mesh.blocks[0].cell_kind == "tetrahedron"
     assert result.coordinate_contract.spatial_id == source.coordinate_contract.spatial_id
     field = phx.discretization.FiniteElementFieldSpec(
@@ -323,7 +318,6 @@ def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path: Any) -> None
 
 
 def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() -> None:
-    import gmsh
 
     from phydrax.meshing.providers._gmsh_elements import _audit_jacobians, _element_rows
 
@@ -344,7 +338,6 @@ def test_real_curved_tetrahedron_audit_detects_inversion_with_valid_corners() ->
 
 
 def test_real_gmsh_session_releases_global_ownership_after_body_failure() -> None:
-    import gmsh
 
     provider = _provider()
     with pytest.raises(RuntimeError, match="body failure"):

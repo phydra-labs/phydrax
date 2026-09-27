@@ -177,7 +177,10 @@ def _facet_classes(
     """Source facet class + 1 of every local facet; 0 for facets new to the source."""
 
     count, width = rows.shape
-    columns = np.asarray([[j for j in range(width) if j != i] for i in range(width)])
+    columns = np.asarray(
+        [[j for j in range(width) if j != i] for i in range(width)],
+        dtype=np.intp,
+    )
     keys = np.sort(rows[:, columns], axis=2).reshape((-1, width - 1))
     found = key_rows(np.sort(facet_keys, axis=1), keys)
     classes = np.where(found >= 0, facet_classes[np.maximum(found, 0)] + 1, 0)

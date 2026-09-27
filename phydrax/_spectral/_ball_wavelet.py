@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from math import ceil, log, prod
+from math import ceil, lgamma, log, prod
 from typing import NamedTuple
 
 import equinox as eqx
@@ -15,7 +15,6 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 from scipy.integrate import quad
-from scipy.special import gammaln
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -126,9 +125,9 @@ def _directionality(bandlimit: int, directional_bandlimit: int, /) -> np.ndarray
             if choose < 0 or choose > gamma or gamma - order != 2 * choose:
                 continue
             log_binomial = (
-                gammaln(gamma + 1.0)
-                - gammaln(choose + 1.0)
-                - gammaln(gamma - choose + 1.0)
+                lgamma(gamma + 1)
+                - lgamma(choose + 1)
+                - lgamma(gamma - choose + 1)
             )
             result[degree, index] = phase * np.sqrt(
                 np.exp(log_binomial - gamma * np.log(2.0))

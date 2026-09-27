@@ -229,7 +229,6 @@ def run_building_dispatch(
     """
     if intervals not in (2, 3, 4):
         raise ValueError("Choose 2, 3 or 4 intervals for this bounded workflow.")
-    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError("This qualification requires JAX_ENABLE_X64=1.")
     execution = execution_identity() if execution is None else execution

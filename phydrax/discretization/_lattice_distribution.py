@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -1090,7 +1090,7 @@ class LatticeStencilExecutionPlan(StrictModule, NonTrainableState):
         self,
         decomposition: LatticeDecompositionPlan,
         site_value_shape: Sequence[int],
-        dtype: object,
+        dtype: DTypeLike,
         /,
         *,
         parity: LatticeParity | None = None,

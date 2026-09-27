@@ -304,7 +304,6 @@ def _rectangle(
     )
     if signed_area < 0.0:
         points = points[[0, 3, 2, 1]]
-    # ty: ignore[invalid-argument-type]
     return PlanarMeshRegion(points, ((0, 1, 2, 3),), feature_id=feature_id)
 
 

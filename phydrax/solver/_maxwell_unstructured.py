@@ -81,17 +81,38 @@ def tetrahedral_maxwell_hodge(
         raise ValueError("inverse_permeability must be finite and positive.")
     connectivity = tetrahedral_connectivity(cells, points.shape[0])
     topology = tetrahedral_cell_complex(cells, points.shape[0])
-    edges = np.asarray(connectivity.edges)
-    faces = np.asarray(connectivity.faces)
-    edge_lookup = {tuple(edge): index for index, edge in enumerate(edges)}
-    face_lookup = {tuple(sorted(face)): index for index, face in enumerate(faces)}
+    edges = np.asarray(connectivity.edges, dtype=np.int32)
+    faces = np.asarray(connectivity.faces, dtype=np.int32)
+    edge_lookup = {
+        (int(edges[index, 0]), int(edges[index, 1])): index
+        for index in range(edges.shape[0])
+    }
+    face_lookup = {
+        tuple(
+            sorted(
+                (
+                    int(faces[index, 0]),
+                    int(faces[index, 1]),
+                    int(faces[index, 2]),
+                )
+            )
+        ): index
+        for index in range(faces.shape[0])
+    }
     electric_mass = np.zeros((edges.shape[0], edges.shape[0]))
     magnetic_mass = np.zeros((faces.shape[0], faces.shape[0]))
     vertex_dual = np.zeros(points.shape[0])
     cell_volume = np.empty(cells.shape[0])
     aspect = np.empty(cells.shape[0])
-    for cell_index, tetrahedron in enumerate(cells):
-        local_points = points[tetrahedron]
+    for cell_index in range(cells.shape[0]):
+        tetrahedron = (
+            int(cells[cell_index, 0]),
+            int(cells[cell_index, 1]),
+            int(cells[cell_index, 2]),
+            int(cells[cell_index, 3]),
+        )
+        tetrahedron_indices = np.asarray(tetrahedron, dtype=np.int32)
+        local_points = points[tetrahedron_indices]
         jacobian = np.stack(
             (
                 local_points[1] - local_points[0],
@@ -115,7 +136,7 @@ def tetrahedral_maxwell_hodge(
             [np.linalg.norm(local_points[j] - local_points[i]) for i, j in _LOCAL_EDGES]
         )
         aspect[cell_index] = np.max(lengths) / np.min(lengths)
-        vertex_dual[tetrahedron] += volume / 4.0
+        vertex_dual[tetrahedron_indices] += volume / 4.0
         local_edge_ids = []
         local_edge_signs = []
         for i, j in _LOCAL_EDGES:
@@ -211,11 +232,13 @@ def tetrahedral_maxwell_hodge(
                     0.5
                     * np.linalg.norm(
                         np.cross(
-                            points[face[1]] - points[face[0]],
-                            points[face[2]] - points[face[0]],
+                            points[int(faces[index, 1])]
+                            - points[int(faces[index, 0])],
+                            points[int(faces[index, 2])]
+                            - points[int(faces[index, 0])],
                         )
                     )
-                    for face in faces
+                    for index in range(faces.shape[0])
                 ]
             ),
             cell_volume,

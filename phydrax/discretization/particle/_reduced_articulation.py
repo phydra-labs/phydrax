@@ -754,7 +754,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         self.prepared_id = prepared_id
         self._parent_order = tuple(parent_indices)
         self._child_order = tuple(child_indices)
-        self._kind_order = tuple(joint_kinds)
+        self._kind_order = tuple(int(value) for value in joint_kinds)
         self._edge_dof_order = tuple(edge_dofs)
         self._hinge_dof_indices = tuple(hinge_dofs)
         self._body_id_order = tuple(self.body_ids)

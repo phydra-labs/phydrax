@@ -15,9 +15,12 @@ import numpy as np
 import phydrax as phx
 
 
-_TETRA_FACES = np.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=np.int32)
-_TETRA_VERTICES = np.asarray(
-    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+_TETRA_FACES = jnp.asarray(
+    [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32
+)
+_TETRA_VERTICES = jnp.asarray(
+    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    dtype=jnp.float64,
 )
 
 _SPHERE_FACE_LADDER = (20, 80, 320, 1280)
@@ -51,13 +54,12 @@ def _sphere_face_count(case: str) -> int | None:
 
 def _region(case: str) -> Any:
     if case == "tetrahedron":
-        # ty: ignore[invalid-argument-type]
         return phx.geometry.MeshRegion(_TETRA_VERTICES, _TETRA_FACES)
     if case == "two-tetrahedra":
-        vertices = np.concatenate(
-            (_TETRA_VERTICES, _TETRA_VERTICES + np.asarray([3.0, 0.0, 0.0]))
+        vertices = jnp.concatenate(
+            (_TETRA_VERTICES, _TETRA_VERTICES + jnp.asarray([3.0, 0.0, 0.0]))
         )
-        faces = np.concatenate((_TETRA_FACES, _TETRA_FACES + 4))
+        faces = jnp.concatenate((_TETRA_FACES, _TETRA_FACES + 4))
         return phx.geometry.MeshRegion(vertices, faces)
     sphere_faces = _sphere_face_count(case)
     if sphere_faces is not None:
@@ -71,7 +73,6 @@ def _region(case: str) -> Any:
             raise ValueError(
                 "[geometry] Deterministic icosphere refinement produced an unexpected face count."
             )
-        # ty: ignore[invalid-argument-type]
         return phx.geometry.MeshRegion(np.asarray(mesh.vertices), np.asarray(mesh.faces))
     raise ValueError(f"[geometry] Unknown benchmark case {case!r}.")
 

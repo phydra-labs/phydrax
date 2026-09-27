@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from importlib import import_module, metadata
 
+import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
@@ -397,7 +398,7 @@ class FTetWildProvider:
         centroids = np.mean(boundary_points[boundary_faces], axis=1)
         query = TriangleMeshQueryIndex(
             TriangleMesh(points, faces, source_id=source.mesh_id)
-        ).query(np.concatenate((boundary_points, centroids)))
+        ).query(jnp.asarray(np.concatenate((boundary_points, centroids))))
         distances = np.asarray(query.distance)
         sampled_deviation = float(distances.max())
         tolerance = (

@@ -30,7 +30,6 @@ def run_power_fault(output_dir: Any, *, execution: Any = None) -> Any:
     Q/voltage before initialization. The infinite grid is explicitly declared;
     the machine is not turned into an infinite source by its PV study control.
     """
-    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError("This qualification requires JAX_ENABLE_X64=1.")
     execution = execution_identity() if execution is None else execution

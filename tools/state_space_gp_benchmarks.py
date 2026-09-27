@@ -351,7 +351,6 @@ def run_state_space_gp_benchmarks(
             "jax": jax.__version__,
             "backend": jax.default_backend(),
             "device": jax.devices()[0].device_kind,
-            # ty: ignore[unresolved-attribute]
             "x64": bool(jax.config.x64_enabled),
         },
         "source_provenance": _source_provenance(),

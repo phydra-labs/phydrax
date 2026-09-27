@@ -122,7 +122,7 @@ class LayeredLoveWavePlan(StrictModule, NonTrainableState):
         for frequency_index, frequency in enumerate(frequencies):
             candidates = np.linspace(lower, upper, self.scan_count)
             residuals = np.asarray(
-                [self.residual(frequency, value) for value in candidates]
+                [self.residual(float(frequency), float(value)) for value in candidates]
             )
             brackets = np.flatnonzero(residuals[:-1] * residuals[1:] < 0)
             for mode, bracket in enumerate(brackets[: self.mode_count]):
@@ -130,7 +130,7 @@ class LayeredLoveWavePlan(StrictModule, NonTrainableState):
                 left_value = residuals[bracket]
                 for _ in range(64):
                     middle = 0.5 * (left + right)
-                    value = self.residual(frequency, middle)
+                    value = self.residual(float(frequency), float(middle))
                     if left_value * value <= 0:
                         right = middle
                     else:

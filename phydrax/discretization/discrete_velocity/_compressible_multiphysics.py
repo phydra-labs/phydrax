@@ -87,17 +87,22 @@ class KineticSpeciesTransportPlan(StrictModule, NonTrainableState):
         density = jnp.sum(particle, axis=-1)
         safe_density = jnp.where(density > 0.0, density, 1.0)
         fractions = species / safe_density[..., None]
-        velocities = np.asarray(self.transport.rule.velocities, dtype=np.int32)
+        velocities = tuple(
+            tuple(int(value) for value in velocity)
+            for velocity in np.asarray(
+                self.transport.rule.velocities, dtype=np.int32
+            ).tolist()
+        )
         transported = jnp.zeros_like(species)
         for direction, velocity in enumerate(velocities):
             source_fraction = jnp.roll(
                 fractions,
-                shift=tuple(int(value) for value in velocity),
+                shift=velocity,
                 axis=tuple(range(self.transport.rule.dimension)),
             )
             source_population = jnp.roll(
                 particle[..., direction],
-                shift=tuple(int(value) for value in velocity),
+                shift=velocity,
                 axis=tuple(range(self.transport.rule.dimension)),
             )
             transported = transported + source_population[..., None] * source_fraction
@@ -105,7 +110,7 @@ class KineticSpeciesTransportPlan(StrictModule, NonTrainableState):
         particle_streamed = sum(
             jnp.roll(
                 particle[..., direction],
-                shift=tuple(int(value) for value in velocity),
+                shift=velocity,
                 axis=tuple(range(self.transport.rule.dimension)),
             )
             for direction, velocity in enumerate(velocities)

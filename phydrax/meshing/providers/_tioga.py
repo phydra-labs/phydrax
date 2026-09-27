@@ -1035,14 +1035,17 @@ class TiogaProvider:
             else part
             for part in previous.assembly.parts
         )
+        moved_coordinates = []
+        for index in moved.tolist():
+            carrier = parts[int(index)].carrier
+            if not isinstance(carrier, CellMeshingResult):
+                raise TypeError("TIOGA motion requires cell mesh parts.")
+            moved_coordinates.append(
+                np.asarray(carrier.mesh.coordinates, dtype=np.float64)
+            )
         arrays = {
             "moved_parts": moved,
-            "coordinates": np.concatenate(
-                [
-                    np.asarray(parts[index].carrier.mesh.coordinates, dtype=np.float64)
-                    for index in moved
-                ]
-            ),
+            "coordinates": np.concatenate(moved_coordinates),
         }
         _require_input_bytes(arrays, limits_)
         call = self.worker.call(

@@ -201,7 +201,9 @@ def geophysical_forecast_metrics(
         raise ValueError(
             "Verification quantities must have distinct names in variable order."
         )
-    area, duration, layer = map(np.asarray, (area_weights, time_weights, layer_weights))
+    area = np.array(area_weights, copy=True)
+    duration = np.array(time_weights, copy=True)
+    layer = np.array(layer_weights, copy=True)
     if (
         area.shape != (na,)
         or duration.shape != (nt,)

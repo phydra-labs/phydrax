@@ -308,13 +308,17 @@ def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(
     source = _stl_cube(tmp_path / "cube.stl")
     provider = phx.meshing.GmshProvider()
     surface = _surface_spec(provider, source, 0.2)
-    specification = phx.meshing.SurfaceRemeshingSpec(surface, source.mesh.mesh_id)
+    source_mesh = source.mesh
+    assert source_mesh is not None
+    specification = phx.meshing.SurfaceRemeshingSpec(surface, source_mesh.mesh_id)
     reconstruction = phx.meshing.SurfaceReconstructionControl(np.deg2rad(40.0), 1.0e-6)
 
     result = provider.plan(source, specification, reconstruction=reconstruction).execute()
 
     achieved = dict(result.compliance.achieved)
-    boundary_audit = result.boundary.audit()
+    boundary = result.boundary
+    assert boundary is not None
+    boundary_audit = boundary.audit()
     assert result.audit.passed and result.compliance.passed
     assert boundary_audit.valid and boundary_audit.closed
     assert result.mesh.blocks[0].cell_count > 12 * 10
@@ -323,7 +327,7 @@ def test_real_discrete_stl_remesh_is_audited_and_preserves_topology(
     assert achieved["surface_maximum_source_to_remesh_distance"] <= 1.0e-6
     assert result.associations[0].complete
     with pytest.raises(TypeError):
-        provider.validate(source.mesh, specification, reconstruction=reconstruction)
+        provider.validate(source_mesh, specification, reconstruction=reconstruction)
 
 
 def _tetrahedron_rule(count: Any) -> Any:
@@ -361,6 +365,7 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     achieved = dict(result.compliance.achieved)
     elements, routes, coordinates = result.geometry.resolve(result.mesh)
     element = elements[0]
+    assert isinstance(element, phx.discretization.FiniteElementSpec)
     nodes = np.asarray(coordinates)[np.asarray(routes[0])]
     points, weights = _tetrahedron_rule(6)
     _, gradients = element.tabulate(points)

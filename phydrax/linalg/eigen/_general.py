@@ -1659,10 +1659,21 @@ def _dense_host_eigensolve(
     generalized: bool,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, bool, int]:
+    combined_dtype = np.result_type(matrix.dtype, mass.dtype)
+    if np.issubdtype(combined_dtype, np.complexfloating):
+        scipy_dtype = (
+            np.complex64 if combined_dtype.itemsize <= 8 else np.complex128
+        )
+    elif np.issubdtype(combined_dtype, np.floating):
+        scipy_dtype = np.float32 if combined_dtype.itemsize <= 4 else np.float64
+    else:
+        scipy_dtype = np.float64
+    matrix_ = np.asarray(matrix, dtype=scipy_dtype)
+    mass_ = np.asarray(mass, dtype=scipy_dtype)
     if generalized:
         homogeneous, left, right = scipy_linalg.eig(
-            matrix,
-            mass,
+            matrix_,
+            mass_,
             left=True,
             right=True,
             homogeneous_eigvals=True,
@@ -1670,7 +1681,7 @@ def _dense_host_eigensolve(
         )
     else:
         homogeneous, left, right = scipy_linalg.eig(
-            matrix,
+            matrix_,
             left=True,
             right=True,
             homogeneous_eigvals=True,

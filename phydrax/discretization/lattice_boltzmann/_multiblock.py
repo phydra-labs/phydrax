@@ -133,11 +133,12 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         if left_velocities.shape != transformed_right.shape:
             raise ValueError("LBM blocks must have the same population count.")
         left_lookup = {
-            tuple(velocity): index for index, velocity in enumerate(left_velocities)
+            tuple(int(value) for value in velocity): index
+            for index, velocity in enumerate(left_velocities.tolist())
         }
         right_to_left = []
-        for velocity in transformed_right:
-            key = tuple(velocity)
+        for velocity in transformed_right.tolist():
+            key = tuple(int(value) for value in velocity)
             if key not in left_lookup:
                 raise ValueError(
                     "Interface orientation is incompatible with the lattice velocity set."
@@ -173,8 +174,12 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         self.right_axis = right_axis_
         self.left_side = left_side
         self.right_side = right_side
-        self.population_permutation_indices = tuple(permutation)
-        self.inverse_population_permutation_indices = tuple(inverse)
+        self.population_permutation_indices = tuple(
+            int(value) for value in permutation
+        )
+        self.inverse_population_permutation_indices = tuple(
+            int(value) for value in inverse
+        )
         self.geometry_kind = LatticeBoltzmannGeometryKind.BLOCKWISE
         self.plan_id = canonical_fingerprint(
             {

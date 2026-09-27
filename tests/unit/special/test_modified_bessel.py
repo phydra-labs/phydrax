@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 import jax
@@ -82,7 +83,7 @@ def test_modified_bessel_half_order_gradient_at_smallest_float64_is_finite() -> 
     expected = np.exp(
         np.log(0.5)
         - 0.5 * np.log(2.0)
-        - scipy.special.gammaln(1.5)
+        - math.lgamma(1.5)
         - 0.5 * np.log(np.asarray(x))
     )
     for function in (phx.special.iv, phx.special.ive):

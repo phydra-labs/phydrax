@@ -233,9 +233,11 @@ def contract_peps_ctmrg(state: PEPS, policy: CTMRGPolicy, /) -> CTMRGResult:
             )
         )
         converged_now = active & (residual <= policy.tolerance)
-        corners = tuple(
-            jnp.where(active, candidate, corner)
-            for candidate, corner in zip(candidates, corners, strict=True)
+        corners = (
+            jnp.where(active, candidates[0], corners[0]),
+            jnp.where(active, candidates[1], corners[1]),
+            jnp.where(active, candidates[2], corners[2]),
+            jnp.where(active, candidates[3], corners[3]),
         )
         residual_history.append(jnp.where(active, residual, 0.0))
         convergence_history.append(converged_now)

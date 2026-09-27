@@ -292,35 +292,30 @@ def test_particle_equilibrium_recovers_variable_temperature_momentum_flux(
         6,
         method.quadrature.population_count,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         recovered_particle_moments,
         expected_particle_moments,
         rtol=0.0,
         atol=tolerance,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.target_particle_momentum_flux,
         expected_momentum_flux,
         rtol=0.0,
         atol=tolerance,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.recovered_particle_momentum_flux,
         expected_momentum_flux,
         rtol=0.0,
         atol=tolerance,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.recovered_particle_momentum_flux,
         jnp.swapaxes(evidence.recovered_particle_momentum_flux, -1, -2),
         rtol=0.0,
         atol=tolerance,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.particle_momentum_flux_residual,
         0.0,
@@ -328,7 +323,6 @@ def test_particle_equilibrium_recovers_variable_temperature_momentum_flux(
         atol=tolerance,
     )
     assert float(evidence.maximum_absolute_particle_momentum_flux_residual) <= tolerance
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         evidence.minimum_particle_equilibrium_population,
         jnp.min(equilibrium.particle_populations),
@@ -418,7 +412,6 @@ def test_total_energy_equilibrium_and_collision_are_coupled_and_conservative(
         rtol=2e-6,
         atol=2e-6,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         post_particle_moments,
         pre_particle_moments,

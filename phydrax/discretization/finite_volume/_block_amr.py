@@ -75,8 +75,12 @@ class _BlockAMRFaceRoute(StrictModule, NonTrainableState):
         self.neighbor_cells = jnp.asarray(neighbor_cells, dtype=jnp.int32)
         self.orientation = jnp.asarray(orientation)
         self.coordinates = jnp.asarray(coordinates)
-        self.lower_positions = tuple(np.flatnonzero(sides == -1))
-        self.upper_positions = tuple(np.flatnonzero(sides == 1))
+        self.lower_positions = tuple(
+            int(value) for value in np.flatnonzero(sides == -1)
+        )
+        self.upper_positions = tuple(
+            int(value) for value in np.flatnonzero(sides == 1)
+        )
         self.block_id = str(block_id)
         self.block_kind = str(block_kind)
 

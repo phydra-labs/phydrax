@@ -183,9 +183,7 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
             route_count = 0
             neighborhoods = tree.query_ball_point(points, plan.radius)
             for target, neighbors in enumerate(neighborhoods):
-                # scipy-stubs resolve a scalar radius to the 1-D overload; batched
-                # points return an object array of neighbor index lists.
-                for source in sorted(int(index) for index in neighbors):  # ty: ignore[not-iterable]
+                for source in sorted(int(index) for index in neighbors):
                     distance = float(np.linalg.norm(points[target] - points[source]))
                     weight = (plan.radius - distance) * measures[source]
                     if weight > 0.0:

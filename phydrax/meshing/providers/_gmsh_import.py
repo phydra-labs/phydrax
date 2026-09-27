@@ -296,7 +296,7 @@ class _CadEntityMap:
     edge_to_curve: tuple[int, ...] = ()
 
 
-def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple:
+def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]:
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.BRepExtrema import BRepExtrema_DistShapeShape
@@ -376,7 +376,7 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple:
                     "BRep solid interiors overlap; provider-side ownership fragmentation is prohibited.",
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
-    return solids
+    return tuple(solids)
 
 
 def _resolve_planar_cad_entity_map(

@@ -198,7 +198,6 @@ def _quasilocal_slices(masses: Any, *, mots_derivative_valid: Any = True) -> Any
                 np.asarray(True),
                 # ty: ignore[invalid-argument-type]
                 np.asarray(True),
-                # ty: ignore[invalid-argument-type]
                 np.asarray(mots_derivative_valid),
                 # ty: ignore[invalid-argument-type]
                 np.asarray(0, dtype=np.int32),
@@ -208,15 +207,11 @@ def _quasilocal_slices(masses: Any, *, mots_derivative_valid: Any = True) -> Any
         area = 16.0 * np.pi * mass**2
         geometries.append(
             HorizonGeometryEvidence(
-                # ty: ignore[invalid-argument-type]
                 np.asarray(area),
-                # ty: ignore[invalid-argument-type]
                 np.asarray(2.0 * mass),
-                # ty: ignore[invalid-argument-type]
                 np.asarray(mass),
                 # ty: ignore[invalid-argument-type]
                 np.asarray(0.0),
-                # ty: ignore[invalid-argument-type]
                 np.asarray(mass),
                 # ty: ignore[invalid-argument-type]
                 np.asarray(0.0),

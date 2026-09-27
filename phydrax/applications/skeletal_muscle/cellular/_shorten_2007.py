@@ -31,7 +31,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -1002,7 +1002,7 @@ class ShortenFastTwitchModel(StrictModule):
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         shape = tuple(batch_shape)
         if any(size < 0 for size in shape):
@@ -1995,7 +1995,7 @@ class PreparedShortenIntegrator(StrictModule):
         self.method_id = "diffrax-kvaerno5-stiff-adaptive-source-complete"
         self.plan_id = plan.plan_id
 
-    def initialize(self, *, dtype: object | None = None) -> ShortenCellState:
+    def initialize(self, *, dtype: DTypeLike | None = None) -> ShortenCellState:
         return ShortenCellState(
             self.plan.time_grid_ms[0], self.plan.model.initialize(dtype=dtype)
         )

@@ -713,7 +713,7 @@ def pybamm_reference(
                 "electrolyte_concentration_mol_m3": np.concatenate(regions, axis=-1),
             }
         )
-    result = {
+    result: dict[str, object] = {
         key: np.concatenate([part[key] for part in parts], axis=0) for key in parts[0]
     }
     result.update(

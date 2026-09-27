@@ -1067,7 +1067,10 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         if not patches:
             patches = {"boundary": face_vertices[boundary_mask]}
         names = tuple(sorted(str(name) for name in patches))
-        lookup = {tuple(sorted(face)): index for index, face in enumerate(face_vertices)}
+        lookup = {
+            tuple(sorted(int(value) for value in face)): index
+            for index, face in enumerate(face_vertices.tolist())
+        }
         assigned = np.zeros((face_vertices.shape[0],), dtype=np.int32)
         normalized_patch_faces = []
         face_arity = dimension

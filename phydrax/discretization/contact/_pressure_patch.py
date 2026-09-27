@@ -168,11 +168,11 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
         records = []
         predicate_margin = np.inf
         preparation_complete = True
-        for plus_index, plus_vertices in enumerate(plus_tetrahedra):
+        for plus_index, plus_vertices in enumerate(plus_tetrahedra.tolist()):
             plus_cell = plus_coordinates[plus_vertices]
             plus_minimum = np.min(plus_cell, axis=0)
             plus_maximum = np.max(plus_cell, axis=0)
-            for minus_index, minus_vertices in enumerate(minus_tetrahedra):
+            for minus_index, minus_vertices in enumerate(minus_tetrahedra.tolist()):
                 minus_cell = minus_coordinates[minus_vertices]
                 if np.any(plus_maximum < np.min(minus_cell, axis=0)) or np.any(
                     np.max(minus_cell, axis=0) < plus_minimum

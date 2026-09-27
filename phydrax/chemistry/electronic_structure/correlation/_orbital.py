@@ -108,7 +108,9 @@ class CorrelatedOrbitalPartition(StrictModule, NonTrainableState):
     ) -> CorrelatedOrbitalPartition:
         if not isinstance(state, RestrictedMeanFieldState):
             raise TypeError("state must be RestrictedMeanFieldState.")
-        occupied = tuple(np.flatnonzero(np.asarray(state.occupations) > 1.0))
+        occupied = tuple(
+            int(index) for index in np.flatnonzero(np.asarray(state.occupations) > 1.0)
+        )
         frozen_count = int(frozen_occupied_count)
         if frozen_count < 0 or frozen_count > len(occupied):
             raise ValueError("frozen_occupied_count exceeds occupied orbitals.")

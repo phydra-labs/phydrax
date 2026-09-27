@@ -367,6 +367,7 @@ replace-imports-with-any = [
   "design.**",
   "h5py.h5o",
   "manifold3d.**",
+  "marimo.**",
   "mini_studies.**",
   "mpi4py.**",
   "open3d.**",

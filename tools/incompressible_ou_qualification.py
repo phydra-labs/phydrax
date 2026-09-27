@@ -503,7 +503,6 @@ def qualification(
             "jax": jax.__version__,
             "backend": jax.default_backend(),
             "platform": platform.platform(),
-            # ty: ignore[unresolved-attribute]
             "x64": bool(jax.config.x64_enabled),
         },
         "coefficient_covariance_and_subdivision": coefficient,

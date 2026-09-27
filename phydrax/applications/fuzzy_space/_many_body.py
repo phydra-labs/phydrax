@@ -829,8 +829,9 @@ def lower_fuzzy_hamiltonian_to_mpo(
         raise ValueError("Dense orbital embedding exceeds maximum_dense_elements.")
     full = np.zeros((dense_dimension, dense_dimension), dtype=np.complex128)
     occupation_table = np.asarray(prepared.occupations)
-    indices = np.asarray(
-        [np.ravel_multi_index(tuple(value), dimensions) for value in occupation_table]
+    indices = np.array(
+        [np.ravel_multi_index(tuple(value), dimensions) for value in occupation_table],
+        dtype=np.intp,
     )
     reduced = np.asarray(prepared.dense(maximum_elements=maximum_dense_elements))
     full[np.ix_(indices, indices)] = reduced

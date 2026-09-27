@@ -113,17 +113,17 @@ def parse_epw(
     records = rows[8:]
     if any(len(row) < 35 for row in records):
         raise ValueError("EPW weather records require all 35 standard fields.")
-    dates = np.asarray(
-        [[int(cell) for cell in row[:5]] for row in records], dtype=np.int64
-    )
+    dates = np.empty((len(records), 5), dtype=np.int64)
+    for record_index, row in enumerate(records):
+        dates[record_index] = tuple(int(cell) for cell in row[:5])
     stitched_years = any(
-        left[0] != right[0]
+        dates[index, 0] != dates[index + 1, 0]
         and not (
-            right[0] == left[0] + 1
-            and tuple(left[1:3]) == (12, 31)
-            and tuple(right[1:3]) == (1, 1)
+            dates[index + 1, 0] == dates[index, 0] + 1
+            and (int(dates[index, 1]), int(dates[index, 2])) == (12, 31)
+            and (int(dates[index + 1, 1]), int(dates[index + 1, 2])) == (1, 1)
         )
-        for left, right in zip(dates[:-1], dates[1:], strict=True)
+        for index in range(dates.shape[0] - 1)
     )
     inferred_tmy = "TMY" in location.source.upper() or stitched_years
     tmy = inferred_tmy if typical_year is None else bool(typical_year)

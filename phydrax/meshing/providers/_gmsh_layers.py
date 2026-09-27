@@ -594,7 +594,6 @@ def _prepare_swept_geometry(
                     direction,
                     unit,
                     levels,
-                    # ty: ignore[invalid-argument-type]
                     volume_difference / max(volume_measure, np.finfo(np.float64).tiny),
                 )
             )

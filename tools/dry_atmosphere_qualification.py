@@ -157,7 +157,6 @@ def main() -> None:
     ]
     report = {
         "scope": "fixed-Cartesian inviscid dry column and slice; not global atmospheric qualification",
-        # ty: ignore[unresolved-attribute]
         "x64_enabled": bool(jax.config.jax_enable_x64),
         "rest": rests,
         "manufactured_steady_shear": {
@@ -183,7 +182,6 @@ def main() -> None:
         and item["unstable_step_rejected_atomically"]
         for item in cases
     )
-    # ty: ignore[unresolved-attribute]
     if not (jax.config.jax_enable_x64 and rest_ok and refinement_ok and cases_ok):
         raise RuntimeError(
             "Dry atmospheric qualification failed; inspect measured evidence above."

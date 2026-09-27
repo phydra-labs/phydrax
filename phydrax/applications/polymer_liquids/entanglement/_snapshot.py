@@ -124,10 +124,14 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         if not isinstance(layout, PolymerChainLayoutPlan):
             raise TypeError("layout must be PolymerChainLayoutPlan.")
         identifiers = tuple(str(value).strip() for value in chain_ids)
-        indices = np.asarray(layout.particle_indices, dtype=np.int32)
-        mask = np.asarray(layout.chain_mask, dtype=np.bool_)
+        layout_shape = layout.particle_indices.shape
+        indices = np.empty((layout_shape[0], layout_shape[1]), dtype=np.int32)
+        indices[...] = np.asarray(layout.particle_indices)
+        mask = np.empty((layout_shape[0], layout_shape[1]), dtype=np.bool_)
+        mask[...] = np.asarray(layout.chain_mask)
         selected = indices[mask]
-        active = np.asarray(dynamics.system.active_mask, dtype=np.bool_)
+        active = np.empty((dynamics.system.capacity,), dtype=np.bool_)
+        active[...] = np.asarray(dynamics.system.active_mask)
         if (
             len(identifiers) != indices.shape[0]
             or any(not value for value in identifiers)
@@ -152,17 +156,25 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
                 (min(int(left), int(right)), max(int(left), int(right)))
                 for left, right in pairwise(chain)
             )
+        topology_bonds = np.empty(
+            (dynamics.system.topology.bond_indices.shape[0], 2), dtype=np.int32
+        )
+        topology_bonds[...] = np.asarray(dynamics.system.topology.bond_indices)
         actual = {
             tuple(sorted((int(left), int(right))))
-            for left, right in np.asarray(dynamics.system.topology.bond_indices)
+            for left, right in topology_bonds
         }
         if actual != set(expected):
             raise ValueError(
                 "Primitive-path canonical requires exactly adjacent open-chain backbone bonds."
             )
-        if dynamics.system.topology.angle_indices.shape[0] and any(
-            len(set(row)) != 3
-            for row in np.asarray(dynamics.system.topology.angle_indices)
+        topology_angles = np.empty(
+            (dynamics.system.topology.angle_indices.shape[0], 3), dtype=np.int32
+        )
+        topology_angles[...] = np.asarray(dynamics.system.topology.angle_indices)
+        if topology_angles.shape[0] and any(
+            len({int(left), int(center), int(right)}) != 3
+            for left, center, right in topology_angles
         ):
             raise ValueError("Primitive-path source contains malformed angles.")
         self.plan = plan

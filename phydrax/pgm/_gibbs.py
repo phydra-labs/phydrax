@@ -377,7 +377,7 @@ def prepare_chromatic_gibbs(
     )
     _validate_colors(graph, colors_host)
     stages = tuple(
-        tuple(np.nonzero(colors_host == color)[0])
+        tuple(int(index) for index in np.flatnonzero(colors_host == color))
         for color in range(int(colors_host.max()) + 1 if colors_host.size else 0)
     )
     if len(stages) > resources_.maximum_colors:
@@ -388,9 +388,11 @@ def prepare_chromatic_gibbs(
         [] for _ in range(graph.num_variables)
     ]
     for group_index, scope in enumerate(graph._host_topology.factor_scopes):
-        for factor, row in enumerate(scope):
-            for position, variable in enumerate(row):
-                incident_lists[int(variable)].append((group_index, factor, position))
+        scope_array = np.asarray(scope, dtype=np.int32)
+        for factor in range(scope_array.shape[0]):
+            for position in range(scope_array.shape[1]):
+                variable = int(scope_array[factor, position])
+                incident_lists[variable].append((group_index, factor, position))
     incidents = tuple(tuple(values) for values in incident_lists)
     plan_id = canonical_fingerprint(
         {

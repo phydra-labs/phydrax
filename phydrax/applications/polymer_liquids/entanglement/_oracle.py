@@ -68,9 +68,13 @@ def export_z1plus_lammps_dump(
     if not isinstance(snapshot, PrimitivePathSnapshot):
         raise TypeError("snapshot must be PrimitivePathSnapshot.")
     positions = np.asarray(snapshot.unwrapped_positions, dtype=np.float64)
-    active = np.asarray(snapshot.chain_mask, dtype=np.bool_)
-    indices = np.asarray(snapshot.chain_indices, dtype=np.int32)
-    particle_ids = np.asarray(snapshot.stable_particle_ids, dtype=np.int64)
+    layout_shape = snapshot.chain_indices.shape
+    active = np.empty((layout_shape[0], layout_shape[1]), dtype=np.bool_)
+    active[...] = np.asarray(snapshot.chain_mask)
+    indices = np.empty((layout_shape[0], layout_shape[1]), dtype=np.int32)
+    indices[...] = np.asarray(snapshot.chain_indices)
+    particle_ids = np.empty((positions.shape[0],), dtype=np.int64)
+    particle_ids[...] = np.asarray(snapshot.stable_particle_ids)
     selected = indices[active]
     if snapshot.cell_vectors.shape != (3, 3):
         raise ValueError("Z1+ LAMMPS export requires one full periodic 3-D cell.")

@@ -133,7 +133,8 @@ class PlanarMachine(StrictModule):
         ):
             raise ValueError("A planar machine requires one 2D triangle mesh block.")
         points = np.asarray(mesh.coordinates)
-        cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
+        cells = np.empty((mesh.blocks[0].vertices.shape[0], 3), dtype=np.int32)
+        cells[...] = np.asarray(mesh.blocks[0].vertices)
         vertices = points[cells]
         first, second = vertices[:, 1] - vertices[:, 0], vertices[:, 2] - vertices[:, 0]
         determinant = first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0]

@@ -268,10 +268,10 @@ def _action_order(value: str, name: str, /) -> HJBIActionOrder:
 
 def _callback_scalar(
     callback: Callable,
-    time: float,
-    state: float,
-    minimizer_action: float,
-    maximizer_action: float,
+    time: ArrayLike,
+    state: ArrayLike,
+    minimizer_action: ArrayLike,
+    maximizer_action: ArrayLike,
     args: Any,
     name: str,
     /,
@@ -357,8 +357,8 @@ def _hjbi_coefficients(
                     courant = duration * (
                         abs(drift_value) / dx + variance_value / (dx * dx)
                     )
-                    maximum_courant = max(maximum_courant, courant)
-                    minimum_margin = min(minimum_margin, 1.0 - courant)
+                    maximum_courant = max(maximum_courant, float(courant))
+                    minimum_margin = min(minimum_margin, float(1.0 - courant))
     if minimum_margin < -32.0 * np.finfo(np.float64).eps:
         raise ValueError(
             "The declared time and spatial grids violate the explicit monotone upwind-diffusion step condition."

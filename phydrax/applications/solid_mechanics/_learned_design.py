@@ -107,7 +107,10 @@ def prepare_learned_topology_design(
     fixed = prepared.plan.filter.fixed_density
     decoder = _FixedDensityDecoder(decode, prepared.plan.filter.design_mask, fixed)
     physical_problem = problem.as_state_design_problem()
-    free_indices = tuple(np.flatnonzero(np.asarray(prepared.plan.filter.design_mask)))
+    free_indices = tuple(
+        int(index)
+        for index in np.flatnonzero(np.asarray(prepared.plan.filter.design_mask))
+    )
     # The prepared fixed-region map proves the remaining cell bounds exactly.
     # Keep every free bound scalar so ReducedMMA retains its scalar-inequality
     # contract; large elementwise bound sets should use the structured route.

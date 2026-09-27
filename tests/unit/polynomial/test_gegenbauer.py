@@ -30,7 +30,10 @@ def test_standard_monic_and_orthonormal_scales_have_declared_meaning() -> None:
         [
             1.0
             if index == 0
-            else 2.0**index * special.poch(alpha, index) / math.factorial(index)
+            else 2.0**index
+            * math.gamma(alpha + index)
+            / math.gamma(alpha)
+            / math.factorial(index)
             for index in range(degree + 1)
         ]
     )

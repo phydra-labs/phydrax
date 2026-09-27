@@ -138,8 +138,11 @@ class TargetMonomialSupport(StrictModule, NonTrainableState):
                 "Target monomial exponents must be non-negative int32 values."
             )
         powers = powers.astype(np.int32, copy=False)
+        power_rows = tuple(
+            tuple(int(value) for value in row) for row in powers.tolist()
+        )
         order = np.asarray(
-            sorted(range(powers.shape[0]), key=lambda index: tuple(powers[index])),
+            sorted(range(len(power_rows)), key=power_rows.__getitem__),
             dtype=np.int32,
         )
         powers = powers[order]

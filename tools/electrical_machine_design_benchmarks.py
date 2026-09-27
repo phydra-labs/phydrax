@@ -61,7 +61,6 @@ def main() -> Any:
     options = parser.parse_args()
     if options.samples < 1 or options.repeats < 1 or options.optimization_steps < 1:
         parser.error("samples, repeats, and optimization steps must be positive")
-    # ty: ignore[unresolved-attribute]
     if not jax.config.jax_enable_x64:
         parser.error("this certification benchmark requires JAX_ENABLE_X64=1")
     rows = []
@@ -254,7 +253,6 @@ def main() -> Any:
             {
                 "platform": platform.platform(),
                 "jax_backend": jax.default_backend(),
-                # ty: ignore[unresolved-attribute]
                 "jax_enable_x64": bool(jax.config.jax_enable_x64),
                 "fidelity": (
                     "2D prescribed-angle linear isotropic magnetostatics; no "

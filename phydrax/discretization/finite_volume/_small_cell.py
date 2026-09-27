@@ -358,9 +358,15 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         self.recipient_mask = jnp.asarray(recipient_mask)
         self.weights = jnp.asarray(weights)
         self.local_retention_fractions = jnp.asarray(local_retention)
-        self.redistribution_owner_cells = tuple(redistribution_owner_cells)
-        self.redistribution_neighbor_cells = tuple(redistribution_neighbor_cells)
-        self.redistribution_route_indices = tuple(redistribution_route_indices)
+        self.redistribution_owner_cells = tuple(
+            int(value) for value in redistribution_owner_cells.tolist()
+        )
+        self.redistribution_neighbor_cells = tuple(
+            int(value) for value in redistribution_neighbor_cells.tolist()
+        )
+        self.redistribution_route_indices = tuple(
+            int(value) for value in redistribution_route_indices.tolist()
+        )
         self.redistribution_block_id = redistribution_block_id
         self.report = ConservativeSmallCellRedistributionReport(
             small_cell_count=jnp.asarray(source_cells.size, dtype=jnp.int32),

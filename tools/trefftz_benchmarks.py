@@ -149,7 +149,6 @@ def run_trefftz_benchmarks(
         "environment": {
             "platform": device.platform,
             "device_kind": device.device_kind,
-            # ty: ignore[unresolved-attribute]
             "jax_enable_x64": bool(jax.config.x64_enabled),
         },
         "records": [asdict(record) for record in records],

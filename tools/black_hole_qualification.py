@@ -451,7 +451,6 @@ def _runtime_manifest(valid_at: int, /) -> dict[str, object]:
             for device in devices
         ],
         "precision": {
-            # ty: ignore[unresolved-attribute]
             "jax_enable_x64": bool(jax.config.jax_enable_x64),
             "scientific_profiles": "float64",
             "production_and_native_electromagnetic_controls": "float32",

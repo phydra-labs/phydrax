@@ -324,11 +324,14 @@ class DevicePlan(StrictModule):
             np.argmax(np.stack(masks), axis=0), dtype=jnp.int32
         )
         material_index = np.asarray(self.material_index)
-        self.material_nodes = tuple(tuple(np.flatnonzero(mask)) for mask in masks)
+        self.material_nodes = tuple(
+            tuple(int(node) for node in np.flatnonzero(mask)) for mask in masks
+        )
         tail, head = np.asarray(support.tail), np.asarray(support.head)
         self.material_edges = tuple(
             tuple(
-                np.flatnonzero(
+                int(edge)
+                for edge in np.flatnonzero(
                     (material_index[tail] == index) & (material_index[head] == index)
                 )
             )

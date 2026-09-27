@@ -5,7 +5,6 @@
 
 from typing import Any
 
-# ty: ignore[unresolved-import]
 import marimo
 
 
@@ -20,8 +19,6 @@ def _() -> Any:
     import jax
     import jax.numpy as jnp
     import jax.random as jr
-
-    # ty: ignore[unresolved-import]
     import marimo as mo
 
     # ty: ignore[unresolved-import]

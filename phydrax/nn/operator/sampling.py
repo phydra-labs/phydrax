@@ -269,7 +269,7 @@ def select_function_samples(
             assert_never(strategy)
 
     return SampleSelection(
-        indices=tuple(chosen),
+        indices=tuple(int(index) for index in chosen),
         probabilities=tuple(float(value) for value in probabilities),
         importance_weights=tuple(float(value) for value in corrected),
         strategy=strategy,

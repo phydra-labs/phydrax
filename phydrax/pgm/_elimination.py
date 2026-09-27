@@ -242,8 +242,13 @@ def _factor_tables(
     topology = graph._host_topology
     for group_index, rows in enumerate(topology.factor_scopes):
         tables = factor_group_dense_tables(graph, group_index)
-        for factor, row in enumerate(rows):
-            factors.append((tuple(int(value) for value in row), tables[factor]))
+        rows_array = np.asarray(rows, dtype=np.int32)
+        for factor in range(rows_array.shape[0]):
+            scope = tuple(
+                int(rows_array[factor, position])
+                for position in range(rows_array.shape[1])
+            )
+            factors.append((scope, tables[factor]))
     offsets = topology.state_offsets
     for variable in range(graph.num_variables):
         factors.append(

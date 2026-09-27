@@ -43,7 +43,6 @@ def execution_identity() -> Any:
     packages = {
         item.metadata["Name"]: item.version
         for item in importlib.metadata.distributions()
-        # ty: ignore[unresolved-attribute]
         if item.metadata.get("Name")
     }
     environment = {
@@ -52,7 +51,6 @@ def execution_identity() -> Any:
         "machine": platform.machine(),
         "packages": dict(sorted(packages.items())),
         "backend": jax.default_backend(),
-        # ty: ignore[unresolved-attribute]
         "jax_enable_x64": bool(jax.config.x64_enabled),
         "devices": [str(device) for device in jax.devices()],
     }

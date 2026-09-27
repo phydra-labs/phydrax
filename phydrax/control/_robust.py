@@ -89,8 +89,7 @@ def hinfinity_state_feedback(
         raise ValueError("gamma must be finite and positive.")
     combined = np.concatenate((b, w), axis=1)
     game_metric = scipy_linalg.block_diag(r, -(gamma_**2) * np.eye(w.shape[1]))
-    # ty resolves float64 arrays to scipy-stubs' deprecated low-precision overload.
-    riccati = scipy_linalg.solve_continuous_are(a, combined, q, game_metric)  # ty: ignore[deprecated]
+    riccati = scipy_linalg.solve_continuous_are(a, combined, q, game_metric)
     gain = np.linalg.solve(r, b.T @ riccati)
     closed = a - b @ gain
     eigenvalues = np.linalg.eigvals(closed)

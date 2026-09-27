@@ -264,7 +264,9 @@ class SusceptibilityEstimate(StrictModule, NonTrainableState):
         if np.min(eigenvalues) < -1.0e-10 * max(np.max(np.abs(eigenvalues)), 1.0):
             raise ValueError("Susceptibility covariance must be positive semidefinite.")
         if convention.cp_symmetric:
-            odd = np.asarray([index.total_order % 2 == 1 for index in indices_])
+            odd = np.asarray(
+                [index.total_order % 2 == 1 for index in indices_], dtype=np.bool_
+            )
             if np.any(np.abs(values_[:, odd]) > 256.0 * np.finfo(values_.dtype).eps):
                 raise ValueError(
                     "CP-symmetric susceptibility input contains nonzero odd total orders."

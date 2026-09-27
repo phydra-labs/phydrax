@@ -427,7 +427,8 @@ def _prepare_scalar_fast_provider_3d(
                 [
                     parent_positions[int(index)]
                     for index in clusters_host[child_index].indices
-                ]
+                ],
+                dtype=np.int32,
             )
             restricted = bases_host[parent_index][rows]
             child_basis = bases_host[child_index]

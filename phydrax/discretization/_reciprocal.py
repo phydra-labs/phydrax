@@ -365,7 +365,9 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
         points = np.asarray(mesh.fractional_points)
         displacement = points[target] + shift - points[source]
         tolerance = float(closure_tolerance)
-        for edges, signs in zip(plaquettes, orientations, strict=True):
+        for row in range(plaquettes.shape[0]):
+            edges = plaquettes[row]
+            signs = orientations[row]
             oriented_displacements = displacement[edges] * signs[:, None]
             if (
                 np.max(np.abs(np.sum(oriented_displacements, axis=0)), initial=0.0)
@@ -438,12 +440,16 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
                 "Regular connectivity axes must be distinct sampled periodic axes."
             )
         indices = np.asarray(mesh.mesh_indices)
-        lookup = {tuple(row): index for index, row in enumerate(indices)}
+        lookup = {
+            tuple(int(value) for value in row): index
+            for index, row in enumerate(indices.tolist())
+        }
         sources: list[int] = []
         targets: list[int] = []
         shifts: list[tuple[int, ...]] = []
         edge_lookup: dict[tuple[int, int], int] = {}
-        for point_index, coordinate in enumerate(indices):
+        for point_index in range(indices.shape[0]):
+            coordinate = indices[point_index]
             for axis in selected:
                 for direction in (1, -1):
                     raw = coordinate.copy()
@@ -455,18 +461,17 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
                     elif raw[axis] < 0:
                         raw[axis] = mesh.mesh_shape[axis] - 1
                         shift[axis] = -1
-                    target = lookup[tuple(raw)]
+                    target = lookup[tuple(int(value) for value in raw)]
                     edge_lookup[(point_index, direction * (axis + 1))] = len(sources)
                     sources.append(point_index)
                     targets.append(target)
-                    shifts.append(tuple(shift))
+                    shifts.append(tuple(int(value) for value in shift))
         if len(sources) > int(maximum_edges):
             raise ReciprocalResourceError(
                 "Regular reciprocal connectivity exceeds maximum_edges."
             )
         reverse = []
-        for point_index, coordinate in enumerate(indices):
-            del coordinate
+        for point_index in range(indices.shape[0]):
             for axis in selected:
                 forward_target = targets[edge_lookup[(point_index, axis + 1)]]
                 reverse.append(edge_lookup[(forward_target, -(axis + 1))])

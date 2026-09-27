@@ -126,7 +126,6 @@ def run_qualification(
         "execution": execution,
         "radius": radius,
         "repeats": repeats,
-        # ty: ignore[unresolved-attribute]
         "x64_enabled": jax.config.x64_enabled,
         "backend": jax.default_backend(),
         "sample_shape": space.sample_shape,

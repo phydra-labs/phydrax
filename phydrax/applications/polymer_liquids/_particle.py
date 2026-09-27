@@ -103,7 +103,8 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
             raise TypeError("chain_layout must be PolymerChainLayoutPlan.")
         system = dynamics.system
         cell = system.cell
-        active = np.asarray(system.active_mask, dtype=np.bool_)
+        active = np.empty((system.capacity,), dtype=np.bool_)
+        active[...] = np.asarray(system.active_mask)
         active_count = int(np.count_nonzero(active))
         if cell is None or not cell.fully_periodic:
             raise ValueError("The Kremer-Grest profile requires a fully periodic cell.")
@@ -115,8 +116,15 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
             or chain_layout.particle_indices.shape[1] > plan.maximum_particles
         ):
             raise ValueError("Kremer-Grest resource bounds are exceeded.")
-        layout_indices = np.asarray(chain_layout.particle_indices, dtype=np.int32)
-        layout_mask = np.asarray(chain_layout.chain_mask, dtype=np.bool_)
+        layout_shape = chain_layout.particle_indices.shape
+        layout_indices = np.empty(
+            (layout_shape[0], layout_shape[1]), dtype=np.int32
+        )
+        layout_indices[...] = np.asarray(chain_layout.particle_indices)
+        layout_mask = np.empty(
+            (layout_shape[0], layout_shape[1]), dtype=np.bool_
+        )
+        layout_mask[...] = np.asarray(chain_layout.chain_mask)
         selected = layout_indices[layout_mask]
         if (
             selected.size != active_count
@@ -153,7 +161,9 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
             raise ValueError("Kremer-Grest supports at most one bending term.")
         fene = terms[fene_indices[0]]
         lj = terms[lj_indices[0]]
-        atom_types = np.asarray(system.plan.atom_type_ids)[active]
+        all_atom_types = np.empty((system.capacity,), dtype=np.int32)
+        all_atom_types[...] = np.asarray(system.plan.atom_type_ids)
+        atom_types = all_atom_types[active]
         if np.unique(atom_types).size != 1:
             raise ValueError("The initial Kremer-Grest profile is monodisperse.")
         bead_type = int(atom_types[0])
@@ -181,25 +191,44 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
                     chain[:-2], chain[1:-1], chain[2:], strict=True
                 )
             )
+        topology_bonds = np.empty(
+            (system.topology.bond_indices.shape[0], 2), dtype=np.int32
+        )
+        topology_bonds[...] = np.asarray(system.topology.bond_indices)
         actual_bonds = {
             tuple(sorted((int(left), int(right))))
-            for left, right in np.asarray(system.topology.bond_indices)
+            for left, right in topology_bonds
         }
         if actual_bonds != set(expected_bonds):
             raise ValueError(
                 "Kremer-Grest topology must contain exactly the chain bonds."
             )
-        actual_angles = {tuple(row) for row in np.asarray(system.topology.angle_indices)}
+        topology_angles = np.empty(
+            (system.topology.angle_indices.shape[0], 3), dtype=np.int32
+        )
+        topology_angles[...] = np.asarray(system.topology.angle_indices)
+        actual_angles = {
+            (int(left), int(center), int(right))
+            for left, center, right in topology_angles
+        }
         if angle_terms and actual_angles != set(expected_angles):
             raise ValueError("The bending term must route every internal chain angle.")
         if not angle_terms and actual_angles:
             raise ValueError("Topology angles require an admitted bending term.")
-        stable_ids = np.asarray(system.plan.particle_ids, dtype=np.int64)
+        stable_ids = np.empty((system.capacity,), dtype=np.int64)
+        stable_ids[...] = np.asarray(system.plan.particle_ids)
+        exception_count = system.plan.topology.pair_exceptions.shape[0]
+        exception_pairs = np.empty((exception_count, 2), dtype=np.int64)
+        exception_pairs[...] = np.asarray(system.plan.topology.pair_exceptions)
+        exception_scales = np.empty((exception_count,), dtype=np.float64)
+        exception_scales[...] = np.asarray(
+            system.plan.topology.lennard_jones_scales
+        )
         exception_scale = {
             tuple(sorted((int(left), int(right)))): float(scale)
             for (left, right), scale in zip(
-                np.asarray(system.plan.topology.pair_exceptions, dtype=np.int64),
-                np.asarray(system.plan.topology.lennard_jones_scales, dtype=np.float64),
+                exception_pairs,
+                exception_scales,
                 strict=True,
             )
         }

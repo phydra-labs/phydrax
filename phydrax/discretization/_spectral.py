@@ -996,7 +996,7 @@ class SpectralDecomposition(StrictModule, NonTrainableState):
             )
             try:
                 # ty selects scipy-stubs' deprecated bool/float16 overload for float64 input.
-                values, physical = scipy_linalg.eigh(  # ty: ignore[deprecated]
+                values, physical = scipy_linalg.eigh(
                     stiffness_dense,
                     mass_dense,
                     subset_by_index=(0, modes - 1),

@@ -141,7 +141,7 @@ def test_default_ids_are_deterministic_and_declared_as_synthesized(ase: Any) -> 
 def test_explicit_ids_follow_exact_atom_reordering(ase: Any) -> None:
     source = _identified_atoms(ase)
     original, original_report = phx.atomistic.interchange.from_ase_atoms(source, SCALE)
-    order = np.asarray([2, 0, 1])
+    order = np.asarray([2, 0, 1], dtype=np.int64)
     reordered, reordered_report = phx.atomistic.interchange.from_ase_atoms(
         source[order], SCALE
     )

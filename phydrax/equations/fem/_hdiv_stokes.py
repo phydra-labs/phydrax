@@ -362,13 +362,19 @@ def _tangential_nitsche_entries(
         np.abs(np.linalg.det(coordinates[cells[:, 1:]] - coordinates[cells[:, :1]])) / 6.0
     )
     incidents: list[list[tuple[int, int]]] = [[] for _ in face_vertices]
-    face_by_vertices = {
-        tuple(vertices): face for face, vertices in enumerate(face_vertices)
-    }
-    for cell, vertices in enumerate(cells):
+    face_by_vertices: dict[tuple[int, int, int], int] = {}
+    for face in range(face_vertices.shape[0]):
+        first, second, third = np.take(face_vertices, face, axis=0)
+        first, second, third = sorted((int(first), int(second), int(third)))
+        face_by_vertices[(first, second, third)] = face
+    for cell in range(cells.shape[0]):
+        vertices = np.take(cells, cell, axis=0)
         for local_face, reference_face in enumerate(_REFERENCE_FACES):
-            key = tuple(sorted(int(vertices[local]) for local in reference_face))
-            incidents[face_by_vertices[key]].append((cell, local_face))
+            first, second, third = np.take(vertices, reference_face)
+            first, second, third = sorted((int(first), int(second), int(third)))
+            incidents[face_by_vertices[(first, second, third)]].append(
+                (cell, local_face)
+            )
     dof_map = discretization.dof_maps[0]
     element = discretization.elements[0][0]
     source_indices = []

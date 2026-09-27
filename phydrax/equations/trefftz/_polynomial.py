@@ -112,7 +112,7 @@ def _add_scaled_expression(
 def _canonical_harmonic_block(
     dimension: int,
     degree: int,
-) -> tuple[np.ndarray, np.ndarray, float, np.floating, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray]:
     """Return a canonical exact nullspace basis for one homogeneous degree.
 
     The coefficient of every monomial with first exponent at least two is a

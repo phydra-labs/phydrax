@@ -295,9 +295,12 @@ class QuadraticProgram(StrictModule):
             raise ValueError(
                 "QuadraticProgram bounds must have one shared finite/fixed role pattern across the batch."
             )
-        fixed_indices = tuple(np.flatnonzero(fixed[0]))
-        lower_indices = tuple(np.flatnonzero(lower_finite[0] & ~fixed[0]))
-        upper_indices = tuple(np.flatnonzero(upper_finite[0] & ~fixed[0]))
+        fixed_identity_indices = tuple(np.flatnonzero(fixed[0]))
+        lower_identity_indices = tuple(np.flatnonzero(lower_finite[0] & ~fixed[0]))
+        upper_identity_indices = tuple(np.flatnonzero(upper_finite[0] & ~fixed[0]))
+        fixed_indices = tuple(int(value) for value in fixed_identity_indices)
+        lower_indices = tuple(int(value) for value in lower_identity_indices)
+        upper_indices = tuple(int(value) for value in upper_identity_indices)
         (
             equality_value,
             equality_rhs_value,
@@ -348,9 +351,9 @@ class QuadraticProgram(StrictModule):
                 "variables": variables,
                 "user_equalities": user_equalities,
                 "user_inequalities": user_inequalities,
-                "fixed_bounds": list(fixed_indices),
-                "lower_bounds": list(lower_indices),
-                "upper_bounds": list(upper_indices),
+                "fixed_bounds": list(fixed_identity_indices),
+                "lower_bounds": list(lower_identity_indices),
+                "upper_bounds": list(upper_identity_indices),
                 "dtype": str(dtype),
             }
         )

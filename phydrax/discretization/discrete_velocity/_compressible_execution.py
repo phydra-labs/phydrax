@@ -241,13 +241,16 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
             raise ValueError("State spatial shape does not match the transport grid.")
         if state.rule_id != self.rule.rule_id:
             raise ValueError("State velocity-rule identity does not match transport.")
-        velocities = np.asarray(self.rule.velocities, dtype=np.int32)
+        velocities = tuple(
+            tuple(int(value) for value in velocity)
+            for velocity in np.asarray(self.rule.velocities, dtype=np.int32).tolist()
+        )
         streamed_fields = []
         for populations in state.populations:
             directions = tuple(
                 jnp.roll(
                     populations[..., direction],
-                    shift=tuple(int(value) for value in velocity),
+                    shift=velocity,
                     axis=tuple(range(self.rule.dimension)),
                 )
                 for direction, velocity in enumerate(velocities)

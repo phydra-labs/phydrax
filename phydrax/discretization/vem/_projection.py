@@ -134,8 +134,10 @@ def _prepare_h1_virtual_element_projections(
 
     moment_indices = total_degree_multiindices(2, degree - 2) if degree >= 2 else ()
     exponent_to_polynomial = {
-        tuple(exponent): index
-        for index, exponent in enumerate(np.asarray(basis.exponents))
+        tuple(int(value) for value in exponent): index
+        for index, exponent in enumerate(
+            np.asarray(basis.exponents, dtype=np.int32).tolist()
+        )
     }
     if moment_indices:
         moment_columns = jnp.asarray(
@@ -173,11 +175,12 @@ def _prepare_h1_virtual_element_projections(
     exponents = np.asarray(basis.exponents, dtype=np.int32)
     scale_squared = geometry.characteristic_lengths * geometry.characteristic_lengths
     moment_start = arity + arity * edge_width
-    for alpha, exponent in enumerate(exponents):
+    for alpha, exponent_values in enumerate(exponents.tolist()):
         if alpha == 0:
             continue
+        exponent = tuple(int(value) for value in exponent_values)
         for axis in range(2):
-            power = int(exponent[axis])
+            power = exponent[axis]
             if power < 2:
                 continue
             reduced = list(int(value) for value in exponent)

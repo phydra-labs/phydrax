@@ -314,8 +314,9 @@ def intersect_plane_surface(
     segment_edges: list[tuple[tuple[int, int], tuple[int, int]]] = []
     segment_charts: list[int] = []
     segment_cells: list[int] = []
-    for chart, face in enumerate(faces):
-        face_distances = signed_distances[face]
+    for chart, face_values in enumerate(faces.tolist()):
+        face = tuple(int(value) for value in face_values)
+        face_distances = signed_distances[np.asarray(face, dtype=np.int32)]
         if np.all(face_distances > tolerance_) or np.all(face_distances < -tolerance_):
             continue
         crossings: list[tuple[int, int]] = []
@@ -490,7 +491,14 @@ def intersect_plane_surface(
                 source_edge_vertex_global_ids=loop_edge_ids,
             )
         )
-    loops_ = tuple(sorted(loops, key=lambda loop: tuple(np.asarray(loop.points[0]))))
+    loops_ = tuple(
+        sorted(
+            loops,
+            key=lambda loop: tuple(
+                float(value) for value in np.asarray(loop.points[0]).tolist()
+            ),
+        )
+    )
     return _section_result(
         realization,
         origin_,
