@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import BinaryIO, TYPE_CHECKING
 
 import h5py
-import h5py.h5o as h5o
 import numpy as np
 
 from .._external_resource import (
@@ -26,25 +25,47 @@ from .._external_resource import (
 )
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._publication import publish_bytes
+from ._openpmd_base import (
+    attribute_text,
+    BoundedHDF5Buffer,
+    ELECTRIC_FIELD_DIMENSION,
+    LENGTH_DIMENSION,
+    numeric_attribute,
+    OPENPMD_LASER_ENVELOPE_REVISION,
+    OpenPMDDimension,
+    OpenPMDHDF5Inventory,
+    OpenPMDIterationTime,
+    OpenPMDUnit,
+    OpenPMDUnsupportedError,
+    preflight_hdf5,
+    read_grid_unit_si,
+    read_iteration,
+    read_record_unit,
+    read_series_root,
+    required_text,
+    scalar_attribute,
+    TIME_DIMENSION,
+    write_grid_units,
+    write_iteration,
+    write_record_unit,
+    write_series_root,
+)
 from ._report import AdapterReport, AdapterStatus
 
 
 if TYPE_CHECKING:
-    from _typeshed import ReadableBuffer
-
     from ..geometry.analytic._operations import RigidFrame
     from ..optics.wave._envelope import PulseEnvelopeField
     from ..optics.wave._fields import PlaneFieldSpace
 
 
-_OPENPMD_PROFILE = "openPMD-upcoming-2.0.0-LaserEnvelope-HDF5@0957997"
-_PINNED_STANDARD_COMMIT = "095799703baf69111e8383a6fda05ce029e65bb2"
-_ELECTRIC_FIELD_DIMENSION = np.asarray(
-    (1.0, 1.0, -3.0, -1.0, 0.0, 0.0, 0.0), dtype=np.float64
-)
-_LENGTH_DIMENSION = np.asarray((1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
-_TIME_DIMENSION = np.asarray((0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0))
+_REVISION = OPENPMD_LASER_ENVELOPE_REVISION
+_ASSUMPTION = f"LaserEnvelope draft pinned at {_REVISION.source}"
 _RECORD_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _axis_dimensions(labels: tuple[str, str, str], /) -> tuple[OpenPMDDimension, ...]:
+    return tuple(TIME_DIMENSION if label == "t" else LENGTH_DIMENSION for label in labels)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +110,7 @@ class OpenPMDLaserEnvelopeProfile:
             canonical_fingerprint(
                 {
                     "kind": "openpmd-laser-envelope-profile",
-                    "standard_commit": _PINNED_STANDARD_COMMIT,
+                    "standard_commit": _REVISION.source,
                     "record_name": name,
                     "iteration": iteration,
                     "axis_labels": list(labels),
@@ -172,55 +193,13 @@ def _failure(
     )
     report = AdapterReport(
         status,
-        _OPENPMD_PROFILE,
+        _REVISION.format_id,
         target_format,
         source_id=source_id,
         target_id=failure_id,
-        assumptions=(f"LaserEnvelope draft pinned at {_PINNED_STANDARD_COMMIT}",),
+        assumptions=(_ASSUMPTION,),
     )
     return OpenPMDLaserEnvelopeError(message, report)
-
-
-def _text(value: object, name: str, /) -> str:
-    array = np.asarray(value)
-    if array.size != 1:
-        raise ValueError(f"{name} must be a scalar string attribute.")
-    scalar = array.reshape(()).item()
-    if isinstance(scalar, bytes):
-        result = scalar.decode("ascii", errors="strict")
-    elif isinstance(scalar, str):
-        result = scalar
-    else:
-        raise TypeError(f"{name} must be a string attribute.")
-    result = result.rstrip("\x00").strip()
-    if not result:
-        raise ValueError(f"{name} must be nonempty.")
-    return result
-
-
-def _required_text(attributes: h5py.AttributeManager, name: str, /) -> str:
-    if name not in attributes:
-        raise ValueError(f"Missing required openPMD attribute {name}.")
-    return _text(attributes[name], name)
-
-
-def _numeric_array(
-    attributes: h5py.AttributeManager, name: str, shape: tuple[int, ...], /
-) -> np.ndarray:
-    if name not in attributes:
-        raise ValueError(f"Missing required openPMD attribute {name}.")
-    supplied = np.asarray(attributes[name])
-    if supplied.shape != shape or not np.issubdtype(supplied.dtype, np.number):
-        raise ValueError(f"openPMD attribute {name} must have shape {shape}.")
-    result = np.asarray(supplied, dtype=np.float64)
-    if np.any(~np.isfinite(result)):
-        raise ValueError(f"openPMD attribute {name} must be finite.")
-    return result
-
-
-def _scalar_float(attributes: h5py.AttributeManager, name: str, /) -> float:
-    value = _numeric_array(attributes, name, ())
-    return float(value.reshape(()))
 
 
 def _axis_labels(attributes: h5py.AttributeManager, /) -> tuple[str, str, str]:
@@ -230,91 +209,40 @@ def _axis_labels(attributes: h5py.AttributeManager, /) -> tuple[str, str, str]:
     if values.shape != (3,):
         raise ValueError("axisLabels must contain exactly three labels.")
     labels = (
-        _text(values[0], "axisLabels"),
-        _text(values[1], "axisLabels"),
-        _text(values[2], "axisLabels"),
+        attribute_text(values[0], "axisLabels"),
+        attribute_text(values[1], "axisLabels"),
+        attribute_text(values[2], "axisLabels"),
     )
     if set(labels) != {"x", "y", "t"}:
-        raise ValueError("Only Cartesian temporal axes ('x', 'y', 't') are supported.")
+        raise OpenPMDUnsupportedError(
+            "Only Cartesian temporal axes ('x', 'y', 't') are supported."
+        )
     return labels
 
 
-def _preflight_hdf5(
+def _select_envelope(
     handle: h5py.File,
+    inventory: OpenPMDHDF5Inventory,
     resource: BoundedResource,
     policy: OpenPMDLaserEnvelopeImportPolicy,
     /,
-) -> tuple[h5py.Dataset, int, int, int]:
-    limits = resource.manifest.limits
-    stack: list[tuple[str, h5py.Group | h5py.Dataset, int]] = [("", handle, 0)]
-    addresses: set[int] = set()
-    object_count = 0
-    attribute_count = 0
-    maximum_depth = 0
-    datasets: dict[str, h5py.Dataset] = {}
-    decoded_bytes = 0
-    decoded_elements = 0
-    while stack:
-        name, item, depth = stack.pop()
-        object_count += 1
-        maximum_depth = max(maximum_depth, depth)
-        if maximum_depth > limits.max_depth or object_count > limits.max_nodes:
-            raise ResourceReadError("limit", "openPMD HDF5 structure exceeds its bounds.")
-        address = int(h5o.get_info(item.id).addr)
-        if address in addresses:
-            raise ValueError("HDF5 hard-link aliases and cycles are unsupported.")
-        addresses.add(address)
-        attribute_count += len(item.attrs)
-        if attribute_count > limits.max_attributes:
-            raise ResourceReadError(
-                "limit", "openPMD HDF5 attributes exceed their limit."
-            )
-        if isinstance(item, h5py.Group):
-            for child_name in item:
-                link = item.get(child_name, getlink=True)
-                if not isinstance(link, h5py.HardLink):
-                    raise ValueError("HDF5 soft and external links are forbidden.")
-                child = item[child_name]
-                stack.append((f"{name}/{child_name}".lstrip("/"), child, depth + 1))
-        elif isinstance(item, h5py.Dataset):
-            if item.shape is None or item.is_virtual or item.external:
-                raise ValueError(
-                    "LaserEnvelope datasets must be resident fixed dataspaces."
-                )
-            dtype = item.dtype
-            if dtype.hasobject or h5py.check_dtype(ref=dtype) is not None:
-                raise TypeError(
-                    "LaserEnvelope datasets cannot use object or reference data."
-                )
-            creation = item.id.get_create_plist()
-            for index in range(creation.get_nfilters()):
-                if creation.get_filter(index)[0] not in (1, 2, 3):
-                    raise ValueError(
-                        "Only HDF5 deflate, shuffle, and Fletcher32 filters are supported."
-                    )
-            decoded_bytes += item.size * dtype.itemsize
-            decoded_elements += item.size
-            datasets[name] = item
-        else:
-            raise ValueError("HDF5 named datatypes are unsupported.")
+) -> h5py.Dataset:
     selected_path = f"data/{policy.profile.iteration}/meshes/{policy.profile.record_name}"
-    if selected_path not in datasets:
+    if selected_path not in inventory.datasets:
         if selected_path in handle:
-            raise ValueError("Vector/group LaserEnvelope records are unsupported.")
+            raise OpenPMDUnsupportedError(
+                "Vector/group LaserEnvelope records are unsupported."
+            )
         raise ValueError("The selected LaserEnvelope record is absent.")
-    selected = datasets[selected_path]
+    selected = inventory.datasets[selected_path]
     # Reserve the detached canonical complex128 array in addition to HDF5's
     # fixed-width decoded buffer before reading any dataset payload.
-    decoded_bytes += selected.size * np.dtype(np.complex128).itemsize
-    if decoded_bytes > policy.maximum_decoded_bytes:
-        raise ResourceReadError(
-            "limit", "openPMD decoded datasets exceed maximum_decoded_bytes."
-        )
-    if object_count + decoded_elements > limits.max_nodes:
-        raise ResourceReadError(
-            "limit", "openPMD decoded element count exceeds its limit."
-        )
-    return selected, maximum_depth, object_count, attribute_count
+    inventory.require_budget(
+        resource.manifest.limits,
+        policy.maximum_decoded_bytes,
+        selected.size * np.dtype(np.complex128).itemsize,
+    )
+    return selected
 
 
 def _validate_series_metadata(
@@ -327,82 +255,59 @@ def _validate_series_metadata(
     np.ndarray,
     np.ndarray,
     np.ndarray,
-    np.ndarray,
+    OpenPMDUnit,
     float,
     np.ndarray,
 ]:
-    root = handle.attrs
-    if _required_text(root, "openPMD") != "2.0.0":
-        raise ValueError("Only openPMD 2.0.0 draft metadata is supported.")
-    if _required_text(root, "basePath") != "/data/%T/":
-        raise ValueError("Only the canonical openPMD basePath is supported.")
-    if _required_text(root, "meshesPath") != "meshes/":
-        raise ValueError("Only the canonical meshesPath is supported.")
-    if _required_text(root, "iterationEncoding") != "groupBased":
-        raise ValueError("Only groupBased openPMD HDF5 is supported.")
-    if _required_text(root, "iterationFormat") != "/data/%T/":
-        raise ValueError("iterationFormat must match the canonical group base path.")
-    extensions = tuple(
-        item.strip() for item in _required_text(root, "openPMDextension").split(";")
-    )
-    if "LaserEnvelope" not in extensions:
-        raise ValueError("The LaserEnvelope extension is not declared.")
-    iteration_path = f"data/{policy.profile.iteration}"
-    if iteration_path not in handle or not isinstance(handle[iteration_path], h5py.Group):
-        raise ValueError("The selected openPMD iteration is absent.")
-    iteration = handle[iteration_path]
-    time = _scalar_float(iteration.attrs, "time")
-    dt = _scalar_float(iteration.attrs, "dt")
-    time_unit = _scalar_float(iteration.attrs, "timeUnitSI")
-    if time != 0.0 or dt != 0.0 or time_unit <= 0.0:
-        raise ValueError(
-            "The temporal-envelope profile requires zero iteration time/dt and positive timeUnitSI."
-        )
+    root = read_series_root(handle, _REVISION)
+    if root.meshes_path is None:
+        raise ValueError("Missing required openPMD attribute meshesPath.")
+    if root.meshes_path != "meshes/":
+        raise OpenPMDUnsupportedError("Only the canonical meshesPath is supported.")
+    if root.iteration_encoding != "groupBased":
+        raise OpenPMDUnsupportedError("Only groupBased openPMD HDF5 is supported.")
+    _, time = read_iteration(handle, policy.profile.iteration)
+    if time.time != 0.0 or time.dt != 0.0:
+        raise ValueError("The temporal-envelope profile requires zero iteration time/dt.")
     attributes = dataset.attrs
-    geometry = _required_text(attributes, "geometry")
+    geometry = required_text(attributes, "geometry")
     if geometry != "cartesian":
-        raise ValueError("Only Cartesian LaserEnvelope geometry is supported.")
+        raise OpenPMDUnsupportedError(
+            "Only Cartesian LaserEnvelope geometry is supported."
+        )
     if "geometryParameters" in attributes:
-        parameters = _text(attributes["geometryParameters"], "geometryParameters")
+        parameters = attribute_text(
+            attributes["geometryParameters"], "geometryParameters"
+        )
         if parameters:
             raise ValueError("Cartesian LaserEnvelope geometry takes no parameters.")
-    if _required_text(attributes, "envelopeField") != "electric_field":
-        raise ValueError("Normalized vector-potential envelopes are unsupported.")
+    if required_text(attributes, "envelopeField") != "electric_field":
+        raise OpenPMDUnsupportedError(
+            "Normalized vector-potential envelopes are unsupported."
+        )
     labels = _axis_labels(attributes)
     if labels != policy.profile.axis_labels:
-        raise ValueError("LaserEnvelope axisLabels do not match the selected profile.")
-    spacing = _numeric_array(attributes, "gridSpacing", (3,))
-    offset = _numeric_array(attributes, "gridGlobalOffset", (3,))
-    grid_unit = _numeric_array(attributes, "gridUnitSI", (3,))
-    if np.any(spacing <= 0.0) or np.any(grid_unit <= 0.0):
-        raise ValueError("LaserEnvelope grid spacing and SI factors must be positive.")
-    dimensions = _numeric_array(attributes, "gridUnitDimension", (21,)).reshape((3, 7))
-    expected_dimensions = np.stack(
-        [_TIME_DIMENSION if label == "t" else _LENGTH_DIMENSION for label in labels]
+        raise OpenPMDUnsupportedError(
+            "LaserEnvelope axisLabels do not match the selected profile."
+        )
+    spacing = numeric_attribute(attributes, "gridSpacing", (3,))
+    offset = numeric_attribute(attributes, "gridGlobalOffset", (3,))
+    if np.any(spacing <= 0.0):
+        raise ValueError("LaserEnvelope grid spacing must be positive.")
+    grid_unit = read_grid_unit_si(
+        attributes, _REVISION, _axis_dimensions(labels), policy.metadata_tolerance
     )
-    if not np.allclose(
-        dimensions,
-        expected_dimensions,
-        rtol=0.0,
-        atol=policy.metadata_tolerance,
-    ):
-        raise ValueError("LaserEnvelope grid-axis unit dimensions are unsupported.")
-    position = _numeric_array(attributes, "position", (3,))
+    position = numeric_attribute(attributes, "position", (3,))
     if np.any(position < 0.0) or np.any(position >= 1.0):
         raise ValueError("LaserEnvelope component positions must lie in [0, 1).")
-    unit_dimension = _numeric_array(attributes, "unitDimension", (7,))
-    if not np.allclose(
-        unit_dimension,
-        _ELECTRIC_FIELD_DIMENSION,
-        rtol=0.0,
-        atol=policy.metadata_tolerance,
-    ):
-        raise ValueError("LaserEnvelope record is not an electric-field envelope.")
-    unit_si = _scalar_float(attributes, "unitSI")
-    time_offset = _scalar_float(attributes, "timeOffset")
-    angular_frequency = _scalar_float(attributes, "angularFrequency")
-    if unit_si <= 0.0 or time_offset != 0.0 or angular_frequency <= 0.0:
-        raise ValueError("LaserEnvelope SI scale, time offset, or carrier is invalid.")
+    # The scalar envelope record is its own component.
+    unit = read_record_unit(
+        attributes, attributes, ELECTRIC_FIELD_DIMENSION, policy.metadata_tolerance
+    )
+    time_offset = scalar_attribute(attributes, "timeOffset")
+    angular_frequency = scalar_attribute(attributes, "angularFrequency")
+    if time_offset != 0.0 or angular_frequency <= 0.0:
+        raise ValueError("LaserEnvelope time offset or carrier is invalid.")
     polarization = np.asarray(attributes.get("polarization"))
     if polarization.shape != (2,) or not np.issubdtype(
         polarization.dtype, np.complexfloating
@@ -421,7 +326,7 @@ def _validate_series_metadata(
         rtol=0.0,
         atol=policy.metadata_tolerance,
     ):
-        raise ValueError(
+        raise OpenPMDUnsupportedError(
             "LaserEnvelope polarization does not match the selected profile."
         )
     return (
@@ -429,7 +334,7 @@ def _validate_series_metadata(
         spacing * grid_unit,
         offset * grid_unit,
         position,
-        dimensions,
+        unit,
         angular_frequency,
         polarization,
     )
@@ -451,7 +356,8 @@ def _decode_openpmd_laser(
     if not isinstance(frame, RigidFrame) or frame.dimension != 3:
         raise ValueError("frame must be a three-dimensional RigidFrame.")
     with h5py.File(BytesIO(resource.data), "r") as handle:
-        dataset, depth, objects, attributes = _preflight_hdf5(handle, resource, policy)
+        inventory = preflight_hdf5(handle, resource.manifest.limits)
+        dataset = _select_envelope(handle, inventory, resource, policy)
         if dataset.ndim != 3 or any(size < 2 for size in dataset.shape):
             raise ValueError(
                 "LaserEnvelope payload must have three axes of at least two points."
@@ -460,15 +366,14 @@ def _decode_openpmd_laser(
             raise TypeError("LaserEnvelope payload must use fixed-width complex storage.")
         dataset_shape = tuple(dataset.shape)
         metadata = _validate_series_metadata(handle, dataset, policy)
-        labels, spacing, offset, position, _, carrier, polarization = metadata
+        labels, spacing, offset, position, unit, carrier, polarization = metadata
         # The complete HDF5 tree, selected metadata, dtype, shape, and decoded-byte
         # budget have been checked before this sole payload allocation.
         payload = np.array(dataset[()], dtype=np.complex128, copy=True)
-        unit_si = _scalar_float(dataset.attrs, "unitSI")
     if np.any(~np.isfinite(payload)):
         raise ValueError("LaserEnvelope payload must contain only finite values.")
     canonical_order = tuple(labels.index(name) for name in ("x", "y", "t"))
-    scalar = np.transpose(payload, canonical_order) * unit_si
+    scalar = unit.to_si(np.transpose(payload, canonical_order))
     counts = {label: dataset_shape[index] for index, label in enumerate(labels)}
     coordinate0 = {
         label: offset[index] + position[index] * spacing[index]
@@ -516,14 +421,14 @@ def _decode_openpmd_laser(
     )
     accounted = account_bounded_resource(
         resource,
-        depth=depth,
-        nodes=objects + payload.size,
-        attributes=attributes,
+        depth=inventory.maximum_depth,
+        nodes=inventory.object_count + payload.size,
+        attributes=inventory.attribute_count,
         losses=0,
     )
     report = AdapterReport(
         AdapterStatus.LOSSLESS,
-        _OPENPMD_PROFILE,
+        _REVISION.format_id,
         "PulseEnvelopeField",
         source_id=accounted.manifest.manifest_id,
         target_id=target_id,
@@ -539,7 +444,7 @@ def _decode_openpmd_laser(
             "Cartesian temporal grid",
         ),
         assumptions=(
-            f"LaserEnvelope draft pinned at {_PINNED_STANDARD_COMMIT}",
+            _ASSUMPTION,
             "frame and longitudinal coordinate are caller-supplied embedding metadata",
         ),
     )
@@ -571,42 +476,16 @@ def read_openpmd_laser_envelope_hdf5(
             resource.manifest.manifest_id,
             str(error),
         ) from error
+    except OpenPMDUnsupportedError as error:
+        raise _failure(
+            AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+            resource.manifest.manifest_id,
+            str(error),
+        ) from error
     except (OSError, KeyError, UnicodeError, TypeError, ValueError) as error:
-        text = str(error)
-        unsupported = any(
-            marker in text
-            for marker in (
-                "unsupported",
-                "Only ",
-                "Vector/group",
-                "Normalized vector-potential",
-                "does not match the selected profile",
-            )
-        )
-        status = (
-            AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
-            if unsupported
-            else AdapterStatus.MALFORMED_SOURCE
-        )
-        raise _failure(status, resource.manifest.manifest_id, text) from error
-
-
-class _BoundedHDF5Buffer(BytesIO):
-    def __init__(self, maximum_bytes: int) -> None:
-        super().__init__()
-        self.maximum_bytes = int(maximum_bytes)
-
-    def write(self, data: ReadableBuffer, /) -> int:
-        projected = max(self.tell() + memoryview(data).nbytes, len(self.getbuffer()))
-        if projected > self.maximum_bytes:
-            raise ResourceReadError("limit", "Encoded HDF5 output exceeds max_bytes.")
-        return super().write(data)
-
-    def truncate(self, size: int | None = None, /) -> int:
-        resolved = self.tell() if size is None else int(size)
-        if resolved > self.maximum_bytes:
-            raise ResourceReadError("limit", "Encoded HDF5 output exceeds max_bytes.")
-        return super().truncate(resolved)
+        raise _failure(
+            AdapterStatus.MALFORMED_SOURCE, resource.manifest.manifest_id, str(error)
+        ) from error
 
 
 def _finite_uniform_axis(
@@ -668,17 +547,10 @@ def _write_payload(
     /,
 ) -> None:
     with h5py.File(stream, "w") as handle:
-        handle.attrs["openPMD"] = np.bytes_("2.0.0")
-        handle.attrs["basePath"] = np.bytes_("/data/%T/")
-        handle.attrs["meshesPath"] = np.bytes_("meshes/")
-        handle.attrs["iterationEncoding"] = np.bytes_("groupBased")
-        handle.attrs["iterationFormat"] = np.bytes_("/data/%T/")
-        handle.attrs["openPMDextension"] = np.bytes_("LaserEnvelope")
-        handle.attrs["software"] = np.bytes_("phydrax")
-        iteration = handle.require_group(f"data/{profile.iteration}")
-        iteration.attrs["time"] = np.float64(0.0)
-        iteration.attrs["dt"] = np.float64(0.0)
-        iteration.attrs["timeUnitSI"] = np.float64(1.0)
+        write_series_root(handle, _REVISION, meshes_path="meshes/", particles_path=None)
+        iteration = write_iteration(
+            handle, profile.iteration, OpenPMDIterationTime(0.0, 0.0, 1.0)
+        )
         meshes = iteration.require_group("meshes")
         order = tuple(("x", "y", "t").index(label) for label in profile.axis_labels)
         stored = np.transpose(payload, order)
@@ -692,13 +564,11 @@ def _write_payload(
         dataset.attrs["gridGlobalOffset"] = np.asarray(
             [offsets[label] for label in labels], dtype=np.float64
         )
-        dataset.attrs["gridUnitSI"] = np.ones(3, dtype=np.float64)
-        dataset.attrs["gridUnitDimension"] = np.concatenate(
-            [_TIME_DIMENSION if label == "t" else _LENGTH_DIMENSION for label in labels]
-        ).astype(np.float64)
+        write_grid_units(dataset.attrs, _REVISION, _axis_dimensions(labels))
         dataset.attrs["position"] = np.zeros(3, dtype=np.float64)
-        dataset.attrs["unitDimension"] = _ELECTRIC_FIELD_DIMENSION
-        dataset.attrs["unitSI"] = np.float64(1.0)
+        write_record_unit(
+            dataset.attrs, dataset.attrs, OpenPMDUnit(1.0, ELECTRIC_FIELD_DIMENSION)
+        )
         dataset.attrs["timeOffset"] = np.float64(0.0)
         dataset.attrs["envelopeField"] = np.bytes_("electric_field")
         dataset.attrs["angularFrequency"] = np.float64(
@@ -764,7 +634,7 @@ def write_openpmd_laser_envelope_hdf5(
     scalar = _scalar_envelope_for_export(field_value, profile, tolerance)
     if scalar.nbytes > limits.max_bytes or scalar.size > limits.max_nodes:
         raise ResourceReadError("limit", "LaserEnvelope payload exceeds resource limits.")
-    buffer = _BoundedHDF5Buffer(limits.max_bytes)
+    buffer = BoundedHDF5Buffer(limits.max_bytes)
     _write_payload(
         buffer,
         scalar,
@@ -799,7 +669,7 @@ def write_openpmd_laser_envelope_hdf5(
     report = AdapterReport(
         AdapterStatus.LOSSLESS,
         "PulseEnvelopeField",
-        _OPENPMD_PROFILE,
+        _REVISION.format_id,
         source_id=source_id,
         target_id=resource.manifest.manifest_id,
         coordinate_mapping=(
@@ -815,7 +685,7 @@ def write_openpmd_laser_envelope_hdf5(
             "canonical identity frame and zero longitudinal coordinate",
         ),
         assumptions=(
-            f"LaserEnvelope draft pinned at {_PINNED_STANDARD_COMMIT}",
+            _ASSUMPTION,
             "canonical identity frame and zero longitudinal coordinate are implicit",
         ),
     )

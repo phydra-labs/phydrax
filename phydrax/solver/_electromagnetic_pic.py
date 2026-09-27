@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.pic import (
     ChargeConservingCurrentPlan,
+    PIC_CODE_RELATIVITY,
     PICEnergyLedger,
     PICMaxwellCurrentArguments,
     PICParticleState,
@@ -25,7 +26,7 @@ from ..discretization.pic import (
     PICRunStatus,
     PICTransferState,
     PreparedPICParticleCochainTransfer,
-    RelativisticBorisPlan,
+    RelativisticPushPlan,
 )
 from ._cochain_electrostatic import CochainElectrostaticPlan
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
@@ -72,7 +73,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
     electrostatic: CochainElectrostaticPlan
     transfers: tuple[PreparedPICParticleCochainTransfer, ...]
     currents: tuple[ChargeConservingCurrentPlan, ...]
-    pusher: RelativisticBorisPlan
+    pusher: RelativisticPushPlan
     maximum_displacement_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -84,7 +85,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         currents: Sequence[ChargeConservingCurrentPlan],
         /,
         *,
-        pusher: RelativisticBorisPlan | None = None,
+        pusher: RelativisticPushPlan | None = None,
         maximum_displacement_fraction: float = 0.5,
     ) -> None:
         if not isinstance(maxwell, PreparedCompatibleMaxwell):
@@ -139,10 +140,14 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Electromagnetic PIC requires passive instantaneous Maxwell material."
             )
-        pusher_ = RelativisticBorisPlan() if pusher is None else pusher
+        pusher_ = (
+            RelativisticPushPlan(PIC_CODE_RELATIVITY, method="boris")
+            if pusher is None
+            else pusher
+        )
         maximum = float(maximum_displacement_fraction)
-        if not isinstance(pusher_, RelativisticBorisPlan):
-            raise TypeError("pusher must be RelativisticBorisPlan or None.")
+        if not isinstance(pusher_, RelativisticPushPlan):
+            raise TypeError("pusher must be RelativisticPushPlan or None.")
         if not np.isfinite(maximum) or maximum <= 0.0:
             raise ValueError("maximum_displacement_fraction must be positive and finite.")
         self.maxwell = maxwell

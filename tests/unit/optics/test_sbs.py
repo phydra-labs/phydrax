@@ -16,7 +16,7 @@ from phydrax.optics.sbs._sbs import (
 )
 
 
-_EPSILON_0 = 8.8541878128e-12
+_EPSILON_0 = 8.8541878188e-12
 
 
 def _domain(volume_weights: Any, *, boundary_weights: Any = None) -> Any:

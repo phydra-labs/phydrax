@@ -21,7 +21,7 @@ from ._model import _text
 
 
 if TYPE_CHECKING:
-    from ..._external_runtime import EnergyRunResult, PinnedExecutable
+    from ..._external_runtime import PinnedExecutable, PinnedRunResult
 
 
 class RadiativeBasis(StrictModule):
@@ -246,7 +246,7 @@ def produce_radiance_matrix(
     output_path: str | None = None,
     timeout: float = 120,
     environment: Mapping[str, str] | None = None,
-) -> tuple[RadiativeOperator, EnergyRunResult]:
+) -> tuple[RadiativeOperator, PinnedRunResult]:
     """Run a pinned bounded Radiance (or Frads CLI) matrix producer and import bytes.
 
     Producer arguments/scenes are explicit; no shell or implicit binary search.
@@ -282,7 +282,7 @@ def produce_uniform_sky_reference(
     *,
     environment: Mapping[str, str] | None = None,
     timeout: float = 120,
-) -> tuple[RadiativeOperator, tuple[EnergyRunResult, EnergyRunResult]]:
+) -> tuple[RadiativeOperator, tuple[PinnedRunResult, PinnedRunResult]]:
     """Measure an upward irradiance sensor under a uniform unit-radiance hemisphere.
 
     The analytic result is π per RGB channel. Returned coefficients are actual

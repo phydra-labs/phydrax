@@ -31,7 +31,7 @@ from ...linalg import (
 from .._simplicial_locator import CellLocationResult, PreparedSimplicialCellLocator
 from ..particle import ParticlePopulationState
 from ._charge_state import PICChargeModelPlan, PICChargeState
-from ._method import RelativisticBorisPlan
+from ._method import PIC_CODE_RELATIVITY, RelativisticPushPlan
 from ._types import PICParticleState
 
 
@@ -62,7 +62,7 @@ class UnstructuredElectrostaticPICResult(StrictModule):
 class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
     locator: PreparedSimplicialCellLocator
     charge_model: PICChargeModelPlan
-    pusher: RelativisticBorisPlan
+    pusher: RelativisticPushPlan
     gradients: Array
     cell_measures: Array
     stiffness: Array
@@ -81,7 +81,7 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         permittivity: float = 1.0,
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
-        pusher: RelativisticBorisPlan | None = None,
+        pusher: RelativisticPushPlan | None = None,
     ) -> None:
         if not isinstance(locator, PreparedSimplicialCellLocator):
             raise TypeError("locator must be PreparedSimplicialCellLocator.")
@@ -149,7 +149,11 @@ class UnstructuredElectrostaticPICPlan(StrictModule, NonTrainableState):
         prepared = prepare(LinearSystem(operator), policy)
         self.locator = locator
         self.charge_model = charge_model
-        self.pusher = RelativisticBorisPlan() if pusher is None else pusher
+        self.pusher = (
+            RelativisticPushPlan(PIC_CODE_RELATIVITY, method="boris")
+            if pusher is None
+            else pusher
+        )
         self.gradients = jnp.asarray(gradients)
         self.cell_measures = jnp.asarray(measures)
         self.stiffness = jnp.asarray(modified)

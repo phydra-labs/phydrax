@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import ElectromagneticScaleContract
 from phydrax.applications.semiconductor import quantum as semiconductor_quantum
 from phydrax.applications.semiconductor._detector import (
     DetectorElectrode,
@@ -43,8 +44,9 @@ from phydrax.units import METER
 
 
 jax.config.update("jax_enable_x64", True)
-_EPSILON = 11.7 * 8.8541878128e-12
-_ELEMENTARY_CHARGE = 1.602176634e-19
+_SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
+_EPSILON = 11.7 * float(_SI_ELECTROMAGNETIC_SCALE.vacuum_permittivity)
+_ELEMENTARY_CHARGE = float(_SI_ELECTROMAGNETIC_SCALE.elementary_charge)
 _PLANCK = 6.62607015e-34
 _QUANTUM_REFERENCE = "semiconductor quantum qualification synthetic datum"
 
@@ -183,7 +185,7 @@ def _segmented_locked() -> dict[str, object]:
         weighting_plan,
         weighting,
         DetectorTrajectoryRoute(layout, (0, 1)),
-    ).evaluate(trajectory, -1.602176634e-19)
+    ).evaluate(trajectory, -_ELEMENTARY_CHARGE)
     return {
         "electrodes": detector.electrode_count,
         "partition_defect": float(weighting.evidence.partition_of_unity_defect),

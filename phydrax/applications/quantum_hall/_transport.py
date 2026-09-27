@@ -12,6 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import (
@@ -21,7 +22,7 @@ from ...solver import (
 )
 
 
-_ELEMENTARY_CHARGE_SI = 1.602_176_634e-19
+_ELEMENTARY_CHARGE_SI = float(ElectromagneticScaleContract.si().elementary_charge)
 
 
 class HallBarPlan(StrictModule, NonTrainableState):

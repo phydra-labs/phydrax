@@ -27,10 +27,10 @@ from typing import Any, Literal
 
 from .._external_runtime import (
     _host_only,
-    EnergyRunResult,
-    EnergyRuntimeError,
+    ExternalRuntimeError,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from .._fingerprint import canonical_json
 from ..artifacts import ScientificArtifactEnvelope
@@ -333,8 +333,8 @@ class GYMDetectorDesignResult:
     upstream_inverse_thickness_diagnostic: float
     elapsed_seconds: float
     artifact: ScientificArtifactEnvelope
-    simulation: EnergyRunResult
-    reconstruction: EnergyRunResult
+    simulation: PinnedRunResult
+    reconstruction: PinnedRunResult
     accepted: bool
     qualification_failures: tuple[str, ...]
 
@@ -671,7 +671,7 @@ void phydrax_detector() {{
         os.pathsep + env["ROOT_INCLUDE_PATH"] if "ROOT_INCLUDE_PATH" in env else ""
     )
     try:
-        simulation = run_energy_command(
+        simulation = run_pinned_command(
             root,
             ("-l", "-b", "-q", "phydrax_detector.C"),
             inputs=inputs,
@@ -680,7 +680,7 @@ void phydrax_detector() {{
             max_output_bytes=max_output_bytes,
             environment=env,
         )
-    except EnergyRuntimeError as failure:
+    except ExternalRuntimeError as failure:
         runs = () if failure.result is None else (failure.result,)
         raise DeviceQualificationError(str(failure), runs=runs) from failure
     try:
@@ -715,7 +715,7 @@ void phydrax_detector() {{
     }
     field_strength = dict(design)["B_FIELD"]
     try:
-        reconstruction = run_energy_command(
+        reconstruction = run_pinned_command(
             root,
             (
                 "-l",
@@ -729,7 +729,7 @@ void phydrax_detector() {{
             max_output_bytes=max_output_bytes,
             environment=env,
         )
-    except EnergyRuntimeError as failure:
+    except ExternalRuntimeError as failure:
         runs = (simulation,) if failure.result is None else (simulation, failure.result)
         raise DeviceQualificationError(str(failure), runs=runs) from failure
     try:

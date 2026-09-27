@@ -18,13 +18,14 @@ import phydrax.linalg as la
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.simplicial._ddg import DDGOperators, discrete_operators
 from ...geometry.simplicial._mesh import TriangleMesh
 
 
-_VACUUM_PERMEABILITY = 1.25663706212e-6
+_VACUUM_PERMEABILITY = float(ElectromagneticScaleContract.si().vacuum_permeability)
 
 
 class ThinFilmLondonEvidence(StrictModule):

@@ -57,7 +57,9 @@ def run_pic_qualification(*, smoke: Any = False) -> Any:
     )
     step = plan.step_detailed(state, 5.0e-4)
 
-    pusher = phx.discretization.pic.RelativisticBorisPlan()
+    pusher = phx.discretization.pic.RelativisticPushPlan(
+        phx.discretization.pic.PIC_CODE_RELATIVITY, method="boris"
+    )
     proper = jnp.asarray([[0.2, 0.1, 0.0]])
     pushed = pusher.push(
         proper,

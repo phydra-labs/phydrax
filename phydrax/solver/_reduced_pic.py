@@ -16,9 +16,10 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle import ParticlePopulationState
 from ..discretization.pic import (
+    PIC_CODE_RELATIVITY,
     PICParticleState,
     ReducedPICTransferPlan,
-    RelativisticBorisPlan,
+    RelativisticPushPlan,
 )
 from ._maxwell_reduced import (
     CompatibleMaxwell1DPlan,
@@ -52,7 +53,7 @@ class ReducedElectromagneticPICResult(StrictModule):
 class ReducedElectromagneticPICPlan(StrictModule, NonTrainableState):
     field: CompatibleMaxwell1DPlan | CompatibleMaxwell2DPlan
     transfer: ReducedPICTransferPlan
-    pusher: RelativisticBorisPlan
+    pusher: RelativisticPushPlan
     specific_charge: float = eqx.field(static=True)
     maximum_displacement_fraction: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -64,7 +65,7 @@ class ReducedElectromagneticPICPlan(StrictModule, NonTrainableState):
         specific_charge: float,
         /,
         *,
-        pusher: RelativisticBorisPlan | None = None,
+        pusher: RelativisticPushPlan | None = None,
         maximum_displacement_fraction: float = 0.5,
     ) -> None:
         if not isinstance(field, (CompatibleMaxwell1DPlan, CompatibleMaxwell2DPlan)):
@@ -79,7 +80,11 @@ class ReducedElectromagneticPICPlan(StrictModule, NonTrainableState):
             raise ValueError("Reduced PIC charge/displacement policy is invalid.")
         self.field = field
         self.transfer = transfer
-        self.pusher = RelativisticBorisPlan() if pusher is None else pusher
+        self.pusher = (
+            RelativisticPushPlan(PIC_CODE_RELATIVITY, method="boris")
+            if pusher is None
+            else pusher
+        )
         self.specific_charge = charge
         self.maximum_displacement_fraction = maximum
         self.plan_id = canonical_fingerprint(

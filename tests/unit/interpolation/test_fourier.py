@@ -163,12 +163,14 @@ def test_fourier_scenario_1() -> None:
     points = jnp.zeros((0, 2))
     coefficients = jnp.ones((3, 4), dtype=jnp.complex64)
     type2 = PreparedNonuniformFourier(
-        NonuniformFourierPlan((3, 4), 2, route="chunked", chunk_size=2)
+        NonuniformFourierPlan((3, 4), 2, route="chunked", chunk_size=2),
+        dtype=jnp.float64,
     )
     values = type2.type2(points, coefficients)
 
     type1 = PreparedNonuniformFourier(
-        NonuniformFourierPlan((3, 4), 1, route="chunked", chunk_size=2)
+        NonuniformFourierPlan((3, 4), 1, route="chunked", chunk_size=2),
+        dtype=jnp.float64,
     )
     reconstructed = type1.type1(points, jnp.zeros((0,), dtype=jnp.complex64))
 
@@ -214,10 +216,10 @@ def test_nonuniform_fourier_contracts() -> None:
     # Coordinates are angular phases: each mode k contributes exp(i k x).
     points = jnp.asarray([[0.5 * jnp.pi]])
 
-    type2 = PreparedNonuniformFourier(NonuniformFourierPlan((3,), 2))
+    type2 = PreparedNonuniformFourier(NonuniformFourierPlan((3,), 2), dtype=jnp.float64)
     evaluated = type2.type2(points, jnp.asarray([0.0, 1.0, 0.0]))
 
-    type1 = PreparedNonuniformFourier(NonuniformFourierPlan((3,), 1))
+    type1 = PreparedNonuniformFourier(NonuniformFourierPlan((3,), 1), dtype=jnp.float64)
     accumulated = type1.type1(points, jnp.asarray([1.0]))
 
     assert jnp.issubdtype(evaluated.dtype, jnp.complexfloating)

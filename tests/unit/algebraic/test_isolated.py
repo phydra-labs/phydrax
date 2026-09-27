@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import phydrax.algebraic._isolated as isolated_module
-from phydrax._external_runtime import pin_energy_executable
+from phydrax._external_runtime import pin_executable
 from phydrax.algebraic._isolated import (
     IsolatedPolynomialRootProblem,
     plan_isolated_roots,
@@ -61,7 +61,7 @@ def _provider(tmp_path: Any) -> Any:
         "2.15.0",
     )
     return HomotopyContinuationProvider(
-        pin_energy_executable(executable, version="1.11.7", license_id="MIT"),
+        pin_executable(executable, version="1.11.7", license_id="MIT"),
         environment,
     )
 

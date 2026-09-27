@@ -21,10 +21,11 @@ from .._trainable import NonTrainableState
 from ..discretization import tetrahedral_cell_complex, tetrahedral_connectivity
 from ..discretization.particle import ParticlePopulationState
 from ..discretization.pic import (
+    PIC_CODE_RELATIVITY,
     PICChargeModelPlan,
     PICChargeState,
     PICParticleState,
-    RelativisticBorisPlan,
+    RelativisticPushPlan,
     UnstructuredWhitneyCurrentPlan,
 )
 from ._maxwell import CompatibleMaxwellState
@@ -54,7 +55,7 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
     maxwell: PreparedUnstructuredMaxwell
     current: UnstructuredWhitneyCurrentPlan
     charge_model: PICChargeModelPlan
-    pusher: RelativisticBorisPlan
+    pusher: RelativisticPushPlan
     gradients: Array
     face_reconstruction: Array
     cell_faces: Array
@@ -71,7 +72,7 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
         charge_model: PICChargeModelPlan,
         /,
         *,
-        pusher: RelativisticBorisPlan | None = None,
+        pusher: RelativisticPushPlan | None = None,
         tolerance: float = 1.0e-8,
     ) -> None:
         if not isinstance(maxwell, PreparedUnstructuredMaxwell):
@@ -144,7 +145,11 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
         self.maxwell = maxwell
         self.current = current
         self.charge_model = charge_model
-        self.pusher = RelativisticBorisPlan() if pusher is None else pusher
+        self.pusher = (
+            RelativisticPushPlan(PIC_CODE_RELATIVITY, method="boris")
+            if pusher is None
+            else pusher
+        )
         self.gradients = jnp.asarray(gradients)
         self.face_reconstruction = jnp.asarray(reconstruction)
         self.cell_faces = connectivity.cell_faces

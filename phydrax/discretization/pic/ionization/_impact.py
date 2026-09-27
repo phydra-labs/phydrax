@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -169,6 +170,10 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
                 jnp.arange(self.maximum_events, dtype=jnp.int64),
                 requested_masses,
                 event,
+                parents=(
+                    ion_population.id_hi[safe_ions],
+                    ion_population.id_lo[safe_ions],
+                ),
             ),
         )
         use = event & allocation.allocated
@@ -305,32 +310,10 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
                 ion_particles.proper_velocity,
             ),
         )
-        electron_population_accepted = ParticlePopulationState(
-            jnp.where(
-                successful,
-                allocation.candidate_state.active,
-                electron_population.active,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.mass,
-                electron_population.mass,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.incarnation,
-                electron_population.incarnation,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.ever_occupied,
-                electron_population.ever_occupied,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.retired,
-                electron_population.retired,
-            ),
+        electron_population_accepted = jax.tree.map(
+            lambda proposed, old: jnp.where(successful, proposed, old),
+            allocation.candidate_state,
+            electron_population,
         )
         electron_particle_accepted = PICParticleState(
             jnp.where(

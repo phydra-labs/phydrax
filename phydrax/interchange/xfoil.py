@@ -23,9 +23,9 @@ from dataclasses import dataclass
 from .._external_runtime import (
     _artifact,
     _host_only,
-    EnergyRunResult,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from .._fingerprint import canonical_fingerprint
 from ..artifacts import ScientificArtifactEnvelope
@@ -89,7 +89,7 @@ class XFOILPointResult:
     geometry_sha256: str
     converged: bool
     failure_reason: str
-    run: EnergyRunResult
+    run: PinnedRunResult
     artifact: ScientificArtifactEnvelope
 
     def require_convergence(self) -> XFOILPointResult:
@@ -230,7 +230,7 @@ def run_xfoil_point(
     The pin covers executable bytes, not its dynamic libraries. The inherited
     process environment and engine remain trusted, not sandboxed. The existing
     bounded runtime provides private paths, process-group timeout and log/output
-    limits. Failure to launch/collect raises EnergyRuntimeError with evidence.
+    limits. Failure to launch/collect raises ExternalRuntimeError with evidence.
     A clean process exit alone is never treated as viscous convergence.
     """
     _host_only(coordinates, iterations, timeout)
@@ -268,7 +268,7 @@ def run_xfoil_point(
         "QUIT",
         "",
     )
-    run = run_energy_command(
+    run = run_pinned_command(
         executable,
         (),
         inputs={"airfoil.dat": geometry},

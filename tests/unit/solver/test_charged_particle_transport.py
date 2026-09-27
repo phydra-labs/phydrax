@@ -87,7 +87,7 @@ def test_charged_particle_transport_scenario_1() -> None:
     assert bool(escaping.all_successful)
     assert escaping.escaped_energy[0] > 999.0
     assert bool(annihilating.all_successful)
-    np.testing.assert_allclose(annihilating.annihilation_photon_energy, 2.0 * 510998.95)
+    np.testing.assert_allclose(annihilating.annihilation_photon_energy, 2.0 * 510998.95069)
     np.testing.assert_allclose(
         annihilating.deposited_energy + annihilating.escaped_energy,
         20.0,

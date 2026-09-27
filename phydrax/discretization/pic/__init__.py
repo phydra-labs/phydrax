@@ -21,7 +21,12 @@ from ._current import (
     ChargeConservingCurrentPlan,
     PICMaxwellCurrentArguments,
 )
-from ._method import PICResourcePolicy, RelativisticBorisPlan
+from ._method import (
+    PIC_CODE_RELATIVITY,
+    PICResourcePolicy,
+    RelativisticPusher,
+    RelativisticPushPlan,
+)
 from ._reduced import ReducedPICCurrentResult, ReducedPICTransferPlan
 from ._response import (
     PICParticleResponsePlan,
@@ -33,7 +38,6 @@ from ._transfer import (
     PreparedPICParticleCochainTransfer,
 )
 from ._types import (
-    BorisPushResult,
     PICChargeDepositResult,
     PICCurrentDepositResult,
     PICEnergyLedger,
@@ -43,6 +47,7 @@ from ._types import (
     PICRunStatus,
     PICStepEvidence,
     PICTransferState,
+    RelativisticPushResult,
 )
 from ._unstructured import (
     UnstructuredElectrostaticPICPlan,
@@ -76,7 +81,6 @@ __all__ = [
     "UnstructuredElectrostaticPICState",
     "UnstructuredWhitneyCurrentPlan",
     "UnstructuredWhitneyCurrentResult",
-    "BorisPushResult",
     "ChargeConservingCurrentPlan",
     "PICChargeDepositResult",
     "PICCurrentDepositResult",
@@ -91,5 +95,8 @@ __all__ = [
     "PICStepEvidence",
     "PICTransferState",
     "PreparedPICParticleCochainTransfer",
-    "RelativisticBorisPlan",
+    "PIC_CODE_RELATIVITY",
+    "RelativisticPushPlan",
+    "RelativisticPushResult",
+    "RelativisticPusher",
 ]

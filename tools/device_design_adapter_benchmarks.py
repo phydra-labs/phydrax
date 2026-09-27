@@ -50,9 +50,7 @@ from typing import Any
 # ty: ignore[unresolved-import]
 from phydrax.interchange._resource import read_bounded_resource, ResourceLimits
 
-# ty: ignore[unresolved-import]
-from phydrax.interchange.energy_runtime import EnergyRuntimeError, PinnedExecutable
-
+from phydrax._external_runtime import ExternalRuntimeError, PinnedExecutable
 from phydrax.interchange._device_design import DeviceQualificationError, DeviceSource
 from phydrax.interchange.geant4_detector_design import (
     GYMDetectorProfile,
@@ -131,10 +129,10 @@ def _save_run(run: Any, directory: Any) -> Any:
 
 def _failure_status(failure: Any) -> Any:
     if isinstance(failure, DeviceQualificationError):
-        if isinstance(failure.__cause__, EnergyRuntimeError):
+        if isinstance(failure.__cause__, ExternalRuntimeError):
             return "engine-unavailable-or-failed"
         return "qualification-failed"
-    if isinstance(failure, EnergyRuntimeError):
+    if isinstance(failure, ExternalRuntimeError):
         return "engine-unavailable-or-failed"
     if isinstance(failure, (OSError, subprocess.SubprocessError)):
         return "runtime-or-source-unavailable"
@@ -260,7 +258,7 @@ def main() -> Any:
             )
             accepted = accepted and result.accepted
         except (
-            EnergyRuntimeError,
+            ExternalRuntimeError,
             DeviceQualificationError,
             ValueError,
             TypeError,
@@ -275,7 +273,7 @@ def main() -> Any:
                 "error_type": type(failure).__name__,
                 "error": str(failure),
             }
-            if isinstance(failure, EnergyRuntimeError) and failure.result is not None:
+            if isinstance(failure, ExternalRuntimeError) and failure.result is not None:
                 row["execution"] = _save_run(failure.result, directory / "failed-engine")
             if isinstance(failure, DeviceQualificationError):
                 row["artifact_id"] = failure.artifact.artifact_id

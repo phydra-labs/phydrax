@@ -15,7 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.pic import RelativisticBorisPlan
+from ...discretization.pic import PIC_CODE_RELATIVITY, RelativisticPushPlan
 from ._core import DetectorConditions, TransportTrackBank
 
 
@@ -27,7 +27,7 @@ class ChargedPropagationPlan(StrictModule, NonTrainableState):
     """Bounded constant-field propagation; no shower or material-interaction claim."""
 
     conditions: DetectorConditions
-    pusher: RelativisticBorisPlan
+    pusher: RelativisticPushPlan
     step_size: Array
     step_count: int = eqx.field(static=True)
     mean_energy_loss_per_length: float = eqx.field(static=True)
@@ -40,7 +40,7 @@ class ChargedPropagationPlan(StrictModule, NonTrainableState):
         *,
         step_size: float,
         step_count: int,
-        speed_of_light: float = 1.0,
+        pusher: RelativisticPushPlan | None = None,
         mean_energy_loss_per_length: float = 0.0,
     ) -> None:
         if not isinstance(conditions, DetectorConditions):
@@ -56,8 +56,15 @@ class ChargedPropagationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "mean_energy_loss_per_length must be finite and nonnegative."
             )
+        pusher_ = (
+            RelativisticPushPlan(PIC_CODE_RELATIVITY, method="boris")
+            if pusher is None
+            else pusher
+        )
+        if not isinstance(pusher_, RelativisticPushPlan):
+            raise TypeError("pusher must be RelativisticPushPlan or None.")
         self.conditions = conditions
-        self.pusher = RelativisticBorisPlan(speed_of_light)
+        self.pusher = pusher_
         self.step_size = jnp.asarray(step)
         self.step_count = count
         self.mean_energy_loss_per_length = loss
@@ -67,7 +74,7 @@ class ChargedPropagationPlan(StrictModule, NonTrainableState):
                 "conditions": conditions.conditions_id,
                 "step_size": step,
                 "step_count": count,
-                "speed_of_light": speed_of_light,
+                "pusher": pusher_.plan_id,
                 "mean_energy_loss_per_length": loss,
             }
         )

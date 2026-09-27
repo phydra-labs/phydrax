@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
@@ -34,7 +35,7 @@ CarrierResolvedFieldKind = Literal["scalar", "lab-vector"]
 
 # CODATA 2018. Susceptibilities below are electric SI susceptibilities, so the
 # physical nonlinear polarization is epsilon_0 times the contracted response.
-_VACUUM_PERMITTIVITY = 8.854_187_812_8e-12
+_VACUUM_PERMITTIVITY = float(ElectromagneticScaleContract.si().vacuum_permittivity)
 
 
 def _real_finite_array(name: str, value: ArrayLike, shape: tuple[int, ...], /) -> Array:

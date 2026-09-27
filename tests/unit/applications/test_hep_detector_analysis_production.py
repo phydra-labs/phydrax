@@ -280,7 +280,6 @@ def test_hep_detector_analysis_production_scenario_2() -> None:
             conditions,
             step_size=1.0,
             step_count=1,
-            speed_of_light=1.0,
             mean_energy_loss_per_length=1.0,
         ),
         tracks,

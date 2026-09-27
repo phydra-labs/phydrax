@@ -24,7 +24,7 @@ from ._particle_internal_state import (
     ParticleConversionState,
     ParticleInternalBatchState,
 )
-from ._population import ParticlePopulationState
+from ._population import _initial_population_state, ParticlePopulationState
 
 
 class ParticleDynamicBodyProperties(StrictModule):
@@ -225,13 +225,7 @@ class DensityPorosityMorphologyPlan(StrictModule, NonTrainableState):
         inverse_inertia = jnp.where(
             owner_active & (owner_inertia > 0.0), 1.0 / owner_inertia, 0.0
         )
-        population = ParticlePopulationState(
-            owner_active,
-            owner_mass,
-            jnp.where(owner_active, 1, 0).astype(jnp.int32),
-            owner_active,
-            jnp.zeros_like(owner_active),
-        )
+        population = _initial_population_state(owner_active, owner_mass)
         properties = ParticleDynamicBodyProperties(
             population,
             inverse_mass,

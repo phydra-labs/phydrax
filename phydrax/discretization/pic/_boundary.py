@@ -7,6 +7,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -209,32 +210,10 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
                 surface.collected_kinetic_energy,
             ),
         )
-        accepted_population = ParticlePopulationState(
-            jnp.where(
-                successful,
-                deactivation.candidate_state.active,
-                population.active,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.mass,
-                population.mass,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.incarnation,
-                population.incarnation,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.ever_occupied,
-                population.ever_occupied,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.retired,
-                population.retired,
-            ),
+        accepted_population = jax.tree.map(
+            lambda proposed, old: jnp.where(successful, proposed, old),
+            deactivation.candidate_state,
+            population,
         )
         return PICBoundaryResult(
             candidate_particles,

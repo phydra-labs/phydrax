@@ -7,10 +7,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .._external_runtime import (
-    EnergyRunResult,
     ExternalExecutionPolicy,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 
 
@@ -34,13 +34,13 @@ class KineticVideoPlan:
         if self.timeout_seconds <= 0.0 or self.maximum_output_bytes < 1:
             raise ValueError("Video execution limits must be positive.")
 
-    def encode_png_frames(self, frames: tuple[bytes, ...], /) -> EnergyRunResult:
+    def encode_png_frames(self, frames: tuple[bytes, ...], /) -> PinnedRunResult:
         if not frames or any(
             not isinstance(frame, bytes) or not frame for frame in frames
         ):
             raise ValueError("frames must contain non-empty PNG byte strings.")
         inputs = {f"frames/{index:08d}.png": frame for index, frame in enumerate(frames)}
-        return run_energy_command(
+        return run_pinned_command(
             self.executable,
             (
                 "-hide_banner",

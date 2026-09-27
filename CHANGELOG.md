@@ -3,6 +3,82 @@
 ## Unreleased
 
 ### Added
+- `phydrax.special.synchrotron_f(x) = x ∫ₓ^∞ K_{5/3}(t) dt` and
+  `phydrax.special.synchrotron_g(x) = x K_{2/3}(x)` for float64 `x >= 0`:
+  small-`x` series, twelve log-`x` Chebyshev panels on `[0.25, 64)`, and
+  asymptotic series, with analytic all-order custom JVPs from the closed Bessel
+  recurrence system. `tools/synchrotron_function_tables.py` regenerates the
+  committed table module reproducibly from 30-digit mpmath quadrature and
+  records the uniform relative-error bound `3.6e-15`.
+- Nonuniform Fourier transforms gain a `"gridded"` Type-1/2 route: the
+  exponential-of-semicircle kernel (Barnett, Magland, af Klinteberg 2019) with
+  twofold oversampling, width and `beta` chosen from the requested
+  `tolerance` split over axes, an FFT, and deconvolution by the kernel Fourier
+  transform evaluated with Gauss–Legendre quadrature. The new
+  `NonuniformFourierType3Plan` shares the kernel and a gridded Type-2 inner
+  transform, and reports a per-target `supported` mask for its declared
+  source and target boxes. Gridded preparation reports
+  `NonuniformFourierGridEvidence` (requested tolerance, kernel width, fine
+  grid, grid bytes, chunk stencil entries), refuses grids above
+  `maximum_grid_points` with `NonuniformFourierResourceError`, and refuses a
+  tolerance the prepared dtype cannot resolve. `PreparedNonuniformFourier` now
+  requires an explicit real `dtype`.
+- `phydrax.ElectromagneticScaleContract` composes `RelativityScaleContract` with exact
+  `elementary_charge`, `electron_mass`, `vacuum_permittivity`, a charge unit, and
+  `constant_set_id`. `si()` gives CODATA 2022 values (`"codata-2022"`). It also
+  provides exact `vacuum_permeability`, `vacuum_impedance`, `fine_structure`,
+  `classical_electron_radius`, and `schwinger_field`, plus `code_units(...)`, which
+  requires every constant explicitly. `unit_si_map()` returns openPMD `unitSI` and
+  `unitDimension` pairs. The contract has a canonical `scale_id` fingerprint and
+  round-trips through `to_dict`/`from_dict`.
+- Core special relativity in `phydrax`: `FourMomentum`, `minkowski_dot`,
+  `lower_four_vector`, `MINKOWSKI_METRIC`, and `LorentzFrame` move from
+  `phydrax.applications.relativistic_scattering` (re-exports removed; import them
+  from `phydrax`). New traced `boost_matrix`, `boost_event`,
+  `boost_proper_velocity`, `boost_fields` (`F' = Λ F Λᵀ`), `boost_wavevector`
+  (Doppler and aberration), and `transform_spectral_energy` with
+  `LorentzSpectralTransform` evidence, which refuses media and truncated
+  emission (`SpectralEmissionCompleteness`). `LorentzFrame.boost`, hadronization
+  two-body decays, and `BMSFrameTransformation` now use `boost_matrix` /
+  `boost_wavevector`; `BMSFrameTransformation.lorentz_matrix` is removed.
+- Persistent particle identity: `ParticlePopulationState` adds `id_hi`/`id_lo`
+  (`uint32` words of a 64-bit global ID), `parent_hi`/`parent_lo` lineage with a
+  `has_parent` mask, and the `next_id_hi`/`next_id_lo` population counter.
+  Identity survives deactivation, slot reuse, and slot permutation. Each creating
+  event numbers its particles consecutively in request order (slot order for
+  `initialize` and `update_particle_population`, ascending event ID for
+  `allocate`). New `ParticleAllocationRequest(..., parents=(hi, lo))`,
+  `assign_particle_identities`, and `ParticlePopulationStatus.IDENTITY_EXHAUSTED`.
+  Field- and impact-ionization electrons record the ionized ion as parent. FLIP
+  split children record their cell's receiver as parent. `derive_key` now folds each
+  index as one exact `uint32` word. It refuses host integers outside `[0, 2**32)`,
+  booleans, non-integer dtypes, and non-scalar indices, so particle keys
+  `derive_key(root, address, step, id_hi, id_lo, event)` follow the particle rather
+  than its slot.
+- Bounded on-disk provider artifacts: `run_pinned_command(..., artifacts=
+  PinnedFileOutputs(destination, requests, maximum_total_bytes))` declares file
+  outputs as `PinnedFileRequest(path, maximum_bytes)`. After a successful command,
+  every declared file is checked against its own cap and the shared total cap. The
+  whole set is then exclusively published under the caller-owned destination and
+  returned as `PinnedFileArtifact` (location, size, SHA-256, envelope) through
+  `PinnedRunResult.file_artifacts` / `file_artifact(path)`; the run evidence records
+  each digest. A missing or oversize file, or a destination collision, refuses the
+  whole set, publishes nothing, and raises `ExternalRuntimeError`. A failed command
+  publishes nothing. File artifacts do not pass through memory, so provider output
+  can exceed `max_output_bytes`.
+- `phydrax.interchange._openpmd_base` is the shared openPMD HDF5 owner.
+  Per-profile standard revisions pin openPMD 1.1.0 for meshes and particles and the
+  2.0.0 LaserEnvelope draft at commit `0957997`. Root validation reads 1.x
+  extension bitmasks (ED-PIC) and 2.0 extension names, and refuses other standard
+  versions as unsupported. It also provides iteration time and `timeUnitSI`, record
+  units (`unitSI`/`unitDimension` via `OpenPMDUnit.to_si`/`from_si`),
+  revision-dependent grid units (1.1.0 scalar `gridUnitSI`, 2.0 per-axis
+  `gridUnitSI` + `gridUnitDimension`), and a bounded structural preflight: depth,
+  node, attribute, and decoded-byte budgets, no link aliases, soft/external links,
+  or unadmitted filters, and no payload read. The LaserEnvelope adapter now uses
+  it: stored code units are converted through `unitSI` and `gridUnitSI`, and
+  unsupported-semantic classification uses `OpenPMDUnsupportedError` instead of
+  message matching.
 - Meshing workflow examples `adaptive_bisection_heat.py`,
   `anisotropic_metric_adaptation.py`, `ale_conservative_remesh.py`,
   `cad_high_order_curving.py`, `boundary_layer_core_mesh.py`, and
@@ -449,6 +525,52 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- The PIC pusher is now a relativistic pusher family: `RelativisticBorisPlan` is
+  replaced by `RelativisticPushPlan(relativity, method=...)` with
+  `RelativisticPusher = Literal["boris", "vay", "higuera-cary"]`, and
+  `BorisPushResult` is renamed `RelativisticPushResult` (same fields). The speed
+  of light comes from the plan's `RelativityScaleContract`; callers holding an
+  `ElectromagneticScaleContract` pass its `relativity`. `"vay"` (Vay 2008) and
+  `"higuera-cary"` (Higuera–Cary 2017) keep the E×B drift exact at any γ, and
+  Higuera–Cary preserves phase-space volume; `"boris"` is numerically
+  unchanged. `phydrax.discretization.pic.PIC_CODE_RELATIVITY` declares the c = 1
+  code-unit scale used by electrostatic, electromagnetic, reduced, and
+  unstructured PIC plans and by `ChargedPropagationPlan` when no pusher is
+  supplied. `ChargedPropagationPlan` takes `pusher=` instead of
+  `speed_of_light=`. Pusher and dependent plan fingerprints change.
+- Documentation capability boundaries corrected: the particle-in-cell guide now
+  states that the full 3-D `ElectromagneticPICPlan` requires every axis periodic
+  and therefore cannot carry CPML (`PreparedMaxwellCPML` rejects CPML on periodic
+  axes); the advanced particle-grid guide restricts electromagnetic-PIC CPML
+  support to reduced 1-D/2-D PIC; the accelerator guide documents
+  `LongitudinalWakePlan` as a prescribed, unitless binned-convolution research
+  primitive rather than qualified wakefield support.
+- Private electromagnetic constants now come from
+  `ElectromagneticScaleContract.si()` (CODATA 2022), so several numeric results change
+  slightly:
+  - Vacuum permittivity changes from 8.8541878128e-12 to 8.8541878188e-12 F/m
+    (relative change 6.8e-10). This affects chemistry optical response, SBS, optics
+    wave nonlinear/material polarization, geophysical layered EM,
+    `semiconductor.VACUUM_PERMITTIVITY_SI` and materials, GR microphysics, and quantum
+    Hall Coulomb energies.
+  - Vacuum permeability is now 1/(ε₀c²) = 1.25663706127e-6 H/m. It was previously
+    4π×10⁻⁷ in `electrical_machines.VACUUM_PERMEABILITY` and
+    `geophysics.VACUUM_PERMEABILITY_H_M` (potential fields), and 1.25663706212e-6 in
+    layered/magnetotelluric geophysics and London superconductivity.
+    `tokamak.DEFAULT_VACUUM_PERMEABILITY_H_M` keeps its value but is now derived.
+  - Electron mass in the optics-wave plasma material response changes from the
+    CODATA 2018 value 9.1093837015e-31 kg to 9.1093837139e-31 kg. Photon and
+    charged-particle transport use an electron rest energy of 510998.95069 eV, derived
+    as mₑc²/e, instead of 510998.95 eV.
+  - Any fingerprint that records these values changes. This includes geophysical
+    layered-earth defaults and the optics-wave plasma response `electron_mass`.
+- The energy-specific external runner is now generic: `run_energy_command` →
+  `run_pinned_command`, `EnergyRunResult` → `PinnedRunResult` (new
+  `file_artifacts` field), `EnergyOutput` → `PinnedOutput`, `EnergyRuntimeError`
+  → `ExternalRuntimeError`, and `pin_energy_executable` → `pin_executable`. Every
+  caller (backends, interchange adapters, applications, rendering, tools, tests,
+  guides) is migrated. Run and output envelopes now use the artifact kinds
+  `pinned-command-run`/`pinned-command-output`, so run artifact IDs change.
 - Python support now targets 3.12 (`>=3.12,<3.13`). Runtime, optional, test,
   QA, and Python build dependency floors target the newest jointly resolvable
   stable releases, with ceilings at the next compatible release boundary. Both

@@ -19,6 +19,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._physical import ElectromagneticScaleContract
 from ...measurement import resolve_quantity
 from ...units import (
     AMPERE,
@@ -37,9 +38,9 @@ from ...units import (
 )
 
 
-ELEMENTARY_CHARGE_SI = 1.602176634e-19
+ELEMENTARY_CHARGE_SI = float(ElectromagneticScaleContract.si().elementary_charge)
 BOLTZMANN_CONSTANT_SI = 1.380649e-23
-VACUUM_PERMITTIVITY_SI = 8.8541878128e-12
+VACUUM_PERMITTIVITY_SI = float(ElectromagneticScaleContract.si().vacuum_permittivity)
 SQUARE_METER = derived_unit("m2", ((METER, 2),))
 HERTZ_UNIT = derived_unit("Hz", ((SECOND, -1),))
 WATT_UNIT = derived_unit("W", ((JOULE, 1), (SECOND, -1)))

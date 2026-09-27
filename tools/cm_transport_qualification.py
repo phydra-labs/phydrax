@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from benchmarks._runtime import capture_environment
+from phydrax import ElectromagneticScaleContract
 from phydrax.chemistry.periodic._boltzmann import (
     ConstantRelaxationTime,
     PeriodicBoltzmannPlan,
@@ -29,7 +30,7 @@ from phydrax.chemistry.periodic._kubo import (
 from phydrax.operators.quantum._electronic_transport import retarded_embedding
 
 
-_E = 1.602176634e-19
+_E = float(ElectromagneticScaleContract.si().elementary_charge)
 _KB = 1.380649e-23
 _HBAR = 1.0545718176461565e-34
 

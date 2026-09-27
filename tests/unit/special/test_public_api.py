@@ -53,6 +53,8 @@ def test_special_namespace_is_public() -> None:
         "sph_harm_y",
         "sph_harm_y_cart",
         "sph_legendre_p",
+        "synchrotron_f",
+        "synchrotron_g",
         "voigt_profile",
         "wofz",
         "yv",

@@ -12,10 +12,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from ..._external_runtime import (
-    EnergyRunResult,
-    EnergyRuntimeError,
+    ExternalRuntimeError,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from ..._fingerprint import canonical_fingerprint
 from ._eprl import EPRLVertexPlan
@@ -47,7 +47,7 @@ class SpinFoamProviderResult:
     amplitude_real: str
     amplitude_imaginary: str
     absolute_error: str
-    run: EnergyRunResult | None
+    run: PinnedRunResult | None
     plan_id: str
     provider_id: str
     result_id: str
@@ -81,7 +81,7 @@ def _result(
     status: SpinFoamProviderStatus,
     plan: EPRLVertexPlan,
     provider: ExternalSpinFoamProvider,
-    run: EnergyRunResult | None,
+    run: PinnedRunResult | None,
     /,
     *,
     amplitude_real: str = "0",
@@ -134,7 +134,7 @@ def execute_spin_foam_provider(
         raise TypeError("plan must be EPRLVertexPlan.")
     payload = (json.dumps(_input_record(plan), sort_keys=True) + "\n").encode("ascii")
     try:
-        run = run_energy_command(
+        run = run_pinned_command(
             provider.executable,
             ("--input=eprl-input.json", "--output=eprl-output.json"),
             inputs={"eprl-input.json": payload},
@@ -142,7 +142,7 @@ def execute_spin_foam_provider(
             timeout=timeout,
             max_output_bytes=maximum_output_bytes,
         )
-    except EnergyRuntimeError as failure:
+    except ExternalRuntimeError as failure:
         return _result(
             "provider-failed",
             plan,

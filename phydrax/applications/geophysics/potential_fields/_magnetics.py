@@ -13,13 +13,14 @@ from jax.typing import ArrayLike
 from phydrax import ein
 
 from ...._fingerprint import canonical_fingerprint
+from ...._physical import ElectromagneticScaleContract
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....interchange import GeospatialContract
 from ._gravity import GravityQuadratureSource
 
 
-VACUUM_PERMEABILITY_H_M = 4.0e-7 * np.pi
+VACUUM_PERMEABILITY_H_M = float(ElectromagneticScaleContract.si().vacuum_permeability)
 
 
 class MagneticMaterial(StrictModule):

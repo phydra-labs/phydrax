@@ -29,12 +29,12 @@ import numpy as np
 from .._external_runtime import (
     _artifact,
     _host_only,
-    EnergyRunResult,
     ExternalAdjointAction,
     ExternalPrimalStage,
     ExternalTensorSpec,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from .._external_worker import _digest_file, _relative_path
 from .._fingerprint import canonical_fingerprint, canonical_json
@@ -198,7 +198,7 @@ class DAFoamResult:
     gradient_capability: str
     failure_reason: str
     replay_id: str
-    run: EnergyRunResult
+    run: PinnedRunResult
     artifact: ScientificArtifactEnvelope
 
     @property
@@ -417,7 +417,7 @@ def run_dafoam(
     }
     files["aerodynamic-request.json"] = canonical_json(request).encode()
     files["aerodynamic-worker.py"] = worker
-    run = run_energy_command(
+    run = run_pinned_command(
         runtime.python,
         ("-B", "aerodynamic-worker.py"),
         inputs=files,

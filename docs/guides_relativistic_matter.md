@@ -27,6 +27,26 @@ and nonconvergence. Extrapolation, clipping, and a zero uncertainty are not supp
 fallbacks. A table is qualified only when its axes, values, pressure monotonicity, heat
 capacity, mechanical stability, and causality evidence pass.
 
+### Electromagnetic constants
+
+Any process that needs $e$, $m_e$, $\varepsilon_0$, or $\hbar$ together binds an
+`ElectromagneticScaleContract`. It composes a `RelativityScaleContract` (which owns
+$c$ and $\hbar$), adds the elementary charge, electron mass, vacuum permittivity and a
+charge unit, and records `constant_set_id`. `ElectromagneticScaleContract.si()` is the
+CODATA 2022 realization (`constant_set_id="codata-2022"`). Derived constants are exact
+rationals: `vacuum_permeability` $=1/(\varepsilon_0c^2)$, `vacuum_impedance`,
+`fine_structure`, `classical_electron_radius`, and `schwinger_field`
+$=m_e^2c^3/(e\hbar)$.
+
+`code_units(dimensional_scale, charge_unit, ...)` builds a code-unit scale and requires
+every constant as a keyword. The charge unit must share the dimensional scale's
+reference system. For SI-referenced units, `unit_si_map()` returns openPMD
+`(unitSI, unitDimension)` pairs, in $(L,M,T,I,\theta,N,J)$ order, for length, mass,
+time, charge, velocity, momentum, energy, current, charge and current density, and the
+electric and magnetic fields. Dimensionless results such as the quantum parameter
+$\chi=\gamma E/E_S$ do not depend on the unit choice. `to_dict`/`from_dict` round-trip
+the contract and reject payloads whose `scale_id` fingerprint does not match.
+
 ## SRHD and Valencia GRHD
 
 `RelativisticHydrodynamicsLayout` fixes primitive components

@@ -22,9 +22,9 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._external_runtime import (
-    EnergyRunResult,
-    EnergyRuntimeError,
-    run_energy_command,
+    ExternalRuntimeError,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._strict import StrictModule
@@ -1201,7 +1201,7 @@ class HomotopyGeometryResult(StrictModule, NonTrainableState):
     status: HomotopyGeometryStatus = eqx.field(static=True)
     output: GeometryOutput | None
     paths: PathInventory | None
-    run: EnergyRunResult | None
+    run: PinnedRunResult | None
     request_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
     environment_id: str = eqx.field(static=True)
@@ -1215,7 +1215,7 @@ class HomotopyGeometryResult(StrictModule, NonTrainableState):
         status: HomotopyGeometryStatus,
         output: GeometryOutput | None,
         paths: PathInventory | None,
-        run: EnergyRunResult | None,
+        run: PinnedRunResult | None,
         request_id: str,
         provider_id: str,
         environment_id: str,
@@ -1300,7 +1300,7 @@ def _identity_failure(
     request: HomotopyGeometryRequest,
     provider_id: str,
     environment_id: str,
-    run: EnergyRunResult | None,
+    run: PinnedRunResult | None,
     error: str,
     /,
 ) -> HomotopyGeometryResult:
@@ -1739,7 +1739,7 @@ def decode_homotopy_geometry_result(
     *,
     provider_id: str,
     environment_id: str,
-    run: EnergyRunResult | None = None,
+    run: PinnedRunResult | None = None,
 ) -> HomotopyGeometryResult:
     """Validate one detached worker record without executing a provider."""
 
@@ -1817,7 +1817,7 @@ def _host_failure(
     request: HomotopyGeometryRequest,
     provider: HomotopyContinuationProvider,
     status: HomotopyGeometryStatus,
-    run: EnergyRunResult | None,
+    run: PinnedRunResult | None,
     error: str,
     /,
 ) -> HomotopyGeometryResult:
@@ -1873,7 +1873,7 @@ def execute_homotopy_geometry(
     if provider.environment.depot_path:
         environment["JULIA_DEPOT_PATH"] = provider.environment.depot_path
     try:
-        run = run_energy_command(
+        run = run_pinned_command(
             provider.executable,
             (
                 "--startup-file=no",
@@ -1894,7 +1894,7 @@ def execute_homotopy_geometry(
             max_output_bytes=policy.maximum_output_bytes,
             environment=environment,
         )
-    except EnergyRuntimeError as failure:
+    except ExternalRuntimeError as failure:
         diagnostic = str(failure)
         try:
             provider.environment.verify()

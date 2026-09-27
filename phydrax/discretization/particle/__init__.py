@@ -401,6 +401,7 @@ from ._particle_surface_exchange import (
     ParticleContactExchangePlan,
 )
 from ._population import (
+    assign_particle_identities,
     ParticleAllocationRequest,
     ParticleAllocationResult,
     ParticleDeactivationResult,
@@ -997,6 +998,7 @@ __all__ = [
     "ParticlePopulationStatus",
     "ParticleSlotReusePolicy",
     "update_particle_population",
+    "assign_particle_identities",
     "emit_sph_particles",
     "SPHDensityInitialization",
     "SPHEmissionEvidence",

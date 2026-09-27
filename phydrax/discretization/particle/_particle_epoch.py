@@ -29,7 +29,7 @@ from ._pair_state import (
     ParticlePairKeySpace,
 )
 from ._particle_morphology import ParticleDynamicBodyProperties
-from ._population import ParticlePopulationState
+from ._population import _NO_IDENTITY_WORD, ParticlePopulationState
 from ._rigid_sphere import RigidSphereKinematics, RigidSphereSetPlan
 from ._verlet import PreparedVerletParticleNeighborhood, VerletParticleNeighborhoodPlan
 
@@ -360,12 +360,19 @@ def grow_particle_execution_epoch(
     velocity = _pad(old_state.kinematics.velocity, target, 0.0)
     angular = _pad(old_state.kinematics.angular_velocity, target, 0.0)
     active = _pad(old_state.body_properties.active, target, False)
+    old_population = old_state.body_properties.population
     population = ParticlePopulationState(
         active,
         _pad(old_state.body_properties.masses, target, 0.0),
-        _pad(old_state.body_properties.population.incarnation, target, 0),
-        _pad(old_state.body_properties.population.ever_occupied, target, False),
-        _pad(old_state.body_properties.population.retired, target, False),
+        _pad(old_population.incarnation, target, 0),
+        _pad(old_population.ever_occupied, target, False),
+        _pad(old_population.retired, target, False),
+        _pad(old_population.id_hi, target, _NO_IDENTITY_WORD),
+        _pad(old_population.id_lo, target, _NO_IDENTITY_WORD),
+        _pad(old_population.parent_hi, target, _NO_IDENTITY_WORD),
+        _pad(old_population.parent_lo, target, _NO_IDENTITY_WORD),
+        old_population.next_id_hi,
+        old_population.next_id_lo,
     )
     properties = ParticleDynamicBodyProperties(
         population,

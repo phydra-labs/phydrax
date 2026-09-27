@@ -23,13 +23,14 @@ from ..discretization import (
     DiscretizationRole,
 )
 from ..discretization.pic import (
+    PIC_CODE_RELATIVITY,
     PICEnergyLedger,
     PICFieldGatherResult,
     PICParticleState,
     PICRejectionReason,
     PICRunStatus,
     PreparedPICParticleCochainTransfer,
-    RelativisticBorisPlan,
+    RelativisticPushPlan,
 )
 from ._cochain_electrostatic import CochainElectrostaticPlan, CochainElectrostaticResult
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
@@ -72,7 +73,7 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
 
     field: CochainElectrostaticPlan
     transfers: tuple[PreparedPICParticleCochainTransfer, ...]
-    pusher: RelativisticBorisPlan
+    pusher: RelativisticPushPlan
     background_charge: Array
     maximum_displacement_fraction: float = eqx.field(static=True)
     discretization_bundle: DiscretizationBundle
@@ -84,7 +85,7 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         transfers: Sequence[PreparedPICParticleCochainTransfer],
         /,
         *,
-        pusher: RelativisticBorisPlan | None = None,
+        pusher: RelativisticPushPlan | None = None,
         background_charge: ArrayLike | None = None,
         maximum_displacement_fraction: float = 0.5,
     ) -> None:
@@ -104,9 +105,13 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Each electrostatic PIC species requires a distinct particle support."
             )
-        pusher_ = RelativisticBorisPlan() if pusher is None else pusher
-        if not isinstance(pusher_, RelativisticBorisPlan):
-            raise TypeError("pusher must be RelativisticBorisPlan or None.")
+        pusher_ = (
+            RelativisticPushPlan(PIC_CODE_RELATIVITY, method="boris")
+            if pusher is None
+            else pusher
+        )
+        if not isinstance(pusher_, RelativisticPushPlan):
+            raise TypeError("pusher must be RelativisticPushPlan or None.")
         maximum = float(maximum_displacement_fraction)
         if not np.isfinite(maximum) or maximum <= 0.0:
             raise ValueError("maximum_displacement_fraction must be positive and finite.")

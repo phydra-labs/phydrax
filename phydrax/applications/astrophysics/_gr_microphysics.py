@@ -12,7 +12,7 @@ from jax.typing import ArrayLike
 
 from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._physical import RelativityScaleContract
+from ..._physical import ElectromagneticScaleContract, RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...units import (
@@ -29,12 +29,13 @@ from ...units import (
 
 
 _SI_RELATIVITY_SCALE = RelativityScaleContract.si()
-_ELECTRON_CHARGE_C = 1.602176634e-19
-_ELECTRON_MASS_KG = 9.1093837139e-31
+_SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
+_ELECTRON_CHARGE_C = float(_SI_ELECTROMAGNETIC_SCALE.elementary_charge)
+_ELECTRON_MASS_KG = float(_SI_ELECTROMAGNETIC_SCALE.electron_mass)
 _SPEED_OF_LIGHT_M_S = float(_SI_RELATIVITY_SCALE.speed_of_light)
 _BOLTZMANN_CONSTANT_J_K = float(_SI_RELATIVITY_SCALE.boltzmann_constant)
 _PLANCK_CONSTANT_J_S = 2.0 * np.pi * float(_SI_RELATIVITY_SCALE.reduced_planck_constant)
-_VACUUM_PERMITTIVITY_F_M = 8.8541878128e-12
+_VACUUM_PERMITTIVITY_F_M = float(_SI_ELECTROMAGNETIC_SCALE.vacuum_permittivity)
 _THETA_PER_KELVIN = _BOLTZMANN_CONSTANT_J_K / (_ELECTRON_MASS_KG * _SPEED_OF_LIGHT_M_S**2)
 _CYCLOTRON_HZ_PER_TESLA = _ELECTRON_CHARGE_C / (2.0 * np.pi * _ELECTRON_MASS_KG)
 _FARADAY_ROTATION_FACTOR = _ELECTRON_CHARGE_C**3 / (

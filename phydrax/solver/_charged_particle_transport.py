@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._physical import ElectromagneticScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle._radiation_geometry import VoxelRadiationGeometryPlan
@@ -25,7 +26,12 @@ from ..equations._charged_radiation_interactions import (
 )
 
 
-_POSITRON_ANNIHILATION_ENERGY_EV = 2.0 * 510998.95
+_SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
+_POSITRON_ANNIHILATION_ENERGY_EV = 2.0 * float(
+    _SI_ELECTROMAGNETIC_SCALE.electron_mass
+    * _SI_ELECTROMAGNETIC_SCALE.speed_of_light**2
+    / _SI_ELECTROMAGNETIC_SCALE.elementary_charge
+)
 
 _TransportCarry: TypeAlias = tuple[
     Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array

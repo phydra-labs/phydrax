@@ -17,11 +17,12 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
-_VACUUM_PERMITTIVITY = 8.8541878128e-12
+_VACUUM_PERMITTIVITY = float(ElectromagneticScaleContract.si().vacuum_permittivity)
 
 
 class SBSStatus(IntEnum):

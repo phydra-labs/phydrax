@@ -6,7 +6,7 @@
 
 `DetectorConditions` binds geometry, material, field, alignment, calibration, units, and a half-open validity interval. Transport tracks, truth steps, sensitive hits, digits, track measurements, fitted tracks, clusters, and reconstructed particles use distinct types and stable IDs.
 
-`ChargedPropagationPlan` is a bounded constant-field reference. It reuses the relativistic Boris substrate and may apply a declared deterministic mean energy loss. It makes no shower, secondary-production, fluctuating-loss, or general navigation claim.
+`ChargedPropagationPlan` is a bounded constant-field reference. It reuses the `RelativisticPushPlan` substrate (Boris in `PIC_CODE_RELATIVITY` unless a pusher is supplied) and may apply a declared deterministic mean energy loss. It makes no shower, secondary-production, fluctuating-loss, or general navigation claim.
 
 `SensitiveHitPlan` maps detector elements to channels. `DigitizationPlan` composes calibration, noise, crosstalk, ADC quantization, saturation, thresholding, and zero suppression. Event-ID-folded noise is batching independent. Derivatives are invalid through random draws, quantization, saturation, thresholds, and changing channel support.
 

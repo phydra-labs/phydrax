@@ -22,7 +22,7 @@ transformation.
 ## Ownership, identity, and limits
 
 `phydrax.interchange.external_runtime` provides `PinnedExecutable`,
-`pin_energy_executable`, `run_energy_command`, `run_energyplus`,
+`pin_executable`, `run_pinned_command`, `run_energyplus`,
 `run_radiance_command`, and `run_opendss`, together with the staged-adjoint
 types `ExternalTensorSpec`, `ExternalPrimalStage`, `ExternalAdjointAction`, and
 `ExternalDerivativeSupport`.
@@ -32,16 +32,25 @@ types `ExternalTensorSpec`, `ExternalPrimalStage`, `ExternalAdjointAction`, and
   files, and symlink output reads are rejected.
 - Every run has a private working directory. Returned file bytes, stdout, stderr,
   identities, exit status, elapsed time, and timeout evidence survive cleanup.
-  `EnergyRunResult.output(path)` retrieves a requested file. Runtime failures raise
-  `EnergyRuntimeError`; command failures carry `.result`, and optional native
+  `PinnedRunResult.output(path)` retrieves a requested file. Runtime failures raise
+  `ExternalRuntimeError`; command failures carry `.result`, and optional native
   session failures carry `.evidence`, including bounded logs and process status.
+- Large provider outputs stay on disk. `run_pinned_command(..., artifacts=
+  PinnedFileOutputs(destination, requests, maximum_total_bytes))` declares each
+  file as a `PinnedFileRequest(path, maximum_bytes)`. After a successful command
+  every declared file must exist as a regular file within its own cap and the
+  shared total cap; the set is then exclusively published under the
+  caller-owned destination, and `PinnedRunResult.file_artifact(path)` returns its
+  location, size, and SHA-256 digest. A missing or oversize file refuses the
+  whole set (nothing is published) and raises `ExternalRuntimeError`; a failed
+  command publishes nothing.
 - `ScientificArtifactEnvelope` records producer/build/input identity and actual
   complete/failed status. Output identity does not certify physical model validity.
   Source URLs record provenance, not authorization or correctness.
 - A pinned executable requires the expected SHA-256, declared release, and an
   explicit caller-supplied license identifier. Each run hashes an opened regular
   file and executes that exact held descriptor, so replacing its path cannot
-  substitute code between verification and launch. `pin_energy_executable`
+  substitute code between verification and launch. `pin_executable`
   computes the pin for a selected file; independent release/digest qualification
   remains the caller's responsibility.
 - Native sessions record installed distribution versions, manifests and native

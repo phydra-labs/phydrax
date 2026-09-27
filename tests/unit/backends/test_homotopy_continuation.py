@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax._external_runtime import pin_energy_executable
+from phydrax._external_runtime import pin_executable
 from phydrax.backends.homotopy_continuation import (
     execute_homotopy_continuation,
     homotopy_continuation_availability,
@@ -97,7 +97,7 @@ with open("homotopy-output.json", "w", encoding="ascii") as stream:
         "2.15.0",
     )
     return HomotopyContinuationProvider(
-        pin_energy_executable(executable, version="1.11.7", license_id="MIT"),
+        pin_executable(executable, version="1.11.7", license_id="MIT"),
         environment,
     )
 

@@ -17,7 +17,7 @@ import numpy as np
 from ...meshing import MeshAttribute, MeshAttributeRole, MeshPatch, MeshZone, MeshZoneRole
 from ._device import DevicePlan, GateContact, MaterialBinding, OhmicContact
 from ._materials import DielectricMaterial, SemiconductorMaterial
-from ._quantities import PER_CUBIC_METER
+from ._quantities import PER_CUBIC_METER, VACUUM_PERMITTIVITY_SI
 from ._support import TransportSupport
 
 
@@ -106,7 +106,7 @@ def mos_capacitor(
                 oxide,
                 DielectricMaterial(
                     "silicon-dioxide",
-                    permittivity=3.9 * 8.8541878128e-12,
+                    permittivity=3.9 * VACUUM_PERMITTIVITY_SI,
                     provenance="Illustrative static SiO2 relative permittivity 3.9",
                 ),
             ),

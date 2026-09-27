@@ -23,9 +23,9 @@ from typing import Literal
 
 from .._external_runtime import (
     _host_only,
-    EnergyRunResult,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from .._fingerprint import canonical_json
 from ..artifacts import ScientificArtifactEnvelope
@@ -184,7 +184,7 @@ class HFSSDesignResult:
     mode_labels: tuple[str, ...]
     mesh_identity: str
     artifact: ScientificArtifactEnvelope
-    run: EnergyRunResult
+    run: PinnedRunResult
     # Adaptive convergence is numerical evidence, not statistical uncertainty.
     uncertainty: None = None
     accepted: bool = True
@@ -545,7 +545,7 @@ def run_hfss_design(
     inputs = {f"source/{name}": value for name, value in sources.items()}
     inputs["request.json"] = canonical_json(request).encode()
     inputs["worker.py"] = worker
-    run = run_energy_command(
+    run = run_pinned_command(
         python,
         ("worker.py",),
         inputs=inputs,

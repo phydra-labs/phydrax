@@ -17,6 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._nonlinear_response import (
@@ -37,8 +38,9 @@ from ._pulse_time import PulseTimeSpace
 
 
 # CODATA 2018 values. They are overridable only through an explicit Drude plan.
-_ELEMENTARY_CHARGE = 1.602_176_634e-19
-_ELECTRON_MASS = 9.109_383_701_5e-31
+_SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
+_ELEMENTARY_CHARGE = float(_SI_ELECTROMAGNETIC_SCALE.elementary_charge)
+_ELECTRON_MASS = float(_SI_ELECTROMAGNETIC_SCALE.electron_mass)
 
 
 def _workspace_limit(value: int, /) -> int:

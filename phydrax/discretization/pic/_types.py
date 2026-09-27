@@ -44,7 +44,7 @@ class PICParticleState(StrictModule):
     proper_velocity: Array
 
 
-class BorisPushResult(StrictModule):
+class RelativisticPushResult(StrictModule):
     proper_velocity: Array
     velocity: Array
     maximum_speed: Array
@@ -118,7 +118,6 @@ class PICStepEvidence(StrictModule):
 
 
 __all__ = [
-    "BorisPushResult",
     "PICChargeDepositResult",
     "PICCurrentDepositResult",
     "PICEnergyLedger",
@@ -128,4 +127,5 @@ __all__ = [
     "PICRunStatus",
     "PICStepEvidence",
     "PICTransferState",
+    "RelativisticPushResult",
 ]

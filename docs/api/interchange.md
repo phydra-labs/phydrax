@@ -118,8 +118,13 @@ structural and allocation limits. They do not assign domain semantics.
 The bounded laser-envelope adapter implements one exact Cartesian temporal
 electric-field profile from the pinned upcoming openPMD LaserEnvelope draft. It
 uses the public HDF5 schema through `h5py`, not the LGPL openPMD-api runtime.
-Unsupported geometry, field quantity, axes, units, polarization, frame, and
-resource requests fail with a retained `AdapterReport`.
+Stored code units are converted to SI through the record `unitSI` and the per-axis
+`gridUnitSI`, with `unitDimension` and `gridUnitDimension` checked. Other openPMD
+standard versions and unsupported geometry, field quantity, axes, units,
+polarization, frame, and resource requests fail with a retained `AdapterReport`.
+The adapter builds on the shared openPMD HDF5 base, which pins openPMD 1.1.0 for
+mesh and particle profiles and the 2.0.0 LaserEnvelope draft for this one, and
+completes a bounded structural preflight before reading any payload.
 
 ::: phydrax.interchange.OpenPMDLaserEnvelopeProfile
 
@@ -366,9 +371,12 @@ with bounded exact-byte inputs, descriptor-held logs, named outputs, and positiv
 finite timeouts. `ExternalExecutionPolicy` supports only truthful
 `trusted-local` direct execution with ordinary host filesystem, process, and
 network access; container/sandbox selectors and network denial fail closed
-without an enforcing launcher. A launch error, timeout, nonzero exit, absent
-output, pin mismatch, or resource-bound violation raises with the bounded run
-evidence; it never becomes an optimization penalty or a skipped success.
+without an enforcing launcher. Large outputs are declared as `PinnedFileOutputs`
+file artifacts with a per-file and total byte cap; they are published to a
+caller-owned directory with SHA-256 digests only after a successful run, and never
+partially. A launch error, timeout, nonzero exit, absent output or artifact, pin
+mismatch, or resource-bound violation raises with the bounded run evidence; it never
+becomes an optimization penalty or a skipped success.
 
 The repository's parser and boundary tests are not live engine qualifications. The
 local development host used for this work has no DAFoam runtime, Windows

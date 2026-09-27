@@ -139,6 +139,66 @@ def test_scalar_envelope_roundtrip_expands_declared_polarization(tmp_path: Path)
     assert jnp.allclose(imported.field.values, expected, rtol=2e-6, atol=2e-6)
 
 
+def test_import_applies_record_and_grid_code_units(tmp_path: Path) -> None:
+    # Rewrite an SI export into code units: field in GV/m, x/y in micrometers,
+    # t in femtoseconds. The imported SI field and grid must be unchanged.
+    profile = OpenPMDLaserEnvelopeProfile(polarization=(0.6, 0.8j))
+    source = _field(polarization="scalar")
+    path = tmp_path / "code-units.h5"
+    write_openpmd_laser_envelope_hdf5(path, source, profile, limits=_limits())
+    grid_unit = np.asarray([1.0e-6, 1.0e-6, 1.0e-15])
+    with h5py.File(path, "r+") as handle:
+        record = handle[f"data/0/meshes/{profile.record_name}"]
+        record[...] = record[()] / 1.0e9
+        record.attrs["unitSI"] = np.float64(1.0e9)
+        record.attrs["gridSpacing"] = record.attrs["gridSpacing"] / grid_unit
+        record.attrs["gridGlobalOffset"] = record.attrs["gridGlobalOffset"] / grid_unit
+        record.attrs["gridUnitSI"] = grid_unit
+
+    imported = read_openpmd_laser_envelope_hdf5(
+        _resource(path),
+        OpenPMDLaserEnvelopeImportPolicy(profile),
+        frame=RigidFrame.identity(3),
+        longitudinal_coordinate=0.0,
+    )
+    expected = source.values[..., None] * jnp.asarray(profile.polarization)
+    assert jnp.allclose(imported.field.values, expected, rtol=2e-6, atol=2e-6)
+    for axis in (0, 1):
+        assert jnp.allclose(
+            imported.field.plane_space.coordinate_axes[axis],
+            source.plane_space.coordinate_axes[axis],
+            rtol=1e-12,
+            atol=1e-12,
+        )
+    assert jnp.allclose(
+        imported.field.time_space.coordinates,
+        source.time_space.coordinates,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_import_refuses_other_standard_revisions_as_unsupported(
+    tmp_path: Path,
+) -> None:
+    profile = OpenPMDLaserEnvelopeProfile()
+    path = tmp_path / "release.h5"
+    write_openpmd_laser_envelope_hdf5(
+        path, _field(polarization="scalar"), profile, limits=_limits()
+    )
+    with h5py.File(path, "r+") as handle:
+        handle.attrs["openPMD"] = np.bytes_("1.1.0")
+    with pytest.raises(OpenPMDLaserEnvelopeError, match=r"openPMD 1\.1\.0") as caught:
+        read_openpmd_laser_envelope_hdf5(
+            _resource(path),
+            OpenPMDLaserEnvelopeImportPolicy(profile),
+            frame=RigidFrame.identity(3),
+            longitudinal_coordinate=0.0,
+        )
+    assert caught.value.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    assert not caught.value.report.valid
+
+
 def test_export_rejects_tangential_field_without_constant_profile_polarization(
     tmp_path: Path,
 ) -> None:

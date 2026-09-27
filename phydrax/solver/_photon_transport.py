@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._physical import ElectromagneticScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle._radiation_geometry import VoxelRadiationGeometryPlan
@@ -26,7 +27,12 @@ from ..equations._radiation_interactions import (
 from ..units import conversion_factor, ELECTRONVOLT
 
 
-_ELECTRON_REST_ENERGY_EV = 510998.95
+_SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
+_ELECTRON_REST_ENERGY_EV = float(
+    _SI_ELECTROMAGNETIC_SCALE.electron_mass
+    * _SI_ELECTROMAGNETIC_SCALE.speed_of_light**2
+    / _SI_ELECTROMAGNETIC_SCALE.elementary_charge
+)
 
 # Position, direction, energy, live flag, material kerma, escaped and truncated
 # energy, event/Compton/Rayleigh/virtual counts, status, and five event buffers.

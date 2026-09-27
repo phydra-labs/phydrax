@@ -25,6 +25,7 @@ from ..._limit_study import (
     ScientificLimitStudyResult,
     ScientificLimitVariation,
 )
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...applications.fuzzy_space import (
@@ -45,9 +46,10 @@ from ._identity import MonopoleLandauLevel
 
 
 _HBAR_SI = 1.054_571_817e-34
-_ELEMENTARY_CHARGE_SI = 1.602_176_634e-19
-_EPSILON_ZERO_SI = 8.854_187_8128e-12
-_ELECTRON_MASS_SI = 9.109_383_7139e-31
+_SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
+_ELEMENTARY_CHARGE_SI = float(_SI_ELECTROMAGNETIC_SCALE.elementary_charge)
+_EPSILON_ZERO_SI = float(_SI_ELECTROMAGNETIC_SCALE.vacuum_permittivity)
+_ELECTRON_MASS_SI = float(_SI_ELECTROMAGNETIC_SCALE.electron_mass)
 
 HallStatistics: TypeAlias = Literal["fermion", "boson"]
 QuantumHallGapKind: TypeAlias = Literal["neutral", "charge", "transport"]

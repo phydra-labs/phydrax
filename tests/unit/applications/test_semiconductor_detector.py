@@ -36,7 +36,7 @@ from phydrax.dynamics import StateLayout, TrajectoryData
 from phydrax.units import METER
 
 
-EPSILON = 11.7 * 8.8541878128e-12
+EPSILON = 11.7 * 8.8541878188e-12
 
 
 def _resources(**changes: Any) -> Any:

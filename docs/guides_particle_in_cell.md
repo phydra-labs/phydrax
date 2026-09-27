@@ -11,10 +11,24 @@ state. They do not introduce a second particle or mesh runtime.
 zero. Macro mass, activity, stable ID, support, and position/velocity field-space identity remain
 owned by `ParticleDiscretization`.
 
-PIC state stores spatial position and three-component proper velocity. `RelativisticBorisPlan`
-converts proper velocity to physical velocity, applies the relativistic Boris map, and reports
-finite and subluminal evidence. Its `speed_of_light` belongs to the caller's explicit code-unit
-system; no unit conversion is inferred.
+PIC state stores spatial position and three-component proper velocity. `RelativisticPushPlan`
+converts proper velocity to physical velocity, applies one relativistic pusher selected by
+`method` (`RelativisticPusher`), and reports finite and subluminal evidence in
+`RelativisticPushResult`:
+
+- `"boris"`: the relativistic Boris map; it evaluates the magnetic rotation at the Lorentz factor
+  after the first electric half kick, so crossed fields with E + v×B = 0 acquire a spurious
+  drift-frame velocity when the rest-mass cyclotron frequency is unresolved;
+- `"vay"`: Vay (Phys. Plasmas 15, 056701, 2008), which keeps the E×B drift exact at any γ but is
+  not phase-space volume preserving;
+- `"higuera-cary"`: Higuera and Cary (Phys. Plasmas 24, 052104, 2017), which keeps the E×B drift
+  exact and preserves phase-space volume.
+
+All three conserve |u| in a pure magnetic field. The speed of light is the exact
+`speed_of_light` of the plan's `RelativityScaleContract`; fields, specific charge, and step size
+are expressed in that scale and no unit conversion is inferred. Callers holding an
+`ElectromagneticScaleContract` pass its `relativity`. PIC plans constructed without a pusher use
+`"boris"` in `PIC_CODE_RELATIVITY`, a declared code-unit system with c = 1.
 
 ## Instantaneous particle–cochain transfer
 
@@ -71,7 +85,7 @@ prepared `sources` collection.
 observer, CFL, and constraint updates. It owns only particle staggering and coupling:
 
 1. gather E and B at integer-time particle positions;
-2. push half-step proper velocity with Boris;
+2. push half-step proper velocity with the plan's relativistic pusher;
 3. drift particles;
 4. deposit midpoint current and endpoint charge;
 5. advance `PreparedCompatibleMaxwell`;
@@ -80,11 +94,14 @@ observer, CFL, and constraint updates. It owns only particle staggering and coup
 7. commit the entire particle/field candidate atomically.
 
 The base `ElectromagneticPICPlan` scope is fixed-population,
-lossless, instantaneous-material, periodic 3-D without PML or material boundaries. The advanced
-plans in [Advanced particle-grid physics](guides_advanced_particle_grid.md) add bounded population
-changes, collisions, ionization, reduced-dimensional/open electromagnetic PIC, moving windows,
-unstructured electrostatic/electromagnetic PIC, CPML coupling, and semi-implicit response without
-changing this base contract.
+lossless, instantaneous-material, periodic 3-D without PML or material boundaries. Construction
+rejects any bridge that is not three-dimensional with every structured axis periodic, and
+`PreparedMaxwellCPML` rejects nonzero CPML width on a periodic axis, so the full 3-D plan cannot
+carry an absorbing CPML layer. The advanced plans in
+[Advanced particle-grid physics](guides_advanced_particle_grid.md) add bounded population
+changes, collisions, ionization, reduced 1-D/2-D open electromagnetic PIC (the only PIC route that
+accepts `MaxwellCPMLPlan`), moving windows, unstructured electrostatic/electromagnetic PIC, and
+semi-implicit response without changing this base contract.
 
 ## Differentiation and limits
 

@@ -21,6 +21,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax._physical import ElectromagneticScaleContract
 from phydrax._strict import StrictModule
 from phydrax.discretization import (
     CellMesh,
@@ -31,7 +32,7 @@ from phydrax.discretization import (
 )
 
 
-VACUUM_PERMEABILITY = 4.0e-7 * np.pi
+VACUUM_PERMEABILITY = float(ElectromagneticScaleContract.si().vacuum_permeability)
 
 
 class LinearMagneticRegion(StrictModule):

@@ -33,6 +33,7 @@ dk = jax.vmap(jax.grad(phx.special.ellipk))(m)
 | Airy | `airy`, `airye` | entire Airy values; documented complex scaling for `airye` |
 | Modified Bessel | `iv`, `ive`, `kv`, `kve` and their `*_order_derivative` functions | principal logarithm; `K` cut on the negative real axis |
 | Cylindrical Bessel | `jv`, `yv`, `hankel1`, `hankel2`, `jv_order_derivative`, `yv_order_derivative` | principal logarithm; `Y`/Hankel cut on the negative real axis |
+| Synchrotron kernels | `synchrotron_f`, `synchrotron_g` | `F(x) = x ∫ₓ^∞ K_{5/3}`, `G(x) = x K_{2/3}(x)` for `x >= 0`; float64 only |
 | Gegenbauer | `gegenbauer_c`, `gegenbauer_vander`, `gegenbauer_alpha_derivative` | standard $C_n^{(\alpha)}$ normalization for real $\alpha>-1/2$, including the exact $\alpha=0$ limit |
 | Zeta and polylogarithms | `zeta`, `hurwitz_zeta`, `dilog`, `spence`, `polylog` | Euler--Maclaurin zeta continuation and principal complex polylogarithm branches |
 | Spherical and solid harmonics | `sph_legendre_p`, `sph_harm_y`, `sph_harm_y_cart`, `solid_harmonic_regular`, `solid_harmonic_irregular` | orthonormal Condon--Shortley convention; polar `theta`, azimuthal `phi` |
@@ -365,6 +366,48 @@ The normalized Voigt profile uses `wofz` in its open domain. Exact Gaussian,
 Cauchy, and zero-width limits define its scale boundaries. Negative Gaussian
 or Cauchy scales return `NaN`.
 
+## Synchrotron kernels
+
+`synchrotron_f` and `synchrotron_g` are the classical synchrotron emission
+kernels of the photon frequency in units of the critical frequency:
+
+```text
+F(x) = x * integral(K_{5/3}(t), t=x..inf)
+G(x) = x * K_{2/3}(x).
+```
+
+`F` is the angle-integrated single-particle spectrum; `F + G` and `F - G` are
+the emissivity kernels polarized perpendicular and parallel to the projected
+magnetic field. They behave as `F ≈ 2.1495 x**(1/3)` and
+`G ≈ Gamma(2/3) (x/2)**(1/3)` for small `x`, and both approach
+`sqrt(pi x / 2) exp(-x)` for large `x`.
+
+```python
+x = jnp.geomspace(1e-4, 30.0, 512)
+total = phx.special.synchrotron_f(x)
+perpendicular = total + phx.special.synchrotron_g(x)
+slope = jax.vmap(jax.grad(phx.special.synchrotron_f))(x)
+```
+
+Each function is evaluated from a convergent power series for `x < 0.25`,
+twelve degree-13 Chebyshev panels uniform in `log(x)` on `[0.25, 64)`, and a
+Hankel-type asymptotic series above. `tools/synchrotron_function_tables.py`
+generates the committed table module with mpmath at 30 digits: `F` from
+quadrature of its exponentially scaled integral representation, `G` from
+mpmath's Bessel `K`. The measured high-precision truncation error is below
+`1e-19`; the recorded uniform float64 relative-error bound, including a
+16-ulp rounding allowance, is `3.6e-15` for both functions wherever the result
+is a positive normal number. Rerunning the tool reproduces the module exactly.
+
+Argument derivatives are analytic custom JVPs of the closed Bessel system
+`F' = F/x - x K_{5/3}`, `G' = G/(3x) - x K_{1/3}`, and
+`(x K_{1/3})' = 2 K_{1/3}/3 - G`, so every derivative order is available and
+matches the tables' accuracy. `F(0) = G(0) = 0` with infinite right
+derivatives, both vanish at `+inf`, and negative or `NaN` arguments return
+`NaN`. Inputs must be float64 (integer and Python-scalar inputs promote);
+float32 inputs are refused with `TypeError` because the tables carry float64
+accuracy.
+
 ## Differentiation support
 
 | Family | Differentiable arguments |
@@ -383,6 +426,7 @@ or Cauchy scales return `NaN`.
 | Spherical harmonics | angular arguments; Cartesian directions away from zero/nonfinite lanes, including finite z-axis derivatives |
 | Faddeeva/Dawson | complex argument |
 | Voigt | admitted real arguments only; intentionally nonholomorphic |
+| Synchrotron kernels | argument `x`, all orders, through the closed Bessel derivative system |
 
 At genuine poles, cut crossings, or nonsmooth scaling lips, derivatives remain
 infinite or `NaN`; Phydrax does not clip them to finite substitutes. These are

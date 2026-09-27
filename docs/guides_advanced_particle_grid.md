@@ -11,6 +11,21 @@ incarnation. Reused slots receive a new incarnation, so contact, collision, ioni
 reseed history cannot alias a previous occupant. Allocation and deactivation use fixed request
 arrays and fail closed on capacity or incarnation overflow.
 
+Every particle also carries a persistent 64-bit global identity stored as two `uint32` words,
+`ParticlePopulationState.id_hi` and `id_lo`, and the identity of the particle it was created from,
+`parent_hi` and `parent_lo` (`has_parent` is false for primary particles). Identity is independent
+of the storage slot: it survives deactivation, slot reuse, and slot permutation. The population
+counter `next_id_hi`/`next_id_lo` numbers particles in creation order: `initialize` numbers
+active slots in slot order; `allocate` numbers accepted requests in ascending event-ID order
+(`ParticleAllocationRequest(..., parents=(hi, lo))` records lineage); `update_particle_population`
+numbers newly active slots in slot order; FLIP split children descend from their cell's receiver;
+and ionization electrons descend from the ionized ion. Other creating events call
+`assign_particle_identities` with the event's request ranks. The all-ones identity is reserved
+for never-occupied slots and absent parents, and allocation that would reach it fails with
+`ParticlePopulationStatus.IDENTITY_EXHAUSTED`. Per-particle random streams fold both words,
+`derive_key(root, address, step, id_hi, id_lo, event)`, so draws follow the particle, not its
+slot.
+
 `PreparedParticleGridSplat.build(..., active_mask=...)` intersects this runtime activity with the
 structural particle mask. Dynamic PIC and FLIP methods pass runtime mass/charge as explicit
 payloads; static `ParticleDiscretization` measures remain the immutable preparation reference.
@@ -36,12 +51,14 @@ capacity failure rejects the complete event batch.
 `CompatibleMaxwell2DPlan` implements explicit TE/TM 2D3V Yee blocks; `CompatibleMaxwell1DPlan`
 implements the longitudinal field plus two transverse wave pairs. `ReducedPICTransferPlan` performs
 periodic CIC transfer and projects midpoint current onto the exact discrete continuity constraint.
-`ReducedElectromagneticPICPlan` composes these fields with relativistic Boris stepping.
+`ReducedElectromagneticPICPlan` composes these fields with `RelativisticPushPlan`
+stepping.
 
 `PICOpenBoundaryPlan` clips trajectories against axis-aligned faces, supports absorbing or
 reflecting particle policies, and records boundary mass, charge, kinetic energy, hit location, and
-surface accumulation. Electromagnetic PIC now accepts passive instantaneous Maxwell CPML state;
-CPML dissipation remains owned and reported by the Maxwell runtime.
+surface accumulation. Reduced 1-D/2-D electromagnetic PIC accepts passive instantaneous Maxwell
+CPML state; CPML dissipation remains owned and reported by the Maxwell runtime. The full 3-D
+`ElectromagneticPICPlan` requires every axis periodic and therefore cannot carry CPML.
 
 `PICMovingWindowPlan` shifts full cochain orientations, compatible auxiliary/observer arrays, local
 particle positions, global window origin, and trailing outflow in one integer-cell accepted-step

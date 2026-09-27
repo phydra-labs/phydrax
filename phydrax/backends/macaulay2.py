@@ -15,9 +15,9 @@ import equinox as eqx
 import numpy as np
 
 from .._external_runtime import (
-    EnergyRuntimeError,
+    ExternalRuntimeError,
     PinnedExecutable,
-    run_energy_command,
+    run_pinned_command,
 )
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._strict import StrictModule
@@ -318,7 +318,7 @@ def execute_macaulay2_symbolic(prepared: PreparedExactSymbolic, /) -> ExactSymbo
     if len(payload) > plan.maximum_input_bytes:
         raise ValueError("Exact symbolic request exceeds maximum_input_bytes.")
     try:
-        run = run_energy_command(
+        run = run_pinned_command(
             provider.environment.executable,
             ("--script", "worker.m2", "--no-readline", "--silent"),
             inputs={"worker.m2": worker},
@@ -327,7 +327,7 @@ def execute_macaulay2_symbolic(prepared: PreparedExactSymbolic, /) -> ExactSymbo
             max_output_bytes=plan.maximum_output_bytes,
             environment={"LC_ALL": "C"},
         )
-    except EnergyRuntimeError as error:
+    except ExternalRuntimeError as error:
         artifact_id = "" if error.result is None else error.result.artifact.artifact_id
         return ExactSymbolicResult(
             ExactSymbolicStatus.PROVIDER_FAILED,

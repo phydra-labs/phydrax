@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..particle import ParticlePopulationState
+from ..particle import assign_particle_identities, ParticlePopulationState
 from ._types import FLIPParticleState
 
 
@@ -282,8 +282,41 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         inserted = split_slot_mask
         merged = merge_slot_mask
         required_events = merge_events + jnp.sum(split_requested, dtype=jnp.int32)
-        candidate_population = ParticlePopulationState(
-            active, mass, incarnation, ever, retired
+        # Split children are one creating event ordered by split rank; each child
+        # descends from its cell's receiver, which keeps its identity through merges.
+        flat_split_slots = split_slots.reshape((-1,))
+        candidate_population, identity_valid = assign_particle_identities(
+            ParticlePopulationState(
+                active,
+                mass,
+                incarnation,
+                ever,
+                retired,
+                population.id_hi,
+                population.id_lo,
+                population.parent_hi,
+                population.parent_lo,
+                population.next_id_hi,
+                population.next_id_lo,
+            ),
+            split_slot_mask,
+            jnp.zeros((particle_count,), dtype=jnp.int32)
+            .at[flat_split_slots]
+            .add(jnp.where(split_use, split_rank, 0).reshape((-1,))),
+            jnp.zeros((particle_count,), dtype=jnp.uint32)
+            .at[flat_split_slots]
+            .add(
+                jnp.where(
+                    split_use, population.id_hi[safe_receivers][:, None], 0
+                ).reshape((-1,))
+            ),
+            jnp.zeros((particle_count,), dtype=jnp.uint32)
+            .at[flat_split_slots]
+            .add(
+                jnp.where(
+                    split_use, population.id_lo[safe_receivers][:, None], 0
+                ).reshape((-1,))
+            ),
         )
         candidate_particles = FLIPParticleState(position, velocity)
         final_mass = jnp.sum(mass)
@@ -307,7 +340,7 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         capacity_available = (required_events <= self.maximum_events) & (
             jnp.sum(split_requested, dtype=jnp.int32) <= free_count
         )
-        successful = finite & conservative & capacity_available
+        successful = finite & conservative & capacity_available & identity_valid
         accepted_population = jax_tree_where(successful, candidate_population, population)
         accepted_particles = jax_tree_where(successful, candidate_particles, particles)
         return FLIPReseedingResult(
