@@ -207,7 +207,9 @@ def _planar_surface_evidence(
         entity_tags = row.entity_tags[row_orders[block.name]]
         owner_chunks.append(
             np.asarray(
-                tuple(surface_to_face.get(int(tag), -1) for tag in entity_tags),
+                tuple(
+                    surface_to_face.get(int(tag), -1) for tag in entity_tags.tolist()
+                ),
                 dtype=np.int32,
             )
         )
@@ -242,15 +244,18 @@ def _planar_surface_evidence(
             stage=MeshingStageKind.CANONICALIZATION.value,
         )
     edge_rows = np.asarray(connectivity.edges, dtype=np.int32)
-    edge_lookup = {
-        tuple(sorted(int(value) for value in edge)): index
-        for index, edge in enumerate(edge_rows)
-    }
+    edge_lookup: dict[tuple[int, int], int] = {}
+    for index in range(edge_rows.shape[0]):
+        first, second = np.take(edge_rows, index, axis=0)
+        first, second = sorted((int(first), int(second)))
+        edge_lookup[(first, second)] = index
     curve_to_edge = {curve: edge for edge, curve in enumerate(cad_entities.edge_to_curve)}
     mesh_edge_source = np.full((edge_rows.shape[0],), -1, dtype=np.int32)
-    for values, curve in zip(corners, curve_tags, strict=True):
-        mesh_edge = edge_lookup.get(tuple(sorted(int(value) for value in values)))
-        source_edge = curve_to_edge.get(int(curve))
+    for row_index in range(corners.shape[0]):
+        first, second = np.take(corners, row_index, axis=0)
+        first, second = sorted((int(first), int(second)))
+        mesh_edge = edge_lookup.get((first, second))
+        source_edge = curve_to_edge.get(int(curve_tags[row_index]))
         if mesh_edge is None or source_edge is None or mesh_edge_source[mesh_edge] >= 0:
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
@@ -543,9 +548,9 @@ def _connectivity_face_incidents(
             for first, second in zip(owner, neighbor, strict=True)
         )
     incidents = [[] for _ in np.asarray(connectivity.faces)]
-    for cell_index, face_row in enumerate(
-        np.asarray(connectivity.cell_faces, dtype=np.int32)
-    ):
+    cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
+    for cell_index in range(cell_faces.shape[0]):
+        face_row = np.take(cell_faces, cell_index, axis=0)
         for face_index in face_row:
             incidents[int(face_index)].append(cell_index)
     return tuple(tuple(row) for row in incidents)

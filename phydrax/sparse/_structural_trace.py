@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import ShapedArray
 
 from ._pattern import SparsePattern
 from ._structural_interpret import _prop_jaxpr
@@ -65,7 +66,10 @@ def trace_sparse_pattern(
     jaxpr = closed.jaxpr
     if len(jaxpr.invars) != 1:
         raise ValueError("Structural sparsity tracing requires one coordinate input.")
-    input_size = int(np.prod(jaxpr.invars[0].aval.shape, dtype=np.int64))
+    input_aval = jaxpr.invars[0].aval
+    if not isinstance(input_aval, ShapedArray):
+        raise TypeError("Coordinate JAXPR input must be a shaped array.")
+    input_size = int(np.prod(input_aval.shape, dtype=np.int64))
     if input_size != source_size:
         raise ValueError(
             f"Coordinate JAXPR has size {input_size}; expected {source_size}."

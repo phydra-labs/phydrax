@@ -352,7 +352,6 @@ def reconstruct_planar_region(
         np.arange(offsets[index], offsets[index + 1], dtype=np.int32)
         for index in range(offsets.shape[0] - 1)
     )
-    # ty: ignore[invalid-argument-type]
     source = PlanarMeshRegion(vertices, loops, feature_id=feature_id)
     algorithm = "scipy_delaunay_2d_native_boundary"
     parameters = _parameter_records(

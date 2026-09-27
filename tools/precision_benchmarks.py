@@ -26,7 +26,10 @@ def _timed(call: Callable[[], Any], repeats: int, /) -> tuple[Any, float]:
         warmup=1,
         repeats=repeats,
     )
-    return value, float(distribution.mean_seconds)
+    mean_seconds = distribution.mean_seconds
+    if mean_seconds is None:
+        raise RuntimeError("Repeated timing did not produce any samples.")
+    return value, mean_seconds
 
 
 def _fd_case(size: int, repeats: int, /) -> dict[str, Any]:
@@ -120,11 +123,13 @@ def _integration_case(order: int, repeats: int, /) -> dict[str, Any]:
         )
         value, seconds = _timed(reduce, repeats)
         estimate = phx.integration.reduce(function, realization)
+        precision_evidence = estimate.precision_evidence
+        assert precision_evidence is not None
         results[name] = {
             "seconds": seconds,
             "absolute_error": float(jnp.abs(value.astype(jnp.float64) - 0.2)),
             "output_dtype": value.dtype.name,
-            "precision_evidence_id": estimate.precision_evidence.evidence_id,
+            "precision_evidence_id": precision_evidence.evidence_id,
         }
     return results
 
@@ -462,8 +467,16 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
             method,
             precision=precision,
         )
+        dynamics = compiled.dynamics
+        if not isinstance(
+            dynamics,
+            phx.discretization.PreparedFiniteVolumeDynamics,
+        ):
+            raise TypeError(
+                "Structured finite-volume compilation returned invalid dynamics."
+            )
         runtime = phx.solver.PreparedFiniteVolumeRuntime(
-            compiled.dynamics,
+            dynamics,
             phx.discretization.FluxPositivityPlan(),
         )
         primitive = jnp.stack(
@@ -487,7 +500,7 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
         )
         value, seconds = _timed(execute, repeats)
         advanced = runtime.advance(initial)
-        residual, diagnostics = compiled.dynamics.residual_with_diagnostics(
+        residual, diagnostics = dynamics.residual_with_diagnostics(
             precision.decision(0.0),
             state,
         )
@@ -701,11 +714,16 @@ def _open_system_case(steps: int, repeats: int, /) -> dict[str, Any]:
         result = execute()
         evidence = result.precision_evidence
         assert evidence is not None
+        statistical_error = next(
+            quantity.value
+            for quantity in result.approximation.quantities
+            if quantity.name == "monte-carlo-standard-error-scale"
+        )
         results[name] = {
             "seconds": seconds,
             "trajectory_bytes": value.size * value.dtype.itemsize,
             "output_dtype": value.dtype.name,
-            "statistical_error": float(result.approximation.statistical_error),
+            "statistical_error": float(statistical_error),
             "precision_evidence_id": evidence.evidence_id,
             "approximation_policy_ids": list(result.approximation.precision_policy_ids),
         }

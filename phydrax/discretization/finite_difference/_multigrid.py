@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -210,7 +210,7 @@ def _apply_axis_matrices(
     matrices: Sequence[Array],
     /,
     *,
-    accumulation_dtype: object | None = None,
+    accumulation_dtype: DTypeLike | None = None,
 ) -> Array:
     dtype = None if accumulation_dtype is None else jnp.dtype(accumulation_dtype)
     result = jnp.asarray(value, dtype=dtype)

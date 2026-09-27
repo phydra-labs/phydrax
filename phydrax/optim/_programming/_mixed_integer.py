@@ -81,10 +81,9 @@ class MixedIntegerProgram(StrictModule):
         discrete = tuple(sorted((*integer, *binary)))
         if not discrete:
             raise ValueError("At least one discrete variable is required.")
-        lower, upper = map(
-            np.asarray,
-            (relaxation.lower_bounds, relaxation.upper_bounds),
-        )
+        dtype = np.dtype(relaxation.linear.dtype)
+        lower = np.asarray(relaxation.lower_bounds, dtype=dtype)
+        upper = np.asarray(relaxation.upper_bounds, dtype=dtype)
         selected = np.asarray(discrete, dtype=np.int64)
         lo, hi = lower[selected], upper[selected]
         if not np.all(np.isfinite(lo)) or not np.all(np.isfinite(hi)):
@@ -95,7 +94,6 @@ class MixedIntegerProgram(StrictModule):
             binary_array = np.asarray(binary, dtype=np.int64)
             if np.any(lower[binary_array] < 0.0) or np.any(upper[binary_array] > 1.0):
                 raise ValueError("Binary bounds must be contained in [0, 1].")
-        dtype = np.dtype(relaxation.linear.dtype)
         limit = float(2 ** (np.finfo(dtype).nmant + 1))
         if np.any(np.abs(lo) > limit) or np.any(np.abs(hi) > limit):
             raise ValueError("Discrete bounds are not exact in the relaxation dtype.")

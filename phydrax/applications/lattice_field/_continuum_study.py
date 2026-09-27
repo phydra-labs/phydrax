@@ -562,7 +562,7 @@ def _variation_indices(
         mask &= lattice_spacing <= variation.maximum_lattice_spacing
     if variation.minimum_physical_extent is not None:
         mask &= physical_extent >= variation.minimum_physical_extent
-    return tuple(np.flatnonzero(mask))
+    return tuple(int(index) for index in np.flatnonzero(mask))
 
 
 def _design_matrix(

@@ -182,7 +182,10 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
             patches = {"boundary": edges[boundary_mask]}
         names = tuple(sorted(str(name) for name in patches))
         patch_values = tuple(np.asarray(patches[name], dtype=np.int32) for name in names)
-        edge_lookup = {tuple(edge): index for index, edge in enumerate(edges)}
+        edge_lookup = {
+            tuple(int(value) for value in edge): index
+            for index, edge in enumerate(edges.tolist())
+        }
         assigned = np.zeros((edges.shape[0],), dtype=np.int32)
         normalized_patch_edges = []
         for name, values in zip(names, patch_values, strict=True):

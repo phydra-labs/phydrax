@@ -652,7 +652,7 @@ def _rate_concentration_dependencies(
         return ()
     if isinstance(rate, (ThirdBodyRatePlan, LindemannRatePlan, TroeRatePlan)):
         efficiencies = np.asarray(rate.efficiencies)
-        return tuple(np.flatnonzero(efficiencies != 0.0))
+        return tuple(int(index) for index in np.flatnonzero(efficiencies != 0.0))
     if isinstance(rate, SurfaceCoverageRatePlan):
         return (rate.species_index,)
     raise TypeError(

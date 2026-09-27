@@ -706,14 +706,14 @@ def _clip_tetrahedron(
 def _tetrahedra_in_subcube(
     lower: tuple[int, int, int],
 ) -> tuple[tuple[tuple[int, int, int], ...], ...]:
-    result = []
+    result: list[tuple[tuple[int, int, int], ...]] = []
     for ordering in permutations(range(3)):
         point = np.asarray(lower, dtype=np.int64)
-        vertices = [tuple(point)]
+        vertices = [(int(point[0]), int(point[1]), int(point[2]))]
         for axis in ordering:
             point = point.copy()
             point[axis] += 1
-            vertices.append(tuple(point))
+            vertices.append((int(point[0]), int(point[1]), int(point[2])))
         result.append(tuple(vertices))
     return tuple(result)
 

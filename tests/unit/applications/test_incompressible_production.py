@@ -485,7 +485,6 @@ def test_periodic_les_production_uses_guarded_first_stage_and_statistics(
 
     assert bool(guarded_result.successful)
     assert bool(transition.successful)
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         guarded_result.accepted_state,
         reused_result.accepted_state,

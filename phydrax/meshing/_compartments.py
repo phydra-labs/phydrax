@@ -251,7 +251,8 @@ class FTetWildCompartmentProvider:
         zones = []
         for compartment in specification.compartments.compartments:
             mask = np.asarray(
-                [value == compartment.compartment_id for value in cell_compartment_ids]
+                [value == compartment.compartment_id for value in cell_compartment_ids],
+                dtype=np.bool_,
             )
             if not np.any(mask):
                 raise MeshingFailure(

@@ -47,7 +47,6 @@ def build_column(layers: Any = 8) -> Any:
         background_diffusivity=0.5,
         mixing_length=50.0,
     )
-    # ty: ignore[unresolved-attribute]
     dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
     thickness = 4000.0 / layers
     height = thickness * (

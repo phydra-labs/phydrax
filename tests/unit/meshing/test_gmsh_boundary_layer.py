@@ -438,7 +438,6 @@ def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(
 ) -> None:
     embedding = phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
     region = phx.geometry.PlanarMeshRegion(
-        # ty: ignore[invalid-argument-type]
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 0.5), (0.0, 0.5))),
         ((0, 1, 2, 3),),
         feature_id="channel",

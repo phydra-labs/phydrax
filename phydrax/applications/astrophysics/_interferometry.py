@@ -386,11 +386,13 @@ class ClosureTopology(StrictModule, NonTrainableState):
         if phase_conjugated is None:
             conjugated = np.zeros(phase.shape, dtype=np.bool_)
         else:
-            conjugated = np.asarray(phase_conjugated)
-            if conjugated.dtype != np.dtype(np.bool_) or conjugated.shape != phase.shape:
+            candidate = np.asarray(phase_conjugated)
+            if candidate.dtype != np.dtype(np.bool_) or candidate.shape != phase.shape:
                 raise ValueError(
                     "phase_conjugated must be boolean and match phase indices."
                 )
+            conjugated = np.empty(phase.shape, dtype=np.bool_)
+            conjugated[...] = candidate
         if (
             np.any(phase < 0)
             or np.any(phase >= sampling.visibility_count)
@@ -402,11 +404,13 @@ class ClosureTopology(StrictModule, NonTrainableState):
             )
         pairs = np.asarray(sampling.station_pairs)
         station_count = len(sampling.station_ids)
-        for indices, reversals in zip(phase, conjugated, strict=True):
+        for row_index in range(phase.shape[0]):
             balance = np.zeros((station_count,), dtype=np.int64)
-            for index, reversal in zip(indices, reversals, strict=True):
-                first, second = pairs[index]
-                if reversal:
+            for position in range(phase.shape[1]):
+                index = int(phase[row_index, position])
+                first = int(pairs[index, 0])
+                second = int(pairs[index, 1])
+                if bool(conjugated[row_index, position]):
                     first, second = second, first
                 balance[first] += 1
                 balance[second] -= 1
@@ -414,11 +418,13 @@ class ClosureTopology(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Every phase row must be an oriented closed station cycle."
                 )
-        for indices in amplitude:
+        for row_index in range(amplitude.shape[0]):
             balance = np.zeros((station_count,), dtype=np.int64)
-            for position, index in enumerate(indices):
+            for position in range(amplitude.shape[1]):
+                index = int(amplitude[row_index, position])
                 sign = 1 if position < 2 else -1
-                first, second = pairs[index]
+                first = int(pairs[index, 0])
+                second = int(pairs[index, 1])
                 balance[first] += sign
                 balance[second] += sign
             if np.any(balance != 0):

@@ -87,7 +87,10 @@ def _timed(operation: Any, ready: Any, repeats: Any) -> Any:
         repeats=repeats,
         synchronizer=lambda value: jax.block_until_ready(ready(value)),
     )
-    return result, 1_000.0 * float(distribution.mean_seconds)
+    mean_seconds = distribution.mean_seconds
+    if mean_seconds is None:
+        raise RuntimeError("Repeated timing did not produce any samples.")
+    return result, 1_000.0 * mean_seconds
 
 
 def main() -> None:

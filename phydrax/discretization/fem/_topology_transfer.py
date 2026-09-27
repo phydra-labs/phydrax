@@ -122,12 +122,14 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(primal, AbstractLinearOperator):
             raise TypeError("primal must be a SparseLinearMap or linear operator.")
+        source_space = primal.source
+        target_space = primal.target
         if (
             primal.batch_shape
-            or not isinstance(primal.source, ArraySpace)
-            or not isinstance(primal.target, ArraySpace)
-            or len(primal.source.shape) != 1
-            or len(primal.target.shape) != 1
+            or not isinstance(source_space, ArraySpace)
+            or not isinstance(target_space, ArraySpace)
+            or len(source_space.shape) != 1
+            or len(target_space.shape) != 1
         ):
             raise ValueError(
                 "Topology transfer primal must be one unbatched target-by-source map."
@@ -157,6 +159,7 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         )
         _certify_claims(
             primal,
+            source_space,
             *claims,
             action_condition=condition,
             source_coordinates=source_coordinates,
@@ -249,6 +252,7 @@ def _row_scales(
 
 def _certify_claims(
     primal: AbstractLinearOperator,
+    source_space: ArraySpace,
     preserves_constants: bool,
     preserves_linear: bool,
     conservative: bool,
@@ -261,8 +265,7 @@ def _certify_claims(
     source_measures: ArrayLike | None,
     target_measures: ArrayLike | None,
 ) -> None:
-    # ty: ignore[unresolved-attribute]
-    dtype = np.dtype(primal.source.dtype)
+    dtype = np.dtype(source_space.dtype)
     row_scale, absolute_scale = _row_scales(primal, positivity_preserving, dtype)
 
     def exceeds(defect: np.ndarray, scale: np.ndarray) -> bool:
@@ -1176,7 +1179,6 @@ def prepare_l2_projection_transfer(
         preserves_constants=target_covered,
         preserves_linear=linear,
         conservative=source_covered,
-        # ty: ignore[invalid-argument-type]
         action_condition=max(condition, 1.0) * max(lebesgue, 1.0) * (1.0 + coverage),
         source_coordinates=source_dofs.dof_coordinates if linear else None,
         target_coordinates=target_dofs.dof_coordinates if linear else None,

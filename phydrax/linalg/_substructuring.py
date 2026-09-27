@@ -348,7 +348,9 @@ class AdaptiveSpectralCoarseSpace(StrictModule, NonTrainableState):
         required_total = 0
         for interface in deluxe.interfaces:
             ids_all = np.asarray(interface.global_dof_ids)
-            keep = np.asarray([int(value) not in primal_ids for value in ids_all])
+            keep = np.asarray(
+                [int(value) not in primal_ids for value in ids_all], dtype=np.bool_
+            )
             ids = ids_all[keep]
             if ids.size == 0:
                 continue

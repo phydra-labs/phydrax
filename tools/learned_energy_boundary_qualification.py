@@ -227,7 +227,10 @@ def _long_link_routes(
 ) -> tuple[dict[str, Any], Any]:
     result = plan.route(state)
     topology = plan.topology
-    velocities = np.asarray(topology.quadrature.velocities, dtype=np.int64)
+    velocities = tuple(
+        (int(row[0]), int(row[1]))
+        for row in np.asarray(topology.quadrature.velocities, dtype=np.int64).tolist()
+    )
     particles = np.asarray(state.particle_populations)
     energy = np.asarray(state.total_energy_populations)
     candidate_particles = np.asarray(result.candidate_state.particle_populations)
@@ -242,8 +245,7 @@ def _long_link_routes(
     secondary_face = np.asarray(topology.secondary_face_index)
     corner_index = np.asarray(topology.corner_index)
     velocity_to_direction = {
-        (int(velocity[0]), int(velocity[1])): index
-        for index, velocity in enumerate(velocities)
+        velocity: index for index, velocity in enumerate(velocities)
     }
     owner_inventory_exact = bool(
         sum(topology.owner_counts) == int(np.prod(topology.population_shape))
@@ -260,8 +262,7 @@ def _long_link_routes(
     populations_exact = True
     checked_links = 0
 
-    for direction, velocity_array in enumerate(velocities):
-        velocity = (int(velocity_array[0]), int(velocity_array[1]))
+    for direction, velocity in enumerate(velocities):
         if max(abs(velocity[0]), abs(velocity[1])) != 2:
             continue
         velocity_name = f"({velocity[0]},{velocity[1]})"
@@ -618,7 +619,6 @@ def _maxwell_thermal(
         and _allclose(
             reported_exchange,
             actual_exchange,
-            # ty: ignore[invalid-argument-type]
             absolute_tolerance=exchange_tolerance,
         )
         and _allclose(

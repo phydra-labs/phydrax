@@ -521,10 +521,13 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         propagate(target_root)
         outputs = []
         errors = []
-        for target_index, target in enumerate(target_points):
+        for target_index, target_values in enumerate(target_points.tolist()):
+            target_coordinate = complex(
+                float(target_values[0]), float(target_values[1])
+            )
             leaf = target_leaf_map[target_index]
             center = target_centers_jax[leaf, 0] + 1j * target_centers_jax[leaf, 1]
-            displacement = target[0] + 1j * target[1] - center
+            displacement = target_coordinate - center
             high = local[leaf][0]
             for degree in range(1, self.expansion_order + 1):
                 high = high + local[leaf][degree] * displacement**degree
@@ -534,7 +537,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
                     potential.density[indices]
                     * self.source_weights[indices]
                     * (
-                        -jnp.log(jnp.abs(target[0] + 1j * target[1] - source[indices]))
+                        -jnp.log(jnp.abs(target_coordinate - source[indices]))
                         / (2.0 * jnp.pi)
                     )
                 )

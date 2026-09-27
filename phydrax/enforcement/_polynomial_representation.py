@@ -634,8 +634,10 @@ def _finite_columns(
     equation_indices = np.asarray(support.equation_indices, dtype=np.int64)
     exponents = np.asarray(support.exponents, dtype=np.int64)
     columns: list[dict[tuple[int, tuple[int, ...]], complex | float]] = []
-    for source_equation, exponent_array in zip(equation_indices, exponents, strict=True):
-        exponent = tuple(exponent_array)
+    for term_index in range(exponents.shape[0]):
+        source_equation = int(equation_indices[term_index])
+        exponent_array = np.take(exponents, term_index, axis=0)
+        exponent = tuple(int(value) for value in exponent_array)
         column: dict[tuple[int, tuple[int, ...]], complex | float] = {}
         for transformed_exponent, coefficient in _expanded_monomial(
             exponent, variable
@@ -661,8 +663,10 @@ def _infinitesimal_columns(
     equation_indices = np.asarray(support.equation_indices, dtype=np.int64)
     exponents = np.asarray(support.exponents, dtype=np.int64)
     columns: list[dict[tuple[int, tuple[int, ...]], complex | float]] = []
-    for source_equation, exponent_array in zip(equation_indices, exponents, strict=True):
-        exponent = tuple(exponent_array)
+    for term_index in range(exponents.shape[0]):
+        source_equation = int(equation_indices[term_index])
+        exponent_array = np.take(exponents, term_index, axis=0)
+        exponent = tuple(int(value) for value in exponent_array)
         column: dict[tuple[int, tuple[int, ...]], complex | float] = {}
         for source_variable, power in enumerate(exponent):
             if power == 0:
@@ -791,10 +795,15 @@ def polynomial_action_constraints(
         columns_by_action = [_finite_columns(support, variables[0], equations[0])]
     support_equations = np.asarray(support.equation_indices, dtype=np.int64)
     support_exponents = np.asarray(support.exponents, dtype=np.int64)
-    ambient = {
-        (int(equation), tuple(exponent))
-        for equation, exponent in zip(support_equations, support_exponents, strict=True)
-    }
+    ambient: set[tuple[int, tuple[int, ...]]] = set()
+    for term_index in range(support.term_count):
+        exponent = np.take(support_exponents, term_index, axis=0)
+        ambient.add(
+            (
+                int(support_equations[term_index]),
+                tuple(int(value) for value in exponent),
+            )
+        )
     for action_columns in columns_by_action:
         for column in action_columns:
             ambient.update(column)
@@ -812,7 +821,15 @@ def polynomial_action_constraints(
     ambient_equations = np.asarray([term[0] for term in ambient_terms], dtype=np.int32)
     ambient_exponents = np.asarray([term[1] for term in ambient_terms], dtype=np.int32)
     source_weights = np.asarray(
-        [_monomial_metric(tuple(exponent)) for exponent in support_exponents],
+        [
+            _monomial_metric(
+                tuple(
+                    int(value)
+                    for value in np.take(support_exponents, index, axis=0)
+                )
+            )
+            for index in range(support.term_count)
+        ],
         dtype=np.float64,
     )
     ambient_weights = np.asarray(

@@ -92,7 +92,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
             range(cell_count),
             key=lambda index: (
                 int(levels[index]),
-                tuple(coordinates[index]),
+                tuple(int(value) for value in coordinates[index]),
                 int(slots[index]),
             ),
         )
@@ -139,7 +139,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
         )
         evidence = DistributedCutCellEvidence(
             part_costs=tuple(float(value) for value in accumulated),
-            part_counts=tuple(used),
+            part_counts=tuple(int(value) for value in used),
             maximum_imbalance=imbalance,
             cross_part_face_count=int(np.count_nonzero(cross)),
             evidence_id=evidence_id,

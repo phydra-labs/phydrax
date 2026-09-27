@@ -284,7 +284,7 @@ def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit() -> No
     assert jnp.array_equal(rewritten, function(*arguments))
     assert rewrite.original_fingerprint != ""
 
-    state = {
+    state: dict[str, jax.Array] = {
         "count": jnp.asarray(3, dtype=jnp.int32),
         "moment": jnp.asarray([0.25, -0.5], dtype=jnp.float32),
     }
@@ -297,10 +297,13 @@ def test_mx_formats_rewrite_and_local_optimizer_compression_are_explicit() -> No
     )
     compressed = compress_optimizer_state(plan, state)
     decompressed = decompress_optimizer_state(plan, compressed)
-    # ty: ignore[not-subscriptable]
-    assert decompressed["count"] == state["count"]
-    # ty: ignore[not-subscriptable, unresolved-attribute]
-    assert decompressed["moment"].dtype == state["moment"].dtype
+    assert isinstance(decompressed, dict)
+    count = decompressed["count"]
+    moment = decompressed["moment"]
+    assert isinstance(count, jax.Array)
+    assert isinstance(moment, jax.Array)
+    assert count == state["count"]
+    assert moment.dtype == state["moment"].dtype
     assert compressed.diagnostics[0].payload_bytes < state["moment"].nbytes
 
     prepared_optimizer = prepare_compressed_optimizer(

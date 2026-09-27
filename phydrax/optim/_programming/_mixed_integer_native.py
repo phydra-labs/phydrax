@@ -499,12 +499,18 @@ def _linear_bound_certificate(
         return None
     n, m = problem.num_variables, problem.num_equalities
     lower, upper = np.full(n, -np.inf), np.full(n, np.inf)
-    lower_proof, upper_proof = [None] * n, [None] * n
+    lower_proof: list[dict[int, float] | None] = [None for _ in range(n)]
+    upper_proof: list[dict[int, float] | None] = [None for _ in range(n)]
     supports = tuple(np.flatnonzero(row) for row in matrix)
 
     def add(target: dict[int, float], proof: dict[int, float], scale: float) -> None:
         for index, value in proof.items():
             target[index] = target.get(index, 0.0) + scale * value
+
+    def required(proof: dict[int, float] | None, /) -> dict[int, float]:
+        if proof is None:
+            raise RuntimeError("A finite implied bound is missing its dual proof.")
+        return proof
 
     def audit(proof: dict[int, float]) -> DualRayAudit | None:
         multipliers = np.zeros(len(rhs))
@@ -565,7 +571,7 @@ def _linear_bound_certificate(
                     proofs,
                     strict=True,
                 ):
-                    add(proof, bound_proof, abs(coefficient))
+                    add(proof, required(bound_proof), abs(coefficient))
                 certificate = audit(proof)
                 if certificate is not None:
                     return certificate
@@ -589,7 +595,7 @@ def _linear_bound_certificate(
                     if other_position != position:
                         add(
                             proof,
-                            bound_proof,
+                            required(bound_proof),
                             abs(coefficients[other_position] / coefficient),
                         )
                 if coefficient > 0:
@@ -598,8 +604,8 @@ def _linear_bound_certificate(
                     lower[index], lower_proof[index] = candidate, proof
                 changed = True
                 if lower[index] > upper[index] + tolerance:
-                    contradiction = dict(lower_proof[index])
-                    add(contradiction, upper_proof[index], 1.0)
+                    contradiction = dict(required(lower_proof[index]))
+                    add(contradiction, required(upper_proof[index]), 1.0)
                     certificate = audit(contradiction)
                     if certificate is not None:
                         return certificate

@@ -58,7 +58,6 @@ def test_same_block_sobol_uses_one_joint_reference_design() -> None:
     )
 
     actual = np.column_stack((batch["x"].data, batch["t"].data))
-    # ty: ignore[invalid-argument-type]
     expected = Sobol(2, scramble=False).random(8)
 
     assert np.array_equal(actual, expected)
@@ -75,7 +74,6 @@ def test_joint_design_slices_multidimensional_reference_transports() -> None:
         phx.domain.PointSampling(8, layout=structure, design=SobolDesign()), key=jr.key(0)
     )
 
-    # ty: ignore[invalid-argument-type]
     unit = Sobol(3, scramble=False).random(8)
     expected_x = np.column_stack(
         (
@@ -101,7 +99,6 @@ def test_joint_design_preserves_finite_dataset_rows() -> None:
         phx.domain.PointSampling(8, layout=structure, design=SobolDesign()), key=jr.key(0)
     )
 
-    # ty: ignore[invalid-argument-type]
     unit = Sobol(2, scramble=False).random(8)
     indices = np.floor(4 * unit[:, 0]).astype("int64")
 

@@ -1483,7 +1483,9 @@ def _refined_univariate_routes(
     for index, coefficient in enumerate(np.asarray(spline.c)):
         if abs(coefficient) <= 64.0 * np.finfo(np.float64).eps:
             continue
-        window = _knot_key(spline.t[index : index + _BICUBIC_DEGREE + 2])
+        window = _knot_key(
+            spline.t[index : index + _BICUBIC_DEGREE + 2].tolist()
+        )
         if window not in target_windows:
             raise ValueError(
                 "Refined local knot vector is absent from the closure basis."

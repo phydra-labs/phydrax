@@ -145,7 +145,6 @@ def main() -> None:
         default=Path("benchmarks/cm_transport_qualification.json"),
     )
     arguments = parser.parse_args()
-    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError("Transport qualification requires JAX_ENABLE_X64=1.")
     payload = qualification()

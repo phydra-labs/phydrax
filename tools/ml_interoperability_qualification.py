@@ -628,7 +628,6 @@ def main() -> None:
         build_id=source_build_id(),
         environment=runtime_environment(),
         backend=jax.default_backend(),
-        # ty: ignore[unresolved-attribute]
         precision="float64" if jax.config.jax_enable_x64 else "float32",
     )
     payload = serialize_report(report)

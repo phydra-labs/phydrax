@@ -461,6 +461,10 @@
   `AxisArray` directly from the native axis substrate.
 - Public runtime type aliases use Python 3.12 `type` statements, so Griffe 2
   resolves their package-owned identities without chasing `typing` internals.
+- Static typing is restored across package, test, example, and qualification
+  surfaces under NumPy 2.5 and JAX 0.11. Seventy-one obsolete suppressions are
+  removed, and host metadata, dtype, optional-value, and provider boundaries
+  now carry explicit contracts without changing numerical or evidence semantics.
 - `SweptLayerControl` and `LayerTerminationPolicy` are replaced by
   `BoundaryLayerControl(wall, schedule, route=EXACT_SWEEP, volume_scope=...,
   cap_scope=...)`; `VolumeMeshingSpec.layer_controls` accepts

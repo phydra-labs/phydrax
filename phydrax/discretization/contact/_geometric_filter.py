@@ -38,12 +38,14 @@ def certify_closed_oriented_surface(
     faces = np.asarray(plan.faces, dtype=np.int32)
     edges = np.asarray(plan.edges, dtype=np.int32)
     edge_lookup = {
-        tuple(sorted(edge.tolist())): index for index, edge in enumerate(edges)
+        tuple(sorted(int(value) for value in edge)): index
+        for index, edge in enumerate(edges.tolist())
     }
     incidence = np.zeros((edges.shape[0],), dtype=np.int32)
     oriented_sum = np.zeros((edges.shape[0],), dtype=np.int32)
     nondegenerate = True
-    for face in faces:
+    for face_values in faces.tolist():
+        face = tuple(int(value) for value in face_values)
         first = positions[face[1]] - positions[face[0]]
         second = positions[face[2]] - positions[face[0]]
         nondegenerate = (

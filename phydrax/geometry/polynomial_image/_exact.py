@@ -85,14 +85,14 @@ def _equation_polynomials(
     exponents = np.asarray(support.exponents, dtype=np.int32)
     equations: list[_Polynomial] = [dict() for _ in range(support.equation_count)]
     for equation, exponent, coefficient in zip(
-        equation_indices,
-        exponents,
+        equation_indices.tolist(),
+        exponents.tolist(),
         system.coefficients,
         strict=True,
     ):
         _add_term(
             equations[int(equation)],
-            tuple(exponent),
+            tuple(int(value) for value in exponent),
             Fraction(coefficient),
         )
     return tuple(equations)

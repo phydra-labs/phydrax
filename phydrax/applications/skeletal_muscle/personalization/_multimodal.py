@@ -178,7 +178,9 @@ class SkeletalObservationChannel(StrictModule, NonTrainableState):
             np.where(mask_host, uncertainty_host, 1.0),
             dtype=data.dtype,
         )
-        active_indices = tuple(np.flatnonzero(mask_host.reshape((-1,))))
+        active_indices = tuple(
+            int(index) for index in np.flatnonzero(mask_host.reshape((-1,)))
+        )
 
         self.channel_id, self.asset_id = identifiers
         self.quantity_id = quantity_spec.quantity_id

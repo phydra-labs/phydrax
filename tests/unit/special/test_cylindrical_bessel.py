@@ -72,7 +72,7 @@ def test_cylindrical_half_order_gradient_at_smallest_float64_is_finite() -> None
     expected = np.exp(
         np.log(0.5)
         - 0.5 * np.log(2.0)
-        - scipy.special.gammaln(1.5)
+        - math.lgamma(1.5)
         - 0.5 * np.log(np.asarray(x))
     )
     derivative = np.asarray(jax.grad(lambda argument: phx.special.jv(0.5, argument))(x))

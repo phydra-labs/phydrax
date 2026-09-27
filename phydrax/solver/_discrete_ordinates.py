@@ -89,12 +89,14 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Discrete-ordinates iteration controls are invalid.")
         matrices = _dsa_matrices(problem)
-        positive_angles = tuple(
+        positive_identity_angles = tuple(
             np.flatnonzero(np.asarray(problem.quadrature.ordinates) > 0.0)
         )
-        negative_angles = tuple(
+        negative_identity_angles = tuple(
             np.flatnonzero(np.asarray(problem.quadrature.ordinates) < 0.0)
         )
+        positive_angles = tuple(int(index) for index in positive_identity_angles)
+        negative_angles = tuple(int(index) for index in negative_identity_angles)
         self.problem = problem
         self.maximum_iterations = iterations
         self.tolerance = tolerance_
@@ -112,8 +114,8 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
                 "dsa": bool(dsa),
                 "dsa_relaxation": relaxation,
                 "dsa_matrices": array_tree_fingerprint(matrices),
-                "positive_angles": positive_angles,
-                "negative_angles": negative_angles,
+                "positive_angles": positive_identity_angles,
+                "negative_angles": negative_identity_angles,
             }
         )
 

@@ -41,6 +41,7 @@ from ._hp import (
     FiniteElementHPTopology,
 )
 from ._hp_runtime import (
+    _host_integer,
     finite_element_hp_balance_error,
     FiniteElementHPGeometry,
     FiniteElementHPRefinementResult,
@@ -124,19 +125,19 @@ def refine_anisotropic_hp_cells(
         or geometry.topology_id != topology.topology_id
     ):
         raise ValueError("Anisotropic pattern, topology, and geometry disagree.")
-    identifiers = np.asarray(topology.cell_global_ids).copy()
-    allocated = np.asarray(topology.allocated).copy()
-    active = np.asarray(topology.active).copy()
-    degrees = np.asarray(topology.cell_degrees).copy()
-    roots = np.asarray(topology.root_cell_ids).copy()
-    paths = np.asarray(topology.path_codes).copy()
-    levels = np.asarray(topology.levels).copy()
-    parents = np.asarray(topology.parent_slots).copy()
-    children = np.asarray(topology.child_slots).copy()
-    child_valid = np.asarray(topology.child_valid).copy()
-    vertices = np.asarray(geometry.cell_vertices).copy()
-    lower = np.asarray(geometry.reference_lower).copy()
-    upper = np.asarray(geometry.reference_upper).copy()
+    identifiers = np.array(topology.cell_global_ids, dtype=np.int64, copy=True)
+    allocated = np.array(topology.allocated, dtype=np.bool_, copy=True)
+    active = np.array(topology.active, dtype=np.bool_, copy=True)
+    degrees = np.array(topology.cell_degrees, dtype=np.int32, copy=True)
+    roots = np.array(topology.root_cell_ids, dtype=np.int64, copy=True)
+    paths = np.array(topology.path_codes, dtype=np.int64, copy=True)
+    levels = np.array(topology.levels, dtype=np.int32, copy=True)
+    parents = np.array(topology.parent_slots, dtype=np.int32, copy=True)
+    children = np.array(topology.child_slots, dtype=np.int32, copy=True)
+    child_valid = np.array(topology.child_valid, dtype=np.bool_, copy=True)
+    vertices = np.array(geometry.cell_vertices, copy=True)
+    lower = np.array(geometry.reference_lower, copy=True)
+    upper = np.array(geometry.reference_upper, copy=True)
     slot_by_id = {int(identifiers[slot]): int(slot) for slot in np.flatnonzero(active)}
     marked = np.asarray(marked_cell_ids, dtype=np.int64)
     unknown = set(marked.tolist()) - set(slot_by_id)
@@ -145,7 +146,12 @@ def refine_anisotropic_hp_cells(
     marked_slots = np.asarray(
         sorted(
             (slot_by_id[int(value)] for value in marked),
-            key=lambda slot: (int(roots[slot]), int(paths[slot])),
+            key=lambda slot: (
+                _host_integer(
+                    roots[_host_integer(slot, "cell slot")], "root cell ID"
+                ),
+                _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
+            ),
         ),
         dtype=np.int32,
     )
@@ -173,8 +179,8 @@ def refine_anisotropic_hp_cells(
             relations.append("unchanged")
     cursor = 0
     corners = _tensor_corners(topology.dimension)
-    for marked_index, parent in enumerate(marked_slots):
-        parent = int(parent)
+    for marked_index, parent_value in enumerate(marked_slots.tolist()):
+        parent = int(parent_value)
         parent_degree = degrees[parent].copy()
         active[parent] = False
         degrees[parent] = 0

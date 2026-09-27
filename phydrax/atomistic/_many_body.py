@@ -497,6 +497,12 @@ class ManyBodyPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         return PreparedManyBodyPotential(self, system)
 
 
+def _required_many_body_array(value: Array | None, error: str, /) -> Array:
+    if value is None:
+        raise RuntimeError(error)
+    return value
+
+
 def _many_body_neighbor_slots(
     context: AtomisticPotentialContext, /
 ) -> tuple[Array, Array, Array, Array]:
@@ -516,11 +522,16 @@ def _many_body_neighbor_slots(
             jnp.empty((atom_capacity, 0), dtype=jnp.bool_),
         )
     edges = graph.graph
-    senders = edges.senders
-    receivers = edges.receivers
+    topology_error = "Many-body potentials require directed prepared graph edges."
+    senders = _required_many_body_array(edges.senders, topology_error)
+    receivers = _required_many_body_array(edges.receivers, topology_error)
     valid = edges.edge_mask
-    displacement = edges.edges["displacement"]
-    distance = edges.edges["distance"][:, 0]
+    geometry_error = (
+        "Many-body potentials require prepared displacement and distance geometry."
+    )
+    displacement = _required_many_body_array(edges.edges["displacement"], geometry_error)
+    distance_data = _required_many_body_array(edges.edges["distance"], geometry_error)
+    distance = distance_data[:, 0]
     ranks = graph.edge_slots
     slot_valid = valid & (ranks < neighbor_capacity)
     safe_center = jnp.where(slot_valid, receivers, 0)

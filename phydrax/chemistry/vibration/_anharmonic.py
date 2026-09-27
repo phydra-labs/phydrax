@@ -384,7 +384,9 @@ class VibrationalPerturbationPlan(StrictModule, NonTrainableState):
             self.maximum_basis_states,
         )
         lookup = {tuple(state): index for index, state in enumerate(states)}
-        target_indices = np.asarray([lookup[tuple(state)] for state in requested])
+        target_indices = np.array(
+            [lookup[tuple(state)] for state in requested], dtype=np.intp
+        )
         cubic_corrections = np.zeros((requested.shape[0],), dtype=np.float64)
         quartic_corrections = np.diag(fourth)[target_indices]
         anharmonic = harmonic[target_indices] + quartic_corrections
@@ -415,7 +417,10 @@ class VibrationalPerturbationPlan(StrictModule, NonTrainableState):
             anharmonic[output_index] += correction
             if self.kind is VibrationalPerturbationKind.GVPT2 and np.any(resonant):
                 polyad = np.concatenate(
-                    (np.asarray([basis_index]), np.flatnonzero(resonant))
+                    (
+                        np.asarray([basis_index], dtype=np.intp),
+                        np.flatnonzero(resonant),
+                    )
                 )
                 values, vectors = np.linalg.eigh(full[np.ix_(polyad, polyad)])
                 root = int(np.argmax(np.abs(vectors[0]) ** 2))

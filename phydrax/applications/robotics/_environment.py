@@ -580,7 +580,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                     "format": "legacy-key-data",
                     "dtype": "uint32",
                     "implementation": str(
-                        jax.config.jax_default_prng_impl  # ty: ignore[unresolved-attribute]
+                        jax.config.jax_default_prng_impl
                     ),
                 },
             }

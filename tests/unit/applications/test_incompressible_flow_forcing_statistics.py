@@ -179,7 +179,6 @@ def test_compiled_periodic_statistics_keep_equation_terms_separate() -> None:
         statistics.molecular_dissipation_shells.integral.sum(),
         native_molecular_dissipation,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         statistics.advective_transfer_shells.integral.sum(),
         native_advective_transfer,

@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from scipy.linalg import expm
+from scipy.sparse.linalg import expm
 
 from phydrax.applications.systems_biology import (
     CountMeasurementPlan,

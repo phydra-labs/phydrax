@@ -117,7 +117,8 @@ def _fixture() -> Any:
             [5, 10],
             [5, 11],
             [5, 12],
-        ]
+        ],
+        dtype=np.int64,
     )
     # Topology canonicalizes endpoint order without changing row ordering.
     lengths = np.sqrt(

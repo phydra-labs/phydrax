@@ -113,8 +113,10 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             raise TypeError("plan must be ConvergentContactPotentialPlan.")
         if not isinstance(scene, PreparedCollisionScene):
             raise TypeError("scene must be PreparedCollisionScene.")
-        edges = np.asarray(scene.edges, dtype=np.int32)
-        faces = np.asarray(scene.faces, dtype=np.int32)
+        edges = np.empty((scene.edge_count, 2), dtype=np.int32)
+        edges[...] = np.asarray(scene.edges)
+        faces = np.empty((scene.face_count, 3), dtype=np.int32)
+        faces[...] = np.asarray(scene.faces)
         vertex_edge_count = np.zeros((scene.vertex_count,), dtype=np.int32)
         for edge in edges:
             vertex_edge_count[edge] += 1

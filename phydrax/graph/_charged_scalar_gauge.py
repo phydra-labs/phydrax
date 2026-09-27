@@ -65,10 +65,14 @@ class ChargedScalarGaugePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Charged gauge mesh or coupling is invalid.")
         incidence = np.zeros((faces_.shape[0], edges_.shape[0]), dtype=np.float64)
-        lookup = {tuple(edge): index for index, edge in enumerate(edges_)}
-        for face_index, face in enumerate(faces_):
-            for first, second in zip(face, np.roll(face, -1), strict=True):
-                canonical = tuple(sorted((int(first), int(second))))
+        lookup = {
+            tuple(int(value) for value in edge): index
+            for index, edge in enumerate(edges_.tolist())
+        }
+        for face_index, face_values in enumerate(faces_.tolist()):
+            face = tuple(int(value) for value in face_values)
+            for first, second in zip(face, face[1:] + face[:1], strict=True):
+                canonical = tuple(sorted((first, second)))
                 edge_index = lookup[canonical]
                 incidence[face_index, edge_index] = 1.0 if first < second else -1.0
         lengths = np.linalg.norm(

@@ -153,7 +153,9 @@ class NeuralCDETrainingData(StrictModule):
             raise ValueError("initial_states must be finite.")
         selected_indices: list[tuple[int, ...]] = []
         for case_index, path in enumerate(path_values):
-            indices = tuple(np.flatnonzero(host_mask[case_index]))
+            indices = tuple(
+                int(index) for index in np.flatnonzero(host_mask[case_index])
+            )
             if not indices:
                 raise ValueError(
                     "Every case must contain at least one valid observation."

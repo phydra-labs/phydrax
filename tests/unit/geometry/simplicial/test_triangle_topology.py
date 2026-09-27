@@ -17,8 +17,7 @@ def test_triangle_topology_traces_oriented_boundary_loops_and_components() -> No
                 index[i, j + 1],
             )
             triangles += [(a, b, c), (a, c, d)]
-    faces = np.asarray(triangles + [(16, 17, 18)])
-    # ty: ignore[invalid-argument-type]
+    faces = np.asarray(triangles + [(16, 17, 18)], dtype=np.int64)
     topology = phx.geometry.simplicial.TriangleTopology(faces)
 
     assert topology.num_face_components == 2

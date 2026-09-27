@@ -30,7 +30,10 @@ def _measure(
         warmup=1,
         repeats=repeats,
     )
-    return estimate, 1_000.0 * float(distribution.mean_seconds)
+    mean_seconds = distribution.mean_seconds
+    if mean_seconds is None:
+        raise RuntimeError("Repeated timing did not produce any samples.")
+    return estimate, 1_000.0 * mean_seconds
 
 
 def _record(
@@ -71,7 +74,10 @@ def _measure_compiled(
         warmup=1,
         repeats=repeats,
     )
-    return estimate, 1_000.0 * float(distribution.mean_seconds)
+    mean_seconds = distribution.mean_seconds
+    if mean_seconds is None:
+        raise RuntimeError("Repeated timing did not produce any samples.")
+    return estimate, 1_000.0 * mean_seconds
 
 
 def _interoperability_record(
@@ -153,7 +159,10 @@ def _interoperability_benchmarks(
         num_times = 16
         num_space = 16
         times = jnp.linspace(0.0, 1.0, num_times)
-        axis = phx.discretization.FourierAxisSpec(num_space).materialize(0.0, 1.0)
+        axis = phx.discretization.FourierAxisSpec(num_space).materialize(
+            jnp.asarray(0.0, dtype=jnp.float64),
+            jnp.asarray(1.0, dtype=jnp.float64),
+        )
         spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
         phase = jnp.linspace(0.0, 2.0 * jnp.pi, budget, endpoint=False)
         states = (

@@ -503,7 +503,9 @@ def _boundaries(
     )
     inverse = inverse.reshape(-1)
     classes = []
-    for row, count in zip(unique, counts, strict=True):
+    for index in range(unique.shape[0]):
+        row = unique[index]
+        count = counts[index]
         if not row.any():
             continue
         patch_flags = row[: len(patches)]

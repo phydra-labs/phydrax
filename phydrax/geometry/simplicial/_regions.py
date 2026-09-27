@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -188,7 +189,7 @@ class PlanarMeshRegion(GeometrySource):
 
     def __init__(
         self,
-        vertices: Array,
+        vertices: ArrayLike,
         loops: Sequence[Sequence[int]],
         *,
         feature_id: str | None = None,

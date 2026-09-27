@@ -2487,13 +2487,11 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 stage_metrics,
                 recorded_stage_metrics,
             )
-            recorded_stage_rates = tuple(
-                jnp.where(record_attempt, new, old)
-                for new, old in zip(
-                    candidate.stage_maximum_relative_rates,
-                    recorded_stage_rates,
-                    strict=True,
-                )
+            new_stage_rates = candidate.stage_maximum_relative_rates
+            recorded_stage_rates = (
+                jnp.where(record_attempt, new_stage_rates[0], recorded_stage_rates[0]),
+                jnp.where(record_attempt, new_stage_rates[1], recorded_stage_rates[1]),
+                jnp.where(record_attempt, new_stage_rates[2], recorded_stage_rates[2]),
             )
             recorded_maximum_rate = jnp.where(
                 record_attempt,

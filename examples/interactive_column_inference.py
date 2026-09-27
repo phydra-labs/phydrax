@@ -236,7 +236,6 @@ def twin_candidate(experiment: Any) -> Any:
 
 
 def run_twin(*, steps: Any = 12, maximum_steps: Any = 24, audit: Any = True) -> Any:
-    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         raise ValueError(
             "This qualification requires JAX_ENABLE_X64=1 for small physical response differences."

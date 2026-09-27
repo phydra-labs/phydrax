@@ -741,14 +741,17 @@ class ElectrodeObservationPlan:
         )
 
     def prepare(self) -> PreparedObservationOperator:
-        support = np.any(self.valid, axis=-1)
+        valid = self.valid
+        if valid is None:
+            raise RuntimeError("Internal invariant failed: valid is None.")
+        support = np.any(valid, axis=-1)
         return ObservationSamplingPlan(
             self.source_indices,
             self.weights,
             (self.source_size,),
             operator_kind="electrode-linear-map",
             source_geometry_id=self.source_geometry_id,
-            valid=self.valid,
+            valid=valid,
             support=support,
             require_complete_coverage=self.require_complete_coverage,
         ).prepare()

@@ -1626,7 +1626,12 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
                 for face_id in route_face_ids
             )
             order = np.asarray(
-                sorted(range(route_face_ids.size), key=lambda index: sort_keys[index]),
+                [
+                    index
+                    for index, _ in sorted(
+                        enumerate(sort_keys), key=lambda item: item[1]
+                    )
+                ],
                 dtype=np.int32,
             )
             route_face_ids = route_face_ids[order]

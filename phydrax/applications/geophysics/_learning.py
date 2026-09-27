@@ -150,7 +150,9 @@ def column_closure_dataset(
     and every forcing source must cover exactly the target's finite interval.
     The resolved increment must use that same interval, not an instantaneous rate.
     """
-    initial, final, resolved = map(np.asarray, (before, after, resolved_increment))
+    initial = np.array(before, copy=True)
+    final = np.array(after, copy=True)
+    resolved = np.array(resolved_increment, copy=True)
     if initial.ndim != 3 or initial.shape[1:] != (
         len(binding.level_ids),
         len(binding.quantities),

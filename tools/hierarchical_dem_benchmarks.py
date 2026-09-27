@@ -23,7 +23,7 @@ def _problem() -> Any:
     count = position.shape[0]
     radii = np.full((count,), 0.003)
     medium = np.linspace(8, count - 9, 12, dtype="int64")
-    large = np.asarray([0, 191, 383, 575])
+    large = np.asarray([0, 191, 383, 575], dtype=np.int64)
     radii[medium] = 0.05
     radii[large] = 0.2
     particles = phx.discretization.ParticleSetPlan(

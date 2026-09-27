@@ -225,11 +225,12 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
         }
 
         def resolve(name: str, values: Array) -> np.ndarray:
-            host = np.asarray(values, dtype=np.int64)
+            host = np.empty((values.shape[0], values.shape[1]), dtype=np.int64)
+            host[...] = np.asarray(values)
             resolved = np.zeros(host.shape, dtype=np.int32)
-            for interaction_index, row in enumerate(host):
-                for endpoint_index, identifier in enumerate(row):
-                    key = int(identifier)
+            for interaction_index in range(host.shape[0]):
+                for endpoint_index in range(host.shape[1]):
+                    key = int(host[interaction_index, endpoint_index])
                     if key not in slot_by_id:
                         raise ValueError(f"{name} references unknown particle ID {key}.")
                     slot = slot_by_id[key]

@@ -134,12 +134,13 @@ def test_carlson_rd_rj_retain_representable_values_at_extreme_dynamic_range() ->
 
     assert np.isfinite(rd) and rd > 0.0
     assert np.isfinite(rj) and rj > 0.0
-    np.testing.assert_allclose(
-        rd, scipy.special.elliprd(*rd_arguments), rtol=5e-13, atol=0.0
+    expected = scipy.special.elliprd(
+        np.asarray(rd_arguments[0], dtype=np.float64),
+        np.asarray(rd_arguments[1], dtype=np.float64),
+        np.asarray(rd_arguments[2], dtype=np.float64),
     )
-    np.testing.assert_allclose(
-        rj, scipy.special.elliprd(*rd_arguments), rtol=5e-13, atol=0.0
-    )
+    np.testing.assert_allclose(rd, expected, rtol=5e-13, atol=0.0)
+    np.testing.assert_allclose(rj, expected, rtol=5e-13, atol=0.0)
 
 
 def test_carlson_rg_equal_arguments_preserve_extreme_scales() -> None:

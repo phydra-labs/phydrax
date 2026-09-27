@@ -1048,7 +1048,9 @@ def run_spherical_ads_collapse_campaign(
         for value in values
     )
     statuses = tuple(run.evidence.status for run in runs)
-    collapsed = np.asarray([status == "horizon" for status in statuses])
+    collapsed = np.asarray(
+        [status == "horizon" for status in statuses], dtype=np.bool_
+    )
     if np.any(collapsed) and np.any(~collapsed):
         lower = max(
             value for value, status in zip(values, collapsed, strict=True) if not status

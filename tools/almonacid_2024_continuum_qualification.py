@@ -204,7 +204,6 @@ def qualify(
     distance, indices = cKDTree(points).query(main0[:, :3])
     if (
         len(points) != len(main0)
-        # ty: ignore[invalid-argument-type]
         or len(np.unique(indices)) != len(indices)
         or np.max(distance) > 4e-8
     ):

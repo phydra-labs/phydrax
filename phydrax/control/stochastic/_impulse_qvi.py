@@ -263,9 +263,9 @@ class _RawQVI(NamedTuple):
 
 def _callback_scalar(
     callback: Callable,
-    time: float,
-    state: float,
-    action: float,
+    time: ArrayLike,
+    state: ArrayLike,
+    action: ArrayLike,
     args: Any,
     owner: str,
     /,
@@ -328,8 +328,8 @@ def _coefficients(
                     "running_cost",
                 )
                 courant = duration * (abs(drift_value) / dx + variance_value / (dx * dx))
-                maximum_courant = max(maximum_courant, courant)
-                minimum_margin = min(minimum_margin, 1.0 - courant)
+                maximum_courant = max(maximum_courant, float(courant))
+                minimum_margin = min(minimum_margin, float(1.0 - courant))
             for action_index, action in enumerate(impulse_actions):
                 mapped = _callback_scalar(
                     problem.intervention_state,

@@ -30,7 +30,7 @@ def node_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
     )
     vertex_count = coordinates.shape[0]
     incident = [[] for _ in range(vertex_count)]
-    for cell_index, cell in enumerate(cells):
+    for cell_index, cell in enumerate(cells.tolist()):
         for vertex in cell:
             incident[int(vertex)].append(cell_index)
     rule_points = np.asarray([0.5 - 0.5 / np.sqrt(3.0), 0.5 + 0.5 / np.sqrt(3.0)])

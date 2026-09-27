@@ -19,7 +19,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from scipy.linalg import expm
+from scipy.sparse.linalg import expm
 
 from phydrax.applications.atmosphere._global import (
     GlobalPrimitiveEquationPlan,
@@ -153,7 +153,13 @@ def linear_wave_error(model: Any, initial: Any, final: Any) -> Any:
     duration = float(final.time - initial.time)
     expected = np.stack(
         [
-            packed[degree] @ expm(duration * np.asarray(model.fast_matrix[degree])).T
+            packed[degree]
+            @ expm(
+                np.asarray(
+                    duration * np.asarray(model.fast_matrix[degree]),
+                    dtype=np.float64,
+                )
+            ).T
             for degree in range(packed.shape[0])
         ]
     )
@@ -289,7 +295,6 @@ def main() -> None:
     args = parser.parse_args()
     if args.steps < 1 or args.levels < 1:
         parser.error("steps and levels must be positive")
-    # ty: ignore[unresolved-attribute]
     if not jax.config.x64_enabled:
         parser.error("Spherical transforms require JAX_ENABLE_X64=1")
     results = [

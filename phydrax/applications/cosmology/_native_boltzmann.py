@@ -601,7 +601,7 @@ class ScalarEinsteinBoltzmannPlan(StrictModule, NonTrainableState):
         self.layout = layout
         self.transitions = transitions
         self.multipoles = jnp.asarray(ell_host, dtype=jnp.int32)
-        self.multipole_values = tuple(ell_host)
+        self.multipole_values = tuple(int(value) for value in ell_host)
         self.baryon_matter_fraction = baryon
         self.constraint_tolerance = constraint
         self.overlap_tolerance = overlap

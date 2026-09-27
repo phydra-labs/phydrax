@@ -252,7 +252,8 @@ def prepare_polygon_triangulation(
     witness_weights = np.zeros((cells_.shape[0], cells_.shape[1]), dtype=np.float64)
     star_margins = np.zeros((cells_.shape[0],), dtype=np.float64)
     policy_ = PolygonAdmissibilityPolicy() if policy is None else policy
-    for cell, polygon in enumerate(selected):
+    for cell in range(selected.shape[0]):
+        polygon = selected[cell]
         _validate_simple_polygon(polygon)
         local_triangles = _ear_clip(polygon)
         for index, triangle in enumerate(local_triangles):

@@ -228,13 +228,18 @@ class CubatureAtlas(StrictModule):
     ) -> CubatureAtlas:
         mask = np.ones((self.num_charts,), dtype=np.bool_)
         if entity_ids is not None:
-            mask &= np.isin(
-                np.asarray(self.source_entity_ids),
-                np.asarray(tuple(entity_ids), dtype=np.int32),
+            mask = mask & np.asarray(
+                np.isin(
+                    np.asarray(self.source_entity_ids),
+                    np.asarray(tuple(entity_ids), dtype=np.int32),
+                ),
+                dtype=np.bool_,
             )
         if tags is not None:
             selected_tags = frozenset(tags)
-            mask &= np.asarray([tag in selected_tags for tag in self.physical_tags])
+            mask = mask & np.asarray(
+                [tag in selected_tags for tag in self.physical_tags], dtype=np.bool_
+            )
         selected = np.flatnonzero(mask).astype(np.int32)
         if selected.size == 0:
             raise ValueError("CubatureAtlas selection contains no charts.")

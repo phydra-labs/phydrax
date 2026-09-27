@@ -290,12 +290,14 @@ def _forest_metadata(
     factor_lookup: list[tuple[int, int]] = []
     factor_global = 0
     for group_index, scope_host in enumerate(graph._host_topology.factor_scopes):
-        for local_factor, variables in enumerate(scope_host):
+        scope_array = np.asarray(scope_host, dtype=np.int32)
+        for local_factor in range(scope_array.shape[0]):
             factor_node = variable_count + factor_global
             factor_lookup.append((group_index, local_factor))
-            for variable in variables:
-                adjacency[int(variable)].append(factor_node)
-                adjacency[factor_node].append(int(variable))
+            for position in range(scope_array.shape[1]):
+                variable = int(scope_array[local_factor, position])
+                adjacency[variable].append(factor_node)
+                adjacency[factor_node].append(variable)
             factor_global += 1
 
     parent = list(range(node_count))

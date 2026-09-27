@@ -529,7 +529,6 @@ class _LayoutDecoder:
             }
         )
         geometry = PlanarMeshRegion(
-            # ty: ignore[invalid-argument-type]
             canonical,
             (tuple(range(canonical.shape[0])),),
             feature_id=f"layout-region-{physical_id}",

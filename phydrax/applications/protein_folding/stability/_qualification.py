@@ -1327,7 +1327,8 @@ def qualify_double_mutant_challenge(
                 pair_contrast_variances: list[float] = []
                 for pair_id in sorted(set(pair_by_case.values())):
                     indices = np.asarray(
-                        [pair_by_case[case_id] == pair_id for case_id in locked_ids]
+                        [pair_by_case[case_id] == pair_id for case_id in locked_ids],
+                        dtype=np.bool_,
                     )
                     member_ids = tuple(
                         case_id

@@ -83,7 +83,10 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
         )
         coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
         edges = np.asarray(connectivity.edges, dtype=np.int32)
-        edge_lookup = {tuple(edge): index for index, edge in enumerate(edges)}
+        edge_lookup = {
+            tuple(int(value) for value in edge): index
+            for index, edge in enumerate(edges.tolist())
+        }
         cell_edges = np.empty((cells.shape[0], 6), dtype=np.int32)
         signs = np.empty_like(cell_edges, dtype=np.float64)
         for cell, vertices in enumerate(cells):

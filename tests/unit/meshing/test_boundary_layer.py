@@ -152,7 +152,6 @@ def _box(lower: Any, upper: Any, count: Any, *, outward: Any) -> Any:
         key = tuple(np.round(value, 12))
         if key not in index:
             index[key] = len(points)
-            # ty: ignore[unresolved-attribute]
             points.append(value)
         return index[key]
 

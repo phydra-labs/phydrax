@@ -643,7 +643,8 @@ def wolff_cluster_step(
     for group, scope in zip(graph.factor_groups, graph._host_topology.factor_scopes):
         if not isinstance(group, IsingFactorGroup):
             raise TypeError("Wolff updates require IsingFactorGroup factors only.")
-        arity = scope.shape[1]
+        scope_array = np.asarray(scope, dtype=np.int32)
+        arity = scope_array.shape[1]
         if arity == 1:
             if np.any(np.asarray(group.weights) != 0.0):
                 raise ValueError("Wolff updates require zero unary fields.")
@@ -651,10 +652,12 @@ def wolff_cluster_step(
             weights = np.asarray(group.weights)
             if np.any(weights < 0.0):
                 raise ValueError("Wolff updates require ferromagnetic couplings.")
-            for row, weight in zip(scope, weights):
-                left, right = int(row[0]), int(row[1])
-                adjacency[left].append((right, float(weight)))
-                adjacency[right].append((left, float(weight)))
+            for factor in range(scope_array.shape[0]):
+                weight = float(weights[factor])
+                left = int(scope_array[factor, 0])
+                right = int(scope_array[factor, 1])
+                adjacency[left].append((right, weight))
+                adjacency[right].append((left, weight))
         else:
             raise ValueError("Wolff updates support unary and pairwise Ising factors.")
     seed = int(jr.randint(key, (), 0, graph.num_variables))

@@ -136,7 +136,9 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         )
 
 
-def _validated_request(model: BRepModel, control: BoundaryLayerControl, /) -> Any:
+def _validated_request(
+    model: BRepModel, control: BoundaryLayerControl, /
+) -> tuple[tuple[int, ...], list[int], MeshingScope]:
     if not isinstance(model, BRepModel):
         raise TypeError("source must be BRepModel.")
     if not isinstance(control, BoundaryLayerControl):
@@ -145,8 +147,13 @@ def _validated_request(model: BRepModel, control: BoundaryLayerControl, /) -> An
         raise ValueError(
             "prepare_boundary_layer_extrusion realizes CAD_EXTRUSION controls."
         )
+    volume_scope = control.volume_scope
+    if volume_scope is None:
+        raise ValueError(
+            "CAD_EXTRUSION requires a wall face scope, a volume scope, and no cap."
+        )
     revision = model.report.source_revision
-    for scope, dimension in ((control.wall_scope, 2), (control.volume_scope, 3)):
+    for scope, dimension in ((control.wall_scope, 2), (volume_scope, 3)):
         if (
             scope.source_id != model.report.source_id
             or scope.source_revision != revision
@@ -154,7 +161,7 @@ def _validated_request(model: BRepModel, control: BoundaryLayerControl, /) -> An
         ):
             raise ValueError("The control scopes must bind this BRep source revision.")
     walls = tuple(int(value) for value in np.asarray(control.wall_scope.entity_ids))
-    solids = {int(value) for value in np.asarray(control.volume_scope.entity_ids)}
+    solids = {int(value) for value in np.asarray(volume_scope.entity_ids)}
     owners = []
     for wall in walls:
         incident = set(model.topology.face_solids[wall]) & solids
@@ -163,7 +170,7 @@ def _validated_request(model: BRepModel, control: BoundaryLayerControl, /) -> An
                 "Every extruded wall must be a boundary face of one controlled solid."
             )
         owners.append(incident.pop())
-    return walls, owners
+    return walls, owners, volume_scope
 
 
 def _extrusion_prisms(shape: Any, walls: Any, owners: Any, total: float, /) -> Any:
@@ -276,7 +283,7 @@ def prepare_boundary_layer_extrusion(
     ``result.control`` (straight SWEEP fill) and region controls naming
     ``layer_solid_ids`` and ``core_solid_ids``.
     """
-    walls, owners = _validated_request(source, control)
+    walls, owners, volume_scope = _validated_request(source, control)
     shape, source_format, digest = read_occt_shape(source.report.source_id)
     if (
         source_format != source.report.source_format
@@ -297,7 +304,7 @@ def prepare_boundary_layer_extrusion(
     slabs, bottoms, tops, volumes, residual = _classify_slabs(
         partitioned, prisms, planes, total, scale
     )
-    controlled = {int(value) for value in np.asarray(control.volume_scope.entity_ids)}
+    controlled = {int(value) for value in np.asarray(volume_scope.entity_ids)}
     original = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     published = _explore_unique(
         read_occt_shape(partitioned.report.source_id)[0],

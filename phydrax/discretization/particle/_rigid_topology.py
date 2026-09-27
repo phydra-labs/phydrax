@@ -395,8 +395,8 @@ def _transaction_table(
     )
     if mask.shape != array.shape:
         raise ValueError(f"{name}_valid must match its ID table shape.")
-    for row, row_mask in zip(array, mask, strict=True):
-        selected = row[row_mask]
+    for index in range(array.shape[0]):
+        selected = array[index, mask[index]]
         if np.unique(selected).size != selected.size:
             raise ValueError(f"{name} contains duplicate valid IDs in a transaction.")
     return array, mask

@@ -280,7 +280,9 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
         pairs = (
             ((0, 1),) if rank == 2 else (((0, 1), (1, 2), (2, 0)) if rank == 3 else ())
         )
-        valid_shell_indices = tuple(np.flatnonzero(np.asarray(shells.valid_shells)))
+        valid_shell_indices = tuple(
+            int(index) for index in np.flatnonzero(np.asarray(shells.valid_shells))
+        )
         self.wave = wave
         self.shells = shells
         self.radial_edges = jax.lax.stop_gradient(jnp.asarray(edges_host))

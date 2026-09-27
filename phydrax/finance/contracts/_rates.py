@@ -148,7 +148,9 @@ class ResolvedRateSchedule(StrictModule):
                 raise ValueError(f"Active {name} must be finite.")
             if np.any(concrete[~mask] != 0.0):
                 raise ValueError(f"Inactive {name} must use neutral zero padding.")
-        start_np, end_np, payment_np = map(np.asarray, (start, end, payment))
+        start_np = np.asarray(start)
+        end_np = np.asarray(end)
+        payment_np = np.asarray(payment)
         if np.any(end_np[mask] <= start_np[mask]) or np.any(
             payment_np[mask] < end_np[mask]
         ):

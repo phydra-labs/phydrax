@@ -210,7 +210,6 @@ def test_complex_lyapunov_and_gramian_use_conjugate_transposes() -> None:
     )
     source = np.array([[1.0, 0.2j], [-0.2j, 0.7]], dtype=np.complex128)
     result = solve_continuous_lyapunov(matrix, source, tolerance=1e-10)
-    # ty: ignore[deprecated]
     reference = scipy.linalg.solve_continuous_lyapunov(matrix, -source)
     np.testing.assert_allclose(result.value, reference, rtol=2e-11, atol=2e-11)
     np.testing.assert_allclose(

@@ -348,9 +348,9 @@ class _RawBranchSet(NamedTuple):
 def _callback_scalar(
     callback: Callable,
     player: int,
-    time: float,
-    state: float,
-    joint_action: np.ndarray,
+    time: ArrayLike,
+    state: ArrayLike,
+    joint_action: ArrayLike,
     args: Any,
     name: str,
     /,
@@ -445,8 +445,8 @@ def _coefficient_table(problem: DiscreteCoupledHJBProblem, /) -> _CoefficientTab
                     courant = duration * (
                         abs(drift_value) / spacing + variance_value / (spacing * spacing)
                     )
-                    maximum_courant = max(maximum_courant, courant)
-                    minimum_margin = min(minimum_margin, 1.0 - courant)
+                    maximum_courant = max(maximum_courant, float(courant))
+                    minimum_margin = min(minimum_margin, float(1.0 - courant))
     if minimum_margin < -32.0 * np.finfo(np.float64).eps:
         raise ValueError(
             "The declared time and spatial grids violate the explicit monotone "

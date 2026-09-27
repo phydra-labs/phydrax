@@ -58,7 +58,7 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
         edges = []
         cell_edges = np.empty((cells.shape[0], len(local_pairs)), dtype=np.int32)
         signs = np.empty_like(cell_edges)
-        for cell_index, cell in enumerate(cells):
+        for cell_index, cell in enumerate(cells.tolist()):
             for local_index, (left, right) in enumerate(local_pairs):
                 a, b = int(cell[left]), int(cell[right])
                 canonical = (min(a, b), max(a, b))

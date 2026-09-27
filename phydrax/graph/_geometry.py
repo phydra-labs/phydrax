@@ -215,7 +215,7 @@ def _canonical_edge_counts(faces: np.ndarray, /) -> dict[tuple[int, int], int]:
     unique, counts = np.unique(canonical, axis=0, return_counts=True)
     return {
         (int(edge[0]), int(edge[1])): int(count)
-        for edge, count in zip(unique, counts, strict=True)
+        for edge, count in zip(unique.tolist(), counts.tolist(), strict=True)
     }
 
 

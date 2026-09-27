@@ -385,21 +385,18 @@ def test_mixed_component_cross_power_reconstructs_direct_total_power() -> None:
     resolved_power = float(product.auto_power[0, resolved_shell])
     assert resolved_power > 0.0
     roundoff = 64.0 * np.finfo(np.float64).eps * resolved_power
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         product.auto_power[1, resolved_shell],
         4.0 * product.auto_power[0, resolved_shell],
         rtol=2e-13,
         atol=roundoff,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         product.cross_power[0, resolved_shell],
         2.0 * product.auto_power[0, resolved_shell],
         rtol=2e-13,
         atol=roundoff,
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         product.direct_total_power[resolved_shell],
         9.0 * product.auto_power[0, resolved_shell],

@@ -79,7 +79,8 @@ def _icosphere(level: Any) -> Any:
             [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2],
             [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10],
             [8, 6, 7], [9, 8, 1],
-        ]
+        ],
+        dtype=np.int64,
     )  # fmt: skip
     points /= np.linalg.norm(points, axis=1, keepdims=True)
     for _ in range(level):
@@ -87,6 +88,8 @@ def _icosphere(level: Any) -> Any:
             np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]])), axis=1
         )
         unique, inverse = np.unique(edges, axis=0, return_inverse=True)
+        unique = np.asarray(unique, dtype=np.int64)
+        inverse = np.asarray(inverse, dtype=np.int64)
         middle = points[unique].mean(axis=1)
         middle /= np.linalg.norm(middle, axis=1, keepdims=True)
         ab, bc, ca = points.shape[0] + inverse.reshape(3, -1)
@@ -193,13 +196,14 @@ def _classes(association: Any, mesh: Any) -> Any:
         int(value): row for row, value in enumerate(np.asarray(mesh.vertex_global_ids))
     }
     order = np.asarray(
-        [rows[int(value)] for value in np.asarray(association.target_global_ids)]
+        [rows[int(value)] for value in np.asarray(association.target_global_ids)],
+        dtype=np.int64,
     )
     classes = np.empty((order.size, 2), dtype=np.int64)
     residuals = np.empty((order.size,))
-    classes[order, 0] = np.asarray(association.source_dimensions)
-    classes[order, 1] = np.asarray(association.source_indices)
-    residuals[order] = np.asarray(association.residuals)
+    classes[order, 0] = np.asarray(association.source_dimensions, dtype=np.int64)
+    classes[order, 1] = np.asarray(association.source_indices, dtype=np.int64)
+    residuals[order] = np.asarray(association.residuals, dtype=np.float64)
     return classes, residuals
 
 

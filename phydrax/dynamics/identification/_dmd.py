@@ -254,10 +254,12 @@ def fit_dmd(
     fitted = target_columns @ _adjoint(right_h) @ (inverse[:, None] * _adjoint(left))
     state_size = data.state_layout.size
     state_matrix = fitted[:, :state_size]
-    input_matrix = None if input_values is None else fitted[:, state_size:]
-    prediction = source @ state_matrix.T
-    if input_matrix is not None:
-        prediction = prediction + input_values @ input_matrix.T
+    if input_values is None:
+        input_matrix = None
+        prediction = source @ state_matrix.T
+    else:
+        input_matrix = fitted[:, state_size:]
+        prediction = source @ state_matrix.T + input_values @ input_matrix.T
     residual = jnp.where(mask[:, None], target - prediction, 0.0)
     weighted_residual = jnp.sqrt(
         jnp.sum(jnp.where(mask, weights, 0.0)[:, None] * jnp.abs(residual) ** 2)

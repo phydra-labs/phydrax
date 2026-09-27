@@ -70,8 +70,11 @@ def _barycentric_refinement(
     refined_points = np.concatenate((points, edge_midpoints, face_centroids), axis=0)
     refined_faces = np.empty((6 * surface.face_count, 3), dtype=np.int64)
     parent_faces = np.repeat(np.arange(surface.face_count, dtype=np.int32), 6)
-    for face_id, (a, b, c) in enumerate(faces):
-        ab, bc, ca = vertex_count + face_edges[face_id]
+    for face_id, face in enumerate(faces.tolist()):
+        a, b, c = (int(value) for value in face)
+        ab, bc, ca = (
+            int(value) for value in face_edges[face_id].tolist()
+        )
         centroid = vertex_count + edge_count + face_id
         refined_faces[6 * face_id : 6 * face_id + 6] = (
             (a, ab, centroid),
@@ -93,11 +96,12 @@ def _oriented_vertex_links(
     """Map each outgoing link vertex to its CCW face and successor."""
     faces = np.asarray(surface.triangles, dtype=np.int64)
     links: list[dict[int, tuple[int, int]]] = [{} for _ in range(surface.vertex_count)]
-    for face_id, face in enumerate(faces):
-        for local_id, vertex in enumerate(face):
+    for face_id, face in enumerate(faces.tolist()):
+        for local_id, vertex_value in enumerate(face):
+            vertex = int(vertex_value)
             outgoing = int(face[(local_id + 1) % 3])
             successor = int(face[(local_id - 1) % 3])
-            link = links[int(vertex)]
+            link = links[vertex]
             if outgoing in link:
                 raise ValueError("BC construction requires manifold vertex links.")
             link[outgoing] = (face_id, successor)
@@ -130,12 +134,12 @@ def _bc_barycentric_transform(
     coarse_face_signs = np.asarray(surface.face_edge_signs)
     coarse_edge_ids = {
         (int(start), int(stop)): edge_id
-        for edge_id, (start, stop) in enumerate(coarse_edges)
+        for edge_id, (start, stop) in enumerate(coarse_edges.tolist())
     }
     refined_edges = np.asarray(barycentric_surface.edge_vertices, dtype=np.int64)
     refined_edge_ids = {
         (int(start), int(stop)): edge_id
-        for edge_id, (start, stop) in enumerate(refined_edges)
+        for edge_id, (start, stop) in enumerate(refined_edges.tolist())
     }
     refined_edge_lengths = np.asarray(barycentric_surface.edge_lengths, dtype=np.float64)
     transform = np.zeros(
@@ -156,7 +160,7 @@ def _bc_barycentric_transform(
             orientation * coefficient / refined_edge_lengths[refined_edge_id]
         )
 
-    for coarse_edge_id, (first, second) in enumerate(coarse_edges):
+    for coarse_edge_id, (first, second) in enumerate(coarse_edges.tolist()):
         # RWGs on edges incident to a pole are oriented so that their vector
         # traces circulate counter-clockwise. The two endpoint patches carry
         # opposite signs, as in the BC edge construction.
@@ -193,7 +197,7 @@ def _bc_barycentric_transform(
         # The two refined dual-edge pieces crossing the coarse edge carry
         # equal 1/2 weights and the physical direction first -> second.
         midpoint = vertex_count + coarse_edge_id
-        for face_id, local_id in np.argwhere(coarse_face_edges == coarse_edge_id):
+        for face_id, local_id in np.argwhere(coarse_face_edges == coarse_edge_id).tolist():
             centroid = vertex_count + edge_count + int(face_id)
             if coarse_face_signs[face_id, local_id] > 0.0:
                 add_oriented(coarse_edge_id, midpoint, centroid, 0.5)

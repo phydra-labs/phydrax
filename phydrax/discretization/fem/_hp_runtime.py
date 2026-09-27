@@ -51,6 +51,13 @@ _HEX_FACETS = (
     (3, 0, 4, 7),
 )
 
+def _host_integer(value: object, name: str, /) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value, (int, np.integer)
+    ):
+        raise TypeError(f"{name} must be an integer.")
+    return int(value)
+
 
 def _cell_facets(cell_kind: str, /) -> tuple[tuple[int, ...], ...]:
     if cell_kind == "quadrilateral":
@@ -730,19 +737,19 @@ def refine_tensor_hp_cells(
     if geometry.topology_id != topology.topology_id:
         raise ValueError("hp refinement topology and geometry identities disagree.")
     marked_ids = np.asarray(marked_cell_ids, dtype=np.int64)
-    identifiers = np.asarray(topology.cell_global_ids).copy()
-    allocated = np.asarray(topology.allocated).copy()
-    active = np.asarray(topology.active).copy()
-    degrees = np.asarray(topology.cell_degrees).copy()
-    roots = np.asarray(topology.root_cell_ids).copy()
-    paths = np.asarray(topology.path_codes).copy()
-    levels = np.asarray(topology.levels).copy()
-    parents = np.asarray(topology.parent_slots).copy()
-    children = np.asarray(topology.child_slots).copy()
-    child_valid = np.asarray(topology.child_valid).copy()
-    vertices = np.asarray(geometry.cell_vertices).copy()
-    lower = np.asarray(geometry.reference_lower).copy()
-    upper = np.asarray(geometry.reference_upper).copy()
+    identifiers = np.array(topology.cell_global_ids, dtype=np.int64, copy=True)
+    allocated = np.array(topology.allocated, dtype=np.bool_, copy=True)
+    active = np.array(topology.active, dtype=np.bool_, copy=True)
+    degrees = np.array(topology.cell_degrees, dtype=np.int32, copy=True)
+    roots = np.array(topology.root_cell_ids, dtype=np.int64, copy=True)
+    paths = np.array(topology.path_codes, dtype=np.int64, copy=True)
+    levels = np.array(topology.levels, dtype=np.int32, copy=True)
+    parents = np.array(topology.parent_slots, dtype=np.int32, copy=True)
+    children = np.array(topology.child_slots, dtype=np.int32, copy=True)
+    child_valid = np.array(topology.child_valid, dtype=np.bool_, copy=True)
+    vertices = np.array(geometry.cell_vertices, copy=True)
+    lower = np.array(geometry.reference_lower, copy=True)
+    upper = np.array(geometry.reference_upper, copy=True)
     active_slots = np.flatnonzero(active)
     slot_by_id = {int(identifiers[slot]): int(slot) for slot in active_slots}
     unknown = set(marked_ids.tolist()) - set(slot_by_id)
@@ -751,7 +758,12 @@ def refine_tensor_hp_cells(
     requested = np.asarray(
         sorted(
             (slot_by_id[int(value)] for value in marked_ids),
-            key=lambda slot: (roots[slot], paths[slot]),
+            key=lambda slot: (
+                _host_integer(
+                    roots[_host_integer(slot, "cell slot")], "root cell ID"
+                ),
+                _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
+            ),
         ),
         dtype=np.int32,
     )
@@ -778,8 +790,8 @@ def refine_tensor_hp_cells(
         relation_names.append("unchanged")
     free_cursor = 0
     corners = _corner_points(topology.dimension)
-    for marked_index, parent in enumerate(requested):
-        parent = int(parent)
+    for marked_index, parent_value in enumerate(requested.tolist()):
+        parent = int(parent_value)
         active[parent] = False
         parent_degree = degrees[parent].copy()
         degrees[parent] = 0
@@ -875,16 +887,16 @@ def coarsen_tensor_hp_cells(
     if geometry.topology_id != topology.topology_id:
         raise ValueError("hp coarsening topology and geometry identities disagree.")
     parent_ids = np.asarray(parent_cell_ids, dtype=np.int64)
-    identifiers = np.asarray(topology.cell_global_ids).copy()
-    allocated = np.asarray(topology.allocated).copy()
-    active = np.asarray(topology.active).copy()
-    degrees = np.asarray(topology.cell_degrees).copy()
-    roots = np.asarray(topology.root_cell_ids).copy()
-    paths = np.asarray(topology.path_codes).copy()
-    levels = np.asarray(topology.levels).copy()
-    parents = np.asarray(topology.parent_slots).copy()
-    children = np.asarray(topology.child_slots).copy()
-    child_valid = np.asarray(topology.child_valid).copy()
+    identifiers = np.array(topology.cell_global_ids, dtype=np.int64, copy=True)
+    allocated = np.array(topology.allocated, dtype=np.bool_, copy=True)
+    active = np.array(topology.active, dtype=np.bool_, copy=True)
+    degrees = np.array(topology.cell_degrees, dtype=np.int32, copy=True)
+    roots = np.array(topology.root_cell_ids, dtype=np.int64, copy=True)
+    paths = np.array(topology.path_codes, dtype=np.int64, copy=True)
+    levels = np.array(topology.levels, dtype=np.int32, copy=True)
+    parents = np.array(topology.parent_slots, dtype=np.int32, copy=True)
+    children = np.array(topology.child_slots, dtype=np.int32, copy=True)
+    child_valid = np.array(topology.child_valid, dtype=np.bool_, copy=True)
     slot_by_id = {int(identifiers[slot]): int(slot) for slot in np.flatnonzero(allocated)}
     unknown = set(parent_ids.tolist()) - set(slot_by_id)
     if parent_ids.ndim != 1 or np.unique(parent_ids).size != parent_ids.size or unknown:
@@ -892,7 +904,12 @@ def coarsen_tensor_hp_cells(
     selected = np.asarray(
         sorted(
             (slot_by_id[int(value)] for value in parent_ids),
-            key=lambda slot: (roots[slot], paths[slot]),
+            key=lambda slot: (
+                _host_integer(
+                    roots[_host_integer(slot, "cell slot")], "root cell ID"
+                ),
+                _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
+            ),
         ),
         dtype=np.int32,
     )
@@ -900,8 +917,8 @@ def coarsen_tensor_hp_cells(
     relation_target = []
     relation_names = []
     selected_children: set[int] = set()
-    for parent in selected:
-        parent = int(parent)
+    for parent_value in selected.tolist():
+        parent = int(parent_value)
         local_children = children[parent, child_valid[parent]]
         if (
             local_children.size != topology.child_capacity
@@ -1380,9 +1397,11 @@ def balanced_hp_refinement_ids(
 ) -> tuple[Array, Array]:
     """Close a requested refinement set under the deterministic 2:1 face rule."""
 
-    identifiers = np.asarray(topology.cell_global_ids)
-    levels = np.asarray(topology.levels)
-    active = np.asarray(topology.active)
+    identifiers = np.asarray(topology.cell_global_ids, dtype=np.int64)
+    levels = np.asarray(topology.levels, dtype=np.int32)
+    active = np.asarray(topology.active, dtype=np.bool_)
+    roots = np.asarray(topology.root_cell_ids, dtype=np.int64)
+    paths = np.asarray(topology.path_codes, dtype=np.int64)
     slot_by_id = {int(identifiers[slot]): int(slot) for slot in np.flatnonzero(active)}
     marked = np.asarray(marked_cell_ids, dtype=np.int64)
     unknown = set(marked.tolist()) - set(slot_by_id)
@@ -1391,28 +1410,34 @@ def balanced_hp_refinement_ids(
     requested = {slot_by_id[int(value)] for value in marked}
     closure = set(requested)
     changed = True
-    owners = np.asarray(interfaces.owner_slots)
-    neighbors = np.asarray(interfaces.neighbor_slots)
-    valid = np.asarray(interfaces.valid)
+    owners = np.asarray(interfaces.owner_slots, dtype=np.int32)
+    neighbors = np.asarray(interfaces.neighbor_slots, dtype=np.int32)
+    valid = np.asarray(interfaces.valid, dtype=np.bool_)
     while changed:
         changed = False
-        for owner, neighbor in zip(owners[valid], neighbors[valid], strict=True):
+        for owner_value, neighbor_value in zip(
+            owners[valid].tolist(), neighbors[valid].tolist(), strict=True
+        ):
+            owner = int(owner_value)
+            neighbor = int(neighbor_value)
             if neighbor < 0:
                 continue
-            owner_target = levels[owner] + (1 if int(owner) in closure else 0)
-            neighbor_target = levels[neighbor] + (1 if int(neighbor) in closure else 0)
-            if owner_target > neighbor_target + 1 and int(neighbor) not in closure:
-                closure.add(int(neighbor))
+            owner_target = levels[owner] + (1 if owner in closure else 0)
+            neighbor_target = levels[neighbor] + (1 if neighbor in closure else 0)
+            if owner_target > neighbor_target + 1 and neighbor not in closure:
+                closure.add(neighbor)
                 changed = True
-            if neighbor_target > owner_target + 1 and int(owner) not in closure:
-                closure.add(int(owner))
+            if neighbor_target > owner_target + 1 and owner not in closure:
+                closure.add(owner)
                 changed = True
     np.asarray(
         sorted(
             requested,
             key=lambda slot: (
-                int(np.asarray(topology.root_cell_ids)[slot]),
-                int(np.asarray(topology.path_codes)[slot]),
+                _host_integer(
+                    roots[_host_integer(slot, "cell slot")], "root cell ID"
+                ),
+                _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
             ),
         ),
         dtype=np.int32,
@@ -1421,8 +1446,10 @@ def balanced_hp_refinement_ids(
         sorted(
             closure - requested,
             key=lambda slot: (
-                int(np.asarray(topology.root_cell_ids)[slot]),
-                int(np.asarray(topology.path_codes)[slot]),
+                _host_integer(
+                    roots[_host_integer(slot, "cell slot")], "root cell ID"
+                ),
+                _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
             ),
         ),
         dtype=np.int32,
@@ -1432,8 +1459,12 @@ def balanced_hp_refinement_ids(
             sorted(
                 closure,
                 key=lambda slot: (
-                    int(np.asarray(topology.root_cell_ids)[slot]),
-                    int(np.asarray(topology.path_codes)[slot]),
+                    _host_integer(
+                        roots[_host_integer(slot, "cell slot")], "root cell ID"
+                    ),
+                    _host_integer(
+                        paths[_host_integer(slot, "cell slot")], "path code"
+                    ),
                 ),
             ),
             dtype=np.int32,

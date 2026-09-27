@@ -56,7 +56,11 @@ def evaluate_sphere_observables(
         orbital_cut=orbital_cut,
     )
     cut = int(orbital_cut)
-    occupations = np.asarray(low_level.occupations, dtype=np.int32)
+    occupation_shape = low_level.occupations.shape
+    occupations = np.empty(
+        (occupation_shape[0], occupation_shape[1]), dtype=np.int32
+    )
+    occupations[...] = np.asarray(low_level.occupations)
     projections = np.arange(
         -prepared.sphere.twice_orbital_spin,
         prepared.sphere.twice_orbital_spin + 1,

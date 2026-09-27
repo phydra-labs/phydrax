@@ -396,7 +396,6 @@ def _relative_l2(candidate: Any, reference: Any, /) -> float:
     denominator = max(
         float(np.linalg.norm(reference_array.reshape(-1))), np.finfo(np.float64).tiny
     )
-    # ty: ignore[invalid-return-type]
     return numerator / denominator
 
 

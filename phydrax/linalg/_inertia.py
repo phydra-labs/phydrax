@@ -173,6 +173,8 @@ def factorization_inertia(
         raise ValueError("Bounded dense inertia dimension exceeds the declared limit.")
     matrix = materialize(operator, policy.materialization)
     requested = dict(policy.precision.requested)["certification"]
+    if not isinstance(requested, str):
+        raise RuntimeError("Validated inertia certification dtype is not a string.")
     certification_dtype = jnp.dtype(requested)
     if certification_dtype.itemsize < 4:
         raise ValueError("Inertia certification dtype must be float32 or wider.")

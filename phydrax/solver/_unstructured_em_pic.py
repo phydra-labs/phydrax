@@ -93,14 +93,20 @@ class UnstructuredElectromagneticPICPlan(StrictModule, NonTrainableState):
         if maxwell.plan.cochain.cell_counts[1] != maxwell_edges.shape[0]:
             raise ValueError("Maxwell degree-one capacity does not match topology.")
         edge_lookup = {
-            tuple(int(value) for value in edge): index
-            for index, edge in enumerate(maxwell_edges)
+            (
+                int(maxwell_edges[index, 0]),
+                int(maxwell_edges[index, 1]),
+            ): index
+            for index in range(maxwell_edges.shape[0])
         }
         current_to_maxwell = []
         current_to_maxwell_signs = []
-        for edge in np.asarray(current.edges, dtype=np.int32):
-            oriented = tuple(int(value) for value in edge)
-            canonical = tuple(sorted(oriented))
+        current_edges = np.asarray(current.edges, dtype=np.int32)
+        for edge_index in range(current_edges.shape[0]):
+            first = int(current_edges[edge_index, 0])
+            second = int(current_edges[edge_index, 1])
+            oriented = (first, second)
+            canonical = (first, second) if first <= second else (second, first)
             if canonical not in edge_lookup:
                 raise ValueError("Whitney edge is absent from the Maxwell cochain.")
             current_to_maxwell.append(edge_lookup[canonical])

@@ -55,7 +55,6 @@ def _integer_range(values: Any) -> dict[str, int]:
 
 def _planar_region(name: str, x0: float, x1: float) -> phx.geometry.PlanarMeshRegion:
     return phx.geometry.PlanarMeshRegion(
-        # ty: ignore[invalid-argument-type]
         np.asarray(((x0, 0.0), (x1, 0.0), (x1, 1.0), (x0, 1.0))),
         ((0, 1, 2, 3),),
         feature_id=name,

@@ -486,7 +486,6 @@ def _qualification(
     )
     nonfinite_plan = SmoothCompressibleD2VBodyForcingPlan(
         method,
-        # ty: ignore[invalid-argument-type]
         acceleration=(np.finfo(np.float64).max, 0.0),
     )
     negative_plan = SmoothCompressibleD2VBodyForcingPlan(

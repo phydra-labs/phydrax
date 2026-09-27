@@ -32,7 +32,6 @@ def _rectangle(
     feature_id: str,
 ) -> PlanarMeshRegion:
     return PlanarMeshRegion(
-        # ty: ignore[invalid-argument-type]
         np.asarray(
             (
                 (x_min, y_min),

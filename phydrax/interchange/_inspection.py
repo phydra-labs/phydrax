@@ -29,7 +29,9 @@ def _identifier(value: str, owner: str, /) -> str:
     return identifier
 
 
-def _readonly_array(value: ArrayLike, /, *, dtype: DTypeLike = None) -> NDArray:
+def _readonly_array(
+    value: ArrayLike, /, *, dtype: DTypeLike | None = None
+) -> NDArray:
     array = np.asarray(value, dtype=dtype)
     if array.dtype.hasobject:
         raise TypeError("Host inspection arrays cannot use object dtype.")

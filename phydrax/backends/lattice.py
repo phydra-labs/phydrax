@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from phydrax.ein import contract
 
@@ -111,7 +111,7 @@ class LatticeKernelCapabilities(StrictModule, NonTrainableState):
     def supports(self, operation: str, /) -> bool:
         return str(operation) in self.operations
 
-    def require(self, operation: str, dtype: object | None = None, /) -> None:
+    def require(self, operation: str, dtype: DTypeLike | None = None, /) -> None:
         requested = str(operation)
         if requested not in self.operations:
             raise LatticeKernelCapabilityError(
@@ -169,7 +169,7 @@ class LatticeProviderStatus(StrictModule, NonTrainableState):
     def provider_id(self) -> str:
         return self.capabilities.provider_id
 
-    def require(self, operation: str, dtype: object | None = None, /) -> None:
+    def require(self, operation: str, dtype: DTypeLike | None = None, /) -> None:
         self.capabilities.require(operation, dtype)
         if not self.available:
             raise LatticeKernelCapabilityError(

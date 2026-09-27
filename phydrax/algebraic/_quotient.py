@@ -888,7 +888,13 @@ def _prepare_numeric(
         )
     basis_lookup = {index: column for column, index in enumerate(basis_indices)}
     pivot_lookup = {index: row for row, index in enumerate(pivot_indices)}
-    monomial_lookup = {tuple(value): index for index, value in enumerate(monomials)}
+    monomial_lookup = {
+        tuple(
+            int(exponent)
+            for exponent in np.take(monomials, index, axis=0)
+        ): index
+        for index in range(monomials.shape[0])
+    }
     multiplication = np.zeros(
         (plan.variable_count, quotient_dimension, quotient_dimension),
         dtype=np.result_type(host_matrix, np.complex128),
@@ -898,7 +904,8 @@ def _prepare_numeric(
         increment = np.zeros((plan.variable_count,), dtype=np.int64)
         increment[variable] = 1
         for basis_column, monomial_index in enumerate(basis_indices):
-            product = tuple(monomials[monomial_index] + increment)
+            monomial = np.take(monomials, monomial_index, axis=0)
+            product = tuple(int(exponent) for exponent in monomial + increment)
             product_index = monomial_lookup.get(product)
             if product_index is None:
                 closure_valid = False

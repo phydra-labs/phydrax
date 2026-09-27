@@ -310,14 +310,17 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
     ) -> MoistAdjustmentResult:
         return self._adjust(pressure, total_water, specific_enthalpy, True)
 
-    def _arrays(self, a: ArrayLike, b: ArrayLike, c: ArrayLike) -> list[Array]:
+    def _arrays(
+        self, a: ArrayLike, b: ArrayLike, c: ArrayLike
+    ) -> tuple[Array, Array, Array]:
         a, b, c = jnp.asarray(a), jnp.asarray(b), jnp.asarray(c)
         dtype = jnp.result_type(a.dtype, b.dtype, c.dtype, jnp.float32)
-        return jnp.broadcast_arrays(
+        broadcasted = jnp.broadcast_arrays(
             jnp.asarray(a, dtype=dtype),
             jnp.asarray(b, dtype=dtype),
             jnp.asarray(c, dtype=dtype),
         )
+        return broadcasted[0], broadcasted[1], broadcasted[2]
 
     def _valid(self, constraint: Array, temperature: Array, qt: Array) -> Array:
         return (

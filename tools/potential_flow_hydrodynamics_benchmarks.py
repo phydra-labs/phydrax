@@ -61,9 +61,7 @@ def _case(*, depth: float | None, smoke: bool) -> Any:
     mesh = trimesh.creation.icosphere(subdivisions=0 if smoke else 1, radius=0.5)
     mesh.apply_translation((0.0, 0.0, -2.0))
     region = MeshRegion(
-        # ty: ignore[invalid-argument-type]
         np.asarray(mesh.vertices),
-        # ty: ignore[invalid-argument-type]
         np.asarray(mesh.faces, dtype=np.int32),
         feature_id="potential-flow-benchmark-sphere",
     )

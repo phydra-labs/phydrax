@@ -53,7 +53,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _readonly(
-    value: ArrayLike, name: str, /, *, dtype: npt.DTypeLike = None
+    value: ArrayLike, name: str, /, *, dtype: npt.DTypeLike | None = None
 ) -> np.ndarray:
     array = np.array(value, dtype=dtype, copy=True)
     if array.dtype.hasobject:

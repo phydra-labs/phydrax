@@ -187,15 +187,15 @@ def read_variable_patch_checkpoint(
             lower = np.asarray(arrays[f"{prefix}/lower"], dtype=np.int32)
             extent = np.asarray(arrays[f"{prefix}/extent"], dtype=np.int32)
             routes = np.asarray(arrays[f"{prefix}/route_indices"], dtype=np.int32)
-            boxes = tuple(
-                plan.topology.levels[level].boxes[bucket_index][lane]
-                for lane in np.flatnonzero(active)
-            )
-            if any(box is None for box in boxes):
-                raise ValueError(
-                    "Variable patch checkpoint active lane lost its logical box."
-                )
-            groups.append(boxes)
+            boxes = []
+            for lane in np.flatnonzero(active):
+                box = plan.topology.levels[level].boxes[bucket_index][int(lane)]
+                if box is None:
+                    raise ValueError(
+                        "Variable patch checkpoint active lane lost its logical box."
+                    )
+                boxes.append(box)
+            groups.append(tuple(boxes))
             expected_metadata = plan.topology.levels[level]
             if (
                 not np.array_equal(lower, expected_metadata.lower[bucket_index])

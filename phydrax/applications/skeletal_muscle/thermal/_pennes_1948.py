@@ -383,7 +383,9 @@ def _facet_mass(
 
 
 def _subdomain(base: IntegrationDomain, ids: tuple[int, ...]) -> IntegrationDomain:
-    positions = np.asarray([list(np.asarray(base.entity_indices)).index(x) for x in ids])
+    positions = np.asarray(
+        [list(np.asarray(base.entity_indices)).index(x) for x in ids], dtype=np.intp
+    )
     return IntegrationDomain(
         base.kind,
         np.asarray(base.entity_indices)[positions],

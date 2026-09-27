@@ -484,7 +484,9 @@ class TransportSupport(StrictModule):
         lookup = {int(identifier): i for i, identifier in enumerate(ids)}
         if any(int(identifier) not in lookup for identifier in selected):
             raise ValueError("Scope includes unknown or inactive mesh entities.")
-        rows = np.asarray([lookup[int(identifier)] for identifier in selected])
+        rows = np.asarray(
+            [lookup[int(identifier)] for identifier in selected], dtype=np.intp
+        )
         mask = np.zeros(self.positions.shape[0], dtype=np.bool_)
         mask[np.asarray(self.entity_vertices[dimension])[rows].ravel()] = True
         return mask

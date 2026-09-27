@@ -81,7 +81,10 @@ def test_so3_quadratics_split_into_scalar_and_traceless_casimir_blocks() -> None
     assert all(not block.evidence.irreducibility_proven for block in blocks)
 
     exponents = np.asarray(support.exponents)
-    diagonal = np.asarray([np.count_nonzero(row == 2) == 1 for row in exponents])
+    diagonal = np.asarray(
+        [np.count_nonzero(row == 2) == 1 for row in exponents],
+        dtype=np.bool_,
+    )
     scalar_vector = np.asarray(scalar.basis[:, 0])
     assert np.allclose(scalar_vector[~diagonal], 0.0, atol=1e-5)
     assert np.allclose(
