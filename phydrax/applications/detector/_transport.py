@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import math
-from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,8 +29,8 @@ from ._core import DetectorConditions, TransportTrackBank
 
 
 # (position, proper velocity, alive) per flattened track.
-_PropagationCarry: TypeAlias = tuple[Array, Array, Array]
-_PropagationHistory: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+type _PropagationCarry = tuple[Array, Array, Array]
+type _PropagationHistory = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class ChargedPropagationPlan(StrictModule, NonTrainableState):

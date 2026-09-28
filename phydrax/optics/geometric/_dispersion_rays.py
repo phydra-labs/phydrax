@@ -315,7 +315,7 @@ class DispersionRayPlan(StrictModule, NonTrainableState):
         return PreparedDispersionRay(self)
 
 
-_RayCarry: TypeAlias = tuple[
+type _RayCarry = tuple[
     Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
 ]
 

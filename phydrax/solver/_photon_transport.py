@@ -452,6 +452,7 @@ class PhotonTransportPlan(StrictModule, NonTrainableState):
         )
 
         def event_step(event: Array, carry: _Carry) -> _Carry:
+            """Advance one photon event and its secondary-stack transaction."""
             draws = _Draws(key, id_hi, id_lo, event)
             photon_energy = carry.energy
             majorant = self.cross_sections.majorant(photon_energy)

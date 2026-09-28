@@ -665,6 +665,10 @@ def _pairing_probe(
 ) -> tuple[Array, Array]:
     """One species' probe deposit, field advance, and relative Gauss defect.
 
+    The residual is certified above a charge-scaled floating-point floor. This
+    prevents a uniformly populated periodic probe, whose exact charge change is
+    zero, from dividing one rounding error by another.
+
     Module-level and compiled once per solver structure and probe shape: plans
     over the same prepared solver reuse the executable instead of dispatching
     the deposit and field update op by op at every preparation.
@@ -680,8 +684,15 @@ def _pairing_probe(
         step,
     )
     change = jnp.max(jnp.abs(deposited.end_charge - deposited.start_charge))
-    defect = jnp.max(jnp.abs(advanced.charge - deposited.end_charge)) / jnp.maximum(
-        change, jnp.finfo(start.dtype).tiny
+    error = jnp.max(jnp.abs(advanced.charge - deposited.end_charge))
+    charge_scale = (
+        deposited.continuity_scale * step
+        + jnp.max(jnp.abs(deposited.start_charge), initial=0.0)
+        + jnp.max(jnp.abs(deposited.end_charge), initial=0.0)
+    )
+    roundoff = 64.0 * jnp.finfo(start.dtype).eps * charge_scale
+    defect = jnp.maximum(error - roundoff, 0.0) / jnp.maximum(
+        jnp.maximum(change, roundoff), jnp.finfo(start.dtype).tiny
     )
     return defect, deposited.successful & jnp.isfinite(defect)
 
@@ -697,9 +708,10 @@ def deposit_gauss_pairing_defect(
     transfer; the field solver then advances a zero field carrying the start
     charge with that current. A paired solver's current-driven Gauss charge
     (`PICFieldAdvance.charge`, the field's own discrete divergence applied to
-    the current) lands exactly on the deposited end charge; charge the field
-    induces at conducting walls or in the medium is not a pairing defect. The
-    probes of all species are evaluated before one host read of the evidence.
+    the current) lands on the deposited end charge to the charge-scaled
+    floating-point floor; charge the field induces at conducting walls or in
+    the medium is not a pairing defect. The probes of all species are evaluated
+    before one host read of the evidence.
     """
     probes = []
     for index, value in enumerate(species):

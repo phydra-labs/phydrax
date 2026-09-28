@@ -1363,6 +1363,14 @@ class QEDCascadeProcess(AbstractPICProcess, NonTrainableState):
         context: PICProcessContext,
         /,
     ) -> PICProcessResult:
+        """Execute one atomic emission, transport, pair-creation, and ledger step.
+
+        This fused creation-stage transaction deliberately keeps optical-depth
+        renewal, identity-addressed allocation, recoil, pair lineage, capacity
+        refusal, and conservation ledgers in one deterministic order. Splitting
+        it across transformed helpers would permit partially committed banks or
+        alter event identities.
+        """
         state = context.state
         if not isinstance(state, QEDCascadeState):
             raise TypeError("The QED cascade requires its QEDCascadeState.")

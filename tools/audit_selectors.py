@@ -77,6 +77,8 @@ def _aliases(tree: ast.Module, /) -> dict[str, frozenset[object]]:
             target, value = node.targets[0], node.value
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             target, value = node.target, node.value
+        elif isinstance(node, ast.TypeAlias):
+            target, value = node.name, node.value
         if isinstance(target, ast.Name) and value is not None:
             members = _literal_members(value)
             if members:

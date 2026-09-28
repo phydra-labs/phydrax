@@ -952,7 +952,7 @@ class _Arrivals(StrictModule):
     dropped: Array
 
 
-_Carry: TypeAlias = tuple[_Lanes, _Tallies, Array, _Flags, _Arrivals]
+type _Carry = tuple[_Lanes, _Tallies, Array, _Flags, _Arrivals]
 
 
 def _lane_keys(
@@ -1078,6 +1078,13 @@ def _transport_one(
     root_key: PRNGKey,
     photon: OpticalPhotonState,
 ) -> tuple[OpticalTransportTallies, _Lanes, Array, Array, Array, Array, Array, _Arrivals]:
+    """Transport one photon bank through a bounded interaction scan.
+
+    Branch creation, identity-addressed draws, polarization-basis transport,
+    roulette, surface response, arrival allocation, and energy tallies stay in
+    one fused scan so capacity refusal cannot expose partially committed lanes
+    and the random-event address remains independent of batching.
+    """
     plan = prepared.plan
     medium = plan.medium
     surfaces = plan.surfaces
@@ -1151,6 +1158,7 @@ def _transport_one(
         )
 
     def step(carry: _Carry, interaction: Array) -> tuple[_Carry, Array]:
+        """Advance every live branch through one atomic optical interaction."""
         lanes_, tallies_, interaction_count, flags, arrivals = carry
         draw_index = interaction + 1
         hit = intersect_triangle_rays(

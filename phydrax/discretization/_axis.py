@@ -16,6 +16,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from .._dtype_names import canonical_dtype
 from .._fingerprint import canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
@@ -80,7 +81,7 @@ class AxisDiscretization(StrictModule):
         if not isinstance(domain, AxisDomain):
             raise TypeError("domain must be an AxisDomain.")
         basis = parse(basis, AxisBasis, "basis")
-        nodes_ = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
+        nodes_ = jnp.asarray(nodes, dtype=canonical_dtype(jnp.float64)).reshape((-1,))
         if nodes_.size == 0:
             raise ValueError("AxisDiscretization.nodes must be non-empty.")
         nodes_ = eqx.error_if(
@@ -91,7 +92,9 @@ class AxisDiscretization(StrictModule):
         weights = (
             None
             if quad_weights is None
-            else jnp.asarray(quad_weights, dtype=jnp.float64).reshape((-1,))
+            else jnp.asarray(quad_weights, dtype=canonical_dtype(jnp.float64)).reshape(
+                (-1,)
+            )
         )
         if weights is not None:
             if weights.shape != nodes_.shape:
@@ -302,21 +305,21 @@ class UniformAxisSpec(AbstractAxisSpec):
         self.periodic = bool(periodic)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         n = int(self.n)
 
         nodes = jnp.linspace(a_, b_, n, endpoint=bool(self.endpoint))
 
         if n == 1:
-            w = jnp.asarray([b_ - a_], dtype=jnp.float64)
+            w = jnp.asarray([b_ - a_], dtype=canonical_dtype(jnp.float64))
         else:
             if self.periodic or not self.endpoint:
                 dx = (b_ - a_) / float(n)
-                w = jnp.full((n,), dx, dtype=jnp.float64)
+                w = jnp.full((n,), dx, dtype=canonical_dtype(jnp.float64))
             else:
                 dx = (b_ - a_) / float(n - 1)
-                w = jnp.full((n,), dx, dtype=jnp.float64)
+                w = jnp.full((n,), dx, dtype=canonical_dtype(jnp.float64))
                 w = w.at[0].set(0.5 * dx)
                 w = w.at[-1].set(0.5 * dx)
 
@@ -345,11 +348,13 @@ class UniformCellAxisSpec(AbstractAxisSpec):
         self.periodic = bool(periodic)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         count = int(self.n)
         width = (b_ - a_) / float(count)
-        centers = a_ + (jnp.arange(count, dtype=jnp.float64) + 0.5) * width
+        centers = (
+            a_ + (jnp.arange(count, dtype=canonical_dtype(jnp.float64)) + 0.5) * width
+        )
         return AxisDiscretization(
             nodes=centers,
             quad_weights=jnp.full((count,), width),
@@ -396,8 +401,8 @@ class NonuniformCellAxisSpec(AbstractAxisSpec):
         self.periodic = bool(periodic)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         edges = a_ + (b_ - a_) * self.normalized_edges
         widths = jnp.diff(edges)
         centers = 0.5 * (edges[:-1] + edges[1:])
@@ -435,8 +440,8 @@ class NestedDyadicAxisSpec(AbstractAxisSpec):
         self.initial_level = int(initial_level)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         n = int(self.n)
         max_level = int(math.log2(n - 1))
         nodes = jnp.linspace(a_, b_, n, endpoint=True)
@@ -474,7 +479,7 @@ class NestedDyadicAxisSpec(AbstractAxisSpec):
 
 
 def _trapezoid_weights_from_active(nodes: Array, active: Array) -> Array:
-    nodes_ = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
+    nodes_ = jnp.asarray(nodes, dtype=canonical_dtype(jnp.float64)).reshape((-1,))
     active_ = jnp.asarray(active, dtype=jnp.bool_).reshape((-1,))
     active_nodes = nodes_[active_]
     if active_nodes.size == 1:
@@ -516,11 +521,13 @@ class FourierAxisSpec(AbstractAxisSpec):
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         n = int(self.n)
-        nodes = a_ + (b_ - a_) * (jnp.arange(n, dtype=jnp.float64) / float(n))
-        w = jnp.full((n,), (b_ - a_) / float(n), dtype=jnp.float64)
+        nodes = a_ + (b_ - a_) * (
+            jnp.arange(n, dtype=canonical_dtype(jnp.float64)) / float(n)
+        )
+        w = jnp.full((n,), (b_ - a_) / float(n), dtype=canonical_dtype(jnp.float64))
         return AxisDiscretization(
             nodes=nodes,
             quad_weights=w,
@@ -550,11 +557,13 @@ class SineAxisSpec(AbstractAxisSpec):
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         n = int(self.n)
-        nodes = a_ + (b_ - a_) * ((jnp.arange(n, dtype=jnp.float64) + 0.5) / float(n))
-        w = jnp.full((n,), (b_ - a_) / float(n), dtype=jnp.float64)
+        nodes = a_ + (b_ - a_) * (
+            (jnp.arange(n, dtype=canonical_dtype(jnp.float64)) + 0.5) / float(n)
+        )
+        w = jnp.full((n,), (b_ - a_) / float(n), dtype=canonical_dtype(jnp.float64))
         return AxisDiscretization(
             nodes=nodes,
             quad_weights=w,
@@ -585,16 +594,16 @@ class CosineAxisSpec(AbstractAxisSpec):
         self.n = _axis_count(n)
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         n = int(self.n)
         nodes = jnp.linspace(a_, b_, n, endpoint=True)
 
         if n == 1:
-            w = jnp.asarray([b_ - a_], dtype=jnp.float64)
+            w = jnp.asarray([b_ - a_], dtype=canonical_dtype(jnp.float64))
         else:
             dx = (b_ - a_) / float(n - 1)
-            w = jnp.full((n,), dx, dtype=jnp.float64)
+            w = jnp.full((n,), dx, dtype=canonical_dtype(jnp.float64))
             w = w.at[0].set(0.5 * dx)
             w = w.at[-1].set(0.5 * dx)
 
@@ -635,8 +644,8 @@ class LegendreAxisSpec(AbstractAxisSpec):
         self.kind = kind
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
-        a_ = jnp.asarray(a, dtype=jnp.float64).reshape(())
-        b_ = jnp.asarray(b, dtype=jnp.float64).reshape(())
+        a_ = jnp.asarray(a, dtype=canonical_dtype(jnp.float64)).reshape(())
+        b_ = jnp.asarray(b, dtype=canonical_dtype(jnp.float64)).reshape(())
         n = int(self.n)
 
         rule = legendre_rule_data(n, self.kind, dtype=a_.dtype)
@@ -663,7 +672,9 @@ def broadcasted_grid(coords: tuple[Array, ...], /) -> Array:
     If `coords=(x0, x1, ..., x{d-1})` with shapes `(n0,)`, `(n1,)`, ..., returns a
     grid array with shape `(n0, n1, ..., n{d-1}, d)`.
     """
-    coords_ = tuple(jnp.asarray(c, dtype=jnp.float64).reshape((-1,)) for c in coords)
+    coords_ = tuple(
+        jnp.asarray(c, dtype=canonical_dtype(jnp.float64)).reshape((-1,)) for c in coords
+    )
     d = len(coords_)
     if d == 0:
         raise ValueError("coords must be non-empty.")
@@ -692,7 +703,7 @@ def sdf_mask_from_adf(
     d = grid.shape[-1]
     pts = grid.reshape((-1, d))
     sdf = jax.vmap(adf)(pts)
-    inside = jnp.asarray(sdf, dtype=jnp.float64) < -float(inside_tol)
+    inside = jnp.asarray(sdf, dtype=canonical_dtype(jnp.float64)) < -float(inside_tol)
     return inside.reshape(grid.shape[:-1])
 
 
@@ -714,15 +725,19 @@ def cut_cell_geometry_weight_from_adf(
         raise ValueError("cut-cell probe order must be positive.")
     if len(coords) != len(base_weights):
         raise ValueError("coords and base_weights must have the same length.")
-    bounds_ = jnp.asarray(bounds, dtype=jnp.float64)
+    bounds_ = jnp.asarray(bounds, dtype=canonical_dtype(jnp.float64))
     if bounds_.shape != (2, len(coords)):
         raise ValueError("bounds must have shape (2, num_axes).")
 
-    fractions = (jnp.arange(probe_order, dtype=jnp.float64) + 0.5) / probe_order
+    fractions = (
+        jnp.arange(probe_order, dtype=canonical_dtype(jnp.float64)) + 0.5
+    ) / probe_order
     probe_axes: list[Array] = []
     cell_widths: list[Array] = []
     for axis_index, coordinate in enumerate(coords):
-        values = jnp.asarray(coordinate, dtype=jnp.float64).reshape((-1,))
+        values = jnp.asarray(coordinate, dtype=canonical_dtype(jnp.float64)).reshape(
+            (-1,)
+        )
         permutation = jnp.argsort(values)
         sorted_values = values[permutation]
         midpoints = 0.5 * (sorted_values[:-1] + sorted_values[1:])
@@ -751,8 +766,8 @@ def cut_cell_geometry_weight_from_adf(
     probe_axes_to_reduce = tuple(range(1, 2 * len(coords), 2))
     occupancy = jnp.mean(probe_inside.astype("float64"), axis=probe_axes_to_reduce)
 
-    cell_measure = jnp.asarray(1.0, dtype=jnp.float64)
-    quadrature_measure = jnp.asarray(1.0, dtype=jnp.float64)
+    cell_measure = jnp.asarray(1.0, dtype=canonical_dtype(jnp.float64))
+    quadrature_measure = jnp.asarray(1.0, dtype=canonical_dtype(jnp.float64))
     for axis_index, (width, base_weight) in enumerate(
         zip(cell_widths, base_weights, strict=True)
     ):
@@ -760,14 +775,14 @@ def cut_cell_geometry_weight_from_adf(
         shape[axis_index] = width.shape[0]
         cell_measure = cell_measure * width.reshape(tuple(shape))
         quadrature_measure = quadrature_measure * jnp.asarray(
-            base_weight, dtype=jnp.float64
+            base_weight, dtype=canonical_dtype(jnp.float64)
         ).reshape(tuple(shape))
 
     mask = jnp.asarray(center_mask, dtype=jnp.bool_)
     represented_measure = jnp.where(mask, occupancy * cell_measure, 0.0)
     estimate = jnp.sum(represented_measure)
     normalized_measure = represented_measure * (
-        jnp.asarray(target_measure, dtype=jnp.float64)
+        jnp.asarray(target_measure, dtype=canonical_dtype(jnp.float64))
         / jnp.maximum(estimate, jnp.finfo(represented_measure.dtype).tiny)
     )
     return normalized_measure / jnp.maximum(

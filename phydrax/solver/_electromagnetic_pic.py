@@ -1407,6 +1407,13 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
     def step_detailed(
         self, state: ElectromagneticPICState, step_size: ArrayLike, /
     ) -> ElectromagneticPICStepResult:
+        """Execute one atomic PIC transaction in its physical lifecycle order.
+
+        Gather, push, momentum/creation/population processes, deposition, field
+        advance, Gauss restoration, ledgers, evidence, and commit/rollback stay
+        centralized so no extracted phase can observe or publish a partially
+        accepted state. Numerical branch bodies remain in their owning helpers.
+        """
         if not isinstance(state, ElectromagneticPICState):
             raise TypeError("state must be ElectromagneticPICState.")
         dt = jnp.asarray(step_size, dtype=state.time.dtype).reshape(())

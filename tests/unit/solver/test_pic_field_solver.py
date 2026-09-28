@@ -76,6 +76,13 @@ def _initial_state(pic: Any, step_size: Any) -> Any:
     )
 
 
+def test_pairing_probe_uses_a_charge_scale_when_capacity_cancels_change() -> None:
+    solver = _reduced_solver(64)
+    species = (_species(512, -1.0, "electrons", 1, 0),)
+    pic = phx.solver.ElectromagneticPICPlan(solver, species=species)
+    assert pic.pairing_defect < 1.0e-12
+
+
 def test_order_one_gather_matches_in_cell_difference_of_the_interpolant() -> None:
     solver = _reduced_solver(16)
     x = (jnp.arange(16) + 0.5) / 16

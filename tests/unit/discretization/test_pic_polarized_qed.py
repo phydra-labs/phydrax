@@ -152,8 +152,14 @@ def _airy_terms(z: float) -> tuple[float, float, float]:
         # Every term is below e^{−1800}.
         return 0.0, 0.0, 0.0
     ai, aip, _, _ = airy(np.float64(z))
-    # Beyond z + 60 the integrand is below e^{−300}.
-    integral = quad(lambda t: airy(t)[0], z, z + 60.0, epsabs=0.0, epsrel=1e-13)[0]
+    integral = quad(
+        lambda t: airy(t)[0],
+        z,
+        np.inf,
+        epsabs=1.0e-300,
+        epsrel=1.0e-11,
+        limit=500,
+    )[0]
     return integral, ai / math.sqrt(z), 2.0 * aip / z
 
 
@@ -186,10 +192,21 @@ def _sk_pairs(
     return 0.25 * (a * integral + b * ai + c * aip)
 
 
+_REFERENCE_NODES, _REFERENCE_WEIGHTS = np.polynomial.legendre.leggauss(64)
+
+
+def _panel_integral(function: Any, lower: float, upper: float, /) -> float:
+    half = 0.5 * (upper - lower)
+    midpoint = 0.5 * (upper + lower)
+    points = midpoint + half * _REFERENCE_NODES
+    values = np.asarray([function(float(point)) for point in points])
+    return float(half * np.dot(_REFERENCE_WEIGHTS, values))
+
+
 def _integrate_range(function: Any, lower: float, upper: float) -> float:
     breaks = np.linspace(lower, upper, 25)
     return sum(
-        quad(function, float(a), float(b), epsabs=0.0, epsrel=1e-10, limit=200)[0]
+        _panel_integral(function, float(a), float(b))
         for a, b in zip(breaks[:-1], breaks[1:], strict=True)
     )
 
@@ -208,7 +225,7 @@ def _integrate(function: Any, chi: float) -> float:
     )
     head = float(breaks[0])
     return 3.0 * head * function(head) + sum(
-        quad(function, float(a), float(b), epsabs=0.0, epsrel=1e-10, limit=200)[0]
+        _panel_integral(function, float(a), float(b))
         for a, b in zip(breaks[:-1], breaks[1:], strict=True)
     )
 

@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax._strict import StrictModule
 from phydrax.discretization import pic
 from phydrax.units import CHARGE, UnitDefinition
 
@@ -38,7 +37,7 @@ scale = phx.ElectromagneticScaleContract.code_units(
 )
 
 
-class RotatingField(StrictModule):
+class RotatingField(phx.StrictModule):
     amplitude: float = eqx.field(static=True)
 
     @property

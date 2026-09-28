@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from .._dtype_names import canonical_dtype
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -247,7 +248,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
     ) -> "PreparedTensorGrid":
         if not isinstance(plan, TensorGridPlan):
             raise TypeError("plan must be a TensorGridPlan.")
-        limits = jnp.asarray(bounds, dtype=jnp.float64)
+        limits = jnp.asarray(bounds, dtype=canonical_dtype(jnp.float64))
         if limits.shape != (2, len(plan.axes)):
             raise ValueError(
                 f"bounds must have shape {(2, len(plan.axes))}; got {limits.shape}."

@@ -1649,6 +1649,13 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Non-selector aliases introduced in this release use canonical Python 3.12
+  `type` statements. Closed `Literal` selectors retain runtime
+  `typing.TypeAlias` values so `typing.get_args` remains the canonical source
+  of members; the selector and structural-contract audits now recognize both
+  syntaxes. CSR and PSATD preparation are split into validation,
+  geometry/execution, and kernel phases, and distributed PIC no longer
+  constructs a fresh inner `jax.jit` wrapper on each map call.
 - `SpectralHuygensBoxPlan` samples each tangential `E` component at its own
   staggered edge points (no interpolation) and interpolates the paired `H`
   across the face with the fourth-order stencil `(−1, 9, 9, −1)/16`: the
@@ -2316,6 +2323,22 @@
   triangle-intersection implementations, and dense remesh transfer matrices.
 
 ### Fixed
+- The PIC deposit↔Gauss preparation certificate no longer divides numerical
+  roundoff by an almost-zero charge change when a high-capacity periodic probe
+  uniformly fills the grid. It subtracts the same charge-scaled roundoff floor
+  used by runtime continuity evidence; a 512-slot probe on 64 cells now certifies
+  at roundoff while deliberately nonconserving deposits are still refused.
+- Public radiation documentation and the QED cascade example now import bounded
+  resources and `StrictModule` from public facades. Generated external-provider
+  scripts use explicit NumPy dtypes, and the Geant4 electromagnetic constructor
+  is selected by a fail-closed exhaustive branch instead of dynamic attribute
+  lookup.
+- Axis domains, axis materialization, tensor-grid bounds, and broadcasted
+  coordinates request JAX's canonical available real precision rather than
+  forcing unavailable float64 values. x64-disabled executions now remain
+  float32 without precision-truncation warnings. Cherenkov regime preparation
+  also validates and caches continuum permeability once instead of synchronizing
+  once per frequency during evaluation.
 - The rank-deficient height-function fallback regression evaluated a
   `StructuredPLICReconstruction` of one volume-fraction field against a
   different `alpha`, so the reconstruction's Youngs-supported mixed cells fell

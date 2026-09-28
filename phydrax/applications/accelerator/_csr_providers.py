@@ -37,10 +37,10 @@ for index, (length, angle, e1, e2) in enumerate(document["elements"]):
     else:
         cell.append(SBend(l=length, angle=angle, e1=e1, e2=e2, eid="b%d" % index))
 lattice = MagneticLattice(cell)
-coordinates = np.asarray(document["coordinates"], dtype=float)
+coordinates = np.asarray(document["coordinates"], dtype=np.float64)
 particles = ParticleArray(n=coordinates.shape[0])
 particles.rparticles[:] = coordinates.T
-particles.q_array[:] = np.asarray(document["charges"], dtype=float)
+particles.q_array[:] = np.asarray(document["charges"], dtype=np.float64)
 particles.E = document["energy_GeV"]
 csr = CSR()
 csr.traj_step = document["trajectory_step"]
@@ -61,7 +61,7 @@ from csr3d.wake import green_mesh
 from csr3d.convolution import fftconvolve3
 
 document = json.load(open(sys.argv[1]))
-density = np.asarray(document["density"], dtype=float)
+density = np.asarray(document["density"], dtype=np.float64)
 deltas = tuple(document["spacing"])
 green = green_mesh(density.shape, deltas, rho=document["radius"], gamma=document["gamma"], component="s")
 slope = np.gradient(density, deltas[2], axis=2)

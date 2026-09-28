@@ -726,6 +726,8 @@ class CherenkovRegimePlan(StrictModule):
     audit: CompatibleMaxwellDispersionAudit
     velocity: Array
     angular_frequencies: Array
+    continuum_permittivity: Array
+    continuum_permeability: Array
     azimuth_count: int = eqx.field(static=True)
     vacuum_speed_of_light: float = eqx.field(static=True)
     termination: NonlinearTermination
@@ -771,6 +773,21 @@ class CherenkovRegimePlan(StrictModule):
         self.azimuth_count = count
         self.vacuum_speed_of_light = light
         self.termination = selected
+        tensors = tuple(
+            self._continuum_tensors(jnp.asarray(value, dtype=jnp.float64))
+            for value in omega
+        )
+        permittivity = jnp.stack(tuple(value[0] for value in tensors))
+        permeability = jnp.stack(tuple(value[1] for value in tensors))
+        permeability_host = np.asarray(jax.device_get(permeability))
+        scalar = permeability_host[:, 0, 0]
+        isotropic = scalar[:, None, None] * np.eye(3, dtype=permeability_host.dtype)
+        if not np.allclose(permeability_host, isotropic, rtol=1.0e-10, atol=1.0e-14):
+            raise ValueError(
+                "Cherenkov continuum index requires an isotropic permeability."
+            )
+        self.continuum_permittivity = permittivity
+        self.continuum_permeability = jnp.asarray(scalar)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "cherenkov-regime-plan",
@@ -867,19 +884,8 @@ class CherenkovRegimePlan(StrictModule):
         radius = pi / jnp.max(audit.spacing)
         branch_count = audit.local_dimension // 2
         method = TOMS748()
-        tensors = [self._continuum_tensors(omega) for omega in self.angular_frequencies]
-        mu = []
-        for permittivity, permeability in tensors:
-            scalar = permeability[0, 0]
-            if not bool(
-                jnp.allclose(permeability, scalar * jnp.eye(3), rtol=1e-10, atol=1e-14)
-            ):
-                raise ValueError(
-                    "Cherenkov continuum index requires an isotropic permeability."
-                )
-            mu.append(scalar)
-        permittivities = jnp.stack(tuple(value[0] for value in tensors))
-        permeabilities = jnp.stack(mu)
+        permittivities = self.continuum_permittivity
+        permeabilities = self.continuum_permeability
         axis = self._frame()[0]
 
         def physical(omega_index: Array, azimuth: Array, branch: Array) -> Array:

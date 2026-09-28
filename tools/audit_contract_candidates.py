@@ -63,12 +63,18 @@ class Candidate:
 def _literal_aliases(tree: ast.Module, /) -> set[str]:
     aliases: set[str] = set()
     for node in tree.body:
-        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
+        value = (
+            node.value
+            if isinstance(node, ast.Assign | ast.AnnAssign | ast.TypeAlias)
+            else None
+        )
         target = (
             node.targets[0]
             if isinstance(node, ast.Assign) and len(node.targets) == 1
             else node.target
             if isinstance(node, ast.AnnAssign)
+            else node.name
+            if isinstance(node, ast.TypeAlias)
             else None
         )
         if (

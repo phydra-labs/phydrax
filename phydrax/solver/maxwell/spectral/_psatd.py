@@ -42,7 +42,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from itertools import product
 from math import factorial, pi
-from typing import Any, Literal, NamedTuple, TypeAlias
+from typing import Any, assert_never, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -694,6 +694,166 @@ def _three(values: Sequence[int] | None, name: str, /) -> tuple[int, int, int] |
     return (result[0], result[1], result[2])
 
 
+class _SpectralGridMetadata(NamedTuple):
+    counts: tuple[int, int, int]
+    spacing: tuple[float, float, float]
+    origin: tuple[float, float, float]
+
+
+class _SpectralExecution(NamedTuple):
+    stencil_order: int | None
+    current_intervals: int
+    galilean_velocity: tuple[float, float, float]
+    subdomains: tuple[int, int, int] | None
+    guard_cells: tuple[int, int, int] | None
+
+
+def _spectral_grid_metadata(bridge: StructuredCochainBridge, /) -> _SpectralGridMetadata:
+    if not isinstance(bridge, StructuredCochainBridge):
+        raise TypeError("bridge must be a StructuredCochainBridge.")
+    axes = bridge.grid.structured_axes
+    if bridge.dimension != 3 or any(not axis.periodic for axis in axes):
+        raise ValueError("Spectral Maxwell requires a periodic three-dimensional grid.")
+    widths = tuple(np.asarray(axis.interval_widths, dtype=np.float64) for axis in axes)
+    if any(not np.allclose(value, value[0], rtol=1e-12, atol=0.0) for value in widths):
+        raise ValueError("Spectral Maxwell requires uniform axes.")
+    counts = tuple(int(axis.interval_centers.size) for axis in axes)
+    return _SpectralGridMetadata(
+        (counts[0], counts[1], counts[2]),
+        (float(widths[0][0]), float(widths[1][0]), float(widths[2][0])),
+        (
+            float(axes[0].bounds[0]),
+            float(axes[1].bounds[0]),
+            float(axes[2].bounds[0]),
+        ),
+    )
+
+
+def _spectral_execution(
+    variant: SpectralMaxwellVariant,
+    time_dependency: SpectralTimeDependency,
+    charge_conservation: SpectralChargeConservation,
+    stencil: SpectralStencil,
+    stencil_order: int | None,
+    decomposition: SpectralDecomposition,
+    grid: SpectralGrid,
+    counts: tuple[int, int, int],
+    speed: float,
+    galilean_velocity: Sequence[float] | None,
+    current_substeps: int | None,
+    subdomains: Sequence[int] | None,
+    guard_cells: Sequence[int] | None,
+    /,
+) -> _SpectralExecution:
+    order = _stencil_order(stencil, stencil_order)
+    intervals = _current_intervals(time_dependency, current_substeps)
+    velocity = _galilean_velocity(variant, galilean_velocity, speed)
+    blocks, guards = _local_blocks(
+        decomposition,
+        order,
+        counts,
+        _three(subdomains, "subdomains"),
+        _three(guard_cells, "guard_cells"),
+    )
+    local_counts = (
+        counts
+        if blocks is None or guards is None
+        else tuple(
+            count // block + 2 * guard
+            for count, block, guard in zip(counts, blocks, guards, strict=True)
+        )
+    )
+    _require_charge_conservation(
+        charge_conservation,
+        variant,
+        time_dependency,
+        decomposition,
+        grid,
+        local_counts,
+    )
+    if variant == "averaged-galilean" and time_dependency == "linear-j":
+        raise ValueError(
+            "averaged-galilean fields are defined for piecewise-constant currents; "
+            "use constant-j or multi-j."
+        )
+    return _SpectralExecution(order, intervals, velocity, blocks, guards)
+
+
+def _validate_spectral_absorber(
+    absorber: SpectralAbsorber,
+    pml: SpectralPMLPlan | None,
+    variant: SpectralMaxwellVariant,
+    counts: tuple[int, int, int],
+    stencil_order: int | None,
+    /,
+) -> None:
+    match absorber:
+        case "none":
+            if pml is not None:
+                raise ValueError("A PML plan requires absorber='psatd-pml'.")
+        case "psatd-pml":
+            if not isinstance(pml, SpectralPMLPlan):
+                raise TypeError("absorber='psatd-pml' requires a SpectralPMLPlan.")
+            if variant != "standard":
+                raise ValueError(
+                    "The PSATD PML is standard-only; Galilean coordinates with a "
+                    "PML are refused."
+                )
+            if any(
+                2 * layer >= count
+                for layer, count in zip(pml.thickness, counts, strict=True)
+            ):
+                raise ValueError("PML layers leave no interior.")
+            if stencil_order is None and max(pml.thickness) < 2:
+                raise ValueError(
+                    "An infinite-order PSATD PML confines its layer charge to "
+                    "the two outermost planes of its thickest layer, which must "
+                    "span at least two cells."
+                )
+        case _:
+            assert_never(absorber)
+
+
+def _validated_spectral_observers(
+    observers: Sequence[SpectralHuygensBoxPlan],
+    variant: SpectralMaxwellVariant,
+    grid: SpectralGrid,
+    pml: SpectralPMLPlan | None,
+    counts: tuple[int, int, int],
+    permittivity: float,
+    permeability: float,
+    /,
+) -> tuple[SpectralHuygensBoxPlan, ...]:
+    values = tuple(observers)
+    if any(not isinstance(value, SpectralHuygensBoxPlan) for value in values):
+        raise TypeError("observers must be SpectralHuygensBoxPlan instances.")
+    if values and variant != "standard":
+        raise ValueError("Huygens sampling requires the standard (lab-frame) variant.")
+    if values and grid != "staggered":
+        raise ValueError(
+            "Huygens sampling requires grid='staggered': the collocated half-cell "
+            "current centering leaves current on every Huygens surface."
+        )
+    for box in values:
+        limit = (0, 0, 0) if pml is None else tuple(value + 2 for value in pml.thickness)
+        if any(
+            low < layer or high > count - layer
+            for low, high, layer, count in zip(
+                box.lower, box.upper, limit, counts, strict=True
+            )
+        ):
+            raise ValueError(
+                "Huygens box must lie inside the grid interior, two cells clear "
+                "of any absorbing layer."
+            )
+        if (
+            box.exterior.permittivity != permittivity
+            or box.exterior.permeability != permeability
+        ):
+            raise ValueError("Huygens exterior must be the solver's vacuum medium.")
+    return values
+
+
 class SpectralMaxwellPlan(StrictModule, NonTrainableState):
     """Declared Cartesian PSATD configuration on a periodic uniform 3-D grid.
 
@@ -750,8 +910,6 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         permeability: float = 1.0,
         topology: SpectralMeshTopology | None = None,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be a StructuredCochainBridge.")
         variant = parse(variant, SpectralMaxwellVariant, "variant")
         time_dependency = parse(
             time_dependency, SpectralTimeDependency, "time_dependency"
@@ -763,118 +921,48 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         decomposition = parse(decomposition, SpectralDecomposition, "decomposition")
         grid = parse(grid, SpectralGrid, "grid")
         absorber = parse(absorber, SpectralAbsorber, "absorber")
-        axes = bridge.grid.structured_axes
-        if bridge.dimension != 3 or any(not axis.periodic for axis in axes):
-            raise ValueError(
-                "Spectral Maxwell requires a periodic three-dimensional grid."
-            )
-        widths = tuple(
-            np.asarray(axis.interval_widths, dtype=np.float64) for axis in axes
-        )
-        if any(
-            not np.allclose(value, value[0], rtol=1e-12, atol=0.0) for value in widths
-        ):
-            raise ValueError("Spectral Maxwell requires uniform axes.")
-        counts = tuple(axis.interval_centers.size for axis in axes)
+        metadata = _spectral_grid_metadata(bridge)
         epsilon, mu = float(permittivity), float(permeability)
         if not (np.isfinite(epsilon) and epsilon > 0.0 and np.isfinite(mu) and mu > 0.0):
             raise ValueError("permittivity and permeability must be finite and positive.")
-        speed = 1.0 / np.sqrt(epsilon * mu)
-        order = _stencil_order(stencil, stencil_order)
-        intervals = _current_intervals(time_dependency, current_substeps)
-        velocity = _galilean_velocity(variant, galilean_velocity, speed)
-        blocks, guards = _local_blocks(
-            decomposition,
-            order,
-            counts,
-            _three(subdomains, "subdomains"),
-            _three(guard_cells, "guard_cells"),
-        )
-        _require_charge_conservation(
-            charge_conservation,
+        execution = _spectral_execution(
             variant,
             time_dependency,
+            charge_conservation,
+            stencil,
+            stencil_order,
             decomposition,
             grid,
-            counts
-            if blocks is None or guards is None
-            else tuple(
-                count // block + 2 * guard
-                for count, block, guard in zip(counts, blocks, guards, strict=True)
-            ),
+            metadata.counts,
+            1.0 / np.sqrt(epsilon * mu),
+            galilean_velocity,
+            current_substeps,
+            subdomains,
+            guard_cells,
         )
-        if variant == "averaged-galilean" and time_dependency == "linear-j":
-            raise ValueError(
-                "averaged-galilean fields are defined for piecewise-constant currents; "
-                "use constant-j or multi-j."
-            )
-        observer_values = tuple(observers)
-        if any(
-            not isinstance(value, SpectralHuygensBoxPlan) for value in observer_values
-        ):
-            raise TypeError("observers must be SpectralHuygensBoxPlan instances.")
-        if observer_values and variant != "standard":
-            raise ValueError(
-                "Huygens sampling requires the standard (lab-frame) variant."
-            )
-        if observer_values and grid != "staggered":
-            # The collocated grid moves each deposited edge current to the nodes by
-            # an exact half-cell spectral shift, whose Dirichlet tails put current
-            # on every node along the current's axis: no surface is current-free.
-            raise ValueError(
-                "Huygens sampling requires grid='staggered': the collocated "
-                "half-cell current centering leaves current on every Huygens surface."
-            )
-        match absorber:
-            case "none":
-                if pml is not None:
-                    raise ValueError("A PML plan requires absorber='psatd-pml'.")
-            case "psatd-pml":
-                if not isinstance(pml, SpectralPMLPlan):
-                    raise TypeError("absorber='psatd-pml' requires a SpectralPMLPlan.")
-                if variant != "standard":
-                    raise ValueError(
-                        "The PSATD PML is standard-only; Galilean coordinates with a "
-                        "PML are refused."
-                    )
-                if any(
-                    2 * layer >= count
-                    for layer, count in zip(pml.thickness, counts, strict=True)
-                ):
-                    raise ValueError("PML layers leave no interior.")
-                if order is None and max(pml.thickness) < 2:
-                    raise ValueError(
-                        "An infinite-order PSATD PML confines its layer charge to "
-                        "the two outermost planes of its thickest layer, which must "
-                        "span at least two cells."
-                    )
-            case _:
-                raise ValueError("absorber is invalid.")
-        for box in observer_values:
-            # The fourth-order H stencil reaches two node indices below and one
-            # above each face; it must stay out of the absorbing layers.
-            limit = (
-                (0, 0, 0) if pml is None else tuple(value + 2 for value in pml.thickness)
-            )
-            if any(
-                low < layer or high > count - layer
-                for low, high, layer, count in zip(
-                    box.lower, box.upper, limit, counts, strict=True
-                )
-            ):
-                raise ValueError(
-                    "Huygens box must lie inside the grid interior, two cells clear "
-                    "of any absorbing layer."
-                )
-            if box.exterior.permittivity != epsilon or box.exterior.permeability != mu:
-                raise ValueError("Huygens exterior must be the solver's vacuum medium.")
+        _validate_spectral_absorber(
+            absorber,
+            pml,
+            variant,
+            metadata.counts,
+            execution.stencil_order,
+        )
+        observer_values = _validated_spectral_observers(
+            observers,
+            variant,
+            grid,
+            pml,
+            metadata.counts,
+            epsilon,
+            mu,
+        )
         antenna_values = _require_antennas(
             antennas,
             bridge,
             time_dependency,
             decomposition,
             observer_values,
-            velocity,
+            execution.galilean_velocity,
             epsilon,
             mu,
         )
@@ -886,27 +974,23 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         self.time_dependency = time_dependency
         self.charge_conservation = charge_conservation
         self.stencil = stencil
-        self.stencil_order = order
+        self.stencil_order = execution.stencil_order
         self.decomposition = decomposition
         self.grid = grid
         self.absorber = absorber
-        self.galilean_velocity = velocity
-        self.current_intervals = intervals
-        self.subdomains = blocks
-        self.guard_cells = guards
+        self.galilean_velocity = execution.galilean_velocity
+        self.current_intervals = execution.current_intervals
+        self.subdomains = execution.subdomains
+        self.guard_cells = execution.guard_cells
         self.pml = pml
         self.observers = observer_values
         self.antennas = antenna_values
         self.permittivity = epsilon
         self.permeability = mu
         self.topology = topology_
-        self.counts = (counts[0], counts[1], counts[2])
-        self.spacing = (float(widths[0][0]), float(widths[1][0]), float(widths[2][0]))
-        self.origin = (
-            float(axes[0].bounds[0]),
-            float(axes[1].bounds[0]),
-            float(axes[2].bounds[0]),
-        )
+        self.counts = metadata.counts
+        self.spacing = metadata.spacing
+        self.origin = metadata.origin
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "spectral-maxwell-plan",
@@ -915,14 +999,18 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
                 "time_dependency": time_dependency,
                 "charge_conservation": charge_conservation,
                 "stencil": stencil,
-                "stencil_order": order,
+                "stencil_order": execution.stencil_order,
                 "decomposition": decomposition,
                 "grid": grid,
                 "absorber": absorber,
-                "galilean_velocity": list(velocity),
-                "current_intervals": intervals,
-                "subdomains": None if blocks is None else list(blocks),
-                "guard_cells": None if guards is None else list(guards),
+                "galilean_velocity": list(execution.galilean_velocity),
+                "current_intervals": execution.current_intervals,
+                "subdomains": (
+                    None if execution.subdomains is None else list(execution.subdomains)
+                ),
+                "guard_cells": (
+                    None if execution.guard_cells is None else list(execution.guard_cells)
+                ),
                 "pml": None if pml is None else pml.plan_id,
                 "observers": [value.plan_id for value in observer_values],
                 "antennas": [value.source_id for value in antenna_values],

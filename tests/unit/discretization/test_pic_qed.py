@@ -69,7 +69,25 @@ def _k(order: float, x: float) -> float:
 
 
 def _tail(order: float, x: float) -> float:
-    return quad(lambda t: _k(order, t), x, np.inf, epsabs=0.0, epsrel=1e-12, limit=200)[0]
+    if x < 1.0:
+        total = math.pi / (2.0 * math.cos(0.5 * math.pi * order))
+        missing = quad(
+            lambda s: 3.0 * x * s * s * _k(order, x * s**3),
+            0.0,
+            1.0,
+            epsabs=1.0e-14,
+            epsrel=1.0e-11,
+            limit=200,
+        )[0]
+        return total - missing
+    return quad(
+        lambda t: _k(order, t),
+        x,
+        np.inf,
+        epsabs=0.0,
+        epsrel=1.0e-11,
+        limit=200,
+    )[0]
 
 
 def _compton_density(chi: float, xi: float) -> float:

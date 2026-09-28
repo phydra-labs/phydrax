@@ -823,6 +823,12 @@ class NonlinearComptonPlan(StrictModule, NonTrainableState):
         constant fields, the default); ``grid_cutoff_frequency`` enables the
         scale-separation check against a field grid. The spin model requires
         the polarization vectors ``spin[N, 3]`` (``|S| ≤ 1``).
+
+        The subcycle remains one fused kernel deliberately: optical-depth
+        renewal, recoil, polarization, event addressing, and ledger updates
+        must commit in one deterministic order. Splitting those branch bodies
+        across separately transformed helpers would change RNG/event ordering
+        or retain duplicate per-particle intermediates.
         """
         u0 = jnp.asarray(proper_velocity, dtype=jnp.float64)
         e = jnp.asarray(electric, dtype=jnp.float64)

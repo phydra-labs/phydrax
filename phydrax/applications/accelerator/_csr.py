@@ -1171,6 +1171,297 @@ class _Constants(NamedTuple):
     longitudinal_sign: float
 
 
+class _CSRRequest(NamedTuple):
+    model: CSRModel
+    resources: CSRResources
+    rest_energy: float
+    momentum: float
+    gamma: float
+    beta: float
+    dimension: int
+    smoothing: tuple[float, ...]
+    plate_gap: float | None
+    image_count: int
+    shielding_tolerance: float
+    history_capacity: int
+    far_nodes: int
+    kernel_quadrature: int
+    derbenev_limit: float
+
+
+class _CSRGeometry(NamedTuple):
+    centers: tuple[np.ndarray, ...]
+    spacing: np.ndarray
+    shape: tuple[int, ...]
+    smoothing_taps: tuple[np.ndarray | None, ...]
+    lag_nodes: _LagNodes
+    line_horizontal: np.ndarray
+    line_vertical: np.ndarray
+    line_factors: np.ndarray
+    line_table: np.ndarray
+    steady_taps: Array | None
+    root_tolerance: float
+
+
+class _CSRKernels(NamedTuple):
+    estimate: CSRResourceEstimate
+    igf: tuple[FreeSpaceConvolutionPlan, ...]
+    curvatures: tuple[float, ...]
+    quadrature_defect: float
+
+
+def _prepare_csr_request(
+    model: CSRModel,
+    lattice: CSRLattice,
+    scale: ElectromagneticScaleContract,
+    /,
+    *,
+    reference_rest_energy: float,
+    reference_momentum: float,
+    capacity: int,
+    smoothing: float | tuple[float, ...],
+    plate_gap: float | None,
+    image_count: int,
+    shielding_tolerance: float,
+    history_capacity: int,
+    far_nodes: int,
+    kernel_quadrature: int,
+    derbenev_limit: float,
+    resources: CSRResources | None,
+) -> tuple[_CSRRequest, int]:
+    model_ = parse(model, CSRModel, "model")
+    if not isinstance(lattice, CSRLattice):
+        raise TypeError("lattice must be a CSRLattice.")
+    if not isinstance(scale, ElectromagneticScaleContract):
+        raise TypeError("scale must be an ElectromagneticScaleContract.")
+    resources_ = CSRResources() if resources is None else resources
+    if not isinstance(resources_, CSRResources):
+        raise TypeError("resources must be CSRResources or None.")
+    rest = positive_finite_float(reference_rest_energy, "reference_rest_energy")
+    momentum = positive_finite_float(reference_momentum, "reference_momentum")
+    capacity_ = positive_integer(capacity, "capacity")
+    gamma = math.sqrt(1.0 + (momentum / rest) ** 2)
+    beta = momentum / (gamma * rest)
+    match model_:
+        case "1d-steady" | "1d-transient-shielded":
+            dimension = 1
+        case "3d-steady-igf" | "3d-retarded-mesh":
+            dimension = 3
+        case _:
+            assert_never(model_)
+    widths = (
+        (smoothing,) * dimension
+        if isinstance(smoothing, (int, float))
+        else tuple(smoothing)
+    )
+    if len(widths) != dimension or any(
+        not math.isfinite(float(width)) or float(width) < 0.0 for width in widths
+    ):
+        raise ValueError("smoothing must be finite, nonnegative, one width per axis.")
+    widths = tuple(float(width) for width in widths)
+    gap: float | None = None
+    images = 0
+    tolerance = positive_finite_float(shielding_tolerance, "shielding_tolerance")
+    if model_ == "1d-transient-shielded":
+        if plate_gap is not None:
+            gap = positive_finite_float(plate_gap, "plate_gap")
+            images = positive_integer(image_count, "image_count")
+        elif image_count != 0:
+            raise ValueError("image_count requires plate_gap.")
+    elif plate_gap is not None or image_count != 0:
+        raise ValueError("Parallel-plate shielding belongs to 1d-transient-shielded.")
+    retarded = model_ in ("1d-transient-shielded", "3d-retarded-mesh")
+    history = positive_integer(history_capacity, "history_capacity") if retarded else 1
+    far = positive_integer(far_nodes, "far_nodes")
+    quadrature = positive_integer(kernel_quadrature, "kernel_quadrature")
+    if quadrature % 2:
+        raise ValueError(
+            "kernel_quadrature must be even so no node sits on the singular axis."
+        )
+    return (
+        _CSRRequest(
+            model_,
+            resources_,
+            rest,
+            momentum,
+            gamma,
+            beta,
+            dimension,
+            widths,
+            gap,
+            images,
+            tolerance,
+            history,
+            far,
+            quadrature,
+            positive_finite_float(derbenev_limit, "derbenev_limit"),
+        ),
+        capacity_,
+    )
+
+
+def _prepare_csr_geometry(
+    request: _CSRRequest,
+    lattice: CSRLattice,
+    grid: PreparedTensorGrid,
+    /,
+) -> _CSRGeometry:
+    centers, spacing = _grid_axes(grid, request.dimension)
+    shape = tuple(center.shape[0] for center in centers)
+    if shape[-1] < _NEAR_CELLS + 2:
+        raise ValueError(f"The longitudinal grid needs at least {_NEAR_CELLS + 2} cells.")
+    taps = tuple(
+        _gaussian_taps(width, float(step))
+        for width, step in zip(request.smoothing, spacing, strict=True)
+    )
+    maximum_curvature = lattice.maximum_curvature
+    if request.dimension == 3 and maximum_curvature > 0.0:
+        transverse = 0.5 * max(
+            float(centers[0][-1] - centers[0][0]) + spacing[0],
+            float(centers[1][-1] - centers[1][0]) + spacing[1],
+        )
+        if transverse * maximum_curvature >= 0.1:
+            raise ValueError("The transverse grid must be small against the bend radius.")
+    longitudinal = spacing[-1]
+    formation = (
+        1.0e-3 / (maximum_curvature * request.gamma**3)
+        if maximum_curvature > 0.0
+        else longitudinal
+    )
+    nodes = _lag_nodes(longitudinal, shape[-1], min(1.0e-4 * longitudinal, formation))
+    horizontal = np.zeros((1,), dtype=np.float64)
+    vertical = np.zeros((1,), dtype=np.float64)
+    factors = np.ones((1,), dtype=np.float64)
+    table = np.zeros((1, 1), dtype=np.int32)
+    if request.model == "1d-transient-shielded" and request.plate_gap is not None:
+        order = np.arange(1, request.image_count + 1, dtype=np.float64)
+        horizontal = np.zeros((request.image_count + 1,), dtype=np.float64)
+        vertical = np.concatenate(([0.0], order * request.plate_gap))
+        factors = np.concatenate(([1.0], 2.0 * (-1.0) ** order))
+        factors[-1] *= 0.5
+    if request.model == "3d-retarded-mesh":
+        nx, ny = shape[0], shape[1]
+        dx = spacing[0] * np.arange(-(nx - 1), nx)
+        dy = spacing[1] * np.arange(-(ny - 1), ny)
+        horizontal = np.repeat(dx, 2 * ny - 1)
+        vertical = np.tile(dy, 2 * nx - 1)
+        factors = np.full(horizontal.shape, spacing[0] * spacing[1])
+        a = np.arange(nx)[:, None, None, None]
+        b = np.arange(ny)[None, :, None, None]
+        a_ = np.arange(nx)[None, None, :, None]
+        b_ = np.arange(ny)[None, None, None, :]
+        table = (
+            ((a - a_ + nx - 1) * (2 * ny - 1) + (b - b_ + ny - 1))
+            .reshape(nx * ny, nx * ny)
+            .astype(np.int32)
+        )
+    steady = None
+    if request.model == "1d-steady":
+        index = np.arange(shape[0], dtype=np.float64)
+        steady = jnp.asarray(
+            1.5
+            * (
+                ((index + 0.5) * longitudinal) ** (2.0 / 3.0)
+                - (np.maximum(index - 0.5, 0.0) * longitudinal) ** (2.0 / 3.0)
+            )
+        )
+    tolerance = max(
+        1.0e-10,
+        100.0 * float(np.finfo(np.float64).eps) * request.gamma * request.gamma,
+    )
+    return _CSRGeometry(
+        centers,
+        spacing,
+        shape,
+        taps,
+        nodes,
+        horizontal,
+        vertical,
+        factors,
+        table,
+        steady,
+        tolerance,
+    )
+
+
+def _prepare_csr_kernels(
+    request: _CSRRequest,
+    lattice: CSRLattice,
+    grid: PreparedTensorGrid,
+    geometry: _CSRGeometry,
+    /,
+) -> _CSRKernels:
+    retarded = request.model in ("1d-transient-shielded", "3d-retarded-mesh")
+    side = geometry.lag_nodes.delta.shape[0]
+    grid_size = int(np.prod(geometry.shape))
+    pair_count = (
+        geometry.line_horizontal.shape[0] * geometry.shape[-1] * 2 * side
+        if retarded
+        else 0
+    )
+    sample_count = (
+        geometry.line_horizontal.shape[0]
+        * geometry.shape[-1]
+        * (2 * side + 2 * request.far_nodes)
+        if retarded
+        else 0
+    )
+    curvatures: tuple[float, ...] = ()
+    if request.model == "3d-steady-igf":
+        curvatures = tuple(
+            sorted(
+                {float(value) for value in np.asarray(lattice.curvatures) if value != 0.0}
+            )
+        )
+    kernel_bytes = (
+        len(curvatures) * 8 * grid_size * 3 * 16
+        if request.model == "3d-steady-igf"
+        else sample_count * 6 * 8
+    )
+    estimate = CSRResourceEstimate(
+        pair_count,
+        (request.history_capacity + 2) * grid_size * 2 * 8,
+        kernel_bytes,
+    )
+    if (
+        estimate.retarded_pairs > request.resources.maximum_retarded_pairs
+        or estimate.history_bytes > request.resources.maximum_history_bytes
+        or estimate.kernel_bytes > request.resources.maximum_kernel_bytes
+    ):
+        raise CSRResourceError(
+            "CSR plan exceeds its declared resources: "
+            f"{estimate} against {request.resources}."
+        )
+    plans: list[FreeSpaceConvolutionPlan] = []
+    defect = 0.0
+    if request.model == "3d-steady-igf":
+        shape = (geometry.shape[0], geometry.shape[1], geometry.shape[2])
+        for curvature in curvatures:
+            values, failures = _steady_table(
+                geometry.spacing,
+                shape,
+                curvature,
+                request.gamma,
+                request.kernel_quadrature,
+            )
+            if failures:
+                raise ValueError(
+                    "Steady retarded angles did not converge on the kernel table."
+                )
+            plans.append(FreeSpaceConvolutionPlan("tabulated", grid, kernel_table=values))
+            defect = max(
+                defect,
+                _kernel_quadrature_defect(
+                    geometry.spacing,
+                    shape,
+                    curvature,
+                    request.gamma,
+                    request.kernel_quadrature,
+                ),
+            )
+    return _CSRKernels(estimate, tuple(plans), curvatures, defect)
+
+
 class CSRPlan(StrictModule, NonTrainableState):
     """Coherent synchrotron radiation of a bunch on a :class:`CSRLattice`.
 
@@ -1277,247 +1568,85 @@ class CSRPlan(StrictModule, NonTrainableState):
         derbenev_limit: float = 1.0,
         resources: CSRResources | None = None,
     ) -> None:
-        model_ = parse(model, CSRModel, "model")
-        if not isinstance(lattice, CSRLattice):
-            raise TypeError("lattice must be a CSRLattice.")
-        if not isinstance(scale, ElectromagneticScaleContract):
-            raise TypeError("scale must be an ElectromagneticScaleContract.")
-        resources_ = CSRResources() if resources is None else resources
-        if not isinstance(resources_, CSRResources):
-            raise TypeError("resources must be CSRResources or None.")
-        rest = positive_finite_float(reference_rest_energy, "reference_rest_energy")
-        momentum = positive_finite_float(reference_momentum, "reference_momentum")
-        capacity_ = positive_integer(capacity, "capacity")
-        gamma = math.sqrt(1.0 + (momentum / rest) ** 2)
-        beta = momentum / (gamma * rest)
-        match model_:
-            case "1d-steady" | "1d-transient-shielded":
-                dimension = 1
-            case "3d-steady-igf" | "3d-retarded-mesh":
-                dimension = 3
-            case _:
-                assert_never(model_)
-        centers, spacing = _grid_axes(grid, dimension)
-        shape = tuple(center.shape[0] for center in centers)
-        if shape[-1] < _NEAR_CELLS + 2:
-            raise ValueError(
-                f"The longitudinal grid needs at least {_NEAR_CELLS + 2} cells."
-            )
-        widths = (
-            (smoothing,) * dimension
-            if isinstance(smoothing, (int, float))
-            else tuple(smoothing)
+        request, capacity_ = _prepare_csr_request(
+            model,
+            lattice,
+            scale,
+            reference_rest_energy=reference_rest_energy,
+            reference_momentum=reference_momentum,
+            capacity=capacity,
+            smoothing=smoothing,
+            plate_gap=plate_gap,
+            image_count=image_count,
+            shielding_tolerance=shielding_tolerance,
+            history_capacity=history_capacity,
+            far_nodes=far_nodes,
+            kernel_quadrature=kernel_quadrature,
+            derbenev_limit=derbenev_limit,
+            resources=resources,
         )
-        if len(widths) != dimension or any(
-            not math.isfinite(float(width)) or float(width) < 0.0 for width in widths
-        ):
-            raise ValueError("smoothing must be finite, nonnegative, one width per axis.")
-        widths = tuple(float(width) for width in widths)
-        taps = tuple(
-            _gaussian_taps(width, float(step)) for width, step in zip(widths, spacing)
-        )
-        gap: float | None = None
-        images = 0
-        tolerance_ = positive_finite_float(shielding_tolerance, "shielding_tolerance")
-        if model_ == "1d-transient-shielded":
-            if plate_gap is not None:
-                gap = positive_finite_float(plate_gap, "plate_gap")
-                images = positive_integer(image_count, "image_count")
-            elif image_count != 0:
-                raise ValueError("image_count requires plate_gap.")
-        elif plate_gap is not None or image_count != 0:
-            raise ValueError("Parallel-plate shielding belongs to 1d-transient-shielded.")
-        retarded = model_ in ("1d-transient-shielded", "3d-retarded-mesh")
-        history = (
-            positive_integer(history_capacity, "history_capacity") if retarded else 1
-        )
-        far = positive_integer(far_nodes, "far_nodes")
-        quadrature = positive_integer(kernel_quadrature, "kernel_quadrature")
-        if quadrature % 2:
-            raise ValueError(
-                "kernel_quadrature must be even so no node sits on the singular axis."
-            )
-        limit = positive_finite_float(derbenev_limit, "derbenev_limit")
-        maximum_curvature = lattice.maximum_curvature
-        if dimension == 3 and maximum_curvature > 0.0:
-            transverse = 0.5 * max(
-                float(centers[0][-1] - centers[0][0]) + spacing[0],
-                float(centers[1][-1] - centers[1][0]) + spacing[1],
-            )
-            if transverse * maximum_curvature >= 0.1:
-                raise ValueError(
-                    "The transverse grid must be small against the bend radius."
-                )
-        longitudinal = spacing[-1]
-        # Geometric nodes reach below the formation scale R/γ³ of the kernel.
-        formation = (
-            1.0e-3 / (maximum_curvature * gamma**3)
-            if maximum_curvature > 0.0
-            else longitudinal
-        )
-        minimum = min(1.0e-4 * longitudinal, formation)
-        nodes = _lag_nodes(longitudinal, shape[-1], minimum)
-        horizontal = np.zeros((1,), dtype=np.float64)
-        vertical = np.zeros((1,), dtype=np.float64)
-        factors = np.ones((1,), dtype=np.float64)
-        table = np.zeros((1, 1), dtype=np.int32)
-        if model_ == "1d-transient-shielded" and gap is not None:
-            order = np.arange(1, images + 1, dtype=np.float64)
-            horizontal = np.zeros((images + 1,), dtype=np.float64)
-            vertical = np.concatenate(([0.0], order * gap))
-            # Alternating image pairs 2Σ(−1)ⁿ; the last pair is half-weighted
-            # (mean of the last two partial sums), and that half weight is the
-            # reported truncation measure.
-            factors = np.concatenate(([1.0], 2.0 * (-1.0) ** order))
-            factors[-1] *= 0.5
-        if model_ == "3d-retarded-mesh":
-            nx, ny = shape[0], shape[1]
-            dx = spacing[0] * np.arange(-(nx - 1), nx)
-            dy = spacing[1] * np.arange(-(ny - 1), ny)
-            horizontal = np.repeat(dx, 2 * ny - 1)
-            vertical = np.tile(dy, 2 * nx - 1)
-            factors = np.full(horizontal.shape, spacing[0] * spacing[1])
-            a = np.arange(nx)[:, None, None, None]
-            b = np.arange(ny)[None, :, None, None]
-            a_ = np.arange(nx)[None, None, :, None]
-            b_ = np.arange(ny)[None, None, None, :]
-            table = (
-                ((a - a_ + nx - 1) * (2 * ny - 1) + (b - b_ + ny - 1))
-                .reshape(nx * ny, nx * ny)
-                .astype(np.int32)
-            )
-        steady = None
-        if model_ == "1d-steady":
-            index = np.arange(shape[0], dtype=np.float64)
-            steady = jnp.asarray(
-                1.5
-                * (
-                    ((index + 0.5) * longitudinal) ** (2.0 / 3.0)
-                    - (np.maximum(index - 0.5, 0.0) * longitudinal) ** (2.0 / 3.0)
-                )
-            )
-        tolerance = max(1.0e-10, 100.0 * float(np.finfo(np.float64).eps) * gamma * gamma)
-        side = nodes.delta.shape[0]
-        grid_size = int(np.prod(shape))
-        pairs = horizontal.shape[0] * shape[-1] * 2 * side if retarded else 0
-        samples = (
-            horizontal.shape[0] * shape[-1] * (2 * side + 2 * far) if retarded else 0
-        )
-        curvatures: tuple[float, ...] = ()
-        if model_ == "3d-steady-igf":
-            curvatures = tuple(
-                sorted(
-                    {
-                        float(value)
-                        for value in np.asarray(lattice.curvatures)
-                        if value != 0.0
-                    }
-                )
-            )
-        kernel_bytes = (
-            len(curvatures) * 8 * grid_size * 3 * 16
-            if model_ == "3d-steady-igf"
-            else samples * 6 * 8
-        )
-        estimate = CSRResourceEstimate(
-            pairs, (history + 2) * grid_size * 2 * 8, kernel_bytes
-        )
-        if (
-            estimate.retarded_pairs > resources_.maximum_retarded_pairs
-            or estimate.history_bytes > resources_.maximum_history_bytes
-            or estimate.kernel_bytes > resources_.maximum_kernel_bytes
-        ):
-            raise CSRResourceError(
-                "CSR plan exceeds its declared resources: "
-                f"{estimate} against {resources_}."
-            )
-        igf: tuple[FreeSpaceConvolutionPlan, ...] = ()
-        defect = 0.0
-        if model_ == "3d-steady-igf":
-            plans = []
-            for curvature in curvatures:
-                values, failures = _steady_table(
-                    spacing, (shape[0], shape[1], shape[2]), curvature, gamma, quadrature
-                )
-                if failures:
-                    raise ValueError(
-                        "Steady retarded angles did not converge on the kernel table."
-                    )
-                plans.append(
-                    FreeSpaceConvolutionPlan("tabulated", grid, kernel_table=values)
-                )
-                defect = max(
-                    defect,
-                    _kernel_quadrature_defect(
-                        spacing,
-                        (shape[0], shape[1], shape[2]),
-                        curvature,
-                        gamma,
-                        quadrature,
-                    ),
-                )
-            igf = tuple(plans)
+        geometry = _prepare_csr_geometry(request, lattice, grid)
+        kernels = _prepare_csr_kernels(request, lattice, grid, geometry)
         particles = ParticleSetPlan(
             np.arange(capacity_, dtype=np.int64),
             np.ones((capacity_,), dtype=np.float64),
-            ambient_dimension=dimension,
+            ambient_dimension=request.dimension,
             name="csr-macroparticles",
         ).prepare()
-        splat = ParticleGridSplatPlan(grid, boundary="drop").prepare(particles)
-        self.model = model_
+        self.model = request.model
         self.lattice = lattice
         self.scale = scale
         self.grid = grid
-        self.splat = splat
-        self.shape = shape
-        self.spacing = tuple(float(step) for step in spacing)
-        self.lower_centers = tuple(float(center[0]) for center in centers)
+        self.splat = ParticleGridSplatPlan(grid, boundary="drop").prepare(particles)
+        self.shape = geometry.shape
+        self.spacing = tuple(float(step) for step in geometry.spacing)
+        self.lower_centers = tuple(float(center[0]) for center in geometry.centers)
         self.capacity = capacity_
-        self.rest_energy = rest
-        self.momentum = momentum
-        self.gamma = gamma
-        self.beta = beta
-        self.smoothing = widths
+        self.rest_energy = request.rest_energy
+        self.momentum = request.momentum
+        self.gamma = request.gamma
+        self.beta = request.beta
+        self.smoothing = request.smoothing
         self.smoothing_taps = tuple(
-            None if tap is None else jnp.asarray(tap) for tap in taps
+            None if tap is None else jnp.asarray(tap) for tap in geometry.smoothing_taps
         )
-        self.plate_gap = gap
-        self.image_count = images
-        self.shielding_tolerance = tolerance_
-        self.history_capacity = history
-        self.far_nodes = far
-        self.lag_nodes = jnp.asarray(nodes.delta)
-        self.lag_weights = jnp.asarray(nodes.weights)
-        self.line_horizontal = jnp.asarray(horizontal)
-        self.line_vertical = jnp.asarray(vertical)
-        self.line_factors = jnp.asarray(factors)
-        self.line_table = jnp.asarray(table)
-        self.steady_taps = steady
-        self.igf = igf
-        self.igf_curvatures = curvatures
-        self.kernel_quadrature = quadrature
-        self.kernel_defect = defect
-        self.derbenev_limit = limit
-        self.root_tolerance = tolerance
-        self.resources = resources_
-        self.estimate = estimate
+        self.plate_gap = request.plate_gap
+        self.image_count = request.image_count
+        self.shielding_tolerance = request.shielding_tolerance
+        self.history_capacity = request.history_capacity
+        self.far_nodes = request.far_nodes
+        self.lag_nodes = jnp.asarray(geometry.lag_nodes.delta)
+        self.lag_weights = jnp.asarray(geometry.lag_nodes.weights)
+        self.line_horizontal = jnp.asarray(geometry.line_horizontal)
+        self.line_vertical = jnp.asarray(geometry.line_vertical)
+        self.line_factors = jnp.asarray(geometry.line_factors)
+        self.line_table = jnp.asarray(geometry.line_table)
+        self.steady_taps = geometry.steady_taps
+        self.igf = kernels.igf
+        self.igf_curvatures = kernels.curvatures
+        self.kernel_quadrature = request.kernel_quadrature
+        self.kernel_defect = kernels.quadrature_defect
+        self.derbenev_limit = request.derbenev_limit
+        self.root_tolerance = geometry.root_tolerance
+        self.resources = request.resources
+        self.estimate = kernels.estimate
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "accelerator-csr-plan",
-                "model": model_,
+                "model": request.model,
                 "lattice": lattice.lattice_id,
                 "scale": scale.scale_id,
                 "grid": grid.prepared_id,
                 "capacity": capacity_,
-                "reference": [rest, momentum],
-                "smoothing": list(widths),
-                "plate_gap": gap,
-                "image_count": images,
-                "shielding_tolerance": tolerance_,
-                "history_capacity": history,
-                "far_nodes": far,
-                "kernel_quadrature": quadrature,
-                "derbenev_limit": limit,
+                "reference": [request.rest_energy, request.momentum],
+                "smoothing": list(request.smoothing),
+                "plate_gap": request.plate_gap,
+                "image_count": request.image_count,
+                "shielding_tolerance": request.shielding_tolerance,
+                "history_capacity": request.history_capacity,
+                "far_nodes": request.far_nodes,
+                "kernel_quadrature": request.kernel_quadrature,
+                "derbenev_limit": request.derbenev_limit,
             }
         )
 

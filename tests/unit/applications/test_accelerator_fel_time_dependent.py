@@ -437,7 +437,7 @@ def _sase(count: int) -> tuple[FELTimeDependentResult, np.ndarray]:
         boundary="periodic",
     )
     keys = jax.random.split(jax.random.key(11), 512)
-    result = eqx.filter_jit(jax.vmap(plan.solve, in_axes=(None, 0)))(slices, keys)
+    result = eqx.filter_jit(eqx.filter_vmap(plan.solve, in_axes=(None, 0)))(slices, keys)
     area = float(result.scaling.beam_area[0, 0])
     modes = 2.0 * np.pi * np.fft.fftfreq(count, d=spacing)
     gain = np.asarray(

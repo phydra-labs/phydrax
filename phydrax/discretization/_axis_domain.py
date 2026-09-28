@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._dtype_names import canonical_dtype
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -41,10 +42,14 @@ class AxisDomain(StrictModule, NonTrainableState):
     ) -> None:
         kind = parse(kind, AxisDomainKind, "kind")
         lower_ = (
-            None if lower is None else jnp.asarray(lower, dtype=jnp.float64).reshape(())
+            None
+            if lower is None
+            else jnp.asarray(lower, dtype=canonical_dtype(jnp.float64)).reshape(())
         )
         upper_ = (
-            None if upper is None else jnp.asarray(upper, dtype=jnp.float64).reshape(())
+            None
+            if upper is None
+            else jnp.asarray(upper, dtype=canonical_dtype(jnp.float64)).reshape(())
         )
         direction_: HalfLineDirection | None = direction
         match kind:

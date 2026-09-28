@@ -83,10 +83,11 @@ Particle output of external PIC codes and beam simulations enters as openPMD
 1.1.0 HDF5 species tracks, and trajectories leave the same way:
 
 ```python
-from phydrax._external_resource import ResourceLimits, read_bounded_resource
 from phydrax.interchange import (
     OpenPMDParticleTrackImportPolicy,
     OpenPMDParticleTrackSelection,
+    ResourceLimits,
+    read_bounded_resource,
     read_openpmd_particle_tracks_hdf5,
     write_openpmd_particle_tracks_hdf5,
 )

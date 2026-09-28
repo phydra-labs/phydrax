@@ -167,8 +167,8 @@ runs = g4.G4RunManagerFactory.CreateRunManager(g4.G4RunManagerType.Serial)
 _SHOWER_SCRIPT = (
     _COMMON_SCRIPT
     + b"""
-lower = np.asarray(document["lower_m"], dtype=float)
-upper = np.asarray(document["upper_m"], dtype=float)
+lower = np.asarray(document["lower_m"], dtype=np.float64)
+upper = np.asarray(document["upper_m"], dtype=np.float64)
 center = 0.5 * (lower + upper)
 half = 0.5 * (upper - lower)
 bins = document["depth_bins"]
@@ -233,8 +233,19 @@ class Stepping(g4.G4UserSteppingAction):
         deposits[current_event[0], index] += deposit / g4.eV
 
 
+constructor = document["physics_constructor"]
+if constructor == "G4EmStandardPhysics":
+    physics_constructor = g4.G4EmStandardPhysics()
+elif constructor == "G4EmStandardPhysics_option4":
+    physics_constructor = g4.G4EmStandardPhysics_option4()
+elif constructor == "G4EmLivermorePhysics":
+    physics_constructor = g4.G4EmLivermorePhysics()
+elif constructor == "G4EmPenelopePhysics":
+    physics_constructor = g4.G4EmPenelopePhysics()
+else:
+    raise ValueError("Unsupported electromagnetic physics constructor: " + constructor)
 physics = g4.G4VModularPhysicsList()
-physics.RegisterPhysics(getattr(g4, document["physics_constructor"])())
+physics.RegisterPhysics(physics_constructor)
 runs.SetUserInitialization(detector)
 runs.SetUserInitialization(physics)
 runs.SetUserAction(Primary())

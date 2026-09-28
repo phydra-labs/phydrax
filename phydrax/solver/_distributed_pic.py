@@ -746,20 +746,18 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
         out_specs: Any,
         /,
     ) -> Callable[..., Any]:
-        """``shard_map`` of ``function`` over the mesh, compiled.
+        """Return ``function`` mapped over the prepared device mesh.
 
-        Eager shard_map dispatches every primitive separately; compiling the
-        mapped body keeps preparation probes and eager lifecycle calls fast.
-        Under an enclosing jit the inner jit is inlined.
+        Public distributed operations are stable module-level
+        ``eqx.filter_jit`` entry points; this helper only builds the inner
+        ``shard_map`` while those entry points are traced.
         """
-        return jax.jit(
-            jax.shard_map(
-                function,
-                mesh=self.mesh,
-                in_specs=in_specs,
-                out_specs=out_specs,
-                check_vma=False,
-            )
+        return jax.shard_map(
+            function,
+            mesh=self.mesh,
+            in_specs=in_specs,
+            out_specs=out_specs,
+            check_vma=False,
         )
 
     def _accumulate(
@@ -1016,6 +1014,7 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
     def field_energy(self, field: Any, /) -> Array:
         return self.base.field_energy(field)
 
+    @eqx.filter_jit
     def advance(
         self, time: Array, field: Any, current: Any, step_size: Array, /
     ) -> PICFieldAdvance:
@@ -1081,6 +1080,7 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
         )(owned, current, conductivity, jnp.asarray(step_size))
         return base.complete_advance(time, field, current, step_size, update)
 
+    @eqx.filter_jit
     def deposit_charge(
         self,
         species: int,
@@ -1106,6 +1106,7 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
         )(position, macrocharge, active)
         return self.layout.charge_from(owned), ok
 
+    @eqx.filter_jit
     def deposit(
         self,
         species: int,
@@ -1139,6 +1140,7 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
         )(start, end, velocity, macrocharge, active, step_size)
         return self._deposit_result(planes, defect, ok)
 
+    @eqx.filter_jit
     def deposit_all(
         self,
         starts: tuple[Array, ...],
@@ -1191,6 +1193,7 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
         )(starts, ends, velocities, macrocharges, actives, step_size)
         return self._deposit_result(planes, defect, ok)
 
+    @eqx.filter_jit
     def gather_fields(
         self,
         species: int,
@@ -1348,6 +1351,7 @@ class DistributedPICExecutor(AbstractPICParticleExecutor, NonTrainableState):
             return process.bank_plans()
         return ()
 
+    @eqx.filter_jit
     def apply_process(
         self,
         index: int,
@@ -1607,6 +1611,7 @@ class DistributedPICExecutor(AbstractPICParticleExecutor, NonTrainableState):
             )
         return tuple(species_out), tuple(states_out)
 
+    @eqx.filter_jit
     def exchange(
         self, species: tuple[PICSpeciesState, ...], processes: tuple[Any, ...], /
     ) -> PICParticleExchangeResult:
