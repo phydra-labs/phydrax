@@ -794,3 +794,20 @@ The lower-level `AdditiveIMEXTableau.step` requires the keyword `implicit_rhs`, 
 the RHS cannot be recovered from a zero diagonal or zero step. Its RHS callbacks use
 `(state, time, args)`; `ConservationIMEXMethod` RHS callbacks use `(time, state, args)`.
 Both diagonal-solve callbacks take `(provisional, stage_time, diagonal_step, args)`.
+
+`AdditiveIMEXTableau` also takes `explicit_weights`, for schemes whose explicit
+and implicit quadratures differ (forward–backward Euler has explicit weights
+`(1, 0)` and implicit weights `(0, 1)`), and `implicit_parts`, which assigns each
+stage one implicit part or `None` for an explicit-only stage. Distinct parts form
+the block-sequential N-additive form: each implicit stage solves one part with
+all earlier increments fixed, and `ConservationIMEXMethod` then takes one
+`implicit_rhs` and one `implicit_solver` per part. Implicit weights sum to one per
+part. When a stage row repeats the previous row, the stage starts from the previous
+stage value. When the last rows equal the weights (stiff accuracy), the step
+result is the last stage value. Both identities are detected on the host and keep
+committed components, such as held constraint values, exact.
+`ImplicitConservationStageResult` may carry a solver `status` code and an array
+`evidence` tree. `ConservationIMEXResult` reports per-stage success, iterations,
+residuals, statuses and evidence (`None` for explicit-only stages, zero-filled when
+the diagonal step vanishes). The solvers of the surface plug-flow film are one
+consumer.

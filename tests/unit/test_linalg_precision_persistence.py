@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import optax
+import pytest
 
 import phydrax as phx
 from phydrax import linalg as la
@@ -217,6 +218,91 @@ def test_traced_sparse_value_refresh_preserves_solves_gradients_and_batch_failur
     )
     assert jnp.all(nonfinite.status == int(la.SparseFactorizationStatus.NONFINITE))
     assert jnp.all(nonfinite.lower_status == int(la.SparseTriangularStatus.NONFINITE))
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        jnp.asarray([jnp.nan, 2.0, 0.0]),
+        jnp.asarray([jnp.inf, 2.0, 1.0]),
+        jnp.asarray([1.0, jnp.inf, 1.0]),
+    ),
+    ids=("nan-pivot-with-zero", "infinite-pivot", "infinite-off-diagonal"),
+)
+def test_sparse_triangular_nonfinite_values_outrank_zero_pivots(values: Any) -> None:
+    storage = la.SparseStorage(
+        values,
+        jnp.asarray([0, 0, 1], dtype=jnp.int32),
+        jnp.asarray([0, 1, 3], dtype=jnp.int32),
+        shape=(2, 2),
+    )
+    analysis = la.analyze_sparse_triangular(storage, triangle="lower")
+
+    result = la.solve_sparse_triangular(
+        analysis,
+        values,
+        jnp.asarray([1.0, 2.0]),
+    )
+
+    assert result.status == int(la.SparseTriangularStatus.NONFINITE)
+    assert not result.diagnostics.finite
+
+
+def test_sparse_triangular_finite_tiny_pivot_retains_zero_status_and_derivative() -> None:
+    values = jnp.asarray([1.0e-8, 2.0, 1.0])
+    storage = la.SparseStorage(
+        values,
+        jnp.asarray([0, 0, 1], dtype=jnp.int32),
+        jnp.asarray([0, 1, 3], dtype=jnp.int32),
+        shape=(2, 2),
+    )
+    analysis = la.analyze_sparse_triangular(storage, triangle="lower")
+
+    def solution_sum(numeric: Any) -> Any:
+        return jnp.sum(
+            la.solve_sparse_triangular(
+                analysis,
+                numeric,
+                jnp.asarray([1.0, 2.0]),
+                pivot_tolerance=1.0e-7,
+            ).value
+        )
+
+    result = la.solve_sparse_triangular(
+        analysis,
+        values,
+        jnp.asarray([1.0, 2.0]),
+        pivot_tolerance=1.0e-7,
+    )
+    primal, tangent = jax.jvp(solution_sum, (values,), (jnp.ones_like(values),))
+
+    assert result.status == int(la.SparseTriangularStatus.ZERO_PIVOT)
+    assert result.diagnostics.finite
+    assert jnp.isfinite(primal)
+    assert jnp.isfinite(tangent)
+
+
+def test_prepared_sparse_factor_solve_propagates_nonfinite_over_zero_pivot() -> None:
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        jnp.asarray([0, 1], dtype=jnp.int32),
+        source_size=2,
+        target_size=2,
+    )
+    operator = phx.sparse.SparseLinearMap(
+        relation,
+        jnp.asarray([0.0, jnp.nan]),
+    )
+
+    factor = la.factorize_sparse(
+        operator,
+        la.SparseFactorizationPolicy("lu"),
+    )
+    result = factor.solve(jnp.ones((2,)))
+
+    assert factor.status == int(la.SparseFactorizationStatus.NONFINITE)
+    assert result.status == int(la.SparseFactorizationStatus.NONFINITE)
+    assert result.factorization_status == int(la.SparseFactorizationStatus.NONFINITE)
 
 
 def test_numeric_sparse_refresh_accepts_traced_routes_and_coalesces_duplicates() -> None:

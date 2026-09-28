@@ -245,6 +245,7 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
 class TwoPhaseRemeshEvidence(StrictModule):
     liquid_volume_defect: Array
     scalar_content_defect: dict[str, Array]
+    material_scalar_content_defect: dict[str, Array]
     momentum_defect: Array
     source_coverage_residual: Array
     target_coverage_residual: Array
@@ -348,6 +349,14 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
             ).reshape(target_volume.shape)
             for name, value in state.phase_scalar_content.items()
         }
+        material_scalars = {
+            name: contract(
+                "ts,s->t",
+                self.cell_overlap_volume,
+                (value / source_volume).reshape((-1,)),
+            ).reshape(target_volume.shape)
+            for name, value in state.material_scalar_content.items()
+        }
         momentum = tuple(
             contract("ts,s->t", matrix, value.reshape((-1,))).reshape(layout.shape)
             for matrix, value, layout in zip(
@@ -363,6 +372,7 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
             liquid_content=liquid_content,
             momentum=momentum,
             phase_scalar_content=scalars,
+            material_scalar_content=material_scalars,
             level_set=self.target.level_set_from_alpha(alpha),
             geometry_epoch=(
                 jnp.asarray(-1, dtype=jnp.int32)
@@ -376,6 +386,10 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
         scalar_defect = {
             name: jnp.sum(scalars[name]) - jnp.sum(value)
             for name, value in state.phase_scalar_content.items()
+        }
+        material_scalar_defect = {
+            name: jnp.sum(material_scalars[name]) - jnp.sum(value)
+            for name, value in state.material_scalar_content.items()
         }
         momentum_defect = jnp.stack(
             tuple(
@@ -399,10 +413,13 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
         topology = self.target.topology_evidence(candidate)
         scalar_finite = (
             jnp.asarray(True)
-            if not scalars
+            if not scalars and not material_scalars
             else jnp.all(
                 jnp.stack(
-                    tuple(jnp.all(jnp.isfinite(value)) for value in scalars.values())
+                    tuple(
+                        jnp.all(jnp.isfinite(value))
+                        for value in (*scalars.values(), *material_scalars.values())
+                    )
                 )
             )
         )
@@ -412,10 +429,11 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(momentum_defect))
             & scalar_finite
         )
+        defects = (*scalar_defect.values(), *material_scalar_defect.values())
         scalar_max = (
             jnp.asarray(0.0, dtype=liquid_content.dtype)
-            if not scalar_defect
-            else jnp.max(jnp.abs(jnp.stack(tuple(scalar_defect.values()))))
+            if not defects
+            else jnp.max(jnp.abs(jnp.stack(defects)))
         )
         conservative = (
             (jnp.abs(liquid_defect) <= self.tolerance)
@@ -428,6 +446,7 @@ class ConservativeTwoPhaseRemeshPlan(StrictModule, NonTrainableState):
         evidence = TwoPhaseRemeshEvidence(
             liquid_volume_defect=liquid_defect,
             scalar_content_defect=scalar_defect,
+            material_scalar_content_defect=material_scalar_defect,
             momentum_defect=momentum_defect,
             source_coverage_residual=source_coverage,
             target_coverage_residual=target_coverage,

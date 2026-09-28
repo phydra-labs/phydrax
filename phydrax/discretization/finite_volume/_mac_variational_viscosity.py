@@ -34,6 +34,20 @@ def _cell_to_axis_faces(value: Array, axis: int, periodic: bool, /) -> Array:
     return jnp.moveaxis(faces, 0, axis)
 
 
+def _neighbor_union(value: Array, axis: int, periodic: bool, /) -> Array:
+    moved = jnp.moveaxis(value, axis, 0)
+    if periodic:
+        union = moved | jnp.roll(moved, 1, axis=0) | jnp.roll(moved, -1, axis=0)
+    else:
+        empty = jnp.zeros_like(moved[:1])
+        union = (
+            moved
+            | jnp.concatenate((empty, moved[:-1]), axis=0)
+            | jnp.concatenate((moved[1:], empty), axis=0)
+        )
+    return jnp.moveaxis(union, 0, axis)
+
+
 class MACVariationalViscosityResult(StrictModule, NonTrainableState):
     """Variational stress action and its stage-local energy evidence."""
 
@@ -370,6 +384,41 @@ class PreparedMACVariationalViscosityAction(StrictModule, NonTrainableState):
         """Return the certified forward-Euler step bound when available."""
         row_sum = self.operator_row_sum_bound(cell_viscosity)
         return jnp.where(row_sum > 0.0, 2.0 / row_sum, jnp.inf)
+
+    def coupled_faces(self, cell_viscosity: ArrayLike, /) -> tuple[Array, ...]:
+        """Return the free faces whose positive-action row is nonzero.
+
+        A free face enters the deviatoric normal strain of both adjacent cells
+        and the shear on the edges beside it along every tangential axis, whose
+        viscosity averages the cells on either side of the edge. Its row
+        therefore vanishes exactly when every cell of that stencil has zero
+        viscosity. Faces constrained by an essential boundary are uncoupled, as
+        are all faces of a one-dimensional grid, where deviatoric strain
+        vanishes identically.
+        """
+        viscosity = self._viscosity(cell_viscosity)
+        discretization = self.momentum.operators.discretization
+        axes = discretization.grid.structured_axes
+        free = self.momentum.boundaries.homogeneous_rate(
+            tuple(
+                jnp.ones(layout.shape, dtype=viscosity.dtype)
+                for layout in discretization.face_layouts
+            )
+        )
+        viscous = viscosity > 0.0
+        coupled: list[Array] = []
+        for axis, free_faces in enumerate(free):
+            stencil = jnp.zeros_like(viscous)
+            for other in range(self.dimension):
+                if other != axis:
+                    stencil = stencil | _neighbor_union(
+                        viscous, other, axes[other].periodic
+                    )
+            faces = _cell_to_axis_faces(
+                stencil.astype(viscosity.dtype), axis, axes[axis].periodic
+            )
+            coupled.append((faces > 0.0) & (free_faces != 0.0))
+        return tuple(coupled)
 
     def evaluate(
         self,

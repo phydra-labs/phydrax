@@ -44,6 +44,9 @@ from ._capillarity import (
     CurvatureGeometryError,
     CurvatureStatus,
     CurvatureUncertaintyError,
+    LinearSurfaceTensionLaw,
+    MACBalancedCapillaryOperator,
+    MACCapillaryForceResult,
     SurfaceTensionEvaluation,
     SurfaceTensionPolicy,
     VariableSurfaceTensionPolicy,
@@ -219,6 +222,10 @@ from ._mac_enthalpy import (
     MACThermalBoundaryKind,
     MACThermalBoundarySet,
     PreparedMACEnthalpyTransport,
+)
+from ._mac_height_function import (
+    HeightFunctionCurvaturePlan,
+    HeightFunctionCurvatureResult,
 )
 from ._mac_interface_state import MACFreeSurfaceGeometryState
 from ._mac_marker_transfer import (
@@ -415,6 +422,11 @@ from ._stage_transition import (
     FiniteVolumeStageEpochTransition,
 )
 from ._structured import FiniteVolumeDiscretization, FiniteVolumePlan
+from ._structured_plic import (
+    plane_volume_fraction,
+    StructuredPLICPlan,
+    StructuredPLICReconstruction,
+)
 from ._triangle_archive import (
     read_triangle_fv_archive,
     write_triangle_fv_archive,
@@ -571,6 +583,9 @@ __all__ = [
     "CurvatureGeometryError",
     "CurvatureStatus",
     "CurvatureUncertaintyError",
+    "LinearSurfaceTensionLaw",
+    "MACBalancedCapillaryOperator",
+    "MACCapillaryForceResult",
     "SurfaceTensionPolicy",
     "ContactAngleCondition",
     "ContactAngleEvidence",
@@ -783,6 +798,11 @@ __all__ = [
     "MACMarkerTransferDiagnostics",
     "MACMarkerTransferPlan",
     "MACCapillaryResult",
+    "HeightFunctionCurvaturePlan",
+    "HeightFunctionCurvatureResult",
+    "plane_volume_fraction",
+    "StructuredPLICPlan",
+    "StructuredPLICReconstruction",
     "MACDiffuseSDFGeometryPlan",
     "MACDiffuseSDFGeometryState",
     "MACFreeSurfaceViscousMeasurePlan",

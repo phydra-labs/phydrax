@@ -283,10 +283,10 @@ def _multiphysics_case() -> dict[str, object]:
     blue = 1.0 - red
     total = jnp.broadcast_to(weights, red.shape + (lattice.population_count,))
     normal = jnp.broadcast_to(jnp.asarray((0.6, 0.8)), red.shape + (2,))
-    recolored = recolor_populations(total, red, blue, normal, lattice, 0.7)
-    recolor_closure = _maximum_absolute(
-        recolored.red_populations + recolored.blue_populations - total
+    recolored = recolor_populations(
+        total, jnp.stack((red, blue)), normal[None], lattice, jnp.asarray((0.7,))
     )
+    recolor_closure = _maximum_absolute(jnp.sum(recolored, axis=0) - total)
 
     velocity = jnp.broadcast_to(jnp.asarray((0.02, -0.01)), red.shape + (2,))
     energy = jnp.asarray([[2.0, 2.5], [1.5, 3.0]])

@@ -19,12 +19,12 @@ Three evaluation modes share one sign convention:
 the determinant in floating point and certify its sign with Shewchuk's static
 stage-A error bounds (Adaptive Precision Floating-Point Arithmetic and Fast
 Robust Geometric Predicates, 1997) derived for the input dtype, extended by an
-absolute term covering gradual underflow and flush-to-zero.  A certified sign is
-never wrong; unresolved entries are ``UNCERTAIN``.  Exact zeros are certified
+absolute term covering gradual underflow and flush-to-zero. A certified sign is
+never wrong; unresolved entries are ``UNCERTAIN``. Exact zeros are certified
 structurally, when every monomial of the determinant contains a coordinate
-difference of equal inputs.  ``EXACT`` resolves the uncertain entries of the host
-filter with the native meshcore adaptive expansion arithmetic and raises
-:class:`~phydrax._meshcore.MeshcoreUnavailableError` when the library is absent.
+difference of equal inputs. ``EXACT`` resolves uncertain host entries with the
+native meshcore adaptive expansion arithmetic when available and otherwise with
+exact dyadic-rational evaluation of the input floating-point coordinates.
 
 ``segment_intersections_2d`` and ``polygon_simplicity_2d`` are host algorithms
 built on ``orient2d`` and exact coordinate comparisons; their classifications
@@ -101,17 +101,16 @@ class PredicateResult(StrictModule, NonTrainableState):
 
 
 def resolve_host_predicate_mode(mode: PredicateMode, /) -> PredicateMode:
-    """Effective mode of a host geometric algorithm that reports unresolved decisions.
+    """Effective mode of a host geometric algorithm that reports decisions.
 
-    ``EXACT`` requires meshcore; without it the host filter is used and its
-    unresolved entries surface as the caller's uncertain-predicate status.
+    ``EXACT`` uses the optional meshcore adaptive predicates when available and
+    the exact dyadic host fallback otherwise. It therefore remains exact in
+    either environment; ``FILTERED`` alone may return unresolved entries.
     """
 
     match mode:
-        case PredicateMode.EXACT:
-            return PredicateMode.EXACT if meshcore_available() else PredicateMode.FILTERED
-        case PredicateMode.FILTERED:
-            return PredicateMode.FILTERED
+        case PredicateMode.EXACT | PredicateMode.FILTERED:
+            return mode
         case PredicateMode.FILTERED_DEVICE:
             raise ValueError(
                 "Host geometric algorithms require the FILTERED or EXACT predicate mode."
@@ -362,19 +361,186 @@ _EXACT_ROUTES = {
 }
 
 
+def _normalize_dyadic(numerator: int, exponent: int, /) -> tuple[int, int]:
+    """Canonical ``numerator * 2**exponent`` without even numerator factors."""
+    if numerator == 0:
+        return 0, 0
+    magnitude = abs(numerator)
+    shift = (magnitude & -magnitude).bit_length() - 1
+    return numerator >> shift, exponent + shift
+
+
+def _dyadic(value: np.float64, /) -> tuple[int, int]:
+    """Exact integer significand and binary exponent of one finite binary64."""
+    numerator, denominator = float(value).as_integer_ratio()
+    return _normalize_dyadic(numerator, 1 - denominator.bit_length())
+
+
+def _dyadic_add(first: tuple[int, int], second: tuple[int, int], /) -> tuple[int, int]:
+    exponent = min(first[1], second[1])
+    numerator = (first[0] << (first[1] - exponent)) + (
+        second[0] << (second[1] - exponent)
+    )
+    return _normalize_dyadic(numerator, exponent)
+
+
+def _dyadic_subtract(
+    first: tuple[int, int], second: tuple[int, int], /
+) -> tuple[int, int]:
+    return _dyadic_add(first, (-second[0], second[1]))
+
+
+def _dyadic_multiply(
+    first: tuple[int, int], second: tuple[int, int], /
+) -> tuple[int, int]:
+    return _normalize_dyadic(first[0] * second[0], first[1] + second[1])
+
+
+def _dyadic_sign(value: tuple[int, int], /) -> np.int8:
+    return np.int8((value[0] > 0) - (value[0] < 0))
+
+
+def _exact_dyadic_row(
+    spec: _Filter, points: tuple[np.ndarray, ...], row: int, /
+) -> np.int8:
+    """Exact sign of one unresolved predicate on binary64 coordinates."""
+    values = tuple(
+        tuple(_dyadic(coordinate) for coordinate in point[row]) for point in points
+    )
+
+    def difference(first: int, second: int, axis: int, /) -> tuple[int, int]:
+        return _dyadic_subtract(values[first][axis], values[second][axis])
+
+    if spec.name == "orient2d":
+        ab = (difference(1, 0, 0), difference(1, 0, 1))
+        ac = (difference(2, 0, 0), difference(2, 0, 1))
+        determinant = _dyadic_subtract(
+            _dyadic_multiply(ab[0], ac[1]), _dyadic_multiply(ab[1], ac[0])
+        )
+        return _dyadic_sign(determinant)
+    if spec.name == "orient3d":
+        ab = tuple(difference(1, 0, axis) for axis in range(3))
+        ac = tuple(difference(2, 0, axis) for axis in range(3))
+        ad = tuple(difference(3, 0, axis) for axis in range(3))
+        first = _dyadic_multiply(
+            ab[0],
+            _dyadic_subtract(
+                _dyadic_multiply(ac[1], ad[2]), _dyadic_multiply(ac[2], ad[1])
+            ),
+        )
+        second = _dyadic_multiply(
+            ab[1],
+            _dyadic_subtract(
+                _dyadic_multiply(ac[0], ad[2]), _dyadic_multiply(ac[2], ad[0])
+            ),
+        )
+        third = _dyadic_multiply(
+            ab[2],
+            _dyadic_subtract(
+                _dyadic_multiply(ac[0], ad[1]), _dyadic_multiply(ac[1], ad[0])
+            ),
+        )
+        return _dyadic_sign(_dyadic_add(_dyadic_subtract(first, second), third))
+
+    width = spec.width
+    translated = tuple(
+        tuple(difference(row_, spec.arity - 1, axis) for axis in range(width))
+        for row_ in range(spec.arity - 1)
+    )
+    x = tuple(row_[0] for row_ in translated)
+    y = tuple(row_[1] for row_ in translated)
+    products = {
+        (first, second): _dyadic_multiply(x[first], y[second])
+        for first in range(spec.arity - 1)
+        for second in range(spec.arity - 1)
+        if first != second
+    }
+
+    def cross(first: int, second: int, /) -> tuple[int, int]:
+        return _dyadic_subtract(products[first, second], products[second, first])
+
+    if spec.name == "incircle":
+        lift = tuple(
+            _dyadic_add(
+                _dyadic_multiply(x[index], x[index]), _dyadic_multiply(y[index], y[index])
+            )
+            for index in range(3)
+        )
+        determinant = _dyadic_add(
+            _dyadic_add(
+                _dyadic_multiply(lift[0], cross(1, 2)),
+                _dyadic_multiply(lift[1], cross(2, 0)),
+            ),
+            _dyadic_multiply(lift[2], cross(0, 1)),
+        )
+        return _dyadic_sign(determinant)
+    if spec.name != "insphere":
+        raise ValueError(f"Unknown exact predicate {spec.name!r}.")
+    z = tuple(row_[2] for row_ in translated)
+    ab, bc, cd = cross(0, 1), cross(1, 2), cross(2, 3)
+    da, ac, bd = cross(3, 0), cross(0, 2), cross(1, 3)
+    abc = _dyadic_add(
+        _dyadic_subtract(_dyadic_multiply(z[0], bc), _dyadic_multiply(z[1], ac)),
+        _dyadic_multiply(z[2], ab),
+    )
+    bcd = _dyadic_add(
+        _dyadic_subtract(_dyadic_multiply(z[1], cd), _dyadic_multiply(z[2], bd)),
+        _dyadic_multiply(z[3], bc),
+    )
+    cda = _dyadic_add(
+        _dyadic_add(_dyadic_multiply(z[2], da), _dyadic_multiply(z[3], ac)),
+        _dyadic_multiply(z[0], cd),
+    )
+    dab = _dyadic_add(
+        _dyadic_add(_dyadic_multiply(z[3], ab), _dyadic_multiply(z[0], bd)),
+        _dyadic_multiply(z[1], da),
+    )
+    lift = tuple(
+        _dyadic_add(
+            _dyadic_add(
+                _dyadic_multiply(x[index], x[index]), _dyadic_multiply(y[index], y[index])
+            ),
+            _dyadic_multiply(z[index], z[index]),
+        )
+        for index in range(4)
+    )
+    shewchuk = _dyadic_add(
+        _dyadic_subtract(_dyadic_multiply(lift[3], abc), _dyadic_multiply(lift[2], dab)),
+        _dyadic_subtract(_dyadic_multiply(lift[1], cda), _dyadic_multiply(lift[0], bcd)),
+    )
+    return -_dyadic_sign(shewchuk)
+
+
+def _exact_dyadic(
+    spec: _Filter, points: tuple[np.ndarray, ...], unresolved: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    signs = np.full((unresolved.size,), PredicateSign.UNCERTAIN, dtype=np.int8)
+    certain = np.zeros((unresolved.size,), dtype=np.bool_)
+    for output, row in enumerate(unresolved.tolist()):
+        if all(np.all(np.isfinite(point[row])) for point in points):
+            signs[output] = _exact_dyadic_row(spec, points, row)
+            certain[output] = True
+    return signs, certain
+
+
 def _host(spec: _Filter, values: tuple, mode: PredicateMode, /) -> PredicateResult:
-    if mode is PredicateMode.EXACT:
+    native_exact = mode is PredicateMode.EXACT and meshcore_available()
+    if native_exact:
         load_meshcore()
     flat, leading = _host_points(values, spec.width)
     with np.errstate(over="ignore", invalid="ignore", under="ignore"):
         signs, certain = _filter(np, spec, flat, np.float64, 1.0)
     if mode is PredicateMode.EXACT:
         unresolved = np.flatnonzero(~certain)
-        if unresolved.size:
+        if unresolved.size and native_exact:
             signs[unresolved] = _EXACT_ROUTES[spec.name](
                 *(array[unresolved] for array in flat)
             )
             certain[unresolved] = True
+        elif unresolved.size:
+            exact_signs, exact_certain = _exact_dyadic(spec, flat, unresolved)
+            signs[unresolved] = exact_signs
+            certain[unresolved] = exact_certain
     return PredicateResult(signs.reshape(leading), certain.reshape(leading), mode)
 
 

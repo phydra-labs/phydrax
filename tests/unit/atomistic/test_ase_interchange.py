@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.interchange import AdapterError, AdapterStatus, require_lossless
+from phydrax.atomistic import AtomicStructure
+from phydrax.interchange import (
+    AdapterError,
+    AdapterReport,
+    AdapterStatus,
+    require_lossless,
+)
 from phydrax.units import ANGSTROM, ELECTRONVOLT, JOULE, METER
 
 
@@ -182,7 +188,6 @@ def test_explicit_source_provenance_is_preserved_and_conflicts_are_rejected(
 def test_unsupported_state_is_fully_declared_and_require_lossless_rejects(
     ase: Any,
 ) -> None:
-    # ty: ignore[unresolved-import]
     from ase.constraints import FixAtoms
 
     source = _identified_atoms(ase)
@@ -249,24 +254,24 @@ def test_incompatible_units_and_malformed_periodic_cells_are_rejected(ase: Any) 
 
 
 def test_calculator_state_is_reported_but_never_retained(ase: Any) -> None:
-    # ty: ignore[unresolved-import]
     from ase.calculators.singlepoint import SinglePointCalculator
 
-    source = _identified_atoms(ase)
-    calculator = SinglePointCalculator(source, energy=-1.25)
-    calculator_reference = weakref.ref(calculator)
-    source.calc = calculator
+    def convert() -> tuple[AtomicStructure, AdapterReport, weakref.ReferenceType[Any]]:
+        source = _identified_atoms(ase)
+        calculator = SinglePointCalculator(source, energy=-1.25)
+        calculator_reference = weakref.ref(calculator)
+        source.calc = calculator
+        structure, report = phx.atomistic.interchange.from_ase_atoms(source, SCALE)
+        return structure, report, calculator_reference
 
-    structure, report = phx.atomistic.interchange.from_ase_atoms(source, SCALE)
+    structure, report, calculator_reference = convert()
     assert [loss.path for loss in report.losses] == ["calculator"]
     assert report.status == AdapterStatus.DECLARED_LOSS
+    gc.collect()
+    assert calculator_reference() is None
 
     restored, _ = phx.atomistic.interchange.to_ase_atoms(structure)
     assert restored.calc is None
-    source.calc = None
-    del calculator
-    gc.collect()
-    assert calculator_reference() is None
 
 
 def test_optional_dependency_failure_and_public_exports(monkeypatch: Any) -> None:

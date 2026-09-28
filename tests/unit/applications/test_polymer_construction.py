@@ -6,12 +6,12 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax._artifact_security import (
+from phydrax.applications import polymer_construction as pc
+from phydrax.artifacts import (
     admit_external_artifact,
+    ArtifactManifest,
     ExternalArtifactPolicy,
 )
-from phydrax.applications import polymer_construction as pc
-from phydrax.artifacts import ArtifactManifest
 
 
 def _source() -> Any:

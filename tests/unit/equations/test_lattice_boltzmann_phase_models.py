@@ -36,6 +36,7 @@ from phydrax.equations._lattice_boltzmann_free_energy import (
     compile_free_energy_lattice_boltzmann_problem,
     FreeEnergyLatticeBoltzmannProblem,
 )
+from phydrax.interfacial_transport import InterfaceTensionMatrix
 
 
 def _discretization(count: Any = 24) -> Any:
@@ -55,7 +56,9 @@ def _forced_method() -> Any:
 
 def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     discretization = _discretization()
-    method = ColorGradientLBMMethod(_forced_method(), maximum_capillary_number=10.0)
+    method = ColorGradientLBMMethod(
+        _forced_method(), ("red", "blue"), maximum_capillary_number=10.0
+    )
     compiled = compile_color_gradient_lattice_boltzmann_problem(
         ColorGradientLatticeBoltzmannProblem("binary", 2),
         discretization,
@@ -67,17 +70,20 @@ def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     color = jnp.tanh((x - 0.5) / 0.08)
     red = 0.5 * (1.0 + color)
     blue = 1.0 - red
-    parameters = ColorGradientLBMRuntimeParameters(0.01, 1.0e-4)
-    state = compiled.initialize_state(red, blue, jnp.zeros((2,)), parameters)
+    tension = InterfaceTensionMatrix(
+        ("red", "blue"), np.asarray([[0.0, 1.0e-4], [1.0e-4, 0.0]])
+    )
+    parameters = ColorGradientLBMRuntimeParameters(0.01, tension)
+    state = compiled.initialize_state(jnp.stack((red, blue)), jnp.zeros((2,)), parameters)
 
     # ty: ignore[invalid-argument-type]
     result = compiled.dynamics.step_detailed(0, 0.0, state, 0.01, parameters)
-    assert result.candidate_state.red_populations.shape == discretization.population_shape
-    assert (
-        result.candidate_state.blue_populations.shape == discretization.population_shape
+    assert result.candidate_state.color_populations.shape == (
+        2,
+        *discretization.population_shape,
     )
     np.testing.assert_allclose(
-        result.diagnostics.red_mass + result.diagnostics.blue_mass,
+        jnp.sum(result.diagnostics.component_masses),
         result.diagnostics.total_mass,
         atol=1e-11,
     )
@@ -88,10 +94,10 @@ def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     rejected = compiled.dynamics.step_detailed(0, 0.0, state, 0.02, parameters)
     assert not bool(rejected.successful)
     np.testing.assert_array_equal(
-        rejected.accepted_state.red_populations, state.red_populations
+        rejected.accepted_state.color_populations, state.color_populations
     )
     np.testing.assert_array_equal(
-        rejected.accepted_state.blue_populations, state.blue_populations
+        rejected.accepted_state.near_contact_work, state.near_contact_work
     )
     discretization = _discretization()
     method = FreeEnergyLBMMethod(

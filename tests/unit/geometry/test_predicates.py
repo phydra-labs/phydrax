@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from phydrax._geometry_precision import GeometryPrecisionPolicy
-from phydrax._meshcore import meshcore_available, MeshcoreUnavailableError
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry import (
     incircle,
     insphere,
@@ -24,10 +24,6 @@ from phydrax.geometry import (
     resolve_host_predicate_mode,
 )
 
-
-requires_meshcore = pytest.mark.skipif(
-    not meshcore_available(), reason="native phydrax-meshcore library is not available"
-)
 
 ULP = 2.0**-53
 
@@ -192,8 +188,6 @@ def test_predicates_scenario_1() -> None:
     assert int(incircle(a[:2], x[:2], y[:2], inside[:2], mode=mode).signs) == 1
 
 
-@requires_meshcore
-@pytest.mark.meshcore
 def test_exact_mode_matches_rational_reference() -> None:
     for name in sorted(CASES):
         arrays, reference, predicate = CASES[name]()
@@ -205,8 +199,6 @@ def test_exact_mode_matches_rational_reference() -> None:
         assert set(expected.tolist()) == {-1, 0, 1}
 
 
-@requires_meshcore
-@pytest.mark.meshcore
 def test_exact_signs_are_antisymmetric_under_argument_exchange() -> None:
     rng = np.random.default_rng(3)
     # A small integer lattice makes many configurations exactly degenerate.
@@ -232,14 +224,17 @@ def test_exact_signs_are_antisymmetric_under_argument_exchange() -> None:
     assert np.any(o2 == 0) and np.any(o3 == 0)
 
 
-def test_missing_library_is_explicit(monkeypatch: Any, tmp_path: Any) -> None:
+def test_missing_library_uses_exact_dyadic_host_fallback(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
     monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", str(tmp_path / "missing.dylib"))
     assert not meshcore_available()
-    assert resolve_host_predicate_mode(PredicateMode.EXACT) is PredicateMode.FILTERED
-    with pytest.raises(MeshcoreUnavailableError):
-        orient2d([0.0, 0.0], [1.0, 0.0], [0.0, 1.0], mode=PredicateMode.EXACT)
-    filtered = orient2d([0.0, 0.0], [1.0, 0.0], [0.0, 1.0], mode=PredicateMode.FILTERED)
-    assert int(filtered.signs) == PredicateSign.POSITIVE
+    assert resolve_host_predicate_mode(PredicateMode.EXACT) is PredicateMode.EXACT
+    exact = orient2d([0.0, 0.0], [1.0, 1.0], [2.0, 2.0], mode=PredicateMode.EXACT)
+    assert bool(exact.certain)
+    assert int(exact.signs) == PredicateSign.ZERO
+    filtered = orient2d([0.0, 0.0], [1.0, 1.0], [2.0, 2.0], mode=PredicateMode.FILTERED)
+    assert int(filtered.signs) == PredicateSign.UNCERTAIN
     with pytest.raises(ValueError, match="FILTERED or EXACT"):
         resolve_host_predicate_mode(PredicateMode.FILTERED_DEVICE)
 

@@ -269,9 +269,22 @@ runtime compacts inactive routes before EOS/Riemann evaluation, excludes solid c
 from positivity and CFL, and redistributes small-cell rate excess only to stable
 non-small recipients.
 
-`BalancedCapillaryOperator` and `SurfaceTensionPolicy` provide a geometry-bound,
-owner-oriented capillary rate block, curvature evidence, equal-and-opposite momentum
-force/work, and an explicit capillary step restriction. Contact angles require an
+`BalancedCapillaryOperator` and `SurfaceTensionPolicy` provide curvature evidence, a
+balanced capillary force block, and an explicit capillary step restriction. The
+curvature is `kappa = t . dn/ds` of the 2-D PLIC normals: `+1/R` for a drop of the
+alpha phase and `-1/R` for a bubble. Each interior face carries the force
+`phi_f (alpha_Q - alpha_P) A_f n_f` with `phi_f = sigma * kappa_f`, and each of its two
+cells receives half. The cell force approximates `phi grad(alpha)` per unit volume.
+It uses the same face operator as the arithmetic-mean Riemann pressure, so for uniform
+curvature it cancels the Laplace pressure `p0 + sigma * kappa * alpha` to rounding.
+It is a body force, not a flux: the net force is the discrete `oint sigma kappa n dS`
+(zero for uniform curvature). The capillary work on each cell is its force times the
+cell velocity. `face_rate_block` refuses interface cells without valid curvature and
+alpha jumps without adjacent valid curvature, unless `sigma = 0` (exact disabling path).
+The force uses the base geometry: embedded cut apertures and moving-mesh stage metrics
+are not balanced. Curvature from the differentiated first-order PLIC normals of a real
+reconstruction is noisy and does not converge under refinement; relax
+`curvature_tolerance` only with that limit in mind. Contact angles require an
 `EmbeddedBoundaryContactAngleSet`; no angle is inferred from a wall type.
 
 ## Two-material VOF status

@@ -10,8 +10,9 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax.applications.cellular_mechanics._membrane import BiomembranePlan
+from phydrax.applications.cellular_mechanics import BiomembranePlan
 from phydrax.discretization.lattice_boltzmann import ImmersedBoundaryForcingPlan
+from phydrax.geometry.multiregion_surface import EdgeSplitProposal
 
 
 def _membrane() -> Any:
@@ -101,3 +102,20 @@ def test_transport_thermal_mechanics_and_immersed_fluid_compose_end_to_end() -> 
     evaluation = membrane.evaluate(thermal.accepted_state)
     assert evaluation.valid
     assert evaluation.force.shape == coupling.membrane_force.shape
+
+    remesh = membrane.propose_remesh(thermal.accepted_state, EdgeSplitProposal((0, 1)))
+    evidence = membrane.evaluate_remesh(
+        remesh,
+        maximum_relative_area_jump=1.0,
+        maximum_relative_volume_jump=1.0,
+        maximum_relative_energy_jump=10.0,
+    )
+    committed = membrane.commit_remesh(remesh, evidence)
+    assert committed.committed
+    assert not committed.evidence.derivative_available
+    assert committed.prepared.remesh_topology.epoch == 1
+    np.testing.assert_allclose(
+        jnp.sum(committed.state.species_mass, axis=0),
+        jnp.sum(thermal.accepted_state.species_mass, axis=0),
+        atol=2.0e-8,
+    )

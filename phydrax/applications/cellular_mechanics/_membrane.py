@@ -11,7 +11,7 @@ transactions; a committed transaction always produces a newly prepared identity.
 
 from __future__ import annotations
 
-from enum import IntEnum
+from collections.abc import Sequence
 from math import isfinite
 
 import equinox as eqx
@@ -25,28 +25,32 @@ from numpy.typing import ArrayLike as NumPyArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._geometry_predicates import (
-    orient2d,
-    PredicateMode,
-    resolve_host_predicate_mode,
-    segment_intersections_2d,
-    SegmentIntersectionStatus,
-)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import unique_identifiers
+from ...discretization._topology_epoch import TopologyEpochTransition
 from ...discretization.lattice_boltzmann import (
     ImmersedBoundaryForcingPlan,
     ImmersedBoundaryForcingResult,
 )
+from ...geometry.multiregion_surface import (
+    apply_surface_events,
+    EdgeCollapseProposal,
+    EdgeFlipProposal,
+    EdgeSplitProposal,
+    ExtensiveTransferEvidence,
+    MultiRegionSurfaceCapacityPlan,
+    MultiRegionSurfaceLineage,
+    MultiRegionSurfaceState,
+    MultiRegionSurfaceTopology,
+    MultiRegionSurfaceValidationPolicy,
+    PreparedMultiRegionSurface,
+    SurfaceEventKind,
+    SurfaceEventPassEvidence,
+    SurfaceEventPassResult,
+    SurfaceEventPolicy,
+)
 from ...sparse import EdgeRelation, route_reduce
-
-
-class BiomembraneRemeshOperation(IntEnum):
-    """Supported host-side local topology transactions."""
-
-    SPLIT = 1
-    COLLAPSE = 2
-    FLIP = 3
 
 
 class BiomembraneState(StrictModule):
@@ -170,25 +174,27 @@ class BiomembraneFluidCouplingResult(StrictModule):
 
 
 class BiomembraneRemeshProposal(StrictModule, NonTrainableState):
-    """Immutable candidate produced by one host-side local topology operation."""
+    """Biomembrane candidate produced by one shared surface-event transaction."""
 
     source: PreparedBiomembrane
     source_state: BiomembraneState
     candidate: PreparedBiomembrane
     candidate_state: BiomembraneState
-    vertex_parent_ids: Array
-    face_parent_ids: Array
-    manifold: bool = eqx.field(static=True)
-    oriented: bool = eqx.field(static=True)
-    self_intersection_free: bool = eqx.field(static=True)
+    surface_result: SurfaceEventPassResult
+    vertex_transfer_evidence: ExtensiveTransferEvidence | None
+    face_transfer_evidence: ExtensiveTransferEvidence | None
     stencil_valid: bool = eqx.field(static=True)
-    operation: BiomembraneRemeshOperation = eqx.field(static=True)
+    event_kind: SurfaceEventKind = eqx.field(static=True)
     edge_vertex_ids: tuple[int, int] = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
+    @property
+    def lineage(self) -> MultiRegionSurfaceLineage | None:
+        return self.surface_result.evidence.lineage
+
 
 class BiomembraneRemeshEvidence(StrictModule):
-    """Conservation, jump, and exact host-guard evidence for a remesh candidate."""
+    """Mechanics jumps and shared transaction evidence for a remesh candidate."""
 
     area_jump: Array
     relative_area_jump: Array
@@ -199,23 +205,25 @@ class BiomembraneRemeshEvidence(StrictModule):
     species_mass_jump: Array
     material_integral_jump: Array
     finite: Array
-    manifold: Array
-    oriented: Array
-    self_intersection_free: Array
     stencil_valid: Array
     conservative_transfer: Array
     within_jump_limits: Array
     accepted: Array
+    surface: SurfaceEventPassEvidence
+    derivative_available: bool = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
 
 class BiomembraneRemeshResult(StrictModule, NonTrainableState):
-    """Committed candidate, or the exact source objects when evaluation rejected it."""
+    """Committed membrane epoch, or the bitwise-identical source objects."""
 
     prepared: PreparedBiomembrane
     state: BiomembraneState
     proposal: BiomembraneRemeshProposal
     evidence: BiomembraneRemeshEvidence
+    lineage: MultiRegionSurfaceLineage | None
+    vertex_transition: TopologyEpochTransition | None
+    face_transition: TopologyEpochTransition | None
     committed: bool = eqx.field(static=True)
 
 
@@ -414,235 +422,31 @@ def _host_cotangent_sums(
     return weights
 
 
-def _conservative_transfer(
-    source_positions: np.ndarray,
-    candidate_positions: np.ndarray,
-    source_measure: np.ndarray,
-    candidate_measure: np.ndarray,
-    /,
-) -> np.ndarray:
-    source_total = float(np.sum(source_measure))
-    candidate_total = float(np.sum(candidate_measure))
-    if source_total <= 0.0 or candidate_total <= 0.0:
-        raise ValueError("Conservative transfer requires positive total measure.")
-    supply = np.asarray(source_measure, dtype=np.float64).copy()
-    demand = np.asarray(candidate_measure, dtype=np.float64) * (
-        source_total / candidate_total
+def _default_remesh_capacity(
+    vertex_count: int, edge_count: int, face_count: int, /
+) -> MultiRegionSurfaceCapacityPlan:
+    vertex_capacity = max(vertex_count + 1, 2 * vertex_count)
+    growth = vertex_capacity - vertex_count
+    return MultiRegionSurfaceCapacityPlan(
+        vertex_capacity=vertex_capacity,
+        edge_capacity=edge_count + 3 * growth,
+        face_capacity=face_count + 2 * growth,
+        region_capacity=2,
+        region_pair_capacity=1,
+        maximum_edge_valence=2,
+        maximum_vertex_region_pairs=1,
+        event_capacity=1,
+        resource_id="biomembrane-remesh",
     )
-    amount = np.zeros(
-        (candidate_positions.shape[0], source_positions.shape[0]),
-        dtype=np.float64,
-    )
-    distances = np.sum(
-        (candidate_positions[:, None, :] - source_positions[None, :, :]) ** 2,
-        axis=2,
-    )
-    for flat_index in np.argsort(distances, axis=None):
-        candidate, source = np.unravel_index(flat_index, distances.shape)
-        transferred = min(demand[candidate], supply[source])
-        if transferred > 0.0:
-            amount[candidate, source] += transferred
-            demand[candidate] -= transferred
-            supply[source] -= transferred
-    residual = max(
-        float(np.max(np.abs(supply), initial=0.0)),
-        float(np.max(np.abs(demand), initial=0.0)),
-    )
-    if residual > 1.0e-11 * max(source_total, 1.0):
-        raise RuntimeError("Conservative transfer failed to close its marginals.")
-    return amount / source_measure[None, :]
-
-
-def _point_in_triangle_2d(
-    point: np.ndarray, triangle: np.ndarray, mode: PredicateMode, /
-) -> bool:
-    orientation = orient2d(triangle, np.roll(triangle, -1, axis=0), point, mode=mode)
-    # An unresolved orientation is conservatively treated as contact.
-    if not np.all(orientation.certain):
-        return True
-    signs = orientation.signs
-    return bool(np.all(signs >= 0) or np.all(signs <= 0))
-
-
-def _segment_triangle_intersection(
-    start: np.ndarray,
-    end: np.ndarray,
-    triangle: np.ndarray,
-    tolerance: float,
-    /,
-) -> bool:
-    direction = end - start
-    edge_one = triangle[1] - triangle[0]
-    edge_two = triangle[2] - triangle[0]
-    scale = max(
-        float(np.linalg.norm(direction)),
-        float(np.linalg.norm(edge_one)),
-        float(np.linalg.norm(edge_two)),
-        np.finfo(np.float64).tiny,
-    )
-    direction = direction / scale
-    edge_one = edge_one / scale
-    edge_two = edge_two / scale
-    offset = (start - triangle[0]) / scale
-    cross_direction = np.cross(direction, edge_two)
-    determinant = float(np.dot(edge_one, cross_direction))
-    predicate_tolerance = max(tolerance, 64.0 * np.finfo(np.float64).eps)
-    if abs(determinant) <= predicate_tolerance:
-        return False
-    inverse = 1.0 / determinant
-    first_coordinate = inverse * float(np.dot(offset, cross_direction))
-    second_cross = np.cross(offset, edge_one)
-    second_coordinate = inverse * float(np.dot(direction, second_cross))
-    parameter = inverse * float(np.dot(edge_two, second_cross))
-    return bool(
-        first_coordinate >= -predicate_tolerance
-        and second_coordinate >= -predicate_tolerance
-        and first_coordinate + second_coordinate <= 1.0 + predicate_tolerance
-        and parameter >= -predicate_tolerance
-        and parameter <= 1.0 + predicate_tolerance
-    )
-
-
-def _triangles_intersect(
-    first: np.ndarray, second: np.ndarray, tolerance: float, mode: PredicateMode, /
-) -> bool:
-    origin = first[0]
-    all_points = np.concatenate((first, second), axis=0)
-    edge_scale = max(
-        float(
-            np.max(
-                np.linalg.norm(
-                    all_points[:, None, :] - all_points[None, :, :],
-                    axis=2,
-                )
-            )
-        ),
-        np.finfo(np.float64).tiny,
-    )
-    first = (first - origin) / edge_scale
-    second = (second - origin) / edge_scale
-    predicate_tolerance = max(tolerance, 64.0 * float(np.finfo(np.float64).eps))
-    distance_tolerance = np.sqrt(predicate_tolerance)
-    first_normal = np.cross(first[1] - first[0], first[2] - first[0])
-    second_normal = np.cross(second[1] - second[0], second[2] - second[0])
-    first_length = float(np.linalg.norm(first_normal))
-    second_length = float(np.linalg.norm(second_normal))
-    if first_length <= predicate_tolerance or second_length <= predicate_tolerance:
-        return True
-    first_distance = (second - first[0]) @ (first_normal / first_length)
-    second_distance = (first - second[0]) @ (second_normal / second_length)
-    coplanar = bool(
-        np.max(np.abs(first_distance)) <= distance_tolerance
-        and np.max(np.abs(second_distance)) <= distance_tolerance
-    )
-    if coplanar:
-        axis = int(np.argmax(np.abs(first_normal)))
-        projected_first = np.delete(first, axis, axis=1)
-        projected_second = np.delete(second, axis, axis=1)
-        first_edge, second_edge = np.divmod(np.arange(9), 3)
-        contact = segment_intersections_2d(
-            projected_first[first_edge],
-            projected_first[(first_edge + 1) % 3],
-            projected_second[second_edge],
-            projected_second[(second_edge + 1) % 3],
-            mode=mode,
-        )
-        # An unresolved contact class is conservatively treated as contact.
-        if np.any(np.asarray(contact.status) != SegmentIntersectionStatus.DISJOINT):
-            return True
-        return _point_in_triangle_2d(
-            projected_first[0], projected_second, mode
-        ) or _point_in_triangle_2d(projected_second[0], projected_first, mode)
-    for index in range(3):
-        if _segment_triangle_intersection(
-            first[index],
-            first[(index + 1) % 3],
-            second,
-            predicate_tolerance,
-        ) or _segment_triangle_intersection(
-            second[index],
-            second[(index + 1) % 3],
-            first,
-            predicate_tolerance,
-        ):
-            return True
-    return False
-
-
-def _self_intersection_free(
-    positions: np.ndarray, faces: np.ndarray, tolerance: float, /
-) -> bool:
-    triangles = positions[faces]
-    trimming = max(np.sqrt(tolerance), 1.0e-10)
-    mode = resolve_host_predicate_mode(PredicateMode.EXACT)
-    for first in range(faces.shape[0]):
-        for second in range(first + 1, faces.shape[0]):
-            shared = np.intersect1d(faces[first], faces[second])
-            if shared.size == 0:
-                intersects = _triangles_intersect(
-                    triangles[first], triangles[second], tolerance, mode
-                )
-            elif shared.size == 1:
-                first_triangle = triangles[first].copy()
-                second_triangle = triangles[second].copy()
-                first_slot = int(np.flatnonzero(faces[first] == shared[0])[0])
-                second_slot = int(np.flatnonzero(faces[second] == shared[0])[0])
-                first_triangle[first_slot] = (1.0 - trimming) * first_triangle[
-                    first_slot
-                ] + trimming * np.mean(first_triangle, axis=0)
-                second_triangle[second_slot] = (1.0 - trimming) * second_triangle[
-                    second_slot
-                ] + trimming * np.mean(second_triangle, axis=0)
-                intersects = _triangles_intersect(
-                    first_triangle, second_triangle, tolerance, mode
-                )
-            elif shared.size == 2:
-                first_other = int(
-                    next(item for item in faces[first] if item not in shared)
-                )
-                second_other = int(
-                    next(item for item in faces[second] if item not in shared)
-                )
-                edge_start, edge_end = positions[shared]
-                edge = edge_end - edge_start
-                first_offset = positions[first_other] - edge_start
-                second_offset = positions[second_other] - edge_start
-                normal = np.cross(edge, first_offset)
-                scale = max(
-                    float(np.linalg.norm(edge) * np.linalg.norm(first_offset)),
-                    np.finfo(np.float64).tiny,
-                )
-                length_scale = max(
-                    float(np.linalg.norm(edge)),
-                    float(np.linalg.norm(first_offset)),
-                    float(np.linalg.norm(second_offset)),
-                    np.finfo(np.float64).tiny,
-                )
-                coplanar = abs(float(np.dot(normal, second_offset))) / (
-                    scale * length_scale
-                ) <= np.sqrt(tolerance)
-                same_side = (
-                    float(
-                        np.dot(
-                            np.cross(edge, first_offset),
-                            np.cross(edge, second_offset),
-                        )
-                    )
-                    > tolerance * scale * scale
-                )
-                intersects = coplanar and same_side
-            else:
-                intersects = True
-            if intersects:
-                return False
-    return True
 
 
 class BiomembranePlan(StrictModule, NonTrainableState):
     """Closed oriented topology and constitutive data for a biomembrane.
 
-    All constitutive arrays have the topology's exact fixed capacity. Species
-    are nodal amounts; concentration uses the current barycentric dual area.
+    Constitutive arrays follow the active mechanics topology exactly; the
+    shared remesh owner separately keeps fixed padded transaction capacities.
+    Species are nodal amounts with explicit IDs, and concentration uses the
+    current barycentric dual area.
     """
 
     faces: Array
@@ -660,6 +464,8 @@ class BiomembranePlan(StrictModule, NonTrainableState):
     mobility: Array
     species_diffusivity: Array
     reaction_matrix: Array
+    remesh_capacity: MultiRegionSurfaceCapacityPlan
+    remesh_policy: SurfaceEventPolicy
     adhesion_normal: Array
     global_area_modulus: Array
     volume_modulus: Array
@@ -672,6 +478,8 @@ class BiomembranePlan(StrictModule, NonTrainableState):
     face_count: int = eqx.field(static=True)
     edge_count: int = eqx.field(static=True)
     species_count: int = eqx.field(static=True)
+    species_ids: tuple[str, ...] = eqx.field(static=True)
+    remesh_region_ids: tuple[str, str] = eqx.field(static=True)
     target_area: float | None = eqx.field(static=True)
     target_volume: float | None = eqx.field(static=True)
     geometry_tolerance: float = eqx.field(static=True)
@@ -703,6 +511,13 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         mobility: ArrayLike = 1.0,
         species_diffusivity: NumPyArrayLike = (),
         reaction_matrix: ArrayLike | None = None,
+        species_ids: Sequence[str] | None = None,
+        remesh_capacity: MultiRegionSurfaceCapacityPlan | None = None,
+        remesh_policy: SurfaceEventPolicy | None = None,
+        remesh_region_ids: Sequence[str] = (
+            "biomembrane-interior",
+            "biomembrane-ambient",
+        ),
         geometry_tolerance: float = 1.0e-12,
         plan_id: str | None = None,
     ) -> None:
@@ -744,6 +559,13 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         if np.any(~np.isfinite(diffusivity)) or np.any(diffusivity < 0.0):
             raise ValueError("species_diffusivity must be finite and nonnegative.")
         species_count = diffusivity.shape[0]
+        species_names = (
+            tuple(f"species-{index}" for index in range(species_count))
+            if species_ids is None
+            else unique_identifiers(species_ids, "species_ids", allow_empty=True)
+        )
+        if len(species_names) != species_count:
+            raise ValueError("species_ids must identify every surface species.")
         if reaction_matrix is None:
             reaction = np.zeros((species_count, species_count), dtype=np.float64)
         else:
@@ -768,6 +590,51 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         else:
             coupling = _real_array(
                 curvature_coupling, (species_count,), "curvature_coupling"
+            )
+        capacity = (
+            _default_remesh_capacity(vertex_count, edges.shape[0], face_count)
+            if remesh_capacity is None
+            else remesh_capacity
+        )
+        if not isinstance(capacity, MultiRegionSurfaceCapacityPlan):
+            raise TypeError("remesh_capacity must be MultiRegionSurfaceCapacityPlan.")
+        if (
+            capacity.vertex_capacity < vertex_count
+            or capacity.edge_capacity < edges.shape[0]
+            or capacity.face_capacity < face_count
+            or capacity.region_capacity != 2
+            or capacity.region_pair_capacity != 1
+            or capacity.maximum_edge_valence != 2
+            or capacity.maximum_vertex_region_pairs != 1
+            or capacity.event_capacity < 1
+            or capacity.coordinate_dtype != "float64"
+        ):
+            raise ValueError(
+                "remesh_capacity must fit the membrane and declare exactly two "
+                "regions, one pair/slot, edge valence two, float64 coordinates, "
+                "and at least one event."
+            )
+        region_names = unique_identifiers(
+            remesh_region_ids, "remesh_region_ids", allow_empty=False
+        )
+        if len(region_names) != 2:
+            raise ValueError(
+                "remesh_region_ids must identify the finite interior and ambient."
+            )
+        policy = (
+            SurfaceEventPolicy(
+                validation=MultiRegionSurfaceValidationPolicy(
+                    profile="manifold_two_region"
+                )
+            )
+            if remesh_policy is None
+            else remesh_policy
+        )
+        if not isinstance(policy, SurfaceEventPolicy):
+            raise TypeError("remesh_policy must be SurfaceEventPolicy.")
+        if policy.validation.profile != "manifold_two_region":
+            raise ValueError(
+                "Biomembrane remeshing requires the manifold_two_region profile."
             )
 
         scalars = {
@@ -829,6 +696,10 @@ class BiomembranePlan(StrictModule, NonTrainableState):
             "mobility": array_tree_fingerprint(mobility_values),
             "diffusivity": array_tree_fingerprint(diffusivity),
             "reaction": array_tree_fingerprint(reaction),
+            "species_ids": list(species_names),
+            "remesh_capacity": capacity.plan_id,
+            "remesh_policy": policy.policy_id,
+            "remesh_region_ids": list(region_names),
         }
         generated = canonical_fingerprint(payload)
         resolved = generated if plan_id is None else str(plan_id)
@@ -850,6 +721,8 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         self.active_traction = jnp.asarray(traction, dtype=dtype)
         self.mobility = jnp.asarray(mobility_values, dtype=dtype)
         self.species_diffusivity = jnp.asarray(diffusivity, dtype=dtype)
+        self.remesh_capacity = capacity
+        self.remesh_policy = policy
         reaction_array = jnp.asarray(reaction, dtype=dtype)
         if species_count:
             reaction_array = reaction_array.at[-1, :].add(
@@ -870,6 +743,8 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         self.face_count = face_count
         self.edge_count = edges.shape[0]
         self.species_count = species_count
+        self.species_ids = species_names
+        self.remesh_region_ids = (region_names[0], region_names[1])
         self.target_area, self.target_volume = targets
         self.geometry_tolerance = scalars["geometry_tolerance"]
         self.plan_id = resolved
@@ -882,6 +757,8 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
     """Prepared static-topology biomembrane runtime."""
 
     plan: BiomembranePlan
+    remesh_topology: MultiRegionSurfaceTopology
+    prepared_remesh: PreparedMultiRegionSurface
     reference_positions: Array
     reference_face_area: Array
     reference_vertex_area: Array
@@ -899,6 +776,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
         /,
         *,
         reference_face_area: ArrayLike | None = None,
+        remesh_topology: MultiRegionSurfaceTopology | None = None,
     ) -> None:
         if not isinstance(plan, BiomembranePlan):
             raise TypeError("plan must be BiomembranePlan.")
@@ -913,6 +791,46 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
         if np.any(~np.isfinite(reference)):
             raise ValueError("reference_positions must be finite.")
         faces = np.asarray(plan.faces)
+        if remesh_topology is None:
+            labels = np.tile(np.asarray((0, 1), dtype=np.int32), (plan.face_count, 1))
+            topology = MultiRegionSurfaceTopology(
+                plan.remesh_capacity,
+                faces,
+                labels,
+                plan.remesh_region_ids,
+                ("finite", "boundary"),
+                vertex_count=plan.vertex_count,
+                vertex_global_ids=np.asarray(plan.vertex_ids),
+                face_global_ids=np.asarray(plan.face_ids),
+            )
+        else:
+            if not isinstance(remesh_topology, MultiRegionSurfaceTopology):
+                raise TypeError("remesh_topology must be MultiRegionSurfaceTopology.")
+            topology = remesh_topology
+            compatible = (
+                topology.plan.plan_id == plan.remesh_capacity.plan_id
+                and topology.vertex_count == plan.vertex_count
+                and topology.face_count == plan.face_count
+                and topology.region_ids == plan.remesh_region_ids
+                and topology.region_kinds == ("finite", "boundary")
+                and np.array_equal(topology.host_faces(), faces)
+                and np.array_equal(
+                    np.asarray(topology.vertex_global_ids[: topology.vertex_count]),
+                    np.asarray(plan.vertex_ids),
+                )
+                and np.array_equal(
+                    np.asarray(topology.face_global_ids[: topology.face_count]),
+                    np.asarray(plan.face_ids),
+                )
+            )
+            if not compatible:
+                raise ValueError("remesh_topology does not match the biomembrane plan.")
+        padded_positions = np.zeros((topology.vertex_capacity, 3), dtype=np.float64)
+        padded_positions[: plan.vertex_count] = reference
+        remesh_state = MultiRegionSurfaceState(topology, padded_positions)
+        prepared_remesh = PreparedMultiRegionSurface(
+            topology, remesh_state, policy=plan.remesh_policy.validation
+        )
         areas, vertex_area, total_area, volume = _host_geometry(
             reference, faces, plan.geometry_tolerance
         )
@@ -926,8 +844,6 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             raise ValueError(
                 "Prepared membrane transport requires intrinsic Delaunay edges."
             )
-        if not _self_intersection_free(reference, faces, plan.geometry_tolerance):
-            raise ValueError("Reference membrane must be free of self-intersection.")
         if reference_face_area is None:
             rest_areas = areas
         else:
@@ -957,10 +873,13 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
                 "reference_volume": volume,
                 "target_area": target_area,
                 "target_volume": target_volume,
+                "remesh_lineage": topology.lineage_id,
             }
         )
         dtype = plan.bending_rigidity.dtype
         self.plan = plan
+        self.remesh_topology = topology
+        self.prepared_remesh = prepared_remesh
         self.reference_positions = jnp.asarray(reference, dtype=dtype)
         self.reference_face_area = jnp.asarray(rest_areas, dtype=dtype)
         self.reference_vertex_area = jnp.asarray(rest_vertex_area, dtype=dtype)
@@ -1567,71 +1486,117 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
-    def _edge_indices(self, edge_vertex_ids: tuple[int, int], /) -> tuple[int, int, int]:
-        if len(edge_vertex_ids) != 2:
-            raise ValueError(
-                "edge_vertex_ids must contain exactly two stable vertex IDs."
-            )
-        first_id, second_id = (int(value) for value in edge_vertex_ids)
-        if first_id == second_id:
-            raise ValueError("A remesh edge requires two distinct stable vertex IDs.")
-        identifiers = np.asarray(self.plan.vertex_ids)
-        first_matches = np.flatnonzero(identifiers == first_id)
-        second_matches = np.flatnonzero(identifiers == second_id)
-        if first_matches.shape != (1,) or second_matches.shape != (1,):
-            raise ValueError("edge_vertex_ids must name prepared membrane vertices.")
-        first, second = int(first_matches[0]), int(second_matches[0])
-        edges = np.asarray(self.plan.edge_vertices)
-        matches = np.flatnonzero(
-            ((edges[:, 0] == first) & (edges[:, 1] == second))
-            | ((edges[:, 0] == second) & (edges[:, 1] == first))
+    def _remesh_state(self, state: BiomembraneState, /) -> MultiRegionSurfaceState:
+        """Capacity-shaped E3 state with every transported field made extensive."""
+        values = self._validate_state(state)
+        topology = self.remesh_topology
+        positions = np.zeros((topology.vertex_capacity, 3), dtype=np.float64)
+        positions[: self.plan.vertex_count] = np.asarray(values.positions)
+        _, vertex_area, _, _ = _host_geometry(
+            np.asarray(values.positions),
+            np.asarray(self.plan.faces),
+            self.plan.geometry_tolerance,
         )
-        if matches.shape != (1,):
-            raise ValueError("edge_vertex_ids must name one prepared membrane edge.")
-        return first, second, int(matches[0])
+        material = np.stack(
+            (
+                np.asarray(self.plan.bending_rigidity),
+                np.asarray(self.plan.gaussian_rigidity),
+                np.asarray(self.plan.spontaneous_curvature),
+                np.asarray(self.plan.active_traction),
+                np.asarray(self.plan.mobility),
+            ),
+            axis=1,
+        )
+        active_fields = np.concatenate(
+            (np.asarray(values.species_mass), vertex_area[:, None] * material), axis=1
+        )
+        fields = np.zeros(
+            (
+                topology.vertex_capacity,
+                topology.slot_width,
+                active_fields.shape[1],
+            ),
+            dtype=np.float64,
+        )
+        fields[: self.plan.vertex_count, 0] = active_fields
+        names = tuple(
+            f"species-content-{index}-{identifier}"
+            for index, identifier in enumerate(self.plan.species_ids)
+        ) + (
+            "bending-rigidity-area-content",
+            "gaussian-rigidity-area-content",
+            "spontaneous-curvature-area-content",
+            "active-traction-area-content",
+            "mobility-area-content",
+        )
+        return MultiRegionSurfaceState(
+            topology,
+            positions,
+            sheet_fields=fields,
+            sheet_field_names=names,
+        )
+
+    def _face_contents(self) -> np.ndarray:
+        topology = self.remesh_topology
+        values = np.zeros((topology.face_capacity, 2), dtype=np.float64)
+        rest_area = np.asarray(self.reference_face_area)
+        values[: self.plan.face_count, 0] = rest_area
+        values[: self.plan.face_count, 1] = rest_area * np.asarray(
+            self.plan.local_area_modulus
+        )
+        return values
+
+    def _candidate_geometry_admitted(
+        self, positions: np.ndarray, faces: np.ndarray, /
+    ) -> bool:
+        """Membrane-only oriented-normal and transport-stencil admission."""
+        edges, opposites, _ = _closed_topology(faces, positions.shape[0])
+        points = positions[faces]
+        area_vectors = 0.5 * np.cross(
+            points[:, 1] - points[:, 0], points[:, 2] - points[:, 0]
+        )
+        normal_sum = np.zeros_like(positions)
+        np.add.at(
+            normal_sum,
+            faces.reshape((-1,)),
+            np.repeat(area_vectors, 3, axis=0),
+        )
+        normal_magnitude = np.linalg.norm(normal_sum, axis=1)
+        normals_valid = bool(
+            np.all(np.isfinite(normal_magnitude))
+            and np.all(normal_magnitude > self.plan.geometry_tolerance)
+        )
+        weights = _host_cotangent_sums(
+            positions, edges, opposites, self.plan.geometry_tolerance
+        )
+        stencil_valid = bool(np.all(weights >= -np.sqrt(self.plan.geometry_tolerance)))
+        return normals_valid and stencil_valid
 
     def _candidate_plan(
         self,
-        faces: np.ndarray,
-        source_positions: np.ndarray,
-        positions: np.ndarray,
-        vertex_ids: np.ndarray,
-        face_ids: np.ndarray,
-        vertex_transfer: np.ndarray,
-        face_transfer: np.ndarray,
+        surface: SurfaceEventPassResult,
+        vertex_fields: np.ndarray,
+        face_fields: np.ndarray,
         /,
-    ) -> tuple[BiomembranePlan, np.ndarray]:
+    ) -> BiomembranePlan:
+        topology = surface.topology
+        positions = np.asarray(surface.state.positions[: topology.vertex_count])
+        faces = topology.host_faces().astype(np.int32)
+        _, vertex_area, _, _ = _host_geometry(
+            positions, faces, self.plan.geometry_tolerance
+        )
+        species = self.plan.species_count
+        material = vertex_fields[:, species:] / vertex_area[:, None]
+        rest_area = face_fields[:, 0]
+        local_modulus = face_fields[:, 1] / rest_area
         plan = self.plan
-        source_faces = np.asarray(plan.faces)
-        source_face_area, source_vertex_area, _, _ = _host_geometry(
-            source_positions,
-            source_faces,
-            plan.geometry_tolerance,
-        )
-        candidate_face_area, candidate_vertex_area, _, _ = _host_geometry(
-            positions,
+        return BiomembranePlan(
             faces,
-            plan.geometry_tolerance,
-        )
-
-        def transfer_vertex(values: ArrayLike) -> np.ndarray:
-            source = np.asarray(values, dtype=np.float64)
-            amount = vertex_transfer @ (source_vertex_area * source)
-            return amount / candidate_vertex_area
-
-        source_rest_area = np.asarray(self.reference_face_area)
-        candidate_rest_area = face_transfer @ source_rest_area
-        local_amount = face_transfer @ (
-            source_rest_area * np.asarray(plan.local_area_modulus)
-        )
-        local_modulus = local_amount / candidate_rest_area
-        candidate_plan = BiomembranePlan(
-            faces,
-            vertex_ids=vertex_ids,
-            face_ids=face_ids,
-            bending_rigidity=transfer_vertex(plan.bending_rigidity),
-            gaussian_rigidity=transfer_vertex(plan.gaussian_rigidity),
-            spontaneous_curvature=transfer_vertex(plan.spontaneous_curvature),
+            vertex_ids=np.asarray(topology.vertex_global_ids[: topology.vertex_count]),
+            face_ids=np.asarray(topology.face_global_ids[: topology.face_count]),
+            bending_rigidity=material[:, 0],
+            gaussian_rigidity=material[:, 1],
+            spontaneous_curvature=material[:, 2],
             curvature_coupling=np.asarray(plan.curvature_coupling),
             local_area_modulus=local_modulus,
             global_area_modulus=float(plan.global_area_modulus),
@@ -1644,323 +1609,82 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             adhesion_normal=np.asarray(plan.adhesion_normal),
             adhesion_offset=float(plan.adhesion_offset),
             adhesion_length=float(plan.adhesion_length),
-            active_traction=transfer_vertex(plan.active_traction),
-            mobility=transfer_vertex(plan.mobility),
+            active_traction=material[:, 3],
+            mobility=material[:, 4],
             species_diffusivity=np.asarray(plan.species_diffusivity),
             reaction_matrix=np.asarray(plan.reaction_matrix),
+            species_ids=plan.species_ids,
+            remesh_capacity=plan.remesh_capacity,
+            remesh_policy=plan.remesh_policy,
+            remesh_region_ids=plan.remesh_region_ids,
             geometry_tolerance=plan.geometry_tolerance,
         )
-        return candidate_plan, candidate_rest_area
 
     def propose_remesh(
         self,
         state: BiomembraneState,
-        operation: BiomembraneRemeshOperation | str,
-        edge_vertex_ids: tuple[int, int],
+        event: EdgeSplitProposal | EdgeCollapseProposal | EdgeFlipProposal,
         /,
     ) -> BiomembraneRemeshProposal:
         values = self._validate_state(state)
-        if isinstance(operation, str):
-            normalized = operation.strip().lower()
-            mapping = {
-                "split": BiomembraneRemeshOperation.SPLIT,
-                "collapse": BiomembraneRemeshOperation.COLLAPSE,
-                "flip": BiomembraneRemeshOperation.FLIP,
-            }
-            if normalized not in mapping:
-                raise ValueError("operation must be 'split', 'collapse', or 'flip'.")
-            selected = mapping[normalized]
-        else:
-            selected = BiomembraneRemeshOperation(operation)
-        first, second, edge_index = self._edge_indices(edge_vertex_ids)
-        source_faces = np.asarray(self.plan.faces, dtype=np.int32)
-        source_vertex_ids = np.asarray(self.plan.vertex_ids, dtype=np.int64)
-        source_face_ids = np.asarray(self.plan.face_ids, dtype=np.int64)
-        positions = np.array(values.positions, dtype=np.float64, copy=True)
-        source_positions = positions.copy()
-        masses = np.asarray(values.species_mass, dtype=np.float64)
-        source_masses = masses.copy()
-        edge_faces = np.asarray(self.plan.edge_faces)[edge_index]
-        edge_oriented = np.asarray(self.plan.edge_vertices)[edge_index]
-        opposites = np.asarray(self.plan.edge_opposites)[edge_index]
-        vertex_parents = np.stack(
-            (source_vertex_ids, np.full_like(source_vertex_ids, -1)), axis=1
+        if not isinstance(
+            event, (EdgeSplitProposal, EdgeCollapseProposal, EdgeFlipProposal)
+        ):
+            raise TypeError(
+                "event must be EdgeSplitProposal, EdgeCollapseProposal, "
+                "or EdgeFlipProposal."
+            )
+        event_state = self._remesh_state(values)
+        surface = apply_surface_events(
+            self.remesh_topology,
+            event_state,
+            (event,),
+            policy=self.plan.remesh_policy,
         )
-        face_parents = source_face_ids.copy()
-
-        if selected is BiomembraneRemeshOperation.SPLIT:
-            if (
-                int(np.max(source_vertex_ids)) == np.iinfo(np.int64).max
-                or int(np.max(source_face_ids)) > np.iinfo(np.int64).max - 2
-            ):
-                raise OverflowError("Stable remesh identifiers are exhausted.")
-            new_vertex = self.plan.vertex_count
-            new_vertex_id = int(np.max(source_vertex_ids)) + 1
-            positions = np.concatenate(
-                (positions, (0.5 * (positions[first] + positions[second]))[None, :]),
-                axis=0,
-            )
-            candidate_faces = source_faces.tolist()
-            candidate_face_ids = source_face_ids.tolist()
-            candidate_face_source = list(range(self.plan.face_count))
-            next_face_id = int(np.max(source_face_ids)) + 1
-            for local, face_index in enumerate(edge_faces.tolist()):
-                u = int(edge_oriented[0]) if local == 0 else int(edge_oriented[1])
-                v = int(edge_oriented[1]) if local == 0 else int(edge_oriented[0])
-                opposite = int(opposites[local])
-                candidate_faces[face_index] = [u, new_vertex, opposite]
-                candidate_faces.append([new_vertex, v, opposite])
-                candidate_face_ids.append(next_face_id)
-                next_face_id += 1
-                candidate_face_source.append(face_index)
-            faces = np.asarray(candidate_faces, dtype=np.int32)
-            vertex_ids = np.concatenate(
-                (source_vertex_ids, np.asarray((new_vertex_id,), dtype=np.int64))
-            )
-            face_ids = np.asarray(candidate_face_ids, dtype=np.int64)
-            face_source = np.asarray(candidate_face_source, dtype=np.int64)
-            vertex_parents = np.concatenate(
-                (
-                    vertex_parents,
-                    np.asarray(
-                        ((source_vertex_ids[first], source_vertex_ids[second]),),
-                        dtype=np.int64,
-                    ),
-                ),
-                axis=0,
-            )
-            face_parents = source_face_ids[face_source]
-        elif selected is BiomembraneRemeshOperation.COLLAPSE:
-            keep, remove = (
-                (first, second)
-                if source_vertex_ids[first] < source_vertex_ids[second]
-                else (second, first)
-            )
-            positions[keep] = 0.5 * (source_positions[keep] + source_positions[remove])
-            replaced = source_faces.copy()
-            replaced[replaced == remove] = keep
-            valid_face = ~(
-                (replaced[:, 0] == replaced[:, 1])
-                | (replaced[:, 1] == replaced[:, 2])
-                | (replaced[:, 2] == replaced[:, 0])
-            )
-            kept_vertices = np.arange(self.plan.vertex_count) != remove
-            remap = np.cumsum(kept_vertices) - 1
-            faces = remap[replaced[valid_face]].astype(np.int32)
-            positions = positions[kept_vertices]
-            vertex_ids = source_vertex_ids[kept_vertices]
-            face_ids = source_face_ids[valid_face]
-            face_source = np.flatnonzero(valid_face)
-            vertex_parents = vertex_parents[kept_vertices]
-            keep_new = int(remap[keep])
-            vertex_parents[keep_new] = np.asarray(
-                (source_vertex_ids[keep], source_vertex_ids[remove]), dtype=np.int64
-            )
-            face_parents = source_face_ids[valid_face]
-        else:
-            left_face, right_face = (int(item) for item in edge_faces)
-            u, v = (int(item) for item in edge_oriented)
-            a, b = (int(item) for item in opposites)
-            faces = source_faces.copy()
-            faces[left_face] = np.asarray((a, b, v), dtype=np.int32)
-            faces[right_face] = np.asarray((b, a, u), dtype=np.int32)
-            vertex_ids = source_vertex_ids.copy()
-            face_ids = source_face_ids.copy()
-            face_source = np.arange(self.plan.face_count)
-
-        manifold = True
-        oriented = True
-        self_intersection_free = True
-        stencil_valid = False
         candidate = self
         candidate_state = values
-        try_topology = True
-        if faces.shape[0] < 4 or positions.shape[0] < 4:
-            manifold = False
-            try_topology = False
-        if try_topology:
-            canonical = np.sort(faces, axis=1)
-            used_vertices = np.unique(faces.reshape((-1,)))
-            manifold = bool(
-                np.all(faces >= 0)
-                and np.all(faces < positions.shape[0])
-                and np.unique(canonical, axis=0).shape[0] == faces.shape[0]
-                and used_vertices.shape[0] == positions.shape[0]
-                and np.array_equal(used_vertices, np.arange(positions.shape[0]))
-            )
-            if manifold:
-                edge_uses: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
-                for face_index, face in enumerate(faces.tolist()):
-                    for start, end in (
-                        (face[0], face[1]),
-                        (face[1], face[2]),
-                        (face[2], face[0]),
-                    ):
-                        edge_uses.setdefault(
-                            (min(start, end), max(start, end)), []
-                        ).append((start, end, face_index))
-                manifold = all(len(uses) == 2 for uses in edge_uses.values())
-                oriented = manifold and all(
-                    uses[0][0] == uses[1][1] and uses[0][1] == uses[1][0]
-                    for uses in edge_uses.values()
+        stencil_valid = False
+        face_evidence = None
+        if surface.committed:
+            target = surface.topology
+            positions = np.asarray(surface.state.positions[: target.vertex_count])
+            faces = target.host_faces().astype(np.int32)
+            stencil_valid = self._candidate_geometry_admitted(positions, faces)
+            if stencil_valid:
+                vertex_fields = np.asarray(
+                    surface.state.sheet_fields[: target.vertex_count, 0]
                 )
-                if manifold:
-                    neighbors: list[list[int]] = [[] for _ in range(faces.shape[0])]
-                    for uses in edge_uses.values():
-                        left, right = uses[0][2], uses[1][2]
-                        neighbors[left].append(right)
-                        neighbors[right].append(left)
-                    reached = {0}
-                    frontier = [0]
-                    while frontier:
-                        current = frontier.pop()
-                        for neighbor in neighbors[current]:
-                            if neighbor not in reached:
-                                reached.add(neighbor)
-                                frontier.append(neighbor)
-                    manifold = len(reached) == faces.shape[0] and _vertex_links_valid(
-                        faces, positions.shape[0]
+                face_transfer = surface.face_transfer
+                if face_transfer is None:
+                    raise RuntimeError(
+                        "A committed surface event must expose its face transfer."
                     )
-                    oriented = oriented and manifold
-        if manifold and oriented:
-            points = positions[faces]
-            area_vector = 0.5 * np.cross(
-                points[:, 1] - points[:, 0],
-                points[:, 2] - points[:, 0],
-            )
-            face_area = np.linalg.norm(area_vector, axis=1)
-            normal_sum = np.zeros_like(positions)
-            np.add.at(
-                normal_sum,
-                faces.reshape((-1,)),
-                np.repeat(area_vector, 3, axis=0),
-            )
-            normal_magnitude = np.linalg.norm(normal_sum, axis=1)
-            center = np.mean(positions, axis=0)
-            relative = points - center
-            volume = float(
-                np.sum(
-                    np.sum(
-                        relative[:, 0] * np.cross(relative[:, 1], relative[:, 2]),
-                        axis=1,
-                    )
+                source_face_fields = self._face_contents()
+                transferred_faces = face_transfer.apply(source_face_fields)
+                face_evidence = face_transfer.evidence(
+                    source_face_fields, transferred_faces
                 )
-                / 6.0
-            )
-            total_area = float(np.sum(face_area))
-            volume_tolerance = self.plan.geometry_tolerance * max(total_area, 1.0)
-            oriented = bool(
-                np.all(np.isfinite(face_area))
-                and np.all(face_area > self.plan.geometry_tolerance)
-                and np.all(np.isfinite(normal_magnitude))
-                and np.all(normal_magnitude > self.plan.geometry_tolerance)
-                and isfinite(volume)
-                and volume > volume_tolerance
-            )
-            self_intersection_free = oriented and _self_intersection_free(
-                positions, faces, self.plan.geometry_tolerance
-            )
-            if self_intersection_free:
-                candidate_edges, candidate_opposites, _ = _closed_topology(
-                    faces, positions.shape[0]
+                target_face_fields = np.asarray(transferred_faces[: target.face_count])
+                candidate_plan = self._candidate_plan(
+                    surface, vertex_fields, target_face_fields
                 )
-                candidate_weights = _host_cotangent_sums(
+                candidate = PreparedBiomembrane(
+                    candidate_plan,
                     positions,
-                    candidate_edges,
-                    candidate_opposites,
-                    self.plan.geometry_tolerance,
+                    reference_face_area=target_face_fields[:, 0],
+                    remesh_topology=target,
                 )
-                stencil_valid = bool(
-                    np.all(candidate_weights >= -np.sqrt(self.plan.geometry_tolerance))
+                candidate_state = candidate.state(
+                    positions, vertex_fields[:, : self.plan.species_count]
                 )
-        else:
-            self_intersection_free = False
-        if manifold and oriented and self_intersection_free and stencil_valid:
-            (
-                source_face_area,
-                source_vertex_area,
-                _,
-                _,
-            ) = _host_geometry(
-                source_positions,
-                source_faces,
-                self.plan.geometry_tolerance,
-            )
-            (
-                candidate_face_area,
-                candidate_vertex_area,
-                _,
-                _,
-            ) = _host_geometry(
-                positions,
-                faces,
-                self.plan.geometry_tolerance,
-            )
-            if selected is BiomembraneRemeshOperation.COLLAPSE:
-                vertex_source = np.flatnonzero(kept_vertices)
-                vertex_transfer = np.zeros(
-                    (positions.shape[0], self.plan.vertex_count),
-                    dtype=np.float64,
-                )
-                vertex_transfer[np.arange(positions.shape[0]), vertex_source] = 1.0
-                vertex_transfer[keep_new, remove] = 1.0
-                face_transfer = np.zeros(
-                    (faces.shape[0], self.plan.face_count),
-                    dtype=np.float64,
-                )
-                face_transfer[np.arange(faces.shape[0]), face_source] = 1.0
-                affected = np.flatnonzero(np.any(faces == keep_new, axis=1))
-                affected_weight = candidate_face_area[affected]
-                affected_weight = affected_weight / np.sum(affected_weight)
-                for removed_face in np.flatnonzero(~valid_face):
-                    face_transfer[affected, removed_face] = affected_weight
-            elif selected is BiomembraneRemeshOperation.FLIP:
-                vertex_transfer = np.eye(self.plan.vertex_count, dtype=np.float64)
-                face_transfer = np.eye(self.plan.face_count, dtype=np.float64)
-            else:
-                vertex_transfer = _conservative_transfer(
-                    source_positions,
-                    positions,
-                    source_vertex_area,
-                    candidate_vertex_area,
-                )
-                face_transfer = np.zeros(
-                    (faces.shape[0], self.plan.face_count),
-                    dtype=np.float64,
-                )
-                for source_face in range(self.plan.face_count):
-                    children = np.flatnonzero(face_source == source_face)
-                    child_weight = candidate_face_area[children]
-                    face_transfer[children, source_face] = child_weight / np.sum(
-                        child_weight
-                    )
-            masses = vertex_transfer @ source_masses
-            candidate_plan, candidate_rest_area = self._candidate_plan(
-                faces,
-                source_positions,
-                positions,
-                vertex_ids,
-                face_ids,
-                vertex_transfer,
-                face_transfer,
-            )
-            candidate = PreparedBiomembrane(
-                candidate_plan,
-                positions,
-                reference_face_area=candidate_rest_area,
-            )
-            candidate_state = candidate.state(positions, masses)
-
         proposal_id = canonical_fingerprint(
             {
                 "kind": "biomembrane-remesh-proposal",
                 "source": self.prepared_id,
-                "operation": int(selected),
-                "edge_vertex_ids": tuple(edge_vertex_ids),
+                "surface_evidence": surface.evidence.evidence_id,
+                "event": event.kind.name,
+                "edge_vertex_ids": list(event.edge_vertex_ids),
                 "candidate": candidate.prepared_id,
-                "manifold": manifold,
-                "oriented": oriented,
-                "self_intersection_free": self_intersection_free,
                 "stencil_valid": stencil_valid,
                 "source_state": array_tree_fingerprint(
                     (
@@ -1974,8 +1698,16 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
                         np.asarray(candidate_state.species_mass),
                     )
                 ),
-                "vertex_parents": array_tree_fingerprint(vertex_parents),
-                "face_parents": array_tree_fingerprint(face_parents),
+                "sheet_transfer": (
+                    None
+                    if surface.sheet_transfer is None
+                    else surface.sheet_transfer.transfer_id
+                ),
+                "face_transfer": (
+                    None
+                    if surface.face_transfer is None
+                    else surface.face_transfer.transfer_id
+                ),
             }
         )
         return BiomembraneRemeshProposal(
@@ -1983,14 +1715,12 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             values,
             candidate,
             candidate_state,
-            jnp.asarray(vertex_parents),
-            jnp.asarray(face_parents),
-            manifold,
-            oriented,
-            self_intersection_free,
+            surface,
+            surface.evidence.sheet_transfer,
+            face_evidence,
             stencil_valid,
-            selected,
-            tuple(edge_vertex_ids),
+            event.kind,
+            event.edge_vertex_ids,
             proposal_id,
         )
 
@@ -2047,7 +1777,7 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             )
         )
         energy_floor = jnp.sqrt(jnp.finfo(source_area.dtype).eps) * jnp.maximum(
-            energy_scale, tiny
+            energy_scale, jnp.asarray(1.0, dtype=source_area.dtype)
         )
         relative_energy = jnp.abs(energy_jump) / jnp.maximum(
             jnp.abs(source_energy), energy_floor
@@ -2082,20 +1812,30 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             else jnp.asarray(0.0, dtype=source_area.dtype)
         )
         material_scale = jnp.maximum(jnp.abs(source_material), 1.0)
-        conservative_transfer = (species_error <= limits[3] * mass_scale) & (
+        jumps_conservative = (species_error <= limits[3] * mass_scale) & (
             jnp.abs(material_jump) <= limits[3] * material_scale
         )
+        vertex_transfer = (
+            jnp.asarray(False)
+            if proposal.vertex_transfer_evidence is None
+            else proposal.vertex_transfer_evidence.successful
+        )
+        face_transfer = (
+            jnp.asarray(False)
+            if proposal.face_transfer_evidence is None
+            else proposal.face_transfer_evidence.successful
+        )
+        conservative_transfer = jumps_conservative & vertex_transfer & face_transfer
         within_limits = (
             (relative_area <= limits[0])
             & (relative_volume <= limits[1])
             & (relative_energy <= limits[2])
         )
         guard = jnp.asarray(
-            proposal.manifold
-            and proposal.oriented
-            and proposal.self_intersection_free
+            proposal.surface_result.committed
             and proposal.stencil_valid
             and proposal.candidate.prepared_id != self.prepared_id
+            and not proposal.surface_result.evidence.derivative_available
         )
         accepted = finite & conservative_transfer & within_limits & guard
         return BiomembraneRemeshEvidence(
@@ -2108,13 +1848,12 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
             species_jump,
             material_jump,
             finite,
-            jnp.asarray(proposal.manifold),
-            jnp.asarray(proposal.oriented),
-            jnp.asarray(proposal.self_intersection_free),
             jnp.asarray(proposal.stencil_valid),
             conservative_transfer,
             within_limits,
             accepted,
+            proposal.surface_result.evidence,
+            False,
             proposal.proposal_id,
         )
 
@@ -2136,27 +1875,16 @@ class PreparedBiomembrane(StrictModule, NonTrainableState):
         committed = bool(np.asarray(evidence.accepted))
         prepared = proposal.candidate if committed else self
         state = proposal.candidate_state if committed else proposal.source_state
-        return BiomembraneRemeshResult(prepared, state, proposal, evidence, committed)
-
-    def propose_split(
-        self, state: BiomembraneState, edge_vertex_ids: tuple[int, int], /
-    ) -> BiomembraneRemeshProposal:
-        return self.propose_remesh(
-            state, BiomembraneRemeshOperation.SPLIT, edge_vertex_ids
-        )
-
-    def propose_collapse(
-        self, state: BiomembraneState, edge_vertex_ids: tuple[int, int], /
-    ) -> BiomembraneRemeshProposal:
-        return self.propose_remesh(
-            state, BiomembraneRemeshOperation.COLLAPSE, edge_vertex_ids
-        )
-
-    def propose_flip(
-        self, state: BiomembraneState, edge_vertex_ids: tuple[int, int], /
-    ) -> BiomembraneRemeshProposal:
-        return self.propose_remesh(
-            state, BiomembraneRemeshOperation.FLIP, edge_vertex_ids
+        surface = proposal.surface_result
+        return BiomembraneRemeshResult(
+            prepared,
+            state,
+            proposal,
+            evidence,
+            surface.evidence.lineage if committed else None,
+            surface.transition if committed else None,
+            surface.face_transition if committed else None,
+            committed,
         )
 
 
@@ -2167,7 +1895,6 @@ __all__ = [
     "BiomembraneGeometryEvidence",
     "BiomembranePlan",
     "BiomembraneRemeshEvidence",
-    "BiomembraneRemeshOperation",
     "BiomembraneRemeshProposal",
     "BiomembraneRemeshResult",
     "BiomembraneState",

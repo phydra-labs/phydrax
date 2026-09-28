@@ -1,6 +1,6 @@
 # Scientific rendering
 
-`phydrax.rendering` maps physical geometry and fields to predicted measurements. It is not a plotting package, interactive viewer, asset scene graph, or display-color system.
+`phydrax.rendering` maps physical geometry and fields to predicted measurements. It is not a plotting package, interactive viewer, or asset scene graph. Display color exists only as explicit spectral colorimetry with a declared observer, illuminant, and sRGB encoding (see [Spectral colorimetry and thin-film appearance](#spectral-colorimetry-and-thin-film-appearance)).
 
 ## Point image formation
 
@@ -43,3 +43,25 @@ A successful render means finite geometry and values, exact visibility for the r
 ## Quantity discipline
 
 Rendering outputs `PreparedQuantityField`, not an anonymous image. The caller declares whether the rendered field is temperature, displacement, radiance, detector signal, or another quantity. Colormaps and tone mapping remain presentation concerns unless they are part of a calibrated detector model.
+
+## Spectral colorimetry and thin-film appearance
+
+`SpectralColorimetryPlan` integrates spectral reflectance factors against CIE
+1931 color-matching functions and a `SpectralIlluminant`, normalizes a perfect
+reflector to `Y = 1`, and maps to linear and IEC 61966-2-1 encoded sRGB with
+explicit gamut evidence. `ThinFilmAppearancePlan` composes it with
+`phydrax.optics.wave.ThinFilmInterferencePlan` to color film samples from
+thickness, normals, and view or illumination directions. A spectrum with any
+nonzero interference status is masked before colorimetry, so rejected
+undersampled or energy-inconsistent calculations cannot acquire plausible XYZ
+or sRGB values; the interference evidence retains the originating status and
+finite quality diagnostics.
+
+`thin_film_surface_colors` adds an explicit physics-owned support mask and
+returns linear/encoded sRGB surface fields plus status; unsupported and
+rejected samples stay NaN. The fields can enter `SurfaceImagePlan`, while
+Plateau borders and junctions remain separate supported geometry rather than
+receiving invented thickness. Appearance is downstream of physics: it never
+alters or certifies film state. The [thin-film optics
+guide](guides_thin_film_optics.md) documents observers, illuminant resources,
+and error bounds.

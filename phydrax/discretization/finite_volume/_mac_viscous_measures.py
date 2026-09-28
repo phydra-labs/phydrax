@@ -34,9 +34,16 @@ def _cell_to_face_fraction(value: Array, shape: tuple[int, ...], axis: int, /) -
 
 
 class MACFreeSurfaceViscousMeasures(StrictModule):
+    """Liquid- and solid-weighted coefficients of the implicit viscous stage.
+
+    ``face_density`` is the density times the open liquid face fraction and
+    ``cell_viscosity`` the viscosity times the open liquid cell fraction; air
+    and solid regions carry neither mass nor viscous stress.
+    """
+
     cell_fraction: Array
     face_fraction: FaceVelocity
-    face_mass: FaceVelocity
+    face_density: FaceVelocity
     cell_viscosity: Array
     solid_face_fraction: FaceVelocity
     finite: Array
@@ -92,7 +99,7 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
         cell_fraction = interface.cell_fraction * solid_cell
         face_fraction = []
         solid_fraction = []
-        face_mass = []
+        face_density = []
         for axis, layout in enumerate(self.operators.discretization.face_layouts):
             liquid = interface.face_fraction[axis]
             solid_open = (
@@ -103,14 +110,13 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
             fraction = _cell_to_face_fraction(liquid, layout.shape, axis) * solid_open
             face_fraction.append(fraction)
             solid_fraction.append(solid_open)
-            face_mass.append(
-                self.density * fraction * layout.measure.astype(fraction.dtype)
-            )
+            face_density.append(self.density * fraction)
+        cell_viscosity = mu * cell_fraction
         finite = (
             interface.finite
             & jnp.all(jnp.isfinite(mu) & (mu >= 0.0))
             & jnp.all(
-                jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in face_mass))
+                jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in face_density))
             )
         )
         identifier = canonical_fingerprint(
@@ -124,8 +130,8 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
         return MACFreeSurfaceViscousMeasures(
             cell_fraction,
             tuple(face_fraction),
-            tuple(face_mass),
-            mu,
+            tuple(face_density),
+            cell_viscosity,
             tuple(solid_fraction),
             finite,
             interface.successful & (solid is None or solid.accepted) & finite,

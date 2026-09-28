@@ -262,6 +262,54 @@
 
 ---
 
+::: phydrax.discretization.ColorGradientLBMRuntimeParameters
+
+---
+
+::: phydrax.discretization.ColorGradientLBMState
+
+---
+
+::: phydrax.discretization.PreparedColorGradientLBMDynamics
+
+---
+
+::: phydrax.discretization.ColorGradientStepResult
+
+---
+
+::: phydrax.discretization.ColorGradientDiagnostics
+
+---
+
+::: phydrax.discretization.ColorGradientMacroscopicState
+
+---
+
+::: phydrax.discretization.ColorGradientInterfacialFields
+
+---
+
+::: phydrax.discretization.NearContactRepulsionPlan
+
+---
+
+::: phydrax.discretization.PreparedNearContactRepulsion
+
+---
+
+::: phydrax.discretization.NearContactForce
+
+---
+
+::: phydrax.discretization.NearContactRepulsionEvidence
+
+---
+
+::: phydrax.discretization.color_gradient_candidate_profiles
+
+---
+
 ::: phydrax.discretization.FreeEnergyLBMMethod
 
 ---

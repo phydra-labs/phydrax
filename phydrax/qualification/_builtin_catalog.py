@@ -27,6 +27,38 @@ from ._registry import CapabilityProfile, SupportTuple
 # intentionally collapsed without changing the owner selected by the first producer.
 _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
+    ("phydrax.acoustics._bubbly", "bubbly_medium_candidate_profiles"),
+    ("phydrax.applications.foams._profiles", "foam_candidate_profiles"),
+    (
+        "phydrax.applications.soap_film_tunnel._profiles",
+        "soap_film_tunnel_candidate_profiles",
+    ),
+    ("phydrax.bubble_dynamics._cloud_profiles", "bubble_cloud_candidate_profiles"),
+    ("phydrax.bubble_dynamics._profiles", "bubble_dynamics_candidate_profiles"),
+    (
+        "phydrax.discretization.lattice_boltzmann",
+        "color_gradient_candidate_profiles",
+    ),
+    (
+        "phydrax.geometry.multiregion_surface._profiles",
+        "multiregion_surface_candidate_profiles",
+    ),
+    (
+        "phydrax.interfacial_transport._core",
+        "interfacial_transport_candidate_profiles",
+    ),
+    (
+        "phydrax.optics.wave._thin_film_qualification",
+        "thin_film_interference_candidate_profiles",
+    ),
+    (
+        "phydrax.rendering._thin_film_qualification",
+        "thin_film_appearance_candidate_profiles",
+    ),
+    (
+        "phydrax.threshold_dynamics._profiles",
+        "threshold_dynamics_candidate_profiles",
+    ),
     ("phydrax.applications.battery._dfn", "battery_dfn_candidate_profiles"),
     ("phydrax.nuclear._transport", "nuclear_transport_candidate_profiles"),
     (

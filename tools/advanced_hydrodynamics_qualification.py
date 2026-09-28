@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 
@@ -55,11 +56,25 @@ def _graph(case: Any) -> Any:
     return hydro, continuation
 
 
+_DROP_CELLS = 24
+_DROP_RADIUS = 0.3
+_DROP_SURFACE_TENSION = 0.072
+
+
+def _drop_fraction(cells: int, radius: float, samples: int = 16) -> np.ndarray:
+    """Liquid fraction of the centered drop from ``samples²`` points per cell."""
+
+    offsets = (np.arange(samples) + 0.5) / (samples * cells)
+    x = (np.arange(cells)[:, None] / cells + offsets).reshape(-1)
+    inside = (x[:, None] - 0.5) ** 2 + (x[None, :] - 0.5) ** 2 < radius**2
+    return inside.reshape(cells, samples, cells, samples).mean(axis=(1, 3))
+
+
 def _two_phase() -> Any:
     grid = phx.discretization.TensorGridPlan(
         (
-            phx.discretization.UniformCellAxisSpec(8, periodic=True),
-            phx.discretization.UniformCellAxisSpec(8, periodic=True),
+            phx.discretization.UniformCellAxisSpec(_DROP_CELLS, periodic=True),
+            phx.discretization.UniformCellAxisSpec(_DROP_CELLS, periodic=True),
         ),
         axis_names=("x", "y"),
     ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
@@ -69,15 +84,12 @@ def _two_phase() -> Any:
     material = phx.applications.two_phase_flow.TwoPhaseMaterialPlan(
         liquid_density=1000.0,
         gas_density=10.0,
-        surface_tension=0.072,
+        surface_tension=_DROP_SURFACE_TENSION,
     )
     two_phase = phx.applications.two_phase_flow.IncompressibleTwoPhaseVOFPlan(
-        discretization, material
+        discretization, material, maximum_iterations=4000
     ).prepare()
-    x = (jnp.arange(8) + 0.5) / 8
-    y = (jnp.arange(8) + 0.5) / 8
-    xx, yy = jnp.meshgrid(x, y, indexing="ij")
-    alpha = jnp.where((xx - 0.5) ** 2 + (yy - 0.5) ** 2 < 0.2**2, 1.0, 0.0)
+    alpha = jnp.asarray(_drop_fraction(_DROP_CELLS, _DROP_RADIUS))
     method = phx.applications.two_phase_flow.IncompressibleTwoPhaseVOFMethod(two_phase)
     return two_phase, method, method.initial_continuation(two_phase.initial_state(alpha))
 
@@ -162,8 +174,21 @@ def run_case(case: Any, dt: Any) -> Any:
             jnp.asarray(dt),
             None,
         )
-        final_volume = jnp.sum(result.accepted_state.state.liquid_content)
-        evidence = result.accepted_state.evidence
+        candidate = result.candidate_state
+        final_volume = jnp.sum(candidate.state.liquid_content)
+        evidence = candidate.evidence
+        # Laplace jump of the static drop: mean pressure two cells inside the
+        # interface minus two cells outside, against sigma / R.
+        radius = np.linalg.norm(
+            np.asarray(two_phase.plan.discretization.cell_centers) - 0.5, axis=-1
+        )
+        pressure = np.asarray(candidate.pressure)
+        band = 2.0 / _DROP_CELLS
+        measured_jump = float(
+            pressure[radius < _DROP_RADIUS - band].mean()
+            - pressure[radius > _DROP_RADIUS + band].mean()
+        )
+        laplace_jump = _DROP_SURFACE_TENSION / _DROP_RADIUS
         return {
             "case": case,
             "successful": bool(result.successful),
@@ -172,6 +197,13 @@ def run_case(case: Any, dt: Any) -> Any:
             "alpha_maximum": float(evidence.alpha_maximum),
             "divergence_residual": float(evidence.divergence_residual),
             "topology_events": int(evidence.topology_event_count),
+            "laplace_jump": laplace_jump,
+            "measured_pressure_jump": measured_jump,
+            "curvature_pressure_jump": float(evidence.capillary_pressure_jump),
+            "parasitic_velocity": float(evidence.parasitic_velocity),
+            "curvature_valid_cells": int(evidence.curvature_valid_count),
+            "curvature_fallback_cells": int(evidence.curvature_fallback_count),
+            "curvature_underresolved_cells": int(evidence.curvature_underresolved_count),
             "passed": bool(
                 result.successful
                 and jnp.isfinite(final_volume)
@@ -183,6 +215,10 @@ def run_case(case: Any, dt: Any) -> Any:
                 and evidence.alpha_maximum <= 1.0
                 and jnp.abs(evidence.divergence_residual) <= 1.0e-8
                 and evidence.topology_event_count >= 0
+                and evidence.curvature_underresolved_count == 0
+                and abs(measured_jump - laplace_jump) <= 5.0e-2 * laplace_jump
+                and abs(float(evidence.capillary_pressure_jump) - laplace_jump)
+                <= 5.0e-2 * laplace_jump
             ),
         }
     hydro, continuation = _graph(case)

@@ -22,7 +22,14 @@ The Gaussian term uses the closed-mesh angle defect. For constant Gaussian rigid
 
 ## Surface species
 
-`BiomembraneState.species_mass` stores nodal amounts, not concentrations. Every state also carries its static `prepared_id`; a runtime rejects states from another topology epoch even when capacities happen to match. Current concentration is amount divided by current barycentric dual area. `diffuse_react` uses the signed intrinsic-Delaunay cotangent finite-volume flux and applies the exactly column-conservative execution-dtype reaction matrix to concentrations. Flux is added with equal and opposite endpoint contributions.
+`BiomembraneState.species_mass` stores nodal amounts, not concentrations;
+`BiomembranePlan.species_ids` gives every species axis an explicit scientific
+identity. Every state also carries its static `prepared_id`; a runtime rejects
+states from another topology epoch even when capacities happen to match.
+Current concentration is amount divided by current barycentric dual area.
+`diffuse_react` uses the signed intrinsic-Delaunay cotangent finite-volume flux
+and applies the exactly column-conservative execution-dtype reaction matrix to
+concentrations. Flux is added with equal and opposite endpoint contributions.
 
 The result contains both candidate and accepted states. A nonfinite, nonconservative, or negative candidate fails closed and returns the input amounts as `accepted_state`. `BiomembraneTransportEvidence` reports per-species before/after amounts, total conservation residual, minimum candidate amount, finite/positivity/conservation status, and acceptance. Choose an explicit step size small enough for the positivity limit of the explicit transport update.
 
@@ -61,18 +68,52 @@ transport = membrane.diffuse_react(state, 1.0e-3)
 
 ## Transactional remeshing
 
-Split, collapse, and flip operations are host-side candidate/evaluation/commit transactions:
+Biomembrane mechanics remains owned by `BiomembranePlan`; only its topology
+transaction and field transfer use
+`phydrax.geometry.multiregion_surface`. Preparation creates an explicit finite
+interior/ambient pair under the `manifold_two_region` validation profile. That
+profile refuses extra regions, borders, non-manifold edges, singular vertex
+fans, disconnected finite regions, and self-intersections. The default
+`MultiRegionSurfaceCapacityPlan` reserves headroom for subsequent events; pass
+an explicit `remesh_capacity` when a workflow needs a different fixed resource
+bound.
 
-1. `propose_split`, `propose_collapse`, or `propose_flip` resolves an edge by its two stable vertex IDs.
-2. The proposal constructs a candidate only if exhaustive edge and vertex-link manifold, opposite-edge-orientation, scaled positive-volume, oriented-normal, intrinsic-Delaunay, and shared-entity-aware triangle-intersection guards pass.
-3. Nodal species amounts, area-integrated material fields, and per-face local rest area are transferred by a conservative nearest-support measure map. Existing entity IDs survive; split entities receive monotone new IDs; parent-ID arrays record lineage. Removed collapse-patch material remains local instead of being distributed over the whole surface.
-4. `evaluate_remesh` reports finite signed and relative area, volume, energy, species, and material jumps and applies caller-selected jump limits. Its identity fingerprints both source and candidate states, so evidence cannot be reused after composition changes.
-5. `commit_remesh` requires valid source and candidate states and returns the candidate only when every guard and limit accepts it. Rejection returns the exact source preparation and state objects.
+Split, collapse, and flip are shared `EdgeSplitProposal`,
+`EdgeCollapseProposal`, and `EdgeFlipProposal` transactions:
 
-A successful transaction always has a new `prepared_id`, even when the represented surface is geometrically unchanged. Compiled functions must be prepared again after commit because their capacities and topology are intentionally static.
+1. `propose_remesh` converts the current coordinates, species amounts, and
+   area-integrated vertex mechanics fields to one capacity-shaped shared event
+   state.
+2. E3 resolves stable vertex IDs, applies its link/feature/normal guards,
+   restores enclosed volume, certifies every motion by inclusion CCD, validates
+   the complete candidate with exact predicates, and commits or returns the
+   unchanged source surface.
+3. One sparse sheet-slot route transfers every nodal extensive field. A sparse
+   face route transfers reference area and reference-area-weighted local
+   modulus. Intensive mechanics coefficients are reconstructed by dividing
+   transferred content by the candidate dual measure. No dense
+   `N_new`-by-`N_old` transfer is formed.
+4. The proposal exposes shared pass status, exact validation, conservative
+   transfer evidence, stable `MultiRegionSurfaceLineage`, and sparse vertex and
+   face epoch transitions. `evaluate_remesh` additionally reports membrane
+   area, volume, energy, species, and material jumps under caller-selected
+   limits.
+5. `commit_remesh` returns the new `PreparedBiomembrane` epoch only when both
+   shared certification and membrane mechanics admission pass. Any failure
+   returns the exact source preparation and state objects.
+
+Prepared geometry and sparse routes are reused for every proposal in one
+epoch. A successful transaction advances the topology epoch and prepares the
+new fixed-topology mechanics runtime. Event evidence always reports
+`derivative_available=False`; fixed-topology mechanics and transport remain
+differentiable separately.
 
 ```python
-proposal = membrane.propose_split(state, (vertex_id_a, vertex_id_b))
+from phydrax.geometry.multiregion_surface import EdgeSplitProposal
+
+proposal = membrane.propose_remesh(
+    state, EdgeSplitProposal((vertex_id_a, vertex_id_b))
+)
 evidence = membrane.evaluate_remesh(
     proposal,
     maximum_relative_area_jump=0.02,
@@ -82,6 +123,13 @@ evidence = membrane.evaluate_remesh(
 transaction = membrane.commit_remesh(proposal, evidence)
 membrane, state = transaction.prepared, transaction.state
 ```
+
+The executable smoke is `examples/advanced_biomembrane_remeshing.py`.
+`tools/biomembrane_remesh_qualification.py` exercises all three event kinds,
+conservation, sparse-route scaling, epoch evidence, and rollback.
+`benchmarks/biomembrane_remesh_scaling.py` records lowering, compilation,
+warmed execution, compiler memory, retained sparse-route memory, and host
+transaction time across declared vertex capacities.
 
 ## Evidence and differentiation contract
 

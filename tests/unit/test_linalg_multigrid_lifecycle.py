@@ -439,6 +439,37 @@ def test_implicit_unit_triangular_solve_retains_first_stored_offdiagonal() -> No
         assert result.status == int(la.SparseTriangularStatus.SUCCESS)
         assert jnp.allclose(result.value, expected)
 
+@pytest.mark.parametrize("triangle", ("lower", "upper"))
+def test_sparse_triangular_substitution_supports_multiple_complex_right_sides(
+    triangle: Any,
+) -> None:
+    lower = jnp.asarray(
+        (
+            (2.0 + 1.0j, 0.0, 0.0),
+            (1.0 - 2.0j, 3.0 + 0.5j, 0.0),
+            (-0.5j, 2.0, 4.0 - 1.0j),
+        )
+    )
+    matrix = lower if triangle == "lower" else lower.T
+    storage = _sparse_map(matrix).sparse_storage()
+    analysis = la.analyze_sparse_triangular(storage, triangle=triangle)
+    right_hand_side = jnp.asarray(
+        ((1.0 + 0.5j, 2.0), (-1.0j, 3.0 - 0.5j), (4.0, -2.0j))
+    )
+
+    for options, operator in (
+        ({}, matrix),
+        ({"transpose": True}, matrix.T),
+        ({"adjoint": True}, jnp.conj(matrix.T)),
+    ):
+        result = la.solve_sparse_triangular(
+            analysis, storage.values, right_hand_side, **options
+        )
+        assert result.status == int(la.SparseTriangularStatus.SUCCESS)
+        assert jnp.allclose(
+            operator @ result.value, right_hand_side, rtol=1e-12, atol=1e-12
+        )
+
 
 def test_cholesky_factor_action_preserves_builder_property_evidence() -> None:
     properties = la.OperatorProperties(

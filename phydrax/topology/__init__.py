@@ -33,6 +33,15 @@ from ._complex import (
     CompactBoundary,
     CompactCellLayout,
 )
+from ._components import (
+    ComponentEventKind,
+    ComponentLabelingResult,
+    ComponentLabelingStatus,
+    ComponentTransitionPlan,
+    ComponentTransitionResult,
+    ConnectedComponentPlan,
+    grid_adjacency_relation,
+)
 from ._cone import compute_mapping_cone_homology, mapping_cone, MappingConeResult
 from ._cubical import compute_structured_cubical_persistence, CubicalPersistenceResult
 from ._diagram import PackedPersistenceDiagram, PersistenceDiagram
@@ -163,6 +172,12 @@ __all__ = [
     "CoefficientDomain",
     "CompactBoundary",
     "CompactCellLayout",
+    "ComponentEventKind",
+    "ComponentLabelingResult",
+    "ComponentLabelingStatus",
+    "ComponentTransitionPlan",
+    "ComponentTransitionResult",
+    "ConnectedComponentPlan",
     "CubicalPersistenceResult",
     "DiagramDistanceResult",
     "ExactChainComplex",
@@ -238,6 +253,7 @@ __all__ = [
     "finite_element_topology_transfer",
     "freeze_persistence_pairing",
     "frozen_total_persistence",
+    "grid_adjacency_relation",
     "induced_homology_coordinates",
     "lower_star_filtration",
     "mapping_cone",

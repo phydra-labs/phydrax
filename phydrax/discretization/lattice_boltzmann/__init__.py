@@ -67,7 +67,9 @@ from ._collision import (
     TRTCollisionPlan,
 )
 from ._color_gradient import (
+    color_gradient_candidate_profiles,
     ColorGradientDiagnostics,
+    ColorGradientInterfacialFields,
     ColorGradientLBMMethod,
     ColorGradientLBMRuntimeParameters,
     ColorGradientLBMState,
@@ -234,6 +236,12 @@ from ._multiblock import (
     LatticeBoltzmannMultiblockExchangeEvidence,
     LatticeBoltzmannMultiblockExchangeResult,
     LatticeBoltzmannMultiblockState,
+)
+from ._near_contact import (
+    NearContactForce,
+    NearContactRepulsionEvidence,
+    NearContactRepulsionPlan,
+    PreparedNearContactRepulsion,
 )
 from ._operating_envelope import (
     LatticeBoltzmannEnvelopeAdmission,

@@ -71,7 +71,8 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
 
     ``predicate_mode`` selects how geometric sign decisions (orientation,
     in-circle, side-of-plane) are certified; the default ``EXACT`` resolves
-    every filtered-uncertain sign with the native meshcore predicates.
+    every filtered-uncertain host sign with native meshcore adaptive predicates
+    when available and exact dyadic-rational evaluation otherwise.
     """
 
     coordinate_dtype: str | None = eqx.field(static=True)

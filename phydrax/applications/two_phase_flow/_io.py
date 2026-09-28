@@ -325,6 +325,13 @@ def two_phase_inspection_frames(
     return candidate, accepted
 
 
+def _bubbly_parameter_realization_id(
+    method: IncompressibleTwoPhaseVOFMethod, /
+) -> str | None:
+    bubbles = method.bubbles
+    return None if bubbles is None else bubbles.parameter_realization_id()
+
+
 def write_two_phase_checkpoint(
     path: str | Path,
     two_phase: PreparedIncompressibleTwoPhaseVOF,
@@ -346,6 +353,7 @@ def write_two_phase_checkpoint(
             "schema": "alpha-momentum-clsvof-topology-ledger",
             "two_phase_id": two_phase.prepared_id,
             "method_id": method.method_id,
+            "bubbly_parameter_realization_id": _bubbly_parameter_realization_id(method),
             "state": specification,
         },
         arrays=arrays,
@@ -366,6 +374,11 @@ def read_two_phase_checkpoint(
         raise ValueError("Two-phase checkpoint model identity mismatch.")
     if manifest.get("method_id") != method.method_id:
         raise ValueError("Two-phase checkpoint method identity mismatch.")
+    realization_key = "bubbly_parameter_realization_id"
+    if realization_key not in manifest or manifest[
+        realization_key
+    ] != _bubbly_parameter_realization_id(method):
+        raise ValueError("Two-phase checkpoint bubbly parameter realization mismatch.")
     restored = unpack_array_tree(manifest["state"], arrays, template)
     return jnp.asarray(arrays["time"]), jnp.asarray(arrays["accepted_step"]), restored
 

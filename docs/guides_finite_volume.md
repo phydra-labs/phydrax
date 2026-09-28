@@ -464,6 +464,21 @@ velocity from one face-density policy, shares one mass flux between density and
 momentum, and uses `MACVariableDensityProjectionPlan`. It does not claim an EOS,
 low-Mach heat expansion, VOF, or multiphase interface physics.
 
+`MACVariableDensityProjectionPlan` solves the gauged pressure system with native
+PCG and a Jacobi preconditioner refreshed from the exact diagonal of the runtime
+`dt / rho_f` coefficients. `tolerance` is relative, and the solve has one
+threshold, `tolerance * (divergence_scale + ||b||_V)`. Native PCG stops only when
+the true residual meets it. The recurrence residual nominates a stop, and on a
+miss the recurrence restarts from the true residual. At high density contrast,
+recurrence drift therefore costs iterations instead of a stop that certification
+then rejects.
+`divergence_scale` is the volume-norm flux scale of the predicted velocity, the
+incoming-pressure correction and the target divergence, so acceptance does not
+depend on the flow's units. `successful` is exactly that native solve status,
+combined with a target compatible with the net boundary flux and with impulse,
+gauge and divergence identities that hold to rounding. No second tolerance test
+is applied.
+
 `MACMarkerTransferPlan` builds fixed local cubic tensor B-spline routes on each
 staggered face layout and exposes material-measure adjoint gather/spread, moment,
 force, torque, and work evidence. `MACImmersedBoundaryProjectionPlan` solves

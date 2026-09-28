@@ -12,7 +12,7 @@ Twenty-one exact single-host CPU support tuples now close their analytic and for
 - `phydrax.population_balance`: sectional growth, aggregation, breakage, moments, and realizability.
 - `phydrax.system_modeling`: across/through connectors and acausal connection sets.
 - `phydrax.rheology`: generalized-Newtonian, viscoelastic, thixotropic, and conformation models.
-- `phydrax.interfacial_transport`: surfactant, adsorption, dynamic wetting, and thin-film pressure.
+- `phydrax.interfacial_transport`: surfactant, adsorption and dynamic wetting laws; manifold film lubrication with disjoining pressure, symmetric two-interface surfactant transport, plug-flow Marangoni films and moving-surface transport (see [surface thin films](guides_surface_thin_films.md)).
 - `phydrax.structural_dynamics`: harmonic response, Craig–Bampton constraint modes, and SEA controls.
 - `phydrax.correlation`: FRF, modal assurance, and force reconstruction.
 - `phydrax.electrohydrodynamics`: Maxwell stress, leaky-dielectric surface charge, and interface traction.

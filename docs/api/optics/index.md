@@ -7,6 +7,7 @@ solvers remain under `phydrax.solver.maxwell`.
 - [Geometric optics](geometric.md)
 - [Wave optics](wave.md)
 - [Optical materials, transport, and SBS](advanced.md)
+- [Thin-film interference and color](../thin_film_optics.md)
 
 See the [optics guide](../../guides_optics.md) for model selection and approximation
 boundaries.

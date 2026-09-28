@@ -14,12 +14,6 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 
-from .._artifact_security import (
-    admit_external_artifact,
-    AdmittedExternalArtifact,
-    ExternalArtifactPolicy,
-    read_admitted_artifact,
-)
 from .._external_resource import (
     account_bounded_resource,
     bounded_resource_from_bytes,
@@ -30,7 +24,13 @@ from .._external_resource import (
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..artifacts import ArtifactManifest
+from ..artifacts import (
+    admit_external_artifact,
+    AdmittedExternalArtifact,
+    ArtifactManifest,
+    ExternalArtifactPolicy,
+    read_admitted_artifact,
+)
 from ..typing import parse
 from ._report import (
     AdapterError,

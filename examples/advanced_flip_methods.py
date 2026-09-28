@@ -52,35 +52,36 @@ projected = ghost.project(
 )
 
 
-# Deterministic moving-solid/cut-cell geometry.
+# Stationary cut-cell cylinder. Viscous measures accept only qualified sharp
+# geometry, so the exact circle distance is enclosed rather than ramped.
 def solid_sdf(points: Any, time: Any, args: Any) -> Any:
     del time, args
     return jnp.sqrt(jnp.sum((points - jnp.asarray([0.15, 0.5])) ** 2, axis=-1)) - 0.08
 
 
-def wall_velocity(points: Any, time: Any, args: Any) -> Any:
-    del time, args
-    return jnp.zeros_like(points)
-
-
-solid_plan = phx.discretization.finite_volume.MACDiffuseSDFGeometryPlan(
+solid = phx.discretization.MACExactSDFMeasurePlan(
     mac,
     solid_sdf,
-    wall_velocity,
-    field_id="stationary-cylinder",
-    interface_width=0.04,
-)
-solid = solid_plan.evaluate(0.0)
-measures = phx.discretization.finite_volume.MACFreeSurfaceViscousMeasurePlan(
-    mac,
-    1.0,
     # ty: ignore[invalid-argument-type]
+    phx.geometry.ExactSDFEnclosureCertificate(
+        phx.geometry.exact_signed_distance_certificate(smooth=False)
+    ),
+    source_id="stationary-cylinder",
+    subdivisions=16,
+).prepare(0.0)
+measures = phx.discretization.finite_volume.MACFreeSurfaceViscousMeasurePlan(
+    mac, 1.0
 ).evaluate(interface, 0.1, solid=solid)
-viscous = phx.solver.MACVariationalViscosityPlan(mac, tolerance=1.0e-7).solve(
-    projected.velocity, measures, 1.0e-3
+momentum = phx.discretization.MACMomentumPlan(mac, boundaries=boundaries).prepare()
+viscous = phx.solver.MACVariationalViscosityPlan(momentum, tolerance=1.0e-7).solve(
+    projected.velocity,
+    measures.face_density,
+    measures.cell_viscosity,
+    1.0e-3,
+    boundaries.homogeneous_stage(),
 )
 if not bool(
-    interface.successful & projected.successful & solid.successful & viscous.successful
+    interface.successful & projected.successful & solid.accepted & viscous.successful
 ):
     raise RuntimeError(
         "Advanced FLIP interface, projection, geometry, or viscosity failed"

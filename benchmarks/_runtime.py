@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import math
 import os
@@ -11,8 +12,9 @@ import platform
 import re
 import statistics
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
+from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
 
 import jax
@@ -41,6 +43,39 @@ _PERFORMANCE_ENVIRONMENT_KEYS = (
     "XLA_PYTHON_CLIENT_MEM_FRACTION",
     "JAX_COMPILATION_CACHE_DIR",
 )
+_SOURCE_BUILD_DIRECTORIES = ("phydrax", "native")
+_SOURCE_BUILD_FILES = ("pyproject.toml", "uv.lock")
+_IGNORED_SOURCE_PARTS = (
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".ty_cache",
+    "build",
+    "dist",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkIdentity:
+    """Content identity for code and evidence interpreted by a benchmark record."""
+
+    source_build_fingerprint: str
+    benchmark_driver_fingerprint: str
+    evidence_fields: tuple[str, ...]
+    evidence_schema_signature: str
+    fingerprint: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "fingerprint": self.fingerprint,
+            "source_build_fingerprint": self.source_build_fingerprint,
+            "benchmark_driver_fingerprint": self.benchmark_driver_fingerprint,
+            "evidence_schema": {
+                "fields": list(self.evidence_fields),
+                "signature": self.evidence_schema_signature,
+            },
+        }
 
 
 class CompilerMemoryAnalysis(Protocol):
@@ -372,6 +407,193 @@ def logical_array_bytes(value: Any, /) -> int:
     return sum(leaf.nbytes for leaf in _array_leaves(value))
 
 
+def source_build_fingerprint(project_root: Path, /) -> str:
+    """Fingerprint the current package source and repository build inputs."""
+    root = _repository_root(project_root)
+    required = tuple(root / name for name in _SOURCE_BUILD_FILES)
+    if any(not path.is_file() for path in required):
+        raise FileNotFoundError(
+            "Source/build identity requires pyproject.toml and uv.lock."
+        )
+    paths = list(required)
+    for directory_name in _SOURCE_BUILD_DIRECTORIES:
+        directory = root / directory_name
+        if not directory.exists():
+            continue
+        if not directory.is_dir():
+            raise FileNotFoundError(
+                f"Source/build input must be a directory: {directory}"
+            )
+        candidates = (
+            directory.rglob("*.py")
+            if directory_name == "phydrax"
+            else directory.rglob("*")
+        )
+        paths.extend(
+            path
+            for path in candidates
+            if path.is_file()
+            and not any(
+                part in _IGNORED_SOURCE_PARTS
+                for part in path.relative_to(directory).parts
+            )
+            and path.suffix not in {".pyc", ".pyo"}
+        )
+    return canonical_fingerprint(
+        {
+            "kind": "phydrax-current-source-build",
+            "files": _file_records(root, paths),
+        }
+    )
+
+
+def benchmark_driver_fingerprint(project_root: Path, driver_path: Path, /) -> str:
+    """Fingerprint a benchmark driver and its shared runtime harness."""
+    root = _repository_root(project_root)
+    driver = driver_path.resolve()
+    try:
+        driver.relative_to(root)
+    except ValueError as error:
+        raise ValueError("Benchmark driver must be within the project root.") from error
+    runtime = root / "benchmarks" / "_runtime.py"
+    paths = tuple(dict.fromkeys((driver, runtime)))
+    if any(not path.is_file() for path in paths):
+        raise FileNotFoundError(
+            "Benchmark-driver identity requires the driver and benchmarks/_runtime.py."
+        )
+    return canonical_fingerprint(
+        {
+            "kind": "phydrax-benchmark-driver",
+            "files": _file_records(root, paths),
+        }
+    )
+
+
+def capture_benchmark_identity(
+    project_root: Path,
+    driver_path: Path,
+    evidence_fields: Iterable[str],
+    /,
+) -> BenchmarkIdentity:
+    """Capture source, driver, and serialized evidence-schema identity."""
+    if isinstance(evidence_fields, (str, bytes)):
+        raise TypeError("Evidence fields must be an iterable of field names.")
+    normalized_fields = tuple(sorted(evidence_fields))
+    if (
+        not normalized_fields
+        or any(not isinstance(name, str) or not name for name in normalized_fields)
+        or len(set(normalized_fields)) != len(normalized_fields)
+    ):
+        raise ValueError("Evidence fields must be unique non-empty strings.")
+    schema_signature = canonical_fingerprint(
+        {
+            "kind": "benchmark-evidence-field-set",
+            "fields": list(normalized_fields),
+        }
+    )
+    identity = {
+        "source_build_fingerprint": source_build_fingerprint(project_root),
+        "benchmark_driver_fingerprint": benchmark_driver_fingerprint(
+            project_root, driver_path
+        ),
+        "evidence_schema": {
+            "fields": list(normalized_fields),
+            "signature": schema_signature,
+        },
+    }
+    return BenchmarkIdentity(
+        source_build_fingerprint=identity["source_build_fingerprint"],
+        benchmark_driver_fingerprint=identity["benchmark_driver_fingerprint"],
+        evidence_fields=normalized_fields,
+        evidence_schema_signature=schema_signature,
+        fingerprint=canonical_fingerprint(identity),
+    )
+
+
+def validate_benchmark_record(
+    record: Mapping[str, Any], expected: BenchmarkIdentity, /
+) -> None:
+    """Reject a stored record that does not describe the current executable evidence."""
+    identity = record.get("identity")
+    if not isinstance(identity, Mapping):
+        raise ValueError("Benchmark record is missing its identity.")
+    expected_identity = expected.to_dict()
+    if set(identity) != set(expected_identity):
+        raise ValueError(
+            "Benchmark identity field set does not match the current schema."
+        )
+    evidence_schema = identity["evidence_schema"]
+    if not isinstance(evidence_schema, Mapping) or set(evidence_schema) != {
+        "fields",
+        "signature",
+    }:
+        raise ValueError("Benchmark evidence-schema field set is invalid.")
+    if identity["source_build_fingerprint"] != expected.source_build_fingerprint:
+        raise ValueError(
+            "Benchmark record source/build fingerprint does not match current sources."
+        )
+    if identity["benchmark_driver_fingerprint"] != expected.benchmark_driver_fingerprint:
+        raise ValueError(
+            "Benchmark record driver fingerprint does not match the current driver."
+        )
+    if (
+        evidence_schema["fields"] != list(expected.evidence_fields)
+        or evidence_schema["signature"] != expected.evidence_schema_signature
+    ):
+        raise ValueError(
+            "Benchmark record evidence field set/signature does not match current evidence."
+        )
+    if identity["fingerprint"] != expected.fingerprint:
+        raise ValueError(
+            "Benchmark record identity fingerprint does not match current evidence."
+        )
+    cases = record.get("cases")
+    if not isinstance(cases, Sequence) or isinstance(cases, (str, bytes)):
+        raise ValueError("Benchmark record cases must be a sequence.")
+    expected_fields = set(expected.evidence_fields)
+    for index, case in enumerate(cases):
+        if not isinstance(case, Mapping):
+            raise ValueError(f"Benchmark case {index} must be a mapping.")
+        evidence = case.get("last_step_evidence")
+        if not isinstance(evidence, Mapping) or set(evidence) != expected_fields:
+            raise ValueError(
+                f"Benchmark case {index} evidence field set does not match "
+                "the recorded schema."
+            )
+
+
+def _repository_root(project_root: Path, /) -> Path:
+    if not isinstance(project_root, Path):
+        raise TypeError("Project root must be a pathlib.Path.")
+    root = project_root.resolve()
+    if not root.is_dir() or not (root / "phydrax").is_dir():
+        raise FileNotFoundError(
+            "Project root must be a directory containing the phydrax package."
+        )
+    return root
+
+
+def _file_records(root: Path, paths: Iterable[Path], /) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for path in sorted(
+        set(paths), key=lambda candidate: candidate.relative_to(root).as_posix()
+    ):
+        before = path.stat()
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        after = path.stat()
+        if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+            raise RuntimeError(f"Source/build input changed while hashing: {path}")
+        records.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "size_bytes": after.st_size,
+                "sha256": digest,
+            }
+        )
+    return records
+
+
 def installed_package_fingerprint() -> str:
     """Fingerprint normalized installed distribution names and versions."""
     packages: dict[str, str] = {}
@@ -461,11 +683,14 @@ def _analysis_integer(analysis: Mapping[str, float] | None, key: str, /) -> int 
 
 
 __all__ = [
+    "BenchmarkIdentity",
     "CompilationTiming",
     "CompilerEvidence",
     "DeviceEnvironment",
     "DurationDistribution",
     "RuntimeEnvironment",
+    "benchmark_driver_fingerprint",
+    "capture_benchmark_identity",
     "capture_environment",
     "compiler_evidence",
     "installed_package_fingerprint",
@@ -474,5 +699,7 @@ __all__ = [
     "measure_lower_and_compile",
     "measure_repeated",
     "measure_synchronized",
+    "source_build_fingerprint",
     "synchronize",
+    "validate_benchmark_record",
 ]
