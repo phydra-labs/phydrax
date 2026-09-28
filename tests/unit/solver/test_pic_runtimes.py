@@ -61,7 +61,7 @@ def test_pic_runtimes_scenario_1() -> None:
     result = pic.step_detailed(state, dt)
     assert result.successful
     assert result.diagnostics.continuity_defect < 1.0e-10
-    assert result.diagnostics.particle_maxwell_charge_defect < 1.0e-10
+    assert result.diagnostics.particle_field_charge_defect < 1.0e-10
     assert result.diagnostics.electric_constraint < 1.0e-10
     assert result.diagnostics.magnetic_constraint < 1.0e-10
     pic, maxwell = _electromagnetic_pic()
@@ -74,18 +74,16 @@ def test_pic_runtimes_scenario_1() -> None:
         dt,
     )
     # A separated nonzero charge distribution has positive Coulomb energy.
-    charge = state.maxwell.primary.charge
-    field = pic.electrostatic.solve(charge)
-    weights = pic.electrostatic.bridge.cochain.hodge_stars[0]
+    charge = state.field.primary.charge
+    field = pic.solver.electrostatic.solve(charge)
+    weights = pic.solver.electrostatic.bridge.cochain.hodge_stars[0]
     assert jnp.sum(weights * charge * field.potential) > 0.0
-    np.testing.assert_allclose(
-        maxwell.electric_constraint(state.maxwell), 0.0, atol=1e-10
-    )
+    np.testing.assert_allclose(maxwell.electric_constraint(state.field), 0.0, atol=1e-10)
 
     result = pic.step_detailed(state, dt)
     assert result.successful
     assert result.diagnostics.continuity_defect < 1e-10
-    assert result.diagnostics.particle_maxwell_charge_defect < 1e-10
+    assert result.diagnostics.particle_field_charge_defect < 1e-10
     assert result.diagnostics.electric_constraint < 1e-10
 
 
@@ -98,6 +96,19 @@ def _electromagnetic_pic() -> Any:
     _, negative = _species(bridge, 0, -1.0, "negative", count=2)
     _, positive = _species(bridge, 100, 1.0, "positive", count=2)
     transfers = (negative, positive)
+    species = tuple(
+        phx.discretization.pic.PICSpeciesPlan(
+            phx.discretization.ParticlePopulationPlan(value.species.particles),
+            phx.discretization.pic.PICChargeModelPlan(
+                sign,
+                value.species.plan.species_id,
+                minimum_charge_number=1,
+                maximum_charge_number=1,
+                initial_charge_number=1,
+            ),
+        )
+        for value, sign in zip(transfers, (-1.0, 1.0), strict=True)
+    )
     currents = tuple(
         phx.discretization.pic.ChargeConservingCurrentPlan(value) for value in transfers
     )
@@ -109,5 +120,8 @@ def _electromagnetic_pic() -> Any:
     electrostatic = phx.solver.CochainElectrostaticPlan(
         bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
     )
-    pic = phx.solver.ElectromagneticPICPlan(maxwell, electrostatic, transfers, currents)
+    solver = phx.solver.CochainMaxwellPICFieldSolver(
+        maxwell, electrostatic, transfers, currents
+    )
+    pic = phx.solver.ElectromagneticPICPlan(solver, species=species)
     return pic, maxwell

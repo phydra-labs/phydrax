@@ -15,10 +15,10 @@ from typing import Literal
 import numpy as np
 
 from ..._external_runtime import (
-    EnergyRunResult,
-    EnergyRuntimeError,
+    ExternalRuntimeError,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from ..._fingerprint import canonical_fingerprint
 from ._pmp import (
@@ -165,8 +165,8 @@ class SDPBExecutionResult:
     program_id: str
     job_id: str
     status: SDPBExecutionStatus
-    converter_run: EnergyRunResult | None
-    solver_run: EnergyRunResult | None
+    converter_run: PinnedRunResult | None
+    solver_run: PinnedRunResult | None
     summary: SDPBNumericalSummary | None
     functional: tuple[str, ...]
     sampled_audit: PMPSampledAuditEvidence | None
@@ -282,7 +282,7 @@ def _job_id(program: ConformalPolynomialMatrixProgram, job: SDPBJobPlan, /) -> s
     )
 
 
-def _failed_run(error: EnergyRuntimeError, /) -> EnergyRunResult | None:
+def _failed_run(error: ExternalRuntimeError, /) -> PinnedRunResult | None:
     return error.result
 
 
@@ -290,8 +290,8 @@ def _result(
     program: ConformalPolynomialMatrixProgram,
     job_id: str,
     status: SDPBExecutionStatus,
-    converter: EnergyRunResult | None,
-    solver: EnergyRunResult | None,
+    converter: PinnedRunResult | None,
+    solver: PinnedRunResult | None,
     summary: SDPBNumericalSummary | None,
     functional: tuple[str, ...],
     audit: PMPSampledAuditEvidence | None,
@@ -353,9 +353,9 @@ def execute_sdpb(
     if not isinstance(job, SDPBJobPlan):
         raise TypeError("job must be SDPBJobPlan.")
     identifier = _job_id(program, job)
-    converter: EnergyRunResult | None = None
+    converter: PinnedRunResult | None = None
     try:
-        converter = run_energy_command(
+        converter = run_pinned_command(
             job.provider.pmp2sdp,
             (
                 f"--precision={job.precision_bits}",
@@ -368,7 +368,7 @@ def execute_sdpb(
             timeout=job.timeout_seconds,
             max_output_bytes=job.maximum_output_bytes,
         )
-    except EnergyRuntimeError as error:
+    except ExternalRuntimeError as error:
         return _result(
             program,
             identifier,
@@ -396,9 +396,9 @@ def execute_sdpb(
         arguments.append("--findPrimalFeasible=true")
     if job.find_dual_feasible:
         arguments.append("--findDualFeasible=true")
-    solver: EnergyRunResult | None = None
+    solver: PinnedRunResult | None = None
     try:
-        solver = run_energy_command(
+        solver = run_pinned_command(
             job.provider.sdpb,
             tuple(arguments),
             inputs={"sdp.zip": converter.output("sdp.zip")},
@@ -406,7 +406,7 @@ def execute_sdpb(
             timeout=job.timeout_seconds,
             max_output_bytes=job.maximum_output_bytes,
         )
-    except EnergyRuntimeError as error:
+    except ExternalRuntimeError as error:
         return _result(
             program,
             identifier,

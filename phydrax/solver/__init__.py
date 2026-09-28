@@ -143,6 +143,20 @@ from ._block_amr_runtime import (
     BlockAMRRuntimeState,
     PreparedBlockAMRRuntime,
 )
+from ._boosted_frame import (
+    BoostedExternalField,
+    BoostedFrameEvidence,
+    BoostedFramePlan,
+    BoostedFrameState,
+    BoostedFrameStepResult,
+    BoostedLabFieldSnapshot,
+    BoostedLabParticleSnapshot,
+    BoostedParticles,
+    BoostedParticleSnapshotBuffer,
+    BoostedSnapshotPlan,
+    BoostedSnapshotState,
+    PreparedBoostedFrame,
+)
 from ._boundary_integral import (
     InteriorLaplaceDirichletResult,
     solve_interior_laplace_dirichlet_2d,
@@ -198,6 +212,11 @@ from ._charged_particle_transport import (
     ChargedParticleTransportPlan,
     ChargedParticleTransportResult,
     ChargedParticleTransportStatus,
+    ChargedStepBank,
+)
+from ._charged_step_radiation import (
+    ChargedStepRadiationPlan,
+    ChargedStepRadiationResult,
 )
 from ._chemical_equilibrium import (
     ChemicalEquilibriumEnsemble,
@@ -241,6 +260,7 @@ from ._cochain_multirate import (
     CochainMultiratePlan,
     CochainRatePartition,
 )
+from ._cochain_pic_field import CochainMaxwellPICFieldSolver
 from ._collocation import (
     assemble_stochastic_collocation,
     COLLOCATION_NONFINITE,
@@ -519,6 +539,14 @@ from ._distributed_aerothermodynamics import (
     DistributedConservationLedger,
     DistributedOwnershipEvidence,
 )
+from ._distributed_pic import (
+    DistributedElectromagneticPICPlan,
+    DistributedPICExecutor,
+    DistributedPICFieldSolver,
+    DistributedPICStepResult,
+    PICDistributedEvidence,
+    PICDistributedRoute,
+)
 from ._distributed_wave_amr import (
     DistributedWaveAMRCheckpointEvidence,
     DistributedWaveAMRDiagnostics,
@@ -602,6 +630,8 @@ from ._electromagnetic_pic import (
     ElectromagneticPICPlan,
     ElectromagneticPICState,
     ElectromagneticPICStepResult,
+    PICFieldHistory,
+    PICRestartCheckpoint,
 )
 from ._electrostatic_conductors import (
     ConductorCircuitSolveResult,
@@ -614,6 +644,13 @@ from ._electrostatic_pic import (
     ElectrostaticPICPlan,
     ElectrostaticPICState,
     ElectrostaticPICStepResult,
+)
+from ._em_shower import (
+    EMShowerPlan,
+    EMShowerResult,
+    EMShowerStatus,
+    ShowerParticleBatch,
+    ShowerSpecies,
 )
 from ._etdrk import (
     ETDRKMethod,
@@ -1608,6 +1645,7 @@ from ._moving_window_pic import (
     PICMovingWindowPlan,
     PICMovingWindowResult,
     PICMovingWindowState,
+    PICWindowInjection,
 )
 from ._mps_quantum_jump import (
     LocalMPSJump,
@@ -1814,10 +1852,72 @@ from ._photon_transport import (
     PhotonTransportResult,
     PhotonTransportStatus,
 )
+from ._pic_cherenkov_guard import PICCherenkovGuard
 from ._pic_current_source import (
     PICMaxwellCurrentSourcePlan,
     PreparedPICMaxwellCurrentSource,
 )
+from ._pic_field_solver import (
+    AbstractPICFieldFilter,
+    AbstractPreparedPICFieldSolver,
+    PICFieldAdvance,
+    PICFieldDeposit,
+    PICFieldSample,
+    PICFilterContinuityReport,
+    PICGalileanGrid,
+    PICGatherDerivativeOrder,
+    PICGaussProjection,
+    PICGaussProjectionResult,
+    PICGaussProjectionRoute,
+    PICHuygensSampling,
+    PICMultiDeposit,
+    PICPrecisionPolicy,
+    PICRelativisticFieldResult,
+    PICRelativisticSelfFields,
+    PICRestartComponent,
+    PICRestartState,
+    PICSelfFieldInitialization,
+    PICSpectralSymbol,
+    PICTensorKind,
+    PICTensorLayout,
+    PICTensorMap,
+    PICWindowShift,
+)
+from ._pic_filter import PICFilterPlan
+from ._pic_providers import (
+    pic_oracle_case,
+    pic_oracle_wakefield_case,
+    picongpu_input,
+    PIConGPUProvider,
+    PICOracleCase,
+    PICOracleCode,
+    PICOracleFields,
+    PICOracleLaser,
+    PICOracleModalFields,
+    PICOracleResult,
+    PICOracleScenario,
+    PICOracleSpecies,
+    PICOracleSpectralSolver,
+    PICOracleTrack,
+    PICOracleTrackResult,
+    PICOracleWakefieldCase,
+    PICOracleWakefieldResult,
+    read_pic_oracle_openpmd,
+    read_pic_oracle_track,
+    read_smilei_fields,
+    read_warpx_wakefield,
+    run_picongpu,
+    run_smilei,
+    run_warpx,
+    run_warpx_track,
+    run_warpx_wakefield,
+    smilei_input,
+    SmileiProvider,
+    warpx_input,
+    warpx_preroll_steps,
+    WarpXProvider,
+)
+from ._pic_restart import PICRestartManifest, PICRestartPlan, PICRestartResult
 from ._plasma_electrostatic import (
     ElectrostaticPlasmaCouplingPlan,
     ElectrostaticPlasmaCouplingResult,
@@ -2085,11 +2185,7 @@ from ._reactive_replay import (
     ReactiveReplayRecord,
     ReactiveReplayResult,
 )
-from ._reduced_pic import (
-    ReducedElectromagneticPICPlan,
-    ReducedElectromagneticPICResult,
-    ReducedElectromagneticPICState,
-)
+from ._reduced_pic import ReducedMaxwellPICFieldSolver
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -2217,6 +2313,7 @@ from ._scalar_screen_junction3d import (
     ScalarScreenJunctionResult3D,
 )
 from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
+from ._secondary_stack import SecondaryParticleStack, SecondaryStackSpec
 from ._segmented_execution import (
     FixedCapacitySegmentEvidence,
     FixedCapacitySegmentPolicy,
@@ -2417,11 +2514,7 @@ from ._unstructured_amr_runtime import (
     UnstructuredAMRRefluxReport,
     UnstructuredAMRRuntimeState,
 )
-from ._unstructured_em_pic import (
-    UnstructuredElectromagneticPICPlan,
-    UnstructuredElectromagneticPICResult,
-    UnstructuredElectromagneticPICState,
-)
+from ._unstructured_em_pic import UnstructuredMaxwellPICFieldSolver
 from ._unstructured_incompressible import (
     UnstructuredPressureCorrectionPlan,
     UnstructuredPressureCorrectionResult,
@@ -2870,6 +2963,18 @@ __all__ = [
     "AbstractDifferentiableDrivingPath",
     "BoundedEvolutionObservation",
     "BoundedEvolutionObservationPlan",
+    "BoostedExternalField",
+    "BoostedFrameEvidence",
+    "BoostedFramePlan",
+    "BoostedFrameState",
+    "BoostedFrameStepResult",
+    "BoostedLabFieldSnapshot",
+    "BoostedLabParticleSnapshot",
+    "BoostedParticleSnapshotBuffer",
+    "BoostedParticles",
+    "BoostedSnapshotPlan",
+    "BoostedSnapshotState",
+    "PreparedBoostedFrame",
     "OBSERVATION_NONFINITE",
     "AbstractGeometricSolver",
     "AbstractBSDERegressionBasis",
@@ -2981,6 +3086,75 @@ __all__ = [
     "ElectromagneticPICPlan",
     "ElectromagneticPICState",
     "ElectromagneticPICStepResult",
+    "PICFieldHistory",
+    "PICRestartCheckpoint",
+    "PICRestartManifest",
+    "PICRestartPlan",
+    "PICRestartResult",
+    "PICOracleCase",
+    "PICOracleCode",
+    "PICOracleFields",
+    "PICOracleLaser",
+    "PICOracleModalFields",
+    "PICOracleResult",
+    "PICOracleScenario",
+    "PICOracleSpecies",
+    "PICOracleSpectralSolver",
+    "PICOracleTrack",
+    "PICOracleTrackResult",
+    "PICOracleWakefieldCase",
+    "PICOracleWakefieldResult",
+    "PIConGPUProvider",
+    "SmileiProvider",
+    "WarpXProvider",
+    "pic_oracle_case",
+    "pic_oracle_wakefield_case",
+    "picongpu_input",
+    "read_pic_oracle_openpmd",
+    "read_pic_oracle_track",
+    "read_smilei_fields",
+    "read_warpx_wakefield",
+    "run_picongpu",
+    "run_smilei",
+    "run_warpx",
+    "run_warpx_track",
+    "run_warpx_wakefield",
+    "smilei_input",
+    "warpx_input",
+    "warpx_preroll_steps",
+    "DistributedElectromagneticPICPlan",
+    "DistributedPICExecutor",
+    "DistributedPICFieldSolver",
+    "DistributedPICStepResult",
+    "PICDistributedEvidence",
+    "PICDistributedRoute",
+    "CochainMaxwellPICFieldSolver",
+    "AbstractPICFieldFilter",
+    "AbstractPreparedPICFieldSolver",
+    "PICFieldAdvance",
+    "PICFieldDeposit",
+    "PICFieldSample",
+    "PICGatherDerivativeOrder",
+    "PICGaussProjection",
+    "PICGaussProjectionResult",
+    "PICGalileanGrid",
+    "PICGaussProjectionRoute",
+    "PICHuygensSampling",
+    "PICMultiDeposit",
+    "PICPrecisionPolicy",
+    "PICRelativisticFieldResult",
+    "PICRelativisticSelfFields",
+    "PICRestartComponent",
+    "PICRestartState",
+    "PICSelfFieldInitialization",
+    "PICSpectralSymbol",
+    "PICWindowShift",
+    "PICCherenkovGuard",
+    "PICFilterContinuityReport",
+    "PICFilterPlan",
+    "PICTensorKind",
+    "PICTensorLayout",
+    "PICTensorMap",
     "ElectrostaticPICDiagnostics",
     "ElectrostaticPICFixedStepMethod",
     "ElectrostaticPICPlan",
@@ -4191,20 +4365,17 @@ __all__ = [
     "PICMovingWindowPlan",
     "PICMovingWindowResult",
     "PICMovingWindowState",
+    "PICWindowInjection",
     "PICMaxwellCurrentSourcePlan",
     "PreparedPICMaxwellCurrentSource",
-    "ReducedElectromagneticPICPlan",
-    "ReducedElectromagneticPICResult",
-    "ReducedElectromagneticPICState",
+    "ReducedMaxwellPICFieldSolver",
     "PICGaussCorrectionPlan",
     "PICGaussCorrectionResult",
     "SemiImplicitPICDiagnostics",
     "SemiImplicitPICPlan",
     "SemiImplicitPICResult",
     "SemiImplicitPICState",
-    "UnstructuredElectromagneticPICPlan",
-    "UnstructuredElectromagneticPICResult",
-    "UnstructuredElectromagneticPICState",
+    "UnstructuredMaxwellPICFieldSolver",
 ]
 
 __all__ += [
@@ -4611,6 +4782,16 @@ __all__ += [
     "ChargedParticleTransportPlan",
     "ChargedParticleTransportResult",
     "ChargedParticleTransportStatus",
+    "ChargedStepBank",
+    "ChargedStepRadiationPlan",
+    "ChargedStepRadiationResult",
+    "EMShowerPlan",
+    "EMShowerResult",
+    "EMShowerStatus",
+    "ShowerParticleBatch",
+    "ShowerSpecies",
+    "SecondaryParticleStack",
+    "SecondaryStackSpec",
     "HybridIMCDDMCPlan",
     "IMCDDMCEvidence",
     "IMCDDMCState",

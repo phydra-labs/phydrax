@@ -2,14 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Differentiable Hamiltonian rays in continuously varying refractive media."""
+"""Refractive-index media and the isotropic graded-index ray specialization."""
 
 from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,11 +21,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...ein import contract
 from ...geometry.simplicial import AffineSimplexMap
-
-
-_GradedRayCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+from ._dispersion_rays import (
+    AbstractSeparableDispersionHamiltonian,
+    DispersionRayPlan,
+    PreparedDispersionRay,
+)
 
 
 class AbstractRefractiveIndexField(StrictModule):
@@ -319,259 +318,69 @@ class TetrahedralRefractiveIndexField(AbstractRefractiveIndexField, NonTrainable
         )
 
 
-class GradedIndexRayState(StrictModule):
-    positions: Array
-    momenta: Array
-    tangent_maps: Array
-    geometric_lengths: Array
-    optical_lengths: Array
-    valid: Array
+class RefractiveIndexHamiltonian(AbstractSeparableDispersionHamiltonian):
+    """Isotropic graded-index Hamiltonian ``H = ½(|p|² − n(x)²)``.
 
+    The canonical momentum is ``p = n t`` for the unit ray tangent ``t``; the ray
+    parameter satisfies ``ds = n dτ``, so the optical length is ``∫ n² dτ``.
+    """
 
-class GradedIndexRayEvidence(StrictModule, NonTrainableState):
-    finite: Array
-    field_covered: Array
-    maximum_hamiltonian_drift: Array
-    maximum_symplectic_residual: Array
-    successful: Array
-    plan_id: str = eqx.field(static=True)
-
-
-class GradedIndexRayResult(StrictModule):
-    state: GradedIndexRayState
-    position_history: Array
-    momentum_history: Array
-    tangent_history: Array
-    initial_directions: Array
-    final_directions: Array
-    evidence: GradedIndexRayEvidence
-
-
-@dataclass(frozen=True, slots=True)
-class GradedIndexRayPlan:
     field: AbstractRefractiveIndexField
-    step_size: float
-    step_count: int
-    plan_id: str = field(init=False)
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.field, AbstractRefractiveIndexField):
+    def __init__(self, field: AbstractRefractiveIndexField, /) -> None:
+        if not isinstance(field, AbstractRefractiveIndexField):
             raise TypeError("field must be AbstractRefractiveIndexField.")
-        step_size = float(self.step_size)
-        step_count = int(self.step_count)
-        if not np.isfinite(step_size) or step_size <= 0.0 or step_count < 1:
-            raise ValueError("step_size and step_count must be positive.")
-        object.__setattr__(self, "step_size", step_size)
-        object.__setattr__(self, "step_count", step_count)
-        object.__setattr__(
-            self,
-            "plan_id",
-            canonical_fingerprint(
-                {
-                    "kind": "graded-index-ray-plan",
-                    "field": self.field.field_id,
-                    "step_size": step_size,
-                    "step_count": step_count,
-                }
-            ),
+        self.field = field
+        self.coordinate_contract = field.coordinate_contract
+        self.hamiltonian_id = canonical_fingerprint(
+            {"kind": "refractive-index-ray-hamiltonian", "field": field.field_id}
         )
 
-    def prepare(self) -> PreparedGradedIndexRay:
-        return PreparedGradedIndexRay(
-            self.field, self.step_size, self.step_count, self.plan_id
-        )
+    def potential(self, position: Array, /) -> tuple[Array, Array, Array]:
+        n, gradient, _, valid = self.field.sample(position[None, :])
+        return -0.5 * n[0] * n[0], -(n[0] * gradient[0]), valid[0] & (n[0] > 0.0)
+
+    def supported(self, position: Array, /) -> Array:
+        n, _, _, valid = self.field.sample(position[None, :])
+        return valid[0] & (n[0] > 0.0)
+
+    def launch(self, position: Array, direction: Array, /) -> tuple[Array, Array]:
+        n, _, _, valid = self.field.sample(position[None, :])
+        return n[0] * direction, valid[0] & (n[0] > 0.0)
 
 
-class PreparedGradedIndexRay(StrictModule):
-    field: AbstractRefractiveIndexField
-    step_size: float = eqx.field(static=True)
-    step_count: int = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+class GradedIndexRayPlan(StrictModule, NonTrainableState):
+    """Graded-index specialization of `DispersionRayPlan`.
 
-    def integrate(
-        self, positions: ArrayLike, directions: ArrayLike, /
-    ) -> GradedIndexRayResult:
-        positions_ = jnp.asarray(positions)
-        directions_ = jnp.asarray(directions, dtype=positions_.dtype)
-        if (
-            positions_.ndim != 2
-            or positions_.shape[1] != 3
-            or directions_.shape != positions_.shape
-        ):
-            raise ValueError("positions and directions must share shape (ray_count, 3).")
-        direction_norm = jnp.sqrt(jnp.sum(directions_ * directions_, axis=-1))
-        direction_valid = direction_norm > jnp.finfo(positions_.dtype).tiny
-        unit = directions_ / jnp.where(
-            direction_valid[:, None], direction_norm[:, None], 1.0
-        )
-        n0, _, _, field_valid = self.field.sample(positions_)
-        momenta = n0[:, None] * unit
-        tangent = jnp.broadcast_to(
-            jnp.eye(6, dtype=positions_.dtype), (positions_.shape[0], 6, 6)
-        )
-        h0 = 0.5 * (jnp.sum(momenta * momenta, axis=-1) - n0 * n0)
-        geometric = jnp.zeros_like(n0)
-        optical = jnp.zeros_like(n0)
-        valid = direction_valid & field_valid & (n0 > 0.0)
-        step = jnp.asarray(self.step_size, dtype=positions_.dtype)
+    Binds `RefractiveIndexHamiltonian` to the explicit kick–drift–kick schedule
+    with roundoff Hamiltonian-drift evidence.
+    """
 
-        def one_step(vector: Array) -> Array:
-            x, p = vector[:3], vector[3:]
-            n, gradient, _, _ = self.field.sample(x[None, :])
-            p_half = p + 0.5 * step * n[0] * gradient[0]
-            x_new = x + step * p_half
-            n_new, gradient_new, _, _ = self.field.sample(x_new[None, :])
-            p_new = p_half + 0.5 * step * n_new[0] * gradient_new[0]
-            return jnp.concatenate((x_new, p_new))
+    rays: DispersionRayPlan
 
-        def advance(
-            carry: _GradedRayCarry, _x: None
-        ) -> tuple[_GradedRayCarry, tuple[Array, Array, Array]]:
-            x, p, mapping, length, optical_path, active, maximum_h = carry
-            vector = jnp.concatenate((x, p), axis=-1)
-            next_vector = jax.vmap(one_step)(vector)
-            jacobian = jax.vmap(jax.jacfwd(one_step))(vector)
-            next_mapping = contract("rij,rjk->rik", jacobian, mapping)
-            x_new, p_new = next_vector[:, :3], next_vector[:, 3:]
-            n_old, _, _, valid_old = self.field.sample(x)
-            n_new, _, _, valid_new = self.field.sample(x_new)
-            next_length = length + 0.5 * step * (n_old + n_new)
-            next_optical = optical_path + 0.5 * step * (n_old * n_old + n_new * n_new)
-            hamiltonian = 0.5 * (jnp.sum(p_new * p_new, axis=-1) - n_new * n_new)
-            next_active = active & valid_old & valid_new & (n_new > 0.0)
-            maximum_h = jnp.maximum(maximum_h, jnp.abs(hamiltonian - h0))
-            return (
-                x_new,
-                p_new,
-                next_mapping,
-                next_length,
-                next_optical,
-                next_active,
-                maximum_h,
-            ), (x_new, p_new, next_mapping)
-
-        initial = (
-            positions_,
-            momenta,
-            tangent,
-            geometric,
-            optical,
-            valid,
-            jnp.zeros_like(n0),
-        )
-        final, history = jax.lax.scan(advance, initial, xs=None, length=self.step_count)
-        x_final, p_final, map_final, geometric, optical, valid, max_h = final
-        positions_history = jnp.concatenate((positions_[None], history[0]), axis=0)
-        momenta_history = jnp.concatenate((momenta[None], history[1]), axis=0)
-        tangent_history = jnp.concatenate((tangent[None], history[2]), axis=0)
-        n_final, _, _, final_covered = self.field.sample(x_final)
-        final_direction = p_final / jnp.where(
-            n_final[:, None] > 0.0, n_final[:, None], 1.0
-        )
-        symplectic = jnp.block(
-            [[jnp.zeros((3, 3)), jnp.eye(3)], [-jnp.eye(3), jnp.zeros((3, 3))]]
-        ).astype(positions_.dtype)
-        residual = (
-            contract("rji,jk,rkl->ril", map_final, symplectic, map_final) - symplectic
-        )
-        maximum_symplectic = jnp.max(jnp.abs(residual))
-        finite = jnp.all(
-            jnp.stack(
-                tuple(
-                    jnp.all(jnp.isfinite(value))
-                    for value in (x_final, p_final, map_final, geometric, optical)
-                )
-            )
-        )
-        covered = jnp.all(valid & final_covered)
-        tolerance = 2.0e3 * jnp.finfo(positions_.dtype).eps * self.step_count
-        successful = (
-            finite
-            & covered
-            & (jnp.max(max_h) <= tolerance)
-            & (maximum_symplectic <= 10.0 * tolerance)
-        )
-        evidence = GradedIndexRayEvidence(
-            finite, covered, jnp.max(max_h), maximum_symplectic, successful, self.plan_id
-        )
-        state = GradedIndexRayState(
-            x_final, p_final, map_final, geometric, optical, valid & final_covered
-        )
-        return GradedIndexRayResult(
-            state,
-            positions_history,
-            momenta_history,
-            tangent_history,
-            unit,
-            final_direction,
-            evidence,
+    def __init__(
+        self, field: AbstractRefractiveIndexField, step_size: float, step_count: int, /
+    ) -> None:
+        self.rays = DispersionRayPlan(
+            RefractiveIndexHamiltonian(field),
+            step_size,
+            step_count,
+            method="kick-drift-kick",
         )
 
+    @property
+    def plan_id(self) -> str:
+        return self.rays.plan_id
 
-class RayFanResult(StrictModule, NonTrainableState):
-    determinant_history: Array
-    minimum_singular_value: Array
-    caustic_crossings: Array
-    caustic_detected: Array
-    successful: Array
-
-
-@dataclass(frozen=True, slots=True)
-class RayFanPlan:
-    transverse_basis: np.ndarray
-    determinant_tolerance: float = 1.0e-8
-
-    def __post_init__(self) -> None:
-        basis = np.array(self.transverse_basis, dtype=np.float64, copy=True)
-        tolerance = float(self.determinant_tolerance)
-        if basis.shape != (2, 3) or not np.allclose(
-            basis @ basis.T, np.eye(2), atol=1.0e-10, rtol=0.0
-        ):
-            raise ValueError("transverse_basis must be an orthonormal (2, 3) basis.")
-        if not np.isfinite(tolerance) or tolerance <= 0.0:
-            raise ValueError("determinant_tolerance must be positive.")
-        basis.setflags(write=False)
-        object.__setattr__(self, "transverse_basis", basis)
-        object.__setattr__(self, "determinant_tolerance", tolerance)
-
-    def evaluate(self, rays: GradedIndexRayResult, /) -> RayFanResult:
-        basis = jnp.asarray(self.transverse_basis, dtype=rays.tangent_history.dtype)
-        position_momentum = rays.tangent_history[..., :3, 3:]
-        transverse = contract("ai,srij,bj->srab", basis, position_momentum, basis)
-        determinant = (
-            transverse[..., 0, 0] * transverse[..., 1, 1]
-            - transverse[..., 0, 1] * transverse[..., 1, 0]
-        )
-        frobenius_squared = jnp.sum(transverse * transverse, axis=(-2, -1))
-        discriminant = jnp.maximum(
-            frobenius_squared * frobenius_squared - 4.0 * determinant * determinant,
-            0.0,
-        )
-        minimum_eigenvalue = 0.5 * (frobenius_squared - jnp.sqrt(discriminant))
-        singular = jnp.sqrt(jnp.maximum(minimum_eigenvalue, 0.0))
-        near = jnp.abs(determinant) <= self.determinant_tolerance
-        crossings = jnp.sum((determinant[1:] * determinant[:-1] < 0.0) | near[1:], axis=0)
-        detected = crossings > 0
-        finite = jnp.all(jnp.isfinite(determinant)) & jnp.all(jnp.isfinite(singular))
-        return RayFanResult(
-            determinant,
-            jnp.min(singular, axis=0),
-            crossings,
-            detected,
-            finite & rays.evidence.finite,
-        )
+    def prepare(self) -> PreparedDispersionRay:
+        return self.rays.prepare()
 
 
 __all__ = [
-    "AnalyticRefractiveIndexField",
     "AbstractRefractiveIndexField",
-    "GradedIndexRayEvidence",
+    "AnalyticRefractiveIndexField",
     "GradedIndexRayPlan",
-    "GradedIndexRayResult",
-    "GradedIndexRayState",
-    "PreparedGradedIndexRay",
-    "RayFanPlan",
-    "RayFanResult",
+    "RefractiveIndexHamiltonian",
     "StructuredRefractiveIndexField",
     "TetrahedralRefractiveIndexField",
 ]

@@ -16,7 +16,7 @@ from phydrax import ein
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....interchange import MTImpedanceData
-from ._layered import LayeredEarthModel
+from ._layered import LayeredEarthModel, VACUUM_PERMEABILITY_H_M
 
 
 def _inverse_2x2(matrix: Array, name: str) -> Array:
@@ -118,7 +118,7 @@ class MagnetotelluricResponsePlan(StrictModule, NonTrainableState):
         real = jnp.real(impedance)
         phase_tensor = _inverse_2x2(real, "MT real impedance") @ jnp.imag(impedance)
         omega = 2 * jnp.pi * self.frequencies_Hz
-        permeability = 1.25663706212e-6
+        permeability = VACUUM_PERMEABILITY_H_M
         apparent = jnp.abs(impedance) ** 2 / (permeability * omega[:, None, None])
         phase = jnp.angle(impedance)
         tipper = None

@@ -35,6 +35,10 @@ class PICRejectionReason(IntFlag):
     GAUSS = 32
     MAGNETIC = 64
     NONFINITE = 128
+    PROCESS = 256
+    RADIATION_OWNERSHIP = 512
+    NUMERICAL_CHERENKOV = 1024
+    MIGRATION = 2048
 
 
 class PICParticleState(StrictModule):
@@ -44,7 +48,7 @@ class PICParticleState(StrictModule):
     proper_velocity: Array
 
 
-class BorisPushResult(StrictModule):
+class RelativisticPushResult(StrictModule):
     proper_velocity: Array
     velocity: Array
     maximum_speed: Array
@@ -80,25 +84,63 @@ class PICFieldGatherResult(StrictModule):
 
 
 class PICCurrentDepositResult(StrictModule):
+    """Charge-conserving current of one step with its endpoint charges.
+
+    ``deposited_end`` is the path head actually deposited: the requested head,
+    or its exit point for paths leaving a nonperiodic face, flagged per particle
+    by ``boundary_exit``. ``end_charge`` is deposited at ``deposited_end``.
+    ``continuity_scale`` is the unsigned charge-rate magnitude
+    ``max(|Δρ| + 2ρ_|q|)/Δt`` that ``maximum_continuity_defect`` is certified
+    against: the residual is a difference of charges of that size, so its
+    roundoff floor is relative to it.
+    """
+
     start_charge: PICChargeDepositResult
     end_charge: PICChargeDepositResult
     current: Array
     continuity_residual: Array
     maximum_continuity_defect: Array
+    continuity_scale: Array
     segment_count: Array
     capacity_overflow: Array
+    deposited_end: Array
+    boundary_exit: Array
     finite: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
 
 
 class PICEnergyLedger(StrictModule):
+    """Per-step energy ledger.
+
+    ``radiated`` is the energy particles handed this step to radiation the field
+    does not resolve (subgrid radiation reaction, net photon emission of
+    strong-field QED), ``created_rest_energy`` the rest energy of particles
+    created from that radiation (pair creation), and ``field_exchange`` the
+    energy the field supplied to close process kinematics (the ``O(m²c⁴/ε)``
+    defect of collinear QED events). ``material`` is the energy the medium
+    stores (polarization, magnetization, plasma current) and ``dissipated`` the
+    energy the field lost this step to conduction, material damping, impedance
+    boundaries, and absorbing layers; both are ``None`` when the field solver
+    does not account them. ``exited`` is the kinetic energy particles carried
+    out through absorbing particle boundaries. ``total`` includes ``material``
+    and
+    ``defect = total + radiated + created_rest_energy + dissipated + exited −
+    field_exchange − previous_total``.
+    """
+
     particle_kinetic: Array
     electric_field: Array
     magnetic_field: Array
+    radiated: Array
     total: Array
     previous_total: Array
     defect: Array
+    created_rest_energy: Array
+    field_exchange: Array
+    material: Array | None
+    dissipated: Array | None
+    exited: Array
 
 
 class PICStepEvidence(StrictModule):
@@ -118,7 +160,6 @@ class PICStepEvidence(StrictModule):
 
 
 __all__ = [
-    "BorisPushResult",
     "PICChargeDepositResult",
     "PICCurrentDepositResult",
     "PICEnergyLedger",
@@ -128,4 +169,5 @@ __all__ = [
     "PICRunStatus",
     "PICStepEvidence",
     "PICTransferState",
+    "RelativisticPushResult",
 ]

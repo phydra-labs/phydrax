@@ -13,7 +13,7 @@ import jax
 import numpy as np
 import pytest
 
-from phydrax._external_runtime import pin_energy_executable
+from phydrax._external_runtime import pin_executable
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.interchange import dafoam
 from phydrax.interchange.dafoam import _request, run_dafoam
@@ -210,7 +210,7 @@ def _fake_runtime(tmp_path: Any) -> Any:
     for path in files:
         path.write_text("# pinned\n")
     return dafoam.DAFoamRuntime(
-        pin_energy_executable(sys.executable, version="3", license_id="PSF-2.0"),
+        pin_executable(sys.executable, version="3", license_id="PSF-2.0"),
         str(package),
         tuple((str(path.resolve()), "0" * 64) for path in files),
         "GPL-3.0-or-later",
@@ -218,7 +218,7 @@ def _fake_runtime(tmp_path: Any) -> Any:
 
 
 def _fake_worker(runtime: Any, *, accept: Any) -> Any:
-    def run_energy_command(
+    def run_pinned_command(
         executable: Any, argv: Any, *, inputs: Any, **options: Any
     ) -> Any:
         request = json.loads(inputs["aerodynamic-request.json"])
@@ -277,7 +277,7 @@ def _fake_worker(runtime: Any, *, accept: Any) -> Any:
             output=lambda path: json.dumps(payload).encode(),
         )
 
-    return run_energy_command
+    return run_pinned_command
 
 
 def _dafoam_action(tmp_path: Any, options: Any = None) -> Any:
@@ -304,7 +304,7 @@ def test_dafoam_staged_adjoint_contracts_shape_preserving_totals(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
     runtime, action = _dafoam_action(tmp_path)
-    monkeypatch.setattr(dafoam, "run_energy_command", _fake_worker(runtime, accept=True))
+    monkeypatch.setattr(dafoam, "run_pinned_command", _fake_worker(runtime, accept=True))
     assert [spec.name for spec in action.input_schema] == ["patchV", "shape"]
     assert [spec.name for spec in action.output_schema] == ["CD", "CL"]
 
@@ -330,7 +330,7 @@ def test_dafoam_staged_adjoint_contracts_shape_preserving_totals(
 
     other_runtime, other = _dafoam_action(tmp_path / "other", {"primalMinResTol": 1e-9})
     monkeypatch.setattr(
-        dafoam, "run_energy_command", _fake_worker(other_runtime, accept=True)
+        dafoam, "run_pinned_command", _fake_worker(other_runtime, accept=True)
     )
     with pytest.raises(ValueError, match="Replay mismatch"):
         action.apply_adjoint(other.stage_primal(patch, shape), *weights)
@@ -340,7 +340,7 @@ def test_dafoam_failed_primal_stages_evidence_without_an_adjoint(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
     runtime, action = _dafoam_action(tmp_path)
-    monkeypatch.setattr(dafoam, "run_energy_command", _fake_worker(runtime, accept=False))
+    monkeypatch.setattr(dafoam, "run_pinned_command", _fake_worker(runtime, accept=False))
     stage = action.stage_primal(np.asarray([10.0, 2.0]), np.zeros((2, 3)))
     assert not stage.accepted and stage.outputs == ()
     assert "primalFail" in stage.failure_reason

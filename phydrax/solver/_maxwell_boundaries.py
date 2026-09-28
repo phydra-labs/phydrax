@@ -23,10 +23,18 @@ MaxwellBoundaryKind: TypeAlias = Literal["pec", "pmc", "impedance"]
 
 
 class MaxwellBoundaryPlan(StrictModule):
-    """Structured compatible trace condition with explicit power semantics."""
+    """Structured compatible trace condition with explicit power semantics.
+
+    Without ``support`` the condition acts on the trace of the nonperiodic
+    domain boundary. ``support`` is an explicit boolean mask over the
+    constrained cochain (electric for ``"pec"``/``"impedance"``, magnetic for
+    ``"pmc"``) that replaces that trace, so conductors, gratings, and screens
+    inside the domain are staircased onto the entities they contain.
+    """
 
     kind: MaxwellBoundaryKind = eqx.field(static=True)
     admittance: Array | None
+    support: Array | None
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -35,6 +43,7 @@ class MaxwellBoundaryPlan(StrictModule):
         /,
         *,
         admittance: ArrayLike | None = None,
+        support: ArrayLike | None = None,
     ) -> None:
         kind = parse(kind, MaxwellBoundaryKind, "kind")
         if kind == "impedance":
@@ -52,13 +61,22 @@ class MaxwellBoundaryPlan(StrictModule):
             if admittance is not None:
                 raise ValueError("Only impedance boundaries accept admittance.")
             value = None
+        if support is None:
+            mask = None
+        else:
+            host = np.asarray(support)
+            if host.dtype != np.bool_ or host.ndim != 1:
+                raise TypeError("Boundary support must be a boolean cochain mask.")
+            mask = jnp.asarray(host)
         self.kind = kind
         self.admittance = value
+        self.support = mask
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "maxwell-boundary-plan",
                 "boundary_kind": kind,
                 "admittance": (None if value is None else array_tree_fingerprint(value)),
+                "support": None if mask is None else array_tree_fingerprint(mask),
             }
         )
 
@@ -112,6 +130,16 @@ class PreparedMaxwellBoundary(StrictModule):
                 adjacent[tuple(lower)] = True
                 adjacent[tuple(upper)] = True
             magnetic_boundary = jnp.asarray(adjacent.reshape((-1,)))
+        if plan.support is not None:
+            constrained = magnetic_boundary if plan.kind == "pmc" else electric_boundary
+            if plan.support.shape != constrained.shape:
+                raise ValueError(
+                    f"{plan.kind} boundary support must have shape {constrained.shape}."
+                )
+            if plan.kind == "pmc":
+                magnetic_boundary = jnp.asarray(plan.support)
+            else:
+                electric_boundary = jnp.asarray(plan.support)
         admittance = plan.admittance
         if admittance is not None:
             if admittance.shape not in ((), (1,), electric_boundary.shape):

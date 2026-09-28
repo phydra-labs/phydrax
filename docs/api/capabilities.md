@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `6eb302616b65ea920df884452d9c9a511feff011247d68e3901d5d20fc1fdf2b`
+Catalog ID: `25b24ab8ece2cfd04bae9a4799258be4d35bb43177c23551b8ff96f1f557ecee`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 233 |
+| candidate | 269 |
 | research | 169 |
 | internal | 5 |
 | retired | 0 |
@@ -20,6 +20,15 @@ Catalog ID: `6eb302616b65ea920df884452d9c9a511feff011247d68e3901d5d20fc1fdf2b`
 
 | Capability | Owner | Disposition | Domain maturity | Profiles |
 | --- | --- | --- | --- | ---: |
+| `accelerator.csr-1d` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.csr-3d` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.fel-averaged` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.fel-full-wave` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.fel-time-dependent` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.insertion-device-radiation` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.ring-radiation` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.space-charge-igf` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.wake-impedance` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
 | `acoustics.bubbly-medium` | `phydrax.acoustics` | candidate | candidate | 1 |
 | `acoustics.vibroacoustic` | `phydrax.acoustics` | candidate | implementation-qualified-candidate | 1 |
 | `application.accelerator` | `phydrax.applications.accelerator` | research | application-research | 0 |
@@ -207,6 +216,19 @@ Catalog ID: `6eb302616b65ea920df884452d9c9a511feff011247d68e3901d5d20fc1fdf2b`
 | `dicom-radiotherapy-admission` | `phydrax.imaging` | candidate | candidate | 4 |
 | `electrochemistry.porous-electrode` | `phydrax.electrochemistry` | candidate | implementation-qualified-candidate | 1 |
 | `electrohydrodynamics.operator-coupled` | `phydrax.electrohydrodynamics` | candidate | implementation-qualified-candidate | 1 |
+| `electromagnetics.cold-plasma-dielectric` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.discrete-dispersion-audit` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.frequency-moving-charge` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.kinetic-dispersion` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.magnetobremsstrahlung` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.maxwell-far-field` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.moving-charge-cherenkov` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.moving-charge-smith-purcell` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.moving-charge-transition` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.near-zone-lienard-wiechert` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.one-way-antenna` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.plasma-rays` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.vacuum-trajectory-radiation` | `phydrax.electromagnetics` | candidate | candidate | 1 |
 | `foams.constrained-dynamics` | `phydrax.applications.foams` | candidate | candidate | 1 |
 | `foams.plateau-border-drainage` | `phydrax.applications.foams` | candidate | candidate | 1 |
 | `foams.quasistatic-equilibrium` | `phydrax.applications.foams` | candidate | candidate | 1 |
@@ -301,6 +323,8 @@ Catalog ID: `6eb302616b65ea920df884452d9c9a511feff011247d68e3901d5d20fc1fdf2b`
 | `numerical-relativity.holographic-observables` | `phydrax.applications.numerical_relativity` | candidate | candidate | 1 |
 | `optics.scalar-envelope-gnlse` | `phydrax.optics.wave` | candidate | candidate | 1 |
 | `optics.thin-film-interference` | `phydrax.optics.wave` | candidate | candidate | 1 |
+| `optics.transport.charged-step-optical-sources` | `phydrax.optics.transport` | candidate | candidate | 1 |
+| `optics.transport.optical-photon-transport` | `phydrax.optics.transport` | candidate | candidate | 1 |
 | `optomechanics.spatial-stop` | `phydrax.optomechanics` | candidate | implementation-qualified-candidate | 1 |
 | `particle-spectrum.interchange-provider` | `phydrax.particle_physics` | candidate | candidate | 1 |
 | `particle-spectrum.native-scale-bvp` | `phydrax.particle_physics` | candidate | candidate | 1 |
@@ -308,6 +332,15 @@ Catalog ID: `6eb302616b65ea920df884452d9c9a511feff011247d68e3901d5d20fc1fdf2b`
 | `phase-field-evolution` | `phydrax.applications.phase_field` | candidate | candidate | 4 |
 | `phase-field.stationary-double-well-kink` | `phydrax.applications.phase_field` | candidate | candidate | 1 |
 | `phoresis.oseen-cloud` | `phydrax.phoresis` | candidate | implementation-qualified-candidate | 1 |
+| `pic.boosted-frame` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.dispersive-self-consistent` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.distributed` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.galilean-psatd` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.polarized-qed` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.psatd` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.qed-cascade` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.quasi-cylindrical` | `phydrax.solver` | candidate | candidate | 1 |
+| `pic.radiation-reaction` | `phydrax.solver` | candidate | candidate | 1 |
 | `platform.acoustics` | `phydrax.acoustics` | research | analytic-control | 0 |
 | `platform.chemo-mechanics` | `phydrax.chemo_mechanics` | research | local-constitutive | 0 |
 | `platform.correlation` | `phydrax.correlation` | research | analytic-control | 0 |
@@ -346,10 +379,13 @@ Catalog ID: `6eb302616b65ea920df884452d9c9a511feff011247d68e3901d5d20fc1fdf2b`
 | `radiation-circulating-blood-dose` | `phydrax.applications` | candidate | candidate | 2 |
 | `radiation-external-score-admission` | `phydrax.applications` | candidate | candidate | 3 |
 | `radiation-transport.charged-condensed-history` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
+| `radiation-transport.charged-step-photon-production` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.discrete-ordinates` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
+| `radiation-transport.em-shower-matter-processes` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.imc-ddmc` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.photon-diagnostic-xray` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.spectral-polarized-experiment` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
+| `radiation.cross-route-release-matrix` | `phydrax.qualification` | candidate | candidate | 1 |
 | `reacting-flow.amr-ale-production` | `phydrax.applications.reacting_flow` | candidate | candidate | 1 |
 | `reacting-flow.chemical-equilibrium` | `phydrax.applications.reacting_flow` | candidate | candidate | 1 |
 | `reacting-flow.chemical-explosive-modes` | `phydrax.applications.reacting_flow` | candidate | candidate | 1 |

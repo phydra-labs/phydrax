@@ -32,6 +32,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._custom_root import custom_root
 from ..._strict import StrictModule
 from ...ein import contract
 from ...integration import GaussLegendreRule
@@ -112,7 +113,7 @@ def _implicit_scalar_root(
         )
 
     # This is a scalar linear equation, not a dense inverse or an iterative AD.
-    return jax.lax.custom_root(
+    return custom_root(
         function,
         initial,
         solve,

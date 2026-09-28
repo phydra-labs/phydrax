@@ -18,6 +18,8 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....typing import parse
 from ._boundary_cascade import (
+    _fields_to_waves,
+    _waves_to_fields,
     BoundaryCascadePolicy,
     BoundaryRelation,
     compose_boundary_relations,
@@ -329,11 +331,11 @@ def _cost_estimate(problem: FourierModalMaxwellProblem) -> FourierModalCostEstim
     sample_points = int(np.prod(problem.harmonics.plan.sample_shape))
     # An invariant layer retains two material factorizations (36), one complete
     # operator (42), and one boundary relation (16), all in N-by-N units.
-    # A continuous layer retains a capacity-sized prefix of 4(2N)^2 boundary
-    # blocks plus its final boundary. Global storage includes both port bases,
-    # both scattering maps, and four cached reference-phase vectors.
+    # A continuous layer retains capacity-sized prefix and suffix stacks of
+    # 4(2N)^2 boundary blocks plus its final boundary. Global storage includes
+    # both port bases, both scattering maps, and four cached reference-phase vectors.
     continuous_matrix_elements = sum(
-        16 * (element.integration_policy.maximum_segments + 2)
+        16 * (2 * element.integration_policy.maximum_segments + 3)
         for element in continuous_layers
     )
     global_matrix_elements = 64 + 8 * periodic_port_count
@@ -1000,7 +1002,12 @@ def _affine_stack(
     prepared: PreparedFourierModalMaxwell,
     excitation: FourierModalExcitation,
     /,
-) -> tuple[AffineBoundaryRelation, tuple[AffineBoundaryRelation, ...]]:
+) -> tuple[tuple[AffineBoundaryRelation, ...], tuple[AffineBoundaryRelation, ...]]:
+    """Return prefix and suffix affine relations for every element boundary.
+
+    Entry ``j`` of the prefixes relates the stack's left plane to boundary ``j``;
+    entry ``j`` of the suffixes relates boundary ``j`` to the right plane.
+    """
     count = prepared.problem.harmonics.harmonic_count
     dtype = prepared.interface_scattering.s11.matrix.dtype
     affine_elements: list[AffineBoundaryRelation] = []
@@ -1029,43 +1036,64 @@ def _affine_stack(
             source_plane_affine_relation(host.operator, electric, magnetic)
         )
         source_index += 1
-    total = homogeneous_affine_relation(
+    identity = homogeneous_affine_relation(
         identity_boundary_relation(2 * count, dtype),
         excitation.rhs_count,
     )
+    prefixes = [identity]
     for element in affine_elements:
-        total = compose_affine_boundary_relations(total, element)
-    return total, tuple(affine_elements)
+        prefixes.append(compose_affine_boundary_relations(prefixes[-1], element))
+    suffixes = [identity]
+    for element in reversed(affine_elements):
+        suffixes.append(compose_affine_boundary_relations(element, suffixes[-1]))
+    return tuple(prefixes), tuple(reversed(suffixes))
 
 
 def _interface_boundary_fields(
     prepared: PreparedFourierModalMaxwell,
     excitation: FourierModalExcitation,
     left_interface_outgoing: Array,
-    affine_elements: tuple[AffineBoundaryRelation, ...],
+    right_interface_outgoing: Array,
+    prefixes: tuple[AffineBoundaryRelation, ...],
+    suffixes: tuple[AffineBoundaryRelation, ...],
     /,
 ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
-    left_interface_incoming = (
-        prepared.left_incoming_phase[:, None] * excitation.left_incident
-    )
+    """Tangential fields at every element boundary from both stack sides.
+
+    Boundary ``j`` couples the forward wave leaving the prefix with the backward wave
+    leaving the suffix; both relations are contractive, so no evanescent
+    transmission is ever inverted.
+    """
     left_in_e, left_in_h, left_out_e, left_out_h = _port_bases(
         prepared.left_modes, "left"
     )
-    electric = left_in_e @ left_interface_incoming + left_out_e @ left_interface_outgoing
-    magnetic = left_in_h @ left_interface_incoming + left_out_h @ left_interface_outgoing
-    electric_fields = [electric]
-    magnetic_fields = [magnetic]
-    for affine in affine_elements:
-        relation = affine.relation
-        magnetic_right = _dense_solve(
-            relation.d,
-            magnetic - relation.c @ electric - affine.magnetic_source,
+    right_in_e, right_in_h, right_out_e, right_out_h = _port_bases(
+        prepared.right_modes, "right"
+    )
+    left_incoming = prepared.left_incoming_phase[:, None] * excitation.left_incident
+    right_incoming = prepared.right_incoming_phase[:, None] * excitation.right_incident
+    left_forward, _ = _fields_to_waves(
+        left_in_e @ left_incoming + left_out_e @ left_interface_outgoing,
+        left_in_h @ left_incoming + left_out_h @ left_interface_outgoing,
+    )
+    _, right_backward = _fields_to_waves(
+        right_in_e @ right_incoming + right_out_e @ right_interface_outgoing,
+        right_in_h @ right_incoming + right_out_h @ right_interface_outgoing,
+    )
+    identity = jnp.eye(left_forward.shape[0], dtype=left_forward.dtype)
+    electric_fields: list[Array] = []
+    magnetic_fields: list[Array] = []
+    for prefix, suffix in zip(prefixes, suffixes, strict=True):
+        entering = suffix.relation.s22 @ right_backward + suffix.backward_source
+        forward = _dense_solve(
+            identity - prefix.relation.s12 @ suffix.relation.s21,
+            prefix.relation.s11 @ left_forward
+            + prefix.relation.s12 @ entering
+            + prefix.forward_source,
         )
-        electric_right = (
-            relation.a @ electric + relation.b @ magnetic_right + affine.electric_source
+        electric, magnetic = _waves_to_fields(
+            forward, suffix.relation.s21 @ forward + entering
         )
-        electric = electric_right
-        magnetic = magnetic_right
         electric_fields.append(electric)
         magnetic_fields.append(magnetic)
     return tuple(electric_fields), tuple(magnetic_fields)
@@ -1166,9 +1194,9 @@ def solve_fourier_modal_maxwell(
         interface.s21.matrix @ left_interface_incoming
         + interface.s22.matrix @ right_interface_incoming
     )
-    affine, affine_elements = _affine_stack(prepared, excitation)
+    prefixes, suffixes = _affine_stack(prepared, excitation)
     emitted_right, emitted_left = emitted_port_amplitudes(
-        affine,
+        prefixes[-1],
         prepared.left_modes,
         prepared.right_modes,
     )
@@ -1237,7 +1265,9 @@ def solve_fourier_modal_maxwell(
         prepared,
         excitation,
         interface_left,
-        affine_elements,
+        interface_right,
+        prefixes,
+        suffixes,
     )
     power_audit_residual = _power_audit_residual(
         prepared,

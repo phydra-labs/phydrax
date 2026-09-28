@@ -44,7 +44,9 @@ def test_pic_foundation_scenario_1() -> None:
         phx.discretization.ChargedParticlePlan(
             jnp.asarray([-1.0, -1.0]), "invalid"
         ).prepare(particles)
-    pusher = phx.discretization.pic.RelativisticBorisPlan()
+    pusher = phx.discretization.pic.RelativisticPushPlan(
+        phx.discretization.pic.PIC_CODE_RELATIVITY, method="boris"
+    )
     initial = jnp.asarray([[0.2, -0.1, 0.05]])
     result = pusher.push(
         initial,

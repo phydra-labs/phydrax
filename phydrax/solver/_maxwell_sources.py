@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +19,10 @@ from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
+
+
+if TYPE_CHECKING:
+    from ._maxwell import PreparedCompatibleMaxwell
 
 
 def _envelope_identity(
@@ -48,10 +52,12 @@ class PreparedMaxwellSourceContract(Protocol):
     @property
     def prepared_id(self) -> str: ...
 
-    @property
-    def magnetic_closedness_preserving(self) -> bool: ...
-
     def sample(self, time: ArrayLike, args: object = None, /) -> MaxwellSourceForcing: ...
+
+    def validate_runtime(self, prepared: PreparedCompatibleMaxwell, /) -> None:
+        """Refuse a prepared runtime whose materials, absorbers, or sibling sources
+        break this source's admissibility."""
+        ...
 
 
 class AbstractMaxwellSourcePlan(StrictModule):
@@ -87,7 +93,6 @@ class PreparedMaxwellSource(StrictModule):
     envelope: Callable[[Array, Any], ArrayLike] | None = eqx.field(static=True)
     envelope_semantic_content_id: str | None = eqx.field(static=True)
     envelope_numeric_content_id: str | None = eqx.field(static=True)
-    magnetic_closedness_preserving: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -106,7 +111,6 @@ class PreparedMaxwellSource(StrictModule):
         envelope: Callable[[Array, Any], ArrayLike] | None,
         envelope_semantic_content_id: str | None,
         envelope_numeric_content_id: str | None,
-        magnetic_closedness_preserving: bool,
         source_id: str,
         layout_id: str,
     ) -> None:
@@ -162,7 +166,6 @@ class PreparedMaxwellSource(StrictModule):
         self.envelope = envelope
         self.envelope_semantic_content_id = envelope_semantic_content_id
         self.envelope_numeric_content_id = envelope_numeric_content_id
-        self.magnetic_closedness_preserving = bool(magnetic_closedness_preserving)
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-maxwell-source",
@@ -183,6 +186,10 @@ class PreparedMaxwellSource(StrictModule):
         if control.shape != ():
             raise ValueError("Maxwell source control amplitude must be scalar.")
         return self.amplitude * control
+
+    def validate_runtime(self, prepared: PreparedCompatibleMaxwell, /) -> None:
+        """Sparse prepared sources carry no material or boundary requirements."""
+        del prepared
 
     def sample(self, time: ArrayLike, args: Any = None, /) -> MaxwellSourceForcing:
         time_ = jnp.asarray(time)
@@ -291,7 +298,6 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
             envelope=self.envelope,
             envelope_semantic_content_id=self.envelope_semantic_content_id,
             envelope_numeric_content_id=self.envelope_numeric_content_id,
-            magnetic_closedness_preserving=True,
             source_id=self.source_id,
             layout_id=layout.layout_id,
         )
@@ -317,7 +323,6 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
     envelope: Callable[[Array, Any], ArrayLike] | None = eqx.field(static=True)
     envelope_semantic_content_id: str | None = eqx.field(static=True)
     envelope_numeric_content_id: str | None = eqx.field(static=True)
-    magnetic_closedness_preserving: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
     def __init__(
@@ -335,7 +340,6 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
         envelope: Callable[[Array, Any], ArrayLike] | None = None,
         envelope_semantic_id: str | None = None,
         envelope_numeric_id: str | None = None,
-        magnetic_closedness_preserving: bool = False,
         source_id: str | None = None,
     ) -> None:
         e_indices = jnp.asarray(electric_indices, dtype=jnp.int32)
@@ -370,7 +374,6 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
         self.envelope = envelope
         self.envelope_semantic_content_id = semantic
         self.envelope_numeric_content_id = numeric
-        self.magnetic_closedness_preserving = bool(magnetic_closedness_preserving)
         self.source_id = identifier
 
     def prepare(
@@ -391,7 +394,6 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
             envelope=self.envelope,
             envelope_semantic_content_id=self.envelope_semantic_content_id,
             envelope_numeric_content_id=self.envelope_numeric_content_id,
-            magnetic_closedness_preserving=self.magnetic_closedness_preserving,
             source_id=self.source_id,
             layout_id=layout.layout_id,
         )

@@ -16,11 +16,12 @@ from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
+from .._physical import ElectromagneticScaleContract
 from .._strict import StrictModule
 
 
 BOLTZMANN_CONSTANT_J_PER_K = 1.380649e-23
-ELEMENTARY_CHARGE_C = 1.602176634e-19
+ELEMENTARY_CHARGE_C = float(ElectromagneticScaleContract.si().elementary_charge)
 FARADAY_CONSTANT_C_PER_MOL = 96485.33212331001
 GAS_CONSTANT_J_PER_MOL_K = 8.31446261815324
 PLANCK_CONSTANT_J_S = 6.62607015e-34

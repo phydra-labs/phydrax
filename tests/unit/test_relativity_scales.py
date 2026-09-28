@@ -13,7 +13,11 @@ def test_relativity_scales_scenario_1() -> None:
 
     assert scale.gravitational_constant == Fraction(66_743, 10**15)
     assert scale.speed_of_light == Fraction(299_792_458)
-    assert scale.reduced_planck_constant == Fraction(1_054_571_817, 10**43)
+    assert scale.reduced_planck_constant == Fraction(
+        "1.054571817646156391262428003302280744723e-34"
+    )
+    # Correctly rounded float64 of exact SI h / (2 pi).
+    assert float(scale.reduced_planck_constant) == 1.0545718176461565e-34
     assert scale.boltzmann_constant == Fraction(1_380_649, 10**29)
     assert scale.quantum_constants_explicit
 

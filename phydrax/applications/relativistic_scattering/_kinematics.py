@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Mostly-minus Lorentz kinematics and on-shell particle contracts."""
+"""On-shell particle contracts and scattering kinematics."""
 
 from __future__ import annotations
 
@@ -15,146 +15,10 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
+from ..._lorentz import FourMomentum, LorentzFrame, minkowski_dot
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-
-
-MINKOWSKI_METRIC = jnp.diag(jnp.asarray([1.0, -1.0, -1.0, -1.0]))
-
-
-def minkowski_dot(left: ArrayLike, right: ArrayLike, /) -> Array:
-    """Contract four-vectors with metric signature ``(+---)``."""
-    left_ = jnp.asarray(left)
-    right_ = jnp.asarray(right)
-    if left_.shape[-1:] != (4,) or right_.shape[-1:] != (4,):
-        raise ValueError("Minkowski products require trailing four-vector axes.")
-    return left_[..., 0] * right_[..., 0] - jnp.sum(
-        left_[..., 1:] * right_[..., 1:], axis=-1
-    )
-
-
-def lower_four_vector(value: ArrayLike, /) -> Array:
-    """Lower one mostly-minus Lorentz index."""
-    vector = jnp.asarray(value)
-    if vector.shape[-1:] != (4,):
-        raise ValueError(
-            "Lorentz index lowering requires a trailing axis of length four."
-        )
-    return vector * jnp.asarray([1.0, -1.0, -1.0, -1.0], dtype=vector.dtype)
-
-
-class FourMomentum(StrictModule):
-    """Contravariant four-momentum with time component first."""
-
-    value: Array
-
-    def __init__(self, value: ArrayLike, /) -> None:
-        value_ = jnp.asarray(value)
-        if value_.shape[-1:] != (4,):
-            raise ValueError("FourMomentum requires a trailing axis of length four.")
-        self.value = value_
-
-    @property
-    def energy(self) -> Array:
-        return self.value[..., 0]
-
-    @property
-    def spatial(self) -> Array:
-        return self.value[..., 1:]
-
-    @property
-    def invariant_mass_squared(self) -> Array:
-        return minkowski_dot(self.value, self.value)
-
-    @property
-    def invariant_mass(self) -> Array:
-        return jnp.sqrt(jnp.maximum(self.invariant_mass_squared, 0.0))
-
-    def dot(self, other: "FourMomentum", /) -> Array:
-        return minkowski_dot(self.value, other.value)
-
-    def __add__(self, other: "FourMomentum", /) -> "FourMomentum":
-        return FourMomentum(self.value + other.value)
-
-    def __sub__(self, other: "FourMomentum", /) -> "FourMomentum":
-        return FourMomentum(self.value - other.value)
-
-    def __neg__(self) -> "FourMomentum":
-        return FourMomentum(-self.value)
-
-
-class LorentzFrame(StrictModule, NonTrainableState):
-    """Proper orthochronous Lorentz transformation with validation evidence."""
-
-    matrix: Array
-    metric_residual: Array
-    determinant: Array
-    valid: Array
-    frame_id: str = eqx.field(static=True)
-
-    def __init__(self, matrix: ArrayLike, /) -> None:
-        matrix_ = np.asarray(matrix, dtype=np.float64)
-        if matrix_.shape != (4, 4) or np.any(~np.isfinite(matrix_)):
-            raise ValueError("Lorentz frames require one finite 4x4 matrix.")
-        metric = np.diag([1.0, -1.0, -1.0, -1.0])
-        residual = matrix_.T @ metric @ matrix_ - metric
-        determinant = float(np.linalg.det(matrix_))
-        valid = (
-            float(np.max(np.abs(residual))) <= 1.0e-10
-            and abs(determinant - 1.0) <= 1.0e-10
-            and matrix_[0, 0] >= 1.0
-        )
-        if not valid:
-            raise ValueError("matrix is not a proper orthochronous Lorentz transform.")
-        self.matrix = jnp.asarray(matrix_)
-        self.metric_residual = jnp.asarray(residual)
-        self.determinant = jnp.asarray(determinant)
-        self.valid = jnp.asarray(valid)
-        self.frame_id = canonical_fingerprint(
-            {"kind": "lorentz-frame", "matrix": array_tree_fingerprint(matrix_)}
-        )
-
-    @classmethod
-    def identity(cls) -> "LorentzFrame":
-        return cls(np.eye(4))
-
-    @classmethod
-    def boost(cls, velocity: ArrayLike, /) -> "LorentzFrame":
-        """Return the active boost carrying rest momentum toward ``velocity``."""
-        beta = np.asarray(velocity, dtype=np.float64)
-        if beta.shape != (3,) or np.any(~np.isfinite(beta)):
-            raise ValueError("Boost velocity must be one finite three-vector.")
-        speed_squared = float(beta @ beta)
-        if speed_squared >= 1.0:
-            raise ValueError("Lorentz boost speed must be strictly below light speed.")
-        if speed_squared == 0.0:
-            return cls.identity()
-        gamma = 1.0 / math.sqrt(1.0 - speed_squared)
-        spatial = np.eye(3) + (gamma - 1.0) * np.outer(beta, beta) / speed_squared
-        matrix = np.empty((4, 4), dtype=np.float64)
-        matrix[0, 0] = gamma
-        matrix[0, 1:] = gamma * beta
-        matrix[1:, 0] = gamma * beta
-        matrix[1:, 1:] = spatial
-        return cls(matrix)
-
-    def apply(self, momentum: FourMomentum | ArrayLike, /) -> FourMomentum:
-        value = (
-            momentum.value
-            if isinstance(momentum, FourMomentum)
-            else jnp.asarray(momentum)
-        )
-        if value.shape[-1:] != (4,):
-            raise ValueError("Lorentz transforms require trailing four-momentum axes.")
-        return FourMomentum(jnp.matmul(value, self.matrix.T))
-
-    def inverse(self, /) -> "LorentzFrame":
-        metric = np.diag([1.0, -1.0, -1.0, -1.0])
-        return LorentzFrame(metric @ np.asarray(self.matrix).T @ metric)
-
-    def compose(self, other: "LorentzFrame", /) -> "LorentzFrame":
-        return LorentzFrame(np.asarray(self.matrix) @ np.asarray(other.matrix))
 
 
 class Particle(StrictModule, NonTrainableState):
@@ -310,13 +174,8 @@ def mandelstam(
 
 
 __all__ = [
-    "FourMomentum",
-    "LorentzFrame",
-    "MINKOWSKI_METRIC",
     "MassShell",
     "Particle",
     "center_of_momentum_frame",
-    "lower_four_vector",
     "mandelstam",
-    "minkowski_dot",
 ]

@@ -13,10 +13,15 @@ from jax.typing import ArrayLike
 from phydrax import ein
 
 from ..._fingerprint import canonical_fingerprint
-from ..._physical import RelativityScaleContract
+from ..._physical import ElectromagneticScaleContract, RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume import FiniteVolumeDiscretization
+from ...electromagnetics import (
+    GrayMeanOpacities,
+    ThermalFreeFreeModel,
+    ThermalSynchrotronModel,
+)
 from ...equations._relativistic_radiation_interaction import (
     AbstractGRGrayOpacityPlan,
     GRGrayOpacityEvaluation,
@@ -87,58 +92,113 @@ def _opacity_evidence(
     return finite, physical, supported, derivative
 
 
-class ThermalBremsstrahlungGrayOpacityPlan(AbstractGRGrayOpacityPlan):
-    """Parameterized thermal free-free gray emission and absorption."""
+_PLANCK_MEAN_PHOTON_ENERGY = 2.70118
+"""Mean blackbody photon energy ``π⁴/(30 ζ(3))`` in units of ``k T``."""
 
-    scale: RelativityScaleContract
-    emission_prefactor: float = eqx.field(static=True)
-    rosseland_ratio: float = eqx.field(static=True)
-    minimum_temperature: float = eqx.field(static=True)
-    maximum_temperature: float = eqx.field(static=True)
-    radiation_constant: float = eqx.field(static=True)
+
+def _radiation_constant(scale: ElectromagneticScaleContract, /) -> float:
+    """``a = π² k⁴/(15 ħ³ c³)`` in the scale's energy-density-per-kelvin⁴ unit."""
+    k = float(scale.relativity.boltzmann_constant)
+    hbar = float(scale.reduced_planck_constant)
+    c = float(scale.speed_of_light)
+    return float(
+        np.exp(
+            2.0 * np.log(np.pi) + 4.0 * np.log(k) - np.log(15.0) - 3.0 * np.log(hbar * c)
+        )
+    )
+
+
+def _gray_evaluation(
+    means: GrayMeanOpacities,
+    density: Array,
+    matter: Array,
+    radiation: Array,
+    magnetic: Array,
+    composition_finite: Array,
+    scale: ElectromagneticScaleContract,
+    opacity_id: str,
+    /,
+) -> GRGrayOpacityEvaluation:
+    """Gray closure from spectral means; photon number uses the blackbody mean energy."""
+    tiny = jnp.finfo(matter.dtype).tiny
+    emission = means.planck_emission
+    absorption = means.planck_absorption
+    boltzmann = float(scale.relativity.boltzmann_constant)
+    photon_emission = (
+        emission
+        * _radiation_constant(scale)
+        * matter**4
+        / jnp.maximum(_PLANCK_MEAN_PHOTON_ENERGY * boltzmann * matter, tiny)
+    )
+    zero = jnp.zeros_like(emission)
+    coefficients = (
+        emission,
+        absorption,
+        means.rosseland,
+        zero,
+        absorption,
+        photon_emission,
+        zero,
+    )
+    finite, physical, _, _ = _opacity_evidence(
+        density,
+        matter,
+        radiation,
+        magnetic,
+        composition_finite,
+        coefficients,
+        minimum_temperature=0.0,
+        maximum_temperature=float("inf"),
+    )
+    qualified = (
+        physical
+        & means.emission_supported
+        & means.absorption_supported
+        & means.rosseland_supported
+    )
+    return GRGrayOpacityEvaluation(
+        *coefficients,
+        finite,
+        physical,
+        qualified,
+        qualified,
+        opacity_id,
+    )
+
+
+class ThermalBremsstrahlungGrayOpacityPlan(AbstractGRGrayOpacityPlan):
+    """Thermal free–free Planck and Rosseland means of the spectral owner.
+
+    ``rest_mass_density / electron_mass_per_particle`` is the electron density and
+    ions of charge ``ion_charge_number`` neutralize it. Temperatures are in
+    kelvin; coefficients are per length of ``scale``. Qualification is the
+    spectral support of every mean (`ThermalFreeFreeModel.gray_means`).
+    """
+
+    model: ThermalFreeFreeModel
+    electron_mass_per_particle: float = eqx.field(static=True)
 
     def __init__(
         self,
-        scale: RelativityScaleContract,
+        scale: ElectromagneticScaleContract,
         /,
         *,
-        emission_prefactor: float,
-        rosseland_ratio: float = 0.033,
-        minimum_temperature: float,
-        maximum_temperature: float,
-        radiation_constant: float = 1.0,
+        electron_mass_per_particle: float,
+        ion_charge_number: float = 1.0,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        values = tuple(
-            float(value)
-            for value in (
-                emission_prefactor,
-                rosseland_ratio,
-                minimum_temperature,
-                maximum_temperature,
-                radiation_constant,
-            )
-        )
-        if (
-            any(not np.isfinite(value) or value <= 0.0 for value in values)
-            or values[3] <= values[2]
-        ):
-            raise ValueError("Bremsstrahlung gray-opacity controls are invalid.")
-        self.scale = scale
-        self.emission_prefactor = values[0]
-        self.rosseland_ratio = values[1]
-        self.minimum_temperature = values[2]
-        self.maximum_temperature = values[3]
-        self.radiation_constant = values[4]
+        if not isinstance(scale, ElectromagneticScaleContract):
+            raise TypeError("scale must be ElectromagneticScaleContract.")
+        mass = float(electron_mass_per_particle)
+        if not np.isfinite(mass) or mass <= 0.0:
+            raise ValueError("electron_mass_per_particle must be finite and positive.")
+        model = ThermalFreeFreeModel(scale, ion_charge_number=ion_charge_number)
+        self.model = model
+        self.electron_mass_per_particle = mass
         self.opacity_id = canonical_fingerprint(
             {
                 "kind": "thermal-bremsstrahlung-gray-opacity",
-                "scale": scale.scale_id,
-                "emission_prefactor": values[0],
-                "rosseland_ratio": values[1],
-                "temperature_support": values[2:4],
-                "radiation_constant": values[4],
+                "model": model.model_id,
+                "electron_mass_per_particle": mass,
             }
         )
 
@@ -158,104 +218,64 @@ class ThermalBremsstrahlungGrayOpacityPlan(AbstractGRGrayOpacityPlan):
             magnetic_squared,
             composition,
         )
-        tiny = jnp.finfo(jnp.result_type(density, matter)).tiny
-        safe_matter = jnp.maximum(matter, tiny)
-        safe_radiation = jnp.maximum(radiation, tiny)
-        emission = self.emission_prefactor * density**2 * safe_matter ** (-3.5)
-        absorption = emission * (safe_matter / safe_radiation) ** 3
-        transport = self.rosseland_ratio * emission
-        zero = jnp.zeros_like(emission)
-        boltzmann = jnp.asarray(float(self.scale.boltzmann_constant), emission.dtype)
-        equilibrium = self.radiation_constant * safe_matter**4
-        photon_emission = (
-            emission * equilibrium / jnp.maximum(2.70118 * boltzmann * safe_matter, tiny)
+        electrons = density / self.electron_mass_per_particle
+        means = self.model.gray_means(
+            electrons,
+            electrons / self.model.ion_charge_number,
+            matter,
+            radiation,
         )
-        coefficients = (
-            emission,
-            absorption,
-            transport,
-            zero,
-            absorption,
-            photon_emission,
-            zero,
-        )
-        finite, physical, supported, derivative = _opacity_evidence(
+        return _gray_evaluation(
+            means,
             density,
             matter,
             radiation,
             magnetic,
             composition_finite,
-            coefficients,
-            minimum_temperature=self.minimum_temperature,
-            maximum_temperature=self.maximum_temperature,
-        )
-        return GRGrayOpacityEvaluation(
-            *coefficients,
-            finite,
-            physical,
-            supported,
-            derivative,
+            self.model.scale,
             self.opacity_id,
         )
 
 
 class ThermalSynchrotronGrayOpacityPlan(AbstractGRGrayOpacityPlan):
-    """Thermal synchrotron gray source tied to local magnetic energy."""
+    """Thermal synchrotron Planck and Rosseland means of the MNY96 spectral route.
 
-    scale: RelativityScaleContract
+    ``magnetic_squared`` is ``b² = B²/μ₀`` (twice the magnetic pressure) in the
+    scale's energy-density unit. Fields are converted to SI through the scale's
+    SI-referenced units, the SI `ThermalSynchrotronModel` means are taken, and the
+    coefficients are returned per length of ``scale``. The synchrotron Rosseland
+    mean lies outside the MNY96 frequency support whenever ``hν_s ≪ kT`` and is
+    then unqualified.
+    """
+
+    scale: ElectromagneticScaleContract = eqx.field(static=True)
+    model: ThermalSynchrotronModel
     electron_mass_per_particle: float = eqx.field(static=True)
-    emission_prefactor: float = eqx.field(static=True)
-    rosseland_ratio: float = eqx.field(static=True)
-    minimum_temperature: float = eqx.field(static=True)
-    maximum_temperature: float = eqx.field(static=True)
-    radiation_constant: float = eqx.field(static=True)
 
     def __init__(
         self,
-        scale: RelativityScaleContract,
+        scale: ElectromagneticScaleContract,
         /,
         *,
         electron_mass_per_particle: float,
-        emission_prefactor: float,
-        rosseland_ratio: float = 1.0,
-        minimum_temperature: float,
-        maximum_temperature: float,
-        radiation_constant: float = 1.0,
     ) -> None:
-        if not isinstance(scale, RelativityScaleContract):
-            raise TypeError("scale must be RelativityScaleContract.")
-        values = tuple(
-            float(value)
-            for value in (
-                electron_mass_per_particle,
-                emission_prefactor,
-                rosseland_ratio,
-                minimum_temperature,
-                maximum_temperature,
-                radiation_constant,
-            )
-        )
-        if (
-            any(not np.isfinite(value) or value <= 0.0 for value in values)
-            or values[4] <= values[3]
-        ):
-            raise ValueError("Synchrotron gray-opacity controls are invalid.")
+        if not isinstance(scale, ElectromagneticScaleContract):
+            raise TypeError("scale must be ElectromagneticScaleContract.")
+        if scale.charge_unit.reference_system_id != "si":
+            raise ValueError("scale units must be referenced to the SI system.")
+        mass = float(electron_mass_per_particle)
+        if not np.isfinite(mass) or mass <= 0.0:
+            raise ValueError("electron_mass_per_particle must be finite and positive.")
+        model = ThermalSynchrotronModel()
         self.scale = scale
-        self.electron_mass_per_particle = values[0]
-        self.emission_prefactor = values[1]
-        self.rosseland_ratio = values[2]
-        self.minimum_temperature = values[3]
-        self.maximum_temperature = values[4]
-        self.radiation_constant = values[5]
+        self.model = model
+        self.electron_mass_per_particle = mass
         self.opacity_id = canonical_fingerprint(
             {
                 "kind": "thermal-synchrotron-gray-opacity",
                 "scale": scale.scale_id,
-                "electron_mass_per_particle": values[0],
-                "emission_prefactor": values[1],
-                "rosseland_ratio": values[2],
-                "temperature_support": values[3:5],
-                "radiation_constant": values[5],
+                "model": model.model_id,
+                "electron_mass_per_particle": mass,
             }
         )
 
@@ -275,45 +295,31 @@ class ThermalSynchrotronGrayOpacityPlan(AbstractGRGrayOpacityPlan):
             magnetic_squared,
             composition,
         )
-        tiny = jnp.finfo(jnp.result_type(density, matter)).tiny
-        safe_matter = jnp.maximum(matter, tiny)
-        safe_radiation = jnp.maximum(radiation, tiny)
-        electron_number = density / self.electron_mass_per_particle
-        emissivity = self.emission_prefactor * electron_number * magnetic * safe_matter**2
-        equilibrium = self.radiation_constant * safe_matter**4
-        emission = emissivity / jnp.maximum(equilibrium, tiny)
-        absorption = emission * (safe_matter / safe_radiation) ** 3
-        transport = self.rosseland_ratio * absorption
-        zero = jnp.zeros_like(emission)
-        boltzmann = jnp.asarray(float(self.scale.boltzmann_constant), emission.dtype)
-        photon_emission = emissivity / jnp.maximum(
-            2.70118 * boltzmann * safe_matter, tiny
+        units = self.scale.unit_si_map()
+        length_si = units["length"][0]
+        field_si = units["magnetic_field"][0]
+        permeability = float(self.scale.vacuum_permeability)
+        electrons_si = density / self.electron_mass_per_particle / length_si**3
+        field_tesla = jnp.sqrt(permeability * jnp.maximum(magnetic, 0.0)) * field_si
+        means = self.model.gray_means(electrons_si, matter, field_tesla, radiation)
+        means = GrayMeanOpacities(
+            planck_emission=means.planck_emission * length_si,
+            planck_absorption=means.planck_absorption * length_si,
+            rosseland=means.rosseland * length_si,
+            edge_fraction=means.edge_fraction,
+            quadrature_error=means.quadrature_error,
+            emission_supported=means.emission_supported,
+            absorption_supported=means.absorption_supported,
+            rosseland_supported=means.rosseland_supported,
         )
-        coefficients = (
-            emission,
-            absorption,
-            transport,
-            zero,
-            absorption,
-            photon_emission,
-            zero,
-        )
-        finite, physical, supported, derivative = _opacity_evidence(
+        return _gray_evaluation(
+            means,
             density,
             matter,
             radiation,
             magnetic,
             composition_finite,
-            coefficients,
-            minimum_temperature=self.minimum_temperature,
-            maximum_temperature=self.maximum_temperature,
-        )
-        return GRGrayOpacityEvaluation(
-            *coefficients,
-            finite,
-            physical,
-            supported,
-            derivative,
+            self.scale,
             self.opacity_id,
         )
 

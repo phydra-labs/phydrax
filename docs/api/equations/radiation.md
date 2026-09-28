@@ -50,11 +50,61 @@
 
 ::: phydrax.solver.ChargedParticleTransportPlan
 
+::: phydrax.solver.ChargedStepBank
+
+::: phydrax.solver.SecondaryStackSpec
+
+::: phydrax.solver.SecondaryParticleStack
+
+::: phydrax.equations.sample_sauter_cosine
+
+::: phydrax.equations.compton_electron_cosine
+
+::: phydrax.equations.doppler_scattered_energy
+
+::: phydrax.equations.sample_compton_profile_momentum
+
+::: phydrax.equations.sample_bremsstrahlung_photon
+::: phydrax.equations.SeltzerBergerBremsstrahlungTable
+
+::: phydrax.equations.sample_bremsstrahlung_fraction
+
+::: phydrax.equations.bethe_heitler_pair_cross_section_m2
+
+::: phydrax.equations.sample_bethe_heitler_pair_kinetic_energies
+
+::: phydrax.equations.bremsstrahlung_suppression_factor
+
+::: phydrax.equations.delta_ray_kinematics
+
+::: phydrax.equations.positron_annihilation_in_flight
+
+::: phydrax.equations.atomic_relaxation
+
+::: phydrax.equations.FoilStackTransitionRadiationPlan
+
+::: phydrax.equations.cherenkov_yield_in_band
+
+::: phydrax.equations.cherenkov_step_spectral_yield
+
+::: phydrax.equations.longo_shower_profile
+
+::: phydrax.solver.ChargedStepRadiationPlan
+
+::: phydrax.solver.ChargedStepRadiationResult
+
+
+::: phydrax.solver.ShowerParticleBatch
+
+::: phydrax.solver.EMShowerPlan
+
+::: phydrax.solver.EMShowerResult
+
 ::: phydrax.solver.HybridIMCDDMCPlan
 
 ## General-relativistic radiation
 
-`ThermalSynchrotronModel` reference-qualifies only its declared MNY96 Stokes-$I$
+`phydrax.electromagnetics.ThermalSynchrotronModel` reference-qualifies only its declared MNY96 Stokes-$I$
 support and validated $K_2$ approximation. Active polarization/Faraday approximations
 and the resulting composite polarized prediction remain reference-unqualified.
 `PolarizedRayPath` binds polarized transfer to an exact null ray result and metric.
@@ -100,4 +150,4 @@ and the resulting composite polarized prediction remain reference-unqualified.
 
 ::: phydrax.applications.astrophysics.PolarizedInvariantTransferPlan
 
-::: phydrax.applications.astrophysics.ThermalSynchrotronModel
+::: phydrax.applications.astrophysics.invariant_emission_coefficients

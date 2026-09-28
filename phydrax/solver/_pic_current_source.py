@@ -22,14 +22,13 @@ from ._maxwell_sources import (
 
 
 if TYPE_CHECKING:
-    from ._maxwell import MaxwellCochainLayout
+    from ._maxwell import MaxwellCochainLayout, PreparedCompatibleMaxwell
 
 
 class PreparedPICMaxwellCurrentSource(StrictModule, NonTrainableState):
     electric_count: int = eqx.field(static=True)
     magnetic_count: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
-    magnetic_closedness_preserving: bool = eqx.field(static=True)
 
     def sample(self, time: ArrayLike, args: object = None, /) -> MaxwellSourceForcing:
         del time
@@ -42,6 +41,10 @@ class PreparedPICMaxwellCurrentSource(StrictModule, NonTrainableState):
             current,
             jnp.zeros((self.magnetic_count,), dtype=current.dtype),
         )
+
+    def validate_runtime(self, prepared: PreparedCompatibleMaxwell, /) -> None:
+        """Deposited particle currents carry no material or boundary requirements."""
+        del prepared
 
 
 class PICMaxwellCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
@@ -69,7 +72,6 @@ class PICMaxwellCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
                     "layout": layout.layout_id,
                 }
             ),
-            True,
         )
 
 

@@ -2,7 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Particle↔cochain transfer with spline-Whitney shapes of order one to three.
+
+Shape order ``p`` deposits charge with the degree-``p`` tensor cardinal
+B-spline on vertices and gathers each oriented field component with the
+matching spline-Whitney shape: degree ``p − 1`` along the axes an entity spans
+and degree ``p`` across the others (edges for ``E``, faces for ``B``). Order one
+is the lowest-order Whitney transfer (multilinear charge; multilinear
+interpolation of the edge/face components).
+"""
+
 from __future__ import annotations
+
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -11,6 +23,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._structured_cochain import StructuredCochainBridge
 from .._tensor_support import TensorEntityLayout
 from ..particle import ParticlePrecisionPolicy, PreparedChargedParticles
@@ -21,6 +34,7 @@ from ..splatting import (
     ParticleGridSplatPlan,
     PreparedParticleGridSplat,
     SplatExecutionPolicy,
+    TensorBSplineSplatAssignment,
 )
 from ._types import (
     PICChargeDepositResult,
@@ -29,11 +43,43 @@ from ._types import (
 )
 
 
+PICShapeOrder: TypeAlias = Literal[1, 2, 3]
+
+
+def _spline_whitney_assignment(
+    shape_order: PICShapeOrder, layout: TensorEntityLayout, /
+) -> AbstractStructuredSplatAssignment:
+    """Assignment of one entity layout for one spline-Whitney shape order.
+
+    Order ``p`` uses degree ``p`` along the axes where the entity sits at points
+    and degree ``p − 1`` along the axes it spans, so the gather is the exact
+    Galerkin transpose of the charge-conserving current: at order one this is
+    the lowest-order Whitney form, piecewise constant along an edge (and across
+    a face), and the gathered field does exactly the work ``⟨E, ⋆J⟩`` the
+    deposited current does on the grid. Order-one layouts without a point axis
+    (1-D edges) keep multilinear midpoint interpolation, the electrostatic
+    momentum-conserving gather.
+    """
+    order = parse(shape_order, PICShapeOrder, "shape_order")
+    if order == 1 and len(set(layout.axis_entities)) == 1:
+        return MultilinearSplatAssignment()
+    match order:
+        case 1 | 2 | 3:
+            return TensorBSplineSplatAssignment(
+                tuple(
+                    order if kind == "point" else order - 1
+                    for kind in layout.axis_entities
+                )
+            )
+        case _:
+            raise ValueError("shape_order is invalid.")
+
+
 class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
     """Bind charged particles to exact structured cochain entity locations."""
 
     bridge: StructuredCochainBridge
-    assignment: AbstractStructuredSplatAssignment
+    shape_order: PICShapeOrder = eqx.field(static=True)
     execution: SplatExecutionPolicy
     precision: ParticlePrecisionPolicy
     budget: ParticleGridSplatBudget
@@ -44,21 +90,19 @@ class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
         bridge: StructuredCochainBridge,
         /,
         *,
-        assignment: AbstractStructuredSplatAssignment | None = None,
+        shape_order: PICShapeOrder = 1,
         execution: SplatExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
         budget: ParticleGridSplatBudget | None = None,
     ) -> None:
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
-        assignment_ = MultilinearSplatAssignment() if assignment is None else assignment
+        order = parse(shape_order, PICShapeOrder, "shape_order")
         execution_ = SplatExecutionPolicy() if execution is None else execution
         precision_ = ParticlePrecisionPolicy() if precision is None else precision
         budget_ = ParticleGridSplatBudget() if budget is None else budget
-        if not isinstance(assignment_, AbstractStructuredSplatAssignment):
-            raise TypeError("assignment must be a structured splat assignment.")
         self.bridge = bridge
-        self.assignment = assignment_
+        self.shape_order = order
         self.execution = execution_
         self.precision = precision_
         self.budget = budget_
@@ -66,7 +110,7 @@ class PICParticleCochainTransferPlan(StrictModule, NonTrainableState):
             {
                 "kind": "pic-particle-cochain-transfer-plan",
                 "bridge": bridge.bridge_id,
-                "assignment": assignment_.assignment_id,
+                "shape_order": order,
                 "execution": execution_.policy_id,
                 "precision": precision_.policy_id,
                 "budget": budget_.budget_id,
@@ -105,7 +149,7 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
             return ParticleGridSplatPlan(
                 grid,
                 location=location,
-                assignment=plan.assignment,
+                assignment=_spline_whitney_assignment(plan.shape_order, layout),
                 boundary="reject",
                 execution=plan.execution,
                 precision=plan.precision,
@@ -237,4 +281,8 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
         return PICFieldGatherResult(values, support, finite, successful, self.prepared_id)
 
 
-__all__ = ["PICParticleCochainTransferPlan", "PreparedPICParticleCochainTransfer"]
+__all__ = [
+    "PICParticleCochainTransferPlan",
+    "PICShapeOrder",
+    "PreparedPICParticleCochainTransfer",
+]

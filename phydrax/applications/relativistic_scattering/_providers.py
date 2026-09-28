@@ -8,9 +8,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from ..._external_runtime import (
-    EnergyRunResult,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from ...particle_physics import HEPProviderBinding
 
@@ -43,14 +43,14 @@ def run_external_hep_provider(
     timeout: float = 120.0,
     max_output_bytes: int = 1 << 30,
     environment: Mapping[str, str] | None = None,
-) -> EnergyRunResult:
+) -> PinnedRunResult:
     """Run one admitted external capability in the existing bounded host runtime."""
     if not isinstance(provider, ExternalHEPProvider):
         raise TypeError("provider must be ExternalHEPProvider.")
     capability = str(required_capability).strip()
     if not capability or not provider.capability.supports(capability):
         raise ValueError("The provider does not advertise the required capability.")
-    return run_energy_command(
+    return run_pinned_command(
         provider.executable,
         args,
         inputs=inputs,

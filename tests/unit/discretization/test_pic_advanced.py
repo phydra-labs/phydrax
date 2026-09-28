@@ -58,6 +58,7 @@ def test_boundary_and_ionization_failures_roll_back_every_accepted_state() -> No
         jnp.asarray(((-0.1,), (jnp.nan,))),
         jnp.ones((2,)),
         boundary.initialize_surface(),
+        kinetic_energy=(jnp.zeros((2,)), jnp.zeros((2,))),
     )
     assert not bool(boundary_result.successful)
     np.testing.assert_array_equal(
@@ -540,41 +541,6 @@ def test_simplicial_locator_contracts() -> None:
     )
     assert current.successful
     assert current.maximum_continuity_defect < 1e-9
-    hodge = phx.solver.maxwell.tetrahedral_maxwell_hodge(
-        tetra_mesh.coordinates,
-        tetra_locator.cells,
-    )
-    maxwell = phx.solver.maxwell.UnstructuredMaxwellPlan(
-        hodge.cochain,
-        phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(),
-        100.0,
-    ).prepare()
-    charge_model = phx.discretization.pic.PICChargeModelPlan(
-        1.0,
-        "ions",
-        minimum_charge_number=0,
-        maximum_charge_number=1,
-        initial_charge_number=1,
-    )
-    electromagnetic = phx.solver.UnstructuredElectromagneticPICPlan(
-        maxwell,
-        current_plan,
-        charge_model,
-    )
-    connectivity = phx.discretization.tetrahedral_connectivity(
-        tetra_locator.cells,
-        tetra_locator.coordinate_count,
-    )
-    np.testing.assert_array_equal(
-        np.asarray(connectivity.edges)[
-            np.asarray(electromagnetic.current_to_maxwell_edges)
-        ],
-        np.asarray(current_plan.edges),
-    )
-    assert not np.array_equal(
-        np.asarray(electromagnetic.current_to_maxwell_edges),
-        np.arange(current_plan.edges.shape[0]),
-    )
     mesh = phx.discretization.CellMesh(
         jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
         (phx.discretization.CellBlock("tri", "triangle", jnp.asarray(((0, 1, 2),))),),

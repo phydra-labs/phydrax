@@ -373,6 +373,12 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
                 absorbed
                 & (self.population.reuse_policy is ParticleSlotReusePolicy.NEVER_REUSE)
             ),
+            state.population.id_hi,
+            state.population.id_lo,
+            state.population.parent_hi,
+            state.population.parent_lo,
+            state.population.next_id_hi,
+            state.population.next_id_lo,
         )
         final_position = jnp.where(final_active[:, None], final_position, 0.0)
         final_velocity = jnp.where(final_active[:, None], final_velocity, 0.0)

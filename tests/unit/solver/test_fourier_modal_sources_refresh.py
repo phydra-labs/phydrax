@@ -190,28 +190,40 @@ def test_periodic_directional_bases_emit_consistent_surface_jump() -> None:
         )
 
     relation = fm.identity_boundary_relation(size, jnp.complex128)
-    electric_source = jnp.asarray(((1.0 + 0.5j), (-0.25 + 0.1j)))[:, None]
-    magnetic_source = jnp.asarray(((0.2 - 0.3j), (0.4 + 0.2j)))[:, None]
+    forward_source = jnp.asarray(((1.0 + 0.5j), (-0.25 + 0.1j)))[:, None]
+    backward_source = jnp.asarray(((0.2 - 0.3j), (0.4 + 0.2j)))[:, None]
     affine = fm.AffineBoundaryRelation(
         relation,
-        electric_source,
-        magnetic_source,
+        forward_source,
+        backward_source,
     )
     left_modes = modes("left")
     right_modes = modes("right")
     right, left = fm.emitted_port_amplitudes(affine, left_modes, right_modes)
-    right_electric = right_modes.outgoing_electric_matrix @ right
-    right_magnetic = right_modes.outgoing_magnetic_matrix @ right
-    left_electric = left_modes.outgoing_electric_matrix @ left
-    left_magnetic = left_modes.outgoing_magnetic_matrix @ left
+
+    def power_waves(
+        electric: jax.Array, magnetic: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        # f, g = (e ± Jh)/2 with Jh = [Hy, -Hx] for the single harmonic.
+        rotated = jnp.concatenate((magnetic[1:], -magnetic[:1]), axis=0)
+        return 0.5 * (electric + rotated), 0.5 * (electric - rotated)
+
+    right_forward, right_backward = power_waves(
+        right_modes.outgoing_electric_matrix @ right,
+        right_modes.outgoing_magnetic_matrix @ right,
+    )
+    left_forward, left_backward = power_waves(
+        left_modes.outgoing_electric_matrix @ left,
+        left_modes.outgoing_magnetic_matrix @ left,
+    )
     np.testing.assert_allclose(
-        right_electric - left_electric,
-        electric_source,
+        right_forward - left_forward,
+        forward_source,
         atol=1.0e-12,
     )
     np.testing.assert_allclose(
-        left_magnetic - right_magnetic,
-        magnetic_source,
+        left_backward - right_backward,
+        backward_source,
         atol=1.0e-12,
     )
 

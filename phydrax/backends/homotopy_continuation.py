@@ -17,10 +17,10 @@ from typing import Any, NoReturn
 import equinox as eqx
 
 from .._external_runtime import (
-    EnergyRunResult,
-    EnergyRuntimeError,
+    ExternalRuntimeError,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -403,7 +403,7 @@ class HomotopyContinuationExecution(StrictModule):
     system_id: str = eqx.field(static=True)
     provider_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
-    run: EnergyRunResult | None = eqx.field(static=True)
+    run: PinnedRunResult | None = eqx.field(static=True)
     error: str = eqx.field(static=True)
     execution_id: str = eqx.field(static=True)
 
@@ -462,7 +462,7 @@ def _execution(
     counts: tuple[tuple[str, int], ...] = (),
     start_count: int = 0,
     tracked_path_count: int = 0,
-    run: EnergyRunResult | None = None,
+    run: PinnedRunResult | None = None,
     error: str = "",
 ) -> HomotopyContinuationExecution:
     identifier = canonical_fingerprint(
@@ -672,7 +672,7 @@ def _parse_output(
     provider: HomotopyContinuationProvider,
     policy: HomotopyContinuationPolicy,
     request: HomotopyContinuationRequest,
-    run: EnergyRunResult,
+    run: PinnedRunResult,
     /,
 ) -> HomotopyContinuationExecution:
     record = _decode_json_object(data, "HomotopyContinuation output")
@@ -833,10 +833,10 @@ def execute_homotopy_continuation(
     }
     if provider.environment.depot_path:
         environment["JULIA_DEPOT_PATH"] = provider.environment.depot_path
-    run: EnergyRunResult | None = None
+    run: PinnedRunResult | None = None
     runtime_error = ""
     try:
-        run = run_energy_command(
+        run = run_pinned_command(
             provider.executable,
             (
                 "--startup-file=no",
@@ -858,7 +858,7 @@ def execute_homotopy_continuation(
             max_output_bytes=policy.maximum_output_bytes,
             environment=environment,
         )
-    except EnergyRuntimeError as failure:
+    except ExternalRuntimeError as failure:
         run = failure.result
         runtime_error = str(failure)
     except ValueError as failure:

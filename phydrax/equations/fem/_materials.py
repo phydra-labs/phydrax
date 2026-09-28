@@ -21,6 +21,7 @@ from ..._admissibility import (
     guard_derivative_validity,
     reason_bits_where,
 )
+from ..._custom_root import custom_root
 from ..._differentiation import ComponentAuthority
 from ..._fingerprint import canonical_fingerprint
 from ..._model import (
@@ -91,7 +92,7 @@ class AbstractLocalImplicitMaterial(AbstractComponentSlot):
     `state_shape`, `max_steps`, `tolerance`, and `model_id` and supplies the
     local residual and the response at a root. `solve` runs `max_steps` Newton
     iterations and differentiates the root by the implicit function theorem
-    (`jax.lax.custom_root`), never through the iterations; `evaluate` marks the
+    (a custom JVP root rule), never through the iterations; `evaluate` marks the
     response invalid unless the root converged to `tolerance` and is finite.
     """
 
@@ -150,7 +151,7 @@ class AbstractLocalImplicitMaterial(AbstractComponentSlot):
             flat_matrix = matrix.reshape((flat_rhs.size, flat_rhs.size))
             return jnp.linalg.solve(flat_matrix, flat_rhs).reshape(right_hand_side.shape)
 
-        return jax.lax.custom_root(
+        return custom_root(
             lambda state: function(state, args),
             initial,
             solve_fn,

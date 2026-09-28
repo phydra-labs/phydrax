@@ -149,6 +149,14 @@ vector Fourier factorization during layer preparation.
 - `InverseFourierFactorizationPlan`: scalar isotropic inverse-rule transverse blocks.
 - `VectorFourierFactorizationPlan`: scalar local-frame factorization.
 
+Vector factorization follows Li's rules with the supplied interface tangent `t`.
+Tangential E is continuous, so its product with ε uses Laurent's rule. Normal D is
+continuous, so the normal component uses the inverse rule:
+`ε_eff = ⟦1/ε⟧⁻¹ + (⟦ε⟧ − ⟦1/ε⟧⁻¹)⟦t tᴴ⟧`. For a lamellar grating whose walls run
+along y, TE (Eᵧ along the grooves) sees `⟦ε⟧` and the TM component Eₓ sees
+`⟦1/ε⟧⁻¹`. This is the Lalanne–Morris/Granet–Guizal formulation that converges for
+metallic gratings.
+
 Vector factorization accepts an analytic tangent field or a Jones-direct Fourier
 least-squares frame. A dynamic `AnalyticInterfaceFramePlan` requires an explicit
 `frame_id`. Equal IDs with unequal tangent values fail; a shape match is never a
@@ -166,8 +174,20 @@ implemented and fails closed.
 
 The default backend forms a first-order tangential Maxwell operator for
 `[Eₓ, Eᵧ, Hₓ, Hᵧ]`. It initializes a short-interval transfer polynomial, converts it
-to a mixed boundary relation, and repeatedly doubles that relation. Growing transfer
-states are never propagated across the full layer.
+to a power-wave scattering relation, and repeatedly doubles that relation with the
+Redheffer star product. Growing transfer states are never propagated across the full
+layer.
+
+`BoundaryRelation` maps the incoming power waves `[f_left, g_right]` to the outgoing
+waves `[f_right, g_left]` through blocks `s11`, `s12`, `s21`, `s22`. At each plane
+`f = (e + Jh)/2` and `g = (e − Jh)/2`, where `e = [Eₓ, Eᵧ]`, `h = [Hₓ, Hᵧ]`,
+`Jh = [Hᵧ, −Hₓ]`, and the reference admittance is the unit vacuum admittance of the
+relative constitutive units. `|f|² − |g|²` is the +z Poynting flux summed over
+harmonics, so a passive slab with a real Bloch wavevector has a contractive relation.
+Composition therefore never divides by exponentially small evanescent transmission,
+and a cavity resonance inside one sub-slab cannot make the cascade singular. This
+keeps metallic layers and strongly evanescent orders stable, including the Bloch
+wavevector `ω/v` of a slow moving charge.
 
 `BoundaryCascadePolicy` fixes:
 
@@ -224,9 +244,13 @@ coherent or incoherent from shape alone.
 
 ## Fields and far fields
 
-`fields_in_layer` evaluates a partial boundary relation at a requested layer offset,
-recovers E_z and H_z from the constitutive elimination maps, and reconstructs either
-the physical pixel grid or caller-supplied xy coordinates.
+`fields_in_layer` composes the partial relations before and after the requested
+layer offset. It closes the interior plane from both faces, using the forward wave
+that leaves the left part and the backward wave that leaves the right part, so it
+never inverts an evanescent transmission. It then recovers E_z and H_z from the
+constitutive elimination maps and reconstructs either the physical pixel grid or
+caller-supplied xy coordinates. Solve-time boundary fields use the same two-sided
+closure with the stack's prefix and suffix relations.
 
 `diffraction_order_far_field` returns exact discrete order wavevectors, directions,
 angles, propagating masks, and powers. It does not interpolate a continuous angular
@@ -342,12 +366,12 @@ epoch remains unchanged. `LateralTransformationOpticsPMLPlan` transforms every
 constitutive block and rejects singular, active, orientation-reversing, or
 nonperiodic-seam transforms.
 
-Preparation retains fixed-capacity prefix boundary relations for every accepted
-continuous segment. `fields_in_layer` selects the containing prefix, performs one
-partial fourth-order step, and evaluates the local constitutive operator at the
-requested coordinate. Its result reports the selected segment, embedded dense-output
-defect, and continuous integration status; it never substitutes one representative
-midpoint operator for a varying profile.
+Preparation retains fixed-capacity prefix and suffix boundary relations for every
+accepted continuous segment. `fields_in_layer` selects the containing segment, takes
+one partial fourth-order step on each side of the offset, and evaluates the local
+constitutive operator at the requested coordinate. Its result reports the selected
+segment, embedded dense-output defect, and continuous integration status; it never
+substitutes one representative midpoint operator for a varying profile.
 
 `diffraction_order_far_field` remains the exact discrete radiation API for an
 infinite periodic stack. Continuous directions are available only through

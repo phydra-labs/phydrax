@@ -655,10 +655,9 @@ def iv(v: ArrayLike, x: ArrayLike) -> Array:
 def kve(v: ArrayLike, x: ArrayLike) -> Array:
     """Exponentially scaled principal modified Bessel function ``K_v(x)``."""
     if jnp.issubdtype(jnp.result_type(v, x), jnp.complexfloating):
-        from ._continuation import complex_kv, promote_principal
+        from ._continuation import complex_kve
 
-        (_, z) = promote_principal(v, x)
-        return jnp.exp(z) * complex_kv(v, z)
+        return complex_kve(v, x)
     return _kve_array(*_prepare("kve", v, x))
 
 

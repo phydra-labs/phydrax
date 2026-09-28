@@ -15,9 +15,9 @@ import h5py
 import numpy as np
 
 from ..._external_runtime import (
-    EnergyRunResult,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...interchange import (
@@ -327,10 +327,10 @@ def run_openmc(
     args: tuple[str, ...] = (),
     timeout: float = 120.0,
     max_output_bytes: int = 512 * 1024 * 1024,
-) -> EnergyRunResult:
-    """Run a pinned OpenMC executable in the shared private energy runtime."""
+) -> PinnedRunResult:
+    """Run a pinned OpenMC executable in the shared pinned-command runtime."""
 
-    return run_energy_command(
+    return run_pinned_command(
         executable,
         args,
         inputs=inputs,

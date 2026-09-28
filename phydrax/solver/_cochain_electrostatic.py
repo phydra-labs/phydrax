@@ -18,12 +18,12 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
 from ..linalg import (
-    ConjugateGradient,
     FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSystem,
     OperatorProperties,
+    PCG,
     prepare,
     PreparedLinearSolve,
     solve,
@@ -204,6 +204,13 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
     The codifferential is the positive Hodge adjoint, so this is the
     positive-definite weak form of ``-div(epsilon*grad(phi)) = rho``.
     Physical Gauss law is consequently ``-delta(epsilon*E) = rho``.
+
+    ``tolerance`` is relative: a solve converges when the Hodge-norm true
+    residual is at most ``tolerance`` (floored at the runtime's roundoff
+    level ``10 ε n``) times the Hodge norm of the assembled right-hand side,
+    charge plus Neumann source minus the Dirichlet lift. The criterion is
+    invariant under the units of ``epsilon``, ``rho``, and boundary data, so a
+    charge-free, Dirichlet-driven solve is held to the same relative accuracy.
     """
 
     bridge: StructuredCochainBridge
@@ -287,11 +294,16 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
                 {"kind": "cochain-electrostatic-system", "operator": operator_id}
             ),
         )
+        # Native PCG stops on the Hodge-norm true residual the linalg runtime
+        # certifies (Lineax CG's elementwise max-norm test does not). No
+        # absolute floor: with SI permittivities (~1e-10 F/m) the assembled
+        # right-hand side is itself ~1e-10, and an absolute tolerance accepts
+        # unconverged iterates.
         policy = (
             LinearSolvePolicy(
-                ConjugateGradient(),
+                PCG(),
                 tolerance=TolerancePolicy(
-                    relative=tolerance_, absolute=tolerance_, max_steps=iterations
+                    relative=tolerance_, absolute=0.0, max_steps=iterations
                 ),
             )
             if linear_policy is None
@@ -342,7 +354,15 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
                 compatibility > self.compatibility_tolerance * source_scale,
                 "Electrostatic charge/flux is incompatible with the gauge boundary.",
             )
-        lift = self.boundary.dirichlet_values.astype(rho.dtype)
+        # The lift carries the Dirichlet data on fixed vertices only. Values on
+        # free vertices are not constraints; lifting them would move part of
+        # the solution into the lift and cancel the right-hand side down to
+        # roundoff, which a relative certificate cannot then reach.
+        lift = jnp.where(
+            self.boundary.dirichlet_mask,
+            self.boundary.dirichlet_values.astype(rho.dtype),
+            0.0,
+        )
         action = _CochainPoissonAction(
             self.bridge, self.permittivity, self.boundary, self.active
         )
@@ -397,9 +417,13 @@ class CochainElectrostaticPlan(StrictModule, NonTrainableState):
             & jnp.isfinite(field_energy)
         )
         rhs_norm = jnp.sqrt(jnp.real(cochain.space(0).vector_space.inner(rhs, rhs)))
-        converged = linear.successful & (
-            residual_norm <= self.tolerance * jnp.maximum(1.0, rhs_norm)
+        # Same criterion as the default policy's certificate, including the
+        # linear runtime's roundoff floor on the relative tolerance.
+        relative = max(
+            self.tolerance,
+            10.0 * float(np.finfo(np.float64).eps) * cochain.cell_counts[0],
         )
+        converged = linear.successful & (residual_norm <= relative * rhs_norm)
         return CochainElectrostaticResult(
             rho,
             potential,

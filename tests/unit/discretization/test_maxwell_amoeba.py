@@ -34,7 +34,12 @@ def test_maxwell_amoeba_scenario_1() -> None:
         permeability=1.0 + 0.1 * jnp.arange(n2) / n2,
     )
     probe = phx.solver.maxwell.FieldProbePlan("electric", jnp.asarray([0, 1, 2]))
-    dft = phx.solver.maxwell.DFTObserverPlan(probe, jnp.asarray([1.0, 2.0]))
+    dft = phx.solver.maxwell.DFTObserverPlan(
+        probe,
+        phx.solver.maxwell.MaxwellSpectralAcquisition(
+            jnp.asarray([1.0, 2.0]), sign="negative", measure="sample-mean"
+        ),
+    )
     pml = phx.solver.maxwell.MaxwellCPMLPlan(1)
     runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,
@@ -102,7 +107,9 @@ def test_maxwell_amoeba_scenario_1() -> None:
     )
 
     dispersive = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
-        jnp.asarray([1.0]), jnp.asarray([0.1]), jnp.asarray([0.5])
+        phx.solver.maxwell.MaxwellLorentzPoles(
+            jnp.asarray([1.0]), jnp.asarray([0.1]), jnp.asarray([0.5])
+        )
     ).prepare(bridge.cochain, layout)
     material_state = dispersive.initialize_state()
     updated = dispersive.advance_state(

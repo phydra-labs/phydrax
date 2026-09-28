@@ -16,11 +16,51 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReferenceArtifactManifest
+from ._matter_radiation_interactions import (
+    BremsstrahlungSpectrumRoute,
+    sample_bremsstrahlung_fraction,
+    SeltzerBergerBremsstrahlungTable,
+)
 
 
 class ChargedRadiationParticleKind(IntEnum):
     ELECTRON = 0
     POSITRON = 1
+
+
+def sample_bremsstrahlung_photon(
+    energy_draw: Array,
+    polar_draw: Array,
+    kinetic_energy: Array,
+    electron_rest_energy: float,
+    /,
+    *,
+    route: BremsstrahlungSpectrumRoute = "bounded",
+    material_index: ArrayLike = 0,
+    minimum_photon_energy_ev: float = 1.0,
+    table: SeltzerBergerBremsstrahlungTable | None = None,
+) -> tuple[Array, Array, Array]:
+    """Bremsstrahlung photon energy, polar cosine, and spectral support.
+
+    ``"bounded"`` preserves the M1a half-energy diagnostic distribution.
+    ``"screened-bethe-heitler"`` samples the complete-screening Tsai spectrum,
+    while ``"seltzer-berger"`` performs inverse-CDF sampling from an explicitly
+    governed NIST table.  The leading Tsai small-angle distribution is common
+    to all routes.  The transport owns the azimuth draw.
+    """
+    fraction, supported = sample_bremsstrahlung_fraction(
+        route,
+        energy_draw,
+        kinetic_energy,
+        material_index,
+        minimum_photon_energy_ev,
+        table=table,
+    )
+    photon_energy = fraction * kinetic_energy
+    gamma = 1.0 + kinetic_energy / electron_rest_energy
+    draw = jnp.minimum(polar_draw, 1.0 - jnp.finfo(polar_draw.dtype).eps)
+    theta = jnp.minimum(jnp.sqrt(draw / (1.0 - draw)) / gamma, jnp.pi)
+    return photon_energy, jnp.cos(theta), supported
 
 
 class ChargedRadiationMaterialEvaluation(StrictModule):
@@ -156,4 +196,5 @@ __all__ = [
     "ChargedRadiationMaterialEvaluation",
     "ChargedRadiationMaterialLibrary",
     "ChargedRadiationParticleKind",
+    "sample_bremsstrahlung_photon",
 ]

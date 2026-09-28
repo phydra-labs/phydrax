@@ -11,8 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import LorentzFrame
 from phydrax._physical import DimensionalScaleContract, RelativityScaleContract
-from phydrax.applications.relativistic_scattering._kinematics import LorentzFrame
 from phydrax.applications.relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
     RelativisticUnitContract,

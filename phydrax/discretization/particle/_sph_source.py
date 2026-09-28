@@ -20,6 +20,7 @@ from ..._trainable import NonTrainableState
 from ...typing import parse
 from ._particle_epoch import ParticleCapacityRequest
 from ._population import (
+    _select_state,
     ParticleAllocationRequest,
     ParticlePopulationPlan,
     ParticlePopulationState,
@@ -472,19 +473,7 @@ def emit_sph_particles(
         candidate_source,
     )
     accepted = SPHRuntimeState(
-        ParticlePopulationState(
-            jnp.where(successful, candidate.population.active, state.population.active),
-            jnp.where(successful, candidate.population.mass, state.population.mass),
-            jnp.where(
-                successful, candidate.population.incarnation, state.population.incarnation
-            ),
-            jnp.where(
-                successful,
-                candidate.population.ever_occupied,
-                state.population.ever_occupied,
-            ),
-            jnp.where(successful, candidate.population.retired, state.population.retired),
-        ),
+        _select_state(successful, candidate.population, state.population),
         jnp.where(successful, candidate.position, state.position),
         jnp.where(successful, candidate.velocity, state.velocity),
         jnp.where(successful, candidate.evolved_density, state.evolved_density),

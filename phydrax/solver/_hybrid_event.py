@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from .._custom_root import custom_root
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -552,7 +553,7 @@ def localize_numerical_event(
         valid = primal_valid & jnp.isfinite(slope) & (jnp.abs(slope) > grazing_tolerance)
         return rhs / jnp.where(valid, slope, jnp.nan)
 
-    event_time = jax.lax.custom_root(
+    event_time = custom_root(
         residual, primal_time, lambda function, initial: initial, tangent_solve
     )
     state = state_at_time(event_time)

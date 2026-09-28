@@ -282,8 +282,8 @@ route moments, and fast/deterministic/compensated reductions. Compatible
 particle-in-cell methods attach extensive macrocharge to the same stable
 particle support, deposit endpoint charge on degree-zero cochains, gather
 physical E/B from oriented cochain layouts, solve compatible electrostatics, and
-advance periodic 3-D Maxwell fields with a trajectory current that certifies
-discrete continuity. Fixed-population free-surface FLIP separately binds cell and
+advance periodic or open, dispersive, and magnetized 3-D Maxwell fields with a
+trajectory current that certifies discrete continuity. Fixed-population free-surface FLIP separately binds cell and
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
@@ -406,9 +406,9 @@ lepton, charge, polarization, and conservation ledgers remain visible.
 rays with separate content-bound metric/chart identities and capture/escape/domain/work
 event priority; parallel screen/Jacobi evidence;
 fast-/slow-light plasma sampling, including exact chart/path/snapshot-bound active-
-segment midpoint preparation; MNY96 Stokes-$I$ thermal synchrotron with validated
-$K_2$ support and explicitly reference-unqualified polarization/Faraday approximations;
-typed polarized ray paths; invariant transfer; JANSKY-aware Stokes images; direct
+segment midpoint preparation; the GR-invariant conversion of local emission
+coefficients owned by `phydrax.electromagnetics` (MNY96 thermal synchrotron,
+thermal free–free); typed polarized ray paths; invariant transfer; JANSKY-aware Stokes images; direct
 visibilities and gain-invariant closure products; neutral FITS/UVFITS payloads; and
 fixed-event-branch inference.
 

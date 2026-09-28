@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from .._custom_root import custom_root
 from ..linalg._causal_linear import (
     associative_affine_solve,
     associative_transpose_solve,
@@ -67,7 +68,7 @@ def attach_causal_implicit_derivative(
             transpose_solve=lambda _, rhs: associative_transpose_solve(matrices, rhs),
         )
 
-    implicit_states = jax.lax.custom_root(
+    implicit_states = custom_root(
         residual_function,
         forward_states,
         solve=primal_solve,

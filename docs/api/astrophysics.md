@@ -2,9 +2,9 @@
 
 The general-relativistic observation surface provides observer screens, bounded null
 and timelike rays, ordered terminal events, parallel-transport/Jacobi evidence,
-fast-light and slow-light plasma sampling, MNY96 Stokes-$I$ synchrotron with validated
-$K_2$ support and reference-unqualified active polarization/Faraday approximations,
-exact ray-result/metric `PolarizedRayPath`, chart/path/snapshot-bound fast-light
+fast-light and slow-light plasma sampling, GR-invariant conversion of local emission
+coefficients from `phydrax.electromagnetics` (MNY96 thermal synchrotron, thermal
+free–free), exact ray-result/metric `PolarizedRayPath`, chart/path/snapshot-bound fast-light
 segment-midpoint sampling, invariant scalar/polarized transfer, Jy-aware physical
 Stokes images, direct visibilities and closure products, neutral FITS/UVFITS payloads,
 and fixed-branch inference. Read the

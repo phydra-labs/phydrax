@@ -9,6 +9,7 @@ import subprocess
 import sys
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -635,3 +636,54 @@ def test_matrix_free_verification_detects_missing_structure() -> None:
     assert accepted.scope == "sample-point"
     assert not bool(rejected.passed)
     assert float(rejected.maximum_absolute_error) > 0.0
+
+
+def _traced_pattern(plan: phx.sparse.SparseDerivativePlan, shape: tuple[int, int]) -> Any:
+    relation = plan.coloring.pattern.relation
+    pattern = np.zeros(shape, dtype=np.bool_)
+    pattern[np.asarray(relation.target_indices), np.asarray(relation.source_indices)] = (
+        True
+    )
+    return pattern
+
+
+@jax.jit
+def _take(values: Any, index: Any) -> Any:
+    return values[index]
+
+
+def test_structural_trace_isolates_repeated_calls_of_one_jitted_helper() -> None:
+    # Both calls bind one shared inner jaxpr. The first call's static index must
+    # not be reused as the second call's value-dependent index.
+    space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+
+    def repeated(value: Any, _: Any) -> Any:
+        permuted = _take(value, jnp.asarray([1, 2, 0], dtype=jnp.int32))
+        selected = jnp.clip(jnp.floor(value), 0, 2).astype(jnp.int32)
+        return permuted + _take(value, selected)
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        repeated, jnp.zeros((3,)), source=space, target=space, compiler="auto"
+    )
+    pattern = _traced_pattern(plan, (3, 3))
+    for point in ([0.2, 0.3, 0.4], [2.5, 1.5, 0.5], [1.2, 2.7, 1.9]):
+        jacobian = np.asarray(jax.jacfwd(repeated)(jnp.asarray(point), None))
+        assert not np.any((jacobian != 0) & ~pattern), point
+
+
+def test_structural_trace_resolves_statically_passing_bounds_checks() -> None:
+    # ``eqx.error_if`` routes the index through a cond on a statically false
+    # predicate; the checked permutation stays exact instead of dense.
+    space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+
+    def checked(value: Any, _: Any) -> Any:
+        index = jnp.asarray([2, 0, 1], dtype=jnp.int32)
+        index = eqx.error_if(index, (index < 0) | (index >= 3), "index out of range")
+        return 2.0 * value[index]
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        checked, jnp.zeros((3,)), source=space, target=space, compiler="auto"
+    )
+    expected = np.asarray(jax.jacfwd(checked)(jnp.ones((3,)), None)) != 0
+    assert np.array_equal(_traced_pattern(plan, (3, 3)), expected)
+    assert plan.coloring.num_colors == 1

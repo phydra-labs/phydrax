@@ -18,11 +18,17 @@ from ....discretization.spectral import (
     LatticeHarmonicDiscretization,
     PreparedBrillouinZone,
 )
-from ._boundary_cascade import BoundaryRelation, compose_boundary_relations
+from ._boundary_cascade import (
+    _rotate_magnetic,
+    BoundaryRelation,
+    compose_boundary_relations,
+    identity_boundary_relation,
+)
+from ._contracts import FourierModalMaxwellProblem, MovingLineChargeSource
 from ._factorization import _dense_solve
 from ._layer import PreparedLayerOperator
 from ._scattering import (
-    _port_bases,
+    _port_wave_bases,
     HomogeneousPortModes,
     MaxwellPortScatteringOperator,
     PreparedFourierModalPortModes,
@@ -197,9 +203,15 @@ def gaussian_source_coefficients(
 
 
 class AffineBoundaryRelation(StrictModule):
+    """Power-wave relation plus source-generated forward and backward outputs.
+
+    ``f_right = s11 f_left + s12 g_right + forward_source`` and
+    ``g_left = s21 f_left + s22 g_right + backward_source``.
+    """
+
     relation: BoundaryRelation
-    electric_source: Array
-    magnetic_source: Array
+    forward_source: Array
+    backward_source: Array
 
 
 def homogeneous_affine_relation(
@@ -209,7 +221,7 @@ def homogeneous_affine_relation(
 ) -> AffineBoundaryRelation:
     zero = jnp.zeros(
         (relation.tangential_size, int(rhs_count)),
-        dtype=relation.a.dtype,
+        dtype=relation.s11.dtype,
     )
     return AffineBoundaryRelation(relation, zero, zero)
 
@@ -244,25 +256,14 @@ def source_plane_affine_relation(
     delta_ey = mx + mu[0, 2] @ mu_z_current
     electric_jump = jnp.concatenate((delta_ex, delta_ey), axis=0)
     magnetic_jump = jnp.concatenate((-delta_hx, -delta_hy), axis=0)
-    size = 2 * count
-    identity = jnp.eye(size, dtype=layer.matrix.dtype)
-    zero = jnp.zeros_like(identity)
-    from ._boundary_cascade import BoundaryRelationDiagnostics
-
-    relation = BoundaryRelation(
-        identity,
-        zero,
-        zero,
-        identity,
-        BoundaryRelationDiagnostics(
-            jnp.asarray(0.0),
-            jnp.asarray(0.0),
-            jnp.asarray(0.0),
-            jnp.asarray(True),
-            jnp.asarray(True),
-        ),
+    # E_right = E_left + electric_jump and H_left = H_right + magnetic_jump: a
+    # zero-thickness sheet transmits both power waves and emits (Δe ∓ JΔh)/2.
+    rotated_jump = _rotate_magnetic(magnetic_jump)
+    return AffineBoundaryRelation(
+        identity_boundary_relation(2 * count, layer.matrix.dtype),
+        0.5 * (electric_jump - rotated_jump),
+        -0.5 * (electric_jump + rotated_jump),
     )
-    return AffineBoundaryRelation(relation, electric_jump, magnetic_jump)
 
 
 def compose_affine_boundary_relations(
@@ -272,15 +273,15 @@ def compose_affine_boundary_relations(
 ) -> AffineBoundaryRelation:
     relation = compose_boundary_relations(left.relation, right.relation)
     size = left.relation.tangential_size
-    identity = jnp.eye(size, dtype=left.relation.a.dtype)
-    system = identity - left.relation.b @ right.relation.c
-    source_rhs = left.electric_source + left.relation.b @ right.magnetic_source
+    identity = jnp.eye(size, dtype=left.relation.s11.dtype)
+    system = identity - left.relation.s12 @ right.relation.s21
+    source_rhs = left.forward_source + left.relation.s12 @ right.backward_source
     middle_source = _dense_solve(system, source_rhs)
-    electric_source = right.relation.a @ middle_source + right.electric_source
-    magnetic_source = left.magnetic_source + left.relation.d @ (
-        right.relation.c @ middle_source + right.magnetic_source
+    forward_source = right.relation.s11 @ middle_source + right.forward_source
+    backward_source = left.backward_source + left.relation.s22 @ (
+        right.relation.s21 @ middle_source + right.backward_source
     )
-    return AffineBoundaryRelation(relation, electric_source, magnetic_source)
+    return AffineBoundaryRelation(relation, forward_source, backward_source)
 
 
 def emitted_port_amplitudes(
@@ -291,26 +292,64 @@ def emitted_port_amplitudes(
 ) -> tuple[Array, Array]:
     """Solve source-only outgoing amplitudes with no incident port field."""
     relation = affine.relation
-    _, _, left_electric, left_magnetic = _port_bases(left_modes, "left")
-    _, _, right_electric, right_magnetic = _port_bases(right_modes, "right")
+    _, _, left_forward, left_backward = _port_wave_bases(left_modes, "left")
+    _, _, right_forward, right_backward = _port_wave_bases(right_modes, "right")
     system = jnp.block(
         [
             [
-                right_electric - relation.b @ right_magnetic,
-                -relation.a @ left_electric,
+                right_forward - relation.s12 @ right_backward,
+                -relation.s11 @ left_forward,
             ],
             [
-                -relation.d @ right_magnetic,
-                left_magnetic - relation.c @ left_electric,
+                -relation.s22 @ right_backward,
+                left_backward - relation.s21 @ left_forward,
             ],
         ]
     )
     right_hand_side = jnp.concatenate(
-        (affine.electric_source, affine.magnetic_source), axis=0
+        (affine.forward_source, affine.backward_source), axis=0
     )
     outgoing = _dense_solve(system, right_hand_side)
     size = relation.tangential_size
     return outgoing[:size], outgoing[size:]
+
+
+def moving_line_charge_excitation(
+    problem: FourierModalMaxwellProblem,
+    source: MovingLineChargeSource,
+    port_size: int,
+    /,
+) -> FourierModalExcitation:
+    """Source-only excitation of one moving line charge in its source plane.
+
+    The problem's Bloch wavevector must be the source's ``(ω/v) d̂ + k_⊥ ê_⊥``;
+    ``port_size`` is the prepared stack's port block size. No port field is
+    incident.
+    """
+    if not isinstance(problem, FourierModalMaxwellProblem):
+        raise TypeError("problem must be a FourierModalMaxwellProblem.")
+    if not isinstance(source, MovingLineChargeSource):
+        raise TypeError("source must be a MovingLineChargeSource.")
+    if source.source_id not in problem.source_ids:
+        raise KeyError(f"Unknown source plane {source.source_id!r}.")
+    expected = source.bloch_wavevector(problem.angular_frequency)
+    mismatch = jnp.any(
+        jnp.abs(jnp.asarray(problem.bloch_wavevector) - expected)
+        > 1e-10 * jnp.maximum(jnp.max(jnp.abs(expected)), 1.0)
+    )
+    electric = eqx.error_if(
+        source.surface_current(problem.harmonics, problem.angular_frequency)[..., None],
+        mismatch,
+        "A moving line charge requires the Bloch wavevector (ω/v) d̂ + k_⊥ ê_⊥.",
+    )
+    zero = jnp.zeros((int(port_size), 1), dtype=jnp.complex128)
+    return FourierModalExcitation(
+        zero,
+        zero,
+        source_ids=(source.source_id,),
+        electric_currents=(electric,),
+        magnetic_currents=(jnp.zeros_like(electric),),
+    )
 
 
 def integrate_brillouin_fields(
@@ -350,6 +389,7 @@ __all__ = [
     "homogeneous_affine_relation",
     "integrate_brillouin_fields",
     "integrate_brillouin_power",
+    "moving_line_charge_excitation",
     "plane_wave_excitation",
     "port_mode_excitation",
     "point_source_coefficients",

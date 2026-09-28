@@ -225,12 +225,19 @@ def pullback_particle_epoch_transition(
         cotangent.kinematics.velocity[:capacity],
         cotangent.kinematics.angular_velocity[:capacity],
     )
+    cotangent_population = cotangent.body_properties.population
     population = ParticlePopulationState(
-        cotangent.body_properties.population.active[:capacity],
-        cotangent.body_properties.population.mass[:capacity],
-        cotangent.body_properties.population.incarnation[:capacity],
-        cotangent.body_properties.population.ever_occupied[:capacity],
-        cotangent.body_properties.population.retired[:capacity],
+        cotangent_population.active[:capacity],
+        cotangent_population.mass[:capacity],
+        cotangent_population.incarnation[:capacity],
+        cotangent_population.ever_occupied[:capacity],
+        cotangent_population.retired[:capacity],
+        cotangent_population.id_hi[:capacity],
+        cotangent_population.id_lo[:capacity],
+        cotangent_population.parent_hi[:capacity],
+        cotangent_population.parent_lo[:capacity],
+        cotangent_population.next_id_hi,
+        cotangent_population.next_id_lo,
     )
     properties = ParticleDynamicBodyProperties(
         population,

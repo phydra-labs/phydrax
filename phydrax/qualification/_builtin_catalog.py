@@ -139,6 +139,46 @@ _PROFILE_PROVIDERS = (
         "particle_spectrum_candidate_profiles",
     ),
     ("phydrax.solver._calabi_yau_qualification", "calabi_yau_candidate_profiles"),
+    (
+        "phydrax.solver._maxwell_qualification",
+        "maxwell_far_field_candidate_profiles",
+    ),
+    ("phydrax.solver._maxwell_qualification", "maxwell_antenna_candidate_profiles"),
+    ("phydrax.solver._maxwell_qualification", "maxwell_dispersion_candidate_profiles"),
+    (
+        "phydrax.solver._maxwell_qualification",
+        "maxwell_moving_charge_candidate_profiles",
+    ),
+    (
+        "phydrax.solver._maxwell_qualification",
+        "maxwell_frequency_moving_charge_candidate_profiles",
+    ),
+    ("phydrax.solver._pic_qualification", "pic_qed_cascade_candidate_profiles"),
+    ("phydrax.solver._pic_qualification", "pic_polarized_qed_candidate_profiles"),
+    (
+        "phydrax.solver._pic_qualification",
+        "pic_radiation_reaction_candidate_profiles",
+    ),
+    ("phydrax.solver._pic_qualification", "pic_spectral_candidate_profiles"),
+    ("phydrax.solver._pic_qualification", "pic_boosted_frame_candidate_profiles"),
+    ("phydrax.solver._pic_qualification", "pic_distributed_candidate_profiles"),
+    (
+        "phydrax.solver._pic_qualification",
+        "pic_dispersive_self_consistent_candidate_profiles",
+    ),
+    (
+        "phydrax.electromagnetics._qualification",
+        "electromagnetic_radiation_candidate_profiles",
+    ),
+    (
+        "phydrax.optics.transport._qualification",
+        "optical_transport_candidate_profiles",
+    ),
+    ("phydrax.applications.accelerator._qualification", "accelerator_candidate_profiles"),
+    (
+        "phydrax.qualification._radiation_release_matrix",
+        "radiation_release_matrix_candidate_profiles",
+    ),
     ("phydrax.applications._biophysical_qualification", "biophysical_candidate_profiles"),
     ("phydrax.applications._soft_matter_qualification", "soft_matter_candidate_profiles"),
     (

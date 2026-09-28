@@ -4,7 +4,14 @@
 
 from ._background import BackgroundMCCPlan
 from ._coulomb import CoulombCollisionPlan
+from ._process import BackgroundCollisionProcess, CoulombCollisionProcess
 from ._types import PICCollisionResult
 
 
-__all__ = ["BackgroundMCCPlan", "CoulombCollisionPlan", "PICCollisionResult"]
+__all__ = [
+    "BackgroundCollisionProcess",
+    "BackgroundMCCPlan",
+    "CoulombCollisionPlan",
+    "CoulombCollisionProcess",
+    "PICCollisionResult",
+]

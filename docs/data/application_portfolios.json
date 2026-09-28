@@ -1,5 +1,5 @@
 {
-  "catalog_id": "6eb302616b65ea920df884452d9c9a511feff011247d68e3901d5d20fc1fdf2b",
+  "catalog_id": "25b24ab8ece2cfd04bae9a4799258be4d35bb43177c23551b8ff96f1f557ecee",
   "kind": "application-promotion-portfolios",
   "portfolios": [
     {
@@ -26,7 +26,9 @@
         "phase-field.stationary-double-well-kink",
         "platform.electrohydrodynamics",
         "radiation-transport.charged-condensed-history",
+        "radiation-transport.charged-step-photon-production",
         "radiation-transport.discrete-ordinates",
+        "radiation-transport.em-shower-matter-processes",
         "radiation-transport.imc-ddmc",
         "radiation-transport.photon-diagnostic-xray",
         "radiation-transport.spectral-polarized-experiment",
@@ -41,7 +43,7 @@
       ],
       "kind": "application-promotion-portfolio",
       "name": "flow-multiphysics",
-      "portfolio_id": "90c631798caa67323f1686466284c33d219b22bd395307054fded2d2e5ef3c69",
+      "portfolio_id": "cca35f645b8b637af4d08ad2aa7de72b5be23326b210708654453c02332e1328",
       "profile_ids": [
         "0d17aca65753422e3d0e9b6701beed907d599c7aa2b686310de129fb7508f804",
         "151ab196975b2663144f9fd7010b756c659023fb56bd739107cb4c5c26948a6f",
@@ -49,6 +51,7 @@
         "1969663ee0dd208e0eeff006434342fe6236d6f1f51b4342e6ef4cfcd5652ba1",
         "1b74956e06cee0d71748c1768284e53610713cf5bd2526876af2023fbeb61db5",
         "210f07b434931c6348dbb0f25c83f789f5bd2738d779e7b689ecc742f3be06fc",
+        "281ad343c288246130e88a2daa6264f7dce850cfd63e7f8da9a86fc091c1127b",
         "2c4527b2be5f3c5c101730dd5c791664544c419b9a046f4cccee9e4bf9b88421",
         "2c9df8f8d968f6b6acedc034dcb261a2166aa63456b4198683edbc261d018ff4",
         "33c391a1a4726f05ab8685a286c44b4358913ff7e1f2e9f37bf930993b4d8829",
@@ -61,6 +64,7 @@
         "7ae43b10532ccb0b6741924cbe510285afb630025d559563bcef04aee84ebf62",
         "82c10f7683b4161ee86b4b6ba2723c9152727005d1ad90930a90498549fa3cdd",
         "882b427ff81b4020b2db8f9b7e319fb77bc79d66aaedee983dea856789c2ad24",
+        "92eb85944a7b1fafbabf91807bc5ed8fae73b86eeb40e8913ed7ddb782eadcaf",
         "a7466362c56316389faf7ca33b2b4988adf978841bdd9fc02222b9497afac936",
         "aacf55af163ed8b996c7b100ee56dada6566aaca994e058f1984645536ae0e12",
         "b948de7bded7e461f717c9fbd9c335d3a24434843e6aafd7509e15f5969ed8f8",

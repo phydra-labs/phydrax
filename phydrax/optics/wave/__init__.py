@@ -66,6 +66,7 @@ from ._envelope import (
     PulseEnvelopeBridgeStatus,
     PulseEnvelopeField,
     PulseEnvelopePolarization,
+    sample_focused_gaussian_pulse_envelope,
     sample_gaussian_pulse_envelope,
 )
 from ._envelope_propagation import (
@@ -126,6 +127,11 @@ from ._maxwell_adapter import (
     PeriodicWindowConversionEvidence,
     TangentialElectromagneticPlane,
     tile_periodic_plane_to_finite_window,
+)
+from ._maxwell_antenna_adapter import (
+    openpmd_laser_envelope_antenna,
+    pulse_envelope_antenna,
+    pulse_envelope_quasi_cylindrical_antenna,
 )
 from ._measurement import ideal_square_law, integrate_intensity
 from ._nonlinear_response import (
@@ -293,6 +299,7 @@ __all__ = [
     "ideal_square_law",
     "instantaneous_nonlinear_polarization",
     "integrate_intensity",
+    "openpmd_laser_envelope_antenna",
     "prepare_bidirectional_coupled_mode",
     "prepare_carrier_resolved_response",
     "prepare_cylindrical_unidirectional_propagation",
@@ -311,6 +318,9 @@ __all__ = [
     "propagate_unidirectional",
     "propagate_envelope",
     "propagate_envelope_adaptive",
+    "pulse_envelope_antenna",
+    "pulse_envelope_quasi_cylindrical_antenna",
+    "sample_focused_gaussian_pulse_envelope",
     "sample_gaussian_pulse_envelope",
     "sequential_pupil_to_scalar_field",
     "solve_bidirectional_coupled_mode",

@@ -1,0 +1,36 @@
+{
+  "datasets": [
+    "G4EMLOW8.8",
+    "G4ENSDFSTATE3.0",
+    "PhotonEvaporation6.1.2"
+  ],
+  "geant4": "geant4-11-04-patch-01 [MT]",
+  "geant4_pybind": "0.1.3",
+  "interpreter": "conda-forge python 3.12 (pixi) with PyPI geant4-pybind==0.1.3",
+  "interpreter_sha256": "ad3b7cae0c83e3888683777aa6b0110169f0bd97d7284510f0747c3e83ccd24b",
+  "license_id": "LicenseRef-Geant4",
+  "provider": "geant4_pybind (statically linked Geant4)",
+  "runs": {
+    "cherenkov": {
+      "command": "/tmp/phx-i2/geant4/pixi/.pixi/envs/default/bin/python3.12 geant4_cherenkov.py input.json",
+      "date": "2026-09-28",
+      "deck_sha256": "0e5885c2844815a856612f3810f90c0715b62b0bfabe405fcc06294f02e43fa2",
+      "output_sha256": "edaf93dc1098db47b52907e132943856aa7f57926c5f3978a6db1ac9b3742e94",
+      "script_sha256": "cc0d69e97345d21c91a06957828f0ea3f1fdbbba60b9327053d071e1dc33641e"
+    },
+    "optical": {
+      "command": "/tmp/phx-i2/geant4/pixi/.pixi/envs/default/bin/python3.12 geant4_optical.py input.json",
+      "date": "2026-09-28",
+      "deck_sha256": "5c17f4db5ce4d2ea81d6321e415adecfda6051233266d3bb0c97b66e14350278",
+      "output_sha256": "f0a99cdb8c79a30ff342c08f8790da4409a049f554bda060d01d0dd7221fdb30",
+      "script_sha256": "8232d58ff276d5b61df7987e53eaf5e5d0fd581c5e406e030e1483e79a852bd5"
+    },
+    "shower": {
+      "command": "/tmp/phx-i2/geant4/pixi/.pixi/envs/default/bin/python3.12 geant4_shower.py input.json",
+      "date": "2026-09-28",
+      "deck_sha256": "05b1d2208f6038ee7eeab3356de8b374e9f613f64650ada0456cf4f5663478e3",
+      "output_sha256": "0ef0a8e2ffac6cbf00c96fbaef66e33dbc3bdf425c725416eb5e758758ccb4cc",
+      "script_sha256": "9edaff96ae44f518d512d80d9a496c5fa81672f8e637dfaee7345f650fe2113b"
+    }
+  }
+}

@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -34,7 +35,9 @@ from ...sparse import EdgeRelation, SparseCoordinateOperator
 from ._conventions import TokamakMagneticConvention
 
 
-DEFAULT_VACUUM_PERMEABILITY_H_M = 1.25663706127e-6
+DEFAULT_VACUUM_PERMEABILITY_H_M = float(
+    ElectromagneticScaleContract.si().vacuum_permeability
+)
 
 
 class FixedBoundaryEquilibriumResult(StrictModule):

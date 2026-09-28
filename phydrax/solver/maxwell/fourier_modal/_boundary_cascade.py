@@ -71,17 +71,29 @@ class BoundaryRelationDiagnostics(StrictModule):
 
 
 class BoundaryRelation(StrictModule):
-    """Mixed field map [E_left, H_right] to [E_right, H_left]."""
+    """Power-wave scattering relation of a slab between two boundary planes.
 
-    a: Array
-    b: Array
-    c: Array
-    d: Array
+    At each plane the tangential harmonics ``e = [Eₓ, Eᵧ]`` and ``h = [Hₓ, Hᵧ]`` split
+    into forward and backward power waves ``f = (e + Jh)/2`` and ``g = (e − Jh)/2``,
+    with ``Jh = [Hᵧ, −Hₓ]`` and the unit reference admittance of the relative
+    constitutive units. ``|f|² − |g|²`` is the harmonic sum ``Re(eᴴJh)`` of +z Poynting
+    flux. Inputs ``[f_left, g_right]`` map to outputs ``[f_right, g_left]``:
+    ``f_right = s11 f_left + s12 g_right`` and ``g_left = s21 f_left + s22 g_right``.
+
+    A passive slab with a real Bloch wavevector has a contractive relation, so
+    composition never divides by exponentially small evanescent transmission and a
+    cavity resonance of one sub-slab never makes the cascade singular.
+    """
+
+    s11: Array
+    s12: Array
+    s21: Array
+    s22: Array
     diagnostics: BoundaryRelationDiagnostics
 
     @property
     def tangential_size(self) -> int:
-        return self.a.shape[-1]
+        return self.s11.shape[-1]
 
 
 def identity_boundary_relation(size: int, dtype: jnp.dtype, /) -> BoundaryRelation:
@@ -97,6 +109,26 @@ def identity_boundary_relation(size: int, dtype: jnp.dtype, /) -> BoundaryRelati
     return BoundaryRelation(identity, zero, zero, identity, diagnostics)
 
 
+def _rotate_magnetic(magnetic: Array, /) -> Array:
+    """Return ``Jh = [Hᵧ, −Hₓ]`` along the leading tangential axis."""
+    count = magnetic.shape[0] // 2
+    return jnp.concatenate((magnetic[count:], -magnetic[:count]), axis=0)
+
+
+def _fields_to_waves(electric: Array, magnetic: Array, /) -> tuple[Array, Array]:
+    """Forward and backward power waves of tangential harmonic fields."""
+    rotated = _rotate_magnetic(magnetic)
+    return 0.5 * (electric + rotated), 0.5 * (electric - rotated)
+
+
+def _waves_to_fields(forward: Array, backward: Array, /) -> tuple[Array, Array]:
+    """Tangential harmonic fields of forward and backward power waves."""
+    rotated = forward - backward
+    count = rotated.shape[0] // 2
+    magnetic = jnp.concatenate((-rotated[count:], rotated[:count]), axis=0)
+    return forward + backward, magnetic
+
+
 def _matrix_relative_residual(matrix: Array, solution: Array, rhs: Array) -> Array:
     residual = matrix @ solution - rhs
     denominator = jnp.maximum(jnp.sqrt(jnp.sum(jnp.abs(rhs) ** 2)), 1.0)
@@ -104,12 +136,18 @@ def _matrix_relative_residual(matrix: Array, solution: Array, rhs: Array) -> Arr
 
 
 def _transfer_to_boundary(transfer: Array, /) -> BoundaryRelation:
+    """Convert a short field transfer ``[e, h](0) ↦ [e, h](L)`` to power waves."""
     size = transfer.shape[0] // 2
-    t11 = transfer[:size, :size]
-    t12 = transfer[:size, size:]
-    t21 = transfer[size:, :size]
-    t22 = transfer[size:, size:]
+    forward_rows, backward_rows = _fields_to_waves(transfer[:size], transfer[size:])
+    # Columns: the field transfer applied to the fields of unit forward/backward waves.
     identity = jnp.eye(size, dtype=transfer.dtype)
+    zero = jnp.zeros_like(identity)
+    forward_fields = jnp.concatenate(_waves_to_fields(identity, zero), axis=0)
+    backward_fields = jnp.concatenate(_waves_to_fields(zero, identity), axis=0)
+    t11 = forward_rows @ forward_fields
+    t12 = forward_rows @ backward_fields
+    t21 = backward_rows @ forward_fields
+    t22 = backward_rows @ backward_fields
     right_hand_side = jnp.concatenate((t21, identity), axis=1)
     solution = _dense_solve(t22, right_hand_side)
     solve_t21 = solution[:, :size]
@@ -135,20 +173,20 @@ def compose_boundary_relations(
     right: BoundaryRelation,
     /,
 ) -> BoundaryRelation:
-    """Compose adjacent left and right boundary relations without transfer growth."""
-    if left.a.shape != right.a.shape:
+    """Redheffer star product of adjacent left and right power-wave relations."""
+    if left.s11.shape != right.s11.shape:
         raise ValueError("Boundary relations must act on the same tangential space.")
     size = left.tangential_size
-    identity = jnp.eye(size, dtype=left.a.dtype)
-    system = identity - left.b @ right.c
-    rhs = jnp.concatenate((left.a, left.b @ right.d), axis=1)
+    identity = jnp.eye(size, dtype=left.s11.dtype)
+    system = identity - left.s12 @ right.s21
+    rhs = jnp.concatenate((left.s11, left.s12 @ right.s22), axis=1)
     middle = _dense_solve(system, rhs)
     from_left = middle[:, :size]
     from_right = middle[:, size:]
-    a = right.a @ from_left
-    b = right.a @ from_right + right.b
-    c = left.c + left.d @ right.c @ from_left
-    d = left.d @ (right.c @ from_right + right.d)
+    s11 = right.s11 @ from_left
+    s12 = right.s11 @ from_right + right.s12
+    s21 = left.s21 + left.s22 @ right.s21 @ from_left
+    s22 = left.s22 @ (right.s21 @ from_right + right.s22)
     solve_residual = jnp.maximum(
         jnp.maximum(left.diagnostics.solve_residual, right.diagnostics.solve_residual),
         _matrix_relative_residual(system, middle, rhs),
@@ -160,17 +198,17 @@ def compose_boundary_relations(
     finite = (
         left.diagnostics.finite
         & right.diagnostics.finite
-        & jnp.all(jnp.isfinite(a))
-        & jnp.all(jnp.isfinite(b))
-        & jnp.all(jnp.isfinite(c))
-        & jnp.all(jnp.isfinite(d))
+        & jnp.all(jnp.isfinite(s11))
+        & jnp.all(jnp.isfinite(s12))
+        & jnp.all(jnp.isfinite(s21))
+        & jnp.all(jnp.isfinite(s22))
     )
     converged = left.diagnostics.converged & right.diagnostics.converged & finite
     return BoundaryRelation(
-        a,
-        b,
-        c,
-        d,
+        s11,
+        s12,
+        s21,
+        s22,
         BoundaryRelationDiagnostics(
             solve_residual,
             initializer_remainder,
@@ -222,7 +260,7 @@ def _prepare_at_doublings(
         relation.diagnostics.converged,
     )
     relation = BoundaryRelation(
-        relation.a, relation.b, relation.c, relation.d, diagnostics
+        relation.s11, relation.s12, relation.s21, relation.s22, diagnostics
     )
     for _ in range(doublings):
         relation = compose_boundary_relations(relation, relation)
@@ -231,17 +269,17 @@ def _prepare_at_doublings(
 
 def _boundary_difference(left: BoundaryRelation, right: BoundaryRelation) -> Array:
     numerator = jnp.sqrt(
-        jnp.sum(jnp.abs(left.a - right.a) ** 2)
-        + jnp.sum(jnp.abs(left.b - right.b) ** 2)
-        + jnp.sum(jnp.abs(left.c - right.c) ** 2)
-        + jnp.sum(jnp.abs(left.d - right.d) ** 2)
+        jnp.sum(jnp.abs(left.s11 - right.s11) ** 2)
+        + jnp.sum(jnp.abs(left.s12 - right.s12) ** 2)
+        + jnp.sum(jnp.abs(left.s21 - right.s21) ** 2)
+        + jnp.sum(jnp.abs(left.s22 - right.s22) ** 2)
     )
     denominator = jnp.maximum(
         jnp.sqrt(
-            jnp.sum(jnp.abs(right.a) ** 2)
-            + jnp.sum(jnp.abs(right.b) ** 2)
-            + jnp.sum(jnp.abs(right.c) ** 2)
-            + jnp.sum(jnp.abs(right.d) ** 2)
+            jnp.sum(jnp.abs(right.s11) ** 2)
+            + jnp.sum(jnp.abs(right.s12) ** 2)
+            + jnp.sum(jnp.abs(right.s21) ** 2)
+            + jnp.sum(jnp.abs(right.s22) ** 2)
         ),
         1.0,
     )
@@ -276,7 +314,9 @@ def prepare_layer_boundary(
         primary.diagnostics.finite,
         converged,
     )
-    return BoundaryRelation(primary.a, primary.b, primary.c, primary.d, diagnostics)
+    return BoundaryRelation(
+        primary.s11, primary.s12, primary.s21, primary.s22, diagnostics
+    )
 
 
 __all__ = [

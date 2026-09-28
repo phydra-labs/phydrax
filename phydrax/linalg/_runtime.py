@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._admissibility import guard_derivative_validity
+from .._custom_root import custom_root
 from .._iteration import (
     bind_iteration_scope,
     finalize_iteration,
@@ -2146,7 +2147,7 @@ def _implicit_custom_root(
             ),
         )
 
-    return jax.lax.custom_root(
+    return custom_root(
         residual,
         initial,
         solve=lambda _, value: value,

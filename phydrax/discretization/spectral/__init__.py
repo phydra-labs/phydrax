@@ -64,6 +64,10 @@ from ._cylindrical_hankel import (
     CylindricalHankelStatus,
     prepare_cylindrical_hankel,
     PreparedCylindricalHankel,
+    PreparedSharedGridHankel,
+    SharedGridHankelEvidence,
+    SharedGridHankelOffset,
+    SharedGridHankelPlan,
 )
 from ._dealias import (
     AbstractDealiasingPlan,
@@ -263,6 +267,10 @@ __all__ = [
     "PeriodicLerayProjector",
     "PreparedBoundaryLift",
     "PreparedCylindricalHankel",
+    "PreparedSharedGridHankel",
+    "SharedGridHankelEvidence",
+    "SharedGridHankelOffset",
+    "SharedGridHankelPlan",
     "PreparedDealiasingPlan",
     "PreparedPseudospectralMethod",
     "PreparedSpectralModalDiagnostics",

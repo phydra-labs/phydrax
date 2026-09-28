@@ -17,19 +17,19 @@ import pytest
 
 import phydrax._external_runtime as external_runtime
 from phydrax._external_runtime import (
-    EnergyRuntimeError,
     ExternalExecutionPolicy,
-    pin_energy_executable,
+    ExternalRuntimeError,
+    pin_executable,
     PinnedExecutable,
-    run_energy_command,
     run_opendss,
+    run_pinned_command,
 )
 from phydrax._external_worker import _OpenDSSWorker, _send_packet
 
 
 @pytest.fixture
 def python_executable() -> Any:
-    return pin_energy_executable(
+    return pin_executable(
         sys.executable, version=sys.version.split()[0], license_id="PSF-2.0"
     )
 
@@ -44,7 +44,7 @@ def test_command_detaches_computed_artifact_and_cleans_work_directory(
         "p('energy.json').write_text(json.dumps(sum(v*h for v,h in values))); "
         "print(p.cwd())"
     )
-    result = run_energy_command(
+    result = run_pinned_command(
         python_executable,
         ("-c", program),
         inputs={"load.json": b"[[100,0.25],[200,0.5]]"},
@@ -62,8 +62,8 @@ def test_command_detaches_computed_artifact_and_cleans_work_directory(
 def test_timeout_retains_partial_diagnostics_and_cleans_directory(
     python_executable: Any,
 ) -> None:
-    with pytest.raises(EnergyRuntimeError) as caught:
-        run_energy_command(
+    with pytest.raises(ExternalRuntimeError) as caught:
+        run_pinned_command(
             python_executable,
             (
                 "-c",
@@ -86,8 +86,8 @@ def test_timeout_retains_partial_diagnostics_and_cleans_directory(
 def test_nonzero_exit_and_missing_output_do_not_report_success(
     python_executable: Any,
 ) -> None:
-    with pytest.raises(EnergyRuntimeError) as caught:
-        run_energy_command(
+    with pytest.raises(ExternalRuntimeError) as caught:
+        run_pinned_command(
             python_executable,
             ("-c", "import sys; sys.stderr.write('invalid physical model'); sys.exit(7)"),
             inputs={},
@@ -96,8 +96,8 @@ def test_nonzero_exit_and_missing_output_do_not_report_success(
     assert caught.value.result.returncode == 7
     # ty: ignore[unresolved-attribute]
     assert caught.value.result.stderr == b"invalid physical model"
-    with pytest.raises(EnergyRuntimeError) as caught:
-        run_energy_command(
+    with pytest.raises(ExternalRuntimeError) as caught:
+        run_pinned_command(
             python_executable,
             ("-c", "sum(range(10))"),
             inputs={},
@@ -111,18 +111,18 @@ def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(
     python_executable: Any,
 ) -> None:
     with pytest.raises(ValueError, match="bounded relative POSIX file path"):
-        run_energy_command(
+        run_pinned_command(
             python_executable, ("-c", "sum(range(10))"), inputs={"../escape": b"x"}
         )
     with pytest.raises(ValueError, match="reserved"):
-        run_energy_command(
+        run_pinned_command(
             python_executable,
             ("-c", "pass"),
             inputs={},
             outputs=(".phydrax-stdout",),
         )
-    with pytest.raises(EnergyRuntimeError) as caught:
-        run_energy_command(
+    with pytest.raises(ExternalRuntimeError) as caught:
+        run_pinned_command(
             python_executable,
             ("-c", "import os; os.symlink('/etc/hosts','result')"),
             inputs={},
@@ -136,8 +136,8 @@ def test_untrusted_paths_symlinks_and_pin_mismatch_fail_closed(
         python_executable.version,
         python_executable.license_id,
     )
-    with pytest.raises(EnergyRuntimeError) as caught:
-        run_energy_command(wrong_pin, ("-c", "sum(range(10))"), inputs={})
+    with pytest.raises(ExternalRuntimeError) as caught:
+        run_pinned_command(wrong_pin, ("-c", "sum(range(10))"), inputs={})
     # ty: ignore[unresolved-attribute]
     assert caught.value.result.returncode is None
 
@@ -150,9 +150,7 @@ def test_execution_uses_private_snapshot_when_original_is_mutated_in_place(
     executable_path.write_text("#!/bin/sh\nprintf old > result\n")
     executable_path.chmod(0o700)
     replacement_bytes = b"#!/bin/sh\nprintf new > result\n"
-    executable = pin_energy_executable(
-        executable_path, version="test", license_id="test-only"
-    )
+    executable = pin_executable(executable_path, version="test", license_id="test-only")
     popen = external_runtime.subprocess.Popen
 
     def mutate_before_exec(*args: Any, **kwargs: Any) -> Any:
@@ -161,13 +159,13 @@ def test_execution_uses_private_snapshot_when_original_is_mutated_in_place(
         return popen(*args, **kwargs)
 
     monkeypatch.setattr(external_runtime.subprocess, "Popen", mutate_before_exec)
-    result = run_energy_command(executable, (), inputs={}, outputs=("result",))
+    result = run_pinned_command(executable, (), inputs={}, outputs=("result",))
 
     assert result.output("result") == b"old"
 
 
 def test_log_bytes_are_read_from_held_descriptors(python_executable: Any) -> None:
-    result = run_energy_command(
+    result = run_pinned_command(
         python_executable,
         (
             "-c",
@@ -234,8 +232,8 @@ def test_opendss_worker_rejects_oversized_circuit_before_collections() -> None:
 
 
 def test_collected_output_bound_is_enforced(python_executable: Any) -> None:
-    with pytest.raises(EnergyRuntimeError) as caught:
-        run_energy_command(
+    with pytest.raises(ExternalRuntimeError) as caught:
+        run_pinned_command(
             python_executable,
             ("-c", "import pathlib; pathlib.Path('result').write_bytes(b'x'*4096)"),
             inputs={},
@@ -267,7 +265,7 @@ def test_unenforced_isolation_and_network_denial_fail_closed(
         inherit_environment=False,
         allowed_environment_variables=("QUALIFICATION_TOKEN",),
     )
-    result = run_energy_command(
+    result = run_pinned_command(
         python_executable,
         (
             "-c",
@@ -291,7 +289,7 @@ def test_unenforced_isolation_and_network_denial_fail_closed(
         else "trusted-local-direct-descriptor"
     )
     with pytest.raises(ValueError, match="allowlist"):
-        run_energy_command(
+        run_pinned_command(
             python_executable,
             ("-c", "pass"),
             inputs={},
@@ -303,7 +301,7 @@ def test_unenforced_isolation_and_network_denial_fail_closed(
 def test_host_boundary_rejects_even_argument_free_jit(python_executable: Any) -> None:
     @jax.jit
     def transformed() -> int:
-        run_energy_command(python_executable, ("-c", "sum(range(10))"), inputs={})
+        run_pinned_command(python_executable, ("-c", "sum(range(10))"), inputs={})
         return 1
 
     with pytest.raises(TypeError):

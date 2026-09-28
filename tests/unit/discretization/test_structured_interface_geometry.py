@@ -253,14 +253,10 @@ def test_height_function_rejects_a_second_interface_band(
     count = 7
     plic = StructuredPLICPlan(_grid(count, dimension, periodic=False))
     # The one-cell liquid film creates two extra crossings hidden by valid endpoints.
-    profile = jnp.asarray(
-        (1.0, 1.0, 1.0, 0.5, 0.0, 1.0, 0.0), dtype=jnp.float64
-    )
+    profile = jnp.asarray((1.0, 1.0, 1.0, 0.5, 0.0, 1.0, 0.0), dtype=jnp.float64)
     if orientation < 0.0:
         profile = profile[::-1]
-    profile_shape = tuple(
-        count if other == axis else 1 for other in range(dimension)
-    )
+    profile_shape = tuple(count if other == axis else 1 for other in range(dimension))
     alpha = jnp.broadcast_to(profile.reshape(profile_shape), (count,) * dimension)
     normal = jnp.zeros((*alpha.shape, dimension), dtype=alpha.dtype)
     normal = normal.at[..., axis].set(orientation)
@@ -413,6 +409,7 @@ def test_cusp_fallback_refuses_unresolved_curvature() -> None:
 
 def test_parabolic_fallback_refuses_rank_deficient_primary_facets() -> None:
     plic = StructuredPLICPlan(_grid(16, 2, periodic=False))
+    plan = HeightFunctionCurvaturePlan(plic)
     profile = jnp.concatenate(
         (
             jnp.ones((7,), dtype=jnp.float64),
@@ -420,22 +417,37 @@ def test_parabolic_fallback_refuses_rank_deficient_primary_facets() -> None:
             jnp.zeros((6,), dtype=jnp.float64),
         )
     )
+    # A diffuse plane normal to x: the column centered on row 6 ends inside the
+    # three-cell transition, so the height function is incomplete there and
+    # the primary-facet fallback is attempted.
     diffuse_plane = jnp.broadcast_to(profile[:, None], (16, 16))
     reconstruction = plic.reconstruct(diffuse_plane)
-    one_row = reconstruction.facet_valid & (jnp.arange(16, dtype=jnp.int32)[None, :] == 8)
+    cell = (6, 8)
+
+    # All seven stencil columns carry three facets each: the fit is full rank.
+    full = plan.evaluate(diffuse_plane, reconstruction)
+    assert bool(full.fallback_attempted[cell])
+    assert int(full.fallback_support_count[cell]) == 21
+    assert int(full.fallback_rank[cell]) == 3
+
+    # Keeping only the facets of column 8 leaves three centroids that share one
+    # tangential coordinate, so the quadratic graph fit has rank one.
+    one_column = reconstruction.facet_valid & (
+        jnp.arange(16, dtype=jnp.int32)[None, :] == 8
+    )
     rank_deficient = eqx.tree_at(
         lambda selected: selected.facet_valid,
         reconstruction,
-        one_row,
+        one_column,
     )
-    query = jnp.zeros((16, 16), dtype=jnp.float64).at[8, 8].set(0.3)
 
-    result = HeightFunctionCurvaturePlan(plic).evaluate(query, rank_deficient)
+    result = plan.evaluate(diffuse_plane, rank_deficient)
 
-    assert bool(result.fallback_attempted[8, 8])
-    assert int(result.fallback_support_count[8, 8]) == 3
-    assert int(result.fallback_rank[8, 8]) < 3
-    assert int(result.evidence.status[8, 8]) == int(CurvatureStatus.UNDERRESOLVED)
+    assert bool(result.fallback_attempted[cell])
+    assert int(result.fallback_support_count[cell]) == 3
+    assert int(result.fallback_rank[cell]) < 3
+    assert int(result.evidence.status[cell]) == int(CurvatureStatus.UNDERRESOLVED)
+    assert float(result.evidence.curvature[cell]) == 0.0
 
 
 @pytest.mark.parametrize(
@@ -507,9 +519,7 @@ def _planar_marangoni_case(
         normal * widths,
         jnp.sum(normal * (point - lower), axis=-1),
     )
-    reconstruction = plic.reconstruct(
-        alpha, jnp.broadcast_to(normal, alpha.shape + (2,))
-    )
+    reconstruction = plic.reconstruct(alpha, jnp.broadcast_to(normal, alpha.shape + (2,)))
     delta, supported = plic.interface_delta(alpha, reconstruction)
     if not delta_supported:
         delta = jnp.zeros_like(delta)
@@ -550,13 +560,9 @@ def _planar_marangoni_case(
 def test_marangoni_force_uses_rotation_invariant_scalar_interface_delta(
     angle: float,
 ) -> None:
-    capillarity, alpha, curvature, variable, dual_measures = _planar_marangoni_case(
-        angle
-    )
+    capillarity, alpha, curvature, variable, dual_measures = _planar_marangoni_case(angle)
 
-    result = capillarity.evaluate(
-        alpha, curvature, variable_surface_tension=variable
-    )
+    result = capillarity.evaluate(alpha, curvature, variable_surface_tension=variable)
 
     integrated = jnp.stack(
         tuple(
@@ -568,8 +574,7 @@ def test_marangoni_force_uses_rotation_invariant_scalar_interface_delta(
     )
     tangent = jnp.asarray((np.cos(angle), np.sin(angle)), dtype=integrated.dtype)
     interface_measure = jnp.sum(
-        curvature.interface_delta
-        * capillarity.operators.discretization.cell_volumes
+        curvature.interface_delta * capillarity.operators.discretization.cell_volumes
     )
     assert bool(result.valid)
     assert int(result.unsupported_face_count) == 0
@@ -597,9 +602,7 @@ def test_marangoni_force_refuses_missing_interface_delta_geometry() -> None:
         0.0, delta_supported=False
     )
 
-    result = capillarity.evaluate(
-        alpha, curvature, variable_surface_tension=variable
-    )
+    result = capillarity.evaluate(alpha, curvature, variable_surface_tension=variable)
 
     assert not bool(result.valid)
     assert int(result.unsupported_face_count) > 0
@@ -616,9 +619,7 @@ def _drop_marangoni_force_error(count: int, /) -> tuple[float, float]:
     plic = StructuredPLICPlan(discretization)
     alpha = _ball_fraction(count, 2, (0.503, 0.497), radius)
     reconstruction = plic.reconstruct(alpha)
-    curvature = HeightFunctionCurvaturePlan(plic).evaluate(
-        alpha, reconstruction
-    ).evidence
+    curvature = HeightFunctionCurvaturePlan(plic).evaluate(alpha, reconstruction).evidence
     policy = VariableSurfaceTensionPolicy(
         LinearSurfaceTensionLaw(1.0, 1.0, 0.0),
         density_floor=1.0e-6,
@@ -636,9 +637,7 @@ def _drop_marangoni_force_error(count: int, /) -> tuple[float, float]:
         scalar_gradient,
     )
     capillarity = MACBalancedCapillaryOperator(operators, policy)
-    result = capillarity.evaluate(
-        alpha, curvature, variable_surface_tension=surface
-    )
+    result = capillarity.evaluate(alpha, curvature, variable_surface_tension=surface)
     integrated = jnp.stack(
         tuple(
             jnp.sum(component * measure)

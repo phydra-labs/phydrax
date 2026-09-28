@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -15,15 +17,32 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparedTensorGrid
 from ._maxwell_boundaries import MaxwellBoundaryPlan
-from ._maxwell_pml import MaxwellCPMLPlan, MaxwellCPMLState
+from ._maxwell_pml import (
+    _graded_profile,
+    _layer_depth,
+    _recursion,
+    _stretch,
+    MaxwellCPMLPlan,
+    MaxwellCPMLState,
+)
 
 
+# On a nonperiodic axis the stored layout holds the upper wall face and omits
+# the lower one. The backward difference reads ``value[-1] = 0`` (no flux or
+# tangential H through the lower wall) and the forward difference reads
+# ``value[N] = 0``; the pair is skew-adjoint (``forward = −backwardᵀ``), so the
+# curl update conserves energy exactly, ``div ∘ curl = 0`` holds per axis, and
+# the charge continuity of the particle transfer uses the same divergence as
+# Gauss's law.
 def _forward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
     if periodic:
         shifted = jnp.roll(value, -1, axis=axis)
     else:
-        indices = jnp.minimum(jnp.arange(value.shape[axis]) + 1, value.shape[axis] - 1)
-        shifted = jnp.take(value, indices, axis=axis)
+        pad = [(0, 0)] * value.ndim
+        pad[axis] = (0, 1)
+        shifted = jnp.pad(
+            jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis), pad
+        )
     return (shifted - value) / spacing
 
 
@@ -31,8 +50,11 @@ def _backward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
     if periodic:
         previous = jnp.roll(value, 1, axis=axis)
     else:
-        indices = jnp.maximum(jnp.arange(value.shape[axis]) - 1, 0)
-        previous = jnp.take(value, indices, axis=axis)
+        pad = [(0, 0)] * value.ndim
+        pad[axis] = (1, 0)
+        previous = jnp.pad(
+            jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis), pad
+        )
     return (value - previous) / spacing
 
 
@@ -69,7 +91,12 @@ class PreparedReducedMaxwellCPMLTerm(StrictModule, NonTrainableState):
 
 
 class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
-    """Prepared CPML profiles for fixed-shape reduced Maxwell derivatives."""
+    """Prepared CPML of fixed-shape reduced Maxwell derivatives.
+
+    Profiles, recursion, and kick time levels are those of
+    :class:`PreparedMaxwellCPML`: electric memories sit at nodes of the
+    derivative axis, magnetic ones at cell centers.
+    """
 
     electric_terms: tuple[PreparedReducedMaxwellCPMLTerm, ...]
     magnetic_terms: tuple[PreparedReducedMaxwellCPMLTerm, ...]
@@ -84,19 +111,30 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
         plan: MaxwellCPMLPlan,
         shape: tuple[int, ...],
         periodic: tuple[bool, ...],
+        spacing: tuple[float, ...],
+        wave_speed: float,
         /,
     ) -> None:
         if not isinstance(plan, MaxwellCPMLPlan):
             raise TypeError("plan must be MaxwellCPMLPlan.")
         shape = tuple(shape)
         periodic = tuple(bool(value) for value in periodic)
+        spacing = tuple(float(value) for value in spacing)
+        speed = float(wave_speed)
         dimension = len(shape)
         if (
             dimension not in (1, 2)
             or len(periodic) != dimension
+            or len(spacing) != dimension
             or any(value < 1 for value in shape)
+            or any(not np.isfinite(value) or value <= 0.0 for value in spacing)
+            or not np.isfinite(speed)
+            or speed <= 0.0
         ):
-            raise ValueError("Reduced Maxwell CPML requires a valid 1-D or 2-D shape.")
+            raise ValueError(
+                "Reduced Maxwell CPML requires a valid 1-D or 2-D shape, "
+                "spacing, and wave speed."
+            )
         widths = plan.widths * dimension if len(plan.widths) == 1 else plan.widths
         if len(widths) != dimension:
             raise ValueError("Reduced Maxwell CPML requires one width per axis.")
@@ -112,23 +150,20 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             width = widths[axis]
             if width == 0:
                 return None
-            grid = np.indices(shape, dtype=np.int64)
-            coordinate = grid[axis]
-            count = shape[axis]
-            low = coordinate < width
-            high = coordinate >= count - width
-            mask = low | high
-            low_depth = (width - coordinate - 0.5) / width
-            high_depth = (coordinate - (count - width) + 0.5) / width
-            depth = np.clip(np.maximum(low_depth, high_depth)[mask], 0.0, 1.0)
+            coordinate = np.indices(shape, dtype=np.int64)[axis]
+            depth = _layer_depth(coordinate, shape[axis], width, kind == "magnetic")
+            mask = depth > 0.0
             indices = np.arange(np.prod(shape), dtype=np.int32).reshape(shape)[mask]
-            powered = depth**plan.sigma_order
-            sigma_max = -(plan.sigma_order + 1.0) * np.log(plan.target_reflection) / width
+            sigma, kappa, alpha = _graded_profile(
+                plan, depth[mask], width * spacing[axis], speed
+            )
             term_id = canonical_fingerprint(
                 {
                     "kind": "prepared-reduced-maxwell-cpml-term",
                     "plan": plan.plan_id,
                     "shape": shape,
+                    "spacing": spacing,
+                    "wave_speed": speed,
                     "field": kind,
                     "axis": axis,
                     "component": component,
@@ -136,9 +171,9 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             )
             return PreparedReducedMaxwellCPMLTerm(
                 jnp.asarray(indices),
-                jnp.asarray(sigma_max * powered),
-                jnp.asarray(1.0 + (plan.kappa_max - 1.0) * powered),
-                jnp.asarray(plan.alpha_max * (1.0 - depth)),
+                jnp.asarray(sigma),
+                jnp.asarray(kappa),
+                jnp.asarray(alpha),
                 axis,
                 component,
                 term_id,
@@ -206,7 +241,7 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             tuple(jnp.zeros_like(value) for value in state.magnetic_memory),
         )
 
-    def apply(
+    def _apply(
         self,
         derivative: Array,
         state: MaxwellCPMLState,
@@ -216,9 +251,9 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
         electric: bool,
         axis: int,
         component: int,
+        before: bool,
+        after: bool,
     ) -> tuple[Array, MaxwellCPMLState]:
-        """Advance one directional memory and return the CPML-modified derivative."""
-
         self.validate_state(state)
         terms = self.electric_terms if electric else self.magnetic_terms
         slots = self.electric_slots if electric else self.magnetic_slots
@@ -229,17 +264,19 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
         term = terms[slot]
         flat = jnp.asarray(derivative).reshape((-1,))
         sample = flat[term.indices]
-        old = memory[slot]
-        dt = jnp.asarray(step_size)
-        decay = jnp.exp(-(term.sigma / term.kappa + term.alpha) * dt)
-        denominator = term.sigma * term.kappa + term.alpha * term.kappa**2
-        coefficient = jnp.where(
-            denominator > 0.0,
-            term.sigma * (decay - 1.0) / denominator,
-            0.0,
+        decay, gain = _recursion(
+            term.sigma, term.kappa, term.alpha, 0.5 * jnp.asarray(step_size)
         )
-        new = decay * old + coefficient * sample
-        corrected = flat.at[term.indices].add((1.0 / term.kappa - 1.0) * sample + new)
+        correction, new = _stretch(
+            sample,
+            memory[slot],
+            1.0 / term.kappa - 1.0,
+            decay,
+            gain,
+            before=before,
+            after=after,
+        )
+        corrected = flat.at[term.indices].add(correction)
         next_memory = memory[:slot] + (new,) + memory[slot + 1 :]
         next_state = (
             MaxwellCPMLState(next_memory, state.magnetic_memory)
@@ -247,6 +284,75 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             else MaxwellCPMLState(state.electric_memory, next_memory)
         )
         return corrected.reshape(self.shape), next_state
+
+    def apply_electric(
+        self,
+        derivative: Array,
+        state: MaxwellCPMLState,
+        step_size: Array,
+        /,
+        *,
+        axis: int,
+        component: int,
+    ) -> tuple[Array, MaxwellCPMLState]:
+        """CPML-stretched derivative of the ``t_{n+½}`` electric kick of a ``Δt`` step."""
+
+        return self._apply(
+            derivative,
+            state,
+            step_size,
+            electric=True,
+            axis=axis,
+            component=component,
+            before=True,
+            after=True,
+        )
+
+    def apply_magnetic_start(
+        self,
+        derivative: Array,
+        state: MaxwellCPMLState,
+        step_size: Array,
+        /,
+        *,
+        axis: int,
+        component: int,
+    ) -> tuple[Array, MaxwellCPMLState]:
+        """CPML-stretched derivative of the opening ``t_n`` magnetic half kick."""
+
+        return self._apply(
+            derivative,
+            state,
+            step_size,
+            electric=False,
+            axis=axis,
+            component=component,
+            before=False,
+            after=True,
+        )
+
+    def apply_magnetic_end(
+        self,
+        derivative: Array,
+        state: MaxwellCPMLState,
+        step_size: Array,
+        /,
+        *,
+        axis: int,
+        component: int,
+    ) -> tuple[Array, MaxwellCPMLState]:
+        """CPML-stretched derivative of the closing ``t_{n+1}`` magnetic half kick."""
+
+        return self._apply(
+            derivative,
+            state,
+            step_size,
+            electric=False,
+            axis=axis,
+            component=component,
+            before=True,
+            after=False,
+        )
 
 
 def _select_cpml_state(
@@ -336,7 +442,7 @@ class CompatibleMaxwell2DState(StrictModule):
 
 
 class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
-    """Periodic 2D3V Yee/de-Rham Maxwell block with explicit staggering."""
+    """2D3V Yee/de-Rham Maxwell block with explicit staggering."""
 
     grid: PreparedTensorGrid
     permittivity: float = eqx.field(static=True)
@@ -403,12 +509,15 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
             grid.structured_axes[0].interval_centers.size,
             grid.structured_axes[1].interval_centers.size,
         )
-        wave_speed = 1.0 / np.sqrt(epsilon * mu)
+        # Host floats: the stable step is static plan metadata.
+        wave_speed = 1.0 / math.sqrt(epsilon * mu)
         stable = courant / (
-            wave_speed * np.sqrt(sum(1.0 / value**2 for value in spacing))
+            wave_speed * math.sqrt(sum(1.0 / value**2 for value in spacing))
         )
         prepared_pml = (
-            None if pml is None else PreparedReducedMaxwellCPML(pml, shape, periodic)
+            None
+            if pml is None
+            else PreparedReducedMaxwellCPML(pml, shape, periodic, spacing, wave_speed)
         )
         self.grid = grid
         self.permittivity = epsilon
@@ -518,17 +627,17 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         d_x_ey = _forward(ey, 0, dx, self.periodic[0])
         d_y_ex = _forward(ex, 1, dy, self.periodic[1])
         if self.pml is not None and pml_memory is not None:
-            d_y_ez, pml_memory = self.pml.apply(
-                d_y_ez, pml_memory, 0.5 * dt, electric=False, axis=1, component=0
+            d_y_ez, pml_memory = self.pml.apply_magnetic_start(
+                d_y_ez, pml_memory, dt, axis=1, component=0
             )
-            d_x_ez, pml_memory = self.pml.apply(
-                d_x_ez, pml_memory, 0.5 * dt, electric=False, axis=0, component=1
+            d_x_ez, pml_memory = self.pml.apply_magnetic_start(
+                d_x_ez, pml_memory, dt, axis=0, component=1
             )
-            d_x_ey, pml_memory = self.pml.apply(
-                d_x_ey, pml_memory, 0.5 * dt, electric=False, axis=0, component=2
+            d_x_ey, pml_memory = self.pml.apply_magnetic_start(
+                d_x_ey, pml_memory, dt, axis=0, component=2
             )
-            d_y_ex, pml_memory = self.pml.apply(
-                d_y_ex, pml_memory, 0.5 * dt, electric=False, axis=1, component=2
+            d_y_ex, pml_memory = self.pml.apply_magnetic_start(
+                d_y_ex, pml_memory, dt, axis=1, component=2
             )
         half_bx = bx - 0.5 * dt * d_y_ez
         half_by = by + 0.5 * dt * d_x_ez
@@ -539,17 +648,17 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         d_x_by = _backward(half_by / self.permeability, 0, dx, self.periodic[0])
         d_y_bx = _backward(half_bx / self.permeability, 1, dy, self.periodic[1])
         if self.pml is not None and pml_memory is not None:
-            d_y_bz, pml_memory = self.pml.apply(
-                d_y_bz, pml_memory, dt, electric=True, axis=1, component=0
+            d_y_bz, pml_memory = self.pml.apply_electric(
+                d_y_bz, pml_memory, dt, axis=1, component=0
             )
-            d_x_bz, pml_memory = self.pml.apply(
-                d_x_bz, pml_memory, dt, electric=True, axis=0, component=1
+            d_x_bz, pml_memory = self.pml.apply_electric(
+                d_x_bz, pml_memory, dt, axis=0, component=1
             )
-            d_x_by, pml_memory = self.pml.apply(
-                d_x_by, pml_memory, dt, electric=True, axis=0, component=2
+            d_x_by, pml_memory = self.pml.apply_electric(
+                d_x_by, pml_memory, dt, axis=0, component=2
             )
-            d_y_bx, pml_memory = self.pml.apply(
-                d_y_bx, pml_memory, dt, electric=True, axis=1, component=2
+            d_y_bx, pml_memory = self.pml.apply_electric(
+                d_y_bx, pml_memory, dt, axis=1, component=2
             )
         next_ex = ex + dt / self.permittivity * (d_y_bz - jx)
         next_ey = ey + dt / self.permittivity * (-d_x_bz - jy)
@@ -559,30 +668,36 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         d_x_next_ey = _forward(next_ey, 0, dx, self.periodic[0])
         d_y_next_ex = _forward(next_ex, 1, dy, self.periodic[1])
         if self.pml is not None and pml_memory is not None:
-            d_y_next_ez, pml_memory = self.pml.apply(
-                d_y_next_ez, pml_memory, 0.5 * dt, electric=False, axis=1, component=0
+            d_y_next_ez, pml_memory = self.pml.apply_magnetic_end(
+                d_y_next_ez, pml_memory, dt, axis=1, component=0
             )
-            d_x_next_ez, pml_memory = self.pml.apply(
-                d_x_next_ez, pml_memory, 0.5 * dt, electric=False, axis=0, component=1
+            d_x_next_ez, pml_memory = self.pml.apply_magnetic_end(
+                d_x_next_ez, pml_memory, dt, axis=0, component=1
             )
-            d_x_next_ey, pml_memory = self.pml.apply(
-                d_x_next_ey, pml_memory, 0.5 * dt, electric=False, axis=0, component=2
+            d_x_next_ey, pml_memory = self.pml.apply_magnetic_end(
+                d_x_next_ey, pml_memory, dt, axis=0, component=2
             )
-            d_y_next_ex, pml_memory = self.pml.apply(
-                d_y_next_ex, pml_memory, 0.5 * dt, electric=False, axis=1, component=2
+            d_y_next_ex, pml_memory = self.pml.apply_magnetic_end(
+                d_y_next_ex, pml_memory, dt, axis=1, component=2
             )
         next_bx = half_bx - 0.5 * dt * d_y_next_ez
         next_by = half_by + 0.5 * dt * d_x_next_ez
         next_bz = half_bz - 0.5 * dt * (d_x_next_ey - d_y_next_ex)
-        next_charge = state.charge - dt * (
-            _backward(jx, 0, dx, self.periodic[0])
-            + _backward(jy, 1, dy, self.periodic[1])
-        )
         next_electric = _apply_boundary_traces(
             (next_ex, next_ey, next_ez), self.boundaries, dt, electric=True
         )
         next_magnetic = _apply_boundary_traces(
             (next_bx, next_by, next_bz), self.boundaries, dt, electric=False
+        )
+        # The charge is the Gauss charge of the stepped field with the incoming
+        # constraint defect carried: it moves by −Δt ∇·J plus the induced wall
+        # charge of electric traces and the bookkeeping divergence of the CPML
+        # stretching, which the plain curl (∇·curl = 0) never produces.
+        stepped = CompatibleMaxwell2DState(
+            next_electric, next_magnetic, state.charge, pml_memory
+        )
+        next_charge = self.divergence_electric(stepped) - (
+            self.divergence_electric(state) - state.charge
         )
         candidate = CompatibleMaxwell2DState(
             next_electric,
@@ -644,7 +759,7 @@ class CompatibleMaxwell1DState(StrictModule):
 
 
 class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
-    """Periodic 1D3V compatible longitudinal/transverse Maxwell blocks."""
+    """1D3V compatible longitudinal/transverse Maxwell blocks."""
 
     grid: PreparedTensorGrid
     permittivity: float = eqx.field(static=True)
@@ -703,10 +818,14 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Reduced 1-D Maxwell parameters/grid are invalid.")
         spacing = float(widths[0])
-        stable = courant * spacing * np.sqrt(epsilon * mu)
+        stable = courant * spacing * math.sqrt(epsilon * mu)
         count = axis.interval_centers.size
         prepared_pml = (
-            None if pml is None else PreparedReducedMaxwellCPML(pml, (count,), periodic)
+            None
+            if pml is None
+            else PreparedReducedMaxwellCPML(
+                pml, (count,), periodic, (spacing,), 1.0 / math.sqrt(epsilon * mu)
+            )
         )
         self.grid = grid
         self.permittivity = epsilon
@@ -807,11 +926,11 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         d_x_ez = _forward(ez, 0, self.spacing, self.periodic[0])
         d_x_ey = _forward(ey, 0, self.spacing, self.periodic[0])
         if self.pml is not None and pml_memory is not None:
-            d_x_ez, pml_memory = self.pml.apply(
-                d_x_ez, pml_memory, 0.5 * dt, electric=False, axis=0, component=1
+            d_x_ez, pml_memory = self.pml.apply_magnetic_start(
+                d_x_ez, pml_memory, dt, axis=0, component=1
             )
-            d_x_ey, pml_memory = self.pml.apply(
-                d_x_ey, pml_memory, 0.5 * dt, electric=False, axis=0, component=2
+            d_x_ey, pml_memory = self.pml.apply_magnetic_start(
+                d_x_ey, pml_memory, dt, axis=0, component=2
             )
         half_by = by + 0.5 * dt * d_x_ez
         half_bz = bz - 0.5 * dt * d_x_ey
@@ -820,22 +939,22 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         d_x_bz = _backward(half_bz / self.permeability, 0, self.spacing, self.periodic[0])
         d_x_by = _backward(half_by / self.permeability, 0, self.spacing, self.periodic[0])
         if self.pml is not None and pml_memory is not None:
-            d_x_bz, pml_memory = self.pml.apply(
-                d_x_bz, pml_memory, dt, electric=True, axis=0, component=1
+            d_x_bz, pml_memory = self.pml.apply_electric(
+                d_x_bz, pml_memory, dt, axis=0, component=1
             )
-            d_x_by, pml_memory = self.pml.apply(
-                d_x_by, pml_memory, dt, electric=True, axis=0, component=2
+            d_x_by, pml_memory = self.pml.apply_electric(
+                d_x_by, pml_memory, dt, axis=0, component=2
             )
         next_ey = ey + dt / self.permittivity * (-d_x_bz - jy)
         next_ez = ez + dt / self.permittivity * (d_x_by - jz)
         d_x_next_ez = _forward(next_ez, 0, self.spacing, self.periodic[0])
         d_x_next_ey = _forward(next_ey, 0, self.spacing, self.periodic[0])
         if self.pml is not None and pml_memory is not None:
-            d_x_next_ez, pml_memory = self.pml.apply(
-                d_x_next_ez, pml_memory, 0.5 * dt, electric=False, axis=0, component=1
+            d_x_next_ez, pml_memory = self.pml.apply_magnetic_end(
+                d_x_next_ez, pml_memory, dt, axis=0, component=1
             )
-            d_x_next_ey, pml_memory = self.pml.apply(
-                d_x_next_ey, pml_memory, 0.5 * dt, electric=False, axis=0, component=2
+            d_x_next_ey, pml_memory = self.pml.apply_magnetic_end(
+                d_x_next_ey, pml_memory, dt, axis=0, component=2
             )
         next_by = half_by + 0.5 * dt * d_x_next_ez
         next_bz = half_bz - 0.5 * dt * d_x_next_ey

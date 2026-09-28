@@ -18,7 +18,11 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....typing import parse
-from ._boundary_cascade import prepare_layer_boundary
+from ._boundary_cascade import (
+    _fields_to_waves,
+    _waves_to_fields,
+    prepare_layer_boundary,
+)
 from ._continuous import (
     continuous_boundary_at,
     PreparedContinuousFourierModalLayer,
@@ -99,10 +103,22 @@ def fields_in_layer(
         (offset < 0.0) | (offset > jnp.real(layer.layer.thickness)),
         "longitudinal_offset must lie within the selected layer.",
     )
-    left_electric = result.boundary_electric_fields[element_index]
-    left_magnetic = result.boundary_magnetic_fields[element_index]
+    left_forward, _ = _fields_to_waves(
+        result.boundary_electric_fields[element_index],
+        result.boundary_magnetic_fields[element_index],
+    )
+    _, right_backward = _fields_to_waves(
+        result.boundary_electric_fields[element_index + 1],
+        result.boundary_magnetic_fields[element_index + 1],
+    )
     if isinstance(layer, PreparedContinuousFourierModalLayer):
-        partial, operator, integration_defect, segment_index = continuous_boundary_at(
+        (
+            before,
+            after,
+            operator,
+            integration_defect,
+            segment_index,
+        ) = continuous_boundary_at(
             layer,
             prepared.problem,
             offset,
@@ -111,19 +127,27 @@ def fields_in_layer(
         continuous_status = layer.status
     else:
         operator = layer.operator
-        partial = prepare_layer_boundary(operator, offset, prepared.plan.policy.boundary)
+        policy = prepared.plan.policy.boundary
+        before = prepare_layer_boundary(operator, offset, policy)
+        after = prepare_layer_boundary(operator, layer.layer.thickness - offset, policy)
         integration_defect = jnp.asarray(0.0, dtype=offset.dtype)
         segment_index = jnp.asarray(-1, dtype=jnp.int32)
         continuous_status = jnp.asarray(-1, dtype=jnp.int32)
-    magnetic_rhs = left_magnetic - partial.c @ left_electric
-    magnetic = _dense_solve(partial.d, magnetic_rhs)
-    electric = partial.a @ left_electric + partial.b @ magnetic
+    # The forward wave leaving [0, z] and the backward wave leaving [z, L] close the
+    # interior plane from both faces without inverting evanescent transmission.
+    entering = after.s22 @ right_backward
+    system = jnp.eye(left_forward.shape[0], dtype=left_forward.dtype) - (
+        before.s12 @ after.s21
+    )
+    forward_rhs = before.s11 @ left_forward + before.s12 @ entering
+    forward = _dense_solve(system, forward_rhs)
+    electric, magnetic = _waves_to_fields(forward, after.s21 @ forward + entering)
     residual_denominator = jnp.maximum(
-        jnp.sqrt(jnp.sum(jnp.abs(magnetic_rhs) ** 2)),
+        jnp.sqrt(jnp.sum(jnp.abs(forward_rhs) ** 2)),
         1.0,
     )
     boundary_solve_residual = (
-        jnp.sqrt(jnp.sum(jnp.abs(partial.d @ magnetic - magnetic_rhs) ** 2))
+        jnp.sqrt(jnp.sum(jnp.abs(system @ forward - forward_rhs) ** 2))
         / residual_denominator
     )
     tangential = jnp.concatenate((electric, magnetic), axis=0)

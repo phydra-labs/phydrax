@@ -18,34 +18,47 @@ from ._boundary import PICBoundaryResult
 
 
 def _forward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
-    shifted = (
-        jnp.roll(value, -1, axis=axis)
-        if periodic
-        else jnp.concatenate(
-            (
-                jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis),
-                jnp.take(value, jnp.asarray([value.shape[axis] - 1]), axis=axis),
-            ),
-            axis=axis,
+    """Forward difference, ``−_backward`` transposed (``value[N] = 0`` on walls)."""
+    if periodic:
+        shifted = jnp.roll(value, -1, axis=axis)
+    else:
+        pad = [(0, 0)] * value.ndim
+        pad[axis] = (0, 1)
+        shifted = jnp.pad(
+            jnp.take(value, jnp.arange(1, value.shape[axis]), axis=axis), pad
         )
-    )
     return (shifted - value) / spacing
 
 
 def _backward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
+    """Face-to-cell divergence; a nonperiodic lower wall carries no flux."""
     if periodic:
         previous = jnp.roll(value, 1, axis=axis)
     else:
-        pad_shape = list(value.shape)
-        pad_shape[axis] = 1
-        previous = jnp.concatenate(
-            (
-                jnp.zeros(tuple(pad_shape), dtype=value.dtype),
-                jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis),
-            ),
-            axis=axis,
+        pad = [(0, 0)] * value.ndim
+        pad[axis] = (1, 0)
+        previous = jnp.pad(
+            jnp.take(value, jnp.arange(value.shape[axis] - 1), axis=axis), pad
         )
     return (value - previous) / spacing
+
+
+def _backward_gram_basis(
+    count: int, spacing: float, periodic: bool, /
+) -> tuple[Array, Array]:
+    """Eigenpairs of ``B Bᵀ`` for the reduced backward difference ``B`` of one axis.
+
+    Host preparation of the Poisson operator ``−div ∘ grad`` of the reduced
+    Yee complex: periodic ``B`` is circulant with one null mode, nonperiodic
+    ``B`` reads ``value[-1] = 0`` and is invertible.
+    """
+    identity = np.eye(count)
+    shift = np.roll(identity, 1, axis=0) if periodic else np.eye(count, k=-1)
+    backward = (identity - shift) / spacing
+    values, vectors = np.linalg.eigh(backward @ backward.T)
+    # The periodic null eigenvalue is rounded to zero so it stays masked exactly.
+    values = np.where(values < 1.0e-12 / spacing**2, 0.0, values)
+    return jnp.asarray(values), jnp.asarray(vectors)
 
 
 class ReducedPICCurrentResult(StrictModule):
@@ -65,6 +78,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
     """dD3V CIC transfer with conservative physical-boundary assignment."""
 
     grid: PreparedTensorGrid
+    laplacian_bases: tuple[tuple[Array, Array], ...]
     dimension: int = eqx.field(static=True)
     shape: tuple[int, ...] = eqx.field(static=True)
     lower: tuple[float, ...] = eqx.field(static=True)
@@ -103,6 +117,16 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         self.periodic = tuple(bool(axis.periodic) for axis in grid.structured_axes)
         self.maximum_path_segments = segments
         self.spacing = tuple(float(value[0]) for value in widths)
+        self.laplacian_bases = (
+            ()
+            if self.dimension == 1
+            else tuple(
+                _backward_gram_basis(count, spacing, periodic)
+                for count, spacing, periodic in zip(
+                    self.shape, self.spacing, self.periodic, strict=True
+                )
+            )
+        )
         self.cell_volume = float(np.prod(self.spacing))
         self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(
@@ -234,40 +258,47 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         )
         residual = (rho_end - rho_start) / dt + divergence
         corrected = list(raw)
-        boundary_flux = jnp.zeros((self.dimension, 2), dtype=start.dtype)
-        if all(self.periodic):
-            transformed = jnp.fft.fftn(residual)
-            eigenvalue = jnp.zeros(self.shape, dtype=start.dtype)
-            for axis in range(self.dimension):
-                frequency = 2.0 * jnp.pi * jnp.fft.fftfreq(self.shape[axis])
-                axis_shape = [1] * self.dimension
-                axis_shape[axis] = self.shape[axis]
-                eigenvalue = (
-                    eigenvalue
-                    + (2.0 - 2.0 * jnp.cos(frequency)).reshape(axis_shape)
-                    / self.spacing[axis] ** 2
-                )
+        if self.dimension == 2:
+            # Poisson correction J ← J + Bᵀψ with (Σ_a B_a B_aᵀ)ψ = −residual,
+            # diagonalized by the per-axis eigenbases; B is the divergence the
+            # reduced Yee field pairs with (a nonperiodic axis reads J[-1] = 0).
+            (x_values, x_vectors), (y_values, y_vectors) = self.laplacian_bases
+            eigenvalue = x_values[:, None] + y_values[None, :]
             safe = jnp.where(eigenvalue > 0.0, eigenvalue, 1.0)
-            potential_hat = jnp.where(eigenvalue > 0.0, -transformed / safe, 0.0)
-            potential = jnp.real(jnp.fft.ifftn(potential_hat))
-            for axis in range(self.dimension):
-                corrected[axis] = raw[axis] - _forward(
-                    potential, axis, self.spacing[axis], True
+            potential = (
+                x_vectors
+                @ jnp.where(
+                    eigenvalue > 0.0, -(x_vectors.T @ residual @ y_vectors) / safe, 0.0
                 )
+                @ y_vectors.T
+            )
+            for axis in range(2):
+                corrected[axis] = raw[axis] - _forward(
+                    potential, axis, self.spacing[axis], self.periodic[axis]
+                )
+        elif self.periodic[0]:
+            transformed = jnp.fft.fft(residual)
+            eigenvalue = (
+                2.0 - 2.0 * jnp.cos(2.0 * jnp.pi * jnp.fft.fftfreq(self.shape[0]))
+            ) / self.spacing[0] ** 2
+            safe = jnp.where(eigenvalue > 0.0, eigenvalue, 1.0)
+            potential = jnp.real(
+                jnp.fft.ifft(jnp.where(eigenvalue > 0.0, -transformed / safe, 0.0))
+            )
+            corrected[0] = raw[0] - _forward(potential, 0, self.spacing[0], True)
         else:
-            correction_axis = self.periodic.index(False)
-            correction = -self.spacing[correction_axis] * jnp.cumsum(
-                residual, axis=correction_axis
-            )
-            corrected[correction_axis] = corrected[correction_axis] + correction
-            upper_flux = jnp.take(
-                correction,
-                jnp.asarray([self.shape[correction_axis] - 1]),
-                axis=correction_axis,
-            )
-            boundary_flux = boundary_flux.at[correction_axis, 1].set(
-                jnp.sum(upper_flux) * self.cell_volume / self.spacing[correction_axis]
-            )
+            corrected[0] = raw[0] - self.spacing[0] * jnp.cumsum(residual)
+        # The corrected current on the upper face of a nonperiodic axis is the
+        # physical outflow; the lower wall carries none.
+        boundary_flux = jnp.zeros((self.dimension, 2), dtype=start.dtype)
+        for axis in range(self.dimension):
+            if not self.periodic[axis]:
+                upper_flux = jnp.take(
+                    corrected[axis], jnp.asarray([self.shape[axis] - 1]), axis=axis
+                )
+                boundary_flux = boundary_flux.at[axis, 1].set(
+                    jnp.sum(upper_flux) * self.cell_volume / self.spacing[axis]
+                )
         final_residual = (rho_end - rho_start) / dt + jnp.sum(
             jnp.stack(
                 tuple(

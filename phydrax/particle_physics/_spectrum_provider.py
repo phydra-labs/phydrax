@@ -15,10 +15,10 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .._external_runtime import (
-    EnergyRunResult,
-    EnergyRuntimeError,
+    ExternalRuntimeError,
     PinnedExecutable,
-    run_energy_command,
+    PinnedRunResult,
+    run_pinned_command,
 )
 from .._fingerprint import canonical_fingerprint
 from ._capabilities import HEPProviderBinding
@@ -87,7 +87,7 @@ SpectrumProviderStatus = Literal[
 @dataclass(frozen=True, slots=True)
 class SpectrumProviderExecution:
     status: SpectrumProviderStatus
-    run: EnergyRunResult | None
+    run: PinnedRunResult | None
     document: SLHADocument | None
     provider_id: str
     input_artifact_id: str
@@ -100,7 +100,7 @@ def _execution(
     status: SpectrumProviderStatus,
     provider: ExternalSpectrumProvider,
     input_artifact_id: str,
-    run: EnergyRunResult | None,
+    run: PinnedRunResult | None,
     document: SLHADocument | None,
     error: str,
     /,
@@ -151,9 +151,9 @@ def execute_spectrum_provider(
         )
         for value in plan.arguments
     )
-    run: EnergyRunResult | None = None
+    run: PinnedRunResult | None = None
     try:
-        run = run_energy_command(
+        run = run_pinned_command(
             provider.executable,
             arguments,
             inputs={plan.input_filename: input_slha},
@@ -162,7 +162,7 @@ def execute_spectrum_provider(
             max_output_bytes=plan.maximum_output_bytes,
             environment=dict(plan.environment),
         )
-    except EnergyRuntimeError as failure:
+    except ExternalRuntimeError as failure:
         return _execution(
             "provider-failed",
             provider,

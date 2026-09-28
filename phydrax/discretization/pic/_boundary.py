@@ -7,6 +7,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -20,11 +21,22 @@ from ._types import PICParticleState
 
 
 class PICBoundaryKind(IntEnum):
+    """Particle policy of one axis face.
+
+    ``ABSORB`` removes the particle at the face and records its charge, mass,
+    and kinetic energy as exited; ``REFLECT`` mirrors the path and the normal
+    velocity; ``PERIODIC`` marks both faces of a periodic axis, which particles
+    cross freely.
+    """
+
     ABSORB = 0
     REFLECT = 1
+    PERIODIC = 2
 
 
 class PICBoundarySurfaceState(StrictModule):
+    """Cumulative charge, mass, and kinetic energy absorbed at each face."""
+
     collected_charge: Array
     collected_mass: Array
     collected_kinetic_energy: Array
@@ -73,6 +85,12 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
         values = tuple(PICBoundaryKind(value) for value in kinds)
         if len(values) != 2 * lo.size:
             raise ValueError("One boundary kind is required for each lower/upper face.")
+        if any(
+            (values[2 * axis] == PICBoundaryKind.PERIODIC)
+            != (values[2 * axis + 1] == PICBoundaryKind.PERIODIC)
+            for axis in range(lo.size)
+        ):
+            raise ValueError("Both faces of a periodic particle axis must be PERIODIC.")
         self.lower = jnp.asarray(lo)
         self.upper = jnp.asarray(hi)
         self.kinds = values
@@ -83,6 +101,14 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
                 "upper": hi.tolist(),
                 "kinds": [int(value) for value in values],
             }
+        )
+
+    @property
+    def periodic(self) -> tuple[bool, ...]:
+        """Axes whose faces are PERIODIC."""
+        return tuple(
+            self.kinds[2 * axis] == PICBoundaryKind.PERIODIC
+            for axis in range(len(self.kinds) // 2)
         )
 
     def initialize_surface(
@@ -104,21 +130,37 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
         macrocharge: ArrayLike,
         surface: PICBoundarySurfaceState,
         /,
+        *,
+        kinetic_energy: tuple[ArrayLike, ArrayLike],
     ) -> PICBoundaryResult:
+        """Clip paths at the faces; absorbed particles carry out their ledger.
+
+        ``kinetic_energy`` is each particle's kinetic energy at the start and
+        the end time of its path, in the caller's relativity (``(γ − 1)mc²``
+        for relativistic PIC). An absorbed particle adds its macrocharge, its
+        mass, and its kinetic energy interpolated linearly to the hit fraction
+        of the path to the face it crossed.
+        """
         start = particles.position
         end = jnp.asarray(proposed_position, dtype=start.dtype)
         charge = jnp.asarray(macrocharge, dtype=start.dtype)
+        kinetic_start = jnp.asarray(kinetic_energy[0], dtype=start.dtype)
+        kinetic_end = jnp.asarray(kinetic_energy[1], dtype=start.dtype)
         dimension = start.shape[1]
         if (
             dimension != self.lower.size
             or end.shape != start.shape
             or charge.shape != population.active.shape
+            or kinetic_start.shape != population.active.shape
+            or kinetic_end.shape != population.active.shape
         ):
             raise ValueError("PIC boundary state shapes are incompatible.")
         delta = end - start
         capacity = start.shape[0]
         candidate_t = jnp.full((capacity, 2 * dimension), jnp.inf, dtype=start.dtype)
         for axis in range(dimension):
+            if self.kinds[2 * axis] == PICBoundaryKind.PERIODIC:
+                continue
             safe_delta = jnp.where(jnp.abs(delta[:, axis]) > 0.0, delta[:, axis], 1.0)
             lower_t = (self.lower[axis] - start[:, axis]) / safe_delta
             upper_t = (self.upper[axis] - start[:, axis]) / safe_delta
@@ -163,7 +205,7 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
             jnp.where(reflect[:, None], reflected_position, end),
         )
         deactivation = population_plan.deactivate(population, absorb)
-        kinetic = 0.5 * population.mass * jnp.sum(velocity**2, axis=-1)
+        kinetic = kinetic_start + safe_fraction * (kinetic_end - kinetic_start)
         charge_flux = (
             jnp.zeros((2 * dimension,), dtype=start.dtype)
             .at[face]
@@ -209,32 +251,10 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
                 surface.collected_kinetic_energy,
             ),
         )
-        accepted_population = ParticlePopulationState(
-            jnp.where(
-                successful,
-                deactivation.candidate_state.active,
-                population.active,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.mass,
-                population.mass,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.incarnation,
-                population.incarnation,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.ever_occupied,
-                population.ever_occupied,
-            ),
-            jnp.where(
-                successful,
-                deactivation.candidate_state.retired,
-                population.retired,
-            ),
+        accepted_population = jax.tree.map(
+            lambda proposed, old: jnp.where(successful, proposed, old),
+            deactivation.candidate_state,
+            population,
         )
         return PICBoundaryResult(
             candidate_particles,

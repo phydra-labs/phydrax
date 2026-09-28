@@ -39,7 +39,7 @@ Q = 1.602176634e-19
 HBAR = 1.054571817e-34
 H = 2 * np.pi * HBAR
 ME = 9.1093837139e-31
-EPS0 = 8.8541878128e-12
+EPS0 = 8.8541878188e-12
 REFERENCE = "common declared vacuum alignment"
 
 

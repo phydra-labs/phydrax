@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from phydrax import ein
 
 from ..._fingerprint import canonical_fingerprint
+from ..._lorentz import boost_matrix, boost_wavevector
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -442,18 +443,6 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
             }
         )
 
-    def lorentz_matrix(self) -> Array:
-        beta = self.boost_velocity
-        speed_squared = ein.contract("i,i->", beta, beta)
-        gamma = 1.0 / jnp.sqrt(1.0 - speed_squared)
-        denominator = jnp.where(speed_squared > 0.0, speed_squared, 1.0)
-        spatial = jnp.eye(3, dtype=beta.dtype) + (
-            (gamma - 1.0) / denominator
-        ) * ein.contract("i,j->ij", beta, beta)
-        first_row = jnp.concatenate((gamma[None], -gamma * beta))
-        remaining = jnp.concatenate((-gamma * beta[:, None], spatial), axis=1)
-        return jnp.concatenate((first_row[None], remaining), axis=0)
-
     def map_null_infinity(
         self, plan: BMSQuadraturePlan, retarded_times: ArrayLike, /
     ) -> BMSFrameMap:
@@ -468,17 +457,10 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         ):
             raise ValueError("retarded_times must be finite real increasing values.")
         times = jnp.asarray(times_host)
-        beta = self.boost_velocity
-        speed_squared = ein.contract("i,i->", beta, beta)
-        gamma = 1.0 / jnp.sqrt(1.0 - speed_squared)
-        direction_dot = ein.contract("ni,i->n", plan.directions, beta)
-        denominator = gamma * (1.0 - direction_dot)
-        conformal_factor = 1.0 / denominator
-        safe_speed_squared = jnp.where(speed_squared > 0.0, speed_squared, 1.0)
-        aberration_factor = (gamma - 1.0) * direction_dot / safe_speed_squared - gamma
-        transformed_directions = (
-            plan.directions + aberration_factor[:, None] * beta
-        ) / denominator[:, None]
+        doppler, transformed_directions = boost_wavevector(
+            self.boost_velocity, 1.0, plan.directions
+        )
+        conformal_factor = 1.0 / doppler
         translation_cut = self.translation[0] - ein.contract(
             "ni,i->n", plan.directions, self.translation[1:]
         )
@@ -534,7 +516,7 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         )
 
     def transform_charges(self, charges: BMSChargeProduct, /) -> TransformedBMSCharges:
-        transform = self.lorentz_matrix()
+        transform = boost_matrix(self.boost_velocity)
         four_momentum = ein.contract("ab,tb->ta", transform, charges.four_momentum)
         translation_wedge = ein.contract(
             "a,tb->tab", self.translation, charges.four_momentum

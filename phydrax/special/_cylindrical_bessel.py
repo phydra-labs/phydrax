@@ -503,7 +503,7 @@ def _jy_primal(v: Array, x: Array) -> tuple[Array, Array]:
     safe_x = jnp.where(invalid | zero | infinity, jnp.ones_like(x), x)
 
     integer_order = jnp.floor(safe_v).astype(jnp.int32)
-    fractional_order = safe_v - integer_order
+    fractional_order = safe_v - integer_order.astype(safe_v.dtype)
     base_j, base_y, base_j_next, base_y_next = _base_pair_values(fractional_order, safe_x)
     forward_j, forward_y = _forward_pair(
         fractional_order,

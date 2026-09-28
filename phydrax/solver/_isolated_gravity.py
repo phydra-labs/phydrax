@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -14,6 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparedTensorGrid
+from ..operators.integral._free_space_convolution import FreeSpaceConvolutionPlan
 
 
 class IsolatedGravityDiagnostics(StrictModule):
@@ -25,11 +25,18 @@ class IsolatedGravityDiagnostics(StrictModule):
 
 
 class IsolatedCartesianGravityPlan(StrictModule, NonTrainableState):
+    """Softened isolated (open-boundary) Newtonian gravity on a bounded grid.
+
+    The potential is ``G`` times the Hockney doubled-grid convolution of the
+    density with the point-sampled softened kernel ``−1/√(r² + softening²)``
+    (:class:`FreeSpaceConvolutionPlan` with ``"newton-softened"``); the
+    acceleration is its centered difference.
+    """
+
     grid: PreparedTensorGrid
     gravitational_constant: float = eqx.field(static=True)
     softening: float = eqx.field(static=True)
-    kernel_transform: Array
-    padded_shape: tuple[int, ...] = eqx.field(static=True)
+    convolution: FreeSpaceConvolutionPlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -49,25 +56,12 @@ class IsolatedCartesianGravityPlan(StrictModule, NonTrainableState):
             or epsilon <= 0.0
         ):
             raise ValueError("Isolated Cartesian gravity requires a bounded tensor grid.")
-        padded_shape = tuple(2 * count for count in grid.shape)
-        coordinates = tuple(
-            jnp.where(
-                jnp.arange(size) <= size // 2,
-                jnp.arange(size),
-                jnp.arange(size) - size,
-            )
-            * float(np.mean(axis.interval_widths))
-            for size, axis in zip(padded_shape, grid.structured_axes, strict=True)
-        )
-        mesh = jnp.meshgrid(*coordinates, indexing="ij")
-        radius_squared = sum(component**2 for component in mesh) + epsilon**2
-        kernel = -coupling / jnp.sqrt(radius_squared)
-        kernel = kernel.at[(0,) * len(padded_shape)].set(0.0)
         self.grid = grid
         self.gravitational_constant = coupling
         self.softening = epsilon
-        self.kernel_transform = jnp.fft.fftn(kernel)
-        self.padded_shape = padded_shape
+        self.convolution = FreeSpaceConvolutionPlan(
+            "newton-softened", grid, softening=epsilon
+        )
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "isolated-cartesian-gravity",
@@ -85,13 +79,7 @@ class IsolatedCartesianGravityPlan(StrictModule, NonTrainableState):
         source = jnp.asarray(density)
         if source.shape != self.grid.shape:
             raise ValueError("Isolated gravity density must match the grid shape.")
-        padded = jnp.zeros(self.padded_shape, dtype=source.dtype)
-        slices = tuple(slice(0, count) for count in self.grid.shape)
-        padded = padded.at[slices].set(source * self.grid.quadrature_weights)
-        potential_padded = jnp.fft.ifftn(
-            jnp.fft.fftn(padded) * self.kernel_transform
-        ).real
-        potential = potential_padded[slices]
+        potential = self.gravitational_constant * self.convolution.convolve(source).field
         acceleration_components = []
         for axis, structured_axis in enumerate(self.grid.structured_axes):
             spacing = jnp.asarray(structured_axis.interval_widths)

@@ -1,0 +1,43 @@
+{
+  "provider": "SRW (srwpy)",
+  "provider_version": "4.2.1",
+  "interpreter": "CPython 3.12.8 (uv standalone) with srwpy 4.2.1 from PyPI",
+  "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+  "license_id": "EPICS",
+  "command": "python srw_driver.py srw_input.json (phydrax.electromagnetics.run_srw)",
+  "date": "2026-09-28",
+  "output_sha256": "14cff380724dfacb94677425ade0e75e018afe04a30c9c3c7a365c6c4515eedc",
+  "case": {
+    "source": "SRWFieldMapSource(representation='ideal-undulator')",
+    "undulator": {
+      "polarization": "planar",
+      "period_m": 0.02,
+      "period_count": 10,
+      "deflection_parameter": 1.0
+    },
+    "lorentz_factor": 100.0,
+    "entrance_plane_m": -0.1,
+    "exit_plane_m": 0.1,
+    "directions": [
+      [
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        0.002999995500002025,
+        0.0,
+        0.999995500003375
+      ]
+    ],
+    "reference_axis": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "angular_frequencies": "fundamental * linspace(0.96, 1.04, 5)",
+    "observation_distance_m": 100.0,
+    "relative_precision": 1e-05,
+    "trajectory_points": 20000
+  }
+}

@@ -19,6 +19,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._lorentz import boost_matrix
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..applications.relativistic_scattering._unit_contract import (
@@ -476,25 +477,20 @@ def _two_body_momenta(
     e2 = jnp.sqrt(m2 * m2 + magnitude * magnitude)
     safe_parent_energy = jnp.where(positive_energy, parent[0], 1.0)
     beta = parent[1:] / safe_parent_energy
-    beta_squared = jnp.sum(beta * beta)
-    boost_valid = beta_squared < 1.0
-    gamma = safe_parent_energy / invariant_mass
-
-    def boost(energy: Array, spatial: Array) -> Array:
-        projection = jnp.sum(beta * spatial)
-        coefficient = jnp.where(
-            beta_squared > 0.0,
-            (gamma - 1.0) * projection / jnp.maximum(beta_squared, 1.0e-30)
-            + gamma * energy,
-            0.0,
+    boost_valid = jnp.sum(beta * beta) < 1.0
+    # The rest-frame pair moves with the parent: the active boost by β is the
+    # passive boost into -β.
+    rest_frame = boost_matrix(-jnp.where(boost_valid, beta, 0.0))
+    rest_momenta = jnp.stack(
+        (
+            jnp.concatenate((e1[None], p_rest)),
+            jnp.concatenate((e2[None], -p_rest)),
         )
-        return jnp.concatenate(
-            ((gamma * (energy + projection))[None], spatial + coefficient * beta)
-        )
+    )
 
     physical = positive_energy & timelike & boost_valid & open_channel
     return (
-        jnp.stack((boost(e1, p_rest), boost(e2, -p_rest))),
+        rest_momenta @ rest_frame.T,
         invariant_mass,
         physical,
     )

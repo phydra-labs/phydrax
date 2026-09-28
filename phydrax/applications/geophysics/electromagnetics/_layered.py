@@ -13,13 +13,15 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
+from ...._physical import ElectromagneticScaleContract
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....special import jv
 
 
-VACUUM_PERMITTIVITY_F_M = 8.8541878128e-12
-VACUUM_PERMEABILITY_H_M = 1.25663706212e-6
+_SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
+VACUUM_PERMITTIVITY_F_M = float(_SI_ELECTROMAGNETIC_SCALE.vacuum_permittivity)
+VACUUM_PERMEABILITY_H_M = float(_SI_ELECTROMAGNETIC_SCALE.vacuum_permeability)
 
 
 class LayeredEarthModel(StrictModule):

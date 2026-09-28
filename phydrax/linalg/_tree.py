@@ -17,6 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
+from .._custom_root import custom_root
 from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -293,7 +294,7 @@ def _implicit_tree_value(
             transpose_solve=lambda _, right: solve_tree(right, transposed=True),
         )
 
-    return jax.lax.custom_root(
+    return custom_root(
         residual,
         jax.lax.stop_gradient(initial),
         solve=lambda _, value: value,

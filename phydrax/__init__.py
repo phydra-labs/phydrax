@@ -213,9 +213,25 @@ from ._trainable import (
 )
 from ._physical import (
     DimensionalScaleContract,
+    ElectromagneticScaleContract,
     LengthCoordinateKind,
     RelativityScaleContract,
     SpatialCoordinateContract,
+)
+from ._lorentz import (
+    boost_event,
+    boost_fields,
+    boost_matrix,
+    boost_proper_velocity,
+    boost_wavevector,
+    FourMomentum,
+    LorentzFrame,
+    LorentzSpectralTransform,
+    lower_four_vector,
+    MINKOWSKI_METRIC,
+    minkowski_dot,
+    SpectralEmissionCompleteness,
+    transform_spectral_energy,
 )
 
 from . import atomistic, chemistry, nuclear
@@ -235,6 +251,19 @@ from .interchange import cosmology as _cosmology_interchange  # noqa: F401
 
 # Explicit re-exports for star import
 __all__ = [
+    "FourMomentum",
+    "LorentzFrame",
+    "LorentzSpectralTransform",
+    "MINKOWSKI_METRIC",
+    "SpectralEmissionCompleteness",
+    "boost_event",
+    "boost_fields",
+    "boost_matrix",
+    "boost_proper_velocity",
+    "boost_wavevector",
+    "lower_four_vector",
+    "minkowski_dot",
+    "transform_spectral_energy",
     "AbstractArrayModel",
     "AbstractComponentSlot",
     "AbstractConstructionCertificate",
@@ -264,6 +293,7 @@ __all__ = [
     "DerivativeSurface",
     "DifferentiationRequest",
     "DimensionalScaleContract",
+    "ElectromagneticScaleContract",
     "ExecutableSignature",
     "ExecutionCapabilities",
     "ExecutionResourceEvidence",

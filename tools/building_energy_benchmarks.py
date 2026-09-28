@@ -14,9 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-# ty: ignore[unresolved-import]
-from phydrax.interchange.energy_runtime import pin_energy_executable
-
+from phydrax._external_runtime import pin_executable
 from phydrax.applications.building_energy import (
     Adjacency,
     BuildingBoundary,
@@ -176,7 +174,7 @@ def run_native() -> Any:
 
 
 def run_energyplus_reference(path: Any, version: Any, license_id: Any) -> Any:
-    executable = pin_energy_executable(path, version=version, license_id=license_id)
+    executable = pin_executable(path, version=version, license_id=license_id)
     idf_version = ".".join(version.split(".")[:2])
     reference = energyplus_adiabatic_reference(version=idf_version)
     run = reference.run(executable, energyplus_reference_weather())
@@ -221,8 +219,8 @@ def run_energyplus_reference(path: Any, version: Any, license_id: Any) -> Any:
 def run_radiance_reference(
     oconv_path: Any, rtrace_path: Any, raypath: Any, version: Any, license_id: Any
 ) -> Any:
-    oconv = pin_energy_executable(oconv_path, version=version, license_id=license_id)
-    rtrace = pin_energy_executable(rtrace_path, version=version, license_id=license_id)
+    oconv = pin_executable(oconv_path, version=version, license_id=license_id)
+    rtrace = pin_executable(rtrace_path, version=version, license_id=license_id)
     operator, runs = produce_uniform_sky_reference(
         oconv, rtrace, environment={"RAYPATH": str(Path(raypath).resolve())}
     )

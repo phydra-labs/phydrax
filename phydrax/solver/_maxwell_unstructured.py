@@ -40,9 +40,21 @@ class TetrahedralMaxwellQuality(StrictModule, NonTrainableState):
 
 
 class TetrahedralMaxwellHodge(StrictModule, NonTrainableState):
+    """Whitney mass Hodge of one affine tetrahedral mesh.
+
+    ``permittivity`` scales the edge mass and ``inverse_permeability`` the face
+    mass, so a runtime built on this Hodge with constitutive factors
+    ``(ε_c, μ_c)`` evolves a medium with ``ε = permittivity·ε_c`` and
+    ``μ = μ_c / inverse_permeability``.
+    """
+
     cochain: CochainDiscretization
+    vertices: Array
+    tetrahedra: Array
     electric_mass: Array
     magnetic_mass: Array
+    permittivity: float = eqx.field(static=True)
+    inverse_permeability: float = eqx.field(static=True)
     quality: TetrahedralMaxwellQuality
     hodge_id: str = eqx.field(static=True)
 
@@ -59,6 +71,26 @@ _QUADRATURE = np.asarray(
 )
 _LOCAL_EDGES = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
 _LOCAL_FACES = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
+
+
+def _barycentric_gradients(local_points: np.ndarray, /) -> tuple[np.ndarray, float]:
+    """Return ``∇λ_i`` (rows) and the signed Jacobian determinant of one tetrahedron.
+
+    With edge vectors ``J[:, m] = p_m − p_0`` the gradients satisfy
+    ``∇λ_k · J[:, m] = δ_km``, so rows ``1..3`` are ``J⁻¹``.
+    """
+    jacobian = np.stack(
+        (
+            local_points[1] - local_points[0],
+            local_points[2] - local_points[0],
+            local_points[3] - local_points[0],
+        ),
+        axis=1,
+    )
+    gradient = np.empty((4, 3))
+    gradient[1:] = np.linalg.solve(jacobian, np.eye(3, dtype=jacobian.dtype))
+    gradient[0] = -np.sum(gradient[1:], axis=0)
+    return gradient, float(np.linalg.det(jacobian))
 
 
 def tetrahedral_maxwell_hodge(
@@ -113,25 +145,11 @@ def tetrahedral_maxwell_hodge(
         )
         tetrahedron_indices = np.asarray(tetrahedron, dtype=np.int32)
         local_points = points[tetrahedron_indices]
-        jacobian = np.stack(
-            (
-                local_points[1] - local_points[0],
-                local_points[2] - local_points[0],
-                local_points[3] - local_points[0],
-            ),
-            axis=1,
-        )
-        determinant = np.linalg.det(jacobian)
+        gradient, determinant = _barycentric_gradients(local_points)
         volume = abs(determinant) / 6.0
         if volume <= np.finfo(np.float64).eps:
             raise ValueError("Tetrahedral Maxwell mesh contains a degenerate cell.")
         cell_volume[cell_index] = volume
-        gradient = np.empty((4, 3))
-        gradient[1:] = np.linalg.solve(
-            jacobian.T,
-            np.eye(3, dtype=jacobian.dtype),
-        )
-        gradient[0] = -np.sum(gradient[1:], axis=0)
         lengths = np.asarray(
             [np.linalg.norm(local_points[j] - local_points[i]) for i, j in _LOCAL_EDGES]
         )
@@ -263,14 +281,20 @@ def tetrahedral_maxwell_hodge(
     )
     return TetrahedralMaxwellHodge(
         cochain=cochain,
+        vertices=jnp.asarray(points),
+        tetrahedra=jnp.asarray(cells),
         electric_mass=jnp.asarray(electric_mass),
         magnetic_mass=jnp.asarray(magnetic_mass),
+        permittivity=float(permittivity),
+        inverse_permeability=float(inverse_permeability),
         quality=quality,
         hodge_id=canonical_fingerprint(
             {
                 "kind": "tetrahedral-maxwell-hodge",
                 "cochain": cochain.prepared_id,
                 "quality": quality_id,
+                "permittivity": float(permittivity),
+                "inverse_permeability": float(inverse_permeability),
             }
         ),
     )
@@ -428,7 +452,14 @@ class PreparedUnstructuredMaxwell(StrictModule):
                 jnp.zeros((counts[2],)),
                 jnp.zeros((counts[0],)),
             ),
-            MaxwellAuxiliaryState(self.constitutive.initialize_state(), None),
+            # The unstructured runtime carries no source magnetic currents, so its
+            # declared magnetic charge on the tetrahedra stays zero.
+            MaxwellAuxiliaryState(
+                self.constitutive.initialize_state(),
+                None,
+                jnp.zeros((counts[3],)),
+                jnp.zeros((counts[3],)),
+            ),
             (),
         )
 

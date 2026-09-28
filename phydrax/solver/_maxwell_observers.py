@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,10 +15,17 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..typing import parse
 
 
+if TYPE_CHECKING:
+    from ._maxwell import PreparedCompatibleMaxwell
+
+
 MaxwellFieldKind: TypeAlias = Literal["electric", "magnetic"]
+MaxwellSpectralMeasure: TypeAlias = Literal["sample-mean", "time-integral"]
+FourierExponentSign: TypeAlias = Literal["negative", "positive"]
 
 
 class AbstractPreparedMaxwellObserver(StrictModule):
@@ -44,6 +51,11 @@ class AbstractPreparedMaxwellObserver(StrictModule):
     @abc.abstractmethod
     def value(self, state: Any, /) -> Array:
         raise NotImplementedError
+
+    def validate_runtime(self, prepared: PreparedCompatibleMaxwell, /) -> None:
+        """Refuse a prepared runtime whose materials, absorbers, or sources break
+        this observer's admissibility; observers without such requirements accept."""
+        del prepared
 
 
 class AbstractMaxwellObserverPlan(StrictModule):
@@ -156,53 +168,196 @@ class PreparedFieldProbe(AbstractPreparedMaxwellObserver):
 
 
 class DFTObserverState(StrictModule):
+    """Streaming spectral accumulation owned by `MaxwellSpectralAcquisition`.
+
+    ``accumulator[F, ...]`` holds the weighted phasor sum, ``normalization`` the
+    active sample count (sample mean) or the integrated active duration (time
+    integral), and ``samples`` every payload presented so far. The trapezoid
+    measure carries the previous payload and time; both are ``None`` for the
+    sample mean.
+    """
+
     accumulator: Array
     normalization: Array
     samples: Array
+    previous_payload: Array | None
+    previous_time: Array | None
 
 
-class DFTObserverPlan(AbstractMaxwellObserverPlan):
-    """Streaming complex DFT of a prepared probe payload."""
+class MaxwellSpectralAcquisition(StrictModule, NonTrainableState):
+    """Angular frequencies, Fourier exponent sign, measure, and time window.
 
-    probe: FieldProbePlan
+    ``sign="negative"`` accumulates ``exp(-iωt)·f(t)`` and ``"positive"``
+    ``exp(+iωt)·f(t)``. The ``"sample-mean"`` measure divides the sum over
+    samples inside ``[start_time, stop_time]`` by their count; the
+    ``"time-integral"`` measure approximates ``∫ f(t) e^{±iωt} dt`` by the
+    trapezoid rule over consecutive samples that both lie inside the window,
+    which with ``"positive"`` is the transient spectrum of ``exp(-iωt)`` phasors.
+    """
+
     angular_frequencies: Array
+    sign: FourierExponentSign = eqx.field(static=True)
+    measure: MaxwellSpectralMeasure = eqx.field(static=True)
     start_time: float = eqx.field(static=True)
     stop_time: float | None = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    acquisition_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        probe: FieldProbePlan,
         angular_frequencies: ArrayLike,
         /,
         *,
+        sign: FourierExponentSign,
+        measure: MaxwellSpectralMeasure,
         start_time: float = 0.0,
         stop_time: float | None = None,
     ) -> None:
-        if not isinstance(probe, FieldProbePlan):
-            raise TypeError("probe must be a FieldProbePlan.")
-        frequencies = jnp.asarray(angular_frequencies, dtype=jnp.float64)
+        sign = parse(sign, FourierExponentSign, "sign")
+        measure = parse(measure, MaxwellSpectralMeasure, "measure")
+        frequencies = np.asarray(angular_frequencies, dtype=np.float64)
         if frequencies.ndim != 1 or frequencies.size == 0:
             raise ValueError("angular_frequencies must be a nonempty vector.")
-        if bool(jnp.any(~jnp.isfinite(frequencies))) or bool(jnp.any(frequencies < 0.0)):
+        if np.any(~np.isfinite(frequencies)) or np.any(frequencies < 0.0):
             raise ValueError("angular_frequencies must be finite and nonnegative.")
         start = float(start_time)
         stop = None if stop_time is None else float(stop_time)
         if not np.isfinite(start) or (
             stop is not None and (not np.isfinite(stop) or stop < start)
         ):
-            raise ValueError("DFT start/stop times are invalid.")
-        self.probe = probe
-        self.angular_frequencies = frequencies
+            raise ValueError("Spectral acquisition start/stop times are invalid.")
+        self.angular_frequencies = jnp.asarray(frequencies)
+        self.sign = sign
+        self.measure = measure
         self.start_time = start
         self.stop_time = stop
+        self.acquisition_id = canonical_fingerprint(
+            {
+                "kind": "maxwell-spectral-acquisition",
+                "frequencies": array_tree_fingerprint(frequencies),
+                "sign": sign,
+                "measure": measure,
+                "start": start,
+                "stop": stop,
+            }
+        )
+
+    @property
+    def exponent_sign(self) -> float:
+        match self.sign:
+            case "negative":
+                return -1.0
+            case "positive":
+                return 1.0
+            case _:
+                assert_never(self.sign)
+
+    def phase(self, time: Array, /) -> Array:
+        """Return ``exp(±iωt)`` for every acquired angular frequency."""
+        return jnp.exp(self.exponent_sign * 1j * self.angular_frequencies * time)
+
+    def active(self, time: Array, /) -> Array:
+        inside = time >= self.start_time
+        if self.stop_time is not None:
+            inside = inside & (time <= self.stop_time)
+        return inside
+
+    def initialize(self, payload_shape: tuple[int, ...], /) -> DFTObserverState:
+        shape = (self.angular_frequencies.shape[0], *payload_shape)
+        carries_previous = self.measure == "time-integral"
+        return DFTObserverState(
+            accumulator=jnp.zeros(shape, dtype=jnp.complex128),
+            normalization=jnp.asarray(0.0, dtype=jnp.float64),
+            samples=jnp.asarray(0, dtype=jnp.int32),
+            previous_payload=(
+                jnp.zeros(payload_shape, dtype=jnp.complex128)
+                if carries_previous
+                else None
+            ),
+            previous_time=(
+                jnp.asarray(0.0, dtype=jnp.float64) if carries_previous else None
+            ),
+        )
+
+    def accumulate(
+        self,
+        state: DFTObserverState,
+        time: Array,
+        payload: Array,
+        /,
+    ) -> DFTObserverState:
+        """Fold one synchronized payload sample at ``time`` into ``state``."""
+        time_ = jnp.asarray(time, dtype=jnp.float64)
+        payload_ = jnp.asarray(payload).astype(jnp.complex128)
+        expand = (slice(None),) + (None,) * payload_.ndim
+        active = self.active(time_)
+        match self.measure:
+            case "sample-mean":
+                contribution = self.phase(time_)[expand] * payload_[None]
+                return DFTObserverState(
+                    accumulator=state.accumulator + jnp.where(active, contribution, 0),
+                    normalization=state.normalization + active.astype(jnp.float64),
+                    samples=state.samples + 1,
+                    previous_payload=None,
+                    previous_time=None,
+                )
+            case "time-integral":
+                if state.previous_payload is None or state.previous_time is None:
+                    raise ValueError(
+                        "Time-integral acquisition requires the carried previous sample."
+                    )
+                include = (state.samples > 0) & active & self.active(state.previous_time)
+                width = time_ - state.previous_time
+                contribution = (0.5 * width) * (
+                    self.phase(state.previous_time)[expand] * state.previous_payload[None]
+                    + self.phase(time_)[expand] * payload_[None]
+                )
+                return DFTObserverState(
+                    accumulator=state.accumulator + jnp.where(include, contribution, 0),
+                    normalization=state.normalization + jnp.where(include, width, 0.0),
+                    samples=state.samples + 1,
+                    previous_payload=payload_,
+                    previous_time=time_,
+                )
+            case _:
+                assert_never(self.measure)
+
+    def value(self, state: DFTObserverState, /) -> Array:
+        match self.measure:
+            case "sample-mean":
+                denominator = jnp.where(
+                    state.normalization > 0.0, state.normalization, 1.0
+                )
+                return state.accumulator / denominator
+            case "time-integral":
+                return state.accumulator
+            case _:
+                assert_never(self.measure)
+
+
+class DFTObserverPlan(AbstractMaxwellObserverPlan):
+    """Streaming spectral acquisition of a prepared probe payload."""
+
+    probe: FieldProbePlan
+    acquisition: MaxwellSpectralAcquisition
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        probe: FieldProbePlan,
+        acquisition: MaxwellSpectralAcquisition,
+        /,
+    ) -> None:
+        if not isinstance(probe, FieldProbePlan):
+            raise TypeError("probe must be a FieldProbePlan.")
+        if not isinstance(acquisition, MaxwellSpectralAcquisition):
+            raise TypeError("acquisition must be a MaxwellSpectralAcquisition.")
+        self.probe = probe
+        self.acquisition = acquisition
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "maxwell-dft-observer",
                 "probe": probe.plan_id,
-                "frequencies": array_tree_fingerprint(frequencies),
-                "start": start,
-                "stop": stop,
+                "acquisition": acquisition.acquisition_id,
             }
         )
 
@@ -219,27 +374,18 @@ class DFTObserverPlan(AbstractMaxwellObserverPlan):
 
 class PreparedDFTObserver(AbstractPreparedMaxwellObserver):
     probe: PreparedFieldProbe
-    angular_frequencies: Array
-    start_time: float = eqx.field(static=True)
-    stop_time: float | None = eqx.field(static=True)
+    acquisition: MaxwellSpectralAcquisition
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: DFTObserverPlan, probe: PreparedFieldProbe, /) -> None:
         self.probe = probe
-        self.angular_frequencies = plan.angular_frequencies
-        self.start_time = plan.start_time
-        self.stop_time = plan.stop_time
+        self.acquisition = plan.acquisition
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-maxwell-dft", "plan": plan.plan_id}
         )
 
     def initialize(self, /) -> DFTObserverState:
-        shape = (self.angular_frequencies.size, self.probe.indices.shape[0])
-        return DFTObserverState(
-            accumulator=jnp.zeros(shape, dtype=jnp.complex128),
-            normalization=jnp.asarray(0.0),
-            samples=jnp.asarray(0, dtype=jnp.int32),
-        )
+        return self.acquisition.initialize((self.probe.indices.shape[0],))
 
     def update(
         self,
@@ -252,21 +398,12 @@ class PreparedDFTObserver(AbstractPreparedMaxwellObserver):
         if not isinstance(state, DFTObserverState):
             raise TypeError("DFT observer requires DFTObserverState.")
         payload = self.probe.update(time, electric, magnetic, None)
-        active = jnp.asarray(time) >= self.start_time
-        if self.stop_time is not None:
-            active = active & (jnp.asarray(time) <= self.stop_time)
-        phase = jnp.exp(-1j * self.angular_frequencies * jnp.asarray(time))
-        contribution = phase[:, None] * payload[None, :]
-        accumulator = state.accumulator + jnp.where(active, contribution, 0)
-        normalization = state.normalization + active.astype("float64")
-        samples = state.samples + active.astype(jnp.int32)
-        return DFTObserverState(accumulator, normalization, samples)
+        return self.acquisition.accumulate(state, jnp.asarray(time), payload)
 
     def value(self, state: Any, /) -> Array:
         if not isinstance(state, DFTObserverState):
             raise TypeError("DFT observer requires DFTObserverState.")
-        denominator = jnp.where(state.normalization > 0.0, state.normalization, 1.0)
-        return state.accumulator / denominator
+        return self.acquisition.value(state)
 
 
 class PoyntingFluxPlan(StrictModule):
@@ -524,7 +661,10 @@ __all__ = [
     "DFTObserverPlan",
     "DFTObserverState",
     "FieldProbePlan",
+    "FourierExponentSign",
     "MaxwellFieldKind",
+    "MaxwellSpectralAcquisition",
+    "MaxwellSpectralMeasure",
     "ModeAmplitudeObserverPlan",
     "ModeAmplitudeObserverState",
     "PoyntingFluxPlan",

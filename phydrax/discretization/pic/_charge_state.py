@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..particle import ParticlePopulationState
+from ..particle import ParticlePopulationPlan, ParticlePopulationState
 from ._types import PICParticleState
 
 
@@ -184,9 +184,92 @@ class PICChargeModelPlan(StrictModule, NonTrainableState):
         )
 
 
+class PICSpeciesPlan(StrictModule, NonTrainableState):
+    """One PIC species: runtime population with persistent identities and charge.
+
+    Macroparticle charge is ``mass * base_specific_charge * charge_number`` of the
+    runtime population, so ionization and creation events change charge through
+    the population and charge state rather than through prepared constants.
+    """
+
+    population: ParticlePopulationPlan
+    charge_model: PICChargeModelPlan
+    species_id: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        population: ParticlePopulationPlan,
+        charge_model: PICChargeModelPlan,
+        /,
+    ) -> None:
+        if not isinstance(population, ParticlePopulationPlan):
+            raise TypeError("population must be ParticlePopulationPlan.")
+        if not isinstance(charge_model, PICChargeModelPlan):
+            raise TypeError("charge_model must be PICChargeModelPlan.")
+        self.population = population
+        self.charge_model = charge_model
+        self.species_id = charge_model.species_id
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "pic-species",
+                "population": population.plan_id,
+                "charge_model": charge_model.plan_id,
+            }
+        )
+
+    @property
+    def capacity(self) -> int:
+        return self.population.particles.capacity
+
+    def initialize(
+        self,
+        position: ArrayLike,
+        proper_velocity: ArrayLike,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
+        masses: ArrayLike | None = None,
+    ) -> PICSpeciesState:
+        """Initial species state; active particles receive identities in slot order."""
+        population = self.population.initialize(active_mask=active_mask, masses=masses)
+        position_ = jnp.asarray(position)
+        velocity = jnp.asarray(proper_velocity, dtype=position_.dtype)
+        if (
+            position_.ndim != 2
+            or position_.shape[0] != self.capacity
+            or velocity.shape != (self.capacity, 3)
+        ):
+            raise ValueError(
+                "Species position/proper velocity must have capacity-by-d and "
+                "capacity-by-three shapes."
+            )
+        active = population.active[:, None]
+        return PICSpeciesState(
+            PICParticleState(
+                jnp.where(active, position_, 0.0), jnp.where(active, velocity, 0.0)
+            ),
+            population,
+            self.charge_model.initialize(population),
+        )
+
+    def macrocharge(self, state: PICSpeciesState, /) -> Array:
+        return self.charge_model.macrocharge(state.population, state.charge)
+
+    def specific_charge(self, state: PICSpeciesState, /) -> Array:
+        """Runtime charge-to-mass ratio; zero on inactive slots."""
+        return jnp.where(
+            state.population.active,
+            self.charge_model.base_specific_charge
+            * state.charge.charge_number.astype(state.population.mass.dtype),
+            0.0,
+        )
+
+
 __all__ = [
     "PICChargeModelPlan",
     "PICChargeState",
     "PICChargeTransitionResult",
+    "PICSpeciesPlan",
     "PICSpeciesState",
 ]

@@ -22,10 +22,8 @@ from phydrax.applications.relativistic_scattering import (
     EventStatus,
     finite_scalar_bubble,
     klein_nishina_differential_cross_section,
-    LorentzFrame,
     massive_vector_polarization_sum,
     MassShell,
-    minkowski_dot,
     moller_amplitude,
     MultiChannelPhaseSpacePlan,
     Particle,
@@ -126,20 +124,7 @@ def test_relativistic_scattering_production_scenario_1() -> None:
     )
     shell = MassShell(electron)
     momentum = shell.from_spatial(jnp.asarray([0.3, -0.2, 0.7]))
-    boost = LorentzFrame.boost(jnp.asarray([0.2, -0.1, 0.05]))
-    transformed = boost.apply(momentum)
-
     assert shell.contains(momentum)
-    assert jnp.allclose(
-        minkowski_dot(transformed.value, transformed.value),
-        minkowski_dot(momentum.value, momentum.value),
-        atol=1.0e-12,
-    )
-    assert jnp.allclose(
-        boost.inverse().apply(transformed).value,
-        momentum.value,
-        atol=1.0e-12,
-    )
     mass = 0.8
     momentum = jnp.asarray(
         [

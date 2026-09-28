@@ -185,6 +185,10 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
+        # The setup operator already stores its sparse values, so nothing is
+        # densely materialized; the plan charges the retained factor to
+        # SolveResourcePolicy.preconditioner_bytes.
+        del materialization
         self.properties_for(setup_operator)
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
             return PreconditionerCostEstimate(
@@ -193,11 +197,7 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
                 reason="sparse factorization requires canonical sparse operator storage",
             )
         try:
-            plan = prepare_sparse_factorization(
-                setup_operator,
-                self.policy(),
-                materialization=materialization,
-            )
+            plan = prepare_sparse_factorization(setup_operator, self.policy())
         except LinearCapabilityError as error:
             return PreconditionerCostEstimate(
                 component=self.builder_id,
@@ -227,14 +227,11 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy,
     ) -> SparseFactorizationPreconditioner:
+        del materialization
         properties = self.properties_for(setup_operator)
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
             raise TypeError("Sparse factorization requires a sparse operator.")
-        plan = prepare_sparse_factorization(
-            setup_operator,
-            self.policy(),
-            materialization=materialization,
-        )
+        plan = prepare_sparse_factorization(setup_operator, self.policy())
         factorization = refresh_sparse_factorization(plan, setup_operator)
         return SparseFactorizationPreconditioner(
             setup_operator,

@@ -11,6 +11,21 @@ incarnation. Reused slots receive a new incarnation, so contact, collision, ioni
 reseed history cannot alias a previous occupant. Allocation and deactivation use fixed request
 arrays and fail closed on capacity or incarnation overflow.
 
+Every particle also carries a persistent 64-bit global identity stored as two `uint32` words,
+`ParticlePopulationState.id_hi` and `id_lo`, and the identity of the particle it was created from,
+`parent_hi` and `parent_lo` (`has_parent` is false for primary particles). Identity is independent
+of the storage slot: it survives deactivation, slot reuse, and slot permutation. The population
+counter `next_id_hi`/`next_id_lo` numbers particles in creation order: `initialize` numbers
+active slots in slot order; `allocate` numbers accepted requests in ascending event-ID order
+(`ParticleAllocationRequest(..., parents=(hi, lo))` records lineage); `update_particle_population`
+numbers newly active slots in slot order; FLIP split children descend from their cell's receiver;
+and ionization electrons descend from the ionized ion. Other creating events call
+`assign_particle_identities` with the event's request ranks. The all-ones identity is reserved
+for never-occupied slots and absent parents, and allocation that would reach it fails with
+`ParticlePopulationStatus.IDENTITY_EXHAUSTED`. Per-particle random streams fold both words,
+`derive_key(root, address, step, id_hi, id_lo, event)`, so draws follow the particle, not its
+slot.
+
 `PreparedParticleGridSplat.build(..., active_mask=...)` intersects this runtime activity with the
 structural particle mask. Dynamic PIC and FLIP methods pass runtime mass/charge as explicit
 payloads; static `ParticleDiscretization` measures remain the immutable preparation reference.
@@ -36,16 +51,26 @@ capacity failure rejects the complete event batch.
 `CompatibleMaxwell2DPlan` implements explicit TE/TM 2D3V Yee blocks; `CompatibleMaxwell1DPlan`
 implements the longitudinal field plus two transverse wave pairs. `ReducedPICTransferPlan` performs
 periodic CIC transfer and projects midpoint current onto the exact discrete continuity constraint.
-`ReducedElectromagneticPICPlan` composes these fields with relativistic Boris stepping.
+`ReducedMaxwellPICFieldSolver` exposes these fields to `ElectromagneticPICPlan` through the PIC
+field-solver protocol. Reduced 2-D fields with a nonperiodic axis are refused at preparation
+because their Gauss charge does not follow the deposited current.
 
-`PICOpenBoundaryPlan` clips trajectories against axis-aligned faces, supports absorbing or
-reflecting particle policies, and records boundary mass, charge, kinetic energy, hit location, and
-surface accumulation. Electromagnetic PIC now accepts passive instantaneous Maxwell CPML state;
-CPML dissipation remains owned and reported by the Maxwell runtime.
+`PICOpenBoundaryPlan` clips trajectories against axis-aligned faces, supports absorbing,
+reflecting, and periodic (`PERIODIC`, never hit) particle policies, and records boundary mass,
+charge, kinetic energy, hit location, and surface accumulation; the caller supplies each
+particle's kinetic energy at the start and end of its path (`kinetic_energy=(start, end)`), and an
+absorbed particle records it interpolated to its hit fraction. It is the `boundaries` input of
+`ElectromagneticPICPlan`: reflected paths deposit two segments joined at the wall and absorbed
+charge is kept on the grid as wall charge.
+Reduced 1-D electromagnetic PIC accepts passive instantaneous Maxwell CPML state; CPML dissipation
+remains owned and reported by the Maxwell runtime. The full 3-D cochain solver requires every axis
+periodic and therefore cannot carry CPML.
 
-`PICMovingWindowPlan` shifts full cochain orientations, compatible auxiliary/observer arrays, local
-particle positions, global window origin, and trailing outflow in one integer-cell accepted-step
-transaction.
+`PICMovingWindowPlan` shifts the field through the solver's `PICWindowShift` capability (full
+cochain orientations and compatible auxiliary/observer arrays, or reduced E/B/charge), local
+particle positions, global window origin, trailing outflow, and optional `PICWindowInjection`
+particles in one integer-cell accepted-step transaction, and reports the particle↔field charge
+defect after the shift.
 
 ## Unstructured and semi-implicit PIC
 
@@ -56,9 +81,9 @@ solves the native stiffness system, gathers cellwise electric field, and advance
 native KKT system.
 
 `UnstructuredWhitneyCurrentPlan` deposits Whitney-0 endpoint charge and integrated Whitney-1 path
-current over bounded in-cell trajectory segments. `UnstructuredElectromagneticPICPlan` couples it
-to existing compatible tetrahedral Maxwell evolution and rejects any path whose subdivision does
-not resolve cell ownership.
+current over bounded in-cell trajectory segments. `UnstructuredMaxwellPICFieldSolver` couples it
+to compatible tetrahedral Maxwell evolution through the inverse Hodge stars and rejects any path
+whose subdivision does not resolve cell ownership.
 
 `PICParticleResponsePlan` supplies a matrix-free gather/rotation/scatter response.
 `SemiImplicitPICPlan` solves the periodic nonrelativistic theta response through bounded GMRES and

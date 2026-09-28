@@ -12,7 +12,7 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from ._kinematics import minkowski_dot, MINKOWSKI_METRIC
+from ..._lorentz import minkowski_dot, MINKOWSKI_METRIC
 
 
 _COMPLEX = jnp.complex128

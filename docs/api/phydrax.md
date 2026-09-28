@@ -758,3 +758,65 @@ drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
 ---
 
 ::: phydrax.closure_data.SpectralFallbackArtifact
+
+## Special relativity
+
+The root namespace owns mostly-minus `(+---)` Lorentz algebra shared by
+scattering, hadronization, BMS frames, and radiation. Four-vectors carry the time
+component first. `boost_matrix(β)` is the passive boost into a frame moving with
+dimensionless velocity `β` (`t' = γ(t − β·x)`); it is traced, batched over
+leading axes of `β`, and differentiable at `β = 0`. `LorentzFrame` is the host
+wrapper with metric-residual evidence and a fingerprint; `LorentzFrame.boost(v)`
+is the active boost carrying rest momentum toward `v`, i.e. `boost_matrix(-v)`.
+
+`boost_event`, `boost_proper_velocity` (dimensionless `u = γv/c`),
+`boost_fields` (`F' = Λ F Λᵀ` with explicit `speed_of_light`), and
+`boost_wavevector` (Doppler shift and aberration of vacuum plane waves) apply the
+same boost. `transform_spectral_energy` relabels one-sided spectral energy
+samples `d²W/(dω dΩ)` through the invariant `(1/ω²) d²W/(dω dΩ)`; samples move
+pointwise and consumers re-grid. It is valid only in vacuum and for complete
+emission: `refractive_index != 1` and `emission="truncated"` are refused, and
+`LorentzSpectralTransform.valid` marks non-finite, superluminal, non-unit
+direction, and nonpositive frequency samples.
+
+::: phydrax.boost_matrix
+
+---
+
+::: phydrax.boost_event
+
+---
+
+::: phydrax.boost_proper_velocity
+
+---
+
+::: phydrax.boost_fields
+
+---
+
+::: phydrax.boost_wavevector
+
+---
+
+::: phydrax.transform_spectral_energy
+
+---
+
+::: phydrax.LorentzSpectralTransform
+
+---
+
+::: phydrax.LorentzFrame
+
+---
+
+::: phydrax.FourMomentum
+
+---
+
+::: phydrax.minkowski_dot
+
+---
+
+::: phydrax.lower_four_vector

@@ -6,8 +6,13 @@ Gaussian and Gaussian-erf direct sums remain the regularized authorities.
 Singular and Rosenhead cores provide independent near/far limits.
 `PeriodicVortexEwaldPlan` supplies screened real-image plus reciprocal periodic
 reference values and rejects incompatible nonzero mean vorticity.
-`FreeSpaceVortexFFTPlan` zero-pads every spatial axis and reports boundary
-vorticity contamination rather than silently wrapping it.
+`FreeSpaceVortexFFTPlan` is the Biot–Savart owner over the shared Hockney
+substrate `phydrax.operators.FreeSpaceConvolutionPlan("biot-savart", grid)`:
+it zero-pads every spatial axis, applies the cell measure to the vorticity
+density, and reports boundary vorticity contamination rather than silently
+wrapping it. Constructing it with `velocity_gradient=True` prepares the
+analytic kernel derivatives so `velocity_gradient[..., i, l] = ∂_l u_i` is a
+convolution, not a spectral derivative of the padded velocity.
 
 ## Particle mesh and P3M
 

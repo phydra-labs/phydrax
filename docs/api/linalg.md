@@ -678,8 +678,10 @@ those routes only when the canonical pattern identity matches. Fill level, numer
 drop tolerance, maximum retained entries per row, diagonal shift, and pivot
 replacement are declared policy. A replacement is never enabled implicitly.
 Symbolic construction is bounded incrementally by `max_factor_nnz`,
-`max_factor_bytes`, and `max_symbolic_work`; an active `MaterializationPolicy`
-tightens those ceilings for sparse-factor builder costing and preparation. Seed and
+`max_factor_bytes`, and `max_symbolic_work`. Factoring stored sparse values is not
+a dense materialization, so `MaterializationPolicy` does not tighten these ceilings;
+a solve plan charges a sparse-factor preconditioner's retained bytes to
+`SolveResourcePolicy.preconditioner_bytes`. Seed and
 fill insertions are refused before their host dictionaries exceed a ceiling, with
 observed and allowed nonzeros, retained bytes, and logical work in the refusal.
 Admitted plans retain the same three quantities as static resource evidence.
@@ -701,6 +703,21 @@ prepared-preconditioner lifecycle. Incomplete Cholesky requires certified
 self-adjoint structure and only claims positive definiteness when the setup operator
 provides that evidence. Symbolic analysis remains host-side; numeric refresh and
 triangular actions have static storage under JIT.
+
+Host `SparseLU` (provider `"auto"` or `"scipy-superlu"`) owns its column ordering.
+Planning runs `analyze_sparse_lu` on the canonical pattern: an approximate
+minimum-degree ordering `Q` of `AᵀA` built from the rows of `A` (the COLAMD
+formulation), the column elimination tree, and Gilbert–Ng–Peyton column counts of
+`(AQ)ᵀ(AQ)`, all without forming `AᵀA`. By George and Ng (1985), every
+partial-pivoting sequence of a structurally nonsingular `AQ` keeps `L` and `U`
+inside the Cholesky factor `R` of `(AQ)ᵀ(AQ)`, so `2 nnz(R)` bounds the stored
+factor before any value is read. The plan carries the result as
+`LinearSolvePlan.sparse_lu_analysis`; its `factorization_bytes` estimate is that
+bound's values and SuperLU indices, and `SolveResourcePolicy.factorization_bytes`
+refuses above it. SuperLU then factors `A[:, Q]` with its natural ordering, so the
+bound describes the executed factorization. A structurally singular pattern keeps
+the dense `n²` bound, as do `SparseLU(provider="jax-cpu")` and `"umfpack"`, whose
+orderings are chosen inside the provider.
 
 `SPARSE_PROVIDER_CATALOG` is an immutable declaration of optional CUDA, SuperLU,
 UMFPACK, CHOLMOD, and SPQR capabilities. Availability inspection is deterministic and
@@ -2306,6 +2323,14 @@ runtime.
 ---
 
 ::: phydrax.linalg.factorize_sparse
+
+---
+
+::: phydrax.linalg.SparseLUSymbolicAnalysis
+
+---
+
+::: phydrax.linalg.analyze_sparse_lu
 
 ---
 

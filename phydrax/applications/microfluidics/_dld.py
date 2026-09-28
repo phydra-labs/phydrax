@@ -14,7 +14,6 @@ from ..._admissibility import AdmissibilityHeader, AdmissibilityReason
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.particle._population import ParticlePopulationState
 from ...solver._finite_particle_transport import (
     FiniteParticleTransportPlan,
     FiniteParticleTransportState,
@@ -150,13 +149,7 @@ class DLDWorkflowPlan(StrictModule, NonTrainableState):
             deactivation = self.transport.population.deactivate(
                 state.population, terminal
             )
-            population = ParticlePopulationState(
-                deactivation.accepted_state.active,
-                deactivation.accepted_state.mass,
-                deactivation.accepted_state.incarnation,
-                deactivation.accepted_state.ever_occupied,
-                deactivation.accepted_state.retired,
-            )
+            population = deactivation.accepted_state
             terminal_times = jnp.where(terminal, state.time, terminal_times)
             state = FiniteParticleTransportState(
                 population,

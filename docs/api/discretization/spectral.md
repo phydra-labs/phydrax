@@ -312,6 +312,29 @@ zero; the transform itself does not imply modal closure.
 
 ::: phydrax.discretization.CylindricalHankelEvidence
 
+### Shared-grid quasi-cylindrical transforms
+
+`SharedGridHankelPlan(radius, radial_count, mode_count)` prepares, for every
+azimuthal mode `m`, the synthesis matrices of Bessel orders `m − 1, m, m + 1` on
+the cell-centered radii and one k-grid from the zeros of `J_m`, together with
+their Moore–Penrose pseudoinverses and rank, conditioning, and Penrose-residual
+evidence. The quasi-cylindrical PSATD solver of
+`phydrax.solver.maxwell.spectral` uses it for its circular field components.
+
+::: phydrax.discretization.SharedGridHankelPlan
+
+---
+
+::: phydrax.discretization.PreparedSharedGridHankel
+
+---
+
+::: phydrax.discretization.SharedGridHankelEvidence
+
+---
+
+::: phydrax.discretization.SharedGridHankelOffset
+
 
 ## Radial-spherical and rotational transforms
 

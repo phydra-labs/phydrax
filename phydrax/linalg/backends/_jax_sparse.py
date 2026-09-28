@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import equinox as eqx
@@ -61,11 +62,24 @@ def _validated_storage(storage: SparseStorage, /) -> SparseStorage:
     return eqx.tree_at(lambda item: item.values, storage, values)
 
 
-def _host_factor(provider: str, matrix: Any, /) -> Any:
+@dataclass(frozen=True, eq=False)
+class _ColumnPermutedLU:
+    """SuperLU factor of ``A[:, columns]`` under SuperLU's natural ordering."""
+
+    factor: Any
+    columns: np.ndarray
+
+
+def _host_factor(provider: str, matrix: Any, columns: np.ndarray | None, /) -> Any:
     if provider == "scipy-superlu":
         import scipy.sparse.linalg as spla
 
-        return spla.splu(matrix.tocsc())
+        if columns is None:
+            raise ValueError("Host SuperLU requires the plan's sparse LU analysis.")
+        # The planned symbolic fill bound holds for exactly this column order.
+        return _ColumnPermutedLU(
+            spla.splu(matrix.tocsc()[:, columns], permc_spec="NATURAL"), columns
+        )
     if provider == "umfpack":
         import scikits.umfpack  # noqa: F401
 
@@ -98,7 +112,13 @@ def _host_solve(
 ) -> np.ndarray:
     if provider == "scipy-superlu":
         mode = "H" if adjoint else ("T" if transpose else "N")
-        return np.asarray(factor.solve(rhs, trans=mode))
+        # (A Q)ᵀ x = Qᵀ b for transposed solves; A x = b is (A Q)(Qᵀ x) = b.
+        if transpose or adjoint:
+            return np.asarray(factor.factor.solve(rhs[factor.columns], trans=mode))
+        permuted = np.asarray(factor.factor.solve(rhs))
+        solution = np.empty_like(permuted)
+        solution[factor.columns] = permuted
+        return solution
     if provider == "umfpack":
         import scipy.sparse.linalg as spla
 
@@ -154,6 +174,8 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
 
         batch_count = int(np.prod(storage.batch_shape)) if storage.batch_shape else 1
         values = np.asarray(storage.values).reshape((batch_count, storage.nnz))
+        analysis = plan.sparse_lu_analysis
+        columns = None if analysis is None else np.asarray(analysis.column_permutation)
         factors = tuple(
             _host_factor(
                 provider,
@@ -165,6 +187,7 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
                     ),
                     shape=storage.shape,
                 ),
+                columns,
             )
             for batch_values in values
         )

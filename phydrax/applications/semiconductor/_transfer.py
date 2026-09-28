@@ -26,6 +26,7 @@ from ._analysis import (
 from ._continuum import PreparedSemiconductorDevice, SemiconductorOperatingPoint
 from ._device import DevicePlan
 from ._materials import SemiconductorMaterial
+from ._quantities import ELEMENTARY_CHARGE_SI
 
 
 class SemiconductorTransferEvidence(StrictModule):
@@ -411,7 +412,7 @@ def semiconductor_reprepare(
     # Elementary charge is exact in SI. Particle-wise conservation is stronger
     # than cancellation-prone conservation of the net dopant/carrier charge.
     signs = jnp.asarray([-1.0, 1.0, 1.0, -1.0])
-    q = 1.602176634e-19
+    q = ELEMENTARY_CHARGE_SI
     evidence = SemiconductorTransferEvidence(
         source_counts,
         transferred_counts,
@@ -477,7 +478,7 @@ def semiconductor_adaptation_indicators(
     )
     residual = jnp.max(bulk_residual, axis=-1)
     electrons, holes = prepared.edge_fluxes(u)
-    current = 1.602176634e-19 * (holes - electrons)
+    current = ELEMENTARY_CHARGE_SI * (holes - electrons)
     divergence = (
         jnp.zeros_like(support.volumes).at[tail].add(-current).at[head].add(current)
     )

@@ -56,10 +56,11 @@ def test_maxwell_platform_scenario_1() -> None:
         magnetic_constraint=phx.solver.maxwell.MaxwellMagneticConstraintPolicy("elide"),
     ).prepare()
     assert elided.magnetic_projection_elided
+    # A PMC trace overwrites B, so only projection restores d(B) = q_m.
     with pytest.raises(ValueError, match="closedness evidence"):
         phx.solver.CompatibleMaxwellPlan(
             bridge,
-            pml=phx.solver.maxwell.MaxwellCPMLPlan(0),
+            boundaries=(phx.solver.maxwell.MaxwellBoundaryPlan("pmc"),),
             magnetic_constraint=phx.solver.maxwell.MaxwellMagneticConstraintPolicy(
                 "elide"
             ),
@@ -88,7 +89,7 @@ def test_maxwell_platform_scenario_2() -> None:
     assert all(
         memory.ndim == 1 for memory in (*state.electric_memory, *state.magnetic_memory)
     )
-    coefficients = runtime.pml.bind_coefficients(0.1, 0.05)
+    coefficients = runtime.pml.bind_coefficients(0.1)
     assert tuple(value.term_id for value in coefficients.electric) == tuple(
         value.term_id for value in runtime.pml.electric_terms
     )
@@ -155,6 +156,65 @@ def test_maxwell_platform_scenario_2() -> None:
         )
 
 
+def _cpml_reflection(width: int, target: float, fraction: float) -> float:
+    """Round-trip amplitude reflection of a normally incident TMz pulse pair.
+
+    A modulated Gaussian ``E_z`` (λ = 20 cells) splits into two pulses that
+    cross the CPML, reflect off its outer wall, and meet again at the center
+    after one interior crossing; the interior energy then is ``|r|²`` of the
+    initial energy.
+    """
+    cells, length = 200, 20.0
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(cells),
+            phx.discretization.UniformCellAxisSpec(2, periodic=True),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [length, 0.2]]))
+    bridge = phx.discretization.StructuredCochainBridge(grid)
+    runtime = phx.solver.CompatibleMaxwellPlan(
+        bridge,
+        polarization="tmz",
+        pml=phx.solver.maxwell.MaxwellCPMLPlan((width, 0), target_reflection=target),
+    ).prepare()
+    x = np.linspace(-0.5 * length, 0.5 * length, cells + 1)[:, None]
+    pulse = np.broadcast_to(np.exp(-((x / 1.5) ** 2)) * np.cos(np.pi * x), (cells + 1, 2))
+    electric = bridge.pack(0, (jnp.asarray(pulse),))
+    state = runtime.initialize(
+        electric_displacement=runtime.constitutive.electric_displacement(electric, None)
+    )
+    dt = fraction * float(runtime.stable_dt)
+    steps = round((length - 2.0 * width * length / cells) / dt)
+    final = phx.solver.maxwell.solve_compatible_maxwell(
+        runtime, state, 0.0, dt, steps
+    ).final_state
+
+    def interior(degree: int, values: Any) -> Any:
+        components = []
+        for value in bridge.unpack(degree, values):
+            index = np.indices(value.shape)[0]
+            inside = (index >= width) & (index < cells - width)
+            components.append(jnp.where(inside, value, 0.0))
+        return bridge.pack(degree, tuple(components))
+
+    inner = runtime.initialize(
+        electric_displacement=interior(0, final.primary.electric_displacement),
+        magnetic_flux=interior(1, final.primary.magnetic_flux),
+    )
+    return float(np.sqrt(runtime.energy(inner) / runtime.energy(state)))
+
+
+def test_time_domain_cpml_reflects_below_its_calibrated_target() -> None:
+    # σ_max is calibrated so the continuum round trip reflects R = 1e-4. The
+    # discrete layer must stay below it, and the reflection must not depend on
+    # Δt: memories read off their kick's time level reflected ∝ Δt (1.3e-3 at
+    # CFL 0.9, 6.4e-4 at CFL 0.45 before the kicks were centered).
+    coarse, fine = (_cpml_reflection(15, 1e-4, value) for value in (0.9, 0.45))
+    assert coarse < 1e-4 and fine < 1e-4
+    assert abs(coarse - fine) < 0.05 * fine
+
+
 def test_maxwell_platform_scenario_3() -> None:
     bridge = _bridge((2, 2, 2))
     plan = phx.solver.maxwell.UnstructuredMaxwellPlan(
@@ -194,18 +254,26 @@ def test_maxwell_platform_scenario_3() -> None:
         -1j * 0.4 * 0.2 * field,
         atol=1e-13,
     )
-    assert conductive_frequency.dissipated_power(field) > 0
+    electric_star = bridge.cochain.hodge_metric(runtime.layout.electric_degree)
+    ledger = conductive_frequency.power_ledger(field, conductive_frequency.mv(field))
+    np.testing.assert_allclose(
+        ledger.electric_material,
+        0.5 * 0.2 * jnp.sum(electric_star * field**2),
+        rtol=1e-12,
+    )
     magnetic_loss = phx.solver.maxwell.ConductiveMaxwellConstitutivePlan(
         electric_conductivity=0.2,
         magnetic_conductivity=0.1,
     ).prepare(bridge.cochain, runtime.layout)
-    with pytest.raises(ValueError, match="frequency-domain"):
-        phx.solver.maxwell.FrequencyMaxwellOperator(
-            bridge.cochain,
-            runtime.layout,
-            magnetic_loss,
-            0.4,
-        )
+    lossy_frequency = phx.solver.maxwell.FrequencyMaxwellOperator(
+        bridge.cochain,
+        runtime.layout,
+        magnetic_loss,
+        0.4,
+    )
+    lossy_ledger = lossy_frequency.power_ledger(field, lossy_frequency.mv(field))
+    assert lossy_ledger.magnetic_material > 0.0
+    assert lossy_ledger.relative_residual < 1e-12
     state = runtime.initialize()
     dt = 0.05 * runtime.stable_dt
     batch = phx.solver.maxwell.prepare_compatible_maxwell_case_batch(
@@ -330,14 +398,18 @@ def test_maxwell_platform_scenario_4() -> None:
 def test_refresh_contracts() -> None:
     bridge = _bridge((2, 2))
     one_pole = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
-        jnp.asarray([1.0]),
-        jnp.asarray([0.1]),
-        jnp.asarray([0.5]),
+        phx.solver.maxwell.MaxwellLorentzPoles(
+            jnp.asarray([1.0]),
+            jnp.asarray([0.1]),
+            jnp.asarray([0.5]),
+        )
     )
     two_poles = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
-        jnp.asarray([1.0, 2.0]),
-        jnp.asarray([0.1, 0.2]),
-        jnp.asarray([0.5, 0.25]),
+        phx.solver.maxwell.MaxwellLorentzPoles(
+            jnp.asarray([1.0, 2.0]),
+            jnp.asarray([0.1, 0.2]),
+            jnp.asarray([0.5, 0.25]),
+        )
     )
     runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,

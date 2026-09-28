@@ -97,6 +97,35 @@ checks. Both refuse query routes with any invalid point (for example
 declares trailing component axes, so the coefficients have shape
 `space.modal_shape + event_shape`.
 
+### Nonuniform Fourier transforms
+
+The internal nonuniform Fourier owner (`phydrax._spectral._nonuniform_fourier`)
+serves MRI encoding, scattered Fourier fits, Fourier interpolation and
+trajectory radiation. `NonuniformFourierPlan` covers Type 1
+(`f_k = sum_j c_j exp(i sign k.x_j)`) and Type 2
+(`c_j = sum_k f_k exp(i sign k.x_j)`) in one to three dimensions with integer
+modes and `2 pi`-periodic coordinates. Routes are `"direct"` and `"chunked"`
+(exact sums) and `"gridded"`, which requires `tolerance`: it spreads with the
+exponential-of-semicircle kernel of Barnett, Magland and af Klinteberg (2019)
+onto a twofold oversampled grid, applies an FFT, and divides by the kernel
+Fourier transform evaluated by Gauss–Legendre quadrature. Half of the requested
+relative error (a margin, because the width rule is approximate) is split
+evenly over the axes; each axis uses width
+`ceil(log10(1 / axis_tolerance)) + 1` and `beta = 2.30 * width`.
+`NonuniformFourierType3Plan` evaluates `f_k = sum_j c_j exp(i sign s_k.x_j)`
+for sources and targets in declared boxes with the same kernel and a gridded
+Type-2 inner transform; the spreading and inner stages each receive half of
+the tolerance. Its result carries a per-target `supported` mask that
+is false outside the declared boxes.
+
+Preparation takes an explicit real `dtype`; a tolerance below about 100 ulps
+of that dtype is refused. Gridded plans refuse fine grids above
+`maximum_grid_points` with `NonuniformFourierResourceError`, and prepared
+transforms report `NonuniformFourierGridEvidence`: requested tolerance, kernel
+width and `beta`, fine shape, grid points and bytes, and per-chunk stencil
+entries. A gridded Type 1 is the exact adjoint of the opposite-sign gridded
+Type 2.
+
 ## Axis domains and unbounded intervals
 
 `AxisDomain` distinguishes bounded, periodic, half-line, and real-line support.

@@ -8,12 +8,15 @@ import numpy as np
 from jax._src.core import JaxprEqn
 
 from ._common import (
+    _atom_const_val,
+    _atom_numel,
     _atom_shape,
     _empty_index_sets,
     _index_sets,
     _numel,
     _union_all,
     IndexSet,
+    StateConsts,
     StateIndices,
 )
 
@@ -70,3 +73,29 @@ def _prop_reduce(eqn: JaxprEqn, state_indices: StateIndices) -> None:
         out_indices[group_map[in_flat]] |= elem_deps
 
     state_indices[eqn.outvars[0]] = out_indices
+
+
+_BITWISE_REDUCTIONS: dict[str, np.ufunc] = {
+    "reduce_and": np.bitwise_and,
+    "reduce_or": np.bitwise_or,
+    "reduce_xor": np.bitwise_xor,
+}
+
+
+def _prop_bitwise_reduce(
+    eqn: JaxprEqn, state_indices: StateIndices, state_consts: StateConsts
+) -> None:
+    """Bitwise and logical reductions are piecewise constant.
+
+    Outputs carry no dependencies. Known inputs are reduced to a known result so
+    that validity predicates built from static index arrays (e.g. Equinox bounds
+    checks) keep their branch selection resolvable downstream.
+    """
+    state_indices[eqn.outvars[0]] = _empty_index_sets(_atom_numel(eqn.outvars[0]))
+    value = _atom_const_val(eqn.invars[0], state_consts)
+    if value is not None:
+        state_consts[eqn.outvars[0]] = np.asarray(
+            _BITWISE_REDUCTIONS[eqn.primitive.name].reduce(
+                value, axis=tuple(eqn.params["axes"])
+            )
+        )

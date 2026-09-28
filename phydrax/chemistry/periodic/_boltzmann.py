@@ -22,6 +22,7 @@ from jax.typing import ArrayLike
 from phydrax.operators.periodic import PeriodicSpectrumResult
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_finite_float
@@ -41,7 +42,7 @@ from ._observables import PeriodicVelocityResult
 
 
 _BOLTZMANN_CONSTANT_SI = 1.380649e-23
-_ELECTRON_CHARGE_SI = -1.602176634e-19
+_ELECTRON_CHARGE_SI = -float(ElectromagneticScaleContract.si().elementary_charge)
 _VELOCITY_UNIT = derived_unit("m/s", ((METER, 1), (SECOND, -1)))
 
 

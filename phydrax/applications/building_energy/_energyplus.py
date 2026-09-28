@@ -22,7 +22,7 @@ from .._energy_series import EnergySeries
 
 
 if TYPE_CHECKING:
-    from ..._external_runtime import EnergyRunResult, PinnedExecutable
+    from ..._external_runtime import PinnedExecutable, PinnedRunResult
 
 
 class EnergyPlusVariable(StrictModule):
@@ -86,7 +86,7 @@ class EnergyPlusReference(StrictModule):
 
     def run(
         self, executable: PinnedExecutable, weather: bytes, *, timeout: float = 120
-    ) -> EnergyRunResult:
+    ) -> PinnedRunResult:
         from ..._external_runtime import run_energyplus
 
         result = run_energyplus(

@@ -16,9 +16,10 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._lorentz import minkowski_dot
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._kinematics import mandelstam, minkowski_dot, Particle
+from ._kinematics import mandelstam, Particle
 from ._wavefunctions import (
     dirac_adjoint,
     dirac_u,

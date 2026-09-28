@@ -195,7 +195,7 @@ def determinant_small_linear(
     if value.shape[-2:] != (dimension, dimension):
         raise ValueError("Small matrix shape does not match the plan dimension.")
     scale = jnp.max(jnp.abs(value), axis=(-2, -1))
-    safe_scale = jnp.where(scale > 0.0, scale, 1.0)
+    safe_scale = jnp.where(scale > 0.0, scale, 1.0).astype(value.dtype)
     scaled = value / safe_scale[..., None, None]
     if dimension == 1:
         determinant = scaled[..., 0, 0]

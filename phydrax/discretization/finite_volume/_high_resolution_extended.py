@@ -142,12 +142,13 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
         self.optimal_weights = jnp.asarray(optimal_weights)
         self.cutoff = cutoff_
         self.epsilon = epsilon_
+        # Static host metadata; report_id keeps the NumPy-scalar payload above.
         self.qualification = TENOQualification(
             order,
             len(offsets),
-            constant_residual,
-            polynomial_residual,
-            passed,
+            float(constant_residual),
+            float(polynomial_residual),
+            bool(passed),
             report_id,
         )
         self.plan_id = canonical_fingerprint(

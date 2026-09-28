@@ -756,7 +756,7 @@ def _orthogonality_error(
     /,
 ) -> Array:
     gram = jax.vmap(lambda left: jax.vmap(lambda right: inner(left, right))(basis))(basis)
-    indices = jnp.arange(basis.shape[0])
+    indices = jnp.arange(basis.shape[0], dtype=jnp.asarray(effective_dimension).dtype)
     active = indices < effective_dimension
     mask = active[:, None] & active[None, :]
     identity = jnp.eye(basis.shape[0], dtype=gram.dtype)

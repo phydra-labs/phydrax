@@ -268,12 +268,9 @@ def test_production_modalities_scenario_2() -> None:
         phx.discretization.StructuredCochainBridge(grid),
         polarization="tez",
         constitutive=phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
-            # ty: ignore[invalid-argument-type]
-            [1.0],
-            # ty: ignore[invalid-argument-type]
-            [0.1],
-            # ty: ignore[invalid-argument-type]
-            [0.5],
+            phx.solver.maxwell.MaxwellLorentzPoles(
+                jnp.asarray([1.0]), jnp.asarray([0.1]), jnp.asarray([0.5])
+            )
         ),
         pml=phx.solver.maxwell.MaxwellCPMLPlan(1),
         sources=(source, phx.solver.PICMaxwellCurrentSourcePlan()),

@@ -35,6 +35,7 @@ from ._normal import (
 from ._polylog import polylog
 from ._solid_harmonic import solid_harmonic_irregular, solid_harmonic_regular
 from ._spherical_harmonic import sph_harm_y, sph_harm_y_cart, sph_legendre_p
+from ._synchrotron import synchrotron_f, synchrotron_g, synchrotron_h
 from ._zeta import hurwitz_zeta, zeta
 
 
@@ -89,6 +90,9 @@ __all__ = [
     "sph_harm_y",
     "sph_harm_y_cart",
     "sph_legendre_p",
+    "synchrotron_f",
+    "synchrotron_g",
+    "synchrotron_h",
     "voigt_profile",
     "wofz",
     "yv",

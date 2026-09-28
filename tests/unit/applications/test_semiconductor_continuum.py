@@ -188,7 +188,7 @@ def test_semiconductor_continuum_scenario_2() -> None:
     np.testing.assert_allclose(
         prepared.terminal_current(u), jnp.asarray([expected, -expected]), rtol=2e-13
     )
-    area, length, permittivity = 1e-12, 1e-6, 3.9 * 8.8541878128e-12
+    area, length, permittivity = 1e-12, 1e-6, 3.9 * 8.8541878188e-12
     support = TransportSupport.interval(
         np.asarray([0, 0.1, 0.35, 0.8, 1.0]) * length, area=area
     )

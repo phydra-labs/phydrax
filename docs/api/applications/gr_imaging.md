@@ -1,8 +1,8 @@
 # General-relativistic imaging
 
 Observer screens, fixed-capacity ray trajectories and ordered events, transported ray
-bundles, fast-/slow-light plasma fields, source-evidenced Stokes-$I$ thermal
-synchrotron with explicitly unqualified polarization/Faraday approximations, typed
+bundles, fast-/slow-light plasma fields, the GR-invariant form of local emission
+coefficients owned by [`phydrax.electromagnetics`](../electromagnetics.md), typed
 ray paths with chart/path/snapshot-bound active-segment midpoint sampling, invariant
 transfer, Stokes images with canonical `phydrax.units.JANSKY`, interferometry, neutral
 array payloads, and fixed-branch inference. See the
@@ -57,13 +57,8 @@ labels or a claim that equal chart names imply equal geometry.
         - FastLightSnapshot
         - FixedGRWorldtubeSamplingPlan
         - MonotoneSlowLightWorldtube
-        - ThermalSynchrotronUnitContract
-        - ThermalSynchrotronDomain
-        - ThermalSynchrotronEvidence
-        - ThermalSynchrotronCoefficients
-        - InvariantSynchrotronCoefficients
-        - ThermalSynchrotronModel
-        - invariant_synchrotron_coefficients
+        - InvariantEmissionCoefficients
+        - invariant_emission_coefficients
         - InvariantTransferUnitContract
         - InvariantScalarTransferEvidence
         - InvariantScalarTransferResult

@@ -1,0 +1,14 @@
+{
+  "case": "tests/unit/solver/test_pic_providers.py::_tiny_yee_case",
+  "command": "OMP_NUM_THREADS=1 warpx.3d inputs (deck: phydrax.solver.warpx_input(_tiny_yee_case()))",
+  "date": "2026-09-28",
+  "executable_sha256": "7c581fc0b6e9a2d1d91ac5422c2a994ce90a5b0f58856e4d028d267107687042",
+  "files": {
+    "openpmd_000000.h5": "dd50a7034ecef0ab60e8b989359de4493569439c665939b5f83c6a7e1ebf4eb9",
+    "openpmd_000001.h5": "23c11b75d69ca1b06e4c200474a70682e5eea365a4ee8cb8ac2f260663ffdfbb",
+    "openpmd_000002.h5": "0f074ef56cfdb072b38d0937d398885a94ce0f70ca9cbddb1be129adb9c5997f"
+  },
+  "license": "BSD-3-Clause-LBNL",
+  "provider": "warpx",
+  "version": "26.01"
+}

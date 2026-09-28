@@ -72,8 +72,8 @@ does not make float32 into float64. Out-of-domain and failed-convergence values
 are returned for diagnosis with `successful=False`, not silently accepted or
 clipped into a successful thermodynamic state.
 
-JAX implicit differentiation uses the diagonal caloric Jacobian through
-`lax.custom_root`, not differentiation of iteration counts or branch decisions.
+JAX implicit differentiation uses the diagonal caloric Jacobian through a
+custom JVP root rule, not differentiation of iteration counts or branch decisions.
 `derivative_valid` admits successful interiors of ice-saturated,
 liquid-saturated, and unsaturated branches. It excludes saturation onset,
 freezing/coexistence, and temperature-domain boundaries. Callers **must check

@@ -86,10 +86,10 @@ def _propagation_case() -> dict[str, float | int]:
     )
     modal = fm.prepare_modal_boundary(operator, 0.125)
     difference = jnp.sqrt(
-        jnp.sum(jnp.abs(boundary.a - modal.boundary.a) ** 2)
-        + jnp.sum(jnp.abs(boundary.b - modal.boundary.b) ** 2)
-        + jnp.sum(jnp.abs(boundary.c - modal.boundary.c) ** 2)
-        + jnp.sum(jnp.abs(boundary.d - modal.boundary.d) ** 2)
+        jnp.sum(jnp.abs(boundary.s11 - modal.boundary.s11) ** 2)
+        + jnp.sum(jnp.abs(boundary.s12 - modal.boundary.s12) ** 2)
+        + jnp.sum(jnp.abs(boundary.s21 - modal.boundary.s21) ** 2)
+        + jnp.sum(jnp.abs(boundary.s22 - modal.boundary.s22) ** 2)
     )
     return {
         "boundary_modal_difference": float(difference),

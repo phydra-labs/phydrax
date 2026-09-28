@@ -15,25 +15,33 @@ def test_reduced_pic_and_ghost_fluid_workflows_share_fixed_shape_contracts() -> 
     support = phx.discretization.ParticleSetPlan(
         jnp.arange(2), jnp.ones((2,)), ambient_dimension=1
     ).prepare()
-    population = phx.discretization.ParticlePopulationPlan(support).initialize()
     field_plan = phx.solver.CompatibleMaxwell1DPlan(grid_1d)
-    reduced = phx.solver.ReducedElectromagneticPICPlan(
-        field_plan,
-        phx.discretization.pic.ReducedPICTransferPlan(grid_1d),
-        -1.0,
-    )
-    state = phx.solver.ReducedElectromagneticPICState(
-        phx.discretization.pic.PICParticleState(
-            jnp.asarray([[0.2], [0.7]]), jnp.zeros((2, 3))
+    reduced = phx.solver.ElectromagneticPICPlan(
+        phx.solver.ReducedMaxwellPICFieldSolver(
+            field_plan, phx.discretization.pic.ReducedPICTransferPlan(grid_1d)
         ),
-        population,
-        field_plan.initialize(),
-        jnp.asarray(0.0),
-        jnp.asarray(0, dtype=jnp.int32),
+        species=tuple(
+            phx.discretization.pic.PICSpeciesPlan(
+                phx.discretization.ParticlePopulationPlan(support),
+                phx.discretization.pic.PICChargeModelPlan(
+                    sign,
+                    name,
+                    minimum_charge_number=1,
+                    maximum_charge_number=1,
+                    initial_charge_number=1,
+                ),
+            )
+            for sign, name in ((-1.0, "electrons"), (1.0, "ions"))
+        ),
     )
-    pic_result = reduced.step(state, 1e-3)
+    # A periodic 1-D domain admits Gauss-consistent fields only when neutral.
+    position = jnp.asarray([[0.2], [0.7]])
+    state = reduced.initialize(
+        (position + 0.01, position), (jnp.zeros((2, 3)), jnp.zeros((2, 3))), 1e-3
+    )
+    pic_result = reduced.step_detailed(state, 1e-3)
     assert pic_result.successful
-    assert pic_result.accepted_state.particles.position.shape == (2, 1)
+    assert pic_result.accepted_state.species[0].particles.position.shape == (2, 1)
 
     grid_2d = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformCellAxisSpec(8) for _ in range(2)),

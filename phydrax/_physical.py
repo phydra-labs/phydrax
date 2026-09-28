@@ -20,7 +20,10 @@ from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from .typing import parse
 from .units import (
+    CHARGE,
+    COULOMB,
     derived_unit,
+    DimensionSignature,
     KILOGRAM,
     LENGTH,
     MASS,
@@ -468,7 +471,11 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
             DimensionalScaleContract.si(),
             "6.67430e-11",
             299_792_458,
-            "1.054571817e-34",
+            # SI fixes h = 6.62607015e-34 J s exactly; hbar = h / (2 pi) is
+            # irrational, so store it as the exact decimal rational carrying 40
+            # significant digits (relative error < 1e-39), far below float64
+            # resolution, so float(hbar) is correctly rounded.
+            "1.054571817646156391262428003302280744723e-34",
             "1.380649e-23",
         )
 
@@ -671,8 +678,295 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
         return contract
 
 
+_CODATA_2022_ELEMENTARY_CHARGE = Fraction(1_602_176_634, 10**28)
+_CODATA_2022_ELECTRON_MASS = Fraction(91_093_837_139, 10**41)
+_CODATA_2022_VACUUM_PERMITTIVITY = Fraction(88_541_878_188, 10**22)
+
+# openPMD unitDimension axis order: L, M, T, I, theta, N, J.
+_OPENPMD_AXES = ("length", "mass", "time", "current", "temperature", "amount", "luminous")
+
+
+def _openpmd_unit_dimension(dimension: DimensionSignature, /) -> tuple[float, ...]:
+    exponents = {axis: Fraction(0) for axis in _OPENPMD_AXES}
+    for axis, numerator, denominator in dimension.terms:
+        exponent = Fraction(numerator, denominator)
+        match axis:
+            case "charge":
+                exponents["current"] += exponent
+                exponents["time"] += exponent
+            case "length" | "mass" | "time" | "temperature" | "amount":
+                exponents[axis] += exponent
+            case _:
+                raise ValueError(
+                    f"Dimension axis {axis!r} has no openPMD representation."
+                )
+    return tuple(float(exponents[axis]) for axis in _OPENPMD_AXES)
+
+
+class ElectromagneticScaleContract(StrictModule, NonTrainableState):
+    """Exact realization of ``e``, ``m_e``, and ``epsilon_0`` over a relativity scale.
+
+    The speed of light and reduced Planck constant are owned by ``relativity``.
+    Constants are exact rationals in the units of ``relativity.dimensional_scale``
+    and ``charge_unit``; derived constants are exact up to the declared ``pi``.
+    """
+
+    relativity: RelativityScaleContract = eqx.field(static=True)
+    charge_unit: UnitDefinition = eqx.field(static=True)
+    elementary_charge: Fraction = eqx.field(static=True)
+    electron_mass: Fraction = eqx.field(static=True)
+    vacuum_permittivity: Fraction = eqx.field(static=True)
+    constant_set_id: str = eqx.field(static=True)
+    scale_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        relativity: RelativityScaleContract,
+        charge_unit: UnitDefinition,
+        elementary_charge: PhysicalConstant,
+        electron_mass: PhysicalConstant,
+        vacuum_permittivity: PhysicalConstant,
+        /,
+        *,
+        constant_set_id: str,
+    ) -> None:
+        if not isinstance(relativity, RelativityScaleContract):
+            raise TypeError("relativity must be a RelativityScaleContract.")
+        if not relativity.quantum_constants_explicit:
+            raise ValueError(
+                "Electromagnetic scales require explicitly declared hbar and k_B."
+            )
+        if not isinstance(charge_unit, UnitDefinition):
+            raise TypeError("charge_unit must be a UnitDefinition.")
+        if charge_unit.dimension != CHARGE:
+            raise ValueError("charge_unit must have charge dimension.")
+        reference_system_id = relativity.dimensional_scale.length_unit.reference_system_id
+        if charge_unit.reference_system_id != reference_system_id:
+            raise ValueError(
+                "charge_unit must share the dimensional scale reference system."
+            )
+        if not isinstance(constant_set_id, str) or not constant_set_id.strip():
+            raise ValueError("constant_set_id must be a non-empty string.")
+        charge = _positive_constant(elementary_charge, "elementary_charge")
+        mass = _positive_constant(electron_mass, "electron_mass")
+        permittivity = _positive_constant(vacuum_permittivity, "vacuum_permittivity")
+        constant_set = constant_set_id.strip()
+        self.relativity = relativity
+        self.charge_unit = charge_unit
+        self.elementary_charge = charge
+        self.electron_mass = mass
+        self.vacuum_permittivity = permittivity
+        self.constant_set_id = constant_set
+        self.scale_id = canonical_fingerprint(
+            {
+                "kind": "electromagnetic-scale-contract",
+                "relativity": relativity.scale_id,
+                "charge_unit": charge_unit.unit_id,
+                "elementary_charge": [charge.numerator, charge.denominator],
+                "electron_mass": [mass.numerator, mass.denominator],
+                "vacuum_permittivity": [
+                    permittivity.numerator,
+                    permittivity.denominator,
+                ],
+                "constant_set_id": constant_set,
+            }
+        )
+
+    @classmethod
+    def si(cls) -> ElectromagneticScaleContract:
+        """Return CODATA 2022 SI values over :meth:`RelativityScaleContract.si`."""
+        return cls(
+            RelativityScaleContract.si(),
+            COULOMB,
+            _CODATA_2022_ELEMENTARY_CHARGE,
+            _CODATA_2022_ELECTRON_MASS,
+            _CODATA_2022_VACUUM_PERMITTIVITY,
+            constant_set_id="codata-2022",
+        )
+
+    @classmethod
+    def code_units(
+        cls,
+        dimensional_scale: DimensionalScaleContract,
+        charge_unit: UnitDefinition,
+        /,
+        *,
+        gravitational_constant: PhysicalConstant,
+        speed_of_light: PhysicalConstant,
+        reduced_planck_constant: PhysicalConstant,
+        boltzmann_constant: PhysicalConstant,
+        elementary_charge: PhysicalConstant,
+        electron_mass: PhysicalConstant,
+        vacuum_permittivity: PhysicalConstant,
+        constant_set_id: str,
+    ) -> ElectromagneticScaleContract:
+        """Build a code-unit scale with every constant declared explicitly."""
+        return cls(
+            RelativityScaleContract(
+                dimensional_scale,
+                gravitational_constant,
+                speed_of_light,
+                reduced_planck_constant,
+                boltzmann_constant,
+            ),
+            charge_unit,
+            elementary_charge,
+            electron_mass,
+            vacuum_permittivity,
+            constant_set_id=constant_set_id,
+        )
+
+    @property
+    def speed_of_light(self) -> Fraction:
+        return self.relativity.speed_of_light
+
+    @property
+    def reduced_planck_constant(self) -> Fraction:
+        return self.relativity.reduced_planck_constant
+
+    @property
+    def vacuum_permeability(self) -> Fraction:
+        """``mu_0 = 1 / (epsilon_0 c^2)``."""
+        return 1 / (self.vacuum_permittivity * self.speed_of_light**2)
+
+    @property
+    def vacuum_impedance(self) -> Fraction:
+        """``Z_0 = 1 / (epsilon_0 c)``."""
+        return 1 / (self.vacuum_permittivity * self.speed_of_light)
+
+    @property
+    def fine_structure(self) -> Fraction:
+        """``alpha = e^2 / (4 pi epsilon_0 hbar c)``."""
+        return self.elementary_charge**2 / (
+            4
+            * Fraction.from_float(pi)
+            * self.vacuum_permittivity
+            * self.reduced_planck_constant
+            * self.speed_of_light
+        )
+
+    @property
+    def classical_electron_radius(self) -> Fraction:
+        """``r_e = e^2 / (4 pi epsilon_0 m_e c^2)``."""
+        return self.elementary_charge**2 / (
+            4
+            * Fraction.from_float(pi)
+            * self.vacuum_permittivity
+            * self.electron_mass
+            * self.speed_of_light**2
+        )
+
+    @property
+    def schwinger_field(self) -> Fraction:
+        """Critical field ``E_S = m_e^2 c^3 / (e hbar)``."""
+        return (
+            self.electron_mass**2
+            * self.speed_of_light**3
+            / (self.elementary_charge * self.reduced_planck_constant)
+        )
+
+    def unit_si_map(self) -> dict[str, tuple[float, tuple[float, ...]]]:
+        """Return openPMD ``(unitSI, unitDimension)`` for each field quantity.
+
+        ``unitDimension`` holds seven powers in openPMD order ``(L, M, T, I,
+        theta, N, J)``; charge contributes ``I*T``.
+        """
+        if self.charge_unit.reference_system_id != "si":
+            raise ValueError("unit_si_map requires units referenced to the SI system.")
+        dimensional = self.relativity.dimensional_scale
+        length = dimensional.length_unit
+        mass = dimensional.mass_unit
+        time = dimensional.time_unit
+        charge = self.charge_unit
+        units = {
+            "length": length,
+            "mass": mass,
+            "time": time,
+            "charge": charge,
+            "velocity": dimensional.velocity_unit,
+            "momentum": dimensional.canonical_momentum_unit,
+            "energy": self.relativity.energy_unit,
+            "current": derived_unit("Q/T", ((charge, 1), (time, -1))),
+            "charge_density": derived_unit("Q/L^3", ((charge, 1), (length, -3))),
+            "current_density": derived_unit(
+                "Q/(T*L^2)", ((charge, 1), (time, -1), (length, -2))
+            ),
+            "electric_field": derived_unit(
+                "M*L/(Q*T^2)", ((mass, 1), (length, 1), (charge, -1), (time, -2))
+            ),
+            "magnetic_field": derived_unit(
+                "M/(Q*T)", ((mass, 1), (charge, -1), (time, -1))
+            ),
+        }
+        return {
+            name: (
+                float(unit.scale_to_reference),
+                _openpmd_unit_dimension(unit.dimension),
+            )
+            for name, unit in units.items()
+        }
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "relativity": self.relativity.to_dict(),
+            "charge_unit": self.charge_unit.to_dict(),
+            "elementary_charge": _fraction_payload(self.elementary_charge),
+            "electron_mass": _fraction_payload(self.electron_mass),
+            "vacuum_permittivity": _fraction_payload(self.vacuum_permittivity),
+            "constant_set_id": self.constant_set_id,
+            "scale_id": self.scale_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> ElectromagneticScaleContract:
+        if not isinstance(payload, Mapping):
+            raise TypeError("Electromagnetic scale payload must be a mapping.")
+        expected = {
+            "relativity",
+            "charge_unit",
+            "elementary_charge",
+            "electron_mass",
+            "vacuum_permittivity",
+            "constant_set_id",
+            "scale_id",
+        }
+        if set(payload) != expected:
+            raise ValueError(
+                "Electromagnetic scale payload must use the canonical fields."
+            )
+        relativity_payload = payload["relativity"]
+        charge_payload = payload["charge_unit"]
+        if not isinstance(relativity_payload, Mapping) or not isinstance(
+            charge_payload, Mapping
+        ):
+            raise TypeError("Electromagnetic scale nested payloads must be mappings.")
+        constant_set_id = payload["constant_set_id"]
+        if not isinstance(constant_set_id, str):
+            raise TypeError("constant_set_id payload must be a string.")
+        contract = cls(
+            RelativityScaleContract.from_dict(relativity_payload),
+            UnitDefinition.from_dict(charge_payload),
+            _fraction_from_payload(payload["elementary_charge"], "elementary_charge"),
+            _fraction_from_payload(payload["electron_mass"], "electron_mass"),
+            _fraction_from_payload(
+                payload["vacuum_permittivity"],
+                "vacuum_permittivity",
+            ),
+            constant_set_id=constant_set_id,
+        )
+        claimed_id = payload["scale_id"]
+        if not isinstance(claimed_id, str):
+            raise TypeError("Electromagnetic scale payload scale_id must be a string.")
+        if claimed_id != contract.scale_id:
+            raise ValueError(
+                "Electromagnetic scale payload fingerprint does not match its content."
+            )
+        return contract
+
+
 __all__ = [
     "DimensionalScaleContract",
+    "ElectromagneticScaleContract",
     "LengthCoordinateKind",
     "SpatialCoordinateContract",
 ]

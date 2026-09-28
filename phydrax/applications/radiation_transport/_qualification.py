@@ -72,6 +72,43 @@ _SPECS = (
         },
         ("correlated-k-reference", "polarized-transfer", "sensor-response"),
     ),
+    (
+        "radiation-transport.em-shower-matter-processes",
+        {
+            "particles": "photon-electron-positron",
+            "processes": (
+                "bethe-heitler-pair-seltzer-berger-bremsstrahlung-"
+                "delta-rays-annihilation-relaxation"
+            ),
+            "suppression": "lpm-and-ter-mikaelian",
+            "data": "governed-nist-or-source-faithful-analytic",
+            "provider_oracle": "pinned-geant4-optional-provider-boundary",
+        },
+        (
+            "shower-longo-profile",
+            "shower-radiation-length-scaling",
+            "matter-process-energy-ledger",
+            "pair-threshold-and-asymptote",
+            "seltzer-berger-differential-spectrum",
+            "geant4-provider-oracle",
+        ),
+    ),
+    (
+        "radiation-transport.charged-step-photon-production",
+        {
+            "inputs": "m1a-charged-step-bank",
+            "transition_radiation": "garibian-cherry-foil-stack-with-absorption",
+            "cherenkov": "frank-tamm-declared-band",
+            "secondary_storage": "fixed-capacity-atomic-refusal",
+        },
+        (
+            "foil-stack-transition-radiation",
+            "formation-length-scaling",
+            "frank-tamm-count-and-energy",
+            "step-process-energy-ledger",
+            "capacity-and-identity-invariance",
+        ),
+    ),
 )
 
 _REQUIRED_GATES = (

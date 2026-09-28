@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 
@@ -81,7 +82,7 @@ class DiagnosticXRayExperimentPlan(StrictModule, NonTrainableState):
             source.directions,
             source.energies,
             jr.fold_in(key, 1),
-            history_ids=source.history_ids,
+            identities=(jnp.zeros_like(source.history_ids), source.history_ids),
             weights=source.weights,
         )
         detector = self.detector.score(transport)

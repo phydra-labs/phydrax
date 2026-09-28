@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -20,6 +21,7 @@ from ...particle import (
     ParticlePopulationState,
 )
 from .._charge_state import PICChargeModelPlan, PICChargeState
+from .._process import AbstractPICParticleAllocator
 from .._types import PICParticleState
 from ._types import PICIonizationResult
 
@@ -92,7 +94,15 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         step_index: ArrayLike,
         /,
+        *,
+        allocator: AbstractPICParticleAllocator | None = None,
     ) -> PICIonizationResult:
+        """Ionize eligible ions and create one electron at each ionized ion.
+
+        Electrons are allocated through ``allocator`` (a run's allocation route
+        for created particles) at the ionized ions' positions, or through
+        ``electron_population_plan`` without one.
+        """
         field = jnp.asarray(electric_field, dtype=ion_particles.position.dtype)
         if field.shape != (ion_population.active.size, 3):
             raise ValueError("electric_field must have ion-capacity by three shape.")
@@ -117,13 +127,24 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
         event = sampled[selected]
         selected_mass = ion_population.mass[selected]
         electron_mass = jnp.where(event, selected_mass, 1.0)
-        allocation = electron_population_plan.allocate(
-            electron_population,
-            ParticleAllocationRequest(
-                jnp.arange(self.maximum_events, dtype=jnp.int64),
-                electron_mass,
-                event,
+        request = ParticleAllocationRequest(
+            jnp.arange(self.maximum_events, dtype=jnp.int64),
+            electron_mass,
+            event,
+            parents=(
+                ion_population.id_hi[selected],
+                ion_population.id_lo[selected],
             ),
+        )
+        allocation = (
+            electron_population_plan.allocate(electron_population, request)
+            if allocator is None
+            else allocator.allocate(
+                electron_population_plan,
+                electron_population,
+                request,
+                ion_particles.position[selected],
+            )
         )
         use = event & allocation.allocated
         slots = jnp.maximum(allocation.slots, 0)
@@ -198,32 +219,10 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
                 ion_charge.last_transition_step,
             ),
         )
-        accepted_population = ParticlePopulationState(
-            jnp.where(
-                successful,
-                allocation.candidate_state.active,
-                electron_population.active,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.mass,
-                electron_population.mass,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.incarnation,
-                electron_population.incarnation,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.ever_occupied,
-                electron_population.ever_occupied,
-            ),
-            jnp.where(
-                successful,
-                allocation.candidate_state.retired,
-                electron_population.retired,
-            ),
+        accepted_population = jax.tree.map(
+            lambda proposed, old: jnp.where(successful, proposed, old),
+            allocation.candidate_state,
+            electron_population,
         )
         accepted_electron = PICParticleState(
             jnp.where(successful, electron_state.position, electron_particles.position),

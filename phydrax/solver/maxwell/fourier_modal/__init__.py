@@ -41,6 +41,9 @@ from ._contracts import (
     FourierModalStackElement,
     FrequencyMaxwellMaterial,
     HomogeneousMaxwellPort,
+    MovingLineChargeSource,
+    MovingPointChargeIntegral,
+    MovingPointChargeQuadrature,
     PeriodicMaxwellPort,
 )
 from ._effective_medium import (
@@ -150,6 +153,7 @@ from ._sources import (
     homogeneous_affine_relation,
     integrate_brillouin_fields,
     integrate_brillouin_power,
+    moving_line_charge_excitation,
     plane_wave_excitation,
     point_source_coefficients,
     port_mode_excitation,
@@ -291,4 +295,8 @@ __all__ = [
     "transform_fourier_modal_material",
     "source_plane_affine_relation",
     "translate_prepared_fourier_material",
+    "MovingLineChargeSource",
+    "MovingPointChargeIntegral",
+    "MovingPointChargeQuadrature",
+    "moving_line_charge_excitation",
 ]

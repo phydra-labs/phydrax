@@ -19,7 +19,7 @@ prepared = phx.solver.LaplaceCapacitancePlan3D(
     galerkin,
     {"left": left, "right": right},
 ).prepare()
-result = prepared.solve(permittivity=8.8541878128e-12)
+result = prepared.solve(permittivity=8.8541878188e-12)
 assert bool(result.valid)
 ```
 

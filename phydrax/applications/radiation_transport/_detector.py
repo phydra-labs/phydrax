@@ -30,7 +30,8 @@ class PlanarXRayDetectorResult(StrictModule, NonTrainableState):
     energy_residual: Array
     finite: Array
     successful: Array
-    transport_history_ids: Array
+    transport_id_hi: Array
+    transport_id_lo: Array
     transport_plan_id: str = eqx.field(static=True)
     detector_id: str = eqx.field(static=True)
 
@@ -142,7 +143,7 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
         x = jnp.clip(x, 0, self.pixel_shape[1] - 1)
         y = jnp.clip(y, 0, self.pixel_shape[0] - 1)
         pixel = jnp.stack((y, x), axis=-1)
-        history_count = transport.history_ids.size
+        history_count = transport.id_lo.size
         per_history = jnp.zeros(
             (history_count, 4, *self.pixel_shape), dtype=transport.escaped_energy.dtype
         )
@@ -184,7 +185,8 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
             residual,
             finite,
             successful,
-            transport.history_ids,
+            transport.id_hi,
+            transport.id_lo,
             transport.plan_id,
             self.detector_id,
         )
@@ -204,14 +206,20 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Detector result belongs to another detector or transport plan."
             )
-        if result.transport_history_ids.shape != transport.history_ids.shape:
+        if (
+            result.transport_id_hi.shape != transport.id_hi.shape
+            or result.transport_id_lo.shape != transport.id_lo.shape
+        ):
             raise ValueError("Detector result and transport history shapes differ.")
-        history_ids = eqx.error_if(
-            transport.history_ids,
-            jnp.any(result.transport_history_ids != transport.history_ids),
+        id_lo = eqx.error_if(
+            transport.id_lo,
+            jnp.any(result.transport_id_hi != transport.id_hi)
+            | jnp.any(result.transport_id_lo != transport.id_lo),
             "Detector result belongs to different transport histories.",
         )
-        count = history_ids.size
+        # Hit banks carry one integer event identity; pack both identity words.
+        event_ids = (transport.id_hi.astype(jnp.int64) << 32) | id_lo.astype(jnp.int64)
+        count = event_ids.size
         flat_pixel = (
             result.pixel_index[:, 0] * self.pixel_shape[1] + result.pixel_index[:, 1]
         )
@@ -219,7 +227,7 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
             result.hit_position - transport.terminal_position, axis=-1
         )
         return SensitiveHitBank(
-            event_ids=history_ids,
+            event_ids=event_ids,
             hit_ids=jnp.zeros((count, 1), dtype=jnp.int32),
             detector_element_ids=flat_pixel[:, None],
             channel_ids=flat_pixel[:, None],

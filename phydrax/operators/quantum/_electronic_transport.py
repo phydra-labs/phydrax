@@ -23,6 +23,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
@@ -37,7 +38,7 @@ from ...linalg import (
 )
 
 
-_ELECTRON_CHARGE_SI = -1.602176634e-19
+_ELECTRON_CHARGE_SI = -float(ElectromagneticScaleContract.si().elementary_charge)
 
 
 def _adjoint(value: Array, /) -> Array:

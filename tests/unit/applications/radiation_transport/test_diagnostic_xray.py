@@ -105,9 +105,9 @@ def test_diagnostic_xray_source_transport_detector_pipeline_and_hit_adapter() ->
         result.transport, result.detector, conditions_id="synthetic-conditions"
     )
     mismatched_transport = eqx.tree_at(
-        lambda item: item.history_ids,
+        lambda item: item.id_lo,
         result.transport,
-        result.transport.history_ids + jnp.asarray(1, dtype=jnp.uint32),
+        result.transport.id_lo + jnp.asarray(1, dtype=jnp.uint32),
     )
     with pytest.raises(eqx.EquinoxRuntimeError, match="different transport histories"):
         detector.to_sensitive_hits(

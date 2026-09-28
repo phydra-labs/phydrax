@@ -475,8 +475,11 @@ def test_geophysics_production_qualification_scenario_2() -> None:
     )
     # ty: ignore[invalid-argument-type]
     observer = phx.solver.maxwell.FieldProbePlan("electric", [0])
-    # ty: ignore[invalid-argument-type]
-    material = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan([1.0], [0.1], [0.5])
+    material = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
+        phx.solver.maxwell.MaxwellLorentzPoles(
+            jnp.asarray([1.0]), jnp.asarray([0.1]), jnp.asarray([0.5])
+        )
+    )
     runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,
         polarization="tez",

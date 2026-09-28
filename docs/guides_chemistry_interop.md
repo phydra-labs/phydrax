@@ -84,7 +84,7 @@ properties fail capability admission.
 
 ## Executable isolation
 
-Executable providers must use `PinnedExecutable` and `run_energy_command`: exact
+Executable providers must use `PinnedExecutable` and `run_pinned_command`: exact
 binary digest, argv without a shell, private working directory, bounded I/O,
 timeout, process-group cleanup, and detached artifacts. This operational
 isolation is not a security sandbox; provider inputs remain trusted executable

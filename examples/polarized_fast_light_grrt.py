@@ -90,14 +90,16 @@ def main() -> None:
         jnp.sum(sampled.magnetic_four_vector[..., 1:] ** 2, axis=-1)
     )
     frequency = jnp.full(sampled.electron_number_density.shape, 1.0e10)
-    local = astro.ThermalSynchrotronModel(scale=scale).evaluate(
+    local = phx.electromagnetics.ThermalSynchrotronModel(
+        scale=phx.ElectromagneticScaleContract.si()
+    ).evaluate(
         sampled.electron_number_density,
         sampled.electron_temperature,
         magnetic_strength,
         frequency,
         jnp.full(frequency.shape, 0.5),
     )
-    invariant = astro.invariant_synchrotron_coefficients(local, frequency)
+    invariant = astro.invariant_emission_coefficients(local, frequency)
 
     transfer = astro.PolarizedInvariantTransferPlan(
         path,

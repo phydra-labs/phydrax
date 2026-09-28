@@ -50,13 +50,8 @@ from ._events import (
 )
 from ._kinematics import (
     center_of_momentum_frame,
-    FourMomentum,
-    LorentzFrame,
-    lower_four_vector,
     mandelstam,
     MassShell,
-    minkowski_dot,
-    MINKOWSKI_METRIC,
     Particle,
 )
 from ._matrix_element_revision import (
@@ -144,11 +139,8 @@ __all__ = [
     "EventStatus",
     "MatchingMergingPlan",
     "PDFProviderPlan",
-    "FourMomentum",
     "GAMMA_FIVE",
     "GAMMA_MATRICES",
-    "LorentzFrame",
-    "MINKOWSKI_METRIC",
     "MassShell",
     "MultiChannelPhaseSpacePlan",
     "MultiChannelPhaseSpacePoint",
@@ -192,11 +184,9 @@ __all__ = [
     "hard_process_integrand",
     "integrate_hard_process",
     "klein_nishina_differential_cross_section",
-    "lower_four_vector",
     "mandelstam",
     "massive_vector_polarization",
     "massive_vector_polarization_sum",
-    "minkowski_dot",
     "mixed_polarization_density",
     "moller_amplitude",
     "moller_differential_cross_section",

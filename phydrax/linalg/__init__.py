@@ -582,6 +582,7 @@ from ._sparse_factorizations import (
     SparseFactorizationStatus,
     SparseOrdering,
 )
+from ._sparse_lu_analysis import analyze_sparse_lu, SparseLUSymbolicAnalysis
 from ._sparse_providers import (
     available_sparse_providers,
     sparse_provider_availability,
@@ -1241,6 +1242,7 @@ __all__ = [
     "SparseFactorizationKind",
     "SparseFactorizationSolveResult",
     "SparseFactorizationStatus",
+    "SparseLUSymbolicAnalysis",
     "SparseOrdering",
     "SparseProviderAvailability",
     "SparseProviderCapabilities",
@@ -1250,6 +1252,7 @@ __all__ = [
     "SparseTriangularSolveDiagnostics",
     "SparseTriangularSolveResult",
     "SparseTriangularStatus",
+    "analyze_sparse_lu",
     "analyze_sparse_triangular",
     "available_sparse_providers",
     "factorize_sparse",

@@ -18,6 +18,14 @@ from ._experiment import (
     ScalarRadiativeExperimentPlan,
     ScalarRadiativeExperimentResult,
 )
+from ._plasma_transfer import (
+    magnetobremsstrahlung_path_coefficients,
+    ModeCouplingLimit,
+    PlasmaPathCoefficients,
+    PlasmaRayTransferPlan,
+    PlasmaRayTransferResult,
+    PlasmaRayTransferStatus,
+)
 from ._qualification import (
     radiation_transport_candidate_campaigns,
     radiation_transport_candidate_profiles,
@@ -32,6 +40,12 @@ __all__ = [
     "DiagnosticXRayExperimentPlan",
     "DiagnosticXRayExperimentResult",
     "DiagnosticXRaySourcePlan",
+    "magnetobremsstrahlung_path_coefficients",
+    "ModeCouplingLimit",
+    "PlasmaPathCoefficients",
+    "PlasmaRayTransferPlan",
+    "PlasmaRayTransferResult",
+    "PlasmaRayTransferStatus",
     "PolarizedRadiativeExperimentPlan",
     "PolarizedRadiativeExperimentResult",
     "RadiativeSensorPlan",

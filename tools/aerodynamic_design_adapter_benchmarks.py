@@ -24,7 +24,7 @@ from typing import Any
 
 import numpy as np
 
-from phydrax._external_runtime import pin_energy_executable
+from phydrax._external_runtime import pin_executable
 from phydrax.interchange.dafoam import pin_dafoam_runtime, run_dafoam
 from phydrax.interchange.xfoil import run_xfoil_polar, XFOILOperatingPoint
 
@@ -285,7 +285,7 @@ def main() -> None:
     foam.add_argument("--fd-step", type=float, default=1e-3)
     args = parser.parse_args()
     if args.engine == "xfoil":
-        executable = pin_energy_executable(
+        executable = pin_executable(
             args.executable,
             version=args.version,
             license_id="GPL-2.0-or-later",
@@ -328,7 +328,7 @@ def main() -> None:
     else:
         if not math.isfinite(args.fd_step) or args.fd_step <= 0:
             parser.error("--fd-step must be positive and finite")
-        python = pin_energy_executable(
+        python = pin_executable(
             args.python, version=args.python_version, license_id="PSF-2.0"
         )
         runtime = pin_dafoam_runtime(

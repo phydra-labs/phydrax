@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .._external_resource import read_bounded_resource, ResourceLimits
-from .._external_runtime import _artifact, _host_only, EnergyRunResult
+from .._external_runtime import _artifact, _host_only, PinnedRunResult
 from .._fingerprint import canonical_fingerprint
 from ..artifacts import ScientificArtifactEnvelope
 
@@ -156,7 +156,7 @@ class DeviceQualificationError(ValueError):
     No numerical objective, noise estimate or training penalty is synthesized.
     """
 
-    def __init__(self, message: str, *, runs: Sequence[EnergyRunResult] = ()) -> None:
+    def __init__(self, message: str, *, runs: Sequence[PinnedRunResult] = ()) -> None:
         self.runs = tuple(runs)
         self.artifact = _artifact(
             "device-design-qualification",
@@ -176,7 +176,7 @@ def device_artifact(
     kind: str,
     payload: object,
     source: DeviceSource,
-    runs: Sequence[EnergyRunResult],
+    runs: Sequence[PinnedRunResult],
     *,
     error: str = "",
 ) -> ScientificArtifactEnvelope:

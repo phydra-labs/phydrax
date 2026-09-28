@@ -26,7 +26,7 @@ import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Literal, NoReturn, TYPE_CHECKING, TypeAlias
 
 import jax
@@ -45,10 +45,11 @@ from ._external_worker import (
     _send_packet,
 )
 from ._fingerprint import canonical_fingerprint, canonical_json
-from ._host_io import open_regular_file
+from ._host_io import open_regular_beneath, open_regular_file
 from ._identity import ArtifactBindingIdentity
 from ._jax_context import inside_jax_transformation
 from ._model._component import ExecutionCapabilities
+from ._publication import publish_file
 from .artifacts import ScientificArtifactEnvelope
 from .backends._types import BackendUnavailableError
 from .logging import emit
@@ -60,12 +61,12 @@ def _host_only(*values: Any) -> None:
     # calls whose arguments happen to contain a tracer.
     if inside_jax_transformation():
         raise TypeError(
-            "External energy operations cannot execute inside JAX transformations."
+            "External host operations cannot execute inside JAX transformations."
         )
     if any(
         isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(values)
     ):
-        raise TypeError("External energy operations require concrete host values.")
+        raise TypeError("External host operations require concrete host values.")
 
 
 def _require_execution(capabilities: ExecutionCapabilities, /, *values: Any) -> None:
@@ -94,6 +95,9 @@ def _positive_timeout(value: float) -> float:
     if not math.isfinite(value) or value <= 0:
         raise ValueError("timeout must be positive and finite.")
     return value
+
+
+_ARTIFACT_COPY_BYTES = 1024 * 1024
 
 
 def _limits(max_bytes: int) -> ResourceLimits:
@@ -191,7 +195,7 @@ class PinnedExecutable:
         object.__setattr__(self, "path", str(path))
 
 
-def pin_energy_executable(
+def pin_executable(
     path: str | os.PathLike[str], *, version: str, license_id: str, source_url: str = ""
 ) -> PinnedExecutable:
     """Identify exact bytes of a caller-selected trusted-local executable."""
@@ -203,21 +207,85 @@ def pin_energy_executable(
 
 
 @dataclass(frozen=True, slots=True)
-class EnergyOutput:
+class PinnedOutput:
+    """One small declared output file detached into memory."""
+
     path: str
     data: bytes
     artifact: ScientificArtifactEnvelope
 
 
 @dataclass(frozen=True, slots=True)
-class EnergyRunResult:
+class PinnedFileRequest:
+    """One declared file artifact: working-directory path and its byte cap."""
+
+    path: str
+    maximum_bytes: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str):
+            raise TypeError("File artifact paths must be text.")
+        path = _relative_path(self.path)
+        if path.startswith(".phydrax-"):
+            raise ValueError("The .phydrax- prefix is reserved for runtime evidence.")
+        if type(self.maximum_bytes) is not int or self.maximum_bytes <= 0:
+            raise ValueError("File artifact maximum_bytes must be a positive integer.")
+        object.__setattr__(self, "path", path)
+
+
+@dataclass(frozen=True, slots=True)
+class PinnedFileOutputs:
+    """Declared file artifacts published into one caller-owned directory.
+
+    Files stay on disk, so provider output may far exceed ``max_output_bytes``;
+    each declared path has its own cap and all of them share one total cap.
+    """
+
+    destination: str
+    requests: tuple[PinnedFileRequest, ...]
+    maximum_total_bytes: int
+
+    def __post_init__(self) -> None:
+        destination = Path(self.destination).expanduser().resolve(strict=True)
+        if not destination.is_dir():
+            raise ValueError("File artifact destination must be an existing directory.")
+        requests = tuple(self.requests)
+        if not requests or any(
+            not isinstance(request, PinnedFileRequest) for request in requests
+        ):
+            raise TypeError("requests must be a nonempty sequence of PinnedFileRequest.")
+        paths = [request.path for request in requests]
+        if len(set(paths)) != len(paths):
+            raise ValueError("Declared file artifact paths must be unique.")
+        if type(self.maximum_total_bytes) is not int or self.maximum_total_bytes <= 0:
+            raise ValueError("maximum_total_bytes must be a positive integer.")
+        object.__setattr__(self, "destination", str(destination))
+        object.__setattr__(
+            self, "requests", tuple(sorted(requests, key=lambda item: item.path))
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PinnedFileArtifact:
+    """One published file artifact with its verified size and SHA-256 digest."""
+
+    path: str
+    location: str
+    size_bytes: int
+    sha256: str
+    artifact: ScientificArtifactEnvelope
+
+
+@dataclass(frozen=True, slots=True)
+class PinnedRunResult:
     command: tuple[str, ...]
     returncode: int | None
     elapsed_seconds: float
     timed_out: bool
     stdout: bytes
     stderr: bytes
-    outputs: tuple[EnergyOutput, ...]
+    outputs: tuple[PinnedOutput, ...]
+    file_artifacts: tuple[PinnedFileArtifact, ...]
     execution_policy_id: str
     isolation: ExternalIsolation
     network_access: Literal[True]
@@ -231,22 +299,28 @@ class EnergyRunResult:
                 return output.data
         raise KeyError(path)
 
-    def require_success(self) -> EnergyRunResult:
+    def file_artifact(self, path: str) -> PinnedFileArtifact:
+        for artifact in self.file_artifacts:
+            if artifact.path == path:
+                return artifact
+        raise KeyError(path)
+
+    def require_success(self) -> PinnedRunResult:
         if self.error or self.timed_out or self.returncode != 0:
-            raise EnergyRuntimeError(
+            raise ExternalRuntimeError(
                 self.error or "External command failed.", result=self
             )
         return self
 
 
-class EnergyRuntimeError(RuntimeError):
+class ExternalRuntimeError(RuntimeError):
     """Execution failure retaining bounded diagnostic and artifact evidence."""
 
     def __init__(
         self,
         message: str,
         *,
-        result: EnergyRunResult | None = None,
+        result: PinnedRunResult | None = None,
         evidence: Mapping[str, Any] | None = None,
     ) -> None:
         self.result = result
@@ -355,7 +429,105 @@ def _snapshot_executable(
     return destination
 
 
-def run_energy_command(
+def _admit_file_artifacts(root: Path, declared: PinnedFileOutputs, /) -> str:
+    """Return why declared artifacts are refused, or ``""`` before any publication."""
+    total = 0
+    for request in declared.requests:
+        try:
+            with open_regular_beneath(
+                request.path, trusted_root=root, maximum_depth=32
+            ) as opened:
+                size = opened.file_status.st_size
+        except FileNotFoundError:
+            return f"File artifact {request.path!r} is missing."
+        except (OSError, OverflowError, ValueError, RuntimeError) as failure:
+            return f"File artifact {request.path!r}: {failure}"
+        if size > request.maximum_bytes:
+            return (
+                f"File artifact {request.path!r} exceeds its "
+                f"{request.maximum_bytes}-byte limit."
+            )
+        total += size
+        if total > declared.maximum_total_bytes:
+            return "File artifacts exceed maximum_total_bytes."
+    return ""
+
+
+def _publish_file_artifact(
+    root: Path,
+    destination: str,
+    request: PinnedFileRequest,
+    created: list[Path],
+    /,
+) -> tuple[int, str]:
+    location = Path(destination, *PurePosixPath(request.path).parts)
+    with open_regular_beneath(
+        request.path, trusted_root=root, maximum_depth=32
+    ) as opened:
+
+        def copy(stream: BinaryIO) -> None:
+            # The cap bounds bytes written, not only bytes admitted beforehand.
+            remaining = request.maximum_bytes
+            with opened.duplicate_stream() as source:
+                source.seek(0)
+                while block := source.read(min(_ARTIFACT_COPY_BYTES, remaining + 1)):
+                    if len(block) > remaining:
+                        raise ValueError(
+                            f"File artifact {request.path!r} exceeds its "
+                            f"{request.maximum_bytes}-byte limit."
+                        )
+                    remaining -= len(block)
+                    stream.write(block)
+
+        receipt = publish_file(
+            location, copy, maximum_bytes=request.maximum_bytes, mode="exclusive"
+        )
+        created.append(location)
+        if receipt.size_bytes != opened.file_status.st_size:
+            raise RuntimeError(f"File artifact {request.path!r} changed while published.")
+    return receipt.size_bytes, receipt.content_sha256
+
+
+def _collect_file_artifacts(
+    root: Path,
+    declared: PinnedFileOutputs,
+    executable: PinnedExecutable,
+    resource_id: str,
+    /,
+) -> tuple[tuple[PinnedFileArtifact, ...], str]:
+    """Publish every declared artifact, or none of them, with verified digests."""
+    refusal = _admit_file_artifacts(root, declared)
+    if refusal:
+        return (), refusal
+    created: list[Path] = []
+    published: list[PinnedFileArtifact] = []
+    try:
+        for request in declared.requests:
+            size, digest = _publish_file_artifact(
+                root, declared.destination, request, created
+            )
+            envelope = ScientificArtifactEnvelope(
+                artifact_kind="pinned-command-file-artifact",
+                content_digest=digest,
+                producer=Path(executable.path).name,
+                producer_version=executable.version,
+                build_id=executable.sha256,
+                license_id=executable.license_id,
+                resource_id=resource_id,
+                status="complete",
+            )
+            published.append(
+                PinnedFileArtifact(request.path, str(created[-1]), size, digest, envelope)
+            )
+    except (OSError, OverflowError, ValueError, RuntimeError) as failure:
+        # A refused set never leaves a partial publication behind.
+        for location in created:
+            location.unlink(missing_ok=True)
+        return (), f"File artifact publication failed: {failure}"
+    return tuple(published), ""
+
+
+def run_pinned_command(
     executable: PinnedExecutable,
     args: Sequence[str],
     *,
@@ -366,12 +538,20 @@ def run_energy_command(
     max_output_bytes: int = _DEFAULT_BYTES,
     environment: Mapping[str, str] | None = None,
     execution_policy: ExternalExecutionPolicy | None = None,
-) -> EnergyRunResult:
+    artifacts: PinnedFileOutputs | None = None,
+) -> PinnedRunResult:
     """Execute trusted local argv after verifying a private executable snapshot.
 
     Linux executes through the held snapshot descriptor. Darwin executes scripts
     from the private snapshot; path-sensitive native binaries use their verified
     configured path under the declared trusted-local threat model.
+
+    ``outputs`` are small files detached into memory under ``max_output_bytes``.
+    ``artifacts`` declares on-disk file outputs: after a successful command, each
+    declared file is checked against its own cap and the shared total cap, then
+    exclusively published under the caller's destination with its SHA-256
+    digest. A missing or oversize artifact refuses the whole set, and a failed
+    command publishes nothing.
     """
     _host_only(args, inputs, timeout)
     timeout = _positive_timeout(timeout)
@@ -398,6 +578,11 @@ def run_energy_command(
         raise ValueError("The .phydrax- prefix is reserved for runtime evidence.")
     if len(output_names) != len(set(output_names)):
         raise ValueError("Requested output paths must be unique.")
+    if artifacts is not None and not isinstance(artifacts, PinnedFileOutputs):
+        raise TypeError("artifacts must be PinnedFileOutputs or None.")
+    artifact_requests = () if artifacts is None else artifacts.requests
+    if set(output_names).intersection(request.path for request in artifact_requests):
+        raise ValueError("A path cannot be both a detached output and a file artifact.")
     command = (executable.path, *tuple(str(arg) for arg in args))
     if any("\x00" in arg for arg in command):
         raise ValueError("Command arguments cannot contain NUL.")
@@ -409,7 +594,7 @@ def run_energy_command(
     stderr = b""
     detached = []
     enforcement = _execution_enforcement(executable)
-    with tempfile.TemporaryDirectory(prefix="phydrax-energy-") as directory:
+    with tempfile.TemporaryDirectory(prefix="phydrax-pinned-") as directory:
         root = Path(directory)
         identities = _stage_inputs(root, inputs, max_output_bytes)
         resource_id = canonical_fingerprint(
@@ -423,12 +608,18 @@ def run_energy_command(
                 "network_access": policy.network_access,
                 "source_url": executable.source_url,
                 "enforcement": enforcement,
+                "file_artifacts": [
+                    (request.path, request.maximum_bytes) for request in artifact_requests
+                ],
+                "file_artifact_total_bytes": (
+                    0 if artifacts is None else artifacts.maximum_total_bytes
+                ),
             }
         )
         emit(
             "DEBUG",
             "provider.execution.started",
-            "Energy provider execution started",
+            "Pinned provider execution started",
             executable=Path(executable.path).name,
             input_count=len(inputs),
             output_count=len(output_names),
@@ -523,11 +714,11 @@ def run_energy_command(
                     raise ValueError("Combined outputs exceed max_output_bytes.")
                 remaining -= len(resource.data)
                 detached.append(
-                    EnergyOutput(
+                    PinnedOutput(
                         name,
                         resource.data,
                         _artifact(
-                            "energy-engine-output",
+                            "pinned-command-output",
                             resource.data,
                             producer=Path(executable.path).name,
                             version=executable.version,
@@ -540,6 +731,11 @@ def run_energy_command(
                 )
             except (OSError, ValueError) as failure:
                 error = error or f"Output {name!r}: {failure}"
+        file_artifacts: tuple[PinnedFileArtifact, ...] = ()
+        if artifacts is not None and not error:
+            file_artifacts, error = _collect_file_artifacts(
+                root, artifacts, executable, resource_id
+            )
         elapsed = time.monotonic() - start
         evidence = {
             "command": command,
@@ -556,9 +752,12 @@ def run_energy_command(
             "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
             "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
             "outputs": [(item.path, item.artifact.artifact_id) for item in detached],
+            "file_artifacts": [
+                (item.path, item.size_bytes, item.sha256) for item in file_artifacts
+            ],
         }
         artifact = _artifact(
-            "energy-engine-run",
+            "pinned-command-run",
             evidence,
             producer=Path(executable.path).name,
             version=executable.version,
@@ -567,7 +766,7 @@ def run_energy_command(
             resource_id=resource_id,
             error=error,
         )
-        result = EnergyRunResult(
+        result = PinnedRunResult(
             command,
             returncode,
             elapsed,
@@ -575,6 +774,7 @@ def run_energy_command(
             stdout,
             stderr,
             tuple(detached),
+            file_artifacts,
             policy.policy_id,
             policy.isolation,
             policy.network_access,
@@ -585,10 +785,10 @@ def run_energy_command(
     emit(
         "ERROR" if result.error else "INFO",
         ("provider.execution.failed" if result.error else "provider.execution.completed"),
-        "Energy provider execution finished",
+        "Pinned provider execution finished",
         elapsed_seconds=result.elapsed_seconds,
         executable=Path(executable.path).name,
-        output_artifact_count=len(result.outputs),
+        output_artifact_count=len(result.outputs) + len(result.file_artifacts),
         resource_id=resource_id,
         return_code=result.returncode,
         stderr_bytes=len(result.stderr),
@@ -608,7 +808,7 @@ def run_energyplus(
     inputs: Mapping[str, bytes] | None = None,
     timeout: float = 120,
     max_output_bytes: int = _DEFAULT_BYTES,
-) -> EnergyRunResult:
+) -> PinnedRunResult:
     """Run a pinned EnergyPlus CLI with exact IDF/epJSON and EPW bytes."""
     if model_format not in ("idf", "epjson"):
         raise ValueError("model_format must be 'idf' or 'epjson'.")
@@ -618,7 +818,7 @@ def run_energyplus(
         raise ValueError("Additional inputs collide with the model/weather paths.")
     staged.update({model_name: model, "weather.epw": weather})
     requested = tuple(dict.fromkeys((*outputs, "eplusout.err")))
-    result = run_energy_command(
+    result = run_pinned_command(
         executable,
         ("--weather", "weather.epw", "--output-directory", ".", "--readvars", model_name),
         inputs=staged,
@@ -643,7 +843,7 @@ def run_energyplus(
                 error=error,
                 parents=(result.artifact.artifact_id,),
             )
-            raise EnergyRuntimeError(
+            raise ExternalRuntimeError(
                 error, result=replace(result, artifact=failed, error=error)
             )
     return result
@@ -659,9 +859,9 @@ def run_radiance_command(
     timeout: float = 120,
     max_output_bytes: int = _DEFAULT_BYTES,
     environment: Mapping[str, str] | None = None,
-) -> EnergyRunResult:
+) -> PinnedRunResult:
     """Run oconv/rtrace/rfluxmtx/etc.; explicitly pass prior-stage bytes, not a shell pipe."""
-    return run_energy_command(
+    return run_pinned_command(
         executable,
         args,
         inputs=inputs,
@@ -803,7 +1003,7 @@ class _HostWorker:
                     "External runtime response exceeds the configured byte limit."
                 )
             if not response["ok"]:
-                raise EnergyRuntimeError(response["error"], evidence=response)
+                raise ExternalRuntimeError(response["error"], evidence=response)
             if os.fstat(logs.fileno()).st_size > self.max_bytes:
                 raise ValueError(
                     "External runtime logs exceed the configured byte limit."
@@ -829,7 +1029,7 @@ class _HostWorker:
             evidence["returncode"] = process.returncode
             if not isinstance(failure, Exception):
                 raise
-            raise EnergyRuntimeError(str(failure), evidence=evidence) from failure
+            raise ExternalRuntimeError(str(failure), evidence=evidence) from failure
 
     def close(self) -> None:
         if self.closed:
@@ -870,7 +1070,7 @@ class OpenDSSRunResult:
     total_power: tuple[float, float]
     losses: tuple[float, float]
     element_powers: tuple[tuple[str, int, int, tuple[tuple[float, float], ...]], ...]
-    outputs: tuple[EnergyOutput, ...]
+    outputs: tuple[PinnedOutput, ...]
     artifact: ScientificArtifactEnvelope
     engine_version: str
 
@@ -938,7 +1138,7 @@ def run_opendss(
             if remaining < 0:
                 raise ValueError("Combined OpenDSS outputs exceed the byte limit.")
             detached.append(
-                EnergyOutput(
+                PinnedOutput(
                     name,
                     resource.data,
                     _artifact(
@@ -986,7 +1186,7 @@ def run_opendss(
             worker.info["engine_version"],
         )
         if error:
-            raise EnergyRuntimeError(
+            raise ExternalRuntimeError(
                 error, evidence={"artifact_id": artifact.artifact_id, "data": data}
             )
         return result
@@ -2092,14 +2292,12 @@ class ExternalAdjointAction(ABC):
 
 
 __all__ = [
-    "EnergyOutput",
-    "EnergyRunResult",
-    "EnergyRuntimeError",
     "ExternalAdjointAction",
     "ExternalDerivativeSupport",
     "ExternalExecutionPolicy",
     "ExternalIsolation",
     "ExternalPrimalStage",
+    "ExternalRuntimeError",
     "ExternalTensorSpec",
     "NativeWorker",
     "NativeWorkerCall",
@@ -2109,9 +2307,14 @@ __all__ = [
     "NativeWorkerPolicy",
     "OpenDSSRunResult",
     "PinnedExecutable",
-    "pin_energy_executable",
-    "run_energy_command",
+    "PinnedFileArtifact",
+    "PinnedFileOutputs",
+    "PinnedFileRequest",
+    "PinnedOutput",
+    "PinnedRunResult",
+    "pin_executable",
     "run_energyplus",
     "run_opendss",
+    "run_pinned_command",
     "run_radiance_command",
 ]

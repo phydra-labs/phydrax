@@ -14,6 +14,7 @@ from jax import Array
 from jax.typing import DTypeLike
 from jaxtyping import PyTree
 
+from .._custom_root import custom_root
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree
 from ..linalg import (
@@ -417,7 +418,7 @@ def implicit_root_result(
             ),
         )
 
-    coordinates, evidence = jax.lax.custom_root(
+    coordinates, evidence = custom_root(
         coordinate_residual,
         initial_coordinates,
         solve=primal_solve,
@@ -567,7 +568,7 @@ def implicit_fixed_point_result(
             transpose_solve=derivative_solve(adjoint_policy),
         )
 
-    coordinates, evidence = jax.lax.custom_root(
+    coordinates, evidence = custom_root(
         coordinate_residual,
         space.flatten(initial),
         solve=primal_solve,
