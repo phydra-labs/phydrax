@@ -16,7 +16,7 @@ import numpy as np
 from scipy.special import erf
 
 import phydrax as phx
-from phydrax.applications.accelerator import AcceleratorBunch
+from phydrax.applications.accelerator import AcceleratorBunch, SpaceChargeIGFPlan
 from phydrax.discretization import TensorGridPlan, UniformCellAxisSpec
 
 
@@ -140,8 +140,10 @@ def test_space_charge_kick_is_refused_outside_its_admissible_domain() -> None:
     grid = TensorGridPlan((UniformCellAxisSpec(6),) * 3).prepare(
         np.asarray([[-1.0e-3] * 3, [1.0e-3] * 3])
     )
+    # Two probe charges have no rest-frame extent across the line joining them;
+    # this test isolates support and speed refusal from resolution refusal.
     plan = accelerator.SpaceChargeIGFPlan(
-        scale, grid, capacity=2, maximum_rest_frame_speed=0.1
+        scale, grid, capacity=2, maximum_rest_frame_speed=0.1, minimum_cells_per_sigma=0.0
     )
 
     def bunch(coordinates: np.ndarray) -> AcceleratorBunch:
@@ -175,3 +177,103 @@ def test_space_charge_kick_is_refused_outside_its_admissible_domain() -> None:
     assert float(too_fast.maximum_rest_frame_speed) > 0.1
     assert not bool(too_fast.accepted)
     np.testing.assert_array_equal(np.asarray(too_fast.bunch.coordinates), hot)
+
+
+def _gaussian_bunch(
+    sigma: float, gamma: float, spacing: float, momentum: float
+) -> tuple[AcceleratorBunch, np.ndarray]:
+    """Spherical rest-frame Gaussian sampled at the centers of a ``spacing`` lattice."""
+    scale = phx.ElectromagneticScaleContract.si()
+    rest_energy = float(scale.electron_mass) * float(scale.speed_of_light) ** 2
+    axis = (np.arange(-16, 16) + 0.5) * spacing
+    positions = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
+    positions = positions.reshape(-1, 3)
+    positions = positions[np.all(np.abs(positions) < 4.0 * sigma, axis=-1)]
+    profile = np.exp(-0.5 * np.sum((positions / sigma) ** 2, axis=-1))
+    weights = 1.0e-9 / float(scale.elementary_charge) * profile / np.sum(profile)
+    coordinates = np.zeros((positions.shape[0], 6))
+    coordinates[:, 0] = positions[:, 0]
+    coordinates[:, 2] = positions[:, 1]
+    coordinates[:, 4] = -positions[:, 2] / gamma
+    bunch = AcceleratorBunch(
+        jnp.asarray(coordinates),
+        jnp.asarray(weights),
+        jnp.arange(positions.shape[0]),
+        reference_rest_energy=rest_energy,
+        reference_momentum=momentum,
+        reference_charge=-1.0,
+        bunch_id="gaussian",
+    )
+    return bunch, positions
+
+
+def test_under_resolved_bunch_is_refused_with_cells_per_sigma_evidence() -> None:
+    accelerator = phx.applications.accelerator
+    scale = phx.ElectromagneticScaleContract.si()
+    rest_energy = float(scale.electron_mass) * float(scale.speed_of_light) ** 2
+    momentum = 5.0e6 * float(scale.elementary_charge)
+    gamma = np.sqrt(1.0 + (momentum / rest_energy) ** 2)
+    sigma = 1.0e-3
+    bunch, positions = _gaussian_bunch(sigma, gamma, sigma / 4.0, momentum)
+    rms = np.sqrt(np.average(positions**2, axis=0, weights=np.asarray(bunch.weights)))
+
+    def plan(cells_per_sigma: float) -> SpaceChargeIGFPlan:
+        count = int(round(9.0 * cells_per_sigma))
+        grid = TensorGridPlan((UniformCellAxisSpec(count),) * 3).prepare(
+            np.asarray([[-4.5 * sigma] * 3, [4.5 * sigma] * 3])
+        )
+        return accelerator.SpaceChargeIGFPlan(scale, grid, capacity=positions.shape[0])
+
+    resolved = plan(4.0).kick(bunch, 0.1)
+    assert bool(resolved.resolved)
+    assert bool(resolved.accepted)
+    np.testing.assert_allclose(
+        np.asarray(resolved.cells_per_sigma), rms / (sigma / 4.0), rtol=1e-9
+    )
+    # Deposit and gather each smooth over one cell: at one cell per σ the field
+    # would be ≈ 45 % low, so the kick is refused and the bunch left unchanged.
+    coarse = plan(1.0).kick(bunch, 0.1)
+    np.testing.assert_allclose(np.asarray(coarse.cells_per_sigma), rms / sigma, rtol=1e-9)
+    assert not bool(coarse.resolved)
+    assert not bool(coarse.accepted)
+    np.testing.assert_array_equal(
+        np.asarray(coarse.bunch.coordinates), np.asarray(bunch.coordinates)
+    )
+
+
+def test_kick_depends_on_the_declared_frame_not_the_reference_momentum() -> None:
+    # The same particles referenced to a 1.5× larger momentum, kicked in the
+    # frame of their own motion, receive the same absolute momentum increments.
+    accelerator = phx.applications.accelerator
+    scale = phx.ElectromagneticScaleContract.si()
+    rest_energy = float(scale.electron_mass) * float(scale.speed_of_light) ** 2
+    momentum = 5.0e6 * float(scale.elementary_charge)
+    gamma = float(np.sqrt(1.0 + (momentum / rest_energy) ** 2))
+    sigma = 1.0e-3
+    bunch, positions = _gaussian_bunch(sigma, gamma, sigma / 4.0, momentum)
+    rereferenced = accelerator.AcceleratorBunch(
+        bunch.coordinates.at[:, 5].set(1.0 / 1.5 - 1.0),
+        bunch.weights,
+        bunch.particle_ids,
+        reference_rest_energy=rest_energy,
+        reference_momentum=1.5 * momentum,
+        reference_charge=-1.0,
+        bunch_id="rereferenced",
+    )
+    grid = TensorGridPlan((UniformCellAxisSpec(36),) * 3).prepare(
+        np.asarray([[-4.5 * sigma] * 3, [4.5 * sigma] * 3])
+    )
+    plan = accelerator.SpaceChargeIGFPlan(scale, grid, capacity=positions.shape[0])
+    own = plan.kick(bunch, 0.1)
+    framed = plan.kick(rereferenced, 0.1, frame_lorentz_factor=gamma)
+    assert bool(own.accepted) and bool(framed.accepted)
+    np.testing.assert_allclose(float(framed.reference_gamma), gamma, rtol=1e-15)
+    increment = np.asarray(own.momentum_kick) * momentum
+    np.testing.assert_allclose(
+        np.asarray(framed.momentum_kick) * 1.5 * momentum,
+        increment,
+        rtol=1e-9,
+        atol=1e-9 * np.max(np.abs(increment)),
+    )
+    # A frame at γ ≤ 1 is refused.
+    assert not bool(plan.kick(bunch, 0.1, frame_lorentz_factor=1.0).accepted)

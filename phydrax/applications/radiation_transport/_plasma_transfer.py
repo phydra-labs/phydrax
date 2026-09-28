@@ -218,11 +218,14 @@ class PlasmaRayTransferPlan(StrictModule, NonTrainableState):
     ``coupling_tolerance`` bounds the path's coupling parameter in the weak
     limit and ``anisotropy_tolerance`` the relative index splitting of the two
     modes in the strong limit. Segment lengths along the wave normal are host
-    plan structure; coefficients and incident Stokes vectors are dynamic.
+    plan structure; coefficients and incident Stokes vectors are dynamic. The
+    canonical exponential reports segments whose optical or Faraday depth is
+    large (beyond a few) as ``EXPONENTIAL_UNCONVERGED``; refine the ray steps.
     """
 
     path: ColdPlasmaRayPath
     transfers: tuple[PolarizedRadiativeTransferPlan, ...]
+    length_units: Array
     coupling: ModeCouplingLimit = eqx.field(static=True)
     coupling_tolerance: float = eqx.field(static=True)
     anisotropy_tolerance: float = eqx.field(static=True)
@@ -251,13 +254,19 @@ class PlasmaRayTransferPlan(StrictModule, NonTrainableState):
                 "path normal lengths must be finite and nonnegative; resample rays "
                 "whose segments are invalid."
             )
+        # Each ray is transported in units of its longest segment so the
+        # exponential sees order-one lengths whatever the coordinate scale.
+        longest = np.max(lengths, axis=-1)
+        units = np.where(longest > 0.0, longest, 1.0)
         self.path = path
         self.transfers = tuple(
             PolarizedRadiativeTransferPlan(
-                lengths[ray], plan_id=f"{path.hamiltonian_id}:plasma-ray:{ray}"
+                lengths[ray] / units[ray],
+                plan_id=f"{path.hamiltonian_id}:plasma-ray:{ray}",
             )
             for ray in range(lengths.shape[0])
         )
+        self.length_units = jnp.asarray(units)
         self.coupling = coupling_
         self.coupling_tolerance, self.anisotropy_tolerance = tolerances
         self.plan_id = canonical_fingerprint(
@@ -334,11 +343,23 @@ class PlasmaRayTransferPlan(StrictModule, NonTrainableState):
                 )
             case _:
                 assert_never(self.coupling)
+        # The augmented exponential carries the source against a unit entry; a
+        # per-ray intensity unit keeps both of order one (the problem is linear).
+        unit = jnp.maximum(
+            jnp.max(jnp.abs(initial), axis=-1),
+            jnp.max(jnp.abs(source) * path.normal_lengths[..., None], axis=(-2, -1)),
+        )
+        unit = jnp.where((unit > 0.0) & jnp.isfinite(unit), unit, 1.0)
+        scale = self.length_units
         results = tuple(
-            transfer.evaluate(source[ray], matrix[ray], initial[ray])
+            transfer.evaluate(
+                source[ray] * (scale[ray] / unit[ray]),
+                matrix[ray] * scale[ray],
+                initial[ray] / unit[ray],
+            )
             for ray, transfer in enumerate(self.transfers)
         )
-        emergent = jnp.stack(tuple(value.emergent for value in results))
+        emergent = unit[:, None] * jnp.stack(tuple(value.emergent for value in results))
         converged = jnp.stack(tuple(value.valid for value in results))
         match self.coupling:
             case "weak":

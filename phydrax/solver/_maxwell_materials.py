@@ -478,14 +478,12 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
             jnp.all(self.electric_conductivity == 0.0)
             & jnp.all(self.magnetic_conductivity == 0.0)
         )
-        zero_magnetic_conductivity = bool(jnp.all(self.magnetic_conductivity == 0.0))
         self.capabilities = MaxwellCapabilities(
             lossless=lossless,
             passive=True,
             reversible=lossless,
             structured_only=False,
             frequency_domain=True,
-            magnetic_closedness_preserving=zero_magnetic_conductivity,
         )
         self.prepared_id = canonical_fingerprint(
             {

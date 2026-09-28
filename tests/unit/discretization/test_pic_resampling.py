@@ -589,3 +589,37 @@ def test_merging_in_a_pic_step_gauss_projects_the_field(build: Any, route: str) 
     follow = pic.step_detailed(result.accepted_state, dt)
     assert follow.successful
     assert float(follow.diagnostics.particle_field_charge_defect) < 1e-10
+
+
+@pytest.mark.parametrize(
+    ("occupancy", "merged"), [(0.75, False), (0.5, True)], ids=["below", "at"]
+)
+def test_occupancy_trigger_gates_merging_of_a_crowded_cell(
+    occupancy: float, merged: bool
+) -> None:
+    # Eight of sixteen slots are active (occupancy 0.5) in one crowded cell.
+    plan = _species(16, -1.0, "electrons", 1, 0)
+    active = np.arange(16) < 8
+    rng = np.random.default_rng(11)
+    state = _state(
+        plan,
+        rng.uniform(0.05, 0.45, (16, 1)),
+        rng.normal(0.0, 0.5, (16, 3)),
+        np.ones(16),
+        active,
+    )
+    merge = PIC.ParticleMergePlan(
+        PIC.PICCellBinningPlan((0.0,), (1.0,), (2,), (True,)),
+        RELATIVITY,
+        species=(0,),
+        maximum_per_cell=4,
+        momentum_bins=(1, 1, 1),
+        minimum_packet_size=3,
+        maximum_packet_size=4,
+        minimum_occupancy=occupancy,
+    )
+    result = _apply(merge, (plan,), (state,))
+    (evidence,) = result.evidence
+    assert result.ledger.successful
+    assert int(evidence.events) == (2 if merged else 0)
+    assert int(evidence.active_after) == (4 if merged else 8)

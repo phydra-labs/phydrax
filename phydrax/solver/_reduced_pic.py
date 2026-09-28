@@ -20,7 +20,8 @@ from .._trainable import NonTrainableState
 from ..discretization import AxisEntityKind
 from ..discretization.pic import PICSpeciesPlan, ReducedPICTransferPlan
 from ._maxwell_reduced import (
-    _charge_divergence,
+    _backward,
+    _forward,
     CompatibleMaxwell1DPlan,
     CompatibleMaxwell1DState,
     CompatibleMaxwell2DPlan,
@@ -102,15 +103,23 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
             raise ValueError("Reduced PIC species must match the field dimension.")
 
     def pairing_probe(self, species: int, capacity: int, /) -> tuple[Array, Array]:
+        """Probe paths through every periodic cell and two central wall-free cells.
+
+        On a nonperiodic axis the paths stay two cells from the walls, where
+        electric boundary traces induce wall charge.
+        """
         del species
         slot = np.arange(capacity)
         start = np.stack(
             tuple(
-                lower + (slot % count + 0.7) * spacing
-                for lower, count, spacing in zip(
+                lower
+                + ((slot % count if periodic else count // 2 - 1 + slot % 2) + 0.7)
+                * spacing
+                for lower, count, spacing, periodic in zip(
                     self.transfer.lower,
                     self.transfer.shape,
                     self.transfer.spacing,
+                    self.transfer.periodic,
                     strict=True,
                 )
             ),
@@ -146,34 +155,27 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
                 # Periodic Gauss fixes E_x up to a constant; zero mean removes it.
                 return (electric - jnp.mean(electric), zero, zero), neutral
             return (electric, zero, zero), jnp.asarray(True)
-        if not all(self.transfer.periodic):
-            raise ValueError(
-                "Gauss-consistent initialization of reduced 2-D fields requires "
-                "periodic axes."
-            )
-        # E = -forward(phi) with backward(forward(phi)) having symbol -lambda.
-        eigenvalue = jnp.zeros(self.transfer.shape, dtype=charge.dtype)
-        for axis, (count, spacing) in enumerate(
-            zip(self.transfer.shape, self.transfer.spacing, strict=True)
-        ):
-            frequency = 2.0 * jnp.pi * jnp.fft.fftfreq(count)
-            shape = [1, 1]
-            shape[axis] = count
-            eigenvalue = eigenvalue + (2.0 - 2.0 * jnp.cos(frequency)).reshape(shape) / (
-                spacing**2
-            )
-        transformed = jnp.fft.fftn(charge)
+        # ε Σ_a B_a B_aᵀ φ = ρ and E_a = B_aᵀ φ = −forward_a(φ), diagonalized
+        # by the per-axis eigenbases of B_a B_aᵀ; only an all-periodic grid has
+        # the constant null mode, which neutral charge leaves unexcited.
+        (x_values, x_vectors), (y_values, y_vectors) = self.transfer.laplacian_bases
+        eigenvalue = x_values[:, None] + y_values[None, :]
+        transformed = x_vectors.T @ charge @ y_vectors
         safe = jnp.where(eigenvalue > 0.0, eigenvalue, 1.0)
-        potential = jnp.real(
-            jnp.fft.ifftn(
-                jnp.where(eigenvalue > 0.0, transformed / (epsilon * safe), 0.0)
-            )
+        potential = (
+            x_vectors
+            @ jnp.where(eigenvalue > 0.0, transformed / (epsilon * safe), 0.0)
+            @ y_vectors.T
         )
         components = tuple(
-            -(jnp.roll(potential, -1, axis=axis) - potential) / spacing
-            for axis, spacing in enumerate(self.transfer.spacing)
+            -_forward(potential, axis, spacing, periodic)
+            for axis, (spacing, periodic) in enumerate(
+                zip(self.transfer.spacing, self.transfer.periodic, strict=True)
+            )
         )
-        return (components[0], components[1], zero), neutral
+        if all(self.transfer.periodic):
+            return (components[0], components[1], zero), neutral
+        return (components[0], components[1], zero), jnp.asarray(True)
 
     def initialize_field(
         self, charge: Array, /, *, magnetic: Any = None
@@ -193,8 +195,8 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         """Discrete ``ε ∇·E`` in the charge layout of the field update."""
         plan = self.field
         if isinstance(plan, CompatibleMaxwell1DPlan):
-            return plan.permittivity * _charge_divergence(
-                field.electric[0], plan.spacing, plan.periodic[0]
+            return plan.permittivity * _backward(
+                field.electric[0], 0, plan.spacing, plan.periodic[0]
             )
         if isinstance(plan, CompatibleMaxwell2DPlan) and isinstance(
             field, CompatibleMaxwell2DState
@@ -205,11 +207,12 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
     def project_gauss(
         self, field: ReducedMaxwellState, charge: Array, /
     ) -> PICGaussProjectionResult:
-        """Poisson projection onto ``charge``: exact 1-D cochain inverse or 2-D FFT.
+        """Poisson projection onto ``charge``: exact 1-D inverse or 2-D eigenbasis.
 
         The residual ``ρ - ε∇·E`` is inverted by the same electrostatic solve
-        that initializes the field (cumulative sum in 1-D, the Yee Laplacian
-        symbol on periodic 2-D grids); ``B`` and absorber memory are unchanged.
+        that initializes the field (cumulative sum in 1-D, the per-axis
+        eigenbasis of the Yee Laplacian in 2-D); ``B`` and absorber memory are
+        unchanged.
         """
         residual = charge - self._gauss_charge(field)
         correction, successful = self._electrostatic(residual)
@@ -275,12 +278,18 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
         result = self.transfer.current(
             start, end, macrocharge, velocity, active, step_size
         )
+        magnitude = self.transfer.deposit(end, jnp.abs(macrocharge), active)
         return PICFieldDeposit(
             result.current,
             result.start_charge,
             result.end_charge,
             result.maximum_continuity_defect,
             result.successful,
+            jnp.max(
+                jnp.abs(result.end_charge - result.start_charge) + 2.0 * magnitude,
+                initial=0.0,
+            )
+            / step_size,
         )
 
     def deposit_all(
@@ -323,9 +332,25 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
             advanced, diagnostics = plan.step(field, current, step_size)
         else:
             raise TypeError("Reduced field state does not match its Maxwell plan.")
+        # The field's charge also follows induced wall and CPML divergence; the
+        # advance reports the start charge moved by the current alone.
+        charge = field.charge - step_size * sum(
+            (
+                _backward(value, axis, spacing, periodic)
+                for axis, (value, spacing, periodic) in enumerate(
+                    zip(
+                        current[: self.spatial_dimension],
+                        self.transfer.spacing,
+                        self.transfer.periodic,
+                        strict=True,
+                    )
+                )
+            ),
+            start=jnp.zeros_like(field.charge),
+        )
         return PICFieldAdvance(
             advanced,
-            advanced.charge,
+            charge,
             diagnostics.electric_constraint_linf,
             diagnostics.magnetic_constraint_linf,
             diagnostics.energy,

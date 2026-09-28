@@ -1,14 +1,17 @@
 """Propagation rule for cond (conditional branching)."""
 
+import numpy as np
 from jax._src.core import JaxprEqn
 
 from ._common import (
+    _atom_const_val,
     _copy_index_sets,
-    _forward_const_vals,
+    _export_scope,
     _index_sets,
-    _seed_const_vals,
+    _nested_scope,
     IndexSet,
     PropJaxprFn,
+    StateBounds,
     StateConsts,
     StateIndices,
 )
@@ -18,11 +21,13 @@ def _prop_cond(
     eqn: JaxprEqn,
     state_indices: StateIndices,
     state_consts: StateConsts,
+    state_bounds: StateBounds,
     _prop_jaxpr: PropJaxprFn,
 ) -> None:
     """cond/switch selects one of several branches based on an integer index.
 
-    Since we don't know which branch executes at trace time,
+    When the index is statically known only that branch executes, so its
+    dependencies and known result values pass through exactly. Otherwise the
     output state_indices are the union across all branches.
 
     Layout:
@@ -42,21 +47,37 @@ def _prop_cond(
     operand_indices: list[list[IndexSet]] = [
         _index_sets(state_indices, v) for v in operands
     ]
+    index = _atom_const_val(eqn.invars[0], state_consts)
+    if index is not None:
+        # lax.switch semantics: out-of-range indices clamp to the end branches.
+        branches = (branches[int(np.clip(index, 0, len(branches) - 1))],)
 
-    n_out = len(eqn.outvars)
-
-    # Propagate each branch and collect per-branch output state_indices
+    # Each branch runs in its own scope; see ``_nested_scope``.
     branch_outputs: list[list[list[IndexSet]]] = []
     for branch in branches:
-        _seed_const_vals(state_consts, branch.jaxpr.constvars, branch.consts)
-        _forward_const_vals(state_consts, operands, branch.jaxpr.invars)
-        out = _prop_jaxpr(branch.jaxpr, operand_indices, state_consts)
-        branch_outputs.append(out)
+        inner_consts, inner_bounds = _nested_scope(
+            branch.jaxpr.constvars,
+            branch.consts,
+            operands,
+            branch.jaxpr.invars,
+            state_consts,
+            state_bounds,
+        )
+        branch_outputs.append(
+            _prop_jaxpr(branch.jaxpr, operand_indices, inner_consts, inner_bounds)
+        )
+        if index is not None:
+            _export_scope(
+                eqn.outvars,
+                branch.jaxpr.outvars,
+                inner_consts,
+                inner_bounds,
+                state_consts,
+                state_bounds,
+            )
 
     # Union across branches for each output variable
-    for i in range(n_out):
-        outvar = eqn.outvars[i]
-        # Start from first branch, union with the rest
+    for i, outvar in enumerate(eqn.outvars):
         merged: list[IndexSet] = _copy_index_sets(branch_outputs[0][i])
         for branch_out in branch_outputs[1:]:
             for j in range(len(merged)):

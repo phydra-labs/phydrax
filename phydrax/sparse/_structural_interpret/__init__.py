@@ -9,7 +9,7 @@ and applies the appropriate handler for each equation.
 """
 
 import numpy as np
-from jax._src.core import Jaxpr, JaxprEqn, Var
+from jax._src.core import ClosedJaxpr, Jaxpr, JaxprEqn
 
 from ._argmax import _prop_argmax
 from ._broadcast import _prop_broadcast_in_dim
@@ -17,10 +17,9 @@ from ._common import (
     _atom_numel,
     _conservative_indices,
     _empty_index_sets,
-    _forward_const_vals,
-    _forward_value_bounds,
+    _export_scope,
     _index_sets,
-    _seed_const_vals,
+    _nested_scope,
     IndexSet,
     StateBounds,
     StateConsts,
@@ -47,13 +46,14 @@ from ._elementwise import (
     _prop_zero_derivative_const,
 )
 from ._equinox._select_if_vmap import _prop_select_if_vmap
+from ._equinox._unvmap import _prop_unvmap
 from ._gather import _prop_gather
 from ._linalg import _prop_qr
 from ._mul import _prop_mul
 from ._pad import _prop_pad
 from ._platform_index import _prop_platform_index
 from ._random import _prop_random
-from ._reduce import _prop_reduce
+from ._reduce import _prop_bitwise_reduce, _prop_reduce
 from ._reshape import _prop_reshape
 from ._rev import _prop_rev
 from ._scan import _prop_scan
@@ -132,25 +132,21 @@ def _prop_closed_jaxpr(
         )
         raise ValueError(msg)
 
-    # Unwrap ClosedJaxpr, seeding state_consts for captured constants
-    if hasattr(closed, "jaxpr"):
-        _seed_const_vals(state_consts, closed.jaxpr.constvars, closed.consts)
-        closed = closed.jaxpr
-
-    _forward_const_vals(state_consts, eqn.invars, closed.invars)
-    _forward_value_bounds(state_bounds, eqn.invars, closed.invars)
+    if isinstance(closed, ClosedJaxpr):
+        jaxpr, constvars, captured = closed.jaxpr, closed.jaxpr.constvars, closed.consts
+    else:
+        jaxpr, constvars, captured = closed, (), ()
+    inner_consts, inner_bounds = _nested_scope(
+        constvars, captured, eqn.invars, jaxpr.invars, state_consts, state_bounds
+    )
     input_indices = [_index_sets(state_indices, invar) for invar in eqn.invars]
-    output_indices = _prop_jaxpr(closed, input_indices, state_consts, state_bounds)
+    output_indices = _prop_jaxpr(jaxpr, input_indices, inner_consts, inner_bounds)
 
-    for outvar, indices, inner_outvar in zip(
-        eqn.outvars,
-        output_indices,
-        closed.outvars,
-        strict=False,
-    ):
+    for outvar, indices in zip(eqn.outvars, output_indices, strict=False):
         state_indices[outvar] = indices
-        if isinstance(inner_outvar, Var) and inner_outvar in state_bounds:
-            state_bounds[outvar] = state_bounds[inner_outvar]
+    _export_scope(
+        eqn.outvars, jaxpr.outvars, inner_consts, inner_bounds, state_consts, state_bounds
+    )
 
 
 def _prop_dispatch(
@@ -172,15 +168,14 @@ def _prop_dispatch(
             | "is_finite"
             | "clz"
             | "population_count"
-            | "reduce_and"
-            | "reduce_or"
-            | "reduce_xor"
             | "not"
             | "shift_left"
             | "shift_right_arithmetic"
             | "shift_right_logical"
         ):
             _prop_zero_derivative(eqn, state_indices)
+        case "reduce_and" | "reduce_or" | "reduce_xor":
+            _prop_bitwise_reduce(eqn, state_indices, state_consts)
         case "clamp":
             _prop_clamp(eqn, state_indices)
         case "eq" | "ne" | "lt_to" | "le_to":
@@ -315,9 +310,9 @@ def _prop_dispatch(
         ):
             _prop_random(eqn, state_indices)
         case "while":
-            _prop_while(eqn, state_indices, state_consts, _prop_jaxpr)
+            _prop_while(eqn, state_indices, state_consts, state_bounds, _prop_jaxpr)
         case "cond":
-            _prop_cond(eqn, state_indices, state_consts, _prop_jaxpr)
+            _prop_cond(eqn, state_indices, state_consts, state_bounds, _prop_jaxpr)
         case "platform_index":
             _prop_platform_index(eqn, state_indices)
         case "dynamic_slice":
@@ -329,7 +324,7 @@ def _prop_dispatch(
         # TODO: add precise handlers for remaining control flow operators.
         # https://docs.jax.dev/en/latest/jax.lax.html#control-flow-operators
         case "scan":
-            _prop_scan(eqn, state_indices, state_consts, _prop_jaxpr)
+            _prop_scan(eqn, state_indices, state_consts, state_bounds, _prop_jaxpr)
         case "dot_general":
             _prop_dot_general(eqn, state_indices, state_consts)
         case "split":
@@ -346,17 +341,10 @@ def _prop_dispatch(
             _prop_cumsum(eqn, state_indices)
         case "qr":
             _prop_qr(eqn, state_indices)
+        case "unvmap_any" | "unvmap_max":  # from Equinox
+            _prop_unvmap(eqn, state_indices, state_consts)
         # Conservative fallback: all outputs depend on all inputs.
-        case (
-            "nonbatchable"
-            | "unvmap_any"  # from Equinox
-            | "unvmap_max"  # from Equinox
-            | "pure_callback"
-            | "lu"
-            | "cholesky"
-            | "svd"
-            | "eigh"
-        ):
+        case "nonbatchable" | "pure_callback" | "lu" | "cholesky" | "svd" | "eigh":
             _prop_conservative_fallback(eqn, state_indices)
         case _:
             _prop_throw_error(eqn, state_indices)

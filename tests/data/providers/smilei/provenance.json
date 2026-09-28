@@ -1,0 +1,12 @@
+{
+  "case": "tests/unit/solver/test_pic_providers.py::_tiny_yee_case",
+  "command": "OMP_NUM_THREADS=1 smilei smilei.py (deck: phydrax.solver.smilei_input(_tiny_yee_case()))",
+  "date": "2026-09-28",
+  "executable_sha256": "63c2d7e9b290879e7efbe337db55c4e43963ab1a7824e820eb5f5dc3d1e2066f",
+  "files": {
+    "Fields0.h5": "9108aa7a04e3a3282ee364c303873e40c8b89af6e6acf0cfd48beee9b0f36dae"
+  },
+  "license": "CECILL-B",
+  "provider": "smilei",
+  "version": "5.1"
+}

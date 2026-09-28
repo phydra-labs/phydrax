@@ -164,6 +164,60 @@ def test_frequency_operator_applies_dispersive_constitutive_response() -> None:
         operator.eigensystem(1)
 
 
+@pytest.mark.parametrize(
+    ("shape", "periodic", "polarization", "widths", "boundaries"),
+    [
+        ((5, 8), (True, False), "tez", (0, 2), ("pec",)),
+        ((3, 4, 5), (False, False, False), "full_3d", (1, 1, 1), ()),
+    ],
+    ids=["tez-cpml-pec", "full-3d-cpml"],
+)
+def test_direct_route_traces_the_exact_curl_curl_pattern(
+    shape: tuple[int, ...],
+    periodic: tuple[bool, ...],
+    polarization: str,
+    widths: tuple[int, ...],
+    boundaries: tuple[str, ...],
+) -> None:
+    bridge = _bridge(shape, (1.0,) * len(shape), periodic=periodic)
+    layout = mx.MaxwellCochainLayout(bridge, polarization)  # ty: ignore[invalid-argument-type]
+    material = mx.DiagonalMaxwellConstitutivePlan(permittivity=2.0).prepare(
+        bridge.cochain, layout
+    )
+    operator = mx.FrequencyMaxwellOperator(
+        bridge,
+        layout,
+        material,
+        3.0,
+        stretching=mx.MaxwellCPMLPlan(widths, target_reflection=1e-6),
+        boundaries=tuple(mx.MaxwellBoundaryPlan(kind) for kind in boundaries),  # ty: ignore[invalid-argument-type]
+    )
+    size = operator.size
+    # Independent structure: free edges couple through a shared face of the
+    # incidence d (dᵀd) plus the diagonal; conductor rows are the identity.
+    incidence = bridge.cochain.topology.incidences[1].exterior_derivative().relation
+    curl = np.zeros((layout.magnetic_count, size), dtype=np.int64)
+    curl[np.asarray(incidence.target_indices), np.asarray(incidence.source_indices)] = 1
+    expected = (curl.T @ curl) != 0
+    conductor = np.asarray(operator.conductor)
+    expected[conductor, :] = False
+    expected[:, conductor] = False
+    expected[np.arange(size), np.arange(size)] = True
+
+    relation = operator.sparse_coloring().pattern.relation
+    traced = np.zeros((size, size), dtype=np.bool_)
+    traced[np.asarray(relation.target_indices), np.asarray(relation.source_indices)] = (
+        True
+    )
+    assert np.array_equal(traced, expected)
+    source = jnp.cos(jnp.arange(size, dtype=jnp.float64)).astype(jnp.complex128)
+    direct = operator.solve(source, method="direct")
+    assert bool(direct.converged)
+    np.testing.assert_allclose(
+        operator.mv(direct.electric), source, rtol=1e-10, atol=1e-10
+    )
+
+
 def _stretched_line(width: int, target: float) -> tuple[Any, Any, Any, Any, float]:
     cells, length = 200, 20.0
     bridge = _bridge((cells, 2), (length, 0.2), periodic=(False, True))

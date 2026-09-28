@@ -24,10 +24,11 @@ from ._assignment import (
 
 
 class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
-    """Uniform tensor-product cardinal B-spline assignment of degree one to three.
+    """Uniform tensor-product cardinal B-spline assignment of degree zero to three.
 
     ``degree`` is one degree for every axis or a per-axis degree tuple (the
-    mixed-degree tensor splines of spline-Whitney forms).
+    mixed-degree tensor splines of spline-Whitney forms). Degree zero is the
+    cell box spline, allowed per axis only next to a positive degree.
     """
 
     degree: int | tuple[int, ...] = eqx.field(static=True)
@@ -41,9 +42,14 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
             else tuple(int(value) for value in degree)
         )
         degrees = (degree_,) if isinstance(degree_, int) else degree_
-        if not degrees or any(value not in (1, 2, 3) for value in degrees):
+        if (
+            not degrees
+            or any(value not in (0, 1, 2, 3) for value in degrees)
+            or max(degrees) == 0
+        ):
             raise ValueError(
-                "Tensor B-spline splatting supports degrees one, two, and three."
+                "Tensor B-spline splatting supports degrees zero to three with at "
+                "least one positive degree."
             )
         capabilities = SplatAssignmentCapabilities(
             partition_of_unity=True,

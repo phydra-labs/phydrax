@@ -55,6 +55,7 @@ def test_special_namespace_is_public() -> None:
         "sph_legendre_p",
         "synchrotron_f",
         "synchrotron_g",
+        "synchrotron_h",
         "voigt_profile",
         "wofz",
         "yv",

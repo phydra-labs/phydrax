@@ -111,8 +111,8 @@ def main() -> None:
         0.5 * float(np.arctan2(stokes[2], stokes[1])),
     )
     print(
-        "invariant_conserved",
-        bool(np.allclose(transfer.invariant, transfer.incident_invariant)),
+        "intensity_over_ray_index_squared_conserved",
+        bool(np.isclose(transfer.invariant[0, 0], transfer.incident_invariant[0, 0])),
         "successful",
         bool(transfer.successful),
     )

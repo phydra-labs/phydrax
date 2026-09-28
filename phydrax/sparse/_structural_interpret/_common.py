@@ -22,19 +22,14 @@ def _empty_index_set() -> IndexSet:
     return set()
 
 
-def _singleton_index_set(i: int) -> IndexSet:
-    """Create a dependency set containing a single index."""
-    return {i}
-
-
 def _empty_index_sets(n: int) -> list[IndexSet]:
     """Create n empty dependency sets."""
-    return [_empty_index_set() for _ in range(n)]
+    return [set() for _ in range(n)]
 
 
 def _identity_index_sets(n: int) -> list[IndexSet]:
     """Create identity sets where element i depends on index i."""
-    return [_singleton_index_set(i) for i in range(n)]
+    return [{i} for i in range(n)]
 
 
 StateIndices = dict[Var, list[IndexSet]]
@@ -56,7 +51,8 @@ Atom = Var | Literal
 """Atomic elements in jaxpressions: named intermediates (Var) or constants (Literal)."""
 
 PropJaxprFn = Callable[
-    [Jaxpr, list[list[IndexSet]], StateConsts | None], list[list[IndexSet]]
+    [Jaxpr, list[list[IndexSet]], StateConsts | None, StateBounds | None],
+    list[list[IndexSet]],
 ]
 """Signature of ``_prop_jaxpr``, passed as callback to break circular imports."""
 
@@ -418,44 +414,52 @@ def _flat_to_coords(flat: int, strides: tuple[int, ...]) -> list[int]:
 # Const value propagation
 
 
-def _seed_const_vals(
-    state_consts: StateConsts, constvars: Sequence[Var], consts: Sequence[object]
-) -> None:
-    """Populate state_consts for the captured constants of a ClosedJaxpr.
+def _nested_scope(
+    constvars: Sequence[Var],
+    captured: Sequence[object],
+    outer_atoms: Sequence[Atom],
+    inner_vars: Sequence[Var],
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
+) -> tuple[StateConsts, StateBounds]:
+    """Fresh const and bound state for one invocation of a nested jaxpr.
 
-    Without this, gather/scatter inside nested jaxprs (cond branches,
-    while bodies, jit-wrapped calls) cannot resolve closure-captured
-    index arrays and fall back to conservative.
+    JAX shares one jaxpr object between repeated calls of the same function
+    (every ``jnp.where`` call binds the same ``_where`` jaxpr), so inner ``Var``
+    keys recur across call sites with different arguments. Each invocation
+    therefore owns its state, seeded only from its captured constants and the
+    known values of its actual arguments; a value resolved at one call site
+    can never be read back as a static index at another.
+
+    Without the seeding, gather/scatter inside nested jaxprs (cond branches,
+    loop bodies, jit-wrapped calls) cannot resolve closure-captured or
+    argument index arrays and fall back to conservative.
     """
-    for var, val in zip(constvars, consts, strict=True):
-        state_consts[var] = np.asarray(val)
-
-
-def _forward_value_bounds(
-    state_bounds: StateBounds, outer_atoms: Sequence[Atom], inner_vars: Sequence[Var]
-) -> None:
-    """Transfer known value bounds from outer-scope atoms to inner jaxpr variables.
-
-    Same idea as ``_forward_const_vals`` but for value bounds.
-    """
+    consts: StateConsts = {
+        var: np.asarray(value) for var, value in zip(constvars, captured, strict=True)
+    }
+    bounds: StateBounds = {}
     for outer, inner in zip(outer_atoms, inner_vars, strict=False):
-        if isinstance(outer, Var) and outer in state_bounds:
-            state_bounds[inner] = state_bounds[outer]
+        value = _atom_const_val(outer, state_consts)
+        if value is not None:
+            consts[inner] = value
+        elif isinstance(outer, Var) and outer in state_bounds:
+            bounds[inner] = state_bounds[outer]
+    return consts, bounds
 
 
-def _forward_const_vals(
-    state_consts: StateConsts, outer_atoms: Sequence[Atom], inner_vars: Sequence[Var]
+def _export_scope(
+    outer_vars: Sequence[Var],
+    inner_atoms: Sequence[Atom],
+    inner_consts: StateConsts,
+    inner_bounds: StateBounds,
+    state_consts: StateConsts,
+    state_bounds: StateBounds,
 ) -> None:
-    """Transfer known state_consts from outer-scope atoms to inner jaxpr variables.
-
-    When entering a nested jaxpr (cond branch, while body, jit call),
-    the outer equation's invars and the inner jaxpr's invars are different
-    ``Var`` objects representing the same values.
-    This copies any concrete values from the outer atoms
-    to the corresponding inner vars so that downstream handlers
-    (gather, scatter, dynamic_slice) can resolve indices precisely.
-    """
-    for outer, inner in zip(outer_atoms, inner_vars, strict=False):
-        val = _atom_const_val(outer, state_consts)
-        if val is not None:
-            state_consts[inner] = val
+    """Publish the known values of a nested jaxpr's results at its call site."""
+    for outer, inner in zip(outer_vars, inner_atoms, strict=True):
+        value = _atom_const_val(inner, inner_consts)
+        if value is not None:
+            state_consts[outer] = value
+        elif isinstance(inner, Var) and inner in inner_bounds:
+            state_bounds[outer] = inner_bounds[inner]

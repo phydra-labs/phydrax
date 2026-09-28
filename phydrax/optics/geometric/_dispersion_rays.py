@@ -231,8 +231,9 @@ class DispersionRayPlan(StrictModule, NonTrainableState):
     ``hamiltonian_tolerance`` bounds ``|H − H₀|``; ``None`` demands roundoff
     conservation ``2·10³ ε step_count``, which a separable schedule meets on
     piecewise-quadratic potentials and which a nonquadratic Hamiltonian
-    generally violates at ``O(h²)``. ``root_tolerance`` and ``root_steps``
-    configure the implicit-midpoint Newton solve. Rays whose ``|p|`` exceeds
+    generally violates at ``O(h²)``. ``root_tolerance`` (on the midpoint
+    residual scaled componentwise by ``1 + |z| + |(h/2) J∇H(z)|``) and
+    ``root_steps`` configure the implicit-midpoint Newton solve. Rays whose ``|p|`` exceeds
     ``resonance_index`` are refused as resonant; rays whose ``|p|`` falls below
     ``cutoff_index`` carry the qualifying ``CUTOFF`` flag.
     """
@@ -384,18 +385,24 @@ class PreparedDispersionRay(StrictModule):
                 )
             case "implicit-midpoint":
                 half = 0.5 * jnp.asarray(self.plan.step_size, dtype=vector.dtype)
+                # The componentwise scale 1 + |z| + |(h/2) f(z)| makes the root
+                # tolerance relative to the state and the step without moving the root.
+                predictor = half * self._flow(vector)
+                scale = 1.0 + jnp.abs(vector) + jnp.abs(predictor)
 
                 def residual(midpoint: Array) -> Array:
-                    return midpoint - vector - half * self._flow(midpoint)
+                    return (midpoint - vector - half * self._flow(midpoint)) / scale
 
                 midpoint, diagnostics = self.root.solve_with_diagnostics(
-                    residual, vector + half * self._flow(vector)
+                    residual, vector + predictor
                 )
                 identity = jnp.eye(6, dtype=vector.dtype)
                 # z' = 2m − z with (I − (h/2) J ∇²H(m)) dm = dz, so the step map is
-                # the Cayley transform 2 (∂r/∂m)⁻¹ − I.
+                # the Cayley transform 2 (∂r/∂m)⁻¹ − I; the scaled Jacobian is
+                # diag(1/s) ∂r/∂m.
                 inverse = solve(
-                    LinearSystem(DenseLinearOperator(diagnostics.jacobian)), identity
+                    LinearSystem(DenseLinearOperator(diagnostics.jacobian)),
+                    jnp.diag(1.0 / scale),
                 )
                 return (
                     2.0 * midpoint - vector,

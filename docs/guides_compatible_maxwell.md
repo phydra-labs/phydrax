@@ -23,18 +23,20 @@ suppressed components fail during preparation.
 ## Magnetic closedness
 
 Pure Faraday forcing preserves the magnetic Gauss law because the next exterior
-derivative composed with the electric derivative is zero. Source magnetic currents
-carry magnetic charge: an equivalent (Huygens, antenna) sheet has physical surface
-divergence, the jump of the normal `B` across it. The runtime therefore tracks declared
-magnetic charge `q_m` in `MaxwellAuxiliaryState.magnetic_charge`, advanced with the
-same half kicks as `B` (`∂q_m/∂t = −d(M)`), and the constraint is `d(B) = q_m`;
-`magnetic_constraint(state)` and the diagnostics report the defect `d(B) − q_m`.
-Magnetic conductivity, PMC masking, and CPML memory require their own construction
-evidence.
+derivative composed with the electric derivative is zero. Every non-curl magnetic
+forcing carries magnetic charge: an equivalent (Huygens, antenna) sheet has physical
+surface divergence, the jump of the normal `B` across it, and CPML coordinate
+stretching and magnetic conductivity act as effective magnetic currents inside their
+supports. The runtime therefore tracks declared magnetic charge `q_m` in
+`MaxwellAuxiliaryState.magnetic_charge`, advanced with the same half kicks as `B`
+(`∂q_m/∂t = d(Ḃ − curl E)`, the divergence of exactly the non-curl forcing `B`
+receives), and the constraint is `d(B) = q_m`; `magnetic_constraint(state)` and the
+diagnostics report the defect `d(B) − q_m`. Only PMC masking, which overwrites `B`,
+breaks that bookkeeping.
 
-The automatic constraint policy elides projection only when the initial state matches
-its declared charge and every material, boundary, and absorber action carries that
-evidence. Otherwise Phydrax computes the Euclidean minimum-norm correction onto
+The automatic constraint policy elides projection when no PMC boundary is present
+and the initial state matches its declared charge. Otherwise Phydrax computes the
+Euclidean minimum-norm correction onto
 `d(B) = q_m` through a resource-bounded sparse native solve, restores the declared
 harmonic periods, and reports original residual and solver work.
 No production path materializes the incidence matrix densely.
@@ -65,12 +67,14 @@ circuit scattering adapter.
 `SampledPlaneCurrentAntennaPlan(bridge, normal_axis, plane_coordinate,
 first_coordinates, second_coordinates, times, electric, *, magnetic=None,
 carrier_angular_frequency=..., direction=..., medium=None, beta=0.0, scale=None)`
-launches a prescribed forward wave from a sheet normal to one nonperiodic, uniformly
-spaced `full_3d` axis. `electric[b, c, t, 2]` holds the complex tangential envelope
-`(E_b, E_c)` of the wave at the sheet on a tensor of sample coordinates along the two
-remaining axes in increasing order; the physical field is `Re[A(τ) e^{−iω₀τ}]` and the
-sampled window is the aperture (zero outside). `magnetic` defaults to the plane-wave
-relation `H' = s â × E'/η` of `medium`.
+launches a prescribed forward wave from a sheet normal to one uniformly spaced axis
+(nonperiodic and `full_3d` for the cochain runtime). `electric[b, c, t, 2]` holds the
+complex tangential envelope `(E_b, E_c)` of the wave at the sheet on a tensor of sample
+coordinates along the two remaining axes in increasing order; the physical field is
+`Re[A(τ) e^{−iω₀τ}]` and the sampled window is the aperture (zero outside). `magnetic`
+defaults to the plane-wave relation `H' = s â × E'/η` of `medium`. The same plan drives
+Cartesian PSATD through `SpectralMaxwellPlan(antennas=...)` on a periodic grid (see the
+spectral PIC guide).
 
 With emission sign `s` the equivalence principle gives `K = s â × H'` and
 `K_m = −s â × E'`, radiating the wave ahead of the sheet and nothing behind it. On the
@@ -216,9 +220,65 @@ derivative by `1/s`, with `s = κ + σ/(α − iω)` on the same graded profile 
 
 `power_ledger(E, source)` reports the impressed source power `−½Re⟨E, J⟩`, the
 electric and magnetic material losses `½ω Im⟨E, εE⟩` and `½ω Im⟨H, μH⟩`, and the work
-of the equivalent stretched-coordinate currents. On a closed domain the ledger closes
-to the solve residual. The Hermitian eigen path is refused when stretching is active or
-when the response is dispersive or lossy.
+of the equivalent stretched-coordinate currents, plus the impedance-boundary loss
+`½Re⟨E, YE⟩`. On a closed domain the ledger closes to the solve residual. The
+Hermitian eigen path is refused when stretching is active, when the response is
+dispersive or lossy, or when perfect-conductor or impedance boundaries are present.
+
+`boundaries=` takes the time-domain `MaxwellBoundaryPlan` vocabulary: the domain trace
+or an explicit `support` mask (interior plates, gratings, thick conductors).
+Perfect-conductor entries become identity rows (`E` equals the right-hand side
+there), perfect-magnetic-conductor entries zero `H`, and impedance entries add the
+surface conduction current `YE`. `solve(source, method="krylov")` runs restarted
+GMRES on the matrix-free operator; `method="direct"` assembles the exact sparse
+operator by structural coloring of the traced curl-curl pattern (`phydrax.sparse`
+structure detection), reuses that coloring across frequencies, and factors it with
+native sparse LU, whose resource estimate is the symbolic fill bound of its owned
+column ordering.
+
+## Moving charges in the frequency domain
+
+A charge in uniform motion has the transformed current `J̃ = q d̂ δ_⊥ exp(iωs/v)`
+(`s` the path coordinate from the position at `t = 0`). `MaxwellMovingChargePlan`
+integrates it exactly on the Whitney edge forms: on every crossed cell the Whitney
+factor `W_e·d̂` is a polynomial of degree `dimension − 1` in the path parameter, so each
+segment contributes closed-form moments `∫₀¹ τᵐ exp(iθτ) dτ`. The Whitney node load of
+`ρ̃ = (q/v) δ_⊥ exp(iωs/v)` satisfies `d₀ᵀ b + iωb₀ = 0` to roundoff away from path
+ends. Full 3-D layouts carry a point charge; `tez` layouts a line charge per unit `z`
+length. A path parallel to a periodic axis of length `L` is one closed pass and needs
+`ωL/v ∈ 2πℤ`; it then equals the transform of a single charge on an infinite line, so
+a commensurate periodic cell is the natural Cherenkov and Smith–Purcell domain. Any
+other path is clipped to the box; its ends are reported as open endpoints where charge
+appears or vanishes (harmless on a conductor or deep in an absorber).
+
+`FrequencyMovingChargePlan(source, constitutive, formulation=...)`:
+
+- `"total-field"` solves `A E = iωJ̃`. `(2/π)·ledger.source_power` is the one-sided
+  energy per unit frequency the field extracts from the charge (Frank–Tamm per unit
+  length in a periodic cell).
+- `"scattered-field"` requires a prepared homogeneous isotropic `background`. The
+  incident field is the analytic `phydrax.electromagnetics.UniformMotionFieldPlan`
+  field in that background, integrated on edges; free rows carry `A_b E_inc − A P E_inc`
+  and conductor surfaces `E_s = −E_inc`, so only material contrast and conductor
+  surfaces radiate and thick conductors may enclose the path. Sources must stay at
+  least a quarter edge from the path. `(2/π)·ledger.absorbed_power` is the radiated
+  (for example transition) energy per unit frequency.
+
+`FrequencyMovingChargeEvidence` reports the branch (`radiating`, `k_ρ`), the bound-field
+reach `γβλ = 2π/Im k_ρ` against the transverse clearance to the absorbers
+(`bound_field_contained`), the continuity defect, the scattered-field source distance,
+open endpoints, and the solve residual, convergence, and iterations. Resolving the
+bound field needs cells well below `γβλ/2π`; slow charges (`γβλ/2π` below a cell)
+under-resolve transition radiation.
+
+The Fourier-modal solver carries the same physics for periodic layer stacks:
+`fourier_modal.MovingLineChargeSource` is the zeroth-harmonic sheet
+`λ d̂ exp(i k_B·r)` with Bloch wavevector `k_B = (ω/v) d̂`, which produces the
+Smith–Purcell orders `λ = (d/|n|)(1/β − cosθ)` of a grating directly.
+`MovingPointChargeQuadrature` decomposes a point charge into `k_⊥` components with
+`Γ = √(ω²/(β²γ²c²) + k_⊥²)`, truncates at `exp(−2Γh) ≤ tolerance`, and integrates with
+cosine-mapped Gauss–Kronrod panels that absorb the square-root cutoffs of the orders;
+its evidence is the Kronrod–Gauss difference and the truncation bound.
 
 ## Discrete-dispersion audit and Cherenkov regimes
 

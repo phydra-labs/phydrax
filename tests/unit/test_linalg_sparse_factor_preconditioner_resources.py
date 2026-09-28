@@ -234,33 +234,36 @@ def test_admitted_complete_and_incomplete_star_factorizations_retain_reference()
     assert incomplete.status == int(la.SparseFactorizationStatus.SUCCESS)
 
 
-def test_sparse_factor_builder_threads_active_planner_ceiling() -> None:
-    matrix = jnp.asarray(
-        [
-            [8.0, 1.0, 1.0, 1.0],
-            [1.0, 4.0, 0.0, 0.0],
-            [1.0, 0.0, 5.0, 0.0],
-            [1.0, 0.0, 0.0, 6.0],
-        ],
-        dtype=jnp.float64,
-    )
-    operator = _sparse_map(matrix)
-    builder = la.SparseFactorizationPreconditionerBuilder(
-        la.SparseFactorizationPolicy(
-            "lu",
-            max_factor_nnz=100,
-            max_factor_bytes=1_000_000,
-            max_symbolic_work=10_000,
+def test_matrix_free_solve_admits_sparse_ilu_under_its_preconditioner_budget() -> None:
+    # A matrix-free Krylov solve forbids dense materialization of the system
+    # operator. Factoring the stored sparse setup operator is not a dense
+    # materialization: the factor is charged to preconditioner_bytes instead.
+    operator = _laplacian(12)
+    builder = la.ILUPreconditionerBuilder()
+    stored = builder.cost_for(operator).storage_bytes
+    assert stored > 16
+
+    def policy(budget: int) -> la.LinearSolvePolicy:
+        return la.LinearSolvePolicy(
+            la.GMRES(restart=40),
+            tolerance=la.TolerancePolicy(relative=1e-12, absolute=0.0, max_steps=200),
+            preconditioning=la.PreconditioningPolicy(
+                builder, setup_operator=operator, side="right"
+            ),
+            materialization=la.MaterializationPolicy(max_entries=1, max_bytes=16),
+            resources=la.SolveResourcePolicy(preconditioner_bytes=budget),
+            failure=la.FailurePolicy("status"),
         )
+
+    problem = la.LinearSystem(operator)
+    right_hand_side = jnp.cos(jnp.arange(operator.source.size, dtype=jnp.float64))
+    result = la.solve(problem, right_hand_side, policy=policy(stored))
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        operator.mv(result.value), right_hand_side, rtol=1e-10, atol=1e-10
     )
-    ceiling = la.MaterializationPolicy(max_entries=15, max_bytes=1_000_000)
-
-    estimate = builder.cost_for(operator, materialization=ceiling)
-
-    assert not estimate.accepted
-    assert "factor_nnz requires 16, exceeding limit 15" in estimate.reason
-    with pytest.raises(la.LinearCapabilityError, match="factor_nnz requires 16"):
-        builder.prepare(operator, materialization=ceiling)
+    with pytest.raises(ValueError, match="preconditioner state bytes, exceeding"):
+        la.plan(problem, policy(stored - 1))
 
 
 def test_sparse_symbolic_retained_byte_cap_reports_observed_and_limit() -> None:

@@ -284,25 +284,6 @@ def test_overlapping_radiation_ownership_claims_are_refused() -> None:
     assert plan.ownership == "subgrid-reaction"
 
 
-def test_unpaired_deposit_and_gauss_charge_are_refused_at_preparation() -> None:
-    grid = D.TensorGridPlan(
-        (
-            D.UniformCellAxisSpec(8, periodic=False),
-            D.UniformCellAxisSpec(8, periodic=True),
-        ),
-        axis_names=("x", "y"),
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
-    pec = phx.solver.maxwell.MaxwellBoundaryPlan("pec")
-    solver = phx.solver.ReducedMaxwellPICFieldSolver(
-        phx.solver.CompatibleMaxwell2DPlan(grid, boundaries=((pec, pec), (None, None))),
-        PIC.ReducedPICTransferPlan(grid),
-    )
-    with pytest.raises(ValueError, match="pairing defect"):
-        phx.solver.ElectromagneticPICPlan(
-            solver, species=(_species(4, -1.0, "electrons", 2, 0),)
-        )
-
-
 def test_absorbed_charge_stays_on_the_grid_as_wall_charge() -> None:
     electrons, ions = _neutral_pair()
     boundary = PIC.PICOpenBoundaryPlan(
@@ -410,3 +391,158 @@ def test_tetrahedral_maxwell_charge_follows_the_whitney_deposit() -> None:
     assert result.diagnostics.continuity_defect < 1e-9
     assert result.diagnostics.particle_field_charge_defect < 1e-10
     assert result.diagnostics.electric_constraint < 1e-10
+
+
+def _knot_plasma(counts: tuple[int, int, int]) -> tuple[Any, Any, Any]:
+    """Quadratic-spline electrons and ions on cell centers: every particle on a knot."""
+    spacing = 0.2
+    grid = D.TensorGridPlan(
+        tuple(D.UniformCellAxisSpec(n, periodic=True) for n in counts),
+        axis_names=("x", "y", "z"),
+    ).prepare(jnp.asarray([[0.0, 0.0, 0.0], [n * spacing for n in counts]]))
+    bridge = D.StructuredCochainBridge(grid)
+    count = int(np.prod(counts))
+    weight = spacing**3
+    species, charged = [], []
+    for offset, sign, name in ((0, -1.0, "electrons"), (10**6, 1.0, "ions")):
+        support = D.ParticleSetPlan(
+            jnp.arange(offset, offset + count),
+            weight * jnp.ones((count,)),
+            ambient_dimension=3,
+        ).prepare()
+        charged.append(
+            D.ChargedParticlePlan(sign * weight * jnp.ones((count,)), name).prepare(
+                support
+            )
+        )
+        species.append(
+            PIC.PICSpeciesPlan(
+                D.ParticlePopulationPlan(support),
+                PIC.PICChargeModelPlan(
+                    sign,
+                    name,
+                    minimum_charge_number=1,
+                    maximum_charge_number=1,
+                    initial_charge_number=1,
+                ),
+            )
+        )
+    transfers = tuple(
+        PIC.PICParticleCochainTransferPlan(bridge, shape_order=2).prepare(value)
+        for value in charged
+    )
+    maxwell = phx.solver.CompatibleMaxwellPlan(
+        bridge, sources=(phx.solver.PICMaxwellCurrentSourcePlan(),), plan_id="knots"
+    ).prepare()
+    solver = phx.solver.CochainMaxwellPICFieldSolver(
+        maxwell,
+        phx.solver.CochainElectrostaticPlan(
+            bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+        ),
+        transfers,
+        tuple(PIC.ChargeConservingCurrentPlan(value) for value in transfers),
+    )
+    axes = np.meshgrid(*(np.arange(n) for n in counts), indexing="ij")
+    lattice = jnp.asarray(
+        np.stack(tuple((value + 0.5) * spacing for value in axes), axis=-1).reshape(-1, 3)
+    )
+    return phx.solver.ElectromagneticPICPlan(solver, species=species), lattice, count
+
+
+def test_compiled_step_certifies_continuity_for_particles_on_spline_knots() -> None:
+    # Compiled and eager stencils once disagreed for particles exactly on a
+    # knot, shifting compiled charge by a whole vertex on larger grids.
+    pic, lattice, count = _knot_plasma((24, 24, 12))
+    drift = jnp.zeros((count, 3)).at[:, 0].set(0.01)
+    state = eqx.filter_jit(
+        lambda: pic.initialize((lattice, lattice), (drift, jnp.zeros((count, 3))), 0.1)
+    )()
+    result = eqx.filter_jit(lambda value: pic.step_detailed(value, 0.1))(state)
+    diagnostics = result.diagnostics
+    assert result.successful
+    assert int(diagnostics.rejection_reason) == 0
+    eps = float(jnp.finfo(jnp.float64).eps)
+    assert diagnostics.continuity_defect <= 64.0 * eps * diagnostics.continuity_scale
+    assert diagnostics.particle_field_charge_defect <= 64.0 * eps * (
+        diagnostics.continuity_scale * 0.1
+    )
+
+
+class _LeakySolver(phx.solver.AbstractPreparedPICFieldSolver):
+    """Fault injection: a valid solver whose deposited current is 1 ppm too strong."""
+
+    inner: Any
+    solver_id: str = eqx.field(static=True)
+    spatial_dimension: int = eqx.field(static=True)
+    field_dtype: Any = eqx.field(static=True)
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.solver_id = "leaky-" + inner.solver_id
+        self.spatial_dimension = inner.spatial_dimension
+        self.field_dtype = inner.field_dtype
+
+    @property
+    def stable_step(self) -> Any:
+        return self.inner.stable_step
+
+    @property
+    def displacement_widths(self) -> Any:
+        return self.inner.displacement_widths
+
+    def validate_species(self, species: Any, /) -> None:
+        self.inner.validate_species(species)
+
+    def pairing_probe(self, species: int, capacity: int, /) -> Any:
+        return self.inner.pairing_probe(species, capacity)
+
+    def field_with_charge(self, charge: Any, /) -> Any:
+        return self.inner.field_with_charge(charge)
+
+    def initialize_field(self, charge: Any, /, *, magnetic: Any = None) -> Any:
+        return self.inner.initialize_field(charge, magnetic=magnetic)
+
+    def field_charge(self, field: Any, /) -> Any:
+        return self.inner.field_charge(field)
+
+    def field_energy(self, field: Any, /) -> Any:
+        return self.inner.field_energy(field)
+
+    def deposit_charge(self, *arguments: Any) -> Any:
+        return self.inner.deposit_charge(*arguments)
+
+    def deposit(self, *arguments: Any) -> Any:
+        value = self.inner.deposit(*arguments)
+        leaked = tuple(1.000001 * component for component in value.current)
+        return eqx.tree_at(lambda deposit: deposit.current, value, leaked)
+
+    def advance(self, *arguments: Any) -> Any:
+        return self.inner.advance(*arguments)
+
+    def gather_fields(self, *arguments: Any) -> Any:
+        return self.inner.gather_fields(*arguments)
+
+
+def test_non_conserving_deposit_is_rejected_for_continuity() -> None:
+    grid = _grid_1d(16, periodic=True)
+    solver = _LeakySolver(
+        phx.solver.ReducedMaxwellPICFieldSolver(
+            phx.solver.CompatibleMaxwell1DPlan(grid), PIC.ReducedPICTransferPlan(grid)
+        )
+    )
+    with pytest.raises(ValueError, match="pairing defect"):
+        phx.solver.ElectromagneticPICPlan(solver, species=_neutral_pair())
+    # Admitted past preparation, the step certificate still catches the leak.
+    pic = phx.solver.ElectromagneticPICPlan(
+        solver, species=_neutral_pair(), pairing_tolerance=1.0e-3
+    )
+    dt = 0.2 * solver.inner.field.stable_dt
+    result = pic.step_detailed(_initial_state(pic, dt), dt)
+    assert not result.successful
+    assert int(result.diagnostics.rejection_reason) & int(
+        PIC.PICRejectionReason.CONTINUITY
+    )
+    np.testing.assert_array_equal(
+        result.accepted_state.species[0].particles.position,
+        _initial_state(pic, dt).species[0].particles.position,
+    )

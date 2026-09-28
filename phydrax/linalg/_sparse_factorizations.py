@@ -20,7 +20,6 @@ from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
 from ..typing import parse
-from ._materialization import MaterializationPolicy
 from ._properties import LinearCapabilityError
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._sparse_triangular import (
@@ -488,31 +487,19 @@ class _SymbolicResourceTracker:
 def _symbolic_resource_tracker(
     storage: SparseStorage,
     policy: SparseFactorizationPolicy,
-    materialization: MaterializationPolicy | None,
     kind: Literal["lu", "cholesky"],
     base_bytes: int,
     /,
 ) -> _SymbolicResourceTracker:
-    if materialization is not None and not isinstance(
-        materialization, MaterializationPolicy
-    ):
-        raise TypeError("materialization must be a MaterializationPolicy or None.")
-    maximum_nnz = policy.max_factor_nnz
-    maximum_bytes = policy.max_factor_bytes
-    maximum_work = policy.max_symbolic_work
-    if materialization is not None:
-        maximum_nnz = min(maximum_nnz, materialization.max_entries)
-        maximum_bytes = min(maximum_bytes, materialization.max_bytes)
-        maximum_work = min(maximum_work, 4 * materialization.max_entries)
     tracker = _SymbolicResourceTracker(
         size=storage.shape[0],
         kind=kind,
         batch_count=prod(storage.batch_shape or (1,)),
         value_itemsize=storage.values.dtype.itemsize,
         index_itemsize=storage.indices.dtype.itemsize,
-        max_factor_nnz=maximum_nnz,
-        max_factor_bytes=maximum_bytes,
-        max_symbolic_work=maximum_work,
+        max_factor_nnz=policy.max_factor_nnz,
+        max_factor_bytes=policy.max_factor_bytes,
+        max_symbolic_work=policy.max_symbolic_work,
         base_bytes=base_bytes,
     )
     tracker.reserve_fixed_bytes()
@@ -770,10 +757,15 @@ def prepare_sparse_factorization(
     operator: AbstractSparseLinearOperator,
     policy: SparseFactorizationPolicy | None = None,
     /,
-    *,
-    materialization: MaterializationPolicy | None = None,
 ) -> SparseFactorizationPlan:
-    """Build a bounded host symbolic factorization plan without reading values."""
+    """Build a bounded host symbolic factorization plan without reading values.
+
+    Factor fill is bounded by the policy's own ``max_factor_nnz``,
+    ``max_factor_bytes`` and ``max_symbolic_work``. Factoring stored sparse
+    values is not a dense materialization, so ``MaterializationPolicy`` does not
+    apply; solve plans charge the retained factor to
+    ``SolveResourcePolicy.preconditioner_bytes``.
+    """
     policy_ = SparseFactorizationPolicy() if policy is None else policy
     if not isinstance(policy_, SparseFactorizationPolicy):
         raise TypeError("policy must be SparseFactorizationPolicy or None.")
@@ -809,13 +801,7 @@ def prepare_sparse_factorization(
         kind = policy_.kind
     if kind == "cholesky" and not operator.properties.certifies("self_adjoint"):
         raise ValueError("Sparse Cholesky requires a certified self-adjoint operator.")
-    tracker = _symbolic_resource_tracker(
-        storage,
-        policy_,
-        materialization,
-        kind,
-        base_bytes,
-    )
+    tracker = _symbolic_resource_tracker(storage, policy_, kind, base_bytes)
     for row in range(storage.shape[0]):
         tracker.add_work()
         tracker.add_factor_entry(row, row)
@@ -1282,15 +1268,9 @@ def factorize_sparse(
     operator: AbstractSparseLinearOperator,
     policy: SparseFactorizationPolicy | None = None,
     /,
-    *,
-    materialization: MaterializationPolicy | None = None,
 ) -> PreparedSparseFactorization:
     """Symbolically plan and numerically factor one sparse operator."""
-    plan = prepare_sparse_factorization(
-        operator,
-        policy,
-        materialization=materialization,
-    )
+    plan = prepare_sparse_factorization(operator, policy)
     return refresh_sparse_factorization(plan, operator)
 
 

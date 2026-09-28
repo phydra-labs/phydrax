@@ -49,12 +49,22 @@ PICShapeOrder: TypeAlias = Literal[1, 2, 3]
 def _spline_whitney_assignment(
     shape_order: PICShapeOrder, layout: TensorEntityLayout, /
 ) -> AbstractStructuredSplatAssignment:
-    """Assignment of one entity layout for one spline-Whitney shape order."""
+    """Assignment of one entity layout for one spline-Whitney shape order.
+
+    Order ``p`` uses degree ``p`` along the axes where the entity sits at points
+    and degree ``p − 1`` along the axes it spans, so the gather is the exact
+    Galerkin transpose of the charge-conserving current: at order one this is
+    the lowest-order Whitney form, piecewise constant along an edge (and across
+    a face), and the gathered field does exactly the work ``⟨E, ⋆J⟩`` the
+    deposited current does on the grid. Order-one layouts without a point axis
+    (1-D edges) keep multilinear midpoint interpolation, the electrostatic
+    momentum-conserving gather.
+    """
     order = parse(shape_order, PICShapeOrder, "shape_order")
+    if order == 1 and len(set(layout.axis_entities)) == 1:
+        return MultilinearSplatAssignment()
     match order:
-        case 1:
-            return MultilinearSplatAssignment()
-        case 2 | 3:
+        case 1 | 2 | 3:
             return TensorBSplineSplatAssignment(
                 tuple(
                     order if kind == "point" else order - 1

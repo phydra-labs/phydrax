@@ -528,9 +528,17 @@ def _prepare_numeric(
             jnp.maximum(jnp.asarray(1, dtype=absolute_scale.dtype), absolute_scale),
             jnp.asarray(1, dtype=absolute_scale.dtype),
         )
+        # XLA lowers division by a broadcast scale to multiplication by its
+        # reciprocal. Capping the scale at 1 / tiny keeps that reciprocal a normal
+        # number, so CPU flush-to-zero cannot annihilate the normalized matrix;
+        # normalized entries then stay below max * tiny < 4.
+        maximum_factor_scale = jnp.asarray(
+            1 / jnp.finfo(absolute_scale.dtype).tiny,
+            dtype=absolute_scale.dtype,
+        )
         factor_scale = jnp.where(
             input_finite & (absolute_scale > 0.0),
-            absolute_scale,
+            jnp.minimum(absolute_scale, maximum_factor_scale),
             jnp.asarray(1, dtype=absolute_scale.dtype),
         )
         factor_scale = jax.lax.stop_gradient(factor_scale)

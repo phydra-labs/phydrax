@@ -74,6 +74,7 @@ from ._spaces import (
     RHSLayout,
 )
 from ._sparse_contract import AbstractSparseLinearOperator
+from ._sparse_lu_analysis import analyze_sparse_lu, SparseLUSymbolicAnalysis
 from ._sparse_providers import sparse_provider_availability, SparseProviderName
 from ._structured_operators import (
     _is_structured_exact,
@@ -112,6 +113,7 @@ class LinearSolvePlan(StrictModule):
     candidates: tuple[LinearCostEstimate, ...]
     preconditioner_plan: PreconditionerPlan | None
     rhs_layout: RHSLayout | None
+    sparse_lu_analysis: SparseLUSymbolicAnalysis | None
     problem_id: str = eqx.field(static=True)
     problem_kind: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
@@ -136,6 +138,7 @@ class LinearSolvePlan(StrictModule):
         reason: str,
         rejected: tuple[str, ...] = (),
         candidates: tuple[LinearCostEstimate, ...] = (),
+        sparse_lu_analysis: SparseLUSymbolicAnalysis | None = None,
     ) -> None:
         backend = parse(backend, LinearBackend, "backend")
         values = (str(method), str(reason))
@@ -158,6 +161,7 @@ class LinearSolvePlan(StrictModule):
         self.preconditioner_plan = preconditioner_plan
         self.candidates = candidates
         self.rhs_layout = rhs_layout
+        self.sparse_lu_analysis = sparse_lu_analysis
         self.problem_id = problem.problem_id
         self.problem_kind = problem.kind
         self.operator_id = problem.operator.operator_id
@@ -228,6 +232,11 @@ class LinearSolvePlan(StrictModule):
                 ),
                 "preconditioning": (
                     None if preconditioner_plan is None else preconditioner_plan.plan_id
+                ),
+                **(
+                    {}
+                    if sparse_lu_analysis is None
+                    else {"sparse_lu_analysis": sparse_lu_analysis.analysis_id}
                 ),
                 "recycling": (
                     None
@@ -319,6 +328,7 @@ def plan(
         selected,
         policy_,
     )
+    sparse_lu_analysis = _sparse_lu_analysis(problem, selected, backend)
     selected_estimate = _selected_estimate(
         problem,
         selected,
@@ -327,6 +337,7 @@ def plan(
         preconditioner_plan,
         rhs_layout,
         reason,
+        sparse_lu_analysis,
     )
     _require_selected_resources(
         selected_estimate,
@@ -346,7 +357,32 @@ def plan(
         reason=reason,
         rejected=rejected,
         candidates=estimates,
+        sparse_lu_analysis=sparse_lu_analysis,
     )
+
+
+def _sparse_lu_analysis(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    backend: LinearBackend,
+    /,
+) -> SparseLUSymbolicAnalysis | None:
+    """Symbolic analysis for the sparse LU providers whose column ordering is owned.
+
+    Host SuperLU factors the pre-permuted matrix with its natural ordering, so the
+    symbolic fill bound applies to the executed factorization. UMFPACK and the
+    JAX CPU route choose their own orderings and keep the dense bound.
+    """
+    if not (
+        backend == "host-sparse"
+        and isinstance(method, SparseLU)
+        and method.provider in ("auto", "scipy-superlu")
+    ):
+        return None
+    operator = problem.operator
+    if not isinstance(operator, AbstractSparseLinearOperator):
+        raise TypeError("Sparse LU symbolic analysis requires canonical sparse storage.")
+    return analyze_sparse_lu(operator.sparse_storage())
 
 
 def _validate_precision_policy(
@@ -1540,6 +1576,7 @@ def _selected_estimate(
     preconditioner_plan: PreconditionerPlan | None,
     rhs_layout: RHSLayout | None,
     reason: str,
+    sparse_lu_analysis: SparseLUSymbolicAnalysis | None,
     /,
 ) -> LinearCostEstimate:
     rows, columns = problem.operator.target.size, problem.operator.source.size
@@ -1583,7 +1620,12 @@ def _selected_estimate(
             factorization_itemsize,
         )
         preparation_workspace_bytes = batch_count * rows * columns * itemsize
+    elif sparse_lu_analysis is not None:
+        # George–Ng fill bound under the owned column ordering; one factor per batch.
+        factorization_bytes = sparse_lu_analysis.factor_bytes(itemsize, batch_count)
+        preparation_workspace_bytes = sparse_lu_analysis.workspace_bytes(itemsize)
     elif sparse_direct:
+        # Providers that choose their own ordering keep the dense bound.
         factorization_bytes = rows * columns * itemsize
         preparation_workspace_bytes = rows * columns * itemsize
     elif structured_direct:

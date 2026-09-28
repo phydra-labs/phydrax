@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -29,9 +31,13 @@ class SpaceChargeIGFResult(StrictModule):
     ``magnetic_field`` are the lab-frame fields on that same grid;
     ``momentum_kick`` is ``Δ(p c)/(p₀ c)`` per particle. ``support`` marks
     particles that were fully deposited and gathered inside the grid.
+    ``reference_gamma`` is the Lorentz factor ``γ₀`` of the rest frame.
     ``maximum_rest_frame_speed`` is the largest rest-frame ``|β'|`` of an
     active particle: the electrostatic rest-frame solve is valid only when it
-    is small. The bunch is updated only when ``accepted`` holds.
+    is small. ``cells_per_sigma`` is the charge-weighted rest-frame rms size of
+    the deposited bunch per grid axis in cells; ``resolved`` holds when every
+    axis reaches the plan's ``minimum_cells_per_sigma``. The bunch is updated
+    only when ``accepted`` holds.
     """
 
     bunch: AcceleratorBunch
@@ -45,10 +51,37 @@ class SpaceChargeIGFResult(StrictModule):
     total_charge: Array
     reference_gamma: Array
     maximum_rest_frame_speed: Array
+    cells_per_sigma: Array
+    resolved: Array
     support: Array
     finite: Array
     accepted: Array
     plan_id: str = eqx.field(static=True)
+
+
+class SpaceChargeIGFKick(NamedTuple):
+    """Traceable arrays of one kick: updated coordinates plus the result fields.
+
+    ``coordinates`` are the kicked bunch coordinates (unchanged unless
+    ``accepted``); the remaining fields match :class:`SpaceChargeIGFResult`.
+    """
+
+    coordinates: Array
+    momentum_kick: Array
+    rest_frame_potential: Array
+    rest_frame_electric_field: Array
+    electric_field: Array
+    magnetic_field: Array
+    charge_density: Array
+    deposited_charge: Array
+    total_charge: Array
+    reference_gamma: Array
+    maximum_rest_frame_speed: Array
+    cells_per_sigma: Array
+    resolved: Array
+    support: Array
+    finite: Array
+    accepted: Array
 
 
 def _longitudinal_sign(bunch: AcceleratorBunch) -> float:
@@ -69,16 +102,25 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
     Each ``kick`` boosts the bunch into the frame of the reference particle,
     deposits the macro-charge on ``grid`` (centroid-relative rest-frame
     coordinates, multilinear assignment), solves the open-boundary Poisson
-    equation with the cell-integrated Coulomb kernel (Qiang et al. 2006),
-    transforms the electrostatic field back to the lab frame through
-    ``boost_fields``, gathers ``E + v × B`` on the particles, and applies the
-    exact three-momentum increment over the lab path length ``step_length``.
+    equation with the cell-integrated Coulomb kernel (Qiang et al. 2006) and
+    its face-difference field kernels (exact for the deposited density,
+    second-order accurate at any cell aspect ratio), transforms the
+    electrostatic field back to the lab frame through ``boost_fields``, gathers
+    ``E + v × B`` on the particles, and applies the exact three-momentum
+    increment over the lab path length ``step_length``.
 
     ``reference_rest_energy`` and ``reference_momentum`` (``p₀ c``) of the
     bunch are read in the energy unit of ``scale``; positions use its length
     unit and ``reference_charge`` counts elementary charges. The provider kick
     route (:class:`SpaceChargeKickPlan`) remains distinct: it applies an
     external field solve, this plan owns its own.
+
+    Deposit and gather each smooth the bunch over one cell, so the field error
+    is set by the rest-frame rms size per axis in cells (Gaussian bunch,
+    longitudinal field at the particles: ≈ 4 % at 4 cells, 7 % at 3, 15 % at
+    2, 45 % at 1, independent of the cell aspect ratio). A kick whose
+    ``cells_per_sigma`` falls below ``minimum_cells_per_sigma`` on any axis is
+    refused.
     """
 
     scale: ElectromagneticScaleContract = eqx.field(static=True)
@@ -87,6 +129,7 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
     splat: PreparedParticleGridSplat
     capacity: int = eqx.field(static=True)
     maximum_rest_frame_speed: float = eqx.field(static=True)
+    minimum_cells_per_sigma: float = eqx.field(static=True)
     speed_of_light: float = eqx.field(static=True)
     elementary_charge: float = eqx.field(static=True)
     vacuum_permittivity: float = eqx.field(static=True)
@@ -100,6 +143,7 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
         *,
         capacity: int,
         maximum_rest_frame_speed: float = 0.3,
+        minimum_cells_per_sigma: float = 3.0,
     ) -> None:
         if not isinstance(scale, ElectromagneticScaleContract):
             raise TypeError("scale must be an ElectromagneticScaleContract.")
@@ -113,6 +157,9 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
         speed_limit = float(maximum_rest_frame_speed)
         if not np.isfinite(speed_limit) or not 0.0 < speed_limit < 1.0:
             raise ValueError("maximum_rest_frame_speed must lie in (0, 1).")
+        resolution = float(minimum_cells_per_sigma)
+        if not np.isfinite(resolution) or resolution < 0.0:
+            raise ValueError("minimum_cells_per_sigma must be finite and nonnegative.")
         convolution = FreeSpaceConvolutionPlan("coulomb-igf", grid, gradient=True)
         particles = ParticleSetPlan(
             np.arange(capacity_, dtype=np.int64),
@@ -127,6 +174,7 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
         self.splat = splat
         self.capacity = capacity_
         self.maximum_rest_frame_speed = speed_limit
+        self.minimum_cells_per_sigma = resolution
         self.speed_of_light = float(scale.speed_of_light)
         self.elementary_charge = float(scale.elementary_charge)
         self.vacuum_permittivity = float(scale.vacuum_permittivity)
@@ -138,12 +186,68 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
                 "splat": splat.prepared_id,
                 "capacity": capacity_,
                 "maximum_rest_frame_speed": speed_limit,
+                "minimum_cells_per_sigma": resolution,
             }
         )
 
     def kick(
-        self, bunch: AcceleratorBunch, step_length: ArrayLike, /
+        self,
+        bunch: AcceleratorBunch,
+        step_length: ArrayLike,
+        /,
+        *,
+        frame_lorentz_factor: ArrayLike | None = None,
     ) -> SpaceChargeIGFResult:
+        kick = self.evaluate(
+            bunch, step_length, frame_lorentz_factor=frame_lorentz_factor
+        )
+        result_bunch = AcceleratorBunch(
+            kick.coordinates,
+            bunch.weights,
+            bunch.particle_ids,
+            active=bunch.active,
+            reference_rest_energy=float(bunch.reference_rest_energy),
+            reference_momentum=float(bunch.reference_momentum),
+            reference_charge=float(bunch.reference_charge),
+            convention=bunch.convention,
+            bunch_id=f"{bunch.bunch_id}:{self.plan_id}",
+        )
+        return SpaceChargeIGFResult(
+            result_bunch,
+            kick.momentum_kick,
+            kick.rest_frame_potential,
+            kick.rest_frame_electric_field,
+            kick.electric_field,
+            kick.magnetic_field,
+            kick.charge_density,
+            kick.deposited_charge,
+            kick.total_charge,
+            kick.reference_gamma,
+            kick.maximum_rest_frame_speed,
+            kick.cells_per_sigma,
+            kick.resolved,
+            kick.support,
+            kick.finite,
+            kick.accepted,
+            self.plan_id,
+        )
+
+    def evaluate(
+        self,
+        bunch: AcceleratorBunch,
+        step_length: ArrayLike,
+        /,
+        *,
+        frame_lorentz_factor: ArrayLike | None = None,
+    ) -> SpaceChargeIGFKick:
+        """Traceable kick arrays without rebuilding the (host-validated) bunch.
+
+        ``frame_lorentz_factor`` selects the quasi-static frame boosted along
+        the reference axis (default: the bunch reference ``γ₀``), for example
+        the frame of the mean longitudinal motion ``γ_z = γ/√(1 + a_w²)`` in an
+        undulator; the particle coordinates must then describe that mean
+        motion. A nonfinite frame or one at ``γ ≤ 1`` is refused.
+        """
         if not isinstance(bunch, AcceleratorBunch):
             raise TypeError("bunch must be an AcceleratorBunch.")
         if bunch.capacity != self.capacity:
@@ -166,9 +270,16 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
         proper = momentum / rest_energy
         gamma = jnp.sqrt(1.0 + jnp.sum(proper * proper, axis=-1))
         beta = proper / gamma[:, None]
-        reference_proper = reference_momentum / rest_energy
-        reference_gamma = jnp.sqrt(1.0 + reference_proper * reference_proper)
-        reference_beta = reference_proper / reference_gamma
+        if frame_lorentz_factor is None:
+            reference_proper = reference_momentum / rest_energy
+            reference_gamma = jnp.sqrt(1.0 + reference_proper * reference_proper)
+        else:
+            reference_gamma = jnp.asarray(
+                frame_lorentz_factor, dtype=coordinates.dtype
+            ).reshape(())
+        frame_valid = jnp.isfinite(reference_gamma) & (reference_gamma > 1.0)
+        safe_gamma = jnp.where(frame_valid, reference_gamma, 2.0)
+        reference_beta = jnp.sqrt(1.0 - 1.0 / (safe_gamma * safe_gamma))
         boost = jnp.stack(
             (
                 jnp.zeros_like(reference_beta),
@@ -197,8 +308,14 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
             total_weight, jnp.finfo(coordinates.dtype).tiny
         )
         relative = lab_positions - centroid
-        rest_positions = relative.at[:, 2].multiply(reference_gamma)
+        rest_positions = relative.at[:, 2].multiply(safe_gamma)
         rest_positions = jnp.where(active[:, None], rest_positions, 0.0)
+        # Charge-weighted rest-frame rms size per axis, in cells.
+        variance = jnp.sum(weights[:, None] * rest_positions**2, axis=0) / jnp.maximum(
+            total_weight, jnp.finfo(coordinates.dtype).tiny
+        )
+        cells_per_sigma = jnp.sqrt(variance) / self.convolution.spacing
+        resolved = jnp.all(cells_per_sigma >= self.minimum_cells_per_sigma)
 
         charge_per_particle = bunch.reference_charge * self.elementary_charge
         state = self.splat.build(rest_positions, active_mask=active)
@@ -244,23 +361,14 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
         )
         accepted = (
             finite
+            & frame_valid
+            & resolved
             & jnp.all(jnp.where(bunch.active & bunch.valid, kinematic_valid, True))
             & jnp.all(jnp.where(active, support, True))
             & (maximum_rest_speed <= self.maximum_rest_frame_speed)
         )
-        result_bunch = AcceleratorBunch(
+        return SpaceChargeIGFKick(
             jnp.where(accepted, candidate, coordinates),
-            bunch.weights,
-            bunch.particle_ids,
-            active=bunch.active,
-            reference_rest_energy=float(bunch.reference_rest_energy),
-            reference_momentum=float(bunch.reference_momentum),
-            reference_charge=float(bunch.reference_charge),
-            convention=bunch.convention,
-            bunch_id=f"{bunch.bunch_id}:{self.plan_id}",
-        )
-        return SpaceChargeIGFResult(
-            result_bunch,
             increment / reference_momentum,
             potential,
             rest_electric,
@@ -271,11 +379,12 @@ class SpaceChargeIGFPlan(StrictModule, NonTrainableState):
             deposit.balance.active_source_total,
             reference_gamma,
             maximum_rest_speed,
+            cells_per_sigma,
+            resolved,
             support & active,
             finite,
             accepted,
-            self.plan_id,
         )
 
 
-__all__ = ["SpaceChargeIGFPlan", "SpaceChargeIGFResult"]
+__all__ = ["SpaceChargeIGFKick", "SpaceChargeIGFPlan", "SpaceChargeIGFResult"]

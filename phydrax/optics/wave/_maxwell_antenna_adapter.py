@@ -6,12 +6,15 @@
 
 The optics owner maps a `PulseEnvelopeField` (sampled directly, from
 `sample_focused_gaussian_pulse_envelope`, or from an openPMD LaserEnvelope
-import) onto `phydrax.solver.maxwell.SampledPlaneCurrentAntennaPlan`; the solver
-never imports optics. The plane frame must be aligned with the structured grid:
-its normal is a signed grid axis (the emission direction) and each tangential
-basis vector a signed tangential grid axis. The tangential Jones envelope is
-rotated into grid components and the sample axes are reordered to increasing
-grid coordinates; the world coordinates of the plane are the grid coordinates.
+import) onto `phydrax.solver.maxwell.SampledPlaneCurrentAntennaPlan` or, for
+quasi-cylindrical spectral PIC, onto
+`phydrax.solver.maxwell.spectral.QuasiCylindricalAntennaPlan`; the solver never
+imports optics. The plane frame must be aligned with the structured grid: its
+normal is a signed grid axis (the emission direction; the ``z`` axis for
+quasi-cylindrical grids) and each tangential basis vector a signed tangential
+grid axis. The tangential Jones envelope is rotated into grid components and
+the sample axes are reordered to increasing grid coordinates; the world
+coordinates of the plane are the grid coordinates.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from ..._physical import ElectromagneticScaleContract
 from ...discretization import StructuredCochainBridge
 from ...solver._maxwell_antenna import SampledPlaneCurrentAntennaPlan
 from ...solver._maxwell_far_field import HomogeneousMaxwellExterior
+from ...solver.maxwell.spectral import QuasiCylindricalAntennaPlan
 from ._envelope import PulseEnvelopeField
 
 
@@ -41,24 +45,10 @@ def _signed_axis(vector: np.ndarray, name: str, /) -> tuple[int, float]:
     return axis, sign
 
 
-def pulse_envelope_antenna(
-    field: PulseEnvelopeField,
-    bridge: StructuredCochainBridge,
-    /,
-    *,
-    medium: HomogeneousMaxwellExterior | None = None,
-    beta: float = 0.0,
-    scale: ElectromagneticScaleContract | None = None,
-    provenance_id: str | None = None,
-) -> SampledPlaneCurrentAntennaPlan:
-    """Build a one-way plane antenna launching ``field`` along its plane normal.
-
-    ``field`` must carry a tangential polarization; the rest-frame sample times
-    are its pulse-time coordinates and outside them the antenna is silent. The
-    magnetic envelope follows the plane-wave relation of the antenna medium
-    (paraxial launch). ``medium``, ``beta``, and ``scale`` are forwarded to the
-    antenna plan.
-    """
+def _grid_samples(
+    field: PulseEnvelopeField, /
+) -> tuple[int, float, list[np.ndarray], np.ndarray]:
+    """Normal axis, normal sign, increasing tangential coordinates, and ``(E_b, E_c)``."""
     if not isinstance(field, PulseEnvelopeField):
         raise TypeError("field must be a PulseEnvelopeField.")
     if field.polarization != "tangential":
@@ -96,6 +86,29 @@ def pulse_envelope_antenna(
         if sign < 0.0:
             coordinates[position] = coordinates[position][::-1]
             grid_values = np.flip(grid_values, axis=position)
+    return normal_axis, normal_sign, coordinates, grid_values
+
+
+def pulse_envelope_antenna(
+    field: PulseEnvelopeField,
+    bridge: StructuredCochainBridge,
+    /,
+    *,
+    medium: HomogeneousMaxwellExterior | None = None,
+    beta: float = 0.0,
+    scale: ElectromagneticScaleContract | None = None,
+    provenance_id: str | None = None,
+) -> SampledPlaneCurrentAntennaPlan:
+    """Build a one-way plane antenna launching ``field`` along its plane normal.
+
+    ``field`` must carry a tangential polarization; the rest-frame sample times
+    are its pulse-time coordinates and outside them the antenna is silent. The
+    magnetic envelope follows the plane-wave relation of the antenna medium
+    (paraxial launch). ``medium``, ``beta``, and ``scale`` are forwarded to the
+    antenna plan.
+    """
+    normal_axis, normal_sign, coordinates, grid_values = _grid_samples(field)
+    translation = np.asarray(field.plane_space.frame.translation, dtype=np.float64)
     return SampledPlaneCurrentAntennaPlan(
         bridge,
         normal_axis,
@@ -109,6 +122,36 @@ def pulse_envelope_antenna(
         medium=medium,
         beta=beta,
         scale=scale,
+        provenance_id=provenance_id,
+    )
+
+
+def pulse_envelope_quasi_cylindrical_antenna(
+    field: PulseEnvelopeField,
+    /,
+    *,
+    medium: HomogeneousMaxwellExterior | None = None,
+    provenance_id: str | None = None,
+) -> QuasiCylindricalAntennaPlan:
+    """Build a quasi-cylindrical sheet antenna launching ``field`` along ``±z``.
+
+    The plane normal must be the grid ``z`` axis; its tangential samples are
+    the Cartesian ``(E_x, E_y)`` envelope the solver decomposes into azimuthal
+    modes. The magnetic envelope follows the plane-wave relation of ``medium``.
+    """
+    normal_axis, normal_sign, coordinates, grid_values = _grid_samples(field)
+    if normal_axis != 2:
+        raise ValueError("Quasi-cylindrical antennas launch along the z axis.")
+    translation = np.asarray(field.plane_space.frame.translation, dtype=np.float64)
+    return QuasiCylindricalAntennaPlan(
+        float(translation[2]),
+        coordinates[0],
+        coordinates[1],
+        np.asarray(field.time_space.coordinates, dtype=np.float64),
+        grid_values,
+        carrier_angular_frequency=float(field.carrier_angular_frequency),
+        direction="positive" if normal_sign > 0.0 else "negative",
+        medium=medium,
         provenance_id=provenance_id,
     )
 
@@ -142,4 +185,8 @@ def openpmd_laser_envelope_antenna(
     )
 
 
-__all__ = ["openpmd_laser_envelope_antenna", "pulse_envelope_antenna"]
+__all__ = [
+    "openpmd_laser_envelope_antenna",
+    "pulse_envelope_antenna",
+    "pulse_envelope_quasi_cylindrical_antenna",
+]

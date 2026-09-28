@@ -1,0 +1,14 @@
+{
+  "case": "tests/unit/solver/test_pic_providers.py::_tiny_track_case",
+  "command": "OMP_NUM_THREADS=1 warpx.3d inputs (deck: phydrax.solver.warpx_input(_tiny_track_case()))",
+  "date": "2026-09-28",
+  "executable": "warpx.3d",
+  "executable_sha256": "7c581fc0b6e9a2d1d91ac5422c2a994ce90a5b0f58856e4d028d267107687042",
+  "files": {
+    "openpmd.h5": "5a487120ea343c2a9766d9b85930dfde015338d01c6a02f10edb47016bee153c"
+  },
+  "license": "BSD-3-Clause-LBNL",
+  "provider": "warpx",
+  "scenario": "single-particle-radiation",
+  "version": "26.01"
+}

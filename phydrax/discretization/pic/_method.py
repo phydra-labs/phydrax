@@ -143,12 +143,55 @@ def _higuera_cary_update(
     return u_plus + half * electric + jnp.cross(u_plus, t)
 
 
+def _rotation_lorentz_factor(
+    method: RelativisticPusher,
+    proper: Array,
+    electric: Array,
+    magnetic: Array,
+    half: Array,
+    light: float,
+    /,
+) -> Array:
+    """Lorentz factor at which ``method`` evaluates its magnetic rotation."""
+    tau = half * magnetic
+    match method:
+        case "boris":
+            return _lorentz_factor(proper + half * electric, light)
+        case "vay":
+            gamma = _lorentz_factor(proper, light)
+            u_prime = (
+                proper + 2.0 * half * electric + jnp.cross(proper / gamma[:, None], tau)
+            )
+            return _implicit_rotation_factor(
+                u_prime, _lorentz_factor(u_prime, light), tau, light
+            )
+        case "higuera-cary":
+            u_minus = proper + half * electric
+            return _implicit_rotation_factor(
+                u_minus, _lorentz_factor(u_minus, light), tau, light
+            )
+        case _:
+            assert_never(method)
+
+
+def _cayley_rotation(vector: Array, t: Array, /) -> Array:
+    """Exact-norm rotation solving ``v_out − v = (v + v_out) × t``."""
+    t2 = jnp.sum(t * t, axis=-1, keepdims=True)
+    return (
+        (1.0 - t2) * vector
+        + 2.0 * jnp.sum(vector * t, axis=-1, keepdims=True) * t
+        + 2.0 * jnp.cross(vector, t)
+    ) / (1.0 + t2)
+
+
 class RelativisticPushPlan(StrictModule, NonTrainableState):
     """Relativistic proper-velocity pusher in one declared relativity scale.
 
     ``method`` selects the Boris, Vay (2008), or Higuera--Cary (2017) map. The
     speed of light is the exact ``relativity.speed_of_light`` in the scale's own
     velocity unit; fields, specific charge, and step size use that same scale.
+    `precess` advances rest-frame spin (polarization) vectors over the same
+    step with the Thomas–Bargmann–Michel–Telegdi equation.
     """
 
     relativity: RelativityScaleContract = eqx.field(static=True)
@@ -250,6 +293,75 @@ class RelativisticPushPlan(StrictModule, NonTrainableState):
             subluminal,
             finite & subluminal & jnp.isfinite(step),
         )
+
+    def precess(
+        self,
+        spin: ArrayLike,
+        proper_velocity: ArrayLike,
+        pushed_proper_velocity: ArrayLike,
+        electric: ArrayLike,
+        magnetic: ArrayLike,
+        specific_charge: ArrayLike,
+        anomaly: ArrayLike,
+        active_mask: ArrayLike,
+        step_size: ArrayLike,
+        /,
+    ) -> Array:
+        """Rest-frame spin vectors ``S[N, 3]`` after the `push` from ``u`` to ``u'``.
+
+        Thomas–Bargmann–Michel–Telegdi precession ``dS/dt = (q/m) S × X`` with
+        magnetic-moment anomaly ``a`` (per particle or shared),
+
+            X = (a + 1/γ)B − (aγ/(γ + 1))(β·B)β − (a + 1/(γ + 1)) β×E/c,
+
+        integrated consistently with ``method``: ``X`` is evaluated at the
+        time-centered ``β = (u + u')/(2cγ_r)`` and at the Lorentz factor
+        ``γ_r`` the method uses for its own magnetic rotation, and ``S`` is
+        rotated by the same norm-exact Cayley map
+        ``S' − S = (S + S') × (qΔt/2m) X``. With ``a = 0`` in a pure magnetic
+        field the spin therefore turns with the momentum to roundoff (Thomas
+        locking), and the precession relative to the momentum is the anomaly
+        frequency ``aγω_c`` for motion across ``B``. ``|S|`` is preserved;
+        inactive lanes are returned unchanged.
+        """
+        proper = jnp.asarray(proper_velocity)
+        pushed = jnp.asarray(pushed_proper_velocity, dtype=proper.dtype)
+        spin_ = jnp.asarray(spin, dtype=proper.dtype)
+        electric_ = jnp.asarray(electric, dtype=proper.dtype)
+        magnetic_ = jnp.asarray(magnetic, dtype=proper.dtype)
+        specific = jnp.asarray(specific_charge, dtype=proper.dtype)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
+        step = jnp.asarray(step_size, dtype=proper.dtype).reshape(())
+        if proper.ndim != 2 or proper.shape[-1] != 3:
+            raise ValueError("proper_velocity must have shape (particles,3).")
+        if any(
+            value.shape != proper.shape for value in (pushed, spin_, electric_, magnetic_)
+        ):
+            raise ValueError(
+                "spin, pushed velocities, and fields must match proper_velocity."
+            )
+        if specific.shape != (proper.shape[0],) or active.shape != specific.shape:
+            raise ValueError(
+                "specific_charge and active_mask must match particle capacity."
+            )
+        anomaly_ = jnp.broadcast_to(
+            jnp.asarray(anomaly, dtype=proper.dtype), specific.shape
+        )
+        half = 0.5 * step * specific[:, None]
+        light = self.speed_of_light
+        gamma = _rotation_lorentz_factor(
+            self.method, proper, electric_, magnetic_, half, light
+        )[:, None]
+        a = anomaly_[:, None]
+        beta = 0.5 * (proper + pushed) / (light * gamma)
+        along = jnp.sum(beta * magnetic_, axis=-1, keepdims=True)
+        vector = (
+            (a + 1.0 / gamma) * magnetic_
+            - (a * gamma / (gamma + 1.0)) * along * beta
+            - (a + 1.0 / (gamma + 1.0)) * jnp.cross(beta, electric_) / light
+        )
+        rotated = _cayley_rotation(spin_, half * vector)
+        return jnp.where(active[:, None], rotated, spin_)
 
 
 __all__ = [

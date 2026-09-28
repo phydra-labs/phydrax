@@ -34,6 +34,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._custom_root import custom_root
 from .._fingerprint import canonical_fingerprint
 from .._interpolation import cubic_hermite_segment, linear_segment
 from .._physical import ElectromagneticScaleContract
@@ -516,8 +517,8 @@ def _segment_retarded(
     """Bracketed retarded root on one Hermite segment, ``s ∈ [0, 1]``.
 
     The residual is ``g(t₀ + h s) / h`` with ``g(t₀) = lag``; the implicit
-    function theorem differentiates the accepted root through
-    ``lax.custom_root``, never through the bracketing iterations.
+    function theorem differentiates the accepted root through a custom JVP
+    root rule, never through the bracketing iterations.
     """
     c = config.speed_of_light
     h = segment.step
@@ -554,7 +555,7 @@ def _segment_retarded(
             ),
         )
 
-    s, solved = jax.lax.custom_root(
+    s, solved = custom_root(
         residual,
         0.5 * one,
         solve,

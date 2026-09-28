@@ -9,6 +9,7 @@ from itertools import product
 from math import prod
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -258,6 +259,10 @@ def _uniform_spacing(
 def _basis_and_derivative(degree: int, coordinate: Array, /) -> tuple[Array, Array]:
     absolute = jnp.abs(coordinate)
     sign = jnp.sign(coordinate)
+    if degree == 0:
+        # Box spline of the cell centered on the entity; its distributional
+        # derivative at the cell faces is not part of the interpolant gradient.
+        return jnp.where(absolute <= 0.5, 1.0, 0.0), jnp.zeros_like(coordinate)
     if degree == 1:
         value = jnp.maximum(1.0 - absolute, 0.0)
         derivative = jnp.where(absolute < 1.0, -sign, 0.0)
@@ -286,7 +291,7 @@ def _basis_and_derivative(degree: int, coordinate: Array, /) -> tuple[Array, Arr
             jnp.where(absolute < 2.0, outer_derivative, 0.0),
         )
         return value, derivative
-    raise ValueError("Structured splat basis degree must be one, two, or three.")
+    raise ValueError("Structured splat basis degree must be zero to three.")
 
 
 def _uniform_axis_stencil(
@@ -299,16 +304,26 @@ def _uniform_axis_stencil(
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     count = coordinates.size
-    spacing = jnp.asarray(
-        _uniform_spacing(coordinates, bounds, periodic), dtype=position.dtype
-    )
+    # Every assignment validates uniform spacing on the host when it is prepared
+    # (``validate``); the traced first difference keeps prepared plans usable as
+    # dynamic (jit-traced) arguments.
+    spacing = (coordinates[1] - coordinates[0]).astype(position.dtype)
     lower, upper = bounds
     evaluated = jnp.mod(position - lower, upper - lower) + lower if periodic else position
     source_in_domain = active & (
         jnp.ones_like(active) if periodic else (position >= lower) & (position <= upper)
     )
-    normalized = (evaluated - coordinates[0]) / spacing
-    if degree == 1:
+    # One materialized coordinate feeds both the support base and the local
+    # offsets: if XLA recomputed it per fusion, a particle on a knot could get
+    # its base from one rounding and its weights from another, shifting the
+    # whole stencil by one entity.
+    normalized = jax.lax.optimization_barrier((evaluated - coordinates[0]) / spacing)
+    if degree == 0:
+        # A point on the closing face of a bounded axis belongs to the last cell.
+        base = jnp.floor(normalized + 0.5)
+        if not periodic:
+            base = jnp.minimum(base, count - 1)
+    elif degree == 1:
         base = jnp.floor(normalized)
     elif degree == 2:
         base = jnp.floor(normalized - 0.5)

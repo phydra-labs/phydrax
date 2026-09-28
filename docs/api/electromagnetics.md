@@ -122,6 +122,60 @@ for references.
 
 ::: phydrax.electromagnetics.TrajectoryRadiationResourceError
 
+## SRW single-electron oracle
+
+`run_srw` runs SRW (Chubar and Elleaume, EPAC 1998; EPICS Open License;
+validated against srwpy 4.2.1) in a caller-pinned Python interpreter
+(`SRWProvider`) as an external oracle for `TrajectoryRadiationPlan`.
+`srw_input` translates the plan (uniform angular frequencies, forward
+directions, one electron) and one source into SRW's driver and JSON deck:
+either a `ChargedTrajectory` lane sampled at uniform lab times, whose
+positions and `β` SRW integrates directly, or an `SRWFieldMapSource` (a
+`FieldMapTrackingPlan` of static magnetic elements and a one-electron
+`AcceleratorBunch` at `ζ = 0`) for which SRW integrates its own trajectory
+through the beamline sampled onto a uniform table (`"tabulated"`) or through
+its ideal undulator (`"ideal-undulator"`). Anything outside that subset is
+refused with `ValueError` before SRW runs. Photon energies are requested with
+SRW's own wavenumber constant so that SRW radiates at exactly the plan's `ω`.
+
+`read_srw_output` converts SRW's field at the point `o + D n` into the far-field
+convention above: `|r Ẽ| = D √(10⁹ π ħ e/(I ε₀ c)) |E|` from SRW's
+`√(photons/s/0.1%bw/mm²)` normalization, `E_z` from `n · Ẽ = 0`, projection
+onto `(e1, e2)`, and removal of SRW's paraxial clock and Fresnel phase so the
+phase refers to the trajectory's retarded time. `SRWSpectrumResult` carries
+the `SRWFieldSpectrum` in the plan's units, the pinned version, interpreter
+digest, license, output digest, and an `AdapterReport` whose losses list
+every approximation (finite distance, paraxial phase, reconstructed `E_z`,
+single precision, trajectory or field representation, missing evidence).
+Against an X1a-tracked ten-period undulator SRW agrees with
+`TrajectoryRadiationPlan` to a few 10⁻³ in spectral energy and field.
+
+::: phydrax.electromagnetics.run_srw
+
+---
+
+::: phydrax.electromagnetics.srw_input
+
+---
+
+::: phydrax.electromagnetics.read_srw_output
+
+---
+
+::: phydrax.electromagnetics.SRWProvider
+
+---
+
+::: phydrax.electromagnetics.SRWFieldMapSource
+
+---
+
+::: phydrax.electromagnetics.SRWFieldSpectrum
+
+---
+
+::: phydrax.electromagnetics.SRWSpectrumResult
+
 ## Near-zone Liénard–Wiechert fields
 
 `LienardWiechertFieldPlan` evaluates the retarded fields of the point-charge
@@ -176,6 +230,37 @@ particle chunks and refuses oversized work with `LienardWiechertResourceError`.
 ---
 
 ::: phydrax.electromagnetics.LienardWiechertResourceError
+
+## Uniform-motion fields
+
+`UniformMotionFieldPlan` evaluates the exact `exp(-iωt)` transform of the field
+of a point (3-D) or line (2-D) charge in uniform motion through a homogeneous,
+isotropic, passive, dispersive `UniformMotionMedium` (absolute `ε(ω)`, `μ(ω)`):
+`K₀, K₁(sρ)` with `s² = ω²/v² − ω²εμ` for the point charge and `exp(−s|η|)` for
+the line charge. The branch is `Im k_ρ ≥ 0` (`s = −i k_ρ`); above the Cherenkov
+threshold this is the outgoing `H⁽¹⁾(k_ρ ρ)` wave, and lossless negative-index
+media take the passive limit (reversed phase flow). `radial_energy_flux` gives
+the one-sided `d²W/(dω dl)` through a cylinder (point) or slab (line), which is
+the Frank–Tamm spectrum above threshold and zero below; `UniformMotionEvidence`
+reports the branch, `γβλ` bound-field reach, and cone angle.
+
+::: phydrax.electromagnetics.UniformMotionGeometry
+
+---
+
+::: phydrax.electromagnetics.UniformMotionMedium
+
+---
+
+::: phydrax.electromagnetics.UniformMotionFieldPlan
+
+---
+
+::: phydrax.electromagnetics.UniformMotionField
+
+---
+
+::: phydrax.electromagnetics.UniformMotionEvidence
 
 ## Frequency-domain Maxwell systems
 
@@ -322,6 +407,62 @@ omitted tail mass.
 ---
 
 ::: phydrax.electromagnetics.TabulatedGyrotropicDistribution
+
+### Gyrosynchrotron oracles (UFGC, Symphony)
+
+Pinned external oracles for `MagnetobremsstrahlungPlan` (GPL-3.0 providers,
+run only as caller-pinned libraries through a pinned interpreter).
+`run_ufgc` returns UFGC's ordinary/extraordinary `j_σ`, `κ_σ` from its exact
+or continuous code; `run_symphony` returns Symphony's vacuum Stokes `(j, α)`.
+Both results carry the provider version, library digest, license, output
+digest and an `AdapterReport` of declared losses; unsupported plans are
+refused before running.
+
+::: phydrax.electromagnetics.UFGCProvider
+
+---
+
+::: phydrax.electromagnetics.run_ufgc
+
+---
+
+::: phydrax.electromagnetics.ufgc_input
+
+---
+
+::: phydrax.electromagnetics.read_ufgc_output
+
+---
+
+::: phydrax.electromagnetics.UFGCCoefficients
+
+---
+
+::: phydrax.electromagnetics.UFGCResult
+
+---
+
+::: phydrax.electromagnetics.SymphonyProvider
+
+---
+
+::: phydrax.electromagnetics.run_symphony
+
+---
+
+::: phydrax.electromagnetics.symphony_input
+
+---
+
+::: phydrax.electromagnetics.read_symphony_output
+
+---
+
+::: phydrax.electromagnetics.SymphonyCoefficients
+
+---
+
+::: phydrax.electromagnetics.SymphonyResult
 
 ## Thermal synchrotron (MNY96) and free–free
 

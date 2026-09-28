@@ -27,8 +27,10 @@ the dipole are conserved and the spatial second moment grows by ``(m/d) δ_a²``
 
 Both move charge between grid locations while conserving its total, so they
 declare ``redistributes_charge``: the PIC runtime Gauss-projects the field onto
-the redeposited charge (`PICGaussProjection`). Products and children receive
-fresh persistent identities in canonical event order with the lowest merged
+the redeposited charge (`PICGaussProjection`). Products and children are
+allocated through the run's allocation route (`allocate_particles`) at the
+packet's center of mass or the split particle's position and receive fresh
+persistent identities in canonical event order with the lowest merged
 identity (merge) or the split particle (split) as parent. Grouping, packet
 order, reductions, and identity assignment are keyed by cell and global
 identity, never by storage slot, so results are invariant to slot order.
@@ -57,15 +59,21 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import KeyGroupPlan
 from ...typing import parse
-from ..particle import ParticleAllocationRequest, ParticleSlotReusePolicy
+from ..particle import (
+    ParticleAllocationRequest,
+    ParticlePopulationPlan,
+    ParticleSlotReusePolicy,
+)
 from ._binning import PICCellBinningPlan, PICCellBins
 from ._charge_state import PICChargeState, PICSpeciesPlan, PICSpeciesState
 from ._process import (
     AbstractPICProcess,
+    allocate_particles,
     PICProcessContext,
     PICProcessLedger,
     PICProcessResult,
     PICProcessStage,
+    PICProcessStatePartition,
     RadiationOwnership,
 )
 from ._types import PICParticleState
@@ -135,7 +143,11 @@ class _Moments(NamedTuple):
 
 
 class _Proposal(NamedTuple):
-    """Canonically ordered replacement of one species' macroparticles."""
+    """Canonically ordered replacement of one species' macroparticles.
+
+    ``origin`` is each request row's creating-event position: the merged
+    packet's center of mass or the split parent's position.
+    """
 
     removed: Array
     valid: Array
@@ -143,6 +155,7 @@ class _Proposal(NamedTuple):
     parent_hi: Array
     parent_lo: Array
     position: Array
+    origin: Array
     proper_velocity: Array
     charge_number: Array
     events: Array
@@ -248,14 +261,21 @@ def _orthonormal_partner(axis: Array, reference: Array, /) -> Array:
 
 
 def _commit(
-    plan: PICSpeciesPlan, state: PICSpeciesState, proposal: _Proposal, /
+    context: PICProcessContext,
+    plan: PICSpeciesPlan,
+    state: PICSpeciesState,
+    proposal: _Proposal,
+    /,
 ) -> tuple[PICSpeciesState, Array]:
     """Deactivate removed slots, allocate the canonical request, and scatter it."""
     population = plan.population
     removed = proposal.removed & state.population.active
     deactivated = population.deactivate(state.population, removed).accepted_state
     width = proposal.valid.shape[0]
-    allocation = population.allocate(
+    particles = state.particles
+    allocation = allocate_particles(
+        context,
+        population,
         deactivated,
         ParticleAllocationRequest(
             jnp.arange(width, dtype=jnp.int32),
@@ -263,11 +283,11 @@ def _commit(
             proposal.valid,
             parents=(proposal.parent_hi, proposal.parent_lo),
         ),
+        proposal.origin.astype(particles.position.dtype),
     )
     capacity = state.population.active.shape[0]
     slots = jnp.where(allocation.allocated, allocation.slots, capacity)
     kept = ~removed
-    particles = state.particles
     position = (
         jnp.where(kept[:, None], particles.position, 0.0)
         .at[slots]
@@ -315,6 +335,7 @@ class _SpeciesOutcome(NamedTuple):
 
 
 def _resample_species(
+    context: PICProcessContext,
     binning: PICCellBinningPlan,
     plan: PICSpeciesPlan,
     state: PICSpeciesState,
@@ -325,7 +346,7 @@ def _resample_species(
     /,
 ) -> _SpeciesOutcome:
     """Commit a proposal atomically and measure its conservation and moments."""
-    candidate, allocated = _commit(plan, state, proposal)
+    candidate, allocated = _commit(context, plan, state, proposal)
     before = _moments(plan, state, light)
     after = _moments(plan, candidate, light)
     width = float(np.max(_cell_widths(binning)))
@@ -417,6 +438,44 @@ def _validated_positive(name: str, value: int, minimum: int, /) -> int:
     return value_
 
 
+def _combined_evidence(
+    evidence: ParticleResamplingEvidence, /
+) -> ParticleResamplingEvidence:
+    """One species' evidence from per-device rows (see ``combine``)."""
+
+    def total(value: Array) -> Array:
+        return jnp.sum(value, axis=0, dtype=value.dtype)
+
+    def largest(value: Array) -> Array:
+        return jnp.max(value, axis=0)
+
+    # Rows are device-sharded: fold the flag sets row by row (a custom
+    # reduction cannot be lowered to a cross-device collective).
+    status = evidence.status[0]
+    for row in range(1, evidence.status.shape[0]):
+        status = status | evidence.status[row]
+
+    return ParticleResamplingEvidence(
+        total(evidence.active_before),
+        total(evidence.active_after),
+        total(evidence.events),
+        total(evidence.removed),
+        total(evidence.created),
+        total(evidence.refused),
+        total(evidence.unsupported),
+        largest(evidence.maximum_cell_count_before),
+        largest(evidence.maximum_cell_count_after),
+        largest(evidence.charge_defect),
+        largest(evidence.momentum_defect),
+        largest(evidence.energy_defect),
+        largest(evidence.dipole_defect),
+        largest(evidence.momentum_second_moment_distortion),
+        largest(evidence.spatial_second_moment_distortion),
+        status,
+        jnp.all(evidence.successful, axis=0),
+    )
+
+
 class _AbstractResamplingProcess(AbstractPICProcess):
     """Shared population-process shell of the resampling plans."""
 
@@ -485,6 +544,7 @@ class _AbstractResamplingProcess(AbstractPICProcess):
                 identity=(state.population.id_hi, state.population.id_lo),
             )
             outcome = _resample_species(
+                context,
                 self.binning,
                 plan,
                 state,
@@ -510,6 +570,66 @@ class _AbstractResamplingProcess(AbstractPICProcess):
             tuple(evidence),
         )
 
+    # -- distribution ----------------------------------------------------------
+
+    def localize(
+        self, species: tuple[PICSpeciesPlan, ...], parts: int, /
+    ) -> _AbstractResamplingProcess:
+        """The process on one device's slot blocks.
+
+        Request widths and occupancy triggers derive from the species plans it
+        is applied with, so the block-capacity plans localize them; the plan
+        itself is unchanged once every block can hold one resampling event.
+        """
+        if parts <= 0:
+            raise ValueError("parts must be positive.")
+        for index in self.species_indices:
+            self._validate_species(species[index])
+        return self
+
+    def bank_plans(self) -> tuple[ParticlePopulationPlan, ...]:
+        """Resampling owns no particle bank."""
+        return ()
+
+    def partition_state(self, state: None, /) -> PICProcessStatePartition:
+        """Resampling is stateless: an empty partition."""
+        if state is not None:
+            raise TypeError("Resampling processes carry no state.")
+        return PICProcessStatePartition((), (), (), (), ())
+
+    def assemble_state(self, partition: PICProcessStatePartition, /) -> None:
+        """Resampling is stateless."""
+        if (
+            partition.companions
+            or partition.banks
+            or partition.totals
+            or partition.shared
+        ):
+            raise ValueError("Resampling processes carry no state.")
+
+    def combine(
+        self,
+        ledger: PICProcessLedger,
+        evidence: tuple[ParticleResamplingEvidence, ...],
+        /,
+    ) -> tuple[PICProcessLedger, tuple[ParticleResamplingEvidence, ...]]:
+        """The run's ledger and per-species evidence from per-device rows.
+
+        Event, particle, refusal and support counts add; the ledger defects
+        (largest absolute species change), relative conservation defects,
+        moment distortions and maximal cell counts take the largest device
+        value; status flags combine by bitwise or and success requires every
+        device.
+        """
+        return PICProcessLedger(
+            jnp.sum(ledger.event_count, axis=0, dtype=ledger.event_count.dtype),
+            jnp.max(ledger.charge_defect, axis=0),
+            jnp.max(ledger.momentum_defect, axis=0),
+            jnp.max(ledger.energy_defect, axis=0),
+            jnp.all(ledger.successful, axis=0),
+            self.process_id,
+        ), tuple(_combined_evidence(value) for value in evidence)
+
 
 class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
     """Vranic momentum-cell merging of crowded cells into exact pairs."""
@@ -518,6 +638,7 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
     relativity: RelativityScaleContract = eqx.field(static=True)
     method: ParticleMergeMethod = eqx.field(static=True)
     maximum_per_cell: int = eqx.field(static=True)
+    minimum_occupancy: float = eqx.field(static=True)
     momentum_bins: tuple[int, int, int] = eqx.field(static=True)
     minimum_packet_size: int = eqx.field(static=True)
     maximum_packet_size: int = eqx.field(static=True)
@@ -542,13 +663,17 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
         minimum_packet_size: int = 4,
         maximum_packet_size: int = 8,
         conservation_tolerance: float = 1.0e-10,
+        minimum_occupancy: float = 0.0,
     ) -> None:
         """Merge species ``species`` in cells holding more than ``maximum_per_cell``.
 
         ``momentum_bins`` counts (magnitude, polar-cosine, azimuth) momentum
         cells; momentum cells are cut into packets of ``maximum_packet_size``
         in identity order, and a trailing packet merges only when it holds at
-        least ``minimum_packet_size`` (≥ 3) particles.
+        least ``minimum_packet_size`` (≥ 3) particles. Merging is triggered
+        only while a species' active fraction of its capacity is at least
+        ``minimum_occupancy`` (a QED cascade's merge request), below which the
+        species is left unchanged.
         """
         if not isinstance(binning, PICCellBinningPlan):
             raise TypeError("binning must be PICCellBinningPlan.")
@@ -561,6 +686,9 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
         minimum = _validated_positive("minimum_packet_size", minimum_packet_size, 3)
         maximum = _validated_positive("maximum_packet_size", maximum_packet_size, minimum)
         threshold = _validated_positive("maximum_per_cell", maximum_per_cell, 1)
+        occupancy = float(minimum_occupancy)
+        if not 0.0 <= occupancy <= 1.0:
+            raise ValueError("minimum_occupancy must lie in [0, 1].")
         tolerance = float(conservation_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("conservation_tolerance must be positive and finite.")
@@ -569,6 +697,7 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
         self.relativity = relativity
         self.method = method_
         self.maximum_per_cell = threshold
+        self.minimum_occupancy = occupancy
         self.momentum_bins = (bins[0], bins[1], bins[2])
         self.minimum_packet_size = minimum
         self.maximum_packet_size = maximum
@@ -585,6 +714,7 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
                 "relativity": relativity.scale_id,
                 "method": method_,
                 "maximum_per_cell": threshold,
+                "minimum_occupancy": occupancy,
                 "momentum_bins": list(self.momentum_bins),
                 "packet_sizes": [minimum, maximum],
                 "tolerance": tolerance,
@@ -655,7 +785,11 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
         capacity = population.active.shape[0]
         light = self.speed_of_light
         velocity = state.particles.proper_velocity.astype(jnp.float64)
-        crowded = bins.binned & (_cell_occupancy(bins) > self.maximum_per_cell)
+        # The occupancy trigger stays traced: below it no cell is crowded.
+        triggered = jnp.sum(population.active) / plan.capacity >= self.minimum_occupancy
+        crowded = (
+            bins.binned & (_cell_occupancy(bins) > self.maximum_per_cell) & triggered
+        )
         model = plan.charge_model
         charge_states = model.maximum_charge_number - model.minimum_charge_number + 1
         momentum_cells = int(np.prod(self.momentum_bins))
@@ -731,13 +865,16 @@ class ParticleMergePlan(_AbstractResamplingProcess, NonTrainableState):
         )
         center = center / safe_weight[:, None]
         removed = jnp.zeros((capacity,), dtype=jnp.bool_).at[order].set(accepted)
+        # Both products sit at, and are created at, the packet's center of mass.
+        product_position = jnp.repeat(center, 2, axis=0)
         return _Proposal(
             removed,
             jnp.repeat(active_pair, 2),
             jnp.repeat(0.5 * weight, 2),
             jnp.repeat(population.id_hi[order][first], 2),
             jnp.repeat(population.id_lo[order][first], 2),
-            jnp.repeat(center, 2, axis=0),
+            product_position,
+            product_position,
             products,
             jnp.repeat(state.charge.charge_number[order][first], 2),
             jnp.minimum(total, limit),
@@ -907,6 +1044,7 @@ class ParticleSplitPlan(_AbstractResamplingProcess, NonTrainableState):
             jnp.repeat(population.id_hi[parent], children),
             jnp.repeat(population.id_lo[parent], children),
             child_position.reshape((splits * children, dimension)),
+            jnp.repeat(position[parent], children, axis=0),
             jnp.repeat(
                 state.particles.proper_velocity[parent].astype(jnp.float64),
                 children,

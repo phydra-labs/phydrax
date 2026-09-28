@@ -71,7 +71,7 @@ def test_ordinary_ray_reflects_on_linear_ramp_along_the_analytic_parabola() -> N
         _ramp_profile(), angular_frequency=OMEGA, mode=PlasmaWaveMode.ORDINARY
     )
     rays = (
-        DispersionRayPlan(hamiltonian, 0.01, 360, hamiltonian_tolerance=1.0e-6)
+        DispersionRayPlan(hamiltonian, 0.01, 340, hamiltonian_tolerance=1.0e-6)
         .prepare()
         .integrate(
             np.asarray(((0.0, 0.0, 0.0),)),

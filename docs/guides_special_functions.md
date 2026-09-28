@@ -33,7 +33,7 @@ dk = jax.vmap(jax.grad(phx.special.ellipk))(m)
 | Airy | `airy`, `airye` | entire Airy values; documented complex scaling for `airye` |
 | Modified Bessel | `iv`, `ive`, `kv`, `kve` and their `*_order_derivative` functions | principal logarithm; `K` cut on the negative real axis |
 | Cylindrical Bessel | `jv`, `yv`, `hankel1`, `hankel2`, `jv_order_derivative`, `yv_order_derivative` | principal logarithm; `Y`/Hankel cut on the negative real axis |
-| Synchrotron kernels | `synchrotron_f`, `synchrotron_g` | `F(x) = x ∫ₓ^∞ K_{5/3}`, `G(x) = x K_{2/3}(x)` for `x >= 0`; float64 only |
+| Synchrotron kernels | `synchrotron_f`, `synchrotron_g`, `synchrotron_h` | `F(x) = x ∫ₓ^∞ K_{5/3}`, `G(x) = x K_{2/3}(x)`, `H(x) = x K_{1/3}(x)` for `x >= 0`; float64 only |
 | Gegenbauer | `gegenbauer_c`, `gegenbauer_vander`, `gegenbauer_alpha_derivative` | standard $C_n^{(\alpha)}$ normalization for real $\alpha>-1/2$, including the exact $\alpha=0$ limit |
 | Zeta and polylogarithms | `zeta`, `hurwitz_zeta`, `dilog`, `spence`, `polylog` | Euler--Maclaurin zeta continuation and principal complex polylogarithm branches |
 | Spherical and solid harmonics | `sph_legendre_p`, `sph_harm_y`, `sph_harm_y_cart`, `solid_harmonic_regular`, `solid_harmonic_irregular` | orthonormal Condon--Shortley convention; polar `theta`, azimuthal `phi` |
@@ -152,8 +152,16 @@ stable_k = phx.special.kve(v, x)
 ```
 
 The real admitted contract remains `v >= 0`, `x >= 0`. Complex arguments use
-the principal continuation. At zero, `I_0(0) = 1`, `I_v(0) = 0` for positive
-real `v`, and `K_v(0) = +inf`. Argument derivatives use analytic recurrences.
+the principal continuation. For complex `K_v(z)` with `Re z >= 0` (including
+the imaginary axis, `K_0(-ix) = (i pi/2) H_0^(1)(x)`), orders with
+`|Re v| <= 128.5` and `|Im v| <= 1` are evaluated from the scaled form
+`e^z K_v(z)`: Temme's series for `|z| <= 2`, Temme's CF2 continued fraction in
+Steed form otherwise, and masked upward order recurrence, all with fixed trip
+counts. `kve` never forms `exp(z) * kv`, so it stays finite where `K_v`
+underflows. Left-half-plane arguments and orders outside that envelope keep
+the power-series connection formula, which is accurate only for small `|z|`.
+At zero, `I_0(0) = 1`, `I_v(0) = 0` for positive real `v`, and
+`K_v(0) = +inf`. Argument derivatives use analytic recurrences.
 `iv_order_derivative`, `ive_order_derivative`, `kv_order_derivative`, and
 `kve_order_derivative` include stable exact/near-integer limits.
 
@@ -380,7 +388,9 @@ G(x) = x * K_{2/3}(x).
 the emissivity kernels polarized perpendicular and parallel to the projected
 magnetic field. They behave as `F ≈ 2.1495 x**(1/3)` and
 `G ≈ Gamma(2/3) (x/2)**(1/3)` for small `x`, and both approach
-`sqrt(pi x / 2) exp(-x)` for large `x`.
+`sqrt(pi x / 2) exp(-x)` for large `x`. `synchrotron_h(x) = x K_{1/3}(x)` is
+the spin-dependent kernel of the quantum synchrotron spectrum (spin-flip and
+spin-polarized emission in strong-field QED).
 
 ```python
 x = jnp.geomspace(1e-4, 30.0, 512)

@@ -20,8 +20,8 @@ type Kernel = Callable[[ArrayLike], Array]
 _ROOT = Path(__file__).resolve().parents[3]
 _FUNCTIONS = pytest.mark.parametrize(
     "function",
-    [phx.special.synchrotron_f, phx.special.synchrotron_g],
-    ids=["F", "G"],
+    [phx.special.synchrotron_f, phx.special.synchrotron_g, phx.special.synchrotron_h],
+    ids=["F", "G", "H"],
 )
 
 
@@ -58,6 +58,10 @@ def _g_reference(x: float) -> float:
     return _scaled_bessel_k(2, x)
 
 
+def _h_reference(x: float) -> float:
+    return _scaled_bessel_k(1, x)
+
+
 def _reference_grid() -> np.ndarray:
     edges = np.exp(
         _synchrotron_data.PANEL_LOG_LOWER
@@ -89,8 +93,13 @@ def _reference_grid() -> np.ndarray:
             _g_reference,
             _synchrotron_data.G_RELATIVE_ERROR_BOUND,
         ),
+        (
+            phx.special.synchrotron_h,
+            _h_reference,
+            _synchrotron_data.H_RELATIVE_ERROR_BOUND,
+        ),
     ],
-    ids=["F", "G"],
+    ids=["F", "G", "H"],
 )
 def test_recorded_relative_error_bound_holds_against_high_precision_reference(
     function: Kernel, reference: Callable[[float], float], bound: float

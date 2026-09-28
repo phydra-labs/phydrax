@@ -124,13 +124,19 @@
 
 Pulse envelopes on a grid-aligned plane become one-way
 `phydrax.solver.maxwell.SampledPlaneCurrentAntennaPlan` sheets launching the field
-along the plane normal; the solver never imports optics.
+along the plane normal, or, on a plane normal to the grid `z` axis,
+`phydrax.solver.maxwell.spectral.QuasiCylindricalAntennaPlan` sheets for
+quasi-cylindrical spectral PIC; the solver never imports optics.
 
 ::: phydrax.optics.wave.pulse_envelope_antenna
 
 ---
 
 ::: phydrax.optics.wave.openpmd_laser_envelope_antenna
+
+---
+
+::: phydrax.optics.wave.pulse_envelope_quasi_cylindrical_antenna
 
 
 ## Nonlinear propagation

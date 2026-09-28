@@ -1,0 +1,11 @@
+{
+  "provider": "elegant",
+  "version": "2026.3.0 (conda-forge osx-arm64, SVN revision 2026.3.0)",
+  "license": "EPICS",
+  "executable_sha256": "49d1cc2662520b868d09e4810100121ee179da2db7bd2a588f6049f2dc12a7c6",
+  "command": "elegant csr.ele -rpnDefns=defns.rpn (inputs from phydrax.applications.accelerator.elegant_csr_input of test_accelerator_elegant._fixture_case)",
+  "date": "2026-09-28",
+  "beam_sha256": "ccef027f3c27383faa8189d83f90394831eb020432f3168f514a5383badee5ae",
+  "lattice_sha256": "21f20233be1d103c1b96dcd3691d7ce90a9307a88a8eab948694754b65ed1933",
+  "output_sha256": "9af71511c6f7307d71acc23075bbc413a527343d75a001aa1c7411c43977eecb"
+}

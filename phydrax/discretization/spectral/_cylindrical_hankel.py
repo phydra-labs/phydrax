@@ -2,12 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Finite-radius Bessel-zero Hankel transforms with explicit certification."""
+"""Finite-radius Bessel-zero Hankel transforms with explicit certification.
+
+`CylindricalHankelPlan` is the self-reciprocal fixed-order quadrature (QDHT).
+`SharedGridHankelPlan` is the quasi-cylindrical transform family: one uniform
+cell-centered radial grid shared by every azimuthal mode and by the Bessel
+orders ``m − 1``, ``m``, ``m + 1`` that carry ``(F_r ∓ iF_θ)/2`` and ``F_z``.
+"""
 
 from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,7 +27,12 @@ from ... import ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import LinearSolveStatus, pseudoinverse
 from ...special import jv
+from ...typing import parse
+
+
+SharedGridHankelOffset: TypeAlias = Literal[-1, 0, 1]
 
 
 class CylindricalHankelStatus(IntEnum):
@@ -336,10 +348,246 @@ def _apply_matrix(
     return jnp.moveaxis(transformed, -1, normalized_axis)
 
 
+class SharedGridHankelEvidence(StrictModule, NonTrainableState):
+    """Rank, conditioning, and pseudoinverse evidence of every mode and order.
+
+    Arrays are ``[mode, 3]`` with order index ``0, 1, 2`` for the Bessel orders
+    ``m − 1, m, m + 1``. ``expected_rank`` is the synthesis rank the shared
+    k-grid admits: full for ``m = 0`` and for order ``m − 1``, one less for
+    orders ``m`` and ``m + 1`` at ``m ≥ 1`` (their ``k = 0`` column vanishes, so
+    one radial direction per such pair has no spectral representation).
+    ``condition`` is the retained-spectrum condition estimate and
+    ``pseudoinverse_residual`` the relative Penrose residual ``‖AA⁺A − A‖/‖A‖``;
+    ``status`` holds the native `phydrax.linalg.LinearSolveStatus` codes.
+    """
+
+    rank: Array
+    expected_rank: Array
+    condition: Array
+    pseudoinverse_residual: Array
+    status: Array
+    successful: Array
+    matrix_elements: int = eqx.field(static=True)
+    retained_bytes: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+
+class SharedGridHankelPlan(StrictModule, NonTrainableState):
+    """Quasi-cylindrical Hankel transforms of orders ``m − 1, m, m + 1``.
+
+    Every azimuthal mode ``m = 0, …, mode_count − 1`` samples the same radii
+    ``r_j = (j + ½)R/N``. Mode ``m`` uses one k-grid ``k_{m,n} = α_{m,n}/R``
+    from the zeros of ``J_m``: the ``N`` positive zeros for ``m = 0``, and
+    ``k = 0`` followed by the first ``N − 1`` positive zeros for ``m ≥ 1``.
+    Synthesis is ``f(r_j) = Σ_n c_n J_p(k_{m,n} r_j)`` for
+    ``p ∈ {m − 1, m, m + 1}`` with ``J_{−1} = −J_1`` at ``m = 0``; the ``k = 0``
+    column of order ``m − 1`` is its ``k → 0`` limit shape ``(r/R)^{m−1}`` (the
+    harmonic polynomial ``(x + iy)^{m−1}``) and vanishes for orders ``m`` and
+    ``m + 1``. Analysis is the Moore–Penrose pseudoinverse of each synthesis
+    matrix, prepared once through `phydrax.linalg.pseudoinverse` with its rank
+    and conditioning evidence.
+
+    Because ``J_{m−1}(α) = −J_{m+1}(α)`` at zeros of ``J_m``, the three orders of
+    one mode share the Fourier–Bessel normalization of each k-node: the order
+    ``m ∓ 1`` coefficients of ``(F_r ∓ iF_θ)/2`` and the order ``m``
+    coefficients of ``F_z`` are, up to one common factor per node, the Cartesian
+    spectrum at transverse wavevector ``(k_{m,n}, 0)`` (Lehe et al., Comput.
+    Phys. Commun. 203, 66, 2016).
+    """
+
+    radius: float = eqx.field(static=True)
+    radial_count: int = eqx.field(static=True)
+    mode_count: int = eqx.field(static=True)
+    maximum_matrix_elements: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        radius: float,
+        radial_count: int,
+        mode_count: int,
+        /,
+        *,
+        maximum_matrix_elements: int = 16_777_216,
+    ) -> None:
+        radius_value = float(radius)
+        count = int(radial_count)
+        modes = int(mode_count)
+        capacity = int(maximum_matrix_elements)
+        if not math.isfinite(radius_value) or radius_value <= 0.0:
+            raise ValueError("radius must be finite and positive.")
+        if count < 2:
+            raise ValueError("radial_count must be at least two.")
+        if modes < 1:
+            raise ValueError("mode_count must be at least one.")
+        if capacity <= 0 or 6 * modes * count * count > capacity:
+            raise ValueError(
+                "The shared-grid Hankel matrices exceed maximum_matrix_elements."
+            )
+        self.radius = radius_value
+        self.radial_count = count
+        self.mode_count = modes
+        self.maximum_matrix_elements = capacity
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "shared-grid-hankel-plan",
+                "radius": radius_value,
+                "radial_count": count,
+                "mode_count": modes,
+                "maximum_matrix_elements": capacity,
+            }
+        )
+
+    def prepare(self, /) -> PreparedSharedGridHankel:
+        count, modes = self.radial_count, self.mode_count
+        radii = self.radius * (np.arange(count, dtype=np.float64) + 0.5) / count
+        wavenumbers = np.stack(
+            tuple(
+                (
+                    jn_zeros(0, count)
+                    if mode == 0
+                    else np.concatenate(([0.0], jn_zeros(mode, count - 1)))
+                )
+                / self.radius
+                for mode in range(modes)
+            )
+        )
+        synthesis = np.zeros((3, modes, count, count), dtype=np.float64)
+        analysis = np.zeros((3, modes, count, count), dtype=np.float64)
+        rank = np.zeros((modes, 3), dtype=np.int32)
+        expected = np.zeros((modes, 3), dtype=np.int32)
+        condition = np.zeros((modes, 3), dtype=np.float64)
+        residual = np.zeros((modes, 3), dtype=np.float64)
+        status = np.zeros((modes, 3), dtype=np.int32)
+        for mode in range(modes):
+            argument = jnp.asarray(radii[:, None] * wavenumbers[mode][None, :])
+            for index, offset in enumerate((-1, 0, 1)):
+                order = mode + offset
+                # J_{-1} = -J_1; the native Bessel owner takes nonnegative orders.
+                matrix = np.array(
+                    math.copysign(1.0, order) * jv(float(abs(order)), argument),
+                    dtype=np.float64,
+                )
+                if mode > 0:
+                    matrix[:, 0] = (
+                        (radii / self.radius) ** (mode - 1) if offset == -1 else 0.0
+                    )
+                inverse = pseudoinverse(jnp.asarray(matrix))
+                synthesis[index, mode] = matrix
+                analysis[index, mode] = np.asarray(inverse.value)
+                rank[mode, index] = int(inverse.diagnostics.rank)
+                expected[mode, index] = count if mode == 0 or offset == -1 else count - 1
+                condition[mode, index] = float(inverse.diagnostics.condition_estimate)
+                residual[mode, index] = float(inverse.diagnostics.relative_residual)
+                status[mode, index] = int(inverse.status)
+        finite = bool(
+            np.all(np.isfinite(synthesis))
+            and np.all(np.isfinite(analysis))
+            and np.all(np.isfinite(condition))
+        )
+        successful = (
+            finite
+            and bool(np.all(status == int(LinearSolveStatus.SUCCESS)))
+            and bool(np.all(rank == expected))
+        )
+        fingerprint = array_tree_fingerprint(
+            {
+                "radii": radii,
+                "wavenumbers": wavenumbers,
+                "synthesis": synthesis,
+                "analysis": analysis,
+            }
+        )
+        prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-shared-grid-hankel",
+                "plan_id": self.plan_id,
+                "arrays": fingerprint,
+            }
+        )
+        evidence = SharedGridHankelEvidence(
+            rank=jnp.asarray(rank),
+            expected_rank=jnp.asarray(expected),
+            condition=jnp.asarray(condition),
+            pseudoinverse_residual=jnp.asarray(residual),
+            status=jnp.asarray(status),
+            successful=jnp.asarray(successful),
+            matrix_elements=6 * modes * count * count,
+            retained_bytes=8 * (6 * modes * count * count + modes * count + count),
+            plan_id=self.plan_id,
+            prepared_id=prepared_id,
+        )
+        return PreparedSharedGridHankel(
+            self,
+            jnp.asarray(radii),
+            jnp.asarray(wavenumbers),
+            jnp.asarray(synthesis),
+            jnp.asarray(analysis),
+            evidence,
+            prepared_id=prepared_id,
+        )
+
+
+class PreparedSharedGridHankel(StrictModule, NonTrainableState):
+    """Prepared quasi-cylindrical synthesis matrices and their pseudoinverses.
+
+    ``synthesis[o, m]`` is the ``[radius, k]`` matrix of order ``m + o − 1``
+    and ``analysis[o, m]`` its pseudoinverse; values are laid out
+    ``[mode, radial, …]`` with the radial axis second.
+    """
+
+    plan: SharedGridHankelPlan
+    radial_coordinates: Array
+    wavenumbers: Array
+    synthesis: Array
+    analysis: Array
+    evidence: SharedGridHankelEvidence
+    prepared_id: str = eqx.field(static=True)
+
+    def _matrix(self, stack: Array, offset: SharedGridHankelOffset, /) -> Array:
+        match parse(offset, SharedGridHankelOffset, "offset"):
+            case -1:
+                return stack[0]
+            case 0:
+                return stack[1]
+            case 1:
+                return stack[2]
+            case _:
+                raise ValueError("offset is invalid.")
+
+    def _check(self, values: Array, /) -> None:
+        expected = (self.plan.mode_count, self.plan.radial_count)
+        if values.ndim < 2 or values.shape[:2] != expected:
+            raise ValueError(f"Hankel values must begin with shape {expected}.")
+
+    def forward(self, values: ArrayLike, offset: SharedGridHankelOffset, /) -> Array:
+        """Coefficients ``c[m, n, …]`` of order ``m + offset`` from ``f[m, j, …]``."""
+        array = jnp.asarray(values)
+        self._check(array)
+        return ein.contract(
+            "mkr,mr...->mk...", self._matrix(self.analysis, offset), array
+        )
+
+    def inverse(
+        self, coefficients: ArrayLike, offset: SharedGridHankelOffset, /
+    ) -> Array:
+        """Samples ``f[m, j, …] = Σ_n c[m, n, …] J_{m+offset}(k_{m,n} r_j)``."""
+        array = jnp.asarray(coefficients)
+        self._check(array)
+        return ein.contract(
+            "mrk,mk...->mr...", self._matrix(self.synthesis, offset), array
+        )
+
+
 __all__ = [
     "CylindricalHankelEvidence",
     "CylindricalHankelPlan",
     "CylindricalHankelStatus",
     "PreparedCylindricalHankel",
+    "PreparedSharedGridHankel",
+    "SharedGridHankelEvidence",
+    "SharedGridHankelOffset",
+    "SharedGridHankelPlan",
     "prepare_cylindrical_hankel",
 ]

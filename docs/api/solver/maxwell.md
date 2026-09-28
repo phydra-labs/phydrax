@@ -8,6 +8,8 @@ Phydrax provides complementary Maxwell substrates.
   problem.
 - `phydrax.solver.maxwell.fourier_modal` solves transversely periodic layered
   frequency-domain problems with boundary-field propagation.
+- `phydrax.solver.maxwell.spectral` advances Cartesian PSATD/Galilean fields for
+  explicit PIC ([Spectral Maxwell](spectral_maxwell.md)).
 
 ## Compatible time-domain lifecycle
 
@@ -72,10 +74,15 @@ A sampled plane antenna is a solver-native equivalent source: an electric sheet
 `K = s â × H'` on node planes and a magnetic sheet `K_m = −s â × E'` half a cell
 upstream on interval centers (the total-field/scattered-field placement), driven by
 sampled rest-frame envelopes `Re[A(τ) e^{−iω₀τ}]`. A moving antenna (velocity `β`
-along its normal, vacuum of a declared `ElectromagneticScaleContract`) deposits the
-four-vector currents `K'(τ)/γ` at the rest-frame retarded time of each sheet event.
-Runtime preparation refuses sheets outside the declared homogeneous medium or inside
-CPML. `MaxwellAntennaWorkObserverPlan` streams the work the sheets do on the field.
+along its normal, vacuum of a declared `ElectromagneticScaleContract`) is a smoothed
+moving total-field/scattered-field boundary: quadratic B-spline pairs driven by the
+Lorentz-transformed incident fields at each event's rest-frame retarded time plus the
+convective currents of the moving boundary, with second-order backward leakage. The
+magnetic sheet's surface divergence is declared magnetic charge
+(`MaxwellAuxiliaryState.magnetic_charge`), so antennas never trigger the global
+magnetic projection. Runtime preparation refuses sheets outside the declared
+homogeneous medium or inside CPML. `MaxwellAntennaWorkObserverPlan` streams the work
+the sheets do on the field.
 Optical envelopes reach antennas through `phydrax.optics.wave.pulse_envelope_antenna`
 and `phydrax.optics.wave.openpmd_laser_envelope_antenna`.
 
@@ -97,6 +104,127 @@ and `phydrax.optics.wave.openpmd_laser_envelope_antenna`.
 
 ::: phydrax.solver.maxwell.MaxwellAntennaWorkEvidence
 
+## Prescribed moving charges
+
+`PrescribedChargeMaxwellPlan(prepared_maxwell, current_plan, trajectory, charge)`
+drives a prepared compatible runtime with point charges whose positions
+`PrescribedChargeTrajectory` samples on the Maxwell step grid (uniform times, step
+no larger than `stable_dt`). Each step deposits the charge-conserving
+tail-to-head current of the straight path between samples, so the Maxwell
+charge cochain follows the deposited charge exactly. Each charge starts
+coincident with a static compensating charge (zero initial field, Gauss's law
+without an electrostatic solve) and is frozen after the last sample or after it
+leaves the box through a nonperiodic face (`boundary_exit`). The runtime must
+carry the matching `PrescribedChargeCurrentSourcePlan`, whose preparation
+certifies the electric support of every step so Huygens boxes can verify
+`J = 0` on their surfaces. Any linear runtime is accepted: dispersive, lossy,
+heterogeneous, magnetized-plasma, and negative-index media, CPML, and
+PEC/PMC/impedance boundaries including interior conductors
+(`MaxwellBoundaryPlan(kind, support=mask)`). `solve_prescribed_charge_maxwell`
+runs one `lax.scan` and returns per-step leapfrog energy, source work
+`−Δt⟨(E_n+E_{n+1})/2, ⋆J⟩`, trapezoidal losses, and `PrescribedChargeEvidence`
+(continuity, Gauss against the prescribed charge on boundary-free vertices,
+runtime Gauss constraint, magnetic, support-leak, ledger, and exit evidence;
+`PrescribedChargeStatus` flags).
+
+With CPML the power ledger is an `O(Δt²)` residual of the absorber: at CFL 0.9
+it typically exceeds the default `1e-2` tolerance (`LEDGER_OPEN`) while every
+constraint bit stays clear, and it falls by ≈ 4 per halving of Δt. The example
+and the benchmark therefore run below CFL 0.45.
+
+Prescribed runs match the `FrequencyMovingChargePlan` solve of the same bridge,
+material, absorber, and conductors. In a periodic cell with the charge
+advancing `h/r` per step, harmonic `m` of `T = L/v` is an exact Bloch wave and
+`T` times its whole-period sample-mean phasor is the single-charge transform
+the frequency-domain route solves for. Projecting both onto `e^{ikz}`
+(each Smith–Purcell order separately) removes the start transient, and
+averaging whole-period windows that start one period apart removes waves that
+graze along the absorber-free axis. The routes then differ only by
+`O((ωΔt)²)`: Cherenkov and Smith–Purcell fields and spectral Poynting fluxes
+agree to about `1e-3` at `Δt = h/(4β)` and `h/(6β)`. Diffraction radiation of
+a slit in an open box needs a finite path. Start and stop at rest with slow
+ramps, since ramp radiation reaches the screen Doppler-compressed by
+`1 − β`. Add a delayed opposite charge on the same path so that no static
+field remains. Taper the time cut, since a line charge's 2-D wake decays only
+algebraically. The result then matches the scattered-field reference to the
+`O((kh)²)` difference between the lattice and the analytic incident field.
+For line charges use the planar `tez` layout for the scattered-field route: in
+a `full_3d` bridge with periodic transverse axes its analytic incident field
+is a single point charge, not the periodic image line.
+
+::: phydrax.solver.maxwell.PrescribedChargeTrajectory
+
+---
+
+::: phydrax.solver.maxwell.PrescribedChargeCurrentSourcePlan
+
+---
+
+::: phydrax.solver.maxwell.PrescribedChargeMaxwellPlan
+
+---
+
+::: phydrax.solver.maxwell.PrescribedChargeMaxwellResult
+
+---
+
+::: phydrax.solver.maxwell.PrescribedChargeEvidence
+
+---
+
+::: phydrax.solver.maxwell.PrescribedChargeStatus
+
+---
+
+::: phydrax.solver.maxwell.solve_prescribed_charge_maxwell
+
+## Frequency-domain moving charges
+
+`MaxwellMovingChargePlan(bridge, layout, charge=, speed=, origin=, direction=)`
+describes one charge in uniform rectilinear motion: a point charge on
+`full_3d` layouts, a line charge per unit `z` length on `tez` layouts. Its
+preparation integrates the transformed current `q d̂ δ_⊥ exp(iωs/v)` exactly on
+the Whitney edge forms (closed-form moments of the polynomial Whitney factors on
+every crossed cell) and the transformed charge on the Whitney node forms, so
+`d₀ᵀ b + iω b₀ = 0` to roundoff off the path ends. A path along a periodic axis
+is one closed pass and requires `ωL/v ∈ 2πℤ`; it then equals the transform of
+one charge on an infinite line. `FrequencyMovingChargePlan` solves
+`SourceFormulation` `"total-field"` (`A E = iω J̃`) or `"scattered-field"` (the
+analytic `UniformMotionFieldPlan` field of a declared homogeneous background is
+the incident field; only material contrast and conductor surfaces radiate) with
+the `FrequencyMaxwellOperator` Krylov or sparse-direct route, the B2a
+stretching, and the shared `MaxwellBoundaryPlan` vocabulary.
+`FrequencyMovingChargeEvidence` reports the branch (`radiating`, transverse
+wavenumber), the bound-field reach `γβλ = 2π/Im k_ρ` against the transverse
+clearance to the absorbers, the Whitney continuity defect, the closest
+scattered-field source distance, open endpoints, and solve convergence.
+
+::: phydrax.solver.maxwell.SourceFormulation
+
+---
+
+::: phydrax.solver.maxwell.MaxwellMovingChargePlan
+
+---
+
+::: phydrax.solver.maxwell.PreparedMaxwellMovingCharge
+
+---
+
+::: phydrax.solver.maxwell.FrequencyMovingChargePlan
+
+---
+
+::: phydrax.solver.maxwell.PreparedFrequencyMovingCharge
+
+---
+
+::: phydrax.solver.maxwell.FrequencyMovingChargeResult
+
+---
+
+::: phydrax.solver.maxwell.FrequencyMovingChargeEvidence
+
 ## Huygens surfaces and far fields
 
 Phasors follow `exp(-iωt)`. A Huygens sampler accumulates the transient
@@ -109,10 +237,11 @@ surface integral `(1/π) Re ∫ (Ẽ × H̃*)·n̂ dS`.
 
 Admissibility is refused, not approximated: the surface entities must carry the
 declared lossless homogeneous exterior (diagonal, or conductive with zero
-conductivity), no CPML term may touch the surface, and no electric or magnetic
-current may drive it during the acquisition window (dynamic PIC currents are
-refused because they cannot certify `J = 0`). Structured boxes require the
-`full_3d` polarization.
+conductivity), no CPML term or boundary constraint may touch the surface, and no
+electric or magnetic current may drive it during the acquisition window (dynamic
+PIC currents are refused because they cannot certify `J = 0`; prescribed-charge
+sources are admitted when their certified path support avoids the surface).
+Structured boxes require the `full_3d` polarization.
 
 ::: phydrax.solver.maxwell.HomogeneousMaxwellExterior
 
@@ -203,6 +332,10 @@ refused because they cannot certify `J = 0`). Structured boxes require the
 ---
 
 ::: phydrax.solver.maxwell.FrequencyMaxwellPowerLedger
+
+---
+
+::: phydrax.solver.maxwell.FrequencyMaxwellSolveMethod
 
 ## Discrete-dispersion audit
 
@@ -352,6 +485,22 @@ refused because they cannot certify `J = 0`). Structured boxes require the
 
 ::: phydrax.solver.maxwell.fourier_modal.plane_wave_excitation
 ::: phydrax.solver.maxwell.fourier_modal.port_mode_excitation
+
+A `MovingLineChargeSource` in a `FourierModalSourcePlane` is the single
+zeroth-harmonic surface current `λ d̂ exp(i k_B·r)` of a line charge moving at
+`v`; the problem's Bloch wavevector must be `k_B = (ω/v) d̂ + k_⊥ ê_⊥`, and
+`moving_line_charge_excitation` builds its source-only excitation.
+`MovingPointChargeQuadrature` decomposes a point charge into `k_⊥` components
+with decay `Γ = √(ω²/(β²γ²c²) + k_⊥²)`, truncates where `exp(−2Γ h)` reaches the
+tolerance, and integrates per-component results with cosine-mapped embedded
+Gauss–Kronrod panels (`MovingPointChargeIntegral` carries the Kronrod–Gauss
+difference and the truncation bound). The one-sided spectral energy per cell is
+`(2/π)` times the outgoing port power of the transformed fields.
+
+::: phydrax.solver.maxwell.fourier_modal.MovingLineChargeSource
+::: phydrax.solver.maxwell.fourier_modal.moving_line_charge_excitation
+::: phydrax.solver.maxwell.fourier_modal.MovingPointChargeQuadrature
+::: phydrax.solver.maxwell.fourier_modal.MovingPointChargeIntegral
 
 
 ::: phydrax.solver.maxwell.fourier_modal.fields_in_layer

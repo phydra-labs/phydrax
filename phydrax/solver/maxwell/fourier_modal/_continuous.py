@@ -41,6 +41,7 @@ class PreparedContinuousFourierModalLayer(StrictModule):
     segment_active: Array
     segment_defects: Array
     segment_prefix_boundaries: BoundaryRelation
+    segment_suffix_boundaries: BoundaryRelation
     boundary: BoundaryRelation
     maximum_defect: Array
     maximum_constitutive_residual: Array
@@ -53,7 +54,7 @@ def _boundary_norm(boundary: BoundaryRelation, /) -> Array:
     return jnp.sqrt(
         sum(
             jnp.sum(jnp.abs(value) ** 2)
-            for value in (boundary.a, boundary.b, boundary.c, boundary.d)
+            for value in (boundary.s11, boundary.s12, boundary.s21, boundary.s22)
         )
     )
 
@@ -63,8 +64,8 @@ def _boundary_difference(left: BoundaryRelation, right: BoundaryRelation, /) -> 
         sum(
             jnp.sum(jnp.abs(x - y) ** 2)
             for x, y in zip(
-                (left.a, left.b, left.c, left.d),
-                (right.a, right.b, right.c, right.d),
+                (left.s11, left.s12, left.s21, left.s22),
+                (right.s11, right.s12, right.s21, right.s22),
                 strict=True,
             )
         )
@@ -172,8 +173,13 @@ def continuous_boundary_at(
     longitudinal_offset: Array,
     cascade: BoundaryCascadePolicy,
     /,
-) -> tuple[BoundaryRelation, PreparedLayerOperator, Array, Array]:
-    """Reconstruct one dense-output boundary from accepted fixed-capacity data."""
+) -> tuple[BoundaryRelation, BoundaryRelation, PreparedLayerOperator, Array, Array]:
+    """Reconstruct the relations before and after one interior plane.
+
+    Returns the layer-left-to-offset and offset-to-layer-right relations, each one
+    partial fourth-order step composed with the accepted fixed-capacity prefix or
+    suffix, so the interior plane is closed from both faces.
+    """
     completed = jnp.sum(
         prepared.segment_active & (longitudinal_offset >= prepared.segment_edges[1:]),
         dtype=jnp.int32,
@@ -184,20 +190,33 @@ def continuous_boundary_at(
     )
     segment_index = jnp.minimum(completed, final_index)
     segment_left = prepared.segment_edges[segment_index]
+    segment_right = prepared.segment_edges[segment_index + 1]
     prefix = jax.tree.map(
         lambda value: value[segment_index],
         prepared.segment_prefix_boundaries,
     )
-    partial, _, _ = _fourth_order_boundary(
+    suffix = jax.tree.map(
+        lambda value: value[segment_index + 1],
+        prepared.segment_suffix_boundaries,
+    )
+    before, _, _ = _fourth_order_boundary(
         problem,
         prepared.layer,
         cascade,
         segment_left,
         longitudinal_offset,
     )
+    after, _, _ = _fourth_order_boundary(
+        problem,
+        prepared.layer,
+        cascade,
+        longitudinal_offset,
+        segment_right,
+    )
     local_operator = _operator_at(problem, prepared.layer, longitudinal_offset)
     return (
-        compose_boundary_relations(prefix, partial),
+        compose_boundary_relations(prefix, before),
+        compose_boundary_relations(after, suffix),
         local_operator,
         prepared.segment_defects[segment_index],
         segment_index,
@@ -269,6 +288,16 @@ def prepare_continuous_fourier_modal_layer(
     prefix_relations.extend(
         boundary for _ in range(policy.maximum_segments + 1 - len(prefix_relations))
     )
+    suffix_relations = [identity_boundary_relation(size, dtype)]
+    for relation in reversed(relations):
+        suffix_relations.append(
+            compose_boundary_relations(relation, suffix_relations[-1])
+        )
+    suffix_relations.reverse()
+    suffix_relations.extend(
+        identity_boundary_relation(size, dtype)
+        for _ in range(policy.maximum_segments + 1 - len(suffix_relations))
+    )
     edges = np.ones((policy.maximum_segments + 1,), dtype=np.float64) * thickness
     active = np.zeros((policy.maximum_segments,), dtype=np.bool_)
     defect_values = np.zeros((policy.maximum_segments,), dtype=np.float64)
@@ -290,6 +319,7 @@ def prepare_continuous_fourier_modal_layer(
         jnp.asarray(active),
         jnp.asarray(defect_values, dtype=real_dtype),
         _stack_boundary_relations(tuple(prefix_relations)),
+        _stack_boundary_relations(tuple(suffix_relations)),
         boundary,
         jnp.asarray(max(defects, default=0.0), dtype=real_dtype),
         jnp.asarray(

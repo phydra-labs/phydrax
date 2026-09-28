@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,6 +20,7 @@ from ..discretization import CochainDiscretization, StructuredCochainBridge
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
+    DifferentiationPolicy,
     eigen as eigen_linalg,
     FailurePolicy,
     FunctionLinearOperator,
@@ -28,8 +30,11 @@ from ..linalg import (
     OperatorProperties,
     PropertyEvidence,
     solve,
+    SparseLU,
     TolerancePolicy,
 )
+from ..sparse import compile_sparse_jacobian, SparseColoring, SparseDerivativePlan
+from ..typing import parse
 from ._maxwell import (
     _apply_hodge_metric,
     AbstractMaxwellFrequencyResponse,
@@ -38,8 +43,12 @@ from ._maxwell import (
     MaxwellCochainLayout,
     PreparedCompatibleMaxwell,
 )
+from ._maxwell_boundaries import MaxwellBoundaryPlan
 from ._maxwell_pml import MaxwellCPMLPlan, PreparedMaxwellCPML, PreparedMaxwellCPMLTerm
 from ._maxwell_sources import MaxwellSourceForcing
+
+
+FrequencyMaxwellSolveMethod: TypeAlias = Literal["krylov", "direct"]
 
 
 def _paired_matrix(metric: Array, matrix: Array, /) -> Array:
@@ -111,15 +120,17 @@ class FrequencyMaxwellPowerLedger(StrictModule):
 
     ``source_power = -½Re⟨E, J⟩`` is delivered by the impressed current,
     ``electric_material`` and ``magnetic_material`` are ``½ω Im⟨E, ε(ω)E⟩`` and
-    ``½ω Im⟨H, μ(ω)H⟩``, and ``absorbed_power`` is the work of the equivalent
-    stretched-coordinate currents. ``residual`` is source minus sinks; it vanishes
-    to the solve residual on a closed (absolute-boundary) domain.
+    ``½ω Im⟨H, μ(ω)H⟩``, ``absorbed_power`` is the work of the equivalent
+    stretched-coordinate currents, and ``boundary_power = ½Re⟨E, Y E⟩`` the
+    impedance-boundary dissipation. ``residual`` is source minus sinks; it
+    vanishes to the solve residual when perfect-conductor rows carry ``E = 0``.
     """
 
     source_power: Array
     electric_material: Array
     magnetic_material: Array
     absorbed_power: Array
+    boundary_power: Array
     residual: Array
     relative_residual: Array
 
@@ -213,7 +224,12 @@ class FrequencyMaxwellOperator(StrictModule):
 
     The constitutive law contributes its continuous ``frequency_response(ω)``;
     ``stretching`` applies CFS complex coordinate stretching with the same graded
-    ``(σ, κ, α)`` profile as the time-domain `MaxwellCPMLPlan`.
+    ``(σ, κ, α)`` profile as the time-domain `MaxwellCPMLPlan`. ``boundaries``
+    are the time-domain `MaxwellBoundaryPlan` traces (domain boundary or explicit
+    ``support``): perfect-conductor entries become identity rows with ``E = 0``,
+    perfect-magnetic-conductor entries zero ``H``, and impedance entries add the
+    surface conduction current ``Y E``. Without boundaries the natural trace of
+    the absolute cochain complex applies.
     """
 
     cochain: CochainDiscretization
@@ -222,6 +238,9 @@ class FrequencyMaxwellOperator(StrictModule):
     stretching: _FrequencyStretching | None
     angular_frequency: Array
     layout: MaxwellCochainLayout
+    conductor: Array
+    magnetic_wall: Array
+    admittance: Array
     operator_id: str = eqx.field(static=True)
 
     def __init__(
@@ -233,6 +252,7 @@ class FrequencyMaxwellOperator(StrictModule):
         /,
         *,
         stretching: MaxwellCPMLPlan | None = None,
+        boundaries: Sequence[MaxwellBoundaryPlan] = (),
     ) -> None:
         bridge = (
             discretization
@@ -272,6 +292,31 @@ class FrequencyMaxwellOperator(StrictModule):
                 raise ValueError(
                     "Coordinate stretching requires a StructuredCochainBridge."
                 )
+        boundary_plans = tuple(boundaries)
+        if not all(isinstance(plan, MaxwellBoundaryPlan) for plan in boundary_plans):
+            raise TypeError("boundaries must contain MaxwellBoundaryPlan values.")
+        if boundary_plans and bridge is None:
+            raise ValueError("Maxwell boundaries require a StructuredCochainBridge.")
+        prepared_boundaries = (
+            ()
+            if bridge is None
+            else tuple(plan.prepare(bridge, layout) for plan in boundary_plans)
+        )
+        conductor = jnp.zeros((layout.electric_count,), dtype=jnp.bool_)
+        magnetic_wall = jnp.zeros((layout.magnetic_count,), dtype=jnp.bool_)
+        admittance = jnp.zeros((layout.electric_count,), dtype=jnp.complex128)
+        for boundary in prepared_boundaries:
+            match boundary.kind:
+                case "pec":
+                    conductor = conductor | boundary.electric_boundary
+                case "pmc":
+                    magnetic_wall = magnetic_wall | boundary.magnetic_boundary
+                case "impedance":
+                    admittance = admittance + boundary.impedance_current(
+                        jnp.ones((layout.electric_count,), dtype=jnp.complex128)
+                    )
+                case _:
+                    assert_never(boundary.kind)
         self.cochain = cochain
         self.constitutive = constitutive
         self.response = constitutive.frequency_response(frequency)
@@ -288,6 +333,9 @@ class FrequencyMaxwellOperator(StrictModule):
         )
         self.layout = layout
         self.angular_frequency = frequency
+        self.conductor = conductor
+        self.magnetic_wall = magnetic_wall
+        self.admittance = admittance
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "frequency-maxwell-operator",
@@ -298,6 +346,7 @@ class FrequencyMaxwellOperator(StrictModule):
                 "stretching": None
                 if self.stretching is None
                 else self.stretching.cpml.prepared_id,
+                "boundaries": [boundary.prepared_id for boundary in prepared_boundaries],
             }
         )
 
@@ -315,19 +364,28 @@ class FrequencyMaxwellOperator(StrictModule):
             return self.cochain.codifferential(self.layout.magnetic_degree, magnetic)
         return self.stretching.electric_curl(self.layout.magnetic_degree, magnetic)
 
+    def _magnetic(self, flux: Array, /) -> Array:
+        """``H = μ(ω)⁻¹ B`` with perfect-magnetic-conductor entries held at zero."""
+        return jnp.where(self.magnetic_wall, 0, self.response.magnetic_field(flux))
+
     def _curl_curl(self, electric: Array, /) -> Array:
         return self._stretched_curl_adjoint(
-            self.response.magnetic_field(self._stretched_curl(electric))
+            self._magnetic(self._stretched_curl(electric))
         )
 
     def mv(self, electric: ArrayLike, /) -> Array:
         electric_ = jnp.asarray(electric)
         if electric_.shape != (self.size,):
             raise ValueError("Frequency Maxwell electric field has wrong shape.")
-        # exp(-i*omega*t): curl_s(mu(omega)^-1 curl_s E) - omega^2 eps(omega) E = i omega J.
-        return self._curl_curl(
-            electric_
-        ) - self.angular_frequency**2 * self.response.electric_displacement(electric_)
+        # exp(-i*omega*t): curl_s(mu^-1 curl_s E) - omega^2 eps E - i omega Y E = i omega J.
+        free = jnp.where(self.conductor, 0, electric_)
+        applied = (
+            self._curl_curl(free)
+            - self.angular_frequency**2 * self.response.electric_displacement(free)
+            - 1j * self.angular_frequency * self.admittance * free
+        )
+        # Perfect-conductor rows are the identity, so E = source there.
+        return jnp.where(self.conductor, electric_, applied)
 
     def defect(
         self, electric: ArrayLike, source: ArrayLike, /
@@ -378,7 +436,11 @@ class FrequencyMaxwellOperator(StrictModule):
     def power_ledger(
         self, electric: ArrayLike, source: ArrayLike, /
     ) -> FrequencyMaxwellPowerLedger:
-        """Power balance for a field solving ``mv(E) = source`` with ``source = iωJ``."""
+        """Power balance for a field solving ``mv(E) = source`` with ``source = iωJ``.
+
+        Perfect-conductor rows carry prescribed values rather than currents and are
+        excluded from the source, material, and boundary pairings.
+        """
         electric_ = jnp.asarray(electric).astype(jnp.complex128)
         source_ = jnp.asarray(source).astype(jnp.complex128)
         if electric_.shape != (self.size,) or source_.shape != (self.size,):
@@ -386,20 +448,21 @@ class FrequencyMaxwellOperator(StrictModule):
         omega = self.angular_frequency
         electric_star = self.cochain.hodge_metric(self.layout.electric_degree)
         magnetic_star = self.cochain.hodge_metric(self.layout.magnetic_degree)
-        current = source_ / (1j * omega)
+        free = jnp.where(self.conductor, 0, electric_)
+        current = jnp.where(self.conductor, 0, source_ / (1j * omega))
         flux = self._stretched_curl(electric_) / (1j * omega)
-        magnetic = self.response.magnetic_field(flux)
+        magnetic = self._magnetic(flux)
         source_power = -0.5 * jnp.real(
-            jnp.vdot(electric_, _apply_hodge_metric(electric_star, current))
+            jnp.vdot(free, _apply_hodge_metric(electric_star, current))
         )
         electric_material = (
             0.5
             * omega
             * jnp.imag(
                 jnp.vdot(
-                    electric_,
+                    free,
                     _apply_hodge_metric(
-                        electric_star, self.response.electric_displacement(electric_)
+                        electric_star, self.response.electric_displacement(free)
                     ),
                 )
             )
@@ -422,20 +485,52 @@ class FrequencyMaxwellOperator(StrictModule):
                 jnp.vdot(electric_, _apply_hodge_metric(electric_star, electric_current))
                 + jnp.vdot(magnetic, _apply_hodge_metric(magnetic_star, magnetic_current))
             )
-        residual = source_power - electric_material - magnetic_material - absorbed
+        boundary_power = 0.5 * jnp.real(
+            jnp.vdot(free, _apply_hodge_metric(electric_star, self.admittance * free))
+        )
+        residual = (
+            source_power
+            - electric_material
+            - magnetic_material
+            - absorbed
+            - boundary_power
+        )
         scale = (
             jnp.abs(source_power)
             + jnp.abs(electric_material)
             + jnp.abs(magnetic_material)
             + jnp.abs(absorbed)
+            + jnp.abs(boundary_power)
         )
         return FrequencyMaxwellPowerLedger(
             source_power,
             electric_material,
             magnetic_material,
             absorbed,
+            boundary_power,
             residual,
             jnp.abs(residual) / jnp.maximum(scale, jnp.finfo(scale.dtype).tiny),
+        )
+
+    def sparse_coloring(self, /) -> SparseColoring:
+        """Structural coloring of the traced operator pattern.
+
+        The pattern is fixed by the layout, stretching, and boundary masks;
+        frequency enters only coefficient values, so the coloring is reusable at
+        every frequency.
+        """
+        return self._sparse_plan(None).coloring
+
+    def _sparse_plan(self, coloring: SparseColoring | None, /) -> SparseDerivativePlan:
+        space = ArraySpace((self.size,), dtype=jnp.complex128)
+        return compile_sparse_jacobian(
+            lambda electric, operator: operator.mv(electric),
+            jnp.zeros((self.size,), dtype=jnp.complex128),
+            source=space,
+            target=space,
+            sample_args=self,
+            structure=coloring,
+            complex_semantics="holomorphic",
         )
 
     def solve(
@@ -443,33 +538,60 @@ class FrequencyMaxwellOperator(StrictModule):
         source: ArrayLike,
         /,
         *,
+        method: FrequencyMaxwellSolveMethod = "krylov",
         tolerance: float = 1e-9,
         restart: int = 40,
         maxiter: int = 400,
         policy: LinearSolvePolicy | None = None,
+        coloring: SparseColoring | None = None,
     ) -> FrequencyMaxwellSolveResult:
+        """Solve ``mv(E) = source`` natively.
+
+        ``"krylov"`` applies the matrix-free operator in restarted GMRES;
+        ``"direct"`` assembles the exact sparse operator by structural coloring
+        (``coloring`` reuses a pattern from `sparse_coloring`) and factors it with
+        native sparse LU. ``policy`` replaces the default policy of either route.
+        """
+        method = parse(method, FrequencyMaxwellSolveMethod, "method")
         source_ = jnp.asarray(source, dtype=jnp.result_type(source, jnp.complex64))
         if source_.shape != (self.size,):
             raise ValueError("Frequency Maxwell source has wrong shape.")
-        selected = (
-            LinearSolvePolicy(
-                GMRES(
-                    restart=int(restart),
-                    stagnation_iterations=int(restart),
-                ),
-                tolerance=TolerancePolicy(
-                    relative=float(tolerance),
-                    absolute=0.0,
-                    max_steps=int(maxiter),
-                ),
-                failure=FailurePolicy("status"),
-            )
-            if policy is None
-            else policy
-        )
-        if not isinstance(selected, LinearSolvePolicy):
+        if policy is not None and not isinstance(policy, LinearSolvePolicy):
             raise TypeError("Frequency Maxwell solve policy must be LinearSolvePolicy.")
-        operator = self.linear_operator()
+        match method:
+            case "krylov":
+                selected = (
+                    LinearSolvePolicy(
+                        GMRES(
+                            restart=int(restart),
+                            stagnation_iterations=int(restart),
+                        ),
+                        tolerance=TolerancePolicy(
+                            relative=float(tolerance),
+                            absolute=0.0,
+                            max_steps=int(maxiter),
+                        ),
+                        failure=FailurePolicy("status"),
+                    )
+                    if policy is None
+                    else policy
+                )
+                operator = self.linear_operator()
+            case "direct":
+                selected = (
+                    LinearSolvePolicy(
+                        SparseLU(),
+                        differentiation=DifferentiationPolicy("none"),
+                        failure=FailurePolicy("status"),
+                    )
+                    if policy is None
+                    else policy
+                )
+                operator = self._sparse_plan(coloring).operator(
+                    jnp.zeros((self.size,), dtype=jnp.complex128)
+                )
+            case _:
+                assert_never(method)
         result = solve(
             LinearSystem(operator),
             operator.target.unflatten(source_),
@@ -562,6 +684,11 @@ class FrequencyMaxwellOperator(StrictModule):
         if self.response.dispersive or not self.response.lossless:
             raise ValueError(
                 "The Hermitian Maxwell eigen path requires a lossless nondispersive response."
+            )
+        if bool(jnp.any(self.conductor)) or bool(jnp.any(self.admittance != 0.0)):
+            raise ValueError(
+                "The Hermitian Maxwell eigen path does not accept perfect-conductor "
+                "or impedance boundaries."
             )
         if self.size > int(maximum_dofs):
             raise ValueError("Frequency Maxwell materialization exceeds maximum_dofs.")
@@ -699,9 +826,7 @@ def compatible_maxwell_harmonic_defect(
             phase_full * source_phasor.magnetic_current,
         ),
     )
-    coefficients = (
-        None if runtime.pml is None else runtime.pml.bind_coefficients(dt, 0.5 * dt)
-    )
+    coefficients = None if runtime.pml is None else runtime.pml.bind_coefficients(dt)
     stepped = runtime._step_core(
         jnp.asarray(0.0),
         state,
@@ -851,6 +976,7 @@ __all__ = [
     "FrequencyMaxwellEigenResult",
     "FrequencyMaxwellOperator",
     "FrequencyMaxwellPowerLedger",
+    "FrequencyMaxwellSolveMethod",
     "FrequencyMaxwellSolveResult",
     "MaxwellHarmonicDefectReport",
     "MaxwellHarmonicSource",

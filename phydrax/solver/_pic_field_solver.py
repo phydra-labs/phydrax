@@ -17,11 +17,12 @@ only through the core operations
   spatial gradients) at particle positions.
 
 The deposit↔Gauss pairing — advancing the field with a deposited current moves
-the solver's Gauss charge exactly to the deposited end charge — is verified
+the solver's current-driven Gauss charge exactly to the deposited end charge — is verified
 numerically when the PIC run is prepared (`deposit_gauss_pairing_defect`).
 Optional capabilities are structural protocols: `PICSpectralSymbol`,
-`PICHuygensSampling`, `PICMultiDeposit`, `PICWindowShift`, and
-`PICRestartState`. Prescribed external fields use the core
+`PICHuygensSampling`, `PICMultiDeposit`, `PICWindowShift`, `PICGalileanGrid`,
+`PICEnergyAccounting`, `PICOpenDomain`, `PICRestartState`, and
+`PICRelativisticSelfFields`. Prescribed external fields use the core
 `phydrax.discretization.pic.ExternalFieldSource`.
 """
 
@@ -50,6 +51,9 @@ from ._maxwell_far_field import HuygensSurfacePhasors
 
 PICGatherDerivativeOrder: TypeAlias = Literal[0, 1]
 PICGaussProjectionRoute: TypeAlias = Literal["cochain-poisson", "spectral-poisson"]
+PICSelfFieldInitialization: TypeAlias = Literal[
+    "electrostatic", "relativistic-per-species"
+]
 
 
 class PICPrecisionPolicy(StrictModule, NonTrainableState):
@@ -91,13 +95,20 @@ class PICPrecisionPolicy(StrictModule, NonTrainableState):
 
 
 class PICFieldDeposit(StrictModule):
-    """Charge-conserving source in the solver's own current/charge layout."""
+    """Charge-conserving source in the solver's own current/charge layout.
+
+    ``continuity_defect`` is the largest ``|Δρ/Δt + ∇·J|`` of the deposit and
+    ``continuity_scale`` the unsigned charge-rate magnitude it is certified
+    against (``max(|Δρ| + 2ρ_|q|)/Δt``, the size of the charges whose
+    difference the residual is): its roundoff floor is relative to that scale.
+    """
 
     current: Any
     start_charge: Array
     end_charge: Array
     continuity_defect: Array
     successful: Array
+    continuity_scale: Array
 
 
 class PICFieldSample(StrictModule):
@@ -116,7 +127,15 @@ class PICFieldSample(StrictModule):
 
 
 class PICFieldAdvance(StrictModule):
-    """One field step and its constraint/energy evidence."""
+    """One field step and its constraint/energy evidence.
+
+    ``charge`` is the start Gauss charge moved by the step's current alone
+    (the solver's discrete continuity update), in the solver's charge layout.
+    Charge the field acquires by itself — induced wall charge of conducting
+    boundaries, conduction or plasma charge of the medium, and absorber
+    bookkeeping divergence — stays in the field state (`field_charge`) and is
+    not part of ``charge``.
+    """
 
     field: Any
     charge: Array
@@ -125,6 +144,21 @@ class PICFieldAdvance(StrictModule):
     energy: Array
     diagnostics: Any
     successful: Array
+
+
+class PICFieldEnergy(StrictModule):
+    """Electromagnetic and medium energy of one field state at its integer time.
+
+    ``electric`` is ``½⟨E, ⋆ε_∞E⟩`` with the instantaneous electric response,
+    ``magnetic`` is ``½⟨H, ⋆μ_∞H⟩`` minus the leapfrog half-kick term (so the
+    lossless vacuum update exchanges it exactly with ``−∫E·J``), and
+    ``material`` is the energy stored by the medium itself (polarization and
+    magnetization oscillators, cold-plasma current).
+    """
+
+    electric: Array
+    magnetic: Array
+    material: Array
 
 
 class PICGaussProjectionResult(StrictModule):
@@ -490,6 +524,50 @@ class PICWindowShift(Protocol):
 
 
 @runtime_checkable
+class PICGalileanGrid(Protocol):
+    """Field grid translating uniformly at ``grid_velocity`` (Galilean coordinates).
+
+    Particle positions are grid coordinates ``x − v_grid t``: the runtime drifts
+    them by ``(v − v_grid)Δt`` and samples external fields at the lab position
+    ``x + v_grid t``.
+    """
+
+    @property
+    def grid_velocity(self) -> tuple[float, ...]: ...
+
+
+@runtime_checkable
+class PICEnergyAccounting(Protocol):
+    """Field energy split and the power the field loses by itself.
+
+    ``loss_power(field)`` is the source-free ``−dW/dt`` of the field update:
+    conduction, material damping, impedance boundaries, and absorbing layers.
+    The PIC ledger integrates it with the trapezoidal rule over each step.
+    """
+
+    def energy_components(self, field: Any, step_size: Array, /) -> PICFieldEnergy: ...
+
+    def loss_power(self, field: Any, /) -> Array: ...
+
+
+@runtime_checkable
+class PICOpenDomain(Protocol):
+    """Axis-aligned field box whose axes are periodic or wall-bounded.
+
+    Particles must stay ``boundary_inset(species)[axis]`` inside every wall of
+    a bounded axis so the species' deposit and gather stencils stay on the grid.
+    """
+
+    @property
+    def domain_periodic(self) -> tuple[bool, ...]: ...
+
+    @property
+    def domain_bounds(self) -> tuple[tuple[float, ...], tuple[float, ...]]: ...
+
+    def boundary_inset(self, species: int, /) -> tuple[float, ...]: ...
+
+
+@runtime_checkable
 class PICRestartState(Protocol):
     """Field restart component admitted only by the same prepared solver."""
 
@@ -512,6 +590,42 @@ class PICGaussProjection(Protocol):
     def project_gauss(self, field: Any, charge: Array, /) -> PICGaussProjectionResult: ...
 
 
+class PICRelativisticFieldResult(StrictModule):
+    """Superposed lab-frame self-fields of uniformly drifting species.
+
+    ``gauss_residual`` is the max-norm Gauss defect ``|−∇·D − ρ|`` of the
+    superposed field against the summed charge on free (not grounded) Gauss
+    entities; ``magnetic_divergence`` is the max-norm ``|∇·B|``. ``successful``
+    requires every species' certified Poisson solve and finite fields.
+    """
+
+    field: Any
+    gauss_residual: Array
+    magnetic_divergence: Array
+    successful: Array
+
+
+@runtime_checkable
+class PICRelativisticSelfFields(Protocol):
+    """Boosted-Coulomb self-fields of species drifting along one grid axis.
+
+    For species ``s`` with drift ``β_s`` (a velocity over ``speed_of_light``)
+    along axis ``∥`` and ``γ_s = (1 − β_s²)^{-1/2}``, the solver solves
+    ``−∇·(ε(∇⊥ + γ_s⁻² ê∥∂∥)φ_s) = ρ_s`` and superposes
+    ``E_s = −(∇⊥φ_s + γ_s⁻² ê∥∂∥φ_s)`` and ``B_s = ∇ × (β_s φ_s / c) = β_s × E_s / c``,
+    the lab-frame field of the species' rest-frame Coulomb field. A zero drift
+    is the electrostatic field. ``drifts`` are host values.
+    """
+
+    def initialize_relativistic_field(
+        self,
+        charges: tuple[Array, ...],
+        drifts: tuple[tuple[float, ...], ...],
+        speed_of_light: float,
+        /,
+    ) -> PICRelativisticFieldResult: ...
+
+
 def add_deposits(values: Sequence[PICFieldDeposit], /) -> PICFieldDeposit:
     """Superpose species deposits; continuity is linear in charge and current."""
     first, *rest = values
@@ -523,6 +637,7 @@ def add_deposits(values: Sequence[PICFieldDeposit], /) -> PICFieldDeposit:
             total.end_charge + value.end_charge,
             jnp.maximum(total.continuity_defect, value.continuity_defect),
             total.successful & value.successful,
+            jnp.maximum(total.continuity_scale, value.continuity_scale),
         )
     return total
 
@@ -535,7 +650,40 @@ def chain_deposits(first: PICFieldDeposit, second: PICFieldDeposit, /) -> PICFie
         second.end_charge,
         jnp.maximum(first.continuity_defect, second.continuity_defect),
         first.successful & second.successful,
+        jnp.maximum(first.continuity_scale, second.continuity_scale),
     )
+
+
+@eqx.filter_jit
+def _pairing_probe(
+    solver: AbstractPreparedPICFieldSolver,
+    species: int,
+    start: Array,
+    end: Array,
+    active: Array,
+    /,
+) -> tuple[Array, Array]:
+    """One species' probe deposit, field advance, and relative Gauss defect.
+
+    Module-level and compiled once per solver structure and probe shape: plans
+    over the same prepared solver reuse the executable instead of dispatching
+    the deposit and field update op by op at every preparation.
+    """
+    step = 0.5 * jnp.asarray(solver.stable_step, dtype=start.dtype)
+    charge = jnp.where(active, 1.0, 0.0).astype(start.dtype)
+    velocity = jnp.pad((end - start) / step, ((0, 0), (0, 3 - start.shape[1])))
+    deposited = solver.deposit(species, start, end, velocity, charge, active, step)
+    advanced = solver.advance(
+        jnp.zeros((), dtype=start.dtype),
+        solver.field_with_charge(deposited.start_charge),
+        deposited.current,
+        step,
+    )
+    change = jnp.max(jnp.abs(deposited.end_charge - deposited.start_charge))
+    defect = jnp.max(jnp.abs(advanced.charge - deposited.end_charge)) / jnp.maximum(
+        change, jnp.finfo(start.dtype).tiny
+    )
+    return defect, deposited.successful & jnp.isfinite(defect)
 
 
 def deposit_gauss_pairing_defect(
@@ -545,39 +693,35 @@ def deposit_gauss_pairing_defect(
 ) -> float:
     """Relative defect between the advanced Gauss charge and deposited end charge.
 
-    Each species deposits a deterministic probe path; the field solver then
-    advances a zero field carrying the start charge with that current. A
-    paired solver lands exactly on the deposited end charge.
+    Each species deposits a deterministic probe path through its prepared
+    transfer; the field solver then advances a zero field carrying the start
+    charge with that current. A paired solver's current-driven Gauss charge
+    (`PICFieldAdvance.charge`, the field's own discrete divergence applied to
+    the current) lands exactly on the deposited end charge; charge the field
+    induces at conducting walls or in the medium is not a pairing defect. The
+    probes of all species are evaluated before one host read of the evidence.
     """
-    step = 0.5 * jnp.asarray(solver.stable_step)
-    worst = 0.0
+    probes = []
     for index, value in enumerate(species):
         start, end = solver.pairing_probe(index, value.capacity)
-        active = value.population.particles.active_mask
-        charge = jnp.where(active, 1.0, 0.0).astype(start.dtype)
-        velocity = jnp.pad((end - start) / step, ((0, 0), (0, 3 - start.shape[1])))
-        deposited = solver.deposit(index, start, end, velocity, charge, active, step)
-        advanced = solver.advance(
-            jnp.zeros((), dtype=start.dtype),
-            solver.field_with_charge(deposited.start_charge),
-            deposited.current,
-            step,
+        probes.append(
+            _pairing_probe(
+                solver, index, start, end, value.population.particles.active_mask
+            )
         )
-        change = jnp.max(jnp.abs(deposited.end_charge - deposited.start_charge))
-        defect = jnp.max(
-            jnp.abs(solver.field_charge(advanced.field) - deposited.end_charge)
-        ) / jnp.maximum(change, jnp.finfo(start.dtype).tiny)
-        if not bool(deposited.successful) or not bool(jnp.isfinite(defect)):
-            raise ValueError("PIC deposit↔Gauss pairing probe failed to deposit.")
-        worst = max(worst, float(defect))
-    return worst
+    defects, successes = jax.device_get(tuple(zip(*probes, strict=True)))
+    if not all(bool(value) for value in successes):
+        raise ValueError("PIC deposit↔Gauss pairing probe failed to deposit.")
+    return max(float(value) for value in defects)
 
 
 __all__ = [
     "AbstractPICFieldFilter",
     "AbstractPreparedPICFieldSolver",
     "PICFieldAdvance",
+    "PICEnergyAccounting",
     "PICFieldDeposit",
+    "PICFieldEnergy",
     "PICFieldSample",
     "PICFilterContinuityReport",
     "PICGatherDerivativeOrder",
@@ -585,10 +729,15 @@ __all__ = [
     "PICGaussProjectionResult",
     "PICGaussProjectionRoute",
     "PICHuygensSampling",
+    "PICGalileanGrid",
     "PICMultiDeposit",
+    "PICOpenDomain",
     "PICPrecisionPolicy",
+    "PICRelativisticFieldResult",
+    "PICRelativisticSelfFields",
     "PICRestartComponent",
     "PICRestartState",
+    "PICSelfFieldInitialization",
     "PICSpectralSymbol",
     "PICTensorKind",
     "PICTensorLayout",

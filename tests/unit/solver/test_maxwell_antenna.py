@@ -104,8 +104,12 @@ def test_three_dimensional_beam_runs_on_declared_magnetic_charge() -> None:
     assert runtime.magnetic_projection_elided
     assert np.max(np.abs(declared)) > 0.0
     assert np.max(np.abs(defect)) < 1e-12 * np.max(np.abs(declared))
+    # The trapezoidal ledger of step-end fields agrees with the leapfrog energy to
+    # its O((ωΔt)²) consistency error (measured coefficient 1/36 on the plane-wave
+    # test; this broadband 3-D beam is bounded by (ωΔt)²/12).
+    carrier = 2.0 * np.pi / 8.0
     assert float(ledger.evidence(result.final_state.observations[0]).total_work) == (
-        pytest.approx(energy, rel=1e-3)
+        pytest.approx(energy, rel=(carrier * step) ** 2 / 12.0)
     )
 
 
@@ -192,8 +196,21 @@ def test_antenna_work_equals_injected_field_energy(plane_wave_run: Any) -> None:
     carrier = np.real(_ENVELOPE * np.exp(-1j * _OMEGA * _TIMES))
     # ε = μ = c = 1: a launched plane pulse carries A ∫ E(t)² dt.
     analytic = (2 * _H) ** 2 * np.trapezoid(carrier**2, _TIMES)
+    # The trapezoidal ledger of step-end fields and the leapfrog energy differ by
+    # the scheme's O((ωΔt)²) consistency error: halving Δt must quarter it.
+    step = 0.9 * float(runtime.stable_dt)
+    half = mx.solve_compatible_maxwell(
+        runtime, runtime.initialize(), 0.0, 0.5 * step, 2 * int(4.6 / step)
+    )
+    half_energy = float(runtime.energy(half.final_state))
+    half_work = float(runtime.observers[0].value(half.final_state.observations[0]))
+    mismatch = (
+        abs(float(ledger.total_work) - energy) / energy,
+        abs(half_work - half_energy) / half_energy,
+    )
 
-    assert float(ledger.total_work) == pytest.approx(energy, rel=1e-4)
+    assert mismatch[0] < (_OMEGA * step) ** 2 / 24.0
+    assert np.log2(mismatch[0] / mismatch[1]) == pytest.approx(2.0, abs=0.1)
     assert abs(float(ledger.first_power)) < 1e-12 * energy
     assert energy == pytest.approx(analytic, rel=0.02)
 
@@ -385,9 +402,14 @@ def test_antenna_refuses_inadmissible_configurations() -> None:
             medium=mx.HomogeneousMaxwellExterior(permittivity=2.0),
         )
     with pytest.raises(ValueError, match="nonperiodic"):
-        mx.SampledPlaneCurrentAntennaPlan(
-            bridge, 0, 0.5, [-1.0, 3.0], [-1.0, 50.0], times, electric
-        )
+        phx.solver.CompatibleMaxwellPlan(
+            bridge,
+            sources=(
+                mx.SampledPlaneCurrentAntennaPlan(
+                    bridge, 0, 0.5, [-1.0, 3.0], [-1.0, 50.0], times, electric
+                ),
+            ),
+        ).prepare()
     with pytest.raises(ValueError, match="interior node planes"):
         phx.solver.CompatibleMaxwellPlan(
             bridge, sources=(plan(plane_coordinate=0.0),)

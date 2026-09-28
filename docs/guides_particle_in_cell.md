@@ -30,6 +30,15 @@ are expressed in that scale and no unit conversion is inferred. Callers holding 
 `ElectromagneticScaleContract` pass its `relativity`. PIC plans constructed without a pusher use
 `"boris"` in `PIC_CODE_RELATIVITY`, a declared code-unit system with c = 1.
 
+`RelativisticPushPlan.precess(spin, u, u', E, B, q/m, anomaly, active, dt)` advances rest-frame
+spin vectors over the same step with the Thomas–Bargmann–Michel–Telegdi equation, evaluated at the
+time-centered velocity and the Lorentz factor the selected method uses for its magnetic rotation
+and applied with the same norm-exact Cayley rotation: with a zero anomaly the spin stays locked to
+the momentum in a magnetic field, and with `a = (g − 2)/2` it turns relative to it at `aγω_c`.
+Processes receive the run's pusher and the step-start proper velocities in `PICProcessContext`
+(`pusher`, `step_start_proper_velocity`), together with the Galilean `grid_velocity` of the field
+grid; the polarized strong-field QED cascade uses them (see the strong-field QED guide).
+
 ## Instantaneous particle–cochain transfer
 
 `PICParticleCochainTransferPlan(bridge, *, shape_order=1)` prepares only existing
@@ -74,8 +83,9 @@ and finite-state checks all pass.
 
 ## Charge-conserving electromagnetic coupling
 
-`ChargeConservingCurrentPlan` currently supports uniform periodic 3-D grids and trajectories that
-cross at most one cell per axis in one step, at the transfer's shape order. Order one splits a
+`ChargeConservingCurrentPlan` supports uniform 3-D grids with periodic or wall-bounded axes (paths
+are clipped at bounded faces) and trajectories that cross at most one cell per axis in one step, at
+the transfer's shape order. Order one splits a
 straight trajectory at crossed faces and integrates cubical Whitney edge forms in closed form.
 Orders two and three split the path at the common knot lattice of the spline-Whitney forms
 (half-integers for `p = 2`, integers for `p = 3`) and integrate the path integrals
@@ -111,14 +121,19 @@ and the particle↔grid transfers bound to its discretization; its minimal core 
 
 The deposit↔Gauss pairing is verified numerically when the PIC plan is prepared: every species
 deposits a probe path, the solver advances a zero field carrying the start charge with that
-current, and the resulting Gauss charge must equal the deposited end charge
+current, and the current-driven Gauss charge (`PICFieldAdvance.charge`, the field's own discrete
+divergence applied to the current) must equal the deposited end charge
 (`ElectromagneticPICPlan.pairing_defect`). A solver whose Gauss charge does not follow its own
-deposited current is refused at construction.
+deposited current is refused at construction. Charge the field acquires by itself — induced
+charge of conducting walls, conduction or plasma charge of the medium, and the bookkeeping
+divergence of absorbing layers — stays in the field state and is not a pairing defect.
+The probe runs through one module-level compiled function reused by every plan over the same
+solver structure, so preparation does not dispatch the deposit and field update op by op.
 
 | Solver | Field | Transfer | Optional capabilities |
 |---|---|---|---|
-| `CochainMaxwellPICFieldSolver` | periodic 3-D `PreparedCompatibleMaxwell` | cochain splats + `ChargeConservingCurrentPlan` per species | spectral symbol, Huygens sampling, Gauss projection (cochain Poisson), window shift, restart |
-| `ReducedMaxwellPICFieldSolver` | `CompatibleMaxwell1DPlan`/`CompatibleMaxwell2DPlan` | `ReducedPICTransferPlan` | spectral symbol, multi-deposit, Gauss projection (1-D cochain, periodic 2-D spectral Poisson), window shift, restart |
+| `CochainMaxwellPICFieldSolver` | 3-D `PreparedCompatibleMaxwell`, periodic or bounded axes, boundaries, CPML, linear passive media | cochain splats + `ChargeConservingCurrentPlan` per species | spectral symbol, Huygens sampling, Gauss projection (cochain Poisson), window shift, energy accounting, open domain, restart, relativistic self-fields |
+| `ReducedMaxwellPICFieldSolver` | `CompatibleMaxwell1DPlan`/`CompatibleMaxwell2DPlan`, periodic or bounded axes | `ReducedPICTransferPlan` | spectral symbol, multi-deposit, Gauss projection (1-D cochain, 2-D per-axis eigenbasis), window shift, open domain, restart |
 | `UnstructuredMaxwellPICFieldSolver` | tetrahedral `PreparedUnstructuredMaxwell` | `UnstructuredWhitneyCurrentPlan` | Gauss projection (cochain Poisson), restart |
 
 Optional capabilities are structural protocols: `PICSpectralSymbol` (vacuum numerical dispersion
@@ -126,7 +141,11 @@ Optional capabilities are structural protocols: `PICSpectralSymbol` (vacuum nume
 fused deposit of every species), `PICWindowShift` (integer-cell translation, consumed by
 `PICMovingWindowPlan`), `PICGaussProjection` (curl-free Poisson projection of the field onto a
 prescribed Gauss charge, reporting `divergence_before`/`divergence_after`, the added field energy,
-and its `"cochain-poisson"` or `"spectral-poisson"` route), and `PICRestartState`. Prescribed
+and its `"cochain-poisson"` or `"spectral-poisson"` route), `PICEnergyAccounting` (field,
+magnetic, and medium energy split plus the source-free loss power the energy ledger integrates),
+`PICOpenDomain` (periodic and wall-bounded axes of the field box and the wall inset each
+species' stencil needs), `PICRelativisticSelfFields` (boosted-Coulomb initial fields of drifting
+species), and `PICRestartState`. Prescribed
 fields enter through
 `phydrax.discretization.pic.ExternalFieldSource` and are added to every gather. The semi-implicit
 ECSIM runtime `SemiImplicitPICPlan` solves particles and field jointly and remains a separate
@@ -135,9 +154,14 @@ orchestrator.
 The Whitney transfer returns nodal charge content and integrated edge flow; the unstructured
 solver maps them through the inverse degree-0/degree-1 Hodge stars onto Maxwell's charge density
 and current on Maxwell's edge order. Boundary vertices are absolutely constrained, so charge lives
-on interior vertices. The reduced 1-D Gauss divergence gives the nonperiodic lower wall zero flux,
-matching the transfer's continuity operator; reduced 2-D fields with a nonperiodic axis do not pair
-their Gauss charge with the deposited current and are refused.
+on interior vertices. On a nonperiodic reduced axis the stored layout keeps the upper wall face
+and omits the lower one: the backward difference reads zero below the lower wall and the forward
+difference zero beyond the last cell, a skew-adjoint pair. The reduced 1-D and 2-D curl updates
+therefore conserve energy exactly, the divergence of the curl vanishes axis by axis, and Gauss's
+law uses the transfer's continuity divergence, so reduced 2-D fields pair to roundoff on any mix of
+periodic and bounded axes. The reduced transfer projects the raw midpoint current onto continuity
+with the same operator (a cumulative sum in 1-D, the per-axis eigenbasis of the reduced Poisson
+operator in 2-D); the corrected current on an upper wall face is the physical outflow.
 
 ## Electromagnetic PIC runtime
 
@@ -148,8 +172,11 @@ precision)` owns:
   `ParticlePopulationState` with persistent `(id_hi, id_lo)` identities and parent lineage;
   macrocharge is `mass × base_specific_charge × charge_number`.
 - `processes`: `AbstractPICProcess` values at the `"momentum"` stage (after the push, proper
-  velocity only) or the `"population"` stage (after the field advance, may create particles and
-  change charge numbers). Population processes must preserve deposited charge pointwise, which is
+  velocity only), the `"creation"` stage (after the momentum stage and before the drift; may
+  change proper velocities and create particles at step-start positions, which then drift and
+  deposit in the same step — strong-field QED, see [Strong-field QED](guides_strong_field_qed.md))
+  or the `"population"` stage (after the field advance, may create particles and
+  change charge numbers). Creation and population processes must preserve deposited charge pointwise, which is
   verified by redeposition (`process_charge_defect`), unless they declare
   `redistributes_charge` (particle resampling): those conserve total charge, require a solver
   implementing `PICGaussProjection`, and the runtime projects the advanced field onto the
@@ -163,12 +190,17 @@ precision)` owns:
   each process's `validate_run(species, relativity)` may refuse species or pusher units it cannot
   act on.
 - `boundaries`: an optional `PICOpenBoundaryPlan`. Reflected paths deposit two straight segments
-  joined at the wall; absorbed charge stays immobile on the grid as `wall_charge`.
+  joined at the wall; absorbed charge stays immobile on the grid as `wall_charge`, and the
+  absorbed macrocharge, mass, and kinetic energy are recorded per face (see
+  [Open, dispersive, and magnetized PIC](#open-dispersive-and-magnetized-pic)). Periodic axes
+  carry `PICBoundaryKind.PERIODIC` faces.
 - `recorders` (`AbstractPICRecorder`), `filters` (`AbstractPICFieldFilter`, applied identically to
   charge, current, and the gathered field; see below), `cherenkov_guards` (`PICCherenkovGuard`),
   `external_fields`.
 - `ownership`: the run's `RadiationOwnership`. Processes claiming `"resolved-field"` are refused;
-  `"subgrid-reaction"` ownership requires exactly one claiming process and otherwise none. At
+  `"subgrid-reaction"` ownership requires exactly one claiming process and otherwise none. The
+  field solver advances the field of the deposited current, so it claims the resolved radiation;
+  `"diagnostic-only"` ownership overlaps that claim and is refused at construction. At
   runtime a claiming process reports `PICProcessLedger.radiation` (`PICProcessRadiation`): the
   energy handed to unresolved radiation, which enters `PICEnergyLedger.radiated` (the ledger
   defect is `total + radiated − previous_total`), and the scale separation between emission and
@@ -181,7 +213,11 @@ One step gathers E and B at integer-time positions, pushes half-step proper velo
 momentum processes, drifts, applies particle boundaries, deposits current, advances the field,
 runs population processes, and commits the whole candidate only if transfer, pusher, continuity,
 particle↔field charge, Gauss, magnetic, displacement, CFL, process, radiation-ownership, and
-finiteness checks pass. `PICRejectionReason` flags record every failed gate. A momentum process
+finiteness checks pass. `PICRejectionReason` flags record every failed gate. Continuity and
+particle↔field charge are certified relative to the deposit's unsigned charge-rate magnitude
+(`PICFieldDeposit.continuity_scale`, reported as `diagnostics.continuity_scale`) with relative
+tolerance `max(continuity_tolerance, 64 ε)`, so the certificate is independent of units, grid
+size, and particle count. A momentum process
 declaring `requires_field_derivatives` (full Landau–Lifshitz) receives, per species, the gradients
 of the gathered fields (order-one gather plus exact forward-mode derivatives of external fields)
 and their time derivatives; grid-field time derivatives come from a staggered field history, the
@@ -195,11 +231,84 @@ solver), clock, particle boundaries, each species, each recorder, and the field 
 processes restarts from the same field and species, while a different field solver or species is
 refused.
 
-The full 3-D cochain solver requires every axis periodic, and `PreparedMaxwellCPML` rejects
-nonzero CPML width on a periodic axis, so it cannot carry an absorbing CPML layer; reduced 1-D
-fields are the PIC route that accepts `MaxwellCPMLPlan`. See
-[Advanced particle-grid physics](guides_advanced_particle_grid.md) for population changes,
+See [Advanced particle-grid physics](guides_advanced_particle_grid.md) for population changes,
 collisions, ionization, moving windows, and semi-implicit response.
+
+## Open, dispersive, and magnetized PIC
+
+`CochainMaxwellPICFieldSolver` accepts any linear passive `PreparedCompatibleMaxwell`: bounded
+axes with `MaxwellCPMLPlan` absorbers and PEC/PMC/impedance `MaxwellBoundaryPlan`s, lossy
+conductors (`ConductiveMaxwellConstitutivePlan`), Lorentz–Drude electric poles and magnetic poles
+(`LorentzDrudeMaxwellConstitutivePlan`, negative index when both are resonant), and the magnetized
+cold plasma (`MagnetizedColdPlasmaMaxwellConstitutivePlan`). Nonlinear or active media are refused.
+Particles deposit through `ChargeConservingCurrentPlan`, which clips paths at wall-bounded faces,
+and the gather is its exact Galerkin transpose (Whitney forms at order one), so the gathered field
+does exactly the work `⟨E, ⋆J⟩` the deposited current does on the grid.
+
+The electrostatic plan initializes Gauss-consistent fields from the filtered deposited charge: a
+periodic boundary on periodic grids, a Dirichlet (grounded) or mixed boundary on bounded grids,
+whose fixed vertices carry the induced charge `−δD`. Its permittivity must equal the medium's
+instantaneous electric response (checked at construction). `CochainElectrostaticPlan` solves with
+native PCG, whose stopping test is the Hodge-norm true residual the linear runtime certifies, and
+its `tolerance` is relative to the assembled right-hand side (charge plus Neumann source minus the
+Dirichlet lift), independent of units: non-neutral charge on bounded 3-D grids of any size, and
+charge-free Dirichlet-driven solves with SI permittivities, converge to that relative residual.
+Reduced 2-D fields initialize on any mix of periodic and bounded axes through
+the per-axis eigenbasis of their Poisson operator.
+
+A static field with `B = 0` around a relativistic beam is not the field of the drifting beam and
+radiates a start-up pulse that contaminates radiation diagnostics.
+`ElectromagneticPICPlan.initialize(..., self_fields="relativistic-per-species", drifts=None)`
+instead gives every species the lab-frame field of its rest-frame Coulomb field: for drift `β_s`
+along one grid axis (explicit `drifts[s]`, or the mean velocity of its active particles, read on
+the host) the cochain solver solves `−∇·(ε(∇⊥ + γ_s⁻² ê∥∂∥)φ_s) = ρ_s` (the electrostatic
+operator with `ε/γ_s²` on the drift edges, with a Krylov budget scaled by `γ_s`), and superposes
+`E_s = −(∇⊥φ_s + γ_s⁻² ê∥∂∥φ_s)` and `B_s = d(β_s φ_s/c) = β_s × E_s/c`. Gauss's law holds to
+the certified solve tolerance per species and `d(B) = 0` exactly; `initialize_relativistic_field`
+reports both (`PICRelativisticFieldResult`). The grounded boundary must have zero potential values
+and no Neumann source, and `magnetic` must be `None`. A zero drift is the electrostatic field.
+
+Particle boundaries (`PICOpenBoundaryPlan`) must lie inside the field box, inset on bounded axes by
+the wall distance each species' spline stencil needs (`PICOpenDomain.boundary_inset`: zero at shape
+order one, `(p + 1)/2` cells at orders two and three); faces on periodic axes are `PERIODIC`.
+Absorbed particles leave their charge frozen at the exit point (`wall_charge`), so Gauss's law
+holds on every vertex, and each step's `ElectromagneticPICDiagnostics.exit` (`PICExitLedger`)
+reports the charge, mass, and kinetic energy taken out; the energy is `(γ − 1)mc²` interpolated to
+the hit fraction between the path's start and end time. `charge_ledger_defect` is the relative
+balance `|Q_particles(t + Δt) + Q_exited − Q_particles(t)|`, and `medium_charge` is the largest
+difference between the field's Gauss charge and the particle plus wall charge: induced wall charge,
+conduction or plasma charge of the medium, and the CPML bookkeeping divergence, zero in vacuum away
+from conducting walls and absorbers.
+
+The energy ledger splits the field energy for solvers implementing `PICEnergyAccounting`:
+`electric_field` is `½⟨E, ⋆ε∞E⟩`, `magnetic_field` is `½⟨H, ⋆μ∞H⟩` minus the leapfrog half-kick
+term, `material` is the energy the medium stores (polarization and magnetization oscillators,
+cold-plasma current), and `dissipated` is the trapezoidal integral of the source-free loss power
+(conduction, pole damping, collisions, impedance boundaries, and CPML absorption). With `exited`
+the kinetic energy particles carried out,
+`defect = total + radiated + created_rest_energy + dissipated + exited − field_exchange −
+previous_total`. Per-step ledgers pair half-step kinetic energies with integer-time fields, so their
+sum carries a first-order endpoint term; `ElectromagneticPICPlan.synchronized_energy(state,
+step_size)` returns a `PICEnergySnapshot` at the state's integer time, whose differences plus the
+accumulated dissipated, exited, and radiated energy close at second order as `Δt` is halved at
+fixed `h`, in vacuum, with CPML, and in every passive medium (the defect falls fourfold per halving
+for Lorentz–Drude, negative-index, magnetized-plasma, and conducting media). This relies on the
+Maxwell step advancing medium memory with the boundary-constrained fluxes the kicks see and
+evaluating conduction and impedance-wall currents at the kick's midpoint field. Particles
+crossing cell faces see the piecewise-constant order-one Whitney field along their motion, a
+first-order work defect per crossing; shape orders two and three give continuous gathers and
+keep the ledger second order for paths that cross cells.
+
+A weakly coupled relativistic macroparticle (huge mass, immobile compensating charge at its start)
+reproduces the prescribed-charge runtime `solve_prescribed_charge_maxwell` field for field, so the
+PIC Cherenkov cone and spectrum in a dielectric equal the B4 reference.
+`examples/dispersive_pic_cherenkov.py` runs a beam at `β = 0.9` through a Lorentz dielectric with
+quadratic shapes at `Δt` and `Δt/2`: the energy ledger falls 4.45× (−3.94 then −0.886 against
+13.5 dissipated), within its Richardson second-order bound, and the first-harmonic cone at `Δt/2`
+is 43.26° against the dispersion audit's discrete cone 43.10° at the same `Δt` (continuum 42.50°;
+the gap to the continuum is the lattice dispersion at `kh ≈ 0.7`). With order-one shapes the
+beam's own grid-scale field jumps at every face it crosses, and the ledger converges only at
+first order.
 
 ## Filters, cell binning, and the numerical-Cherenkov guard
 
@@ -242,8 +351,10 @@ drifting plasmas belongs to the spectral-PIC NCI analysis.
 ## Macroparticle resampling
 
 `ParticleMergePlan(binning, relativity, *, species, maximum_per_cell, method="vranic-momentum-cell",
-momentum_bins, minimum_packet_size, maximum_packet_size)` implements the momentum-cell merging of
-Vranic et al. (Comput. Phys. Commun. 191, 65, 2015). `binning` is a `PICCellBinningPlan`; in every
+momentum_bins, minimum_packet_size, maximum_packet_size, minimum_occupancy=0.0)` implements the
+momentum-cell merging of Vranic et al. (Comput. Phys. Commun. 191, 65, 2015); with
+`minimum_occupancy` it merges only while a species' active fraction of its capacity reaches that
+value (the QED cascade merge trigger). `binning` is a `PICCellBinningPlan`; in every
 spatial cell holding more than `maximum_per_cell` particles, particles of one charge state are
 grouped into spherical momentum cells (magnitude between the cell's extreme speeds, polar cosine,
 azimuth), each momentum cell is cut into packets of `maximum_packet_size` in global-identity order
@@ -408,6 +519,187 @@ reported as losses, so bitwise restarts remain the job of `ElectromagneticPICPla
 With `provider=OpenPMDADIOS2Provider(...)` the writer publishes ADIOS2 BP4 directories through a
 pinned openPMD-api `openpmd-pipe`.
 
+## External PIC oracles
+
+`phydrax.solver.pic_oracle_case(plan, scale, positions, velocities, dt, *, particle_masses,
+steps, output_interval)` binds one `ElectromagneticPICPlan` and exactly the arguments its
+`initialize` receives to a `PICOracleCase` for a pinned external code. The scale declares the
+plan's code units (its `c`, `ε₀`, and `μ₀` must match the pusher and field solver) and supplies
+every SI conversion; `particle_masses` fixes the real particle charge, mass, and weight per
+species. The scenario follows the field solver: `"periodic-psatd-plasma"` for
+`PreparedSpectralMaxwell` and `"periodic-yee-plasma"` for the cochain Yee solver, on a fully
+periodic box without processes, particle boundaries, filters, or external fields.
+
+- WarpX (`WarpXProvider`, pinned `warpx.3d`; `PHYDRAX_WARPX`, `PHYDRAX_WARPX_VERSION`): both
+  scenarios from a native `inputs` deck with explicit `MultipleParticles`; openPMD HDF5 snapshots
+  are imported with `read_openpmd_meshes_hdf5`. Declared losses: no Gauss-consistent initial
+  field, cell-centered output averaging, and direct deposition on collocated PSATD grids.
+- Smilei (`SmileiProvider`, pinned `smilei`; `PHYDRAX_SMILEI`, `PHYDRAX_SMILEI_VERSION`): Yee
+  only, shape order 2, integer charge states; its `Fields0.h5` (catalog format `smilei-fields`)
+  is read by `read_smilei_fields`. Declared losses: Smilei's own field interpolator and the
+  dropped periodic duplicate samples.
+- PIConGPU (`PIConGPUProvider`, a pinned per-setup build driver; `PHYDRAX_PICONGPU`,
+  `PHYDRAX_PICONGPU_VERSION`): Yee only; `picongpu_input` writes the setup's `.param` files,
+  the driver compiles `setup/bin/picongpu`, which is pinned by digest and run. Each species must
+  be a one-per-cell lattice with one drift and weight, counts multiples of `(8, 8, 4)` spanning
+  three supercells.
+
+`run_warpx`, `run_smilei`, and `run_picongpu` return a `PICOracleResult`: `E`/`B` snapshots in
+plan units with their staggering and time offsets, provider version, executable and output
+digests, license, and an `AdapterReport` enumerating the losses. Measured: the uniform
+cold-plasma oscillation (`ω_pe = 1`, `Δt = 0.1`, 126 steps) of WarpX 26.01 matches Phydrax's
+electric field energy to 1.3e-13 relative and Smilei 5.1 to 2.6e-7, both oscillating at the
+leapfrog frequency 1.00067, and PIConGPU 0.8.0 reproduces the same energy per volume on its
+`(24, 24, 12)` box to 1e-6 of the peak; the staggered-PSATD numerical Cherenkov growth of a γ = 10 drifting
+plasma in WarpX (0.205) matches Phydrax (0.228) to 11% once both are sampled cell-centered.
+
+Two further scenarios run on WarpX only (Smilei and PIConGPU refuse them):
+
+- `"single-particle-radiation"`: a plan with one `PICTrackRecorder` following the only
+  macroparticle of its species on the Yee cochain solver, with external fields that sum to a
+  uniform, static field (probed at every cell center and particle at the start, middle, and end of
+  the run). `pic_oracle_case` stores it in `PICOracleCase.track` (`PICOracleTrack`); the WarpX
+  deck applies it as constant particle fields and writes the tracked species as a group-based
+  openPMD series, which `run_warpx_track`/`read_pic_oracle_track` import through the openPMD
+  particle-track reader into a `ChargedTrajectory` under the recorder identity
+  (`PICOracleTrackResult`). Smilei's track output (openPMD 1.0.0 without ED-PIC weighting
+  metadata) is not readable by that reader; PIConGPU loads species only as lattices. Measured
+  (four cyclotron periods, A1 segment-exact spectra): WarpX vs the Phydrax recorder differ by
+  1.8e-3/2.7e-3 (fundamental/second harmonic) at 192 steps and 4.5e-4/6.7e-4 at 384 steps,
+  below the half-push-vs-mean velocity model `m(ΩΔt)²/8`; both are 5.0e-3/1.1e-2 from the exact
+  helix at 384 steps (Boris phase lag).
+- `"laser-wakefield-stage"`: `pic_oracle_wakefield_case(plan, scale, positions, velocities,
+  step, laser=PICOracleLaser(...), ...)` binds a quasi-cylindrical P3 plan (standard PSATD,
+  spectral charge conservation, no absorber, antennas, or observers) and the focused Gaussian
+  pulse it adds to its initial field into a `PICOracleWakefieldCase`. `run_warpx_wakefield`
+  (pinned `warpx.rz`; `PHYDRAX_WARPX_RZ`, `PHYDRAX_WARPX_VERSION`) runs RZ PSATD with the
+  explicit particles and a Gaussian antenna at the pulse center (`warpx_preroll_steps` steps
+  of pre-roll), and `read_warpx_wakefield` imports the `thetaMode` `E`/`B` snapshots onto the
+  case's nodes (`PICOracleWakefieldResult`). Declared losses: antenna injection and its
+  backward pulse (damped/absorbing, not periodic, axial boundaries), local FFTs with
+  `psatd.noz = 32`, direct deposition with the rho update (WarpX's current correction needs a
+  global FFT RZ lacks), cell-centered output. Measured on the FBPIC test's linear LWFA: the
+  on-axis wake differs from P3 by 13.1%, 9.8%, and 8.1% (relative L²) at Δt, Δt/2, and Δt/4
+  (WarpX step error of order ≈ 0.7; P3 is step-converged to 0.7% and agrees with FBPIC 0.27.0
+  to 5.6%).
+
+## Distributed PIC and restart
+
+`DistributedPICFieldSolver(base, mesh, guard_cells=3, particle_margin=1.0, identity_tiles=None)`
+runs the periodic 3-D cochain, reduced 1-D/2-D, or Cartesian PSATD solver on a device mesh of one
+to three axes. Mesh axis `a` splits grid axis `a` into equal blocks of whole cells
+(`PICDomainDecomposition`): a one-axis mesh gives slabs, a two-axis mesh pencils, a three-axis mesh
+blocks (every mesh axis holds at least two devices). Device `(p₀, …)` with row-major linear index
+`p` owns slot block `[p C/P, (p+1) C/P)` of
+every species, so particle ownership is aligned with the field decomposition. It is an ordinary
+`AbstractPreparedPICFieldSolver`, so `ElectromagneticPICPlan` runs over it unchanged:
+
+- each device deposits its own particles on its block window (owned cells plus `guard_cells`
+  cells on each side of every decomposed axis); one plane-level
+  `phydrax.discretization.DistributedHaloPlan` per decomposed axis adds guard contributions to
+  their owners axis by axis. A component uniform along the decomposed axes — the mean current of
+  periodic continuity-projected reduced grids — is summed over devices instead;
+- gathers read the owned cells plus guards exchanged axis by axis, each exchange carrying the
+  previous axes' guards, so edge and corner guards of diagonal neighbors arrive without extra
+  messages; particles more than `particle_margin` cells outside their block are refused;
+- cochain, reduced, and global-FFT PSATD updates are the base solver's own update,
+  SPMD-partitioned over the same mesh; PSATD global FFTs must run through a
+  `DistributedSpectralExecutionPlan` built on the same mesh (slab schedule on one axis, pencil on
+  two; three-axis meshes are refused for PSATD). Reduced and spectral field arrays are sharded over
+  the blocks; packed cochains are replicated;
+- local-guarded PSATD (Kirchen et al., Phys. Rev. E 102, 063215 (2020)) runs per device: the owned
+  fields, current, and charge receive the plan's `guard_cells` cells exchanged through the same
+  halo substrate on every decomposed axis, and each of the device's local-guarded subdomains
+  (which must tile the device block: the mesh part counts divide `subdomains`) is transformed,
+  advanced with the finite-order stencil, and inverted locally; only the Gauss residual maxima and
+  energies are reduced over the mesh. Vay deposition or update-with-ρ conserve charge (the
+  spectral correction needs the global spectrum). A step equals the single-device local-guarded
+  step to reduction order and the global-FFT step up to the stencil truncation reported by
+  `PreparedSpectralMaxwell.guard_truncation(dt)`, the relative real-space kernel mass of one
+  vacuum step beyond the guards.
+
+Preparation refuses a guard narrower than the transfer footprint: probe paths leaving every
+interior block face by `particle_margin` cells must deposit and gather inside the window. A solver
+whose deposit is not window-local is refused by the same probe: collocated PSATD with even extents
+projects checkerboard charge over the whole grid, and the continuity-projected reduced 2-D current
+spreads over the whole grid, so a reduced 2-D run decomposes only when the guard windows cover the
+grid (reduced 1-D currents are window-local up to their mean current). The distributed solver shares its base
+solver's identity — decomposition changes reduction order, not the discretization — and reports
+execution in `PICDistributedEvidence` (`distributed=True`, mesh shape, local-guarded guards; for
+cochain Maxwell the capability set with `distributed` and `spatial_distribution` set). It
+implements `PICGaussProjection` through its base, so resampling Gauss projections run on the
+distributed field with the halo-accumulated charge.
+
+```python
+from jax.sharding import Mesh
+
+mesh = Mesh(np.asarray(jax.devices()[:4], dtype=object).reshape(2, 2), ("x", "y"))
+solver = phx.solver.DistributedPICFieldSolver(base_solver, mesh)
+pic = phx.solver.ElectromagneticPICPlan(solver, species=species, processes=processes)
+run = phx.solver.DistributedElectromagneticPICPlan(pic, packet_capacity=64, reach=1)
+state = run.initialize(positions, velocities, dt, active_masks=masks, masses=masses)
+step = eqx.filter_jit(lambda value: run.step_detailed(value, dt))
+result = step(state)  # result.migration, result.rejection_reason
+```
+
+`initialize` places every particle in its owner's slot block while persistent identities follow
+the caller's slot order, so identity-addressed randomness and diagnostics do not depend on the
+decomposition. `PICMigrationPlan` routes particles whose owner changed through fixed-capacity
+`lax.ppermute` packets, one per mesh offset in `{−reach, …, reach}^k` (diagonal neighbors
+included): the source slot is deactivated (it keeps its occupant's identity) and a free destination
+slot is allocated with the particle's identity, lineage, charge state, and slot-aligned process
+state. A packet overflow, an owner beyond `reach`, or a destination without free slots on any
+device rejects the whole step: the accepted state is the step-start state and
+`PICRejectionReason.MIGRATION` is set.
+
+`DistributedElectromagneticPICPlan` installs a `DistributedPICExecutor` in the PIC plan.
+Creation-stage, population-stage, stateful, and charge-redistributing processes must implement
+`PICDistributedProcess` (the QED cascade with polarization, merging and splitting, field and impact
+ionization do); they run per device on the device's slot blocks, their slot-aligned state (QED
+lepton optical depths and spins) moves with the particles, and process-owned banks (the QED photon
+bank, whose capacity must equal the gather species' capacity) are decomposed and migrated by their
+own positions. Additive process totals (escape histograms) are accumulated per device and summed;
+ledgers and evidence are combined by the process. The step order is gather → push → momentum and
+creation processes → drift, deposit, field advance → migration → population processes → migration,
+so resampling groups and ionization act on particles held by their owners, and every step ends
+with every particle on its owner. Merge and split binning cells must nest in the device blocks.
+
+Created particles are allocated inside the creating device's slot block by `PICIdentityAllocator`,
+whose identities do not depend on the decomposition and need no communication: every allocation
+call reserves `B·R` identities after the population counter (`B` identity tiles — `identity_tiles`,
+by default one per decomposed cell, a partition nested in every admissible block — and `R` the
+population's global capacity); the particle created by an event in tile `t` with rank `r` among the
+call's events in `t` (in the process's canonical, identity-keyed event order) receives
+`counter + t R + r`. An event's tile is that of its creating event's position (emitter, decaying
+photon, merged packet, split particle, ionized ion), which always lies in the creating device's
+block, so each tile's identities come from exactly one device, and a run on `N` devices creates the
+same identities, lineage, and counts as on one device. Single-device `ElectromagneticPICPlan` runs
+keep the consecutive per-event F6 counter.
+
+`PICRestartPlan(run, window=None, auxiliaries=())` composes the run's per-component restart leaves
+— species with identities and lineage, the field state with its ADE/plasma/CPML/PML memory, the
+boundary ledger, recorders, process states (radiation accumulators, QED photon and pair banks),
+the field history, the moving-window epoch, and auxiliary `PICRestartState` owners such as
+boosted-frame buffers — into a `PICRestartManifest`, publishes this process's addressable shards
+through `phydrax.lifecycle` checkpoints, and restores them:
+
+```python
+plan = phx.solver.PICRestartPlan(run)
+plan.publish(repository, state, checkpoint_id="pic-0100", writer_id="rank-0")
+checkpoint = plan.assemble(repository, "pic-0100", expected_process_count=1)
+restored = phx.solver.PICRestartPlan(other_run).restore(repository, checkpoint)
+restored.state, restored.restart_class  # "bitwise" or "tolerance"
+```
+
+A restart on the topology that wrote the checkpoint continues bitwise. The decomposition is
+static during a run and changes only at restart: a different mesh (device count, or slabs versus
+blocks) repartitions particles, with their slot-aligned process state, into the new slot blocks
+and process banks by their own positions (slot permutations, so the restored state is exact) and
+is a
+`"tolerance"` restart within `repartition_tolerance`, because the continued run sums deposits in a
+different order. The lifecycle `TopologyRestartPolicy` admits or refuses the relation; the default
+admits tolerance restarts. Components are admitted only by owners with the same identity.
+
 ## Differentiation and limits
 
 Weights and payloads differentiate inside a fixed route and segment program. Cell crossings,
@@ -416,5 +708,5 @@ stopped branch decisions. No derivative is claimed through particle creation/del
 ionization, moving windows, repartitioning, or adaptive topology.
 
 Support is configuration-specific rather than inherited across those plans. Quasi-cylindrical
-PSATD and cross-device particle sharding remain unsupported; each advanced configuration requires
-its own conservation, capacity, solver, and differentiation evidence.
+PSATD is not distributed, and dynamic load balancing between restarts is excluded; each advanced
+configuration requires its own conservation, capacity, solver, and differentiation evidence.

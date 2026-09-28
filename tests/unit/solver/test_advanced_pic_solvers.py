@@ -33,12 +33,15 @@ def test_advanced_pic_solvers_scenario_1() -> None:
         jnp.asarray([[0.2], [1.2]]),
         jnp.asarray([-1.0, -1.0]),
         plan.initialize_surface(),
+        kinetic_energy=(jnp.asarray([0.0, 0.2]), jnp.asarray([0.0, 0.3])),
     )
     assert result.successful
     assert result.hit_mask[1]
     assert not result.accepted_population.active[1]
     assert jnp.sum(result.boundary_charge_flux) == -1.0
     assert jnp.sum(result.boundary_mass_flux) == 1.0
+    # The path 0.8 → 1.2 hits the upper face halfway; its energy interpolates there.
+    np.testing.assert_allclose(result.boundary_energy_flux[1], 0.25, rtol=1e-12)
     ion_support = phx.discretization.ParticleSetPlan(
         jnp.arange(2), jnp.ones((2,)), ambient_dimension=3
     ).prepare()

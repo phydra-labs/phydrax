@@ -359,6 +359,37 @@ flagged `LOW_HARMONIC`.
 basis above, with the cold-plasma rotation and conversion `2 Re ρ` from
 `faraday_coefficients`.
 
+### External oracles: UFGC and Symphony
+
+Two GPL-3.0 gyrosynchrotron codes serve as pinned external oracles for a
+`MagnetobremsstrahlungPlan`; neither is imported into Phydrax nor copied. Each
+runs in a caller-pinned Python interpreter that loads the digest-checked
+provider library staged into the run directory, and each result carries the
+provider version, library digest, license, output digest and an
+`AdapterReport` whose losses list everything the provider cannot represent.
+
+- `run_ufgc(UFGCProvider(python, library), plan, directory, angular_frequencies=ω,
+  angles=θ)` calls the Ultimate Fast Gyrosynchrotron Codes (Kuznetsov &
+  Fleishman 2021) `MWTransferArr` library. UFGC is mode-resolved in the cold
+  magnetoionic plasma, so its ordinary/extraordinary `j_σ`, `κ_σ` compare
+  directly with `emission`/`absorption`: the plan route selects UFGC's exact
+  harmonic code or its continuous code. Thermal and kappa populations must be
+  the plasma electrons; a power law maps to UFGC's momentum power law above a
+  background of `n_plasma − N`. The coefficients are recovered from an
+  optically thick and an optically negligible single-voxel transfer.
+- `run_symphony(SymphonyProvider(python, module), plan, directory, ...)` calls
+  Symphony (Pandya et al. 2016) for vacuum Stokes `(j, α)` of `I`, `Q`, `V`
+  in the `FaradayCoefficients` basis, comparable with `stokes_emission` and
+  the first row of `propagation_matrix` when `n_σ ≈ 1`. The pinned revision
+  integrates its power law over `γ ∈ [1, ∞)` whatever its `γ_min`, `γ_max`; the
+  adapter matches the plan's population for `u ≫ 1` and declares the rest.
+
+`ufgc_input`/`symphony_input` and `read_ufgc_output`/`read_symphony_output`
+are the provider-free deck generators and parsers; unsupported plans
+(tabulated distributions, non-electron emitters, multi-species or collisional
+plasmas for UFGC, angles at or beyond `π/2` for Symphony) are refused before
+running.
+
 ## Thermal synchrotron and free–free closures
 
 `ThermalSynchrotronModel` (Mahadevan, Narayan & Yi 1996) is the fast

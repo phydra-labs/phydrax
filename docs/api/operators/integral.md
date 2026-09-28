@@ -57,12 +57,24 @@ silently.
 open-boundary convolutions on bounded uniform cell grids. It owns the kernel
 family (`FreeSpaceKernel`): cell-integrated Coulomb and Newton Green functions
 (Qiang, Lidia, Ryne, Limborg-Deprey 2006), the point-sampled softened Newton
-kernel, and the point-sampled Biot–Savart kernel. `gradient=True` prepares the
-derivative kernels under the same sampling rule so fields are convolved rather
-than finite-differenced. `FreeSpaceVortexFFTPlan` (vortex methods),
-`IsolatedCartesianGravityPlan` (`phydrax.solver.advanced`), and
-`SpaceChargeIGFPlan` (`phydrax.applications.accelerator`) are thin owners of
-their scientific meaning over this substrate.
+kernel, the point-sampled Biot–Savart kernel, and `"tabulated"` kernels whose
+caller-supplied `kernel_table` holds the kernel at every on-grid displacement
+(for Green functions without reflection symmetry; trailing axes give several
+fields from one source). `gradient=True` prepares the
+derivative kernels so fields are convolved rather than finite-differenced:
+point-sampled derivatives for the sampled kernels and, for the integrated
+kernels, the exact field of the density that is linear between sites along the
+derivative axis and cell-constant across it,
+`K_a(m) = [P(m + ½e_a) − P(m − ½e_a)]/h_a` with `P` the exact cell integral.
+The cell average of `∂_a g` would drop the near-zone field of the density
+gradient inside a cell; on cells longer than the source is wide (relativistic
+rest frames) that underestimates `E_z` by 40 % at aspect ratio 100 and 60 % at
+1000, while the face-difference kernel stays second order at any aspect ratio.
+`FreeSpaceVortexFFTPlan` (vortex methods),
+`IsolatedCartesianGravityPlan` (`phydrax.solver.advanced`),
+`SpaceChargeIGFPlan`, and the `"3d-steady-igf"` `CSRPlan`
+(`phydrax.applications.accelerator`) are thin owners of their scientific
+meaning over this substrate.
 
 ::: phydrax.operators.FreeSpaceConvolutionPlan
     options:

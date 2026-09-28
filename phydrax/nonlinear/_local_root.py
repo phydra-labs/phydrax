@@ -13,6 +13,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._custom_root import custom_root
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -137,7 +138,7 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
             value, _ = self._solve_linear(matrix, right_hand_side)
             return value
 
-        return jax.lax.custom_root(residual, initial_, solve_fn, tangent_solve)
+        return custom_root(residual, initial_, solve_fn, tangent_solve)
 
     def solve_with_diagnostics(
         self, residual: Callable[[Array], Array], initial: ArrayLike, /
@@ -256,7 +257,7 @@ class LocalRootPlan(StrictModule, NonTrainableState):
             )
             return right_hand_side / safe
 
-        return jax.lax.custom_root(residual, initial_, solve_fn, tangent_solve)
+        return custom_root(residual, initial_, solve_fn, tangent_solve)
 
     def solve_with_diagnostics(
         self, residual: Callable[[Array], Array], initial: ArrayLike, /

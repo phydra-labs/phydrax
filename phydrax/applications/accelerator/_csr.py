@@ -58,6 +58,7 @@ from ...special import ellipeinc, ellipkinc
 from ...typing import (
     AnyShape,
     Bool,
+    ConvertibleToArray,
     Dim,
     Float64,
     Identifier,
@@ -199,13 +200,13 @@ class CSRLattice(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        lengths: ArrayLike,
-        curvatures: ArrayLike,
+        lengths: ConvertibleToArray,
+        curvatures: ConvertibleToArray,
         /,
         *,
         element_ids: Iterable[str],
-        entrance_edges: ArrayLike | None = None,
-        exit_edges: ArrayLike | None = None,
+        entrance_edges: ConvertibleToArray | None = None,
+        exit_edges: ConvertibleToArray | None = None,
     ) -> None:
         lengths_ = np.asarray(lengths, dtype=np.float64)
         curvatures_ = np.asarray(curvatures, dtype=np.float64)
@@ -896,16 +897,35 @@ def _cai_ding_alpha(
     return jax.vmap(solve)(jnp.arange(xi.shape[0]))
 
 
-def _cai_ding_potentials(
+@eqx.filter_jit
+def _steady_potentials(
     chi: Array, zeta: Array, xi: Array, gamma: float
 ) -> tuple[Array, Array, Array, Array]:
-    """Cai–Ding (2020) steady Green functions ``ψ_s``, ``ψ̂_x``, ``ψ_y`` including Coulomb terms.
+    """Steady Green functions ``ψ_s``, ``ψ̂_x``, ``ψ_y`` of a source on a circle.
 
     Dimensionless ``χ = x/ρ``, ``ζ = y/ρ``, ``ξ = z/(2ρ)`` of the observer
-    relative to a source on the reference orbit; the prefactor ``eβ²/(2ρ²)`` is
-    omitted. ``ψ̂_x = ψ_x − ψ_φ`` is the effective horizontal potential with the
-    curvilinear ``−eφ/ρ`` term. Transcribed from the published expressions
-    (Cai and Ding, PRAB 23, 014402, 2020, Eqs. 23–25 and Appendix B).
+    relative to a source on the reference orbit; each force is
+    ``(qe β²/(2ρ²)) ∂ψ/∂ξ`` (prefactor omitted). ``ψ_s`` is Cai and Ding's
+    longitudinal potential with its Coulomb term (PRAB 23, 014402, 2020,
+    Eq. 23 and Appendix B).
+
+    The transverse potentials are ``ξ``-antiderivatives of the exact Lorentz
+    force on an observer moving at the reference velocity ``βc`` along its
+    tangent, plus the curvilinear ``−qφ/ρ`` term. The source field rotates
+    rigidly, so with ``Ψ = φ − βA_s`` and the Liénard–Wiechert potentials
+    ``φ = 1/D``, ``A_s = β cos 2α/D``, ``A_x = β sin 2α/D``
+    (``D = κ − β(1+χ) sin 2α``, units ``e/ρ``)::
+
+        F̂_x = −∂_χΨ + βA_s/(1+χ) − φ + βχ/(2(1+χ)) ∂_ξA_x,
+        F_y = −∂_ζΨ.
+
+    Since ``φ dξ = dα/κ``, the antiderivatives of ``φ`` and ``A_s`` are
+    incomplete elliptic integrals and their transverse derivatives at fixed
+    ``ξ`` follow in closed form. Cai and Ding's published transverse
+    potentials instead set ``β_s ≈ β`` in the magnetic term, which moves the
+    observer rigidly with the bunch at speed ``β(1+χ)c``; the extra ``−βχB``
+    acting on the near Coulomb field adds ``2⟨x²/r²⟩`` to the residual
+    centripetal coefficient (``Λ = 3`` instead of ``2`` for a round beam).
     """
     beta_squared = 1.0 - 1.0 / (gamma * gamma)
     beta = math.sqrt(beta_squared)
@@ -913,96 +933,58 @@ def _cai_ding_potentials(
     kappa = 2.0 * (alpha - xi) / beta
     sin2a = jnp.sin(2.0 * alpha)
     cos2a = jnp.cos(2.0 * alpha)
-    kappa2 = kappa * kappa
-    x2 = chi * chi
-    y2 = zeta * zeta
-    y4 = y2 * y2
     xp = 1.0 + chi
-    xp2 = xp * xp
-    xy2 = x2 + y2
-    xy = jnp.sqrt(xy2)
-    f1 = 2.0 + 2.0 * chi + x2
-    f2 = (2.0 + chi) ** 2
-    parameter = -4.0 * xp / xy2
+    longitudinal_denominator = kappa - beta * xp * sin2a
+    psi_s = (cos2a - 1.0 / xp) / longitudinal_denominator - 1.0 / (
+        (gamma * gamma - 1.0) * xp * longitudinal_denominator
+    )
+    # Transverse terms are evaluated as functions of α alone, so that the
+    # large cancelling Coulomb pieces stay consistent with each other.
+    sine = jnp.sin(alpha)
+    cosine = jnp.cos(alpha)
+    sine_squared = sine * sine
+    a = chi * chi + zeta * zeta
+    b = 4.0 * xp
+    root_a = jnp.sqrt(a)
+    radius = jnp.sqrt(a + b * sine_squared)
+    denominator = radius - beta * xp * sin2a
+    parameter = -b / a
     first = ellipkinc(alpha, parameter)
     second = ellipeinc(alpha, parameter)
-    denominator = kappa2 - beta_squared * xp2 * sin2a * sin2a
-    quartic = y4 + x2 * f2 + 2.0 * y2 * f1
-    inverse_momentum = 1.0 / (gamma * gamma - 1.0)
-    longitudinal_denominator = kappa - beta * xp * sin2a
-    psi_s = (cos2a - 1.0 / xp) / longitudinal_denominator - inverse_momentum / (
-        xp * longitudinal_denominator
+    # ∫dα/κ, ∫κ dα, ∫dα/κ³ with κ² = a + b sin²α.
+    inverse = first / root_a
+    direct = root_a * second
+    cubic = second / (root_a * (a + b)) + b * sine * cosine / (a * (a + b) * radius)
+    # ∫φ dξ and ∫cos 2α φ dξ; cos 2α = 1 + 2a/b − 2κ²/b.
+    potential = inverse
+    aligned = (1.0 + 2.0 * a / b) * inverse - (2.0 / b) * direct
+    shape = 1.0 - beta_squared * cos2a
+    # ∂_χ at fixed α: ∂_χ(1/κ) = −(χ + 2 sin²α)/κ³, expanded in powers of κ².
+    potential_chi = (chi - 2.0 * a / b) * cubic + (2.0 / b) * inverse
+    aligned_chi = (
+        (chi - (2.0 - 2.0 * chi) * a / b - 4.0 * a * a / (b * b)) * cubic
+        + ((2.0 - 2.0 * chi) / b + 8.0 * a / (b * b)) * inverse
+        - 4.0 / (b * b) * direct
     )
-    psi_x = (
-        f1 * first / (xp * xy)
-        - (x2 * f2 + y2 * f1) * second / (xp * (y2 + f2) * xy)
-        + (kappa2 - 2.0 * beta_squared * xp2 + beta_squared * xp * f1 * cos2a)
-        / (beta * xp * denominator)
-        + kappa
-        * (y4 - x2 * f2 - 2.0 * beta_squared * y2 * xp2)
-        * sin2a
-        / (xy2 * (y2 + f2) * denominator)
-        + kappa
-        * beta_squared
-        * xp
-        * (x2 * f2 + y2 * f1)
-        * sin2a
-        * cos2a
-        / (xy2 * (y2 + f2) * denominator)
+    alpha_chi = beta * (chi + 2.0 * sine_squared) / (2.0 * denominator)
+    alpha_zeta = beta * zeta / (2.0 * denominator)
+    transverse_chi = shape * alpha_chi / radius - (
+        potential_chi - beta_squared * aligned_chi
     )
-    psi_x_coulomb = inverse_momentum * (
-        first / (xp * xy)
-        + (chi * (2.0 + chi) - y2) * second / (xp * (y2 + f2) * xy)
-        + beta * (cos2a - xp) / denominator
-        - kappa
-        * sin2a
-        * (
-            chi * (2.0 + chi) * (beta_squared * xp2 - 2.0)
-            + y2 * (2.0 + beta_squared * xp2)
-            + beta_squared * xp * (chi * (2.0 + chi) - y2) * cos2a
-        )
-        / (quartic * denominator)
+    transverse_zeta = shape * alpha_zeta / radius - zeta * (
+        cubic - beta_squared * ((1.0 + 2.0 * a / b) * cubic - (2.0 / b) * inverse)
     )
-    psi_phi = (2.0 / beta_squared) * first / xy
-    psi_y = zeta * (
-        first / xy
-        - (chi * (2.0 + chi) + y2) * second / ((y2 + f2) * xy)
-        - beta * (1.0 - xp * cos2a) / denominator
-        + kappa
-        * xp
-        * (-(2.0 + beta_squared) * y2 + (beta_squared - 2.0) * chi * (2.0 + chi))
-        * sin2a
-        / (quartic * denominator)
-        + kappa
-        * beta_squared
-        * xp2
-        * (y2 + chi * (2.0 + chi))
-        * sin2a
-        * cos2a
-        / (quartic * denominator)
+    horizontal = (
+        -transverse_chi
+        + beta_squared * aligned / xp
+        - potential
+        + beta_squared * chi * sin2a / (2.0 * xp * denominator)
     )
-    psi_y_coulomb = (
-        zeta
-        * inverse_momentum
-        * (
-            2.0 * second / ((y2 + f2) * xy)
-            - beta / denominator
-            + kappa
-            * xp
-            * (beta_squared * (f1 + y2) - 4.0 + 2.0 * beta_squared * xp * cos2a)
-            * sin2a
-            / (quartic * denominator)
-        )
-    )
-    return (
-        psi_s,
-        psi_x + psi_x_coulomb - psi_phi,
-        psi_y + psi_y_coulomb,
-        successful,
-    )
+    scale = 2.0 / beta_squared
+    return psi_s, scale * horizontal, -scale * transverse_zeta, successful
 
 
-def _cai_ding_table(
+def _steady_table(
     spacing: np.ndarray,
     shape: tuple[int, int, int],
     curvature: float,
@@ -1045,7 +1027,7 @@ def _cai_ding_table(
         chi = np.broadcast_to(orientation * x / radius, target).reshape(-1)
         zeta = np.broadcast_to(y / radius, target).reshape(-1)
         xi = np.broadcast_to((z + side * spacing[2]) / (2.0 * radius), target).reshape(-1)
-        psi_s, psi_x, psi_y, successful = _cai_ding_potentials(
+        psi_s, psi_x, psi_y, successful = _steady_potentials(
             jnp.asarray(chi), jnp.asarray(zeta), jnp.asarray(xi), gamma
         )
         failures += int(np.sum(~np.asarray(successful)))
@@ -1115,7 +1097,7 @@ class CSREvidence(StrictModule):
     the largest total field; ``retarded_failures`` counts retarded-time solves
     that did not converge; ``history_complete`` is false when a retarded time
     fell into dropped history. ``support_fraction`` is the share of active
-    charge deposited inside the grid.
+    particles deposited inside the grid.
     """
 
     __strict_contract__ = True
@@ -1203,18 +1185,29 @@ class CSRPlan(StrictModule, NonTrainableState):
       including the incoming straight line, entrance and exit transients,
       density history (bunch compression), and, with ``plate_gap``, the
       parallel-plate image series ``2Σ(−1)ⁿ`` over ``image_count`` pairs.
-    - ``"3d-steady-igf"``: the steady three-dimensional Green functions of Cai
-      and Ding (2020) including Coulomb terms, integrated over grid cells and
-      convolved with the deposited density on the doubled grid of
-      :class:`phydrax.operators.FreeSpaceConvolutionPlan`; gives the energy
-      wake, the effective horizontal force (with the curvilinear ``−eφ/ρ``
-      term), and the vertical force.
+    - ``"3d-steady-igf"``: steady three-dimensional Green functions of a source
+      on the circular orbit, integrated over grid cells and convolved with the
+      deposited density on the doubled grid of
+      :class:`phydrax.operators.FreeSpaceConvolutionPlan`. The energy wake uses
+      the longitudinal potential of Cai and Ding (2020) with its Coulomb term;
+      the effective horizontal force (with the curvilinear ``−qφ/ρ`` term) and
+      the vertical force are closed-form antiderivatives of the exact Lorentz
+      force of a reference-velocity particle.
     - ``"3d-retarded-mesh"``: the retarded Liénard–Wiechert potentials of the
       smooth deposited density over its recorded history on the lattice (the
       three-dimensional extension of the 1-D model, sources on the reference
       path displaced by the transverse grid offsets); forces follow from
-      ``Ψ = Φ − βcA_s`` as ``F_x = −q(∂_xΨ + hΨ) − q c dA_x/dt``,
-      ``F_y = −q∂_yΨ``.
+      ``Ψ = Φ − βcA_s`` as ``F_x = −q(∂_xΨ + hΨ) − q c dA_x/dt`` (the exact
+      Lorentz force of the reference-velocity particle plus the ``−qφ/ρ``
+      curvilinear term) and ``F_y = −q∂_yΨ``.
+
+    Both three-dimensional routes compute the same steady forces. The
+    residual centripetal force of a Gaussian bunch in steady state is
+    ``F_x = −2 q λ(z)/(4πε₀ρ)`` for any transverse aspect ratio (Derbenev and
+    Shiltsev 1996; Stupakov, PRAB 25, 014401, 2022). Cai and Ding's published
+    transverse potentials give ``2 ≤ Λ ≤ 4`` instead because their paraxial
+    step ``β_s ≈ β`` moves the test particle at ``β(1+x/ρ)c``; the IGF kernels
+    here do not make that substitution.
 
     Retarded models subtract the same density moving on a straight line (the
     space-charge field, owned by :class:`SpaceChargeIGFPlan`). ``grid`` is a
@@ -1443,12 +1436,12 @@ class CSRPlan(StrictModule, NonTrainableState):
         if model_ == "3d-steady-igf":
             plans = []
             for curvature in curvatures:
-                values, failures = _cai_ding_table(
+                values, failures = _steady_table(
                     spacing, (shape[0], shape[1], shape[2]), curvature, gamma, quadrature
                 )
                 if failures:
                     raise ValueError(
-                        "Cai–Ding retarded angles did not converge on the kernel table."
+                        "Steady retarded angles did not converge on the kernel table."
                     )
                 plans.append(
                     FreeSpaceConvolutionPlan("tabulated", grid, kernel_table=values)
@@ -1789,9 +1782,9 @@ class CSRPlan(StrictModule, NonTrainableState):
         grids = jnp.moveaxis(channels, 0, 1).reshape((4, nx, ny, nz))
         potential, transverse, vector_x, wake = grids
         horizontal = -(
-            jnp.gradient(transverse, self.spacing[0], axis=0) + curvature * transverse
+            _axis_gradient(transverse, self.spacing[0], 0) + curvature * transverse
         )
-        vertical = -jnp.gradient(transverse, self.spacing[1], axis=1)
+        vertical = -_axis_gradient(transverse, self.spacing[1], 1)
         return _Fields(
             potential,
             wake,
@@ -1872,12 +1865,9 @@ class CSRPlan(StrictModule, NonTrainableState):
         charges = jnp.where(active, weights * constants.particle_charge, 0.0)
         deposit = self.splat.deposit_content(splat_state, charges)
         density = self._smooth(deposit.density)
-        slope = jnp.gradient(density, self.spacing[-1], axis=-1)
+        slope = _axis_gradient(density, self.spacing[-1], -1)
         supported = splat_state.supported_mask & ~splat_state.truncated_support_mask
-        magnitude = jnp.abs(charges)
-        fraction = jnp.sum(jnp.where(supported, magnitude, 0.0)) / jnp.maximum(
-            jnp.sum(magnitude), jnp.finfo(jnp.float64).tiny
-        )
+        fraction = jnp.sum(active & supported) / jnp.maximum(jnp.sum(active), 1)
         return density, slope, positions, fraction, deposit.successful
 
     def _gather(self, positions: Array, active: Array, grids: Array, /) -> Array:
@@ -2084,7 +2074,9 @@ class CSRPlan(StrictModule, NonTrainableState):
 
         Without ``state`` the density is taken as frozen over its whole history.
         Retarded models need ``derivative_step`` (path length) for the symmetric
-        difference ``dΦ/ds`` at fixed bunch offset.
+        difference of the potentials along a reference-speed particle: at fixed
+        bunch offset plus, off axis in a bend, the path-length slip
+        ``dz/ds = −h x`` of a particle at horizontal offset ``x``.
         """
         density_ = jnp.asarray(density, dtype=jnp.float64)
         if density_.shape != self.shape:
@@ -2092,7 +2084,7 @@ class CSRPlan(StrictModule, NonTrainableState):
         position_ = jnp.asarray(position, dtype=jnp.float64).reshape(())
         charge = float(reference_charge) * float(self.scale.elementary_charge)
         c = charge / (4.0 * math.pi * float(self.scale.vacuum_permittivity))
-        slope = jnp.gradient(density_, self.spacing[-1], axis=-1)
+        slope = _axis_gradient(density_, self.spacing[-1], -1)
         retarded = self.model in ("1d-transient-shielded", "3d-retarded-mesh")
         if retarded != (derivative_step is not None):
             raise ValueError(
@@ -2121,6 +2113,15 @@ class CSRPlan(StrictModule, NonTrainableState):
             )
             failures = failures + ahead.failures + behind.failures
             incomplete = incomplete | ahead.incomplete | behind.incomplete
+            if len(self.shape) == 3:
+                horizontal_offsets = self.grid.points.reshape(self.shape + (3,))[..., 0]
+                slip = self.lattice.curvature(position_) * horizontal_offsets
+                wake = wake + slip * _axis_gradient(
+                    fields.potential, self.spacing[-1], -1
+                )
+                horizontal = horizontal + self.beta * slip * _axis_gradient(
+                    fields.vector_x, self.spacing[-1], -1
+                )
         finite = jnp.all(jnp.isfinite(wake)) & jnp.all(jnp.isfinite(horizontal))
         points = self.grid.points.reshape((-1, len(self.shape)))
         length, width = _moments(
@@ -2178,6 +2179,14 @@ def _moments(
     )
 
 
+def _axis_gradient(values: Array, spacing: ArrayLike, axis: int) -> Array:
+    """Second-order centered difference along one axis (one-sided at the ends)."""
+    gradient = jnp.gradient(values, spacing, axis=axis)
+    if isinstance(gradient, list):
+        raise AssertionError("jnp.gradient returned per-axis gradients for one axis.")
+    return gradient
+
+
 def _kernel_quadrature_defect(
     spacing: np.ndarray,
     shape: tuple[int, int, int],
@@ -2190,8 +2199,8 @@ def _kernel_quadrature_defect(
         spacing[axis] * np.arange(-min(2, count - 1), min(2, count - 1) + 1)
         for axis, count in enumerate(shape)
     )
-    coarse, _ = _cai_ding_table(spacing, shape, curvature, gamma, quadrature, offsets)
-    fine, _ = _cai_ding_table(spacing, shape, curvature, gamma, 2 * quadrature, offsets)
+    coarse, _ = _steady_table(spacing, shape, curvature, gamma, quadrature, offsets)
+    fine, _ = _steady_table(spacing, shape, curvature, gamma, 2 * quadrature, offsets)
     scale = np.max(np.abs(fine), axis=(0, 1, 2))
     return float(
         np.max(

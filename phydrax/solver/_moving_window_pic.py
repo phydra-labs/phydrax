@@ -67,8 +67,9 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
     particles leaving the trailing face are deactivated and ledgered, and
     optional injections fill the leading cells. Every recorder receives the
     shift through `AbstractPICRecorder.shift_frame`, so position-dependent
-    diagnostics stay in the fixed frame. The particle↔field charge defect after
-    the shift is reported, not repaired.
+    diagnostics stay in the fixed frame, and every process state through
+    `AbstractPICProcess.shift_frame` (QED photons translate with the window).
+    The particle↔field charge defect after the shift is reported, not repaired.
     """
 
     pic: ElectromagneticPICPlan
@@ -239,6 +240,12 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
             else PICFieldHistory(
                 solver.shift_window(history.field, self.axis, self.shift_cells),
                 history.time,
+            ),
+            tuple(
+                process.shift_frame(value, self.axis, distance)
+                for process, value in zip(
+                    self.pic.processes, state.pic.processes, strict=True
+                )
             ),
         )
         deposited, deposit_success = self.pic.species_charge(species_tuple)

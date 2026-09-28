@@ -505,13 +505,8 @@ def test_identity_lineage_and_energy_ledger() -> None:
     assert np.all(np.diff(parents) >= 0) and set(parents) <= {10, 20, 30}
     next_identity = (int(emission.next_id_hi) << 32) | int(emission.next_id_lo)
     assert next_identity == first + count
-    photon_energy = (
-        2.0
-        * np.pi
-        * 1.054571817e-34
-        * _C
-        / np.asarray(emission.state.wavelengths)[active]
-    )
+    # h c / lambda with the exact SI Planck constant.
+    photon_energy = 6.62607015e-34 * _C / np.asarray(emission.state.wavelengths)[active]
     for slot, word in enumerate(ids):
         np.testing.assert_allclose(
             emission.cherenkov_photon_energy[slot],

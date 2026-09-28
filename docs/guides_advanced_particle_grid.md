@@ -55,10 +55,13 @@ periodic CIC transfer and projects midpoint current onto the exact discrete cont
 field-solver protocol. Reduced 2-D fields with a nonperiodic axis are refused at preparation
 because their Gauss charge does not follow the deposited current.
 
-`PICOpenBoundaryPlan` clips trajectories against axis-aligned faces, supports absorbing or
-reflecting particle policies, and records boundary mass, charge, kinetic energy, hit location, and
-surface accumulation. It is the `boundaries` input of `ElectromagneticPICPlan`: reflected paths
-deposit two segments joined at the wall and absorbed charge is kept on the grid as wall charge.
+`PICOpenBoundaryPlan` clips trajectories against axis-aligned faces, supports absorbing,
+reflecting, and periodic (`PERIODIC`, never hit) particle policies, and records boundary mass,
+charge, kinetic energy, hit location, and surface accumulation; the caller supplies each
+particle's kinetic energy at the start and end of its path (`kinetic_energy=(start, end)`), and an
+absorbed particle records it interpolated to its hit fraction. It is the `boundaries` input of
+`ElectromagneticPICPlan`: reflected paths deposit two segments joined at the wall and absorbed
+charge is kept on the grid as wall charge.
 Reduced 1-D electromagnetic PIC accepts passive instantaneous Maxwell CPML state; CPML dissipation
 remains owned and reported by the Maxwell runtime. The full 3-D cochain solver requires every axis
 periodic and therefore cannot carry CPML.

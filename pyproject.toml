@@ -289,6 +289,7 @@ fixable = ["F401", "F841", "I001", "RUF100"]
 "jax.scipy.sparse.linalg".msg = "Use phydrax.linalg iterative solvers and status evidence."
 "equinox.Module".msg = "Use phydrax._strict.StrictModule for Phydrax-owned modules."
 "jax.experimental.hijax".msg = "HiJAX is experimental; package code must not depend on it."
+"jax.lax.custom_root".msg = "Use phydrax._custom_root.custom_root; the HiJAX custom_root cannot be linearized under vmap."
 "jaxtyping.Array".msg = "Import Array from jax."
 "jaxtyping.ArrayLike".msg = "Import ArrayLike from jax.typing."
 "jaxtyping.Key".msg = "Use phydrax.typing.PRNGKey for typed PRNG keys."

@@ -2,7 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Unreleased Maxwell far-field, antenna, and dispersion-audit capability declarations."""
+"""Unreleased Maxwell far-field, antenna, dispersion-audit, and moving-charge
+capability declarations."""
 
 from __future__ import annotations
 
@@ -23,6 +24,8 @@ _ANTENNA_REQUIRED_GATES = (
     "paraxial-gaussian-waist-and-gouy-phase",
     "antenna-work-equals-injected-energy",
     "moving-antenna-doppler",
+    "moving-antenna-second-order-leakage",
+    "declared-magnetic-charge-three-dimensional-beam",
     "laser-envelope-adapter-round-trip",
     "admissibility-refusals",
     "documentation-nonclaims",
@@ -77,9 +80,10 @@ def maxwell_antenna_support_tuples() -> tuple[SupportTuple, ...]:
             "electromagnetics.one-way-antenna",
             {
                 "source": "sampled-plane-electric-and-magnetic-sheet",
-                "placement": "total-field-scattered-field-staggered-sheets",
+                "placement": "smoothed-tfsf-quadratic-bspline-pairs",
                 "medium": "declared-lossless-homogeneous-on-sheet-support",
-                "motion": "normal-boost-in-scale-vacuum",
+                "motion": "normal-boost-in-scale-vacuum-with-convective-currents",
+                "magnetic_charge": "declared-and-tracked-not-projected",
                 "adapters": "pulse-envelope-focused-gaussian-openpmd-laser-envelope",
                 "outputs": "cochain-currents-work-ledger-support-evidence",
             },
@@ -130,6 +134,118 @@ def maxwell_dispersion_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     )
 
 
+_MOVING_CHARGE_COMMON_GATES = (
+    "coincident-neutral-start-and-freeze",
+    "continuity-gauss-and-power-ledger",
+    "admissibility-refusals",
+    "documentation-nonclaims",
+)
+
+_MOVING_CHARGE_GATES = {
+    "electromagnetics.moving-charge-cherenkov": (
+        "frank-tamm-spectral-power-per-length",
+        "cone-angle-audit-and-continuum",
+        "below-threshold-null",
+        "reversed-cherenkov-backward-flow",
+        "time-domain-equals-frequency-domain",
+    ),
+    "electromagnetics.moving-charge-transition": (
+        "vacuum-orbit-trajectory-radiation-second-order",
+        "pec-image-pair-trajectory-radiation",
+        "ginzburg-frank-perfect-conductor",
+        "matched-interface-null",
+    ),
+    "electromagnetics.moving-charge-smith-purcell": (
+        "smith-purcell-wavelength-relation",
+        "time-domain-equals-frequency-domain",
+        "diffraction-radiation-rigorous-reference",
+    ),
+}
+
+
+def maxwell_moving_charge_support_tuples() -> tuple[SupportTuple, ...]:
+    shared = {
+        "source": "prescribed-point-charges-charge-conserving-whitney-current",
+        "start": "coincident-neutral-compensating-charge",
+        "stop": "freeze-after-trajectory-or-boundary-exit",
+        "media": "linear-dispersive-lossy-heterogeneous-plasma-negative-index",
+        "boundaries": "cpml-pec-pmc-impedance-and-interior-conductor-supports",
+        "outputs": "fields-observers-power-ledger-constraint-evidence",
+    }
+    geometry = {
+        "electromagnetics.moving-charge-cherenkov": "homogeneous-medium-uniform-motion",
+        "electromagnetics.moving-charge-transition": "planar-interface-or-conductor",
+        "electromagnetics.moving-charge-smith-purcell": "periodic-grating-or-aperture",
+    }
+    return tuple(
+        SupportTuple(capability, {**shared, "geometry": geometry[capability]})
+        for capability in _MOVING_CHARGE_GATES
+    )
+
+
+def maxwell_moving_charge_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=(
+                *_MOVING_CHARGE_GATES[support.capability],
+                *_MOVING_CHARGE_COMMON_GATES,
+            ),
+            released=False,
+        )
+        for support in maxwell_moving_charge_support_tuples()
+    )
+
+
+_FREQUENCY_MOVING_CHARGE_GATES = (
+    "analytic-uniform-motion-field-maxwell-and-gauss",
+    "frank-tamm-power-per-length",
+    "line-charge-cherenkov-analytic",
+    "below-threshold-null",
+    "whitney-continuity-and-uniform-field-work",
+    "scattered-field-equals-total-field",
+    "ginzburg-frank-transition-radiation",
+    "smith-purcell-wavelength-and-intensity",
+    "krylov-direct-agreement-and-convergence-evidence",
+    "admissibility-refusals",
+    "documentation-nonclaims",
+)
+
+
+def maxwell_frequency_moving_charge_support_tuples() -> tuple[SupportTuple, ...]:
+    return (
+        SupportTuple(
+            "electromagnetics.frequency-moving-charge",
+            {
+                "source": "exact-whitney-edge-integral-uniform-motion",
+                "formulation": "total-field-or-scattered-field-analytic-incident",
+                "incident": "homogeneous-isotropic-dispersive-k0-k1-outgoing-hankel",
+                "domain": "periodic-commensurate-path-or-clipped-with-open-endpoints",
+                "solver": "cochain-krylov-or-sparse-direct-with-cfs-stretching",
+                "fourier_modal": "moving-line-charge-bloch-and-point-charge-ky-quadrature",
+                "outputs": "field-phasors-power-ledger-branch-and-domain-evidence",
+            },
+        ),
+    )
+
+
+def maxwell_frequency_moving_charge_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=_FREQUENCY_MOVING_CHARGE_GATES,
+            released=False,
+        )
+        for support in maxwell_frequency_moving_charge_support_tuples()
+    )
+
+
 __all__ = [
     "maxwell_antenna_candidate_profiles",
     "maxwell_antenna_support_tuples",
@@ -137,4 +253,8 @@ __all__ = [
     "maxwell_dispersion_support_tuples",
     "maxwell_far_field_candidate_profiles",
     "maxwell_far_field_support_tuples",
+    "maxwell_frequency_moving_charge_candidate_profiles",
+    "maxwell_frequency_moving_charge_support_tuples",
+    "maxwell_moving_charge_candidate_profiles",
+    "maxwell_moving_charge_support_tuples",
 ]

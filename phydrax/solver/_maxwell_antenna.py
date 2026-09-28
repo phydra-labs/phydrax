@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Solver-native one-way plane current antennas for compatible Maxwell runs.
+"""Solver-native one-way plane current antennas for Maxwell runs.
 
 A sampled plane antenna launches a prescribed forward wave from a sheet normal to
 one structured axis ``â``. With emission direction ``s = ±1`` along ``â`` and the
@@ -21,13 +21,23 @@ leakage is limited to the mismatch between continuum and lattice plane waves.
 
 Fields are sampled envelopes ``A(x_b, x_c, τ)`` with physical value
 ``Re[A(τ) e^{−iω₀τ}]`` (``exp(−iωt)`` phasors). A moving antenna translates along
-its normal with ``β`` in the simulation frame. Surface currents are four-vector
-densities and the boost is along the normal, so the simulation-frame currents
-are ``K'(τ)/γ`` with ``τ = t' − s z'/c`` the rest-frame retarded time of each
-sheet event, obtained through :func:`phydrax.boost_event`. The launched wave is
-then the Lorentz transform of the rest-frame wave, Doppler-shifted by
-``γ(1 + sβ)``; a moving antenna therefore requires the vacuum of a declared
-:class:`~phydrax.ElectromagneticScaleContract`.
+its normal with ``β`` in the simulation frame and is a moving total-field/
+scattered-field boundary: the simulation-frame field is ``Θ·F_inc`` with ``F_inc``
+the Lorentz transform of the rest-frame wave, evaluated at the rest-frame retarded
+time ``τ = t' − s z'/c`` of each event through :func:`phydrax.boost_event`, and
+``Θ`` a step smoothed by the quadratic B-spline of the sheet position. Its lattice
+sources are the curl commutator with ``Θ`` (exact TFSF pairs) and the convective
+currents ``−D ∂Θ/∂t``, ``−B ∂Θ/∂t``; backward leakage is second order in the cell
+size and the launched wave is Doppler-shifted by ``γ(1 + sβ)``. A moving antenna
+requires the vacuum of a declared :class:`~phydrax.ElectromagneticScaleContract`.
+
+The magnetic sheet's surface divergence (the normal-``B`` jump of the equivalent
+source) is declared magnetic charge, tracked by the runtime in
+``MaxwellAuxiliaryState.magnetic_charge`` rather than projected out.
+
+The same plan drives Cartesian PSATD (`SpectralMaxwellPlan(antennas=...)`),
+which prepares it as band-limited continuum sheet currents on its periodic grid
+(`phydrax.solver.maxwell.spectral.PreparedSpectralPlaneAntenna`).
 """
 
 from __future__ import annotations
@@ -174,9 +184,12 @@ class SampledPlaneCurrentAntennaPlan(AbstractMaxwellSourcePlan, NonTrainableStat
 
     ``beta`` is the sheet velocity along ``+â`` in units of the vacuum speed of
     light of ``scale``; moving antennas require ``scale``, and ``medium`` then
-    defaults to (and must equal) its vacuum. The normal axis must be nonperiodic
-    and uniformly spaced; preparation refuses sheets whose active support leaves
-    the interior node planes.
+    defaults to (and must equal) its vacuum. The normal axis must be uniformly
+    spaced. One plan drives both field solvers: `CompatibleMaxwellPlan`
+    ``sources`` (the cochain lattice; the normal axis must be nonperiodic and
+    preparation refuses sheets whose active support leaves the interior node
+    planes) and `phydrax.solver.maxwell.spectral.SpectralMaxwellPlan`
+    ``antennas`` (PSATD, a band-limited sheet on the periodic grid).
     """
 
     __strict_contract__ = True
@@ -223,8 +236,6 @@ class SampledPlaneCurrentAntennaPlan(AbstractMaxwellSourcePlan, NonTrainableStat
         if isinstance(normal_axis, bool) or normal_axis not in (0, 1, 2):
             raise ValueError("normal_axis must be 0, 1, or 2.")
         axis = bridge.grid.structured_axes[normal_axis]
-        if bool(axis.periodic):
-            raise ValueError("The antenna normal axis must be nonperiodic.")
         widths = np.asarray(axis.interval_widths, dtype=np.float64)
         if not np.allclose(widths, widths[0], rtol=1e-12, atol=0.0):
             raise ValueError("The antenna normal axis must be uniformly spaced.")
@@ -348,6 +359,11 @@ class SampledPlaneCurrentAntennaPlan(AbstractMaxwellSourcePlan, NonTrainableStat
             raise ValueError("The antenna was planned on a different cochain bridge.")
         if layout.polarization != "full_3d":
             raise ValueError("Plane current antennas require full_3d Maxwell.")
+        if bool(bridge.grid.structured_axes[self.normal_axis].periodic):
+            raise ValueError(
+                "The cochain antenna normal axis must be nonperiodic; spectral "
+                "PSATD grids take periodic normals."
+            )
         return PreparedSampledPlaneCurrentAntenna(self, layout)
 
 

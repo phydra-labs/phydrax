@@ -323,6 +323,9 @@ def fourier_modal_numeric_revision(
             arrays[f"element_{index}_segment_prefix_boundaries"] = (
                 prepared_element.segment_prefix_boundaries
             )
+            arrays[f"element_{index}_segment_suffix_boundaries"] = (
+                prepared_element.segment_suffix_boundaries
+            )
             arrays[f"element_{index}_boundary"] = prepared_element.boundary
             arrays[f"element_{index}_maximum_defect"] = prepared_element.maximum_defect
             arrays[f"element_{index}_maximum_constitutive_residual"] = (

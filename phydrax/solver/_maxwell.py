@@ -350,17 +350,21 @@ class MaxwellPrimaryState(StrictModule):
 class MaxwellAuxiliaryState(StrictModule):
     """Material and boundary/PML state kept outside the primary fluxes.
 
-    ``magnetic_charge`` is the magnetic charge declared by sources: equivalent
-    (Huygens, antenna) magnetic currents have physical surface divergence, so the
-    magnetic Gauss law reads ``d(B) = magnetic_charge`` with
-    ``∂(magnetic_charge)/∂t = −d(M)`` accumulated with the same half kicks as
-    ``B``. It lives on the magnetic-divergence cochain and is empty when ``B`` is
-    a top form.
+    ``magnetic_charge`` is the physical magnetic charge declared by sources:
+    equivalent (Huygens, antenna) magnetic currents have surface divergence,
+    ``∂(magnetic_charge)/∂t = −d(M)``. ``absorber_magnetic_charge`` is the
+    bookkeeping divergence of the absorber forcing (CPML stretching minus the
+    plain curl, and material magnetic conduction ``σ_m H``); it is supported
+    only where those actions act. The magnetic Gauss law reads
+    ``d(B) = magnetic_charge + absorber_magnetic_charge``; both accumulate with
+    the same half kicks as ``B`` and live on the magnetic-divergence cochain
+    (empty when ``B`` is a top form).
     """
 
     material: Any
     boundary: Any
     magnetic_charge: Array
+    absorber_magnetic_charge: Array
 
 
 class CompatibleMaxwellState(StrictModule):
@@ -1033,12 +1037,11 @@ class PreparedCompatibleMaxwell(StrictModule):
             )
         )
         top_form = layout.magnetic_degree == cochain.max_degree
-        # Source magnetic currents are tracked as declared magnetic charge, so only
-        # materials, boundaries, and absorbers can break d(B) = magnetic charge.
-        preserving = top_form or (
-            constitutive.capabilities.magnetic_closedness_preserving
-            and all(value.magnetic_closedness_preserving for value in boundaries)
-            and pml is None
+        # Every non-curl magnetic forcing (source magnetic currents, CPML
+        # stretching, magnetic conduction) is tracked as declared magnetic charge,
+        # so only boundaries that overwrite B can break d(B) = magnetic charge.
+        preserving = top_form or all(
+            value.magnetic_closedness_preserving for value in boundaries
         )
         if plan.magnetic_constraint.mode == "elide" and not preserving:
             raise ValueError("Magnetic projection elision lacks closedness evidence.")
@@ -1050,9 +1053,10 @@ class PreparedCompatibleMaxwell(StrictModule):
             if top_form
             else cochain.topology.incidences[layout.magnetic_degree].exterior_derivative()
         )
+        # An elided projection never solves, so no minimum-norm solver is prepared.
         magnetic_constraint_solver = (
             None
-            if magnetic_incidence is None or plan.magnetic_constraint.mode == "elide"
+            if magnetic_incidence is None or projection_elided
             else prepare(
                 MinimumNormProblem(
                     magnetic_incidence,
@@ -1176,7 +1180,9 @@ class PreparedCompatibleMaxwell(StrictModule):
     @property
     def magnetic_charge_count(self) -> int:
         """Size of the magnetic-divergence cochain carrying declared magnetic charge."""
-        return 0 if self.magnetic_incidence is None else self.magnetic_incidence.target.size
+        return (
+            0 if self.magnetic_incidence is None else self.magnetic_incidence.target.size
+        )
 
     def pack(
         self,
@@ -1258,6 +1264,20 @@ class PreparedCompatibleMaxwell(StrictModule):
                         "Projection-elided initial magnetic flux does not match its "
                         "declared magnetic charge."
                     )
+            elif self.magnetic_projection_elided:
+                # Automatic elision checks the initial state instead of projecting.
+                residual = self.magnetic_incidence.mv(flux) - magnetic_charge_
+                tolerance = jnp.maximum(
+                    self.plan.magnetic_constraint.absolute_tolerance,
+                    self.plan.magnetic_constraint.relative_tolerance
+                    * jnp.linalg.norm(flux),
+                )
+                flux = eqx.error_if(
+                    flux,
+                    jnp.linalg.norm(residual) > tolerance,
+                    "Projection-elided initial magnetic flux does not match its "
+                    "declared magnetic charge; use the 'project' constraint mode.",
+                )
             else:
                 flux, _ = self._project_magnetic_constraint(
                     flux, magnetic_charge_, force=True
@@ -1273,6 +1293,7 @@ class PreparedCompatibleMaxwell(StrictModule):
                 material=material_state,
                 boundary=boundary_state_,
                 magnetic_charge=magnetic_charge_,
+                absorber_magnetic_charge=jnp.zeros_like(magnetic_charge_),
             ),
             observations=observation_state,
         )
@@ -1309,7 +1330,11 @@ class PreparedCompatibleMaxwell(StrictModule):
             or primary.charge.shape != (charge_count,)
         ):
             raise ValueError("Maxwell D, B, and charge cochains have wrong sizes.")
-        if state.auxiliary.magnetic_charge.shape != (self.magnetic_charge_count,):
+        if state.auxiliary.magnetic_charge.shape != (
+            self.magnetic_charge_count,
+        ) or state.auxiliary.absorber_magnetic_charge.shape != (
+            self.magnetic_charge_count,
+        ):
             raise ValueError("Maxwell magnetic charge has the wrong size.")
         if len(tuple(state.observations)) != len(self.observers):
             raise ValueError("Maxwell observation state count does not match observers.")
@@ -1653,10 +1678,10 @@ class PreparedCompatibleMaxwell(StrictModule):
         if self.pml is None:
             magnetic_curl = jnp.sum(magnetic_components, axis=0)
         else:
-            magnetic_curl, boundary_half = self.pml.apply_magnetic(
+            magnetic_curl, boundary_half = self.pml.apply_magnetic_start(
                 magnetic_components,
                 boundary_half,
-                half_step,
+                dt,
                 coefficients=cpml_coefficients,
             )
         magnetic_forcing = (
@@ -1665,12 +1690,27 @@ class PreparedCompatibleMaxwell(StrictModule):
             - magnetic_start.magnetic_current
         )
         magnetic_half_flux = state.primary.magnetic_flux + half_step * magnetic_forcing
-        # Declared source magnetic charge follows the same half kicks as B.
+        # Source magnetic currents declare physical magnetic charge; the rest of
+        # the non-curl forcing B receives (CPML stretching, σ_m H) is absorber
+        # bookkeeping inside its support.
         magnetic_charge_half = state.auxiliary.magnetic_charge - half_step * (
             self._magnetic_divergence(magnetic_start.magnetic_current)
         )
+        absorber_half = state.auxiliary.absorber_magnetic_charge + half_step * (
+            self._magnetic_divergence(
+                magnetic_forcing
+                - jnp.sum(magnetic_components, axis=0)
+                + magnetic_start.magnetic_current
+            )
+        )
         magnetic_half_flux, _ = self._project_magnetic_constraint(
-            magnetic_half_flux, magnetic_charge_half
+            magnetic_half_flux, magnetic_charge_half + absorber_half
+        )
+        # Media advance with the boundary-constrained fluxes the kicks see: a
+        # pole driven by an unconstrained wall flux that the step then zeroes
+        # leaves an O(Δt) spurious wall polarization per step.
+        _, magnetic_half_flux = self._constrain_primary(
+            state.primary.electric_displacement, magnetic_half_flux
         )
         material_half = self.constitutive.advance_state(
             time,
@@ -1691,11 +1731,12 @@ class PreparedCompatibleMaxwell(StrictModule):
         electric_half = self.constitutive.electric_field(
             state.primary.electric_displacement, material_half
         )
-        total_current = (
-            electric_mid.electric_current
-            + self._boundary_current(electric_half)
-            + self.constitutive.electric_conduction(electric_half, material_half)
-        )
+        # Every kick sees the boundary-constrained fields, so the two magnetic
+        # half kicks and the electric kick stay one symmetric leapfrog.
+        for boundary in self.boundaries:
+            electric_half, magnetic_half = boundary.constrain_fields(
+                electric_half, magnetic_half
+            )
         electric_components = self._electric_curl_components(magnetic_half)
         if self.pml is None:
             electric_curl = jnp.sum(electric_components, axis=0)
@@ -1706,8 +1747,32 @@ class PreparedCompatibleMaxwell(StrictModule):
                 dt,
                 coefficients=cpml_coefficients,
             )
+        # Conduction (medium and impedance walls) is evaluated at the kick's
+        # midpoint field from an explicit predictor, so the kick is second order
+        # and its loss ⟨Ē, σĒ⟩Δt matches the trapezoidal loss ledger to O(Δt³);
+        # sampling it at the kick start is first order and leaves an O(Δt)
+        # endpoint term −(Δt/4)σ(|E_N|² − |E_0|²) in every energy ledger.
+        conduction_start = self._boundary_current(
+            electric_half
+        ) + self.constitutive.electric_conduction(electric_half, material_half)
+        predicted = self.constitutive.electric_field(
+            state.primary.electric_displacement
+            + dt * (electric_curl - electric_mid.electric_current - conduction_start),
+            material_half,
+        )
+        for boundary in self.boundaries:
+            predicted, _ = boundary.constrain_fields(predicted, magnetic_half)
+        electric_centered = 0.5 * (electric_half + predicted)
+        total_current = (
+            electric_mid.electric_current
+            + self._boundary_current(electric_centered)
+            + self.constitutive.electric_conduction(electric_centered, material_half)
+        )
         electric_forcing = electric_curl - total_current
         displacement_new = state.primary.electric_displacement + dt * electric_forcing
+        displacement_new, _ = self._constrain_primary(
+            displacement_new, magnetic_half_flux
+        )
         charge_new = (
             jnp.zeros((0,), dtype=displacement_new.dtype)
             if self.layout.charge_degree is None
@@ -1727,15 +1792,17 @@ class PreparedCompatibleMaxwell(StrictModule):
             args,
         )
         electric_new = self.constitutive.electric_field(displacement_new, material_new)
+        for boundary in self.boundaries:
+            electric_new, _ = boundary.constrain_fields(electric_new, magnetic_half)
         magnetic_components_new = self._magnetic_curl_components(electric_new)
         boundary_new = boundary_half
         if self.pml is None:
             magnetic_curl_new = jnp.sum(magnetic_components_new, axis=0)
         else:
-            magnetic_curl_new, boundary_new = self.pml.apply_magnetic(
+            magnetic_curl_new, boundary_new = self.pml.apply_magnetic_end(
                 magnetic_components_new,
                 boundary_half,
-                half_step,
+                dt,
                 coefficients=cpml_coefficients,
             )
         magnetic_end = (
@@ -1743,10 +1810,20 @@ class PreparedCompatibleMaxwell(StrictModule):
             if source_samples is None
             else source_samples[2]
         )
-        magnetic_forcing_new = (
+        # The closing half kick samples magnetic conduction at the predicted
+        # step-end field, so the two half kicks form the trapezoidal rule.
+        magnetic_predicted = magnetic_half_flux + half_step * (
             magnetic_curl_new
             - self.constitutive.magnetic_conduction(
                 self.constitutive.magnetic_field(magnetic_half_flux, material_new),
+                material_new,
+            )
+            - magnetic_end.magnetic_current
+        )
+        magnetic_forcing_new = (
+            magnetic_curl_new
+            - self.constitutive.magnetic_conduction(
+                self.constitutive.magnetic_field(magnetic_predicted, material_new),
                 material_new,
             )
             - magnetic_end.magnetic_current
@@ -1764,12 +1841,23 @@ class PreparedCompatibleMaxwell(StrictModule):
             magnetic_charge_half
             - half_step * self._magnetic_divergence(magnetic_end.magnetic_current)
         ).astype(state.auxiliary.magnetic_charge.dtype)
+        absorber_new = (
+            absorber_half
+            + half_step
+            * self._magnetic_divergence(
+                magnetic_forcing_new
+                - jnp.sum(magnetic_components_new, axis=0)
+                + magnetic_end.magnetic_current
+            )
+        ).astype(state.auxiliary.absorber_magnetic_charge.dtype)
         magnetic_new, _ = self._project_magnetic_constraint(
-            magnetic_new, magnetic_charge_new
+            magnetic_new, magnetic_charge_new + absorber_new
         )
         provisional = CompatibleMaxwellState(
             MaxwellPrimaryState(displacement_new, magnetic_new, charge_new),
-            MaxwellAuxiliaryState(material_new, boundary_new, magnetic_charge_new),
+            MaxwellAuxiliaryState(
+                material_new, boundary_new, magnetic_charge_new, absorber_new
+            ),
             state.observations,
         )
         electric_observed = self.constitutive.electric_field(
@@ -1814,6 +1902,61 @@ class PreparedCompatibleMaxwell(StrictModule):
             self.plan.bridge.cochain.hodge_metric(self.layout.magnetic_degree),
         )
 
+    def leapfrog_energy(
+        self, state: CompatibleMaxwellState, step_size: ArrayLike, /
+    ) -> Array:
+        """Step-end energy minus the half-kick term ``(Δt²/8)⟨dE, ⋆ ∂H/∂B dE⟩``.
+
+        For linear magnetic response it equals the staggered
+        ``½⟨E_n, ⋆D_n⟩ + ½⟨H_{n+1/2}, ⋆B_{n−1/2}⟩``, the energy the leapfrog
+        update exchanges exactly with ``−∫ E·J`` in lossless media.
+        """
+        state_ = self._state(state)
+        material = state_.auxiliary.material
+        degree = self.layout.magnetic_degree
+        curl = self.plan.bridge.exterior_derivative(
+            self.layout.electric_degree, self.electric_field(state_)
+        )
+        _, response = jax.jvp(
+            lambda flux: self.constitutive.magnetic_field(flux, material),
+            (state_.primary.magnetic_flux,),
+            (curl,),
+        )
+        correction = jnp.real(
+            jnp.vdot(curl, self.plan.bridge.cochain.apply_hodge(degree, response))
+        )
+        step = jnp.asarray(step_size)
+        return self.energy(state_) - 0.125 * step**2 * correction
+
+    def loss_power(self, state: CompatibleMaxwellState, /) -> Array:
+        """Semi-discrete loss ``−dW/dt`` of the source-free runtime drift.
+
+        The plain curl pair exchanges no energy (``⟨E, δH⟩ = ⟨dE, H⟩``), so the
+        source-free energy rate is exactly the power removed by conduction,
+        impedance boundaries, material damping, and CPML stretching and memory.
+        """
+        state_ = self._state(state)
+        layout = self.layout
+        primary = state_.primary
+        zero = MaxwellSourceForcing(
+            jnp.zeros(
+                (layout.electric_count,), dtype=primary.electric_displacement.dtype
+            ),
+            jnp.zeros((layout.magnetic_count,), dtype=primary.magnetic_flux.dtype),
+        )
+        rates = self._rates_with_forcing(state_, zero)
+        cochain = self.plan.bridge.cochain
+        rate = self.constitutive.energy_rate(
+            primary.electric_displacement,
+            primary.magnetic_flux,
+            rates.electric_displacement,
+            rates.magnetic_flux,
+            state_.auxiliary.material,
+            cochain.hodge_metric(layout.electric_degree),
+            cochain.hodge_metric(layout.magnetic_degree),
+        )
+        return -rate
+
     def electric_constraint(self, state: CompatibleMaxwellState, /) -> Array:
         """Return the physical Gauss defect ``-delta(D) - rho``."""
         state_ = self._state(state)
@@ -1839,13 +1982,14 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
 
     def magnetic_constraint(self, state: CompatibleMaxwellState, /) -> Array:
-        """Return the magnetic Gauss defect ``d(B) − declared magnetic charge``."""
+        """Return ``d(B) − declared source charge − absorber bookkeeping charge``."""
         state_ = self._state(state)
         if self.magnetic_incidence is None:
             return jnp.asarray(0.0, dtype=state_.primary.magnetic_flux.real.dtype)
         return (
             self.magnetic_incidence.mv(state_.primary.magnetic_flux)
             - state_.auxiliary.magnetic_charge
+            - state_.auxiliary.absorber_magnetic_charge
         )
 
     def magnetic_constraint_evidence(
@@ -2087,9 +2231,7 @@ def _fixed_step(
     /,
 ) -> _PreparedMaxwellFixedStep:
     dt = runtime._step_size(step_size)
-    coefficients = (
-        None if runtime.pml is None else runtime.pml.bind_coefficients(dt, 0.5 * dt)
-    )
+    coefficients = None if runtime.pml is None else runtime.pml.bind_coefficients(dt)
     pml_shapes = (
         ()
         if runtime.pml is None

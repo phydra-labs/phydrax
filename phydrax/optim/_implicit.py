@@ -15,6 +15,7 @@ from jax import Array
 from jax.flatten_util import ravel_pytree
 from jaxtyping import PyTree
 
+from .._custom_root import custom_root
 from .._tree_math import (
     tree_allfinite as _tree_allfinite,
     tree_norm as _tree_norm,
@@ -240,7 +241,7 @@ def implicit_minimize(
             guarded,
         )
 
-    return jax.lax.custom_root(
+    return custom_root(
         stationarity,
         initial,
         primal_solve,
@@ -329,7 +330,7 @@ def implicit_least_squares(
             guarded,
         )
 
-    return jax.lax.custom_root(
+    return custom_root(
         stationarity,
         initial,
         primal_solve,
@@ -649,7 +650,7 @@ def implicit_constrained_minimize(
                 solved_root + jnp.asarray(0, dtype=solved_root.dtype) * regularity_anchor
             )
 
-        root = jax.lax.custom_root(
+        root = custom_root(
             equation,
             initial_root,
             primal_solve,

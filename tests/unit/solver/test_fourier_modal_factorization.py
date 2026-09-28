@@ -114,3 +114,98 @@ def test_dynamic_analytic_frame_id_cannot_collide_by_shape() -> None:
     )
     with pytest.raises(ValueError, match="frame_id"):
         fm.prepare_fourier_modal_maxwell(problem)
+
+
+# Lalanne & Hugonin, J. Opt. Soc. Am. A 17, 1033 (2000), Tables 1-2, RCWA column
+# (the Lalanne-Morris / Granet-Guizal inverse-rule formulation): lamellar grating of
+# period, wavelength, and depth 1 um, fill 0.5, ridges and substrate of index
+# 0.22 + 6.71i, 30 deg incidence from air. Only reflected orders 0 and -1 propagate.
+# The TM entries are order 0 and the TE entries order -1; both converge to the exact
+# modal values 0.84848 and 0.73428.
+METALLIC_LAMELLAR_TM_ORDER_ZERO = {21: 0.84211, 41: 0.84425, 81: 0.84677}
+METALLIC_LAMELLAR_TE_ORDER_MINUS_ONE = {21: 0.76227, 41: 0.73857, 81: 0.73485}
+METALLIC_LAMELLAR_EXACT = {"tm": 0.84848, "te": 0.73428}
+
+
+def _lamellar_reflection(
+    harmonics_count: int,
+    permittivity: complex,
+    polarization: str,
+    policy: Any = None,
+) -> tuple[dict[int, float], Any]:
+    # Fine sampling makes the sampled Fourier coefficients those of the exact profile.
+    lattice = LatticeHarmonicPlan.parallelogramic((harmonics_count,), (16384,)).prepare(
+        jnp.asarray(((1.0, 0.0),))
+    )
+    fraction = lattice.fractional_coordinates[..., 0]
+    grating = fm.FrequencyMaxwellMaterial(
+        jnp.where(fraction < 0.5, permittivity, 1.0 + 0j), material_id="lamellar"
+    )
+    walls = jnp.broadcast_to(jnp.asarray((0.0, 1.0)), lattice.sample_shape + (2,))
+    wavenumber = 2.0 * np.pi
+    problem = fm.FourierModalMaxwellProblem(
+        lattice,
+        wavenumber,
+        jnp.asarray((wavenumber * 0.5, 0.0)),
+        fm.HomogeneousMaxwellPort(
+            fm.FrequencyMaxwellMaterial(1.0 + 0j, material_id="air"), port_id="air"
+        ),
+        (
+            fm.FourierModalLayer(
+                grating,
+                1.0,
+                fm.VectorFourierFactorizationPlan(
+                    fm.AnalyticInterfaceFramePlan(walls, frame_id="lamellar-walls")
+                ),
+                layer_id="ridges",
+            ),
+        ),
+        fm.HomogeneousMaxwellPort(
+            fm.FrequencyMaxwellMaterial(permittivity, material_id="metal"),
+            port_id="metal",
+        ),
+    )
+    prepared = fm.prepare_fourier_modal_maxwell(problem, policy)
+    layout = lattice.plan.layout
+    result = fm.solve_fourier_modal_maxwell(
+        prepared,
+        fm.plane_wave_excitation(
+            prepared.scattering, layout.mode_ids[layout.zero_index], polarization
+        ),
+    )
+    far = fm.diffraction_order_far_field(prepared, result, side="left")
+    power = np.asarray(jnp.sum(far.power[..., 0], axis=1))
+    orders = np.asarray(layout.coefficients[:, 0])
+    return {int(order): float(power[orders == order][0]) for order in (0, -1)}, result
+
+
+def test_metallic_lamellar_grating_matches_published_inverse_rule_efficiencies() -> None:
+    permittivity = (0.22 + 6.71j) ** 2
+    errors: dict[str, list[float]] = {"tm": [], "te": []}
+    for count in (21, 41, 81):
+        tm, tm_result = _lamellar_reflection(count, permittivity, "tm")
+        te, te_result = _lamellar_reflection(count, permittivity, "te")
+        for result in (tm_result, te_result):
+            assert bool(result.diagnostics.finite)
+            assert bool(result.diagnostics.propagation_converged)
+        np.testing.assert_allclose(
+            tm[0], METALLIC_LAMELLAR_TM_ORDER_ZERO[count], atol=1e-5
+        )
+        np.testing.assert_allclose(
+            te[-1], METALLIC_LAMELLAR_TE_ORDER_MINUS_ONE[count], atol=1e-5
+        )
+        errors["tm"].append(abs(tm[0] - METALLIC_LAMELLAR_EXACT["tm"]))
+        errors["te"].append(abs(te[-1] - METALLIC_LAMELLAR_EXACT["te"]))
+        assert tm[0] + tm[-1] < 1.0 and te[0] + te[-1] < 1.0
+    for sequence in errors.values():
+        assert sequence[0] > sequence[1] > sequence[2]
+
+
+def test_perfect_conductor_limit_grating_conserves_energy() -> None:
+    # Lossless ε = −10⁴ (the bulk perfect-conductor surrogate of Szczepkowicz et al.
+    # 2020) has skin depth λ/630; every order below the ridges is evanescent.
+    policy = fm.FourierModalSolvePolicy(boundary=fm.BoundaryCascadePolicy(doublings=16))
+    for polarization in ("te", "tm"):
+        efficiency, result = _lamellar_reflection(21, -1.0e4 + 0j, polarization, policy)
+        assert int(result.status) == int(fm.FourierModalSolveStatus.SUCCESS)
+        np.testing.assert_allclose(efficiency[0] + efficiency[-1], 1.0, atol=1e-9)

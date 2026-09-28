@@ -5,11 +5,11 @@ from collections.abc import Callable
 from jax._src.core import JaxprEqn
 
 from ._common import (
-    _forward_const_vals,
     _index_sets,
-    _seed_const_vals,
+    _nested_scope,
     IndexSet,
     PropJaxprFn,
+    StateBounds,
     StateConsts,
     StateIndices,
 )
@@ -23,6 +23,7 @@ def _prop_while(
     eqn: JaxprEqn,
     state_indices: StateIndices,
     state_consts: StateConsts,
+    state_bounds: StateBounds,
     _prop_jaxpr: PropJaxprFn,
 ) -> None:
     """while_loop iterates a body until a condition becomes false.
@@ -54,9 +55,16 @@ def _prop_while(
     carry_init = eqn.invars[body_nconsts + cond_nconsts :]
     assert len(carry_init) == n_carry
 
-    _seed_const_vals(state_consts, body_jaxpr.constvars, body_closed.consts)
-    # Only forward state_consts for body consts, not carry (carry changes each iteration)
-    _forward_const_vals(state_consts, body_consts, body_jaxpr.invars[:body_nconsts])
+    # One scope for this loop (see ``_nested_scope``); only body consts are
+    # loop invariant, so carry is never forwarded as a known value.
+    inner_consts, inner_bounds = _nested_scope(
+        body_jaxpr.constvars,
+        body_closed.consts,
+        body_consts,
+        body_jaxpr.invars[:body_nconsts],
+        state_consts,
+        state_bounds,
+    )
 
     # Initialize carry state_indices from the initial values
     carry_indices: list[list[IndexSet]] = [
@@ -69,7 +77,7 @@ def _prop_while(
     ]
 
     def iterate(carry: list[list[IndexSet]]) -> list[list[IndexSet]]:
-        return _prop_jaxpr(body_jaxpr, const_inputs + carry, state_consts)
+        return _prop_jaxpr(body_jaxpr, const_inputs + carry, inner_consts, inner_bounds)
 
     _fixed_point_loop(iterate, carry_indices, n_carry)
 

@@ -252,6 +252,30 @@ to `"ground"`; other finishes, negative or non-finite values, probabilities
 outside `[0, 1]` or summing above one, and non-default declarations on
 absorber or detector surfaces are refused.
 
+`phydrax.applications.detector.run_geant4_optical(provider, plan, photons,
+destination)` is the pinned Geant4 oracle for this transport (see the
+radiation-transport guide for `Geant4Provider` and the `PHYDRAX_GEANT4_*`
+variables). `geant4_optical_input` accepts an SI `OpticalMonteCarloPlan` whose
+surfaces form a planar stack along `z`: every surface id is one plane normal
+to `z` covering a common rectangle, the two outermost planes are detector
+(acceptance cosine 0) or absorber planes, and the inner planes are lossless
+`"polished"` UNIFIED dielectric interfaces with both branches. The detector
+response must be `UnitDetectorResponse`. The medium must be a
+`SpectralOpticalMedium` with bulk absorption and Rayleigh scattering only, each
+present at every wavelength node or none, and the photons unit-weight and
+linearly polarized inside a layer of their medium. Each layer becomes a Geant4
+box with the medium's `RINDEX`, `ABSLENGTH`, and `RAYLEIGH` tables, each inner
+plane a pair of UNIFIED polished `dielectric_dielectric` border surfaces, and
+each photon one event. Everything else is refused. `Geant4OpticalResult`
+holds per-photon unit `detector`, `absorption`, and `escape` tallies that
+mirror `OpticalTransportTallies`, plus exit surface, position, direction,
+polarization, and time, and the Rayleigh event counts. Its `AdapterReport`
+declares these losses: lateral kills at the rectangle edge, the elliptical
+TIR states Geant4 cannot carry, and Geant4 11.4.p01 reversing the in-plane
+polarization component at every dielectric crossing (even across matched
+indices). Only `|E·s|` and `|E·p|` of exit polarizations therefore compare
+with Phydrax.
+
 ## Photodetection
 
 `OpticalPhotodetector(wavelength_nodes, quantum_efficiency,
@@ -346,6 +370,24 @@ Launch the bank with `ExplicitPhotonSource(emission.state)`; empty slots carry
 zero weight. `examples/cherenkov_water_detector.py` follows a 3 MeV electron
 through water, transports its Cherenkov light to the walls, and reads it out
 through photodetection.
+
+`phydrax.applications.detector.run_geant4_cherenkov(provider, plan, steps,
+destination, *, nist_material, events)` is the pinned Geant4 oracle for these
+sources (see the radiation-transport guide for `Geant4Provider` and the
+`PHYDRAX_GEANT4_*` variables). `geant4_cherenkov_input` accepts an SI plan with
+Cherenkov emission only and one singly charged parent with one constant-speed
+step: the step becomes an electron (charge −1) or positron (+1) of the same
+speed inside a sphere of the step's medium with the step length as radius,
+`RINDEX` is the plan's refractive index on its wavelength nodes at photon
+energies `2 pi hbar c / lambda`, and the bulk composition is a named Geant4 NIST
+material. Only Cherenkov photons of the primary are scored, at creation.
+`Geant4CherenkovResult` returns their wavelengths, directions, polarizations,
+emitting-step chord and speeds, positions, and times in the plan frame, the
+primary path length per event, and an `AdapterReport` declaring the
+synthesized bulk, energy-linear index interpolation, self-consistent primary
+transport, and dropped optical transport. Per path length, yield, cone
+`cos theta = 1 / (beta n)`, `p x (p x v)` polarization, and spectrum compare
+directly with `emit_optical_photons`.
 
 ## Variance reduction
 

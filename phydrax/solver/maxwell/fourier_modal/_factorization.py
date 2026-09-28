@@ -33,6 +33,9 @@ from ._contracts import AbstractFourierFactorizationPlan, FrequencyMaxwellMateri
 FrameDifferentiation: TypeAlias = Literal["mathematical", "frozen", "none"]
 
 
+# Compiled once per shape: the cascade calls this hundreds of times per solve, and an
+# eager call retraces the native solver's control flow every time.
+@jax.jit
 def _dense_solve(matrix: Array, right_hand_side: Array) -> Array:
     policy = LinearSolvePolicy(
         DenseLU(),
@@ -388,7 +391,10 @@ def _vector_transverse_blocks(
     inverse_block = jnp.block(
         [[inverse, jnp.zeros_like(inverse)], [jnp.zeros_like(inverse), inverse]]
     )
-    effective = direct_block - (direct_block - inverse_block) @ projector
+    # Li's rules: tangential E is continuous across an interface, so its product
+    # with ε uses Laurent's rule; normal D is continuous, so the normal component
+    # uses the inverse rule. ε_eff = ⟦1/ε⟧⁻¹ + (⟦ε⟧ − ⟦1/ε⟧⁻¹)⟦t tᴴ⟧.
+    effective = inverse_block + (direct_block - inverse_block) @ projector
     return effective.reshape((2, count, 2, count)).transpose((0, 2, 1, 3))
 
 

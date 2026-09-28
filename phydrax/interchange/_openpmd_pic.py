@@ -1146,6 +1146,7 @@ def _build_state(
         PICFieldHistory(field_value, time - meshes.dt)
         if plan.field_derivatives
         else None,
+        plan.initialize_process_states(states),
     )
 
 
@@ -1181,6 +1182,17 @@ def _import_losses(layout: OpenPMDPICLayout, /) -> tuple[AdapterLoss, ...]:
                 "synthesized",
                 "The field history treats the imported field as static over the "
                 "preceding step.",
+                changes_interpretation=True,
+            )
+        )
+    if any(process.stateful for process in plan.processes):
+        losses.append(
+            AdapterLoss(
+                "processes",
+                "import",
+                "synthesized",
+                "Process states (strong-field QED optical depths, trajectory "
+                "histories and photons) restart from their initial state.",
                 changes_interpretation=True,
             )
         )

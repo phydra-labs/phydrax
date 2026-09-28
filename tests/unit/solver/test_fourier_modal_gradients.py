@@ -40,7 +40,7 @@ def test_boundary_thickness_gradient_matches_finite_difference() -> None:
 
     def objective(thickness: Any) -> Any:
         relation = fm.prepare_layer_boundary(operator, thickness, policy)
-        return jnp.real(jnp.sum(jnp.abs(relation.a) ** 2))
+        return jnp.real(jnp.sum(jnp.abs(relation.s11) ** 2))
 
     thickness = jnp.asarray(0.17)
     automatic = jax.grad(objective)(thickness)
@@ -61,14 +61,14 @@ def test_modal_and_boundary_relations_agree_for_uniform_layer() -> None:
     boundary = fm.prepare_layer_boundary(operator, 0.1, policy)
     modal = fm.prepare_modal_boundary(operator, 0.1)
     np.testing.assert_allclose(
-        np.asarray(boundary.a), np.asarray(modal.boundary.a), rtol=1e-8, atol=1e-9
+        np.asarray(boundary.s11), np.asarray(modal.boundary.s11), rtol=1e-8, atol=1e-9
     )
     np.testing.assert_allclose(
-        np.asarray(boundary.b), np.asarray(modal.boundary.b), rtol=1e-8, atol=1e-9
+        np.asarray(boundary.s12), np.asarray(modal.boundary.s12), rtol=1e-8, atol=1e-9
     )
     np.testing.assert_allclose(
-        np.asarray(boundary.c), np.asarray(modal.boundary.c), rtol=1e-8, atol=1e-9
+        np.asarray(boundary.s21), np.asarray(modal.boundary.s21), rtol=1e-8, atol=1e-9
     )
     np.testing.assert_allclose(
-        np.asarray(boundary.d), np.asarray(modal.boundary.d), rtol=1e-8, atol=1e-9
+        np.asarray(boundary.s22), np.asarray(modal.boundary.s22), rtol=1e-8, atol=1e-9
     )

@@ -262,8 +262,10 @@ def _surface_sources(
     /,
 ) -> None:
     """Refuse sources whose static support reaches the surface, or dynamic ones."""
-    # The antenna module builds on this one; resolve its prepared type lazily.
+    # The antenna and prescribed-charge modules build on this one; resolve their
+    # prepared types lazily.
     from ._maxwell_antenna import PreparedSampledPlaneCurrentAntenna
+    from ._prescribed_charge_maxwell import PreparedPrescribedChargeCurrentSource
 
     electric_set = np.asarray(electric_indices)
     magnetic_set = np.asarray(magnetic_indices)
@@ -284,6 +286,12 @@ def _surface_sources(
                     raise ValueError(
                         "A Maxwell source drives entities on the Huygens surface; "
                         "equivalent currents require J = M = 0 there."
+                    )
+            case PreparedPrescribedChargeCurrentSource() as prescribed:
+                if np.any(np.asarray(prescribed.electric_support)[electric_set]):
+                    raise ValueError(
+                        "A prescribed charge path drives entities on the Huygens "
+                        "surface; equivalent currents require J = 0 there."
                     )
             case PreparedPICMaxwellCurrentSource():
                 raise ValueError(
@@ -599,6 +607,17 @@ class PreparedMaxwellHuygensBox(AbstractPreparedMaxwellObserver):
             self.exterior.permeability,
         )
         _surface_sources(prepared.sources, electric_indices, magnetic_indices)
+        for boundary in prepared.boundaries:
+            constrained = (
+                np.asarray(boundary.magnetic_boundary)[magnetic_indices]
+                if boundary.kind == "pmc"
+                else np.asarray(boundary.electric_boundary)[electric_indices]
+            )
+            if np.any(constrained):
+                raise ValueError(
+                    f"A {boundary.kind} boundary constrains entities on the Huygens "
+                    "surface; the exterior must be the declared homogeneous medium."
+                )
 
     def initialize(self, /) -> DFTObserverState:
         return self.acquisition.initialize((6 * self.surface_count,))

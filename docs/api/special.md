@@ -336,8 +336,10 @@ pairwise alias is provided.
 
 ## Synchrotron kernels
 
-`synchrotron_f(x) = x ∫ₓ^∞ K_{5/3}(t) dt` and `synchrotron_g(x) = x K_{2/3}(x)`
-take the photon frequency in units of the critical frequency. They require
+`synchrotron_f(x) = x ∫ₓ^∞ K_{5/3}(t) dt`, `synchrotron_g(x) = x K_{2/3}(x)` and
+`synchrotron_h(x) = x K_{1/3}(x)` (the spin-dependent kernel of the quantum
+synchrotron spectrum) take the photon frequency in units of the critical
+frequency. They require
 float64 arguments, return `0` at `x = 0` and `+inf`, and return `NaN` for
 negative or `NaN` lanes. Generated series, log-x Chebyshev, and asymptotic
 tables hold a recorded uniform relative-error bound of `3.6e-15`; argument
@@ -348,5 +350,9 @@ derivatives of every order use the closed Bessel recurrence system.
       show_root_heading: true
 
 ::: phydrax.special.synchrotron_g
+    options:
+      show_root_heading: true
+
+::: phydrax.special.synchrotron_h
     options:
       show_root_heading: true

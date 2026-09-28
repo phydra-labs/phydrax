@@ -158,8 +158,6 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
         "wave_phase_screen": phase_times.to_milliseconds_dict(),
         "lidar_atmosphere": lidar_times.to_milliseconds_dict(),
         "statuses": statuses,
-        # ty: ignore[unresolved-attribute]
-        "lidar_status": int(lidar_result.evidence.status),
         "successful": successful,
     }
 

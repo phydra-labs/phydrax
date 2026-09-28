@@ -20,6 +20,20 @@ from ._free_free import (
 )
 from ._frequency import MaxwellFrequencyResult, MaxwellFrequencySystem
 from ._gray_means import GrayMeanOpacities
+from ._gyrosynchrotron_providers import (
+    read_symphony_output,
+    read_ufgc_output,
+    run_symphony,
+    run_ufgc,
+    symphony_input,
+    SymphonyCoefficients,
+    SymphonyProvider,
+    SymphonyResult,
+    ufgc_input,
+    UFGCCoefficients,
+    UFGCProvider,
+    UFGCResult,
+)
 from ._kinetic_dielectric import (
     HorseshoeDistribution,
     KineticDispersionModel,
@@ -59,6 +73,16 @@ from ._magnetobremsstrahlung import (
     TabulatedGyrotropicDistribution,
     ThermalJuttnerDistribution,
 )
+from ._srw_provider import (
+    read_srw_output,
+    run_srw,
+    srw_input,
+    SRWFieldMapSource,
+    SRWFieldRepresentation,
+    SRWFieldSpectrum,
+    SRWProvider,
+    SRWSpectrumResult,
+)
 from ._thermal_synchrotron import (
     ThermalSynchrotronCoefficients,
     ThermalSynchrotronDomain,
@@ -81,6 +105,13 @@ from ._trajectory_radiation import (
     TrajectoryRadiationRoute,
     TrajectoryRadiationState,
     TrajectoryRadiationStatus,
+)
+from ._uniform_motion_field import (
+    UniformMotionEvidence,
+    UniformMotionField,
+    UniformMotionFieldPlan,
+    UniformMotionGeometry,
+    UniformMotionMedium,
 )
 
 
@@ -130,7 +161,23 @@ __all__ = [
     "RelativisticWeakGrowthPlan",
     "RelativisticWeakGrowthResult",
     "RingDistribution",
+    "read_srw_output",
+    "read_symphony_output",
+    "read_ufgc_output",
+    "run_srw",
+    "run_symphony",
+    "run_ufgc",
+    "srw_input",
+    "SRWFieldMapSource",
+    "SRWFieldRepresentation",
+    "SRWFieldSpectrum",
+    "SRWProvider",
+    "SRWSpectrumResult",
     "StixParameters",
+    "symphony_input",
+    "SymphonyCoefficients",
+    "SymphonyProvider",
+    "SymphonyResult",
     "TabulatedGyrotropicDistribution",
     "ThermalFreeFreeCoefficients",
     "ThermalFreeFreeEvidence",
@@ -151,5 +198,14 @@ __all__ = [
     "TrajectoryRadiationRoute",
     "TrajectoryRadiationState",
     "TrajectoryRadiationStatus",
+    "ufgc_input",
+    "UFGCCoefficients",
+    "UFGCProvider",
+    "UFGCResult",
+    "UniformMotionEvidence",
+    "UniformMotionField",
+    "UniformMotionFieldPlan",
+    "UniformMotionGeometry",
+    "UniformMotionMedium",
     "WeakGrowthStatus",
 ]

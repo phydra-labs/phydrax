@@ -605,8 +605,10 @@ def scan_mesh_record(
                 raise OpenPMDUnsupportedError(
                     "Only C-ordered thetaMode records are supported."
                 )
-            if labels != _THETA_AXES:
-                raise OpenPMDUnsupportedError("thetaMode axisLabels must be ('r', 'z').")
+            if labels not in (_THETA_AXES, _THETA_AXES[::-1]):
+                raise OpenPMDUnsupportedError(
+                    "thetaMode axisLabels must be ('r', 'z') or ('z', 'r')."
+                )
             if modes is None or len(shape) != 3 or shape[0] != 2 * modes - 1:
                 raise ValueError(
                     f"thetaMode record {name} must hold 2m - 1 mode planes of [r, z]."
@@ -645,6 +647,12 @@ def decode_mesh_record(
     positions = [value.position for value in scanned.components]
     length = np.float64(units["length"][0])
     spacing, offset = scanned.spacing_si / length, scanned.offset_si / length
+    if scanned.geometry == "thetaMode" and labels != _THETA_AXES:
+        # Stored [mode, z, r] planes (e.g. WarpX) are returned as [mode, r, z].
+        arrays = [np.transpose(value, (0, 2, 1)) for value in arrays]
+        positions = [value[::-1] for value in positions]
+        labels = _THETA_AXES
+        spacing, offset = spacing[::-1], offset[::-1]
     if scanned.geometry == "cartesian":
         order = tuple(
             sorted(

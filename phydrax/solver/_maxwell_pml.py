@@ -141,6 +141,8 @@ class PreparedMaxwellCPMLTerm(StrictModule, NonTrainableState):
 
 
 class MaxwellCPMLTermCoefficients(StrictModule):
+    """Half-step ``(1/κ − 1, b, a)`` of one term's recursive convolution."""
+
     inverse_kappa_minus_one: Array
     decay: Array
     memory_coefficient: Array
@@ -148,11 +150,89 @@ class MaxwellCPMLTermCoefficients(StrictModule):
 
 
 class MaxwellCPMLCoefficients(StrictModule):
+    """Half-step recursion coefficients bound to one fixed leapfrog step."""
+
     electric: tuple[MaxwellCPMLTermCoefficients, ...]
     magnetic: tuple[MaxwellCPMLTermCoefficients, ...]
-    electric_step: Array
-    magnetic_step: Array
+    step_size: Array
     coefficient_id: str = eqx.field(static=True)
+
+
+def _layer_depth(
+    coordinate: np.ndarray, cells: int, width: int, staggered: bool, /
+) -> np.ndarray:
+    """Normalized depth into the two ``width``-cell layers of a ``cells``-cell axis.
+
+    ``staggered`` entries sit at cell centers ``coordinate + ½``, the others at
+    nodes ``coordinate``; depth is zero on the interior side of a layer face and
+    one on the outer wall.
+    """
+    scale = max(width, 1)
+    offset = 0.5 if staggered else 0.0
+    low = (width - coordinate - offset) / scale
+    high = (coordinate + offset - (cells - width)) / scale
+    return np.clip(np.maximum(low, high), 0.0, 1.0)
+
+
+def _graded_profile(
+    plan: MaxwellCPMLPlan, depth: np.ndarray, thickness: float, wave_speed: float, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Graded ``(σ, κ, α)`` of the stretching ``s = κ + σ/(α − iω)``.
+
+    ``σ_max = (m + 1) c ln(1/R) / (2 d)`` makes the continuum normal-incidence
+    round-trip reflection of a layer of physical thickness ``d`` equal to the
+    target ``R`` for waves of speed ``c``. The time-domain CPML, the reduced
+    Maxwell blocks, and the frequency-domain coordinate stretching share this
+    profile.
+    """
+    sigma_max = (
+        -(plan.sigma_order + 1.0)
+        * wave_speed
+        * np.log(plan.target_reflection)
+        / (2.0 * thickness)
+    )
+    powered = depth**plan.sigma_order
+    return (
+        sigma_max * powered,
+        1.0 + (plan.kappa_max - 1.0) * powered,
+        plan.alpha_max * (1.0 - depth),
+    )
+
+
+def _recursion(
+    sigma: Array, kappa: Array, alpha: Array, half_step: Array, /
+) -> tuple[Array, Array]:
+    """Half-step decay ``b`` and gain ``a`` of the CFS recursive convolution.
+
+    ``ψ ← b ψ + a ∂f`` integrates ``ψ̇ = −(σ/κ + α) ψ − (σ/κ²) ∂f`` exactly over
+    ``Δt/2`` for a derivative held at the sampled value.
+    """
+    decay = jnp.exp(-(sigma / kappa + alpha) * half_step)
+    denominator = sigma * kappa + alpha * kappa**2
+    gain = jnp.where(denominator > 0.0, sigma * (decay - 1.0) / denominator, 0.0)
+    return decay, gain
+
+
+def _stretch(
+    sample: Array,
+    memory: Array,
+    inverse_kappa_minus_one: Array,
+    decay: Array,
+    gain: Array,
+    /,
+    *,
+    before: bool,
+    after: bool,
+) -> tuple[Array, Array]:
+    """Stretched-derivative correction of one kick and the advanced memory.
+
+    Each memory advances by two half-step recursions per leapfrog step, and a
+    kick reads it at the kick's own time level: ``before`` advances it to that
+    level first, ``after`` advances it past the kick with the same sample.
+    """
+    kick = decay * memory + gain * sample if before else memory
+    stored = decay * kick + gain * sample if after else kick
+    return inverse_kappa_minus_one * sample + kick, stored
 
 
 def _term_profile(
@@ -164,62 +244,34 @@ def _term_profile(
     wave_speed: float,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Graded ``(σ, κ, α)`` of the stretching ``s = κ + σ/(α − iω)``.
-
-    ``σ_max = (m + 1) c ln(1/R) / (2 d)`` makes the continuum normal-incidence
-    round-trip reflection of a layer of physical thickness ``d`` equal to the
-    target ``R`` for waves of speed ``c``; the time-domain CPML and the
-    frequency-domain coordinate stretching share this profile.
-    """
+    """Packed indices and graded ``(σ, κ, α)`` of one derivative axis."""
     indices: list[np.ndarray] = []
     depths: list[np.ndarray] = []
-    offsets = bridge.orientation_offsets[degree]
+    widths = np.asarray(bridge.grid.structured_axes[axis].interval_widths)
     for orientation, shape, offset in zip(
         bridge.orientations[degree],
         bridge.orientation_shapes[degree],
-        offsets,
+        bridge.orientation_offsets[degree],
         strict=True,
     ):
-        grid = np.indices(shape, dtype=np.int64)
-        coordinate = grid[axis]
-        extent = shape[axis]
-        low = coordinate < width
-        high = coordinate >= extent - width
-        mask = low | high
+        coordinate = np.indices(shape, dtype=np.int64)[axis]
+        depth = _layer_depth(coordinate, widths.size, width, axis in orientation)
+        mask = depth > 0.0
         if not np.any(mask):
             continue
-        if axis in orientation:
-            low_depth = (width - coordinate - 0.5) / max(width, 1)
-            high_depth = (coordinate - (extent - width) + 0.5) / max(width, 1)
-        else:
-            low_depth = (width - coordinate) / max(width, 1)
-            high_depth = (coordinate - (extent - 1 - width)) / max(width, 1)
-        depth = np.maximum(low_depth, high_depth)
         flat = np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
         indices.append(offset + flat[mask])
-        depths.append(np.clip(depth[mask], 0.0, 1.0))
+        depths.append(depth[mask])
     if not indices:
         empty = np.zeros((0,), dtype=np.float64)
         return np.zeros((0,), dtype=np.int32), empty, empty + 1.0, empty
-    index = np.concatenate(indices).astype(np.int32)
-    depth = np.concatenate(depths)
-    widths = np.asarray(bridge.grid.structured_axes[axis].interval_widths)
     thickness = max(
         float(np.sum(widths[:width])), float(np.sum(widths[widths.size - width :]))
     )
-    sigma_max = (
-        -(plan.sigma_order + 1.0)
-        * wave_speed
-        * np.log(plan.target_reflection)
-        / (2.0 * thickness)
+    sigma, kappa, alpha = _graded_profile(
+        plan, np.concatenate(depths), thickness, wave_speed
     )
-    powered = depth**plan.sigma_order
-    return (
-        index,
-        sigma_max * powered,
-        1.0 + (plan.kappa_max - 1.0) * powered,
-        plan.alpha_max * (1.0 - depth),
-    )
+    return np.concatenate(indices).astype(np.int32), sigma, kappa, alpha
 
 
 def _terms(
@@ -268,6 +320,18 @@ def _terms(
 
 
 class PreparedMaxwellCPML(StrictModule):
+    """Prepared CFS-CPML: stretched derivatives ``∂/κ + ψ`` with convolution memories.
+
+    Each memory ``ψ`` of ``ψ̇ = −(σ/κ + α) ψ − (σ/κ²) ∂f`` is stored at the
+    integer step ``t_n`` and advances by two exponential half-step recursions
+    per leapfrog step, each over one sampled derivative: ``∂H_{n+½}`` twice for
+    the electric memory, ``∂E_n`` then ``∂E_{n+1}`` for the magnetic memory.
+    Every kick reads its memory at the kick's own time level (``t_n``,
+    ``t_{n+½}``, ``t_{n+1}``), so the update is a second-order discretization
+    of the stretched Maxwell system whose ``−dW/dt`` is ``electric_rate`` and
+    ``magnetic_rate`` evaluated on the stored ``t_n`` memories.
+    """
+
     electric_terms: tuple[PreparedMaxwellCPMLTerm, ...]
     magnetic_terms: tuple[PreparedMaxwellCPMLTerm, ...]
     electric_size: int = eqx.field(static=True)
@@ -371,36 +435,28 @@ class PreparedMaxwellCPML(StrictModule):
 
     @staticmethod
     def _coefficient(
-        term: PreparedMaxwellCPMLTerm, step: Array, /
+        term: PreparedMaxwellCPMLTerm, half_step: Array, /
     ) -> MaxwellCPMLTermCoefficients:
-        decay = jnp.exp(-(term.sigma / term.kappa + term.alpha) * step)
-        denominator = term.sigma * term.kappa + term.alpha * term.kappa**2
-        coefficient = jnp.where(
-            denominator > 0.0, term.sigma * (decay - 1.0) / denominator, 0.0
-        )
+        decay, gain = _recursion(term.sigma, term.kappa, term.alpha, half_step)
         return MaxwellCPMLTermCoefficients(
-            1.0 / term.kappa - 1.0, decay, coefficient, term.term_id
+            1.0 / term.kappa - 1.0, decay, gain, term.term_id
         )
 
-    def bind_coefficients(
-        self, electric_step: ArrayLike, magnetic_step: ArrayLike, /
-    ) -> MaxwellCPMLCoefficients:
-        e_step, m_step = jnp.asarray(electric_step), jnp.asarray(magnetic_step)
-        if e_step.shape != () or m_step.shape != ():
-            raise ValueError("CPML fixed steps must be scalars.")
-        electric = tuple(self._coefficient(term, e_step) for term in self.electric_terms)
-        magnetic = tuple(self._coefficient(term, m_step) for term in self.magnetic_terms)
+    def bind_coefficients(self, step_size: ArrayLike, /) -> MaxwellCPMLCoefficients:
+        """Bind the half-step recursion of one fixed leapfrog step ``Δt``."""
+        step = jnp.asarray(step_size)
+        if step.shape != ():
+            raise ValueError("The CPML fixed step must be a scalar.")
+        half = 0.5 * step
         return MaxwellCPMLCoefficients(
-            electric,
-            magnetic,
-            e_step,
-            m_step,
+            tuple(self._coefficient(term, half) for term in self.electric_terms),
+            tuple(self._coefficient(term, half) for term in self.magnetic_terms),
+            step,
             canonical_fingerprint(
                 {
                     "kind": "maxwell-cpml-coefficients",
                     "prepared": self.prepared_id,
-                    "electric_step": float(np.asarray(e_step)),
-                    "magnetic_step": float(np.asarray(m_step)),
+                    "step_size": float(np.asarray(step)),
                 }
             ),
         )
@@ -413,16 +469,28 @@ class PreparedMaxwellCPML(StrictModule):
         step_size: Array,
         coefficients: tuple[MaxwellCPMLTermCoefficients, ...] | None,
         /,
+        *,
+        before: bool,
+        after: bool,
     ) -> tuple[Array, tuple[Array, ...]]:
         value = jnp.sum(forcing, axis=0)
         updated = []
         for index, (term, old) in enumerate(zip(terms, memory, strict=True)):
             sample = forcing[term.axis, term.indices]
-            fixed = None if coefficients is None else coefficients[index]
-            if fixed is None:
-                fixed = PreparedMaxwellCPML._coefficient(term, step_size)
-            new = fixed.decay * old + fixed.memory_coefficient * sample
-            correction = fixed.inverse_kappa_minus_one * sample + new
+            fixed = (
+                PreparedMaxwellCPML._coefficient(term, 0.5 * step_size)
+                if coefficients is None
+                else coefficients[index]
+            )
+            correction, new = _stretch(
+                sample,
+                old,
+                fixed.inverse_kappa_minus_one,
+                fixed.decay,
+                fixed.memory_coefficient,
+                before=before,
+                after=after,
+            )
             value = value.at[term.indices].add(correction)
             updated.append(new)
         return value, tuple(updated)
@@ -436,21 +504,53 @@ class PreparedMaxwellCPML(StrictModule):
         *,
         coefficients: MaxwellCPMLCoefficients | None = None,
     ) -> tuple[Array, MaxwellCPMLState]:
+        """Stretched curl of the ``t_{n+½}`` electric kick of a ``Δt`` step.
+
+        The kick reads the memory advanced half a step to ``t_{n+½}``; the
+        stored memory advances the second half with the same ``∂H_{n+½}``.
+        """
         self.validate_state(state)
         forcing = jnp.asarray(forcing_components)
         if forcing.shape != (self.dimension, self.electric_size):
             raise ValueError("Electric CPML forcing has the wrong directional shape.")
-        fixed = None if coefficients is None else coefficients.electric
         value, memory = self._apply_terms(
             forcing,
             state.electric_memory,
             self.electric_terms,
             jnp.asarray(step_size),
-            fixed,
+            None if coefficients is None else coefficients.electric,
+            before=True,
+            after=True,
         )
         return value, MaxwellCPMLState(memory, state.magnetic_memory)
 
-    def apply_magnetic(
+    def _magnetic(
+        self,
+        forcing_components: Array,
+        state: MaxwellCPMLState,
+        step_size: Array,
+        coefficients: MaxwellCPMLCoefficients | None,
+        /,
+        *,
+        before: bool,
+        after: bool,
+    ) -> tuple[Array, MaxwellCPMLState]:
+        self.validate_state(state)
+        forcing = jnp.asarray(forcing_components)
+        if forcing.shape != (self.dimension, self.magnetic_size):
+            raise ValueError("Magnetic CPML forcing has the wrong directional shape.")
+        value, memory = self._apply_terms(
+            forcing,
+            state.magnetic_memory,
+            self.magnetic_terms,
+            jnp.asarray(step_size),
+            None if coefficients is None else coefficients.magnetic,
+            before=before,
+            after=after,
+        )
+        return value, MaxwellCPMLState(state.electric_memory, memory)
+
+    def apply_magnetic_start(
         self,
         forcing_components: Array,
         state: MaxwellCPMLState,
@@ -459,19 +559,42 @@ class PreparedMaxwellCPML(StrictModule):
         *,
         coefficients: MaxwellCPMLCoefficients | None = None,
     ) -> tuple[Array, MaxwellCPMLState]:
-        self.validate_state(state)
-        forcing = jnp.asarray(forcing_components)
-        if forcing.shape != (self.dimension, self.magnetic_size):
-            raise ValueError("Magnetic CPML forcing has the wrong directional shape.")
-        fixed = None if coefficients is None else coefficients.magnetic
-        value, memory = self._apply_terms(
-            forcing,
-            state.magnetic_memory,
-            self.magnetic_terms,
-            jnp.asarray(step_size),
-            fixed,
+        """Stretched curl of the opening ``t_n`` magnetic half kick of a ``Δt`` step.
+
+        The kick reads the stored ``t_n`` memory; the memory then advances half a
+        step with ``∂E_n``.
+        """
+        return self._magnetic(
+            forcing_components,
+            state,
+            step_size,
+            coefficients,
+            before=False,
+            after=True,
         )
-        return value, MaxwellCPMLState(state.electric_memory, memory)
+
+    def apply_magnetic_end(
+        self,
+        forcing_components: Array,
+        state: MaxwellCPMLState,
+        step_size: Array,
+        /,
+        *,
+        coefficients: MaxwellCPMLCoefficients | None = None,
+    ) -> tuple[Array, MaxwellCPMLState]:
+        """Stretched curl of the closing ``t_{n+1}`` magnetic half kick.
+
+        The memory first advances the second half step with ``∂E_{n+1}``; the
+        kick reads that stored ``t_{n+1}`` memory.
+        """
+        return self._magnetic(
+            forcing_components,
+            state,
+            step_size,
+            coefficients,
+            before=True,
+            after=False,
+        )
 
     @staticmethod
     def _rate(

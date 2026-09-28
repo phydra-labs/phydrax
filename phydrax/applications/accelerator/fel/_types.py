@@ -10,7 +10,7 @@ from ....typing import Dim
 
 
 class FELSliceDim(Dim, minimum=1):
-    """Independent time-independent beam slices."""
+    """Electron beam slices."""
 
 
 class FELRecordDim(Dim, minimum=2):
@@ -21,4 +21,18 @@ class FELHarmonicDim(Dim, minimum=1):
     """Modeled radiation harmonics."""
 
 
-__all__ = ["FELHarmonicDim", "FELRecordDim", "FELSliceDim"]
+class FELWindowDim(Dim, minimum=2):
+    """Time-dependent radiation window slots (head padding plus beam slices)."""
+
+
+class FELFrequencyDim(Dim, minimum=2):
+    """Discrete angular-frequency samples of a time-dependent window spectrum."""
+
+
+__all__ = [
+    "FELFrequencyDim",
+    "FELHarmonicDim",
+    "FELRecordDim",
+    "FELSliceDim",
+    "FELWindowDim",
+]

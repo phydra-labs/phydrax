@@ -131,6 +131,7 @@ from ._maxwell_adapter import (
 from ._maxwell_antenna_adapter import (
     openpmd_laser_envelope_antenna,
     pulse_envelope_antenna,
+    pulse_envelope_quasi_cylindrical_antenna,
 )
 from ._measurement import ideal_square_law, integrate_intensity
 from ._nonlinear_response import (
@@ -318,6 +319,7 @@ __all__ = [
     "propagate_envelope",
     "propagate_envelope_adaptive",
     "pulse_envelope_antenna",
+    "pulse_envelope_quasi_cylindrical_antenna",
     "sample_focused_gaussian_pulse_envelope",
     "sample_gaussian_pulse_envelope",
     "sequential_pupil_to_scalar_field",

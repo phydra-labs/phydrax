@@ -4,7 +4,8 @@
 
 """Field and electron-impact ionization as population-stage PIC processes.
 
-Both create electrons at the ionized ion's position with a compensating charge
+Both create electrons at the ionized ion's position, allocated through the
+run's allocation route (`allocate_particles`), with a compensating charge
 transition, so the deposited charge is preserved pointwise.
 """
 
@@ -18,6 +19,7 @@ from jax import Array
 from ...._fingerprint import canonical_fingerprint
 from ...._trainable import NonTrainableState
 from ....typing import PRNGKey
+from ...particle import ParticlePopulationPlan
 from .._charge_state import PICSpeciesPlan, PICSpeciesState
 from .._process import (
     AbstractPICProcess,
@@ -25,6 +27,7 @@ from .._process import (
     PICProcessLedger,
     PICProcessResult,
     PICProcessStage,
+    PICProcessStatePartition,
     RadiationOwnership,
 )
 from ._field import FieldIonizationPlan
@@ -74,7 +77,66 @@ def _ionized_species(
     )
 
 
-class FieldIonizationProcess(AbstractPICProcess, NonTrainableState):
+def _local_events(maximum_events: int, parts: int, limit: int, /) -> int:
+    """One device's share ``⌈maximum_events / parts⌉`` of a step's event budget.
+
+    The share must fit ``limit``, the slot blocks' request capacity.
+    """
+    if parts <= 0:
+        raise ValueError("parts must be positive.")
+    events = -(-maximum_events // parts)
+    if events > limit:
+        raise ValueError(
+            "The per-device ionization event share exceeds the species' slot blocks."
+        )
+    return events
+
+
+class _AbstractIonizationProcess(AbstractPICProcess):
+    """Stateless distribution shell of the ionization processes."""
+
+    def bank_plans(self) -> tuple[ParticlePopulationPlan, ...]:
+        """Ionization owns no particle bank."""
+        return ()
+
+    def partition_state(self, state: None, /) -> PICProcessStatePartition:
+        """Ionization is stateless: an empty partition."""
+        if state is not None:
+            raise TypeError("Ionization processes carry no state.")
+        return PICProcessStatePartition((), (), (), (), ())
+
+    def assemble_state(self, partition: PICProcessStatePartition, /) -> None:
+        """Ionization is stateless."""
+        if (
+            partition.companions
+            or partition.banks
+            or partition.totals
+            or partition.shared
+        ):
+            raise ValueError("Ionization processes carry no state.")
+
+    def combine(
+        self, ledger: PICProcessLedger, evidence: None, /
+    ) -> tuple[PICProcessLedger, None]:
+        """The run's ledger from per-device rows.
+
+        Events, the signed charge source and the ionization energy add; the
+        momentum defect (a nonnegative norm) takes the largest device value;
+        success requires every device.
+        """
+        if evidence is not None:
+            raise TypeError("Ionization processes report no evidence.")
+        return PICProcessLedger(
+            jnp.sum(ledger.event_count, axis=0, dtype=ledger.event_count.dtype),
+            jnp.sum(ledger.charge_defect, axis=0, dtype=ledger.charge_defect.dtype),
+            jnp.max(ledger.momentum_defect, axis=0),
+            jnp.sum(ledger.energy_defect, axis=0, dtype=ledger.energy_defect.dtype),
+            jnp.all(ledger.successful, axis=0),
+            self.process_id,
+        ), None
+
+
+class FieldIonizationProcess(_AbstractIonizationProcess, NonTrainableState):
     """`FieldIonizationPlan` driven by the push-stage electric field on the ions."""
 
     plan: FieldIonizationPlan
@@ -129,10 +191,39 @@ class FieldIonizationProcess(AbstractPICProcess, NonTrainableState):
             key,
             context.step_size,
             context.step_index,
+            allocator=context.allocator,
         )
         return _ionized_species(
             context, self.ions, self.electrons, result, self.process_id
         )
+
+    def localize(
+        self, species: tuple[PICSpeciesPlan, ...], parts: int, /
+    ) -> FieldIonizationProcess:
+        """The process on one device's slot blocks.
+
+        Each device ionizes at most its share ``⌈maximum_events / parts⌉`` of
+        the step's event budget, which must fit the ion block and the electron
+        block's allocation capacity. The local view keeps the run's process
+        identity, so its random stream is the run's.
+        """
+        plan = self.plan
+        events = _local_events(
+            plan.maximum_events,
+            parts,
+            min(
+                species[self.ions].capacity,
+                species[self.electrons].population.allocation_capacity,
+            ),
+        )
+        local = FieldIonizationPlan(
+            plan.rate_coefficient,
+            field_power=plan.field_power,
+            ionization_energy=plan.ionization_energy,
+            maximum_probability=plan.maximum_probability,
+            maximum_events=events,
+        )
+        return eqx.tree_at(lambda process: process.plan, self, local)
 
 
 def _random_active_slots(key: PRNGKey, active: Array, count: int, /) -> Array:
@@ -145,7 +236,7 @@ def _random_active_slots(key: PRNGKey, active: Array, count: int, /) -> Array:
     return jnp.pad(selected, (0, count - size), constant_values=-1)
 
 
-class ImpactIonizationProcess(AbstractPICProcess, NonTrainableState):
+class ImpactIonizationProcess(_AbstractIonizationProcess, NonTrainableState):
     """`ElectronImpactIonizationPlan` over randomly paired active ions/electrons.
 
     Each step pairs up to ``maximum_events`` distinct active ions with distinct
@@ -210,10 +301,37 @@ class ImpactIonizationProcess(AbstractPICProcess, NonTrainableState):
             event_key,
             context.step_size,
             context.step_index,
+            allocator=context.allocator,
         )
         return _ionized_species(
             context, self.ions, self.electrons, result, self.process_id
         )
+
+    def localize(
+        self, species: tuple[PICSpeciesPlan, ...], parts: int, /
+    ) -> ImpactIonizationProcess:
+        """The process on one device's slot blocks.
+
+        Each device pairs at most its share ``⌈maximum_events / parts⌉`` of the
+        step's pair budget among its own ions and electrons, which must fit the
+        electron block's allocation capacity. The local view keeps the run's
+        process identity, so its random stream is the run's.
+        """
+        plan = self.plan
+        events = _local_events(
+            plan.maximum_events,
+            parts,
+            species[self.electrons].population.allocation_capacity,
+        )
+        local = ElectronImpactIonizationPlan(
+            plan.energy_grid,
+            plan.cross_section,
+            ionization_energy=plan.ionization_energy,
+            rate_scale=plan.rate_scale,
+            maximum_probability=plan.maximum_probability,
+            maximum_events=events,
+        )
+        return eqx.tree_at(lambda process: process.plan, self, local)
 
 
 __all__ = ["FieldIonizationProcess", "ImpactIonizationProcess"]

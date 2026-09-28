@@ -15,6 +15,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._custom_root import custom_root
 from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -295,7 +296,7 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
             return right_hand_side / safe
 
         initial = jnp.clip(jnp.asarray(0.0, dtype=deformation.dtype), lower, upper)
-        eta = jax.lax.custom_root(residual, initial, solve, tangent_solve)
+        eta = custom_root(residual, initial, solve, tangent_solve)
         lower_response = law.evaluate(embedded(lower))
         upper_response = law.evaluate(embedded(upper))
         lower_residual = lower_response.first_piola[2, 2]

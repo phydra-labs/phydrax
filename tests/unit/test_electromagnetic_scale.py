@@ -1,5 +1,5 @@
 from fractions import Fraction
-from math import isclose
+from math import isclose, pi
 
 import pytest
 
@@ -57,13 +57,8 @@ def test_si_realization_matches_codata_2022() -> None:
         _CODATA_2022_DERIVED["classical_electron_radius"],
         rel_tol=1e-10,
     )
-    # The shared relativity scale declares hbar to ten significant digits, which
-    # bounds the reproduced fine-structure constant at the 1e-9 level.
-    assert isclose(
-        1.0 / float(scale.fine_structure),
-        _CODATA_2022_DERIVED["inverse_fine_structure"],
-        rel_tol=2e-9,
-    )
+    # hbar = h / (2 pi) from exact SI h; CODATA 2022 alpha^-1 = 137.035999177(21).
+    assert abs(1.0 / float(scale.fine_structure) - 137.035999177) <= 21e-9
 
 
 def test_vacuum_constants_satisfy_maxwell_identity() -> None:
@@ -83,7 +78,7 @@ def test_schwinger_field_matches_independent_float_formula() -> None:
     mass = 9.1093837139e-31
     charge = 1.602176634e-19
     light = 299_792_458.0
-    hbar = 1.054571817e-34
+    hbar = 6.62607015e-34 / (2.0 * pi)
 
     expected = mass**2 * light**3 / (charge * hbar)
     assert isclose(float(scale.schwinger_field), expected, rel_tol=1e-12)

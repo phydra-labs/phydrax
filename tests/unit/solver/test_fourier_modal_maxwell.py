@@ -349,10 +349,10 @@ def test_fourier_modal_maxwell_scenario_3() -> None:
         jnp.asarray((0.0, 0.0)),
     )
     relation = fm.prepare_layer_boundary(operator, 0.0, _boundary_policy())
-    np.testing.assert_allclose(np.asarray(relation.a), np.eye(2), atol=1e-12)
-    np.testing.assert_allclose(np.asarray(relation.d), np.eye(2), atol=1e-12)
-    np.testing.assert_allclose(np.asarray(relation.b), 0.0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(relation.c), 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(relation.s11), np.eye(2), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(relation.s22), np.eye(2), atol=1e-12)
+    np.testing.assert_allclose(np.asarray(relation.s12), 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(relation.s21), 0.0, atol=1e-12)
 
 
 def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() -> None:
@@ -398,16 +398,16 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
     assert int(jnp.sum(prepared_continuous.segment_active)) == 1
     for actual, expected in zip(
         (
-            prepared_continuous.boundary.a,
-            prepared_continuous.boundary.b,
-            prepared_continuous.boundary.c,
-            prepared_continuous.boundary.d,
+            prepared_continuous.boundary.s11,
+            prepared_continuous.boundary.s12,
+            prepared_continuous.boundary.s21,
+            prepared_continuous.boundary.s22,
         ),
         (
-            constant_boundary.a,
-            constant_boundary.b,
-            constant_boundary.c,
-            constant_boundary.d,
+            constant_boundary.s11,
+            constant_boundary.s12,
+            constant_boundary.s21,
+            constant_boundary.s22,
         ),
         strict=True,
     ):
@@ -478,7 +478,7 @@ def test_constant_continuous_layer_and_zero_to_pml_reduce_to_existing_paths() ->
     )
     assert (
         # ty: ignore[unresolved-attribute]
-        prepared_stack.elements[0].segment_prefix_boundaries.a.shape[0]
+        prepared_stack.elements[0].segment_prefix_boundaries.s11.shape[0]
         == varying.integration_policy.maximum_segments + 1
     )
 

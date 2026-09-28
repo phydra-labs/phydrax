@@ -58,6 +58,7 @@ def test_boundary_and_ionization_failures_roll_back_every_accepted_state() -> No
         jnp.asarray(((-0.1,), (jnp.nan,))),
         jnp.ones((2,)),
         boundary.initialize_surface(),
+        kinetic_energy=(jnp.zeros((2,)), jnp.zeros((2,))),
     )
     assert not bool(boundary_result.successful)
     np.testing.assert_array_equal(

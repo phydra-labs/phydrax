@@ -272,9 +272,368 @@ def pic_radiation_reaction_candidate_profiles() -> tuple[CapabilityProfile, ...]
     )
 
 
+_SPECTRAL_GATES = (
+    "vacuum-dispersion-exact-infinite-order",
+    "vacuum-dispersion-modified-wavenumber-finite-order",
+    "gauss-law-per-charge-conservation-mode",
+    "godfrey-vay-predicted-nci-growth",
+    "psatd-pml-reflection",
+    "psatd-pml-gauss-law-outside-layers",
+    "spectral-sheet-antenna-one-way-work-doppler-gaussian-beam",
+    "local-guarded-equals-global-within-truncation",
+    "dipole-far-field-matches-cochain",
+    "compatibility-refusals",
+    "restart-round-trip",
+)
+_GALILEAN_GATES = (
+    "gauss-law-per-charge-conservation-mode",
+    "galilean-suppresses-nci-drifting-plasma",
+    "compatibility-refusals",
+    "restart-round-trip",
+)
+_QUASI_CYLINDRICAL_GATES = (
+    "shared-grid-hankel-laplacian-eigenfunctions-with-rank-evidence",
+    "vacuum-tm-modes-exact-dispersion",
+    "m1-gaussian-antenna-beam-matches-paraxial-waist-and-gouy",
+    "gauss-law-per-charge-conservation-mode-and-shape",
+    "near-axis-regular-modal-densities",
+    "axisymmetric-field-equals-cartesian-psatd",
+    "hertzian-dipole-far-field-through-huygens-cylinder",
+    "radial-damping-absorption-ledger",
+    "window-shift-with-gauss-projection",
+    "compatibility-refusals",
+    "restart-round-trip",
+    "lwfa-wake-matches-pinned-fbpic",
+)
+
+
+def pic_spectral_support_tuples() -> tuple[SupportTuple, ...]:
+    return (
+        SupportTuple(
+            "pic.psatd",
+            {
+                "geometry": "periodic-uniform-cartesian-3d",
+                "time_integration": "exact-phi-function-psatd-constant-linear-multi-j",
+                "charge_conservation": "spectral-correction-vay-deposition-update-with-rho",
+                "stencils": "infinite-order-and-even-finite-order",
+                "grids": "collocated-and-staggered",
+                "decomposition": "global-fft-and-local-guarded",
+                "absorber": "two-step-split-field-psatd-pml-with-layer-absorber-charge",
+                "sources": "band-limited-moving-plane-sheet-antennas",
+                "observation": "huygens-box-far-field",
+                "precision": "float64",
+            },
+        ),
+        SupportTuple(
+            "pic.galilean-psatd",
+            {
+                "geometry": "periodic-uniform-cartesian-3d",
+                "variants": "galilean-and-averaged-galilean",
+                "particle_frame": "grid-coordinates-drifting-at-galilean-velocity",
+                "charge_conservation": "update-with-rho-and-galilean-form-correction",
+                "stability": "nci-monitor-high-k-shell-growth-fit",
+                "precision": "float64",
+            },
+        ),
+        SupportTuple(
+            "pic.quasi-cylindrical",
+            {
+                "geometry": "azimuthal-modes-radial-hankel-periodic-axial",
+                "transform": "shared-grid-hankel-pseudoinverse-orders-m-and-m-plus-minus-1",
+                "time_integration": "exact-phi-function-psatd-constant-j",
+                "variants": "standard-galilean-and-averaged-galilean",
+                "charge_conservation": "update-with-rho-and-spectral-correction",
+                "deposition": "azimuthal-mode-splines-order-1-to-3-near-axis-volumes",
+                "absorber": "divergence-preserving-radial-damping",
+                "sources": "per-mode-one-way-sheet-antennas-with-declared-charges",
+                "observation": "huygens-cylinder-far-field",
+                "moving_window": "axial-shift-with-spectral-gauss-projection",
+                "oracle": "pinned-fbpic",
+                "precision": "float64",
+            },
+        ),
+    )
+
+
+def pic_spectral_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    gates = {
+        "pic.psatd": _SPECTRAL_GATES,
+        "pic.galilean-psatd": _GALILEAN_GATES,
+        "pic.quasi-cylindrical": _QUASI_CYLINDRICAL_GATES,
+    }
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=gates[support.capability],
+            released=False,
+        )
+        for support in pic_spectral_support_tuples()
+    )
+
+
+_QED_CASCADE_GATES = (
+    "compton-rate-vs-bessel-quadrature",
+    "breit-wheeler-rate-vs-quadrature-and-erber-asymptotics",
+    "photon-spectrum-kolmogorov-smirnov",
+    "pair-spectrum-kolmogorov-smirnov",
+    "small-chi-power-equals-quantum-corrected-landau-lifshitz",
+    "improved-lcfa-infrared-spectrum",
+    "declared-conservation-with-field-exchange-defect",
+    "rotating-field-cascade-growth-vs-grismayer",
+    "ledger-closure-with-field-exchange",
+    "storage-slot-order-invariance",
+    "atomic-capacity-refusal",
+    "restart-component",
+    "documentation-nonclaims",
+)
+
+
+def pic_qed_cascade_support_tuples() -> tuple[SupportTuple, ...]:
+    return (
+        SupportTuple(
+            "pic.qed-cascade",
+            {
+                "processes": "nonlinear-compton-and-nonlinear-breit-wheeler",
+                "models": "lcfa-and-improved-lcfa-di-piazza-2019",
+                "tables": "host-quadrature-of-synchrotron-kernels-fingerprinted-monotone-cdf",
+                "monte_carlo": "optical-depth-with-bounded-adaptive-subcycling",
+                "randomness": "identity-addressed-step-id-event-keys",
+                "coupling": "pic-creation-stage-before-drift-and-deposit",
+                "conservation": "declared-momentum-or-energy-with-field-exchange-ledger",
+                "photons": "process-owned-ballistic-bank-with-escape-histograms",
+                "capacity": "atomic-refusal-and-occupancy-merge-trigger",
+                "validity": "per-event-formation-ratio-trident-and-splitting-flags",
+                "ownership": "subgrid-reaction-with-grid-cutoff-scale-separation",
+                "precision": "float64",
+            },
+        ),
+    )
+
+
+def pic_qed_cascade_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=_QED_CASCADE_GATES,
+            released=False,
+        )
+        for support in pic_qed_cascade_support_tuples()
+    )
+
+
+_POLARIZED_QED_GATES = (
+    "polarized-tables-average-to-unpolarized-tables",
+    "polarized-rates-vs-seipt-king-quadrature",
+    "channel-spectra-vs-seipt-king",
+    "sokolov-ternov-flip-rate-and-equilibrium",
+    "monte-carlo-radiative-polarization-relaxation",
+    "tbmt-anomaly-precession-all-pushers",
+    "pic-spin-precession-with-run-pusher",
+    "photon-polarization-degree-vs-lcfa",
+    "polarized-pair-rates-and-pair-spins",
+    "galilean-grid-qed-equals-lab-grid",
+    "spin-polarized-restart-component",
+    "documentation-nonclaims",
+)
+
+
+def pic_polarized_qed_support_tuples() -> tuple[SupportTuple, ...]:
+    return (
+        SupportTuple(
+            "pic.polarized-qed",
+            {
+                "models": "photon-polarized-and-spin-and-photon-polarized",
+                "rates": "seipt-king-2020-lcfa-spin-quantization-axis-channels",
+                "tables": "polarized-compton-and-breit-wheeler-mixture-components",
+                "spin": "identity-carried-polarization-vector-quantum-jump",
+                "no_event_evolution": "mass-operator-and-vacuum-dichroism",
+                "precession": "tbmt-consistent-with-boris-vay-higuera-cary",
+                "photons": "linear-stokes-rotated-to-local-field-basis",
+                "grids": "lab-and-galilean",
+                "precision": "float64",
+            },
+        ),
+    )
+
+
+def pic_polarized_qed_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=_POLARIZED_QED_GATES,
+            released=False,
+        )
+        for support in pic_polarized_qed_support_tuples()
+    )
+
+
+_DISTRIBUTED_GATES = (
+    "n-devices-equal-one-device-within-reduction-order",
+    "halo-accumulation-equals-global-deposit",
+    "migration-overflow-atomic-rejection",
+    "same-topology-restart-bitwise",
+    "repartition-restart-within-tolerance",
+    "window-locality-refusal",
+    "local-guarded-equals-global-fft-within-stencil-truncation",
+    "distributed-processes-equal-one-device-identities-bitwise",
+    "weak-and-strong-scaling-benchmark",
+)
+
+
+def pic_distributed_support_tuples() -> tuple[SupportTuple, ...]:
+    return (
+        SupportTuple(
+            "pic.distributed",
+            {
+                "decomposition": "static-equal-blocks-1d-2d-3d-mesh-restart-repartition",
+                "field_solvers": (
+                    "cochain-3d-reduced-1d-2d-psatd-global-fft-and-local-guarded"
+                ),
+                "deposition": "window-local-axis-by-axis-halo-accumulation-plus-uniform",
+                "migration": "fixed-capacity-ppermute-packets-diagonals-atomic-rejection",
+                "processes": (
+                    "per-device-creation-population-stateful-resampling-"
+                    "tile-reserved-identities"
+                ),
+                "restart": "lifecycle-addressable-shards-bitwise-same-topology",
+                "precision": "float64",
+            },
+        ),
+    )
+
+
+def pic_distributed_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=_DISTRIBUTED_GATES,
+            released=False,
+        )
+        for support in pic_distributed_support_tuples()
+    )
+
+
+_DISPERSIVE_SELF_CONSISTENT_GATES = (
+    "open-boundary-gauss-and-charge-ledger-closure",
+    "particle-exit-charge-mass-energy-ledger",
+    "reduced-2d-nonperiodic-pairing-roundoff",
+    "dispersive-magnetized-energy-ledger-second-order",
+    "cpml-absorbed-energy-in-ledger",
+    "weak-coupling-beam-equals-prescribed-charge-cherenkov",
+    "filtered-gauss-initialization",
+    "ownership-and-medium-refusals",
+    "documentation-nonclaims",
+)
+
+
+def pic_dispersive_self_consistent_support_tuples() -> tuple[SupportTuple, ...]:
+    return (
+        SupportTuple(
+            "pic.dispersive-self-consistent",
+            {
+                "geometry": "cartesian-3d-cochain-and-reduced-1d-2d-periodic-or-bounded",
+                "boundaries": "cpml-pec-pmc-impedance-with-particle-exit-ledger",
+                "media": "linear-passive-lossy-lorentz-drude-magnetic-poles-magnetized-plasma",
+                "deposition": "charge-conserving-spline-whitney-clipped-at-walls",
+                "gauss": "current-driven-pairing-with-induced-wall-and-medium-charge",
+                "energy_ledger": "leapfrog-field-medium-split-trapezoidal-losses",
+                "initialization": "filtered-charge-electrostatic-grounded-or-periodic",
+                "ownership": "field-solver-radiation-claim-refused-on-overlap",
+                "precision": "float64",
+            },
+        ),
+    )
+
+
+def pic_dispersive_self_consistent_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=_DISPERSIVE_SELF_CONSISTENT_GATES,
+            released=False,
+        )
+        for support in pic_dispersive_self_consistent_support_tuples()
+    )
+
+
+_BOOSTED_FRAME_GATES = (
+    "particle-boost-contraction-and-velocity-addition",
+    "undulator-gather-only-magnetic-type-subluminal",
+    "boosted-tracks-through-trajectory-radiation-equal-lab",
+    "back-transformed-vacuum-laser-equals-lab",
+    "lwfa-energy-gain-boosted-equals-lab",
+    "back-transformed-wake-and-particles-match-lab-run",
+    "nci-guard-rejection",
+    "moving-antenna-world-line",
+    "refusals",
+    "restart-round-trip",
+)
+
+
+def pic_boosted_frame_support_tuples() -> tuple[SupportTuple, ...]:
+    return (
+        SupportTuple(
+            "pic.boosted-frame",
+            {
+                "frame": "pure-lorentz-boost-along-one-grid-axis",
+                "field_solver": "galilean-psatd-comoving-with-boosted-plasma",
+                "particles": "proper-velocity-boost-and-ballistic-slice-loading",
+                "external_fields": "gather-only-boosted-lab-sources",
+                "antennas": "moving-sampled-plane-sheet",
+                "stability": "mandatory-high-k-nci-guard",
+                "diagnostics": "back-transformed-lab-fields-and-particles-bounded-ring",
+                "tracks": "lab-frame-per-lane-times-for-trajectory-radiation",
+                "far_field": "huygens-standard-grid-zero-surface-current-vacuum-only",
+                "precision": "float64",
+            },
+        ),
+    )
+
+
+def pic_boosted_frame_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    return tuple(
+        CapabilityProfile(
+            f"{support.capability}.profile",
+            "phydrax",
+            "candidate",
+            (support,),
+            required_gates=_BOOSTED_FRAME_GATES,
+            released=False,
+        )
+        for support in pic_boosted_frame_support_tuples()
+    )
+
+
 __all__ = [
     "PICQualificationReport",
+    "pic_boosted_frame_candidate_profiles",
+    "pic_boosted_frame_support_tuples",
+    "pic_dispersive_self_consistent_candidate_profiles",
+    "pic_dispersive_self_consistent_support_tuples",
+    "pic_distributed_candidate_profiles",
+    "pic_distributed_support_tuples",
+    "pic_polarized_qed_candidate_profiles",
+    "pic_polarized_qed_support_tuples",
+    "pic_qed_cascade_candidate_profiles",
+    "pic_qed_cascade_support_tuples",
     "pic_radiation_reaction_candidate_profiles",
     "pic_radiation_reaction_support_tuples",
+    "pic_spectral_candidate_profiles",
+    "pic_spectral_support_tuples",
     "run_pic_qualification",
 ]

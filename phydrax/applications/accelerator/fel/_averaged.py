@@ -102,8 +102,11 @@ class FELStatus(IntFlag):
     """Fail-closed status bits of an averaged-FEL slice or time-dependent run.
 
     The first six bits apply to every slice; ``WINDOW_TRUNCATED``,
-    ``SEED_UNREPRESENTED``, and ``SPACE_CHARGE_REFUSED`` are raised only by the
-    time-dependent solver.
+    ``SEED_UNREPRESENTED``, ``SPACE_CHARGE_REFUSED``,
+    ``SLIPPAGE_UNRESOLVED`` (an undulator step slips the field past more than
+    one slot, so it skips slices), and ``TRANSVERSE_SPACE_CHARGE_OMITTED`` (an
+    omitted X3 transverse kick exceeds its declared tolerance) are raised only
+    by the time-dependent solver.
     """
 
     SUCCESS = 0
@@ -116,6 +119,8 @@ class FELStatus(IntFlag):
     WINDOW_TRUNCATED = 64
     SEED_UNREPRESENTED = 128
     SPACE_CHARGE_REFUSED = 256
+    SLIPPAGE_UNRESOLVED = 512
+    TRANSVERSE_SPACE_CHARGE_OMITTED = 1024
 
 
 class FELSeed(StrictModule, NonTrainableState):

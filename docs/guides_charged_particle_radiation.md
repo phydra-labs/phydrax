@@ -266,7 +266,7 @@ indices finds its segment, and the native bracketed `scalar_root` (TOMS748)
 solves the residual on the Hermite segment to `10⁻¹³` of the step in observer
 time. The residual is written relative to the segment's first sample, so far
 observers keep full precision. Derivatives of the root come from the implicit
-function theorem (`lax.custom_root`), so fields are differentiable with
+function theorem (a custom JVP root rule), so fields are differentiable with
 respect to observer events and trajectory samples.
 
 `interpolation="hermite-cubic"` needs only positions and proper velocities: the
@@ -313,6 +313,104 @@ field (including `γ = 10⁴`), Born's hyperbolic-motion field, second- and
 fourth-order convergence, the far-zone limit against the observer-time
 waveform, Gauss's law on a sphere, history, causality, exclusion and activity
 evidence, chunk invariance, JVP/VJP, and refusals.
+
+## Cross-route release matrix
+
+The radiation routes are implemented independently: vacuum trajectory spectra
+(A), Maxwell fields in media (B), self-consistent PIC (P), radiative particle
+processes (Q), plasma microphysics (C), accelerator and FEL physics (X), and
+matter and optical-photon transport (M). The release matrix drives pairs of
+them through one shared scenario and asserts that they agree on one
+observable. Each row is evaluated at two or more resolutions. Its tolerance is
+a stated multiple of the measured coefficient of its error model, so no bound
+is loose by assumption.
+
+| Row | Scenario and observable | Error model (measured) | Test |
+|---|---|---|---|
+| A1 ↔ B1 | Prescribed circular orbit in a CPML box; Huygens far-field complex spectrum against A1 on the deposited path | `(kh)²`, order > 1.7 | `tests/unit/solver/test_prescribed_charge_vacuum_orbit.py` |
+| A1 ↔ P | Electron gyrating in a uniform external field inside `ElectromagneticPICPlan`, recorded by `PICTrackRecorder`, then radiated by A1; compared with A1 on the exact helix at `Ω` and `2Ω` | Boris phase lag `(ΩΔt)²`: order 1.98–1.99, error 5·10⁻³ (fundamental) at `ΩΔt = 0.065` | `test_radiation_cross_route.py` |
+| B2 ↔ B4 | Cherenkov and Smith–Purcell time-domain prescribed charge against the frequency-domain moving charge | Owned by B4 | `tests/unit/solver/test_prescribed_charge_frequency_domain.py` |
+| P1 ↔ P2 ↔ P3 | Axisymmetric TM pulse on the cochain, Cartesian-PSATD, and quasi-cylindrical field solvers, gathered at shared probes; closed-form d'Alembert reference | PSATD exact in vacuum (3·10⁻⁸, 1·10⁻⁹); Yee order 1.95, 6.5·10⁻² at `h = 0.05` | `test_radiation_cross_route.py` |
+| Q1 ↔ Q2 | Nonlinear-Compton Monte Carlo energy loss against classical Landau–Lifshitz for `χ = 0.02, 0.01, 0.005` | Quantum deficit `1 − g(χ)`: leading coefficient 6.07 ± 0.15 against `55√3/16`; step independence at `p/2` within 0.8σ | `test_radiation_cross_route.py` |
+| C2 ↔ A1 | Thermal (Jüttner, `kT = 0.02 mc²`) cyclotron harmonics `s = 1, 2` in a tenuous plasma against A1 helices averaged over the same distribution (emitted power) | Window error exactly first order in `1/N`; Richardson residual ≤ 1·10⁻⁶ | `test_radiation_cross_route.py` |
+| X4 | 3-D steady integrated-Green-function CSR against the retarded mesh | Owned by X4 | `tests/unit/applications/test_accelerator_csr.py` |
+| X5 ↔ X6 | Seeded 1-D-like low-gain FEL: full-wave boosted-frame PIC gain against the period-averaged FEL | Owned by X6 | `tests/unit/applications/test_accelerator_fel_full_wave.py` |
+| M2 ↔ B2 | Cherenkov photons per length in a dispersive water-like dielectric against the Poynting flux of the uniform-motion field divided by `ħω` | Source trapezoid in `λ`: `0.458 (N − 1)⁻²` (Euler–Maclaurin); Richardson limit within 4·10⁻⁸ | `test_radiation_cross_route.py` |
+
+The candidate profile `radiation.cross-route-release-matrix` in the built-in
+qualification catalog lists the test node IDs of every row as its required
+gates and depends on every member route profile. Release discovery therefore
+needs each member released and current evidence for each row. Rows whose
+routes disagree are reported against the owning module. They are never
+absorbed by widening a tolerance.
+
+## External provider oracles
+
+Established codes check the radiation routes as external oracles. Every
+adapter lives with the route it checks. It builds the provider's input deck from
+the Phydrax plan, so the provider runs the same case and no second
+implementation of the physics is involved. It runs a caller-pinned executable
+or interpreter (`PinnedExecutable`, `run_pinned_command`) with a timeout and
+byte-capped file artifacts, and converts the output back through the plan's
+`ElectromagneticScaleContract`. Each result carries `provider_version`,
+`executable_sha256`, `license_id`, `output_sha256`, and an `AdapterReport`
+whose losses list what the provider cannot represent. Configurations outside
+the supported subset raise `ValueError` before anything runs. GPL codes are
+only ever run as pinned external programs: no source is copied or linked.
+Each live comparison test skips only when its environment variables are unset.
+If they are set and the provider is broken, the test fails. The "validated"
+column gives the release each live comparison ran against. `pin_executable`
+resolves symbolic links, so a symlinked virtual-environment interpreter is
+pinned as the base interpreter and loses the environment's packages. Point an
+interpreter variable at a real file instead: a conda/pixi interpreter, a
+`python -m venv --copies` interpreter, or a wrapper script.
+
+| Provider | Validated | License | Supported subset | Environment variables |
+|---|---|---|---|---|
+| SRW (`run_srw`) | srwpy 4.2.1 | EPICS | One electron, given as a single-lane `ChargedTrajectory` with uniform times or as an X1a `FieldMapTrackingPlan` (undulators, dipoles, magnetic tables; tabulated `SRWLMagFld3D` or ideal undulator). Forward observers, uniformly spaced frequencies, SI-referenced scale. The phase is referred to the A1 retarded time. | `PHYDRAX_SRW_PYTHON`, `PHYDRAX_SRW_PYTHON_VERSION` |
+| UFGC (`run_ufgc`) | gyrosynchrotron 5e014ba | GPL-3.0-only | C2 electrons in one collisionless plasma species: thermal, kappa, or power law; harmonic-sum or continuous route; angles in (0, π) | `PHYDRAX_UFGC_PYTHON`, `PHYDRAX_UFGC_PYTHON_VERSION`, `PHYDRAX_UFGC_LIBRARY`, `PHYDRAX_UFGC_VERSION` |
+| Symphony (`run_symphony`) | a869c6b | GPL-3.0-only | C2 thermal, kappa, or power-law electrons in vacuum (`n = 1`); angles in (0, π/2) | `PHYDRAX_SYMPHONY_PYTHON`, `PHYDRAX_SYMPHONY_PYTHON_VERSION`, `PHYDRAX_SYMPHONY_MODULE`, `PHYDRAX_SYMPHONY_VERSION` |
+| WarpX (`run_warpx`, `run_warpx_track`, `run_warpx_wakefield`) | 26.01 | BSD-3-Clause-LBNL | Fully periodic 3-D `ElectromagneticPICPlan` on the Yee cochain solver or on constant-J global-FFT PSATD (standard/Galilean), with no processes, filters, or boundaries. One recorded particle in a uniform static external field (`single-particle-radiation`), whose track enters A1 through the openPMD particle reader. A quasi-cylindrical P3 laser-wakefield stage on WarpX RZ PSATD (`laser-wakefield-stage`). | `PHYDRAX_WARPX`, `PHYDRAX_WARPX_RZ`, `PHYDRAX_WARPX_VERSION` |
+| Smilei (`run_smilei`) | 5.1 | CECILL-B | Periodic Yee plasma, shape order 2, integer charge states | `PHYDRAX_SMILEI`, `PHYDRAX_SMILEI_VERSION` |
+| PIConGPU (`run_picongpu`) | 0.8.0 | GPL-3.0-or-later | Periodic Yee plasma with lattice-loaded species. Counts must be multiples of the supercell. Each setup is compiled by a pinned build driver. | `PHYDRAX_PICONGPU`, `PHYDRAX_PICONGPU_VERSION` |
+| FBPIC (`fbpic_laser_wakefield`) | 0.27.0 | BSD-3-Clause-LBNL | Quasi-cylindrical laser wakefield in plasma units | `PHYDRAX_FBPIC_PYTHON`, `PHYDRAX_FBPIC_PYTHON_VERSION` |
+| Genesis 1.3 v4 (`run_genesis4`) | 4.6.15 | GPL-3.0-only | X5 averaged time-dependent FEL: angular-spectrum grid, fundamental only, uniform slices | `PHYDRAX_GENESIS4`, `PHYDRAX_GENESIS4_VERSION` |
+| Puffin (`run_puffin`) | 2.1.0a+157f473 | BSD-3-Clause | X5 one-dimensional model, fundamental only, one undulator period and polarization, Gaussian seed | `PHYDRAX_PUFFIN`, `PHYDRAX_PUFFIN_VERSION` |
+| elegant (`run_elegant_csr`) | 2026.3.0 | EPICS | X4 `1d-steady` and unshielded `1d-transient-shielded` electron tracking through bends and drifts | `PHYDRAX_ELEGANT`, `PHYDRAX_ELEGANT_VERSION` |
+| Ocelot (`ocelot_csr_tracking`) | no live run recorded | GPL-3.0 | X4 1-D transient CSR through drifts and bends | `PHYDRAX_OCELOT_PYTHON`, `PHYDRAX_OCELOT_PYTHON_VERSION` |
+| PyCSR3D (`pycsr3d_longitudinal_wake`) | no live run recorded | Apache-2.0 | X4 `3d-steady-igf` longitudinal wake | `PHYDRAX_PYCSR3D_PYTHON`, `PHYDRAX_PYCSR3D_PYTHON_VERSION` |
+| Geant4 (`run_geant4_shower`, `run_geant4_cherenkov`, `run_geant4_optical`) | geant4_pybind 0.1.3, Geant4 11.4.p01 | LicenseRef-Geant4 | M1 homogeneous-slab electromagnetic showers with thresholds matched through range cuts. M2 Cherenkov emission from one constant-speed step. M2 optical transport through a planar stack of polished UNIFIED dielectric interfaces with absorption and Rayleigh scattering. The in-plane polarization sign of 11.4.p01 is a declared loss. | `PHYDRAX_GEANT4_PYTHON`, `PHYDRAX_GEANT4_PYTHON_VERSION`, `PHYDRAX_GEANT4_DATA` |
+| openPMD-api (`OpenPMDADIOS2Provider`) | 0.17.1 | LGPL-3.0-or-later | ADIOS2 BP4 ↔ HDF5 conversion of openPMD series | `PHYDRAX_OPENPMD_PIPE`, `PHYDRAX_OPENPMD_API_VERSION` |
+
+Measured agreement in the live tests:
+
+- SRW against A1 on an X1a-tracked 10-period planar undulator (γ = 100, K = 1):
+  spectral energy within 1.8·10⁻³ of the peak on axis; phase within 1.1·10⁻³ rad.
+  The helical Stokes `V/I` agrees to 2·10⁻⁶.
+- UFGC against the C2 harmonic sum: thermal coefficients within 2.3·10⁻³,
+  power-law coefficients within 1.4·10⁻⁴. Symphony against C2 in the
+  vacuum-index regime: thermal and kappa `j_I` and `α_I` within 0.4%.
+- WarpX, Smilei, and PIConGPU against the cochain PIC plasma oscillation:
+  field energy within 1.3·10⁻¹³ (WarpX) and 2.6·10⁻⁷ (Smilei). WarpX
+  drifting-plasma NCI growth rate against PSATD: 0.205 against 0.228.
+  - WarpX cyclotron track through A1 against the Phydrax recorder track, at
+    384 steps: 4.5·10⁻⁴ (fundamental) and 6.8·10⁻⁴ (second harmonic). Both
+    are inside the `m(ΩΔt)²/8` velocity-synchronization bound, and the
+    observed order is 2.00.
+  - WarpX RZ on-axis wake against P3 (relative `L²`): 13.1%, 9.8%, and 8.1%
+    as the WarpX step is halved twice, converging toward the 5.6%
+    FBPIC-to-P3 level.
+- Puffin against X5: gain length 0.2811 m against 0.2805 m, and saturation
+  power within 0.06%.
+- elegant against `track_csr`: steady-model energy spread within 1% and
+  emittance growth within 6%.
+- Geant4 lead showers: mean depth within 4% of the Longo profile.
+  Cherenkov yield in water within 0.21% of Frank–Tamm. Fresnel, total
+  internal reflection, Beer–Lambert, and Rayleigh fractions within 2.5
+  binomial σ of the optical Monte Carlo.
+
+Program references are in the source ledger
+(`electromagnetic_radiation_sources.md`, "Comparison programs").
 
 ## Not claimed
 

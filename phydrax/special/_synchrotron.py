@@ -194,4 +194,16 @@ def synchrotron_g(x: ArrayLike) -> Array:
     return _synchrotron_g_array(_prepare("synchrotron_g", x))
 
 
-__all__ = ["synchrotron_f", "synchrotron_g"]
+def synchrotron_h(x: ArrayLike) -> Array:
+    """Spin-dependent synchrotron kernel ``H(x) = x * K_{1/3}(x)``.
+
+    The spin-odd part of the quantum synchrotron spectrum and the spin-flip
+    channels carry ``K_{1/3}``. The float64 result has uniform relative error
+    at most ``3.6e-15`` for positive normal results. ``H(0) = 0`` with an
+    infinite right derivative, ``H(inf) = 0``, and negative or NaN arguments
+    return NaN. The argument derivative ``2H/(3x) - x K_{2/3}(x)`` is analytic.
+    """
+    return _synchrotron_h_array(_prepare("synchrotron_h", x))
+
+
+__all__ = ["synchrotron_f", "synchrotron_g", "synchrotron_h"]

@@ -952,7 +952,9 @@ def matrix_function_action(
     )
     norm = _norm_from_squared(operator.source.inner(validated_vector, validated_vector))
     dimension = decomposition.effective_dimension
-    active = jnp.arange(projected.shape[0]) < dimension
+    active = (
+        jnp.arange(projected.shape[0], dtype=jnp.asarray(dimension).dtype) < dimension
+    )
     coefficients = jnp.where(active, function[:, 0], 0)
     basis_coordinates = jnp.swapaxes(decomposition.basis[:-1], -1, -2)
     result_coordinates = norm * (basis_coordinates @ coefficients)
@@ -1233,7 +1235,10 @@ def _small_matrix_function(
 ) -> Array:
     scaled = scale * matrix
     if active_dimension is not None:
-        active = jnp.arange(matrix.shape[0]) < active_dimension
+        active = (
+            jnp.arange(matrix.shape[0], dtype=jnp.asarray(active_dimension).dtype)
+            < active_dimension
+        )
         active_block = active[:, None] & active[None, :]
         scaled = jnp.where(active_block, scaled, 0)
         scaled = scaled + jnp.diag((~active).astype(scaled.dtype))

@@ -1,0 +1,18 @@
+{
+  "provider": "Puffin",
+  "version": "2.1.0a+157f473 (https://github.com/UKFELs/Puffin commit 157f473590b59f4716f7bdeaaed991c99f09d0b5, built with conda-forge openmpi 5.0, fftw mpi_openmpi, hdf5 mpi_openmpi 2.2.0, gfortran 15.3.0, osx-arm64)",
+  "license": "BSD-3-Clause",
+  "executable_sha256": "5ef887f416ca2b9cf61410cc1d164c62518c85f2fb5f037a4831faddb5de257f",
+  "command": "OMP_NUM_THREADS=1 puffin puffin.in via phydrax.applications.accelerator.fel.run_puffin on test_accelerator_fel_puffin._reference_case (record_periods=4); records stored as gzip -9 -n",
+  "date": "2026-09-28",
+  "input_sha256": {
+    "beam.in": "157f9508a2838472ebf8409d0cb3486bc253bdbab68440b423b58048e7315eff",
+    "puffin.in": "7cfdd928ab1b876a03b62c259d72cc31b8c752e150061d4bb3ef92cbcc2fc4be",
+    "puffin.latt": "566f4021c481ede79e7cb648b4bd16e4e6bfaf0a333b1c31d57d71963144b101",
+    "seed.in": "f18ede19654df47232812d7164589fcf638e899ccbe8e5850e902fc30afbedb5"
+  },
+  "output_sha256": {
+    "puffin_integrated_0.h5": "7ce77f182f9fd55e77fa6104cc095666100c22acab8796e0792ca4b2b6d2207a",
+    "puffin_integrated_1.h5": "a552ec9570f85ca66b074f959dd23ac6a78374f16d11fc381648578d3b60ed91"
+  }
+}

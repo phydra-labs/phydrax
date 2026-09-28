@@ -22,6 +22,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..._custom_root import custom_root
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -443,9 +444,9 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
         ) -> Array:
             return right_hand_side / linearized(jnp.ones_like(right_hand_side))
 
-        t = jax.lax.custom_root(
-            residual_all, initial.reshape(-1), solve, tangent_solve
-        ).reshape(shape)
+        t = custom_root(residual_all, initial.reshape(-1), solve, tangent_solve).reshape(
+            shape
+        )
         qv, ql, qi = self._partition(c, t, qt, frozen, isobaric)
         coexist_vapor, _, coexist_ice = self._partition(c, freezing, qt, True, isobaric)
         coexist_liquid = jnp.clip(

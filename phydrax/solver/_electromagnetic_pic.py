@@ -14,40 +14,48 @@ One step:
 
 1. gather ``E``/``B`` (plus external fields) at integer-time positions;
 2. push half-step proper velocities, then momentum-stage processes;
-3. drift, apply particle boundaries;
-4. deposit charge-conserving current along each path and advance the field;
-5. population-stage processes on the end-of-step species, with pointwise
+3. creation-stage processes (strong-field QED emission and pair creation) on
+   the pushed species, with pointwise charge preservation verified by
+   redeposition at the step-start positions;
+4. drift, apply particle boundaries;
+5. deposit charge-conserving current along each path and advance the field;
+6. population-stage processes on the end-of-step species, with pointwise
    charge preservation verified by redeposition;
-6. commit or reject the whole candidate; accepted recorders advance.
+7. commit or reject the whole candidate; accepted recorders and process
+   states advance.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.pic import (
+    AbstractPICParticleExecutor,
     AbstractPICProcess,
     AbstractPICRecorder,
     ExternalFieldSource,
     PIC_CODE_RELATIVITY,
     PICBoundarySurfaceState,
     PICEnergyLedger,
+    PICFieldProbe,
+    PICFieldProbeSample,
     PICOpenBoundaryPlan,
     PICParticleState,
     PICProcessContext,
     PICProcessLedger,
+    PICProcessResult,
     PICProcessStage,
     PICRejectionReason,
     PICRunStatus,
@@ -66,14 +74,20 @@ from ._pic_field_solver import (
     add_deposits,
     chain_deposits,
     deposit_gauss_pairing_defect,
+    PICEnergyAccounting,
     PICFieldDeposit,
+    PICFieldEnergy,
     PICFilterContinuityReport,
+    PICGalileanGrid,
     PICGaussProjection,
     PICGaussProjectionResult,
     PICMultiDeposit,
+    PICOpenDomain,
     PICPrecisionPolicy,
+    PICRelativisticSelfFields,
     PICRestartComponent,
     PICRestartState,
+    PICSelfFieldInitialization,
     restart_component,
     restore_component,
 )
@@ -97,7 +111,8 @@ class ElectromagneticPICState(StrictModule):
     ``wall_charge`` is the charge of particles absorbed by particle boundaries,
     held immobile on the grid in the field solver's charge layout.
     ``field_history`` is the staggered field history (``None`` unless a process
-    requires field derivatives).
+    requires field derivatives). ``processes`` holds each process's own state
+    in process order (``None`` for stateless processes).
     """
 
     species: tuple[PICSpeciesState, ...]
@@ -109,6 +124,33 @@ class ElectromagneticPICState(StrictModule):
     accepted_step: Array
     status: Array
     field_history: PICFieldHistory | None
+    processes: tuple[Any, ...]
+
+
+class PICExitLedger(StrictModule):
+    """Charge, mass, and kinetic energy absorbed particle boundaries took this step."""
+
+    charge: Array
+    mass: Array
+    kinetic_energy: Array
+
+
+class PICEnergySnapshot(StrictModule):
+    """Particle and field energy synchronized at one integer time.
+
+    ``particle_kinetic`` evaluates ``(γ − 1)mc²`` at the proper velocity after
+    the electric half kick ``u + (q/m)EΔt/2`` of the next step, an
+    ``O(Δt²)`` integer-time value of the half-step velocities. Field terms are
+    those of `PICFieldEnergy` (``material`` is ``None`` for solvers without
+    `PICEnergyAccounting`, whose ``electric_field`` is the total field
+    energy).
+    """
+
+    particle_kinetic: Array
+    electric_field: Array
+    magnetic_field: Array
+    material: Array | None
+    total: Array
 
 
 class ElectromagneticPICDiagnostics(StrictModule):
@@ -120,10 +162,28 @@ class ElectromagneticPICDiagnostics(StrictModule):
     redeposited charge; ``electric_constraint`` is then the projected field's
     Gauss residual. ``process_evidence`` holds each process's own evidence in
     ledger order.
+
+    ``particle_field_charge_defect`` compares the field's current-driven Gauss
+    charge change with the (filtered) deposited charge change.
+    ``continuity_scale`` is the deposit's unsigned charge-rate magnitude
+    (`PICFieldDeposit.continuity_scale`). Continuity is certified relative to
+    it: ``continuity_defect ≤ r·continuity_scale`` and
+    ``particle_field_charge_defect ≤ r·(continuity_scale·Δt + max|ρ_field|)``
+    with ``r = max(continuity_tolerance, 64 ε)`` for the field dtype's machine
+    epsilon ``ε``, so the gate is unit-free and holds at roundoff on any grid.
+    ``medium_charge`` is ``max|ρ_field − ρ_particles − ρ_wall|`` over the
+    field's charge layout: the induced wall, conduction, and absorber charge
+    the field holds beyond its particle sources (zero in vacuum away from
+    conducting walls and absorbers). ``exit`` is the step's particle-boundary
+    exit ledger and ``charge_ledger_defect`` the relative particle charge
+    balance ``|Q_particles(t+Δt) + Q_exited − Q_particles(t)|``. ``exchange``
+    is the evidence of the run executor's particle exchange before the
+    population stage (``None`` without one).
     """
 
     continuity_defect: Array
     particle_field_charge_defect: Array
+    continuity_scale: Array
     process_charge_defect: Array
     electric_constraint: Array
     magnetic_constraint: Array
@@ -141,6 +201,10 @@ class ElectromagneticPICDiagnostics(StrictModule):
     rejection_reason: Array
     process_evidence: tuple[Any, ...]
     gauss_projection: PICGaussProjectionResult | None
+    exit: PICExitLedger
+    medium_charge: Array
+    charge_ledger_defect: Array
+    exchange: Any = None
 
 
 class ElectromagneticPICStepResult(StrictModule):
@@ -182,10 +246,20 @@ def _validated_ownership(
     processes: tuple[AbstractPICProcess, ...],
     /,
 ) -> RadiationOwnership:
+    """Refuse overlapping static radiation claims.
+
+    The field solver advances the field of the deposited current, so it owns
+    the radiation the grid resolves (``"resolved-field"``); a
+    ``"diagnostic-only"`` run would leave that self-consistent radiation and
+    its back-reaction unowned. ``"subgrid-reaction"`` coexists with the
+    resolved field only through the runtime scale-separation evidence of its
+    one claiming process.
+    """
     declared = parse(ownership, RadiationOwnership, "ownership")
     claims = [value.radiation_ownership for value in processes]
     if "resolved-field" in claims:
         raise ValueError("Only the field solver owns resolved-field radiation.")
+
     subgrid = claims.count("subgrid-reaction")
     match declared:
         case "subgrid-reaction":
@@ -193,18 +267,76 @@ def _validated_ownership(
                 raise ValueError(
                     "subgrid-reaction ownership requires exactly one claiming process."
                 )
-        case "resolved-field" | "diagnostic-only":
+        case "resolved-field":
             if subgrid:
                 raise ValueError(
                     f"A subgrid-reaction process overlaps {declared!r} ownership."
                 )
+        case "diagnostic-only":
+            raise ValueError(
+                "The self-consistent PIC field solver claims resolved-field "
+                "radiation, which overlaps 'diagnostic-only' ownership."
+            )
         case _:
             raise ValueError("ownership is invalid.")
     return declared
 
 
+def _validate_boundaries(
+    solver: AbstractPreparedPICFieldSolver,
+    species_count: int,
+    boundaries: PICOpenBoundaryPlan,
+    /,
+) -> None:
+    """Particle faces must match the field box and keep stencils on the grid."""
+    if not isinstance(boundaries, PICOpenBoundaryPlan):
+        raise TypeError("boundaries must be PICOpenBoundaryPlan or None.")
+    if boundaries.lower.size != solver.spatial_dimension:
+        raise ValueError("Particle boundaries must match the field dimension.")
+    if not isinstance(solver, PICOpenDomain):
+        if any(boundaries.periodic):
+            raise ValueError(
+                "PERIODIC particle faces require a field solver implementing "
+                "PICOpenDomain."
+            )
+        return
+    periodic = solver.domain_periodic
+    if boundaries.periodic != periodic:
+        raise ValueError(
+            "PERIODIC particle faces must be exactly the field solver's periodic axes."
+        )
+    lower, upper = solver.domain_bounds
+    inset = np.max(
+        np.asarray(
+            [solver.boundary_inset(index) for index in range(species_count)],
+            dtype=np.float64,
+        ),
+        axis=0,
+    )
+    planes_lower = np.asarray(boundaries.lower)
+    planes_upper = np.asarray(boundaries.upper)
+    for axis, wrapped in enumerate(periodic):
+        if wrapped:
+            continue
+        if (
+            planes_lower[axis] < lower[axis] + inset[axis]
+            or planes_upper[axis] > upper[axis] - inset[axis]
+        ):
+            raise ValueError(
+                f"Particle faces of axis {axis} must lie within the field box inset "
+                f"by {inset[axis]:.3e}, where every species' deposit and gather "
+                "stencil stays on the grid."
+            )
+
+
 class ElectromagneticPICPlan(StrictModule, NonTrainableState):
-    """Explicit electromagnetic PIC over one prepared PIC field solver."""
+    """Explicit electromagnetic PIC over one prepared PIC field solver.
+
+    ``executor`` is ``None`` for single-device execution; a decomposed run
+    (`DistributedElectromagneticPICPlan`) installs its particle executor, which
+    applies distributed processes per device and exchanges particles between
+    devices before the population stage.
+    """
 
     __strict_contract__ = True
 
@@ -221,6 +353,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
     pusher: RelativisticPushPlan
     precision: PICPrecisionPolicy
     random_key: PRNGKey | None
+    executor: AbstractPICParticleExecutor | None
     ownership: RadiationOwnership = eqx.field(static=True)
     maximum_displacement_fraction: float = eqx.field(static=True)
     continuity_tolerance: float = eqx.field(static=True)
@@ -281,10 +414,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             )
         declared = _validated_ownership(ownership, processes_)
         if boundaries is not None:
-            if not isinstance(boundaries, PICOpenBoundaryPlan):
-                raise TypeError("boundaries must be PICOpenBoundaryPlan or None.")
-            if boundaries.lower.size != solver.spatial_dimension:
-                raise ValueError("Particle boundaries must match the field dimension.")
+            _validate_boundaries(solver, len(species_), boundaries)
         recorders_ = tuple(recorders)
         if any(not isinstance(value, AbstractPICRecorder) for value in recorders_):
             raise TypeError("recorders must be AbstractPICRecorder instances.")
@@ -360,6 +490,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         self.pusher = pusher_
         self.precision = precision_
         self.random_key = key
+        self.executor = None
         self.ownership = declared
         self.maximum_displacement_fraction = maximum
         self.continuity_tolerance = continuity
@@ -388,6 +519,17 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
 
     # -- field views -------------------------------------------------------------
 
+    def _grid_velocity(self, dtype: DTypeLike, /) -> Array:
+        """Velocity of a Galilean field grid (zero for lab-fixed grids)."""
+        if isinstance(self.solver, PICGalileanGrid):
+            return jnp.asarray(self.solver.grid_velocity, dtype=dtype)
+        return jnp.zeros((3,), dtype=dtype)
+
+    def _lab_position(self, position: Array, time: Array, /) -> Array:
+        """Lab position ``x + v_grid t`` of grid coordinates, padded to three axes."""
+        padded = jnp.pad(position, ((0, 0), (0, 3 - position.shape[1])))
+        return padded + time * self._grid_velocity(position.dtype)
+
     def _filtered_charge(self, charge: Array, /) -> Array:
         for value in self.filters:
             charge = value.filter_charge(self.solver, charge)
@@ -403,6 +545,26 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             field = value.filter_field(self.solver, field)
         return field
 
+    def _sample_fields(
+        self, index: int, position: Array, active: Array, view: Any, time: Array, /
+    ) -> _Gathered:
+        """Grid plus external fields at positions through species ``index``'s route."""
+        sample = self.solver.gather(index, position, active, view)
+        electric, magnetic, successful = (
+            sample.electric,
+            sample.magnetic,
+            sample.successful,
+        )
+        if self.external_fields:
+            position3 = self._lab_position(position, time)
+            times = jnp.full((position.shape[0],), time, dtype=position.dtype)
+            for source in self.external_fields:
+                external = source.external_fields(position3, times)
+                electric = electric + jnp.where(active[:, None], external.electric, 0.0)
+                magnetic = magnetic + jnp.where(active[:, None], external.magnetic, 0.0)
+                successful = successful & jnp.all(external.support | ~active)
+        return _Gathered(electric, magnetic, successful)
+
     def _gather(
         self,
         species: tuple[PICSpeciesState, ...],
@@ -411,30 +573,39 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         /,
     ) -> tuple[_Gathered, ...]:
         view = self._filtered_field(field)
-        gathered = []
-        for index, state in enumerate(species):
-            active = state.population.active
-            sample = self.solver.gather(index, state.particles.position, active, view)
-            electric, magnetic, successful = (
-                sample.electric,
-                sample.magnetic,
-                sample.successful,
+        return tuple(
+            self._sample_fields(
+                index, state.particles.position, state.population.active, view, time
             )
-            if self.external_fields:
-                position = state.particles.position
-                position3 = jnp.pad(position, ((0, 0), (0, 3 - position.shape[1])))
-                times = jnp.full((position.shape[0],), time, dtype=position.dtype)
-                for source in self.external_fields:
-                    external = source.external_fields(position3, times)
-                    electric = electric + jnp.where(
-                        active[:, None], external.electric, 0.0
-                    )
-                    magnetic = magnetic + jnp.where(
-                        active[:, None], external.magnetic, 0.0
-                    )
-                    successful = successful & jnp.all(external.support | ~active)
-            gathered.append(_Gathered(electric, magnetic, successful))
-        return tuple(gathered)
+            for index, state in enumerate(species)
+        )
+
+    def _probe(
+        self, probe: PICFieldProbe, field: Any, time: Array, /
+    ) -> PICFieldProbeSample:
+        """Fields at a process's probe positions, in chunks of the route capacity."""
+        capacity = self.species[probe.species].capacity
+        count, dimension = probe.position.shape
+        if count % capacity:
+            raise ValueError(
+                "A PIC field probe must hold a multiple of its route species capacity."
+            )
+        view = self._filtered_field(field)
+        chunks = count // capacity
+        sampled = jax.lax.map(
+            lambda chunk: self._sample_fields(
+                probe.species, chunk[0], chunk[1], view, time
+            ),
+            (
+                probe.position.reshape(chunks, capacity, dimension),
+                probe.active.reshape(chunks, capacity),
+            ),
+        )
+        return PICFieldProbeSample(
+            sampled.electric.reshape(count, 3),
+            sampled.magnetic.reshape(count, 3),
+            jnp.all(sampled.successful),
+        )
 
     def species_charge(
         self, species: tuple[PICSpeciesState, ...], /
@@ -456,21 +627,104 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             total = total + value
         return total, successful
 
+    def _particle_kinetic(self, state: PICSpeciesState, proper: Array, /) -> Array:
+        """Per-particle ``(γ − 1)mc²`` of ``proper`` (zero for inactive slots)."""
+        dtype = jnp.dtype(self.precision.accumulation_dtype)
+        c2 = self.pusher.speed_of_light**2
+        u = proper.astype(dtype)
+        squared = jnp.sum(u**2, axis=-1) / c2
+        # (γ − 1) = u²/c² / (γ + 1) avoids cancellation for slow particles.
+        return jnp.where(
+            state.population.active,
+            state.population.mass.astype(dtype)
+            * c2
+            * squared
+            / (jnp.sqrt(1.0 + squared) + 1.0),
+            0.0,
+        )
+
+    def _path_kinetic(
+        self, previous: PICSpeciesState, pushed: PICSpeciesState, /
+    ) -> tuple[Array, Array]:
+        """Kinetic energy at the start and end time of each drift path.
+
+        Half-step energies ``K∓`` (before and after the push) give the
+        integer-time values ``(K⁻ + K⁺)/2`` and ``(3K⁺ − K⁻)/2`` to second
+        order; a slot created this step has no earlier energy and uses ``K⁺``.
+        """
+        after = self._particle_kinetic(pushed, pushed.particles.proper_velocity)
+        before = jnp.where(
+            previous.population.active,
+            self._particle_kinetic(previous, previous.particles.proper_velocity),
+            after,
+        )
+        return 0.5 * (before + after), 0.5 * (3.0 * after - before)
+
     def _kinetic(self, species: tuple[PICSpeciesState, ...], /) -> Array:
         dtype = jnp.dtype(self.precision.accumulation_dtype)
         total = jnp.asarray(0.0, dtype=dtype)
-        c2 = self.pusher.speed_of_light**2
         for state in species:
-            proper = state.particles.proper_velocity.astype(dtype)
-            gamma = jnp.sqrt(1.0 + jnp.sum(proper**2, axis=-1) / c2)
             total = total + jnp.sum(
-                jnp.where(
-                    state.population.active,
-                    state.population.mass.astype(dtype) * c2 * (gamma - 1.0),
-                    0.0,
-                )
+                self._particle_kinetic(state, state.particles.proper_velocity)
             )
         return total
+
+    def _particle_charge(self, species: tuple[PICSpeciesState, ...], /) -> Array:
+        """Total active macrocharge and the unsigned total that scales it."""
+        dtype = jnp.dtype(self.precision.accumulation_dtype)
+        total = jnp.zeros((2,), dtype=dtype)
+        for plan, state in zip(self.species, species, strict=True):
+            charge = jnp.where(
+                state.population.active, plan.macrocharge(state).astype(dtype), 0.0
+            )
+            total = total + jnp.stack((jnp.sum(charge), jnp.sum(jnp.abs(charge))))
+        return total
+
+    def _field_energy(self, field: Any, step_size: Array, /) -> PICFieldEnergy | None:
+        solver = self.solver
+        if isinstance(solver, PICEnergyAccounting):
+            return solver.energy_components(field, step_size)
+        return None
+
+    def synchronized_energy(
+        self, state: ElectromagneticPICState, step_size: ArrayLike, /
+    ) -> PICEnergySnapshot:
+        """Particle and field energy of ``state`` synchronized at its integer time.
+
+        Differences of these snapshots over a run, plus the ledger's dissipated,
+        exited, radiated, and created energy, close to the order of the
+        leapfrog; per-step ledgers pair half-step kinetic energies with
+        integer-time fields and telescope to a first-order endpoint term.
+        """
+        dt = jnp.asarray(step_size, dtype=state.time.dtype).reshape(())
+        gathered = self._gather(state.species, state.field, state.time)
+        dtype = jnp.dtype(self.precision.accumulation_dtype)
+        kinetic = jnp.asarray(0.0, dtype=dtype)
+        for plan, species, sample in zip(
+            self.species, state.species, gathered, strict=True
+        ):
+            kicked = (
+                species.particles.proper_velocity
+                + 0.5 * dt * plan.specific_charge(species)[:, None] * sample.electric
+            )
+            kinetic = kinetic + jnp.sum(self._particle_kinetic(species, kicked))
+        energy = self._field_energy(state.field, dt)
+        if energy is None:
+            field = self.solver.field_energy(state.field).astype(dtype)
+            return PICEnergySnapshot(
+                kinetic, field, jnp.zeros((), dtype=dtype), None, kinetic + field
+            )
+        electric, magnetic, material = (
+            value.astype(dtype)
+            for value in (energy.electric, energy.magnetic, energy.material)
+        )
+        return PICEnergySnapshot(
+            kinetic,
+            electric,
+            magnetic,
+            material,
+            kinetic + electric + magnetic + material,
+        )
 
     def _process_key(self, process: AbstractPICProcess, step: Array, /) -> PRNGKey | None:
         if not process.stochastic or self.random_key is None:
@@ -517,7 +771,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             magnetic_rate = (sample.magnetic - earlier.magnetic) / interval
             successful = successful & sample.successful & earlier.successful
             dimension = position.shape[1]
-            position3 = jnp.pad(position, ((0, 0), (0, 3 - dimension)))
+            position3 = self._lab_position(position, time)
             times = jnp.full((position.shape[0],), time, dtype=position.dtype)
             for source in self.external_fields:
 
@@ -581,23 +835,43 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         self,
         stage: PICProcessStage,
         species: tuple[PICSpeciesState, ...],
+        start: tuple[PICSpeciesState, ...],
         gathered: tuple[_Gathered, ...],
+        states: tuple[Any, ...],
+        field: Any,
         time: Array,
         dt: Array,
         step: Array,
         derivatives: _FieldDerivatives | None,
         /,
     ) -> tuple[
-        tuple[PICSpeciesState, ...], tuple[PICProcessLedger, ...], tuple[Any, ...]
+        tuple[PICSpeciesState, ...],
+        tuple[PICProcessLedger, ...],
+        tuple[Any, ...],
+        tuple[Any, ...],
+        Array,
     ]:
+        """Apply one stage; returns species, ledgers, evidence, states, probe success.
+
+        Probes sample the step-start ``field`` at ``time``; ``start`` are the
+        species before this step's push.
+        """
         ledgers = []
         evidence = []
+        updated = list(states)
+        probed = jnp.asarray(True)
         cutoff = self._grid_cutoff_frequency(dt)
-        for process in self.processes:
+        for index, process in enumerate(self.processes):
             if process.stage != stage:
                 continue
             supplied = derivatives if process.requires_field_derivatives else None
-            result = process.apply(
+            probe = process.field_probe(states[index])
+            sample = None if probe is None else self._probe(probe, field, time)
+            if sample is not None:
+                probed = probed & sample.successful
+            result = self._apply_process(
+                index,
+                process,
                 self.species,
                 PICProcessContext(
                     species,
@@ -612,6 +886,11 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                     None if supplied is None else supplied.electric_rate,
                     None if supplied is None else supplied.magnetic_rate,
                     cutoff,
+                    states[index],
+                    sample,
+                    self.pusher,
+                    tuple(value.particles.proper_velocity for value in start),
+                    self._grid_velocity(dt.dtype),
                 ),
             )
             if stage == "momentum":
@@ -630,9 +909,90 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                 species = result.species
             ledgers.append(result.ledger)
             evidence.append(result.evidence)
-        return species, tuple(ledgers), tuple(evidence)
+            updated[index] = result.state
+        return species, tuple(ledgers), tuple(evidence), tuple(updated), probed
+
+    def _apply_process(
+        self,
+        index: int,
+        process: AbstractPICProcess,
+        species: tuple[PICSpeciesPlan, ...],
+        context: PICProcessContext,
+        /,
+    ) -> PICProcessResult:
+        executor = self.executor
+        if executor is None:
+            return process.apply(species, context)
+        return executor.apply_process(index, process, species, context)
+
+    def initialize_process_states(
+        self, species: tuple[PICSpeciesState, ...], /
+    ) -> tuple[Any, ...]:
+        """Initial state of every process (``None`` for stateless processes)."""
+        return tuple(
+            process.initialize_state(self.species, species) for process in self.processes
+        )
 
     # -- lifecycle ---------------------------------------------------------------
+
+    def _relativistic_fields(
+        self,
+        species: tuple[PICSpeciesState, ...],
+        velocities: tuple[ArrayLike, ...],
+        masks: tuple[ArrayLike | None, ...],
+        drifts: Sequence[ArrayLike | None] | None,
+        magnetic: Any,
+        /,
+    ) -> tuple[Any, Array, Array, Array]:
+        """Superposed per-species boosted-Coulomb field, total charge, successes."""
+        solver = self.solver
+        if not isinstance(solver, PICRelativisticSelfFields):
+            raise TypeError(
+                "self_fields='relativistic-per-species' requires a field solver "
+                "implementing PICRelativisticSelfFields."
+            )
+        if magnetic is not None:
+            raise ValueError(
+                "Relativistic self-fields own the initial magnetic field; "
+                "magnetic must be None."
+            )
+        drift_values = (None,) * len(species) if drifts is None else tuple(drifts)
+        if len(drift_values) != len(species):
+            raise ValueError("drifts needs one entry (or None) per species.")
+        light = float(self.pusher.speed_of_light)
+        betas = []
+        for velocity, mask, drift in zip(velocities, masks, drift_values, strict=True):
+            if drift is None:
+                values = np.asarray(velocity, dtype=np.float64)
+                active = (
+                    np.ones((values.shape[0],), dtype=np.bool_)
+                    if mask is None
+                    else np.asarray(mask, dtype=np.bool_)
+                )
+                mean = (
+                    np.mean(values[active], axis=0)
+                    if np.any(active)
+                    else np.zeros((3,), dtype=np.float64)
+                )
+            else:
+                mean = np.asarray(drift, dtype=np.float64)
+            betas.append(tuple(float(value) / light for value in mean.reshape(-1)))
+        charges = []
+        successful = jnp.asarray(True)
+        for index, (plan, state) in enumerate(zip(self.species, species, strict=True)):
+            charge, ok = solver.deposit_charge(
+                index,
+                state.particles.position,
+                plan.macrocharge(state),
+                state.population.active,
+            )
+            charges.append(self._filtered_charge(charge))
+            successful = successful & ok
+        result = solver.initialize_relativistic_field(tuple(charges), tuple(betas), light)
+        total = charges[0]
+        for value in charges[1:]:
+            total = total + value
+        return result.field, total, successful, result.successful
 
     def initialize(
         self,
@@ -645,12 +1005,24 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         masses: Sequence[ArrayLike | None] | None = None,
         magnetic: Any = None,
         time: ArrayLike = 0.0,
+        self_fields: PICSelfFieldInitialization = "electrostatic",
+        drifts: Sequence[ArrayLike | None] | None = None,
     ) -> ElectromagneticPICState:
         """Gauss-consistent initial state from positions and physical velocities.
+
+        ``self_fields="electrostatic"`` solves Poisson for the total charge
+        (``B`` from ``magnetic``, else zero). ``"relativistic-per-species"``
+        gives every species the lab-frame field of its rest-frame Coulomb field
+        (`PICRelativisticSelfFields`): ``drifts[s]`` is its drift velocity
+        (physical units, along one grid axis) or ``None`` for the mean velocity
+        of its active particles. Drifts are read on the host. A static field
+        with ``B = 0`` around a relativistic beam is not a solution of the
+        drifting problem and radiates a spurious transient.
 
         Proper velocities are bootstrapped half a step backward in the initial
         field so the pusher sees leapfrog-staggered momenta.
         """
+        mode = parse(self_fields, PICSelfFieldInitialization, "self_fields")
         count = len(self.species)
         position_values = tuple(positions)
         velocity_values = tuple(velocities)
@@ -696,10 +1068,22 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             )
             species.append(state)
         species_tuple = tuple(species)
-        charge, charge_success = self.species_charge(species_tuple)
-        field, field_success = self.solver.initialize_field(
-            self._filtered_charge(charge), magnetic=magnetic
-        )
+        match mode:
+            case "electrostatic":
+                if drifts is not None:
+                    raise ValueError(
+                        "drifts require self_fields='relativistic-per-species'."
+                    )
+                charge, charge_success = self.species_charge(species_tuple)
+                field, field_success = self.solver.initialize_field(
+                    self._filtered_charge(charge), magnetic=magnetic
+                )
+            case "relativistic-per-species":
+                field, charge, charge_success, field_success = self._relativistic_fields(
+                    species_tuple, velocity_values, masks, drifts, magnetic
+                )
+            case _:
+                assert_never(mode)
         t0 = jnp.asarray(time, dtype=dtype).reshape(())
         dt = jnp.asarray(step_size, dtype=dtype).reshape(())
         gathered = self._gather(species_tuple, field, t0)
@@ -744,6 +1128,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             # The backward half-push bootstrap already treats the initial field
             # as static over the preceding step; the history declares the same.
             PICFieldHistory(field, t0 - dt) if self.field_derivatives else None,
+            self.initialize_process_states(bootstrapped_tuple),
         )
         return jax.tree.map(
             lambda value: (
@@ -806,6 +1191,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         Array,
         Array,
         Array,
+        PICExitLedger,
     ]:
         """Drift, apply particle boundaries, and deposit every species' current."""
         widths = self.solver.displacement_widths.astype(dt.dtype)
@@ -816,13 +1202,16 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         wall = state.wall_charge
         maximum_fraction = jnp.asarray(0.0, dtype=dt.dtype)
         boundary_success = jnp.asarray(True)
+        exited = jnp.zeros((3,), dtype=jnp.dtype(self.precision.accumulation_dtype))
         starts, ends, means, charges, actives = [], [], [], [], []
         for index, (plan, value, velocity) in enumerate(
             zip(self.species, species, velocities, strict=True)
         ):
             active = value.population.active
             start = value.particles.position
-            displacement = dt * velocity[:, :dimension]
+            displacement = dt * (
+                velocity[:, :dimension] - self._grid_velocity(dt.dtype)[:dimension]
+            )
             position = jnp.where(active[:, None], start + displacement, 0.0)
             maximum_fraction = jnp.maximum(
                 maximum_fraction,
@@ -853,7 +1242,15 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                 position,
                 macrocharge,
                 state.boundaries[index],
+                kinetic_energy=self._path_kinetic(state.species[index], value),
             )
+            exited = exited + jnp.stack(
+                (
+                    jnp.sum(boundary.boundary_charge_flux),
+                    jnp.sum(boundary.boundary_mass_flux),
+                    jnp.sum(boundary.boundary_energy_flux),
+                )
+            ).astype(exited.dtype)
             hit = boundary.hit_mask
             waypoint = jnp.where(hit[:, None], boundary.hit_position, position)
             fraction = jnp.where(hit, boundary.hit_fraction, 1.0)[:, None]
@@ -926,6 +1323,85 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             wall,
             maximum_fraction,
             boundary_success,
+            PICExitLedger(exited[0], exited[1], exited[2]),
+        )
+
+    def _energy_ledger(
+        self,
+        state: ElectromagneticPICState,
+        final: tuple[PICSpeciesState, ...],
+        field: Any,
+        field_energy: Array,
+        advanced_field: Any,
+        dt: Array,
+        radiated: Array,
+        rest_energy: Array,
+        exchange: Array,
+        exited: Array,
+        /,
+    ) -> PICEnergyLedger:
+        """Step ledger; accounting solvers split field energy and report losses.
+
+        Losses are the solver's source-free ``−dW/dt`` integrated with the
+        trapezoidal rule between the step-start and the advanced field.
+        """
+        dtype = jnp.dtype(self.precision.accumulation_dtype)
+        previous_kinetic = self._kinetic(state.species)
+        next_kinetic = self._kinetic(final)
+        solver = self.solver
+        if not isinstance(solver, PICEnergyAccounting):
+            previous_total = previous_kinetic + self.solver.field_energy(
+                state.field
+            ).astype(dtype)
+            total = next_kinetic + field_energy.astype(dtype)
+            return PICEnergyLedger(
+                next_kinetic,
+                field_energy.astype(dtype),
+                jnp.zeros((), dtype=dtype),
+                radiated,
+                total,
+                previous_total,
+                total + radiated + rest_energy + exited - exchange - previous_total,
+                rest_energy,
+                exchange,
+                None,
+                None,
+                exited,
+            )
+        before = solver.energy_components(state.field, dt)
+        after = solver.energy_components(field, dt)
+        dissipated = (
+            0.5
+            * dt
+            * (solver.loss_power(state.field) + solver.loss_power(advanced_field))
+        ).astype(dtype)
+        electric, magnetic, material = (
+            value.astype(dtype)
+            for value in (after.electric, after.magnetic, after.material)
+        )
+        previous_total = previous_kinetic + (
+            before.electric + before.magnetic + before.material
+        ).astype(dtype)
+        total = next_kinetic + electric + magnetic + material
+        return PICEnergyLedger(
+            next_kinetic,
+            electric,
+            magnetic,
+            radiated,
+            total,
+            previous_total,
+            total
+            + radiated
+            + rest_energy
+            + dissipated
+            + exited
+            - exchange
+            - previous_total,
+            rest_energy,
+            exchange,
+            material,
+            dissipated,
+            exited,
         )
 
     def step_detailed(
@@ -944,33 +1420,101 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             )
             gather_success = gather_success & derivatives.successful
         pushed, velocities, pusher_success = self._advance_species(state, gathered, dt)
-        pushed, momentum_ledgers, momentum_evidence = self._run_processes(
-            "momentum", pushed, gathered, state.time, dt, step, derivatives
+        pushed, momentum_ledgers, momentum_evidence, states, _ = self._run_processes(
+            "momentum",
+            pushed,
+            state.species,
+            gathered,
+            state.processes,
+            state.field,
+            state.time,
+            dt,
+            step,
+            derivatives,
         )
-        if momentum_ledgers:
+        created, creation_ledgers, creation_evidence, states, probed = (
+            self._run_processes(
+                "creation",
+                pushed,
+                state.species,
+                gathered,
+                states,
+                state.field,
+                state.time,
+                dt,
+                step,
+                None,
+            )
+        )
+        gather_success = gather_success & probed
+        creation_charged = jnp.asarray(True)
+        creation_charge_defect = jnp.zeros((), dtype=dt.dtype)
+        if creation_ledgers:
+            # Created particles appear at step-start positions in charge-neutral
+            # sets, so the deposited charge must be unchanged pointwise.
+            before, _ = self.species_charge(pushed)
+            after, redeposit_success = self.species_charge(created)
+            creation_charge_defect = jnp.max(
+                jnp.abs(after - before), initial=0.0
+            ) / jnp.maximum(1.0, jnp.max(jnp.abs(before), initial=0.0))
+            creation_charged = redeposit_success & (
+                creation_charge_defect <= self.continuity_tolerance
+            )
+            pushed = created
+        if momentum_ledgers or creation_ledgers:
             velocities = tuple(
                 self.pusher.velocity(value.particles.proper_velocity) for value in pushed
             )
-        moved, deposit, surfaces, wall, fraction, boundary_success = self._move(
-            state, pushed, velocities, dt
+        moved, deposit, surfaces, wall, fraction, boundary_success, exit_ledger = (
+            self._move(state, pushed, velocities, dt)
         )
         current = self._filtered_current(deposit.current)
         advanced = self.solver.advance(state.time, state.field, current, dt)
-        expected_charge = deposit.end_charge + state.wall_charge
+        # The field's Gauss charge moves by the deposited (filtered) charge
+        # change; absorbed particles stay in the end charge at their exit point
+        # and join the immobile wall charge from the next step on.
+        expected_change = deposit.end_charge - deposit.start_charge
         if self.filters:
-            expected_charge = self._filtered_charge(expected_charge)
-        charge_defect = jnp.max(jnp.abs(advanced.charge - expected_charge), initial=0.0)
-        final, population_ledgers, population_evidence = self._run_processes(
-            "population", moved, gathered, state.time, dt, step, None
+            expected_change = self._filtered_charge(expected_change)
+        charge_defect = jnp.max(
+            jnp.abs(
+                advanced.charge - self.solver.field_charge(state.field) - expected_change
+            ),
+            initial=0.0,
+        )
+        exchange = None
+        exchanged = jnp.asarray(True)
+        executor = self.executor
+        if executor is not None and any(
+            value.stage == "population" for value in self.processes
+        ):
+            # Population processes group particles by cell and create them at
+            # home positions, so every particle first moves to its owner.
+            exchange = executor.exchange(moved, states)
+            moved, states = exchange.species, exchange.processes
+            exchanged = exchange.successful
+        final, population_ledgers, population_evidence, states, _ = self._run_processes(
+            "population",
+            moved,
+            state.species,
+            gathered,
+            states,
+            state.field,
+            state.time,
+            dt,
+            step,
+            None,
         )
         field = advanced.field
         electric_constraint = advanced.electric_constraint
         field_energy = advanced.energy
         projection = None
         process_charged = jnp.asarray(True)
+        particle_layout_charge = deposit.end_charge + state.wall_charge
         if population_ledgers:
             before, _ = self.species_charge(moved)
             after, redeposit_success = self.species_charge(final)
+            particle_layout_charge = after + wall
             process_charge_defect = jnp.max(
                 jnp.abs(after - before), initial=0.0
             ) / jnp.maximum(1.0, jnp.max(jnp.abs(before), initial=0.0))
@@ -997,30 +1541,51 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                 )
         else:
             process_charge_defect = jnp.zeros((), dtype=dt.dtype)
-        ledgers = momentum_ledgers + population_ledgers
-        process_success = process_charged
+        process_charge_defect = jnp.maximum(process_charge_defect, creation_charge_defect)
+        ledgers = momentum_ledgers + creation_ledgers + population_ledgers
+        process_success = process_charged & creation_charged
         for ledger in ledgers:
             process_success = process_success & ledger.successful
         dtype = jnp.dtype(self.precision.accumulation_dtype)
         radiated = jnp.zeros((), dtype=dtype)
+        rest_energy = jnp.zeros((), dtype=dtype)
+        exchange = jnp.zeros((), dtype=dtype)
         ownership_ok = jnp.asarray(True)
         for ledger in ledgers:
-            if ledger.radiation is not None:
-                radiated = radiated + ledger.radiation.radiated_energy.astype(dtype)
-                ownership_ok = ownership_ok & ledger.radiation.scale_separated
-        previous_kinetic = self._kinetic(state.species)
-        next_kinetic = self._kinetic(final)
-        previous_total = previous_kinetic + self.solver.field_energy(state.field)
-        total = next_kinetic + field_energy
-        energy = PICEnergyLedger(
-            next_kinetic,
+            radiation = ledger.radiation
+            if radiation is not None:
+                radiated = radiated + radiation.radiated_energy.astype(dtype)
+                ownership_ok = ownership_ok & radiation.scale_separated
+                if radiation.created_rest_energy is not None:
+                    rest_energy = rest_energy + radiation.created_rest_energy.astype(
+                        dtype
+                    )
+                if radiation.field_exchange_energy is not None:
+                    exchange = exchange + radiation.field_exchange_energy.astype(dtype)
+        energy = self._energy_ledger(
+            state,
+            final,
+            field,
             field_energy,
-            jnp.zeros((), dtype=total.dtype),
+            advanced.field,
+            dt,
             radiated,
-            total,
-            previous_total,
-            total + radiated - previous_total,
+            rest_energy,
+            exchange,
+            exit_ledger.kinetic_energy,
         )
+        total = energy.total
+        if self.filters:
+            particle_layout_charge = self._filtered_charge(particle_layout_charge)
+        medium_charge = jnp.max(
+            jnp.abs(self.solver.field_charge(field) - particle_layout_charge),
+            initial=0.0,
+        )
+        charge_before = self._particle_charge(state.species)
+        charge_after = self._particle_charge(final)
+        charge_ledger_defect = jnp.abs(
+            charge_after[0] + exit_ledger.charge - charge_before[0]
+        ) / jnp.maximum(charge_before[1], jnp.finfo(charge_before.dtype).tiny)
         stable = (dt <= self.solver.stable_step) & (
             fraction <= self.maximum_displacement_fraction
         )
@@ -1044,15 +1609,23 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             & jnp.isfinite(total)
         )
         continuity = deposit.continuity_defect
+        # Both residuals are differences of charges of the deposit's size, so
+        # their certificate is relative to it and never below dtype roundoff.
+        relative = jnp.maximum(
+            self.continuity_tolerance, 64.0 * jnp.finfo(continuity.dtype).eps
+        )
+        charge_scale = (
+            deposit.continuity_scale * dt
+            + jnp.max(jnp.abs(advanced.charge), initial=0.0)
+            + jnp.max(jnp.abs(self.solver.field_charge(state.field)), initial=0.0)
+        )
+        conserved = (continuity <= relative * deposit.continuity_scale) & (
+            charge_defect <= relative * charge_scale
+        )
         tolerance = self.constraint_tolerance
         gauss_ok = electric_constraint <= tolerance
         magnetic_ok = advanced.magnetic_constraint <= tolerance
-        constraints = (
-            (continuity <= self.continuity_tolerance)
-            & (charge_defect <= self.continuity_tolerance)
-            & gauss_ok
-            & magnetic_ok
-        )
+        constraints = conserved & gauss_ok & magnetic_ok
         transfer_success = gather_success & boundary_success
         current_success = deposit.successful
         successful = (
@@ -1066,24 +1639,21 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             & stable
             & finite
             & constraints
+            & exchanged
         )
         flags = (
             (transfer_success, PICRejectionReason.ROUTE),
             (advanced.successful, PICRejectionReason.FIELD),
             (pusher_success, PICRejectionReason.PUSHER),
             (stable, PICRejectionReason.DISPLACEMENT),
-            (
-                current_success
-                & (continuity <= self.continuity_tolerance)
-                & (charge_defect <= self.continuity_tolerance),
-                PICRejectionReason.CONTINUITY,
-            ),
+            (current_success & conserved, PICRejectionReason.CONTINUITY),
             (gauss_ok, PICRejectionReason.GAUSS),
             (magnetic_ok, PICRejectionReason.MAGNETIC),
             (finite, PICRejectionReason.NONFINITE),
             (process_success, PICRejectionReason.PROCESS),
             (ownership_ok, PICRejectionReason.RADIATION_OWNERSHIP),
             (cherenkov_ok, PICRejectionReason.NUMERICAL_CHERENKOV),
+            (exchanged, PICRejectionReason.MIGRATION),
         )
         reason = jnp.asarray(int(PICRejectionReason.NONE), dtype=jnp.int32)
         for passed, flag in flags:
@@ -1107,11 +1677,13 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             None
             if state.field_history is None
             else PICFieldHistory(state.field, state.time),
+            states,
         )
         accepted = _select(successful, candidate, state)
         diagnostics = ElectromagneticPICDiagnostics(
             continuity,
             charge_defect,
+            deposit.continuity_scale,
             process_charge_defect,
             electric_constraint,
             advanced.magnetic_constraint,
@@ -1127,8 +1699,12 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             finite,
             successful,
             reason,
-            momentum_evidence + population_evidence,
+            momentum_evidence + creation_evidence + population_evidence,
             projection,
+            exit_ledger,
+            medium_charge,
+            charge_ledger_defect,
+            exchange,
         )
         return ElectromagneticPICStepResult(
             candidate, accepted, diagnostics, current, successful
@@ -1187,6 +1763,12 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                 self.solver.solver_id,
                 PICFieldHistory(self.solver.field_with_charge(charge), time),
             )
+        for index, template in enumerate(self.initialize_process_states(species)):
+            if template is not None:
+                templates[f"process/{index}"] = (
+                    self.processes[index].process_id,
+                    template,
+                )
         return templates
 
     def checkpoint(self, state: ElectromagneticPICState, /) -> PICRestartCheckpoint:
@@ -1225,6 +1807,13 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                     "field-history", self.solver.solver_id, state.field_history
                 )
             )
+        components.extend(
+            restart_component(f"process/{index}", process.process_id, value)
+            for index, (process, value) in enumerate(
+                zip(self.processes, state.processes, strict=True)
+            )
+            if value is not None
+        )
         return PICRestartCheckpoint(tuple(components))
 
     def restore(self, checkpoint: PICRestartCheckpoint, /) -> ElectromagneticPICState:
@@ -1261,6 +1850,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
             accepted_step,
             status,
             restored["field-history"] if self.field_derivatives else None,
+            tuple(
+                restored.get(f"process/{index}") for index in range(len(self.processes))
+            ),
         )
 
 

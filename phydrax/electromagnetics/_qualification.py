@@ -33,6 +33,20 @@ _REQUIRED_GATES = {
         "resource-envelope",
         "documentation-nonclaims",
     ),
+    "electromagnetics.cold-plasma-dielectric": (
+        "appleton-hartree-equals-wave-operator-determinant",
+        "unmagnetized-isotropic-degeneracy",
+        "parallel-right-left-closed-forms",
+        "perpendicular-ordinary-extraordinary-closed-forms",
+        "whistler-resonance-cone-evanescence",
+        "quasi-longitudinal-and-quasi-transverse-limits",
+        "refinement-stable-branch-continuation",
+        "cutoff-and-resonance-frequencies",
+        "collisional-absorption-sign-and-complex-cutoffs",
+        "faraday-rotation-and-conversion-high-frequency-limits",
+        "precision-and-species-table-refusals",
+        "documentation-nonclaims",
+    ),
     "electromagnetics.kinetic-dispersion": (
         "landau-damping-roots",
         "bernstein-perpendicular-dispersion",
@@ -97,6 +111,17 @@ def electromagnetic_radiation_support_tuples() -> tuple[SupportTuple, ...]:
                 "history": "refuse-or-inertial-extrapolation",
                 "precision": "float64-only",
                 "outputs": "electric-magnetic-velocity-acceleration-fields-retarded-times",
+            },
+        ),
+        SupportTuple(
+            "electromagnetics.cold-plasma-dielectric",
+            {
+                "medium": "cold-magnetized-multispecies-plasma-optional-collisions",
+                "dielectric": "stix-rld-signed-cyclotron-frequencies",
+                "roots": "appleton-hartree-homogeneous-pairs-branch-continuation",
+                "characteristics": "cutoffs-resonances-resonance-cone",
+                "polarization": "mode-vectors-and-faraday-rotation-conversion",
+                "precision": "float64-only",
             },
         ),
         SupportTuple(

@@ -22,7 +22,7 @@ from ....linalg.eigen import (
     GeneralEigenSelection,
     GeneralEigenSolvePolicy,
 )
-from ._boundary_cascade import BoundaryRelation
+from ._boundary_cascade import _fields_to_waves, BoundaryRelation
 from ._contracts import (
     AbstractFourierModalPort,
     HomogeneousMaxwellPort,
@@ -378,6 +378,16 @@ def _port_bases(
     )
 
 
+def _port_wave_bases(
+    modes: PreparedFourierModalPortModes, side: str, /
+) -> tuple[Array, Array, Array, Array]:
+    """Forward/backward power-wave components of incoming and outgoing port modes."""
+    incoming_e, incoming_h, outgoing_e, outgoing_h = _port_bases(modes, side)
+    incoming_forward, incoming_backward = _fields_to_waves(incoming_e, incoming_h)
+    outgoing_forward, outgoing_backward = _fields_to_waves(outgoing_e, outgoing_h)
+    return incoming_forward, incoming_backward, outgoing_forward, outgoing_backward
+
+
 def _port_power_data(
     modes: PreparedFourierModalPortModes,
     /,
@@ -421,10 +431,10 @@ def boundary_to_scattering(
     right_modes: PreparedFourierModalPortModes,
     /,
 ) -> MaxwellPortScatteringOperator:
-    lin_e, lin_h, lout_e, lout_h = _port_bases(left_modes, "left")
-    rin_e, rin_h, rout_e, rout_h = _port_bases(right_modes, "right")
+    lin_f, lin_g, lout_f, lout_g = _port_wave_bases(left_modes, "left")
+    rin_f, rin_g, rout_f, rout_g = _port_wave_bases(right_modes, "right")
     size = relation.tangential_size
-    if lin_e.shape != (size, size) or rin_e.shape != (size, size):
+    if lin_f.shape != (size, size) or rin_f.shape != (size, size):
         raise ValueError("Port modes and boundary relation have incompatible sizes.")
 
     def mm(left: Array, right: Array) -> Array:
@@ -432,14 +442,14 @@ def boundary_to_scattering(
 
     left_matrix = jnp.block(
         [
-            [rout_e - mm(relation.b, rout_h), -mm(relation.a, lout_e)],
-            [-mm(relation.d, rout_h), lout_h - mm(relation.c, lout_e)],
+            [rout_f - mm(relation.s12, rout_g), -mm(relation.s11, lout_f)],
+            [-mm(relation.s22, rout_g), lout_g - mm(relation.s21, lout_f)],
         ]
     )
     right_matrix = jnp.block(
         [
-            [mm(relation.a, lin_e), -rin_e + mm(relation.b, rin_h)],
-            [mm(relation.c, lin_e) - lin_h, mm(relation.d, rin_h)],
+            [mm(relation.s11, lin_f), -rin_f + mm(relation.s12, rin_g)],
+            [mm(relation.s21, lin_f) - lin_g, mm(relation.s22, rin_g)],
         ]
     )
     scattering = _dense_solve(left_matrix, right_matrix)

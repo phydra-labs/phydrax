@@ -1,5 +1,7 @@
 """Propagation rule for scatter operations."""
 
+from typing import SupportsIndex
+
 import numpy as np
 from jax._src.core import JaxprEqn
 
@@ -61,53 +63,66 @@ def _scatter_flat_map(
     update_ndim = len(updates_shape)
     flat_map = np.full(updates_size, -1, dtype=np.intp)
 
-    for batch_idx in np.ndindex(*batching_shape) if batching_shape else [()]:
-        for si_batch_idx in np.ndindex(*si_batch_shape) if si_batch_shape else [()]:
-            # Look up index vector from scatter_indices.
-            si_idx: list[int | slice] = [0 for _ in range(len(si_shape))]
-            for i, d in enumerate(si_batching_dims):
-                si_idx[d] = batch_idx[i]
-            for i, d in enumerate(si_batch_axes):
-                si_idx[d] = si_batch_idx[i]
-            si_idx[index_vector_dim] = slice(None)
-            index_vector = concrete_indices[tuple(si_idx)]
+    # Every (batch, scatter-batch, window) combination at once.
+    grid_shape = batching_shape + si_batch_shape + window_shape
+    count = _numel(grid_shape)
+    if count == 0:
+        return flat_map
+    coords = [axis.ravel() for axis in np.indices(grid_shape, dtype=np.intp)]
+    batch_coords = coords[: len(batching_shape)]
+    si_coords = coords[len(batching_shape) : len(batching_shape) + len(si_batch_shape)]
+    window_coords = coords[len(batching_shape) + len(si_batch_shape) :]
 
-            # Build start position in operand.
-            start = [0] * op_ndim
-            for i, d in enumerate(scatter_dims_to_operand_dims):
-                start[d] = int(index_vector[i])
-            for i, d in enumerate(operand_batching_dims):
-                start[d] = int(batch_idx[i])
+    # Look up index vectors from scatter_indices (index_vector_dim is last).
+    si_index: list[np.ndarray] = [np.zeros(count, dtype=np.intp)] * index_vector_dim
+    for i, d in enumerate(si_batching_dims):
+        si_index[d] = batch_coords[i]
+    for i, d in enumerate(si_batch_axes):
+        si_index[d] = si_coords[i]
+    index_vectors = np.broadcast_to(
+        concrete_indices[tuple(si_index)], (count, si_shape[index_vector_dim])
+    )
 
-            for window_idx in np.ndindex(*window_shape) if window_shape else [()]:
-                # Build full operand index: start + window offset at non-removed dims.
-                operand_idx = list(start)
-                w_iter = iter(window_idx)
-                for d in window_operand_dims:
-                    operand_idx[d] += next(w_iter)
+    # Operand index: start + window offset at non-removed dims.
+    operand_idx = np.zeros((count, op_ndim), dtype=np.intp)
+    for i, d in enumerate(scatter_dims_to_operand_dims):
+        operand_idx[:, d] = index_vectors[:, i]
+    for i, d in enumerate(operand_batching_dims):
+        operand_idx[:, d] = batch_coords[i]
+    for d, offset in zip(window_operand_dims, window_coords, strict=False):
+        operand_idx[:, d] += offset
 
-                # Scatter drops OOB updates (unlike gather which clamps).
-                if any(
-                    operand_idx[d] < 0 or operand_idx[d] >= operand_shape[d]
-                    for d in range(op_ndim)
-                ):
-                    continue
+    # Scatter drops OOB updates (unlike gather which clamps).
+    valid = np.all(
+        (operand_idx >= 0) & (operand_idx < np.asarray(operand_shape, dtype=np.intp)),
+        axis=1,
+    )
 
-                # Build update multi-index from batch and window components.
-                update_multi = [0] * update_ndim
-                b_iter = iter(batch_idx + si_batch_idx)
-                w_iter2 = iter(window_idx)
-                for d in range(update_ndim):
-                    if d in update_window_dims:
-                        update_multi[d] = next(w_iter2)
-                    else:
-                        update_multi[d] = next(b_iter)
+    # Update multi-index: window coords on window dims, batch coords elsewhere.
+    window_dims = [d for d in range(update_ndim) if d in update_window_dims]
+    scatter_dims = [d for d in range(update_ndim) if d not in update_window_dims]
+    update_multi: list[np.ndarray] = [np.zeros(count, dtype=np.intp)] * update_ndim
+    for d, coordinate in zip(scatter_dims, batch_coords + si_coords, strict=False):
+        update_multi[d] = coordinate
+    for d, coordinate in zip(window_dims, window_coords, strict=False):
+        update_multi[d] = coordinate
 
-                operand_flat = int(np.ravel_multi_index(operand_idx, operand_shape))
-                update_flat = int(np.ravel_multi_index(update_multi, updates_shape))
-                flat_map[update_flat] = operand_flat
-
+    kept = np.count_nonzero(valid)
+    operand_flat = _ravel(tuple(operand_idx[valid].T), operand_shape, kept)
+    update_flat = _ravel(
+        tuple(column[valid] for column in update_multi), updates_shape, kept
+    )
+    flat_map[update_flat] = operand_flat
     return flat_map
+
+
+def _ravel(
+    coordinates: tuple[np.ndarray, ...], shape: tuple[int, ...], count: SupportsIndex
+) -> np.ndarray:
+    """Row-major flat positions; a rank-0 array has the single position 0."""
+    if not shape:
+        return np.zeros(count, dtype=np.intp)
+    return np.ravel_multi_index(coordinates, shape)
 
 
 def _scatter_for_indices(

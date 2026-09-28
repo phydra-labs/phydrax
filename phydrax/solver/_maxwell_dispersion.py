@@ -165,12 +165,6 @@ class CompatibleMaxwellDispersionAudit(StrictModule):
         capabilities = prepared.capabilities
         if capabilities.nonlinear or not capabilities.linear_time_invariant:
             raise ValueError("Dispersion audit requires linear time-invariant dynamics.")
-        if not prepared.magnetic_projection_elided or (
-            prepared.harmonic_constraint is not None
-        ):
-            raise ValueError(
-                "Dispersion audit requires a local update; magnetic projection is global."
-            )
         dt = float(np.asarray(step_size))
         if not np.isfinite(dt) or dt <= 0.0:
             raise ValueError("Dispersion audit step_size must be finite and positive.")
@@ -187,6 +181,13 @@ class CompatibleMaxwellDispersionAudit(StrictModule):
         ):
             raise ValueError(
                 f"Material region must span more than {2 * _STENCIL_RADIUS} cells per axis."
+            )
+        _refuse_absorber_overlap(prepared, region)
+        if not prepared.magnetic_projection_elided or (
+            prepared.harmonic_constraint is not None
+        ):
+            raise ValueError(
+                "Dispersion audit requires a local update; magnetic projection is global."
             )
         # Axes that are periodic and fully covered wrap: every cell is verified
         # with a commensurate wavevector; other axes are eroded by the radius.
@@ -413,6 +414,40 @@ def _entity_coordinates(values: tuple[Array | None, ...], /) -> tuple[np.ndarray
     return tuple(points)
 
 
+def _refuse_absorber_overlap(
+    prepared: PreparedCompatibleMaxwell, region: MaxwellMaterialRegion, /
+) -> None:
+    """Refuse a region containing CPML terms; their memories are not audited."""
+    pml = prepared.pml
+    if pml is None:
+        return
+    bridge = prepared.plan.bridge
+    layout = prepared.layout
+    lower = np.asarray(region.lower)
+    upper = np.asarray(region.upper)
+    for degree, terms in (
+        (layout.electric_degree, pml.electric_terms),
+        (layout.magnetic_degree, pml.magnetic_terms),
+    ):
+        indices = np.concatenate(
+            [np.zeros((0,), dtype=np.int64)]
+            + [np.asarray(term.indices, dtype=np.int64) for term in terms]
+        )
+        for shape, offset in zip(
+            bridge.orientation_shapes[degree],
+            bridge.orientation_offsets[degree],
+            strict=True,
+        ):
+            local = indices[
+                (indices >= offset) & (indices < offset + int(np.prod(shape)))
+            ]
+            if local.size == 0:
+                continue
+            cells = np.stack(np.unravel_index(local - offset, shape), axis=1)
+            if np.any(np.all((cells >= lower) & (cells < upper), axis=1)):
+                raise ValueError("Material region intersects the absorbing CPML.")
+
+
 def _bloch_matrix(
     rows: Array,
     columns: Array,
@@ -481,7 +516,9 @@ def _linear_step(
         displacement, flux, material = unravel(flat)
         state = CompatibleMaxwellState(
             MaxwellPrimaryState(displacement, flux, charge),
-            MaxwellAuxiliaryState(material, boundary, magnetic_charge),
+            MaxwellAuxiliaryState(
+                material, boundary, magnetic_charge, jnp.zeros_like(magnetic_charge)
+            ),
             observations,
         )
         stepped = prepared._step_core(

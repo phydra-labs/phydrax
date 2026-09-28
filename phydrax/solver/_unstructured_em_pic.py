@@ -389,12 +389,19 @@ class UnstructuredMaxwellPICFieldSolver(
         )
         # The Whitney flow is the negative integrated flux ⋆1 J on Maxwell edges.
         current = -self.maxwell.plan.cochain.solve_hodge(1, flow)
+        # The Whitney defect is in charge content, so its scale is too.
+        magnitude, _ = self._nodal_content(end, jnp.abs(macrocharge), active)
         return PICFieldDeposit(
             current,
             self._density(result.start_charge),
             self._density(result.end_charge),
             result.maximum_continuity_defect,
             result.successful,
+            jnp.max(
+                jnp.abs(result.end_charge - result.start_charge) + 2.0 * magnitude,
+                initial=0.0,
+            )
+            / step_size,
         )
 
     def advance(

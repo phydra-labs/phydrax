@@ -47,10 +47,18 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
     The shape order is the transfer's ``shape_order``: order one integrates the
     lowest-order Whitney forms in closed form; orders two and three integrate
     the spline-Whitney path integrals exactly (`_spline_whitney_flux`).
+
+    Nonperiodic axes clip every path at the closed domain box: a path whose
+    head leaves the box ends at its exit point, where its charge is deposited,
+    and is reported in ``PICCurrentDepositResult.boundary_exit``. Continuity
+    therefore holds exactly for the deposited path. Order one keeps every
+    in-box stencil inside the grid; orders two and three refuse stencils that
+    reach beyond a nonperiodic boundary (the endpoint splat rejects them).
     """
 
     transfer: PreparedPICParticleCochainTransfer
     binning: PICCellBinningPlan
+    periodic: tuple[bool, bool, bool] = eqx.field(static=True)
     maximum_segments_per_particle: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -67,14 +75,8 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             raise TypeError("transfer must be PreparedPICParticleCochainTransfer.")
         if transfer.bridge.dimension != 3:
             raise ValueError("Charge-conserving current currently requires a 3-D bridge.")
-        if any(not axis.periodic for axis in transfer.bridge.grid.structured_axes):
-            raise ValueError(
-                "Charge-conserving current currently requires periodic axes."
-            )
-        widths = tuple(
-            np.asarray(axis.interval_widths)
-            for axis in transfer.bridge.grid.structured_axes
-        )
+        axes = transfer.bridge.grid.structured_axes
+        widths = tuple(np.asarray(axis.interval_widths) for axis in axes)
         if any(
             not np.allclose(value, value[0], rtol=1e-12, atol=1e-14) for value in widths
         ):
@@ -87,18 +89,22 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             )
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("tolerance must be positive and finite.")
+        periodic = (
+            bool(axes[0].periodic),
+            bool(axes[1].periodic),
+            bool(axes[2].periodic),
+        )
         self.transfer = transfer
         self.binning = PICCellBinningPlan(
-            tuple(float(axis.bounds[0]) for axis in transfer.bridge.grid.structured_axes),
-            tuple(float(axis.bounds[1]) for axis in transfer.bridge.grid.structured_axes),
-            tuple(
-                axis.interval_centers.size
-                for axis in transfer.bridge.grid.structured_axes
-            ),
-            (True, True, True),
+            tuple(float(axis.bounds[0]) for axis in axes),
+            tuple(float(axis.bounds[1]) for axis in axes),
+            tuple(axis.interval_centers.size for axis in axes),
+            periodic,
         )
+        self.periodic = periodic
         self.maximum_segments_per_particle = segments
         self.tolerance = tolerance_
+        # The transfer identity already fixes the grid and its periodicity.
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "charge-conserving-whitney-current",
@@ -154,6 +160,16 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         midpoint = q0[:, None, :] + midpoint_t[..., None] * delta[:, None, :]
         cell_unwrapped = jnp.floor(midpoint + epsilon * direction[:, None, :]).astype(
             jnp.int32
+        )
+        # A closed nonperiodic box assigns its upper face to the last cell, so
+        # paths on that face keep every lowest-order index inside the grid.
+        last_cell = jnp.asarray(
+            [axis.interval_centers.size - 1 for axis in axes], dtype=jnp.int32
+        )
+        cell_unwrapped = jnp.where(
+            jnp.asarray(self.periodic),
+            cell_unwrapped,
+            jnp.clip(cell_unwrapped, 0, last_cell),
         )
         local_start = (
             q0[:, None, :] + segment_start[..., None] * delta[:, None, :] - cell_unwrapped
@@ -300,6 +316,13 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         indices = []
         values = []
         valid = []
+        truncated = jnp.asarray(False)
+
+        def wrap(index: Array, axis: int, count: int) -> tuple[Array, Array]:
+            if self.periodic[axis]:
+                return index % count, jnp.ones(index.shape, dtype=jnp.bool_)
+            return jnp.clip(index, 0, count - 1), (index >= 0) & (index < count)
+
         for axis in range(3):
             first, second = tuple(value for value in range(3) if value != axis)
             along_index, along = axis_shape(axis, order - 1, 0.5)
@@ -308,18 +331,26 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             integral = delta[..., axis, None, None, None] * ein.contract(
                 "g,nsgi,nsgj,nsgk->nsijk", weights, along, first_value, second_value
             )
-            grids = {
-                axis: along_index[..., :, None, None] % axes[axis].interval_centers.size,
-                first: (
-                    first_index[..., None, :, None] % axes[first].point_coordinates.size
-                ),
-                second: (
-                    second_index[..., None, None, :] % axes[second].point_coordinates.size
-                ),
-            }
+            along_wrapped, along_inside = wrap(
+                along_index[..., :, None, None], axis, axes[axis].interval_centers.size
+            )
+            first_wrapped, first_inside = wrap(
+                first_index[..., None, :, None], first, axes[first].point_coordinates.size
+            )
+            second_wrapped, second_inside = wrap(
+                second_index[..., None, None, :],
+                second,
+                axes[second].point_coordinates.size,
+            )
+            grids = {axis: along_wrapped, first: first_wrapped, second: second_wrapped}
             flat = offsets[axis] + _flat_index(
                 (grids[0], grids[1], grids[2]), shapes[axis]
             )
+            inside = jnp.broadcast_to(
+                along_inside & first_inside & second_inside, integral.shape
+            )
+            contributing = segment_valid[..., None, None, None] & (integral != 0.0)
+            truncated = truncated | jnp.any(contributing & ~inside)
             indices.append(
                 jnp.broadcast_to(flat, integral.shape).reshape((start.shape[0], -1))
             )
@@ -329,8 +360,9 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
                 )
             )
             valid.append(
-                jnp.broadcast_to(
-                    segment_valid[..., None, None, None], integral.shape
+                (
+                    jnp.broadcast_to(segment_valid[..., None, None, None], integral.shape)
+                    & inside
                 ).reshape((start.shape[0], -1))
             )
         route_indices = jnp.concatenate(indices, axis=1)
@@ -359,7 +391,36 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         flux_content, evidence = execution.reduce(
             route_values.reshape((-1,)), accumulation="fast", output="dense"
         )
-        return flux_content, counts, overflow, evidence.successful
+        return flux_content, counts, overflow, evidence.successful & ~truncated
+
+    def _clip_to_domain(
+        self, start: Array, end: Array, active: Array, /
+    ) -> tuple[Array, Array]:
+        """Return the path head clipped at the closed nonperiodic box and exits.
+
+        The exit parameter is the first crossing of any nonperiodic face along
+        the straight tail-to-head path; the crossed coordinate is snapped onto
+        its face so the deposited head lies exactly in the closed box.
+        """
+        axes = self.transfer.bridge.grid.structured_axes
+        lower = jnp.asarray([axis.bounds[0] for axis in axes], dtype=start.dtype)
+        upper = jnp.asarray([axis.bounds[1] for axis in axes], dtype=start.dtype)
+        bounded = jnp.asarray(tuple(not value for value in self.periodic))
+        delta = end - start
+        above = bounded & (end > upper)
+        below = bounded & (end < lower)
+        safe = jnp.where(above | below, delta, 1.0)
+        fraction = jnp.where(
+            above, (upper - start) / safe, jnp.where(below, (lower - start) / safe, 1.0)
+        )
+        parameter = jnp.clip(jnp.min(fraction, axis=-1), 0.0, 1.0)
+        leaves = active & jnp.any(above | below, axis=-1)
+        clipped = start + parameter[:, None] * delta
+        crossed = fraction <= parameter[:, None]
+        clipped = jnp.where(crossed & above, upper, clipped)
+        clipped = jnp.where(crossed & below, lower, clipped)
+        clipped = jnp.where(bounded, jnp.clip(clipped, lower, upper), clipped)
+        return jnp.where(leaves[:, None], clipped, end), leaves
 
     def deposit(
         self,
@@ -375,6 +436,8 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
 
         ``macrocharge`` and ``active_mask`` are the runtime population charge and
         activity; omitted, the prepared species charges and activity are used.
+        Heads beyond a nonperiodic face are clipped at their exit point (see the
+        class docstring); ``deposited_end`` and ``boundary_exit`` report them.
         """
         start = jnp.asarray(start_position)
         end = jnp.asarray(end_position, dtype=start.dtype)
@@ -398,14 +461,15 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         dt = eqx.error_if(
             dt, ~jnp.isfinite(dt) | (dt <= 0.0), "step_size must be positive and finite."
         )
+        deposited_end, boundary_exit = self._clip_to_domain(start, end, active)
         start_routes = self.transfer.build(start, active_mask=active_mask)
-        end_routes = self.transfer.build(end, active_mask=active_mask)
+        end_routes = self.transfer.build(deposited_end, active_mask=active_mask)
         start_charge = self.transfer.deposit_macrocharge(start_routes, charges)
         end_charge = self.transfer.deposit_macrocharge(end_routes, charges)
         flux_content, counts, overflow, reduced = (
-            self._whitney_flux(start, end, charges, active, dt)
+            self._whitney_flux(start, deposited_end, charges, active, dt)
             if self.transfer.plan.shape_order == 1
-            else self._spline_whitney_flux(start, end, charges, active, dt)
+            else self._spline_whitney_flux(start, deposited_end, charges, active, dt)
         )
         bridge = self.transfer.bridge
         current = bridge.cochain.solve_hodge(1, flux_content)
@@ -413,12 +477,17 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             end_charge.cochain - start_charge.cochain
         ) / dt - bridge.codifferential(1, current)
         maximum = jnp.max(jnp.abs(continuity), initial=0.0)
-        scale = jnp.maximum(
-            1.0,
+        # The residual of a short step is a difference of charges of size |ρ|, so
+        # its roundoff floor is ε|ρ|/Δt even when the charge change is tiny; the
+        # unsigned deposit keeps that floor when opposite charges coincide.
+        magnitude = self.transfer.deposit_macrocharge(end_routes, jnp.abs(charges))
+        scale = (
             jnp.max(
-                jnp.abs((end_charge.cochain - start_charge.cochain) / dt),
+                jnp.abs(end_charge.cochain - start_charge.cochain)
+                + 2.0 * magnitude.cochain,
                 initial=0.0,
-            ),
+            )
+            / dt
         )
         finite = (
             jnp.all(jnp.isfinite(current))
@@ -440,8 +509,11 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             current,
             continuity,
             maximum,
+            scale,
             jnp.sum(counts, dtype=jnp.int32),
             overflow,
+            deposited_end,
+            boundary_exit,
             finite,
             successful,
             self.plan_id,

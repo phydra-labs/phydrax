@@ -1,0 +1,15 @@
+{
+  "case": "tests/unit/solver/test_pic_providers.py::_tiny_wakefield_case",
+  "command": "OMP_NUM_THREADS=1 OPENPMD_HDF5_CHUNKS=none warpx.rz inputs (deck: phydrax.solver.warpx_input(_tiny_wakefield_case()))",
+  "date": "2026-09-28",
+  "executable": "warpx.rz",
+  "executable_sha256": "ea1ee6bb9239403ffd0dce5afd13d608ef0af2c2cf9c02ce97a7dc734776df90",
+  "files": {
+    "openpmd_000022.h5": "06be3e4a58e7c5f29e5a8a5d8b5445323bc5f990f7a5a6b4481ff3ab5388f4be",
+    "openpmd_000026.h5": "06455c2e53c818dc04ba2b54a6db3461c291cb28c47745322138c36451c55f3b"
+  },
+  "license": "BSD-3-Clause-LBNL",
+  "provider": "warpx",
+  "scenario": "laser-wakefield-stage",
+  "version": "26.01"
+}

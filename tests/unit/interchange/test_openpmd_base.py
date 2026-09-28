@@ -209,6 +209,14 @@ def test_draft_revision_requires_its_named_extension(tmp_path: Path) -> None:
             "file name",
             id="file-format",
         ),
+        pytest.param(
+            {
+                "iterationEncoding": np.bytes_("fileBased"),
+                "iterationFormat": np.bytes_("data_%T_%06T.h5"),
+            },
+            "file name",
+            id="file-format-two-placeholders",
+        ),
         pytest.param({"meshesPath": np.bytes_("/meshes/")}, "relative", id="meshes"),
         pytest.param({"openPMDextension": None}, "openPMDextension", id="extension"),
     ],
@@ -222,16 +230,17 @@ def test_series_root_refuses_malformed_metadata(
             read_series_root(handle, OPENPMD_MESH_REVISION)
 
 
-def test_file_based_series_is_admitted(tmp_path: Path) -> None:
+@pytest.mark.parametrize("pattern", ["data_%T.h5", "openpmd_%06T"])
+def test_file_based_series_is_admitted(tmp_path: Path, pattern: str) -> None:
     path = _mesh_series(
         tmp_path / "data_100.h5",
         iterationEncoding=np.bytes_("fileBased"),
-        iterationFormat=np.bytes_("data_%T.h5"),
+        iterationFormat=np.bytes_(pattern),
     )
     with h5py.File(path, "r") as handle:
         root = read_series_root(handle, OPENPMD_MESH_REVISION)
     assert root.iteration_encoding == "fileBased"
-    assert root.iteration_format == "data_%T.h5"
+    assert root.iteration_format == pattern
 
 
 def test_grid_units_follow_the_revision_layout(tmp_path: Path) -> None:

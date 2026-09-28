@@ -12,6 +12,7 @@ Profile adapters own record selection and scientific interpretation.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from numbers import Integral
@@ -36,6 +37,9 @@ OpenPMDIterationEncoding: TypeAlias = Literal["groupBased", "fileBased"]
 
 # Fixed by openPMD 1.1.0 and the 2.0 draft alike.
 OPENPMD_BASE_PATH = "/data/%T/"
+# One fileBased iteration placeholder: ``%T``, or the zero-padded ``%0<N>T``
+# that openPMD-api writers (WarpX, PIConGPU) emit.
+_FILE_ITERATION = re.compile(r"%(?:0\d+)?T")
 # openPMD 1.x registers exactly one extension identifier in its bitmask.
 _BITMASK_EXTENSIONS = {1: "ED-PIC"}
 # HDF5 filter identifiers: deflate, shuffle, Fletcher32.
@@ -383,9 +387,12 @@ def read_series_root(
                     "iterationFormat must match the canonical group base path."
                 )
         case "fileBased":
-            if "%T" not in iteration_format or "/" in iteration_format:
+            if len(_FILE_ITERATION.findall(iteration_format)) != 1 or (
+                "/" in iteration_format
+            ):
                 raise ValueError(
-                    "fileBased iterationFormat must be one file name containing %T."
+                    "fileBased iterationFormat must be one file name containing one "
+                    "%T or %0<N>T placeholder."
                 )
         case unreachable:
             assert_never(unreachable)

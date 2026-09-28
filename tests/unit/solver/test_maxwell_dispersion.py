@@ -194,7 +194,7 @@ def test_dispersion_audit_refusals() -> None:
     absorbing = phx.solver.CompatibleMaxwellPlan(
         bridge, pml=mx.MaxwellCPMLPlan(2)
     ).prepare()
-    with pytest.raises(ValueError, match="magnetic projection is global"):
+    with pytest.raises(ValueError, match="intersects the absorbing CPML"):
         mx.CompatibleMaxwellDispersionAudit(
             absorbing, mx.MaxwellMaterialRegion((1, 1, 1), (9, 9, 9)), 0.01
         )

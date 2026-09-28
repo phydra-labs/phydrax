@@ -419,6 +419,11 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             total,
             previous_total,
             total - previous_total,
+            jnp.asarray(0.0, dtype=total.dtype),
+            jnp.asarray(0.0, dtype=total.dtype),
+            jnp.asarray(0.0, dtype=total.dtype),
+            jnp.asarray(0.0, dtype=total.dtype),
+            jnp.asarray(0.0, dtype=total.dtype),
         )
         particle_finite = jnp.all(
             jnp.stack(

@@ -3,6 +3,448 @@
 ## Unreleased
 
 ### Added
+- Full-wave FEL `phydrax.applications.accelerator.fel.FELFullWavePlan`
+  (`FELFullWaveBeam`, `FELFullWaveSeed`, `FELFullWaveTracks`,
+  `FELFullWaveHuygens`, `FELFullWaveResult`, `FELFullWaveLedger`,
+  `FELFullWaveEvidence`, `FELFullWaveFrameEvidence`, `FELFullWaveStatus`,
+  `PreparedFELFullWave`): boosted-frame staggered PSATD PIC with a gather-only
+  undulator, PML-open boost axis, a B5 antenna seed boosted onto the grid,
+  A1 track radiation or boosted Huygens far fields, and a lab ledger of beam,
+  grid-field, PML-escaped, and antenna-injected energy. Seeded small-signal
+  gain matches `FELPlan` within 5 % (+3.6 %), spontaneous Huygens spectra match
+  A1 times the track's spline deposit factor within 6 %, prebunched emission
+  matches KMR within 3 % and scales as `(I J₁(a))²`, and the boosted run
+  matches a lab-frame PIC run within 5 %. Example
+  `examples/free_electron_laser_full_wave.py`, benchmark
+  `benchmarks/fel_full_wave.py`.
+- Cartesian PSATD drives the B5 `SampledPlaneCurrentAntennaPlan`:
+  `SpectralMaxwellPlan(..., antennas=(...))` prepares each plan as
+  `phydrax.solver.maxwell.spectral.PreparedSpectralPlaneAntenna`, electric
+  and magnetic TFSF sheet currents (with the convective terms of a sheet
+  moving along its normal) on a band-limited normal delta, flat to a quarter of
+  the Nyquist wavenumber and empty above half of it. Declared sheet charges live
+  in `SpectralMaxwellState.antenna_charge`/`antenna_magnetic_charge`;
+  `SpectralMaxwellDiagnostics.antenna_work` is each antenna's work on the
+  field. `BoostedFramePlan.boost_antenna` output now seeds boosted PSATD runs
+  (stationary on the Galilean grid). The exact propagators
+  (`exact_interval`, `window_integral`, `apply_source`) take a magnetic
+  current, and `SpectralOperators.magnetic_charge_field` inverts `∇⁺·B`.
+  Measured: one-way ratio below `1e-12`, antenna work equal to the injected
+  energy to `3e-14`, β = −0.9 Doppler centroid within `6e-5`, Gaussian waist
+  within `0.6%` and Gouy phase within `5e-3` rad, and a γ_b = 2 LWFA seeded by
+  a boosted antenna within `0.3%` of the lab gain with no NCI rejection.
+- Pinned external provider oracles for the radiation routes, placed next to
+  the route each one checks. Each adapter builds its input deck from a Phydrax
+  plan and runs a caller-pinned executable through `run_pinned_command` with
+  byte-capped file artifacts. Output comes back in plan units through the
+  plan's `ElectromagneticScaleContract`. Each result reports the provider
+  version, executable and output digests, the license, and an `AdapterReport`
+  of declared losses. Configurations outside the supported subset are refused
+  before the provider runs.
+  - SRW: `run_srw`, `srw_input`, `read_srw_output`, `SRWProvider`,
+    `SRWFieldMapSource`, `SRWFieldRepresentation`, `SRWFieldSpectrum`, and
+    `SRWSpectrumResult` (`phydrax.electromagnetics`). SRW computes
+    single-electron spectra from A1 trajectories or X1a field maps, returned
+    in the A1 convention.
+  - UFGC and Symphony: `run_ufgc`, `ufgc_input`, `read_ufgc_output`,
+    `UFGCProvider`, `UFGCCoefficients`, `UFGCResult`, `run_symphony`,
+    `symphony_input`, `read_symphony_output`, `SymphonyProvider`,
+    `SymphonyCoefficients`, and `SymphonyResult`. They compute C2 emission and
+    absorption coefficients. Both codes are GPL, so each runs only through a
+    pinned interpreter plus a digest-pinned library or module.
+  - WarpX, Smilei, and PIConGPU (`phydrax.solver`): `PICOracleScenario`,
+    `PICOracleCode`, `pic_oracle_case`, `PICOracleCase`, `PICOracleSpecies`,
+    `PICOracleSpectralSolver`, `PICOracleFields`, `PICOracleResult`,
+    `WarpXProvider`, `warpx_input`, `run_warpx`, `read_pic_oracle_openpmd`,
+    `SmileiProvider`, `smilei_input`, `run_smilei`, `read_smilei_fields`,
+    `PIConGPUProvider`, `picongpu_input`, `run_picongpu`, `PICOracleTrack`,
+    `PICOracleTrackResult`, `run_warpx_track`, `read_pic_oracle_track`,
+    `PICOracleLaser`, `PICOracleWakefieldCase`, `pic_oracle_wakefield_case`,
+    `PICOracleModalFields`, `PICOracleWakefieldResult`,
+    `warpx_preroll_steps`, `run_warpx_wakefield`, and `read_warpx_wakefield`.
+    Each scenario is derived from the plan passed in:
+    - `periodic-yee-plasma` (WarpX, Smilei, PIConGPU) and
+      `periodic-psatd-plasma` (WarpX) come from the fully periodic
+      `ElectromagneticPICPlan`.
+    - `single-particle-radiation` (WarpX) takes one recorded particle in a
+      uniform static external field. Its track enters through the openPMD
+      particle reader as a `ChargedTrajectory` for A1.
+    - `laser-wakefield-stage` (WarpX RZ PSATD) comes from the
+      quasi-cylindrical P3 plan. Its mode-resolved fields enter through the
+      openPMD `thetaMode` reader.
+
+    WarpX and PIConGPU fields are imported through the openPMD mesh reader.
+    PIConGPU runs through a pinned per-setup build driver.
+  - Puffin: `run_puffin`, `puffin_input`, `read_puffin_power`,
+    `PuffinProvider`, `PuffinGaussianSeed`, and `PuffinResult`
+    (`phydrax.applications.accelerator.fel`). Puffin runs the 1-D
+    unaveraged FEL against `FELTimeDependentPlan`.
+  - elegant: `run_elegant_csr`, `elegant_csr_input`, `elegant_csr_bunch`,
+    `ElegantCSRProvider`, and `ElegantCSRResult`
+    (`phydrax.applications.accelerator`). elegant runs `CSRCSBEND`/`CSRDRIFT`
+    tracking against the X4 1-D models.
+  - Geant4 through geant4_pybind: `run_geant4_shower`,
+    `geant4_shower_input`, `read_geant4_shower`, `Geant4ShowerResult`,
+    `run_geant4_cherenkov`, `geant4_cherenkov_input`,
+    `read_geant4_cherenkov`, `Geant4CherenkovResult`, `run_geant4_optical`,
+    `geant4_optical_input`, `read_geant4_optical`, `Geant4OpticalResult`,
+    `Geant4Provider`, and `Geant4ElectromagneticPhysics`
+    (`phydrax.applications.detector`). Geant4 computes M1 shower depth
+    profiles, M2 Cherenkov yield, cone, and polarization, and M2 transport of
+    optical photons through planar polished UNIFIED stacks with absorption and
+    Rayleigh scattering. In Geant4 11.4.p01 the in-plane polarization
+    component changes sign at every dielectric crossing. The adapter reports
+    this as a declared loss and does not correct it.
+
+  New interchange catalog formats: `sdds` (binary elegant particle files,
+  read and write), `puffin-integrated`, and `smilei-fields` (both read-only).
+  openPMD `fileBased` series now accept the zero-padded `%0<N>T` iteration
+  placeholder that WarpX and PIConGPU write; exactly one placeholder is
+  required. The `thetaMode` mesh reader also accepts `axisLabels`
+  `("z", "r")` (WarpX RZ) and transposes those records to `[mode, r, z]`.
+  Every tiny reference output under `tests/data/providers/` was
+  produced by the real provider, and its provenance is recorded next to it.
+  Validated releases, licenses, and environment variables are listed in
+  `docs/guides_charged_particle_radiation.md#external-provider-oracles`.
+- Cross-route consistency release matrix for charged-particle radiation.
+  `tests/integration/test_radiation_cross_route.py` compares independent
+  routes on shared scenarios at two or more resolutions. Each tolerance is set
+  from a measured error coefficient. The rows are: PIC-tracked electron
+  through `PICTrackRecorder` and A1 against A1 on the exact helix (A1 ↔ P);
+  one axisymmetric TM pulse on the cochain, Cartesian-PSATD, and
+  quasi-cylindrical field solvers against the closed form (P1 ↔ P2 ↔ P3);
+  nonlinear-Compton energy loss against classical Landau–Lifshitz as `χ → 0`
+  (Q1 ↔ Q2); thermal cyclotron harmonic emissivity against Jüttner-averaged A1
+  helices (C2 ↔ A1); and Cherenkov photon yield against the moving-charge
+  Poynting flux over `ħω` (M2 ↔ B2). The A1 ↔ B1, B2 ↔ B4, X4 steady ↔
+  retarded-mesh and X5 ↔ X6 rows reference their milestone tests. The new
+  candidate profile `radiation.cross-route-release-matrix`
+  (`phydrax.qualification`) names every row's test node IDs as required gates
+  and depends on the member route profiles. New candidate profiles:
+  `electromagnetics.cold-plasma-dielectric`, `accelerator.wake-impedance`,
+  `accelerator.space-charge-igf`, and
+  `optics.transport.optical-photon-transport`. The guide section is
+  `docs/guides_charged_particle_radiation.md#cross-route-release-matrix`.
+- Relativistic self-field initialization for electromagnetic PIC.
+  `ElectromagneticPICPlan.initialize(..., self_fields="relativistic-per-species",
+  drifts=None)` gives every species drifting along a grid axis (explicit drift or
+  the mean velocity of its active particles) the lab-frame field of its
+  rest-frame Coulomb field: `−∇·(ε(∇⊥ + γ⁻² ê∥∂∥)φ) = ρ` with the native PCG
+  path, `E = −(∇⊥φ + γ⁻² ê∥∂∥φ)`, `B = d(βφ/c) = β × E/c`, superposed over
+  species. New optional field-solver protocol `PICRelativisticSelfFields`
+  (implemented by `CochainMaxwellPICFieldSolver`) returns
+  `PICRelativisticFieldResult` with the Gauss residual and `|∇·B|` (zero by
+  construction). A γ = 10 Gaussian bunch matches the boosted analytic field to
+  1.8% at 32³ with `B = β × E/c` to 3.5%, and radiates 1.4% of the energy
+  through surrounding planes that a static `B = 0` start radiates.
+- Lorentz-boosted-frame PIC. `phydrax.solver.BoostedFramePlan(frame,
+  lab_domain)` binds a pure boost `LorentzFrame` along one grid axis to a lab
+  `phydrax.geometry.Box`: exact event, field, and proper-velocity transforms;
+  `boost_particles` (lab-resting plasma becomes density `γ_b n` drifting at
+  `−v_b`, beams get the velocity addition and a ballistic drift onto the
+  boosted slice); `boost_external_field` (`BoostedExternalField`, gather-only,
+  never deposited; a boosted static undulator is a sub-luminal magnetic-type
+  field); `boost_antenna` (moving `SampledPlaneCurrentAntennaPlan`).
+  `prepare(pic, *, snapshots, nci_...)` returns `PreparedBoostedFrame` over a
+  Galilean (comoving with the boosted plasma) or standard
+  `PreparedSpectralMaxwell`: lab vacuum fields (lasers) sampled on the initial
+  slice and Gauss-projected, a mandatory high-`|k|` NCI guard that rejects
+  steps, back-transformed lab field and particle snapshots
+  (`BoostedSnapshotPlan`) in a bounded ring, lab-frame track conversion with
+  per-lane lab times for trajectory radiation (`lab_trajectory`), boosted
+  Huygens far fields relabeled into the lab only on standard grids with zero
+  surface current in vacuum (`lab_far_field`), and a `"boosted-frame"` restart
+  component. Refusals: rotated or oblique frames, non-comoving Galilean
+  velocities, grids short of the contracted lab domain, unboosted external
+  fields, recorders streaming boosted-frame radiation, non-vacuum media,
+  overflowing snapshot rings, plasma on a standard grid, vacuum fields over
+  particles. Qualification candidate `pic.boosted-frame`; example
+  `examples/boosted_frame_lwfa.py`; benchmark `benchmarks/boosted_frame.py`.
+- Open, dispersive, and magnetized self-consistent electromagnetic PIC.
+  `CochainMaxwellPICFieldSolver` accepts bounded axes, CPML absorbers,
+  PEC/PMC/impedance boundaries, and every linear passive medium (lossy
+  conductors, Lorentz–Drude electric and magnetic poles, magnetized cold
+  plasma); nonlinear or active media and an electrostatic permittivity that
+  differs from the medium's instantaneous response are refused. Grounded
+  (Dirichlet) initialization puts the induced wall charge on the fixed
+  vertices. New optional protocols `PICEnergyAccounting` (`PICFieldEnergy`
+  split into electric, leapfrog-corrected magnetic, and medium energy plus the
+  source-free loss power) and `PICOpenDomain` (periodic/bounded axes, box, and
+  per-species wall inset of the spline stencil). `PICEnergyLedger` gains
+  `material`, `dissipated` (trapezoidal conduction, pole damping, collision,
+  impedance, and CPML loss), and `exited`; `ElectromagneticPICDiagnostics`
+  gains `exit` (`PICExitLedger`: absorbed charge, mass, kinetic energy),
+  `medium_charge`, and `charge_ledger_defect`;
+  `ElectromagneticPICPlan.synchronized_energy` returns a `PICEnergySnapshot`
+  at the state's integer time. `PICBoundaryKind.PERIODIC` marks periodic
+  particle axes; particle faces are validated against the field box.
+  `PreparedCompatibleMaxwell.leapfrog_energy` and `loss_power` (moved from the
+  prescribed-charge runtime). Qualification candidate
+  `pic.dispersive-self-consistent`; example
+  `examples/dispersive_pic_cherenkov.py`.
+- Quasi-cylindrical spectral PIC. `QuasiCylindricalMaxwellPlan` on a
+  `phydrax.discretization.pic.QuasiCylindricalGrid` advances azimuthal modes
+  `m = 0, …, M` whose circular components are transformed by
+  `phydrax.discretization.SharedGridHankelPlan` (orders `m − 1, m, m + 1` on
+  one k-grid from the zeros of `J_m`, pseudoinverse analysis with rank and
+  residual evidence) into the Cartesian-equivalent spectrum, so the P2
+  standard, Galilean, and averaged-Galilean PSATD propagators apply exactly
+  (constant-J; `"update-with-rho"` or `"spectral-correction"`,
+  `"vay-deposition"` refused). `AzimuthalTransferPlan` deposits and gathers
+  modes with `e^{−imθ}` weights (×2 for `m > 0`), mirror folding, and
+  near-axis-corrected volumes for shapes 1–3. The prepared solver is a PIC
+  field solver with `PICSpectralSymbol`, `PICHuygensSampling` (closed
+  cylinders, standard variant, no antennas), `PICWindowShift` along `z` with
+  a spectral Gauss projection, `PICGalileanGrid`, `PICRestartState`, and
+  `PICGaussProjection`; `RadialDampingPlan` absorbs in an outer radial layer
+  without touching the divergences, and `QuasiCylindricalAntennaPlan` injects
+  per-mode one-way sheet currents with declared sheet charges
+  (`phydrax.optics.wave.pulse_envelope_quasi_cylindrical_antenna` builds it
+  from a `PulseEnvelopeField`). `fbpic_laser_wakefield` runs a pinned
+  external FBPIC interpreter (`FBPICProvider`) as a laser-wakefield oracle;
+  the on-axis wake matches FBPIC 0.27.0 to 5% relative `L²`. Benchmark
+  `benchmarks/quasi_cylindrical_pic.py`.
+- Distributed explicit electromagnetic PIC and lifecycle restart.
+  `DistributedPICFieldSolver(base, mesh, guard_cells=, particle_margin=,
+  identity_tiles=)` runs the periodic 3-D cochain, reduced 1-D/2-D, or
+  Cartesian PSATD solver over a static block decomposition of the leading grid
+  axes on a one- to three-axis device mesh (slabs, pencils, blocks;
+  `phydrax.discretization.pic.PICDomainDecomposition`) aligned with per-device
+  particle slot blocks; per-device deposits are halo-accumulated axis by axis
+  through one plane-level `DistributedHaloPlan` per decomposed axis (a uniform
+  mean-current mode is summed), gathers read owned cells plus guards exchanged
+  axis by axis (edge and corner guards included), and preparation refuses
+  guards narrower than the transfer footprint or non-window-local deposits
+  (the continuity-projected reduced 2-D current is not window-local).
+  Global-FFT PSATD runs its slab or pencil transforms on the PIC mesh;
+  local-guarded PSATD (Kirchen et al. 2020) runs per device with the plan's
+  guard cells exchanged through the halo substrate and local finite-order
+  transforms of each device's subdomains (Vay deposition or update-with-ρ),
+  with `PreparedSpectralMaxwell.guard_truncation(dt)` as stencil-truncation
+  evidence; `PreparedSpectralMaxwell.guarded_update`/`complete_advance` and
+  `SpectralLocalUpdate` split the PSATD step into its device-local update and
+  its evidence. It shares its base solver's identity, implements
+  `PICGaussProjection` through its base, and reports `PICDistributedEvidence`
+  (`distributed=True`, mesh shape, spectral guards; cochain Maxwell
+  capabilities with `distributed` and `spatial_distribution`).
+  `DistributedElectromagneticPICPlan` initializes with caller-order
+  identities, installs a `DistributedPICExecutor`
+  (`ElectromagneticPICPlan.executor`, a new `AbstractPICParticleExecutor`
+  hook that also exchanges particles before the population stage;
+  `ElectromagneticPICDiagnostics.exchange`), and migrates particles with their
+  slot-aligned process state through fixed-capacity `ppermute` packets to every
+  mesh neighbor including diagonals (`PICMigrationPlan`,
+  `PICMigrationEvidence`, `PICSlotGroup`), rejecting the whole step on any
+  packet, reach, or slot overflow (`PICRejectionReason.MIGRATION`).
+  Creation-stage, population-stage, stateful, and charge-redistributing
+  processes implement the new `PICDistributedProcess` protocol
+  (`PICProcessStatePartition`, `PICProcessBank`) — the QED cascade with
+  polarization, particle merging and splitting, field and impact ionization —
+  and run per device; they allocate through `allocate_particles`
+  (`PICProcessContext.allocator`, `AbstractPICParticleAllocator`), and the
+  distributed `PICIdentityAllocator` gives created particles
+  decomposition-independent identities without communication (per-call
+  identity reservations striped by identity tile), so `N`-device cascades and
+  resampling reproduce one-device identities, lineage, and counts bitwise. The
+  ionization plans' `apply` gain an optional `allocator` keyword. The previous
+  refusals of local-guarded PSATD and of creation, stateful, and
+  charge-redistributing processes are removed. `PICRestartPlan` composes the
+  per-component restart leaves (species with identities, field with absorber
+  and material memory, boundary ledger, recorders, process states, field
+  history, moving-window epoch, auxiliary `PICRestartState` owners) into a
+  `PICRestartManifest` published and restored through lifecycle
+  addressable-shard checkpoints: same-topology restarts continue bitwise; a
+  different mesh repartitions particles, slot-aligned process state, and
+  process banks exactly and is a `"tolerance"` restart admitted by
+  `TopologyRestartPolicy`. Benchmark `benchmarks/pic_distributed.py` covers
+  slabs, blocks, and local-guarded PSATD. Candidate qualification profile
+  `pic.distributed`.
+- Polarization- and spin-resolved strong-field QED. `QEDPolarizationModel`
+  (`"unpolarized"`, `"photon-polarized"`, `"spin-and-photon-polarized"`) on
+  `NonlinearComptonPlan` and `NonlinearBreitWheelerPlan` selects the Seipt–King
+  LCFA rates in the spin-quantization-axis scheme: `QEDTable(..., polarization=
+  "positive" | "negative")` (`QEDTablePolarization`) tabulates the polarized
+  components whose average is the unpolarized table; `channel_spectrum` exposes
+  the four spin/photon channels of each process; leptons carry identity-keyed
+  rest-frame polarization vectors (`QEDSpinState`) with spin-flip sampling and
+  the no-emission evolution, reproducing Sokolov–Ternov polarization
+  (`8/(5√3)`); photons carry linear Stokes parameters rotated to the local
+  field basis, weighting pair creation and evolving by vacuum dichroism, and
+  pairs are created with sampled spins. `QEDCascadeState` gains `polarization`
+  (`QEDPolarizationState`, `None` when unpolarized) with escaped Stokes
+  histograms; `QEDCascadeProcess` gains `magnetic_moment_anomaly`
+  (`ELECTRON_MAGNETIC_MOMENT_ANOMALY`, CODATA 2022), `polarization_reference`
+  and `polarize`. `RelativisticPushPlan.precess` integrates
+  Thomas–Bargmann–Michel–Telegdi precession consistently with the Boris, Vay
+  and Higuera–Cary pushes. `PICProcessContext` gains `pusher`,
+  `step_start_proper_velocity` and `grid_velocity`.
+  `phydrax.special.synchrotron_h(x) = x K_{1/3}(x)`. `tools/qed_tables.py`
+  builds and verifies all six tables. Qualification candidate
+  `pic.polarized-qed`. The unpolarized model keeps its arithmetic, fingerprints
+  and random streams; polarized tables, plans and processes carry their
+  polarization in their fingerprints.
+- Creation-stage PIC processes run on Galilean field grids: the refusal of a
+  nonzero `PICGalileanGrid.grid_velocity` is lifted, and the QED cascade drifts
+  its photons at `c k̂ − v_grid` in grid coordinates.
+- Frequency-domain moving charges in media. `phydrax.electromagnetics`
+  `UniformMotionFieldPlan` (with `UniformMotionMedium`, `UniformMotionField`,
+  `UniformMotionEvidence`, `UniformMotionGeometry`) evaluates the exact
+  `exp(-iωt)` field of a point (`K₀`, `K₁` of `sρ`) or line (`exp(−s|η|)`) charge
+  in uniform motion through a homogeneous isotropic dispersive passive medium,
+  with the passive branch `Im k_ρ ≥ 0` (outgoing `H⁽¹⁾` above the Cherenkov
+  threshold, reversed phase in lossless negative-index media) and the radial
+  spectral energy flux. `phydrax.solver.maxwell` `MaxwellMovingChargePlan`
+  integrates `q v̂ exp(iωs/v)` exactly on Whitney edge and node forms (discrete
+  continuity to roundoff; periodic paths require `ωL/v ∈ 2πℤ`), and
+  `FrequencyMovingChargePlan` solves `SourceFormulation`
+  `"total-field"`/`"scattered-field"` (analytic incident field of a declared
+  homogeneous background; contrast and conductor surfaces radiate) with the
+  Krylov or sparse-direct `FrequencyMaxwellOperator`, stretched coordinates, and
+  `MaxwellBoundaryPlan` conductors, reporting `FrequencyMovingChargeEvidence`
+  (branch, `γβλ` bound-field reach vs absorber clearance, continuity, source
+  distance, open endpoints, convergence). `fourier_modal.MovingLineChargeSource`
+  (Bloch wavevector `(ω/v) d̂ + k_⊥ ê_⊥`), `moving_line_charge_excitation`, and
+  `MovingPointChargeQuadrature`/`MovingPointChargeIntegral` (point charges by
+  cosine-mapped Gauss–Kronrod `k_⊥` panels with `Γ = √(ω²/(β²γ²c²) + k_⊥²)`
+  truncation and Kronrod–Gauss evidence). Validated against Frank–Tamm, the
+  2-D line-charge Cherenkov flux, below-threshold nulls, Ginzburg–Frank
+  transition radiation, the Smith–Purcell relation, and published SI
+  Smith–Purcell energies (Szczepkowicz, Schächter & England 2020). Examples
+  `examples/maxwell_cherenkov_frequency_domain.py` and
+  `examples/smith_purcell_fourier_modal.py`; qualification candidate
+  `electromagnetics.frequency-moving-charge`.
+- Strong-field QED Monte Carlo and cascades in PIC
+  (`phydrax.discretization.pic`): `QEDTable` (host-prepared, fingerprinted
+  nonlinear Compton `K(χ)`/`P(χ, ξ)` and Breit–Wheeler `T(χ_γ)`/`P(χ_γ, ξ)`
+  from the F5 synchrotron kernels with quadrature, interpolation, monotone-CDF
+  and truncation evidence), `NonlinearComptonPlan` (`QEDEmissionModel`
+  `"lcfa"`/`"improved-lcfa"` after Di Piazza et al. 2019; optical-depth Monte
+  Carlo with a per-particle event-probability cap and bounded adaptive
+  subcycling; identity-addressed `(step, id_hi, id_lo, event)` randomness;
+  declared `QEDConservation` with the `O(m²c⁴/ε)` defect handed to the field),
+  `NonlinearBreitWheelerPlan`, `QEDPhotonSpeciesPlan` (ballistic photon bank
+  with F6 identities, escape box and polar-angle × energy histograms), and
+  `QEDCascadeProcess` (creation-stage process: Compton emission then pair
+  creation into electron/positron species with lineage before drift and
+  deposit; atomic capacity refusal; occupancy merge requests; per-event LCFA
+  validity, infrared, one-step trident and photon splitting flags in
+  `QEDEventFlag`/`QEDCascadeEvidence`). `tools/qed_tables.py` generates,
+  records and bitwise-verifies table sets. Guide
+  `docs/guides_strong_field_qed.md`, example `examples/pic_qed_cascade.py`,
+  benchmark `benchmarks/pic_qed_cascade.py`, qualification candidate
+  `pic.qed-cascade`.
+- PIC process capabilities: the `"creation"` process stage (after momentum
+  processes, before the drift, with pointwise charge preservation verified by
+  redeposition), stateful processes (`AbstractPICProcess.stateful`,
+  `initialize_state`, `shift_frame`, `PICProcessContext.state`,
+  `PICProcessResult.state`, restart components `process/{index}`), field
+  probes (`PICFieldProbe`, `PICFieldProbeSample`, `field_probe`), and
+  `PICProcessRadiation.field_exchange_energy`/`created_rest_energy`.
+  `ParticleMergePlan(minimum_occupancy=...)` gates merging on a species'
+  occupancy (the QED merge trigger).
+- Prescribed moving charges in compatible Maxwell media
+  (`phydrax.solver.maxwell`): `PrescribedChargeTrajectory` (positions on the
+  uniform Maxwell step grid), `PrescribedChargeCurrentSourcePlan` (certified
+  electric support so Huygens boxes admit it), `PrescribedChargeMaxwellPlan`,
+  `solve_prescribed_charge_maxwell`, `PrescribedChargeMaxwellResult`,
+  `PrescribedChargeEvidence`, `PrescribedChargeStatus`. Coincident-neutral
+  start (static compensating charge, zero initial field), freeze after the last
+  sample or a boundary exit, one `lax.scan` with continuity, Gauss (against the
+  prescribed charge), magnetic, support-leak, and exit evidence and a power
+  ledger of leapfrog energy, source work, and the runtime's semi-discrete
+  losses. Any linear runtime: dispersive, lossy, heterogeneous, magnetized
+  plasma, negative-index, CPML, PEC/PMC/impedance. Qualification candidates
+  `electromagnetics.moving-charge-cherenkov`, `-transition`, `-smith-purcell`.
+  Example `examples/cherenkov_prescribed_charge.py` (CFL ≤ 0.45), benchmark
+  `benchmarks/prescribed_charge_maxwell.py` (`--cfl`, default 0.225); both
+  close the CPML power ledger. Checked against B2b's
+  `FrequencyMovingChargePlan`: Cherenkov and Smith–Purcell Bloch harmonics
+  (fields and spectral Poynting per order) agree at second order in Δt, the
+  time-domain Smith–Purcell orders obey `λ = (d/n)(1/β − cos θ)` on the Yee
+  branch, and slit diffraction radiation matches the scattered-field
+  reference and the Kazantsev–Surdutovich two-edge limit.
+- `ChargeConservingCurrentPlan` supports nonperiodic axes: paths are clipped at
+  the closed box and `PICCurrentDepositResult` gains `deposited_end` and
+  `boundary_exit`; the continuity success scale includes the `ε|ρ|/Δt`
+  roundoff floor. Spline orders refuse stencils beyond an open face.
+- `MaxwellBoundaryPlan(kind, support=mask)` applies PEC/PMC/impedance to an
+  explicit interior entity mask (conductor plates, gratings, screens); Huygens
+  boxes refuse boundary-constrained surface entities.
+- Compatible Maxwell tracks every non-curl magnetic forcing (source magnetic
+  currents, CPML stretching, magnetic conductivity) as declared magnetic charge,
+  so full-3-D CPML and magnetically conductive runs elide the global magnetic
+  projection (previously the per-half-step projection solve failed); only PMC
+  still projects. Both magnetic half kicks and the electric kick now see
+  boundary-constrained fields, making PEC/PMC leapfrog runs exactly
+  energy-conserving. `ConductiveMaxwellConstitutivePlan` no longer reports
+  `magnetic_closedness_preserving=False`.
+- Cartesian PSATD/Galilean spectral PIC field solver
+  (`phydrax.solver.maxwell.spectral`): `SpectralMaxwellPlan` on a periodic
+  uniform 3-D bridge prepares `PreparedSpectralMaxwell`, an
+  `AbstractPreparedPICFieldSolver` for `ElectromagneticPICPlan` with the exact
+  φ-function propagator (`variant` standard/galilean/averaged-galilean,
+  `time_dependency` constant-j/linear-j/multi-j, `charge_conservation`
+  spectral-correction/vay-deposition/update-with-rho, infinite- or finite-order
+  `stencil` on collocated or staggered `grid`, `decomposition` global-fft or
+  local-guarded), the two-step split-field `SpectralPMLPlan`,
+  `SpectralHuygensBoxPlan` far-field sampling, and the NCI monitor
+  `SpectralNCIMonitorPlan` with the Godfrey–Vay–Haber linear reference
+  `godfrey_vay_growth_rate`. Incompatible combinations are refused at
+  construction. New core protocol `phydrax.solver.PICGalileanGrid`: particle
+  positions are grid coordinates, the PIC runtime drifts them by
+  `(v − v_grid)Δt` and samples external fields at the lab position. Guide
+  `docs/guides_spectral_pic.md`, benchmark `benchmarks/spectral_maxwell.py`.
+- Time-dependent averaged free-electron laser
+  (`phydrax.applications.accelerator.fel`): `FELTimeDependentPlan` composes an
+  `FELPlan` and couples its slices through slippage inside the Strang sequence
+  `T S(Δz/2) F(Δz) S(Δz/2) T` with `F = D X`; `FELSlippageRoute`
+  `"commensurate"` (exact integer rolls, non-integer step slips refused) or
+  `"spectral"` (exact Fourier phase ramp), `FELWindowBoundary` `"periodic"`
+  (infinitely long beam; reduces to `FELPlan` for a uniform beam) or `"open"`
+  with head padding, exit-energy ledger, and padding evidence. SASE starts from
+  identity-addressed Fawley shot noise of `I Δζ/(ec)` electrons per slice;
+  `FELPulseSeed` seeds from optics `PulseEnvelopeField`s on exact slots with an
+  exact carrier ramp; `FELPrebunching` runs `FELModulator` energy modulation and
+  `SymplecticMapPlan` chicanes for HGHG/EEHG; per-slice X2 wakes and X3 space
+  charge (`FELSpaceCharge`). `FELTimeDependentResult` reports temporal power,
+  pulse energy, per-slice bunching, `FELSpectrum` (spectral energy, spikes,
+  coherence time, bandwidth), `FELTimeDependentLedger`, and
+  `FELTimeDependentEvidence`; `FELStatus` gains `WINDOW_TRUNCATED`,
+  `SEED_UNREPRESENTED`, `SPACE_CHARGE_REFUSED`, and `SLIPPAGE_UNRESOLVED`. Pinned Genesis 1.3 version 4
+  oracle `run_genesis4`/`genesis4_input`/`Genesis4GaussianSeed`/`Genesis4Result`.
+  `SpaceChargeIGFPlan.evaluate` returns the traceable `SpaceChargeIGFKick`
+  arrays (used by `kick`), and uniform splat stencils take their spacing from
+  the prepared coordinates so both run under `jit`. Qualification candidate
+  `accelerator.fel-time-dependent`, example
+  `examples/free_electron_laser_time_dependent.py`, benchmark
+  `benchmarks/fel_time_dependent.py`.
+- Coherent synchrotron radiation (`phydrax.applications.accelerator`):
+  `CSRPlan(model, lattice, scale, grid, ...)` with `CSRModel =
+  Literal["1d-steady", "1d-transient-shielded", "3d-steady-igf",
+  "3d-retarded-mesh"]` on a planar drift/arc `CSRLattice` with pole faces:
+  the Saldin–Derbenev steady wake with a cell-integrated kernel; the exact
+  retarded 1-D line-charge model of Mayes and Hoffstaetter with entrance and
+  exit transients, previous elements, density history (bunch compression), and
+  parallel-plate image series with half-weighted truncation evidence; the
+  steady 3-D Green functions (the Cai–Ding 2020 longitudinal potential and
+  closed-form exact-Lorentz transverse potentials, which give the residual
+  centripetal force `−2qλ/(4πε₀ρ)` of both 3-D routes) integrated over cells
+  and convolved on the doubled grid; and a retarded 3-D mesh of the
+  smooth deposited density over its history. Retarded times use the native
+  bracketed `scalar_root`; the straight-line space-charge field is subtracted
+  pairwise. `CSRState` (bounded density ring and per-particle potential memory
+  so `−ΔqΦ` telescopes), `CSRWake`, `CSRKickResult`, `CSREvidence`
+  (`CSRStatus` refusals and Derbenev/steady-length validity bits),
+  `CSRResources`/`CSRResourceEstimate`/`CSRResourceError`, and split-step
+  tracking `CSRTrackingPlan`/`track_csr`/`CSRTrackingResult`. Pinned external
+  oracles `ocelot_csr_tracking`/`OcelotCSRProvider` and
+  `pycsr3d_longitudinal_wake`/`PyCSR3DProvider`. Qualification candidates
+  `accelerator.csr-1d` and `accelerator.csr-3d`; example
+  `examples/csr_chicane.py`; benchmark `benchmarks/csr_models.py`.
+- `FreeSpaceConvolutionPlan("tabulated", grid, kernel_table=...)`
+  (`phydrax.operators`): caller-supplied kernels at every on-grid displacement
+  for Green functions without reflection symmetry, with trailing component
+  axes; existing kernel plan identities are unchanged.
 - Radiation reaction (`phydrax.discretization.pic`): `RadiationReactionPlan(model,
   scale, physical_charge, physical_mass, *, tables, maximum_chi, minimum_gamma,
   maximum_relative_step_loss, minimum_scale_separation)` with models
@@ -181,12 +623,16 @@
   `K = s â × H'` and a magnetic sheet `K_m = −s â × E'` half a cell upstream
   (total-field/scattered-field placement), implementing the prepared Maxwell
   source contract. `beta` moves the sheet along its normal in the vacuum of a
-  declared `ElectromagneticScaleContract`, depositing `K'(τ)/γ` at the
-  rest-frame retarded time from `phydrax.boost_event` (Doppler factor
-  `γ(1 + sβ)`; backward leakage first order in the cell size).
+  declared `ElectromagneticScaleContract` as a smoothed moving TFSF boundary:
+  quadratic B-spline weights over the three nearest node planes, one exact
+  lattice pair per plane driven by the Lorentz-transformed incident fields at
+  each event's rest-frame retarded time (`phydrax.boost_event`), plus the
+  convective currents `−D ∂Θ/∂t`, `−B ∂Θ/∂t` of the moving boundary (Doppler
+  factor `γ(1 + sβ)`; backward leakage second order in the cell size: 7.9e-4 at
+  24 and 1.1e-4 at 48 cells per wavelength for `β = 0.2`).
   `SampledPlaneAntennaEvidence` reports aperture support, emitted carrier and
   resolution, Lorentz factor, active window, touched planes, and the magnetic
-  sheet's discrete divergence, which decides `magnetic_closedness_preserving`.
+  sheet's discrete divergence (its declared surface magnetic charge).
   `MaxwellAntennaWorkObserverPlan` streams the work the sheets do on the field.
   Optics adapters `phydrax.optics.wave.pulse_envelope_antenna`,
   `openpmd_laser_envelope_antenna`, and `sample_focused_gaussian_pulse_envelope`
@@ -1203,6 +1649,107 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `SpectralHuygensBoxPlan` samples each tangential `E` component at its own
+  staggered edge points (no interpolation) and interpolates the paired `H`
+  across the face with the fourth-order stencil `(−1, 9, 9, −1)/16`: the
+  Hertzian-dipole far-field error drops from 4.6 % to 1.5 % at nine cells per
+  wavelength. Huygens boxes must stay two cells clear of a PML, and the `J = 0`
+  check watches the tangential face edges and the normal edges crossing
+  them. `PreparedSpectralHuygensBox` takes a `current_gather`.
+- The PSATD PML keeps the Gauss law: the divergence its split-field damping
+  creates is booked as `SpectralMaxwellState.absorber_charge`/
+  `absorber_magnetic_charge`, supported in
+  `PreparedSpectralMaxwell.absorber_support` (the layers dilated by the stencil
+  half-width for finite order; for infinite order the global divergence is
+  confined to the layers by a static curl-free correction). The spectral
+  constraints are full-grid residuals against the Gauss plus declared absorber
+  and antenna charges (no interior mask), and `project_gauss` keeps the
+  declared charges. Before, the interior Gauss residual grew by spectral
+  leakage of the layers' divergence (to `3e-3` of the charge density in 300
+  steps) and failed PIC constraint tolerances; it now stays below `1e-13`,
+  with the reflection unchanged. Infinite-order PMLs need a layer at least two
+  cells thick.
+- `SampledPlaneCurrentAntennaPlan` no longer requires a nonperiodic normal
+  axis; the compatible (cochain) preparation refuses one.
+- `PICFieldAdvance.charge` is the start Gauss charge moved by the step's
+  current alone; the PIC particle↔field charge check is incremental, so
+  induced wall, conduction, plasma, and CPML charge the field holds is not a
+  defect, and the deposit↔Gauss pairing uses the current-driven charge.
+- `PICOpenBoundaryPlan.apply` requires `kinetic_energy=(start, end)`; an
+  absorbed particle records the energy interpolated to its hit fraction
+  (relativistic `(γ − 1)mc²` from the PIC runtime).
+- `ownership="diagnostic-only"` is refused for electromagnetic PIC: the
+  self-consistent field solver claims the resolved radiation.
+- Reduced Maxwell nonperiodic axes use the skew-adjoint zero-pad difference
+  pair (lower wall reads zero, forward difference reads zero beyond the last
+  cell) in curl, divergence, and charge; the reduced 2-D charge follows the
+  Gauss charge of the stepped field. Reduced 2-D PIC with bounded axes pairs
+  to roundoff, initializes and projects through the per-axis eigenbasis of the
+  reduced Poisson operator, and `ReducedPICTransferPlan` projects 2-D currents
+  with that operator (`laplacian_bases`).
+- Time-dependent FEL space charge is evaluated from the current particles at
+  every step as the kick `K(Δz)` at the center of the Strang step (replacing
+  the constant per-slice rate computed once at the entrance).
+  `FELSpaceCharge(bunch=None, *, transverse, harmonics=0, radial_extent=0.0,
+  radial_cells=100, azimuthal_modes=0, transverse_tolerance=1e-2)` combines
+  intra-slice harmonic longitudinal space charge (the Genesis 1.3 version 4
+  short-range model in the mean-motion frame `γ_z = γ_r/√(1 + a_w²)`: a radial
+  finite-volume solve for the grid model, the uniform-disk reduction
+  `1 − 2I₁K₁` for the one-dimensional model) with the X3 bunch-scale field
+  (every particle at its slice center, boosted with `γ_z`; open windows,
+  capacity slices × particles). The X3 transverse kick (∝ 1/γ_z²) is applied
+  or omitted by the `FELTransverseSpaceCharge` selector; its accumulated
+  ratio to the entrance rms `u⊥` is reported, and an omitted kick above
+  tolerance raises the new `FELStatus.TRANSVERSE_SPACE_CHARGE_OMITTED`.
+  `FELTimeDependentResult.space_charge_rate` is replaced by
+  `space_charge_gain[z, s]`; `FELTimeDependentEvidence` gains
+  `space_charge_cells_per_sigma` and `transverse_space_charge_ratio`.
+  `run_genesis4` maps longitudinal space charge onto Genesis `&efield`.
+- `SpaceChargeIGFPlan.kick`/`evaluate` take `frame_lorentz_factor` (a
+  quasi-static frame other than the bunch reference) and refuse bunches whose
+  rest-frame rms size falls below `minimum_cells_per_sigma` (default 3) grid
+  cells on any axis; `SpaceChargeIGFResult`/`SpaceChargeIGFKick` report
+  `cells_per_sigma` and `resolved`.
+- `FrequencyMaxwellOperator` takes `boundaries=` (`MaxwellBoundaryPlan`,
+  including `support` masks: perfect-conductor identity rows, zeroed PMC `H`,
+  impedance conduction `YE`) and `solve(method=...)` with
+  `FrequencyMaxwellSolveMethod` `"krylov"` (GMRES, default) or `"direct"`
+  (exact sparse assembly by structural coloring of the curl-curl pattern,
+  reusable `sparse_coloring()`, native sparse LU). `FrequencyMaxwellPowerLedger`
+  gains `boundary_power`; the Hermitian eigen path refuses perfect-conductor and
+  impedance boundaries.
+- `ElectromagneticPICState` gains the required trailing `processes` tuple of
+  process states (`ElectromagneticPICPlan.initialize_process_states`); the
+  moving window shifts it and openPMD import restarts it (declared adapter
+  loss). `PICEnergyLedger` gains trailing `created_rest_energy` and
+  `field_exchange`, and its `defect` is
+  `total + radiated + created_rest_energy − field_exchange − previous_total`.
+  `PICProcessStage` gains `"creation"`.
+- Compatible Maxwell tracks declared source magnetic charge: source magnetic
+  currents (Huygens, mode, antenna sheets) carry physical surface divergence,
+  so `MaxwellAuxiliaryState` gains `magnetic_charge` on the magnetic-divergence
+  cochain, advanced with the `B` half kicks (`∂q_m/∂t = −d(M)`);
+  `PreparedCompatibleMaxwell.pack(..., magnetic_charge=None)` and
+  `magnetic_charge_count` expose it. The magnetic Gauss law is `d(B) = q_m`:
+  `magnetic_constraint(state)` and the diagnostics report `d(B) − q_m`, and the
+  minimum-norm projection (still run for non-preserving materials, boundaries,
+  or CPML) targets `d(B) = q_m`. Sources no longer carry
+  `magnetic_closedness_preserving` (removed from the prepared source contract,
+  `PreparedMaxwellSource`, `MaxwellPairedCurrentSourcePlan`,
+  `MaxwellHuygensSourcePlan`, and `PreparedPICMaxwellCurrentSource`), so source
+  magnetic currents never trigger the global projection; a fully 3-D antenna beam
+  on a 48×48×64 grid runs projection-free with the declared-charge defect at
+  roundoff. Runtimes with an elided projection no longer prepare the
+  minimum-norm solver: under the automatic policy `pack` checks that the initial
+  flux matches its declared charge (a traced error otherwise; use the `"project"`
+  mode to project a non-closed initial flux) instead of projecting it.
+- `RelativityScaleContract.si()` now declares ħ as exact SI h/(2π), stored as a
+  40-significant-digit rational (`1.054571817646156391262428003302280744723e-34`,
+  float64-correctly rounded) instead of the truncated `1.054571817e-34`. SI ħ,
+  α (now CODATA 2022 α⁻¹ = 137.035999177(21) within 1σ; previously ~4σ off),
+  Schwinger field and every ħ-derived quantity shift by ~6.1e-10 relative, and
+  the SI relativity/electromagnetic `scale_id` fingerprints (and any artifact
+  fingerprint embedding them) change.
 - `PICEnergyLedger` gains `radiated` (after `magnetic_field`) and its `defect`
   is `total + radiated − previous_total`; `ElectromagneticPICState` gains the
   required trailing `field_history`; `ChargedPropagationResult` gains
@@ -1769,6 +2316,216 @@
   triangle-intersection implementations, and dense remesh transfer matrices.
 
 ### Fixed
+- The rank-deficient height-function fallback regression evaluated a
+  `StructuredPLICReconstruction` of one volume-fraction field against a
+  different `alpha`, so the reconstruction's Youngs-supported mixed cells fell
+  outside the query's interface band and `CurvatureEvidence` correctly refused
+  the inconsistent interface delta before any fallback evidence was produced.
+  The regression now reconstructs the same diffuse plane it evaluates: with
+  every primary facet the fallback fit has full rank, and with only one column
+  of collinear facets it reports rank one and `UNDERRESOLVED`.
+- Sparse LU/Cholesky symbolic factorization took an active `MaterializationPolicy`,
+  a dense-materialization permission, as its factor ceilings: `max_entries`
+  capped factor nonzeros, `max_bytes` capped retained bytes, and
+  `4 · max_entries` capped symbolic work. A matrix-free Krylov solve that forbids
+  dense materialization (`max_entries=1, max_bytes=16`) therefore refused its own
+  sparse ILU preconditioner ("factor_bytes requires 6499, exceeding limit 16"),
+  breaking the semiconductor small-signal, sensitivity, and circuit operating-point
+  solves. The default `MaterializationPolicy` of every solve also silently halved
+  the sparse factor's own nonzero ceiling. `prepare_sparse_factorization` and
+  `factorize_sparse` no longer take `materialization=`; fill is bounded by the
+  `SparseFactorizationPolicy` ceilings, and a solve plan charges the retained
+  factor to `SolveResourcePolicy.preconditioner_bytes`, refusing above it.
+- `phydrax.linalg.evaluate_pfaffian` no longer reports skew matrices whose
+  largest entry exceeds `1 / finfo.tiny` (2^1022 in float64, 2^126 in float32)
+  as singular. XLA lowers the internal normalization by that scale to a
+  multiplication by its reciprocal, which is subnormal and flushed to zero on
+  CPU, zeroing every pivot. The normalization scale is now capped at
+  `1 / finfo.tiny`, so normalized entries stay below 4; values, signs, log
+  magnitudes, and derivatives are unchanged for all other inputs.
+- `jax.linearize` and `prepare_linearization` of vmapped implicit roots no
+  longer raise `NotImplementedError` for `jax._src.hijax.VmapOf`. JAX 0.11's
+  `lax.custom_root` batches into a HiJAX primitive without a linearization rule,
+  which broke implicit MPM plane-stress steps and semiconductor equilibrium
+  Newton Jacobians/sparse derivative plans. Package roots (plane stress,
+  semiconductor thermodynamics, moist adjustment, Liénard–Wiechert retardation,
+  FEM local materials, local root plans, nonlinear/optim implicit results,
+  linalg implicit solves, hybrid events) now use a Phydrax custom-JVP
+  implicit-function rule with the same values and derivative contract;
+  `jax.lax.custom_root` is a banned API.
+- `CompatibleMaxwell1DPlan`/`CompatibleMaxwell2DPlan.stable_dt` and the
+  high-order TENO `TENOQualification` residuals and `passed` flag are host
+  Python scalars. They were NumPy scalars in static fields, so every
+  construction warned "A JAX array is being set as static" (NumPy scalars are
+  array leaves to Equinox). Values and fingerprints are unchanged.
+- Spectral Huygens boxes on `grid="collocated"` are refused. The collocated
+  half-cell spectral centering of deposited edge currents leaves current on
+  every node along each current's axis, so no surface is current-free, and
+  far fields depended on the source's sub-cell position (a 20–50 % dipole
+  error that did not converge). The old `J = 0` check inspected only the edge
+  current. This caused the full-wave FEL's Huygens/A1 drop to 0.76 after a
+  half-cell origin shift.
+- Compiled quadratic/cubic spline PIC steps rejected every step for
+  CONTINUITY on larger periodic grids (e.g. 24×24×12, 48×48×24) when particles
+  sat exactly on spline knots: XLA recomputed the normalized coordinate of
+  `_uniform_axis_stencil` per fusion, so a knot particle's support base and its
+  weights came from different roundings and its charge shifted by one vertex.
+  The coordinate is now materialized once. The electromagnetic PIC continuity
+  and particle↔field charge gates are relative to the new
+  `PICFieldDeposit.continuity_scale` (unsigned charge-rate magnitude, reported
+  as `ElectromagneticPICDiagnostics.continuity_scale`) with tolerance
+  `max(continuity_tolerance, 64 ε)` instead of an absolute `1e-9`;
+  `ChargeConservingCurrentPlan` drops its dimensional `max(1, ·)` floor and
+  reports `PICCurrentDepositResult.continuity_scale`.
+- The PIC deposit↔Gauss pairing check runs one module-level compiled probe per
+  species instead of eager op-by-op dispatch. Plan preparation over an already
+  prepared solver: 32×16×16 PSATD 9.8 s → 1.5 s, 24×24×12 quadratic Yee
+  5.5 s → 1.6 s; cold first build including compilation 29.6 s → 9.3 s and
+  16.8 s → 10.7 s.
+- Compatible Maxwell current↔medium coupling is second order. The Lorentz–Drude
+  and magnetic-pole ADE advanced with the pre-constraint `D`/`B`, so PEC (PMC)
+  walls drove a spurious O(Δt) wall polarization every step; conduction and
+  impedance-wall currents were sampled at the kick start (forward Euler) and
+  magnetic conduction at `H_n` and `H_{n+½}`, leaving an O(Δt) endpoint term
+  `−(Δt/4)σ(|E_N|² − |E_0|²)` against the trapezoidal loss ledger. Media now
+  advance with the boundary-constrained fluxes, and conduction uses the
+  predictor-midpoint field (magnetic conduction the trapezoid of the two half
+  kicks). PIC energy ledgers now fall 4.0× per Δt halving for Lorentz–Drude
+  (was 2.74 → 2.45 → 2.25), negative-index (2.89 → 2.33), magnetized plasma, and
+  conductors (2.09 → 2.02); prescribed-charge ledgers 4.0× for conductors (was
+  4.5 → 3.6 → 3.2) and impedance walls. Updates without dispersive media,
+  conduction, or impedance walls are bitwise unchanged.
+- `CochainElectrostaticPlan` solves with native PCG by default and certifies a
+  relative residual. Lineax CG stops on an elementwise max-norm test while the
+  linear runtime certifies the Hodge 2-norm residual, so non-neutral charge on
+  bounded 3-D grids of 12³ and more returned `RESIDUAL_TOO_LARGE` (32³: 2.5e-9
+  against a 1e-10 threshold). `tolerance` is now relative to the Hodge norm of
+  the assembled right-hand side (charge plus Neumann source minus the Dirichlet
+  lift, floored at the runtime's roundoff level) with no absolute term, in both
+  the linear policy and the plan's own `converged` check: with SI permittivities
+  the Dirichlet-driven right-hand side is ~1e-10, so an absolute tolerance
+  accepted PCG after a few iterations and the semiconductor detector weighting
+  potential came out `[1, 0.667, 0.333, 0, …]` instead of `1 − x/L`. The lift
+  now carries Dirichlet values on fixed vertices only (free-vertex values are
+  not constraints and would cancel the right-hand side to roundoff).
+- `examples/dispersive_pic_cherenkov.py` evidence is consistent: quadratic
+  shapes (order-one Whitney gathers jump at each face the beam crosses, a
+  first-order self-field work defect that left the ledger 23% open), runs at
+  `Δt` and `Δt/2` whose ledgers fall 4.45× within the Richardson second-order
+  bound, and compares the first-harmonic cone (43.26°) with the dispersion
+  audit's discrete cone at the same `Δt` (43.10°) as well as the continuum
+  (42.50°).
+- `NonlinearComptonPlan` optical-depth Monte Carlo is an unbiased renewal
+  process: after a crossing, the next target is a fresh draw minus the
+  overshoot, and a second crossing in one subcycle stays pending instead of
+  being discarded. Before this fix the emission rate and radiated energy were
+  biased low by `(1 − e^{−p})/p` (−4.9 % at the default
+  `maximum_event_probability = 0.1`), including for the polarized and spin
+  models. `NonlinearBreitWheelerPlan` carries the overshoot the same way after
+  a refused draw.
+- Order-one cochain PIC gathers E and B with the lowest-order Whitney forms
+  (degree zero along the entity's own axes) instead of multilinear
+  interpolation between entity midpoints, so the gathered field does exactly
+  the work of the charge-conserving current; `TensorBSplineSplatAssignment`
+  admits per-axis degree zero.
+- `phydrax.sparse` structural sparsity detection
+  (`compile_sparse_jacobian(..., compiler="auto")`) shared one const/bound state
+  across every invocation of a nested jaxpr. JAX binds one jaxpr object for
+  repeated calls of a function (every `jnp.where` shares `_where`), so an index
+  array resolved at one call site was read back as the static index of another
+  call whose index was unknown, and gathers/scatters there produced a wrong
+  pattern. The Maxwell curl-curl operator (Equinox bounds checks in the
+  codifferential) lost most entries: the assembled operator had relative error ~1.
+  Every nested jaxpr invocation (`jit`, custom JVP/VJP calls, `cond` branches,
+  `while`/`scan` bodies) now owns its scope, seeded only from its captured
+  constants and actual arguments, and publishes known results to the call site;
+  `cond` with a statically known index traces only the taken branch, and
+  `reduce_or`/`reduce_and`/`reduce_xor`/`unvmap_any`/`unvmap_max` propagate known
+  values. Statically passing `eqx.error_if` checks therefore keep checked indices
+  exact instead of dense. The scatter position map is vectorized.
+  `FrequencyMaxwellOperator(...).solve(method="direct")` now uses the traced
+  pattern; its explicit incidence-product pattern (and the diagonal-Hodge
+  restriction it imposed) is removed.
+- Host `SparseLU` (`provider="auto"`/`"scipy-superlu"`) estimated its factor as
+  the dense `n²` bound (1.4 GB for 9k complex unknowns), so the default
+  `SolveResourcePolicy` refused realistic grids. Planning now owns the column
+  ordering through `analyze_sparse_lu` (approximate minimum degree of `AᵀA` from
+  the rows of `A`, column elimination tree, Gilbert–Ng–Peyton column counts),
+  bounds `nnz(L + U)` by George–Ng's `2 nnz(chol((AQ)ᵀ(AQ)))` for every pivot
+  sequence, and SuperLU factors `A[:, Q]` with its natural ordering. On 2-D/3-D
+  Laplacians and curl-curl operators the bound is 1.7–2.1× the executed fill and
+  the owned ordering's fill is 0.85–1.07× SuperLU's COLAMD. The plan carries
+  `LinearSolvePlan.sparse_lu_analysis` (`SparseLUSymbolicAnalysis`), and the
+  factorization budget still refuses above the symbolic bound. The moving-charge
+  tests and the frequency-domain Cherenkov example no longer raise the budget.
+- Fourier-modal Maxwell layers composed a mixed `[E_left, H_right] ↦ [E_right,
+  H_left]` boundary relation, and reconstructed interior and interface fields by
+  inverting its `H_right ↦ H_left` block. That block decays like the evanescent
+  transmission, and the mixed relation has poles at sub-slab cavity resonances.
+  Metallic and perfect-conductor-like patterned layers, even under plane-wave
+  excitation, and dielectric gratings at ≥15 harmonics under the moving-charge
+  Bloch wavevector `ω/v` (condition number 4.5·10¹⁵) therefore failed with
+  "Linear solve failed". `BoundaryRelation` is now the power-wave scattering
+  relation `s11, s12, s21, s22`, with `f, g = (e ± Jh)/2`. It is contractive for
+  passive slabs and composed by the Redheffer star product.
+  `AffineBoundaryRelation` carries `forward_source`/`backward_source`.
+  Solve-time boundary fields and `fields_in_layer` close each plane from both
+  sides with prefix and suffix relations; continuous layers retain
+  `segment_suffix_boundaries`. The shared dense solve is compiled once per
+  shape, which makes a 41-harmonic solve about 0.4 s instead of 20–40 s.
+- `VectorFourierFactorizationPlan` applied the inverse rule to the component
+  tangent to the interfaces and Laurent's rule to the normal one, the reverse of
+  Li's rules. Lamellar TE and TM efficiencies therefore did not converge to the
+  correct values. It now uses `⟦1/ε⟧⁻¹ + (⟦ε⟧ − ⟦1/ε⟧⁻¹)⟦t tᴴ⟧`. A metallic
+  lamellar grating (index 0.22 + 6.71i) now reproduces the Lalanne–Hugonin (2000)
+  inverse-rule efficiencies to 10⁻⁵ at 21, 41, and 81 harmonics, and a lossless
+  ε = −10⁴ grating conserves energy to 10⁻⁹. The silica Smith–Purcell grating
+  converges by 21 harmonics (21 versus 61 agree to 3·10⁻⁵). Its point-charge
+  energy is 0.8 % below Szczepkowicz–Schächter–England (2020), and its line-charge
+  up/down split matches the cochain frequency-domain solver.
+- Integrated-Green-function field kernels (`FreeSpaceConvolutionPlan`
+  `"coulomb-igf"`/`"newton-igf"` with `gradient=True`, used by
+  `SpaceChargeIGFPlan`) were the cell average of `∇g`, the exact field of a
+  cell-constant density: it has no self-cell field and drops the near-zone
+  field of the density gradient inside a cell. On cells longer than the
+  source is wide (relativistic rest frames) that zone carries most of `E_z`:
+  a Gaussian bunch at four cells per σ on every axis read `E_z` 9 % low at
+  aspect ratio 10, 42 % at 100, and 62 % at 1000, converging only
+  logarithmically. The kernels are now `[P(m + ½e_a) − P(m − ½e_a)]/h_a`, the
+  exact field of the density linear between sites along the derivative axis
+  (the multilinear deposit) and cell-constant across it, equal to direct
+  integration of that density to 10⁻⁹ at aspect ratios 1–1000 and
+  second-order accurate (1–4 % at four cells per σ) at any aspect ratio.
+- The time-domain CFS-CPML of `CompatibleMaxwellPlan` and the reduced 1-D/2-D
+  Maxwell blocks read their convolution memories half a step off the kick's
+  time level (the electric kick used `ψ(t_{n+1})`, the opening magnetic half
+  kick `ψ(t_n + Δt/2)`), a first-order error that made normal-incidence
+  reflection proportional to `Δt` (1.3e-3 at CFL 0.9 for a 15-cell layer
+  calibrated to 1e-4) and kept the prescribed-charge CPML power ledger from
+  converging. Each memory now advances by two exponential half-step
+  recursions per step and every kick reads it at its own time level; the same
+  layer reflects 4.4e-5 independent of `Δt`, and the CPML ledger converges at
+  second order (relative defect 8.5e-3, 2.0e-3, 4.9e-4 as `Δt` halves).
+  `PreparedMaxwellCPML.bind_coefficients(step_size)` binds the half-step
+  recursion of one leapfrog step, and `apply_magnetic_start`/`apply_magnetic_end`
+  replace `apply_magnetic` (`PreparedReducedMaxwellCPML` likewise replaces
+  `apply` with `apply_electric`/`apply_magnetic_start`/`apply_magnetic_end`).
+  The reduced CPML now takes its profile from the shared calibration
+  `σ_max = (m + 1) c ln(1/R) / (2d)` (it ignored wave speed and spacing and
+  was twice as strong) and grades electric memories at nodes rather than cell
+  centers, which lowers its reflection from 1.4e-2 to 3.6e-4 for a 15-cell
+  layer; `PreparedReducedMaxwellCPML` takes the grid spacing and wave speed.
+- Complex `phydrax.special.kv`/`kve` were a pure power-series connection
+  formula (relative error ~1e-9 at `|z| = 0.5`, 0.7 at `|z| = 10`, 1e8 at
+  `|z| = 20`; 1e6 at `|z| = 40` on the imaginary axis). For `Re z >= 0`
+  (including the imaginary axis), `|Re v| <= 128.5`, and `|Im v| <= 1`, they
+  now use Temme's series (`|z| <= 2`) or Temme's CF2 continued fraction in
+  Steed form, then masked upward order recurrence, all with fixed trip counts;
+  `kve` is computed directly in scaled form instead of `exp(z) * kv`, and the
+  argument JVP uses `K_v' = (v/z) K_v - K_{v+1}`. Relative error against
+  mpmath is below 2e-15 over `|z| in [1e-3, 200]`, `|arg z| <= pi/2`. The real
+  `kv`/`kve` order derivatives, which route through this continuation, inherit
+  the accuracy. Left-half-plane arguments keep the previous series.
 - Strict dtype promotion failures: native restarted GMRES and the Arnoldi
   orthogonality check compared `int64` index ranges with `int32` step counts
   (reached by dense `VectorLocalRootPlan` tangent solves above dimension three

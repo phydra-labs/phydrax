@@ -5,6 +5,11 @@
 """Charged particle-in-cell discretization and transfer primitives."""
 
 from . import collisions, ionization
+from ._azimuthal import (
+    AzimuthalTransferPlan,
+    PreparedAzimuthalTransfer,
+    QuasiCylindricalGrid,
+)
 from ._binning import PICCellBinningPlan, PICCellBins
 from ._boundary import (
     PICBoundaryKind,
@@ -23,6 +28,14 @@ from ._current import (
     ChargeConservingCurrentPlan,
     PICMaxwellCurrentArguments,
 )
+from ._distributed import (
+    PICDomainDecomposition,
+    PICGuardWindow,
+    PICIdentityAllocator,
+    PICMigrationEvidence,
+    PICMigrationPlan,
+    PICSlotGroup,
+)
 from ._external_field import ExternalFieldSample, ExternalFieldSource
 from ._method import (
     PIC_CODE_RELATIVITY,
@@ -30,15 +43,52 @@ from ._method import (
     RelativisticPusher,
     RelativisticPushPlan,
 )
+from ._nonlinear_breit_wheeler import (
+    NonlinearBreitWheelerPlan,
+    NonlinearBreitWheelerResult,
+)
+from ._nonlinear_compton import (
+    NonlinearComptonPlan,
+    NonlinearComptonResult,
+    QEDEmissionModel,
+)
 from ._process import (
+    AbstractPICParticleAllocator,
+    AbstractPICParticleExecutor,
     AbstractPICProcess,
     AbstractPICRecorder,
+    allocate_particles,
+    PICDistributedProcess,
+    PICFieldProbe,
+    PICFieldProbeSample,
+    PICParticleExchangeResult,
+    PICProcessBank,
     PICProcessContext,
     PICProcessLedger,
     PICProcessRadiation,
     PICProcessResult,
     PICProcessStage,
+    PICProcessStatePartition,
     RadiationOwnership,
+)
+from ._qed_cascade import (
+    ELECTRON_MAGNETIC_MOMENT_ANOMALY,
+    QEDCascadeEvidence,
+    QEDCascadeProcess,
+    QEDCascadeState,
+    QEDLeptonState,
+    QEDPhotonSpeciesPlan,
+    QEDPhotonState,
+    QEDPolarizationState,
+    QEDSpinState,
+)
+from ._qed_tables import (
+    QEDConservation,
+    QEDEventFlag,
+    QEDPolarizationModel,
+    QEDProcess,
+    QEDTable,
+    QEDTablePolarization,
 )
 from ._radiation_reaction import (
     RadiationReactionFlag,
@@ -96,6 +146,9 @@ from ._unstructured_current import (
 
 
 __all__ = [
+    "AzimuthalTransferPlan",
+    "PreparedAzimuthalTransfer",
+    "QuasiCylindricalGrid",
     "collisions",
     "ionization",
     "PICCellBinningPlan",
@@ -112,14 +165,49 @@ __all__ = [
     "PICParticleResponseState",
     "PICSpeciesPlan",
     "PICSpeciesState",
+    "PICDomainDecomposition",
+    "PICGuardWindow",
+    "PICIdentityAllocator",
+    "PICMigrationEvidence",
+    "PICMigrationPlan",
+    "PICSlotGroup",
+    "AbstractPICParticleAllocator",
+    "AbstractPICParticleExecutor",
     "AbstractPICProcess",
     "AbstractPICRecorder",
+    "allocate_particles",
+    "PICDistributedProcess",
+    "PICFieldProbe",
+    "PICFieldProbeSample",
+    "PICParticleExchangeResult",
+    "PICProcessBank",
     "PICProcessContext",
     "PICProcessLedger",
     "PICProcessRadiation",
     "PICProcessResult",
     "PICProcessStage",
+    "PICProcessStatePartition",
     "RadiationOwnership",
+    "NonlinearBreitWheelerPlan",
+    "NonlinearBreitWheelerResult",
+    "NonlinearComptonPlan",
+    "NonlinearComptonResult",
+    "ELECTRON_MAGNETIC_MOMENT_ANOMALY",
+    "QEDCascadeEvidence",
+    "QEDCascadeProcess",
+    "QEDCascadeState",
+    "QEDConservation",
+    "QEDEmissionModel",
+    "QEDEventFlag",
+    "QEDLeptonState",
+    "QEDPhotonSpeciesPlan",
+    "QEDPhotonState",
+    "QEDPolarizationModel",
+    "QEDPolarizationState",
+    "QEDProcess",
+    "QEDSpinState",
+    "QEDTable",
+    "QEDTablePolarization",
     "RadiationReactionFlag",
     "RadiationReactionModel",
     "RadiationReactionPlan",

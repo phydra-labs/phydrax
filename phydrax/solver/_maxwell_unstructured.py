@@ -455,7 +455,10 @@ class PreparedUnstructuredMaxwell(StrictModule):
             # The unstructured runtime carries no source magnetic currents, so its
             # declared magnetic charge on the tetrahedra stays zero.
             MaxwellAuxiliaryState(
-                self.constitutive.initialize_state(), None, jnp.zeros((counts[3],))
+                self.constitutive.initialize_state(),
+                None,
+                jnp.zeros((counts[3],)),
+                jnp.zeros((counts[3],)),
             ),
             (),
         )

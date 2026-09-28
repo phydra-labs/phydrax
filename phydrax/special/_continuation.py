@@ -10,6 +10,7 @@ from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax.custom_derivatives import SymbolicZero
 from jax.typing import ArrayLike, DTypeLike
 
 
@@ -232,24 +233,288 @@ def _kv_connection(order: Array, argument: Array, /) -> Array:
     )
 
 
-def complex_kv(order: ArrayLike, argument: ArrayLike, /) -> Array:
-    order_, argument_ = promote_principal(order, argument)
-    ordinary = _kv_connection(order_, argument_)
-    nearest = jnp.round(jnp.real(order_)).astype(order_.dtype)
+def _kv_power_series(order: Array, argument: Array, /) -> Array:
+    ordinary = _kv_connection(order, argument)
+    nearest = jnp.round(jnp.real(order)).astype(order.dtype)
     delta = jnp.asarray(
-        8.0 * jnp.sqrt(jnp.finfo(argument_.real.dtype).eps),
-        dtype=order_.real.dtype,
-    ).astype(order_.dtype)
-    upper = _kv_connection(nearest + delta, argument_)
-    lower = _kv_connection(nearest - delta, argument_)
+        8.0 * jnp.sqrt(jnp.finfo(argument.real.dtype).eps),
+        dtype=order.real.dtype,
+    ).astype(order.dtype)
+    upper = _kv_connection(nearest + delta, argument)
+    lower = _kv_connection(nearest - delta, argument)
     center = 0.5 * (upper + lower)
     slope = (upper - lower) / (2.0 * delta)
-    integer_limit = center + (order_ - nearest) * slope
+    integer_limit = center + (order - nearest) * slope
     return jnp.where(
-        jnp.abs(order_ - nearest) <= delta,
+        jnp.abs(order - nearest) <= delta,
         integer_limit,
         ordinary,
     )
+
+
+# Taylor coefficients of 1/Gamma(1 + x) about x = 0; thirty terms reach double
+# precision for |x| <= 1, covering the Temme reduced orders |mu| <= 1/2 and the
+# admitted complex orders with |Im mu| <= _KV_MAX_IMAGINARY_ORDER.
+_RECIPROCAL_GAMMA_TAYLOR = (
+    1.0,
+    0.5772156649015329,
+    -0.6558780715202539,
+    -0.04200263503409524,
+    0.16653861138229148,
+    -0.04219773455554433,
+    -0.009621971527876973,
+    0.0072189432466631,
+    -0.0011651675918590652,
+    -0.00021524167411495098,
+    0.0001280502823881162,
+    -2.013485478078824e-05,
+    -1.2504934821426706e-06,
+    1.133027231981696e-06,
+    -2.056338416977607e-07,
+    6.116095104481416e-09,
+    5.002007644469223e-09,
+    -1.18127457048702e-09,
+    1.0434267116911005e-10,
+    7.782263439905071e-12,
+    -3.696805618642206e-12,
+    5.100370287454476e-13,
+    -2.0583260535665066e-14,
+    -5.348122539423018e-15,
+    1.2267786282382608e-15,
+    -1.1812593016974588e-16,
+    1.1866922547516004e-18,
+    1.4123806553180319e-18,
+    -2.29874568443537e-19,
+    1.7144063219273374e-20,
+)
+_KV_TEMME_RADIUS = 2.0
+_KV_TEMME_TERMS = 28
+# CF2 needs 135 steps at |z| = 2 on the imaginary axis for real orders and 155
+# for |Im mu| = 1 before the series increment drops below float64 epsilon.
+_KV_STEED_STEPS = 168
+_KV_MAX_RECURRENCE = 128
+_KV_MAX_IMAGINARY_ORDER = 1.0
+
+
+def _temme_gamma_terms(mu: Array, /) -> tuple[Array, Array, Array, Array]:
+    """Return Temme's ``gamma1``, ``gamma2``, ``1/Gamma(1+mu)``, ``1/Gamma(1-mu)``."""
+    square = mu * mu
+    even = jnp.zeros_like(mu)
+    odd = jnp.zeros_like(mu)
+    for coefficient in _RECIPROCAL_GAMMA_TAYLOR[-2::-2]:
+        even = even * square + coefficient
+    for coefficient in _RECIPROCAL_GAMMA_TAYLOR[-1::-2]:
+        odd = odd * square + coefficient
+    return -odd, even, even + mu * odd, even - mu * odd
+
+
+def _x_over_sin(x: Array, /) -> Array:
+    small = jnp.abs(x) < 1e-2
+    safe = jnp.where(small, jnp.ones_like(x), x)
+    square = x * x
+    series = 1.0 + square * (
+        1.0 / 6.0 + square * (7.0 / 360.0 + square * (31.0 / 15120.0))
+    )
+    return jnp.where(small, series, safe / jnp.sin(safe))
+
+
+def _sinh_over_x(x: Array, /) -> Array:
+    small = jnp.abs(x) < 1e-2
+    safe = jnp.where(small, jnp.ones_like(x), x)
+    square = x * x
+    series = 1.0 + square * (1.0 / 6.0 + square * (1.0 / 120.0 + square * (1.0 / 5040.0)))
+    return jnp.where(small, series, jnp.sinh(safe) / safe)
+
+
+def _kv_temme_series(mu: Array, argument: Array, /) -> tuple[Array, Array]:
+    """Temme's series for ``K_mu`` and ``K_{mu+1}`` with ``|mu| <= 1/2``, ``|z| <= 2``."""
+    log_inverse_half = -jnp.log(0.5 * argument)
+    exponent = mu * log_inverse_half
+    gamma1, gamma2, gamma_plus, gamma_minus = _temme_gamma_terms(mu)
+    f = _x_over_sin(math.pi * mu) * (
+        gamma1 * jnp.cosh(exponent) + gamma2 * _sinh_over_x(exponent) * log_inverse_half
+    )
+    power = jnp.exp(exponent)
+    p = 0.5 * power / gamma_plus
+    q = 0.5 / (power * gamma_minus)
+    quarter_square = 0.25 * argument * argument
+    mu_square = mu * mu
+
+    def accumulate(
+        index: Array, state: tuple[Array, Array, Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        f_, p_, q_, c, total, total1 = state
+        k = index.astype(argument.dtype)
+        f_ = (k * f_ + p_ + q_) / (k * k - mu_square)
+        c = c * quarter_square / k
+        p_ = p_ / (k - mu)
+        q_ = q_ / (k + mu)
+        return f_, p_, q_, c, total + c * f_, total1 + c * (p_ - k * f_)
+
+    _, _, _, _, total, total1 = jax.lax.fori_loop(
+        1,
+        _KV_TEMME_TERMS + 1,
+        accumulate,
+        (f, p, q, jnp.ones_like(argument), f, p),
+    )
+    return total, 2.0 * total1 / argument
+
+
+type _SteedState = tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]
+
+
+def _kve_steed(mu: Array, argument: Array, /) -> tuple[Array, Array]:
+    """Scaled ``e^z K_mu`` and ``e^z K_{mu+1}`` by Temme's CF2 in Steed form.
+
+    Complex-argument analogue of the Thompson--Barnett continued fraction used
+    for ``x >= 2`` in Numerical Recipes ``bessik``. The factorially growing
+    coefficient ``c_k`` and decaying ``Q_k`` are carried only as the products
+    ``c_k Q_{k-1}`` and ``c_k Q_k``. Forward recurrence for ``Q_k`` is unstable
+    once the sum has converged, so each lane freezes as soon as both the ``h``
+    and ``s`` increments fall below machine epsilon.
+    """
+    eps = jnp.finfo(argument.real.dtype).eps
+    a1 = 0.25 - mu * mu
+    b = 2.0 * (1.0 + argument)
+    d = 1.0 / b
+    state = (-a1, b, d, d, d, a1, jnp.zeros_like(argument), a1, 1.0 + a1 * d)
+
+    def iterate(
+        index: Array, carry: tuple[_SteedState, Array]
+    ) -> tuple[_SteedState, Array]:
+        current, done = carry
+        a, b_, d_, delta_h, h, q, lower, upper, s = current
+        k = index.astype(argument.dtype)
+        a = a - 2.0 * (k - 1.0)
+        lower, upper = -a * upper / k, (b_ * upper - lower) / k
+        q = q + upper
+        b_ = b_ + 2.0
+        d_ = 1.0 / (b_ + a * d_)
+        delta_h = (b_ * d_ - 1.0) * delta_h
+        h = h + delta_h
+        delta_s = q * delta_h
+        s = s + delta_s
+        converged = (jnp.abs(delta_s) <= eps * jnp.abs(s)) & (
+            jnp.abs(delta_h) <= eps * jnp.abs(h)
+        )
+        updated = (a, b_, d_, delta_h, h, q, lower, upper, s)
+        a, b_, d_, delta_h, h, q, lower, upper, s = (
+            jnp.where(done, old, new) for old, new in zip(current, updated, strict=True)
+        )
+        return (a, b_, d_, delta_h, h, q, lower, upper, s), done | converged
+
+    (_, _, _, _, h, _, _, _, s), _ = jax.lax.fori_loop(
+        2,
+        _KV_STEED_STEPS + 2,
+        iterate,
+        (state, jnp.zeros(argument.shape, dtype=jnp.bool_)),
+    )
+    scaled = jnp.sqrt(0.5 * math.pi / argument) / s
+    return scaled, scaled * (mu + argument + 0.5 - a1 * h) / argument
+
+
+def _kve_right_half_plane_pair(order: Array, argument: Array, /) -> tuple[Array, Array]:
+    """Scaled ``e^z K_v`` and ``e^z K_{v+1}`` for ``Re v >= 0`` and ``Re z >= 0``.
+
+    The reduced order ``mu = v - n`` with ``|Re mu| <= 1/2`` is evaluated by the
+    Temme series for ``|z| <= 2`` and by CF2 otherwise, followed by the stable
+    upward recurrence ``K_{k+1} = (2k/z) K_k + K_{k-1}`` masked to ``n`` steps.
+    """
+    count = jnp.round(jnp.real(order))
+    mu = order - count.astype(order.dtype)
+    small = jnp.abs(argument) <= _KV_TEMME_RADIUS
+    temme_argument = jnp.where(small, argument, jnp.ones_like(argument))
+    steed_argument = jnp.where(small, 2.0 * _KV_TEMME_RADIUS, argument)
+    temme_value, temme_next = _kv_temme_series(mu, temme_argument)
+    temme_scale = jnp.exp(temme_argument)
+    steed_value, steed_next = _kve_steed(mu, steed_argument)
+    value = jnp.where(small, temme_scale * temme_value, steed_value)
+    following = jnp.where(small, temme_scale * temme_next, steed_next)
+    two_over_argument = 2.0 / argument
+
+    def recur(index: Array, pair: tuple[Array, Array]) -> tuple[Array, Array]:
+        lower, upper = pair
+        active = index.astype(count.dtype) < count
+        k = index.astype(argument.dtype) + 1.0
+        raised = (mu + k) * two_over_argument * upper + lower
+        return jnp.where(active, upper, lower), jnp.where(active, raised, upper)
+
+    return jax.lax.fori_loop(0, _KV_MAX_RECURRENCE, recur, (value, following))
+
+
+@jax.custom_jvp
+def _kve_right_half_plane(order: Array, argument: Array, /) -> Array:
+    return _kve_right_half_plane_pair(order, argument)[0]
+
+
+def _kve_right_half_plane_jvp(
+    primals: tuple[Array, Array],
+    tangents: tuple[Array | SymbolicZero, Array | SymbolicZero],
+) -> tuple[Array, Array]:
+    order, argument = primals
+    order_tangent, argument_tangent = tangents
+    if isinstance(order_tangent, SymbolicZero):
+        value, following = _kve_right_half_plane_pair(order, argument)
+        tangent = jnp.zeros_like(value)
+    else:
+        (value, following), (tangent, _) = jax.jvp(
+            lambda v: _kve_right_half_plane_pair(v, argument),
+            (order,),
+            (order_tangent,),
+        )
+    if not isinstance(argument_tangent, SymbolicZero):
+        # d(e^z K_v)/dz = e^z (K_v + K_v') with K_v' = (v/z) K_v - K_{v+1}.
+        derivative = value * (1.0 + order / argument) - following
+        tangent = tangent + derivative * argument_tangent
+    return value, tangent
+
+
+_kve_right_half_plane.defjvp(_kve_right_half_plane_jvp, symbolic_zeros=True)
+
+
+def _kv_parts(
+    order: ArrayLike, argument: ArrayLike, /
+) -> tuple[Array, Array, Array, Array]:
+    """Split principal ``K_v(z)`` into the Temme/CF2 domain and the legacy series.
+
+    Returns ``(z, supported, scaled, series)`` with the promoted broadcast
+    argument ``z``, ``scaled = e^z K_v(z)`` on the supported lanes
+    (``Re z >= 0``, ``|Re v| <= _KV_MAX_RECURRENCE + 1/2``,
+    ``|Im v| <= _KV_MAX_IMAGINARY_ORDER``) and ``series`` the unscaled
+    power-series connection formula on the remaining lanes (left half plane,
+    very large or strongly complex orders), whose behavior is unchanged.
+    """
+    order_, argument_ = jnp.broadcast_arrays(*promote_principal(order, argument))
+    reflected = jnp.where(jnp.real(order_) < 0.0, -order_, order_)
+    supported = (
+        (jnp.real(argument_) >= 0.0)
+        & (jnp.real(reflected) <= _KV_MAX_RECURRENCE + 0.5)
+        & (jnp.abs(jnp.imag(reflected)) <= _KV_MAX_IMAGINARY_ORDER)
+    )
+    scaled = _kve_right_half_plane(
+        jnp.where(supported, reflected, jnp.zeros_like(reflected)),
+        jnp.where(supported, argument_, jnp.ones_like(argument_)),
+    )
+    unsupported = ~supported
+    series = jax.lax.cond(
+        jnp.any(unsupported),
+        lambda: _kv_power_series(
+            jnp.where(unsupported, order_, jnp.full_like(order_, 0.5)),
+            jnp.where(unsupported, argument_, jnp.ones_like(argument_)),
+        ),
+        lambda: jnp.zeros_like(argument_),
+    )
+    return argument_, supported, scaled, series
+
+
+def complex_kv(order: ArrayLike, argument: ArrayLike, /) -> Array:
+    argument_, supported, scaled, series = _kv_parts(order, argument)
+    return jnp.where(supported, jnp.exp(-argument_) * scaled, series)
+
+
+def complex_kve(order: ArrayLike, argument: ArrayLike, /) -> Array:
+    argument_, supported, scaled, series = _kv_parts(order, argument)
+    return jnp.where(supported, scaled, jnp.exp(argument_) * series)
 
 
 def jv_order_derivative(order: ArrayLike, argument: ArrayLike, /) -> Array:
@@ -278,8 +543,8 @@ def ive_order_derivative(order: ArrayLike, argument: ArrayLike, /) -> Array:
 
 
 def kve_order_derivative(order: ArrayLike, argument: ArrayLike, /) -> Array:
-    _, argument_ = promote_principal(order, argument)
-    return jnp.exp(argument_) * kv_order_derivative(order, argument_)
+    order_, argument_ = promote_principal(order, argument)
+    return _order_derivative(lambda value, z: complex_kve(value, z), order_, argument_)
 
 
 _AI0 = 0.3550280538878172392600631860041831764
@@ -497,6 +762,7 @@ __all__ = [
     "complex_iv",
     "complex_jv",
     "complex_kv",
+    "complex_kve",
     "complex_yv",
     "ive_order_derivative",
     "iv_order_derivative",

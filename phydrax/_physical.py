@@ -471,7 +471,11 @@ class RelativityScaleContract(StrictModule, NonTrainableState):
             DimensionalScaleContract.si(),
             "6.67430e-11",
             299_792_458,
-            "1.054571817e-34",
+            # SI fixes h = 6.62607015e-34 J s exactly; hbar = h / (2 pi) is
+            # irrational, so store it as the exact decimal rational carrying 40
+            # significant digits (relative error < 1e-39), far below float64
+            # resolution, so float(hbar) is correctly rounded.
+            "1.054571817646156391262428003302280744723e-34",
             "1.380649e-23",
         )
 

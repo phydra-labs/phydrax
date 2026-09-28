@@ -11,6 +11,19 @@ Green functions (Qiang, Lidia, Ryne, Limborg-Deprey, Phys. Rev. ST Accel.
 Beams 9, 044204, 2006) replace the point-sampled Green function by its exact
 integral over the source cell, which keeps the discretization accurate when the
 cell aspect ratio is large or the source is under-resolved.
+
+Integrated gradient kernels are the exact field of a density that is linear
+between sites along the derivative axis and cell-constant across it (the
+multilinear-deposit representation along that axis). Integrating the tent
+basis by parts turns ``∫ Λ_a ∂_a g`` into a difference of two exactly
+integrated half-shifted cells, ``K_a(m) = [P(m + ½e_a) − P(m − ½e_a)]/h_a``,
+i.e. the compact face-centered difference of the exact cell-constant
+potential. The cell average of ``∂_a g`` (the field of a cell-constant
+density) would instead drop the near-zone field of the density gradient inside
+a cell: when the cell is longer along ``a`` than the source is wide (elongated
+rest-frame cells of a relativistic bunch) that zone carries a fraction
+``≈ ln(h_a/σ⊥)/ln(σ_a/σ⊥)`` of the field and the error no longer converges at
+second order.
 """
 
 from __future__ import annotations
@@ -23,7 +36,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PreparedTensorGrid
@@ -60,24 +73,28 @@ class FreeSpaceConvolutionResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
+def _vanishing_arctan(
+    w: np.ndarray, u: np.ndarray, v: np.ndarray, r: np.ndarray
+) -> np.ndarray:
+    # w² arctan(uv/(wr)) → 0 as w → 0; gradient-kernel corners lie on w = 0.
+    on_plane = w == 0.0
+    safe = np.where(on_plane, 1.0, w)
+    return np.where(on_plane, 0.0, w * w * np.arctan(u * v / (safe * r)))
+
+
 def _igf_primitive(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
-    # ∂³F/∂x∂y∂z = 1/r. Corner coordinates are half-integer multiples of the
-    # spacing, so no argument below vanishes and every logarithm is finite.
+    # ∂³F/∂x∂y∂z = 1/r. At most one corner coordinate is zero (the gradient
+    # kernel's derivative axis) and the others are half-integer multiples of
+    # the spacing, so every logarithm argument is positive.
     r = np.sqrt(x * x + y * y + z * z)
     return (
-        -0.5 * z * z * np.arctan(x * y / (z * r))
-        - 0.5 * y * y * np.arctan(x * z / (y * r))
-        - 0.5 * x * x * np.arctan(y * z / (x * r))
+        -0.5 * _vanishing_arctan(z, x, y, r)
+        - 0.5 * _vanishing_arctan(y, x, z, r)
+        - 0.5 * _vanishing_arctan(x, y, z, r)
         + y * z * np.log(x + r)
         + x * z * np.log(y + r)
         + x * y * np.log(z + r)
     )
-
-
-def _igf_gradient_primitive(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
-    # ∂³/∂x∂y∂z of this primitive is ∂(1/r)/∂x = −x/r³; symmetric in (y, z).
-    r = np.sqrt(x * x + y * y + z * z)
-    return -x * np.arctan(y * z / (x * r)) + z * np.log(y + r) + y * np.log(z + r)
 
 
 def _mixed_difference(values: np.ndarray) -> np.ndarray:
@@ -92,26 +109,28 @@ def _integrated_octant(
     *,
     gradient: bool,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    """Cell averages of ``1/r`` (and ``∇(1/r)``) on the non-negative octant."""
+    """Cell averages of ``1/r`` and face-difference ``∇(1/r)`` on the octant."""
     corners = tuple(
         np.concatenate((axis_offsets, axis_offsets[-1:] + spacing[axis]))
         - 0.5 * spacing[axis]
         for axis, axis_offsets in enumerate(offsets)
     )
-    x, y, z = np.meshgrid(*corners, indexing="ij")
     volume = float(np.prod(spacing))
-    value = _mixed_difference(_igf_primitive(x, y, z)) / volume
+    value = _mixed_difference(_igf_primitive(*np.meshgrid(*corners, indexing="ij")))
     if not gradient:
-        return value, None
-    derivative = np.stack(
-        (
-            _mixed_difference(_igf_gradient_primitive(x, y, z)),
-            _mixed_difference(_igf_gradient_primitive(y, z, x)),
-            _mixed_difference(_igf_gradient_primitive(z, x, y)),
-        ),
-        axis=-1,
-    )
-    return value, derivative / volume
+        return value / volume, None
+    components = []
+    for axis, axis_offsets in enumerate(offsets):
+        # Cells [k h, (k+1) h] along the derivative axis: P(m + ½e_a) for m ≥ 0,
+        # and P(−½e_a) = P(+½e_a) by reflection, so the self offset vanishes.
+        shifted = list(corners)
+        shifted[axis] = np.concatenate((axis_offsets, axis_offsets[-1:] + spacing[axis]))
+        cells = _mixed_difference(_igf_primitive(*np.meshgrid(*shifted, indexing="ij")))
+        first = np.take(cells, [0], axis=axis)
+        components.append(
+            np.diff(np.concatenate((first, cells), axis=axis), axis=axis) / spacing[axis]
+        )
+    return value / volume, np.stack(components, axis=-1) / volume
 
 
 def _softened_octant(
@@ -333,11 +352,11 @@ class FreeSpaceConvolutionPlan(StrictModule, NonTrainableState):
       cell-integrated anisotropic Green functions). A scalar source then yields
       one field per trailing component.
 
-    ``gradient=True`` prepares the derivative kernels under the same sampling
-    rule (cell-integrated ``∇(1/r)`` for the integrated kernels, point-sampled
-    analytic derivatives otherwise) so fields are obtained without finite
-    differences; it is refused for tabulated kernels. All transforms are
-    float64/complex128.
+    ``gradient=True`` prepares derivative kernels so fields are obtained
+    without finite differences: face-difference kernels (the exact field of the
+    density linear between sites along the derivative axis) for the integrated
+    kernels, point-sampled analytic derivatives otherwise; it is refused for
+    tabulated kernels. All transforms are float64/complex128.
     """
 
     kernel: FreeSpaceKernel = eqx.field(static=True)
@@ -421,7 +440,7 @@ class FreeSpaceConvolutionPlan(StrictModule, NonTrainableState):
                 )
             if not np.all(np.isfinite(table)):
                 raise ValueError("kernel_table must be finite.")
-            table_fingerprint = array_tree_fingerprint(table)
+            table_fingerprint = canonical_fingerprint(table)
             kernel_padded = _padded_table(table, shape)
             gradient_padded = None
         kernel_transform = np.fft.fftn(kernel_padded, axes=spatial_axes)
