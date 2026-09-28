@@ -542,6 +542,7 @@ from ._material_point import (
 from ._materials import (
     AbstractThermodynamicMaterial,
     IdealGasMaterial,
+    NobleAbelStiffenedGasMaterial,
     StiffenedGasMaterial,
     TwoMaterialEOSClosure,
     TwoMaterialEOSReport,
@@ -1368,6 +1369,7 @@ __all__ = [
     "ShallowWaterSystem",
     "ShallowWaterCoriolisSource",
     "PrandtlTransport",
+    "NobleAbelStiffenedGasMaterial",
     "StiffenedGasMaterial",
     "ideal_gas_euler_entropy_pair",
     "TwoMaterialEOSClosure",

@@ -279,18 +279,20 @@ def _controls_and_applications() -> tuple[
         )
     )
 
-    surface = interfacial_transport.CoupledBulkSurfaceTransport.create(
-        jnp.ones(1),
-        jnp.ones(1),
-        jnp.zeros((1, 1)),
-        jnp.ones((1, 1)),
+    surface = interfacial_transport.CoupledBulkSurfaceTransport(
+        np.zeros((0, 2), dtype=np.int32),
+        np.zeros((1,), dtype=np.int32),
+        np.zeros((1,), dtype=np.int32),
+        np.ones((1,)),
         interfacial_transport.AdsorptionKinetics(0.1, 0.0, 1.0),
-    ).advance(jnp.ones(1), jnp.zeros(1), 0.1)
+        bulk_size=1,
+        surface_size=1,
+    ).advance(jnp.ones(1), jnp.zeros(1), jnp.ones(1), jnp.ones(1), jnp.zeros(0), 0.1)
     controls.append(
         _control(
             "interfacial-transport",
             "bulk-surface-species-balance",
-            surface.total_mole_balance_residual,
+            surface.total_amount_residual_mol,
         )
     )
 

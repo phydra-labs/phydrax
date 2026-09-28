@@ -4,15 +4,15 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
+Catalog ID: `1de53bded333ddce19183ca4e8914eaa4b647239959e66048acfd71e692a944c`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 201 |
-| research | 167 |
+| candidate | 248 |
+| research | 169 |
 | internal | 5 |
 | retired | 0 |
 
@@ -20,6 +20,10 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 
 | Capability | Owner | Disposition | Domain maturity | Profiles |
 | --- | --- | --- | --- | ---: |
+| `accelerator.fel-averaged` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.insertion-device-radiation` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `accelerator.ring-radiation` | `phydrax.applications.accelerator` | candidate | candidate | 1 |
+| `acoustics.bubbly-medium` | `phydrax.acoustics` | candidate | candidate | 1 |
 | `acoustics.vibroacoustic` | `phydrax.acoustics` | candidate | implementation-qualified-candidate | 1 |
 | `application.accelerator` | `phydrax.applications.accelerator` | research | application-research | 0 |
 | `application.additive-manufacturing` | `phydrax.applications.additive_manufacturing` | research | application-research | 0 |
@@ -53,6 +57,7 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `application.fixed-target` | `phydrax.applications.fixed_target` | research | application-research | 0 |
 | `application.flavor-physics` | `phydrax.applications.flavor_physics` | research | application-research | 0 |
 | `application.flight-dynamics` | `phydrax.applications.flight_dynamics` | research | application-research | 0 |
+| `application.foams` | `phydrax.applications.foams` | research | application-research | 0 |
 | `application.fracture` | `phydrax.applications.fracture` | research | application-research | 0 |
 | `application.free-boundary` | `phydrax.applications.free_boundary` | research | application-research | 0 |
 | `application.functional-rg` | `phydrax.applications.functional_rg` | research | application-research | 0 |
@@ -94,6 +99,7 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `application.semiconductor` | `phydrax.applications.semiconductor` | research | application-research | 0 |
 | `application.sign-problem` | `phydrax.applications.sign_problem` | research | application-research | 0 |
 | `application.skeletal-muscle` | `phydrax.applications.skeletal_muscle` | research | application-research | 0 |
+| `application.soap-film-tunnel` | `phydrax.applications.soap_film_tunnel` | research | application-research | 0 |
 | `application.solid-mechanics` | `phydrax.applications.solid_mechanics` | research | application-research | 0 |
 | `application.spin-foam` | `phydrax.applications.spin_foam` | research | application-research | 0 |
 | `application.spin-network` | `phydrax.applications.spin_network` | research | application-research | 0 |
@@ -111,6 +117,11 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `battery.dfn.isothermal-finite-volume` | `phydrax.applications.battery` | candidate | candidate | 1 |
 | `battery.pack.series-dfn` | `phydrax.applications.battery` | candidate | candidate | 1 |
 | `boundary.integral-platform` | `phydrax.operators.integral` | research | Q0 | 0 |
+| `bubble-dynamics.clean-radial` | `phydrax.bubble_dynamics` | candidate | candidate | 1 |
+| `bubble-dynamics.cloud` | `phydrax.bubble_dynamics` | candidate | candidate | 1 |
+| `bubble-dynamics.coated-microbubble` | `phydrax.bubble_dynamics` | candidate | candidate | 1 |
+| `bubble-dynamics.surface-nanobubble` | `phydrax.bubble_dynamics` | candidate | candidate | 1 |
+| `bubble-dynamics.thermal-compressible` | `phydrax.bubble_dynamics` | candidate | candidate | 1 |
 | `calabi-yau.metric-evidence` | `phydrax.solver` | candidate | candidate | 1 |
 | `calabi-yau.moduli-observables` | `phydrax.solver` | candidate | candidate | 1 |
 | `chemistry.interchange.wannier90-hr` | `phydrax.chemistry.periodic` | candidate | candidate | 1 |
@@ -199,17 +210,42 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `dicom-radiotherapy-admission` | `phydrax.imaging` | candidate | candidate | 4 |
 | `electrochemistry.porous-electrode` | `phydrax.electrochemistry` | candidate | implementation-qualified-candidate | 1 |
 | `electrohydrodynamics.operator-coupled` | `phydrax.electrohydrodynamics` | candidate | implementation-qualified-candidate | 1 |
+| `electromagnetics.discrete-dispersion-audit` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.kinetic-dispersion` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.magnetobremsstrahlung` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.maxwell-far-field` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.near-zone-lienard-wiechert` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.one-way-antenna` | `phydrax.solver` | candidate | candidate | 1 |
+| `electromagnetics.plasma-rays` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `electromagnetics.vacuum-trajectory-radiation` | `phydrax.electromagnetics` | candidate | candidate | 1 |
+| `foams.constrained-dynamics` | `phydrax.applications.foams` | candidate | candidate | 1 |
+| `foams.plateau-border-drainage` | `phydrax.applications.foams` | candidate | candidate | 1 |
+| `foams.quasistatic-equilibrium` | `phydrax.applications.foams` | candidate | candidate | 1 |
+| `foams.thickness-driven-rupture` | `phydrax.applications.foams` | candidate | candidate | 1 |
+| `foams.vortex-sheet-air` | `phydrax.applications.foams` | candidate | candidate | 1 |
 | `frequency.second-order-complex` | `phydrax.frequency` | candidate | implementation-qualified-candidate | 1 |
 | `functional-rg.fermionic-fermi-surface-patch` | `phydrax.applications` | candidate | candidate | 1 |
 | `fuzzy-space.two-particle-sphere` | `phydrax.applications.fuzzy_space` | candidate | candidate | 1 |
+| `interfacial-transport.adsorption` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
 | `interfacial-transport.bulk-surface` | `phydrax.interfacial_transport` | candidate | implementation-qualified-candidate | 1 |
+| `interfacial-transport.dynamic-wetting` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
+| `interfacial-transport.langmuir-surfactant` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
+| `interfacial-transport.moving-surface` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
+| `interfacial-transport.surface-lubrication` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
+| `interfacial-transport.surface-plug-flow` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
+| `interfacial-transport.symmetric-film-surfactant` | `phydrax.interfacial_transport` | candidate | candidate | 1 |
 | `kinetic.compressible-entropic` | `phydrax.discretization` | research | research-production-closure | 0 |
+| `lattice-boltzmann.n-color-emulsion` | `phydrax.discretization.lattice_boltzmann` | candidate | candidate | 1 |
 | `magnetic-resonance.epr.exact-single-crystal` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
 | `magnetic-resonance.musr.exact-static-site` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
 | `magnetic-resonance.nmr.exact-single-crystal` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
 | `manufacturing.scheduled-spatial-runtime` | `phydrax.manufacturing` | candidate | implementation-qualified-candidate | 1 |
 | `materials.spatial-icme` | `phydrax.materials` | candidate | implementation-qualified-candidate | 1 |
 | `membranes.segmented-crossflow` | `phydrax.membranes` | candidate | implementation-qualified-candidate | 1 |
+| `multiregion-surface.geometry` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
+| `multiregion-surface.label-field-extraction` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
+| `multiregion-surface.remeshing` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
+| `multiregion-surface.topology-events` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `nn.operator.abupt` | `phydrax.nn.operator` | research | research | 0 |
 | `nn.operator.axialfactorizedfno` | `phydrax.nn.operator` | research | experimental | 0 |
 | `nn.operator.axialoperatorattention` | `phydrax.nn.operator` | research | experimental | 0 |
@@ -275,6 +311,8 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `numerical-relativity.conformal-einstein-ads` | `phydrax.applications.numerical_relativity` | candidate | candidate | 1 |
 | `numerical-relativity.holographic-observables` | `phydrax.applications.numerical_relativity` | candidate | candidate | 1 |
 | `optics.scalar-envelope-gnlse` | `phydrax.optics.wave` | candidate | candidate | 1 |
+| `optics.thin-film-interference` | `phydrax.optics.wave` | candidate | candidate | 1 |
+| `optics.transport.charged-step-optical-sources` | `phydrax.optics.transport` | candidate | candidate | 1 |
 | `optomechanics.spatial-stop` | `phydrax.optomechanics` | candidate | implementation-qualified-candidate | 1 |
 | `particle-spectrum.interchange-provider` | `phydrax.particle_physics` | candidate | candidate | 1 |
 | `particle-spectrum.native-scale-bvp` | `phydrax.particle_physics` | candidate | candidate | 1 |
@@ -282,6 +320,7 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `phase-field-evolution` | `phydrax.applications.phase_field` | candidate | candidate | 4 |
 | `phase-field.stationary-double-well-kink` | `phydrax.applications.phase_field` | candidate | candidate | 1 |
 | `phoresis.oseen-cloud` | `phydrax.phoresis` | candidate | implementation-qualified-candidate | 1 |
+| `pic.radiation-reaction` | `phydrax.solver` | candidate | candidate | 1 |
 | `platform.acoustics` | `phydrax.acoustics` | research | analytic-control | 0 |
 | `platform.chemo-mechanics` | `phydrax.chemo_mechanics` | research | local-constitutive | 0 |
 | `platform.correlation` | `phydrax.correlation` | research | analytic-control | 0 |
@@ -320,7 +359,9 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `radiation-circulating-blood-dose` | `phydrax.applications` | candidate | candidate | 2 |
 | `radiation-external-score-admission` | `phydrax.applications` | candidate | candidate | 3 |
 | `radiation-transport.charged-condensed-history` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
+| `radiation-transport.charged-step-photon-production` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.discrete-ordinates` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
+| `radiation-transport.em-shower-matter-processes` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.imc-ddmc` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.photon-diagnostic-xray` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
 | `radiation-transport.spectral-polarized-experiment` | `phydrax.applications.radiation_transport` | candidate | candidate | 1 |
@@ -333,6 +374,8 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `reacting-flow.transport-properties` | `phydrax.applications.reacting_flow` | candidate | candidate | 1 |
 | `reactor.neutron-diffusion` | `phydrax.applications.reactor_physics` | candidate | candidate | 1 |
 | `reactor.point-kinetics` | `phydrax.applications.reactor_physics` | candidate | candidate | 1 |
+| `rendering.spectral-colorimetry` | `phydrax.rendering` | candidate | candidate | 1 |
+| `rendering.thin-film-appearance` | `phydrax.rendering` | candidate | candidate | 1 |
 | `rheology.spatial-conformation` | `phydrax.rheology` | candidate | implementation-qualified-candidate | 1 |
 | `rna-conditional-ensemble-inference` | `phydrax.applications` | candidate | candidate | 1 |
 | `rom.affine-steady` | `phydrax.rom` | candidate | candidate | 1 |
@@ -357,6 +400,7 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `semiconductor.quantum.stationary` | `phydrax.applications.semiconductor` | candidate | candidate | 1 |
 | `sign-problem.controlled-sign-study` | `phydrax.applications` | candidate | candidate | 1 |
 | `smart-materials.spatial-piezoelectric` | `phydrax.smart_materials` | candidate | implementation-qualified-candidate | 1 |
+| `soap-film-tunnel.planar-plug-flow` | `phydrax.applications.soap_film_tunnel` | candidate | candidate | 1 |
 | `soft-matter.atomistic-observables-protocols` | `phydrax.applications` | candidate | candidate | 1 |
 | `soft-matter.binary-free-energy-lbm` | `phydrax.applications` | candidate | candidate | 1 |
 | `soft-matter.chromatin-atomistic-coupling` | `phydrax.applications` | candidate | candidate | 1 |
@@ -387,6 +431,11 @@ Catalog ID: `4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655`
 | `system-modeling.linear-acausal` | `phydrax.system_modeling` | candidate | implementation-qualified-candidate | 1 |
 | `tensor-network.platform` | `phydrax.tensor_network` | research | experimental | 0 |
 | `thermal.diffuse-gray-enclosure` | `phydrax.thermal_systems` | candidate | implementation-qualified-candidate | 1 |
+| `threshold-dynamics.exact-volumes` | `phydrax.threshold_dynamics` | candidate | candidate | 1 |
+| `threshold-dynamics.gas-diffusion-coarsening` | `phydrax.threshold_dynamics` | candidate | candidate | 1 |
+| `threshold-dynamics.mesh-heat` | `phydrax.threshold_dynamics` | candidate | candidate | 1 |
+| `threshold-dynamics.periodic-multiphase` | `phydrax.threshold_dynamics` | candidate | candidate | 1 |
+| `threshold-dynamics.sparse-labels` | `phydrax.threshold_dynamics` | candidate | candidate | 1 |
 | `tokamak.core-transport` | `phydrax.applications.tokamak` | candidate | candidate | 1 |
 | `tokamak.equilibrium-import` | `phydrax.applications.tokamak` | candidate | candidate | 1 |
 | `tokamak.free-boundary` | `phydrax.applications.tokamak` | candidate | candidate | 1 |

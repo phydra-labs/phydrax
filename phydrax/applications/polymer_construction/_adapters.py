@@ -9,13 +9,13 @@ from collections.abc import Mapping
 
 import equinox as eqx
 
-from ..._artifact_security import (
+from ..._strict import StrictModule
+from ...artifacts import (
     AdmittedExternalArtifact,
+    ArtifactManifest,
     ExternalArtifactPolicy,
     read_admitted_artifact,
 )
-from ..._strict import StrictModule
-from ...artifacts import ArtifactManifest
 from ...atomistic import AtomisticUnitSystem
 from ...atomistic.interchange._core import canonical_source_digest, require_mapping_fields
 from ...discretization import PeriodicCell

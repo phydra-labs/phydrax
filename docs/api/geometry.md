@@ -455,13 +455,13 @@ a primitive constructor.
 (host NumPy) and `PredicateMode.FILTERED_DEVICE` (pure JAX, jittable) certify
 signs with Shewchuk's static error bounds for the input dtype and report
 `UNCERTAIN` otherwise; a certified sign is never wrong. `PredicateMode.EXACT`
-resolves every uncertain entry with the native `phydrax-meshcore` library
-(adaptive expansion arithmetic; optional extra `phydrax[meshcore]`, or
-`PHYDRAX_MESHCORE_LIBRARY`) and raises `MeshcoreUnavailableError` when it is
-absent. `GeometryPrecisionPolicy(predicate_mode=...)` selects the route of host
-geometry decisions: convex-polygon and tetrahedron intersections and
-triangle-ray preparation use exact predicates when meshcore is installed and
-otherwise report unresolved decisions as `UNCERTAIN_PREDICATE`.
+resolves uncertain host entries with the native `phydrax-meshcore` adaptive
+expansion library when the optional `phydrax[meshcore]` extra (or
+`PHYDRAX_MESHCORE_LIBRARY`) is available. Otherwise it evaluates the binary64
+coordinates as exact dyadic rationals, so the host route remains exact without
+an optional provider. `GeometryPrecisionPolicy(predicate_mode=...)` selects the
+route of host geometry decisions; nonfinite inputs and resource exhaustion
+remain fail-closed.
 
 `segment_intersections_2d(a, b, c, d, mode=...)` classifies closed segments as
 `SegmentIntersectionStatus` `DISJOINT`, `PROPER_CROSSING`, `ENDPOINT_CONTACT`

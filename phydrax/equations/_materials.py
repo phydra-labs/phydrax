@@ -220,6 +220,122 @@ class StiffenedGasMaterial(AbstractThermodynamicMaterial):
         )
 
 
+class NobleAbelStiffenedGasMaterial(AbstractThermodynamicMaterial):
+    """Noble–Abel stiffened-gas (NASG) closure of Le Métayer & Saurel (2016).
+
+    With specific volume `v = 1/ρ`, covolume `b`, stiffness `p∞`, heat-capacity
+    ratio `γ`, constant `c_v` and reference energy `q`:
+    `p = (γ − 1)(e − q)/(v − b) − γ p∞`,
+    `T = (v − b)(p + p∞)/((γ − 1) c_v)`, `h = e + p v`,
+    `c² = γ v² (p + p∞)/(v − b)` and `c_p = γ c_v`. `b = 0` recovers the
+    stiffened gas with this temperature law and `b = p∞ = q = 0` the ideal gas
+    with `R = (γ − 1) c_v`. States require `v > b` and `p + p∞ > 0`.
+    """
+
+    gamma: float = eqx.field(static=True)
+    pressure_offset: float = eqx.field(static=True)
+    covolume: float = eqx.field(static=True)
+    heat_capacity: float = eqx.field(static=True)
+    reference_energy: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        gamma: float,
+        pressure_offset: float,
+        covolume: float,
+        heat_capacity: float,
+        /,
+        *,
+        reference_energy: float = 0.0,
+        density_floor: float = 1e-12,
+        pressure_floor: float = 1e-12,
+    ) -> None:
+        values = tuple(
+            float(value)
+            for value in (
+                gamma,
+                pressure_offset,
+                covolume,
+                heat_capacity,
+                reference_energy,
+                density_floor,
+                pressure_floor,
+            )
+        )
+        gamma_, offset, covolume_, capacity, reference, density_floor_, pressure_floor_ = values
+        if (
+            any(not np.isfinite(value) for value in values)
+            or gamma_ <= 1.0
+            or covolume_ < 0.0
+            or capacity <= 0.0
+            or density_floor_ <= 0.0
+            or pressure_floor_ + offset <= 0.0
+        ):
+            raise ValueError("Noble-Abel stiffened-gas parameters are invalid.")
+        self.gamma = gamma_
+        self.pressure_offset = offset
+        self.covolume = covolume_
+        self.heat_capacity = capacity
+        self.reference_energy = reference
+        self.density_floor = density_floor_
+        self.pressure_floor = pressure_floor_
+        self.material_id = canonical_fingerprint(
+            {
+                "kind": "noble-abel-stiffened-gas-material",
+                "gamma": gamma_,
+                "pressure_offset": offset,
+                "covolume": covolume_,
+                "heat_capacity": capacity,
+                "reference_energy": reference,
+                "density_floor": density_floor_,
+                "pressure_floor": pressure_floor_,
+            }
+        )
+
+    def _free_volume(self, density: Array, /) -> Array:
+        return 1.0 / density - self.covolume
+
+    def pressure(self, density: Array, specific_internal_energy: Array, /) -> Array:
+        return (self.gamma - 1.0) * (
+            specific_internal_energy - self.reference_energy
+        ) / self._free_volume(density) - self.gamma * self.pressure_offset
+
+    def specific_internal_energy(self, density: Array, pressure: Array, /) -> Array:
+        return self.reference_energy + (pressure + self.gamma * self.pressure_offset) * (
+            self._free_volume(density)
+        ) / (self.gamma - 1.0)
+
+    def temperature(self, density: Array, pressure: Array, /) -> Array:
+        return (
+            self._free_volume(density)
+            * (pressure + self.pressure_offset)
+            / ((self.gamma - 1.0) * self.heat_capacity)
+        )
+
+    def sound_speed(self, density: Array, pressure: Array, /) -> Array:
+        return jnp.sqrt(
+            self.gamma * (pressure + self.pressure_offset)
+            / (density**2 * self._free_volume(density))
+        )
+
+    def specific_enthalpy(self, density: Array, pressure: Array, /) -> Array:
+        return self.specific_internal_energy(density, pressure) + pressure / density
+
+    def specific_heat_cp(self, density: Array, pressure: Array, /) -> Array:
+        del pressure
+        return jnp.full_like(density, self.gamma * self.heat_capacity)
+
+    def admissible(self, density: Array, pressure: Array, /) -> Array:
+        return (
+            jnp.isfinite(density)
+            & jnp.isfinite(pressure)
+            & (density >= self.density_floor)
+            & (self._free_volume(density) > 0.0)
+            & (pressure + self.pressure_offset > 0.0)
+        )
+
+
+
 @eqx.filter_jit
 def _two_material_velocity_squared(velocity: Array, /) -> Array:
     """Return a contraction that remains differentiable under JAX transforms."""
@@ -1108,6 +1224,7 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
 __all__ = [
     "AbstractThermodynamicMaterial",
     "IdealGasMaterial",
+    "NobleAbelStiffenedGasMaterial",
     "StiffenedGasMaterial",
     "TwoMaterialEOSClosure",
     "TwoMaterialEOSReport",

@@ -20,8 +20,6 @@ def _() -> Any:
     import jax.numpy as jnp
     import jax.random as jr
     import marimo as mo
-
-    # ty: ignore[unresolved-import]
     import matplotlib.pyplot as plt
     import optax
 

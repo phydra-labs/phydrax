@@ -156,6 +156,13 @@ from ._pupil_adapter import (
 )
 from ._statistical_ao import __all__ as _statistical_ao_all
 from ._thin import JonesThinTransmission, ScalarThinTransmission, thin_lens
+from ._thin_film import (
+    ThinFilmInterferenceEvidence,
+    ThinFilmInterferencePlan,
+    ThinFilmInterferenceResult,
+    ThinFilmInterferenceStatus,
+)
+from ._thin_film_qualification import thin_film_interference_candidate_profiles
 from ._unidirectional import (
     prepare_unidirectional_propagation,
     PreparedUnidirectionalPropagation,
@@ -271,6 +278,10 @@ __all__ = [
     "ScalarThinTransmission",
     "TangentialElectromagneticPlane",
     "TangentialPlaneField",
+    "ThinFilmInterferenceEvidence",
+    "ThinFilmInterferencePlan",
+    "ThinFilmInterferenceResult",
+    "ThinFilmInterferenceStatus",
     "UnidirectionalApproximationEvidence",
     "UnidirectionalPropagationPlan",
     "UnidirectionalPropagationResult",
@@ -312,6 +323,7 @@ __all__ = [
     "sequential_pupil_to_scalar_field",
     "solve_bidirectional_coupled_mode",
     "thin_lens",
+    "thin_film_interference_candidate_profiles",
     "tile_periodic_plane_to_finite_window",
 ]
 

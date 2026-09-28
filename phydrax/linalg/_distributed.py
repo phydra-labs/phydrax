@@ -355,7 +355,7 @@ def solve_distributed_pcg(
         jnp.asarray(policy.absolute_tolerance, dtype=rhs.real.dtype),
         finite_all=pairing.global_all,
     )
-    iterations, residual_norm, _, _, breakdown = auxiliary
+    iterations, residual_norm, _, _, breakdown, _ = auxiliary
     rhs_norm = jnp.sqrt(jnp.maximum(jnp.real(pairing.inner(rhs, rhs)), 0.0))
     threshold = policy.absolute_tolerance + policy.relative_tolerance * rhs_norm
     converged = pairing.global_all(residual_norm <= threshold)

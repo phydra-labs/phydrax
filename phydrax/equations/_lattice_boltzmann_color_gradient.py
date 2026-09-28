@@ -39,7 +39,7 @@ from ..discretization.lattice_boltzmann._scaling import LatticeBoltzmannScaling
 
 
 class ColorGradientLatticeBoltzmannProblem(StrictModule, NonTrainableState):
-    """Matched-density binary flow with color-gradient interfacial physics."""
+    """Matched-density N-component flow with pairwise color-gradient interfaces."""
 
     reference_density: Array
     name: str = eqx.field(static=True)
@@ -95,15 +95,12 @@ class CompiledColorGradientLatticeBoltzmannProblem(StrictModule, NonTrainableSta
 
     def initialize_state(
         self,
-        red_density: ArrayLike,
-        blue_density: ArrayLike,
+        component_densities: ArrayLike,
         velocity: ArrayLike,
         parameters: ColorGradientLBMRuntimeParameters,
         /,
     ) -> ColorGradientLBMState:
-        return self.dynamics.initialize_state(
-            red_density, blue_density, velocity, parameters
-        )
+        return self.dynamics.initialize_state(component_densities, velocity, parameters)
 
     def macroscopic_state(
         self,

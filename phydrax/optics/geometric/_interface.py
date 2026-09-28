@@ -125,6 +125,44 @@ class RefractiveInterfaceResult(StrictModule, NonTrainableState):
     status: Array
 
 
+def _fresnel_amplitudes(
+    incident_index: Array,
+    transmitted_index: Array,
+    incident_cosine: Array,
+    transmitted_cosine: Array,
+    /,
+) -> tuple[Array, Array]:
+    """Return ``(s, p)``-stacked planar Fresnel reflection and transmission amplitudes.
+
+    The complex inputs broadcast together; cosines are measured from the interface
+    normal in the incident and transmitted media. Amplitudes are electric-field
+    ratios in the ``exp(-i omega t)`` convention with the p basis of
+    :class:`RefractiveInterfaceResult`, so passive or evanescent transmitted media
+    use the cosine branch with nonnegative imaginary part. A vanishing denominator
+    is replaced by one; callers own the grazing or pole status of such samples.
+    """
+    denominator_s = (
+        incident_index * incident_cosine + transmitted_index * transmitted_cosine
+    )
+    denominator_p = (
+        transmitted_index * incident_cosine + incident_index * transmitted_cosine
+    )
+    safe_denominator_s = jnp.where(denominator_s != 0.0, denominator_s, 1.0 + 0.0j)
+    safe_denominator_p = jnp.where(denominator_p != 0.0, denominator_p, 1.0 + 0.0j)
+    reflection_s = (
+        incident_index * incident_cosine - transmitted_index * transmitted_cosine
+    ) / safe_denominator_s
+    reflection_p = (
+        transmitted_index * incident_cosine - incident_index * transmitted_cosine
+    ) / safe_denominator_p
+    transmission_s = 2.0 * incident_index * incident_cosine / safe_denominator_s
+    transmission_p = 2.0 * incident_index * incident_cosine / safe_denominator_p
+    return (
+        jnp.stack((reflection_s, reflection_p), axis=-1),
+        jnp.stack((transmission_s, transmission_p), axis=-1),
+    )
+
+
 def evaluate_refractive_interface(
     directions: ArrayLike,
     normals: ArrayLike,
@@ -205,24 +243,9 @@ def evaluate_refractive_interface(
     incident_complex = incident_.astype(complex_dtype)
     transmitted_complex = transmitted_.astype(complex_dtype)
     cosine_complex = incident_cosine.astype(complex_dtype)
-    denominator_s = (
-        incident_complex * cosine_complex + transmitted_complex * complex_cosine
+    reflection_amplitudes, transmission_amplitudes = _fresnel_amplitudes(
+        incident_complex, transmitted_complex, cosine_complex, complex_cosine
     )
-    denominator_p = (
-        transmitted_complex * cosine_complex + incident_complex * complex_cosine
-    )
-    safe_denominator_s = jnp.where(denominator_s != 0.0, denominator_s, 1.0 + 0.0j)
-    safe_denominator_p = jnp.where(denominator_p != 0.0, denominator_p, 1.0 + 0.0j)
-    reflection_s = (
-        incident_complex * cosine_complex - transmitted_complex * complex_cosine
-    ) / safe_denominator_s
-    reflection_p = (
-        transmitted_complex * cosine_complex - incident_complex * complex_cosine
-    ) / safe_denominator_p
-    transmission_s = 2.0 * incident_complex * cosine_complex / safe_denominator_s
-    transmission_p = 2.0 * incident_complex * cosine_complex / safe_denominator_p
-    reflection_amplitudes = jnp.stack((reflection_s, reflection_p), axis=-1)
-    transmission_amplitudes = jnp.stack((transmission_s, transmission_p), axis=-1)
     reflectance = jnp.real(
         reflection_amplitudes * jnp.conj(reflection_amplitudes)
     ).astype(dtype)

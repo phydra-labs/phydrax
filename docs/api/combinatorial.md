@@ -143,6 +143,62 @@ assert result.success
 assert result.certificate.dual_available
 ```
 
+## Capacitated auction
+
+`CapacitatedAuctionPlan(sites, labels, width)` assigns every site to one label
+through a fixed-width candidate relation (slot `(x, c)` names label
+`candidate_labels[x, c]`) under integer label-count bounds
+`lower_i <= n_i <= upper_i`; `lower == upper` prescribes exact counts. Values
+are maximized. The plan owns a static, strictly decreasing epsilon schedule
+(`epsilon_scale="value-range"` multiplies it by the valid value range,
+`"absolute"` does not), a per-phase round cap, and a route budget: plans with
+`sites * width > maximum_routes` are refused.
+
+Each epsilon stage runs a Jacobi forward auction (unassigned sites bid; labels
+accept by sorted bids up to their upper counts; prices only rise) followed by a
+Jacobi reverse auction (labels below their lower count, or below their upper
+count at a positive price, lower their prices and make offers; prices only
+fall). Both phases are bounded `lax.while_loop`s and the whole solve is
+traceable, so it can run inside `jax.jit` or `lax.scan`.
+
+```python
+plan = phx.combinatorial.CapacitatedAuctionPlan(4, 2, 2)
+prepared = plan.prepare(jnp.asarray([[0, 1]] * 4))
+result = prepared.solve(
+    jnp.asarray([[3.0, 0.0], [2.0, 0.0], [1.0, 0.0], [0.5, 0.0]]),
+    jnp.asarray([2, 2]),
+    jnp.asarray([2, 2]),
+)
+assert result.success
+assert result.labels.tolist() == [0, 0, 1, 1]
+```
+
+`prepare` host-validates a fixed topology once (duplicate, out-of-range, or
+non-int32-representable labels on valid slots raise `ValueError`).
+`CapacitatedAuctionPlan.solve` accepts candidates built on device instead and
+checks labels, count bounds, and warm-start slots in their original integer
+dtype before narrowing. Inconsistent candidates, bounds, or warm starts yield
+`INFEASIBLE`; the corresponding `evidence.candidates_consistent`,
+`evidence.bounds_consistent`, or `evidence.warm_start_consistent` flag is false.
+
+The returned `prices` are numerical dual variables of the count constraints,
+not physical pressures. `CapacitatedAuctionEvidence` reports the primal value
+`P`, the dual value
+`D = sum_x max_c (a - p) + sum_i max(upper_i p_i, lower_i p_i)`, and their gap:
+`P <= optimum <= D` always, and `D - P <= sites * epsilon` for a certified
+result, so integer values with `sites * epsilon < 1` are solved exactly. Status
+precedence is `NONFINITE_INPUT`, `INFEASIBLE` (inconsistent candidates, bounds,
+or warm start, or price divergence), `MAXIMUM_STEPS_REACHED`,
+`CERTIFICATION_FAILED`, then `OPTIMAL` (gap within the default certification
+tolerance) or `FEASIBLE` (certified epsilon-optimal). Failed solves return
+labels and slots `-1`, zero counts, and NaN prices; no partial assignment is
+exposed. Warm starts pass the previous `prices` as `initial_prices`; optional
+`initial_slots` values must be representable in signed int32.
+
+`CapacitatedAssignmentSpace` and `CapacitatedAuction` expose the same kernel
+through `solve_combinatorial`, minimizing `costs = -values` with the chosen-slot
+one-hot matrix as objective features.
+
 ## Directed acyclic shortest paths
 
 `ShortestPathSpace` uses a fixed `phydrax.sparse.EdgeRelation`. Its constructor
@@ -271,6 +327,34 @@ approach zero. Inspect `relative_perturbation`, `feature_change_norm`, and
 ---
 
 ::: phydrax.combinatorial.HungarianAssignment
+
+---
+
+::: phydrax.combinatorial.CapacitatedAuctionPlan
+
+---
+
+::: phydrax.combinatorial.PreparedCapacitatedAuction
+
+---
+
+::: phydrax.combinatorial.CapacitatedAuctionResult
+
+---
+
+::: phydrax.combinatorial.CapacitatedAuctionEvidence
+
+---
+
+::: phydrax.combinatorial.CapacitatedAssignmentSpace
+
+---
+
+::: phydrax.combinatorial.CapacitatedAssignmentDecision
+
+---
+
+::: phydrax.combinatorial.CapacitatedAuction
 
 ---
 

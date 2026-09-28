@@ -326,6 +326,14 @@ adapter has the same metric restriction. Auto planning routes general pairings
 to dense LU when materialization is feasible, or to native `FGMRES` and
 `GeneralizedLSMR` otherwise.
 
+Native `PCG` and `ProjectedPCG` stop only on the true residual. When the
+recurrence residual meets `absolute + relative * ||b||`, the runtime evaluates
+`b - A x` with one extra operator action and stops only if that also meets the
+threshold. Otherwise the recurrence restarts from the true residual (residual
+replacement; van der Vorst & Ye, *SIAM J. Sci. Comput.* 22 (2000) 1035–1062). The
+stop test and the certified status are one test on one quantity. The extra
+actions are counted in `matvec_count`.
+
 `TreeTopology(parent_index)` prepares one rooted tree and its elimination order.
 `TreeLinearOperator(diagonal, lower, upper, topology)` stores linear-size
 coefficients; for each nonroot child, `lower[child]` is the child-parent entry
@@ -658,16 +666,34 @@ Sparse triangular and factorization lifecycles consume canonical
 `AbstractSparseLinearOperator` storage. `analyze_sparse_triangular` builds a fixed
 level schedule from the sparsity pattern; `solve_sparse_triangular` changes only
 numeric values and right-hand sides. The solve is JAX-native and returns explicit
-zero-pivot, nonfinite, and dependency-invalid status rather than repairing a factor.
+status evidence: any nonfinite stored value, pivot, right-hand side, or resulting
+solution is `NONFINITE`, while a finite pivot whose magnitude is at or below the
+declared tolerance is `ZERO_PIVOT`. Prepared factor solves preserve that
+distinction in their lower, upper, and aggregate statuses.
 
 `SparseFactorizationPolicy` separates ordering and fill construction from numeric
 factorization. `prepare_sparse_factorization` computes immutable symbolic LU or
 Cholesky routes and binds the first values; `refresh_sparse_factorization` reuses
 those routes only when the canonical pattern identity matches. Fill level, numerical
 drop tolerance, maximum retained entries per row, diagonal shift, and pivot
-replacement are declared policy. A replacement is never enabled implicitly, and
-diagnostics report minimum pivot, dropped entries, replacement count, factor
-nonzeros, and fill ratio.
+replacement are declared policy. A replacement is never enabled implicitly.
+Symbolic construction is bounded incrementally by `max_factor_nnz`,
+`max_factor_bytes`, and `max_symbolic_work`; an active `MaterializationPolicy`
+tightens those ceilings for sparse-factor builder costing and preparation. Seed and
+fill insertions are refused before their host dictionaries exceed a ceiling, with
+observed and allowed nonzeros, retained bytes, and logical work in the refusal.
+Admitted plans retain the same three quantities as static resource evidence.
+Numeric diagnostics separately report minimum pivot, dropped entries, replacement
+count, realized factor nonzeros, and fill ratio.
+
+The symbolic plan stores only the factor pattern: the CSR rows of `L + U` and
+a column-major index of the strictly lower entries. The numeric kernel is
+right-looking. For each pivot it derives the update targets at runtime from the
+stored rows through a dense column marker and a fixed `column_width x row_width`
+window. Plan and prepared bytes therefore scale with `nnz(L + U)`, not with the
+number of elimination updates, and `SparseFactorizationPreconditionerBuilder`
+charges exactly those bytes. Every pivot's targets are unique, so the scatter is
+deterministic.
 
 `ILUPreconditionerBuilder`, `ILUTPreconditionerBuilder`, and
 `IncompleteCholeskyPreconditionerBuilder` expose these factors through the ordinary

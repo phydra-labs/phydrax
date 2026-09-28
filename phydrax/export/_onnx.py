@@ -255,7 +255,15 @@ def load_onnx(
     output_names = [spec.name for spec in outputs]
 
     def run(values: tuple[np.ndarray, ...]) -> list[np.ndarray]:
-        return session.run(output_names, dict(zip(input_names, values, strict=True)))
+        raw_outputs = session.run(
+            output_names, dict(zip(input_names, values, strict=True))
+        )
+        dense_outputs: list[np.ndarray] = []
+        for name, value in zip(output_names, raw_outputs, strict=True):
+            if not isinstance(value, np.ndarray):
+                raise TypeError(f"ONNX output {name!r} is not a dense tensor.")
+            dense_outputs.append(value)
+        return dense_outputs
 
     return HostInferenceAdapter(
         run,

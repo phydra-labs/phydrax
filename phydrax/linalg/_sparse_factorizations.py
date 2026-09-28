@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import IntEnum
 from hashlib import sha256
-from math import isfinite
-from typing import Any, Literal, TypeAlias
+from math import isfinite, prod
+from numbers import Integral
+from typing import Any, Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,6 +20,8 @@ from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
 from ..typing import parse
+from ._materialization import MaterializationPolicy
+from ._properties import LinearCapabilityError
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._sparse_triangular import (
     analyze_sparse_triangular,
@@ -50,6 +54,9 @@ class SparseFactorizationPolicy(StrictModule):
     diagonal_shift: float = eqx.field(static=True)
     allow_pivot_replacement: bool = eqx.field(static=True)
     replacement_value: float = eqx.field(static=True)
+    max_factor_nnz: int = eqx.field(static=True)
+    max_factor_bytes: int = eqx.field(static=True)
+    max_symbolic_work: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -64,11 +71,24 @@ class SparseFactorizationPolicy(StrictModule):
         diagonal_shift: float = 0.0,
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
+        max_factor_nnz: int = 2_000_000,
+        max_factor_bytes: int = 256 * 1024 * 1024,
+        max_symbolic_work: int = 512_000_000,
     ) -> None:
         kind = parse(kind, SparseFactorizationKind, "kind")
         ordering = parse(ordering, SparseOrdering, "ordering")
         fill = None if fill_level is None else int(fill_level)
         maximum_fill = None if maximum_fill_per_row is None else int(maximum_fill_per_row)
+        resource_limits = {
+            "max_factor_nnz": max_factor_nnz,
+            "max_factor_bytes": max_factor_bytes,
+            "max_symbolic_work": max_symbolic_work,
+        }
+        for name, value in resource_limits.items():
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise TypeError(f"{name} must be a host integer.")
+            if value < 1:
+                raise ValueError(f"{name} must be positive.")
         if fill is not None and fill < 0:
             raise ValueError("fill_level must be non-negative or None.")
         if maximum_fill is not None and maximum_fill < 0:
@@ -97,10 +117,22 @@ class SparseFactorizationPolicy(StrictModule):
         self.diagonal_shift = numeric[2]
         self.allow_pivot_replacement = bool(allow_pivot_replacement)
         self.replacement_value = numeric[3]
+        self.max_factor_nnz = int(max_factor_nnz)
+        self.max_factor_bytes = int(max_factor_bytes)
+        self.max_symbolic_work = int(max_symbolic_work)
 
 
 class SparseFactorizationPlan(StrictModule):
-    """Immutable host symbolic plan for refreshable sparse LU or Cholesky values."""
+    """Immutable host symbolic plan for refreshable sparse LU or Cholesky values.
+
+    The plan stores only the factor pattern: CSR rows of the combined factor
+    and a column-major index of its strictly lower entries. The numeric
+    kernel derives every elimination target at runtime from that pattern, so
+    stored bytes scale with the factor nonzeros, not with the number of
+    elimination updates. ``row_width``, ``column_width`` and ``upper_width``
+    bound the fixed per-pivot windows: the longest factor row, the longest
+    strictly lower column, and the longest strictly upper row.
+    """
 
     permutation: Array
     inverse_permutation: Array
@@ -110,14 +142,8 @@ class SparseFactorizationPlan(StrictModule):
     input_positions: Array
     input_conjugate: Array
     diagonal_positions: Array
-    multiplier_positions: Array
-    multiplier_valid: Array
-    update_targets: Array
-    update_left: Array
-    update_right: Array
-    update_valid: Array
-    row_positions: Array
-    row_valid: Array
+    column_positions: Array
+    column_offsets: Array
     lower_positions: Array
     upper_positions: Array | None
     lower_analysis: SparseTriangularAnalysis
@@ -129,6 +155,12 @@ class SparseFactorizationPlan(StrictModule):
     input_pattern_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     input_nnz: int = eqx.field(static=True)
+    factor_nnz: int = eqx.field(static=True)
+    factor_bytes: int = eqx.field(static=True)
+    symbolic_work: int = eqx.field(static=True)
+    row_width: int = eqx.field(static=True)
+    column_width: int = eqx.field(static=True)
+    upper_width: int = eqx.field(static=True)
     storage_plan: Any = None
 
 
@@ -255,22 +287,29 @@ class PreparedSparseFactorization(StrictModule):
                 lower.status == int(SparseTriangularStatus.NONFINITE)
             ) | (upper.status == int(SparseTriangularStatus.NONFINITE))
             triangular_status = jnp.where(
-                triangular_success,
-                int(SparseFactorizationStatus.SUCCESS),
+                triangular_nonfinite,
+                int(SparseFactorizationStatus.NONFINITE),
                 jnp.where(
                     triangular_zero_pivot,
                     int(SparseFactorizationStatus.ZERO_PIVOT),
                     jnp.where(
-                        triangular_nonfinite,
-                        int(SparseFactorizationStatus.NONFINITE),
+                        triangular_success,
+                        int(SparseFactorizationStatus.SUCCESS),
                         int(SparseFactorizationStatus.ZERO_PIVOT),
                     ),
                 ),
             )
+            any_nonfinite = (
+                factor_status == int(SparseFactorizationStatus.NONFINITE)
+            ) | (triangular_status == int(SparseFactorizationStatus.NONFINITE))
             result_status = jnp.where(
-                factor_status != int(SparseFactorizationStatus.SUCCESS),
-                factor_status,
-                triangular_status,
+                any_nonfinite,
+                int(SparseFactorizationStatus.NONFINITE),
+                jnp.where(
+                    factor_status != int(SparseFactorizationStatus.SUCCESS),
+                    factor_status,
+                    triangular_status,
+                ),
             ).astype(jnp.int32)
             return solution, result_status, lower.status, upper.status
 
@@ -328,6 +367,158 @@ def _pattern_identifier(
     return sha256(payload).hexdigest()
 
 
+@dataclass
+class _SymbolicResourceTracker:
+    size: int
+    kind: Literal["lu", "cholesky"]
+    batch_count: int
+    value_itemsize: int
+    index_itemsize: int
+    max_factor_nnz: int
+    max_factor_bytes: int
+    max_symbolic_work: int
+    base_bytes: int
+    factor_nnz: int = 0
+    lower_nnz: int = 0
+    strictly_lower_nnz: int = 0
+    upper_nnz: int = 0
+    factor_bytes: int = 0
+    symbolic_work: int = 0
+
+    def _refuse(
+        self,
+        metric: str,
+        required: int,
+        limit: int,
+        /,
+        *,
+        factor_nnz: int | None = None,
+        factor_bytes: int | None = None,
+        symbolic_work: int | None = None,
+    ) -> NoReturn:
+        observed_nnz = self.factor_nnz if factor_nnz is None else factor_nnz
+        observed_bytes = self.factor_bytes if factor_bytes is None else factor_bytes
+        observed_work = self.symbolic_work if symbolic_work is None else symbolic_work
+        raise LinearCapabilityError(
+            "Sparse symbolic factorization refused before allocation: "
+            f"{metric} requires {required}, exceeding limit {limit}; "
+            f"factor_nnz={observed_nnz}/{self.max_factor_nnz}, "
+            f"factor_bytes={observed_bytes}/{self.max_factor_bytes}, "
+            f"symbolic_work={observed_work}/{self.max_symbolic_work}."
+        )
+
+    def _retained_bytes(
+        self,
+        factor_nnz: int,
+        lower_nnz: int,
+        strictly_lower_nnz: int,
+        upper_nnz: int,
+        /,
+    ) -> int:
+        index = self.index_itemsize
+        triangular_fixed = index * (4 * self.size + 2) + 8 * self.size
+        fixed = self.base_bytes + index * (5 * self.size + 2) + triangular_fixed
+        if self.kind == "lu":
+            fixed += triangular_fixed
+        return (
+            fixed
+            + self.batch_count * factor_nnz * self.value_itemsize
+            + factor_nnz * (3 * index + 1)
+            + strictly_lower_nnz * index
+            + lower_nnz * 6 * index
+            + upper_nnz * 6 * index
+        )
+
+    def reserve_fixed_bytes(self, /) -> None:
+        required = self._retained_bytes(0, 0, 0, 0)
+        if required > self.max_factor_bytes:
+            self._refuse(
+                "factor_bytes",
+                required,
+                self.max_factor_bytes,
+                factor_bytes=required,
+            )
+        self.factor_bytes = required
+
+    def add_work(self, count: int = 1, /) -> None:
+        projected = self.symbolic_work + count
+        if projected > self.max_symbolic_work:
+            self._refuse(
+                "symbolic_work",
+                projected,
+                self.max_symbolic_work,
+                symbolic_work=projected,
+            )
+        self.symbolic_work = projected
+
+    def add_factor_entry(self, row: int, column: int, /) -> None:
+        projected_nnz = self.factor_nnz + 1
+        projected_lower = self.lower_nnz + (column <= row)
+        projected_strictly_lower = self.strictly_lower_nnz + (column < row)
+        projected_upper = self.upper_nnz + (self.kind == "lu" and column >= row)
+        projected_bytes = self._retained_bytes(
+            projected_nnz,
+            projected_lower,
+            projected_strictly_lower,
+            projected_upper,
+        )
+        if projected_nnz > self.max_factor_nnz:
+            self._refuse(
+                "factor_nnz",
+                projected_nnz,
+                self.max_factor_nnz,
+                factor_nnz=projected_nnz,
+                factor_bytes=projected_bytes,
+            )
+        if projected_bytes > self.max_factor_bytes:
+            self._refuse(
+                "factor_bytes",
+                projected_bytes,
+                self.max_factor_bytes,
+                factor_nnz=projected_nnz,
+                factor_bytes=projected_bytes,
+            )
+        self.factor_nnz = projected_nnz
+        self.lower_nnz = projected_lower
+        self.strictly_lower_nnz = projected_strictly_lower
+        self.upper_nnz = projected_upper
+        self.factor_bytes = projected_bytes
+
+
+def _symbolic_resource_tracker(
+    storage: SparseStorage,
+    policy: SparseFactorizationPolicy,
+    materialization: MaterializationPolicy | None,
+    kind: Literal["lu", "cholesky"],
+    base_bytes: int,
+    /,
+) -> _SymbolicResourceTracker:
+    if materialization is not None and not isinstance(
+        materialization, MaterializationPolicy
+    ):
+        raise TypeError("materialization must be a MaterializationPolicy or None.")
+    maximum_nnz = policy.max_factor_nnz
+    maximum_bytes = policy.max_factor_bytes
+    maximum_work = policy.max_symbolic_work
+    if materialization is not None:
+        maximum_nnz = min(maximum_nnz, materialization.max_entries)
+        maximum_bytes = min(maximum_bytes, materialization.max_bytes)
+        maximum_work = min(maximum_work, 4 * materialization.max_entries)
+    tracker = _SymbolicResourceTracker(
+        size=storage.shape[0],
+        kind=kind,
+        batch_count=prod(storage.batch_shape or (1,)),
+        value_itemsize=storage.values.dtype.itemsize,
+        index_itemsize=storage.indices.dtype.itemsize,
+        max_factor_nnz=maximum_nnz,
+        max_factor_bytes=maximum_bytes,
+        max_symbolic_work=maximum_work,
+        base_bytes=base_bytes,
+    )
+    tracker.reserve_fixed_bytes()
+    return tracker
+
+
 def _permutation(
     shape: tuple[int, int],
     indices: np.ndarray,
@@ -351,83 +542,143 @@ def _permuted_entries(
     indices: np.ndarray,
     indptr: np.ndarray,
     permutation: np.ndarray,
+    tracker: _SymbolicResourceTracker,
     /,
-) -> dict[tuple[int, int], int]:
+) -> dict[tuple[int, int], tuple[int, bool]]:
     inverse = np.empty_like(permutation)
     inverse[permutation] = np.arange(permutation.size)
-    entries: dict[tuple[int, int], int] = {}
+    entries: dict[tuple[int, int], tuple[int, bool]] = {}
     for old_row in range(permutation.size):
         new_row = int(inverse[old_row])
         for position in range(indptr[old_row], indptr[old_row + 1]):
+            tracker.add_work()
             new_column = int(inverse[indices[position]])
-            entries[(new_row, new_column)] = position
+            if tracker.kind == "lu":
+                coordinate = (new_row, new_column)
+                conjugate = False
+            else:
+                coordinate = (
+                    max(new_row, new_column),
+                    min(new_row, new_column),
+                )
+                conjugate = new_row < new_column
+            previous = entries.get(coordinate)
+            if previous is None:
+                if coordinate[0] != coordinate[1]:
+                    tracker.add_factor_entry(*coordinate)
+                entries[coordinate] = (position, conjugate)
+            elif previous[1] and not conjugate:
+                entries[coordinate] = (position, False)
     return entries
+
+
+def _insert_symbolic_entry(
+    rows: list[dict[int, int]],
+    column_rows: list[set[int]],
+    row: int,
+    column: int,
+    level: int,
+    tracker: _SymbolicResourceTracker,
+    /,
+) -> None:
+    previous = rows[row].get(column)
+    if previous is None:
+        tracker.add_factor_entry(row, column)
+        rows[row][column] = level
+        column_rows[column].add(row)
+    elif level < previous:
+        rows[row][column] = level
 
 
 def _lu_symbolic_rows(
     size: int,
-    entries: dict[tuple[int, int], int],
+    entries: dict[tuple[int, int], tuple[int, bool]],
     fill_level: int | None,
+    tracker: _SymbolicResourceTracker,
     /,
 ) -> list[dict[int, int]]:
     rows = [dict() for _ in range(size)]
+    column_rows = [set() for _ in range(size)]
     for row, column in entries:
         rows[row][column] = 0
+        column_rows[column].add(row)
     for row in range(size):
         rows[row].setdefault(row, 0)
+        column_rows[row].add(row)
+    if fill_level == 0:
+        return rows
     for pivot in range(size):
-        upper = tuple(
+        upper = [
             (column, level)
             for column, level in sorted(rows[pivot].items())
             if column > pivot
-        )
-        for row in range(pivot + 1, size):
-            if pivot not in rows[row]:
-                continue
+        ]
+        below = [row for row in sorted(column_rows[pivot]) if row > pivot]
+        for row in below:
             lower_level = rows[row][pivot]
             for column, upper_level in upper:
+                tracker.add_work()
                 level = lower_level + upper_level + 1
                 if fill_level is None or level <= fill_level:
-                    previous = rows[row].get(column)
-                    if previous is None or level < previous:
-                        rows[row][column] = level
+                    _insert_symbolic_entry(
+                        rows,
+                        column_rows,
+                        row,
+                        column,
+                        level,
+                        tracker,
+                    )
     return rows
 
 
 def _cholesky_symbolic_rows(
     size: int,
-    entries: dict[tuple[int, int], int],
+    entries: dict[tuple[int, int], tuple[int, bool]],
     fill_level: int | None,
+    tracker: _SymbolicResourceTracker,
     /,
 ) -> list[dict[int, int]]:
     rows = [dict() for _ in range(size)]
+    column_rows = [set() for _ in range(size)]
     for row, column in entries:
-        lower_row, lower_column = max(row, column), min(row, column)
-        rows[lower_row][lower_column] = 0
+        rows[row][column] = 0
+        column_rows[column].add(row)
     for row in range(size):
         rows[row].setdefault(row, 0)
+        column_rows[row].add(row)
+    if fill_level == 0:
+        return rows
     for pivot in range(size):
-        neighbors = [row for row in range(pivot + 1, size) if pivot in rows[row]]
+        neighbors = [row for row in sorted(column_rows[pivot]) if row > pivot]
         for left_index, row in enumerate(neighbors):
             left_level = rows[row][pivot]
             for column in neighbors[: left_index + 1]:
+                tracker.add_work()
                 right_level = rows[column][pivot]
                 level = left_level + right_level + 1
                 if fill_level is None or level <= fill_level:
-                    previous = rows[row].get(column)
-                    if previous is None or level < previous:
-                        rows[row][column] = level
+                    _insert_symbolic_entry(
+                        rows,
+                        column_rows,
+                        row,
+                        column,
+                        level,
+                        tracker,
+                    )
     return rows
 
 
 def _csr_from_rows(
-    rows: list[dict[int, int]], /
+    rows: list[dict[int, int]],
+    tracker: _SymbolicResourceTracker,
+    /,
 ) -> tuple[np.ndarray, np.ndarray, dict[tuple[int, int], int]]:
     indices: list[int] = []
     indptr = [0]
     positions: dict[tuple[int, int], int] = {}
     for row, columns in enumerate(rows):
         for column in sorted(columns):
+            tracker.add_work()
             positions[(row, column)] = len(indices)
             indices.append(column)
         indptr.append(len(indices))
@@ -438,65 +689,35 @@ def _csr_from_rows(
     )
 
 
-def _padded(rows: list[list[int]], /, *, fill: int = 0) -> tuple[np.ndarray, np.ndarray]:
-    width = max((len(row) for row in rows), default=0)
-    width = max(width, 1)
-    values = np.full((len(rows), width), fill, dtype=np.int64)
-    valid = np.zeros((len(rows), width), dtype=np.bool_)
-    for index, row in enumerate(rows):
-        values[index, : len(row)] = row
-        valid[index, : len(row)] = True
-    return values, valid
-
-
-def _operation_tables(
-    kind: Literal["lu", "cholesky"],
-    rows: list[dict[int, int]],
-    positions: dict[tuple[int, int], int],
+def _column_index(
+    indices: np.ndarray,
+    indptr: np.ndarray,
+    diagonal: np.ndarray,
+    tracker: _SymbolicResourceTracker,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    size = len(rows)
-    multipliers: list[list[int]] = []
-    targets: list[list[int]] = []
-    lefts: list[list[int]] = []
-    rights: list[list[int]] = []
-    for pivot in range(size):
-        below = [row for row in range(pivot + 1, size) if pivot in rows[row]]
-        multipliers.append([positions[(row, pivot)] for row in below])
-        pivot_targets: list[int] = []
-        pivot_lefts: list[int] = []
-        pivot_rights: list[int] = []
-        if kind == "lu":
-            upper = [column for column in rows[pivot] if column > pivot]
-            for row in below:
-                for column in upper:
-                    target = positions.get((row, column))
-                    if target is not None:
-                        pivot_targets.append(target)
-                        pivot_lefts.append(positions[(row, pivot)])
-                        pivot_rights.append(positions[(pivot, column)])
-        else:
-            for left_index, row in enumerate(below):
-                for column in below[: left_index + 1]:
-                    target = positions.get((row, column))
-                    if target is not None:
-                        pivot_targets.append(target)
-                        pivot_lefts.append(positions[(row, pivot)])
-                        pivot_rights.append(positions[(column, pivot)])
-        targets.append(pivot_targets)
-        lefts.append(pivot_lefts)
-        rights.append(pivot_rights)
-    multiplier_values, multiplier_valid = _padded(multipliers)
-    target_values, update_valid = _padded(targets)
-    left_values, _ = _padded(lefts)
-    right_values, _ = _padded(rights)
+) -> tuple[np.ndarray, np.ndarray, int, int, int]:
+    """Return the column-major index of strictly lower factor entries and widths.
+
+    ``column_positions[column_offsets[k] : column_offsets[k + 1]]`` are the CSR
+    positions of the entries ``(i, k)`` with ``i > k`` in ascending row order.
+    The widths are the longest factor row, strictly lower column and strictly
+    upper row.
+    """
+    tracker.add_work(indices.size)
+    size = indptr.size - 1
+    rows = np.repeat(np.arange(size, dtype=np.int64), np.diff(indptr))
+    strictly_lower = np.flatnonzero(indices < rows)
+    columns = indices[strictly_lower]
+    # A stable sort keeps CSR (ascending-row) order inside every column.
+    column_positions = strictly_lower[np.argsort(columns, kind="stable")]
+    counts = np.bincount(columns, minlength=size)
+    column_offsets = np.concatenate(([0], np.cumsum(counts))).astype(np.int64)
     return (
-        multiplier_values,
-        multiplier_valid,
-        target_values,
-        left_values,
-        right_values,
-        update_valid,
+        column_positions,
+        column_offsets,
+        int(np.diff(indptr).max(initial=0)),
+        int(counts.max(initial=0)),
+        int((indptr[1:] - diagonal - 1).max(initial=0)),
     )
 
 
@@ -505,6 +726,7 @@ def _triangular_pattern(
     combined_positions: dict[tuple[int, int], int],
     triangle: Literal["lower", "upper"],
     index_dtype: DTypeLike,
+    tracker: _SymbolicResourceTracker,
     /,
     *,
     unit_diagonal: bool,
@@ -512,13 +734,15 @@ def _triangular_pattern(
     selected: list[list[int]] = []
     factor_positions: list[int] = []
     for row, columns in enumerate(rows):
-        kept = [
-            column
-            for column in sorted(columns)
-            if (column <= row if triangle == "lower" else column >= row)
-        ]
+        kept: list[int] = []
+        for column in sorted(columns):
+            tracker.add_work()
+            if column <= row if triangle == "lower" else column >= row:
+                kept.append(column)
         selected.append(kept)
         factor_positions.extend(combined_positions[(row, column)] for column in kept)
+    triangular_nnz = len(factor_positions)
+    tracker.add_work(2 * triangular_nnz)
     indices = np.asarray([column for row in selected for column in row], dtype=np.int64)
     indptr = np.concatenate(
         ([0], np.cumsum([len(row) for row in selected], dtype=np.int64))
@@ -546,8 +770,10 @@ def prepare_sparse_factorization(
     operator: AbstractSparseLinearOperator,
     policy: SparseFactorizationPolicy | None = None,
     /,
+    *,
+    materialization: MaterializationPolicy | None = None,
 ) -> SparseFactorizationPlan:
-    """Build a host symbolic sparse factorization plan without reading values."""
+    """Build a bounded host symbolic factorization plan without reading values."""
     policy_ = SparseFactorizationPolicy() if policy is None else policy
     if not isinstance(policy_, SparseFactorizationPolicy):
         raise TypeError("policy must be SparseFactorizationPolicy or None.")
@@ -566,6 +792,16 @@ def prepare_sparse_factorization(
         if isinstance(operator, (SparseCoordinateOperator, SparseLinearMap))
         else None
     )
+    storage_plan_arrays = (
+        {}
+        if storage_plan is None
+        else {
+            id(leaf): leaf for leaf in jax.tree.leaves(storage_plan) if eqx.is_array(leaf)
+        }
+    )
+    base_bytes = sum(
+        array.size * array.dtype.itemsize for array in storage_plan_arrays.values()
+    )
     kind: Literal["lu", "cholesky"]
     if policy_.kind == "auto":
         kind = "cholesky" if operator.properties.certifies("positive_definite") else "lu"
@@ -573,54 +809,57 @@ def prepare_sparse_factorization(
         kind = policy_.kind
     if kind == "cholesky" and not operator.properties.certifies("self_adjoint"):
         raise ValueError("Sparse Cholesky requires a certified self-adjoint operator.")
+    tracker = _symbolic_resource_tracker(
+        storage,
+        policy_,
+        materialization,
+        kind,
+        base_bytes,
+    )
+    for row in range(storage.shape[0]):
+        tracker.add_work()
+        tracker.add_factor_entry(row, row)
     permutation = _permutation(
         storage.shape, input_indices, input_indptr, policy_.ordering
     )
     inverse = np.empty_like(permutation)
     inverse[permutation] = np.arange(permutation.size)
-    entries = _permuted_entries(input_indices, input_indptr, permutation)
+    entries = _permuted_entries(input_indices, input_indptr, permutation, tracker)
     rows = (
-        _lu_symbolic_rows(storage.shape[0], entries, policy_.fill_level)
+        _lu_symbolic_rows(storage.shape[0], entries, policy_.fill_level, tracker)
         if kind == "lu"
-        else _cholesky_symbolic_rows(storage.shape[0], entries, policy_.fill_level)
+        else _cholesky_symbolic_rows(
+            storage.shape[0],
+            entries,
+            policy_.fill_level,
+            tracker,
+        )
     )
-    factor_indices, factor_indptr, positions = _csr_from_rows(rows)
+    factor_indices, factor_indptr, positions = _csr_from_rows(rows, tracker)
     input_positions = np.full(factor_indices.size, -1, dtype=np.int64)
     input_conjugate = np.zeros(factor_indices.size, dtype=np.bool_)
-    if kind == "lu":
-        for coordinate, factor_position in positions.items():
-            input_positions[factor_position] = entries.get(coordinate, -1)
-    else:
-        for (row, column), factor_position in positions.items():
-            direct = entries.get((row, column))
-            reflected = entries.get((column, row))
-            if direct is not None:
-                input_positions[factor_position] = direct
-            elif reflected is not None:
-                input_positions[factor_position] = reflected
-                input_conjugate[factor_position] = row != column
+    for coordinate, factor_position in positions.items():
+        tracker.add_work()
+        route = entries.get(coordinate)
+        if route is not None:
+            input_positions[factor_position] = route[0]
+            input_conjugate[factor_position] = route[1]
     diagonal = np.asarray(
         [positions[(row, row)] for row in range(storage.shape[0])], dtype=np.int64
     )
     (
-        multipliers,
-        multiplier_valid,
-        update_targets,
-        update_left,
-        update_right,
-        update_valid,
-    ) = _operation_tables(kind, rows, positions)
-    row_positions, row_valid = _padded(
-        [
-            list(range(factor_indptr[row], factor_indptr[row + 1]))
-            for row in range(storage.shape[0])
-        ]
-    )
+        column_positions,
+        column_offsets,
+        row_width,
+        column_width,
+        upper_width,
+    ) = _column_index(factor_indices, factor_indptr, diagonal, tracker)
     lower_analysis, lower_positions = _triangular_pattern(
         rows,
         positions,
         "lower",
         storage.indices.dtype,
+        tracker,
         unit_diagonal=kind == "lu",
     )
     if kind == "lu":
@@ -629,6 +868,7 @@ def prepare_sparse_factorization(
             positions,
             "upper",
             storage.indices.dtype,
+            tracker,
             unit_diagonal=False,
         )
     else:
@@ -643,6 +883,11 @@ def prepare_sparse_factorization(
             str(policy_.fill_level).encode(),
             str(storage.batch_shape).encode(),
             str(storage.index_width).encode(),
+            str(policy_.max_factor_nnz).encode(),
+            str(policy_.max_factor_bytes).encode(),
+            str(policy_.max_symbolic_work).encode(),
+            str(tracker.factor_bytes).encode(),
+            str(tracker.symbolic_work).encode(),
             factor_indices.tobytes(),
             factor_indptr.tobytes(),
         )
@@ -663,14 +908,8 @@ def prepare_sparse_factorization(
         input_positions=jnp.asarray(input_positions, dtype=index_dtype),
         input_conjugate=jnp.asarray(input_conjugate),
         diagonal_positions=jnp.asarray(diagonal, dtype=index_dtype),
-        multiplier_positions=jnp.asarray(multipliers, dtype=index_dtype),
-        multiplier_valid=jnp.asarray(multiplier_valid),
-        update_targets=jnp.asarray(update_targets, dtype=index_dtype),
-        update_left=jnp.asarray(update_left, dtype=index_dtype),
-        update_right=jnp.asarray(update_right, dtype=index_dtype),
-        update_valid=jnp.asarray(update_valid),
-        row_positions=jnp.asarray(row_positions, dtype=index_dtype),
-        row_valid=jnp.asarray(row_valid),
+        column_positions=jnp.asarray(column_positions, dtype=index_dtype),
+        column_offsets=jnp.asarray(column_offsets, dtype=index_dtype),
         lower_positions=jnp.asarray(lower_positions, dtype=index_dtype),
         upper_positions=(
             None
@@ -686,8 +925,25 @@ def prepare_sparse_factorization(
         input_pattern_id=input_pattern_id,
         plan_id=sha256(plan_payload).hexdigest(),
         input_nnz=input_indices.size,
+        factor_nnz=tracker.factor_nnz,
+        factor_bytes=tracker.factor_bytes,
+        symbolic_work=tracker.symbolic_work,
+        row_width=row_width,
+        column_width=column_width,
+        upper_width=upper_width,
         storage_plan=storage_plan,
     )
+
+
+def _window(start: Array, stop: Array, width: int, /) -> tuple[Array, Array]:
+    """Return ``width`` consecutive positions from ``start`` masked below ``stop``.
+
+    Masked positions are replaced by zero so gathers stay in bounds; scatters
+    route them out of bounds and drop them.
+    """
+    positions = start + jnp.arange(width, dtype=start.dtype)
+    valid = positions < stop
+    return jnp.where(valid, positions, 0), valid
 
 
 def _prune_row(
@@ -696,9 +952,9 @@ def _prune_row(
     row: Array,
     /,
 ) -> tuple[Array, Array]:
-    positions = plan.row_positions[row]
-    valid = plan.row_valid[row]
-    safe_positions = jnp.where(valid, positions, 0)
+    safe_positions, valid = _window(
+        plan.factor_indptr[row], plan.factor_indptr[row + 1], plan.row_width
+    )
     row_values = values[safe_positions]
     diagonal = safe_positions == plan.diagonal_positions[row]
     row_scale = jnp.max(jnp.where(valid, jnp.abs(row_values), 0.0))
@@ -709,10 +965,7 @@ def _prune_row(
     elif plan.policy.maximum_fill_per_row == 0:
         selected = jnp.zeros_like(candidate)
     else:
-        count = min(
-            plan.policy.maximum_fill_per_row,
-            plan.row_positions.shape[1],
-        )
+        count = min(plan.policy.maximum_fill_per_row, plan.row_width)
         scores = jnp.where(candidate, jnp.abs(row_values), -jnp.inf)
         _, selected_indices = jax.lax.top_k(scores, count)
         selected = (
@@ -722,12 +975,71 @@ def _prune_row(
             )
             & candidate
         )
-    keep = valid & (diagonal | selected)
-    row_marker = jnp.zeros(values.shape, dtype=jnp.bool_).at[safe_positions].max(valid)
-    keep_marker = jnp.zeros(values.shape, dtype=jnp.bool_).at[safe_positions].max(keep)
-    pruned = jnp.where(row_marker & ~keep_marker, jnp.zeros((), values.dtype), values)
-    dropped = jnp.sum((row_marker & ~keep_marker).astype(jnp.int32))
-    return pruned, dropped
+    removed = valid & ~(diagonal | selected)
+    pruned = values.at[jnp.where(removed, safe_positions, values.size)].set(
+        jnp.zeros((), values.dtype), mode="drop"
+    )
+    return pruned, jnp.sum(removed, dtype=jnp.int32)
+
+
+def _eliminate_pivot(
+    values: Array,
+    marker: Array,
+    plan: SparseFactorizationPlan,
+    pivot: Array,
+    denominator: Array,
+    /,
+) -> tuple[Array, Array]:
+    """Divide pivot column ``k`` and apply its rank-one update on the pattern.
+
+    Targets come from the stored factor rows at runtime: ``marker`` maps every
+    column of the pivot's update row (``U[k, j > k]`` for LU, the conjugate
+    column ``L[j > k, k]`` for Cholesky) to its window slot. Each target row's
+    entries right of its pivot-column entry look up the marker, so an update
+    is applied exactly where the symbolic pattern holds ``(i, j)``. Targets are
+    unique within one pivot, which keeps the scatter deterministic.
+    """
+    size = values.size
+    below, below_valid = _window(
+        plan.column_offsets[pivot], plan.column_offsets[pivot + 1], plan.column_width
+    )
+    below = plan.column_positions[below]
+    multipliers = values[below] / denominator
+    values = values.at[jnp.where(below_valid, below, size)].set(multipliers, mode="drop")
+    if plan.kind == "lu":
+        right, right_valid = _window(
+            plan.diagonal_positions[pivot] + 1,
+            plan.factor_indptr[pivot + 1],
+            plan.upper_width,
+        )
+        keys = plan.factor_indices[right]
+        right_values = values[right]
+    else:
+        right_valid = below_valid
+        keys = plan.factor_rows[below]
+        right_values = jnp.conj(multipliers)
+    marked = jnp.where(right_valid, keys, marker.size)
+    marker = marker.at[marked].set(jnp.arange(keys.size, dtype=marker.dtype), mode="drop")
+    rows = plan.factor_rows[below]
+    tail = below[:, None] + 1 + jnp.arange(plan.row_width, dtype=below.dtype)[None, :]
+    tail_valid = below_valid[:, None] & (tail < plan.factor_indptr[rows + 1][:, None])
+    tail = jnp.where(tail_valid, tail, 0)
+    slot = marker[plan.factor_indices[tail]]
+    hit = tail_valid & (slot >= 0)
+    updates = multipliers[:, None] * right_values[jnp.where(hit, slot, 0)]
+    values = values.at[jnp.where(hit, tail, size)].add(-updates, mode="drop")
+    return values, marker.at[marked].set(-1, mode="drop")
+
+
+def _refresh_workspace_bytes(plan: SparseFactorizationPlan, itemsize: int, /) -> int:
+    """Transient bytes of one numeric refresh besides the factor values.
+
+    One pivot holds the dense column marker and a ``column_width x row_width``
+    target window (positions, columns, slots, update values and masks).
+    """
+    index = plan.factor_indices.dtype.itemsize
+    window = plan.column_width * plan.row_width * (3 * index + itemsize + 2)
+    return plan.shape[0] * index + window
 
 
 def refresh_sparse_factorization(
@@ -800,6 +1112,7 @@ def refresh_sparse_factorization_values(
         values = values.at[plan.diagonal_positions].add(plan.policy.diagonal_shift)
         initial = (
             values,
+            jnp.full((plan.shape[0],), -1, dtype=plan.factor_indices.dtype),
             jnp.asarray(int(SparseFactorizationStatus.SUCCESS), dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
@@ -807,9 +1120,9 @@ def refresh_sparse_factorization_values(
         )
 
         def factor_step(
-            pivot_index: Array, carry: tuple[Array, Array, Array, Array, Array]
-        ) -> tuple[Array, Array, Array, Array, Array]:
-            current, status, replaced, dropped, minimum_pivot = carry
+            pivot_index: Array, carry: tuple[Array, Array, Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
+            current, marker, status, replaced, dropped, minimum_pivot = carry
             if (
                 plan.policy.drop_tolerance > 0.0
                 or plan.policy.maximum_fill_per_row is not None
@@ -864,13 +1177,13 @@ def refresh_sparse_factorization_values(
                 )
             bad = ~acceptable
             status = jnp.where(
-                (status == int(SparseFactorizationStatus.SUCCESS)) & bad,
+                ~finite,
+                int(SparseFactorizationStatus.NONFINITE),
                 jnp.where(
-                    finite,
+                    (status == int(SparseFactorizationStatus.SUCCESS)) & bad,
                     failure_status,
-                    int(SparseFactorizationStatus.NONFINITE),
+                    status,
                 ),
-                status,
             ).astype(jnp.int32)
             use_replacement = bad & plan.policy.allow_pivot_replacement
             effective_pivot = jnp.where(
@@ -896,33 +1209,12 @@ def refresh_sparse_factorization_values(
             else:
                 current = current.at[pivot_position].set(effective_pivot)
                 denominator = effective_pivot
-            multiplier_positions = plan.multiplier_positions[pivot_index]
-            multiplier_valid = plan.multiplier_valid[pivot_index]
-            safe_multipliers = jnp.where(
-                multiplier_valid,
-                multiplier_positions,
-                0,
+            current, marker = _eliminate_pivot(
+                current, marker, plan, pivot_index, denominator
             )
-            previous = current[safe_multipliers]
-            divided = previous / denominator
-            current = current.at[safe_multipliers].add(
-                jnp.where(multiplier_valid, divided - previous, 0.0)
-            )
-            targets = plan.update_targets[pivot_index]
-            left = plan.update_left[pivot_index]
-            right = plan.update_right[pivot_index]
-            update_valid = plan.update_valid[pivot_index]
-            safe_targets = jnp.where(update_valid, targets, 0)
-            safe_left = jnp.where(update_valid, left, 0)
-            safe_right = jnp.where(update_valid, right, 0)
-            right_values = current[safe_right]
-            if plan.kind == "cholesky":
-                right_values = jnp.conj(right_values)
-            updates = current[safe_left] * right_values
-            current = current.at[safe_targets].add(jnp.where(update_valid, -updates, 0.0))
-            return current, status, replaced, dropped, minimum_pivot
+            return current, marker, status, replaced, dropped, minimum_pivot
 
-        values, status, replaced, dropped, minimum_pivot = jax.lax.fori_loop(
+        values, _, status, replaced, dropped, minimum_pivot = jax.lax.fori_loop(
             0,
             plan.shape[0],
             factor_step,
@@ -930,7 +1222,7 @@ def refresh_sparse_factorization_values(
         )
         finite = jnp.all(jnp.isfinite(values))
         status = jnp.where(
-            (status == int(SparseFactorizationStatus.SUCCESS)) & ~finite,
+            ~finite,
             int(SparseFactorizationStatus.NONFINITE),
             status,
         ).astype(jnp.int32)
@@ -990,9 +1282,15 @@ def factorize_sparse(
     operator: AbstractSparseLinearOperator,
     policy: SparseFactorizationPolicy | None = None,
     /,
+    *,
+    materialization: MaterializationPolicy | None = None,
 ) -> PreparedSparseFactorization:
     """Symbolically plan and numerically factor one sparse operator."""
-    plan = prepare_sparse_factorization(operator, policy)
+    plan = prepare_sparse_factorization(
+        operator,
+        policy,
+        materialization=materialization,
+    )
     return refresh_sparse_factorization(plan, operator)
 
 

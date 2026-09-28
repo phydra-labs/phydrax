@@ -1,6 +1,240 @@
 {
-  "catalog_id": "4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655",
+  "catalog_id": "1de53bded333ddce19183ca4e8914eaa4b647239959e66048acfd71e692a944c",
   "declarations": [
+    {
+      "capability": "accelerator.fel-averaged",
+      "declaration_id": "e16c4a744e448094b4070fab6060b42c997837ef73e4c4f14d0da16b29d29171",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.accelerator",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "accelerator.fel-averaged.profile",
+          "profile_id": "6bf97c1594c71a8772c0ab00cabbb7786bdd84ffb60749ec80c2cf2666938836",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "documentation-nonclaims",
+            "harmonic-bessel-coupling",
+            "identity-addressed-loading",
+            "ming-xie-gain-length",
+            "one-dimensional-cold-growth-rate",
+            "one-dimensional-energy-spread-dispersion",
+            "particle-field-energy-ledger",
+            "per-slice-wake-loss",
+            "quiet-start-and-fawley-shot-noise",
+            "saturation-power-scale",
+            "taper-and-focusing-transfer",
+            "unsupported-configuration-refusal"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "collective": "per-slice-longitudinal-wake-loss",
+                "field": "one-dimensional-or-angular-spectrum-grid",
+                "harmonics": "odd-planar-bessel-coupled-or-helical-fundamental",
+                "integration": "strang-betatron-diffraction-rk4-source",
+                "lattice": "planar-or-helical-modules-stepwise-taper-thin-quad-breaks",
+                "loading": "quiet-start-fawley-shot-noise-identity-addressed",
+                "model": "kmr-period-averaged-time-independent-slices",
+                "precision": "float64-only"
+              },
+              "capability": "accelerator.fel-averaged",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "567199d71add5ce21354f6b71a5398d84f84516ab51ca88f2316410cd779f749"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "accelerator.insertion-device-radiation",
+      "declaration_id": "8cc059e7c5a1c8090c34abcd859a5b34bb12a284998495dcf477d93433ffb64d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.accelerator",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "accelerator.insertion-device-radiation.profile",
+          "profile_id": "a34246abb9a0b7eced5b3644f1b15d0e9a6160701681b32daef354b130eda45c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "bend-field-integral",
+            "documentation-nonclaims",
+            "exit-delay-convention",
+            "field-support-refusal",
+            "harmonic-line-width",
+            "matched-termination-exit-orbit",
+            "resource-envelope",
+            "tabulated-map-interpolation-bound",
+            "undulator-resonance-and-odd-harmonics"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coordinates": "accelerator-convention-s-to-t",
+                "field_model": "exact-vacuum-analytic-or-multilinear-table",
+                "fields": "planar-helical-undulator-wiggler-dipole-bend-tabulated-3d",
+                "frame": "straight-cartesian-map-frame",
+                "precision": "float64-only",
+                "radiation": "vacuum-trajectory-radiation-far-field",
+                "tracking": "lab-time-relativistic-push-per-lane-arrival"
+              },
+              "capability": "accelerator.insertion-device-radiation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "90c2b6432ead27b246f5aa0ebff907464a2ca89bfd49bc277a52bcb5f6711872"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "accelerator.ring-radiation",
+      "declaration_id": "3e94c496197c48bacaec2036c2a9e12f46dd1653280821c70f3bbecbd3f02368",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.accelerator",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "accelerator.ring-radiation.profile",
+          "profile_id": "820038beacc1595d934b7865329e86c1f8da4e27a21b6bac1766c222d31a0995",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "classical-loss-per-turn",
+            "documentation-nonclaims",
+            "identity-addressed-emission",
+            "isomagnetic-fodo-hill-equation-integrals",
+            "partitioned-damping-rates",
+            "photon-spectrum-mellin-moments",
+            "published-radiation-constants-equilibrium",
+            "resource-envelope",
+            "stochastic-equilibrium-convergence",
+            "unsupported-lattice-refusal",
+            "weak-focusing-closed-form-integrals",
+            "zero-radiation-symplectic-identity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "bends": "horizontal-normal-entry-sector-optional-gradient",
+                "integrals": "sands-i1-i5-gauss-kronrod",
+                "lattice": "periodic-cell-drift-quadrupole-sector-bend-thin-rf",
+                "optics": "first-order-uncoupled-periodic",
+                "precision": "float64-only",
+                "radiation": "classical-ultrarelativistic-collinear-emission",
+                "randomness": "particle-identity-addressed",
+                "spectrum": "synchrotron-function-photon-number-table",
+                "tracking": "sliced-bend-kicks-classical-or-poisson-photons"
+              },
+              "capability": "accelerator.ring-radiation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a96e66e5822f789fac922587f5bb4b3dda471ef0293c453468770789535e5fc4"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "acoustics.bubbly-medium",
+      "declaration_id": "14be51288b7d1a7214a82a47569d8619d837fc2e20fdfd0bb0f9ddb8c7cc7964",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.acoustics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "acoustics.bubbly-medium.profile",
+          "profile_id": "8367a31755237703556a43fc98be910afb99cd64d7a8df41b1810a938effdc80",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "commander-prosperetti-reference",
+            "dilute-analytic-limit",
+            "public-workflow",
+            "resonance-attenuation",
+            "wood-low-frequency-limit"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "bubble_response": "composed-linear-bubble-response",
+                "formulation": "commander-prosperetti-linear",
+                "regime": "dilute",
+                "size_distribution": "discrete-bins"
+              },
+              "capability": "acoustics.bubbly-medium",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "397fe6d198c9fed4cc7aed3d98bb4436b3acd36931b71219a9293f68ed64b0b9"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
     {
       "capability": "acoustics.vibroacoustic",
       "declaration_id": "d4e80486454e012b384e46cb45e283986ee0454490aaf1ed2ae55d61f2c17e6a",
@@ -803,6 +1037,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.flight_dynamics"
+      ]
+    },
+    {
+      "capability": "application.foams",
+      "declaration_id": "5360d29d158b4bfd74a4316f28e2ad2373107c7109d6d8831e4a8572be94af65",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.foams",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.foams"
       ]
     },
     {
@@ -1708,6 +1964,28 @@
       ]
     },
     {
+      "capability": "application.soap-film-tunnel",
+      "declaration_id": "1b70763f5991bcb75a3fb5dadba1513e6d0a9fa60937176b647c9e5a9d7a57a6",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.soap_film_tunnel",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.soap_film_tunnel"
+      ]
+    },
+    {
       "capability": "application.solid-mechanics",
       "declaration_id": "c78b46d967ef25a60031bc0442c2a70154c1a7b5210f0c102f28d2a0d3aa01c9",
       "dependencies": [],
@@ -2171,6 +2449,265 @@
       ],
       "owner": "phydrax.operators.integral",
       "profiles": [],
+      "public_symbols": []
+    },
+    {
+      "capability": "bubble-dynamics.clean-radial",
+      "declaration_id": "56c366e4558facf371b71daf7f1fd1dc6af8f193e56af5f0ba2a649d9c977b58",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.bubble_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "bubble-dynamics.clean-radial.profile",
+          "profile_id": "7bc07ad2c6d1cc1ba73633c3b6336915ed50efc6bbed3956661e786a1c84f8d5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "compressible-limit",
+            "derivative-duality",
+            "energy-identity",
+            "minnaert-frequency",
+            "public-workflow",
+            "rayleigh-collapse"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "equations": "rayleigh-plesset,radiation,gas-radiation,keller-miksis,gilmore",
+                "gas": "polytropic,hard-core",
+                "integration": "native-diffrax-events",
+                "interface": "clean"
+              },
+              "capability": "bubble-dynamics.clean-radial",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "1e6e065d994ae77945bf9f3cfcbb9d2b3288a26db1941899e2d4bca9a8d7ef9e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "bubble-dynamics.cloud",
+      "declaration_id": "cb69f6b2fe6d577741cbfb6b0e44cd2e776b6e0005dc2e641a47d317d4fc5561",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.bubble_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "bubble-dynamics.cloud.profile",
+          "profile_id": "5d32e16000a08c9d3189b0475fe66cf2e61096ecf55c0823354828d7ea6811c0",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "bjerknes-sign-rule",
+            "dense-direct-reference",
+            "fmm-dense-agreement",
+            "public-workflow",
+            "retarded-incompressible-limit",
+            "two-bubble-normal-modes",
+            "work-identity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coupling": "implicit-incompressible,retarded-neutral-delay",
+                "emission": "far-field-monopole-dense-output",
+                "interfaces": "smooth-only",
+                "routes": "dense-cholesky,fmm-conjugate-gradients",
+                "species": "static-groups-batched-parameters",
+                "translation": "added-mass-bjerknes"
+              },
+              "capability": "bubble-dynamics.cloud",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0b364be6665a0e22dd53091450a2f4faf8c2420eb36fa366f575f60d6d58dc41"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "bubble-dynamics.coated-microbubble",
+      "declaration_id": "b0aefea27e1bd6b9175172d5c3b4c71661dcf78e13c7ef055159a0ccc3a4c977",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.bubble_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "bubble-dynamics.coated-microbubble.profile",
+          "profile_id": "e1c006067aa170f5f622054434450708fd020aa851e64b4d25fa57e16bc7b6c7",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "coated-resonance",
+            "compression-only-reference",
+            "event-time-convergence",
+            "public-workflow",
+            "regime-radii",
+            "shell-gradient"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "inference": "dynamic-shell-parameters",
+                "regimes": "native-event-localized",
+                "shells": "marmottant,gompertz,hoff,church-equal-density,sarkar,doinikov,maxwell"
+              },
+              "capability": "bubble-dynamics.coated-microbubble",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "3c95fe1c50b3fea3304a09e687ce71ac3c88d2d1391415a1ebf313871d5602fc"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "bubble-dynamics.surface-nanobubble",
+      "declaration_id": "89afbe6f577149861de1cb7c428dd0ea84cf0df8ebe4572707cb26fa4374328e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.bubble_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "bubble-dynamics.surface-nanobubble.profile",
+          "profile_id": "9b2feeabb27fce2c07e80340eee46008d89b7322cb3e94797aeda30e4cd961ce",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "closed-form-lifetime",
+            "continuum-evidence",
+            "independent-history-reference",
+            "lohse-zhang-equilibrium",
+            "public-workflow",
+            "stability-sign"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "bulk_nanobubbles": false,
+                "dissolution": "epstein-plesset-quasi-static,epstein-plesset-full-history",
+                "surface": "pinned-spherical-cap,unpinned-spherical-cap"
+              },
+              "capability": "bubble-dynamics.surface-nanobubble",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "68b807b354e8f7d31effbc14b37806a840991c5ffde648315a1670d512b62a26"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "bubble-dynamics.thermal-compressible",
+      "declaration_id": "2452146e73eb8800f6209866386c28cb6f8c654b848e3369073fdcfe244c864e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.bubble_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "bubble-dynamics.thermal-compressible.profile",
+          "profile_id": "8745a15380616f8d4a6ea6128ecc3c538929c3df1c77840fd2e28322573f5930",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "gilmore-keller-miksis-limit",
+            "prosperetti-linear-theory",
+            "public-workflow",
+            "spectral-refinement",
+            "viscoelastic-limits"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "equation": "gilmore-tait",
+                "gas": "boundary-layer,reduced-transfer,spectral-chebyshev,material",
+                "liquid": "newtonian,power-law,kelvin-voigt,zener,oldroyd-b"
+              },
+              "capability": "bubble-dynamics.thermal-compressible",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "abb2c0d3ea58299f8bab1f98fe3c92ac55c2f1b6ebf2360eb53130d1b5cf50fc"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
       "public_symbols": []
     },
     {
@@ -7446,6 +7983,728 @@
       ]
     },
     {
+      "capability": "electromagnetics.discrete-dispersion-audit",
+      "declaration_id": "5510ec19631d3655ad4426b5ab584401e86739db477ee4fb2a6f306176a2e380",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.solver",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.discrete-dispersion-audit.profile",
+          "profile_id": "616d73794523cdfb3c92cc49be7981df416fcb9604680280e753ca594309fb49",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "ade-continuum-limit",
+            "admissibility-refusals",
+            "appleton-hartree-continuum-and-cutoffs",
+            "audit-equals-runtime-phase-advance",
+            "cherenkov-regime-masks",
+            "courant-boundary",
+            "documentation-nonclaims",
+            "negative-index-band",
+            "passivity-and-power-balance",
+            "vacuum-yee-analytic-dispersion"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "admissibility": "local-update-no-magnetic-projection-verified-stencil",
+                "grid": "uniform-structured-axes-declared-homogeneous-region",
+                "media": "diagonal-lorentz-drude-magnetic-poles-magnetized-cold-plasma",
+                "outputs": "multipliers-numerical-frequencies-cherenkov-regime-masks",
+                "update": "executed-compatible-leapfrog-one-step-bloch-map"
+              },
+              "capability": "electromagnetics.discrete-dispersion-audit",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "dd62ea906fe1f3a04ac58fe243977544fcec7916c26f43a33a8021bda04de146"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electromagnetics.kinetic-dispersion",
+      "declaration_id": "4b1ea47efca344e7fff50fd7c6a829aba20544213d43be813d004a65609ad4c1",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electromagnetics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.kinetic-dispersion.profile",
+          "profile_id": "7820e60e7c1fcd985f5f5651173ef656ada17cb08bb651697db9bea03bef0837",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-continuation-and-parallel-sign",
+            "bernstein-perpendicular-dispersion",
+            "cold-limit-equals-stix",
+            "cyclotron-maser-analytic-growth",
+            "documentation-nonclaims",
+            "harmonic-truncation-evidence",
+            "landau-damping-roots",
+            "root-failure-status",
+            "shkarofsky-dnestrovskii-absorption",
+            "whistler-anisotropy-growth"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "continuation": "landau-contour-all-im-omega-both-parallel-signs",
+                "distributions": "drifting-bi-maxwellian-or-isotropic-maxwellian-weakly-relativistic",
+                "medium": "hot-magnetized-multispecies-plasma",
+                "precision": "float64-only",
+                "roots": "vector-newton-branch-continuation-with-failure-status",
+                "susceptibility": "nonrelativistic-harmonic-sum-or-lowest-flr-shkarofsky",
+                "weak_growth": "relativistic-resonance-ellipse-arbitrary-gyrotropic-cold-modes"
+              },
+              "capability": "electromagnetics.kinetic-dispersion",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "140d2c091f3c5f1999191dc9d50aee6be455e03f29fa200b2db77be4e24b51a7"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electromagnetics.magnetobremsstrahlung",
+      "declaration_id": "713c218179ce0fde1d43cb2ea0bb8771ff77e4b7c053818c189abddce42d2f74",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electromagnetics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.magnetobremsstrahlung.profile",
+          "profile_id": "34c8cb41b14ddf09f5f659fbcc20585819c7a753f18dd9bf864432e040c1cc11",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "bekefi-thermal-cyclotron-harmonics",
+            "continuous-route-error-versus-harmonic-sum",
+            "documentation-nonclaims",
+            "evanescent-and-resonance-cone-status",
+            "free-free-born-gaunt-and-gray-means",
+            "harmonic-set-and-truncation-evidence",
+            "kirchhoff-detailed-balance",
+            "mny96-equation-31-codata-2022",
+            "ordinary-extraordinary-polarization",
+            "razin-single-particle-spectrum"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "distributions": "juttner-power-law-kappa-tabulated-gyrotropic",
+                "harmonics": "resonance-curve-intersection-including-anomalous-doppler",
+                "medium": "cold-magnetized-multispecies-plasma-collisionless-modes",
+                "polarization": "mode-resolved-stokes-with-cold-plasma-faraday",
+                "precision": "float64-only",
+                "routes": "exact-harmonic-sum-or-exact-bessel-continuous-harmonic",
+                "thermal_routes": "mny96-stokes-i-si-and-born-free-free-gray-means"
+              },
+              "capability": "electromagnetics.magnetobremsstrahlung",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "76a31b01cca583e203516dcad75d452885b401358b15745948ff5645dbc5fde3"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electromagnetics.maxwell-far-field",
+      "declaration_id": "e3324f5c953cb66d785fd3fdd8f21cf2df72997bf190f75100304135243fde02",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.solver",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.maxwell-far-field.profile",
+          "profile_id": "4b1b0dfbda89f57b88ab1c4323be8f9d17624756f650a5241d72bca3b8881caa",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "admissibility-refusals",
+            "documentation-nonclaims",
+            "grid-convergence",
+            "hertzian-dipole-pattern-and-energy",
+            "nested-surface-agreement",
+            "surface-poynting-energy-balance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "acquisition": "time-integral-trapezoid-positive-exponent",
+                "admissibility": "no-cpml-overlap-no-surface-current",
+                "exterior": "declared-lossless-homogeneous",
+                "outputs": "field-spectrum-coherency-stokes-spectral-energy",
+                "surface": "structured-huygens-box-or-tetrahedral-face-set"
+              },
+              "capability": "electromagnetics.maxwell-far-field",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8be4eb1143259b3ca62dfb52adadecacfba5b29ff892436ff1887cbed312ee90"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electromagnetics.near-zone-lienard-wiechert",
+      "declaration_id": "35fd8f7b09be619c9c4d8e3e923ef7af6da8aed025503a8a4fae06ae57a2899f",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electromagnetics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.near-zone-lienard-wiechert.profile",
+          "profile_id": "26b3a9a9e3b18d3cac1edf58a7edac956950703cdd41a76d3edc814f638fd84d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "born-hyperbolic-motion",
+            "chunk-invariance",
+            "derivative-contract",
+            "documentation-nonclaims",
+            "far-zone-equals-trajectory-waveform",
+            "gauss-flux",
+            "heaviside-uniform-motion",
+            "hermite-convergence-order",
+            "history-causality-exclusion-evidence",
+            "resource-envelope"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "history": "refuse-or-inertial-extrapolation",
+                "interpolation": "hermite-cubic-or-hermite-quintic",
+                "medium": "vacuum",
+                "outputs": "electric-magnetic-velocity-acceleration-fields-retarded-times",
+                "precision": "float64-only",
+                "retarded_solve": "index-bisection-then-toms748-implicit-derivative",
+                "sources": "point-charges-outside-exclusion-radius",
+                "zone": "near-and-far-zone-time-domain"
+              },
+              "capability": "electromagnetics.near-zone-lienard-wiechert",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "03c1de4eb832f8612941c5d327db9534ddc48ff62b2ba40786b71ee45f46d948"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electromagnetics.one-way-antenna",
+      "declaration_id": "b8155769e9933b34331ddeb82c277d8097f2f597d93f1f7019ba80506f5b314e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.solver",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.one-way-antenna.profile",
+          "profile_id": "f05e8d53c22675d8cb246411b6de4e4a3914b895755102a9424ed7a14682fece",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "admissibility-refusals",
+            "antenna-work-equals-injected-energy",
+            "documentation-nonclaims",
+            "laser-envelope-adapter-round-trip",
+            "moving-antenna-doppler",
+            "one-way-forward-backward-ratio",
+            "paraxial-gaussian-waist-and-gouy-phase"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "adapters": "pulse-envelope-focused-gaussian-openpmd-laser-envelope",
+                "medium": "declared-lossless-homogeneous-on-sheet-support",
+                "motion": "normal-boost-in-scale-vacuum",
+                "outputs": "cochain-currents-work-ledger-support-evidence",
+                "placement": "total-field-scattered-field-staggered-sheets",
+                "source": "sampled-plane-electric-and-magnetic-sheet"
+              },
+              "capability": "electromagnetics.one-way-antenna",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9a8d0e74d10e3140ae6cefd7230e45606cc847f18e7cce142603ba3d00c7ff8c"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electromagnetics.plasma-rays",
+      "declaration_id": "bcd19b32465d1021355f4b81fbf4218394c8d566df0a7f8be0d2f6b8ccf08651",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electromagnetics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.plasma-rays.profile",
+          "profile_id": "ba28712e0aaf702c991169455f4120089de547fa1b119c1eb9206029295cd794",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "appleton-hartree-turning-point",
+            "documentation-nonclaims",
+            "graded-index-kick-drift-kick-agreement",
+            "implicit-midpoint-symplectic-second-order-energy",
+            "launch-and-coupling-refusals",
+            "linear-ramp-cutoff-reflection",
+            "ray-refractive-index-invariant",
+            "rotation-measure-integral",
+            "thermal-kirchhoff-saturation",
+            "twisted-field-mode-coupling-limits"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coefficients": "mode-resolved-magnetobremsstrahlung-per-segment",
+                "exclusions": "vacuum-mode-degeneracy-airy-turning-phase-collisional-rays",
+                "hamiltonian": "stix-quartic-group-time-normalized-mode-fixed-at-launch",
+                "integrator": "implicit-midpoint-symplectic-or-separable-kick-drift-kick",
+                "medium": "collisionless-cold-magnetized-multispecies-analytic-profiles",
+                "precision": "float64-only",
+                "transfer": "stokes-over-ray-index-squared-weak-or-strong-mode-coupling"
+              },
+              "capability": "electromagnetics.plasma-rays",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "33dd74eec4dc86230a4f9730bbfedaa83fd04860b0d38ca7517636d10e7d4739"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "electromagnetics.vacuum-trajectory-radiation",
+      "declaration_id": "87c76b5ed34f1b1bf31070481fc30376a52af4062fc181687e0e9afdb375ada7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.electromagnetics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "electromagnetics.vacuum-trajectory-radiation.profile",
+          "profile_id": "1da40b573d61df2fec06cafaa6d26efb46be900d96ce367a98f72e7d2dab45a6",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "boost-covariance",
+            "derivative-contract",
+            "documentation-nonclaims",
+            "larmor-and-schott-harmonics",
+            "lienard-total-power",
+            "resource-envelope",
+            "retardation-stability",
+            "route-agreement-within-reported-floor",
+            "streaming-equals-offline"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coherence": "coherent-incoherent-gaussian-or-tabulated-form-factor",
+                "fourier_convention": "exp-minus-i-omega-t-one-sided-energy",
+                "medium": "vacuum",
+                "outputs": "field-spectrum-coherency-stokes-spectral-energy-waveform",
+                "precision": "float64-only",
+                "routes": "segment-exact-segment-hermite-node-gridded-type3",
+                "zone": "far-field"
+              },
+              "capability": "electromagnetics.vacuum-trajectory-radiation",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ef77820e46365f77e14a39797c797c14c219d9f54b1cbdd938ac06c7537781ae"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "foams.constrained-dynamics",
+      "declaration_id": "2baee5bbbe92dda16d73c7e5f435d1236b9e75edaecdf06f5ad9f5ee153dbe3d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.foams",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "foams.constrained-dynamics.profile",
+          "profile_id": "122d7e9c9b01e226891a2a43e6dcfa4a7cc21c210995ec8951190a44948e8dd4",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "kkt-evidence",
+            "public-workflow",
+            "qualification-campaign"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "air": "incompressible-targets-or-compartment-gas",
+                "constraints": "independent-region-volume-basis",
+                "derivatives": "fixed-topology-only",
+                "linear-solve": "native-rank-condition-evidence",
+                "routes": "overdamped-gradient,film-inertia-shake-rattle"
+              },
+              "capability": "foams.constrained-dynamics",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "6d25f894baf2612c1b7b488e99868306657001687b3910ea1b528dea2d0a22d8"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "foams.plateau-border-drainage",
+      "declaration_id": "8a5b76176a74e1d47c1ebf8db5e725acb00519f8597fd6e8ce17479673258f52",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.foams",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "foams.plateau-border-drainage.profile",
+          "profile_id": "c978f055bbf9b1432be7fb3421b893343bf1038ceb453f32f7be2d4b1f80a1f7",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "kkt-evidence",
+            "public-workflow",
+            "qualification-campaign"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "derivatives": "fixed-topology-only",
+                "films": "per-region-pair-prepared-manifold-operators",
+                "flow": "gravity-viscous-triangular-channel",
+                "junctions": "quad-point-mass-pressure-balance",
+                "ledgers": "liquid,surfactant,declared-evaporation",
+                "network": "fixed-capacity-physical-triple-edges"
+              },
+              "capability": "foams.plateau-border-drainage",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cb378a23da8ec896b0e8c332c4a22f1fe4df308c3431794851a2078ea2b453c4"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "foams.quasistatic-equilibrium",
+      "declaration_id": "6d766c67b7b962543e35c5d400b68973fcce1684279bccc4103c5c791aa95027",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.foams",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "foams.quasistatic-equilibrium.profile",
+          "profile_id": "14960c27ac181f02906f8a69d4e642849860b4adbb9baeb446923b5a442932e5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "kkt-evidence",
+            "public-workflow",
+            "qualification-campaign"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "constraints": "independent-region-volumes",
+                "derivatives": "fixed-topology-implicit-kkt",
+                "energy": "effective-pair-tension-area",
+                "solver": "native-sqp-augmented-lagrangian",
+                "topology-events": false
+              },
+              "capability": "foams.quasistatic-equilibrium",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "43583ec59ed3ce3e0e749bcb88ed57322a4e52d2a034f9a0849069214966f079"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "foams.thickness-driven-rupture",
+      "declaration_id": "9f47c293591be4f7eb9bc4ce1e46eb828c64a554feae0d052382f2a230bbf712",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.foams",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "foams.thickness-driven-rupture.profile",
+          "profile_id": "a3262314e5e58d019c849a44160963f96f18277eeb2f29ebcb940637fb9e24c3",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "kkt-evidence",
+            "public-workflow",
+            "qualification-campaign"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "derivatives-across-event": false,
+                "liquid-ledger": "resolved-rim-border-when-supported-otherwise-unresolved",
+                "random-rupture": false,
+                "transaction": "whole-sheet-delete-region-merge",
+                "trigger": "accepted-deterministic-sheet-slot-thickness"
+              },
+              "capability": "foams.thickness-driven-rupture",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b9291a926328821dab54a81aba696d42c11d3c594ad265725706b178de073cab"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "foams.vortex-sheet-air",
+      "declaration_id": "6d3fb1be2d6d41689668fa8a80f52654b4e6393807d172c0c83b593f647b1bb2",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.foams",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "foams.vortex-sheet-air.profile",
+          "profile_id": "4ff795fcd70432863ef59c5e94df5aae62dff7992647a2c9c8fe0f7e180d3f52",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "kkt-evidence",
+            "public-workflow",
+            "qualification-campaign"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "constraints": "e6-shake-rattle-volumes",
+                "gauge": "pairwise-mean-zero",
+                "state": "circulation-per-vertex-region-pair",
+                "status": "candidate-until-kornek-refinement",
+                "topology": "transactional-conservative-circulation-transfer",
+                "velocity": "regularized-biot-savart-vortex-fmm"
+              },
+              "capability": "foams.vortex-sheet-air",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8406720d75dcb3d3651fd5fd786fc600167ce160dcf935baddaf26919af2d4e1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "frequency.second-order-complex",
       "declaration_id": "a7dff0f41ea64a394e4dbebc8da38ee2b8950b89499c1ec18ef94c07efb86400",
       "dependencies": [],
@@ -7648,6 +8907,52 @@
       "public_symbols": []
     },
     {
+      "capability": "interfacial-transport.adsorption",
+      "declaration_id": "7330d3eb8a6e80b4d6c7110745997ecb4296696ce4fbad5c181fc09feb693ab8",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.adsorption.profile",
+          "profile_id": "43178b0909d2ab1a68dc3b86d827eb4d5f2feb4f44556844f2a635d1a35cf135",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "kinetics": "langmuir"
+              },
+              "capability": "interfacial-transport.adsorption",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c630d14c51d24ff3c8b145e02ec27094cb64aae197ef65ac8e4276d8f76f1893"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "interfacial-transport.bulk-surface",
       "declaration_id": "37453813cd745a0c15c129539367d40da87d0adb54ec687dd87003562aea7a60",
       "dependencies": [],
@@ -7748,6 +9053,286 @@
       ]
     },
     {
+      "capability": "interfacial-transport.dynamic-wetting",
+      "declaration_id": "c5e947df7a38699471fdc97a417113c5ec714f68b8bed9118ef6b0df0c234fc3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.dynamic-wetting.profile",
+          "profile_id": "b5cbda1efb848b1ce51f50a3afa7b1f546bdfbf411fb9205425a265b75afaf01",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "law": "cox-voinov"
+              },
+              "capability": "interfacial-transport.dynamic-wetting",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c2b85ec6d18e98606c35b480d81ab0166d5796680c9103ed8ca4711b7ab76e36"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.langmuir-surfactant",
+      "declaration_id": "a9ce55e9507b8904c11d413bdf79d6afa50534c17b3168a11bf692435c826b26",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.langmuir-surfactant.profile",
+          "profile_id": "d80e5d4f78729cecc440ab6c9c48b00236ec097871b7a44bc162791b370e4dce",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "state": "surface-concentration"
+              },
+              "capability": "interfacial-transport.langmuir-surfactant",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "544dcc8aa9112dc648fa1c54b713e701fdff10299b7b45dd3b1c3847ab30b921"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.moving-surface",
+      "declaration_id": "388336579146d11de03fe2516e2f815c8c98a8bc56a39b6373b441c054263925",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.moving-surface.profile",
+          "profile_id": "57921604e0a6da9d3dece646a93a5f7d07b0f11f6b90c67dcb59d8e8d2dc8f08",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "motion": "fixed-topology",
+                "transport": "relative-velocity"
+              },
+              "capability": "interfacial-transport.moving-surface",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "090dcdf10808976c035e37726e70ccabde04cb2eb9100a6775c8b71a1901da2d"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.surface-lubrication",
+      "declaration_id": "3ba61cef0f5008b2f4c824fefeca81f780116512c23583f4a3ed9ef05f66b0e4",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.surface-lubrication.profile",
+          "profile_id": "43236dd662544ea19fbbcfaf6796f722f3cb49bdd8f3775026080ad072d56312",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "geometry": "fixed-manifold",
+                "state": "liquid-volume"
+              },
+              "capability": "interfacial-transport.surface-lubrication",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a88d6bfb9ba616753883239a6ffc24387d334cf602f3b846bf03682e1bbe8a3b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.surface-plug-flow",
+      "declaration_id": "14f08df01d5976e3528aae2df11062f428267feb4a85f0bcdfcfffc3bc4e2524",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.surface-plug-flow.profile",
+          "profile_id": "155f3b03eb856d2b73f8325428631527847b12b2f87b7de36dcb070661830fb4",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "leaflets": "symmetric",
+                "regime": "plug-flow"
+              },
+              "capability": "interfacial-transport.surface-plug-flow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e0f62963cce3d38657dcaf24fcf1da3cf81a5f109d671cfab39c58b6c025615b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "interfacial-transport.symmetric-film-surfactant",
+      "declaration_id": "b4c39f020e17c4402abfe4325d0dda23d4e4735fb57c78e648bd40d998a4bb35",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.interfacial_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "interfacial-transport.symmetric-film-surfactant.profile",
+          "profile_id": "61214c0aa2e1b092dd696cbe5d9eed2f9613efbd1afbf8fed808dc51c895c197",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "surface-conservation"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "geometry": "fixed-manifold",
+                "leaflets": "symmetric"
+              },
+              "capability": "interfacial-transport.symmetric-film-surfactant",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "81999f9a8898802429eb8dc65a41bf8e04d9818b628700af548d5a5ec5e950f1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "kinetic.compressible-entropic",
       "declaration_id": "b519cdb696f709274550533744098dc5e10877db9f182019d8545910dfd2a1e7",
       "dependencies": [],
@@ -7778,6 +9363,55 @@
         "phydrax.discretization.entropic_d3q343_plan",
         "phydrax.discretization.guided_d3q39_plan"
       ]
+    },
+    {
+      "capability": "lattice-boltzmann.n-color-emulsion",
+      "declaration_id": "66e2634a12d3ec9ab82798367887639c1e97f406306e1b056f79378a7f445a73",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.lattice_boltzmann",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "lattice-boltzmann.n-color-emulsion.profile",
+          "profile_id": "8a9715acc8ed7db4970260a573ee4a92abd59cb13ffb7b13659dbcaf706b26a2",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "reference-qualification"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "capillary-force": "continuum-surface-stress",
+                "density": "matched",
+                "near-contact": "pairwise-antisymmetric",
+                "recoloring": "pairwise-latva-kokko"
+              },
+              "capability": "lattice-boltzmann.n-color-emulsion",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8337c113261b2cf3a2f98c701ed46c6ba48457a3361efe2facb9007644b0d4e0"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
     },
     {
       "capability": "magnetic-resonance.epr.exact-single-crystal",
@@ -8229,6 +9863,212 @@
       "public_symbols": [
         "phydrax.membranes.CrossflowMembraneModule"
       ]
+    },
+    {
+      "capability": "multiregion-surface.geometry",
+      "declaration_id": "1fad6e837b3f4dfb49d004e84899f80aeb75f2b945547045cf3e4fd1d794560e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.geometry.multiregion_surface",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "multiregion-surface.geometry.profile",
+          "profile_id": "924223ccdbba42501c08ecf8d24d899996678ccb1357b5d2e47a55128ec8666b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "public-workflow",
+            "qualification-campaign",
+            "topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "periodic": false,
+                "topology": "labeled-non-manifold-triangles",
+                "validation": "exact-predicates-bvh",
+                "volumes": "signed-finite-regions"
+              },
+              "capability": "multiregion-surface.geometry",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "893201226feac9ba8afcbc525c234cb5ca4e7d91e4983bbf23b5e70b286c5ce9"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "multiregion-surface.label-field-extraction",
+      "declaration_id": "6b137413f9a2ab85c99e56937c68070cc00fbf204c740180acac87c75e5d8aec",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.geometry.multiregion_surface",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "multiregion-surface.label-field-extraction.profile",
+          "profile_id": "2c5fc295b987c55316da178cfed381d499a28a7e9e5eb46bd4c1ad9e245e2e7c",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "public-workflow",
+            "qualification-campaign",
+            "topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "algorithm": "freudenthal-multilabel-marching-tetrahedra",
+                "authority": "one-way-seed-or-repair",
+                "identity": "stable-label-to-explicit-region",
+                "junctions": "non-manifold-pair-labeled",
+                "source": "uniform-or-sparse-hard-label-grid",
+                "validation": "exact-host-collision-certified"
+              },
+              "capability": "multiregion-surface.label-field-extraction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a4ba1599011451a3b4ab0416641ce2c3f3ac3e088fd390e315426f44ab65f1bf"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "multiregion-surface.remeshing",
+      "declaration_id": "6670fee3776c63235195b622e436642205f08687b0369d0362ee2a79b4d11c2b",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.geometry.multiregion_surface",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "multiregion-surface.remeshing.profile",
+          "profile_id": "dd7de766c392e5c56e114a24a2bfb327a9492fac35d2a083842086fc52c955b7",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "public-workflow",
+            "qualification-campaign",
+            "topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "derivatives-across-event": false,
+                "events": "edge-split,edge-collapse,edge-flip",
+                "transaction": "exact-guards-ccd-full-validation",
+                "transfer": "sparse-conservative-sheet-and-region"
+              },
+              "capability": "multiregion-surface.remeshing",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "2959b97d0756463788a9c7d7e40dc8439084b56948b4f1fc224a98aa8ab010d1"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "multiregion-surface.topology-events",
+      "declaration_id": "e0370fae4441bf0c8af81226f57082e08aff0f79f87f7b1491381af0c6556622",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.geometry.multiregion_surface",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "multiregion-surface.topology-events.profile",
+          "profile_id": "7245ac03a01d6a882e95ab227f1a3003da5dbecc0ab85b092fe98003f6c01822",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "documentation-nonclaims",
+            "public-workflow",
+            "qualification-campaign",
+            "topology-evidence"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "derivatives-across-event": false,
+                "events": "t1-pop,pinch,merge,region-split,burst",
+                "search": "bounded-candidate-certified",
+                "transaction": "lineage-conservative-transfer-atomic-rollback"
+              },
+              "capability": "multiregion-surface.topology-events",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "97a3a6de05feaa4264706771585b74561f53efce509ce179da5555558336cda6"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
     },
     {
       "capability": "nn.operator.abupt",
@@ -10087,6 +11927,117 @@
       "public_symbols": []
     },
     {
+      "capability": "optics.thin-film-interference",
+      "declaration_id": "bb93051139b76746463be9350ea2ff35c4759f88ce6167706fb2c6afad39e156",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.optics.wave",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "optics.thin-film-interference",
+          "profile_id": "3cc6be0882794e9d5a089e36a3468961b419a9690ca6d83c888382a4d9c77dba",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "characteristic-matrix-cross-check",
+            "lossless-energy-balance",
+            "single-interface-fresnel-limit",
+            "spectral-fringe-sampling",
+            "symmetric-film-extrema"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "evidence": "energy-residual-and-spectral-fringe-sampling",
+                "model": "exact-airy-summation-exp-minus-i-omega-t",
+                "nonclaims": "no-absorbing-film-or-multilayer-stack",
+                "polarization": "s-and-p-amplitudes-and-flux",
+                "stack": "lossless-ambient-lossless-film-passive-substrate"
+              },
+              "capability": "optics.thin-film-interference",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "674f610ad22b43cb917b439d1056fd13dbbf8c264532ef4c4dfc0ece61be7eec"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "optics.transport.charged-step-optical-sources",
+      "declaration_id": "0c9022a07e2f597bde0603b3aae1f0ceaf2241508a8ffd6ce360045b78725798",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.optics.transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "optics.transport.charged-step-optical-sources.profile",
+          "profile_id": "6c1673ec6151164764d989ad6cb907b3ca4e04fda4681b569919c772435a89ad",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "atomic-capacity-refusal",
+            "birks-mean-and-scintillation-timing",
+            "charged-step-to-detector-hits",
+            "cherenkov-polarization",
+            "cherenkov-threshold-and-cone",
+            "dispersive-band-quadrature",
+            "documentation-nonclaims",
+            "frank-tamm-water-yield",
+            "geant4-optical-oracle",
+            "step-subdivision-and-parent-order-invariance"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "allocation": "fixed-capacity-atomic-refusal",
+                "cherenkov_model": "dispersive-frank-tamm-linear-speed-steps",
+                "counts": "poisson-identity-addressed",
+                "inputs": "charged-step-banks-and-charged-trajectories",
+                "precision": "float64-only",
+                "processes": "cherenkov-scintillation",
+                "scintillation_model": "birks-multi-exponential-tabulated-spectra"
+              },
+              "capability": "optics.transport.charged-step-optical-sources",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "b1485f22be2dd89c2cd8264fce122908dd18082334e7b6adcd8f551a227b0668"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "optomechanics.spatial-stop",
       "declaration_id": "8d93007a013493e35c0dc9bff7e83f04268637fb70162e1227d96e3f4a2e321a",
       "dependencies": [],
@@ -10654,6 +12605,68 @@
       "public_symbols": [
         "phydrax.phoresis.HydrodynamicPhoreticSolver"
       ]
+    },
+    {
+      "capability": "pic.radiation-reaction",
+      "declaration_id": "b96add57d11513c9c8d80d78e046f11338d0726d044764168b3c6467408cd135",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.solver",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "pic.radiation-reaction.profile",
+          "profile_id": "b9667a7d2e1046f5aafa2a7fdae71dacde50241411c3e16bb3340e0b932442af",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "documentation-nonclaims",
+            "first-order-step-convergence",
+            "fokker-planck-moment-equations",
+            "identity-addressed-wiener-increments",
+            "niel-quantum-corrections",
+            "planar-landau-lifshitz-cooling-analytic",
+            "quantum-to-classical-limit",
+            "radiated-equals-kinetic-loss",
+            "reduced-equals-full-in-uniform-fields",
+            "species-charge-to-mass-refusal",
+            "support-and-ownership-refusals"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "coupling": "pic-momentum-stage-process-and-detector-propagation",
+                "field_derivatives": "order-one-gather-and-staggered-field-history",
+                "models": "landau-lifshitz-reduced-full-quantum-corrected-fokker-planck",
+                "ownership": "subgrid-reaction-with-grid-cutoff-scale-separation",
+                "precision": "float64",
+                "quantum_corrections": "baier-katkov-g-and-h-tables-from-synchrotron-kernels",
+                "stochasticity": "euler-maruyama-identity-addressed-wiener-increments",
+                "time_integration": "first-order-explicit-split-after-push",
+                "validity": "lcfa-declared-maximum-chi-and-minimum-gamma"
+              },
+              "capability": "pic.radiation-reaction",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "4a43863f37fc6db504e50137c06b29ead3a4b0b86f34dea3c35b65abcedce611"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
     },
     {
       "capability": "platform.acoustics",
@@ -12324,6 +14337,60 @@
       "public_symbols": []
     },
     {
+      "capability": "radiation-transport.charged-step-photon-production",
+      "declaration_id": "ecba23bcb8b7b151e355558c6dee42c3e049e8e884278840404cea1f5d97a3a4",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.radiation_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "radiation-transport.charged-step-photon-production.profile",
+          "profile_id": "92eb85944a7b1fafbabf91807bc5ed8fae73b86eeb40e8913ed7ddb782eadcaf",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "artifact-rights",
+            "derivative-contract",
+            "documentation-nonclaims",
+            "lifecycle-restore",
+            "resource-envelope",
+            "runtime-distribution",
+            "scientific-validation",
+            "source-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "cherenkov": "frank-tamm-declared-band",
+                "inputs": "m1a-charged-step-bank",
+                "secondary_storage": "fixed-capacity-atomic-refusal",
+                "transition_radiation": "garibian-cherry-foil-stack-with-absorption"
+              },
+              "capability": "radiation-transport.charged-step-photon-production",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ecbfcdc33c4b3064dddf36034351a36b6499d2e157aa5b9ed0c70a271e7b304e"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "radiation-transport.discrete-ordinates",
       "declaration_id": "51a22c3b3c02d885a9d7139128435d49fe626e3efee10be9410658a56c8163bd",
       "dependencies": [],
@@ -12371,6 +14438,61 @@
               "capability": "radiation-transport.discrete-ordinates",
               "kind": "capability-support-tuple",
               "support_tuple_id": "6b28b36743e7f77bfa5fdceb6e1a6a93a03cb3379c8b2057a92e3dd59a3576cb"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "radiation-transport.em-shower-matter-processes",
+      "declaration_id": "3f48181ffb314cb5c60a325ac0100ecf08d78efd2b0fdf6bebd5689cd0c13903",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.radiation_transport",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "radiation-transport.em-shower-matter-processes.profile",
+          "profile_id": "281ad343c288246130e88a2daa6264f7dce850cfd63e7f8da9a86fc091c1127b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "artifact-rights",
+            "derivative-contract",
+            "documentation-nonclaims",
+            "lifecycle-restore",
+            "resource-envelope",
+            "runtime-distribution",
+            "scientific-validation",
+            "source-admission"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "data": "governed-nist-or-source-faithful-analytic",
+                "particles": "photon-electron-positron",
+                "processes": "bethe-heitler-pair-seltzer-berger-bremsstrahlung-delta-rays-annihilation-relaxation",
+                "provider_oracle": "pinned-geant4-optional-provider-boundary",
+                "suppression": "lpm-and-ter-mikaelian"
+              },
+              "capability": "radiation-transport.em-shower-matter-processes",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cc27009f8bf99eba6ebb841f8927581f96cda72c68c41c96338f0458e9292873"
             }
           ],
           "version": "candidate"
@@ -13011,6 +15133,108 @@
               "capability": "reactor.point-kinetics",
               "kind": "capability-support-tuple",
               "support_tuple_id": "19ed5e377bd5074ddbf91dcdf59f7da03aba447a11e811c9c26e1c4f0bd65a6b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "rendering.spectral-colorimetry",
+      "declaration_id": "241e117a6df163a4796649b99a250151903d7635f2d276ba69f77fbfbee574bc",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.rendering",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rendering.spectral-colorimetry",
+          "profile_id": "296ac55793ea7d84134e3d89a4a5054239c447d9ab28114208223538a33f2b2a",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "d65-unit-reflector-neutral-white",
+            "equal-energy-white",
+            "observer-fit-error-vs-cie-table",
+            "srgb-transfer-endpoints"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "encoding": "iec-61966-2-1-srgb",
+                "evidence": "white-neutral-error-and-gamut-excess",
+                "illuminant": "caller-array-or-hash-verified-host-resource",
+                "nonclaims": "no-bundled-cie-data-no-chromatic-adaptation",
+                "observer": "cie-1931-2-degree-analytic-or-hash-verified-table"
+              },
+              "capability": "rendering.spectral-colorimetry",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "0a874075e48b49ecf51a60f83f3097d2ade338e71d38d738b1bfa441b3f41c62"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "rendering.thin-film-appearance",
+      "declaration_id": "47dcde7f6b416b007da1b536ef5fae923e518831afb1a2ded450de5ebc0859d3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.rendering",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "rendering.thin-film-appearance",
+          "profile_id": "5a0182aeeb81ecf345c74199cd53a7a5265848743cb059981dfe0fd20cfe775b",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "geometry-and-facing-status",
+            "interference-colorimetry-composition",
+            "plateau-sheet-slot-colors-and-state-nonmutation",
+            "rendered-color-ramp-smoke"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "composition": "thin-film-interference-colorimetry-and-surface-fields",
+                "evidence": "per-sample-stage-and-support-status",
+                "geometry": "specular-half-vector-or-uniform-environment",
+                "inputs": "thickness-normal-view-light-and-explicit-support-arrays",
+                "nonclaims": "no-roughness-scattering-border-thickness-or-film-state-certification"
+              },
+              "capability": "rendering.thin-film-appearance",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "22c8f74e5b7f1cbc1bbde445f8f1656a152b62d2bf0a0e548061e7252cb6905a"
             }
           ],
           "version": "candidate"
@@ -14318,6 +16542,61 @@
       "public_symbols": [
         "phydrax.smart_materials.SpatialPiezoelectricSystem"
       ]
+    },
+    {
+      "capability": "soap-film-tunnel.planar-plug-flow",
+      "declaration_id": "4ff8eec70ea9d034faf39ff59acbce53e3c2568f8f2887e55c126362cb784a09",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.soap_film_tunnel",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "soap-film-tunnel.planar-plug-flow",
+          "profile_id": "1d236b1b51fe1391227ecd8c36783c36b4ef46a5066ed8638bf1e0d31a900cf1",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "cylinder-wake-strouhal-campaign",
+            "film-mach-evidence",
+            "flux-balance-ledgers",
+            "no-slip-enforcement",
+            "terminal-velocity-uniform-flow"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "boundaries": "inflow-outflow-wire-and-rim",
+                "drive": "gravity-balanced-by-linear-air-drag",
+                "evidence": "flux-ledgers-obstacle-force-film-mach-strouhal",
+                "film": "symmetric-plug-flow-marangoni-elasticity",
+                "geometry": "planar-channel-with-optional-circular-hole",
+                "mesh": "meshcore-constrained-delaunay-with-conductance-audit",
+                "nonclaims": "no-3d-foam-no-nonlinear-air-boundary-layer-drag",
+                "time-integration": "first-order-imex"
+              },
+              "capability": "soap-film-tunnel.planar-plug-flow",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e524a52bce9d0fde332fa00cf1c2d1079bfd08e959e9024bebb7b2532c183a83"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
     },
     {
       "capability": "soft-matter.atomistic-observables-protocols",
@@ -16007,6 +18286,245 @@
       "public_symbols": [
         "phydrax.thermal_systems.DiffuseGrayEnclosure"
       ]
+    },
+    {
+      "capability": "threshold-dynamics.exact-volumes",
+      "declaration_id": "50360708fb65b3236d4c9aaee485bf3e47fe637500ca405d2d1a1956e6cf1af7",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.threshold_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "threshold-dynamics.exact-volumes.profile",
+          "profile_id": "ef9a4c24e76d812b8e2df86ad8a7f52e0e1548fcd08cba20ae1831fdfd8a2ecb",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "reference-qualification"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "assignment": "capacitated-auction",
+                "site-measure": "equal"
+              },
+              "capability": "threshold-dynamics.exact-volumes",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "9f461940357e481facb39be3edbe4bfa8ec40a7a6452d2c5d38031ea71952407"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "threshold-dynamics.gas-diffusion-coarsening",
+      "declaration_id": "7511deee86ba652f618d2dc89fec6116a57dc021ca402e0e4ea01edfd6cd9fb3",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.threshold_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "threshold-dynamics.gas-diffusion-coarsening.profile",
+          "profile_id": "716084e9e63056172b53b469ed06cbce09200345ab28c9ab7bd0f047ebea044f",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "reference-qualification"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "cells": "incompressible",
+                "pressure": "auction-dual"
+              },
+              "capability": "threshold-dynamics.gas-diffusion-coarsening",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "82fae6050ddea68a119bf2bbf4f21c8ba3f8f00f5bceb1f948ea31228c0d4c82"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "threshold-dynamics.mesh-heat",
+      "declaration_id": "163d3b750e0e75af61de99d510f8120417376ebcd24684d8d0da420f8772053e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.threshold_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "threshold-dynamics.mesh-heat.profile",
+          "profile_id": "e1e6289e869483eec156ca14a9e78760a695bc88acee07e454e06c3d2f82edb6",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "reference-qualification"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "evidence": "native-provenance-work-resources",
+                "labels": "dense",
+                "route": "taylor-exponential-action"
+              },
+              "capability": "threshold-dynamics.mesh-heat",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "cd732cd454b769f0d918206f1265946d71c9e38cb891a64303b47275145d1d3b"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "threshold-dynamics.periodic-multiphase",
+      "declaration_id": "d46060ef2a41f00e502a668ee337c6353cef3f0e42fa2393092d5a914fd73a7d",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.threshold_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "threshold-dynamics.periodic-multiphase.profile",
+          "profile_id": "f37bbe7ea060238231e8d7c82fa43c407ee953d50e172210b20218cab73a007a",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "reference-qualification"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "kernel": "gaussian",
+                "labels": "dense",
+                "route": "periodic-fourier",
+                "uniform-coefficients": "structured-off-diagonal"
+              },
+              "capability": "threshold-dynamics.periodic-multiphase",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "e9099e7e4334a64226a57e296793ab0e78fcd6c9b64fb8301938934736680320"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "threshold-dynamics.sparse-labels",
+      "declaration_id": "b4963147933d30f7b7caf9677a8d46a2bd29f93086bc106f84f74aaf72433a92",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.threshold_dynamics",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "threshold-dynamics.sparse-labels.profile",
+          "profile_id": "c814dca3a32705820ee794266790f859481d7377d9bd6ab6180ebe42ea2edba0",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "analytic-control",
+            "public-workflow",
+            "reference-qualification"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "candidates": "brick-halo",
+                "exactness": "distinct-periodic-residues",
+                "route": "periodic-box-stencil"
+              },
+              "capability": "threshold-dynamics.sparse-labels",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "bf08239c167b5c936cc8e12b017d8fe043f8433624c47be6f7c9108cce873cdf"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
     },
     {
       "capability": "tokamak.core-transport",

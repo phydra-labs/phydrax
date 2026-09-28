@@ -99,7 +99,6 @@ def test_result_archive_and_born_oppenheimer_adapter_roundtrip(tmp_path: Any) ->
 
 def test_real_contracts() -> None:
     ase = pytest.importorskip("ase")
-    # ty: ignore[unresolved-import]
     from ase.calculators.emt import EMT
 
     del ase

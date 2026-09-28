@@ -601,9 +601,14 @@ matrix-function action. `RadauIIAIntegrator` turns the verified tableau into a
 bounded dense-array Newton stage solve, while `IMEXBDF2Integrator` keeps explicit
 and implicit right-hand-side ownership separate.
 
-`SHAKERATTLEPlan` advances regular holonomically constrained mechanics and
-atomically rejects failed position/velocity projections. `parareal` provides a
-deterministic fixed-partition coarse/fine iteration. These methods expose finite
-candidate execution; they do not imply adaptive schedules, arbitrary PyTrees,
-higher-index reduction beyond regular holonomic mechanics, or multi-host
-qualification.
+`SHAKERATTLEPlan` owns static tolerances and resource bounds;
+`plan.prepare(inverse_mass, potential_gradient, constraint)` returns the strict
+`PreparedSHAKERATTLEPlan`. At every projection point the constraint Jacobian is
+a native operator with explicit JVP and transpose actions. The mass-metric Gram
+problem uses the native minimum-norm solve and reports numerical rank,
+conditioning and linear status. `ConstrainedMechanicsEvidence` retains bounded
+position iterations, position and velocity residuals, signed projection work,
+acceptance and atomic rollback. `parareal` provides a deterministic
+fixed-partition coarse/fine iteration. These methods expose finite candidate
+execution; they do not imply adaptive schedules, higher-index reduction beyond
+regular holonomic mechanics, or multi-host qualification.

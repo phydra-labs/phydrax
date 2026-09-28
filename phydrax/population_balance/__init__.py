@@ -2,6 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._bubble_kernels import (
+    BubbleBreakageKernelResult,
+    BubbleCoalescenceKernelResult,
+    BubbleKernelEvidence,
+    BubbleKernelStatus,
+    BubbleSectionalPlan,
+    LehrCoalescenceKernel,
+    luo_svendsen_eddy_integral,
+    LuoSvendsenBreakageKernel,
+    PrinceBlanchCoalescenceKernel,
+    TurbulentBubblyLiquid,
+)
 from ._conservative import (
     ConservativeSectionalSolver,
     SectionalPopulationRate,
@@ -25,8 +37,16 @@ from ._spatial import (
 
 
 __all__ = [
+    "BubbleBreakageKernelResult",
+    "BubbleCoalescenceKernelResult",
+    "BubbleKernelEvidence",
+    "BubbleKernelStatus",
+    "BubbleSectionalPlan",
     "ConservativeSectionalSolver",
     "GaussianEQMOM",
+    "LehrCoalescenceKernel",
+    "LuoSvendsenBreakageKernel",
+    "PrinceBlanchCoalescenceKernel",
     "SectionalAggregationRate",
     "SectionalPopulationPlan",
     "TwoNodeQuadrature",
@@ -35,8 +55,10 @@ __all__ = [
     "SectionalPopulationStep",
     "SpatialPopulationStep",
     "SpatialPopulationTransport",
+    "TurbulentBubblyLiquid",
     "exponential_maximum_entropy_density",
     "gaussian_eqmom_one_node",
+    "luo_svendsen_eddy_integral",
     "population_balance_candidate_profiles",
     "qmom_two_node",
     "quadrature_moment_rates",

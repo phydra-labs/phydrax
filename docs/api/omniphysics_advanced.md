@@ -1,6 +1,6 @@
 # Advanced omniphysics APIs
 
-The modules below expose exact fixed-topology, single-host CPU candidate tuples. The generated closure matrix records implementation closure separately from release closure; none of these candidates is released or distributed-qualified.
+The modules below expose exact fixed-topology, single-host CPU candidate tuples. `phydrax.interfacial_transport` is documented on the [surface thin-film API page](surface_thin_films.md). The generated closure matrix records implementation closure separately from release closure; none of these candidates is released or distributed-qualified.
 
 ::: phydrax.materials
 
@@ -13,8 +13,6 @@ The modules below expose exact fixed-topology, single-host CPU candidate tuples.
 ::: phydrax.system_modeling
 
 ::: phydrax.rheology
-
-::: phydrax.interfacial_transport
 
 ::: phydrax.structural_dynamics
 

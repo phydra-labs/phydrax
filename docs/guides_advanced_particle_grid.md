@@ -107,14 +107,37 @@ accepted `QualifiedSharpGeometry` may bind matched FLIP transfer, sharp projecti
 and `FLIPSolidBoundaryPlan` collision under one source identity. Collision records
 impulse and moving-wall work.
 
-`MACFreeSurfaceViscousMeasurePlan` combines liquid and solid measures. The matrix-free
-`MACVariationalViscosityPlan` differentiates the symmetric strain dissipation form to obtain a
-coupled, self-adjoint positive viscous action and solves it with native block linalg.
+`MACFreeSurfaceViscousMeasurePlan` combines liquid and solid measures into a face density
+(density times open liquid face fraction) and a cell viscosity (viscosity times open liquid
+cell fraction). `solver.MACVariationalViscosityPlan` is the implicit variable-density,
+variable-viscosity MAC stage built once from `PreparedMACMomentumOperators`. Each call
+solves `(rho_f + dt A_mu) u = rho_f u_star - dt b_mu`, where `A_mu` is the staggered
+deviatoric-strain action of `PreparedMACVariationalViscosityAction` with no-slip or
+free-slip wall handling and `b_mu` is its prescribed-wall offset. It then enforces the stage
+boundary. `A_mu` is self-adjoint only in the dual-measure pairing, so the stage assembles
+the symmetric positive-definite form `M (rho_f + dt A_mu)`. It refreshes one prepared
+native PCG solve with the runtime density, viscosity and step. The solve stops and is
+accepted on one true residual threshold, `tolerance * (||b|| + ||H u_0||)`. Free faces
+with zero density and no viscous coupling have no momentum equation. They keep their
+input value and are counted as `decoupled_face_count`. The result reports:
 
-`MultiphaseFLIPPlan` accepts a finite declared phase count. P2G remains independent
-per phase; results expose per-phase face mass, momentum, and velocity. Symmetric
-zero-diagonal drag produces equal/opposite impulses, reports pair work, conserves
-global momentum, and fails closed on invalid phase IDs or pair matrices.
+- the dissipation rate `integral 2 mu S_d:S_d`;
+- the wall power;
+- the kinetic energy before and after the stage;
+- the excess of the energy change over `dt` times the wall power;
+- the native linear status, true residual and iteration count.
+
+On failure, the velocity is returned unchanged.
+
+`MultiphaseFLIPPlan` takes a prepared FLIP transfer, per-phase densities and
+viscosities, an optional pairwise drag matrix, and an optional maximum phase count
+(all positional). P2G runs independently per phase, and results
+expose per-phase deposited mass plus per-phase face mass, momentum, and velocity. The
+optional drag matrix must be finite, nonnegative, symmetric, and zero on its diagonal;
+pairwise drag is applied implicitly per face, so each pair exchanges equal and opposite
+impulses, relative phase velocity decays without overshoot, global face momentum is
+conserved, and the reported pair work is nonpositive. Invalid phase IDs on active
+particles and invalid pair matrices fail closed.
 
 ## Nonperiodic PIC, curved location, and ALE epochs
 

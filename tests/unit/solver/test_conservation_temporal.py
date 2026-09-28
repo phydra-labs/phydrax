@@ -263,6 +263,168 @@ def test_real_initial_imex_state_promotes_for_complex_evolution() -> None:
         np.testing.assert_allclose(jax.grad(imaginary_response)(0.0), -1.0)
 
 
+def _forward_backward_parts() -> AdditiveIMEXTableau:
+    """Explicit stage, then implicit part 0, then implicit part 1 (Lie order)."""
+    return AdditiveIMEXTableau(
+        np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+        np.asarray([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 1.0]]),
+        np.asarray([0.0, 1.0, 1.0]),
+        np.asarray([0.0, 1.0, 1.0]),
+        explicit_weights=np.asarray([1.0, 0.0, 0.0]),
+        implicit_parts=(None, 0, 1),
+    )
+
+
+def _held_first_part(provisional: Any, time: Any, coefficient: Any, args: Any) -> Any:
+    """Part 0: y' = -a y on free components; component 0 is held at zero."""
+    del time
+    state = (provisional / (1.0 + args["a"] * coefficient)).at[0].set(0.0)
+    return ImplicitConservationStageResult(
+        state,
+        jnp.asarray(True),
+        jnp.asarray(2, dtype=jnp.int32),
+        jnp.asarray(1e-14),
+        jnp.asarray(7, dtype=jnp.int32),
+        {"coefficient": coefficient, "scale": jnp.max(state)},
+    )
+
+
+def _second_part(provisional: Any, time: Any, coefficient: Any, args: Any) -> Any:
+    """Part 1: y' = -b y; its convergence flag comes from ``args``."""
+    del time
+    return ImplicitConservationStageResult(
+        provisional / (1.0 + args["b"] * coefficient),
+        args["converged"],
+        jnp.asarray(3, dtype=jnp.int32),
+        jnp.asarray(2e-14),
+        jnp.asarray(4, dtype=jnp.int32),
+    )
+
+
+def _block_method() -> ConservationIMEXMethod:
+    return ConservationIMEXMethod(
+        _forward_backward_parts(),
+        lambda time, state, args: args["e"] * state,
+        (
+            lambda time, state, args: (-args["a"] * state).at[0].set(0.0),
+            lambda time, state, args: -args["b"] * state,
+        ),
+        (_held_first_part, _second_part),
+        method_id="forward-backward-block-sequential",
+    )
+
+
+def test_block_sequential_parts_give_the_forward_backward_lie_product() -> None:
+    args = {
+        "e": jnp.asarray(0.5),
+        "a": jnp.asarray(3.0),
+        "b": jnp.asarray(5.0),
+        "converged": jnp.asarray(True),
+    }
+    state = jnp.asarray([2.0, 1.0, -0.5])
+    step = jnp.asarray(0.1)
+    result = eqx.filter_jit(_block_method().step)(jnp.asarray(0.0), state, step, args)
+    expected = state * (1.0 + 0.1 * 0.5) / (1.0 + 0.1 * 3.0) / (1.0 + 0.1 * 5.0)
+    assert result.successful
+    np.testing.assert_allclose(result.accepted_state[1:], expected[1:], rtol=1e-14)
+    # The held component is committed exactly: stage 3 starts from the stage-2
+    # value and the stiffly accurate result is the stage-3 value.
+    assert float(result.accepted_state[0]) == 0.0
+    np.testing.assert_array_equal(result.stage_successful, [True, True, True])
+    np.testing.assert_array_equal(result.stage_iterations, [0, 2, 3])
+    np.testing.assert_array_equal(result.stage_status, [0, 7, 4])
+    assert result.implicit_iterations == 5
+    np.testing.assert_allclose(result.maximum_implicit_residual, 2e-14)
+    assert result.stage_evidence[0] is None
+    np.testing.assert_allclose(result.stage_evidence[1]["coefficient"], step)
+    assert result.stage_evidence[2] is None
+
+    tableau_result = _forward_backward_parts().step(
+        state,
+        jnp.asarray(0.0),
+        step,
+        lambda state, time, args: args["e"] * state,
+        (
+            lambda provisional, time, coefficient, args: (
+                _held_first_part(provisional, time, coefficient, args).state
+            ),
+            lambda provisional, time, coefficient, args: (
+                _second_part(provisional, time, coefficient, args).state
+            ),
+        ),
+        args,
+        implicit_rhs=(
+            lambda state, time, args: (-args["a"] * state).at[0].set(0.0),
+            lambda state, time, args: -args["b"] * state,
+        ),
+    )
+    np.testing.assert_allclose(tableau_result, result.accepted_state, rtol=1e-15)
+    assert float(tableau_result[0]) == 0.0
+
+
+def test_failed_implicit_part_rejects_the_step_and_keeps_stage_evidence() -> None:
+    args = {
+        "e": jnp.asarray(0.5),
+        "a": jnp.asarray(3.0),
+        "b": jnp.asarray(5.0),
+        "converged": jnp.asarray(False),
+    }
+    state = jnp.asarray([2.0, 1.0, -0.5])
+    result = _block_method().step(jnp.asarray(0.0), state, jnp.asarray(0.1), args)
+    assert not result.successful
+    np.testing.assert_array_equal(result.accepted_state, state)
+    np.testing.assert_array_equal(result.stage_successful, [True, True, False])
+    np.testing.assert_array_equal(result.stage_status, [0, 7, 4])
+    zero = _block_method().step(
+        jnp.asarray(0.0), state, jnp.asarray(0.0), {**args, "converged": True}
+    )
+    assert zero.successful
+    np.testing.assert_array_equal(zero.accepted_state, state)
+    np.testing.assert_array_equal(zero.stage_iterations, [0, 0, 0])
+    np.testing.assert_array_equal(zero.stage_status, [0, 0, 0])
+    # A vanished diagonal step zero-fills the solver's evidence structure.
+    np.testing.assert_array_equal(zero.stage_evidence[1]["scale"], 0.0)
+
+
+def test_partitioned_tableau_and_callbacks_fail_closed() -> None:
+    explicit = np.asarray([[0.0, 0.0], [1.0, 0.0]])
+    with pytest.raises(ValueError, match="explicit-only"):
+        AdditiveIMEXTableau(
+            explicit,
+            np.asarray([[0.0, 0.0], [0.5, 1.0]]),
+            np.asarray([0.0, 1.0]),
+            np.asarray([0.0, 1.0]),
+            explicit_weights=np.asarray([1.0, 0.0]),
+            implicit_parts=(None, 0),
+        )
+    with pytest.raises(ValueError, match="consecutively"):
+        AdditiveIMEXTableau(
+            explicit,
+            np.asarray([[0.0, 0.0], [0.0, 1.0]]),
+            np.asarray([0.0, 1.0]),
+            np.asarray([0.0, 1.0]),
+            explicit_weights=np.asarray([1.0, 0.0]),
+            implicit_parts=(None, 1),
+        )
+    with pytest.raises(ValueError, match="every implicit part"):
+        AdditiveIMEXTableau(
+            explicit,
+            np.asarray([[1.0, 0.0], [0.0, 1.0]]),
+            np.asarray([0.5, 0.5]),
+            np.asarray([0.0, 1.0]),
+            explicit_weights=np.asarray([1.0, 0.0]),
+            implicit_parts=(0, 1),
+        )
+    with pytest.raises(TypeError, match="one callable per implicit part"):
+        ConservationIMEXMethod(
+            _forward_backward_parts(),
+            lambda time, state, args: state,
+            lambda time, state, args: state,
+            (_held_first_part, _second_part),
+            method_id="missing-part-rate",
+        )
+
+
 def test_conservation_temporal_scenario_1() -> None:
     state = jnp.asarray(((1.0,), (2.0,)))
     preconditioner = prepare_element_block_preconditioner(

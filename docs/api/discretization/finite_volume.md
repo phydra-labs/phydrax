@@ -448,6 +448,61 @@ boundary, projection, pressure, resource, or underlying-method failures.
 
 ---
 
+### MAC interface geometry and balanced capillarity
+
+These owners serve structured two-phase VOF
+(see [Two-phase hydrodynamics](../../guides_two_phase_hydrodynamics.md)):
+
+- `StructuredPLICPlan` reconstructs exact PLIC planes, facet measures, and facet
+  centroids in rectangular cells.
+- `plane_volume_fraction` is the closed-form plane volume.
+- `HeightFunctionCurvaturePlan` returns height-function curvature and
+  primary-PLIC-only local quadratic fallbacks. Each cell has a
+  `CurvatureStatus` of `VALID`, `FALLBACK`, or `UNDERRESOLVED`; fallback
+  support, rank, condition, residual, and bounded-resource exhaustion remain
+  in `HeightFunctionCurvatureResult`.
+- `MACBalancedCapillaryOperator` applies the balanced force `phi_f (G alpha)_f` with the
+  MAC projection gradient `G`. It counts unsupported faces and refused cells.
+
+Sign convention: the normal points out of the alpha phase, `kappa = div(n)`, and
+`p_alpha - p_complement = sigma * kappa`.
+
+::: phydrax.discretization.StructuredPLICPlan
+
+---
+
+::: phydrax.discretization.StructuredPLICReconstruction
+
+---
+
+::: phydrax.discretization.plane_volume_fraction
+
+---
+
+::: phydrax.discretization.HeightFunctionCurvaturePlan
+
+---
+
+::: phydrax.discretization.HeightFunctionCurvatureResult
+
+---
+
+::: phydrax.discretization.CurvatureStatus
+
+---
+
+::: phydrax.discretization.CurvatureEvidence
+
+---
+
+::: phydrax.discretization.MACBalancedCapillaryOperator
+
+---
+
+::: phydrax.discretization.MACCapillaryForceResult
+
+---
+
 ### MAC LES and named scalar SGS
 
 Static MAC algebraic LES is a 3-D implicit-grid-volume action admitting periodic,

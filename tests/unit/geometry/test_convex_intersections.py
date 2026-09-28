@@ -3,7 +3,6 @@ import pytest
 
 from phydrax._geometry_precision import GeometryPrecisionPolicy
 from phydrax._geometry_predicates import PredicateMode
-from phydrax._meshcore import meshcore_available
 from phydrax.geometry._convex_intersections import (
     intersect_convex_polygons,
     IntersectionStatus,
@@ -20,9 +19,6 @@ SLIVER = np.asarray([[0.5, 0.5], [12.0, 12.0], [24.0, 24.0 + 2.0**-48]])
 FILTERED = GeometryPrecisionPolicy(predicate_mode=PredicateMode.FILTERED)
 EXACT = GeometryPrecisionPolicy(predicate_mode=PredicateMode.EXACT)
 TRIANGLE = np.asarray([[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]], dtype=np.float64)
-requires_meshcore = pytest.mark.skipif(
-    not meshcore_available(), reason="phydrax-meshcore unavailable"
-)
 
 
 def test_convex_intersections_scenario_1() -> None:
@@ -49,6 +45,7 @@ def test_convex_intersections_scenario_1() -> None:
     contained = intersect_convex_polygons(SQUARE, inner)
     assert contained.status is IntersectionStatus.SUCCESS
     assert contained.area == pytest.approx(0.0625)
+
     left = np.asarray([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]])
     right = np.asarray([[1.0, -0.5], [3.0, -0.5], [3.0, 0.5], [1.0, 0.5]])
     expected = np.asarray([[1.0, 0.0], [2.0, 0.0], [2.0, 0.5], [1.0, 0.5]])
@@ -67,8 +64,6 @@ def test_convex_intersections_scenario_1() -> None:
     assert rotated.area == reference.area == reversed_order.area
 
 
-@pytest.mark.meshcore
-@requires_meshcore
 def test_analytic_partial_triangle_overlap_with_exact_contacts() -> None:
     # The intersection is the triangle (0, 0), (1, 0), (0, 1) clipped by the
     # x+y <= 1/2 half-plane, whose area is 1/8.  The constructed vertices lie
@@ -109,8 +104,6 @@ def test_convex_intersections_scenario_2() -> None:
     assert result.area == 0.5e-16
 
 
-@pytest.mark.meshcore
-@requires_meshcore
 def test_exact_predicates_resolve_the_sliver() -> None:
     result = intersect_convex_polygons(SLIVER, SLIVER, precision=EXACT)
 

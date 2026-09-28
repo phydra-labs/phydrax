@@ -28,6 +28,12 @@ clinical, diagnostic, treatment, regulatory, or commercial claim.
 
 ## Cellular mechanics
 
+`BiomembranePlan` owns membrane mechanics. Its remesh boundary accepts the
+canonical multiregion `EdgeSplitProposal`, `EdgeCollapseProposal`, and
+`EdgeFlipProposal` contracts and returns shared sparse lineage, transfers,
+transaction status, collision/validation evidence, and nondifferentiable epoch
+transitions under the `manifold_two_region` profile.
+
 ::: phydrax.applications.cellular_mechanics
     options:
       show_root_heading: true

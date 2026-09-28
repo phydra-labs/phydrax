@@ -49,6 +49,8 @@ class SparseTriangularAnalysis(StrictModule):
     unit_diagonal: bool = eqx.field(static=True)
     number_levels: int = eqx.field(static=True)
     transpose_number_levels: int = eqx.field(static=True)
+    row_width: int = eqx.field(static=True)
+    transpose_row_width: int = eqx.field(static=True)
     pattern_id: str = eqx.field(static=True)
 
 
@@ -259,6 +261,8 @@ def analyze_sparse_triangular(
         unit_diagonal=bool(unit_diagonal),
         number_levels=int(levels.max(initial=-1)) + 1,
         transpose_number_levels=int(transpose_levels.max(initial=-1)) + 1,
+        row_width=int(np.max(np.diff(indptr), initial=0)),
+        transpose_row_width=int(np.max(transpose_counts, initial=0)),
         pattern_id=sha256(pattern_bytes).hexdigest(),
     )
 
@@ -273,7 +277,7 @@ def solve_sparse_triangular(
     transpose: bool = False,
     adjoint: bool = False,
 ) -> SparseTriangularSolveResult:
-    """Execute a fixed-capacity level-scheduled CSR triangular solve."""
+    """Execute one fixed-capacity CSR row substitution per triangular row."""
     if not isinstance(analysis, SparseTriangularAnalysis):
         raise TypeError("analysis must be SparseTriangularAnalysis.")
     tolerance = float(pivot_tolerance)
@@ -296,17 +300,21 @@ def solve_sparse_triangular(
     use_transpose = bool(transpose or adjoint)
     if use_transpose:
         indices = analysis.transpose_indices
+        indptr = analysis.transpose_indptr
         rows = analysis.transpose_row_indices
         values_ = values_[analysis.transpose_value_positions]
         diagonal_positions = analysis.transpose_diagonal_positions
-        levels = analysis.transpose_row_levels
         number_levels = analysis.transpose_number_levels
+        row_width = analysis.transpose_row_width
+        lower = analysis.triangle == "upper"
     else:
         indices = analysis.indices
+        indptr = analysis.indptr
         rows = analysis.row_indices
         diagonal_positions = analysis.diagonal_positions
-        levels = analysis.row_levels
         number_levels = analysis.number_levels
+        row_width = analysis.row_width
+        lower = analysis.triangle == "lower"
     if adjoint:
         values_ = jnp.conj(values_)
     safe_diagonal_positions = jnp.maximum(diagonal_positions, 0)
@@ -325,26 +333,33 @@ def solve_sparse_triangular(
     )
     off_values = jnp.where(off_diagonal, values_, jnp.zeros((), dtype=dtype))
     initial = jnp.zeros_like(rhs)
+    offsets = jnp.arange(row_width, dtype=indptr.dtype)
 
-    def solve_level(level: Array, solution: Array) -> Array:
-        products = off_values[:, None] * solution[indices]
-        row_sums = jax.ops.segment_sum(
-            products,
-            rows,
-            num_segments=analysis.shape[0],
-        )
-        candidate = (rhs - row_sums) / safe_diagonal[:, None]
-        return jnp.where((levels == level)[:, None], candidate, solution)
+    def solve_row(position: Array, solution: Array) -> Array:
+        row = jnp.where(lower, position, analysis.shape[0] - 1 - position)
+        entry_positions = indptr[row] + offsets
+        valid = entry_positions < indptr[row + 1]
+        safe_positions = jnp.where(valid, entry_positions, 0)
+        columns = indices[safe_positions]
+        products = off_values[safe_positions, None] * solution[columns]
+        row_sum = jnp.sum(jnp.where(valid[:, None], products, 0.0), axis=0)
+        candidate = (rhs[row] - row_sum) / safe_diagonal[row]
+        return solution.at[row].set(candidate)
 
-    solution = jax.lax.fori_loop(0, number_levels, solve_level, initial)
-    finite = jnp.all(jnp.isfinite(solution)) & jnp.all(jnp.isfinite(values_))
+    solution = jax.lax.fori_loop(0, analysis.shape[0], solve_row, initial)
+    finite = (
+        jnp.all(jnp.isfinite(solution))
+        & jnp.all(jnp.isfinite(values_))
+        & jnp.all(jnp.isfinite(rhs))
+    )
+    zero_pivot = jnp.all(jnp.isfinite(diagonal)) & jnp.any(jnp.abs(diagonal) <= tolerance)
     status = jnp.where(
-        ~jnp.all(valid_pivot),
-        int(SparseTriangularStatus.ZERO_PIVOT),
+        ~finite,
+        int(SparseTriangularStatus.NONFINITE),
         jnp.where(
-            finite,
+            zero_pivot,
+            int(SparseTriangularStatus.ZERO_PIVOT),
             int(SparseTriangularStatus.SUCCESS),
-            int(SparseTriangularStatus.NONFINITE),
         ),
     ).astype(jnp.int32)
     result_value = solution[:, 0] if vector_input else solution

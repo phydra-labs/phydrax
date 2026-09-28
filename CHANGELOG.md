@@ -696,6 +696,67 @@
   it: stored code units are converted through `unitSI` and `gridUnitSI`, and
   unsupported-semantic classification uses `OpenPMDUnsupportedError` instead of
   message matching.
+- Credible structured two-phase flow: `MACBalancedCapillaryOperator`,
+  `StructuredPLICPlan`, `HeightFunctionCurvaturePlan`, reduced-gravity and
+  variable-viscosity support, absolute-pressure/interface-geometry accessors,
+  the public `alpha_bound_tolerance` admission rule, conservation/work
+  evidence, the `advanced_rising_bubble.py` workflow, and Hysing qualification
+  tooling.
+- `phydrax.bubble_dynamics` with clean, coated, thermal, compressible,
+  viscoelastic, dissolving, pinned-surface, cloud, retarded-coupling,
+  Bjerknes-force, and far-field-emission routes; public examples cover acoustic
+  bubbles, contrast-agent inversion, surface nanobubbles, and bubble clouds.
+  `phydrax.equations.NobleAbelStiffenedGasMaterial` supplies the complete
+  thermodynamic-material contract used by bubble gas laws.
+- Bubble population and acoustic media support:
+  `PrinceBlanchCoalescenceKernel`, `LehrCoalescenceKernel`,
+  `LuoSvendsenBreakageKernel`, `BubblyMediumDispersionPlan`,
+  `solve_bubbly_medium_dispersion`, and `wood_sound_speed`.
+- Manifold thin-film transport in `phydrax.interfacial_transport`: prepared
+  DDG film surfaces; DLVO disjoining-pressure and black-film equilibria;
+  conservative lubrication; symmetric surfactant, Marangoni, and plug-flow
+  dynamics; open/wall boundaries; and fixed-topology moving-surface and
+  multiregion sheet-slot transfer with explicit status and ledger evidence.
+- Single-film optical appearance through
+  `phydrax.optics.wave.ThinFilmInterferencePlan`,
+  `phydrax.rendering.SpectralColorimetryPlan`,
+  `ThinFilmAppearancePlan`, and support-aware `thin_film_surface_colors`.
+  `phydrax.artifacts` exposes the existing fail-closed
+  `ExternalArtifactPolicy`/`admit_external_artifact` boundary required for
+  hash-verified external illuminants. Runnable thin-film and foam-iridescence
+  examples retain rejected samples as NaN with owner status instead of
+  fabricating colors.
+- `phydrax.threshold_dynamics` with periodic Fourier, sparse-label, and mesh
+  heat actions; exact/bounded label volumes; gas-diffusive coarsening; and
+  explicit energy, extinction, capacity, and rollback evidence. Label states
+  bind ordered material, route, preparation, and site identities; uniform
+  pair coefficients remain structured without quadratic materialization;
+  nonuniform coefficient storage is resource-admitted; sparse exactness uses
+  distinct periodic residues and rollback evidence retains current/candidate
+  overflow; mesh heat evidence preserves native provenance, convergence, work,
+  and storage diagnostics. The shared `InterfaceTensionMatrix`/
+  `InterfaceMobilityMatrix` contracts and native `CapacitatedAuctionPlan` use
+  stable label identity and certified assignment gaps.
+- Resolved bubbly-flow identity, gas-compartment thermodynamics, mixed MAC
+  projection, multi-marker transport, drainage-gated coalescence, variable
+  surface tension/Marangoni forcing, and evidence-only reduced/resolved
+  exchange records in `phydrax.applications.two_phase_flow`.
+- N-color color-gradient lattice Boltzmann flow with ordered component IDs,
+  pairwise tension/recoloring, `ColorGradientInterfacialFields`, and
+  antisymmetric `NearContactRepulsionPlan` work and momentum evidence.
+- `phydrax.geometry.multiregion_surface` and
+  `phydrax.applications.foams`: labeled non-manifold surfaces, exact validation,
+  conservative sparse transfers, volume-constrained equilibrium, transactional
+  remeshing/T1/pinch/merge/split events, overdamped and SHAKE/RATTLE dynamics,
+  deterministic rupture, circulation-slot vortex air, and Plateau-border
+  drainage.
+- `phydrax.applications.soap_film_tunnel` for gravity-driven planar film flow
+  with meshcore-constrained geometry, open/wire boundaries, film-Mach and
+  conservation evidence, cylinder-wake references, and Strouhal uncertainty.
+- Cross-track transactions: hard-label-to-multiregion surface extraction,
+  biomembrane remeshing through the shared surface-event owner, conservative
+  rupture-to-border transfer, support-aware foam rendering, and explicit
+  reduced/resolved bubble request and failure records.
 - Meshing workflow examples `adaptive_bisection_heat.py`,
   `anisotropic_metric_adaptation.py`, `ale_conservative_remesh.py`,
   `cad_high_order_curving.py`, `boundary_layer_core_mesh.py`, and
@@ -1270,6 +1331,43 @@
   caller (backends, interchange adapters, applications, rendering, tools, tests,
   guides) is migrated. Run and output envelopes now use the artifact kinds
   `pinned-command-run`/`pinned-command-output`, so run artifact IDs change.
+- Two-phase VOF now advances geometric Weymouth--Yue PLIC transport,
+  mass-consistent momentum, implicit variational viscosity, balanced
+  capillary/gravity forcing, and variable-density projection in that order.
+  Structured PLIC reports exact facet centroids, and height functions use a
+  bounded primary-facet quadratic fallback with explicit
+  support/rank/condition/resource evidence. Pressure, curvature, Courant,
+  capillary-step, viscosity, gravity, surface-energy, and work diagnostics
+  reach the consumer.
+- `ColorGradientLBMMethod`, state, runtime parameters, diagnostics, and
+  initialization now use an ordered static set of two or more components;
+  binary flow is the two-component case of the same pairwise API.
+- `CoupledBulkSurfaceTransport` now advances extensive amounts on sparse
+  topology, and surface plug flow composes `ConservationIMEXMethod`.
+  `SurfaceMeshMotion` uses the exact finite-step dual-area GCL and rejects
+  inadmissible motion or Courant violations transactionally.
+- Sparse factorization stores factor structure rather than padded elimination
+  schedules, derives numeric update targets at runtime, and charges actual
+  retained and transient work. Film Newton solves use the declared accurate
+  inexact-Newton tolerance rather than a stalled Eisenstat--Walker forcing cap.
+- `SHAKERATTLEPlan` is a static plan whose masses and constraint callbacks bind
+  in `prepare`; every migrated consumer receives rank, condition, projection
+  work, and rollback evidence through `ConstrainedMechanicsEvidence`.
+- `BiomembranePlan` declares remesh region/species identity and capacity, and
+  `PreparedBiomembrane.propose_remesh` now accepts canonical shared
+  `EdgeSplitProposal`, `EdgeCollapseProposal`, and `EdgeFlipProposal`
+  transactions with sparse vertex and face transfers.
+- New bubble, film, threshold, color-gradient, multiregion, foam, optics,
+  rendering, and soap-film-tunnel qualification profiles are registered as
+  unreleased candidates. Passing a campaign does not independently authorize
+  release.
+- Candidate-profile registration now uses canonical package owners:
+  `phydrax.discretization.lattice_boltzmann` owns color-gradient profiles,
+  multiregion geometry owns geometry/extraction/remeshing/topology profiles and
+  foam mechanics owns only `foams.*` profiles.
+- Plug-flow evidence identifies the terminal nonlinear stage explicitly;
+  threshold label states/evidence expose their complete contract fields, and
+  two-phase checkpoints bind the bubbly parameter-realization identity.
 - Python support now targets 3.12 (`>=3.12,<3.13`). Runtime, optional, test,
   QA, and Python build dependency floors target the newest jointly resolvable
   stable releases, with ceilings at the next compatible release boundary. Both
@@ -1654,6 +1752,22 @@
   arbitrary-normal numerical flux; moving and overset unstructured routes
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
+### Removed
+- Removed `TwoPhaseImplicitViscosity`, `TwoPhaseViscousResult`, the local
+  two-phase viscosity module, obsolete total-energy/limiter/body residual
+  fields, and the unused `MultiphaseFLIPPlan.surface_tension` argument.
+- Removed the rolled-stencil `thin_film_pressure`, dense
+  `transfer_surface_content`/`surface_transfer_balance`,
+  `CoupledBulkSurfaceTransport.create`, its dense generator matrices, and
+  `SurfaceTransportResult.positivity_preserving`; moving-surface transport now
+  exposes candidate/accepted state and an explicit status.
+- Removed color-gradient LBM red/blue state, density, mass, defect,
+  scalar-tension, and scalar-contact-angle fields; component and canonical-pair
+  arrays are now the only API.
+- Removed `BiomembraneRemeshOperation`, the forwarding
+  `propose_split`/`propose_collapse`/`propose_flip` methods, local remesh and
+  triangle-intersection implementations, and dense remesh transfer matrices.
+
 ### Fixed
 - Strict dtype promotion failures: native restarted GMRES and the Arnoldi
   orthogonality check compared `int64` index ranges with `int32` step counts
@@ -1676,6 +1790,49 @@
   charge. The reduced 1-D Maxwell Gauss/charge divergence gives the nonperiodic
   lower wall zero flux, matching the PIC continuity operator; reduced 2-D fields
   with a nonperiodic axis (not paired) are refused by the pairing check.
+- Corrected structured VOF capillarity, pressure accumulation, density
+  averaging, PLIC offset residuals, height-function fallback support, and
+  continuation dtypes; the force now produces the intended pressure jump and
+  restoring dynamics without post-transport volume-fraction clipping.
+- Native PCG and ProjectedPCG convergence now requires the true residual;
+  recurrence-residual hits trigger confirmation and residual replacement rather
+  than accepting a drifted Krylov residual.
+- Film Newton convergence no longer stalls on large drainage steps because its
+  inner forcing matches the declared linear tolerance. Sparse ILU/IC dropping
+  also preserves the x64 loop-carry dtype and avoids full-pattern marker
+  allocation per pivot.
+- Exact finite topology predicates no longer leave already separated triangle
+  pairs unresolved; zero-energy biomembrane remesh candidates use a finite
+  execution-dtype scale instead of producing `0/0` evidence.
+- Langmuir surfactant updates and inflows now reject capacity crossings,
+  nonpositive tension, and nonfinite states atomically; constant-tension
+  vertex forces also cancel exactly in the momentum ledger.
+- Bubble-cloud FMM overlap candidates now cover the complete declared contact
+  support, while resolved bubbly-flow and foam dynamics roll failed retries,
+  pressure solves, CCD steps, and event passes back without committing
+  compartment, ledger, topology, or lineage changes. Active multiregion face
+  normals are unit normals, and event lineage records parentless created faces
+  explicitly.
+- Batched native PCG confirms nominated true residuals with one shared action
+  stream, and compartment pressure lanes use one multi-right-hand-side solve
+  while preserving scalar projection and derivative semantics.
+- Vortex-sheet curvature preparation now stores a bounded edge relation instead
+  of a vertex-by-region materialization, with exact retained-byte evidence and
+  fail-closed relation-capacity admission.
+- Capacitated-assignment canonicalization rejects out-of-range integer slots
+  before int32 narrowing, and audit residuals use overflow-safe saturation so
+  large deficits, including exactly `2**32`, cannot wrap to feasible zero.
+- Sparse LU/Cholesky symbolic fill enforces incremental factor-nnz,
+  retained-byte, and symbolic-work ceilings before dictionaries grow; factor
+  builders honor active materialization ceilings with observed/limit evidence,
+  and sparse solve status gives `NONFINITE` precedence over `ZERO_PIVOT`.
+- Incompressible foam dynamics and foam equilibrium now prepare a bounded
+  topology-first volume-constraint basis with explicit rank-action/byte
+  evidence and resource refusal. Compartment-gas dynamics records a canonical
+  not-applicable zero-work basis status and retains only its matrix-free volume
+  pressure operator. Open boundary-boundary film interiors use the same
+  tangential quotient as closed flat films, preserving the catenoid equilibrium
+  route under current JAX.
 - `phydrax.meshing.evaluate_cell_quality` of hexahedra, prisms, and pyramids
   can be first evaluated under `jax.jit`/`eqx.filter_jit`: the cached exact
   measure quadrature holds host NumPy nodal gradients instead of converting a

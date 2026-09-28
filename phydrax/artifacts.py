@@ -10,6 +10,12 @@ from enum import StrEnum
 
 import equinox as eqx
 
+from ._artifact_security import (
+    admit_external_artifact,
+    AdmittedExternalArtifact,
+    ExternalArtifactPolicy,
+    read_admitted_artifact,
+)
 from ._differentiation import DerivativeContract
 from ._fingerprint import canonical_fingerprint
 from ._identity import ArtifactBindingIdentity
@@ -280,8 +286,12 @@ class ArtifactManifest(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AdmittedExternalArtifact",
     "ArtifactManifest",
     "DerivativeEstimatorKind",
     "DerivativeEvidence",
+    "ExternalArtifactPolicy",
     "ScientificArtifactEnvelope",
+    "admit_external_artifact",
+    "read_admitted_artifact",
 ]
