@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
@@ -26,10 +27,23 @@ class DDGOperators(StrictModule):
     basis_gradients: Array
     boundary_vertices: Array
 
-    def __init__(self, mesh: TriangleMesh) -> None:
+    def __init__(self, mesh: TriangleMesh, *, vertices: ArrayLike | None = None) -> None:
+        """Assemble operators on ``mesh``.
+
+        ``vertices`` refreshes the embedding for identical topology: the
+        connectivity of ``mesh`` is reused and only numerical coefficients are
+        recomputed, so moving-surface consumers never rebuild topology.
+        """
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("DDGOperators requires a TriangleMesh.")
-        vertices = mesh.vertices
+        if vertices is None:
+            vertices = mesh.vertices
+        else:
+            vertices = jnp.asarray(vertices, dtype=mesh.vertices.dtype)
+            if vertices.shape != mesh.vertices.shape:
+                raise ValueError(
+                    "Refreshed vertices must match the mesh vertex array shape."
+                )
         faces = mesh.faces
         triangles = vertices[faces]
         cross = jnp.cross(
@@ -89,15 +103,29 @@ class DDGOperators(StrictModule):
 
     def apply_stiffness(self, values: Array, /) -> Array:
         """Apply the positive cotangent stiffness matrix without materializing it."""
+        return self._edge_action(values, self.edge_weights)
+
+    def apply_weighted_stiffness(
+        self, values: Array, edge_coefficients: Array, /
+    ) -> Array:
+        """Apply ``sum_e c_e w_e (u_i - u_j)`` with per-edge coefficients ``c_e``.
+
+        This is the matrix-free action of a variable-coefficient (for example
+        mobility-weighted) cotangent stiffness. Coefficients are aligned with
+        ``edges``; the action stays conservative for any coefficients.
+        """
+        coefficients = jnp.asarray(edge_coefficients)
+        if coefficients.shape != self.edge_weights.shape:
+            raise ValueError("edge_coefficients must have shape (num_edges,).")
+        return self._edge_action(values, self.edge_weights * coefficients)
+
+    def _edge_action(self, values: Array, weights: Array, /) -> Array:
         values_ = jnp.asarray(values)
         first = self.edges[:, 0]
         second = self.edges[:, 1]
         difference = values_[first] - values_[second]
         weighted = (
-            self.edge_weights.reshape(
-                (self.edge_weights.shape[0],) + (1,) * (values_.ndim - 1)
-            )
-            * difference
+            weights.reshape((weights.shape[0],) + (1,) * (values_.ndim - 1)) * difference
         )
         result = jnp.zeros_like(values_)
         result = result.at[first].add(weighted)

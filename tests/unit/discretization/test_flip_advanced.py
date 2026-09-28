@@ -87,16 +87,38 @@ def test_flip_advanced_scenario_1() -> None:
     measures = phx.discretization.finite_volume.MACFreeSurfaceViscousMeasurePlan(
         mac, 1.0
     ).evaluate(interface, 0.2, solid=solid)
-    velocity = tuple(
-        jnp.full(layout.shape, 1e-3 * (axis + 1))
-        for axis, layout in enumerate(finite_volume.face_layouts)
+    velocity = (
+        1e-3 * finite_volume.face_centers[0][..., 1],
+        jnp.full(finite_volume.face_layouts[1].shape, 2e-3),
     )
-    result = phx.solver.MACVariationalViscosityPlan(mac, tolerance=1e-7).solve(
-        velocity, measures, 1e-3
+    momentum = phx.discretization.MACMomentumPlan(mac).prepare()
+    result = phx.solver.MACVariationalViscosityPlan(momentum, tolerance=1e-7).solve(
+        velocity,
+        measures.face_density,
+        measures.cell_viscosity,
+        1e-3,
+        momentum.boundaries.homogeneous_stage(),
+    )
+    coupled = phx.discretization.PreparedMACVariationalViscosityAction(
+        momentum
+    ).coupled_faces(measures.cell_viscosity)
+    free = momentum.boundaries.homogeneous_rate(
+        tuple(jnp.ones_like(value) for value in velocity)
+    )
+    decoupled = tuple(
+        (open_face != 0.0) & ~linked & (density == 0.0)
+        for open_face, linked, density in zip(
+            free, coupled, measures.face_density, strict=True
+        )
     )
     assert result.successful
-    assert result.dissipation >= 0.0
-    assert result.energy_increase < 1e-8
+    assert result.dissipation > 0.0
+    assert result.energy_after < result.energy_before
+    assert result.decoupled_face_count > 0
+    assert result.decoupled_face_count == sum(int(jnp.sum(mask)) for mask in decoupled)
+    # Air faces beyond the viscous stencil carry no momentum equation.
+    for solved, original, mask in zip(result.velocity, velocity, decoupled, strict=True):
+        np.testing.assert_array_equal(solved[mask], original[mask])
 
 
 def test_flip_reseeding_contracts() -> None:

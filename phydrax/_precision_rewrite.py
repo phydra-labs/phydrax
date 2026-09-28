@@ -249,7 +249,7 @@ def _rewrite_nested(
     path: str,
     /,
 ) -> tuple[Any, tuple[tuple[str, str], ...], bool]:
-    if isinstance(value, jax_core.Jaxpr):
+    if isinstance(value, (jax_core.Jaxpr, jax_core.ClosedJaxpr)):
         rewritten, records = _rewrite_jaxpr(
             value, policy, path, allow_boundary_dtype_change=False
         )
@@ -279,14 +279,16 @@ def _rewrite_jaxpr(
     *,
     allow_boundary_dtype_change: bool,
 ) -> tuple[Any, tuple[tuple[str, str], ...]]:
+    closed = isinstance(jaxpr, jax_core.ClosedJaxpr)
+    expression = jaxpr.jaxpr if closed else jaxpr
     rules = _rule_map(policy)
     equations = []
     records: list[tuple[str, str]] = []
-    boundary_variables = frozenset(jaxpr.outvars)
+    boundary_variables = frozenset(expression.outvars)
     consumed_variables = frozenset(
-        variable for equation in jaxpr.eqns for variable in equation.invars
+        variable for equation in expression.eqns for variable in equation.invars
     )
-    for index, equation in enumerate(jaxpr.eqns):
+    for index, equation in enumerate(expression.eqns):
         equation_path = f"{path}/{index}:{equation.primitive.name}"
         if equation.effects:
             raise ValueError(f"Effectful precision equation at {equation_path}.")
@@ -377,7 +379,10 @@ def _rewrite_jaxpr(
         else:
             records.append((equation_path, "unchanged-supported"))
         equations.append(equation)
-    return jaxpr.replace(eqns=equations), tuple(records)
+    rewritten = expression.replace(eqns=equations)
+    if closed:
+        rewritten = jaxpr.replace(jaxpr=rewritten)
+    return rewritten, tuple(records)
 
 
 def prepare_precision_rewrite(

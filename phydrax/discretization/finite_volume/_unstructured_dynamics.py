@@ -1785,12 +1785,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             density = average[:, 0] + average[:, 1]
             velocity = primitive[:, 2 : 2 + self.system.dimension]
             alpha = average[:, self.system.layout.alpha_index]
-            capillary_block = capillarity.face_rate_block(
-                stage_plic,
-                density,
-                alpha,
-                velocity,
-            )
+            capillary_block = capillarity.face_rate_block(stage_plic, alpha, velocity)
             momentum_rate = capillary_block.cell_momentum_rate(metrics.cell_count)
             energy_rate = capillary_block.cell_energy_rate(metrics.cell_count)
             source_rate = source_rate.at[

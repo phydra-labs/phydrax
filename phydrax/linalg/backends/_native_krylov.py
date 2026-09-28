@@ -69,6 +69,17 @@ _TargetInner: TypeAlias = Callable[[_TargetPair, _TargetPair], Array]
 # (iterations, residual norm, normal residual norm, condition, breakdown).
 _KrylovAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array]
 _KrylovResult: TypeAlias = tuple[Array, _KrylovAuxiliary, IterationRuntimeState | None]
+# `_KrylovAuxiliary` followed by the executed true-residual confirmation count.
+_PCGResult: TypeAlias = tuple[
+    Array,
+    tuple[Array, Array, Array, Array, Array, Array],
+    IterationRuntimeState | None,
+]
+# Batched PCG returns the number of executed batched operator actions directly.
+_PCGBatchedResult: TypeAlias = tuple[
+    Array,
+    tuple[Array, Array, Array, Array, Array, Array],
+]
 # `_KrylovAuxiliary` followed by the executed restart cycle count.
 _FGMRESResult: TypeAlias = tuple[
     Array,
@@ -79,9 +90,30 @@ _FGMRESResult: TypeAlias = tuple[
 _SolveAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 _SolveResult: TypeAlias = tuple[Array, _SolveAuxiliary, IterationRuntimeState | None]
 
-# (x, r, z, p, rho, iterations, active, breakdown, observed).
+# (x, r, z, p, rho, iterations, active, breakdown, confirmations, observed).
 _PCGCarry: TypeAlias = tuple[
-    Array, Array, Array, Array, Array, Array, Array, Array, IterationRuntimeState | None
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    IterationRuntimeState | None,
+]
+# (x, r, z, p, rho, iterations, active, breakdown, batched action count).
+_PCGBatchedCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
 ]
 # (x, r1, r2, y, old beta, beta, dbar, epsilon, phibar, cosine, sine, w, w2,
 # iterations, active, breakdown, observed).
@@ -476,6 +508,20 @@ def solve_native_krylov(
         )
         value = value_column[:, None]
         auxiliary = jax.tree.map(lambda item: item[None], auxiliary_column)
+    elif method_name in (PCG().name, ProjectedPCG().name):
+        value, auxiliary, _ = _square_pcg_batched(
+            problem,
+            rhs,
+            guesses,
+            "projected-pcg" if method_name == ProjectedPCG().name else "pcg",
+            preconditioner=state.preconditioner,
+            relative=relative_tolerance,
+            absolute=absolute_tolerance,
+            max_steps=maximum_steps,
+            structural_max_steps=structural_maximum_steps,
+            driver=_loop_driver(plan),
+        )
+        updated_iteration_state = iteration_state
     else:
 
         def solve_unobserved(
@@ -616,7 +662,7 @@ def _square_solve(
 
     def run(selected_action: _Action, target: Array) -> _SolveResult:
         if method == "pcg":
-            value, auxiliary, next_iteration_state = _pcg_raw(
+            value, pcg_auxiliary, next_iteration_state = _pcg_raw(
                 selected_action,
                 target,
                 initial,
@@ -630,7 +676,8 @@ def _square_solve(
                 iteration=iteration,
                 iteration_state=iteration_state,
             )
-            matvec_count = auxiliary[0] + 2
+            auxiliary = pcg_auxiliary[:5]
+            matvec_count = auxiliary[0] + pcg_auxiliary[5] + 2
         elif method == "minres":
             value, auxiliary, next_iteration_state = _minres_raw(
                 selected_action,
@@ -707,6 +754,229 @@ def _square_solve(
     )
 
 
+def _square_pcg_batched(
+    problem: AbstractLinearProblem,
+    rhs: Array,
+    initial: Array,
+    method: Literal["pcg", "projected-pcg"],
+    *,
+    preconditioner: AbstractPreconditioner | None,
+    relative: Array,
+    absolute: Array,
+    max_steps: Array,
+    structural_max_steps: int,
+    driver: KrylovLoopDriver,
+) -> _SolveResult:
+    """Solve independent PCG lanes with one explicitly batched operator action."""
+    operator = problem.operator
+    action = lambda vector: _action_coordinates(operator, vector)
+    inner = lambda left, right: _space_inner(operator.source, left, right)
+    precondition = _preconditioner_action(preconditioner, operator.source)
+    projected = method == "projected-pcg"
+    if projected:
+        nullspace = cast(NullspacePolicy, problem.nullspace_policy)
+        certificate = cast(KernelCertificate, nullspace.certificate)
+        right_nullspace = cast(LinearSubspace, nullspace.right)
+        complement = lambda vector: vector - right_nullspace.project_coordinates(vector)
+        batched_complement = jax.vmap(complement, in_axes=1, out_axes=1)
+        rhs = eqx.error_if(
+            batched_complement(rhs),
+            (~certificate.valid) | (certificate.right.dimension < 1),
+            "ProjectedPCG requires a valid nonempty kernel certificate.",
+        )
+        initial = batched_complement(initial)
+        unprojected_action = action
+        action = lambda vector: complement(unprojected_action(complement(vector)))
+        unprojected_precondition = precondition
+        precondition = lambda vector, iteration: complement(
+            unprojected_precondition(complement(vector), iteration)
+        )
+
+    value, pcg_auxiliary = _pcg_batched_raw(
+        action,
+        rhs,
+        initial,
+        inner,
+        precondition,
+        structural_max_steps,
+        relative,
+        absolute,
+        step_limit=max_steps,
+        driver=driver,
+    )
+    iterations, residual, normal_residual, condition, breakdown, action_count = (
+        pcg_auxiliary
+    )
+    value = batched_complement(value) if projected else value
+    return (
+        value,
+        (
+            iterations,
+            residual,
+            normal_residual,
+            condition,
+            breakdown,
+            action_count,
+            jnp.zeros_like(action_count),
+        ),
+        None,
+    )
+
+
+def _pcg_batched_raw(
+    action: _Action,
+    rhs: Array,
+    initial: Array,
+    inner: _Inner,
+    precondition: _Precondition,
+    max_steps: int,
+    relative: Array,
+    absolute: Array,
+    *,
+    step_limit: Array,
+    driver: KrylovLoopDriver,
+) -> _PCGBatchedResult:
+    """Run independent PCG lanes while gating confirmation as one batch."""
+    batched_action = jax.vmap(action, in_axes=1, out_axes=1)
+    batched_inner = jax.vmap(inner, in_axes=(1, 1), out_axes=0)
+    batched_precondition = jax.vmap(precondition, in_axes=(1, None), out_axes=1)
+    residual = rhs - batched_action(initial)
+    transformed = batched_precondition(residual, jnp.asarray(0, dtype=jnp.int32))
+    rho = jnp.real(batched_inner(residual, transformed))
+    rhs_norm = _norm(rhs, batched_inner)
+    threshold = absolute + relative * rhs_norm
+    residual_norm = _norm(residual, batched_inner)
+    lane_count = rhs.shape[1]
+    state: _PCGBatchedCarry = (
+        initial,
+        residual,
+        transformed,
+        transformed,
+        rho,
+        jnp.zeros((lane_count,), dtype=jnp.int32),
+        residual_norm > threshold,
+        jnp.full(
+            (lane_count,),
+            int(KrylovBreakdownStatus.NONE),
+            dtype=jnp.int32,
+        ),
+        jnp.asarray(1, dtype=jnp.int32),
+    )
+    epsilon = jnp.finfo(rhs.real.dtype).eps
+
+    def step(index: Array, current: _PCGBatchedCarry) -> _PCGBatchedCarry:
+        executing = current[6] & (index < step_limit)
+
+        def execute(operand: _PCGBatchedCarry) -> _PCGBatchedCarry:
+            x, r, z, p, rho_, iterations, active, breakdown, action_count = operand
+            image = batched_action(p)
+            denominator = jnp.real(batched_inner(p, image))
+            invalid = (
+                ~jnp.isfinite(denominator)
+                | (
+                    jnp.abs(denominator)
+                    <= epsilon * _norm(p, batched_inner) * _norm(image, batched_inner)
+                )
+                | (rho_ <= 0.0)
+            )
+            safe_denominator = jnp.where(invalid, 1.0, denominator)
+            alpha = rho_ / safe_denominator
+            candidate_x = x + alpha[None, :] * p
+            recursive_r = r - alpha[None, :] * image
+            recursive_norm = _norm(recursive_r, batched_inner)
+            nominated = executing & (recursive_norm <= threshold)
+            any_nominated = jnp.any(nominated)
+
+            def confirm(_: None) -> tuple[Array, Array]:
+                true_residual = rhs - batched_action(candidate_x)
+                return true_residual, _norm(true_residual, batched_inner)
+
+            confirmed_r, confirmed_norm = jax.lax.cond(
+                any_nominated,
+                confirm,
+                lambda _: (recursive_r, recursive_norm),
+                operand=None,
+            )
+            candidate_r = jnp.where(nominated[None, :], confirmed_r, recursive_r)
+            norm = jnp.where(nominated, confirmed_norm, recursive_norm)
+            converged = executing & (norm <= threshold)
+            replaced = nominated & ~converged
+            candidate_z = batched_precondition(
+                candidate_r, jnp.asarray(index + 1, dtype=jnp.int32)
+            )
+            next_rho = jnp.real(batched_inner(candidate_r, candidate_z))
+            beta = jnp.where(
+                replaced,
+                0.0,
+                next_rho / jnp.where(rho_ == 0.0, 1.0, rho_),
+            )
+            candidate_p = candidate_z + beta[None, :] * p
+            finite = jnp.all(jnp.isfinite(candidate_x), axis=0) & jnp.isfinite(norm)
+            candidate_breakdown = jnp.where(
+                finite,
+                jnp.where(
+                    invalid & ~converged,
+                    int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
+                    jnp.where(
+                        converged,
+                        int(KrylovBreakdownStatus.HAPPY),
+                        int(KrylovBreakdownStatus.NONE),
+                    ),
+                ),
+                int(KrylovBreakdownStatus.NONFINITE_ACTION),
+            ).astype(jnp.int32)
+            next_active = finite & ~invalid & ~converged
+            select_vector = lambda candidate, previous: jnp.where(
+                executing[None, :], candidate, previous
+            )
+            select_lane = lambda candidate, previous: jnp.where(
+                executing, candidate, previous
+            )
+            return (
+                select_vector(candidate_x, x),
+                select_vector(candidate_r, r),
+                select_vector(candidate_z, z),
+                select_vector(candidate_p, p),
+                select_lane(next_rho, rho_),
+                select_lane(index + 1, iterations),
+                select_lane(next_active, active),
+                select_lane(candidate_breakdown, breakdown),
+                action_count
+                + jnp.asarray(1, dtype=jnp.int32)
+                + any_nominated.astype(jnp.int32),
+            )
+
+        return jax.lax.cond(jnp.any(executing), execute, lambda operand: operand, current)
+
+    if _fixed_trip(driver):
+        from ..._numerics._checkpointed_scan import checkpointed_scan
+
+        final, _ = checkpointed_scan(
+            lambda current, index: (step(index, current), None),
+            state,
+            jnp.arange(max_steps, dtype=jnp.int32),
+            length=max_steps,
+            mode="block",
+            block_size=_pcg_checkpoint_block(max_steps),
+        )
+    else:
+        final = jax.lax.fori_loop(0, max_steps, step, state)
+    x, _, _, _, _, iterations, _, breakdown, action_count = final
+    true_residual = rhs - batched_action(x)
+    residual_norm = _norm(true_residual, batched_inner)
+    action_count = action_count + jnp.asarray(1, dtype=jnp.int32)
+    action_counts = jnp.full((lane_count,), action_count, dtype=jnp.int32)
+    auxiliary = (
+        iterations,
+        residual_norm,
+        jnp.full_like(residual_norm, jnp.nan),
+        jnp.full_like(residual_norm, jnp.nan),
+        breakdown,
+        action_counts,
+    )
+    return x, auxiliary
+
+
 def _pcg_raw(
     action: _Action,
     rhs: Array,
@@ -722,7 +992,19 @@ def _pcg_raw(
     driver: KrylovLoopDriver = "early-exit",
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-) -> _KrylovResult:
+) -> _PCGResult:
+    """Preconditioned CG whose stop test is the certified true residual.
+
+    The recurrence residual only nominates convergence: when its norm meets
+    ``absolute + relative * ||rhs||`` the true residual ``rhs - A x`` is
+    evaluated (one extra action), and the iteration stops only if that meets
+    the same threshold.  Otherwise the recurrence is restarted from the true
+    residual (residual replacement, van der Vorst & Ye 2000, SIAM J. Sci.
+    Comput. 22:1035) and continues.  Stopping and acceptance therefore apply
+    one test to one quantity; rounding drift of the recurrence can cost
+    iterations but never a stop that the final certification rejects.
+    """
+
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = rhs - action(initial)
@@ -741,15 +1023,27 @@ def _pcg_raw(
         jnp.asarray(0, dtype=jnp.int32),
         (residual_norm > threshold) & ~_iteration_stop(iteration_state),
         jnp.asarray(int(KrylovBreakdownStatus.NONE), dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
         iteration_state,
     )
     epsilon = jnp.finfo(rhs.real.dtype).eps
 
     def step(index: Array, current: _PCGCarry) -> _PCGCarry:
-        x, r, z, p, rho_, iterations, active, breakdown, observed = current
+        (
+            x,
+            r,
+            z,
+            p,
+            rho_,
+            iterations,
+            active,
+            breakdown,
+            confirmations,
+            observed,
+        ) = current
 
         def execute(operand: _PCGCarry) -> _PCGCarry:
-            x_, r_, z_, p_, rho_i, _, _, _, observed_i = operand
+            x_, r_, z_, p_, rho_i, _, _, _, confirmations_i, observed_i = operand
             image = action(p_)
             denominator = jnp.real(inner(p_, image))
             invalid = (
@@ -763,15 +1057,25 @@ def _pcg_raw(
             safe_denominator = jnp.where(invalid, 1.0, denominator)
             alpha = rho_i / safe_denominator
             candidate_x = x_ + alpha * p_
-            candidate_r = r_ - alpha * image
+            recursive_r = r_ - alpha * image
+            recursive_norm = _norm(recursive_r, inner)
+            nominated = recursive_norm <= threshold
+            candidate_r, norm = jax.lax.cond(
+                nominated,
+                lambda: _confirmed_residual(action, inner, rhs, candidate_x),
+                lambda: (recursive_r, recursive_norm),
+            )
+            converged = norm <= threshold
+            replaced = nominated & ~converged
+            next_confirmations = confirmations_i + nominated.astype(jnp.int32)
             candidate_z = precondition(
                 candidate_r, jnp.asarray(index + 1, dtype=jnp.int32)
             )
             next_rho = jnp.real(inner(candidate_r, candidate_z))
-            beta = next_rho / jnp.where(rho_i == 0.0, 1.0, rho_i)
+            beta = jnp.where(
+                replaced, 0.0, next_rho / jnp.where(rho_i == 0.0, 1.0, rho_i)
+            )
             candidate_p = candidate_z + beta * p_
-            norm = _norm(candidate_r, inner)
-            converged = norm <= threshold
             finite_local = jnp.all(jnp.isfinite(candidate_x)) & jnp.isfinite(norm)
             finite = finite_local if finite_all is None else finite_all(finite_local)
             breakdown_i = jnp.where(
@@ -794,7 +1098,7 @@ def _pcg_raw(
                 norm,
                 rhs_norm,
                 breakdown_i,
-                matvec_count=index + 2,
+                matvec_count=index + 2 + next_confirmations,
             )
             return (
                 candidate_x,
@@ -805,6 +1109,7 @@ def _pcg_raw(
                 jnp.asarray(index + 1, dtype=jnp.int32),
                 finite & ~invalid & ~converged & ~_iteration_stop(next_iteration),
                 breakdown_i,
+                next_confirmations,
                 next_iteration,
             )
 
@@ -829,7 +1134,7 @@ def _pcg_raw(
         )
     else:
         final = jax.lax.fori_loop(0, max_steps, step, state)
-    x, residual, _, _, _, iterations, _, breakdown, iteration_state = final
+    x, residual, _, _, _, iterations, _, breakdown, confirmations, iteration_state = final
     residual_norm = _norm(rhs - action(x), inner)
     auxiliary = (
         iterations,
@@ -837,8 +1142,16 @@ def _pcg_raw(
         jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
         jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
         breakdown,
+        confirmations,
     )
     return x, auxiliary, iteration_state
+
+
+def _confirmed_residual(
+    action: _Action, inner: _Inner, rhs: Array, value: Array, /
+) -> tuple[Array, Array]:
+    residual = rhs - action(value)
+    return residual, _norm(residual, inner)
 
 
 def _minres_raw(

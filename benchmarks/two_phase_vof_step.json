@@ -1,0 +1,162 @@
+{
+  "identity": {
+    "fingerprint": "db6cd9b5777e31b7222e8162fb0f137241b25cb334e396667e96e3ca6ec45644",
+    "source_build_fingerprint": "fe7f6864df9a5f4c8d71bffeb57398177d5ca87b2d7ca2680df20ac21279ccf6",
+    "benchmark_driver_fingerprint": "dcb16a84db56d187eaaa12338b3d9bee548bf17e52787d7c0ace673ceee83b12",
+    "evidence_schema": {
+      "fields": [
+        "advective_courant",
+        "alpha_maximum",
+        "alpha_minimum",
+        "capillary_balance_residual",
+        "capillary_pressure_jump",
+        "capillary_step_limit",
+        "clsvof_correction",
+        "curvature_fallback_count",
+        "curvature_underresolved_count",
+        "curvature_valid_count",
+        "divergence_residual",
+        "finite",
+        "geometry_accepted",
+        "liquid_volume_residual",
+        "marangoni_force_norm",
+        "mass_flux_residual",
+        "material_scalar_residual",
+        "parasitic_velocity",
+        "plic_residual",
+        "pressure_residual",
+        "solid_interface_conflict_count",
+        "successful",
+        "surface_tension_maximum",
+        "surface_tension_minimum",
+        "sweep_offset",
+        "topology_event_count",
+        "unsupported_face_count",
+        "viscous_converged",
+        "viscous_residual"
+      ],
+      "signature": "31e8ec5b936b68bc5908d9a598e9e8069250568f540a9e5e137073cae6d1ff30"
+    }
+  },
+  "environment": {
+    "fingerprint": "a1a5e77b7b1385da748b2e97e07defc9e2bba34ea11dd40142a8f619ac64e536",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.5.3",
+    "jaxlib_version": "0.11.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "de9d16613d4896b9603205091d1d4a57fa7eda328dc1437a7ca770d3f83f0533",
+    "jax": {
+      "version": "0.11.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "NPROC": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": "1",
+      "XLA_FLAGS": "--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1",
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "configuration": {
+    "liquid_density": 1000.0,
+    "gas_density": 1.0,
+    "surface_tension": 1.0,
+    "base": {
+      "cells": 64,
+      "radius": 0.25,
+      "liquid_viscosity": 0.1,
+      "gas_viscosity": 0.001
+    },
+    "selection": "single-case",
+    "steps": 1,
+    "warmup": 1,
+    "repeats": 1,
+    "maximum_iterations": 200
+  },
+  "cases": [
+    {
+      "case": {
+        "cells": 8,
+        "radius": 0.25,
+        "liquid_viscosity": 0.1,
+        "gas_viscosity": 0.001
+      },
+      "cells": 64,
+      "mixed_cells": 12,
+      "cells_per_radius": 2.0,
+      "step_size": 0.19721826351931268,
+      "preparation_seconds": 8.452304042,
+      "compilation": {
+        "lowering_seconds": 4.272331,
+        "compilation_seconds": 6.46577525
+      },
+      "execution": {
+        "count": 1,
+        "samples_seconds": [
+          0.012084333
+        ],
+        "min_seconds": 0.012084333,
+        "median_seconds": 0.012084333,
+        "mean_seconds": 0.012084333,
+        "std_seconds": 0.0,
+        "max_seconds": 0.012084333
+      },
+      "first_step_successful": true,
+      "continuation_types_stable": true,
+      "steps_requested": 1,
+      "steps_accepted": 1,
+      "iterations": [
+        16
+      ],
+      "last_step_evidence": {
+        "alpha_minimum": 0.0,
+        "alpha_maximum": 1.0,
+        "liquid_volume_residual": 0.0,
+        "mass_flux_residual": 0.0,
+        "material_scalar_residual": 0.0,
+        "pressure_residual": 9.958608356208049e-11,
+        "divergence_residual": 9.95860834394129e-11,
+        "capillary_balance_residual": 0.05112162059733619,
+        "capillary_pressure_jump": 4.555267040527356,
+        "surface_tension_minimum": 1.0,
+        "surface_tension_maximum": 1.0,
+        "marangoni_force_norm": 0.0,
+        "parasitic_velocity": 0.0005446234435456251,
+        "advective_courant": 0.0,
+        "capillary_step_limit": 0.39443652703862536,
+        "curvature_valid_count": 0,
+        "curvature_fallback_count": 32,
+        "curvature_underresolved_count": 0,
+        "unsupported_face_count": 0,
+        "plic_residual": 1.1102230246251565e-16,
+        "viscous_residual": 0.0,
+        "viscous_converged": true,
+        "sweep_offset": 0,
+        "clsvof_correction": 0.0,
+        "topology_event_count": 0,
+        "finite": true,
+        "geometry_accepted": true,
+        "solid_interface_conflict_count": 0,
+        "successful": true
+      }
+    }
+  ]
+}

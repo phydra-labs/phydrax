@@ -78,14 +78,35 @@ product rather than extending graph eta past its mathematical domain.
 
 ## Canonical topology-changing product
 
-`IncompressibleTwoPhaseVOFPlan` owns variable-density projection, two- and
-three-dimensional PLIC/CLSVOF, contact angle, surface tension, wetting/drying, moving
-bodies, and topology-changing interfaces. `TwoPhaseCapabilityEventPlan` names the
-surface-piercing, moving-contact, body-contact, wet/dry, breaking, and overturning
-routes with explicit derivative boundaries. `ConservativeTwoPhaseRemeshPlan` transfers
-extensive phase/scalar content and face momentum between preflighted mesh epochs. This
-is one canonical product boundary: the graph ALE solver is not duplicated into a
-second interface-capturing implementation.
+`IncompressibleTwoPhaseVOFPlan` is the one structured interface-capturing product.
+The graph ALE solver is not duplicated into a second interface-capturing
+implementation. The VOF product owns:
+
+- exact geometric PLIC transport of liquid volume on fixed two- and three-dimensional
+  grids;
+- variable-density projection;
+- balanced surface tension from height-function curvature;
+- reduced gravity with absolute pressure;
+- implicit variable viscosity;
+- no-slip and free-slip walls.
+
+Its limits:
+
+- It is a **candidate** product until the Hysing rising-bubble qualification passes.
+- Under-resolved interfaces are refused.
+- The material contact angle sets PLIC normals at walls, but wall curvature uses
+  90° height-function ghosts.
+- Qualified sharp solids require zero viscosity, gravity, and surface tension.
+
+`TwoPhaseCapabilityEventPlan` names the surface-piercing, moving-contact,
+body-contact, wet/dry, breaking, and overturning routes as event masks with explicit
+derivative boundaries. Detecting a route does not qualify its dynamics.
+
+`ConservativeTwoPhaseRemeshPlan` transfers extensive phase/scalar content and face
+momentum between preflighted mesh epochs.
+
+See [Two-phase hydrodynamics](guides_two_phase_hydrodynamics.md) for the contracts
+and nonclaims.
 
 ## Work ledger and restart
 

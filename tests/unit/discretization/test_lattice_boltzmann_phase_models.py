@@ -42,25 +42,66 @@ def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     blue = 1.0 - red
     total = jnp.broadcast_to(weights, (*red.shape, lattice.population_count))
     normal = jnp.broadcast_to(jnp.asarray((0.6, 0.8), dtype=jnp.float64), (*red.shape, 2))
+    beta = jnp.asarray((0.7,), dtype=jnp.float64)
 
-    split = recolor_populations(total, red, blue, normal, lattice, 0.7)
-    swapped = recolor_populations(total, blue, red, -normal, lattice, 0.7)
+    split = recolor_populations(
+        total, jnp.stack((red, blue)), normal[None], lattice, beta
+    )
+    swapped = recolor_populations(
+        total, jnp.stack((blue, red)), -normal[None], lattice, beta
+    )
 
-    np.testing.assert_allclose(
-        split.red_populations, swapped.blue_populations, atol=1e-14
+    velocities = np.asarray(lattice.velocities, dtype=np.float64)
+    speed = np.linalg.norm(velocities, axis=-1)
+    cosine = (
+        np.asarray(normal) @ (velocities / np.where(speed > 0.0, speed, 1.0)[:, None]).T
     )
-    np.testing.assert_allclose(
-        split.blue_populations, swapped.red_populations, atol=1e-14
+    red_host = np.asarray(red)[..., None]
+    blue_host = np.asarray(blue)[..., None]
+    latva_kokko_red = (
+        red_host * np.asarray(total)
+        + 0.7 * red_host * blue_host * np.asarray(weights) * cosine
     )
-    np.testing.assert_allclose(jnp.sum(split.red_populations, axis=-1), red, atol=1e-14)
-    np.testing.assert_allclose(jnp.sum(split.blue_populations, axis=-1), blue, atol=1e-14)
-    closure = split.red_populations + split.blue_populations
+    np.testing.assert_allclose(split[0], latva_kokko_red, atol=1e-15)
+    np.testing.assert_allclose(split[0], swapped[1], atol=1e-14)
+    np.testing.assert_allclose(split[1], swapped[0], atol=1e-14)
+    np.testing.assert_allclose(jnp.sum(split[0], axis=-1), red, atol=1e-14)
+    np.testing.assert_allclose(jnp.sum(split[1], axis=-1), blue, atol=1e-14)
+    closure = jnp.sum(split, axis=0)
     np.testing.assert_allclose(closure, total, atol=1e-14)
     np.testing.assert_allclose(
         oe.contract("...q,qd->...d", closure, lattice.velocities),
         oe.contract("...q,qd->...d", total, lattice.velocities),
         atol=1e-14,
     )
+
+    lattice = D2Q9()
+    generator = np.random.default_rng(7)
+    densities = jnp.asarray(generator.uniform(0.05, 1.0, (3, 3, 4)))
+    total = jnp.asarray(lattice.weights) * jnp.sum(densities, axis=0)[..., None]
+    total = total * jnp.asarray(generator.uniform(0.9, 1.1, (3, 4, 9)))
+    angles = generator.uniform(0.0, 2.0 * np.pi, (3, 3, 4))
+    normals = jnp.asarray(np.stack((np.cos(angles), np.sin(angles)), axis=-1))
+    beta = jnp.asarray((0.5, 0.7, 0.9))
+
+    split = recolor_populations(total, densities, normals, lattice, beta)
+
+    np.testing.assert_allclose(
+        jnp.sum(split, axis=-1),
+        densities * jnp.sum(total, axis=-1) / jnp.sum(densities, axis=0),
+        rtol=1e-13,
+    )
+    np.testing.assert_allclose(jnp.sum(split, axis=0), total, atol=1e-14)
+    # Relabel (0, 1, 2) -> (2, 1, 0): pairs (0,1), (0,2), (1,2) become the reversed
+    # pairs (2,1), (2,0), (1,0), so their normals flip and their strengths permute.
+    relabeled = recolor_populations(
+        total,
+        densities[::-1],
+        -normals[::-1],
+        lattice,
+        beta[::-1],
+    )
+    np.testing.assert_allclose(relabeled, split[::-1], atol=1e-14)
     lattice = D2Q9()
     count = 96
     coordinates = jnp.arange(count, dtype=jnp.float64) - 0.5 * count

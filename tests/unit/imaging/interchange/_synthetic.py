@@ -4,18 +4,10 @@ from io import BytesIO
 from typing import Any
 
 import numpy as np
-
-# ty: ignore[unresolved-import]
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
-
-# ty: ignore[unresolved-import]
 from pydicom.filewriter import dcmwrite
-
-# ty: ignore[unresolved-import]
 from pydicom.sequence import Sequence
-
-# ty: ignore[unresolved-import]
-from pydicom.uid import ExplicitVRLittleEndian
+from pydicom.uid import ExplicitVRLittleEndian, UID
 
 
 STUDY_UID = "1.2.826.0.1.3680043.10.999.1"
@@ -43,11 +35,11 @@ def sequence(*items: Any) -> Any:
 
 def _base(sop_class_uid: str, sop_instance_uid: str, modality: str) -> FileDataset:
     meta = FileMetaDataset()
-    meta.MediaStorageSOPClassUID = sop_class_uid
-    meta.MediaStorageSOPInstanceUID = sop_instance_uid
+    meta.MediaStorageSOPClassUID = UID(sop_class_uid)
+    meta.MediaStorageSOPInstanceUID = UID(sop_instance_uid)
     meta.TransferSyntaxUID = ExplicitVRLittleEndian
-    meta.ImplementationClassUID = "1.2.826.0.1.3680043.10.999.99"
-    dataset = FileDataset(None, {}, file_meta=meta, preamble=b"\x00" * 128)
+    meta.ImplementationClassUID = UID("1.2.826.0.1.3680043.10.999.99")
+    dataset = FileDataset(BytesIO(), {}, file_meta=meta, preamble=b"\x00" * 128)
     dataset.SOPClassUID = sop_class_uid
     dataset.SOPInstanceUID = sop_instance_uid
     dataset.StudyInstanceUID = STUDY_UID

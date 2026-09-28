@@ -204,6 +204,7 @@ python examples/advanced_capillary_wave.py
 python examples/advanced_rigid_hydroelastic_body.py
 python examples/advanced_two_phase_vof.py
 python examples/passive_tracer_maccormack.py
+python examples/advanced_rising_bubble.py
 ```
 
 These exercise variational graph capillarity, coherent wave forcing and absorption,
@@ -212,6 +213,95 @@ nonconservative bounded periodic passive tracer. See
 [Advanced hydrodynamics](../guides_advanced_hydrodynamics.md),
 [Structured finite volume](../guides_finite_volume.md), and
 [Two-phase hydrodynamics](../guides_two_phase_hydrodynamics.md).
+
+## Bubble dynamics and resolved bubbly flow
+
+```text
+python examples/advanced_acoustic_bubble.py
+python examples/advanced_contrast_agent_microbubble.py
+python examples/advanced_surface_nanobubble.py
+python examples/advanced_bubble_cloud.py
+python examples/advanced_bubble_coalescence.py
+python examples/advanced_thermocapillary_droplet.py
+python examples/advanced_bubble_evidence_exchange.py
+python examples/advanced_lbm_emulsion.py
+```
+
+- `advanced_acoustic_bubble.py` exercises a Keller--Miksis air bubble with
+  boundary-layer thermal gas, tone-burst forcing, and linear-response evidence.
+- `advanced_contrast_agent_microbubble.py` compares clean and Marmottant-shell
+  responses and recovers shell elasticity and viscosity by bounded inverse fitting.
+- `advanced_surface_nanobubble.py` evaluates pinned Lohse--Zhang stability and
+  free, pinned, and unpinned Epstein--Plesset dissolution.
+- `advanced_bubble_cloud.py` composes heterogeneous cloud dynamics, far-field
+  emission, Bjerknes forces, dense/FMM coupling, and retarded propagation.
+- `advanced_bubble_coalescence.py` runs marker-resolved near-contact drainage and
+  gated coalescence with separate pressure and contact-work ledgers.
+- `advanced_thermocapillary_droplet.py` transports material temperature and
+  compares Marangoni migration with the Young--Goldstein--Block control.
+- `advanced_bubble_evidence_exchange.py` creates an explicitly unaccepted
+  resolved-to-reduced request that retains missing impulse and flow-field
+  invariants rather than performing an automatic model handoff.
+- `advanced_lbm_emulsion.py` compares merging and pairwise-repelled N-color
+  emulsions while reporting mass, momentum, and near-contact-work evidence.
+
+The rising-bubble script in the preceding hydrodynamics block runs the Hysing TC1
+workflow and reports circularity, centroid, rise speed, volume, and solver evidence.
+The Hysing route remains a candidate until every declared campaign gate passes.
+
+## Surface films and interference color
+
+```text
+python examples/advanced_bubble_film_drainage.py
+python examples/advanced_soap_film_tunnel.py
+python examples/advanced_thin_film_iridescence.py
+```
+
+- `advanced_bubble_film_drainage.py` drains a spherical soap film with DLVO
+  disjoining pressure and reports conservation, positivity, and black-film
+  equilibrium evidence.
+- `advanced_soap_film_tunnel.py` runs a gravity-driven cylinder wake at
+  Reynolds number 150 with flux ledgers, film-Mach evidence, Strouhal
+  estimation, and an interference-color image; it requires `phydrax-meshcore`.
+- `advanced_thin_film_iridescence.py` renders an air--soap--air thickness and
+  viewing-angle sweep through Airy interference, spectral colorimetry, and sRGB
+  encoding, with fringe-sampling, energy, gamut, and white-balance evidence.
+
+## Threshold dynamics and explicit foam geometry
+
+```text
+python examples/advanced_foam_coarsening.py
+python examples/advanced_grain_growth_3d.py
+python examples/advanced_threshold_surface_seeding.py
+python examples/advanced_double_bubble.py
+python examples/advanced_catenoid_collapse.py
+python examples/advanced_foam_burst.py
+python examples/advanced_foam_bubble_oscillation.py
+python examples/advanced_plateau_border_drainage.py
+python examples/advanced_foam_iridescence.py
+python examples/advanced_biomembrane_remeshing.py
+```
+
+- `advanced_foam_coarsening.py` compares unconstrained threshold coarsening,
+  exact capacitated label volumes, and gas-diffusive von Neumann evolution.
+- `advanced_grain_growth_3d.py` runs capillarity-only grain growth with sparse
+  candidate labels and explicit stencil-support and dissipation evidence.
+- `advanced_threshold_surface_seeding.py` converts a hard-label field into a
+  collision-certified multiregion surface and prepares the foam equilibrium route.
+- `advanced_double_bubble.py` relaxes an unequal soap-film double bubble and
+  compares pressures and geometry with the closed-form reference.
+- `advanced_catenoid_collapse.py` continues to the catenoid stability limit,
+  then demonstrates certified remeshing, pinch, region split, and disk relaxation.
+- `advanced_foam_burst.py` deletes an accepted thin sheet, conserves liquid and
+  gas ledgers through the merge lineage, and advances the merged constrained cell.
+- `advanced_foam_bubble_oscillation.py` advances a volume-constrained quadrupole
+  with circulation-slot vortex air, regularized FMM, and bounded direct-error evidence.
+- `advanced_plateau_border_drainage.py` couples per-sheet film operators to a
+  physical Plateau-border network with liquid, surfactant, and evaporation ledgers.
+- `advanced_foam_iridescence.py` renders drained and ruptured foam surfaces with
+  support masks and verifies that rendering leaves the physical states unchanged.
+- `advanced_biomembrane_remeshing.py` sends a membrane face flip through the
+  shared certified surface-event transaction with sparse conservative transfers.
 
 ## Particle physics scripts
 

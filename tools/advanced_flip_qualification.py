@@ -54,12 +54,12 @@ def _case(count: Any) -> Any:
         0.05, interface_width=2.0 / count
     ).evaluate(interface)
     velocity = tuple(jnp.zeros(layout.shape) for layout in finite_volume.face_layouts)
-    return finite_volume, mac, ghost, interface, capillary, velocity
+    return finite_volume, mac, boundaries, ghost, interface, capillary, velocity
 
 
 def run(*, smoke: Any = False) -> Any:
     count = 8 if smoke else 24
-    finite_volume, mac, ghost, interface, capillary, velocity = _case(count)
+    finite_volume, mac, boundaries, ghost, interface, capillary, velocity = _case(count)
 
     @jax.jit
     def project(values: Any) -> Any:
@@ -84,8 +84,13 @@ def run(*, smoke: Any = False) -> Any:
     measures = phx.discretization.finite_volume.MACFreeSurfaceViscousMeasurePlan(
         mac, 1.0
     ).evaluate(interface, 0.1)
-    viscous = phx.solver.MACVariationalViscosityPlan(mac, tolerance=1.0e-7).solve(
-        projected.velocity, measures, 1.0e-3
+    momentum = phx.discretization.MACMomentumPlan(mac, boundaries=boundaries).prepare()
+    viscous = phx.solver.MACVariationalViscosityPlan(momentum, tolerance=1.0e-7).solve(
+        projected.velocity,
+        measures.face_density,
+        measures.cell_viscosity,
+        1.0e-3,
+        boundaries.homogeneous_stage(),
     )
     evidence_values = jnp.asarray(
         (

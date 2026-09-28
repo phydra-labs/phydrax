@@ -307,6 +307,38 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
         projected = value - mean
         return -self.weighted_laplacian(projected, face_inverse_momentum) + mean
 
+    def positive_gauged_weighted_laplacian_diagonal(
+        self,
+        face_inverse_momentum: FaceVelocity,
+        /,
+    ) -> Array:
+        """Exact diagonal of `positive_gauged_weighted_laplacian`.
+
+        Each gradient-carrying face couples its two cells through the conductance
+        ``c_f A_f / d_f``, where ``A_f d_f`` is the face dual measure. Wall faces
+        and single-cell periodic axes carry no gradient. The volume-weighted
+        gauge row adds ``V_i / sum(V)``.
+        """
+        coefficient = self.validate_velocity(face_inverse_momentum)
+        volumes = self.discretization.cell_volumes.astype(self.pressure_space.dtype)
+        diagonal = volumes / jnp.sum(volumes)
+        for axis, structured_axis in enumerate(self.discretization.grid.structured_axes):
+            measure = self.discretization.face_measures[axis]
+            conductance = jnp.moveaxis(
+                coefficient[axis] * measure * measure / self.face_dual_measures[axis],
+                axis,
+                0,
+            )
+            if structured_axis.periodic:
+                if conductance.shape[0] == 1:
+                    conductance = jnp.zeros_like(conductance)
+                incident = conductance + jnp.roll(conductance, -1, axis=0)
+            else:
+                conductance = conductance.at[0].set(0.0).at[-1].set(0.0)
+                incident = conductance[:-1] + conductance[1:]
+            diagonal = diagonal + jnp.moveaxis(incident, 0, axis) / volumes
+        return diagonal
+
     def positive_gauged_laplacian(self, pressure: ArrayLike, /) -> Array:
         value = self.validate_pressure(pressure)
         unit = tuple(

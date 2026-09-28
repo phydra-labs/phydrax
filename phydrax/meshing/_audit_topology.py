@@ -414,8 +414,8 @@ def _signs(result: Any) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-# Exact predicates when meshcore is available, otherwise the float64 filter
-# whose unresolved signs surface as an explicit unresolved disposition.
+# Meshcore adaptive predicates are used when available; the exact dyadic host
+# route resolves filtered-uncertain signs otherwise.
 def _orient3d(a: Any, b: Any, c: Any, d: Any, /) -> tuple[np.ndarray, np.ndarray]:
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
     return _signs(orient3d(a, b, c, d, mode=mode))
@@ -441,7 +441,13 @@ def _segment_crosses_triangle(
     edges = np.stack((first, second, third), axis=1).astype(np.int16)
     straddles = (side_a.astype(np.int16) * side_b <= 0) & ~((side_a == 0) & (side_b == 0))
     inside = np.all(edges >= 0, axis=1) | np.all(edges <= 0, axis=1)
-    certain = certain_a & certain_b & certain_1 & certain_2 & certain_3
+    known = np.stack((certain_1, certain_2, certain_3), axis=1)
+    plane_known = certain_a & certain_b
+    # A certified plane miss, or two certified opposite edge signs, decides the
+    # contact whatever the remaining signs are.
+    missed = plane_known & (side_a.astype(np.int16) * side_b > 0)
+    separated = np.any(known & (edges > 0), axis=1) & np.any(known & (edges < 0), axis=1)
+    certain = plane_known & (missed | separated | np.all(known, axis=1))
     return straddles & inside, certain
 
 
@@ -461,17 +467,25 @@ def _project(points: np.ndarray, axes: np.ndarray, /) -> np.ndarray:
 def _inside_triangle_2d(point: Any, triangle: Any, /, *, strict: bool) -> Any:
     p, q, r = triangle
     signs = []
-    certain = np.ones(point.shape[0], dtype=np.bool_)
+    certainties = []
     for start, stop in ((p, q), (q, r), (r, p)):
         sign, known = _orient2d(start, stop, point)
         signs.append(sign.astype(np.int16))
-        certain &= known
+        certainties.append(known)
     stacked = np.stack(signs, axis=1)
+    known = np.stack(certainties, axis=1)
+    # Two certified opposite signs (or, for strict containment, one certified
+    # zero) place the point outside whatever the unresolved signs are.
+    outside = np.any(known & (stacked > 0), axis=1) & np.any(
+        known & (stacked < 0), axis=1
+    )
     if strict:
         inside = np.all(stacked > 0, axis=1) | np.all(stacked < 0, axis=1)
+        outside |= np.any(known & (stacked == 0), axis=1)
     else:
         inside = np.all(stacked >= 0, axis=1) | np.all(stacked <= 0, axis=1)
-    return inside, certain
+    certain = np.all(known, axis=1) | outside
+    return inside & ~outside, certain
 
 
 def _coplanar_overlap(
@@ -605,7 +619,68 @@ def _triangle_pairs_intersect(
                 known &= ~relevant | certain_
         hit[crossing_rows] = contact
         certain[crossing_rows] &= known
+    unresolved = np.flatnonzero(~certain)
+    if unresolved.size:
+        disjoint = _projected_disjoint(
+            points,
+            first[unresolved],
+            second[unresolved],
+            tri_one[unresolved],
+            tri_two[unresolved],
+            shared[unresolved],
+        )
+        hit[unresolved[disjoint]] = False
+        certain[unresolved[disjoint]] = True
     return hit, certain
+
+
+def _projected_disjoint(
+    points: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    tri_one: np.ndarray,
+    tri_two: np.ndarray,
+    shared: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Certified disjointness beyond shared features from one coordinate projection.
+
+    On a coordinate plane where both triangles project nondegenerately each
+    triangle is a graph, so projections meeting only at shared features imply
+    3D intersection only there, whatever the exact coplanarity. This decides
+    near-coplanar pairs (flat sheets) left unresolved by filtered 3D signs.
+    """
+    axes = _projection_axes(tri_one)
+    projected_one = np.stack([_project(tri_one[:, index], axes) for index in range(3)], 1)
+    projected_two = np.stack([_project(tri_two[:, index], axes) for index in range(3)], 1)
+    sign_one, known_one = _orient2d(
+        projected_one[:, 0], projected_one[:, 1], projected_one[:, 2]
+    )
+    sign_two, known_two = _orient2d(
+        projected_two[:, 0], projected_two[:, 1], projected_two[:, 2]
+    )
+    graphs = known_one & known_two & (sign_one != 0) & (sign_two != 0)
+    disjoint = np.zeros(first.shape[0], dtype=np.bool_)
+    general = np.flatnonzero(graphs & (shared <= 1))
+    if general.size:
+        overlap, known = _coplanar_overlap(
+            tri_one[general], tri_two[general], shared[general]
+        )
+        disjoint[general] = known & ~overlap
+    edge_rows = np.flatnonzero(graphs & (shared == 2))
+    if edge_rows.size:
+        shared_mask = first[edge_rows][:, :, None] == second[edge_rows][:, None, :]
+        common = first[edge_rows][np.any(shared_mask, axis=2)].reshape(-1, 2)
+        free_one = points[first[edge_rows][~np.any(shared_mask, axis=2)]]
+        free_two = points[second[edge_rows][~np.any(shared_mask, axis=1)]]
+        local_axes = axes[edge_rows]
+        start = _project(points[common[:, 0]], local_axes)
+        stop = _project(points[common[:, 1]], local_axes)
+        side_one, known_side_one = _orient2d(start, stop, _project(free_one, local_axes))
+        side_two, known_side_two = _orient2d(start, stop, _project(free_two, local_axes))
+        opposite = side_one.astype(np.int16) * side_two < 0
+        disjoint[edge_rows] = known_side_one & known_side_two & opposite
+    return disjoint
 
 
 _EAR_WORKING_ENTRIES = 1 << 20

@@ -1,4 +1,7 @@
+import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -88,18 +91,31 @@ def test_advanced_foundations_scenario_2() -> None:
         result.polymer_stress_pa, result.polymer_stress_pa.swapaxes(-1, -2)
     )
     kinetics = phx.interfacial_transport.AdsorptionKinetics(0.1, 0.0, 1.0)
-    solver = phx.interfacial_transport.CoupledBulkSurfaceTransport.create(
+    solver = phx.interfacial_transport.CoupledBulkSurfaceTransport(
+        np.asarray(((0, 1),)),
+        np.asarray((0, 0)),
+        np.asarray((0, 1)),
+        np.asarray((1.0, 1.0)),
+        kinetics,
+        bulk_size=1,
+        surface_size=2,
+    )
+    with pytest.raises(AttributeError):
+        solver.tolerance = 1.0e-6
+    result = solver.advance(
+        jnp.asarray((1.0,)),
+        jnp.asarray((0.0, 0.0)),
         jnp.asarray((1.0,)),
         jnp.asarray((0.5, 0.5)),
-        jnp.asarray(((-1.0, 1.0), (1.0, -1.0))),
-        jnp.asarray(((1.0, 1.0),)),
-        kinetics,
+        jnp.asarray((1.0,)),
+        1.0,
     )
-    result = solver.advance(jnp.asarray((1.0,)), jnp.asarray((0.0, 0.0)), 1.0)
     assert bool(result.successful)
-    assert jnp.isclose(result.bulk_concentration_mol_m3[0], 0.9)
-    assert jnp.allclose(result.surface_concentration_mol_m2, 0.1)
-    assert jnp.isclose(result.total_mole_balance_residual, 0, atol=1e-12)
+    # Backward Euler with k_d = 0: Gamma = 1 - c and Gamma = 0.1 c (1 - Gamma).
+    bulk = (np.sqrt(1.4) - 1.0) / 0.2
+    assert jnp.isclose(result.bulk_amount_mol[0], bulk, rtol=1e-9)
+    assert jnp.allclose(result.surface_amount_mol, 0.5 * (1.0 - bulk), rtol=1e-9)
+    assert jnp.isclose(result.total_amount_residual_mol, 0, atol=1e-15)
     system = phx.structural_dynamics.LinearStructuralSystem.create(
         jnp.eye(2),
         jnp.zeros((2, 2)),
@@ -116,6 +132,61 @@ def test_advanced_foundations_scenario_2() -> None:
     assert bool(step.successful)
     assert step.equilibrium_residual_norm < 1e-10
     assert step.mechanical_energy_j > 0
+
+
+def test_advanced_foundations_scenario_3() -> None:
+    law = phx.interfacial_transport.LangmuirSurfactantLaw(0.072, 300.0, 2.0e-6)
+    surface_concentration = jnp.asarray(0.5e-6)
+    pressure_scale = 8.31446261815324 * 300.0 * 2.0e-6
+    expected_tension = 0.072 + pressure_scale * np.log(0.75)
+    np.testing.assert_allclose(
+        law.surface_tension(surface_concentration), expected_tension
+    )
+    np.testing.assert_allclose(
+        law.tension_derivative(surface_concentration),
+        -pressure_scale / 1.5e-6,
+    )
+    np.testing.assert_allclose(
+        law.gibbs_elasticity(surface_concentration),
+        surface_concentration * pressure_scale / 1.5e-6,
+    )
+
+    kinetics = phx.interfacial_transport.AdsorptionKinetics(0.1, 0.02, 2.0e-6)
+    expected_flux = 0.1 * 2.0 * 0.75 - 0.02 * 0.5e-6
+    np.testing.assert_allclose(
+        kinetics.rate(jnp.asarray(2.0), surface_concentration), expected_flux
+    )
+
+    wetting = phx.interfacial_transport.CoxVoinovWettingLaw(0.8, 1.0e-8, 1.0e-3)
+    expected_angle = np.cbrt(0.8**3 + 9.0e-3 * np.log(1.0e5))
+    np.testing.assert_allclose(wetting.dynamic_angle(jnp.asarray(1.0e-3)), expected_angle)
+
+    components = (law, kinetics, wetting)
+    parameters, model_state, fixed = phx.partition_parameters(components)
+    assert len(jax.tree_util.tree_leaves(parameters)) == 9
+    trained = phx.combine_parameters(
+        jax.tree_util.tree_map(lambda parameter: 1.01 * parameter, parameters),
+        model_state,
+        fixed,
+    )
+    assert not jnp.isclose(
+        trained[0].surface_tension(surface_concentration),
+        law.surface_tension(surface_concentration),
+    )
+    assert not jnp.isclose(
+        trained[1].rate(jnp.asarray(2.0), surface_concentration),
+        kinetics.rate(jnp.asarray(2.0), surface_concentration),
+    )
+    assert not jnp.isclose(
+        trained[2].dynamic_angle(jnp.asarray(1.0e-3)),
+        wetting.dynamic_angle(jnp.asarray(1.0e-3)),
+    )
+    with pytest.raises(AttributeError):
+        law.temperature_k = jnp.asarray(301.0)
+    with pytest.raises(AttributeError):
+        kinetics.adsorption_rate_m_s = jnp.asarray(0.2)
+    with pytest.raises(AttributeError):
+        wetting.equilibrium_angle_rad = jnp.asarray(0.9)
 
 
 def test_modal_and_frf_correlation_pair_permuted_modes() -> None:

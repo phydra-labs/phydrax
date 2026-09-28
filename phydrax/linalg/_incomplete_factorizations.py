@@ -16,14 +16,16 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
 from ..typing import parse
-from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
+from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
 from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import AbstractPreconditionerBuilder
+from ._properties import LinearCapabilityError
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._sparse_factorizations import (
+    _refresh_workspace_bytes,
     prepare_sparse_factorization,
     PreparedSparseFactorization,
     refresh_sparse_factorization,
@@ -144,6 +146,9 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
                     "diagonal_shift": policy.diagonal_shift,
                     "allow_pivot_replacement": policy.allow_pivot_replacement,
                     "replacement_value": policy.replacement_value,
+                    "max_factor_nnz": policy.max_factor_nnz,
+                    "max_factor_bytes": policy.max_factor_bytes,
+                    "max_symbolic_work": policy.max_symbolic_work,
                 },
             }
         )
@@ -180,7 +185,6 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
-        del materialization
         self.properties_for(setup_operator)
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
             return PreconditionerCostEstimate(
@@ -188,16 +192,32 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
                 accepted=False,
                 reason="sparse factorization requires canonical sparse operator storage",
             )
-        plan = prepare_sparse_factorization(setup_operator, self.policy())
+        try:
+            plan = prepare_sparse_factorization(
+                setup_operator,
+                self.policy(),
+                materialization=materialization,
+            )
+        except LinearCapabilityError as error:
+            return PreconditionerCostEstimate(
+                component=self.builder_id,
+                accepted=False,
+                reason=str(error),
+            )
         itemsize = setup_operator.sparse_storage().values.dtype.itemsize
         factor_entries = plan.factor_indices.size
         return PreconditionerCostEstimate(
             component=self.builder_id,
-            storage_bytes=_array_tree_storage_bytes(plan) + factor_entries * itemsize,
-            preparation_workspace_bytes=factor_entries * itemsize,
+            storage_bytes=plan.factor_bytes,
+            preparation_workspace_bytes=factor_entries * itemsize
+            + _refresh_workspace_bytes(plan, itemsize),
             apply_workspace_bytes_per_rhs=4 * plan.shape[0] * itemsize,
             accepted=True,
-            reason="fixed-pattern sparse factorization",
+            reason=(
+                "fixed-pattern sparse factorization; "
+                f"factor_nnz={plan.factor_nnz}, factor_bytes={plan.factor_bytes}, "
+                f"symbolic_work={plan.symbolic_work}"
+            ),
         )
 
     def prepare(
@@ -207,11 +227,14 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy,
     ) -> SparseFactorizationPreconditioner:
-        del materialization
         properties = self.properties_for(setup_operator)
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
             raise TypeError("Sparse factorization requires a sparse operator.")
-        plan = prepare_sparse_factorization(setup_operator, self.policy())
+        plan = prepare_sparse_factorization(
+            setup_operator,
+            self.policy(),
+            materialization=materialization,
+        )
         factorization = refresh_sparse_factorization(plan, setup_operator)
         return SparseFactorizationPreconditioner(
             setup_operator,

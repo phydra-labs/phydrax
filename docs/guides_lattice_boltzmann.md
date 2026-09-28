@@ -39,6 +39,7 @@ profile evaluation remains a candidate for one exact operating/deployment tuple.
 | Ratio-2 block refinement | Experimental infrastructure | Conservative restriction/prolongation and fixed subcycling schedule |
 | Collision-aware ratio-2 transfer | Experimental research path | Equilibrium/nonequilibrium transfer, acoustic scaling, half-time interface data, and local defects |
 | Phase-field, color-gradient, free-energy, thermal, passive species | Implemented research path | Separate distributions and explicit mass/energy/species ledgers |
+| N-color color-gradient with near-contact repulsion | Implemented research path | Density-matched; pairwise tensions from `InterfaceTensionMatrix`; conservative capillary stress; antisymmetric film force with a work ledger |
 | Single-source binary thermodynamics | Implemented research path | Energy, variational derivative, symmetric stress, and selected force share one closure |
 | Reactive species with Strang splitting | Implemented research path | Atomic rollback across flow, thermal, and species states |
 | D2V17 and off-lattice D2V37 smooth compressible kinetic methods | Implemented research path | Total energy is a kinetic population; off-lattice transport is explicit |
@@ -189,6 +190,114 @@ mesh-convergent agreement rather than assuming a discrete product rule.
 Every ledger separates initial amount, boundary exchange, volumetric source,
 reaction exchange where applicable, and residual. A coupled step commits all fields
 or rolls all fields back.
+
+## N-color immiscible flow and near-contact repulsion
+
+`ColorGradientLBMMethod` declares an ordered set of `N >= 2` component ids. The state
+`ColorGradientLBMState.color_populations` has shape `(N, *grid, Q)`; the binary model
+is the `N = 2` case of the same API. The mixture `f = sum_k f_k` collides once with the
+forced hydrodynamic method, is recolored pairwise, and every component is routed.
+Every pair axis follows `ColorGradientLBMMethod.component_pairs`, the canonical
+unordered pairs `(k, l)`, `k < l`, in component order.
+
+Pairwise tensions `sigma_kl` come from
+`phydrax.interfacial_transport.InterfaceTensionMatrix`, whose label ids must equal the
+method's component ids in order; the tension values are differentiable runtime
+parameters. For each pair (Spencer, Halliday and Care, Phys. Rev. E 82, 066701, 2010):
+
+- the pair phase field is `phi_kl = (rho_k - rho_l) / (rho_k + rho_l)` with unit
+  normal `n_kl` pointing into `k`;
+- the pair presence `C_kl = min(1, c_k c_l / threshold)`, `c_k = rho_k / rho`
+  (Leclaire, Reggio and Trépanier, J. Comput. Phys. 246, 318, 2013), removes the
+  ill-defined `phi_kl` where neither component is present;
+- the capillary force is the lattice divergence of the continuum surface stress
+  `S = sum_kl (sigma_kl / 2) C_kl |grad phi_kl| (I - n_kl n_kl)` (Lafaurie et al.,
+  J. Comput. Phys. 113, 134, 1994). In the continuum
+  `div(|grad phi| (I - n n)) = kappa grad phi` with `kappa = -div n`, which is the
+  Lishchuk–Care–Halliday body force `(sigma / 2) kappa grad phi`; discretely the
+  divergence of a stress telescopes, so capillarity carries no net momentum on a
+  periodic lattice (`ColorGradientDiagnostics.capillary_net_force_residual`);
+- recoloring follows Latva-Kokko and Rothman (Phys. Rev. E 71, 056702, 2005)
+  pairwise: `f_k,i = c_k f_i + sum_{l != k} beta_kl (rho_k rho_l / rho) w_i cos(n_kl, e_i)`.
+  Because `n_lk = -n_kl`, the pair terms cancel in the mixture, so every mixture
+  moment is unchanged and every component mass is preserved.
+  `recoloring_strength` is one `beta` for every pair or a symmetric zero-diagonal
+  `N x N` matrix.
+
+Static contact angles are per pair (`contact_angles`, measured through the first pair
+member). Young consistency across pairs of three or more components is the caller's
+responsibility and is not checked. The lattice gradient stencils are periodic; on
+non-periodic halfway walls they wrap across the domain faces. A binary drop on such a
+wall responds to the imposed angle (requested 60°, 90° and 120° gave apparent cap
+angles of 38°, 86° and 124° after 3000 steps on a 64 x 32 lattice) but does not settle
+at it, so no static-wetting accuracy is claimed.
+
+`NearContactRepulsionPlan` adds the short-range film repulsion of Montessori,
+Lauricella, Tirelli and Succi (J. Fluid Mech. 872, 327, 2019) for the declared
+component pairs, as an explicit sum over lattice node pairs `(x, x + v)`,
+`0 < |v| <= R`:
+
+```text
+m(x, v) = A_ab g(|v|) [w_a(x) s-_a(x) w_b(x + v) s+_b(x + v) + (a <-> b if a != b)]
+F(x)    = sum_v [m(x - v, v) - m(x, v)] e_v
+```
+
+with interface indicator `w_k = 4 c_k (1 - c_k)`, facing selectors
+`s-_k = max(0, -n_k . e_v)` and `s+_k = max(0, n_k . e_v)`, and kernel
+`g(d) = 1 - d / (R + 1)`. Every pair acts with equal and opposite forces, so the net
+force is zero to roundoff and the power `sum F . u` equals the Galilean-invariant pair
+sum `sum m e_v . (u(x + v) - u(x))`: the repulsion decelerates approaching films and
+does no work on uniform translation. `NearContactRepulsionEvidence` reports the net
+force, its residual, the power, the step work and the active pair count;
+`ColorGradientLBMState.near_contact_work` is the cumulative work ledger committed only
+by accepted steps. The strength `A_ab` is a physical force density (one runtime value
+per declared pair); it is a model parameter, not a calibrated disjoining-pressure
+isotherm.
+
+Scope and nonclaims: the route is for density-matched emulsions and wet foams.
+High-density-ratio bubbles remain with the VOF workflow. The interface mobility of a
+color-gradient model is set by `beta` and the relaxation rate, so
+`InterfaceMobilityMatrix` is not consumed. Ternary claims require tensions that satisfy
+the strict triangle inequality (a Neumann triangle exists; see
+`InterfaceTensionMatrix.admissibility`). Critical and complete-spreading states are not
+claimed.
+
+For D2Q9 in lattice units, BGK viscosity and relaxation obey
+`tau = 1/2 + 3 nu` and `omega = 1 / tau`. Viscosity controls the decay of
+hydrodynamic transients, but it is absent from the static Neumann force triangle:
+changing `nu` does not change the target Young/Herring angles set by the three
+pairwise tensions. Equilibrium qualification must therefore declare both the
+relaxation and enough time for the measured angles to become steady. The campaign
+changes physical viscosity only; it does not smooth or clip the simulated state.
+
+Qualification (`tools/color_gradient_lbm_qualification.py`, D2Q9, float64 CPU):
+
+- the `N = 2` static drop matches the Laplace law within 2.0 % and the pre-cutover
+  binary route within 0.07 %;
+- a liquid lens on a flat interface reproduces the Neumann angles within 0.24° for
+  equal tensions. The retained 3-4-5 diagnostic at `nu = 1/6` (`tau = 1`,
+  `omega = 1`) stays within 3.2° through 16000 steps but fails steadiness: the last
+  angle drift is 1.26°. Its width changes by only 0.35% while the baseline and both
+  cap apexes move by about 0.3 cells, identifying a capillary shape/translation mode.
+  At fixed R = 12, increasing the periodic height from 6R to 8R shifts the apparent
+  angles by as much as 2.36° and reduces far-interface variation, so the close periodic
+  companion interface materially couples to the mode. A spatially averaged far-field
+  estimator changes either angle by at most 0.62° and is not the cause;
+- the accepted 3-4-5 equilibrium campaign uses `nu = 1/3`, `tau = 1.5`,
+  `omega = 2/3` on proportionally scaled `9R x 8R` periodic domains (the companion
+  interface is 4R away), with no state filtering. R = 16 at 17500 steps gives
+  37.83°/52.33° and R = 18 at 22500 steps gives 37.22°/51.86°, versus
+  36.87°/53.13°. Maximum target errors are 0.96° and 1.27°, last-three-checkpoint
+  ranges are 0.79° and 0.31°, and the maximum cross-resolution difference is 0.60°.
+  The earlier R = 12 value is retained as pre-asymptotic evidence rather than used to
+  weaken the declared 2° convergence bound;
+- a ternary periodic rollout with repulsion conserves total momentum to a relative
+  1e-13 and every component mass to a relative 1e-13 over 2000 steps;
+- two pressed drops merge without repulsion and stay separate with it for the
+  declared 3000-step interval.
+
+`examples/advanced_lbm_emulsion.py` runs the four-drop emulsion with and without
+repulsion, plus a ternary variant.
 
 ## Smooth compressible discrete-velocity methods
 

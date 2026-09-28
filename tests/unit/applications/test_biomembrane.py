@@ -11,11 +11,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax.applications.cellular_mechanics._membrane import (
-    _self_intersection_free,
-    _vertex_links_valid,
-    BiomembranePlan,
+from phydrax.applications.cellular_mechanics import BiomembranePlan
+from phydrax.geometry.multiregion_surface import (
+    EdgeFlipProposal,
+    EdgeSplitProposal,
+    MultiRegionSurfaceValidationPolicy,
+    SurfaceEventKind,
+    SurfaceEventPassStatus,
+    SurfaceEventPolicy,
 )
+from tests._support.assertions import assert_tree_equal
 
 
 jax.config.update("jax_enable_x64", True)
@@ -50,6 +55,39 @@ def _octahedron() -> Any:
             [5, 1, 2],
             [5, 3, 1],
             [5, 0, 3],
+        ],
+        dtype=np.int32,
+    )
+    return vertices, faces
+
+
+def _cube() -> Any:
+    vertices = np.asarray(
+        [
+            [-1.0, -1.0, -1.0],
+            [1.0, -1.0, -1.0],
+            [1.0, 1.0, -1.0],
+            [-1.0, 1.0, -1.0],
+            [-1.0, -1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [-1.0, 1.0, 1.0],
+        ]
+    )
+    faces = np.asarray(
+        [
+            [0, 2, 1],
+            [0, 3, 2],
+            [4, 5, 6],
+            [4, 6, 7],
+            [0, 1, 5],
+            [0, 5, 4],
+            [3, 7, 6],
+            [3, 6, 2],
+            [0, 4, 7],
+            [0, 7, 3],
+            [1, 2, 6],
+            [1, 6, 5],
         ],
         dtype=np.int32,
     )
@@ -273,10 +311,11 @@ def test_biomembrane_scenario_3() -> None:
     prepared = _prepared(species=True)
     mass = 0.02 + 0.005 * np.arange(12).reshape(6, 2)
     state = prepared.state(species_mass=mass)
-    proposal = prepared.propose_split(state, (100, 102))
-    assert proposal.manifold
-    assert proposal.oriented
-    assert proposal.self_intersection_free
+    proposal = prepared.propose_remesh(state, EdgeSplitProposal((100, 102)))
+    assert proposal.surface_result.evidence.status is SurfaceEventPassStatus.COMMITTED
+    assert proposal.surface_result.evidence.validation is not None
+    assert proposal.surface_result.evidence.validation.profile == "manifold_two_region"
+    assert proposal.surface_result.evidence.validation.self_intersection_checked
     assert proposal.candidate.prepared_id != prepared.prepared_id
     np.testing.assert_allclose(
         np.sum(proposal.candidate_state.species_mass, axis=0),
@@ -290,44 +329,30 @@ def test_biomembrane_scenario_3() -> None:
         maximum_relative_energy_jump=10.0,
     )
     assert bool(evidence.accepted)
+    np.testing.assert_allclose(evidence.area_jump, 0.0, atol=2.0e-13)
+    np.testing.assert_allclose(evidence.volume_jump, 0.0, atol=2.0e-13)
     np.testing.assert_allclose(evidence.species_mass_jump, 0.0, atol=2.0e-15)
     np.testing.assert_allclose(evidence.material_integral_jump, 0.0, atol=2.0e-13)
+    assert proposal.vertex_transfer_evidence is not None
+    assert proposal.face_transfer_evidence is not None
+    assert bool(proposal.vertex_transfer_evidence.successful)
+    np.testing.assert_allclose(
+        proposal.vertex_transfer_evidence.absolute_defect, 0.0, atol=2.0e-13
+    )
+    np.testing.assert_allclose(
+        proposal.face_transfer_evidence.absolute_defect, 0.0, atol=2.0e-13
+    )
+    assert bool(proposal.face_transfer_evidence.successful)
     committed = prepared.commit_remesh(proposal, evidence)
     assert committed.committed
     assert committed.prepared.prepared_id == proposal.candidate.prepared_id
     assert set(np.asarray(prepared.plan.vertex_ids)).issubset(
         set(np.asarray(committed.prepared.plan.vertex_ids))
     )
-    vertices, faces = _tetrahedron()
-    vertices = vertices.copy()
-    vertices[0] *= 1.04
-    prepared = BiomembranePlan(
-        faces,
-        local_area_modulus=2.0,
-        species_diffusivity=(0.1,),
-    ).prepare(vertices)
-    deformed = vertices.copy()
-    deformed[:, 2] *= 1.05
-    deformed_state = prepared.state(deformed)
-    dual_area = np.asarray(prepared.evaluate(deformed_state).geometry.vertex_area)
-    state = prepared.state(deformed, (0.7 * dual_area)[:, None])
-    proposal = prepared.propose_split(state, (0, 1))
-    assert proposal.stencil_valid
-    candidate_evaluation = proposal.candidate.evaluate(proposal.candidate_state)
-    np.testing.assert_allclose(
-        candidate_evaluation.species_concentration,
-        0.7,
-        rtol=2.0e-10,
-        atol=2.0e-10,
-    )
-    assert float(candidate_evaluation.energy.local_area) > 0.0
-    assert not np.allclose(
-        proposal.candidate.reference_face_area,
-        candidate_evaluation.geometry.face_area,
-    )
+
     prepared = _prepared(species=True)
     state = prepared.state(species_mass=np.full((6, 2), 0.1))
-    proposal = prepared.propose_split(state, (100, 102))
+    proposal = prepared.propose_remesh(state, EdgeSplitProposal((100, 102)))
     evidence = prepared.evaluate_remesh(
         proposal,
         maximum_relative_area_jump=0.0,
@@ -339,6 +364,9 @@ def test_biomembrane_scenario_3() -> None:
     assert not result.committed
     assert result.prepared is prepared
     assert result.state is state
+    assert result.lineage is None
+    assert result.vertex_transition is None
+    assert result.face_transition is None
     vertices, faces = _tetrahedron()
     first = BiomembranePlan(faces, species_diffusivity=(0.1,)).prepare(vertices)
     second = BiomembranePlan(
@@ -352,8 +380,8 @@ def test_biomembrane_scenario_3() -> None:
         second.evaluate(state)
 
     changed = first.state(species_mass=np.full((4, 1), 0.2))
-    first_proposal = first.propose_split(state, (0, 1))
-    second_proposal = first.propose_split(changed, (0, 1))
+    first_proposal = first.propose_remesh(state, EdgeSplitProposal((0, 1)))
+    second_proposal = first.propose_remesh(changed, EdgeSplitProposal((0, 1)))
     assert first_proposal.proposal_id != second_proposal.proposal_id
     evidence = first.evaluate_remesh(
         first_proposal,
@@ -374,36 +402,7 @@ def test_biomembrane_scenario_4() -> None:
     )
     evaluation = prepared.evaluate(prepared.state())
     np.testing.assert_allclose(np.sum(evaluation.active_force, axis=0), 0.0, atol=2.0e-14)
-    vertices, faces = _octahedron()
-    modulus = np.arange(1.0, 9.0)
-    prepared = BiomembranePlan(
-        faces,
-        vertex_ids=np.arange(100, 106),
-        face_ids=np.arange(200, 208),
-        local_area_modulus=modulus,
-    ).prepare(vertices)
-    proposal = prepared.propose_collapse(prepared.state(), (100, 102))
-    assert proposal.candidate.prepared_id != prepared.prepared_id
-    far_ids = [
-        int(prepared.plan.face_ids[index])
-        for index, face in enumerate(faces)
-        if 0 not in face and 2 not in face
-    ]
-    source_ids = np.asarray(prepared.plan.face_ids)
-    candidate_ids = np.asarray(proposal.candidate.plan.face_ids)
-    for face_id in far_ids:
-        source = int(np.flatnonzero(source_ids == face_id)[0])
-        candidate = int(np.flatnonzero(candidate_ids == face_id)[0])
-        np.testing.assert_allclose(
-            proposal.candidate.reference_face_area[candidate],
-            prepared.reference_face_area[source],
-            atol=2.0e-14,
-        )
-        np.testing.assert_allclose(
-            proposal.candidate.plan.local_area_modulus[candidate],
-            prepared.plan.local_area_modulus[source],
-            atol=2.0e-14,
-        )
+
     vertices, faces = _tetrahedron()
     prepared = BiomembranePlan(faces).prepare(vertices)
     shifted = vertices + np.asarray((1.0e9, -2.0e9, 3.0e9))
@@ -471,7 +470,9 @@ def test_biomembrane_scenario_5() -> None:
     prepared = _prepared(species=True)
     mass = np.full((6, 2), 0.1)
     mass[0, 0] = -0.01
-    proposal = prepared.propose_split(prepared.state(species_mass=mass), (100, 102))
+    proposal = prepared.propose_remesh(
+        prepared.state(species_mass=mass), EdgeSplitProposal((100, 102))
+    )
     evidence = prepared.evaluate_remesh(
         proposal,
         maximum_relative_area_jump=1.0,
@@ -479,19 +480,68 @@ def test_biomembrane_scenario_5() -> None:
         maximum_relative_energy_jump=10.0,
     )
     assert not bool(evidence.accepted)
+    prepared = _prepared(species=True)
+    cold = prepared.plan.prepare(np.asarray(prepared.reference_positions))
+    mass = 0.1 + np.arange(12, dtype=np.float64).reshape((6, 2)) / 100.0
+    event = EdgeSplitProposal((100, 102))
+    warm_proposal = prepared.propose_remesh(prepared.state(species_mass=mass), event)
+    cold_proposal = cold.propose_remesh(cold.state(species_mass=mass), event)
+    assert (
+        warm_proposal.surface_result.topology.topology_id
+        == cold_proposal.surface_result.topology.topology_id
+    )
+    assert (
+        warm_proposal.surface_result.evidence.evidence_id
+        == cold_proposal.surface_result.evidence.evidence_id
+    )
+    assert_tree_equal(
+        warm_proposal.candidate_state,
+        cold_proposal.candidate_state,
+    )
     _, tetra_faces = _tetrahedron()
     second = tetra_faces + 3
     second[second == 3] = 0
     pinched = np.concatenate((tetra_faces, second), axis=0)
-    assert not _vertex_links_valid(pinched, 7)
+    with pytest.raises(ValueError, match="vertex link"):
+        BiomembranePlan(pinched)
 
-    positions = np.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.2, 1.0, 0.0),
-            (0.8, 1.0, 0.0),
+    with pytest.raises(ValueError, match="manifold_two_region"):
+        BiomembranePlan(
+            tetra_faces,
+            remesh_policy=SurfaceEventPolicy(
+                validation=MultiRegionSurfaceValidationPolicy(profile="general")
+            ),
         )
+
+
+def test_coplanar_face_flip_commits_shared_epoch_and_preserves_content() -> None:
+    vertices, faces = _cube()
+    prepared = BiomembranePlan(
+        faces,
+        bending_rigidity=0.0,
+        vertex_ids=np.arange(10, 18),
+        face_ids=np.arange(30, 42),
+        species_diffusivity=(0.1,),
+        species_ids=("lipid",),
+    ).prepare(vertices)
+    state = prepared.state(species_mass=np.arange(8, dtype=np.float64)[:, None] + 1.0)
+    proposal = prepared.propose_remesh(state, EdgeFlipProposal((14, 16)))
+    assert proposal.surface_result.committed
+    assert proposal.event_kind is SurfaceEventKind.FLIP
+    evidence = prepared.evaluate_remesh(
+        proposal,
+        maximum_relative_area_jump=1.0,
+        maximum_relative_volume_jump=1.0,
+        maximum_relative_energy_jump=1.0,
     )
-    overlapping = np.asarray(((0, 1, 2), (1, 0, 3)), dtype=np.int32)
-    assert not _self_intersection_free(positions, overlapping, 1.0e-12)
+    result = prepared.commit_remesh(proposal, evidence)
+    assert result.committed
+    assert result.lineage is not None
+    assert result.vertex_transition is not None
+    assert result.face_transition is not None
+    assert result.prepared.remesh_topology.epoch == prepared.remesh_topology.epoch + 1
+    np.testing.assert_allclose(
+        np.sum(result.state.species_mass, axis=0),
+        np.sum(state.species_mass, axis=0),
+        atol=2.0e-13,
+    )

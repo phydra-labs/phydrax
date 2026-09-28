@@ -8,9 +8,11 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.linalg.backends._native_krylov import _pcg_batched_raw
 
 
 la = phx.linalg
@@ -607,6 +609,155 @@ def test_matrix_free_iterative_system_and_least_squares_backends() -> None:
     assert pcg.diagnostics.iterations == 0
     assert pcg.diagnostics.matvec_count == 2
     assert pcg.diagnostics.adjoint_matvec_count == 0
+
+
+def test_batched_pcg_counts_only_executed_block_operator_actions() -> None:
+    size = 12
+    maximum_steps = 6
+    matrix = jnp.diag(jnp.linspace(1.0, 12.0, size))
+    action_calls: list[None] = []
+
+    def record_action() -> None:
+        action_calls.append(None)
+
+    def action(vector: Any) -> Any:
+        jax.debug.callback(record_action, ordered=True)
+        return matrix @ vector
+
+    def inner(left: Any, right: Any) -> Any:
+        return jnp.vdot(left, right)
+
+    def precondition(residual: Any, iteration: Any) -> Any:
+        del iteration
+        return residual
+
+    right_hand_sides = jnp.stack(
+        (
+            jnp.linspace(0.25, 1.25, size),
+            jnp.linspace(-1.0, 0.75, size),
+        ),
+        axis=1,
+    )
+
+    def run(values: Any) -> Any:
+        return _pcg_batched_raw(
+            action,
+            values,
+            jnp.zeros_like(values),
+            inner,
+            precondition,
+            maximum_steps,
+            jnp.asarray(0.0),
+            jnp.asarray(0.0),
+            step_limit=jnp.asarray(maximum_steps, dtype=jnp.int32),
+            driver="early-exit",
+        )
+
+    value, auxiliary = jax.jit(run)(right_hand_sides)
+    jax.block_until_ready((value, auxiliary))
+
+    expected_actions = maximum_steps + 2
+    assert len(action_calls) == expected_actions
+    np.testing.assert_array_equal(
+        auxiliary[0],
+        jnp.full((2,), maximum_steps, dtype=jnp.int32),
+    )
+    np.testing.assert_array_equal(
+        auxiliary[5],
+        jnp.full((2,), expected_actions, dtype=jnp.int32),
+    )
+
+
+def test_batched_pcg_mixed_nomination_preserves_each_lane_recurrence() -> None:
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
+    space = la.ArraySpace((4,), dtype=jnp.float64)
+    operator = la.FunctionLinearOperator(
+        lambda vector: matrix @ vector,
+        source=space,
+        target=space,
+        properties=_positive_definite_properties(),
+        operator_id="mixed-nomination-batched-pcg",
+    )
+    prepared = la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(
+            la.PCG(),
+            tolerance=la.TolerancePolicy(
+                relative=1.0e-12,
+                absolute=0.0,
+                max_steps=8,
+            ),
+            differentiation=la.DifferentiationPolicy("none"),
+        ),
+    )
+    right_hand_sides = jnp.stack(
+        (jnp.asarray([1.0, 0.0, 0.0, 0.0]), jnp.ones((4,))),
+        axis=1,
+    )
+
+    batched = jax.jit(lambda values: la.solve_many(prepared, values))(right_hand_sides)
+    scalar = jax.jit(lambda value: la.solve(prepared, value))(right_hand_sides[:, 1])
+
+    assert bool(jnp.all(batched.successful))
+    assert batched.diagnostics.iterations[0] == 1
+    assert batched.diagnostics.iterations[1] == scalar.diagnostics.iterations
+    np.testing.assert_array_equal(
+        batched.diagnostics.matvec_count,
+        jnp.full((2,), 8, dtype=jnp.int32),
+    )
+    np.testing.assert_allclose(
+        batched.value[:, 1],
+        scalar.value,
+        rtol=0.0,
+        atol=1.0e-15,
+    )
+    residuals = jnp.linalg.norm(
+        right_hand_sides - matrix @ batched.value,
+        axis=0,
+    )
+    thresholds = 1.0e-12 * jnp.linalg.norm(right_hand_sides, axis=0)
+    assert bool(jnp.all(residuals <= thresholds))
+
+
+def test_pcg_replaces_recursive_residual_before_true_residual_stop() -> None:
+    size = 48
+    random = np.random.default_rng(0)
+    basis, _ = np.linalg.qr(random.standard_normal((size, size)))
+    eigenvalues = np.logspace(0.0, 4.0, size)
+    matrix_host = np.asarray((basis * eigenvalues) @ basis.T, dtype=np.float32)
+    matrix = jnp.asarray(0.5 * (matrix_host + matrix_host.T))
+    right_hand_side = jnp.asarray(
+        random.standard_normal(size),
+        dtype=jnp.float32,
+    )
+    space = la.ArraySpace((size,), dtype=jnp.float32)
+    operator = la.FunctionLinearOperator(
+        lambda vector: matrix @ vector,
+        source=space,
+        target=space,
+        transpose_action=lambda vector: matrix.T @ vector,
+        properties=_positive_definite_properties(),
+        operator_id="pcg-recursive-residual-replacement",
+    )
+    relative_tolerance = 1.0e-4
+    result = la.solve(
+        la.LinearSystem(operator),
+        right_hand_side,
+        policy=la.LinearSolvePolicy(
+            la.PCG(),
+            tolerance=la.TolerancePolicy(
+                relative=relative_tolerance,
+                absolute=0.0,
+                max_steps=20 * size,
+            ),
+        ),
+    )
+    true_residual = jnp.linalg.norm(right_hand_side - matrix @ result.value)
+    threshold = relative_tolerance * jnp.linalg.norm(right_hand_side)
+
+    assert bool(result.successful)
+    assert int(result.diagnostics.matvec_count) > int(result.diagnostics.iterations) + 3
+    assert float(true_residual) <= float(threshold)
 
 
 def test_prepared_native_krylov_accepts_dynamic_per_solve_controls() -> None:

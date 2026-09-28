@@ -54,7 +54,6 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
     transfer: PreparedFLIPParticleTransfer
     densities: Array
     viscosities: Array
-    surface_tension: Array
     drag: Array
     phase_count: int = eqx.field(static=True)
     maximum_phases: int = eqx.field(static=True)
@@ -65,7 +64,6 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
         transfer: PreparedFLIPParticleTransfer,
         densities: ArrayLike,
         viscosities: ArrayLike,
-        surface_tension: ArrayLike,
         drag: ArrayLike | None = None,
         maximum_phases: int | None = None,
         /,
@@ -74,40 +72,35 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
             raise TypeError("transfer must be PreparedFLIPParticleTransfer.")
         rho = np.asarray(densities, dtype=np.float64)
         mu = np.asarray(viscosities, dtype=np.float64)
-        sigma = np.asarray(surface_tension, dtype=np.float64)
         if rho.ndim != 1 or rho.size < 1 or mu.shape != rho.shape:
             raise ValueError(
                 "Multiphase FLIP densities/viscosities must be phase vectors."
             )
         phase_count = rho.size
         maximum = phase_count if maximum_phases is None else int(maximum_phases)
-        if phase_count > maximum or sigma.shape != (phase_count, phase_count):
+        if phase_count > maximum:
             raise ValueError("Multiphase material arrays exceed maximum_phases.")
         drag_ = (
-            np.zeros_like(sigma) if drag is None else np.asarray(drag, dtype=np.float64)
+            np.zeros((phase_count, phase_count), dtype=np.float64)
+            if drag is None
+            else np.asarray(drag, dtype=np.float64)
         )
-        if drag_.shape != sigma.shape:
-            raise ValueError("Drag matrix must match the phase-pair shape.")
+        if drag_.shape != (phase_count, phase_count):
+            raise ValueError("Drag matrix must have shape (phase_count, phase_count).")
         if (
             np.any(rho <= 0.0)
             or np.any(mu < 0.0)
-            or np.any(sigma < 0.0)
             or np.any(drag_ < 0.0)
             or not np.all(np.isfinite(rho))
             or not np.all(np.isfinite(mu))
+            or not np.all(np.isfinite(drag_))
         ):
             raise ValueError("Multiphase material values are invalid.")
-        if (
-            not np.allclose(sigma, sigma.T)
-            or not np.allclose(np.diag(sigma), 0.0)
-            or not np.allclose(drag_, drag_.T)
-            or not np.allclose(np.diag(drag_), 0.0)
-        ):
-            raise ValueError("Pair matrices must be symmetric with zero diagonal.")
+        if not np.allclose(drag_, drag_.T) or not np.allclose(np.diag(drag_), 0.0):
+            raise ValueError("Drag matrix must be symmetric with zero diagonal.")
         self.transfer = transfer
         self.densities = jnp.asarray(rho)
         self.viscosities = jnp.asarray(mu)
-        self.surface_tension = jnp.asarray(sigma)
         self.drag = jnp.asarray(drag_)
         self.phase_count = phase_count
         self.maximum_phases = maximum
@@ -117,7 +110,6 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
                 "transfer": transfer.prepared_id,
                 "densities": array_tree_fingerprint(rho),
                 "viscosities": array_tree_fingerprint(mu),
-                "surface_tension": array_tree_fingerprint(sigma),
                 "drag": array_tree_fingerprint(drag_),
                 "maximum_phases": maximum,
             }

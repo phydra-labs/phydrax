@@ -100,6 +100,7 @@ from . import (
     system_modeling,
     thermal_systems,
     tribology,
+    threshold_dynamics,
     typing,
     smart_materials,
     chemo_mechanics,
@@ -111,6 +112,8 @@ from . import (
     optics,
     velocimetry,
     weighting,
+    # Bubble clouds compose spatial discretization and geometry; load them afterward.
+    bubble_dynamics,
 )
 from . import artifacts, events, observation
 from . import causal
@@ -305,6 +308,7 @@ __all__ = [
     "authority_admits",
     "axes",
     "backends",
+    "bubble_dynamics",
     "bind_component",
     "branch_policy_contract",
     "callable_payload",
@@ -411,6 +415,7 @@ __all__ = [
     "tensor_network",
     "tensor_train",
     "terms",
+    "threshold_dynamics",
     "thermal_systems",
     "topology",
     "transport",

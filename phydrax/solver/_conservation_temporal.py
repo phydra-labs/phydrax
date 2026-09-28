@@ -24,30 +24,66 @@ from ..linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
-from ._balance_law_composition import AdditiveIMEXTableau
+from ._balance_law_composition import (
+    _part_callables,
+    AdditiveIMEXTableau,
+    ImplicitCallbacks,
+)
 
 
 class ImplicitConservationStageResult(StrictModule):
+    """One diagonal implicit solve returned by an implicit-part solver.
+
+    ``status`` is the solver's own integer code (``None`` reports zero).
+    ``evidence`` is any array PyTree the solver hands to the consumer. Both
+    reach ``ConservationIMEXResult`` per stage.
+    """
+
     state: Array
     successful: Array
     iterations: Array
     residual_norm: Array
+    status: Array | None = None
+    evidence: Any = None
 
 
 class ConservationIMEXResult(StrictModule):
+    """IMEX step with aggregate and per-stage implicit-solve evidence.
+
+    Stage arrays have one entry per tableau stage. Explicit-only stages and
+    stages whose diagonal step vanishes report success with zero iterations,
+    residual and status. ``stage_evidence`` holds each solver's evidence:
+    ``None`` for explicit-only stages and zeros of the solver's structure when
+    the diagonal step vanished.
+    """
+
     candidate_state: Array
     accepted_state: Array
     successful: Array
     implicit_iterations: Array
     maximum_implicit_residual: Array
     method_id: str = eqx.field(static=True)
+    stage_successful: Array
+    stage_iterations: Array
+    stage_residual_norms: Array
+    stage_status: Array
+    stage_evidence: tuple[Any, ...]
 
 
 class ConservationIMEXMethod(StrictModule, NonTrainableState):
+    """Additive IMEX step of a conservative state with per-stage solve evidence.
+
+    ``implicit_rhs`` and ``implicit_solver`` hold one callback per implicit
+    part of the tableau (a bare callable for one part). A solver may commit a
+    conservative update built from fluxes at its nonlinear iterate; the stage
+    rate is then that exact increment divided by the diagonal step, so
+    conservation holds independently of the solve tolerance.
+    """
+
     tableau: AdditiveIMEXTableau
     explicit_rhs: Callable = eqx.field(static=True)
-    implicit_rhs: Callable = eqx.field(static=True)
-    implicit_solver: Callable = eqx.field(static=True)
+    implicit_rhs: tuple[Callable, ...] = eqx.field(static=True)
+    implicit_solver: tuple[Callable, ...] = eqx.field(static=True)
     validator: Callable = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
@@ -55,20 +91,17 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
         self,
         tableau: AdditiveIMEXTableau,
         explicit_rhs: Callable,
-        implicit_rhs: Callable,
-        implicit_solver: Callable,
+        implicit_rhs: ImplicitCallbacks,
+        implicit_solver: ImplicitCallbacks,
         /,
         *,
         validator: Callable | None = None,
         method_id: str,
     ) -> None:
-        if (
-            not isinstance(tableau, AdditiveIMEXTableau)
-            or not callable(explicit_rhs)
-            or not callable(implicit_rhs)
-            or not callable(implicit_solver)
-        ):
+        if not isinstance(tableau, AdditiveIMEXTableau) or not callable(explicit_rhs):
             raise TypeError("Conservation IMEX inputs are invalid.")
+        rates = _part_callables(implicit_rhs, tableau.part_count, "implicit_rhs")
+        solvers = _part_callables(implicit_solver, tableau.part_count, "implicit_solver")
         validator_ = (
             (lambda state: jnp.all(jnp.isfinite(state)))
             if validator is None
@@ -78,8 +111,8 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             raise ValueError("Conservation IMEX validator or ID is invalid.")
         self.tableau = tableau
         self.explicit_rhs = explicit_rhs
-        self.implicit_rhs = implicit_rhs
-        self.implicit_solver = implicit_solver
+        self.implicit_rhs = rates
+        self.implicit_solver = solvers
         self.validator = validator_
         self.method_id = canonical_fingerprint(
             {
@@ -97,6 +130,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> ConservationIMEXResult:
+        tableau = self.tableau
         time_ = jnp.asarray(time)
         value = jnp.asarray(state)
         step = jnp.asarray(step_size)
@@ -106,7 +140,10 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
         structures = eqx.filter_eval_shape(
             lambda candidate: (
                 jnp.asarray(self.explicit_rhs(time_, candidate, args)),
-                jnp.asarray(self.implicit_rhs(time_, candidate, args)),
+                *(
+                    jnp.asarray(rate(time_, candidate, args))
+                    for rate in self.implicit_rhs
+                ),
             ),
             value,
         )
@@ -114,101 +151,159 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             jnp.result_type(
                 value,
                 step,
-                self.tableau.weights,
+                tableau.weights,
                 *(structure.dtype for structure in structures),
             )
         )
-
-        def solver_shape(candidate: Array) -> Array:
-            result = self.implicit_solver(
-                candidate, time_, step * self.tableau.implicit_matrix[0, 0], args
-            )
-            if not isinstance(result, ImplicitConservationStageResult):
-                raise TypeError("Implicit conservation solver must return stage result.")
-            return jnp.asarray(result.state)
-
-        solved_structure = eqx.filter_eval_shape(solver_shape, value)
-        value = value.astype(jnp.result_type(value, solved_structure.dtype))
-        explicit_stages = []
-        implicit_stages = []
-        successful = (
-            jnp.all(jnp.isfinite(value)) & jnp.isfinite(time_) & jnp.isfinite(step)
+        # One trace per part solver yields the solved dtype and the evidence
+        # structure that a stage with a vanishing diagonal step zero-fills.
+        part_structures = eqx.filter_eval_shape(
+            lambda candidate: tuple(
+                (jnp.asarray(result.state), result.evidence)
+                for result in (
+                    _checked(solver(candidate, time_, step, args))
+                    for solver in self.implicit_solver
+                )
+            ),
+            value,
         )
-        iterations = jnp.asarray(0, dtype=jnp.int32)
-        maximum_residual = jnp.zeros((), dtype=value.real.dtype)
-        for stage in range(self.tableau.stage_count):
-            provisional = value
-            for previous in range(stage):
-                provisional = provisional + step * (
-                    self.tableau.explicit_matrix[stage, previous]
-                    * explicit_stages[previous]
-                    + self.tableau.implicit_matrix[stage, previous]
-                    * implicit_stages[previous]
-                )
-            stage_time = time_ + self.tableau.nodes[stage] * step
-            diagonal = self.tableau.implicit_matrix[stage, stage]
-            coefficient = step * diagonal
-
-            def solve_stage(provisional: Array) -> ImplicitConservationStageResult:
-                result = self.implicit_solver(provisional, stage_time, coefficient, args)
-                if not isinstance(result, ImplicitConservationStageResult):
-                    raise TypeError(
-                        "Implicit conservation solver must return stage result."
-                    )
-                return ImplicitConservationStageResult(
-                    jnp.asarray(result.state, dtype=value.dtype),
-                    jnp.asarray(result.successful, dtype=jnp.bool_),
-                    jnp.asarray(result.iterations, dtype=jnp.int32),
-                    jnp.asarray(jnp.abs(result.residual_norm), dtype=value.real.dtype),
-                )
-
-            stage_result = jax.lax.cond(
-                coefficient != 0.0,
-                solve_stage,
-                lambda provisional: ImplicitConservationStageResult(
+        value = value.astype(
+            jnp.result_type(value, *(state.dtype for state, _ in part_structures))
+        )
+        explicit_rates: list[Array | None] = []
+        implicit_rates: list[Array] = []
+        stage_values: list[Array] = []
+        records: list[ImplicitConservationStageResult] = []
+        for stage in range(tableau.stage_count):
+            provisional = tableau.provisional(
+                stage, value, step, explicit_rates, implicit_rates, stage_values
+            )
+            stage_time = time_ + tableau.nodes[stage] * step
+            part = tableau.implicit_parts[stage]
+            if part is None:
+                solved = provisional
+                rate = jnp.zeros_like(provisional)
+                record = _passive_stage(provisional, None)
+            else:
+                solved, rate, record = self._implicit_stage(
+                    part,
+                    step * tableau.implicit_matrix[stage, stage],
                     provisional,
-                    jnp.asarray(True),
-                    jnp.asarray(0, dtype=jnp.int32),
-                    jnp.zeros((), dtype=value.real.dtype),
-                ),
-                provisional,
-            )
-            stage_successful = (
-                stage_result.successful
-                & jnp.all(jnp.isfinite(stage_result.state))
-                & jnp.isfinite(stage_result.residual_norm)
-            )
-            solved = jnp.where(stage_successful, stage_result.state, provisional)
-            explicit_stages.append(self.explicit_rhs(stage_time, solved, args))
-            # Mask the denominator before division: an inactive 0/0 branch
-            # otherwise poisons reverse-mode derivatives through jnp.where.
-            safe_coefficient = jnp.where(coefficient != 0.0, coefficient, 1.0)
-            implicit_stages.append(
-                jnp.where(
-                    coefficient != 0.0,
-                    (solved - provisional) / safe_coefficient,
-                    self.implicit_rhs(stage_time, solved, args),
+                    stage_time,
+                    args,
+                    part_structures[part][1],
                 )
+            stage_values.append(solved)
+            implicit_rates.append(rate)
+            records.append(record)
+            explicit_rates.append(
+                self.explicit_rhs(stage_time, solved, args)
+                if tableau.explicit_rate_used(stage)
+                else None
             )
-            successful = successful & stage_successful
-            iterations = iterations + stage_result.iterations
-            maximum_residual = jnp.maximum(maximum_residual, stage_result.residual_norm)
-        candidate = value
-        for stage in range(self.tableau.stage_count):
-            candidate = candidate + step * self.tableau.weights[stage] * (
-                explicit_stages[stage] + implicit_stages[stage]
-            )
+        candidate = tableau.combine(
+            value, step, explicit_rates, implicit_rates, stage_values
+        )
+        stage_successful = jnp.stack([record.successful for record in records])
+        stage_iterations = jnp.stack([record.iterations for record in records])
+        stage_residuals = jnp.stack([record.residual_norm for record in records])
         successful = (
-            successful & jnp.all(jnp.isfinite(candidate)) & self.validator(candidate)
+            jnp.all(jnp.isfinite(value))
+            & jnp.isfinite(time_)
+            & jnp.isfinite(step)
+            & jnp.all(stage_successful)
+            & jnp.all(jnp.isfinite(candidate))
+            & self.validator(candidate)
         )
         return ConservationIMEXResult(
             candidate,
             jnp.where(successful, candidate, value),
             successful,
-            iterations,
-            maximum_residual,
+            jnp.sum(stage_iterations, dtype=jnp.int32),
+            jnp.max(stage_residuals),
             self.method_id,
+            stage_successful,
+            stage_iterations,
+            stage_residuals,
+            jnp.stack([jnp.asarray(record.status) for record in records]),
+            tuple(record.evidence for record in records),
         )
+
+    def _implicit_stage(
+        self,
+        part: int,
+        coefficient: Array,
+        provisional: Array,
+        stage_time: Array,
+        args: Any,
+        evidence_structure: Any,
+        /,
+    ) -> tuple[Array, Array, ImplicitConservationStageResult]:
+        solver = self.implicit_solver[part]
+        result = jax.lax.cond(
+            coefficient != 0.0,
+            lambda value: _normalized(
+                _checked(solver(value, stage_time, coefficient, args)), value
+            ),
+            lambda value: _passive_stage(value, evidence_structure),
+            provisional,
+        )
+        stage_successful = (
+            result.successful
+            & jnp.all(jnp.isfinite(result.state))
+            & jnp.isfinite(result.residual_norm)
+        )
+        solved = jnp.where(stage_successful, result.state, provisional)
+        # Mask the denominator before division: an inactive 0/0 branch
+        # otherwise poisons reverse-mode derivatives through jnp.where.
+        safe_coefficient = jnp.where(coefficient != 0.0, coefficient, 1.0)
+        rate = jnp.where(
+            coefficient != 0.0,
+            (solved - provisional) / safe_coefficient,
+            self.implicit_rhs[part](stage_time, solved, args),
+        )
+        record = ImplicitConservationStageResult(
+            solved,
+            stage_successful,
+            result.iterations,
+            result.residual_norm,
+            result.status,
+            result.evidence,
+        )
+        return solved, rate, record
+
+
+def _checked(result: Any, /) -> ImplicitConservationStageResult:
+    if not isinstance(result, ImplicitConservationStageResult):
+        raise TypeError("Implicit conservation solver must return stage result.")
+    return result
+
+
+def _normalized(
+    result: ImplicitConservationStageResult, provisional: Array, /
+) -> ImplicitConservationStageResult:
+    return ImplicitConservationStageResult(
+        jnp.asarray(result.state, dtype=provisional.dtype),
+        jnp.asarray(result.successful, dtype=jnp.bool_),
+        jnp.asarray(result.iterations, dtype=jnp.int32),
+        jnp.asarray(jnp.abs(result.residual_norm), dtype=provisional.real.dtype),
+        jnp.asarray(0 if result.status is None else result.status, dtype=jnp.int32),
+        result.evidence,
+    )
+
+
+def _passive_stage(
+    provisional: Array, evidence: Any, /
+) -> ImplicitConservationStageResult:
+    """Return the record of a stage without a solve; evidence is zero-filled."""
+    return ImplicitConservationStageResult(
+        provisional,
+        jnp.asarray(True),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.zeros((), dtype=provisional.real.dtype),
+        jnp.asarray(0, dtype=jnp.int32),
+        jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, leaf.dtype), evidence),
+    )
 
 
 class ElementBlockPreconditioner(StrictModule):

@@ -53,7 +53,6 @@ def _rules_literal(rules: dict[int, tuple[np.ndarray, np.ndarray]], /) -> str:
 
 def _simplex_rules(modepy_root: Path, /) -> Any:
     sys.path.insert(0, str(modepy_root))
-    # ty: ignore[unresolved-import]
     from modepy.quadrature.xiao_gimbutas import XiaoGimbutasSimplexQuadrature
 
     def family(dimension: int, degrees: tuple[int, ...]) -> Any:

@@ -11,12 +11,19 @@ import opt_einsum as oe
 import pytest
 
 import phydrax as phx
+from phydrax.discretization import lattice_boltzmann
 from phydrax.discretization.lattice_boltzmann._collision import (
     collide_bgk,
     collide_trt,
     quadratic_equilibrium,
 )
 from phydrax.discretization.lattice_boltzmann._forcing import guo_raw_source
+
+
+def test_lattice_boltzmann_module_facade_is_public() -> None:
+    assert "lattice_boltzmann" in phx.discretization.__all__
+    assert lattice_boltzmann is phx.discretization.lattice_boltzmann
+    assert lattice_boltzmann.D2Q9 is phx.discretization.D2Q9
 
 
 def _cell_grid(shape: Any, *, periodic: Any = None, lengths: Any = None) -> Any:

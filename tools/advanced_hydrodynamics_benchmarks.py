@@ -13,6 +13,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import phydrax as phx
 
@@ -93,11 +94,21 @@ def _measure_graph(shape: Any, repeats: Any, *, capillary: Any, wave: Any) -> An
     }
 
 
+def _drop_fraction(cells: int, radius: float, samples: int = 16) -> np.ndarray:
+    """Liquid fraction of the centered drop from ``samples²`` points per cell."""
+
+    offsets = (np.arange(samples) + 0.5) / (samples * cells)
+    x = (np.arange(cells)[:, None] / cells + offsets).reshape(-1)
+    inside = (x[:, None] - 0.5) ** 2 + (x[None, :] - 0.5) ** 2 < radius**2
+    return inside.reshape(cells, samples, cells, samples).mean(axis=(1, 3))
+
+
 def _measure_two_phase(repeats: Any) -> Any:
+    cells = 32
     grid = phx.discretization.TensorGridPlan(
         (
-            phx.discretization.UniformCellAxisSpec(8, periodic=True),
-            phx.discretization.UniformCellAxisSpec(8, periodic=True),
+            phx.discretization.UniformCellAxisSpec(cells, periodic=True),
+            phx.discretization.UniformCellAxisSpec(cells, periodic=True),
         ),
         axis_names=("x", "y"),
     ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
@@ -111,8 +122,9 @@ def _measure_two_phase(repeats: Any) -> Any:
             gas_density=10.0,
             surface_tension=0.072,
         ),
+        maximum_iterations=4000,
     ).prepare()
-    alpha = jnp.where(jnp.indices((8, 8))[0] < 4, 1.0, 0.0)
+    alpha = jnp.asarray(_drop_fraction(cells, 0.3))
     method = phx.applications.two_phase_flow.IncompressibleTwoPhaseVOFMethod(two_phase)
     state = method.initial_continuation(two_phase.initial_state(alpha))
     step = eqx.filter_jit(method.step)
@@ -135,10 +147,10 @@ def _measure_two_phase(repeats: Any) -> Any:
     execution = (time.perf_counter() - started) / repeats
     return {
         "product": "two-phase-vof",
-        "shape": [8, 8],
+        "shape": [cells, cells],
         "compile_seconds": compile_seconds,
         "execution_seconds": execution,
-        "cell_updates_per_second": 64 / execution,
+        "cell_updates_per_second": cells**2 / execution,
         "successful": bool(result.successful),
     }
 

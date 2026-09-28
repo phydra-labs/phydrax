@@ -1077,6 +1077,36 @@ the accepted numerical operator before applying its pullback. Morton ordering,
 node membership, and opening decisions remain piecewise-constant topology;
 positions and masses remain differentiable within the accepted branch.
 
+`evaluate_monopole` exposes the same pass chain as a signed Laplace monopole
+field. `prepare_structure` builds the position-dependent part once as a
+`PreparedUniformFMMStructure`: the Morton plane schedule and sorted point
+order, the dual-tree far/near lists with their reduction orders, and the near
+pair routes. Each `evaluate_monopole(structure, strengths)` call consumes only
+the strength vector and returns a `LaplaceMonopoleFieldResult` with
+`potential[i] = G * sum_{j != i} q[j] / sqrt(|x[i] - x[j]|**2 + eps**2)` over
+active sources and `gradient[i]`, the true derivative of `potential[i]` with
+respect to `x[i]`. The gradient is the acceleration `evaluate` returns for
+masses equal to `q`. Strengths are signed, so zero-net and dipole-like source
+sets are valid; inactive rows are zero. `G` and `eps` are the plan's
+`gravitational_constant` and `softening`. The result carries the same
+`CartesianFMMResourceEvidence`. Capacity exhaustion or an active point outside
+the box sets `successful` to false; it is not raised. The structure is a PyTree
+whose metadata is static, so a matrix-free Krylov solve can close over it
+inside `jax.jit` and `lax.while_loop` and refresh strengths on every
+iteration. The gravity route `evaluate` composes the same preparation and
+kernel. Plans with `short_range_scale` are refused. With the Pallas P2P
+backend, the near gradient uses that kernel; the near potential sum is plain
+JAX.
+
+```python
+plan = phx.solver.UniformFMMPlan(
+    1.0, phx.solver.CartesianExpansionSpace(5), softening=0.01
+)
+structure = plan.prepare_structure(positions, box_size=(1.0, 1.0, 1.0), depth=8)
+field = plan.evaluate_monopole(structure, strengths)
+refreshed = plan.evaluate_monopole(structure, new_strengths)
+```
+
 The Cartesian particle FMM is free-space only. `TreePMPlan` may select a
 `UniformFMMPlan` prepared with matching `short_range_scale` and
 `short_range_cutoff`; its high-order Cartesian M2L then evaluates the same

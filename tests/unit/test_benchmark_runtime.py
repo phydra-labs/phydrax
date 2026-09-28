@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
@@ -14,6 +16,9 @@ import numpy as np
 import pytest
 
 from benchmarks._runtime import (
+    benchmark_driver_fingerprint,
+    BenchmarkIdentity,
+    capture_benchmark_identity,
     capture_environment,
     compiler_evidence,
     CompilerEvidence,
@@ -24,9 +29,12 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
     measure_synchronized,
+    source_build_fingerprint,
     synchronize,
+    validate_benchmark_record,
 )
 from phydrax._fingerprint import canonical_fingerprint
+from phydrax.applications.two_phase_flow import TwoPhaseStepEvidence
 
 
 def test_benchmark_runtime_scenario_1() -> None:
@@ -227,3 +235,87 @@ def test_captured_environment_records_xla_worker_count(monkeypatch: Any) -> None
     monkeypatch.setenv("NPROC", "3")
     environment = capture_environment()
     assert dict(environment.performance_environment)["NPROC"] == "3"
+
+
+def _benchmark_source_tree(root: Path) -> Path:
+    (root / "phydrax").mkdir()
+    (root / "benchmarks").mkdir()
+    (root / "phydrax" / "model.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (root / "benchmarks" / "_runtime.py").write_text("RUNTIME = 1\n", encoding="utf-8")
+    driver = root / "benchmarks" / "driver.py"
+    driver.write_text("DRIVER = 1\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    (root / "uv.lock").write_text("revision = 1\n", encoding="utf-8")
+    return driver
+
+
+def _stored_record(identity: BenchmarkIdentity) -> dict[str, Any]:
+    return {
+        "identity": identity.to_dict(),
+        "cases": [{"last_step_evidence": {"accepted": True, "residual": 0.0}}],
+    }
+
+
+def test_benchmark_identity_detects_source_mutation(tmp_path: Path) -> None:
+    driver = _benchmark_source_tree(tmp_path)
+    initial = capture_benchmark_identity(tmp_path, driver, ("accepted", "residual"))
+    stored = _stored_record(initial)
+
+    source = tmp_path / "phydrax" / "model.py"
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    changed = capture_benchmark_identity(tmp_path, driver, ("accepted", "residual"))
+
+    assert source_build_fingerprint(tmp_path) != initial.source_build_fingerprint
+    with pytest.raises(ValueError, match="source/build fingerprint"):
+        validate_benchmark_record(stored, changed)
+
+
+def test_benchmark_identity_detects_driver_mutation(tmp_path: Path) -> None:
+    driver = _benchmark_source_tree(tmp_path)
+    initial = capture_benchmark_identity(tmp_path, driver, ("accepted", "residual"))
+    stored = _stored_record(initial)
+
+    driver.write_text("DRIVER = 2\n", encoding="utf-8")
+    changed = capture_benchmark_identity(tmp_path, driver, ("accepted", "residual"))
+
+    assert (
+        benchmark_driver_fingerprint(tmp_path, driver)
+        != initial.benchmark_driver_fingerprint
+    )
+    with pytest.raises(ValueError, match="driver fingerprint"):
+        validate_benchmark_record(stored, changed)
+
+
+def test_benchmark_record_rejects_evidence_schema_field_set_mismatch(
+    tmp_path: Path,
+) -> None:
+    driver = _benchmark_source_tree(tmp_path)
+    identity = capture_benchmark_identity(tmp_path, driver, ("accepted", "residual"))
+    stored = _stored_record(identity)
+    stored["identity"]["evidence_schema"]["fields"] = ["accepted"]
+
+    with pytest.raises(ValueError, match="evidence field set/signature"):
+        validate_benchmark_record(stored, identity)
+
+
+def test_benchmark_record_rejects_case_evidence_field_set_mismatch(
+    tmp_path: Path,
+) -> None:
+    driver = _benchmark_source_tree(tmp_path)
+    identity = capture_benchmark_identity(tmp_path, driver, ("accepted", "residual"))
+    stored = _stored_record(identity)
+    stored["cases"][0]["last_step_evidence"].pop("residual")
+
+    with pytest.raises(ValueError, match="evidence field set"):
+        validate_benchmark_record(stored, identity)
+
+
+def test_current_two_phase_vof_benchmark_record_validates() -> None:
+    root = Path(__file__).resolve().parents[2]
+    driver = root / "benchmarks" / "two_phase_vof_step.py"
+    record_path = driver.with_suffix(".json")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    evidence_fields = tuple(field.name for field in fields(TwoPhaseStepEvidence))
+    identity = capture_benchmark_identity(root, driver, evidence_fields)
+
+    validate_benchmark_record(record, identity)
