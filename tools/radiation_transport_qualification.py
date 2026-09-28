@@ -154,6 +154,24 @@ def qualify() -> dict[str, object]:
         jnp.asarray((300.0,)),
     )
     imc = imc_plan.advance(imc_state, 1.0e-3, jr.key(3))
+    pair_threshold, _ = phx.equations.bethe_heitler_pair_cross_section_m2(
+        jnp.asarray((2.0 * 510998.95069, 1.0e10)), jnp.asarray(82.0)
+    )
+    suppression_identity = phx.equations.bremsstrahlung_suppression_factor(
+        jnp.asarray(1.0e9), jnp.asarray(1.0e6)
+    )
+    cherenkov_count, cherenkov_energy = phx.equations.cherenkov_yield_in_band(
+        jnp.asarray(0.1),
+        jnp.asarray(0.99),
+        jnp.asarray(1.5),
+        300.0e-9,
+        600.0e-9,
+    )
+    shower_depth = jnp.linspace(1.0e-6, 60.0, 20000)
+    shower_profile = phx.equations.longo_shower_profile(
+        shower_depth, jnp.asarray(1.0e10), jnp.asarray(8.0e7), incident="photon"
+    )
+    shower_normalization = jnp.trapezoid(shower_profile, shower_depth)
     transfer = phx.applications.astrophysics.RayTransferPlan(
         jnp.asarray(((1.0, 1.0),)), ray_id="qualification-ray"
     )
@@ -175,10 +193,18 @@ def qualify() -> dict[str, object]:
         "charged": bool(charged.all_successful),
         "imc_ddmc": bool(imc.successful),
         "spectral_experiment": bool(experiment.successful),
+        "matter_processes": bool(
+            (pair_threshold[0] == 0.0)
+            & (pair_threshold[1] > 0.0)
+            & (suppression_identity == 1.0)
+            & (cherenkov_count > 0.0)
+            & (cherenkov_energy > 0.0)
+            & (jnp.abs(shower_normalization - 1.0) < 1.0e-5)
+        ),
     }
     return {
         "qualification": "radiation-transport-native-closure",
-        "evidence_scope": "synthetic-numerical-validity-only",
+        "evidence_scope": "native-analytic-and-synthetic-numerical-validity-only",
         "checks": checks,
         "metrics": {
             "photon_ledger": float(photon.maximum_ledger_residual),
@@ -186,6 +212,10 @@ def qualify() -> dict[str, object]:
             "sn_balance": float(sn.evidence.global_balance_residual),
             "charged_ledger": float(charged.maximum_kinetic_ledger_residual),
             "imc_ledger": float(imc.evidence.energy_residual),
+            "pair_high_energy_cross_section_m2": float(pair_threshold[1]),
+            "cherenkov_count": float(cherenkov_count),
+            "cherenkov_energy_ev": float(cherenkov_energy),
+            "longo_profile_normalization": float(shower_normalization),
         },
         "successful": all(checks.values()),
     }

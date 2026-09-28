@@ -1082,7 +1082,7 @@ def _fgmres_raw(
         iteration_state,
     )
     cycles = (max_steps + restart - 1) // restart
-    columns = jnp.arange(restart)
+    columns = jnp.arange(restart, dtype=jnp.int32)
 
     def reduced_solve(hessenberg: Array, reduced_rhs: Array, steps: Array) -> Array:
         active_columns = columns < steps

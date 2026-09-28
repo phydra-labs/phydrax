@@ -406,9 +406,9 @@ lepton, charge, polarization, and conservation ledgers remain visible.
 rays with separate content-bound metric/chart identities and capture/escape/domain/work
 event priority; parallel screen/Jacobi evidence;
 fast-/slow-light plasma sampling, including exact chart/path/snapshot-bound active-
-segment midpoint preparation; MNY96 Stokes-$I$ thermal synchrotron with validated
-$K_2$ support and explicitly reference-unqualified polarization/Faraday approximations;
-typed polarized ray paths; invariant transfer; JANSKY-aware Stokes images; direct
+segment midpoint preparation; the GR-invariant conversion of local emission
+coefficients owned by `phydrax.electromagnetics` (MNY96 thermal synchrotron,
+thermal free–free); typed polarized ray paths; invariant transfer; JANSKY-aware Stokes images; direct
 visibilities and gain-invariant closure products; neutral FITS/UVFITS payloads; and
 fixed-event-branch inference.
 

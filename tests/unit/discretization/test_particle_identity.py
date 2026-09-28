@@ -81,6 +81,27 @@ def test_allocation_assigns_identities_in_event_order_not_request_order() -> Non
     assert (int(accepted.next_id_hi), int(accepted.next_id_lo)) == (0, 4)
 
 
+def test_padded_int32_request_fills_every_valid_row_including_slot_zero() -> None:
+    plan = _plan(5)
+    state = plan.initialize(
+        active_mask=jnp.asarray([False, True, False, True, True]),
+        masses=jnp.asarray([0.0, 1.0, 0.0, 1.0, 1.0]),
+    )
+    # Fixed-width requests pad with invalid rows beyond the free slots.
+    request = phx.discretization.ParticleAllocationRequest(
+        jnp.arange(4, dtype=jnp.int32),
+        jnp.full((4,), 2.0),
+        jnp.asarray([True, True, False, False]),
+    )
+    result = plan.allocate(state, request)
+    assert bool(result.successful)
+    np.testing.assert_array_equal(result.slots, [0, 2, -1, -1])
+    accepted = result.accepted_state
+    np.testing.assert_array_equal(accepted.active, [True] * 5)
+    np.testing.assert_array_equal(accepted.mass, [2.0, 1.0, 2.0, 1.0, 1.0])
+    assert [_identity(accepted, slot) for slot in (0, 2)] == [3, 4]
+
+
 def test_identities_stay_unique_across_slot_reuse_and_deactivation_cycles() -> None:
     plan = _plan(4)
     state = plan.initialize(

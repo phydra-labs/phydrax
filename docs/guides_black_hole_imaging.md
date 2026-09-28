@@ -88,7 +88,10 @@ unless separately evaluated.
 
 ## Thermal synchrotron microphysics
 
-`ThermalSynchrotronModel` is capability-scoped. Its Stokes-$I$ shape is
+Local emission coefficients are owned by `phydrax.electromagnetics`; see
+[Plasma waves and emission](guides_plasma_waves_and_emission.md). The GR imaging
+path uses its fast thermal route, `phydrax.electromagnetics.ThermalSynchrotronModel`,
+which is capability-scoped. Its Stokes-$I$ shape is
 Mahadevan--Narayan--Yi (1996), equation 31, only for
 $T_e\ge3.2\times10^{10}\,\mathrm K$, with the published maximum relative shape error
 $0.027$ at normalized frequency $160$. The default numeric intersection additionally
@@ -101,7 +104,8 @@ Its independent piecewise degree-12 Chebyshev approximation to
 $\log K_2(z)$ covers $10^{-3}\le z\le10^3$ and records uniform log-error bounds below
 $10^{-10}$ in float64 and $2\times10^{-4}$ after float32 rounding against 600,006
 validation nodes. Panel boundaries remain derivative boundaries.
-`ThermalSynchrotronUnitContract` requires the exact SI relativity scale and reports
+`ThermalSynchrotronUnitContract` requires the CODATA 2022 SI
+`ElectromagneticScaleContract` (all constants are read from it) and reports
 emissivity, absorption, intensity, frequency, temperature, magnetic-field, and number-
 density units.
 
@@ -112,7 +116,10 @@ rotation/conversion are independent approximations marked
 `unqualified-independent-approximation`. When either is active,
 `polarization_reference_valid` or `faraday_reference_valid` is false, so the composite
 polarized coefficients are not reference-qualified even if finite and in the Stokes-$I$
-domain. `invariant_synchrotron_coefficients` preserves that disposition.
+domain. `invariant_emission_coefficients` converts these coefficients, or the
+unpolarized `ThermalFreeFreeCoefficients` evaluated on the SI scale at
+$\omega=2\pi\nu$ (with $j_\nu=2\pi j_\omega$), to the invariant convention and
+preserves their qualification disposition.
 
 ## Invariant transfer
 

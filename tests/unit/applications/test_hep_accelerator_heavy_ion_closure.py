@@ -57,16 +57,22 @@ def test_hep_accelerator_heavy_ion_closure_scenario_1() -> None:
     assert bool(tracked.finite)
     assert jnp.all(tracked.bunch.active)
 
-    wake = accelerator.apply_longitudinal_wake(
-        accelerator.LongitudinalWakePlan(
-            jnp.asarray([-1.0, 0.0, 1.0]),
-            jnp.asarray([0.1, 0.05]),
-            kick_scale=0.01,
+    wake = accelerator.apply_wake(
+        accelerator.WakeFunctionPlan(
+            "longitudinal",
+            jnp.asarray([0.0, 1.0, 2.0]),
+            jnp.asarray([0.1, 0.05, 0.0]),
+            units="V/C",
+            causality_convention="behind-positive",
         ),
         bunch,
+        phx.ElectromagneticScaleContract.si(),
+        bin_count=2,
     )
     assert bool(wake.finite)
     assert jnp.any(wake.kicks != 0.0)
+    assert float(wake.energy_change) < 0.0
+    assert float(wake.causality_defect) == 0.0
     qcd = phx.applications.lattice_field
     table = qcd.QCDTransportTable(
         jnp.asarray([0.15, 0.25]),

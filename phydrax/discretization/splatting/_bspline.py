@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import numpy as np
 from jax import Array
@@ -22,15 +24,24 @@ from ._assignment import (
 
 
 class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
-    """Uniform tensor-product cardinal B-spline assignment of degree one to three."""
+    """Uniform tensor-product cardinal B-spline assignment of degree one to three.
 
-    degree: int = eqx.field(static=True)
+    ``degree`` is one degree for every axis or a per-axis degree tuple (the
+    mixed-degree tensor splines of spline-Whitney forms).
+    """
+
+    degree: int | tuple[int, ...] = eqx.field(static=True)
     capabilities: SplatAssignmentCapabilities = eqx.field(static=True)
     assignment_id: str = eqx.field(static=True)
 
-    def __init__(self, degree: int, /) -> None:
-        degree_ = int(degree)
-        if degree_ not in (1, 2, 3):
+    def __init__(self, degree: int | Sequence[int], /) -> None:
+        degree_: int | tuple[int, ...] = (
+            int(degree)
+            if isinstance(degree, (int, np.integer))
+            else tuple(int(value) for value in degree)
+        )
+        degrees = (degree_,) if isinstance(degree_, int) else degree_
+        if not degrees or any(value not in (1, 2, 3) for value in degrees):
             raise ValueError(
                 "Tensor B-spline splatting supports degrees one, two, and three."
             )
@@ -42,23 +53,30 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
             maximum_explicit_derivative_order=1,
             supports_nonuniform=False,
             supports_mixed_entities=True,
-            maximum_support_radius_cells=0.5 * (degree_ + 1),
+            maximum_support_radius_cells=0.5 * (max(degrees) + 1),
         )
         self.degree = degree_
         self.capabilities = capabilities
         self.assignment_id = canonical_fingerprint(
             {
                 "kind": "tensor-bspline-splat-assignment",
-                "degree": degree_,
+                "degree": degree_ if isinstance(degree_, int) else list(degree_),
                 "capabilities": capabilities.capability_id,
             }
         )
+
+    def _axis_degrees(self, dimension: int, /) -> tuple[int, ...]:
+        if isinstance(self.degree, int):
+            return (self.degree,) * dimension
+        if len(self.degree) != dimension:
+            raise ValueError("Per-axis B-spline degrees must match the dimension.")
+        return self.degree
 
     def route_width(self, dimension: int, /) -> int:
         dimension_ = int(dimension)
         if dimension_ <= 0:
             raise ValueError("Splat assignment dimension must be positive.")
-        return (self.degree + 1) ** dimension_
+        return int(np.prod([value + 1 for value in self._axis_degrees(dimension_)]))
 
     def validate(
         self,
@@ -68,8 +86,11 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
     ) -> None:
         if len(axes) != len(layout.shape):
             raise ValueError("Assignment axes must match the target layout dimension.")
-        for coordinates, axis in zip(layout.coordinates_by_axis, axes, strict=True):
-            if coordinates.size < self.degree + 1:
+        degrees = self._axis_degrees(len(axes))
+        for coordinates, axis, degree in zip(
+            layout.coordinates_by_axis, axes, degrees, strict=True
+        ):
+            if coordinates.size < degree + 1:
                 raise ValueError(
                     "B-spline target axes need at least degree plus one entities."
                 )
@@ -109,15 +130,21 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
         self.validate_input(assignment_input, position.shape[0], position.shape[1])
         stencils = tuple(
             _uniform_axis_stencil(
-                self.degree,
+                degree,
                 coordinates,
                 bounds,
                 axis.periodic,
                 position[:, index],
                 active,
             )
-            for index, (coordinates, bounds, axis) in enumerate(
-                zip(layout.coordinates_by_axis, axis_bounds, axes, strict=True)
+            for index, (coordinates, bounds, axis, degree) in enumerate(
+                zip(
+                    layout.coordinates_by_axis,
+                    axis_bounds,
+                    axes,
+                    self._axis_degrees(len(axes)),
+                    strict=True,
+                )
             )
         )
         return _tensor_product_state(stencils, layout.shape, active)

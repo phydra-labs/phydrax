@@ -18,9 +18,9 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...measurement import PreparedQuantityField, QuantitySpec, ValueKind, ValueLayout
-from ...optics.geometric._graded_index import (
-    GradedIndexRayResult,
-    PreparedGradedIndexRay,
+from ...optics.geometric._dispersion_rays import (
+    DispersionRayResult,
+    PreparedDispersionRay,
     RayFanPlan,
     RayFanResult,
 )
@@ -30,14 +30,14 @@ from .._plane import ImagePlaneSupport
 
 class CurvedSchlierenResult(StrictModule, NonTrainableState):
     prediction: PreparedQuantityField
-    rays: GradedIndexRayResult
+    rays: DispersionRayResult
     fan: RayFanResult
     successful: Array
 
 
 @dataclass(frozen=True, slots=True)
 class CurvedSchlierenPlan:
-    rays: PreparedGradedIndexRay
+    rays: PreparedDispersionRay
     image_support: ImagePlaneSupport
     transverse_basis: np.ndarray
     transverse_basis_frame_id: str
@@ -56,10 +56,10 @@ class CurvedSchlierenPlan:
         if (
             not frame
             or frame != self.transverse_basis_frame_id
-            or frame != self.rays.field.coordinate_contract.reference_frame
+            or frame != self.rays.hamiltonian.coordinate_contract.reference_frame
         ):
             raise ValueError(
-                "transverse_basis_frame_id must equal the refractive-index coordinate frame."
+                "transverse_basis_frame_id must equal the ray medium coordinate frame."
             )
         if self.deflection_quantity.unit != RADIAN:
             raise ValueError("deflection_quantity must use radians.")

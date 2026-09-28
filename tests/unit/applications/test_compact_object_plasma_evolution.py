@@ -3,13 +3,15 @@
 #
 
 
+from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from scipy import integrate, special
 
 import phydrax as phx
-from phydrax._physical import RelativityScaleContract
+from phydrax._physical import ElectromagneticScaleContract, RelativityScaleContract
 from phydrax.applications.compact_objects._nonthermal_evolution import (
     NonthermalElectronEvolutionPlan,
     NonthermalLorentzGrid,
@@ -76,19 +78,6 @@ def _grid_stage(scale: Any) -> Any:
 
 def test_compact_object_plasma_evolution_scenario_1() -> None:
     scale = _scale()
-    bremsstrahlung = ThermalBremsstrahlungGrayOpacityPlan(
-        scale,
-        emission_prefactor=2.0,
-        minimum_temperature=0.1,
-        maximum_temperature=10.0,
-    ).evaluate(2.0, 1.0, 1.0, 0.0)
-    synchrotron = ThermalSynchrotronGrayOpacityPlan(
-        scale,
-        electron_mass_per_particle=1.0,
-        emission_prefactor=1.0,
-        minimum_temperature=0.1,
-        maximum_temperature=10.0,
-    ).evaluate(2.0, 1.0, 1.0, 4.0)
     scattering_plan = KleinNishinaScatteringPlan(
         electron_mass_per_particle=1.0,
         thomson_cross_section=2.0,
@@ -97,10 +86,6 @@ def test_compact_object_plasma_evolution_scenario_1() -> None:
     low_energy = scattering_plan.evaluate(1.0, 1.0, 0.1, 0.0)
     high_energy = scattering_plan.evaluate(1.0, 1.0, 10.0, 0.0)
 
-    assert bool(bremsstrahlung.qualified)
-    assert bool(synchrotron.qualified)
-    assert float(bremsstrahlung.photon_emission_rate) > 0.0
-    assert float(synchrotron.planck_emission) > 0.0
     assert float(low_energy.scattering) > float(high_energy.scattering)
 
     discretization, stage = _grid_stage(scale)
@@ -214,3 +199,153 @@ def test_nonthermal_injection_and_gyrotropic_conduction_close_their_ledgers() ->
     np.testing.assert_allclose(evaluation.heat_flux, jnp.asarray((-2.0, 0.0, 0.0)))
     assert float(evaluation.entropy_production) > 0.0
     assert bool(evaluation.qualified)
+
+
+# CODATA 2022 SI constants, written independently of the scale contract.
+_E = 1.602176634e-19
+_ME = 9.1093837139e-31
+_C = 299792458.0
+_EPS0 = 8.8541878188e-12
+_KB = 1.380649e-23
+_H = 6.62607015e-34
+_STEFAN_OVER_PI = 2.0 * np.pi**4 * _KB**4 / (15.0 * _H**3 * _C**2)
+
+
+def _free_free_emissivity_per_hertz(
+    electrons: float, ions: float, temperature: float, u: float
+) -> float:
+    """Rybicki & Lightman eq. 5.14a per steradian with the Born thermal Gaunt factor."""
+    prefactor = (
+        32.0 * np.pi * _E**6 / (3.0 * _ME * _C**3 * (4.0 * np.pi * _EPS0) ** 3)
+    ) * np.sqrt(2.0 * np.pi / (3.0 * _KB * _ME))
+    gaunt = np.sqrt(3.0) / np.pi * special.kve(np.float64(0.0), np.float64(0.5 * u))
+    return (
+        prefactor
+        * electrons
+        * ions
+        * np.exp(-u)
+        * gaunt
+        / np.sqrt(temperature)
+        / (4.0 * np.pi)
+    )
+
+
+def test_free_free_gray_closure_is_the_born_planck_and_rosseland_mean() -> None:
+    scale = ElectromagneticScaleContract.si()
+    proton_mass = 1.67262192595e-27
+    density, temperature, radiation = 1.0e-3, 1.0e8, 5.0e7
+    evaluation = ThermalBremsstrahlungGrayOpacityPlan(
+        scale, electron_mass_per_particle=proton_mass
+    ).evaluate(density, temperature, radiation, 0.0)
+    electrons = density / proton_mass
+    # The Planck average of the Born thermal Gaunt factor is exactly 2√3/π.
+    prefactor = (
+        32.0 * np.pi * _E**6 / (3.0 * _ME * _C**3 * (4.0 * np.pi * _EPS0) ** 3)
+    ) * np.sqrt(2.0 * np.pi / (3.0 * _KB * _ME))
+    total = (
+        prefactor
+        * electrons**2
+        / np.sqrt(temperature)
+        * (_KB * temperature / _H)
+        * 2.0
+        * np.sqrt(3.0)
+        / np.pi
+        / (4.0 * np.pi)
+    )
+    np.testing.assert_allclose(
+        evaluation.planck_emission,
+        total / (_STEFAN_OVER_PI * temperature**4),
+        rtol=1.0e-6,
+    )
+
+    def alpha(nu: float) -> float:
+        u = _H * nu / (_KB * temperature)
+        j = _free_free_emissivity_per_hertz(electrons, electrons, temperature, u)
+        return float(j * _C**2 * np.expm1(u) / (2.0 * _H * nu**3))
+
+    def planck(nu: float, t: float) -> float:
+        return float(2.0 * _H * nu**3 / _C**2 / np.expm1(_H * nu / (_KB * t)))
+
+    def log_integral(function: Callable[[float], float]) -> float:
+        lower, upper = (
+            np.log(1.0e-9 * _KB * radiation / _H),
+            np.log(80.0 * _KB * temperature / _H),
+        )
+        return integrate.quad(
+            lambda s: function(np.exp(s)) * np.exp(s), lower, upper, limit=500
+        )[0]
+
+    absorption = log_integral(lambda nu: alpha(nu) * planck(nu, radiation))
+    np.testing.assert_allclose(
+        evaluation.planck_absorption,
+        absorption / (_STEFAN_OVER_PI * radiation**4),
+        rtol=1.0e-6,
+    )
+
+    def rosseland_weight(nu: float) -> float:
+        u = _H * nu / (_KB * temperature)
+        return planck(nu, temperature) * u / -np.expm1(-u) / temperature
+
+    inverse = log_integral(lambda nu: rosseland_weight(nu) / alpha(nu))
+    np.testing.assert_allclose(
+        evaluation.rosseland_transport,
+        4.0 * _STEFAN_OVER_PI * temperature**3 / inverse,
+        rtol=1.0e-6,
+    )
+    assert bool(evaluation.qualified)
+    radiation_constant = 4.0 * np.pi * _STEFAN_OVER_PI / _C
+    np.testing.assert_allclose(
+        evaluation.photon_emission_rate,
+        evaluation.planck_emission
+        * radiation_constant
+        * temperature**3
+        / (2.70118 * _KB),
+        rtol=1.0e-8,
+    )
+
+    # Below the Born support (Z² Ry ≳ kT) the closure is unqualified.
+    cold = ThermalBremsstrahlungGrayOpacityPlan(
+        scale, electron_mass_per_particle=proton_mass
+    ).evaluate(density, 1.0e4, 1.0e4, 0.0)
+    assert not bool(cold.qualified)
+
+
+def test_synchrotron_gray_closure_uses_the_mny96_planck_mean() -> None:
+    scale = ElectromagneticScaleContract.si()
+    proton_mass = 1.67262192595e-27
+    density, temperature, radiation, field = 1.0e-14, 1.0e11, 5.0e10, 1.0e-1
+    permeability = 1.0 / (_EPS0 * _C**2)
+    evaluation = ThermalSynchrotronGrayOpacityPlan(
+        scale, electron_mass_per_particle=proton_mass
+    ).evaluate(density, temperature, radiation, field**2 / permeability)
+    electrons = density / proton_mass
+    theta = _KB * temperature / (_ME * _C**2)
+    nu_s = 1.5 * _E * field / (2.0 * np.pi * _ME) * theta**2
+
+    def emissivity(log_x: float) -> float:
+        x = np.exp(log_x)
+        nu = x * nu_s
+        shape = (
+            4.0505
+            * x ** (-1.0 / 6.0)
+            * (1.0 + 0.40 * x ** (-0.25) + 0.5316 * x ** (-0.5))
+            * np.exp(-1.8899 * x ** (1.0 / 3.0))
+        )
+        j = (
+            electrons
+            * _E**2
+            * nu
+            / (4.0 * np.pi * _EPS0 * _C * np.sqrt(3.0) * special.kn(2, 1.0 / theta))
+            * shape
+        )
+        return float(j * nu)
+
+    total = integrate.quad(emissivity, np.log(1.0e-6), np.log(1.0e6), limit=400)[0]
+    np.testing.assert_allclose(
+        evaluation.planck_emission,
+        total / (_STEFAN_OVER_PI * temperature**4),
+        rtol=1.0e-6,
+    )
+    assert bool(evaluation.physically_valid)
+    # The Rosseland weight lies far above the MNY96 frequency support.
+    assert not bool(evaluation.qualified)

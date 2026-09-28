@@ -3,6 +3,623 @@
 ## Unreleased
 
 ### Added
+- Radiation reaction (`phydrax.discretization.pic`): `RadiationReactionPlan(model,
+  scale, physical_charge, physical_mass, *, tables, maximum_chi, minimum_gamma,
+  maximum_relative_step_loss, minimum_scale_separation)` with models
+  `landau-lifshitz-reduced`, `landau-lifshitz` (field gradients from the
+  order-one gather plus staggered-history time derivatives),
+  `quantum-corrected-landau-lifshitz` and `stochastic-fokker-planck` (Niel et al.
+  2018, identity-addressed Wiener increments); `RadiationReactionTables` (`g(χ)`,
+  `h(χ)` from `phydrax.special` synchrotron kernels), `RadiationReactionResult`
+  (radiated energy, χ, critical frequency, scale separation, Fokker–Planck drift
+  and diffusion), `RadiationReactionFlag`, and the momentum-stage
+  `RadiationReactionProcess` claiming `subgrid-reaction` ownership. PIC core:
+  `PICEnergyLedger.radiated`, `PICRejectionReason.RADIATION_OWNERSHIP`,
+  `PICProcessRadiation` on `PICProcessLedger.radiation`, `PICProcessContext`
+  field gradients/time derivatives and grid cutoff, `AbstractPICProcess.
+  requires_field_derivatives` and `validate_run`, and
+  `phydrax.solver.PICFieldHistory` in `ElectromagneticPICState.field_history`
+  (restart component `field-history`, shifted by moving windows). Detector
+  `ChargedPropagationPlan(radiation_reaction=, radiation_key=)` with
+  `ChargedPropagationResult.radiated_energy_history` and
+  `radiation_flags_history`. Qualification candidate `pic.radiation-reaction`;
+  example `examples/pic_radiation_reaction.py`; benchmark
+  `benchmarks/pic_radiation_reaction.py`.
+- Plasma rays and mode-resolved polarized transfer: `phydrax.optics.geometric`
+  `DispersionRayPlan(hamiltonian, step_size, step_count, method=)` integrates
+  rays of any `AbstractDispersionHamiltonian` with the implicit-midpoint
+  symplectic scheme (midpoint solved by `VectorLocalRootPlan`, Cayley tangent
+  map) or, for `AbstractSeparableDispersionHamiltonian`, kick–drift–kick;
+  `DispersionRayResult`/`DispersionRayEvidence` report Hamiltonian drift,
+  symplectic residual, root convergence, refractive-index extremes and
+  per-ray `DispersionRayStatus` (launch, support, resonance, qualifying
+  cutoff). `ColdPlasmaProfile` and `ColdPlasmaHamiltonian` trace one cold-plasma
+  mode (Stix quartic in Cartesian form, normalized to the group light path,
+  mode fixed at launch by the `PlasmaWaveMode` label);
+  `ColdPlasmaHamiltonian.sample_path` returns a `ColdPlasmaRayPath` with the
+  ray refractive index `n_r²`, mode Stokes vectors and Faraday rotation in a
+  parallel-transported basis, mode-coupling parameter and quasi-transverse
+  flags. `phydrax.applications.radiation_transport.PlasmaRayTransferPlan`
+  transports `S/n_r²` in the weak (independent modes) or strong (coupled
+  Stokes) mode-coupling limit (`ModeCouplingLimit`,
+  `PlasmaRayTransferResult`, `PlasmaRayTransferStatus`) on the canonical
+  `PolarizedRadiativeTransferPlan`, and
+  `magnetobremsstrahlung_path_coefficients` composes `MagnetobremsstrahlungPlan`
+  per segment into `PlasmaPathCoefficients`. Candidate qualification
+  `electromagnetics.plasma-rays`; example `examples/plasma_ray_transfer.py`.
+- PIC shapes, filters, binning, and numerical-Cherenkov guard:
+  `PICParticleCochainTransferPlan(bridge, *, shape_order=1|2|3)`
+  (`PICShapeOrder`) selects spline-Whitney transfer; orders two and three
+  deposit degree-`p` B-spline charge, gather edge/face components with degree
+  `p − 1` along spanned axes, and `ChargeConservingCurrentPlan` integrates the
+  spline-Whitney path integrals exactly (knot-lattice splitting plus
+  `⌈3p/2⌉`-point Gauss–Legendre) with continuity to roundoff, reduced through
+  `phydrax.sparse` in canonical cell-binned order so the current is invariant
+  to particle slot order. Order one is numerically unchanged.
+  `TensorBSplineSplatAssignment` accepts per-axis degree tuples.
+  `phydrax.solver.PICFilterPlan` (binomial passes plus compensation) acts
+  identically on charge, current, and the gather field through the new
+  optional `PICTensorLayout` solver capability (cochain and reduced solvers),
+  commutes with the divergence on periodic axes, mirrors with component parity
+  at nonperiodic walls, and reports `PICFilterContinuityReport` (interior and
+  wall-normal commutation defects, Gauss-initialization residual) in
+  `ElectromagneticPICPlan.filter_reports`.
+  `phydrax.discretization.pic.PICCellBinningPlan`/`PICCellBins` give
+  bounded-work cell-sorted binning in canonical `(cell, identity)` order.
+  `phydrax.solver.PICCherenkovGuard` (`ElectromagneticPICPlan(...,
+  cherenkov_guards=...)`) enforces a B3 `CherenkovRegimePlan`: numerical-only
+  emission is refused at construction and steps off the audited step size or
+  drift speed are rejected with `PICRejectionReason.NUMERICAL_CHERENKOV`.
+- openPMD meshes and PIC output (`phydrax.interchange`): `OpenPMDMeshRecord`
+  and `OpenPMDMeshIteration` carry the openPMD 1.1.0 `E`, `B`, `J`, and `rho`
+  mesh records in `cartesian` and `thetaMode` (`m=<M>;imag=+`, `2M - 1` mode
+  planes) geometry with per-component staggering `position` and record
+  `timeOffset`, in the units of a bound `ElectromagneticScaleContract`
+  (`unitSI`, `gridUnitSI`, `timeUnitSI`, `unitDimension` checked).
+  `read_openpmd_meshes_hdf5(resource, OpenPMDMeshImportPolicy(iteration,
+  records=), scale=)` preflights the whole HDF5 tree and decoded-byte budget
+  before any payload read, canonicalizes Cartesian axes to `x, y, z` (C or F
+  `dataOrder`), and refuses with `OpenPMDMeshError`; `write_openpmd_meshes_hdf5`
+  publishes one iteration exclusively as a `fileBased` series member.
+  `OpenPMDPICLayout(plan, scale, particle_masses)`,
+  `write_openpmd_pic_state`, and `read_openpmd_pic_state` export and rebuild
+  `ElectromagneticPICState` for the cochain and reduced field solvers (fields
+  with solver staggering, `J` and momenta at `timeOffset -dt/2`, particles in
+  identity order with `parentId` lineage, wall charge from `rho`); slot
+  bookkeeping, charge-transition history, boundary ledgers, and recorder
+  states are declared losses. `OpenPMDPICStreamWriter` is the bounded per-step
+  output component: atomic exclusive publication per due iteration, with
+  iteration-count and total-byte budgets refused before publishing.
+  ADIOS2 BP4 is an optional provider route through a pinned openPMD-api
+  `openpmd-pipe` (`OpenPMDADIOS2Provider`, `convert_openpmd_hdf5_to_adios2`,
+  `read_openpmd_adios2`, and the writer's `provider=`). Catalog format
+  `openpmd-mesh`. The shared openPMD base gains `fileBased` root metadata and
+  shared constant-component, identity, and ED-PIC weighting helpers, which
+  the particle-track adapter now uses.
+- Macroparticle resampling as PIC population processes
+  (`phydrax.discretization.pic`): `ParticleMergePlan(method="vranic-momentum-cell")`
+  merges packets of one charge state in spherical momentum cells of crowded
+  cells (`maximum_per_cell`) into exact pairs conserving charge, mass,
+  momentum, energy, and the charge dipole (Vranic et al. 2015);
+  `ParticleSplitPlan` splits the heaviest particles of sparse cells
+  (`minimum_per_cell`) into `2d` axis-pair children. Both bin through
+  `PICCellBinningPlan`, order packets, reductions, and identity assignment by
+  cell and global identity (slot-order invariant), give products fresh
+  identities with the lowest merged or the split particle as parent, refuse
+  events beyond free capacity or allocation width with counted evidence, and
+  report `ParticleResamplingEvidence` (conservation defects, momentum and
+  spatial second-moment distortion, occupancy before/after,
+  `ParticleResamplingStatus`). New optional field-solver capability
+  `PICGaussProjection` (`PICGaussProjectionResult`, route
+  `"cochain-poisson"`/`"spectral-poisson"`) is implemented by the cochain,
+  reduced, and tetrahedral PIC solvers; processes declaring
+  `AbstractPICProcess.redistributes_charge` make `ElectromagneticPICPlan`
+  Gauss-project the field onto the redeposited charge after the population
+  stage, reported as `ElectromagneticPICDiagnostics.gauss_projection` with
+  divergence before/after. `PICProcessResult.evidence` carries process
+  evidence to `ElectromagneticPICDiagnostics.process_evidence`. Example
+  `examples/pic_resampling.py`.
+- Time-independent averaged free-electron laser
+  (`phydrax.applications.accelerator.fel`): `FELUndulatorLattice` of
+  `FELUndulatorSegment`s wrapping X1a `InsertionDeviceField`s (stepwise taper,
+  natural and smooth focusing, thin break quadrupoles and phase shifters);
+  `FELBeamSlices` and `FELLoading` quiet-start beamlets (`M ≥ 2h_max`) with
+  identity-addressed Fawley shot noise; `FELPlan.solve` integrates the KMR
+  period-averaged equations with harmonic `[JJ]_h` coupling
+  (`undulator_coupling_factors`) by a Strang split of exact betatron motion,
+  optics angular-spectrum diffraction (or a one-dimensional field), and an RK4
+  source kick; `FELResult` reports power, bunching, harmonic frequencies and
+  far field, `FELGainEvidence` (fitted gain length, saturation, Pierce/1-D/Ming
+  Xie `fel_scaling_estimate`), an `FELEnergyLedger`, and `FELStatus` evidence.
+  X2 longitudinal wakes apply per slice through `FELWakeLoss`. Qualification
+  candidate `accelerator.fel-averaged`, guide `guides_free_electron_lasers.md`,
+  example `examples/free_electron_laser_averaged.py`, benchmark
+  `benchmarks/fel_averaged.py`.
+- Identity-addressed PIC particle tracks (`phydrax.discretization.pic`):
+  `PICTrackRecorder` implements the PIC recorder protocol for declared
+  `(id_hi, id_lo)` identities per species, located among active slots every
+  accepted step, so tracks survive slot permutation/migration, reused slots
+  never continue a previous occupant, and births/deaths toggle lane activity
+  with per-lane first/last step, activation count, parent lineage,
+  duplicate-identity and charge/mass-transition evidence and per-sample slot
+  and incarnation provenance (`PICTrackRecorderState`). Samples carry the
+  time-centered proper velocity `(u^{k−1/2} + u^{k+1/2})/2` at `x^k` (one step
+  behind the run); reduced 1-D/2-D runs drift unresolved coordinates with
+  `u/γ`. `AbstractPICRecorder` gains `validate_run(species, relativity)`
+  (called by `ElectromagneticPICPlan` at construction; the track recorder
+  refuses other species plans or pusher relativity) and
+  `shift_frame(state, axis, distance)` (called by `PICMovingWindowPlan.shift`;
+  the track recorder accumulates the window offset so moving-window tracks
+  stay in the lab frame). `PICTrackBuffer` is a fixed-capacity ring with
+  `TrackOverflowPolicy` `"refuse"`/`"keep-latest"` and `dropped_samples`;
+  `to_charged_trajectory(state, scale)` returns a `ChargedTrajectory` whose
+  charge × multiplicity is the macrocharge. An optional
+  `PreparedTrajectoryRadiation` streams every sample into the far-field
+  accumulator inside the run, with or without stored tracks
+  (`finalize_radiation`); the recorder state is a restart component.
+- Storage-ring radiation (`phydrax.applications.accelerator`):
+  `RingLattice` of `RingElement` drifts, quadrupoles, combined-function
+  sector bends, and thin RF cavities repeated over a periodic cell;
+  `RingRadiationPlan` solves the periodic first-order optics and integrates
+  the radiation integrals `I₁…I₅` (Gauss–Kronrod on exact in-bend optics),
+  giving the damping partition, damping times, `U₀`, and the equilibrium
+  emittance and energy spread in the bound `ElectromagneticScaleContract`;
+  unstable optics, open rings, `J_x ≤ 0`/`J_s ≤ 0`, sub-ultrarelativistic
+  references, and quantum parameters above the classical limit raise
+  `RingOpticsError`. `SynchrotronPhotonSpectrum` samples the classical
+  photon-number spectrum `F(ξ)/ξ` from `phydrax.special.synchrotron_f`.
+  `RadiativeRingTrackingPlan`/`track_radiative_ring` track an
+  `AcceleratorBunch` with `"none"`, `"classical"` (mean loss), or
+  `"stochastic"` (particle-identity-addressed Poisson photon emission)
+  radiation, thin RF at the synchronous phase, bounded memory, and
+  per-turn moment, emittance, energy-ledger, overflow, and loss evidence.
+  Example `examples/storage_ring_radiation.py`; candidate qualification
+  profile `accelerator.ring-radiation`.
+- One-way plane antennas (`phydrax.solver.maxwell`):
+  `SampledPlaneCurrentAntennaPlan` launches sampled tangential rest-frame
+  envelopes `Re[A(τ) e^{−iω₀τ}]` from an electric node-plane sheet
+  `K = s â × H'` and a magnetic sheet `K_m = −s â × E'` half a cell upstream
+  (total-field/scattered-field placement), implementing the prepared Maxwell
+  source contract. `beta` moves the sheet along its normal in the vacuum of a
+  declared `ElectromagneticScaleContract`, depositing `K'(τ)/γ` at the
+  rest-frame retarded time from `phydrax.boost_event` (Doppler factor
+  `γ(1 + sβ)`; backward leakage first order in the cell size).
+  `SampledPlaneAntennaEvidence` reports aperture support, emitted carrier and
+  resolution, Lorentz factor, active window, touched planes, and the magnetic
+  sheet's discrete divergence, which decides `magnetic_closedness_preserving`.
+  `MaxwellAntennaWorkObserverPlan` streams the work the sheets do on the field.
+  Optics adapters `phydrax.optics.wave.pulse_envelope_antenna`,
+  `openpmd_laser_envelope_antenna`, and `sample_focused_gaussian_pulse_envelope`
+  (paraxial Gaussian sampled upstream of its waist). The prepared source
+  contract gains `validate_runtime(prepared)`, called for every source by
+  `PreparedCompatibleMaxwell`; antennas refuse media other than the declared
+  homogeneous medium and CPML on their support, and Huygens boxes refuse
+  antennas reaching their surface. Candidate capability
+  `electromagnetics.one-way-antenna`. Example
+  `examples/maxwell_antenna_gaussian_beam.py`.
+- Maxwell media and discrete-dispersion audit (`phydrax.solver.maxwell`):
+  `MaxwellLorentzPoles` (spatial `(poles, entities)` strengths with masked
+  energy/dissipation), magnetic Lorentz poles (magnetization ADE) on
+  `LorentzDrudeMaxwellConstitutivePlan`,
+  `MagnetizedColdPlasmaMaxwellConstitutivePlan` (multi-species
+  `J̇ = ε₀ωₚ²E + J×ω_c − νJ` on vertex-collocated currents with exact
+  exponential gyration, `MagnetizedColdPlasmaState`),
+  `CompatibleMaxwellDispersionAudit` (exact one-step Bloch map of the executed
+  update in a `MaxwellMaterialRegion`, `MaxwellDispersionResult`, cyclotron
+  resonance shift), and `CherenkovRegimePlan`/`CherenkovRegimeEvidence`
+  (physical versus numerical Cherenkov resonance). Candidate capability
+  `electromagnetics.discrete-dispersion-audit`.
+- Maxwell frequency response (`phydrax.solver.maxwell`): every constitutive law
+  implements `frequency_response(ω)` (`AbstractMaxwellFrequencyResponse`,
+  `DiagonalMaxwellFrequencyResponse`, `InstantaneousMaxwellFrequencyResponse`,
+  `MagnetizedColdPlasmaFrequencyResponse`) and declares `auxiliary_degrees`.
+  `FrequencyMaxwellOperator(..., stretching=MaxwellCPMLPlan)` applies CFS
+  coordinate stretching on the CPML profile, with
+  `power_ledger` → `FrequencyMaxwellPowerLedger` (source, material, and
+  absorbed power).
+- PIC field-solver protocol (`phydrax.solver`): `AbstractPreparedPICFieldSolver`
+  with core `deposit`, `advance`, and `gather(derivative_order)` (order one
+  returns exact forward-mode spatial gradients of the solver's interpolant);
+  the deposit↔Gauss pairing is verified numerically when a PIC plan is
+  prepared (`ElectromagneticPICPlan.pairing_defect`). Optional capability
+  protocols `PICSpectralSymbol`, `PICHuygensSampling`, `PICMultiDeposit`,
+  `PICWindowShift`, `PICRestartState`; prescribed fields through the core
+  `ExternalFieldSource`. Implementations `CochainMaxwellPICFieldSolver`,
+  `ReducedMaxwellPICFieldSolver`, `UnstructuredMaxwellPICFieldSolver`.
+  `PICPrecisionPolicy`, `AbstractPICFieldFilter`, `PICRestartCheckpoint`
+  (per-component restart with owner-identity admission), `PICWindowInjection`.
+- PIC species and processes (`phydrax.discretization.pic`): `PICSpeciesPlan`
+  (runtime population with persistent identities and charge model),
+  `AbstractPICProcess` with `"momentum"`/`"population"` stages and
+  `PICProcessLedger`, `AbstractPICRecorder`, `RadiationOwnership`;
+  `collisions.CoulombCollisionProcess`, `collisions.BackgroundCollisionProcess`,
+  `ionization.FieldIonizationProcess`, `ionization.ImpactIonizationProcess`;
+  `PICRejectionReason.PROCESS`. PIC qualification provider
+  `phydrax.solver._pic_qualification` (electrostatic, cochain electromagnetic,
+  and pusher gates) called by `tools/pic_qualification.py`.
+- Magnetobremsstrahlung (`phydrax.electromagnetics`):
+  `MagnetobremsstrahlungPlan` gives mode-resolved emission and absorption of a
+  gyrotropic population into both `ColdPlasmaDielectric` modes from `n_σ(ω, θ)`
+  and the mode polarization, with an exact `"harmonic-sum"` route (harmonic set
+  from the resonance ellipse/hyperbola ∩ momentum support, including `s ≤ 0`)
+  and an exact-Bessel `"continuous-harmonic"` route; explicit status for
+  evanescent modes, the resonance cone, harmonic capacity and anomalous
+  Doppler; Stokes emission and a propagation matrix with the cold-plasma
+  Faraday terms. Distributions `AbstractGyrotropicDistribution`,
+  `ThermalJuttnerDistribution`, `PowerLawDistribution`, `KappaDistribution`,
+  `TabulatedGyrotropicDistribution`. `ThermalFreeFreeModel` (Born thermal Gaunt
+  factor, `born_thermal_gaunt`) and `GrayMeanOpacities` Planck/Rosseland means;
+  `FaradayCoefficients.mode_stokes`. Qualification candidate
+  `electromagnetics.magnetobremsstrahlung`; example
+  `examples/magnetobremsstrahlung_emission.py`.
+- Optical photons from charged steps (`phydrax.optics.transport`):
+  `ChargedOpticalSteps` (straight steps, speed linear in path, start times,
+  optical medium, deposit, charge number, multiplicity, parent identity,
+  completeness) built by `charged_steps_from_transport` from
+  `ChargedParticleTransportPlan` step banks or by
+  `charged_steps_from_trajectory` from `ChargedTrajectory` lanes.
+  `CherenkovEmission` samples the dispersive Frank–Tamm spectrum on declared
+  wavelength nodes, the emission speed by exact inverse CDF above threshold,
+  the cone `cos θ = 1 / (β n(λ))` at the local speed, and polarization along
+  `p × (p × v)`; `ScintillationEmission` applies yield, Birks quenching,
+  rise/decay time components, and tabulated emission spectra.
+  `OpticalPhotonSourcePlan` and `emit_optical_photons` draw Poisson counts
+  keyed by parent identity, step, and ordinal into one fixed-capacity
+  `OpticalPhotonEmission` bank (launch with `ExplicitPhotonSource`) with
+  consecutive photon identities, parent lineage, per-parent count and energy
+  ledgers, and `OpticalEmissionStatus` flags that refuse the whole bank
+  atomically. `phydrax.equations.cherenkov_step_spectral_yield` is the single
+  dispersive Frank–Tamm owner, exact along linear-speed steps. Candidate
+  profile `optics.transport.charged-step-optical-sources`; example
+  `examples/cherenkov_water_detector.py`.
+- Kinetic plasma dielectric (`phydrax.electromagnetics`):
+  `KineticPlasmaDielectric` gives the hot magnetized susceptibility of
+  drifting bi-Maxwellian species with `Z = i√π·wofz` on Landau's contour for
+  every `Im ω` and the causal `sgn(k∥)` continuation, exact `k∥ = 0`
+  (Bernstein) and `k⊥ = 0` limits, first-omitted-harmonic truncation
+  evidence, and a weakly relativistic Shkarofsky model (lowest Larmor order,
+  `F_q(z, a)` from closed forms in `Z` continued from `Im ω > 0`).
+  `KineticDispersionProblem` solves the electromagnetic or electrostatic
+  dispersion relation for complex `ω` with `VectorLocalRootPlan` along a
+  wavenumber path with secant branch continuation and per-point
+  convergence, conditioning and branch-jump status.
+  `RelativisticWeakGrowthPlan` integrates the relativistic anti-Hermitian
+  susceptibility of an arbitrary `AbstractGyrotropicDistribution` over the
+  resonance ellipse for the weak growth of `ColdPlasmaDielectric` modes, with
+  `LossConeDistribution`, `RingDistribution` and `HorseshoeDistribution`
+  maser drivers. Candidate qualification `electromagnetics.kinetic-dispersion`;
+  example `examples/kinetic_plasma_dispersion.py`.
+- Accelerator field maps and insertion devices
+  (`phydrax.applications.accelerator`): exact-vacuum analytic
+  `InsertionDeviceField` (planar/helical undulators and wigglers with matched
+  tanh terminations and `resonance(scale, γ)` giving `K`, the on-axis
+  fundamental, and the critical frequency), `DipoleBendField` with analytic
+  fringes, `TabulatedFieldMap` on the native multilinear gather with reported
+  interpolation-error estimates, and `FieldMapBeamline` binding one
+  `ElectromagneticScaleContract`. `FieldMapTrackingPlan`/`track_field_map`
+  convert a bunch between entrance/exit planes and lab time per
+  `AcceleratorConvention`, push with `RelativisticPushPlan`, and return the
+  exit bunch, a per-lane lab-time `ChargedTrajectory` for trajectory
+  radiation, and field-support/exit-orbit evidence; apertures beyond an
+  analytic model's support and lanes leaving field support are refused.
+  Core capability `phydrax.discretization.pic.ExternalFieldSource`
+  (`external_fields(positions, times) -> ExternalFieldSample`) is implemented by
+  every element. Example `examples/undulator_radiation.py`; candidate
+  qualification profile `accelerator.insertion-device-radiation`.
+- openPMD particle tracks (`phydrax.interchange`):
+  `read_openpmd_particle_tracks_hdf5(resource, OpenPMDParticleTrackImportPolicy(
+  OpenPMDParticleTrackSelection(species, iterations=, identities=)), scale=)`
+  follows one openPMD 1.1.0 species through an increasing iteration range and
+  returns a `ChargedTrajectory` (lanes in ascending `uint64` id order, split into
+  `(hi, lo)` words; weighting as multiplicity; momentum/mass as proper velocity
+  through ED-PIC `macroWeighted`/`weightingPower`), the per-lane rest masses, and
+  an `AdapterReport`. `unitSI` and `unitDimension` convert through the bound
+  `ElectromagneticScaleContract.unit_si_map()`. Missing or repeated ids,
+  nonmonotonic times, per-particle charge/mass/weighting changes, truncated
+  records, unit-dimension mismatches, and resource overflow are refused with
+  `OpenPMDParticleTrackError` before any payload read where the check is
+  structural. `write_openpmd_particle_tracks_hdf5` encodes shared-time,
+  fully active lanes in scale units (declared loss for `proper_accelerations`).
+  Catalog format `openpmd-particle-tracks`; no openPMD-api dependency.
+- Detector tracks as radiation lanes:
+  `phydrax.applications.detector.charged_trajectory(plan, tracks, result,
+  scale)` returns a `ChargedTrajectory` from one constant-field propagation.
+  It prepends the initial sample at time 0 and uses row-major
+  `(event_id, track_id)` lane identities. Charges are per-particle charges in
+  `scale.charge_unit` with multiplicity one, and proper velocities are
+  `u = p c²/E₀`. It refuses a pusher relativity scale whose units or exact speed
+  of light differ from `scale`, and refuses non-float64 kinematics.
+  `ChargedPropagationResult` gains `active_history`, which records whether each
+  step committed a state of an existing track. A constant-field helix radiates
+  its cyclotron line at `|q|B/(γm)`.
+- Electromagnetic shower matter-process closure: optional governed XCOM
+  nuclear/electron-field Bethe--Heitler pair channels now create typed
+  electron/positron daughters in fixed-capacity shower stacks;
+  charged-particle bremsstrahlung selects the unchanged bounded diagnostic
+  route, an independent screened Bethe--Heitler/Tsai spectrum, or
+  `SeltzerBergerBremsstrahlungTable`, with optional LPM and Ter–Mikaelian
+  suppression. Public reference kernels cover Møller/Bhabha delta-ray
+  kinematics, positron annihilation in flight, fluorescence/Auger relaxation,
+  and the Longo--Sestili shower profile. `FoilStackTransitionRadiationPlan`
+  implements Garibian/Cherry formation-zone interference with absorption;
+  `ChargedStepRadiationPlan` consumes M1a step banks for foil transition
+  radiation and Frank--Tamm Cherenkov yields with atomic capacity refusal and
+  an energy ledger. `tools/import_nist_seltzer_berger.py` imports only
+  caller-supplied SHA-256-pinned NIST rows; no NIST data are fabricated or
+  bundled. NIST XCOM/ESTAR/Seltzer--Berger data are documented as United
+  States public domain under 17 U.S.C. § 105, while Geant4 remains a separately
+  pinned provider-only oracle.
+- Near-zone Liénard–Wiechert fields (`phydrax.electromagnetics`):
+  `LienardWiechertFieldPlan(scale, *, history, exclusion_radius,
+  interpolation, resources)` and `PreparedLienardWiechertField.evaluate(
+  trajectory, observer_events[O, 4])` return the electric, magnetic,
+  velocity-field, and acceleration-field parts of point charges at any
+  distance, plus retarded times `[O, P]`. The monotone retarded condition is
+  located by a fixed `⌈log₂(T − 1)⌉` index bisection and solved on the Hermite
+  segment (`"hermite-cubic"` or `"hermite-quintic"`) by the native TOMS748
+  `scalar_root`, differentiated implicitly through `lax.custom_root`; `κ`
+  uses the cancellation-free form. `history="refuse"` or
+  `"inertial-extrapolation"` decides retarded times before the window; later
+  retarded times, nonmonotone or superluminal samples, and superluminal
+  interpolants are unsupported (NaN, never zero). `LienardWiechertEvidence`
+  reports per-observer and per-pair `LienardWiechertStatus` bits, support,
+  resolution, derivative-valid masks, excluded and absent (inactive) charge,
+  retardation factor, observer-time root residual, Lorentz-consistency
+  mismatch, and the resource estimate; execution runs in bounded
+  observer×particle chunks refused above `LienardWiechertResources` limits
+  (`LienardWiechertResourceError`). Candidate profile
+  `electromagnetics.near-zone-lienard-wiechert`,
+  `examples/lienard_wiechert_near_field.py`,
+  `benchmarks/lienard_wiechert_fields.py`, and guide/API sections.
+- Vacuum trajectory radiation (`phydrax.electromagnetics`):
+  `TrajectoryRadiationPlan(scale, observers, angular_frequencies, *, coherence,
+  route, emission, form_factor, bunch_sigma, observer_time_window,
+  quadrature_order, resources)` computes far-field spectra of sampled
+  `ChargedTrajectory` lanes (float64 per-lane times, positions, proper
+  velocities and optional accelerations, charges, multiplicities, activity,
+  `(hi, lo)` identities; float32 refused) for `RadiationObserverPlan`
+  directions with the `exp(-iωt)` convention and `d²W/(dω dΩ) = ε₀c|rẼ|²/π`,
+  prefactors from `ElectromagneticScaleContract`, and the stable retardation
+  factor `(1/γ² + |n×β|²)/(1 + n·β)`. Routes `"segment-exact"`,
+  `"segment-hermite"` (fourth order), and `"node-gridded"` (batched Type-3
+  NUFFT with a reported absolute floor); coherence `"coherent"`,
+  `"incoherent"`, `"gaussian-form-factor"`, `"tabulated-form-factor"`; results
+  carry field spectra, coherency, Stokes (`U = 2Re(R1R2*)`, `V = -2Im(R1R2*)`)
+  and `TrajectoryRadiationEvidence` (`TrajectoryRadiationStatus` bits,
+  `resolved`, `derivative_valid`, retardation/phase/amplitude/window-edge
+  metrics, gridded floor, resource estimate). Execution is bounded by
+  `TrajectoryRadiationResources` (`TrajectoryRadiationResourceError`);
+  `PreparedTrajectoryRadiation` offers `evaluate`, streaming
+  `initialize`/`accumulate`/`finalize` equal to offline evaluation, and the
+  coherent observer-time `waveform`. Candidate profile
+  `electromagnetics.vacuum-trajectory-radiation`,
+  `tools/electromagnetic_radiation_qualification.py`,
+  `benchmarks/trajectory_radiation.py`,
+  `examples/trajectory_cyclotron_synchrotron_radiation.py`, the
+  charged-particle radiation guide, `docs/api/electromagnetics.md` (which now
+  also documents `MaxwellFrequencySystem`/`MaxwellFrequencyResult` in place of
+  the module dump in the advanced omniphysics page), and the electromagnetic
+  radiation source ledger.
+- Maxwell Huygens surfaces and far fields (`phydrax.solver.maxwell`): phasors
+  follow `exp(-iωt)`. `MaxwellSpectralAcquisition(angular_frequencies, *, sign:
+  FourierExponentSign, measure: MaxwellSpectralMeasure, start_time, stop_time)`
+  owns every spectral observer's convention; `"time-integral"` applies the
+  trapezoid rule over consecutive in-window samples (carrying the previous
+  payload and time in `DFTObserverState`) and `"sample-mean"` reproduces the
+  former windowed DFT mean. `DFTObserverPlan(probe, acquisition)` replaces
+  `DFTObserverPlan(probe, angular_frequencies, *, start_time, stop_time)`;
+  callers pass `sign="negative", measure="sample-mean"` for the former values.
+  Observers gain `validate_runtime(prepared)`, called by
+  `PreparedCompatibleMaxwell`. `MaxwellHuygensBoxPlan(bridge, lower_nodes,
+  upper_nodes, acquisition, exterior)` samples a closed `full_3d` box at
+  surface-cell centers (tangential `E` from edge circulations, `H` from the four
+  straddling faces, both through `SparseLinearMap` gathers) and refuses CPML
+  overlap, sources on the surface, dynamic PIC currents, and any constitutive
+  law other than the declared lossless `HomogeneousMaxwellExterior`.
+  `MaxwellHuygensSurfacePlan(hodge, faces, acquisition, exterior)` does the same
+  on closed oriented interior tetrahedral face sets with Whitney
+  reconstruction; `MaxwellHuygensSampler` is the capability protocol.
+  `MaxwellFarFieldPlan(directions, reference_axis, exterior).evaluate(phasors)`
+  returns `MaxwellFarFieldResult` with `field_spectrum[F, D, 2]` on
+  `(θ̂, φ̂)`, coherency, Stokes (`U = 2 Re(F_θ F_φ*)`, `V = −2 Im(F_θ F_φ*)`),
+  and one-sided `spectral_energy = εc|F|²/π`; `spectral_poynting_energy`
+  integrates `(1/π) Re ∫ (Ẽ × H̃*)·n̂ dS`. Signs are fixed by a Hertzian-dipole
+  test (pattern, absolute energy, grid convergence, nested boxes, Poynting
+  balance). `MaxwellNearToFarPlan` is removed. `TetrahedralMaxwellHodge` now
+  records `vertices`, `tetrahedra`, `permittivity`, and `inverse_permeability`,
+  and its Whitney assembly uses the correct barycentric gradients `J⁻¹`
+  (previously `J⁻ᵀ`, which mis-weighted the edge and face mass matrices on
+  cells with non-symmetric Jacobians); unstructured Maxwell results change on
+  such meshes. Candidate capability `electromagnetics.maxwell-far-field`.
+  Example `examples/maxwell_dipole_far_field.py`, benchmark
+  `benchmarks/maxwell_far_field.py`.
+- `phydrax.electromagnetics.ColdPlasmaDielectric(scale, *, densities,
+  charge_numbers, mass_ratios, magnetic_field, collision_frequencies,
+  continuation_steps, polarization_tolerance)`: cold magnetized multi-species
+  plasma bound to an `ElectromagneticScaleContract`. `stix_parameters` and
+  `dielectric_tensor` return Stix `S`, `D`, `P`, `R`, `L` (complex with
+  collisions, `Im n² > 0` absorbing); `refractive_indices(ω, θ)` returns both
+  roots of `A n⁴ − B n² + C = 0` in a `ColdPlasmaWaveResult` with branch
+  identity (`PlasmaWaveMode` `RIGHT`/`LEFT` by continuation from `θ = 0`,
+  `ORDINARY`/`EXTRAORDINARY` from `θ = π/2`, certified by continuing the
+  pole-free discriminant root with reported separation and per-step turn),
+  unit polarization vectors, `K = iE_x/E_y`, longitudinal components, QL/QT
+  discriminant terms, and `ColdPlasmaWaveStatus` bits for evanescent,
+  resonant, degenerate, ambiguous, and polarization-undefined roots.
+  `characteristic_frequencies` returns every zero of `R`, `L`, `P`, `S` with
+  residuals, `resonance_cone` returns `tan²θ_res = −P/S`, and
+  `faraday_coefficients` returns Faraday rotation and conversion per unit
+  length (`FaradayCoefficients`) from the two mode indices and polarizations.
+  Angular frequencies and angles must be float64. See
+  `docs/guides_plasma_waves_and_emission.md` and
+  `examples/cold_plasma_waves.py`.
+- Optical photon Monte Carlo: `phydrax.optics.transport` is one spectral,
+  polarized owner. `OpticalMonteCarloPlan(surfaces, medium, *, relativity,
+  maximum_interactions, variance_reduction, surface_model, detector_response,
+  branch_capacity, photon_batch_size, ...)`, `prepare_optical_monte_carlo`, and
+  `simulate_optical_photons(prepared, source, key)` transport
+  `OpticalPhotonState` packets carrying position, direction, a transverse axis
+  with a unit complex Jones vector on `(e1, direction × e1)`, vacuum
+  wavelength, time (`n · distance / c` from the bound
+  `RelativityScaleContract`), weight, and a persistent `(id_hi, id_lo)`
+  identity allocated consecutively by `launch_optical_photons(...,
+  first_identity=...)` with the particle-population reserved-identity rule.
+  Scattering and interfaces rotate the Jones vector into the scattering-plane
+  and `(s, p)` frames; `maximum_polarization_defect` reports unit-norm and
+  transversality. Variance reduction is the explicit
+  `OpticalVarianceReduction(interface_branching=Literal["stochastic",
+  "expected-split"], roulette_threshold, roulette_survival_probability)`.
+  Media, surfaces, detectors, and sources are the `OpticalMedium`,
+  `OpticalSurfaceModel`, `OpticalDetectorResponse`, and `OpticalPhotonSource`
+  protocols; the tissue configuration implements them with
+  `TissueOpticalMedium` (`mu_a`, `mu_s`, Henyey–Greenstein `g`, real `n`),
+  `ScalarFresnelSurfaceModel`, `UnitDetectorResponse`, and
+  `ExplicitPhotonSource`. Guide `docs/guides_optical_photon_transport.md`,
+  example `examples/optical_tissue_reflectance.py`; tests reproduce the MCML
+  van de Hulst slab and Giovanelli semi-infinite references.
+  `TissueTransportPlan`, `TissueTransportCoefficients`,
+  `PreparedTissueTransport`, `TissueTransportResult`, `TissueTransportStatus`,
+  `TissueTransportTallies`, `prepare_tissue_transport`, and
+  `simulate_tissue_transport` are removed with `optics/transport/_tissue.py`.
+  Tissue outputs are re-baselined: random draws are now `derive_key(root,
+  SampleAddress(purpose), interaction, id_hi, id_lo, branch)` on the photon
+  identity instead of `fold_in` chains on caller `photon_ids`, so per-photon
+  histories and finite-sample tallies for a given seed differ from earlier
+  releases while their expectations are unchanged; keys must be typed JAX
+  keys.
+- Spectral optical media (`phydrax.optics.transport`):
+  `SpectralOpticalMedium(wavelengths, refractive_indices, absorption_lengths,
+  *, rayleigh, henyey_greenstein, mie, wavelength_shifter)` tabulates media on
+  one vacuum-wavelength grid with native piecewise-linear interpolation of
+  inverse lengths and refuses wavelengths outside the grid.
+  `RayleighScattering` samples the polarized dipole law (Cardano polar
+  inverse, exact Stokes-conditioned azimuth, Jones `(S1 J_s, S2 J_p)`);
+  `HenyeyGreensteinScattering` is the scalar specialization shared with
+  `TissueOpticalMedium`; `MieParticles` prepares Lorenz–Mie series per node
+  (Wiscombe `N_stop`, Lentz-started downward `D_n(m x)`, Riccati–Bessel
+  recurrences, complex `m = n + iκ`) with exact inverse-CDF angular tables,
+  runtime `S1`/`S2` at the sampled angle, and `MieTableEvidence` (truncation
+  share, Lentz lengths, table normalization/asymmetry residuals, refusal above
+  `table_tolerance`); `WavelengthShifter` re-emits isotropically and
+  unpolarized with a quantum yield, an exact piecewise-linear emission
+  spectrum, and an exponential or delta delay. `lorenz_mie(size_parameter,
+  relative_index, cosines)` returns `LorenzMieResult` efficiencies,
+  amplitudes, coefficients, and evidence; tests reproduce the Wiscombe MIEV0
+  cases. The `OpticalMedium` protocol gains `spectral_support`, and
+  `OpticalScatteringSample` gains post-event `wavelengths` and `delays`;
+  unsupported lanes stop with `OpticalTransportStatus.SPECTRAL_SUPPORT_EXCEEDED`
+  and their weight reported as truncated. Example
+  `examples/optical_spectral_media.py`.
+- Optical surfaces and photodetection (`phydrax.optics.transport`):
+  `UnifiedSurfaceModel(finishes, *, sigma_alpha, specular_spike,
+  specular_lobe, backscatter, reflectivity, facet_attempts)` with the
+  `OpticalSurfaceFinish = Literal["polished", "ground",
+  "polished-front-painted", "ground-front-painted"]` selector is the polarized
+  Fresnel boundary (complex `(s, p)` amplitudes of the refractive-interface
+  owner applied to the Jones vector, so total-internal-reflection phase and
+  ellipticity are carried) and the Geant4 UNIFIED rough surface (Gaussian
+  micro-facet tilt, spike/lobe/backscatter/Lambertian branches, front paints,
+  surface absorption). `OpticalPhotodetector`, `PhotodetectionPlan`, and
+  `detect_optical_arrivals` apply QE(λ), collection efficiency, transit time
+  and Gaussian transit-time spread, a gamma single-photoelectron charge, and
+  Poisson dark counts to the transport's new `OpticalDetectorArrivals` and
+  return the detector `SensitiveHitBank` consumed by `digitize_sensitive_hits`
+  (`PhotodetectionResult`, per-event `PhotodetectionStatus`). Protocol
+  cutover: `OpticalSurfaceModel.interact(hit, keys)` receives identity-keyed
+  per-lane keys and gains `validate_surfaces(surfaces)` (called by
+  `OpticalMonteCarloPlan`); `OpticalSurfaceHit` gains `frame_axes` and
+  `surface_ids`; `OpticalSurfaceInteraction` gains `reflected_axes` and
+  `transmitted_axes`, and `reflectance + transmittance < 1` is now absorbed
+  at the surface instead of forced into transmission. `OpticalMonteCarloPlan`
+  gains `detector_arrival_capacity`, `OpticalTransportResult` gains
+  `detector_arrivals`, and `OpticalTransportStatus` gains
+  `DETECTOR_ARRIVAL_CAPACITY_EXHAUSTED`. Tests cover Maxwell boundary
+  conditions, the Born–Wolf TIR phase, reciprocity, facet and branch
+  statistics, binomial/Poisson/TTS/SPE moments, a light guide, and a
+  Lambertian cavity. Example `examples/optical_light_guide_photodetection.py`.
+- `phydrax.operators.FreeSpaceConvolutionPlan(kernel, grid, *, softening,
+  gradient)`: one Hockney doubled-grid FFT substrate for open-boundary
+  convolutions on bounded uniform cell grids with `FreeSpaceKernel =
+  Literal["coulomb-igf", "newton-igf", "newton-softened", "biot-savart"]`. The
+  `*-igf` kernels are the cell-integrated Green functions of Qiang, Lidia,
+  Ryne, and Limborg-Deprey (2006) in closed form; `gradient=True` prepares
+  derivative kernels under the same sampling rule so fields are convolved, not
+  finite-differenced. `FreeSpaceVortexFFTPlan` and
+  `IsolatedCartesianGravityPlan` now own only their scientific semantics over
+  this substrate; their duplicated Hockney code is deleted.
+  `FreeSpaceVortexFFTPlan` now applies the cell measure to
+  `vorticity_density` (its velocity was previously the convolution of the raw
+  cell values), takes `velocity_gradient` at construction instead of in
+  `evaluate`, and convolves the analytic Biot–Savart kernel derivatives for
+  `velocity_gradient` instead of differentiating the padded velocity
+  spectrally. Isolated gravity potentials are unchanged.
+- `phydrax.applications.accelerator.SpaceChargeIGFPlan(scale, grid, *,
+  capacity, maximum_rest_frame_speed)`: native rest-frame space charge.
+  `kick(bunch, step_length)` boosts proper velocities with
+  `boost_proper_velocity`, deposits macro-charge with multilinear assignment in
+  centroid-relative rest-frame coordinates, solves the open-boundary Poisson
+  equation with the integrated Coulomb kernel and its integrated gradient,
+  back-transforms the field with `boost_fields`, and applies the exact lab
+  three-momentum increment `Δ(pc) = q(E + v × B)Δs/β_z`. `SpaceChargeIGFResult`
+  reports rest and lab fields, deposited charge, per-particle support, the
+  maximum rest-frame speed, and `accepted`. The provider route
+  `SpaceChargeKickPlan`/`apply_space_charge_kick` remains distinct.
+- Accelerator wakes and impedance replace `LongitudinalWakePlan`,
+  `LongitudinalWakeResult`, and `apply_longitudinal_wake` (removed; callers use
+  `apply_wake`). `WakeFunctionPlan(kind, zeta_samples, wake_values, *, units,
+  causality_convention)` tabulates a causal wake in SI (`WakeKind =
+  Literal["longitudinal", "dipolar-x", "dipolar-y", "quadrupolar-x",
+  "quadrupolar-y"]`, units `"V/C"`/`"V/C/m"` checked against the kind,
+  transverse tables vanishing at zero). `apply_wake(plan, bunch, scale, *,
+  bin_count, arrival_time, memory)` binds an `ElectromagneticScaleContract`,
+  bins by `zeta` per `AcceleratorConvention`, convolves causally with the
+  half-weighted self term, kicks `delta` per physical particle or
+  `px/p0`/`py/p0` with source (dipolar) or witness (quadrupolar) offsets, and
+  reports bunch energy change, loss factor, causality defect, table truncation,
+  and history sufficiency. `WakeMemoryState`/`record_passage` hold a bounded
+  ring of passages for multi-bunch/multi-turn wakes inside `lax.scan`.
+  `wake_impedance` and `wake_from_impedance` map `W ↔ Z` with the
+  `exp(−iωt)` convention through the gridded Type-3 nonuniform Fourier
+  transform. `ResonatorWake(R, Q, f_r, *, kind, scale)` gives closed-form
+  wakes, impedance, and `loss_factor = ω_r R_s/(2Q)`;
+  `ResistiveWallWake(radius, conductivity, length, *, scale)` evaluates Bane–Sands
+  short-range wakes with the classical long-range forms beyond `50 s₀`.
+- Electromagnetic showers: `phydrax.solver.EMShowerPlan` couples
+  `PhotonTransportPlan` and `ChargedParticleTransportPlan` on one voxel
+  geometry over bounded generation rounds with fixed-capacity
+  `ShowerParticleBatch` launches, identity-ordered compaction of secondaries,
+  exact 64-bit child identities `p * stride + e + 1`, atomic capacity/identity
+  refusal, and an `EMShowerResult` whose ledger closes
+  `primary = deposited + escaped + truncated + stack_remainder` and reports
+  photon↔charged transfers, per-generation counts, and every transport result
+  and launch batch. `SecondaryStackSpec`/`SecondaryParticleStack` attach
+  fixed-capacity per-history secondary stacks: `PhotonTransportPlan(...,
+  electron_stack=...)` records photoelectrons (K-shell Sauter angular
+  distribution) and Compton recoil electrons (Klein–Nishina kinematics) and
+  reports `secondary_electron_energy`; `ChargedParticleTransportPlan(...,
+  photon_stack=...)` turns bremsstrahlung tallies into recorded secondary
+  photons (leading-order Tsai angle). A full stack reports
+  `SECONDARY_CAPACITY_EXHAUSTED` and tallies the refused secondary as
+  truncated. `ChargedParticleTransportPlan(..., step_bank_capacity=...)`
+  records a `ChargedStepBank` (pre/post position, pre/post `beta`, deposit,
+  material, `unrecorded_count`). `PhotonTransportPlan(...,
+  compton_kinematics=...)` selects `"free-electron"` or
+  `"impulse-approximation"` Doppler broadening from the optional per-material
+  `compton_profile_j0` of `RadiationCrossSectionLibrary`. New
+  `phydrax.equations` samplers: `sample_sauter_cosine`,
+  `compton_electron_cosine`, `sample_compton_profile_momentum`,
+  `doppler_scattered_energy`, `sample_bremsstrahlung_photon`. A history keeps
+  its first failure status; event/step capacity is reported only for
+  otherwise healthy histories. Example `examples/em_shower_slab.py`.
+- Photon and charged transport histories are now addressed by persistent
+  `(id_hi, id_lo)` identity words through `SampleAddress`/`derive_key`:
+  `simulate(..., identities=(hi, lo))` replaces `history_ids=`, results carry
+  `id_hi`/`id_lo` instead of `history_ids`, and keys must be typed
+  `jax.random.key` values. Random streams, plan IDs (`random_addressing`,
+  `step_bank_capacity`, `compton_kinematics`), and consequently sampled
+  outcomes change. `PlanarXRayDetectorResult` carries
+  `transport_id_hi`/`transport_id_lo`, and sensitive-hit `event_ids` pack both
+  words as `int64`.
 - `phydrax.special.synchrotron_f(x) = x ∫ₓ^∞ K_{5/3}(t) dt` and
   `phydrax.special.synchrotron_g(x) = x K_{2/3}(x)` for float64 `x >= 0`:
   small-`x` series, twelve log-`x` Chebyshev panels on `[0.25, 64)`, and
@@ -525,6 +1142,88 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `PICEnergyLedger` gains `radiated` (after `magnetic_field`) and its `defect`
+  is `total + radiated − previous_total`; `ElectromagneticPICState` gains the
+  required trailing `field_history`; `ChargedPropagationResult` gains
+  `radiated_energy_history` and `radiation_flags_history`, and the
+  `ChargedPropagationPlan` identity includes its radiation reaction.
+- Graded-index rays are the isotropic specialization of dispersion rays:
+  `RefractiveIndexHamiltonian(field)` (`H = ½(|p|² − n²)`) and
+  `GradedIndexRayPlan` (now a `StrictModule` binding it to kick–drift–kick).
+  `GradedIndexRayState`, `GradedIndexRayEvidence`, `GradedIndexRayResult` and
+  `PreparedGradedIndexRay` are replaced by `DispersionRayState`,
+  `DispersionRayEvidence` (`field_covered` → `medium_covered`, plus root,
+  index and status evidence), `DispersionRayResult` and
+  `PreparedDispersionRay`; `CurvedSchlierenPlan` takes a
+  `PreparedDispersionRay` and checks the Hamiltonian's coordinate frame.
+  Geometric and optical lengths integrate `|∂H/∂p|` and `p·∂H/∂p`, which
+  differ from the previous `n`-based trapezoid by the Hamiltonian drift;
+  graded-index plan identities change. `RayFanPlan` is a `StrictModule`.
+- PIC filter protocol: `AbstractPICFieldFilter` operations take the prepared
+  solver (`filter_charge(solver, charge)`, `filter_current(solver, current)`,
+  `filter_field(solver, field)`), and `validate_solver` is replaced by
+  `continuity_report(solver) -> PICFilterContinuityReport`.
+  `PICParticleCochainTransferPlan` replaces its `assignment` argument with
+  `shape_order`; transfer and current plan identities include the shape order.
+- `SymplecticMapPlan` checks symplecticity with the form of its
+  `AcceleratorConvention`: `δ` is conjugate to the positive-early longitudinal
+  coordinate, so `"positive-late"` maps with dispersion carry the opposite
+  longitudinal sign, and conventions without a `"positive-late"`/`"positive-early"`
+  sign or the canonical momentum normalization are refused. Field-map
+  tracking and wake kicks share the same convention validation.
+- `LorentzDrudeMaxwellConstitutivePlan(electric_poles, /, *, magnetic_poles,
+  permittivity_infinity, permeability_infinity)` takes `MaxwellLorentzPoles`
+  (the positional frequency/damping/strength arrays and the `permeability`
+  keyword are removed); `DispersiveMaxwellState` gains `magnetization` and
+  `magnetization_velocity`; `drude_maxwell_constitutive` accepts spatial plasma
+  frequencies and takes `permeability_infinity`. Plan fingerprints include
+  the strengths.
+- `FrequencyMaxwellOperator` takes a `StructuredCochainBridge` or cochain,
+  uses the law's `frequency_response`, requires `ω > 0`, and no longer takes
+  `material_state`; `dissipated_power` is replaced by `power_ledger`.
+  Lorentz–Drude, magnetic-loss conductive, and linear-gain laws now support
+  the frequency domain; the Hermitian eigen path refuses stretched, lossy, or
+  dispersive responses.
+- `MaxwellCPMLPlan.prepare(bridge, layout, wave_speed)`: the CPML profile uses
+  `σ_max = (m + 1) c ln(1/R) / (2 L)` with the physical layer thickness `L` and
+  the runtime's wave-speed bound `c`. The old per-cell `σ_max` ignored grid
+  spacing and wave speed, so time-domain CPML results and term fingerprints change.
+- `energy_rate` of dispersive constitutive laws is the rate of the complete
+  stored energy, so `power_balance_residual` closes with material dissipation.
+- `ElectromagneticPICPlan(solver, *, species, processes, boundaries, recorders,
+  filters, ownership, precision, ...)` is the single explicit electromagnetic
+  PIC runtime over any PIC field solver, with species as
+  `ParticlePopulationState` + persistent identities. It replaces the old
+  cochain-only constructor, `ReducedElectromagneticPICPlan`/`State`/`Result`
+  and `UnstructuredElectromagneticPICPlan`/`State`/`Result`.
+  `ElectromagneticPICState` carries `species`, `field`, `boundaries`,
+  `wall_charge`, `recorders`; `ElectromagneticPICDiagnostics.particle_maxwell_charge_defect`
+  is renamed `particle_field_charge_defect` and gains `process_charge_defect`,
+  `processes`, `field_successful`, `process_successful`. The cochain example is
+  bitwise unchanged. `PICMovingWindowPlan(pic, axis)` shifts through
+  `PICWindowShift` and operates on `ElectromagneticPICState`.
+  `ChargeConservingCurrentPlan.deposit` accepts runtime `macrocharge` and
+  `active_mask`. `SemiImplicitPICPlan` (ECSIM) remains a separate runtime.
+- `tools/pic_qualification.py` report: `boris_speed_defect` is renamed
+  `pusher_speed_defect` (worst over every `RelativisticPusher`); adds
+  `electromagnetic_continuity_defect`, `particle_field_charge_defect`,
+  `gauss_defect`, `deposit_gauss_pairing_defect`.
+- Thermal synchrotron moved to `phydrax.electromagnetics`:
+  `ThermalSynchrotronModel`, `ThermalSynchrotronCoefficients`,
+  `ThermalSynchrotronDomain`, `ThermalSynchrotronEvidence`,
+  `ThermalSynchrotronReferenceEvidence` and `ThermalSynchrotronUnitContract` are
+  no longer exported by `phydrax.applications.astrophysics`; the model and unit
+  contract bind the CODATA 2022 SI `ElectromagneticScaleContract` instead of a
+  `RelativityScaleContract` (model and unit fingerprints change; values are
+  unchanged). `invariant_synchrotron_coefficients`/`InvariantSynchrotronCoefficients`
+  are renamed `invariant_emission_coefficients`/`InvariantEmissionCoefficients`
+  and also accept SI `ThermalFreeFreeCoefficients`. Both gain `gray_means`.
+- `ThermalBremsstrahlungGrayOpacityPlan` and `ThermalSynchrotronGrayOpacityPlan`
+  (`phydrax.applications.compact_objects`) bind an `ElectromagneticScaleContract`
+  and compute Planck and Rosseland means of the spectral free–free and MNY96
+  coefficients; `emission_prefactor`, `rosseland_ratio`, `radiation_constant`
+  and the temperature-window arguments are removed and qualification is the
+  spectral support of every mean.
 - The PIC pusher is now a relativistic pusher family: `RelativisticBorisPlan` is
   replaced by `RelativisticPushPlan(relativity, method=...)` with
   `RelativisticPusher = Literal["boris", "vay", "higuera-cary"]`, and
@@ -956,6 +1655,27 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- Strict dtype promotion failures: native restarted GMRES and the Arnoldi
+  orthogonality check compared `int64` index ranges with `int32` step counts
+  (reached by dense `VectorLocalRootPlan` tangent solves above dimension three
+  and by `PolarizedRadiativeTransferPlan` matrix-exponential actions).
+- `ParticlePopulationPlan.allocate` sorted invalid requests with an `int64`
+  sentinel cast into the request's `int32` event-ID dtype (wrapping to `-1`,
+  so padding rows came first), and unused request rows scattered back into
+  slot 0, erasing an allocation made there; event IDs now widen before
+  sorting and only allocated rows write.
+- Lorentz–Drude ADE damping was applied twice per half step (effective `2γ`);
+  the oscillator half step is now a symmetric kick-drift-kick with
+  Crank–Nicolson damping and matches the continuum `ε(ω)` to second order.
+- `tools/pic_qualification.py --smoke` crashed on the missing
+  `ElectrostaticPICDiagnostics.continuity_defect`; the diagnostics now report the
+  integrated continuity residual `|Σ ⋆0(ρ_{n+1} − ρ_n)|/Δt`.
+- Tetrahedral electromagnetic PIC passed Whitney edge flow directly as Maxwell
+  current; charge and current now enter Maxwell through the inverse Hodge stars
+  with the physical sign, so Maxwell's Gauss charge follows the deposited
+  charge. The reduced 1-D Maxwell Gauss/charge divergence gives the nonperiodic
+  lower wall zero flux, matching the PIC continuity operator; reduced 2-D fields
+  with a nonperiodic axis (not paired) are refused by the pairing check.
 - `phydrax.meshing.evaluate_cell_quality` of hexahedra, prisms, and pyramids
   can be first evaluated under `jax.jit`/`eqx.filter_jit`: the cached exact
   measure quadrature holds host NumPy nodal gradients instead of converting a

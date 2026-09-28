@@ -348,10 +348,19 @@ class MaxwellPrimaryState(StrictModule):
 
 
 class MaxwellAuxiliaryState(StrictModule):
-    """Material and boundary/PML state kept outside the primary fluxes."""
+    """Material and boundary/PML state kept outside the primary fluxes.
+
+    ``magnetic_charge`` is the magnetic charge declared by sources: equivalent
+    (Huygens, antenna) magnetic currents have physical surface divergence, so the
+    magnetic Gauss law reads ``d(B) = magnetic_charge`` with
+    ``∂(magnetic_charge)/∂t = −d(M)`` accumulated with the same half kicks as
+    ``B``. It lives on the magnetic-divergence cochain and is empty when ``B`` is
+    a top form.
+    """
 
     material: Any
     boundary: Any
+    magnetic_charge: Array
 
 
 class CompatibleMaxwellState(StrictModule):
@@ -378,6 +387,116 @@ class CompatibleMaxwellDiagnostics(StrictModule):
     power_balance_residual: Array
     stable_step: Array
     step_fraction: Array | None
+
+
+def _positive_angular_frequency(value: ArrayLike, /) -> Array:
+    frequency = jnp.asarray(value)
+    if jnp.iscomplexobj(frequency):
+        raise TypeError("angular_frequency must be real.")
+    if frequency.shape != ():
+        raise ValueError("angular_frequency must be a scalar.")
+    if not jnp.issubdtype(frequency.dtype, jnp.inexact):
+        frequency = frequency.astype(jnp.float64)
+    return eqx.error_if(
+        frequency,
+        ~jnp.isfinite(frequency) | (frequency <= 0.0),
+        "Constitutive frequency response requires a finite positive angular_frequency.",
+    )
+
+
+class AbstractMaxwellFrequencyResponse(StrictModule):
+    """Linear constitutive response at one real angular frequency, ``exp(-iωt)``.
+
+    ``electric_displacement`` applies the effective permittivity ``ε(ω)`` with
+    electric conduction folded in as ``iσ/ω``; ``magnetic_field`` applies
+    ``μ(ω)⁻¹`` with magnetic conduction folded into ``μ(ω)`` as ``iσₘ/ω``.
+    ``lossless`` states that both maps are Hodge-Hermitian; ``dispersive`` states
+    that they depend on ``ω``.
+    """
+
+    angular_frequency: eqx.AbstractVar[Array]
+    lossless: eqx.AbstractVar[bool]
+    dispersive: eqx.AbstractVar[bool]
+
+    @abc.abstractmethod
+    def electric_displacement(self, electric: Array, /) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def magnetic_field(self, flux: Array, /) -> Array:
+        raise NotImplementedError
+
+
+class DiagonalMaxwellFrequencyResponse(AbstractMaxwellFrequencyResponse):
+    """Degree-aligned complex ``ε(ω)`` and ``μ(ω)`` on electric/magnetic cochains."""
+
+    angular_frequency: Array
+    permittivity: Array
+    permeability: Array
+    lossless: bool = eqx.field(static=True)
+    dispersive: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        angular_frequency: ArrayLike,
+        permittivity: ArrayLike,
+        permeability: ArrayLike,
+        /,
+        *,
+        lossless: bool,
+        dispersive: bool,
+    ) -> None:
+        epsilon = jnp.asarray(permittivity).astype(jnp.complex128)
+        mu = jnp.asarray(permeability).astype(jnp.complex128)
+        if epsilon.ndim != 1 or mu.ndim != 1:
+            raise ValueError("Diagonal frequency responses must be cochain vectors.")
+        self.angular_frequency = _positive_angular_frequency(angular_frequency)
+        self.permittivity = epsilon
+        self.permeability = eqx.error_if(
+            mu, jnp.any(mu == 0.0), "Frequency permeability must be nonzero."
+        )
+        self.lossless = bool(lossless)
+        self.dispersive = bool(dispersive)
+
+    def electric_displacement(self, electric: Array, /) -> Array:
+        return self.permittivity * electric
+
+    def magnetic_field(self, flux: Array, /) -> Array:
+        return flux / self.permeability
+
+
+class InstantaneousMaxwellFrequencyResponse(AbstractMaxwellFrequencyResponse):
+    """Frequency-independent response of a stateless lossless constitutive law."""
+
+    angular_frequency: Array
+    constitutive: AbstractPreparedMaxwellConstitutive
+    lossless: bool = eqx.field(static=True)
+    dispersive: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        constitutive: AbstractPreparedMaxwellConstitutive,
+        angular_frequency: ArrayLike,
+        /,
+    ) -> None:
+        if not isinstance(constitutive, AbstractPreparedMaxwellConstitutive):
+            raise TypeError("constitutive must be a prepared Maxwell constitutive law.")
+        capabilities = constitutive.capabilities
+        if not capabilities.lossless or capabilities.dispersive:
+            raise ValueError(
+                "Instantaneous frequency responses require lossless nondispersive laws."
+            )
+        constitutive.validate_state(constitutive.initialize_state())
+        self.angular_frequency = _positive_angular_frequency(angular_frequency)
+        self.constitutive = constitutive
+        self.lossless = True
+        self.dispersive = False
+
+    def electric_displacement(self, electric: Array, /) -> Array:
+        return self.constitutive.electric_displacement(electric, None)
+
+    def magnetic_field(self, flux: Array, /) -> Array:
+        return self.constitutive.magnetic_field(flux, None)
 
 
 class AbstractPreparedMaxwellConstitutive(StrictModule):
@@ -468,11 +587,29 @@ class AbstractPreparedMaxwellConstitutive(StrictModule):
         magnetic_star: Array,
         /,
     ) -> Array:
+        """Rate of the complete stored energy, fields plus auxiliary material."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def wave_speed_bound(self, /) -> Array:
         """Return a conservative material wave-speed bound."""
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def auxiliary_degrees(self, /) -> tuple[int, ...]:
+        """Cochain degree indexed by the trailing axis of each auxiliary state leaf.
+
+        Leaves are ordered as ``jax.tree_util.tree_leaves(initialize_state())``;
+        leading axes enumerate local auxiliary components on that cochain entity.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def frequency_response(
+        self, angular_frequency: ArrayLike, /
+    ) -> AbstractMaxwellFrequencyResponse:
+        """Continuous ``exp(-iωt)`` response ``ε(ω)``, ``μ(ω)`` of the law."""
         raise NotImplementedError
 
 
@@ -699,6 +836,21 @@ class PreparedDiagonalMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
     def wave_speed_bound(self, /) -> Array:
         return jnp.sqrt(jnp.max(1.0 / self.permeability) / jnp.min(self.permittivity))
 
+    @property
+    def auxiliary_degrees(self, /) -> tuple[int, ...]:
+        return ()
+
+    def frequency_response(
+        self, angular_frequency: ArrayLike, /
+    ) -> DiagonalMaxwellFrequencyResponse:
+        return DiagonalMaxwellFrequencyResponse(
+            angular_frequency,
+            self.permittivity,
+            self.permeability,
+            lossless=True,
+            dispersive=False,
+        )
+
 
 class CompatibleMaxwellPlan(StrictModule):
     """Compatible Maxwell plan over one role-aware retained de Rham segment."""
@@ -846,7 +998,11 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
         observers = tuple(value.prepare(layout) for value in plan.observers)
         sources = tuple(value.prepare(plan.bridge, layout) for value in plan.sources)
-        pml = None if plan.pml is None else plan.pml.prepare(plan.bridge, layout)
+        pml = (
+            None
+            if plan.pml is None
+            else plan.pml.prepare(plan.bridge, layout, constitutive.wave_speed_bound())
+        )
         spacings = tuple(
             jnp.min(axis.interval_widths) for axis in plan.bridge.grid.structured_axes
         )
@@ -877,10 +1033,11 @@ class PreparedCompatibleMaxwell(StrictModule):
             )
         )
         top_form = layout.magnetic_degree == cochain.max_degree
+        # Source magnetic currents are tracked as declared magnetic charge, so only
+        # materials, boundaries, and absorbers can break d(B) = magnetic charge.
         preserving = top_form or (
             constitutive.capabilities.magnetic_closedness_preserving
             and all(value.magnetic_closedness_preserving for value in boundaries)
-            and all(value.magnetic_closedness_preserving for value in sources)
             and pml is None
         )
         if plan.magnetic_constraint.mode == "elide" and not preserving:
@@ -990,6 +1147,10 @@ class PreparedCompatibleMaxwell(StrictModule):
                 "sources": [value.prepared_id for value in sources],
             }
         )
+        for observer in observers:
+            observer.validate_runtime(self)
+        for source in sources:
+            source.validate_runtime(self)
 
     @property
     def primary_counts(self) -> tuple[int, int, int]:
@@ -1012,6 +1173,11 @@ class PreparedCompatibleMaxwell(StrictModule):
             )
         return displacement, magnetic_flux
 
+    @property
+    def magnetic_charge_count(self) -> int:
+        """Size of the magnetic-divergence cochain carrying declared magnetic charge."""
+        return 0 if self.magnetic_incidence is None else self.magnetic_incidence.target.size
+
     def pack(
         self,
         electric_displacement: ArrayLike,
@@ -1022,6 +1188,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         material_state: Any = None,
         boundary_state: Any = None,
         observations: Any = None,
+        magnetic_charge: ArrayLike | None = None,
     ) -> CompatibleMaxwellState:
         displacement = jnp.asarray(electric_displacement)
         flux = jnp.asarray(magnetic_flux)
@@ -1037,6 +1204,13 @@ class PreparedCompatibleMaxwell(StrictModule):
         displacement = displacement.astype(dtype)
         flux = flux.astype(dtype)
         charge_ = charge_.astype(dtype)
+        magnetic_charge_ = (
+            jnp.zeros((self.magnetic_charge_count,), dtype=dtype)
+            if magnetic_charge is None
+            else jnp.asarray(magnetic_charge).astype(dtype)
+        )
+        if magnetic_charge_.shape != (self.magnetic_charge_count,):
+            raise ValueError("Maxwell magnetic charge has the wrong size.")
         if boundary_state is None:
             boundary_state_ = (
                 None if self.pml is None else self.pml.initialize(dtype=dtype)
@@ -1073,7 +1247,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
         if self.layout.magnetic_degree < self.plan.bridge.cochain.max_degree:
             if self.plan.magnetic_constraint.mode == "elide":
-                residual = self.magnetic_incidence.mv(flux)
+                residual = self.magnetic_incidence.mv(flux) - magnetic_charge_
                 tolerance = max(
                     self.plan.magnetic_constraint.absolute_tolerance,
                     self.plan.magnetic_constraint.relative_tolerance
@@ -1081,10 +1255,13 @@ class PreparedCompatibleMaxwell(StrictModule):
                 )
                 if float(np.linalg.norm(np.asarray(residual))) > tolerance:
                     raise ValueError(
-                        "Projection-elided initial magnetic flux is not closed."
+                        "Projection-elided initial magnetic flux does not match its "
+                        "declared magnetic charge."
                     )
             else:
-                flux, _ = self._project_magnetic_constraint(flux, force=True)
+                flux, _ = self._project_magnetic_constraint(
+                    flux, magnetic_charge_, force=True
+                )
         self.constitutive.validate_state(material_state)
         return CompatibleMaxwellState(
             primary=MaxwellPrimaryState(
@@ -1095,6 +1272,7 @@ class PreparedCompatibleMaxwell(StrictModule):
             auxiliary=MaxwellAuxiliaryState(
                 material=material_state,
                 boundary=boundary_state_,
+                magnetic_charge=magnetic_charge_,
             ),
             observations=observation_state,
         )
@@ -1131,6 +1309,8 @@ class PreparedCompatibleMaxwell(StrictModule):
             or primary.charge.shape != (charge_count,)
         ):
             raise ValueError("Maxwell D, B, and charge cochains have wrong sizes.")
+        if state.auxiliary.magnetic_charge.shape != (self.magnetic_charge_count,):
+            raise ValueError("Maxwell magnetic charge has the wrong size.")
         if len(tuple(state.observations)) != len(self.observers):
             raise ValueError("Maxwell observation state count does not match observers.")
         self.constitutive.validate_state(state.auxiliary.material)
@@ -1338,13 +1518,20 @@ class PreparedCompatibleMaxwell(StrictModule):
             "Maxwell step_size must be finite, positive, and no larger than stable_dt.",
         )
 
+    def _magnetic_divergence(self, magnetic: Array, /) -> Array:
+        if self.magnetic_incidence is None:
+            return jnp.zeros((0,), dtype=magnetic.dtype)
+        return self.magnetic_incidence.mv(magnetic)
+
     def _project_magnetic_constraint(
         self,
         magnetic_flux: Array,
+        magnetic_charge: Array,
         /,
         *,
         force: bool = False,
     ) -> tuple[Array, MaxwellMagneticConstraintEvidence]:
+        """Project ``B`` onto ``d(B) = magnetic_charge`` (minimum-norm correction)."""
         if self.magnetic_incidence is None:
             zero = jnp.asarray(0.0, dtype=magnetic_flux.real.dtype)
             return magnetic_flux, MaxwellMagneticConstraintEvidence(
@@ -1356,7 +1543,7 @@ class PreparedCompatibleMaxwell(StrictModule):
                 jnp.asarray(False),
                 True,
             )
-        residual = self.magnetic_incidence.mv(magnetic_flux)
+        residual = self.magnetic_incidence.mv(magnetic_flux) - magnetic_charge
         residual_norm = jnp.linalg.norm(residual)
         scale = jnp.linalg.norm(magnetic_flux)
         relative = residual_norm / jnp.maximum(scale, jnp.finfo(scale.dtype).tiny)
@@ -1400,7 +1587,9 @@ class PreparedCompatibleMaxwell(StrictModule):
                 )
             else:
                 projected = self.harmonic_constraint.apply(projected)
-        final_residual = jnp.linalg.norm(self.magnetic_incidence.mv(projected))
+        final_residual = jnp.linalg.norm(
+            self.magnetic_incidence.mv(projected) - magnetic_charge
+        )
         tolerance = jnp.maximum(
             self.plan.magnetic_constraint.absolute_tolerance,
             self.plan.magnetic_constraint.relative_tolerance * jnp.linalg.norm(projected),
@@ -1476,7 +1665,13 @@ class PreparedCompatibleMaxwell(StrictModule):
             - magnetic_start.magnetic_current
         )
         magnetic_half_flux = state.primary.magnetic_flux + half_step * magnetic_forcing
-        magnetic_half_flux, _ = self._project_magnetic_constraint(magnetic_half_flux)
+        # Declared source magnetic charge follows the same half kicks as B.
+        magnetic_charge_half = state.auxiliary.magnetic_charge - half_step * (
+            self._magnetic_divergence(magnetic_start.magnetic_current)
+        )
+        magnetic_half_flux, _ = self._project_magnetic_constraint(
+            magnetic_half_flux, magnetic_charge_half
+        )
         material_half = self.constitutive.advance_state(
             time,
             state.auxiliary.material,
@@ -1565,10 +1760,16 @@ class PreparedCompatibleMaxwell(StrictModule):
                 self.layout.electric_degree,
                 displacement_new,
             ) - self.electric_constraint(state)
-        magnetic_new, _ = self._project_magnetic_constraint(magnetic_new)
+        magnetic_charge_new = (
+            magnetic_charge_half
+            - half_step * self._magnetic_divergence(magnetic_end.magnetic_current)
+        ).astype(state.auxiliary.magnetic_charge.dtype)
+        magnetic_new, _ = self._project_magnetic_constraint(
+            magnetic_new, magnetic_charge_new
+        )
         provisional = CompatibleMaxwellState(
             MaxwellPrimaryState(displacement_new, magnetic_new, charge_new),
-            MaxwellAuxiliaryState(material_new, boundary_new),
+            MaxwellAuxiliaryState(material_new, boundary_new, magnetic_charge_new),
             state.observations,
         )
         electric_observed = self.constitutive.electric_field(
@@ -1638,10 +1839,14 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
 
     def magnetic_constraint(self, state: CompatibleMaxwellState, /) -> Array:
+        """Return the magnetic Gauss defect ``d(B) − declared magnetic charge``."""
         state_ = self._state(state)
         if self.magnetic_incidence is None:
             return jnp.asarray(0.0, dtype=state_.primary.magnetic_flux.real.dtype)
-        return self.magnetic_incidence.mv(state_.primary.magnetic_flux)
+        return (
+            self.magnetic_incidence.mv(state_.primary.magnetic_flux)
+            - state_.auxiliary.magnetic_charge
+        )
 
     def magnetic_constraint_evidence(
         self,
@@ -2064,6 +2269,7 @@ def refresh_compatible_maxwell(
 
 __all__ = [
     "AbstractMaxwellConstitutivePlan",
+    "AbstractMaxwellFrequencyResponse",
     "AbstractPreparedMaxwellConstitutive",
     "CompatibleMaxwellDiagnostics",
     "CompatibleMaxwellPlan",
@@ -2071,6 +2277,8 @@ __all__ = [
     "CompatibleMaxwellRunResult",
     "CompatibleMaxwellState",
     "DiagonalMaxwellConstitutivePlan",
+    "DiagonalMaxwellFrequencyResponse",
+    "InstantaneousMaxwellFrequencyResponse",
     "MaxwellAuxiliaryState",
     "MaxwellCapabilities",
     "MaxwellCochainLayout",

@@ -47,22 +47,32 @@ collision = phx.discretization.pic.collisions.CoulombCollisionPlan(
     0.1,
 )
 
-# True 1D3V field/PIC coupling.
+# True 1D3V field/PIC coupling: collided electrons over neutralizing ions.
 field_plan = phx.solver.CompatibleMaxwell1DPlan(grid)
-field = field_plan.initialize()
-transfer = phx.discretization.pic.ReducedPICTransferPlan(grid)
-reduced = phx.solver.ReducedElectromagneticPICPlan(field_plan, transfer, -1.0)
-state = phx.solver.ReducedElectromagneticPICState(
-    phx.discretization.pic.PICParticleState(
-        (jnp.arange(8, dtype="float64")[:, None] + 0.5) / 8.0,
-        collision.accepted_velocity,
+ions = phx.discretization.pic.PICSpeciesPlan(
+    population_plan,
+    phx.discretization.pic.PICChargeModelPlan(
+        1.0,
+        "ions",
+        minimum_charge_number=1,
+        maximum_charge_number=1,
+        initial_charge_number=1,
     ),
-    population,
-    field,
-    jnp.asarray(0.0),
-    jnp.asarray(0, dtype=jnp.int32),
 )
-step = reduced.step(state, 1.0e-3)
+electrons = phx.discretization.pic.PICSpeciesPlan(population_plan, charge_model)
+reduced = phx.solver.ElectromagneticPICPlan(
+    phx.solver.ReducedMaxwellPICFieldSolver(
+        field_plan, phx.discretization.pic.ReducedPICTransferPlan(grid)
+    ),
+    species=(electrons, ions),
+)
+position = (jnp.arange(8, dtype="float64")[:, None] + 0.5) / 8.0
+state = reduced.initialize(
+    (position, position),
+    (collision.accepted_velocity, jnp.zeros((8, 3))),
+    1.0e-3,
+)
+step = reduced.step_detailed(state, 1.0e-3)
 
 # Simplicial ownership on an independent unstructured mesh.
 mesh = phx.discretization.CellMesh(
@@ -89,7 +99,7 @@ print(
         "collision_successful": True,
         "collision_momentum_defect": float(collision.momentum_defect),
         "reduced_pic_successful": True,
-        "reduced_continuity_defect": float(step.continuity_defect),
+        "reduced_continuity_defect": float(step.diagnostics.continuity_defect),
         "unstructured_points_located": int(jnp.sum(located.inside)),
         "total_macrocharge": float(jnp.sum(charge_model.macrocharge(population, charge))),
     }

@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
+from phydrax import RelativityScaleContract
 from phydrax.artifacts import ArtifactManifest
 from phydrax.discretization import (
     CylindricalHankelPlan,
@@ -37,10 +38,12 @@ from phydrax.optics.materials import (
     RefractiveIndexProvenance,
 )
 from phydrax.optics.transport import (
-    prepare_tissue_transport,
-    simulate_tissue_transport,
-    TissueTransportCoefficients,
-    TissueTransportPlan,
+    ExplicitPhotonSource,
+    launch_optical_photons,
+    OpticalMonteCarloPlan,
+    prepare_optical_monte_carlo,
+    simulate_optical_photons,
+    TissueOpticalMedium,
 )
 from phydrax.optics.wave import (
     AnalyticPulseField,
@@ -245,32 +248,29 @@ def _transport_case() -> Any:
         jnp.asarray((1.0, 1.0)),
         surface_ids=jnp.asarray((0, 0)),
     )
-    prepared = prepare_tissue_transport(
-        TissueTransportPlan(
+    prepared = prepare_optical_monte_carlo(
+        OpticalMonteCarloPlan(
             surfaces,
-            TissueTransportCoefficients(
+            TissueOpticalMedium(
                 jnp.asarray((0.4, 0.0)),
                 jnp.asarray((0.6, 0.0)),
                 jnp.asarray((0.5, 0.0)),
                 jnp.asarray((1.0, 1.0)),
             ),
+            relativity=RelativityScaleContract.si(),
             maximum_interactions=4,
         )
     )
     count = 2048
-    origins = jnp.broadcast_to(jnp.asarray((0.0, 0.0, 0.0)), (count, 3))
-    directions = jnp.broadcast_to(jnp.asarray((0.0, 0.0, 1.0)), (count, 3))
-    media = jnp.zeros((count,), dtype=jnp.int32)
-    return _timed(
-        lambda: simulate_tissue_transport(
-            prepared,
-            origins,
-            directions,
-            media,
-            jr.PRNGKey(0),
-            photon_ids=jnp.arange(count, dtype=jnp.uint32),
+    source = ExplicitPhotonSource(
+        launch_optical_photons(
+            np.broadcast_to(np.asarray((0.0, 0.0, 0.0)), (count, 3)),
+            np.broadcast_to(np.asarray((0.0, 0.0, 1.0)), (count, 3)),
+            0,
+            wavelengths=500e-9,
         )
     )
+    return _timed(lambda: simulate_optical_photons(prepared, source, jr.key(0)))
 
 
 def _guided_case() -> Any:

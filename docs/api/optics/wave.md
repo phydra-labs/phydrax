@@ -116,6 +116,22 @@
 
 ::: phydrax.optics.wave.sample_gaussian_pulse_envelope
 
+---
+
+::: phydrax.optics.wave.sample_focused_gaussian_pulse_envelope
+
+## Maxwell antennas
+
+Pulse envelopes on a grid-aligned plane become one-way
+`phydrax.solver.maxwell.SampledPlaneCurrentAntennaPlan` sheets launching the field
+along the plane normal; the solver never imports optics.
+
+::: phydrax.optics.wave.pulse_envelope_antenna
+
+---
+
+::: phydrax.optics.wave.openpmd_laser_envelope_antenna
+
 
 ## Nonlinear propagation
 

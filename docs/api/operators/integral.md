@@ -51,6 +51,27 @@ silently.
 
 ::: phydrax.operators.time_convolution
 
+## Free-space convolution on bounded grids
+
+`FreeSpaceConvolutionPlan` is the one Hockney doubled-grid FFT substrate for
+open-boundary convolutions on bounded uniform cell grids. It owns the kernel
+family (`FreeSpaceKernel`): cell-integrated Coulomb and Newton Green functions
+(Qiang, Lidia, Ryne, Limborg-Deprey 2006), the point-sampled softened Newton
+kernel, and the point-sampled Biot–Savart kernel. `gradient=True` prepares the
+derivative kernels under the same sampling rule so fields are convolved rather
+than finite-differenced. `FreeSpaceVortexFFTPlan` (vortex methods),
+`IsolatedCartesianGravityPlan` (`phydrax.solver.advanced`), and
+`SpaceChargeIGFPlan` (`phydrax.applications.accelerator`) are thin owners of
+their scientific meaning over this substrate.
+
+::: phydrax.operators.FreeSpaceConvolutionPlan
+    options:
+      show_root_heading: true
+
+::: phydrax.operators.FreeSpaceConvolutionResult
+    options:
+      show_root_heading: true
+
 ## Three-dimensional multipole translations
 
 ::: phydrax.operators.LaplaceMultipolePlan3D

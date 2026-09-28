@@ -35,6 +35,9 @@ class PICRejectionReason(IntFlag):
     GAUSS = 32
     MAGNETIC = 64
     NONFINITE = 128
+    PROCESS = 256
+    RADIATION_OWNERSHIP = 512
+    NUMERICAL_CHERENKOV = 1024
 
 
 class PICParticleState(StrictModule):
@@ -93,9 +96,17 @@ class PICCurrentDepositResult(StrictModule):
 
 
 class PICEnergyLedger(StrictModule):
+    """Per-step energy ledger.
+
+    ``radiated`` is the energy particles handed this step to radiation the field
+    does not resolve (subgrid radiation reaction), so
+    ``defect = total + radiated - previous_total``.
+    """
+
     particle_kinetic: Array
     electric_field: Array
     magnetic_field: Array
+    radiated: Array
     total: Array
     previous_total: Array
     defect: Array

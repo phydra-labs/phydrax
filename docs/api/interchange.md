@@ -140,6 +140,160 @@ completes a bounded structural preflight before reading any payload.
 
 ::: phydrax.interchange.write_openpmd_laser_envelope_hdf5
 
+## Particle-track HDF5 profile
+
+The bounded particle-track adapter follows one openPMD 1.1.0 particle species
+through an increasing range of group-based iterations and returns
+`phydrax.electromagnetics.ChargedTrajectory` lanes with an `AdapterReport`. It
+uses the public HDF5 schema through `h5py`, not the openPMD-api runtime.
+`OpenPMDParticleTrackSelection` names the species, the iterations (default: every
+iteration of the series), and optionally a subset of `uint64` identities.
+Particles are matched across iterations by the openPMD `id` record alone and
+emitted in ascending identity order, so storage order inside an iteration never
+changes the result; each `id` becomes the `(id >> 32, id & 0xffffffff)` identity
+words of `ChargedTrajectory`.
+
+The reader requires `id`, `position`, `positionOffset`, `momentum`, `weighting`,
+`charge`, and `mass` (dataset or constant record components) with the ED-PIC
+`macroWeighted`/`weightingPower` attributes, which convert macroparticle values
+to one particle. Every record's `unitDimension` must equal the openPMD dimension
+of its quantity in the bound `ElectromagneticScaleContract`; values are converted
+through `unitSI` to SI and from SI to the scale's units via `unit_si_map()`.
+Sample times are `(time + timeOffset) · timeUnitSI`, and proper velocities are
+`momentum / mass`. `result.masses` holds the per-lane rest masses, which
+`ChargedTrajectory` does not carry. Refusals raise `OpenPMDParticleTrackError`
+with an invalid report:
+
+| Refusal | Status |
+|---|---|
+| identities missing from a selected iteration, repeated identities, nonmonotonic times, per-particle charge/mass/weighting changing between iterations | `INCONSISTENT_SOURCE` |
+| component extents that disagree (truncated records), `unitDimension` mismatch, absent records | `MALFORMED_SOURCE` |
+| no `id` record, missing `macroWeighted`/`weightingPower`, fewer than three Cartesian components, staggered position/momentum `timeOffset`, other standard revisions, `fileBased` series | `UNSUPPORTED_REQUIRED_SEMANTIC` |
+| HDF5 structure or decoded payload plus canonical lanes above the resource limits or `maximum_decoded_bytes` | `INCONSISTENT_SOURCE` |
+
+The complete HDF5 tree, every selected record's structure and units, the times,
+and the decoded-byte budget are checked before any particle payload is read.
+The writer stores lanes that share times and are active at every sample, one
+iteration per sample, in the scale's units with `unitSI`/`unitDimension` from
+`unit_si_map()`, with constant components where all particles agree. The
+`proper_accelerations` of a trajectory have no openPMD particle record and are
+reported as a declared loss.
+
+::: phydrax.interchange.OpenPMDParticleTrackSelection
+
+---
+
+::: phydrax.interchange.OpenPMDParticleTrackImportPolicy
+
+---
+
+::: phydrax.interchange.read_openpmd_particle_tracks_hdf5
+
+---
+
+::: phydrax.interchange.write_openpmd_particle_tracks_hdf5
+
+## Mesh and PIC-state HDF5 profile
+
+The bounded mesh adapter reads and writes the openPMD 1.1.0 `E`, `B`, `J`, and
+`rho` mesh records in `cartesian` and `thetaMode` geometry as
+`OpenPMDMeshRecord` values inside one `OpenPMDMeshIteration`. It uses the public
+HDF5 schema through `h5py`, not the openPMD-api runtime. Values, grids, and times
+are in the units of the bound `ElectromagneticScaleContract`: stored values pass
+through the component `unitSI` (grids through `gridUnitSI`, times through
+`timeUnitSI`) to SI and from SI to the scale via `unit_si_map()`, and every
+record's `unitDimension` must equal its quantity's dimension. Each component
+keeps its in-cell `position`, so Yee/Whitney staggering survives the round trip,
+and each record keeps its `timeOffset`. Cartesian axes are returned in `x, y, z`
+order whatever the stored order (`dataOrder` `C` or `F`). ThetaMode records are
+`[2M - 1, N_r, N_z]` arrays of mode planes with `geometryParameters`
+`m=<M>;imag=+`: mode 0, then the real and imaginary parts of modes `1 … M - 1`,
+so the field at azimuth θ is `F_0 + Σ_m (Re F_m cos mθ + Im F_m sin mθ)`.
+`write_openpmd_meshes_hdf5` publishes one iteration exclusively as
+`<series>_<iteration>.h5`, a member of the `fileBased` series `<series>_%T.h5`.
+Refusals raise `OpenPMDMeshError` with an invalid report:
+
+| Refusal | Status |
+|---|---|
+| missing or malformed attributes, absent records, component extents that disagree (truncated records), damaged HDF5 images, `unitDimension` mismatch, a thetaMode plane count other than `2m - 1` | `MALFORMED_SOURCE` |
+| `cylindrical`, `spherical`, or `other` geometry, `imag=-`, Fortran-ordered thetaMode, axis labels outside `x, y, z` / `r, z`, missing vector components, other standard versions | `UNSUPPORTED_REQUIRED_SEMANTIC` |
+| HDF5 structure or decoded payload above the resource limits or `maximum_decoded_bytes` | `INCONSISTENT_SOURCE` |
+
+`OpenPMDPICLayout(plan, scale, particle_masses)` binds an
+`ElectromagneticPICPlan` over the periodic 3-D cochain or the reduced 1-D/2-D
+field solver; the scale declares the run's code units (its speed of light must
+equal the pusher's) and `particle_masses` gives one real particle's rest mass per
+species. `write_openpmd_pic_state` publishes one state as `<series>_<step>.h5`:
+`E`, `B`, `rho` (and the step's `J` at `timeOffset -dt/2`) on the solver grid
+with the cochain edge/face/vertex or reduced cell-centered staggering, and one
+species per PIC species in ascending identity order with `id`, a `parentId`
+lineage record, `weighting` = macroparticle mass / particle mass, per-particle
+`charge` and `mass`, and `momentum` = particle mass × proper velocity at
+`timeOffset -dt/2`. Slot bookkeeping, charge-transition history, boundary
+ledgers, recorders, and field auxiliary state are declared losses.
+`read_openpmd_pic_state` rebuilds a state that continues the run: particles fill
+the leading slots in identity order, the identity counter resumes past the
+largest id, and wall charge is `rho` minus the deposited particle charge.
+Records that contradict the plan (grid, staggering, capacity, particle mass,
+non-integral charge numbers) are `INCONSISTENT_SOURCE`; positions off the
+iteration time or momenta not at `-dt/2` are `UNSUPPORTED_REQUIRED_SEMANTIC`.
+
+`OpenPMDPICStreamWriter` is the bounded per-step output component of a PIC run:
+each `write(step_result, step_size=dt)` whose accepted step is a multiple of
+`interval` publishes one complete iteration file atomically; rejected, repeated,
+and off-cadence steps publish nothing, and the iteration count and total bytes
+are refused before publication once exhausted. ADIOS2 BP4 is an optional provider
+route: `OpenPMDADIOS2Provider` pins an openPMD-api `openpmd-pipe` executable,
+`convert_openpmd_hdf5_to_adios2` (or the writer's `provider=`) converts a
+published member into `<member>.bp`, and `read_openpmd_adios2` converts a BP4
+directory back into a bounded HDF5 image for the readers above.
+
+::: phydrax.interchange.OpenPMDMeshRecord
+
+---
+
+::: phydrax.interchange.OpenPMDMeshIteration
+
+---
+
+::: phydrax.interchange.OpenPMDMeshImportPolicy
+
+---
+
+::: phydrax.interchange.read_openpmd_meshes_hdf5
+
+---
+
+::: phydrax.interchange.write_openpmd_meshes_hdf5
+
+---
+
+::: phydrax.interchange.OpenPMDPICLayout
+
+---
+
+::: phydrax.interchange.write_openpmd_pic_state
+
+---
+
+::: phydrax.interchange.read_openpmd_pic_state
+
+---
+
+::: phydrax.interchange.OpenPMDPICStreamWriter
+
+---
+
+::: phydrax.interchange.OpenPMDADIOS2Provider
+
+---
+
+::: phydrax.interchange.convert_openpmd_hdf5_to_adios2
+
+---
+
+::: phydrax.interchange.read_openpmd_adios2
+
 
 ## Layout interchange
 

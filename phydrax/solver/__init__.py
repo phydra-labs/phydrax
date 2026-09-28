@@ -198,6 +198,11 @@ from ._charged_particle_transport import (
     ChargedParticleTransportPlan,
     ChargedParticleTransportResult,
     ChargedParticleTransportStatus,
+    ChargedStepBank,
+)
+from ._charged_step_radiation import (
+    ChargedStepRadiationPlan,
+    ChargedStepRadiationResult,
 )
 from ._chemical_equilibrium import (
     ChemicalEquilibriumEnsemble,
@@ -241,6 +246,7 @@ from ._cochain_multirate import (
     CochainMultiratePlan,
     CochainRatePartition,
 )
+from ._cochain_pic_field import CochainMaxwellPICFieldSolver
 from ._collocation import (
     assemble_stochastic_collocation,
     COLLOCATION_NONFINITE,
@@ -599,6 +605,8 @@ from ._electromagnetic_pic import (
     ElectromagneticPICPlan,
     ElectromagneticPICState,
     ElectromagneticPICStepResult,
+    PICFieldHistory,
+    PICRestartCheckpoint,
 )
 from ._electrostatic_conductors import (
     ConductorCircuitSolveResult,
@@ -611,6 +619,13 @@ from ._electrostatic_pic import (
     ElectrostaticPICPlan,
     ElectrostaticPICState,
     ElectrostaticPICStepResult,
+)
+from ._em_shower import (
+    EMShowerPlan,
+    EMShowerResult,
+    EMShowerStatus,
+    ShowerParticleBatch,
+    ShowerSpecies,
 )
 from ._etdrk import (
     ETDRKMethod,
@@ -1596,6 +1611,7 @@ from ._moving_window_pic import (
     PICMovingWindowPlan,
     PICMovingWindowResult,
     PICMovingWindowState,
+    PICWindowInjection,
 )
 from ._mps_quantum_jump import (
     LocalMPSJump,
@@ -1804,6 +1820,30 @@ from ._pic_current_source import (
     PICMaxwellCurrentSourcePlan,
     PreparedPICMaxwellCurrentSource,
 )
+from ._pic_cherenkov_guard import PICCherenkovGuard
+from ._pic_field_solver import (
+    AbstractPICFieldFilter,
+    AbstractPreparedPICFieldSolver,
+    PICFieldAdvance,
+    PICFieldDeposit,
+    PICFieldSample,
+    PICFilterContinuityReport,
+    PICGatherDerivativeOrder,
+    PICGaussProjection,
+    PICGaussProjectionResult,
+    PICGaussProjectionRoute,
+    PICHuygensSampling,
+    PICMultiDeposit,
+    PICPrecisionPolicy,
+    PICRestartComponent,
+    PICRestartState,
+    PICSpectralSymbol,
+    PICTensorKind,
+    PICTensorLayout,
+    PICTensorMap,
+    PICWindowShift,
+)
+from ._pic_filter import PICFilterPlan
 from ._plasma_electrostatic import (
     ElectrostaticPlasmaCouplingPlan,
     ElectrostaticPlasmaCouplingResult,
@@ -2071,11 +2111,7 @@ from ._reactive_replay import (
     ReactiveReplayRecord,
     ReactiveReplayResult,
 )
-from ._reduced_pic import (
-    ReducedElectromagneticPICPlan,
-    ReducedElectromagneticPICResult,
-    ReducedElectromagneticPICState,
-)
+from ._reduced_pic import ReducedMaxwellPICFieldSolver
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -2203,6 +2239,7 @@ from ._scalar_screen_junction3d import (
     ScalarScreenJunctionResult3D,
 )
 from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
+from ._secondary_stack import SecondaryParticleStack, SecondaryStackSpec
 from ._segmented_execution import (
     FixedCapacitySegmentEvidence,
     FixedCapacitySegmentPolicy,
@@ -2403,11 +2440,7 @@ from ._unstructured_amr_runtime import (
     UnstructuredAMRRefluxReport,
     UnstructuredAMRRuntimeState,
 )
-from ._unstructured_em_pic import (
-    UnstructuredElectromagneticPICPlan,
-    UnstructuredElectromagneticPICResult,
-    UnstructuredElectromagneticPICState,
-)
+from ._unstructured_em_pic import UnstructuredMaxwellPICFieldSolver
 from ._unstructured_incompressible import (
     UnstructuredPressureCorrectionPlan,
     UnstructuredPressureCorrectionResult,
@@ -2964,6 +2997,31 @@ __all__ = [
     "ElectromagneticPICPlan",
     "ElectromagneticPICState",
     "ElectromagneticPICStepResult",
+    "PICFieldHistory",
+    "PICRestartCheckpoint",
+    "CochainMaxwellPICFieldSolver",
+    "AbstractPICFieldFilter",
+    "AbstractPreparedPICFieldSolver",
+    "PICFieldAdvance",
+    "PICFieldDeposit",
+    "PICFieldSample",
+    "PICGatherDerivativeOrder",
+    "PICGaussProjection",
+    "PICGaussProjectionResult",
+    "PICGaussProjectionRoute",
+    "PICHuygensSampling",
+    "PICMultiDeposit",
+    "PICPrecisionPolicy",
+    "PICRestartComponent",
+    "PICRestartState",
+    "PICSpectralSymbol",
+    "PICWindowShift",
+    "PICCherenkovGuard",
+    "PICFilterContinuityReport",
+    "PICFilterPlan",
+    "PICTensorKind",
+    "PICTensorLayout",
+    "PICTensorMap",
     "ElectrostaticPICDiagnostics",
     "ElectrostaticPICFixedStepMethod",
     "ElectrostaticPICPlan",
@@ -4167,20 +4225,17 @@ __all__ = [
     "PICMovingWindowPlan",
     "PICMovingWindowResult",
     "PICMovingWindowState",
+    "PICWindowInjection",
     "PICMaxwellCurrentSourcePlan",
     "PreparedPICMaxwellCurrentSource",
-    "ReducedElectromagneticPICPlan",
-    "ReducedElectromagneticPICResult",
-    "ReducedElectromagneticPICState",
+    "ReducedMaxwellPICFieldSolver",
     "PICGaussCorrectionPlan",
     "PICGaussCorrectionResult",
     "SemiImplicitPICDiagnostics",
     "SemiImplicitPICPlan",
     "SemiImplicitPICResult",
     "SemiImplicitPICState",
-    "UnstructuredElectromagneticPICPlan",
-    "UnstructuredElectromagneticPICResult",
-    "UnstructuredElectromagneticPICState",
+    "UnstructuredMaxwellPICFieldSolver",
 ]
 
 __all__ += [
@@ -4585,6 +4640,16 @@ __all__ += [
     "ChargedParticleTransportPlan",
     "ChargedParticleTransportResult",
     "ChargedParticleTransportStatus",
+    "ChargedStepBank",
+    "ChargedStepRadiationPlan",
+    "ChargedStepRadiationResult",
+    "EMShowerPlan",
+    "EMShowerResult",
+    "EMShowerStatus",
+    "ShowerParticleBatch",
+    "ShowerSpecies",
+    "SecondaryParticleStack",
+    "SecondaryStackSpec",
     "HybridIMCDDMCPlan",
     "IMCDDMCEvidence",
     "IMCDDMCState",

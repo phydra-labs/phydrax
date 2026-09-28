@@ -7,12 +7,10 @@ import numpy as np
 import pytest
 
 from phydrax._fingerprint import canonical_fingerprint
-from phydrax._physical import RelativityScaleContract
+from phydrax._physical import ElectromagneticScaleContract, RelativityScaleContract
 from phydrax.applications.astrophysics._gr_medium import FastLightSnapshot
 from phydrax.applications.astrophysics._gr_microphysics import (
-    _validated_log_bessel_k2,
-    invariant_synchrotron_coefficients,
-    ThermalSynchrotronModel,
+    invariant_emission_coefficients,
 )
 from phydrax.applications.astrophysics._gr_rays import GRRayPlan
 from phydrax.applications.astrophysics._gr_screens import GRObserverScreenPlan
@@ -25,11 +23,12 @@ from phydrax.applications.astrophysics._gr_transfer import (
 from phydrax.applications.astrophysics._gr_worldtube import (
     MonotoneSlowLightWorldtube,
 )
+from phydrax.electromagnetics import ThermalFreeFreeModel, ThermalSynchrotronModel
 from phydrax.metrix._chart import CoordinateChart
 from phydrax.metrix._lorentzian import minkowski_metric
 from phydrax.metrix._metric import LorentzianMetric
 from phydrax.metrix._spacetime_conventions import RelativityConvention
-from phydrax.units import CENTIMETER, SOLAR_MASS
+from phydrax.units import CENTIMETER, COULOMB, SOLAR_MASS
 
 
 jax.config.update("jax_enable_x64", True)
@@ -461,87 +460,52 @@ def test_gr_transfer_scenario_2() -> None:
             metric_semantic_id=semantic_id,
             metric_numeric_id=canonical_fingerprint({"wrong": "metric-numeric-id"}),
         )
-    arguments = jnp.asarray([1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0, 100.0, 1000.0])
-    trusted_log_values = jnp.asarray(
-        [
-            14.508657488524674,
-            9.903462555643179,
-            5.295834109025258,
-            0.4854086715656462,
-            -10.74700112206937,
-            -102.05813713541278,
-            -1003.2262122239944,
-        ]
+
+
+def test_invariant_emission_coefficients_convert_synchrotron_and_free_free() -> None:
+    frequency = jnp.asarray([1.0e11, 3.0e11])
+    synchrotron = ThermalSynchrotronModel().evaluate(1.0e6, 4.0e10, 1.0, frequency, 0.5)
+    invariant = invariant_emission_coefficients(synchrotron, frequency)
+    np.testing.assert_allclose(
+        invariant.emission, synchrotron.emission / frequency[:, None] ** 2
     )
-    evaluated = eqx.filter_jit(_validated_log_bessel_k2)(arguments)
-    np.testing.assert_allclose(evaluated, trusted_log_values, atol=1.0e-9, rtol=0.0)
-
-
-def test_thermal_synchrotron_attribution_and_scoped_qualification() -> None:
-    model = ThermalSynchrotronModel()
-    coefficients = eqx.filter_jit(model.evaluate)(
-        jnp.asarray(1.0e6),
-        jnp.asarray(4.0e10),
-        jnp.asarray(1.0),
-        jnp.asarray(1.0e11),
-        jnp.asarray(0.5),
+    np.testing.assert_allclose(
+        invariant.propagation_matrix,
+        synchrotron.propagation_matrix * frequency[:, None, None],
     )
-    assert model.units.number_density_unit.symbol == "m^-3"
-    assert model.units.frequency_unit.symbol == "Hz"
-    assert model.reference.doi == "10.1086/177422"
-    assert model.reference.equation == "31"
-    assert model.reference.maximum_shape_relative_error == 0.027
-    assert model.reference.authors == (
-        "Rohan Mahadevan",
-        "Ramesh Narayan",
-        "Insu Yi",
+    assert not bool(jnp.any(invariant.qualified))
+    assert bool(jnp.all(invariant.finite))
+
+    free_free = ThermalFreeFreeModel(ElectromagneticScaleContract.si()).evaluate(
+        1.0e12, 1.0e12, 1.0e7, 2.0 * np.pi * frequency
     )
-    assert model.reference.polarization_status == (
-        "unqualified-independent-approximation"
+    converted = invariant_emission_coefficients(free_free, frequency)
+    # j_nu = 2 pi j_omega; J = j_nu / nu^2 and K = nu alpha.
+    np.testing.assert_allclose(
+        converted.emission[:, 0],
+        2.0 * np.pi * free_free.emission[:, 0] / frequency**2,
     )
-    assert bool(coefficients.evidence.k2_approximation_valid)
-    assert bool(coefficients.evidence.emission_reference_valid)
-    assert bool(coefficients.evidence.emission_derivative_valid)
-    assert not bool(coefficients.evidence.polarization_reference_valid)
-    assert not bool(coefficients.evidence.faraday_reference_valid)
-    assert not bool(coefficients.evidence.qualified)
-    assert not bool(coefficients.evidence.derivative_valid)
-    assert coefficients.emission[0] > 0.0
-    assert coefficients.emission[1] < 0.0
-    assert coefficients.absorption_i > 0.0
-    assert coefficients.faraday_rotation > 0.0
-    assert coefficients.faraday_conversion > 0.0
+    np.testing.assert_allclose(
+        converted.propagation_matrix[:, 0, 0], frequency * free_free.absorption
+    )
+    assert bool(jnp.all(converted.qualified))
 
-    invariant = invariant_synchrotron_coefficients(coefficients, jnp.asarray(1.0e11))
-    assert not bool(invariant.qualified)
-    assert bool(jnp.all(jnp.isfinite(invariant.emission)))
-    assert bool(jnp.all(jnp.isfinite(invariant.propagation_matrix)))
+    mismatched = invariant_emission_coefficients(free_free, 2.0 * frequency)
+    assert not bool(jnp.any(mismatched.physically_valid))
+    assert bool(jnp.all(jnp.isnan(mismatched.emission)))
 
-    log_temperature_derivative = jax.grad(
-        lambda log_temperature: jnp.log(
-            model.evaluate(
-                1.0e6,
-                jnp.exp(log_temperature),
-                1.0,
-                1.0e11,
-                0.5,
-            ).emission[0]
-        )
-    )(jnp.log(jnp.asarray(4.0e10)))
-    assert bool(jnp.isfinite(log_temperature_derivative))
-
-    below_published_support = model.evaluate(1.0e6, 1.0e10, 1.0, 1.0e11, 0.5)
-    assert bool(below_published_support.evidence.physically_valid)
-    assert not bool(below_published_support.evidence.in_domain)
-    assert not bool(below_published_support.evidence.emission_reference_valid)
-
-    vacuum = model.evaluate(0.0, 1.0e10, 1.0, 1.0e10, 0.5)
-    np.testing.assert_allclose(vacuum.emission, 0.0)
-    np.testing.assert_allclose(vacuum.propagation_matrix, 0.0)
-    assert bool(vacuum.evidence.qualified)
-    assert not bool(vacuum.evidence.derivative_valid)
-
-    invalid = model.evaluate(1.0e6, 4.0e10, 1.0, 1.0e11, 1.1)
-    assert not bool(invalid.evidence.physically_valid)
-    assert not bool(invalid.evidence.qualified)
-    assert bool(jnp.all(jnp.isnan(invalid.emission)))
+    code_scale = ElectromagneticScaleContract.code_units(
+        ElectromagneticScaleContract.si().relativity.dimensional_scale,
+        COULOMB,
+        gravitational_constant=1,
+        speed_of_light=1,
+        reduced_planck_constant=1,
+        boltzmann_constant=1,
+        elementary_charge=1,
+        electron_mass=1,
+        vacuum_permittivity=1,
+        constant_set_id="unit-test",
+    )
+    code = ThermalFreeFreeModel(code_scale).evaluate(1.0, 1.0, 1.0, 1.0)
+    with pytest.raises(ValueError, match="SI scale"):
+        invariant_emission_coefficients(code, jnp.asarray(1.0))

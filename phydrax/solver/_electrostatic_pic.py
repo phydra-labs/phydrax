@@ -47,9 +47,18 @@ class ElectrostaticPICState(StrictModule):
 
 
 class ElectrostaticPICDiagnostics(StrictModule):
+    """Step evidence.
+
+    ``continuity_defect`` is the integrated discrete continuity residual
+    ``|Σ ⋆0 (ρ_{n+1} − ρ_n)| / Δt``: the codifferential of any current
+    integrates to zero over the closed cochain complex, so this is the charge
+    that no charge-conserving current could have transported.
+    """
+
     charge_balance_defect: Array
     poisson_residual: Array
     gauss_defect: Array
+    continuity_defect: Array
     maximum_displacement_fraction: Array
     energy: PICEnergyLedger
     transfer_successful: Array
@@ -406,6 +415,7 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             self._kinetic_energy(final_tuple),
             field.field_energy,
             jnp.asarray(0.0, dtype=total.dtype),
+            jnp.asarray(0.0, dtype=total.dtype),
             total,
             previous_total,
             total - previous_total,
@@ -452,10 +462,19 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             candidate,
             state,
         )
+        continuity_defect = (
+            jnp.abs(
+                jnp.sum(
+                    self.field.bridge.cochain.hodge_stars[0] * (charge - state.charge)
+                )
+            )
+            / dt
+        )
         diagnostics = ElectrostaticPICDiagnostics(
             charge_defect,
             field.residual_norm,
             field.residual_norm,
+            continuity_defect,
             maximum_fraction,
             energy,
             transfer_success,

@@ -16,6 +16,16 @@
 
 ::: phydrax.applications.radiation_transport.PolarizedRadiativeExperimentPlan
 
+::: phydrax.applications.radiation_transport.PlasmaRayTransferPlan
+
+::: phydrax.applications.radiation_transport.PlasmaRayTransferResult
+
+::: phydrax.applications.radiation_transport.PlasmaRayTransferStatus
+
+::: phydrax.applications.radiation_transport.PlasmaPathCoefficients
+
+::: phydrax.applications.radiation_transport.magnetobremsstrahlung_path_coefficients
+
 ::: phydrax.applications.radiation_transport.photon_result_to_interaction_ledger
 
 ::: phydrax.applications.radiation_transport.radiation_transport_candidate_profiles

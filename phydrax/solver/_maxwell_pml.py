@@ -86,9 +86,9 @@ class MaxwellCPMLPlan(StrictModule, NonTrainableState):
         )
 
     def prepare(
-        self, bridge: StructuredCochainBridge, layout: Any, /
+        self, bridge: StructuredCochainBridge, layout: Any, wave_speed: ArrayLike, /
     ) -> PreparedMaxwellCPML:
-        return PreparedMaxwellCPML(self, bridge, layout)
+        return PreparedMaxwellCPML(self, bridge, layout, wave_speed)
 
 
 class PreparedMaxwellCPMLTerm(StrictModule, NonTrainableState):
@@ -161,8 +161,16 @@ def _term_profile(
     axis: int,
     width: int,
     plan: MaxwellCPMLPlan,
+    wave_speed: float,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Graded ``(σ, κ, α)`` of the stretching ``s = κ + σ/(α − iω)``.
+
+    ``σ_max = (m + 1) c ln(1/R) / (2 d)`` makes the continuum normal-incidence
+    round-trip reflection of a layer of physical thickness ``d`` equal to the
+    target ``R`` for waves of speed ``c``; the time-domain CPML and the
+    frequency-domain coordinate stretching share this profile.
+    """
     indices: list[np.ndarray] = []
     depths: list[np.ndarray] = []
     offsets = bridge.orientation_offsets[degree]
@@ -195,7 +203,16 @@ def _term_profile(
         return np.zeros((0,), dtype=np.int32), empty, empty + 1.0, empty
     index = np.concatenate(indices).astype(np.int32)
     depth = np.concatenate(depths)
-    sigma_max = -(plan.sigma_order + 1.0) * np.log(plan.target_reflection) / max(width, 1)
+    widths = np.asarray(bridge.grid.structured_axes[axis].interval_widths)
+    thickness = max(
+        float(np.sum(widths[:width])), float(np.sum(widths[widths.size - width :]))
+    )
+    sigma_max = (
+        -(plan.sigma_order + 1.0)
+        * wave_speed
+        * np.log(plan.target_reflection)
+        / (2.0 * thickness)
+    )
     powered = depth**plan.sigma_order
     return (
         index,
@@ -211,6 +228,7 @@ def _terms(
     degree: int,
     widths: tuple[int, ...],
     kind: str,
+    wave_speed: float,
     /,
 ) -> tuple[PreparedMaxwellCPMLTerm, ...]:
     output_size = bridge.cochain.cell_counts[degree]
@@ -218,7 +236,9 @@ def _terms(
     for axis, width in enumerate(widths):
         if width == 0:
             continue
-        index, sigma, kappa, alpha = _term_profile(bridge, degree, axis, width, plan)
+        index, sigma, kappa, alpha = _term_profile(
+            bridge, degree, axis, width, plan, wave_speed
+        )
         if index.size == 0:
             continue
         term_id = canonical_fingerprint(
@@ -229,6 +249,7 @@ def _terms(
                 "degree": degree,
                 "axis": axis,
                 "field": kind,
+                "wave_speed": wave_speed,
                 "indices": array_tree_fingerprint(index),
             }
         )
@@ -256,8 +277,16 @@ class PreparedMaxwellCPML(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
-        self, plan: MaxwellCPMLPlan, bridge: StructuredCochainBridge, layout: Any, /
+        self,
+        plan: MaxwellCPMLPlan,
+        bridge: StructuredCochainBridge,
+        layout: Any,
+        wave_speed: ArrayLike,
+        /,
     ) -> None:
+        speed = float(np.asarray(wave_speed))
+        if not np.isfinite(speed) or speed <= 0.0:
+            raise ValueError("CPML reference wave_speed must be finite and positive.")
         widths = plan.widths * bridge.dimension if len(plan.widths) == 1 else plan.widths
         if len(widths) != bridge.dimension:
             raise ValueError("CPML requires one width per structured axis.")
@@ -271,8 +300,12 @@ class PreparedMaxwellCPML(StrictModule):
             if 2 * width >= count:
                 raise ValueError("CPML leaves no undamped interior.")
             fractions.append((count - 2 * width) / count)
-        electric_terms = _terms(plan, bridge, layout.electric_degree, widths, "electric")
-        magnetic_terms = _terms(plan, bridge, layout.magnetic_degree, widths, "magnetic")
+        electric_terms = _terms(
+            plan, bridge, layout.electric_degree, widths, "electric", speed
+        )
+        magnetic_terms = _terms(
+            plan, bridge, layout.magnetic_degree, widths, "magnetic", speed
+        )
         corner_axes = sum(width > 0 for width in widths)
         minimum_fraction = min(fractions)
         qualification_id = canonical_fingerprint(

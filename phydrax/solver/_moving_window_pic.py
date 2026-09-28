@@ -2,223 +2,265 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Integer-cell moving window over a `PICWindowShift` field solver."""
+
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import StructuredCochainBridge
-from ..discretization.particle import (
-    ParticleAllocationRequest,
-    ParticlePopulationPlan,
-    ParticlePopulationState,
+from ..discretization.particle import ParticleAllocationRequest
+from ..discretization.pic import PICChargeState, PICParticleState, PICSpeciesState
+from ._electromagnetic_pic import (
+    ElectromagneticPICPlan,
+    ElectromagneticPICState,
+    PICFieldHistory,
 )
-from ..discretization.pic import PICParticleState
-from ._maxwell import CompatibleMaxwellState, MaxwellPrimaryState
-
-
-def _shift_without_wrap(value: Array, axis: int, cells: int, /) -> Array:
-    shifted = jnp.roll(value, -cells, axis=axis)
-    index = [slice(None)] * value.ndim
-    index[axis] = slice(value.shape[axis] - cells, value.shape[axis])
-    return shifted.at[tuple(index)].set(0.0)
+from ._pic_field_solver import PICWindowShift
 
 
 class PICMovingWindowState(StrictModule):
-    particles: PICParticleState
-    population: ParticlePopulationState
-    maxwell: CompatibleMaxwellState
+    pic: ElectromagneticPICState
     origin: Array
     cumulative_cells: Array
     shift_epoch: Array
+
+
+class PICWindowInjection(StrictModule):
+    """Particles created in the leading cells of one species during a shift.
+
+    ``position[W, d]`` are window-local; ``proper_velocity[W, 3]`` are the
+    staggered proper velocities of the created particles.
+    """
+
+    species: int = eqx.field(static=True)
+    request: ParticleAllocationRequest
+    position: Array
+    proper_velocity: Array
 
 
 class PICMovingWindowResult(StrictModule):
     candidate_state: PICMovingWindowState
     accepted_state: PICMovingWindowState
     shifted: Array
-    outflow_mask: Array
+    outflow_masks: tuple[Array, ...]
     outflow_mass: Array
     outflow_charge: Array
+    particle_field_charge_defect: Array
     finite: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
 
 
 class PICMovingWindowPlan(StrictModule, NonTrainableState):
-    bridge: StructuredCochainBridge
+    """Shift field, particles, and window origin by whole cells in one transaction.
+
+    The field translates through the solver's `PICWindowShift` capability;
+    particles leaving the trailing face are deactivated and ledgered, and
+    optional injections fill the leading cells. Every recorder receives the
+    shift through `AbstractPICRecorder.shift_frame`, so position-dependent
+    diagnostics stay in the fixed frame. The particle↔field charge defect after
+    the shift is reported, not repaired.
+    """
+
+    pic: ElectromagneticPICPlan
     axis: int = eqx.field(static=True)
     shift_cells: int = eqx.field(static=True)
     interval: float = eqx.field(static=True)
+    lower: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        bridge: StructuredCochainBridge,
+        pic: ElectromagneticPICPlan,
         axis: int,
         /,
         *,
         shift_cells: int = 1,
     ) -> None:
-        if not isinstance(bridge, StructuredCochainBridge):
-            raise TypeError("bridge must be StructuredCochainBridge.")
+        if not isinstance(pic, ElectromagneticPICPlan):
+            raise TypeError("pic must be ElectromagneticPICPlan.")
+        solver = pic.solver
+        if not isinstance(solver, PICWindowShift):
+            raise TypeError("The PIC field solver does not implement PICWindowShift.")
+        if pic.boundaries is not None:
+            raise ValueError(
+                "Moving windows own their outflow ledger; particle boundaries are "
+                "refused."
+            )
         selected = int(axis)
         cells = int(shift_cells)
-        if selected < 0 or selected >= bridge.dimension or cells <= 0:
+        if selected < 0 or selected >= pic.solver.spatial_dimension or cells <= 0:
             raise ValueError("Moving-window axis/cell shift is invalid.")
-        widths = np.asarray(bridge.grid.structured_axes[selected].interval_widths)
-        if not np.allclose(widths, widths[0]) or cells >= widths.size:
-            raise ValueError(
-                "Moving window requires a uniform axis and a bounded cell shift."
-            )
-        self.bridge = bridge
+        interval = solver.window_interval(selected)
+        lower, upper = solver.window_bounds(selected)
+        if cells * interval >= upper - lower:
+            raise ValueError("Moving-window shift must be shorter than the domain.")
+        self.pic = pic
         self.axis = selected
         self.shift_cells = cells
-        self.interval = float(widths[0])
+        self.interval = interval
+        self.lower = lower
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "pic-moving-window",
-                "bridge": bridge.bridge_id,
+                "pic": pic.plan_id,
                 "axis": selected,
                 "shift_cells": cells,
             }
         )
 
-    def initialize(
-        self,
-        particles: PICParticleState,
-        population: ParticlePopulationState,
-        maxwell: CompatibleMaxwellState,
-        /,
-    ) -> PICMovingWindowState:
+    def initialize(self, pic: ElectromagneticPICState, /) -> PICMovingWindowState:
         return PICMovingWindowState(
-            particles,
-            population,
-            maxwell,
-            jnp.asarray(0.0, dtype=particles.position.dtype),
+            pic,
+            jnp.zeros((), dtype=pic.time.dtype),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
         )
 
-    def _shift_cochain(self, degree: int, value: Array, /) -> Array:
-        components = self.bridge.unpack(degree, value)
-        shifted = tuple(
-            _shift_without_wrap(component, self.axis, self.shift_cells)
-            for component in components
+    def _inject(
+        self,
+        state: PICSpeciesState,
+        injection: PICWindowInjection,
+        /,
+    ) -> tuple[PICSpeciesState, Array]:
+        plan = self.pic.species[injection.species]
+        width = injection.request.valid.shape[0]
+        position = jnp.asarray(injection.position, dtype=state.particles.position.dtype)
+        velocity = jnp.asarray(
+            injection.proper_velocity, dtype=state.particles.proper_velocity.dtype
         )
-        return self.bridge.pack(degree, shifted)
-
-    def _shift_auxiliary_leaf(self, value: Any) -> Any:
-        if not eqx.is_array(value):
-            return value
-        if value.shape == (self.bridge.cochain.cell_counts[0],):
-            return self._shift_cochain(0, value)
-        if value.shape == (self.bridge.cochain.cell_counts[1],):
-            return self._shift_cochain(1, value)
-        if value.shape == (self.bridge.cochain.cell_counts[2],):
-            return self._shift_cochain(2, value)
-        return value
+        if position.shape != (width, state.particles.position.shape[1]) or (
+            velocity.shape != (width, 3)
+        ):
+            raise ValueError(
+                "Moving-window injection payloads must match request capacity."
+            )
+        allocation = plan.population.allocate(state.population, injection.request)
+        slots = jnp.maximum(allocation.slots, 0)
+        use = allocation.allocated
+        particles = PICParticleState(
+            state.particles.position.at[slots].set(
+                jnp.where(use[:, None], position, state.particles.position[slots])
+            ),
+            state.particles.proper_velocity.at[slots].set(
+                jnp.where(use[:, None], velocity, state.particles.proper_velocity[slots])
+            ),
+        )
+        charge = PICChargeState(
+            state.charge.charge_number.at[slots].set(
+                jnp.where(
+                    use,
+                    plan.charge_model.initial_charge_number,
+                    state.charge.charge_number[slots],
+                ).astype(state.charge.charge_number.dtype)
+            ),
+            state.charge.transition_count,
+            state.charge.last_transition_step,
+        )
+        return (
+            PICSpeciesState(particles, allocation.accepted_state, charge),
+            allocation.successful,
+        )
 
     def shift(
         self,
         state: PICMovingWindowState,
-        population_plan: ParticlePopulationPlan,
-        macrocharge: ArrayLike,
         /,
         *,
         apply_shift: ArrayLike = True,
-        injection_request: ParticleAllocationRequest | None = None,
-        injection_position: ArrayLike | None = None,
-        injection_velocity: ArrayLike | None = None,
+        injections: Sequence[PICWindowInjection] = (),
     ) -> PICMovingWindowResult:
+        solver = self.pic.solver
+        if not isinstance(solver, PICWindowShift):
+            raise TypeError("The PIC field solver does not implement PICWindowShift.")
         predicate = jnp.asarray(apply_shift, dtype=jnp.bool_).reshape(())
         distance = self.shift_cells * self.interval
-        position = state.particles.position.at[:, self.axis].add(-distance)
-        lower = self.bridge.grid.structured_axes[self.axis].bounds[0]
-        outflow = state.population.active & (position[:, self.axis] < lower)
-        deactivated = population_plan.deactivate(state.population, outflow)
-        shifted_position = jnp.where(
-            deactivated.accepted_state.active[:, None], position, 0.0
-        )
-        shifted_velocity = jnp.where(
-            deactivated.accepted_state.active[:, None],
-            state.particles.proper_velocity,
-            0.0,
-        )
-        next_population = deactivated.accepted_state
-        injection_success = jnp.asarray(True)
-        if injection_request is not None:
-            if injection_position is None or injection_velocity is None:
-                raise ValueError(
-                    "Moving-window injection requires position and velocity payloads."
+        species = []
+        masks = []
+        masses = []
+        charges = []
+        successful = jnp.asarray(True)
+        for plan, value in zip(self.pic.species, state.pic.species, strict=True):
+            position = value.particles.position.at[:, self.axis].add(-distance)
+            outflow = value.population.active & (position[:, self.axis] < self.lower)
+            deactivated = plan.population.deactivate(value.population, outflow)
+            active = deactivated.accepted_state.active[:, None]
+            species.append(
+                PICSpeciesState(
+                    PICParticleState(
+                        jnp.where(active, position, 0.0),
+                        jnp.where(active, value.particles.proper_velocity, 0.0),
+                    ),
+                    deactivated.accepted_state,
+                    value.charge,
                 )
-            injected_position = jnp.asarray(
-                injection_position, dtype=shifted_position.dtype
             )
-            injected_velocity = jnp.asarray(
-                injection_velocity, dtype=shifted_velocity.dtype
+            masks.append(outflow)
+            masses.append(jnp.sum(jnp.where(outflow, value.population.mass, 0.0)))
+            charges.append(jnp.sum(jnp.where(outflow, plan.macrocharge(value), 0.0)))
+            successful = successful & deactivated.successful
+        for injection in injections:
+            if not isinstance(injection, PICWindowInjection):
+                raise TypeError("injections must be PICWindowInjection values.")
+            if not 0 <= injection.species < len(species):
+                raise ValueError("Injection references a species outside the run.")
+            species[injection.species], injected = self._inject(
+                species[injection.species], injection
             )
-            width = injection_request.valid.shape[0]
-            if injected_position.shape != (
-                width,
-                shifted_position.shape[1],
-            ) or injected_velocity.shape != (width, 3):
-                raise ValueError(
-                    "Moving-window injection payloads must match request capacity."
+            successful = successful & injected
+        species_tuple = tuple(species)
+        field = solver.shift_window(state.pic.field, self.axis, self.shift_cells)
+        history = state.pic.field_history
+        pic = ElectromagneticPICState(
+            species_tuple,
+            field,
+            state.pic.boundaries,
+            state.pic.wall_charge,
+            tuple(
+                recorder.shift_frame(value, self.axis, distance)
+                for recorder, value in zip(
+                    self.pic.recorders, state.pic.recorders, strict=True
                 )
-            allocation = population_plan.allocate(
-                deactivated.accepted_state, injection_request
-            )
-            slots = jnp.maximum(allocation.slots, 0)
-            use = allocation.allocated
-            shifted_position = shifted_position.at[slots].set(
-                jnp.where(use[:, None], injected_position, shifted_position[slots])
-            )
-            shifted_velocity = shifted_velocity.at[slots].set(
-                jnp.where(use[:, None], injected_velocity, shifted_velocity[slots])
-            )
-            next_population = allocation.accepted_state
-            injection_success = allocation.successful
-        shifted_particles = PICParticleState(
-            shifted_position,
-            shifted_velocity,
+            ),
+            state.pic.time,
+            state.pic.accepted_step,
+            state.pic.status,
+            None
+            if history is None
+            else PICFieldHistory(
+                solver.shift_window(history.field, self.axis, self.shift_cells),
+                history.time,
+            ),
         )
-        primary = MaxwellPrimaryState(
-            self._shift_cochain(1, state.maxwell.primary.electric_displacement),
-            self._shift_cochain(2, state.maxwell.primary.magnetic_flux),
-            self._shift_cochain(0, state.maxwell.primary.charge),
+        deposited, deposit_success = self.pic.species_charge(species_tuple)
+        charge_defect = jnp.max(
+            jnp.abs(self.pic.solver.field_charge(field) - deposited), initial=0.0
         )
-        auxiliary = jax.tree.map(self._shift_auxiliary_leaf, state.maxwell.auxiliary)
-        observations = jax.tree.map(
-            self._shift_auxiliary_leaf, state.maxwell.observations
-        )
-        shifted_maxwell = CompatibleMaxwellState(primary, auxiliary, observations)
         candidate = PICMovingWindowState(
-            shifted_particles,
-            next_population,
-            shifted_maxwell,
+            pic,
             state.origin + distance,
             state.cumulative_cells + self.shift_cells,
             state.shift_epoch + 1,
         )
-        charge = jnp.asarray(macrocharge, dtype=state.origin.dtype)
-        outflow_mass = jnp.sum(jnp.where(outflow, state.population.mass, 0.0))
-        outflow_charge = jnp.sum(jnp.where(outflow, charge, 0.0))
-        finite = (
-            jnp.all(jnp.isfinite(candidate.particles.position))
-            & jnp.all(jnp.isfinite(candidate.maxwell.primary.electric_displacement))
-            & jnp.all(jnp.isfinite(candidate.maxwell.primary.magnetic_flux))
+        finite = jnp.all(
+            jnp.stack(
+                tuple(
+                    jnp.all(jnp.isfinite(leaf))
+                    for leaf in jax.tree.leaves((species_tuple, field))
+                    if jnp.issubdtype(jnp.result_type(leaf), jnp.inexact)
+                )
+            )
         )
-        successful = deactivated.successful & injection_success & finite
+        successful = successful & deposit_success & finite
         select = predicate & successful
         accepted = jax.tree.map(
             lambda proposed, old: jnp.where(select, proposed, old), candidate, state
@@ -227,9 +269,10 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
             candidate,
             accepted,
             select,
-            outflow,
-            outflow_mass,
-            outflow_charge,
+            tuple(masks),
+            jnp.stack(masses),
+            jnp.stack(charges),
+            charge_defect,
             finite,
             successful,
             self.plan_id,
@@ -240,4 +283,5 @@ __all__ = [
     "PICMovingWindowPlan",
     "PICMovingWindowResult",
     "PICMovingWindowState",
+    "PICWindowInjection",
 ]

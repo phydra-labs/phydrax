@@ -6,6 +6,10 @@
 
 ::: phydrax.applications.detector.ChargedPropagationPlan
 
+::: phydrax.applications.detector.ChargedPropagationResult
+
+::: phydrax.applications.detector.charged_trajectory
+
 ::: phydrax.applications.detector.SensitiveHitPlan
 
 ::: phydrax.applications.detector.DigitizationPlan

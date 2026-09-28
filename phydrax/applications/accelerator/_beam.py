@@ -25,6 +25,8 @@ from ..._trainable import NonTrainableState
 _ElementCarry: TypeAlias = tuple[Array, Array, Array, Array]
 _ElementData: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
+_CANONICAL_MOMENTUM_NORMALIZATION = "px-over-p0,py-over-p0,delta-p-over-p0"
+
 
 class BeamlineElementKind(IntEnum):
     DRIFT = 0
@@ -63,6 +65,29 @@ class AcceleratorConvention(StrictModule, NonTrainableState):
                 "momentum_normalization": normalization,
             }
         )
+
+
+def _late_sign(convention: AcceleratorConvention, /) -> float:
+    """``+1`` when ``zeta`` grows with arrival delay, ``−1`` when it shrinks.
+
+    Physical (time-of-flight and symplectic) interpretations of ``zeta`` also
+    require the canonical ``px/p₀, py/p₀, δ`` momentum normalization.
+    """
+    if convention.momentum_normalization != _CANONICAL_MOMENTUM_NORMALIZATION:
+        raise ValueError(
+            "Accelerator coordinates require the canonical momentum normalization "
+            f"{_CANONICAL_MOMENTUM_NORMALIZATION!r}."
+        )
+    match convention.longitudinal_sign:
+        case "positive-late":
+            return 1.0
+        case "positive-early":
+            return -1.0
+        case _:
+            raise ValueError(
+                "Accelerator coordinates need a 'positive-late' or 'positive-early' "
+                "longitudinal sign convention."
+            )
 
 
 class AcceleratorBunch(StrictModule, NonTrainableState):

@@ -194,18 +194,26 @@ def test_maxwell_platform_scenario_3() -> None:
         -1j * 0.4 * 0.2 * field,
         atol=1e-13,
     )
-    assert conductive_frequency.dissipated_power(field) > 0
+    electric_star = bridge.cochain.hodge_metric(runtime.layout.electric_degree)
+    ledger = conductive_frequency.power_ledger(field, conductive_frequency.mv(field))
+    np.testing.assert_allclose(
+        ledger.electric_material,
+        0.5 * 0.2 * jnp.sum(electric_star * field**2),
+        rtol=1e-12,
+    )
     magnetic_loss = phx.solver.maxwell.ConductiveMaxwellConstitutivePlan(
         electric_conductivity=0.2,
         magnetic_conductivity=0.1,
     ).prepare(bridge.cochain, runtime.layout)
-    with pytest.raises(ValueError, match="frequency-domain"):
-        phx.solver.maxwell.FrequencyMaxwellOperator(
-            bridge.cochain,
-            runtime.layout,
-            magnetic_loss,
-            0.4,
-        )
+    lossy_frequency = phx.solver.maxwell.FrequencyMaxwellOperator(
+        bridge.cochain,
+        runtime.layout,
+        magnetic_loss,
+        0.4,
+    )
+    lossy_ledger = lossy_frequency.power_ledger(field, lossy_frequency.mv(field))
+    assert lossy_ledger.magnetic_material > 0.0
+    assert lossy_ledger.relative_residual < 1e-12
     state = runtime.initialize()
     dt = 0.05 * runtime.stable_dt
     batch = phx.solver.maxwell.prepare_compatible_maxwell_case_batch(
@@ -330,14 +338,18 @@ def test_maxwell_platform_scenario_4() -> None:
 def test_refresh_contracts() -> None:
     bridge = _bridge((2, 2))
     one_pole = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
-        jnp.asarray([1.0]),
-        jnp.asarray([0.1]),
-        jnp.asarray([0.5]),
+        phx.solver.maxwell.MaxwellLorentzPoles(
+            jnp.asarray([1.0]),
+            jnp.asarray([0.1]),
+            jnp.asarray([0.5]),
+        )
     )
     two_poles = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
-        jnp.asarray([1.0, 2.0]),
-        jnp.asarray([0.1, 0.2]),
-        jnp.asarray([0.5, 0.25]),
+        phx.solver.maxwell.MaxwellLorentzPoles(
+            jnp.asarray([1.0, 2.0]),
+            jnp.asarray([0.1, 0.2]),
+            jnp.asarray([0.5, 0.25]),
+        )
     )
     runtime = phx.solver.CompatibleMaxwellPlan(
         bridge,

@@ -153,13 +153,16 @@ def test_photon_transport_scenario_1() -> None:
     directions = jnp.broadcast_to(jnp.asarray((0.0, 0.0, 1.0)), (4, 3))
     energies = jnp.full((4,), 1000.0)
     ids = jnp.asarray((11, 12, 13, 14), dtype=jnp.uint32)
-    together = plan.simulate(origins, directions, energies, jr.key(9), history_ids=ids)
+    hi = jnp.zeros_like(ids)
+    together = plan.simulate(
+        origins, directions, energies, jr.key(9), identities=(hi, ids)
+    )
     split = plan.simulate(
         origins[1:3],
         directions[1:3],
         energies[1:3],
         jr.key(9),
-        history_ids=ids[1:3],
+        identities=(hi[1:3], ids[1:3]),
     )
 
     np.testing.assert_array_equal(split.material_kerma, together.material_kerma[1:3])

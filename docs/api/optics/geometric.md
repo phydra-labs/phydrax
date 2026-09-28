@@ -68,3 +68,55 @@
 ---
 
 ::: phydrax.optics.geometric.trace_nonsequential_optics
+
+## Dispersion rays and graded-index media
+
+::: phydrax.optics.geometric.DispersionRayPlan
+
+---
+
+::: phydrax.optics.geometric.PreparedDispersionRay
+
+---
+
+::: phydrax.optics.geometric.DispersionRayResult
+
+---
+
+::: phydrax.optics.geometric.DispersionRayEvidence
+
+---
+
+::: phydrax.optics.geometric.DispersionRayStatus
+
+---
+
+::: phydrax.optics.geometric.AbstractDispersionHamiltonian
+
+---
+
+::: phydrax.optics.geometric.AbstractSeparableDispersionHamiltonian
+
+---
+
+::: phydrax.optics.geometric.RefractiveIndexHamiltonian
+
+---
+
+::: phydrax.optics.geometric.GradedIndexRayPlan
+
+---
+
+::: phydrax.optics.geometric.RayFanPlan
+
+## Cold-plasma rays
+
+::: phydrax.optics.geometric.ColdPlasmaProfile
+
+---
+
+::: phydrax.optics.geometric.ColdPlasmaHamiltonian
+
+---
+
+::: phydrax.optics.geometric.ColdPlasmaRayPath

@@ -60,7 +60,89 @@ Phydrax provides complementary Maxwell substrates.
 
 ---
 
+::: phydrax.solver.maxwell.MaxwellSpectralAcquisition
+
+---
+
 ::: phydrax.solver.maxwell.DFTObserverPlan
+
+## One-way plane antennas
+
+A sampled plane antenna is a solver-native equivalent source: an electric sheet
+`K = s â × H'` on node planes and a magnetic sheet `K_m = −s â × E'` half a cell
+upstream on interval centers (the total-field/scattered-field placement), driven by
+sampled rest-frame envelopes `Re[A(τ) e^{−iω₀τ}]`. A moving antenna (velocity `β`
+along its normal, vacuum of a declared `ElectromagneticScaleContract`) deposits the
+four-vector currents `K'(τ)/γ` at the rest-frame retarded time of each sheet event.
+Runtime preparation refuses sheets outside the declared homogeneous medium or inside
+CPML. `MaxwellAntennaWorkObserverPlan` streams the work the sheets do on the field.
+Optical envelopes reach antennas through `phydrax.optics.wave.pulse_envelope_antenna`
+and `phydrax.optics.wave.openpmd_laser_envelope_antenna`.
+
+::: phydrax.solver.maxwell.SampledPlaneCurrentAntennaPlan
+
+---
+
+::: phydrax.solver.maxwell.PreparedSampledPlaneCurrentAntenna
+
+---
+
+::: phydrax.solver.maxwell.SampledPlaneAntennaEvidence
+
+---
+
+::: phydrax.solver.maxwell.MaxwellAntennaWorkObserverPlan
+
+---
+
+::: phydrax.solver.maxwell.MaxwellAntennaWorkEvidence
+
+## Huygens surfaces and far fields
+
+Phasors follow `exp(-iωt)`. A Huygens sampler accumulates the transient
+spectrum `∫ f(t) e^{+iωt} dt` of the tangential fields on a closed surface, so
+its acquisition must use `measure="time-integral"` and `sign="positive"`. The
+far field of the equivalent currents `J = n̂ × H̃`, `M = −n̂ × Ẽ` in the declared
+homogeneous exterior uses `k = ω√(εμ)` and `η = √(μ/ε)`; `spectral_energy` is the
+one-sided `d²W/(dω dΩ) = εc|rẼ|²/π` and `spectral_poynting_energy` the matching
+surface integral `(1/π) Re ∫ (Ẽ × H̃*)·n̂ dS`.
+
+Admissibility is refused, not approximated: the surface entities must carry the
+declared lossless homogeneous exterior (diagonal, or conductive with zero
+conductivity), no CPML term may touch the surface, and no electric or magnetic
+current may drive it during the acquisition window (dynamic PIC currents are
+refused because they cannot certify `J = 0`). Structured boxes require the
+`full_3d` polarization.
+
+::: phydrax.solver.maxwell.HomogeneousMaxwellExterior
+
+---
+
+::: phydrax.solver.maxwell.MaxwellHuygensSampler
+
+---
+
+::: phydrax.solver.maxwell.MaxwellHuygensBoxPlan
+
+---
+
+::: phydrax.solver.maxwell.MaxwellHuygensSurfacePlan
+
+---
+
+::: phydrax.solver.maxwell.HuygensSurfacePhasors
+
+---
+
+::: phydrax.solver.maxwell.MaxwellFarFieldPlan
+
+---
+
+::: phydrax.solver.maxwell.MaxwellFarFieldResult
+
+---
+
+::: phydrax.solver.maxwell.spectral_poynting_energy
 
 ## Harmonic and material evidence
 
@@ -77,6 +159,70 @@ Phydrax provides complementary Maxwell substrates.
 ---
 
 ::: phydrax.solver.maxwell.assemble_scalar_maxwell_material
+
+## Dispersive and magnetized media
+
+::: phydrax.solver.maxwell.MaxwellLorentzPoles
+
+---
+
+::: phydrax.solver.maxwell.PreparedLorentzDrudeMaxwellConstitutive
+
+---
+
+::: phydrax.solver.maxwell.drude_maxwell_constitutive
+
+---
+
+::: phydrax.solver.maxwell.MagnetizedColdPlasmaMaxwellConstitutivePlan
+
+---
+
+::: phydrax.solver.maxwell.PreparedMagnetizedColdPlasmaMaxwellConstitutive
+
+---
+
+::: phydrax.solver.maxwell.MagnetizedColdPlasmaState
+
+## Frequency response and stretched coordinates
+
+::: phydrax.solver.maxwell.AbstractMaxwellFrequencyResponse
+
+---
+
+::: phydrax.solver.maxwell.DiagonalMaxwellFrequencyResponse
+
+---
+
+::: phydrax.solver.maxwell.InstantaneousMaxwellFrequencyResponse
+
+---
+
+::: phydrax.solver.maxwell.MagnetizedColdPlasmaFrequencyResponse
+
+---
+
+::: phydrax.solver.maxwell.FrequencyMaxwellPowerLedger
+
+## Discrete-dispersion audit
+
+::: phydrax.solver.maxwell.MaxwellMaterialRegion
+
+---
+
+::: phydrax.solver.maxwell.CompatibleMaxwellDispersionAudit
+
+---
+
+::: phydrax.solver.maxwell.MaxwellDispersionResult
+
+---
+
+::: phydrax.solver.maxwell.CherenkovRegimePlan
+
+---
+
+::: phydrax.solver.maxwell.CherenkovRegimeEvidence
 
 ## Independent case batching
 

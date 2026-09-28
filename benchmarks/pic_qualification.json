@@ -1,8 +1,12 @@
 {
-  "poisson_residual": 7.134910796491033e-12,
+  "poisson_residual": 6.863861412672913e-12,
   "charge_balance_defect": 0.0,
-  "electrostatic_energy_defect": 3.274286861261466e-08,
+  "electrostatic_energy_defect": -8.290966871382643e-12,
   "continuity_defect": 0.0,
-  "boris_speed_defect": 6.938893903907228e-18,
+  "electromagnetic_continuity_defect": 4.416023102749023e-12,
+  "particle_field_charge_defect": 2.9976021664879227e-15,
+  "gauss_defect": 3.885780586188048e-16,
+  "deposit_gauss_pairing_defect": 3.7762687912420293e-16,
+  "pusher_speed_defect": 2.0816681711721685e-17,
   "successful": true
 }

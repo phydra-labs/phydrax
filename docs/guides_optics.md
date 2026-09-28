@@ -220,10 +220,21 @@ reciprocity, passivity, power balance, conditioning, and resource evidence.
 
 ## Radiative transport
 
-`TissueTransportPlan` uses concrete absorption, scattering, Henyey-Greenstein, and
-real-index records. Packets retain remaining optical depth across interfaces, use
-implicit capture and unbiased roulette, and produce fixed tallies with standard
-errors. Pathwise differentiability is explicitly not claimed.
+`OpticalMonteCarloPlan` transports photon packets that carry position,
+direction, a complex Jones vector in a transverse frame carried with the
+direction, vacuum wavelength, time, weight, and a persistent 64-bit identity.
+Media, surfaces, sources, and detectors are extension protocols;
+`TissueOpticalMedium` (absorption, scattering, Henyey-Greenstein, real index)
+with the scalar Fresnel surface model is the tissue configuration;
+`SpectralOpticalMedium` tabulates dispersion, absorption, polarized Rayleigh and
+Lorenz-Mie scattering, and wavelength shifting on one wavelength grid and
+refuses wavelengths outside it. Packets retain remaining optical depth across
+interfaces, use implicit capture and an
+explicit `OpticalVarianceReduction` (interface branching, unbiased roulette),
+and produce fixed tallies with standard errors. Every random draw is keyed by
+photon identity, so results are invariant to batching and photon order.
+Pathwise differentiability is explicitly not claimed. See the
+[optical photon transport guide](guides_optical_photon_transport.md).
 
 ## Guided modes and SBS
 

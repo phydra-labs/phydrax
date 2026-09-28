@@ -630,28 +630,15 @@ def prepare_gaussian_pulse_envelope(
     )
 
 
-def sample_gaussian_pulse_envelope(
+def _gaussian_envelope_result(
     prepared: PreparedGaussianPulseEnvelope,
+    scalar: Array,
+    boundary_omitted_fraction: Array,
+    longitudinal_coordinate: float,
     /,
 ) -> GaussianPulseEnvelopeResult:
-    """Sample the prepared Gaussian without carrier-resolved oscillation."""
-    if not isinstance(prepared, PreparedGaussianPulseEnvelope):
-        raise TypeError("prepared must be a PreparedGaussianPulseEnvelope.")
+    """Polarize one sampled scalar envelope and attach support evidence."""
     plan = prepared.plan
-    normalized_time_squared = (
-        prepared.temporal_displacement / plan.temporal_rms_duration
-    ) ** 2
-    magnitude = plan.peak_amplitude * jnp.exp(
-        -0.25
-        * (
-            prepared.normalized_transverse_squared[..., None]
-            + normalized_time_squared[None, None, :]
-        )
-    )
-    phase = jnp.exp(
-        1j * (plan.carrier_phase + 0.5 * plan.chirp * prepared.temporal_displacement**2)
-    )
-    scalar = magnitude * phase[None, None, :]
     # Tangential envelopes are exactly those constructed with a Jones vector.
     jones_vector = plan.jones_vector
     values = scalar if jones_vector is None else scalar[..., None] * jones_vector
@@ -668,9 +655,9 @@ def sample_gaussian_pulse_envelope(
         jnp.all(jnp.isfinite(jnp.real(values)))
         & jnp.all(jnp.isfinite(jnp.imag(values)))
         & jnp.isfinite(edge_fraction)
-        & jnp.isfinite(prepared.boundary_omitted_fraction)
+        & jnp.isfinite(boundary_omitted_fraction)
     )
-    boundary_ok = prepared.boundary_omitted_fraction <= plan.boundary_tolerance
+    boundary_ok = boundary_omitted_fraction <= plan.boundary_tolerance
     edge_ok = edge_fraction <= plan.spectral_edge_tolerance
     status = jnp.where(
         boundary_ok,
@@ -693,18 +680,133 @@ def sample_gaussian_pulse_envelope(
         plan.time_space,
         values,
         plan.carrier_angular_frequency,
-        0.0,
+        longitudinal_coordinate,
         polarization=plan.polarization,
     )
     evidence = GaussianPulseEnvelopeEvidence(
-        1.0 - prepared.boundary_omitted_fraction,
-        prepared.boundary_omitted_fraction,
+        1.0 - boundary_omitted_fraction,
+        boundary_omitted_fraction,
         edge_fraction,
         finite,
         accepted,
         status,
     )
     return GaussianPulseEnvelopeResult(field, evidence, prepared.prepared_id)
+
+
+def sample_gaussian_pulse_envelope(
+    prepared: PreparedGaussianPulseEnvelope,
+    /,
+) -> GaussianPulseEnvelopeResult:
+    """Sample the prepared Gaussian without carrier-resolved oscillation."""
+    if not isinstance(prepared, PreparedGaussianPulseEnvelope):
+        raise TypeError("prepared must be a PreparedGaussianPulseEnvelope.")
+    plan = prepared.plan
+    normalized_time_squared = (
+        prepared.temporal_displacement / plan.temporal_rms_duration
+    ) ** 2
+    magnitude = plan.peak_amplitude * jnp.exp(
+        -0.25
+        * (
+            prepared.normalized_transverse_squared[..., None]
+            + normalized_time_squared[None, None, :]
+        )
+    )
+    phase = jnp.exp(
+        1j * (plan.carrier_phase + 0.5 * plan.chirp * prepared.temporal_displacement**2)
+    )
+    return _gaussian_envelope_result(
+        prepared,
+        magnitude * phase[None, None, :],
+        prepared.boundary_omitted_fraction,
+        0.0,
+    )
+
+
+def sample_focused_gaussian_pulse_envelope(
+    prepared: PreparedGaussianPulseEnvelope,
+    /,
+    *,
+    focus_distance: float,
+    wave_speed: float,
+) -> GaussianPulseEnvelopeResult:
+    """Sample a paraxial Gaussian beam a distance upstream of its waist.
+
+    The plan describes the field at the waist (focus) plane. The sampled plane
+    lies ``focus_distance`` before it along the plane normal in a homogeneous
+    medium of phase and group speed ``wave_speed``, so each transverse axis
+    carries the paraxial beam at ``z = −d`` with carrier wavenumber
+    ``k = ω₀/v``, waist ``w₀ = 2σ``, Rayleigh range ``z_R = k w₀²/2``:
+
+        √(w₀/w) exp(−u²/w² − i k u²/(2(d + z_R²/d)) + (i/2) arctan(d/z_R)),
+
+    times ``exp(−i k d)`` and the waist envelope delayed to ``t + d/v``. The
+    carrier-frequency beam parameters apply to every spectral component
+    (narrowband paraxial approximation). ``focus_distance = 0`` reproduces
+    `sample_gaussian_pulse_envelope`; support evidence uses the widened
+    intensity RMS widths ``w/2`` and the shifted temporal center.
+    """
+    if not isinstance(prepared, PreparedGaussianPulseEnvelope):
+        raise TypeError("prepared must be a PreparedGaussianPulseEnvelope.")
+    distance, speed = float(focus_distance), float(wave_speed)
+    if not np.isfinite(distance) or distance < 0.0:
+        raise ValueError("focus_distance must be finite and nonnegative.")
+    if not np.isfinite(speed) or speed <= 0.0:
+        raise ValueError("wave_speed must be finite and positive.")
+    plan = prepared.plan
+    wavenumber = plan.carrier_angular_frequency / speed
+    waists = 2.0 * plan.transverse_rms_width
+    rayleigh = 0.5 * wavenumber * waists**2
+    ratio = distance / rayleigh
+    widths = waists * jnp.sqrt(1.0 + ratio**2)
+    # 1/R at z = −d is −d/(d² + z_R²): converging wavefronts.
+    inverse_radius = -distance / (distance**2 + rayleigh**2)
+    displacement = plan.plane_space.transverse_coordinates - plan.transverse_center
+    transverse = jnp.prod(jnp.sqrt(waists / widths)) * jnp.exp(
+        jnp.sum(
+            -((displacement / widths) ** 2)
+            + 0.5j * wavenumber * inverse_radius * displacement**2,
+            axis=-1,
+        )
+        + 0.5j * jnp.sum(jnp.arctan(ratio))
+        - 1j * wavenumber * distance
+    )
+    shifted = prepared.temporal_displacement + distance / speed
+    temporal = jnp.exp(
+        -0.25 * (shifted / plan.temporal_rms_duration) ** 2
+        + 1j * (plan.carrier_phase + 0.5 * plan.chirp * shifted**2)
+    )
+    scalar = plan.peak_amplitude * transverse[..., None] * temporal[None, None, :]
+    bounds = [
+        np.asarray(axis.bounds, dtype=np.float64) for axis in plan.plane_space.grid.axes
+    ]
+    time_bounds = np.asarray(
+        plan.time_space.temporal_grid.axes[0].bounds, dtype=np.float64
+    )
+    fractions = [
+        _gaussian_interval_fraction(
+            float(axis_bounds[0]), float(axis_bounds[1]), float(center), float(width)
+        )
+        for axis_bounds, center, width in zip(
+            bounds,
+            np.asarray(plan.transverse_center),
+            0.5 * np.asarray(widths),
+            strict=True,
+        )
+    ]
+    fractions.append(
+        _gaussian_interval_fraction(
+            float(time_bounds[0]),
+            float(time_bounds[1]),
+            float(plan.temporal_center) - distance / speed,
+            float(plan.temporal_rms_duration),
+        )
+    )
+    omitted = jnp.asarray(
+        1.0 - float(np.clip(prod(fractions), 0.0, 1.0)),
+        dtype=plan.plane_space.transverse_coordinates.dtype,
+    )
+    return _gaussian_envelope_result(prepared, scalar, omitted, -distance)
 
 
 __all__ = [
@@ -724,5 +826,6 @@ __all__ = [
     "envelope_to_analytic_field",
     "prepare_gaussian_pulse_envelope",
     "prepare_pulse_envelope_bridge",
+    "sample_focused_gaussian_pulse_envelope",
     "sample_gaussian_pulse_envelope",
 ]

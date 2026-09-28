@@ -46,7 +46,8 @@ The modules below expose exact fixed-topology, single-host CPU candidate tuples.
 
 ::: phydrax.durability
 
-::: phydrax.electromagnetics
+Electromagnetics (trajectory radiation, cold plasma, frequency-domain Maxwell
+systems): see [Electromagnetics](electromagnetics.md).
 
 ::: phydrax.discretization.pic
 

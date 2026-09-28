@@ -204,6 +204,107 @@ def scalar_attribute(attributes: h5py.AttributeManager, name: str, /) -> float:
     return float(numeric_attribute(attributes, name, ()).reshape(()))
 
 
+# Record components ------------------------------------------------------------------
+
+
+def component_shape(item: h5py.Dataset | h5py.Group, path: str, /) -> tuple[int, ...]:
+    """Extents of one real record component stored as data or as a constant.
+
+    A constant component is a group holding a real scalar ``value`` and its
+    ``shape`` (one unsigned extent per record axis).
+    """
+    if isinstance(item, h5py.Dataset):
+        if not np.issubdtype(item.dtype, np.integer) and not np.issubdtype(
+            item.dtype, np.floating
+        ):
+            raise TypeError(f"Record component {path} must be real numeric.")
+        return tuple(item.shape)
+    if "value" not in item.attrs:
+        raise ValueError(f"Record component {path} is neither data nor constant.")
+    value = np.asarray(item.attrs["value"])
+    if value.shape != () or not (
+        np.issubdtype(value.dtype, np.integer) or np.issubdtype(value.dtype, np.floating)
+    ):
+        raise TypeError(f"Constant component {path} value must be a real scalar.")
+    if "shape" not in item.attrs:
+        raise ValueError(f"Constant component {path} lacks its shape attribute.")
+    shape = np.asarray(item.attrs["shape"])
+    if shape.ndim != 1 or shape.size == 0 or not np.issubdtype(shape.dtype, np.integer):
+        raise ValueError(f"Constant component {path} shape must hold integer extents.")
+    if np.any(shape < 0):
+        raise ValueError(f"Constant component {path} extents must be nonnegative.")
+    return tuple(int(extent) for extent in shape)
+
+
+def component_values(
+    item: h5py.Dataset | h5py.Group, shape: tuple[int, ...], /
+) -> np.ndarray:
+    """Stored float64 values of one component admitted by `component_shape`."""
+    if isinstance(item, h5py.Dataset):
+        return np.asarray(item[()], dtype=np.float64)
+    return np.full(shape, np.asarray(item.attrs["value"], dtype=np.float64))
+
+
+def identity_values(
+    item: h5py.Dataset | h5py.Group, shape: tuple[int, ...], /
+) -> np.ndarray:
+    """Unsigned 64-bit particle identities of one integer component."""
+    raw = (
+        np.asarray(item[()])
+        if isinstance(item, h5py.Dataset)
+        else np.full(shape, np.asarray(item.attrs["value"]))
+    )
+    if not np.issubdtype(raw.dtype, np.integer):
+        raise TypeError("Particle id records must use integer storage.")
+    if np.issubdtype(raw.dtype, np.signedinteger) and np.any(raw < 0):
+        raise ValueError("Particle ids must be nonnegative.")
+    return raw.astype(np.uint64)
+
+
+def weighting_metadata(
+    attributes: h5py.AttributeManager, path: str, /
+) -> tuple[bool, float]:
+    """ED-PIC ``macroWeighted`` flag and ``weightingPower`` of one particle record."""
+    if "macroWeighted" not in attributes:
+        raise OpenPMDUnsupportedError(
+            f"Particle record {path} lacks macroWeighted; per-particle and "
+            "macroparticle values cannot be distinguished."
+        )
+    flag = np.asarray(attributes["macroWeighted"])
+    if flag.shape != () or not np.issubdtype(flag.dtype, np.integer):
+        raise ValueError(f"macroWeighted of {path} must be an integer scalar.")
+    macro = int(flag)
+    if macro not in (0, 1):
+        raise ValueError(f"macroWeighted of {path} must be 0 or 1.")
+    if "weightingPower" not in attributes:
+        raise OpenPMDUnsupportedError(f"Particle record {path} lacks weightingPower.")
+    return macro == 1, scalar_attribute(attributes, "weightingPower")
+
+
+def write_particle_metadata(
+    attributes: h5py.AttributeManager,
+    macro_weighted: int,
+    weighting_power: float,
+    time_offset: float,
+    /,
+) -> None:
+    attributes["macroWeighted"] = np.uint32(macro_weighted)
+    attributes["weightingPower"] = np.float64(weighting_power)
+    attributes["timeOffset"] = np.float64(time_offset)
+
+
+def write_component(
+    parent: h5py.Group, name: str, values: np.ndarray, /
+) -> h5py.Dataset | h5py.Group:
+    """Write one component, as a constant component when every value agrees."""
+    if values.size and np.all(values == values.reshape(-1)[0]):
+        component = parent.create_group(name)
+        component.attrs["value"] = values.reshape(-1)[0]
+        component.attrs["shape"] = np.asarray(values.shape, dtype=np.uint64)
+        return component
+    return parent.create_dataset(name, data=values)
+
+
 # Series root and iterations --------------------------------------------------------
 
 
@@ -357,8 +458,14 @@ def write_series_root(
     *,
     meshes_path: str | None,
     particles_path: str | None,
+    file_format: str | None = None,
 ) -> None:
-    """Write group-based root metadata of one pinned revision."""
+    """Write root metadata of one pinned revision.
+
+    ``file_format`` (a file name containing ``%T``, such as ``fields_%T.h5``)
+    declares one file of a ``fileBased`` series; otherwise the file is
+    ``groupBased``.
+    """
     attributes = handle.attrs
     attributes["openPMD"] = np.bytes_(revision.version)
     attributes["basePath"] = np.bytes_(OPENPMD_BASE_PATH)
@@ -366,8 +473,14 @@ def write_series_root(
         attributes["meshesPath"] = np.bytes_(meshes_path)
     if particles_path is not None:
         attributes["particlesPath"] = np.bytes_(particles_path)
-    attributes["iterationEncoding"] = np.bytes_("groupBased")
-    attributes["iterationFormat"] = np.bytes_(OPENPMD_BASE_PATH)
+    if file_format is None:
+        attributes["iterationEncoding"] = np.bytes_("groupBased")
+        attributes["iterationFormat"] = np.bytes_(OPENPMD_BASE_PATH)
+    else:
+        if file_format.count("%T") != 1 or "/" in file_format:
+            raise ValueError("file_format must be one file name containing %T once.")
+        attributes["iterationEncoding"] = np.bytes_("fileBased")
+        attributes["iterationFormat"] = np.bytes_(file_format)
     match revision.extension_encoding:
         case "names":
             attributes["openPMDextension"] = np.bytes_(revision.extension)
@@ -624,6 +737,9 @@ __all__ = [
     "OpenPMDUnsupportedError",
     "TIME_DIMENSION",
     "attribute_text",
+    "component_shape",
+    "component_values",
+    "identity_values",
     "numeric_attribute",
     "preflight_hdf5",
     "read_grid_unit_si",
@@ -632,8 +748,11 @@ __all__ = [
     "read_series_root",
     "required_text",
     "scalar_attribute",
+    "weighting_metadata",
+    "write_component",
     "write_grid_units",
     "write_iteration",
+    "write_particle_metadata",
     "write_record_unit",
     "write_series_root",
 ]

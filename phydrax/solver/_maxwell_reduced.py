@@ -36,6 +36,19 @@ def _backward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
     return (value - previous) / spacing
 
 
+def _charge_divergence(value: Array, spacing: float, periodic: bool, /) -> Array:
+    """1-D divergence of face values whose nonperiodic lower wall carries no flux.
+
+    It is the divergence of the particle continuity equation; ``E_x`` has no
+    curl coupling in 1-D, so Gauss is preserved exactly under the same operator.
+    """
+    if periodic:
+        previous = jnp.roll(value, 1)
+    else:
+        previous = jnp.concatenate((jnp.zeros((1,), dtype=value.dtype), value[:-1]))
+    return (value - previous) / spacing
+
+
 def _field_triple(
     values: tuple[ArrayLike, ArrayLike, ArrayLike], /
 ) -> tuple[Array, Array, Array]:
@@ -839,7 +852,9 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
             )
         next_by = half_by + 0.5 * dt * d_x_next_ez
         next_bz = half_bz - 0.5 * dt * d_x_next_ey
-        charge = state.charge - dt * _backward(jx, 0, self.spacing, self.periodic[0])
+        charge = state.charge - dt * _charge_divergence(
+            jx, self.spacing, self.periodic[0]
+        )
         next_electric = _apply_boundary_traces(
             (next_ex, next_ey, next_ez), self.boundaries, dt, electric=True
         )
@@ -857,7 +872,9 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         gauss = jnp.max(
             jnp.abs(
                 self.permittivity
-                * _backward(candidate.electric[0], 0, self.spacing, self.periodic[0])
+                * _charge_divergence(
+                    candidate.electric[0], self.spacing, self.periodic[0]
+                )
                 - charge
             )
         )

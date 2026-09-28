@@ -260,8 +260,9 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
                 residual, axis=correction_axis
             )
             corrected[correction_axis] = corrected[correction_axis] + correction
+            # The corrected current on the last face is the physical outflow.
             upper_flux = jnp.take(
-                correction,
+                corrected[correction_axis],
                 jnp.asarray([self.shape[correction_axis] - 1]),
                 axis=correction_axis,
             )

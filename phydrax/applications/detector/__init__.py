@@ -39,6 +39,7 @@ from ._tracking import (
     TrackMeasurementBank,
 )
 from ._transport import (
+    charged_trajectory,
     ChargedPropagationPlan,
     ChargedPropagationResult,
     propagate_charged_tracks,
@@ -72,6 +73,7 @@ __all__ = [
     "calorimetry",
     "apply_detector_calibration",
     "build_particle_flow_candidates",
+    "charged_trajectory",
     "digitize_sensitive_hits",
     "fit_associated_tracks",
     "fit_primary_vertices",

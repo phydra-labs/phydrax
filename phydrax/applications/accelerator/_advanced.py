@@ -11,20 +11,25 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike, DTypeLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
-from ._beam import AcceleratorBunch, AcceleratorConvention
+from ._beam import _late_sign, AcceleratorBunch, AcceleratorConvention
 
 
-def _symplectic_form(dtype: DTypeLike) -> Array:
-    form = jnp.zeros((6, 6), dtype=dtype)
-    for index in (0, 2, 4):
-        form = form.at[index, index + 1].set(1.0)
-        form = form.at[index + 1, index].set(-1.0)
+def _symplectic_form(late_sign: float, /) -> np.ndarray:
+    """Symplectic form of ``(x, px/p₀, y, py/p₀, ζ, δ)``.
+
+    The canonical partner of ``δ`` is the positive-early coordinate
+    ``z = −σ ζ``, so the longitudinal block carries the sign ``−σ``.
+    """
+    form = np.zeros((6, 6), dtype=np.float64)
+    for index, sign in ((0, 1.0), (2, 1.0), (4, -late_sign)):
+        form[index, index + 1] = sign
+        form[index + 1, index] = -sign
     return form
 
 
@@ -67,7 +72,7 @@ class SymplecticMapPlan(StrictModule, NonTrainableState):
             or maximum < 0.0
         ):
             raise ValueError("Map convention, identity, and residual policy are invalid.")
-        form = np.asarray(_symplectic_form(matrix_.dtype))
+        form = _symplectic_form(_late_sign(convention))
         residual = float(np.linalg.norm(matrix_.T @ form @ matrix_ - form, ord=np.inf))
         if residual > maximum:
             raise ValueError("Transfer map exceeds the declared symplectic residual.")
@@ -221,95 +226,11 @@ def linear_ring_optics(plan: SymplecticMapPlan, /) -> LinearRingOptics:
     )
 
 
-class LongitudinalWakePlan(StrictModule, NonTrainableState):
-    zeta_edges: Array
-    wake_values: Array
-    kick_scale: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self, zeta_edges: ArrayLike, wake_values: ArrayLike, /, *, kick_scale: float
-    ) -> None:
-        edges = np.asarray(zeta_edges, dtype=np.float64)
-        wake = np.asarray(wake_values, dtype=np.float64)
-        scale = float(kick_scale)
-        if (
-            edges.ndim != 1
-            or edges.size < 2
-            or wake.shape != (edges.size - 1,)
-            or np.any(~np.isfinite(edges))
-            or np.any(np.diff(edges) <= 0.0)
-            or np.any(~np.isfinite(wake))
-            or not math.isfinite(scale)
-        ):
-            raise ValueError("Wake bins, values, and kick scale are invalid.")
-        self.zeta_edges = jnp.asarray(edges)
-        self.wake_values = jnp.asarray(wake)
-        self.kick_scale = scale
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "longitudinal-wake-plan",
-                "arrays": array_tree_fingerprint((edges, wake)),
-                "kick_scale": scale,
-            }
-        )
-
-
-class LongitudinalWakeResult(StrictModule, NonTrainableState):
-    bunch: AcceleratorBunch
-    line_density: Array
-    wake_potential: Array
-    kicks: Array
-    finite: Array
-    plan_id: str = eqx.field(static=True)
-
-
-def apply_longitudinal_wake(
-    plan: LongitudinalWakePlan,
-    bunch: AcceleratorBunch,
-    /,
-) -> LongitudinalWakeResult:
-    if not isinstance(plan, LongitudinalWakePlan) or not isinstance(
-        bunch, AcceleratorBunch
-    ):
-        raise TypeError("plan and bunch must use accelerator wake types.")
-    bin_count = plan.wake_values.shape[0]
-    indices = jnp.searchsorted(plan.zeta_edges, bunch.coordinates[:, 4], side="right") - 1
-    in_range = bunch.active & bunch.valid & (indices >= 0) & (indices < bin_count)
-    safe_indices = jnp.clip(indices, 0, bin_count - 1)
-    density = (
-        jnp.zeros((bin_count,), dtype=bunch.coordinates.dtype)
-        .at[safe_indices]
-        .add(jnp.where(in_range, bunch.weights, 0.0))
-    )
-    potential = jnp.convolve(density, plan.wake_values, mode="full")[:bin_count]
-    kicks = plan.kick_scale * potential[safe_indices]
-    coordinates = bunch.coordinates.at[:, 5].add(jnp.where(in_range, kicks, 0.0))
-    finite = jnp.all(jnp.isfinite(potential)) & jnp.all(
-        jnp.where(in_range, jnp.isfinite(kicks), True)
-    )
-    result = AcceleratorBunch(
-        jnp.where(finite, coordinates, bunch.coordinates),
-        bunch.weights,
-        bunch.particle_ids,
-        active=bunch.active,
-        reference_rest_energy=float(bunch.reference_rest_energy),
-        reference_momentum=float(bunch.reference_momentum),
-        reference_charge=float(bunch.reference_charge),
-        convention=bunch.convention,
-        bunch_id=f"{bunch.bunch_id}:{plan.plan_id}",
-    )
-    return LongitudinalWakeResult(result, density, potential, kicks, finite, plan.plan_id)
-
-
 __all__ = [
     "LinearRingOptics",
-    "LongitudinalWakePlan",
-    "LongitudinalWakeResult",
     "RingTrackingPlan",
     "RingTrackingResult",
     "SymplecticMapPlan",
-    "apply_longitudinal_wake",
     "linear_ring_optics",
     "track_ring",
 ]

@@ -741,7 +741,6 @@ class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
         phase: ArrayLike = 0.0,
         amplitude: ArrayLike = 1.0,
         control_key: str | None = None,
-        magnetic_closedness_preserving: bool = False,
     ) -> None:
         if direction not in (-1, 1):
             raise ValueError("Huygens launch direction must be -1 or +1.")
@@ -766,7 +765,6 @@ class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
             phase=phase,
             amplitude=amplitude / np.sqrt(abs(power)),
             control_key=control_key,
-            magnetic_closedness_preserving=magnetic_closedness_preserving,
             source_id=identifier,
         )
         self.direction, self.signed_power, self.source_id = (
@@ -870,96 +868,6 @@ class MaxwellModeDecomposition(StrictModule, NonTrainableState):
         return jnp.conj(self.modes.T) @ (self.mass @ value)
 
 
-class MaxwellNearToFarPlan(StrictModule, NonTrainableState):
-    """Homogeneous-exterior Huygens surface far-field transform."""
-
-    positions: Array
-    normals: Array
-    weights: Array
-    directions: Array
-    wavenumbers: Array
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        positions: ArrayLike,
-        normals: ArrayLike,
-        weights: ArrayLike,
-        directions: ArrayLike,
-        wavenumbers: ArrayLike,
-        /,
-    ) -> None:
-        positions_ = jnp.asarray(positions, dtype=jnp.float64)
-        normals_ = jnp.asarray(normals, dtype=jnp.float64)
-        weights_ = jnp.asarray(weights, dtype=jnp.float64)
-        directions_ = jnp.asarray(directions, dtype=jnp.float64)
-        wavenumbers_ = jnp.asarray(wavenumbers, dtype=jnp.float64)
-        if positions_.ndim != 2 or positions_.shape[1] != 3:
-            raise ValueError("Near-to-far positions must have shape (surface, 3).")
-        if normals_.shape != positions_.shape or weights_.shape != positions_.shape[:1]:
-            raise ValueError("Near-to-far surface arrays are incompatible.")
-        if directions_.ndim != 2 or directions_.shape[1] != 3:
-            raise ValueError("Far-field directions must have shape (directions, 3).")
-        if wavenumbers_.ndim != 1 or wavenumbers_.size == 0:
-            raise ValueError("wavenumbers must be a nonempty vector.")
-        normal_norm = jnp.linalg.norm(normals_, axis=1)
-        direction_norm = jnp.linalg.norm(directions_, axis=1)
-        normals_ = normals_ / normal_norm[:, None]
-        directions_ = directions_ / direction_norm[:, None]
-        invalid = (
-            jnp.any(~jnp.isfinite(positions_))
-            | jnp.any(~jnp.isfinite(normals_))
-            | jnp.any(~jnp.isfinite(weights_))
-            | jnp.any(~jnp.isfinite(directions_))
-            | jnp.any(~jnp.isfinite(wavenumbers_))
-            | jnp.any(normal_norm <= 0.0)
-            | jnp.any(direction_norm <= 0.0)
-            | jnp.any(weights_ <= 0.0)
-            | jnp.any(wavenumbers_ < 0.0)
-        )
-        positions_ = eqx.error_if(
-            positions_, invalid, "Near-to-far geometry/frequencies are invalid."
-        )
-        self.positions = positions_
-        self.normals = normals_
-        self.weights = weights_
-        self.directions = directions_
-        self.wavenumbers = wavenumbers_
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "maxwell-near-to-far",
-                "positions": array_tree_fingerprint(positions_),
-                "directions": array_tree_fingerprint(directions_),
-                "wavenumbers": array_tree_fingerprint(wavenumbers_),
-            }
-        )
-
-    def transform(self, electric: ArrayLike, magnetic: ArrayLike, /) -> Array:
-        electric_ = jnp.asarray(electric)
-        magnetic_ = jnp.asarray(magnetic)
-        if (
-            electric_.shape != self.positions.shape
-            or magnetic_.shape != self.positions.shape
-        ):
-            raise ValueError("Near-to-far fields must have shape (surface, 3).")
-        electric_current = jnp.cross(self.normals, magnetic_)
-        magnetic_current = -jnp.cross(self.normals, electric_)
-        phase_argument = self.directions @ self.positions.T
-        phase = jnp.exp(
-            -1j * self.wavenumbers[:, None, None] * phase_argument[None, :, :]
-        )
-        projected_electric = electric_current[None, None, :, :]
-        projected_magnetic = jnp.cross(
-            self.directions[None, :, None, :],
-            magnetic_current[None, None, :, :],
-        )
-        integrand = projected_electric + projected_magnetic
-        return jnp.sum(
-            phase[..., None] * self.weights[None, None, :, None] * integrand,
-            axis=2,
-        )
-
-
 __all__ = [
     "FixedFrequencyGuidedModePlan",
     "FixedFrequencyGuidedModeResult",
@@ -972,7 +880,6 @@ __all__ = [
     "MaxwellModeDecomposition",
     "MaxwellModePortPlan",
     "MaxwellModePortResponse",
-    "MaxwellNearToFarPlan",
     "PreparedFixedFrequencyGuidedModes",
     "guided_mode_beta_derivative",
     "prepare_fixed_frequency_guided_modes",

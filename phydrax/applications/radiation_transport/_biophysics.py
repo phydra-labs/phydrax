@@ -40,7 +40,9 @@ def photon_result_to_interaction_ledger(
         raise TypeError("source must be RadiationSource.")
     if not run_id or not fraction_id:
         raise ValueError("run_id and fraction_id must be nonempty.")
-    history_ids = np.asarray(result.history_ids)
+    history_ids = (np.asarray(result.id_hi, dtype=np.uint64) << np.uint64(32)) | (
+        np.asarray(result.id_lo, dtype=np.uint64)
+    )
     active = np.asarray(result.event_active)
     positions = np.asarray(result.event_positions)
     deposited = np.asarray(result.event_deposited_energy)

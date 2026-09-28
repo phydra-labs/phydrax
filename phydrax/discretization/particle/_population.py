@@ -353,8 +353,14 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         reusable = self.particles.active_mask & ~state.active
         if self.reuse_policy is ParticleSlotReusePolicy.NEVER_REUSE:
             reusable = reusable & ~state.ever_occupied & ~state.retired
+        # Invalid requests sort last; event IDs widen first so the sentinel
+        # cannot wrap inside a narrower integer dtype.
         order = jnp.argsort(
-            jnp.where(request.valid, request.event_ids, jnp.iinfo(jnp.int64).max)
+            jnp.where(
+                request.valid,
+                request.event_ids.astype(jnp.int64),
+                jnp.iinfo(jnp.int64).max,
+            )
         )
         ordered_valid = request.valid[order]
         ordered_mass = request.masses[order]
@@ -392,21 +398,15 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         exhausted = ~identity_valid
         successful = available & finite_request & ~overflow & ~exhausted
         use = allocation_mask & successful
-        candidate_active = state.active.at[safe_slots].set(
-            jnp.where(use, True, state.active[safe_slots])
+        # Unused request rows write nowhere: padding rows must not alias slot 0.
+        written = jnp.where(use, slots, capacity)
+        candidate_active = state.active.at[written].set(True, mode="drop")
+        candidate_mass = state.mass.at[written].set(ordered_mass, mode="drop")
+        candidate_incarnation = state.incarnation.at[written].set(
+            next_incarnation, mode="drop"
         )
-        candidate_mass = state.mass.at[safe_slots].set(
-            jnp.where(use, ordered_mass, state.mass[safe_slots])
-        )
-        candidate_incarnation = state.incarnation.at[safe_slots].set(
-            jnp.where(use, next_incarnation, state.incarnation[safe_slots])
-        )
-        candidate_ever = state.ever_occupied.at[safe_slots].set(
-            jnp.where(use, True, state.ever_occupied[safe_slots])
-        )
-        candidate_retired = state.retired.at[safe_slots].set(
-            jnp.where(use, False, state.retired[safe_slots])
-        )
+        candidate_ever = state.ever_occupied.at[written].set(True, mode="drop")
+        candidate_retired = state.retired.at[written].set(False, mode="drop")
         identity = _select_state(successful, identified, state)
         candidate = ParticlePopulationState(
             candidate_active,

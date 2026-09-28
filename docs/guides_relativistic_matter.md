@@ -177,7 +177,16 @@ time coordinate $t_{\rm in}=v-r$, not null constant-$v$ hypersurfaces.
 chart/scale/convention-bound imaging medium.
 
 `ThermalBremsstrahlungGrayOpacityPlan`, `ThermalSynchrotronGrayOpacityPlan`, and
-`KleinNishinaScatteringPlan` produce state-dependent interaction coefficients.
+`KleinNishinaScatteringPlan` produce state-dependent interaction coefficients. The
+free–free and synchrotron closures bind an `ElectromagneticScaleContract` and are
+the Planck mean (emission at the matter temperature, absorption of a blackbody at the
+radiation temperature) and Rosseland mean of the spectral coefficients owned by
+`phydrax.electromagnetics` (`ThermalFreeFreeModel` with the Born thermal Gaunt
+factor; the MNY96 `ThermalSynchrotronModel` with `magnetic_squared` $=b^2=B^2/\mu_0$).
+A closure is qualified only where every mean is inside its spectral support; the
+synchrotron Rosseland weight lies far above the MNY96 frequency support in hot flows
+and is then reported unqualified. Photon-number emission uses the blackbody mean
+photon energy $2.70118\,kT$.
 `GRPhotonNumberPlan` transports and creates/absorbs photon number separately from
 energy moments. `RelativisticTwoTemperaturePlan` combines adiabatic species work,
 declared dissipation partition, radiation exchange, and exact Coulomb equilibration.

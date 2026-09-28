@@ -13,16 +13,28 @@ grid = phx.discretization.TensorGridPlan(
 ).prepare(jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
 bridge = phx.discretization.StructuredCochainBridge(grid)
 
-particles = []
+species = []
 charged = []
 for offset, charge, name in ((0, -1.0, "electrons"), (100, 1.0, "ions")):
     support = phx.discretization.ParticleSetPlan(
         jnp.arange(offset, offset + 4), jnp.ones((4,)), ambient_dimension=3
     ).prepare()
-    particles.append(support)
     charged.append(
         phx.discretization.ChargedParticlePlan(charge * jnp.ones((4,)), name).prepare(
             support
+        )
+    )
+    # Unit-mass macroparticles: charge-to-mass ratio ±1 at charge number one.
+    species.append(
+        phx.discretization.pic.PICSpeciesPlan(
+            phx.discretization.ParticlePopulationPlan(support),
+            phx.discretization.pic.PICChargeModelPlan(
+                charge,
+                name,
+                minimum_charge_number=1,
+                maximum_charge_number=1,
+                initial_charge_number=1,
+            ),
         )
     )
 
@@ -38,7 +50,10 @@ maxwell = phx.solver.CompatibleMaxwellPlan(
 electrostatic = phx.solver.CochainElectrostaticPlan(
     bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
 )
-pic = phx.solver.ElectromagneticPICPlan(maxwell, electrostatic, transfers, currents)
+solver = phx.solver.CochainMaxwellPICFieldSolver(
+    maxwell, electrostatic, transfers, currents
+)
+pic = phx.solver.ElectromagneticPICPlan(solver, species=species)
 
 position = jnp.asarray(
     [[0.20, 0.20, 0.20], [0.35, 0.45, 0.55], [0.60, 0.30, 0.70], [0.80, 0.75, 0.40]]
@@ -56,5 +71,6 @@ print(
         "continuity_defect": float(result.diagnostics.continuity_defect),
         "gauss_defect": float(result.diagnostics.electric_constraint),
         "magnetic_defect": float(result.diagnostics.magnetic_constraint),
+        "pairing_defect": pic.pairing_defect,
     }
 )

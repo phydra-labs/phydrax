@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import equinox as eqx
 import jax
@@ -20,10 +20,12 @@ from ..discretization import CochainDiscretization, StructuredCochainBridge
 from ..geometry._contracts import CompiledGeometry, GeometryKind
 from ._maxwell import (
     _apply_hodge_metric,
+    _positive_angular_frequency,
     _positive_material,
     AbstractMaxwellConstitutivePlan,
     AbstractPreparedMaxwellConstitutive,
     DiagonalMaxwellConstitutivePlan,
+    DiagonalMaxwellFrequencyResponse,
     MaxwellCapabilities,
     MaxwellCochainLayout,
 )
@@ -283,6 +285,17 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
         )
         return jnp.sqrt(jnp.max(1.0 / self.permeability) / jnp.min(tangent_minimum))
 
+    @property
+    def auxiliary_degrees(self, /) -> tuple[int, ...]:
+        return ()
+
+    def frequency_response(self, angular_frequency: ArrayLike, /) -> NoReturn:
+        del angular_frequency
+        raise ValueError(
+            "Kerr/Pockels constitutive laws are nonlinear and have no linear "
+            "frequency response."
+        )
+
 
 class ActiveGainMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
     """Explicitly active diagonal gain with optional saturation."""
@@ -478,6 +491,27 @@ class PreparedActiveGainMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
 
     def wave_speed_bound(self, /) -> Array:
         return jnp.sqrt(jnp.max(1.0 / self.permeability) / jnp.min(self.permittivity))
+
+    @property
+    def auxiliary_degrees(self, /) -> tuple[int, ...]:
+        return ()
+
+    def frequency_response(
+        self, angular_frequency: ArrayLike, /
+    ) -> DiagonalMaxwellFrequencyResponse:
+        if not np.isinf(self.saturation_intensity):
+            raise ValueError(
+                "Saturable gain is nonlinear and has no linear frequency response."
+            )
+        omega = _positive_angular_frequency(angular_frequency)
+        # Gain is a negative conductivity: ε(ω) = ε - i g / ω.
+        return DiagonalMaxwellFrequencyResponse(
+            omega,
+            self.permittivity - 1j * self.gain / omega,
+            self.permeability,
+            lossless=False,
+            dispersive=True,
+        )
 
 
 def gyrotropic_maxwell_constitutive(

@@ -14,7 +14,10 @@ grid = phx.discretization.TensorGridPlan(
 bridge = phx.discretization.StructuredCochainBridge(grid)
 n0, n1, n2, _ = bridge.cochain.cell_counts
 probe = phx.solver.maxwell.FieldProbePlan("electric", jnp.asarray([0, 1, 2]))
-dft = phx.solver.maxwell.DFTObserverPlan(probe, jnp.asarray([2.0, 4.0]))
+acquisition = phx.solver.maxwell.MaxwellSpectralAcquisition(
+    jnp.asarray([2.0, 4.0]), sign="negative", measure="sample-mean"
+)
+dft = phx.solver.maxwell.DFTObserverPlan(probe, acquisition)
 material = phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
     permittivity=1.0 + 0.2 * jnp.arange(n1) / n1,
     permeability=1.0 + 0.1 * jnp.arange(n2) / n2,

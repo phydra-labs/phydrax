@@ -8,6 +8,7 @@ from . import layer_potential, multipole as multipole, vortex as vortex
 from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
 from ._convolution_quadrature import __all__ as _convolution_quadrature_all
 from ._diffrax_collocation import DiffraxCollocationIntegralOperator
+from ._free_space_convolution import __all__ as _free_space_convolution_all
 from ._local_ops import local_integral, local_integral_ball
 from ._spatial_ops import nonlocal_integral, spatial_integral
 from ._time_convolution import time_convolution
@@ -69,6 +70,7 @@ from .vortex import __all__ as _vortex_all
 
 _FACADE_EXPORT_MODULES = (
     "._convolution_quadrature",
+    "._free_space_convolution",
     ".layer_potential",
     ".multipole",
     ".vortex",
@@ -153,7 +155,11 @@ __all__ = [
 ]
 __all__ += [
     name
-    for name in (*_convolution_quadrature_all, *_layer_potential_all)
+    for name in (
+        *_convolution_quadrature_all,
+        *_free_space_convolution_all,
+        *_layer_potential_all,
+    )
     if name not in __all__
 ]
 
