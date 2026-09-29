@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, Literal, NamedTuple, TypeAlias
+from typing import Any, assert_never, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
@@ -81,8 +81,10 @@ from ..._maxwell_far_field import (
 from ..._maxwell_observers import DFTObserverState, MaxwellSpectralAcquisition
 from ..._pic_field_solver import (
     AbstractPreparedPICFieldSolver,
+    PICCapabilityRecord,
     PICFieldAdvance,
     PICFieldDeposit,
+    PICFieldSolverCapability,
     PICGaussProjectionResult,
     PICRestartComponent,
     restart_component,
@@ -1035,12 +1037,92 @@ class PreparedQuasiCylindricalMaxwell(AbstractPreparedPICFieldSolver, NonTrainab
         return self.plan.grid
 
     @property
+    def pic_configuration(self) -> str:
+        return "quasi-cylindrical-psatd"
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        route, refusal = PICCapabilityRecord.route, PICCapabilityRecord.refusal
+        match capability:
+            case "spectral-symbol":
+                return route(capability, "Vacuum ω = c|k| of every (m, k_⊥, k_z) mode.")
+            case "huygens-sampling":
+                if not self.huygens:
+                    return refusal(
+                        capability,
+                        "No QuasiCylindricalHuygensPlan observers are declared, so no "
+                        "phasors exist.",
+                        published=True,
+                    )
+                return route(
+                    capability,
+                    f"Phasors of {len(self.huygens)} closed-cylinder observers "
+                    "(standard variant, no antennas).",
+                )
+            case "window-shift":
+                return route(
+                    capability,
+                    "Axial (axis 2) integer-cell translation followed by the spectral "
+                    "Gauss/solenoidal projection.",
+                )
+            case "galilean-grid":
+                if self.plan.variant == "standard":
+                    return refusal(
+                        capability,
+                        "The standard variant's grid is lab-fixed; Galilean "
+                        "coordinates need variant='galilean' or 'averaged-galilean' "
+                        "with a galilean_velocity.",
+                        published=True,
+                    )
+                return route(
+                    capability,
+                    f"Axial grid velocity {self.plan.galilean_velocity} "
+                    f"({self.plan.variant}).",
+                )
+            case "restart-state":
+                return route(
+                    capability,
+                    "Modal spectra and observer memory, admitted by solver identity.",
+                )
+            case "gauss-projection":
+                return route(
+                    capability, "Modal spectral Poisson projection (spectral-poisson)."
+                )
+            case "multi-deposit":
+                return refusal(
+                    capability,
+                    "Each species deposits through its own azimuthal transfer.",
+                )
+            case "tensor-layout" | "open-domain":
+                return refusal(
+                    capability,
+                    "Azimuthal modes on a radial–axial grid declare no Cartesian "
+                    "mirror-parity layout or particle wall inset.",
+                )
+            case "energy-accounting":
+                return refusal(
+                    capability,
+                    "The ledger uses the total modal field energy; radial damping is "
+                    "reported by the solver diagnostics.",
+                )
+            case "relativistic-self-fields":
+                return refusal(
+                    capability, "Boosted-Coulomb initialization is a cochain capability."
+                )
+            case _:
+                assert_never(capability)
+
+    @property
     def hankel_evidence(self) -> Any:
         return self.transform.hankel.evidence
 
     @property
     def grid_velocity(self) -> tuple[float, ...]:
         """Axial Galilean grid velocity; particle positions are grid coordinates."""
+        record = self.pic_capability("galilean-grid")
+        if not record.admitted:
+            raise ValueError(record.basis)
         return (0.0, 0.0, self.plan.galilean_velocity)
 
     @property
@@ -1537,6 +1619,9 @@ class PreparedQuasiCylindricalMaxwell(AbstractPreparedPICFieldSolver, NonTrainab
     def huygens_phasors(
         self, field: QuasiCylindricalMaxwellState, /
     ) -> tuple[HuygensSurfacePhasors, ...]:
+        record = self.pic_capability("huygens-sampling")
+        if not record.admitted:
+            raise ValueError(record.basis)
         return tuple(
             box.surface_phasors(state)
             for box, state in zip(self.huygens, field.observations, strict=True)

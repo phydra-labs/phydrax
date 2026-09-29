@@ -520,8 +520,11 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
     # -- field views -------------------------------------------------------------
 
     def _grid_velocity(self, dtype: DTypeLike, /) -> Array:
-        """Velocity of a Galilean field grid (zero for lab-fixed grids)."""
-        if isinstance(self.solver, PICGalileanGrid):
+        """Velocity of an admitted Galilean field grid (zero for lab-fixed grids)."""
+        if (
+            isinstance(self.solver, PICGalileanGrid)
+            and self.solver.pic_capability("galilean-grid").admitted
+        ):
             return jnp.asarray(self.solver.grid_velocity, dtype=dtype)
         return jnp.zeros((3,), dtype=dtype)
 

@@ -4,11 +4,13 @@
 
 """Distributed explicit electromagnetic PIC over a static block decomposition.
 
-`DistributedPICFieldSolver` executes a prepared cochain (periodic 3-D),
+`distribute_pic_field_solver` executes a prepared cochain (periodic 3-D),
 reduced 1-D/2-D, or Cartesian PSATD field solver on a device mesh of one to
 three axes, which split the leading grid axes into slabs, pencils, or blocks.
-It is an `AbstractPreparedPICFieldSolver`, so `ElectromagneticPICPlan` runs
-over it unchanged:
+`pic_distribution_support` states whether and how a base solver distributes
+(quasi-cylindrical PSATD, unstructured Whitney, and bounded cochain grids are
+refused). The result is an `AbstractDistributedPICFieldSolver`, so
+`ElectromagneticPICPlan` runs over it unchanged:
 
 - particle transfers run per device on the device's slot block: each device
   deposits its own particles on its block window, and one plane-level
@@ -29,6 +31,11 @@ over it unchanged:
 The distributed solver shares its base solver's identity: decomposition
 changes reduction order, not the discretization, so restart components are
 admitted across topologies and `PICDistributedEvidence` records execution.
+Each route-specific solver publishes exactly the optional protocols whose
+distributed route it executes and withholds the others with a stated reason
+(`pic_capabilities`): moving windows are withheld because the window shift
+does not migrate particles to their new owners, and relativistic self-fields
+because they need a grounded (bounded) cochain boundary.
 
 `DistributedElectromagneticPICPlan` places every species' slot block on its
 owner device and installs a `DistributedPICExecutor` in the PIC plan:
@@ -47,7 +54,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -99,6 +106,7 @@ from ..discretization.pic._distributed import (
     with_population_slot_leaves,
     with_species_slot_leaves,
 )
+from ..typing import parse
 from ._cochain_pic_field import CochainMaxwellPICFieldSolver
 from ._electromagnetic_pic import (
     ElectromagneticPICDiagnostics,
@@ -106,13 +114,16 @@ from ._electromagnetic_pic import (
     ElectromagneticPICState,
 )
 from ._maxwell import MaxwellCapabilities
+from ._maxwell_far_field import HuygensSurfacePhasors
 from ._maxwell_reduced import CompatibleMaxwell1DState, CompatibleMaxwell2DState
 from ._pic_field_solver import (
     AbstractPreparedPICFieldSolver,
     add_deposits,
+    PICCapabilityRecord,
     PICFieldAdvance,
     PICFieldDeposit,
-    PICGalileanGrid,
+    PICFieldEnergy,
+    PICFieldSolverCapability,
     PICGaussProjection,
     PICGaussProjectionResult,
     PICMultiDeposit,
@@ -120,11 +131,12 @@ from ._pic_field_solver import (
     PICRestartState,
     PICSpectralSymbol,
     PICTensorKind,
-    PICTensorLayout,
     PICTensorMap,
 )
 from ._reduced_pic import ReducedMaxwellPICFieldSolver
+from ._unstructured_em_pic import UnstructuredMaxwellPICFieldSolver
 from .maxwell.spectral import (
+    PreparedQuasiCylindricalMaxwell,
     PreparedSpectralMaxwell,
     SpectralMaxwellSource,
     SpectralMaxwellState,
@@ -133,6 +145,9 @@ from .maxwell.spectral import (
 
 PICDistributedRoute: TypeAlias = Literal[
     "cochain", "reduced", "spectral-global-fft", "spectral-local-guarded"
+]
+type _SharedCapability = Literal[
+    "multi-deposit", "spectral-symbol", "restart-state", "gauss-projection"
 ]
 type _Planes = tuple[Array, ...]
 type _LeafMap = Callable[[Array], Any]
@@ -490,25 +505,123 @@ class _SpectralLayout(_AbstractPlaneLayout):
         return solver.plan.prepare(transfers, currents)
 
 
-def _layout(
+class PICDistributionSupport(StrictModule, NonTrainableState):
+    """Whether `distribute_pic_field_solver` admits one prepared base solver.
+
+    ``route`` is the distributed execution route, or ``None`` when distribution
+    is refused; ``basis`` states the route's numerical scheme or the refusal.
+    """
+
+    configuration: str = eqx.field(static=True)
+    route: PICDistributedRoute | None = eqx.field(static=True)
+    basis: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        configuration: str,
+        route: PICDistributedRoute | None,
+        basis: str,
+        /,
+    ) -> None:
+        if not isinstance(configuration, str) or not configuration:
+            raise ValueError("configuration must be a nonempty label.")
+        parsed = None if route is None else parse(route, PICDistributedRoute, "route")
+        if not isinstance(basis, str) or not basis.strip():
+            raise ValueError("A distribution support record needs a nonempty basis.")
+        self.configuration = configuration
+        self.route = parsed
+        self.basis = basis
+
+
+def _spectral_support(solver: PreparedSpectralMaxwell, /) -> PICDistributionSupport:
+    configuration = solver.pic_configuration
+    match solver.plan.decomposition:
+        case "global-fft":
+            return PICDistributionSupport(
+                configuration,
+                "spectral-global-fft",
+                "The base PSATD update SPMD-partitioned over the PIC mesh; its global "
+                "FFTs run on a slab (one-axis) or pencil (two-axis) schedule of that "
+                "mesh.",
+            )
+        case "local-guarded":
+            return PICDistributionSupport(
+                configuration,
+                "spectral-local-guarded",
+                "Per-device local-guarded subdomains with guard cells exchanged by "
+                "halo; subdomains must tile the device blocks and the Coulomb and "
+                "Gauss-projection FFTs run on the PIC mesh.",
+            )
+        case _:
+            assert_never(solver.plan.decomposition)
+
+
+def pic_distribution_support(
     solver: AbstractPreparedPICFieldSolver, /
-) -> tuple[_AbstractPlaneLayout, PICDistributedRoute]:
+) -> PICDistributionSupport:
+    """The distributed route of ``solver``, or the reason distribution is refused."""
+    if not isinstance(solver, AbstractPreparedPICFieldSolver):
+        raise TypeError("solver must be an AbstractPreparedPICFieldSolver.")
+    configuration = solver.pic_configuration
     if isinstance(solver, CochainMaxwellPICFieldSolver):
-        return _CochainLayout(solver), "cochain"
+        if not all(solver.periodic):
+            return PICDistributionSupport(
+                configuration,
+                None,
+                "Distributed cochain PIC requires periodic axes: a bounded axis adds "
+                "a wall vertex plane that does not tile the cell blocks.",
+            )
+        return PICDistributionSupport(
+            configuration,
+            "cochain",
+            "The base cochain update SPMD-partitioned over the mesh with replicated "
+            "packed cochains; block-window deposits and gathers exchange guards.",
+        )
     if isinstance(solver, ReducedMaxwellPICFieldSolver):
-        return _ReducedLayout(solver), "reduced"
+        return PICDistributionSupport(
+            configuration,
+            "reduced",
+            "The base reduced update on block-sharded fields; a reduced 2-D "
+            "continuity projection is global, so it decomposes only when the guard "
+            "windows cover the grid.",
+        )
     if isinstance(solver, PreparedSpectralMaxwell):
-        match solver.plan.decomposition:
-            case "global-fft":
-                return _SpectralLayout(solver), "spectral-global-fft"
-            case "local-guarded":
-                return _SpectralLayout(solver), "spectral-local-guarded"
-            case _:
-                raise ValueError("Spectral decomposition is invalid.")
-    raise TypeError(
-        "Distributed PIC supports the cochain, reduced, and Cartesian PSATD field "
-        "solvers."
+        return _spectral_support(solver)
+    if isinstance(solver, PreparedQuasiCylindricalMaxwell):
+        return PICDistributionSupport(
+            configuration,
+            None,
+            "Quasi-cylindrical PSATD is not distributed: its radial Hankel "
+            "transforms couple every radius of every azimuthal mode.",
+        )
+    if isinstance(solver, UnstructuredMaxwellPICFieldSolver):
+        return PICDistributionSupport(
+            configuration,
+            None,
+            "Unstructured Whitney PIC is not distributed: tetrahedral cochains have "
+            "no block decomposition or halo plan.",
+        )
+    return PICDistributionSupport(
+        configuration,
+        None,
+        f"No distributed route is declared for {type(solver).__name__}.",
     )
+
+
+def _layout(
+    solver: AbstractPreparedPICFieldSolver, route: PICDistributedRoute, /
+) -> _AbstractPlaneLayout:
+    match route:
+        case "cochain" if isinstance(solver, CochainMaxwellPICFieldSolver):
+            return _CochainLayout(solver)
+        case "reduced" if isinstance(solver, ReducedMaxwellPICFieldSolver):
+            return _ReducedLayout(solver)
+        case "spectral-global-fft" | "spectral-local-guarded" if isinstance(
+            solver, PreparedSpectralMaxwell
+        ):
+            return _SpectralLayout(solver)
+        case _:
+            raise RuntimeError("The distributed route does not match its base solver.")
 
 
 def _mesh_devices(mesh: Mesh, /) -> tuple[tuple[int, int], ...]:
@@ -617,12 +730,17 @@ def _distributed_capabilities(
     )
 
 
-class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableState):
+class AbstractDistributedPICFieldSolver(
+    AbstractPreparedPICFieldSolver, NonTrainableState
+):
     """A prepared PIC field solver executed over a one- to three-axis device mesh.
 
     Mesh axis ``a`` splits grid axis ``a`` into ``mesh.devices.shape[a]``
     blocks; ``identity_tiles`` (default one per cell) fixes the identity
-    partition of created particles (`PICDomainDecomposition`).
+    partition of created particles (`PICDomainDecomposition`). Construct it
+    with `distribute_pic_field_solver`, which selects the route-specific
+    solver: each publishes exactly the optional protocols whose distributed
+    route it executes (`pic_capabilities`).
     """
 
     base: AbstractPreparedPICFieldSolver
@@ -649,11 +767,15 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
     ) -> None:
         if not isinstance(base, AbstractPreparedPICFieldSolver):
             raise TypeError("base must be an AbstractPreparedPICFieldSolver.")
-        if not isinstance(base, PICRestartState):
-            raise TypeError("Distributed PIC requires a PICRestartState field solver.")
         if not isinstance(mesh, Mesh):
             raise TypeError("mesh must be a jax.sharding.Mesh.")
-        layout, route = _layout(base)
+        support = pic_distribution_support(base)
+        route = support.route
+        if route is None:
+            raise ValueError(support.basis)
+        if not self._executes(route):
+            raise TypeError(f"{type(self).__name__} does not execute the {route} route.")
+        layout = _layout(base, route)
         shape = tuple(int(value) for value in mesh.devices.shape)
         axes = len(shape)
         if axes > min(3, len(layout.counts), base.spatial_dimension):
@@ -823,14 +945,6 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
     @property
     def displacement_widths(self) -> Array:
         return self.base.displacement_widths
-
-    @property
-    def grid_velocity(self) -> tuple[float, ...]:
-        """Galilean grid velocity of the base solver (zero for lab-fixed grids)."""
-        base = self.base
-        if isinstance(base, PICGalileanGrid):
-            return tuple(base.grid_velocity)
-        return (0.0, 0.0, 0.0)
 
     def validate_species(self, species: tuple[PICSpeciesPlan, ...], /) -> None:
         self.base.validate_species(species)
@@ -1233,7 +1347,82 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
             (slot, slot, slot),
         )(position, active, self.layout.field_planes(field))
 
-    # -- optional capabilities shared by every supported base -------------------------
+    # -- optional capabilities ------------------------------------------------------
+
+    @abc.abstractmethod
+    def _executes(self, route: PICDistributedRoute, /) -> bool:
+        """Whether this route-specific solver executes ``route``."""
+        raise NotImplementedError
+
+    @property
+    def pic_configuration(self) -> str:
+        return f"distributed-{self.base.pic_configuration}"
+
+    def _forwarded(
+        self, capability: PICFieldSolverCapability, route: str, /
+    ) -> PICCapabilityRecord:
+        """A base protocol whose distributed route this solver executes."""
+        record = self.base.pic_capability(capability)
+        if not record.published:
+            raise RuntimeError(
+                f"Distribution forwards {capability!r}, which its base does not publish."
+            )
+        return PICCapabilityRecord(
+            capability,
+            published=True,
+            admitted=record.admitted,
+            basis=f"{record.basis} Distributed: {route}",
+        )
+
+    def _withheld(
+        self, capability: PICFieldSolverCapability, reason: str, /
+    ) -> PICCapabilityRecord:
+        """A base protocol distribution refuses, with the refusal reason."""
+        if not self.base.pic_capability(capability).published:
+            raise RuntimeError(
+                f"Distribution withholds {capability!r}, which its base does not publish."
+            )
+        return PICCapabilityRecord.refusal(
+            capability, f"Withheld by distribution: {reason}"
+        )
+
+    def _unpublished(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        """A protocol the base does not publish; the base refusal carries over."""
+        record = self.base.pic_capability(capability)
+        if record.published:
+            raise RuntimeError(
+                f"Distribution leaves the base-published {capability!r} undeclared."
+            )
+        return record
+
+    def _shared(self, capability: _SharedCapability, /) -> PICCapabilityRecord:
+        """Protocols every distributed route executes."""
+        match capability:
+            case "multi-deposit":
+                return PICCapabilityRecord.route(
+                    capability,
+                    "Every species' block-window deposit is summed on its device "
+                    "before one halo accumulation per decomposed axis.",
+                )
+            case "spectral-symbol":
+                return self._forwarded(
+                    capability, "the distributed update is the base update."
+                )
+            case "restart-state":
+                return self._forwarded(
+                    capability,
+                    "components keep the base identity and restart across topologies.",
+                )
+            case "gauss-projection":
+                return self._forwarded(
+                    capability,
+                    "the projection runs on the distributed field with the "
+                    "halo-accumulated charge.",
+                )
+            case _:
+                assert_never(capability)
 
     def project_gauss(self, field: Any, charge: Array, /) -> PICGaussProjectionResult:
         """The base solver's Gauss projection on the distributed field.
@@ -1244,7 +1433,7 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
         """
         base = self.base
         if not isinstance(base, PICGaussProjection):
-            raise TypeError("The base PIC field solver has no PICGaussProjection.")
+            raise RuntimeError("A distributed base solver lost PICGaussProjection.")
         return base.project_gauss(field, charge)
 
     def dispersion_frequency(
@@ -1252,40 +1441,263 @@ class DistributedPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableStat
     ) -> Array:
         base = self.base
         if not isinstance(base, PICSpectralSymbol):
-            raise TypeError("The base PIC field solver has no spectral symbol.")
+            raise RuntimeError("A distributed base solver lost PICSpectralSymbol.")
         return base.dispersion_frequency(wavevector, step_size)
 
     def restart_component(self, field: Any, /) -> PICRestartComponent:
         base = self.base
         if not isinstance(base, PICRestartState):
-            raise TypeError("The base PIC field solver lost PICRestartState.")
+            raise RuntimeError("A distributed base solver lost PICRestartState.")
         return base.restart_component(field)
 
     def restore_component(self, component: PICRestartComponent, /) -> Any:
         base = self.base
         if not isinstance(base, PICRestartState):
-            raise TypeError("The base PIC field solver lost PICRestartState.")
+            raise RuntimeError("A distributed base solver lost PICRestartState.")
         return base.restore_component(component)
 
-    def _tensor_layout(self) -> PICTensorLayout:
+
+_WINDOW_REFUSAL = (
+    "PICMovingWindowPlan translates particles and fills the leading cells without "
+    "migrating them to their new owner blocks."
+)
+
+
+class _DistributedCochainPICFieldSolver(AbstractDistributedPICFieldSolver):
+    """Distributed periodic 3-D cochain PIC and its cochain-local protocols."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractDistributedPICFieldSolver.__init__
+
+    def _executes(self, route: PICDistributedRoute, /) -> bool:
+        return route == "cochain"
+
+    def _cochain(self) -> CochainMaxwellPICFieldSolver:
         base = self.base
-        if not isinstance(base, PICTensorLayout):
-            raise TypeError(
-                "PIC filters require a base field solver implementing PICTensorLayout."
-            )
+        if not isinstance(base, CochainMaxwellPICFieldSolver):
+            raise RuntimeError("Distributed cochain PIC lost its cochain base solver.")
         return base
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        match capability:
+            case (
+                "multi-deposit"
+                | "spectral-symbol"
+                | "restart-state"
+                | ("gauss-projection")
+            ):
+                return self._shared(capability)
+            case "tensor-layout":
+                return self._forwarded(
+                    capability,
+                    "filters act on the global charge, current, and field of the "
+                    "partitioned update.",
+                )
+            case "huygens-sampling":
+                return self._withheld(
+                    capability,
+                    "cochain PIC never carries Huygens boxes (Maxwell refuses them "
+                    "with dynamic PIC currents), so no distributed route exists.",
+                )
+            case "energy-accounting":
+                return self._forwarded(
+                    capability, "energy split and loss power of the replicated cochains."
+                )
+            case "open-domain":
+                return self._forwarded(
+                    capability, "every distributed cochain axis is periodic."
+                )
+            case "window-shift":
+                return self._withheld(capability, _WINDOW_REFUSAL)
+            case "relativistic-self-fields":
+                return self._withheld(
+                    capability,
+                    "superposed Coulomb fields need a zero-valued grounded boundary "
+                    "on bounded axes, and distributed cochain axes are periodic.",
+                )
+            case "galilean-grid":
+                return self._unpublished(capability)
+            case _:
+                assert_never(capability)
 
     @property
     def tensor_periodic(self) -> tuple[bool, ...]:
-        return self._tensor_layout().tensor_periodic
+        return self._cochain().tensor_periodic
 
     def tensor_template(self, kind: PICTensorKind, /) -> Any:
-        return self._tensor_layout().tensor_template(kind)
+        return self._cochain().tensor_template(kind)
 
     def map_tensors(
         self, kind: PICTensorKind, value: Any, function: PICTensorMap, /
     ) -> Any:
-        return self._tensor_layout().map_tensors(kind, value, function)
+        return self._cochain().map_tensors(kind, value, function)
+
+    def energy_components(self, field: Any, step_size: Array, /) -> PICFieldEnergy:
+        return self._cochain().energy_components(field, step_size)
+
+    def loss_power(self, field: Any, /) -> Array:
+        return self._cochain().loss_power(field)
+
+    @property
+    def domain_periodic(self) -> tuple[bool, ...]:
+        return self._cochain().domain_periodic
+
+    @property
+    def domain_bounds(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        return self._cochain().domain_bounds
+
+    def boundary_inset(self, species: int, /) -> tuple[float, ...]:
+        return self._cochain().boundary_inset(species)
+
+
+class _DistributedReducedPICFieldSolver(AbstractDistributedPICFieldSolver):
+    """Distributed reduced 1-D/2-D PIC and its filter layout."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractDistributedPICFieldSolver.__init__
+
+    def _executes(self, route: PICDistributedRoute, /) -> bool:
+        return route == "reduced"
+
+    def _reduced(self) -> ReducedMaxwellPICFieldSolver:
+        base = self.base
+        if not isinstance(base, ReducedMaxwellPICFieldSolver):
+            raise RuntimeError("Distributed reduced PIC lost its reduced base solver.")
+        return base
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        match capability:
+            case (
+                "multi-deposit"
+                | "spectral-symbol"
+                | "restart-state"
+                | ("gauss-projection")
+            ):
+                return self._shared(capability)
+            case "tensor-layout":
+                return self._forwarded(
+                    capability,
+                    "filters act on the global charge, current, and field triples of "
+                    "the sharded update.",
+                )
+            case "window-shift":
+                return self._withheld(capability, _WINDOW_REFUSAL)
+            case (
+                "huygens-sampling"
+                | "galilean-grid"
+                | "energy-accounting"
+                | "open-domain"
+                | "relativistic-self-fields"
+            ):
+                return self._unpublished(capability)
+            case _:
+                assert_never(capability)
+
+    @property
+    def tensor_periodic(self) -> tuple[bool, ...]:
+        return self._reduced().tensor_periodic
+
+    def tensor_template(self, kind: PICTensorKind, /) -> Any:
+        return self._reduced().tensor_template(kind)
+
+    def map_tensors(
+        self, kind: PICTensorKind, value: Any, function: PICTensorMap, /
+    ) -> Any:
+        return self._reduced().map_tensors(kind, value, function)
+
+
+class _DistributedSpectralPICFieldSolver(AbstractDistributedPICFieldSolver):
+    """Distributed Cartesian PSATD (global-FFT or local-guarded)."""
+
+    if TYPE_CHECKING:
+        __init__ = AbstractDistributedPICFieldSolver.__init__
+
+    def _executes(self, route: PICDistributedRoute, /) -> bool:
+        return route in ("spectral-global-fft", "spectral-local-guarded")
+
+    def _spectral(self) -> PreparedSpectralMaxwell:
+        base = self.base
+        if not isinstance(base, PreparedSpectralMaxwell):
+            raise RuntimeError("Distributed PSATD lost its spectral base solver.")
+        return base
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        match capability:
+            case (
+                "multi-deposit"
+                | "spectral-symbol"
+                | "restart-state"
+                | ("gauss-projection")
+            ):
+                return self._shared(capability)
+            case "huygens-sampling":
+                return self._forwarded(
+                    capability,
+                    "observers accumulate from the global fields when each step "
+                    "completes.",
+                )
+            case "galilean-grid":
+                return self._forwarded(
+                    capability,
+                    "particles drift and migrate in grid coordinates; the base forms "
+                    "the lab current.",
+                )
+            case (
+                "tensor-layout"
+                | "window-shift"
+                | "energy-accounting"
+                | "open-domain"
+                | "relativistic-self-fields"
+            ):
+                return self._unpublished(capability)
+            case _:
+                assert_never(capability)
+
+    @property
+    def grid_velocity(self) -> tuple[float, ...]:
+        return self._spectral().grid_velocity
+
+    def huygens_phasors(self, field: Any, /) -> tuple[HuygensSurfacePhasors, ...]:
+        return self._spectral().huygens_phasors(field)
+
+
+def distribute_pic_field_solver(
+    base: AbstractPreparedPICFieldSolver,
+    mesh: Mesh,
+    /,
+    *,
+    guard_cells: int = 3,
+    particle_margin: float = 1.0,
+    identity_tiles: Sequence[int] | None = None,
+) -> AbstractDistributedPICFieldSolver:
+    """Execute ``base`` over ``mesh`` through its route-specific distributed solver.
+
+    Distribution is admitted exactly as `pic_distribution_support` states; a
+    refused base raises its stated reason.
+    """
+    support = pic_distribution_support(base)
+    options: dict[str, Any] = {
+        "guard_cells": guard_cells,
+        "particle_margin": particle_margin,
+        "identity_tiles": identity_tiles,
+    }
+    match support.route:
+        case None:
+            raise ValueError(support.basis)
+        case "cochain":
+            return _DistributedCochainPICFieldSolver(base, mesh, **options)
+        case "reduced":
+            return _DistributedReducedPICFieldSolver(base, mesh, **options)
+        case "spectral-global-fft" | "spectral-local-guarded":
+            return _DistributedSpectralPICFieldSolver(base, mesh, **options)
+        case _:
+            assert_never(support.route)
 
 
 # -- particle execution ---------------------------------------------------------------
@@ -1324,7 +1736,7 @@ class DistributedPICExecutor(AbstractPICParticleExecutor, NonTrainableState):
     banks by their own positions (`PICMigrationPlan`).
     """
 
-    solver: DistributedPICFieldSolver
+    solver: AbstractDistributedPICFieldSolver
     migration: PICMigrationPlan
     processes: tuple[AbstractPICProcess, ...]
     local_processes: tuple[AbstractPICProcess | None, ...]
@@ -1739,8 +2151,10 @@ class DistributedElectromagneticPICPlan(StrictModule, NonTrainableState):
         if not isinstance(pic, ElectromagneticPICPlan):
             raise TypeError("pic must be ElectromagneticPICPlan.")
         solver = pic.solver
-        if not isinstance(solver, DistributedPICFieldSolver):
-            raise TypeError("Distributed PIC requires a DistributedPICFieldSolver.")
+        if not isinstance(solver, AbstractDistributedPICFieldSolver):
+            raise TypeError(
+                "Distributed PIC requires a solver from distribute_pic_field_solver."
+            )
         for process in pic.processes:
             if _needs_devices(process) and not isinstance(process, PICDistributedProcess):
                 raise ValueError(
@@ -1802,10 +2216,10 @@ class DistributedElectromagneticPICPlan(StrictModule, NonTrainableState):
         )
 
     @property
-    def solver(self) -> DistributedPICFieldSolver:
+    def solver(self) -> AbstractDistributedPICFieldSolver:
         solver = self.pic.solver
-        if not isinstance(solver, DistributedPICFieldSolver):
-            raise TypeError("Distributed PIC lost its DistributedPICFieldSolver.")
+        if not isinstance(solver, AbstractDistributedPICFieldSolver):
+            raise TypeError("Distributed PIC lost its distributed field solver.")
         return solver
 
     @property
@@ -2124,10 +2538,13 @@ class DistributedElectromagneticPICPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AbstractDistributedPICFieldSolver",
     "DistributedElectromagneticPICPlan",
     "DistributedPICExecutor",
-    "DistributedPICFieldSolver",
     "DistributedPICStepResult",
+    "distribute_pic_field_solver",
+    "pic_distribution_support",
     "PICDistributedEvidence",
     "PICDistributedRoute",
+    "PICDistributionSupport",
 ]

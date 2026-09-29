@@ -4,7 +4,8 @@
 
 """Contracts of the Cartesian PSATD/Galilean spectral PIC field solver."""
 
-from typing import Any
+import functools
+from typing import Any, assert_never, Literal, NamedTuple
 
 import equinox as eqx
 import jax
@@ -919,3 +920,273 @@ def test_galilean_psatd_suppresses_nci_that_standard_psatd_grows_as_predicted(
     start = np.searchsorted(times, 4.5)
     assert standard[stop] / standard[start] > 20.0
     assert galilean[stop] / galilean[start] < 3.0
+
+
+# -- cochain → Cartesian PSATD substitution --------------------------------------------
+#
+# One explicit PIC declaration runs a cold electron–ion Langmuir oscillation;
+# only the prepared field solver differs. Electrons start on a one-per-cell
+# lattice at the E_x edge positions, displaced by δ sin(k x̄). On that lattice
+# the quadratic node deposit of a displacement is its node difference and the
+# linear edge gather samples its own edge, so the cochain (Yee) Gauss law
+# inverts the deposit exactly: ω² = ω_p²(1 + m_e/m_i). Infinite-order PSATD
+# inverts the node difference with the exact wavenumber instead, which scales ω²
+# by G = sin(kΔ/2)/(kΔ/2) = 1 − (kΔ)²/24 + …. Both advance the longitudinal
+# mode with the same explicit leapfrog, so each measured frequency is
+# (2/Δt) asin(ωΔt/2) of its own continuous ω. The step is fixed across
+# resolutions, so only the spatial error varies.
+
+_LANGMUIR_CELLS = (16, 32)
+_LANGMUIR_STEP = 0.4 * (1.0 / _LANGMUIR_CELLS[-1]) / np.sqrt(3.0)
+_LANGMUIR_PLASMA = 2.0 * np.pi / (64 * _LANGMUIR_STEP)  # 64 steps per period
+_LANGMUIR_K = 2.0 * np.pi  # unit box length along x
+_LANGMUIR_DELTA = 1.0e-6
+_LANGMUIR_RATIO = 1836.0
+_LANGMUIR_STEPS = 160
+
+type _SubstitutedSolver = Literal["cochain", "psatd"]
+
+
+class _Langmuir(NamedTuple):
+    spacing: float
+    bridge: Any
+    species: tuple[Any, ...]
+    transfers: tuple[Any, ...]
+    currents: tuple[Any, ...]
+    lattice: np.ndarray
+    electrons: np.ndarray
+
+
+@functools.cache
+def _langmuir(cells: int) -> _Langmuir:
+    """Species, transfers, and current plans shared by both substituted solvers."""
+    h = 1.0 / cells
+    bridge = _bridge((cells, 4, 4), h)
+    ix, iy, iz = np.meshgrid(np.arange(cells), np.arange(4), np.arange(4), indexing="ij")
+    lattice = np.stack(((ix + 0.5) * h, (iy + 0.5) * h, (iz + 0.5) * h), axis=-1)
+    lattice = lattice.reshape(-1, 3)
+    species, transfers, currents = _species(
+        bridge,
+        lattice,
+        weight=_LANGMUIR_PLASMA**2 * h**3,  # ω_p² = n q²/(ε m), q = m = weight
+        ion_mass_ratio=_LANGMUIR_RATIO,
+    )
+    electrons = lattice.copy()
+    electrons[:, 0] += _LANGMUIR_DELTA * np.sin(_LANGMUIR_K * lattice[:, 0])
+    return _Langmuir(h, bridge, species, transfers, currents, lattice, electrons)
+
+
+def _field_solver(case: _Langmuir, kind: _SubstitutedSolver) -> Any:
+    match kind:
+        case "cochain":
+            maxwell = phx.solver.CompatibleMaxwellPlan(
+                case.bridge,
+                sources=(phx.solver.PICMaxwellCurrentSourcePlan(),),
+                plan_id="langmuir-cochain",
+            ).prepare()
+            electrostatic = phx.solver.CochainElectrostaticPlan(
+                case.bridge,
+                phx.solver.CochainElectrostaticBoundaryPlan.periodic(case.bridge),
+            )
+            return phx.solver.CochainMaxwellPICFieldSolver(
+                maxwell, electrostatic, case.transfers, case.currents
+            )
+        case "psatd":
+            # Staggered: E_x on the Yee edges the shared transfers gather from;
+            # the default spectral correction holds Gauss's law for the solver's
+            # own divergence with the unchanged Esirkepov deposit.
+            return sp.SpectralMaxwellPlan(case.bridge, grid="staggered").prepare(
+                case.transfers, case.currents
+            )
+        case _:
+            assert_never(kind)
+
+
+def _langmuir_pic(
+    case: _Langmuir, solver: Any, filters: tuple[Any, ...] = ()
+) -> phx.solver.ElectromagneticPICPlan:
+    """The one PIC declaration; the prepared field solver is the substituted argument."""
+    return phx.solver.ElectromagneticPICPlan(
+        solver, species=case.species, filters=filters
+    )
+
+
+@functools.cache
+def _langmuir_run(kind: _SubstitutedSolver, cells: int) -> dict[str, np.ndarray]:
+    case = _langmuir(cells)
+    solver = _field_solver(case, kind)
+    pic = _langmuir_pic(case, solver)
+    x0 = jnp.asarray(case.lattice[:, 0])
+    velocity = np.zeros(case.lattice.shape)
+    state = eqx.filter_jit(
+        lambda: pic.initialize(
+            (case.electrons, case.lattice), (velocity, velocity), _LANGMUIR_STEP
+        )
+    )()
+    # The net charge is a kδ-small difference of the species densities, so the
+    # Gauss residual is measured against the unsigned electron density.
+    electrons = state.species[0]
+    density, _ = solver.deposit_charge(
+        0,
+        electrons.particles.position,
+        pic.species[0].macrocharge(electrons),
+        electrons.population.active,
+    )
+    scale = jnp.max(jnp.abs(density))
+
+    def amplitude(position: Array) -> Array:
+        # Solver-independent mode amplitude (2/N) Σ (x − x̄) sin(k x̄), unwrapped.
+        shift = jnp.mod(position[:, 0] - x0 + 0.5, 1.0) - 0.5
+        return 2.0 * jnp.mean(shift * jnp.sin(_LANGMUIR_K * x0))
+
+    def body(value: Any, _: None) -> tuple[Any, dict[str, Array]]:
+        result = pic.step_detailed(value, _LANGMUIR_STEP)
+        accepted, diagnostics = result.accepted_state, result.diagnostics
+        synchronized = pic.synchronized_energy(accepted, _LANGMUIR_STEP)
+        return accepted, {
+            "amplitude": amplitude(accepted.species[0].particles.position),
+            "successful": result.successful,
+            "gauss": diagnostics.electric_constraint / scale,
+            "continuity": diagnostics.continuity_defect / diagnostics.continuity_scale,
+            "magnetic": diagnostics.magnetic_constraint,
+            "ledger_defect": diagnostics.energy.defect,
+            "ledger_total": diagnostics.energy.total,
+            "energy": synchronized.total,
+            "kinetic": synchronized.particle_kinetic,
+            "field": synchronized.electric_field + synchronized.magnetic_field,
+        }
+
+    _, series = eqx.filter_jit(
+        lambda value: jax.lax.scan(body, value, None, length=_LANGMUIR_STEPS)
+    )(state)
+    result = {key: np.asarray(value) for key, value in series.items()}
+    first = np.asarray(amplitude(state.species[0].particles.position))
+    result["amplitude"] = np.concatenate((first[None], result["amplitude"]))
+    return result
+
+
+def _prony_frequency(series: np.ndarray) -> float:
+    """``ω`` from ``D(n+1) + D(n−1) = 2cos(ωΔt) D(n)``; differencing drops offsets."""
+    d = np.diff(series)
+    ratio = d[1:-1] @ (d[2:] + d[:-2]) / (d[1:-1] @ d[1:-1])
+    return float(np.arccos(0.5 * ratio) / _LANGMUIR_STEP)
+
+
+def _shape_factor(kind: _SubstitutedSolver, cells: int) -> float:
+    half = 0.5 * _LANGMUIR_K / cells
+    match kind:
+        case "cochain":
+            return 1.0
+        case "psatd":
+            return float(np.sin(half) / half)
+        case _:
+            assert_never(kind)
+
+
+def _continuous_frequency(kind: _SubstitutedSolver, cells: int) -> float:
+    ratio = (1.0 + 1.0 / _LANGMUIR_RATIO) * _shape_factor(kind, cells)
+    return float(_LANGMUIR_PLASMA * np.sqrt(ratio))
+
+
+def _leapfrog(continuous: float) -> float:
+    return float(2.0 / _LANGMUIR_STEP * np.arcsin(0.5 * continuous * _LANGMUIR_STEP))
+
+
+def test_cochain_to_psatd_substitution_converges_in_langmuir_frequency() -> None:
+    reference = _leapfrog(_LANGMUIR_PLASMA * np.sqrt(1.0 + 1.0 / _LANGMUIR_RATIO))
+    kinds: tuple[_SubstitutedSolver, ...] = ("cochain", "psatd")
+    measured: dict[tuple[str, int], float] = {}
+    for cells in _LANGMUIR_CELLS:
+        kh = _LANGMUIR_K / cells
+        for kind in kinds:
+            omega = _prony_frequency(_langmuir_run(kind, cells)["amplitude"])
+            measured[kind, cells] = omega
+            # Each solver's own discrete dispersion, evaluated on the host. The
+            # residue is the first-order knot-crossing nonlinearity of the
+            # quadratic shape, of relative size ≲ k²Δδ (coefficient ≈ 0.27
+            # measured at δ = 1e-4 and 1e-5, linear in δ and Δ).
+            predicted = _leapfrog(_continuous_frequency(kind, cells))
+            assert abs(omega - predicted) <= _LANGMUIR_K**2 / cells * _LANGMUIR_DELTA * (
+                reference
+            )
+            # Second-order spatial error from the shared leapfrog reference with the
+            # analytic PSATD leading coefficient 1/48 (1 − √G); 10% covers the
+            # asin map (1 + (ωΔt)²/12) and higher orders.
+            assert abs(omega - reference) <= 1.1 / 48.0 * kh**2 * reference
+    coarse, fine = (
+        abs(measured["cochain", cells] - measured["psatd", cells])
+        for cells in _LANGMUIR_CELLS
+    )
+    # The solvers converge to each other at second order: ×1/4 per halving.
+    assert fine <= 0.3 * coarse
+    assert fine <= 1.1 / 48.0 * (_LANGMUIR_K / _LANGMUIR_CELLS[-1]) ** 2 * reference
+    assert fine > 0.0
+
+
+@pytest.mark.parametrize("kind", ["cochain", "psatd"])
+def test_substituted_solvers_accept_every_step_with_their_constraints(
+    kind: _SubstitutedSolver,
+) -> None:
+    cells = _LANGMUIR_CELLS[-1]
+    result = _langmuir_run(kind, cells)
+    assert result["successful"].all()
+    eps = float(np.finfo(np.float64).eps)
+    assert result["continuity"].max() <= 64.0 * eps
+    assert result["magnetic"].max() <= 64.0 * eps
+    # Both hold Gauss's law at roundoff of the unsigned density: PSATD with its
+    # spectral Coulomb start and correction, the cochain solver because its
+    # iterative Coulomb start is converged to 1e-10 of the kδ-small net charge
+    # and Yee with the Esirkepov current keeps that residual.
+    assert result["gauss"].max() <= 1.0e-12
+
+
+@pytest.mark.parametrize("kind", ["cochain", "psatd"])
+def test_substituted_solvers_exchange_energy_as_the_leapfrog_predicts(
+    kind: _SubstitutedSolver,
+) -> None:
+    cells = _LANGMUIR_CELLS[-1]
+    result = _langmuir_run(kind, cells)
+    omega = _prony_frequency(result["amplitude"])
+    field, kinetic, energy = result["field"], result["kinetic"], result["energy"]
+    # Field energy ∝ displacement² oscillates at 2ω and empties into kinetic
+    # energy (sampled minima within sin²(ωΔt/2) of zero).
+    assert _prony_frequency(field) == pytest.approx(2.0 * omega, rel=1.0e-5)
+    assert field.min() <= np.sin(0.5 * omega * _LANGMUIR_STEP) ** 2 * field.max()
+    # Leapfrog exactly conserves K + (1 − ε)W/G, ε = (ωΔt)²/4, with G the
+    # solver's shape factor (W/G is the potential of its force). With
+    # f = (1 − ε)/G − 1 the synchronized total K + W is C − fW, so it varies by f
+    # of its minimum when f > 0 and by −fG/(1 − ε) otherwise. The 1% tolerance
+    # covers extrema sampled 1/32 of a 2ω period apart.
+    shape = _shape_factor(kind, cells)
+    epsilon = 0.25 * (_continuous_frequency(kind, cells) * _LANGMUIR_STEP) ** 2
+    excess = (1.0 - epsilon) / shape - 1.0
+    variation = excess if excess > 0.0 else -excess * shape / (1.0 - epsilon)
+    assert float(np.ptp(energy) / energy.min()) == pytest.approx(variation, rel=1.0e-2)
+    assert kinetic.max() / field.max() == pytest.approx(
+        (1.0 - epsilon) / shape, rel=1.0e-2
+    )
+    # The per-step ledger pairs half-step kinetic with integer-time field energy;
+    # its telescoped defect oscillates with relative amplitude sin(ωΔt/2) and
+    # does not drift.
+    drift = np.abs(np.cumsum(result["ledger_defect"])) / result["ledger_total"].max()
+    assert drift.max() <= 2.0 * np.sin(0.5 * omega * _LANGMUIR_STEP)
+
+
+def test_substitution_refuses_filters_the_psatd_solver_cannot_serve() -> None:
+    case = _langmuir(_LANGMUIR_CELLS[0])
+    filters = (phx.solver.PICFilterPlan(),)
+    accepted = _langmuir_pic(case, _field_solver(case, "cochain"), filters)
+    assert accepted.filters == filters
+    with pytest.raises(TypeError, match="implementing PICTensorLayout"):
+        _langmuir_pic(case, _field_solver(case, "psatd"), filters)
+
+
+def test_psatd_refuses_transfers_prepared_on_another_bridge() -> None:
+    case = _langmuir(_LANGMUIR_CELLS[0])
+    other = D.pic.PICParticleCochainTransferPlan(
+        _langmuir(_LANGMUIR_CELLS[-1]).bridge, shape_order=2
+    )
+    transfers = tuple(other.prepare(value.species) for value in case.transfers)
+    currents = tuple(D.pic.ChargeConservingCurrentPlan(value) for value in transfers)
+    with pytest.raises(ValueError, match="spectral plan's bridge"):
+        sp.SpectralMaxwellPlan(case.bridge, grid="staggered").prepare(transfers, currents)

@@ -19,18 +19,29 @@ only through the core operations
 The deposit↔Gauss pairing — advancing the field with a deposited current moves
 the solver's current-driven Gauss charge exactly to the deposited end charge — is verified
 numerically when the PIC run is prepared (`deposit_gauss_pairing_defect`).
-Optional capabilities are structural protocols: `PICSpectralSymbol`,
-`PICHuygensSampling`, `PICMultiDeposit`, `PICWindowShift`, `PICGalileanGrid`,
-`PICEnergyAccounting`, `PICOpenDomain`, `PICRestartState`, and
-`PICRelativisticSelfFields`. Prescribed external fields use the core
-`phydrax.discretization.pic.ExternalFieldSource`.
+Optional capabilities are structural protocols: `PICTensorLayout`,
+`PICSpectralSymbol`, `PICHuygensSampling`, `PICMultiDeposit`, `PICWindowShift`,
+`PICGalileanGrid`, `PICEnergyAccounting`, `PICOpenDomain`, `PICRestartState`,
+`PICGaussProjection`, and `PICRelativisticSelfFields`. Every prepared solver
+declares, per protocol, whether it publishes it and whether its configuration
+admits the route (`AbstractPreparedPICFieldSolver.pic_capabilities`), checked
+against the structural protocol test the runtime performs. Prescribed external
+fields use the core `phydrax.discretization.pic.ExternalFieldSource`.
 """
 
 from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
+from typing import (
+    Any,
+    assert_never,
+    get_args,
+    Literal,
+    Protocol,
+    runtime_checkable,
+    TypeAlias,
+)
 
 import equinox as eqx
 import jax
@@ -53,6 +64,19 @@ PICGatherDerivativeOrder: TypeAlias = Literal[0, 1]
 PICGaussProjectionRoute: TypeAlias = Literal["cochain-poisson", "spectral-poisson"]
 PICSelfFieldInitialization: TypeAlias = Literal[
     "electrostatic", "relativistic-per-species"
+]
+PICFieldSolverCapability: TypeAlias = Literal[
+    "tensor-layout",
+    "spectral-symbol",
+    "huygens-sampling",
+    "multi-deposit",
+    "window-shift",
+    "galilean-grid",
+    "energy-accounting",
+    "open-domain",
+    "restart-state",
+    "gauss-projection",
+    "relativistic-self-fields",
 ]
 
 
@@ -221,6 +245,124 @@ def restore_component(
     ):
         raise ValueError(f"Restart component {name!r} has an incompatible layout.")
     return jax.tree.unflatten(treedef, list(component.leaves))
+
+
+class PICCapabilityRecord(StrictModule, NonTrainableState):
+    """Support of one optional protocol by one prepared field-solver configuration.
+
+    ``published`` states that the solver structurally implements the protocol,
+    which is what the PIC runtime checks. ``admitted`` states that this
+    configuration executes the protocol's numerical route; a published but
+    unadmitted protocol refuses when called, for the configuration reason in
+    ``basis``. ``basis`` is the route when admitted and the refusal otherwise.
+    """
+
+    capability: PICFieldSolverCapability = eqx.field(static=True)
+    published: bool = eqx.field(static=True)
+    admitted: bool = eqx.field(static=True)
+    basis: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        capability: PICFieldSolverCapability,
+        /,
+        *,
+        published: bool,
+        admitted: bool,
+        basis: str,
+    ) -> None:
+        parsed = parse(capability, PICFieldSolverCapability, "capability")
+        if not isinstance(published, bool) or not isinstance(admitted, bool):
+            raise TypeError("published and admitted must be bool values.")
+        if admitted and not published:
+            raise ValueError("An unpublished PIC capability cannot be admitted.")
+        if not isinstance(basis, str) or not basis.strip():
+            raise ValueError("A PIC capability record needs a nonempty basis.")
+        self.capability = parsed
+        self.published = published
+        self.admitted = admitted
+        self.basis = basis
+
+    @classmethod
+    def route(
+        cls, capability: PICFieldSolverCapability, basis: str, /
+    ) -> PICCapabilityRecord:
+        """A published protocol whose route this configuration executes."""
+        return cls(capability, published=True, admitted=True, basis=basis)
+
+    @classmethod
+    def refusal(
+        cls,
+        capability: PICFieldSolverCapability,
+        basis: str,
+        /,
+        *,
+        published: bool = False,
+    ) -> PICCapabilityRecord:
+        """An unpublished protocol, or a published one this configuration refuses."""
+        return cls(capability, published=published, admitted=False, basis=basis)
+
+
+class PICFieldSolverCapabilities(StrictModule, NonTrainableState):
+    """Optional-protocol matrix of one prepared PIC field solver.
+
+    ``records`` holds one `PICCapabilityRecord` per `PICFieldSolverCapability`
+    in canonical order. ``configuration`` names the solver family and its
+    execution route (for example ``"psatd-local-guarded"`` or
+    ``"distributed-cochain-3d"``).
+    """
+
+    solver_id: str = eqx.field(static=True)
+    configuration: str = eqx.field(static=True)
+    records: tuple[PICCapabilityRecord, ...]
+    capabilities_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        solver_id: str,
+        configuration: str,
+        records: Sequence[PICCapabilityRecord],
+        /,
+    ) -> None:
+        values = tuple(records)
+        if any(not isinstance(value, PICCapabilityRecord) for value in values):
+            raise TypeError("records must be PICCapabilityRecord values.")
+        if tuple(value.capability for value in values) != get_args(
+            PICFieldSolverCapability
+        ):
+            raise ValueError(
+                "records must hold every PIC capability once, in canonical order."
+            )
+        if not isinstance(configuration, str) or not configuration:
+            raise ValueError("configuration must be a nonempty label.")
+        self.solver_id = str(solver_id)
+        self.configuration = configuration
+        self.records = values
+        self.capabilities_id = canonical_fingerprint(
+            {
+                "kind": "pic-field-solver-capabilities",
+                "solver": self.solver_id,
+                "configuration": configuration,
+                "records": [
+                    [value.capability, value.published, value.admitted, value.basis]
+                    for value in values
+                ],
+            }
+        )
+
+    @property
+    def published(self) -> tuple[PICFieldSolverCapability, ...]:
+        """Protocols the solver structurally implements."""
+        return tuple(value.capability for value in self.records if value.published)
+
+    @property
+    def admitted(self) -> tuple[PICFieldSolverCapability, ...]:
+        """Protocols whose route this configuration executes."""
+        return tuple(value.capability for value in self.records if value.admitted)
+
+    def record(self, capability: PICFieldSolverCapability, /) -> PICCapabilityRecord:
+        parsed = parse(capability, PICFieldSolverCapability, "capability")
+        return self.records[get_args(PICFieldSolverCapability).index(parsed)]
 
 
 class AbstractPreparedPICFieldSolver(StrictModule):
@@ -392,6 +534,38 @@ class AbstractPreparedPICFieldSolver(StrictModule):
             finite & jnp.all(support | ~active),
         )
 
+    @property
+    @abc.abstractmethod
+    def pic_configuration(self) -> str:
+        """Solver family and execution route of the capability matrix."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        """Declared support of one optional protocol, with its route or refusal."""
+        raise NotImplementedError
+
+    @property
+    def pic_capabilities(self) -> PICFieldSolverCapabilities:
+        """Optional-protocol matrix of this configuration, checked structurally.
+
+        Each declared ``published`` flag must equal the structural protocol
+        check the PIC runtime performs; a disagreement is an owner defect.
+        """
+        records = []
+        for capability in get_args(PICFieldSolverCapability):
+            record = self.pic_capability(capability)
+            structural = isinstance(self, _capability_protocol(capability))
+            if record.capability != capability or record.published != structural:
+                raise RuntimeError(
+                    f"{type(self).__name__} misdeclares the {capability!r} PIC "
+                    "capability."
+                )
+            records.append(record)
+        return PICFieldSolverCapabilities(self.solver_id, self.pic_configuration, records)
+
 
 class PICFilterContinuityReport(StrictModule, NonTrainableState):
     """Host evidence of one field filter bound to one prepared solver.
@@ -529,7 +703,9 @@ class PICGalileanGrid(Protocol):
 
     Particle positions are grid coordinates ``x − v_grid t``: the runtime drifts
     them by ``(v − v_grid)Δt`` and samples external fields at the lab position
-    ``x + v_grid t``.
+    ``x + v_grid t``. The runtime reads ``grid_velocity`` only when the
+    configuration admits ``"galilean-grid"``; a published lab-fixed
+    configuration refuses the read, and its grid velocity is zero.
     """
 
     @property
@@ -624,6 +800,35 @@ class PICRelativisticSelfFields(Protocol):
         speed_of_light: float,
         /,
     ) -> PICRelativisticFieldResult: ...
+
+
+def _capability_protocol(capability: PICFieldSolverCapability, /) -> type[object]:
+    """The structural protocol the PIC runtime checks for ``capability``."""
+    match capability:
+        case "tensor-layout":
+            return PICTensorLayout
+        case "spectral-symbol":
+            return PICSpectralSymbol
+        case "huygens-sampling":
+            return PICHuygensSampling
+        case "multi-deposit":
+            return PICMultiDeposit
+        case "window-shift":
+            return PICWindowShift
+        case "galilean-grid":
+            return PICGalileanGrid
+        case "energy-accounting":
+            return PICEnergyAccounting
+        case "open-domain":
+            return PICOpenDomain
+        case "restart-state":
+            return PICRestartState
+        case "gauss-projection":
+            return PICGaussProjection
+        case "relativistic-self-fields":
+            return PICRelativisticSelfFields
+        case _:
+            assert_never(capability)
 
 
 def add_deposits(values: Sequence[PICFieldDeposit], /) -> PICFieldDeposit:
@@ -730,11 +935,14 @@ def deposit_gauss_pairing_defect(
 __all__ = [
     "AbstractPICFieldFilter",
     "AbstractPreparedPICFieldSolver",
-    "PICFieldAdvance",
+    "PICCapabilityRecord",
     "PICEnergyAccounting",
+    "PICFieldAdvance",
     "PICFieldDeposit",
     "PICFieldEnergy",
     "PICFieldSample",
+    "PICFieldSolverCapabilities",
+    "PICFieldSolverCapability",
     "PICFilterContinuityReport",
     "PICGatherDerivativeOrder",
     "PICGaussProjection",
