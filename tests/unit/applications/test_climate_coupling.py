@@ -26,6 +26,7 @@ from phydrax.solver._partitioned_coupling_adaptive import (
     transition_coupling_epoch,
 )
 from phydrax.solver._partitioned_coupling_graph import CouplingGraph, prepare_coupling
+from phydrax.solver._partitioned_coupling_measurement import CouplingMeasurement
 from phydrax.solver._partitioned_coupling_runtime import advance_coupling_window
 from phydrax.solver._partitioned_coupling_types import (
     CallableCouplingSubsystem,
@@ -39,6 +40,7 @@ from phydrax.solver._partitioned_coupling_types import (
     CouplingWindow,
     ExplicitCouplingPolicy,
 )
+from phydrax.solver._partitioned_coupling_waveform import CouplingTemporalConversion
 
 
 _AREA = phx.units.derived_unit("m²", ((phx.units.METER, 2),))
@@ -62,18 +64,19 @@ def _typed_exchange(
     target_kind: Any = "enthalpy_per_area",
     target_unit: Any = _HEAT,
     source_kind: Any = "enthalpy_per_area",
+    target_area: Any = (1.0, 1.0, 2.0),
+    temporal: Any = True,
 ) -> Any:
     source, source_measure = coupling_surface_field(jnp.asarray([1.0, 3.0]), "source")
-    target, target_measure = coupling_surface_field(
-        jnp.asarray([1.0, 1.0, 2.0]), "target"
-    )
+    target, target_measure = coupling_surface_field(jnp.asarray(target_area), "target")
     output = CouplingPort(
         "out",
         "output",
         source.vector_space,
         field_space=source,
-        measure=source_measure,
-        measure_unit=_AREA,
+        measurement=CouplingMeasurement.from_measure(
+            source_measure, source.vector_space, _AREA
+        ),
         quantity=CouplingQuantity(source_kind, _HEAT),
         temporal_kind="interval_integral",
         reference_scale=1.0,
@@ -83,8 +86,9 @@ def _typed_exchange(
         "input",
         target.vector_space,
         field_space=target,
-        measure=target_measure,
-        measure_unit=_AREA,
+        measurement=CouplingMeasurement.from_measure(
+            target_measure, target.vector_space, _AREA
+        ),
         quantity=CouplingQuantity(target_kind, target_unit),
         temporal_kind="interval_integral",
         reference_scale=1.0,
@@ -138,6 +142,7 @@ def _typed_exchange(
             constant_preserving=True,
             frame_action="preserve",
         ),
+        temporal=CouplingTemporalConversion("window-integral") if temporal else None,
     )
     sweep = (
         CouplingSweep("jacobi")
@@ -202,8 +207,14 @@ def test_climate_coupling_scenario_1() -> None:
     np.testing.assert_allclose(result.accepted_exchange_budget, [[-22.0, 22.0]])
     with pytest.raises(ValueError):
         _typed_exchange(target_kind="temperature-inventory")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="L_target P = L_source"):
         _typed_exchange(bad_measure=True)
+    with pytest.raises(ValueError, match="L_target P = L_source"):
+        _typed_exchange(target_area=(2.0, 1.0, 1.0))
+    with pytest.raises(
+        ValueError, match="requires temporal conversion 'window-integral'"
+    ):
+        _typed_exchange(temporal=False)
 
 
 def test_climate_coupling_scenario_2() -> None:
@@ -383,3 +394,142 @@ def test_climate_coupling_scenario_3() -> None:
         port.quantity.quantity_kind != "water_mass_per_area"
         for port in receiver.input_ports
     )
+
+
+def _extensive_target(
+    matrix: Any, *, target_kind: Any = "enthalpy"
+) -> tuple[Any, Any, Any]:
+    source, source_measure = coupling_surface_field(jnp.asarray([1.0, 3.0]), "source")
+    target_space = phx.linalg.ArraySpace(
+        (3,), dtype=jnp.float64, space_id="target-cell-enthalpy"
+    )
+    target = phx.discretization.DiscreteFieldSpace(
+        "surface-cell-integral",
+        "target",
+        phx.discretization.EntityDofLayout("target/cells", 3, 3),
+        target_space,
+        representation="cell_integral",
+    )
+    output = CouplingPort(
+        "out",
+        "output",
+        source.vector_space,
+        field_space=source,
+        measurement=CouplingMeasurement.from_measure(
+            source_measure, source.vector_space, _AREA
+        ),
+        quantity=CouplingQuantity("enthalpy", _HEAT),
+        temporal_kind="interval_integral",
+        reference_scale=1.0,
+    )
+    input_ = CouplingPort(
+        "in",
+        "input",
+        target_space,
+        field_space=target,
+        measurement=CouplingMeasurement.extensive(
+            target_space, "target", provenance_id="target-cell-enthalpy"
+        ),
+        quantity=CouplingQuantity(target_kind, phx.units.JOULE),
+        temporal_kind="interval_integral",
+        reference_scale=1.0,
+    )
+    transfer = phx.discretization.FieldTransfer(
+        source,
+        target,
+        phx.linalg.DenseLinearOperator(
+            matrix, source=source.vector_space, target=target_space
+        ),
+        dual_pullback_operator=phx.linalg.DenseLinearOperator(
+            matrix.T, source=target_space, target=source.vector_space
+        ),
+        properties=phx.discretization.TransferProperties(
+            conservative=True, positivity_preserving=True
+        ),
+    )
+
+    def produce(window: Any, state: Any, inputs: Any, args: Any) -> Any:
+        del inputs, args
+        density = jnp.asarray([2.0, 3.0]) * window.size
+        return CouplingSubsystemResult(state, (density,), successful=True, status=0)
+
+    def consume(window: Any, state: Any, inputs: Any, args: Any) -> Any:
+        del window, args
+        return CouplingSubsystemResult(state + inputs[0], (), successful=True, status=0)
+
+    exchange = CouplingExchange(
+        "energy",
+        "out",
+        "in",
+        transfer=transfer,
+        requirement=CouplingTransferRequirement(
+            conservative=True, positivity_preserving=True
+        ),
+        temporal=CouplingTemporalConversion("window-integral"),
+    )
+    prepared = prepare_coupling(
+        CouplingGraph(
+            (
+                CallableCouplingSubsystem(
+                    produce,
+                    subsystem_id="a",
+                    output_ports=(output,),
+                    capabilities=_capabilities(),
+                ),
+                CallableCouplingSubsystem(
+                    consume,
+                    subsystem_id="b",
+                    input_ports=(input_,),
+                    capabilities=_capabilities(),
+                ),
+            ),
+            (exchange,),
+        ),
+        (jnp.zeros(2), jnp.zeros(3)),
+        (jnp.zeros(3),),
+        policy=ExplicitCouplingPolicy(
+            CouplingSweep("gauss-seidel", subsystem_order=("a", "b"))
+        ),
+    )
+    return prepared, source_measure, target
+
+
+def test_density_to_extensive_storage_conserves_without_double_weighting() -> None:
+    source_area = np.asarray([1.0, 3.0])
+    # Target cell i covers this fraction of source cell j (target areas 1, 1, 2).
+    overlap = np.asarray([[1.0, 0.0], [0.0, 1.0 / 3.0], [0.0, 2.0 / 3.0]])
+    cell_integral = jnp.asarray(overlap * source_area[None, :])
+    prepared, source_measure, target = _extensive_target(cell_integral)
+
+    result = advance_coupling_window(prepared, prepared.reference_state, 2.0)
+
+    density = 2.0 * np.asarray([2.0, 3.0])
+    heat = float(np.dot(source_area, density))
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        result.accepted_state.participant_states[1],
+        overlap @ (source_area * density),
+        rtol=1e-14,
+    )
+    np.testing.assert_allclose(result.accepted_exchange_budget, [[-heat, heat]])
+    np.testing.assert_allclose(float(source_measure.integrate(density)), heat)
+    with pytest.raises(ValueError, match="L_target P = L_source"):
+        _extensive_target(jnp.asarray(overlap))
+    with pytest.raises(ValueError):
+        _extensive_target(cell_integral, target_kind="enthalpy_per_area")
+    target_cells = phx.discretization.DiscreteMeasure(
+        "surface-area", "target", "target/cells", jnp.asarray([1.0, 1.0, 2.0])
+    )
+    with pytest.raises(ValueError, match="cannot measure 'cell_integral' storage"):
+        CouplingPort(
+            "density-on-extensive",
+            "input",
+            target.vector_space,
+            field_space=target,
+            measurement=CouplingMeasurement.from_measure(
+                target_cells, target.vector_space, _AREA
+            ),
+            quantity=CouplingQuantity("enthalpy", phx.units.JOULE),
+            temporal_kind="interval_integral",
+            reference_scale=1.0,
+        )

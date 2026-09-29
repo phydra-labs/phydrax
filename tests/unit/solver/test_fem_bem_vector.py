@@ -1,6 +1,9 @@
+from collections.abc import Iterator
 from typing import Any
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -10,8 +13,11 @@ from phydrax.linalg import (
     DenseLU,
     DifferentiationPolicy,
     FailurePolicy,
+    FGMRES,
+    LinearDerivativeSolvePolicy,
     LinearSolvePolicy,
     OperatorProperties,
+    TolerancePolicy,
     transpose,
 )
 from phydrax.operators.integral.layer_potential._elasticity3d import (
@@ -25,16 +31,20 @@ from phydrax.solver._fem_bem_vector import (
 )
 
 
-_VERTICES = jnp.asarray(
-    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-)
+_VERTICES = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 _FACES = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
+_FIXED_STRUCTURE = (
+    "geometry",
+    "interior_operator",
+    "kernel",
+    "quadrature",
+    "trace_maps",
+)
 
 
-@pytest.fixture(scope="module")
-def elasticity_bem() -> Any:
+def _prepare_elasticity_bem(dtype: Any) -> Any:
     return prepare_elasticity_single_layer_dp0_3d(
-        phx.geometry.MeshRegion(_VERTICES, _FACES),
+        phx.geometry.MeshRegion(jnp.asarray(_VERTICES, dtype=dtype), _FACES),
         shear_modulus=2.0,
         poisson_ratio=0.25,
         policy=ElasticitySingleLayerDP0Policy3D(
@@ -47,6 +57,17 @@ def elasticity_bem() -> Any:
             max_preparation_workspace_bytes=1024 * 1024,
         ),
     )
+
+
+@pytest.fixture(scope="module")
+def elasticity_bem() -> Any:
+    return _prepare_elasticity_bem(jnp.float32)
+
+
+@pytest.fixture
+def elasticity_bem_f64() -> Iterator[Any]:
+    with jax.enable_x64(True):
+        yield _prepare_elasticity_bem(jnp.float64)
 
 
 def _qualified_blocks(
@@ -251,8 +272,203 @@ def test_elasticity_coupling_rejects_unpaired_conormal_map(elasticity_bem: Any) 
 def test_vector_support_report_explicitly_rejects_maxwell_interface() -> None:
     report = vector_fem_bem_support_report()
 
-    assert len(report.implemented) == 1
     assert "static isotropic elasticity 3D" in report.implemented[0]
+    assert any(
+        "'rhs-only' admits" in entry and "interior_load and boundary_load" in entry
+        for entry in report.implemented
+    )
+    assert any(
+        "Kelvin kernel and Lame parameters" in reason
+        and "'mathematical' and 'algorithmic' are refused" in reason
+        for reason in report.rejected
+    )
     assert any("Maxwell FEM-BEM is unavailable" in reason for reason in report.rejected)
     assert any("H(curl)-to-RWG" in reason for reason in report.rejected)
     assert report.continuum_certified is False
+
+
+def _rhs_only_policy(
+    *, relative: float = 1.0e-12, max_steps: int | None = None
+) -> LinearSolvePolicy:
+    return LinearSolvePolicy(
+        FGMRES(restart=30, stagnation_iterations=30),
+        tolerance=TolerancePolicy(relative=relative, absolute=0.0, max_steps=max_steps),
+        differentiation=DifferentiationPolicy("rhs-only"),
+        derivative_solve=LinearDerivativeSolvePolicy(
+            relative_tolerance=1.0e-12, absolute_tolerance=0.0
+        ),
+        failure=FailurePolicy("status"),
+    )
+
+
+def _prepare(elasticity_bem: Any, linear: LinearSolvePolicy) -> Any:
+    blocks = _qualified_blocks(elasticity_bem)
+    return prepare_elasticity_fem_bem_3d(
+        *blocks[:3],
+        # ty: ignore[too-many-positional-arguments]
+        elasticity_bem,
+        blocks[3],
+        linear=linear,
+    )
+
+
+def _loads(prepared: Any) -> tuple[Any, Any]:
+    dtype = prepared.bem.weak_operator.source.structure().dtype
+    return (
+        jnp.linspace(0.1, 0.5, prepared.interior_operator.source.size, dtype=dtype),
+        jnp.linspace(-0.2, 0.3, prepared.bem.weak_operator.source.size, dtype=dtype),
+    )
+
+
+def _directions(prepared: Any, seed: int) -> tuple[Any, Any]:
+    generator = np.random.default_rng(seed)
+    return (
+        jnp.asarray(generator.standard_normal(prepared.interior_operator.source.size)),
+        jnp.asarray(generator.standard_normal(prepared.bem.weak_operator.source.size)),
+    )
+
+
+def _solution(prepared: Any, interior_load: Any, boundary_load: Any) -> Any:
+    result = prepared.solve(interior_load, boundary_load)
+    return result.interior_displacement, result.boundary_traction
+
+
+@pytest.mark.parametrize("argument", ["interior_load", "boundary_load"])
+def test_rhs_only_load_jvp_matches_central_finite_differences(
+    elasticity_bem_f64: Any, argument: str
+) -> None:
+    prepared = _prepare(elasticity_bem_f64, _rhs_only_policy())
+    loads = _loads(prepared)
+    interior_direction, boundary_direction = _directions(prepared, 7)
+    tangent = (
+        (interior_direction, jnp.zeros_like(boundary_direction))
+        if argument == "interior_load"
+        else (jnp.zeros_like(interior_direction), boundary_direction)
+    )
+    result = prepared.solve(*loads)
+
+    _, derivative = jax.jvp(
+        lambda interior, boundary: _solution(prepared, interior, boundary),
+        loads,
+        tangent,
+    )
+    # The solution map is affine in the loads; the central difference of two
+    # converged primal solves is exact up to the solve tolerance.
+    step = 1.0e-2
+    plus = _solution(prepared, loads[0] + step * tangent[0], loads[1] + step * tangent[1])
+    minus = _solution(
+        prepared, loads[0] - step * tangent[0], loads[1] - step * tangent[1]
+    )
+
+    assert prepared.derivative_capability.admits(argument)
+    assert bool(result.valid) and bool(result.derivative_valid)
+    for actual, upper, lower in zip(derivative, plus, minus, strict=True):
+        reference = (np.asarray(upper) - np.asarray(lower)) / (2.0 * step)
+        np.testing.assert_allclose(np.asarray(actual), reference, rtol=1e-7, atol=1e-8)
+
+
+def test_rhs_only_load_vjp_is_the_transpose_of_the_jvp(
+    elasticity_bem_f64: Any,
+) -> None:
+    prepared = _prepare(elasticity_bem_f64, _rhs_only_policy())
+    loads = _loads(prepared)
+    direction = _directions(prepared, 11)
+    generator = np.random.default_rng(13)
+    cotangent = tuple(
+        jnp.asarray(generator.standard_normal(load.shape)) for load in loads
+    )
+
+    def solve(interior: Any, boundary: Any) -> Any:
+        return _solution(prepared, interior, boundary)
+
+    _, forward = jax.jvp(solve, loads, direction)
+    _, pullback = jax.vjp(solve, *loads)
+    reverse = pullback(cotangent)
+    transpose_pairing = sum(
+        float(jnp.vdot(value, tangent))
+        for value, tangent in zip(reverse, direction, strict=True)
+    )
+    forward_pairing = sum(
+        float(jnp.vdot(weight, value))
+        for weight, value in zip(cotangent, forward, strict=True)
+    )
+
+    assert np.isclose(transpose_pairing, forward_pairing, rtol=1e-9, atol=1e-10)
+
+
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("mathematical", "'mathematical' is unsupported: .*fixed prepared operators"),
+        ("algorithmic", "'algorithmic' is unsupported: the unrolled Krylov"),
+    ],
+)
+def test_unqualified_differentiation_modes_are_refused_at_preparation(
+    elasticity_bem: Any, mode: Any, message: str
+) -> None:
+    linear = LinearSolvePolicy(
+        FGMRES(restart=30, stagnation_iterations=30),
+        differentiation=DifferentiationPolicy(mode),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _prepare(elasticity_bem, linear)
+
+
+@pytest.mark.parametrize("argnum", [0, 1])
+def test_stopped_route_refuses_load_gradients(elasticity_bem: Any, argnum: int) -> None:
+    prepared = _prepare(
+        elasticity_bem,
+        LinearSolvePolicy(DenseLU(), differentiation=DifferentiationPolicy("none")),
+    )
+    loads = _loads(prepared)
+    result = prepared.solve(*loads)
+
+    def objective(interior: Any, boundary: Any) -> Any:
+        solved = prepared.solve(interior, boundary)
+        return jnp.sum(solved.interior_displacement) + jnp.sum(solved.boundary_traction)
+
+    assert bool(result.valid)
+    assert not bool(result.derivative_valid)
+    assert not prepared.derivative_capability.admits("interior_load")
+    with pytest.raises(ValueError, match="derivative-unsupported"):
+        jax.grad(objective, argnums=argnum)(*loads)
+
+
+def test_rejected_solve_poisons_load_derivatives(elasticity_bem_f64: Any) -> None:
+    prepared = _prepare(
+        elasticity_bem_f64, _rhs_only_policy(relative=1.0e-14, max_steps=1)
+    )
+    loads = _loads(prepared)
+    direction = _directions(prepared, 17)
+
+    result = prepared.solve(*loads)
+    _, derivative = jax.jvp(
+        lambda interior, boundary: _solution(prepared, interior, boundary),
+        loads,
+        direction,
+    )
+
+    assert not bool(result.valid)
+    assert not bool(result.derivative_valid)
+    assert bool(jnp.all(jnp.isfinite(result.interior_displacement)))
+    assert all(bool(jnp.all(jnp.isnan(value))) for value in derivative)
+
+
+def test_derivative_capability_refuses_fixed_prepared_structure(
+    elasticity_bem_f64: Any,
+) -> None:
+    prepared = _prepare(elasticity_bem_f64, _rhs_only_policy())
+    capability = prepared.derivative_capability
+
+    assert capability.require("interior_load") is phx.DerivativeSurface.SOLVER_ARGUMENT
+    assert capability.require("boundary_load") is phx.DerivativeSurface.SOLVER_ARGUMENT
+    assert capability.derivative_contract.route is phx.DerivativeRoute.IMPLICIT
+    for name in _FIXED_STRUCTURE:
+        assert not capability.admits(name)
+    with pytest.raises(ValueError, match="derivative-unsupported.*Kelvin.*Lame"):
+        capability.require("kernel")
+    with pytest.raises(ValueError, match="derivative-unsupported.*hypersingular"):
+        capability.require("interior_operator")
+    with pytest.raises(ValueError, match="derivative-unsupported.*trace map"):
+        capability.require("trace_maps")

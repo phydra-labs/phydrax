@@ -23,6 +23,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import DiscreteFieldSpace, DiscreteMeasure, EntityDofLayout
 from ...linalg import ArraySpace
+from ...solver._partitioned_coupling_measurement import CouplingMeasurement
 from ...solver._partitioned_coupling_types import (
     AbstractCouplingSubsystem,
     CouplingDirection,
@@ -106,11 +107,18 @@ def coupling_surface_field(
     return field, measure
 
 
+def _area_measurement(
+    field: DiscreteFieldSpace, measure: DiscreteMeasure, /
+) -> CouplingMeasurement:
+    """Area integral of per-area cell averages: the port inventory functional."""
+    return CouplingMeasurement.from_measure(measure, field.vector_space, _AREA_UNIT)
+
+
 def _port(
     name: str,
     direction: CouplingDirection,
     field: DiscreteFieldSpace,
-    measure: DiscreteMeasure,
+    measurement: CouplingMeasurement,
     quantity: CouplingQuantity,
     *,
     integrated: bool = False,
@@ -120,8 +128,7 @@ def _port(
         direction,
         field.vector_space,
         field_space=field,
-        measure=measure,
-        measure_unit=_AREA_UNIT,
+        measurement=measurement,
         quantity=quantity,
         temporal_kind="interval_integral" if integrated else "instantaneous",
         reference_scale=1.0,
@@ -207,12 +214,13 @@ class SlabReservoir(AbstractCouplingSubsystem, NonTrainableState):
         self.subsystem_id = f"{name}:{identity}"
         self.discretization_bundle_id = field.support_id
         self.capabilities = _CAPABILITIES
+        area = _area_measurement(field, measure)
         self.input_ports = (
-            _port(f"{identity}/temperature", "input", field, measure, _TEMPERATURE),
+            _port(f"{identity}/temperature", "input", field, area, _TEMPERATURE),
         )
         self.output_ports = (
-            _port(f"{identity}/heat", "output", field, measure, _HEAT, integrated=True),
-            _port(f"{identity}/water", "output", field, measure, _WATER, integrated=True),
+            _port(f"{identity}/heat", "output", field, area, _HEAT, integrated=True),
+            _port(f"{identity}/water", "output", field, area, _WATER, integrated=True),
         )
 
     def initialize(
@@ -329,32 +337,15 @@ class HydrostaticOceanCouplingSubsystem(AbstractCouplingSubsystem):
         self.subsystem_id = f"{name}:{identity}"
         self.discretization_bundle_id = ocean.geometry.geometry_id
         self.capabilities = _CAPABILITIES
+        area = _area_measurement(self.field, self.measure)
         self.input_ports = (
+            _port(f"{identity}/heat", "input", self.field, area, _HEAT, integrated=True),
             _port(
-                f"{identity}/heat",
-                "input",
-                self.field,
-                self.measure,
-                _HEAT,
-                integrated=True,
-            ),
-            _port(
-                f"{identity}/water",
-                "input",
-                self.field,
-                self.measure,
-                _WATER,
-                integrated=True,
+                f"{identity}/water", "input", self.field, area, _WATER, integrated=True
             ),
         )
         self.output_ports = (
-            _port(
-                f"{identity}/temperature",
-                "output",
-                self.field,
-                self.measure,
-                _TEMPERATURE,
-            ),
+            _port(f"{identity}/temperature", "output", self.field, area, _TEMPERATURE),
         )
 
     def temperature(self, state: HydrostaticContinuationState, /) -> Array:
@@ -496,12 +487,13 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
         self.subsystem_id = f"{name}:{identity}"
         self.discretization_bundle_id = ocean.prepared_id
         self.capabilities = _CAPABILITIES
+        area_measurement = _area_measurement(self.field, self.measure)
         ports = [
             _port(
                 f"{identity}/heat",
                 "input",
                 self.field,
-                self.measure,
+                area_measurement,
                 _HEAT,
                 integrated=True,
             )
@@ -521,7 +513,7 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
                         f"{identity}/impulse-{axis}",
                         "input",
                         self.field,
-                        self.measure,
+                        area_measurement,
                         quantity,
                         integrated=True,
                     )
@@ -532,7 +524,7 @@ class BoussinesqOceanCouplingSubsystem(AbstractCouplingSubsystem):
                 f"{identity}/temperature",
                 "output",
                 self.field,
-                self.measure,
+                area_measurement,
                 _TEMPERATURE,
             ),
         )

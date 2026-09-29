@@ -4,11 +4,19 @@
 
 from __future__ import annotations
 
+from typing import assert_never, Literal
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._admissibility import guard_derivative_validity, refuse_derivative_dependencies
+from .._differentiation import (
+    DerivativeRoute,
+    DerivativeSurface,
+    OwnerDerivativeCapability,
+)
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -17,6 +25,7 @@ from ..linalg import (
     AbstractVectorSpace,
     BlockLinearOperator,
     BlockSpace,
+    DifferentiationMode,
     DifferentiationPolicy,
     estimate_operator_action_cost,
     FailurePolicy,
@@ -58,6 +67,51 @@ _NON_GOALS = (
 _MAXWELL_REJECTION = (
     "Maxwell FEM-BEM is unavailable: the landed RWG surface space does not provide "
     "an exact matching H(curl)-to-RWG tangential trace and dual conormal interface map."
+)
+_LOAD_ARGUMENTS = ("interior_load", "boundary_load")
+_FIXED_STRUCTURE_REFUSALS = {
+    "geometry": (
+        "the matching interface, the BEM surface mesh and panelization, and the "
+        "caller-qualified volume discretization are fixed prepared structure; "
+        "shape derivatives are not qualified"
+    ),
+    "kernel": (
+        "the Kelvin fundamental solution and its Lame parameters (shear modulus, "
+        "Poisson ratio) are assembled into the fixed prepared weak DP0 single "
+        "layer V; kernel and material derivatives are not qualified"
+    ),
+    "quadrature": (
+        "the regular and singular Kelvin quadrature rules and pair classification "
+        "are fixed prepared structure"
+    ),
+    "interior_operator": (
+        "the caller-prepared A_sym entries, including the hypersingular trace "
+        "contribution, are fixed prepared operator arrays; interior operator and "
+        "hypersingular derivatives are not qualified"
+    ),
+    "trace_maps": (
+        "the caller-prepared exact signed Calderon trace map C and its conormal "
+        "transpose C^T are fixed prepared operator arrays; trace-map derivatives "
+        "are not qualified"
+    ),
+}
+_STOPPED_LOAD_REFUSAL = (
+    "differentiation mode 'none' stops the prepared elasticity FEM-BEM solve; "
+    "prepare with mode 'rhs-only' to differentiate with respect to the loads"
+)
+_MATHEMATICAL_REFUSAL = (
+    "Elasticity FEM-BEM differentiation mode 'mathematical' is unsupported: the "
+    "caller-prepared A_sym (including the hypersingular trace term), the exact "
+    "trace/conormal maps C and C^T, and the weak DP0 Kelvin single layer V are "
+    "fixed prepared operators without runtime operator arguments; Lame/kernel, "
+    "hypersingular, trace-map, and geometry derivatives are not qualified. Use "
+    "'rhs-only' for derivatives with respect to interior_load and boundary_load."
+)
+_ALGORITHMIC_REFUSAL = (
+    "Elasticity FEM-BEM differentiation mode 'algorithmic' is unsupported: the "
+    "unrolled Krylov derivative of the executed iteration is not the solution-map "
+    "derivative and is not qualified. Use 'rhs-only' for derivatives with respect "
+    "to interior_load and boundary_load."
 )
 
 
@@ -179,7 +233,14 @@ class ElasticityFEMBEMInterfaceQualification3D(StrictModule, NonTrainableState):
 
 
 class ElasticityFEMBEMResult3D(StrictModule, NonTrainableState):
-    """Solved finite-dimensional symmetric static-elasticity coupling state."""
+    """Solved finite-dimensional symmetric static-elasticity coupling state.
+
+    ``valid`` is primal acceptance (successful, finite linear solve with finite
+    block residual and symmetry evidence).  ``derivative_valid`` additionally
+    requires the prepared ``derivative_capability`` route to hold for this solve:
+    it is ``valid`` and the converged implicit linear-solve derivative under
+    ``'rhs-only'`` and always false under the stopped ``'none'`` route.
+    """
 
     interior_displacement: Array
     boundary_traction: Array
@@ -190,6 +251,8 @@ class ElasticityFEMBEMResult3D(StrictModule, NonTrainableState):
     symmetry_defect: Array
     bem_maximum_quadrature_error: Array
     valid: Array
+    derivative_valid: Array
+    derivative_capability: OwnerDerivativeCapability
     spatial_dimension: int = eqx.field(static=True)
     physics: str = eqx.field(static=True)
     geometry_contract: str = eqx.field(static=True)
@@ -215,6 +278,16 @@ class PreparedElasticityFEMBEM3D(StrictModule, NonTrainableState):
     and jump in ``C``.  ``C^T`` must be a PHYDRAX algebraic transpose view, and
     ``V`` is the landed weak DP0 Kelvin single layer.  These checks establish a
     symmetric discrete block, not a continuum transmission certificate.
+
+    ``derivative_capability`` names the runtime arguments whose derivatives the
+    product admits.  Under differentiation mode ``'rhs-only'`` the loads
+    ``interior_load`` and ``boundary_load`` are admitted as implicit
+    solver-argument derivatives of the converged solve; under the default
+    ``'none'`` they are refused with ``derivative-unsupported``.  ``A_sym``
+    (including the hypersingular term), the trace/conormal maps, the Kelvin
+    kernel and Lame parameters, quadrature, and geometry are fixed prepared
+    structure whose derivatives are refused in every mode; ``'mathematical'`` and
+    ``'algorithmic'`` are refused at preparation.
     """
 
     interior_operator: AbstractLinearOperator
@@ -226,6 +299,7 @@ class PreparedElasticityFEMBEM3D(StrictModule, NonTrainableState):
     prepared_linear: PreparedLinearSolve
     linear_policy: LinearSolvePolicy
     bem_maximum_quadrature_error: Array
+    derivative_capability: OwnerDerivativeCapability
     spatial_dimension: int = eqx.field(static=True)
     physics: str = eqx.field(static=True)
     geometry_contract: str = eqx.field(static=True)
@@ -269,12 +343,21 @@ def vector_fem_bem_support_report() -> VectorFEMBEMSupportReport:
     implemented = (
         "static isotropic elasticity 3D: caller-prepared Costabel symmetric "
         "[A_sym, C^T; C, V] with landed weak DP0 Kelvin V",
+        "static elasticity 3D derivatives: differentiation mode 'rhs-only' admits "
+        "implicit derivatives of interior_displacement and boundary_traction with "
+        "respect to the runtime loads interior_load and boundary_load at an "
+        "accepted converged solve (NaN or error otherwise); the default mode "
+        "'none' refuses load derivatives with derivative-unsupported",
     )
     rejected = (
         _MAXWELL_REJECTION,
         "Automatic vector-H1 matching-interface trace preparation is unavailable; "
         "exact caller-prepared elasticity maps are required.",
         "Stokes, dynamic elasticity, anisotropic elasticity, and nonmatching vector couplings are not implemented.",
+        "Static elasticity FEM-BEM derivatives with respect to A_sym (including the "
+        "hypersingular term), the trace/conormal maps, the Kelvin kernel and Lame "
+        "parameters, quadrature, and geometry are rejected; differentiation modes "
+        "'mathematical' and 'algorithmic' are refused at preparation.",
     )
     return VectorFEMBEMSupportReport(
         implemented=implemented,
@@ -297,6 +380,89 @@ def _default_linear_policy() -> LinearSolvePolicy:
         differentiation=DifferentiationPolicy("none"),
         failure=FailurePolicy("status"),
     )
+
+
+def _qualified_differentiation(
+    mode: DifferentiationMode, /
+) -> Literal["none", "rhs-only"]:
+    match mode:
+        case "none" | "rhs-only":
+            return mode
+        case "mathematical":
+            raise ValueError(_MATHEMATICAL_REFUSAL)
+        case "algorithmic":
+            raise ValueError(_ALGORITHMIC_REFUSAL)
+        case _:
+            assert_never(mode)
+
+
+def _derivative_capability(
+    prepared_id: str, mode: Literal["none", "rhs-only"], /
+) -> OwnerDerivativeCapability:
+    match mode:
+        case "rhs-only":
+            return OwnerDerivativeCapability(
+                prepared_id,
+                admitted=dict.fromkeys(
+                    _LOAD_ARGUMENTS, DerivativeSurface.SOLVER_ARGUMENT
+                ),
+                refused=_FIXED_STRUCTURE_REFUSALS,
+                route=DerivativeRoute.IMPLICIT,
+                conditions=(
+                    "accepted-result",
+                    "prepared-geometry-fixed",
+                    "solve-converged",
+                ),
+            )
+        case "none":
+            return OwnerDerivativeCapability(
+                prepared_id,
+                admitted={},
+                refused={
+                    **_FIXED_STRUCTURE_REFUSALS,
+                    **dict.fromkeys(_LOAD_ARGUMENTS, _STOPPED_LOAD_REFUSAL),
+                },
+                route=DerivativeRoute.STOPPED,
+                conditions=("prepared-geometry-fixed",),
+            )
+        case _:
+            assert_never(mode)
+
+
+def _derivative_envelope(
+    prepared: PreparedElasticityFEMBEM3D,
+    outputs: tuple[Array, Array, Array, Array, LinearSolveResult],
+    loads: tuple[Array, Array],
+    valid: Array,
+    /,
+) -> tuple[Array, Array, Array, Array, LinearSolveResult]:
+    route = prepared.derivative_capability.derivative_contract.route
+    match route:
+        case DerivativeRoute.IMPLICIT:
+            return guard_derivative_validity(
+                outputs,
+                valid,
+                dependencies=loads,
+                failure=prepared.linear_policy.failure.mode,
+                message=(
+                    "Elasticity FEM-BEM load derivatives require an accepted "
+                    "converged solve."
+                ),
+            )
+        case DerivativeRoute.STOPPED:
+            return refuse_derivative_dependencies(
+                outputs,
+                loads,
+                message=(
+                    f"prepared elasticity FEM-BEM {prepared.prepared_id} refuses "
+                    f"derivatives with respect to interior_load and boundary_load: "
+                    f"{_STOPPED_LOAD_REFUSAL}"
+                ),
+            )
+        case _:
+            raise ValueError(
+                f"Elasticity FEM-BEM does not qualify the {route.value} derivative route."
+            )
 
 
 def _require_same_space(
@@ -445,10 +611,7 @@ def prepare_elasticity_fem_bem_3d(
     policy = _default_linear_policy() if linear is None else linear
     if not isinstance(policy, LinearSolvePolicy):
         raise TypeError("linear must be a LinearSolvePolicy or None.")
-    if policy.differentiation.mode != "none":
-        raise ValueError(
-            "The bounded elasticity FEM-BEM solve requires differentiation mode 'none'."
-        )
+    mode = _qualified_differentiation(policy.differentiation.mode)
 
     block_space = BlockSpace(
         (interior_operator.source, boundary),
@@ -530,6 +693,7 @@ def prepare_elasticity_fem_bem_3d(
         prepared_linear=prepared_linear,
         linear_policy=policy,
         bem_maximum_quadrature_error=report.maximum_quadrature_error,
+        derivative_capability=_derivative_capability(prepared_id, mode),
         spatial_dimension=3,
         physics=_PHYSICS,
         geometry_contract=_GEOMETRY,
@@ -551,7 +715,14 @@ def solve_elasticity_fem_bem_3d(
     boundary_load: ArrayLike,
     /,
 ) -> ElasticityFEMBEMResult3D:
-    """Solve one qualified symmetric static-elasticity FEM--BEM block."""
+    """Solve one qualified symmetric static-elasticity FEM--BEM block.
+
+    Under ``'rhs-only'`` the displacement, traction, and residual/symmetry
+    evidence carry implicit load derivatives guarded by primal acceptance: a
+    rejected solve returns NaN tangents (``failure='status'``) or raises
+    (``failure='error'``).  Under ``'none'`` any derivative request with respect
+    to the loads raises ``derivative-unsupported`` instead of returning zero.
+    """
 
     if not isinstance(prepared, PreparedElasticityFEMBEM3D):
         raise TypeError("prepared must be a PreparedElasticityFEMBEM3D.")
@@ -582,6 +753,14 @@ def solve_elasticity_fem_bem_3d(
         & jnp.isfinite(symmetry_defect)
     )
     valid = linear_result.successful & linear_result.diagnostics.finite & finite
+    interior, traction, relative_residual, symmetry_defect, linear_result = (
+        _derivative_envelope(
+            prepared,
+            (interior, traction, relative_residual, symmetry_defect, linear_result),
+            right_hand_side,
+            valid,
+        )
+    )
     return ElasticityFEMBEMResult3D(
         interior_displacement=interior,
         boundary_traction=traction,
@@ -592,6 +771,8 @@ def solve_elasticity_fem_bem_3d(
         symmetry_defect=symmetry_defect,
         bem_maximum_quadrature_error=prepared.bem_maximum_quadrature_error,
         valid=valid,
+        derivative_valid=valid & linear_result.derivative_valid,
+        derivative_capability=prepared.derivative_capability,
         spatial_dimension=prepared.spatial_dimension,
         physics=prepared.physics,
         geometry_contract=prepared.geometry_contract,

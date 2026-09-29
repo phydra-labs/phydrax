@@ -33,6 +33,10 @@ from ..._resource_archive import (
 from ...artifacts import ScientificArtifactEnvelope
 
 
+# FMI 2.0 BaseUnit exponent attributes, in the standard's order.
+_BASE_UNIT_ATTRIBUTES = ("kg", "m", "s", "A", "K", "mol", "cd", "rad")
+
+
 @dataclass(frozen=True, slots=True)
 class FMIVariable:
     name: str
@@ -45,11 +49,30 @@ class FMIVariable:
 
 
 @dataclass(frozen=True, slots=True)
+class FMIUnit:
+    """One FMI2 `UnitDefinitions/Unit` element as declared by the model description.
+
+    `base_exponents` lists the nonzero `BaseUnit` exponents in the FMI order
+    kg, m, s, A, K, mol, cd, rad. `factor` and `offset` keep the exact decimal
+    text of `BaseUnit_value = factor * value + offset`. `declared_base` is false
+    when the unit is named without a `BaseUnit`, so the model description states
+    no dimension for it.
+    """
+
+    name: str
+    base_exponents: tuple[tuple[str, int], ...]
+    factor: str
+    offset: str
+    declared_base: bool
+
+
+@dataclass(frozen=True, slots=True)
 class FMIModelDescription:
     model_name: str
     guid: str
     model_identifier: str
     variables: tuple[FMIVariable, ...]
+    units: tuple[FMIUnit, ...]
     can_get_set_state: bool
     can_serialize_state: bool
     variable_step: bool
@@ -59,6 +82,12 @@ class FMIModelDescription:
         for variable in self.variables:
             if variable.name == name:
                 return variable
+        raise KeyError(name)
+
+    def unit(self, name: str) -> FMIUnit:
+        for unit in self.units:
+            if unit.name == name:
+                return unit
         raise KeyError(name)
 
 
@@ -80,6 +109,47 @@ class FMIState:
     session_id: str
     token: int
     time: float
+
+
+def _decimal(text: str, role: str, /) -> str:
+    try:
+        value = float(text)
+    except ValueError as error:
+        raise ValueError(f"FMI {role} {text!r} is not a decimal number.") from error
+    if not math.isfinite(value):
+        raise ValueError(f"FMI {role} {text!r} must be finite.")
+    return text
+
+
+def _unit_definition(element: ET.Element, /) -> FMIUnit:
+    name = element.get("name", "")
+    base = element.find("BaseUnit")
+    if base is None:
+        return FMIUnit(name, (), "1", "0", False)
+    exponents = []
+    for attribute in _BASE_UNIT_ATTRIBUTES:
+        text = base.get(attribute, "0")
+        if not re.fullmatch(r"[+-]?[0-9]+", text):
+            raise ValueError(
+                f"FMI BaseUnit exponent {attribute}={text!r} is not an integer."
+            )
+        if int(text):
+            exponents.append((attribute, int(text)))
+    factor = _decimal(base.get("factor", "1"), "BaseUnit factor")
+    if float(factor) == 0.0:
+        raise ValueError(f"FMI unit {name!r} declares a zero BaseUnit factor.")
+    offset = _decimal(base.get("offset", "0"), "BaseUnit offset")
+    return FMIUnit(name, tuple(exponents), factor, offset, True)
+
+
+def _unit_definitions(root: ET.Element, /) -> tuple[FMIUnit, ...]:
+    units = tuple(
+        _unit_definition(element) for element in root.findall("./UnitDefinitions/Unit")
+    )
+    names = [unit.name for unit in units]
+    if any(not name for name in names) or len(set(names)) != len(names):
+        raise ValueError("FMI unit names must be nonempty and unique.")
+    return units
 
 
 def _xml_description(data: bytes, digest: str) -> FMIModelDescription:
@@ -182,6 +252,7 @@ def _xml_description(data: bytes, digest: str) -> FMIModelDescription:
         guid,
         identifier,
         tuple(variables),
+        _unit_definitions(root),
         flag("canGetAndSetFMUstate"),
         flag("canSerializeFMUstate"),
         flag("canHandleVariableCommunicationStepSize"),
@@ -334,6 +405,11 @@ class FMICoSimulationSession:
         return self._worker.closed
 
     @property
+    def resource_id(self) -> str:
+        """Identity of the pinned archive, experiment interval, and start values."""
+        return self._resource_id
+
+    @property
     def artifact(self) -> ScientificArtifactEnvelope:
         failed = next(
             (
@@ -441,6 +517,7 @@ class FMICoSimulationSession:
 
 __all__ = [
     "FMIVariable",
+    "FMIUnit",
     "FMIModelDescription",
     "FMIStepResult",
     "FMIState",

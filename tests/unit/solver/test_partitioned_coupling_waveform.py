@@ -8,6 +8,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -24,6 +25,12 @@ def _waveform_capabilities() -> Any:
         fixed_topology=True,
         supports_endpoint=False,
         supports_waveform=True,
+    )
+
+
+def _linear_interpolation() -> Any:
+    return cpl.CouplingTemporalConversion(
+        "interpolate", transfer=cpl.BarycentricCouplingTemporalTransfer(1)
     )
 
 
@@ -117,7 +124,6 @@ def test_partitioned_coupling_waveform_scenario_1() -> None:
         source_space.vector_space,
         field_space=source_space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     source_output = cpl.CouplingPort(
@@ -126,7 +132,6 @@ def test_partitioned_coupling_waveform_scenario_1() -> None:
         source_space.vector_space,
         field_space=source_space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     target_input = cpl.CouplingPort(
@@ -135,7 +140,6 @@ def test_partitioned_coupling_waveform_scenario_1() -> None:
         target_space.vector_space,
         field_space=target_space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     target_output = cpl.CouplingPort(
@@ -144,7 +148,6 @@ def test_partitioned_coupling_waveform_scenario_1() -> None:
         target_space.vector_space,
         field_space=target_space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     source_values = jnp.asarray([[1.0, 0.0], [2.0, 1.0], [3.0, 2.0]])
@@ -177,6 +180,7 @@ def test_partitioned_coupling_waveform_scenario_1() -> None:
                 "source-output",
                 "target-input",
                 transfer=transfer,
+                temporal=_linear_interpolation(),
             ),
             cpl.CouplingExchange(
                 "adjoint",
@@ -184,6 +188,7 @@ def test_partitioned_coupling_waveform_scenario_1() -> None:
                 "source-input",
                 transfer=transfer,
                 use_adjoint=True,
+                temporal=_linear_interpolation(),
             ),
         ),
     )
@@ -220,7 +225,6 @@ def _waveform_graph(*, parameterized: Any = False) -> Any:
         "input",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     a_output = cpl.CouplingPort(
@@ -228,7 +232,6 @@ def _waveform_graph(*, parameterized: Any = False) -> Any:
         "output",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     b_input = cpl.CouplingPort(
@@ -236,7 +239,6 @@ def _waveform_graph(*, parameterized: Any = False) -> Any:
         "input",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     b_output = cpl.CouplingPort(
@@ -244,7 +246,6 @@ def _waveform_graph(*, parameterized: Any = False) -> Any:
         "output",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
 
@@ -280,8 +281,12 @@ def _waveform_graph(*, parameterized: Any = False) -> Any:
     graph = cpl.CouplingGraph(
         (a, b),
         (
-            cpl.CouplingExchange("a-to-b", "a-output", "b-input"),
-            cpl.CouplingExchange("b-to-a", "b-output", "a-input"),
+            cpl.CouplingExchange(
+                "a-to-b", "a-output", "b-input", temporal=_linear_interpolation()
+            ),
+            cpl.CouplingExchange(
+                "b-to-a", "b-output", "a-input", temporal=_linear_interpolation()
+            ),
         ),
     )
     zero = cpl.CouplingWaveform.constant(grid, jnp.zeros(1, dtype=jnp.float64), space)
@@ -317,7 +322,6 @@ def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint() -> None:
         "input",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     output_port = cpl.CouplingPort(
@@ -325,7 +329,6 @@ def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint() -> None:
         "output",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
 
@@ -372,7 +375,6 @@ def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep() -> No
         "input",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
     output_port = cpl.CouplingPort(
@@ -380,7 +382,6 @@ def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep() -> No
         "output",
         space,
         waveform_plan=waveform_plan,
-        temporal_transfer=cpl.BarycentricCouplingTemporalTransfer(1),
         reference_scale=1.0,
     )
 
@@ -605,3 +606,295 @@ def test_coupling_epoch_transition_contracts() -> None:
     assert not result.successful
     assert result.epoch.epoch_id == current.epoch_id
     assert result.state is prepared.reference_state
+
+
+def _mixed_graph(hold: Any, sample: Any) -> Any:
+    plan = cpl.CouplingWaveformPlan(3, 2, (0.0, 0.25, 1.0), plan_id="mixed-grid")
+    grid = plan.initial_grid()
+    space = phx.linalg.ArraySpace((1,), dtype=jnp.float64, space_id="mixed-scalar")
+    source_waveform = cpl.CouplingWaveform(
+        grid, jnp.asarray([[1.0], [2.0], [5.0]], dtype=jnp.float64), space
+    )
+
+    def advance_endpoint(window: Any, state: Any, inputs: Any, args: Any) -> Any:
+        del window, state, args
+        return cpl.CouplingSubsystemResult(
+            inputs[0], (jnp.asarray([2.5], dtype=jnp.float64),), successful=True, status=0
+        )
+
+    def advance_waveform(window: Any, state: Any, inputs: Any, args: Any) -> Any:
+        del window, state, args
+        return cpl.CouplingSubsystemResult(
+            inputs[0].values, (source_waveform,), successful=True, status=0
+        )
+
+    endpoint = cpl.CallableCouplingSubsystem(
+        advance_endpoint,
+        subsystem_id="endpoint",
+        input_ports=(
+            cpl.CouplingPort("endpoint-input", "input", space, reference_scale=1.0),
+        ),
+        output_ports=(
+            cpl.CouplingPort("endpoint-output", "output", space, reference_scale=1.0),
+        ),
+        capabilities=cpl.CouplingSubsystemCapabilities(
+            jit=True, differentiable=True, deterministic_replay=True, fixed_topology=True
+        ),
+    )
+    waveform = cpl.CallableCouplingSubsystem(
+        advance_waveform,
+        subsystem_id="waveform",
+        input_ports=(
+            cpl.CouplingPort(
+                "waveform-input", "input", space, waveform_plan=plan, reference_scale=1.0
+            ),
+        ),
+        output_ports=(
+            cpl.CouplingPort(
+                "waveform-output",
+                "output",
+                space,
+                waveform_plan=plan,
+                reference_scale=1.0,
+            ),
+        ),
+        capabilities=_waveform_capabilities(),
+    )
+    graph = cpl.CouplingGraph(
+        (endpoint, waveform),
+        (
+            cpl.CouplingExchange(
+                "endpoint-to-waveform", "endpoint-output", "waveform-input", temporal=hold
+            ),
+            cpl.CouplingExchange(
+                "waveform-to-endpoint",
+                "waveform-output",
+                "endpoint-input",
+                temporal=sample,
+            ),
+        ),
+    )
+    zero = jnp.zeros((1,), dtype=jnp.float64)
+    return cpl.prepare_coupling(
+        graph,
+        (zero, jnp.zeros((3, 1), dtype=jnp.float64)),
+        (cpl.CouplingWaveform.constant(grid, zero, space), zero),
+        policy=cpl.ExplicitCouplingPolicy(cpl.CouplingSweep("jacobi")),
+    )
+
+
+def test_undeclared_or_mismatched_temporal_conversions_are_refused() -> None:
+    hold = cpl.CouplingTemporalConversion("hold")
+    sample = cpl.CouplingTemporalConversion("sample-end")
+
+    with pytest.raises(ValueError, match="requires temporal conversion 'hold'"):
+        _mixed_graph(None, sample)
+    with pytest.raises(ValueError, match="requires temporal conversion 'sample-end'"):
+        _mixed_graph(hold, None)
+    with pytest.raises(
+        ValueError, match="requires temporal conversion 'hold' but declares 'sample-end'"
+    ):
+        _mixed_graph(sample, sample)
+    with pytest.raises(
+        ValueError,
+        match="requires temporal conversion 'sample-end' but declares 'interpolate'",
+    ):
+        _mixed_graph(hold, _linear_interpolation())
+
+
+def test_hold_and_sample_end_deliver_the_declared_endpoint_values() -> None:
+    prepared = _mixed_graph(
+        cpl.CouplingTemporalConversion("hold"),
+        cpl.CouplingTemporalConversion("sample-end"),
+    )
+    step = eqx.filter_jit(cpl.advance_coupling_window)
+
+    first = step(prepared, prepared.reference_state, 1.0)
+    state = first.accepted_state
+    held = state.exchange_values[state.exchange_ids.index("endpoint-to-waveform")]
+    sampled = state.exchange_values[state.exchange_ids.index("waveform-to-endpoint")]
+
+    assert bool(first.successful)
+    assert jnp.array_equal(held.grid.nodes, jnp.asarray([0.0, 0.25, 1.0]))
+    assert jnp.array_equal(held.values, jnp.full((3, 1), 2.5))
+    assert jnp.array_equal(sampled, jnp.asarray([5.0]))
+    second = step(prepared, state, 1.0).accepted_state
+    endpoint_state = second.participant_states[second.subsystem_ids.index("endpoint")]
+    waveform_state = second.participant_states[second.subsystem_ids.index("waveform")]
+    assert jnp.array_equal(endpoint_state, jnp.asarray([5.0]))
+    assert jnp.array_equal(waveform_state, jnp.full((3, 1), 2.5))
+
+
+_FLUX = phx.units.derived_unit(
+    "W/m²", ((phx.units.JOULE, 1), (phx.units.METER, -2), (phx.units.SECOND, -1))
+)
+_HEAT = phx.units.JOULE_PER_SQUARE_METER
+_AREA = phx.units.derived_unit("m²", ((phx.units.METER, 2),))
+
+
+def _integrated_flux(
+    integrated: Any, time_unit: Any = phx.units.SECOND, plan: Any = None
+) -> Any:
+    plan = (
+        cpl.CouplingWaveformPlan(3, 2, (0.0, 0.25, 1.0), plan_id="flux-grid")
+        if plan is None
+        else plan
+    )
+    grid = plan.initial_grid()
+    measure = phx.discretization.DiscreteMeasure(
+        "surface-area", "flux-surface", "flux-cells", jnp.asarray([1.0, 3.0])
+    )
+    space = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="flux-cells")
+    field = phx.discretization.DiscreteFieldSpace(
+        "surface-heat",
+        "flux-surface",
+        phx.discretization.EntityDofLayout("flux-cells", 2, 2),
+        space,
+        representation="cell_average",
+    )
+    measurement = cpl.CouplingMeasurement.from_measure(measure, space, _AREA)
+    nodes = grid.nodes[:, None]
+    # Cell rates 1 + 2s + 3s² and 2 + 6s² on the normalized window s ∈ [0, 1].
+    rates = jnp.concatenate(
+        (1.0 + 2.0 * nodes + 3.0 * nodes**2, 2.0 + 6.0 * nodes**2), axis=1
+    )
+    source = cpl.CallableCouplingSubsystem(
+        lambda window, state, inputs, args: cpl.CouplingSubsystemResult(
+            state, (cpl.CouplingWaveform(grid, rates, space),), successful=True, status=0
+        ),
+        subsystem_id="flux",
+        output_ports=(
+            cpl.CouplingPort(
+                "flux-output",
+                "output",
+                space,
+                field_space=field,
+                waveform_plan=plan,
+                quantity=cpl.CouplingQuantity("surface_heat_flux", _FLUX),
+                measurement=measurement,
+                reference_scale=1.0,
+            ),
+        ),
+        capabilities=_waveform_capabilities(),
+    )
+    store = cpl.CallableCouplingSubsystem(
+        lambda window, state, inputs, args: cpl.CouplingSubsystemResult(
+            state + inputs[0], (), successful=True, status=0
+        ),
+        subsystem_id="store",
+        input_ports=(
+            cpl.CouplingPort(
+                "heat-input",
+                "input",
+                space,
+                field_space=field,
+                quantity=cpl.CouplingQuantity("surface_heat", _HEAT),
+                measurement=measurement,
+                temporal_kind="interval_integral",
+                reference_scale=1.0,
+            ),
+        ),
+        capabilities=cpl.CouplingSubsystemCapabilities(
+            jit=True, differentiable=True, deterministic_replay=True, fixed_topology=True
+        ),
+    )
+    exchange = cpl.CouplingExchange(
+        "heat",
+        "flux-output",
+        "heat-input",
+        temporal=cpl.CouplingTemporalConversion(
+            "integrate", integrated_quantity=integrated
+        ),
+    )
+    zero = jnp.zeros((2,), dtype=jnp.float64)
+    return cpl.prepare_coupling(
+        cpl.CouplingGraph((source, store), (exchange,), time_unit=time_unit),
+        (zero, zero),
+        (zero,),
+        policy=cpl.ExplicitCouplingPolicy(
+            cpl.CouplingSweep("gauss-seidel", subsystem_order=("flux", "store"))
+        ),
+    )
+
+
+def test_integrate_delivers_the_exact_window_amount_and_ledger() -> None:
+    prepared = _integrated_flux(cpl.CouplingQuantity("surface_heat", _HEAT))
+
+    result = eqx.filter_jit(cpl.advance_coupling_window)(
+        prepared, prepared.reference_state, 2.0
+    )
+
+    # ∫₀¹ (1 + 2s + 3s²) ds = 3 and ∫₀¹ (2 + 6s²) ds = 4 over a 2 s window.
+    amount = 2.0 * np.asarray([3.0, 4.0])
+    area_integral = float(np.dot([1.0, 3.0], amount))
+    state = result.accepted_state
+    assert bool(result.successful)
+    np.testing.assert_allclose(state.exchange_values[0], amount, rtol=1e-13)
+    np.testing.assert_allclose(
+        state.participant_states[state.subsystem_ids.index("store")], amount, rtol=1e-13
+    )
+    np.testing.assert_allclose(
+        result.accepted_exchange_budget, [[-area_integral, area_integral]], rtol=1e-13
+    )
+    with pytest.raises(ValueError, match="rate dimension times time"):
+        _integrated_flux(cpl.CouplingQuantity("surface_heat", _FLUX))
+
+
+def test_integrate_is_exact_for_the_reconstruction_degree_not_the_metric_order() -> None:
+    # A cubic reconstruction with a one-point residual metric: the booked amount
+    # must still be the exact integral of the quadratic rates (3 and 4 per unit s).
+    plan = cpl.CouplingWaveformPlan(
+        4, 3, (0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0), metric_order=1, plan_id="cubic-grid"
+    )
+    prepared = _integrated_flux(
+        cpl.CouplingQuantity("surface_heat", _HEAT), phx.units.SECOND, plan
+    )
+
+    result = cpl.advance_coupling_window(prepared, prepared.reference_state, 2.0)
+
+    amount = 2.0 * np.asarray([3.0, 4.0])
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        result.accepted_state.exchange_values[0], amount, rtol=1e-13
+    )
+    np.testing.assert_allclose(
+        result.accepted_exchange_budget[0, 1], np.dot([1.0, 3.0], amount), rtol=1e-13
+    )
+
+
+def test_integrate_books_the_window_in_the_graph_clock_unit() -> None:
+    # A 2 ms window of W/m² rates delivers 1e-3 times the 2 s window's J/m².
+    prepared = _integrated_flux(
+        cpl.CouplingQuantity("surface_heat", _HEAT), phx.units.MILLISECOND
+    )
+
+    result = cpl.advance_coupling_window(prepared, prepared.reference_state, 2.0)
+
+    amount = 2.0e-3 * np.asarray([3.0, 4.0])
+    area_integral = float(np.dot([1.0, 3.0], amount))
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        result.accepted_state.exchange_values[0], amount, rtol=1e-13
+    )
+    np.testing.assert_allclose(
+        result.accepted_exchange_budget, [[-area_integral, area_integral]], rtol=1e-13
+    )
+    with pytest.raises(ValueError, match="declare the coupling clock time_unit"):
+        _integrated_flux(cpl.CouplingQuantity("surface_heat", _HEAT), None)
+    with pytest.raises(ValueError, match="unit of time"):
+        _integrated_flux(cpl.CouplingQuantity("surface_heat", _HEAT), phx.units.METER)
+
+
+def test_temporal_conversion_refuses_inconsistent_declarations() -> None:
+    heat = cpl.CouplingQuantity("surface_heat", _HEAT)
+
+    with pytest.raises(ValueError, match="exactly one temporal transfer"):
+        cpl.CouplingTemporalConversion("interpolate")
+    with pytest.raises(ValueError, match="integrated_quantity"):
+        cpl.CouplingTemporalConversion("integrate")
+    with pytest.raises(ValueError, match="carries no transfer"):
+        cpl.CouplingTemporalConversion(
+            "hold", transfer=cpl.BarycentricCouplingTemporalTransfer(1)
+        )
+    with pytest.raises(ValueError, match="carries no transfer"):
+        cpl.CouplingTemporalConversion("sample-end", integrated_quantity=heat)

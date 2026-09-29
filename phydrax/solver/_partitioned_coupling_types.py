@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from enum import IntEnum
 from math import isfinite
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,7 +17,7 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import DiscreteFieldSpace, DiscreteMeasure, FieldTransfer
+from ..discretization import DiscreteFieldSpace, FieldTransfer
 from ..linalg import AbstractVectorSpace
 from ..nonlinear import (
     AbstractNonlinearMethod,
@@ -27,9 +27,15 @@ from ..nonlinear import (
 )
 from ..typing import parse
 from ..units import UnitDefinition
+from ._partitioned_coupling_measurement import CouplingMeasurement, field_storage
+
+
+if TYPE_CHECKING:
+    from ._partitioned_coupling_waveform import CouplingTemporalConversion
 
 
 CouplingDirection: TypeAlias = Literal["input", "output"]
+CouplingTemporalKind: TypeAlias = Literal["instantaneous", "interval_integral"]
 CouplingSweepKind: TypeAlias = Literal["jacobi", "gauss-seidel"]
 CouplingDifferentiationMode: TypeAlias = Literal["none", "algorithmic", "implicit"]
 
@@ -70,7 +76,7 @@ def _termination_payload(termination: NonlinearTermination, /) -> dict[str, Any]
 
 
 class CouplingStatus(IntEnum):
-    """Terminal status of one transactional coupling window."""
+    """Terminal status of one transactional coupling window or adaptive rollout."""
 
     SUCCESS = 0
     PARTICIPANT_FAILURE = 1
@@ -78,6 +84,7 @@ class CouplingStatus(IntEnum):
     NONLINEAR_FAILURE = 3
     WORK_EXHAUSTED = 4
     CERTIFICATION_FAILURE = 5
+    UNRELIABLE_ERROR_ESTIMATE = 6
 
 
 _COUPLING_STATUS_MESSAGES = {
@@ -88,6 +95,9 @@ _COUPLING_STATUS_MESSAGES = {
     CouplingStatus.WORK_EXHAUSTED: "implicit coupling exhausted its work limit",
     CouplingStatus.CERTIFICATION_FAILURE: (
         "candidate coupling state failed physical interface certification"
+    ),
+    CouplingStatus.UNRELIABLE_ERROR_ESTIMATE: (
+        "adaptive window acceptance lacked a reliable finite local error estimate"
     ),
 }
 
@@ -210,16 +220,19 @@ class CouplingQuantity(StrictModule, NonTrainableState):
 
 
 class CouplingPort(StrictModule, NonTrainableState):
-    """One exact endpoint or fixed-capacity waveform participant space."""
+    """One exact endpoint or fixed-capacity waveform participant space.
+
+    `reference_scale` and the vector-space pairing define the interface residual
+    norm. A physical inventory is a separate `CouplingMeasurement` functional; it
+    is never inferred from the norm, the storage shape, or a cell measure.
+    """
 
     space: AbstractVectorSpace
     field_space: DiscreteFieldSpace | None
     waveform_plan: Any | None
-    temporal_transfer: Any | None
     quantity: CouplingQuantity | None
-    measure: DiscreteMeasure | None
-    measure_unit: UnitDefinition | None
-    temporal_kind: str = eqx.field(static=True)
+    measurement: CouplingMeasurement | None
+    temporal_kind: CouplingTemporalKind = eqx.field(static=True)
     frame: str = eqx.field(static=True)
     reference_scale: float = eqx.field(static=True)
     direction: CouplingDirection = eqx.field(static=True)
@@ -234,15 +247,14 @@ class CouplingPort(StrictModule, NonTrainableState):
         *,
         field_space: DiscreteFieldSpace | None = None,
         waveform_plan: Any | None = None,
-        temporal_transfer: Any | None = None,
         quantity: CouplingQuantity | None = None,
-        measure: DiscreteMeasure | None = None,
-        measure_unit: UnitDefinition | None = None,
-        temporal_kind: Literal["instantaneous", "interval_integral"] = "instantaneous",
+        measurement: CouplingMeasurement | None = None,
+        temporal_kind: CouplingTemporalKind = "instantaneous",
         frame: str = "scalar",
         reference_scale: float,
     ) -> None:
         direction = parse(direction, CouplingDirection, "direction")
+        temporal_kind = parse(temporal_kind, CouplingTemporalKind, "temporal_kind")
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("Coupling port space must be an AbstractVectorSpace.")
         if field_space is not None:
@@ -254,64 +266,73 @@ class CouplingPort(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Coupling field_space vector space must equal the declared port space."
                 )
-        from ._partitioned_coupling_waveform import (
-            AbstractCouplingTemporalTransfer,
-            CouplingWaveformPlan,
-        )
+        from ._partitioned_coupling_waveform import CouplingWaveformPlan
 
-        if waveform_plan is None:
-            if temporal_transfer is not None:
-                raise ValueError("Endpoint ports do not accept a temporal transfer.")
-        else:
-            if not isinstance(waveform_plan, CouplingWaveformPlan):
-                raise TypeError("waveform_plan must be CouplingWaveformPlan or None.")
-            if not isinstance(temporal_transfer, AbstractCouplingTemporalTransfer):
-                raise TypeError(
-                    "Waveform ports require an explicit coupling temporal transfer."
-                )
+        if waveform_plan is not None and not isinstance(
+            waveform_plan, CouplingWaveformPlan
+        ):
+            raise TypeError("waveform_plan must be CouplingWaveformPlan or None.")
         if quantity is not None and not isinstance(quantity, CouplingQuantity):
             raise TypeError("quantity must be CouplingQuantity or None.")
-        if temporal_kind not in ("instantaneous", "interval_integral"):
-            raise ValueError("Unknown coupling port temporal_kind.")
+        frame_ = _identifier(frame, "coupling component frame")
+        if measurement is not None:
+            _validate_port_measurement(measurement, space, field_space, frame_)
         if temporal_kind == "interval_integral":
-            if quantity is None or measure is None:
-                raise ValueError("Interval-integral ports require quantity and measure.")
+            if quantity is None or measurement is None:
+                raise ValueError(
+                    "Interval-integral ports require a quantity and a measurement."
+                )
+            if measurement.normalization == "probability":
+                raise ValueError(
+                    "A probability-normalized functional yields averages, not the "
+                    "inventory of a whole-window amount."
+                )
             if waveform_plan is not None:
                 raise ValueError(
                     "Interval integrals are authoritative whole-window values, not waveforms."
                 )
-        if measure is not None:
-            if not isinstance(measure_unit, UnitDefinition):
-                raise TypeError("Measured ports require an explicit native measure_unit.")
-            if not isinstance(measure, DiscreteMeasure):
-                raise TypeError("measure must be DiscreteMeasure or None.")
-            if measure.normalization != "physical":
-                raise ValueError("Physical coupling requires a physical measure.")
-            if field_space is None or field_space.support_id != measure.support_id:
-                raise ValueError("Port measure must belong to its declared support.")
-            if space.size != measure.weights.size:
-                raise ValueError(
-                    "Physical port measures require one scalar weight per DOF."
-                )
-            if field_space.representation != "cell_average":
-                raise ValueError("Measured physical ports require cell-average storage.")
-        elif measure_unit is not None:
-            raise ValueError("measure_unit requires a discrete measure.")
-        self.quantity = quantity
-        self.measure = measure
-        self.measure_unit = measure_unit
-        self.temporal_kind = temporal_kind
-        self.frame = _identifier(frame, "coupling component frame")
         scale = float(reference_scale)
         if not isfinite(scale) or scale <= 0.0:
             raise ValueError("Coupling port reference_scale must be finite and positive.")
+        self.quantity = quantity
+        self.measurement = measurement
+        self.temporal_kind = temporal_kind
+        self.frame = frame_
         self.space = space
         self.field_space = field_space
         self.waveform_plan = waveform_plan
-        self.temporal_transfer = temporal_transfer
         self.reference_scale = scale
         self.direction = direction
         self.port_id = _identifier(port_id, "Coupling port_id")
+
+
+def _validate_port_measurement(
+    measurement: CouplingMeasurement,
+    space: AbstractVectorSpace,
+    field_space: DiscreteFieldSpace | None,
+    frame: str,
+    /,
+) -> None:
+    if not isinstance(measurement, CouplingMeasurement):
+        raise TypeError("measurement must be CouplingMeasurement or None.")
+    if measurement.source_space.space_id != space.space_id:
+        raise ValueError("Port measurement must act on the declared port space.")
+    if field_space is None or field_space.support_id != measurement.support_id:
+        raise ValueError("Port measurement must belong to the port field support.")
+    storage = field_storage(field_space.representation)
+    if measurement.representation != "functional" and (
+        storage != measurement.representation
+    ):
+        raise ValueError(
+            f"A {measurement.representation} measurement cannot measure "
+            f"{field_space.representation!r} storage; declare the physical "
+            "functional explicitly instead of weighting the coordinates again."
+        )
+    if measurement.component_count > 1 and frame == "scalar":
+        raise ValueError(
+            "A component inventory requires a declared component frame; unlike "
+            "scalar quantities belong to separate ports."
+        )
 
 
 class CouplingTransferRequirement(StrictModule, NonTrainableState):
@@ -362,13 +383,21 @@ class CouplingTransferRequirement(StrictModule, NonTrainableState):
 
 
 class CouplingExchange(StrictModule, NonTrainableState):
-    """One directed output-to-input exchange with no implicit mapping fallback."""
+    """One directed output-to-input exchange with no implicit mapping fallback.
+
+    `temporal` declares how a source signal becomes the target signal: sampling a
+    waveform end, holding an endpoint across a waveform, interpolating between
+    waveform grids, passing an authoritative whole-window amount, or integrating
+    a waveform over the window. Only an instantaneous endpoint-to-endpoint
+    exchange carries no conversion; preparation refuses every undeclared one.
+    """
 
     transfer: FieldTransfer | None
     source_port_id: str = eqx.field(static=True)
     target_port_id: str = eqx.field(static=True)
     use_adjoint: bool = eqx.field(static=True)
     requirement: CouplingTransferRequirement | None
+    temporal: CouplingTemporalConversion | None
     exchange_id: str = eqx.field(static=True)
 
     def __init__(
@@ -381,7 +410,10 @@ class CouplingExchange(StrictModule, NonTrainableState):
         transfer: FieldTransfer | None = None,
         use_adjoint: bool = False,
         requirement: CouplingTransferRequirement | None = None,
+        temporal: CouplingTemporalConversion | None = None,
     ) -> None:
+        from ._partitioned_coupling_waveform import CouplingTemporalConversion
+
         if transfer is not None and not isinstance(transfer, FieldTransfer):
             raise TypeError("Coupling exchange transfer must be a FieldTransfer or None.")
         if transfer is None and use_adjoint:
@@ -394,11 +426,16 @@ class CouplingExchange(StrictModule, NonTrainableState):
             raise TypeError(
                 "Coupling exchange requirement must be a CouplingTransferRequirement or None."
             )
+        if temporal is not None and not isinstance(temporal, CouplingTemporalConversion):
+            raise TypeError(
+                "Coupling exchange temporal must be a CouplingTemporalConversion or None."
+            )
         self.transfer = transfer
         self.source_port_id = _identifier(source_port_id, "source_port_id")
         self.target_port_id = _identifier(target_port_id, "target_port_id")
         self.use_adjoint = bool(use_adjoint)
         self.requirement = requirement
+        self.temporal = temporal
         self.exchange_id = _identifier(exchange_id, "Coupling exchange_id")
 
 
@@ -804,7 +841,12 @@ class CallableCouplingSubsystem(AbstractCouplingSubsystem, NonTrainableState):
 
 
 class CouplingState(StrictModule):
-    """Accepted participant states and target exchange values at one window boundary."""
+    """Accepted participant states and target exchange values at one window boundary.
+
+    `cumulative_exchange_budget` holds one source-debit/target-credit row per
+    `budget_row_ids` entry: one row per scalar exchange and one row per inventory
+    component of a componentized exchange, so unlike components are never summed.
+    """
 
     participant_states: tuple[Any, ...]
     exchange_values: tuple[Any, ...]
@@ -814,6 +856,7 @@ class CouplingState(StrictModule):
     window_index: Array
     subsystem_ids: tuple[str, ...] = eqx.field(static=True)
     exchange_ids: tuple[str, ...] = eqx.field(static=True)
+    budget_row_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -826,6 +869,7 @@ class CouplingState(StrictModule):
         subsystem_ids: tuple[str, ...],
         exchange_ids: tuple[str, ...],
         cumulative_exchange_budget: Any | None = None,
+        budget_row_ids: tuple[str, ...] | None = None,
         graph_id: str | None = None,
     ) -> None:
         states = tuple(
@@ -842,15 +886,18 @@ class CouplingState(StrictModule):
             raise ValueError("One participant state is required per subsystem ID.")
         if len(values) != len(exchange_ids_):
             raise ValueError("One target value is required per exchange ID.")
+        rows = exchange_ids_ if budget_row_ids is None else tuple(budget_row_ids)
+        if len(set(rows)) != len(rows) or not all(rows):
+            raise ValueError("Exchange budget row IDs must be unique and non-empty.")
         self.participant_states = states
         self.exchange_values = values
         budget = (
-            jnp.zeros((len(values), 2), dtype=jnp.asarray(time).dtype)
+            jnp.zeros((len(rows), 2), dtype=jnp.asarray(time).dtype)
             if cumulative_exchange_budget is None
             else jnp.asarray(cumulative_exchange_budget)
         )
-        if budget.shape != (len(values), 2):
-            raise ValueError("Exchange budget must have shape (exchange_count, 2).")
+        if budget.shape != (len(rows), 2):
+            raise ValueError("Exchange budget must have shape (budget_row_count, 2).")
         self.cumulative_exchange_budget = budget
         self.graph_id = graph_id
         self.time = _scalar(time, "Coupling state time")
@@ -859,10 +906,18 @@ class CouplingState(StrictModule):
         )
         self.subsystem_ids = subsystem_ids_
         self.exchange_ids = exchange_ids_
+        self.budget_row_ids = rows
 
 
 class CouplingWindowDiagnostics(StrictModule):
-    """Physical block residuals and exact participant work for one window."""
+    """Physical block residuals and participant work for one window.
+
+    `participant_work` and `participant_iterations` sum every participant
+    evaluation the window executed: the sweep of an explicit window, or every
+    fixed-point interface iterate plus the final re-evaluation of an implicit
+    window. `counts_complete` is true when that sum is exact; general root
+    interface methods report only the final evaluation, so it is false for them.
+    """
 
     exchange_residual_norms: Array
     normalized_exchange_residual_norms: Array
@@ -925,6 +980,7 @@ __all__ = [
     "CouplingSubsystemResult",
     "CouplingSweep",
     "CouplingSweepKind",
+    "CouplingTemporalKind",
     "CouplingTolerance",
     "CouplingTransferRequirement",
     "CouplingWindow",

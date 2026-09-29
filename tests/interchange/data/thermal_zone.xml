@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fmiModelDescription fmiVersion="2.0" modelName="PhydraxThermalZone"
+ guid="{phydrax-thermal-zone}" generationTool="PHYDRA original qualification specimen"
+ variableNamingConvention="flat" numberOfEventIndicators="0">
+ <CoSimulation modelIdentifier="thermal_zone"
+  canHandleVariableCommunicationStepSize="true" canGetAndSetFMUstate="true"
+  canSerializeFMUstate="true" canInterpolateInputs="false"
+  maxOutputDerivativeOrder="0" providesDirectionalDerivative="false"/>
+ <UnitDefinitions>
+  <Unit name="s"><BaseUnit s="1"/></Unit>
+  <Unit name="K"><BaseUnit K="1"/></Unit>
+  <Unit name="degC"><BaseUnit K="1" offset="273.15"/></Unit>
+  <Unit name="W"><BaseUnit kg="1" m="2" s="-3"/></Unit>
+  <Unit name="J"><BaseUnit kg="1" m="2" s="-2"/></Unit>
+  <Unit name="J/K"><BaseUnit kg="1" m="2" s="-2" K="-1"/></Unit>
+  <Unit name="W/K"><BaseUnit kg="1" m="2" s="-3" K="-1"/></Unit>
+ </UnitDefinitions>
+ <DefaultExperiment startTime="0" stopTime="10" stepSize="0.1"/>
+ <ModelVariables>
+  <ScalarVariable name="boundary_temperature" valueReference="0" causality="input" variability="continuous"><Real unit="K" start="293.15"/></ScalarVariable>
+  <ScalarVariable name="heat_rate" valueReference="1" causality="input" variability="continuous"><Real unit="W" start="0"/></ScalarVariable>
+  <ScalarVariable name="temperature" valueReference="2" causality="output" variability="continuous" initial="calculated"><Real unit="K"/></ScalarVariable>
+  <ScalarVariable name="conducted_heat" valueReference="3" causality="output" variability="continuous" initial="exact"><Real unit="J" start="0"/></ScalarVariable>
+  <ScalarVariable name="capacity" valueReference="4" causality="parameter" variability="fixed" initial="exact"><Real unit="J/K" start="1"/></ScalarVariable>
+  <ScalarVariable name="conductance" valueReference="5" causality="parameter" variability="fixed" initial="exact"><Real unit="W/K" start="0"/></ScalarVariable>
+  <ScalarVariable name="initial_temperature" valueReference="6" causality="parameter" variability="fixed" initial="exact"><Real unit="K" start="293.15"/></ScalarVariable>
+  <ScalarVariable name="temperature_celsius" valueReference="7" causality="output" variability="continuous" initial="calculated"><Real unit="degC"/></ScalarVariable>
+  <ScalarVariable name="maximum_temperature" valueReference="9" causality="parameter" variability="fixed" initial="exact"><Real unit="K" start="1e9"/></ScalarVariable>
+  <ScalarVariable name="time" valueReference="8" causality="independent" variability="continuous"><Real unit="s"/></ScalarVariable>
+  <ScalarVariable name="steps" valueReference="10" causality="output" variability="discrete" initial="exact"><Integer start="0"/></ScalarVariable>
+ </ModelVariables>
+ <ModelStructure>
+  <Outputs><Unknown index="3" dependencies="1 2"/><Unknown index="4" dependencies="1 2"/><Unknown index="8" dependencies="1 2"/><Unknown index="11"/></Outputs>
+  <InitialUnknowns><Unknown index="3"/><Unknown index="8"/></InitialUnknowns>
+ </ModelStructure>
+</fmiModelDescription>
