@@ -18,6 +18,7 @@ from phydrax.qualification import (
     validate_qualification_causality,
 )
 from tools import ml_interoperability_qualification as runner
+from tools._pytest_outcomes import NodeOutcome, PytestRun
 
 
 _SUITE = runner.SUITE_PATH
@@ -32,13 +33,11 @@ _ENVIRONMENT = {
 
 def _outcome(
     gate_id: str, name: str, outcome: str = "passed", message: str = ""
-) -> runner.ScenarioOutcome:
-    return runner.ScenarioOutcome(
-        f"{_SUITE}::test_g{gate_id[1:]}_{name}", outcome, message
-    )
+) -> NodeOutcome:
+    return NodeOutcome(f"{_SUITE}::test_g{gate_id[1:]}_{name}", outcome, message, 0.0)
 
 
-def _passing(gate_ids: Any = _ALL_GATES) -> list[runner.ScenarioOutcome]:
+def _passing(gate_ids: Any = _ALL_GATES) -> list[NodeOutcome]:
     return [
         _outcome(gate_id, name) for gate_id in gate_ids for name in ("first", "second")
     ]
@@ -48,7 +47,7 @@ def _report(
     scenarios: Any, gate_ids: Any = None, *, collection_failed: Any = False
 ) -> Any:
     return runner.qualification_report(
-        runner.ScenarioRun(tuple(scenarios), collection_failed),
+        PytestRun(tuple(scenarios), collection_failed),
         gate_ids,
         build_id="build",
         environment=_ENVIRONMENT,

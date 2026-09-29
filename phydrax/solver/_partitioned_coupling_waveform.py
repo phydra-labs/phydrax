@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 import math
 from collections.abc import Callable
-from typing import Any, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,14 +19,25 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractVectorSpace
+from ..typing import parse
 from ._partitioned_coupling_types import (
     AbstractCouplingSubsystem,
     CouplingPort,
+    CouplingQuantity,
     CouplingSubsystemCapabilities,
     CouplingSubsystemResult,
     CouplingWindow,
     CouplingWindowErrorEstimate,
 )
+
+
+CouplingTemporalConversionKind: TypeAlias = Literal[
+    "sample-end",
+    "hold",
+    "interpolate",
+    "window-integral",
+    "integrate",
+]
 
 
 # Substep state, outputs, success, status, residual, iterations, work, and error
@@ -384,6 +395,82 @@ class BarycentricCouplingTemporalTransfer(AbstractCouplingTemporalTransfer):
         return CouplingWaveform(target_grid, values, space)
 
 
+class CouplingTemporalConversion(StrictModule, NonTrainableState):
+    """Declared temporal meaning of one exchange between participant signals.
+
+    - `"sample-end"`: a source waveform supplies its value at the window end to an
+      instantaneous endpoint target.
+    - `"hold"`: an instantaneous endpoint value is held constant across the
+      target waveform grid.
+    - `"interpolate"`: a source waveform is reconstructed on the target grid by
+      the explicit `transfer`; it never extrapolates.
+    - `"window-integral"`: an authoritative whole-window amount passes to a
+      whole-window target without temporal reinterpretation.
+    - `"integrate"`: a source rate waveform is integrated over the complete window
+      with its own declared reconstruction and an exact Gauss rule. Typed ports
+      declare the `integrated_quantity` (rate times the coupling graph's clock
+      `time_unit`) received.
+
+    An endpoint value is never multiplied by the window size and reported as an
+    exact integral; a whole-window amount never acquires a waveform history.
+    """
+
+    transfer: AbstractCouplingTemporalTransfer | None
+    integrated_quantity: CouplingQuantity | None
+    kind: CouplingTemporalConversionKind = eqx.field(static=True)
+    conversion_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        kind: CouplingTemporalConversionKind,
+        /,
+        *,
+        transfer: AbstractCouplingTemporalTransfer | None = None,
+        integrated_quantity: CouplingQuantity | None = None,
+    ) -> None:
+        kind = parse(kind, CouplingTemporalConversionKind, "kind")
+        if transfer is not None and not isinstance(
+            transfer, AbstractCouplingTemporalTransfer
+        ):
+            raise TypeError("transfer must be an AbstractCouplingTemporalTransfer.")
+        if integrated_quantity is not None and not isinstance(
+            integrated_quantity, CouplingQuantity
+        ):
+            raise TypeError("integrated_quantity must be CouplingQuantity or None.")
+        match kind:
+            case "interpolate":
+                if transfer is None or integrated_quantity is not None:
+                    raise ValueError(
+                        "Waveform interpolation declares exactly one temporal transfer."
+                    )
+            case "integrate":
+                if transfer is not None or integrated_quantity is None:
+                    raise ValueError(
+                        "Waveform integration declares its integrated_quantity and "
+                        "no temporal transfer."
+                    )
+            case "sample-end" | "hold" | "window-integral":
+                if transfer is not None or integrated_quantity is not None:
+                    raise ValueError(
+                        f"A {kind!r} conversion carries no transfer or quantity."
+                    )
+            case _:
+                assert_never(kind)
+        self.transfer = transfer
+        self.integrated_quantity = integrated_quantity
+        self.kind = kind
+        self.conversion_id = canonical_fingerprint(
+            {
+                "kind": "coupling-temporal-conversion",
+                "conversion": kind,
+                "transfer": None if transfer is None else transfer.transfer_id,
+                "integrated_quantity": (
+                    None if integrated_quantity is None else integrated_quantity.to_dict()
+                ),
+            }
+        )
+
+
 class CouplingWaveformAdaptationEvidence(StrictModule):
     previous_sample_count: Array
     candidate_index: Array
@@ -539,81 +626,168 @@ def subtract_coupling_signals(port: CouplingPort, left: Any, right: Any, /) -> A
     )
 
 
+def _waveform_plan(port: CouplingPort, /) -> CouplingWaveformPlan:
+    plan = port.waveform_plan
+    if not isinstance(plan, CouplingWaveformPlan):
+        raise ValueError(f"Coupling port {port.port_id!r} is not a waveform port.")
+    return plan
+
+
+def _gauss_rule(points: int, dtype: Any, /) -> tuple[Array, Array]:
+    nodes, weights = np.polynomial.legendre.leggauss(points)
+    return jnp.asarray(nodes, dtype=dtype), jnp.asarray(weights, dtype=dtype)
+
+
+def _interval_values(
+    port: CouplingPort,
+    waveform: CouplingWaveform,
+    interval_index: int,
+    gauss_nodes: Array,
+    /,
+) -> tuple[Array, Array, Any]:
+    """Half width, activity, and reconstruction at one interval's Gauss nodes."""
+    plan = _waveform_plan(port)
+    left = waveform.grid.nodes[interval_index]
+    right = waveform.grid.nodes[interval_index + 1]
+    active = interval_index < waveform.grid.sample_count - 1
+    half = 0.5 * (right - left)
+    query = 0.5 * (right + left) + half * gauss_nodes
+    values = _barycentric_values(
+        waveform,
+        query,
+        jnp.ones(gauss_nodes.shape, dtype=jnp.bool_),
+        port.space,
+        plan.polynomial_degree,
+    )
+    return half, active, values
+
+
 def coupling_signal_norm(port: CouplingPort, value: Any, /) -> Array:
+    """Interface residual norm from the vector-space pairing, not an inventory.
+
+    A waveform norm integrates the pairing of the port plan's own piecewise
+    polynomial reconstruction with its exact declared Gauss order.
+    """
     validated = validate_coupling_signal(port, value)
     if port.waveform_plan is None:
         squared = jnp.real(port.space.inner(validated, validated))
         return jnp.sqrt(jnp.maximum(squared, 0.0))
-    order = port.waveform_plan.metric_order
-    gauss_nodes, gauss_weights = np.polynomial.legendre.leggauss(order)
-    gauss_nodes_ = jnp.asarray(gauss_nodes, dtype=validated.grid.nodes.dtype)
-    gauss_weights_ = jnp.asarray(gauss_weights, dtype=validated.grid.nodes.dtype)
-    temporal_transfer = port.temporal_transfer
-    # Waveform ports require an explicit temporal transfer at construction.
-    if not (temporal_transfer is not None):
-        raise RuntimeError("Internal invariant failed: temporal_transfer is not None.")
-    degree = temporal_transfer.degree
+    plan = _waveform_plan(port)
+    gauss_nodes, gauss_weights = _gauss_rule(
+        plan.metric_order, validated.grid.nodes.dtype
+    )
     squared = jnp.asarray(0.0, dtype=validated.grid.nodes.dtype)
-    for interval_index in range(port.waveform_plan.sample_capacity - 1):
-        left = validated.grid.nodes[interval_index]
-        right = validated.grid.nodes[interval_index + 1]
-        active_interval = interval_index < validated.grid.sample_count - 1
-        half = 0.5 * (right - left)
-        center = 0.5 * (right + left)
-        query = center + half * gauss_nodes_
-        query_values = _barycentric_values(
-            validated,
-            query,
-            jnp.ones((order,), dtype=jnp.bool_),
-            port.space,
-            degree,
+    for interval_index in range(plan.sample_capacity - 1):
+        half, active, query_values = _interval_values(
+            port, validated, interval_index, gauss_nodes
         )
         interval_value = jnp.asarray(0.0, dtype=squared.dtype)
-        for quadrature_index in range(order):
+        for quadrature_index in range(plan.metric_order):
             sample = port.space.validate(
                 jax.tree.map(lambda leaf: leaf[quadrature_index], query_values)
             )
-            interval_value = interval_value + gauss_weights_[quadrature_index] * jnp.real(
+            interval_value = interval_value + gauss_weights[quadrature_index] * jnp.real(
                 port.space.inner(sample, sample)
             )
-        squared = squared + jnp.where(active_interval, half * interval_value, 0.0)
+        squared = squared + jnp.where(active, half * interval_value, 0.0)
     return jnp.sqrt(jnp.maximum(squared, 0.0))
+
+
+def integrate_coupling_waveform(port: CouplingPort, value: Any, /) -> Any:
+    """Integrate a waveform over the normalized window with its own reconstruction.
+
+    The result is `∫₀¹ v(s) ds` in the port space; the caller multiplies by the
+    physical window size. Inactive intervals contribute nothing. The reconstruction
+    is one polynomial of `polynomial_degree` per interval, so the
+    `⌈(degree + 1) / 2⌉`-point Gauss rule integrates it exactly, independent of the
+    plan's residual-metric order.
+    """
+    validated = validate_coupling_signal(port, value)
+    plan = _waveform_plan(port)
+    points = (plan.polynomial_degree + 2) // 2
+    gauss_nodes, gauss_weights = _gauss_rule(points, validated.grid.nodes.dtype)
+
+    def interval_sum(half: Array, active: Array, samples: Array) -> Array:
+        weights = gauss_weights.astype(samples.dtype).reshape(
+            (points,) + (1,) * (samples.ndim - 1)
+        )
+        return jnp.where(
+            active,
+            half * jnp.sum(weights * samples, axis=0),
+            jnp.zeros((), dtype=samples.dtype),
+        )
+
+    total = jax.tree.map(
+        lambda spec: jnp.zeros(spec.shape, spec.dtype), port.space.structure()
+    )
+    for interval_index in range(plan.sample_capacity - 1):
+        half, active, query_values = _interval_values(
+            port, validated, interval_index, gauss_nodes
+        )
+        total = jax.tree.map(
+            lambda accumulated, samples, h=half, a=active: (
+                accumulated + interval_sum(h, a, samples)
+            ),
+            total,
+            query_values,
+        )
+    return port.space.validate(total)
 
 
 def transfer_coupling_signal(
     source_port: CouplingPort,
     target_port: CouplingPort,
+    conversion: CouplingTemporalConversion | None,
     source_value: Any,
     spatial_action: Callable[[Any], Any],
+    window_size: Array,
     /,
 ) -> Any:
-    """Apply one explicit temporal transfer and one supplied spatial action."""
+    """Apply one declared temporal conversion and one supplied spatial action."""
 
     source = validate_coupling_signal(source_port, source_value)
-    source_plan = source_port.waveform_plan
-    target_plan = target_port.waveform_plan
-    if target_plan is None:
-        if source_plan is None:
+    kind = None if conversion is None else conversion.kind
+    match kind:
+        case None | "window-integral":
             return target_port.space.validate(spatial_action(source))
-        source_sample = source.sample(source.grid.sample_count - 1, source_port.space)
-        return target_port.space.validate(spatial_action(source_sample))
-    if source_plan is None:
-        source_waveform = CouplingWaveform.constant(
-            target_plan.initial_grid(), source, source_port.space
-        )
-    else:
-        source_waveform = source
+        case "sample-end":
+            end = source.sample(source.grid.sample_count - 1, source_port.space)
+            return target_port.space.validate(spatial_action(end))
+        case "integrate":
+            integral = integrate_coupling_waveform(source_port, source)
+            amount = jax.tree.map(
+                lambda leaf: jnp.asarray(window_size, dtype=leaf.dtype) * leaf, integral
+            )
+            return target_port.space.validate(spatial_action(amount))
+        case "hold":
+            held = target_port.space.validate(spatial_action(source))
+            grid = _waveform_plan(target_port).initial_grid()
+            return CouplingWaveform.constant(grid, held, target_port.space)
+        case "interpolate":
+            return _interpolate_signal(
+                source_port, target_port, conversion, source, spatial_action
+            )
+        case _:
+            assert_never(kind)
+
+
+def _interpolate_signal(
+    source_port: CouplingPort,
+    target_port: CouplingPort,
+    conversion: CouplingTemporalConversion | None,
+    source: CouplingWaveform,
+    spatial_action: Callable[[Any], Any],
+    /,
+) -> CouplingWaveform:
+    transfer = None if conversion is None else conversion.transfer
+    if transfer is None:
+        raise ValueError("Waveform interpolation requires its declared transfer.")
+    target_plan = _waveform_plan(target_port)
     target_grid = target_plan.initial_grid()
-    temporal_transfer = target_port.temporal_transfer
-    # Waveform ports require an explicit temporal transfer at construction.
-    if not (temporal_transfer is not None):
-        raise RuntimeError("Internal invariant failed: temporal_transfer is not None.")
-    source_waveform = temporal_transfer.interpolate(
-        source_waveform, target_grid, source_port.space
-    )
+    interpolated = transfer.interpolate(source, target_grid, source_port.space)
     samples = tuple(
         target_port.space.validate(
-            spatial_action(source_waveform.sample(index, source_port.space))
+            spatial_action(interpolated.sample(index, source_port.space))
         )
         for index in range(target_plan.sample_capacity)
     )
@@ -855,6 +1029,8 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem, NonTrainableState)
 __all__ = [
     "AbstractCouplingTemporalTransfer",
     "BarycentricCouplingTemporalTransfer",
+    "CouplingTemporalConversion",
+    "CouplingTemporalConversionKind",
     "CouplingWaveform",
     "CouplingWaveformAdaptationEvidence",
     "CouplingWaveformAdaptationPolicy",
@@ -867,6 +1043,7 @@ __all__ = [
     "coupling_signal_norm",
     "coupling_signal_structure",
     "flatten_coupling_signal",
+    "integrate_coupling_waveform",
     "subtract_coupling_signals",
     "transfer_coupling_signal",
     "unflatten_coupling_signal",

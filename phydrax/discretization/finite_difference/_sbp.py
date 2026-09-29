@@ -4,18 +4,20 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from collections.abc import Sequence
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_integer
 from ...linalg import (
     AbstractLinearOperator,
     ArraySpace,
@@ -41,6 +43,8 @@ from ._stencil import (
 SBPInteriorOrder: TypeAlias = Literal[2, 4, 6, 8]
 SATConditionKind: TypeAlias = Literal["none", "dirichlet", "neumann", "robin"]
 SATInterfaceFlux: TypeAlias = Literal["central", "upwind"]
+SBPNormKind: TypeAlias = Literal["diagonal-closure", "periodic-uniform"]
+SBPNormLayout: TypeAlias = Literal["grid", "rows"]
 
 
 _NORM_BOUNDARY_WEIGHTS = {
@@ -595,6 +599,192 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
         return norm @ matrix + matrix.T @ norm - jnp.diag(self.boundary_diagonal)
 
 
+# A degree counts as integrated exactly when its relative moment defect on the
+# reference grid is below this; the first inexact degree of every declared
+# family defects by more than 1e-9 there, and exact degrees by rounding only.
+_NORM_EXACTNESS_TOLERANCE = 1.0e-12
+
+
+def _norm_exact_degree(weights: np.ndarray, length: float, /) -> int:
+    """Largest `k` with `sum_i w_i x_i^j = int_0^length x^j dx` for all `j <= k`.
+
+    `weights` sit on the unit-spaced nodes `x_i = i`. Coordinates are scaled to
+    `[0, 1]`, where the relative moment defect is scale invariant.
+    """
+    unit = np.arange(weights.size, dtype=np.float64) / length
+    scaled = weights / length
+    degree = -1
+    while degree + 1 < 2 * weights.size:
+        power = degree + 1
+        defect = abs(float(scaled @ unit**power) * (power + 1) - 1.0)
+        if defect > _NORM_EXACTNESS_TOLERANCE:
+            break
+        degree = power
+    if degree < 0:
+        raise ValueError("The SBP norm does not integrate constants exactly.")
+    return degree
+
+
+@final
+class SBPClosureEvidence(StrictModule, NonTrainableState):
+    """Declared closure accuracy and derived norm exactness of one SBP axis.
+
+    `interior_order` and `closure_order` are the declared accuracies of the
+    interior and boundary-closure derivative rows (equal on periodic axes).
+    `norm_exact_degree` is the largest polynomial degree the diagonal norm
+    integrates exactly, derived from the family's norm coefficients on its
+    smallest admissible unit-spaced grid: interior weights are one there and the
+    two closure blocks do not overlap, so exactness is a property of the
+    closure coefficients alone (on fine grids the defect of the first inexact
+    degree decays like a high power of the spacing and is numerically
+    invisible). A periodic uniform norm integrates only constants among
+    non-periodic polynomials. `minimum_weight` is the smallest physical norm
+    weight on the prepared axis.
+    """
+
+    axis: str = eqx.field(static=True)
+    interior_order: int = eqx.field(static=True)
+    closure_order: int = eqx.field(static=True)
+    norm_kind: SBPNormKind = eqx.field(static=True)
+    norm_exact_degree: int = eqx.field(static=True)
+    minimum_weight: float = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(self, derivative: PreparedSBPOperator, /) -> None:
+        if not isinstance(derivative, PreparedSBPOperator):
+            raise TypeError("derivative must be a PreparedSBPOperator.")
+        family = derivative.family
+        norm_kind: SBPNormKind
+        if derivative.grid.structured_axes[derivative.axis_index].periodic:
+            norm_kind = "periodic-uniform"
+            count = family.interior_order + 1
+            _, reference = _normalized_periodic_sbp_matrix(family, count)
+            exact_degree = _norm_exact_degree(reference, float(count))
+            closure_order = family.interior_order
+        else:
+            norm_kind = "diagonal-closure"
+            count = 2 * family.boundary_width + family.interior_order + 1
+            _, reference = _normalized_sbp_matrix(family, count)
+            exact_degree = _norm_exact_degree(reference, float(count - 1))
+            closure_order = family.closure_order
+        minimum = float(np.min(np.asarray(derivative.axis_norm_weights)))
+        self.axis = derivative.axis
+        self.interior_order = family.interior_order
+        self.closure_order = closure_order
+        self.norm_kind = norm_kind
+        self.norm_exact_degree = exact_degree
+        self.minimum_weight = minimum
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "sbp-closure-evidence",
+                "operator": derivative.prepared_id,
+                "interior_order": family.interior_order,
+                "closure_order": closure_order,
+                "norm_kind": norm_kind,
+                "norm_exact_degree": exact_degree,
+                "minimum_weight": minimum,
+            }
+        )
+
+
+@final
+class SBPGridNorm(StrictModule, NonTrainableState):
+    """Tensor-product diagonal SBP norm `H = H_1 (x) ... (x) H_d` of one grid.
+
+    Declared by one prepared SBP derivative per grid axis, in grid-axis order;
+    `axis_weights` are their physical one-dimensional norm diagonals, `weights`
+    the grid-shaped diagonal of `H`, and `evidence` the per-axis closure
+    evidence. Every `D_a (x) I` is summation-by-parts with respect to `H`.
+    """
+
+    grid_id: str = eqx.field(static=True)
+    shape: tuple[int, ...] = eqx.field(static=True)
+    axis_weights: tuple[Array, ...]
+    weights: Array
+    evidence: tuple[SBPClosureEvidence, ...]
+    norm_id: str = eqx.field(static=True)
+
+    def __init__(self, derivatives: Sequence[PreparedSBPOperator], /) -> None:
+        operators = tuple(derivatives)
+        if not operators or not all(
+            isinstance(operator, PreparedSBPOperator) for operator in operators
+        ):
+            raise TypeError("derivatives must contain PreparedSBPOperator values.")
+        grid = operators[0].grid
+        if any(operator.grid.prepared_id != grid.prepared_id for operator in operators):
+            raise ValueError("SBP norm derivatives must share one prepared grid.")
+        if tuple(operator.axis_index for operator in operators) != tuple(
+            range(len(grid.shape))
+        ):
+            raise ValueError(
+                "An SBP grid norm needs one SBP derivative per grid axis, in "
+                "grid-axis order."
+            )
+        axis_weights = tuple(
+            np.asarray(operator.axis_norm_weights, dtype=np.float64)
+            for operator in operators
+        )
+        weights = axis_weights[0]
+        for factor in axis_weights[1:]:
+            weights = np.multiply.outer(weights, factor)
+        evidence = tuple(SBPClosureEvidence(operator) for operator in operators)
+        self.grid_id = grid.prepared_id
+        self.shape = grid.shape
+        self.axis_weights = tuple(jnp.asarray(factor) for factor in axis_weights)
+        self.weights = jnp.asarray(weights)
+        self.evidence = evidence
+        self.norm_id = canonical_fingerprint(
+            {
+                "kind": "sbp-grid-norm",
+                "grid": grid.prepared_id,
+                "derivatives": [operator.prepared_id for operator in operators],
+            }
+        )
+
+    def pairing(
+        self,
+        component_shape: tuple[int, ...] = (),
+        /,
+        *,
+        layout: SBPNormLayout = "grid",
+        dtype: DTypeLike = jnp.float64,
+    ) -> DiagonalPairing:
+        """`H` as a diagonal Riesz pairing on nodal coefficients.
+
+        `layout="grid"` pairs arrays of shape `grid.shape + component_shape`;
+        `layout="rows"` pairs the flat node-row layout `(nodes,) +
+        component_shape` of `PreparedFiniteDifferenceDiscretization.flatten`
+        (row-major node order). Components are paired independently.
+        """
+        layout = parse(layout, SBPNormLayout, "layout")
+        components = tuple(
+            positive_integer(size, "component_shape") for size in component_shape
+        )
+        match layout:
+            case "grid":
+                nodal = self.weights
+            case "rows":
+                nodal = self.weights.reshape((-1,))
+            case _:
+                assert_never(layout)
+        weights = jnp.broadcast_to(
+            nodal.reshape(nodal.shape + (1,) * len(components)),
+            nodal.shape + components,
+        ).astype(dtype)
+        return DiagonalPairing(
+            weights,
+            pairing_id=canonical_fingerprint(
+                {
+                    "kind": "sbp-grid-norm-pairing",
+                    "norm": self.norm_id,
+                    "layout": layout,
+                    "components": list(components),
+                    "dtype": jnp.dtype(dtype).str,
+                }
+            ),
+        )
+
+
 class SATBoundaryPlan(StrictModule, NonTrainableState):
     """Explicit SAT residual and penalty realization for one SBP axis."""
 
@@ -866,5 +1056,9 @@ __all__ = [
     "SATInterfacePlan",
     "SBPDerivativePlan",
     "SBPFamily",
+    "SBPClosureEvidence",
+    "SBPGridNorm",
     "SBPInteriorOrder",
+    "SBPNormKind",
+    "SBPNormLayout",
 ]

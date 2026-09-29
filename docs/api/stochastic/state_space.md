@@ -339,6 +339,10 @@ The thermodynamic decomposition is independently implemented; the
 
 ::: phydrax.stochastic.PathwiseTransitionKernel
 
+---
+
+::: phydrax.stochastic.CoupledTransitionKernel
+
 ## Structural state-space components
 
 `compile_structural_state_space` turns named additive scalar-observation components

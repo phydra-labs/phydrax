@@ -36,7 +36,12 @@ edge: inside a face the dual segment between corners `a`, `b` has conormal
 
 `TriangleTopology` stays manifold. Non-manifold foams use
 `PreparedFilmSheetSlots`: one `PreparedFilmSurface` per region pair plus sparse
-gather/scatter maps to the owning multiregion sheet slots.
+gather/scatter maps to the owning multiregion sheet slots. The adapter owns no
+content: film liquid and surfactant live on E's sheet slots. Across a topology
+event the adapter is therefore re-prepared by construction on the target epoch,
+while the slot content crosses through E's conservative sheet-slot transition
+(see the
+[foam guide](guides_soap_films_and_foams.md#border-content-across-topology-events)).
 
 ## Lubrication drainage (B1)
 

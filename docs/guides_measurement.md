@@ -50,6 +50,25 @@ The validity mask has the sample shape. Component axes remain separate. Invalid 
 
 `MeasurementComparisonPlan` accepts only compatible prepared observed and predicted fields. Different supports require an explicit spatial observation operator; no automatic interpolation occurs.
 
+Discretized fields of a coupled spatial problem are observed through explicit observation bindings of `phydrax.solver.coupling`. `FieldPointObservation` samples point values or one derivative, `FieldBoundaryObservation` a boundary trace, average, or path integral, and `FieldFluxObservation` a flux content. Each binding declares its `QuantitySpec`, layout, support, and sampling, and construction refuses a sampling kind or unit dimension that differs from the operation it performs. Every `CoupledSolution` returns the prediction as a `PreparedQuantityField` (`solution.observation(binding_id)`) that compares with data prepared from the same records; it is evidence only when the solution is accepted. Virtual-element point values are labeled H1 projections, not field values. See [Observation bindings](guides_numerical_interoperability.md#observation-bindings).
+
+## Comparison noise and likelihoods
+
+A comparison's noise model is declared, never implied. `MeasurementComparisonResult.noise_model` records which declaration applies:
+
+| `noise_model` | Declaration | Result |
+|---|---|---|
+| `"unquantified"` | no covariance, no uncertainty, no reference scale | residual only; no quadratic, log determinant, or likelihood |
+| `"reference_weighting"` | `reference_scale=` on unquantified data | reference-weighted residual and least-squares quadratic; no likelihood |
+| `"independent_uncertainty"` | observed `IndependentStandardUncertainty` | diagonal whitening, quadratic, log determinant, normalized log likelihood on active values |
+| `"covariance"` | explicit `covariance=` action | quadratic, log determinant, normalized log likelihood; whitened residual only when a factor exists |
+
+`whitened_residual` is present only when an actual factor `W` with `W^T W` equal to the precision backs it, so its squared norm equals `quadratic`. `whitening` names the factor: diagonal, dense Cholesky, Kronecker Cholesky, or circulant. Dense precision, diagonal-plus-low-rank, and matrix-free precision covariances report `whitening="unavailable"` with the quadratic and log determinant; no dense square root is invented. `log_likelihood` is `-(quadratic + logdet_covariance + active_value_count * log(2 pi)) / 2` for real-valued data. Independent uncertainty on complex data carries no implied circular or per-component normalization, so its likelihood fields are absent.
+
+Independent uncertainty marginalizes exactly by dropping invalid samples, so its active set follows both validity masks at runtime. A correlated covariance does not: masking entries of a dense correlated residual changes the likelihood. The correlated active set is therefore fixed by the observed validity mask at construction, and the covariance must be declared on exactly those values. `restrict_observation_covariance(covariance, active)` returns the exact Gaussian marginal: diagonal and diagonal-plus-low-rank structure is kept, a dense Cholesky factor is refactored, and a dense precision uses its Schur complement. Kronecker, circulant, and matrix-free precision covariances refuse a partial restriction because no structure-preserving marginal exists; declare the active-set covariance explicitly. A prediction invalid on a correlated active value sets `active_set_consistent` and `successful` to false.
+
+Least-squares objectives may use `quadratic` or `whitened_residual` under an explicit reference weighting. Posterior code requires a declared noise model and consumes `log_likelihood`; noise that depends on inferred parameters belongs in a normalized likelihood such as `phydrax.uq.FixedObservationLikelihood` or `phydrax.uq.LinearizedGaussianMeasurementLikelihood`, whose values and derivatives include the covariance log determinant.
+
 ## Radiation quantity meanings
 
 `RadiationQuantityKind` and `resolve_radiation_quantity` are the single shared

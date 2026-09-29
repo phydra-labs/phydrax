@@ -26,6 +26,7 @@ from ._scope import MeshingEntityKind, MeshingScope
 
 if TYPE_CHECKING:
     from ._coupling import MeshCoupling
+    from ._interface_binding import MeshInterfaceAttachment
 
 
 class MeshCarrierKind(StrEnum):
@@ -321,6 +322,25 @@ class MeshAssembly(StrictModule, NonTrainableState):
             if part.name == name:
                 return part
         raise KeyError(f"Unknown assembly part {name!r}.")
+
+    def require_attachment(self, attachment: MeshInterfaceAttachment, /) -> MeshPart:
+        """Return the current owning part of an interface attachment.
+
+        The assembly stays a carrier container: attachments of different parts
+        are validated against the current part revisions without welding them.
+        """
+        from ._interface_binding import MeshInterfaceAttachment
+
+        if not isinstance(attachment, MeshInterfaceAttachment):
+            raise TypeError("attachment must be MeshInterfaceAttachment.")
+        for part in self.parts:
+            if part.name == attachment.part_name:
+                attachment.require_current(part)
+                return part
+        raise ValueError(
+            f"Interface attachment part {attachment.part_name!r} is not owned by this "
+            "assembly."
+        )
 
 
 __all__ = ["MeshAssembly", "MeshCarrier", "MeshCarrierKind", "MeshPart"]

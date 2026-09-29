@@ -28,7 +28,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.custom_derivatives import SymbolicZero
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from .._differentiation import (
     _regularity_payload,
@@ -48,10 +48,12 @@ if TYPE_CHECKING:
     from ..domain._derivative import DerivativeRule
     from ..domain._domain import Domain
     from ..geometry import CompiledGeometry
+    from ._field_query import FieldQueryCoverage, PreparedFieldQuery
 
 
 FieldTraceSide: TypeAlias = Literal["owner", "neighbor", "average"]
 FieldSupportCoverage: TypeAlias = Literal["complete", "partial"]
+FieldApproximation: TypeAlias = Literal["exact", "h1-projection", "l2-projection"]
 _INVALID_QUERY_MESSAGE = (
     "Discrete field view query is invalid at one or more points (outside the "
     "reconstruction support, on a non-smooth locus without a bound trace side, "
@@ -341,7 +343,13 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
     averages). Coordinate derivatives are evaluated exactly up to
     `maximum_derivative_order`; higher orders raise `ValueError`.
     `support_geometry` is the explicit region the reconstruction covers; views
-    bind only to an equivalent `GeometryDomain`.
+    bind only to an equivalent `GeometryDomain`. `approximation` states whether
+    the reconstruction evaluates the discrete field itself (`"exact"`) or a
+    labeled polynomial projection of it (for example the virtual-element
+    `"h1-projection"` and `"l2-projection"` interior channels).
+    `coefficient_dtype` is the native coefficient storage dtype (for example the
+    complex modal storage of spectral fields); `None` declares real
+    coefficients in the precision of the query points.
     """
 
     kernel: AbstractFieldReconstructionKernel
@@ -357,6 +365,8 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
     field_space_id: str = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
     reconstruction_id: str = eqx.field(static=True)
+    approximation: FieldApproximation = eqx.field(static=True)
+    coefficient_dtype: np.dtype | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -373,6 +383,8 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         field_space_id: str,
         support_id: str,
         coefficient_linear: bool = True,
+        approximation: FieldApproximation = "exact",
+        coefficient_dtype: DTypeLike | None = None,
     ) -> None:
         from ..geometry import CompiledGeometry, GeometryKind
 
@@ -388,6 +400,10 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
             raise TypeError("trace_policy must be a FieldTracePolicy.")
         if not isinstance(coefficient_linear, bool):
             raise TypeError("coefficient_linear must be a bool.")
+        approximation = parse(approximation, FieldApproximation, "approximation")
+        native = None if coefficient_dtype is None else jnp.dtype(coefficient_dtype)
+        if native is not None and not jnp.issubdtype(native, jnp.inexact):
+            raise TypeError("coefficient_dtype must be a floating or complex dtype.")
         dimension = _positive_int(physical_dimension, "physical_dimension")
         maximum = _nonnegative_int(maximum_derivative_order, "maximum_derivative_order")
         shape = tuple(
@@ -446,6 +462,8 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         self.physical_dimension = dimension
         self.maximum_derivative_order = maximum
         self.coefficient_linear = coefficient_linear
+        self.approximation = approximation
+        self.coefficient_dtype = native
         self.field_space_id = space
         self.support_id = support
         self.reconstruction_id = canonical_fingerprint(
@@ -461,6 +479,8 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
                 "physical_dimension": dimension,
                 "maximum_derivative_order": maximum,
                 "coefficient_linear": coefficient_linear,
+                "approximation": approximation,
+                "coefficient_dtype": None if native is None else native.name,
             }
         )
 
@@ -610,6 +630,37 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         """Evaluate a one-sided trace (or trace derivative) at fixed sites."""
         binding = self.bind_trace(points, side=side, cell_ids=cell_ids)
         return self.derivative(coefficients, binding.sites, derivative, side=binding)
+
+    def prepare_query(
+        self,
+        points: ArrayLike,
+        /,
+        *,
+        derivative: tuple[int, ...] | None = None,
+        side: FieldTraceSide | None = None,
+        cell_ids: ArrayLike | None = None,
+        coverage: FieldQueryCoverage = "complete",
+    ) -> PreparedFieldQuery:
+        """Locate fixed points once and return their reusable prepared query.
+
+        The query binds the points, derivative multi-index, trace side, and
+        coverage policy to one located owner route; repeated `apply`/`transpose`
+        calls with changing coefficients reuse that route without relocating.
+        `coverage="complete"` refuses any invalid point; `"masked"` admits the
+        valid points only and retains the evidence of every requested point.
+        """
+        from ._field_query import PreparedFieldQuery
+
+        if side is None and cell_ids is not None:
+            raise ValueError("cell_ids select trace cells and require a side.")
+        binding = (
+            None
+            if side is None
+            else self.bind_trace(points, side=side, cell_ids=cell_ids)
+        )
+        return PreparedFieldQuery(
+            self, points, derivative=derivative, side=binding, coverage=coverage
+        )
 
     def transpose(
         self,
@@ -1158,6 +1209,7 @@ __all__ = [
     "AbstractFieldReconstructionKernel",
     "DiscreteFieldEvaluator",
     "DiscreteFieldFunctionView",
+    "FieldApproximation",
     "FieldQueryEvidence",
     "FieldQueryResult",
     "FieldQueryStatus",

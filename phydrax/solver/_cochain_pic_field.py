@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax
@@ -46,9 +46,11 @@ from ._maxwell_far_field import HuygensSurfacePhasors, PreparedMaxwellHuygensBox
 from ._pic_current_source import PreparedPICMaxwellCurrentSource
 from ._pic_field_solver import (
     AbstractPreparedPICFieldSolver,
+    PICCapabilityRecord,
     PICFieldAdvance,
     PICFieldDeposit,
     PICFieldEnergy,
+    PICFieldSolverCapability,
     PICGaussProjectionResult,
     PICRelativisticFieldResult,
     PICRestartComponent,
@@ -184,6 +186,106 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
                 "currents": [value.plan_id for value in current_values],
             }
         )
+
+    @property
+    def pic_configuration(self) -> str:
+        return "cochain-3d"
+
+    def _homogeneous_diagonal(self) -> bool:
+        constitutive = self.maxwell.constitutive
+        return (
+            isinstance(constitutive, PreparedDiagonalMaxwellConstitutive)
+            and np.ptp(np.asarray(constitutive.permittivity)) == 0.0
+            and np.ptp(np.asarray(constitutive.permeability)) == 0.0
+        )
+
+    def _zero_grounded(self) -> bool:
+        boundary = self.electrostatic.boundary
+        return not (
+            boundary.gauge_required
+            or bool(np.any(np.asarray(boundary.dirichlet_values) != 0.0))
+            or bool(np.any(np.asarray(boundary.neumann_source) != 0.0))
+        )
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        route, refusal = PICCapabilityRecord.route, PICCapabilityRecord.refusal
+        match capability:
+            case "tensor-layout":
+                return route(
+                    capability,
+                    "Oriented cochain components with mirror parities (PICFilterPlan).",
+                )
+            case "spectral-symbol":
+                if self._homogeneous_diagonal():
+                    return route(
+                        capability, "Yee vacuum dispersion within the stable step."
+                    )
+                return refusal(
+                    capability,
+                    "Heterogeneous or non-diagonal material has no single symbol.",
+                    published=True,
+                )
+            case "huygens-sampling":
+                if any(
+                    isinstance(value, PreparedMaxwellHuygensBox)
+                    for value in self.maxwell.observers
+                ):
+                    return route(capability, "Phasors of the Maxwell Huygens boxes.")
+                # Maxwell refuses Huygens boxes beside the dynamic PIC current.
+                return refusal(
+                    capability,
+                    "Maxwell refuses Huygens boxes with dynamic PIC currents (J = 0 "
+                    "cannot be certified on the surface), so no phasors exist.",
+                    published=True,
+                )
+            case "multi-deposit":
+                return refusal(
+                    capability, "Species deposit through their own cochain transfers."
+                )
+            case "window-shift":
+                return route(
+                    capability,
+                    "Integer-cell cochain, auxiliary, and observer translation along "
+                    "a uniform axis.",
+                )
+            case "galilean-grid":
+                return refusal(capability, "The Yee leapfrog grid is lab-fixed.")
+            case "energy-accounting":
+                return route(
+                    capability,
+                    "Leapfrog-corrected field and medium energy with the source-free "
+                    "loss power.",
+                )
+            case "open-domain":
+                return route(
+                    capability,
+                    f"Periodic axes {self.periodic}; bounded axes with the spline "
+                    "stencil wall inset.",
+                )
+            case "restart-state":
+                return route(
+                    capability,
+                    "Field cochains with medium, CPML, and observer memory, admitted "
+                    "by solver identity.",
+                )
+            case "gauss-projection":
+                return route(capability, "Cochain Poisson projection (cochain-poisson).")
+            case "relativistic-self-fields":
+                if self._zero_grounded():
+                    return route(
+                        capability,
+                        "Anisotropic Poisson solve per species drifting along one axis.",
+                    )
+                return refusal(
+                    capability,
+                    "Superposed Coulomb fields require a zero-valued grounded "
+                    "electrostatic boundary; this boundary is gauged or sourced.",
+                    published=True,
+                )
+            case _:
+                assert_never(capability)
 
     @property
     def stable_step(self) -> Array:
@@ -746,6 +848,9 @@ class CochainMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
     def huygens_phasors(
         self, field: CompatibleMaxwellState, /
     ) -> tuple[HuygensSurfacePhasors, ...]:
+        record = self.pic_capability("huygens-sampling")
+        if not record.admitted:
+            raise ValueError(record.basis)
         return tuple(
             observer.surface_phasors(state)
             for observer, state in zip(

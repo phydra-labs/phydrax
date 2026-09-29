@@ -329,6 +329,36 @@ geometry revision. B4 motion uses `PreparedFilmSheetSlots.refresh` and
 transfer record, then the consumer rebuilds the target-epoch border network.
 No derivative is claimed across rupture, remeshing or any physical event.
 
+### Border content across topology events
+
+`PreparedPlateauBorder.reprepare_after_events(event, surface, film_slots,
+state)` consumes the `SurfaceEventPassEvidence` of a committed pass that
+started from the network's own epoch and geometry, prepares the network on the
+target epoch with the same plan, and returns a `PlateauBorderAdaptation`. Its
+`transition` is the nondifferentiable `TopologyEpochTransition` of one
+extensive border field (liquid volume or surfactant amount) built on a
+`ConservativeFieldTransfer`, so `transition.composition_transport(source,
+target)` binds it into a `phx.lifecycle` rebind. Only two border rules are
+declared:
+
+- a border whose two stable vertex IDs survive keeps its content;
+- a border split at a new vertex (parents are exactly its endpoints) gives each
+  child `L_child / (L_1 + L_2)` of its content, which keeps the cell's uniform
+  cross-section `V / L` and surfactant concentration.
+
+Accepted T1 pops, pinches, merges, region splits and bursts raise
+`PlateauBorderTransportError` before any target network is prepared, and so
+does any collapse that removes or coarsens a border: a redistribution of border
+liquid is not inferred from lineage. Sheet-slot content crosses the same pass
+through E's own `SurfaceEventPassResult.transition`.
+`examples/foam_junction_rebind.py` drains three double-bubble sheets into the
+border ring (a declared first-order boundary suction, not a lubrication
+model), declares the three sheets as one junction `InterfaceBinding`, splits a
+border through one accepted composition rebind that reprepares the geometry,
+sheet views, junction, network and rendering observation, renders the
+published thickness, and shows the rupture refusal. Liquid and surfactant are
+conserved to roundoff across the exchange and the rebind.
+
 ## Iridescent rendering
 
 E remains the geometry and content authority. For a `PlateauBorderState`, each

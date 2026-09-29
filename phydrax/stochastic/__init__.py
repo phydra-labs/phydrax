@@ -322,6 +322,7 @@ from ._solution import (
     validate_spde_formulation,
 )
 from ._solver_transition import (
+    CoupledTransitionKernel,
     DifferentialTransitionKernel,
     FiniteStateTransitionKernel,
     JumpDifferentialTransitionKernel,
@@ -494,6 +495,7 @@ __all__ = [
     "CallableTransitionKernel",
     "CategoricalStatePrior",
     "DistributionStatePrior",
+    "CoupledTransitionKernel",
     "DifferentialTransitionKernel",
     "DampedTrendComponent",
     "DeterministicTransitionComponent",

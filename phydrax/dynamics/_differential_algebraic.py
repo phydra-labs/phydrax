@@ -15,7 +15,12 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._strict import StrictModule
-from ..linalg import AbstractLinearOperator, ArraySpace, OperatorCapabilities
+from ..linalg import (
+    AbstractLinearOperator,
+    ArraySpace,
+    MappedBlockLinearOperator,
+    OperatorCapabilities,
+)
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 from ..typing import parse
 from ._layout import InputLayout
@@ -143,10 +148,18 @@ class _BoundDAELinearSetup(StrictModule):
             raise ValueError(
                 "DAE setup operators must use the supplied native ArraySpaces."
             )
-        return (
-            _ActiveDAESetupOperator(operator, arguments.active, self.source, self.target)
-            if hasattr(arguments, "active")
-            else operator
+        if not hasattr(arguments, "active"):
+            return operator
+        if isinstance(operator, MappedBlockLinearOperator) and operator.identity_ordered:
+            # Blend each named block with its coordinate-identity piece so the
+            # inactive-root identity keeps the block view for preconditioners.
+            # Permuted maps carry no coordinate-aligned identity per block and use
+            # the generic inactive-root identity below.
+            return operator.with_inactive_identity(
+                arguments.active, source=self.source, target=self.target
+            )
+        return _ActiveDAESetupOperator(
+            operator, arguments.active, self.source, self.target
         )
 
 

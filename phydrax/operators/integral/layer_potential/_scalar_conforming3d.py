@@ -18,14 +18,23 @@ import phydrax.ein as ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....discretization._boundary_trace_space import (
+    boundary_geometry_revision,
+    BoundaryTraceSpaceCapability,
+    CauchyTraceCapability,
+    diagonal_gram_trace_space,
+    sparse_gram_trace_space,
+)
 from ....geometry import MeshRegion
 from ....linalg import (
     AbstractLinearOperator,
     ArraySpace,
     DenseLinearOperator,
+    DualSpace,
     FunctionLinearOperator,
     OperatorProperties,
 )
+from ....sparse import EdgeRelation, SparseCoordinateOperator
 from ._galerkin3d import LaplaceSingleLayerDP0GalerkinPolicy3D
 from ._galerkin_quadrature3d import (
     _duffy_rule,
@@ -39,11 +48,13 @@ from ._scalar_calderon3d import (
     ScalarCalderonDP0Galerkin3D,
     ScalarKernelFamily3D,
 )
+from ._scalar_trace import SCALAR_TRACE_CONVENTION_3D
 
 
 class ScalarBoundarySpaces3D(StrictModule, NonTrainableState):
     """Canonical continuous-P1 Dirichlet and DP0 Neumann trace pairing."""
 
+    vertices: Array
     faces: Array
     face_areas: Array
     cross_mass: Array
@@ -52,6 +63,85 @@ class ScalarBoundarySpaces3D(StrictModule, NonTrainableState):
     vertex_count: int = eqx.field(static=True)
     face_count: int = eqx.field(static=True)
     spaces_id: str = eqx.field(static=True)
+
+    def cauchy_trace_capability(
+        self, /, *, gram_tolerance: float = 1.0e-13
+    ) -> CauchyTraceCapability:
+        """Publish the P1 Dirichlet / DP0 Neumann Cauchy data with area pairings.
+
+        The Dirichlet coordinates are paired by the exact P1 area Gram map
+        (local stencil `A (1 + δ_ij) / 12`) with a prepared conjugate-gradient
+        Riesz solve to `gram_tolerance`, the Neumann coordinates by the face
+        areas, and the duality is the sparse cross mass `(B φ)_f = ∫_f φ dA`
+        between the native spaces. The Neumann trace differentiates along the
+        interior-to-exterior normal: `MeshRegion` orients every closed surface
+        component outward, whatever winding was declared.
+        """
+        cells = np.asarray(self.faces, dtype=np.int32)
+        areas = np.asarray(self.face_areas, dtype=np.float64)
+        stencil = (areas / 12.0)[:, None, None] * (1.0 + np.eye(3))[None, :, :]
+        dirichlet_gram, dirichlet_mass = sparse_gram_trace_space(
+            np.repeat(cells, 3, axis=1).reshape((-1,)),
+            np.tile(cells, (1, 3)).reshape((-1,)),
+            stencil.reshape((-1,)),
+            size=self.vertex_count,
+            dtype=self.dirichlet_space.dtype,
+            space_id=canonical_fingerprint(
+                {
+                    "kind": "closed-surface-continuous-p1-trace-3d",
+                    "spaces": self.spaces_id,
+                }
+            ),
+            gram_tolerance=gram_tolerance,
+        )
+        neumann_gram, neumann_mass = diagonal_gram_trace_space(
+            areas,
+            dtype=self.neumann_space.dtype,
+            space_id=canonical_fingerprint(
+                {"kind": "closed-surface-dp0-trace-3d", "spaces": self.spaces_id}
+            ),
+        )
+        duality = SparseCoordinateOperator(
+            EdgeRelation(
+                cells.reshape((-1,)),
+                np.repeat(np.arange(self.face_count, dtype=np.int32), 3),
+                source_size=self.vertex_count,
+                target_size=self.face_count,
+            ),
+            jnp.asarray(np.repeat(areas / 3.0, 3), dtype=jnp.float64),
+            source=self.dirichlet_space,
+            target=DualSpace(self.neumann_space),
+            operator_id=f"{self.spaces_id}:cauchy-duality",
+            accumulation_dtype=np.result_type(
+                self.dirichlet_space.dtype, self.neumann_space.dtype
+            ),
+        )
+        revision = boundary_geometry_revision(self.vertices, cells)
+        return CauchyTraceCapability(
+            BoundaryTraceSpaceCapability(
+                owner_id=self.spaces_id,
+                quantity="dirichlet",
+                representation="continuous-p1",
+                coefficient_space=self.dirichlet_space,
+                gram_space=dirichlet_gram,
+                mass=dirichlet_mass,
+                ambient_dimension=3,
+                revision_id=revision,
+            ),
+            BoundaryTraceSpaceCapability(
+                owner_id=self.spaces_id,
+                quantity="neumann",
+                representation="dp0",
+                coefficient_space=self.neumann_space,
+                gram_space=neumann_gram,
+                mass=neumann_mass,
+                ambient_dimension=3,
+                revision_id=revision,
+            ),
+            duality,
+            interior=SCALAR_TRACE_CONVENTION_3D.interior,
+            convention_id=SCALAR_TRACE_CONVENTION_3D.convention_id,
+        )
 
 
 class ScalarConformingAssemblyEvidence3D(StrictModule, NonTrainableState):
@@ -369,7 +459,18 @@ def prepare_scalar_calderon_3d(
         surface_curls=jnp.asarray(curls),
         vertex_count=vertices.shape[0],
     )
-    p1_space = ArraySpace((vertices.shape[0],), dtype=dp0.face_areas.dtype)
+    p1_space = ArraySpace(
+        (vertices.shape[0],),
+        dtype=dp0.space.dtype,
+        space_id=canonical_fingerprint(
+            {
+                "kind": "closed-surface-continuous-p1-space-3d",
+                "binding": dp0._binding.binding_id,
+                "faces": array_tree_fingerprint(faces),
+                "dtype": np.dtype(dp0.space.dtype).str,
+            }
+        ),
+    )
     hypersingular = FunctionLinearOperator(
         hypersingular_action.mv,
         source=p1_space,
@@ -415,6 +516,7 @@ def prepare_scalar_calderon_3d(
         ),
     )
     spaces = ScalarBoundarySpaces3D(
+        vertices=jnp.asarray(vertices),
         faces=jnp.asarray(faces),
         face_areas=jnp.asarray(face_areas),
         cross_mass=jnp.asarray(cross_mass_matrix),

@@ -147,6 +147,9 @@ class HyperRectangle(AbstractGeometry):
             return False
         if self.spatial_dim != other.spatial_dim:
             return False
+        self._require_concrete_support(
+            other, self.lower, self.upper, other.lower, other.upper
+        )
         return bool(
             np.allclose(np.asarray(self.lower), np.asarray(other.lower))
             and np.allclose(np.asarray(self.upper), np.asarray(other.upper))

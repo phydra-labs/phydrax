@@ -90,6 +90,28 @@ from ._rcip import RCIPPreconditioner2D
 from ._scalar_calderon3d import __all__ as _scalar_calderon_all
 from ._scalar_conforming3d import __all__ as _scalar_conforming_all
 from ._scalar_formulations3d import __all__ as _scalar_formulations_all
+from ._scalar_galerkin2d import (
+    BoundaryTraceProjection2D,
+    BoundaryTraceRepresentation2D,
+    BoundaryTraceSpace2D,
+    ClosedPolygonalCurve2D,
+    CurveTraversal2D,
+    ExteriorFarField2D,
+    ExteriorLaplaceDirichletResult2D,
+    prepare_boundary_trace_projection_2d,
+    prepare_exterior_laplace_dirichlet_2d,
+    prepare_scalar_laplace_galerkin_2d,
+    PreparedExteriorLaplaceDirichlet2D,
+    ScalarBoundarySpaces2D,
+    ScalarLaplaceFieldEvaluation2D,
+    ScalarLaplaceGalerkin2D,
+    ScalarLaplaceGalerkinPolicy2D,
+    ScalarLaplaceGalerkinReport2D,
+    ScalarTraceConvention2D,
+    ScalarTraceSide2D,
+    solve_exterior_laplace_dirichlet_2d,
+    TraceProjectionResult2D,
+)
 from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
 from ._scalar_screens3d import __all__ as _scalar_screens_all
 from ._scalar_trace import __all__ as _scalar_trace_all
@@ -196,6 +218,26 @@ __all__ = [
     "LaplaceFMMEvaluation2D",
     "GlobalQBXFMMEvaluation2D",
     "evaluate_global_qbx_fmm_2d",
+    "ClosedPolygonalCurve2D",
+    "CurveTraversal2D",
+    "ScalarTraceConvention2D",
+    "ScalarTraceSide2D",
+    "BoundaryTraceRepresentation2D",
+    "BoundaryTraceSpace2D",
+    "ScalarBoundarySpaces2D",
+    "ScalarLaplaceGalerkinPolicy2D",
+    "ScalarLaplaceGalerkinReport2D",
+    "ScalarLaplaceGalerkin2D",
+    "ScalarLaplaceFieldEvaluation2D",
+    "prepare_scalar_laplace_galerkin_2d",
+    "ExteriorFarField2D",
+    "PreparedExteriorLaplaceDirichlet2D",
+    "ExteriorLaplaceDirichletResult2D",
+    "prepare_exterior_laplace_dirichlet_2d",
+    "solve_exterior_laplace_dirichlet_2d",
+    "BoundaryTraceProjection2D",
+    "TraceProjectionResult2D",
+    "prepare_boundary_trace_projection_2d",
 ]
 
 __all__ += [

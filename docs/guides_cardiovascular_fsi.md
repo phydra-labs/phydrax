@@ -140,6 +140,12 @@ scales, and convergence tolerances. It is a native `PreparedCoupling`, so a fail
 fluid solve, structural solve, post-LBM no-slip qualification, or interface
 convergence leaves the accepted state unchanged.
 
+The bundle's coupling ports are untyped instantaneous endpoint spaces: they declare
+no `CouplingQuantity` or `CouplingMeasurement` inventory, and their exchanges declare
+no temporal conversion. Their reference scales define only the interface residual
+norm. Coupling a physical inventory, such as an accumulated window impulse, would
+use typed ports with an explicit `CouplingMeasurement`.
+
 ```python
 bundle = build_immersed_fsi_participants(
     forcing,

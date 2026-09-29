@@ -172,6 +172,26 @@ reuses those prepared flux operators where the requested expression is conservat
 
 ::: phydrax.discretization.SATInterfacePlan
 
+### Boundary norms and traces
+
+`PreparedFiniteDifferenceDiscretization.prepare_side_trace` restricts the nodal
+field to boundary-node facets measured by the tangential factors of a declared
+`SBPGridNorm`; `boundary_face_selection` and `integration_domain` select faces.
+
+::: phydrax.discretization.SBPGridNorm
+
+---
+
+::: phydrax.discretization.SBPClosureEvidence
+
+---
+
+::: phydrax.discretization.SBPNormKind
+
+---
+
+::: phydrax.discretization.SBPNormLayout
+
 ## Periodic SBP flux differencing
 
 Periodic SBP conservation diagnostics use a twofold compensated reduction for the

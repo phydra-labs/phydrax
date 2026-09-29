@@ -43,6 +43,7 @@ from ._equilibrium import (
 )
 from ._plateau_borders import (
     apply_foam_rupture_with_borders,
+    PlateauBorderAdaptation,
     PlateauBorderBoundaryFlux,
     PlateauBorderEvidence,
     PlateauBorderPlan,
@@ -56,6 +57,7 @@ from ._plateau_borders import (
     PlateauBorderRimStatus,
     PlateauBorderState,
     PlateauBorderStatus,
+    PlateauBorderTransportError,
     PreparedPlateauBorder,
 )
 from ._profiles import foam_candidate_profiles
@@ -133,6 +135,7 @@ __all__ = [
     "FoamRuptureStatus",
     "FoamWireConstraints",
     "FoamVolumeConstraintBasis",
+    "PlateauBorderAdaptation",
     "PlateauBorderBoundaryFlux",
     "PlateauBorderEvidence",
     "PlateauBorderPlan",
@@ -146,6 +149,7 @@ __all__ = [
     "PlateauBorderRimStatus",
     "PlateauBorderState",
     "PlateauBorderStatus",
+    "PlateauBorderTransportError",
     "PreparedPlateauBorder",
     "PreparedFoamEquilibrium",
     "PreparedFoamRelaxation",

@@ -488,6 +488,13 @@ def _research_platform_declarations() -> tuple[CapabilityDeclaration, ...]:
             "docs/guides_omniphysics_program.md",
             "equation-oriented-flowsheets-not-implementation-closed",
         ),
+        (
+            "platform.numerical-interoperability",
+            "phydrax.solver.coupling",
+            "research",
+            "docs/guides_numerical_interoperability.md",
+            "method-combinations-beyond-qualified-scenarios-not-claimed",
+        ),
     )
     return tuple(
         CapabilityDeclaration(

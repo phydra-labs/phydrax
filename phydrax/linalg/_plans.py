@@ -266,6 +266,7 @@ class LinearSolvePlan(StrictModule):
                             if policy.derivative_solve.stability_lower_bound is None
                             else policy.derivative_solve.stability_lower_bound.certificate_id
                         ),
+                        "route": policy.derivative_solve.route,
                     },
                 },
                 "failure": policy.failure.mode,
@@ -319,6 +320,7 @@ def plan(
             )
     backend = _validate_method(problem, selected, policy_, rhs_layout)
     _validate_precision_policy(problem, selected, backend, policy_)
+    _validate_derivative_route(problem, selected, policy_)
     if policy_.require_device_binding and backend in ("host-sparse", "lineax"):
         raise ValueError(
             f"Selected backend {backend!r} cannot bind numerical state on device."
@@ -383,6 +385,34 @@ def _sparse_lu_analysis(
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise TypeError("Sparse LU symbolic analysis requires canonical sparse storage.")
     return analyze_sparse_lu(operator.sparse_storage())
+
+
+def _validate_derivative_route(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    /,
+) -> None:
+    route = policy.derivative_solve.route
+    match route:
+        case "krylov":
+            return
+        case "primal-factors":
+            if not isinstance(method, (DenseLU, DenseCholesky)):
+                raise ValueError(
+                    "route='primal-factors' requires a square direct DenseLU or "
+                    f"DenseCholesky factorization; the selected method is "
+                    f"{method.name}."
+                )
+            if not isinstance(problem, LinearSystem):
+                raise TypeError("route='primal-factors' requires a LinearSystem.")
+            if problem.nullspace_policy is not None:
+                raise ValueError(
+                    "route='primal-factors' requires a LinearSystem without a "
+                    "nullspace policy."
+                )
+        case _:
+            raise ValueError(f"Unsupported derivative solve route {route!r}.")
 
 
 def _validate_precision_policy(
@@ -1778,12 +1808,7 @@ def _krylov_storage_bytes(
     if policy.differentiation.mode not in ("mathematical", "rhs-only"):
         return batch_count * max(primal, recycling)
     derivative_steps = policy.derivative_solve.maximum_steps or columns
-    if isinstance(method, (BlockCG, BlockGMRES)):
-        # Native block differentiation uses one independent scalar Krylov
-        # basis per tangent column under the derivative work limit.
-        restart = min(derivative_steps, columns)
-    else:
-        restart = min(30, derivative_steps, columns)
+    restart = _derivative_restart(method, derivative_steps, columns)
     tangent = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
     return batch_count * max(primal, tangent, recycling)
 
@@ -1835,6 +1860,13 @@ def _implicit_storage_bytes(
 ) -> int:
     if policy.differentiation.mode not in ("mathematical", "rhs-only"):
         return 0
+    match policy.derivative_solve.route:
+        case "primal-factors":
+            return 0
+        case "krylov":
+            pass
+        case route:
+            raise ValueError(f"Unsupported derivative solve route {route!r}.")
     if isinstance(problem, LinearSystem) and isinstance(
         problem.operator, TreeLinearOperator
     ):
@@ -1843,9 +1875,30 @@ def _implicit_storage_bytes(
     if isinstance(problem, MinimumNormProblem):
         dimension += problem.operator.target.size
     max_steps = policy.derivative_solve.maximum_steps or dimension
-    restart = min(30, max_steps, dimension)
+    restart = _derivative_restart(policy.method, max_steps, dimension)
     per_problem = ((2 * restart + 1) * dimension + (restart + 1) * restart) * itemsize
     return prod(problem.operator.batch_shape or (1,)) * per_problem
+
+
+_DERIVATIVE_RESTART = 30
+
+
+def _derivative_restart(
+    method: AbstractLinearMethod, maximum_steps: int, dimension: int, /
+) -> int:
+    """Restart length of the ``route="krylov"`` implicit derivative GMRES.
+
+    Native block methods run one unrestarted scalar GMRES per tangent column
+    under the derivative step limit. GMRES and FGMRES keep at least their
+    declared primal restart, so a system whose primal converges within that
+    Krylov basis is not differentiated with a shorter, stalling restart; the
+    planner already budgets that basis. Every other method restarts at 30.
+    """
+    if isinstance(method, (BlockCG, BlockGMRES)):
+        return min(maximum_steps, dimension)
+    if isinstance(method, (GMRES, FGMRES)):
+        return min(max(_DERIVATIVE_RESTART, method.restart), maximum_steps, dimension)
+    return min(_DERIVATIVE_RESTART, maximum_steps, dimension)
 
 
 def _recycling_state_bytes(

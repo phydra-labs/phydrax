@@ -15,6 +15,7 @@ from ._reconstruction import (
     evaluate_explicit_polygon_h1_reconstruction,
     evaluate_explicit_polygon_h1_trace,
     ExplicitPolygonH1Reconstruction,
+    prepare_explicit_polygon_h1_field_reconstruction,
     prepare_explicit_polygon_h1_reconstruction,
 )
 from ._space import (
@@ -47,5 +48,6 @@ __all__ = [
     "evaluate_explicit_polygon_h1_reconstruction",
     "evaluate_explicit_polygon_h1_trace",
     "explicit_polygon_h1_dirichlet_constraint",
+    "prepare_explicit_polygon_h1_field_reconstruction",
     "prepare_explicit_polygon_h1_reconstruction",
 ]

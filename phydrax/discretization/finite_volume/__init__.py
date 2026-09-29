@@ -411,6 +411,7 @@ from ._shallow_water_lowerings import (
     lower_triangle_unstructured_shallow_water,
     PreparedBalancedShallowWaterLowering,
 )
+from ._side_trace import PreparedNonlinearFaceTrace
 from ._small_cell import (
     ConservativeSmallCellRedistributionEvidence,
     ConservativeSmallCellRedistributionPlan,
@@ -668,6 +669,7 @@ __all__ = [
     "StructuredFiniteVolumeFieldReconstructionKernel",
     "UnstructuredFiniteVolumeFieldReconstructionKernel",
     "prepare_finite_volume_field_reconstruction",
+    "PreparedNonlinearFaceTrace",
     "PreparedTriangleFiniteVolumeDynamics",
     "TriangleFiniteVolumeBoundarySet",
     "TriangleFiniteVolumeDiagnostics",

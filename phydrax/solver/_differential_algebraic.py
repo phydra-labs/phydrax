@@ -1218,7 +1218,14 @@ class DAEReplayEvidence(StrictModule):
 
 
 class DAEContinuation(StrictModule):
-    """Exact accepted-history boundary state for segmented integration."""
+    """Exact accepted-history boundary state for segmented integration.
+
+    Besides the BDF history and step controller, it retains the complete
+    modified-Newton reuse state (Jacobian age, last shift, the iteration count
+    of the last accepted stage solve, and a pending forced refresh), so an
+    adaptive window continued from it makes the same reuse decisions as one
+    uninterrupted segment.
+    """
 
     time: Array
     states: Array
@@ -1231,6 +1238,8 @@ class DAEContinuation(StrictModule):
     proposed_step_size: Array
     jacobian_age: Array
     last_alpha: Array
+    last_nonlinear_iterations: Array
+    force_refresh: Array
     nonlinear_solve: PreparedNonlinearSolve | None
     problem_id: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
@@ -1256,6 +1265,8 @@ class DAEContinuation(StrictModule):
         proposed_step_size: Array,
         jacobian_age: Array,
         last_alpha: Array,
+        last_nonlinear_iterations: Array,
+        force_refresh: Array,
         nonlinear_solve: PreparedNonlinearSolve | None,
         problem_id: str,
         system_id: str,
@@ -1286,6 +1297,10 @@ class DAEContinuation(StrictModule):
         self.proposed_step_size = jnp.asarray(proposed_step_size)
         self.jacobian_age = jnp.asarray(jacobian_age, dtype=jnp.int32)
         self.last_alpha = jnp.asarray(last_alpha)
+        self.last_nonlinear_iterations = jnp.asarray(
+            last_nonlinear_iterations, dtype=jnp.int32
+        )
+        self.force_refresh = jnp.asarray(force_refresh, dtype=jnp.bool_)
         self.nonlinear_solve = nonlinear_solve
         self.problem_id = str(problem_id)
         self.input_policy_id = None if input_policy_id is None else str(input_policy_id)
@@ -2501,6 +2516,8 @@ def _solve_prepared(
         proposed_step_size=last_step,
         jacobian_age=jnp.asarray(0, dtype=jnp.int32),
         last_alpha=last_alpha,
+        last_nonlinear_iterations=jnp.asarray(0, dtype=jnp.int32),
+        force_refresh=jnp.asarray(False),
         nonlinear_solve=None,
         problem_id=problem.problem_id,
         input_policy_id=(
@@ -3239,6 +3256,8 @@ def _solve_prepared_events_primal(
         proposed_step_size=last_step,
         jacobian_age=jnp.asarray(0, dtype=jnp.int32),
         last_alpha=1.0 / jnp.maximum(last_step, jnp.finfo(dtype).tiny),
+        last_nonlinear_iterations=jnp.asarray(0, dtype=jnp.int32),
+        force_refresh=jnp.asarray(False),
         nonlinear_solve=None,
         problem_id=problem.problem_id,
         system_id=system.system_id,

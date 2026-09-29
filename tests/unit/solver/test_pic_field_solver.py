@@ -529,6 +529,15 @@ class _LeakySolver(phx.solver.AbstractPreparedPICFieldSolver):
     def gather_fields(self, *arguments: Any) -> Any:
         return self.inner.gather_fields(*arguments)
 
+    @property
+    def pic_configuration(self) -> str:
+        return "fault-injection"
+
+    def pic_capability(self, capability: Any, /) -> Any:
+        return phx.solver.PICCapabilityRecord.refusal(
+            capability, "The fault-injection solver publishes no optional protocol."
+        )
+
 
 def test_non_conserving_deposit_is_rejected_for_continuity() -> None:
     grid = _grid_1d(16, periodic=True)

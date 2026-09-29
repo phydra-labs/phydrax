@@ -384,6 +384,34 @@ collocation remain explicit term realizations.
 query samples can therefore have distinct supports, measures, and graph views without
 conflating sample coordinates with field DOFs.
 
+## Prepared field queries and side actions
+
+A `PreparedFieldReconstruction` evaluates one discrete field exactly (or, for
+the labeled virtual-element channels, a projection of it: see
+`PreparedFieldReconstruction.approximation`). Repeated observations at fixed
+points use `reconstruction.prepare_query(points, derivative=..., side=...,
+coverage=...)`, which locates the points once and returns a
+`PreparedFieldQuery`. The query keeps the owner route and the pointwise
+evidence of every requested point; `apply` reuses the route for any
+coefficient state, `transpose` is the owner's exact scatter, and
+`as_linear_operator` exposes the matrix-free query operator with declared
+coefficient and value pairings. Masked coverage admits only valid points and
+reports the rejected ones; complete coverage refuses them. Nonlinear
+reconstructions expose `linearize(coefficients)` instead of a transpose.
+
+Facet traces are prepared by the discretization that owns them.
+`prepare_side_trace(field_name, domain, rule=FacetTraceRule(...),
+quantity=..., side=...)` returns a `PreparedTraceAction` on the selected
+exterior or interior facets of an `IntegrationDomain`, with physical sites,
+facet measure weights, unit normals, support rows, and a
+`SideActionDescriptor` that records the quantity, orientation, geometry
+revision, and exactness. The action separates the primal trace, the coordinate
+dual pullback into residual rows, the measure-weighted load injection, and the
+Hilbert adjoint for a declared coefficient pairing. Conormal fluxes and
+imposition provenance belong to compiled physics owners (`PreparedFluxAction`,
+`BoundaryImposition`). See
+[Numerical interoperability](guides_numerical_interoperability.md).
+
 ## Refresh and adaptation
 
 Prepared objects may refresh numeric geometry or coefficients only when topology,

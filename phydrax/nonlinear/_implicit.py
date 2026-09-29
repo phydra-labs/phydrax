@@ -183,8 +183,13 @@ def _checked_root_state(
 
 
 def _stop_gradient(tree: Any, /) -> Any:
+    # Only inexact leaves carry tangents. Binding stop_gradient on a known
+    # boolean/integer partial-evaluation tracer lowers it to a Python scalar,
+    # which changes the leaf structure of carried solver state.
     return jax.tree.map(
-        lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
+        lambda value: (
+            jax.lax.stop_gradient(value) if eqx.is_inexact_array(value) else value
+        ),
         tree,
     )
 

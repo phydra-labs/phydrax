@@ -630,6 +630,56 @@ source ranges and destination ownership before injected range I/O.
 
 ::: phydrax.lifecycle.execute_direct_restore
 
+### Composition rebind transactions
+
+A running composition binds owner artifacts and owner state at one accepted
+boundary. Each `CompositionEntry` carries explicit structure, revision, and
+semantics identities; a `Composition` refuses unresolved or stale dependency
+bindings. `CompositionRebind` assigns every source entry exactly one disposition
+(retain, numeric refresh, topology reprepare, owner transport, or invalidate), and
+`commit_composition_rebind` publishes only at an accepted boundary with successful
+owner transports; otherwise the receipt keeps the original composition. State is
+never reprepared from nothing or zero-filled. See
+[Numerical interoperability](../guides_numerical_interoperability.md#lifecycle-adaptation-and-junctions).
+
+::: phydrax.lifecycle.CompositionEntry
+
+---
+
+::: phydrax.lifecycle.CompositionDependency
+
+---
+
+::: phydrax.lifecycle.Composition
+
+---
+
+::: phydrax.lifecycle.CompositionTransport
+
+---
+
+::: phydrax.lifecycle.CompositionRebind
+
+---
+
+::: phydrax.lifecycle.CompositionRebindReceipt
+
+---
+
+::: phydrax.lifecycle.commit_composition_rebind
+
+---
+
+::: phydrax.lifecycle.CompositionRole
+
+---
+
+::: phydrax.lifecycle.CompositionFacet
+
+---
+
+::: phydrax.lifecycle.CompositionTransportKind
+
 ## Service and security providers
 
 `InProcessReferenceService` is a synchronous reference implementation, not a network

@@ -130,6 +130,65 @@ linear solves are differentiable while topology and triangulation remain fixed.
 Self-intersection, triangle inversion, loss of the star witness, rank loss, and
 boundary selection are validity or discrete derivative boundaries.
 
+## Prepared projected channels, exact traces, and fluxes
+
+`phydrax.equations.vem.prepare_virtual_element_field_reconstruction(space,
+channel=...)` prepares one labeled interior channel as a
+`PreparedFieldReconstruction`: `"h1-projection"` evaluates the energy
+projection of scalar `ConformingH1` fields and `"l2-projection"` the (enhanced)
+L2 projection of every family, vector valued for H(div) and H(curl). The
+reconstruction's `approximation` is the channel, so projected interior values
+stay distinguishable from exact edge traces. Points are located in the
+star-kernel witness fans of the cells; the route is linear in the DOFs
+(projection coefficients, oriented local DOFs, scaled monomials) and is reused
+for every coefficient refresh. Projections are discontinuous across cells, so
+points on shared edges need a bound trace side.
+
+`VirtualElementDiscretization.prepare_side_trace(field, domain, rule=...)`
+publishes the exact edge trace of the virtual field itself (`trace_degree=k`):
+the value trace of `ConformingH1` (Lagrange on the Gauss--Lobatto edge nodes),
+the normal trace of `ConformingHdiv`, and the tangential trace of
+`ConformingHcurl` (Legendre moment DOFs with their dual scaling). Normal and
+tangential traces are `"outward"` relative to the side cell: the trace
+`normals` point out of that cell and the tangent is its counter-clockwise edge
+direction. Discontinuous L2 fields have no boundary trace, and a quantity that
+is not the family's trace is refused. `VirtualElementSpec.edge_trace_basis`
+and `VirtualElementDiscretization.edge_trace_routes` are the shared edge basis
+and DOF routes of these traces, of `evaluate_virtual_element_trace`, and of
+compiled boundary terms.
+
+A compiled problem publishes its physics-owned side quantities:
+
+- `prepare_conormal_flux(trace)` is the exact-edge multiplier: the full weak
+  residual restricted to the trace's support rows (exterior facets, scalar
+  `ConformingH1`, `approximation="variational-reaction"`);
+- `prepare_projected_flux(trace)` evaluates `kappa grad(Pi^nabla u) . n` at the
+  trace sites from the side cell with the form's scalar or tensor diffusivity,
+  labeled `approximation="h1-projection"`; it is exact for polynomial fields of
+  degree `k`;
+- `boundary_impositions()` reports the strong Dirichlet rows, then natural
+  boundary loads and Robin facets in form order.
+
+```python
+from phydrax.discretization import FacetTraceRule
+from phydrax.equations.vem import prepare_virtual_element_field_reconstruction
+
+interior = prepare_virtual_element_field_reconstruction(space, channel="h1-projection")
+projected = interior.prepare_query(points).apply(full_solution)
+trace = space.prepare_side_trace(
+    "u", space.exterior_facet_domain, rule=FacetTraceRule(points=4)
+)
+reaction = compiled.prepare_conormal_flux(trace).evaluate(full_solution)
+```
+
+`VirtualElementDiscretization.integration_domain("exterior_facet",
+EntitySelection(space.mesh.topology.entity_sets[1], mask))` selects the edges
+of an interface. `phydrax.solver.coupling.VariationalComponent` publishes a
+compiled scalar `ConformingH1` problem, with its exact edge traces and reaction
+flux, to spatial coupled assembly; `examples/coupled_scalar_regions.py` couples
+a polygon region to a finite-element region through a nonmatching mortar. See
+[Spatial coupled problems](guides_numerical_interoperability.md#spatial-coupled-problems).
+
 ## Extended bounded envelope
 
 Polynomial degree is any positive static value that fits

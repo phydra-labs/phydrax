@@ -165,6 +165,95 @@ remain visible evidence; it is not labeled an exact Ewald sum.
 
 ---
 
+The two-dimensional Galerkin owner publishes fixed-geometry derivative
+capabilities: `ScalarLaplaceGalerkin2D.derivative_capability` admits the
+`dirichlet`, `conormal`, and `far_field_constant` inputs of its linear actions,
+and `PreparedExteriorLaplaceDirichlet2D.derivative_capability` admits the
+Dirichlet data of the bordered exterior solve under `rhs-only`.
+`ExteriorLaplaceDirichletResult2D.derivative_valid` is reported separately from
+`accepted`. Geometry, kernel, quadrature, and field-target derivatives are
+refused.
+
+::: phydrax.operators.ClosedPolygonalCurve2D
+
+---
+
+::: phydrax.operators.CurveTraversal2D
+
+---
+
+::: phydrax.operators.ScalarTraceConvention2D
+
+---
+
+::: phydrax.operators.ScalarTraceSide2D
+
+---
+
+::: phydrax.operators.BoundaryTraceSpace2D
+
+---
+
+::: phydrax.operators.BoundaryTraceRepresentation2D
+
+---
+
+::: phydrax.operators.ScalarBoundarySpaces2D
+
+---
+
+::: phydrax.operators.ScalarLaplaceGalerkinPolicy2D
+
+---
+
+::: phydrax.operators.ScalarLaplaceGalerkinReport2D
+
+---
+
+::: phydrax.operators.ScalarLaplaceGalerkin2D
+
+---
+
+::: phydrax.operators.prepare_scalar_laplace_galerkin_2d
+
+---
+
+::: phydrax.operators.ScalarLaplaceFieldEvaluation2D
+
+---
+
+::: phydrax.operators.PreparedExteriorLaplaceDirichlet2D
+
+---
+
+::: phydrax.operators.ExteriorFarField2D
+
+---
+
+::: phydrax.operators.ExteriorLaplaceDirichletResult2D
+
+---
+
+::: phydrax.operators.prepare_exterior_laplace_dirichlet_2d
+
+---
+
+::: phydrax.operators.solve_exterior_laplace_dirichlet_2d
+
+---
+
+::: phydrax.operators.BoundaryTraceProjection2D
+
+---
+
+::: phydrax.operators.TraceProjectionResult2D
+
+---
+
+::: phydrax.operators.prepare_boundary_trace_projection_2d
+
+---
+
 ::: phydrax.operators.AbstractLayerBackend
 
 ---

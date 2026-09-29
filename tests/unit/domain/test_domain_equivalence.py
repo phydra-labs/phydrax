@@ -5,6 +5,7 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import meshio
 import numpy as np
@@ -13,6 +14,7 @@ import pytest
 import phydrax as phx
 from phydrax.domain import (
     DatasetDomain,
+    HyperRectangle,
     Interval1d,
     ProductDomain,
     TimeInterval,
@@ -59,6 +61,33 @@ def test_domain_equivalence_scenario_1() -> None:
     data3 = {"a": jnp.zeros((4, 3), dtype="float64")}
     dom5 = DatasetDomain(data3, label="data", measure="probability")
     assert not dom1.same_support(dom5)
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: HyperRectangle(np.zeros(2), np.ones(2)),
+        lambda: Interval1d(0.0, 1.0),
+        lambda: TimeInterval(0.0, 1.0),
+    ],
+    ids=("hyperrectangle", "interval1d", "scalar-interval"),
+)
+def test_traced_support_is_decided_by_identity_never_by_traced_values(
+    make: Any,
+) -> None:
+    first, copy = make(), make()
+    decisions = []
+
+    @eqx.filter_jit
+    def stage(factor: Any, other: Any) -> Any:
+        decisions.append(factor.same_support(factor))
+        with pytest.raises(ValueError, match="support-defining values are traced"):
+            factor.same_support(other)
+        return jnp.zeros(())
+
+    stage(first, copy)
+    assert decisions == [True]
+    assert first.same_support(copy)
 
 
 def test_domain_equivalence_scenario_2() -> None:

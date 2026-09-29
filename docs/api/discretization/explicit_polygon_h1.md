@@ -63,3 +63,11 @@
 ---
 
 ::: phydrax.discretization.evaluate_explicit_polygon_h1_trace
+
+## Prepared queries and side traces
+
+::: phydrax.discretization.explicit_polygon_h1.prepare_explicit_polygon_h1_field_reconstruction
+
+---
+
+::: phydrax.discretization.ExplicitPolygonH1Discretization.prepare_side_trace

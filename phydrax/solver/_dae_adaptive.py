@@ -637,6 +637,8 @@ def _adaptive_primal(
         proposed_step = initial_step
         jacobian_age = jnp.asarray(0, dtype=jnp.int32)
         last_alpha = 1.0 / initial_step
+        last_nonlinear_iterations = jnp.asarray(0, dtype=jnp.int32)
+        force_refresh = jnp.asarray(False)
         retained_nonlinear = prepared.stage_solve
         initial_terminal = jnp.where(
             initialization.valid,
@@ -666,6 +668,8 @@ def _adaptive_primal(
         proposed_step = continuation.proposed_step_size
         jacobian_age = continuation.jacobian_age
         last_alpha = continuation.last_alpha
+        last_nonlinear_iterations = continuation.last_nonlinear_iterations
+        force_refresh = continuation.force_refresh
         _, stage_static = eqx.partition(prepared.stage_solve, eqx.is_array)
         retained_nonlinear = eqx.combine(continuation.nonlinear_solve, stage_static)
         initial_terminal = jnp.where(
@@ -717,8 +721,8 @@ def _adaptive_primal(
         consecutive_rejections=jnp.asarray(0, dtype=jnp.int32),
         jacobian_age=jacobian_age,
         last_alpha=last_alpha,
-        last_nonlinear_iterations=jnp.asarray(0, dtype=jnp.int32),
-        force_refresh=jnp.asarray(False),
+        last_nonlinear_iterations=last_nonlinear_iterations,
+        force_refresh=force_refresh,
         terminal_status=initial_terminal,
         retained_nonlinear=retained_dynamic,
         nodes=nodes,
@@ -1349,6 +1353,8 @@ def _adaptive_primal(
         proposed_step_size=carry.proposed_step_size,
         jacobian_age=carry.jacobian_age,
         last_alpha=carry.last_alpha,
+        last_nonlinear_iterations=carry.last_nonlinear_iterations,
+        force_refresh=carry.force_refresh,
         nonlinear_solve=carry.retained_nonlinear,
         problem_id=problem.problem_id,
         system_id=system.system_id,

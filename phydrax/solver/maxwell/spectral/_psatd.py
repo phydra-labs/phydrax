@@ -80,8 +80,10 @@ from ..._maxwell_far_field import (
 from ..._maxwell_observers import DFTObserverState, MaxwellSpectralAcquisition
 from ..._pic_field_solver import (
     AbstractPreparedPICFieldSolver,
+    PICCapabilityRecord,
     PICFieldAdvance,
     PICFieldDeposit,
+    PICFieldSolverCapability,
     PICGaussProjectionResult,
     PICRestartComponent,
     restart_component,
@@ -1480,11 +1482,101 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
             }
         )
 
+    @property
+    def pic_configuration(self) -> str:
+        return f"psatd-{self.plan.decomposition}"
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        route, refusal = PICCapabilityRecord.route, PICCapabilityRecord.refusal
+        match capability:
+            case "spectral-symbol":
+                return route(
+                    capability,
+                    "Vacuum ω = c|[k]| of the declared stencil"
+                    + (
+                        "; local-guarded steps differ from it by at most "
+                        "guard_truncation(dt)."
+                        if self.plan.decomposition == "local-guarded"
+                        else "."
+                    ),
+                )
+            case "huygens-sampling":
+                if not self.huygens:
+                    return refusal(
+                        capability,
+                        "No SpectralHuygensBoxPlan observers are declared, so no "
+                        "phasors exist.",
+                        published=True,
+                    )
+                return route(
+                    capability,
+                    f"Phasors of {len(self.huygens)} SpectralHuygensBoxPlan observers "
+                    "(standard variant, staggered grid, no antennas).",
+                )
+            case "multi-deposit":
+                return route(
+                    capability, "Every species' Esirkepov current in one source."
+                )
+            case "galilean-grid":
+                if self.plan.variant == "standard":
+                    return refusal(
+                        capability,
+                        "The standard variant's grid is lab-fixed; Galilean "
+                        "coordinates need variant='galilean' or 'averaged-galilean' "
+                        "with a galilean_velocity.",
+                        published=True,
+                    )
+                return route(
+                    capability,
+                    f"Grid velocity {self.plan.galilean_velocity} ({self.plan.variant}).",
+                )
+            case "restart-state":
+                return route(
+                    capability,
+                    "Fields, charge, PML split fields, averaged fields, and observer "
+                    "memory, admitted by solver identity.",
+                )
+            case "gauss-projection":
+                return route(
+                    capability,
+                    "Spectral Poisson projection on the global transform "
+                    "(spectral-poisson).",
+                )
+            case "tensor-layout":
+                return refusal(
+                    capability,
+                    "Spectral fields declare no local mirror-parity tensor layout.",
+                )
+            case "window-shift" | "open-domain":
+                return refusal(
+                    capability,
+                    "The Cartesian PSATD box is periodic on every axis; absorbing "
+                    "layers lie inside it.",
+                )
+            case "energy-accounting":
+                return refusal(
+                    capability,
+                    "The ledger uses the total field energy; PML absorption is "
+                    "reported as absorbed_energy.",
+                )
+            case "relativistic-self-fields":
+                return refusal(
+                    capability,
+                    "Boosted-Coulomb initialization is a cochain capability.",
+                )
+            case _:
+                assert_never(capability)
+
     # -- geometry and core protocol ------------------------------------------------
 
     @property
     def grid_velocity(self) -> tuple[float, ...]:
         """Velocity of the Galilean grid; particle positions are grid coordinates."""
+        record = self.pic_capability("galilean-grid")
+        if not record.admitted:
+            raise ValueError(record.basis)
         return self.plan.galilean_velocity
 
     @property
@@ -2602,6 +2694,9 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
     def huygens_phasors(
         self, field: SpectralMaxwellState, /
     ) -> tuple[HuygensSurfacePhasors, ...]:
+        record = self.pic_capability("huygens-sampling")
+        if not record.admitted:
+            raise ValueError(record.basis)
         return tuple(
             box.surface_phasors(state)
             for box, state in zip(self.huygens, field.observations, strict=True)

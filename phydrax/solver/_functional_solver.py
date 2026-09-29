@@ -51,6 +51,11 @@ from ..operators.differential._requests import (
     trace_derivative_requests,
 )
 from ..optim._evolution_strategy import AbstractDistributionEvolutionMethod
+from ..optim._iterative import (
+    AbstractCompositeLeastSquaresMethod,
+    AbstractLeastSquaresMethod,
+    AbstractScalarIterativeMethod,
+)
 from ..optim._kfac._config import KFAC
 from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import AbstractRiemannianOptimizer
@@ -474,6 +479,9 @@ class FunctionalSolver(StrictModule):
         | KFAC
         | AbstractMirrorOptimizer
         | AbstractRiemannianOptimizer
+        | AbstractCompositeLeastSquaresMethod
+        | AbstractLeastSquaresMethod
+        | AbstractScalarIterativeMethod
         | None = None,
         evaluation_parameters: EvaluationParametersFn | None = None,
         target_policy: DelayedTargetPolicy

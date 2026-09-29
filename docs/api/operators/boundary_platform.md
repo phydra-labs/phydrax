@@ -97,11 +97,38 @@ preflights never become implicit fallback dispatches.
 
 ## Coupled and vector physics
 
+The matching FEM–BEM products publish an owner derivative capability
+(`derivative_capability`, a `phydrax.OwnerDerivativeCapability`) on the prepared
+product and on every result, and a per-result `derivative_valid` flag separate
+from primal `valid`. The linear policy's differentiation mode selects the route
+at preparation; see the derivative support table in
+[Boundary platform qualification](../../guides_boundary_platform.md#derivative-support).
+The scalar product admits the volume source and DP0 transmission jumps under
+`rhs-only`, and additionally the per-cell interior `conductivity` under
+`mathematical`; the elasticity product admits its interior and boundary loads
+under `rhs-only` only. Geometry, kernel, and quadrature derivatives are refused.
+
 ::: phydrax.solver.prepare_scalar_laplace_fem_bem_3d
 
 ---
 
+::: phydrax.solver.solve_scalar_laplace_fem_bem_3d
+
+---
+
+::: phydrax.solver.PreparedScalarLaplaceFEMBEM3D
+
+---
+
+::: phydrax.solver.ScalarLaplaceFEMBEMResult3D
+
+---
+
 ::: phydrax.solver.prepare_elasticity_fem_bem_3d
+
+---
+
+::: phydrax.solver.solve_elasticity_fem_bem_3d
 
 ---
 

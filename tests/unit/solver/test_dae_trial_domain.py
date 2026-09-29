@@ -175,6 +175,115 @@ def test_native_setup_actions_cover_initialization_stage_event_and_replay() -> N
     assert jnp.allclose(gradient, tangent, atol=1e-7)
 
 
+def _coupled_residual(time: Any, state: Any, rate: Any, args: Any) -> Any:
+    del time, args
+    return jnp.asarray([rate[0] + state[0] - state[1], state[1] - 2.0 * state[0]])
+
+
+def _mapped_stage_setup(permuted: bool) -> Any:
+    """Named ``[[shift + 1, -1], [-2, 1]]`` blocks on identity or permuted maps."""
+    la = phx.linalg
+
+    def setup(unknown: Any, arguments: Any, source: Any, target: Any) -> Any:
+        del unknown
+        spaces = {
+            name: la.ArraySpace((1,), dtype=jnp.float64, space_id=name)
+            for name in ("x", "y", "diff", "alg")
+        }
+        entries = {
+            ("diff", "x"): arguments.shift + 1.0,
+            ("diff", "y"): -1.0,
+            ("alg", "x"): -2.0,
+            ("alg", "y"): 1.0,
+        }
+        columns = ("y", "x") if permuted else ("x", "y")
+        rows = ("alg", "diff") if permuted else ("diff", "alg")
+        native = {"x": (0, 1), "y": (1, 2), "diff": (0, 1), "alg": (1, 2)}
+
+        def selection(space: Any, names: tuple[str, str]) -> Any:
+            return la.BlockSelection(
+                space,
+                tuple(
+                    (name, la.CoordinateBlock(spaces[name], (native[name],)))
+                    for name in names
+                ),
+            )
+
+        column_map, row_map = selection(source, columns), selection(target, rows)
+        block = la.assemble_block_operator(
+            tuple(
+                (
+                    (row,),
+                    (column,),
+                    la.DenseLinearOperator(
+                        jnp.reshape(jnp.asarray(entries[(row, column)]), (1, 1)),
+                        source=spaces[column],
+                        target=spaces[row],
+                    ),
+                )
+                for row in rows
+                for column in columns
+            ),
+            source=column_map.target,
+            target=row_map.target,
+        )
+        return la.MappedBlockLinearOperator(block, row_map=row_map, column_map=column_map)
+
+    return setup
+
+
+def test_permuted_mapped_stage_setup_is_bound_as_the_stage_matrix() -> None:
+    def dense(unknown: Any, arguments: Any, source: Any, target: Any) -> Any:
+        del unknown
+        matrix = jnp.asarray([[arguments.shift + 1.0, -1.0], [-2.0, 1.0]])
+        return phx.linalg.DenseLinearOperator(matrix, source=source, target=target)
+
+    def system(setup: Any) -> Any:
+        return phx.dynamics.DifferentialAlgebraicSystem(
+            _coupled_residual,
+            state_shape=(2,),
+            structure=phx.dynamics.DAEStructure(("differential", "algebraic")),
+            stage_linear_setup=setup,
+            system_id="mapped-setup",
+        )
+
+    linear = phx.linalg.LinearSolvePolicy(
+        phx.linalg.FGMRES(restart=2),
+        tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=1e-14, max_steps=8),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.JacobiPreconditionerBuilder()
+        ),
+        materialization=phx.linalg.MaterializationPolicy(max_entries=1, max_bytes=8),
+    )
+    prepared = phx.solver.prepare_dae(
+        phx.solver.DifferentialAlgebraicProblem(
+            system(dense),
+            jnp.asarray([1.0, 2.0]),
+            initial_state_rate=jnp.asarray([1.0, 0.0]),
+        ),
+        phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.5, 3), time_id="mapped-setups"),
+        policy=phx.solver.DAESolvePolicy(
+            nonlinear_method=phx.nonlinear.NewtonKrylov(linear_policy=linear)
+        ),
+    )
+    arguments = prepared.stage_solve.args
+    source = prepared.stage_problem.state_space
+    target = prepared.stage_problem.residual_space
+    increment = jnp.asarray([0.25, -0.5])
+    # Independent reference: the native residual Jacobian of the stage root.
+    reference = jax.jacfwd(
+        lambda value: prepared.stage_problem.residual(value, arguments)
+    )(increment)
+    setup = system(_mapped_stage_setup(permuted=True)).stage_linear_setup
+    assert setup is not None
+    # Permuted named maps on an active-flagged stage root were refused before.
+    operator = setup(increment, arguments, source, target)
+    materialized = phx.linalg.materialize(
+        operator, phx.linalg.MaterializationPolicy(max_entries=4, max_bytes=32)
+    )
+    assert jnp.allclose(materialized, reference, rtol=1e-12, atol=1e-12)
+
+
 def test_dae_trial_domain_scenario_2() -> None:
     from phydrax.solver._dae_events import _DAEEventRootResidual
 

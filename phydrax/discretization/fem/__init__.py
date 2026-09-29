@@ -223,6 +223,7 @@ from ._point_interpolation import (
     FiniteElementFieldReconstructionKernel,
     prepare_finite_element_field_reconstruction,
     prepare_finite_element_point_interpolation,
+    prepare_finite_element_side_trace,
     PreparedFiniteElementPointInterpolation,
 )
 from ._precision import FiniteElementPrecisionPolicy
@@ -246,6 +247,7 @@ from ._reference_operator import (
     FiniteElementFacetReference,
     FiniteElementReferenceReport,
     PreparedFiniteElementReference,
+    reference_facet_embedding,
     ReferenceAction,
 )
 from ._rigid_coupling import (
@@ -529,6 +531,7 @@ __all__ = [
     "prepare_finite_element_field_reconstruction",
     "prepare_finite_element_hp_epoch",
     "prepare_finite_element_point_interpolation",
+    "prepare_finite_element_side_trace",
     "prepare_gradient_recovery",
     "prepare_l2_projection_target",
     "prepare_l2_projection_transfer",
@@ -544,6 +547,7 @@ __all__ = [
     "recover_gradient",
     "recover_hessian",
     "recovery_error_estimate",
+    "reference_facet_embedding",
     "refine_anisotropic_hp_cells",
     "refine_tensor_hp_cells",
     "refresh_l2_projection_target",

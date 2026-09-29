@@ -16,7 +16,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, DenseLinearOperator
-from ._rwg import RWGSurfaceCurrentSpace3D
+from .._boundary_trace_space import (
+    boundary_geometry_revision,
+    BoundaryTraceSpaceCapability,
+    sparse_gram_trace_space,
+)
+from ._rwg import rwg_gram_entries, RWGSurfaceCurrentSpace3D
 from ._surface_complex import OrientedTriangleSurfaceComplex3D
 
 
@@ -54,6 +59,47 @@ class BuffaChristiansenDualSpace3D(StrictModule, NonTrainableState):
         values = self.validate(coefficients)
         return contract("re,e->r", self.barycentric_transform, values)
 
+    def trace_capability(
+        self, /, *, gram_tolerance: float = 1.0e-13
+    ) -> BoundaryTraceSpaceCapability:
+        """Publish the BC dual-current trace space with its area Gram pairing.
+
+        BC functions are exact combinations `T` of barycentric RWGs, so their
+        Gram map is `Tᵀ G T` with the exact barycentric RWG Gram map `G`. The
+        duality with the primal RWG currents is the separate rotated
+        `cross_mass`, not this Gram map.
+        """
+        targets, sources, values = rwg_gram_entries(self.barycentric_surface)
+        transform = np.asarray(self.barycentric_transform, dtype=np.float64)
+        applied = np.zeros_like(transform)
+        np.add.at(applied, targets, values[:, None] * transform[sources])
+        gram = transform.T @ applied
+        gram = 0.5 * (gram + gram.T)
+        rows, columns = np.nonzero(gram)
+        gram_space, mass = sparse_gram_trace_space(
+            rows.astype(np.int32),
+            columns.astype(np.int32),
+            gram[rows, columns],
+            size=self.size,
+            dtype=self.vector_space.dtype,
+            space_id=canonical_fingerprint(
+                {"kind": "bc-dual-current-trace-space-3d", "space": self.space_id}
+            ),
+            gram_tolerance=gram_tolerance,
+        )
+        return BoundaryTraceSpaceCapability(
+            owner_id=self.space_id,
+            quantity="surface-current-dual",
+            representation="buffa-christiansen",
+            coefficient_space=self.vector_space,
+            gram_space=gram_space,
+            mass=mass,
+            ambient_dimension=3,
+            revision_id=boundary_geometry_revision(
+                self.primal.surface.vertices, self.primal.surface.triangles
+            ),
+        )
+
 
 def _barycentric_refinement(
     surface: OrientedTriangleSurfaceComplex3D, /
@@ -72,7 +118,7 @@ def _barycentric_refinement(
     parent_faces = np.repeat(np.arange(surface.face_count, dtype=np.int32), 6)
     for face_id, face in enumerate(faces.tolist()):
         a, b, c = (int(value) for value in face)
-        ab, bc, ca = (int(value) for value in face_edges[face_id].tolist())
+        ab, bc, ca = (vertex_count + int(value) for value in face_edges[face_id].tolist())
         centroid = vertex_count + edge_count + face_id
         refined_faces[6 * face_id : 6 * face_id + 6] = (
             (a, ab, centroid),

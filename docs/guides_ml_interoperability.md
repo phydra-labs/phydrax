@@ -720,8 +720,83 @@ else:
     raise AssertionError("an accelerator has no solution-map signal")
 ```
 
+Coupled spatial problems use the same frontend. A learned physical input of a
+prepared coupled problem, such as a conductivity field, is bound as the value of
+a `phydrax.solver.coupling.ParameterBinding`. The value is a
+`ComponentBinding` with `MODEL` or `DISCRETIZATION` authority whose owner output
+ports publish the parameter's `ValuePort`, and the owner evaluates the bound
+model in its coefficient callable. Accelerator, surrogate, and decision
+components are refused as parameter values because they would change the
+accepted equations. A `SolverObjective` differentiates the accepted coupled
+solution implicitly through the problem's `derivative_capability`, and its
+`measure` compares `solution.observation(...)` with prepared data through
+`MeasurementComparisonPlan` or an explicit reference weighting. A preconditioner
+or initial guess of the same solve is an accelerator: a `SolverObjective`
+refuses it, and it trains through an `AlgorithmicWorkObjective` whose `measure`
+runs exactly `work` Krylov steps with `DifferentiationPolicy("algorithmic")` and
+zero tolerances. A learned right preconditioner subclasses
+`phx.linalg.AbstractPreconditioner` over `prepared.state_space` and enters
+production solves through `PreconditioningPolicy`; a `LearnedInitialGuess`
+provider passed as `solve_coupled_problem(..., initial_state=provider)` is used
+only when it strictly reduces the original residual, and
+`CoupledSolution.initial_guess` reports that decision. Either way acceptance
+certifies the original equations, so the accepted solution does not depend on
+the accelerator. See
+[Inverse problems and learned components](guides_numerical_interoperability.md#inverse-problems-and-learned-components),
+`examples/coupled_inverse_problem.py`, and
+`examples/coupled_learned_interface.py`.
+
 See [API → Solver objectives and component training](api/solver/component_training.md)
 and [API → Authority and objectives](api/differentiation.md#authority-and-objectives).
+
+## Hybrid PINN and classical owners
+
+A physics-informed network that shares an interface with a classical owner keeps
+its `SURROGATE` binding. Its training signals are the ones that authority
+admits:
+
+- **Direct physical residuals.** `FunctionalSolver` trains the network on its
+  own region's residuals, including an interface condition whose value may be a
+  fixed numerical field of the classical owner (a
+  `phx.discretization.DiscreteFieldFunctionView` of the accepted coefficients,
+  read at the interface sites with valid query evidence; the network declares
+  the view's value port, see [Ports](#ports)).
+- **Accepted classical responses.** A classical owner that consumes the network
+  (for example as a boundary heat-flux load) is a `phx.optim.StateDesignProblem`
+  whose design is the network's PARAMETER lane.
+  `phx.optim.StateDesignComponentAdmission(binding, kind=phx.ObjectiveKind.PHYSICAL_RESIDUAL,
+  surfaces=(phx.DerivativeSurface.INPUT, phx.DerivativeSurface.MODEL_PARAMETER))`
+  admits that lane through the model's own derivative contract and direct route;
+  `prepare_state_design_linearization(..., component=admission)` and
+  `state_design_response_vjp` return the response's design cotangent beside
+  separate accepted-primal and accepted-adjoint evidence.
+
+The owner's accepted response does not widen the surrogate's authority. A
+`SOLUTION_MAP` admission of the same binding is refused, and so is a
+`phx.solver.SolverObjective`, whose implicit solution-map signal the surrogate
+does not admit:
+
+```python executable
+surrogate = phx.bind_component(network, phx.ComponentAuthority.SURROGATE)
+admission = phx.optim.StateDesignComponentAdmission(
+    surrogate,
+    kind=phx.ObjectiveKind.PHYSICAL_RESIDUAL,
+    surfaces=(phx.DerivativeSurface.INPUT, phx.DerivativeSurface.MODEL_PARAMETER),
+)
+assert admission.authority is phx.ComponentAuthority.SURROGATE
+assert admission.route is phx.DerivativeRoute.DIRECT
+try:
+    phx.optim.StateDesignComponentAdmission(
+        surrogate, kind=phx.ObjectiveKind.SOLUTION_MAP
+    )
+except ValueError as error:
+    assert "solution-map" in str(error)
+else:
+    raise AssertionError("a surrogate never supplies a solution-map design")
+```
+
+See [Hybrid PINN and classical responses](guides_numerical_interoperability.md#hybrid-pinn-and-classical-responses)
+and `examples/hybrid_pinn_classical.py`.
 
 ## Proposals vs authoritative results
 

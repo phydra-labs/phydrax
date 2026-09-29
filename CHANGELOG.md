@@ -3,6 +3,110 @@
 ## Unreleased
 
 ### Added
+- Numerical interoperability across methods and pipelines
+  (`docs/guides_numerical_interoperability.md`). Existing scientific owners
+  stay authoritative; prepared bindings connect them.
+  - Interface bindings: `phydrax.meshing.MeshInterfaceAttachment`
+    (certified `GeometryAssociation` witness and B-Rep normal side),
+    `MeshAssembly.require_attachment`, `GeometryAssociation.target_rows`,
+    `SubdomainCover.revision`, and `phydrax.solver.coupling.InterfaceBinding`,
+    `InterfaceEndpoint`, `InterfaceSource`, `PairedSupportAttachment`,
+    `SheetViewAttachment`, `InterfaceIncidence`, `EmbeddedMeaning` for
+    two-sided, junction, overlap and embedded incidences with revision,
+    orientation and witness checks.
+  - Prepared field queries and side actions: `PreparedFieldQuery`
+    (`PreparedFieldReconstruction.prepare_query`), `PreparedTraceAction`,
+    `PreparedFluxAction`, `SideActionDescriptor`, `SideGatherRoute`,
+    `BoundaryImposition`, `PreparedNonlinearFaceTrace`, with providers for
+    FE/SEM, explicit polygon H1, VEM (exact edge traces versus labeled
+    projected interiors), IGA (`iga.prepare_isogeometric_field_reconstruction`,
+    public-layout side traces), FD/SBP (`SBPGridNorm`, `SBPClosureEvidence`,
+    `SBPNormKind`, `SBPNormLayout`), global spectral (`SpectralFaceRoute`),
+    finite volumes (cell-average and face-state representations) and point
+    clouds; boundary trace-space capabilities `BoundaryTraceSpaceCapability`
+    and `CauchyTraceCapability` for 2-D/3-D scalar Galerkin, RWG and
+    Buffa–Christiansen spaces.
+  - Native 2-D Laplace Galerkin boundary operator on closed straight-panel
+    polygons: `ClosedPolygonalCurve2D`, `prepare_scalar_laplace_galerkin_2d`
+    (weak V and K, P1/DP0 trace spaces, exterior relation, per-class
+    singular quadrature evidence), `prepare_exterior_laplace_dirichlet_2d`,
+    `solve_exterior_laplace_dirichlet_2d`,
+    `prepare_boundary_trace_projection_2d`.
+  - Spatial coupled problems in `phydrax.solver.coupling`:
+    `CoupledProblemPlan`, `prepare_coupled_problem`,
+    `PreparedCoupledProblem`, `solve_coupled_problem`, `CoupledSolution`
+    (original component residuals and interface defects certified; native,
+    accepted and derivative validity reported separately);
+    `VariationalComponent`, `GalerkinBoundaryComponent` (declared
+    `far_field="bounded"|"decaying"`), `ReducedComponent`,
+    `ScalarLaplaceFEMBEMComponent`, `ElasticityFEMBEMComponent`;
+    `ScalarTransmissionLaw` with `MatchingElimination`, `MortarImposition`
+    and `NitscheImposition` (certified trace-inverse constants via
+    `certify_trace_inverse`, `CompiledFiniteElementProblem.prepare_pointwise_flux`
+    and `certify_flux_stability`); `BoundaryIntegralTransmissionLaw`
+    (bordered Johnson–Nédélec); `ConservativeFluxLaw`, `IntegralPortLaw`,
+    `FieldTransferLaw`, `MonotoneInterfaceConductance`; exact 2-D common
+    refinement `prepare_interface_quadrature`; coupled kernel detection
+    through law-owned unknowns with `CoupledGauge`.
+  - Spectral-element, virtual-element and boundary-element transmission in
+    one coupled solve (`examples/sem_vem_bem_transmission.py`) with FE,
+    polygon and IGA substitutions under the same law.
+  - Parameters, observations and derivatives: `ParameterBinding`,
+    `RuntimeInput`, `FieldPointObservation`, `FieldBoundaryObservation`,
+    `FieldFluxObservation`, `PreparedCoupledProblem.bind_arguments` and
+    `derivative_capability`, `phydrax.OwnerDerivativeCapability`; exact RHS,
+    boundary-data and coefficient derivative routes for the 3-D scalar and
+    elasticity FEM–BEM products and the 2-D exterior solve.
+  - Temporal coupling: `CouplingMeasurement` inventory functionals,
+    `CouplingTemporalConversion`, native participants
+    `FixedStepCouplingParticipant`, `DAECouplingParticipant`,
+    `SteadyResponseCouplingParticipant`, `PartitionedCouplingDeclaration`,
+    `lower_partitioned_coupling`, `CouplingStatus.UNRELIABLE_ERROR_ESTIMATE`,
+    `FixedPointProblem(evaluation_work=True)` and
+    `NonlinearResult.evaluation_work`; host execution for FMI participants
+    (`prepare_host_coupling`, `advance_host_coupling_window`,
+    `solve_host_coupling`, FMI2 `FMICouplingBinding`,
+    `FMICouplingParticipant`, `FMIVariableBinding`, `FMIUnit`,
+    `fmi_unit_definition`).
+  - Block coordinates and transient systems: `BlockSelection`,
+    `CoordinateBlock`, `BlockRestrictionLinearOperator`,
+    `BlockProlongationLinearOperator`, `MappedBlockLinearOperator`,
+    `select_block_operator`, `assemble_block_operator`,
+    `phydrax.solver.DAECoordinateAdapter`, exact static condensation and
+    coupled transient problems.
+  - Consumers: `prepare_coupled_transition`, `PreparedCoupledTransition`,
+    `CoupledObservationPort`, `phydrax.stochastic.CoupledTransitionKernel`,
+    `phydrax.optim.StateDesignComponentAdmission`.
+  - Lifecycle: `phydrax.lifecycle` composition rebind transaction
+    (`Composition`, `CompositionEntry`, `CompositionTransport`,
+    `CompositionRebind`, `commit_composition_rebind`) with owner hooks for
+    FE, FV, topology epochs, coupling, restart, distribution, training and
+    worksets; `PreparedPlateauBorder.reprepare_after_events`,
+    `multiregion_topology_epoch`.
+  - Execution: bounded coupled lane worksets (`CoupledExecutionPolicy`,
+    `PreparedCoupledExecution`, `LaneWorkset`, `LaneWorksetEstimate`);
+    PIC capability records (`PICFieldSolverCapability`,
+    `PICCapabilityRecord`, `PICFieldSolverCapabilities`),
+    `pic_distribution_support`, `hand_off_pic_state`.
+  - Declared implicit derivative route
+    `LinearDerivativeSolvePolicy(route="primal-factors")`
+    (`DerivativeSolveRoute`): tangent and adjoint solves reuse the primal
+    DenseLU/DenseCholesky factors with residual acceptance; the default
+    `"krylov"` route is unchanged.
+  - Measurement noise: `restrict_observation_covariance`,
+    `MeasurementNoiseModel`, `MeasurementWhitening`.
+  - Qualification runner `tools/numerical_interoperability_qualification.py`
+    and benchmark `benchmarks/numerical_interoperability.py`.
+  - Examples: `numerical_interface_binding`, `prepared_field_observations`,
+    `exterior_laplace_galerkin`, `coupled_scalar_regions`,
+    `nitsche_transmission`, `sem_vem_bem_transmission`,
+    `coupled_inverse_problem`, `coupled_learned_interface`,
+    `mixed_method_time_coupling`, `named_block_dae`,
+    `coupled_transient_fields`, `coupled_control`,
+    `coupled_data_assimilation`, `coupled_rom_swap`,
+    `hybrid_pinn_classical`, `adaptive_fe_fv_rebind`,
+    `foam_junction_rebind`, `fmi_host_coupling`, `coupled_lane_worksets`,
+    `pic_field_solver_substitution`, `pic_field_handoff`.
 - Full-wave FEL `phydrax.applications.accelerator.fel.FELFullWavePlan`
   (`FELFullWaveBeam`, `FELFullWaveSeed`, `FELFullWaveTracks`,
   `FELFullWaveHuygens`, `FELFullWaveResult`, `FELFullWaveLedger`,
@@ -1649,6 +1753,33 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- The integrate conversion's time unit is declared once on
+  `CouplingGraph(time_unit=...)` / `PartitionedCouplingDeclaration(time_unit=...)`.
+- `AbstractCouplingLaw.prepare` receives `interface_owners`; law runtime
+  inputs are declared through `runtime_inputs` and must be parameter-bound.
+- `CouplingPort` physical ports use `measurement=CouplingMeasurement`;
+  `measure`, `measure_unit` and `temporal_transfer` are removed. Conservative
+  transfers are certified by `L_target P = L_source`; ledgers carry one row
+  per component (`CouplingState.budget_row_ids`); the cell-average-only
+  restriction is gone. Endpoint/waveform conversions must be declared on
+  `CouplingExchange(temporal=...)`.
+- `MeasurementComparisonResult` reports `noise_model`, `whitening`, a
+  factor-backed `whitened_residual`, `quadratic`, `logdet_covariance`,
+  `log_likelihood`, `active_value_count` and `active_set_consistent`;
+  `standardized_residual` is removed. Data without uncertainty compare as
+  unquantified; `MeasurementComparisonPlan(reference_scale=...)` declares
+  least-squares weighting; correlated covariances must be declared on the
+  active values.
+- `DistributedPICFieldSolver(...)` is replaced by
+  `distribute_pic_field_solver(...)`, which publishes exactly the protocols
+  its configuration supports.
+- `SideRepresentation` adds `cell-average` and `face-state`;
+  `PreparedIsogeometricDiscretization.prepare_side_trace` acts on the public
+  control layout.
+- `FactorizedVirtualElementOperator.materialize_buckets` is replaced by
+  `local_tensors`.
+- `FunctionalSolver.solve(optim=...)` is annotated to accept Phydrax
+  least-squares and scalar iterative methods.
 - Non-selector aliases introduced in this release use canonical Python 3.12
   `type` statements. Closed `Literal` selectors retain runtime
   `typing.TypeAlias` values so `typing.get_args` remains the canonical source
@@ -2323,6 +2454,65 @@
   triangle-intersection implementations, and dense remesh transfer matrices.
 
 ### Fixed
+- Newton implicit roots no longer fail with a `lax.cond` pytree mismatch in
+  DAE replay and large-offset BDF increments.
+- `DAEContinuation` carries the modified-Newton refresh triggers, so
+  continued adaptive windows reproduce uninterrupted runs.
+- Default simplicial point location no longer reports `LOCATION_FAILED` for
+  interior points of small FE meshes (BVH point queries test item boxes).
+- Field algebra between a discrete field view and a `DomainFunction` under
+  `jit` no longer converts traced domain bounds.
+- B-Rep projection bounding boxes work with OCP 8 (`CornerMin`/`CornerMax`).
+- `prepare_scalar_calderon_3d` gives its P1 space its own identity (complex
+  kernels no longer crash); Buffa–Christiansen barycentric refinement uses
+  the correct midpoint vertex indices.
+- The VEM sparse realization no longer runs host validation inside jitted
+  paths.
+- Partitioned fixed-point windows replay the Gauss–Seidel sweep in their
+  final certification evaluation; adaptive windows without a reliable error
+  estimate no longer report success.
+- `TopologyEpochTransition.composition_transport` tolerances scale with the
+  transported magnitudes.
+- Coupled certificates (component rows, law defects, 2-D exterior
+  compatibility, transient rows) scale by uncancelled term magnitudes, so
+  exact states whose owner terms cancel are accepted.
+- The Riesz-identified coupled `LinearSystem` and lane actions publish the
+  exact coordinate transpose `M^{-T}`.
+- Interface bindings are audited against each law side's trace sites and
+  normals; interface quadrature enforces a per-facet tiling; matching
+  elimination refuses or imposes strong crosspoints; certified trace-inverse
+  constants refuse flux/energy pencils whose kernels disagree.
+- Coupled derivatives refuse raw runtime arguments that no parameter binding
+  supplies and solver-argument declarations that structurally enter the
+  operator; `refuse_derivative_dependencies` refuses every derivative order;
+  FEM–BEM results guard every derivative-bearing output.
+- Lane worksets certify custom differentiation rules and host callbacks in
+  their executable signatures and refuse uncertified higher-order
+  derivatives; `solve_coupled_problem` defaults to DenseLU with
+  `route="primal-factors"` when a dense plan fits.
+- Partitioned coupling: exact waveform integration, steady-response
+  checkpoints, native step-index continuation, conservative certification of
+  dimension-changing transfers, scale-aware ledger tolerances, exact host
+  window grids, per-participant host rollback, and FMI time-unit checks.
+- Lifecycle refreshes cannot rebind state onto new structure; topology epoch
+  transitions honor owner-certified conservation bounds; exchange transports
+  verify epoch provenance.
+- Curved simplicial cells use certified Bernstein bounds for BVH pruning;
+  prepared queries keep native complex coefficient dtypes and publish a
+  realified operator for real-output complex reconstructions.
+- `PhysicalPODPlan` decides its rank above a relative numerical-rank floor of
+  the method of snapshots.
+- Observation ports respect validity masks and transient capacity terms;
+  dense-precision covariance restriction is symmetrized; the coupled
+  transition kernel's log density uses an exact triangular factor.
+- `solve_factored_matrix_equation` certifies the Frobenius residual on the
+  QR-reduced low-rank core instead of a squared Gram trace, so exact
+  low-rank ADI solutions are no longer reported as
+  `RESIDUAL_TOLERANCE_NOT_MET`.
+- The strict documentation build renders runtime type aliases
+  (`Literal[...]`, parameterized generics, PEP 695 `type` aliases with
+  forward references) through the `RuntimeTypeAliases` griffe extension
+  instead of failing alias resolution.
 - The PIC deposit↔Gauss preparation certificate no longer divides numerical
   roundoff by an almost-zero charge change when a high-capacity periodic probe
   uniformly fills the grid. It subtracts the same charge-scaled roundoff floor

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,16 +21,24 @@ from .._core import (
     DiscretizationRole,
     PreparationReport,
 )
+from .._integration_domain import IntegrationDomain
 from .._lifecycle import (
     AbstractDiscretizationPlan,
     AbstractPreparedDiscretization,
     validate_prepared_metadata,
 )
 from .._measure import DiscreteMeasure
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._support import DiscreteSupport
 from .._tensor_entities import TensorEntityLayout
 from .._tensor_support import PreparedTensorGrid
+from .._topology import EntitySelection
+from .._views import FieldTraceSide
+
+
+if TYPE_CHECKING:
+    from ._side_trace import FiniteVolumeFaceReconstruction, PreparedNonlinearFaceTrace
 
 
 def _component_names(values: Sequence[str], /) -> tuple[str, ...]:
@@ -323,6 +332,77 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
             raise ValueError("axis and side must identify one finite-volume boundary.")
         sign = -1.0 if side == "lower" else 1.0
         return sign * jnp.eye(len(self.grid.shape))[int(axis)]
+
+    def integration_domain(
+        self, kind: str, selection: EntitySelection | None = None, /
+    ) -> IntegrationDomain:
+        """Cell or facet domain; facets enumerate each axis's faces in turn.
+
+        Facet `offset_a + row-major face index` is a face of axis `a`; interior
+        faces are owned by the lower cell, exterior faces by their only cell,
+        and the local facet of a cell is `2 * axis` (lower) or `2 * axis + 1`
+        (upper). Periodic seam faces are interior facets marked periodic.
+        """
+        from ._side_trace import finite_volume_integration_domain
+
+        return finite_volume_integration_domain(self, kind, selection)
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        reconstruction: FiniteVolumeFaceReconstruction | None = None,
+    ) -> PreparedTraceAction:
+        """Prepare the cell-average or linear face state on selected faces.
+
+        `reconstruction=None` publishes the side cell average at every site
+        (`representation="cell-average"`); `MUSCLReconstruction(UnlimitedLimiter())`
+        publishes its directional face state (`"face-state"`, constant along
+        the face) through a per-facet stencil route with an exact transpose.
+        Sites are shared by both sides of an interior face and normals point
+        out of the side cell. Stencils that leave a bounded axis, periodic
+        seam faces, and nonlinear plans are refused.
+        """
+        from ._side_trace import prepare_finite_volume_side_trace
+
+        return prepare_finite_volume_side_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            quantity=quantity,
+            side=side,
+            reconstruction=reconstruction,
+        )
+
+    def prepare_nonlinear_face_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        reconstruction: FiniteVolumeFaceReconstruction,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+    ) -> PreparedNonlinearFaceTrace:
+        """Prepare limited-MUSCL or WENO face states with a local linearization."""
+        from ._side_trace import prepare_finite_volume_nonlinear_face_trace
+
+        return prepare_finite_volume_nonlinear_face_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            reconstruction=reconstruction,
+            quantity=quantity,
+            side=side,
+        )
 
 
 __all__ = ["FiniteVolumeDiscretization", "FiniteVolumePlan"]

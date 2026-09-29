@@ -184,12 +184,19 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
 
     def candidate_coefficients(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
-        optimal = self.optimal.coefficients(value)
+        return self._candidates(
+            value,
+            self.optimal.coefficients(value),
+            tuple(sector.coefficients(value) for sector in self.sectors),
+        )
+
+    def _candidates(
+        self, value: Array, optimal: Array, sectors: tuple[Array, ...], /
+    ) -> Array:
         feature_count = self.optimal.basis.feature_count
         padded_sectors = []
-        for sector in self.sectors:
-            coefficients = sector.coefficients(value)
-            padding = feature_count - sector.basis.feature_count
+        for coefficients in sectors:
+            padding = feature_count - coefficients.shape[-1]
             padded_sectors.append(
                 jnp.pad(
                     coefficients, ((0, 0),) * (coefficients.ndim - 1) + ((0, padding),)
@@ -207,12 +214,15 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
 
     def coefficients(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
-        candidates = self.candidate_coefficients(value)
-        gram = self.optimal.smoothness_gram.astype(value.dtype)
+        return self._blend(
+            value, self.candidate_coefficients(value), self.optimal.smoothness_gram
+        )
+
+    def _blend(self, value: Array, candidates: Array, gram: Array, /) -> Array:
         smoothness = ein.contract(
             "kc...i,cij,kc...j->kc...",
             candidates,
-            gram,
+            gram.astype(value.dtype),
             candidates,
         )
         tau = jnp.max(smoothness, axis=0) - jnp.min(smoothness, axis=0)
@@ -228,6 +238,30 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         )
         nonlinear_weights = alpha / jnp.sum(alpha, axis=0, keepdims=True)
         return jnp.sum(nonlinear_weights[..., None] * candidates, axis=0)
+
+    def evaluate_cells(self, state: Array, cell_routes: Array, points: Array, /) -> Array:
+        """WENO-Z traces of the selected cells at their own points.
+
+        Only the routed cells' candidate polynomials are formed. `points` has
+        shape `(routes, points, dimension)`; the `"cell_extrema"` limiter scales
+        each route by its own point set, exactly as `reconstruct_at` does for
+        face quadrature points.
+        """
+        value = jnp.asarray(state)
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        candidates = self._candidates(
+            value,
+            self.optimal.cell_coefficients(value, routes),
+            tuple(sector.cell_coefficients(value, routes) for sector in self.sectors),
+        )
+        coefficients = self._blend(
+            value, candidates, self.optimal.smoothness_gram[routes]
+        )
+        basis = self.optimal.basis_values(routes, jnp.asarray(points, dtype=value.dtype))
+        traces = value[routes, None, ...] + ein.contract(
+            "r...f,rqf->rq...", coefficients, basis
+        )
+        return self._limit(value, traces, routes)
 
     def _limit(self, state: Array, traces: Array, cell_routes: Array, /) -> Array:
         if self.limiter == "none":

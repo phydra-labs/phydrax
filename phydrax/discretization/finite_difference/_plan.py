@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -16,18 +16,23 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
+from ...linalg import ArraySpace
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
     DiscretizationRole,
     PreparationReport,
 )
+from .._integration_domain import IntegrationDomain
 from .._lifecycle import AbstractDiscretizationPlan, validate_prepared_metadata
 from .._measure import DiscreteMeasure
-from .._spaces import DiscreteFieldSpace
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
+from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._support import DiscreteSupport
 from .._tensor import AbstractStrongFormDiscretization
 from .._tensor_support import GridLocation, PreparedTensorGrid
+from .._topology import EntitySelection
+from .._views import FieldTraceSide
 from ._boundary import (
     AxisBoundaryPair,
     BoundaryRealizationPlan,
@@ -36,6 +41,13 @@ from ._boundary import (
 from ._operators import prepare_linear_stencil, PreparedStencilOperator
 from ._precision import FDExecutionPrecisionPolicy
 from ._request import DerivativeRequest
+from ._sbp import SBPGridNorm
+from ._side_trace import (
+    boundary_face_node_selection,
+    boundary_node_facet_domain,
+    prepare_sbp_boundary_trace,
+    select_boundary_node_facets,
+)
 from ._stencil import BoundaryStencilSet, StencilFootprint
 
 
@@ -547,6 +559,119 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
             if operator_name == value:
                 return stencil
         raise KeyError(f"Unknown finite-difference stencil {value!r}.")
+
+    @property
+    def exterior_facet_domain(self) -> IntegrationDomain:
+        """Boundary-node facets of every bounded axis in canonical order.
+
+        One facet per (bounded face, boundary node) incidence: faces in
+        ascending axis order, lower before upper, then the face nodes in
+        row-major order; a corner node appears once per face it bounds.
+        `owner_cells` are flat row-major node rows and `owner_local_entities`
+        the local faces `2 * axis + side` (`side` 0 lower, 1 upper). Periodic
+        axes have no faces.
+        """
+        return boundary_node_facet_domain(self.grid, self.support.support_id)
+
+    def integration_domain(
+        self, kind: str, selection: EntitySelection | None = None, /
+    ) -> IntegrationDomain:
+        """Exterior boundary-node facets, optionally restricted to a selection.
+
+        Nodal finite-difference fields are single-valued, so there are no
+        interior facets; grid operators act on nodes, so there is no cell
+        integration domain.
+        """
+        match kind:
+            case "exterior_facet":
+                base = self.exterior_facet_domain
+            case "interior_facet":
+                raise ValueError(
+                    "Nodal finite-difference fields are single-valued at the grid "
+                    "nodes and have no interior facets."
+                )
+            case "cell":
+                raise ValueError(
+                    "Finite-difference grids publish no cell integration domain; "
+                    "their operators act on the grid nodes."
+                )
+            case _:
+                raise ValueError("Unknown finite-difference integration-domain kind.")
+        if selection is None:
+            return base
+        return select_boundary_node_facets(base, selection)
+
+    def boundary_face_selection(
+        self, axis: str, side: Literal["lower", "upper"], /
+    ) -> EntitySelection:
+        """Select every boundary-node facet of the lower or upper face of one axis.
+
+        Periodic axes have no boundary face or outward normal and are refused.
+        Combine faces with `EntitySelection.union`.
+        """
+        return boundary_face_node_selection(
+            self.grid, self.exterior_facet_domain, axis, side
+        )
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule | None = None,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        norm: SBPGridNorm,
+        component_shape: tuple[int, ...] = (),
+    ) -> PreparedTraceAction:
+        """Prepare the SBP boundary trace of the nodal field on boundary-node facets.
+
+        The trace is the exact nodal restriction `e_Gamma u` (one site per
+        facet at the boundary node), so `approximation="exact"`, `rule` must be
+        `None`, and `trace_degree` is `None`. `weights` are the boundary
+        quadrature of the declared tensor SBP `norm`: the product of its
+        tangential physical weights (one on the point facets of a 1-D grid).
+        `quadrature_exact_degree` is the smallest tangential norm exactness of
+        the selected faces (`None` for point facets). Normals are the outward
+        axis unit vectors. The coefficient space is the flat node-row layout
+        of `flatten` with shape `(nodes, *component_shape)`, paired by the
+        declared norm; `support_rows` are the boundary node rows. `"normal"`
+        (`u . n`) and `"tangential"` (`u . tau` with `tau = (-n_y, n_x)` in 2-D,
+        `u - (u . n) n` in 3-D) traces need `component_shape=(dimension,)`.
+        """
+        space = self._nodal_space(field_name)
+        vector_space = space.vector_space
+        if not isinstance(vector_space, ArraySpace):
+            raise TypeError("Finite-difference fields are array valued.")
+        return prepare_sbp_boundary_trace(
+            self.grid,
+            self.exterior_facet_domain,
+            domain,
+            owner_id=self.prepared_id,
+            field_space_id=space.field_space_id,
+            dtype=vector_space.dtype,
+            rule=rule,
+            quantity=quantity,
+            side=side,
+            norm=norm,
+            component_shape=component_shape,
+        )
+
+    def _nodal_space(self, field_name: str, /) -> DiscreteFieldSpace:
+        name = str(field_name)
+        centered = self.grid.centered_location.location_id
+        for space in self.field_spaces:
+            if space.name != name:
+                continue
+            layout = space.layout
+            if not isinstance(layout, TensorDofLayout) or layout.location_id != centered:
+                raise ValueError(
+                    "Boundary traces are published for the nodal field at the "
+                    "grid's primary points, not for staggered location spaces."
+                )
+            return space
+        raise KeyError(f"Unknown finite-difference field {name!r}.")
 
 
 def periodic_finite_difference(

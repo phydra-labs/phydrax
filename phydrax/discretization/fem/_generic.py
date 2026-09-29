@@ -68,9 +68,15 @@ from .._local_variational import (
 )
 from .._measure import DiscreteMeasure
 from .._reference_cell import reference_cell_topology
+from .._side_actions import (
+    FacetTraceRule,
+    PreparedTraceAction,
+    SideTraceQuantity,
+)
 from .._spaces import BlockDofLayout, DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
 from .._topology import EntitySelection
+from .._views import FieldTraceSide
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec, lagrange_element
 
@@ -2212,6 +2218,33 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         )
         mask = self.dof_maps[field_index].boundary_dof_mask
         return coordinates[mask], values[mask]
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        runtime: FiniteElementRuntimeData | None = None,
+    ) -> PreparedTraceAction:
+        """Prepare the exact trace of one field on selected facets.
+
+        See `prepare_finite_element_side_trace`.
+        """
+        from ._point_interpolation import prepare_finite_element_side_trace
+
+        return prepare_finite_element_side_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            quantity=quantity,
+            side=side,
+            runtime=runtime,
+        )
 
     def reconstruct(
         self,

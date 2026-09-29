@@ -12,18 +12,20 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..nonlinear import FixedPointIteration
+from ..units import TIME, UnitDefinition
+from ._partitioned_coupling_measurement import CouplingMeasurement
 from ._partitioned_coupling_types import (
     AbstractCouplingPolicy,
     AbstractCouplingSubsystem,
     CouplingDifferentiationPolicy,
     CouplingExchange,
     CouplingPort,
+    CouplingQuantity,
     CouplingState,
     CouplingSweep,
     ExplicitCouplingPolicy,
@@ -31,6 +33,7 @@ from ._partitioned_coupling_types import (
 )
 from ._partitioned_coupling_waveform import (
     coupling_signal_structure,
+    CouplingTemporalConversionKind,
     CouplingWaveform,
     flatten_coupling_signal,
     validate_coupling_signal,
@@ -65,17 +68,13 @@ def _port_payload(port: CouplingPort, /) -> dict[str, Any]:
         ),
         "reference_scale": port.reference_scale,
         "quantity": None if port.quantity is None else port.quantity.to_dict(),
-        "measure": None if port.measure is None else port.measure.measure_id,
-        "measure_unit": None
-        if port.measure_unit is None
-        else port.measure_unit.to_dict(),
+        "measurement": (
+            None if port.measurement is None else port.measurement.measurement_id
+        ),
         "temporal_kind": port.temporal_kind,
         "frame": port.frame,
         "waveform_plan": (
             None if port.waveform_plan is None else port.waveform_plan.plan_id
-        ),
-        "temporal_transfer": (
-            None if port.temporal_transfer is None else port.temporal_transfer.transfer_id
         ),
     }
 
@@ -109,6 +108,10 @@ def _subsystem_payload(subsystem: AbstractCouplingSubsystem, /) -> dict[str, Any
     }
 
 
+def _integrated(exchange: CouplingExchange, /) -> bool:
+    return exchange.temporal is not None and exchange.temporal.kind == "integrate"
+
+
 def _exchange_payload(exchange: CouplingExchange, /) -> dict[str, Any]:
     return {
         "id": exchange.exchange_id,
@@ -121,14 +124,23 @@ def _exchange_payload(exchange: CouplingExchange, /) -> dict[str, Any]:
         "requirement": (
             None if exchange.requirement is None else exchange.requirement.requirement_id
         ),
+        "temporal": (
+            None if exchange.temporal is None else exchange.temporal.conversion_id
+        ),
     }
 
 
 class CouplingGraph(StrictModule, NonTrainableState):
-    """Finite participant and exchange graph with explicit semantic identity."""
+    """Finite participant and exchange graph with explicit semantic identity.
+
+    `time_unit` is the unit of the one coupling clock: window times and sizes
+    are in it. It is required whenever a waveform `"integrate"` conversion books
+    a rate times the window size, and it is part of the graph identity.
+    """
 
     subsystems: tuple[AbstractCouplingSubsystem, ...]
     exchanges: tuple[CouplingExchange, ...]
+    time_unit: UnitDefinition | None
     graph_id: str = eqx.field(static=True)
 
     def __init__(
@@ -136,6 +148,8 @@ class CouplingGraph(StrictModule, NonTrainableState):
         subsystems: tuple[AbstractCouplingSubsystem, ...],
         exchanges: tuple[CouplingExchange, ...],
         /,
+        *,
+        time_unit: UnitDefinition | None = None,
     ) -> None:
         subsystems_ = tuple(subsystems)
         exchanges_ = tuple(exchanges)
@@ -150,6 +164,18 @@ class CouplingGraph(StrictModule, NonTrainableState):
         ):
             raise TypeError(
                 "Coupling graph exchanges must contain CouplingExchange values."
+            )
+        if time_unit is not None:
+            if not isinstance(time_unit, UnitDefinition):
+                raise TypeError(
+                    "Coupling graph time_unit must be UnitDefinition or None."
+                )
+            if time_unit.dimension != TIME:
+                raise ValueError("Coupling graph time_unit must be a unit of time.")
+        if time_unit is None and any(_integrated(value) for value in exchanges_):
+            raise ValueError(
+                "Waveform integration multiplies by the window size; declare the "
+                "coupling clock time_unit on the graph."
             )
         subsystem_ids = tuple(value.subsystem_id for value in subsystems_)
         exchange_ids = tuple(value.exchange_id for value in exchanges_)
@@ -174,10 +200,12 @@ class CouplingGraph(StrictModule, NonTrainableState):
                 (_exchange_payload(exchange) for exchange in exchanges_),
                 key=lambda item: item["id"],
             ),
+            "time_unit": None if time_unit is None else time_unit.unit_id,
         }
         identifier = canonical_fingerprint(payload)
         self.subsystems = subsystems_
         self.exchanges = exchanges_
+        self.time_unit = time_unit
         self.graph_id = identifier
 
 
@@ -275,7 +303,10 @@ class CouplingPreparationReport(StrictModule, NonTrainableState):
 
 
 class PreparedCoupling(StrictModule, NonTrainableState):
-    """Prepared participant graph with canonical indices and numeric state."""
+    """Prepared participant graph with canonical indices and numeric state.
+
+    `time_unit` is the graph's declared coupling clock unit.
+    """
 
     subsystems: tuple[AbstractCouplingSubsystem, ...]
     exchanges: tuple[CouplingExchange, ...]
@@ -285,6 +316,7 @@ class PreparedCoupling(StrictModule, NonTrainableState):
     reference_state: CouplingState
     report: CouplingPreparationReport
     numeric_version: jax.Array
+    time_unit: UnitDefinition | None
     input_exchange_indices: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     exchange_source_subsystems: tuple[int, ...] = eqx.field(static=True)
     exchange_target_subsystems: tuple[int, ...] = eqx.field(static=True)
@@ -334,118 +366,268 @@ def _validate_requirement(exchange: CouplingExchange, /) -> None:
         )
 
 
-def _validate_physical_exchange(
+def _required_conversion(
+    source: CouplingPort, target: CouplingPort, /
+) -> CouplingTemporalConversionKind | None:
+    """Return the one temporal conversion meaning an exchange must declare."""
+    source_waveform = source.waveform_plan is not None
+    target_waveform = target.waveform_plan is not None
+    source_amount = source.temporal_kind == "interval_integral"
+    target_amount = target.temporal_kind == "interval_integral"
+    if source_waveform and target_waveform:
+        return "interpolate"
+    if source_waveform:
+        return "integrate" if target_amount else "sample-end"
+    if target_waveform:
+        if source_amount:
+            raise ValueError("A whole-window amount has no waveform history to hold.")
+        return "hold"
+    if source_amount != target_amount:
+        raise ValueError(
+            "Instantaneous values and interval integrals cannot be exchanged; an "
+            "endpoint value is never multiplied by the window as an exact integral."
+        )
+    return "window-integral" if target_amount else None
+
+
+def _validate_temporal_exchange(
     exchange: CouplingExchange, source: CouplingPort, target: CouplingPort, /
 ) -> None:
-    if source.quantity is None and target.quantity is None:
+    required = _required_conversion(source, target)
+    declared = None if exchange.temporal is None else exchange.temporal.kind
+    if declared != required:
+        raise ValueError(
+            f"Coupling exchange {exchange.exchange_id!r} requires temporal conversion "
+            f"{required!r} but declares {declared!r}; temporal meaning is never inferred."
+        )
+
+
+def _received_quantity(
+    exchange: CouplingExchange,
+    source: CouplingPort,
+    time_unit: UnitDefinition | None,
+    /,
+) -> CouplingQuantity | None:
+    """Physical quantity delivered after the declared temporal conversion."""
+    conversion = exchange.temporal
+    if conversion is None or conversion.kind != "integrate":
+        return source.quantity
+    integrated = conversion.integrated_quantity
+    if integrated is None or time_unit is None:
+        raise RuntimeError("Prepared waveform integration lacks its declared semantics.")
+    rate = source.quantity
+    if rate is None:
+        raise ValueError("Waveform integration requires a typed source rate quantity.")
+    systems = {
+        rate.unit.reference_system_id,
+        time_unit.reference_system_id,
+        integrated.unit.reference_system_id,
+    }
+    if (
+        integrated.unit.dimension != rate.unit.dimension * time_unit.dimension
+        or len(systems) != 1
+    ):
+        raise ValueError(
+            "The integrated quantity must have the source rate dimension times time."
+        )
+    return integrated
+
+
+def _validate_inventory_semantics(
+    received: CouplingQuantity,
+    source: CouplingPort,
+    target: CouplingPort,
+    target_quantity: CouplingQuantity,
+    /,
+) -> None:
+    """Require one physical quantity whose inventories share dimensions.
+
+    Storage may change between a density and an extensive representation, for
+    example J/m² cell averages with an area measurement and J cell integrals with
+    a counting measurement, only through a certified conservative transfer; the
+    quantity kind, reference configuration, sign, reference system, and the
+    inventory dimension `quantity × measurement` must agree. Unmeasured ports
+    require exactly equal quantity dimensions.
+    """
+    if (
+        received.quantity_kind != target_quantity.quantity_kind
+        or received.reference_configuration != target_quantity.reference_configuration
+        or received.sign_convention != target_quantity.sign_convention
+        or received.unit.reference_system_id != target_quantity.unit.reference_system_id
+    ):
+        raise ValueError("Coupling quantities have incompatible physical semantics.")
+    source_measurement = source.measurement
+    target_measurement = target.measurement
+    if source_measurement is None or target_measurement is None:
+        if received.compatibility_id != target_quantity.compatibility_id:
+            raise ValueError("Coupling quantities have incompatible physical semantics.")
         return
-    if source.quantity is None or target.quantity is None:
+    source_unit = source_measurement.unit
+    target_unit = target_measurement.unit
+    if (
+        received.unit.dimension * source_unit.dimension
+        != target_quantity.unit.dimension * target_unit.dimension
+        or source_unit.reference_system_id != target_unit.reference_system_id
+    ):
+        raise ValueError(
+            "Coupling measurements require compatible inventory dimensions and "
+            "reference systems."
+        )
+    if source_measurement.component_ids != target_measurement.component_ids:
+        raise ValueError("Coupling measurements must inventory the same components.")
+
+
+def _validate_direct_physical(source: CouplingPort, target: CouplingPort, /) -> None:
+    if source.frame != target.frame:
+        raise ValueError("Changing component frames requires an explicit FieldTransfer.")
+    source_field_space = source.field_space
+    target_field_space = target.field_space
+    if (source_field_space is None) != (target_field_space is None) or (
+        source_field_space is not None
+        and target_field_space is not None
+        and source_field_space.field_space_id != target_field_space.field_space_id
+    ):
+        raise ValueError("Different physical storage requires an explicit FieldTransfer.")
+    source_measurement = source.measurement
+    target_measurement = target.measurement
+    if (source_measurement is None) != (target_measurement is None) or (
+        source_measurement is not None
+        and target_measurement is not None
+        and source_measurement.measurement_id != target_measurement.measurement_id
+    ):
+        raise ValueError(
+            "Direct physical exchange requires exact measurement-functional identity."
+        )
+
+
+def _certify_conservative_transfer(
+    exchange: CouplingExchange,
+    source: CouplingMeasurement,
+    target: CouplingMeasurement,
+    /,
+) -> None:
+    """Certify `L_target P = L_source` per component with transposed actions.
+
+    Each inventory covector of the target is pulled back through the transpose of
+    the transfer action actually applied, so the certificate needs one transposed
+    action per component and never a dense transfer matrix. Quantity scales
+    cancel against the runtime unit conversion; measurement scales remain.
+    """
+    transfer = exchange.transfer
+    if transfer is None:
+        raise RuntimeError("A conservative certificate requires a prepared transfer.")
+    operator = (
+        transfer.hilbert_adjoint_operator
+        if exchange.use_adjoint
+        else transfer.primal_operator
+    )
+    if operator is None:
+        raise RuntimeError("Prepared coupling transfer action is unavailable.")
+    if not operator.capabilities.transpose:
+        raise ValueError(
+            "A conservative exchange requires the transposed transfer action."
+        )
+    source_scale = float(source.unit.scale_to_reference)
+    target_scale = float(target.unit.scale_to_reference)
+    dtype = target.inventory_dtype
+    count = target.component_count
+    for component in range(count):
+        basis = jnp.zeros((count,), dtype=dtype).at[component].set(1)
+        pulled = np.asarray(
+            operator.source.flatten(operator.transpose_mv(target.covector(basis)))
+        )
+        expected = np.asarray(source.source_space.flatten(source.covector(basis)))
+        tolerance = 64 * np.finfo(expected.dtype).eps
+        if not np.allclose(
+            target_scale * pulled,
+            source_scale * expected,
+            rtol=tolerance,
+            atol=tolerance * source_scale * float(np.max(np.abs(expected))),
+        ):
+            raise ValueError(
+                f"FieldTransfer of exchange {exchange.exchange_id!r} fails the "
+                "declared physical measurement identity L_target P = L_source."
+            )
+
+
+def _validate_transferred_physical(
+    exchange: CouplingExchange,
+    source: CouplingPort,
+    target: CouplingPort,
+    storage_change: bool,
+    /,
+) -> None:
+    requirement = exchange.requirement
+    source_measurement = source.measurement
+    target_measurement = target.measurement
+    if requirement is None or source_measurement is None or target_measurement is None:
+        raise ValueError(
+            "Physical FieldTransfer requires explicit measurements and transfer semantics."
+        )
+    if (source.frame == target.frame) != (requirement.frame_action == "preserve"):
+        raise ValueError("Transfer frame_action does not match the physical frames.")
+    if target.temporal_kind == "interval_integral" and not requirement.conservative:
+        raise ValueError("Whole-window amounts require conservative transfers.")
+    # Only the certified identity L_target P = L_source carries the measure between
+    # density and extensive storage; an uncertified map would relabel values.
+    if storage_change and not requirement.conservative:
+        raise ValueError(
+            f"Coupling exchange {exchange.exchange_id!r} changes the quantity "
+            "dimension between density and extensive storage and requires a "
+            "certified conservative transfer."
+        )
+    if requirement.conservative:
+        _certify_conservative_transfer(exchange, source_measurement, target_measurement)
+
+
+def _validate_physical_exchange(
+    exchange: CouplingExchange,
+    source: CouplingPort,
+    target: CouplingPort,
+    time_unit: UnitDefinition | None,
+    /,
+) -> None:
+    received = _received_quantity(exchange, source, time_unit)
+    if received is None and target.quantity is None:
+        return
+    if received is None or target.quantity is None:
         raise ValueError(
             "A physically typed exchange requires descriptors at both ports."
         )
-    if source.quantity.compatibility_id != target.quantity.compatibility_id:
-        raise ValueError("Coupling quantities have incompatible physical semantics.")
-    if source.temporal_kind != target.temporal_kind:
-        raise ValueError(
-            "Instantaneous values and interval integrals cannot be exchanged."
-        )
-    if source.measure is not None and target.measure is not None:
-        source_unit = source.measure_unit
-        target_unit = target.measure_unit
-        # CouplingPort construction requires a UnitDefinition for measured ports.
-        if not (source_unit is not None and target_unit is not None):
-            raise RuntimeError(
-                "Internal invariant failed: source_unit is not None and target_unit is not None."
-            )
-        if (
-            source_unit.dimension != target_unit.dimension
-            or source_unit.reference_system_id != target_unit.reference_system_id
-        ):
-            raise ValueError(
-                "Coupling measures require compatible dimensions and reference systems."
-            )
-    requirement = exchange.requirement
+    _validate_inventory_semantics(received, source, target, target.quantity)
     if exchange.transfer is None:
-        if source.frame != target.frame:
-            raise ValueError(
-                "Changing component frames requires an explicit FieldTransfer."
-            )
-        source_field_space = source.field_space
-        target_field_space = target.field_space
-        if (source_field_space is None) != (target_field_space is None) or (
-            source_field_space is not None
-            and target_field_space is not None
-            and source_field_space.field_space_id != target_field_space.field_space_id
-        ):
-            raise ValueError(
-                "Different physical storage requires an explicit FieldTransfer."
-            )
-        source_measure = source.measure
-        target_measure = target.measure
-        if (source_measure is None) != (target_measure is None) or (
-            source_measure is not None
-            and target_measure is not None
-            and source_measure.measure_id != target_measure.measure_id
-        ):
-            raise ValueError("Direct physical exchange requires exact measure identity.")
-        if source.measure_unit != target.measure_unit:
-            raise ValueError(
-                "Direct physical exchange requires exact measure-unit identity."
-            )
+        _validate_direct_physical(source, target)
     else:
-        source_measure = source.measure
-        target_measure = target.measure
-        if requirement is None or source_measure is None or target_measure is None:
-            raise ValueError(
-                "Physical FieldTransfer requires explicit measure and transfer semantics."
-            )
-        if (source.frame == target.frame) != (requirement.frame_action == "preserve"):
-            raise ValueError("Transfer frame_action does not match the physical frames.")
-        if source.temporal_kind == "interval_integral":
-            if not requirement.conservative:
-                raise ValueError(
-                    "Interval-integrated exchanges require conservative transfers."
-                )
-        if requirement.conservative:
-            operator = (
-                exchange.transfer.hilbert_adjoint_operator
-                if exchange.use_adjoint
-                else exchange.transfer.primal_operator
-            )
-            if operator is None:
-                raise RuntimeError("Prepared coupling transfer action is unavailable.")
-            source_unit = source.measure_unit
-            target_unit = target.measure_unit
-            # CouplingPort construction requires a UnitDefinition for measured ports.
-            if not (source_unit is not None and target_unit is not None):
-                raise RuntimeError(
-                    "Internal invariant failed: source_unit is not None and target_unit is not None."
-                )
+        _validate_transferred_physical(
+            exchange,
+            source,
+            target,
+            received.unit.dimension != target.quantity.unit.dimension,
+        )
 
-            # One transposed operator action proves the measure pairing without a
-            # dense transfer matrix or a basis-by-basis allocation.
-            def coordinate_action(value: Array) -> Array:
-                return target.space.flatten(operator.mv(source.space.unflatten(value)))
 
-            source_weights = source_measure.masked_weights() * float(
-                source_unit.scale_to_reference
+def _budget_row_ids(
+    exchanges: tuple[CouplingExchange, ...],
+    ports: dict[str, tuple[int, int, CouplingPort]],
+    /,
+) -> tuple[str, ...]:
+    """One ledger row per scalar exchange and per component of a componentized one."""
+    rows: list[str] = []
+    for exchange in exchanges:
+        target = ports[exchange.target_port_id][2]
+        measurement = target.measurement
+        if (
+            target.temporal_kind == "interval_integral"
+            and measurement is not None
+            and measurement.component_count > 1
+        ):
+            rows.extend(
+                f"{exchange.exchange_id}[{component}]"
+                for component in measurement.component_ids
             )
-            target_weights = target_measure.masked_weights() * float(
-                target_unit.scale_to_reference
-            )
-            (pulled_weights,) = jax.linear_transpose(
-                coordinate_action, jnp.zeros_like(source_weights)
-            )(target_weights)
-            tolerance = 64 * np.finfo(np.asarray(source_weights).dtype).eps
-            if not np.allclose(
-                np.asarray(pulled_weights),
-                np.asarray(source_weights),
-                rtol=tolerance,
-                atol=tolerance * float(np.max(np.asarray(source_weights))),
-            ):
-                raise ValueError(
-                    "FieldTransfer fails the declared physical measure pairing."
-                )
+        else:
+            rows.append(exchange.exchange_id)
+    return tuple(rows)
 
 
 def _strongly_connected_components(
@@ -597,6 +779,11 @@ def _shape_validate_subsystems(
         jnp.asarray(1.0, dtype=window_dtype),
     )
     for subsystem_index, subsystem in enumerate(subsystems):
+        if not subsystem.capabilities.jit:
+            # Host participants are never traced; route admission lets them reach
+            # this point only for the host orchestrator, which checks their signals
+            # against live observations instead.
+            continue
         inputs = tuple(
             state.exchange_values[exchange_index]
             for exchange_index in input_exchange_indices[subsystem_index]
@@ -743,16 +930,25 @@ def _canonicalize_coupling_inputs(
     )
 
 
-def _prepare_coupling_routes(
-    subsystems: tuple[AbstractCouplingSubsystem, ...],
-    exchanges: tuple[CouplingExchange, ...],
-    canonical_values: tuple[Any, ...],
-    subsystem_ids: tuple[str, ...],
-    exchange_ids: tuple[str, ...],
-    /,
-) -> _CouplingRoutes:
-    if any(not subsystem.capabilities.jit for subsystem in subsystems):
-        raise ValueError("Native coupling requires every participant to be JIT-capable.")
+def _admit_route_participants(
+    subsystems: tuple[AbstractCouplingSubsystem, ...], /, *, host_execution: bool
+) -> None:
+    """Refuse participants the route cannot execute or feed on their ports.
+
+    The native route traces every participant. Participants that are not
+    JIT-capable execute only on the explicit host route, whose orchestrator admits
+    exactly its own host participants among them.
+    """
+    host = sorted(
+        subsystem.subsystem_id
+        for subsystem in subsystems
+        if not subsystem.capabilities.jit
+    )
+    if host and not host_execution:
+        raise ValueError(
+            "Native coupling requires every participant to be JIT-capable; "
+            f"host-executed participants {host} run only through prepare_host_coupling."
+        )
     if any(not subsystem.capabilities.fixed_topology for subsystem in subsystems):
         raise ValueError("Native coupling requires fixed-topology participants.")
     for subsystem in subsystems:
@@ -770,6 +966,11 @@ def _prepare_coupling_routes(
                 f"Coupling subsystem {subsystem.subsystem_id!r} does not support its waveform ports."
             )
 
+
+def _index_coupling_ports(
+    subsystems: tuple[AbstractCouplingSubsystem, ...], /
+) -> tuple[dict[str, tuple[int, int, CouplingPort]], tuple[str, ...]]:
+    """Map each port to its canonical participant and local port index."""
     ports: dict[str, tuple[int, int, CouplingPort]] = {}
     port_ids: list[str] = []
     for subsystem_index, subsystem in enumerate(subsystems):
@@ -779,86 +980,102 @@ def _prepare_coupling_routes(
         for local_index, port in enumerate(subsystem.output_ports):
             ports[port.port_id] = (subsystem_index, local_index, port)
             port_ids.append(port.port_id)
+    return ports, tuple(port_ids)
 
-    source_subsystems: list[int] = []
-    target_subsystems: list[int] = []
-    source_output_indices: list[int] = []
-    target_input_indices: list[int] = []
-    input_drivers: dict[str, int] = {}
-    incident = [False] * len(subsystems)
-    validated_values: list[Any] = []
-    for exchange_index, (exchange, initial_value) in enumerate(
-        zip(exchanges, canonical_values, strict=True)
-    ):
-        if exchange.source_port_id not in ports or exchange.target_port_id not in ports:
+
+def _resolve_exchange_endpoints(
+    exchange: CouplingExchange,
+    ports: dict[str, tuple[int, int, CouplingPort]],
+    input_drivers: dict[str, int],
+    /,
+) -> tuple[tuple[int, int, CouplingPort], tuple[int, int, CouplingPort]]:
+    """Resolve one known output-to-input route whose input has no other driver."""
+    if exchange.source_port_id not in ports or exchange.target_port_id not in ports:
+        raise ValueError(
+            f"Coupling exchange {exchange.exchange_id!r} references an unknown port."
+        )
+    source = ports[exchange.source_port_id]
+    target = ports[exchange.target_port_id]
+    if source[2].direction != "output" or target[2].direction != "input":
+        raise ValueError(
+            f"Coupling exchange {exchange.exchange_id!r} must connect output to input."
+        )
+    if target[2].port_id in input_drivers:
+        raise ValueError(
+            f"Coupling input port {target[2].port_id!r} has multiple drivers."
+        )
+    return source, target
+
+
+def _validate_transfer_spaces(
+    exchange: CouplingExchange, source_port: CouplingPort, target_port: CouplingPort, /
+) -> None:
+    """Require the storage the direct, forward, or adjoint action maps between."""
+    transfer = exchange.transfer
+    if transfer is None:
+        if source_port.space.space_id != target_port.space.space_id:
             raise ValueError(
-                f"Coupling exchange {exchange.exchange_id!r} references an unknown port."
+                f"Direct coupling exchange {exchange.exchange_id!r} requires exact "
+                "source and target vector-space identity."
             )
-        source_subsystem, source_local, source_port = ports[exchange.source_port_id]
-        target_subsystem, target_local, target_port = ports[exchange.target_port_id]
-        if source_port.direction != "output" or target_port.direction != "input":
+    elif not exchange.use_adjoint:
+        if source_port.field_space is None or target_port.field_space is None:
             raise ValueError(
-                f"Coupling exchange {exchange.exchange_id!r} must connect output to input."
+                "Field transfers require field-valued source and target ports."
             )
-        if target_port.port_id in input_drivers:
-            raise ValueError(
-                f"Coupling input port {target_port.port_id!r} has multiple drivers."
-            )
-        input_drivers[target_port.port_id] = exchange_index
-        if exchange.transfer is None:
-            if source_port.space.space_id != target_port.space.space_id:
-                raise ValueError(
-                    f"Direct coupling exchange {exchange.exchange_id!r} requires exact "
-                    "source and target vector-space identity."
-                )
-        elif not exchange.use_adjoint:
-            if source_port.field_space is None or target_port.field_space is None:
-                raise ValueError(
-                    "Field transfers require field-valued source and target ports."
-                )
-            if (
-                source_port.field_space.field_space_id
-                != exchange.transfer.source.field_space_id
-                or target_port.field_space.field_space_id
-                != exchange.transfer.target.field_space_id
-            ):
-                raise ValueError(
-                    f"Coupling exchange {exchange.exchange_id!r} field spaces do not match its forward transfer."
-                )
-        else:
-            if exchange.transfer.hilbert_adjoint_operator is None:
-                raise ValueError(
-                    f"Coupling exchange {exchange.exchange_id!r} requests an unavailable adjoint transfer."
-                )
-            if source_port.field_space is None or target_port.field_space is None:
-                raise ValueError("Adjoint transfers require field-valued ports.")
-            if (
-                source_port.field_space.field_space_id
-                != exchange.transfer.target.field_space_id
-                or target_port.field_space.field_space_id
-                != exchange.transfer.source.field_space_id
-            ):
-                raise ValueError(
-                    f"Coupling exchange {exchange.exchange_id!r} field spaces do not match its adjoint transfer."
-                )
-        _validate_requirement(exchange)
-        _validate_physical_exchange(exchange, source_port, target_port)
-        if source_port.temporal_kind == "interval_integral" and any(
-            previous.source_port_id == exchange.source_port_id
-            for previous in exchanges[:exchange_index]
+        if (
+            source_port.field_space.field_space_id != transfer.source.field_space_id
+            or target_port.field_space.field_space_id != transfer.target.field_space_id
         ):
             raise ValueError(
-                "An authoritative interval-integrated output cannot be spent twice; "
-                "partition the physical flux into explicit output ports."
+                f"Coupling exchange {exchange.exchange_id!r} field spaces do not match its forward transfer."
             )
-        validated_values.append(validate_coupling_signal(target_port, initial_value))
-        source_subsystems.append(source_subsystem)
-        target_subsystems.append(target_subsystem)
-        source_output_indices.append(source_local)
-        target_input_indices.append(target_local)
-        incident[source_subsystem] = True
-        incident[target_subsystem] = True
+    else:
+        if transfer.hilbert_adjoint_operator is None:
+            raise ValueError(
+                f"Coupling exchange {exchange.exchange_id!r} requests an unavailable adjoint transfer."
+            )
+        if source_port.field_space is None or target_port.field_space is None:
+            raise ValueError("Adjoint transfers require field-valued ports.")
+        if (
+            source_port.field_space.field_space_id != transfer.target.field_space_id
+            or target_port.field_space.field_space_id != transfer.source.field_space_id
+        ):
+            raise ValueError(
+                f"Coupling exchange {exchange.exchange_id!r} field spaces do not match its adjoint transfer."
+            )
 
+
+def _refuse_whole_window_double_spend(
+    exchange_index: int,
+    exchanges: tuple[CouplingExchange, ...],
+    ports: dict[str, tuple[int, int, CouplingPort]],
+    target_port: CouplingPort,
+    /,
+) -> None:
+    """Refuse a source whose whole-window amount an earlier exchange already spends."""
+    if target_port.temporal_kind != "interval_integral":
+        return
+    source_port_id = exchanges[exchange_index].source_port_id
+    if any(
+        previous.source_port_id == source_port_id
+        and ports[previous.target_port_id][2].temporal_kind == "interval_integral"
+        for previous in exchanges[:exchange_index]
+    ):
+        raise ValueError(
+            "An authoritative whole-window amount cannot be spent twice; "
+            "partition the physical flux into explicit output ports."
+        )
+
+
+def _validate_route_coverage(
+    subsystems: tuple[AbstractCouplingSubsystem, ...],
+    subsystem_ids: tuple[str, ...],
+    input_drivers: dict[str, int],
+    incident: frozenset[int],
+    /,
+) -> None:
+    """Require one driver per input port and at least one exchange per participant."""
     missing_inputs = sorted(
         port.port_id
         for subsystem in subsystems
@@ -870,29 +1087,32 @@ def _prepare_coupling_routes(
             "Coupling input ports require exactly one driver: "
             + ", ".join(missing_inputs)
         )
-    if not all(incident):
-        isolated = [
-            subsystem_ids[index]
-            for index, connected in enumerate(incident)
-            if not connected
-        ]
+    isolated = [
+        subsystem_ids[index] for index in range(len(subsystems)) if index not in incident
+    ]
+    if isolated:
         raise ValueError(
             "Coupling graph contains isolated subsystems: " + ", ".join(isolated)
         )
 
-    input_exchange_indices = tuple(
-        tuple(input_drivers[port.port_id] for port in subsystem.input_ports)
-        for subsystem in subsystems
-    )
-    adjacency_sets = [set() for _ in subsystems]
+
+def _assemble_coupling_stages(
+    source_subsystems: tuple[int, ...],
+    target_subsystems: tuple[int, ...],
+    subsystem_ids: tuple[str, ...],
+    exchange_ids: tuple[str, ...],
+    /,
+) -> tuple[tuple[CouplingStagePlan, ...], tuple[int, ...]]:
+    """Order strongly connected stages and list the exchanges solved implicitly."""
+    adjacency_sets: list[set[int]] = [set() for _ in subsystem_ids]
     for source, target in zip(source_subsystems, target_subsystems, strict=True):
         adjacency_sets[source].add(target)
     adjacency = tuple(tuple(sorted(targets)) for targets in adjacency_sets)
     components = _strongly_connected_components(adjacency)
     stages = _ordered_stages(
         components,
-        tuple(source_subsystems),
-        tuple(target_subsystems),
+        source_subsystems,
+        target_subsystems,
         subsystem_ids,
         exchange_ids,
     )
@@ -902,9 +1122,65 @@ def _prepare_coupling_routes(
         if stage.cyclic
         for exchange_index in stage.internal_exchange_indices
     )
+    return stages, implicit_exchange_indices
+
+
+def _prepare_coupling_routes(
+    subsystems: tuple[AbstractCouplingSubsystem, ...],
+    exchanges: tuple[CouplingExchange, ...],
+    canonical_values: tuple[Any, ...],
+    subsystem_ids: tuple[str, ...],
+    exchange_ids: tuple[str, ...],
+    time_unit: UnitDefinition | None,
+    /,
+    *,
+    host_execution: bool,
+) -> _CouplingRoutes:
+    _admit_route_participants(subsystems, host_execution=host_execution)
+    ports, port_ids = _index_coupling_ports(subsystems)
+    source_subsystems: list[int] = []
+    target_subsystems: list[int] = []
+    source_output_indices: list[int] = []
+    target_input_indices: list[int] = []
+    input_drivers: dict[str, int] = {}
+    validated_values: list[Any] = []
+    for exchange_index, (exchange, initial_value) in enumerate(
+        zip(exchanges, canonical_values, strict=True)
+    ):
+        source, target = _resolve_exchange_endpoints(exchange, ports, input_drivers)
+        source_subsystem, source_local, source_port = source
+        target_subsystem, target_local, target_port = target
+        input_drivers[target_port.port_id] = exchange_index
+        _validate_transfer_spaces(exchange, source_port, target_port)
+        _validate_requirement(exchange)
+        _validate_temporal_exchange(exchange, source_port, target_port)
+        _validate_physical_exchange(exchange, source_port, target_port, time_unit)
+        _refuse_whole_window_double_spend(exchange_index, exchanges, ports, target_port)
+        validated_values.append(validate_coupling_signal(target_port, initial_value))
+        source_subsystems.append(source_subsystem)
+        target_subsystems.append(target_subsystem)
+        source_output_indices.append(source_local)
+        target_input_indices.append(target_local)
+
+    _validate_route_coverage(
+        subsystems,
+        subsystem_ids,
+        input_drivers,
+        frozenset((*source_subsystems, *target_subsystems)),
+    )
+    input_exchange_indices = tuple(
+        tuple(input_drivers[port.port_id] for port in subsystem.input_ports)
+        for subsystem in subsystems
+    )
+    stages, implicit_exchange_indices = _assemble_coupling_stages(
+        tuple(source_subsystems),
+        tuple(target_subsystems),
+        subsystem_ids,
+        exchange_ids,
+    )
     return _CouplingRoutes(
         ports,
-        tuple(port_ids),
+        port_ids,
         tuple(validated_values),
         tuple(source_subsystems),
         tuple(target_subsystems),
@@ -1012,6 +1288,7 @@ def _prepare_coupling_interface(
         0,
         subsystem_ids=subsystem_ids,
         exchange_ids=exchange_ids,
+        budget_row_ids=_budget_row_ids(exchanges, ports),
         graph_id=graph.graph_id,
     )
     time_dtype = initial_state.time.dtype
@@ -1111,7 +1388,40 @@ def prepare_coupling(
     problem_id: str = "partitioned-coupling",
     resources: CouplingResourcePolicy | None = None,
 ) -> PreparedCoupling:
-    """Validate and compile one fixed-topology participant graph."""
+    """Validate and compile one fixed-topology participant graph.
+
+    Every participant must be JIT-capable; host-executed participants are refused
+    and run only through `prepare_host_coupling`.
+    """
+    return _prepare_coupling_plan(
+        graph,
+        participant_states,
+        exchange_values,
+        policy=policy,
+        differentiation=differentiation,
+        time=time,
+        args=args,
+        problem_id=problem_id,
+        resources=resources,
+        host_execution=False,
+    )
+
+
+def _prepare_coupling_plan(
+    graph: CouplingGraph,
+    participant_states: tuple[Any, ...],
+    exchange_values: tuple[Any, ...],
+    /,
+    *,
+    policy: AbstractCouplingPolicy,
+    differentiation: CouplingDifferentiationPolicy | None,
+    time: Any,
+    args: Any,
+    problem_id: str,
+    resources: CouplingResourcePolicy | None,
+    host_execution: bool,
+) -> PreparedCoupling:
+    """Validate one participant graph for the native or the explicit host route."""
 
     canonical = _canonicalize_coupling_inputs(
         graph,
@@ -1130,7 +1440,13 @@ def prepare_coupling(
     subsystem_ids = canonical.subsystem_ids
     exchange_ids = canonical.exchange_ids
     routes = _prepare_coupling_routes(
-        subsystems, exchanges, canonical_values, subsystem_ids, exchange_ids
+        subsystems,
+        exchanges,
+        canonical_values,
+        subsystem_ids,
+        exchange_ids,
+        graph.time_unit,
+        host_execution=host_execution,
     )
     ports = routes.ports
     port_ids = routes.port_ids
@@ -1180,6 +1496,9 @@ def prepare_coupling(
         coordinate_dtype,
     )
     reasons: list[str] = []
+    traced = all(subsystem.capabilities.jit for subsystem in subsystems)
+    if not traced:
+        reasons.append("host participants execute outside JAX transformations")
     differentiable = all(
         subsystem.capabilities.differentiable for subsystem in subsystems
     )
@@ -1224,7 +1543,7 @@ def prepare_coupling(
         ),
         transfer_ids=transfer_ids,
         bundle_ids=bundle_ids,
-        jit_eligible=True,
+        jit_eligible=traced,
         differentiation_eligible=differentiable and not fixed_point_without_derivative,
         eligibility_reasons=tuple(reasons),
         report_id=report_id,
@@ -1253,6 +1572,7 @@ def prepare_coupling(
         reference_state=initial_state,
         report=report,
         numeric_version=jnp.asarray(0, dtype=jnp.int32),
+        time_unit=graph.time_unit,
         input_exchange_indices=input_exchange_indices,
         exchange_source_subsystems=tuple(source_subsystems),
         exchange_target_subsystems=tuple(target_subsystems),
@@ -1281,6 +1601,11 @@ def refresh_coupling(
         raise TypeError("prepared must be PreparedCoupling.")
     if not isinstance(graph, CouplingGraph):
         raise TypeError("graph must be CouplingGraph.")
+    if not prepared.report.jit_eligible:
+        raise ValueError(
+            "A host coupling plan binds live host participants; prepare it again "
+            "with prepare_host_coupling instead of refreshing it."
+        )
     if graph.graph_id != prepared.graph_id:
         raise ValueError("Coupling refresh requires unchanged structural graph identity.")
     subsystem_by_id = {value.subsystem_id: value for value in graph.subsystems}
@@ -1307,6 +1632,7 @@ def refresh_coupling(
         reference_state=prepared.reference_state,
         report=prepared.report,
         numeric_version=prepared.numeric_version + 1,
+        time_unit=prepared.time_unit,
         input_exchange_indices=prepared.input_exchange_indices,
         exchange_source_subsystems=prepared.exchange_source_subsystems,
         exchange_target_subsystems=prepared.exchange_target_subsystems,

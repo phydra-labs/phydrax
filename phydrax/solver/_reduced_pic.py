@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -29,8 +29,10 @@ from ._maxwell_reduced import (
 )
 from ._pic_field_solver import (
     AbstractPreparedPICFieldSolver,
+    PICCapabilityRecord,
     PICFieldAdvance,
     PICFieldDeposit,
+    PICFieldSolverCapability,
     PICGaussProjectionResult,
     PICRestartComponent,
     PICTensorKind,
@@ -86,6 +88,72 @@ class ReducedMaxwellPICFieldSolver(AbstractPreparedPICFieldSolver, NonTrainableS
                 "transfer": transfer.plan_id,
             }
         )
+
+    @property
+    def pic_configuration(self) -> str:
+        return f"reduced-{self.spatial_dimension}d"
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        route, refusal = PICCapabilityRecord.route, PICCapabilityRecord.refusal
+        match capability:
+            case "tensor-layout":
+                return route(
+                    capability,
+                    "Cell charge, face current, and E/B component triples with mirror "
+                    "parities (PICFilterPlan).",
+                )
+            case "spectral-symbol":
+                return route(
+                    capability,
+                    "Yee vacuum dispersion over the resolved wavevector components.",
+                )
+            case "huygens-sampling":
+                return refusal(
+                    capability, "Reduced Maxwell carries no Huygens observers."
+                )
+            case "multi-deposit":
+                return route(
+                    capability, "One shared grid transfer deposits every species."
+                )
+            case "window-shift":
+                return route(
+                    capability,
+                    "Integer-cell E, B, and charge translation; CPML memory stays with "
+                    "the fixed absorber.",
+                )
+            case "galilean-grid":
+                return refusal(capability, "The reduced Yee grid is lab-fixed.")
+            case "energy-accounting":
+                return refusal(
+                    capability,
+                    "Reduced Maxwell reports only its total field energy; the ledger "
+                    "uses it without a medium split or loss power.",
+                )
+            case "open-domain":
+                return refusal(
+                    capability,
+                    "No declared wall inset: periodic particle faces are refused and "
+                    "bounded faces are not inset-checked.",
+                )
+            case "restart-state":
+                return route(
+                    capability,
+                    "E, B, charge, and CPML memory, admitted by solver identity.",
+                )
+            case "gauss-projection":
+                return route(
+                    capability,
+                    "Exact 1-D Poisson inverse or 2-D per-axis eigenbasis "
+                    "(cochain-poisson).",
+                )
+            case "relativistic-self-fields":
+                return refusal(
+                    capability, "Boosted-Coulomb fields are a 3-D cochain capability."
+                )
+            case _:
+                assert_never(capability)
 
     @property
     def stable_step(self) -> Array:

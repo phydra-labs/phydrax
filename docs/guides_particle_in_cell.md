@@ -130,26 +130,56 @@ divergence of absorbing layers — stays in the field state and is not a pairing
 The probe runs through one module-level compiled function reused by every plan over the same
 solver structure, so preparation does not dispatch the deposit and field update op by op.
 
-| Solver | Field | Transfer | Optional capabilities |
-|---|---|---|---|
-| `CochainMaxwellPICFieldSolver` | 3-D `PreparedCompatibleMaxwell`, periodic or bounded axes, boundaries, CPML, linear passive media | cochain splats + `ChargeConservingCurrentPlan` per species | spectral symbol, Huygens sampling, Gauss projection (cochain Poisson), window shift, energy accounting, open domain, restart, relativistic self-fields |
-| `ReducedMaxwellPICFieldSolver` | `CompatibleMaxwell1DPlan`/`CompatibleMaxwell2DPlan`, periodic or bounded axes | `ReducedPICTransferPlan` | spectral symbol, multi-deposit, Gauss projection (1-D cochain, 2-D per-axis eigenbasis), window shift, open domain, restart |
-| `UnstructuredMaxwellPICFieldSolver` | tetrahedral `PreparedUnstructuredMaxwell` | `UnstructuredWhitneyCurrentPlan` | Gauss projection (cochain Poisson), restart |
+| Solver | Field | Transfer |
+|---|---|---|
+| `CochainMaxwellPICFieldSolver` | 3-D `PreparedCompatibleMaxwell`, periodic or bounded axes, boundaries, CPML, linear passive media | cochain splats + `ChargeConservingCurrentPlan` per species |
+| `ReducedMaxwellPICFieldSolver` | `CompatibleMaxwell1DPlan`/`CompatibleMaxwell2DPlan`, periodic or bounded axes | `ReducedPICTransferPlan` |
+| `UnstructuredMaxwellPICFieldSolver` | tetrahedral `PreparedUnstructuredMaxwell` | `UnstructuredWhitneyCurrentPlan` |
+| `PreparedSpectralMaxwell` | Cartesian PSATD, global-FFT or local-guarded ([Spectral PIC](guides_spectral_pic.md)) | cochain splats + `ChargeConservingCurrentPlan` per species |
+| `PreparedQuasiCylindricalMaxwell` | azimuthal-mode PSATD | `AzimuthalTransferPlan` |
 
-Optional capabilities are structural protocols: `PICSpectralSymbol` (vacuum numerical dispersion
-`ω(k)`), `PICHuygensSampling` (phasors of the solver's Huygens observers), `PICMultiDeposit` (one
-fused deposit of every species), `PICWindowShift` (integer-cell translation, consumed by
-`PICMovingWindowPlan`), `PICGaussProjection` (curl-free Poisson projection of the field onto a
+Optional capabilities are structural protocols, each named by a `PICFieldSolverCapability`:
+`PICTensorLayout` (`"tensor-layout"`, the structured component layout `PICFilterPlan` filters),
+`PICSpectralSymbol` (`"spectral-symbol"`, vacuum numerical dispersion `ω(k)`), `PICHuygensSampling`
+(`"huygens-sampling"`, phasors of the solver's Huygens observers), `PICMultiDeposit`
+(`"multi-deposit"`, one fused deposit of every species), `PICWindowShift` (`"window-shift"`,
+integer-cell translation, consumed by `PICMovingWindowPlan`), `PICGalileanGrid`
+(`"galilean-grid"`, a grid translating at `grid_velocity`), `PICEnergyAccounting`
+(`"energy-accounting"`, field, magnetic, and medium energy split plus the source-free loss power the
+energy ledger integrates), `PICOpenDomain` (`"open-domain"`, periodic and wall-bounded axes of the
+field box and the wall inset each species' stencil needs), `PICRestartState` (`"restart-state"`),
+`PICGaussProjection` (`"gauss-projection"`, curl-free Poisson projection of the field onto a
 prescribed Gauss charge, reporting `divergence_before`/`divergence_after`, the added field energy,
-and its `"cochain-poisson"` or `"spectral-poisson"` route), `PICEnergyAccounting` (field,
-magnetic, and medium energy split plus the source-free loss power the energy ledger integrates),
-`PICOpenDomain` (periodic and wall-bounded axes of the field box and the wall inset each
-species' stencil needs), `PICRelativisticSelfFields` (boosted-Coulomb initial fields of drifting
-species), and `PICRestartState`. Prescribed
-fields enter through
-`phydrax.discretization.pic.ExternalFieldSource` and are added to every gather. The semi-implicit
-ECSIM runtime `SemiImplicitPICPlan` solves particles and field jointly and remains a separate
-orchestrator.
+and its `"cochain-poisson"` or `"spectral-poisson"` route), and `PICRelativisticSelfFields`
+(`"relativistic-self-fields"`, boosted-Coulomb initial fields of drifting species). Prescribed
+fields enter through `phydrax.discretization.pic.ExternalFieldSource` and are added to every
+gather. The semi-implicit ECSIM runtime `SemiImplicitPICPlan` solves particles and field jointly
+and remains a separate orchestrator.
+
+Every prepared solver declares its capability matrix: `solver.pic_capabilities` is a
+`PICFieldSolverCapabilities` holding one `PICCapabilityRecord` per capability, in canonical order,
+with `published` (the solver structurally implements the protocol the runtime checks), `admitted`
+(this configuration executes the route), and `basis` (the route, or the refusal reason).
+`published` is verified against the structural protocol check whenever the matrix is built, so a
+record cannot claim a protocol the runtime would not find or hide one it would use. A published but
+unadmitted protocol refuses when called for the configuration reason in `basis`.
+
+| Capability | cochain 3-D | reduced 1-D/2-D | unstructured Whitney | Cartesian PSATD (global, local) | quasi-cylindrical PSATD |
+|---|---|---|---|---|---|
+| `tensor-layout` | admitted | admitted | — | — | — |
+| `spectral-symbol` | admitted for homogeneous diagonal media (Yee) | admitted (Yee) | — | admitted (`c\|[k]\|`; local-guarded steps differ by at most `guard_truncation(dt)`) | admitted |
+| `huygens-sampling` | published; refused: Maxwell refuses Huygens boxes beside the dynamic PIC current, so no phasors exist | — | — | admitted with observers (standard, staggered, no antennas); published and refused without observers | admitted with observers; published and refused without |
+| `multi-deposit` | — | admitted | — | admitted | — |
+| `window-shift` | admitted (uniform axis) | admitted | — | — (periodic box) | admitted (axis 2) |
+| `galilean-grid` | — | — | — | admitted for the Galilean variants; published and refused for `"standard"` (lab-fixed grid) | admitted for the Galilean variants; published and refused for `"standard"` |
+| `energy-accounting` | admitted | — | — | — | — |
+| `open-domain` | admitted | — | — | — | — |
+| `restart-state` | admitted | admitted | admitted | admitted | admitted |
+| `gauss-projection` | admitted (cochain Poisson) | admitted | admitted | admitted (spectral Poisson) | admitted |
+| `relativistic-self-fields` | published; admitted only with a zero-valued grounded electrostatic boundary | — | — | — | — |
+
+"—" is unpublished. Without `open-domain`, periodic particle faces are refused and bounded faces are
+not inset-checked; without `energy-accounting` the ledger uses the total field energy.
 
 The Whitney transfer returns nodal charge content and integrated edge flow; the unstructured
 solver maps them through the inverse degree-0/degree-1 Hodge stars onto Maxwell's charge density
@@ -162,6 +192,37 @@ law uses the transfer's continuity divergence, so reduced 2-D fields pair to rou
 periodic and bounded axes. The reduced transfer projects the raw midpoint current onto continuity
 with the same operator (a cumulative sum in 1-D, the per-axis eigenbasis of the reduced Poisson
 operator in 2-D); the corrected current on an upper wall face is the physical outflow.
+
+### Field-solver state handoff
+
+Replacing the field solver of a declaration is construction of a new prepared solver (see
+[Spectral PIC](guides_spectral_pic.md#substituting-the-cochain-solver)). Converting a running state
+is a separate explicit operation: `hand_off_pic_state(source, target, state, step_size)` returns a
+`PICFieldHandoffResult` with the converted `ElectromagneticPICState` for `target` and its
+`PICFieldHandoffEvidence`. It is defined only between `CochainMaxwellPICFieldSolver` and
+`PreparedSpectralMaxwell` (`"cochain-to-spectral"` and `"spectral-to-cochain"`), for both plans
+declaring the same run (species, processes, boundaries, recorders, filters, guards, external fields,
+ownership, precision, pusher, key), the same bridge, transfers, and current plans, on a periodic
+uniform grid with a lossless stateless homogeneous medium and the PIC current as the only Maxwell
+source. On that grid the degree-1 and degree-2 cochains are the edge circulations `E_a Δ_a` and
+face fluxes `B_c Δ_a Δ_b` at the Yee positions where `grid="staggered"` PSATD stores `E_a` and
+`B_c`, and the order-2 finite PSATD stencil `[k] = 2 sin(kΔ/2)/Δ` is exactly the Yee node
+difference, so the conversion preserves Gauss's law and `∇·B` identically; both runtimes hold `E`
+and `B` at the same integer time. The evidence reports one mean-free relative Gauss residual on
+both sides (`−δD − (ρ − ρ̄)` and `ε∇⁻·E − (ρ − ρ̄)`, the mean being invisible to PSATD), relative
+magnetic residuals, the synchronized field energies and their relative difference, total charges,
+and `leapfrog_energy_correction`, the Yee half-kick term by which the ledger's field energy jumps
+across the handoff. Preservation carries a violated constraint over unchanged, so
+`constraint_satisfied` separately checks the converted state against the target plan's absolute
+`constraint_tolerance` with the target solver's own per-step residuals: Gauss's law including the
+mean charge (a non-neutral periodic state fails in either direction) and `∇·B`. `successful`
+requires finite fields, `constraint_satisfied`, and target residuals, energy, and charge
+preserved to roundoff. Infinite-order or higher-order stencils and collocated grids are refused
+(their Gauss law differs at `O((kΔ)²)` and restoring it would change the field), as are Galilean
+variants, PSATD PML, antennas, and observers, and cochain boundaries, CPML, observers, harmonic
+constraints, and conductive, dispersive, or plasma media (memory with no counterpart). Distributed
+solvers are not converted. `examples/pic_field_handoff.py` hands a cochain plasma run to PSATD
+mid-run (Gauss residual `3.4e-15` relative, energy difference `3.1e-16`).
 
 ## Electromagnetic PIC runtime
 
@@ -585,14 +646,15 @@ Two further scenarios run on WarpX only (Smilei and PIConGPU refuse them):
 
 ## Distributed PIC and restart
 
-`DistributedPICFieldSolver(base, mesh, guard_cells=3, particle_margin=1.0, identity_tiles=None)`
-runs the periodic 3-D cochain, reduced 1-D/2-D, or Cartesian PSATD solver on a device mesh of one
-to three axes. Mesh axis `a` splits grid axis `a` into equal blocks of whole cells
-(`PICDomainDecomposition`): a one-axis mesh gives slabs, a two-axis mesh pencils, a three-axis mesh
-blocks (every mesh axis holds at least two devices). Device `(p₀, …)` with row-major linear index
-`p` owns slot block `[p C/P, (p+1) C/P)` of
-every species, so particle ownership is aligned with the field decomposition. It is an ordinary
-`AbstractPreparedPICFieldSolver`, so `ElectromagneticPICPlan` runs over it unchanged:
+`distribute_pic_field_solver(base, mesh, guard_cells=3, particle_margin=1.0, identity_tiles=None)`
+runs the periodic 3-D cochain, reduced 1-D/2-D (periodic or bounded axes), or Cartesian PSATD
+solver on a device mesh of one to three axes. Mesh axis `a` splits grid axis `a` into equal blocks
+of whole cells (`PICDomainDecomposition`): a one-axis mesh gives slabs, a two-axis mesh pencils, a
+three-axis mesh blocks (every mesh axis holds at least two devices). Device `(p₀, …)` with
+row-major linear index `p` owns slot block `[p C/P, (p+1) C/P)` of
+every species, so particle ownership is aligned with the field decomposition. The result is an
+`AbstractDistributedPICFieldSolver`, an ordinary `AbstractPreparedPICFieldSolver`, so
+`ElectromagneticPICPlan` runs over it unchanged:
 
 - each device deposits its own particles on its block window (owned cells plus `guard_cells`
   cells on each side of every decomposed axis); one plane-level
@@ -626,15 +688,40 @@ spreads over the whole grid, so a reduced 2-D run decomposes only when the guard
 grid (reduced 1-D currents are window-local up to their mean current). The distributed solver shares its base
 solver's identity — decomposition changes reduction order, not the discretization — and reports
 execution in `PICDistributedEvidence` (`distributed=True`, mesh shape, local-guarded guards; for
-cochain Maxwell the capability set with `distributed` and `spatial_distribution` set). It
-implements `PICGaussProjection` through its base, so resampling Gauss projections run on the
-distributed field with the halo-accumulated charge.
+cochain Maxwell the capability set with `distributed` and `spatial_distribution` set).
+
+`pic_distribution_support(base)` returns the `PICDistributionSupport` (`route` or `None`, and the
+`basis`) that `distribute_pic_field_solver` enforces: quasi-cylindrical PSATD is refused (its
+radial Hankel transforms couple every radius of every mode), unstructured Whitney PIC is refused
+(tetrahedral cochains have no block decomposition or halo plan), and a cochain grid with a bounded
+axis is refused (the wall vertex plane does not tile the cell blocks). The route-specific
+distributed solver publishes exactly the protocols whose distributed route it executes
+(`pic_capabilities`, configuration `"distributed-<base>"`) and states every base protocol it
+withholds; a published distributed protocol is admitted exactly when the base admits it:
+
+| Capability | distributed cochain 3-D | distributed reduced 1-D/2-D | distributed PSATD (global-FFT, local-guarded) |
+|---|---|---|---|
+| `tensor-layout` | forwarded: filters act on the global arrays of the partitioned update | forwarded | — (base unpublished) |
+| `spectral-symbol` | forwarded (the distributed update is the base update) | forwarded | forwarded |
+| `huygens-sampling` | withheld: the cochain base never carries Huygens boxes beside the PIC current | — | forwarded: observers accumulate from the global fields when each step completes |
+| `multi-deposit` | wrapper route: every species' block-window deposit summed before one halo accumulation | same | same |
+| `window-shift` | withheld: `PICMovingWindowPlan` shifts particles without migrating them to their new owners | withheld (same) | — (base unpublished) |
+| `galilean-grid` | — | — | forwarded: particles drift and migrate in grid coordinates |
+| `energy-accounting` | forwarded (replicated cochains) | — | — |
+| `open-domain` | forwarded (every distributed cochain axis is periodic) | — | — |
+| `restart-state` | forwarded; components restart across topologies | forwarded | forwarded |
+| `gauss-projection` | forwarded on the halo-accumulated charge | forwarded | forwarded (FFTs on the PIC mesh) |
+| `relativistic-self-fields` | withheld: needs a grounded boundary on bounded axes, and distributed cochain axes are periodic | — | — |
+
+Each published route is exercised on four forced host devices against the single-device base or an
+analytic reference in `tests/unit/solver/test_distributed_pic_capabilities.py` (functional
+evidence, not hardware scaling).
 
 ```python
 from jax.sharding import Mesh
 
 mesh = Mesh(np.asarray(jax.devices()[:4], dtype=object).reshape(2, 2), ("x", "y"))
-solver = phx.solver.DistributedPICFieldSolver(base_solver, mesh)
+solver = phx.solver.distribute_pic_field_solver(base_solver, mesh)
 pic = phx.solver.ElectromagneticPICPlan(solver, species=species, processes=processes)
 run = phx.solver.DistributedElectromagneticPICPlan(pic, packet_capacity=64, reach=1)
 state = run.initialize(positions, velocities, dt, active_masks=masks, masses=masses)
@@ -708,5 +795,7 @@ stopped branch decisions. No derivative is claimed through particle creation/del
 ionization, moving windows, repartitioning, or adaptive topology.
 
 Support is configuration-specific rather than inherited across those plans. Quasi-cylindrical
-PSATD is not distributed, and dynamic load balancing between restarts is excluded; each advanced
+PSATD, unstructured Whitney PIC, and bounded cochain grids are not distributed, distributed runs
+refuse moving windows and relativistic self-field initialization, the decomposition is static
+between restarts (no dynamic load balancing or ownership migration during a run), and each advanced
 configuration requires its own conservation, capacity, solver, and differentiation evidence.

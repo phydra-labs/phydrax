@@ -125,6 +125,37 @@ time-window behavior is covered by
       `enforce_dirichlet(...)` call accepts the same gate settings. These settings
       do not change derivative conditions.
 
+## Hybrid coupling with classical owners
+
+A physics-informed network that shares an interface with a classical owner
+trains through the same `FunctionalSolver`; there is no separate hybrid solver.
+
+- **Direct pretraining.** The network is bound once as
+  `phx.ComponentBinding(network, authority=phx.ComponentAuthority.SURROGATE)`
+  and wrapped with `domain.Model(...)` for training. Its region's physical
+  residuals (interior operator, boundary fluxes, and an interface condition) are
+  ordinary `ResidualPenalty` terms: direct physical-residual training, which the
+  surrogate authority admits.
+- **Fixed numerical field views.** In a Dirichlet–Neumann step, the classical
+  owner's accepted solution enters the network's interface condition as a FIXED
+  field: a `phx.discretization.DiscreteFieldFunctionView` of the owner's
+  coefficients, queried with `view.query(points)` evidence at the interface
+  sites and used as the target of a `phx.conditions.Observation` on the
+  interface component. The view is `NonTrainableState`; only the network's
+  PARAMETER lane trains. The view publishes its reconstruction's `value_port`,
+  so the network must declare the same port (`model_ports()` plus a
+  `domain.Model(..., port_mapping=...)` binding) before the two compose.
+- **Accepted classical responses.** The derivative of a classical owner's
+  response with respect to the network's parameters is not a `FunctionalSolver`
+  term. It goes through `phx.optim.StateDesignProblem`,
+  `prepare_state_design_linearization(..., component=StateDesignComponentAdmission(...))`,
+  and `state_design_response_vjp`, which report accepted primal and adjoint
+  evidence separately (see
+  [Optimization](../optim.md#accepted-response-pullbacks-and-block-evidence)).
+
+See [Hybrid PINN and classical responses](../../guides_numerical_interoperability.md#hybrid-pinn-and-classical-responses)
+and `examples/hybrid_pinn_classical.py`.
+
 ## Eigen-PINN selection and strong residual refinement
 
 For a self-adjoint eigenproblem, use separate terms for separate mathematical

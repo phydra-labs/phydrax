@@ -121,6 +121,23 @@ Characteristic reconstruction requires an equation-owned eigensystem. Physical s
 live in `phydrax.equations`; reconstruction never owns Euler, multispecies, shallow-water,
 or MHD physics.
 
+### Face traces
+
+`FiniteVolumeDiscretization.integration_domain("exterior_facet" | "interior_facet")`
+enumerates the faces of each axis in turn (row-major within an axis). Interior faces
+are owned by the lower cell; a cell's local facets are `2 * axis` (lower) and
+`2 * axis + 1` (upper). `prepare_side_trace` publishes a `PreparedTraceAction` on the
+state array itself: without a reconstruction every site carries the side cell average
+(`representation="cell-average"`), and `MUSCLReconstruction(UnlimitedLimiter())`
+publishes its directional face state (`representation="face-state"`, constant along
+the face, equal to the face average of a linear field) through an exact-transpose
+stencil route. Limited MUSCL and `WENOReconstructionPlan` face states are nonlinear;
+`prepare_nonlinear_face_trace` returns a `PreparedNonlinearFaceTrace` whose only
+derivative contract is `linearize(state)`. Face states whose stencil leaves a bounded
+axis depend on boundary ghost states owned by the boundary condition and are refused,
+as are periodic seam faces, which join two physically distinct images. WENO face plans
+also require uniform cells across each stencil.
+
 ## Interface solvers
 
 Conservative numerical-flux plans return one normal flux density and one maximum signal

@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 from math import prod
 from typing import Any, TYPE_CHECKING
 
+import jax.core as jax_core
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
@@ -428,11 +429,33 @@ class JointFactor(Domain):
         raise NotImplementedError
 
     def same_support(self, other: object, /) -> bool:
+        """Return whether ``other`` denotes the same labeled support.
+
+        One factor object always denotes its own support, so identity is decided
+        statically. Distinct factors are compared by `_same_factor_support`, which
+        reads support-defining values only when they are concrete host data.
+        """
+        if self is other:
+            return True
         return (
             isinstance(other, JointFactor)
             and self.labels == other.labels
             and self._same_factor_support(other)
         )
+
+    def _require_concrete_support(self, other: "JointFactor", *values: object) -> None:
+        """Refuse comparing distinct supports whose defining values are traced.
+
+        A traced value has no host value, so equality of two distinct traced
+        supports cannot be decided while staging; only identity (handled by
+        `same_support`) can establish it.
+        """
+        if any(isinstance(value, jax_core.Tracer) for value in values):
+            raise ValueError(
+                f"Cannot decide whether distinct factors {self.labels} and "
+                f"{other.labels} share a support: their support-defining values are "
+                "traced. Compare supports before tracing or reuse one factor object."
+            )
 
     def relabel(
         self,

@@ -195,6 +195,19 @@ def _smoothness_gram(
     return gram
 
 
+def _stencil_coefficients(
+    value: Array, base: Array, stencils: Array, valid: Array, factors: Array, /
+) -> Array:
+    """Least-squares modal coefficients from stencil differences to `base` cells."""
+    difference = value[stencils] - base[:, None, ...]
+    mask = valid.reshape(valid.shape + (1,) * (difference.ndim - 2))
+    return ein.contract(
+        "cfs,cs...->c...f",
+        factors.astype(value.dtype),
+        jnp.where(mask, difference, 0.0),
+    )
+
+
 class CellPolynomialBasis(StrictModule, NonTrainableState):
     """Nonconstant total-degree basis for conservative cell-average polynomials."""
 
@@ -434,14 +447,22 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
         value = jnp.asarray(state)
         if value.shape[0] != self.discretization.cell_count:
             raise ValueError("Cell polynomial state must begin with cell count.")
-        difference = value[self.stencil_cells] - value[:, None, ...]
-        mask = self.stencil_valid.reshape(
-            self.stencil_valid.shape + (1,) * (difference.ndim - 2)
+        return _stencil_coefficients(
+            value, value, self.stencil_cells, self.stencil_valid, self.factors
         )
-        return ein.contract(
-            "cfs,cs...->c...f",
-            self.factors.astype(value.dtype),
-            jnp.where(mask, difference, 0.0),
+
+    def cell_coefficients(self, state: Array, cell_routes: Array, /) -> Array:
+        """Modal coefficients of the selected cells only, `(routes, ..., features)`."""
+        value = jnp.asarray(state)
+        if value.shape[0] != self.discretization.cell_count:
+            raise ValueError("Cell polynomial state must begin with cell count.")
+        routes = jnp.asarray(cell_routes, dtype=jnp.int32)
+        return _stencil_coefficients(
+            value,
+            value[routes],
+            self.stencil_cells[routes],
+            self.stencil_valid[routes],
+            self.factors[routes],
         )
 
     def stage_coefficients(

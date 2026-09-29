@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -32,6 +32,10 @@ from ._identity import NumericRevision
 from ._sampling._addressing import SampleAddress
 from ._strict import StrictModule
 from ._trainable import LaneLayout, NonTrainableState
+
+
+if TYPE_CHECKING:
+    from .lifecycle import CompositionDependency, CompositionEntry
 
 
 ExecutionWorksetMode = Literal["serial", "vmap", "filter_vmap"]
@@ -241,6 +245,43 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
     @property
     def item_count(self) -> int:
         return self.plan.item_count
+
+    def composition_entry(
+        self,
+        /,
+        *,
+        entry_id: str,
+        owner_id: str,
+        dependencies: Sequence[CompositionDependency] = (),
+    ) -> CompositionEntry:
+        """Composition entry of these prepared worksets (a derived `workset`).
+
+        Structure and revision are `prepared_id` (plan, bucket signatures, and
+        item permutation); semantics are the plan's canonical semantic item IDs,
+        which a reprepare must keep. `dependencies` are the caller's bindings of
+        what the signatures were prepared against (for example the topology),
+        so a topology reprepare leaves these worksets stale until they are
+        reprepared or invalidated.
+        """
+
+        # Lazy: the lifecycle package sits above the execution substrate.
+        from .lifecycle import CompositionEntry
+
+        return CompositionEntry(
+            self,
+            entry_id=entry_id,
+            role="workset",
+            owner_id=owner_id,
+            structure_id=self.prepared_id,
+            revision_id=self.prepared_id,
+            semantics_id=canonical_fingerprint(
+                {
+                    "kind": "execution-workset-semantics",
+                    "semantic_ids": list(self.plan.semantic_ids),
+                }
+            ),
+            dependencies=dependencies,
+        )
 
     def gather(self, values: PyTree[ArrayLike], /) -> PyTree[Array]:
         """Gather item-major values with safe duplicate values in padded lanes."""

@@ -121,6 +121,29 @@ is not `NONE`; a contract without supported surfaces is constant.
       show_root_heading: true
       show_source: false
 
+## Owner derivative capabilities
+
+A prepared scientific owner (for example a FEM–BEM transmission solve or a
+boundary-element exterior solve) publishes an `OwnerDerivativeCapability`: the
+runtime arguments it admits, each with the `DerivativeSurface` it enters
+(`SOLVER_ARGUMENT` for solve data, `PHYSICAL_PARAMETER` for operator
+coefficients, `INPUT` for densities of linear actions), and the quantities it
+refuses with a reason (runtime arguments outside the selected route and fixed
+prepared structure such as geometry, kernels, or quadrature). Its
+`derivative_contract` is `SMOOTH` on the admitted surfaces through the declared
+route, or `STOPPED` when nothing is admitted. `require` raises a `ValueError`
+beginning with `DERIVATIVE_UNSUPPORTED` that carries the owner's reason. The
+capability is static; each owner result reports primal acceptance and a
+separate `derivative_valid` flag for one evaluation. Owners refuse derivative
+requests through arguments they do not admit at transformation time rather than
+returning a stopped (zero) derivative, and poison derivatives of results they
+do not accept.
+
+::: phydrax.OwnerDerivativeCapability
+    options:
+      show_root_heading: true
+      show_source: false
+
 ## Branch differentiation
 
 ::: phydrax.BranchDifferentiationPolicy

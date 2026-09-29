@@ -66,7 +66,9 @@ def test_measurement_core_scenario_1() -> None:
         field_id="predicted",
     )
     result = phx.observation.MeasurementComparisonPlan(observed).evaluate(predicted)
-    np.testing.assert_allclose(result.standardized_residual, (1.0, -2.0))
+    assert result.noise_model == "independent_uncertainty"
+    assert result.whitened_residual is not None and result.quadratic is not None
+    np.testing.assert_allclose(result.whitened_residual, (1.0, -2.0))
     np.testing.assert_allclose(result.quadratic, 5.0)
     assert bool(result.successful)
     covariance = phx.observation.DiagonalCovarianceAction(
@@ -76,6 +78,7 @@ def test_measurement_core_scenario_1() -> None:
     correlated = phx.observation.MeasurementComparisonPlan(
         observed, covariance=covariance
     ).evaluate(predicted)
+    assert correlated.whitening == "diagonal" and correlated.quadratic is not None
     np.testing.assert_allclose(correlated.quadratic, 5.0)
     assert bool(correlated.successful)
     incompatible = phx.measurement.QuantityField(
@@ -111,8 +114,17 @@ def test_measurement_core_scenario_1() -> None:
         np.asarray((1.0 + 1.0j,)),
     ).prepare()
     result = phx.observation.MeasurementComparisonPlan(observed).evaluate(predicted)
-    np.testing.assert_allclose(result.quadratic, 2.0)
+    assert result.noise_model == "unquantified"
+    assert result.quadratic is None and result.log_likelihood is None
+    np.testing.assert_allclose(result.residual, (1.0 + 1.0j,))
     assert bool(result.successful)
+    weighted = phx.observation.MeasurementComparisonPlan(
+        observed, reference_scale=1.0
+    ).evaluate(predicted)
+    assert weighted.noise_model == "reference_weighting"
+    assert weighted.quadratic is not None and weighted.log_likelihood is None
+    np.testing.assert_allclose(weighted.quadratic, 2.0)
+    assert bool(weighted.successful)
 
 
 def test_measurement_core_scenario_2() -> None:

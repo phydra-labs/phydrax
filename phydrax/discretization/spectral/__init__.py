@@ -165,6 +165,7 @@ from ._rational import (
     RationalChebyshevHalfLineBasisPlan,
     RationalChebyshevLineBasisPlan,
 )
+from ._side_trace import SpectralFaceRoute
 from ._solid_harmonic import (
     PreparedSolidHarmonicSynthesis,
     SolidHarmonicPlan,
@@ -347,6 +348,7 @@ __all__ = [
     "TensorSpectralDiscretization",
     "TensorSpectralPlan",
     "SpectralFieldReconstructionKernel",
+    "SpectralFaceRoute",
     "prepare_spectral_field_reconstruction",
     "spectral_derivative_operator",
     "spectral_hilbert_operator",

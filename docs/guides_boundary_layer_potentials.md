@@ -199,6 +199,164 @@ successful solves; no continuum BEM discretization-error estimator is claimed. S
 differentiation, accelerated far fields, mixed boundary conditions, and fused
 multi-right-hand-side execution remain outside this contract.
 
+## Two-dimensional Laplace Galerkin operator
+
+`BoundaryPanelization2D` and `LaplaceLayerPotential2D` carry quadrature-node densities,
+and `double_layer_principal_value_matrix` is a Nyström/collocation matrix. Neither is a
+Galerkin boundary operator. `prepare_scalar_laplace_galerkin_2d` is the native
+Galerkin product for the same kernel `G = -log|x-y|/(2π)` and the same outward-normal
+convention.
+
+**Geometry.** `ClosedPolygonalCurve2D(vertices, source_id=...)` is one closed simple
+polygon with exact straight panels. Vertices keep their declared order; panel `k` joins
+vertex `k` to `k + 1`. Either traversal is accepted and every normal points from the
+bounded interior to the unbounded exterior. Zero-length panels, zero area, fold-back
+corners, and touching or crossing non-adjacent panels are refused. Curved charts are
+not approximated.
+
+**Trace spaces.** `ScalarBoundarySpaces2D` publishes the continuous P1 Dirichlet trace
+(vertex coefficients) and the DP0 conormal trace (panel coefficients) as
+`BoundaryTraceSpace2D` records. Both vector spaces carry physical arc-length pairings:
+DP0 uses the diagonal of panel lengths, P1 uses its tridiagonal Gram map with a
+prepared native PCG inverse. `mixed_mass` is the DP0 x P1 duality pairing
+`∫ q φ ds`; `integral_weights` are the exact covectors `∫ basis ds`.
+
+**Operators.** `single_layer` is the weak `V` (DP0 x DP0) and `double_layer` the weak
+`K` (DP0 test x P1 trial); both map into the DP0 dual. For a bounded exterior harmonic
+field, `u = c + Dφ - Sq` with `∫ q ds = 0`, where `φ` and `q` are the exterior
+Dirichlet and outward conormal traces and `c` is the far-field constant. Its exterior
+trace, using `γ0⁺D = K + I/2`, gives
+
+```text
+(M/2 - K) φ + V q - m c = 0
+```
+
+tested with DP0, where `M` is the mixed mass and `m` the panel lengths. The interior
+relation `(M/2 + K) φ - V q = 0` is a different equation. `exterior_relation` publishes
+the rectangular block map from `(dirichlet_trace, conormal, far_field_constant)` to
+`(exterior_boundary_equation, total_conormal)`.
+
+**Quadrature.** Every panel pair is classified. Coincident pairs use closed forms (the
+straight-panel double layer vanishes, which is its principal value). Shared-endpoint
+pairs use the Duffy map about the shared vertex: the `ρ log ρ` part of `V` and the `ρ`
+cancellation of `K` are integrated exactly and the smooth angular remainder uses
+adaptive Gauss--Kronrod (21) quadrature. Near pairs integrate the exact straight-panel
+inner integrals with adaptive Kronrod quadrature over the test panel. Regular pairs use
+a fixed tensor Gauss--Legendre rule at run time; preparation certifies every regular pair
+against the exact-inner Kronrod reference and promotes any pair above the tolerance to
+the near class. `ScalarLaplaceGalerkinReport2D` reports per-class counts, normalized
+maximum errors, evaluations, adaptive depth, promoted pairs, and preparation, resident,
+and per-action bytes. Its `support` field is the exact candidate
+`BoundarySupportEnvelope`, with unsupported claims stated explicitly.
+
+**Execution.** Actions are blocked-direct: regular pairs are summed block by block
+(`lax.fori_loop`) with sparse exception corrections, and no panel-pair tensor is
+retained. Transposes and pairing adjoints are available. Dense matrices exist only
+through `phx.linalg.materialize` under an explicit `MaterializationPolicy`. No FMM
+Galerkin route is provided.
+
+```text
+curve = phx.operators.ClosedPolygonalCurve2D(vertices, source_id="outer-boundary")
+galerkin = phx.operators.prepare_scalar_laplace_galerkin_2d(curve)
+projection = phx.operators.prepare_boundary_trace_projection_2d(galerkin.spaces, order=8)
+dirichlet = projection.project_dirichlet(trace_samples)   # declared L2 projection
+prepared = phx.operators.prepare_exterior_laplace_dirichlet_2d(
+    galerkin, far_field="decaying", far_field_tolerance=1.0e-3
+)
+result = phx.operators.solve_exterior_laplace_dirichlet_2d(prepared, dirichlet.coefficients)
+field = galerkin.evaluate_field(
+    targets,
+    side="exterior",
+    dirichlet=dirichlet.coefficients,
+    conormal=result.conormal,
+    far_field_constant=result.far_field_constant,
+)
+```
+
+**Bordered exterior solve.** `prepare_exterior_laplace_dirichlet_2d` assembles the
+square system with unknowns `(conormal, far_field_constant)` and equations
+(exterior boundary equation, `m^T q = 0`). Each equation passes through the inverse
+Riesz map of its row space, so the operator is an endomorphism usable by native
+Krylov methods; a dense direct policy materializes only within its own budget. The
+system is nonsingular because `V` is positive definite on zero-mean densities. The
+far field is declared: `bounded` accepts any solved constant; `decaying` additionally
+requires `|c|` below `far_field_tolerance`, and a nonzero constant is reported as an
+unsatisfied far field rather than silently accepted. The result keeps the native linear
+status and recertifies the original weak equation and the zero-total-conormal row.
+Only `rhs-only` (the default) or `none` differentiation is admitted.
+
+**Derivatives.** Geometry, pair classes, and singular corrections are prepared once on
+the host and never traced. `ScalarLaplaceGalerkin2D.derivative_capability` admits the
+densities `dirichlet` and `conormal` and the `far_field_constant` as direct inputs:
+`V`, `K`, `exterior_relation`, and `evaluate_field` are linear in them, so a JVP is the
+action itself and a VJP is its transpose. Field target positions, geometry, kernel,
+and quadrature derivatives are refused; a transformation that requests one raises
+`derivative-unsupported`. The exterior solve admits the Dirichlet data under
+`rhs-only` as an implicit solution-map derivative of `(q, c)`. Its result keeps
+`accepted` separate from `derivative_valid`; a result that is not accepted (failed
+solve, failed recertification, or a violated decaying far field) returns NaN
+tangents under the status failure mode. Finite-difference or directional checks of
+a `decaying` solve must perturb inside that regime, for example along the trace of a
+field that itself decays. Under `none` any Dirichlet-data derivative raises.
+
+**Trace projection.** `prepare_boundary_trace_projection_2d` fixes Gauss--Legendre
+sample points on each panel. `project_dirichlet` is the L2 projection onto continuous
+P1 and `project_conormal` the L2 projection onto DP0; loads are exact for per-panel
+polynomial traces up to `exact_polynomial_degree`. Every result carries its measured
+defect `||f - Πf||`; a projected higher-order trace is never labeled exact.
+`dirichlet_projection` is the same projection as a linear operator whose Hilbert adjoint
+is P1 evaluation at the samples.
+
+**Field evaluation.** `evaluate_field` uses exact straight-panel integrals of the
+discrete densities, reports the winding number `-D[1]` and boundary distance of every
+target, and refuses to accept on-boundary targets or targets on the wrong side.
+
+Not supported: open curves, several boundary components, curved or moving geometry,
+Helmholtz kernels, the hypersingular operator, FMM Galerkin actions, geometry
+derivatives, and any continuum discretization-error certificate.
+
+## Boundary trace-space capabilities
+
+Boundary-integral owners publish their boundary coefficient spaces to coupling
+consumers as `phydrax.discretization.BoundaryTraceSpaceCapability` records. A record
+names the trace `quantity` (`"dirichlet"`, `"neumann"`, `"surface-current"`,
+`"surface-current-dual"`), its `representation` (`"continuous-p1"`, `"dp0"`, `"rwg"`,
+`"buffa-christiansen"`), the implied Sobolev `conformity`, the `orientation`, the
+coefficient-carrying boundary entities, and the geometry `revision_id`, a fingerprint
+of the vertex coordinates and cells, so moved or rewound geometry is a new revision.
+`coefficient_space` is the owner's native coordinate space, the one its boundary
+operators act on; `gram_space` pairs the same coordinates through the physical
+arc-length or area Gram map, whose inverse is a prepared Jacobi-PCG Riesz solve, and
+`mass` maps them into that dual. Neither record carries a volume support or an
+integration domain.
+
+Scalar Cauchy data are published together as a `CauchyTraceCapability`: one owner, one
+revision, a Dirichlet and a Neumann part, and the sparse `duality` map
+`(B φ)_i = ∫ φ q_i ds`, so `pair(q, φ)` is `∫ q φ ds`. `interior` names the declared
+interior; Dirichlet traces are unoriented and the Neumann trace differentiates along the
+normal pointing out of it.
+
+```python
+cauchy = galerkin.spaces.cauchy_trace_capability()          # 2-D P1/DP0
+cauchy3 = calderon.spaces.cauchy_trace_capability()         # 3-D P1/DP0
+currents = rwg_space.trace_capability()                      # RWG, H(div_Γ)
+energy = cauchy.dirichlet.gram_space.inner(phi, phi)         # ∫ φ² ds
+```
+
+| Owner | Dirichlet | Neumann | Orientation of the Neumann trace |
+| --- | --- | --- | --- |
+| `ScalarBoundarySpaces2D.cauchy_trace_capability()` | vertex P1, tridiagonal arc-length Gram | panel DP0, panel lengths | out of the bounded interior for either declared traversal |
+| `ScalarBoundarySpaces3D.cauchy_trace_capability(gram_tolerance=...)` (from `prepare_scalar_calderon_3d`) | vertex P1, `A(1 + δ_ij)/12` area Gram | face DP0, face areas | out of the bounded interior; `MeshRegion` orients each closed component outward for either declared winding |
+
+`RWGSurfaceCurrentSpace3D.trace_capability()` publishes the tangential current as a
+distinct `"surface-current"` / `"rwg"` record in `H^(-1/2)(div_Γ)`, paired by the exact
+RWG area Gram map; `BuffaChristiansenDualSpace3D.trace_capability()` publishes its
+Buffa--Christiansen dual (`"surface-current-dual"`) with the Gram map of its barycentric
+RWG representation. Currents follow the oriented surface complex: reversing every
+triangle winding negates each basis function and changes the revision. A current record
+is never accepted as a scalar Cauchy part, and a representation declared for another
+quantity is refused. The 3-D scalar P1 coordinate space now carries the kernel's
+coefficient dtype and its own space identity, distinct from the DP0 space.
 
 ## Reference near/far backend
 
@@ -217,6 +375,8 @@ revision identities; singular and near-panel corrections remain direct.
 - direct 3D Laplace triangular surface panels with target-centered Duffy self rules;
 - 3D coefficient-quadrature QBX with continuous signed-distance clearance;
 - 3D Laplace DP0 Galerkin single-layer assembly and conductor capacitance solves;
+- 2D Laplace P1/DP0 Galerkin `V`/`K`, bordered exterior Dirichlet-to-Neumann solves,
+  and declared L2 trace projections on closed straight-panel polygons;
 - explicit direct near/far reference accounting;
 - genuine 2D Laplace FMM M2M/M2L/L2L translations;
 - global 2D QBX/FMM coupling with panel coefficient near corrections.

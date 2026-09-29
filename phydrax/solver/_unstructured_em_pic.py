@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import itertools
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax
@@ -37,8 +37,10 @@ from ._maxwell import CompatibleMaxwellState, MaxwellPrimaryState
 from ._maxwell_unstructured import PreparedUnstructuredMaxwell
 from ._pic_field_solver import (
     AbstractPreparedPICFieldSolver,
+    PICCapabilityRecord,
     PICFieldAdvance,
     PICFieldDeposit,
+    PICFieldSolverCapability,
     PICGaussProjectionResult,
     PICRestartComponent,
     restart_component,
@@ -222,6 +224,54 @@ class UnstructuredMaxwellPICFieldSolver(
                 "electrostatic": electrostatic.plan.plan_id,
             }
         )
+
+    @property
+    def pic_configuration(self) -> str:
+        return "unstructured-whitney"
+
+    def pic_capability(
+        self, capability: PICFieldSolverCapability, /
+    ) -> PICCapabilityRecord:
+        refusal = PICCapabilityRecord.refusal
+        match capability:
+            case "restart-state":
+                return PICCapabilityRecord.route(
+                    capability, "Tetrahedral field cochains, admitted by solver identity."
+                )
+            case "gauss-projection":
+                return PICCapabilityRecord.route(
+                    capability,
+                    "Cochain Poisson projection on interior vertices (cochain-poisson).",
+                )
+            case "tensor-layout" | "window-shift" | "open-domain":
+                return refusal(
+                    capability,
+                    "Tetrahedral cochains have no structured axes, mirror parities, "
+                    "or integer-cell translations.",
+                )
+            case "spectral-symbol":
+                return refusal(
+                    capability, "An unstructured mesh has no single vacuum symbol."
+                )
+            case "huygens-sampling" | "energy-accounting":
+                return refusal(
+                    capability,
+                    "Unstructured Maxwell publishes no Huygens observers or energy split.",
+                )
+            case "multi-deposit":
+                return refusal(
+                    capability,
+                    "Each species deposits its own Whitney trajectory current.",
+                )
+            case "galilean-grid":
+                return refusal(capability, "The tetrahedral mesh is lab-fixed.")
+            case "relativistic-self-fields":
+                return refusal(
+                    capability,
+                    "Boosted-Coulomb fields are a structured cochain capability.",
+                )
+            case _:
+                assert_never(capability)
 
     @property
     def stable_step(self) -> Array:

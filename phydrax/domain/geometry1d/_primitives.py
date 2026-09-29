@@ -98,6 +98,9 @@ class Interval1d(_AbstractGeometry1D):
     def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, Interval1d):
             return False
+        self._require_concrete_support(
+            other, self.start, self.end, other.start, other.end
+        )
         start_eq = np.isclose(
             np.asarray(self.start),
             np.asarray(other.start),

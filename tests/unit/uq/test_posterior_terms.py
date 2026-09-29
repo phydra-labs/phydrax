@@ -7,7 +7,9 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from scipy import stats
 
 import phydrax as phx
 
@@ -301,3 +303,45 @@ def test_composite_terms_construct_problem_without_hidden_reweighting() -> None:
     mode = phx.uq.find_map(problem)
     assert mode.converged
     assert jnp.allclose(mode.position, 0.9995, atol=1e-3)
+
+
+def test_parameter_dependent_noise_gradient_includes_the_log_determinant() -> None:
+    target = jnp.asarray([0.3, -0.5, 1.1, 0.2])
+    min_scale = 1e-4
+    term = phx.uq.FixedObservationLikelihood(
+        lambda parameters: jnp.broadcast_to(parameters["mean"], target.shape),
+        target,
+        phx.uq.GaussianLocationScaleLikelihood(min_scale=min_scale),
+        parameters=lambda parameters: {
+            "raw_scale": jnp.broadcast_to(parameters["raw_scale"], target.shape)
+        },
+    )
+    parameters = {"mean": jnp.asarray(0.25), "raw_scale": jnp.asarray(-0.4)}
+    raw = float(parameters["raw_scale"])
+    scale = np.log1p(np.exp(raw)) + min_scale
+    residual = np.asarray(target) - float(parameters["mean"])
+    count = residual.size
+    # d/d(raw) of sum(-r^2 / (2 s^2) - log s) with ds/d(raw) = sigmoid(raw).
+    sigmoid = 1.0 / (1.0 + np.exp(-raw))
+    expected = (np.sum(residual**2) / scale**3 - count / scale) * sigmoid
+    without_log_determinant = np.sum(residual**2) / scale**3 * sigmoid
+
+    def at_raw_scale(value: float) -> Any:
+        return term.log_prob(
+            {"mean": parameters["mean"], "raw_scale": jnp.asarray(value)}
+        )
+
+    step = 1e-6
+    central = (float(at_raw_scale(raw + step)) - float(at_raw_scale(raw - step))) / (
+        2.0 * step
+    )
+    gradient = jax.grad(term.log_prob)(parameters)["raw_scale"]
+
+    np.testing.assert_allclose(
+        term.log_prob(parameters),
+        np.sum(stats.norm(float(parameters["mean"]), scale).logpdf(np.asarray(target))),
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(gradient, expected, rtol=1e-10)
+    np.testing.assert_allclose(gradient, central, rtol=1e-6)
+    assert abs(float(gradient) - without_log_determinant) > 1.0

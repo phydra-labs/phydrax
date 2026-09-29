@@ -240,6 +240,17 @@ without forming normal equations. Coefficient solves and mapping evaluations
 are counted exactly. Conditioning, residual growth, and nonfinite candidates
 restart the fixed-capacity history.
 
+`FixedPointProblem(mapping, evaluation_work=True)` declares a mapping that returns
+`(mapped_state, work)`, where `work` is a fixed-structure PyTree of non-negative
+integer arrays: the owner-reported work of that one evaluation.
+`FixedPointIteration` sums it over every evaluation it executes, including the
+initial evaluation and the unaccelerated re-evaluations of safeguarded Anderson steps,
+and returns the exact total in `NonlinearResult.evaluation_work`, consistent with
+`diagnostics.residual_evaluations`. Methods that only call `mapping()`, including
+`SteffensenIteration` and residual conversion, do not account the work and report
+`evaluation_work=None`; partitioned coupling uses this channel to count the
+participant work of rejected interface iterates.
+
 `SteffensenIteration` provides elementwise Aitken/Steffensen acceleration and
 falls back to the ordinary mapped point when the accelerated residual is worse
 or the denominator is singular. Fixed-point termination is the physical norm

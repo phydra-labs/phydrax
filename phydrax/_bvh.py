@@ -739,6 +739,8 @@ def _bounded_leaf_candidates(
     bvh: PackedBVH,
     maximum_candidates: int,
     /,
+    *,
+    item_overlaps: Any = None,
 ) -> tuple[Array, Array, Array]:
     capacity = int(maximum_candidates)
     if capacity <= 0:
@@ -755,6 +757,11 @@ def _bounded_leaf_candidates(
             current, current_count = carry
             item = leaf_items[slot]
             item_valid = item >= 0
+            if item_overlaps is not None:
+                safe = jnp.maximum(item, 0)
+                item_valid = item_valid & item_overlaps(
+                    bvh.item_bbox_min[safe], bvh.item_bbox_max[safe]
+                )
             has_space = current_count < capacity
             target = jnp.minimum(current_count, capacity - 1)
             current = current.at[target].set(
@@ -866,7 +873,15 @@ def point_select_leaf_items(
     tolerance: ArrayLike = 0.0,
     query_batch_capacity: int = 64,
 ) -> tuple[Array, Array, Array]:
-    """Return all bounded leaf candidates whose node boxes contain each point."""
+    """Return the bounded items whose own boxes contain each point.
+
+    Hit leaves are traversed through node boxes and each leaf item is kept only
+    when its stored item box, padded by `tolerance`, contains the point, so the
+    candidate count is the local box overlap rather than whole leaf payloads.
+    Callers must store item boxes that enclose each whole item (for curved cells,
+    a certified bound of the mapped cell rather than its coordinate nodes);
+    an item whose box misses a point it contains is never returned.
+    """
     values = jnp.asarray(points, dtype=bvh.bbox_min.dtype)
     single = values.ndim == 1
     if single:
@@ -880,12 +895,11 @@ def point_select_leaf_items(
         raise ValueError("tolerance must be non-negative.")
 
     def query(point: Any) -> Any:
+        def contains(lower: Any, upper: Any) -> Any:
+            return jnp.all((point >= lower - padding) & (point <= upper + padding))
+
         return _bounded_leaf_candidates(
-            lambda lower, upper: jnp.all(
-                (point >= lower - padding) & (point <= upper + padding)
-            ),
-            bvh,
-            maximum_candidates,
+            contains, bvh, maximum_candidates, item_overlaps=contains
         )
 
     if single:

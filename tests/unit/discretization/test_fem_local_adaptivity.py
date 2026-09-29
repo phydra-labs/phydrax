@@ -173,3 +173,71 @@ def test_vertex_interpolation_transfer_certifies_its_invariant_claims() -> None:
             source_topology_id="source",
             target_topology_id="target",
         )
+
+
+@pytest.mark.parametrize("measure_scale", (1.0, 1e-9), ids=("unit", "si-microliter"))
+def test_certified_conservative_transfer_forms_an_accepted_epoch_transition(
+    measure_scale: float,
+) -> None:
+    # A near-identity transfer whose measures change by a relative 2e-12: the
+    # accuracy an L2 projection with action condition 1e3 certifies. Independent
+    # ledger: content changes by 4 * m * 2e-12 * 300 = 2.4e-9 * m exactly.
+    count, defect, measure = 4, 2e-12, 0.25 * measure_scale
+    relation = phx.sparse.RowRelation(
+        np.tile(np.arange(count, dtype=np.int32), (count, 1)),
+        source_size=count,
+        valid=np.ones((count, count), dtype=np.bool_),
+    )
+    primal = phx.sparse.SparseLinearMap(
+        relation, jnp.asarray(np.eye(count) * (1.0 + defect)), operator_id="near-identity"
+    )
+    measures = np.full((count,), measure)
+    transfer = phx.discretization.FiniteElementTopologyTransfer(
+        primal,
+        "coarse",
+        "graded",
+        conservative=True,
+        action_condition=1e3,
+        source_measures=measures,
+        target_measures=measures,
+    )
+    epoch = phx.discretization.TopologyEpoch
+    source_epoch, target_epoch = (
+        epoch(0, "g", "coarse", "p"),
+        epoch(1, "g", "graded", "p"),
+    )
+
+    def space(item: phx.discretization.TopologyEpoch) -> Any:
+        return phx.discretization.DiscreteFieldSpace(
+            "u",
+            item.epoch_id,
+            phx.discretization.EntityDofLayout(f"dofs-{item.index}", count, count),
+            phx.linalg.ArraySpace((count,)),
+            representation="basis_coefficient",
+        )
+
+    transition = transfer.epoch_transition(
+        space(source_epoch),
+        space(target_epoch),
+        source_epoch,
+        target_epoch,
+        measures,
+        measures,
+    )
+    values = jnp.full((count,), 300.0, dtype=jnp.float64)
+    result = transition.apply(values)
+    content = count * measure * 300.0
+
+    np.testing.assert_allclose(result.conservation_residual, content * defect, rtol=1e-3)
+    assert bool(result.successful)
+    # Admitted content drift stays a tiny relative fraction at every measure scale.
+    assert float(result.content_tolerance) <= 1e-9 * content
+    with pytest.raises(ValueError, match="not conserved by this transfer"):
+        transfer.epoch_transition(
+            space(source_epoch),
+            space(target_epoch),
+            source_epoch,
+            target_epoch,
+            measures,
+            measures * 1.001,
+        )

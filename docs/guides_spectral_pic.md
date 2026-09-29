@@ -93,6 +93,24 @@ Every combination below is refused when the plan is constructed, never at runtim
 `current_substeps` is accepted only with `"multi-j"` (at least two), `galilean_velocity` only
 with a Galilean variant, and `subdomains`/`guard_cells` only with `"local-guarded"`.
 
+## Advertised capabilities and distribution
+
+`solver.pic_capabilities` records, per `PICFieldSolverCapability`, whether a prepared spectral
+solver publishes the protocol and whether its configuration admits it (see the particle-in-cell
+guide). The exact advertised combinations are:
+
+| Solver and route | Admitted | Unpublished (refusal) | Distribution |
+|---|---|---|---|
+| `PreparedSpectralMaxwell`, `"global-fft"` | `spectral-symbol` (`c\|[k]\|`), `huygens-sampling` (with observers: standard, staggered, no antennas), `multi-deposit`, `galilean-grid` (Galilean variants), `restart-state`, `gauss-projection` (`"spectral-poisson"`); published but refused when called: `huygens-sampling` without observers, `galilean-grid` for `"standard"` (lab-fixed grid) | `tensor-layout`, `window-shift` and `open-domain` (periodic box), `energy-accounting` (the ledger uses the total field energy; PML absorption is `absorbed_energy`), `relativistic-self-fields` | `"spectral-global-fft"`: base update SPMD-partitioned; FFT topology must be the PIC mesh (slab or pencil); three-axis meshes refused |
+| `PreparedSpectralMaxwell`, `"local-guarded"` | same set; `spectral-symbol` is the global symbol, from which a step differs by at most `guard_truncation(dt)` | same | `"spectral-local-guarded"`: per-device guarded subdomains; subdomains must tile the device blocks and the Coulomb/Gauss-projection FFT topology must be the PIC mesh |
+| distributed PSATD (either route) | the base set above, each admitted exactly when the base admits it and refused with the base reason otherwise; `multi-deposit` is the wrapper's fused block-window deposit | the same five | — |
+| `PreparedQuasiCylindricalMaxwell` | `spectral-symbol`, `huygens-sampling` (with observers), `window-shift` (axis 2), `galilean-grid` (Galilean variants), `restart-state`, `gauss-projection`; published but refused when called: `huygens-sampling` without observers, `galilean-grid` for `"standard"` | `tensor-layout`, `multi-deposit`, `energy-accounting`, `open-domain`, `relativistic-self-fields` | refused: radial Hankel transforms couple every radius of every mode |
+
+Configuration refusals of the table in [Compatibility](#compatibility) (PML and observers only in
+the standard variant, antennas only with `"global-fft"` and without observers, `"local-guarded"`
+without `"spectral-correction"`) are properties of the base plan and hold unchanged under
+distribution, because the distributed solver runs the base plan's own update.
+
 ## Minimal usage
 
 The spectral solver replaces the cochain field solver of `examples/electromagnetic_pic.py`; the
@@ -163,6 +181,31 @@ residual as `result.diagnostics.electric_constraint`. `solver.initialize_field(c
 the Coulomb field `E = −D⁺ρ/(ε[k]²)` of a periodic charge with a neutrality flag, and
 `project_gauss` performs the `"spectral-poisson"` projection that particle resampling requires.
 
+## Substituting the cochain solver
+
+Substitution is construction of a new prepared solver, not conversion of a running state: the
+same `PICSpeciesPlan`s, prepared transfers, current plans, processes, and `ElectromagneticPICPlan`
+options drive `CochainMaxwellPICFieldSolver` or `SpectralMaxwellPlan(bridge,
+grid="staggered").prepare(transfers, currents)`, and the particle initialization is the same call.
+`examples/pic_field_solver_substitution.py` runs one cold two-species Langmuir oscillation
+(`m_i/m_e = 1836`, quadratic shapes, one fixed step on every grid) through both solvers at three
+resolutions and measures the electron mode frequency from the particle states alone (Prony
+recurrence on first differences of the mode amplitude). Both solvers share the explicit leapfrog of
+the longitudinal mode (the PSATD update with piecewise-constant current is `E∥ ← E∥ − Δt J∥/ε`), so
+each measured frequency is `(2/Δt) asin(ω Δt/2)` of its continuous `ω² = ω_p²(1 + m_e/m_i) G`. On
+the one-particle-per-cell edge-centered lattice the cochain Gauss law inverts the quadratic deposit
+exactly (`G = 1`), while PSATD inverts it with the exact wavenumber, `G = sin(kh/2)/(kh/2)`, a
+relative frequency shift `≈ −(kh)²/48`. With `h = 1/16, 1/32, 1/64` the measured PSATD errors are
+`−3.215e-3, −8.041e-4, −2.011e-4` against predicted `−3.214e-3, −8.038e-4, −2.010e-4`, the cochain
+errors stay below `7e-7`, and the solver difference falls by a factor `4.00` per halving. Continuity
+defects stay below `6.1e-16` of the continuity scale, `∇·B` is zero, every step is accepted, and the
+field energy oscillates at `2.000000002 ω`; `tests/unit/solver/test_spectral_maxwell.py` asserts
+the refinement behavior, the constraints, and the leapfrog energy exchange.
+A declaration that only one solver serves is refused, not silently changed: `PICFilterPlan`
+filters need `PICTensorLayout`, which PSATD does not publish. Handing a running state to a new
+solver is the separate `hand_off_pic_state` (see the particle-in-cell guide), admitted only for
+order-2 staggered standard PSATD.
+
 ## Galilean coordinates and NCI suppression
 
 A plasma drifting relativistically through a PSATD grid couples its aliased beam modes
@@ -172,8 +215,9 @@ plasma is at rest on the grid and the instability is eliminated when `v_gal` equ
 velocity (Lehe et al. 2016; Kirchen et al. 2016).
 
 `PreparedSpectralMaxwell.grid_velocity` implements the core `phydrax.solver.PICGalileanGrid`
-protocol. Particle positions are grid coordinates: `ElectromagneticPICPlan` drifts them by
-`(v − v_grid)Δt` and samples external fields at the lab position `x + v_grid t`. The deposit
+protocol; the standard variant publishes it but refuses the read (its grid is lab-fixed, and the
+runtime then uses zero). Particle positions are grid coordinates: `ElectromagneticPICPlan` drifts
+them by `(v − v_grid)Δt` and samples external fields at the lab position `x + v_grid t`. The deposit
 therefore returns the convective current `J′` in the grid frame, and the solver forms the lab
 current `J = J′ + v_gal ρ` from it and the time-centered deposited charge. The averaged
 Galilean variant additionally gathers fields averaged over the step (Shapoval et al. 2021),
@@ -222,7 +266,7 @@ keeps the update local and is the mode to use with local transforms.
 `guard_truncation(dt)` reports the stencil truncation: the relative real-space mass of the
 one-step vacuum propagator kernels (`cos(ωΔt)`, `c[k]_a sin(ωΔt)/ω`) beyond the guard cells, which
 bounds the per-step relative difference from `"global-fft"`. On one device the blocks are
-transformed in turn; `DistributedPICFieldSolver` runs each device's blocks on that device, with the
+transformed in turn; `distribute_pic_field_solver` runs each device's blocks on that device, with the
 guards exchanged through the halo substrate (`guarded_update` on the owned block, then
 `complete_advance` for the evidence), so an `N`-device step equals the one-device local-guarded
 step to reduction order (see the particle-in-cell guide).

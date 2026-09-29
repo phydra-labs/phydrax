@@ -287,3 +287,70 @@ def test_pool_execution_signature_is_exported_by_public_execution_module() -> No
 
     assert execution.PoolExecutionSignature is PoolExecutionSignature
     assert "PoolExecutionSignature" in execution.__all__
+
+
+def _fiber_topology(epoch: int) -> phx.lifecycle.CompositionEntry:
+    return phx.lifecycle.CompositionEntry(
+        jnp.arange(4 + epoch),
+        entry_id="fiber/topology",
+        role="topology",
+        owner_id="fiber",
+        structure_id=f"fiber-topology-{epoch}",
+        revision_id=f"fiber-topology-{epoch}",
+        semantics_id="fiber.bundle",
+    )
+
+
+def test_workset_entry_is_stale_until_reprepared_for_a_new_topology() -> None:
+    topology = _fiber_topology(0)
+    worksets = _plan().prepare()
+    source = phx.lifecycle.Composition(
+        (
+            topology,
+            worksets.composition_entry(
+                entry_id="fiber/worksets",
+                owner_id="fiber",
+                dependencies=(topology.binding("structure"),),
+            ),
+        ),
+        boundary_id="window-0",
+    )
+    refined = _fiber_topology(1)
+    with pytest.raises(
+        ValueError, match="'fiber/worksets' is stale against the structure"
+    ):
+        phx.lifecycle.CompositionRebind(
+            source, retain=("fiber/worksets",), reprepare=(refined,)
+        )
+    fine = _signature("fine-fiber")
+    replanned = ExecutionWorksetPlan(
+        ("unit-3", "unit-1", "unit-4", "unit-2", "unit-0"),
+        (fine, fine, fine, fine, _signature("slow-fiber")),
+        bucket_capacity=2,
+    ).prepare()
+    staged = replanned.composition_entry(
+        entry_id="fiber/worksets",
+        owner_id="fiber",
+        dependencies=(refined.binding("structure"),),
+    )
+    assert staged.structure_id != source.entry("fiber/worksets").structure_id
+    receipt = phx.lifecycle.commit_composition_rebind(
+        phx.lifecycle.CompositionRebind(source, reprepare=(refined, staged)),
+        accepted_boundary=True,
+    )
+    assert receipt.published
+    assert receipt.reprepared == ("fiber/topology", "fiber/worksets")
+    assert receipt.composition.value("fiber/worksets") is replanned
+    other_items = ExecutionWorksetPlan(("unit-0",), (fine,)).prepare()
+    with pytest.raises(ValueError, match="must keep its role and semantics"):
+        phx.lifecycle.CompositionRebind(
+            source,
+            reprepare=(
+                refined,
+                other_items.composition_entry(
+                    entry_id="fiber/worksets",
+                    owner_id="fiber",
+                    dependencies=(refined.binding("structure"),),
+                ),
+            ),
+        )

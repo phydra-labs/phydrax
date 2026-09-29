@@ -170,8 +170,9 @@ qualification, base quantities, phase selection/aggregation, and sign conversion
 
 ## FMI: closed FMI 2.0 Co-Simulation subset
 
-`phydrax.interchange.fmi` exports `inspect_fmu`, `FMIVariable`,
-`FMIModelDescription`, `FMICoSimulationSession`, `FMIStepResult`, and `FMIState`.
+`phydrax.interchange.fmi` exports `inspect_fmu`, `FMIVariable`, `FMIUnit`,
+`FMIModelDescription`, `FMICoSimulationSession`, `FMIStepResult`, and `FMIState`,
+plus the physical coupling binding described below.
 The optional runtime is FMPy; a compatible FMU native binary is also required.
 No source compilation, FMU conversion, Model Exchange solver, FMI3 clock support,
 or missing-library fallback occurs implicitly.
@@ -189,7 +190,9 @@ The declared runtime subset is:
 - FMI **2.0 synchronous Co-Simulation**, not Model Exchange or asynchronous
   `fmi2Pending`. An asynchronously declared FMU is rejected before loading.
 - Scalar Real, Integer, Boolean, String and Enumeration variable mappings by
-  name/value reference. Units/causality/variability are retained. Inputs can be
+  name/value reference. Units/causality/variability are retained, and every
+  `UnitDefinitions/Unit` is kept as an `FMIUnit` with its `BaseUnit` exponents,
+  factor, and offset (exact decimal text). Inputs can be
   set at communication points; parameters are set only before initialization.
   Boolean and integer writes are type checked, not silently coerced.
 - Real instantiate, setup-experiment, enter/exit-initialization, scalar get/set,
@@ -232,6 +235,69 @@ It integrates `dx/dt = gain*u` exactly and handles a time event by changing
 termination and native-state restoration. The matching test fixture compiles that
 source using a local C compiler and packages a platform-compatible FMU. No
 third-party source or binaries are vendored by that specimen.
+
+### Coupling an FMU to native participants
+
+`FMIVariableBinding(variable, port, realization)` declares how one FMI2 Real
+communication variable realizes one physically typed, scalar `CouplingPort`
+from `phydrax.solver.coupling`:
+
+| Realization | Port | FMU variable |
+|---|---|---|
+| `"hold"` | instantaneous input | input set at the communication point and held over the step |
+| `"uniform-rate"` | whole-window input amount | input rate `amount / window`, so exactly the amount enters under the FMI2 hold |
+| `"sample"` | instantaneous output | output read at the reached communication point |
+| `"increment"` | whole-window output amount | change of a cumulative output over the step |
+
+`FMICouplingBinding(model, variables, time_unit=...)` checks every binding against
+the model description: Real type, `input`/`output` causality, `continuous` or
+`discrete` variability, and the variable's unit. The unit must name a
+`UnitDefinitions` entry with a `BaseUnit`; its SI exponents and factor become an
+exact `UnitDefinition` (`fmi_unit_definition`), whose dimension must equal the
+port quantity's (divided by time for `"uniform-rate"`), and the exact factor
+converts values at the host boundary. Undeclared units, units without `BaseUnit`,
+affine units such as `degC`, and candela exponents are refused, never guessed.
+`time_unit` is the unit of the coupling clock, which is the FMU's independent
+variable: it must equal that variable's declared unit, must be seconds when the
+FMU declares no independent variable (the FMI 2.0 default), and is refused when
+the independent variable declares no unit. The binding records
+`rollback="restore"` only when the FMU advertises `canGetAndSetFMUstate`.
+
+`FMICouplingParticipant(session, binding, subsystem_id=...)` binds one live
+session as a host participant of a `PartitionedCouplingDeclaration`, whose
+`time_unit` must equal the binding's. Each window
+sets every bound input at the accepted communication point and performs one
+`fmi2DoStep` to the window end. An early return, a termination request, or a
+non-finite input (refused before any process I/O) fails the window with an
+`FMIWindowStatus`. The participant has no adjoint: its `derivative_support` is
+route `"none"` with the derivative-free alternatives. Such declarations execute
+only through `prepare_host_coupling` and `advance_host_coupling_window`; see
+[partitioned coupling](guides_partitioned_coupling.md#host-participants).
+
+```python
+from phydrax.interchange.fmi import (
+    FMICouplingBinding, FMICouplingParticipant, FMIVariableBinding,
+)
+
+binding = FMICouplingBinding(
+    session.model,
+    (
+        FMIVariableBinding("boundary_temperature", boundary_port, "hold"),
+        FMIVariableBinding("conducted_heat", conducted_heat_port, "increment"),
+    ),
+    time_unit=phx.units.SECOND,
+)
+zone = FMICouplingParticipant(session, binding, subsystem_id="zone")
+```
+
+`examples/fmi_host_coupling.py` compiles Phydrax's second original specimen,
+`tests/interchange/data/thermal_zone.c` (one lumped capacity
+`C dT/dt = G (T_b - T) + P` integrated exactly per held step, with units `K`, `W`,
+`J`, `J/K`, `W/K`, an affine `degC` output, and a `maximum_temperature` cutout that
+stops at the exact crossing with `fmi2Discard`), and couples it to a native
+SSPRK(3,3) node. `tests/interchange/test_fmi_composition.py` checks both coupling
+routes against their exact discrete recursions and the analytic two-capacity
+solution, and the discard path against the FMU's native state restore.
 
 ## HELICS: typed value federation, not implicit coupling convergence
 

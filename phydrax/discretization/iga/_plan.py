@@ -37,9 +37,11 @@ from .._local_variational import (
     LocalVariationalOffer,
     PreparedLocalRegion,
 )
+from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._support import DiscreteSupport
 from .._topology import EntitySelection
+from .._views import FieldTraceSide
 from ..fem._precision import FiniteElementPrecisionPolicy
 from ._actions import IsogeometricGeometryActions, IsogeometricReferenceActions
 from ._basis import (
@@ -97,6 +99,35 @@ def _facet_routes(
         np.asarray(owners, dtype=np.int32),
         np.asarray(local_entities, dtype=np.int32),
         tuple(groups),
+    )
+
+
+def _interior_facet_routes(
+    overlay_breaks: tuple[tuple[float, ...], ...], /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Owner (lower) and neighbor (upper) overlay cells of every interior knot face."""
+    overlay_shape = tuple(len(values) - 1 for values in overlay_breaks)
+    owners: list[int] = []
+    neighbors: list[int] = []
+    owner_local: list[int] = []
+    neighbor_local: list[int] = []
+    for axis in range(len(overlay_shape)):
+        tangential_shape = overlay_shape[:axis] + overlay_shape[axis + 1 :]
+        for interval in range(1, overlay_shape[axis]):
+            for tangential in np.ndindex(tangential_shape):
+                lower = list(tangential)
+                lower.insert(axis, interval - 1)
+                upper = list(tangential)
+                upper.insert(axis, interval)
+                owners.append(int(np.ravel_multi_index(tuple(lower), overlay_shape)))
+                neighbors.append(int(np.ravel_multi_index(tuple(upper), overlay_shape)))
+                owner_local.append(2 * axis + 1)
+                neighbor_local.append(2 * axis)
+    return (
+        np.asarray(owners, dtype=np.int32),
+        np.asarray(neighbors, dtype=np.int32),
+        np.asarray(owner_local, dtype=np.int32),
+        np.asarray(neighbor_local, dtype=np.int32),
     )
 
 
@@ -418,6 +449,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
     overlay_breaks: tuple[tuple[float, ...], ...] = eqx.field(static=True)
     cell_domain: IntegrationDomain
     exterior_facet_domain: IntegrationDomain
+    interior_facet_domain: IntegrationDomain
     bindings: tuple[LocalFieldBinding, ...]
     key: DiscretizationKey
     support: DiscreteSupport
@@ -456,6 +488,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 TensorDofLayout(
                     field.basis.axis_names,
                     field.basis.control_shape,
+                    component_shape=field.component_shape,
                     layout_id=field.basis.layout_id,
                 ),
                 ArraySpace(
@@ -521,6 +554,28 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             neighbor_cells=np.full(facet_owners.shape, -1, dtype=np.int32),
             owner_local_entities=facet_local,
         )
+        (
+            interior_owners,
+            interior_neighbors,
+            interior_owner_local,
+            interior_neighbor_local,
+        ) = _interior_facet_routes(overlay_breaks)
+        interior_domain = IntegrationDomain(
+            "interior_facet",
+            np.arange(interior_owners.size, dtype=np.int32),
+            support.support_id,
+            canonical_fingerprint(
+                {
+                    "kind": "isogeometric-interior-facets",
+                    "geometry": basis.basis_id,
+                    "breaks": [list(values) for values in overlay_breaks],
+                }
+            ),
+            owner_cells=interior_owners,
+            neighbor_cells=interior_neighbors,
+            owner_local_entities=interior_owner_local,
+            neighbor_local_entities=interior_neighbor_local,
+        )
         preparation = PreparationReport(
             capabilities=plan.capabilities,
             diagnostics=(
@@ -557,6 +612,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         self.facet_groups = facet_groups
         self.cell_domain = cell_domain
         self.exterior_facet_domain = exterior_domain
+        self.interior_facet_domain = interior_domain
         self.bindings = bindings
         self.key = plan.key
         self.support = support
@@ -700,13 +756,18 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
     def integration_domain(
         self, kind: str, selection: EntitySelection | None = None, /
     ) -> IntegrationDomain:
-        kind_ = str(kind)
-        if kind_ == "cell":
-            base = self.cell_domain
-        elif kind_ == "exterior_facet":
-            base = self.exterior_facet_domain
-        else:
-            raise ValueError("S1 IGA supports only cell and exterior-facet domains.")
+        match str(kind):
+            case "cell":
+                base = self.cell_domain
+            case "exterior_facet":
+                base = self.exterior_facet_domain
+            case "interior_facet":
+                base = self.interior_facet_domain
+            case _:
+                raise ValueError(
+                    "IGA integration domains are 'cell', 'exterior_facet', or "
+                    "'interior_facet'."
+                )
         if selection is None:
             return base
         if not isinstance(selection, EntitySelection):
@@ -717,6 +778,33 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             np.asarray(selection.mask, dtype=np.bool_)[np.asarray(base.entity_indices)]
         )
         return _subset_domain(base, rows)
+
+    def prepare_side_trace(
+        self,
+        field_name: str,
+        domain: IntegrationDomain,
+        /,
+        *,
+        rule: FacetTraceRule,
+        quantity: SideTraceQuantity = "value",
+        side: FieldTraceSide = "owner",
+        runtime: IsogeometricRuntimeData | None = None,
+    ) -> PreparedTraceAction:
+        """Prepare the exact trace of one field on selected patch facets.
+
+        See `prepare_isogeometric_side_trace`.
+        """
+        from ._field_view import prepare_isogeometric_side_trace
+
+        return prepare_isogeometric_side_trace(
+            self,
+            field_name,
+            domain,
+            rule=rule,
+            quantity=quantity,
+            side=side,
+            runtime=runtime,
+        )
 
     def prepare_local_regions(
         self,

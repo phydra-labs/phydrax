@@ -22,6 +22,7 @@ from phydrax.solver.coupling import (
     CouplingExchange,
     CouplingGraph,
     CouplingSweep,
+    CouplingTemporalConversion,
     CouplingTransferRequirement,
     ExplicitCouplingPolicy,
     prepare_coupling,
@@ -85,6 +86,9 @@ def slab_ocean_scenario(
         positivity_preserving=True,
         frame_action="preserve",
     )
+    # Heat and water are authoritative whole-window amounts; the temperature
+    # return is an instantaneous endpoint and declares no temporal conversion.
+    window_integral = CouplingTemporalConversion("window-integral")
     exchanges = (
         CouplingExchange(
             "heat",
@@ -92,6 +96,7 @@ def slab_ocean_scenario(
             receiver.input_ports[0].port_id,
             transfer=forward,
             requirement=requirement,
+            temporal=window_integral,
         ),
         CouplingExchange(
             "water",
@@ -99,6 +104,7 @@ def slab_ocean_scenario(
             receiver.input_ports[1].port_id,
             transfer=forward,
             requirement=requirement,
+            temporal=window_integral,
         ),
         CouplingExchange(
             "temperature",

@@ -336,7 +336,7 @@ class PreparedFactoredMatrixEquation(StrictModule):
 
 
 class FactoredMatrixEquationResidualCertificate(StrictModule):
-    """Original-equation Frobenius residual from a low-rank Gram identity."""
+    """Original-equation Frobenius residual from a QR-reduced low-rank core."""
 
     residual_norm: Array
     relative_residual: Array
@@ -777,19 +777,15 @@ def _residual_certificate(
     signature = signature.at[2 * factor_capacity :, 2 * factor_capacity :].set(
         jnp.eye(source_rank, dtype=factor.dtype)
     )
-    gram = jnp.conj(columns.T) @ columns
-    signed_gram = signature @ gram
-    residual_squared = jnp.maximum(
-        jnp.real(jnp.trace(signed_gram @ signed_gram)),
-        0,
-    )
-    source_gram = jnp.conj(source.T) @ source
-    forcing_squared = jnp.maximum(
-        jnp.real(jnp.trace(source_gram @ source_gram)),
-        0,
-    )
-    residual_norm = jnp.sqrt(residual_squared)
-    forcing_norm = jnp.sqrt(forcing_squared)
+    # R = C S C* with C = [A Z, Z, B]. With the thin QR C = Q T,
+    # ||R||_F = ||T S T*||_F, evaluated on the small core without squaring it.
+    # The equivalent trace((S C* C)^2) cancels terms of size ||C||^4 and floors
+    # the residual near sqrt(eps) ||C||^2 even for an exact factor.
+    _, triangular = jnp.linalg.qr(columns, mode="reduced")
+    core = triangular @ signature @ jnp.conj(triangular.T)
+    residual_norm = jnp.linalg.norm(core)
+    # ||B B*||_F = ||B* B||_F: a sum of squares, free of cancellation.
+    forcing_norm = jnp.linalg.norm(jnp.conj(source.T) @ source)
     tiny = jnp.asarray(jnp.finfo(residual_norm.dtype).tiny)
     relative = residual_norm / jnp.maximum(forcing_norm, tiny)
     valid = (
@@ -802,7 +798,7 @@ def _residual_certificate(
         valid=valid,
         equation="A X + X A* + B B* = 0",
         norm="Frobenius",
-        method="exact low-rank Gram identity in coordinate arithmetic",
+        method="Frobenius norm of the QR-reduced low-rank residual core",
         exact=True,
     )
 

@@ -3,11 +3,14 @@
 #
 
 
+from collections.abc import Callable
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
 
@@ -276,3 +279,214 @@ def test_l2_vem_contracts() -> None:
     )
     with pytest.raises(ValueError, match="no boundary trace"):
         phx.equations.compile_virtual_element_problem(boundary, space)
+
+
+_REALIZATIONS = ("matrix_free", "sparse")
+_CENTRAL_STEP = 1.0e-5
+# Central differences of exact dense solves agree with implicit derivatives up
+# to O(step^2) truncation and O(eps / step) roundoff.
+_RTOL = 1.0e-6
+_ATOL = 1.0e-8
+# Diffusivity scale, source amplitude, Dirichlet amplitude.
+_DIRICHLET_PARAMETERS = jnp.asarray([1.3, 0.7, 0.4])
+_DIRICHLET_ARGUMENT_IDS = ("diffusivity", "source", "dirichlet-lift")
+# Reaction, Robin coefficient, Robin value, boundary load.
+_BOUNDARY_PARAMETERS = jnp.asarray([0.6, 1.3, 0.7, 0.4])
+_BOUNDARY_ARGUMENT_IDS = ("reaction", "robin-coefficient", "robin-value", "load")
+
+
+# VEM coefficient callables receive the runtime user_args directly.
+def _runtime_coefficient(
+    name: str, profile: Callable[[Array], Array]
+) -> phx.equations.VariationalCoefficient:
+    def evaluate(points: Array, args: Any) -> Array:
+        return args[name] * profile(points)
+
+    return phx.equations.coefficient(evaluate, coefficient_id=f"runtime-{name}")
+
+
+def _policy(realization: str) -> Any:
+    return phx.equations.VirtualElementExecutionPolicy(realization=realization)
+
+
+def _mathematical_policy() -> Any:
+    return phx.linalg.LinearSolvePolicy(
+        phx.linalg.DenseLU(),
+        differentiation=phx.linalg.DifferentiationPolicy("mathematical"),
+    )
+
+
+def _dirichlet_solution(realization: str) -> Callable[[Array], Array]:
+    """Full solved state as a function of runtime diffusivity, source, and lift."""
+    space = _space(2)
+    constraint = phx.discretization.virtual_element_dirichlet_constraint(space, "u")
+    form = phx.equations.VirtualElementForm(
+        "runtime-poisson",
+        "u",
+        (
+            phx.equations.DiffusionAction(
+                "u", _runtime_coefficient("kappa", lambda p: 1.0 + 0.5 * p[..., 0])
+            ),
+            phx.equations.SourceAction(
+                "u", _runtime_coefficient("source", lambda p: 1.0 + p[..., 1])
+            ),
+        ),
+    )
+    compiled = phx.equations.compile_virtual_element_problem(
+        form,
+        space,
+        constraint=constraint,
+        dirichlet_values=0.0,
+        execution_policy=_policy(realization),
+    )
+    policy = _mathematical_policy()
+
+    def solution(theta: Array) -> Array:
+        context = phx.equations.VirtualElementExecutionContext(
+            space.default_runtime,
+            lift=constraint.lift(lambda p: theta[2] * (p[:, 0] + 2.0 * p[:, 1])),
+            user_args={"kappa": theta[0], "source": theta[1]},
+        )
+        system, right_hand_side = compiled.linear_system(context)
+        result = phx.linalg.solve(system, right_hand_side, policy=policy)
+        return compiled.expand(result.value, context)
+
+    return solution
+
+
+def _boundary_problem(realization: str) -> Any:
+    space = _space(1)
+    form = phx.equations.VirtualElementForm(
+        "runtime-reaction-robin",
+        "u",
+        (
+            phx.equations.DiffusionAction("u", 1.0),
+            phx.equations.MassAction(
+                "u", _runtime_coefficient("reaction", lambda p: 1.0 + 0.0 * p[..., 0])
+            ),
+            phx.equations.VirtualElementRobinAction(
+                "u",
+                _runtime_coefficient("alpha", lambda p: 1.0 + p[..., 0]),
+                _runtime_coefficient("value", lambda p: 1.0 + p[..., 1]),
+                space.exterior_facet_domain,
+            ),
+            phx.equations.BoundaryLoadAction(
+                "u", _runtime_coefficient("load", lambda p: 1.0 + 0.0 * p[..., 0])
+            ),
+        ),
+    )
+    return phx.equations.compile_virtual_element_problem(
+        form, space, execution_policy=_policy(realization)
+    )
+
+
+def _boundary_arguments(theta: Array) -> dict[str, Array]:
+    return {
+        "reaction": theta[0],
+        "alpha": theta[1],
+        "value": theta[2],
+        "load": theta[3],
+    }
+
+
+def _boundary_solution(realization: str) -> Callable[[Array], Array]:
+    """Solved state as a function of runtime reaction, Robin, and load data."""
+    compiled = _boundary_problem(realization)
+    policy = _mathematical_policy()
+
+    def solution(theta: Array) -> Array:
+        system, right_hand_side = compiled.linear_system(_boundary_arguments(theta))
+        return phx.linalg.solve(system, right_hand_side, policy=policy).value
+
+    return solution
+
+
+def _central_difference(
+    function: Callable[[Array], Array], theta: Array, direction: Array
+) -> np.ndarray:
+    plus = np.asarray(function(theta + _CENTRAL_STEP * direction))
+    minus = np.asarray(function(theta - _CENTRAL_STEP * direction))
+    return (plus - minus) / (2.0 * _CENTRAL_STEP)
+
+
+def _assert_solution_derivative(
+    solution: Callable[[Array], Array], theta: Array, argument: int
+) -> None:
+    # Tracing under jit refuses host synchronization on runtime data.
+    compiled_solution = jax.jit(solution)
+    direction = jnp.zeros_like(theta).at[argument].set(1.0)
+    reference = _central_difference(compiled_solution, theta, direction)
+    _, tangent = jax.jvp(compiled_solution, (theta,), (direction,))
+    _, pullback = jax.vjp(compiled_solution, theta)
+    cotangent = jnp.linspace(-0.4, 0.9, reference.size)
+
+    assert np.linalg.norm(reference) > 1.0e-2
+    np.testing.assert_allclose(tangent, reference, rtol=_RTOL, atol=_ATOL)
+    np.testing.assert_allclose(
+        pullback(cotangent)[0][argument],
+        np.dot(np.asarray(cotangent), reference),
+        rtol=_RTOL,
+        atol=_ATOL,
+    )
+
+
+@pytest.mark.parametrize("argument", range(3), ids=_DIRICHLET_ARGUMENT_IDS)
+@pytest.mark.parametrize("realization", _REALIZATIONS)
+def test_runtime_dirichlet_solve_derivatives_match_central_differences(
+    realization: str, argument: int
+) -> None:
+    _assert_solution_derivative(
+        _dirichlet_solution(realization), _DIRICHLET_PARAMETERS, argument
+    )
+
+
+@pytest.mark.parametrize("argument", range(4), ids=_BOUNDARY_ARGUMENT_IDS)
+@pytest.mark.parametrize("realization", _REALIZATIONS)
+def test_runtime_boundary_solve_derivatives_match_central_differences(
+    realization: str, argument: int
+) -> None:
+    _assert_solution_derivative(
+        _boundary_solution(realization), _BOUNDARY_PARAMETERS, argument
+    )
+
+
+@pytest.mark.parametrize("realization", _REALIZATIONS)
+def test_runtime_objective_gradient_compiles_under_jit(realization: str) -> None:
+    solution = _dirichlet_solution(realization)
+
+    def objective(theta: Array) -> Array:
+        state = solution(theta)
+        return jnp.sum(jnp.linspace(0.5, 1.5, state.size) * state**2)
+
+    gradient = jax.jit(jax.grad(objective))(_DIRICHLET_PARAMETERS)
+    compiled_objective = jax.jit(objective)
+    reference = [
+        _central_difference(compiled_objective, _DIRICHLET_PARAMETERS, direction)
+        for direction in jnp.eye(3)
+    ]
+
+    np.testing.assert_allclose(gradient, reference, rtol=_RTOL, atol=_ATOL)
+
+
+@pytest.mark.parametrize("realization", _REALIZATIONS)
+def test_runtime_affine_operator_transpose_matches_forward_action(
+    realization: str,
+) -> None:
+    compiled = _boundary_problem(realization)
+    arguments = _boundary_arguments(_BOUNDARY_PARAMETERS)
+    size = compiled.state_space.size
+    state = jnp.linspace(-0.3, 0.8, size)
+    direction = jnp.cos(jnp.arange(size, dtype=jnp.float64))
+    covector = jnp.linspace(0.9, -0.6, size)
+    operator = compiled.affine_operator(arguments)
+    reference = _central_difference(
+        lambda value: compiled.residual(value, arguments), state, direction
+    )
+
+    np.testing.assert_allclose(operator.mv(direction), reference, rtol=_RTOL, atol=_ATOL)
+    np.testing.assert_allclose(
+        jnp.dot(covector, operator.mv(direction)),
+        jnp.dot(direction, operator.transpose_mv(covector)),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )

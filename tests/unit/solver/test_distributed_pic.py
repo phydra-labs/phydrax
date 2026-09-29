@@ -295,7 +295,7 @@ def _distributed(
         )
         if name in options
     }
-    distributed = phx.solver.DistributedPICFieldSolver(solver, mesh, **options)
+    distributed = phx.solver.distribute_pic_field_solver(solver, mesh, **options)
     pic = phx.solver.ElectromagneticPICPlan(
         distributed, species=species, processes=processes, **extra
     )
@@ -608,16 +608,16 @@ def test_spectral_transforms_off_the_pic_mesh_are_refused() -> None:
     mesh = _mesh((4,))
     base, _ = _spectral_base(8, None, "local-guarded", subdomains=(4, 1, 1))
     with pytest.raises(ValueError, match="FFT topology"):
-        phx.solver.DistributedPICFieldSolver(base, mesh)
+        phx.solver.distribute_pic_field_solver(base, mesh)
     untiled, _ = _spectral_base(8, mesh, "local-guarded", subdomains=(2, 1, 1))
     with pytest.raises(ValueError, match="tile every device block"):
-        phx.solver.DistributedPICFieldSolver(untiled, mesh)
+        phx.solver.distribute_pic_field_solver(untiled, mesh)
 
 
 def test_deposits_that_are_not_window_local_are_refused() -> None:
     # The continuity-projected reduced 2-D current spreads over the whole grid.
     base, species = _reduced_base(16, 2), _reduced_species(64, 2)
-    solver = phx.solver.DistributedPICFieldSolver(base, _mesh((2, 2)))
+    solver = phx.solver.distribute_pic_field_solver(base, _mesh((2, 2)))
     with pytest.raises(ValueError, match="not window-local"):
         phx.solver.ElectromagneticPICPlan(solver, species=species)
 
@@ -625,12 +625,12 @@ def test_deposits_that_are_not_window_local_are_refused() -> None:
 def test_size_one_mesh_axes_are_refused() -> None:
     base, _ = _cochain_base(8)
     with pytest.raises(ValueError, match="size-one"):
-        phx.solver.DistributedPICFieldSolver(base, _mesh((2, 1)))
+        phx.solver.distribute_pic_field_solver(base, _mesh((2, 1)))
 
 
 def test_guard_narrower_than_the_transfer_footprint_is_refused() -> None:
     base, species = _reduced_base(), _reduced_species(128)
-    solver = phx.solver.DistributedPICFieldSolver(
+    solver = phx.solver.distribute_pic_field_solver(
         base, _mesh((4,)), guard_cells=1, particle_margin=0.9
     )
     with pytest.raises(ValueError, match="guard_cells=1"):
@@ -993,7 +993,7 @@ def test_processes_without_the_distributed_protocol_are_refused() -> None:
             raise NotImplementedError
 
     base, species = _reduced_base(), _reduced_species(128)
-    solver = phx.solver.DistributedPICFieldSolver(base, _mesh((4,)))
+    solver = phx.solver.distribute_pic_field_solver(base, _mesh((4,)))
     pic = phx.solver.ElectromagneticPICPlan(
         solver, species=species, processes=(_Creation(),)
     )

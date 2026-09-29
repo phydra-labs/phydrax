@@ -43,6 +43,8 @@ build/
 site/
 _gitignore/
 benchmarks/*
+!benchmarks/numerical_interoperability.py
+!benchmarks/numerical_interoperability.json
 !benchmarks/omniphysics_production_qualification.py
 !benchmarks/quantum_hall.py
 benchmarks/advanced_solvers/**/__pycache__/

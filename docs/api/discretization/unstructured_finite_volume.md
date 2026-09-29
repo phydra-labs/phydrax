@@ -119,8 +119,9 @@ boundary-outward, and net-cell content-rate sums through the shared
 
 `prepare_finite_volume_field_reconstruction` exposes cell averages (piecewise
 constant, no derivatives), k-exact cell polynomials (exact derivatives up to
-their degree), or WENO-Z reconstructions (branchwise, nonlinear in the cell
-averages) as `PreparedFieldReconstruction`s on structured and unstructured
+their degree), triangle k-exact and WLSQ MUSCL planes, or WENO-Z
+reconstructions (branchwise, nonlinear in the cell averages) as
+`PreparedFieldReconstruction`s on structured, unstructured, and triangular
 finite-volume meshes.
 
 ::: phydrax.discretization.prepare_finite_volume_field_reconstruction
@@ -132,6 +133,20 @@ finite-volume meshes.
 ---
 
 ::: phydrax.discretization.UnstructuredFiniteVolumeFieldReconstructionKernel
+
+## Face traces
+
+`integration_domain("exterior_facet" | "interior_facet")` on
+`FiniteVolumeDiscretization`, `UnstructuredFiniteVolumeDiscretization`, and
+`TriangleFiniteVolumeDiscretization` lists faces in the owner's canonical order
+and orientation. `prepare_side_trace` publishes a `PreparedTraceAction` whose
+descriptor states the face semantics: `representation="cell-average"` repeats
+the side cell average at every site; `"face-state"` evaluates a linear
+reconstruction through a per-facet gather route with an exact transpose.
+`prepare_nonlinear_face_trace` publishes WENO and limited-MUSCL face states
+with a linearization at a supplied state and no transpose.
+
+::: phydrax.discretization.PreparedNonlinearFaceTrace
 
 ## Implicit and pressure-correction solvers
 

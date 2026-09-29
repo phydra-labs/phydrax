@@ -127,6 +127,50 @@ sector candidates through a CWENO decomposition and Jiang--Shu derivative Gram
 matrices. WENO-Z weights retain the exact constant and affine smooth limit. The optional
 cell-extrema rescaling preserves cell averages while bounding all live face traces.
 
+## Face traces and field views
+
+A finite-volume field is a set of cell averages, so its value on a face depends on
+the side and on the reconstruction. Face traces publish that choice explicitly.
+`integration_domain("exterior_facet")` and `integration_domain("interior_facet")`
+list faces in the face table's order; the owner is the cell the stored area vector
+points out of. `prepare_side_trace` returns a `PreparedTraceAction` whose sites
+follow the owner's facet parametrization (edges, or triangles for tetrahedra), whose
+weights are the physical face measure, and whose normals point out of the side cell:
+
+```python
+rule = phx.discretization.FacetTraceRule(points=2)
+interior = fv.integration_domain("interior_facet")
+averages = fv.prepare_side_trace("state", interior, rule=rule)
+polynomial = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(fv)
+owner = fv.prepare_side_trace("state", interior, rule=rule, reconstruction=polynomial)
+neighbor = fv.prepare_side_trace(
+    "state", interior, rule=rule, side="neighbor", reconstruction=polynomial
+)
+cell_averages = jnp.ones(fv.state_shape)
+jump = owner.apply(cell_averages) - neighbor.apply(cell_averages)
+```
+
+Without a reconstruction the trace repeats the side cell average at every site
+(`representation="cell-average"`, `trace_degree=0`). A cell polynomial, triangle
+k-exact, or unlimited triangle MUSCL reconstruction publishes the reconstructed face
+state (`representation="face-state"`) through a route that gathers only the side
+cell and its stencil; `dual_pullback` and `inject_load` are its exact transpose.
+Owner and neighbor traces of an interior face share sites and have opposite normals.
+
+WENO-Z and limited MUSCL face states are nonlinear in the cell averages.
+`prepare_nonlinear_face_trace` returns a `PreparedNonlinearFaceTrace` with `apply`
+and `linearize(state)`; its `jvp`/`vjp` are the exact derivative at that state, and
+no global transpose exists. `prepare_side_trace` refuses these reconstructions, and
+`side="average"`, neighbor sides of boundary faces, foreign domains, normal or flux
+quantities, and polyhedral faces are refused as well. The WENO-Z cell-extrema limiter
+scales each face by its own site set, exactly as the conservation dynamics do at face
+quadrature.
+
+`prepare_finite_volume_field_reconstruction` evaluates the same reconstructions at
+arbitrary points on structured, unstructured, and triangular meshes. Triangle k-exact
+and WLSQ MUSCL planes publish exact coordinate derivatives; limited MUSCL queries are
+nonlinear and expose `linearize` instead of `transpose`.
+
 ## Implicit compressible stepping
 
 `FiniteVolumeBackwardEulerPlan` wraps any prepared structured, triangle, or

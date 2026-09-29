@@ -42,6 +42,21 @@ Apply geometry Boolean or transform operations to sources before compilation.
 Apply `@`, `relabel`, `restrict`, and `component` to domain objects. Keeping these
 roles separate prevents host-side CAD topology from leaking into JAX execution.
 
+### Analytic interface authority
+
+Analytic subdomain covers remain the authority of their paired supports. A
+`PairedSupport` keeps its declared `pairing_id`, left and right patch IDs, and
+coordinate maps; its optional normal points out of the left patch into the
+right patch. `SubdomainCover.revision` content-addresses the declared cover,
+patch, and pairing IDs, pairing topology and codimension, normal presence,
+coordinate labels, and every numeric array leaf such as patch bounds. Maps
+authored as opaque Python callables are identified only through the declared
+IDs, so replacing such a map requires a new `cover_id`. Solver-level interface
+bindings (`phydrax.solver.coupling.PairedSupportAttachment`) reference a cover
+by this revision and a fresh `PairedSupport.audit`; the domain layer imports no
+meshing definition. See
+[Numerical interoperability](guides_numerical_interoperability.md#interface-bindings).
+
 
 ## Migration from the pre-refactor API
 

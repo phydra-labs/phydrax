@@ -152,6 +152,9 @@ class _FixedPointRun(StrictModule):
     final_linear_residual_norm: Array
     final_linear_converged: Array
     status: Array
+    # Exact problem-reported work of every executed evaluation; None when the
+    # problem reports no work.
+    evaluation_work: PyTree[Array] | None
 
 
 # Proposed state, accelerated flag, then the coefficient solve's linear status,
@@ -353,7 +356,7 @@ class FixedPointIteration(StrictModule):
         initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
         space = PyTreeSpace(initial)
         flat_initial = space.flatten(initial)
-        mapped = problem.mapping(initial, args)
+        mapped, initial_work = problem.evaluate(initial, args)
         flat_mapped = space.flatten(mapped)
         residual = flat_mapped - flat_initial
         self.precision.validate_trees(initial, residual)
@@ -415,6 +418,7 @@ class FixedPointIteration(StrictModule):
             final_linear_residual_norm=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
             final_linear_converged=jnp.asarray(False),
             status=status,
+            evaluation_work=initial_work,
         )
 
         def required_evaluations(current: _FixedPointRun) -> Array:
@@ -436,8 +440,11 @@ class FixedPointIteration(StrictModule):
                 & within_evaluations
             )
 
-        def evaluate_flat(candidate: Array) -> Array:
-            return space.flatten(problem.mapping(space.unflatten(candidate), args))
+        def evaluate_flat(candidate: Array) -> tuple[Array, PyTree[Array] | None]:
+            mapped, work = problem.evaluate(space.unflatten(candidate), args)
+            return space.flatten(mapped), work
+
+        unexecuted_work = jax.tree.map(jnp.zeros_like, initial_work)
 
         def body(current: _FixedPointRun) -> _FixedPointRun:
             raw = current.state + self.damping * current.residual
@@ -493,18 +500,22 @@ class FixedPointIteration(StrictModule):
                     unaccelerated,
                     operand=None,
                 )
-            next_mapped = evaluate_flat(proposed)
+            next_mapped, next_work = evaluate_flat(proposed)
             next_residual = next_mapped - proposed
             next_norm = _coordinate_norm(next_residual, self.precision)
+            evaluation_work = jax.tree.map(jnp.add, current.evaluation_work, next_work)
             if self.acceleration is None or effective_history == 0:
                 raw_mapped = next_mapped
             else:
-                raw_mapped = jax.lax.cond(
+                # The raw map is re-evaluated only for an accelerated proposal;
+                # only that executed evaluation adds work.
+                raw_mapped, raw_work = jax.lax.cond(
                     accelerated,
                     lambda _: evaluate_flat(raw),
-                    lambda _: next_mapped,
+                    lambda _: (next_mapped, unexecuted_work),
                     operand=None,
                 )
+                evaluation_work = jax.tree.map(jnp.add, evaluation_work, raw_work)
             raw_residual = raw_mapped - raw
             raw_norm = _coordinate_norm(raw_residual, self.precision)
             safeguard = (
@@ -646,6 +657,7 @@ class FixedPointIteration(StrictModule):
                     current.final_linear_converged,
                 ),
                 status=next_status,
+                evaluation_work=evaluation_work,
             )
 
         run = jax.lax.while_loop(condition, body, run)
@@ -720,6 +732,7 @@ class FixedPointIteration(StrictModule):
                 final_residual,
                 output_value=output_state,
             ),
+            evaluation_work=run.evaluation_work,
         )
         return _attach_fixed_point_iteration(result, iteration, method_id)
 

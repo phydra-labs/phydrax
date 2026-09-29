@@ -15,7 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
-from ...sparse import ElementTensorOperator, RelationAccumulation, scatter_local
+from ...sparse import RelationAccumulation, scatter_local
 
 
 class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
@@ -136,28 +136,23 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
             closure_convert=False,
         )
 
-    def materialize_buckets(self, /) -> tuple[ElementTensorOperator, ...]:
-        operators = []
-        for coefficient, polynomial, stabilization, gather in zip(
-            self.coefficient_maps,
-            self.polynomial_matrices,
-            self.stabilization_matrices,
-            self.gathers,
-            strict=True,
-        ):
-            local = ein.contract("cai,cab,cbj->cij", coefficient, polynomial, coefficient)
-            operators.append(
-                ElementTensorOperator(
-                    local + stabilization,
-                    gather,
-                    gather,
-                    self.global_size,
-                    self.global_size,
-                    accumulation=self.accumulation,
-                    properties=self.properties,
-                )
+    def local_tensors(self, /) -> tuple[Array, ...]:
+        """Assembled `C^T G C + S` cell tensors, one per bucket, on `gathers`.
+
+        Only the tensors are runtime data; the gathers stay the prepared routes,
+        so coordinate storage can be rebuilt inside traced code without host
+        route validation or fingerprinting.
+        """
+        return tuple(
+            ein.contract("cai,cab,cbj->cij", coefficient, polynomial, coefficient)
+            + stabilization
+            for coefficient, polynomial, stabilization in zip(
+                self.coefficient_maps,
+                self.polynomial_matrices,
+                self.stabilization_matrices,
+                strict=True,
             )
-        return tuple(operators)
+        )
 
 
 __all__ = ["FactorizedVirtualElementOperator"]

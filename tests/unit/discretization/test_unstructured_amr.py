@@ -63,6 +63,64 @@ def _hierarchy() -> Any:
     )
 
 
+def test_remap_transition_accepts_content_within_the_certified_coverage_bound() -> None:
+    # Clipped intersections carry a 1e-12 relative roundoff excess, far inside the
+    # plan's 1e-10 coverage certificate. Independent ledger: the fine field of
+    # 1000 on total area 2 has content 2000; the coarse image carries the
+    # covered measure 8 * 0.25 * (1 + 1e-12) times 1000, a 2e-9 excess.
+    coarse, fine = _quad_grid(2, 1), _quad_grid(4, 2)
+    excess = 1e-12
+    plan = phx.discretization.UnstructuredConservativeRemapPlan(
+        fine,
+        coarse,
+        np.asarray((0, 4, 8), dtype=np.int32),
+        np.asarray((0, 1, 4, 5, 2, 3, 6, 7), dtype=np.int32),
+        np.full((8,), 0.25 * (1.0 + excess)),
+        method="clipped",
+        provenance="geometric-intersection",
+        tolerance=1e-10,
+    )
+    epoch = phx.discretization.TopologyEpoch
+    source = epoch(0, "g0", plan.source_topology_id, "p0")
+    target = epoch(1, "g1", plan.target_topology_id, "p0")
+    transition = plan.epoch_transition(fine.cell_space, coarse.cell_space, source, target)
+    values = jnp.full(fine.cell_space.vector_space.shape, 1000.0, dtype=jnp.float64)
+    result = transition.apply(values)
+
+    np.testing.assert_allclose(result.source_content, 2000.0, rtol=1e-14)
+    np.testing.assert_allclose(result.conservation_residual, 2000.0 * excess, rtol=1e-3)
+    assert bool(result.successful)
+    # The admitted defect is the certified 1e-10 relative coverage, not more.
+    assert float(result.content_tolerance) <= 1.01e-10 * 2000.0
+    lc = phx.lifecycle
+    staged = lc.CompositionEntry(
+        result.values,
+        entry_id="fluid/U",
+        role="physical-state",
+        owner_id="fluid",
+        structure_id=target.epoch_id,
+        revision_id="coarse",
+        semantics_id="fluid:U",
+    )
+    held = lc.CompositionEntry(
+        values,
+        entry_id="fluid/U",
+        role="physical-state",
+        owner_id="fluid",
+        structure_id=source.epoch_id,
+        revision_id="fine",
+        semantics_id="fluid:U",
+    )
+    receipt = lc.commit_composition_rebind(
+        lc.CompositionRebind(
+            lc.Composition((held,), boundary_id="accepted-window-1"),
+            transports=(transition.composition_transport(held, staged),),
+        ),
+        accepted_boundary=True,
+    )
+    assert receipt.published and receipt.transport_accepted == (True,)
+
+
 def test_unstructured_amr_contracts() -> None:
     hierarchy = _hierarchy()
     selection = eqx.filter_jit(hierarchy.select)(

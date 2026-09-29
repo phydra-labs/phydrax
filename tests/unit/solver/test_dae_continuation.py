@@ -165,3 +165,66 @@ def test_dae_continuation_scenario_1() -> None:
             initial_state=first.states[-1],
             continuation=first.continuation,
         )
+
+
+def test_adaptive_continuation_keeps_modified_newton_refresh_decisions() -> None:
+    # A cubic decay needs several Newton iterations per stage, so the
+    # iteration-count refresh trigger decides Jacobian reuse right after the
+    # window boundary; the continued window must decide exactly as the
+    # uninterrupted segment does.
+    system = phx.dynamics.DifferentialAlgebraicSystem(
+        lambda time, state, state_rate, parameter: (
+            state_rate + parameter * state**3 - jnp.cos(time)
+        ),
+        state_shape=(2,),
+        structure=phx.dynamics.DAEStructure(("differential", "differential")),
+        system_id="adaptive-reuse-continuation-system",
+    )
+    problem = phx.solver.DifferentialAlgebraicProblem(
+        system,
+        jnp.asarray((1.0, 2.0)),
+        args=jnp.asarray(1.0),
+        problem_id="adaptive-reuse-continuation",
+    )
+    policy = phx.solver.DAESolvePolicy(
+        method=phx.solver.BDFMethod(2),
+        nonlinear_termination=phx.nonlinear.NonlinearTermination(
+            absolute_residual=1e-12, relative_residual=0.0, maximum_steps=12
+        ),
+        temporal_reuse=phx.solver.DAETemporalReusePolicy(
+            maximum_jacobian_age=8, maximum_alpha_ratio=4.0, refresh_after_iterations=2
+        ),
+        adaptive=phx.solver.DAEAdaptivePolicy(
+            relative_tolerance=1e-5,
+            absolute_tolerance=1e-8,
+            maximum_accepted_steps=256,
+            maximum_attempts=512,
+        ),
+    )
+
+    def grid(times: tuple[float, ...], name: str) -> Any:
+        return phx.dynamics.TimeGrid(jnp.asarray(times), time_id=name)
+
+    full = phx.solver.solve_dae(
+        problem, grid((0.0, 0.5, 1.0), "reuse-full"), policy=policy
+    )
+    first = phx.solver.solve_dae(problem, grid((0.0, 0.5), "reuse-first"), policy=policy)
+    second = phx.solver.solve_dae(
+        problem,
+        grid((0.5, 1.0), "reuse-second"),
+        policy=policy,
+        continuation=first.continuation,
+    )
+    counts = (int(first.step_history.count), int(second.step_history.count))
+    segmented = jnp.concatenate(
+        (
+            first.step_history.accepted_times[: counts[0]],
+            second.step_history.accepted_times[: counts[1]],
+        )
+    )
+
+    assert full.successful & first.successful & second.successful
+    assert int(first.continuation.last_nonlinear_iterations) >= 2
+    assert sum(counts) == int(full.step_history.count)
+    assert jnp.array_equal(segmented, full.step_history.accepted_times[: sum(counts)])
+    assert jnp.array_equal(second.states[-1], full.states[-1])

@@ -557,6 +557,30 @@ For a field state, keep `state_shape` as the physical tensor shape. The ensemble
 inserted explicitly before those event axes and is labeled as process uncertainty in the
 predictive result.
 
+A coupled multi-method transient enters the same filters through its accepted
+transition and observation bindings (`examples/coupled_data_assimilation.py`):
+
+```python
+transition = phx.solver.coupling.prepare_coupled_transition(
+    transient, step=0.1, policy=dae_policy, parameters={"wall-heat-flux": flux}
+)
+port = transition.observation_port(("conductor-sensor", "insulator-sensors"))
+kernel = phx.stochastic.CoupledTransitionKernel(
+    transition, noise_factor=0.01 * jnp.eye(transition.state_size)
+)
+observation = phx.stochastic.GaussianObservationModel(
+    port.location,
+    port.noise_covariance(comparison_plans),
+    state_shape=(transition.state_size,),
+    observation_shape=(port.observation_size,),
+)
+```
+
+Pass the known forcing values as the problem `args` (they are read from
+`context.args`). The kernel draws noise only from the filter's semantic key; a
+kernel without a nonsingular noise factor has no transition density, and the
+ETKF log-likelihood remains an ensemble Gaussian approximation.
+
 ## 8. Checkpoint streaming state and export results
 
 ```python

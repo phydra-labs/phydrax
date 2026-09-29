@@ -21,13 +21,17 @@ The B-on-E adapter supplies explicit sheet-boundary half-edge routes.  Positive
 route flux moves extensive content from a film sheet slot into a border cell.
 Liquid, surfactant, and a separately declared evaporation sink have distinct
 ledgers.  Topology events remain nondifferentiable; ``rates`` and ``step`` are
-differentiable only on one prepared topology and geometry revision.
+differentiable only on one prepared topology and geometry revision.  Across a
+committed event pass, ``reprepare_after_events`` rebuilds the network on the
+target epoch and transports border content only by declared rules: retained
+borders keep it and split borders share it by child length.  Every other
+event is refused rather than redistributed from lineage.
 """
 
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import final, NoReturn
+from typing import assert_never, final, NoReturn
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -39,10 +43,16 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import parameter_field, ParameterOwner
 from ..._validation import canonical_identifier, nonnegative_integer, positive_integer
+from ...discretization import TopologyEpoch, TopologyEpochTransition
 from ...geometry.multiregion_surface import (
+    ConservativeFieldTransfer,
+    multiregion_topology_epoch,
+    MultiRegionSurfaceLineage,
     MultiRegionSurfaceState,
     MultiRegionSurfaceTopology,
     PreparedMultiRegionSurface,
+    SurfaceEventKind,
+    SurfaceEventPassEvidence,
     SurfaceEventPolicy,
 )
 from ...interfacial_transport import PreparedFilmSheetSlots, SurfaceFilmEvidence
@@ -109,6 +119,17 @@ class PlateauBorderPreparationError(ValueError):
         )
 
 
+class PlateauBorderTransportError(ValueError):
+    """A topology event has no declared physical transport of border content.
+
+    Border liquid and surfactant cross an event pass only by an explicit rule:
+    a retained border keeps its content and a split border shares it between
+    its two children. T1 pops, pinches, merges, region splits, bursts, and
+    border coarsening have no declared rule, so re-preparation is refused
+    instead of redistributing content from lineage.
+    """
+
+
 @final
 class PlateauBorderPlan(StrictModule, ParameterOwner):
     """Physical coefficients and fixed capacities of border drainage.
@@ -155,12 +176,8 @@ class PlateauBorderPlan(StrictModule, ParameterOwner):
         density = _positive_scalar(density_kg_m3, "density_kg_m3")
         viscosity = _positive_scalar(viscosity_pa_s, "viscosity_pa_s")
         tension = _positive_scalar(surface_tension_n_m, "surface_tension_n_m")
-        hydraulic = _positive_scalar(
-            hydraulic_shape_factor, "hydraulic_shape_factor"
-        )
-        capillary = _positive_scalar(
-            capillary_shape_factor, "capillary_shape_factor"
-        )
+        hydraulic = _positive_scalar(hydraulic_shape_factor, "hydraulic_shape_factor")
+        capillary = _positive_scalar(capillary_shape_factor, "capillary_shape_factor")
         step_size = _positive_scalar(time_step_s, "time_step_s")
         gravity = np.asarray(gravity_m_s2, dtype=np.float64)
         if gravity.shape != (3,) or not np.all(np.isfinite(gravity)):
@@ -239,9 +256,7 @@ class PlateauBorderBoundaryFlux(StrictModule):
         /,
     ) -> None:
         liquid = jnp.asarray(sheet_to_border_liquid_m3_s, dtype=jnp.float64)
-        surfactant = jnp.asarray(
-            sheet_to_border_surfactant_mol_s, dtype=jnp.float64
-        )
+        surfactant = jnp.asarray(sheet_to_border_surfactant_mol_s, dtype=jnp.float64)
         sheet_sink = jnp.asarray(sheet_evaporation_m3_s, dtype=jnp.float64)
         border_sink = jnp.asarray(border_evaporation_m3_s, dtype=jnp.float64)
         if liquid.ndim != 1 or surfactant.shape != liquid.shape:
@@ -312,9 +327,7 @@ class PlateauBorderState(StrictModule):
 
     def total_surfactant_mol(self) -> Array:
         """Total represented sheet plus border surfactant amount."""
-        return jnp.sum(self.sheet_surfactant_mol) + jnp.sum(
-            self.border_surfactant_mol
-        )
+        return jnp.sum(self.sheet_surfactant_mol) + jnp.sum(self.border_surfactant_mol)
 
 
 @final
@@ -619,9 +632,7 @@ class PreparedPlateauBorder(StrictModule):
             (self.plan.border_edge_capacity,),
         )
         concentration = jnp.broadcast_to(
-            jnp.asarray(
-                border_surfactant_concentration_mol_m3, dtype=jnp.float64
-            ),
+            jnp.asarray(border_surfactant_concentration_mol_m3, dtype=jnp.float64),
             (self.plan.border_edge_capacity,),
         )
         length = self._geometry()[0]
@@ -691,9 +702,7 @@ class PreparedPlateauBorder(StrictModule):
         hydraulic_flux = route_conductance * (
             route_potential - node_potential[endpoint_vertices]
         )
-        hydraulic_flux = jnp.where(
-            self.endpoint_relation.valid, hydraulic_flux, 0.0
-        )
+        hydraulic_flux = jnp.where(self.endpoint_relation.valid, hydraulic_flux, 0.0)
         node_mass = route_reduce(self.endpoint_relation, hydraulic_flux)
         node_pressure = node_mass / safe_node_conductance
         border_outflow = route_reduce(self.endpoint_to_borders, hydraulic_flux)
@@ -735,12 +744,8 @@ class PreparedPlateauBorder(StrictModule):
             0.0,
         )
         sheet_liquid_rate = -self.film_slots.boundary_slot_rate(liquid_boundary)
-        sheet_surfactant_rate = -self.film_slots.boundary_slot_rate(
-            surfactant_boundary
-        )
-        border_liquid_boundary = route_reduce(
-            self.boundary_to_borders, liquid_boundary
-        )
+        sheet_surfactant_rate = -self.film_slots.boundary_slot_rate(surfactant_boundary)
+        border_liquid_boundary = route_reduce(self.boundary_to_borders, liquid_boundary)
         border_surfactant_boundary = route_reduce(
             self.boundary_to_borders, surfactant_boundary
         )
@@ -756,9 +761,7 @@ class PreparedPlateauBorder(StrictModule):
         border_liquid_rate = (
             internal_liquid_rate + border_liquid_boundary - border_evaporation
         )
-        border_surfactant_rate = (
-            internal_surfactant_rate + border_surfactant_boundary
-        )
+        border_surfactant_rate = internal_surfactant_rate + border_surfactant_boundary
         endpoint_outflow = route_reduce(
             self.endpoint_to_borders, jnp.maximum(hydraulic_flux, 0.0)
         )
@@ -767,12 +770,7 @@ class PreparedPlateauBorder(StrictModule):
         )
         outflow_rate = jnp.where(
             self.border_active,
-            (
-                endpoint_outflow
-                + boundary_outflow
-                + border_evaporation
-            )
-            / safe_volume,
+            (endpoint_outflow + boundary_outflow + border_evaporation) / safe_volume,
             0.0,
         )
         return PlateauBorderRates(
@@ -817,10 +815,9 @@ class PreparedPlateauBorder(StrictModule):
             & jnp.all(jnp.isfinite(boundary.sheet_evaporation_m3_s))
             & jnp.all(jnp.isfinite(boundary.border_evaporation_m3_s))
         )
-        evaporation_nonnegative = (
-            jnp.all(boundary.sheet_evaporation_m3_s >= 0.0)
-            & jnp.all(boundary.border_evaporation_m3_s >= 0.0)
-        )
+        evaporation_nonnegative = jnp.all(
+            boundary.sheet_evaporation_m3_s >= 0.0
+        ) & jnp.all(boundary.border_evaporation_m3_s >= 0.0)
         padding_zero = (
             jnp.all(
                 jnp.where(
@@ -834,9 +831,7 @@ class PreparedPlateauBorder(StrictModule):
                 jnp.where(slot_active, True, boundary.sheet_evaporation_m3_s == 0.0)
             )
             & jnp.all(
-                jnp.where(
-                    active_border, True, boundary.border_evaporation_m3_s == 0.0
-                )
+                jnp.where(active_border, True, boundary.border_evaporation_m3_s == 0.0)
             )
         )
         state_finite = (
@@ -852,21 +847,13 @@ class PreparedPlateauBorder(StrictModule):
             & evaporation_nonnegative
             & padding_zero
             & jnp.all(jnp.where(slot_active, state.sheet_liquid_m3 >= 0.0, True))
-            & jnp.all(
-                jnp.where(slot_active, state.sheet_surfactant_mol >= 0.0, True)
-            )
+            & jnp.all(jnp.where(slot_active, state.sheet_surfactant_mol >= 0.0, True))
             & jnp.all(jnp.where(slot_active, True, state.sheet_liquid_m3 == 0.0))
-            & jnp.all(
-                jnp.where(slot_active, True, state.sheet_surfactant_mol == 0.0)
-            )
+            & jnp.all(jnp.where(slot_active, True, state.sheet_surfactant_mol == 0.0))
             & jnp.all(jnp.where(active_border, state.border_liquid_m3 > 0.0, True))
-            & jnp.all(
-                jnp.where(active_border, state.border_surfactant_mol >= 0.0, True)
-            )
+            & jnp.all(jnp.where(active_border, state.border_surfactant_mol >= 0.0, True))
             & jnp.all(jnp.where(active_border, True, state.border_liquid_m3 == 0.0))
-            & jnp.all(
-                jnp.where(active_border, True, state.border_surfactant_mol == 0.0)
-            )
+            & jnp.all(jnp.where(active_border, True, state.border_surfactant_mol == 0.0))
             & (state.unresolved_rim_content_m3 >= 0.0)
         )
         revision_matches = state.geometry_revision == self.geometry_revision
@@ -878,16 +865,12 @@ class PreparedPlateauBorder(StrictModule):
         )
         evaporation = jnp.sum(
             jnp.where(slot_active, boundary.sheet_evaporation_m3_s, 0.0)
-        ) + jnp.sum(
-            jnp.where(active_border, boundary.border_evaporation_m3_s, 0.0)
-        )
+        ) + jnp.sum(jnp.where(active_border, boundary.border_evaporation_m3_s, 0.0))
         evaporation_declared = self.plan.evaporation_declared | (evaporation == 0.0)
         maximum_courant = dt * jnp.max(rates.border_outflow_courant_rate_s_inv)
         positive = (
             jnp.all(jnp.where(slot_active, candidate.sheet_liquid_m3 >= 0.0, True))
-            & jnp.all(
-                jnp.where(slot_active, candidate.sheet_surfactant_mol >= 0.0, True)
-            )
+            & jnp.all(jnp.where(slot_active, candidate.sheet_surfactant_mol >= 0.0, True))
             & jnp.all(jnp.where(active_border, candidate.border_liquid_m3 > 0.0, True))
             & jnp.all(
                 jnp.where(active_border, candidate.border_surfactant_mol >= 0.0, True)
@@ -980,8 +963,7 @@ class PreparedPlateauBorder(StrictModule):
             surfactant_before_mol=surfactant_before,
             surfactant_after_mol=surfactant_after,
             sheet_border_surfactant_transfer_mol=surfactant_transfer,
-            surfactant_conservation_residual_mol=surfactant_after
-            - surfactant_before,
+            surfactant_conservation_residual_mol=surfactant_after - surfactant_before,
             maximum_quad_mass_residual_m3_s=quad_mass,
             maximum_quad_pressure_residual_pa=quad_pressure,
             maximum_courant_number=maximum_courant,
@@ -1032,9 +1014,51 @@ class PreparedPlateauBorder(StrictModule):
             ),
         )
 
-    def _rim_weights(
-        self, region_pair: tuple[str, str], /
-    ) -> tuple[Array, int]:
+    def reprepare_after_events(
+        self,
+        event: SurfaceEventPassEvidence,
+        surface: PreparedMultiRegionSurface,
+        film_slots: PreparedFilmSheetSlots,
+        state: MultiRegionSurfaceState,
+        /,
+        *,
+        geometry_revision: ArrayLike = 0,
+    ) -> PlateauBorderAdaptation:
+        """Reprepare the network on a committed event target and transport content.
+
+        Host boundary without derivatives. ``event`` is the committed pass
+        from this network's epoch and geometry; ``surface``, ``film_slots``,
+        and ``state`` are prepared on its target geometry. An accepted event
+        without a declared border-content rule raises
+        :class:`PlateauBorderTransportError` before any target network is
+        prepared, so this network and its state stay usable.
+        """
+        lineage, target_epoch = _committed_event(self, event, surface, state)
+        _require_border_transport_rule(event)
+        target = PreparedPlateauBorder(
+            self.plan, surface, film_slots, state, geometry_revision=geometry_revision
+        )
+        sources, targets, weights = _border_event_routes(self, target, lineage)
+        transfer = ConservativeFieldTransfer(
+            sources,
+            targets,
+            weights,
+            source_active=np.asarray(self.border_active),
+            target_active=np.asarray(target.border_active),
+        )
+        transition = transfer.epoch_transition(
+            event.source_epoch, target_epoch, field_name="plateau-border-content"
+        )
+        fan_out = np.bincount(sources, minlength=self.border_count)
+        return PlateauBorderAdaptation(
+            target,
+            transfer,
+            transition,
+            retained_border_count=int(np.count_nonzero(fan_out == 1)),
+            refined_border_count=int(np.count_nonzero(fan_out == 2)),
+        )
+
+    def _rim_weights(self, region_pair: tuple[str, str], /) -> tuple[Array, int]:
         canonical = tuple(sorted(region_pair))
         sheet_indices = tuple(
             index
@@ -1137,10 +1161,62 @@ class PreparedPlateauBorder(StrictModule):
             topology.slot_width,
         ):
             raise ValueError("Sheet evaporation must use the E sheet-slot layout.")
-        if boundary.border_evaporation_m3_s.shape != (
-            self.plan.border_edge_capacity,
-        ):
+        if boundary.border_evaporation_m3_s.shape != (self.plan.border_edge_capacity,):
             raise ValueError("Border evaporation must use border_edge_capacity.")
+
+
+@final
+class PlateauBorderAdaptation(StrictModule):
+    """Target-epoch border network plus the explicit transport of its content.
+
+    ``transition`` is the nondifferentiable epoch transition of one extensive
+    border field (liquid volume or surfactant amount) from the source to the
+    target border axis. A retained border keeps its content. A border split
+    at a new vertex gives each child the fraction ``L_child / (L_1 + L_2)`` of
+    its content, which keeps the cell's uniform cross-section ``V / L`` and
+    surfactant concentration. The weights of every source border sum to one,
+    so totals are conserved to roundoff and content stays nonnegative.
+    """
+
+    prepared: PreparedPlateauBorder
+    transfer: ConservativeFieldTransfer
+    transition: TopologyEpochTransition
+    retained_border_count: int = eqx.field(static=True)
+    refined_border_count: int = eqx.field(static=True)
+    adaptation_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        prepared: PreparedPlateauBorder,
+        transfer: ConservativeFieldTransfer,
+        transition: TopologyEpochTransition,
+        /,
+        *,
+        retained_border_count: int,
+        refined_border_count: int,
+    ) -> None:
+        if not isinstance(prepared, PreparedPlateauBorder):
+            raise TypeError("prepared must be PreparedPlateauBorder.")
+        if not isinstance(transfer, ConservativeFieldTransfer):
+            raise TypeError("transfer must be ConservativeFieldTransfer.")
+        if not isinstance(transition, TopologyEpochTransition):
+            raise TypeError("transition must be TopologyEpochTransition.")
+        retained = nonnegative_integer(retained_border_count, "retained_border_count")
+        refined = nonnegative_integer(refined_border_count, "refined_border_count")
+        self.prepared = prepared
+        self.transfer = transfer
+        self.transition = transition
+        self.retained_border_count = retained
+        self.refined_border_count = refined
+        self.adaptation_id = canonical_fingerprint(
+            {
+                "kind": "plateau-border-adaptation",
+                "target": prepared.prepared_id,
+                "transition": transition.transition_id,
+                "retained": retained,
+                "refined": refined,
+            }
+        )
 
 
 def apply_foam_rupture_with_borders(
@@ -1264,9 +1340,7 @@ def apply_foam_rupture_with_borders(
         derivative_available=False,
         prepared_id=prepared.prepared_id,
     )
-    return PlateauBorderRimResult(
-        rupture, resolved_state, added, unresolved, evidence
-    )
+    return PlateauBorderRimResult(rupture, resolved_state, added, unresolved, evidence)
 
 
 def _rupture_sheet_masks(
@@ -1310,9 +1384,7 @@ def _rupture_sheet_masks(
             )
             target_lookup.add((int(target_vertex_ids[vertex]), pair_ids))
 
-    survivor = np.zeros(
-        (source.vertex_capacity, source.slot_width), dtype=np.bool_
-    )
+    survivor = np.zeros((source.vertex_capacity, source.slot_width), dtype=np.bool_)
     source_vertex_ids = np.asarray(
         source.vertex_global_ids[: source.vertex_count], dtype=np.int64
     )
@@ -1342,6 +1414,139 @@ def _rupture_sheet_masks(
             )
     active = np.asarray(source.slot_active, dtype=np.bool_)
     return survivor, active & ~survivor
+
+
+def _committed_event(
+    source: PreparedPlateauBorder,
+    event: SurfaceEventPassEvidence,
+    surface: PreparedMultiRegionSurface,
+    state: MultiRegionSurfaceState,
+    /,
+) -> tuple[MultiRegionSurfaceLineage, TopologyEpoch]:
+    """Lineage and target epoch of a committed pass from ``source``'s geometry."""
+    if not isinstance(event, SurfaceEventPassEvidence):
+        raise TypeError("event must be SurfaceEventPassEvidence.")
+    if not isinstance(surface, PreparedMultiRegionSurface):
+        raise TypeError("surface must be PreparedMultiRegionSurface.")
+    if not isinstance(state, MultiRegionSurfaceState):
+        raise TypeError("state must be MultiRegionSurfaceState.")
+    lineage, target_epoch = event.lineage, event.target_epoch
+    if not event.committed or lineage is None or target_epoch is None:
+        raise ValueError("Border re-preparation needs a committed event pass.")
+    origin = multiregion_topology_epoch(source.surface.topology, source.positions_m)
+    if event.source_epoch.epoch_id != origin.epoch_id:
+        raise ValueError(
+            "The event pass did not start from this border network's epoch and geometry."
+        )
+    state.require_topology(surface.topology)
+    reached = multiregion_topology_epoch(surface.topology, state.positions)
+    if target_epoch.epoch_id != reached.epoch_id:
+        raise ValueError(
+            "The target surface is not the committed geometry of this event pass."
+        )
+    return lineage, target_epoch
+
+
+def _require_border_transport_rule(event: SurfaceEventPassEvidence, /) -> None:
+    """Refuse accepted events whose border content has no declared transport."""
+    for record in event.records:
+        if not record.accepted:
+            continue
+        match record.kind:
+            case (
+                SurfaceEventKind.SPLIT | SurfaceEventKind.COLLAPSE | SurfaceEventKind.FLIP
+            ):
+                # Local remeshing: border identity is checked edge by edge.
+                continue
+            case (
+                SurfaceEventKind.T1_POP
+                | SurfaceEventKind.PINCH
+                | SurfaceEventKind.MERGE
+                | SurfaceEventKind.REGION_SPLIT
+                | SurfaceEventKind.BURST
+            ):
+                raise PlateauBorderTransportError(
+                    f"{record.kind.name} events have no declared physical transport "
+                    "of Plateau-border liquid and surfactant; content is not "
+                    "redistributed from lineage."
+                )
+            case unknown:
+                assert_never(unknown)
+
+
+def _border_keys(prepared: PreparedPlateauBorder, /) -> dict[tuple[int, int], int]:
+    """Border axis index of every physical border keyed by stable vertex IDs."""
+    ids = np.asarray(prepared.surface.topology.vertex_global_ids, dtype=np.int64)
+    edges = np.asarray(prepared.border_edges[: prepared.border_count], dtype=np.int64)
+    keys = np.sort(ids[edges], axis=1).tolist()
+    return {
+        (int(first), int(second)): index for index, (first, second) in enumerate(keys)
+    }
+
+
+def _border_parent(
+    key: tuple[int, int],
+    source_borders: dict[tuple[int, int], int],
+    created: dict[int, tuple[int, ...]],
+    /,
+) -> int:
+    """Source border holding the content of target border ``key``."""
+    retained = source_borders.get(key)
+    if retained is not None:
+        return retained
+    new = [vertex for vertex in key if vertex in created]
+    if len(new) == 1:
+        split = created[new[0]]
+        other = key[1] if key[0] == new[0] else key[0]
+        parent = source_borders.get((split[0], split[-1])) if len(split) == 2 else None
+        if parent is not None and other in split:
+            return parent
+    raise PlateauBorderTransportError(
+        f"Target Plateau border {key} has no physical content source; only "
+        "retained borders and the two children of a split border are transported."
+    )
+
+
+def _border_event_routes(
+    source: PreparedPlateauBorder,
+    target: PreparedPlateauBorder,
+    lineage: MultiRegionSurfaceLineage,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Retained and split-border routes with child-length weights."""
+    source_borders = _border_keys(source)
+    target_borders = _border_keys(target)
+    topology = source.surface.topology
+    existing = set(
+        np.asarray(topology.vertex_global_ids[: topology.vertex_count]).tolist()
+    )
+    created = {
+        child: tuple(sorted(parents))
+        for child, parents in lineage.vertex_parents
+        if child not in existing
+    }
+    parents = np.asarray(
+        [_border_parent(key, source_borders, created) for key in target_borders],
+        dtype=np.int64,
+    )
+    children = np.asarray(list(target_borders.values()), dtype=np.int64)
+    fan_out = np.bincount(parents, minlength=source.border_count)
+    expected = np.asarray(
+        [1 if key in target_borders else 2 for key in source_borders], dtype=np.int64
+    )
+    if np.any(fan_out != expected):
+        lost = [
+            key
+            for key, index in source_borders.items()
+            if fan_out[index] != expected[index]
+        ]
+        raise PlateauBorderTransportError(
+            f"Source Plateau borders {lost} have no complete physical image; "
+            "border coarsening and partial splits have no declared transport."
+        )
+    length = np.asarray(target._geometry()[0], dtype=np.float64)[children]
+    total = np.bincount(parents, weights=length, minlength=source.border_count)
+    return parents, children, length / total[parents]
 
 
 def _preparation_evidence(
@@ -1392,6 +1597,7 @@ def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
 
 __all__ = [
     "apply_foam_rupture_with_borders",
+    "PlateauBorderAdaptation",
     "PlateauBorderBoundaryFlux",
     "PlateauBorderEvidence",
     "PlateauBorderPlan",
@@ -1405,5 +1611,6 @@ __all__ = [
     "PlateauBorderRimStatus",
     "PlateauBorderState",
     "PlateauBorderStatus",
+    "PlateauBorderTransportError",
     "PreparedPlateauBorder",
 ]

@@ -4,58 +4,27 @@
 
 
 import hashlib
-import importlib.util
-import shutil
 import stat
-import subprocess
-import sys
 import zipfile
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from phydrax.interchange import ResourceReadError
 from phydrax.interchange.fmi import FMICoSimulationSession, inspect_fmu
-
-
-_DATA = Path(__file__).parent / "data"
+from tests._support.fmi import compile_specimen, package_fmu, SPECIMENS
 
 
 @pytest.fixture(scope="module")
 def compiled_fmu(tmp_path_factory: Any) -> Any:
-    if importlib.util.find_spec("fmpy") is None:
-        pytest.skip("requires optional FMPy and a native C compiler")
-    if sys.platform not in ("darwin", "linux"):
-        pytest.skip("qualification compiler invocation supports POSIX macOS/Linux")
-    compiler = shutil.which("cc")
-    if compiler is None:
-        pytest.skip("requires a native C compiler for the original real FMU specimen")
-    # ty: ignore[unresolved-import]
-    import fmpy
-
     root = tmp_path_factory.mktemp("real-energy-fmu").resolve()
-    extension = ".dylib" if sys.platform == "darwin" else ".so"
-    library = root / ("energy_accumulator" + extension)
-    subprocess.run(
-        [
-            compiler,
-            "-dynamiclib" if sys.platform == "darwin" else "-shared",
-            "-fPIC",
-            "-O2",
-            str(_DATA / "energy_accumulator.c"),
-            "-o",
-            str(library),
-        ],
-        check=True,
-        timeout=30,
-        capture_output=True,
+    library = compile_specimen(root, "energy_accumulator")
+    return package_fmu(
+        root,
+        library,
+        (SPECIMENS / "energy_accumulator.xml").read_text(encoding="utf-8"),
+        "energy.fmu",
     )
-    archive = root / "energy.fmu"
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
-        output.write(_DATA / "energy_accumulator.xml", "modelDescription.xml")
-        output.write(library, f"binaries/{fmpy.platform}/{library.name}")
-    return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
 
 
 def test_real_fmu_integration_event_and_actual_state_restore(compiled_fmu: Any) -> None:
@@ -116,7 +85,7 @@ def test_archive_pin_and_path_extraction_policy(tmp_path: Any) -> None:
     path = root / "bad.fmu"
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
-            "modelDescription.xml", (_DATA / "energy_accumulator.xml").read_bytes()
+            "modelDescription.xml", (SPECIMENS / "energy_accumulator.xml").read_bytes()
         )
         archive.writestr("../outside", b"untrusted")
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -138,7 +107,7 @@ def test_archive_pin_and_path_extraction_policy(tmp_path: Any) -> None:
     assert not (root.parent / "outside").exists()
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
-            "modelDescription.xml", (_DATA / "energy_accumulator.xml").read_bytes()
+            "modelDescription.xml", (SPECIMENS / "energy_accumulator.xml").read_bytes()
         )
         link = zipfile.ZipInfo("resources/link")
         link.create_system = 3
@@ -161,7 +130,7 @@ def test_xml_entities_and_archive_expansion_fail_before_runtime_import(
     tmp_path: Any,
 ) -> None:
     path = tmp_path.resolve() / "bad.fmu"
-    valid_xml = (_DATA / "energy_accumulator.xml").read_bytes()
+    valid_xml = (SPECIMENS / "energy_accumulator.xml").read_bytes()
     declaration_end = valid_xml.index(b"\n") + 1
     xml = (
         valid_xml[:declaration_end]
@@ -184,7 +153,7 @@ def test_xml_entities_and_archive_expansion_fail_before_runtime_import(
         inspect_fmu(path.name, sha256=digest, trusted_root=path.parent)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(
-            "modelDescription.xml", (_DATA / "energy_accumulator.xml").read_bytes()
+            "modelDescription.xml", (SPECIMENS / "energy_accumulator.xml").read_bytes()
         )
         archive.writestr("resources/large", b"0" * 65536)
     with pytest.raises(ResourceReadError, match="byte limit") as expansion:

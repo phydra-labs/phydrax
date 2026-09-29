@@ -99,7 +99,19 @@ near-axis-corrected volumes for shape orders 1–3.
 
 ## Distributed PIC and restart
 
-::: phydrax.solver.DistributedPICFieldSolver
+::: phydrax.solver.distribute_pic_field_solver
+
+---
+
+::: phydrax.solver.AbstractDistributedPICFieldSolver
+
+---
+
+::: phydrax.solver.pic_distribution_support
+
+---
+
+::: phydrax.solver.PICDistributionSupport
 
 ---
 
@@ -268,6 +280,42 @@ near-axis-corrected volumes for shape orders 1–3.
 ---
 
 ::: phydrax.solver.PICRestartComponent
+
+---
+
+::: phydrax.solver.PICEnergyAccounting
+
+---
+
+::: phydrax.solver.PICOpenDomain
+
+---
+
+::: phydrax.solver.PICFieldSolverCapability
+
+---
+
+::: phydrax.solver.PICCapabilityRecord
+
+---
+
+::: phydrax.solver.PICFieldSolverCapabilities
+
+## PIC field-solver state handoff
+
+::: phydrax.solver.hand_off_pic_state
+
+---
+
+::: phydrax.solver.PICFieldHandoffResult
+
+---
+
+::: phydrax.solver.PICFieldHandoffEvidence
+
+---
+
+::: phydrax.solver.PICFieldHandoffRoute
 
 ## Moving window
 

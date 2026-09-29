@@ -290,8 +290,11 @@ explicit valid mask and count; padded entries are not observations.
 ## Segmented continuation
 
 Every successful adaptive result carries a `DAEContinuation` boundary object with the
-exact accepted BDF history, controller state, and retained nonlinear preparation.
-Pass it to a prepared solve whose first requested time equals that boundary:
+exact accepted BDF history, controller state, retained nonlinear preparation, and
+modified-Newton reuse state (Jacobian age, last shift, last stage iteration count,
+pending forced refresh), so the continued window makes the same Jacobian reuse
+decisions as one uninterrupted segment. Pass it to a prepared solve whose first
+requested time equals that boundary:
 
 ```text
 first = phx.solver.solve_dae(first_prepared)
@@ -633,3 +636,118 @@ cells remain explicit and local probes are not certificates.
 ---
 
 ::: phydrax.solver.ManifoldBDFMethod
+
+## Named block coordinates for reduced DAEs
+
+`DAECoordinateAdapter` gives the named variable and equation blocks of a
+`ReducedDAECompilation` exact coordinates in the native runtime without replacing
+it. Only a compilation produced by the structural owner is admitted: its analysis
+succeeded without tears inside the declared differentiation capacity, so an
+unreduced higher-index declaration is refused by `compile_acausal_dae` with its
+analysis status and never reaches the adapter. A plain `DifferentialAlgebraicSystem`
+carries no structural evidence and is refused. Structural admission is a hypothesis
+about the declared graph; local regularity evidence remains with the solver.
+
+`variable_space` names every variable, with a nested block of derivative segments
+(`"0"`, `"1"`, ...) for variables of order two or more. `equation_space` names the
+reduced equations; `row_space` groups them as `"equations"` and, when present, the
+reduction's `"kinematics"` rows. `variables` and `rows` record each block's native
+range and differential-algebraic role, so distinct variable and equation role
+orders stay distinct. `scale_view("state" | "rate" | "residual")` returns the
+native scales as named blocks; the adapter never rescales them.
+
+`bind_linearization(linearization)` returns the compilation with named-block setup
+hooks. The factory receives named physical state and rate blocks evaluated at
+`physical_state(z)` and `state_rate(z)` of each root and returns a
+`DAEBlockJacobian` of unscaled partial derivatives
+`dF/dstate` and `dF/dstate_rate` from `variable_space` to `equation_space`. The
+adapter supplies the exact kinematic rows and applies the native residual scale
+exactly once. Each root keeps its own map:
+
+| Hook | Native unknown | Named columns | Named rows |
+|---|---|---|---|
+| stage | increment `z` | `"increment"` | `"equations"`, `"kinematics"` |
+| initialization | free state and rate values | `"state"`, `"rate"` | `"equations"`, `"kinematics"` |
+| event | `[z.flatten(), time]` | `"increment"`, `"time"` | `"equations"`, `"kinematics"`, `"guard"` |
+
+The stage operator is `diag(1 / residual_scale) (F_x + shift F_xdot)`. The
+initialization operator restricts `F_x` and `F_xdot` to the free state and rate
+blocks; its free coordinates must be block-aligned and must match the adapter's
+`DAEInitializationSpec`, which is checked at execution. The event operator borders
+the stage operator with the exact time derivative of the scaled residual rows and
+the exact gradient of the scaled guard. Tangent hooks return the forward map of the
+active root; adjoint hooks return its coordinate transpose with reversed row and
+column maps. Each is a `MappedBlockLinearOperator` on the supplied native
+`ArraySpace`s; its Hilbert adjoint uses those spaces' pairings and is not
+substituted by the transpose.
+
+`correction_transfers(kind, groups)` returns a named restriction and prolongation
+on the canonical Euclidean coordinates that Newton solves give to preconditioners.
+Each group gathers its named residual rows into one local block and scatters that
+block's correction into its named root columns; `role_groups(kind)` pairs
+differential and algebraic rows with the columns of the same role (and the event
+guard with time). One `SubspaceCorrectionTerm` with a
+`BlockFactorizationPreconditionerBuilder` local solver then preconditions the
+native root with the named block structure, and named extraction reaches the
+user's explicit blocks, so dense local builders materialize only those blocks.
+
+```python
+adapter = phx.solver.DAECoordinateAdapter(compilation)
+problem = phx.solver.DifferentialAlgebraicProblem(
+    adapter.bind_linearization(linearization),
+    initial_state,
+    initialization="structural",
+)
+stage = phx.linalg.SubspaceCorrectionTerm(
+    *adapter.correction_transfers("stage", adapter.role_groups("stage")),
+    phx.linalg.BlockFactorizationPreconditionerBuilder(pivot, schur, "ldu"),
+)
+```
+
+Transfers are specific to one root kind and orientation. Bind a setup hook only
+when that root's nonlinear method has a preconditioning policy: stage and event
+roots share `nonlinear_method`, and initialization uses `initialization_method`.
+Stage transfers act on the stage coordinate size and are refused by event-root
+preparation. Implicit derivative solves reuse the method's linear policy: tangent
+solves have the forward orientation, while adjoint solves apply the same transfers
+to the coordinate transpose. With exact local solvers, a single full-coverage term
+remains exact in that orientation only when its transposed local pivot is
+nonsingular; otherwise the adjoint linear solve reports its native failure status.
+
+::: phydrax.solver.DAECoordinateAdapter
+
+---
+
+::: phydrax.solver.DAEBlockJacobian
+
+---
+
+::: phydrax.solver.DAEBlockCoordinate
+
+---
+
+::: phydrax.solver.DAERootCoordinates
+
+---
+
+::: phydrax.solver.DAEBlockLinearization
+
+---
+
+::: phydrax.solver.AutonomousDAEBlockLinearization
+
+---
+
+::: phydrax.solver.InputDAEBlockLinearization
+
+---
+
+::: phydrax.solver.DAERootKind
+
+---
+
+::: phydrax.solver.DAESetupHook
+
+---
+
+::: phydrax.solver.DAEScaleKind

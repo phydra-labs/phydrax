@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
@@ -20,11 +21,23 @@ from ..._polynomial import ScaledMonomialBasis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import (
+    AbstractSideFluxEvaluator,
+    BoundaryImposition,
     DiscretizationBundle,
     DiscretizationKey,
     DiscretizationRecord,
     DiscretizationRole,
+    ImpositionKind,
     IntegrationDomain,
+    PreparedFluxAction,
+    PreparedTraceAction,
+    SideActionDescriptor,
+)
+from ...discretization._polygon_query import (
+    polygon_facet_domain,
+    polygon_side_frame,
+    polygon_side_revision,
+    polygonal_connectivity_of,
 )
 from ...discretization.vem import (
     FactorizedVirtualElementOperator,
@@ -35,6 +48,7 @@ from ...discretization.vem import (
     VirtualElementRuntimeData,
     VirtualElementStabilizationPolicy,
 )
+from ...discretization.vem._space import virtual_element_runtime_matches
 from ...dynamics import DAEStructure, DifferentialAlgebraicSystem
 from ...linalg import (
     AbstractLinearOperator,
@@ -68,7 +82,7 @@ from ._form import (
     VirtualElementForm,
     VirtualElementRobinAction,
 )
-from ._reconstruction import _polygonal_connectivity, _runtime_matches_discretization
+from ._reconstruction import virtual_element_projection_basis
 
 
 def _cell_indices(
@@ -287,6 +301,35 @@ def _factorized_action(
     )
 
 
+def _local_coordinate_operator(
+    matrices: Array,
+    routes: Array,
+    full_space: AbstractVectorSpace,
+    /,
+    *,
+    operator_id: str,
+) -> SparseCoordinateOperator:
+    """Canonical coordinates of `(entity, row, column)` tensors on prepared routes.
+
+    The routes are prepared DOF structure and only the tensors are runtime data,
+    so this stays traceable: no host route validation, fingerprinting, or
+    relation re-planning runs inside a runtime or gradient evaluation.
+    """
+    return SparseCoordinateOperator(
+        EdgeRelation(
+            jnp.broadcast_to(routes[:, None, :], matrices.shape).reshape((-1,)),
+            jnp.broadcast_to(routes[:, :, None], matrices.shape).reshape((-1,)),
+            source_size=full_space.size,
+            target_size=full_space.size,
+        ),
+        matrices.reshape((-1,)),
+        source=full_space,
+        target=DualSpace(full_space),
+        properties=OperatorProperties(),
+        operator_id=operator_id,
+    )
+
+
 def _merge_sparse(
     operators: Sequence[SparseCoordinateOperator],
     full_space: AbstractVectorSpace,
@@ -334,8 +377,12 @@ def _realize_factorized(
 ) -> AbstractLinearOperator:
     if policy.realization == "sparse":
         sparse = tuple(
-            operator.as_sparse_coordinate()
-            for operator in factorized.materialize_buckets()
+            _local_coordinate_operator(
+                local, gather, full_space, operator_id=factorized.operator_id
+            )
+            for local, gather in zip(
+                factorized.local_tensors(), factorized.gathers, strict=True
+            )
         )
         return _merge_sparse(
             sparse,
@@ -390,47 +437,6 @@ def _sum_operators(
     )
 
 
-def _lagrange_values(nodes: Array, points: Array, /) -> Array:
-    values = []
-    for index in range(nodes.size):
-        basis = jnp.ones_like(points)
-        for other in range(nodes.size):
-            if other != index:
-                basis = basis * (points - nodes[other]) / (nodes[index] - nodes[other])
-        values.append(basis)
-    return jnp.stack(tuple(values), axis=-1)
-
-
-def _edge_routes(discretization: VirtualElementDiscretization, edges: Array, /) -> Array:
-    trace_kind = discretization.field.element.trace_kind
-    if trace_kind == "none":
-        raise ValueError("Discontinuous L2 virtual elements have no boundary trace.")
-    degree = discretization.field.element.degree
-    offset = discretization.dof_map.vertex_dof_count
-    if trace_kind in ("normal", "tangential"):
-        modes = jnp.arange(degree + 1, dtype=jnp.int32)
-        return offset + edges[:, None] * (degree + 1) + modes[None, :]
-    endpoints = jnp.asarray(
-        _polygonal_connectivity(discretization).edges, dtype=jnp.int32
-    )[edges]
-    routes = [endpoints[:, 0]]
-    for interior in range(degree - 1):
-        routes.append(offset + edges * (degree - 1) + interior)
-    routes.append(endpoints[:, 1])
-    return jnp.stack(tuple(routes), axis=1)
-
-
-def _legendre_values(degree: int, points: Array, /) -> Array:
-    values = [jnp.ones_like(points)]
-    if degree:
-        values.append(points)
-    for order in range(2, degree + 1):
-        values.append(
-            ((2 * order - 1) * points * values[-1] - (order - 1) * values[-2]) / order
-        )
-    return jnp.stack(tuple(values), axis=-1)
-
-
 def _boundary_data(
     coefficient: VariationalCoefficient,
     points: Array,
@@ -455,11 +461,7 @@ def _boundary_operator_and_rhs(
     policy: VirtualElementExecutionPolicy,
     /,
 ) -> tuple[SparseCoordinateOperator | None, Array, Array]:
-    from ...integration import (
-        GaussLegendreRule,
-        GaussLobattoLegendreRule,
-        interval_rule_data,
-    )
+    from ...integration import GaussLegendreRule, interval_rule_data
 
     trace_kind = discretization.field.element.trace_kind
     if trace_kind == "none":
@@ -474,30 +476,21 @@ def _boundary_operator_and_rhs(
     ):
         raise ValueError("VEM boundary domain belongs to another facet support.")
     edges = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
-    routes = _edge_routes(discretization, edges)
+    routes = discretization.edge_trace_routes(edges)
     degree = discretization.field.element.degree
     quadrature = interval_rule_data(GaussLegendreRule(degree + 2))
     axis = jnp.asarray(quadrature.nodes)
     weights = jnp.asarray(quadrature.weights)
+    trace_basis = discretization.field.element.edge_trace_basis(axis)
+    connectivity = polygonal_connectivity_of(discretization.mesh)
     if trace_kind == "value":
-        nodes = jnp.asarray(
-            interval_rule_data(GaussLobattoLegendreRule(degree + 1)).nodes
-        )
-        trace_basis = _lagrange_values(nodes, axis)
         basis = jnp.broadcast_to(trace_basis[None], (edges.size,) + trace_basis.shape)
     else:
-        trace_basis = _legendre_values(degree, axis)
-        dual = 2 * jnp.arange(degree + 1, dtype=axis.dtype) + 1
-        trace_basis = trace_basis * dual
         owner = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
         owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
-        signs = jnp.asarray(_polygonal_connectivity(discretization).cell_edge_signs)[
-            owner, owner_local
-        ]
+        signs = jnp.asarray(connectivity.cell_edge_signs)[owner, owner_local]
         basis = signs[:, None, None] * trace_basis[None]
-    connectivity_edges = jnp.asarray(
-        _polygonal_connectivity(discretization).edges, dtype=jnp.int32
-    )[edges]
+    connectivity_edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)[edges]
     start = context.runtime.coordinates[connectivity_edges[:, 0]]
     stop = context.runtime.coordinates[connectivity_edges[:, 1]]
     points = (
@@ -513,17 +506,10 @@ def _boundary_operator_and_rhs(
             raise ValueError("VEM Robin data must be scalar on boundary quadrature.")
         matrices = ein.contract("eq,eq,eqi,eqj->eij", weighted, alpha, basis, basis)
         rhs = ein.contract("eq,eq,eqi->ei", weighted, value, basis)
-        operator = SparseCoordinateOperator(
-            EdgeRelation(
-                jnp.broadcast_to(routes[:, None, :], matrices.shape).reshape((-1,)),
-                jnp.broadcast_to(routes[:, :, None], matrices.shape).reshape((-1,)),
-                source_size=discretization.dof_map.global_dof_count,
-                target_size=discretization.dof_map.global_dof_count,
-            ),
-            matrices.reshape((-1,)),
-            source=discretization.field_space.vector_space,
-            target=DualSpace(discretization.field_space.vector_space),
-            properties=OperatorProperties(),
+        operator = _local_coordinate_operator(
+            matrices,
+            routes,
+            discretization.field_space.vector_space,
             operator_id=canonical_fingerprint(
                 {
                     "kind": "virtual-element-robin",
@@ -680,7 +666,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         runtime = context.runtime
         if not isinstance(runtime, VirtualElementRuntimeData):
             raise TypeError("VEM execution context runtime has the wrong type.")
-        if not _runtime_matches_discretization(runtime, self.discretization):
+        if not virtual_element_runtime_matches(self.discretization, runtime):
             raise ValueError("VEM execution context is incompatible with the space.")
         return context
 
@@ -915,6 +901,174 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             else self.constraint.constraint_map.pullback_dual(residual)
         )
 
+    def _require_side_trace(self, trace: PreparedTraceAction, /) -> None:
+        if not isinstance(trace, PreparedTraceAction):
+            raise TypeError("trace must be a PreparedTraceAction.")
+        if (
+            trace.descriptor.owner_id != self.discretization.prepared_id
+            or trace.descriptor.field_space_id
+            != self.discretization.field_space.field_space_id
+        ):
+            raise ValueError(
+                "The trace belongs to another discretization field; prepare it with "
+                "this problem's VirtualElementDiscretization.prepare_side_trace."
+            )
+        if (
+            self.discretization.field.element.family != "ConformingH1"
+            or trace.descriptor.quantity != "value"
+        ):
+            raise ValueError(
+                "VEM conormal fluxes are defined for value traces of scalar "
+                "ConformingH1 fields."
+            )
+
+    def _trace_domain(self, trace: PreparedTraceAction, /) -> IntegrationDomain:
+        match trace.descriptor.domain_kind:
+            case "exterior_facet":
+                base = self.discretization.exterior_facet_domain
+            case "interior_facet":
+                base = self.discretization.interior_facet_domain
+            case kind:
+                raise ValueError(f"Side traces do not act on {kind!r} domains.")
+        return polygon_facet_domain(base, trace.descriptor.facets)
+
+    def prepare_conormal_flux(self, trace: PreparedTraceAction, /) -> PreparedFluxAction:
+        """Publish the exact-edge conormal flux as the residual reaction.
+
+        The flux is the discrete Lagrange multiplier of the side: the full weak
+        residual `full_residual(state, args)` restricted to `trace.support_rows`
+        (the vertex and edge DOFs of the selected exterior edges). At a state
+        satisfying the remaining rows it equals the outward conormal flux
+        tested against the edge trace basis, exactly and without projecting the
+        interior gradient (`approximation="variational-reaction"`). Only value
+        traces of scalar `ConformingH1` fields on exterior facets are accepted:
+        interior-facet rows also carry the residual of the other cell.
+        """
+        self._require_side_trace(trace)
+        if trace.descriptor.domain_kind != "exterior_facet":
+            raise ValueError(
+                "Reaction fluxes live on exterior facets; interior-facet rows also "
+                "carry the other cell's residual. Use prepare_projected_flux for "
+                "a one-sided interior flux."
+            )
+        descriptor = SideActionDescriptor(
+            owner_id=self.compilation_id,
+            field_space_id=trace.descriptor.field_space_id,
+            quantity="conormal-flux",
+            representation="residual-reaction",
+            orientation="outward",
+            approximation="variational-reaction",
+            side=trace.descriptor.side,
+            domain=self._trace_domain(trace),
+            revision_id=trace.descriptor.revision_id,
+            rule=None,
+            trace_degree=trace.descriptor.trace_degree,
+            quadrature_exact_degree=None,
+        )
+        return PreparedFluxAction(
+            descriptor, trace, _VirtualElementReactionFlux(self, trace.support_rows)
+        )
+
+    def prepare_projected_flux(self, trace: PreparedTraceAction, /) -> PreparedFluxAction:
+        """Publish the projected conormal flux `kappa grad(Pi^nabla u) . n`.
+
+        Densities at `trace.sites` use the energy projection of the side cell
+        (owner or neighbor of the trace), the form's `DiffusionAction`
+        diffusivities (scalar or 2x2 tensor, summed over the actions whose
+        domain contains the side cell), and the trace's outward normals. The
+        virtual interior gradient is not computable, so the flux is labeled
+        `approximation="h1-projection"`; it is exact when the discrete field is
+        a polynomial of degree `k`. It is evaluated on the geometry revision of
+        its trace, which must be the problem's default runtime.
+        """
+        self._require_side_trace(trace)
+        if not any(isinstance(action, DiffusionAction) for action in self.form.actions):
+            raise ValueError(
+                "The form has no DiffusionAction; it defines no conormal flux."
+            )
+        runtime = self.discretization.default_runtime
+        if trace.descriptor.revision_id != polygon_side_revision(
+            runtime.runtime_id, runtime.coordinates
+        ):
+            raise ValueError(
+                "The trace was prepared on another geometry revision; prepare it "
+                "on the problem's default runtime."
+            )
+        domain = self._trace_domain(trace)
+        side_cells, _, normals = polygon_side_frame(
+            self.discretization.mesh, runtime.coordinates, domain, trace.descriptor.side
+        )
+        if not np.allclose(
+            normals, np.asarray(trace.normals[:, 0]), rtol=0.0, atol=1e-12
+        ):
+            raise ValueError(
+                "The trace's facet sides differ from the owner's canonical facet "
+                "domain; prepare the trace from the discretization's facet domains."
+            )
+        descriptor = SideActionDescriptor(
+            owner_id=self.compilation_id,
+            field_space_id=trace.descriptor.field_space_id,
+            quantity="conormal-flux",
+            representation="quadrature-values",
+            orientation="outward",
+            approximation="h1-projection",
+            side=trace.descriptor.side,
+            domain=domain,
+            revision_id=trace.descriptor.revision_id,
+            rule=None,
+            trace_degree=None,
+            quadrature_exact_degree=trace.descriptor.quadrature_exact_degree,
+        )
+        return PreparedFluxAction(
+            descriptor,
+            trace,
+            _projected_flux_evaluator(self, trace, runtime, side_cells),
+        )
+
+    def boundary_impositions(self) -> tuple[BoundaryImposition, ...]:
+        """Report the provenance of every boundary law of this problem.
+
+        The order is deterministic: the strong Dirichlet rows of `constraint`
+        first (source: its constraint ID), then the natural boundary loads and
+        Robin terms in form-action order on their exterior facets (source:
+        the action ID).
+        """
+        field_space_id = self.discretization.field_space.field_space_id
+        impositions: list[BoundaryImposition] = []
+        kind: ImpositionKind
+        if self.constraint is not None:
+            impositions.append(
+                BoundaryImposition(
+                    "strong",
+                    field_space_id=field_space_id,
+                    source_id=self.constraint.constraint_id,
+                    rows=self.constraint.constrained_dofs,
+                )
+            )
+        for action in self.form.actions:
+            if isinstance(action, BoundaryLoadAction):
+                kind = "natural"
+                domain = (
+                    self.discretization.exterior_facet_domain
+                    if action.domain is None
+                    else action.domain
+                )
+            elif isinstance(action, VirtualElementRobinAction):
+                kind = "robin"
+                domain = action.domain
+            else:
+                continue
+            impositions.append(
+                BoundaryImposition(
+                    kind,
+                    field_space_id=field_space_id,
+                    source_id=action.action_id,
+                    entity_set_id=domain.entity_set_id,
+                    facets=domain.entity_indices,
+                )
+            )
+        return tuple(impositions)
+
     def _default_nullspace_policy(
         self, operator: AbstractLinearOperator
     ) -> NullspacePolicy | None:
@@ -1006,13 +1160,19 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         args: object = None,
         /,
         *,
-        coefficient: ArrayLike = 1.0,
+        coefficient: ArrayLike | VariationalCoefficient = 1.0,
         return_full: bool = False,
     ) -> AbstractLinearOperator:
         context = self._context(args)
         from .._variational import coefficient as bind_coefficient
 
-        bound = bind_coefficient(coefficient)
+        # A coefficient bound on the host (identity fingerprinted once) may be
+        # passed through, so the mass action stays usable inside traced code.
+        bound = (
+            coefficient
+            if isinstance(coefficient, VariationalCoefficient)
+            else bind_coefficient(coefficient)
+        )
         polynomial = _mass_polynomial_matrices(bound, self.discretization, context)
         factorized = _factorized_action(
             context.runtime.projections,
@@ -1165,6 +1325,107 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             ),
         )
         return GeneralizedEigenproblem(stiffness, mass)
+
+
+@final
+class _VirtualElementReactionFlux(AbstractSideFluxEvaluator, NonTrainableState):
+    """Full weak residual of one compiled problem on the rows of one side."""
+
+    problem: CompiledVirtualElementProblem
+    rows: Array
+
+    @property
+    def state_space(self) -> AbstractVectorSpace:
+        return self.problem.full_space
+
+    def evaluate(self, state: PyTree[Array], args: object, /) -> Array:
+        return self.problem.full_residual(state, args)[self.rows]
+
+
+@final
+class _VirtualElementProjectedFlux(AbstractSideFluxEvaluator, NonTrainableState):
+    """`kappa grad(Pi^nabla u) . n` at fixed trace sites of known side cells.
+
+    `gradient_weights` has shape `(facets, sites, local, 2)` and maps the
+    gathered DOFs `dofs` of each side cell to the projected gradient.
+    """
+
+    problem: CompiledVirtualElementProblem
+    dofs: Array
+    gradient_weights: Array
+    sites: Array
+    normals: Array
+    side_cells: Array
+    runtime_id: str = eqx.field(static=True)
+
+    @property
+    def state_space(self) -> AbstractVectorSpace:
+        return self.problem.full_space
+
+    def evaluate(self, state: PyTree[Array], args: object, /) -> Array:
+        context = self.problem._context(args)
+        if context.runtime.runtime_id != self.runtime_id:
+            raise ValueError(
+                "The projected flux was prepared on another VEM runtime; prepare the "
+                "trace and flux on the evaluating runtime."
+            )
+        gathered = jnp.asarray(state)[self.dofs]
+        gradient = ein.contract("fqld,fl->fqd", self.gradient_weights, gathered)
+        flux = jnp.zeros(self.sites.shape[:2], dtype=gradient.dtype)
+        for action in self.problem.form.actions:
+            if not isinstance(action, DiffusionAction):
+                continue
+            kappa = _coefficient_values(
+                action.diffusivity,
+                self.sites,
+                self.side_cells,
+                self.problem.discretization,
+                context,
+            )
+            if kappa.shape == self.sites.shape[:2]:
+                conormal = kappa * jnp.sum(gradient * self.normals, axis=-1)
+            elif kappa.shape == self.sites.shape[:2] + (2, 2):
+                conormal = ein.contract("fqd,fqde,fqe->fq", self.normals, kappa, gradient)
+            else:
+                raise ValueError(
+                    "H1 VEM diffusivity must be scalar or a 2x2 tensor per trace site."
+                )
+            inside = _cell_mask(action, self.side_cells)
+            flux = flux + jnp.where(inside[:, None], conormal, 0.0)
+        return flux
+
+
+def _projected_flux_evaluator(
+    problem: CompiledVirtualElementProblem,
+    trace: PreparedTraceAction,
+    runtime: VirtualElementRuntimeData,
+    side_cells: np.ndarray,
+    /,
+) -> _VirtualElementProjectedFlux:
+    """Prepare the fixed projected-gradient routes of the trace sites."""
+    basis, routes = virtual_element_projection_basis(
+        problem.discretization, runtime, "h1-projection"
+    )
+    facets, sites_per_facet = trace.sites.shape[:2]
+    cells = jnp.asarray(side_cells)
+    flat_cells = jnp.repeat(cells, sites_per_facet)
+    points = trace.sites.reshape((-1, 2))
+    gradient = jnp.stack(
+        tuple(
+            basis.cell_weights(flat_cells, points, derivative)
+            for derivative in ((1, 0), (0, 1))
+        ),
+        axis=-1,
+    )
+    return _VirtualElementProjectedFlux(
+        problem,
+        jnp.asarray(routes)[cells],
+        gradient.reshape((facets, sites_per_facet) + gradient.shape[1:]),
+        trace.sites,
+        trace.normals,
+        cells,
+        runtime_id=runtime.runtime_id,
+    )
 
 
 def compile_virtual_element_problem(

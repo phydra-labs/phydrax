@@ -20,23 +20,39 @@ geophysical application. Existing generic `CouplingPort` instances may keep
 `quantity=None`; they remain genuine untyped mathematical ports, not disguised
 climate fields. A connection cannot mix a typed and an untyped endpoint.
 
-Physical ports declare `frame`. Measured ports additionally declare a native
-`DiscreteMeasure` and `measure_unit`. Current measured port storage is scalar
-cell averages, with one physical measure weight per degree of freedom. The
-measure's support must match the field support. Instantaneous fields and
-whole-window integrals have distinct `temporal_kind` values; the solver never
-multiplies an endpoint sample by an interval and calls that an exact integral.
+Physical ports declare `frame` and a `CouplingMeasurement`, the linear inventory
+functional of their native coordinates. The climate surface ports store per-area
+cell averages (`cell_average`, density storage) and use
+`CouplingMeasurement.from_measure(area_measure, space, m²)`: the area integral of
+each cell value against the physical surface-area `DiscreteMeasure`, so heat and
+water inventories are in J and kg rather than per area. The measurement support
+must match the field support, and storage and representation must agree: density
+storage (point values, cell averages, basis coefficients) uses a `"density"`
+measurement, extensive storage (cell integrals, flux moments, circulation moments,
+cochains) an `"extensive"` one that is never weighted by a measure again, and any
+other storage a declared `"functional"`. Nodal, basis, and flux-moment ports are
+therefore not coerced into cell averages. A componentized inventory requires a
+declared component frame; unlike scalar quantities belong to separate ports.
+
+Instantaneous fields and whole-window integrals have distinct `temporal_kind`
+values, and every exchange declares its temporal meaning explicitly. The heat and
+water exchanges declare `temporal=CouplingTemporalConversion("window-integral")`;
+the instantaneous temperature return declares no conversion. Preparation refuses a
+missing or mismatched declaration, and the solver never multiplies an endpoint
+sample by an interval and calls that an exact integral.
 
 A direct physical exchange requires exact field, vector-space, frame and
-measure identities. Two physically compatible quantities on different grids
-require an explicit `FieldTransfer` and `CouplingTransferRequirement` describing
-conservation, constant preservation, positivity and frame action. Native unit
-conversion is applied after the spatial operator. The solver checks required
-transfer properties, compatible physical measure dimensions, and the actual
-weighted transposed-operator conservation identity. This requires one transpose
-action rather than materializing a dense transfer matrix. A transfer falsely
-claiming conservation fails preparation. A frame change must be explicitly
-identified as a transform; no rotation or change of basis is guessed.
+measurement-functional identities. Two physically compatible quantities on
+different grids require an explicit `FieldTransfer` and
+`CouplingTransferRequirement` describing conservation, constant preservation,
+positivity and frame action. Native unit conversion is applied after the spatial
+operator. The solver checks required transfer properties, matching measurement unit
+dimensions and component IDs, and, for a conservative transfer `P`, the measurement
+identity `L_target P = L_source` per component. Each target inventory covector is
+pulled back through the transposed transfer action actually applied, rather than
+materializing a dense transfer matrix. A transfer falsely claiming conservation
+fails preparation. A frame change must be explicitly identified as a transform; no
+rotation or change of basis is guessed.
 
 ## One authoritative proposal and one atomic acceptance
 
@@ -51,8 +67,8 @@ ports when multiple recipients are required.
 Participants replay from their frozen window-start state. Their candidate
 continuations and native candidate ledgers are not published as accepted state
 during nonlinear iterations. After final participant evaluation, the coupling
-runtime integrates the original source proposal and the actual received target
-value against their respective physical measures. It checks both global
+runtime evaluates the original source proposal and the actual received target
+value with their respective measurement functionals. It checks both global
 conservation and local agreement between the received and mapped proposal.
 These checks use roundoff-level tolerances, independently of looser nonlinear
 stopping criteria. Even an explicit Jacobi window fails certification if a
@@ -60,17 +76,21 @@ recipient used a stale integral.
 
 `CouplingWindowResult` provides:
 
-- `proposed_exchange_budget`: one source-debit/target-credit pair per exchange;
+- `proposed_exchange_budget`: one source-debit/target-credit pair per ledger row;
 - `accepted_exchange_budget`: the same pairs on success, all zeros on rejection;
 - `accepted_state.cumulative_exchange_budget`: cumulative accepted accounting;
 - `candidate_state`: diagnostic-only proposed state, never the restart boundary
   after failure.
 
-Budgets use the reference units of the quantity times the physical measure.
-Instantaneous, non-conserved exchanges have zero budget rows. Exchange rows are
-in the prepared graph's canonical exchange-ID order. Negative heat proposals
-reverse the debit/credit signs naturally. No equal-and-opposite diagnostic is
-fabricated by replacing one independently computed side with its negative.
+Budgets use the reference units of the quantity times the measurement unit. Each
+scalar exchange owns one ledger row identified by its exchange ID; a whole-window
+exchange with a componentized inventory owns one row per component, identified as
+`exchange_id[component]`, so unlike components are never summed.
+`CouplingState.budget_row_ids` names the rows. Instantaneous, non-conserved
+exchanges have zero budget rows. Rows are in the prepared graph's canonical
+exchange-ID order. Negative heat proposals reverse the debit/credit signs
+naturally. No equal-and-opposite diagnostic is fabricated by replacing one
+independently computed side with its negative.
 
 Participant failure, nonfinite evaluation, nonlinear failure and physical
 certification failure preserve **all** accepted participant states, native

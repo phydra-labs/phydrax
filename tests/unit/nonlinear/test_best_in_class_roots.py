@@ -288,6 +288,86 @@ def test_fixed_point_initial_solution_has_exact_success_work() -> None:
     assert jnp.array_equal(result.residual, jnp.zeros(2))
 
 
+@pytest.mark.parametrize(
+    "acceleration",
+    [None, nl.AndersonAcceleration(history=2)],
+    ids=["plain", "anderson"],
+)
+def test_fixed_point_accumulates_the_work_of_every_executed_evaluation(
+    acceleration: Any,
+) -> None:
+    executed: list[int] = []
+
+    def mapping(state: jax.Array, args: None) -> tuple[jax.Array, dict[str, Any]]:
+        # Host-side oracle: fires once per evaluation the method actually executes.
+        jax.debug.callback(lambda: executed.append(1))
+        work = {
+            "calls": jnp.asarray(1, dtype=jnp.int32),
+            "cost": jnp.asarray(3, dtype=jnp.int32),
+        }
+        return 0.5 * jnp.cos(state), work
+
+    result = nl.FixedPointIteration(acceleration=acceleration).solve(
+        nl.FixedPointProblem(mapping, evaluation_work=True),
+        jnp.asarray([1.0, -0.5]),
+        termination=_root_termination(),
+    )
+
+    evaluations = int(result.diagnostics.residual_evaluations)
+    assert bool(result.successful)
+    assert evaluations == len(executed)
+    work = result.evaluation_work
+    assert isinstance(work, dict)
+    assert int(work["calls"]) == evaluations
+    assert int(work["cost"]) == 3 * evaluations
+    # Anderson re-evaluates the raw map after every accelerated proposal.
+    raw_reevaluations = evaluations - int(result.diagnostics.iterations) - 1
+    if acceleration is None:
+        assert raw_reevaluations == 0
+    else:
+        assert raw_reevaluations > 0
+
+
+def test_fixed_point_evaluation_work_is_declared_by_the_problem() -> None:
+    method = nl.FixedPointIteration()
+    plain = method.solve(
+        nl.FixedPointProblem(lambda state, args: 0.5 * state),
+        jnp.asarray([1.0]),
+        termination=_root_termination(),
+    )
+
+    assert bool(plain.successful)
+    assert plain.evaluation_work is None
+    with pytest.raises(TypeError, match=r"\(mapped_state, work\)"):
+        method.solve(
+            nl.FixedPointProblem(lambda state, args: 0.5 * state, evaluation_work=True),
+            jnp.asarray([1.0]),
+        )
+
+
+def test_fixed_point_refuses_negative_evaluation_work() -> None:
+    # A negative count would cancel executed work in the accumulated evidence:
+    # (+2) + (-2) evaluations would otherwise report zero work.
+    def mapping(state: jax.Array, args: None) -> tuple[jax.Array, jax.Array]:
+        refund = jnp.where(state[0] < 0.4, -2, 2).astype(jnp.int32)
+        return 0.5 * jnp.cos(state), refund
+
+    @eqx.filter_jit
+    def work(initial: jax.Array) -> Any:
+        return (
+            nl.FixedPointIteration()
+            .solve(
+                nl.FixedPointProblem(mapping, evaluation_work=True),
+                initial,
+                termination=_root_termination(),
+            )
+            .evaluation_work
+        )
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="must be non-negative"):
+        jax.block_until_ready(work(jnp.asarray([1.0, -0.5])))
+
+
 @pytest.mark.parametrize("kind", ["type-i", "type-ii"])
 def test_anderson_damped_complex_two_step_recurrence(kind: Any) -> None:
     matrix = jnp.asarray(

@@ -139,6 +139,56 @@ A stored fingerprint authenticates canonical metadata identity, not the truth of
 unverified external report. Signing, access control, and artifact retention are outside
 these value types.
 
+## Derivative support
+
+Differentiation is one coordinate of the support tuple, and each prepared owner states
+it explicitly. The prepared product and each of its results carry an
+`OwnerDerivativeCapability`. It lists the runtime arguments that may be
+differentiated, the `DerivativeSurface` each one enters, and the route. It also lists
+every refused quantity with a reason. The linear policy's `DifferentiationPolicy`
+selects the route at preparation. Geometry, matching, panel pairing, and quadrature
+are prepared once on the host and are never traced.
+
+| Prepared owner | Mode | Admitted arguments (surface, route) | Refused |
+| --- | --- | --- | --- |
+| `prepare_scalar_laplace_fem_bem_3d` | `none` (default) | none (stopped) | all runtime arguments; fixed structure |
+| | `rhs-only` | `volume_source_coefficients`, `dirichlet_jump`, `conormal_jump` (solver argument, implicit) | `conductivity`; `geometry`, `kernel`, `quadrature`, `exterior_conductivity` |
+| | `mathematical` | the three data arguments above plus per-cell `conductivity` (physical parameter, implicit) | `geometry`, `kernel`, `quadrature`, `exterior_conductivity` |
+| | `algorithmic` | refused at preparation | — |
+| `prepare_elasticity_fem_bem_3d` | `none` (default) | none (stopped) | both loads; fixed structure |
+| | `rhs-only` | `interior_load`, `boundary_load` (solver argument, implicit) | `geometry`, `kernel` (Kelvin/Lamé), `quadrature`, `interior_operator` (caller `A_sym` including the hypersingular term), `trace_maps` (`C`, `C^T`) |
+| | `mathematical`, `algorithmic` | refused at preparation | — |
+| `prepare_scalar_laplace_galerkin_2d` | linear actions | `dirichlet`, `conormal`, `far_field_constant` (input, direct) | `geometry`, `kernel`, `quadrature`, field `targets` |
+| `prepare_exterior_laplace_dirichlet_2d` | `rhs-only` (default) | `dirichlet` (solver argument, implicit) | `geometry`, `kernel`, `quadrature` |
+| | `none` | none (stopped) | `dirichlet`; fixed structure |
+| | `mathematical`, `algorithmic` | refused at preparation | — |
+
+The scalar conductivity route is exact for the affine P1 envelope. The interior
+stiffness is `G^T diag(κ|T|) G`, where the cell-gradient map `G` is prepared once. A
+runtime conductivity changes only the diagonal and rebinds the prepared solve through
+`phydrax.linalg.refresh`, with no replanning. A compiled gradient therefore runs again
+for a new conductivity without host synchronization. The transmission jumps are DP0
+data, `g_D = γ0⁻u − γ0⁺u` and `g_N = κγ1⁻u − γ1⁺u`, with the same interior-to-exterior
+normal as the conormal unknown.
+
+Evaluation semantics:
+
+- If a JVP, VJP, or gradient requests an argument that the capability does not admit,
+  it raises `ValueError` beginning with `derivative-unsupported` at transformation
+  time. A stopped route never returns a silent zero.
+- Primal acceptance (`valid` or `accepted`) and `derivative_valid` are separate
+  evidence. `derivative_valid` also requires an admitted route and a converged solve.
+  The derivatives of a result that is not accepted are NaN under the status failure
+  mode and raise under the error failure mode. Examples are a failed or non-converged
+  solve, a nonpositive conductivity, a failed recertification, and a violated decaying
+  far field.
+- Implicit tangent and adjoint solves follow the policy's `LinearDerivativeSolvePolicy`.
+  A derivative solve that misses its residual contract returns NaN rather than an
+  approximate derivative.
+- A derivative study of a two-dimensional `decaying` exterior solve must perturb inside
+  that compatibility regime. A perturbation whose far-field constant exceeds the
+  tolerance is not accepted, so its derivative is NaN.
+
 ## Current and planned support
 
 The current implementation boundary must not be read as a qualification matrix:
@@ -146,6 +196,7 @@ The current implementation boundary must not be read as a qualification matrix:
 | Slice | Availability | Qualification statement |
 | --- | --- | --- |
 | PR208 3D Laplace single-layer triangle-DP0 Galerkin and capacitance path | Implemented with explicit geometry and memory bounds | **Bounded/experimental.** It reports assembly, solve, quadrature, and resource evidence, but explicitly has no continuum discretization-error estimator. It remains Q0 until envelope-specific evidence promotes it. |
+| 2D Laplace P1/DP0 Galerkin `V`/`K` and bordered exterior Dirichlet-to-Neumann solve on closed straight-panel polygons | Implemented with blocked-direct actions, pair-class quadrature evidence, and explicit resource budgets | **Bounded/experimental.** `ScalarLaplaceGalerkinReport2D.support` is its exact candidate `BoundarySupportEnvelope`; continuum error, open, curved, or moving geometry, Helmholtz, hypersingular, FMM Galerkin, geometry-derivative, and field-target-derivative claims are declared unsupported; fixed-geometry density and Dirichlet-data derivatives are claimed (see [Derivative support](#derivative-support)). It remains Q0. |
 | Existing 2D/3D direct, adaptive, QBX, treecode, and FMM layer-potential paths | Implemented only for the contracts documented by each API | **Bounded/experimental for commercial qualification.** Existing certificates and evaluator reports do not automatically constitute continuum qualification. |
 
 The scalar Calderón/trace, scalar transmission and open-screen, scalar and
@@ -166,6 +217,15 @@ transpose/adjoint reverse stored factors, and no global dense matrix is formed.
 Scalar closed-surface calculus now pairs DP0 Neumann traces with continuous-P1
 Dirichlet traces. The hypersingular operator is the Maue-regularized P1 map;
 DP0 hypersingular requests remain mathematically invalid and are not projected.
+
+Boundary trace spaces are published to coupling consumers as
+`BoundaryTraceSpaceCapability` and `CauchyTraceCapability` records (2-D polygon and
+3-D closed-surface P1 Dirichlet / DP0 Neumann data, RWG currents, and their
+Buffa--Christiansen duals). Each record states the trace quantity, representation,
+conformity, orientation relative to the declared interior or the oriented surface,
+physical Gram pairing, and geometry revision. The record is an identity and pairing
+contract only: it adds no volume support, no qualification claim, and no route between
+scalar Cauchy data and tangential currents.
 
 `prepare_periodic_maxwell_boundary_3d` combines the prepared central
 free-space RWG action with explicitly bounded smooth noncentral Bloch images.

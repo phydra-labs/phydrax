@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import assert_never, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import scipy.linalg
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -27,7 +28,11 @@ from .typing import PRNGKey
 
 
 if TYPE_CHECKING:
-    from .observation import CholeskyCovarianceAction, CoordinateLayout
+    from .observation import (
+        CholeskyCovarianceAction,
+        CoordinateLayout,
+        PrecisionCovarianceAction,
+    )
     from .uq import AbstractCovariance
 
 
@@ -435,6 +440,139 @@ def prepare_observation_covariance(
     raise TypeError("covariance must implement native UQ AbstractCovariance.")
 
 
+def _active_coordinates(active: ArrayLike, layout: CoordinateLayout, /) -> np.ndarray:
+    mask = np.asarray(active)
+    if mask.dtype != np.bool_ or mask.shape != (layout.size,):
+        raise ValueError("active must be a boolean mask over the covariance layout.")
+    indices = np.flatnonzero(mask)
+    if indices.size == 0:
+        raise ValueError(
+            "Covariance restriction requires at least one active coordinate."
+        )
+    return indices
+
+
+def _restrict_cholesky(
+    covariance: CholeskyCovarianceAction,
+    indices: np.ndarray,
+    layout: CoordinateLayout,
+    /,
+) -> CholeskyCovarianceAction:
+    from .observation import CholeskyCovarianceAction
+
+    # Sigma_AA = L_A L_A^T = R^T R for the QR factorization L_A^T = Q R, which
+    # factors the marginal without squaring the condition number of L_A.
+    rows = np.asarray(covariance.lower_cholesky)[indices, :]
+    upper = np.linalg.qr(rows.T, mode="r")
+    signs = np.where(np.diag(upper) < 0.0, -1.0, 1.0).astype(upper.dtype)
+    return CholeskyCovarianceAction((signs[:, None] * upper).T, layout)
+
+
+def _restrict_precision(
+    covariance: PrecisionCovarianceAction,
+    indices: np.ndarray,
+    layout: CoordinateLayout,
+    /,
+) -> PrecisionCovarianceAction:
+    from .observation import PrecisionCovarianceAction
+
+    # Subsetting a precision conditions on the inactive coordinates. The
+    # marginal precision is the Schur complement P_AA - P_AB P_BB^-1 P_BA, and
+    # log det Sigma_AA = log det Sigma + log det P_BB. With P_BB = L L^T and
+    # W = L^-1 P_BA the complement is P_AA - W^T W; the product is symmetrized
+    # because a rounded Gram product is symmetric only up to its entries' ulp.
+    precision = np.asarray(covariance.precision)
+    inactive = np.setdiff1d(np.arange(precision.shape[0]), indices)
+    active_block = precision[np.ix_(indices, indices)]
+    coupling = precision[np.ix_(indices, inactive)]
+    inactive_block = precision[np.ix_(inactive, inactive)]
+    try:
+        factor = np.linalg.cholesky(inactive_block)
+    except np.linalg.LinAlgError as error:
+        raise ValueError(
+            "Inactive precision block must be positive definite for exact marginalization."
+        ) from error
+    whitened = scipy.linalg.solve_triangular(factor, coupling.T, lower=True)
+    marginal = active_block - whitened.T @ whitened
+    marginal = 0.5 * (marginal + marginal.T)
+    logdet_inactive = 2.0 * np.sum(np.log(np.diag(factor)))
+    logdet = np.asarray(covariance.logdet_covariance) + logdet_inactive
+    return PrecisionCovarianceAction(marginal, logdet, layout)
+
+
+def restrict_observation_covariance(
+    covariance: ObservationCovarianceAction
+    | CholeskyCovarianceAction
+    | PrecisionCovarianceAction,
+    active: ArrayLike,
+    /,
+) -> ObservationCovarianceAction | CholeskyCovarianceAction | PrecisionCovarianceAction:
+    """Return the exact Gaussian marginal covariance on active layout coordinates.
+
+    `active` is a host boolean mask over `covariance.layout`; the restricted
+    layout keeps the active labels in their original order. Diagonal and
+    diagonal-plus-low-rank marginals keep their structure, a dense Cholesky
+    marginal is refactored, and a dense precision marginal uses the Schur
+    complement. Separable Kronecker, stationary circulant, and matrix-free
+    precision operators have no structure-preserving marginal on an arbitrary
+    subset and are refused unless every coordinate is active; declare the
+    active-set covariance explicitly instead.
+    """
+    from .observation import (
+        CholeskyCovarianceAction,
+        CoordinateLayout,
+        PrecisionCovarianceAction,
+    )
+
+    if not isinstance(
+        covariance,
+        (
+            DiagonalCovarianceAction,
+            LowRankDiagonalCovarianceAction,
+            CholeskyCovarianceAction,
+            PrecisionCovarianceAction,
+            KroneckerCholeskyCovarianceAction,
+            CirculantCovarianceAction,
+            PrecisionOperatorCovarianceAction,
+        ),
+    ):
+        raise TypeError("covariance must be a supported observation covariance.")
+    indices = _active_coordinates(active, covariance.layout)
+    if indices.size == covariance.layout.size:
+        return covariance
+    labels = covariance.layout.labels
+    layout = CoordinateLayout(tuple(labels[index] for index in indices))
+    match covariance:
+        case DiagonalCovarianceAction():
+            return DiagonalCovarianceAction(
+                np.asarray(covariance.variance)[indices], layout
+            )
+        case LowRankDiagonalCovarianceAction():
+            return LowRankDiagonalCovarianceAction(
+                np.asarray(covariance.variance)[indices],
+                np.asarray(covariance.factors)[indices, :],
+                layout,
+            )
+        case CholeskyCovarianceAction():
+            return _restrict_cholesky(covariance, indices, layout)
+        case PrecisionCovarianceAction():
+            return _restrict_precision(covariance, indices, layout)
+        case KroneckerCholeskyCovarianceAction() | CirculantCovarianceAction():
+            raise ValueError(
+                "A partial restriction destroys separable or stationary covariance "
+                "structure and would require dense materialization; declare the "
+                "active-set covariance explicitly."
+            )
+        case PrecisionOperatorCovarianceAction():
+            raise ValueError(
+                "A matrix-free precision operator has no prepared Schur complement "
+                "for a partial restriction; declare the active-set covariance "
+                "explicitly."
+            )
+        case _:
+            assert_never(covariance)
+
+
 ObservationCovarianceAction = (
     DiagonalCovarianceAction
     | LowRankDiagonalCovarianceAction
@@ -452,4 +590,5 @@ __all__ = [
     "ObservationCovarianceAction",
     "PrecisionOperatorCovarianceAction",
     "prepare_observation_covariance",
+    "restrict_observation_covariance",
 ]

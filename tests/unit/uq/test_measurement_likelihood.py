@@ -8,6 +8,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -246,3 +247,53 @@ def test_measurement_likelihood_reuses_the_native_minibatch_posterior_contract()
     assert diagnostics.passed
     assert diagnostics.full_log_density_matches
     assert diagnostics.full_gradient_matches
+
+
+def test_parameter_dependent_correlated_noise_gradient_includes_the_log_determinant() -> (
+    None
+):
+    correlation = np.asarray([[1.0, 0.6], [0.6, 1.0]])
+    inputs = np.asarray([[0.4], [1.0], [-0.7]])
+    targets = np.asarray([[0.5, 0.1], [1.3, 0.2], [-0.6, -0.5]])
+    input_variance = 0.02
+    gain = 1.1
+    direction = np.asarray([1.0, 0.5])
+    term = phx.uq.LinearizedGaussianMeasurementLikelihood(
+        lambda parameters, value: parameters["gain"] * jnp.asarray(direction) * value[0],
+        jnp.asarray(inputs),
+        jnp.asarray(targets),
+        input_covariance=jnp.asarray([[input_variance]]),
+        observation_covariance=lambda parameters: (
+            parameters["noise"] ** 2 * jnp.asarray(correlation)
+        ),
+    )
+    noise = 0.3
+    # Host reference for d/d(noise) of -1/2 sum(r^T C^-1 r + log det C), with
+    # C = noise^2 R + gain^2 input_variance d d^T and dC = 2 noise R.
+    covariance = noise**2 * correlation + gain**2 * input_variance * np.outer(
+        direction, direction
+    )
+    derivative = 2.0 * noise * correlation
+    quadratic_part = 0.0
+    log_determinant_part = 0.0
+    for value, target in zip(inputs, targets, strict=True):
+        weighted = np.linalg.solve(covariance, target - gain * direction * value[0])
+        quadratic_part += 0.5 * weighted @ derivative @ weighted
+        log_determinant_part -= 0.5 * np.trace(np.linalg.solve(covariance, derivative))
+
+    def at_noise(value: float) -> Any:
+        return term.log_prob({"gain": jnp.asarray(gain), "noise": jnp.asarray(value)})
+
+    step = 1e-6
+    central = (float(at_noise(noise + step)) - float(at_noise(noise - step))) / (
+        2.0 * step
+    )
+    gradient = jax.grad(term.log_prob)(
+        {"gain": jnp.asarray(gain), "noise": jnp.asarray(noise)}
+    )["noise"]
+
+    np.testing.assert_allclose(
+        gradient, quadratic_part + log_determinant_part, rtol=1e-10
+    )
+    np.testing.assert_allclose(gradient, central, rtol=1e-6)
+    assert abs(float(gradient) - quadratic_part) > 1.0

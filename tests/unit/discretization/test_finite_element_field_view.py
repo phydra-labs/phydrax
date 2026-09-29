@@ -13,10 +13,12 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization import (
+    CellLocationStatus,
     DiscreteFieldFunctionView,
     FieldQueryStatus,
 )
 from phydrax.discretization.fem import (
+    FiniteElementFieldReconstructionKernel,
     prepare_finite_element_field_reconstruction,
     prepare_finite_element_point_interpolation,
 )
@@ -250,6 +252,111 @@ def test_finite_element_field_view_scenario_3() -> None:
     np.testing.assert_allclose(average.func(facet[0]), 2.0)
 
 
+def test_default_location_finds_generic_interior_points_of_small_meshes() -> None:
+    # 3x3 right-triangle mesh of the unit square: 18 cells span several BVH leaves
+    # whose boxes overlap, while only a few cell boxes contain any given point.
+    count = 3
+    grid = np.linspace(0.0, 1.0, count + 1)
+    vertices = np.stack(np.meshgrid(grid, grid, indexing="xy"), axis=-1).reshape(-1, 2)
+    corner = np.arange((count + 1) ** 2).reshape(count + 1, count + 1)[:-1, :-1].ravel()
+    a, b, c, d = corner, corner + 1, corner + count + 2, corner + count + 1
+    cells = np.concatenate((np.stack((a, b, c), -1), np.stack((a, c, d), -1)))
+    mesh = phx.discretization.CellMesh(
+        jnp.asarray(vertices),
+        (phx.discretization.CellBlock("cells", "triangle", jnp.asarray(cells)),),
+    )
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+    reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
+    points = jnp.asarray(
+        np.concatenate(
+            (
+                ((0.41, 0.23),),
+                np.random.default_rng(7).uniform(0.02, 0.98, size=(63, 2)),
+            )
+        )
+    )
+
+    assert (
+        reconstruction.validity(points).status.tolist()
+        == [int(FieldQueryStatus.VALID)] * points.shape[0]
+    )
+    kernel = reconstruction.kernel
+    assert isinstance(kernel, FiniteElementFieldReconstructionKernel)
+    located = kernel.locator.locate(points)
+    # Barycentric weights of the located cell's vertices must rebuild each point.
+    corners = np.asarray(kernel.locator.coordinates)[
+        np.asarray(kernel.locator.cell_map.coordinate_dofs)[np.asarray(located.cell_ids)]
+    ]
+    barycentric = np.asarray(located.barycentric)
+    assert np.all(barycentric >= -1e-12)
+    np.testing.assert_allclose(
+        np.einsum("pv,pvd->pd", barycentric, corners), points, atol=1e-12
+    )
+    coefficients = _nodal(discretization, lambda x, y: 1.0 + 2.0 * x - 3.0 * y)
+    np.testing.assert_allclose(
+        reconstruction.evaluate(coefficients, points).values,
+        1.0 + 2.0 * points[:, 0] - 3.0 * points[:, 1],
+        atol=1e-12,
+    )
+
+
+def test_location_finds_points_where_curved_cells_bulge_past_their_nodes() -> None:
+    # P2 cell 0 is the image of (xi, eta) -> (xi, eta + xi^2 - 0.4 xi): its
+    # bottom edge dips to y = -0.04 below every coordinate node (all y >= 0).
+    # Cell 1 is a straight P2 triangle sharing the BVH leaf.
+    def curve(xi: Any, eta: Any) -> Any:
+        return np.stack((xi, eta + xi**2 - 0.4 * xi), axis=-1)
+
+    nodes = np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5))
+    )
+    coordinates = np.concatenate(
+        (curve(nodes[:, 0], nodes[:, 1]), nodes + np.asarray((2.0, 0.0)))
+    )
+    vertices = coordinates[[0, 1, 2, 6, 7, 8]]
+    mesh = phx.discretization.CellMesh.from_triangles(
+        jnp.asarray(vertices), jnp.asarray(((0, 1, 2), (3, 4, 5)), dtype=jnp.int32)
+    )
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+        coordinate_spec=phx.discretization.CellGeometrySpec(
+            {"triangles": phx.discretization.lagrange_element("triangle", 2)},
+            {"triangles": jnp.arange(12, dtype=jnp.int32).reshape(2, 6)},
+            jnp.asarray(coordinates),
+        ),
+    ).prepare()
+    locator = phx.discretization.PreparedSimplicialCellLocator(
+        phx.discretization.prepare_finite_element_cell_map(discretization, 0),
+        discretization.default_runtime.coordinates,
+        phx.discretization.SimplicialLocationPolicy(2, 32, 1),
+    )
+    reference = np.asarray(((0.2, 0.01), (0.3, 0.005), (0.25, 0.3), (0.6, 0.02)))
+    straight = np.asarray(((2.3, 0.2),))
+    below_curve = np.asarray(((0.5, 0.0),))
+    points = np.concatenate((curve(reference[:, 0], reference[:, 1]), straight))
+    assert np.all(points[:2, 1] < 0.0)
+
+    located = locator.locate(jnp.asarray(points))
+    outside = locator.locate(jnp.asarray(below_curve))
+
+    assert located.status.tolist() == [int(CellLocationStatus.LOCATED)] * 5
+    assert located.cell_ids.tolist() == [0, 0, 0, 0, 1]
+    np.testing.assert_allclose(
+        np.asarray(located.reference_coordinates),
+        np.concatenate((reference, straight - np.asarray((2.0, 0.0)))),
+        atol=1e-10,
+    )
+    assert outside.status.tolist() == [int(CellLocationStatus.OUTSIDE)]
+
+
 class _TemperatureModel(phx.AbstractArrayModel):
     weight: jax.Array
     output_port: phx.ValuePort = eqx.field(static=True)
@@ -325,3 +432,28 @@ def test_fe_plus_network_requires_compatible_support_units_and_ports() -> None:
     )
     with pytest.raises(ValueError, match="Label collision"):
         u_fe + _bound_model(other_support, _temperature_port(kelvin))
+
+
+def test_fe_view_minus_network_on_a_box_composes_under_jit() -> None:
+    kelvin = phx.units.DimensionSignature({"temperature": 1})
+    discretization = _discretization(1)
+    reconstruction = prepare_finite_element_field_reconstruction(
+        discretization, "u", value_port=_temperature_port(kelvin)
+    )
+    coefficients = _nodal(discretization, lambda x, y: x + y)
+    box = phx.domain.HyperRectangle(np.zeros(2), np.ones(2), label="x")
+    target = phx.domain.DomainFunction(
+        domain=box,
+        deps=("x",),
+        func=_view(reconstruction, coefficients).as_domain_function().func,
+    )
+    prediction = _bound_model(box, _temperature_port(kelvin))
+    point = jnp.asarray((0.7, 0.2))
+
+    @eqx.filter_jit
+    def residual(prediction: Any, target: Any, point: Any) -> Any:
+        return (prediction - target).func(point)
+
+    np.testing.assert_allclose(
+        residual(prediction, target, point), jnp.tanh(0.35 - 0.05) - 0.9, atol=1e-12
+    )

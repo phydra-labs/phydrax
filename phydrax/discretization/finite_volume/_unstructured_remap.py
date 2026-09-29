@@ -19,7 +19,14 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import SmallLinearSolvePlan, SmallLinearSolveResult, solve_small_linear
+from ...linalg import (
+    adjoint,
+    FunctionLinearOperator,
+    SmallLinearSolvePlan,
+    SmallLinearSolveResult,
+    solve_small_linear,
+    transpose,
+)
 from ...sparse import (
     EdgeRelation,
     gather_routes,
@@ -28,6 +35,9 @@ from ...sparse import (
     SparseLinearMap,
 )
 from .._cell_mesh import CellMesh
+from .._spaces import DiscreteFieldSpace
+from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
+from .._transfer import FieldTransfer, TransferProperties
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
@@ -555,6 +565,95 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         return compensated_sum_chunks(
             (target, -source),
             output_ndim=source.ndim - 1,
+        )
+
+    def _transpose_averages(self, target_cotangent: Array, /) -> Array:
+        """Algebraic transpose of `apply` for fully active cells."""
+        value = jnp.asarray(target_cotangent)
+        trailing = (1,) * (value.ndim - 1)
+        scaled = value / self.target_volumes.astype(value.dtype).reshape((-1,) + trailing)
+        weighted = scaled[self.target_routes] * self.intersection_measures.astype(
+            value.dtype
+        ).reshape((-1,) + trailing)
+        source = jnp.zeros(
+            (self.source_volumes.size,) + value.shape[1:], dtype=value.dtype
+        )
+        return source.at[self.source_indices].add(weighted)
+
+    def epoch_transition(
+        self,
+        source_field: DiscreteFieldSpace,
+        target_field: DiscreteFieldSpace,
+        source_epoch: TopologyEpoch,
+        target_epoch: TopologyEpoch,
+        /,
+    ) -> TopologyEpochTransition:
+        """Bind this complete cell remap as an explicit topology-epoch transition.
+
+        The epochs must realize this plan's source and target topologies. A
+        complete first-order common-refinement remap preserves constants,
+        positivity, and the volume integral of cell averages; its transpose is the
+        exact CSR transpose and its Hilbert adjoint is taken under the field-space
+        pairings. Content is reported against cell volumes (one per component).
+        The content of a field changes by exactly its source-cell coverage
+        defects, so the plan's certified per-cell coverage limits are the
+        transition's measure-defect bound.
+        """
+
+        if not isinstance(source_epoch, TopologyEpoch) or not isinstance(
+            target_epoch, TopologyEpoch
+        ):
+            raise TypeError("Epoch transitions need TopologyEpoch endpoints.")
+        if (
+            source_epoch.topology_id != self.source_topology_id
+            or target_epoch.topology_id != self.target_topology_id
+        ):
+            raise ValueError("Topology epochs do not realize this remap's topologies.")
+        if not self.require_complete:
+            raise ValueError(
+                "Only a complete-coverage remap is conservative enough for a "
+                "topology transition."
+            )
+        primal = FunctionLinearOperator(
+            lambda values: self.apply(values),
+            source=source_field.vector_space,
+            target=target_field.vector_space,
+            transpose_action=self._transpose_averages,
+            operator_id=f"{self.plan_id}:cell-averages",
+        )
+        transfer = FieldTransfer(
+            source_field,
+            target_field,
+            primal,
+            dual_pullback_operator=transpose(primal),
+            hilbert_adjoint_operator=adjoint(primal),
+            properties=TransferProperties(
+                constant_preserving=True,
+                conservative=True,
+                positivity_preserving=True,
+                adjoint_paired=True,
+                differentiable_geometry=False,
+                exact_on=("constants",),
+            ),
+        )
+        source_volumes = np.asarray(self.source_volumes, dtype=np.float64)
+        target_volumes = np.asarray(self.target_volumes, dtype=np.float64)
+        components = primal.source.size // source_volumes.size
+        _, _, _, source_limit = _coverage_ledger(
+            np.asarray(self.target_routes),
+            np.asarray(self.source_indices),
+            np.asarray(self.intersection_measures, dtype=np.float64),
+            source_volumes,
+            target_volumes,
+            float(np.asarray(self.report.tolerance)),
+        )
+        return TopologyEpochTransition(
+            source_epoch,
+            target_epoch,
+            transfer,
+            np.repeat(source_volumes, components),
+            np.repeat(target_volumes, primal.target.size // target_volumes.size),
+            measure_defect_bound=np.repeat(source_limit, components),
         )
 
 

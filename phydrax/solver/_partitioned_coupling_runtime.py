@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING, TypeAlias
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,18 +15,20 @@ from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import ArraySpace
 from ..nonlinear import (
+    AbstractNonlinearMethod,
     FixedPointIteration,
     FixedPointProblem,
     implicit_root_result,
+    NonlinearResult,
     NonlinearStatus,
     NonlinearSystemProblem,
+    NonlinearTermination,
 )
-from ..units import conversion_factor
 from ._partitioned_coupling_graph import PreparedCoupling
 from ._partitioned_coupling_types import (
+    CouplingExchange,
     CouplingPort,
     CouplingProvenance,
-    CouplingQuantity,
     CouplingState,
     CouplingStatus,
     CouplingSubsystemResult,
@@ -41,16 +43,12 @@ from ._partitioned_coupling_waveform import (
     coupling_signal_finite,
     coupling_signal_norm,
     flatten_coupling_signal,
+    integrate_coupling_waveform,
     subtract_coupling_signals,
     transfer_coupling_signal,
     unflatten_coupling_signal,
     validate_coupling_signal,
 )
-
-
-if TYPE_CHECKING:
-    from ..discretization import DiscreteMeasure
-    from ..units import UnitDefinition
 
 
 _ParticipantEvidence: TypeAlias = tuple[
@@ -84,6 +82,13 @@ class _CouplingEvaluation(StrictModule):
     finite: Array
 
 
+class _ParticipantWork(StrictModule):
+    """Per-participant work and iterations spent by interface evaluations."""
+
+    work: Array
+    iterations: Array
+
+
 def _tree_stop(value: Any, /) -> Any:
     return jax.tree.map(jax.lax.stop_gradient, value)
 
@@ -100,10 +105,49 @@ def _source_port(prepared: PreparedCoupling, exchange_index: int, /) -> Coupling
     return prepared.subsystems[subsystem_index].output_ports[output_index]
 
 
+def _integrated(exchange: CouplingExchange, /) -> bool:
+    return exchange.temporal is not None and exchange.temporal.kind == "integrate"
+
+
+def _time_scale(prepared: PreparedCoupling, exchange: CouplingExchange, /) -> float:
+    """Reference scale of the coupling clock unit a waveform integration multiplies."""
+    if not _integrated(exchange):
+        return 1.0
+    time_unit = prepared.time_unit
+    if time_unit is None:
+        raise RuntimeError("Prepared waveform integration lacks its clock time unit.")
+    return float(time_unit.scale_to_reference)
+
+
+def _unit_factor(
+    prepared: PreparedCoupling,
+    exchange: CouplingExchange,
+    source: CouplingPort,
+    target: CouplingPort,
+    /,
+) -> float | None:
+    """Exact reference-scale ratio applied after the spatial transfer.
+
+    Preparation proved one physical quantity with matching inventory dimensions;
+    any storage change between density and extensive coordinates is carried by
+    the certified transfer, so only the quantity scales (and a waveform
+    integration's clock unit) remain to convert.
+    """
+    source_quantity = source.quantity
+    target_quantity = target.quantity
+    # Preparation requires physical descriptors at both ends of a typed exchange.
+    if source_quantity is None or target_quantity is None:
+        return None
+    return float(
+        source_quantity.unit.scale_to_reference / target_quantity.unit.scale_to_reference
+    ) * _time_scale(prepared, exchange)
+
+
 def _apply_exchange(
     prepared: PreparedCoupling,
     exchange_index: int,
     output: Any,
+    window: CouplingWindow,
     /,
 ) -> Any:
     exchange = prepared.exchanges[exchange_index]
@@ -118,18 +162,15 @@ def _apply_exchange(
         action = operator.mv
     else:
         action = exchange.transfer.primal_operator.mv
-    source_quantity = source_port.quantity
-    if source_quantity is not None:
-        target_quantity = target_port.quantity
-        # Preparation requires physical descriptors at both ends of an exchange.
-        if not (target_quantity is not None):
-            raise RuntimeError("Internal invariant failed: target_quantity is not None.")
-        factor = float(conversion_factor(source_quantity.unit, target_quantity.unit))
+    factor = _unit_factor(prepared, exchange, source_port, target_port)
+    if factor is not None:
         spatial_action = action
         action = lambda value: jax.tree.map(
             lambda leaf: factor * leaf, spatial_action(value)
         )
-    return transfer_coupling_signal(source_port, target_port, output, action)
+    return transfer_coupling_signal(
+        source_port, target_port, exchange.temporal, output, action, window.size
+    )
 
 
 def _participant_finite(result: CouplingSubsystemResult, /) -> Array:
@@ -240,12 +281,13 @@ def _apply_subsystem_outputs(
     subsystem_index: int,
     outputs: tuple[Any, ...],
     working_values: list[Any],
+    window: CouplingWindow,
     /,
 ) -> None:
     for exchange_index in _outgoing_exchange_indices(prepared, subsystem_index):
         output_index = prepared.exchange_source_output_indices[exchange_index]
         working_values[exchange_index] = _apply_exchange(
-            prepared, exchange_index, outputs[output_index]
+            prepared, exchange_index, outputs[output_index], window
         )
 
 
@@ -357,7 +399,7 @@ def _global_jacobi_evaluation(
         )
     for subsystem_index, subsystem_outputs in enumerate(outputs):
         _apply_subsystem_outputs(
-            prepared, subsystem_index, subsystem_outputs, working_values
+            prepared, subsystem_index, subsystem_outputs, working_values, window
         )
     return _finalize_evaluation(
         prepared,
@@ -424,7 +466,7 @@ def _global_gauss_seidel_evaluation(
             outputs,
         )
         _apply_subsystem_outputs(
-            prepared, subsystem_index, result.outputs, working_values
+            prepared, subsystem_index, result.outputs, working_values, window
         )
     return _finalize_evaluation(
         prepared,
@@ -506,7 +548,7 @@ def _stagewise_evaluation(
                     outputs,
                 )
                 _apply_subsystem_outputs(
-                    prepared, subsystem_index, result.outputs, working_values
+                    prepared, subsystem_index, result.outputs, working_values, window
                 )
             continue
 
@@ -534,7 +576,11 @@ def _stagewise_evaluation(
             )
         for subsystem_index in stage.subsystem_indices:
             _apply_subsystem_outputs(
-                prepared, subsystem_index, outputs[subsystem_index], working_values
+                prepared,
+                subsystem_index,
+                outputs[subsystem_index],
+                working_values,
+                window,
             )
     return _finalize_evaluation(
         prepared,
@@ -697,6 +743,7 @@ def _accepted_state(
             candidate.cumulative_exchange_budget,
             original.cumulative_exchange_budget,
         ),
+        budget_row_ids=original.budget_row_ids,
         graph_id=original.graph_id,
     )
 
@@ -712,6 +759,7 @@ def _stop_state(state: CouplingState, /) -> CouplingState:
         cumulative_exchange_budget=jax.lax.stop_gradient(
             state.cumulative_exchange_budget
         ),
+        budget_row_ids=state.budget_row_ids,
         graph_id=state.graph_id,
     )
 
@@ -750,62 +798,124 @@ def _status_from_nonlinear(
     ).astype(jnp.int32)
 
 
-def _interval_integral_parts(
-    port: CouplingPort, /
-) -> tuple[CouplingQuantity, DiscreteMeasure, UnitDefinition]:
+def _amount_scale(port: CouplingPort, /) -> float:
+    """Reference scale of `quantity × measurement` inventories at one port."""
     quantity = port.quantity
-    measure = port.measure
-    unit = port.measure_unit
-    # Interval-integral ports require quantity and measure; measured ports a unit.
-    if not (quantity is not None and measure is not None and (unit is not None)):
-        raise RuntimeError(
-            "Internal invariant failed: quantity is not None and measure is not None and (unit is not None)."
-        )
-    return quantity, measure, unit
+    measurement = port.measurement
+    # Whole-window targets and their budgeted sources are typed and measured.
+    if quantity is None or measurement is None:
+        raise RuntimeError("A budgeted exchange lacks its prepared inventory semantics.")
+    return float(quantity.unit.scale_to_reference * measurement.unit.scale_to_reference)
+
+
+def _proposed_amount(
+    prepared: PreparedCoupling,
+    exchange_index: int,
+    evaluation: _CouplingEvaluation,
+    window: CouplingWindow,
+    /,
+) -> Any:
+    """Source amount spent by one budgeted exchange over the complete window."""
+    exchange = prepared.exchanges[exchange_index]
+    value = evaluation.source_values[exchange_index]
+    if not _integrated(exchange):
+        return value
+    rate = integrate_coupling_waveform(_source_port(prepared, exchange_index), value)
+    return jax.tree.map(lambda leaf: window.size.astype(leaf.dtype) * leaf, rate)
+
+
+def _exchange_budget_rows(
+    prepared: PreparedCoupling,
+    exchange_index: int,
+    evaluation: _CouplingEvaluation,
+    window: CouplingWindow,
+    dtype: Any,
+    /,
+) -> tuple[Array, Array]:
+    """Debit/credit rows per inventory component and their certification."""
+    exchange = prepared.exchanges[exchange_index]
+    source = _source_port(prepared, exchange_index)
+    target = _target_port(prepared, exchange_index)
+    source_measurement = source.measurement
+    target_measurement = target.measurement
+    if source_measurement is None or target_measurement is None:
+        raise RuntimeError("A budgeted exchange lacks its prepared measurements.")
+    amount = _proposed_amount(prepared, exchange_index, evaluation, window)
+    received = evaluation.used_inputs[exchange_index]
+    debit_scale = _amount_scale(source) * _time_scale(prepared, exchange)
+    debit = -source_measurement.inventory(amount) * debit_scale
+    credit = target_measurement.inventory(received) * _amount_scale(target)
+    rows = jnp.stack((debit, credit), axis=-1).astype(dtype)
+    # Rounding is bounded relative to the booked amounts, floored by the inventory
+    # of a signal at the ports' declared reference scales, never by one SI unit.
+    source_floor = jnp.asarray(source_measurement.covector_norms, dtype=dtype) * (
+        source.reference_scale * debit_scale
+    )
+    if _integrated(exchange):
+        source_floor = source_floor * window.size.astype(dtype)
+    target_floor = jnp.asarray(target_measurement.covector_norms, dtype=dtype) * (
+        target.reference_scale * _amount_scale(target)
+    )
+    scale = jnp.maximum(
+        jnp.maximum(jnp.abs(rows[:, 0]), jnp.abs(rows[:, 1])),
+        jnp.maximum(source_floor, target_floor),
+    )
+    tolerance = 64 * jnp.finfo(rows.dtype).eps * scale
+    # Certification uses the actual consumed proposal, not independently rounded
+    # participant diagnostics or a forced equal-and-opposite ledger.
+    received_ = target.space.flatten(received)
+    mapped = target.space.flatten(evaluation.exchange_values[exchange_index])
+    local_scale = jnp.maximum(jnp.abs(received_), jnp.abs(mapped))
+    local_tolerance = (
+        64
+        * jnp.finfo(received_.dtype).eps
+        * jnp.maximum(local_scale, target.reference_scale)
+    )
+    certified = (
+        jnp.all(jnp.isfinite(rows))
+        & jnp.all(jnp.abs(rows[:, 0] + rows[:, 1]) <= tolerance)
+        & jnp.all(jnp.abs(received_ - mapped) <= local_tolerance)
+    )
+    return rows, certified
 
 
 def _physical_window_budget(
-    prepared: PreparedCoupling, evaluation: _CouplingEvaluation, /
+    prepared: PreparedCoupling,
+    evaluation: _CouplingEvaluation,
+    window: CouplingWindow,
+    dtype: Any,
+    /,
 ) -> tuple[Array, Array]:
     rows: list[Array] = []
     certified = jnp.asarray(True)
     for index in range(len(prepared.exchanges)):
-        source = _source_port(prepared, index)
-        target = _target_port(prepared, index)
-        if source.temporal_kind != "interval_integral":
-            rows.append(
-                jnp.zeros((2,), dtype=evaluation.participant_residual_norms.dtype)
-            )
+        if _target_port(prepared, index).temporal_kind != "interval_integral":
+            rows.append(jnp.zeros((1, 2), dtype=dtype))
             continue
-        proposed = source.space.flatten(evaluation.source_values[index])
-        received = target.space.flatten(evaluation.used_inputs[index])
-        source_quantity, source_measure, source_unit = _interval_integral_parts(source)
-        # Prepared exchanges share temporal kinds, so the target is interval-integral.
-        target_quantity, target_measure, target_unit = _interval_integral_parts(target)
-        debit = -source_measure.integrate(proposed) * float(
-            source_quantity.unit.scale_to_reference * source_unit.scale_to_reference
+        exchange_rows, exchange_certified = _exchange_budget_rows(
+            prepared, index, evaluation, window, dtype
         )
-        credit = target_measure.integrate(received) * float(
-            target_quantity.unit.scale_to_reference * target_unit.scale_to_reference
-        )
-        row = jnp.stack((debit, credit))
-        scale = jnp.maximum(jnp.abs(debit), jnp.abs(credit))
-        tolerance = 64 * jnp.finfo(row.dtype).eps * jnp.maximum(scale, 1.0)
-        # Certification uses the actual consumed proposal, not independently
-        # rounded participant diagnostics or a forced equal-and-opposite ledger.
-        mapped = target.space.flatten(evaluation.exchange_values[index])
-        local_scale = jnp.maximum(jnp.abs(received), jnp.abs(mapped))
-        local_tolerance = (
-            64 * jnp.finfo(received.dtype).eps * jnp.maximum(local_scale, 1.0)
-        )
-        certified = (
-            certified
-            & jnp.all(jnp.isfinite(row))
-            & (jnp.abs(debit + credit) <= tolerance)
-            & jnp.all(jnp.abs(received - mapped) <= local_tolerance)
-        )
-        rows.append(row)
-    return jnp.stack(rows), certified
+        rows.append(exchange_rows)
+        certified = certified & exchange_certified
+    return jnp.concatenate(rows, axis=0), certified
+
+
+def coupling_counts_complete(prepared: PreparedCoupling, /) -> bool:
+    """Whether window evidence counts the work of every executed evaluation.
+
+    Explicit sweeps evaluate each participant once, and fixed-point interface
+    iterations account every iterate through the problem's evaluation work.
+    General root methods do not report per-evaluation work, so their windows
+    report only the final evaluation and stay incomplete.
+    """
+    policy = prepared.policy
+    if isinstance(policy, ExplicitCouplingPolicy):
+        exact = True
+    elif isinstance(policy, ImplicitCouplingPolicy):
+        exact = isinstance(policy.method, FixedPointIteration)
+    else:
+        raise TypeError("Unsupported prepared coupling policy.")
+    return prepared.report.resources.complete and exact
 
 
 def _window_result(
@@ -819,6 +929,7 @@ def _window_result(
     coupling_iterations: Array,
     nonlinear_residual_evaluations: Array,
     implicit: bool,
+    iterate_work: _ParticipantWork | None = None,
 ) -> CouplingWindowResult:
     (
         physical_norms,
@@ -843,7 +954,12 @@ def _window_result(
         ).astype(jnp.int32)
         successful = status == int(CouplingStatus.SUCCESS)
         converged = jnp.asarray(False)
-    proposed_budget, budget_certified = _physical_window_budget(prepared, evaluation)
+    proposed_budget, budget_certified = _physical_window_budget(
+        prepared,
+        evaluation,
+        window,
+        start_state.cumulative_exchange_budget.dtype,
+    )
     successful = successful & budget_certified
     status = jnp.where(
         (status == int(CouplingStatus.SUCCESS)) & ~budget_certified,
@@ -860,6 +976,7 @@ def _window_result(
         exchange_ids=start_state.exchange_ids,
         cumulative_exchange_budget=start_state.cumulative_exchange_budget
         + proposed_budget,
+        budget_row_ids=start_state.budget_row_ids,
         graph_id=start_state.graph_id,
     )
     accepted = _accepted_state(successful, candidate, start_state)
@@ -873,6 +990,11 @@ def _window_result(
         nonlinear_residual_evaluations + 1 if implicit else 1,
         dtype=jnp.int32,
     )
+    participant_work = evaluation.participant_work
+    participant_iterations = evaluation.participant_iterations
+    if iterate_work is not None:
+        participant_work = participant_work + iterate_work.work
+        participant_iterations = participant_iterations + iterate_work.iterations
     diagnostics = CouplingWindowDiagnostics(
         exchange_residual_norms=physical_norms,
         normalized_exchange_residual_norms=normalized_norms,
@@ -884,15 +1006,15 @@ def _window_result(
         participant_error_reference_norms=(evaluation.participant_error_reference_norms),
         participant_error_orders=evaluation.participant_error_orders,
         participant_error_reliable=evaluation.participant_error_reliable,
-        participant_iterations=evaluation.participant_iterations,
-        participant_work=evaluation.participant_work,
+        participant_iterations=participant_iterations,
+        participant_work=participant_work,
         participant_evaluations=participant_evaluations,
         transfer_applications=transfer_applications,
         coupling_iterations=jnp.asarray(coupling_iterations, dtype=jnp.int32),
         nonlinear_residual_evaluations=jnp.asarray(
             nonlinear_residual_evaluations, dtype=jnp.int32
         ),
-        counts_complete=prepared.report.resources.complete and not implicit,
+        counts_complete=coupling_counts_complete(prepared),
     )
     policy = prepared.policy
     if isinstance(policy, ExplicitCouplingPolicy):
@@ -930,6 +1052,154 @@ def _window_result(
     )
 
 
+def _checked_window(
+    prepared: PreparedCoupling, state: CouplingState, window_size: Any, /
+) -> CouplingWindow:
+    """Refuse host plans, then bind the next native window."""
+    if not isinstance(prepared, PreparedCoupling):
+        raise TypeError("prepared must be PreparedCoupling.")
+    if not prepared.report.jit_eligible:
+        raise ValueError(
+            "This coupling plan contains host participants; advance it only with "
+            "advance_host_coupling_window."
+        )
+    return _bind_window(prepared, state, window_size)
+
+
+def _require_state_identity(prepared: PreparedCoupling, state: CouplingState, /) -> None:
+    """Refuse a state whose participant, exchange, ledger, or graph identity differs."""
+    if not isinstance(state, CouplingState):
+        raise TypeError("state must be CouplingState.")
+    if state.subsystem_ids != prepared.report.subsystem_ids:
+        raise ValueError("Coupling state subsystem identity does not match its plan.")
+    if state.exchange_ids != prepared.report.exchange_ids:
+        raise ValueError("Coupling state exchange identity does not match its plan.")
+    if state.budget_row_ids != prepared.reference_state.budget_row_ids:
+        raise ValueError("Coupling state ledger rows do not match its plan.")
+    if state.graph_id != prepared.graph_id:
+        raise ValueError(
+            "Coupling state physical graph identity does not match its plan."
+        )
+
+
+def _bind_window(
+    prepared: PreparedCoupling, state: CouplingState, window_size: Any, /
+) -> CouplingWindow:
+    """Validate the state's identity against its plan and bind the next window."""
+    _require_state_identity(prepared, state)
+    size = jnp.asarray(window_size, dtype=state.time.dtype)
+    if size.shape != ():
+        raise ValueError("Coupling window_size must be scalar.")
+    size = eqx.error_if(
+        size,
+        ~jnp.isfinite(size) | (size <= 0.0),
+        "Coupling window_size must be finite and positive.",
+    )
+    return CouplingWindow(
+        state.window_index,
+        state.time,
+        state.time + size,
+    )
+
+
+def _fixed_point_interface_solve(
+    prepared: PreparedCoupling,
+    method: FixedPointIteration,
+    termination: NonlinearTermination,
+    state: CouplingState,
+    window: CouplingWindow,
+    initial_coordinates: Array,
+    args: Any,
+    /,
+    *,
+    gauss_seidel_order: tuple[str, ...] | None,
+) -> tuple[NonlinearResult, _ParticipantWork]:
+    """Iterate the interface sweep map, accounting the work of every iterate."""
+
+    def mapping(coordinates: Array, runtime_args: Any) -> tuple[Array, _ParticipantWork]:
+        current_values = _unpack_interface(prepared, coordinates, state.exchange_values)
+        evaluation = _stagewise_evaluation(
+            prepared,
+            window,
+            state,
+            current_values,
+            runtime_args,
+            gauss_seidel_order=gauss_seidel_order,
+        )
+        return _pack_interface(prepared, evaluation.exchange_values), _ParticipantWork(
+            evaluation.participant_work, evaluation.participant_iterations
+        )
+
+    problem = FixedPointProblem(
+        mapping,
+        problem_id=f"{prepared.problem_id}/interface-fixed-point",
+        evaluation_work=True,
+    )
+    result = method.solve(
+        problem,
+        initial_coordinates,
+        termination=termination,
+        args=args,
+    )
+    iterate_work = result.evaluation_work
+    if not isinstance(iterate_work, _ParticipantWork):
+        raise RuntimeError("Fixed-point interface solve did not report its iterate work.")
+    return result, iterate_work
+
+
+def _root_interface_solve(
+    prepared: PreparedCoupling,
+    policy: ImplicitCouplingPolicy,
+    method: AbstractNonlinearMethod,
+    state: CouplingState,
+    window: CouplingWindow,
+    initial_coordinates: Array,
+    args: Any,
+    /,
+) -> NonlinearResult:
+    """Solve the interface residual with a general nonlinear root method."""
+    coordinate_space = ArraySpace(
+        (prepared.report.resources.interface_size,),
+        dtype=prepared.coordinate_dtype,
+        space_id=f"{prepared.plan_id}/interface-coordinates",
+    )
+
+    def residual(
+        coordinates: Array, runtime_args: Any
+    ) -> tuple[Array, _CouplingEvaluation]:
+        current_values = _unpack_interface(prepared, coordinates, state.exchange_values)
+        evaluation = _stagewise_evaluation(
+            prepared, window, state, current_values, runtime_args
+        )
+        return _pack_residual(prepared, evaluation.residuals), evaluation
+
+    problem = NonlinearSystemProblem(
+        residual,
+        state_space=coordinate_space,
+        residual_space=coordinate_space,
+        has_aux=True,
+        validity=lambda coordinates, current_residual, evaluation, runtime_args: (
+            evaluation.successful & evaluation.finite
+        ),
+        problem_id=f"{prepared.problem_id}/interface-root",
+    )
+    if prepared.differentiation.mode == "implicit":
+        return implicit_root_result(
+            problem,
+            initial_coordinates,
+            method=method,
+            termination=policy.termination,
+            derivative_policy=policy.derivative_policy,
+            args=args,
+        )
+    return method.solve(
+        problem,
+        initial_coordinates,
+        termination=policy.termination,
+        args=args,
+    )
+
+
 def advance_coupling_window(
     prepared: PreparedCoupling,
     state: CouplingState,
@@ -939,31 +1209,7 @@ def advance_coupling_window(
 ) -> CouplingWindowResult:
     """Advance one fixed coupling window and atomically commit only valid work."""
 
-    if not isinstance(prepared, PreparedCoupling):
-        raise TypeError("prepared must be PreparedCoupling.")
-    if not isinstance(state, CouplingState):
-        raise TypeError("state must be CouplingState.")
-    if state.subsystem_ids != prepared.report.subsystem_ids:
-        raise ValueError("Coupling state subsystem identity does not match its plan.")
-    if state.exchange_ids != prepared.report.exchange_ids:
-        raise ValueError("Coupling state exchange identity does not match its plan.")
-    if state.graph_id != prepared.graph_id:
-        raise ValueError(
-            "Coupling state physical graph identity does not match its plan."
-        )
-    size = jnp.asarray(window_size, dtype=state.time.dtype)
-    if size.shape != ():
-        raise ValueError("Coupling window_size must be scalar.")
-    size = eqx.error_if(
-        size,
-        ~jnp.isfinite(size) | (size <= 0.0),
-        "Coupling window_size must be finite and positive.",
-    )
-    window = CouplingWindow(
-        state.window_index,
-        state.time,
-        state.time + size,
-    )
+    window = _checked_window(prepared, state, window_size)
     policy = prepared.policy
     if isinstance(policy, ExplicitCouplingPolicy):
         if policy.sweep.kind == "jacobi":
@@ -993,87 +1239,42 @@ def advance_coupling_window(
     if not isinstance(policy, ImplicitCouplingPolicy):
         raise TypeError("Unsupported prepared coupling policy.")
     initial_coordinates = _pack_interface(prepared, state.exchange_values)
-
-    if isinstance(policy.method, FixedPointIteration):
+    method = policy.method
+    if isinstance(method, FixedPointIteration):
         sweep = policy.fixed_point_sweep
         if sweep is None:
             raise RuntimeError("Prepared fixed-point coupling sweep is missing.")
-
-        def mapping(coordinates: Array, runtime_args: Any) -> Array:
-            current_values = _unpack_interface(
-                prepared, coordinates, state.exchange_values
-            )
-            evaluation = _stagewise_evaluation(
-                prepared,
-                window,
-                state,
-                current_values,
-                runtime_args,
-                gauss_seidel_order=(
-                    None if sweep.kind == "jacobi" else sweep.subsystem_order
-                ),
-            )
-            return _pack_interface(prepared, evaluation.exchange_values)
-
-        fixed_problem = FixedPointProblem(
-            mapping,
-            problem_id=f"{prepared.problem_id}/interface-fixed-point",
-        )
-        nonlinear_result = policy.method.solve(
-            fixed_problem,
+        # The final re-evaluation replays the same sweep as the iterates, so a
+        # Gauss-Seidel consumer receives the amount its source spent this sweep.
+        gauss_seidel_order = None if sweep.kind == "jacobi" else sweep.subsystem_order
+        nonlinear_result, iterate_work = _fixed_point_interface_solve(
+            prepared,
+            method,
+            policy.termination,
+            state,
+            window,
             initial_coordinates,
-            termination=policy.termination,
-            args=args,
+            args,
+            gauss_seidel_order=gauss_seidel_order,
         )
     else:
-        coordinate_space = ArraySpace(
-            (prepared.report.resources.interface_size,),
-            dtype=prepared.coordinate_dtype,
-            space_id=f"{prepared.plan_id}/interface-coordinates",
+        nonlinear_result = _root_interface_solve(
+            prepared, policy, method, state, window, initial_coordinates, args
         )
-
-        def residual(
-            coordinates: Array, runtime_args: Any
-        ) -> tuple[Array, _CouplingEvaluation]:
-            current_values = _unpack_interface(
-                prepared, coordinates, state.exchange_values
-            )
-            evaluation = _stagewise_evaluation(
-                prepared, window, state, current_values, runtime_args
-            )
-            return _pack_residual(prepared, evaluation.residuals), evaluation
-
-        problem = NonlinearSystemProblem(
-            residual,
-            state_space=coordinate_space,
-            residual_space=coordinate_space,
-            has_aux=True,
-            validity=lambda coordinates, current_residual, evaluation, runtime_args: (
-                evaluation.successful & evaluation.finite
-            ),
-            problem_id=f"{prepared.problem_id}/interface-root",
-        )
-        if prepared.differentiation.mode == "implicit":
-            nonlinear_result = implicit_root_result(
-                problem,
-                initial_coordinates,
-                method=policy.method,
-                termination=policy.termination,
-                derivative_policy=policy.derivative_policy,
-                args=args,
-            )
-        else:
-            nonlinear_result = policy.method.solve(
-                problem,
-                initial_coordinates,
-                termination=policy.termination,
-                args=args,
-            )
+        iterate_work = None
+        gauss_seidel_order = None
 
     final_values = _unpack_interface(
         prepared, nonlinear_result.state, state.exchange_values
     )
-    final_evaluation = _stagewise_evaluation(prepared, window, state, final_values, args)
+    final_evaluation = _stagewise_evaluation(
+        prepared,
+        window,
+        state,
+        final_values,
+        args,
+        gauss_seidel_order=gauss_seidel_order,
+    )
     diagnostics = nonlinear_result.diagnostics
     return _window_result(
         prepared,
@@ -1084,6 +1285,7 @@ def advance_coupling_window(
         coupling_iterations=diagnostics.iterations,
         nonlinear_residual_evaluations=diagnostics.residual_evaluations,
         implicit=True,
+        iterate_work=iterate_work,
     )
 
 

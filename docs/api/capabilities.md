@@ -4,7 +4,7 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `25b24ab8ece2cfd04bae9a4799258be4d35bb43177c23551b8ff96f1f557ecee`
+Catalog ID: `88d17133c9a848aff3895dc38f84b3ecdac7ab8f67b9e01258028c25252008cd`
 
 ## Dispositions
 
@@ -12,7 +12,7 @@ Catalog ID: `25b24ab8ece2cfd04bae9a4799258be4d35bb43177c23551b8ff96f1f557ecee`
 | --- | ---: |
 | released | 0 |
 | candidate | 269 |
-| research | 169 |
+| research | 170 |
 | internal | 5 |
 | retired | 0 |
 
@@ -352,6 +352,7 @@ Catalog ID: `25b24ab8ece2cfd04bae9a4799258be4d35bb43177c23551b8ff96f1f557ecee`
 | `platform.manufacturing` | `phydrax.manufacturing` | research | analytic-control | 0 |
 | `platform.materials` | `phydrax.materials` | research | analytic-control | 0 |
 | `platform.membranes` | `phydrax.membranes` | research | local-constitutive | 0 |
+| `platform.numerical-interoperability` | `phydrax.solver.coupling` | research | research | 0 |
 | `platform.optomechanics` | `phydrax.optomechanics` | research | local-constitutive | 0 |
 | `platform.phoresis` | `phydrax.phoresis` | research | analytic-control | 0 |
 | `platform.population-balance` | `phydrax.population_balance` | research | analytic-control | 0 |

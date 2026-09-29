@@ -97,6 +97,56 @@ checks. Both refuse query routes with any invalid point (for example
 declares trailing component axes, so the coefficients have shape
 `space.modal_shape + event_shape`.
 
+### Prepared queries and bounded-face traces
+
+`reconstruction.prepare_query(points, derivative=(1, 0))` binds fixed points and
+one coordinate derivative to the per-axis basis rows once; `apply` synthesizes
+each coefficient refresh without re-evaluating the rows, and `transpose` is the
+same bilinear transpose (`coverage="masked"` admits only points inside the box).
+
+A tensor spectral space also publishes the exact trace of its field on bounded
+faces as a `PreparedTraceAction`:
+
+```python
+space = phx.discretization.TensorSpectralPlan(
+    (phx.discretization.ChebyshevBasisPlan(20), phx.discretization.LegendreBasisPlan(16)),
+    axis_names=("x", "y"),
+    field_name="u",
+).prepare(
+    (
+        phx.discretization.AxisDomain.interval(0.0, 2.0),
+        phx.discretization.AxisDomain.interval(-1.0, 1.0),
+    )
+)
+faces = space.boundary_face_selection("x", "lower").union(
+    space.boundary_face_selection("x", "upper")
+)
+trace = space.prepare_side_trace(
+    "u", space.integration_domain("exterior_facet", faces)
+)
+```
+
+The exterior facets are the faces of the bounded axes, one per `(axis,
+lower/upper)` with local face `2 * axis + side`. With `rule=None` the sites are
+the native tangential nodes and the weights their prepared quadrature
+(Clenshaw--Curtis on Chebyshev--Lobatto axes; Gauss, Radau, or Lobatto on
+Legendre axes; uniform on periodic axes), so all selected faces must share one
+node count; a `FacetTraceRule` instead maps its points onto every face with
+weights times the face measure. Normals are the outward axis unit vectors.
+`trace_degree` is the largest tangential polynomial degree and
+`quadrature_exact_degree` the tangential exactness; both are `None` when a
+tangential axis is trigonometric. The route (`SpectralFaceRoute`) is sum
+factorized: each face contracts the coefficients with the endpoint basis row of
+its normal axis and the tangential rows at its sites, never with a
+coefficient-by-site matrix. Real physical fields trace the real part of the
+synthesis, so `dual_pullback` and `inject_load` satisfy
+`<T c, w> = Re(sum(c * T^T w))`. Vector fields with `component_shape=(d,)` also
+publish outward `"normal"` and `"tangential"` traces. Periodic (Fourier) axes
+have no boundary face or normal and are refused precisely, as are sine axes
+(every sine mode vanishes on their faces), interior facets, one-sided
+`side="neighbor"`/`"average"`, and `"conormal-flux"`: a flux belongs to the
+physics owner, not to the synthesis.
+
 ### Nonuniform Fourier transforms
 
 The internal nonuniform Fourier owner (`phydrax._spectral._nonuniform_fourier`)
