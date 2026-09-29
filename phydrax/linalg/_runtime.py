@@ -35,7 +35,7 @@ from ._binding import LinearSolveTemplate
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._initial_guess import _select_proposal, AbstractInitialGuessProvider
 from ._operators import AbstractLinearOperator, adjoint, transpose
-from ._plans import LinearSolvePlan, plan as make_plan
+from ._plans import _derivative_restart, LinearSolvePlan, plan as make_plan
 from ._policies import (
     DenseSVD,
     FGMRES,
@@ -2052,6 +2052,26 @@ def _implicit_root_value(
     initial: Array,
     /,
 ) -> Array:
+    route = prepared.plan.policy.derivative_solve.route
+    match route:
+        case "primal-factors":
+            if (
+                not isinstance(problem, LinearSystem)
+                or problem.nullspace_policy is not None
+                or not isinstance(
+                    prepared.state,
+                    (DenseLUState, DenseCholeskyState, DenseMixedPrecisionLUState),
+                )
+            ):
+                raise TypeError(
+                    "route='primal-factors' requires prepared square direct factors "
+                    "of a LinearSystem without a nullspace policy."
+                )
+            return _implicit_factored_value(prepared, problem, rhs, initial)
+        case "krylov":
+            pass
+        case _:
+            raise ValueError(f"Unsupported derivative solve route {route!r}.")
     if isinstance(problem, MinimumNormProblem):
         return _implicit_minimum_norm_value(prepared, problem, rhs, initial)
     if isinstance(problem, LinearSystem) and isinstance(
@@ -2123,6 +2143,82 @@ def _implicit_minimum_norm_value(
         prepared.plan,
     )
     return augmented_value[..., :source_size, :]
+
+
+def _implicit_factored_value(
+    prepared: PreparedLinearSolve,
+    problem: LinearSystem,
+    rhs: Array,
+    initial: Array,
+    /,
+) -> Array:
+    """Mathematical root derivative whose tangent and transpose solves reuse the
+    primal square direct factors (``route='primal-factors'``).
+
+    The linearized residual of a linear system is its operator, so the prepared
+    factors solve every tangent (and their algebraic transpose every cotangent)
+    without iteration. Each derivative column is accepted by its true residual
+    against the declared derivative-solve tolerances.
+    """
+    provider = provider_for(prepared.plan.backend)
+    fixed_state = jax.tree.map(jax.lax.stop_gradient, prepared.state)
+    failure_mode = prepared.plan.policy.failure.mode
+    derivative_policy = prepared.plan.policy.derivative_solve
+
+    def residual(value: Array) -> Array:
+        return _operator_action(problem.operator, value) - rhs
+
+    def solve_factored(
+        action: Callable[[Array], Array],
+        right: Array,
+        *,
+        transposed: bool,
+    ) -> Array:
+        output = (
+            provider.solve_transformed(fixed_state, right, prepared.plan, adjoint=False)
+            if transposed
+            else provider.solve(fixed_state, right, prepared.plan)
+        )
+        dtype = right.real.dtype
+        right_norm = jnp.linalg.norm(right, axis=-2)
+        residual_norm = jnp.linalg.norm(action(output.value) - right, axis=-2)
+        threshold = (
+            jnp.asarray(derivative_policy.absolute_tolerance, dtype=dtype)
+            + jnp.asarray(derivative_policy.relative_tolerance, dtype=dtype) * right_norm
+        )
+        valid = (
+            jnp.all(output.status == int(LinearSolveStatus.SUCCESS))
+            & jnp.all(jnp.isfinite(output.value), axis=-2)
+            & jnp.isfinite(residual_norm)
+            & (residual_norm <= threshold)
+        )
+        if failure_mode == "error":
+            return eqx.error_if(
+                output.value,
+                ~valid,
+                "Implicit linear derivative solve failed its primal-factor "
+                "residual contract.",
+            )
+        return jnp.where(
+            valid[..., None, :], output.value, jnp.full_like(output.value, jnp.nan)
+        )
+
+    def tangent_solve(linearized: Callable[[Array], Array], target: Array) -> Array:
+        return jax.lax.custom_linear_solve(
+            linearized,
+            target,
+            solve=lambda action, right: solve_factored(action, right, transposed=False),
+            transpose_solve=lambda action, right: solve_factored(
+                action, right, transposed=True
+            ),
+        )
+
+    return custom_root(
+        residual,
+        jax.lax.stop_gradient(initial),
+        solve=lambda _, value: value,
+        tangent_solve=tangent_solve,
+    )
 
 
 def _implicit_custom_root(
@@ -2299,11 +2395,7 @@ def _callable_gmres(
     dimension = rhs.shape[0]
     policy = plan.policy.derivative_solve
     max_steps = policy.maximum_steps or dimension
-    restart = (
-        min(max_steps, dimension)
-        if plan.backend == "native-block-krylov"
-        else min(30, max_steps, dimension)
-    )
+    restart = _derivative_restart(plan.policy.method, max_steps, dimension)
     result = _run_callable_gmres(
         action,
         rhs,

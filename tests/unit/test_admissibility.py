@@ -3,6 +3,7 @@
 #
 
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -12,7 +13,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._admissibility import guard_derivative_validity
+from phydrax._admissibility import (
+    guard_derivative_validity,
+    refuse_derivative_dependencies,
+)
 
 
 def test_admissibility_scenario_1() -> None:
@@ -117,3 +121,58 @@ def test_admissibility_is_jittable_and_transition_is_diagnostic_only() -> None:
     assert int(request.requested_epoch) == 3
     assert request.current_model_id == "continuum"
     assert request.target_model_id == "kinetic"
+
+
+def _refused_owner(x: jax.Array, k: jax.Array) -> jax.Array:
+    # The owner stops its route through `k` (as an rhs-only or unsupported solve
+    # would) and refuses it, so any derivative in `k` must raise, not return 0.
+    value = x**3 * jax.lax.stop_gradient(k) ** 2
+    return jnp.sum(refuse_derivative_dependencies(value, (k,), message="k refused"))
+
+
+_X = jnp.asarray(2.0, dtype=jnp.float64)
+_K = jnp.asarray(3.0, dtype=jnp.float64)
+
+
+@pytest.mark.parametrize(
+    "route",
+    (
+        pytest.param(lambda: jax.grad(_refused_owner, 1)(_X, _K), id="grad-k"),
+        pytest.param(
+            lambda: jax.grad(lambda k: jax.grad(_refused_owner, 0)(_X, k))(_K),
+            id="grad-k-of-grad-x",
+        ),
+        pytest.param(
+            lambda: jax.jvp(
+                lambda k: jax.grad(_refused_owner, 0)(_X, k), (_K,), (jnp.ones_like(_K),)
+            ),
+            id="jvp-k-of-grad-x",
+        ),
+        pytest.param(
+            lambda: jax.jacfwd(jax.grad(_refused_owner, 0), 1)(_X, _K),
+            id="jacfwd-k-of-grad-x",
+        ),
+        pytest.param(
+            lambda: jax.grad(lambda k: jax.hessian(_refused_owner, 0)(_X, k))(_K),
+            id="grad-k-of-hessian-x",
+        ),
+    ),
+)
+def test_refused_dependency_is_refused_at_every_derivative_order(
+    route: Callable[[], object],
+) -> None:
+    with pytest.raises(ValueError, match="derivative-unsupported: k refused"):
+        route()
+
+
+def test_refusal_preserves_higher_derivatives_in_admitted_inputs() -> None:
+    # f = x^3 k^2 with k fixed: analytic d2f/dx2 = 6 x k^2, d3f/dx3 = 6 k^2.
+    hessian = jax.jit(jax.hessian(_refused_owner, 0))(_X, _K)
+    third = jax.grad(jax.grad(jax.grad(_refused_owner, 0), 0), 0)(_X, _K)
+    batched = jax.vmap(jax.hessian(_refused_owner, 0), (0, None))(
+        jnp.asarray((1.0, 2.0), dtype=jnp.float64), _K
+    )
+
+    np.testing.assert_allclose(hessian, 6.0 * 2.0 * 9.0, rtol=1e-15)
+    np.testing.assert_allclose(third, 6.0 * 9.0, rtol=1e-15)
+    np.testing.assert_allclose(batched, (54.0, 108.0), rtol=1e-15)

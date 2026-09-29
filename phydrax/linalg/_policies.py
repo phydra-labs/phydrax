@@ -34,6 +34,7 @@ DifferentiationMode: TypeAlias = Literal[
     "algorithmic",
     "none",
 ]
+DerivativeSolveRoute: TypeAlias = Literal["krylov", "primal-factors"]
 PrecisionDType: TypeAlias = Literal[
     "float16",
     "bfloat16",
@@ -660,7 +661,19 @@ class LinearSolveCheckPolicy(StrictModule):
 
 
 class LinearDerivativeSolvePolicy(StrictModule):
-    """Independent work and acceptance requirements for implicit derivative solves."""
+    """Independent work and acceptance requirements for implicit derivative solves.
+
+    ``route`` selects how implicit tangent and cotangent linear solves execute:
+
+    - ``"krylov"`` runs an independent restarted GMRES bounded by
+      ``maximum_steps`` and accepted by the declared tolerances.
+    - ``"primal-factors"`` reuses the primal square direct factorization
+      (``DenseLU`` or ``DenseCholesky``) and its algebraic transpose, then accepts
+      each solve by its true residual against the declared tolerances. It is exact
+      to roundoff for indefinite operators, performs no iteration, and therefore
+      refuses ``maximum_steps``; it serves systems without a declared nullspace and
+      therefore refuses ``require_nullspace``.
+    """
 
     relative_tolerance: float = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
@@ -668,6 +681,7 @@ class LinearDerivativeSolvePolicy(StrictModule):
     nullspace_tolerance: float = eqx.field(static=True)
     stability_lower_bound: StabilityLowerBound | None
     require_nullspace: bool = eqx.field(static=True)
+    route: DerivativeSolveRoute = eqx.field(static=True)
 
     def __init__(
         self,
@@ -678,12 +692,13 @@ class LinearDerivativeSolvePolicy(StrictModule):
         nullspace_tolerance: float = 1e-10,
         stability_lower_bound: StabilityLowerBound | None = None,
         require_nullspace: bool = False,
+        route: DerivativeSolveRoute = "krylov",
     ) -> None:
         (
-            self.relative_tolerance,
-            self.absolute_tolerance,
-            self.nullspace_tolerance,
-            self.stability_lower_bound,
+            relative,
+            absolute,
+            nullspace,
+            stability_lower_bound,
         ) = _linear_check_parameters(
             relative_tolerance,
             absolute_tolerance,
@@ -693,8 +708,30 @@ class LinearDerivativeSolvePolicy(StrictModule):
         steps = None if maximum_steps is None else int(maximum_steps)
         if steps is not None and steps < 1:
             raise ValueError("maximum_steps must be positive or None.")
+        route = parse(route, DerivativeSolveRoute, "route")
+        match route:
+            case "krylov":
+                pass
+            case "primal-factors":
+                if steps is not None:
+                    raise ValueError(
+                        "route='primal-factors' performs no iteration and refuses "
+                        "maximum_steps."
+                    )
+                if require_nullspace:
+                    raise ValueError(
+                        "route='primal-factors' serves systems without a declared "
+                        "nullspace and refuses require_nullspace."
+                    )
+            case _:
+                raise ValueError(f"Unsupported derivative solve route {route!r}.")
+        self.relative_tolerance = relative
+        self.absolute_tolerance = absolute
+        self.nullspace_tolerance = nullspace
+        self.stability_lower_bound = stability_lower_bound
         self.maximum_steps = steps
         self.require_nullspace = bool(require_nullspace)
+        self.route = route
 
 
 class LinearSolvePolicy(StrictModule):
@@ -811,6 +848,7 @@ __all__ = [
     "DenseLU",
     "DenseQR",
     "DenseSVD",
+    "DerivativeSolveRoute",
     "DifferentiationMode",
     "DifferentiationPolicy",
     "FailureMode",

@@ -13,8 +13,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax.custom_derivatives import SymbolicZero
 from jax.typing import ArrayLike
 
+from ._differentiation import DERIVATIVE_UNSUPPORTED
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -116,6 +118,85 @@ def guard_derivative_validity(
                 failure,
                 message_,
             )
+            if eqx.is_inexact_array(leaf)
+            else leaf
+        ),
+        tree,
+    )
+
+
+@partial(jax.custom_jvp, nondiff_argnums=(2,))
+def _refuse_dependency_leaf(
+    value: Array,
+    dependencies: tuple[Array, ...],
+    message: str,
+    /,
+) -> Array:
+    del dependencies, message
+    return value
+
+
+def _refuse_dependency_leaf_jvp(
+    message: str,
+    primals: tuple[Array, tuple[Array, ...]],
+    tangents: tuple[Any, tuple[Any, ...]],
+) -> tuple[Array, Array]:
+    value, dependencies = primals
+    value_tangent, dependency_tangents = tangents
+    # Symbolic zeros identify, at trace time, exactly the dependencies that are
+    # not being differentiated; any other tangent is a refused derivative request.
+    if not all(isinstance(tangent, SymbolicZero) for tangent in dependency_tangents):
+        raise ValueError(message)
+    if isinstance(value_tangent, SymbolicZero):
+        value_tangent = jnp.zeros_like(value)
+    # Both outputs stay wrapped so every derivative order re-checks the refused
+    # dependencies: an enclosing JVP (e.g. the outer pass of a mixed second
+    # derivative) differentiates these outputs, not the unwrapped primal.
+    return (
+        _refuse_dependency_leaf(value, dependencies, message),
+        _refuse_dependency_leaf(value_tangent, dependencies, message),
+    )
+
+
+_refuse_dependency_leaf.defjvp(_refuse_dependency_leaf_jvp, symbolic_zeros=True)
+
+
+def refuse_derivative_dependencies(
+    tree: Any,
+    dependencies: Any,
+    /,
+    *,
+    message: str,
+) -> Any:
+    """Keep `tree` differentiable while statically refusing derivatives through `dependencies`.
+
+    A JVP, VJP, or gradient in which any inexact dependency leaf carries a
+    tangent raises `ValueError` at trace time; the message starts with
+    `DERIVATIVE_UNSUPPORTED`. The check applies at every derivative order:
+    mixed higher derivatives (for example a gradient in a refused dependency of
+    a gradient in an admitted input) are refused as well. Primal values and
+    derivatives of `tree` through its other inputs, of any order, are
+    unchanged. Owners use this for arguments they do not admit, where a stopped
+    route would otherwise return a silent zero.
+
+    `dependencies` must be the owner's raw inputs (array leaves received from
+    the caller). A dependency that has passed through a `custom_vjp` together
+    with a differentiated input carries an instantiated zero tangent and is
+    refused conservatively; closures are not inspected, so array leaves
+    captured only inside a callable are not refused.
+    """
+    message_ = str(message).strip()
+    if not message_:
+        raise ValueError("Derivative refusal message must be non-empty.")
+    refused = tuple(
+        leaf for leaf in jax.tree.leaves(dependencies) if eqx.is_inexact_array(leaf)
+    )
+    if not refused:
+        return tree
+    text = f"{DERIVATIVE_UNSUPPORTED}: {message_}"
+    return jax.tree.map(
+        lambda leaf: (
+            _refuse_dependency_leaf(leaf, refused, text)
             if eqx.is_inexact_array(leaf)
             else leaf
         ),
@@ -277,4 +358,5 @@ __all__ = [
     "combine_admissibility",
     "guard_derivative_validity",
     "reason_bits_where",
+    "refuse_derivative_dependencies",
 ]

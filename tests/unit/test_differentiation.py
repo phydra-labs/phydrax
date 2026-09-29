@@ -27,6 +27,7 @@ from phydrax import (
     gradient_level_at_least,
     GradientLevel,
     ObjectiveKind,
+    OwnerDerivativeCapability,
     RegularityPolicy,
     resolve_gradient_level,
     SurfaceDerivative,
@@ -569,3 +570,73 @@ def test_construction_certificates_declare_capability_and_identity() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[missing-argument]
         AbstractConstructionCertificate()
+
+
+def test_owner_derivative_capability_admits_or_refuses_each_name_canonically() -> None:
+    capability = OwnerDerivativeCapability(
+        "plate",
+        admitted={
+            "source": Surface.SOLVER_ARGUMENT,
+            "conductivity": Surface.MODEL_PARAMETER,
+        },
+        refused={"mesh": "fixed prepared geometry"},
+        route=Route.IMPLICIT,
+    )
+    reordered = OwnerDerivativeCapability(
+        "plate",
+        admitted={
+            "conductivity": Surface.MODEL_PARAMETER,
+            "source": Surface.SOLVER_ARGUMENT,
+        },
+        refused={"mesh": "fixed prepared geometry"},
+        route=Route.IMPLICIT,
+    )
+
+    assert capability.capability_id == reordered.capability_id
+    assert capability.require("source") is Surface.SOLVER_ARGUMENT
+    assert capability.admits("conductivity")
+    assert not capability.admits("mesh")
+    with pytest.raises(
+        ValueError, match=f"{DERIVATIVE_UNSUPPORTED}.*fixed prepared geometry"
+    ):
+        capability.require("mesh")
+    with pytest.raises(ValueError, match=DERIVATIVE_UNSUPPORTED):
+        capability.require("undeclared")
+
+
+@pytest.mark.parametrize(
+    ("admitted", "refused", "route", "message"),
+    (
+        pytest.param(
+            {"k": Surface.SOLVER_ARGUMENT},
+            {"k": "stopped"},
+            Route.IMPLICIT,
+            "both admitted and refused",
+            id="overlap",
+        ),
+        pytest.param(
+            {"k": Surface.SOLVER_ARGUMENT},
+            {},
+            Route.STOPPED,
+            "non-stopped route",
+            id="admitted-under-stopped-route",
+        ),
+        pytest.param(
+            {},
+            {"k": "stopped"},
+            Route.IMPLICIT,
+            "stopped route",
+            id="nothing-admitted-under-live-route",
+        ),
+    ),
+)
+def test_owner_derivative_capability_refuses_contradictory_declarations(
+    admitted: dict[str, DerivativeSurface],
+    refused: dict[str, str],
+    route: DerivativeRoute,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        OwnerDerivativeCapability(
+            "plate", admitted=admitted, refused=refused, route=route
+        )

@@ -17,15 +17,12 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from ..linalg import (
     AbstractLinearOperator,
-    ArraySpace,
     FunctionLinearOperator,
     JacobianLinearOperator,
-    LinearCapabilityError,
-    OperatorCapabilities,
-    OperatorProperties,
     prepare_linearization,
     PyTreeSpace,
 )
+from ..linalg._named_blocks import _CoordinateRebasedLinearOperator
 from ..sparse import (
     prepare_sparse_linearization,
     PreparedSparseDerivative,
@@ -118,77 +115,6 @@ class PreparedJacobian(StrictModule):
         self.auxiliary = auxiliary
         self.derivative_id = identifier
         self.residual_evaluations = evaluations
-
-
-class _CoordinateRebasedLinearOperator(AbstractLinearOperator):
-    """Canonical coordinate endomorphism for an equal-size structured map."""
-
-    operator: AbstractLinearOperator
-    coordinate_space: ArraySpace
-
-    def __init__(self, operator: AbstractLinearOperator, /) -> None:
-        if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError("operator must be an AbstractLinearOperator.")
-        if operator.batch_shape:
-            raise ValueError("Coordinate rebasing requires an unbatched operator.")
-        if operator.source.size != operator.target.size:
-            raise ValueError(
-                "Coordinate rebasing requires equal source and target dimensions."
-            )
-        source_coordinates = operator.source.flatten(operator.source.zeros())
-        target_coordinates = operator.target.flatten(operator.target.zeros())
-        if source_coordinates.dtype != target_coordinates.dtype:
-            raise TypeError(
-                "Coordinate rebasing requires matching source and target dtypes."
-            )
-        coordinate_space = ArraySpace(
-            (operator.source.size,),
-            dtype=source_coordinates.dtype,
-        )
-        self.operator = operator
-        self.coordinate_space = coordinate_space
-        self.source = coordinate_space
-        self.target = coordinate_space
-        self.properties = OperatorProperties()
-        self.capabilities = OperatorCapabilities(
-            transpose=operator.capabilities.transpose,
-            adjoint=operator.capabilities.adjoint,
-            materialize=False,
-            diagonal_assembly=operator.capabilities.diagonal_assembly,
-        )
-        self.batch_shape = ()
-        self.operator_id = f"{operator.operator_id}/canonical-coordinate-rebase"
-
-    def flatten_target(self, vector: PyTree[Any], /) -> Array:
-        return self.coordinate_space.validate(self.operator.target.flatten(vector))
-
-    def unflatten_source(self, coordinates: Array, /) -> PyTree[Array]:
-        value = self.coordinate_space.validate(coordinates)
-        return self.operator.source.unflatten(value)
-
-    def mv(self, vector: PyTree[Any], /) -> Array:
-        state_direction = self.unflatten_source(vector)
-        return self.flatten_target(self.operator.mv(state_direction))
-
-    def transpose_mv(self, vector: PyTree[Any], /) -> Array:
-        coordinates = self.coordinate_space.validate(vector)
-        residual_direction = self.operator.target.unflatten(coordinates)
-        transposed = self.operator.transpose_mv(residual_direction)
-        return self.coordinate_space.validate(self.operator.source.flatten(transposed))
-
-    def adjoint_mv(self, vector: PyTree[Any], /) -> Array:
-        coordinates = self.coordinate_space.validate(vector)
-        return jnp.conj(self.transpose_mv(jnp.conj(coordinates)))
-
-    def _assemble_diagonal(self, /) -> Array:
-        from ..linalg._operators import _assemble_operator_diagonal
-
-        return _assemble_operator_diagonal(self.operator)
-
-    def _materialize(self, /) -> Array:
-        raise LinearCapabilityError(
-            "A coordinate-rebased Jacobian is matrix-free and cannot materialize."
-        )
 
 
 def _rebase_jacobian_coordinates(

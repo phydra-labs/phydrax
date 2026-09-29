@@ -19,6 +19,11 @@ from .._trainable import fixed_field
 from ..typing import parse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
+from ._named_blocks import (
+    BlockProlongationLinearOperator,
+    BlockRestrictionLinearOperator,
+    select_block_operator,
+)
 from ._operators import AbstractLinearOperator, AdjointLinearOperator
 from ._preconditioner_properties import (
     _preconditioner_properties_payload,
@@ -126,7 +131,17 @@ def _local_setup_operator(
     setup_operator: AbstractLinearOperator,
     /,
 ) -> AbstractLinearOperator:
-    return term.restriction @ setup_operator @ term.prolongation
+    restriction = term.restriction
+    prolongation = term.prolongation
+    if isinstance(restriction, BlockRestrictionLinearOperator) and isinstance(
+        prolongation, BlockProlongationLinearOperator
+    ):
+        # Named transfers expose the exact local block grid, so block-structured
+        # local solvers receive explicit pivot and coupling blocks.
+        return select_block_operator(
+            setup_operator, restriction.selection, prolongation.selection
+        )
+    return restriction @ setup_operator @ prolongation
 
 
 def _local_setup_operators(
@@ -173,6 +188,12 @@ def _structurally_adjoint_transfers(term: SubspaceCorrectionTerm, /) -> bool:
         or (
             isinstance(prolongation, AdjointLinearOperator)
             and prolongation.operator is restriction
+        )
+        or (
+            isinstance(restriction, BlockRestrictionLinearOperator)
+            and isinstance(prolongation, BlockProlongationLinearOperator)
+            and restriction.selection.selection_id == prolongation.selection.selection_id
+            and restriction.selection.preserves_pairing
         )
     )
 

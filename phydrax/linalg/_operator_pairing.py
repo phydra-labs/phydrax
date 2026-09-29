@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jaxtyping import PyTree
@@ -20,7 +21,14 @@ from ._problems import LinearSystem
 
 
 class OperatorPairing(AbstractPairing):
-    """Hilbert pairing induced by a certified positive-definite Riesz operator."""
+    """Hilbert pairing induced by a certified positive-definite Riesz operator.
+
+    With ``prepared_inverse``, ``inverse_riesz`` is the linear solve
+    ``M x = b`` whose tangent and transpose solves reuse that prepared primal
+    solve (the transpose of Hermitian ``M`` is ``conj(M)``), so its derivative
+    is exact to the primal tolerance rather than to a separate derivative-solve
+    tolerance; each solve raises if it is unsuccessful.
+    """
 
     operator: AbstractLinearOperator
     inverse_action: Callable[[PyTree[Any]], PyTree[Array]] | None
@@ -97,12 +105,25 @@ class OperatorPairing(AbstractPairing):
             return self.operator.source.validate(self.inverse_action(rhs))
         from ._runtime import solve
 
-        assert self.prepared_inverse is not None
-        result = solve(self.prepared_inverse, rhs)
-        candidate = eqx.error_if(
-            result.value,
-            jnp.any(~result.successful),
-            "Prepared Riesz inverse solve failed.",
+        prepared = self.prepared_inverse
+        assert prepared is not None
+
+        def prepared_solve(right: PyTree[Array], /) -> PyTree[Array]:
+            result = solve(prepared, right)
+            return eqx.error_if(
+                result.value,
+                jnp.any(~result.successful),
+                "Prepared Riesz inverse solve failed.",
+            )
+
+        def transposed_solve(right: PyTree[Array], /) -> PyTree[Array]:
+            return jax.tree.map(jnp.conj, prepared_solve(jax.tree.map(jnp.conj, right)))
+
+        candidate = jax.lax.custom_linear_solve(
+            self.operator.mv,
+            rhs,
+            solve=lambda _, right: prepared_solve(right),
+            transpose_solve=lambda _, right: transposed_solve(right),
         )
         return self.operator.source.validate(candidate)
 

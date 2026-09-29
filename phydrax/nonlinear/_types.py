@@ -484,40 +484,80 @@ class NonlinearSystemProblem(StrictModule):
 
 
 class FixedPointProblem(StrictModule):
-    """Fixed-point equation ``state = mapping(state, args)``."""
+    """Fixed-point equation ``state = mapping(state, args)``.
 
-    mapping_function: Callable[[PyTree[Any], Any], PyTree[Any]]
+    With `evaluation_work=True` the mapping returns ``(mapped_state, work)``,
+    where `work` is a fixed-structure PyTree of non-negative integer arrays: the
+    owner-reported work spent by that single evaluation. Methods that account it
+    report the exact sum in `NonlinearResult.evaluation_work`.
+    """
+
+    mapping_function: Callable[[PyTree[Any], Any], Any]
     problem_id: str = eqx.field(static=True)
+    evaluation_work: bool = eqx.field(static=True)
 
     def __init__(
         self,
-        mapping: Callable[[PyTree[Any], Any], PyTree[Any]],
+        mapping: Callable[[PyTree[Any], Any], Any],
         /,
         *,
         problem_id: str = "fixed-point",
+        evaluation_work: bool = False,
     ) -> None:
         if not callable(mapping):
             raise TypeError("mapping must be callable.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
+        if not isinstance(evaluation_work, bool):
+            raise TypeError("evaluation_work must be a bool.")
         self.mapping_function = mapping
         self.problem_id = identifier
+        self.evaluation_work = evaluation_work
 
-    def mapping(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
+    def evaluate(
+        self, state: PyTree[Any], args: Any = None, /
+    ) -> tuple[PyTree[Array], PyTree[Array] | None]:
+        """Return the mapped state and this evaluation's reported work, if any."""
         state_ = validate_inexact_tree(state, name="fixed-point state")
-        mapped = validate_inexact_tree(
-            self.mapping_function(state_, args), name="fixed-point mapping"
-        )
+        output = self.mapping_function(state_, args)
+        if not self.evaluation_work:
+            mapped_output, work = output, None
+        elif isinstance(output, tuple) and len(output) == 2:
+            mapped_output, work = output
+            work = jax.tree.map(jnp.asarray, work)
+            if not all(
+                jnp.issubdtype(leaf.dtype, jnp.integer) for leaf in jax.tree.leaves(work)
+            ):
+                raise TypeError("Fixed-point evaluation work must be integer arrays.")
+            # Work is a count; a negative report would silently cancel real work
+            # in the accumulated `evaluation_work` evidence.
+            work = jax.tree.map(
+                lambda leaf: eqx.error_if(
+                    leaf,
+                    jnp.any(leaf < 0),
+                    "Fixed-point evaluation work must be non-negative.",
+                ),
+                work,
+            )
+        else:
+            raise TypeError(
+                "A work-reporting fixed-point mapping must return (mapped_state, work)."
+            )
+        mapped = validate_inexact_tree(mapped_output, name="fixed-point mapping")
         if jax.tree.structure(mapped) != jax.tree.structure(state_):
             raise ValueError(
                 "A fixed-point mapping must preserve the state PyTree structure."
             )
-        return jax.tree.map(
+        mapped = jax.tree.map(
             lambda value, template: jnp.asarray(value, dtype=template.dtype),
             mapped,
             state_,
         )
+        return mapped, work
+
+    def mapping(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
+        return self.evaluate(state, args)[0]
 
     def as_nonlinear_problem(self) -> NonlinearSystemProblem:
         """Return the equivalent residual problem using ``mapping - state``."""
@@ -709,7 +749,9 @@ class NonlinearResult(StrictModule):
     `component_evidence` records the admission of the residual's model
     components by an owner that admits them (for example implicit root
     differentiation), including `"residual:determinism-undeclared"` for an
-    opaque residual closure.
+    opaque residual closure. `evaluation_work` is the exact sum of the
+    problem-reported work over every evaluation the method executed, or `None`
+    when the problem reports none or the method does not account it.
     """
 
     state: PyTree[Array]
@@ -723,6 +765,7 @@ class NonlinearResult(StrictModule):
     attempts: tuple[Any, ...]
     iteration_evidence: IterationEvidence | None
     component_evidence: tuple[str, ...] = eqx.field(static=True)
+    evaluation_work: PyTree[Array] | None
 
     def __init__(
         self,
@@ -738,6 +781,7 @@ class NonlinearResult(StrictModule):
         attempts: tuple[Any, ...] = (),
         iteration_evidence: IterationEvidence | None = None,
         component_evidence: tuple[str, ...] = (),
+        evaluation_work: PyTree[Any] | None = None,
     ) -> None:
         if not isinstance(diagnostics, NonlinearDiagnostics):
             raise TypeError("diagnostics must be NonlinearDiagnostics.")
@@ -774,6 +818,7 @@ class NonlinearResult(StrictModule):
         self.attempts = tuple(attempts)
         self.iteration_evidence = iteration_evidence
         self.component_evidence = records
+        self.evaluation_work = jax.tree.map(jnp.asarray, evaluation_work)
 
     @property
     def successful(self) -> Array:

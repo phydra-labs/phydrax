@@ -1163,6 +1163,110 @@ def _contract_content(contract: DerivativeContract, /) -> dict[str, Any]:
     }
 
 
+class OwnerDerivativeCapability(StrictModule, NonTrainableState):
+    """Named runtime arguments whose derivatives one prepared scientific owner admits.
+
+    `admitted` maps each differentiable runtime argument, in canonical name
+    order, to the `DerivativeSurface` through which it enters the owner's map.
+    `refused` names every quantity whose derivative the owner refuses, again in
+    canonical order, with the reason: runtime arguments outside the selected
+    route as well as fixed prepared structure such as geometry, topology, or
+    kernels. A name is admitted or refused, never both. `derivative_contract` is
+    the combined canonical contract: `SMOOTH` on every admitted surface through
+    `route` under `conditions`, or `STOPPED` when nothing is admitted. The
+    record is static; the owner's result reports whether one evaluation meets
+    the declared conditions.
+    """
+
+    owner_id: str = eqx.field(static=True)
+    admitted: tuple[tuple[str, DerivativeSurface], ...] = eqx.field(static=True)
+    refused: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    derivative_contract: DerivativeContract
+    capability_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        owner_id: str,
+        /,
+        *,
+        admitted: Mapping[str, DerivativeSurface],
+        refused: Mapping[str, str],
+        route: DerivativeRoute,
+        conditions: Iterable[str] = (),
+    ) -> None:
+        owner = _identifier(owner_id, "owner_id")
+        admitted_ = tuple(
+            sorted(
+                (_identifier(name, "admitted argument"), _require_surface(surface))
+                for name, surface in admitted.items()
+            )
+        )
+        refused_ = tuple(
+            sorted(
+                (_identifier(name, "refused quantity"), _identifier(reason, "reason"))
+                for name, reason in refused.items()
+            )
+        )
+        overlap = {name for name, _ in admitted_} & {name for name, _ in refused_}
+        if overlap:
+            raise ValueError(
+                f"Derivative arguments cannot be both admitted and refused: {sorted(overlap)!r}."
+            )
+        route_ = _require_route(route)
+        if admitted_ and route_ is DerivativeRoute.STOPPED:
+            raise ValueError("Admitted derivative arguments require a non-stopped route.")
+        if not admitted_ and route_ is not DerivativeRoute.STOPPED:
+            raise ValueError("An owner that admits no argument has a stopped route.")
+        contract = (
+            DerivativeContract.smooth(
+                {surface for _, surface in admitted_},
+                route=route_,
+                conditions=conditions,
+            )
+            if admitted_
+            else DerivativeContract(route=route_, conditions=conditions)
+        )
+        self.owner_id = owner
+        self.admitted = admitted_
+        self.refused = refused_
+        self.derivative_contract = contract
+        self.capability_id = canonical_fingerprint(
+            {
+                "kind": "owner-derivative-capability",
+                "owner": owner,
+                "admitted": [[name, surface.value] for name, surface in admitted_],
+                "refused": [list(entry) for entry in refused_],
+                "contract": contract.contract_id,
+            }
+        )
+
+    def admits(self, argument: str, /) -> bool:
+        """Return whether the owner admits derivatives with respect to `argument`."""
+        name = _identifier(argument, "argument")
+        return any(entry == name for entry, _ in self.admitted)
+
+    def require(self, argument: str, /) -> DerivativeSurface:
+        """Return the surface of an admitted `argument`, raising `ValueError` otherwise.
+
+        The message starts with `DERIVATIVE_UNSUPPORTED` and carries the owner's
+        refusal reason, or states that the argument is undeclared.
+        """
+        name = _identifier(argument, "argument")
+        for entry, surface in self.admitted:
+            if entry == name:
+                return surface
+        for entry, reason in self.refused:
+            if entry == name:
+                raise ValueError(
+                    f"{DERIVATIVE_UNSUPPORTED}: owner {self.owner_id} refuses "
+                    f"derivatives with respect to {name!r}: {reason}"
+                )
+        raise ValueError(
+            f"{DERIVATIVE_UNSUPPORTED}: owner {self.owner_id} declares no "
+            f"differentiable argument {name!r}."
+        )
+
+
 _CONTRACT_PAYLOAD_KEYS = frozenset(
     {
         "kind",
@@ -1469,6 +1573,7 @@ __all__ = [
     "DifferentiationRequest",
     "GradientLevel",
     "ObjectiveKind",
+    "OwnerDerivativeCapability",
     "RegularityPieces",
     "RegularityPolicy",
     "SurfaceDerivative",

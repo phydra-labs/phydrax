@@ -391,6 +391,16 @@ class _DAEEventRootArguments(StrictModule):
         )
         return shift * increment + offset
 
+    def rate_shift(self, augmented: Array, /) -> Array:
+        """Return ``d state_rate / d z`` at the augmented event time."""
+        shift, _ = bdf_shift_offset(
+            self.state_history - self.rate_reference,
+            self.history_times,
+            augmented[-1],
+            self.order,
+        )
+        return shift
+
 
 class _DAEEventRootResidual(StrictModule, NonTrainableState):
     system: DifferentialAlgebraicSystem

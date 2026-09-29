@@ -144,6 +144,29 @@ def tree_where(
     )
 
 
+def uncancelled_direction(value: PyTree[Array], /) -> PyTree[Array]:
+    """``s * v`` with fixed Rademacher signs ``s``: the direction of uncancelled terms.
+
+    For a linear action ``A``, ``E_s ||A (s * v)||^2 = ||A diag(v)||_F^2``: the
+    root-mean-square magnitude of the individual terms ``A_ij v_j`` whose sum
+    ``A v`` may cancel (an exact kernel state, a balanced flux). Certificates
+    scale their residuals by ``||A (s * v)||`` so that a state whose terms
+    cancel to roundoff is measured against the magnitude of those terms, never
+    against the cancelled sum itself. The signs are a fixed function of the
+    leaf order and shapes, so the scale is deterministic.
+    """
+    leaves, treedef = jax.tree.flatten(value)
+    key = jax.random.key(0)
+    signed = [
+        leaf
+        * jax.random.rademacher(
+            jax.random.fold_in(key, index), jnp.shape(leaf), dtype=jnp.int8
+        ).astype(jnp.result_type(leaf))
+        for index, leaf in enumerate(leaves)
+    ]
+    return jax.tree.unflatten(treedef, signed)
+
+
 __all__ = [
     "validate_inexact_tree",
     "tree_add",
@@ -158,4 +181,5 @@ __all__ = [
     "tree_scale",
     "tree_where",
     "tree_zeros_like",
+    "uncancelled_direction",
 ]

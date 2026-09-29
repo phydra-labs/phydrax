@@ -214,29 +214,28 @@ class _DAEInitializationArguments(StrictModule):
     state_indices: Array
     rate_indices: Array
 
+    def physical_state(self, unknown: Array, /) -> Array:
+        """Return the state with free entries taken from the leading unknowns."""
+        count = self.state_indices.shape[0]
+        flat = self.state_guess.reshape((-1,)).at[self.state_indices].set(unknown[:count])
+        return flat.reshape(self.state_guess.shape)
+
+    def state_rate(self, unknown: Array, /) -> Array:
+        """Return the rate with free entries taken from the trailing unknowns."""
+        count = self.state_indices.shape[0]
+        flat = self.rate_guess.reshape((-1,)).at[self.rate_indices].set(unknown[count:])
+        return flat.reshape(self.rate_guess.shape)
+
 
 class _DAEInitializationResidual(StrictModule):
     system: DifferentialAlgebraicSystem
     input_policy: AbstractInputPolicy | None
-    state_indices: Array
-    rate_indices: Array
-    state_unknown_count: int = eqx.field(static=True)
 
     def _state_rate_inputs(
         self, unknown: Array, arguments: _DAEInitializationArguments, /
     ) -> tuple[Array, Array, Array | None]:
-        flat_state = (
-            arguments.state_guess.reshape((-1,))
-            .at[self.state_indices]
-            .set(unknown[: self.state_unknown_count])
-        )
-        flat_rate = (
-            arguments.rate_guess.reshape((-1,))
-            .at[self.rate_indices]
-            .set(unknown[self.state_unknown_count :])
-        )
-        state = flat_state.reshape(self.system.state_shape)
-        state_rate = flat_rate.reshape(self.system.state_shape)
+        state = arguments.physical_state(unknown)
+        state_rate = arguments.state_rate(unknown)
         inputs = (
             None
             if self.input_policy is None
@@ -449,13 +448,7 @@ def _prepare_dae_initialization(
         nonlinear_solve = None
         linear_plan_id = "check-only"
     else:
-        residual_function = _DAEInitializationResidual(
-            system,
-            input_policy,
-            state_indices,
-            rate_indices,
-            state_unknown_count,
-        )
+        residual_function = _DAEInitializationResidual(system, input_policy)
         unknown = _unknown_guess(
             state,
             state_rate,
